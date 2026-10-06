@@ -1,8 +1,9 @@
 # I/O
 
-File readers and writers for molecular data, force fields, and trajectories.
-Every name is a function on `mp.io`; most are the native core's own readers and
-writers, re-exported by identity.
+File readers and writers for molecular structures and trajectories. `mp.io`
+is `molrs.io` re-exported by identity (`mp.io.read_pdb is molrs.io.read_pdb`),
+plus two readers of molpy's own: `read_smiles` and `read_amber`. Force-field
+file formats are on `mp.ff.forcefield`.
 
 ## Quick reference
 
@@ -14,25 +15,30 @@ writers, re-exported by identity.
 | `read_lammps_data` / `write_lammps_data` | LAMMPS data | read/write |
 | `read_lammps_molecule` / `write_lammps_molecule` | LAMMPS molecule template | read/write |
 | `read_gro` / `write_gro` | GROMACS GRO | read/write |
-| `read_top` / `write_top` | GROMACS topology (structure) | read/write |
 | `read_mol2` / `write_mol2` | MOL2 | read/write |
 | `read_xyz` / `write_xyz` | XYZ | read/write |
 | `read_xsf` / `write_xsf` | XSF (crystallographic) | read/write |
 | `read_cube` / `write_cube` | Gaussian Cube | read/write |
 | `read_chgcar` | VASP CHGCAR | read |
-| `read_amber_inpcrd` | AMBER inpcrd | read |
-| `read_amber_ac` | Antechamber AC | read |
+| `read_amber_inpcrd` | AMBER inpcrd (optionally into an existing frame) | read |
+| `read_amber_prmtop` | AMBER prmtop (structure) | read |
+| `read_amber` | AMBER prmtop + force field (+ inpcrd) | read |
+| `read_ac` | Antechamber AC | read |
+| `read_frame` / `write_frame` | the format named by the file extension | read/write |
 | `read_smiles` / `write_smarts` | SMILES / local SMARTS | read / write |
+| `SmilesIR`, `CGSmilesIR` | SMILES / CGsmiles text | parse / emit |
+| `write_lammps_bond_react_system`, `write_bond_react_map`, `BondReactTemplate` | LAMMPS `fix bond/react` | write |
 
-### Force fields
+### Force fields (on `mp.ff.forcefield`)
 
 | Function | Format | Direction |
 |----------|--------|-----------|
-| `read_xml_forcefield` / `write_xml_forcefield` | OpenMM/OPLS XML | read/write |
+| `read_forcefield_xml` / `write_forcefield_xml` | OpenMM/OPLS XML | read/write |
 | `read_lammps_forcefield` / `write_lammps_forcefield` | LAMMPS `*.ff` include | read/write (engine units ↔ LAMMPS `real`) |
 | `read_lammps_data_coeffs` / `write_lammps_data_coeffs` | LAMMPS data `* Coeffs` | read/write |
-| `read_gromacs_forcefield` / `write_gromacs_forcefield` | GROMACS `.top` / `.itp` directives | read/write |
-| `read_amber` | AMBER prmtop (+ inpcrd) | read |
+| `read_gromacs_top_ff` / `write_gromacs_top_ff` | GROMACS `.top` / `.itp` directives | read/write |
+| `read_gromacs_system` / `write_gromacs_system` | GROMACS topology: force field + typed frame | read/write |
+| `read_amber_prmtop_ff` / `write_amber_frcmod` | AMBER prmtop / frcmod | read / write |
 
 ### Trajectories
 
@@ -78,11 +84,11 @@ frame = mp.io.read_pdb("molecule.pdb")
 mp.io.write_lammps_data("system.data", frame)
 
 # Read force field (XML or LAMMPS *.ff)
-ff = mp.io.read_xml_forcefield(mp.data.get_forcefield_path("tip3p.xml"))
-ff = mp.io.read_lammps_forcefield("system.ff")
+ff = mp.ff.forcefield.read_forcefield_xml(mp.data.get_forcefield_path("tip3p.xml"))
+ff = mp.ff.forcefield.read_lammps_forcefield("system.ff")
 
 # Write the LAMMPS coefficients the frame's type labels use
-mp.io.write_lammps_forcefield("system.ff", ff, frame)
+mp.ff.forcefield.write_lammps_forcefield("system.ff", ff, frame)
 
 # Read trajectory (lazy)
 traj = mp.io.read_lammps_trajectory("dump.lammpstrj")
@@ -106,17 +112,23 @@ print(thermo.columns)
 
 ### Readers molpy owns
 
-::: molpy.io.readers
+::: molpy.io.read_amber
 
-### Writers molpy owns
-
-::: molpy.io.writers
+::: molpy.io.read_smiles
 
 ### LAMMPS data files
 
-::: molpy.io.data.lammps
-::: molpy.io.data.lammps_bond_react
+::: molpy.io.read_lammps_data
+
+::: molpy.io.write_lammps_data
+
+### LAMMPS `fix bond/react`
+
+::: molpy.io.BondReactTemplate
+
+::: molpy.io.write_lammps_bond_react_system
 
 ### mrec (scientific record stores)
 
-::: molpy.io.mrec
+`mp.io.mrec` is `molrs.io.mrec`: `TrajectoryReader`, `SequenceSchema`,
+`TrajectoryWriter`, `ForceFieldSection`, `pack` and `schema`.

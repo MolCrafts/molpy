@@ -20,7 +20,7 @@ There is no parser *function* to look up: you name the type you want.
 intermediate representation, `SmartsPattern` gives you a compiled query,
 `CGSmilesIR` gives you a parsed CGsmiles string.
 
-> **Polymer notations.** CGsmiles is read by `mp.CGSmilesIR`
+> **Polymer notations.** CGsmiles is read by `mp.io.CGSmilesIR`
 > ([below](#cgsmiles-describes-units-and-how-they-join)); it is how units and
 > polymer topologies are written for [Assembly](02_assembly.md). BigSMILES and
 > G-BigSMILES are not parsed.
@@ -77,12 +77,12 @@ try:
 except ValueError as exc:
  print("refused:", exc)
 
-ions = mp.SmilesIR("[Li+].[F-]").components()
+ions = mp.io.SmilesIR("[Li+].[F-]").components()
 print(f"components: {len(ions)} -> {[len(i.atoms) for i in ions]}")
 ```
 
 ```text
-refused: read_smiles needs one component, '[Li+].[F-]' has 2. Use mp.SmilesIR(smiles).components(), or pass one component at a time.
+refused: read_smiles needs one component, '[Li+].[F-]' has 2. Use mp.io.SmilesIR(smiles).components(), or pass one component at a time.
 components: 2 -> [1, 1]
 ```
 
@@ -157,7 +157,7 @@ string said before committing to a graph — how many molecules it names, and
 whether to take them together or separately.
 
 ```python
-ir = mp.SmilesIR("CCO.O")
+ir = mp.io.SmilesIR("CCO.O")
 print(f"components: {ir.n_components}")
 
 together = ir.to_atomistic()
@@ -191,7 +191,7 @@ whole string into one heavy-atom graph, turning every paired descriptor into a
 bond.
 
 ```python
-ir = mp.CGSmilesIR("{[#EO]|3}.{#EO=[<]OCC[>]}")
+ir = mp.io.CGSmilesIR("{[#EO]|3}.{#EO=[<]OCC[>]}")
 
 eo = ir.templates()["EO"]  # the unit: a ported template
 print(f"EO template: {eo.n_atoms} atoms, {eo.n_ports} ports")
@@ -220,16 +220,16 @@ to_atomistic(): 9 heavy atoms, 8 bonds
 | You have | You want | Use |
 | --- | --- | --- |
 | A SMILES string, one molecule | An editable graph | `mp.io.read_smiles(s)` |
-| A SMILES string, several molecules | One graph each | `mp.SmilesIR(s).components()` |
-| A SMILES string | To inspect before converting | `mp.SmilesIR(s)` |
+| A SMILES string, several molecules | One graph each | `mp.io.SmilesIR(s).components()` |
+| A SMILES string | To inspect before converting | `mp.io.SmilesIR(s)` |
 | A structural rule | To find where it matches | `mp.SmartsPattern(p)` |
 | Missing hydrogens / aromaticity | A perceived structure | `mp.Perceive().find_*(mol)` |
-| A CGsmiles string with fragments | Ported unit templates | `mp.CGSmilesIR(s).templates()` |
-| One fragment body such as `[<]OCC[>]` | One ported unit template | `mp.SmilesIR.from_fragment(body).to_template()` |
-| A CGsmiles string | A site graph (topology) | `mp.CGSmilesIR(s).to_coarsegrain()` |
-| Unit templates and a site graph | A polymer | `mp.Assembler(library, mp.GrowthPlacer())` |
+| A CGsmiles string with fragments | Ported unit templates | `mp.io.CGSmilesIR(s).templates()` |
+| One fragment body such as `[<]OCC[>]` | One ported unit template | `mp.io.SmilesIR.from_fragment(body).to_template()` |
+| A CGsmiles string | A site graph (topology) | `mp.io.CGSmilesIR(s).to_coarsegrain()` |
+| Unit templates and a site graph | A polymer | `mp.builder.Assembler(library, mp.builder.GrowthPlacer())` |
 
 Reach for `SmartsPattern` only for matching rules that feed the typifier, never
 for structure creation. And when the molecule is a polymer, write its units and
-its topology in CGsmiles and join them with `mp.Assembler` — see
+its topology in CGsmiles and join them with `mp.builder.Assembler` — see
 [Assembly](02_assembly.md) and [Polymer Topologies](topology/index.md).

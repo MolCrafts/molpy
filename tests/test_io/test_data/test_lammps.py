@@ -1,8 +1,10 @@
 """
-Tests for ``mp.io.read_lammps_data`` and ``mp.io.write_lammps_data``.
+``mp.io.read_lammps_data`` / ``mp.io.write_lammps_data`` — molrs's, by identity.
 
-Covers the space-delimited data file and the mp.ForceField parameters
-that come with it.
+The reader returns the structure as a ``Frame`` (typed blocks carry
+``type_id`` and the string ``type``) and keeps any ``* Coeffs`` sections as
+text in ``frame.meta["lammps_coeffs_text"]``; the force field is
+``mp.ff.forcefield.read_lammps_data_coeffs`` of that text.
 """
 
 import os
@@ -13,6 +15,19 @@ import pytest
 
 
 import molpy as mp
+
+_KINDS = ("atom", "bond", "angle", "dihedral", "improper")
+
+
+def _forcefield(frame: mp.Frame, units: str = "real") -> mp.ff.forcefield.ForceField:
+    """The force field of a data file's ``* Coeffs``, keyed by its Type Labels."""
+    labels = {}
+    for kind in _KINDS:
+        packed = str(frame.meta.get(f"{kind}_type_labels") or "")
+        pairs = (item.split(":", 1) for item in packed.split(",") if ":" in item)
+        labels[f"{kind}_labels"] = {int(i): label for i, label in pairs} or None
+    text = str(frame.meta.get("lammps_coeffs_text") or "")
+    return mp.ff.forcefield.read_lammps_data_coeffs(text, units=units, **labels)
 
 
 def _section_rows(text: str, heading: str) -> list[list[str]]:
@@ -53,7 +68,7 @@ class TestReadLammpsData:
         """Test reading molid.lmp - file with molecular IDs and full style."""
 
         result = mp.io.read_lammps_data(lammps_dir / "molid.lmp", atom_style="full")
-        frame = result.frame
+        frame = result
 
         # Check basic structure
         assert "atoms" in frame
@@ -83,10 +98,7 @@ class TestReadLammpsData:
         mol_ids = atoms["mol_id"]
         assert len(np.unique(mol_ids)) <= 4  # max 4 different molecules
 
-        # Scalar provenance is typed Frame meta; structured products are explicit.
-        assert frame.meta["format"] == "lammps_data"
-        assert frame.meta["atom_style"] == "full"
-        assert isinstance(result.forcefield, mp.ForceField)
+        assert isinstance(_forcefield(result), mp.ff.forcefield.ForceField)
 
     def test_whitespaces_file(self, lammps_dir):
         """Test reading whitespaces.lmp - file with extra whitespaces."""
@@ -94,7 +106,7 @@ class TestReadLammpsData:
         result = mp.io.read_lammps_data(
             lammps_dir / "whitespaces.lmp", atom_style="full"
         )
-        frame = result.frame
+        frame = result
 
         # Should parse correctly despite extra whitespaces
         assert "atoms" in frame
@@ -117,7 +129,7 @@ class TestReadLammpsData:
 
         frame = mp.io.read_lammps_data(
             lammps_dir / "triclinic-1.lmp", atom_style="atomic"
-        ).frame
+        )
 
         assert frame.box is not None
         np.testing.assert_array_almost_equal(frame.box.lengths, [34.0, 34.0, 34.0])
@@ -132,7 +144,7 @@ class TestReadLammpsData:
 
         frame = mp.io.read_lammps_data(
             lammps_dir / "triclinic-2.lmp", atom_style="atomic"
-        ).frame
+        )
 
         assert frame.box is not None
         assert frame.box.style == "triclinic"
@@ -155,7 +167,7 @@ class TestReadLammpsData:
         """Test reading labelmap.lmp - file with type labels and connectivity."""
 
         result = mp.io.read_lammps_data(lammps_dir / "labelmap.lmp", atom_style="full")
-        frame = result.frame
+        frame = result
 
         # Check atoms
         assert "atoms" in frame
@@ -189,41 +201,48 @@ class TestReadLammpsData:
         assert dihedrals.nrows == 27
 
         # Check force field
-        forcefield = result.forcefield
-        assert forcefield is not None
-        assert isinstance(forcefield, mp.ForceField)
+        assert isinstance(_forcefield(result), mp.ff.forcefield.ForceField)
 
-    def test_atomic_style(self, lammps_dir):
-        """Test reading with atomic atom style."""
+    @staticmethod
+    def _styled(tmp_path: Path, style: str, row: str) -> Path:
+        path = tmp_path / f"{style}.data"
+        path.write_text(
+            f"{style}\n\n1 atoms\n1 atom types\n\n"
+            "0 10 xlo xhi\n0 10 ylo yhi\n0 10 zlo zhi\n\n"
+            f"Masses\n\n1 12.011\n\nAtoms # {style}\n\n{row}\n"
+        )
+        return path
 
+    def test_atomic_style(self, tmp_path):
+        """``atomic`` rows are ``id type x y z``: no mol_id, no charge."""
         frame = mp.io.read_lammps_data(
-            lammps_dir / "molid.lmp", atom_style="atomic"
-        ).frame
-
+            self._styled(tmp_path, "atomic", "1 1 0.0 0.0 0.0"), atom_style="atomic"
+        )
         atoms = frame["atoms"]
-        # Atomic style should not have mol_id or charge columns
         assert "mol_id" not in atoms
         assert "charge" not in atoms
         assert "type" in atoms
         assert "x" in atoms and "y" in atoms and "z" in atoms
 
-    def test_charge_style(self, lammps_dir):
-        """Test reading with charge atom style."""
-
+    def test_charge_style(self, tmp_path):
+        """``charge`` rows are ``id type q x y z``: a charge, no mol_id."""
         frame = mp.io.read_lammps_data(
-            lammps_dir / "molid.lmp", atom_style="charge"
-        ).frame
-
+            self._styled(tmp_path, "charge", "1 1 -0.5 0.0 0.0 0.0"),
+            atom_style="charge",
+        )
         atoms = frame["atoms"]
-        # Charge style should have charge but not mol_id
         assert "mol_id" not in atoms
-        assert "charge" in atoms
-        assert "type" in atoms
-        assert "x" in atoms and "y" in atoms and "z" in atoms
+        assert atoms["charge"].tolist() == [-0.5]
+
+    def test_a_layout_the_style_does_not_have_is_refused(self, lammps_dir):
+        """``atom_style`` fixes the ``Atoms`` layout, as LAMMPS's does: a
+        ``full`` file read as ``atomic`` is an error, not a column drop."""
+        with pytest.raises(OSError):
+            mp.io.read_lammps_data(lammps_dir / "molid.lmp", atom_style="atomic")
 
 
-class TestLammpsDataResultSurface:
-    """Factory default + Frame-like surface on ``LammpsDataResult``."""
+class TestDefaultAtomStyle:
+    """Without ``atom_style`` the reader detects the ``Atoms`` layout."""
 
     @pytest.fixture
     def full_data_path(self, tmp_path: Path) -> Path:
@@ -246,24 +265,19 @@ class TestLammpsDataResultSurface:
         path.write_text(data)
         return path
 
-    def test_factory_default_atom_style_reads_full_file(self, full_data_path: Path):
-        result = mp.io.read_lammps_data(full_data_path)
-        assert result.frame["atoms"].nrows == 3
-        assert isinstance(result.forcefield, mp.ForceField)
+    def test_default_atom_style_reads_full_file(self, full_data_path: Path):
+        frame = mp.io.read_lammps_data(full_data_path)
+        assert isinstance(frame, mp.Frame)
+        assert frame["atoms"].nrows == 3
+        assert "charge" in frame["atoms"] and "mol_id" in frame["atoms"]
 
-    def test_result_exposes_frame_box(self, full_data_path: Path):
-        result = mp.io.read_lammps_data(full_data_path)
-        assert result.frame is not None
-        assert isinstance(result.forcefield, mp.ForceField)
-        assert result.box is not None
-        assert np.allclose(result.box.lengths, [10.0, 10.0, 10.0])
+    def test_the_frame_carries_the_box(self, full_data_path: Path):
+        frame = mp.io.read_lammps_data(full_data_path)
+        assert np.allclose(frame.box.lengths, [10.0, 10.0, 10.0])
 
-    def test_result_is_subscriptable_as_frame(self, full_data_path: Path):
-        result = mp.io.read_lammps_data(full_data_path)
-        assert result.frame is not None
-        assert isinstance(result.forcefield, mp.ForceField)
-        assert "atoms" in result
-        assert result["atoms"].nrows == 3
+    def test_a_file_without_coeffs_has_no_coeffs_text(self, full_data_path: Path):
+        frame = mp.io.read_lammps_data(full_data_path)
+        assert not frame.meta.get("lammps_coeffs_text")
 
 
 class TestWriteLammpsData:
@@ -275,7 +289,7 @@ class TestWriteLammpsData:
         # Read original file
         original_frame = mp.io.read_lammps_data(
             lammps_dir / "molid.lmp", atom_style="full"
-        ).frame
+        )
 
         # Write to temporary file
         tmp_file = tmp_path / "test.data"
@@ -283,7 +297,7 @@ class TestWriteLammpsData:
         mp.io.write_lammps_data(tmp_file, original_frame)
 
         # Read back
-        new_frame = mp.io.read_lammps_data(tmp_file, atom_style="full").frame
+        new_frame = mp.io.read_lammps_data(tmp_file, atom_style="full")
 
         # Compare atoms
         orig_atoms = original_frame["atoms"]
@@ -325,7 +339,7 @@ class TestWriteLammpsData:
         path = tmp_path / "chain.data"
         path.write_text(data)
 
-        frame = mp.io.read_lammps_data(path, atom_style="full").frame
+        frame = mp.io.read_lammps_data(path, atom_style="full")
         # molrs 0.13 reads unsigned 32-bit endpoints; 0.14 uses uint64.
         # Signed ints are the actual drop-bug (from_frame ignores them).
         assert np.asarray(frame["bonds"]["atomi"]).dtype.kind == "u"
@@ -470,17 +484,15 @@ class TestErrorHandling:
             mp.io.read_lammps_data("nonexistent_file.data")
 
     def test_empty_file(self, tmp_path):
-        """Empty files have no box and must raise rather than silently
-        falling back to a default box."""
+        """An empty file has no box, and the reader does not invent one."""
         tmp_file = tmp_path / "test.data"
-        with open(tmp_file, "w") as f:
-            f.write("")
+        tmp_file.write_text("")
+        frame = mp.io.read_lammps_data(tmp_file)
+        assert frame.box is None
+        assert frame.meta["lammps_box_axes"] == "x=0,y=0,z=0"
 
-        with pytest.raises(ValueError, match="missing box bounds"):
-            mp.io.read_lammps_data(tmp_file)
-
-    def test_missing_box_axis_raises(self, tmp_path):
-        """A header missing one axis must raise — no silent default."""
+    def test_a_missing_box_axis_is_recorded(self, tmp_path):
+        """A header missing one axis says so in ``lammps_box_axes``."""
         content = (
             "# missing z\n"
             "1 atoms\n"
@@ -496,8 +508,8 @@ class TestErrorHandling:
         tmp_file = tmp_path / "missing_z.data"
         tmp_file.write_text(content)
 
-        with pytest.raises(ValueError, match=r"missing box bounds for axis \['z'\]"):
-            mp.io.read_lammps_data(tmp_file, atom_style="atomic")
+        frame = mp.io.read_lammps_data(tmp_file, atom_style="atomic")
+        assert frame.meta["lammps_box_axes"] == "x=1,y=1,z=0"
 
     def test_float_box_bounds_parsed(self, tmp_path):
         """Regression: float-valued box bounds must parse, not fall back to 10x10x10."""
@@ -517,7 +529,7 @@ class TestErrorHandling:
         tmp_file = tmp_path / "float_box.data"
         tmp_file.write_text(content)
 
-        frame = mp.io.read_lammps_data(tmp_file, atom_style="atomic").frame
+        frame = mp.io.read_lammps_data(tmp_file, atom_style="atomic")
 
         assert frame.box is not None
         np.testing.assert_array_almost_equal(frame.box.lengths, [25.0, 30.0, 35.0])
@@ -571,11 +583,9 @@ class TestForceFieldIntegration:
 
         mp.io.write_lammps_data(tmp_file, frame)
 
-        # Read back: structure-only file still yields an (empty) ForceField handle.
-        new_forcefield = mp.io.read_lammps_data(
-            tmp_file, atom_style="atomic"
-        ).forcefield
-        assert new_forcefield is not None
+        # Read back: a structure-only file carries no ``* Coeffs``.
+        new_frame = mp.io.read_lammps_data(tmp_file, atom_style="atomic")
+        assert not new_frame.meta.get("lammps_coeffs_text")
 
 
 class TestExplicitTypeLabels:
@@ -625,7 +635,7 @@ class TestExplicitTypeLabels:
         frame.box = mp.Box([10.0, 10.0, 10.0])
 
         type_labels = {
-            "atom_types": ["C", "H", "O", "N"],  # Includes types not in atoms
+            "atoms": ["C", "H", "O", "N"],  # Includes types not in atoms
         }
 
         tmp_file = tmp_path / "test.data"
@@ -658,7 +668,7 @@ class TestExplicitTypeLabels:
         frame.box = mp.Box([10.0, 10.0, 10.0])
 
         type_labels = {
-            "atom_types": ["C", "H", "O", "N"],
+            "atoms": ["C", "H", "O", "N"],
         }
 
         tmp_file = tmp_path / "test.data"
@@ -702,8 +712,8 @@ class TestExplicitTypeLabels:
         frame.box = mp.Box([10.0, 10.0, 10.0])
 
         type_labels = {
-            "atom_types": ["C", "O"],
-            "bond_types": ["C-C", "C-O", "O-O"],  # O-O not in actual bonds
+            "atoms": ["C", "O"],
+            "bonds": ["C-C", "C-O", "O-O"],  # O-O not in actual bonds
         }
 
         tmp_file = tmp_path / "test.data"
@@ -734,14 +744,14 @@ class TestExplicitTypeLabels:
         frame.box = mp.Box([10.0, 10.0, 10.0])
 
         type_labels = {
-            "atom_types": ["H", "O", "C"],  # Different order
+            "atoms": ["H", "O", "C"],  # Different order
         }
 
         tmp_file = tmp_path / "test.data"
         mp.io.write_lammps_data(tmp_file, frame, type_labels=type_labels)
 
         # Read back and verify
-        new_frame = mp.io.read_lammps_data(tmp_file, atom_style="atomic").frame
+        new_frame = mp.io.read_lammps_data(tmp_file, atom_style="atomic")
 
         # Check that type IDs are consistent
         # In the written file, types should be sorted: C, H, O
@@ -760,18 +770,6 @@ class TestExplicitTypeLabels:
         assert atoms is not None
 
 
-def test_sorted_type_names_numeric_before_lexicographic():
-    """Digit type labels sort by integer value (2 before 10), not string order.
-
-    Lexicographic sort of ``\"1\",\"10\",\"2\"`` remapped Type Labels and
-    scrambled Pair Coeffs / Masses on data-file round-trips.
-    """
-    from molpy.io.data.lammps import _sorted_type_names
-
-    assert _sorted_type_names(["10", "2", "1", "14"]) == ["1", "2", "10", "14"]
-    assert _sorted_type_names({"c3", "h1", "oh"}) == ["c3", "h1", "oh"]
-
-
 def test_write_lammps_data_requires_type_columns(tmp_path):
     import numpy as np
 
@@ -780,7 +778,7 @@ def test_write_lammps_data_requires_type_columns(tmp_path):
         {"x": np.zeros(1), "y": np.zeros(1), "z": np.zeros(1), "mass": np.ones(1)}
     )
     frame.box = mp.Box([5.0, 5.0, 5.0])
-    with pytest.raises(ValueError, match="neither 'type' nor 'type_id'"):
+    with pytest.raises(OSError, match="neither 'type' nor 'type_id'"):
         mp.io.write_lammps_data(tmp_path / "bad.data", frame)
 
 
@@ -825,21 +823,21 @@ class TestForceFieldCoeffs:
         return lammps_dir / "coeffs.lmp"
 
     def test_coeffs_are_extracted(self, ff_file):
-        ff = mp.io.read_lammps_data(ff_file, atom_style="full").forcefield
+        ff = _forcefield(mp.io.read_lammps_data(ff_file, atom_style="full"))
         pair = {
             t.name: (t.get("epsilon"), t.get("sigma"))
-            for s in ff.get_styles(mp.PairStyle)
-            for t in s.get_types(mp.Type)
+            for s in ff.get_styles(mp.ff.forcefield.PairStyle)
+            for t in s.get_types(mp.ff.forcefield.Type)
         }
         bond = {
             t.name: (t.get("k"), t.get("r0"))
-            for s in ff.get_styles(mp.BondStyle)
-            for t in s.get_types(mp.Type)
+            for s in ff.get_styles(mp.ff.forcefield.BondStyle)
+            for t in s.get_types(mp.ff.forcefield.Type)
         }
         angle = {
             t.name: (t.get("k"), t.get("theta0"))
-            for s in ff.get_styles(mp.AngleStyle)
-            for t in s.get_types(mp.Type)
+            for s in ff.get_styles(mp.ff.forcefield.AngleStyle)
+            for t in s.get_types(mp.ff.forcefield.Type)
         }
         assert pair == {"1": (0.1521, 3.1507), "2": (0.046, 0.4)}
         # The force-field IR adopts the LAMMPS standard: K is stored as
@@ -856,36 +854,36 @@ class TestForceFieldCoeffs:
             "Pair Coeffs\n\n1 notanumber 3.5\n\n"
             "Atoms\n\n1 1 1 0.0 0.0 0.0 0.0\n2 1 1 0.0 0.5 0.0 0.0\n"
         )
-        result = mp.io.read_lammps_data(data, atom_style="full")
-        with pytest.raises(ValueError, match="malformed PairCoeffs"):
-            result.forcefield
+        frame = mp.io.read_lammps_data(data, atom_style="full")
+        with pytest.raises(ValueError):
+            _forcefield(frame)
 
 
-class TestLazyForceField:
-    """``* Coeffs`` become a ForceField on first ``.forcefield`` access only."""
+class TestCoeffsAreText:
+    """The structure read never depends on the ``* Coeffs`` sections."""
 
     @pytest.fixture
     def cosine_file(self, lammps_dir: Path) -> Path:
         return lammps_dir / "cosine_angle_coeffs.data"
 
     def test_structure_read_survives_unparseable_coeffs(self, cosine_file):
-        result = mp.io.read_lammps_data(cosine_file, atom_style="angle")
-        assert result.frame["atoms"].nrows == 3
+        frame = mp.io.read_lammps_data(cosine_file, atom_style="angle")
+        assert frame["atoms"].nrows == 3
+        assert frame.meta.get("lammps_coeffs_text")
 
-    def test_unparseable_coeffs_raise_on_every_access(self, cosine_file):
-        result = mp.io.read_lammps_data(cosine_file, atom_style="angle")
-        for _ in range(2):  # a failure is not cached
-            with pytest.raises(ValueError):
-                result.forcefield
+    def test_unparseable_coeffs_raise_when_read(self, cosine_file):
+        frame = mp.io.read_lammps_data(cosine_file, atom_style="angle")
+        with pytest.raises(ValueError):
+            _forcefield(frame)
 
-    def test_units_follow_frame_meta(self, lammps_dir):
-        result = mp.io.read_lammps_data(lammps_dir / "coeffs.lmp", atom_style="full")
-        result.frame.meta["lammps_units"] = "metal"
-        assert result.forcefield.units == "metal"
+    def test_units_are_the_callers(self, lammps_dir):
+        frame = mp.io.read_lammps_data(lammps_dir / "coeffs.lmp", atom_style="full")
+        ff = _forcefield(frame, units="metal")
+        assert ff.units == "metal"
         epsilon = {
             t.name: t.get("epsilon")
-            for s in result.forcefield.get_styles(mp.PairStyle)
-            for t in s.get_types(mp.Type)
+            for s in ff.get_styles(mp.ff.forcefield.PairStyle)
+            for t in s.get_types(mp.ff.forcefield.Type)
         }
         # A metal file is a metal force field: epsilon stays in eV, as written.
         assert epsilon["1"] == 0.1521

@@ -5,7 +5,7 @@ Guide: docs/user-guide/topology/index.md
 Every unit is one CGsmiles fragment whose bonding descriptors are its ports:
 ``<`` joins ``>``, and a label (``<g`` / ``>g``) joins only the same label.
 Every topology is a CGsmiles string too; ``to_coarsegrain()`` turns it into
-the site graph that ``mp.Assembler`` grows with ``mp.GrowthPlacer`` into an
+the site graph that ``mp.builder.Assembler`` grows with ``mp.builder.GrowthPlacer`` into an
 ``mp.Atomistic``.
 """
 
@@ -28,7 +28,7 @@ def library(*, seed: int = 42) -> dict[str, mp.Atomistic]:
     """Every unit of :data:`UNITS` as a 3D molecule with hydrogens and ports."""
     conformer = mp.Conformer(seed=seed)
     return {
-        name: conformer.generate(mp.SmilesIR.from_fragment(body).to_template())[0]
+        name: conformer.generate(mp.io.SmilesIR.from_fragment(body).to_template())[0]
         for name, body in UNITS.items()
     }
 

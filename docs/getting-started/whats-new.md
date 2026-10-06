@@ -2,20 +2,47 @@
 
 ## 0.16 (unreleased)
 
-MolPy 0.16 pairs with **molrs 0.16** (`molcrafts-molrs>=0.16.0,<0.17`). molrs
-0.16 makes the force-field IR a *protocol*: a style or a category of the right
-form extends it from Python, with nothing rebuilt, and is typed, priced, saved
-and read back like a built-in.
+MolPy 0.16 pairs with **molrs 0.16** (`molcrafts-molrs>=0.16.0,<0.17`). Two
+things change at once: molrs 0.16 makes the force-field IR a *protocol*, and
+molpy becomes a thin layer over molrs, with one module per job and one public
+path per name.
 
-### Your own styles: `mp.potential`
+### One module, one job
 
-`molpy.potential` is back, as identity re-exports of molrs:
-`StyleSpec`, `Param`, `register_style`, `register_category`, `styles`,
-`categories`, `evaluate`, `unregister` and `IrError` from `molrs.ff.ir`, and
-`Potential`, `kernel` and `LJCut` from `molrs.ff.potential`.
+Every native name in molpy is the molrs object itself (`mp.Atomistic is
+molrs.system.Atomistic`); molpy keeps no parallel IR, I/O, geometry, units or
+regions. molrs 0.16 puts every symbol under the subsystem that owns it
+(`molrs.store`, `molrs.system`, `molrs.spatial`, `molrs.ff`, `molrs.io`, …),
+and molpy maps those subsystems in one of two ways:
+
+- **Mirrored subpackages.** `mp.ff` mirrors `molrs.ff` submodule by submodule
+  (`forcefield`, `potential`, `typifier`, `charge`, `ir`, `params`,
+  `scale_lj`); `mp.io`, `mp.compute`, `mp.signal`, `mp.md`, `mp.op` and
+  `mp.builder` mirror `molrs.io`, `molrs.compute`, `molrs.signal`,
+  `molrs.md`, `molrs.op` and `molrs.builder`. molpy's own additions sit next
+  to the native names: the AmberTools typifiers in `mp.ff.typifier`,
+  `read_smiles` / `read_amber` in `mp.io`, crystals, polymers and virtual
+  sites in `mp.builder`.
+- **The flat root.** The data model and the operations on it stay on `mp`:
+  everything in `molrs.store` (`Frame`, `Block`, `keys`, `schema`, …),
+  `molrs.system`, `molrs.spatial` (regions, neighbour search),
+  `molrs.units`, `molrs.perceive`, `molrs.optimize` and `molrs.conformer`.
+
+So a force field is `mp.ff.forcefield.ForceField`, its compiler
+`mp.ff.potential.PotentialCompiler`, a SMILES parser `mp.io.SmilesIR`, and an
+assembler `mp.builder.Assembler`. The full list of moves is under
+[Upgrading from 0.15](#upgrading-from-015).
+
+### Your own styles: `mp.ff.ir`
+
+A style or a whole category of the right form extends the force-field IR from
+Python, with nothing rebuilt, and is typed, priced, saved and read back like a
+built-in. `mp.ff.ir` is `molrs.ff.ir`: `StyleSpec`, `Param`,
+`register_style`, `register_category`, `styles`, `categories`, `evaluate`,
+`unregister`, `IrError` and its subclasses.
 
 ```python
-class Fene(mp.potential.StyleSpec):  # LAMMPS bond_style fene
+class Fene(mp.ff.ir.StyleSpec):  # LAMMPS bond_style fene
     category, name = "bond", "fene"
     params = {"k": "E/L^2", "r0": "L", "epsilon": "E", "sigma": "L"}
     expression = ("-0.5*k*r0^2*log(1-(r/r0)^2)"
@@ -23,43 +50,90 @@ class Fene(mp.potential.StyleSpec):  # LAMMPS bond_style fene
 ```
 
 A typifier's `Match` types terms with it (`links={mp.Bond: rows}`),
-`mp.PotentialCompiler` prices it, and `mp.io.write_mrec` stores its expression,
-so a process that never registered it reads the record and prices it the same.
-[Extending the Force Field](../developer/extending-forcefield.md) is now "no
-rebuild": the whole recipe in under 30 lines.
+`mp.ff.potential.PotentialCompiler` prices it, and `mp.io.write_mrec` stores
+its expression, so a process that never registered it reads the record and
+prices it the same. [Extending the Force Field](../developer/extending-forcefield.md)
+is the whole recipe in under 30 lines.
 
-`mp.potential.kernel(category, style, atoms, **params)` builds the kernel of
-any registered style over explicit instances (one parameter row per term, angle
-values in degrees) as a `Potentials`, which `Potentials.push` moves into a
-larger one.
+`mp.ff.potential.kernel(category, style, atoms, **params)` builds the kernel
+of any registered style over explicit instances (one parameter row per term,
+angle values in degrees) as a `Potentials`, which `Potentials.push` moves into
+a larger one.
 
-### LAMMPS styles come from molrs
+### File formats are molrs's
 
-`mp.io.emit` (the `lammps` emitter) and `LAMMPSEngine.minimize` / `.md` no
-longer write `*_style` lines of their own for four fixed categories. Every
-style line and coefficient is molrs's LAMMPS include
-(`mp.io.write_lammps_forcefield`), read after `read_data`, so whatever molrs
-writes reaches LAMMPS: a category spanning two styles as `hybrid` (it was
-refused), and `angle charmm` with its Urey-Bradley term. The emitter's
-`.in.init` now holds `units`, `atom_style`, `boundary` and `neighbor` only.
+The LAMMPS data, XYZ, AMBER, PDB and `fix bond/react` code molpy carried is in
+molrs now, and `mp.io` re-exports it:
 
-The relaxation's include keeps the force field's `special_bonds` and
-`pair_modify mix` (molrs's `skip_pair_style` now drops the `pair_style` line
-only); 0.15 dropped both, so a `minimize` / `md` ran with LAMMPS's 1-4 weights
-(`0 0 0`) and its `geometric` mixing.
+- `mp.io.read_lammps_data(path, atom_style=None)` returns the `Frame`. Typed
+  blocks carry `type_id` and the string `type` (the Type Labels, or the id);
+  `atom_style` fixes the `Atoms` layout as LAMMPS's does (a layout the style
+  does not have is an error, not a column drop). The `* Coeffs` sections stay
+  text in `frame.meta["lammps_coeffs_text"]`, and
+  `mp.ff.forcefield.read_lammps_data_coeffs(text, units=..., atom_labels=...)`
+  makes them a force field; the header counts and Type Labels are
+  `frame.meta["lammps_counts"]` and `frame.meta["<kind>_type_labels"]`.
+- `mp.io.write_lammps_data(path, frame, type_labels={"atoms": [...]})`
+  declares labels no row uses; a Drude system gets a `fix drude` flags
+  header comment.
+- `mp.io.read_xyz` reads an n-wide extended-XYZ property as one `(N, n)`
+  column and `species` as `element`; `mp.io.read_amber_inpcrd(path, frame)`
+  reads coordinates into an existing frame; `mp.io.read_ac` emits `charge`.
+- `mp.io.write_pdb` writes `X` for an atom without an element.
+- `mp.io.BondReactTemplate`, `write_bond_react_map` and
+  `write_lammps_bond_react_system` write a `fix bond/react` system.
+- `mp.io.read_frame` / `write_frame` pick the format from the file name.
 
-An `Atomistic` carries no box, so the emitted deck is non-periodic:
-`boundary s s s` with `neighbor 2.0 nsq`, and a data file whose box encloses
-the atoms with a margin of 1 length unit (molrs's data writer, for any frame
-without a box). 0.15 wrote `boundary p p p` around a `0 1` placeholder box,
-into which LAMMPS wrapped the atoms.
+Force-field file formats are `mp.ff.forcefield`'s (`read_forcefield_xml`,
+`read_gromacs_system`, `write_lammps_forcefield`, …); `mp.io` holds
+structure and trajectory formats only.
+
+### One input writer per engine
+
+`mp.io.emit` is gone. Each engine has one `generate_inputs`:
+`LAMMPSEngine.generate_inputs(frame, ff, out)` writes the data file, the
+force-field settings, the init and the input script — the same deck its
+`minimize` / `md` run — and the new `GROMACSEngine.generate_inputs(frame, ff,
+out)` writes the `.gro`, `.top` and `.mdp` templates (its `run` grompp's and
+mdrun's an `.mdp`). `mp.Script` is `mp.engine.Script`.
+
+Every LAMMPS style line and coefficient is molrs's LAMMPS include
+(`mp.ff.forcefield.write_lammps_forcefield_str`), read after `read_data`, so
+whatever molrs writes reaches LAMMPS: a category spanning two styles as
+`hybrid`, and `angle charmm` with its Urey-Bradley term. The relaxation keeps
+the force field's `special_bonds` and `pair_modify mix`. A frame without a
+box (`Atomistic.to_frame()`) gets a non-periodic deck: `boundary s s s` with
+`neighbor 2.0 nsq`, and a data-file box enclosing the atoms with a margin of 1
+length unit.
+
+### Regions, units and CL&Pol data are molrs's
+
+- Regions are the native solids: `mp.Cuboid(origin, lengths)`,
+  `mp.Cuboid.cube(edge)`, `mp.Sphere(center, radius)`, `mp.HalfSpace`, … with
+  `mask(block)`, `region(block)` and `&` / `|` / `~` composition into a
+  `mp.Region`. A selector composes with a region (`selector & region`).
+- Units are `mp.UnitRegistry` and `mp.UnitPreset`, which now hold the
+  `openmm` preset, `UnitPreset.register` / `UnitPreset.names()`, `k_B` and
+  `define_lj_units`.
+- The CL&Pol Drude table is `mp.ff.params.clpol_polarizability()`;
+  `DrudeBuilder` reads it.
+
+### Builders
+
+`mp.builder.GrapheneBuilder` and `CarbonTubeBuilder` are molrs's and build a
+`Frame` (`mp.Atomistic.from_frame` makes it a graph, and
+`generate_topology(gen_angle=True, gen_dihedral=True)` adds its angles and
+dihedrals). `mp.builder.Lattice` keeps its unit cell as a `Box`
+(`lattice.box.to_cart(frac)`), and its `build` clips to any native region.
+The builder's modules are private; every name is on `mp.builder`, including
+`AmberPolymerBuilder` and its result types.
 
 ### `GaffTypifier`
 
-`mp.typifier.GaffTypifier(parameter_set=...)` assigns GAFF / GAFF2 bonded terms
-and parameters natively to a molecule `AtdTypifier` has typed, without
-AmberTools; `ForceField.materialize_params` writes a typed frame's parameters as
-columns.
+`mp.ff.typifier.GaffTypifier(parameter_set=...)` assigns GAFF / GAFF2 bonded
+terms and parameters natively to a molecule `AtdTypifier` has typed, without
+AmberTools; `ForceField.materialize_params` writes a typed frame's parameters
+as columns.
 
 ### Force fields price as molrs 0.16 prices them
 
@@ -72,10 +146,9 @@ Everything molpy compiles, types and writes goes through molrs, so molrs
   from a file or typed by a typifier prices as before; one built by hand
   with `def_type` needs `k / 2` and degrees. A 0.15 `.mrec` record is
   converted on read.
-- **Pair cutoffs.** `mp.PotentialCompiler(ff).compile(frame)` prices a
-  `pairs` row only inside its style's `cutoff`, as LAMMPS does (0.15 priced
-  every listed pair). A style that states no `cutoff` is untruncated, as
-  before.
+- **Pair cutoffs.** `PotentialCompiler(ff).compile(frame)` prices a `pairs`
+  row only inside its style's `cutoff`, as LAMMPS does (0.15 priced every
+  listed pair). A style that states no `cutoff` is untruncated, as before.
 - **`coul/long/pme` reads the frame's box**, as LAMMPS's kspace does; a frame
   without a periodic box is refused by name.
 - **GAFF atom types follow antechamber's bond orders.** `AtdTypifier`
@@ -85,21 +158,112 @@ Everything molpy compiles, types and writes goes through molrs, so molrs
   Types that depend on the Kekulé structure, ring classes or colouring can
   change, and with them GAFF parameters and AM1-BCC / Gasteiger charges.
 - **Typed refusals.** Every refusal of the force-field IR is a subclass of
-  `mp.potential.IrError` (a `ValueError`): `MissingParam`, `BadValue`,
-  `NoMixing`, `NoEngineForm`, … from `molrs.ff.ir`. `except ValueError`
-  still catches them.
+  `mp.ff.ir.IrError` (a `ValueError`): `MissingParam`, `BadValue`,
+  `NoMixing`, `NoEngineForm`, … `except ValueError` still catches them.
 
 ### Upgrading from 0.15
 
+Every moved or removed public path, old → new. A name not listed keeps its
+path.
+
+**Force fields — `mp.ff` mirrors `molrs.ff`**
+
 | 0.15 | 0.16 |
 |------|------|
-| `from molpy.md import LJCut` | `from molpy.potential import LJCut` |
-| `molpy.md.Potential` | `molpy.potential.Potential` |
-| a new style: a molrs kernel, writer arms, a rebuilt wheel | `class MyStyle(mp.potential.StyleSpec)` |
-| `molpy.engine.lammps._style_lines`, `molpy.io.emit.lammps._style_name` | gone: the styles are in molrs's include |
-| emitted `.in.init`: `boundary p p p`; `.in`: `neighbor 2.0 bin` | `.in.init`: `boundary s s s`, `neighbor 2.0 nsq` |
+| `mp.ForceField`, `mp.Style`, `mp.Type`, `mp.AtomStyle` / `AtomType`, `mp.BondStyle` / `BondType`, `mp.AngleStyle` / `AngleType`, `mp.DihedralStyle` / `DihedralType`, `mp.ImproperStyle` / `ImproperType`, `mp.PairStyle` / `PairType` | `mp.ff.forcefield.<same name>` |
+| `mp.PotentialCompiler`, `mp.Potentials` | `mp.ff.potential.PotentialCompiler`, `mp.ff.potential.Potentials` |
+| `mp.BccModel`, `mp.GasteigerModel`, `mp.MullikenModel` | `mp.ff.charge.<same name>` |
+| `mp.FragmentScaling` | `mp.ff.scale_lj.FragmentScaling` |
+| `mp.potential.StyleSpec`, `Param`, `register_style`, `register_category`, `styles`, `categories`, `evaluate`, `unregister`, `IrError` (0.16 pre-release) | `mp.ff.ir.<same name>` |
+| `mp.potential.LJCut`, `Potential`, `kernel` (0.16 pre-release); `molpy.md.LJCut`, `molpy.md.Potential` | `mp.ff.potential.<same name>` |
+| `mp.typifier.<X>` (every typifier, `Typifier`, `Match`), `molpy.typifier.ambertools` | `mp.ff.typifier.<X>` |
+| `molpy.core.ops.scale_lj(ff, {label: atoms}, data)` | `mp.ff.scale_lj.scale_lj(ff, {label: (types, positions, masses)}, data)` |
+| `molpy.core.ops.compute_k_ij`, `fragment_scaling_data` | `mp.ff.scale_lj.compute_k_ij`, `fragment_scaling_data` |
+| `molpy.core.ops.intramolecular_pairs` | `mp.ff.potential.intramolecular_pairs` |
+| `mp.builder.load_polarizability(path)`; `molpy/data/forcefield/alpha.ff` | `mp.ff.params.clpol_polarizability(path)` (molrs ships `alpha.ff`) |
+
+**I/O — `mp.io` mirrors `molrs.io`; force-field files are `mp.ff.forcefield`'s**
+
+| 0.15 | 0.16 |
+|------|------|
+| `mp.SmilesIR`, `mp.CGSmilesIR`, `mp.SmilesError` | `mp.io.<same name>` |
+| `mp.io.read_xml_forcefield`, `mp.io.write_xml_forcefield` | `mp.ff.forcefield.read_forcefield_xml`, `write_forcefield_xml` |
+| `mp.io.read_gromacs_forcefield`, `mp.io.write_gromacs_forcefield` | `mp.ff.forcefield.read_gromacs_top_ff`, `write_gromacs_top_ff` |
+| `mp.io.read_lammps_forcefield`, `write_lammps_forcefield`, `write_lammps_forcefield_str`, `read_lammps_data_coeffs`, `write_lammps_data_coeffs` | `mp.ff.forcefield.<same name>` |
+| `mp.io.read_top(path)`, `mp.io.write_top(path, frame)` | `mp.ff.forcefield.read_gromacs_system(path)` → `(ForceField, Frame)`, `write_gromacs_system(path, ff, frame)` (0-based) |
+| `mp.io.read_amber_ac` | `mp.io.read_ac` (emits `charge`) |
+| `mp.io.read_lammps_data(path, atom_style="full")` → `LammpsDataResult` (`.frame`, `.forcefield`, `.counts`, `.type_labels`) | `mp.io.read_lammps_data(path, atom_style=None)` → `Frame`; force field: `mp.ff.forcefield.read_lammps_data_coeffs(frame.meta["lammps_coeffs_text"], units=..., atom_labels=...)`; counts / labels: `frame.meta["lammps_counts"]`, `frame.meta["<kind>_type_labels"]` |
+| `mp.io.LammpsDataResult` | removed |
+| a missing box axis raised `ValueError`; `frame.meta["format" / "atom_style" / "source_file"]` | recorded in `frame.meta["lammps_box_axes"]`; not set |
+| `mp.io.write_lammps_data(..., type_labels={"atom_types": [...]})` | `type_labels={"atoms": [...]}` (block names) |
+| Drude header `#   fix DRUDE all drude C D N …` | `# fix drude flags (atom-type order): C D N …` |
+| `mp.io.read_xyz` filled `atomic_number` | it does not (`mp.Element` maps symbols) |
+| `mp.io.read_amber_inpcrd` mismatch: `ValueError` | `OSError` |
+| `mp.io.write_pdb` element from `frame.meta["elements"]`; missing `x`: `ValueError` | `X`; `OSError` |
+| `mp.io.BondReactTemplate`, `write_bond_react_map`, `write_lammps_bond_react_system` (molpy's) | the same names, molrs's |
+| `molpy.io.mrec` (a molpy module) | `mp.io.mrec` is `molrs.io.mrec` |
+| `molpy.io.readers`, `molpy.io.writers`, `molpy.io.data.*` | private / removed |
+
+**Engines — one `generate_inputs` per engine**
+
+| 0.15 | 0.16 |
+|------|------|
+| `mp.io.emit.emitters.emit("lammps", mol, ff, out, prefix=p)`, `LammpsEmitter().emit(...)` | `mp.engine.LAMMPSEngine(check_executable=False).generate_inputs(mol.to_frame(), ff, out, prefix=p)` → `{"data", "settings", "init", "input"}` |
+| `mp.io.emit.emitters.emit("gromacs", mol, ff, out, temperature_K=T)`, `GromacsEmitter().emit(...)` | `mp.engine.GROMACSEngine(check_executable=False, prefix=p).generate_inputs(mol.to_frame(), ff, out, temperature=T)` → `{"gro", "top", "em", "nvt"}` |
+| `mp.io.emit.Emitter`, `EmitterRegistry`, `emitters` | removed |
+| `mp.Script`, `mp.ScriptLanguage`, `molpy.core.script` | `mp.engine.Script`, `mp.engine.ScriptLanguage` |
+| `EnvSpec` / engine `env_manager="pip"` or `"virtualenv"` | `env_manager="venv"` |
+
+**Geometry, units, selection**
+
+| 0.15 | 0.16 |
+|------|------|
+| `mp.BoxRegion(lengths, origin)` | `mp.Cuboid(origin, lengths)` |
+| `mp.Cube(edge, origin)` | `mp.Cuboid.cube(edge, origin)` |
+| `mp.SphereRegion(radius, center)` | `mp.Sphere(center, radius)` |
+| `mp.AndRegion(a, b)`, `mp.OrRegion(a, b)`, `mp.NotRegion(a)` | `a & b`, `a \| b`, `~a` (a `mp.Region`) |
+| `region.isin(xyz)`, `region.bounds` (`(2, 3)`) | `region.contains(xyz)`, `region.bounds()` (`(3, 2)`) |
+| `mp.DistanceSelector(center, r_max, min_distance=r_min)` | `mp.Sphere(center, r_max) & ~mp.Sphere(center, r_min)` |
+| `mp.CoordinateRangeSelector("x", lo, hi)` | `mp.HalfSpace([-1, 0, 0], [lo, 0, 0]) & mp.HalfSpace([1, 0, 0], [hi, 0, 0])` |
+| `mp.UnitSystem()` | `mp.UnitRegistry()` (`k_B` included) |
+| `mp.UnitSystem.preset(name)`, `.preset_names()`, `.register_preset(...)` | `mp.UnitPreset(name)`, `mp.UnitPreset.names()`, `mp.UnitPreset.register(name, units, boltzmann=, coulomb=)` |
+| `mp.UnitSystem.lj(mass=, sigma=, epsilon=)` | `reg = mp.UnitRegistry(); reg.define_lj_units(mass, sigma, epsilon)` |
+| `units.convert(q, "nm")`, `units.factor(a, b)` | `q.to(units.parse("nm"))`, `(1.0 * units.parse(a)).to(units.parse(b)).magnitude` |
+| `mp.fields.X` (a `str`), `molpy.core.fields.FieldFormatter` | `mp.keys.X` (a `Key`; `.key` is the `str`); readers emit canonical names |
+| `mp.compute.signal` | `mp.signal` |
+
+**Builders**
+
+| 0.15 | 0.16 |
+|------|------|
+| `mp.Assembler`, `mp.SitePlacer`, `mp.AxisOrienter`, `mp.GrowthPlacer`, `mp.Coarsener` | `mp.builder.<same name>` |
+| `mp.builder.GrapheneBuilder(...).build()` / `CarbonTubeBuilder(...).build()` → `Atomistic` | `mp.Atomistic.from_frame(mp.builder.GrapheneBuilder(...).build())` |
+| `.build(finalize="topology")`; `molpy.builder._finalize.Finalization`, `StructureFinalizer` | `mol.generate_topology(gen_angle=True, gen_dihedral=True)`; removed |
+| `molpy.builder.polymer.<X>`, `molpy.builder.nanostructure.<X>`, `molpy.builder.crystal` / `symmetry` / `virtualsite` / `packing` `.<X>` | `mp.builder.<X>` |
+| `molpy.builder.polymer.AmberPolymerBuilder`, `AmberBuildResult`, `AmberCut`, `AmberPieces` | `mp.builder.<same name>` |
+| `mp.builder.DistributionIR` | removed (unused) |
+| `Lattice.frac_to_cart(f)`, `Lattice.cart_to_frac(c)` | `lattice.box.to_cart(f)`, `lattice.box.to_frac(c)` (`(N, 3)`) |
+| `molpy.builder.virtualsite.K_DRUDE` | removed (the table holds each type's `k_D`) |
+
+**Removed outright**
+
+| 0.15 | 0.16 |
+|------|------|
+| `mp.Config`, `molpy.core.config` | removed: its one setting, `log_level`, configured the logger below |
+| `molpy.core.logger.get_logger` | removed (no caller); molpy no longer depends on `molcrafts-mollog` / `molcrafts-molcfg` |
+| `mp.Conformer` (a subclass adding an empty-molecule guard) | `mp.Conformer` is `molrs.conformer.Conformer`, which has the guard |
+
+**Behaviour**
+
+| 0.15 | 0.16 |
+|------|------|
+| emitted `.in.init`: `boundary p p p`; `.in`: `neighbor 2.0 bin` | a box-free frame: `boundary s s s`, `neighbor 2.0 nsq` |
 | harmonic `k` with a ½ (`def_type(..., k=2K)`), angles in radians | LAMMPS's `K`, degrees |
 | `AtdTypifier` types the graph's bond orders | antechamber's perceived orders; `bond_orders="input"` for the old behaviour |
+| a new style: a molrs kernel, writer arms, a rebuilt wheel | `class MyStyle(mp.ff.ir.StyleSpec)` |
+
+New on the root, flattened from molrs: `Cylinder`, `Ellipsoid`,
+`Polyhedron`, `SphereUnion`, `TriMesh`, `RelationBuckets`, `AMBER_COULOMB`.
 
 ## 0.15
 

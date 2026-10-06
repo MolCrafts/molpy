@@ -32,8 +32,9 @@ you can generate several independent conformers from the same graph.
 
 ## Constructor parameters
 
-`Conformer` subclasses the native conformer generator; the constructor
-parameters are inherited unchanged, `Conformer(speed="medium", add_hydrogens=True, seed=None)`:
+`mp.Conformer` is the native conformer generator (`molrs.conformer.Conformer`),
+`Conformer(speed="medium", add_hydrogens=True, seed=None)`; an empty molecule
+is refused with `ValueError`:
 
 | Parameter | Meaning |
 |---|---|

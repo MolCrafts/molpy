@@ -70,7 +70,7 @@ class TestDataAccess:
 
     def test_list_forcefields(self):
         """Test listing available forcefields."""
-        assert set(list_forcefields()) == {"alpha.ff", "clp.xml", "tip3p.xml"}
+        assert set(list_forcefields()) == {"clp.xml", "tip3p.xml"}
 
 
 class TestDataModuleImport:

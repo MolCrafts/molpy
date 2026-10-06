@@ -1,7 +1,7 @@
 """Trajectory container (native-backed) + split extensions.
 
 The trajectory *container* sinks to the native core: :class:`molpy.Trajectory` subclasses
-:class:`~molpy.Trajectory` — an eager, materialized sequence of frames with
+:class:`molrs.store.Trajectory` — an eager, materialized sequence of frames with
 optional ``step`` / ``time`` arrays. molpy adds Python-side conveniences: an
 associated topology, slice indexing that returns a sub-trajectory, and frame
 mapping. Lazy, seekable reading from disk lives in the native core as ``TrajectoryReader``
@@ -17,15 +17,14 @@ from abc import ABC, abstractmethod
 from collections.abc import Callable, Iterable
 from typing import Any, overload
 
-import molrs
+from molrs.store import Frame
+from molrs.store import Trajectory as _NativeTrajectory
 
-from molrs import Frame
 
-
-class Trajectory(molrs.Trajectory):
+class Trajectory(_NativeTrajectory):
     """An eager sequence of molecular frames with an optional topology.
 
-    Subclasses :class:`~molpy.Trajectory`: frame storage, ``len()``, integer
+    Subclasses :class:`molrs.store.Trajectory`: frame storage, ``len()``, integer
     indexing, and the ``frames`` / ``step`` / ``time`` accessors all live in
     the Rust container. molpy adds an associated ``topology``, slice indexing
     (returns a sub-:class:`Trajectory`), and :meth:`map`.
@@ -59,7 +58,7 @@ class Trajectory(molrs.Trajectory):
         step: Any | None = None,
         time: Any | None = None,
     ) -> "Trajectory":
-        # molrs.Trajectory is constructed in __new__ (PyO3 #[new]); it needs a
+        # molrs.store.Trajectory is constructed in __new__ (PyO3 #[new]); it needs a
         # materialized sequence and does not accept ``topology``.
         return super().__new__(cls, list(frames), step, time)
 

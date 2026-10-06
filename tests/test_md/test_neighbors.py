@@ -3,13 +3,13 @@
 import numpy as np
 
 from molpy import Box, NeighborList
-from molpy.potential import LJCut
+from molpy.ff.potential import LJCut
 
 
 def test_md_neighborlist_is_the_core_engine():
     import molrs
 
-    assert NeighborList is molrs.NeighborList
+    assert NeighborList is molrs.spatial.NeighborList
 
 
 def test_pair_inside_cutoff_is_half_shell():

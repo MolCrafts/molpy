@@ -3,17 +3,17 @@
 Chemical string notation, parsed by the native core. Two notations are supported —
 SMILES and SMARTS — and both are reached through a **type**, not a helper
 function. Every parser type is a native type re-exported at the package root
-(`mp.SmilesIR`); there is no `molpy.parser` module.
+(`mp.io.SmilesIR`); there is no `molpy.parser` module.
 
 ## Quick reference
 
 | Expression | Input | Output | Use when |
 |------------|-------|--------|----------|
 | `mp.io.read_smiles(s)` | SMILES, one component | `Atomistic` | One specific molecule |
-| `mp.SmilesIR(s)` | SMILES | `SmilesIR` | Inspect before converting |
-| `mp.SmilesIR(s).n_components` | SMILES | `int` | How many molecules the string names |
-| `mp.SmilesIR(s).to_atomistic()` | SMILES | `Atomistic` | Every component as one graph |
-| `mp.SmilesIR(s).components()` | dot-separated SMILES | `list[Atomistic]` | One graph per component (`[Li+].[F-]`) |
+| `mp.io.SmilesIR(s)` | SMILES | `SmilesIR` | Inspect before converting |
+| `mp.io.SmilesIR(s).n_components` | SMILES | `int` | How many molecules the string names |
+| `mp.io.SmilesIR(s).to_atomistic()` | SMILES | `Atomistic` | Every component as one graph |
+| `mp.io.SmilesIR(s).components()` | dot-separated SMILES | `list[Atomistic]` | One graph per component (`[Li+].[F-]`) |
 | `mp.SmartsPattern(p)` | SMARTS | `SmartsPattern` | Pattern matching / typification |
 
 There is no `parse_smiles` / `parse_smarts` / `parse_molecule` /
@@ -28,7 +28,7 @@ import molpy as mp
 mol = mp.io.read_smiles("CCO") # Atomistic (heavy atoms only)
 mol = mp.Perceive().find_hydrogens(mol) #... with hydrogens
 
-ions = mp.SmilesIR("[Li+].[F-]").components() # [Atomistic, Atomistic]
+ions = mp.io.SmilesIR("[Li+].[F-]").components() # [Atomistic, Atomistic]
 
 query = mp.SmartsPattern("[C;X4][O;H1]") # compiled query
 query.find_matches(mol) # -> list[SmartsMatch]
@@ -39,10 +39,10 @@ not a molecule. Use `components()`.
 
 ## Polymer notations
 
-CGsmiles is parsed by `mp.CGSmilesIR`: `templates()` gives each fragment
+CGsmiles is parsed by `mp.io.CGSmilesIR`: `templates()` gives each fragment
 as an `Atomistic` whose bonding descriptors are ports (one fragment body alone:
-`mp.SmilesIR.from_fragment(body).to_template()`), and `to_coarsegrain()`
-gives the site graph that [`mp.Assembler`](builder.md) builds.
+`mp.io.SmilesIR.from_fragment(body).to_template()`), and `to_coarsegrain()`
+gives the site graph that [`mp.builder.Assembler`](builder.md) builds.
 BigSMILES and G-BigSMILES are not parsed.
 
 ## Related
@@ -58,12 +58,12 @@ BigSMILES and G-BigSMILES are not parsed.
 
 ## Full API
 
-::: molpy.SmilesIR
+::: molpy.io.SmilesIR
 
-::: molpy.CGSmilesIR
+::: molpy.io.CGSmilesIR
 
 ::: molpy.SmartsPattern
 
 ::: molpy.SmartsMatch
 
-::: molpy.SmilesError
+::: molpy.io.SmilesError

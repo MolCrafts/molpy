@@ -21,7 +21,7 @@ The workflow is always the same: build the structure, load a force field, create
 
 ```python
 import molpy as mp
-from molpy.typifier import OPLSAATypifier
+from molpy.ff.typifier import OPLSAATypifier
 
 # 1. Build the structure
 mol = mp.io.read_smiles("CCO")
@@ -82,7 +82,7 @@ With atom types in place, the typifier has everything it needs to derive bonded 
 
 ## How bonded typing works
 
-Once atom types are assigned, bonded interactions follow mechanically. A bond between atom types `CT` and `OH` maps to bond type `CT-OH`. The same logic extends to angles (three-type sequences) and dihedrals (four-type sequences). Wildcard types (`*`) in the force field act as fallbacks when no specific match exists. Partial charges come with the atom types of the force field (OPLS-AA here), from a native charge model (`mp.GasteigerModel`, `mp.BccModel`, `mp.MullikenModel`), or from AmberTools (see [AmberTools Integration](13_ambertools_integration.md)).
+Once atom types are assigned, bonded interactions follow mechanically. A bond between atom types `CT` and `OH` maps to bond type `CT-OH`. The same logic extends to angles (three-type sequences) and dihedrals (four-type sequences). Wildcard types (`*`) in the force field act as fallbacks when no specific match exists. Partial charges come with the atom types of the force field (OPLS-AA here), from a native charge model (`mp.ff.charge.GasteigerModel`, `mp.ff.charge.BccModel`, `mp.ff.charge.MullikenModel`), or from AmberTools (see [AmberTools Integration](13_ambertools_integration.md)).
 
 ## Strict vs. non-strict mode
 
@@ -139,7 +139,7 @@ ff.get_style("pair", "lj/cut")["cutoff"] = 10.0
 ff.get_style("pair", "coul/cut")["cutoff"] = 10.0
 
 mp.io.write_lammps_data(outdir / "ethanol.data", frame)
-mp.io.write_lammps_forcefield(outdir / "ethanol.ff", ff, frame)
+mp.ff.forcefield.write_lammps_forcefield(outdir / "ethanol.ff", ff, frame)
 
 print(f"exported to {outdir}")
 ```
@@ -152,20 +152,20 @@ The structure and the coefficients are two files and two calls. `write_lammps_fo
 
 ## Typing an assembled polymer
 
-`mp.Assembler` joins units along a site graph (see [Assembly](02_assembly.md)) and assigns no types. The chain it returns is an ordinary `mp.Atomistic`, so it is typed like any other structure: one `typify` call on the finished molecule. Here the chain is a methyl-capped poly(ethylene oxide) hexamer whose caps close both ends, so no port is left open.
+`mp.builder.Assembler` joins units along a site graph (see [Assembly](02_assembly.md)) and assigns no types. The chain it returns is an ordinary `mp.Atomistic`, so it is typed like any other structure: one `typify` call on the finished molecule. Here the chain is a methyl-capped poly(ethylene oxide) hexamer whose caps close both ends, so no port is left open.
 
 ```python
 units = {"CAPA": "C[>]", "EO": "[<]OCC[>]", "CAPB": "[<]OC"}
 conformer = mp.Conformer(seed=42)
 library = {
     name: conformer.generate(
-        mp.SmilesIR.from_fragment(body).to_template()
+        mp.io.SmilesIR.from_fragment(body).to_template()
     )[0]
     for name, body in units.items()
 }
 
-sites = mp.CGSmilesIR("{[#CAPA][#EO]|6[#CAPB]}").to_coarsegrain()
-chain = mp.Assembler(library, mp.GrowthPlacer()).assemble(sites, mp.Atomistic)
+sites = mp.io.CGSmilesIR("{[#CAPA][#EO]|6[#CAPB]}").to_coarsegrain()
+chain = mp.builder.Assembler(library, mp.builder.GrowthPlacer()).assemble(sites, mp.Atomistic)
 
 typed_chain = OPLSAATypifier(strict=True).typify(chain)
 print(f"atoms: {typed_chain.n_atoms}, open ports: {typed_chain.n_ports}")
@@ -184,6 +184,6 @@ Standard OPLS-AA covers common organic functional groups. Specialized molecules 
 1. Use a specialized OPLS-style force field XML that includes the required SMARTS patterns and types (`OPLSAATypifier(source="custom.xml")`)
 2. Or drop to the [Force Field](../tutorials/04_force_field.md) layer and define types manually
 
-The typifier itself is agnostic to the force field content. It only needs SMARTS patterns and type definitions in the XML. If those are present, it will match them. For GAFF / GAFF2 there is the native `mp.typifier.AtdTypifier` (atom types only) and the AmberTools route.
+The typifier itself is agnostic to the force field content. It only needs SMARTS patterns and type definitions in the XML. If those are present, it will match them. For GAFF / GAFF2 there is the native `mp.ff.typifier.AtdTypifier` (atom types only) and the AmberTools route.
 
 See also: [Force Field](../tutorials/04_force_field.md), [Assembly](02_assembly.md).

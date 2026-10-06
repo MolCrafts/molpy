@@ -9,8 +9,8 @@ from eo_kit import library, report
 
 
 def main() -> None:
-    sites = mp.CGSmilesIR("{[#CAPA][#EO]|6[#CAPB]}").to_coarsegrain()
-    tele = mp.Assembler(library(), mp.GrowthPlacer()).assemble(sites, mp.Atomistic)
+    sites = mp.io.CGSmilesIR("{[#CAPA][#EO]|6[#CAPB]}").to_coarsegrain()
+    tele = mp.builder.Assembler(library(), mp.builder.GrowthPlacer()).assemble(sites, mp.Atomistic)
     report("telechelic", tele)
 
 

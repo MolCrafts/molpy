@@ -37,12 +37,13 @@ creation — and it is the only writer of `forcefield()`.
 | `AntechamberTypifier` | antechamber → parmchk2 → tleap for one complete molecule | GAFF / GAFF2 small molecules and monomers |
 | `TLeapTypifier` | tleap alone over a finished graph that already carries AMBER types and charges (a graph with ports is refused) | Re-parameterising a typed molecule |
 
-The native typifiers are identity re-exports of `molrs.ff.typifier`. The
-AmberTools typifiers shell out through `molpy.wrapper`; see
+Every name is on `mp.ff.typifier`, which mirrors `molrs.ff.typifier` (the
+native typifiers are the molrs objects) and adds the two AmberTools
+typifiers. Those shell out through `molpy.wrapper`; see
 [Optional external tools](../getting-started/external-tools.md#ambertools-gaff-parameters).
 A GAFF polymer is not typed by joining typed monomers (each join folds the
 leaving group's charge onto its anchor): build it with
-`mp.builder.polymer.AmberPolymerBuilder`, which cuts one antechamber-typed
+`mp.builder.AmberPolymerBuilder`, which cuts one antechamber-typed
 oligomer with prepgen and joins the residues with tleap — see
 [Builder](builder.md) and the
 [AmberTools guide](../user-guide/13_ambertools_integration.md).
@@ -54,7 +55,7 @@ yet; MolPy re-exports it once one is published.
 
 ```python
 import molpy as mp
-from molpy.typifier import OPLSAATypifier
+from molpy.ff.typifier import OPLSAATypifier
 
 mol, _ = mp.Conformer(add_hydrogens=True, seed=42).generate(
     mp.io.read_smiles("CCO")
@@ -86,13 +87,13 @@ type). The name is never parsed — the endpoints are required. `styles` declare
 each style used; `pairs` adds `(style, name, endpoints, params)` pair rows.
 
 ```python
-class TIP3PTypifier(mp.typifier.Typifier):
+class TIP3PTypifier(mp.ff.typifier.Typifier):
     """TIP3P water: OW / HW atoms and one OW-HW bond type."""
 
     SITES = {"O": ("OW", 15.999, -0.834), "H": ("HW", 1.008, 0.417)}
 
     def library(self):
-        return mp.ForceField("tip3p", units="real")  # the output declares real units
+        return mp.ff.forcefield.ForceField("tip3p", units="real")  # the output declares real units
 
     def match(self, graph):
         nodes = []
@@ -103,7 +104,7 @@ class TIP3PTypifier(mp.typifier.Typifier):
             {"type": ("harmonic", "OW-HW", ["OW", "HW"], {"k": 450.0, "r0": 0.9572})}
             for _ in graph.links.exact_bucket(mp.Bond)
         ]
-        return mp.typifier.Match(
+        return mp.ff.typifier.Match(
             nodes,
             {mp.Bond: bonds},
             styles=[("atom", "full", {}), ("bond", "harmonic", {}), ("pair", "lj/cut", {})],
@@ -133,8 +134,4 @@ assert tip3p.forcefield().get_style("bond", "harmonic").get_type_by_name("OW-HW"
 
 ### Typifiers
 
-::: molpy.typifier
-
-### AmberTools typifiers
-
-::: molpy.typifier.ambertools
+::: molpy.ff.typifier

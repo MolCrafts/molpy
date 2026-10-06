@@ -59,7 +59,7 @@ Parameters are keywords: numbers go to the numeric parameters, strings
 ```python
 import molpy as mp
 
-ff = mp.ForceField(name="tutorial", units="real")
+ff = mp.ff.forcefield.ForceField(name="tutorial", units="real")
 
 # "full" corresponds to LAMMPS atom_style full (charge + molecule ID per atom)
 atom_style = ff.def_style("atom", "full")
@@ -95,6 +95,9 @@ pair_style = ff.def_style("pair", "lj/cut")
 pair_style.def_type("CT", ct, epsilon=0.066, sigma=3.50)
 pair_style.def_type("HC", hc, epsilon=0.030, sigma=2.50)
 pair_style.def_type("OH", oh, epsilon=0.170, sigma=3.12)
+
+# The atom types carry charges: their Coulomb term is a pair style too.
+ff.def_style("pair", "coul/cut")
 ```
 
 `pair_style.def_type(name, itom)` with no second atom type is the self pair of
@@ -120,7 +123,7 @@ print(f"CT-OH: k={bt['k']}, r0={bt['r0']}")
 A full listing of all styles and types gives a global snapshot of the model state.
 
 ```python
-from molpy import Style, Type
+from molpy.ff.forcefield import Style, Type
 
 for style in ff.get_styles(Style):
     types = style.get_types(Type)
@@ -142,7 +145,7 @@ print(f"CT-CT k={ct_ct['k']}")
 ## Evaluating as Potentials
 
 Evaluation is the first strict integrity test of the model.
-`mp.PotentialCompiler(ff)` compiles the force field against a typed `Frame`:
+`mp.ff.potential.PotentialCompiler(ff)` compiles the force field against a typed `Frame`:
 an `atoms` block with coordinates and a `type` column, plus bonded blocks
 (`bonds`, `angles`, …) whose `type` column names force-field types. The
 numerical kernels run in the native Rust core.
@@ -156,7 +159,7 @@ frame = mp.Frame(
     }
 )
 
-pots = mp.PotentialCompiler(ff).compile(frame)
+pots = mp.ff.potential.PotentialCompiler(ff).compile(frame)
 energy = pots.calc_energy(frame)
 forces = pots.calc_forces(frame)
 print(f"energy = {energy}")
@@ -174,13 +177,13 @@ Once the model is internally consistent, serialization becomes an interface prob
 ### GROMACS
 
 ```python
-mp.io.write_gromacs_forcefield("system.itp", ff, precision=4)
+mp.ff.forcefield.write_gromacs_top_ff("system.itp", ff, precision=4)
 ```
 
 ### XML
 
 ```python
-mp.io.write_xml_forcefield("system.xml", ff, precision=6)
+mp.ff.forcefield.write_forcefield_xml("system.xml", ff, precision=6)
 ```
 
 ### LAMMPS
@@ -195,13 +198,14 @@ does not write a style-level cutoff.)
 
 ```python
 ff.get_style("pair", "lj/cut")["cutoff"] = 10.0
-print(mp.io.write_lammps_forcefield_str(ff, frame, precision=4))
+ff.get_style("pair", "coul/cut")["cutoff"] = 10.0
+print(mp.ff.forcefield.write_lammps_forcefield_str(ff, frame, precision=4))
 ```
 
 
 ## When to move beyond built-in styles
 
-Real projects eventually need interaction forms not covered by built-in styles — a FENE spring, a custom torsion profile, a cross term of three atoms. The force-field IR is a protocol: declare the new style in Python (`class Fene(mp.potential.StyleSpec)`, with its ordered parameters and its energy as an expression or a Python kernel), and it is typed, compiled and saved like a built-in, with nothing rebuilt.
+Real projects eventually need interaction forms not covered by built-in styles — a FENE spring, a custom torsion profile, a cross term of three atoms. The force-field IR is a protocol: declare the new style in Python (`class Fene(mp.ff.ir.StyleSpec)`, with its ordered parameters and its energy as an expression or a Python kernel), and it is typed, compiled and saved like a built-in, with nothing rebuilt.
 
 See [Extending Force Field](../developer/extending-forcefield.md) for the full extension recipe.
 

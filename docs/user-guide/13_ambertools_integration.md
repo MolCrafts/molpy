@@ -44,7 +44,7 @@ tfsi = mp.Conformer(add_hydrogens=False, seed=42).generate(tfsi)[0]
 
 ```python
 # docs: skip — needs AmberTools
-tfsi_ante = mp.typifier.AntechamberTypifier(
+tfsi_ante = mp.ff.typifier.AntechamberTypifier(
     atom_type="gaff2",
     charge_method="bcc",
     work_dir=output_dir / "tfsi",
@@ -71,7 +71,7 @@ These were fitted to hydration free energies and are the standard choice for pol
 li = mp.Atomistic()
 li.def_atom(element="Li", type="Li+", charge=1.0, mass=6.94, x=0.0, y=0.0, z=0.0)
 
-li_ff = mp.ForceField("li", units="real")
+li_ff = mp.ff.forcefield.ForceField("li", units="real")
 li_type = li_ff.def_style("atom", "full").def_type("Li+", mass=6.94, charge=1.0)
 # sigma = 2 * Rmin/2 / 2^(1/6)
 li_ff.def_style("pair", "lj/cut").def_type("Li+", li_type, epsilon=0.0183, sigma=2.0259)
@@ -94,7 +94,7 @@ each in backbone order — and the three cuts with it: each residue keeps its
 own monomer and omits the other two.
 
 ```python
-pieces = mp.builder.polymer.AmberPieces(head="COCC", repeat="OCC", tail="OCCOC")
+pieces = mp.builder.AmberPieces(head="COCC", repeat="OCC", tail="OCCOC")
 oligomer, peo_cuts = pieces.oligomer(seed=42)  # CH3O(CH2CH2O)3CH3, embedded
 print(oligomer.n_atoms)  # 30
 print(peo_cuts["chain"].head, peo_cuts["chain"].tail)  # O2 C5
@@ -107,12 +107,12 @@ other architectures. The site graph is only that sequence; it must be one
 linear path.
 
 ```python
-sites = mp.CGSmilesIR("{[#PEO]|10}").to_coarsegrain()
+sites = mp.io.CGSmilesIR("{[#PEO]|10}").to_coarsegrain()
 ```
 
 ```python
 # docs: skip — needs AmberTools
-built = mp.builder.polymer.AmberPolymerBuilder(
+built = mp.builder.AmberPolymerBuilder(
     {"PEO": oligomer},
     {"PEO": peo_cuts},
     force_field="gaff2",
@@ -147,7 +147,7 @@ its GAFF type, read from antechamber's ac file, becomes `PRE_HEAD_TYPE` /
 `POST_TAIL_TYPE`. `pre_head_type` / `post_tail_type` write a type directly.
 
 ```python
-AmberCut = mp.builder.polymer.AmberCut
+AmberCut = mp.builder.AmberCut
 head_methyl = ("C3", "H6", "H7", "H8")
 tail_methyl = ("C7", "H15", "H16", "H17")
 gropob_cuts = {
@@ -201,7 +201,7 @@ lammps_dir.mkdir(exist_ok=True)
 # full atom style needs mol_id: one per connected molecule
 system["atoms"]["mol_id"] = mp.Topology.from_frame(system).connected_components() + 1
 mp.io.write_lammps_data(lammps_dir / "system.data", system)
-mp.io.write_lammps_forcefield(lammps_dir / "system.ff", ff, system, skip_pair_style=True)
+mp.ff.forcefield.write_lammps_forcefield(lammps_dir / "system.ff", ff, system, skip_pair_style=True)
 ```
 
 `skip_pair_style=True` omits the `pair_style` and `special_bonds` lines from the force-field file. This is required when using kspace (long-range electrostatics), because the `pair_style` — and its cutoff — must be set by the simulation input script rather than the force-field file.

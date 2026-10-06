@@ -17,11 +17,7 @@ from unittest.mock import patch
 import pytest
 
 import molpy as mp
-from molpy.builder.polymer import (
-    AmberCut,
-    AmberPieces,
-    AmberPolymerBuilder,
-)
+from molpy.builder import AmberCut, AmberPieces, AmberPolymerBuilder
 from molpy.wrapper import Wrapper
 
 
@@ -172,7 +168,7 @@ def _build(work: Path, sites: str = "{[#EO]|3}", **kwargs) -> mp.Frame:
     library = options.pop("library", {"EO": _ether()})
     cuts = options.pop("cuts", _cuts())
     builder = AmberPolymerBuilder(library, cuts, **options)
-    return builder.assemble(mp.CGSmilesIR(sites).to_coarsegrain())
+    return builder.assemble(mp.io.CGSmilesIR(sites).to_coarsegrain())
 
 
 class TestAmberPieces:
@@ -200,7 +196,7 @@ class TestAmberPieces:
         assert [len(kept[v]) for v in ("head", "chain", "tail")] == [11, 7, 12]
 
     def test_each_piece_is_a_smiles_of_its_own(self):
-        with pytest.raises(mp.SmilesError, match="unmatched ring closure"):
+        with pytest.raises(mp.io.SmilesError, match="unmatched ring closure"):
             AmberPieces("C1OC", "C1O", "C").oligomer(seed=1)
 
     def test_pieces_feed_the_builder(self, tools, tmp_path):
@@ -353,7 +349,7 @@ class TestGroPoBOligomer:
         shutil.copy(data / "PEO.ac", monomer / "PEO.ac")
         shutil.copy(data / "PEO_initial.mol2", monomer / "PEO.mol2")
         shutil.copy(data / "PEO_initial.frcmod", monomer / "PEO.frcmod")
-        frame = mp.io.read_amber_ac(data / "PEO.ac")
+        frame = mp.io.read_ac(data / "PEO.ac")
         del frame["atoms"]["xyz"]
         return mp.Atomistic.from_frame(frame)
 
@@ -528,4 +524,4 @@ def test_tleap_typifier_refuses_a_graph_that_still_has_ports(tmp_path):
         atom["charge"] = 0.0
     graph.def_port(atoms[0], atoms[1], ">")
     with pytest.raises(ValueError, match="ports"):
-        mp.typifier.TLeapTypifier(work_dir=tmp_path).typify(graph)
+        mp.ff.typifier.TLeapTypifier(work_dir=tmp_path).typify(graph)

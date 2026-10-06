@@ -54,12 +54,8 @@ def _frame(step: int) -> mp.Frame:
 frames = [_frame(step) for step in range(20)]
 ```
 
-```python
-import molrs
-from molpy.core.box import Box
-
-
-class Box(molrs.Box): ...
+```text
+class Box(molrs.spatial.Box): ...   # molpy/core/box.py
 ```
 
 The practical consequence is that a molpy box can be handed to any molrs API
@@ -70,7 +66,7 @@ import molrs
 import molpy as mp
 
 box = mp.Box.cube(10.0)
-assert isinstance(box, molrs.Box)  # it *is* a molrs box
+assert isinstance(box, molrs.spatial.Box)  # it *is* a molrs box
 ```
 
 Likewise `frame.box` is accepted directly by Rust-side calls such as

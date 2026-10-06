@@ -206,7 +206,7 @@ For a single one-dimensional series — one degree of freedom, or an
 already-collective flux — use `signal.acf_fft` instead:
 
 ```python
-from molpy.compute import signal
+from molpy import signal
 
 flux = np.ascontiguousarray(velocities.sum(axis=1)[:, 0])
 print(np.asarray(signal.acf_fft(flux, max_lag=50)).shape)   # -> (51,)

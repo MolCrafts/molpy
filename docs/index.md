@@ -149,7 +149,7 @@ SMARTS matching maps every atom, bond, angle, and dihedral to parameters you
 can inspect before anything is exported.
 
 ```python
-typifier = mp.typifier.OPLSAATypifier()  # carries the OPLS-AA library
+typifier = mp.ff.typifier.OPLSAATypifier()  # carries the OPLS-AA library
 typed = typifier.typify(mol)
 ff = typifier.forcefield()  # the parameters of the types just assigned
 system = typed.to_frame()  # the numeric Frame
@@ -194,7 +194,7 @@ system["atoms"]["mol_id"] = mp.Topology.from_frame(system).connected_components(
 ff.get_style("pair", "lj/cut")["cutoff"] = 10.0
 ff.get_style("pair", "coul/cut")["cutoff"] = 10.0
 mp.io.write_lammps_data("system.data", system)
-mp.io.write_lammps_forcefield("system.ff", ff, system)  # the coefficients system uses
+mp.ff.forcefield.write_lammps_forcefield("system.ff", ff, system)  # the coefficients system uses
 ```
 
 </article>

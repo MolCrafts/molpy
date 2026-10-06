@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 
-from molpy import AtomIndexSelector, AtomTypeSelector, Block
+from molpy import AtomIndexSelector, AtomTypeSelector, Block, ElementSelector
 
 
 class TestMaskPredicate:
@@ -159,8 +159,6 @@ class TestSelectorFailFast:
     """
 
     def test_element_selector_missing_field_raises(self):
-        from molpy.core.selector import ElementSelector
-
         block = Block({"x": np.array([0.0, 1.0])})  # no "element" column
         with pytest.raises(KeyError, match="ElementSelector"):
             ElementSelector("C").mask(block)
@@ -169,40 +167,3 @@ class TestSelectorFailFast:
         block = Block({"x": np.array([0.0, 1.0])})  # no "id" column
         with pytest.raises(KeyError, match="AtomIndexSelector"):
             AtomIndexSelector([1, 2]).mask(block)
-
-    def test_distance_selector_missing_coords_raises(self):
-        from molpy.core.selector import DistanceSelector
-
-        block = Block({"x": np.array([0.0, 1.0])})  # missing y, z
-        with pytest.raises(KeyError, match="DistanceSelector"):
-            DistanceSelector([0.0, 0.0, 0.0], 5.0).mask(block)
-
-
-class TestDistanceSelector:
-    def test_native_free_boundary_query(self):
-        from molpy.core.selector import DistanceSelector
-
-        block = Block(
-            {
-                "x": np.array([0.0, 0.5, 1.0, 2.0]),
-                "y": np.zeros(4),
-                "z": np.zeros(4),
-            }
-        )
-        selector = DistanceSelector([0.0, 0.0, 0.0], 1.0, min_distance=0.5)
-        assert np.array_equal(selector.mask(block), [False, True, True, False])
-
-    def test_zero_radius_preserves_exact_match_semantics(self):
-        from molpy.core.selector import DistanceSelector
-
-        block = Block(
-            {
-                "x": np.array([0.0, 1.0]),
-                "y": np.array([0.0, 0.0]),
-                "z": np.array([0.0, 0.0]),
-            }
-        )
-        assert np.array_equal(
-            DistanceSelector([0.0, 0.0, 0.0], 0.0).mask(block),
-            [True, False],
-        )

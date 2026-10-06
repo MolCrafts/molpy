@@ -21,11 +21,11 @@ drives the `Potentials` that `PotentialCompiler` compiles from a force field for
 import molpy as mp
 
 mol, _ = mp.Conformer(seed=42).generate(mp.io.read_smiles("CCO"))
-typifier = mp.typifier.OPLSAATypifier()
+typifier = mp.ff.typifier.OPLSAATypifier()
 frame = typifier.typify(mol).to_frame()
 forcefield = typifier.forcefield()  # OPLS-AA parameters of the types just assigned
 
-potentials = mp.PotentialCompiler(forcefield).compile(frame)  # bonded + pair terms
+potentials = mp.ff.potential.PotentialCompiler(forcefield).compile(frame)  # bonded + pair terms
 opt = mp.LBFGS(potentials, fmax=0.05, max_steps=200)
 frame, report = opt.run(frame)  # a new frame with the relaxed coordinates
 

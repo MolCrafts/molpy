@@ -6,7 +6,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from molpy import Script
+from molpy.engine import Script
 from molpy.engine import CP2KEngine, LAMMPSEngine
 
 

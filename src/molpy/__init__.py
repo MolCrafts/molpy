@@ -1,35 +1,36 @@
-"""MolPy — Composable molecular modeling in Python.
+"""MolPy — composable molecular modeling in Python, a thin layer over molrs.
 
 Users write ``import molpy as mp`` and reach every public name through ``mp``
-(``mp.Frame``, ``mp.Atomistic``, ``mp.io.read_pdb``). Each name has exactly one
-public path; there is no ``molpy.core.X`` spelling of a root name.
+(``mp.Frame``, ``mp.Atomistic``, ``mp.io.read_pdb``,
+``mp.ff.forcefield.ForceField``). Each name has exactly one public path.
 
-Two layers own the names, and molpy says which on purpose:
+**What comes from molrs, and where.** Every native name is the molrs object
+itself (``mp.Atomistic is molrs.system.Atomistic``); molpy keeps no parallel
+IR, I/O, geometry, units or regions. molrs's subsystems map onto molpy in one
+of two ways:
 
-**Re-exported from the native core (molrs).** Identity re-exports —
-``mp.Atomistic is molrs.Atomistic`` — listed one by one at the bottom of this
-module: the molecular graphs (``Atomistic``, ``CoarseGrain`` and their views
-``Atom``/``Bond``/…/``Bead``/``CGBond``, ``NodeRef``/``RelationRef``/``Refs``,
-``Port``, ``Graph``, ``Topology``, ``Trace``), tabular data (``Frame``,
-``Block``, ``FrameMeta``, …), the force-field model (``ForceField``, the
-``Style``/``Type`` trees, ``PotentialCompiler``, ``Potentials``), chemistry
-notation and perception (``SmilesIR``, ``CGSmilesIR``, ``SmartsPattern``,
-``Perceive``, ``RingInfo``, ``Reaction``, ``Coarsener``, ``SubgraphMatcher``),
-site-graph assembly (``Assembler``, ``GrowthPlacer``, ``SitePlacer``,
-``AxisOrienter``), geometric shapes (``Cuboid``, ``Sphere``,
-``Parallelepiped``, ``HalfSpace``), units (``Unit``, ``Quantity``, ``UnitRegistry``, …),
-neighbour search, charge models, ``LBFGS``/``OptReport`` and the conformer
-reports. The namespaces ``mp.md`` and ``mp.op`` are native modules too.
+* *Mirrored as a subpackage* — the subsystems molpy also has a namespace for
+  keep their molrs name and contents: :mod:`molpy.ff` (with ``forcefield``,
+  ``potential``, ``typifier``, ``charge``, ``ir``, ``params``,
+  ``scale_lj``), :mod:`molpy.io`, :mod:`molpy.compute`,
+  :mod:`molpy.signal`, :mod:`molpy.md`, :mod:`molpy.op` and
+  :mod:`molpy.builder`. molpy's own additions sit next to the native names
+  there (the AmberTools typifiers in ``mp.ff.typifier``, ``read_smiles`` in
+  ``mp.io``, crystals and polymers in ``mp.builder``).
+* *Flattened onto this root* — the data model and the operations on it:
+  ``molrs.store`` (``Frame``, ``Block``, ``keys``, ``schema``, …),
+  ``molrs.system`` (``Atomistic``, ``CoarseGrain``, ``Graph`` and the live
+  views), ``molrs.spatial`` (regions such as ``Cuboid`` and ``Sphere``,
+  neighbour search), ``molrs.units``, ``molrs.perceive``,
+  ``molrs.optimize`` and ``molrs.conformer``.
 
-**molpy's own.** Defined in molpy (subclasses marked *sub*): ``Box`` (sub),
-``Trajectory`` (sub) and the ``TrajectorySplitter`` strategies, ``Region``
-with ``BoxRegion``/``SphereRegion``/``Cube``/``AndRegion``/``OrRegion``/
-``NotRegion`` (sub), the selectors, ``UnitSystem`` (sub), ``Conformer`` (sub),
-``Config``, ``Script``, ``fields`` and ``FrameCollection``; plus the
-subpackages ``io``, ``builder``, ``compute``, ``typifier``, ``engine``,
-``adapter`` and ``data`` (and ``molpy.wrapper``, imported explicitly), which mix molpy code with native names
-exported there and nowhere else (``mp.compute.RDF``,
-``mp.typifier.OPLSAATypifier``).
+**molpy's own root names.** :class:`Box` (a subclass of the native box with a
+free-box / diagonal constructor), :class:`Trajectory` (a subclass with a
+topology, slicing and ``map``) and the :class:`TrajectorySplitter`
+strategies, the column-value selectors (:class:`ElementSelector`, …) and
+``FrameCollection``. molpy's own subpackages are :mod:`molpy.engine`,
+:mod:`molpy.adapter`, :mod:`molpy.data` and :mod:`molpy.wrapper` (imported
+explicitly).
 
 Subpackages load lazily on first attribute access (PEP 562).
 """
@@ -50,11 +51,11 @@ if TYPE_CHECKING:
         compute,
         data,
         engine,
+        ff,
         io,
         md,
         op,
-        potential,
-        typifier,
+        signal,
     )
 
 # Submodules are loaded lazily (PEP 562) so that importing a single
@@ -68,11 +69,11 @@ _LAZY_SUBMODULES = frozenset(
         "compute",
         "data",
         "engine",
+        "ff",
         "io",
         "md",
         "op",
-        "potential",
-        "typifier",
+        "signal",
     }
 )
 
@@ -91,24 +92,10 @@ def __dir__() -> list[str]:
 # molpy's own types
 # =============================================================================
 
-from .core import fields
 from .core.box import Box
-from .core.config import Config
-from .core.region import (
-    AndRegion,
-    BoxRegion,
-    Cube,
-    NotRegion,
-    OrRegion,
-    Region,
-    SphereRegion,
-)
-from .core.script import Script, ScriptLanguage
 from .core.selector import (
     AtomIndexSelector,
     AtomTypeSelector,
-    CoordinateRangeSelector,
-    DistanceSelector,
     ElementSelector,
     MaskPredicate,
 )
@@ -120,99 +107,89 @@ from .core.trajectory import (
     Trajectory,
     TrajectorySplitter,
 )
-from .core.unit import UnitSystem
-from .conformer import Conformer
 
 # =============================================================================
-# Re-exported from the native core — identity, ``molpy.X is molrs.X``
+# molrs subsystems flattened onto the root — identity, ``mp.X is molrs.<sub>.X``
 # =============================================================================
-# Each name below has this one public path. Names that belong to a molpy
-# subpackage namespace (analyses on ``mp.compute``, typifiers on
-# ``mp.typifier``, file I/O on ``mp.io``) are exported there, not here.
+# ``Box`` and ``Trajectory`` are molpy's subclasses above, so the native ones
+# are not re-exported under the same name.
 
-from molrs import (
+from molrs.store import (
+    Block,
+    BlockDtypeError,
+    Frame,
+    FrameMeta,
+    MetaDocument,
+    MetaValue,
+    ScalarObservable,
+    VectorObservable,
+    keys,
+    schema,
+)
+from molrs.system import (
     Angle,
     Atom,
     Atomistic,
     Bead,
-    Block,
-    BlockDtypeError,
     Bond,
     CGBond,
     CoarseGrain,
-    Cuboid,
     Dihedral,
     DrudeParticle,
     Element,
     ExtractedSubgraph,
-    Frame,
-    FrameMeta,
     Graph,
-    HalfSpace,
     Improper,
     MasslessSite,
-    MetaDocument,
-    MetaValue,
+    NodeRef,
+    Port,
+    Refs,
+    RelationBuckets,
+    RelationRef,
+    Topology,
+    VirtualSite,
+)
+from molrs.spatial import (
+    Cuboid,
+    Cylinder,
+    Ellipsoid,
+    HalfSpace,
     NeighborList,
     NeighborQuery,
     Neighbors,
-    NodeRef,
     Parallelepiped,
-    Port,
-    Quantity,
-    Reaction,
-    Refs,
-    RelationRef,
-    ScalarObservable,
+    Polyhedron,
+    Region,
     Sphere,
-    Topology,
+    SphereUnion,
     Trace,
+    TriMesh,
+    VerletSkin,
+)
+from molrs.units import (
+    AMBER_COULOMB,
+    Quantity,
     Unit,
     UnitPreset,
     UnitRegistry,
     UnitsError,
-    VectorObservable,
-    VerletSkin,
-    VirtualSite,
-    keys,
-    schema,
 )
-from molrs.builder import Assembler, AxisOrienter, GrowthPlacer, SitePlacer
-from molrs.conformer import ConformerReport, ConformerStageReport
-from molrs.ff import (
-    AngleStyle,
-    AngleType,
-    AtomStyle,
-    AtomType,
-    BccModel,
-    BondStyle,
-    BondType,
-    DihedralStyle,
-    DihedralType,
-    ForceField,
-    FragmentScaling,
-    GasteigerModel,
-    ImproperStyle,
-    ImproperType,
-    MullikenModel,
-    PairStyle,
-    PairType,
-    PotentialCompiler,
-    Potentials,
-    Style,
-    Type,
-)
-
-# Parser types and their error, not file I/O entries (those are on ``mp.io``).
-from molrs.io import CGSmilesIR, SmilesError, SmilesIR
-from molrs.optimize import LBFGS, OptReport
 from molrs.perceive import (
-    Coarsener,
     Perceive,
+    Reaction,
     RingInfo,
     SmartsMatch,
     SmartsPattern,
     SubgraphMatcher,
+)
+from molrs.optimize import (
+    LBFGS,
+    OptReport,
+)
+from molrs.conformer import (
+    Conformer,
+    ConformerReport,
+    ConformerStageReport,
 )
 
 # One record of trajectory-like data (molpy's alias): an ordered sequence of
@@ -234,124 +211,95 @@ __all__ = [
     "compute",
     "data",
     "engine",
+    "ff",
     "io",
     "md",
     "op",
-    "potential",
-    "typifier",
+    "signal",
     # Version
     "version",
     "release_date",
     # --- molpy's own ---
-    "AndRegion",
     "AtomIndexSelector",
     "AtomTypeSelector",
     "Box",
-    "BoxRegion",
-    "Config",
-    "Conformer",
-    "CoordinateRangeSelector",
-    "Cube",
     "CustomStrategy",
-    "DistanceSelector",
     "ElementSelector",
     "FrameCollection",
     "FrameIntervalStrategy",
     "MaskPredicate",
-    "NotRegion",
-    "OrRegion",
-    "Region",
-    "Script",
-    "ScriptLanguage",
-    "SphereRegion",
     "SplitStrategy",
     "TimeIntervalStrategy",
     "Trajectory",
     "TrajectorySplitter",
-    "UnitSystem",
-    "fields",
-    # --- re-exported from the native core ---
-    "Angle",
-    "AngleStyle",
-    "AngleType",
-    "Assembler",
-    "Atom",
-    "AtomStyle",
-    "AtomType",
-    "Atomistic",
-    "AxisOrienter",
-    "BccModel",
-    "Bead",
+    # --- molrs.store ---
     "Block",
     "BlockDtypeError",
+    "Frame",
+    "FrameMeta",
+    "MetaDocument",
+    "MetaValue",
+    "ScalarObservable",
+    "VectorObservable",
+    "keys",
+    "schema",
+    # --- molrs.system ---
+    "Angle",
+    "Atom",
+    "Atomistic",
+    "Bead",
     "Bond",
-    "BondStyle",
-    "BondType",
     "CGBond",
-    "CGSmilesIR",
-    "Coarsener",
     "CoarseGrain",
-    "ConformerReport",
-    "ConformerStageReport",
-    "Cuboid",
     "Dihedral",
-    "DihedralStyle",
-    "DihedralType",
     "DrudeParticle",
     "Element",
     "ExtractedSubgraph",
-    "ForceField",
-    "FragmentScaling",
-    "Frame",
-    "FrameMeta",
-    "GasteigerModel",
     "Graph",
-    "GrowthPlacer",
-    "HalfSpace",
     "Improper",
-    "ImproperStyle",
-    "ImproperType",
-    "LBFGS",
     "MasslessSite",
-    "MetaDocument",
-    "MetaValue",
-    "MullikenModel",
+    "NodeRef",
+    "Port",
+    "Refs",
+    "RelationBuckets",
+    "RelationRef",
+    "Topology",
+    "VirtualSite",
+    # --- molrs.spatial ---
+    "Cuboid",
+    "Cylinder",
+    "Ellipsoid",
+    "HalfSpace",
     "NeighborList",
     "NeighborQuery",
     "Neighbors",
-    "NodeRef",
-    "OptReport",
-    "PairStyle",
-    "PairType",
     "Parallelepiped",
-    "Perceive",
-    "Port",
-    "PotentialCompiler",
-    "Potentials",
-    "Quantity",
-    "Reaction",
-    "Refs",
-    "RelationRef",
-    "RingInfo",
-    "ScalarObservable",
-    "SitePlacer",
-    "SmartsMatch",
-    "SmartsPattern",
-    "SmilesError",
-    "SmilesIR",
+    "Polyhedron",
+    "Region",
     "Sphere",
-    "Style",
-    "SubgraphMatcher",
-    "Topology",
+    "SphereUnion",
     "Trace",
-    "Type",
+    "TriMesh",
+    "VerletSkin",
+    # --- molrs.units ---
+    "AMBER_COULOMB",
+    "Quantity",
     "Unit",
     "UnitPreset",
     "UnitRegistry",
     "UnitsError",
-    "VectorObservable",
-    "VerletSkin",
-    "VirtualSite",
-    "keys",
-    "schema",
+    # --- molrs.perceive ---
+    "Perceive",
+    "Reaction",
+    "RingInfo",
+    "SmartsMatch",
+    "SmartsPattern",
+    "SubgraphMatcher",
+    # --- molrs.optimize ---
+    "LBFGS",
+    "OptReport",
+    # --- molrs.conformer ---
+    "Conformer",
+    "ConformerReport",
+    "ConformerStageReport",
 ]

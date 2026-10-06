@@ -1,7 +1,11 @@
 # Core
 
 Foundational data structures for molecular systems. All available via
-`import molpy as mp`.
+`import molpy as mp`. The root flattens molrs's data-model subsystems —
+`molrs.store`, `molrs.system`, `molrs.spatial`, `molrs.units`,
+`molrs.perceive`, `molrs.optimize`, `molrs.conformer` — by identity
+(`mp.Frame is molrs.store.Frame`); `Box` and `Trajectory` are molpy
+subclasses of the native ones.
 
 ## Quick reference
 
@@ -13,11 +17,10 @@ Foundational data structures for molecular systems. All available via
 | `Box` | Periodic simulation cell (3×3 matrix + PBC) | Wrapping, minimum-image distances | Non-periodic systems |
 | `Trajectory` | Ordered sequence of Frames (eager or lazy) | Time-series analysis, streaming I/O | Single-snapshot work |
 | `CoarseGrain` | CG molecular graph (beads + CG bonds) | Coarse-grained modelling; mirrors `Atomistic` | All-atom work (use `Atomistic`) |
-| `Config` | Thread-safe global configuration singleton | Logging level | Per-run overrides (use `Config.temporary`) |
-| `ForceField` | Force field container (styles → types → potentials) | Defining parameters before execution | Direct numerical computation |
+| `mp.ff.forcefield.ForceField` | Force field container (styles → types → potentials) | Defining parameters before execution | Direct numerical computation |
 | `NodeRef` / `RelationRef` / `Refs` | Live handles onto graph nodes / relations and collections of them (an `Atom` is a node view, a `Bond` a relation view) | Code generic over node / relation kinds | Everyday atom / bond editing |
-| `Region` | Geometric region (box, sphere, boolean combinations) | Spatial selection, packing constraints | Non-geometric masks (use a `Selector`) |
-| `UnitSystem` | Unit registry with named presets (`real`, `metal`, `openmm`, …) and reduced LJ units | Unit conversions and custom presets | Unit-agnostic array math |
+| `Cuboid` / `Sphere` / `HalfSpace` / … / `Region` | Geometric regions (`mask(block)`, `region(block)`, `&` / `\|` / `~` into a `Region`) | Spatial selection, packing constraints | Non-geometric masks (use a `Selector`) |
+| `UnitRegistry` / `UnitPreset` | Unit registry (with `k_B` and reduced LJ units) and named presets (`real`, `metal`, `openmm`, …) | Unit conversions and custom presets | Unit-agnostic array math |
 
 ## Canonical examples
 
@@ -45,7 +48,7 @@ wrapped = box.wrap(np.array([[21.0, 0.0, 0.0]]))
 d = box.distances(np.array([[0.0, 0.0, 0.0]]), np.array([[19.5, 0.0, 0.0]])) # minimum-image distance
 
 # ForceField: parameter data
-ff = mp.ForceField(name="demo", units="real")
+ff = mp.ff.forcefield.ForceField(name="demo", units="real")
 style = ff.def_style("atom", "full")
 ct = style.def_type("CT", mass=12.011) # returns the AtomType handle
 cc = ff.def_style("bond", "harmonic").def_type("CT-CT", ct, ct, k=536.0, r0=1.529)
@@ -72,17 +75,17 @@ cc = ff.def_style("bond", "harmonic").def_type("CT-CT", ct, ct, k=536.0, r0=1.52
 
 ### Forcefield
 
-::: molpy.ForceField
+::: molpy.ff.forcefield.ForceField
 
-::: molpy.Style
+::: molpy.ff.forcefield.Style
 
-::: molpy.Type
+::: molpy.ff.forcefield.Type
 
-::: molpy.PotentialCompiler
+::: molpy.ff.potential.PotentialCompiler
 
 ### Frame and Block
 
-Re-exported from the native core — `mp.Frame is molrs.Frame`:
+Re-exported from the native core — `mp.Frame is molrs.store.Frame`:
 
 ::: molpy.Frame
 
@@ -96,13 +99,9 @@ Re-exported from the native core — `mp.Frame is molrs.Frame`:
 
 ::: molpy.CoarseGrain
 
-### Config
-
-::: molpy.core.config
-
 ### Script
 
-::: molpy.core.script
+::: molpy.engine.Script
 
 ### Node and relation handles
 
@@ -118,8 +117,14 @@ Re-exported from the native core — `mp.Frame is molrs.Frame`:
 
 ### Region
 
-::: molpy.core.region
+::: molpy.Region
+
+::: molpy.Cuboid
+
+::: molpy.Sphere
 
 ### Units
 
-::: molpy.core.unit
+::: molpy.UnitRegistry
+
+::: molpy.UnitPreset

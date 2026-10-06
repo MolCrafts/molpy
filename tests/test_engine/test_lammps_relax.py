@@ -12,7 +12,7 @@ import pytest
 
 import molpy.engine as molpy_engine
 import molpy as mp
-from molpy import ForceField
+from molpy.ff.forcefield import ForceField
 from molpy.engine import LAMMPSEngine
 
 _R0 = 1.5  # harmonic bond equilibrium length (Å)

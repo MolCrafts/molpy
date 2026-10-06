@@ -11,7 +11,7 @@ Three things go in:
 2. **A topology** — an `mp.CoarseGrain` whose beads name units and whose bonds say which units join.
 3. **A placer** (and optionally an **orienter**) — the rule that gives each copy its pose.
 
-`mp.Assembler` puts them together. The per-architecture walk-through (linear, block, ring,
+`mp.builder.Assembler` puts them together. The per-architecture walk-through (linear, block, ring,
 star, comb, telechelic) is the [Polymer Topologies](topology/index.md) section; this page
 explains the pieces.
 
@@ -31,7 +31,7 @@ conformer = mp.Conformer(seed=42)
 
 def unit(body: str) -> mp.Atomistic:
     """One CGsmiles fragment body as a 3D molecule with hydrogens and ports."""
-    return conformer.generate(mp.SmilesIR.from_fragment(body).to_template())[0]
+    return conformer.generate(mp.io.SmilesIR.from_fragment(body).to_template())[0]
 
 
 eo = unit("[<]OCC[>]")  # -O-CH2-CH2-
@@ -82,14 +82,14 @@ From a CG model, the sites come from groups of beads (see
 
 ## Building from a topology
 
-With a topology from notation there are no coordinates to honour, so `mp.GrowthPlacer`
+With a topology from notation there are no coordinates to honour, so `mp.builder.GrowthPlacer`
 grows each molecule breadth-first: the first copy keeps its conformer pose, and every later
 copy is turned and moved so that the anchor of its port lands on its parent's leaving
 handle, pointing back along that bond.
 
 ```python
-sites = mp.CGSmilesIR("{[#EO]|10}").to_coarsegrain()
-chain = mp.Assembler({"EO": eo}, mp.GrowthPlacer()).assemble(sites, mp.Atomistic)
+sites = mp.io.CGSmilesIR("{[#EO]|10}").to_coarsegrain()
+chain = mp.builder.Assembler({"EO": eo}, mp.builder.GrowthPlacer()).assemble(sites, mp.Atomistic)
 print(chain.n_atoms, chain.n_ports)  # 72 2
 ```
 
@@ -100,8 +100,8 @@ between units, ring closures and overlaps are not adjusted; they are left to rel
 
 When the sites come from a CG simulation, the copies must sit where the beads were. Match
 the bead pattern of one repeat unit with `mp.SubgraphMatcher`, turn each match into a site
-with `mp.Coarsener`, and assemble with `mp.SitePlacer` (each copy's centre of mass on its
-site) and `mp.AxisOrienter` (each copy turned to its site's axis and bonds).
+with `mp.builder.Coarsener`, and assemble with `mp.builder.SitePlacer` (each copy's centre of mass on its
+site) and `mp.builder.AxisOrienter` (each copy turned to its site's axis and bonds).
 
 The toy model below is a five-unit PMMA chain with two beads per repeat unit: a backbone
 bead of type `"1"` and an ester side bead of type `"2"`.
@@ -118,11 +118,11 @@ for i in range(5):
         cg.def_cgbond(previous, backbone)
     previous = backbone
 
-groups = mp.SubgraphMatcher(mp.CGSmilesIR("{[#1][#2]}").to_coarsegrain()).find(cg)
-sites = mp.Coarsener(cg).coarsen(groups, ["MMA"] * len(groups))
+groups = mp.SubgraphMatcher(mp.io.CGSmilesIR("{[#1][#2]}").to_coarsegrain()).find(cg)
+sites = mp.builder.Coarsener(cg).coarsen(groups, ["MMA"] * len(groups))
 
 mma = unit("[<]CC([>])(C)C(=O)OC")
-pmma = mp.Assembler({"MMA": mma}, mp.SitePlacer(), mp.AxisOrienter()).assemble(
+pmma = mp.builder.Assembler({"MMA": mma}, mp.builder.SitePlacer(), mp.builder.AxisOrienter()).assemble(
     sites, mp.Atomistic
 )
 print(pmma.n_atoms, pmma.n_ports)  # 77 2
@@ -163,9 +163,9 @@ Every atom of the world gets two integer ids:
 - `mol_id` — its connected component, counted from 1.
 
 ```python
-sites = mp.CGSmilesIR("{[#EO]|3}").to_coarsegrain()
-sites.merge(mp.CGSmilesIR("{[#EO]|4}").to_coarsegrain())
-two = mp.Assembler({"EO": eo}, mp.GrowthPlacer()).assemble(sites, mp.Atomistic)
+sites = mp.io.CGSmilesIR("{[#EO]|3}").to_coarsegrain()
+sites.merge(mp.io.CGSmilesIR("{[#EO]|4}").to_coarsegrain())
+two = mp.builder.Assembler({"EO": eo}, mp.builder.GrowthPlacer()).assemble(sites, mp.Atomistic)
 atoms = two.to_frame()["atoms"]
 print(sorted(set(atoms["frag_id"].tolist())))  # [0, 1, 2, 3, 4, 5, 6]
 print(sorted(set(atoms["mol_id"].tolist())))  # [1, 2]

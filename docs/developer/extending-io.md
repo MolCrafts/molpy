@@ -3,20 +3,25 @@
 `mp.io` has one door per format and direction: `read_X` / `write_X` for one
 frame, `read_X_trajectory` / `write_X_trajectory` for a sequence. There are no
 reader or writer classes to subclass. Parsing and serialization belong in the
-native core (molrs); molpy re-exports the native door by identity, and writes a
-function of its own only when it adds behaviour the native door lacks.
+native core (molrs): `mp.io` is `molrs.io` re-exported by identity, and
+force-field formats are `mp.ff.forcefield`, which is `molrs.ff.forcefield`.
 
 ## A new format goes into molrs
 
-Add the parser and writer to molrs, bind them in molrs-python, and re-export the
-bound functions from `molpy/io/__init__.py` by identity:
+Add the parser and writer to molrs and bind them in molrs-python: a
+structure or trajectory format under `molrs.io`, a force-field format under
+`molrs.ff.forcefield`. molpy picks the new names up with no edit, since its
+modules re-export the native ones wholesale:
 
 ```python
 import molrs
 import molpy as mp
 
 assert mp.io.read_gro is molrs.io.read_gro
-assert mp.io.write_lammps_forcefield is molrs.ff.write_lammps_forcefield
+assert (
+    mp.ff.forcefield.write_lammps_forcefield
+    is molrs.ff.forcefield.write_lammps_forcefield
+)
 ```
 
 No molpy wrapper coerces paths, re-raises native errors under another type or
@@ -24,30 +29,29 @@ buffers frames for the native writer: the native doors accept `str` and
 `os.PathLike`, take any sequence of frames and report an unreadable file as
 `OSError`.
 
-## When molpy adds behaviour
+## Behaviour belongs in the native door
 
-A molpy function is justified by behaviour, not by spelling. The current ones
-live in `molpy/io/readers.py`, `molpy/io/writers.py` and
-`molpy/io/data/lammps.py`: merging inpcrd coordinates into an existing frame,
-dropping the duplicated CONECT bonds of a PDB, joining split XYZ property
-columns, the `LammpsDataResult` bundle and the `fix drude` header of a LAMMPS
-data file. Such a function calls the native door and post-processes its frame.
+A format's behaviour — merging inpcrd coordinates into an existing frame,
+joining an n-wide XYZ property, Type Labels and `fix drude` flags of a LAMMPS
+data file, `fix bond/react` maps — is molrs's, so every caller gets it. molpy
+keeps only two readers of its own in `molpy/io/_readers.py`, and both compose
+native doors rather than post-process a format: `read_amber` (a prmtop's
+structure and force field, plus an inpcrd) and `read_smiles` (one connected
+molecule).
 
 ## Canonical field names
 
-The internal data model uses canonical field names, listed on `mp.fields`. The native readers already translate the formats they
-parse. A format whose column names molpy translates itself declares a
-`FieldFormatter` subclass with a `_field_formatters` mapping:
+The data model uses one column vocabulary, molrs's: `mp.keys` is
+`molrs.store.keys` (`mp.keys.CHARGE.key == "charge"`), and `mp.schema` says
+each column's dtype. Every native reader emits these names — it maps a
+format's own spelling (`q`, `mol`, `resSeq`) at the boundary — and every
+writer takes them:
 
 ```python
-from molpy import fields
+import molpy as mp
 
-
-class MyFieldFormatter(fields.FieldFormatter):
-    _field_formatters = {
-        "q": fields.CHARGE,  # format "q" → canonical "charge"
-        "mol": fields.MOL_ID,  # format "mol" → canonical "mol_id"
-    }
+assert mp.keys.CHARGE.key == "charge"
+assert mp.keys.MOL_ID.key == "mol_id"
 ```
 
 Key canonical fields: `charge` (not `q`), `mol_id` (not `mol`), `id`, `type`,
@@ -56,9 +60,10 @@ Key canonical fields: `charge` (not `q`), `mol_id` (not `mol`), `id`, `type`,
 ## Force field readers and writers live in molrs
 
 Every force-field reader and writer — LAMMPS `*.ff` includes and data-file
-`* Coeffs`, GROMACS directives, OpenMM XML — is a native molrs function that
-`mp.io` re-exports by identity (`read_xml_forcefield` / `write_xml_forcefield`,
-`read_gromacs_forcefield` / `write_gromacs_forcefield`, the LAMMPS family). The
+`* Coeffs`, GROMACS directives and systems, OpenMM XML, AMBER prmtop / frcmod
+— is a native molrs function on `mp.ff.forcefield`, by identity
+(`read_forcefield_xml` / `write_forcefield_xml`, `read_gromacs_top_ff` /
+`write_gromacs_top_ff`, the LAMMPS family). The
 LAMMPS writers take the system as well: the coefficients written are selected by
 the frame's type labels, each matched to a type name exactly. The pair cutoff is
 a run setting the caller declares on the pair styles; no reader or writer
@@ -67,7 +72,7 @@ invents one.
 ```python
 import molpy as mp
 
-ff = mp.io.read_xml_forcefield(mp.data.get_forcefield_path("tip3p.xml"))
+ff = mp.ff.forcefield.read_forcefield_xml(mp.data.get_forcefield_path("tip3p.xml"))
 water = mp.Frame(
     blocks={
         "atoms": {
@@ -81,7 +86,7 @@ water = mp.Frame(
 )
 ff.get_style("pair", "lj/cut")["cutoff"] = 10.0
 ff.get_style("pair", "coul/cut")["cutoff"] = 10.0
-text = mp.io.write_lammps_forcefield_str(ff, water, precision=4)
+text = mp.ff.forcefield.write_lammps_forcefield_str(ff, water, precision=4)
 assert "bond_coeff" in text
 ```
 
@@ -90,8 +95,6 @@ see [Extending the Force Field](extending-forcefield.md#engines).
 
 ## Checklist
 
-- [ ] Parser and writer added to molrs and bound in molrs-python
-- [ ] `read_X` / `write_X` (and `_trajectory`) re-exported by identity from `molpy/io/__init__.py`
-- [ ] A molpy function only where it adds behaviour, calling the native door
+- [ ] Parser and writer added to molrs (`molrs.io` or `molrs.ff.forcefield`) and bound in molrs-python
+- [ ] Round-trip tests (`write → read → compare`) in molrs; molpy needs no edit
 - [ ] Box stored on `frame.box`; exact-dtype metadata stored on `frame.meta`
-- [ ] Round-trip tests (`write → read → compare`) of molpy-owned behaviour in `tests/test_io/`

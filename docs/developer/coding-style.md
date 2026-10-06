@@ -42,7 +42,7 @@ def add_hydrogens(mol):
 ```
 
 `typify()` returns a new `Atomistic`. Follow the helper rule in `builder` /
-`typifier` / similar packages; follow the core rule inside `molpy.core`.
+`ff.typifier` / similar packages; follow the core rule for the data model.
 
 
 ## Functions and files

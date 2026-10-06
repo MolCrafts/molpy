@@ -1,36 +1,41 @@
-"""
-Engine module for MolPy.
+"""External simulation engines.
 
-Provides :class:`~molpy.engine.base.Engine`, an abstract base for running
-external computational chemistry programs, together with concrete
-implementations for LAMMPS, CP2K, and OpenMM.
+:class:`Engine` is the abstract base for running an external program
+(command construction, working directory, launcher and environment). Each
+concrete engine has **one** input writer, ``generate_inputs``, and ``run``:
 
-Two usage modes are supported:
+* :class:`LAMMPSEngine` — ``generate_inputs(frame, ff, out)`` writes the data
+  file, force-field settings, init and input script; ``minimize`` / ``md``
+  relax a frame through the same deck.
+* :class:`GROMACSEngine` — ``generate_inputs(frame, ff, out)`` writes the
+  ``.gro``, ``.top`` and ``.mdp`` templates; ``run`` grompp's and mdrun's an
+  ``.mdp``.
+* :class:`OpenMMEngine` — ``generate_inputs(frame, ff, config, out)`` writes
+  the PDB, the force-field XML and a Python simulation script.
+* :class:`CP2KEngine` — runs a CP2K input.
 
-* **Generate only** — write input files without executing::
-
-      paths = engine.generate_inputs(frame, ff, config, "./output")
-
-* **Generate and run** — write files then launch the subprocess::
-
-      result = engine.run(script, workdir="./calc")
-
-MPI and job-scheduler launchers are supported via the ``launcher`` parameter::
+Scripts are :class:`Script` objects (editable text with a path)::
 
     from molpy.engine import LAMMPSEngine
     engine = LAMMPSEngine("lmp", launcher=["mpirun", "-np", "16"])
-    result = engine.run(script, workdir="./calc")
+    paths = engine.generate_inputs(frame, ff, "./calc")
+    result = engine.run(Script.from_path(paths["input"]), workdir="./calc")
 """
 
 from .base import Engine
 from .cp2k import CP2KEngine
+from .gromacs import GROMACSEngine
 from .lammps import LAMMPSEngine
 from .openmm import OpenMMEngine, OpenMMSimulationConfig
+from .script import Script, ScriptLanguage
 
 __all__ = [
     "CP2KEngine",
     "Engine",
+    "GROMACSEngine",
     "LAMMPSEngine",
     "OpenMMEngine",
     "OpenMMSimulationConfig",
+    "Script",
+    "ScriptLanguage",
 ]

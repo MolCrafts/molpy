@@ -1,8 +1,7 @@
 """``mp.io.read_xyz`` and ``mp.io.write_xyz``.
 
-The native reader parses the file; ``mp.io.read_xyz`` then rejoins the ``base_1..base_n``
-columns the native reader splits an n-wide property into, maps ``species`` to
-``element`` and fills ``atomic_number``. Fixtures live in ``tests-data/xyz``.
+molrs's reader, by identity: an n-wide extended-XYZ property is one ``(N, n)``
+column and ``species`` is ``element``. Fixtures live in ``tests-data/xyz``.
 """
 
 from pathlib import Path
@@ -32,10 +31,10 @@ class TestReadXyz:
             atoms["z"], [0.0, 0.631716, 0.631716, -0.631716, -0.631716]
         )
 
-    def test_element_symbols_are_mapped_to_atomic_numbers(self, xyz_dir):
+    def test_element_symbols_are_read(self, xyz_dir):
         atoms = mp.io.read_xyz(xyz_dir / "methane.xyz")["atoms"]
         assert list(atoms["element"]) == ["C", "H", "H", "H", "H"]
-        assert atoms["atomic_number"].tolist() == [6, 1, 1, 1, 1]
+        assert mp.io.read_xyz is __import__("molrs").io.read_xyz
 
     def test_ragged_spacing_and_trailing_blank_lines_are_tolerated(self, xyz_dir):
         # Leading blanks on the count line, uneven columns, empty lines after
@@ -59,10 +58,9 @@ class TestReadXyz:
             box.h, [[10.0, 2.0, 3.0], [0.0, 11.0, 4.0], [0.0, 0.0, 12.0]]
         )
 
-    def test_species_property_feeds_element_and_atomic_number(self, xyz_dir):
+    def test_species_property_is_the_element(self, xyz_dir):
         atoms = mp.io.read_xyz(xyz_dir / "lattice.xyz")["atoms"]
         assert list(atoms["element"]) == ["O", "C", "H"]
-        assert atoms["atomic_number"].tolist() == [8, 6, 1]
 
     def test_two_wide_property_is_rejoined(self, xyz_dir):
         atoms = mp.io.read_xyz(xyz_dir / "lattice.xyz")["atoms"]

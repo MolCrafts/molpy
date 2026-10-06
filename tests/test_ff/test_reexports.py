@@ -1,0 +1,60 @@
+"""``molpy.ff`` is ``molrs.ff``, submodule by submodule, by identity."""
+
+from __future__ import annotations
+
+import math
+
+import molrs
+import numpy as np
+import pytest
+
+import molpy as mp
+
+SUBMODULES = ("charge", "forcefield", "ir", "params", "potential", "scale_lj")
+
+
+def test_the_submodules_are_molrs_s() -> None:
+    assert sorted(mp.ff.__all__) == sorted(molrs.ff.__all__)
+
+
+@pytest.mark.parametrize("sub", SUBMODULES)
+def test_every_native_name_is_the_molrs_object(sub: str) -> None:
+    native = getattr(molrs.ff, sub)
+    mine = getattr(mp.ff, sub)
+    assert sorted(mine.__all__) == sorted(native.__all__)
+    for name in native.__all__:
+        assert getattr(mine, name) is getattr(native, name), (sub, name)
+
+
+def test_the_typifier_adds_only_the_ambertools_typifiers() -> None:
+    native = molrs.ff.typifier
+    for name in native.__all__:
+        assert getattr(mp.ff.typifier, name) is getattr(native, name)
+    assert sorted(set(mp.ff.typifier.__all__) - set(native.__all__)) == [
+        "AntechamberTypifier",
+        "TLeapTypifier",
+    ]
+
+
+def test_md_defines_no_potential() -> None:
+    for name in ("LJCut", "Potential", "Potentials"):
+        assert not hasattr(mp.md, name)
+
+
+def test_no_force_field_name_is_left_on_the_root() -> None:
+    for name in ("ForceField", "Potentials", "PotentialCompiler", "BccModel"):
+        assert not hasattr(mp, name)
+
+
+def test_a_kernel_built_by_hand_is_pushed_into_potentials() -> None:
+    pos = np.array([0.0, 0.0, 0.0, 1.6, 0.0, 0.0, 1.6, 1.2, 0.0])
+    pots = mp.ff.potential.Potentials()
+    pots.push(
+        mp.ff.potential.kernel("bond", "harmonic", [[0, 1], [1, 2]], k=300.0, r0=1.5)
+    )
+    pots.push(
+        mp.ff.potential.kernel("angle", "harmonic", [[0, 1, 2]], k=50.0, theta0=120.0)
+    )
+    energy, _ = pots.calc_energy_forces(pos)
+    want = 300.0 * (0.1**2 + 0.3**2) + 50.0 * (math.pi / 2 - math.radians(120.0)) ** 2
+    assert energy == pytest.approx(want, rel=1e-12)

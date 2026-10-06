@@ -11,14 +11,9 @@ import numpy as np
 
 import pytest
 
-from molpy.builder.polymer.distributions import SchulzZimmPolydisperse
-from molpy.builder.polymer.sequences import WeightedSequenceGenerator
-from molpy.builder.polymer.system import (
-    Chain,
-    PolydisperseChainGenerator,
-    SystemPlan,
-    SystemPlanner,
-)
+from molpy.builder import SchulzZimmPolydisperse
+from molpy.builder import WeightedSequenceGenerator
+from molpy.builder import Chain, PolydisperseChainGenerator, SystemPlan, SystemPlanner
 
 
 class TestChain:

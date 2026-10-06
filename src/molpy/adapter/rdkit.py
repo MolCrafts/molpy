@@ -21,8 +21,7 @@ import numpy as np
 from rdkit import Chem
 from rdkit.Chem import AllChem
 
-from molpy.core import fields
-from molrs import Atomistic
+from molrs.system import Atomistic
 
 from .base import Adapter
 
@@ -112,7 +111,7 @@ class RDKitAdapter(Adapter[Atomistic, Chem.Mol]):
 
         Returns a new :class:`~molpy.Atomistic` with coordinates;
         this adapter is not mutated. For molpy's native (native) embedder, use
-        :class:`molpy.conformer.Conformer` instead.
+        :class:`molpy.Conformer` instead.
         """
         working = self.copy()
         if not working.has_external():
@@ -195,7 +194,7 @@ class RDKitAdapter(Adapter[Atomistic, Chem.Mol]):
     def _build_mol_from_atomistic(self, atomistic: Atomistic) -> Chem.Mol:
         self._tag_atoms(atomistic)
         handles = atomistic.entities()
-        elements = atomistic.column(fields.ELEMENT)  # a hole is a KeyError
+        elements = atomistic.column("element")  # a hole is a KeyError
         tags = atomistic.column(MP_ID)
         charges = self._formal_charges(atomistic)
         positions = self._positions(atomistic)
@@ -213,7 +212,7 @@ class RDKitAdapter(Adapter[Atomistic, Chem.Mol]):
             mol.AddBond(
                 rd_index[bond.itom.handle],
                 rd_index[bond.jtom.handle],
-                _rdkit_bond_type(bond.get(fields.BOND_TYPE, BOND_TYPE_SINGLE)),
+                _rdkit_bond_type(bond.get("bond_type", BOND_TYPE_SINGLE)),
             )
 
         if positions is not None:
@@ -249,11 +248,11 @@ class RDKitAdapter(Adapter[Atomistic, Chem.Mol]):
         from the column read): a missing coordinate is not ``0.0``.
         """
         cols = atomistic.columns()
-        if not any(k in cols for k in (fields.X, fields.Y, fields.Z)):
+        if not any(k in cols for k in ("x", "y", "z")):
             return None
         # ``column`` raises on a hole; ``atoms["x", "y", "z"]`` would yield None.
         return np.stack(
-            [np.asarray(atomistic.column(k)) for k in (fields.X, fields.Y, fields.Z)],
+            [np.asarray(atomistic.column(k)) for k in ("x", "y", "z")],
             axis=1,
         )
 
@@ -265,13 +264,13 @@ class RDKitAdapter(Adapter[Atomistic, Chem.Mol]):
     def _atom_props(
         rd_atom: Chem.Atom, tag: int, position: Any | None
     ) -> dict[str, Any]:
-        props: dict[str, Any] = {fields.ELEMENT: rd_atom.GetSymbol(), MP_ID: tag}
+        props: dict[str, Any] = {"element": rd_atom.GetSymbol(), MP_ID: tag}
         if rd_atom.GetFormalCharge() != 0:
             props[FORMAL_CHARGE] = rd_atom.GetFormalCharge()
         if position is not None:
-            props[fields.X] = float(position[0])
-            props[fields.Y] = float(position[1])
-            props[fields.Z] = float(position[2])
+            props["x"] = float(position[0])
+            props["y"] = float(position[1])
+            props["z"] = float(position[2])
         return props
 
     def _build_atomistic_from_mol(self, mol: Chem.Mol) -> Atomistic:
@@ -345,12 +344,12 @@ class RDKitAdapter(Adapter[Atomistic, Chem.Mol]):
                 atom_of_rd.append(atom)
                 continue
 
-            atom[fields.ELEMENT] = rd_atom.GetSymbol()
+            atom["element"] = rd_atom.GetSymbol()
             charge = rd_atom.GetFormalCharge()
             if charge != 0 or FORMAL_CHARGE in atom:
                 atom[FORMAL_CHARGE] = charge
             if position is not None:
-                atom[fields.X, fields.Y, fields.Z] = (float(v) for v in position)
+                atom["x", "y", "z"] = (float(v) for v in position)
             atom_of_rd.append(atom)
 
         if update_topology:

@@ -32,8 +32,6 @@ classifiers = [
 dependencies = [
     "numpy>=2.0",
     "molcrafts-molrs>=0.16.0,<0.17",
-    "molcrafts-mollog>=1.0.0",
-    "molcrafts-molcfg>=1.2.0",
 ]
 
 [project.optional-dependencies]
@@ -83,7 +81,7 @@ where = ["src"]
 
 [tool.setuptools.package-data]
 "molpy.data" = ["README.md"]
-"molpy.data.forcefield" = ["*.xml", "*.ff"]
+"molpy.data.forcefield" = ["*.xml"]
 
 [tool.ruff]
 # Matches requires-python: the lint gate must reject syntax the floor

@@ -151,7 +151,7 @@ frame = mp.Frame(blocks={
 frame.box = mp.Box.cube(10.0)
 
 # I/O readers set frame.box automatically
-frame = mp.io.read_lammps_data("system.data", atom_style="full").frame
+frame = mp.io.read_lammps_data("system.data", atom_style="full")
 print(frame.box.lengths) # from the data file header
 ```
 

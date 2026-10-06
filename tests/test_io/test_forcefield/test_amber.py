@@ -6,7 +6,7 @@ import numpy as np
 import pytest
 
 import molpy as mp
-from molpy import AngleType, AtomType, BondType
+from molpy.ff.forcefield import AngleType, AtomType, BondType
 
 
 @pytest.fixture

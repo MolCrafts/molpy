@@ -13,7 +13,7 @@ mol = mp.io.read_smiles("CCO")  # ethanol from SMILES (heavy atoms)
 mol, _ = mp.Conformer(add_hydrogens=True, seed=42).generate(
     mol
 )  # add hydrogens + 3D coordinates
-typifier = mp.typifier.OPLSAATypifier()  # carries the OPLS-AA library
+typifier = mp.ff.typifier.OPLSAATypifier()  # carries the OPLS-AA library
 typed = typifier.typify(mol)  # assign force-field types
 ff = typifier.forcefield()  # the parameters of the types just assigned
 
@@ -73,14 +73,14 @@ Load the bundled `tip3p.xml` and put its type names on the template.
 > named sites, so the atoms, the bonds and the angle simply carry the
 > force field's type labels; the parameters are looked up by label when the
 > force field is compiled or exported. Reach for a typifier
-> (`mp.typifier.OPLSAATypifier`, …) when the types are the unknown.
+> (`mp.ff.typifier.OPLSAATypifier`, …) when the types are the unknown.
 
 The reader names each bonded type by joining its endpoint atom types with `::`
 (the atom-type names contain `-`). A label is matched to a type name exactly, so
 it is spelled the way the force field lists it:
 
 ```python
-ff = mp.io.read_xml_forcefield(mp.data.get_forcefield_path("tip3p.xml"))
+ff = mp.ff.forcefield.read_forcefield_xml(mp.data.get_forcefield_path("tip3p.xml"))
 print("bond types:", [t.name for t in ff.get_types("bond")])
 print("angle types:", [t.name for t in ff.get_types("angle")])
 
@@ -173,7 +173,7 @@ out_dir = Path("quickstart-output")
 out_dir.mkdir(parents=True, exist_ok=True)
 
 mp.io.write_lammps_data(out_dir / "water_box_tip3p.data", frame)
-mp.io.write_lammps_forcefield(out_dir / "water_box_tip3p.ff", ff, frame)
+mp.ff.forcefield.write_lammps_forcefield(out_dir / "water_box_tip3p.ff", ff, frame)
 
 print("wrote:", out_dir / "water_box_tip3p.data")
 print("wrote:", out_dir / "water_box_tip3p.ff")

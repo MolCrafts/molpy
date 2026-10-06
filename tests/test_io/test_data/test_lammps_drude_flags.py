@@ -1,15 +1,15 @@
 """The LAMMPS data writer emits the ``fix drude`` C/D/N flag string.
 
 For a Drude-polarizable frame (shells carry element ``D`` + a type, springs are
-``style="drude"`` bonds), the data writer — which owns the atom-type → ID
-ordering — writes the ready-to-paste ``fix drude`` flags as a header comment.
+``style="drude"`` bonds), molrs's data writer — which owns the atom-type → ID
+ordering — writes the ``fix drude`` flags as a header comment.
 """
 
 from pathlib import Path
 
 import molpy as mp
 from molpy import Atomistic
-from molpy.builder.virtualsite import DrudeBuilder
+from molpy.builder import DrudeBuilder
 
 
 def _ntf2_polarized(test_data_dir: Path) -> Atomistic:
@@ -29,9 +29,8 @@ def test_data_writer_emits_fix_drude_flags(tmp_path, TEST_DATA_DIR):
     mp.io.write_lammps_data(path, frame)
     text = path.read_text()
 
-    assert "fix DRUDE all drude" in text
-    flag_line = next(line for line in text.splitlines() if "all drude" in line)
-    flags = flag_line.split("all drude", 1)[1].split()
+    flag_line = next(line for line in text.splitlines() if "fix drude flags" in line)
+    flags = flag_line.split(":", 1)[1].split()
 
     # One flag per atom type, in sorted (type-ID) order.
     import numpy as np
@@ -71,4 +70,4 @@ def test_data_writer_no_drude_comment_for_plain_system(tmp_path):
     )
     path = tmp_path / "plain.data"
     mp.io.write_lammps_data(path, asm.to_frame())
-    assert "fix DRUDE" not in path.read_text()
+    assert "fix drude" not in path.read_text()

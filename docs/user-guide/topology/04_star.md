@@ -9,8 +9,8 @@ import molpy as mp
 from eo_kit import library
 
 arm = "[#EO][#EO][#EO]"
-sites = mp.CGSmilesIR(f"{{[#X3]({arm})({arm}){arm}}}").to_coarsegrain()
-star = mp.Assembler(library(), mp.GrowthPlacer()).assemble(sites, mp.Atomistic)
+sites = mp.io.CGSmilesIR(f"{{[#X3]({arm})({arm}){arm}}}").to_coarsegrain()
+star = mp.builder.Assembler(library(), mp.builder.GrowthPlacer()).assemble(sites, mp.Atomistic)
 ```
 
 A core with fewer ports than arms is refused, naming the core site.

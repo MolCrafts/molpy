@@ -5,8 +5,8 @@
 Every architecture here is a **short guide page** paired with a **runnable script** of the same name under `examples/topology/`. They all compose the same three native primitives:
 
 1. **Units** — a CGsmiles fragment per repeat unit, with bonding descriptors as its **ports** (`[<]OCC[>]`), turned into a 3D `mp.Atomistic` carrying its ports by `mp.Conformer`.
-2. **Topology** — a CGsmiles string (`{[#EO]|10}`), turned into a **site graph** by `mp.CGSmilesIR(...).to_coarsegrain()`: one site per unit, one bond per join.
-3. **Assembly** — `mp.Assembler(library, mp.GrowthPlacer()).assemble(sites, mp.Atomistic)`: one copy of `library[bead_type]` per site, each bond joining one port of each end, handed back as the graph class you name.
+2. **Topology** — a CGsmiles string (`{[#EO]|10}`), turned into a **site graph** by `mp.io.CGSmilesIR(...).to_coarsegrain()`: one site per unit, one bond per join.
+3. **Assembly** — `mp.builder.Assembler(library, mp.builder.GrowthPlacer()).assemble(sites, mp.Atomistic)`: one copy of `library[bead_type]` per site, each bond joining one port of each end, handed back as the graph class you name.
 
 ```bash
 cd examples
@@ -43,7 +43,7 @@ The assembler chooses the ports itself: it walks each molecule from one end, giv
 
 ## Growing without coordinates
 
-A CGsmiles topology has no coordinates, so the examples use `mp.GrowthPlacer`: the first unit keeps its conformer pose and every later unit is joined onto its parent's port, pointing back along the parent's leaving bond. Bond lengths, ring closures and overlaps are left to a later minimisation. With coordinates, for example a site graph coarsened from a CG model by `mp.Coarsener`, use `mp.SitePlacer` and `mp.AxisOrienter` instead.
+A CGsmiles topology has no coordinates, so the examples use `mp.builder.GrowthPlacer`: the first unit keeps its conformer pose and every later unit is joined onto its parent's port, pointing back along the parent's leaving bond. Bond lengths, ring closures and overlaps are left to a later minimisation. With coordinates, for example a site graph coarsened from a CG model by `mp.builder.Coarsener`, use `mp.builder.SitePlacer` and `mp.builder.AxisOrienter` instead.
 
 ## The kit (`eo_kit.py`)
 

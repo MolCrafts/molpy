@@ -1,14 +1,14 @@
 # Extending Typifiers
 
 Typifiers operate on molecular graphs. The core contract is the molrs base
-`mp.typifier.Typifier`:
+`mp.ff.typifier.Typifier`:
 
 ```python
 import molpy as mp
 
 
-class MyTypifier(mp.typifier.Typifier):
-    def match(self, graph: mp.Atomistic) -> mp.typifier.Match: ...
+class MyTypifier(mp.ff.typifier.Typifier):
+    def match(self, graph: mp.Atomistic) -> mp.ff.typifier.Match: ...
 ```
 
 `typify(mol)` belongs to the base and is final: it copies `mol`, calls `match`
@@ -56,7 +56,7 @@ defines the type on `endpoints` — atom-type names, empty for an atom type.
 Names are opaque: endpoints are always given, never parsed out of a name.
 
 ```python
-class ElementBondTypifier(mp.typifier.Typifier):
+class ElementBondTypifier(mp.ff.typifier.Typifier):
     """Atom types from elements; one harmonic bond type per element pair."""
 
     def match(self, graph):
@@ -68,7 +68,7 @@ class ElementBondTypifier(mp.typifier.Typifier):
         for bond in graph.links.exact_bucket(mp.Bond):
             ends = sorted(atom["element"] for atom in bond.endpoints)
             bonds.append({"type": ("harmonic", "-".join(ends), ends, {"k": 300.0, "r0": 1.5})})
-        return mp.typifier.Match(
+        return mp.ff.typifier.Match(
             nodes, {mp.Bond: bonds}, styles=[("atom", "full", {}), ("bond", "harmonic", {})]
         )
 
@@ -97,7 +97,7 @@ MolPy-side layered matcher classes; OPLS-AA and MMFF matching live in molrs.
 ## Where a Typifier Lives
 
 Force-field typifiers that decide types by SMARTS rules (OPLS-AA, MMFF94) are
-native: they live in molrs and `mp.typifier` re-exports them one by one. A new
+native: they live in molrs and `mp.ff.typifier` re-exports them one by one. A new
 rule-based force field belongs there too.
 
 A MolPy-side typifier is one that drives an external tool, as
@@ -124,4 +124,4 @@ New typifiers need focused tests at three levels:
 
 A typifier that shells out never runs the tool in unit tests: patch
 `subprocess.run` so each call copies a committed output fixture into place, as
-`tests/test_typifier/test_ambertools.py` does.
+`tests/test_ff/test_ambertools.py` does.

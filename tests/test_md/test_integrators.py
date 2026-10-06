@@ -5,7 +5,7 @@ import pytest
 
 from molpy import Box, NeighborList, VerletSkin
 from molpy.md import Langevin, MD, VelocityVerlet
-from molpy.potential import LJCut
+from molpy.ff.potential import LJCut
 
 
 def _dimer(*, skin: float = 0.3, rc: float = 2.5):

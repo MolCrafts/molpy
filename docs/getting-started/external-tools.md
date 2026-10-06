@@ -12,11 +12,11 @@ This page is the only place those integrations are documented as prerequisites.
 
 | Task | Use |
 |------|-----|
-| Parse SMILES / SMARTS | `mp.SmilesIR`, `mp.SmartsPattern` |
+| Parse SMILES / SMARTS | `mp.io.SmilesIR`, `mp.SmartsPattern` |
 | 3D coordinates | `mp.Conformer` |
-| Polymer assembly | `mp.Assembler` on a CGsmiles site graph (native); see [Polymer Topologies](../user-guide/topology/index.md) |
+| Polymer assembly | `mp.builder.Assembler` on a CGsmiles site graph (native); see [Polymer Topologies](../user-guide/topology/index.md) |
 | Pack a box | [molpack](https://docs.molcrafts.org/molpack/) (`molcrafts-molpack`, installed separately) |
-| OPLS-AA / MMFF94 typing | `molpy.typifier` |
+| OPLS-AA / MMFF94 typing | `molpy.ff.typifier` |
 | Trajectory analysis | `molpy.compute` (kernels) |
 | Files (PDB, LAMMPS data, XML FF, …) | `molpy.io` |
 
@@ -31,9 +31,9 @@ tleap `sequence`:
 
 | Surface | Role |
 |---------|------|
-| `molpy.typifier.AntechamberTypifier` | antechamber (types + charges) → parmchk2 → tleap for one complete molecule; net charge from the atoms' formal charges |
-| `molpy.typifier.TLeapTypifier` | tleap only, for a finished graph whose atoms already carry AMBER types and charges; a graph with ports is refused |
-| `molpy.builder.polymer.AmberPolymerBuilder` | antechamber + parmchk2 on an oligomer, prepgen per residue (`AmberCut`), tleap `sequence` over a linear site graph; `AmberPieces` writes the oligomer and cuts from three SMILES |
+| `molpy.ff.typifier.AntechamberTypifier` | antechamber (types + charges) → parmchk2 → tleap for one complete molecule; net charge from the atoms' formal charges |
+| `molpy.ff.typifier.TLeapTypifier` | tleap only, for a finished graph whose atoms already carry AMBER types and charges; a graph with ports is refused |
+| `molpy.builder.AmberPolymerBuilder` | antechamber + parmchk2 on an oligomer, prepgen per residue (`AmberCut`), tleap `sequence` over a linear site graph; `AmberPieces` writes the oligomer and cuts from three SMILES |
 | `molpy.wrapper` (`AntechamberWrapper`, `Parmchk2Wrapper`, `PrepgenWrapper`, `TLeapWrapper`, `SanderWrapper`) | Thin subprocess wrappers |
 
 Install AmberTools in its own conda env (example):
@@ -53,7 +53,7 @@ import molpy as mp
 mol, _ = mp.Conformer(add_hydrogens=True, seed=42).generate(
     mp.io.read_smiles("CCO")
 )  # antechamber needs 3D coordinates
-ante = mp.typifier.AntechamberTypifier(
+ante = mp.ff.typifier.AntechamberTypifier(
     atom_type="gaff2", charge_method="bcc",
     work_dir="amber_work", env="AmberTools25", env_manager="conda",
 )

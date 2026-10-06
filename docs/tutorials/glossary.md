@@ -49,18 +49,18 @@ Quick definitions for MolPy's core terminology. Each entry links to the page tha
 : One concrete parameter record within a style, defined with `style.def_type(name, *endpoints, **params)`. For example, a bond type `CT-OH` between the atom types `CT` and `OH` with `k=320.0` and `r0=1.41`. Subclasses: `AtomType`, `BondType`, `AngleType`, `DihedralType`, `ImproperType`, `PairType`.
 
 **Potential**
-: The numerical realization of a force field's styles and types, ready for energy/force computation. Produced by `mp.PotentialCompiler(ff).compile(frame)` (or `.defer()` for a `Potentials` bound later) and evaluated against a typed `Frame` via `pots.calc_energy(frame)` / `pots.calc_forces(frame)`; the kernels run in the high-performance backend. See [Force Field](04_force_field.md).
+: The numerical realization of a force field's styles and types, ready for energy/force computation. Produced by `mp.ff.potential.PotentialCompiler(ff).compile(frame)` (or `.defer()` for a `Potentials` bound later) and evaluated against a typed `Frame` via `pots.calc_energy(frame)` / `pots.calc_forces(frame)`; the kernels run in the high-performance backend. See [Force Field](04_force_field.md).
 
 ### Modules
 
 **Parsing**
-: `mp.SmilesIR` and `mp.SmartsPattern` convert SMILES and SMARTS strings into MolPy structures; `CGSmilesIR` parses CGsmiles into ported units and site graphs. BigSMILES is not parsed. See [Parsing Chemistry](../user-guide/01_parsing_chemistry.md).
+: `mp.io.SmilesIR` and `mp.SmartsPattern` convert SMILES and SMARTS strings into MolPy structures; `CGSmilesIR` parses CGsmiles into ported units and site graphs. BigSMILES is not parsed. See [Parsing Chemistry](../user-guide/01_parsing_chemistry.md).
 
 **Reaction**
 : A reaction SMARTS. It matches the reactant patterns, forms and breaks bonds, and deletes the atoms that appear on the left and not on the right (the leaving groups). See [Parser](../api/parser.md).
 
 **Assembler**
-: `mp.Assembler(library, placer, orienter=None)` builds one world from a site graph: one copy of `library[bead_type]` per site, each site bond joining one accepting port of each end. Every atom gets `frag_id` (its site's ordinal) and `mol_id` (its connected component, from 1). See [Assembly](../user-guide/02_assembly.md).
+: `mp.builder.Assembler(library, placer, orienter=None)` builds one world from a site graph: one copy of `library[bead_type]` per site, each site bond joining one accepting port of each end. Every atom gets `frag_id` (its site's ordinal) and `mol_id` (its connected component, from 1). See [Assembly](../user-guide/02_assembly.md).
 
 **Port**
 : A place where a unit may bond: an *(anchor, handle)* pair, where the handle is a real atom bonded to the anchor (usually the capping hydrogen) that leaves when the bond forms. Its kind decides its partner — `<` joins `>`, `$` joins `$`, `!` joins `!` — and a label and bond order must match. In CGsmiles, ports are the bonding descriptors (`[<]OCC[>]`).

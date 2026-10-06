@@ -8,6 +8,11 @@ The engine writes an input script to the working directory and runs::
 The ``-screen none`` flag suppresses duplicate stdout output; all
 per-timestep data is written exclusively to *log.lammps*.
 
+:meth:`LAMMPSEngine.generate_inputs` is the one LAMMPS deck writer: data
+file, force-field settings, init and input script, for a periodic frame or a
+box-free one. :meth:`LAMMPSEngine.minimize` and :meth:`LAMMPSEngine.md` run
+the same deck with their own command block.
+
 MPI and scheduler launchers are configured on the :class:`~molpy.engine.base.Engine`
 base class::
 
@@ -28,11 +33,15 @@ import tempfile
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from molrs.ff.forcefield import write_lammps_forcefield_str
+from molrs.io import read_lammps_data, write_lammps_data
+
 from .base import Engine
+from .script import Script
 
 if TYPE_CHECKING:
-    from molrs.ff import ForceField
-    from molrs import Frame
+    from molrs.ff.forcefield import ForceField
+    from molrs.store import Frame
 
 # Common LAMMPS binary names, tried in order when no executable is given.
 _LAMMPS_CANDIDATES = ("lmp", "lmp_serial", "lmp_mpi")
@@ -45,7 +54,7 @@ class LAMMPSEngine(Engine):
     ``lmp_serial``, or ``lmp_mpi`` depending on the build.
 
     Example:
-        >>> from molpy.core.script import Script
+        >>> from molpy.engine import Script
         >>> from molpy.engine import LAMMPSEngine
         >>>
         >>> script = Script.from_text(
@@ -161,6 +170,112 @@ class LAMMPSEngine(Engine):
             timeout=timeout,
             env=self._merged_env(),
         )
+
+    # ------------------------------------------------------------------
+    # Input generation (the one LAMMPS deck writer)
+    # ------------------------------------------------------------------
+
+    def generate_inputs(
+        self,
+        frame: Frame,
+        forcefield: ForceField,
+        output_dir: str | Path,
+        *,
+        prefix: str = "system",
+        atom_style: str = "full",
+        units: str = "real",
+        pair_style: str | None = None,
+        body: str | None = None,
+    ) -> dict[str, Path]:
+        """Write a complete LAMMPS deck for *frame* under *forcefield*.
+
+        Files written (given ``prefix="system"``):
+
+        * ``system.data`` — the structure (molrs's LAMMPS data writer).
+        * ``system.in.settings`` — molrs's LAMMPS force-field include: the
+          ``*_style`` line of every category the frame uses (built-in or a
+          registered force-field IR style; ``hybrid`` when a category spans
+          several styles), its coefficients, ``special_bonds`` and
+          ``pair_modify``. It is included after ``read_data``, where LAMMPS
+          rejects ``units``, so ``units`` is the init's.
+        * ``system.in.init`` — ``units``, ``atom_style``, ``boundary``,
+          ``neighbor`` and, when *pair_style* is given, that ``pair_style``
+          line (the include then leaves its own out).
+        * ``system.in`` — the input script: init, ``read_data``, settings,
+          then *body* (a starter minimise + NVT run by default).
+
+        A frame with a periodic box gets ``boundary p p p`` and binned
+        neighbour lists. A frame without one (``Atomistic.to_frame()``
+        carries no box) gets a non-periodic deck: molrs's data writer puts
+        the atoms inside the bounds of their coordinates widened by 1 length
+        unit on every side, ``boundary s s s`` shrink-wraps that box to the
+        atoms, and ``neighbor 2.0 nsq`` searches all pairs, since binning
+        needs a box wider than the pair cutoff.
+
+        molpy names no style itself: a style molrs can write is emitted and
+        one it cannot is refused by molrs, by name, before any file is
+        written.
+
+        Args:
+            frame: Typed structure (``type`` columns keyed to *forcefield*).
+            forcefield: The force field the settings are written from.
+            output_dir: Directory for the deck (created if absent).
+            prefix: Stem of the four file names.
+            atom_style: LAMMPS ``atom_style``.
+            units: LAMMPS ``units`` style; the coefficients are written in it.
+            pair_style: A ``pair_style`` line (without the command) that
+                replaces the force field's own.
+            body: Commands after the settings include; ``None`` writes the
+                starter minimise + NVT run.
+
+        Returns:
+            ``{"data", "settings", "init", "input"}`` mapped to the written
+            paths.
+        """
+        out = Path(output_dir)
+        out.mkdir(parents=True, exist_ok=True)
+        paths = {
+            "data": out / f"{prefix}.data",
+            "settings": out / f"{prefix}.in.settings",
+            "init": out / f"{prefix}.in.init",
+            "input": out / f"{prefix}.in",
+        }
+
+        # Settings first: a style molrs cannot write fails before any file is
+        # written. They carry the coefficients of the labels `frame` uses, the
+        # same labels the data file declares.
+        settings = write_lammps_forcefield_str(
+            forcefield,
+            frame,
+            skip_pair_style=pair_style is not None,
+            skip_units=True,
+            units=units,
+        )
+        write_lammps_data(paths["data"], frame)
+        paths["settings"].write_text(settings)
+
+        periodic = frame.box is not None and not frame.box.is_free
+        init = [
+            f"# molpy-generated LAMMPS init for {prefix}",
+            f"units {units}",
+            f"atom_style {atom_style}",
+            "boundary p p p" if periodic else "boundary s s s",
+            "neighbor 2.0 bin" if periodic else "neighbor 2.0 nsq",
+        ]
+        if pair_style is not None:
+            init.append(f"pair_style {pair_style}")
+        paths["init"].write_text("\n".join(init) + "\n")
+
+        paths["input"].write_text(
+            _INPUT_TEMPLATE.format(
+                prefix=prefix,
+                init=paths["init"].name,
+                data=paths["data"].name,
+                settings=paths["settings"].name,
+                body=(_STARTER_BODY if body is None else body).rstrip("\n"),
+            )
+        )
+        return paths
 
     # ------------------------------------------------------------------
     # High-level structure relaxation (frame in -> relaxed frame out)
@@ -329,15 +444,11 @@ class LAMMPSEngine(Engine):
     ) -> Frame:
         """Shared driver behind :meth:`minimize` / :meth:`md`.
 
-        Writes inputs, runs the *body* of LAMMPS commands wrapped in a standard
-        init + ``read_data`` + ``write_data`` scaffold, then reads back and
+        Writes the deck with :meth:`generate_inputs` (the script's
+        *pair_style*, the force field's ``special_bonds`` and ``pair_modify``
+        mix), runs *body* followed by ``write_data``, then reads back and
         splices the relaxed coordinates onto a copy of *frame*.
         """
-        from molpy.core.script import Script
-        from molrs.ff import write_lammps_forcefield
-
-        from molpy.io.data.lammps import read_lammps_data, write_lammps_data
-
         if frame.box is None:
             raise ValueError(
                 "LAMMPS relaxation needs a periodic box on the frame. Set it via "
@@ -350,41 +461,25 @@ class LAMMPSEngine(Engine):
             if workdir is not None
             else (self.work_dir or Path(tempfile.mkdtemp()))
         )
-        run_dir.mkdir(parents=True, exist_ok=True)
-        data_name, settings_name, out_name = (
-            "system.data",
-            "system.in.settings",
-            "relaxed.data",
-        )
-
-        write_lammps_data(run_dir / data_name, frame)
-        # The settings carry the coefficients of the labels `frame` uses, the
-        # same labels the data file declares. They are included after
-        # read_data, where LAMMPS rejects `units`; the script sets it above.
-        # skip_pair_style drops the pair_style line only (the script's): the
-        # force field's special_bonds and pair_modify mix stay, read after
-        # the script's pair_style.
-        write_lammps_forcefield(
-            run_dir / settings_name,
-            ff,
+        out_name = "relaxed.data"
+        paths = self.generate_inputs(
             frame,
-            skip_pair_style=True,
-            skip_units=True,
-            units=units,
-        )
-
-        text = _RELAX_TEMPLATE.format(
-            units=units,
+            ff,
+            run_dir,
             atom_style=atom_style,
+            units=units,
             pair_style=pair_style,
-            data=data_name,
-            settings=settings_name,
-            thermo=int(thermo),
-            body=body,
-            out=out_name,
+            body="\n".join(
+                [
+                    f"thermo {int(thermo)}",
+                    "thermo_style custom step temp pe ke etotal press",
+                    body,
+                    f"write_data {out_name} nocoeff",
+                ]
+            ),
         )
         self.run(
-            Script.from_text("relax", text, language="other"),
+            Script.from_path(paths["input"]),
             workdir=run_dir,
             capture_output=capture_output,
             check=True,
@@ -397,29 +492,34 @@ class LAMMPSEngine(Engine):
                 f"LAMMPS finished but did not write {out_path}; "
                 f"inspect {run_dir / 'log.lammps'}."
             )
-        relaxed = read_lammps_data(out_path, atom_style=atom_style).frame
+        relaxed = read_lammps_data(out_path, atom_style=atom_style)
         return _splice_coords(frame, relaxed)
 
 
-# Standard scaffold around a minimise / MD command block. The settings file,
-# included after ``read_data``, is molrs's LAMMPS force-field include: every
-# ``*_style`` line of the force field (any category, hybrid included) with its
-# coefficients, ``special_bonds`` and ``pair_modify``. Only the ``pair_style``
-# line is the caller's, set here.
-_RELAX_TEMPLATE = """\
-# molpy-generated LAMMPS relaxation script
-units {units}
-atom_style {atom_style}
-boundary p p p
-pair_style {pair_style}
+# The input script around a command block: the init, the structure, then the
+# settings include (molrs's LAMMPS force-field writer: every ``*_style`` line
+# with its coefficients, ``special_bonds`` and ``pair_modify``).
+_INPUT_TEMPLATE = """\
+# molpy-generated LAMMPS input for {prefix}
+include {init}
 read_data {data}
 include {settings}
-neighbor 2.0 bin
 neigh_modify every 1 delay 0 check yes
-thermo {thermo}
-thermo_style custom step temp pe ke etotal press
+
 {body}
-write_data {out} nocoeff
+"""
+
+# The default body: minimise, then a short NVT run to edit.
+_STARTER_BODY = """\
+minimize        1.0e-4 1.0e-6 1000 10000
+
+velocity        all create 300.0 12345 loop geom
+fix             1 all nvt temp 300.0 300.0 100.0
+timestep        1.0
+thermo          100
+thermo_style    custom step temp pe ke etotal press
+run             1000
+unfix           1
 """
 
 

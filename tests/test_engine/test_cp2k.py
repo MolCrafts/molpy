@@ -4,7 +4,7 @@ from unittest.mock import patch
 
 import pytest
 
-from molpy import Script
+from molpy.engine import Script
 from molpy.engine import CP2KEngine
 
 

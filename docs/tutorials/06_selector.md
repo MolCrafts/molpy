@@ -16,12 +16,7 @@ The simplest filters match one column: element symbols, type labels, and so on.
 
 ```python
 import molpy as mp
-from molpy import (
- ElementSelector,
- AtomTypeSelector,
- CoordinateRangeSelector,
- DistanceSelector,
-)
+from molpy import AtomTypeSelector, ElementSelector
 import numpy as np
 
 # The Frame schema declares a dtype per field: `type` is the string label and
@@ -47,26 +42,28 @@ print(hydrogens["element"]) # ['H', 'H']
 print(AtomTypeSelector(2, field="type_id")(atoms)["element"]) # ['H', 'H']
 ```
 
-## Geometric selectors
+## Selecting by position: regions
 
-`CoordinateRangeSelector` filters by a coordinate range along one axis. `DistanceSelector` filters by distance from a reference point. Both require `x`, `y`, `z` columns.
+Where an atom is — a slab, a sphere, a shell — is a geometric region's job.
+The regions are molrs's (`mp.Cuboid`, `mp.Sphere`, `mp.HalfSpace`, …); each has
+the same `mask(block)` and is callable on a block, and they compose with `&`,
+`|` and `~` into an `mp.Region`. They read the `x`, `y`, `z` columns.
 
 ```python
-right_half = CoordinateRangeSelector("x", min_value=2.5)(atoms)
+# x >= 2.5: the half-space whose outward normal points to -x
+right_half = mp.HalfSpace([-1.0, 0.0, 0.0], [2.5, 0.0, 0.0])(atoms)
 print(right_half["element"]) # ['H', 'O', 'N']
 
-near_origin = DistanceSelector(center=[0.0, 0.0, 0.0], max_distance=1.5)(atoms)
+near_origin = mp.Sphere([0.0, 0.0, 0.0], 1.5)(atoms)
 print(near_origin["element"]) # ['C', 'C']
 ```
 
-A shell selection — atoms between a minimum and maximum distance — is a common pattern for solvation analysis.
+A shell selection — atoms between a minimum and maximum distance — is a common
+pattern for solvation analysis: the outer sphere without the inner one.
 
 ```python
-shell = DistanceSelector(
- center=[2.0, 0.0, 0.0],
- min_distance=1.0,
- max_distance=2.5,
-)(atoms)
+center = [2.0, 0.0, 0.0]
+shell = (mp.Sphere(center, 2.5) & ~mp.Sphere(center, 1.0))(atoms)
 print(shell["element"])
 ```
 
@@ -75,9 +72,9 @@ print(shell["element"])
 The real power of selectors comes from composition. `&` means AND, `|` means OR, `~` means NOT. The result is a new selector that can be applied or composed further.
 
 ```python
-# (Carbon OR Oxygen) AND (x > 0.5)
-sel = (ElementSelector("C") | ElementSelector("O")) & CoordinateRangeSelector(
- "x", min_value=0.5
+# (Carbon OR Oxygen) AND (x >= 0.5): a selector composes with a region
+sel = (ElementSelector("C") | ElementSelector("O")) & mp.HalfSpace(
+ [-1.0, 0.0, 0.0], [0.5, 0.0, 0.0]
 )
 result = sel(atoms)
 print(result["element"]) # ['C', 'O']
@@ -91,9 +88,7 @@ Nested combinations let you express precise scientific queries concisely.
 
 ```python
 # Heavy atoms near a specific point
-heavy_near = ~ElementSelector("H") & DistanceSelector(
- center=[2.0, 0.0, 0.0], max_distance=2.5
-)
+heavy_near = ~ElementSelector("H") & mp.Sphere([2.0, 0.0, 0.0], 2.5)
 print(heavy_near(atoms)["element"])
 ```
 

@@ -9,9 +9,9 @@ from molpy import Atomistic
 from molpy.io import BondReactTemplate
 
 
-def _forcefield() -> mp.ForceField:
+def _forcefield() -> mp.ff.forcefield.ForceField:
     """Two atom types and two bond types; ``c3-oh`` is used only by the template."""
-    ff = mp.ForceField("hand")
+    ff = mp.ff.forcefield.ForceField("hand")
     atoms = ff.def_style("atom", "full")
     c3 = atoms.def_type("c3", mass=12.011)
     oh = atoms.def_type("oh", mass=15.999)

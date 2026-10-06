@@ -40,12 +40,17 @@ class TestEnvSpecResolve:
         assert prefix[1:3] == ["run", "-p"]
         assert Path(prefix[3]) == Path("/opt/conda/envs/at")
 
-    def test_venv_aliases_normalise_to_path(self):
-        for alias in ("venv", "pip", "virtualenv", "Venv", "PIP"):
-            spec = EnvSpec.resolve("/path/to/.venv", alias)
+    def test_venv_normalises_to_path(self):
+        for name in ("venv", "Venv"):
+            spec = EnvSpec.resolve("/path/to/.venv", name)
             assert spec.env_manager == "venv"
             assert isinstance(spec.env, Path)
             assert spec.env == Path("/path/to/.venv")
+
+    def test_venv_has_one_spelling(self):
+        for alias in ("pip", "virtualenv"):
+            with pytest.raises(ValueError, match="Unsupported env_manager"):
+                EnvSpec.resolve("/path/to/.venv", alias)
 
     def test_unsupported_manager(self):
         with pytest.raises(ValueError, match="Unsupported env_manager"):

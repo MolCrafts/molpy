@@ -78,8 +78,8 @@ class TestWriteMrecTrajectory:
         _assert_coords(loaded[0])
 
 
-def _water_forcefield() -> mp.ForceField:
-    ff = mp.ForceField(name="water", units="real")
+def _water_forcefield() -> mp.ff.forcefield.ForceField:
+    ff = mp.ff.forcefield.ForceField(name="water", units="real")
     atoms = ff.def_style("atom", "full")
     ow = atoms.def_type("OW", mass=15.999, charge=-0.834)
     hw = atoms.def_type("HW", mass=1.008, charge=0.417)
@@ -90,7 +90,7 @@ def _water_forcefield() -> mp.ForceField:
     return ff
 
 
-def _ff_rows(ff: mp.ForceField) -> dict:
+def _ff_rows(ff: mp.ff.forcefield.ForceField) -> dict:
     return {
         (style.category, style.name): {t.name: dict(t.params) for t in style.types}
         for style in ff.styles
@@ -105,7 +105,7 @@ class TestForceFieldSection:
         assert "forcefield" in mp.io.mrec_sections(path)
         section = mp.io.read_mrec_forcefield(path)
         assert isinstance(section, mp.io.mrec.ForceFieldSection)
-        loaded = mp.ForceField.from_section(section)
+        loaded = mp.ff.forcefield.ForceField.from_section(section)
         assert loaded.units == "real"
         assert _ff_rows(loaded) == _ff_rows(ff)
         _assert_coords(mp.io.read_mrec(path))
@@ -114,7 +114,9 @@ class TestForceFieldSection:
         path = tmp_path / "ff.mrec"
         ff = _water_forcefield()
         mp.io.write_mrec_forcefield(path, ff)
-        loaded = mp.ForceField.from_section(mp.io.read_mrec_forcefield(path))
+        loaded = mp.ff.forcefield.ForceField.from_section(
+            mp.io.read_mrec_forcefield(path)
+        )
         assert _ff_rows(loaded) == _ff_rows(ff)
 
     def test_absent_section_reads_none(self, tmp_path: Path) -> None:

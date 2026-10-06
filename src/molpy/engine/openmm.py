@@ -2,7 +2,7 @@
 
 Generates OpenMM input files (PDB + XML force field + Python simulation
 script) from :class:`~molpy.Frame` and
-:class:`~molpy.ForceField` objects.  OpenMM itself is **not**
+:class:`~molpy.ff.forcefield.ForceField` objects.  OpenMM itself is **not**
 required for input generation; it is only needed for
 :meth:`~OpenMMEngine.serialize_system`.
 
@@ -38,9 +38,8 @@ from typing import TYPE_CHECKING, Any, Literal
 from .base import Engine
 
 if TYPE_CHECKING:
-    from molrs import Frame
-
-    from molrs.ff import ForceField
+    from molrs.ff.forcefield import ForceField
+    from molrs.store import Frame
 
 PathLike = str | Path
 
@@ -168,7 +167,7 @@ class OpenMMEngine(Engine):
     """OpenMM molecular dynamics engine.
 
     Generates a complete set of OpenMM input files from MolPy
-    :class:`~molpy.Frame` and :class:`~molpy.ForceField`
+    :class:`~molpy.Frame` and :class:`~molpy.ff.forcefield.ForceField`
     objects.  OpenMM itself is **not** required for input generation; it is
     only needed for :meth:`serialize_system`.
 
@@ -210,8 +209,7 @@ class OpenMMEngine(Engine):
                 Prepended before *executable* when running the script.
             env_vars: Extra environment variables forwarded to the subprocess.
             env: Conda env name / prefix, or venv prefix (with ``env_manager``).
-            env_manager: ``"conda"``, ``"venv"``, ``"pip"``, or
-                ``"virtualenv"`` — same contract as
+            env_manager: ``"conda"`` or ``"venv"`` — same contract as
                 :class:`~molpy.wrapper.env.EnvSpec`.
             check_executable: Verify *executable* is available at construction.
                 Set ``False`` when only using :meth:`generate_inputs`.
@@ -317,7 +315,7 @@ class OpenMMEngine(Engine):
 
         Args:
             frame: :class:`~molpy.Frame` with atom positions.
-            forcefield: MolPy :class:`~molpy.ForceField`
+            forcefield: A :class:`~molpy.ff.forcefield.ForceField`
                 containing interaction parameters.
             config: Simulation parameters.
             output_dir: Directory where files are written (created if absent).
@@ -336,9 +334,8 @@ class OpenMMEngine(Engine):
         ff_path = out / ff_filename
         script_path = out / script_filename
 
-        from molrs.ff import write_forcefield_xml
-
-        from molpy.io.writers import write_pdb
+        from molrs.ff.forcefield import write_forcefield_xml
+        from molrs.io import write_pdb
 
         write_pdb(pdb_path, frame)
         write_forcefield_xml(ff_path, forcefield)
@@ -372,7 +369,7 @@ class OpenMMEngine(Engine):
 
         Args:
             frame: :class:`~molpy.Frame` with atom positions.
-            forcefield: MolPy :class:`~molpy.ForceField`.
+            forcefield: A :class:`~molpy.ff.forcefield.ForceField`.
             config: Simulation parameters.
             output_dir: Output directory.
             pdb_filename: PDB coordinate file name.

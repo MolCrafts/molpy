@@ -3,7 +3,7 @@
 import numpy as np
 import pytest
 
-from molpy.builder.polymer.sequences import (
+from molpy.builder import (
     AlternatingSequenceGenerator,
     BlockSequenceGenerator,
     SequenceGenerator,

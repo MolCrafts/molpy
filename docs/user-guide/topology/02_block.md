@@ -8,8 +8,8 @@ A sequence is a path whose sites name different units. `{[#EO]|6[#PO]|4}` is six
 import molpy as mp
 from eo_kit import library
 
-sites = mp.CGSmilesIR("{[#EO]|6[#PO]|4}").to_coarsegrain()
-block = mp.Assembler(library(), mp.GrowthPlacer()).assemble(sites, mp.Atomistic)
+sites = mp.io.CGSmilesIR("{[#EO]|6[#PO]|4}").to_coarsegrain()
+block = mp.builder.Assembler(library(), mp.builder.GrowthPlacer()).assemble(sites, mp.Atomistic)
 ```
 
 **Check:** 10 units, 84 atoms, 2 open ports.

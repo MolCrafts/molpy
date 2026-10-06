@@ -6,7 +6,7 @@ import numpy as np
 import pytest
 
 from molpy import Block, Frame
-from molpy import ForceField
+from molpy.ff.forcefield import ForceField
 from molpy.engine.openmm import OpenMMEngine, OpenMMSimulationConfig
 
 

@@ -1,17 +1,24 @@
+"""Selectors: boolean row masks over a :class:`~molpy.Block` by column value.
+
+A selector picks rows by what a column holds (a type, an element, an atom
+id). Selecting by *where* an atom is — a slab, a sphere, a shell — is a
+geometric region's job: every native region (``mp.Cuboid``, ``mp.Sphere``,
+``mp.HalfSpace``, their ``&`` / ``|`` / ``~`` compositions) has the same
+``mask(block)`` and ``region(block)`` surface, and a selector composes with
+one through ``&`` / ``|``.
+"""
+
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING
 
 import numpy as np
-from molrs import NeighborQuery
 
 if TYPE_CHECKING:
-    from molrs import Block
+    from molrs.store import Block
 
 __all__ = [
     "AtomIndexSelector",
     "AtomTypeSelector",
-    "CoordinateRangeSelector",
-    "DistanceSelector",
     "ElementSelector",
     "MaskPredicate",
 ]
@@ -113,122 +120,6 @@ class ElementSelector(MaskPredicate):
                 f"(available: {list(block.keys())})"
             )
         return block[self.field] == self.element
-
-
-class CoordinateRangeSelector(MaskPredicate):
-    """Select atoms within a coordinate range."""
-
-    def __init__(
-        self,
-        axis: str,
-        min_value: float | None = None,
-        max_value: float | None = None,
-    ) -> None:
-        """
-        Initialize coordinate range Selector.
-
-        Args:
-            axis: The coordinate axis ("x", "y", or "z")
-            min_value: Minimum coordinate value (inclusive)
-            max_value: Maximum coordinate value (inclusive)
-        """
-        if axis not in ["x", "y", "z"]:
-            raise ValueError("axis must be 'x', 'y', or 'z'")
-
-        if min_value is not None and max_value is not None and min_value > max_value:
-            raise ValueError("min_value cannot be greater than max_value")
-
-        self.axis = axis
-        self.min_value = min_value
-        self.max_value = max_value
-
-    def mask(self, block: "Block") -> np.ndarray:
-        if self.axis not in block:
-            raise KeyError(
-                f"CoordinateRangeSelector: block has no '{self.axis}' column "
-                f"(available: {list(block.keys())})"
-            )
-
-        values = block[self.axis]
-        mask = np.ones(block.nrows, dtype=bool)
-
-        if self.min_value is not None:
-            mask &= values >= self.min_value
-
-        if self.max_value is not None:
-            mask &= values <= self.max_value
-
-        return mask
-
-
-class DistanceSelector(MaskPredicate):
-    """Select atoms within a distance from a reference point."""
-
-    def __init__(
-        self,
-        center: list[float] | np.ndarray,
-        max_distance: float,
-        min_distance: float | None = None,
-    ) -> None:
-        """
-        Initialize distance-based Selector.
-
-        Args:
-            center: Reference point [x, y, z]
-            max_distance: Maximum distance from center (inclusive)
-            min_distance: Minimum distance from center (inclusive, optional)
-        """
-        # Convert center to numpy array and validate
-        if isinstance(center, list):
-            self.center = np.array(center, dtype=float)
-        elif isinstance(center, np.ndarray):
-            self.center = center.astype(float)
-        else:
-            raise TypeError("center must be a list[float] or np.ndarray")
-
-        if len(self.center) != 3:
-            raise ValueError("center must have exactly 3 coordinates")
-
-        if max_distance < 0:
-            raise ValueError("max_distance must be non-negative")
-
-        if min_distance is not None:
-            if min_distance < 0:
-                raise ValueError("min_distance must be non-negative")
-            if min_distance > max_distance:
-                raise ValueError("min_distance cannot be greater than max_distance")
-
-        self.max_distance = max_distance
-        self.min_distance = min_distance
-
-    def mask(self, block: "Block") -> np.ndarray:
-        required_fields = ["x", "y", "z"]
-        missing = [field for field in required_fields if field not in block]
-        if missing:
-            raise KeyError(
-                f"DistanceSelector: block is missing coordinate column(s) {missing} "
-                f"(available: {list(block.keys())})"
-            )
-
-        positions = np.column_stack([block["x"], block["y"], block["z"]])
-        mask = np.zeros(block.nrows, dtype=bool)
-        if self.max_distance == 0.0:
-            # NeighborQuery requires a positive cell width. Exact coincidence
-            # is the only valid zero-radius result, so keep this API edge case
-            # as lightweight Python sugar.
-            return np.all(positions == self.center, axis=1)
-
-        neighbors = NeighborQuery.free(positions, self.max_distance).query(
-            self.center.reshape(1, 3)
-        )
-        selected = neighbors.point_indices()
-        if self.min_distance is not None:
-            dist_sq = neighbors.dist_sq()
-            if dist_sq is None:
-                raise ValueError("Neighbors table has no dist_sq column")
-            selected = selected[np.sqrt(dist_sq) >= self.min_distance]
-        mask[selected] = True
-        return mask
 
 
 # ------------------------------------------------------------------ combinators

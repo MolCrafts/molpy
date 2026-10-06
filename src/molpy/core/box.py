@@ -10,12 +10,12 @@ vocabulary of the native ``style`` strings.
 
 from enum import Enum
 
-import molrs
 import numpy as np
+from molrs.spatial import Box as _NativeBox
 from numpy.typing import ArrayLike
 
 
-class Box(molrs.Box):
+class Box(_NativeBox):
     """Simulation box, accepted by every native API without conversion.
 
     Args:

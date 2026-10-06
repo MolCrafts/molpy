@@ -1,6 +1,6 @@
 # The Engine Module Bridges Python Data and MD Programs
 
-An `Engine` turns your typed system into ready-to-run input for LAMMPS, CP2K, or OpenMM — and either hands the files to your scheduler or presses start itself.
+An `Engine` turns your typed system into ready-to-run input for LAMMPS, GROMACS, OpenMM, or CP2K — and either hands the files to your scheduler or presses start itself.
 
 ---
 
@@ -10,7 +10,7 @@ You have built a molecular system, typed its atoms, and exported the coordinate 
 
 **An Engine is MolPy's adapter between Python data objects and a specific MD program — it knows how to write engine-readable input files and how to invoke the executable.**
 
-What the engine module does not do is equally important. It does not build molecules, assign atom types, or analyze trajectories. It does not write LAMMPS data files or force field coefficient files — that is `mp.io`'s job. The engine is responsible for exactly one thing: the *control script* that tells the MD program what physics to simulate and where to find the coordinate data that `mp.io` already wrote.
+What the engine module does not do is equally important. It does not build molecules, assign atom types, or analyze trajectories, and it formats no file itself: the structure and force-field files come from molrs's writers (`mp.io`, `mp.ff.forcefield`). Each engine has **one** input writer, `generate_inputs`, which calls those writers and adds the control files that tell the MD program what physics to simulate and where to find them.
 
 ---
 
@@ -20,13 +20,68 @@ Think of an Engine like a laboratory instrument controller that operates in two 
 
 This separation is intentional. It lets you inspect and hand-edit the generated files before committing to a run, or copy them to an HPC cluster and submit them to a job scheduler without ever touching the engine's `run()` method. Generate-only is not a degraded mode; it is the primary workflow on any system where the MD binary is not installed locally.
 
-For LAMMPS and CP2K the two steps are fully decoupled: you build a `Script` object yourself and either save it to disk or pass it to `run()`. For OpenMM the engine can generate all three required files — PDB, XML force field, and Python simulation script — from MolPy's `Frame` and `ForceField` objects via `generate_inputs()`, and that method does not require OpenMM to be installed.
+`LAMMPSEngine.generate_inputs(frame, ff, out)` writes a complete LAMMPS deck, `GROMACSEngine.generate_inputs(frame, ff, out)` a GROMACS input set, and `OpenMMEngine.generate_inputs(frame, ff, config, out)` the PDB, XML force field and Python driver; none of them needs the program installed. For a hand-written control script (and for CP2K), you build a `Script` object yourself and either save it to disk or pass it to `run()`.
 
 ---
 
 ## Act 1 — Generating input files without running
 
-### LAMMPS: writing a control script to disk
+### LAMMPS: the whole deck from a typed frame
+
+`generate_inputs` writes four files: the data file, the force-field settings
+(molrs's include: every `*_style` line the frame's types use, their
+coefficients, `special_bonds`, `pair_modify`), an init with `units`,
+`atom_style`, `boundary` and `neighbor`, and the input script that includes
+them and runs a starter minimise + NVT body (`body=` replaces it). A frame
+with a periodic box gets `boundary p p p`; one without (an
+`Atomistic.to_frame()`) gets a shrink-wrapped, non-periodic deck.
+
+```python
+import molpy as mp
+
+water = mp.Frame(
+    blocks={
+        "atoms": {
+            "type": ["OW", "HW", "HW"],
+            "charge": [-0.834, 0.417, 0.417],
+            "mol_id": [1, 1, 1],
+            "x": [0.0, 0.9572, -0.24],
+            "y": [0.0, 0.0, 0.927],
+            "z": [0.0, 0.0, 0.0],
+        },
+        "bonds": {"atomi": [0, 0], "atomj": [1, 2], "type": ["OW-HW"] * 2},
+    }
+)
+water.box = mp.Box.cube(20.0)
+
+ff = mp.ff.forcefield.ForceField("tip3p", units="real")
+atoms = ff.def_style("atom", "full")
+ow = atoms.def_type("OW", mass=15.999, charge=-0.834, element="O")
+hw = atoms.def_type("HW", mass=1.008, charge=0.417, element="H")
+ff.def_style("bond", "harmonic").def_type("OW-HW", ow, hw, k=450.0, r0=0.9572)
+pairs = ff.def_style("pair", "lj/cut", {"cutoff": 10.0})
+pairs.def_type("OW", ow, epsilon=0.1521, sigma=3.1507)
+pairs.def_type("HW", hw, epsilon=0.0, sigma=0.0)
+ff.def_style("pair", "coul/cut", {"cutoff": 10.0})  # the charges' pair term
+
+deck = mp.engine.LAMMPSEngine(check_executable=False).generate_inputs(
+    water, ff, "./lammps_run"
+)
+print(sorted(deck))  # ['data', 'init', 'input', 'settings']
+```
+
+### GROMACS: structure, topology and run parameters
+
+```python
+gmx = mp.engine.GROMACSEngine(check_executable=False)
+files = gmx.generate_inputs(water, ff, "./gromacs_run", temperature=300.0)
+print(sorted(files))  # ['em', 'gro', 'nvt', 'top']
+```
+
+`run(Script.from_path(files["em"]))` grompp's the `.mdp` against the `.gro`
+and `.top`, then mdrun's it (under the engine's `launcher`).
+
+### LAMMPS: writing a control script by hand
 
 The `Script` class holds the text of an input file and knows how to write it to disk. `Script.from_text` creates one from a string. Before saving you can call `script.preview()` to inspect the content — useful when the script is assembled programmatically from many fragments.
 
@@ -46,7 +101,7 @@ frame.box = mp.Box.cube(20.0)
 ```python
 import molpy as mp
 from molpy.engine import LAMMPSEngine
-from molpy import Script
+from molpy.engine import Script
 
 lammps_input = """\
 units           real
@@ -67,7 +122,7 @@ script.save("./submit/input.lmp")
 # -> ./submit/input.lmp written
 ```
 
-The include written by `mp.io.write_lammps_forcefield` already declares every style, so the script does not repeat them; a different `pair_style` issued after it would discard its pair coefficients (for long-range electrostatics, write the include with `skip_pair_style=True` and declare the pair style in the script before `include`). The saved control script, together with the `system.data` and `system.ff` pair produced by `mp.io.write_lammps_data` and `mp.io.write_lammps_forcefield` (there is no bundled `.in` — the control script above *is* the input deck, written separately by `Script.save`), is a complete LAMMPS job. Drop all three into a Slurm submission script and the cluster needs nothing from MolPy.
+The include written by `mp.ff.forcefield.write_lammps_forcefield` already declares every style, so the script does not repeat them; a different `pair_style` issued after it would discard its pair coefficients (for long-range electrostatics, write the include with `skip_pair_style=True` and declare the pair style in the script before `include`). The saved control script, together with the `system.data` and `system.ff` pair produced by `mp.io.write_lammps_data` and `mp.ff.forcefield.write_lammps_forcefield` (there is no bundled `.in` — the control script above *is* the input deck, written separately by `Script.save`), is a complete LAMMPS job. Drop all three into a Slurm submission script and the cluster needs nothing from MolPy.
 
 `Script.from_path` is the mirror image — load an existing file, modify it programmatically, and save it back or pass it to `run()`.
 
@@ -87,7 +142,7 @@ from pathlib import Path
 from molpy.engine import OpenMMEngine, OpenMMSimulationConfig
 
 Path("./omm_run").mkdir(parents=True, exist_ok=True)
-ff = mp.ForceField("water")
+ff = mp.ff.forcefield.ForceField("water")
 
 config = OpenMMSimulationConfig(
     ensemble="NPT",
@@ -201,28 +256,26 @@ Use generate-only when you are submitting to a cluster scheduler, when you want 
 
 ## Adding a new engine takes three methods
 
-Every engine subclasses `Engine` and implements three things: a `name` property that returns a human-readable identifier, `_get_default_extension()` that returns the file extension for the primary input file, and `_execute()` that builds the subprocess command and calls `subprocess.run`. The base class handles working-directory management, script normalization, launcher prefixing, and Conda environment wrapping.
+Every engine subclasses `Engine` and implements three things: a `name` property that returns a human-readable identifier, `_get_default_extension()` that returns the file extension for the primary input file, and `_execute()` that builds the subprocess command and calls `subprocess.run`. The base class handles working-directory management, script normalization, launcher prefixing, and Conda environment wrapping. An engine that writes its own input set adds one `generate_inputs`, calling molrs's writers for every file it does not template itself.
 
 ```python
-from molpy.engine.base import Engine
+from molpy.engine import Engine
 import subprocess
 from pathlib import Path
 
 
-class GromacsEngine(Engine):
+class NamdEngine(Engine):
     @property
     def name(self) -> str:
-        return "GROMACS"
+        return "NAMD"
 
     def _get_default_extension(self) -> str:
-        return ".mdp"
+        return ".namd"
 
     def _execute(
         self, run_dir: Path, capture_output=False, check=True, timeout=None, **kwargs
     ):
-        cmd = self._build_full_command(
-            ["grompp", "-f", self.input_script.path.name, "-o", "topol.tpr"]
-        )
+        cmd = self._build_full_command([self.input_script.path.name])
         return subprocess.run(
             cmd,
             cwd=run_dir,
@@ -241,4 +294,4 @@ class GromacsEngine(Engine):
 
 - [I/O Subsystem](11_io.md) — writing LAMMPS data files, force field coefficient files, PDB and GRO files; the engine assumes these files exist before it runs.
 - [PEO–LiTFSI Electrolyte via AmberTools](13_ambertools_integration.md) — an end-to-end workflow that writes AMBER input files and invokes external tools, illustrating the same generate-then-run pattern applied to a different toolchain.
-- API Reference: `molpy.engine`, `mp.Script`.
+- API Reference: `molpy.engine`, `mp.engine.Script`.

@@ -30,7 +30,7 @@ UNITS = {
 conformer = mp.Conformer(seed=42)
 library = {
     name: conformer.generate(
-        mp.SmilesIR.from_fragment(body).to_template()
+        mp.io.SmilesIR.from_fragment(body).to_template()
     )[0]
     for name, body in UNITS.items()
 }
@@ -63,7 +63,7 @@ The monomer and end-group masses come from the unit library above, so a planned 
 
 ```
 import numpy as np
-from molpy.builder.polymer import (
+from molpy.builder import (
     SchulzZimmPolydisperse,
     UniformPolydisperse,
     PoissonPolydisperse,
@@ -251,17 +251,17 @@ plt.show()
 
 A planned `Chain` carries its monomer sequence. Written as a CGsmiles string between the two caps — `{[#HEAD][#Sty][#Sty][#MA]...[#TAIL]}` — it is the chain's topology: `to_coarsegrain()` turns it into a site graph with one site per unit and one bond per junction.
 
-`mp.Assembler` places one copy of `library[bead_type]` per site and joins one port of each neighbour per bond, removing the two leaving hydrogens. `GrowthPlacer` needs no site positions: it grows the chain from its first unit, setting each copy's anchor where its parent's leaving hydrogen was. One assembler serves every sequence the planner sampled, because both monomers and both caps come from one library. Every port is consumed, so the chains have no open ports left.
+`mp.builder.Assembler` places one copy of `library[bead_type]` per site and joins one port of each neighbour per bond, removing the two leaving hydrogens. `GrowthPlacer` needs no site positions: it grows the chain from its first unit, setting each copy's anchor where its parent's leaving hydrogen was. One assembler serves every sequence the planner sampled, because both monomers and both caps come from one library. Every port is consumed, so the chains have no open ports left.
 
 ```
-assembler = mp.Assembler(library, mp.GrowthPlacer())
+assembler = mp.builder.Assembler(library, mp.builder.GrowthPlacer())
 
 sz_chains = results["Schulz-Zimm"]
 n_chains = 5  # a few chains for this guide; use len(sz_chains) for a production run
 atomistic_chains = []
 for chain in sz_chains[:n_chains]:
     notation = "{[#HEAD]" + "".join(f"[#{m}]" for m in chain.monomers) + "[#TAIL]}"
-    sites = mp.CGSmilesIR(notation).to_coarsegrain()
+    sites = mp.io.CGSmilesIR(notation).to_coarsegrain()
     atomistic_chains.append(assembler.assemble(sites, mp.Atomistic))
 
 for chain, built in zip(sz_chains, atomistic_chains):
@@ -276,7 +276,7 @@ for chain, built in zip(sz_chains, atomistic_chains):
 Assembly assigns no force-field types. Each finished chain is an ordinary `mp.Atomistic`, so it is typed like any other molecule; the typifier's `forcefield()` then holds the parameters it assigned, ready for export.
 
 ```
-from molpy.typifier import OPLSAATypifier
+from molpy.ff.typifier import OPLSAATypifier
 
 typifier = OPLSAATypifier(strict=True)
 typed_chains = [typifier.typify(chain) for chain in atomistic_chains]
@@ -311,7 +311,7 @@ packed = GenCanPack().with_seed(42).run(targets, max_loops=200).frame  # carries
 packed.box = mp.Box.cube(length=box_length)
 
 mp.io.write_lammps_data("05_output/system.data", packed)
-mp.io.write_lammps_forcefield("05_output/system.ff", ff, packed)
+mp.ff.forcefield.write_lammps_forcefield("05_output/system.ff", ff, packed)
 print(f"packed: {packed['atoms'].nrows} atoms, box: {box_length:.1f} A")
 ```
 
@@ -324,7 +324,7 @@ Writing the data file is only half the story. To actually run the simulation, LA
 The code below builds a minimal equilibration protocol for the packed system. It reads the `system.data` and `system.ff` written above. The include already declares every style, the mixing rule (geometric, as OPLS-AA defines it) and `special_bonds`, so the script does not repeat them: a `pair_style` of another kind issued after the include would discard the pair coefficients it just set. For long-range electrostatics, write the include with `write_lammps_forcefield(..., skip_pair_style=True)` and declare `pair_style`, `pair_modify` and `special_bonds` in the script before `include`, as the [AmberTools guide](13_ambertools_integration.md) does.
 
 ```
-from molpy import Script
+from molpy.engine import Script
 from molpy.engine import LAMMPSEngine
 
 # Build the LAMMPS input script line-by-line.
@@ -369,7 +369,7 @@ print(lmp_script.preview(max_lines=12))
 
 ## The notation describes one chain; the ensemble is code
 
-MolPy reads CGsmiles (`mp.CGSmilesIR`), and every chain above passed through it: the units are CGsmiles fragments and each sampled sequence is a CGsmiles string. What a CGsmiles string does not hold is the ensemble — the monomer weights, the chain-length distribution and the target system mass. Those stay ordinary Python objects (`WeightedSequenceGenerator`, a distribution, `SystemPlanner`), which are easier to inspect, debug and parameterise than a single string. BigSMILES and G-BigSMILES are not parsed.
+MolPy reads CGsmiles (`mp.io.CGSmilesIR`), and every chain above passed through it: the units are CGsmiles fragments and each sampled sequence is a CGsmiles string. What a CGsmiles string does not hold is the ensemble — the monomer weights, the chain-length distribution and the target system mass. Those stay ordinary Python objects (`WeightedSequenceGenerator`, a distribution, `SystemPlanner`), which are easier to inspect, debug and parameterise than a single string. BigSMILES and G-BigSMILES are not parsed.
 
 ## Troubleshooting
 

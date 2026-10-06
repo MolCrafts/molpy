@@ -58,7 +58,7 @@ The diagram below illustrates the standard data flow through a MolPy pipeline. E
 
 ```text
 SMILES / CGsmiles / file
-        │  mp.io.read_* · mp.SmilesIR · mp.CGSmilesIR
+        │  mp.io.read_* · mp.io.SmilesIR · mp.io.CGSmilesIR
         ▼
 ┌───────────────────────────┐
 │ Atomistic                 │  editable molecular graph:

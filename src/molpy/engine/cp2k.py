@@ -38,7 +38,7 @@ class CP2KEngine(Engine):
     and ``&MOTION`` (or ``&ENERGY``) sections.
 
     Example:
-        >>> from molpy.core.script import Script
+        >>> from molpy.engine import Script
         >>> from molpy.engine import CP2KEngine
         >>>
         >>> inp = (

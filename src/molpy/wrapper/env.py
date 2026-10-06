@@ -7,9 +7,9 @@ Supported managers
 ------------------
 * ``None`` + ``env is None`` — system environment (current ``PATH``).
 * ``"conda"`` — ``conda run -n <name>`` or ``conda run -p <prefix>``.
-* ``"venv"`` / ``"pip"`` / ``"virtualenv"`` — inject ``<prefix>/bin``
-  (or ``Scripts`` on Windows) into ``PATH``.  Covers standard venv,
-  virtualenv, and uv-created environments (same layout).
+* ``"venv"`` — inject ``<prefix>/bin`` (or ``Scripts`` on Windows) into
+  ``PATH``.  Covers standard venv, virtualenv, and uv-created environments
+  (same layout).
 
 Path contract
 -------------
@@ -35,8 +35,7 @@ from typing import Literal, Mapping
 
 ManagerKind = Literal["conda", "venv"]
 
-_VENV_ALIASES = frozenset({"venv", "pip", "virtualenv"})
-_SUPPORTED = "'conda', 'venv' (aliases: 'pip', 'virtualenv')"
+_SUPPORTED = "'conda', 'venv'"
 
 
 def _looks_like_path(value: str) -> bool:
@@ -105,8 +104,7 @@ class EnvSpec:
 
         Args:
             env: Conda env name / prefix, or venv prefix (``str | Path``).
-            env_manager: ``"conda"``, ``"venv"``, ``"pip"``, or
-                ``"virtualenv"``.
+            env_manager: ``"conda"`` or ``"venv"``.
 
         Returns:
             A frozen :class:`EnvSpec`.
@@ -126,7 +124,7 @@ class EnvSpec:
             )
 
         manager = env_manager.strip().lower()
-        if manager in _VENV_ALIASES:
+        if manager == "venv":
             kind: ManagerKind = "venv"
         elif manager == "conda":
             kind = "conda"

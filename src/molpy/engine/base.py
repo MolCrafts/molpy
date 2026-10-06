@@ -29,7 +29,7 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
-from molpy.core.script import Script
+from .script import Script
 from molpy.wrapper.env import EnvSpec
 
 
@@ -44,7 +44,7 @@ class Engine(ABC):
     Environment isolation uses the shared
     :class:`~molpy.wrapper.env.EnvSpec` contract (same as wrappers): omit
     both ``env`` and ``env_manager`` for the system ``PATH``, or set both
-    explicitly (``"conda"``, ``"venv"`` / ``"pip"`` / ``"virtualenv"``).
+    explicitly (``"conda"`` or ``"venv"``).
 
     Attributes:
         executable: Path or command to the engine binary.
@@ -62,7 +62,7 @@ class Engine(ABC):
             call (or ``None`` before the first call).
 
     Example:
-        >>> from molpy.core.script import Script
+        >>> from molpy.engine import Script
         >>> from molpy.engine import LAMMPSEngine
         >>>
         >>> script = Script.from_text(
@@ -99,8 +99,7 @@ class Engine(ABC):
             env: Conda env name / prefix, or venv prefix.  Must be provided
                 together with *env_manager* (see
                 :class:`~molpy.wrapper.env.EnvSpec`).
-            env_manager: ``"conda"``, ``"venv"``, ``"pip"``, or
-                ``"virtualenv"``.  Conda isolation uses
+            env_manager: ``"conda"`` or ``"venv"``.  Conda isolation uses
                 ``conda run --no-capture-output``; venv injects ``PATH``.
             check_executable: Verify the executable is available at construction
                 time (system ``PATH`` or the configured env).  Set to
@@ -221,7 +220,7 @@ class Engine(ABC):
     ) -> subprocess.CompletedProcess:
         """Write scripts to disk and execute the engine.
 
-        Accepts scripts as :class:`~molpy.core.script.Script` objects, raw
+        Accepts scripts as :class:`~molpy.engine.Script` objects, raw
         strings, :class:`~pathlib.Path` objects, or a list thereof.  If
         *workdir* is given it is used for this call only — ``self.work_dir``
         is **not** modified.
@@ -322,7 +321,7 @@ class Engine(ABC):
         Prefers a script tagged ``"input"``; falls back to the first script.
 
         Returns:
-            The primary :class:`~molpy.core.script.Script`, or ``None`` if
+            The primary :class:`~molpy.engine.Script`, or ``None`` if
             :attr:`scripts` is empty.
         """
         for script in self.scripts:

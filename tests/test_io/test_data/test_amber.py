@@ -247,7 +247,7 @@ def test_inpcrd_atom_count_mismatch(tmp_inpcrd_dir):
         "z": np.zeros(2),
     }
 
-    with pytest.raises(ValueError, match="atoms block has 2.*but inpcrd has 3"):
+    with pytest.raises(OSError, match="atoms block has 2 rows, but the inpcrd has 3"):
         mp.io.read_amber_inpcrd(inpcrd_file, existing_frame)
 
 

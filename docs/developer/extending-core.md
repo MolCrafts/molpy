@@ -43,7 +43,9 @@ requires, in order:
 1. Define its storage and relation arity in molrs.
 2. Teach native copy/merge/extract/topology and Frame projection about it.
 3. Expose a native view class and graph factory in molrs.
-4. Re-export that same object on the molpy root (`mp.<Name>`); add only Python syntax sugar.
+4. Export it from its molrs subsystem (`molrs.system`, …); molpy's root
+   flattens that subsystem by identity, so `mp.<Name>` follows with no molpy
+   edit beyond the root's explicit import list.
 5. Update relevant readers/writers and add Rust, binding, and molpy integration tests.
 
 If the concept is only an annotation, prefer a typed field on an existing node

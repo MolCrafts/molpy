@@ -9,7 +9,7 @@ from molpy.builder import PackingTemplate
 
 
 def _with_hydrogens(smiles: str) -> mp.Atomistic:
-    return mp.Perceive().find_hydrogens(mp.SmilesIR(smiles).to_atomistic())
+    return mp.Perceive().find_hydrogens(mp.io.SmilesIR(smiles).to_atomistic())
 
 
 def test_hydrogens_are_the_h_rows_of_the_frame() -> None:

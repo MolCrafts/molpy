@@ -157,7 +157,7 @@ def list_forcefields() -> list[str]:
         >>> from molpy.data import list_forcefields
         >>> forcefields = list_forcefields()
         >>> print(forcefields)
-        ["alpha.ff", "clp.xml", "tip3p.xml"]
+        ["clp.xml", "tip3p.xml"]
     """
     return [Path(f).name for f in list_files("forcefield", exclude_python=True)]
 

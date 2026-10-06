@@ -3,7 +3,7 @@
 Every time-correlation function on these pages — [VACF](vacf.md),
 [JACF](jacf.md), [Dielectric](dielectric.md), [Spectra](spectra.md) — is built
 from the same three operations: correlate a series with its own past, taper it,
-and transform it. `molpy.compute.signal` exposes those operations directly, for
+and transform it. `molpy.signal` exposes those operations directly, for
 when the packaged computes do not fit the series you have.
 
 They are module-level functions rather than classes, because they are pure array
@@ -32,7 +32,7 @@ $P$ has an autocorrelation that is also a cosine of period $P$:
 
 ```python
 import numpy as np
-from molpy.compute import signal
+from molpy import signal
 
 t = np.arange(2048, dtype=float)
 series = np.ascontiguousarray(np.cos(2 * np.pi * t / 64))   # period 64 frames

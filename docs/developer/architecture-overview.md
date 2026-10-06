@@ -4,22 +4,25 @@ MolPy is a layered toolkit with explicit data flow and minimal magic. This page 
 
 ## Module responsibilities
 
-Each package has one clear responsibility with minimal coupling to its siblings:
+Each package has one job, and molpy is a thin layer over molrs: every native
+name is the molrs object, re-exported by identity, and molpy keeps no parallel
+IR, I/O, geometry, units or regions. A molrs subsystem molpy has a namespace
+for is mirrored under its molrs name; the data-model subsystems are flattened
+onto the root.
 
 | Package | Purpose |
 |---------|---------|
-| `core` | molpy's own data-model pieces: `Box`, `Trajectory`, `Region`s, selectors, `UnitSystem`, `Config`, `Script`, `fields` — all reached from the molpy root, never as `molpy.core.X` |
-| `builder` | Polymer planning (sequences, chain-length distributions), nanostructures, crystals, virtual sites, topology finalization; site-graph assembly (`Assembler`, placers, `AxisOrienter`) is native and re-exported on the molpy root |
-| `conformer` | 3D conformer generation |
-| `typifier` | Graph typification: the molrs `Typifier` base and native typifiers (OPLS-AA, MMFF94, element) re-exported; `AntechamberTypifier` / `TLeapTypifier` for GAFF through AmberTools |
-| `io` | File I/O: molecular data, trajectories, force-field formats |
-| `compute` | Analysis operators — the molrs analyses (`RDF`, `MSD`, dielectric and spectral classes, `signal`, …) re-exported by identity on `molpy.compute` |
-| `engine` | MD abstractions: LAMMPS, CP2K, OpenMM input generation and execution |
+| `molpy` (root) | The data model, flattened from `molrs.store`, `molrs.system`, `molrs.spatial` (regions, neighbour search), `molrs.units`, `molrs.perceive`, `molrs.optimize` and `molrs.conformer`; plus molpy's `Box` and `Trajectory` subclasses, the trajectory splitters and the column selectors (in the private `core` package, never spelled `molpy.core.X`) |
+| `ff` | Mirrors `molrs.ff`: `forcefield` (the container and force-field file formats), `potential` (compiler and kernels), `typifier` (+ molpy's `AntechamberTypifier` / `TLeapTypifier`), `charge`, `ir`, `params`, `scale_lj` |
+| `io` | Mirrors `molrs.io`: structure and trajectory formats, SMILES / CGsmiles text, `*.mrec` records; plus `read_smiles` and `read_amber` |
+| `builder` | Mirrors `molrs.builder` (assembly, `Coarsener`, graphene and nanotubes); plus polymer planning, crystals, virtual sites, `PackingTemplate`, `AmberPolymerBuilder` |
+| `compute`, `signal`, `md`, `op` | Mirror `molrs.compute`, `molrs.signal`, `molrs.md`, `molrs.op` |
+| `engine` | External engines: one `generate_inputs` each for LAMMPS, GROMACS and OpenMM, `run`, `Script` |
 | `wrapper` | Subprocess boundaries to external CLI tools (antechamber, parmchk2, prepgen, tleap, sander) |
 | `adapter` | Optional in-memory bridge (RDKit worked example) |
-| `data` | Bundled package data: force-field XML files, parameter tables |
+| `data` | Bundled package data: force-field files |
 
-`core` depends on nothing above it; everything else builds on `core`. `compute`, `io`, and `engine` operate on the tabular layer (`Frame`/`Block`); `builder` and `typifier` operate on the graph layer (`Atomistic`). The graph and tabular types themselves (`Atomistic`, `Frame`, `Block`, `ForceField`, the notation types `SmilesIR` / `CGSmilesIR` / `SmartsPattern`, …) are molrs types re-exported on the molpy root. `wrapper` and `adapter` sit at the outer edge and never leak external types into `core`.
+`compute`, `io`, and `engine` operate on the tabular layer (`Frame`/`Block`); `builder` and `ff.typifier` operate on the graph layer (`Atomistic`). `wrapper` and `adapter` sit at the outer edge and never leak external types into the data model.
 
 ## The graph layer: live handle views over molrs
 
@@ -48,21 +51,11 @@ The graph → arrays conversion is explicit: `Atomistic.to_frame()` delegates to
 
 ## Force field: parameters apart, kernels in Rust
 
-`ForceField` is an independent, queryable data structure — parameters are neither embedded in atoms nor derived implicitly. The model has three layers: **Style** (functional form), **Type** (parameter set for a type key), and **Potential** (evaluatable kernel). All energy/force kernels live in molrs; a style is named by `ff.def_style(category, name)`, and evaluation always goes through `PotentialCompiler(ff).compile(frame)`. The force-field IR is a protocol, so adding a functional form is a registration from Python (`mp.potential.StyleSpec`, an expression or a Python kernel), with nothing rebuilt — the recipe is in [Extending the Force Field](extending-forcefield.md).
+`ForceField` is an independent, queryable data structure — parameters are neither embedded in atoms nor derived implicitly. The model has three layers: **Style** (functional form), **Type** (parameter set for a type key), and **Potential** (evaluatable kernel). All energy/force kernels live in molrs; a style is named by `ff.def_style(category, name)`, and evaluation always goes through `PotentialCompiler(ff).compile(frame)`. The force-field IR is a protocol, so adding a functional form is a registration from Python (`mp.ff.ir.StyleSpec`, an expression or a Python kernel), with nothing rebuilt — the recipe is in [Extending the Force Field](extending-forcefield.md).
 
-## Boundary translation: the formatter hierarchy
+## One column vocabulary
 
-Canonical field names (`charge`, not `q`; `mol_id`, not `mol`) are used everywhere inside MolPy; format-specific names exist only at the I/O boundary. The translation machinery lives in `core/fields.py`:
-
-```text
-molpy.fields                           — the canonical column names (CHARGE, MOL_ID, …)
-    ↓
-FieldFormatter                         — data field mapping: {format_key: canonical_key}
-    ↓                                     canonicalize() / localize() on Block
-ForceFieldFormatter(FieldFormatter)    — adds param formatters: {StyleType: Callable}
-```
-
-The native readers and writers translate the formats they parse themselves; `FieldFormatter` (native, re-exported on `mp.fields`) is for a format molpy translates on its own: `canonicalize()` on the way in (format → canonical), `localize_frame()` on the way out (canonical → format, on a copy), with `__init_subclass__` isolating each subclass's registry. The full canonical-name catalog is in the [Naming Conventions](../tutorials/naming-conventions.md) appendix; the extension recipe is in [Adding an I/O Format](extending-io.md).
+Canonical field names (`charge`, not `q`; `mol_id`, not `mol`) are used everywhere inside MolPy. The vocabulary is molrs's: `mp.keys` is `molrs.store.keys` (`mp.keys.CHARGE.key == "charge"`) and `mp.schema` gives each column's dtype. Format-specific names exist only inside the native readers and writers, which map them at the boundary, so no molpy code translates column names. The full canonical-name catalog is in the [Naming Conventions](../tutorials/naming-conventions.md) appendix; the extension recipe is in [Adding an I/O Format](extending-io.md).
 
 ## The mutation contract
 
@@ -79,9 +72,9 @@ Assembly is one native call and never types anything:
   in the growing world.
 - **No retyping during the build** — the world comes back with atoms, bonds and ports
   only. Typing is a separate, whole-graph step the caller runs once afterwards.
-- **Explicit finalization** — angles and dihedrals are generated once, when needed, by
-  `StructureFinalizer(Finalization.TOPOLOGY)`; `Finalization.ATOMS` keeps a large
-  system atoms-only until an MD writer needs topology.
+- **Explicit topology** — angles and dihedrals are generated once, when needed, by
+  `generate_topology(gen_angle=True, gen_dihedral=True)`; a large system stays
+  atoms-only until an MD writer needs topology.
 
 ## Where extension happens
 
@@ -92,4 +85,4 @@ Assembly is one native call and never types anything:
 | an external tool integration | plug-in interface | [Adding a Wrapper or Adapter](extending-integration.md) |
 | an entity/link/struct type | core internals — open an issue first | [Extending the Data Model](extending-core.md) |
 | a graph typifier / force-field overlay | typifier internals — open an issue first | [Extending Typifiers](extending-typifiers.md) |
-| an interaction style / category | plug-in interface (`mp.potential.StyleSpec`) | [Extending the Force Field](extending-forcefield.md) |
+| an interaction style / category | plug-in interface (`mp.ff.ir.StyleSpec`) | [Extending the Force Field](extending-forcefield.md) |
