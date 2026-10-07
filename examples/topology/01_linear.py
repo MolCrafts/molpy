@@ -9,8 +9,10 @@ from eo_kit import library, report
 
 
 def main() -> None:
-    sites = mp.io.CGSmilesIR("{[#EO]|10}").to_coarsegrain()
-    chain = mp.builder.Assembler(library(), mp.builder.GrowthPlacer()).assemble(sites, mp.Atomistic)
+    sites = mp.io.smiles.CGSmilesIR("{[#EO]|10}").to_coarsegrain()
+    chain = mp.builder.Assembler(library(), mp.builder.GrowthPlacer()).assemble(
+        sites, mp.Atomistic
+    )
     report("linear-10", chain)
 
 

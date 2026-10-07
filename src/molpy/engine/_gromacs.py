@@ -25,8 +25,7 @@ import subprocess
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from molrs.ff.forcefield import write_gromacs_system
-from molrs.io import write_gro
+from molrs.io import write_gro, write_gromacs_system
 
 from ._base import Engine
 

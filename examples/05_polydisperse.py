@@ -8,7 +8,7 @@ planner primitives do the sampling; you compose them directly (no wrapper):
     -> SystemPlanner.plan_system() -> a list of Chain (dp, monomers, mass)
 
 Each ``Chain`` carries its monomer sequence. Written as a CGsmiles string
-(``{[#Sty][#MA]...}``), ``mp.io.CGSmilesIR(...).to_coarsegrain()`` turns it into a
+(``{[#Sty][#MA]...}``), ``mp.io.smiles.CGSmilesIR(...).to_coarsegrain()`` turns it into a
 site graph that ``mp.builder.Assembler(library, mp.builder.GrowthPlacer())`` grows into one
 chain (see topology/02_block.py).
 
@@ -51,7 +51,7 @@ def main() -> None:
     print(f"  Mn={Mn:.0f}  Mw={Mw:.0f}  PDI={Mw / Mn:.3f}")
 
     # Each Chain is (dp, monomer sequence, mass). Its CGsmiles string is the
-    # topology `mp.io.CGSmilesIR(...).to_coarsegrain()` reads (see topology/).
+    # topology `mp.io.smiles.CGSmilesIR(...).to_coarsegrain()` reads (see topology/).
     first = plan.chains[0]
     labels = "".join(f"[#{m}]" for m in first.monomers[:8])
     print(f"  first chain: dp={first.dp}, cgsmiles[:8]=" + "{" + labels + " ...}")

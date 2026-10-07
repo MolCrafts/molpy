@@ -53,7 +53,7 @@ class TestGenerateInputs:
         assert "atom_style full" in init
         assert "_style " not in init.replace("atom_style ", "")
         settings = paths["settings"].read_text()
-        assert settings == mp.ff.forcefield.write_lammps_forcefield_str(
+        assert settings == mp.io.write_lammps_forcefield_str(
             water_ff, water.to_frame(), skip_units=True, units="real"
         )
         assert "bond_style harmonic" in settings

@@ -19,11 +19,7 @@ from typing import Literal
 from molrs.io import read_ac, read_amber_inpcrd, read_amber_prmtop
 from molrs.system import Atomistic, Bead, CoarseGrain
 
-from molpy.ff._ambertools import (
-    _PrmtopAssignment,
-    net_formal_charge,
-    write_mol2_input,
-)
+from molpy.ff._ambertools import _PrmtopAssignment
 from molpy.wrapper import (
     AntechamberWrapper,
     EnvSpec,
@@ -31,8 +27,9 @@ from molpy.wrapper import (
     PrepgenWrapper,
     TLeapWrapper,
     run_step,
-    write_prepgen_control_file,
 )
+from molpy.wrapper._amber_input import antechamber_input_mol2, net_formal_charge
+from molpy.wrapper._prepgen import prepgen_control_text
 
 from .types import AmberBuildResult, AmberCut
 
@@ -94,7 +91,7 @@ class AmberPolymerBuilder:
 
     Example:
         >>> oligomer, cuts = AmberPieces("COCC", "OCC", "OCCOC").oligomer()
-        >>> sites = mp.io.CGSmilesIR("{[#PEO]|10}").to_coarsegrain()
+        >>> sites = mp.io.smiles.CGSmilesIR("{[#PEO]|10}").to_coarsegrain()
         >>> built = AmberPolymerBuilder(
         ...     {"PEO": oligomer},
         ...     {"PEO": cuts},
@@ -197,7 +194,7 @@ class AmberPolymerBuilder:
 
         oligomer = self.library[label]
         charge = _net_charge(oligomer, label, self.net_charges)
-        write_mol2_input(oligomer, source, rename=False)
+        antechamber_input_mol2(oligomer, source, rename=False)
         digest = _digest(
             source.read_bytes(),
             f"{self.force_field}|{self.charge_method}|{charge}".encode(),
@@ -230,8 +227,7 @@ class AmberPolymerBuilder:
             cut = self.cuts[label][variant]
             control = directory / f"{label}.{variant}"
             previous = control.read_text() if control.is_file() else None
-            write_prepgen_control_file(
-                control,
+            text = prepgen_control_text(
                 variant=variant,
                 head_name=_mapped(cut.head, renamed),
                 tail_name=_mapped(cut.tail, renamed),
@@ -244,9 +240,10 @@ class AmberPolymerBuilder:
                 omit_names=[renamed[name] for name in cut.omit],
                 charge=cut.charge,
             )
+            control.write_text(text)
             output = directory / _prepi_name(label, variant)
             prepi[variant] = output
-            if not stale and output.is_file() and control.read_text() == previous:
+            if not stale and output.is_file() and text == previous:
                 continue
             output.unlink(missing_ok=True)
             run_step(

@@ -4,8 +4,8 @@
 in them is the molrs object (``mp.ff.forcefield.ForceField is
 molrs.ff.forcefield.ForceField``):
 
-* :mod:`~molpy.ff.forcefield` — ``ForceField``, its ``Style`` / ``Type``
-  handles, and the force-field file readers and writers
+* :mod:`~molpy.ff.forcefield` — ``ForceField`` and its ``Style`` / ``Type``
+  handles (the data model; its file formats are :mod:`molpy.io`'s)
 * :mod:`~molpy.ff.potential` — ``PotentialCompiler``, ``Potentials``,
   ``kernel``, ``LJCut`` and the ``Potential`` protocol
 * :mod:`~molpy.ff.typifier` — the ``Typifier`` base, its ``Match``, the

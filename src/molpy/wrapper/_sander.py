@@ -30,7 +30,7 @@ class SanderWrapper(Wrapper):
         ``ncyc`` steepest-descent steps then conjugate gradient to ``maxcyc``
         (``imin=1``); ``ntb=0``/``igb=0`` with no cutoff (a gas-phase fragment or
         single molecule). The ``.rst`` shares the inpcrd coordinate format, so
-        :func:`molpy.io.readers.read_amber_inpcrd` reads the relaxed coordinates.
+        :func:`molpy.io.read_amber_inpcrd` reads the relaxed coordinates.
         """
         if self.workdir is None:
             raise ValueError("SanderWrapper requires a working directory. Set workdir.")

@@ -164,8 +164,7 @@ class PrepgenWrapper(Wrapper):
         return self.run_raw(args=args, check=check)
 
 
-def write_prepgen_control_file(
-    path: Path,
+def prepgen_control_text(
     *,
     variant: Literal["chain", "head", "tail"],
     head_name: str | None = None,
@@ -174,11 +173,10 @@ def write_prepgen_control_file(
     tail_type: str | None = None,
     omit_names: list[str] | None = None,
     charge: int = 0,
-) -> None:
-    """Write a prepgen control file for residue template generation.
+) -> str:
+    """The text of a prepgen control file (``-m``) for one residue variant.
 
     Args:
-        path: Output path for the control file.
         variant: Type of residue variant:
             - "chain": Both HEAD and TAIL connection points
             - "head": Only TAIL connection (for chain start)
@@ -194,8 +192,7 @@ def write_prepgen_control_file(
         ValueError: If required atom names are missing for the variant.
 
     Example:
-        >>> write_prepgen_control_file(
-        ...     Path("mol.chain"),
+        >>> prepgen_control_text(
         ...     variant="chain",
         ...     head_name="C1",
         ...     tail_name="O5",
@@ -250,4 +247,4 @@ def write_prepgen_control_file(
 
     lines.append(f"CHARGE {charge}")
 
-    path.write_text("\n".join(lines) + "\n")
+    return "\n".join(lines) + "\n"

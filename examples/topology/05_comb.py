@@ -13,10 +13,12 @@ from eo_kit import library, report
 
 def main() -> None:
     graft = "[#GR][#EO]"
-    sites = mp.io.CGSmilesIR(
+    sites = mp.io.smiles.CGSmilesIR(
         f"{{[#EO][#BR]({graft})[#EO][#BR]({graft})[#EO]}}"
     ).to_coarsegrain()
-    comb = mp.builder.Assembler(library(), mp.builder.GrowthPlacer()).assemble(sites, mp.Atomistic)
+    comb = mp.builder.Assembler(library(), mp.builder.GrowthPlacer()).assemble(
+        sites, mp.Atomistic
+    )
     report("comb", comb)
 
 

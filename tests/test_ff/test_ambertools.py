@@ -18,7 +18,7 @@ from unittest.mock import patch
 import pytest
 
 import molpy as mp
-from molpy import Angle, Dihedral
+from molpy.core import Angle, Dihedral
 from molpy.wrapper import Wrapper
 
 # LiTFSI in LiTFSI.prmtop row order: [F-C(F2)-S(O2)-N-S(O2)-C(F3)]- and Li+.

@@ -15,11 +15,11 @@ from molpy.compute import (
     Cluster,
     DescriptorRow,
     KMeans,
-    NeighborList,
-    Pca,
+    Pca2,
     RadiusOfGyration,
     Steinhardt,
 )
+from molpy.core import NeighborList
 
 from .lj import Trajectory
 from .order import _fcc_frame
@@ -150,7 +150,7 @@ def descriptor_map(trajectory: Trajectory) -> dict[str, float]:
     # Standardize: PCA on raw columns would be dominated by coordination number.
     matrix = (matrix - matrix.mean(axis=0)) / matrix.std(axis=0)
 
-    projected = Pca().compute([DescriptorRow(row) for row in matrix])
+    projected = Pca2().compute([DescriptorRow(row) for row in matrix])
     coords = np.asarray(projected.coords)
     labels = np.asarray(KMeans(k=2, max_iter=100, seed=0).compute(projected).labels)
 

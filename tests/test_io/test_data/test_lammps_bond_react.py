@@ -16,9 +16,8 @@ from pathlib import Path
 import pytest
 
 import molpy as mp
-from molpy import Atomistic
-from molpy import RelationRef
-from molpy.io import BondReactTemplate
+from molpy.core import Atomistic, RelationRef
+from molpy.io.lammps_bond_react import BondReactTemplate
 
 
 # ===================================================================

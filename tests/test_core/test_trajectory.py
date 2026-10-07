@@ -7,11 +7,11 @@ tested in molrs; ``mp.Trajectory is molrs.store.Trajectory`` is ``test_init``'s.
 import numpy as np
 import pytest
 
-from molpy import (
-    Frame,
-    MetaValue,
+from molpy.core import (
     CustomStrategy,
+    Frame,
     FrameIntervalStrategy,
+    MetaValue,
     SplitStrategy,
     TimeIntervalStrategy,
     Trajectory,

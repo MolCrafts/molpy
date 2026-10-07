@@ -3,7 +3,7 @@
 import numpy as np
 import pytest
 
-from molpy import Box, NeighborList, VerletSkin
+from molpy.core import Box, NeighborList, VerletSkin
 from molpy.md import Langevin, MD, VelocityVerlet
 from molpy.ff.potential import LJCut
 

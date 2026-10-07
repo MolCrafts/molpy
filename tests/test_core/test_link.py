@@ -1,6 +1,6 @@
 import pytest
 
-from molpy import Atomistic
+from molpy.core import Atomistic
 
 
 def test_relation_endpoints_are_live_and_immutable() -> None:
@@ -16,7 +16,7 @@ def test_relation_endpoints_are_live_and_immutable() -> None:
 
 
 def test_relation_has_no_detached_form() -> None:
-    from molpy import Bond
+    from molpy.core import Bond
 
     with pytest.raises(TypeError):
         Bond(object(), object())  # type: ignore[call-arg]

@@ -1,12 +1,12 @@
-"""molpy.io.writers: the bond/react system writer's force-field coverage."""
+"""``mp.io.write_lammps_bond_react_system``: the bond/react system writer's force-field coverage."""
 
 from __future__ import annotations
 
 from pathlib import Path
 
 import molpy as mp
-from molpy import Atomistic
-from molpy.io import BondReactTemplate
+from molpy.core import Atomistic
+from molpy.io.lammps_bond_react import BondReactTemplate
 
 
 def _forcefield() -> mp.ff.forcefield.ForceField:

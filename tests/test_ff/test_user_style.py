@@ -128,7 +128,7 @@ def test_energy_and_forces_are_the_analytic_fene_sum(snippet) -> None:
 
 def test_the_record_keeps_the_style_and_its_expression(snippet) -> None:
     ns, workdir = snippet
-    section = mp.io.mrec.read_forcefield(workdir / "chain.mrec")
+    section = mp.io.read_mrec_forcefield(workdir / "chain.mrec")
     (entry,) = [s for s in section.document["styles"] if s["style"] == "fene"]
     assert entry["category"] == "bond"
     assert entry["expression"] == ns["Fene"].expression
@@ -145,8 +145,8 @@ FRESH = textwrap.dedent(
 
     path = sys.argv[1]
     registered = [s.name for s in mp.ff.ir.styles("bond") if s.name == "fene"]
-    frame = mp.io.mrec.read(path)
-    ff = mp.ff.forcefield.ForceField.from_section(mp.io.mrec.read_forcefield(path))
+    frame = mp.io.read_mrec(path)
+    ff = mp.ff.forcefield.ForceField.from_section(mp.io.read_mrec_forcefield(path))
     e, f = mp.ff.potential.PotentialCompiler(ff).compile(frame).calc_energy_forces(frame)
     print(json.dumps({"registered": registered, "e": float(e).hex(),
                       "f": [float(x).hex() for x in f.ravel()]}))

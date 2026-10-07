@@ -1,8 +1,8 @@
 """Crystal lattice builder.
 
 Tile a Bravais lattice over a range of unit cells and (optionally) clip the
-result to a geometric region (any native region: ``mp.Cuboid``,
-``mp.Sphere``, their ``&`` / ``|`` / ``~`` compositions). The unit cell is a
+result to a geometric region (any native region: ``mp.core.Cuboid``,
+``mp.core.Sphere``, their ``&`` / ``|`` / ``~`` compositions). The unit cell is a
 :class:`~molpy.Box`, which owns fractional ↔ Cartesian conversion; molrs has
 no crystal builder, so the lattice and its space groups are molpy's.
 
@@ -11,7 +11,7 @@ Example:
     >>> lat = mp.builder.Lattice.fcc(a=3.52, species="Ni")
     >>> structure = lat.build(repeats=(4, 4, 4))
     >>> # or clip a 30 Å cube out of a larger tile:
-    >>> structure = lat.build(mp.Cuboid.cube(30.0))
+    >>> structure = lat.build(mp.core.Cuboid.cube(30.0))
 """
 
 from __future__ import annotations
@@ -234,7 +234,7 @@ class Lattice:
 
         Args:
             region: Geometric region in Cartesian space (e.g.
-                ``mp.Cuboid``, ``mp.Sphere``, or any combination via
+                ``mp.core.Cuboid``, ``mp.core.Sphere``, or any combination via
                 ``& | ~``). Atoms outside the region are discarded.
             repeats: Number of unit cells along each lattice vector,
                 ``(nx, ny, nz)``. If omitted, the tile range is inferred from

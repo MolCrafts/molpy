@@ -21,16 +21,15 @@ import numpy as np
 from rdkit import Chem
 from rdkit.Chem import AllChem
 
+from molrs.store.keys import FORMAL_CHARGE
 from molrs.system import Atomistic
 
 from ._base import Adapter
 
 #: The join key between an ``Atomistic`` atom and an RDKit atom (see module doc).
 MP_ID = "mp_id"
-#: Integer formal charge component; absent means neutral.
-FORMAL_CHARGE = "formal_charge"
 
-#: Bond class codes, mirroring ``molrs.system.bond.BondType``.
+#: Bond class codes of the ``bond_type`` column (``molrs.store.keys.BOND_TYPE``).
 BOND_TYPE_UNKNOWN = 0
 BOND_TYPE_SINGLE = 1
 BOND_TYPE_DOUBLE = 2
@@ -111,7 +110,7 @@ class RDKitAdapter(Adapter[Atomistic, Chem.Mol]):
 
         Returns a new :class:`~molpy.Atomistic` with coordinates;
         this adapter is not mutated. For molpy's native (native) embedder, use
-        :class:`molpy.Conformer` instead.
+        :class:`molpy.conformer.Conformer` instead.
         """
         working = self.copy()
         if not working.has_external():
@@ -234,11 +233,13 @@ class RDKitAdapter(Adapter[Atomistic, Chem.Mol]):
     @staticmethod
     def _formal_charges(atomistic: Atomistic) -> list[int]:
         """Per-atom formal charge, 0 where the component is absent (neutral)."""
-        if FORMAL_CHARGE not in atomistic.columns():
+        if FORMAL_CHARGE.key not in atomistic.columns():
             return [0] * len(atomistic.entities())
-        if atomistic.validity(FORMAL_CHARGE).all():
-            return [int(q) for q in atomistic.column(FORMAL_CHARGE)]
-        return [int(atomistic.get(h, FORMAL_CHARGE) or 0) for h in atomistic.entities()]
+        if atomistic.validity(FORMAL_CHARGE.key).all():
+            return [int(q) for q in atomistic.column(FORMAL_CHARGE.key)]
+        return [
+            int(atomistic.get(h, FORMAL_CHARGE.key) or 0) for h in atomistic.entities()
+        ]
 
     @staticmethod
     def _positions(atomistic: Atomistic) -> np.ndarray | None:
@@ -266,7 +267,7 @@ class RDKitAdapter(Adapter[Atomistic, Chem.Mol]):
     ) -> dict[str, Any]:
         props: dict[str, Any] = {"element": rd_atom.GetSymbol(), MP_ID: tag}
         if rd_atom.GetFormalCharge() != 0:
-            props[FORMAL_CHARGE] = rd_atom.GetFormalCharge()
+            props[FORMAL_CHARGE.key] = rd_atom.GetFormalCharge()
         if position is not None:
             props["x"] = float(position[0])
             props["y"] = float(position[1])
@@ -346,8 +347,8 @@ class RDKitAdapter(Adapter[Atomistic, Chem.Mol]):
 
             atom["element"] = rd_atom.GetSymbol()
             charge = rd_atom.GetFormalCharge()
-            if charge != 0 or FORMAL_CHARGE in atom:
-                atom[FORMAL_CHARGE] = charge
+            if charge != 0 or FORMAL_CHARGE.key in atom:
+                atom[FORMAL_CHARGE.key] = charge
             if position is not None:
                 atom["x", "y", "z"] = (float(v) for v in position)
             atom_of_rd.append(atom)

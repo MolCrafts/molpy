@@ -56,9 +56,9 @@ all = ["molcrafts-molpy[dev,doc]"]
 # them here rather than importing a host keeps the arrow one-way: molpy says
 # what it can parse, and a platform picks it up at install time.
 [project.entry-points."molcrafts.metric_readers"]
-lammps_log = "molpy.integrations.metric_readers:LammpsLogReader"
-mrec = "molpy.integrations.metric_readers:MrecReader"
-mlp_jsonl = "molpy.integrations.metric_readers:MlpJsonlReader"
+lammps_log = "molpy.io.log:LammpsLogMetricReader"
+mrec = "molpy.io.mrec:MrecMetricReader"
+mlp_jsonl = "molpy.io.log:MlpJsonlMetricReader"
 
 [project.urls]
 Homepage = "https://github.com/MolCrafts/molpy"
@@ -80,7 +80,6 @@ version = { attr = "molpy.version.version" }
 where = ["src"]
 
 [tool.setuptools.package-data]
-"molpy.data" = ["README.md"]
 "molpy.data.forcefield" = ["*.xml"]
 
 [tool.ruff]

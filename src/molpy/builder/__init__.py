@@ -4,7 +4,7 @@ The native builders of :mod:`molrs.builder` are here by identity
 (``mp.builder.Assembler is molrs.builder.Assembler``): site-graph assembly
 (:class:`Assembler` with :class:`SitePlacer` + :class:`AxisOrienter`, or
 :class:`GrowthPlacer` for a site graph without positions), coarse-graining
-(:class:`Coarsener`, after :class:`molpy.SubgraphMatcher` finds the groups),
+(:class:`Coarsener`, after :class:`molpy.perceive.SubgraphMatcher` finds the groups),
 and the carbon nanostructures (:class:`GrapheneBuilder`,
 :class:`CarbonTubeBuilder`, each building a :class:`~molpy.Frame`;
 ``mp.Atomistic.from_frame`` makes it a graph).

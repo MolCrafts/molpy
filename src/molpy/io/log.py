@@ -1,86 +1,51 @@
-"""Metric readers molpy publishes for any molcrafts viewer.
+"""LAMMPS logs — :mod:`molrs.io.log`, mirrored by identity — and molpy's metric readers.
 
-molrs parses these formats (``molrs.io.read_lammps_log``,
-``molrs.io.mrec.read_trajectory``); what molpy adds is the metric-reader
-contract a viewer consumes — sniffing a path, and turning the parsed tables
-into plottable series records under the viewer's sampling request. No reader
-here parses a format itself. A viewer (molplot, through molexp) never parses
-anything and never imports molpy: it looks up a reader by format and asks it
-for records.
+Every native name is the molrs object (``mp.io.log.LammpsLog is
+molrs.io.log.LammpsLog``); the logs themselves are read by
+``mp.io.read_lammps_log`` / ``read_lammps_log_str``.
+
+molpy adds the metric readers of two text formats a run writes, published in
+the ``molcrafts.metric_readers`` entry-point group for any molcrafts viewer:
+
+* :class:`LammpsLogMetricReader` — ``log.lammps`` thermo tables;
+* :class:`MlpJsonlMetricReader` — ``*.mlp.jsonl``, records that already are
+  metric records.
 
 Registration is declarative, at install time::
 
     [project.entry-points."molcrafts.metric_readers"]
-    lammps_log = "molpy.integrations.metric_readers:LammpsLogReader"
-    mrec       = "molpy.integrations.metric_readers:MrecReader"
-    mlp_jsonl  = "molpy.integrations.metric_readers:MlpJsonlReader"
+    lammps_log = "molpy.io.log:LammpsLogMetricReader"
+    mlp_jsonl  = "molpy.io.log:MlpJsonlMetricReader"
 
-Nothing here imports molexp. The reader contract is a structural Protocol —
-``format`` / ``sniff`` / ``read`` plus the optional ``patterns`` and
-``tailable`` hints — so matching it is a matter of shape, not of dependency.
-That is what keeps the arrow pointing one way: a format's owner publishes a
-capability, and the platform consumes it.
-
-**The viewer sets the sampling policy.** ``read`` receives a request carrying
-``stride`` — how many samples of each series to skip — and each reader pushes
-it as far down as its parser allows. For a LAMMPS thermo table that is a numpy
-slice, so a 160k-row table costs a slice rather than 160k dicts.
+No reader parses a format itself, and nothing here imports a viewer.
 """
 
 from __future__ import annotations
 
-import json
-from pathlib import Path
-from typing import TYPE_CHECKING, Any, Protocol
+import json as _json
+from typing import TYPE_CHECKING
+
+from molrs.io.log import *  # noqa: F403
+from molrs.io.log import __all__ as _native
+
+from . import _metric
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
+    from pathlib import Path
+    from typing import Any
+
+    from ._metric import ReadRequest
 
 # LAMMPS writes this immediately before every thermo header row; the banner
 # alone is not enough, because a log whose run never reached a thermo section
 # has nothing to plot.
 _LAMMPS_MARKER = b"Per MPI rank memory allocation"
 _LAMMPS_BANNER = b"LAMMPS ("
-_PROBE_BYTES = 64 * 1024
 _LOG_SUFFIXES = frozenset({".log", ".lammps", ".out", ".txt"})
 
 
-class ReadRequest(Protocol):
-    """What the viewer asked for. Supplied by the platform, matched by shape."""
-
-    since: int
-    stride: int
-    limit: int | None
-    metric_type: str | None
-    keys: tuple[str, ...]
-
-
-def _wanted(request: ReadRequest | None, record: dict[str, Any]) -> bool:
-    if request is None:
-        return True
-    if request.metric_type is not None and record.get("t") != request.metric_type:
-        return False
-    return not (request.keys and record.get("k") not in request.keys)
-
-
-def _stride_of(request: ReadRequest | None) -> int:
-    return 1 if request is None else max(1, request.stride)
-
-
-def _limit_of(request: ReadRequest | None) -> int | None:
-    return None if request is None else request.limit
-
-
-def _since_of(request: ReadRequest | None) -> int:
-    return 0 if request is None else max(0, request.since)
-
-
-def _head(path: Path, size: int = _PROBE_BYTES) -> bytes:
-    with path.open("rb") as handle:
-        return handle.read(size)
-
-
-class LammpsLogReader:
+class LammpsLogMetricReader:
     """``log.lammps`` thermo tables, parsed by ``molrs.io.read_lammps_log``.
 
     **Thermo rows carry no wall-clock.** LAMMPS records simulation steps, not
@@ -102,7 +67,7 @@ class LammpsLogReader:
     def sniff(self, path: Path) -> bool:
         if not path.is_file() or path.suffix not in _LOG_SUFFIXES:
             return False
-        head = _head(path)
+        head = _metric.head(path)
         if not head:
             return False
         if _LAMMPS_MARKER in head:
@@ -124,9 +89,9 @@ class LammpsLogReader:
     ) -> Iterator[dict[str, Any]]:
         from molrs.io import read_lammps_log
 
-        stride = _stride_of(request)
-        limit = _limit_of(request)
-        skip = _since_of(request)
+        stride = _metric.stride_of(request)
+        limit = _metric.limit_of(request)
+        skip = _metric.since_of(request)
         parsed = read_lammps_log(path)
         emitted = 0
         seen = 0
@@ -158,7 +123,7 @@ class LammpsLogReader:
                     if step is not None:
                         record["s"] = step
                     seen += 1
-                    if seen <= skip or not _wanted(request, record):
+                    if seen <= skip or not _metric.wanted(request, record):
                         continue
                     yield record
                     emitted += 1
@@ -166,67 +131,7 @@ class LammpsLogReader:
                         return
 
 
-class MrecReader:
-    """``*.mrec`` records — the per-frame series a trajectory carries.
-
-    A record store is not a metrics file: what it has that a chart can draw is
-    the frame index against simulation ``step`` and ``time``. Those are
-    emitted and nothing else is invented.
-    """
-
-    format = "mrec"
-    patterns = ("**/*.mrec", "**/*.mrec/")
-    tailable = False
-
-    def sniff(self, path: Path) -> bool:
-        if path.suffix != ".mrec":
-            return False
-        if path.is_dir():
-            return True
-        return path.is_file()
-
-    def read(
-        self,
-        path: Path,
-        *,
-        source: str = "",
-        request: ReadRequest | None = None,
-    ) -> Iterator[dict[str, Any]]:
-        from molrs.io.mrec import read_trajectory
-
-        stride = _stride_of(request)
-        limit = _limit_of(request)
-        skip = _since_of(request)
-        trajectory = read_trajectory(path)
-
-        series: dict[str, Any] = {}
-        for name in ("step", "time"):
-            values = getattr(trajectory, name)
-            if values is not None and len(values):
-                series[name] = values
-
-        emitted = 0
-        seen = 0
-        for name, values in series.items():
-            sampled = values[::stride] if stride > 1 else values
-            for index, value in enumerate(sampled):
-                record = {
-                    "t": "scalar",
-                    "k": f"mrec/{name}",
-                    "s": float(index * stride),
-                    "v": float(value),
-                    "tags": {"source": source},
-                }
-                seen += 1
-                if seen <= skip or not _wanted(request, record):
-                    continue
-                yield record
-                emitted += 1
-                if limit is not None and emitted >= limit:
-                    return
-
-
-class MlpJsonlReader:
+class MlpJsonlMetricReader:
     """``*.mlp.jsonl`` — records that already are metric records.
 
     It is the format molexp writes while a run is in flight, which makes it
@@ -249,9 +154,9 @@ class MlpJsonlReader:
         source: str = "",
         request: ReadRequest | None = None,
     ) -> Iterator[dict[str, Any]]:
-        stride = _stride_of(request)
-        limit = _limit_of(request)
-        skip = _since_of(request)
+        stride = _metric.stride_of(request)
+        limit = _metric.limit_of(request)
+        skip = _metric.since_of(request)
         # A JSONL file is one sample per line and the series are interleaved,
         # so striding is counted per series — striding the file would land on
         # the same key every time and drop the others.
@@ -265,13 +170,13 @@ class MlpJsonlReader:
                 if not stripped:
                     continue
                 try:
-                    record = json.loads(stripped)
-                except json.JSONDecodeError:
+                    record = _json.loads(stripped)
+                except _json.JSONDecodeError:
                     continue
                 if not isinstance(record, dict) or "k" not in record:
                     continue
                 index += 1
-                if index <= skip or not _wanted(request, record):
+                if index <= skip or not _metric.wanted(request, record):
                     continue
                 if stride > 1:
                     key = record.get("k")
@@ -290,4 +195,4 @@ class MlpJsonlReader:
                     return
 
 
-__all__ = ["LammpsLogReader", "MlpJsonlReader", "MrecReader"]
+__all__ = [*_native, "LammpsLogMetricReader", "MlpJsonlMetricReader"]

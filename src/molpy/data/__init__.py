@@ -5,16 +5,13 @@ This module provides a unified interface for accessing built-in data files
 such as force field parameters, molecule templates, and other resources.
 
 Usage:
-    from molpy.data import get_forcefield_path, get_path, list_files
+    from molpy.data import get_path, list_files
 
     # Get path to a data file
     path = get_path("forcefield/tip3p.xml")
 
     # List available files in a subdirectory
     files = list_files("forcefield")
-
-    # Get force field path (convenience function)
-    ff_path = get_forcefield_path("tip3p.xml")
 """
 
 from collections.abc import Iterator
@@ -123,49 +120,8 @@ def exists(relative_path: str | Path) -> bool:
         return False
 
 
-# Convenience functions for specific data types
-def get_forcefield_path(filename: str) -> Path:
-    """
-    Get the path to a force field file.
-
-    Args:
-        filename: Name of the force field file (e.g., "tip3p.xml")
-
-    Returns:
-        Path object pointing to the force field file
-
-    Raises:
-        FileNotFoundError: If the file does not exist
-
-    Examples:
-        >>> from molpy.data import get_forcefield_path
-        >>> path = get_forcefield_path("tip3p.xml")
-        >>> print(path)
-        /path/to/molpy/data/forcefield/tip3p.xml
-    """
-    return get_path(f"forcefield/{filename}")
-
-
-def list_forcefields() -> list[str]:
-    """
-    List all available force field files.
-
-    Returns:
-        List of force field filenames
-
-    Examples:
-        >>> from molpy.data import list_forcefields
-        >>> forcefields = list_forcefields()
-        >>> print(forcefields)
-        ["clp.xml", "tip3p.xml"]
-    """
-    return [Path(f).name for f in list_files("forcefield", exclude_python=True)]
-
-
 __all__ = [
     "exists",
-    "get_forcefield_path",
     "get_path",
     "list_files",
-    "list_forcefields",
 ]

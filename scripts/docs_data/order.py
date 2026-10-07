@@ -10,7 +10,8 @@ from __future__ import annotations
 import numpy as np
 
 import molpy as mp
-from molpy.compute import NeighborList, Steinhardt
+from molpy.compute import Steinhardt
+from molpy.core import NeighborList
 
 from .lj import Trajectory
 from .structure import _frames, write_json

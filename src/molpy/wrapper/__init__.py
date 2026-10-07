@@ -12,7 +12,7 @@ wrapper and any facade that shells out through one.
 from ._base import Wrapper, run_step
 from ._env import EnvSpec
 from ._antechamber import AntechamberWrapper
-from ._prepgen import Parmchk2Wrapper, PrepgenWrapper, write_prepgen_control_file
+from ._prepgen import Parmchk2Wrapper, PrepgenWrapper
 from ._sander import SanderWrapper
 from ._tleap import TLeapWrapper
 
@@ -25,5 +25,4 @@ __all__ = [
     "SanderWrapper",
     "TLeapWrapper",
     "run_step",
-    "write_prepgen_control_file",
 ]

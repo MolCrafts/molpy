@@ -3,7 +3,7 @@
 import numpy as np
 import pytest
 
-from molpy import Block, Frame, MetaValue
+from molpy.core import Block, Frame, MetaValue
 import molpy as mp
 
 

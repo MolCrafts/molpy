@@ -5,7 +5,7 @@ import json
 import numpy as np
 import pytest
 
-from molpy import Block, Frame
+from molpy.core import Block, Frame
 from molpy.ff.forcefield import ForceField
 from molpy.engine import OpenMMEngine, OpenMMSimulationConfig
 

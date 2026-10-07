@@ -2,8 +2,8 @@
 
 A selector picks rows by what a column holds (a type, an element, an atom
 id). Selecting by *where* an atom is — a slab, a sphere, a shell — is a
-geometric region's job: every native region (``mp.Cuboid``, ``mp.Sphere``,
-``mp.HalfSpace``, their ``&`` / ``|`` / ``~`` compositions) has the same
+geometric region's job: every native region (``mp.core.Cuboid``, ``mp.core.Sphere``,
+``mp.core.HalfSpace``, their ``&`` / ``|`` / ``~`` compositions) has the same
 ``mask(block)`` and ``region(block)`` surface, and a selector composes with
 one through ``&`` / ``|``.
 """

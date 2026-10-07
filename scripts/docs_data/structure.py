@@ -14,10 +14,10 @@ import numpy as np
 import molpy as mp
 from molpy.compute import (
     LocalDensity,
-    NeighborList,
     RDF,
     StaticStructureFactorDebye,
 )
+from molpy.core import NeighborList
 
 from .lj import Trajectory
 from .run import DOCS_DATA

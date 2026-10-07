@@ -9,9 +9,9 @@ wrappers (antechamber, parmchk2, prepgen, tleap) on the wrapper side.
 **An example is not a dependency.** RDKit is an optional extra: importing molpy
 never requires it, no molpy code path routes through it, and this package is the
 only place in the source tree allowed to import it. Everything MolPy needs for
-itself is native — 3D embedding is :class:`molpy.Conformer` (native
-ETKDGv3 + MMFF94 cleanup), perception is :class:`molpy.Perceive`, SMILES is
-``mp.io.SmilesIR``, ring facts are ``RingInfo``, and GAFF typing
+itself is native — 3D embedding is :class:`molpy.conformer.Conformer` (native
+ETKDGv3 + MMFF94 cleanup), perception is :class:`molpy.perceive.Perceive`, SMILES is
+``mp.io.smiles.SmilesIR``, ring facts are ``RingInfo``, and GAFF typing
 is antechamber delegation. Reach for the adapter to use *RDKit's* algorithms,
 not to do something molpy already does.
 

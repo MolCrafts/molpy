@@ -37,8 +37,8 @@ def _bond_lengths_by_pair(mol):
 
 
 def test_generate_returns_3d_coords():
-    mol = mp.io.SmilesIR("CCO").to_atomistic()  # ethanol, heavy-atom graph
-    out, _ = mp.Conformer(seed=42).generate(mol)
+    mol = mp.io.smiles.SmilesIR("CCO").to_atomistic()  # ethanol, heavy-atom graph
+    out, _ = mp.conformer.Conformer(seed=42).generate(mol)
 
     atoms = list(out.atoms)
     assert len(atoms) >= 3  # hydrogens added by default
@@ -49,11 +49,11 @@ def test_generate_returns_3d_coords():
 
 
 def test_input_molecule_immutable():
-    mol = mp.io.SmilesIR("CCO").to_atomistic()
+    mol = mp.io.smiles.SmilesIR("CCO").to_atomistic()
     n_before = len(list(mol.atoms))
     coords_before = [(a.get("x"), a.get("y"), a.get("z")) for a in mol.atoms]
 
-    out, _ = mp.Conformer(seed=7).generate(mol)
+    out, _ = mp.conformer.Conformer(seed=7).generate(mol)
 
     assert out is not mol
     assert len(list(mol.atoms)) == n_before  # no atoms added to input
@@ -67,8 +67,8 @@ def test_input_molecule_immutable():
 )
 def test_conformer_physical_sanity(smiles, name):
     """Generated geometries have bond lengths within 10% of literature."""
-    mol = mp.io.SmilesIR(smiles).to_atomistic()
-    out, _ = mp.Conformer(seed=42).generate(mol)
+    mol = mp.io.smiles.SmilesIR(smiles).to_atomistic()
+    out, _ = mp.conformer.Conformer(seed=42).generate(mol)
 
     pairs = _bond_lengths_by_pair(out)
     assert pairs, f"{name}: no bonds found"

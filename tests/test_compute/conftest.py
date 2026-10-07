@@ -28,8 +28,8 @@ def random_periodic_frame():
 def self_neighbors():
     """Factory: the half-shell neighbour table of a frame within ``cutoff``."""
 
-    def search(frame: mp.Frame, cutoff: float) -> mp.Neighbors:
-        nl = mp.NeighborList(cutoff)
+    def search(frame: mp.Frame, cutoff: float) -> mp.core.Neighbors:
+        nl = mp.core.NeighborList(cutoff)
         nl.build(frame.coords, frame.box)
         return nl.neighbors()
 

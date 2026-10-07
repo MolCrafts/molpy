@@ -12,7 +12,7 @@ import numpy as np
 import pytest
 
 import molpy as mp
-from molpy import MetaValue
+from molpy.core import MetaValue
 
 # Inline TIP3P water molecule (LAMMPS JSON molecule schema). Used as input for
 # JSON-format reader tests — no external .json fixture file.

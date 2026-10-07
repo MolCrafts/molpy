@@ -33,8 +33,7 @@ import tempfile
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from molrs.ff.forcefield import write_lammps_forcefield_str
-from molrs.io import read_lammps_data, write_lammps_data
+from molrs.io import read_lammps_data, write_lammps_data, write_lammps_forcefield_str
 
 from ._base import Engine
 from ._script import Script

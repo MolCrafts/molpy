@@ -108,7 +108,9 @@ class _FakeTools:
 
 def _ether() -> mp.Atomistic:
     """CH3-O-CH2-CH2-O-CH3 with Amber atom names and no ports."""
-    graph = mp.Conformer(seed=1).generate(mp.io.SmilesIR("COCCOC").to_atomistic())[0]
+    graph = mp.conformer.Conformer(seed=1).generate(
+        mp.io.smiles.SmilesIR("COCCOC").to_atomistic()
+    )[0]
     for index, atom in enumerate(graph.atoms, start=1):
         atom["name"] = f"{atom['element']}{index}"
     return graph
@@ -168,7 +170,7 @@ def _build(work: Path, sites: str = "{[#EO]|3}", **kwargs) -> mp.Frame:
     library = options.pop("library", {"EO": _ether()})
     cuts = options.pop("cuts", _cuts())
     builder = AmberPolymerBuilder(library, cuts, **options)
-    return builder.assemble(mp.io.CGSmilesIR(sites).to_coarsegrain())
+    return builder.assemble(mp.io.smiles.CGSmilesIR(sites).to_coarsegrain())
 
 
 class TestAmberPieces:
@@ -196,7 +198,7 @@ class TestAmberPieces:
         assert [len(kept[v]) for v in ("head", "chain", "tail")] == [11, 7, 12]
 
     def test_each_piece_is_a_smiles_of_its_own(self):
-        with pytest.raises(mp.io.SmilesError, match="unmatched ring closure"):
+        with pytest.raises(mp.io.smiles.SmilesError, match="unmatched ring closure"):
             AmberPieces("C1OC", "C1O", "C").oligomer(seed=1)
 
     def test_pieces_feed_the_builder(self, tools, tmp_path):
@@ -472,7 +474,9 @@ class TestRefused:
             AmberPolymerBuilder({"EO": mp.CoarseGrain()}, {})  # type: ignore[dict-item]
 
     def test_unnamed_atoms_get_element_and_row(self):
-        graph = mp.Conformer(seed=1).generate(mp.io.SmilesIR("CO").to_atomistic())[0]
+        graph = mp.conformer.Conformer(seed=1).generate(
+            mp.io.smiles.SmilesIR("CO").to_atomistic()
+        )[0]
         builder = AmberPolymerBuilder({"MO": graph}, {})
         names = [str(atom["name"]) for atom in builder.library["MO"].atoms]
         assert names[:2] == ["C1", "O2"]
@@ -517,7 +521,9 @@ class TestToolFailures:
 
 
 def test_tleap_typifier_refuses_a_graph_that_still_has_ports(tmp_path):
-    graph = mp.Conformer(seed=1).generate(mp.io.SmilesIR("COC").to_atomistic())[0]
+    graph = mp.conformer.Conformer(seed=1).generate(
+        mp.io.smiles.SmilesIR("COC").to_atomistic()
+    )[0]
     atoms = list(graph.atoms)
     for atom in atoms:
         atom["type"] = "c3"

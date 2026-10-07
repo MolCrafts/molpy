@@ -334,8 +334,7 @@ class OpenMMEngine(Engine):
         ff_path = out / ff_filename
         script_path = out / script_filename
 
-        from molrs.ff.forcefield import write_forcefield_xml
-        from molrs.io import write_pdb
+        from molrs.io import write_forcefield_xml, write_pdb
 
         write_pdb(pdb_path, frame)
         write_forcefield_xml(ff_path, forcefield)

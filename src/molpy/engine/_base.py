@@ -30,7 +30,7 @@ from pathlib import Path
 from typing import Any
 
 from ._script import Script
-from molpy.wrapper._env import EnvSpec
+from molpy.wrapper import EnvSpec
 
 
 class Engine(ABC):

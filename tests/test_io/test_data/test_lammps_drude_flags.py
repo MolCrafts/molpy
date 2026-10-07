@@ -8,7 +8,7 @@ ordering — writes the ``fix drude`` flags as a header comment.
 from pathlib import Path
 
 import molpy as mp
-from molpy import Atomistic
+from molpy.core import Atomistic
 from molpy.builder import DrudeBuilder
 
 

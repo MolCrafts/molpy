@@ -1,7 +1,7 @@
 import numpy as np
 
 import molpy as mp
-from molpy import MetaValue
+from molpy.core import MetaValue
 from molpy.io import (
     read_lammps_trajectory,
     write_lammps_dump_local,

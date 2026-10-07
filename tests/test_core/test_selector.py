@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 
-from molpy import AtomIndexSelector, AtomTypeSelector, Block, ElementSelector
+from molpy.core import AtomIndexSelector, AtomTypeSelector, Block, ElementSelector
 
 
 class TestMaskPredicate:

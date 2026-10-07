@@ -6,13 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from molpy.data import (
-    exists,
-    get_forcefield_path,
-    get_path,
-    list_files,
-    list_forcefields,
-)
+from molpy.data import exists, get_path, list_files
 
 
 class TestDataAccess:
@@ -57,20 +51,10 @@ class TestDataAccess:
         assert exists("forcefield/tip3p.xml")
         assert not exists("forcefield/nonexistent.xml")
 
-    def test_get_forcefield_path(self):
-        """Test getting forcefield path using convenience function."""
-        path = get_forcefield_path("tip3p.xml")
-        assert Path(path).exists()
-        assert Path(path).name == "tip3p.xml"
-
-    def test_get_forcefield_path_nonexistent(self):
-        """Test getting nonexistent forcefield path raises FileNotFoundError."""
-        with pytest.raises(FileNotFoundError):
-            get_forcefield_path("nonexistent.xml")
-
-    def test_list_forcefields(self):
-        """Test listing available forcefields."""
-        assert set(list_forcefields()) == {"clp.xml", "tip3p.xml"}
+    def test_the_bundled_forcefields(self):
+        """The force-field files molpy ships, found through ``list_files``."""
+        names = {Path(f).name for f in list_files("forcefield")}
+        assert names == {"clp.xml", "tip3p.xml"}
 
 
 class TestDataModuleImport:
@@ -83,5 +67,6 @@ class TestDataModuleImport:
         assert hasattr(molpy.data, "get_path")
         assert hasattr(molpy.data, "list_files")
         assert hasattr(molpy.data, "exists")
-        assert hasattr(molpy.data, "get_forcefield_path")
-        assert hasattr(molpy.data, "list_forcefields")
+        # get_path / list_files are the one door; no per-directory restatement.
+        assert not hasattr(molpy.data, "get_forcefield_path")
+        assert not hasattr(molpy.data, "list_forcefields")

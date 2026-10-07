@@ -4,7 +4,7 @@
 The reader returns the structure as a ``Frame`` (typed blocks carry
 ``type_id`` and the string ``type``) and keeps any ``* Coeffs`` sections as
 text in ``frame.meta["lammps_coeffs_text"]``; the force field is
-``mp.ff.forcefield.read_lammps_data_coeffs(frame)``, which names the rows by
+``mp.io.read_lammps_data_coeffs(frame)``, which names the rows by
 the file's Type Labels.
 """
 
@@ -88,7 +88,7 @@ class TestReadLammpsData:
 
         # No `* Coeffs` sections: the file carries no force field.
         with pytest.raises(ValueError, match="Coeffs"):
-            mp.ff.forcefield.read_lammps_data_coeffs(result)
+            mp.io.read_lammps_data_coeffs(result)
 
     def test_whitespaces_file(self, lammps_dir):
         """Test reading whitespaces.lmp - file with extra whitespaces."""
@@ -192,7 +192,7 @@ class TestReadLammpsData:
 
         # No `* Coeffs` sections: the file carries no force field.
         with pytest.raises(ValueError, match="Coeffs"):
-            mp.ff.forcefield.read_lammps_data_coeffs(result)
+            mp.io.read_lammps_data_coeffs(result)
 
     @staticmethod
     def _styled(tmp_path: Path, style: str, row: str) -> Path:
@@ -315,7 +315,7 @@ class TestWriteLammpsData:
         """read_lammps_data -> Atomistic.from_frame must keep bonds/angles/dihedrals.
 
         Regression: the reader stored relation endpoints as a signed int, and
-        ``molrs.from_frame`` reads endpoints only as ``uint64`` — so it silently
+        ``molrs.system.Atomistic.from_frame`` reads endpoints only as ``uint64`` — so it silently
         dropped every bond on the Frame->Atomistic round-trip.
         """
         data = (
@@ -815,7 +815,7 @@ class TestForceFieldCoeffs:
 
     def test_coeffs_are_extracted(self, ff_file):
         frame = mp.io.read_lammps_data(ff_file, atom_style="full")
-        ff = mp.ff.forcefield.read_lammps_data_coeffs(frame)
+        ff = mp.io.read_lammps_data_coeffs(frame)
         pair = {
             t.name: (t.get("epsilon"), t.get("sigma"))
             for s in ff.get_styles(mp.ff.forcefield.PairStyle)
@@ -848,7 +848,7 @@ class TestForceFieldCoeffs:
         )
         frame = mp.io.read_lammps_data(data, atom_style="full")
         with pytest.raises(ValueError):
-            mp.ff.forcefield.read_lammps_data_coeffs(frame)
+            mp.io.read_lammps_data_coeffs(frame)
 
 
 class TestCoeffsAreText:
@@ -866,11 +866,11 @@ class TestCoeffsAreText:
     def test_unparseable_coeffs_raise_when_read(self, cosine_file):
         frame = mp.io.read_lammps_data(cosine_file, atom_style="angle")
         with pytest.raises(ValueError):
-            mp.ff.forcefield.read_lammps_data_coeffs(frame)
+            mp.io.read_lammps_data_coeffs(frame)
 
     def test_units_are_the_callers(self, lammps_dir):
         frame = mp.io.read_lammps_data(lammps_dir / "coeffs.lmp", atom_style="full")
-        ff = mp.ff.forcefield.read_lammps_data_coeffs(frame, units="metal")
+        ff = mp.io.read_lammps_data_coeffs(frame, units="metal")
         assert ff.units == "metal"
         epsilon = {
             t.name: t.get("epsilon")

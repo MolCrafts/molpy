@@ -1,9 +1,9 @@
-"""Bundled force-field files; locate them with :func:`molpy.data.get_forcefield_path`.
+"""Bundled force-field files; locate them with :func:`molpy.data.get_path`.
 
 * ``tip3p.xml`` — TIP3P water, an OpenMM force-field XML
-  (``mp.ff.forcefield.read_forcefield_xml``).
+  (``mp.io.read_forcefield_xml(get_path("forcefield/tip3p.xml"))``).
 * ``clp.xml`` — the CL&P ionic-liquid typing force field
-  (``mp.ff.typifier.OPLSAATypifier(get_forcefield_path("clp.xml"))``).
+  (``mp.ff.typifier.OPLSAATypifier(get_path("forcefield/clp.xml"))``).
 
 OPLS-AA and the CL&Pol Drude table (``mp.ff.params.clpol_polarizability``)
 ship with molrs.

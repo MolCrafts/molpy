@@ -92,7 +92,7 @@ def _build(library, cuts, work: Path, sites: str = "{[#PEO]|5}"):
         charge_method="bcc",
         work_dir=work,
         **(_ENV or {}),
-    ).assemble(mp.io.CGSmilesIR(sites).to_coarsegrain())
+    ).assemble(mp.io.smiles.CGSmilesIR(sites).to_coarsegrain())
 
 
 def _type_charges(frame: mp.Frame) -> dict[str, list[float]]:
@@ -119,7 +119,7 @@ def test_prepgen_from_their_ac_matches_the_25mer(gropob, tmp_path):
     (script,) = (tmp_path / "chains").glob("*/polymer.in")
     assert "mol = sequence { HPE PEO PEO PEO TPE }" in script.read_text()
 
-    reference_ff, reference = mp.ff.forcefield.read_amber_prmtop_system(
+    reference_ff, reference = mp.io.read_amber_prmtop_system(
         gropob / "PEO_25mer.prmtop"
     )
     frame = result.chain.to_frame()

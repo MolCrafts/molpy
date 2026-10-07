@@ -26,9 +26,11 @@ UNITS = {
 
 def library(*, seed: int = 42) -> dict[str, mp.Atomistic]:
     """Every unit of :data:`UNITS` as a 3D molecule with hydrogens and ports."""
-    conformer = mp.Conformer(seed=seed)
+    conformer = mp.conformer.Conformer(seed=seed)
     return {
-        name: conformer.generate(mp.io.SmilesIR.from_fragment(body).to_template())[0]
+        name: conformer.generate(
+            mp.io.smiles.SmilesIR.from_fragment(body).to_template()
+        )[0]
         for name, body in UNITS.items()
     }
 

@@ -9,7 +9,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from molrs.conformer import Conformer
-from molrs.io import SmilesIR
+from molrs.io.smiles import SmilesIR
 from molrs.system import Atomistic
 
 from .types import AmberCut

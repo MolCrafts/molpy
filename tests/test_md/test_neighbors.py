@@ -1,8 +1,8 @@
-"""Tests for MD using the core :class:`molpy.NeighborList`."""
+"""Tests for MD using the core :class:`molpy.core.NeighborList`."""
 
 import numpy as np
 
-from molpy import Box, NeighborList
+from molpy.core import Box, NeighborList
 from molpy.ff.potential import LJCut
 
 

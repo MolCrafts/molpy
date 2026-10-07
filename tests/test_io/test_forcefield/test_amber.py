@@ -1,16 +1,12 @@
-"""``mp.ff.forcefield.read_amber_prmtop_system``: a prmtop's force field and structure frame."""
+"""``mp.io.read_amber_prmtop_system``: a prmtop's force field and structure frame."""
 
 from __future__ import annotations
 
 import numpy as np
 import pytest
 
-from molpy.ff.forcefield import (
-    AngleType,
-    AtomType,
-    BondType,
-    read_amber_prmtop_system,
-)
+from molpy.ff.forcefield import AngleType, AtomType, BondType
+from molpy.io import read_amber_prmtop_system
 
 
 @pytest.fixture

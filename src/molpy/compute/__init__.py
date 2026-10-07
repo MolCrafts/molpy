@@ -8,9 +8,9 @@ real units). FFT correlation, windows and frequency grids are
 
 Pair-based analyses (``RDF``, ``LocalDensity``, ``Steinhardt``, ``BondOrder``,
 ``PMFTXY``, ``Cluster``, …) take neighbour tables from
-``molpy.NeighborList``::
+``molpy.core.NeighborList``::
 
-    >>> nl = mp.NeighborList(cutoff)
+    >>> nl = mp.core.NeighborList(cutoff)
     >>> nl.build(frame.coords, frame.box)
     >>> g = mp.compute.RDF(n_bins, cutoff).compute([frame], [nl.neighbors()])
 
