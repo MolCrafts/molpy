@@ -255,8 +255,12 @@ The pages are grouped the way the questions group, not the way the classes do.
 Every curve on these pages is computed, not drawn. The reference system is 500
 argon atoms at 85 K and 1.374 g cm⁻³ — the Rahman state point — integrated for
 30 ps at constant energy, conserving total energy to a relative drift of
-$1.4\times10^{-5}$ (dimensionless, $|E(t)-E(0)|/|E(0)|$). The
-generator lives in `scripts/docs_data/` and writes to `docs/data/`, so any
+$3.1\times10^{-6}$ (dimensionless, $|E(t)-E(0)|/|E(0)|$). The transport pages
+([MSD](msd.md), [VACF](vacf.md)) average over eight such runs that differ only
+in the seed of their initial velocities, because one run of a chaotic liquid
+is one noisy draw, and quote each coefficient with its spread over the runs.
+Every run is a pure function of its seed, with nothing cached between runs.
+The generator lives in `scripts/docs_data/` and writes to `docs/data/`, so any
 figure can be reproduced or challenged:
 
 ```python

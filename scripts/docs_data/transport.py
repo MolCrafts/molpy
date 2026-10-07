@@ -1,10 +1,17 @@
 """Datasets for the transport pages: MSD and VACF.
 
-Both observables come from the same argon trajectory, which is why the docs can
-show that the Einstein and Green-Kubo routes to the diffusion coefficient agree.
+Both observables come from the same ensemble of independent argon runs (one per
+seed in ``run.SEEDS``), which is why the docs can show that the Einstein and
+Green-Kubo routes to the diffusion coefficient agree. Lennard-Jones dynamics is
+chaotic: a single 30 ps run of 500 atoms is one noisy draw, and its long-lag MSD
+and fitted D move by tens of percent from seed to seed. So the figures show the
+ensemble mean, and every diffusion coefficient is the mean over the seeds with
+its sample standard deviation and the standard error of that mean.
 """
 
 from __future__ import annotations
+
+from collections.abc import Sequence
 
 import numpy as np
 
@@ -25,6 +32,9 @@ from .structure import write_json
 FIT_START = 5000.0
 FIT_END = 20000.0
 
+#: VACF lags kept, in frames (2.5 ps at 10 fs).
+VACF_MAX_LAG = 250
+
 
 def _unwrapped_frames(trajectory: Trajectory) -> list[mp.Frame]:
     """Frames carrying continuous coordinates — required for displacements."""
@@ -37,11 +47,42 @@ def _unwrapped_frames(trajectory: Trajectory) -> list[mp.Frame]:
     return frames
 
 
-def mean_squared_displacement(trajectory: Trajectory) -> dict[str, float]:
-    """MSD(tau) and the Einstein diffusion coefficient."""
-    series = Msd(method="window").compute(_unwrapped_frames(trajectory))
-    msd = np.asarray(series.mean)
-    lag = np.arange(len(msd)) * trajectory.dt
+def _spread(values: Sequence[float]) -> dict[str, float]:
+    """Mean, sample standard deviation and standard error of the mean."""
+    array = np.asarray(values, dtype=float)
+    std = float(array.std(ddof=1))
+    return {
+        "mean": float(array.mean()),
+        "std": std,
+        "sem": std / np.sqrt(len(array)),
+        "min": float(array.min()),
+        "max": float(array.max()),
+    }
+
+
+def _summary(prefix: str, spread: dict[str, float]) -> dict[str, float]:
+    return {f"{prefix}_{key}": value for key, value in spread.items()}
+
+
+def mean_squared_displacement(trajectories: Sequence[Trajectory]) -> dict[str, float]:
+    """Ensemble-mean MSD(tau) and the Einstein diffusion coefficient per seed."""
+    curves = np.array(
+        [
+            np.asarray(Msd(method="window").compute(_unwrapped_frames(t)).mean)
+            for t in trajectories
+        ]
+    )
+    dt = trajectories[0].dt
+    lag = np.arange(curves.shape[1]) * dt
+    msd = curves.mean(axis=0)
+    temperature = float(np.mean([t.temperature for t in trajectories]))
+
+    # D from each run's own straight-line fit over FIT_START..FIT_END: the
+    # spread of those fits is the uncertainty the docs quote.
+    window = (lag >= FIT_START) & (lag <= FIT_END)
+    diffusion = [np.polyfit(lag[window], curve[window], 1)[0] / 6.0 for curve in curves]
+    diffusion_cm2_per_s = [d * ANGSTROM2_PER_FS_TO_CM2_PER_S for d in diffusion]
+    mean_diffusion = float(np.mean(diffusion))
 
     # Drop lag 0: MSD(0) = 0 cannot be shown on logarithmic axes, and the
     # figure is about the crossover between power laws. Points are then
@@ -50,14 +91,10 @@ def mean_squared_displacement(trajectory: Trajectory) -> dict[str, float]:
     # shipping 3000 near-duplicate points.
     picked = np.unique(np.round(np.geomspace(1, len(msd) - 1, 260)).astype(int))
 
-    window = (lag >= FIT_START) & (lag <= FIT_END)
-    slope, intercept = np.polyfit(lag[window], msd[window], 1)
-    diffusion = slope / 6.0
-
     # Both asymptotes are predictions, not fitted curves drawn by hand:
-    # ballistic uses <v^2> = 3 k_B T / m measured from the same run, and
-    # diffusive uses the slope fitted over FIT_START..FIT_END.
-    mean_square_speed = 3.0 * KB * trajectory.temperature / ArgonLJ().mass * ACCEL
+    # ballistic uses <v^2> = 3 k_B T / m at the runs' mean temperature, and
+    # diffusive uses the seed-mean D.
+    mean_square_speed = 3.0 * KB * temperature / ArgonLJ().mass * ACCEL
     rows: list[dict[str, float | str]] = []
     for i in picked:
         rows.append(
@@ -80,7 +117,7 @@ def mean_squared_displacement(trajectory: Trajectory) -> dict[str, float]:
                     "series": "τ²",
                 }
             )
-        diffusive = slope * tau
+        diffusive = 6.0 * mean_diffusion * tau
         if 1e-4 <= diffusive <= 60.0:
             rows.append(
                 {
@@ -94,22 +131,33 @@ def mean_squared_displacement(trajectory: Trajectory) -> dict[str, float]:
     # Slope of log MSD vs log tau: 2 while ballistic, 1 once diffusive.
     short = (lag > 0) & (lag <= 50.0)
     ballistic_slope = np.polyfit(np.log(lag[short]), np.log(msd[short]), 1)[0]
-
+    first = 1  # tau = dt
     return {
-        "D_A2_per_fs": float(diffusion),
-        "D_cm2_per_s": float(diffusion * ANGSTROM2_PER_FS_TO_CM2_PER_S),
-        "msd_30ps": float(msd[-1]),
+        "n_seeds": float(len(trajectories)),
+        "temperature_K": temperature,
+        **_summary("D_cm2_per_s", _spread(diffusion_cm2_per_s)),
         "loglog_slope_short": float(ballistic_slope),
-        "fit_intercept": float(intercept),
+        "msd_at_dt": float(msd[first]),
+        "ballistic_at_dt": float(mean_square_speed * lag[first] ** 2),
     }
 
 
-def velocity_autocorrelation(trajectory: Trajectory) -> dict[str, float]:
-    """Normalized VACF and the Green-Kubo diffusion coefficient."""
-    velocities = np.ascontiguousarray(trajectory.velocities)
-    result = Acf().compute(velocities, max_lag=250)
-    acf = np.asarray(result.acf)
-    lag = np.arange(len(acf)) * trajectory.dt
+def velocity_autocorrelation(trajectories: Sequence[Trajectory]) -> dict[str, float]:
+    """Ensemble-mean normalized VACF and the Green-Kubo D per seed."""
+    acfs = np.array(
+        [
+            np.asarray(
+                Acf()
+                .compute(np.ascontiguousarray(t.velocities), max_lag=VACF_MAX_LAG)
+                .acf
+            )
+            for t in trajectories
+        ]
+    )
+    dt = trajectories[0].dt
+    lag = np.arange(acfs.shape[1]) * dt
+    acf = acfs.mean(axis=0)
+    temperature = float(np.mean([t.temperature for t in trajectories]))
 
     write_json(
         "vacf/argon_vacf.json",
@@ -120,10 +168,11 @@ def velocity_autocorrelation(trajectory: Trajectory) -> dict[str, float]:
     )
 
     # Running Green-Kubo integral: D(t) = 1/3 \int_0^t C(s) ds.
-    running = (
-        np.concatenate([[0.0], np.cumsum(0.5 * (acf[1:] + acf[:-1]) * np.diff(lag))])
-        / 3.0
-    )
+    def running(curve: np.ndarray) -> np.ndarray:
+        steps = 0.5 * (curve[1:] + curve[:-1]) * np.diff(lag)
+        return np.concatenate([[0.0], np.cumsum(steps)]) / 3.0
+
+    mean_running = running(acf)
     write_json(
         "vacf/argon_running_diffusion.json",
         [
@@ -131,27 +180,46 @@ def velocity_autocorrelation(trajectory: Trajectory) -> dict[str, float]:
                 "t": round(float(a), 2),
                 "D": round(float(b * ANGSTROM2_PER_FS_TO_CM2_PER_S), 8),
             }
-            for a, b in zip(lag, running)
+            for a, b in zip(lag, mean_running)
         ],
     )
 
-    equipartition = 3.0 * KB * trajectory.temperature / ArgonLJ().mass * ACCEL
+    diffusion_cm2_per_s = [
+        float(running(curve)[-1] * ANGSTROM2_PER_FS_TO_CM2_PER_S) for curve in acfs
+    ]
+    equipartition = 3.0 * KB * temperature / ArgonLJ().mass * ACCEL
     minimum = int(np.argmin(acf))
+    crossing = int(np.argmax(acf < 0.0))
+    peak = int(np.argmax(mean_running))
     return {
+        "n_seeds": float(len(trajectories)),
+        "temperature_K": temperature,
         "C0": float(acf[0]),
         "C0_expected_3kT_m": float(equipartition),
+        "zero_crossing_fs": float(lag[crossing]),
         "min_lag_fs": float(lag[minimum]),
         "min_normalized": float(acf[minimum] / acf[0]),
-        "D_cm2_per_s": float(running[-1] * ANGSTROM2_PER_FS_TO_CM2_PER_S),
+        "running_peak_fs": float(lag[peak]),
+        "running_peak_cm2_per_s": float(
+            mean_running[peak] * ANGSTROM2_PER_FS_TO_CM2_PER_S
+        ),
+        "running_at_400fs_cm2_per_s": float(
+            mean_running[int(round(400.0 / dt))] * ANGSTROM2_PER_FS_TO_CM2_PER_S
+        ),
+        "running_at_1500fs_cm2_per_s": float(
+            mean_running[int(round(1500.0 / dt))] * ANGSTROM2_PER_FS_TO_CM2_PER_S
+        ),
+        **_summary("D_cm2_per_s", _spread(diffusion_cm2_per_s)),
     }
 
 
-def pair_survival(trajectory: Trajectory) -> dict[str, float]:
-    """First-shell residence correlation for argon.
+def pair_survival(trajectories: Sequence[Trajectory]) -> dict[str, float]:
+    """First-shell residence correlation for argon, from the first run.
 
     Slow: the kernel walks every (i, j) pair at every lag, so this is minutes,
     not seconds. It is the only dataset here that is not near-instant.
     """
+    trajectory = trajectories[0]
     n_frames = 2000
     positions = np.ascontiguousarray(trajectory.wrapped[:n_frames])
     box = np.tile(np.array([[trajectory.box_length] * 3]), (n_frames, 1))

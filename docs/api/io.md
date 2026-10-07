@@ -49,7 +49,7 @@ The files map onto `mp.ff.forcefield.ForceField`, the data model
 |----------|--------|-----------|
 | `read_openmm_xml_forcefield` / `write_openmm_xml_forcefield` | OpenMM/OPLS XML | read/write |
 | `read_lammps_forcefield` / `write_lammps_forcefield` | LAMMPS `*.ff` include | read/write (engine units ↔ LAMMPS `real`) |
-| `read_lammps_data_coeffs` / `write_lammps_data_coeffs` | LAMMPS data `* Coeffs` | read/write |
+| `read_lammps_data_coeffs` / `read_lammps_data_coeffs_str` / `write_lammps_data_coeffs_str` | LAMMPS data `* Coeffs` | read (file or text) / write (text) |
 | `read_gromacs_top_forcefield` / `write_gromacs_top_forcefield` | GROMACS `.top` / `.itp` directives | read/write |
 | `read_gromacs_top_system` / `write_gromacs_top_system` | GROMACS topology: force field + typed frame | read/write |
 | `read_amber_prmtop_forcefield` / `write_amber_frcmod` | AMBER prmtop / frcmod | read / write |

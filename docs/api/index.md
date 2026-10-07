@@ -41,8 +41,8 @@ its molrs subsystem.
 | Pack molecules into a simulation box | `molpack.GencanPack`, `Target`, molrs regions as restraints | [Pack](pack.md) |
 | Generate 3D conformers from a molecular graph | `Conformer` | [Conformer](conformer.md) |
 | Assign force field types (OPLS-AA, MMFF94, GAFF via AmberTools) | `mp.ff.typifier.OplsAaTypifier`, `Mmff94Typifier`, `AtdTypifier`, `AntechamberTypifier`, `TleapTypifier` | [Typifier](typifier.md) |
-| Evaluate bond, angle, and pair potentials | `mp.ff.potential.PotentialCompiler`, `Potentials`, `compile_explicit_terms` | [Potential](potential.md) |
-| Register a force-field style or category from Python | `mp.ff.ir.StyleDeclaration`, `register_style`, `register_category` | [Potential](potential.md) |
+| Evaluate bond, angle, and pair potentials | `mp.ff.compile.PotentialCompiler`, `compile_explicit_terms`, `mp.ff.potential.Potentials` | [Potential](potential.md) |
+| Register a force-field style or category from Python | `mp.ff.style_registry.StyleDeclaration`, `register_style`, `register_category` | [Potential](potential.md) |
 | Read and write molecular files (PDB, LAMMPS, GRO, …) | `mp.io.read_pdb`, `mp.io.write_lammps_data`, `mp.io.read_openmm_xml_forcefield` | [I/O](io.md) |
 | Store a frame, trajectory or force field as a `*.mrec` record | `mp.io.write_mrec_frame`, `mp.io.read_mrec_trajectory`, `mp.io.read_mrec_forcefield` | [I/O](io.md) |
 | Bridge to a third-party library (in-memory) | `Adapter`, `RdkitAdapter` (optional example) | [Adapter](adapter.md) |
@@ -62,7 +62,7 @@ its molrs subsystem.
 | [Pack](pack.md) | Spatial packing via molpack (`molcrafts-molpack`) |
 | [Conformer](conformer.md) | 3D conformer generation from molecular graphs |
 | [Typifier](typifier.md) | Force-field typing: OPLS-AA and MMFF94 (native), GAFF / GAFF2 through AmberTools |
-| [Potential](potential.md) | `mp.ff.potential` kernels and compiler, `mp.ff.ir` style registration |
+| [Potential](potential.md) | `mp.ff.potential` kernels, `mp.ff.compile` compiler, `mp.ff.style_registry` style registration |
 | [I/O](io.md) | `mp.io`: every file reader and writer — structure, trajectory and force-field files, SMILES, `*.mrec` records, LAMMPS logs — and molpy's metric readers |
 | [Adapter](adapter.md) | Optional in-memory bridge to RDKit (worked example) |
 | [Wrapper](wrapper.md) | Subprocess interfaces for AmberTools command-line executables |

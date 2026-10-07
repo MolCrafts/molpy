@@ -1,23 +1,29 @@
-"""Produce (and cache) the reference argon trajectory the docs figures use.
+"""Run the argon trajectories the docs figures use.
 
-One run serves every figure: structure needs decorrelated configurations,
-MSD needs a long continuous path, VACF needs dense time resolution. Sampling
-every step of a 30 ps constant-energy run covers all three.
+One run serves the structural figures: structure needs decorrelated
+configurations, VACF needs dense time resolution, and sampling every step of a
+30 ps constant-energy run covers both. The transport coefficients are not taken
+from one run: Lennard-Jones dynamics is chaotic, so one 30 ps trajectory of 500
+atoms is one draw of a noisy estimator (its long-lag MSD and its fitted D move
+by tens of percent from seed to seed). The transport pages average over an
+ensemble of independent runs, one per seed in :data:`SEEDS`, and quote the
+spread.
 
-The cache lives under ``.cache/`` (gitignored). Only the small derived JSON
-files under ``docs/data/`` are committed.
+Every run is a pure function of its seed: nothing is read from or written to a
+cache on disk, so a regenerated figure is never built from a stale trajectory.
+Only the small derived JSON files under ``docs/data/`` are committed.
 """
 
 from __future__ import annotations
 
+import functools
+import os
+from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
-
-import numpy as np
 
 from .lj import LennardJonesMD, Trajectory
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-CACHE = REPO_ROOT / ".cache" / "docs_data"
 DOCS_DATA = REPO_ROOT / "docs" / "data"
 
 #: State point: liquid argon just above the triple point (Rahman 1964).
@@ -29,39 +35,28 @@ N_ATOMS = 500
 TIMESTEP = 10.0
 PRODUCTION_STEPS = 3000
 
+#: The seed of the single reference run the structural figures use.
+REFERENCE_SEED = 0
 
-def argon_trajectory(*, refresh: bool = False) -> Trajectory:
-    """Return the reference trajectory, running the MD only when needed."""
-    cache_file = CACHE / f"argon_{N_ATOMS}_{PRODUCTION_STEPS}.npz"
-    if cache_file.is_file() and not refresh:
-        stored = np.load(cache_file)
-        return Trajectory(
-            wrapped=stored["wrapped"],
-            unwrapped=stored["unwrapped"],
-            velocities=stored["velocities"],
-            box_length=float(stored["box_length"]),
-            dt=float(stored["dt"]),
-            temperature=float(stored["temperature"]),
-            energy_drift=float(stored["energy_drift"]),
-        )
+#: The independent runs the transport coefficients are averaged over.
+SEEDS = tuple(range(8))
 
-    md = LennardJonesMD(n_atoms=N_ATOMS, mass_density=MASS_DENSITY, seed=0)
+
+@functools.cache
+def argon_trajectory(seed: int = REFERENCE_SEED) -> Trajectory:
+    """Melt, cool and sample one argon run; the seed draws its velocities."""
+    md = LennardJonesMD(n_atoms=N_ATOMS, mass_density=MASS_DENSITY, seed=seed)
     # Melt the FCC starting lattice before cooling: at the triple point a
     # perfect crystal can stay metastable and the "liquid" would be a solid.
     md.thermalize(300.0)
     md.equilibrate(300.0, steps=400, dt=TIMESTEP)
     md.equilibrate(TEMPERATURE, steps=800, dt=TIMESTEP)
-    trajectory = md.sample(steps=PRODUCTION_STEPS, stride=1, dt=TIMESTEP)
+    return md.sample(steps=PRODUCTION_STEPS, stride=1, dt=TIMESTEP)
 
-    CACHE.mkdir(parents=True, exist_ok=True)
-    np.savez_compressed(
-        cache_file,
-        wrapped=trajectory.wrapped,
-        unwrapped=trajectory.unwrapped,
-        velocities=trajectory.velocities,
-        box_length=trajectory.box_length,
-        dt=trajectory.dt,
-        temperature=trajectory.temperature,
-        energy_drift=trajectory.energy_drift,
-    )
-    return trajectory
+
+@functools.cache
+def argon_ensemble() -> tuple[Trajectory, ...]:
+    """One run per seed in :data:`SEEDS`, in seed order, run in parallel."""
+    workers = min(len(SEEDS), os.cpu_count() or 1)
+    with ProcessPoolExecutor(max_workers=workers) as pool:
+        return tuple(pool.map(argon_trajectory, SEEDS))

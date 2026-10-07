@@ -3,7 +3,7 @@
 :func:`scale_lj` returns a copy of a force field whose LJ well depths (and,
 optionally, diameters) are scaled per fragment pair by :func:`compute_k_ij`;
 :class:`FragmentScaling` is one fragment's charge, dipole and polarizability.
-The table molrs ships is ``mp.ff.params.clpol_fragment_scaling()``.
+The table molrs ships is :func:`fragment_table`.
 """
 
 from molrs.ff.clpol_scaling import *  # noqa: F403

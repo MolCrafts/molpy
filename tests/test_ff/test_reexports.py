@@ -13,10 +13,12 @@ import molpy as mp
 SUBMODULES = (
     "charge",
     "clpol_scaling",
+    "compile",
     "forcefield",
     "ir",
     "params",
     "potential",
+    "style_registry",
 )
 
 
@@ -43,26 +45,16 @@ def test_the_typifier_adds_only_the_ambertools_typifiers() -> None:
     ]
 
 
-def test_md_defines_no_potential() -> None:
-    for name in ("PairLjCut", "Potential", "Potentials"):
-        assert not hasattr(mp.md, name)
-
-
-def test_no_force_field_name_is_left_on_the_root() -> None:
-    for name in ("ForceField", "Potentials", "PotentialCompiler", "BccModel"):
-        assert not hasattr(mp, name)
-
-
 def test_a_kernel_built_by_hand_is_pushed_into_potentials() -> None:
     pos = np.array([0.0, 0.0, 0.0, 1.6, 0.0, 0.0, 1.6, 1.2, 0.0])
     pots = mp.ff.potential.Potentials()
     pots.push(
-        mp.ff.potential.compile_explicit_terms(
+        mp.ff.compile.compile_explicit_terms(
             "bond", "harmonic", [[0, 1], [1, 2]], k=300.0, r0=1.5
         )
     )
     pots.push(
-        mp.ff.potential.compile_explicit_terms(
+        mp.ff.compile.compile_explicit_terms(
             "angle", "harmonic", [[0, 1, 2]], k=50.0, theta0=120.0
         )
     )

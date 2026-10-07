@@ -25,7 +25,7 @@ typifier = mp.ff.typifier.OplsAaTypifier()
 frame = typifier.typify(mol).to_frame()
 forcefield = typifier.forcefield()  # OPLS-AA parameters of the types just assigned
 
-potentials = mp.ff.potential.PotentialCompiler(forcefield).compile(frame)  # bonded + pair terms
+potentials = mp.ff.compile.PotentialCompiler(forcefield).compile(frame)  # bonded + pair terms
 opt = mp.optimize.Lbfgs(potentials, fmax=0.05, max_steps=200)
 frame, report = opt.minimize(frame)  # a new frame with the relaxed coordinates
 

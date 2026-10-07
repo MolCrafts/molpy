@@ -28,6 +28,14 @@ intervals — every frame is a legitimate starting point. Using all of them is
 what `Msd(method="window")` does, and it is why the short-lag end of an MSD
 curve is smooth while the long-lag end is ragged.
 
+Neither average removes the noise of the trajectory itself. Lennard-Jones
+dynamics is chaotic: rerun the same 500 atoms from a different random set of
+initial velocities and the long-lag end of the curve, and the $D$ fitted to it,
+move by several percent. A third average — over **independent runs** — is the
+one that gives a number an error bar. The figures and numbers on this page come
+from eight runs of the same state point that differ only in the seed of their
+initial velocities.
+
 Note also that displacement is squared, not signed. A random walk goes nowhere
 on average, $\langle \mathbf{r}(t+\tau)-\mathbf{r}(t)\rangle = 0$, so the signed
 average would tell you nothing. Squaring keeps the magnitude.
@@ -102,10 +110,11 @@ layer:
 
 </div>
 
-**Figure 1.** MSD of liquid argon at 85 K on log–log axes. Solid blue is the
-measurement. The two muted dashed lines are **not** fits to the shape: the
-steep one is $\langle v^2\rangle\tau^2$ from equipartition, the shallow one is
-$6D\tau$ with $D$ from a straight-line fit between 5 and 20 ps. Labels mark the
+**Figure 1.** MSD of liquid argon at 85 K on log–log axes, averaged over eight
+independent runs. Solid blue is the measurement. The two muted dashed lines are
+**not** fits to the shape: the steep one is $\langle v^2\rangle\tau^2$ from
+equipartition, the shallow one is $6D\tau$ with $D$ the mean of the eight runs'
+straight-line fits between 5 and 20 ps. Labels mark the
 ballistic and diffusive windows used in the text.
 </figure>
 
@@ -114,8 +123,8 @@ exponent becomes a slope you can read by eye.
 
 **Short times — ballistic, slope 2.** Before an atom has collided with anything,
 it moves in a straight line: $\mathbf{r}(\tau) = \mathbf{v}\tau$, so
-$\mathrm{MSD} = \langle v^2\rangle \tau^2$. Fitting the first 50 fs of this
-trajectory gives a log–log slope of **1.994**. The atoms are simply flying, and
+$\mathrm{MSD} = \langle v^2\rangle \tau^2$. Fitting the first 50 fs of these
+runs gives a log–log slope of **1.994**. The atoms are simply flying, and
 $\langle v^2\rangle$ follows from equipartition, $3k_BT/m$ — no dynamics
 required. At $\tau = 10$ fs both the measurement and that prediction give
 0.00053 Å².
@@ -136,11 +145,16 @@ $$
 
 The $2d$ is just dimensionality — each of the $d = 3$ independent directions
 contributes $2D\tau$ — so in three dimensions you divide the slope by 6. Fitting
-this argon between 5 and 20 ps gives
+each of the eight argon runs between 5 and 20 ps and averaging gives
 
 $$
-D = 2.21\times10^{-5}\ \mathrm{cm^{2}\,s^{-1}}.
+D = (1.93 \pm 0.12)\times10^{-5}\ \mathrm{cm^{2}\,s^{-1}},
 $$
+
+the mean over the eight runs with their sample standard deviation. The single
+runs range from $1.81$ to $2.18\times10^{-5}$, so one 30 ps trajectory of 500
+atoms pins $D$ down to no better than about 6 %; the mean of eight is good to
+its standard error, $0.04\times10^{-5}$ (2 %).
 
 Rahman's 1964 molecular-dynamics study of argon at the same density but a
 slightly higher temperature (94.4 K) reported $2.43\times10^{-5}$ cm² s⁻¹.
@@ -148,14 +162,13 @@ Ours is colder and diffuses more slowly, which is the right direction and the
 right magnitude. Getting a number you can check against the literature is the
 point of running a standard system.
 
-The [VACF](vacf.md) page reaches $D = 2.23\times10^{-5}$ cm² s⁻¹ from the same
-trajectory by integrating the velocity autocorrelation instead of fitting
-displacements. The two routes are mathematically equivalent, so this is not an
-independent measurement of the physics — but they break differently (unwrapping
-and fit window here; dump rate and drift there), so agreement tells you neither
-set of analysis choices is distorting the result. Note also that neither number
-carries an error bar, so do not read significance into the last digit; block
-averaging over trajectory segments is how you would get one.
+The [VACF](vacf.md) page reaches $D = (1.99 \pm 0.06)\times10^{-5}$ cm² s⁻¹
+from the same eight runs by integrating the velocity autocorrelation instead of
+fitting displacements. The two routes are mathematically equivalent, so this is
+not an independent measurement of the physics — but they break differently
+(unwrapping and fit window here; dump rate and drift there), so agreement within
+their spreads tells you neither set of analysis choices is distorting the
+result.
 
 ## Unwrapped coordinates are not optional
 

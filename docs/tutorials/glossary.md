@@ -49,7 +49,7 @@ Quick definitions for MolPy's core terminology. Each entry links to the page tha
 : One concrete parameter record within a style, defined with `style.def_type(name, *endpoints, **params)`. For example, a bond type `CT-OH` between the atom types `CT` and `OH` with `k=320.0` and `r0=1.41`. Subclasses: `AtomType`, `BondType`, `AngleType`, `DihedralType`, `ImproperType`, `PairType`.
 
 **Potential**
-: The numerical realization of a force field's styles and types, ready for energy/force computation. Produced by `mp.ff.potential.PotentialCompiler(ff).compile(frame)` (or `.defer()` for a `Potentials` bound later) and evaluated against a typed `Frame` via `pots.calc_energy(frame)` / `pots.calc_forces(frame)`; the kernels run in the high-performance backend. See [Force Field](04_force_field.md).
+: The numerical realization of a force field's styles and types, ready for energy/force computation. Produced by `mp.ff.compile.PotentialCompiler(ff).compile(frame)` (or `.defer()` for a `Potentials` bound later) and evaluated against a typed `Frame` via `pots.calc_energy(frame)` / `pots.calc_forces(frame)`; the kernels run in the high-performance backend. See [Force Field](04_force_field.md).
 
 ### Modules
 

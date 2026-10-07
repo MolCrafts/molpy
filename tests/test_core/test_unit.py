@@ -1,8 +1,7 @@
 """Units are molrs's: ``mp.core.UnitRegistry`` / ``mp.core.UnitPreset`` by identity.
 
-molpy keeps no unit registry of its own; what ``UnitSystem`` used to add — the
-``openmm`` preset, preset registration, ``k_B`` and LJ reduced units — is
-native. These tests pin the molpy-facing contract of those names.
+molpy keeps no unit registry of its own; the ``openmm`` preset, preset
+registration, ``k_B`` and LJ reduced units are native. These tests pin the molpy-facing contract of those names.
 """
 
 import molrs

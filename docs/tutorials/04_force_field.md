@@ -145,7 +145,7 @@ print(f"CT-CT k={ct_ct['k']}")
 ## Evaluating as Potentials
 
 Evaluation is the first strict integrity test of the model.
-`mp.ff.potential.PotentialCompiler(ff)` compiles the force field against a typed `Frame`:
+`mp.ff.compile.PotentialCompiler(ff)` compiles the force field against a typed `Frame`:
 an `atoms` block with coordinates and a `type` column, plus bonded blocks
 (`bonds`, `angles`, …) whose `type` column names force-field types. The
 numerical kernels run in the native Rust core.
@@ -159,7 +159,7 @@ frame = mp.Frame(
     }
 )
 
-pots = mp.ff.potential.PotentialCompiler(ff).compile(frame)
+pots = mp.ff.compile.PotentialCompiler(ff).compile(frame)
 energy = pots.calc_energy(frame)
 forces = pots.calc_forces(frame)
 print(f"energy = {energy}")
@@ -205,7 +205,7 @@ print(mp.io.write_lammps_forcefield_str(ff, frame, precision=4))
 
 ## When to move beyond built-in styles
 
-Real projects eventually need interaction forms not covered by built-in styles — a FENE spring, a custom torsion profile, a cross term of three atoms. The force-field IR is a protocol: declare the new style in Python (`class Fene(mp.ff.ir.StyleDeclaration)`, with its ordered parameters and its energy as an expression or a Python kernel), and it is typed, compiled and saved like a built-in, with nothing rebuilt.
+Real projects eventually need interaction forms not covered by built-in styles — a FENE spring, a custom torsion profile, a cross term of three atoms. The force-field IR is a protocol: declare the new style in Python (`class Fene(mp.ff.style_registry.StyleDeclaration)`, with its ordered parameters and its energy as an expression or a Python kernel), and it is typed, compiled and saved like a built-in, with nothing rebuilt.
 
 See [Extending Force Field](../developer/extending-forcefield.md) for the full extension recipe.
 

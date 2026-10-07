@@ -4,9 +4,8 @@ Every native name is the molrs object (``mp.io.mrec.MrecReader is
 molrs.io.mrec.MrecReader``): the lazy store cursor ``MrecReader`` and its
 ``MrecWriter``, ``SequenceSchema``, ``ForceFieldSection`` (a force field's
 record section: ``ForceFieldSection.from_forcefield(ff)`` /
-``section.to_forcefield()``), ``section_names``, ``pack_mrec_zip``, the
-``validation`` checks and the ``MOLREC_VERSION`` / ``RESERVED_META_KEYS``
-contract. A record is read and written whole by ``mp.io.read_mrec_frame`` /
+``section.to_forcefield()``), ``section_names``, ``pack_mrec_zip`` and the
+``validation`` checks. A record is read and written whole by ``mp.io.read_mrec_frame`` /
 ``write_mrec_frame`` and their ``_system`` / ``_trajectory`` / ``_forcefield``
 partners.
 

@@ -1,7 +1,7 @@
 name: Release
 
 # Tag push on MolCrafts/molpy → pure-Python wheel to PyPI (trusted publishing).
-# Requires molcrafts-molrs on the same major.minor already on PyPI (see release notes).
+# Requires molcrafts-molrs on the same major.minor already on PyPI (see docs/developer/release-process.md).
 #
 # Before publish: run the same 3 OS × 3.12 / 3.13 / 3.14 unit matrix as CI
 # (do not skip a minor of the supported range).

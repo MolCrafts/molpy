@@ -61,7 +61,7 @@ promoted to the root, as the same objects.
 | Where | Capability |
 |---|---|
 | **`mp.*`, `core`, `perceive`, `conformer`, `optimize`** | Explicit data model — `Frame` / `Block` columnar arrays, `Trajectory`, editable `Atomistic` / `CoarseGrain` graphs and `Box` on the root; regions, neighbour search, units, molpy's selectors and trajectory splitters in `mp.core`; perception and SMARTS (`mp.perceive.SmartsPattern`), 3D conformers (`mp.conformer.Conformer`), the `mp.optimize.Lbfgs` minimizer |
-| **`ff`** | Force fields, mirroring `molrs.ff` — `forcefield` (the `ForceField` data model), `potential` (`PotentialCompiler`, kernels), `typifier` (OPLS-AA, MMFF94, GAFF natively; GAFF / GAFF2 via AmberTools), `charge`, `ir` (your own styles from Python), `params`, `clpol_scaling` |
+| **`ff`** | Force fields, mirroring `molrs.ff` — `forcefield` (the `ForceField` data model), `potential` (kernels), `compile` (`PotentialCompiler`), `typifier` (OPLS-AA, MMFF94, GAFF natively; GAFF / GAFF2 via AmberTools), `charge`, `ir` (the IR's vocabulary), `style_registry` (your own styles from Python), `params`, `clpol_scaling` |
 | **`builder`** | Site-graph assembly (`Assembler`), graphene and nanotubes, polymer planning and polydispersity, crystals, virtual sites, packing templates |
 | **`compute`** · **`signal`** | Analysis — `Rdf`, `Msd`, conductivity, order parameters, Voronoi, dielectric and vibrational spectra, … (native kernels); FFT correlation and windows |
 | **`io`** | Read/write — PDB, GRO, LAMMPS data, XYZ, AMBER, SMILES / CGsmiles, trajectories, `*.mrec` records, … |
@@ -152,7 +152,6 @@ Full documentation, including executable notebooks:
 **[docs.molcrafts.org/molpy](https://docs.molcrafts.org/molpy/)**
 
 - [Getting Started](https://docs.molcrafts.org/molpy/getting-started/) — install and first example
-- [What's New](https://docs.molcrafts.org/molpy/getting-started/whats-new/) — release highlights and upgrading
 - [Example Gallery](https://docs.molcrafts.org/molpy/getting-started/examples/) — short copy-paste workflows
 - [Guides](https://docs.molcrafts.org/molpy/user-guide/) — task-oriented notebooks
 - [Concepts](https://docs.molcrafts.org/molpy/tutorials/) — data model deep dives

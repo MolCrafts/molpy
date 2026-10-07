@@ -175,8 +175,6 @@ def test_lammps_prices_the_emitted_bonded_terms_as_molrs_does(
 
     # No `pairs` block: molrs prices the bonded terms alone.
     frame = water.to_frame()
-    energy = (
-        mp.ff.potential.PotentialCompiler(water_ff).compile(frame).calc_energy(frame)
-    )
+    energy = mp.ff.compile.PotentialCompiler(water_ff).compile(frame).calc_energy(frame)
     assert ebond + eangle == pytest.approx(energy, rel=1e-5)
     assert eangle > 0.0

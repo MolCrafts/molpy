@@ -1,7 +1,6 @@
 """A user's own force-field style, from molpy, with nothing rebuilt.
 
-The proof of the force-field IR as a protocol at the molpy layer
-(``ff-ir-02-protocol``, P-molpy): the snippet of
+The proof of the force-field style registry at the molpy layer: the snippet of
 ``docs/developer/extending-forcefield.md`` is run as written. It declares
 LAMMPS ``bond_style fene`` by its expression (``class Fene(StyleDeclaration)``),
 types a bead chain with a ``BeadSpring`` typifier (lj units) whose ``assign``
@@ -94,8 +93,11 @@ def test_the_doc_snippet_is_under_30_lines() -> None:
 
 def test_the_style_is_registered_from_molpy(snippet) -> None:
     ns, _ = snippet
-    assert mp.ff.ir.StyleDeclaration is molrs.ff.ir.StyleDeclaration
-    (info,) = [s for s in mp.ff.ir.styles("bond") if s.name == "fene"]
+    assert (
+        mp.ff.style_registry.StyleDeclaration
+        is molrs.ff.style_registry.StyleDeclaration
+    )
+    (info,) = [s for s in mp.ff.style_registry.styles("bond") if s.name == "fene"]
     assert info.expression == ns["Fene"].expression
     assert not info.builtin
     assert [p.name for p in info.params] == ["k", "r0", "epsilon", "sigma"]
@@ -144,10 +146,10 @@ FRESH = textwrap.dedent(
     import molpy as mp
 
     path = sys.argv[1]
-    registered = [s.name for s in mp.ff.ir.styles("bond") if s.name == "fene"]
+    registered = [s.name for s in mp.ff.style_registry.styles("bond") if s.name == "fene"]
     frame = mp.io.read_mrec_frame(path)
     ff = mp.io.read_mrec_forcefield(path).to_forcefield()
-    e, f = mp.ff.potential.PotentialCompiler(ff).compile(frame).calc_energy_forces(frame)
+    e, f = mp.ff.compile.PotentialCompiler(ff).compile(frame).calc_energy_forces(frame)
     print(json.dumps({"registered": registered, "e": float(e).hex(),
                       "f": [float(x).hex() for x in f.ravel()]}))
     """

@@ -10,10 +10,12 @@ dimension, and its energy, as an expression or as a Python kernel. Anything of
 that form registers into the registry every `PotentialCompiler` reads, and from
 then on it is typed, priced, saved and read back exactly like a built-in.
 molpy keeps no parallel IR: `mp.ff` mirrors `molrs.ff` submodule by submodule
-(`mp.ff.ir.StyleSpec is molrs.ff.ir.StyleSpec`, a registered style's record;
-the class you subclass to declare one is `mp.ff.ir.StyleDeclaration`), so the IR is `mp.ff.ir`, the
-kernels and the compiler are `mp.ff.potential`, and the force-field container
-is `mp.ff.forcefield`.
+(`mp.ff.ir.StyleSpec is molrs.ff.ir.StyleSpec`, a registered style's record).
+The IR's vocabulary (`ParamSpec`, `StyleSpec`, `CategorySpec`, the refusals)
+is `mp.ff.ir`; the registry, with the class you subclass to declare a style
+(`StyleDeclaration`), is `mp.ff.style_registry`; the compiler is
+`mp.ff.compile`; the kernels are `mp.ff.potential`; and the force-field
+container is `mp.ff.forcefield`.
 
 ## A new style in 30 lines
 
@@ -23,8 +25,9 @@ expression, and a typifier that types every bead `B` and every bond with it.
 ```python
 import molpy as mp
 from molpy.ff.forcefield import ForceField
-from molpy.ff.ir import ParamSpec, StyleDeclaration
-from molpy.ff.potential import PotentialCompiler
+from molpy.ff.compile import PotentialCompiler
+from molpy.ff.ir import ParamSpec
+from molpy.ff.style_registry import StyleDeclaration
 from molpy.ff.typifier import TypeAssignment, Typifier
 
 class Fene(StyleDeclaration):  # LAMMPS bond_style fene, by its expression
@@ -62,7 +65,7 @@ bit.
 
 ## The pieces
 
-| Name (`mp.ff.ir.…`, `compile_explicit_terms` on `mp.ff.potential`) | What it does |
+| Name (`mp.ff.style_registry.…`; `ParamSpec` and `IrError` on `mp.ff.ir`, `compile_explicit_terms` on `mp.ff.compile`) | What it does |
 |---|---|
 | `StyleDeclaration` | Subclass it: `category`, `name`, `params`, and an `expression` and/or a `kernel` method. The subclass statement registers it. |
 | `ParamSpec(name, dim, *, kind, default, mix, indexed, …)` | One parameter: its name and dimension (`"E/L^2"`; `E` `L` `A` `Q` `M` for energy, length, angle, charge, mass). `params` also takes a `{name: dim}` dict. |
@@ -70,12 +73,13 @@ bit.
 | `register_category(name, arity, *, coordinate="compound", order="reversible")` | A new category of 2–5 atoms; its terms live in the block `f"{name}s"`. |
 | `styles(category=None)`, `categories()`, `evaluate(...)`, `unregister_style(category, name)` | Introspection (`styles` returns `StyleSpec` records, `categories` `CategorySpec` records), a style's energy on a batch of coordinates, removal of a custom style. |
 | `compile_explicit_terms(category, style, atoms, **params)` | Any style's kernel over explicit instances (atom indices, one parameter row per term), no typifier needed. |
-| `IrError` | Every refusal is a subclass of it (a `ValueError`) named after what was refused, on `mp.ff.ir` too (`SealedError`, `NoKernelError`, `UnboundVariableError`, …). |
+| `IrError` | Every refusal is a subclass of it (a `ValueError`) named after what was refused (`SealedError`, `NoKernelError`, `UnboundVariableError`, …). |
 
 **Parameters arrive as stored.** An angle value (dimension `A`) is in degrees,
-as the force field stores it, and the expression converts it:
-`k*(theta-theta0*0.017453292519943295)^2`. Coordinates (`theta`, `phi`) are
-radians.
+as the force field stores it, and the expression converts it with
+`(pi/180)`, defining `pi` last (Lepton has no named constants):
+`k*(theta-theta0*(pi/180))^2; pi=3.141592653589793`. Coordinates (`theta`,
+`phi`) are radians.
 
 **Variables** by category: `r` (bond, pair), `theta` (angle), `phi`
 (dihedral), `phi` and `chi = abs(phi)` (improper); any category with points
@@ -96,10 +100,10 @@ A Urey-Bradley 1-3 spring as its own category, typed through a custom relation
 kind of the graph:
 
 ```python
-mp.ff.ir.register_category("urey_bradley", 3)
+mp.ff.style_registry.register_category("urey_bradley", 3)
 
 
-class UreyBradley(mp.ff.ir.StyleDeclaration):
+class UreyBradley(mp.ff.style_registry.StyleDeclaration):
     category, name = "urey_bradley", "harmonic"
     params = {"k_ub": "E/L^2", "r_ub": "L"}
     expression = "k_ub*(distance(p1,p3)-r_ub)^2"

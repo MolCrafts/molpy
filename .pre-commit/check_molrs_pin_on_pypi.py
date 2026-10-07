@@ -5,9 +5,8 @@ Release order (see .claude/notes/release.md): ship molrs (master + tag +
 publish) before molpy may push a pin that depends on it. Editable monorepo
 builds do not count.
 
-Accepts either:
-  molcrafts-molrs==X.Y.Z
-  molcrafts-molrs>=X.Y.0,<X.(Y+1)   (preferred minor-line form)
+Accepts the minor-line form only:
+  molcrafts-molrs>=X.Y.0,<X.(Y+1)
 """
 
 from __future__ import annotations
@@ -19,12 +18,10 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-# Exact pin (legacy) or PEP 440 lower/upper minor range.
-EXACT_RE = re.compile(r"molcrafts-molrs==([0-9][^\"',\s]*)")
+# PEP 440 lower/upper minor range.
 RANGE_RE = re.compile(
     r"molcrafts-molrs>=([0-9][^\"',\s]*),\s*<([0-9][^\"',\s]*)"
 )
-PYPI_VERSION = "https://pypi.org/pypi/molcrafts-molrs/{ver}/json"
 PYPI_PROJECT = "https://pypi.org/pypi/molcrafts-molrs/json"
 
 
@@ -56,28 +53,17 @@ def _has_uv_source_override(text: str) -> bool:
     return False
 
 
-def _parse_pin(text: str) -> tuple[str, tuple[int, int] | None, str | None]:
-    """Return (kind, minor|None, exact_version|None).
-
-    kind is \"range\" or \"exact\".
-    """
+def _parse_pin(text: str) -> tuple[int, int]:
+    """Return the (major, minor) line of the molcrafts-molrs range pin."""
     m = RANGE_RE.search(text)
-    if m:
-        lo, hi = m.group(1), m.group(2)
-        lo_mm = _minor_tuple(lo)
-        hi_mm = _minor_tuple(hi)
-        if not _is_next_minor(lo_mm, hi_mm):
-            raise ValueError(
-                f"expected upper bound next minor after {lo}, got <{hi}"
-            )
-        return "range", lo_mm, None
-
-    m = EXACT_RE.search(text)
-    if m:
-        ver = m.group(1)
-        return "exact", _minor_tuple(ver), ver
-
-    raise ValueError("no molcrafts-molrs pin found")
+    if not m:
+        raise ValueError("no molcrafts-molrs minor-line pin found")
+    lo, hi = m.group(1), m.group(2)
+    lo_mm = _minor_tuple(lo)
+    hi_mm = _minor_tuple(hi)
+    if not _is_next_minor(lo_mm, hi_mm):
+        raise ValueError(f"expected upper bound next minor after {lo}, got <{hi}")
+    return lo_mm
 
 
 def _fetch_json(url: str) -> dict:
@@ -94,17 +80,16 @@ def main() -> int:
 
     text = pyproject.read_text(encoding="utf-8")
     try:
-        kind, minor, exact = _parse_pin(text)
+        major, minr = _parse_pin(text)
     except ValueError as exc:
         print(
-            f"BLOCK: {exc}; need molcrafts-molrs>=X.Y.0,<X.(Y+1) "
-            f"or molcrafts-molrs==X.Y.Z in pyproject.toml",
+            f"BLOCK: {exc}; need molcrafts-molrs>=X.Y.0,<X.(Y+1) in pyproject.toml",
             file=sys.stderr,
         )
         return 1
 
-    # Git/path override is how unpublished molrs (pre-0.15) is resolved (CI + local
-    # `uv run`). Blocking the push for a missing PyPI release forces
+    # A git/path override is how an unpublished molrs line is resolved (CI +
+    # local `uv run`). Blocking the push for a missing PyPI release forces
     # `--no-verify`, which also skips pytest. The PyPI pin still has to be
     # well-formed; we just skip the network check.
     if _has_uv_source_override(text):
@@ -115,16 +100,8 @@ def main() -> int:
         return 0
 
     try:
-        if kind == "exact":
-            assert exact is not None
-            _fetch_json(PYPI_VERSION.format(ver=exact))
-            print(f"ok: molcrafts-molrs=={exact} is on PyPI")
-            return 0
-
-        assert minor is not None
         data = _fetch_json(PYPI_PROJECT)
         releases = data.get("releases") or {}
-        major, minr = minor
         matches = []
         for ver in releases:
             try:

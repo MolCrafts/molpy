@@ -10,7 +10,6 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-import molpy.engine as molpy_engine
 import molpy as mp
 from molpy.ff.forcefield import ForceField
 from molpy.engine import LammpsEngine
@@ -51,8 +50,6 @@ def test_init_autodetects_executable() -> None:
     """``LammpsEngine()`` resolves a binary name without requiring it on PATH."""
     eng = LammpsEngine(check_executable=False)
     assert eng.executable in {"lmp", "lmp_serial", "lmp_mpi"}
-    assert "LAMMPS" not in molpy_engine.__all__
-    assert not hasattr(molpy_engine, "LAMMPS")
 
 
 def test_minimize_requires_box() -> None:

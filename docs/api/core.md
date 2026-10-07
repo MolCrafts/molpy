@@ -84,7 +84,7 @@ cc = ff.def_style("bond", "harmonic").def_type("CT-CT", ct, ct, k=536.0, r0=1.52
 
 ::: molpy.ff.forcefield.ForceFieldType
 
-::: molpy.ff.potential.PotentialCompiler
+::: molpy.ff.compile.PotentialCompiler
 
 ### Frame and Block
 

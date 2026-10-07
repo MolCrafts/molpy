@@ -3,8 +3,12 @@
 import pytest
 
 from molpy.ff.forcefield import ForceField, PairType
-from molpy.ff.clpol_scaling import FragmentScaling, compute_k_ij, scale_lj
-from molpy.ff.params import clpol_fragment_scaling
+from molpy.ff.clpol_scaling import (
+    FragmentScaling,
+    compute_k_ij,
+    fragment_table,
+    scale_lj,
+)
 
 
 def _ff():
@@ -111,7 +115,7 @@ def test_missing_fragment_data_raises():
 
 # --- ac-008: data file --------------------------------------------------------
 def test_fragment_data_file_loads():
-    table = clpol_fragment_scaling()
+    table = fragment_table()
     for name in ("c2c1im", "bf4", "pf6", "ntf2", "dca"):
         assert name in table
     bf4 = table["bf4"]

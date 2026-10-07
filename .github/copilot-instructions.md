@@ -40,7 +40,7 @@
 * **MUST** keep data models explicit and serializable where applicable (e.g., configs, IR, templates): avoid hidden globals or implicit state.
 * **MUST NOT** introduce new dependencies unless strictly necessary; if added, **MUST** justify via a short comment in code and add minimal tests around the integration point.
 * **MUST** keep modules small and focused: one file should represent one coherent concept; avoid “utils.py dumping ground”.
-* **MUST** maintain backward compatibility for exported symbols unless the change is explicitly requested; if breaking, **MUST** add a migration note in docs.
+* **MUST NOT** add backward-compatibility apparatus before 1.0: no aliases or legacy spellings for renamed symbols, no deprecation shims, no schema versions, migration notes, changelog or release notes. A rename changes every caller in the same change.
 MUST NOT use try/except for normal control flow or error masking.
 try/except is allowed only at explicit external boundaries (e.g., file I/O, subprocess calls, network access, third-party library interaction), and exceptions must be either re-raised or converted into well-defined domain errors.
 * **MUST NOT** use `try`/`except` for normal control flow or error masking.

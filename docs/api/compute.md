@@ -10,21 +10,18 @@ Pair-based analyses take neighbour tables built with the core
 `mp.core.NeighborList` (`nl.build(frame.coords, frame.box)`, then
 `nl.neighbors()`).
 
-Compose **raw Computes** with **Fits** (and an optional SI scale) yourself. The
-all-in-one recipe classes (`IonicConductivity`, `DielectricSusceptibility`, and
-their `ConductivityResult` / `DielectricSusceptibilityResult`) that used to wrap
-that pipeline in one call were removed in 0.15 — they buried the fit window and
-the unit conversion in a library default. Compose `EinsteinConductivity` →
+Compose **raw Computes** with **Fits** (and an optional SI scale) yourself:
+there is no all-in-one recipe class that would bury the fit window and the
+unit conversion in a library default. Compose `EinsteinConductivity` →
 `LinearFit` → your own prefactor, as the [PMSD](../compute/pmsd.md) and
 [Dielectric](../compute/dielectric.md) pages show.
 
-!!! warning "Time unit when migrating from `IonicConductivity`"
-    `IonicConductivity` took its frame spacing `dt` in **picoseconds**. The
-    composed route works in **femtoseconds**: pass `dt` in fs to
+!!! warning "Time unit"
+    The composed route works in **femtoseconds**: pass `dt` in fs to
     `EinsteinConductivity().compute(...)`, and the S/m prefactor on the
     [PMSD](../compute/pmsd.md) page ($3.0988\times10^{9}$) assumes a slope in
-    $e^2\,\text{Å}^2\,\text{fs}^{-1}$. Reusing an old picosecond `dt` makes the
-    lag axis 1000× too short and the conductivity 1000× too large.
+    $e^2\,\text{Å}^2\,\text{fs}^{-1}$. A `dt` in picoseconds makes the lag
+    axis 1000× too short and the conductivity 1000× too large.
 
 Like freud’s [API modules](https://freud.readthedocs.io/en/stable/), each
 analysis family has its own page under [Compute](../compute/index.md)

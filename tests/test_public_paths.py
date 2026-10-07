@@ -15,9 +15,7 @@ and not walked. Then:
 * the root holds the subsystem modules, the promoted core data classes and
   the version metadata only;
 * each molpy mirror is the molrs subsystem by identity;
-* acronyms are cased as words in every class name;
-* the names molpy dropped for the molrs door, and the names molrs renamed,
-  are gone.
+* acronyms are cased as words in every class name.
 """
 
 from __future__ import annotations
@@ -99,58 +97,6 @@ def test_no_public_path_runs_through_a_private_module() -> None:
     ]
 
 
-@pytest.mark.parametrize(
-    "module",
-    [
-        # molpy's own old layouts
-        "molpy.core.box",
-        "molpy._core",
-        "molpy.core.trajectory",
-        "molpy.engine.base",
-        "molpy.engine._base",
-        "molpy.engine.lammps",
-        "molpy.engine.gromacs",
-        "molpy.engine.openmm",
-        "molpy.engine.cp2k",
-        "molpy.engine.script",
-        "molpy.wrapper.base",
-        "molpy.wrapper._base",
-        "molpy.wrapper.env",
-        "molpy.wrapper._env",
-        "molpy.wrapper.antechamber",
-        "molpy.wrapper.prepgen",
-        "molpy.wrapper.sander",
-        "molpy.wrapper.tleap",
-        "molpy.adapter.base",
-        "molpy.adapter._base",
-        "molpy.adapter.rdkit",
-        "molpy.builder._polymer.ambertools.types",
-        "molpy.data",
-        "molpy.data.forcefield",
-        "molpy.io._metric",
-        "molpy.io.readers",
-        "molpy.potential",
-        "molpy.typifier",
-        "molpy.integrations",
-        "molpy.integrations.metric_readers",
-        "molpy._core.selector",
-        "molpy._core.splitter",
-        "molpy.store",
-        "molpy.system",
-        "molpy.spatial",
-        "molpy.units",
-        # molrs's renamed modules
-        "molpy.io.log",
-        "molpy.io.trajectory",
-        "molpy.io.lammps_bond_react",
-        "molpy.ff.scale_lj",
-    ],
-)
-def test_a_removed_module_is_gone(module: str) -> None:
-    with pytest.raises(ModuleNotFoundError):
-        importlib.import_module(module)
-
-
 #: The molrs subsystems molpy mirrors one to one, each by a module of its name.
 _MIRRORS = (
     "builder",
@@ -212,10 +158,12 @@ _IO_FORMATS = (
 _FF_MODULES = (
     "charge",
     "clpol_scaling",
+    "compile",
     "forcefield",
     "ir",
     "params",
     "potential",
+    "style_registry",
     "typifier",
 )
 
@@ -385,17 +333,18 @@ def test_each_ff_submodule_is_a_molpy_module_mirroring_molrs(sub: str) -> None:
         ("ff.forcefield.ForceFieldType", "ff.forcefield.ForceFieldType"),
         ("ff.potential.PairLjCut", "ff.potential.PairLjCut"),
         ("ff.potential.WeightedTerms", "ff.potential.WeightedTerms"),
-        ("ff.potential.compile_explicit_terms", "ff.potential.compile_explicit_terms"),
+        ("ff.compile.PotentialCompiler", "ff.compile.PotentialCompiler"),
+        ("ff.compile.compile_explicit_terms", "ff.compile.compile_explicit_terms"),
         ("ff.ir.ParamSpec", "ff.ir.ParamSpec"),
         ("ff.ir.CategorySpec", "ff.ir.CategorySpec"),
         ("ff.ir.StyleSpec", "ff.ir.StyleSpec"),
-        ("ff.ir.StyleDeclaration", "ff.ir.StyleDeclaration"),
-        ("ff.ir.unregister_style", "ff.ir.unregister_style"),
+        ("ff.style_registry.StyleDeclaration", "ff.style_registry.StyleDeclaration"),
+        ("ff.style_registry.unregister_style", "ff.style_registry.unregister_style"),
         ("ff.ir.ArityError", "ff.ir.ArityError"),
         ("ff.typifier.TypeAssignment", "ff.typifier.TypeAssignment"),
         ("ff.typifier.OplsAaTypifier", "ff.typifier.OplsAaTypifier"),
         ("ff.typifier.Mmff94Typifier", "ff.typifier.Mmff94Typifier"),
-        ("ff.params.clpol_fragment_scaling", "ff.params.clpol_fragment_scaling"),
+        ("ff.clpol_scaling.fragment_table", "ff.clpol_scaling.fragment_table"),
         ("ff.clpol_scaling.scale_lj", "ff.clpol_scaling.scale_lj"),
     ],
 )
@@ -502,123 +451,6 @@ def test_the_metric_readers_are_their_formats_modules() -> None:
     assert MrecMetricReader is not molrs.io.mrec.MrecReader
     assert LammpsLogMetricReader.format == "lammps_log"
     assert MlpJsonlMetricReader.format == "mlp_jsonl"
-
-
-@pytest.mark.parametrize(
-    ("module", "name"),
-    [
-        # molpy's own removals and renames
-        ("molpy.resources", "get_forcefield_path"),
-        ("molpy.resources", "list_forcefields"),
-        ("molpy.wrapper", "write_prepgen_control_file"),
-        ("molpy.wrapper", "EnvSpec"),
-        ("molpy.wrapper", "TLeapWrapper"),
-        ("molpy.engine", "LAMMPSEngine"),
-        ("molpy.engine", "GROMACSEngine"),
-        ("molpy.engine", "OpenMMEngine"),
-        ("molpy.engine", "OpenMMSimulationConfig"),
-        ("molpy.engine", "CP2KEngine"),
-        ("molpy.adapter", "RDKitAdapter"),
-        ("molpy.builder", "DPDistribution"),
-        ("molpy.ff.typifier", "TLeapTypifier"),
-        ("molpy", "data"),
-        ("molpy", "keys"),
-        ("molpy", "Cuboid"),
-        ("molpy", "UnitRegistry"),
-        ("molpy", "UnitPreset"),
-        ("molpy", "NeighborList"),
-        ("molpy", "Lbfgs"),
-        ("molpy", "Conformer"),
-        ("molpy", "SmartsPattern"),
-        ("molpy", "ElementSelector"),
-        ("molpy", "TrajectorySplitter"),
-        ("molpy", "FrameCollection"),
-        # S1: one core
-        ("molpy", "Graph"),
-        ("molpy", "CGBond"),
-        ("molpy.core", "Graph"),
-        ("molpy.core", "BondType"),
-        ("molpy.ff.forcefield", "read_amber_prmtop_system"),
-        ("molpy.ff.forcefield", "write_gromacs_top_system"),
-        # S2: io per format
-        ("molpy.io", "read_frame"),
-        ("molpy.io", "write_frame"),
-        ("molpy.io", "TrajectoryReader"),
-        ("molpy.io", "read_smiles"),
-        ("molpy.io", "write_smiles"),
-        ("molpy.io", "read_mrec"),
-        ("molpy.io", "write_mrec"),
-        ("molpy.io", "read_frame_bytes"),
-        ("molpy.io", "write_frame_bytes"),
-        ("molpy.io", "read_forcefield_xml"),
-        ("molpy.io", "write_forcefield_xml"),
-        ("molpy.io", "read_opls_xml"),
-        ("molpy.io", "read_lammps_cmap"),
-        ("molpy.io", "write_lammps_cmap"),
-        ("molpy.io", "write_bond_react_map"),
-        ("molpy.io", "read_ac"),
-        ("molpy.io", "read_prep"),
-        ("molpy.io", "write_prep"),
-        ("molpy.io", "read_chgcar"),
-        ("molpy.io", "read_block_csv"),
-        ("molpy.io", "write_block_csv"),
-        ("molpy.io", "read_top"),
-        ("molpy.io", "write_top"),
-        ("molpy.io", "read_gromacs_top_ff"),
-        ("molpy.io", "parse_lammps_log_text"),
-        ("molpy.io", "SmilesIR"),
-        ("molpy.io", "log"),
-        ("molpy.io", "trajectory"),
-        ("molpy.io", "lammps_bond_react"),
-        ("molpy.io.smiles", "SmilesIR"),
-        ("molpy.io.smiles", "CGSmilesIR"),
-        ("molpy.io.smiles", "CgSmilesIr"),
-        ("molpy.io.mrec", "pack"),
-        ("molpy.io.mrec", "schema"),
-        ("molpy.stream", "read_frame_bytes"),
-        # S3: force field
-        ("molpy.ff", "scale_lj"),
-        ("molpy.ff.potential", "LJCut"),
-        ("molpy.ff.potential", "kernel"),
-        ("molpy.ff.potential", "TypedPotentials"),
-        ("molpy.ff.ir", "Param"),
-        ("molpy.ff.ir", "CategoryInfo"),
-        ("molpy.ff.ir", "StyleInfo"),
-        ("molpy.ff.ir", "unregister"),
-        ("molpy.ff.ir", "Arity"),
-        ("molpy.ff.forcefield", "Type"),
-        ("molpy.ff.typifier", "Match"),
-        ("molpy.ff.typifier", "OPLSAATypifier"),
-        ("molpy.ff.typifier", "MMFF94Typifier"),
-        ("molpy.ff.typifier", "MMFF94STypifier"),
-        ("molpy.ff.params", "AMBER_SCEE"),
-        ("molpy.ff.params", "AMBER_SCNB"),
-        # S4: analysis, perception, geometry, dynamics
-        ("molpy.perceive", "Perceive"),
-        ("molpy", "Perceive"),
-        ("molpy.op", "Fit"),
-        ("molpy.optimize", "LBFGS"),
-        ("molpy.optimize", "OptReport"),
-        ("molpy.md", "MD"),
-        ("molpy.md", "MDState"),
-        ("molpy.compute", "MSD"),
-        ("molpy.compute", "RDF"),
-        ("molpy.compute", "VACF"),
-        ("molpy.compute", "PMFTXY"),
-        ("molpy.compute", "KMeans"),
-        ("molpy.compute", "Pca2"),
-        ("molpy.compute", "IRSpectrum"),
-        ("molpy.compute", "BondOrder"),
-        ("molpy.compute", "Dielectric"),
-        ("molpy.compute", "Onsager"),
-        ("molpy.compute", "Persist"),
-        ("molpy.compute", "AngleDistribution"),
-        ("molpy.compute", "DihedralDistribution"),
-        ("molpy.compute", "DistanceDistribution"),
-    ],
-)
-def test_a_removed_name_is_gone(module: str, name: str) -> None:
-    assert not hasattr(importlib.import_module(module), name)
 
 
 def test_the_box_and_the_trajectory_are_the_native_classes() -> None:

@@ -19,7 +19,7 @@ from typing import Any
 
 import numpy as np
 from rdkit import Chem
-from rdkit.Chem import AllChem
+from rdkit.Chem import rdDistGeom, rdForceFieldHelpers
 
 from molrs.core.keys import FORMAL_CHARGE
 from molrs.core import Atomistic
@@ -463,9 +463,7 @@ def _optimize_uff(
     mol.UpdatePropertyCache(strict=False)
     before = mol.GetConformer().GetPositions() if mol.GetNumConformers() > 0 else None
 
-    code = AllChem.UFFOptimizeMolecule(  # type: ignore[attr-defined]
-        mol, maxIters=int(max_iters)
-    )
+    code = rdForceFieldHelpers.UFFOptimizeMolecule(mol, maxIters=int(max_iters))
     if code != 0:
         msg = (
             f"UFF optimization returned code {code}. "
@@ -521,18 +519,18 @@ def _embed(
     if mol.GetNumAtoms() == 0:
         raise ValueError("Cannot embed 3D coordinates for empty molecule")
 
-    params = AllChem.ETKDGv3()  # type: ignore[attr-defined]
+    params = rdDistGeom.ETKDGv3()
     if random_seed is not None:
         params.randomSeed = int(random_seed)
     params.useRandomCoords = True
 
-    embed_result = AllChem.EmbedMolecule(mol, params)  # type: ignore[attr-defined]
+    embed_result = rdDistGeom.EmbedMolecule(mol, params)
     attempts = 1
     while embed_result == -1 and attempts < max_attempts:
         params.useRandomCoords = True
         if random_seed is not None:
             params.randomSeed = int(random_seed) + attempts
-        embed_result = AllChem.EmbedMolecule(mol, params)  # type: ignore[attr-defined]
+        embed_result = rdDistGeom.EmbedMolecule(mol, params)
         attempts += 1
 
     if embed_result == -1:

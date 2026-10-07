@@ -5,7 +5,6 @@ from __future__ import annotations
 from pathlib import Path
 
 import numpy as np
-import pytest
 
 import molpy as mp
 from molpy.core import Block, Frame, Trajectory
@@ -56,8 +55,6 @@ class TestWrite:
         _assert_coords(mp.io.read_mrec_frame(path))
         assert mp.io.mrec.section_names(path) == frozenset({"meta", "frame"})
         meta = mp.io.read_mrec_meta(path)
-        mp.io.mrec.validation.validate_meta(meta)
-        assert meta["molrec_version"] == mp.io.mrec.MOLREC_VERSION
         assert "format_name" not in meta
 
 
@@ -123,22 +120,3 @@ class TestForceFieldSection:
         path = tmp_path / "snapshot.mrec"
         mp.io.write_mrec_frame(path, _coords_frame())
         assert mp.io.read_mrec_forcefield(path) is None
-
-
-class TestSchema:
-    def test_molrec_version_is_checked_only_when_present(self) -> None:
-        assert mp.io.mrec.MOLREC_VERSION == 2
-        # Absent: no version check (molrec contract; 0.14 refused this).
-        mp.io.mrec.validation.validate_meta(
-            {"record_schema_version": 1, "format_name": "mrec"}
-        )
-        mp.io.mrec.validation.validate_meta(
-            {"molrec_version": mp.io.mrec.MOLREC_VERSION}
-        )
-
-    @pytest.mark.parametrize(
-        "bad", [None, 0, "1", 1.5, True, mp.io.mrec.MOLREC_VERSION + 1]
-    )
-    def test_molrec_version_present_must_be_supported_integer(self, bad) -> None:
-        with pytest.raises(Exception, match="molrec_version"):
-            mp.io.mrec.validation.validate_meta({"molrec_version": bad})

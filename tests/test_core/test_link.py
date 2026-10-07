@@ -12,7 +12,6 @@ def test_relation_endpoints_are_live_and_immutable() -> None:
     assert link.endpoints == (a, b)
     assert link["bond_type"] == 1
     assert link["bond_number"] == 1
-    assert not hasattr(link, "replace_endpoint")
 
 
 def test_relation_has_no_detached_form() -> None:

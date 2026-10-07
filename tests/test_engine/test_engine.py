@@ -97,11 +97,6 @@ class TestEngineInit:
         assert "myenv" in repr_str
         assert "conda" in repr_str
 
-    def test_prepare_removed(self):
-        """Engine has no prepare() step."""
-        engine = LammpsEngine(executable="lmp", check_executable=False)
-        assert not hasattr(engine, "prepare")
-
 
 class TestEngineRun:
     """Test engine.run writes scripts; subprocess is mocked — never a real binary."""

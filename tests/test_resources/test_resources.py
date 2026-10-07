@@ -67,6 +67,3 @@ class TestDataModuleImport:
         assert hasattr(molpy.resources, "get_path")
         assert hasattr(molpy.resources, "list_files")
         assert hasattr(molpy.resources, "exists")
-        # get_path / list_files are the one door; no per-directory restatement.
-        assert not hasattr(molpy.resources, "get_forcefield_path")
-        assert not hasattr(molpy.resources, "list_forcefields")

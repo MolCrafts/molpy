@@ -25,9 +25,8 @@ line when co-released. Patch may drift.
 
 **Order:** ship molrs first (`master` + tag `vX.Y.Z` + publish), then land molpy
 APIs that need the new surface. Editable local molrs does not count as a release.
-There is no hand-written `CHANGELOG.md` — history is git tags / GitHub Releases.
-A minor release also updates the user-facing
-[What's New](../getting-started/whats-new.md) page.
+There is no hand-written `CHANGELOG.md` and no release-notes page; the history
+is git.
 
 ### Developing against an unpublished molrs minor
 
@@ -108,27 +107,6 @@ git push origin master:nightly      # or push your integration branch onto night
 Install a nightly with `pip install --pre molcrafts-molpy-nightly`. It imports
 as `molpy` and therefore conflicts with the stable package — test it in a
 dedicated virtual environment.
-
-
-## Release notes
-
-Use this structure on the [GitHub Releases page](https://github.com/MolCrafts/molpy/releases):
-
-```markdown
-## MolPy vX.Y.Z
-
-### Added
-- ...
-
-### Changed
-- ...
-
-### Fixed
-- ...
-
-### Breaking Changes
-- ... (or "None")
-```
 
 
 ## Hotfix

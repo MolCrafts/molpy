@@ -1,7 +1,7 @@
 [project]
 site_name = "MolPy"
-# Public docs live under docs.molcrafts.org/<product>/ (legacy host
-# molpy.molcrafts.org permanently redirects here). Trailing slash required so
+# Public docs live under docs.molcrafts.org/<product>/ (molpy.molcrafts.org
+# redirects here). Trailing slash required so
 # absolute URLs in sitemap/canonical match the product prefix.
 site_url = "https://docs.molcrafts.org/molpy/"
 repo_url = "https://github.com/MolCrafts/molpy"
@@ -29,7 +29,6 @@ nav = [
       { "Quickstart" = "getting-started/quickstart.md" },
       { "Example Gallery" = "getting-started/examples.md" },
       { "FAQ" = "getting-started/faq.md" },
-      { "What's New" = "getting-started/whats-new.md" },
     ] },
     { "The Data Model" = [
       { "Atomistic and Topology" = "tutorials/01_atomistic_and_topology.md" },

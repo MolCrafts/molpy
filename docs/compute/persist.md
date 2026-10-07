@@ -94,10 +94,10 @@ $r_0$ matches the radius you integrated to and that `exclude_self` is set
 correctly. It is an implementation check, not new physics, and it is the fastest
 way to catch the two mistakes that most often silently wreck this analysis.
 
-The decay is slow. The continuous curve falls to 0.91 at 1 ps, 0.73 at 3 ps and
-0.54 at 6 ps. Fitting the tail gives a continuous residence time of about
-9.7 ps — already a mild extrapolation, since the curve only just reaches half
-its initial value inside the window. The intermittent curve decays more slowly
+The decay is slow. The continuous curve falls to 0.91 at 1 ps, 0.74 at 3 ps and
+0.56 at 6 ps. Fitting the tail gives a continuous residence time of about
+10.5 ps — an extrapolation, since the curve has not yet reached half its
+initial value inside the window. The intermittent curve decays more slowly
 still and has not come close to $1/e$ by 6 ps, so this trajectory cannot pin its
 lifetime down; treat it as "longer than 6 ps" and lengthen the run if you need
 the number. That restraint is the same one the troubleshooting section below
@@ -105,7 +105,7 @@ asks of you.
 
 The physical picture is clear even so. An argon atom keeps most of its
 neighbours for many picoseconds while itself moving very little: [MSD](msd.md)
-gives 8.0 Å², an rms displacement of 2.8 Å, over that same 6 ps — less than one
+gives 7.4 Å², an rms displacement of 2.7 Å, over that same 6 ps — less than one
 atomic diameter. So the shell is not being left behind; it travels *with* the
 atom. That is what "cage" means quantitatively, and it is the same cage
 [VACF](vacf.md) sees as a negative lobe at 440 fs.
