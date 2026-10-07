@@ -2,18 +2,18 @@ name: test
 
 # The unit suite against molrs built from the commit scripts/partners.py
 # resolves (molrs's dev, or its branch named like this one), in two tiers
-# (`tier` decides):
+# (`test / tier` decides):
 #
 #   fast  a feature-branch push to MolCrafts: Linux, Python 3.12.
-#   full  everything else -- dev/master, pull requests, dispatches, and every
-#         push to a fork, so a fork branch is proven before its pull request
-#         is opened: Linux, macOS and Windows x Python 3.12 and 3.14 (the
-#         supported range's ends; release.yml tests 3.13 too).
+#   full  every push to a fork (proven before its pull request), dev, master
+#         and main on MolCrafts, pull requests, tags and dispatches: Linux,
+#         macOS and Windows x Python 3.12 and 3.14 (the supported range's
+#         ends; release.yml tests 3.13 too).
 on:
   push:
     branches: ["**"]
   pull_request:
-    branches: [dev, master]
+    branches: [dev, master, main]
   workflow_dispatch:
 
 permissions:
@@ -21,7 +21,7 @@ permissions:
 
 concurrency:
   group: test-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: ${{ github.ref != 'refs/heads/dev' && github.ref != 'refs/heads/master' }}
+  cancel-in-progress: ${{ !contains(fromJSON('["refs/heads/dev","refs/heads/master","refs/heads/main"]'), github.ref) && !startsWith(github.ref, 'refs/tags/') }}
 
 defaults:
   run:
@@ -38,14 +38,14 @@ env:
 jobs:
   tier:
     name: test / tier
-    # A pull request inside a fork was already built by its push.
+    # A pull request inside a fork was already run, full tier, by its push.
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository || github.repository_owner == 'MolCrafts'
     runs-on: ubuntu-latest
     outputs:
       full: ${{ steps.tier.outputs.full }}
     steps:
       - id: tier
-        run: echo "full=${{ !(github.repository_owner == 'MolCrafts' && github.event_name == 'push' && startsWith(github.ref, 'refs/heads/') && github.ref != 'refs/heads/dev' && github.ref != 'refs/heads/master') }}" | tee -a "$GITHUB_OUTPUT"
+        run: echo "full=${{ github.repository_owner != 'MolCrafts' || contains(fromJSON('["dev","master","main"]'), github.ref_name) || github.event_name != 'push' || startsWith(github.ref, 'refs/tags/') }}" | tee -a "$GITHUB_OUTPUT"
 
   python:
     name: test / python (${{ matrix.os }}, ${{ matrix.python }})
@@ -58,12 +58,12 @@ jobs:
         python: ${{ fromJSON(needs.tier.outputs.full == 'true' && '["3.12","3.14"]' || '["3.12"]') }}
     steps:
       - uses: actions/checkout@v7
-      - uses: ./.github/actions/setup-python
+      - uses: MolCrafts/molcrafts-ci/actions/setup-python@master
         with:
           python-version: ${{ matrix.python }}
-      - uses: ./.github/actions/setup-partners
+      - uses: MolCrafts/molcrafts-ci/actions/setup-partners@master
       # molrs/rust-toolchain.toml pins the compiler that builds the molrs wheel.
-      - uses: ./.github/actions/setup-rust
+      - uses: MolCrafts/molcrafts-ci/actions/setup-rust@master
         with:
           toolchain-dir: ../molrs
           cache: molrs-python
