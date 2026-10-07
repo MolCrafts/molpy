@@ -2,8 +2,8 @@
 """The partner repositories this one is built and tested against.
 
 ``.github/partners.env`` names them, and this script resolves them for both
-the workflows (``fetch``, through ``.github/actions/setup-partners``) and the
-git hooks (``check``, ``fetch``, ``run``), so a local gate and CI judge
+the workflows (``fetch``, through ``MolCrafts/molcrafts-ci/actions/setup-partners``)
+and the git hooks (``check``, ``fetch``, ``run``), so a local gate and CI judge
 against the same partner commit -- never whatever branch a developer's
 sibling checkout is on.
 
