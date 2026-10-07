@@ -1,0 +1,71 @@
+name: test
+
+# The unit suite against molrs built from the commit scripts/partners.py
+# resolves (molrs's dev, or its branch named like this one), in two tiers
+# (`tier` decides):
+#
+#   fast  a feature-branch push to MolCrafts: Linux, Python 3.12.
+#   full  everything else -- dev/master, pull requests, dispatches, and every
+#         push to a fork, so a fork branch is proven before its pull request
+#         is opened: Linux, macOS and Windows x Python 3.12 and 3.14 (the
+#         supported range's ends; release.yml tests 3.13 too).
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: [dev, master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: test-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/dev' && github.ref != 'refs/heads/master' }}
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  # uv builds molrs through maturin's PEP 517 hook; this makes that cargo
+  # build --locked as well.
+  MATURIN_PEP517_ARGS: --locked
+  # Every text-mode open without encoding= warns, and pytest's "error" filter
+  # fails it: it would decode with cp1252 on Windows only (pyproject.toml).
+  PYTHONWARNDEFAULTENCODING: "1"
+
+jobs:
+  tier:
+    name: test / tier
+    # A pull request inside a fork was already built by its push.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository || github.repository_owner == 'MolCrafts'
+    runs-on: ubuntu-latest
+    outputs:
+      full: ${{ steps.tier.outputs.full }}
+    steps:
+      - id: tier
+        run: echo "full=${{ !(github.repository_owner == 'MolCrafts' && github.event_name == 'push' && startsWith(github.ref, 'refs/heads/') && github.ref != 'refs/heads/dev' && github.ref != 'refs/heads/master') }}" | tee -a "$GITHUB_OUTPUT"
+
+  python:
+    name: test / python (${{ matrix.os }}, ${{ matrix.python }})
+    needs: tier
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: ${{ fromJSON(needs.tier.outputs.full == 'true' && '["ubuntu-latest","macos-latest","windows-latest"]' || '["ubuntu-latest"]') }}
+        python: ${{ fromJSON(needs.tier.outputs.full == 'true' && '["3.12","3.14"]' || '["3.12"]') }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup-python
+        with:
+          python-version: ${{ matrix.python }}
+      - uses: ./.github/actions/setup-partners
+      # molrs/rust-toolchain.toml pins the compiler that builds the molrs wheel.
+      - uses: ./.github/actions/setup-rust
+        with:
+          toolchain-dir: ../molrs
+          cache: molrs-python
+          workspaces: ../molrs/molrs-python -> ../target
+      - run: uv run --locked --python ${{ matrix.python }} --extra dev python -m pytest tests/ -n auto

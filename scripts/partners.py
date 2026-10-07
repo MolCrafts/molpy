@@ -2,9 +2,10 @@
 """The partner repositories this one is built and tested against.
 
 ``.github/partners.env`` names them, and this script resolves them for both
-the workflows (``partners.py resolve``) and the git hooks (``check``,
-``fetch``, ``run``), so a local gate and CI judge against the same partner
-commit -- never whatever branch a developer's sibling checkout is on.
+the workflows (``fetch``, through ``.github/actions/setup-partners``) and the
+git hooks (``check``, ``fetch``, ``run``), so a local gate and CI judge
+against the same partner commit -- never whatever branch a developer's
+sibling checkout is on.
 
 Each partner is a ``<NAME>_REPOSITORY=owner/repo`` + ``<NAME>_REF`` pair,
 checked out as the directory ``<name>`` (lower case). ``<NAME>_REF`` is a
@@ -31,10 +32,6 @@ A branch resolves to the first of:
                                   dependency resolves inside the layout CI
                                   checks out, and no workflow spells a partner
                                   commit of its own.
-    partners.py resolve           print ``<NAME>_REPOSITORY=`` and
-                                  ``<NAME>_REF=<commit>`` for every partner,
-                                  resolved; CI appends them to $GITHUB_ENV and
-                                  checks the partners out at those commits.
     partners.py fetch NAME DEST   check partner NAME out, resolved, into DEST.
     partners.py run -- CMD...     run CMD in CI's sibling layout: a copy of
                                   this working tree at <root>/<SELF> next to
@@ -343,7 +340,7 @@ def check() -> int:
             if re.match(r"\s*ref:\s*['\"]?[0-9a-f]{40}\b", line):
                 failures.append(
                     f"{wf.relative_to(ROOT)}:{n}: a literal partner commit; name the partner "
-                    "in .github/partners.env and check it out at `partners.py resolve`'s commit"
+                    "in .github/partners.env and check it out with `partners.py fetch`"
                 )
 
     for failure in failures:
@@ -383,7 +380,7 @@ def sync(dest: Path) -> None:
 
 
 def run(cmd: list[str]) -> int:
-    import fcntl  # POSIX only: `run` serves the git hooks; `resolve` also runs on Windows CI.
+    import fcntl  # POSIX only: `run` serves the git hooks; `fetch` also runs on Windows CI.
 
     env = load()
     me = env.get("SELF") or die("partners.env names no SELF")
@@ -413,12 +410,6 @@ def run(cmd: list[str]) -> int:
 def main(argv: list[str]) -> int:
     if argv == ["check"]:
         return check()
-    if argv == ["resolve"]:
-        for name, src in resolved().items():
-            print(f"partners: {name} {src.repo} -> {src.commit} ({src.why})", file=sys.stderr)
-            print(f"{name}_REPOSITORY={src.repo}")
-            print(f"{name}_REF={src.commit}")
-        return 0
     if argv[:1] == ["fetch"] and len(argv) == 3:
         found = resolved()
         name = argv[1].upper()

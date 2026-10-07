@@ -78,8 +78,11 @@ Do **not** `git push <remote> master --tags`: if the protected-master push is
 rejected, the tag still goes out as an orphan and publish refuses it.
 
 On tag push (`v*`), GitHub Actions runs `.github/workflows/release.yml`. It
-validates the tag against `molpy.version.version`, runs the test suite, builds
-artifacts, and publishes to PyPI.
+checks that the tag is `v` + `molpy.version.version` on `master`, runs the
+test matrix against molrs from PyPI, builds the sdist and wheel, publishes
+them to PyPI, and creates the GitHub Release. Dispatching **release** on a
+branch (a fork is fine) is the dry run: the same tests and build, no upload.
+PyPI's trusted publisher names `release.yml` and the `pypi` environment.
 
 
 ## Nightly releases
@@ -88,9 +91,9 @@ Nightlies are **independent** of the tagged release flow above. They ship to a
 separate PyPI project, `molcrafts-molpy-nightly`, and never touch the stable
 `molcrafts-molpy`.
 
-- **Trigger:** every push to the `nightly` branch, or a manual run of the
-  *Nightly* workflow (`.github/workflows/nightly.yml`) via
-  `workflow_dispatch`.
+- **Trigger:** every push to the `nightly` branch of MolCrafts/molpy, or a
+  dispatch of `.github/workflows/nightly.yml` on that branch. (Its scheduled
+  run on `master` only measures tests and coverage for the CI dashboard.)
 - **Versioning:** the workflow reads the current `molpy.version.version` and
   appends a UTC timestamp → `X.Y.Z.dev<YYYYMMDDHHMM>` (a PEP 440 dev release).
   No manual version bump or tag is needed; do **not** edit `version.py` for a
