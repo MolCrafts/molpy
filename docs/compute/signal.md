@@ -3,7 +3,7 @@
 Every time-correlation function on these pages — [VACF](vacf.md),
 [JACF](jacf.md), [Dielectric](dielectric.md), [Spectra](spectra.md) — is built
 from the same three operations: correlate a series with its own past, taper it,
-and transform it. `molpy.compute.signal` exposes those operations directly, for
+and transform it. `molpy.signal` exposes those operations directly, for
 when the packaged computes do not fit the series you have.
 
 They are module-level functions rather than classes, because they are pure array
@@ -32,7 +32,7 @@ $P$ has an autocorrelation that is also a cosine of period $P$:
 
 ```python
 import numpy as np
-from molpy.compute import signal
+from molpy import signal
 
 t = np.arange(2048, dtype=float)
 series = np.ascontiguousarray(np.cos(2 * np.pi * t / 64))   # period 64 frames
@@ -93,11 +93,15 @@ is $\pi/\Delta t$ for even-length input, and to reach the wavenumbers a
 spectroscopist quotes you divide by $2\pi c$:
 
 ```python
-wavenumbers = grid * 1e15 / (2 * np.pi * 2.998e10)   # rad/fs -> cm^-1
-print(round(float(wavenumbers.max())))               # -> 1659
+from molpy.core import UnitRegistry, constants
+
+units = UnitRegistry()
+c = constants.SPEED_OF_LIGHT * units.factor("m/s", "cm/s")         # cm/s
+wavenumbers = grid * units.factor("1/fs", "1/s") / (2 * np.pi * c)  # rad/fs -> cm^-1
+print(round(float(wavenumbers.max())))               # -> 1660
 ```
 
-1659 cm⁻¹, which is the same Nyquist limit as $16678/(\Delta t/\mathrm{fs}) =
+1660 cm⁻¹, which is the same Nyquist limit as $16678/(\Delta t/\mathrm{fs}) =
 1668$ cm⁻¹ up to the odd/even endpoint. If a computed spectrum comes out a
 factor of $2\pi$ or $c$ from where you expect, this conversion is the first
 place to look.

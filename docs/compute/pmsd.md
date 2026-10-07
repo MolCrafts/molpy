@@ -133,7 +133,7 @@ divide by 6 again.
     reference system behind the other compute pages is neutral argon, for which
     $\mathbf{M} \equiv 0$. Plotting a random walk here and labelling it
     "conductivity" would be decoration, not measurement. This page gets a figure
-    when a charged reference trajectory exists under `scripts/docs_data/`.
+    when a charged reference trajectory exists under `scripts/docs_series/`.
 
 ## When it goes wrong
 

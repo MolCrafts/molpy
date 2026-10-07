@@ -19,7 +19,7 @@ never a second property store, endpoint list, or handle registry.
 Use a graph factory to create data:
 
 ```python
-from molpy import Atomistic
+from molpy.core import Atomistic
 
 mol = Atomistic(name="water")
 oxygen = mol.def_atom(element="O", x=0.0, y=0.0, z=0.0)
@@ -43,7 +43,10 @@ requires, in order:
 1. Define its storage and relation arity in molrs.
 2. Teach native copy/merge/extract/topology and Frame projection about it.
 3. Expose a native view class and graph factory in molrs.
-4. Re-export that same object on the molpy root (`mp.<Name>`); add only Python syntax sugar.
+4. Export it from `molrs.core`; molpy's mirror
+   of molrs's core (`molpy/core/__init__.py`) star-imports it with its
+   `__all__`, so `mp.core.<Name>` follows with no molpy edit. Promote it to the
+   root only if it is a data class a user handles directly.
 5. Update relevant readers/writers and add Rust, binding, and molpy integration tests.
 
 If the concept is only an annotation, prefer a typed field on an existing node

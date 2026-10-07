@@ -58,7 +58,7 @@ about $\Omega_{+-}$.
 
 ## Computing it
 
-`Onsager.correlation` is a static method taking two collective coordinate
+`OnsagerCorrelation().compute` takes two collective coordinate
 arrays, each `(n_frames, 3)`, built from **unwrapped** positions. Pass the same
 array twice for a diagonal element.
 
@@ -67,7 +67,7 @@ that deliberately shares 60 % of the cation's steps:
 
 ```python
 import numpy as np
-from molpy.compute import Onsager, LinearFit
+from molpy.compute import LinearFit, OnsagerCorrelation
 
 rng = np.random.default_rng(0)
 steps = rng.normal(0.0, 0.01, size=(400, 3))
@@ -76,8 +76,9 @@ p_anion = np.ascontiguousarray(
     np.cumsum(0.6 * steps + 0.8 * rng.normal(0.0, 0.01, size=(400, 3)), axis=0)
 )
 
-l_same = Onsager.correlation(p_cation, p_cation, dt=10.0, max_correlation_time=100)
-l_cross = Onsager.correlation(p_cation, p_anion, dt=10.0, max_correlation_time=100)
+onsager = OnsagerCorrelation()
+l_same = onsager.compute(p_cation, p_cation, dt=10.0, max_correlation_time=100)
+l_cross = onsager.compute(p_cation, p_anion, dt=10.0, max_correlation_time=100)
 print(sorted(l_same))              # -> ['correlation', 'lag_times']
 ```
 
@@ -107,7 +108,7 @@ is yours to fit, over a window you choose and report.
     charged multi-species trajectory, which the argon reference system is not.
     Synthetic curves would only display the coupling that was typed into them —
     as the 0.6 above does. This page gets a figure when a charged reference
-    trajectory exists under `scripts/docs_data/`.
+    trajectory exists under `scripts/docs_series/`.
 
 ## When it goes wrong
 

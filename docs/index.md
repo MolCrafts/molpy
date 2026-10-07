@@ -116,8 +116,8 @@ describes the units of a polymer and how they join.
 ```python
 import molpy as mp
 
-mol = mp.io.read_smiles("CCO")  # one molecule from SMILES
-mol, report = mp.Conformer(seed=42).generate(mol)  # hydrogens + 3D coordinates
+mol = mp.io.smiles.SmilesIr("CCO").to_atomistic()  # one molecule from SMILES
+mol, report = mp.conformer.Conformer(seed=42).generate(mol)  # hydrogens + 3D coordinates
 ```
 
 </article>
@@ -149,7 +149,7 @@ SMARTS matching maps every atom, bond, angle, and dihedral to parameters you
 can inspect before anything is exported.
 
 ```python
-typifier = mp.typifier.OPLSAATypifier()  # carries the OPLS-AA library
+typifier = mp.ff.typifier.OplsAaTypifier()  # carries the OPLS-AA library
 typed = typifier.typify(mol)
 ff = typifier.forcefield()  # the parameters of the types just assigned
 system = typed.to_frame()  # the numeric Frame
@@ -170,10 +170,10 @@ library, no external binary (`pip install molcrafts-molpack`).
 
 ```python
 # docs: skip — optional molcrafts-molpack; not a molpy runtime/doc dep
-from molpack import GenCanPack, Target
+from molpack import GencanPack, Target
 
-target = Target(system, count=500).with_restraint(mp.Cuboid([0.0, 0.0, 0.0], [30.0, 30.0, 30.0]))
-system = GenCanPack().with_seed(42).run([target], max_loops=200).frame
+target = Target(system, count=500).with_restraint(mp.core.Cuboid([0.0, 0.0, 0.0], [30.0, 30.0, 30.0]))
+system = GencanPack().with_seed(42).run([target], max_loops=200).frame
 ```
 
 </article>
@@ -185,7 +185,7 @@ system = GenCanPack().with_seed(42).run([target], max_loops=200).frame
 ### [Write files your engine runs](user-guide/11_io/)
 
 One call per file via ``mp.io``: LAMMPS data plus force-field coefficients.
-GROMACS, PDB and the ``*.mrec`` record store share the same pattern.
+GROMACS, PDB and the ``*.mrec`` record share the same pattern.
 
 ```python
 # full atom style needs mol_id: one per connected molecule
@@ -209,13 +209,13 @@ Feed the same Frame into the compute layer — neighbor search and $g(r)$ in two
 calls, with many more analyses behind them.
 
 ```python
-from molpy.compute import RDF
+from molpy.compute import Rdf
 
 system.box = mp.Box.cube(30.0)
-nl = mp.NeighborList(8.0)
+nl = mp.core.NeighborList(8.0)
 nl.build(system.coords, system.box)
 neighbors = nl.neighbors()
-result = RDF(n_bins=50, r_max=8.0).compute([system], [neighbors])  # g(r) over the box
+result = Rdf(n_bins=50, r_max=8.0).compute([system], [neighbors])  # g(r) over the box
 ```
 
 </article>

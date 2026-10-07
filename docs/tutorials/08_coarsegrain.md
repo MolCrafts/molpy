@@ -94,7 +94,7 @@ oh = ethanol.def_atom(element="O", x=2.9, y=0.0, z=0.0, mass=15.999)
 ethanol.def_bond(ca, cb)
 ethanol.def_bond(cb, oh)
 
-projected = mp.Coarsener(ethanol).coarsen(
+projected = mp.builder.Coarsener(ethanol).coarsen(
     [[ca.handle, cb.handle], [oh.handle]], ["C2", "OH"]
 )
 print(projected.n_beads, len(projected.cgbonds))  # -> 2 1
@@ -105,7 +105,7 @@ Switching to geometric centres, explicit ITP-declared bonds, or per-bead virtual
 
 ## Round-tripping is the builder's job, not the data structure's
 
-The reverse direction — turning a coarse-grained snapshot back into an atomistic one — is also intentionally absent from `CoarseGrain`. Backmapping is a constructive operation: it requires a fragment library keyed by bead type, a placement procedure that respects bond geometry, and usually a relaxation step. Tools like *Backward*, *initram*, and *vermouth* implement this as a pipeline, not as a single method. In MolPy the same role belongs to `mp.Assembler`: it reads a site `CoarseGrain` (one site per bead group, from `mp.Coarsener`), places one copy of a user-supplied template per site and joins the copies through their ports, returning an `mp.Atomistic`.
+The reverse direction — turning a coarse-grained snapshot back into an atomistic one — is also intentionally absent from `CoarseGrain`. Backmapping is a constructive operation: it requires a fragment library keyed by bead type, a placement procedure that respects bond geometry, and usually a relaxation step. Tools like *Backward*, *initram*, and *vermouth* implement this as a pipeline, not as a single method. In MolPy the same role belongs to `mp.builder.Assembler`: it reads a site `CoarseGrain` (one site per bead group, from `mp.builder.Coarsener`), places one copy of a user-supplied template per site and joins the copies through their ports, returning an `mp.Atomistic`.
 
 For the present page, the takeaway is simpler: `CoarseGrain` is a place to put beads and the bonds between them. Everything else — projection, backmapping, energetics, force-field assignment — happens around it.
 

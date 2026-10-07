@@ -20,3 +20,5 @@ jobs:
           python-version: ${{ matrix.python-version }}
       - uses: astral-sh/setup-uv@v9.0.0
       - run: uv run --locked --extra dev python -m pytest tests/ -n auto
+        env:
+          PYTHONWARNDEFAULTENCODING: "1"

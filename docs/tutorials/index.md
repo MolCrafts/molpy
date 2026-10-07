@@ -12,7 +12,6 @@ concrete task (build, typify, pack, export), go to
 2. **[Quickstart](../getting-started/quickstart.md)** — the whole pipeline in six lines, then a TIP3P water box built with full control. *~10 min*
 3. **[Example Gallery](../getting-started/examples.md)** — copy-paste workflows: small molecules, packed boxes, polymers, virtual sites.
 4. **[FAQ](../getting-started/faq.md)** — why MolPy exists, how it relates to RDKit / ASE / mBuild, and when another tool is the better choice.
-5. **[What's New in 0.15](../getting-started/whats-new.md)** — what changed in this release, and how to upgrade from 0.14.
 
 If MolPy is installed, this runs as-is — no optional dependencies, not even RDKit:
 
@@ -28,7 +27,7 @@ water.def_bond(o, h2)
 
 frame = water.to_frame()
 mp.io.write_pdb("water.pdb", frame)
-print(f"Wrote {frame['atoms'].nrows} atoms to water.pdb")
+print(f"Wrote {frame['atoms'].n_rows} atoms to water.pdb")
 ```
 
 `Wrote 3 atoms to water.pdb` means you are ready — and those few lines already
@@ -58,7 +57,7 @@ The diagram below illustrates the standard data flow through a MolPy pipeline. E
 
 ```text
 SMILES / CGsmiles / file
-        │  mp.io.read_* · mp.SmilesIR · mp.CGSmilesIR
+        │  mp.io.read_* · mp.io.smiles.SmilesIr · mp.io.cgsmiles.CgSmilesIr
         ▼
 ┌───────────────────────────┐
 │ Atomistic                 │  editable molecular graph:
@@ -103,7 +102,7 @@ LAMMPS / GROMACS / PDB / *.mrec files
 | **Trajectory** | An ordered sequence of `Frame` objects | [Trajectory](05_trajectory.md) |
 | **Selector** | Composable, predicate-based atom filters over `Block` columns | [Selector](06_selector.md) |
 | **Wrapper & Adapter** | Subprocess execution boundaries and in-memory representation bridges to external tools | [Wrapper and Adapter](07_wrapper_and_adapter.md) |
-| **CoarseGrain** | `Bead` / `CGBond` graph for coarse-grained models | [Coarse-Grained Structure](08_coarsegrain.md) |
+| **CoarseGrain** | `Bead` / `CgBond` graph for coarse-grained models | [Coarse-Grained Structure](08_coarsegrain.md) |
 | **Units** | Unit-system presets and explicit quantity conversion | [Units](09_units.md) |
 
 ## Appendix

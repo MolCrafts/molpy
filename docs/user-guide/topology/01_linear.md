@@ -8,8 +8,8 @@ A path of identical units is the simplest topology: `{[#EO]|10}` is ten `EO` sit
 import molpy as mp
 from eo_kit import library  # examples/topology/
 
-sites = mp.CGSmilesIR("{[#EO]|10}").to_coarsegrain()
-chain = mp.Assembler(library(), mp.GrowthPlacer()).assemble(sites, mp.Atomistic)
+sites = mp.io.cgsmiles.CgSmilesIr("{[#EO]|10}").to_coarsegrain()
+chain = mp.builder.Assembler(library(), mp.builder.GrowthPlacer()).assemble(sites, mp.Atomistic)
 ```
 
 **Check:** 10 units (`frag_id` 0…9), 72 atoms (7 per unit plus the two end hydrogens), 71 bonds, 2 open ports at the ends.

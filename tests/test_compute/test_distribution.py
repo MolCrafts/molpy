@@ -11,10 +11,8 @@ from __future__ import annotations
 
 import molpy as mp
 from molpy.compute import (
-    AngleDistribution,
     CombinedDistribution,
-    DihedralDistribution,
-    DistanceDistribution,
+    DistributionFunction,
 )
 
 
@@ -39,19 +37,19 @@ def test_frame_carries_core_topology_blocks():
 def test_distance_distribution_reads_bonds_from_frame():
     frame = _chain_frame()
     # No groups argument — atom pairs come from the frame's `bonds` block.
-    result = DistanceDistribution(30, 0.0, 6.0).compute([frame])
+    result = DistributionFunction("distance", 30, 0.0, 6.0).compute([frame])
     assert result.density.shape == (30,)
 
 
 def test_angle_distribution_reads_angles_from_frame():
     frame = _chain_frame()
-    result = AngleDistribution(30, 0.0, 180.0).compute([frame])
+    result = DistributionFunction("angle", 30, 0.0, 180.0).compute([frame])
     assert result.density.shape == (30,)
 
 
 def test_dihedral_distribution_reads_dihedrals_from_frame():
     frame = _chain_frame()
-    result = DihedralDistribution(30).compute([frame])
+    result = DistributionFunction("dihedral", 30).compute([frame])
     assert result.density.shape == (30,)
 
 

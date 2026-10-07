@@ -6,7 +6,7 @@ numbers. That is too many to plot and too few to be a model. You want the two or
 three combinations that actually distinguish the configurations, and then a
 label saying which state each configuration is in.
 
-`Pca2` finds the combinations. `KMeans` assigns the labels.
+`Pca` finds the combinations. `Kmeans` assigns the labels.
 
 ## PCA finds the directions that vary
 
@@ -14,7 +14,7 @@ Principal component analysis takes a table with one row per sample and one
 column per descriptor, and rotates the coordinate axes so that the first new
 axis lies along the direction of greatest variance, the second along the
 greatest remaining variance, and so on. Keeping only the leading axes is what
-turns the rotation into a reduction — and MolPy's `Pca2` makes that choice for
+turns the rotation into a reduction — and MolPy's `Pca` makes that choice for
 you at two, as the API section below spells out.
 
 The reason it works as *analysis* rather than mere compression: descriptors are
@@ -44,7 +44,7 @@ config:
     orient: bottom
     direction: horizontal
     title: null
-data: {$file: data/decomposition/phase_map.json}
+data: {$file: series/decomposition/phase_map.json}
 mark: {type: point, size: 18, filled: true, opacity: 0.45}
 encoding:
   x:
@@ -69,12 +69,12 @@ decomposition never saw. The two clouds separate cleanly along PC1.
 </figure>
 
 The two phases land in disjoint regions along PC1, which carries a variance of
-2.44 against 0.49 for PC2 — so a single coordinate holds most of the
+2.51 against 0.43 for PC2 — so a single coordinate holds most of the
 information. That is the useful output: you started with three descriptors and
 found that one combination of them is the order parameter.
 
 Running k-means with $k=2$ on the same data and comparing its labels with the
-truth gives **99.75 % agreement**. The algorithm recovered the phases from
+truth gives **100 % agreement**. The algorithm recovered the phases from
 geometry alone.
 
 Be careful about what that demonstrates. FCC and a liquid at the triple point
@@ -92,7 +92,7 @@ Descriptors go in as `DescriptorRow` objects, one per sample:
 
 ```python
 import numpy as np
-from molpy.compute import DescriptorRow, KMeans, Pca2
+from molpy.compute import DescriptorRow, Kmeans, Pca
 
 rng = np.random.default_rng(0)
 group_a = rng.normal(0.0, 1.0, size=(60, 5))
@@ -100,7 +100,7 @@ group_b = rng.normal(3.0, 1.0, size=(60, 5))
 table = np.vstack([group_a, group_b])
 
 table = (table - table.mean(axis=0)) / table.std(axis=0)   # standardize first
-projected = Pca2().compute([DescriptorRow(row) for row in table])
+projected = Pca().compute([DescriptorRow(row) for row in table])
 
 coords = np.asarray(projected.coords)
 variance = np.asarray(projected.variance)
@@ -108,7 +108,7 @@ print(coords.shape, np.round(variance, 2).tolist())
 # -> (120, 2) [3.81, 0.35]
 ```
 
-Note the shape. `Pca2` here is specifically a **two-component** PCA — it returns
+Note the shape. `Pca` here is specifically a **two-component** PCA — it returns
 the first two axes and nothing else, so there is no "keep the first $k$"
 decision to make and no way to inspect components 3 and beyond. If you need the
 full spectrum of explained variance to decide how many components matter, this
@@ -118,10 +118,10 @@ is not the tool.
 groups differ along essentially one direction — correct, because that is how
 they were built.
 
-`KMeans` consumes the PCA result directly:
+`Kmeans` consumes the PCA result directly:
 
 ```python
-labels = np.asarray(KMeans(k=2, max_iter=100, seed=0).compute(projected).labels)
+labels = np.asarray(Kmeans(k=2, max_iter=100, seed=0).compute(projected).labels)
 truth = np.array([0] * 60 + [1] * 60)
 agreement = max((labels == truth).mean(), (labels != truth).mean())
 print(round(float(agreement), 3))               # -> 1.0

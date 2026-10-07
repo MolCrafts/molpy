@@ -1,9 +1,9 @@
-"""molpy.compute.RDF — native g(r) over core neighbour tables."""
+"""molpy.compute.Rdf — native g(r) over core neighbour tables."""
 
 import numpy as np
 
 import molpy as mp
-from molpy.compute import RDF
+from molpy.compute import Rdf
 
 
 def _uniform_frame(n: int, box_len: float, seed: int):
@@ -25,7 +25,7 @@ def test_ideal_gas_g_of_r_approaches_one(self_neighbors):
     frames = [_uniform_frame(n_points, box_len, seed=i) for i in range(n_frames)]
     nlists = [self_neighbors(f, cutoff) for f in frames]
 
-    rdf = RDF(n_bins=40, r_max=cutoff, r_min=0.0)
+    rdf = Rdf(n_bins=40, r_max=cutoff, r_min=0.0)
     result = rdf.compute(frames, nlists)
 
     g_of_r = np.asarray(result.rdf)
@@ -49,7 +49,7 @@ def test_multi_frame_aggregation(self_neighbors):
     frames = [_uniform_frame(800, box_len, seed=i) for i in range(3)]
     nlists = [self_neighbors(f, cutoff) for f in frames]
 
-    multi = RDF(n_bins, r_max=cutoff).compute(frames, nlists)
+    multi = Rdf(n_bins, r_max=cutoff).compute(frames, nlists)
     g_multi = np.asarray(multi.rdf)
 
     # Sanity: shape + finite + non-negative.
@@ -65,7 +65,7 @@ def test_input_frame_immutable(self_neighbors):
     box_matrix_before = frame.box.h.copy()
     x_before = frame["atoms"]["x"].copy()
 
-    RDF(20, r_max=4.0).compute([frame], [nlist])
+    Rdf(20, r_max=4.0).compute([frame], [nlist])
 
     np.testing.assert_array_equal(frame.box.h, box_matrix_before)
     np.testing.assert_array_equal(frame["atoms"]["x"], x_before)

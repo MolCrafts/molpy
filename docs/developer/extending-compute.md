@@ -7,10 +7,10 @@ neighbour list, a mean squared displacement from a trajectory, a dipole moment
 from positions and charges.
 
 !!! important "Science lives in molrs"
-    Transport, dielectric, VACF, and spectral kernels are implemented once in
+    Transport, dielectric, `Vacf`, and spectral kernels are implemented once in
     **molrs** and re-exported (identity) into `molpy.compute`. Do **not** add a
     parallel Python recipe class that reimplements Green–Kubo, Einstein
-    conductivity, or dielectric spectra. Prefer a molrs `Compute` + `Fit`
+    conductivity, or dielectric spectra. Prefer a molrs `Compute` + `LinearFit`
     composition; molpy only wraps frame extraction when needed.
 
 ## The contract: one method, called `compute`
@@ -46,25 +46,17 @@ runs — but read what it asserts. A runtime protocol check tests for the
 types, not its behaviour. Treat it as a smoke test at a boundary, not as
 dispatch in a loop.
 
-!!! warning "Removed: the old `Compute` base class"
-    Earlier versions of molpy shipped their own `Compute` abstract base class
-    whose data entry point was `__call__`, with construction parameters
-    forwarded to `super().__init__(**config)` and read back by a `dump()`
-    method. The base class, the `**config` catch-all, and `dump()` are all
-    gone. Name the method `compute`, store your own attributes, and do not call
-    `super().__init__`.
-
 ## Which shape to use
 
 | Need | Shape | Example |
 |------|-------|---------|
-| Analysis with a molrs kernel | re-export the molrs class by identity | `MSD`, `RDF`, `EinsteinConductivity`, `Onsager` |
+| Analysis with a molrs kernel | re-export the molrs class by identity | `Msd`, `Rdf`, `EinsteinConductivity`, `OnsagerCorrelation` |
 | Analysis molpy owns (no kernel in molrs) | plain class with `compute(...)` | the `CollectiveDipole` example below |
 | Pure array math with no owner | module-level function | `signal.acf_fft` |
 
 A molrs class that already carries its own verb keeps it — `RadicalVoronoi`
 builds with `build(...)`, `VoronoiIntegration` with `integrate(...)`,
-`LinearFit` with `fit(...)`, `Onsager` with `correlation(...)`. Those are molrs
+`LinearFit` with `fit(...)`, `KramersKronig` with `check(...)`. Those are molrs
 contracts, not molpy's to rename. Wrapping one of them in a molpy class whose
 only content is a one-line forward is a façade, not an operator: re-export the
 molrs class instead.

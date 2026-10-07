@@ -1,10 +1,12 @@
 name: Release
 
 # Tag push on MolCrafts/molpy → pure-Python wheel to PyPI (trusted publishing).
-# Requires molcrafts-molrs on the same major.minor already on PyPI (see release notes).
+# Requires molcrafts-molrs on the same major.minor already on PyPI (see docs/developer/release-process.md).
 #
 # Before publish: run the same 3 OS × 3.12 / 3.13 / 3.14 unit matrix as CI
-# (do not skip a minor of the supported range).
+# (do not skip a minor of the supported range) -- against molrs from PyPI,
+# exactly what the wheel declares: `--no-sources` drops the ../molrs path
+# source dev builds molrs from.
 on:
   push:
     tags: ["v*"]
@@ -29,20 +31,12 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
       - uses: astral-sh/setup-uv@v9.0.0
-      - name: No uv source overrides
-        # A [tool.uv.sources] entry (e.g. a path to a sibling molrs checkout)
-        # makes the test job resolve something other than what the wheel will
-        # declare, and turns off check_molrs_pin_on_pypi.py. Never release with one.
-        shell: bash
-        run: |
-          python - <<'PY'
-          import sys, tomllib
-          sources = tomllib.load(open("pyproject.toml", "rb")).get("tool", {}).get("uv", {}).get("sources", {})
-          if sources:
-              sys.exit(f"::error::pyproject.toml still has [tool.uv.sources] {sorted(sources)}; remove it before tagging.")
-          PY
-      - name: Unit tests
-        run: uv run --locked --extra dev python -m pytest tests/ -n auto
+      - name: molrs minor line on PyPI
+        run: python scripts/check_molrs_on_pypi.py
+      - name: Unit tests against molrs from PyPI
+        run: uv run --no-sources --extra dev python -m pytest tests/ -n auto
+        env:
+          PYTHONWARNDEFAULTENCODING: "1"
 
   release:
     needs: test

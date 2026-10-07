@@ -1,7 +1,7 @@
 [project]
 site_name = "MolPy"
-# Public docs live under docs.molcrafts.org/<product>/ (legacy host
-# molpy.molcrafts.org permanently redirects here). Trailing slash required so
+# Public docs live under docs.molcrafts.org/<product>/ (molpy.molcrafts.org
+# redirects here). Trailing slash required so
 # absolute URLs in sitemap/canonical match the product prefix.
 site_url = "https://docs.molcrafts.org/molpy/"
 repo_url = "https://github.com/MolCrafts/molpy"
@@ -29,7 +29,6 @@ nav = [
       { "Quickstart" = "getting-started/quickstart.md" },
       { "Example Gallery" = "getting-started/examples.md" },
       { "FAQ" = "getting-started/faq.md" },
-      { "What's New in 0.15" = "getting-started/whats-new.md" },
     ] },
     { "The Data Model" = [
       { "Atomistic and Topology" = "tutorials/01_atomistic_and_topology.md" },
@@ -139,7 +138,7 @@ nav = [
     # Core data structures
     { "Core" = "api/core.md" },
     # Construction pipeline
-    { "Parser" = "api/parser.md" },
+    { "Notation" = "api/notation.md" },
     { "Builder" = "api/builder.md" },
     { "Packing" = "api/pack.md" },
     { "Conformer" = "api/conformer.md" },
@@ -154,7 +153,7 @@ nav = [
     { "Engine" = "api/engine.md" },
     { "Optimization" = "api/optimize.md" },
     { "Compute" = "api/compute.md" },
-    { "Data" = "api/data.md" },
+    { "Resources" = "api/resources.md" },
   ] },
 
   { "Developer Guide" = [
@@ -254,7 +253,7 @@ custom_fences = [
 default_handler = "python"
 
 [project.plugins.mkdocstrings.handlers.python]
-# Load molrs when resolving ``molpy.Frame → molrs.Frame`` re-exports.
+# Load molrs when resolving ``molpy.Frame → molrs.core.Frame`` re-exports.
 load_external_modules = true
 
 [project.plugins.mkdocstrings.handlers.python.options]

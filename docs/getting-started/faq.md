@@ -71,7 +71,7 @@ generation, substructure search. MolPy interoperates with it (see the
 
 * **Simulation-centric structures**: periodic boxes, bonded MD topology, multiphase assemblies.
 * **System-level operations**: polymers, packing, and reactions are outside RDKit's scope.
-* **Interoperability**: RDKit molecules convert to and from MolPy objects through the optional `RDKitAdapter`.
+* **Interoperability**: RDKit molecules convert to and from MolPy objects through the optional `RdkitAdapter`.
 
 RDKit manages chemical graphs; MolPy manages molecular *systems* headed for
 simulation.

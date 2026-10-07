@@ -28,8 +28,8 @@ def random_periodic_frame():
 def self_neighbors():
     """Factory: the half-shell neighbour table of a frame within ``cutoff``."""
 
-    def search(frame: mp.Frame, cutoff: float) -> mp.Neighbors:
-        nl = mp.NeighborList(cutoff)
+    def search(frame: mp.Frame, cutoff: float) -> mp.core.Neighbors:
+        nl = mp.core.NeighborList(cutoff)
         nl.build(frame.coords, frame.box)
         return nl.neighbors()
 
@@ -54,7 +54,7 @@ def orientations_frame():
     One ``(head, tail)`` atom-index row per particle, using the same on-disk
     schema as the core ``bonds`` block — the two endpoint columns ``atomi``
     (head) and ``atomj`` (tail), stored as unsigned-int atom indices. The
-    orientation-aware compute ops (Nematic / SpatialDistribution / PMFTXY) read
+    orientation-aware compute ops (Nematic / SpatialDistribution / PmftXy) read
     their per-particle axis ``normalize(pos[head] - pos[tail])`` from this block.
     """
 

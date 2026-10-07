@@ -6,7 +6,7 @@ Several guides use polymers as the working example — a demonstration domain, n
 
 ## Foundations
 
-- [Parsing Chemistry](01_parsing_chemistry.md) — conversion of SMILES and SMARTS strings into `Atomistic` structures (BigSMILES is no longer parsed; CGsmiles is covered in Assembly)
+- [Parsing Chemistry](01_parsing_chemistry.md) — conversion of SMILES and SMARTS strings into `Atomistic` structures (CGsmiles is covered in Assembly)
 
 ## Chain & Network Construction
 

@@ -1,17 +1,17 @@
-"""molpy.io.writers: the bond/react system writer's force-field coverage."""
+"""``mp.io.write_lammps_bond_react_system``: the bond/react system writer's force-field coverage."""
 
 from __future__ import annotations
 
 from pathlib import Path
 
 import molpy as mp
-from molpy import Atomistic
-from molpy.io import BondReactTemplate
+from molpy.core import Atomistic
+from molpy.io.lammps import BondReactTemplate
 
 
-def _forcefield() -> mp.ForceField:
+def _forcefield() -> mp.ff.forcefield.ForceField:
     """Two atom types and two bond types; ``c3-oh`` is used only by the template."""
-    ff = mp.ForceField("hand")
+    ff = mp.ff.forcefield.ForceField("hand")
     atoms = ff.def_style("atom", "full")
     c3 = atoms.def_type("c3", mass=12.011)
     oh = atoms.def_type("oh", mass=15.999)
@@ -69,7 +69,7 @@ class TestWriteLammpsBondReactSystem:
         )
         coeff_lines = [
             line.split()[:3]
-            for line in (workdir / "rxn.ff").read_text().splitlines()
+            for line in (workdir / "rxn.ff").read_text(encoding="utf-8").splitlines()
             if line.startswith(("pair_coeff", "bond_coeff"))
         ]
         assert ["bond_coeff", "c3-oh"] in [line[:2] for line in coeff_lines]

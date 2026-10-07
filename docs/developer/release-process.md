@@ -21,25 +21,27 @@ line when co-released. Patch may drift.
 |-----------|------|
 | `pyproject.toml` | `molcrafts-molrs>=X.Y.0,<X.(Y+1)` (not `==X.Y.Z`) |
 | Import-time check | `check_molrs_version()` accepts any installed molrs with the same major.minor |
-| Pre-push hook | `molrs-pin-on-pypi` verifies that **some** published wheel on that minor line exists on PyPI |
+| Release gate | `release.yml` runs `scripts/check_molrs_on_pypi.py` (some published wheel on that minor line exists on PyPI), then the test matrix against molrs from PyPI (`uv run --no-sources`) |
 
 **Order:** ship molrs first (`master` + tag `vX.Y.Z` + publish), then land molpy
 APIs that need the new surface. Editable local molrs does not count as a release.
-There is no hand-written `CHANGELOG.md` — history is git tags / GitHub Releases.
-A minor release also updates the user-facing
-[What's New](../getting-started/whats-new.md) page.
+There is no hand-written `CHANGELOG.md` and no release-notes page; the history
+is git.
 
-### Developing against an unpublished molrs minor
+### dev builds molrs's dev; a release tests PyPI
 
-While the matching molrs line is on molrs `master` but not yet on PyPI,
-`pyproject.toml` may carry a `[tool.uv.sources]` path override
-(`molcrafts-molrs = { path = "../molrs/molrs-python" }`) and CI checks molrs out
-beside molpy to build it. The release commit removes both, once molrs is
-published: `release.yml` refuses to tag while any `[tool.uv.sources]` entry is
-present, and the `molrs-pin-on-pypi` hook only checks PyPI once it is gone.
-`uv.lock` is not committed, so there is no lock file to regenerate; resolve
-once from PyPI to confirm the pin (`uv lock --refresh`, then the test command
-below).
+On `dev`, molpy tracks molrs's `dev`, not a release: `pyproject.toml`'s
+`[tool.uv.sources]` builds `molcrafts-molrs` from the sibling `../molrs`, which
+CI and the hooks check out at the commit `scripts/partners.py` resolves
+(`.github/partners.env`; see [Development Setup](development-setup.md)). That
+table only steers uv; the wheel declares the minor-line range alone.
+
+A release keeps the table and is judged against PyPI instead: `release.yml`
+checks that the declared molrs minor line is published
+(`scripts/check_molrs_on_pypi.py`) and runs the test matrix with
+`uv run --no-sources`, i.e. against molrs from PyPI, exactly what users of the
+wheel get. `uv.lock` (which records the dev build's molrs) is not used there.
+
 
 
 ## Pre-release checks
@@ -108,27 +110,6 @@ git push origin master:nightly      # or push your integration branch onto night
 Install a nightly with `pip install --pre molcrafts-molpy-nightly`. It imports
 as `molpy` and therefore conflicts with the stable package — test it in a
 dedicated virtual environment.
-
-
-## Release notes
-
-Use this structure on the [GitHub Releases page](https://github.com/MolCrafts/molpy/releases):
-
-```markdown
-## MolPy vX.Y.Z
-
-### Added
-- ...
-
-### Changed
-- ...
-
-### Fixed
-- ...
-
-### Breaking Changes
-- ... (or "None")
-```
 
 
 ## Hotfix

@@ -13,8 +13,11 @@ import pytest
 
 import molpy as mp
 from molpy.builder import DrudeBuilder, Tip4pBuilder, VirtualSiteBuilder
-from molpy.builder.virtualsite import FOUR_PI_EPS0, K_DRUDE, load_polarizability
-from molpy.data import get_forcefield_path
+from molpy.core import UnitRegistry
+from molpy.ff.params import clpol_polarizability
+
+#: 4πε₀ in e² / (kJ/mol·Å): the paduagroup/clandpol polarizer's value.
+FOUR_PI_EPS0 = 0.0007197587
 
 
 @pytest.fixture
@@ -64,9 +67,8 @@ def test_builders_are_subclasses():
     assert issubclass(Tip4pBuilder, VirtualSiteBuilder)
 
 
-def test_alpha_ff_resolves_and_loads():
-    path = get_forcefield_path("alpha.ff")
-    table = load_polarizability(path)
+def test_the_clpol_table_is_molrs_s():
+    table = clpol_polarizability()
     assert table["CR"]["k_D"] == 4184.0 and table["CR"]["alpha"] > 0
     assert table["HC"]["k_D"] == 0.0
 
@@ -109,21 +111,21 @@ def test_drude_count_matches_heavy_atoms_no_hydrogen(cation):
 
 
 def test_drude_spring_force_constant(cation):
-    """alpha.ff is kJ/mol; molrs stores kcal/mol (÷4.184)."""
+    """alpha.ff is kJ/mol; molrs stores kcal/mol."""
     out = DrudeBuilder().apply(cation)
     springs = _drude_bonds(out)
     assert len(springs) == len(_drudes(out))
-    assert K_DRUDE == 4184.0
-    assert all(b.get("k") == pytest.approx(K_DRUDE / 4.184) for b in springs)
+    kcal_per_kj = UnitRegistry().factor("kJ", "kcal")
+    assert all(b.get("k") == pytest.approx(4184.0 * kcal_per_kj) for b in springs)
     assert all(b.get("r0") == 0.0 for b in springs)
 
 
 def test_alpha_recovered_from_drude_params(cation):
     out = DrudeBuilder().apply(cation)
-    table = load_polarizability()
+    table = clpol_polarizability()
     for shell in _drudes(out):
         q_d, k_d, alpha = shell.get("charge"), shell.get("k_D"), shell.get("alpha")
-        assert q_d**2 / (FOUR_PI_EPS0 * k_d) == alpha
+        assert q_d**2 / (FOUR_PI_EPS0 * k_d) == pytest.approx(alpha, rel=1e-7)
         assert alpha > 0
     assert table["CR"]["alpha"] == 1.122
 

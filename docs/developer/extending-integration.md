@@ -14,12 +14,12 @@ This page shows how to integrate external CLI tools (wrappers) and external Pyth
 
 ## Adding a Wrapper
 
-Subclass `Wrapper` from `molpy.wrapper.base`. The base class handles executable resolution, conda/virtualenv activation, working directory management, and stdout/stderr capture.
+Subclass `molpy.wrapper.Wrapper`. The base class handles executable resolution, conda/virtualenv activation, working directory management, and stdout/stderr capture.
 
 ```python
 from dataclasses import dataclass, field
 from pathlib import Path
-from molpy.wrapper.base import Wrapper
+from molpy.wrapper import Wrapper
 
 @dataclass
 class GmxWrapper(Wrapper):
@@ -49,11 +49,11 @@ Higher-level methods (like `energy_minimize`) are convenience wrappers around `s
 
 ## Adding an Adapter
 
-Subclass `Adapter[InternalT, ExternalT]` from `molpy.adapter.base`. Implement `_do_sync_to_internal()` and `_do_sync_to_external()`.
+Subclass `molpy.adapter.Adapter[InternalT, ExternalT]`. Implement `_do_sync_to_internal()` and `_do_sync_to_external()`.
 
 ```python
-from molpy.adapter.base import Adapter
-from molpy import Atomistic
+from molpy.adapter import Adapter
+from molpy.core import Atomistic
 
 class AseAdapter(Adapter[Atomistic, "ase.Atoms"]):
     """Sync between MolPy Atomistic and ASE Atoms."""

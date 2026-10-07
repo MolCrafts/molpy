@@ -1,6 +1,6 @@
 """UnitPreset is the MD-facing constants view."""
 
-from molpy import UnitPreset
+from molpy.core import UnitPreset
 
 
 def test_real_boltzmann_is_positive():

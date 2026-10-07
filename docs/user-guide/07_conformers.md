@@ -19,8 +19,8 @@ the input graph is never mutated.
 ```python
 import molpy as mp
 
-mol = mp.io.read_smiles("CCO") # ethanol graph (heavy atoms only)
-mol_3d, report = mp.Conformer(seed=42).generate(mol)
+mol = mp.io.smiles.SmilesIr("CCO").to_atomistic() # ethanol graph (heavy atoms only)
+mol_3d, report = mp.conformer.Conformer(seed=42).generate(mol)
 
 print(mol_3d.n_atoms) # 9 — heavy atoms + added hydrogens
 print(report.final_energy) # energy of the returned structure
@@ -32,13 +32,14 @@ you can generate several independent conformers from the same graph.
 
 ## Constructor parameters
 
-`Conformer` subclasses the native conformer generator; the constructor
-parameters are inherited unchanged, `Conformer(speed="medium", add_hydrogens=True, seed=None)`:
+`mp.conformer.Conformer` is the native conformer generator (`molrs.conformer.Conformer`),
+`Conformer(speed="medium", add_hydrogens=True, seed=None)`; an empty molecule
+is refused with `ValueError`:
 
 | Parameter | Meaning |
 |---|---|
 | `speed` | Speed/quality trade-off for the embedding + refinement passes. Faster settings do fewer refinement steps. |
-| `add_hydrogens` | Whether to fill valences with explicit hydrogens before embedding (the same perception as `mp.Perceive().find_hydrogens`). Leave on unless your graph already carries all H. |
+| `add_hydrogens` | Whether to fill valences with explicit hydrogens before embedding (the same edit as `mp.perceive.add_hydrogens`). Leave on unless your graph already carries all H. |
 | `seed` | RNG seed for the stochastic embedding. **Set it for reproducible geometries** — omitting it gives a different conformer each run. |
 
 Charged atoms must already carry the canonical integer `"formal_charge"` key

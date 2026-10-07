@@ -8,8 +8,8 @@ within some distance $r_c$.
 Doing that from scratch means comparing every atom with every other atom: for
 $N = 10^5$ atoms that is $5\times 10^9$ distance evaluations, and you would pay
 it again for each analysis. So MolPy separates the search from the analysis. The core
-`mp.NeighborList` finds the pairs once; [RDF](rdf.md), [LocalDensity](density.md),
-[Steinhardt](order.md), [Cluster](cluster.md), and [PMFTXY](pmft.md) all consume
+`mp.core.NeighborList` finds the pairs once; [RDF](rdf.md), [LocalDensity](density.md),
+[Steinhardt](order.md), [Cluster](cluster.md), and [PmftXy](pmft.md) all consume
 the same object.
 
 ## What a pair means under periodic boundaries
@@ -62,7 +62,7 @@ config:
     orient: bottom
     direction: horizontal
     title: null
-data: {$file: data/neighborlist/pair_scaling.json}
+data: {$file: series/neighborlist/pair_scaling.json}
 mark: {type: line, strokeWidth: 2.4, interpolate: monotone}
 encoding:
   x:
@@ -93,10 +93,10 @@ reading rather than skipping:
 | $r_c$ (Å) | measured | ideal gas | ratio |
 |---|---|---|---|
 | 3.0 | 0.00 | 2.34 | 0 |
-| 4.5 | 8.96 | 7.91 | 1.13 |
-| 6.0 | 16.36 | 18.74 | 0.87 |
-| 8.5 | 52.88 | 53.28 | 0.99 |
-| 14.0 | 237.66 | 238.08 | 1.00 |
+| 4.5 | 8.93 | 7.91 | 1.13 |
+| 6.0 | 16.24 | 18.74 | 0.87 |
+| 8.5 | 53.18 | 53.28 | 1.00 |
+| 14.0 | 238.14 | 238.08 | 1.00 |
 
 Below 3.2 Å the list finds **nothing at all**: no two argon atoms are ever that
 close, which is the excluded core of [$g(r)$](rdf.md) seen from a different
@@ -106,9 +106,9 @@ first minimum, it falls 13 % *below*. By 8.5 Å the shells have averaged out and
 the ideal-gas estimate is good to a percent.
 
 There is a useful cross-check hiding in that table. At $r_c = 5$ Å the list
-gives 11.10 neighbours per atom; integrating $g(r)$ on the [RDF](rdf.md) page
-gives a coordination number $n(5.0) = 11.06$. Two different calculations,
-agreeing to 0.4 %.
+gives 11.24 neighbours per atom; integrating $g(r)$ on the [RDF](rdf.md) page
+gives a coordination number $n(5.0) = 11.09$. Two different calculations, over
+different frames, agreeing to 1.4 %.
 
 For planning work: 11 neighbours per atom at 5 Å, 53 at 8.5 Å, 238 at 14 Å.
 Building a 14 Å list to histogram $g(r)$ out to 6 Å does about twenty times the
@@ -118,10 +118,10 @@ Choosing the cutoff is therefore a physical decision, not a safety margin:
 
 | Consumer | Sensible cutoff |
 |---|---|
-| [`RDF(r_max=…)`](rdf.md) | exactly `r_max` — no more |
+| [`Rdf(r_max=…)`](rdf.md) | exactly `r_max` — no more |
 | [`Cluster`](cluster.md), [`Steinhardt`](order.md) | first minimum of $g(r)$ (5.4 Å for argon) |
 | [`LocalDensity`](density.md) | the length scale you want to smooth over |
-| [`PMFTXY`](pmft.md) | far enough to cover the free-energy well of interest |
+| [`PmftXy`](pmft.md) | far enough to cover the free-energy well of interest |
 
 ## Building one
 
@@ -134,7 +134,7 @@ frame = mp.Frame()
 frame["atoms"] = {"x": xyz[:, 0], "y": xyz[:, 1], "z": xyz[:, 2]}
 frame.box = mp.Box.cube(20.0)
 
-nl = mp.NeighborList(3.0)
+nl = mp.core.NeighborList(3.0)
 nl.build(frame.coords, frame.box)
 nlist = nl.neighbors()
 print(nlist.n_pairs)   # -> 3
@@ -160,7 +160,7 @@ Because each pair appears once, the mean number of neighbours per atom is
 `2 * n_pairs / n_atoms`. That identity is the quickest sanity check you can run:
 
 ```python
-n_atoms = frame["atoms"].nrows
+n_atoms = frame["atoms"].n_rows
 print(2 * nlist.n_pairs / n_atoms)     # -> 1.5
 ```
 
@@ -176,7 +176,7 @@ The frame has no box. Neighbour search needs to know how space wraps. Set
 `frame.box = mp.Box.cube(L)`.
 
 **Histograms are truncated at some radius.**
-The cutoff is smaller than the consumer's `r_max`. `RDF` and friends can only
+The cutoff is smaller than the consumer's `r_max`. `Rdf` and friends can only
 see pairs the list contains; they do not go back for more.
 
 **Coordination numbers come out roughly double what you expect.**

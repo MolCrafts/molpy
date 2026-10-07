@@ -50,21 +50,22 @@ writes it or an agent calls it.
 
 ## Capabilities
 
-Every name is reached through `import molpy as mp`. The graph, table and
-force-field types and the notation parsers are the native core's (molrs),
-re-exported on the molpy root; each row below that names a subpackage is one
-`src/molpy/` package.
+Every name is reached through `import molpy as mp`, and molpy is a thin layer
+over the native core (molrs): every native name is the molrs object. Every
+molrs subsystem is mirrored by a molpy module (`mp.core` for `molrs.core` —
+stores, graphs, box, neighbour search and units — then `mp.io`, `mp.ff`, `mp.perceive`,
+`mp.compute`, `mp.builder`, …). The core data classes you handle directly
+(`mp.Frame`, `mp.Block`, `mp.Trajectory`, `mp.Box`, `mp.Atomistic`, …) are
+promoted to the root, as the same objects.
 
 | Where | Capability |
 |---|---|
-| **`mp.*`** (native) | Explicit data model — editable `Atomistic` / `CoarseGrain` graphs, `Frame` / `Block` columnar arrays, `ForceField`; SMILES / SMARTS / CGsmiles (`SmilesIR`, `SmartsPattern`, `CGSmilesIR`); site-graph assembly (`Assembler`); `PotentialCompiler` and the `LBFGS` minimizer |
-| **`core`** | molpy's own pieces of the model — `Box`, `Trajectory`, regions, selectors, `UnitSystem`, `Script` |
-| **`builder`** | Polymer planning and polydispersity, nanostructures, crystals, virtual sites, packing templates |
-| **`conformer`** | 3D coordinate generation (native ETKDG + MMFF cleanup) |
-| **`typifier`** | Force-field typing — OPLS-AA, MMFF94 and antechamber's atom-type tables (native), GAFF / GAFF2 parameters via AmberTools |
-| **`compute`** | Analysis — RDF, MSD, conductivity, order parameters, Voronoi, dielectric and vibrational spectra, … (native kernels) |
-| **`io`** | Read/write — PDB, GRO, LAMMPS data, XYZ, force fields, trajectories, `*.mrec` records, … |
-| **`engine`** | MD input generation & run management — LAMMPS, CP2K, OpenMM |
+| **`mp.*`, `core`, `perceive`, `conformer`, `optimize`** | Explicit data model — `Frame` / `Block` columnar arrays, `Trajectory`, editable `Atomistic` / `CoarseGrain` graphs and `Box` on the root; regions, neighbour search, units, molpy's selectors and trajectory splitters in `mp.core`; perception and SMARTS (`mp.perceive.SmartsPattern`), 3D conformers (`mp.conformer.Conformer`), the `mp.optimize.Lbfgs` minimizer |
+| **`ff`** | Force fields, mirroring `molrs.ff` — `forcefield` (the `ForceField` data model), `potential` (kernels), `compile` (`PotentialCompiler`), `typifier` (OPLS-AA, MMFF94, GAFF natively; GAFF / GAFF2 via AmberTools), `charge`, `ir` (the IR's vocabulary), `style_registry` (your own styles from Python), `params`, `clpol_scaling` |
+| **`builder`** | Site-graph assembly (`Assembler`), graphene and nanotubes, polymer planning and polydispersity, crystals, virtual sites, packing templates |
+| **`compute`** · **`signal`** | Analysis — `Rdf`, `Msd`, conductivity, order parameters, Voronoi, dielectric and vibrational spectra, … (native kernels); FFT correlation and windows |
+| **`io`** | Read/write — PDB, GRO, LAMMPS data, XYZ, AMBER, SMILES / CGsmiles, trajectories, `*.mrec` records, … |
+| **`engine`** | MD input generation & run management — LAMMPS, GROMACS, OpenMM, CP2K |
 | **`wrapper` · `adapter`** | External CLIs (Antechamber, tleap, …) and optional RDKit in-memory bridge |
 
 ## Install
@@ -78,7 +79,7 @@ pip install molcrafts-molpy
 ```
 
 Core dependencies: NumPy and
-[molrs](https://github.com/MolCrafts/molrs) (`molcrafts-molrs>=0.15.0,<0.16`)
+[molrs](https://github.com/MolCrafts/molrs) (`molcrafts-molrs>=0.16.0,<0.17`)
 plus the MolCrafts logging/config packages. Optional: RDKit (adapter example),
 AmberTools (GAFF charges).
 
@@ -119,10 +120,10 @@ import molpy as mp
 
 from pathlib import Path
 
-mol       = mp.SmilesIR("CCO").to_atomistic()     # ethanol from SMILES
-mol3d, _  = mp.Conformer(seed=42).generate(mol)   # hydrogens + 3D coordinates
+mol       = mp.io.smiles.SmilesIr("CCO").to_atomistic()     # ethanol from SMILES
+mol3d, _  = mp.conformer.Conformer(seed=42).generate(mol)   # hydrogens + 3D coordinates
 
-typifier  = mp.typifier.OPLSAATypifier()          # carries the OPLS-AA library
+typifier  = mp.ff.typifier.OplsAaTypifier()          # carries the OPLS-AA library
 typed     = typifier.typify(mol3d)
 ff        = typifier.forcefield()                 # parameters of the assigned types
 
@@ -151,7 +152,6 @@ Full documentation, including executable notebooks:
 **[docs.molcrafts.org/molpy](https://docs.molcrafts.org/molpy/)**
 
 - [Getting Started](https://docs.molcrafts.org/molpy/getting-started/) — install and first example
-- [What's New in 0.15](https://docs.molcrafts.org/molpy/getting-started/whats-new/) — release highlights and upgrading from 0.14
 - [Example Gallery](https://docs.molcrafts.org/molpy/getting-started/examples/) — short copy-paste workflows
 - [Guides](https://docs.molcrafts.org/molpy/user-guide/) — task-oriented notebooks
 - [Concepts](https://docs.molcrafts.org/molpy/tutorials/) — data model deep dives

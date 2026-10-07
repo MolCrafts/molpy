@@ -117,18 +117,6 @@ wheels = [
 ]
 
 [[package]]
-name = "markdown-it-py"
-version = "4.2.0"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "mdurl" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/06/ff/7841249c247aa650a76b9ee4bbaeae59370dc8bfd2f6c01f3630c35eb134/markdown_it_py-4.2.0.tar.gz", hash = "sha256:04a21681d6fbb623de53f6f364d352309d4094dd4194040a10fd51833e418d49", size = 82454, upload-time = "2026-05-07T12:08:28.36Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/b3/81/4da04ced5a082363ecfa159c010d200ecbd959ae410c10c0264a38cac0f5/markdown_it_py-4.2.0-py3-none-any.whl", hash = "sha256:9f7ebbcd14fe59494226453aed97c1070d83f8d24b6fc3a3bcf9a38092641c4a", size = 91687, upload-time = "2026-05-07T12:08:27.182Z" },
-]
-
-[[package]]
 name = "markupsafe"
 version = "3.0.4"
 source = { registry = "https://pypi.org/simple" }
@@ -242,15 +230,6 @@ wheels = [
 ]
 
 [[package]]
-name = "mdurl"
-version = "0.1.2"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/d6/54/cfe61301667036ec958cb99bd3efefba235e65cdeb9c84d24a8293ba1d90/mdurl-0.1.2.tar.gz", hash = "sha256:bb413d29f5eea38f31dd4754dd7377d4465116fb207585f97bf925588687c1ba", size = 8729, upload-time = "2022-08-14T12:40:10.846Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/b3/38/89ba8ad64ae25be8de66a6d463314cf1eb366222074cfda9ee839c56a4b4/mdurl-0.1.2-py3-none-any.whl", hash = "sha256:84008a41e51615a49fc9966191ff91509e3c40b939176e643fd50a5c2196b8f8", size = 9979, upload-time = "2022-08-14T12:40:09.779Z" },
-]
-
-[[package]]
 name = "mergedeep"
 version = "1.3.4"
 source = { registry = "https://pypi.org/simple" }
@@ -348,35 +327,9 @@ wheels = [
 ]
 
 [[package]]
-name = "molcrafts-molcfg"
-version = "1.5.0"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "pyyaml" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/d2/ed/a365b3d798bf42860a933d675f0ebeeff64cfdb8444e34891bacab885c9e/molcrafts_molcfg-1.5.0.tar.gz", hash = "sha256:3d6fb7cba5ddd87b1370f94486740b40359e3af9639d7cb8b926657424cb9116", size = 43912, upload-time = "2026-08-09T10:06:43.786Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/8d/83/de3456513176b0e0a0876bd7fbf3db4925be8db29f889bdee7b00eb331ac/molcrafts_molcfg-1.5.0-py3-none-any.whl", hash = "sha256:61c5db3cfff5f8ec5a407bc0bbbec73585c29520e1860dc4bf7d8f454564ce31", size = 23623, upload-time = "2026-08-09T10:06:42.368Z" },
-]
-
-[[package]]
-name = "molcrafts-mollog"
-version = "1.3.0"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "rich" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/7a/d8/3bccffd0be892859bd74c0c29e60419455bce1440d9b8e76b9d4673f6c01/molcrafts_mollog-1.3.0.tar.gz", hash = "sha256:4ce63b5089a69ddb188e842155881f0aef4728f1d2229597f9f8d5da17b23870", size = 48173, upload-time = "2026-08-10T12:39:04.332Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/d7/f0/5adb77f4e0dd8e288f53c35d641afa8dd91290185d1b055c01ffe0bad718/molcrafts_mollog-1.3.0-py3-none-any.whl", hash = "sha256:c80d50b9e9f21c4ff1ea2854cbae8c6cbe702b15db8c8318b98be330c37a281e", size = 27476, upload-time = "2026-08-10T12:39:02.952Z" },
-]
-
-[[package]]
 name = "molcrafts-molpy"
 source = { editable = "." }
 dependencies = [
-    { name = "molcrafts-molcfg" },
-    { name = "molcrafts-mollog" },
     { name = "molcrafts-molrs" },
     { name = "numpy" },
 ]
@@ -411,10 +364,8 @@ rdkit = [
 [package.metadata]
 requires-dist = [
     { name = "mkdocstrings", extras = ["python"], marker = "extra == 'doc'", specifier = ">=0.24.0" },
-    { name = "molcrafts-molcfg", specifier = ">=1.2.0" },
-    { name = "molcrafts-mollog", specifier = ">=1.0.0" },
     { name = "molcrafts-molpy", extras = ["dev", "doc"], marker = "extra == 'all'" },
-    { name = "molcrafts-molrs", specifier = ">=0.15.0,<0.16" },
+    { name = "molcrafts-molrs", directory = "../molrs/molrs-python" },
     { name = "molcrafts-zensical-theme", marker = "extra == 'doc'", specifier = ">=0.2.9" },
     { name = "numpy", specifier = ">=2.0" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=6.0.0" },
@@ -429,19 +380,24 @@ provides-extras = ["dev", "rdkit", "doc", "all"]
 
 [[package]]
 name = "molcrafts-molrs"
-version = "0.15.0"
-source = { registry = "https://pypi.org/simple" }
+version = "0.16.0"
+source = { directory = "../molrs/molrs-python" }
 dependencies = [
     { name = "numpy" },
 ]
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/8f/a1/9fa6420faeee69066a240ceb92ca956b6662f4fe358a9705bec51ad2029f/molcrafts_molrs-0.15.0-cp312-abi3-macosx_10_12_x86_64.whl", hash = "sha256:676567635612725d8694d251dce5aafc9c42a12c8087c97fc0d8a0c861ad4545", size = 8518485, upload-time = "2026-10-05T18:35:45.925Z" },
-    { url = "https://files.pythonhosted.org/packages/a3/db/5dfea8c2780b361dfb053d72ebe14b4ce22eaa4d5bef441ea981b78a32c3/molcrafts_molrs-0.15.0-cp312-abi3-macosx_11_0_arm64.whl", hash = "sha256:7866bf49eba1330460c27ab34699c108b5fd0df8bfaaf963c37d453be65176e3", size = 7681505, upload-time = "2026-10-05T18:35:48.713Z" },
-    { url = "https://files.pythonhosted.org/packages/61/0a/320718c010a5638d5801be2d84880680e698904ae6260484d618b83f5782/molcrafts_molrs-0.15.0-cp312-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:f75bdff7aa7fc0c1a46160ee75023fa1a9f4073d2575fba1b02f2893f3a0c5bb", size = 8895389, upload-time = "2026-10-05T18:35:51.181Z" },
-    { url = "https://files.pythonhosted.org/packages/bf/aa/f9d2a07dda04461f985588dfaaea19eaffb2d20f59922f3ef4b23a335c0c/molcrafts_molrs-0.15.0-cp312-abi3-manylinux_2_28_aarch64.whl", hash = "sha256:1eedaea87e4bd6604f0d76334e51d65de1d4ed06a297165eb3c4f46745b0d41d", size = 8021495, upload-time = "2026-10-05T18:35:53.722Z" },
-    { url = "https://files.pythonhosted.org/packages/08/21/ea0f25f46e25348294a095e797a417dba022c715c5f189e2c7448a10b7d2/molcrafts_molrs-0.15.0-cp312-abi3-pyemscripten_2026_0_wasm32.whl", hash = "sha256:b381e3632d507dba90b24a7eb617be67dffbb0e0b4210a9b9f8da0bc47c52e99", size = 2986434, upload-time = "2026-10-05T18:35:55.768Z" },
-    { url = "https://files.pythonhosted.org/packages/a8/0c/da1f850bcdd77f1563204d27d3a4be1d8650584a078fa49d3534d13831fd/molcrafts_molrs-0.15.0-cp312-abi3-win_amd64.whl", hash = "sha256:0c384cc07f03c44701d6706fdfa840b4d957464fcfb1b656747f61283ea70885", size = 9127618, upload-time = "2026-10-05T18:35:58.075Z" },
+
+[package.metadata]
+requires-dist = [
+    { name = "maturin", marker = "extra == 'dev'", specifier = ">=1.0,<2.0" },
+    { name = "mkdocstrings", extras = ["python"], marker = "extra == 'doc'" },
+    { name = "molcrafts-zensical-theme", marker = "extra == 'doc'", specifier = ">=0.2.3" },
+    { name = "numpy", specifier = ">=2.0" },
+    { name = "numpy", marker = "extra == 'dev'", specifier = ">=2.0" },
+    { name = "pytest", marker = "extra == 'dev'" },
+    { name = "tox", marker = "extra == 'dev'", specifier = ">=4.23" },
+    { name = "zensical", marker = "extra == 'doc'", specifier = ">=0.0.51" },
 ]
+provides-extras = ["dev", "doc"]
 
 [[package]]
 name = "molcrafts-zensical-theme"
@@ -805,19 +761,6 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/dc/8a/f97a9df22449f3d0fa19ed3d4bdb42d279b5e591cd256f5fbf29905797d1/rdkit-2026.3.6-cp314-cp314-win_amd64.whl", hash = "sha256:6a82951a8fa3f4d508ba514e648a1766ef793e00700c9338ec5cdb6d07a7ad4c", size = 25458784, upload-time = "2026-09-03T20:10:20.317Z" },
     { url = "https://files.pythonhosted.org/packages/ab/02/4c26e6e15f9b6b6e158dc98f33c200bec08d42ea10a0c9a8e101d1065304/rdkit-2026.3.6-cp315-cp315-macosx_11_0_arm64.whl", hash = "sha256:7b178b11149e0ae8c499eb97e44e43c702d642ca2b3f86c980c4d7c9cb87ceaa", size = 30303081, upload-time = "2026-09-03T20:10:24.524Z" },
     { url = "https://files.pythonhosted.org/packages/da/0e/9200f0ce267cbf32d28f0d30ce024094ffb602df2f636ff9b7b9289f31ae/rdkit-2026.3.6-cp315-cp315-manylinux_2_28_aarch64.whl", hash = "sha256:bd5b0ffc18cef83a9c24012d2d9716daf24f87dc82df89376bb010773669504a", size = 36595165, upload-time = "2026-09-03T20:10:28.335Z" },
-]
-
-[[package]]
-name = "rich"
-version = "15.0.0"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "markdown-it-py" },
-    { name = "pygments" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/c0/8f/0722ca900cc807c13a6a0c696dacf35430f72e0ec571c4275d2371fca3e9/rich-15.0.0.tar.gz", hash = "sha256:edd07a4824c6b40189fb7ac9bc4c52536e9780fbbfbddf6f1e2502c31b068c36", size = 230680, upload-time = "2026-04-12T08:24:00.75Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/82/3b/64d4899d73f91ba49a8c18a8ff3f0ea8f1c1d75481760df8c68ef5235bf5/rich-15.0.0-py3-none-any.whl", hash = "sha256:33bd4ef74232fb73fe9279a257718407f169c09b78a87ad3d296f548e27de0bb", size = 310654, upload-time = "2026-04-12T08:24:02.83Z" },
 ]
 
 [[package]]

@@ -3,14 +3,18 @@
 # same command; Cloudflare Pages' docs build has one too.
 #
 #   pre-commit  file hygiene + `tox -e lint` (ruff + ty). Cheap: runs in place.
-#   pre-push    the hygiene hooks again on --all-files, the partner/path-source
-#               check, the molrs pin on PyPI, the docs build, and the unit
-#               suite (`uv run --locked`, Python 3.12, as ci.yml `test`).
+#   pre-push    the hygiene hooks again on --all-files, the partners check,
+#               the lock, the docs build, and the unit suite (`uv run
+#               --locked`, Python 3.12, as ci.yml `test`) -- the last three in
+#               CI's sibling layout, against molrs built from the commit
+#               scripts/partners.py resolves (molrs's dev, or its branch named
+#               like this one), never the developer's ../molrs.
 #
 # Tests MUST use `uv run pytest`, not tox: tox's pip ignores [tool.uv.sources].
-# The suite is the one heavy hook; scripts/hook-run.sh hands it to
-# $MOLCRAFTS_HOOK_RUNNER (a compute node on the MolCrafts cluster) when set and
-# runs it in place otherwise. See "Hooks" in CONTRIBUTING.md. Never --no-verify.
+# The docs build and the suite compile molrs; scripts/hook-run.sh hands them
+# to $MOLCRAFTS_HOOK_RUNNER (a compute node on the MolCrafts cluster) when set
+# and runs them in place otherwise. See "Hooks" in CONTRIBUTING.md. Never
+# --no-verify.
 
 default_install_hook_types: [pre-commit, pre-push]
 default_stages: [pre-commit]
@@ -55,38 +59,31 @@ repos:
         stages: [pre-push]
 
       - id: partners
-        name: no path source CI cannot resolve
+        name: partners resolve; path sources resolve in CI
         entry: python3 scripts/partners.py check
         language: system
         pass_filenames: false
         always_run: true
         stages: [pre-push]
 
-      # ci.yml lint: uv.lock is committed and current (every `uv run` is --locked).
+      # ci.yml lint: uv.lock is committed and current against the resolved
+      # molrs (every `uv run` is --locked). Metadata only: nothing compiles.
       - id: uv-lock
-        name: uv.lock is current (ci.yml lint)
-        entry: uv lock --check
+        name: uv.lock is current against the resolved molrs (ci.yml lint)
+        entry: python3 scripts/partners.py run -- uv lock --check
         language: system
         pass_filenames: false
-        files: ^(pyproject\.toml|uv\.lock)$
+        files: ^(pyproject\.toml|uv\.lock|\.github/partners\.env)$
         stages: [pre-push]
 
-      - id: molrs-pin-on-pypi
-        name: molrs pin on PyPI
-        entry: python3 .pre-commit/check_molrs_pin_on_pypi.py
-        language: system
-        pass_filenames: false
-        always_run: true
-        stages: [pre-push]
-
-      # Cloudflare Pages: `pip install ".[doc]"` in a clean checkout, then
-      # zensical. Built in a copy of the tree (scripts/partners.py run), so the
-      # theme's staged assets never land in this checkout; --strict fails on
-      # any warning, an unresolved mkdocstrings reference included.
+      # ci.yml docs: `.[doc]` in a fresh env, then zensical. Built in CI's
+      # layout (scripts/partners.py run), so molrs is the resolved commit and
+      # the theme's staged assets never land in this checkout; --strict fails
+      # on any warning, an unresolved mkdocstrings reference included.
       - id: docs
-        name: docs build (ci.yml docs, Cloudflare Pages)
+        name: docs build (ci.yml docs)
         entry: >-
-          python3 scripts/partners.py run --
+          scripts/hook-run.sh python3 scripts/partners.py run --
           uv run --isolated --no-project --python 3.12 --with .[doc]
           zensical build --clean --strict
         language: system
@@ -95,10 +92,13 @@ repos:
         stages: [pre-push]
 
       # Same command as ci.yml `test` (uv honors [tool.uv.sources], tox/pip
-      # does not), on CI's floor Python.
+      # does not), on CI's floor Python, in CI's layout.
       - id: pytest
-        name: uv pytest (CI parity)
-        entry: scripts/hook-run.sh uv run --locked --python 3.12 --extra dev python -m pytest tests/ -n auto
+        name: uv pytest against the resolved molrs (ci.yml test)
+        entry: >-
+          scripts/hook-run.sh python3 scripts/partners.py run --
+          env MATURIN_PEP517_ARGS=--locked PYTHONWARNDEFAULTENCODING=1
+          uv run --locked --python 3.12 --extra dev python -m pytest tests/ -n auto
         language: system
         pass_filenames: false
         always_run: true

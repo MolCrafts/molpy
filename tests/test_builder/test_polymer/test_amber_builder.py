@@ -17,11 +17,7 @@ from unittest.mock import patch
 import pytest
 
 import molpy as mp
-from molpy.builder.polymer import (
-    AmberCut,
-    AmberPieces,
-    AmberPolymerBuilder,
-)
+from molpy.builder import AmberCut, AmberPieces, AmberPolymerBuilder
 from molpy.wrapper import Wrapper
 
 
@@ -38,11 +34,11 @@ def _inpcrd(path: Path, n_atoms: int = 16) -> None:
             row = []
     if row:
         lines.append("".join(row))
-    path.write_text("\n".join(lines) + "\n")
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
 def _ac_from_mol2(mol2: Path, ac: Path) -> None:
-    lines = mol2.read_text().splitlines()
+    lines = mol2.read_text(encoding="utf-8").splitlines()
     start = lines.index("@<TRIPOS>ATOM") + 1
     names = []
     for line in lines[start:]:
@@ -59,7 +55,7 @@ def _ac_from_mol2(mol2: Path, ac: Path) -> None:
         )
     if len(names) >= 2:
         lines.append("BOND    1    1    2    1     C1   C2")
-    ac.write_text("\n".join(lines) + "\n")
+    ac.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
 def _target(args: list[str], cwd: str) -> Path:
@@ -85,7 +81,7 @@ class _FakeTools:
         if tool == self.fail:
             return subprocess.CompletedProcess(argv, 1, f"{tool}: cannot do it", "")
         if tool == "tleap":
-            script = (Path(cwd) / args[1]).read_text()
+            script = (Path(cwd) / args[1]).read_text(encoding="utf-8")
             save = next(
                 line for line in script.splitlines() if line.startswith("saveamberparm")
             )
@@ -100,19 +96,24 @@ class _FakeTools:
             if args[args.index("-fo") + 1] == "ac":
                 _ac_from_mol2(source, target)
             else:
-                target.write_text("fake mol2\n")
+                target.write_text("fake mol2\n", encoding="utf-8")
         elif tool == "parmchk2":
             _target(args, cwd).write_text(
-                "Remark\nMASS\n\nBOND\n\nANGLE\n\nDIHE\n\nIMPROPER\n\nNONBON\n"
+                "Remark\nMASS\n\nBOND\n\nANGLE\n\nDIHE\n\nIMPROPER\n\nNONBON\n",
+                encoding="utf-8",
             )
         else:
-            _target(args, cwd).write_text(f"fake prepi {len(self.calls)}\n")
+            _target(args, cwd).write_text(
+                f"fake prepi {len(self.calls)}\n", encoding="utf-8"
+            )
         return subprocess.CompletedProcess(argv, 0, "", "")
 
 
 def _ether() -> mp.Atomistic:
     """CH3-O-CH2-CH2-O-CH3 with Amber atom names and no ports."""
-    graph = mp.Conformer(seed=1).generate(mp.io.read_smiles("COCCOC"))[0]
+    graph = mp.conformer.Conformer(seed=1).generate(
+        mp.io.smiles.SmilesIr("COCCOC").to_atomistic()
+    )[0]
     for index, atom in enumerate(graph.atoms, start=1):
         atom["name"] = f"{atom['element']}{index}"
     return graph
@@ -143,13 +144,13 @@ def _omit_names(text: str) -> list[str]:
 
 def _script(work: Path) -> str:
     (script,) = (work / "chains").glob("*/polymer.in")
-    return script.read_text()
+    return script.read_text(encoding="utf-8")
 
 
 def _controls(work: Path, label: str = "EO") -> dict[str, str]:
     monomer = work / "monomers" / label
     return {
-        name: (monomer / f"{label}.{name}").read_text()
+        name: (monomer / f"{label}.{name}").read_text(encoding="utf-8")
         for name in ("head", "chain", "tail")
     }
 
@@ -159,7 +160,7 @@ def tools(TEST_DATA_DIR: Path):
     fake = _FakeTools(TEST_DATA_DIR / "prmtop" / "LiTFSI.prmtop")
     with (
         patch.object(Wrapper, "is_available", return_value=True),
-        patch("molpy.wrapper.base.subprocess.run", side_effect=fake),
+        patch("molpy.wrapper._wrapper.subprocess.run", side_effect=fake),
         patch(
             "molrs.builder.Assembler.assemble", side_effect=AssertionError("no link")
         ),
@@ -172,7 +173,7 @@ def _build(work: Path, sites: str = "{[#EO]|3}", **kwargs) -> mp.Frame:
     library = options.pop("library", {"EO": _ether()})
     cuts = options.pop("cuts", _cuts())
     builder = AmberPolymerBuilder(library, cuts, **options)
-    return builder.assemble(mp.CGSmilesIR(sites).to_coarsegrain())
+    return builder.assemble(mp.io.cgsmiles.CgSmilesIr(sites).to_coarsegrain())
 
 
 class TestAmberPieces:
@@ -200,7 +201,7 @@ class TestAmberPieces:
         assert [len(kept[v]) for v in ("head", "chain", "tail")] == [11, 7, 12]
 
     def test_each_piece_is_a_smiles_of_its_own(self):
-        with pytest.raises(mp.SmilesError, match="unmatched ring closure"):
+        with pytest.raises(mp.io.smiles.SmilesError, match="unmatched ring closure"):
             AmberPieces("C1OC", "C1O", "C").oligomer(seed=1)
 
     def test_pieces_feed_the_builder(self, tools, tmp_path):
@@ -241,7 +242,9 @@ class TestAssemble:
         assert first[first.index("-at") + 1] == "gaff"
         assert first[first.index("-nc") + 1] == "0"
         assert first[first.index("-fi") + 1] == "mol2"  # bonds given, not perceived
-        source = (tmp_path / "monomers" / "EO" / "EO.input.mol2").read_text()
+        source = (tmp_path / "monomers" / "EO" / "EO.input.mol2").read_text(
+            encoding="utf-8"
+        )
         assert "@<TRIPOS>BOND" in source
         script = _script(tmp_path)
         assert "source leaprc.gaff" in script
@@ -258,7 +261,7 @@ class TestAssemble:
         assert result.forcefield.units == "real"
         assert list(result.forcefield.get_styles("bond"))
         (atom_style,) = result.forcefield.get_styles("atom")
-        assert all("id" not in t.params for t in atom_style.types)
+        assert all("id" not in t.params for t in atom_style.get_types())
 
         cuts = _controls(tmp_path)
         assert "HEAD_NAME" not in cuts["head"]
@@ -276,7 +279,7 @@ class TestAssemble:
         assert _omit_names(cuts["tail"]) == ["C6"]
         assert all("CHARGE 0\n" in text for text in cuts.values())
         prepi = tmp_path / "monomers" / "EO" / "HEO.prepi"
-        assert prepi.read_text().startswith("fake prepi")
+        assert prepi.read_text(encoding="utf-8").startswith("fake prepi")
 
     def test_one_chain_residue_serves_every_middle_site(self, tools, tmp_path):
         result = _build(tmp_path, "{[#EO]|4}")
@@ -343,7 +346,7 @@ class TestCache:
         ]
 
 
-class TestGroPoBOligomer:
+class TestGropobOligomer:
     """GroPoB's PEO.ac put in place by hand: only prepgen and tleap run."""
 
     @staticmethod
@@ -476,7 +479,9 @@ class TestRefused:
             AmberPolymerBuilder({"EO": mp.CoarseGrain()}, {})  # type: ignore[dict-item]
 
     def test_unnamed_atoms_get_element_and_row(self):
-        graph = mp.Conformer(seed=1).generate(mp.io.read_smiles("CO"))[0]
+        graph = mp.conformer.Conformer(seed=1).generate(
+            mp.io.smiles.SmilesIr("CO").to_atomistic()
+        )[0]
         builder = AmberPolymerBuilder({"MO": graph}, {})
         names = [str(atom["name"]) for atom in builder.library["MO"].atoms]
         assert names[:2] == ["C1", "O2"]
@@ -495,7 +500,7 @@ class TestToolFailures:
         fake = _FakeTools(TEST_DATA_DIR / "prmtop" / "LiTFSI.prmtop", fail="prepgen")
         with (
             patch.object(Wrapper, "is_available", return_value=True),
-            patch("molpy.wrapper.base.subprocess.run", side_effect=fake),
+            patch("molpy.wrapper._wrapper.subprocess.run", side_effect=fake),
             pytest.raises(RuntimeError, match="prepgen: cannot do it"),
         ):
             _build(tmp_path)
@@ -505,7 +510,7 @@ class TestToolFailures:
         with (
             patch.object(Wrapper, "is_available", return_value=True),
             patch(
-                "molpy.wrapper.base.subprocess.run",
+                "molpy.wrapper._wrapper.subprocess.run",
                 side_effect=_FakeTools(prmtop, fail="tleap"),
             ),
             pytest.raises(RuntimeError, match="tleap failed"),
@@ -514,18 +519,20 @@ class TestToolFailures:
         fake = _FakeTools(prmtop)
         with (
             patch.object(Wrapper, "is_available", return_value=True),
-            patch("molpy.wrapper.base.subprocess.run", side_effect=fake),
+            patch("molpy.wrapper._wrapper.subprocess.run", side_effect=fake),
         ):
             _build(tmp_path)
         assert fake.names() == ["tleap"]
 
 
 def test_tleap_typifier_refuses_a_graph_that_still_has_ports(tmp_path):
-    graph = mp.Conformer(seed=1).generate(mp.io.read_smiles("COC"))[0]
+    graph = mp.conformer.Conformer(seed=1).generate(
+        mp.io.smiles.SmilesIr("COC").to_atomistic()
+    )[0]
     atoms = list(graph.atoms)
     for atom in atoms:
         atom["type"] = "c3"
         atom["charge"] = 0.0
     graph.def_port(atoms[0], atoms[1], ">")
     with pytest.raises(ValueError, match="ports"):
-        mp.typifier.TLeapTypifier(work_dir=tmp_path).typify(graph)
+        mp.ff.typifier.TleapTypifier(work_dir=tmp_path).typify(graph)

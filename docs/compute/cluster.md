@@ -26,7 +26,7 @@ config:
     orient: bottom
     direction: horizontal
     title: null
-data: {$file: data/cluster/argon_percolation.json}
+data: {$file: series/cluster/argon_percolation.json}
 mark: {type: line, strokeWidth: 2.4, interpolate: monotone}
 encoding:
   x:
@@ -55,25 +55,25 @@ counted as clusters:
 
 | cutoff (Å) | clusters (size ≥ 2) | largest cluster |
 |---|---|---|
-| 3.3 | 11 | 0.4 % (2 atoms) |
-| 3.5 | 89 | 2.9 % |
-| 3.6 | 49 | 34 % |
-| 3.65 | 19 | 79 % |
-| 3.7 | 6 | 93 % |
-| 3.8 | 2 | 98.8 % |
+| 3.3 | 12 | 0.5 % (2–3 atoms) |
+| 3.5 | 84 | 3.2 % |
+| 3.6 | 51 | 21 % |
+| 3.65 | 23 | 73 % |
+| 3.7 | 8 | 91 % |
+| 3.8 | 1 | 98.7 % |
 | 4.0 | 1 | 100 % |
 
 The cluster count rises and then falls, which is not a mistake: at 3.3 Å almost
 nothing is within range, so there are a handful of isolated pairs; by 3.5 Å most
-atoms have a partner and there are 89 small fragments; past that the fragments
+atoms have a partner and there are 84 small fragments; past that the fragments
 start merging into each other, so the count collapses while the largest cluster
 grows. Nearly all the atoms are in no cluster at all at the small cutoffs, which
-is why 11 clusters and "largest = 2 atoms" are consistent.
+is why 12 clusters and "largest = 2 atoms" are consistent.
 
 Between 3.55 and 3.70 Å the system goes from dozens of small aggregates to one
 network containing essentially every atom. That is a **percolation transition**,
 and it happens inside a 0.15 Å window. For scale, the first peak of
-[$g(r)$](rdf.md) is centred at 3.68 Å and is roughly 1 Å wide at half height —
+[$g(r)$](rdf.md) is centred at 3.73 Å and is roughly 1 Å wide at half height —
 so the entire transition fits inside the leading edge of the first coordination
 shell.
 
@@ -104,11 +104,11 @@ frame = mp.Frame()
 frame["atoms"] = {"x": xyz[:, 0], "y": xyz[:, 1], "z": xyz[:, 2]}
 frame.box = mp.Box.cube(40.0)
 
-nl = mp.NeighborList(2.0)
+nl = mp.core.NeighborList(2.0)
 nl.build(frame.coords, frame.box)
 nlist = nl.neighbors()
 result, = Cluster(min_cluster_size=5).compute([frame], [nlist])
-print(result.num_clusters)                      # -> 3
+print(result.n_clusters)                      # -> 3
 print(sorted(np.asarray(result.cluster_sizes).tolist()))    # -> [40, 40, 40]
 ```
 
@@ -122,7 +122,7 @@ print(labels.shape, len(set(labels.tolist())))  # -> (120,) 3
 ```
 
 `min_cluster_size` discards components smaller than the threshold. Use it to
-drop monomers, but be aware it changes `num_clusters` — it is a reporting
+drop monomers, but be aware it changes `n_clusters` — it is a reporting
 filter, not part of the physics.
 
 ### Per-cluster properties in one call
@@ -166,12 +166,12 @@ report the transition itself rather than a number from inside it.
 
 **A single molecule is reported as two clusters.**
 It straddles a periodic boundary and you unwrapped it wrongly — or not at all.
-Cluster *identification* is fine under minimum image, so `num_clusters` is
+Cluster *identification* is fine under minimum image, so `n_clusters` is
 right; it is the per-cluster *shape* that breaks. [Shape](shape.md) gives the
 `unwrap_cluster` recipe — fold each cluster about one of its own atoms before
 measuring anything geometric.
 
-**`num_clusters` disagrees with the number of components you expected.**
+**`n_clusters` disagrees with the number of components you expected.**
 `min_cluster_size` is filtering. Set it to 1 to see everything.
 
 ## Check yourself
