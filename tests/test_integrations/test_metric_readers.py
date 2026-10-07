@@ -1,7 +1,8 @@
 """The metric readers molpy publishes for any molcrafts viewer.
 
-molpy owns these formats, so this is where they are proved. Nothing here
-imports a host: a reader is matched structurally, and these tests check the
+molrs parses these formats; molpy publishes the readers that turn them into
+metric records, so this is where that mapping is proved. Nothing here imports
+a host: a reader is matched structurally, and these tests check the
 shape a host relies on — ``format`` / ``sniff`` / ``read`` plus the optional
 ``patterns`` and ``tailable`` hints — as well as the mapping itself.
 """
@@ -11,8 +12,10 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import numpy as np
 import pytest
 
+import molpy as mp
 from molpy.integrations.metric_readers import (
     LammpsLogReader,
     MlpJsonlReader,
@@ -198,3 +201,22 @@ class TestMrecReader:
         record.mkdir()
         assert MrecReader().sniff(record)
         assert not MrecReader().sniff(tmp_path / "growth.zarr")
+
+    def test_emits_the_step_and_time_series(self, tmp_path: Path):
+        frame = mp.Frame()
+        frame["atoms"] = {"x": [0.0], "y": [0.0], "z": [0.0]}
+        path = tmp_path / "run.mrec"
+        mp.io.mrec.write_trajectory(
+            path,
+            mp.Trajectory(
+                [frame, frame, frame],
+                step=np.array([0, 10, 20]),
+                time=np.array([0.0, 0.5, 1.0]),
+            ),
+        )
+        records = list(MrecReader().read(path, source="run"))
+        steps = [r["v"] for r in records if r["k"] == "mrec/step"]
+        times = [r["v"] for r in records if r["k"] == "mrec/time"]
+        assert steps == [0.0, 10.0, 20.0]
+        assert times == [0.0, 0.5, 1.0]
+        assert all(r["tags"] == {"source": "run"} for r in records)

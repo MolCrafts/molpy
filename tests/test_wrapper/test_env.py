@@ -1,4 +1,4 @@
-"""Unit tests for :mod:`molpy.wrapper.env` — EnvSpec infrastructure."""
+"""Unit tests for :class:`molpy.wrapper.EnvSpec` — the environment infrastructure."""
 
 from __future__ import annotations
 

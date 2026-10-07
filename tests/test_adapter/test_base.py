@@ -2,7 +2,7 @@
 
 import pytest
 
-from molpy.adapter.base import Adapter
+from molpy.adapter import Adapter
 
 
 class MockAdapter(Adapter[str, int]):

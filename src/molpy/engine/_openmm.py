@@ -35,7 +35,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
 
-from .base import Engine
+from ._base import Engine
 
 if TYPE_CHECKING:
     from molrs.ff.forcefield import ForceField
@@ -210,7 +210,7 @@ class OpenMMEngine(Engine):
             env_vars: Extra environment variables forwarded to the subprocess.
             env: Conda env name / prefix, or venv prefix (with ``env_manager``).
             env_manager: ``"conda"`` or ``"venv"`` — same contract as
-                :class:`~molpy.wrapper.env.EnvSpec`.
+                :class:`~molpy.wrapper.EnvSpec`.
             check_executable: Verify *executable* is available at construction.
                 Set ``False`` when only using :meth:`generate_inputs`.
         """

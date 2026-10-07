@@ -29,8 +29,8 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
-from .script import Script
-from molpy.wrapper.env import EnvSpec
+from ._script import Script
+from molpy.wrapper._env import EnvSpec
 
 
 class Engine(ABC):
@@ -42,7 +42,7 @@ class Engine(ABC):
     (launcher + environment wrapper).
 
     Environment isolation uses the shared
-    :class:`~molpy.wrapper.env.EnvSpec` contract (same as wrappers): omit
+    :class:`~molpy.wrapper.EnvSpec` contract (same as wrappers): omit
     both ``env`` and ``env_manager`` for the system ``PATH``, or set both
     explicitly (``"conda"`` or ``"venv"``).
 
@@ -98,7 +98,7 @@ class Engine(ABC):
             env_vars: Extra environment variables set for the subprocess.
             env: Conda env name / prefix, or venv prefix.  Must be provided
                 together with *env_manager* (see
-                :class:`~molpy.wrapper.env.EnvSpec`).
+                :class:`~molpy.wrapper.EnvSpec`).
             env_manager: ``"conda"`` or ``"venv"``.  Conda isolation uses
                 ``conda run --no-capture-output``; venv injects ``PATH``.
             check_executable: Verify the executable is available at construction
@@ -189,14 +189,14 @@ class Engine(ABC):
     # ------------------------------------------------------------------
 
     def process_env(self) -> EnvSpec:
-        """Return the validated :class:`~molpy.wrapper.env.EnvSpec` for this engine."""
+        """Return the validated :class:`~molpy.wrapper.EnvSpec` for this engine."""
         return EnvSpec.resolve(self.env, self.env_manager)
 
     def check_executable(self) -> None:
         """Verify the executable is available in the configured environment.
 
         Uses system ``PATH`` when no isolation is set; otherwise resolves
-        inside the configured conda / venv via :class:`~molpy.wrapper.env.EnvSpec`.
+        inside the configured conda / venv via :class:`~molpy.wrapper.EnvSpec`.
 
         Raises:
             FileNotFoundError: If the executable cannot be found.
@@ -332,7 +332,7 @@ class Engine(ABC):
     def _merged_env(self, extra: dict[str, str] | None = None) -> dict[str, str] | None:
         """Build the environment dict for :func:`subprocess.run`.
 
-        Delegates to :class:`~molpy.wrapper.env.EnvSpec` (venv ``PATH`` /
+        Delegates to :class:`~molpy.wrapper.EnvSpec` (venv ``PATH`` /
         ``VIRTUAL_ENV`` injection, then :attr:`env_vars`, then *extra*).
 
         Returns ``None`` when isolation is off and both :attr:`env_vars` and

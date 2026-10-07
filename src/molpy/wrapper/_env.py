@@ -20,7 +20,7 @@ names* (no path separators) remain plain ``str``.  Subprocess argv
 receives ``str(path)`` at the OS boundary only.
 
 This module is the single owner of env-isolation logic used by
-:class:`~molpy.wrapper.base.Wrapper` and higher-level facades that
+:class:`~molpy.wrapper.Wrapper` and higher-level facades that
 construct wrappers.
 """
 

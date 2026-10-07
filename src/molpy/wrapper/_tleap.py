@@ -9,7 +9,7 @@ import subprocess
 from dataclasses import dataclass
 
 
-from .base import Wrapper
+from ._base import Wrapper
 
 
 @dataclass

@@ -23,7 +23,7 @@ from rdkit.Chem import AllChem
 
 from molrs.system import Atomistic
 
-from .base import Adapter
+from ._base import Adapter
 
 #: The join key between an ``Atomistic`` atom and an RDKit atom (see module doc).
 MP_ID = "mp_id"

@@ -18,11 +18,11 @@ not to do something molpy already does.
 One adapter exemplar is enough, so RDKit is the only one.
 """
 
-from .base import Adapter
+from ._base import Adapter
 
 # Optional RDKit adapter — the worked example of this pattern.
 try:  # pragma: no cover - depends on whether the optional extra is installed
-    from .rdkit import MP_ID, RDKitAdapter
+    from ._rdkit import MP_ID, RDKitAdapter
 
     _HAS_RDKIT = True
 except ModuleNotFoundError:  # rdkit missing, which is the normal case

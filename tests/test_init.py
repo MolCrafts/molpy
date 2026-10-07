@@ -26,17 +26,12 @@ def test_unregistered_name_raises_attribute_error() -> None:
 FLATTENED = ("store", "system", "spatial", "units", "perceive", "optimize", "conformer")
 #: molrs subsystems mirrored under the same name; molpy may add names there.
 MIRRORED = ("io", "compute", "signal", "md", "op", "builder")
-#: The native names molpy replaces with its own subclass.
-SUBCLASSED = {"Box", "Trajectory"}
 
 
 @pytest.mark.parametrize("sub", FLATTENED)
 def test_a_flattened_subsystem_is_on_the_root_by_identity(sub: str) -> None:
     native = getattr(molrs, sub)
     for name in native.__all__:
-        if name in SUBCLASSED:
-            assert issubclass(getattr(molpy, name), getattr(native, name))
-            continue
         assert getattr(molpy, name) is getattr(native, name), (sub, name)
 
 
@@ -54,7 +49,7 @@ def test_a_mirrored_name_is_not_also_on_the_root() -> None:
     mirrored |= {
         name for sub in molrs.ff.__all__ for name in getattr(molrs.ff, sub).__all__
     }
-    assert not (mirrored - SUBCLASSED) & set(molpy.__all__)
+    assert not mirrored & set(molpy.__all__)
 
 
 def test_every_root_name_resolves() -> None:

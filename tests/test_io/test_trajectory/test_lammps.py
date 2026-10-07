@@ -27,7 +27,7 @@ class TestWriteLammpsTrajectory:
             }
             frame["atoms"] = atoms_data
             frame.meta = {"timestep": MetaValue("i64", i * 100)}
-            frame.box = mp.Box(np.eye(3) * 10.0)
+            frame.box = mp.Box(h=np.eye(3) * 10.0)
             frames.append(frame)
 
         # Write trajectory
@@ -67,7 +67,7 @@ class TestWriteLammpsTrajectory:
         }
         frame["atoms"] = atoms_data
         frame.meta = {"timestep": MetaValue("i64", 1000)}
-        frame.box = mp.Box(np.diag([5.0, 5.0, 5.0]))
+        frame.box = mp.Box(h=np.diag([5.0, 5.0, 5.0]))
 
         tmp_file = tmp_path / "test.dump"
         # Write
@@ -106,7 +106,7 @@ class TestTrajectoryIntegration:
         }
         frame["atoms"] = atoms_data
         frame.meta = {"timestep": MetaValue("i64", 0)}
-        frame.box = mp.Box(np.diag([10.0, 10.0, 10.0]))
+        frame.box = mp.Box(h=np.diag([10.0, 10.0, 10.0]))
 
         # Write as trajectory
         tmp_file = tmp_path / "test.dump"
@@ -135,7 +135,7 @@ class TestTrajectoryIntegration:
         }
         frame_original["atoms"] = atoms_data
         frame_original.meta = {"timestep": MetaValue("i64", 100)}
-        frame_original.box = mp.Box(np.eye(3) * 5.0)
+        frame_original.box = mp.Box(h=np.eye(3) * 5.0)
 
         # Write as trajectory and read back
         tmp_file = tmp_path / "test.dump"

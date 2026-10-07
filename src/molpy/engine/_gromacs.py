@@ -1,8 +1,9 @@
 """GROMACS molecular dynamics engine.
 
 Wraps `GROMACS <https://www.gromacs.org>`_. :meth:`GROMACSEngine.generate_inputs`
-writes a ready-to-run input set — coordinates (``.gro``), topology with its
-parameters (``.top``, molrs's GROMACS writer) and the energy-minimisation and
+writes a ready-to-run input set — coordinates (``.gro``), the whole topology
+(``.top``: directives, one ``[ moleculetype ]`` per molecule, ``[ system ]``
+and ``[ molecules ]``, from ``write_gromacs_system``) and the energy-minimisation and
 NVT ``.mdp`` templates. :meth:`GROMACSEngine.run` takes one ``.mdp`` as its
 input script and runs::
 
@@ -24,10 +25,10 @@ import subprocess
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from molrs.ff.forcefield import write_gromacs_top_ff
+from molrs.ff.forcefield import write_gromacs_system
 from molrs.io import write_gro
 
-from .base import Engine
+from ._base import Engine
 
 if TYPE_CHECKING:
     from molrs.ff.forcefield import ForceField
@@ -63,7 +64,7 @@ class GROMACSEngine(Engine):
             prefix: Stem of the ``.gro`` / ``.top`` pair :meth:`run` passes to
                 ``grompp`` (what :meth:`generate_inputs` writes by default).
             check_executable: Verify the executable is on ``PATH``.
-            **kwargs: Forwarded to :class:`~molpy.engine.base.Engine`.
+            **kwargs: Forwarded to :class:`~molpy.engine.Engine`.
         """
         super().__init__(executable, check_executable=check_executable, **kwargs)
         self.prefix = prefix
@@ -142,13 +143,20 @@ class GROMACSEngine(Engine):
         """Write a ready-to-run GROMACS input set.
 
         Files written (with the engine's ``prefix``, ``"system"`` by default):
-        ``system.gro`` (initial structure), ``system.top`` (topology and
-        parameters), ``em.mdp`` (steepest-descent minimisation) and
-        ``nvt.mdp`` (V-rescale NVT at *temperature* K).
+        ``system.gro`` (initial structure), ``system.top`` (the whole
+        topology: the force field's directives, one ``[ moleculetype ]`` per
+        molecule with each row's parameters, ``[ system ]`` and
+        ``[ molecules ]`` — what ``grompp -p`` reads), ``em.mdp``
+        (steepest-descent minimisation) and ``nvt.mdp`` (V-rescale NVT at
+        *temperature* K).
 
         Args:
-            frame: The structure (``Atomistic.to_frame()`` for a graph).
-            forcefield: The force field written into the topology.
+            frame: The typed structure (``Atomistic.to_frame()`` for a graph)
+                with its angles and dihedrals (``generate_topology``): GROMACS
+                excludes every pair within three bonds, and those rows are
+                how the pair list knows them. Its atoms' ``mol_id`` splits it
+                into molecules, and its box is the ``.gro`` box.
+            forcefield: The force field the frame's types name.
             output_dir: Directory for the files (created if absent).
             temperature: Reference and initial-velocity temperature (K).
 
@@ -164,7 +172,7 @@ class GROMACSEngine(Engine):
             "nvt": out / "nvt.mdp",
         }
         write_gro(paths["gro"], frame)
-        write_gromacs_top_ff(paths["top"], forcefield)
+        write_gromacs_system(paths["top"], forcefield, frame)
         paths["em"].write_text(_EM_MDP)
         paths["nvt"].write_text(_NVT_MDP.format(temperature=temperature))
         return paths

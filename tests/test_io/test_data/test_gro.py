@@ -111,7 +111,7 @@ class TestWriteGro:
             "y": [0.0, 0.0, 0.94],
             "z": [0.0, 0.0, 0.0],
         }
-        frame.box = mp.Box(np.diag([20.0, 30.0, 40.0]))
+        frame.box = mp.Box(h=np.diag([20.0, 30.0, 40.0]))
         return frame
 
     def test_record_layout(self, tmp_path):

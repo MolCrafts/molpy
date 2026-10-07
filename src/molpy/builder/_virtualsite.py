@@ -16,9 +16,13 @@ from typing import Any
 
 from molrs.ff.params import clpol_polarizability
 from molrs.system import Atom, Atomistic, DrudeParticle, MasslessSite
+from molrs.units import UnitPreset, UnitRegistry
 
-# 4*pi*eps0 in e^2 / (kJ/mol * A), per paduagroup/clandpol polarizer.
-FOUR_PI_EPS0 = 0.0007197587
+# kcal/mol per kJ/mol: alpha.ff states k_D in kJ/mol/Å², molrs is kcal/mol.
+_KCAL_PER_KJ = UnitRegistry().quantity(1.0, "kJ/mol").to("kcal/mol").value
+# 4πε₀ in e² / (kJ/mol·Å), the paduagroup/clandpol polarizer's unit: the
+# inverse of the Coulomb constant (LAMMPS ``real``'s, kcal·Å/(mol·e²)) in kJ.
+_FOUR_PI_EPS0 = _KCAL_PER_KJ / UnitPreset.real().coulomb()
 # TIP4P/2005 O–M distance (Angstrom).
 TIP4P_OM = 0.1546
 
@@ -94,7 +98,7 @@ class DrudeBuilder(VirtualSiteBuilder):
         params = self.alpha[host.get("type")]
         k_d, alpha = params["k_D"], params["alpha"]
         sign = 1.0 if params["q_D_sign"] >= 0 else -1.0
-        q_d = sign * sqrt(FOUR_PI_EPS0 * k_d * alpha)
+        q_d = sign * sqrt(_FOUR_PI_EPS0 * k_d * alpha)
         attrs: dict[str, Any] = {
             "element": "D",
             "charge": q_d,
@@ -130,7 +134,7 @@ class DrudeBuilder(VirtualSiteBuilder):
             # alpha.ff states k_D in kJ/mol/Å² ("units: kJ/mol, A"); molrs is
             # kcal/mol in the same ½-form, so the spring crosses a unit
             # boundary the charge does not.
-            k=shell.get("k_D") / 4.184,
+            k=shell.get("k_D") * _KCAL_PER_KJ,
             r0=0.0,
             style="drude",
             type=self.drude_bond_type,

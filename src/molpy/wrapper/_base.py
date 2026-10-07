@@ -7,7 +7,7 @@ They are peer-level to Adapters:
 
 Wrappers MUST NOT contain high-level domain logic.
 
-Environment isolation is owned by :class:`~molpy.wrapper.env.EnvSpec`
+Environment isolation is owned by :class:`~molpy.wrapper.EnvSpec`
 (``env`` + ``env_manager``).  See that module for supported managers.
 """
 
@@ -19,7 +19,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from .env import EnvSpec
+from ._env import EnvSpec
 
 
 @dataclass

@@ -20,13 +20,11 @@ from dataclasses import dataclass
 from typing import Any
 
 import numpy as np
-from molrs.spatial import Cuboid, Cylinder, Ellipsoid, HalfSpace, Parallelepiped
+from molrs.spatial import Box, Cuboid, Cylinder, Ellipsoid, HalfSpace, Parallelepiped
 from molrs.spatial import Polyhedron, Region, Sphere, SphereUnion
 from molrs.store import Frame
 from molrs.system import Atomistic
 from numpy.typing import ArrayLike
-
-from molpy.core.box import Box
 
 from ._symmetry import SpaceGroup
 
@@ -119,7 +117,7 @@ class Lattice:
         Fractional ↔ Cartesian conversion is the box's:
         ``lattice.box.to_cart(frac)`` / ``lattice.box.to_frac(cart)``.
         """
-        return Box(self.cell.T)
+        return Box(h=self.cell.T)
 
     def supercell(self, repeats: tuple[int, int, int]) -> Box:
         """The :class:`~molpy.Box` spanned by ``repeats`` unit cells.
@@ -133,7 +131,7 @@ class Lattice:
         nx, ny, nz = (int(r) for r in repeats)
         if nx <= 0 or ny <= 0 or nz <= 0:
             raise ValueError(f"repeats must be positive, got {repeats}")
-        return Box((self.cell * np.array([nx, ny, nz], dtype=float)[:, None]).T)
+        return Box(h=(self.cell * np.array([nx, ny, nz], dtype=float)[:, None]).T)
 
     @classmethod
     def sc(cls, a: float, species: str) -> Lattice:

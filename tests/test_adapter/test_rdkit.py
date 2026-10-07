@@ -7,7 +7,7 @@ pytest.importorskip("rdkit")
 from rdkit import Chem
 
 import molpy as mp
-from molpy.adapter.rdkit import MP_ID, RDKitAdapter
+from molpy.adapter import MP_ID, RDKitAdapter
 
 
 def _ethanol_heavy() -> mp.Atomistic:

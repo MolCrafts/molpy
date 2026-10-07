@@ -2,7 +2,7 @@
 
 import pytest
 
-from molpy.wrapper.prepgen import write_prepgen_control_file
+from molpy.wrapper import write_prepgen_control_file
 
 
 def test_chain_variant_lists_both_ends_types_and_omissions(tmp_path):

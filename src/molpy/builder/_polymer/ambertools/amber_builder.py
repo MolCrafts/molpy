@@ -16,10 +16,14 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
-from molrs.io import read_ac, write_mol2
+from molrs.io import read_ac, read_amber_inpcrd, read_amber_prmtop
 from molrs.system import Atomistic, Bead, CoarseGrain
 
-from molpy.ff._ambertools import _PrmtopAssignment
+from molpy.ff._ambertools import (
+    _PrmtopAssignment,
+    net_formal_charge,
+    write_mol2_input,
+)
 from molpy.wrapper import (
     AntechamberWrapper,
     EnvSpec,
@@ -193,7 +197,7 @@ class AmberPolymerBuilder:
 
         oligomer = self.library[label]
         charge = _net_charge(oligomer, label, self.net_charges)
-        _write_mol2(oligomer, source)
+        write_mol2_input(oligomer, source, rename=False)
         digest = _digest(
             source.read_bytes(),
             f"{self.force_field}|{self.charge_method}|{charge}".encode(),
@@ -305,8 +309,6 @@ class AmberPolymerBuilder:
     def _tleap(
         self, labels: list[str], prepared: dict[str, _Prepared]
     ) -> AmberBuildResult:
-        from molpy.io._readers import read_amber
-
         sequence = " ".join(
             _resname(label, _variant(index, len(labels)))
             for index, label in enumerate(labels)
@@ -351,7 +353,7 @@ class AmberPolymerBuilder:
                 prmtop,
                 lambda: tleap.run_from_script(script, script_name="polymer.in"),
             )
-        frame, _ = read_amber(prmtop, inpcrd)
+        frame = read_amber_inpcrd(inpcrd, read_amber_prmtop(prmtop))
         assignment = _PrmtopAssignment(prmtop)
         chain = assignment.typify(Atomistic.from_frame(frame))
         return AmberBuildResult(
@@ -401,20 +403,6 @@ def _checked_cuts(
                 )
         checked[variant] = cut
     return checked
-
-
-def _write_mol2(oligomer: Atomistic, path: Path) -> None:
-    """Write the oligomer as antechamber's input, atom names kept.
-
-    mol2 carries the bonds, so antechamber does not perceive them from
-    coordinates (AmberTools 26's bondtype crashes on a PDB with CONECT
-    records). A ``type`` bond column is a force-field label, not the SYBYL
-    bond order mol2 reads there, so it is dropped.
-    """
-    frame = oligomer.to_frame()
-    if "bonds" in frame and "type" in frame["bonds"]:
-        del frame["bonds"]["type"]
-    write_mol2(path, frame)
 
 
 def _digest(*parts: bytes) -> str:
@@ -519,8 +507,7 @@ def _net_charge(
                 "list every label, or pass no net_charges"
             )
         return int(declared[label])
-    # The frame schema declares formal_charge an integer, so the sum is one.
-    return sum(int(atom.get("formal_charge") or 0) for atom in template.atoms)
+    return net_formal_charge(template)
 
 
 def _rename(ours: list[str], ac_names: list[str]) -> dict[str, str]:

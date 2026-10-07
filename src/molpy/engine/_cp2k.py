@@ -9,7 +9,7 @@ Standard CP2K output (log) is redirected to *cp2k.out* via the ``-o`` flag;
 stdout is therefore empty, which avoids pipe-buffer deadlocks when the caller
 captures output.
 
-MPI and scheduler launchers are configured on the :class:`~molpy.engine.base.Engine`
+MPI and scheduler launchers are configured on the :class:`~molpy.engine.Engine`
 base class::
 
     engine = CP2KEngine("cp2k.psmp", launcher=["mpirun", "-np", "32"])
@@ -25,7 +25,7 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
-from .base import Engine
+from ._base import Engine
 
 
 class CP2KEngine(Engine):

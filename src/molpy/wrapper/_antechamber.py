@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Literal
 
 
-from .base import Wrapper
+from ._base import Wrapper
 
 
 @dataclass

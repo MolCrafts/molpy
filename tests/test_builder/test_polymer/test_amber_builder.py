@@ -108,7 +108,7 @@ class _FakeTools:
 
 def _ether() -> mp.Atomistic:
     """CH3-O-CH2-CH2-O-CH3 with Amber atom names and no ports."""
-    graph = mp.Conformer(seed=1).generate(mp.io.read_smiles("COCCOC"))[0]
+    graph = mp.Conformer(seed=1).generate(mp.io.SmilesIR("COCCOC").to_atomistic())[0]
     for index, atom in enumerate(graph.atoms, start=1):
         atom["name"] = f"{atom['element']}{index}"
     return graph
@@ -155,7 +155,7 @@ def tools(TEST_DATA_DIR: Path):
     fake = _FakeTools(TEST_DATA_DIR / "prmtop" / "LiTFSI.prmtop")
     with (
         patch.object(Wrapper, "is_available", return_value=True),
-        patch("molpy.wrapper.base.subprocess.run", side_effect=fake),
+        patch("molpy.wrapper._base.subprocess.run", side_effect=fake),
         patch(
             "molrs.builder.Assembler.assemble", side_effect=AssertionError("no link")
         ),
@@ -472,7 +472,7 @@ class TestRefused:
             AmberPolymerBuilder({"EO": mp.CoarseGrain()}, {})  # type: ignore[dict-item]
 
     def test_unnamed_atoms_get_element_and_row(self):
-        graph = mp.Conformer(seed=1).generate(mp.io.read_smiles("CO"))[0]
+        graph = mp.Conformer(seed=1).generate(mp.io.SmilesIR("CO").to_atomistic())[0]
         builder = AmberPolymerBuilder({"MO": graph}, {})
         names = [str(atom["name"]) for atom in builder.library["MO"].atoms]
         assert names[:2] == ["C1", "O2"]
@@ -491,7 +491,7 @@ class TestToolFailures:
         fake = _FakeTools(TEST_DATA_DIR / "prmtop" / "LiTFSI.prmtop", fail="prepgen")
         with (
             patch.object(Wrapper, "is_available", return_value=True),
-            patch("molpy.wrapper.base.subprocess.run", side_effect=fake),
+            patch("molpy.wrapper._base.subprocess.run", side_effect=fake),
             pytest.raises(RuntimeError, match="prepgen: cannot do it"),
         ):
             _build(tmp_path)
@@ -501,7 +501,7 @@ class TestToolFailures:
         with (
             patch.object(Wrapper, "is_available", return_value=True),
             patch(
-                "molpy.wrapper.base.subprocess.run",
+                "molpy.wrapper._base.subprocess.run",
                 side_effect=_FakeTools(prmtop, fail="tleap"),
             ),
             pytest.raises(RuntimeError, match="tleap failed"),
@@ -510,14 +510,14 @@ class TestToolFailures:
         fake = _FakeTools(prmtop)
         with (
             patch.object(Wrapper, "is_available", return_value=True),
-            patch("molpy.wrapper.base.subprocess.run", side_effect=fake),
+            patch("molpy.wrapper._base.subprocess.run", side_effect=fake),
         ):
             _build(tmp_path)
         assert fake.names() == ["tleap"]
 
 
 def test_tleap_typifier_refuses_a_graph_that_still_has_ports(tmp_path):
-    graph = mp.Conformer(seed=1).generate(mp.io.read_smiles("COC"))[0]
+    graph = mp.Conformer(seed=1).generate(mp.io.SmilesIR("COC").to_atomistic())[0]
     atoms = list(graph.atoms)
     for atom in atoms:
         atom["type"] = "c3"

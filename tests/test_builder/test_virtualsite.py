@@ -13,8 +13,10 @@ import pytest
 
 import molpy as mp
 from molpy.builder import DrudeBuilder, Tip4pBuilder, VirtualSiteBuilder
-from molpy.builder._virtualsite import FOUR_PI_EPS0
 from molpy.ff.params import clpol_polarizability
+
+#: 4πε₀ in e² / (kJ/mol·Å): the paduagroup/clandpol polarizer's value.
+FOUR_PI_EPS0 = 0.0007197587
 
 
 @pytest.fixture
@@ -121,7 +123,7 @@ def test_alpha_recovered_from_drude_params(cation):
     table = clpol_polarizability()
     for shell in _drudes(out):
         q_d, k_d, alpha = shell.get("charge"), shell.get("k_D"), shell.get("alpha")
-        assert q_d**2 / (FOUR_PI_EPS0 * k_d) == alpha
+        assert q_d**2 / (FOUR_PI_EPS0 * k_d) == pytest.approx(alpha, rel=1e-7)
         assert alpha > 0
     assert table["CR"]["alpha"] == 1.122
 

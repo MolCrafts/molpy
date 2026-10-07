@@ -353,7 +353,7 @@ class TestWriteLammpsData:
         }
 
         frame["atoms"] = mp.Block(atoms_data)
-        frame.box = mp.Box([10.0, 10.0, 10.0])
+        frame.box = mp.Box(h=[10.0, 10.0, 10.0])
 
         # Write to temporary file
         tmp_file = tmp_path / "test.data"
@@ -414,7 +414,7 @@ class TestWriteLammpsData:
         }
 
         frame["atoms"] = mp.Block(atoms_data)
-        frame.box = mp.Box([10.0, 10.0, 10.0])
+        frame.box = mp.Box(h=[10.0, 10.0, 10.0])
 
         # Add bonds
         bonds_data = {
@@ -453,7 +453,7 @@ class TestWriteLammpsData:
             "mass": np.array([12.0, 16.0]),
         }
         frame["atoms"] = mp.Block(atoms_data)
-        frame.box = mp.Box([10.0, 10.0, 10.0])
+        frame.box = mp.Box(h=[10.0, 10.0, 10.0])
 
         tmp_file = tmp_path / "test.data"
 
@@ -568,7 +568,7 @@ class TestForceFieldIntegration:
             "mass": np.array([12.0]),
         }
         frame["atoms"] = mp.Block(atoms_data)
-        frame.box = mp.Box([10.0, 10.0, 10.0])
+        frame.box = mp.Box(h=[10.0, 10.0, 10.0])
 
         tmp_file = tmp_path / "test.data"
 
@@ -595,7 +595,7 @@ class TestExplicitTypeLabels:
             "mass": np.array([12.0, 1.0, 16.0]),
         }
         frame["atoms"] = mp.Block(atoms_data)
-        frame.box = mp.Box([10.0, 10.0, 10.0])
+        frame.box = mp.Box(h=[10.0, 10.0, 10.0])
 
         tmp_file = tmp_path / "test.data"
         mp.io.write_lammps_data(tmp_file, frame)
@@ -623,7 +623,7 @@ class TestExplicitTypeLabels:
             "mass": np.array([12.0, 1.0]),
         }
         frame["atoms"] = mp.Block(atoms_data)
-        frame.box = mp.Box([10.0, 10.0, 10.0])
+        frame.box = mp.Box(h=[10.0, 10.0, 10.0])
 
         type_labels = {
             "atoms": ["C", "H", "O", "N"],  # Includes types not in atoms
@@ -656,7 +656,7 @@ class TestExplicitTypeLabels:
             "mass": np.array([12.0, 1.0, 32.0]),
         }
         frame["atoms"] = mp.Block(atoms_data)
-        frame.box = mp.Box([10.0, 10.0, 10.0])
+        frame.box = mp.Box(h=[10.0, 10.0, 10.0])
 
         type_labels = {
             "atoms": ["C", "H", "O", "N"],
@@ -700,7 +700,7 @@ class TestExplicitTypeLabels:
             "atomj": np.array([1, 2]),
         }
         frame["bonds"] = mp.Block(bonds_data)
-        frame.box = mp.Box([10.0, 10.0, 10.0])
+        frame.box = mp.Box(h=[10.0, 10.0, 10.0])
 
         type_labels = {
             "atoms": ["C", "O"],
@@ -732,7 +732,7 @@ class TestExplicitTypeLabels:
             "mass": np.array([12.0, 1.0, 16.0]),
         }
         frame["atoms"] = mp.Block(atoms_data)
-        frame.box = mp.Box([10.0, 10.0, 10.0])
+        frame.box = mp.Box(h=[10.0, 10.0, 10.0])
 
         type_labels = {
             "atoms": ["H", "O", "C"],  # Different order
@@ -768,7 +768,7 @@ def test_write_lammps_data_requires_type_columns(tmp_path):
     frame["atoms"] = mp.Block(
         {"x": np.zeros(1), "y": np.zeros(1), "z": np.zeros(1), "mass": np.ones(1)}
     )
-    frame.box = mp.Box([5.0, 5.0, 5.0])
+    frame.box = mp.Box(h=[5.0, 5.0, 5.0])
     with pytest.raises(OSError, match="neither 'type' nor 'type_id'"):
         mp.io.write_lammps_data(tmp_path / "bad.data", frame)
 
@@ -797,7 +797,7 @@ def test_write_keeps_reverse_angle_type_labels_as_two_types(tmp_path):
             "atomk": np.array([2, 0], dtype=np.uint32),
         }
     )
-    frame.box = mp.Box([5.0, 5.0, 5.0])
+    frame.box = mp.Box(h=[5.0, 5.0, 5.0])
     path = tmp_path / "rev.data"
     mp.io.write_lammps_data(path, frame)
     text = path.read_text()

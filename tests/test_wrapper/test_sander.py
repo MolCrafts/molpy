@@ -5,7 +5,7 @@ from unittest.mock import patch
 
 import pytest
 
-from molpy.wrapper.sander import SanderWrapper
+from molpy.wrapper import SanderWrapper
 
 
 def test_requires_a_working_directory(tmp_path):

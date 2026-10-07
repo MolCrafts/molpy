@@ -8,7 +8,7 @@ import pytest
 
 import molpy as mp
 from molpy.engine import LAMMPSEngine
-from molpy.engine.lammps import _splice_coords
+from molpy.engine._lammps import _splice_coords
 
 
 def test_relaxation_styles_come_from_the_molrs_include(tmp_path, monkeypatch):

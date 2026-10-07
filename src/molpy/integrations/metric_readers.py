@@ -1,8 +1,12 @@
 """Metric readers molpy publishes for any molcrafts viewer.
 
-molpy owns these formats, so molpy is what knows how to turn them into
-plottable series. A viewer (molplot, through molexp) never parses anything and
-never imports molpy: it looks up a reader by format and asks it for records.
+molrs parses these formats (``molrs.io.read_lammps_log``,
+``molrs.io.mrec.read_trajectory``); what molpy adds is the metric-reader
+contract a viewer consumes — sniffing a path, and turning the parsed tables
+into plottable series records under the viewer's sampling request. No reader
+here parses a format itself. A viewer (molplot, through molexp) never parses
+anything and never imports molpy: it looks up a reader by format and asks it
+for records.
 
 Registration is declarative, at install time::
 
@@ -77,7 +81,7 @@ def _head(path: Path, size: int = _PROBE_BYTES) -> bytes:
 
 
 class LammpsLogReader:
-    """``log.lammps`` thermo tables, parsed by molpy's LAMMPS log reader.
+    """``log.lammps`` thermo tables, parsed by ``molrs.io.read_lammps_log``.
 
     **Thermo rows carry no wall-clock.** LAMMPS records simulation steps, not
     timestamps, so each record is tagged ``wall_time_source: "ingest"`` and
@@ -118,7 +122,7 @@ class LammpsLogReader:
         source: str = "",
         request: ReadRequest | None = None,
     ) -> Iterator[dict[str, Any]]:
-        from molpy.io import read_lammps_log
+        from molrs.io import read_lammps_log
 
         stride = _stride_of(request)
         limit = _limit_of(request)
@@ -188,12 +192,12 @@ class MrecReader:
         source: str = "",
         request: ReadRequest | None = None,
     ) -> Iterator[dict[str, Any]]:
-        from molpy.io import read_mrec_trajectory
+        from molrs.io.mrec import read_trajectory
 
         stride = _stride_of(request)
         limit = _limit_of(request)
         skip = _since_of(request)
-        trajectory = read_mrec_trajectory(path)
+        trajectory = read_trajectory(path)
 
         series: dict[str, Any] = {}
         for name in ("step", "time"):

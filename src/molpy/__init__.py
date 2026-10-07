@@ -15,22 +15,23 @@ of two ways:
   ``scale_lj``), :mod:`molpy.io`, :mod:`molpy.compute`,
   :mod:`molpy.signal`, :mod:`molpy.md`, :mod:`molpy.op` and
   :mod:`molpy.builder`. molpy's own additions sit next to the native names
-  there (the AmberTools typifiers in ``mp.ff.typifier``, ``read_smiles`` in
-  ``mp.io``, crystals and polymers in ``mp.builder``).
+  there (the AmberTools typifiers in ``mp.ff.typifier``; crystals, polymers
+  and virtual sites in ``mp.builder``); :mod:`molpy.io` adds nothing.
 * *Flattened onto this root* — the data model and the operations on it:
   ``molrs.store`` (``Frame``, ``Block``, ``keys``, ``schema``, …),
   ``molrs.system`` (``Atomistic``, ``CoarseGrain``, ``Graph`` and the live
-  views), ``molrs.spatial`` (regions such as ``Cuboid`` and ``Sphere``,
-  neighbour search), ``molrs.units``, ``molrs.perceive``,
+  views), ``molrs.spatial`` (``Box``, regions such as ``Cuboid`` and
+  ``Sphere``, neighbour search), ``molrs.units``, ``molrs.perceive``,
   ``molrs.optimize`` and ``molrs.conformer``.
 
-**molpy's own root names.** :class:`Box` (a subclass of the native box with a
-free-box / diagonal constructor), :class:`Trajectory` (a subclass with a
-topology, slicing and ``map``) and the :class:`TrajectorySplitter`
-strategies, the column-value selectors (:class:`ElementSelector`, …) and
-``FrameCollection``. molpy's own subpackages are :mod:`molpy.engine`,
-:mod:`molpy.adapter`, :mod:`molpy.data` and :mod:`molpy.wrapper` (imported
-explicitly).
+**molpy's own root names.** The :class:`TrajectorySplitter` strategies
+(splitting a native ``Trajectory``), the column-value selectors
+(:class:`ElementSelector`, …) and ``FrameCollection``. ``Box`` and
+``Trajectory`` are the native classes (``mp.Box is molrs.spatial.Box``).
+molpy's own subpackages are :mod:`molpy.engine`, :mod:`molpy.adapter`,
+:mod:`molpy.data`, :mod:`molpy.wrapper` and :mod:`molpy.integrations`
+(imported explicitly); their modules are private, so each of their names has
+one path, the subpackage (``mp.engine.LAMMPSEngine``).
 
 Subpackages load lazily on first attribute access (PEP 562).
 """
@@ -92,28 +93,23 @@ def __dir__() -> list[str]:
 # molpy's own types
 # =============================================================================
 
-from .core.box import Box
-from .core.selector import (
+from ._core.selector import (
     AtomIndexSelector,
     AtomTypeSelector,
     ElementSelector,
     MaskPredicate,
 )
-from .core.trajectory import (
+from ._core.splitter import (
     CustomStrategy,
     FrameIntervalStrategy,
     SplitStrategy,
     TimeIntervalStrategy,
-    Trajectory,
     TrajectorySplitter,
 )
 
 # =============================================================================
 # molrs subsystems flattened onto the root — identity, ``mp.X is molrs.<sub>.X``
 # =============================================================================
-# ``Box`` and ``Trajectory`` are molpy's subclasses above, so the native ones
-# are not re-exported under the same name.
-
 from molrs.store import (
     Block,
     BlockDtypeError,
@@ -122,6 +118,7 @@ from molrs.store import (
     MetaDocument,
     MetaValue,
     ScalarObservable,
+    Trajectory,
     VectorObservable,
     keys,
     schema,
@@ -150,6 +147,7 @@ from molrs.system import (
     VirtualSite,
 )
 from molrs.spatial import (
+    Box,
     Cuboid,
     Cylinder,
     Ellipsoid,
@@ -222,7 +220,6 @@ __all__ = [
     # --- molpy's own ---
     "AtomIndexSelector",
     "AtomTypeSelector",
-    "Box",
     "CustomStrategy",
     "ElementSelector",
     "FrameCollection",
@@ -230,7 +227,6 @@ __all__ = [
     "MaskPredicate",
     "SplitStrategy",
     "TimeIntervalStrategy",
-    "Trajectory",
     "TrajectorySplitter",
     # --- molrs.store ---
     "Block",
@@ -240,6 +236,7 @@ __all__ = [
     "MetaDocument",
     "MetaValue",
     "ScalarObservable",
+    "Trajectory",
     "VectorObservable",
     "keys",
     "schema",
@@ -266,6 +263,7 @@ __all__ = [
     "Topology",
     "VirtualSite",
     # --- molrs.spatial ---
+    "Box",
     "Cuboid",
     "Cylinder",
     "Ellipsoid",

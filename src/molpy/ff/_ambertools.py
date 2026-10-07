@@ -21,13 +21,17 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Literal
 
-from molrs.ff.forcefield import ForceField, write_amber_frcmod
+from molrs.ff.forcefield import (
+    ForceField,
+    read_amber_prmtop_system,
+    write_amber_frcmod,
+)
 from molrs.ff.params import AMBER_SCEE, AMBER_SCNB
 from molrs.ff.typifier import Match, Typifier
 from molrs.io import write_mol2
+from molrs.store.keys import FORMAL_CHARGE
 from molrs.system import Angle, Atomistic, Bond, Dihedral, Improper
 
-from molpy.io._readers import read_amber
 from molpy.wrapper import (
     AntechamberWrapper,
     EnvSpec,
@@ -35,10 +39,6 @@ from molpy.wrapper import (
     TLeapWrapper,
     run_step,
 )
-
-# The per-atom formal charge the SMILES reader writes (only on charged bracket
-# atoms; an atom without it is neutral): ``molrs.store.keys.FORMAL_CHARGE``.
-_FORMAL_CHARGE = "formal_charge"
 
 # The mol2 writer prints charges with four decimals, so a charge tleap reads
 # back from the mol2 it was given differs from the graph's by at most half of
@@ -57,7 +57,7 @@ class _Prmtop:
     """
 
     def __init__(self, prmtop: Path) -> None:
-        self.frame, self.forcefield = read_amber(prmtop)
+        self.forcefield, self.frame = read_amber_prmtop_system(prmtop)
 
     def match(self, graph: Atomistic, charges: Sequence[float]) -> Match:
         """Regenerate ``graph``'s terms to the prmtop's set and annotate them.
@@ -220,18 +220,32 @@ class _PrmtopAssignment(_AmberLibrary):
         return self._prmtop.match(graph, self._prmtop.frame["atoms"]["charge"])
 
 
-def _write_mol2(graph: Atomistic, path: Path) -> None:
+def net_formal_charge(graph: Atomistic) -> int:
+    """The sum of the atoms' formal charges (an atom without one is neutral).
+
+    The SMILES reader writes ``formal_charge`` only on charged bracket atoms,
+    and the frame schema declares it an integer, so the sum is one.
+    """
+    key = FORMAL_CHARGE.key
+    return sum(int(atom.get(key) or 0) for atom in graph.atoms)
+
+
+def write_mol2_input(graph: Atomistic, path: Path, *, rename: bool) -> None:
     """Write ``graph`` as the mol2 an AmberTools program reads.
 
-    Atoms are named element + row (``C1``, ``O2``, ...) so antechamber and tleap
-    can tell elements apart. The bond ``type`` column is dropped: MOL2 reads it
-    as the SYBYL bond order, which a typed graph's force-field label is not.
+    mol2 carries the bonds, so antechamber does not perceive them from
+    coordinates (AmberTools 26's bondtype crashes on a PDB with CONECT
+    records). A ``type`` bond column is a force-field label, not the SYBYL
+    bond order mol2 reads there, so it is dropped. With ``rename``, atoms are
+    named element + row (``C1``, ``O2``, ...) so antechamber and tleap can
+    tell elements apart; otherwise the graph's own names are kept.
     """
     frame = graph.to_frame()
-    frame["atoms"]["name"] = [
-        f"{symbol}{row}"
-        for row, symbol in enumerate(frame["atoms"]["element"], start=1)
-    ]
+    if rename:
+        frame["atoms"]["name"] = [
+            f"{symbol}{row}"
+            for row, symbol in enumerate(frame["atoms"]["element"], start=1)
+        ]
     if "bonds" in frame and "type" in frame["bonds"]:
         del frame["bonds"]["type"]
     write_mol2(path, frame)
@@ -283,8 +297,7 @@ class AntechamberTypifier(_AmberLibrary):
             ValueError: The prmtop disagrees with the graph.
             RuntimeError: An AmberTools step failed.
         """
-        # The frame schema declares formal_charge an integer, so the sum is one.
-        net = sum(int(atom.get(_FORMAL_CHARGE) or 0) for atom in graph.atoms)
+        net = net_formal_charge(graph)
         directory = self.work_dir / f"{graph.structural_hash():016x}"
         directory.mkdir(parents=True, exist_ok=True)
 
@@ -293,7 +306,7 @@ class AntechamberTypifier(_AmberLibrary):
         frcmod = directory / "parmchk2.frcmod"
         prmtop = directory / f"{_UNIT}.prmtop"
         inpcrd = directory / f"{_UNIT}.inpcrd"
-        _write_mol2(graph, source)
+        write_mol2_input(graph, source, rename=True)
 
         ante = AntechamberWrapper(
             name="antechamber",
@@ -414,7 +427,7 @@ class TLeapTypifier(_AmberLibrary):
         source = directory / "input.mol2"
         prmtop = directory / f"{_UNIT}.prmtop"
         inpcrd = directory / f"{_UNIT}.inpcrd"
-        _write_mol2(graph, source)
+        write_mol2_input(graph, source, rename=True)
         script = f"source leaprc.{self.leaprc}\n"
         if self.parameters is not None:
             frcmod = directory / "forcefield.frcmod"

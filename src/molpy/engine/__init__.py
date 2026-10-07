@@ -22,12 +22,12 @@ Scripts are :class:`Script` objects (editable text with a path)::
     result = engine.run(Script.from_path(paths["input"]), workdir="./calc")
 """
 
-from .base import Engine
-from .cp2k import CP2KEngine
-from .gromacs import GROMACSEngine
-from .lammps import LAMMPSEngine
-from .openmm import OpenMMEngine, OpenMMSimulationConfig
-from .script import Script, ScriptLanguage
+from ._base import Engine
+from ._cp2k import CP2KEngine
+from ._gromacs import GROMACSEngine
+from ._lammps import LAMMPSEngine
+from ._openmm import OpenMMEngine, OpenMMSimulationConfig
+from ._script import Script, ScriptLanguage
 
 __all__ = [
     "CP2KEngine",

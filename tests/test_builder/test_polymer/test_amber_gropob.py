@@ -119,7 +119,9 @@ def test_prepgen_from_their_ac_matches_the_25mer(gropob, tmp_path):
     (script,) = (tmp_path / "chains").glob("*/polymer.in")
     assert "mol = sequence { HPE PEO PEO PEO TPE }" in script.read_text()
 
-    reference, reference_ff = mp.io.read_amber(gropob / "PEO_25mer.prmtop")
+    reference_ff, reference = mp.ff.forcefield.read_amber_prmtop_system(
+        gropob / "PEO_25mer.prmtop"
+    )
     frame = result.chain.to_frame()
     atoms = frame["atoms"]
     assert atoms.nrows == 183
@@ -155,7 +157,7 @@ def test_prepgen_from_their_ac_matches_the_25mer(gropob, tmp_path):
 
 def test_rerunning_antechamber_keeps_ether_oxygens(gropob, tmp_path):
     result = _build({"PEO": _peo_template(gropob)}, _CUTS, tmp_path)
-    reference, _ = mp.io.read_amber(gropob / "PEO_25mer.prmtop")
+    reference = mp.io.read_amber_prmtop(gropob / "PEO_25mer.prmtop")
     ours = _type_charges(result.chain.to_frame())
     theirs = _type_charges(reference)
     diffs = [

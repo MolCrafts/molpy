@@ -13,7 +13,7 @@ file, force-field settings, init and input script, for a periodic frame or a
 box-free one. :meth:`LAMMPSEngine.minimize` and :meth:`LAMMPSEngine.md` run
 the same deck with their own command block.
 
-MPI and scheduler launchers are configured on the :class:`~molpy.engine.base.Engine`
+MPI and scheduler launchers are configured on the :class:`~molpy.engine.Engine`
 base class::
 
     engine = LAMMPSEngine("lmp", launcher=["mpirun", "-np", "16"])
@@ -36,8 +36,8 @@ from typing import TYPE_CHECKING, Any
 from molrs.ff.forcefield import write_lammps_forcefield_str
 from molrs.io import read_lammps_data, write_lammps_data
 
-from .base import Engine
-from .script import Script
+from ._base import Engine
+from ._script import Script
 
 if TYPE_CHECKING:
     from molrs.ff.forcefield import ForceField
@@ -82,7 +82,7 @@ class LAMMPSEngine(Engine):
     ) -> None:
         """Initialise the LAMMPS engine.
 
-        Differs from :class:`~molpy.engine.base.Engine` only in that
+        Differs from :class:`~molpy.engine.Engine` only in that
         *executable* is optional: when omitted, the first binary found on
         ``PATH`` among ``lmp``, ``lmp_serial``, ``lmp_mpi`` is used, so
         ``LAMMPSEngine()`` works out of the box on a typical install.
@@ -91,7 +91,7 @@ class LAMMPSEngine(Engine):
             executable: Path or command to the LAMMPS binary.  ``None``
                 auto-detects (see above).
             check_executable: Verify the resolved executable is on ``PATH``.
-            **kwargs: Forwarded to :class:`~molpy.engine.base.Engine`
+            **kwargs: Forwarded to :class:`~molpy.engine.Engine`
                 (``workdir``, ``launcher``, ``env_vars``, ``env``,
                 ``env_manager``).
         """
