@@ -20,7 +20,7 @@ Think of an Engine like a laboratory instrument controller that operates in two 
 
 This separation is intentional. It lets you inspect and hand-edit the generated files before committing to a run, or copy them to an HPC cluster and submit them to a job scheduler without ever touching the engine's `run()` method. Generate-only is not a degraded mode; it is the primary workflow on any system where the MD binary is not installed locally.
 
-`LAMMPSEngine.generate_inputs(frame, ff, out)` writes a complete LAMMPS deck, `GROMACSEngine.generate_inputs(frame, ff, out)` a GROMACS input set, and `OpenMMEngine.generate_inputs(frame, ff, config, out)` the PDB, XML force field and Python driver; none of them needs the program installed. For a hand-written control script (and for CP2K), you build a `Script` object yourself and either save it to disk or pass it to `run()`.
+`LammpsEngine.generate_inputs(frame, ff, out)` writes a complete LAMMPS deck, `GromacsEngine.generate_inputs(frame, ff, out)` a GROMACS input set, and `OpenmmEngine.generate_inputs(frame, ff, config, out)` the PDB, XML force field and Python driver; none of them needs the program installed. For a hand-written control script (and for CP2K), you build a `Script` object yourself and either save it to disk or pass it to `run()`.
 
 ---
 
@@ -66,7 +66,7 @@ pairs.def_type("OW", ow, epsilon=0.1521, sigma=3.1507)
 pairs.def_type("HW", hw, epsilon=0.0, sigma=0.0)
 ff.def_style("pair", "coul/cut", {"cutoff": 10.0})  # the charges' pair term
 
-deck = mp.engine.LAMMPSEngine(check_executable=False).generate_inputs(
+deck = mp.engine.LammpsEngine(check_executable=False).generate_inputs(
     water, ff, "./lammps_run"
 )
 print(sorted(deck))  # ['data', 'init', 'input', 'settings']
@@ -75,7 +75,7 @@ print(sorted(deck))  # ['data', 'init', 'input', 'settings']
 ### GROMACS: structure, topology and run parameters
 
 ```python
-gmx = mp.engine.GROMACSEngine(check_executable=False)
+gmx = mp.engine.GromacsEngine(check_executable=False)
 files = gmx.generate_inputs(water, ff, "./gromacs_run", temperature=300.0)
 print(sorted(files))  # ['em', 'gro', 'nvt', 'top']
 ```
@@ -108,7 +108,7 @@ frame.box = mp.Box.cube(20.0)
 
 ```python
 import molpy as mp
-from molpy.engine import LAMMPSEngine
+from molpy.engine import LammpsEngine
 from molpy.engine import Script
 
 lammps_input = """\
@@ -140,19 +140,19 @@ script = Script.from_path("./submit/input.lmp")
 
 ### OpenMM: letting the engine build the files
 
-OpenMM's workflow is more tightly integrated because the three required files are interdependent: the Python driver script embeds the filenames of the PDB and XML force field. Rather than assembling these by hand, `OpenMMEngine.generate_inputs()` accepts MolPy's own data objects and writes all three files consistently.
+OpenMM's workflow is more tightly integrated because the three required files are interdependent: the Python driver script embeds the filenames of the PDB and XML force field. Rather than assembling these by hand, `OpenmmEngine.generate_inputs()` accepts MolPy's own data objects and writes all three files consistently.
 
-The configuration is a dataclass — `OpenMMSimulationConfig` — whose fields document their units explicitly. It round-trips through JSON, which makes it easy to store alongside the generated files for reproducibility.
+The configuration is a dataclass — `OpenmmSimulationConfig` — whose fields document their units explicitly. It round-trips through JSON, which makes it easy to store alongside the generated files for reproducibility.
 
 ```python
 from pathlib import Path
 
-from molpy.engine import OpenMMEngine, OpenMMSimulationConfig
+from molpy.engine import OpenmmEngine, OpenmmSimulationConfig
 
 Path("./omm_run").mkdir(parents=True, exist_ok=True)
 ff = mp.ff.forcefield.ForceField("water")
 
-config = OpenMMSimulationConfig(
+config = OpenmmSimulationConfig(
     ensemble="NPT",
     temperature=300.0,  # K
     pressure=1.0,  # bar
@@ -162,7 +162,7 @@ config = OpenMMSimulationConfig(
 )
 config.to_json("./omm_run/config.json")
 
-engine = OpenMMEngine(check_executable=False)
+engine = OpenmmEngine(check_executable=False)
 paths = engine.generate_inputs(frame, ff, config, "./omm_run")
 # paths -> {"pdb": Path("./omm_run/system.pdb"),
 #            "forcefield": Path("./omm_run/forcefield.xml"),
@@ -183,7 +183,7 @@ When the MD binary is available locally, `engine.run()` writes the script to a w
 
 ```python
 # docs: skip — engine.run launches an MD binary; engines unit-tested with mocks / script literals
-engine = LAMMPSEngine("lmp")
+engine = LammpsEngine("lmp")
 
 result = engine.run(
     script,
@@ -205,10 +205,10 @@ MPI parallelism is configured at engine construction, not at runtime. Passing `l
 ```python
 # docs: skip — engine.run launches an MD binary; engines unit-tested with mocks / script literals
 # OpenMPI
-engine = LAMMPSEngine("lmp", launcher=["mpirun", "-np", "16"])
+engine = LammpsEngine("lmp", launcher=["mpirun", "-np", "16"])
 
 # Slurm srun (common on HPC clusters)
-engine = LAMMPSEngine("lmp", launcher=["srun", "--ntasks=16"])
+engine = LammpsEngine("lmp", launcher=["srun", "--ntasks=16"])
 
 result = engine.run(script, workdir="./calc")
 ```
@@ -221,7 +221,7 @@ Some HPC workflows install LAMMPS or OpenMM inside a Conda environment that is n
 
 ```python
 # docs: skip — engine.run launches an MD binary; engines unit-tested with mocks / script literals
-engine = LAMMPSEngine(
+engine = LammpsEngine(
     "lmp",
     env="lammps-env",
     env_manager="conda",
@@ -238,7 +238,7 @@ Once `generate_inputs()` has produced the files, calling `run()` with the script
 
 ```python
 # docs: skip — needs conda env `openmm-env` with OpenMM; engines unit-tested with mocks
-engine = OpenMMEngine("python", env="openmm-env", env_manager="conda")
+engine = OpenmmEngine("python", env="openmm-env", env_manager="conda")
 paths = engine.generate_inputs(frame, ff, config, "./omm_run")
 assert paths["script"].exists()
 

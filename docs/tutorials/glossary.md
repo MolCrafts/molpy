@@ -19,8 +19,8 @@ Quick definitions for MolPy's core terminology. Each entry links to the page tha
 **RelationRef**
 : A live handle onto one topology connection (`mp.core.RelationRef`). Holds an ordered tuple of node endpoints. Relation views: `Bond`, `Angle`, `Dihedral`, `Improper`.
 
-**Graph**
-: Native base class (`mp.Graph`) holding nodes, relations and ports. `Atomistic` and `CoarseGrain` derive from it; molpy re-exports all three by identity.
+**MolGraph**
+: Native base class (`mp.MolGraph`) holding nodes, relations and ports. `Atomistic` and `CoarseGrain` derive from it; molpy re-exports all three by identity.
 
 **Topology**
 : Bonded terms derived from an `Atomistic`'s bond graph by the native kernels. `generate_topology(gen_angle=..., gen_dihedral=...)` perceives angles and dihedrals **in place** and returns the counts it added (use `.copy()` first when you need an independent graph); `topo_distances(handle, max_hops=...)` answers bond-graph distance queries. On the tabular side, `mp.Topology.from_frame(frame)` reads a `Frame`'s bonds, for example `connected_components()` to number its molecules. See [Atomistic and Topology](01_atomistic_and_topology.md).
@@ -54,7 +54,7 @@ Quick definitions for MolPy's core terminology. Each entry links to the page tha
 ### Modules
 
 **Parsing**
-: `mp.io.smiles.SmilesIR` and `mp.perceive.SmartsPattern` convert SMILES and SMARTS strings into MolPy structures; `CGSmilesIR` parses CGsmiles into ported units and site graphs. BigSMILES is not parsed. See [Parsing Chemistry](../user-guide/01_parsing_chemistry.md).
+: `mp.io.smiles.SmilesIr` and `mp.perceive.SmartsPattern` convert SMILES and SMARTS strings into MolPy structures; `mp.io.cgsmiles.CgSmilesIr` parses CGsmiles into ported units and site graphs. BigSMILES is not parsed. See [Parsing Chemistry](../user-guide/01_parsing_chemistry.md).
 
 **Reaction**
 : A reaction SMARTS. It matches the reactant patterns, forms and breaks bonds, and deletes the atoms that appear on the left and not on the right (the leaving groups). See [Parser](../api/parser.md).
@@ -66,7 +66,7 @@ Quick definitions for MolPy's core terminology. Each entry links to the page tha
 : A place where a unit may bond: an *(anchor, handle)* pair, where the handle is a real atom bonded to the anchor (usually the capping hydrogen) that leaves when the bond forms. Its kind decides its partner — `<` joins `>`, `$` joins `$`, `!` joins `!` — and a label and bond order must match. In CGsmiles, ports are the bonding descriptors (`[<]OCC[>]`).
 
 **Site graph**
-: The topology of an assembly: an `mp.CoarseGrain` whose beads name library units (`bead_type`) and whose bonds say which units join. It comes from CGsmiles notation (`CGSmilesIR(...).to_coarsegrain()`) or from coarsening a CG model (`Coarsener`), in which case each site also has a position and an axis.
+: The topology of an assembly: an `mp.CoarseGrain` whose beads name library units (`bead_type`) and whose bonds say which units join. It comes from CGsmiles notation (`mp.io.cgsmiles.CgSmilesIr(...).to_coarsegrain()`) or from coarsening a CG model (`Coarsener`), in which case each site also has a position and an axis.
 
 **Placer**
 : The assembler's rule for each copy's pose. `GrowthPlacer` grows each molecule onto its parents' ports and needs no coordinates; `SitePlacer` puts each copy's centre of mass on its site.
@@ -75,7 +75,7 @@ Quick definitions for MolPy's core terminology. Each entry links to the page tha
 : The optional rule that turns each copy before it is placed. `AxisOrienter` aligns a unit with its site's axis and bonds; it needs site positions.
 
 **Typifier**
-: Assigns force field types to atoms, bonds, angles, and dihedrals: implements `match`, and the base's `typify` returns a typed copy while `forcefield()` accumulates the assigned types. Native: `OPLSAATypifier`, `MMFF94Typifier`, `MMFF94STypifier`, `ElementTypifier`. GAFF / GAFF2 through AmberTools: `AntechamberTypifier`, `TLeapTypifier` (see [AmberTools Integration](../user-guide/13_ambertools_integration.md)). See [Force Field Typification](../user-guide/06_typifier.md).
+: Assigns force field types to atoms, bonds, angles, and dihedrals: implements `assign` (returning a `TypeAssignment`), and the base's `typify` returns a typed copy while `forcefield()` accumulates the assigned types. Native: `OplsAaTypifier`, `Mmff94Typifier`, `Mmff94sTypifier`, `ElementTypifier`. GAFF / GAFF2 through AmberTools: `AntechamberTypifier`, `TleapTypifier` (see [AmberTools Integration](../user-guide/13_ambertools_integration.md)). See [Force Field Typification](../user-guide/06_typifier.md).
 
 **Selector**
 : A composable predicate that filters atoms in a `Block` by element, type, coordinate range, or distance. Combinable with `&`, `|`, `~`. See [Selector](06_selector.md).

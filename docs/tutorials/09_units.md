@@ -5,7 +5,7 @@ A frame stores `x = 3.0`. Is that 3 Å or 3 nm? The array does not say.
 **A unit preset names the convention that gives bare numbers meaning**, and a
 unit registry converts explicitly when two conventions meet (for example
 LAMMPS `real` vs `metal`). Both are molrs's: `mp.core.UnitPreset` and
-`mp.core.UnitRegistry` are `molrs.units.UnitPreset` and `molrs.units.UnitRegistry`.
+`mp.core.UnitRegistry` are `molrs.core.UnitPreset` and `molrs.core.UnitRegistry`.
 
 What it is **not**: automatic unit tracking on every `Frame` column. Numbers stay
 plain; *you* attach a convention when you convert or compare.

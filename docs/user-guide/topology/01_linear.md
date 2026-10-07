@@ -8,7 +8,7 @@ A path of identical units is the simplest topology: `{[#EO]|10}` is ten `EO` sit
 import molpy as mp
 from eo_kit import library  # examples/topology/
 
-sites = mp.io.smiles.CGSmilesIR("{[#EO]|10}").to_coarsegrain()
+sites = mp.io.cgsmiles.CgSmilesIr("{[#EO]|10}").to_coarsegrain()
 chain = mp.builder.Assembler(library(), mp.builder.GrowthPlacer()).assemble(sites, mp.Atomistic)
 ```
 

@@ -30,7 +30,7 @@ UNITS = {
 conformer = mp.conformer.Conformer(seed=42)
 library = {
     name: conformer.generate(
-        mp.io.smiles.SmilesIR.from_fragment(body).to_template()
+        mp.io.smiles.SmilesIr.from_fragment(body).to_template()
     )[0]
     for name, body in UNITS.items()
 }
@@ -286,7 +286,7 @@ n_chains = 5  # a few chains for this guide; use len(sz_chains) for a production
 atomistic_chains = []
 for chain in sz_chains[:n_chains]:
     notation = "{[#HEAD]" + "".join(f"[#{m}]" for m in chain.monomers) + "[#TAIL]}"
-    sites = mp.io.smiles.CGSmilesIR(notation).to_coarsegrain()
+    sites = mp.io.cgsmiles.CgSmilesIr(notation).to_coarsegrain()
     atomistic_chains.append(assembler.assemble(sites, mp.Atomistic))
 
 for chain, built in zip(sz_chains, atomistic_chains):
@@ -311,9 +311,9 @@ Assembly assigns no force-field types. Each finished chain is an ordinary `mp.At
 
 
 ```python
-from molpy.ff.typifier import OPLSAATypifier
+from molpy.ff.typifier import OplsAaTypifier
 
-typifier = OPLSAATypifier(strict=True)
+typifier = OplsAaTypifier(strict=True)
 typed_chains = [typifier.typify(chain) for chain in atomistic_chains]
 ff = typifier.forcefield()
 print(f"typed {len(typed_chains)} chains, {sum(c.n_atoms for c in typed_chains)} atoms")
@@ -374,7 +374,7 @@ packed: 1156 atoms, box: 63.1 A
 
 ## The engine assembles a runnable input script from the exported data
 
-Writing the data file is only half the story. To actually run the simulation, LAMMPS needs an input script that says how to read that file, which force field styles to activate, and what protocol to follow. MolPy models this through `LAMMPSEngine`, which pairs a `Script` object with subprocess management.
+Writing the data file is only half the story. To actually run the simulation, LAMMPS needs an input script that says how to read that file, which force field styles to activate, and what protocol to follow. MolPy models this through `LammpsEngine`, which pairs a `Script` object with subprocess management.
 
 **A `Script` is an editable, ordered list of lines** that can be built programmatically and saved to disk without executing anything. This separation matters: you can inspect, modify, and version-control the script before committing to a run. When you are ready, `engine.run()` writes the script to the working directory and launches `lmp -in input.lmp -log log.lammps -screen none`.
 
@@ -382,7 +382,7 @@ The code below builds a minimal equilibration protocol for the packed system. It
 
 
 ```python
-from molpy.engine import LAMMPSEngine, Script
+from molpy.engine import LammpsEngine, Script
 
 # Build the LAMMPS input script line-by-line.
 # Script.from_text() dedents and normalises the block.
@@ -414,7 +414,7 @@ lmp_script = Script.from_text(
 # Save the script next to the data files without launching LAMMPS.
 # check_executable=False lets the call succeed in notebooks where lmp
 # may not be on PATH.
-engine = LAMMPSEngine("lmp", check_executable=False)
+engine = LammpsEngine("lmp", check_executable=False)
 script_path = lmp_script.save("05_output/input.lmp")
 print("Input script written to:", script_path)
 print(lmp_script.preview(max_lines=12))
@@ -444,7 +444,7 @@ Input script written to: 05_output/input.lmp
 
 ## The notation describes one chain; the ensemble is code
 
-MolPy reads CGsmiles (`mp.io.smiles.CGSmilesIR`), and every chain above passed through it: the units are CGsmiles fragments and each sampled sequence is a CGsmiles string. What a CGsmiles string does not hold is the ensemble — the monomer weights, the chain-length distribution and the target system mass. Those stay ordinary Python objects (`WeightedSequenceGenerator`, a distribution, `SystemPlanner`), which are easier to inspect, debug and parameterise than a single string. BigSMILES and G-BigSMILES are not parsed.
+MolPy reads CGsmiles (`mp.io.cgsmiles.CgSmilesIr`), and every chain above passed through it: the units are CGsmiles fragments and each sampled sequence is a CGsmiles string. What a CGsmiles string does not hold is the ensemble — the monomer weights, the chain-length distribution and the target system mass. Those stay ordinary Python objects (`WeightedSequenceGenerator`, a distribution, `SystemPlanner`), which are easier to inspect, debug and parameterise than a single string. BigSMILES and G-BigSMILES are not parsed.
 
 ## Troubleshooting
 

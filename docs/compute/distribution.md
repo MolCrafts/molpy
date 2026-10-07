@@ -7,20 +7,21 @@ Those are the internal degrees of freedom, and their distributions are how you
 check a force field, spot a strained geometry, or find the rotameric states of a
 molecule.
 
-Three computes cover them, one per arity: `DistanceDistribution` (pairs),
-`AngleDistribution` (triplets), `DihedralDistribution` (quadruplets), plus
-`CombinedDistribution` for a joint histogram over several at once.
+One compute covers them, `DistributionFunction`, with the observable named
+per arity: `"distance"` (pairs), `"angle"` (triplets), `"dihedral"`
+(quadruplets); `CombinedDistribution` builds a joint histogram over several at
+once.
 
 ## The selection comes from the topology, not from arguments
 
 None of these takes a list of atom indices. Each reads its tuples from the
 matching **topology block** on every frame:
 
-| Compute | Block | Endpoint columns |
+| Observable | Block | Endpoint columns |
 |---|---|---|
-| `DistanceDistribution` | `bonds` | `atomi`, `atomj` |
-| `AngleDistribution` | `angles` | `atomi`, `atomj`, `atomk` |
-| `DihedralDistribution` | `dihedrals` | `atomi`, `atomj`, `atomk`, `atoml` |
+| `DistributionFunction("distance", ...)` | `bonds` | `atomi`, `atomj` |
+| `DistributionFunction("angle", ...)` | `angles` | `atomi`, `atomj`, `atomk` |
+| `DistributionFunction("dihedral", ...)` | `dihedrals` | `atomi`, `atomj`, `atomk`, `atoml` |
 
 The angle is measured at the **middle** atom `atomj`. Endpoint columns are read
 as unsigned integers, so build them from an integer array.
@@ -28,21 +29,20 @@ as unsigned integers, so build them from an integer array.
 This is a deliberate design: the selection lives with the structure, so the same
 compute runs unchanged over a trajectory whose topology you defined once.
 
-!!! warning "The angular ranges are documented in degrees but binned in radians"
-    `AngleDistribution(n_bins, min=0.0, max=180.0)` and
-    `DihedralDistribution(n_bins, min=-180.0, max=180.0)` carry degree-valued
-    defaults, but the kernel bins the angle in **radians**. With the defaults,
-    every physically possible angle (0 to $\pi \approx 3.14$) falls into the
-    first two or three bins out of `n_bins`, and the rest of the histogram is
-    empty. Pass the range explicitly in radians:
+!!! warning "Angular ranges are in radians"
+    The kernel bins angles in **radians**. Leave `min`/`max` out and an angle
+    is binned over its natural range $[0, \pi]$, a dihedral over
+    $(-\pi, \pi]$ (kept signed). A range given in degrees puts every
+    physically possible angle (0 to $\pi \approx 3.14$) into the first two or
+    three bins out of `n_bins`, and the rest of the histogram is empty:
 
     ```text
-    AngleDistribution(n_bins=90, min=0.0, max=np.pi)
-    DihedralDistribution(n_bins=90, min=-np.pi, max=np.pi)
+    DistributionFunction("angle", n_bins=90)                       # [0, pi]
+    DistributionFunction("dihedral", n_bins=90, min=-np.pi, max=np.pi)
     ```
 
-    `bin_centers` comes back in radians too. `DistanceDistribution` has no
-    defaults and is unaffected.
+    `bin_centers` comes back in radians too. `"distance"` has no natural range:
+    `min` and `max` are required, in the coordinates' length unit.
 
 ## The sin θ trap
 
@@ -109,7 +109,7 @@ Build the frame and its topology block together:
 ```python
 import numpy as np
 import molpy as mp
-from molpy.compute import DistanceDistribution
+from molpy.compute import DistributionFunction
 
 rng = np.random.default_rng(0)
 n_bonds = 5000
@@ -130,7 +130,7 @@ frame["bonds"] = {"atomi": index[:, 0], "atomj": index[:, 1]}
 ```
 
 ```python
-result = DistanceDistribution(n_bins=60, min=1.35, max=1.75).compute([frame])
+result = DistributionFunction("distance", n_bins=60, min=1.35, max=1.75).compute([frame])
 
 centers = np.asarray(result.bin_centers)
 density = np.asarray(result.density)
@@ -146,11 +146,9 @@ you do not.
 its columns are misnamed. `angular` tells you whether the sin correction
 applies — `False` here, `True` for angles and dihedrals.
 
-For an angular distribution, the same pattern with the range in radians:
+For an angular distribution, the same pattern over the natural range in radians:
 
 ```python
-from molpy.compute import AngleDistribution
-
 triples = np.arange(3 * 1000, dtype=np.uint32).reshape(1000, 3)
 angles = mp.Frame()
 pts = rng.normal(size=(3000, 3)) * 5.0 + 50.0
@@ -160,7 +158,7 @@ angles["angles"] = {
     "atomi": triples[:, 0], "atomj": triples[:, 1], "atomk": triples[:, 2]
 }
 
-adf = AngleDistribution(n_bins=90, min=0.0, max=float(np.pi)).compute([angles])
+adf = DistributionFunction("angle", n_bins=90).compute([angles])
 print(adf.angular, np.asarray(adf.bin_centers).max() <= np.pi)   # -> True True
 ```
 
@@ -172,7 +170,7 @@ the marginals hide it.
 ## When it goes wrong
 
 **The histogram is empty except for the first few bins.**
-The radians-versus-degrees range. See the warning above.
+A range given in degrees. See the warning above.
 
 **`n_raw_samples` is 0.**
 No `bonds` / `angles` / `dihedrals` block on the frame, or the endpoint columns

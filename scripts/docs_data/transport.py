@@ -9,7 +9,7 @@ from __future__ import annotations
 import numpy as np
 
 import molpy as mp
-from molpy.compute import MSD, Acf, Persist
+from molpy.compute import Acf, Msd, pair_survival_tcf
 
 from .lj import KB, Trajectory
 from .structure import write_json
@@ -25,14 +25,14 @@ def _unwrapped_frames(trajectory: Trajectory) -> list[mp.Frame]:
     for xyz in trajectory.unwrapped:
         frame = mp.Frame()
         frame["atoms"] = {"x": xyz[:, 0], "y": xyz[:, 1], "z": xyz[:, 2]}
-        frame.box = mp.Box.cubic(trajectory.box_length)
+        frame.box = mp.Box.cube(trajectory.box_length)
         frames.append(frame)
     return frames
 
 
 def mean_squared_displacement(trajectory: Trajectory) -> dict[str, float]:
     """MSD(tau) and the Einstein diffusion coefficient."""
-    series = MSD(method="window").compute(_unwrapped_frames(trajectory))
+    series = Msd(method="window").compute(_unwrapped_frames(trajectory))
     msd = np.asarray(series.mean)
     lag = np.arange(len(msd)) * trajectory.dt
 
@@ -151,7 +151,7 @@ def pair_survival(trajectory: Trajectory) -> dict[str, float]:
     rows: list[dict[str, float | str]] = []
     summary: dict[str, float] = {}
     for method in ("continuous", "intermittent"):
-        result = Persist.pair_survival_tcf(
+        result = pair_survival_tcf(
             positions, positions, box, 5.4, 5.9, method, trajectory.dt, 600, True
         )
         correlation = np.asarray(result["correlation"])

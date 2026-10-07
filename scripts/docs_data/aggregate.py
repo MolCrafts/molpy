@@ -14,16 +14,15 @@ from molpy.compute import (
     CenterOfMass,
     Cluster,
     DescriptorRow,
-    KMeans,
-    Pca2,
+    Kmeans,
+    Pca,
     RadiusOfGyration,
     Steinhardt,
 )
-from molpy.core import NeighborList
 
 from .lj import Trajectory
 from .order import _fcc_frame
-from .structure import _frames, write_json
+from .structure import _frames, neighbors, write_json
 
 
 def percolation(trajectory: Trajectory) -> dict[str, float]:
@@ -37,10 +36,10 @@ def percolation(trajectory: Trajectory) -> dict[str, float]:
         counts, fractions = [], []
         for frame in frames:
             result = Cluster(min_cluster_size=2).compute(
-                [frame], [NeighborList(cutoff=float(cutoff)).compute(frame)]
+                [frame], [neighbors(frame, float(cutoff))]
             )[0]
             sizes = np.asarray(result.cluster_sizes)
-            counts.append(result.num_clusters)
+            counts.append(result.n_clusters)
             fractions.append((sizes.max() if len(sizes) else 0) / n_atoms)
         fraction = float(np.mean(fractions))
         rows.append(
@@ -92,9 +91,9 @@ def chain_gyration(_trajectory: Trajectory) -> dict[str, float]:
                 "y": positions[:, 1],
                 "z": positions[:, 2],
             }
-            frame.box = mp.Box.cubic(400.0)
+            frame.box = mp.Box.cube(400.0)
             clusters = Cluster(min_cluster_size=5).compute(
-                [frame], [NeighborList(cutoff=2.5).compute(frame)]
+                [frame], [neighbors(frame, 2.5)]
             )
             masses = np.full(n_beads, 1.0)
             com = CenterOfMass(masses).compute([frame], clusters)
@@ -132,7 +131,7 @@ def descriptor_map(trajectory: Trajectory) -> dict[str, float]:
     liquid_frames = _frames(trajectory, stride=750)
 
     def descriptors(frame: mp.Frame, cutoff: float) -> np.ndarray:
-        nlist = NeighborList(cutoff=cutoff).compute(frame)
+        nlist = neighbors(frame, cutoff)
         ql = np.asarray(Steinhardt(l=[4, 6]).compute([frame], [nlist])[0]["ql"])
         coordination = np.full(ql.shape[1], 2.0 * nlist.n_pairs / ql.shape[1])
         return np.column_stack([ql[0], ql[1], coordination])
@@ -150,9 +149,9 @@ def descriptor_map(trajectory: Trajectory) -> dict[str, float]:
     # Standardize: PCA on raw columns would be dominated by coordination number.
     matrix = (matrix - matrix.mean(axis=0)) / matrix.std(axis=0)
 
-    projected = Pca2().compute([DescriptorRow(row) for row in matrix])
+    projected = Pca().compute([DescriptorRow(row) for row in matrix])
     coords = np.asarray(projected.coords)
-    labels = np.asarray(KMeans(k=2, max_iter=100, seed=0).compute(projected).labels)
+    labels = np.asarray(Kmeans(k=2, max_iter=100, seed=0).compute(projected).labels)
 
     rows: list[dict[str, float | str]] = [
         {

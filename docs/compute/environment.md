@@ -5,7 +5,7 @@ $q_\ell$. That is what you want for classifying thousands of atoms, but
 compression loses information: two quite different arrangements can share a
 $q_6$.
 
-`BondOrder` keeps the whole thing. It histograms the **direction** of every bond
+`BondOrientationalOrder` keeps the whole thing. It histograms the **direction** of every bond
 onto a sphere — polar angle $\theta$, azimuth $\phi$ — so you see the angular
 signature of the local environment directly, rather than a scalar summary of it.
 
@@ -69,7 +69,7 @@ a body-fixed frame to see anything; that is [Spatial](spatial.md) and
 ```python
 import numpy as np
 import molpy as mp
-from molpy.compute import BondOrder
+from molpy.compute import BondOrientationalOrder
 
 a = 5.26
 basis = np.array([[0, 0, 0], [0.5, 0.5, 0], [0.5, 0, 0.5], [0, 0.5, 0.5]])
@@ -90,7 +90,7 @@ longer than their axis, as histogram edges always are:
 nl = mp.core.NeighborList(4.5)
 nl.build(crystal.coords, crystal.box)
 nlist = nl.neighbors()
-counts, density, theta_edges, phi_edges = BondOrder(n_theta=36, n_phi=72).compute(
+counts, density, theta_edges, phi_edges = BondOrientationalOrder(n_theta=36, n_phi=72).compute(
     [crystal], [nlist]
 )[0]
 

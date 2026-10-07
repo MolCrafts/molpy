@@ -5,7 +5,7 @@
 Every architecture here is a **short guide page** paired with a **runnable script** of the same name under `examples/topology/`. They all compose the same three native primitives:
 
 1. **Units** — a CGsmiles fragment per repeat unit, with bonding descriptors as its **ports** (`[<]OCC[>]`), turned into a 3D `mp.Atomistic` carrying its ports by `mp.conformer.Conformer`.
-2. **Topology** — a CGsmiles string (`{[#EO]|10}`), turned into a **site graph** by `mp.io.smiles.CGSmilesIR(...).to_coarsegrain()`: one site per unit, one bond per join.
+2. **Topology** — a CGsmiles string (`{[#EO]|10}`), turned into a **site graph** by `mp.io.cgsmiles.CgSmilesIr(...).to_coarsegrain()`: one site per unit, one bond per join.
 3. **Assembly** — `mp.builder.Assembler(library, mp.builder.GrowthPlacer()).assemble(sites, mp.Atomistic)`: one copy of `library[bead_type]` per site, each bond joining one port of each end, handed back as the graph class you name.
 
 ```bash

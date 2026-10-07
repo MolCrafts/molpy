@@ -25,7 +25,7 @@ Type TFSI with antechamber, build GAFF PEO chains from one antechamber-typed oli
 
 ## Workflow overview
 
-`AntechamberTypifier` types a complete molecule: antechamber (GAFF types, BCC charges) → parmchk2 → tleap. A polymer is not that molecule. You build one oligomer in which the head, chain and tail monomers are already bonded, and you say how prepgen cuts it (`AmberCut`: the atoms each residue omits, and the atom across each junction). `AmberPolymerBuilder` then runs antechamber and parmchk2 on that oligomer, prepgen for each cut, and tleap `sequence`. `TLeapTypifier` is only for a finished molecule that already carries types and charges; a graph that still has ports is refused. Li⁺ gets a force field you define. The three force fields are merged, molpack places the molecules at the target density, and the system is exported to LAMMPS.
+`AntechamberTypifier` types a complete molecule: antechamber (GAFF types, BCC charges) → parmchk2 → tleap. A polymer is not that molecule. You build one oligomer in which the head, chain and tail monomers are already bonded, and you say how prepgen cuts it (`AmberCut`: the atoms each residue omits, and the atom across each junction). `AmberPolymerBuilder` then runs antechamber and parmchk2 on that oligomer, prepgen for each cut, and tleap `sequence`. `TleapTypifier` is only for a finished molecule that already carries types and charges; a graph that still has ports is refused. Li⁺ gets a force field you define. The three force fields are merged, molpack places the molecules at the target density, and the system is exported to LAMMPS.
 
 ## Antechamber assigns GAFF2 types and BCC charges to TFSI
 
@@ -38,7 +38,7 @@ import molpy as mp
 output_dir = Path("13_output")
 output_dir.mkdir(exist_ok=True)
 
-tfsi = mp.io.smiles.SmilesIR("O=S(=O)(C(F)(F)F)[N-]S(=O)(=O)C(F)(F)F").to_atomistic()
+tfsi = mp.io.smiles.SmilesIr("O=S(=O)(C(F)(F)F)[N-]S(=O)(=O)C(F)(F)F").to_atomistic()
 tfsi = mp.conformer.Conformer(add_hydrogens=False, seed=42).generate(tfsi)[0]
 ```
 
@@ -107,7 +107,7 @@ other architectures. The site graph is only that sequence; it must be one
 linear path.
 
 ```python
-sites = mp.io.smiles.CGSmilesIR("{[#PEO]|10}").to_coarsegrain()
+sites = mp.io.cgsmiles.CgSmilesIr("{[#PEO]|10}").to_coarsegrain()
 ```
 
 ```python
@@ -217,14 +217,14 @@ mp.io.write_lammps_forcefield(
 | Chain O near −0.20 e, or typed `oh` | The chain was joined with `Assembler` (the leaving-group charge was folded onto the anchor). Build the oligomer with the monomers already bonded and cut it with prepgen |
 | TFSI charge wrong | The formal charges sum to the net charge (`[N-]` gives −1); use `charge_method="bcc"` |
 | tleap fails on the chain | A junction term missing from the leaprc (`leaprc.gaff2` here); the error carries tleap's output. The connection atoms are the ones in the oligomer you cut |
-| `ValueError: … still has N ports` | `TLeapTypifier` was given a template. A polymer goes through `AmberPolymerBuilder` |
+| `ValueError: … still has N ports` | `TleapTypifier` was given a template. A polymer goes through `AmberPolymerBuilder` |
 | Polymer assembly fails | The site graph is one path of at least two sites, and every bead type has an oligomer and a cut for the residue that site uses |
 | `ValueError: … both make tleap residue …` | Residue names are the first characters of the bead type (`HPE`, `PEO`, `TPE` for `PEO`); give the bead types distinct prefixes |
 | Force field merge conflict | Inspect type names for collisions between PEO, TFSI and Li⁺ |
 | Packing fails | Increase box size or reduce molecule count |
 
 The raw subprocess wrappers (`AntechamberWrapper`, `Parmchk2Wrapper`,
-`TLeapWrapper`, …) stay in `molpy.wrapper` for scripts that drive the
+`TleapWrapper`, …) stay in `molpy.wrapper` for scripts that drive the
 executables directly.
 
 See also: [Force Field Typification](06_typifier.md), [Wrapper and Adapter](../tutorials/07_wrapper_and_adapter.md).

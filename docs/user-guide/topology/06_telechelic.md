@@ -8,7 +8,7 @@ End groups are one-port units at the ends of a path: `CAPA` (`C[>]`) joins the f
 import molpy as mp
 from eo_kit import library
 
-sites = mp.io.smiles.CGSmilesIR("{[#CAPA][#EO]|6[#CAPB]}").to_coarsegrain()
+sites = mp.io.cgsmiles.CgSmilesIr("{[#CAPA][#EO]|6[#CAPB]}").to_coarsegrain()
 tele = mp.builder.Assembler(library(), mp.builder.GrowthPlacer()).assemble(sites, mp.Atomistic)
 ```
 

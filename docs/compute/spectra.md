@@ -28,7 +28,7 @@ that expression with a different $A$:
 | Spectrum | $A$ — the quantity light couples to | Compute |
 |---|---|---|
 | VDOS | atomic velocities | `PowerSpectrum` |
-| Infrared | dipole flux $\dot{\mathbf{M}}$ | `IRSpectrum` |
+| Infrared | dipole flux $\dot{\mathbf{M}}$ | `IrSpectrum` |
 | Raman | polarizability (iso + aniso) | `RamanSpectrum` |
 | VCD | electric ⊗ magnetic dipole | `VcdSpectrum` |
 | ROA | ROA invariants | `RoaSpectrum` |
@@ -189,12 +189,12 @@ print(dipole.shape, flux.shape)                           # -> (1024, 3) (1024, 
 `(T, 1, 3)` — rather than as 32 separate particles:
 
 ```python
-from molpy.compute import IRSpectrum
+from molpy.compute import IrSpectrum
 
 flux_acf = np.asarray(Acf().compute(
     np.ascontiguousarray(flux[:, None, :]), max_lag=256
 ).acf)
-ir = IRSpectrum().fit(flux_acf, dt_fs=0.5)
+ir = IrSpectrum().fit(flux_acf, dt_fs=0.5)
 print(sorted(ir))
 # -> ['frequencies_cm1', 'intensities', 'n_frames', 'resolution']
 ```

@@ -28,7 +28,7 @@ must cross to move from the first shell to the second. Those two numbers are the
 free-energy landscape of the liquid, obtained from nothing but a histogram of
 distances.
 
-`PMFTXY` does the same thing in two dimensions. Instead of binning neighbours by
+`PmftXy` does the same thing in two dimensions. Instead of binning neighbours by
 distance alone, it bins them by their $(x, y)$ position relative to the
 reference particle, and takes $-\ln$ of the result:
 
@@ -55,10 +55,10 @@ prefer the front. Without it, the compute still runs, but in the lab frame, and
 the result is a rotationally averaged smear that tells you nothing $g(r)$ did not
 already.
 
-That is the single most important thing to get right on this page: **`PMFTXY`
+That is the single most important thing to get right on this page: **`PmftXy`
 without an `orientations` block is not a PMFT.**
 
-One further property to expect: `PMFTXY` bins $x$ and $y$ but integrates over
+One further property to expect: `PmftXy` bins $x$ and $y$ but integrates over
 $z$. A three-dimensional coordination shell therefore appears as a fairly shallow
 two-dimensional ring, because the bins near the origin also collect distant pairs
 that happen to lie almost along $z$. Contrast in the map is weaker than in
@@ -91,9 +91,9 @@ $\pm 6$ Å window reaches $6\sqrt{2} = 8.49$ Å at its corners, so anything
 shorter leaves those corners permanently unvisited:
 
 ```python
-from molpy.compute import PMFTXY
+from molpy.compute import PmftXy
 
-analyzer = PMFTXY(x_max=6.0, y_max=6.0, n_x=40, n_y=40)
+analyzer = PmftXy(x_max=6.0, y_max=6.0, n_x=40, n_y=40)
 nl = mp.core.NeighborList(8.5)
 nl.build(frame.coords, frame.box)
 (counts, density, pmf), = analyzer.compute([frame], [nl.neighbors()])
@@ -102,7 +102,7 @@ print(counts.shape, pmf.shape)          # -> (40, 40) (40, 40)
 print(int(counts.sum()))                # -> 39708
 ```
 
-`PMFTXY` returns, **per frame**, a tuple of three `(n_x, n_y)` arrays. Keep them
+`PmftXy` returns, **per frame**, a tuple of three `(n_x, n_y)` arrays. Keep them
 apart in your head: `counts` is the raw histogram, `density` is that histogram
 normalized, and `pmf` is the free energy $-\ln(\text{density})$.
 
@@ -205,7 +205,7 @@ print(rods["orientations"].nrows, rods["atoms"].nrows)   # -> 400 400
 ```
 
 Get that length wrong and the error is unhelpful — a
-`ValueError: PMFTXY orientations length dimension mismatch: expected 207,
+`ValueError: PmftXy orientations length dimension mismatch: expected 207,
 got 200`, where 207 is simply the first atom index the kernel reached that had
 no row. If you see it, count rows against atoms.
 
@@ -260,7 +260,7 @@ logarithms.
 
 - Compute $w(r) = -\ln g(r)$ from the [RDF](rdf.md) page's argon data by hand and
   confirm the first-shell minimum is about $-1.1\,k_BT$.
-- Run `PMFTXY` on random points. The map should be flat to within noise, since
+- Run `PmftXy` on random points. The map should be flat to within noise, since
   uncorrelated particles have no free-energy landscape.
 - Halve `n_x` and `n_y` and watch how many bins stop being empty. That trade
   between resolution and statistics is the whole art of 2-D histogramming.

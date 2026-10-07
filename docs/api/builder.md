@@ -13,15 +13,15 @@ are private.
 
 | Symbol | Summary | Preferred for |
 |--------|---------|---------------|
-| `mp.builder.Assembler` | `Assembler(library, placer, orienter=None).assemble(sites, cls=None)`: one copy of `library[bead_type]` per site of an `mp.CoarseGrain`, each site bond joining one accepting port of each end; returns the world as `cls` (`mp.Graph` by default) | Every site-graph build: chains, blocks, rings, stars, combs, backmapping |
+| `mp.builder.Assembler` | `Assembler(library, placer, orienter=None).assemble(sites, cls=None)`: one copy of `library[bead_type]` per site of an `mp.CoarseGrain`, each site bond joining one accepting port of each end; returns the world as `cls` (`mp.MolGraph` by default) | Every site-graph build: chains, blocks, rings, stars, combs, backmapping |
 | `mp.builder.GrowthPlacer` | Grows each molecule breadth-first onto its parent's ports; needs no site positions | Topologies from CGsmiles notation |
 | `mp.builder.SitePlacer` | Puts each copy's centre of mass on its site | Sites with positions (a coarsened CG model) |
 | `mp.builder.AxisOrienter` | Turns each copy onto its site: backbone-to-centre along the site axis and joining atoms along the bonds for chain units; port directions fitted to bond directions for branch units | Backmapping with `SitePlacer` |
-| `mp.io.smiles.CGSmilesIR` | `.templates()` → name → ported `mp.Atomistic`; `.to_coarsegrain()` → site graph | Writing units and topologies |
-| `mp.io.smiles.SmilesIR.from_fragment` | `SmilesIR.from_fragment(body).to_template()` → one ported `mp.Atomistic` from a fragment body | Writing one unit |
+| `mp.io.cgsmiles.CgSmilesIr` | `.templates()` → name → ported `mp.Atomistic`; `.to_coarsegrain()` → site graph | Writing units and topologies |
+| `mp.io.smiles.SmilesIr.from_fragment` | `SmilesIr.from_fragment(body).to_template()` → one ported `mp.Atomistic` from a fragment body | Writing one unit |
 | `mp.perceive.SubgraphMatcher` / `mp.builder.Coarsener` | Find bead groups in a CG model; turn them into sites with a position and an axis | Site graphs from a CG model |
 | `SystemPlanner` / `PolydisperseChainGenerator` / `Chain` / `SystemPlan` | Sample a polydisperse chain plan to a target mass | Bulk / MW-distributed systems |
-| `SchulzZimmPolydisperse` / `FlorySchulzPolydisperse` / `PoissonPolydisperse` / `UniformPolydisperse` | Chain-length distributions (`MassDistribution` / `DPDistribution` protocols) | Choosing a molecular-weight distribution |
+| `SchulzZimmPolydisperse` / `FlorySchulzPolydisperse` / `PoissonPolydisperse` / `UniformPolydisperse` | Chain-length distributions (`MassDistribution` / `DpDistribution` protocols) | Choosing a molecular-weight distribution |
 | `WeightedSequenceGenerator` / `BlockSequenceGenerator` / `AlternatingSequenceGenerator` | Monomer sequences (`SequenceGenerator` protocol) | Copolymer composition |
 | `CarbonTubeBuilder` | `CarbonTubeBuilder(n, m, ...)` → `.build()` `Frame` + `.cell()` box | Zigzag, armchair, and chiral nanotubes |
 | `GrapheneBuilder` | `GrapheneBuilder(nx, ny, ...)` → `.build()` `Frame` + `.cell()` box | Rectangular graphene honeycomb sheet |
@@ -47,11 +47,11 @@ import molpy as mp
 
 conformer = mp.conformer.Conformer(seed=42)
 eo = conformer.generate(
-    mp.io.smiles.SmilesIR.from_fragment("[<]OCC[>]").to_template()
+    mp.io.smiles.SmilesIr.from_fragment("[<]OCC[>]").to_template()
 )[0]
 assert eo.n_ports == 2
 
-sites = mp.io.smiles.CGSmilesIR("{[#EO]|5}").to_coarsegrain()
+sites = mp.io.cgsmiles.CgSmilesIr("{[#EO]|5}").to_coarsegrain()
 assembler = mp.builder.Assembler({"EO": eo}, mp.builder.GrowthPlacer())
 chain = assembler.assemble(sites, mp.Atomistic)
 
@@ -130,7 +130,7 @@ planner = SystemPlanner(
 plan = planner.plan_system(np.random.default_rng(42))
 chains = [
     assembler.assemble(
-        mp.io.smiles.CGSmilesIR(
+        mp.io.cgsmiles.CgSmilesIr(
             "{" + "".join(f"[#{m}]" for m in chain.monomers) + "}"
         ).to_coarsegrain(),
         mp.Atomistic,

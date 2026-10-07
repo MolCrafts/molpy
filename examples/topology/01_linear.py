@@ -9,7 +9,7 @@ from eo_kit import library, report
 
 
 def main() -> None:
-    sites = mp.io.smiles.CGSmilesIR("{[#EO]|10}").to_coarsegrain()
+    sites = mp.io.cgsmiles.CgSmilesIr("{[#EO]|10}").to_coarsegrain()
     chain = mp.builder.Assembler(library(), mp.builder.GrowthPlacer()).assemble(
         sites, mp.Atomistic
     )

@@ -8,7 +8,7 @@ A ring bond closes the path: `{[#EO]1[#EO][#EO][#EO][#EO][#EO]1}` bonds the last
 import molpy as mp
 from eo_kit import library
 
-sites = mp.io.smiles.CGSmilesIR("{[#EO]1[#EO][#EO][#EO][#EO][#EO]1}").to_coarsegrain()
+sites = mp.io.cgsmiles.CgSmilesIr("{[#EO]1[#EO][#EO][#EO][#EO][#EO]1}").to_coarsegrain()
 ring = mp.builder.Assembler(library(), mp.builder.GrowthPlacer()).assemble(sites, mp.Atomistic)
 ```
 

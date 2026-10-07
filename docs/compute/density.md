@@ -136,7 +136,7 @@ frame.box = mp.Box.cube(20.0)
 ```
 
 `LocalDensity` takes frames and neighbor lists, and returns **one
-`(num_neighbors, density)` pair per frame** — two arrays of length $N$:
+`(n_neighbors, density)` pair per frame** — two arrays of length $N$:
 
 ```python
 from molpy.compute import LocalDensity

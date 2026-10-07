@@ -11,10 +11,9 @@ import numpy as np
 
 import molpy as mp
 from molpy.compute import Steinhardt
-from molpy.core import NeighborList
 
 from .lj import Trajectory
-from .structure import _frames, write_json
+from .structure import _frames, neighbors, write_json
 
 #: Ideal-lattice reference values, Steinhardt et al. (1983).
 FCC_REFERENCE = {"q4": 0.190941, "q6": 0.574524}
@@ -35,7 +34,7 @@ def _fcc_frame(cells: int = 5, lattice: float = 5.26) -> mp.Frame:
     )
     frame = mp.Frame()
     frame["atoms"] = {"x": xyz[:, 0], "y": xyz[:, 1], "z": xyz[:, 2]}
-    frame.box = mp.Box.cubic(cells * lattice)
+    frame.box = mp.Box.cube(cells * lattice)
     return frame
 
 
@@ -44,14 +43,14 @@ def steinhardt_contrast(trajectory: Trajectory) -> dict[str, float]:
     crystal = _fcc_frame()
     crystal_q = np.asarray(
         Steinhardt(l=[4, 6]).compute(
-            [crystal], [NeighborList(cutoff=4.5).compute(crystal)]
+            [crystal], [neighbors(crystal, 4.5)]
         )[0]["ql"]
     )
 
     frames = _frames(trajectory, stride=50)
     # 5.4 A is the first minimum of g(r): the defensible "first shell" cutoff.
     liquid = Steinhardt(l=[4, 6]).compute(
-        frames, [NeighborList(cutoff=5.4).compute(f) for f in frames]
+        frames, [neighbors(f, 5.4) for f in frames]
     )
     liquid_q4 = np.concatenate([np.asarray(r["ql"])[0] for r in liquid])
     liquid_q6 = np.concatenate([np.asarray(r["ql"])[1] for r in liquid])
@@ -87,11 +86,11 @@ def bond_order_diagram(trajectory: Trajectory) -> dict[str, float]:
     the map is emitted as the occupied cells only — that sparsity *is* the
     result, and a dense grid of zeros would hide it.
     """
-    from molpy.compute import BondOrder
+    from molpy.compute import BondOrientationalOrder
 
     crystal = _fcc_frame(cells=4)
-    counts, _, theta_edges, phi_edges = BondOrder(n_theta=36, n_phi=72).compute(
-        [crystal], [NeighborList(cutoff=4.5).compute(crystal)]
+    counts, _, theta_edges, phi_edges = BondOrientationalOrder(n_theta=36, n_phi=72).compute(
+        [crystal], [neighbors(crystal, 4.5)]
     )[0]
     counts = np.asarray(counts)
     theta = 0.5 * (np.asarray(theta_edges)[:-1] + np.asarray(theta_edges)[1:])
@@ -112,8 +111,8 @@ def bond_order_diagram(trajectory: Trajectory) -> dict[str, float]:
     liquid = np.sum(
         [
             np.asarray(r[0])
-            for r in BondOrder(n_theta=36, n_phi=72).compute(
-                frames, [NeighborList(cutoff=5.4).compute(f) for f in frames]
+            for r in BondOrientationalOrder(n_theta=36, n_phi=72).compute(
+                frames, [neighbors(f, 5.4) for f in frames]
             )
         ],
         axis=0,

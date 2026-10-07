@@ -18,7 +18,7 @@ what they added (counts, handle map) — not `self`, so do not chain them.
 ```python
 import molpy as mp
 
-mol = mp.io.smiles.SmilesIR("CCO").to_atomistic()
+mol = mp.io.smiles.SmilesIr("CCO").to_atomistic()
 mol.generate_topology(gen_angle=True, gen_dihedral=True)  # writes angles/dihedrals on mol
 work = mol.copy()                                         # independent graph
 work.generate_topology(gen_angle=True, clear_existing=True)  # mol is untouched
@@ -52,7 +52,26 @@ Keep functions under 50 lines and focused on one task. Keep files under 800 line
 
 ## Code identifiers
 
-Use `snake_case` for functions and variables, `PascalCase` for classes, `UPPER_CASE` for constants. Canonical data-field names such as `element`, `charge`, and `mol_id` are defined in [Naming Conventions](../tutorials/naming-conventions.md); do not introduce local variants in developer docs or extension examples. Use MolPy-specific terms precisely: `topology` means the bond graph (not "connections"), `atom type` means the force field identifier (not "kind"), `struct` refers to the MolPy `Struct` base class (not a generic "structure").
+Use `snake_case` for functions and variables, `PascalCase` for classes, `UPPER_CASE` for constants. Canonical data-field names such as `element`, `charge`, and `mol_id` are defined in [Naming Conventions](../tutorials/naming-conventions.md); do not introduce local variants in developer docs or extension examples. Use MolPy-specific terms precisely: `topology` means the bond graph (not "connections"), `atom type` means the force field identifier (not "kind").
+
+molpy follows molrs's naming rules (`tests/test_public_paths.py` checks the module and class names):
+
+- **A name states its job.** No module is named after a container word —
+  `data`, `base`, `types`, `common`, `utils`, `helpers`, `env` — public or
+  private: the bundled files are `molpy.resources`, the engine base class lives
+  in `engine/_engine.py`, the wrapper environment in `wrapper/_environment.py`.
+  Classes and functions follow (`EnvironmentSpec`, `process_environment`,
+  `TypeAssignment`, `source_forcefield`).
+- **Acronyms are cased as words**: `LammpsEngine`, `OpenmmEngine`,
+  `RdkitAdapter`, `TleapWrapper`, `SmilesIr`, `CgBond`, `Rdf`, `Msd`,
+  `Lbfgs`, `PairLjCut`. numpy's `DType` and `HBond` (H is the element) keep
+  their spelling.
+- **Counts are `n_*`** (numpy / freud): `n_atoms`, `n_pairs`, `n_rings()`,
+  `n_query_atoms` — never `num_*`.
+- **One door per file format**, named after the format:
+  `read_<fmt>[_<what>]` / `write_<fmt>[_<what>]`, `_str` / `_bytes` /
+  `_trajectory` for text, bytes and multi-frame input; no door picks a format
+  from a file extension.
 
 
 ## Type hints

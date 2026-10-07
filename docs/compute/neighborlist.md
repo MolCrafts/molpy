@@ -9,7 +9,7 @@ Doing that from scratch means comparing every atom with every other atom: for
 $N = 10^5$ atoms that is $5\times 10^9$ distance evaluations, and you would pay
 it again for each analysis. So MolPy separates the search from the analysis. The core
 `mp.core.NeighborList` finds the pairs once; [RDF](rdf.md), [LocalDensity](density.md),
-[Steinhardt](order.md), [Cluster](cluster.md), and [PMFTXY](pmft.md) all consume
+[Steinhardt](order.md), [Cluster](cluster.md), and [PmftXy](pmft.md) all consume
 the same object.
 
 ## What a pair means under periodic boundaries
@@ -118,10 +118,10 @@ Choosing the cutoff is therefore a physical decision, not a safety margin:
 
 | Consumer | Sensible cutoff |
 |---|---|
-| [`RDF(r_max=…)`](rdf.md) | exactly `r_max` — no more |
+| [`Rdf(r_max=…)`](rdf.md) | exactly `r_max` — no more |
 | [`Cluster`](cluster.md), [`Steinhardt`](order.md) | first minimum of $g(r)$ (5.4 Å for argon) |
 | [`LocalDensity`](density.md) | the length scale you want to smooth over |
-| [`PMFTXY`](pmft.md) | far enough to cover the free-energy well of interest |
+| [`PmftXy`](pmft.md) | far enough to cover the free-energy well of interest |
 
 ## Building one
 
@@ -176,7 +176,7 @@ The frame has no box. Neighbour search needs to know how space wraps. Set
 `frame.box = mp.Box.cube(L)`.
 
 **Histograms are truncated at some radius.**
-The cutoff is smaller than the consumer's `r_max`. `RDF` and friends can only
+The cutoff is smaller than the consumer's `r_max`. `Rdf` and friends can only
 see pairs the list contains; they do not go back for more.
 
 **Coordination numbers come out roughly double what you expect.**

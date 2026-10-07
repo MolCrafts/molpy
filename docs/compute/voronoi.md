@@ -62,7 +62,7 @@ spike; a broad tail is a signature of disorder.
 Two further things come free. The **number of faces** of a cell is a
 parameter-free coordination number — no cutoff, no first-minimum argument. And
 **face adjacency** is a natural definition of "neighbour", which is what
-`voronoi_domains` builds on.
+`VoronoiDomainAnalysis` builds on.
 
 ## Computing it
 
@@ -91,7 +91,7 @@ The volumes sum to the box volume to the digit, and the mean is $V/N = 20$ Å³.
 Run that assertion on your own system before anything else: if it fails, the box
 or the coordinates are wrong and nothing downstream is worth reading.
 
-`cells.neighbors` holds the face-adjacency lists and `cells.total_volume` the
+`cells.neighbors(i)` lists the cells face-adjacent to cell `i` and `cells.total_volume` the
 sum. For a mixture, pass real radii — that is the point of the radical
 construction:
 
@@ -106,13 +106,13 @@ Cell volume now correlates with particle radius. With `radii = 0` it does not.
 
 ### Domains and voids
 
-`voronoi_domains` merges face-adjacent cells that share a label — use it to turn
+`VoronoiDomainAnalysis().analyze(cells, labels)` merges face-adjacent cells that share a label — use it to turn
 a per-atom classification (say solid/liquid from [Order](order.md)) into
 connected regions without inventing another cutoff. It returns `sizes`,
 `count`, `largest_fraction`, and `domain_of`.
 
-`voronoi_voids` does the same for empty space: give it a per-cell boolean mask
-marking probe cells as void, and it merges them into cavities, returning
+`VoronoiVoidAnalysis().analyze(cells, is_void, box_volume)` does the same for
+empty space: give it a per-cell boolean mask marking probe cells as void, and it merges them into cavities, returning
 `cavity_volumes`, `total_void_volume`, and `void_fraction`. That is the
 parameter-free route to porosity in a framework material.
 

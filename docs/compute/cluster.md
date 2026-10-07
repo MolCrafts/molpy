@@ -108,7 +108,7 @@ nl = mp.core.NeighborList(2.0)
 nl.build(frame.coords, frame.box)
 nlist = nl.neighbors()
 result, = Cluster(min_cluster_size=5).compute([frame], [nlist])
-print(result.num_clusters)                      # -> 3
+print(result.n_clusters)                      # -> 3
 print(sorted(np.asarray(result.cluster_sizes).tolist()))    # -> [40, 40, 40]
 ```
 
@@ -122,7 +122,7 @@ print(labels.shape, len(set(labels.tolist())))  # -> (120,) 3
 ```
 
 `min_cluster_size` discards components smaller than the threshold. Use it to
-drop monomers, but be aware it changes `num_clusters` — it is a reporting
+drop monomers, but be aware it changes `n_clusters` — it is a reporting
 filter, not part of the physics.
 
 ### Per-cluster properties in one call
@@ -166,12 +166,12 @@ report the transition itself rather than a number from inside it.
 
 **A single molecule is reported as two clusters.**
 It straddles a periodic boundary and you unwrapped it wrongly — or not at all.
-Cluster *identification* is fine under minimum image, so `num_clusters` is
+Cluster *identification* is fine under minimum image, so `n_clusters` is
 right; it is the per-cluster *shape* that breaks. [Shape](shape.md) gives the
 `unwrap_cluster` recipe — fold each cluster about one of its own atoms before
 measuring anything geometric.
 
-**`num_clusters` disagrees with the number of components you expected.**
+**`n_clusters` disagrees with the number of components you expected.**
 `min_cluster_size` is filtering. Set it to 1 to see everything.
 
 ## Check yourself

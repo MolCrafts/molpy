@@ -6,13 +6,13 @@ Geometry optimization with the native L-BFGS minimizer.
 
 | Symbol | Summary | Preferred for |
 |--------|---------|---------------|
-| `LBFGS` | Limited-memory BFGS over the `Potentials` compiled for a frame | Geometry relaxation of small/medium structures |
-| `OptReport` | Outcome record: `converged`, `final_energy`, `final_fmax`, `n_steps` | Inspecting why a run stopped |
+| `Lbfgs` | Limited-memory BFGS over the `Potentials` compiled for a frame | Geometry relaxation of small/medium structures |
+| `OptimizationReport` | Outcome record: `converged`, `final_energy`, `final_fmax`, `n_steps` | Inspecting why a run stopped |
 
 Both live in `mp.optimize`, the mirror of `molrs.optimize`
-(`mp.optimize.LBFGS is molrs.optimize.LBFGS`); see the
+(`mp.optimize.Lbfgs is molrs.optimize.Lbfgs`); see the
 [user guide](../user-guide/08_geometry_optimization.md) for the composition
-(typify → `PotentialCompiler(ff).compile(frame)` → `run`).
+(typify → `PotentialCompiler(ff).compile(frame)` → `minimize`).
 
 ## Related
 
@@ -22,6 +22,6 @@ Both live in `mp.optimize`, the mirror of `molrs.optimize`
 
 ## Full API
 
-::: molpy.optimize.LBFGS
+::: molpy.optimize.Lbfgs
 
-::: molpy.optimize.OptReport
+::: molpy.optimize.OptimizationReport

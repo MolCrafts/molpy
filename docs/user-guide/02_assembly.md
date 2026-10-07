@@ -31,7 +31,7 @@ conformer = mp.conformer.Conformer(seed=42)
 
 def unit(body: str) -> mp.Atomistic:
     """One CGsmiles fragment body as a 3D molecule with hydrogens and ports."""
-    return conformer.generate(mp.io.smiles.SmilesIR.from_fragment(body).to_template())[0]
+    return conformer.generate(mp.io.smiles.SmilesIr.from_fragment(body).to_template())[0]
 
 
 eo = unit("[<]OCC[>]")  # -O-CH2-CH2-
@@ -42,8 +42,8 @@ for port in eo.ports:
 # C H >
 ```
 
-`SmilesIR.from_fragment(body).to_template()` returns the fragment body as a ported
-`mp.Atomistic`; `CGSmilesIR(s).templates()` returns a dict from fragment name to one
+`SmilesIr.from_fragment(body).to_template()` returns the fragment body as a ported
+`mp.Atomistic`; `CgSmilesIr(s).templates()` returns a dict from fragment name to one
 such template for every fragment a CGsmiles string defines. Whether two ports may join is decided by their kind, label and order:
 
 | Port | Joins |
@@ -88,7 +88,7 @@ copy is turned and moved so that the anchor of its port lands on its parent's le
 handle, pointing back along that bond.
 
 ```python
-sites = mp.io.smiles.CGSmilesIR("{[#EO]|10}").to_coarsegrain()
+sites = mp.io.cgsmiles.CgSmilesIr("{[#EO]|10}").to_coarsegrain()
 chain = mp.builder.Assembler({"EO": eo}, mp.builder.GrowthPlacer()).assemble(sites, mp.Atomistic)
 print(chain.n_atoms, chain.n_ports)  # 72 2
 ```
@@ -118,7 +118,7 @@ for i in range(5):
         cg.def_cgbond(previous, backbone)
     previous = backbone
 
-groups = mp.perceive.SubgraphMatcher(mp.io.smiles.CGSmilesIR("{[#1][#2]}").to_coarsegrain()).find(cg)
+groups = mp.perceive.SubgraphMatcher(mp.io.cgsmiles.CgSmilesIr("{[#1][#2]}").to_coarsegrain()).find(cg)
 sites = mp.builder.Coarsener(cg).coarsen(groups, ["MMA"] * len(groups))
 
 mma = unit("[<]CC([>])(C)C(=O)OC")
@@ -163,8 +163,8 @@ Every atom of the world gets two integer ids:
 - `mol_id` — its connected component, counted from 1.
 
 ```python
-sites = mp.io.smiles.CGSmilesIR("{[#EO]|3}").to_coarsegrain()
-sites.merge(mp.io.smiles.CGSmilesIR("{[#EO]|4}").to_coarsegrain())
+sites = mp.io.cgsmiles.CgSmilesIr("{[#EO]|3}").to_coarsegrain()
+sites.merge(mp.io.cgsmiles.CgSmilesIr("{[#EO]|4}").to_coarsegrain())
 two = mp.builder.Assembler({"EO": eo}, mp.builder.GrowthPlacer()).assemble(sites, mp.Atomistic)
 atoms = two.to_frame()["atoms"]
 print(sorted(set(atoms["frag_id"].tolist())))  # [0, 1, 2, 3, 4, 5, 6]
@@ -175,7 +175,7 @@ print(sorted(set(atoms["mol_id"].tolist())))  # [1, 2]
 
 `assemble(sites, cls)` builds the world as the class you name: `mp.Atomistic` for atomistic
 units, `mp.CoarseGrain` when the units are themselves CG templates (every node carries a
-`bead_type`), and `mp.Graph` when `cls` is omitted. Pass the class you intend to use next; the
+`bead_type`), and `mp.MolGraph` when `cls` is omitted. Pass the class you intend to use next; the
 typifiers, writers and minimisers take an `mp.Atomistic`.
 
 ## Polydisperse systems

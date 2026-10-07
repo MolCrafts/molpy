@@ -12,7 +12,7 @@ from __future__ import annotations
 import numpy as np
 
 import molpy as mp
-from molpy.compute import AngleDistribution
+from molpy.compute import DistributionFunction
 
 from .lj import Trajectory
 from .structure import write_json
@@ -35,7 +35,7 @@ def solid_angle_jacobian(_trajectory: Trajectory) -> dict[str, float]:
     xyz[0::3], xyz[1::3], xyz[2::3] = first, middle, third
     frame = mp.Frame()
     frame["atoms"] = {"x": xyz[:, 0], "y": xyz[:, 1], "z": xyz[:, 2]}
-    frame.box = mp.Box.cubic(1000.0)
+    frame.box = mp.Box.cube(1000.0)
     index = np.arange(3 * n_triplets, dtype=np.uint32).reshape(n_triplets, 3)
     frame["angles"] = {
         "atomi": index[:, 0],
@@ -43,9 +43,8 @@ def solid_angle_jacobian(_trajectory: Trajectory) -> dict[str, float]:
         "atomk": index[:, 2],
     }
 
-    # The kernel bins radians; the constructor's 0..180 default is a degrees
-    # range bolted onto it, so the range must be given explicitly as 0..pi.
-    result = AngleDistribution(n_bins=90, min=0.0, max=float(np.pi)).compute([frame])
+    # Angles are binned in radians over their natural range 0..pi.
+    result = DistributionFunction("angle", n_bins=90).compute([frame])
     centers = np.asarray(result.bin_centers)
     density = np.asarray(result.density)
     corrected = np.asarray(result.density_sin_corrected)

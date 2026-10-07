@@ -58,7 +58,7 @@ The diagram below illustrates the standard data flow through a MolPy pipeline. E
 
 ```text
 SMILES / CGsmiles / file
-        │  mp.io.read_* · mp.io.smiles.SmilesIR · mp.io.smiles.CGSmilesIR
+        │  mp.io.read_* · mp.io.smiles.SmilesIr · mp.io.cgsmiles.CgSmilesIr
         ▼
 ┌───────────────────────────┐
 │ Atomistic                 │  editable molecular graph:
@@ -103,7 +103,7 @@ LAMMPS / GROMACS / PDB / *.mrec files
 | **Trajectory** | An ordered sequence of `Frame` objects | [Trajectory](05_trajectory.md) |
 | **Selector** | Composable, predicate-based atom filters over `Block` columns | [Selector](06_selector.md) |
 | **Wrapper & Adapter** | Subprocess execution boundaries and in-memory representation bridges to external tools | [Wrapper and Adapter](07_wrapper_and_adapter.md) |
-| **CoarseGrain** | `Bead` / `CGBond` graph for coarse-grained models | [Coarse-Grained Structure](08_coarsegrain.md) |
+| **CoarseGrain** | `Bead` / `CgBond` graph for coarse-grained models | [Coarse-Grained Structure](08_coarsegrain.md) |
 | **Units** | Unit-system presets and explicit quantity conversion | [Units](09_units.md) |
 
 ## Appendix

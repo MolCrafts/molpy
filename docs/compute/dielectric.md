@@ -69,7 +69,7 @@ relaxation time, which makes every number here checkable:
 
 ```python
 import numpy as np
-from molpy.compute import Dielectric
+from molpy.compute import static_dielectric_constant
 
 rng = np.random.default_rng(0)
 n_frames, dt, tau_true = 20000, 10.0, 500.0        # frames, fs, fs
@@ -81,7 +81,7 @@ for i in range(1, n_frames):                        # bounded, not a random walk
 M = np.ascontiguousarray(M)
 
 volume, temperature = 2.69e4, 298.15                # Å³, K
-eps_static = Dielectric.static_dielectric_constant(
+eps_static = static_dielectric_constant(
     M, volume=volume, temperature=temperature, epsilon_inf=1.0
 )
 print(round(float(eps_static), 3))                  # -> 1.1
@@ -102,11 +102,11 @@ example passes it:
 
 ```python
 half = n_frames // 2
-first = Dielectric.static_dielectric_constant(
+first = static_dielectric_constant(
     np.ascontiguousarray(M[:half]), volume=volume,
     temperature=temperature, epsilon_inf=1.0
 )
-second = Dielectric.static_dielectric_constant(
+second = static_dielectric_constant(
     np.ascontiguousarray(M[half:]), volume=volume,
     temperature=temperature, epsilon_inf=1.0
 )
@@ -314,8 +314,8 @@ print(M_solvent.shape, M_ions.shape)          # -> (200, 3) (200, 3)
 
 `M_solvent` goes into `static_dielectric_constant` and the spectrum;
 `M_ions` goes into [`EinsteinConductivity`](pmsd.md).
-`Dielectric.compute_dipole_moment` does the same sum for a whole frame, and
-`Dielectric.decompose_current` splits an already-assembled current series the
+`dipole_moment(charges, positions)` does the same sum for one configuration, and
+`decompose_current` splits an already-assembled current series the
 same way.
 
 The positions above must be **unwrapped per molecule**, as described earlier —
@@ -336,10 +336,10 @@ percent. Quote them.
 
 | Step | Entry point |
 |---|---|
-| Dipole $\mathbf{M}=\sum q_i\mathbf{r}_i$ | `Dielectric.compute_dipole_moment` |
-| Current density $\mathbf{J}=\dot{\mathbf{M}}/V$ | `Dielectric.compute_current_density` |
-| Split solvent / ion series | `Dielectric.decompose_current` |
-| Static $\varepsilon(0)$ | `Dielectric.static_dielectric_constant` |
+| Dipole $\mathbf{M}=\sum q_i\mathbf{r}_i$ | `dipole_moment` |
+| Current density $\mathbf{J}=\dot{\mathbf{M}}/V$ | `current_density` |
+| Split solvent / ion series | `decompose_current` |
+| Static $\varepsilon(0)$ | `static_dielectric_constant` |
 | Raw dipole ACF | `DebyeRelaxation` |
 | $\varepsilon^*(\omega)$, dipole route | `EinsteinHelfandSpectrum` |
 | Raw current ACF | `GreenKuboConductivity` |

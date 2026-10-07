@@ -1,12 +1,15 @@
 # Adding an I/O Format
 
-`mp.io` has one door per format and direction: `read_X` / `write_X` for one
-frame, `read_X_trajectory` / `write_X_trajectory` for a sequence. There are no
-reader or writer classes to subclass. Parsing and serialization belong in the
+`mp.io` has one door per format and direction, named after the format:
+`read_<fmt>[_<what>]` / `write_<fmt>[_<what>]` for a path (`read_pdb`,
+`read_lammps_data`, `read_gromacs_top_forcefield`), `_str` for text in memory
+(`read_smiles_str`), `_bytes` for bytes and `_trajectory` for every frame of a
+multi-frame file. No door picks a format for the caller from a file
+extension. There are no reader or writer classes to subclass. Parsing and serialization belong in the
 native core (molrs): `mp.io` mirrors `molrs.io` by identity, force-field
 formats included (`mp.ff.forcefield` is the `ForceField` data model only). A
 class that belongs to one format lives in that format's submodule
-(`mp.io.smiles`, `mp.io.log`, `mp.io.mrec`, …), mirrored by a molpy module of
+(`mp.io.smiles`, `mp.io.lammps`, `mp.io.mrec`, …), mirrored by a molpy module of
 the same name.
 
 ## A new format goes into molrs
@@ -48,7 +51,7 @@ function.
 ## Canonical field names
 
 The data model uses one column vocabulary, molrs's: `mp.core.keys` is
-`molrs.store.keys` (`mp.core.keys.CHARGE.key == "charge"`), and `mp.core.schema` says
+`molrs.core.keys` (`mp.core.keys.CHARGE.key == "charge"`), and `mp.core.schema` says
 each column's dtype. Every native reader emits these names — it maps a
 format's own spelling (`q`, `mol`, `resSeq`) at the boundary — and every
 writer takes them:
@@ -68,8 +71,8 @@ Key canonical fields: `charge` (not `q`), `mol_id` (not `mol`), `id`, `type`,
 Every force-field reader and writer — LAMMPS `*.ff` includes and data-file
 `* Coeffs`, GROMACS directives and systems, OpenMM XML, AMBER prmtop / frcmod
 — is a native molrs function on `mp.io`, by identity
-(`read_forcefield_xml` / `write_forcefield_xml`, `read_gromacs_top_ff` /
-`write_gromacs_top_ff`, the LAMMPS family). The
+(`read_openmm_xml_forcefield` / `write_openmm_xml_forcefield`, `read_gromacs_top_forcefield` /
+`write_gromacs_top_forcefield`, the LAMMPS family). The
 LAMMPS writers take the system as well: the coefficients written are selected by
 the frame's type labels, each matched to a type name exactly. The pair cutoff is
 a run setting the caller declares on the pair styles; no reader or writer
@@ -78,7 +81,7 @@ invents one.
 ```python
 import molpy as mp
 
-ff = mp.io.read_forcefield_xml(mp.data.get_path("forcefield/tip3p.xml"))
+ff = mp.io.read_openmm_xml_forcefield(mp.resources.get_path("forcefield/tip3p.xml"))
 water = mp.Frame(
     blocks={
         "atoms": {

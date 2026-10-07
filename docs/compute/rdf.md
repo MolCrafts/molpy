@@ -171,7 +171,7 @@ defensible definition of "in contact" for [Cluster](cluster.md),
 
 ## Computing it
 
-`RDF` histograms distances that a [`NeighborList`](neighborlist.md) has already
+`Rdf` histograms distances that a [`NeighborList`](neighborlist.md) has already
 found, so the two are always used together. Build the frame first:
 
 ```python
@@ -193,12 +193,12 @@ That is a perfect FCC crystal, which makes a good first test: you know the
 answer in advance. Now histogram it.
 
 ```python
-from molpy.compute import RDF
+from molpy.compute import Rdf
 
 nl = mp.core.NeighborList(8.0)
 nl.build(frame.coords, frame.box)
 nlist = nl.neighbors()
-result = RDF(n_bins=160, r_max=8.0).compute([frame], [nlist])
+result = Rdf(n_bins=160, r_max=8.0).compute([frame], [nlist])
 
 r, g = result.bin_centers, result.rdf
 peaks = r[g > 0.1]
@@ -210,7 +210,7 @@ $a/\sqrt{2} = 3.72$, $a = 5.26$, $a\sqrt{3/2} = 6.44$, and $a\sqrt{2} = 7.44$ Å
 The peaks land on them. A crystal gives sharp spikes at the lattice distances
 and never decays to 1 — exactly the third row of the table above.
 
-`RDF` takes **lists** of frames and neighbor lists, and averages over them, so a
+`Rdf` takes **lists** of frames and neighbor lists, and averages over them, so a
 trajectory is the same call with longer lists:
 
 ```python
@@ -220,7 +220,7 @@ nlists = []
 for f in frames:
     nl.build(f.coords, f.box)
     nlists.append(nl.neighbors())
-averaged = RDF(n_bins=160, r_max=8.0).compute(frames, nlists)
+averaged = Rdf(n_bins=160, r_max=8.0).compute(frames, nlists)
 print(averaged.n_frames)                       # -> 2
 ```
 
@@ -276,7 +276,7 @@ you have already counted. Keep $r_\max \le L/2$. For the 28.9 Å argon box that
 means 14 Å, which is why Figure 1 stops there.
 
 **The curve is truncated or drops to zero early.**
-The neighbor list cutoff is smaller than `r_max`. `RDF` can only histogram pairs
+The neighbor list cutoff is smaller than `r_max`. `Rdf` can only histogram pairs
 the neighbor list found. Set the cutoff at least equal to `r_max`.
 
 **The first peak is low and broad, and the coordination number is too small.**

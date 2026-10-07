@@ -12,7 +12,7 @@ This page is the only place those integrations are documented as prerequisites.
 
 | Task | Use |
 |------|-----|
-| Parse SMILES / SMARTS | `mp.io.smiles.SmilesIR`, `mp.perceive.SmartsPattern` |
+| Parse SMILES / SMARTS | `mp.io.smiles.SmilesIr`, `mp.perceive.SmartsPattern` |
 | 3D coordinates | `mp.conformer.Conformer` |
 | Polymer assembly | `mp.builder.Assembler` on a CGsmiles site graph (native); see [Polymer Topologies](../user-guide/topology/index.md) |
 | Pack a box | [molpack](https://docs.molcrafts.org/molpack/) (`molcrafts-molpack`, installed separately) |
@@ -32,9 +32,9 @@ tleap `sequence`:
 | Surface | Role |
 |---------|------|
 | `molpy.ff.typifier.AntechamberTypifier` | antechamber (types + charges) → parmchk2 → tleap for one complete molecule; net charge from the atoms' formal charges |
-| `molpy.ff.typifier.TLeapTypifier` | tleap only, for a finished graph whose atoms already carry AMBER types and charges; a graph with ports is refused |
+| `molpy.ff.typifier.TleapTypifier` | tleap only, for a finished graph whose atoms already carry AMBER types and charges; a graph with ports is refused |
 | `molpy.builder.AmberPolymerBuilder` | antechamber + parmchk2 on an oligomer, prepgen per residue (`AmberCut`), tleap `sequence` over a linear site graph; `AmberPieces` writes the oligomer and cuts from three SMILES |
-| `molpy.wrapper` (`AntechamberWrapper`, `Parmchk2Wrapper`, `PrepgenWrapper`, `TLeapWrapper`, `SanderWrapper`) | Thin subprocess wrappers |
+| `molpy.wrapper` (`AntechamberWrapper`, `Parmchk2Wrapper`, `PrepgenWrapper`, `TleapWrapper`, `SanderWrapper`) | Thin subprocess wrappers |
 
 Install AmberTools in its own conda env (example):
 
@@ -51,7 +51,7 @@ Pass the env into the typifier when you construct it:
 import molpy as mp
 
 mol, _ = mp.conformer.Conformer(add_hydrogens=True, seed=42).generate(
-    mp.io.smiles.SmilesIR("CCO").to_atomistic()
+    mp.io.smiles.SmilesIr("CCO").to_atomistic()
 )  # antechamber needs 3D coordinates
 ante = mp.ff.typifier.AntechamberTypifier(
     atom_type="gaff2", charge_method="bcc",
@@ -76,14 +76,14 @@ a binary is optional:
 
 | Engine | Generate | Run |
 |--------|----------|-----|
-| `LAMMPSEngine` | control script + data/ff you already wrote | `lmp` / `lmp_serial` on `PATH` |
-| `CP2KEngine` | CP2K input | `cp2k` on `PATH` |
-| `OpenMMEngine` | PDB + XML + `simulate.py` | Python with `openmm` importable for `run` / `serialize_system` |
+| `LammpsEngine` | control script + data/ff you already wrote | `lmp` / `lmp_serial` on `PATH` |
+| `Cp2kEngine` | CP2K input | `cp2k` on `PATH` |
+| `OpenmmEngine` | PDB + XML + `simulate.py` | Python with `openmm` importable for `run` / `serialize_system` |
 
 ```python
-from molpy.engine import LAMMPSEngine
+from molpy.engine import LammpsEngine
 
-engine = LAMMPSEngine(check_executable=False) # generate / write only
+engine = LammpsEngine(check_executable=False) # generate / write only
 # engine.run(script, workdir="run") # needs a LAMMPS binary
 ```
 

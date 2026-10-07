@@ -14,10 +14,10 @@ import numpy as np
 import molpy as mp
 from molpy.compute import (
     LocalDensity,
-    RDF,
+    Rdf,
     StaticStructureFactorDebye,
 )
-from molpy.core import NeighborList
+from molpy.core import NeighborList, Neighbors
 
 from .lj import Trajectory
 from .run import DOCS_DATA
@@ -41,9 +41,16 @@ def _frames(trajectory: Trajectory, stride: int = STRUCTURE_STRIDE) -> list[mp.F
     for xyz in trajectory.wrapped[::stride]:
         frame = mp.Frame()
         frame["atoms"] = {"x": xyz[:, 0], "y": xyz[:, 1], "z": xyz[:, 2]}
-        frame.box = mp.Box.cubic(trajectory.box_length)
+        frame.box = mp.Box.cube(trajectory.box_length)
         frames.append(frame)
     return frames
+
+
+def neighbors(frame: mp.Frame, cutoff: float) -> Neighbors:
+    """The half-shell pair table of ``frame`` within ``cutoff``."""
+    nl = NeighborList(float(cutoff))
+    nl.build(frame.coords, frame.box)
+    return nl.neighbors()
 
 
 def radial_distribution(trajectory: Trajectory) -> dict[str, float]:
@@ -52,8 +59,8 @@ def radial_distribution(trajectory: Trajectory) -> dict[str, float]:
     # Stay just inside L/2: the last bins of a minimum-image histogram are
     # distorted by the corners of the periodic cell.
     r_max = np.floor(trajectory.box_length / 2.0)
-    neighbors = [NeighborList(cutoff=r_max).compute(frame) for frame in frames]
-    result = RDF(n_bins=int(r_max / 0.05), r_max=r_max).compute(frames, neighbors)
+    nlists = [neighbors(frame, r_max) for frame in frames]
+    result = Rdf(n_bins=int(r_max / 0.05), r_max=r_max).compute(frames, nlists)
 
     r = np.asarray(result.bin_centers)
     g = np.asarray(result.rdf)
@@ -101,7 +108,7 @@ def neighbor_cost(trajectory: Trajectory) -> dict[str, float]:
     ratios: list[float] = []
     for cutoff in np.arange(3.0, trajectory.box_length / 2.0 + 0.01, 0.5):
         measured = (
-            2.0 * NeighborList(cutoff=float(cutoff)).compute(frame).n_pairs / n_atoms
+            2.0 * neighbors(frame, float(cutoff)).n_pairs / n_atoms
         )
         ideal = density * 4.0 / 3.0 * np.pi * cutoff**3
         ratios.append(float(measured / ideal))
@@ -137,8 +144,8 @@ def local_density(trajectory: Trajectory) -> dict[str, float]:
     rows: list[dict[str, float | str]] = []
     summary: dict[str, float] = {"bulk": float(bulk)}
     for probe in (4.0, 8.0):
-        neighbors = [NeighborList(cutoff=probe).compute(frame) for frame in frames]
-        per_frame = LocalDensity(r_max=probe).compute(frames, neighbors)
+        nlists = [neighbors(frame, probe) for frame in frames]
+        per_frame = LocalDensity(r_max=probe).compute(frames, nlists)
         values = np.concatenate([np.asarray(density) for _, density in per_frame])
         counts, edges = np.histogram(values, bins=40, range=(0.0, 0.045), density=True)
         centers = 0.5 * (edges[:-1] + edges[1:])

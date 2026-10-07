@@ -7,10 +7,10 @@ neighbour list, a mean squared displacement from a trajectory, a dipole moment
 from positions and charges.
 
 !!! important "Science lives in molrs"
-    Transport, dielectric, VACF, and spectral kernels are implemented once in
+    Transport, dielectric, `Vacf`, and spectral kernels are implemented once in
     **molrs** and re-exported (identity) into `molpy.compute`. Do **not** add a
     parallel Python recipe class that reimplements Green–Kubo, Einstein
-    conductivity, or dielectric spectra. Prefer a molrs `Compute` + `Fit`
+    conductivity, or dielectric spectra. Prefer a molrs `Compute` + `LinearFit`
     composition; molpy only wraps frame extraction when needed.
 
 ## The contract: one method, called `compute`
@@ -58,13 +58,13 @@ dispatch in a loop.
 
 | Need | Shape | Example |
 |------|-------|---------|
-| Analysis with a molrs kernel | re-export the molrs class by identity | `MSD`, `RDF`, `EinsteinConductivity`, `Onsager` |
+| Analysis with a molrs kernel | re-export the molrs class by identity | `Msd`, `Rdf`, `EinsteinConductivity`, `OnsagerCorrelation` |
 | Analysis molpy owns (no kernel in molrs) | plain class with `compute(...)` | the `CollectiveDipole` example below |
 | Pure array math with no owner | module-level function | `signal.acf_fft` |
 
 A molrs class that already carries its own verb keeps it — `RadicalVoronoi`
 builds with `build(...)`, `VoronoiIntegration` with `integrate(...)`,
-`LinearFit` with `fit(...)`, `Onsager` with `correlation(...)`. Those are molrs
+`LinearFit` with `fit(...)`, `KramersKronig` with `check(...)`. Those are molrs
 contracts, not molpy's to rename. Wrapping one of them in a molpy class whose
 only content is a one-line forward is a façade, not an operator: re-export the
 molrs class instead.

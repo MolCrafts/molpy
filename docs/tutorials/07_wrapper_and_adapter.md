@@ -21,7 +21,7 @@ The examples below share this setup:
 ```python
 import molpy as mp
 
-mol = mp.io.smiles.SmilesIR("CCO").to_atomistic()
+mol = mp.io.smiles.SmilesIr("CCO").to_atomistic()
 ```
 
 ```python
@@ -87,19 +87,19 @@ The example is deliberately simple. The important point is not the data format �
 ## Real-world adapter: reaching RDKit's own algorithms
 
 An adapter earns its keep when you need an algorithm MolPy does not implement.
-`RDKitAdapter` bridges an `Atomistic` to an RDKit `Mol`, lets RDKit work on its
+`RdkitAdapter` bridges an `Atomistic` to an RDKit `Mol`, lets RDKit work on its
 own object, and brings the result back. RDKit is an optional extra — molpy
 never requires it.
 
 ```python
 # docs: skip — RDKit optional adapter example; not unit-tested
 import molpy as mp
-from molpy.adapter import RDKitAdapter
+from molpy.adapter import RdkitAdapter
 from rdkit.Chem import AllChem
 
-mol = mp.io.smiles.SmilesIR("CCO").to_atomistic()
+mol = mp.io.smiles.SmilesIr("CCO").to_atomistic()
 
-adapter = RDKitAdapter(internal=mol)
+adapter = RdkitAdapter(internal=mol)
 rd_mol = adapter.get_external()
 
 AllChem.EmbedMolecule(rd_mol)

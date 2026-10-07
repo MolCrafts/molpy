@@ -25,7 +25,7 @@ Averaging over **particles** $i$ is obvious: 500 atoms give 500 samples.
 Averaging over **starting times** $t$ is the one people forget. A 30 ps
 trajectory contains only one 30 ps interval, but it contains thousands of 1 ps
 intervals — every frame is a legitimate starting point. Using all of them is
-what `MSD(method="window")` does, and it is why the short-lag end of an MSD
+what `Msd(method="window")` does, and it is why the short-lag end of an MSD
 curve is smooth while the long-lag end is ragged.
 
 Note also that displacement is squared, not signed. A random walk goes nowhere
@@ -159,7 +159,7 @@ averaging over trajectory segments is how you would get one.
 
 ## Unwrapped coordinates are not optional
 
-`MSD` measures real displacements. That only works if each atom’s path is a
+`Msd` measures real displacements. That only works if each atom’s path is a
 **continuous** trajectory through space.
 
 In practice, dynamics dumps are already written that way: LAMMPS
@@ -170,10 +170,10 @@ with no-jump, etc. A normal analysis pipeline is therefore:
 # docs: skip — needs your own trajectory file
 import numpy as np
 from molpy.io import read_lammps_trajectory
-from molpy.compute import MSD
+from molpy.compute import Msd
 
 frames = read_lammps_trajectory("run.lammpstrj").read_all()
-series = MSD(method="window").compute(frames)
+series = Msd(method="window").compute(frames)
 msd = np.asarray(series.mean)
 lag = np.arange(len(msd)) * 10.0   # fs, whatever Δt your dump used
 ```
@@ -200,7 +200,7 @@ that far in one dump interval.
 
 ## Choosing the estimator
 
-`MSD` offers two estimators and they are not interchangeable.
+`Msd` offers two estimators and they are not interchangeable.
 
 | `method` | Definition | Use when |
 |---|---|---|
@@ -212,7 +212,7 @@ estimator has exactly one sample at the longest lag, while the windowed one has
 $T - \tau$ of them, and it costs $\mathcal{O}(T\log T)$ rather than
 $\mathcal{O}(T^2)$ because it goes through an FFT.
 
-The result is an `MSDTimeSeries`; `series.mean` is the curve, one value per lag,
+The result is an `MsdTimeSeries`; `series.mean` is the curve, one value per lag,
 with lag $k$ corresponding to $k \times \Delta t$ in the time unit of your dump
 spacing.
 

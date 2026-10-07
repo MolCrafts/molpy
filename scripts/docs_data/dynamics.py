@@ -48,7 +48,7 @@ def van_hove(trajectory: Trajectory) -> dict[str, float]:
 
 def voronoi_volumes(trajectory: Trajectory) -> dict[str, float]:
     """Distribution of Voronoi cell volumes in the liquid."""
-    box = mp.Box.cubic(trajectory.box_length)
+    box = mp.Box.cube(trajectory.box_length)
     volumes: list[np.ndarray] = []
     for xyz in trajectory.wrapped[::100]:
         cells = RadicalVoronoi().build(
@@ -166,7 +166,7 @@ def rotational_relaxation(_trajectory: Trajectory) -> dict[str, float]:
         pos = np.concatenate([centres - 0.5 * axis, centres + 0.5 * axis])
         frame = mp.Frame()
         frame["atoms"] = {"x": pos[:, 0], "y": pos[:, 1], "z": pos[:, 2]}
-        frame.box = mp.Box.cubic(200.0)
+        frame.box = mp.Box.cube(200.0)
         frame["bonds"] = bonds
         frames.append(frame)
 

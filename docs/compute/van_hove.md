@@ -123,7 +123,7 @@ print(g_self.shape)    # -> (n_lags, n_rbins), one row per requested lag
 Useful fields: `g_self`, `g_distinct` (when requested), `r_centers`, `r_edges`,
 `dr`, `lags`. Each self-part row should integrate to 1 over $r$ — check
 `(g_self[i] * dr).sum()`. The second moment $\int r^{2} G_s(r,t)\,\mathrm{d}r$
-is the MSD at that lag, so it should match [`MSD`](msd.md) on the same frames.
+is the MSD at that lag, so it should match [`Msd`](msd.md) on the same frames.
 
 Choose `r_max` from the longest lag you care about: it must cover the bulk of
 $G_s$, not just the peak. If `r_max` is too small the second moment falls short

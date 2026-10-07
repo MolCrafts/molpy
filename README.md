@@ -52,18 +52,18 @@ writes it or an agent calls it.
 
 Every name is reached through `import molpy as mp`, and molpy is a thin layer
 over the native core (molrs): every native name is the molrs object. Every
-molrs subsystem is mirrored by a molpy module (`mp.core` for molrs's core —
-`store`, `system`, `spatial`, `units` — then `mp.io`, `mp.ff`, `mp.perceive`,
+molrs subsystem is mirrored by a molpy module (`mp.core` for `molrs.core` —
+stores, graphs, box, neighbour search and units — then `mp.io`, `mp.ff`, `mp.perceive`,
 `mp.compute`, `mp.builder`, …). The core data classes you handle directly
 (`mp.Frame`, `mp.Block`, `mp.Trajectory`, `mp.Box`, `mp.Atomistic`, …) are
 promoted to the root, as the same objects.
 
 | Where | Capability |
 |---|---|
-| **`mp.*`, `core`, `perceive`, `conformer`, `optimize`** | Explicit data model — `Frame` / `Block` columnar arrays, `Trajectory`, editable `Atomistic` / `CoarseGrain` graphs and `Box` on the root; regions, neighbour search, units, molpy's selectors and trajectory splitters in `mp.core`; perception and SMARTS (`mp.perceive.SmartsPattern`), 3D conformers (`mp.conformer.Conformer`), the `mp.optimize.LBFGS` minimizer |
-| **`ff`** | Force fields, mirroring `molrs.ff` — `forcefield` (`ForceField` and the force-field file formats), `potential` (`PotentialCompiler`, kernels), `typifier` (OPLS-AA, MMFF94, GAFF natively; GAFF / GAFF2 via AmberTools), `charge`, `ir` (your own styles from Python), `params`, `scale_lj` |
+| **`mp.*`, `core`, `perceive`, `conformer`, `optimize`** | Explicit data model — `Frame` / `Block` columnar arrays, `Trajectory`, editable `Atomistic` / `CoarseGrain` graphs and `Box` on the root; regions, neighbour search, units, molpy's selectors and trajectory splitters in `mp.core`; perception and SMARTS (`mp.perceive.SmartsPattern`), 3D conformers (`mp.conformer.Conformer`), the `mp.optimize.Lbfgs` minimizer |
+| **`ff`** | Force fields, mirroring `molrs.ff` — `forcefield` (the `ForceField` data model), `potential` (`PotentialCompiler`, kernels), `typifier` (OPLS-AA, MMFF94, GAFF natively; GAFF / GAFF2 via AmberTools), `charge`, `ir` (your own styles from Python), `params`, `clpol_scaling` |
 | **`builder`** | Site-graph assembly (`Assembler`), graphene and nanotubes, polymer planning and polydispersity, crystals, virtual sites, packing templates |
-| **`compute`** · **`signal`** | Analysis — RDF, MSD, conductivity, order parameters, Voronoi, dielectric and vibrational spectra, … (native kernels); FFT correlation and windows |
+| **`compute`** · **`signal`** | Analysis — `Rdf`, `Msd`, conductivity, order parameters, Voronoi, dielectric and vibrational spectra, … (native kernels); FFT correlation and windows |
 | **`io`** | Read/write — PDB, GRO, LAMMPS data, XYZ, AMBER, SMILES / CGsmiles, trajectories, `*.mrec` records, … |
 | **`engine`** | MD input generation & run management — LAMMPS, GROMACS, OpenMM, CP2K |
 | **`wrapper` · `adapter`** | External CLIs (Antechamber, tleap, …) and optional RDKit in-memory bridge |
@@ -120,10 +120,10 @@ import molpy as mp
 
 from pathlib import Path
 
-mol       = mp.io.smiles.SmilesIR("CCO").to_atomistic()     # ethanol from SMILES
+mol       = mp.io.smiles.SmilesIr("CCO").to_atomistic()     # ethanol from SMILES
 mol3d, _  = mp.conformer.Conformer(seed=42).generate(mol)   # hydrogens + 3D coordinates
 
-typifier  = mp.ff.typifier.OPLSAATypifier()          # carries the OPLS-AA library
+typifier  = mp.ff.typifier.OplsAaTypifier()          # carries the OPLS-AA library
 typed     = typifier.typify(mol3d)
 ff        = typifier.forcefield()                 # parameters of the assigned types
 

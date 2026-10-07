@@ -1,14 +1,13 @@
 # Core
 
 Foundational data structures for molecular systems. All available via
-`import molpy as mp`. `mp.core` mirrors molrs's core — `molrs.store`,
-`molrs.system`, `molrs.spatial` and `molrs.units` — by identity, in one
-module (`mp.core.Cuboid is molrs.spatial.Cuboid`). The data classes you handle
+`import molpy as mp`. `mp.core` mirrors molrs's core, `molrs.core`, by identity, in one
+module (`mp.core.Cuboid is molrs.core.Cuboid`). The data classes you handle
 directly are promoted to the root as the same objects (`mp.Frame is
-mp.core.Frame is molrs.store.Frame`, `mp.Box`, `mp.Atomistic`, …); everything
+mp.core.Frame is molrs.core.Frame`, `mp.Box`, `mp.Atomistic`, …); everything
 else is `mp.core.<Name>`. molpy's additions here are the column selectors and
 the trajectory splitters, both in `mp.core` beside the `Block` and
-`Trajectory` they act on. Perception (`SmartsPattern`, `Perceive`, …) is
+`Trajectory` they act on. Perception (`SmartsPattern`, `perceive_rings`, `add_hydrogens`, …) is
 `mp.perceive`.
 
 ## Quick reference
@@ -83,13 +82,13 @@ cc = ff.def_style("bond", "harmonic").def_type("CT-CT", ct, ct, k=536.0, r0=1.52
 
 ::: molpy.ff.forcefield.Style
 
-::: molpy.ff.forcefield.Type
+::: molpy.ff.forcefield.ForceFieldType
 
 ::: molpy.ff.potential.PotentialCompiler
 
 ### Frame and Block
 
-Re-exported from the native core — `mp.Frame is molrs.store.Frame`:
+Re-exported from the native core — `mp.Frame is molrs.core.Frame`:
 
 ::: molpy.Frame
 

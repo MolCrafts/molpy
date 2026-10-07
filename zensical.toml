@@ -154,7 +154,7 @@ nav = [
     { "Engine" = "api/engine.md" },
     { "Optimization" = "api/optimize.md" },
     { "Compute" = "api/compute.md" },
-    { "Data" = "api/data.md" },
+    { "Resources" = "api/resources.md" },
   ] },
 
   { "Developer Guide" = [

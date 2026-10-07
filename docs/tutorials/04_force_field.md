@@ -21,7 +21,7 @@ MolPy keeps structure and parameters apart on purpose. If a type is wrong or a
 key is missing, you want that while the model is still transparent data — not
 after it is baked into engine-specific arrays.
 
-## The three layers: Style, Type, Potential
+## The three layers: Style, ForceFieldType, Potential
 
 Force-field data nests in three layers:
 
@@ -42,7 +42,7 @@ ForceField
     └── PairType "HC"  (epsilon=0.030, sigma=2.50)
 ```
 
-A `Style` defines an interaction family — harmonic bonds, OPLS dihedrals, Lennard-Jones pairs — and its parameter contract. A `Type` is one concrete parameter record inside that family. The `Potentials` evaluator is the numerical realization, produced from the complete model and run against a typed `Frame`. The kernels themselves live in the native Rust core.
+A `Style` defines an interaction family — harmonic bonds, OPLS dihedrals, Lennard-Jones pairs — and its parameter contract. A `ForceFieldType` (`AtomType`, `BondType`, …) is one concrete parameter record inside that family. The `Potentials` evaluator is the numerical realization, produced from the complete model and run against a typed `Frame`. The kernels themselves live in the native Rust core.
 
 The progression is always: define styles → fill in types → evaluate as potentials.
 
@@ -123,10 +123,10 @@ print(f"CT-OH: k={bt['k']}, r0={bt['r0']}")
 A full listing of all styles and types gives a global snapshot of the model state.
 
 ```python
-from molpy.ff.forcefield import Style, Type
+from molpy.ff.forcefield import ForceFieldType, Style
 
 for style in ff.get_styles(Style):
-    types = style.get_types(Type)
+    types = style.get_types(ForceFieldType)
     print(f"style={style.name!r}  [{len(types)} types]")
     for t in types:
         params = dict(t.params)
@@ -177,13 +177,13 @@ Once the model is internally consistent, serialization becomes an interface prob
 ### GROMACS
 
 ```python
-mp.io.write_gromacs_top_ff("system.itp", ff, precision=4)
+mp.io.write_gromacs_top_forcefield("system.itp", ff, precision=4)
 ```
 
 ### XML
 
 ```python
-mp.io.write_forcefield_xml("system.xml", ff, precision=6)
+mp.io.write_openmm_xml_forcefield("system.xml", ff, precision=6)
 ```
 
 ### LAMMPS
@@ -205,7 +205,7 @@ print(mp.io.write_lammps_forcefield_str(ff, frame, precision=4))
 
 ## When to move beyond built-in styles
 
-Real projects eventually need interaction forms not covered by built-in styles — a FENE spring, a custom torsion profile, a cross term of three atoms. The force-field IR is a protocol: declare the new style in Python (`class Fene(mp.ff.ir.StyleSpec)`, with its ordered parameters and its energy as an expression or a Python kernel), and it is typed, compiled and saved like a built-in, with nothing rebuilt.
+Real projects eventually need interaction forms not covered by built-in styles — a FENE spring, a custom torsion profile, a cross term of three atoms. The force-field IR is a protocol: declare the new style in Python (`class Fene(mp.ff.ir.StyleDeclaration)`, with its ordered parameters and its energy as an expression or a Python kernel), and it is typed, compiled and saved like a built-in, with nothing rebuilt.
 
 See [Extending Force Field](../developer/extending-forcefield.md) for the full extension recipe.
 
