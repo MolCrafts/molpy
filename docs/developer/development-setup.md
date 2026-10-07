@@ -58,9 +58,8 @@ for the native-crate and WASM build targets.
 CI and the pre-push hooks never build against your sibling's working tree.
 `.github/partners.env` names molrs's branch (`MOLRS_REF=dev`: partners are
 tracked, not pinned), and `scripts/partners.py` resolves it -- for CI
-(`partners.py resolve`, appended to `$GITHUB_ENV`) and for the hooks
-(`partners.py run`, a copy of this tree next to the resolved molrs) alike --
-to the first of:
+(`partners.py fetch`, into `../molrs`) and for the hooks (`partners.py run`,
+a copy of this tree next to the resolved molrs) alike -- to the first of:
 
 1. molrs's branch named like the one being built (CI: the pushed branch or a
    pull request's head branch; locally: the checked-out branch), looked up
@@ -74,9 +73,9 @@ to the first of:
 A molpy change that needs a molrs change lands as two same-named branches,
 never by skipping a gate: create the same branch (say `converge/x`) in both
 checkouts; push both to your forks, never to MolCrafts (molpy's gates take
-molrs's branch from your fork, or from your sibling before it is pushed); run
-CI on the forks by opening each branch as a pull request inside its fork --
-molpy's run resolves molrs's `converge/x` on your fork; only once both forks
+molrs's branch from your fork, or from your sibling before it is pushed); each
+push runs the full CI tier on your fork, and molpy's run resolves molrs's
+`converge/x` there; only once both forks
 are green, open the pull requests into MolCrafts `dev`, land molrs's, then
 molpy's (never a red one), and delete the branches.
 

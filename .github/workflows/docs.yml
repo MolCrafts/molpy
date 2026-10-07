@@ -1,0 +1,37 @@
+name: docs
+
+# The site built from `.[doc]` in a fresh env, then zensical, --strict: any
+# warning (an unresolved mkdocstrings reference included) fails. Cloudflare
+# Pages deploys it from MolCrafts itself (its Git integration), so no job here
+# deploys. The user-guide notebooks are executed by scripts/render_notebooks.py
+# when they change, and their rendered pages are committed.
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: [dev, master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: docs-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/dev' && github.ref != 'refs/heads/master' }}
+
+jobs:
+  build:
+    name: docs / build
+    # A pull request inside a fork was already built by its push.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository || github.repository_owner == 'MolCrafts'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup-python
+      - uses: ./.github/actions/setup-partners
+      - uses: ./.github/actions/setup-rust
+        with:
+          toolchain-dir: ../molrs
+          cache: molrs-python
+          workspaces: ../molrs/molrs-python -> ../target
+      - run: uv run --isolated --no-project --python 3.12 --with '.[doc]' zensical build --clean --strict

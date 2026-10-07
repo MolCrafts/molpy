@@ -32,7 +32,7 @@ or `git push --no-verify`, and never merge a red pull request.**
 
 - **pre-commit** (staged files, cheap, in place): file hygiene (whitespace,
   final newline, YAML/TOML/JSON, merge markers, large files) and `tox -e lint`
-  (ruff format + ruff check + ty), as ci.yml `lint`.
+  (ruff format + ruff check + ty), as lint.yml `lint / hooks`.
 - **pre-push**:
   - the pre-commit hooks again on `--all-files`;
   - `scripts/partners.py check` — molrs (`.github/partners.env`) resolves,
@@ -41,12 +41,12 @@ or `git push --no-verify`, and never merge a red pull request.**
     this tree next to molrs at the commit `scripts/partners.py` resolves --
     molrs's `dev`, or its branch named like yours; see "Partners" in the
     Development Setup page), never your `../molrs` working tree:
-    - `uv lock --check` (ci.yml `lint`) when pyproject.toml or uv.lock
+    - `uv lock --check` (`lint / hooks`) when pyproject.toml or uv.lock
       changed;
     - the docs build (`.[doc]` in a fresh env, then `zensical build --clean
       --strict`), when docs/, src/, zensical.toml or pyproject.toml changed;
     - the unit suite, `uv run --locked --python 3.12 --extra dev python -m
-      pytest tests/ -n auto` (ci.yml `test`; `uv.lock` is committed, so a
+      pytest tests/ -n auto` (`test / python`; `uv.lock` is committed, so a
       stale lock fails here as it does in CI).
 - **Dispatch on the MolCrafts cluster:** the docs build and the unit suite
   compile molrs. Their entries go through `scripts/hook-run.sh`, which hands
@@ -58,6 +58,28 @@ or `git push --no-verify`, and never merge a red pull request.**
   warm between pushes. Everything else runs in place, so a commit never waits
   for Slurm. Elsewhere nothing sets the variables and every hook runs locally,
   in a temp layout.
+
+## CI
+
+One workflow per kind of work. Every push of any branch runs `lint`, `test`
+and `docs`, on a fork as on MolCrafts. A pull request into `dev` or `master`
+runs them again only when it comes from another repository (a pull request
+inside a fork was already built by its push).
+
+| workflow | feature-branch push to MolCrafts | everything else: `dev`/`master`, pull requests, any push to a fork | upstream only |
+| --- | --- | --- | --- |
+| `lint.yml` | `lint / hooks` (commit hooks on every file, partners, `uv lock --check`) | same | — |
+| `test.yml` | fast: `test / python (ubuntu-latest, 3.12)` | full: `test / python` on Linux, macOS and Windows × Python 3.12 and 3.14 | — |
+| `docs.yml` | `docs / build` (zensical `--strict`) | same | Cloudflare Pages deploys the site from MolCrafts |
+| `nightly.yml` | — | — | nightly: test and coverage snapshots to molcrafts-ci; a `nightly` branch push: `molcrafts-molpy-nightly` |
+| `release.yml` | — | dispatch: dry run (tests, builds, uploads nothing) | `v*` tag: PyPI and the GitHub Release ([release process](docs/developer/release-process.md)) |
+
+So a fork branch gets the full tier on its push: push to your fork, wait for
+green, then open the pull request into MolCrafts `dev`. Branches pushed to
+MolCrafts itself (Dependabot's) get the fast tier, and their pull requests the
+full one. The `require-green-ci` (`dev`) and `protect-master` rulesets require
+the full tier's jobs. Shared setup lives in `.github/actions/` (`setup-rust`,
+`setup-python`, `setup-partners`).
 
 ## Code of Conduct
 

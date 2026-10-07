@@ -1,11 +1,11 @@
 # prek / pre-commit: `prek install` (installs both hook types).
-# CI parity: every job in .github/workflows/ci.yml has a hook here running the
+# CI parity: every job in .github/workflows/{lint,test,docs}.yml has a hook here running the
 # same command; Cloudflare Pages' docs build has one too.
 #
 #   pre-commit  file hygiene + `tox -e lint` (ruff + ty). Cheap: runs in place.
 #   pre-push    the hygiene hooks again on --all-files, the partners check,
 #               the lock, the docs build, and the unit suite (`uv run
-#               --locked`, Python 3.12, as ci.yml `test`) -- the last three in
+#               --locked`, Python 3.12, as test.yml) -- the last three in
 #               CI's sibling layout, against molrs built from the commit
 #               scripts/partners.py resolves (molrs's dev, or its branch named
 #               like this one), never the developer's ../molrs.
@@ -66,22 +66,22 @@ repos:
         always_run: true
         stages: [pre-push]
 
-      # ci.yml lint: uv.lock is committed and current against the resolved
+      # lint.yml: uv.lock is committed and current against the resolved
       # molrs (every `uv run` is --locked). Metadata only: nothing compiles.
       - id: uv-lock
-        name: uv.lock is current against the resolved molrs (ci.yml lint)
+        name: uv.lock is current against the resolved molrs (lint.yml)
         entry: python3 scripts/partners.py run -- uv lock --check
         language: system
         pass_filenames: false
         files: ^(pyproject\.toml|uv\.lock|\.github/partners\.env)$
         stages: [pre-push]
 
-      # ci.yml docs: `.[doc]` in a fresh env, then zensical. Built in CI's
+      # docs.yml: `.[doc]` in a fresh env, then zensical. Built in CI's
       # layout (scripts/partners.py run), so molrs is the resolved commit and
       # the theme's staged assets never land in this checkout; --strict fails
       # on any warning, an unresolved mkdocstrings reference included.
       - id: docs
-        name: docs build (ci.yml docs)
+        name: docs build (docs.yml)
         entry: >-
           scripts/hook-run.sh python3 scripts/partners.py run --
           uv run --isolated --no-project --python 3.12 --with .[doc]
@@ -91,10 +91,10 @@ repos:
         files: ^(docs/|zensical\.toml|src/|pyproject\.toml)
         stages: [pre-push]
 
-      # Same command as ci.yml `test` (uv honors [tool.uv.sources], tox/pip
+      # Same command as test.yml (uv honors [tool.uv.sources], tox/pip
       # does not), on CI's floor Python, in CI's layout.
       - id: pytest
-        name: uv pytest against the resolved molrs (ci.yml test)
+        name: uv pytest against the resolved molrs (test.yml)
         entry: >-
           scripts/hook-run.sh python3 scripts/partners.py run --
           env MATURIN_PEP517_ARGS=--locked PYTHONWARNDEFAULTENCODING=1

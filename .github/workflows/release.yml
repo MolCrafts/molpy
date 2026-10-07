@@ -1,12 +1,15 @@
-name: Release
+name: release
 
-# Tag push on MolCrafts/molpy → pure-Python wheel to PyPI (trusted publishing).
-# Requires molcrafts-molrs on the same major.minor already on PyPI (see docs/developer/release-process.md).
+# A `v*` tag on MolCrafts/molpy: guard -> the release test matrix -> the
+# pure-Python sdist + wheel to PyPI (trusted publishing) -> the GitHub
+# Release. molcrafts-molrs on the major.minor molpy declares must already be
+# on PyPI (docs/developer/release-process.md): the matrix -- 3 OS x every
+# supported Python -- runs against molrs from PyPI, exactly what the wheel
+# declares (`--no-sources` drops the ../molrs path source dev builds from).
 #
-# Before publish: run the same 3 OS × 3.12 / 3.13 / 3.14 unit matrix as CI
-# (do not skip a minor of the supported range) -- against molrs from PyPI,
-# exactly what the wheel declares: `--no-sources` drops the ../molrs path
-# source dev builds molrs from.
+# A dispatch is the dry run, on any branch, fork or upstream: the same test
+# matrix and build, no upload and no Release. Only a tag push on MolCrafts
+# uploads.
 on:
   push:
     tags: ["v*"]
@@ -14,90 +17,97 @@ on:
 
 permissions:
   contents: read
-  id-token: write
+
+defaults:
+  run:
+    shell: bash
 
 jobs:
+  guard:
+    name: release / guard
+    if: github.event_name == 'workflow_dispatch' || github.repository_owner == 'MolCrafts'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: The tag is the package version, on master
+        if: github.event_name == 'push'
+        run: |
+          version=$(sed -n 's/^version = "\(.*\)"/\1/p' src/molpy/version.py | head -n1)
+          [ "$GITHUB_REF_NAME" = "v$version" ] || { echo "::error::tag $GITHUB_REF_NAME is not v$version"; exit 1; }
+          git merge-base --is-ancestor "$GITHUB_SHA" origin/master || { echo "::error::tag is not on master"; exit 1; }
+
   test:
-    if: github.repository == 'MolCrafts/molpy'
+    name: release / test (${{ matrix.os }}, ${{ matrix.python }})
+    needs: guard
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
-        python-version: ['3.12', '3.13', '3.14']
+        python: ["3.12", "3.13", "3.14"]
+    env:
+      PYTHONWARNDEFAULTENCODING: "1"
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-python@v7
+      - uses: ./.github/actions/setup-python
         with:
-          python-version: ${{ matrix.python-version }}
-      - uses: astral-sh/setup-uv@v9.0.0
-      - name: molrs minor line on PyPI
-        run: python scripts/check_molrs_on_pypi.py
-      - name: Unit tests against molrs from PyPI
-        run: uv run --no-sources --extra dev python -m pytest tests/ -n auto
-        env:
-          PYTHONWARNDEFAULTENCODING: "1"
+          python-version: ${{ matrix.python }}
+      - run: python scripts/check_molrs_on_pypi.py
+      - run: uv run --no-sources --python ${{ matrix.python }} --extra dev python -m pytest tests/ -n auto
 
-  release:
-    needs: test
-    if: github.repository == 'MolCrafts/molpy'
+  build:
+    name: release / build
+    needs: guard
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup-python
+        with:
+          python-version: "3.14"
+      - run: uv build && uvx twine check dist/*
+      - uses: actions/upload-artifact@v7
+        with:
+          name: dist
+          path: dist
+
+  pypi:
+    name: release / pypi
+    needs: [test, build]
+    if: github.event_name == 'push' && github.repository_owner == 'MolCrafts'
     runs-on: ubuntu-latest
     environment:
       name: pypi
       url: https://pypi.org/p/molcrafts-molpy
+    permissions:
+      id-token: write
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
         with:
-          fetch-depth: 0
-
-      - uses: actions/setup-python@v7
-        with:
-          python-version: "3.14"
-
-      - uses: astral-sh/setup-uv@v9.0.0
-
-      - name: Tag must be on master
-        if: github.event_name == 'push'
-        run: |
-          set -euo pipefail
-          git fetch origin master
-          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/master; then
-            echo "::error::Tag is not on master; merge release commit first."
-            exit 1
-          fi
-
-      - name: Version from tag / package
-        id: ver
-        run: |
-          set -euo pipefail
-          if [ "${{ github.event_name }}" = "push" ]; then
-            VERSION="${GITHUB_REF#refs/tags/}"
-            VERSION="${VERSION#v}"
-          else
-            VERSION=$(python -c "import pathlib,re; t=pathlib.Path('src/molpy/version.py').read_text(); print(re.search(r'version = \"([^\"]+)\"', t).group(1))")
-          fi
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          echo "Publishing molcrafts-molpy==$VERSION"
-
-      - name: Verify package version matches tag
-        if: github.event_name == 'push'
-        run: |
-          set -euo pipefail
-          PACKAGE_VERSION=$(python -c "import pathlib,re; t=pathlib.Path('src/molpy/version.py').read_text(); print(re.search(r'version = \"([^\"]+)\"', t).group(1))")
-          if [ "${{ steps.ver.outputs.version }}" != "$PACKAGE_VERSION" ]; then
-            echo "::error::Tag ${{ steps.ver.outputs.version }} != package $PACKAGE_VERSION"
-            exit 1
-          fi
-
-      - name: Build sdist + wheel
-        run: |
-          set -euo pipefail
-          uv pip install --system build twine
-          python -m build
-          twine check dist/*
-
+          name: dist
+          path: dist
       - uses: pypa/gh-action-pypi-publish@release/v1
         with:
-          packages-dir: dist/
+          packages-dir: dist
           skip-existing: true
           print-hash: true
+
+  github:
+    name: release / github
+    needs: pypi
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: dist
+          path: dist
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 \
+            || gh release create "$GITHUB_REF_NAME" --verify-tag --generate-notes
+          gh release upload "$GITHUB_REF_NAME" dist/* --clobber

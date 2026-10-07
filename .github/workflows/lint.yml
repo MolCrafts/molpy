@@ -1,0 +1,35 @@
+name: lint
+
+# The commit-stage hooks on every file (hygiene, `tox -e lint`: ruff + ty),
+# the partners check, and uv.lock against the resolved molrs (metadata only,
+# nothing compiles). Same in every context; see "CI" in CONTRIBUTING.md.
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: [dev, master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: lint-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/dev' && github.ref != 'refs/heads/master' }}
+
+jobs:
+  hooks:
+    name: lint / hooks
+    # A pull request inside a fork was already built by its push.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository || github.repository_owner == 'MolCrafts'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      # tox's lint env runs on 3.14 (pyproject.toml [tool.tox.env.lint]).
+      - uses: ./.github/actions/setup-python
+        with:
+          python-version: "3.14"
+      - uses: ./.github/actions/setup-partners
+      - run: uvx pre-commit run --all-files --show-diff-on-failure
+      - run: python3 scripts/partners.py check
+      - run: uv lock --check
