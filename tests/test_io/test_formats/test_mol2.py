@@ -71,7 +71,10 @@ class TestReadMol2:
     def test_malformed_coordinate_raises(self, mol2_dir, tmp_path):
         bad = tmp_path / "bad.mol2"
         bad.write_text(
-            (mol2_dir / "ethane.mol2").read_text().replace("3.1080", "three")
+            (mol2_dir / "ethane.mol2")
+            .read_text(encoding="utf-8")
+            .replace("3.1080", "three"),
+            encoding="utf-8",
         )
         with pytest.raises(OSError):
             _read(bad)

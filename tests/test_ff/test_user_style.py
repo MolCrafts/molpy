@@ -45,7 +45,7 @@ CHAIN = np.array(
 
 def _snippet() -> str:
     """The doc's first ``python`` block under "A new style in 30 lines"."""
-    text = DOC.read_text()
+    text = DOC.read_text(encoding="utf-8")
     start = text.index("```python\n", text.index("## A new style in 30 lines"))
     start += len("```python\n")
     return text[start : text.index("```", start)]
@@ -163,6 +163,7 @@ def test_a_fresh_process_that_registered_nothing_prices_it_bit_for_bit(snippet) 
         capture_output=True,
         text=True,
         check=False,
+        encoding="utf-8",
     )
     assert done.returncode == 0, done.stderr
     there = json.loads(done.stdout)

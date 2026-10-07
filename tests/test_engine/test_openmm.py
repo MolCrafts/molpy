@@ -112,7 +112,7 @@ class TestOpenmmSimulationConfig:
         cfg = OpenmmSimulationConfig()
         path = tmp_path / "config.json"
         cfg.to_json(path)
-        data = json.loads(path.read_text())
+        data = json.loads(path.read_text(encoding="utf-8"))
         assert "ensemble" in data
         assert "temperature" in data
 

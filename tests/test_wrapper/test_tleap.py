@@ -44,7 +44,7 @@ def test_tleap_wrapper_run_from_script(tmp_path: Path):
 
         wrapper.run_from_script(script_text=script_text, script_name="test.in")
 
-        mock_write.assert_called_once_with(script_text)
+        mock_write.assert_called_once_with(script_text, encoding="utf-8")
 
         mock_run.assert_called_once()
         call_args = mock_run.call_args[0][0]

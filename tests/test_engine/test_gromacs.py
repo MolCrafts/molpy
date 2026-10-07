@@ -44,15 +44,15 @@ def test_writes_coordinates_topology_and_mdps(tmp_path, system):
         "nvt": "nvt.mdp",
     }
     assert all(p.exists() for p in paths.values())
-    assert paths["gro"].read_text().splitlines()[1].strip() == "3"
-    top = paths["top"].read_text()
+    assert paths["gro"].read_text(encoding="utf-8").splitlines()[1].strip() == "3"
+    top = paths["top"].read_text(encoding="utf-8")
     # A whole topology: directives, the molecule, and the system's molecules.
     for directive in ("[ defaults ]", "[ moleculetype ]", "[ atoms ]", "[ angles ]"):
         assert directive in top
     assert "[ system ]" in top
     assert "[ molecules ]" in top
-    assert "integrator      = steep" in paths["em"].read_text()
-    assert "ref_t           = 280.0" in paths["nvt"].read_text()
+    assert "integrator      = steep" in paths["em"].read_text(encoding="utf-8")
+    assert "ref_t           = 280.0" in paths["nvt"].read_text(encoding="utf-8")
 
 
 def test_run_grompps_then_mdruns_the_input_mdp(tmp_path, system, monkeypatch):
@@ -91,7 +91,7 @@ def test_run_grompps_then_mdruns_the_input_mdp(tmp_path, system, monkeypatch):
 
 def test_grompp_accepts_the_generated_inputs(tmp_path, system):
     paths = GromacsEngine(check_executable=False).generate_inputs(*system, tmp_path)
-    top = paths["top"].read_text()
+    top = paths["top"].read_text(encoding="utf-8")
     assert "[ moleculetype ]" in top
     assert "[ molecules ]" in top
     if GMX is None:
@@ -112,6 +112,7 @@ def test_grompp_accepts_the_generated_inputs(tmp_path, system):
         cwd=tmp_path,
         capture_output=True,
         text=True,
+        encoding="utf-8",
     )
     assert done.returncode == 0, done.stderr[-2000:]
     assert (tmp_path / "em.tpr").is_file()

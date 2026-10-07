@@ -86,7 +86,7 @@ class FakeAmberTools:
         if tool == self.fail:
             return subprocess.CompletedProcess(argv, 1, "", f"{tool}: fatal error")
         if tool == "tleap":
-            script = (Path(cwd) / args[1]).read_text()
+            script = (Path(cwd) / args[1]).read_text(encoding="utf-8")
             self.scripts.append(script)
             save = next(s for s in script.splitlines() if s.startswith("saveamberparm"))
             target = save.split()[2]
@@ -212,7 +212,9 @@ class TestTleapTypifier:
         lines = tools.scripts[0].splitlines()
         assert lines[0] == "source leaprc.gaff2"
         frcmod = Path(lines[1].removeprefix("loadamberparams "))
-        rows = [line.split() for line in frcmod.read_text().splitlines()]
+        rows = [
+            line.split() for line in frcmod.read_text(encoding="utf-8").splitlines()
+        ]
         assert ["c3", "12.010000"] in rows  # MASS
         assert ["c3-f", "356.900000", "1.349700"] in rows  # BOND, RK = k
         assert lines[2].startswith("MOL = loadmol2 ")

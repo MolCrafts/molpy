@@ -48,25 +48,27 @@ class TestGenerateInputs:
             "input": "w.in",
         }
         assert all(p.exists() for p in paths.values())
-        init = paths["init"].read_text()
+        init = paths["init"].read_text(encoding="utf-8")
         assert "units real" in init
         assert "atom_style full" in init
         assert "_style " not in init.replace("atom_style ", "")
-        settings = paths["settings"].read_text()
+        settings = paths["settings"].read_text(encoding="utf-8")
         assert settings == mp.io.write_lammps_forcefield_str(
             water_ff, water.to_frame(), skip_units=True, units="real"
         )
         assert "bond_style harmonic" in settings
         assert "pair_style lj/cut" in settings
-        run = paths["input"].read_text()
+        run = paths["input"].read_text(encoding="utf-8")
         assert "read_data w.data" in run and "include w.in.settings" in run
-        assert "3 atoms" in paths["data"].read_text()
+        assert "3 atoms" in paths["data"].read_text(encoding="utf-8")
 
     def test_settings_keyed_by_emitted_frame_labels(self, tmp_path, water, water_ff):
         _deck(water, water_ff, tmp_path)
         pair_labels = {
             line.split()[1]
-            for line in (tmp_path / "w.in.settings").read_text().splitlines()
+            for line in (tmp_path / "w.in.settings")
+            .read_text(encoding="utf-8")
+            .splitlines()
             if line.startswith("pair_coeff")
         }
         assert pair_labels == {"OW", "HW"}
@@ -77,7 +79,7 @@ class TestGenerateInputs:
             "OW-OW", ow, ow, d0=100.0, alpha=2.0, r0=1.0
         )
         _deck(water, water_ff, tmp_path)
-        settings = (tmp_path / "w.in.settings").read_text()
+        settings = (tmp_path / "w.in.settings").read_text(encoding="utf-8")
         assert "bond_style harmonic" in settings
         assert "morse" not in settings
 
@@ -89,7 +91,7 @@ class TestGenerateInputs:
         )
         water.links.exact_bucket(mp.Bond)[1]["type"] = "OW-HW2"
         _deck(water, water_ff, tmp_path)
-        settings = (tmp_path / "w.in.settings").read_text().splitlines()
+        settings = (tmp_path / "w.in.settings").read_text(encoding="utf-8").splitlines()
         assert "bond_style hybrid harmonic morse" in settings
 
     def test_angle_charmm_carries_urey_bradley(self, tmp_path, water, water_ff):
@@ -97,7 +99,7 @@ class TestGenerateInputs:
         LAMMPS ``angle_style charmm``, ``K theta0 K_ub r_ub``."""
         _with_urey_bradley(water, water_ff)
         _deck(water, water_ff, tmp_path)
-        settings = (tmp_path / "w.in.settings").read_text().splitlines()
+        settings = (tmp_path / "w.in.settings").read_text(encoding="utf-8").splitlines()
         assert "angle_style charmm" in settings
         (coeff,) = [line for line in settings if line.startswith("angle_coeff")]
         assert [float(v) for v in coeff.split()[2:]] == [55.0, 104.52, 20.0, 1.5139]
@@ -110,9 +112,9 @@ class TestGenerateInputs:
         of 1 length unit, never a ``0 1`` placeholder."""
         assert water.to_frame().box is None
         _deck(water, water_ff, tmp_path)
-        init = (tmp_path / "w.in.init").read_text().splitlines()
+        init = (tmp_path / "w.in.init").read_text(encoding="utf-8").splitlines()
         assert "boundary s s s" in init and "neighbor 2.0 nsq" in init
-        data = (tmp_path / "w.data").read_text().splitlines()
+        data = (tmp_path / "w.data").read_text(encoding="utf-8").splitlines()
         atoms = water.to_frame()["atoms"]
         for axis in ("x", "y", "z"):
             (bounds,) = [line for line in data if line.endswith(f"{axis}lo {axis}hi")]
@@ -123,7 +125,7 @@ class TestGenerateInputs:
     def test_settings_leave_units_to_init(self, tmp_path, water, water_ff):
         # The settings are included after read_data, where LAMMPS rejects `units`.
         _deck(water, water_ff, tmp_path, units="real")
-        settings = (tmp_path / "w.in.settings").read_text().splitlines()
+        settings = (tmp_path / "w.in.settings").read_text(encoding="utf-8").splitlines()
         assert not [line for line in settings if line.startswith("units")]
 
 
@@ -153,7 +155,7 @@ def test_lammps_prices_the_emitted_bonded_terms_as_molrs_does(
         "thermo_style custom step ebond eangle\n"
         "thermo_modify format float %.17g\nrun 0\n"
     )
-    (tmp_path / "in.check").write_text(deck)
+    (tmp_path / "in.check").write_text(deck, encoding="utf-8")
     # A singleton run: inside a Slurm step, MPI must not join the step's PMI.
     env = {
         k: v
@@ -167,7 +169,7 @@ def test_lammps_prices_the_emitted_bonded_terms_as_molrs_does(
         check=True,
         timeout=120,
     )
-    lines = (tmp_path / "log.check").read_text().splitlines()
+    lines = (tmp_path / "log.check").read_text(encoding="utf-8").splitlines()
     head = next(
         i for i, l in enumerate(lines) if l.split()[:3] == ["Step", "E_bond", "E_angle"]
     )

@@ -21,7 +21,8 @@ class TestXsfCore:
             "PRIMCOORD\n"
             "2 1\n"
             "1  0.0  0.0  0.0\n"
-            "8  1.5  1.5  1.5\n"
+            "8  1.5  1.5  1.5\n",
+            encoding="utf-8",
         )
 
         frame = mp.io.read_xsf(tmp_file)
@@ -39,7 +40,8 @@ class TestXsfCore:
         """Test reading a molecule structure (non-periodic)."""
         tmp_file = tmp_path / "test.xsf"
         tmp_file.write_text(
-            "MOLECULE\nPRIMCOORD\n2 1\n1  0.0  0.0  0.0\n1  1.0  0.0  0.0\n"
+            "MOLECULE\nPRIMCOORD\n2 1\n1  0.0  0.0  0.0\n1  1.0  0.0  0.0\n",
+            encoding="utf-8",
         )
 
         frame = mp.io.read_xsf(tmp_file)
@@ -159,7 +161,7 @@ class TestXsfCore:
 
         # Test reading empty file
         tmp_file = tmp_path / "empty.xsf"
-        tmp_file.write_text("")  # Empty file
+        tmp_file.write_text("", encoding="utf-8")  # Empty file
 
         with pytest.raises(OSError, match="Empty XSF file"):
             mp.io.read_xsf(tmp_file)
@@ -167,7 +169,8 @@ class TestXsfCore:
         # Test malformed PRIMCOORD section
         tmp_file2 = tmp_path / "malformed.xsf"
         tmp_file2.write_text(
-            "MOLECULE\nPRIMCOORD\ninvalid_number 1\n"  # Invalid atom count
+            "MOLECULE\nPRIMCOORD\ninvalid_number 1\n",  # Invalid atom count
+            encoding="utf-8",
         )
 
         with pytest.raises(OSError):

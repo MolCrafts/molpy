@@ -232,7 +232,11 @@ def test_a_fresh_import_binds_molpys_io_format_modules() -> None:
         f"print(*[getattr(mp.io, f).__name__ for f in {_IO_FORMATS!r}])"
     )
     out = subprocess.run(
-        [sys.executable, "-c", code], capture_output=True, text=True, check=True
+        [sys.executable, "-c", code],
+        capture_output=True,
+        text=True,
+        check=True,
+        encoding="utf-8",
     ).stdout.split()
     assert out == [f"molpy.io.{fmt}" for fmt in _IO_FORMATS]
 

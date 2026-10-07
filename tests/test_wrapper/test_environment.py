@@ -116,7 +116,7 @@ class TestEnvironmentSpecMergeEnviron:
 class TestEnvironmentSpecResolveExecutable:
     def test_absolute_existing_file(self, tmp_path: Path):
         exe = tmp_path / "tool"
-        exe.write_text("#!/bin/sh\n")
+        exe.write_text("#!/bin/sh\n", encoding="utf-8")
         exe.chmod(0o755)
         assert EnvironmentSpec.system().resolve_executable(str(exe)) == str(
             exe.resolve()
@@ -127,7 +127,7 @@ class TestEnvironmentSpecResolveExecutable:
         bin_dir = tmp_path / ("Scripts" if os.name == "nt" else "bin")
         bin_dir.mkdir()
         tool = bin_dir / "antechamber"
-        tool.write_text("#!/bin/sh\n")
+        tool.write_text("#!/bin/sh\n", encoding="utf-8")
         tool.chmod(0o755)
         found = EnvironmentSpec.resolve(tmp_path, "venv").resolve_executable(
             "antechamber"

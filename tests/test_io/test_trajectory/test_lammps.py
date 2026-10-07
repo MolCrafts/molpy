@@ -166,7 +166,7 @@ class TestWriteLammpsDumpLocal:
         frame.box = mp.Box.cube(10.0)
         path = tmp_path / "bonds.dump.local"
         write_lammps_dump_local(path, [frame])
-        text = path.read_text()
+        text = path.read_text(encoding="utf-8")
         assert "ITEM: NUMBER OF ENTRIES" in text
         assert "batom1 batom2" in text
         lines = text.splitlines()

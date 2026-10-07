@@ -15,12 +15,16 @@ A branch resolves to the first of:
 
 1. the partner's branch named like the one being built (in CI the pushed
    branch, or a pull request's head branch; locally the checked-out branch),
-   when the partner's remote has one. A change that spans repositories lands
-   as same-named branches, each judged against the other;
+   looked up first on the fork the build comes from -- ``<owner>/<partner>``,
+   where <owner> owns the pull request's head repository or the repository CI
+   runs in, or, in a git hook, the remote being pushed to
+   ($PRE_COMMIT_REMOTE_URL) -- then on ``<NAME>_REPOSITORY``. A change that
+   spans repositories lands as same-named branches, each judged against the
+   other, whether they sit on a fork or on the canonical repositories;
 2. outside CI only (the git hooks): that same-named branch in the sibling
-   clone ``../<name>``, when it has one and the remote does not yet. The first
+   clone ``../<name>``, when it has one and neither remote does yet. The first
    of two coordinated pushes is judged against the partner's local branch;
-3. ``<NAME>_REF`` itself, on the partner's remote.
+3. ``<NAME>_REF`` itself, on ``<NAME>_REPOSITORY``.
 
     partners.py check             cheap pre-push gate (login node is fine):
                                   every partner resolves, every path
@@ -51,6 +55,7 @@ names this repository's directory in the layout.
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import re
 import shutil
@@ -83,9 +88,16 @@ def _clean_env() -> dict[str, str]:
     repository instead of the partner checkout in its working directory.
     """
     names = subprocess.run(
-        ["git", "rev-parse", "--local-env-vars"], capture_output=True, text=True, check=True
+        ["git", "rev-parse", "--local-env-vars"],
+        capture_output=True,
+        text=True,
+        check=True,
+        encoding="utf-8",
     ).stdout.split()
-    return {k: v for k, v in os.environ.items() if k not in names}
+    env = {k: v for k, v in os.environ.items() if k not in names}
+    # A fork that does not exist must fail ls-remote, not prompt for a login.
+    env["GIT_TERMINAL_PROMPT"] = "0"
+    return env
 
 
 ENV = _clean_env()
@@ -100,6 +112,7 @@ def git(*args: str, cwd: Path | None = None, quiet: bool = False) -> subprocess.
         text=True,
         stdout=subprocess.PIPE if quiet else None,
         stderr=subprocess.PIPE if quiet else None,
+        encoding="utf-8",
     )
 
 
@@ -107,7 +120,7 @@ def load() -> dict[str, str]:
     env: dict[str, str] = {}
     if not PINS.is_file():
         return env
-    for n, raw in enumerate(PINS.read_text().splitlines(), 1):
+    for n, raw in enumerate(PINS.read_text(encoding="utf-8").splitlines(), 1):
         line = raw.strip()
         if not line or line.startswith("#"):
             continue
@@ -134,18 +147,24 @@ def url(repo: str) -> str:
 
 @dataclass(frozen=True)
 class Source:
-    """Where a partner comes from: a git URL, the ref to fetch, its commit."""
+    """Where a partner comes from: its repository, a git URL, the ref to fetch, its commit."""
 
+    repo: str
     url: str
     ref: str
     commit: str
     why: str
 
 
-def ls_remote(where: str, ref: str) -> str | None:
-    """The commit REF names at WHERE (a peeled tag's commit), or None."""
+def ls_remote(where: str, ref: str, must: bool = True) -> str | None:
+    """The commit REF names at WHERE (a peeled tag's commit), or None.
+
+    An unreachable WHERE is fatal when MUST, else None (a fork that does not exist).
+    """
     got = git("ls-remote", where, ref, f"{ref}^{{}}", quiet=True)
     if got.returncode:
+        if not must:
+            return None
         die(f"cannot list {where}: {got.stderr.strip()}")
     found = dict(line.split("\t")[::-1] for line in got.stdout.splitlines() if "\t" in line)
     return found.get(f"{ref}^{{}}") or found.get(ref)
@@ -161,22 +180,39 @@ def building() -> str | None:
     return git("symbolic-ref", "-q", "--short", "HEAD", cwd=ROOT, quiet=True).stdout.strip() or None
 
 
+def fork_owner() -> str | None:
+    """The owner of the fork the build comes from (see the module docstring)."""
+    if IN_CI:
+        event = Path(os.environ.get("GITHUB_EVENT_PATH", ""))
+        if event.is_file():
+            pull = json.loads(event.read_text(encoding="utf-8")).get("pull_request") or {}
+            head = (pull.get("head") or {}).get("repo") or {}
+            if owner := (head.get("owner") or {}).get("login"):
+                return owner
+        return os.environ.get("GITHUB_REPOSITORY_OWNER") or None
+    found = re.search(r"github\.com[:/]([^/]+)/", os.environ.get("PRE_COMMIT_REMOTE_URL", ""))
+    return found.group(1) if found else None
+
+
 def resolve(name: str, repo: str, ref: str) -> Source:
     """Resolve partner NAME's REF (see the module docstring for the order)."""
     remote = url(repo)
     if SHA.fullmatch(ref):
-        return Source(remote, ref, ref, "pinned commit")
+        return Source(repo, remote, ref, ref, "pinned commit")
     tip = ls_remote(remote, f"refs/heads/{ref}")
     if tip is None:
         tag = ls_remote(remote, f"refs/tags/{ref}") or die(
             f"{name}: {repo} has no branch or tag {ref!r}"
         )
-        return Source(remote, f"refs/tags/{ref}", tag, f"tag {ref}")
+        return Source(repo, remote, f"refs/tags/{ref}", tag, f"tag {ref}")
     branch = building()
     if branch and branch != ref:
-        same = ls_remote(remote, f"refs/heads/{branch}")
-        if same:
-            return Source(remote, f"refs/heads/{branch}", same, f"same-named branch {branch}")
+        owner, base = repo.split("/", 1)
+        for cand in dict.fromkeys(f"{o}/{base}" for o in (fork_owner(), owner) if o):
+            same = ls_remote(url(cand), f"refs/heads/{branch}", must=cand == repo)
+            if same:
+                why = f"same-named branch {branch} of {cand}"
+                return Source(cand, url(cand), f"refs/heads/{branch}", same, why)
         sibling = ROOT.parent / name.lower()
         if not IN_CI and (sibling / ".git").exists():
             got = git(
@@ -189,18 +225,17 @@ def resolve(name: str, repo: str, ref: str) -> Source:
             )
             if got.returncode == 0:
                 return Source(
+                    repo,
                     sibling.as_uri(),
                     f"refs/heads/{branch}",
                     got.stdout.strip(),
-                    f"branch {branch} of the sibling clone {sibling} (not on {repo} yet)",
+                    f"branch {branch} of the sibling clone {sibling} (on no remote yet)",
                 )
-    return Source(remote, f"refs/heads/{ref}", tip, f"branch {ref}")
+    return Source(repo, remote, f"refs/heads/{ref}", tip, f"branch {ref} of {repo}")
 
 
-def resolved() -> dict[str, tuple[str, Source]]:
-    return {
-        name: (repo, resolve(name, repo, ref)) for name, (repo, ref) in partners(load()).items()
-    }
+def resolved() -> dict[str, Source]:
+    return {name: resolve(name, repo, ref) for name, (repo, ref) in partners(load()).items()}
 
 
 def fetch(name: str, src: Source, dest: Path) -> None:
@@ -243,7 +278,10 @@ def path_deps() -> list[tuple[Path, str, str]]:
     found = []
     for manifest in tracked("pyproject.toml"):
         sources = (
-            tomllib.loads(manifest.read_text()).get("tool", {}).get("uv", {}).get("sources", {})
+            tomllib.loads(manifest.read_text(encoding="utf-8"))
+            .get("tool", {})
+            .get("uv", {})
+            .get("sources", {})
         )
         for dep, spec in sources.items():
             for entry in spec if isinstance(spec, list) else [spec]:
@@ -262,7 +300,7 @@ def path_deps() -> list[tuple[Path, str, str]]:
         return out
 
     for manifest in tracked("Cargo.toml"):
-        for table in tables(tomllib.loads(manifest.read_text())):
+        for table in tables(tomllib.loads(manifest.read_text(encoding="utf-8"))):
             for dep, spec in table.items():
                 if isinstance(spec, dict) and "path" in spec:
                     found.append((manifest, dep, spec["path"]))
@@ -272,11 +310,13 @@ def path_deps() -> list[tuple[Path, str, str]]:
 def check() -> int:
     failures = []
     found = resolved()
-    for name, (repo, src) in found.items():
+    for name, src in found.items():
         if src.ref == src.commit and not commit_exists(src.url, src.commit):
-            failures.append(f"{name}: {repo}@{src.commit} does not exist (CI cannot check it out)")
+            failures.append(
+                f"{name}: {src.repo}@{src.commit} does not exist (CI cannot check it out)"
+            )
             continue
-        print(f"ok: {name} {repo} -> {src.commit} ({src.why})")
+        print(f"ok: {name} {src.repo} -> {src.commit} ({src.why})")
 
     layout = {name.lower() for name in found}
     for manifest, dep, raw in path_deps():
@@ -299,7 +339,7 @@ def check() -> int:
         )
 
     for wf in sorted((ROOT / ".github" / "workflows").glob("*.y*ml")):
-        for n, line in enumerate(wf.read_text().splitlines(), 1):
+        for n, line in enumerate(wf.read_text(encoding="utf-8").splitlines(), 1):
             if re.match(r"\s*ref:\s*['\"]?[0-9a-f]{40}\b", line):
                 failures.append(
                     f"{wf.relative_to(ROOT)}:{n}: a literal partner commit; name the partner "
@@ -349,7 +389,7 @@ def run(cmd: list[str]) -> int:
     me = env.get("SELF") or die("partners.env names no SELF")
     found = resolved()
     cache = os.environ.get("MOLCRAFTS_PARTNER_CACHE")
-    key = hashlib.sha256(repr(sorted((n, r) for n, (r, _) in found.items())).encode()).hexdigest()
+    key = hashlib.sha256(repr(sorted(partners(env).items())).encode()).hexdigest()
     root = (
         Path(cache) / f"{me}-{key[:12]}"
         if cache
@@ -357,9 +397,9 @@ def run(cmd: list[str]) -> int:
     )
     root.mkdir(parents=True, exist_ok=True)
     try:
-        with open(root / ".lock", "w") as lock:
+        with open(root / ".lock", "w", encoding="utf-8") as lock:
             fcntl.flock(lock, fcntl.LOCK_EX)
-            for name, (_, src) in found.items():
+            for name, src in found.items():
                 fetch(name, src, root / name.lower())
             sync(root / me)
             print(f"partners: running in {root / me}: {' '.join(cmd)}", file=sys.stderr)
@@ -374,9 +414,9 @@ def main(argv: list[str]) -> int:
     if argv == ["check"]:
         return check()
     if argv == ["resolve"]:
-        for name, (repo, src) in resolved().items():
-            print(f"partners: {name} {repo} -> {src.commit} ({src.why})", file=sys.stderr)
-            print(f"{name}_REPOSITORY={repo}")
+        for name, src in resolved().items():
+            print(f"partners: {name} {src.repo} -> {src.commit} ({src.why})", file=sys.stderr)
+            print(f"{name}_REPOSITORY={src.repo}")
             print(f"{name}_REF={src.commit}")
         return 0
     if argv[:1] == ["fetch"] and len(argv) == 3:
@@ -384,7 +424,7 @@ def main(argv: list[str]) -> int:
         name = argv[1].upper()
         if name not in found:
             die(f"no partner {name} in .github/partners.env (have: {sorted(found)})")
-        fetch(name, found[name][1], Path(argv[2]))
+        fetch(name, found[name], Path(argv[2]))
         return 0
     if argv[:2] == ["run", "--"] and len(argv) > 2:
         return run(argv[2:])

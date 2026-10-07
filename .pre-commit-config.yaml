@@ -97,7 +97,7 @@ repos:
         name: uv pytest against the resolved molrs (ci.yml test)
         entry: >-
           scripts/hook-run.sh python3 scripts/partners.py run --
-          env MATURIN_PEP517_ARGS=--locked
+          env MATURIN_PEP517_ARGS=--locked PYTHONWARNDEFAULTENCODING=1
           uv run --locked --python 3.12 --extra dev python -m pytest tests/ -n auto
         language: system
         pass_filenames: false

@@ -27,7 +27,7 @@ def test_data_writer_emits_fix_drude_flags(tmp_path, TEST_DATA_DIR):
     frame = _ntf2_polarized(TEST_DATA_DIR).to_frame()
     path = tmp_path / "ntf2.data"
     mp.io.write_lammps_data(path, frame)
-    text = path.read_text()
+    text = path.read_text(encoding="utf-8")
 
     flag_line = next(line for line in text.splitlines() if "fix drude flags" in line)
     flags = flag_line.split(":", 1)[1].split()
@@ -70,4 +70,4 @@ def test_data_writer_no_drude_comment_for_plain_system(tmp_path):
     )
     path = tmp_path / "plain.data"
     mp.io.write_lammps_data(path, asm.to_frame())
-    assert "fix drude" not in path.read_text()
+    assert "fix drude" not in path.read_text(encoding="utf-8")

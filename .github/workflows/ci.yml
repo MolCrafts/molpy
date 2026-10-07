@@ -18,6 +18,9 @@ env:
   # uv builds molrs through maturin's PEP 517 hook; this makes that cargo
   # build --locked as well.
   MATURIN_PEP517_ARGS: --locked
+  # Every text-mode open without encoding= warns, and pytest's "error" filter
+  # fails it: it would decode with cp1252 on Windows only (pyproject.toml).
+  PYTHONWARNDEFAULTENCODING: "1"
 
 jobs:
   lint:

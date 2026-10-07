@@ -248,6 +248,7 @@ class EnvironmentSpec:
                 text=True,
                 check=False,
                 env=self.merge_environ(),
+                encoding="utf-8",
             )
         except OSError:
             return None

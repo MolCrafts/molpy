@@ -200,7 +200,8 @@ class TestReadLammpsData:
         path.write_text(
             f"{style}\n\n1 atoms\n1 atom types\n\n"
             "0 10 xlo xhi\n0 10 ylo yhi\n0 10 zlo zhi\n\n"
-            f"Masses\n\n1 12.011\n\nAtoms # {style}\n\n{row}\n"
+            f"Masses\n\n1 12.011\n\nAtoms # {style}\n\n{row}\n",
+            encoding="utf-8",
         )
         return path
 
@@ -253,7 +254,7 @@ class TestDefaultAtomStyle:
             "3 1 1 0.0 3.0 0.0 0.0\n"
         )
         path = tmp_path / "full.data"
-        path.write_text(data)
+        path.write_text(data, encoding="utf-8")
         return path
 
     def test_default_atom_style_reads_full_file(self, full_data_path: Path):
@@ -328,7 +329,7 @@ class TestWriteLammpsData:
             "Bonds\n\n1 1 1 2\n2 1 2 3\n3 1 3 4\n"
         )
         path = tmp_path / "chain.data"
-        path.write_text(data)
+        path.write_text(data, encoding="utf-8")
 
         frame = mp.io.read_lammps_data(path, atom_style="full")
         # Bond endpoints are unsigned; from_frame would drop signed ones.
@@ -361,7 +362,7 @@ class TestWriteLammpsData:
 
         # Check file was written and has content
         assert os.path.exists(tmp_file)
-        with open(tmp_file) as f:
+        with open(tmp_file, encoding="utf-8") as f:
             content = f.read()
             assert "3 atoms" in content
             assert "2 atom types" in content
@@ -390,10 +391,10 @@ class TestWriteLammpsData:
         mp.io.write_lammps_data(path, frame)
 
         assert "id" not in frame["atoms"], "writer mutated the caller's frame"
-        atoms_section = _section_rows(path.read_text(), "Atoms")
+        atoms_section = _section_rows(path.read_text(encoding="utf-8"), "Atoms")
         assert [row[0] for row in atoms_section] == ["1", "2", "3"]
         # Bonds reference those same 1-based IDs.
-        bonds_section = _section_rows(path.read_text(), "Bonds")
+        bonds_section = _section_rows(path.read_text(encoding="utf-8"), "Bonds")
         assert [row[2:] for row in bonds_section] == [["1", "2"], ["2", "3"]]
 
     def test_write_full_style(self, tmp_path):
@@ -429,7 +430,7 @@ class TestWriteLammpsData:
         mp.io.write_lammps_data(tmp_file, frame)
 
         # Check file content
-        with open(tmp_file) as f:
+        with open(tmp_file, encoding="utf-8") as f:
             content = f.read()
             assert "3 atoms" in content
             assert "2 bonds" in content
@@ -460,7 +461,7 @@ class TestWriteLammpsData:
         mp.io.write_lammps_data(tmp_file, frame)
 
         # Check file content
-        with open(tmp_file) as f:
+        with open(tmp_file, encoding="utf-8") as f:
             content = f.read()
             assert "2 atoms" in content
 
@@ -476,7 +477,7 @@ class TestErrorHandling:
     def test_empty_file(self, tmp_path):
         """An empty file has no box, and the reader does not invent one."""
         tmp_file = tmp_path / "test.data"
-        tmp_file.write_text("")
+        tmp_file.write_text("", encoding="utf-8")
         frame = mp.io.read_lammps_data(tmp_file)
         assert frame.box is None
         assert frame.meta["lammps_box_axes"] == "x=0,y=0,z=0"
@@ -496,7 +497,7 @@ class TestErrorHandling:
             "1 1 0.0 0.0 0.0\n"
         )
         tmp_file = tmp_path / "missing_z.data"
-        tmp_file.write_text(content)
+        tmp_file.write_text(content, encoding="utf-8")
 
         frame = mp.io.read_lammps_data(tmp_file, atom_style="atomic")
         assert frame.meta["lammps_box_axes"] == "x=1,y=1,z=0"
@@ -517,7 +518,7 @@ class TestErrorHandling:
             "1 1 0.0 0.0 0.0\n"
         )
         tmp_file = tmp_path / "float_box.data"
-        tmp_file.write_text(content)
+        tmp_file.write_text(content, encoding="utf-8")
 
         frame = mp.io.read_lammps_data(tmp_file, atom_style="atomic")
 
@@ -543,7 +544,7 @@ Atoms
 1 1 0.0 0.0 0.0
 """
         tmp_file = tmp_path / "test.data"
-        with open(tmp_file, "w") as f:
+        with open(tmp_file, "w", encoding="utf-8") as f:
             f.write(malformed_content)
 
         with pytest.raises(OSError):
@@ -600,7 +601,7 @@ class TestExplicitTypeLabels:
         mp.io.write_lammps_data(tmp_file, frame)
 
         # Check file content
-        with open(tmp_file) as f:
+        with open(tmp_file, encoding="utf-8") as f:
             content = f.read()
             assert "3 atoms" in content
             assert "3 atom types" in content
@@ -632,7 +633,7 @@ class TestExplicitTypeLabels:
         mp.io.write_lammps_data(tmp_file, frame, type_labels=type_labels)
 
         # Check file content - should include all types from the explicit inventory
-        with open(tmp_file) as f:
+        with open(tmp_file, encoding="utf-8") as f:
             content = f.read()
             assert "4 atom types" in content  # All types from the explicit inventory
             assert "Atom Type Labels" in content
@@ -665,7 +666,7 @@ class TestExplicitTypeLabels:
         mp.io.write_lammps_data(tmp_file, frame, type_labels=type_labels)
 
         # Check file content - should include merged types
-        with open(tmp_file) as f:
+        with open(tmp_file, encoding="utf-8") as f:
             content = f.read()
             # Should have 5 types: C, H, N, O (from the explicit inventory) + S (from atoms)
             assert "5 atom types" in content
@@ -710,7 +711,7 @@ class TestExplicitTypeLabels:
         mp.io.write_lammps_data(tmp_file, frame, type_labels=type_labels)
 
         # Check file content
-        with open(tmp_file) as f:
+        with open(tmp_file, encoding="utf-8") as f:
             content = f.read()
             assert "3 bond types" in content  # All types from the explicit inventory
             assert "Bond Type Labels" in content
@@ -746,7 +747,7 @@ class TestExplicitTypeLabels:
         # Check that type IDs are consistent
         # In the written file, types should be sorted: C, H, O
         # So C should be type 1, H should be type 2, O should be type 3
-        with open(tmp_file) as f:
+        with open(tmp_file, encoding="utf-8") as f:
             content = f.read()
             # Type labels should be sorted: C, H, O (alphabetically)
             assert "1 C" in content
@@ -799,7 +800,7 @@ def test_write_keeps_reverse_angle_type_labels_as_two_types(tmp_path):
     frame.box = mp.Box(h=[5.0, 5.0, 5.0])
     path = tmp_path / "rev.data"
     mp.io.write_lammps_data(path, frame)
-    text = path.read_text()
+    text = path.read_text(encoding="utf-8")
     assert "2 angle types" in text
     assert "c3-c3-h1" in text
     assert "h1-c3-c3" in text
@@ -842,7 +843,8 @@ class TestForceFieldCoeffs:
             "0 1 xlo xhi\n0 1 ylo yhi\n0 1 zlo zhi\n\n"
             "Masses\n\n1 1.0\n\n"
             "Pair Coeffs\n\n1 notanumber 3.5\n\n"
-            "Atoms\n\n1 1 1 0.0 0.0 0.0 0.0\n2 1 1 0.0 0.5 0.0 0.0\n"
+            "Atoms\n\n1 1 1 0.0 0.0 0.0 0.0\n2 1 1 0.0 0.5 0.0 0.0\n",
+            encoding="utf-8",
         )
         with pytest.raises(ValueError):
             mp.io.read_lammps_data_coeffs(data)

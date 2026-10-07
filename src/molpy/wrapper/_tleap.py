@@ -42,6 +42,6 @@ class TleapWrapper(Wrapper):
         self.workdir.mkdir(parents=True, exist_ok=True)
         script_path = self.workdir / script_name
 
-        script_path.write_text(script_text)
+        script_path.write_text(script_text, encoding="utf-8")
 
         return self.run(args=["-f", script_name], check=check)

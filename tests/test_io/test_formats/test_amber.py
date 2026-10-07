@@ -28,7 +28,7 @@ def test_inpcrd_basic_coords_only(tmp_inpcrd_dir):
           6.000000    7.000000    8.000000
     """
     )
-    inpcrd_file.write_text(content)
+    inpcrd_file.write_text(content, encoding="utf-8")
 
     frame = mp.io.read_amber_inpcrd(inpcrd_file)
 
@@ -63,7 +63,7 @@ def test_inpcrd_with_time(tmp_inpcrd_dir):
           1.0    2.0    3.0    4.0    5.0    6.0
     """
     )
-    inpcrd_file.write_text(content)
+    inpcrd_file.write_text(content, encoding="utf-8")
 
     frame = mp.io.read_amber_inpcrd(inpcrd_file)
 
@@ -89,7 +89,7 @@ def test_inpcrd_with_velocities(tmp_inpcrd_dir):
           0.1    0.2    0.3    0.4    0.5    0.6
     """
     )
-    inpcrd_file.write_text(content)
+    inpcrd_file.write_text(content, encoding="utf-8")
 
     frame = mp.io.read_amber_inpcrd(inpcrd_file)
 
@@ -114,7 +114,7 @@ def test_inpcrd_with_box(tmp_inpcrd_dir):
          10.0   20.0   30.0   90.0   90.0   90.0
     """
     )
-    inpcrd_file.write_text(content)
+    inpcrd_file.write_text(content, encoding="utf-8")
 
     frame = mp.io.read_amber_inpcrd(inpcrd_file)
 
@@ -138,7 +138,7 @@ def test_inpcrd_with_velocities_and_box(tmp_inpcrd_dir):
          15.0   15.0   15.0
     """
     )
-    inpcrd_file.write_text(content)
+    inpcrd_file.write_text(content, encoding="utf-8")
 
     frame = mp.io.read_amber_inpcrd(inpcrd_file)
 
@@ -160,7 +160,7 @@ def test_inpcrd_update_existing_frame(tmp_inpcrd_dir):
           9.0    8.0    7.0    6.0    5.0    4.0
     """
     )
-    inpcrd_file.write_text(content)
+    inpcrd_file.write_text(content, encoding="utf-8")
 
     # Create pre-existing frame with atoms
     existing_frame = mp.Frame()
@@ -196,7 +196,7 @@ def test_inpcrd_too_short_file(tmp_inpcrd_dir):
     inpcrd_file = tmp_inpcrd_dir / "test_short.inpcrd"
 
     content = "Only title\n"
-    inpcrd_file.write_text(content)
+    inpcrd_file.write_text(content, encoding="utf-8")
 
     with pytest.raises(OSError, match="too short"):
         mp.io.read_amber_inpcrd(inpcrd_file)
@@ -216,7 +216,7 @@ def test_inpcrd_insufficient_coords(tmp_inpcrd_dir):
           1.0    2.0    3.0    4.0    5.0    6.0
     """
     )
-    inpcrd_file.write_text(content)
+    inpcrd_file.write_text(content, encoding="utf-8")
 
     with pytest.raises(OSError, match="Not enough lines"):
         mp.io.read_amber_inpcrd(inpcrd_file)
@@ -236,7 +236,7 @@ def test_inpcrd_atom_count_mismatch(tmp_inpcrd_dir):
           7.0    8.0    9.0
     """
     )
-    inpcrd_file.write_text(content)
+    inpcrd_file.write_text(content, encoding="utf-8")
 
     # Create frame with wrong number of atoms
     existing_frame = mp.Frame()
@@ -269,7 +269,7 @@ def test_inpcrd_large_system(tmp_inpcrd_dir):
     for i in range(0, 30, 6):
         lines.append("".join(coords[i : i + 6]))
 
-    inpcrd_file.write_text("\n".join(lines))
+    inpcrd_file.write_text("\n".join(lines), encoding="utf-8")
 
     frame = mp.io.read_amber_inpcrd(inpcrd_file)
 
@@ -295,7 +295,7 @@ def test_inpcrd_fixed_width_no_whitespace(tmp_inpcrd_dir):
         "  2\n"
         "  50.5413286-100.7101036  12.3456789 -44.5678901  88.8888888  -0.1234567\n"
     )
-    inpcrd_file.write_text(content)
+    inpcrd_file.write_text(content, encoding="utf-8")
 
     frame = mp.io.read_amber_inpcrd(inpcrd_file)
 

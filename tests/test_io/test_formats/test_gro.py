@@ -69,8 +69,9 @@ class TestReadGro:
     ):
         two = tmp_path / "two.gro"
         two.write_text(
-            (gro_dir / "triclinic.gro").read_text()
-            + (gro_dir / "two_waters.gro").read_text()
+            (gro_dir / "triclinic.gro").read_text(encoding="utf-8")
+            + (gro_dir / "two_waters.gro").read_text(encoding="utf-8"),
+            encoding="utf-8",
         )
         frame = _read(two)
         assert frame["atoms"].n_rows == 1
@@ -78,7 +79,10 @@ class TestReadGro:
 
     def test_missing_trailing_newline_is_tolerated(self, gro_dir, tmp_path):
         bare = tmp_path / "bare.gro"
-        bare.write_text((gro_dir / "triclinic.gro").read_text().rstrip("\n"))
+        bare.write_text(
+            (gro_dir / "triclinic.gro").read_text(encoding="utf-8").rstrip("\n"),
+            encoding="utf-8",
+        )
         assert _read(bare)["atoms"].n_rows == 1
 
     def test_short_atom_record_raises(self, gro_dir):
@@ -91,7 +95,7 @@ class TestReadGro:
 
     def test_empty_file_raises(self, tmp_path):
         empty = tmp_path / "empty.gro"
-        empty.write_text("")
+        empty.write_text("", encoding="utf-8")
         with pytest.raises(OSError):
             _read(empty)
 
@@ -117,7 +121,7 @@ class TestWriteGro:
     def test_record_layout(self, tmp_path):
         path = tmp_path / "out.gro"
         mp.io.write_gro(path, self._water())
-        lines = path.read_text().splitlines()
+        lines = path.read_text(encoding="utf-8").splitlines()
         assert len(lines) == 6
         assert lines[1].strip() == "3"
         # Fixed columns: resid(5) resname(5) name(5) serial(5) then 8.3f in nm.
@@ -127,7 +131,7 @@ class TestWriteGro:
     def test_box_is_written_in_nm(self, tmp_path):
         path = tmp_path / "out.gro"
         mp.io.write_gro(path, self._water())
-        assert path.read_text().splitlines()[-1].split() == [
+        assert path.read_text(encoding="utf-8").splitlines()[-1].split() == [
             "2.00000",
             "3.00000",
             "4.00000",

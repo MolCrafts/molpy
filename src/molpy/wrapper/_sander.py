@@ -44,7 +44,8 @@ class SanderWrapper(Wrapper):
         # relaxed coordinates read back through the plain inpcrd reader.
         mdin.write_text(
             f"minimize\n&cntrl\n  imin=1, maxcyc={max_iter}, ncyc={ncyc},\n"
-            f"  ntb=0, igb=0, cut=999.0, ntpr={ncyc}, ntxo=1,\n/\n"
+            f"  ntb=0, igb=0, cut=999.0, ntpr={ncyc}, ntxo=1,\n/\n",
+            encoding="utf-8",
         )
 
         result = self.run(

@@ -23,7 +23,7 @@ def test_atom_count_line_is_row_count(tmp_path):
     path = tmp_path / "traj.xyz"
     write_xyz_trajectory(path, [_frame(2), _frame(3)])
 
-    lines = path.read_text().splitlines()
+    lines = path.read_text(encoding="utf-8").splitlines()
     # Frame 0: count line, comment, 2 atoms.
     assert lines[0] == "2"
     # Frame 1 starts after 2 atom rows: index 0 + 1 (comment) + 2 (atoms) = 4.

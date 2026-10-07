@@ -117,7 +117,9 @@ def test_prepgen_from_their_ac_matches_the_25mer(gropob, tmp_path):
     _seed_monomer(gropob, tmp_path)
     result = _build({"PEO": _peo_template(gropob)}, _CUTS, tmp_path)
     (script,) = (tmp_path / "chains").glob("*/polymer.in")
-    assert "mol = sequence { HPE PEO PEO PEO TPE }" in script.read_text()
+    assert "mol = sequence { HPE PEO PEO PEO TPE }" in script.read_text(
+        encoding="utf-8"
+    )
 
     reference_ff, reference = mp.io.read_amber_prmtop_system(
         gropob / "PEO_25mer.prmtop"

@@ -292,6 +292,7 @@ class OpenmmEngine(Engine):
             check=check,
             timeout=timeout,
             env=self._merged_environment(),
+            encoding="utf-8",
         )
 
     # ------------------------------------------------------------------

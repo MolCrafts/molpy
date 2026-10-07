@@ -47,7 +47,7 @@ def test_relaxation_styles_come_from_the_molrs_include(tmp_path, monkeypatch):
     monkeypatch.setattr(engine, "run", run)
     engine.minimize(frame, ff, workdir=tmp_path)
     script = seen["script"].splitlines()
-    init = (tmp_path / "system.in.init").read_text().splitlines()
+    init = (tmp_path / "system.in.init").read_text(encoding="utf-8").splitlines()
     styled = [
         line for line in init + script if line and line.split()[0].endswith("_style")
     ]
@@ -58,7 +58,9 @@ def test_relaxation_styles_come_from_the_molrs_include(tmp_path, monkeypatch):
     ]
     assert "include system.in.init" in script
     assert "write_data relaxed.data nocoeff" in script
-    settings = (tmp_path / "system.in.settings").read_text().splitlines()
+    settings = (
+        (tmp_path / "system.in.settings").read_text(encoding="utf-8").splitlines()
+    )
     assert "bond_style harmonic" in settings
     assert not [line for line in settings if line.startswith("pair_style")]
     # Only the pair_style line is the script's: the force field's 1-4 weights
@@ -106,7 +108,7 @@ def test_relaxation_runs_with_the_force_field_special_bonds(tmp_path, monkeypatc
     ]:
         monkeypatch.delenv(key)
     relaxed = LammpsEngine("lmp").minimize(frame, ff, workdir=tmp_path)
-    log = (tmp_path / "log.lammps").read_text()
+    log = (tmp_path / "log.lammps").read_text(encoding="utf-8")
     assert (
         "special_bonds lj 0.000000 0.000000 0.500000 coul 0.000000 0.000000 0.833300"
         in log

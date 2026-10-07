@@ -20,7 +20,7 @@ def test_control_file_and_arguments(tmp_path):
 
     def fake_run(*, args, check):
         seen["args"] = args
-        (tmp_path / "run" / "min.rst").write_text("relaxed\n")
+        (tmp_path / "run" / "min.rst").write_text("relaxed\n", encoding="utf-8")
         return SimpleNamespace(returncode=0, stdout="", stderr="")
 
     with patch.object(SanderWrapper, "run", side_effect=fake_run):
@@ -29,7 +29,7 @@ def test_control_file_and_arguments(tmp_path):
         )
 
     assert rst == tmp_path / "run" / "min.rst"
-    mdin = (tmp_path / "run" / "min.in").read_text()
+    mdin = (tmp_path / "run" / "min.in").read_text(encoding="utf-8")
     assert "imin=1, maxcyc=100, ncyc=50," in mdin
     assert "ntxo=1" in mdin
     assert seen["args"][:3] == ["-O", "-i", "min.in"]

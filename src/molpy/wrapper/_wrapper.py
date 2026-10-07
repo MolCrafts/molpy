@@ -108,6 +108,7 @@ class Wrapper(ABC):
             text=True,
             env=spec.merge_environ(extra=self.env_vars),
             check=check,
+            encoding="utf-8",
         )
 
     def __repr__(self) -> str:

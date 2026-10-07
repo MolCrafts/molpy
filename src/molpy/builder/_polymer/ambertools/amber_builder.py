@@ -203,12 +203,12 @@ class AmberPolymerBuilder:
         stamp = directory / _STAMP
         outputs = (ac, mol2, frcmod)
         stale = not all(path.is_file() for path in outputs) or (
-            stamp.is_file() and stamp.read_text() != digest
+            stamp.is_file() and stamp.read_text(encoding="utf-8") != digest
         )
         if stale:
             stamp.unlink(missing_ok=True)
             self._antechamber(directory, source, ac, mol2, frcmod, charge)
-            stamp.write_text(digest)
+            stamp.write_text(digest, encoding="utf-8")
 
         frame = read_amber_ac(ac)
         ac_names = [str(name) for name in frame["atoms"]["name"]]
@@ -227,7 +227,9 @@ class AmberPolymerBuilder:
                 continue
             cut = self.cuts[label][variant]
             control = directory / f"{label}.{variant}"
-            previous = control.read_text() if control.is_file() else None
+            previous = (
+                control.read_text(encoding="utf-8") if control.is_file() else None
+            )
             text = prepgen_control_text(
                 variant=variant,
                 head_name=_mapped(cut.head, renamed),
@@ -241,7 +243,7 @@ class AmberPolymerBuilder:
                 omit_names=[renamed[name] for name in cut.omit],
                 charge=cut.charge,
             )
-            control.write_text(text)
+            control.write_text(text, encoding="utf-8")
             output = directory / _prepi_name(label, variant)
             prepi[variant] = output
             if not stale and output.is_file() and text == previous:

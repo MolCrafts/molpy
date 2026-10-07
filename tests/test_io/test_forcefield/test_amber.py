@@ -187,6 +187,6 @@ def test_title_preserved_in_typed_meta(litfsi_prmtop):
 
 def test_missing_pointers_raises(tmp_path):
     bad = tmp_path / "empty.prmtop"
-    bad.write_text("%VERSION 1\n%FLAG TITLE\n%FORMAT(20a4)\nx\n")
+    bad.write_text("%VERSION 1\n%FLAG TITLE\n%FORMAT(20a4)\nx\n", encoding="utf-8")
     with pytest.raises(ValueError, match="POINTERS"):
         read_amber_prmtop_system(bad)

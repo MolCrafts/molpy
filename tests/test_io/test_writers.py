@@ -69,7 +69,7 @@ class TestWriteLammpsBondReactSystem:
         )
         coeff_lines = [
             line.split()[:3]
-            for line in (workdir / "rxn.ff").read_text().splitlines()
+            for line in (workdir / "rxn.ff").read_text(encoding="utf-8").splitlines()
             if line.startswith(("pair_coeff", "bond_coeff"))
         ]
         assert ["bond_coeff", "c3-oh"] in [line[:2] for line in coeff_lines]

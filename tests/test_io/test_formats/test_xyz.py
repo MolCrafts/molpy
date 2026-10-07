@@ -96,7 +96,7 @@ class TestWriteXyz:
         }
         path = tmp_path / "out.xyz"
         mp.io.write_xyz(path, frame)
-        lines = path.read_text().splitlines()
+        lines = path.read_text(encoding="utf-8").splitlines()
         assert lines[0] == "3"
         assert len(lines) == 5
 

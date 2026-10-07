@@ -44,7 +44,7 @@ class TestWritePdb:
         assert (tmp_path / "test.pdb").exists()
 
         # Verify PDB file content directly (without reader)
-        with open(tmp_path / "test.pdb") as f:
+        with open(tmp_path / "test.pdb", encoding="utf-8") as f:
             lines = f.readlines()
             atom_lines = [l for l in lines if l.startswith("ATOM")]
             assert len(atom_lines) == 3
@@ -74,7 +74,7 @@ class TestWritePdb:
         mp.io.write_pdb(tmp_path / "test.pdb", frame)
         atom_lines = [
             line
-            for line in (tmp_path / "test.pdb").read_text().splitlines()
+            for line in (tmp_path / "test.pdb").read_text(encoding="utf-8").splitlines()
             if line.startswith("ATOM")
         ]
         assert [line[76:78].strip() for line in atom_lines] == ["X", "X"]
@@ -95,7 +95,7 @@ class TestWritePdb:
         mp.io.write_pdb(tmp_path / "test.pdb", frame)
 
         # Check elements in output
-        with open(tmp_path / "test.pdb") as f:
+        with open(tmp_path / "test.pdb", encoding="utf-8") as f:
             lines = f.readlines()
             atom_lines = [l for l in lines if l.startswith("ATOM")]
             elements = [line[76:78].strip() for line in atom_lines]
@@ -118,7 +118,7 @@ class TestWritePdb:
         mp.io.write_pdb(tmp_path / "test.pdb", frame)
 
         # Check atom serial numbers (columns 7-11)
-        with open(tmp_path / "test.pdb") as f:
+        with open(tmp_path / "test.pdb", encoding="utf-8") as f:
             lines = f.readlines()
             atom_lines = [l for l in lines if l.startswith("ATOM")]
             serials = [int(line[6:11].strip()) for line in atom_lines]
@@ -140,7 +140,7 @@ class TestWritePdb:
         mp.io.write_pdb(tmp_path / "test.pdb", frame)
 
         # Check atom serial numbers default to 1, 2, 3
-        with open(tmp_path / "test.pdb") as f:
+        with open(tmp_path / "test.pdb", encoding="utf-8") as f:
             lines = f.readlines()
             atom_lines = [l for l in lines if l.startswith("ATOM")]
             serials = [int(line[6:11].strip()) for line in atom_lines]

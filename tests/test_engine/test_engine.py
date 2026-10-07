@@ -133,13 +133,17 @@ class TestEngineRun:
             with patch("subprocess.run", return_value=_completed()):
                 engine.run("units real\n", capture_output=True, check=False)
             assert (Path(tmpdir) / "input.lmp").exists()
-            assert (Path(tmpdir) / "input.lmp").read_text().startswith("units real")
+            assert (
+                (Path(tmpdir) / "input.lmp")
+                .read_text(encoding="utf-8")
+                .startswith("units real")
+            )
 
     def test_run_with_path(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             tmpdir_path = Path(tmpdir)
             script_file = tmpdir_path / "my_script.lmp"
-            script_file.write_text("units real\natom_style full\n")
+            script_file.write_text("units real\natom_style full\n", encoding="utf-8")
 
             engine = LammpsEngine(
                 executable="lmp", workdir=tmpdir, check_executable=False
@@ -164,8 +168,12 @@ class TestEngineRun:
             assert (Path(tmpdir) / "main.lmp").exists()
             assert (Path(tmpdir) / "data.lmp").exists()
             assert engine.input_script == script1
-            assert (Path(tmpdir) / "main.lmp").read_text() == "units real\n"
-            assert (Path(tmpdir) / "data.lmp").read_text() == "# data file\n"
+            assert (Path(tmpdir) / "main.lmp").read_text(
+                encoding="utf-8"
+            ) == "units real\n"
+            assert (Path(tmpdir) / "data.lmp").read_text(
+                encoding="utf-8"
+            ) == "# data file\n"
 
     def test_run_with_workdir_override(self):
         with tempfile.TemporaryDirectory() as tmpdir1:
@@ -207,7 +215,9 @@ class TestCp2kEngine:
             assert engine.work_dir == Path(tmpdir)
             assert len(engine.scripts) == 1
             assert (Path(tmpdir) / "input.inp").exists()
-            assert "PROJECT water" in (Path(tmpdir) / "input.inp").read_text()
+            assert "PROJECT water" in (Path(tmpdir) / "input.inp").read_text(
+                encoding="utf-8"
+            )
 
 
 class TestLammpsEngine:

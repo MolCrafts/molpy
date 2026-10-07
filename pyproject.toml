@@ -91,7 +91,13 @@ line-length = 88
 [tool.ruff.lint]
 # The default-style gate (E4/E7/E9/F), selected explicitly so a ruff release
 # that widens its defaults does not widen this gate mid-release.
-select = ["E4", "E7", "E9", "F", "RUF100"]
+# PLW1514 (a preview rule; explicit-preview-rules keeps every other preview
+# rule off): text-mode file I/O names its encoding. Unnamed, Python decodes
+# with the locale -- cp1252 on Windows -- so a read that passes every Linux
+# hook fails only on CI's Windows leg.
+select = ["E4", "E7", "E9", "F", "RUF100", "PLW1514"]
+preview = true
+explicit-preview-rules = true
 # E402: readers/writers import lazily inside functions by design (layering);
 # E741: single-letter names in the maths-heavy kernels stay.
 ignore = ["E402", "E741"]
@@ -133,6 +139,10 @@ testpaths = ["tests"]
 # No __init__.py under tests/: same basenames (four test_lammps.py) resolve by path.
 addopts = "--import-mode=importlib"
 pythonpath = ["src"]
+# "error" covers EncodingWarning too: PYTHONWARNDEFAULTENCODING=1 (CI, the
+# hooks and release.yml set it) makes every text-mode open without encoding= warn. Python
+# would decode with the locale, cp1252 on Windows, so such a read passes on
+# Linux and fails only on Windows; ruff's PLW1514 sees only typed receivers.
 filterwarnings = [
     "error",
     "ignore::pytest.PytestUnraisableExceptionWarning",
@@ -159,6 +169,6 @@ base_python = ["python3.14"]
 deps = ["ruff==0.16.1", "ty==0.0.65"]
 commands = [
     ["ruff", "format", "--check", "src/", "tests/"],
-    ["ruff", "check", "src/", "tests/"],
+    ["ruff", "check", "src/", "tests/", "scripts/"],
     ["ty", "check", "src/molpy/"],
 ]

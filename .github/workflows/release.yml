@@ -35,6 +35,8 @@ jobs:
         run: python scripts/check_molrs_on_pypi.py
       - name: Unit tests against molrs from PyPI
         run: uv run --no-sources --extra dev python -m pytest tests/ -n auto
+        env:
+          PYTHONWARNDEFAULTENCODING: "1"
 
   release:
     needs: test

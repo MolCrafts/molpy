@@ -168,6 +168,7 @@ class LammpsEngine(Engine):
             check=check,
             timeout=timeout,
             env=self._merged_environment(),
+            encoding="utf-8",
         )
 
     # ------------------------------------------------------------------
@@ -251,7 +252,7 @@ class LammpsEngine(Engine):
             units=units,
         )
         write_lammps_data(paths["data"], frame)
-        paths["settings"].write_text(settings)
+        paths["settings"].write_text(settings, encoding="utf-8")
 
         periodic = frame.box is not None and not frame.box.is_free
         init = [
@@ -263,7 +264,7 @@ class LammpsEngine(Engine):
         ]
         if pair_style is not None:
             init.append(f"pair_style {pair_style}")
-        paths["init"].write_text("\n".join(init) + "\n")
+        paths["init"].write_text("\n".join(init) + "\n", encoding="utf-8")
 
         paths["input"].write_text(
             _INPUT_TEMPLATE.format(
@@ -272,7 +273,8 @@ class LammpsEngine(Engine):
                 data=paths["data"].name,
                 settings=paths["settings"].name,
                 body=(_STARTER_BODY if body is None else body).rstrip("\n"),
-            )
+            ),
+            encoding="utf-8",
         )
         return paths
 

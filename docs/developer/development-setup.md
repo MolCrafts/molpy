@@ -63,18 +63,22 @@ tracked, not pinned), and `scripts/partners.py` resolves it -- for CI
 to the first of:
 
 1. molrs's branch named like the one being built (CI: the pushed branch or a
-   pull request's head branch; locally: the checked-out branch), when
-   MolCrafts/molrs has one;
+   pull request's head branch; locally: the checked-out branch), looked up
+   first on the fork the build comes from (`<owner>/molrs`, where `<owner>`
+   owns the pull request's head repository or the repository CI runs in; in a
+   git hook, the remote being pushed to), then on MolCrafts/molrs;
 2. outside CI only, that branch in your sibling clone `../molrs`, when it has
-   one and the remote does not yet;
-3. molrs's `dev`.
+   one and neither remote does yet;
+3. MolCrafts/molrs's `dev`.
 
 A molpy change that needs a molrs change lands as two same-named branches,
 never by skipping a gate: create the same branch (say `converge/x`) in both
-checkouts; push molrs's first, then molpy's (its gates take molrs's branch
-from the remote, or from your sibling before it is pushed); open both pull
-requests into `dev` -- molpy's CI resolves molrs's `converge/x` -- and once
-both are green, land molrs's, then molpy's, and delete the branches.
+checkouts; push both to your forks, never to MolCrafts (molpy's gates take
+molrs's branch from your fork, or from your sibling before it is pushed); run
+CI on the forks by opening each branch as a pull request inside its fork --
+molpy's run resolves molrs's `converge/x` on your fork; only once both forks
+are green, open the pull requests into MolCrafts `dev`, land molrs's, then
+molpy's (never a red one), and delete the branches.
 
 
 ## Documentation preview

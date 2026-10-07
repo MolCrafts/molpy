@@ -118,6 +118,7 @@ class GromacsEngine(Engine):
             check=check,
             timeout=timeout,
             env=env,
+            encoding="utf-8",
         )
         if done.returncode != 0:
             return done
@@ -129,6 +130,7 @@ class GromacsEngine(Engine):
             check=check,
             timeout=timeout,
             env=env,
+            encoding="utf-8",
         )
 
     def generate_inputs(
@@ -172,8 +174,10 @@ class GromacsEngine(Engine):
         }
         write_gro(paths["gro"], frame)
         write_gromacs_top_system(paths["top"], forcefield, frame)
-        paths["em"].write_text(_EM_MDP)
-        paths["nvt"].write_text(_NVT_MDP.format(temperature=temperature))
+        paths["em"].write_text(_EM_MDP, encoding="utf-8")
+        paths["nvt"].write_text(
+            _NVT_MDP.format(temperature=temperature), encoding="utf-8"
+        )
         return paths
 
 
