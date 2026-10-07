@@ -39,7 +39,7 @@ def report(name: str, world: mp.Atomistic) -> None:
     """Atoms, bonds, units and the ports left open."""
     atoms = world.to_frame()["atoms"]
     n_units = len(set(atoms["frag_id"].tolist()))
-    n_bonds = world.to_frame()["bonds"].nrows
+    n_bonds = world.to_frame()["bonds"].n_rows
     print(
         f"{name:14s} units={n_units:3d}  atoms={world.n_atoms:4d}  "
         f"bonds={n_bonds:4d}  open ports={world.n_ports}"

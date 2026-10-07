@@ -160,7 +160,7 @@ Because each pair appears once, the mean number of neighbours per atom is
 `2 * n_pairs / n_atoms`. That identity is the quickest sanity check you can run:
 
 ```python
-n_atoms = frame["atoms"].nrows
+n_atoms = frame["atoms"].n_rows
 print(2 * nlist.n_pairs / n_atoms)     # -> 1.5
 ```
 

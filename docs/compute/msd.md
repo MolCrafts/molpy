@@ -169,10 +169,10 @@ with no-jump, etc. A normal analysis pipeline is therefore:
 ```python
 # docs: skip — needs your own trajectory file
 import numpy as np
-from molpy.io import read_lammps_trajectory
+from molpy.io import read_lammps_dump_trajectory
 from molpy.compute import Msd
 
-frames = read_lammps_trajectory("run.lammpstrj").read_all()
+frames = read_lammps_dump_trajectory("run.lammpstrj").read_all()
 series = Msd(method="window").compute(frames)
 msd = np.asarray(series.mean)
 lag = np.arange(len(msd)) * 10.0   # fs, whatever Δt your dump used

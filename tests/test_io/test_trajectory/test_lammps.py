@@ -3,9 +3,9 @@ import numpy as np
 import molpy as mp
 from molpy.core import MetaValue
 from molpy.io import (
-    read_lammps_trajectory,
+    read_lammps_dump_trajectory,
     write_lammps_dump_local,
-    write_lammps_trajectory,
+    write_lammps_dump_trajectory,
 )
 
 
@@ -32,10 +32,10 @@ class TestWriteLammpsTrajectory:
 
         # Write trajectory
         tmp_file = tmp_path / "test.dump"
-        write_lammps_trajectory(tmp_file, frames)
+        write_lammps_dump_trajectory(tmp_file, frames)
 
         # Read back via the native reader and verify
-        reader = read_lammps_trajectory(str(tmp_file))
+        reader = read_lammps_dump_trajectory(str(tmp_file))
 
         # Check that we can read the frames back
         for i, frame_read in enumerate(reader):
@@ -71,10 +71,10 @@ class TestWriteLammpsTrajectory:
 
         tmp_file = tmp_path / "test.dump"
         # Write
-        write_lammps_trajectory(tmp_file, [frame])
+        write_lammps_dump_trajectory(tmp_file, [frame])
 
         # Read back via the native reader
-        reader = read_lammps_trajectory(str(tmp_file))
+        reader = read_lammps_dump_trajectory(str(tmp_file))
         frame_read = reader[0]
 
         # Verify timestep
@@ -83,7 +83,7 @@ class TestWriteLammpsTrajectory:
         # Verify atoms data exists
         assert "atoms" in frame_read
         atoms = frame_read["atoms"]
-        assert atoms.nrows == 4
+        assert atoms.n_rows == 4
 
         # Verify box
         assert frame_read.box is not None
@@ -110,10 +110,10 @@ class TestTrajectoryIntegration:
 
         # Write as trajectory
         tmp_file = tmp_path / "test.dump"
-        write_lammps_trajectory(tmp_file, [frame])
+        write_lammps_dump_trajectory(tmp_file, [frame])
 
         # Read back as trajectory
-        reader = read_lammps_trajectory(str(tmp_file))
+        reader = read_lammps_dump_trajectory(str(tmp_file))
         frame_read = reader[0]
 
         assert frame_read.meta["timestep"] == 0
@@ -139,9 +139,9 @@ class TestTrajectoryIntegration:
 
         # Write as trajectory and read back
         tmp_file = tmp_path / "test.dump"
-        write_lammps_trajectory(tmp_file, [frame_original])
+        write_lammps_dump_trajectory(tmp_file, [frame_original])
 
-        reader = read_lammps_trajectory(str(tmp_file))
+        reader = read_lammps_dump_trajectory(str(tmp_file))
         frame_traj = reader[0]
 
         # Both should have same basic structure

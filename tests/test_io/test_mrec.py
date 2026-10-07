@@ -29,7 +29,7 @@ def _coords_frame() -> Frame:
 
 def _assert_coords(frame: Frame) -> None:
     atoms = frame["atoms"]
-    assert atoms.nrows == _N_ATOMS
+    assert atoms.n_rows == _N_ATOMS
     np.testing.assert_array_equal(
         np.asarray(atoms["x"]), np.array(_ATOM_X, dtype=np.float64)
     )

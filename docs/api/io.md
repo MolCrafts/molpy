@@ -51,7 +51,7 @@ The files map onto `mp.ff.forcefield.ForceField`, the data model
 | `read_lammps_forcefield` / `write_lammps_forcefield` | LAMMPS `*.ff` include | read/write (engine units ↔ LAMMPS `real`) |
 | `read_lammps_data_coeffs` / `write_lammps_data_coeffs` | LAMMPS data `* Coeffs` | read/write |
 | `read_gromacs_top_forcefield` / `write_gromacs_top_forcefield` | GROMACS `.top` / `.itp` directives | read/write |
-| `read_gromacs_system` / `write_gromacs_system` | GROMACS topology: force field + typed frame | read/write |
+| `read_gromacs_top_system` / `write_gromacs_top_system` | GROMACS topology: force field + typed frame | read/write |
 | `read_amber_prmtop_forcefield` / `write_amber_frcmod` | AMBER prmtop / frcmod | read / write |
 | `read_amber_prmtop_system` | AMBER prmtop: force field + typed frame (per-pair 1-4 weights in `pairs`) | read |
 
@@ -59,7 +59,7 @@ The files map onto `mp.ff.forcefield.ForceField`, the data model
 
 | Function | Format | Direction |
 |----------|--------|-----------|
-| `read_lammps_trajectory` / `write_lammps_trajectory` | LAMMPS dump | read (lazy) / write |
+| `read_lammps_dump_trajectory` / `write_lammps_dump_trajectory` | LAMMPS dump | read (lazy) / write |
 | `write_lammps_dump_local` | LAMMPS dump local (bonds) | write |
 | `read_xyz_trajectory` / `write_xyz_trajectory` | XYZ trajectory | read (lazy) / write |
 | `read_pdb_trajectory` / `write_pdb_trajectory` | Multi-MODEL PDB | read (lazy) / write |
@@ -119,7 +119,7 @@ ff = mp.io.read_lammps_forcefield("system.ff")
 mp.io.write_lammps_forcefield("system.ff", ff, frame)
 
 # Read trajectory (lazy)
-traj = mp.io.read_lammps_trajectory("dump.lammpstrj")
+traj = mp.io.read_lammps_dump_trajectory("dump.lammpstrj")
 for frame in traj:
     process(frame)
 

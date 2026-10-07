@@ -58,6 +58,6 @@ class PackingTemplate:
 
     def __repr__(self) -> str:
         return (
-            f"PackingTemplate(atoms={self.frame['atoms'].nrows}, "
+            f"PackingTemplate(atoms={self.frame['atoms'].n_rows}, "
             f"hydrogens={len(self.hydrogens)})"
         )

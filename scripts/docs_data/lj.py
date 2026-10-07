@@ -16,12 +16,24 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 import numpy as np
+from molrs.core import UnitRegistry, constants
 
-#: Boltzmann constant, kcal/(mol*K).
-KB = 0.0019872041
+_UNITS = UnitRegistry()
 
-#: (kcal/mol/A) / (g/mol) -> A/fs**2.
-ACCEL = 4.184e-4
+#: Boltzmann constant per mole, kcal/(mol*K): k_B N_A (the gas constant)
+#: from J to kcal.
+KB = constants.GAS_CONSTANT * _UNITS.factor("J", "kcal")
+
+#: (kcal/mol/A) / (g/mol) -> A/fs**2: a force over a mass, both per mole,
+#: is kcal/g per A, and kcal/g is a squared speed.
+ACCEL = _UNITS.factor("kcal/g", "angstrom^2/fs^2")
+
+#: A^2/fs -> cm^2/s (diffusion coefficients).
+ANGSTROM2_PER_FS_TO_CM2_PER_S = _UNITS.factor("angstrom^2/fs", "cm^2/s")
+
+#: fs -> ps and fs -> s.
+FS_TO_PS = _UNITS.factor("fs", "ps")
+FS_TO_S = _UNITS.factor("fs", "s")
 
 
 @dataclass(frozen=True)
@@ -45,8 +57,8 @@ class ArgonLJ:
 
     def number_density(self, mass_density_g_cm3: float) -> float:
         """Convert a mass density (g/cm^3) to a number density (atoms/A^3)."""
-        avogadro = 6.02214076e23
-        return mass_density_g_cm3 / self.mass * avogadro * 1e-24
+        per_cm3 = mass_density_g_cm3 / self.mass * constants.AVOGADRO
+        return per_cm3 * _UNITS.factor("angstrom^3", "cm^3")
 
 
 @dataclass(frozen=True)

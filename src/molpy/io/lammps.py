@@ -5,7 +5,7 @@ molrs.io.lammps.LammpsLog``): the lazy dump reader ``LammpsDumpReader``, the
 ``fix bond/react`` template ``BondReactTemplate`` and the log records
 (``LammpsLog`` and its runs, thermo tables, warnings and timing summaries).
 The files themselves are read and written by the functions of :mod:`molpy.io`
-(``mp.io.read_lammps_data``, ``read_lammps_trajectory``, ``read_lammps_log``,
+(``mp.io.read_lammps_data``, ``read_lammps_dump_trajectory``, ``read_lammps_log``,
 ``write_lammps_bond_react_system``, …).
 
 molpy adds :class:`LammpsLogMetricReader`, the metric reader of ``log.lammps``

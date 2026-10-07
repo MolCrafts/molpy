@@ -537,10 +537,10 @@ def _splice_coords(original: Frame, relaxed: Frame) -> Frame:
 
     new = original.copy()
     atoms = new["atoms"]
-    n = atoms.nrows
-    if relaxed_atoms.nrows != n:
+    n = atoms.n_rows
+    if relaxed_atoms.n_rows != n:
         raise RuntimeError(
-            f"atom count changed during relaxation: {n} in, {relaxed_atoms.nrows} out."
+            f"atom count changed during relaxation: {n} in, {relaxed_atoms.n_rows} out."
         )
 
     if "id" in atoms:

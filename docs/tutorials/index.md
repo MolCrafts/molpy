@@ -28,7 +28,7 @@ water.def_bond(o, h2)
 
 frame = water.to_frame()
 mp.io.write_pdb("water.pdb", frame)
-print(f"Wrote {frame['atoms'].nrows} atoms to water.pdb")
+print(f"Wrote {frame['atoms'].n_rows} atoms to water.pdb")
 ```
 
 `Wrote 3 atoms to water.pdb` means you are ready — and those few lines already

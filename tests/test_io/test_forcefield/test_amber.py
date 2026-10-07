@@ -27,7 +27,7 @@ def test_prmtop_read_basic(litfsi_prmtop):
 def test_prmtop_read_pointers(litfsi_prmtop):
     _, frame = read_amber_prmtop_system(litfsi_prmtop)
     assert frame.meta["n_atoms"] == 16
-    assert frame["atoms"].nrows == 16
+    assert frame["atoms"].n_rows == 16
     assert "n_bonds" in frame.meta
     assert "n_angles" in frame.meta
     assert "n_dihedrals" in frame.meta

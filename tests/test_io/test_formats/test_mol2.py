@@ -27,7 +27,7 @@ def _read(path: Path) -> mp.Frame:
 class TestReadMol2:
     def test_atom_section_maps_to_canonical_columns(self, mol2_dir):
         atoms = _read(mol2_dir / "ethane.mol2")["atoms"]
-        assert atoms.nrows == 8
+        assert atoms.n_rows == 8
         assert list(atoms["name"][:3]) == ["C", "C", "H"]
         assert list(atoms["type"][:3]) == ["c3", "c3", "hc"]
         assert atoms["res_id"].tolist() == [1] * 8
@@ -38,7 +38,7 @@ class TestReadMol2:
 
     def test_bond_indices_are_zero_based(self, mol2_dir):
         bonds = _read(mol2_dir / "ethane.mol2")["bonds"]
-        assert bonds.nrows == 7
+        assert bonds.n_rows == 7
         assert bonds["atomi"].tolist() == [0, 0, 0, 0, 1, 1, 1]
         assert bonds["atomj"].tolist() == [1, 2, 3, 4, 5, 6, 7]
 
@@ -49,7 +49,7 @@ class TestReadMol2:
 
     def test_ring_closures_reference_earlier_atoms(self, mol2_dir):
         bonds = _read(mol2_dir / "naphthalene.mol2")["bonds"]
-        assert bonds.nrows == 11
+        assert bonds.n_rows == 11
         pairs = set(zip(bonds["atomi"].tolist(), bonds["atomj"].tolist()))
         assert {(5, 0), (9, 2), (1, 6)} <= pairs
         assert set(bonds["type"]) == {"ar"}
@@ -58,7 +58,7 @@ class TestReadMol2:
     def test_no_charges_and_empty_bond_section(self, mol2_dir):
         frame = _read(mol2_dir / "li.mol2")
         atoms = frame["atoms"]
-        assert atoms.nrows == 1
+        assert atoms.n_rows == 1
         assert list(atoms["type"]) == ["opls_404"]
         assert "charge" not in atoms
         assert "bonds" not in frame
@@ -83,7 +83,7 @@ class TestWriteMol2:
         out = tmp_path / "out.mol2"
         mp.io.write_mol2(out, frame)
         back = _read(out)
-        assert back["atoms"].nrows == 8
+        assert back["atoms"].n_rows == 8
         assert list(back["atoms"]["type"]) == list(frame["atoms"]["type"])
         np.testing.assert_allclose(back["atoms"]["charge"], frame["atoms"]["charge"])
         assert back["bonds"]["atomi"].tolist() == frame["bonds"]["atomi"].tolist()

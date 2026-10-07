@@ -24,8 +24,8 @@ def test_frame_is_the_molecule_frame() -> None:
     mol = _with_hydrogens("CCO")
     template = PackingTemplate(mol)
 
-    assert template.frame["atoms"].nrows == mol.n_atoms
-    assert template.frame["bonds"].nrows == mol.to_frame()["bonds"].nrows
+    assert template.frame["atoms"].n_rows == mol.n_atoms
+    assert template.frame["bonds"].n_rows == mol.to_frame()["bonds"].n_rows
 
 
 def test_molecule_without_hydrogens_has_none() -> None:

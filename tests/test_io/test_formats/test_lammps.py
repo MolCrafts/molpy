@@ -63,7 +63,7 @@ class TestReadLammpsData:
         atoms = frame["atoms"]
 
         # Should have 12 atoms based on file content
-        assert atoms.nrows == 12
+        assert atoms.n_rows == 12
         assert "mol_id" in atoms  # molecule ID (canonical name)
         assert "type" in atoms
         assert "charge" in atoms  # charge (canonical name)
@@ -101,7 +101,7 @@ class TestReadLammpsData:
         # Should parse correctly despite extra whitespaces
         assert "atoms" in frame
         atoms = frame["atoms"]
-        assert atoms.nrows == 1
+        assert atoms.n_rows == 1
 
         # Check the single atom's coordinates
         x = atoms["x"][0]
@@ -126,7 +126,7 @@ class TestReadLammpsData:
         np.testing.assert_array_almost_equal(frame.box.tilts, [0.0, 0.0, 0.0])
 
         if "atoms" in frame:
-            assert frame["atoms"].nrows == 0
+            assert frame["atoms"].n_rows == 0
 
     def test_triclinic_2_file(self, lammps_dir):
         """triclinic-2.lmp — non-zero tilt factors (5 -8 3 xy xz yz) must
@@ -162,7 +162,7 @@ class TestReadLammpsData:
         # Check atoms
         assert "atoms" in frame
         atoms = frame["atoms"]
-        assert atoms.nrows == 16
+        assert atoms.n_rows == 16
 
         # Check type labels are preserved
         types = atoms["type"]
@@ -173,7 +173,7 @@ class TestReadLammpsData:
         # Check connectivity
         assert "bonds" in frame
         bonds = frame["bonds"]
-        assert bonds.nrows == 14
+        assert bonds.n_rows == 14
 
         # Check bond types
         bond_types = bonds["type"]
@@ -183,12 +183,12 @@ class TestReadLammpsData:
         # Check angles
         assert "angles" in frame
         angles = frame["angles"]
-        assert angles.nrows == 25
+        assert angles.n_rows == 25
 
         # Check dihedrals
         assert "dihedrals" in frame
         dihedrals = frame["dihedrals"]
-        assert dihedrals.nrows == 27
+        assert dihedrals.n_rows == 27
 
         # No `* Coeffs` sections: the file carries no force field.
         with pytest.raises(ValueError, match="Coeffs"):
@@ -259,7 +259,7 @@ class TestDefaultAtomStyle:
     def test_default_atom_style_reads_full_file(self, full_data_path: Path):
         frame = mp.io.read_lammps_data(full_data_path)
         assert isinstance(frame, mp.Frame)
-        assert frame["atoms"].nrows == 3
+        assert frame["atoms"].n_rows == 3
         assert "charge" in frame["atoms"] and "mol_id" in frame["atoms"]
 
     def test_the_frame_carries_the_box(self, full_data_path: Path):
@@ -294,7 +294,7 @@ class TestWriteLammpsData:
         orig_atoms = original_frame["atoms"]
         new_atoms = new_frame["atoms"]
 
-        assert orig_atoms.nrows == new_atoms.nrows
+        assert orig_atoms.n_rows == new_atoms.n_rows
         # Convert types to strings for comparison since they may be different types
         np.testing.assert_array_equal(
             np.array([str(t) for t in orig_atoms["type"]]),
@@ -860,7 +860,7 @@ class TestCoeffsAreText:
 
     def test_structure_read_survives_unparseable_coeffs(self, cosine_file):
         frame = mp.io.read_lammps_data(cosine_file, atom_style="angle")
-        assert frame["atoms"].nrows == 3
+        assert frame["atoms"].n_rows == 3
         assert frame.meta.get("lammps_coeffs_text")
 
     def test_unparseable_coeffs_raise_when_read(self, cosine_file):

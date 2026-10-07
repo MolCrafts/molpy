@@ -28,7 +28,7 @@ from .structure import _frames, neighbors, write_json
 def percolation(trajectory: Trajectory) -> dict[str, float]:
     """Cluster count and largest-cluster fraction against the cutoff."""
     frames = _frames(trajectory, stride=600)
-    n_atoms = frames[0]["atoms"].nrows
+    n_atoms = frames[0]["atoms"].n_rows
 
     rows: list[dict[str, float | str]] = []
     transition: list[float] = []

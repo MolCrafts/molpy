@@ -31,7 +31,10 @@ def write_json(relative: str, rows: list[dict[str, float | str]]) -> Path:
     """Write ``rows`` to ``docs/data/<relative>`` and return the path."""
     path = DOCS_DATA / relative
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(rows, separators=(",", ":")) + "\n", encoding="utf-8")
+    path.write_text(
+        json.dumps(rows, separators=(",", ":"), ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
     return path
 
 
@@ -69,7 +72,7 @@ def radial_distribution(trajectory: Trajectory) -> dict[str, float]:
         [{"r": round(float(a), 4), "g": round(float(b), 4)} for a, b in zip(r, g)],
     )
 
-    density = frames[0]["atoms"].nrows / trajectory.box_length**3
+    density = frames[0]["atoms"].n_rows / trajectory.box_length**3
     integrand = 4.0 * np.pi * density * r**2 * g
     coordination = np.concatenate([[0.0], np.cumsum(np.diff(r) * integrand[:-1])])
     write_json(
@@ -101,15 +104,13 @@ def neighbor_cost(trajectory: Trajectory) -> dict[str, float]:
     so ``2 * n_pairs / N`` is the quantity that (4/3) pi rho r^3 predicts.
     """
     frame = _frames(trajectory, stride=len(trajectory.wrapped))[0]
-    n_atoms = frame["atoms"].nrows
+    n_atoms = frame["atoms"].n_rows
     density = n_atoms / trajectory.box_length**3
 
     rows: list[dict[str, float | str]] = []
     ratios: list[float] = []
     for cutoff in np.arange(3.0, trajectory.box_length / 2.0 + 0.01, 0.5):
-        measured = (
-            2.0 * neighbors(frame, float(cutoff)).n_pairs / n_atoms
-        )
+        measured = 2.0 * neighbors(frame, float(cutoff)).n_pairs / n_atoms
         ideal = density * 4.0 / 3.0 * np.pi * cutoff**3
         ratios.append(float(measured / ideal))
         rows.append(
@@ -139,7 +140,7 @@ def neighbor_cost(trajectory: Trajectory) -> dict[str, float]:
 def local_density(trajectory: Trajectory) -> dict[str, float]:
     """Distribution of per-particle local density at two probe radii."""
     frames = _frames(trajectory)
-    bulk = frames[0]["atoms"].nrows / trajectory.box_length**3
+    bulk = frames[0]["atoms"].n_rows / trajectory.box_length**3
 
     rows: list[dict[str, float | str]] = []
     summary: dict[str, float] = {"bulk": float(bulk)}

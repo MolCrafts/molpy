@@ -18,7 +18,7 @@ typed = typifier.typify(mol)  # assign force-field types
 ff = typifier.forcefield()  # the parameters of the types just assigned
 
 frame = typed.to_frame()  # columnar arrays
-print(frame["atoms"].nrows, "typed atoms")  # 9 typed atoms
+print(frame["atoms"].n_rows, "typed atoms")  # 9 typed atoms
 ```
 
 That is the entire MolPy story — parse, embed, typify, convert. Every guide in
@@ -149,9 +149,9 @@ frame.box = box  # box is a first-class Frame attribute; writers read frame.box
 # atom_style full needs a molecule id: one per connected component
 frame["atoms"]["mol_id"] = mp.Topology.from_frame(frame).connected_components() + 1
 
-print("atoms rows:", frame["atoms"].nrows)
-print("bonds rows:", frame["bonds"].nrows)
-print("angles rows:", frame["angles"].nrows)
+print("atoms rows:", frame["atoms"].n_rows)
+print("bonds rows:", frame["bonds"].n_rows)
+print("angles rows:", frame["angles"].n_rows)
 ```
 
 The LAMMPS data writer refuses a bonded frame without `mol_id`, so this step is

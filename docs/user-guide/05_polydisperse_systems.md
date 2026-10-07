@@ -364,7 +364,7 @@ mp.io.write_lammps_data("05_output/system.data", packed)
 mp.io.write_lammps_forcefield(
     "05_output/system.ff", ff, packed, skip_units=True
 )
-print(f"packed: {packed['atoms'].nrows} atoms, box: {box_length:.1f} A")
+print(f"packed: {packed['atoms'].n_rows} atoms, box: {box_length:.1f} A")
 ```
 
 ```text

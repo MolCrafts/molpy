@@ -11,7 +11,14 @@ import numpy as np
 import molpy as mp
 from molpy.compute import Acf, Msd, pair_survival_tcf
 
-from .lj import KB, Trajectory
+from .lj import (
+    ACCEL,
+    ANGSTROM2_PER_FS_TO_CM2_PER_S,
+    FS_TO_PS,
+    KB,
+    ArgonLJ,
+    Trajectory,
+)
 from .structure import write_json
 
 #: Linear-response fitting window for the diffusive regime, fs.
@@ -50,7 +57,7 @@ def mean_squared_displacement(trajectory: Trajectory) -> dict[str, float]:
     # Both asymptotes are predictions, not fitted curves drawn by hand:
     # ballistic uses <v^2> = 3 k_B T / m measured from the same run, and
     # diffusive uses the slope fitted over FIT_START..FIT_END.
-    mean_square_speed = 3.0 * KB * trajectory.temperature / 39.948 * 4.184e-4
+    mean_square_speed = 3.0 * KB * trajectory.temperature / ArgonLJ().mass * ACCEL
     rows: list[dict[str, float | str]] = []
     for i in picked:
         rows.append(
@@ -90,7 +97,7 @@ def mean_squared_displacement(trajectory: Trajectory) -> dict[str, float]:
 
     return {
         "D_A2_per_fs": float(diffusion),
-        "D_cm2_per_s": float(diffusion / 10.0),
+        "D_cm2_per_s": float(diffusion * ANGSTROM2_PER_FS_TO_CM2_PER_S),
         "msd_30ps": float(msd[-1]),
         "loglog_slope_short": float(ballistic_slope),
         "fit_intercept": float(intercept),
@@ -120,19 +127,22 @@ def velocity_autocorrelation(trajectory: Trajectory) -> dict[str, float]:
     write_json(
         "vacf/argon_running_diffusion.json",
         [
-            {"t": round(float(a), 2), "D": round(float(b / 10.0), 8)}
+            {
+                "t": round(float(a), 2),
+                "D": round(float(b * ANGSTROM2_PER_FS_TO_CM2_PER_S), 8),
+            }
             for a, b in zip(lag, running)
         ],
     )
 
-    equipartition = 3.0 * KB * trajectory.temperature / 39.948 * 4.184e-4
+    equipartition = 3.0 * KB * trajectory.temperature / ArgonLJ().mass * ACCEL
     minimum = int(np.argmin(acf))
     return {
         "C0": float(acf[0]),
         "C0_expected_3kT_m": float(equipartition),
         "min_lag_fs": float(lag[minimum]),
         "min_normalized": float(acf[minimum] / acf[0]),
-        "D_cm2_per_s": float(running[-1] / 10.0),
+        "D_cm2_per_s": float(running[-1] * ANGSTROM2_PER_FS_TO_CM2_PER_S),
     }
 
 
@@ -170,7 +180,7 @@ def pair_survival(trajectory: Trajectory) -> dict[str, float]:
         # actually reaches 1/e inside the window, so report whether it did;
         # the docs must not quote a lifetime that was never observed.
         slope = np.polyfit(lag[lag > 1000], np.log(normalized[lag > 1000]), 1)[0]
-        summary[f"tau_ps_{method}"] = float(-1.0 / slope / 1000.0)
+        summary[f"tau_ps_{method}"] = float(-1.0 / slope * FS_TO_PS)
         summary[f"reached_1_over_e_{method}"] = float(normalized[-1] < np.exp(-1.0))
     write_json("persist/argon_survival.json", rows)
     return summary

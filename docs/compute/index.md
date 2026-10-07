@@ -150,10 +150,10 @@ For a LAMMPS dump of unwrapped coordinates:
 
 ```python
 # docs: skip — needs a trajectory file of your own
-from molpy.io import read_lammps_trajectory
+from molpy.io import read_lammps_dump_trajectory
 from molpy.compute import Rdf
 
-reader = read_lammps_trajectory("run.lammpstrj")
+reader = read_lammps_dump_trajectory("run.lammpstrj")
 frames = reader.read_all()   # list[Frame]; frame.box from BOX BOUNDS
 
 nl = mp.core.NeighborList(8.0)
@@ -193,7 +193,7 @@ selected = mixture["atoms"]["type_id"] == 1
 subset = mp.Frame()
 subset["atoms"] = {k: mixture["atoms"][k][selected] for k in ("x", "y", "z")}
 subset.box = mixture.box
-print(subset["atoms"].nrows)                       # -> 143
+print(subset["atoms"].n_rows)                       # -> 143
 ```
 
 The density used for normalization then comes from the subset, which is what you

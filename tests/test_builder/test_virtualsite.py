@@ -13,6 +13,7 @@ import pytest
 
 import molpy as mp
 from molpy.builder import DrudeBuilder, Tip4pBuilder, VirtualSiteBuilder
+from molpy.core import UnitRegistry
 from molpy.ff.params import clpol_polarizability
 
 #: 4πε₀ in e² / (kJ/mol·Å): the paduagroup/clandpol polarizer's value.
@@ -110,11 +111,12 @@ def test_drude_count_matches_heavy_atoms_no_hydrogen(cation):
 
 
 def test_drude_spring_force_constant(cation):
-    """alpha.ff is kJ/mol; molrs stores kcal/mol (÷4.184)."""
+    """alpha.ff is kJ/mol; molrs stores kcal/mol."""
     out = DrudeBuilder().apply(cation)
     springs = _drude_bonds(out)
     assert len(springs) == len(_drudes(out))
-    assert all(b.get("k") == pytest.approx(4184.0 / 4.184) for b in springs)
+    kcal_per_kj = UnitRegistry().factor("kJ", "kcal")
+    assert all(b.get("k") == pytest.approx(4184.0 * kcal_per_kj) for b in springs)
     assert all(b.get("r0") == 0.0 for b in springs)
 
 

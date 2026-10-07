@@ -124,7 +124,7 @@ def test_prepgen_from_their_ac_matches_the_25mer(gropob, tmp_path):
     )
     frame = result.chain.to_frame()
     atoms = frame["atoms"]
-    assert atoms.nrows == 183
+    assert atoms.n_rows == 183
     assert Counter(atoms["type"]) == Counter({"os": 25, "c3": 52, "h1": 100, "hc": 6})
     assert abs(float(sum(atoms["charge"]))) <= 0.01
     dihedrals = frame["dihedrals"]

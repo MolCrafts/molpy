@@ -80,7 +80,7 @@ files = gmx.generate_inputs(water, ff, "./gromacs_run", temperature=300.0)
 print(sorted(files))  # ['em', 'gro', 'nvt', 'top']
 ```
 
-The `.top` is the whole topology `mp.io.write_gromacs_system`
+The `.top` is the whole topology `mp.io.write_gromacs_top_system`
 writes: the force field's directives, one `[ moleculetype ]` per molecule
 (by the atoms' `mol_id`) with each row's parameters, `[ system ]` and
 `[ molecules ]` — what `grompp -p` reads. GROMACS excludes every pair within

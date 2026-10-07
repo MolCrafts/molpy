@@ -34,7 +34,7 @@ print(traj[0]["atoms"]["x"])  # [0.]
 ## Frames are materialized
 
 The constructor copies every frame into the native container, so frames from a
-generator are listed first. Use `molpy.io.read_lammps_trajectory` or
+generator are listed first. Use `molpy.io.read_lammps_dump_trajectory` or
 `molpy.io.read_xyz_trajectory` when data must remain lazy and seekable on disk.
 
 ```python

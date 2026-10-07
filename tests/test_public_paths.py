@@ -327,7 +327,7 @@ def test_each_ff_submodule_is_a_molpy_module_mirroring_molrs(sub: str) -> None:
         ("io.read_cgsmiles_str", "io.read_cgsmiles_str"),
         ("io.read_amber_prmtop_system", "io.read_amber_prmtop_system"),
         ("io.read_amber_ac", "io.read_amber_ac"),
-        ("io.write_gromacs_system", "io.write_gromacs_system"),
+        ("io.write_gromacs_top_system", "io.write_gromacs_top_system"),
         ("io.read_lammps_log_str", "io.read_lammps_log_str"),
         ("io.read_msgpack_frame_bytes", "io.read_msgpack_frame_bytes"),
         ("io.read_json_frame_str", "io.read_json_frame_str"),
@@ -539,7 +539,7 @@ def test_the_metric_readers_are_their_formats_modules() -> None:
         ("molpy.core", "Graph"),
         ("molpy.core", "BondType"),
         ("molpy.ff.forcefield", "read_amber_prmtop_system"),
-        ("molpy.ff.forcefield", "write_gromacs_system"),
+        ("molpy.ff.forcefield", "write_gromacs_top_system"),
         # S2: io per format
         ("molpy.io", "read_frame"),
         ("molpy.io", "write_frame"),

@@ -20,7 +20,7 @@ def xyz_dir(TEST_DATA_DIR: Path) -> Path:
 class TestReadXyz:
     def test_coordinates_become_three_flat_columns(self, xyz_dir):
         atoms = mp.io.read_xyz(xyz_dir / "methane.xyz")["atoms"]
-        assert atoms.nrows == 5
+        assert atoms.n_rows == 5
         for key in ("x", "y", "z"):
             assert atoms[key].shape == (5,)
             assert atoms[key].dtype == np.float64
@@ -40,7 +40,7 @@ class TestReadXyz:
         # Leading blanks on the count line, uneven columns, empty lines after
         # the last atom.
         frame = mp.io.read_xyz(xyz_dir / "ragged.xyz")
-        assert frame["atoms"].nrows == 3
+        assert frame["atoms"].n_rows == 3
         np.testing.assert_allclose(frame["atoms"]["y"], [0.1005, 0.5004, 0.7003])
         assert frame.box is None
 

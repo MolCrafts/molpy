@@ -40,7 +40,7 @@ atoms = mp.Block({
  "z": [0.000, 0.000, 0.000],
 })
 
-print(atoms.nrows) # 3
+print(atoms.n_rows) # 3
 print(list(atoms.keys())) # ['element', 'x', 'y', 'z']
 ```
 
@@ -65,7 +65,7 @@ Slicing, boolean masks, and fancy indexing all produce a new `Block`. The origin
 
 ```python
 hydrogens = atoms[atoms["element"] == "H"]
-print(hydrogens.nrows) # 2
+print(hydrogens.n_rows) # 2
 print(hydrogens["x"]) # [ 0.957 -0.239]
 
 first_two = atoms[0:2]

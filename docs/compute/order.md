@@ -174,7 +174,7 @@ Confirm the cutoff caught the shell you meant, using the identity from
 [NeighborList](neighborlist.md):
 
 ```python
-print(2 * nlist.n_pairs / crystal["atoms"].nrows)   # -> 12.0
+print(2 * nlist.n_pairs / crystal["atoms"].n_rows)   # -> 12.0
 ```
 
 Twelve neighbours per atom — the FCC first shell, so the reference values apply.

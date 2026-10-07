@@ -50,7 +50,7 @@ def test_typify_does_not_mutate():
 def test_pdb_round_trip(tmp_path):
     write_pdb(tmp_path / "out.pdb", frame)
     restored = read_pdb(tmp_path / "out.pdb")
-    assert restored["atoms"].nrows == frame["atoms"].nrows
+    assert restored["atoms"].n_rows == frame["atoms"].n_rows
 ```
 
 

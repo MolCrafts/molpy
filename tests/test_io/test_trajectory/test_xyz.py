@@ -36,4 +36,4 @@ def test_roundtrips_through_reader(tmp_path):
 
     reader = read_xyz_trajectory(path)
     frames = list(reader)
-    assert [f["atoms"].nrows for f in frames] == [2, 3]
+    assert [f["atoms"].n_rows for f in frames] == [2, 3]

@@ -134,10 +134,10 @@ lives in that format's submodule: `mp.io.smiles` (`SmilesIr`, `SmilesError`,
   (`read_pdb`, `read_cif`, `read_vasp_poscar`, …).
 
 Force-field file formats are `mp.io`'s too (`read_openmm_xml_forcefield`,
-`read_gromacs_system`, `write_lammps_forcefield`, …); `mp.ff.forcefield` is
+`read_gromacs_top_system`, `write_lammps_forcefield`, …); `mp.ff.forcefield` is
 the `ForceField` data model only. A whole AMBER system is
 `mp.io.read_amber_prmtop_system(prmtop)` → `(ForceField, Frame)`,
-as `read_gromacs_system` is for GROMACS: the frame carries a `pairs` block
+as `read_gromacs_top_system` is for GROMACS: the frame carries a `pairs` block
 for the 1-4 pairs whose `SCEE` / `SCNB` differ from the field's
 `special_bonds` (GLYCAM beside ff14SB), which the structure reader
 `mp.io.read_amber_prmtop` does not.
@@ -170,7 +170,7 @@ entry-point names (`lammps_log`, `mlp_jsonl`, `mrec`) are unchanged; the
 `LammpsEngine.generate_inputs(frame, ff, out)` writes the data file, the
 force-field settings, the init and the input script — the same deck its
 `minimize` / `md` run — and the new `GromacsEngine.generate_inputs(frame, ff,
-out)` writes the `.gro`, the whole `.top` (`write_gromacs_system`: directives,
+out)` writes the `.gro`, the whole `.top` (`write_gromacs_top_system`: directives,
 one `[ moleculetype ]` per molecule, `[ system ]`, `[ molecules ]` — what
 `grompp` reads) and the `.mdp` templates (its `run` grompp's and mdrun's an
 `.mdp`). `mp.Script` is `mp.engine.Script`.
@@ -352,7 +352,7 @@ keeps its path.
 | `mp.io.parse_lammps_log_text(text)` | `mp.io.read_lammps_log_str(text)` |
 | `mp.io.read_xml_forcefield`, `mp.io.write_xml_forcefield` | `mp.io.read_openmm_xml_forcefield` (or `read_molrs_xml_forcefield` for molrs's own layout), `write_openmm_xml_forcefield` |
 | `mp.io.read_gromacs_forcefield`, `mp.io.write_gromacs_forcefield` | `mp.io.read_gromacs_top_forcefield`, `write_gromacs_top_forcefield` |
-| `mp.io.read_top(path)`, `mp.io.write_top(path, frame)` | `mp.io.read_gromacs_system(path)` → `(ForceField, Frame)`, `write_gromacs_system(path, ff, frame)` (0-based) |
+| `mp.io.read_top(path)`, `mp.io.write_top(path, frame)` | `mp.io.read_gromacs_top_system(path)` → `(ForceField, Frame)`, `write_gromacs_top_system(path, ff, frame)` (0-based) |
 | `mp.io.read_amber_ac` | `mp.io.read_amber_ac`, which now emits `charge` |
 | `mp.io.read_mrec(path)`, `mp.io.write_mrec(path, frame, ...)` | `mp.io.read_mrec_frame(path)`, `mp.io.write_mrec_frame(path, frame, ...)` |
 | `mp.io.read_lammps_data(path, atom_style="full")` → `LammpsDataResult` (`.frame`, `.forcefield`, `.counts`, `.type_labels`) | `mp.io.read_lammps_data(path, atom_style=None)` → `Frame`; force field: `mp.io.read_lammps_data_coeffs(frame)`; counts / labels: `frame.meta["lammps_counts"]`, `frame.meta["<kind>_type_labels"]` |

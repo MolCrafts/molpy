@@ -27,7 +27,7 @@ def _read(path: Path) -> mp.Frame:
 class TestReadGro:
     def test_records_are_split_into_canonical_columns(self, gro_dir):
         atoms = _read(gro_dir / "two_waters.gro")["atoms"]
-        assert atoms.nrows == 6
+        assert atoms.n_rows == 6
         assert atoms["res_id"].tolist() == [1, 1, 1, 2, 2, 2]
         assert list(atoms["res_name"]) == ["WAT"] * 6
         assert list(atoms["name"]) == ["OW", "HW1", "HW2", "OW", "HW1", "HW2"]
@@ -73,13 +73,13 @@ class TestReadGro:
             + (gro_dir / "two_waters.gro").read_text()
         )
         frame = _read(two)
-        assert frame["atoms"].nrows == 1
+        assert frame["atoms"].n_rows == 1
         assert frame.meta["title"] == "Triclinic"
 
     def test_missing_trailing_newline_is_tolerated(self, gro_dir, tmp_path):
         bare = tmp_path / "bare.gro"
         bare.write_text((gro_dir / "triclinic.gro").read_text().rstrip("\n"))
-        assert _read(bare)["atoms"].nrows == 1
+        assert _read(bare)["atoms"].n_rows == 1
 
     def test_short_atom_record_raises(self, gro_dir):
         with pytest.raises(OSError, match="too short"):

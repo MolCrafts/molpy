@@ -201,7 +201,7 @@ rods["orientations"] = {"atomi": head, "atomj": tail}
 nl = mp.core.NeighborList(8.5)
 nl.build(rods.coords, rods.box)
 (body_counts, _, _), = analyzer.compute([rods], [nl.neighbors()])
-print(rods["orientations"].nrows, rods["atoms"].nrows)   # -> 400 400
+print(rods["orientations"].n_rows, rods["atoms"].n_rows)   # -> 400 400
 ```
 
 Get that length wrong and the error is unhelpful — a

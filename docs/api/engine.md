@@ -8,7 +8,7 @@ Each engine has one input writer, `generate_inputs`, and `run`.
 | Symbol | Summary | Preferred for |
 |--------|---------|---------------|
 | `LammpsEngine` | `generate_inputs(frame, ff, out)` → data, settings, init, input script; `minimize` / `md` relax a frame through the same deck | LAMMPS decks and relaxations |
-| `GromacsEngine` | `generate_inputs(frame, ff, out)` → `.gro`, the whole `.top` (`write_gromacs_system`), `em.mdp`, `nvt.mdp`; `run` grompp's and mdrun's an `.mdp` | GROMACS input sets |
+| `GromacsEngine` | `generate_inputs(frame, ff, out)` → `.gro`, the whole `.top` (`write_gromacs_top_system`), `em.mdp`, `nvt.mdp`; `run` grompp's and mdrun's an `.mdp` | GROMACS input sets |
 | `OpenmmEngine` | `generate_inputs(frame, ff, config, out)` → PDB, force-field XML, Python script | Running OpenMM simulations |
 | `OpenmmSimulationConfig` | OpenMM run configuration | Configuring an OpenMM run |
 | `Cp2kEngine` | Runs a CP2K input | Running CP2K simulations |

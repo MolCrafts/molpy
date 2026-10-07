@@ -33,7 +33,7 @@ def test_inpcrd_basic_coords_only(tmp_inpcrd_dir):
     frame = mp.io.read_amber_inpcrd(inpcrd_file)
 
     assert "atoms" in frame
-    assert frame["atoms"].nrows == 3
+    assert frame["atoms"].n_rows == 3
     assert frame.meta["title"] == "Simple 3-atom system"
 
     # Check coordinates
@@ -67,7 +67,7 @@ def test_inpcrd_with_time(tmp_inpcrd_dir):
 
     frame = mp.io.read_amber_inpcrd(inpcrd_file)
 
-    assert frame["atoms"].nrows == 2
+    assert frame["atoms"].n_rows == 2
     assert frame.meta["timestep"] == 100
 
 
@@ -93,7 +93,7 @@ def test_inpcrd_with_velocities(tmp_inpcrd_dir):
 
     frame = mp.io.read_amber_inpcrd(inpcrd_file)
 
-    assert frame["atoms"].nrows == 2
+    assert frame["atoms"].n_rows == 2
     assert "vel" in frame["atoms"]
 
     # Check velocities
@@ -142,7 +142,7 @@ def test_inpcrd_with_velocities_and_box(tmp_inpcrd_dir):
 
     frame = mp.io.read_amber_inpcrd(inpcrd_file)
 
-    assert frame["atoms"].nrows == 2
+    assert frame["atoms"].n_rows == 2
     assert "vel" in frame["atoms"]
     assert frame.box is not None
     assert frame.meta["timestep"] == 50
@@ -273,7 +273,7 @@ def test_inpcrd_large_system(tmp_inpcrd_dir):
 
     frame = mp.io.read_amber_inpcrd(inpcrd_file)
 
-    assert frame["atoms"].nrows == 10
+    assert frame["atoms"].n_rows == 10
     # Check first and last atoms
     np.testing.assert_array_almost_equal(frame["atoms"]["x"][0], 0.0)
     np.testing.assert_array_almost_equal(frame["atoms"]["z"][9], 29.0)
@@ -299,7 +299,7 @@ def test_inpcrd_fixed_width_no_whitespace(tmp_inpcrd_dir):
 
     frame = mp.io.read_amber_inpcrd(inpcrd_file)
 
-    assert frame["atoms"].nrows == 2
+    assert frame["atoms"].n_rows == 2
     np.testing.assert_allclose(frame["atoms"]["x"], [50.5413286, -44.5678901])
     np.testing.assert_allclose(frame["atoms"]["y"], [-100.7101036, 88.8888888])
     np.testing.assert_allclose(frame["atoms"]["z"], [12.3456789, -0.1234567])

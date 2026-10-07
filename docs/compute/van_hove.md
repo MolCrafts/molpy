@@ -109,9 +109,9 @@ unwrapped dump and pass the frame list straight in:
 ```python
 # docs: skip — needs your own trajectory file
 from molpy.compute import VanHove
-from molpy.io import read_lammps_trajectory
+from molpy.io import read_lammps_dump_trajectory
 
-frames = read_lammps_trajectory("run.lammpstrj").read_all()
+frames = read_lammps_dump_trajectory("run.lammpstrj").read_all()
 result = VanHove(
     n_rbins=100, r_max=12.0, lags=[10, 50, 200], stride=10
 ).compute(frames)

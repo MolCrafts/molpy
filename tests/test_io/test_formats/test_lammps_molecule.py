@@ -80,7 +80,7 @@ class TestReadLammpsMolecule:
         # Check atoms
         assert "atoms" in frame
         atoms = frame["atoms"]
-        assert atoms.nrows == 3
+        assert atoms.n_rows == 3
 
         # Check atom properties
         assert "id" in atoms
@@ -117,7 +117,7 @@ class TestReadLammpsMolecule:
         # Check angles
         assert "angles" in frame
         angles = frame["angles"]
-        assert angles.nrows == 1
+        assert angles.n_rows == 1
         np.testing.assert_array_equal(angles["type"], ["1"])
         # atom_i/atom_j/atom_k are 0-based indices
         np.testing.assert_array_equal(angles["atomi"], [1])
@@ -139,7 +139,7 @@ class TestReadLammpsMolecule:
         # Check atoms
         assert "atoms" in frame
         atoms = frame["atoms"]
-        assert atoms.nrows == 3
+        assert atoms.n_rows == 3
 
         # Check atom properties
         assert "id" in atoms
@@ -166,7 +166,7 @@ class TestReadLammpsMolecule:
         # Check bonds
         assert "bonds" in frame
         bonds = frame["bonds"]
-        assert bonds.nrows == 2
+        assert bonds.n_rows == 2
         np.testing.assert_array_equal(bonds["type"], ["OW-HO1", "OW-HO1"])
         # atom_i/atom_j are 0-based indices
         np.testing.assert_array_equal(bonds["atomi"], [0, 0])
@@ -175,7 +175,7 @@ class TestReadLammpsMolecule:
         # Check angles
         assert "angles" in frame
         angles = frame["angles"]
-        assert angles.nrows == 1
+        assert angles.n_rows == 1
         np.testing.assert_array_equal(angles["type"], ["HO1-OW-HO1"])
         # atom_i/atom_j/atom_k are 0-based indices
         np.testing.assert_array_equal(angles["atomi"], [1])
@@ -197,7 +197,7 @@ class TestReadLammpsMolecule:
         # Check atoms
         assert "atoms" in frame
         atoms = frame["atoms"]
-        assert atoms.nrows == 8
+        assert atoms.n_rows == 8
 
         # Check all atom properties are present
         assert "id" in atoms
@@ -225,9 +225,9 @@ class TestReadLammpsMolecule:
         angles = frame["angles"]
         dihedrals = frame["dihedrals"]
 
-        assert bonds.nrows == 7
-        assert angles.nrows == 12
-        assert dihedrals.nrows == 9
+        assert bonds.n_rows == 7
+        assert angles.n_rows == 12
+        assert dihedrals.n_rows == 9
 
     def test_empty_file_error(self, tmp_path):
         """Test error handling for empty files."""
@@ -292,9 +292,9 @@ class TestWriteLammpsMolecule:
         frame2 = mp.io.read_lammps_molecule(tmp_file)
 
         # Compare key properties
-        assert frame2["atoms"].nrows == frame["atoms"].nrows
-        assert frame2["bonds"].nrows == frame["bonds"].nrows
-        assert frame2["angles"].nrows == frame["angles"].nrows
+        assert frame2["atoms"].n_rows == frame["atoms"].n_rows
+        assert frame2["bonds"].n_rows == frame["bonds"].n_rows
+        assert frame2["angles"].n_rows == frame["angles"].n_rows
 
         # Check atom types and charges
         np.testing.assert_array_equal(frame2["atoms"]["type"], frame["atoms"]["type"])
@@ -315,9 +315,9 @@ class TestWriteLammpsMolecule:
         frame2 = mp.io.read_lammps_molecule_json(tmp_file)
 
         # Compare key properties
-        assert frame2["atoms"].nrows == frame["atoms"].nrows
-        assert frame2["bonds"].nrows == frame["bonds"].nrows
-        assert frame2["angles"].nrows == frame["angles"].nrows
+        assert frame2["atoms"].n_rows == frame["atoms"].n_rows
+        assert frame2["bonds"].n_rows == frame["bonds"].n_rows
+        assert frame2["angles"].n_rows == frame["angles"].n_rows
 
         # Check atom types and charges
         np.testing.assert_array_equal(frame2["atoms"]["type"], frame["atoms"]["type"])
@@ -348,10 +348,10 @@ class TestWriteLammpsMolecule:
         frame_final = mp.io.read_lammps_molecule(temp_native_path)
 
         # Compare key properties
-        assert frame_final["atoms"].nrows == frame["atoms"].nrows
-        assert frame_final["bonds"].nrows == frame["bonds"].nrows
-        assert frame_final["angles"].nrows == frame["angles"].nrows
-        assert frame_final["dihedrals"].nrows == frame["dihedrals"].nrows
+        assert frame_final["atoms"].n_rows == frame["atoms"].n_rows
+        assert frame_final["bonds"].n_rows == frame["bonds"].n_rows
+        assert frame_final["angles"].n_rows == frame["angles"].n_rows
+        assert frame_final["dihedrals"].n_rows == frame["dihedrals"].n_rows
 
     def test_typed_meta_preservation(self, test_files, tmp_path):
         """Test that typed metadata is preserved during write/read cycle."""
@@ -386,7 +386,7 @@ class TestIntegrationWithMolpyIO:
         frame = mp.io.read_lammps_molecule(test_files["water_native"])
 
         assert "atoms" in frame
-        assert frame["atoms"].nrows == 3
+        assert frame["atoms"].n_rows == 3
         assert frame.meta["format"] == "lammps_molecule"
 
     def test_write_lammps_molecule_function(self, test_files, tmp_path):
@@ -400,7 +400,7 @@ class TestIntegrationWithMolpyIO:
 
         # Read back and verify
         frame2 = mp.io.read_lammps_molecule(tmp_file)
-        assert frame2["atoms"].nrows == frame["atoms"].nrows
+        assert frame2["atoms"].n_rows == frame["atoms"].n_rows
 
     def test_write_json_format_function(self, test_files, tmp_path):
         """Test the high-level write function with JSON format."""
@@ -414,5 +414,5 @@ class TestIntegrationWithMolpyIO:
 
         # Read back and verify
         frame2 = mp.io.read_lammps_molecule_json(tmp_file)
-        assert frame2["atoms"].nrows == frame["atoms"].nrows
+        assert frame2["atoms"].n_rows == frame["atoms"].n_rows
         assert frame2.meta["source_format"] == "json"

@@ -17,7 +17,7 @@ from molpy.compute import (
     VanHove,
 )
 
-from .lj import Trajectory
+from .lj import FS_TO_PS, FS_TO_S, Trajectory
 from .structure import _frames, write_json
 
 
@@ -31,7 +31,7 @@ def van_hove(trajectory: Trajectory) -> dict[str, float]:
     g_self = np.asarray(result.g_self)
     rows: list[dict[str, float | str]] = []
     for index, lag in enumerate(lags):
-        picoseconds = lag * trajectory.dt / 1000.0
+        picoseconds = lag * trajectory.dt * FS_TO_PS
         # Compact legend labels so four lags fit on one bottom row.
         label = f"{picoseconds:g} ps"
         rows.extend(
@@ -94,7 +94,7 @@ def vibrational_dos(trajectory: Trajectory) -> dict[str, float]:
         ],
     )
     peak = int(np.argmax(intensity[keep]))
-    correlation_time = 400 * trajectory.dt * 1e-15
+    correlation_time = 400 * trajectory.dt * FS_TO_S
     return {
         "peak_cm1": float(frequency[keep][peak]),
         "zero_frequency_weight": float(normalized[0]),

@@ -33,7 +33,7 @@ atoms = mp.Block(
 )
 
 carbons = ElementSelector("C")(atoms)
-print(carbons.nrows) # 2
+print(carbons.n_rows) # 2
 print(carbons["element"]) # ['C', 'C']
 
 # Select by the string label, or point the selector at the numeric column.

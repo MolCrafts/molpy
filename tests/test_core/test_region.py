@@ -35,7 +35,7 @@ def test_region_names_are_molrs_objects(name):
 def test_cuboid_mask_and_filter():
     box = mp.core.Cuboid([0.0, 0.0, 0.0], [2.0, 2.0, 2.0])
     assert box.mask(_block()).tolist() == [True, False, True, True]
-    assert box(_block()).nrows == 3
+    assert box(_block()).n_rows == 3
 
 
 def test_cube_and_its_geometry():
