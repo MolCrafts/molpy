@@ -18,6 +18,10 @@ jobs:
           python-version: "3.14"
       - uses: astral-sh/setup-uv@v9.0.0
       - run: uv run --no-project --with 'tox>=4.23' --with ruff==0.16.1 --with ty==0.0.65 tox -e lint
+      # No [tool.uv.sources] path entry: a runner has no sibling to point at.
+      - run: python3 scripts/partners.py check
+      # uv.lock is committed; every `uv run --locked` below refuses a stale one.
+      - run: uv lock --check
 
   test:
     runs-on: ${{ matrix.os }}
@@ -35,7 +39,17 @@ jobs:
           python-version: ${{ matrix.python-version }}
       - uses: astral-sh/setup-uv@v9.0.0
       - name: Unit tests
-        run: uv run --extra dev python -m pytest tests/ -n auto
+        run: uv run --locked --extra dev python -m pytest tests/ -n auto
+
+  # The site Cloudflare Pages deploys, built the way it builds it (a fresh
+  # `pip install ".[doc]"`, then zensical), with --strict: an unresolved
+  # mkdocstrings reference or any other warning fails. Same as the pre-push hook.
+  docs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v9.0.0
+      - run: uv run --isolated --no-project --python 3.12 --with '.[doc]' zensical build --clean --strict
 
   # Publishes this run's tests and coverage to the MolCrafts CI index, which
   # the engineering dashboard reads. Separate from the gate matrix on purpose:
@@ -59,7 +73,7 @@ jobs:
       - name: Measure this run
         if: ${{ !cancelled() }}
         run: |
-          uv run --extra dev --with pytest-cov python -m pytest tests/ \
+          uv run --locked --extra dev --with pytest-cov python -m pytest tests/ \
             --junitxml=.ci-out/junit.xml \
             --cov=molpy --cov-branch --cov-report=json:.ci-out/coverage.json || true
 

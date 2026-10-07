@@ -42,7 +42,7 @@ jobs:
               sys.exit(f"::error::pyproject.toml still has [tool.uv.sources] {sorted(sources)}; remove it before tagging.")
           PY
       - name: Unit tests
-        run: uv run --extra dev python -m pytest tests/ -n auto
+        run: uv run --locked --extra dev python -m pytest tests/ -n auto
 
   release:
     needs: test
