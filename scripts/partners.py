@@ -50,7 +50,6 @@ names this repository's directory in the layout.
 
 from __future__ import annotations
 
-import fcntl
 import hashlib
 import os
 import re
@@ -344,6 +343,8 @@ def sync(dest: Path) -> None:
 
 
 def run(cmd: list[str]) -> int:
+    import fcntl  # POSIX only: `run` serves the git hooks; `resolve` also runs on Windows CI.
+
     env = load()
     me = env.get("SELF") or die("partners.env names no SELF")
     found = resolved()
