@@ -21,17 +21,40 @@ and molpy maps those subsystems in one of two ways:
   `mp.builder` mirror `molrs.io`, `molrs.compute`, `molrs.signal`,
   `molrs.md`, `molrs.op` and `molrs.builder`. molpy's own additions sit next
   to the native names: the AmberTools typifiers in `mp.ff.typifier`,
-  `read_smiles` / `read_amber` in `mp.io`, crystals, polymers and virtual
-  sites in `mp.builder`.
+  crystals, polymers and virtual sites in `mp.builder`. `mp.io` adds nothing.
 - **The flat root.** The data model and the operations on it stay on `mp`:
-  everything in `molrs.store` (`Frame`, `Block`, `keys`, `schema`, …),
-  `molrs.system`, `molrs.spatial` (regions, neighbour search),
+  everything in `molrs.store` (`Frame`, `Block`, `Trajectory`, `keys`,
+  `schema`, …), `molrs.system`, `molrs.spatial` (`Box`, regions, neighbour
+  search),
   `molrs.units`, `molrs.perceive`, `molrs.optimize` and `molrs.conformer`.
 
 So a force field is `mp.ff.forcefield.ForceField`, its compiler
 `mp.ff.potential.PotentialCompiler`, a SMILES parser `mp.io.SmilesIR`, and an
 assembler `mp.builder.Assembler`. The full list of moves is under
 [Upgrading from 0.15](#upgrading-from-015).
+
+molpy's own packages expose each name once, at the package: the modules
+behind `mp.engine`, `molpy.wrapper`, `mp.adapter`, `mp.builder` and the root's
+selectors and splitters are private (`molpy.engine._lammps`, `molpy._core`),
+so `mp.engine.LAMMPSEngine` has no second spelling
+`molpy.engine.lammps.LAMMPSEngine`.
+
+### `Box` and `Trajectory` are molrs's
+
+`mp.Box is molrs.spatial.Box` and `mp.Trajectory is molrs.store.Trajectory`
+(0.15 subclassed both). molrs 0.16 took over what the subclasses added:
+
+- `mp.Box(h=None, origin=None, pbc=None)` takes a `(3, 3)` cell, a `(3,)`
+  diagonal, or no cell (or an all-zero matrix) for a free box; `pbc`
+  defaults to whether there is a cell. Pass the arguments by keyword: the
+  order is the native one, `(h, origin, pbc)`. `box.style` is the string
+  (`"free"`, `"orthogonal"`, `"triclinic"`).
+- `mp.Trajectory(frames, step=None, time=None)` takes negative indices, slices
+  into a sub-trajectory with its `step` / `time` sliced alike, and has `map`
+  and a `repr`. It carries no `topology`.
+- The splitters (`TrajectorySplitter`, `FrameIntervalStrategy`,
+  `TimeIntervalStrategy`, `CustomStrategy`) are molpy's and cut a native
+  `Trajectory`.
 
 ### Your own styles: `mp.ff.ir`
 
@@ -53,7 +76,7 @@ class Fene(mp.ff.ir.StyleSpec):  # LAMMPS bond_style fene
 ```
 
 A typifier's `Match` types terms with it (`links={mp.Bond: rows}`),
-`mp.ff.potential.PotentialCompiler` prices it, and `mp.io.write_mrec` stores
+`mp.ff.potential.PotentialCompiler` prices it, and `mp.io.mrec.write` stores
 its expression, so a process that never registered it reads the record and
 prices it the same. [Extending the Force Field](../developer/extending-forcefield.md)
 is the whole recipe in under 30 lines.
@@ -89,7 +112,17 @@ molrs now, and `mp.io` re-exports it:
 
 Force-field file formats are `mp.ff.forcefield`'s (`read_forcefield_xml`,
 `read_gromacs_system`, `write_lammps_forcefield`, …); `mp.io` holds
-structure and trajectory formats only.
+structure and trajectory formats only. A whole AMBER system is
+`mp.ff.forcefield.read_amber_prmtop_system(prmtop)` → `(ForceField, Frame)`,
+as `read_gromacs_system` is for GROMACS: the frame carries a `pairs` block
+for the 1-4 pairs whose `SCEE` / `SCNB` differ from the field's
+`special_bonds` (GLYCAM beside ff14SB), which the structure reader
+`mp.io.read_amber_prmtop` does not.
+
+Every `*.mrec` door is on `mp.io.mrec` (`molrs.io.mrec`): `read` / `write`,
+`read_system` / `write_system`, `read_trajectory` / `write_trajectory`,
+`read_forcefield` / `write_forcefield`, `read_meta`, `section_names`, and the
+lazy cursor `FrameSequence` with its writer `FrameSequenceWriter`.
 
 ### One input writer per engine
 
@@ -97,8 +130,10 @@ structure and trajectory formats only.
 `LAMMPSEngine.generate_inputs(frame, ff, out)` writes the data file, the
 force-field settings, the init and the input script — the same deck its
 `minimize` / `md` run — and the new `GROMACSEngine.generate_inputs(frame, ff,
-out)` writes the `.gro`, `.top` and `.mdp` templates (its `run` grompp's and
-mdrun's an `.mdp`). `mp.Script` is `mp.engine.Script`.
+out)` writes the `.gro`, the whole `.top` (`write_gromacs_system`: directives,
+one `[ moleculetype ]` per molecule, `[ system ]`, `[ molecules ]` — what
+`grompp` reads) and the `.mdp` templates (its `run` grompp's and mdrun's an
+`.mdp`). `mp.Script` is `mp.engine.Script`.
 
 Every LAMMPS style line and coefficient is molrs's LAMMPS include
 (`mp.ff.forcefield.write_lammps_forcefield_str`), read after `read_data`, so
@@ -205,6 +240,10 @@ path.
 | `mp.io.write_pdb` element from `frame.meta["elements"]`; missing `x`: `ValueError` | `X`; `OSError` |
 | `mp.io.BondReactTemplate`, `write_bond_react_map`, `write_lammps_bond_react_system` (molpy's) | the same names, molrs's |
 | `molpy.io.mrec` (a molpy module) | `mp.io.mrec` is `molrs.io.mrec` |
+| `mp.io.write_mrec` / `read_mrec`, `write_mrec_system` / `read_mrec_system`, `write_mrec_trajectory` / `read_mrec_trajectory`, `write_mrec_forcefield` / `read_mrec_forcefield`, `read_mrec_meta`, `mrec_sections` | `mp.io.mrec.write` / `read`, `write_system` / `read_system`, `write_trajectory` / `read_trajectory`, `write_forcefield` / `read_forcefield`, `read_meta`, `section_names` |
+| `mp.io.mrec.TrajectoryReader`, `mp.io.mrec.TrajectoryWriter` | `mp.io.mrec.FrameSequence`, `mp.io.mrec.FrameSequenceWriter` |
+| `mp.io.read_smiles(s)` (refused a `.`-separated string) | `mp.io.SmilesIR(s).to_atomistic()` (one disconnected graph for several components; `SmilesIR(s).components()` one graph each) |
+| `mp.io.read_amber(prmtop, inpcrd)` → `(Frame, ForceField)` | `ff, frame = mp.ff.forcefield.read_amber_prmtop_system(prmtop)`; `frame = mp.io.read_amber_inpcrd(inpcrd, frame)` |
 | `molpy.io.readers`, `molpy.io.writers`, `molpy.io.data.*` | private / removed |
 
 **Engines — one `generate_inputs` per engine**
@@ -215,6 +254,10 @@ path.
 | `mp.io.emit.emitters.emit("gromacs", mol, ff, out, temperature_K=T)`, `GromacsEmitter().emit(...)` | `mp.engine.GROMACSEngine(check_executable=False, prefix=p).generate_inputs(mol.to_frame(), ff, out, temperature=T)` → `{"gro", "top", "em", "nvt"}` |
 | `mp.io.emit.Emitter`, `EmitterRegistry`, `emitters` | removed |
 | `mp.Script`, `mp.ScriptLanguage`, `molpy.core.script` | `mp.engine.Script`, `mp.engine.ScriptLanguage` |
+| `molpy.engine.base` / `cp2k` / `gromacs` / `lammps` / `openmm` / `script` `.<X>` | `mp.engine.<X>` (the modules are private) |
+| `molpy.wrapper.base` / `env` / `antechamber` / `prepgen` / `sander` / `tleap` `.<X>` | `molpy.wrapper.<X>` |
+| `molpy.adapter.base.Adapter`, `molpy.adapter.rdkit.RDKitAdapter` / `MP_ID` | `mp.adapter.Adapter`, `mp.adapter.RDKitAdapter` / `MP_ID` |
+| `GROMACSEngine.generate_inputs` `.top`: force-field directives only (`write_gromacs_top_ff`; `grompp` could not use it) | the whole topology (`write_gromacs_system`); the frame carries its angles and dihedrals |
 | `EnvSpec` / engine `env_manager="pip"` or `"virtualenv"` | `env_manager="venv"` |
 
 **Geometry, units, selection**
@@ -234,6 +277,12 @@ path.
 | `units.convert(q, "nm")`, `units.factor(a, b)` | `q.to(units.parse("nm"))`, `(1.0 * units.parse(a)).to(units.parse(b)).magnitude` |
 | `mp.fields.X` (a `str`), `molpy.core.fields.FieldFormatter` | `mp.keys.X` (a `Key`; `.key` is the `str`); readers emit canonical names |
 | `mp.compute.signal` | `mp.signal` |
+| `mp.Box(matrix, pbc, origin)` (a molpy subclass), `molpy.core.box.Box` | `mp.Box(h=..., origin=..., pbc=...)`, which is `molrs.spatial.Box` |
+| `mp.Box.Style.FREE` / `ORTHOGONAL` / `TRICLINIC` | `"free"` / `"orthogonal"` / `"triclinic"` (what `box.style` returns) |
+| `mp.Trajectory(frames, topology, step, time)` (a molpy subclass), `traj.topology`, `molpy.core.trajectory` | `mp.Trajectory(frames, step=, time=)`, which is `molrs.store.Trajectory` (no topology) |
+| `Trajectory.from_frames(frames, step, time)`, `traj.count_frames()` (native) | `mp.Trajectory(frames, step, time)`, `len(traj)` |
+| `SmartsMatch.as_list()` / `as_dict()`, `SmartsPattern.find_matches(mol, mapped=True)` (native) | `match.atoms` / `match.mapping`, `[m.mapping for m in pattern.find_matches(mol)]` |
+| `mp.ff.charge.compute_gasteiger_charges(mol)` (0.16 pre-release) | `mp.ff.charge.GasteigerModel().assign(mol)` |
 
 **Builders**
 

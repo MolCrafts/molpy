@@ -1,9 +1,9 @@
 # I/O
 
 File readers and writers for molecular structures and trajectories. `mp.io`
-is `molrs.io` re-exported by identity (`mp.io.read_pdb is molrs.io.read_pdb`),
-plus two readers of molpy's own: `read_smiles` and `read_amber`. Force-field
-file formats are on `mp.ff.forcefield`.
+is `molrs.io` re-exported by identity (`mp.io.read_pdb is molrs.io.read_pdb`);
+molpy adds no reader of its own. Force-field file formats, including a whole
+AMBER or GROMACS system (force field + typed frame), are on `mp.ff.forcefield`.
 
 ## Quick reference
 
@@ -22,11 +22,10 @@ file formats are on `mp.ff.forcefield`.
 | `read_chgcar` | VASP CHGCAR | read |
 | `read_amber_inpcrd` | AMBER inpcrd (optionally into an existing frame) | read |
 | `read_amber_prmtop` | AMBER prmtop (structure) | read |
-| `read_amber` | AMBER prmtop + force field (+ inpcrd) | read |
 | `read_ac` | Antechamber AC | read |
 | `read_frame` / `write_frame` | the format named by the file extension | read/write |
-| `read_smiles` / `write_smarts` | SMILES / local SMARTS | read / write |
-| `SmilesIR`, `CGSmilesIR` | SMILES / CGsmiles text | parse / emit |
+| `SmilesIR`, `CGSmilesIR` | SMILES / CGsmiles text (`SmilesIR(s).to_atomistic()` is the graph) | parse / emit |
+| `write_smarts` | local SMARTS around an atom | write |
 | `write_lammps_bond_react_system`, `write_bond_react_map`, `BondReactTemplate` | LAMMPS `fix bond/react` | write |
 
 ### Force fields (on `mp.ff.forcefield`)
@@ -39,6 +38,7 @@ file formats are on `mp.ff.forcefield`.
 | `read_gromacs_top_ff` / `write_gromacs_top_ff` | GROMACS `.top` / `.itp` directives | read/write |
 | `read_gromacs_system` / `write_gromacs_system` | GROMACS topology: force field + typed frame | read/write |
 | `read_amber_prmtop_ff` / `write_amber_frcmod` | AMBER prmtop / frcmod | read / write |
+| `read_amber_prmtop_system` | AMBER prmtop: force field + typed frame (per-pair 1-4 weights in `pairs`) | read |
 
 ### Trajectories
 
@@ -52,19 +52,19 @@ file formats are on `mp.ff.forcefield`.
 | `read_dcd_trajectory` / `write_dcd_trajectory` | DCD | read (lazy) / write |
 | `read_trr_trajectory` / `write_trr_trajectory` | GROMACS TRR | read (lazy) / write |
 | `read_xtc_trajectory` / `write_xtc_trajectory` | GROMACS XTC | read (lazy) / write |
-| `read_mrec_trajectory` / `write_mrec_trajectory` | mrec store | read / write (whole trajectory) |
-| `mrec.TrajectoryReader` | mrec store | read (lazy cursor) |
-| `mrec.TrajectoryWriter` | mrec store | write (append-first) |
+| `mrec.read_trajectory` / `mrec.write_trajectory` | mrec store | read / write (whole trajectory) |
+| `mrec.FrameSequence` | mrec store | read (lazy cursor) |
+| `mrec.FrameSequenceWriter` | mrec store | write (append-first) |
 
 Names pair: `read_X` / `write_X` for one frame, `read_X_trajectory` /
-`write_X_trajectory` for a sequence. One-frame mrec stores use `read_mrec` /
-`write_mrec` (snapshot) and `read_mrec_system` / `write_mrec_system`
-(topology); `read_mrec_meta(path)` reads a store's identity document and
-`mrec_sections(path)` lists what a store holds. A force field rides in the
-`forcefield` section: `write_mrec(..., forcefield=ff)` /
-`write_mrec_system(..., forcefield=ff)` or `write_mrec_forcefield(path, ff)`
-write it, `read_mrec_forcefield(path)` returns a `mrec.ForceFieldSection` (or
-`None`), and `ForceField.from_section(section)` turns it back into a force
+`write_X_trajectory` for a sequence. Every `*.mrec` door is on `mp.io.mrec`:
+one-frame stores use `mrec.read` / `mrec.write` (snapshot) and
+`mrec.read_system` / `mrec.write_system` (topology); `mrec.read_meta(path)`
+reads a store's identity document and `mrec.section_names(path)` lists what a
+store holds. A force field rides in the `forcefield` section:
+`mrec.write(..., forcefield=ff)` / `mrec.write_system(..., forcefield=ff)` or
+`mrec.write_forcefield(path, ff)` write it, `mrec.read_forcefield(path)`
+returns a `mrec.ForceFieldSection` (or `None`), and `ForceField.from_section(section)` turns it back into a force
 field.
 
 ### Logs
@@ -110,12 +110,6 @@ print(thermo.columns)
 
 ## Full API
 
-### Readers molpy owns
-
-::: molpy.io.read_amber
-
-::: molpy.io.read_smiles
-
 ### LAMMPS data files
 
 ::: molpy.io.read_lammps_data
@@ -130,5 +124,8 @@ print(thermo.columns)
 
 ### mrec (scientific record stores)
 
-`mp.io.mrec` is `molrs.io.mrec`: `TrajectoryReader`, `SequenceSchema`,
-`TrajectoryWriter`, `ForceFieldSection`, `pack` and `schema`.
+`mp.io.mrec` is `molrs.io.mrec`: `read` / `write`, `read_system` /
+`write_system`, `read_trajectory` / `write_trajectory`, `read_forcefield` /
+`write_forcefield`, `read_meta`, `section_names`, `FrameSequence`,
+`SequenceSchema`, `FrameSequenceWriter`, `ForceFieldSection`, `pack` and
+`schema`.

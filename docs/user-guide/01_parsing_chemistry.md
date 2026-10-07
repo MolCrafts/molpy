@@ -16,9 +16,9 @@ encodes logical constraints rather than physical atoms — it never builds a
 structure.
 
 There is no parser *function* to look up: you name the type you want.
-`mp.io.read_smiles` gives you a graph, `SmilesIR` gives you the parsed
-intermediate representation, `SmartsPattern` gives you a compiled query,
-`CGSmilesIR` gives you a parsed CGsmiles string.
+`mp.io.SmilesIR` gives you the parsed SMILES (`to_atomistic()` makes it a
+graph), `SmartsPattern` gives you a compiled query, `CGSmilesIR` gives you a
+parsed CGsmiles string.
 
 > **Polymer notations.** CGsmiles is read by `mp.io.CGSmilesIR`
 > ([below](#cgsmiles-describes-units-and-how-they-join)); it is how units and
@@ -27,15 +27,15 @@ intermediate representation, `SmartsPattern` gives you a compiled query,
 
 ## SMILES describes one specific molecule
 
-`mp.io.read_smiles` is the right choice whenever you have a single, fully
-specified molecule. It parses the string and returns an `Atomistic` containing
-atoms and bonds.
+`mp.io.SmilesIR(s).to_atomistic()` is the way from a SMILES string to a
+structure. `SmilesIR` parses the string once; `to_atomistic()` returns an
+`Atomistic` containing its atoms and bonds.
 
 
 ```python
 import molpy as mp
 
-mol = mp.io.read_smiles("CC(=O)OCC") # ethyl acetate
+mol = mp.io.SmilesIR("CC(=O)OCC").to_atomistic() # ethyl acetate
 print(f"atoms: {len(mol.atoms)}, bonds: {len(mol.bonds)}")
 
 elements = [atom.get("element") for atom in mol.atoms]
@@ -49,13 +49,13 @@ atoms: 6, bonds: 5
 
 
 **Hydrogens are not added.** A SMILES string states connectivity; filling
-open valences is a separate perception step, so `read_smiles` gives you exactly
+open valences is a separate perception step, so `to_atomistic()` gives you exactly
 the heavy-atom skeleton the string names. Ask for the hydrogens when you want
 them:
 
 
 ```python
-skeleton = mp.io.read_smiles("CCO")
+skeleton = mp.io.SmilesIR("CCO").to_atomistic()
 filled = mp.Perceive().find_hydrogens(skeleton)
 
 print(f"skeleton: {len(skeleton.atoms)} atoms") # C, C, O
@@ -70,25 +70,27 @@ the input is untouched: 3
 ```
 
 
-A `.`-separated SMILES names a *set* of molecules, not a molecule — ion
-pairs and solvent mixtures use this. `read_smiles` refuses it rather than
-silently returning a disconnected graph; `SmilesIR.components()` takes it
-apart.
+A `.`-separated SMILES names a *set* of molecules, not one molecule — ion
+pairs and solvent mixtures use this. `n_components` says how many the string
+names; `to_atomistic()` returns them together as one disconnected graph, and
+`components()` takes them apart, one graph each.
 
 
 ```python
-try:
- mp.io.read_smiles("[Li+].[F-]")
-except ValueError as exc:
- print("refused:", exc)
+ir = mp.io.SmilesIR("[Li+].[F-]")
+print(f"components: {ir.n_components}")
 
-ions = mp.io.SmilesIR("[Li+].[F-]").components()
-print(f"components: {len(ions)} -> {[len(i.atoms) for i in ions]}")
+together = ir.to_atomistic()
+print(f"to_atomistic(): one graph of {len(together.atoms)} atoms")
+
+ions = ir.components()
+print(f"components(): {len(ions)} graphs of {[len(i.atoms) for i in ions]} atoms")
 ```
 
 ```text
-refused: read_smiles needs one component, '[Li+].[F-]' has 2. Use mp.io.SmilesIR(smiles).components(), or pass one component at a time.
-components: 2 -> [1, 1]
+components: 2
+to_atomistic(): one graph of 2 atoms
+components(): 2 graphs of [1, 1] atoms
 ```
 
 
@@ -100,7 +102,7 @@ occurrence opens the ring, the second closes it.
 
 
 ```python
-benzene = mp.io.read_smiles("c1ccccc1")
+benzene = mp.io.SmilesIR("c1ccccc1").to_atomistic()
 print([atom.get("is_aromatic") for atom in benzene.atoms])
 ```
 
@@ -115,7 +117,7 @@ explicit double bonds comes out aromatic too:
 
 
 ```python
-kekule = mp.io.read_smiles("C1=CC=CC=C1")
+kekule = mp.io.SmilesIR("C1=CC=CC=C1").to_atomistic()
 print("as written:  ", [atom.get("is_aromatic") for atom in kekule.atoms])
 
 perceived = mp.Perceive().find_aromaticity(kekule)
@@ -141,7 +143,7 @@ read — it has matches to find.
 query = mp.SmartsPattern("[C;X4][O;H1]")
 print(f"query atoms: {query.num_query_atoms}, max bond depth: {query.max_bond_depth}")
 
-ethanol = mp.Perceive().find_hydrogens(mp.io.read_smiles("CCO"))
+ethanol = mp.Perceive().find_hydrogens(mp.io.SmilesIR("CCO").to_atomistic())
 print("matches ethanol:", query.has_match(ethanol))
 for match in query.find_matches(ethanol):
  print(" matched atom handles:", match.atoms)
@@ -160,34 +162,6 @@ a bare skeleton. Perceive the hydrogens first, query after.
 
 SMARTS is the language of force-field typification: patterns map atom
 environments to force-field types. See *Typifier* in this guide.
-
-## Splitting parse from convert
-
-`mp.io.read_smiles` parses and converts in one call, which suits most
-workflows. `SmilesIR` is the step in between, for when you want to know what the
-string said before committing to a graph — how many molecules it names, and
-whether to take them together or separately.
-
-
-```python
-ir = mp.io.SmilesIR("CCO.O")
-print(f"components: {ir.n_components}")
-
-together = ir.to_atomistic()
-print(f"to_atomistic(): one graph of {len(together.atoms)} atoms")
-
-separate = ir.components()
-print(
- f"components(): {len(separate)} graphs of {[len(m.atoms) for m in separate]} atoms"
-)
-```
-
-```text
-components: 2
-to_atomistic(): one graph of 4 atoms
-components(): 2 graphs of [3, 1] atoms
-```
-
 
 ## CGsmiles describes units and how they join
 
@@ -235,7 +209,7 @@ to_atomistic(): 9 heavy atoms, 8 bonds
 
 | You have | You want | Use |
 | --- | --- | --- |
-| A SMILES string, one molecule | An editable graph | `mp.io.read_smiles(s)` |
+| A SMILES string, one molecule | An editable graph | `mp.io.SmilesIR(s).to_atomistic()` |
 | A SMILES string, several molecules | One graph each | `mp.io.SmilesIR(s).components()` |
 | A SMILES string | To inspect before converting | `mp.io.SmilesIR(s)` |
 | A structural rule | To find where it matches | `mp.SmartsPattern(p)` |

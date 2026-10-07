@@ -33,11 +33,12 @@ buffers frames for the native writer: the native doors accept `str` and
 
 A format's behaviour — merging inpcrd coordinates into an existing frame,
 joining an n-wide XYZ property, Type Labels and `fix drude` flags of a LAMMPS
-data file, `fix bond/react` maps — is molrs's, so every caller gets it. molpy
-keeps only two readers of its own in `molpy/io/_readers.py`, and both compose
-native doors rather than post-process a format: `read_amber` (a prmtop's
-structure and force field, plus an inpcrd) and `read_smiles` (one connected
-molecule).
+data file, `fix bond/react` maps, an AMBER prmtop's per-pair 1-4 weights
+(`mp.ff.forcefield.read_amber_prmtop_system`) — is molrs's, so every caller
+gets it. molpy keeps no reader of its own: `mp.io` is `molrs.io` by identity,
+and a convenience that only composes native doors (a prmtop plus its inpcrd,
+a SMILES string to a graph) is two native calls at the call site, not a molpy
+function.
 
 ## Canonical field names
 

@@ -116,7 +116,7 @@ describes the units of a polymer and how they join.
 ```python
 import molpy as mp
 
-mol = mp.io.read_smiles("CCO")  # one molecule from SMILES
+mol = mp.io.SmilesIR("CCO").to_atomistic()  # one molecule from SMILES
 mol, report = mp.Conformer(seed=42).generate(mol)  # hydrogens + 3D coordinates
 ```
 

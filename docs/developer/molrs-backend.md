@@ -33,7 +33,8 @@ There is no exact-patch requirement and no hand-written CHANGELOG.
 
 ## The box is a molrs object, not a copy of one
 
-`molpy.Box` does not wrap a molrs box; it **inherits** from it:
+`molpy.Box` does not wrap a molrs box; it **is** one (`mp.Box is
+molrs.spatial.Box`), as `mp.Trajectory is molrs.store.Trajectory`.
 
 The examples below share this setup:
 
@@ -54,10 +55,6 @@ def _frame(step: int) -> mp.Frame:
 frames = [_frame(step) for step in range(20)]
 ```
 
-```text
-class Box(molrs.spatial.Box): ...   # molpy/core/box.py
-```
-
 The practical consequence is that a molpy box can be handed to any molrs API
 unchanged — there is no `.to_molrs()` bridge and no coordinate translation:
 
@@ -66,14 +63,15 @@ import molrs
 import molpy as mp
 
 box = mp.Box.cube(10.0)
-assert isinstance(box, molrs.spatial.Box)  # it *is* a molrs box
+assert mp.Box is molrs.spatial.Box  # it *is* the molrs box
 ```
 
 Likewise `frame.box` is accepted directly by Rust-side calls such as
-`mp.NeighborList.build`. molpy adds only a constructor that also accepts no
-matrix (a free box) or a `(3,)` diagonal, and the `Box.Style` enumeration; the
-geometry (`wrap`, `unwrap`, `delta`, `distances`, `to_frac`, …) and the
-factories (`Box.cube`, `Box.ortho`, `Box.from_bounds`) are the native box's.
+`mp.NeighborList.build`. Everything — the constructor (`Box(h=None,
+origin=None, pbc=None)`: a `(3, 3)` cell, a `(3,)` diagonal, or no cell for a
+free box), the geometry (`wrap`, `unwrap`, `delta`, `distances`, `to_frac`, …)
+and the factories (`Box.cube`, `Box.ortho`, `Box.from_bounds`) — is the
+native box's.
 
 ## Neighbor lists come from the linked-cell kernel
 
@@ -188,12 +186,12 @@ pipeline (ETKDGv3 → torsion refinement → MMFF94 cleanup):
 
 ```python
 
-mol = mp.io.read_smiles("CCO")  # ethanol, heavy-atom graph
+mol = mp.io.SmilesIR("CCO").to_atomistic()  # ethanol, heavy-atom graph
 mol_3d, report = mp.Conformer(add_hydrogens=True, seed=42).generate(mol)
 ```
 
 `generate` returns the new structure and a report of what each stage did; the
 input is untouched.
 
-The RDKit adapter (`molpy.adapter.rdkit`) remains available as an optional
+The RDKit adapter (`molpy.adapter.RDKitAdapter`) remains available as an optional
 external backend, but the molrs pipeline is the default trunk.

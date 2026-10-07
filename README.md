@@ -58,7 +58,7 @@ onto the root.
 
 | Where | Capability |
 |---|---|
-| **`mp.*`** (native) | Explicit data model — editable `Atomistic` / `CoarseGrain` graphs, `Frame` / `Block` columnar arrays, regions and neighbour search, units, perception and SMARTS (`SmartsPattern`), 3D conformers (`Conformer`), the `LBFGS` minimizer; molpy's `Box`, `Trajectory` and selectors |
+| **`mp.*`** (native) | Explicit data model — editable `Atomistic` / `CoarseGrain` graphs, `Frame` / `Block` columnar arrays, regions and neighbour search, units, perception and SMARTS (`SmartsPattern`), 3D conformers (`Conformer`), the `LBFGS` minimizer, `Box`, `Trajectory`; molpy's trajectory splitters and selectors |
 | **`ff`** | Force fields, mirroring `molrs.ff` — `forcefield` (`ForceField` and the force-field file formats), `potential` (`PotentialCompiler`, kernels), `typifier` (OPLS-AA, MMFF94, GAFF natively; GAFF / GAFF2 via AmberTools), `charge`, `ir` (your own styles from Python), `params`, `scale_lj` |
 | **`builder`** | Site-graph assembly (`Assembler`), graphene and nanotubes, polymer planning and polydispersity, crystals, virtual sites, packing templates |
 | **`compute`** · **`signal`** | Analysis — RDF, MSD, conductivity, order parameters, Voronoi, dielectric and vibrational spectra, … (native kernels); FFT correlation and windows |

@@ -47,13 +47,13 @@ typifier = BeadSpring()
 frame = typifier.typify(chain).to_frame()  # chain: an mp.Atomistic of bonded beads
 ff = typifier.forcefield()
 energy, forces = PotentialCompiler(ff).compile(frame).calc_energy_forces(frame)
-mp.io.write_mrec("chain.mrec", frame, forcefield=ff)  # the expression travels along
+mp.io.mrec.write("chain.mrec", frame, forcefield=ff)  # the expression travels along
 ```
 
 Defining the class registers the style; `Fene.unregister()` takes it out
 again. The record carries the expression, so a process that registered
 nothing reads `chain.mrec` back with
-`ForceField.from_section(mp.io.read_mrec_forcefield("chain.mrec"))` and
+`ForceField.from_section(mp.io.mrec.read_forcefield("chain.mrec"))` and
 prices it identically. molpy's test suite runs this snippet as written
 (`tests/test_ff/test_user_style.py`), and proves the energy and forces
 equal the analytic FENE sum and that a fresh process prices the record bit for

@@ -9,23 +9,22 @@ function. Every parser type is a native type re-exported at the package root
 
 | Expression | Input | Output | Use when |
 |------------|-------|--------|----------|
-| `mp.io.read_smiles(s)` | SMILES, one component | `Atomistic` | One specific molecule |
+| `mp.io.SmilesIR(s).to_atomistic()` | SMILES | `Atomistic` | One specific molecule (several components: one disconnected graph) |
 | `mp.io.SmilesIR(s)` | SMILES | `SmilesIR` | Inspect before converting |
 | `mp.io.SmilesIR(s).n_components` | SMILES | `int` | How many molecules the string names |
-| `mp.io.SmilesIR(s).to_atomistic()` | SMILES | `Atomistic` | Every component as one graph |
 | `mp.io.SmilesIR(s).components()` | dot-separated SMILES | `list[Atomistic]` | One graph per component (`[Li+].[F-]`) |
 | `mp.SmartsPattern(p)` | SMARTS | `SmartsPattern` | Pattern matching / typification |
 
-There is no `parse_smiles` / `parse_smarts` / `parse_molecule` /
-`parse_mixture`: each was a wrapper whose body was a constructor call. Name the
-type instead.
+There is no `read_smiles` / `parse_smiles` / `parse_smarts` /
+`parse_molecule` / `parse_mixture`: each was a wrapper whose body was a
+constructor call. Name the type instead.
 
 ## Canonical example
 
 ```python
 import molpy as mp
 
-mol = mp.io.read_smiles("CCO") # Atomistic (heavy atoms only)
+mol = mp.io.SmilesIR("CCO").to_atomistic() # Atomistic (heavy atoms only)
 mol = mp.Perceive().find_hydrogens(mol) #... with hydrogens
 
 ions = mp.io.SmilesIR("[Li+].[F-]").components() # [Atomistic, Atomistic]
@@ -34,8 +33,9 @@ query = mp.SmartsPattern("[C;X4][O;H1]") # compiled query
 query.find_matches(mol) # -> list[SmartsMatch]
 ```
 
-`read_smiles` raises on a `.`-separated string: that names a *set* of molecules,
-not a molecule. Use `components()`.
+A `.`-separated string names a *set* of molecules: `to_atomistic()` returns
+them as one disconnected graph, `components()` one graph each, and
+`n_components` says how many there are.
 
 ## Polymer notations
 

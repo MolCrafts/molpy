@@ -5,8 +5,9 @@ Auto-generated reference for every public symbol, with typed signatures througho
 ## Public surface: one path per name
 
 Write `import molpy as mp` and reach every name through `mp`. Each name has exactly
-one public path — there is no `molpy.core.Atomistic`, `molpy.parser` or
-`molpy.optimize` spelling. molpy is a thin layer over molrs: every native name
+one public path — there is no `molpy.core.Atomistic`, `molpy.parser`,
+`molpy.optimize` or `molpy.engine.lammps.LAMMPSEngine` spelling: the modules
+behind molpy's own subpackages are private (`_`-prefixed). molpy is a thin layer over molrs: every native name
 is the molrs object (`mp.Atomistic is molrs.system.Atomistic`), placed by one
 rule. A molrs subsystem molpy has a namespace for is mirrored there under the
 same name (`mp.ff` with its submodules, `mp.io`, `mp.compute`, `mp.signal`,
@@ -16,9 +17,9 @@ flattened onto the root.
 
 | Layer | What it means | Names |
 |-------|---------------|-------|
-| **Flattened onto the root** (molrs) | Identity re-export: `mp.Atomistic is molrs.system.Atomistic`. Behaviour and docs come from the native core; molpy adds nothing. | `molrs.system` — `Atomistic`, `CoarseGrain`, `Graph`, `Atom`, `Bond`, `Angle`, `Dihedral`, `Improper`, `VirtualSite`, `DrudeParticle`, `MasslessSite`, `Bead`, `CGBond`, `NodeRef`, `RelationRef`, `Refs`, `RelationBuckets`, `Port`, `Topology`, `ExtractedSubgraph`, `Element` · `molrs.store` — `Frame`, `Block`, `BlockDtypeError`, `FrameMeta`, `MetaDocument`, `MetaValue`, `ScalarObservable`, `VectorObservable`, `keys`, `schema` · `molrs.spatial` — `Cuboid`, `Sphere`, `HalfSpace`, `Parallelepiped`, `Cylinder`, `Ellipsoid`, `Polyhedron`, `SphereUnion`, `Region`, `TriMesh`, `Trace`, `NeighborQuery`, `NeighborList`, `Neighbors`, `VerletSkin` · `molrs.units` — `Unit`, `Quantity`, `UnitRegistry`, `UnitPreset`, `UnitsError`, `AMBER_COULOMB` · `molrs.perceive` — `Perceive`, `RingInfo`, `SmartsPattern`, `SmartsMatch`, `Reaction`, `SubgraphMatcher` · `molrs.optimize` — `LBFGS`, `OptReport` · `molrs.conformer` — `Conformer`, `ConformerReport`, `ConformerStageReport` |
-| **Mirrored subpackages** (molrs) | The molrs subsystem under its own name, every native name the molrs object, plus molpy's additions. | `mp.ff` (`forcefield`, `potential`, `typifier` + the AmberTools typifiers, `charge`, `ir`, `params`, `scale_lj`), `mp.io` (+ `read_smiles`, `read_amber`), `mp.compute`, `mp.signal`, `mp.md`, `mp.op`, `mp.builder` (+ crystals, polymers, virtual sites, `PackingTemplate`) |
-| **molpy's own** | Defined in molpy; *sub* marks a subclass of a native type that adds molpy behaviour. | `Box` (sub), `Trajectory` (sub), `TrajectorySplitter` and its strategies, the column selectors (`ElementSelector`, `AtomTypeSelector`, `AtomIndexSelector`, `MaskPredicate`), `FrameCollection`; the subpackages `mp.engine` (with `Script`), `mp.adapter`, `mp.data`, and `molpy.wrapper` (imported explicitly) |
+| **Flattened onto the root** (molrs) | Identity re-export: `mp.Atomistic is molrs.system.Atomistic`. Behaviour and docs come from the native core; molpy adds nothing. | `molrs.system` — `Atomistic`, `CoarseGrain`, `Graph`, `Atom`, `Bond`, `Angle`, `Dihedral`, `Improper`, `VirtualSite`, `DrudeParticle`, `MasslessSite`, `Bead`, `CGBond`, `NodeRef`, `RelationRef`, `Refs`, `RelationBuckets`, `Port`, `Topology`, `ExtractedSubgraph`, `Element` · `molrs.store` — `Frame`, `Block`, `BlockDtypeError`, `FrameMeta`, `MetaDocument`, `MetaValue`, `ScalarObservable`, `VectorObservable`, `Trajectory`, `keys`, `schema` · `molrs.spatial` — `Box`, `Cuboid`, `Sphere`, `HalfSpace`, `Parallelepiped`, `Cylinder`, `Ellipsoid`, `Polyhedron`, `SphereUnion`, `Region`, `TriMesh`, `Trace`, `NeighborQuery`, `NeighborList`, `Neighbors`, `VerletSkin` · `molrs.units` — `Unit`, `Quantity`, `UnitRegistry`, `UnitPreset`, `UnitsError`, `AMBER_COULOMB` · `molrs.perceive` — `Perceive`, `RingInfo`, `SmartsPattern`, `SmartsMatch`, `Reaction`, `SubgraphMatcher` · `molrs.optimize` — `LBFGS`, `OptReport` · `molrs.conformer` — `Conformer`, `ConformerReport`, `ConformerStageReport` |
+| **Mirrored subpackages** (molrs) | The molrs subsystem under its own name, every native name the molrs object, plus molpy's additions. | `mp.ff` (`forcefield`, `potential`, `typifier` + the AmberTools typifiers, `charge`, `ir`, `params`, `scale_lj`), `mp.io`, `mp.compute`, `mp.signal`, `mp.md`, `mp.op`, `mp.builder` (+ crystals, polymers, virtual sites, `PackingTemplate`) |
+| **molpy's own** | Defined in molpy. | `TrajectorySplitter` and its strategies (over the native `Trajectory`), the column selectors (`ElementSelector`, `AtomTypeSelector`, `AtomIndexSelector`, `MaskPredicate`), `FrameCollection`; the subpackages `mp.engine` (with `Script`), `mp.adapter`, `mp.data`, and `molpy.wrapper` / `molpy.integrations` (imported explicitly) |
 
 ## Index of Operations and Symbols
 
@@ -30,7 +31,7 @@ flattened onto the root.
 | Represent a time-ordered frame sequence | `Trajectory` | [Core](core.md) |
 | Perceive angles/dihedrals in place; bond-graph distances; molecule ids of a frame | `generate_topology`, `topo_distances`, `Topology.from_frame` | [Core](core.md) |
 | Define and query force field parameters | `mp.ff.forcefield.ForceField`, `Style`, `Type` | [Core](core.md) |
-| Parse SMILES / SMARTS | `mp.io.read_smiles`, `mp.io.SmilesIR`, `SmartsPattern` | [Parser](parser.md) |
+| Parse SMILES / SMARTS | `mp.io.SmilesIR` (`.to_atomistic()`), `SmartsPattern` | [Parser](parser.md) |
 | Perceive hydrogens / aromaticity / rings | `Perceive`, `RingInfo` | [Core](core.md) |
 | Apply a reaction SMARTS to a graph (bond formation / removal) | `Reaction` | [Parser](parser.md) |
 | Generate `fix bond/react` pre/post topology templates | `mp.io.BondReactTemplate`, `write_lammps_bond_react_system` | [IO](io.md) |
@@ -41,7 +42,7 @@ flattened onto the root.
 | Evaluate bond, angle, and pair potentials | `mp.ff.potential.PotentialCompiler`, `Potentials`, `kernel` | [Potential](potential.md) |
 | Register a force-field style or category from Python | `mp.ff.ir.StyleSpec`, `register_style`, `register_category` | [Potential](potential.md) |
 | Read and write molecular files (PDB, LAMMPS, GRO, …) | `mp.io.read_pdb`, `mp.io.write_lammps_data`, `mp.ff.forcefield.read_forcefield_xml` | [I/O](io.md) |
-| Store a frame, trajectory or force field as a `*.mrec` record | `write_mrec`, `read_mrec_trajectory`, `read_mrec_forcefield` | [I/O](io.md) |
+| Store a frame, trajectory or force field as a `*.mrec` record | `mp.io.mrec.write`, `mp.io.mrec.read_trajectory`, `mp.io.mrec.read_forcefield` | [I/O](io.md) |
 | Bridge to a third-party library (in-memory) | `Adapter`, `RDKitAdapter` (optional example) | [Adapter](adapter.md) |
 | Invoke external CLI tools (antechamber, tleap) | `Wrapper`, `AntechamberWrapper` | [Wrapper](wrapper.md) |
 | Plan polydisperse polymer systems | `SystemPlanner`, `PolydisperseChainGenerator`, `SchulzZimmPolydisperse` | [Builder](builder.md) |

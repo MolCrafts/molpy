@@ -4,8 +4,9 @@ Foundational data structures for molecular systems. All available via
 `import molpy as mp`. The root flattens molrs's data-model subsystems —
 `molrs.store`, `molrs.system`, `molrs.spatial`, `molrs.units`,
 `molrs.perceive`, `molrs.optimize`, `molrs.conformer` — by identity
-(`mp.Frame is molrs.store.Frame`); `Box` and `Trajectory` are molpy
-subclasses of the native ones.
+(`mp.Frame is molrs.store.Frame`, `mp.Box is molrs.spatial.Box`,
+`mp.Trajectory is molrs.store.Trajectory`). molpy's own root names are the
+column selectors and the trajectory splitters.
 
 ## Quick reference
 
@@ -15,7 +16,7 @@ subclasses of the native ones.
 | `Block` | Columnar table: column names → NumPy arrays | Tabular data, vectorized computation | Graph-level chemical editing |
 | `Frame` | Named Blocks + `box` + dict-like `meta` | System snapshots, file I/O | Editing individual atoms |
 | `Box` | Periodic simulation cell (3×3 matrix + PBC) | Wrapping, minimum-image distances | Non-periodic systems |
-| `Trajectory` | Ordered sequence of Frames (eager or lazy) | Time-series analysis, streaming I/O | Single-snapshot work |
+| `Trajectory` | Ordered in-memory sequence of Frames with `step` / `time` labels (slicing, `map`); lazy readers are `mp.io.read_*_trajectory` | Time-series analysis | Single-snapshot work |
 | `CoarseGrain` | CG molecular graph (beads + CG bonds) | Coarse-grained modelling; mirrors `Atomistic` | All-atom work (use `Atomistic`) |
 | `mp.ff.forcefield.ForceField` | Force field container (styles → types → potentials) | Defining parameters before execution | Direct numerical computation |
 | `NodeRef` / `RelationRef` / `Refs` | Live handles onto graph nodes / relations and collections of them (an `Atom` is a node view, a `Bond` a relation view) | Code generic over node / relation kinds | Everyday atom / bond editing |
@@ -71,7 +72,7 @@ cc = ff.def_style("bond", "harmonic").def_type("CT-CT", ct, ct, k=536.0, r0=1.52
 
 ### Box
 
-::: molpy.core.box
+::: molpy.Box
 
 ### Forcefield
 
@@ -95,6 +96,16 @@ Re-exported from the native core — `mp.Frame is molrs.store.Frame`:
 
 ::: molpy.Trajectory
 
+::: molpy.TrajectorySplitter
+
+::: molpy.SplitStrategy
+
+::: molpy.FrameIntervalStrategy
+
+::: molpy.TimeIntervalStrategy
+
+::: molpy.CustomStrategy
+
 ### Coarse-Grain
 
 ::: molpy.CoarseGrain
@@ -113,7 +124,13 @@ Re-exported from the native core — `mp.Frame is molrs.store.Frame`:
 
 ### Selector
 
-::: molpy.core.selector
+::: molpy.MaskPredicate
+
+::: molpy.ElementSelector
+
+::: molpy.AtomTypeSelector
+
+::: molpy.AtomIndexSelector
 
 ### Region
 

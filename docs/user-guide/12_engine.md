@@ -50,6 +50,7 @@ water = mp.Frame(
             "z": [0.0, 0.0, 0.0],
         },
         "bonds": {"atomi": [0, 0], "atomj": [1, 2], "type": ["OW-HW"] * 2},
+        "angles": {"atomi": [1], "atomj": [0], "atomk": [2], "type": ["HW-OW-HW"]},
     }
 )
 water.box = mp.Box.cube(20.0)
@@ -59,6 +60,7 @@ atoms = ff.def_style("atom", "full")
 ow = atoms.def_type("OW", mass=15.999, charge=-0.834, element="O")
 hw = atoms.def_type("HW", mass=1.008, charge=0.417, element="H")
 ff.def_style("bond", "harmonic").def_type("OW-HW", ow, hw, k=450.0, r0=0.9572)
+ff.def_style("angle", "harmonic").def_type("HW-OW-HW", hw, ow, hw, k=55.0, theta0=104.52)
 pairs = ff.def_style("pair", "lj/cut", {"cutoff": 10.0})
 pairs.def_type("OW", ow, epsilon=0.1521, sigma=3.1507)
 pairs.def_type("HW", hw, epsilon=0.0, sigma=0.0)
@@ -78,8 +80,14 @@ files = gmx.generate_inputs(water, ff, "./gromacs_run", temperature=300.0)
 print(sorted(files))  # ['em', 'gro', 'nvt', 'top']
 ```
 
-`run(Script.from_path(files["em"]))` grompp's the `.mdp` against the `.gro`
-and `.top`, then mdrun's it (under the engine's `launcher`).
+The `.top` is the whole topology `mp.ff.forcefield.write_gromacs_system`
+writes: the force field's directives, one `[ moleculetype ]` per molecule
+(by the atoms' `mol_id`) with each row's parameters, `[ system ]` and
+`[ molecules ]` — what `grompp -p` reads. GROMACS excludes every pair within
+three bonds, so the frame carries its angles (and dihedrals:
+`Atomistic.generate_topology`). `run(Script.from_path(files["em"]))` grompp's
+the `.mdp` against the `.gro` and `.top`, then mdrun's it (under the engine's
+`launcher`).
 
 ### LAMMPS: writing a control script by hand
 

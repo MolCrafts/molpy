@@ -12,7 +12,7 @@ import molpy as mp
 def main() -> None:
     ir = mp.io.SmilesIR("CCO")
     print("ethanol IR components:", ir.n_components)
-    mol = mp.io.read_smiles("c1ccccc1")
+    mol = mp.io.SmilesIR("c1ccccc1").to_atomistic()
     print("benzene atoms:", mol.n_atoms)
 
     pat = mp.SmartsPattern("[#6]")

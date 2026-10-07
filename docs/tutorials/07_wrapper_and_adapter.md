@@ -21,7 +21,7 @@ The examples below share this setup:
 ```python
 import molpy as mp
 
-mol = mp.io.read_smiles("CCO")
+mol = mp.io.SmilesIR("CCO").to_atomistic()
 ```
 
 ```python
@@ -97,7 +97,7 @@ import molpy as mp
 from molpy.adapter import RDKitAdapter
 from rdkit.Chem import AllChem
 
-mol = mp.io.read_smiles("CCO")
+mol = mp.io.SmilesIR("CCO").to_atomistic()
 
 adapter = RDKitAdapter(internal=mol)
 rd_mol = adapter.get_external()

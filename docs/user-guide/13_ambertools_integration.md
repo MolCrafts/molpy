@@ -38,7 +38,7 @@ import molpy as mp
 output_dir = Path("13_output")
 output_dir.mkdir(exist_ok=True)
 
-tfsi = mp.io.read_smiles("O=S(=O)(C(F)(F)F)[N-]S(=O)(=O)C(F)(F)F")
+tfsi = mp.io.SmilesIR("O=S(=O)(C(F)(F)F)[N-]S(=O)(=O)C(F)(F)F").to_atomistic()
 tfsi = mp.Conformer(add_hydrogens=False, seed=42).generate(tfsi)[0]
 ```
 

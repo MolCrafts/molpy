@@ -12,15 +12,20 @@ onto the root.
 
 | Package | Purpose |
 |---------|---------|
-| `molpy` (root) | The data model, flattened from `molrs.store`, `molrs.system`, `molrs.spatial` (regions, neighbour search), `molrs.units`, `molrs.perceive`, `molrs.optimize` and `molrs.conformer`; plus molpy's `Box` and `Trajectory` subclasses, the trajectory splitters and the column selectors (in the private `core` package, never spelled `molpy.core.X`) |
+| `molpy` (root) | The data model, flattened from `molrs.store`, `molrs.system`, `molrs.spatial` (`Box`, regions, neighbour search), `molrs.units`, `molrs.perceive`, `molrs.optimize` and `molrs.conformer`; plus molpy's trajectory splitters (over the native `Trajectory`) and the column selectors (in the private `_core` package) |
 | `ff` | Mirrors `molrs.ff`: `forcefield` (the container and force-field file formats), `potential` (compiler and kernels), `typifier` (+ molpy's `AntechamberTypifier` / `TLeapTypifier`), `charge`, `ir`, `params`, `scale_lj` |
-| `io` | Mirrors `molrs.io`: structure and trajectory formats, SMILES / CGsmiles text, `*.mrec` records; plus `read_smiles` and `read_amber` |
+| `io` | Mirrors `molrs.io`: structure and trajectory formats, SMILES / CGsmiles text, `*.mrec` records (`mp.io.mrec`), by identity |
 | `builder` | Mirrors `molrs.builder` (assembly, `Coarsener`, graphene and nanotubes); plus polymer planning, crystals, virtual sites, `PackingTemplate`, `AmberPolymerBuilder` |
 | `compute`, `signal`, `md`, `op` | Mirror `molrs.compute`, `molrs.signal`, `molrs.md`, `molrs.op` |
 | `engine` | External engines: one `generate_inputs` each for LAMMPS, GROMACS and OpenMM, `run`, `Script` |
 | `wrapper` | Subprocess boundaries to external CLI tools (antechamber, parmchk2, prepgen, tleap, sander) |
 | `adapter` | Optional in-memory bridge (RDKit worked example) |
 | `data` | Bundled package data: force-field files |
+| `integrations` | Capabilities other molcrafts products consume by entry point (the metric readers) |
+
+The modules behind `engine`, `wrapper`, `adapter` and `builder` are private
+(`molpy.engine._lammps`, …): each name has one public path, its subpackage
+(`mp.engine.LAMMPSEngine`).
 
 `compute`, `io`, and `engine` operate on the tabular layer (`Frame`/`Block`); `builder` and `ff.typifier` operate on the graph layer (`Atomistic`). `wrapper` and `adapter` sit at the outer edge and never leak external types into the data model.
 

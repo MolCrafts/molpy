@@ -8,7 +8,7 @@ Each engine has one input writer, `generate_inputs`, and `run`.
 | Symbol | Summary | Preferred for |
 |--------|---------|---------------|
 | `LAMMPSEngine` | `generate_inputs(frame, ff, out)` → data, settings, init, input script; `minimize` / `md` relax a frame through the same deck | LAMMPS decks and relaxations |
-| `GROMACSEngine` | `generate_inputs(frame, ff, out)` → `.gro`, `.top`, `em.mdp`, `nvt.mdp`; `run` grompp's and mdrun's an `.mdp` | GROMACS input sets |
+| `GROMACSEngine` | `generate_inputs(frame, ff, out)` → `.gro`, the whole `.top` (`write_gromacs_system`), `em.mdp`, `nvt.mdp`; `run` grompp's and mdrun's an `.mdp` | GROMACS input sets |
 | `OpenMMEngine` | `generate_inputs(frame, ff, config, out)` → PDB, force-field XML, Python script | Running OpenMM simulations |
 | `OpenMMSimulationConfig` | OpenMM run configuration | Configuring an OpenMM run |
 | `CP2KEngine` | Runs a CP2K input | Running CP2K simulations |
@@ -25,24 +25,28 @@ Each engine has one input writer, `generate_inputs`, and `run`.
 
 ### Base
 
-::: molpy.engine.base
+::: molpy.engine.Engine
 
 ### CP2K
 
-::: molpy.engine.cp2k
+::: molpy.engine.CP2KEngine
 
 ### LAMMPS
 
-::: molpy.engine.lammps
+::: molpy.engine.LAMMPSEngine
 
 ### GROMACS
 
-::: molpy.engine.gromacs
+::: molpy.engine.GROMACSEngine
 
 ### Script
 
-::: molpy.engine.script
+::: molpy.engine.Script
+
+::: molpy.engine.ScriptLanguage
 
 ### OpenMM
 
-::: molpy.engine.openmm
+::: molpy.engine.OpenMMEngine
+
+::: molpy.engine.OpenMMSimulationConfig

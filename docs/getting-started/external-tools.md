@@ -51,7 +51,7 @@ Pass the env into the typifier when you construct it:
 import molpy as mp
 
 mol, _ = mp.Conformer(add_hydrogens=True, seed=42).generate(
-    mp.io.read_smiles("CCO")
+    mp.io.SmilesIR("CCO").to_atomistic()
 )  # antechamber needs 3D coordinates
 ante = mp.ff.typifier.AntechamberTypifier(
     atom_type="gaff2", charge_method="bcc",

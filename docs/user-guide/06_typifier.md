@@ -25,7 +25,7 @@ import molpy as mp
 from molpy.ff.typifier import OPLSAATypifier
 
 # 1. Build the structure
-mol = mp.io.read_smiles("CCO")
+mol = mp.io.SmilesIR("CCO").to_atomistic()
 mol, _ = mp.Conformer(add_hydrogens=True, seed=42).generate(mol)
 mol.generate_topology(gen_angle=True, gen_dihedral=True, clear_existing=True)  # in place
 

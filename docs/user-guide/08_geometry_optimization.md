@@ -20,7 +20,7 @@ drives the `Potentials` that `PotentialCompiler` compiles from a force field for
 ```python
 import molpy as mp
 
-mol, _ = mp.Conformer(seed=42).generate(mp.io.read_smiles("CCO"))
+mol, _ = mp.Conformer(seed=42).generate(mp.io.SmilesIR("CCO").to_atomistic())
 typifier = mp.ff.typifier.OPLSAATypifier()
 frame = typifier.typify(mol).to_frame()
 forcefield = typifier.forcefield()  # OPLS-AA parameters of the types just assigned
