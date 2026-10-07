@@ -18,6 +18,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
 defaults:
   run:
     shell: bash
@@ -51,7 +55,7 @@ jobs:
       PYTHONWARNDEFAULTENCODING: "1"
     steps:
       - uses: actions/checkout@v7
-      - uses: ./.github/actions/setup-python
+      - uses: MolCrafts/molcrafts-ci/actions/setup-python@master
         with:
           python-version: ${{ matrix.python }}
       - run: python scripts/check_molrs_on_pypi.py
@@ -63,7 +67,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: ./.github/actions/setup-python
+      - uses: MolCrafts/molcrafts-ci/actions/setup-python@master
         with:
           python-version: "3.14"
       - run: uv build && uvx twine check dist/*
@@ -96,6 +100,7 @@ jobs:
   github:
     name: release / github
     needs: pypi
+    if: github.event_name == 'push' && github.repository_owner == 'MolCrafts'
     runs-on: ubuntu-latest
     permissions:
       contents: write
