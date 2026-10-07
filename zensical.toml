@@ -138,7 +138,7 @@ nav = [
     # Core data structures
     { "Core" = "api/core.md" },
     # Construction pipeline
-    { "Parser" = "api/parser.md" },
+    { "Notation" = "api/notation.md" },
     { "Builder" = "api/builder.md" },
     { "Packing" = "api/pack.md" },
     { "Conformer" = "api/conformer.md" },
@@ -253,7 +253,7 @@ custom_fences = [
 default_handler = "python"
 
 [project.plugins.mkdocstrings.handlers.python]
-# Load molrs when resolving ``molpy.Frame → molrs.Frame`` re-exports.
+# Load molrs when resolving ``molpy.Frame → molrs.core.Frame`` re-exports.
 load_external_modules = true
 
 [project.plugins.mkdocstrings.handlers.python.options]

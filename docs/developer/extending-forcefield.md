@@ -65,14 +65,14 @@ bit.
 
 ## The pieces
 
-| Name (`mp.ff.style_registry.…`; `ParamSpec` and `IrError` on `mp.ff.ir`, `compile_explicit_terms` on `mp.ff.compile`) | What it does |
+| Name (`mp.ff.style_registry.…`; `ParamSpec` and `IrError` on `mp.ff.ir`, `ExplicitTerms` on `mp.ff.compile`) | What it does |
 |---|---|
 | `StyleDeclaration` | Subclass it: `category`, `name`, `params`, and an `expression` and/or a `kernel` method. The subclass statement registers it. |
 | `ParamSpec(name, dim, *, kind, default, mix, indexed, …)` | One parameter: its name and dimension (`"E/L^2"`; `E` `L` `A` `Q` `M` for energy, length, angle, charge, mass). `params` also takes a `{name: dim}` dict. |
 | `register_style(category, name, *, params, expression=None, kernel=None, …)` | The same as a function. |
 | `register_category(name, arity, *, coordinate="compound", order="reversible")` | A new category of 2–5 atoms; its terms live in the block `f"{name}s"`. |
 | `styles(category=None)`, `categories()`, `evaluate(...)`, `unregister_style(category, name)` | Introspection (`styles` returns `StyleSpec` records, `categories` `CategorySpec` records), a style's energy on a batch of coordinates, removal of a custom style. |
-| `compile_explicit_terms(category, style, atoms, **params)` | Any style's kernel over explicit instances (atom indices, one parameter row per term), no typifier needed. |
+| `ExplicitTerms(category, style, atoms, **params).compile()` | Any style's kernel over explicit instances (atom indices, one parameter row per term), no typifier needed. |
 | `IrError` | Every refusal is a subclass of it (a `ValueError`) named after what was refused (`SealedError`, `NoKernelError`, `UnboundVariableError`, …). |
 
 **Parameters arrive as stored.** An angle value (dimension `A`) is in degrees,

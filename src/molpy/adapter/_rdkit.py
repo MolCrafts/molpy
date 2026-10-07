@@ -22,43 +22,34 @@ from rdkit import Chem
 from rdkit.Chem import rdDistGeom, rdForceFieldHelpers
 
 from molrs.core.keys import FORMAL_CHARGE
-from molrs.core import Atomistic
+from molrs.core import Atomistic, BondNumber, BondOrder
 
 from ._adapter import Adapter
 
 #: The join key between an ``Atomistic`` atom and an RDKit atom (see module doc).
 MP_ID = "mp_id"
 
-#: Bond class codes of the ``bond_type`` column (``molrs.core.keys.BOND_TYPE``).
-BOND_TYPE_UNKNOWN = 0
-BOND_TYPE_SINGLE = 1
-BOND_TYPE_DOUBLE = 2
-BOND_TYPE_TRIPLE = 3
-BOND_TYPE_AROMATIC = 4
-
 #: RDKit models aromaticity the same way molpy does — as a bond *type*
 #: alongside single/double/triple, never as a fractional order. The two
-#: alphabets therefore map one-to-one.
+#: alphabets therefore map one-to-one, keyed by the ``bond_type`` column's code
+#: (``int(molrs.core.BondOrder.X)``, ``molrs.core.keys.BOND_TYPE``).
 BOND_TYPE_TO_RDKIT: dict[int, Chem.BondType] = {
-    BOND_TYPE_SINGLE: Chem.BondType.SINGLE,
-    BOND_TYPE_DOUBLE: Chem.BondType.DOUBLE,
-    BOND_TYPE_TRIPLE: Chem.BondType.TRIPLE,
-    BOND_TYPE_AROMATIC: Chem.BondType.AROMATIC,
+    int(BondOrder.Single): Chem.BondType.SINGLE,
+    int(BondOrder.Double): Chem.BondType.DOUBLE,
+    int(BondOrder.Triple): Chem.BondType.TRIPLE,
+    int(BondOrder.Aromatic): Chem.BondType.AROMATIC,
 }
-
 RDKIT_TO_BOND_TYPE: dict[Chem.BondType, int] = {
     rd: mp for mp, rd in BOND_TYPE_TO_RDKIT.items()
 }
 
-#: Localized integer order per bond type; aromatic and unknown bonds carry none
-#: (the Kekulé phase is a separate fact, and RDKit keeps its own).
-_IMPLIED_NUMBER: dict[int, int] = {
-    BOND_TYPE_UNKNOWN: 0,
-    BOND_TYPE_SINGLE: 1,
-    BOND_TYPE_DOUBLE: 2,
-    BOND_TYPE_TRIPLE: 3,
-    BOND_TYPE_AROMATIC: 0,
-}
+
+def _implied_number(bond_type: int) -> int:
+    """The localized integer order (``BondNumber`` code) a bond type implies;
+    aromatic and unknown bonds carry none, 0 (the Kekulé phase is a separate
+    fact, and RDKit keeps its own)."""
+    number = BondOrder.from_code(bond_type).implied_number()
+    return int(number) if number is not None else int(BondNumber.Unknown)
 
 
 def _rdkit_bond_type(bond_type: int) -> Chem.BondType:
@@ -211,7 +202,7 @@ class RdkitAdapter(Adapter[Atomistic, Chem.Mol]):
             mol.AddBond(
                 rd_index[bond.itom.handle],
                 rd_index[bond.jtom.handle],
-                _rdkit_bond_type(bond.get("bond_type", BOND_TYPE_SINGLE)),
+                _rdkit_bond_type(bond.get("bond_type", int(BondOrder.Single))),
             )
 
         if positions is not None:
@@ -299,7 +290,7 @@ class RdkitAdapter(Adapter[Atomistic, Chem.Mol]):
                 created[rd_bond.GetBeginAtomIdx()],
                 created[rd_bond.GetEndAtomIdx()],
                 bond_type=bond_type,
-                bond_number=_IMPLIED_NUMBER[bond_type],
+                bond_number=_implied_number(bond_type),
             )
         return atomistic
 
@@ -363,7 +354,7 @@ class RdkitAdapter(Adapter[Atomistic, Chem.Mol]):
                     atom_of_rd[rd_bond.GetBeginAtomIdx()],
                     atom_of_rd[rd_bond.GetEndAtomIdx()],
                     bond_type=bond_type,
-                    bond_number=_IMPLIED_NUMBER[bond_type],
+                    bond_number=_implied_number(bond_type),
                 )
 
     # ------------------------------------------------------------------

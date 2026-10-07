@@ -378,7 +378,7 @@ class TestWriteLammpsMolecule:
         assert "total_mass" in frame2.meta
 
 
-class TestIntegrationWithMolpyIO:
+class TestIntegrationWithMolpyIo:
     """Test integration with molpy.io module functions."""
 
     def test_read_lammps_molecule_function(self, test_files):

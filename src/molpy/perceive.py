@@ -1,7 +1,7 @@
 """Chemical perception — :mod:`molrs.perceive`, mirrored by identity.
 
 Every perception is a free function: ``perceive_<fact>`` returns a side table
-(``perceive_rings(mol) -> RingInfo``) and ``assign_<fact>`` writes the fact
+(``perceive_rings(mol) -> RingSet``) and ``assign_<fact>`` writes the fact
 onto a copy (``assign_rings``, ``assign_aromaticity``, ``assign_stereo``,
 ``assign_bond_orders``, ``assign_kekule_bond_orders``,
 ``assign_rotatable_bonds``, ``assign_equivalence_classes``,

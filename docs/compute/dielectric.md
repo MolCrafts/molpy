@@ -199,7 +199,7 @@ config:
     orient: bottom
     direction: horizontal
     title: null
-data: {$file: data/dielectric/debye_reference.json}
+data: {$file: series/dielectric/debye_reference.json}
 mark: {type: line, strokeWidth: 2.4, interpolate: monotone}
 encoding:
   x:
@@ -362,7 +362,7 @@ at least easy to spot.
     nanoseconds with Ewald electrostatics; the reference trajectory behind these
     pages is monatomic argon, for which $\mathbf{M} \equiv 0$. Add a measured
     spectrum when a polar reference trajectory exists under
-    `scripts/docs_data/`.
+    `scripts/docs_series/`.
 
 ## When it goes wrong
 

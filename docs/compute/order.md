@@ -87,7 +87,7 @@ anything** — not to a table, not to a paper, not to your own earlier run.
 
 ## What a liquid looks like
 
-Liquid argon at its first-shell cutoff gives $q_6 = 0.340 \pm 0.064$.
+Liquid argon at its first-shell cutoff gives $q_6 = 0.342 \pm 0.065$.
 
 <figure id="fig-q6" class="molcrafts-figure" markdown>
 <div class="molcrafts-figure__body molcrafts-figure__body--chart">
@@ -98,7 +98,7 @@ config:
     orient: bottom
     direction: horizontal
     title: null
-data: {$file: data/order/steinhardt_q6.json}
+data: {$file: series/order/steinhardt_q6.json}
 mark: {type: line, strokeWidth: 2.4, interpolate: monotone}
 encoding:
   x:
@@ -199,8 +199,8 @@ print(int(n_solid_bonds[0]), bool(is_solid.all()))    # -> 12 True
 ```
 
 Every atom in the perfect crystal has all 12 of its bonds solid-like. The same
-calculation on liquid argon averages 0.28 solid-like bonds per atom and
-classifies **no** atom as solid. The defaults (`q_threshold=0.7`,
+calculation on liquid argon averages 0.32 solid-like bonds per atom and
+classifies 10 of 30 000 atom-frames (0.03 %) as solid. The defaults (`q_threshold=0.7`,
 `n_threshold=6`) separate those two cases with an enormous margin — which is
 exactly why you must retune them on a real system, where the margin is narrow
 and the answer depends on where you put the line.

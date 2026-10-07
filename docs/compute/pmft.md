@@ -22,7 +22,7 @@ That is not an approximation or a fit. It is the definition of a free energy
 read backwards. Wherever $g > 1$, neighbours accumulate, and $w < 0$: a
 favourable separation. Wherever $g < 1$, $w > 0$: a barrier.
 
-For argon, $g = 2.95$ at the first peak gives $w = -1.08\,k_BT$, and the
+For argon, $g = 2.96$ at the first peak gives $w = -1.08\,k_BT$, and the
 minimum at $g = 0.60$ gives $w = +0.50\,k_BT$ — the desolvation barrier a pair
 must cross to move from the first shell to the second. Those two numbers are the
 free-energy landscape of the liquid, obtained from nothing but a histogram of
@@ -71,7 +71,7 @@ $w(r) = -\ln g(r)$, and that is geometry, not a bug.
     pages is monatomic argon, whose map is a featureless ring with a measured
     contrast of only about $0.3\,k_BT$. Showing that would suggest PMFT maps are
     uninformative, which is the opposite of the truth, so this page has no
-    figure until an anisotropic trajectory exists under `scripts/docs_data/`.
+    figure until an anisotropic trajectory exists under `scripts/docs_series/`.
 
 ## Computing it
 

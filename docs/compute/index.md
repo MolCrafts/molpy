@@ -260,13 +260,13 @@ $3.1\times10^{-6}$ (dimensionless, $|E(t)-E(0)|/|E(0)|$). The transport pages
 in the seed of their initial velocities, because one run of a chaotic liquid
 is one noisy draw, and quote each coefficient with its spread over the runs.
 Every run is a pure function of its seed, with nothing cached between runs.
-The generator lives in `scripts/docs_data/` and writes to `docs/data/`, so any
+The generator lives in `scripts/docs_series/` and writes to `docs/series/`, so any
 figure can be reproduced or challenged:
 
 ```python
 # docs: skip — runs a 30 ps MD trajectory (minutes, not seconds)
-from docs_data.run import argon_trajectory
-from docs_data.structure import radial_distribution
+from docs_series.run import argon_trajectory
+from docs_series.structure import radial_distribution
 
 radial_distribution(argon_trajectory())
 ```

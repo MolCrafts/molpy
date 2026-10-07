@@ -57,7 +57,7 @@ Quick definitions for MolPy's core terminology. Each entry links to the page tha
 : `mp.io.smiles.SmilesIr` and `mp.perceive.SmartsPattern` convert SMILES and SMARTS strings into MolPy structures; `mp.io.cgsmiles.CgSmilesIr` parses CGsmiles into ported units and site graphs. BigSMILES is not parsed. See [Parsing Chemistry](../user-guide/01_parsing_chemistry.md).
 
 **Reaction**
-: A reaction SMARTS. It matches the reactant patterns, forms and breaks bonds, and deletes the atoms that appear on the left and not on the right (the leaving groups). See [Parser](../api/parser.md).
+: A reaction SMARTS. It matches the reactant patterns, forms and breaks bonds, and deletes the atoms that appear on the left and not on the right (the leaving groups). See [Notation](../api/notation.md).
 
 **Assembler**
 : `mp.builder.Assembler(library, placer, orienter=None)` builds one world from a site graph: one copy of `library[bead_type]` per site, each site bond joining one accepting port of each end. Every atom gets `frag_id` (its site's ordinal) and `mol_id` (its connected component, from 1). See [Assembly](../user-guide/02_assembly.md).

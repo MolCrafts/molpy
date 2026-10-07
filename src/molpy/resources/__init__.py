@@ -30,7 +30,7 @@ def get_path(relative_path: str | Path) -> Path:
         >>> from molpy.resources import get_path
         >>> path = get_path("forcefield/tip3p.xml")
         >>> print(path)
-        /path/to/molpy/data/forcefield/tip3p.xml
+        /path/to/molpy/resources/forcefield/tip3p.xml
     """
     relative_path = Path(relative_path)
 

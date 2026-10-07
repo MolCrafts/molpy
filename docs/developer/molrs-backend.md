@@ -4,7 +4,7 @@ MolPy's analysis operators are the analyses of [molrs](https://github.com/MolCra
 a Rust column store and compute kernel, re-exported by identity. molrs is a
 **required** runtime dependency — callers use `mp.Frame` and `mp.Block`, which
 are the molrs types re-exported unchanged (never `import molrs` in user code);
-both are backed by a Rust `Store`, and every class on `mp.compute` is the molrs
+both hold their columns in molrs's Rust storage, and every class on `mp.compute` is the molrs
 class itself. There is no pure-Python fallback and no opt-in flag.
 
 This page shows how that backend surfaces in everyday analysis: how the box
@@ -56,7 +56,7 @@ frames = [_frame(step) for step in range(20)]
 ```
 
 The practical consequence is that a molpy box can be handed to any molrs API
-unchanged — there is no `.to_molrs()` bridge and no coordinate translation:
+unchanged, as the same object with the same coordinates:
 
 ```python
 import molrs

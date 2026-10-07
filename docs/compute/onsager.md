@@ -108,7 +108,7 @@ is yours to fit, over a window you choose and report.
     charged multi-species trajectory, which the argon reference system is not.
     Synthetic curves would only display the coupling that was typed into them —
     as the 0.6 above does. This page gets a figure when a charged reference
-    trajectory exists under `scripts/docs_data/`.
+    trajectory exists under `scripts/docs_series/`.
 
 ## When it goes wrong
 

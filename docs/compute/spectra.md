@@ -65,7 +65,7 @@ IR?"
 <div class="molcrafts-figure__body molcrafts-figure__body--chart">
 
 ```molplot preset="molplot" theme="auto" aspect="16:10"
-data: {$file: data/spectra/argon_vdos.json}
+data: {$file: series/spectra/argon_vdos.json}
 mark: {type: line, strokeWidth: 2.4, interpolate: monotone}
 encoding:
   x:
@@ -87,7 +87,7 @@ band peaks at 18 cm⁻¹ and has died away by 150 cm⁻¹.
 </figure>
 
 Two features carry the physics. The spectrum is **non-zero at zero frequency** —
-0.81 of the peak height — because $g(0) \propto D$ and a liquid diffuses; a
+0.72 of the peak height — because $g(0) \propto D$ and a liquid diffuses; a
 solid, after removing drift, goes to zero there. And the whole band lies below
 about 150 cm⁻¹, because argon is monatomic and has no internal vibrations at
 all: everything visible is atoms rattling in their cages, the same motion the
@@ -236,7 +236,7 @@ than their parent spectra because the signal is orders of magnitude smaller.
     charges — or, for *ab initio* intensities, an electron density to partition
     — and the reference system behind these pages is monatomic argon, whose
     dipole is identically zero. Add these when a molecular trajectory exists
-    under `scripts/docs_data/`.
+    under `scripts/docs_series/`.
 
 ## When it goes wrong
 

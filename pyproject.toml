@@ -89,8 +89,8 @@ target-version = "py312"
 line-length = 88
 
 [tool.ruff.lint]
-# Keep the historical default-style gate (E4/E7/E9/F); ruff 0.16 still honors
-# an explicit select so we do not inherit future default expansions mid-release.
+# The default-style gate (E4/E7/E9/F), selected explicitly so a ruff release
+# that widens its defaults does not widen this gate mid-release.
 select = ["E4", "E7", "E9", "F", "RUF100"]
 # E402: readers/writers import lazily inside functions by design (layering);
 # E741: single-letter names in the maths-heavy kernels stay.
@@ -142,11 +142,10 @@ filterwarnings = [
 # PyPI everywhere, including a CI runner, which has no sibling checkout to point
 # at. molcrafts-molrs 0.16 must be published before this pin is pushed (the
 # pre-push molrs-pin-on-pypi hook checks); until then test against a locally
-# built molrs 0.16 wheel installed into the environment. Do not reintroduce a path or git source without
-# removing it again before the next release: it silently disables
-# .pre-commit/check_molrs_pin_on_pypi.py, and uv honours a path dependency's own
-# sources transitively, so a downstream that points at this directory inherits
-# them (that is how molhub once got a molrs without `molrs.io.mrec`).
+# built molrs 0.16 wheel installed into the environment. A path or git source
+# here would silently disable .pre-commit/check_molrs_pin_on_pypi.py, and uv
+# honours a path dependency's own sources transitively, so a downstream that
+# points at this directory would inherit it.
 
 [tool.tox]
 requires = ["tox>=4.23"]

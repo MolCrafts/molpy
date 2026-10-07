@@ -50,7 +50,7 @@ polarized = drude.apply(struct)
 
 | Parameter | Meaning |
 |---|---|
-| `polarizability` | `dict[type -> dict[param -> float]]` of Drude parameters (`m_D`, `q_D_sign`, `k_D`, `alpha`, `a_thole`). `None` uses `mp.ff.params.clpol_polarizability()`, molrs's `alpha.ff`; `clpol_polarizability(path)` reads a custom file. |
+| `polarizability` | `dict[type -> dict[param -> float]]` of Drude parameters (`m_D`, `q_D_sign`, `k_D`, `alpha`, `a_thole`). `None` uses `mp.ff.params.clpol_polarizability()`, molrs's `alpha.ff`; `mp.io.read_clpol_alpha(path)` reads the rows of a custom `alpha.ff` (one dict per type, keyed by `type_name`). |
 | `drude_prefix` | Name prefix for the generated Drude particles (default `"D"`). |
 
 ## TIP4P M-sites

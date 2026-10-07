@@ -45,12 +45,11 @@ three cooperating surfaces:
 3. **Worlds** — `Atomistic` and `CoarseGrain` own nodes, relations, columns, and
    graph algorithms. Their `.atoms`, `.bonds`, and related properties are lazy
    handle collections: integer access interns a view (weak-interned per handle);
-   string field access (`atoms["x"]`) reads the dense component store without
-   materializing every view. There is no mirrored Python property bag.
+   string field access (`atoms["x"]`) reads the dense component columns without
+   materializing every view; per-node values live in those columns only.
 
-There is no `Struct`/`TypeBucket` registration layer. Adding a new stored node
-or relation kind changes the molrs schema and bindings; it is not a Python
-subclassing hook. See [Extending the Data Model](extending-core.md).
+A new stored node or relation kind is declared in the molrs schema and
+bindings; molpy picks it up by identity. See [Extending the Data Model](extending-core.md).
 
 ## The tabular layer: Block and Frame run on molrs
 

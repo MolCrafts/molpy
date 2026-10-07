@@ -334,7 +334,7 @@ def test_each_ff_submodule_is_a_molpy_module_mirroring_molrs(sub: str) -> None:
         ("ff.potential.PairLjCut", "ff.potential.PairLjCut"),
         ("ff.potential.WeightedTerms", "ff.potential.WeightedTerms"),
         ("ff.compile.PotentialCompiler", "ff.compile.PotentialCompiler"),
-        ("ff.compile.compile_explicit_terms", "ff.compile.compile_explicit_terms"),
+        ("ff.compile.ExplicitTerms", "ff.compile.ExplicitTerms"),
         ("ff.ir.ParamSpec", "ff.ir.ParamSpec"),
         ("ff.ir.CategorySpec", "ff.ir.CategorySpec"),
         ("ff.ir.StyleSpec", "ff.ir.StyleSpec"),

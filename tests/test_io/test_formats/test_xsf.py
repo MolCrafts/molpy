@@ -6,7 +6,7 @@ import pytest
 import molpy as mp
 
 
-class TestXSFCore:
+class TestXsfCore:
     """Core XSF functionality tests."""
 
     def test_read_crystal_structure(self, tmp_path):

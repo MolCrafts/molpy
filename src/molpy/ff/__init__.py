@@ -9,7 +9,7 @@ molrs.ff.forcefield.ForceField``):
 * :mod:`~molpy.ff.potential` — ``Potentials``, ``WeightedTerms``,
   ``PairLjCut`` and the ``Potential`` protocol
 * :mod:`~molpy.ff.compile` — ``PotentialCompiler`` and
-  ``compile_explicit_terms``: a force field bound to its kernels
+  ``ExplicitTerms``: a force field bound to its kernels
 * :mod:`~molpy.ff.typifier` — the ``Typifier`` base, its ``TypeAssignment``, the
   built-in typifiers and ``assign_cmaps``; plus molpy's AmberTools typifiers
 * :mod:`~molpy.ff.charge` — partial-charge models

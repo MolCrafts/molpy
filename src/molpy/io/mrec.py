@@ -1,7 +1,7 @@
 """``*.mrec`` records — :mod:`molrs.io.mrec`, mirrored by identity — and molpy's metric reader.
 
 Every native name is the molrs object (``mp.io.mrec.MrecReader is
-molrs.io.mrec.MrecReader``): the lazy store cursor ``MrecReader`` and its
+molrs.io.mrec.MrecReader``): the lazy record cursor ``MrecReader`` and its
 ``MrecWriter``, ``SequenceSchema``, ``ForceFieldSection`` (a force field's
 record section: ``ForceFieldSection.from_forcefield(ff)`` /
 ``section.to_forcefield()``), ``section_names``, ``pack_mrec_zip`` and the
@@ -36,7 +36,7 @@ if TYPE_CHECKING:
 class MrecMetricReader:
     """``*.mrec`` records — the per-frame series a trajectory carries.
 
-    A record store is not a metrics file: what it has that a chart can draw is
+    A record is not a metrics file: what it has that a chart can draw is
     the frame index against simulation ``step`` and ``time``. Those are
     emitted and nothing else is invented.
     """

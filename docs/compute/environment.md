@@ -24,7 +24,7 @@ a first-shell cutoff:
 <div class="molcrafts-figure__body molcrafts-figure__body--chart">
 
 ```molplot preset="molplot" theme="auto" aspect="16:10"
-data: {$file: data/environment/fcc_bond_order.json}
+data: {$file: series/environment/fcc_bond_order.json}
 mark: {type: circle, filled: true, opacity: 0.85}
 encoding:
   x:

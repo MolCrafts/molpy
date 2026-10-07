@@ -197,7 +197,7 @@ class TestAntechamberTypifier:
             mp.ff.typifier.AntechamberTypifier(work_dir=tmp_path).typify(_litfsi())
 
 
-class TestTLeapTypifier:
+class TestTleapTypifier:
     def test_writes_the_given_forcefield_as_frcmod(self, tools, tmp_path):
         ff = mp.ff.forcefield.ForceField("tfsi", units="real")
         ff.set_special_bonds([0.0, 0.0, 0.5], [0.0, 0.0, 5.0 / 6.0])

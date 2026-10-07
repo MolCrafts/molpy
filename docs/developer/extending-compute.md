@@ -46,14 +46,6 @@ runs — but read what it asserts. A runtime protocol check tests for the
 types, not its behaviour. Treat it as a smoke test at a boundary, not as
 dispatch in a loop.
 
-!!! warning "Removed: the old `Compute` base class"
-    Earlier versions of molpy shipped their own `Compute` abstract base class
-    whose data entry point was `__call__`, with construction parameters
-    forwarded to `super().__init__(**config)` and read back by a `dump()`
-    method. The base class, the `**config` catch-all, and `dump()` are all
-    gone. Name the method `compute`, store your own attributes, and do not call
-    `super().__init__`.
-
 ## Which shape to use
 
 | Need | Shape | Example |

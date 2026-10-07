@@ -469,8 +469,8 @@ class OpenmmEngine(Engine):
         return self._render_nvt_script(config, pdb_filename, ff_filename)
 
     @staticmethod
-    def _common_header(config: OpenmmSimulationConfig) -> str:
-        """Render the import block common to all ensembles."""
+    def _import_block(config: OpenmmSimulationConfig) -> str:
+        """The script's docstring and imports, the same for every ensemble."""
         constraints_import = (
             f"    {config.constraints},\n" if config.constraints != "None" else ""
         )
@@ -545,7 +545,7 @@ class OpenmmEngine(Engine):
     ) -> str:
         """Render a Langevin NVT (or NVE) simulation script."""
         parts = [
-            self._common_header(config),
+            self._import_block(config),
             self._system_setup(config, pdb_filename, ff_filename),
             self._integrator_and_simulation(config),
             "\nprint('Minimising energy...')\n",
@@ -573,7 +573,7 @@ class OpenmmEngine(Engine):
             "))\n"
         )
         parts = [
-            self._common_header(config),
+            self._import_block(config),
             self._system_setup(config, pdb_filename, ff_filename),
             barostat_block,
             self._integrator_and_simulation(config),
@@ -594,7 +594,7 @@ class OpenmmEngine(Engine):
     ) -> str:
         """Render an energy-minimisation-only script."""
         parts = [
-            self._common_header(config),
+            self._import_block(config),
             self._system_setup(config, pdb_filename, ff_filename),
             self._integrator_and_simulation(config),
             "\nprint('Minimising energy...')\n",

@@ -68,7 +68,7 @@ config:
     orient: bottom
     direction: horizontal
     title: null
-data: {$file: data/shape/ideal_chain_rg.json}
+data: {$file: series/shape/ideal_chain_rg.json}
 mark: {type: line, strokeWidth: 2.2, point: true}
 encoding:
   x:

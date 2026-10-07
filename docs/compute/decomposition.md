@@ -44,7 +44,7 @@ config:
     orient: bottom
     direction: horizontal
     title: null
-data: {$file: data/decomposition/phase_map.json}
+data: {$file: series/decomposition/phase_map.json}
 mark: {type: point, size: 18, filled: true, opacity: 0.45}
 encoding:
   x:
@@ -69,12 +69,12 @@ decomposition never saw. The two clouds separate cleanly along PC1.
 </figure>
 
 The two phases land in disjoint regions along PC1, which carries a variance of
-2.44 against 0.49 for PC2 — so a single coordinate holds most of the
+2.51 against 0.43 for PC2 — so a single coordinate holds most of the
 information. That is the useful output: you started with three descriptors and
 found that one combination of them is the order parameter.
 
 Running k-means with $k=2$ on the same data and comparing its labels with the
-truth gives **99.75 % agreement**. The algorithm recovered the phases from
+truth gives **100 % agreement**. The algorithm recovered the phases from
 geometry alone.
 
 Be careful about what that demonstrates. FCC and a liquid at the triple point

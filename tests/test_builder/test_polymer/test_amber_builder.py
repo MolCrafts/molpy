@@ -341,7 +341,7 @@ class TestCache:
         ]
 
 
-class TestGroPoBOligomer:
+class TestGropobOligomer:
     """GroPoB's PEO.ac put in place by hand: only prepgen and tleap run."""
 
     @staticmethod

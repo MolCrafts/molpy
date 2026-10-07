@@ -337,7 +337,9 @@ from molpack import GencanPack, Target
 
 total_mw = sum(mass(c.atoms) for c in typed_chains)
 target_density = 0.05  # g/cm^3 (use ~1.0 for production)
-volume = (total_mw / 6.022e23) / target_density * 1e24
+# amu per cubic angstrom, so a mass in g/mol (numerically amu) gives angstrom^3
+density = target_density * mp.core.UnitRegistry().factor("g/cm^3", "amu/angstrom^3")
+volume = total_mw / density
 box_length = volume ** (1 / 3)
 
 box = mp.core.Cuboid([0.0, 0.0, 0.0], [box_length] * 3)

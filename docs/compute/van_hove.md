@@ -53,7 +53,7 @@ config:
     orient: bottom
     direction: horizontal
     title: null
-data: {$file: data/van_hove/argon_self.json}
+data: {$file: series/van_hove/argon_self.json}
 mark: {type: line, strokeWidth: 2.2, interpolate: monotone}
 encoding:
   x:
@@ -75,15 +75,17 @@ encoding:
 
 **Figure 1.** Self part of the Van Hove function for liquid argon at 85 K, at
 four lags. The distribution starts narrow and spreads; its root-mean-square
-width grows from 0.23 Å at 0.1 ps to 2.76 Å at 6 ps.
+width grows from 0.22 Å at 0.1 ps to 2.62 Å at 6 ps.
 </figure>
 
 Every curve is a normalized probability distribution — they all integrate to 1,
 which is the first thing to confirm. What changes is the width, and the widths
-are not arbitrary. Taking $\int r^2 G_s\,\mathrm{d}r$ at each lag gives 0.051,
-0.67, 2.65 and 7.64 Å², against MSD values of 0.051, 0.68, 2.75 and 8.04 Å²
-from the [MSD](msd.md) page. They agree to within a few percent, the residual
-coming from different time-origin sampling in the two calculations.
+are not arbitrary. Taking $\int r^2 G_s\,\mathrm{d}r$ at each lag gives 0.050,
+0.66, 2.46 and 6.87 Å², against [MSD](msd.md) values of 0.050, 0.66, 2.53 and
+7.18 Å² from the same trajectory's unwrapped positions at the same time origins.
+They agree to within a few percent, the residual coming from the finite
+$r_\max$ and bin width of the histogram, which clip the tail that carries the
+largest displacements.
 
 That is the cross-check to run on your own system: if the second moment of your
 $G_s$ does not reproduce your MSD, one of the two is wrong.

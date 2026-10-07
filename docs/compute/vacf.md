@@ -40,7 +40,7 @@ zero. *How* it decays is where the physics is.
 <div class="molcrafts-figure__body molcrafts-figure__body--chart">
 
 ```molplot preset="molplot" theme="auto" aspect="16:10"
-data: {$file: data/vacf/argon_vacf.json}
+data: {$file: series/vacf/argon_vacf.json}
 mark: {type: line, strokeWidth: 2.4, interpolate: monotone}
 encoding:
   x:
@@ -74,7 +74,7 @@ atom rattles in the cage formed by its neighbours.
 noise. At 440 fs the correlation is $-0.105$: the average atom is moving
 *backwards* relative to where it started. It has bounced off the wall of its
 cage of neighbours — the same first coordination shell that [$g(r)$](rdf.md)
-shows at 3.68 Å. A dilute gas has no cage and decays monotonically to zero; a
+shows at 3.73 Å. A dilute gas has no cage and decays monotonically to zero; a
 solid oscillates for far longer.
 
 **It relaxes to zero.** By 2 ps the atom has forgotten its initial velocity
@@ -122,7 +122,7 @@ and look for where it stops changing.
 <div class="molcrafts-figure__body molcrafts-figure__body--chart">
 
 ```molplot preset="molplot" theme="auto" aspect="16:10"
-data: {$file: data/vacf/argon_running_diffusion.json}
+data: {$file: series/vacf/argon_running_diffusion.json}
 mark: {type: line, strokeWidth: 2.4, interpolate: monotone}
 encoding:
   x:

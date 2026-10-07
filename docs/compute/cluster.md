@@ -26,7 +26,7 @@ config:
     orient: bottom
     direction: horizontal
     title: null
-data: {$file: data/cluster/argon_percolation.json}
+data: {$file: series/cluster/argon_percolation.json}
 mark: {type: line, strokeWidth: 2.4, interpolate: monotone}
 encoding:
   x:
@@ -55,25 +55,25 @@ counted as clusters:
 
 | cutoff (Å) | clusters (size ≥ 2) | largest cluster |
 |---|---|---|
-| 3.3 | 11 | 0.4 % (2 atoms) |
-| 3.5 | 89 | 2.9 % |
-| 3.6 | 49 | 34 % |
-| 3.65 | 19 | 79 % |
-| 3.7 | 6 | 93 % |
-| 3.8 | 2 | 98.8 % |
+| 3.3 | 12 | 0.5 % (2–3 atoms) |
+| 3.5 | 84 | 3.2 % |
+| 3.6 | 51 | 21 % |
+| 3.65 | 23 | 73 % |
+| 3.7 | 8 | 91 % |
+| 3.8 | 1 | 98.7 % |
 | 4.0 | 1 | 100 % |
 
 The cluster count rises and then falls, which is not a mistake: at 3.3 Å almost
 nothing is within range, so there are a handful of isolated pairs; by 3.5 Å most
-atoms have a partner and there are 89 small fragments; past that the fragments
+atoms have a partner and there are 84 small fragments; past that the fragments
 start merging into each other, so the count collapses while the largest cluster
 grows. Nearly all the atoms are in no cluster at all at the small cutoffs, which
-is why 11 clusters and "largest = 2 atoms" are consistent.
+is why 12 clusters and "largest = 2 atoms" are consistent.
 
 Between 3.55 and 3.70 Å the system goes from dozens of small aggregates to one
 network containing essentially every atom. That is a **percolation transition**,
 and it happens inside a 0.15 Å window. For scale, the first peak of
-[$g(r)$](rdf.md) is centred at 3.68 Å and is roughly 1 Å wide at half height —
+[$g(r)$](rdf.md) is centred at 3.73 Å and is roughly 1 Å wide at half height —
 so the entire transition fits inside the leading edge of the first coordination
 shell.
 

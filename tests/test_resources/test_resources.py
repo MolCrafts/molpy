@@ -1,6 +1,4 @@
-"""
-Tests for data file access module.
-"""
+"""Tests for ``molpy.resources``: the files molpy ships."""
 
 from pathlib import Path
 
@@ -9,8 +7,8 @@ import pytest
 from molpy.resources import exists, get_path, list_files
 
 
-class TestDataAccess:
-    """Test basic data file access functions."""
+class TestResourceAccess:
+    """``get_path``, ``list_files`` and ``exists`` over the shipped files."""
 
     def test_get_path_forcefield(self):
         """Test getting path to a forcefield file."""
@@ -29,7 +27,6 @@ class TestDataAccess:
         files = list(list_files("forcefield"))
         assert len(files) > 0
         assert any("tip3p.xml" in f for f in files)
-        assert any("tip3p.xml" in f for f in files)
         # Should not include Python files
         assert not any("__init__.py" in f for f in files)
 
@@ -46,8 +43,7 @@ class TestDataAccess:
         assert any("__init__.py" in f for f in files)
 
     def test_exists(self):
-        """Test checking if a data file exists."""
-        assert exists("forcefield/tip3p.xml")
+        """``exists`` says whether a shipped file is there."""
         assert exists("forcefield/tip3p.xml")
         assert not exists("forcefield/nonexistent.xml")
 
@@ -57,11 +53,11 @@ class TestDataAccess:
         assert names == {"clp.xml", "tip3p.xml"}
 
 
-class TestDataModuleImport:
-    """Test that data module can be imported and used."""
+class TestResourcesModule:
+    """``molpy.resources`` exposes its three functions."""
 
-    def test_import_data_module(self):
-        """Test importing the data module."""
+    def test_import_resources_module(self):
+        """The module carries ``get_path``, ``list_files`` and ``exists``."""
         import molpy.resources
 
         assert hasattr(molpy.resources, "get_path")

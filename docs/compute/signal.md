@@ -93,11 +93,15 @@ is $\pi/\Delta t$ for even-length input, and to reach the wavenumbers a
 spectroscopist quotes you divide by $2\pi c$:
 
 ```python
-wavenumbers = grid * 1e15 / (2 * np.pi * 2.998e10)   # rad/fs -> cm^-1
-print(round(float(wavenumbers.max())))               # -> 1659
+from molpy.core import UnitRegistry, constants
+
+units = UnitRegistry()
+c = constants.SPEED_OF_LIGHT * units.factor("m/s", "cm/s")         # cm/s
+wavenumbers = grid * units.factor("1/fs", "1/s") / (2 * np.pi * c)  # rad/fs -> cm^-1
+print(round(float(wavenumbers.max())))               # -> 1660
 ```
 
-1659 cm⁻¹, which is the same Nyquist limit as $16678/(\Delta t/\mathrm{fs}) =
+1660 cm⁻¹, which is the same Nyquist limit as $16678/(\Delta t/\mathrm{fs}) =
 1668$ cm⁻¹ up to the odd/even endpoint. If a computed spectrum comes out a
 factor of $2\pi$ or $c$ from where you expect, this conversion is the first
 place to look.

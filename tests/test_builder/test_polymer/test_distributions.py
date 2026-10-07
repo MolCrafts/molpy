@@ -13,7 +13,7 @@ from molpy.builder import (
 )
 
 
-class TestDPDistribution:
+class TestDpDistribution:
     def test_runtime_protocol_accepts_dp_capability(self):
         assert isinstance(UniformPolydisperse(1, 2), DpDistribution)
 

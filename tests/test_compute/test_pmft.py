@@ -46,7 +46,7 @@ def test_pmftxy_reads_orientations_from_frame(
 
 
 def test_pmftxy_lab_frame_without_block(random_periodic_frame, self_neighbors):
-    # No orientations block => lab frame (the old `orientations=None` path).
+    # No orientations block => lab frame.
     frame = random_periodic_frame(n=20, box_len=12.0, seed=2)
     nlist = self_neighbors(frame, 3.0)
     out = PmftXy(x_max=5.0, y_max=5.0, n_x=8, n_y=8).compute(frame, nlist)

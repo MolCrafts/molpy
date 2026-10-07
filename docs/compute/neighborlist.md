@@ -62,7 +62,7 @@ config:
     orient: bottom
     direction: horizontal
     title: null
-data: {$file: data/neighborlist/pair_scaling.json}
+data: {$file: series/neighborlist/pair_scaling.json}
 mark: {type: line, strokeWidth: 2.4, interpolate: monotone}
 encoding:
   x:
@@ -93,10 +93,10 @@ reading rather than skipping:
 | $r_c$ (Å) | measured | ideal gas | ratio |
 |---|---|---|---|
 | 3.0 | 0.00 | 2.34 | 0 |
-| 4.5 | 8.96 | 7.91 | 1.13 |
-| 6.0 | 16.36 | 18.74 | 0.87 |
-| 8.5 | 52.88 | 53.28 | 0.99 |
-| 14.0 | 237.66 | 238.08 | 1.00 |
+| 4.5 | 8.93 | 7.91 | 1.13 |
+| 6.0 | 16.24 | 18.74 | 0.87 |
+| 8.5 | 53.18 | 53.28 | 1.00 |
+| 14.0 | 238.14 | 238.08 | 1.00 |
 
 Below 3.2 Å the list finds **nothing at all**: no two argon atoms are ever that
 close, which is the excluded core of [$g(r)$](rdf.md) seen from a different
@@ -106,9 +106,9 @@ first minimum, it falls 13 % *below*. By 8.5 Å the shells have averaged out and
 the ideal-gas estimate is good to a percent.
 
 There is a useful cross-check hiding in that table. At $r_c = 5$ Å the list
-gives 11.10 neighbours per atom; integrating $g(r)$ on the [RDF](rdf.md) page
-gives a coordination number $n(5.0) = 11.06$. Two different calculations,
-agreeing to 0.4 %.
+gives 11.24 neighbours per atom; integrating $g(r)$ on the [RDF](rdf.md) page
+gives a coordination number $n(5.0) = 11.09$. Two different calculations, over
+different frames, agreeing to 1.4 %.
 
 For planning work: 11 neighbours per atom at 5 Å, 53 at 8.5 Å, 238 at 14 Å.
 Building a 14 Å list to histogram $g(r)$ out to 6 Å does about twenty times the

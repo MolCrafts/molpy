@@ -184,7 +184,7 @@ class TestEngineRun:
                 assert (Path(tmpdir2) / "input.lmp").exists()
 
 
-class TestCP2KEngine:
+class TestCp2kEngine:
     """Test CP2K engine specifics."""
 
     def test_name(self):
@@ -210,7 +210,7 @@ class TestCP2KEngine:
             assert "PROJECT water" in (Path(tmpdir) / "input.inp").read_text()
 
 
-class TestLAMMPSEngine:
+class TestLammpsEngine:
     """Test LAMMPS engine specifics."""
 
     def test_name(self):

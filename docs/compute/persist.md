@@ -60,7 +60,7 @@ config:
     orient: bottom
     direction: horizontal
     title: null
-data: {$file: data/persist/argon_survival.json}
+data: {$file: series/persist/argon_survival.json}
 mark: {type: line, strokeWidth: 2.4, interpolate: monotone}
 encoding:
   x:

@@ -12,7 +12,7 @@ only place in the source tree allowed to import it. Everything MolPy needs for
 itself is native — 3D embedding is :class:`molpy.conformer.Conformer` (native
 ETKDGv3 + MMFF94 cleanup), perception is :mod:`molpy.perceive`'s ``perceive_*`` /
 ``assign_*`` functions, SMILES is ``mp.io.smiles.SmilesIr``, ring facts are
-``RingInfo``, and GAFF typing
+``RingSet``, and GAFF typing
 is antechamber delegation. Reach for the adapter to use *RDKit's* algorithms,
 not to do something molpy already does.
 

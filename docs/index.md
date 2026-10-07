@@ -185,7 +185,7 @@ system = GencanPack().with_seed(42).run([target], max_loops=200).frame
 ### [Write files your engine runs](user-guide/11_io/)
 
 One call per file via ``mp.io``: LAMMPS data plus force-field coefficients.
-GROMACS, PDB and the ``*.mrec`` record store share the same pattern.
+GROMACS, PDB and the ``*.mrec`` record share the same pattern.
 
 ```python
 # full atom style needs mol_id: one per connected molecule

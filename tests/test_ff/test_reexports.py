@@ -49,14 +49,14 @@ def test_a_kernel_built_by_hand_is_pushed_into_potentials() -> None:
     pos = np.array([0.0, 0.0, 0.0, 1.6, 0.0, 0.0, 1.6, 1.2, 0.0])
     pots = mp.ff.potential.Potentials()
     pots.push(
-        mp.ff.compile.compile_explicit_terms(
+        mp.ff.compile.ExplicitTerms(
             "bond", "harmonic", [[0, 1], [1, 2]], k=300.0, r0=1.5
-        )
+        ).compile()
     )
     pots.push(
-        mp.ff.compile.compile_explicit_terms(
+        mp.ff.compile.ExplicitTerms(
             "angle", "harmonic", [[0, 1, 2]], k=50.0, theta0=120.0
-        )
+        ).compile()
     )
     energy, _ = pots.calc_energy_forces(pos)
     want = 300.0 * (0.1**2 + 0.3**2) + 50.0 * (math.pi / 2 - math.radians(120.0)) ** 2

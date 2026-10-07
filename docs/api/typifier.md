@@ -48,8 +48,7 @@ oligomer with prepgen and joins the residues with tleap — see
 [Builder](builder.md) and the
 [AmberTools guide](../user-guide/13_ambertools_integration.md).
 
-UFF typing exists in the native core (Rust) but has no Python binding
-yet; MolPy re-exports it once one is published.
+UFF typing is in the native core (Rust) only; it has no Python binding.
 
 ## Canonical example
 

@@ -55,8 +55,8 @@ below, the native path is the supported one and needs no third-party install:
 |------|--------|
 | 3D embedding | [`Conformer`](conformer.md) — ETKDGv3 → torsion refinement → MMFF94 cleanup |
 | Hydrogens / aromaticity / stereo | `mp.perceive.add_hydrogens(...)` / `mp.perceive.assign_aromaticity(...)` |
-| SMILES / SMARTS | `mp.io.smiles.SmilesIr(...).to_atomistic()`, `mp.perceive.SmartsPattern` — see [Parser](parser.md) |
-| Ring queries | `mp.perceive.perceive_rings(mol)` → `RingInfo` |
+| SMILES / SMARTS | `mp.io.smiles.SmilesIr(...).to_atomistic()`, `mp.perceive.SmartsPattern` — see [Notation](notation.md) |
+| Ring queries | `mp.perceive.perceive_rings(mol)` → `RingSet` |
 | GAFF types | [AmberTools wrapper](wrapper.md) — antechamber delegation |
 
 ```python

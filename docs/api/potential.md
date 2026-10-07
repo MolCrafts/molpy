@@ -11,7 +11,7 @@ to a typed `Frame` as a `Potentials` evaluator. There is no Python-side
 potential class per style. Each is molrs's submodule by identity:
 `mp.ff.potential` is `molrs.ff.potential` (`Potentials`, `WeightedTerms`,
 `PairLjCut`, `Potential`, …), `mp.ff.compile` is `molrs.ff.compile`
-(`PotentialCompiler`, `compile_explicit_terms`), `mp.ff.ir` is the force-field
+(`PotentialCompiler`, `ExplicitTerms`), `mp.ff.ir` is the force-field
 IR's vocabulary `molrs.ff.ir` (`ParamSpec`, `StyleSpec`, `CategorySpec`,
 `IrError`, …), and `mp.ff.style_registry` is `molrs.ff.style_registry`
 (`StyleDeclaration`, `register_style`, `register_category`, `styles`, …): a new
@@ -24,7 +24,7 @@ style or category is registered from Python with nothing rebuilt — see
 | `mp.ff.forcefield.BondStyle` / `mp.ff.forcefield.AngleStyle` / `mp.ff.forcefield.DihedralStyle` / `mp.ff.forcefield.ImproperStyle` / `mp.ff.forcefield.PairStyle` | One kernel name per style, `def_type(...)` for its parameters | Bonded and nonbonded terms |
 | `mp.ff.compile.PotentialCompiler` | `PotentialCompiler(ff).compile(frame)` → `Potentials` | Binding a force field to a typed frame |
 | `mp.ff.potential.Potentials` | `calc_energy(frame)` / `calc_forces(frame)`; `push` moves more members in | Energy / force computation |
-| `mp.ff.compile.compile_explicit_terms` | `compile_explicit_terms(category, style, atoms, **params)` → `Potentials`: any registered style over explicit instances | Assembling terms by hand |
+| `mp.ff.compile.ExplicitTerms` | `ExplicitTerms(category, style, atoms, **params).compile()` → `Potentials`: any registered style over explicit instances | Assembling terms by hand |
 | `mp.ff.potential.PairLjCut` | The one-type `lj/cut` kernel an MD integrator feeds from a neighbour list | `mp.md` integrators |
 | `mp.ff.potential.Potential` | The protocol: `calc_energy_forces(pos) -> (energy, forces)` | Custom (NN / external) forces in MD |
 | `mp.ff.style_registry.StyleDeclaration`, `register_style`, `register_category`; `mp.ff.ir.ParamSpec` | Declare a style (expression or Python kernel) or a category; `StyleSpec` / `CategorySpec` are the registered records `styles()` / `categories()` return | Extending the force field |

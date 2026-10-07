@@ -1,7 +1,6 @@
 """Chemistry notation via molrs (SMILES / SMARTS).
 
-Lark-based BigSMILES / CGSmiles / G-BigSMILES parsers have been removed from
-molpy. A polymer topology is a CGsmiles string: ``mp.io.cgsmiles.CgSmilesIr(...)
+A polymer topology is a CGsmiles string: ``mp.io.cgsmiles.CgSmilesIr(...)
 .to_coarsegrain()`` gives the site graph that ``mp.builder.Assembler`` grows (see
 ``topology/``).
 """

@@ -151,11 +151,9 @@ class TestAtomIndexSelector:
 
 
 class TestSelectorFailFast:
-    """Selectors raise on a missing column instead of silently selecting nothing.
-
-    Previously a typo'd / absent field made ``mask`` return an all-False array,
-    so a reference to a column that does not exist silently matched zero atoms
-    rather than surfacing the mistake.
+    """Selectors raise on a missing column instead of silently selecting nothing:
+    a typo'd or absent field is a mistake to surface, not a selection of zero
+    atoms.
     """
 
     def test_element_selector_missing_field_raises(self):

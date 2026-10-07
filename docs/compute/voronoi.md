@@ -32,7 +32,7 @@ distribution.
 <div class="molcrafts-figure__body molcrafts-figure__body--chart">
 
 ```molplot preset="molplot" theme="auto" aspect="16:10"
-data: {$file: data/voronoi/argon_volumes.json}
+data: {$file: series/voronoi/argon_volumes.json}
 mark: {type: line, strokeWidth: 2.4, interpolate: monotone}
 encoding:
   x:
@@ -49,7 +49,7 @@ encoding:
 
 **Figure 1.** Radical-Voronoi cell volumes in liquid argon at 85 K (equal
 radii, so an ordinary Voronoi tessellation). Mean 48.28 Å³ = $V/N$ exactly,
-standard deviation 4.4 Å³ — about 9 %.
+standard deviation 4.5 Å³ — about 9 %.
 </figure>
 
 A 9 % spread around a mean fixed by construction is the free-volume distribution

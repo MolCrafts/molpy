@@ -67,16 +67,16 @@ The files map onto `mp.ff.forcefield.ForceField`, the data model
 | `read_dcd_trajectory` / `write_dcd_trajectory` | DCD | read (lazy) / write |
 | `read_trr_trajectory` / `write_trr_trajectory` | GROMACS TRR | read (lazy) / write |
 | `read_xtc_trajectory` / `write_xtc_trajectory` | GROMACS XTC | read (lazy) / write |
-| `read_mrec_trajectory` / `write_mrec_trajectory` | mrec store | read / write (whole trajectory) |
-| `mrec.MrecReader` | mrec store | read (lazy cursor) |
-| `mrec.MrecWriter` | mrec store | write (append-first) |
+| `read_mrec_trajectory` / `write_mrec_trajectory` | mrec record | read / write (whole trajectory) |
+| `mrec.MrecReader` | mrec record | read (lazy cursor) |
+| `mrec.MrecWriter` | mrec record | write (append-first) |
 
 Names pair: `read_X` / `write_X` for one frame, `read_X_trajectory` /
 `write_X_trajectory` for a sequence. A `*.mrec` record is read and written
-whole by functions at the top of `mp.io`: one-frame stores use `read_mrec_frame` /
+whole by functions at the top of `mp.io`: one-frame records use `read_mrec_frame` /
 `write_mrec_frame` (snapshot) and `read_mrec_system` / `write_mrec_system`
-(topology); `read_mrec_meta(path)` reads a store's identity document and
-`mrec.section_names(path)` lists what a store holds. A force field rides in
+(topology); `read_mrec_meta(path)` reads a record's identity document and
+`mrec.section_names(path)` lists what a record holds. A force field rides in
 the `forcefield` section: `write_mrec_frame(..., forcefield=ff)` /
 `write_mrec_system(..., forcefield=ff)` or `write_mrec_forcefield(path, ff)`
 write it, `read_mrec_forcefield(path)` returns a `mrec.ForceFieldSection` (or
@@ -150,7 +150,7 @@ print(thermo.columns)
 
 ::: molpy.io.write_lammps_bond_react_system
 
-### mrec (scientific record stores)
+### mrec (scientific records)
 
 The whole-record functions are at the top of `mp.io`: `read_mrec_frame` /
 `write_mrec_frame`, `read_mrec_system` / `write_mrec_system`, `read_mrec_trajectory`

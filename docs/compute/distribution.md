@@ -72,7 +72,7 @@ config:
     orient: bottom
     direction: horizontal
     title: null
-data: {$file: data/distribution/solid_angle.json}
+data: {$file: series/distribution/solid_angle.json}
 mark: {type: line, strokeWidth: 2.2, interpolate: monotone}
 encoding:
   x:

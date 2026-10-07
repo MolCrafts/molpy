@@ -46,7 +46,7 @@ average would tell you nothing. Squaring keeps the magnitude.
 <div class="molcrafts-figure__body molcrafts-figure__body--chart">
 
 ```molplot preset="molplot" theme="auto" aspect="16:10"
-data: {$file: data/msd/argon_msd.json}
+data: {$file: series/msd/argon_msd.json}
 encoding:
   x:
     field: t

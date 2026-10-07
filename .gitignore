@@ -159,13 +159,13 @@ docs/assets/molplot/
 # zensical build — do not commit.
 docs/assets/molvis-sketch-viewer/
 docs/assets/molvis-stage-viewer/
-# molplot fence $file data (JSON/CSV/YAML under docs/data/)
-!docs/data/
-!docs/data/**/
-!docs/data/**/*.json
-!docs/data/**/*.csv
-!docs/data/**/*.yaml
-!docs/data/**/*.yml
+# molplot fence $file data (JSON/CSV/YAML under docs/series/)
+!docs/series/
+!docs/series/**/
+!docs/series/**/*.json
+!docs/series/**/*.csv
+!docs/series/**/*.yaml
+!docs/series/**/*.yml
 
 # Demo Notebooks
 notebooks/

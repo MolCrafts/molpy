@@ -55,7 +55,7 @@ def engine():
 # ---------------------------------------------------------------------------
 
 
-class TestOpenMMSimulationConfig:
+class TestOpenmmSimulationConfig:
     def test_default_values(self):
         cfg = OpenmmSimulationConfig()
         assert cfg.ensemble == "NVT"
@@ -122,7 +122,7 @@ class TestOpenMMSimulationConfig:
 # ---------------------------------------------------------------------------
 
 
-class TestOpenMMEngineInit:
+class TestOpenmmEngineInit:
     def test_name(self, engine):
         assert engine.name == "OpenMM"
 

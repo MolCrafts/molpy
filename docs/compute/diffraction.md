@@ -57,7 +57,7 @@ reciprocal space.
 <div class="molcrafts-figure__body molcrafts-figure__body--chart">
 
 ```molplot preset="molplot" theme="auto" aspect="16:10"
-data: {$file: data/diffraction/argon_sk.json}
+data: {$file: series/diffraction/argon_sk.json}
 mark: {type: line, strokeWidth: 2.4, interpolate: monotone}
 encoding:
   x:
@@ -81,7 +81,7 @@ the oscillations damp out by about 6 Å⁻¹.
 The **main peak at $k = 1.98$ Å⁻¹** is the dominant density wave of the liquid —
 the reciprocal-space fingerprint of the first coordination shell. Its position is
 the number a diffraction experiment reports; neutron diffraction on liquid argon
-at 85 K puts it close to 2.0 Å⁻¹. Its height here, 2.12, falls short of the
+at 85 K puts it close to 2.0 Å⁻¹. Its height here, 2.11, falls short of the
 experimental ≈ 2.7 for the finite-size reason given above; do not read that as
 the force field failing.
 
@@ -92,7 +92,7 @@ wavelengths the liquid looks structureless.
 Two cautions come with this figure, and both catch people.
 
 **Do not convert the peak with $2\pi/k$.** That gives $2\pi/1.98 = 3.18$ Å,
-while the actual first-neighbour distance from [$g(r)$](rdf.md) is 3.68 Å. The
+while the actual first-neighbour distance from [$g(r)$](rdf.md) is 3.73 Å. The
 $2\pi/k$ rule works for Bragg planes in a crystal, not for the main peak of a
 liquid, because that peak is a broad superposition of many pair distances rather
 than one repeat spacing. To go from $S(k)$ to distances, transform the whole
@@ -190,7 +190,7 @@ then the system size.
   every $k$ except the small-$k$ self-term rise — the reciprocal-space statement
   of "no structure".
 - Compare the main peak position of argon (1.98 Å⁻¹) with $2\pi/r_1$ using the
-  first $g(r)$ peak (3.68 Å). They disagree, and now you know why.
+  first $g(r)$ peak (3.73 Å). They disagree, and now you know why.
 - Double the FCC lattice to $8^3$ cells and watch the Bragg peaks narrow while
   their positions stay put.
 
