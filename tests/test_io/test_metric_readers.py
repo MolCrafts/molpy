@@ -236,7 +236,7 @@ class TestMrecReader:
         record = tmp_path / "growth.mrec"
         record.mkdir()
         assert MrecMetricReader().sniff(record)
-        assert not MrecMetricReader().sniff(tmp_path / "growth.zarr")
+        assert not MrecMetricReader().sniff(tmp_path / "growth.xyz")
 
     def test_emits_the_step_and_time_series(self, tmp_path: Path):
         frame = mp.Frame()

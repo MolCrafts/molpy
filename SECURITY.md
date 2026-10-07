@@ -76,8 +76,8 @@ Depending on the outcome, responses may include:
 
 * Code corrections or refactoring
 * Explicit documentation of limitations or assumptions
-* Deprecation of affected functionality
-* Release notes or technical advisories describing the issue and its resolution
+* Removal of affected functionality
+* Technical advisories describing the issue and its resolution
 
 ---
 
