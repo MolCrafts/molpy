@@ -14,6 +14,7 @@ entry point, so the rules have a single home and cannot drift:
 ## Quick start
 
 ```bash
+git clone https://github.com/MolCrafts/molrs.git     # beside molpy: dev builds molrs's dev
 git clone https://github.com/YOUR_USERNAME/molpy.git
 cd molpy
 uv sync --extra dev
@@ -34,24 +35,29 @@ or `git push --no-verify`, and never merge a red pull request.**
   (ruff format + ruff check + ty), as ci.yml `lint`.
 - **pre-push**:
   - the pre-commit hooks again on `--all-files`;
-  - `scripts/partners.py check` — no `[tool.uv.sources]` path entry (a CI
-    runner has no sibling checkout to point at; release.yml refuses one);
-  - `uv lock --check` (ci.yml `lint`) when pyproject.toml or uv.lock changed;
-  - the molrs pin resolves to a published PyPI release;
-  - the docs build, as Cloudflare Pages builds it (`.[doc]` in a fresh env,
-    then `zensical build --clean --strict` in a clean copy of the tree), when
-    docs/, src/, zensical.toml or pyproject.toml changed;
-  - the unit suite, `uv run --locked --python 3.12 --extra dev python -m
-    pytest tests/ -n auto` (ci.yml `test`; `uv.lock` is committed, so a stale
-    lock fails here as it does in CI).
-- **Dispatch on the MolCrafts cluster:** the unit suite is the one heavy
-  hook. Its entry goes through `scripts/hook-run.sh`, which hands the command
-  to `$MOLCRAFTS_HOOK_RUNNER` when that is set and it is not already inside a
-  Slurm job. The cluster's shared `core.hooksPath` sets it to
+  - `scripts/partners.py check` — molrs (`.github/partners.env`) resolves,
+    and every `[tool.uv.sources]` path entry lands in a checkout CI makes;
+  - the rest in CI's sibling layout (`scripts/partners.py run`: a copy of
+    this tree next to molrs at the commit `scripts/partners.py` resolves --
+    molrs's `dev`, or its branch named like yours; see "Partners" in the
+    Development Setup page), never your `../molrs` working tree:
+    - `uv lock --check` (ci.yml `lint`) when pyproject.toml or uv.lock
+      changed;
+    - the docs build (`.[doc]` in a fresh env, then `zensical build --clean
+      --strict`), when docs/, src/, zensical.toml or pyproject.toml changed;
+    - the unit suite, `uv run --locked --python 3.12 --extra dev python -m
+      pytest tests/ -n auto` (ci.yml `test`; `uv.lock` is committed, so a
+      stale lock fails here as it does in CI).
+- **Dispatch on the MolCrafts cluster:** the docs build and the unit suite
+  compile molrs. Their entries go through `scripts/hook-run.sh`, which hands
+  the command to `$MOLCRAFTS_HOOK_RUNNER` when that is set and it is not
+  already inside a Slurm job. The cluster's shared `core.hooksPath` sets it to
   `.build-alloc/hookrun`, which runs the command on a compute node (allocation
-  `$USER-hooks`; it fails after 20 minutes without a node, never passes).
-  Everything else runs in place, so a commit never waits for Slurm. Elsewhere
-  nothing sets the variable and every hook runs locally.
+  `$USER-hooks`; it fails after 20 minutes without a node, never passes), and
+  sets `$MOLCRAFTS_PARTNER_CACHE` so the molrs checkout and its build stay
+  warm between pushes. Everything else runs in place, so a commit never waits
+  for Slurm. Elsewhere nothing sets the variables and every hook runs locally,
+  in a temp layout.
 
 ## Code of Conduct
 

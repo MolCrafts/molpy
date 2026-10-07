@@ -1,6 +1,12 @@
 name: CI
 
 # lint once + unit matrix: 3 OS × Python 3.12 / 3.13 / 3.14
+#
+# MolCrafts/molrs is checked out next to molpy at the commit
+# scripts/partners.py resolves from .github/partners.env (molrs's dev, or its
+# branch named like this one), and uv builds molcrafts-molrs from it
+# (pyproject.toml [tool.uv.sources]); the pre-push hooks resolve it the same
+# way. Every job has a hook running the same command.
 on:
   push:
     branches: [master, dev, dev-*]
@@ -8,17 +14,36 @@ on:
   pull_request:
   workflow_dispatch:
 
+env:
+  # uv builds molrs through maturin's PEP 517 hook; this makes that cargo
+  # build --locked as well.
+  MATURIN_PEP517_ARGS: --locked
+
 jobs:
   lint:
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: molpy
     steps:
       - uses: actions/checkout@v7
+        with:
+          path: molpy
+      - name: Resolve partners
+        run: python3 scripts/partners.py resolve >> "$GITHUB_ENV"
+      # Metadata only (molrs-python's pyproject.toml is static): the lock is
+      # checked against it, nothing compiles.
+      - uses: actions/checkout@v7
+        with:
+          repository: ${{ env.MOLRS_REPOSITORY }}
+          ref: ${{ env.MOLRS_REF }}
+          path: molrs
       - uses: actions/setup-python@v7
         with:
           python-version: "3.14"
       - uses: astral-sh/setup-uv@v9.0.0
       - run: uv run --no-project --with 'tox>=4.23' --with ruff==0.16.1 --with ty==0.0.65 tox -e lint
-      # No [tool.uv.sources] path entry: a runner has no sibling to point at.
+      # Every partner resolves; no path source CI cannot resolve.
       - run: python3 scripts/partners.py check
       # uv.lock is committed; every `uv run --locked` below refuses a stale one.
       - run: uv lock --check
@@ -30,10 +55,28 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
         python-version: ["3.12", "3.13", "3.14"]
+    defaults:
+      run:
+        working-directory: molpy
     steps:
-      # molcrafts-molrs resolves from PyPI (the pinned minor line); no sibling
-      # checkout and no Rust toolchain.
       - uses: actions/checkout@v7
+        with:
+          path: molpy
+      - name: Resolve partners
+        run: python3 scripts/partners.py resolve >> "$GITHUB_ENV"
+        shell: bash
+      - uses: actions/checkout@v7
+        with:
+          repository: ${{ env.MOLRS_REPOSITORY }}
+          ref: ${{ env.MOLRS_REF }}
+          path: molrs
+      # The toolchain molrs/rust-toolchain.toml pins builds the molrs wheel.
+      - run: rustup toolchain install
+        working-directory: molrs
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: molrs-python-${{ matrix.os }}
+          workspaces: "molrs/molrs-python -> ../target"
       - uses: actions/setup-python@v7
         with:
           python-version: ${{ matrix.python-version }}
@@ -41,13 +84,31 @@ jobs:
       - name: Unit tests
         run: uv run --locked --extra dev python -m pytest tests/ -n auto
 
-  # The site Cloudflare Pages deploys, built the way it builds it (a fresh
-  # `pip install ".[doc]"`, then zensical), with --strict: an unresolved
-  # mkdocstrings reference or any other warning fails. Same as the pre-push hook.
+  # The docs site, built from `.[doc]` in a fresh env, then zensical, with
+  # --strict: an unresolved mkdocstrings reference or any other warning fails.
+  # Same as the pre-push hook.
   docs:
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: molpy
     steps:
       - uses: actions/checkout@v7
+        with:
+          path: molpy
+      - name: Resolve partners
+        run: python3 scripts/partners.py resolve >> "$GITHUB_ENV"
+      - uses: actions/checkout@v7
+        with:
+          repository: ${{ env.MOLRS_REPOSITORY }}
+          ref: ${{ env.MOLRS_REF }}
+          path: molrs
+      - run: rustup toolchain install
+        working-directory: molrs
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: molrs-python-ubuntu-latest
+          workspaces: "molrs/molrs-python -> ../target"
       - uses: astral-sh/setup-uv@v9.0.0
       - run: uv run --isolated --no-project --python 3.12 --with '.[doc]' zensical build --clean --strict
 
@@ -60,8 +121,26 @@ jobs:
   snapshot:
     name: Publish tests + coverage
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: molpy
     steps:
       - uses: actions/checkout@v7
+        with:
+          path: molpy
+      - name: Resolve partners
+        run: python3 scripts/partners.py resolve >> "$GITHUB_ENV"
+      - uses: actions/checkout@v7
+        with:
+          repository: ${{ env.MOLRS_REPOSITORY }}
+          ref: ${{ env.MOLRS_REF }}
+          path: molrs
+      - run: rustup toolchain install
+        working-directory: molrs
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: molrs-python-ubuntu-latest
+          workspaces: "molrs/molrs-python -> ../target"
       - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
@@ -82,7 +161,7 @@ jobs:
       # built and uploaded as an artifact but never published, and CI stays
       # green. Fork pull requests, which get no secrets, stay on that path.
       - name: Build snapshots
-        if: ${{ !cancelled() && hashFiles('.ci-out/junit.xml') != '' }}
+        if: ${{ !cancelled() && hashFiles('molpy/.ci-out/junit.xml') != '' }}
         run: |
           uvx --from git+https://github.com/MolCrafts/molcrafts-ci@master molci snapshot \
             --out .ci-out/snapshots \
@@ -91,10 +170,10 @@ jobs:
             ${{ (github.event_name == 'push' && github.ref == 'refs/heads/master' && secrets.MOLCRAFTS_CI_SSH_KEY != '') && '--track' || '' }}
 
       - name: Publish to molcrafts-ci
-        if: ${{ !cancelled() && hashFiles('.ci-out/snapshots/*.json') != '' }}
+        if: ${{ !cancelled() && hashFiles('molpy/.ci-out/snapshots/*.json') != '' }}
         uses: MolCrafts/molcrafts-ci/actions/submit@master
         with:
-          snapshot-path: .ci-out/snapshots/*.json
+          snapshot-path: molpy/.ci-out/snapshots/*.json
           project: molpy
           # A deploy key on molcrafts-ci: one repository, git only.
           ssh-key: ${{ secrets.MOLCRAFTS_CI_SSH_KEY }}

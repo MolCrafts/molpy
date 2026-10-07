@@ -29,7 +29,9 @@ There is no `molpy[molrs]` extra. molrs is a hard runtime dependency.
 (`molcrafts-molrs>=X.Y.0,<X.(Y+1)`). On `import molpy`,
 `molpy.version.check_molrs_version()` fails only when major.minor differs —
 patch-level drift is allowed (e.g. molpy `0.10.0` with molrs `0.10.1`).
-There is no exact-patch requirement and no hand-written CHANGELOG.
+There is no exact-patch requirement and no hand-written CHANGELOG. On the
+`dev` branch, molpy is developed against molrs's `dev` instead of a release
+(see [Development Setup](development-setup.md)).
 
 ## The box is a molrs object, not a copy of one
 

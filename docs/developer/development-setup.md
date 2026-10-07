@@ -4,14 +4,21 @@ After following this page you will have a working local environment with editabl
 
 ## Prerequisites
 
-You need Python 3.12 or newer, Git, and [uv](https://docs.astral.sh/uv/). Everything else is installed by the commands below.
+You need Python 3.12 or newer, Git, [uv](https://docs.astral.sh/uv/), and the
+Rust toolchain ([`rustup`](https://rustup.rs/)): on `dev`, molpy builds
+[molrs](molrs-backend.md), its Rust compute core, from source. molrs pins the
+toolchain channel and components in its `rust-toolchain.toml`, so no manual
+component setup is required. Everything else is installed by the commands
+below.
 
 
 ## Quick setup
 
-Clone the repository, create a virtualenv, install in editable mode with dev dependencies, and run the test suite to confirm everything works.
+Clone molpy and molrs side by side, sync with dev dependencies (this compiles
+molrs's Python extension), and run the test suite.
 
 ```bash
+git clone https://github.com/MolCrafts/molrs.git
 git clone https://github.com/MolCrafts/molpy.git
 cd molpy
 uv sync --locked --extra dev
@@ -22,45 +29,52 @@ uv run --locked --extra dev python -m pytest tests/ -n auto
 If all tests pass, the environment is ready.
 
 
-## Building molrs from source
+## molrs comes from its dev branch
 
-The quick setup above resolves [molrs](molrs-backend.md) — molpy's required
-Rust compute core — from the published `molcrafts-molrs` wheel on PyPI within
-the **major.minor** range in `pyproject.toml` (`>=X.Y.0,<X.(Y+1)`). That is
-the right path for most molpy development. Import-time
-`check_molrs_version` accepts patch drift inside that minor.
+On `dev`, molpy is built against molrs's `dev`, not against a release:
+`pyproject.toml`'s `[tool.uv.sources]` builds `molcrafts-molrs` from the
+sibling `../molrs/molrs-python`. The wheel itself still declares only the
+**major.minor** range (`>=X.Y.0,<X.(Y+1)`); pip ignores the table, and a
+release is tested against molrs from PyPI (see
+[Release Process](release-process.md)). Import-time `check_molrs_version`
+accepts patch drift inside that minor.
 
-If you are changing the Rust core *and* molpy together, build molrs editable
-from a local checkout instead (local rebuilds do **not** count as a release
-for the pre-push pin gate — see [Release Process](release-process.md)). molrs
-ships its Python bindings as a [maturin](https://www.maturin.rs/) project, so
-this step needs the Rust toolchain — install it via
-[`rustup`](https://rustup.rs/); molrs pins the toolchain channel and components
-in its `rust-toolchain.toml`, so no manual component setup is required inside
-the checkout.
-
-Clone molrs next to molpy and point uv at it with a local path source, added
-to molpy's `pyproject.toml`:
-
-```toml
-[tool.uv.sources]
-molcrafts-molrs = { path = "../molrs/molrs-python", editable = true }
-```
+uv rebuilds molrs when the sibling's commit moves; after uncommitted changes
+to the molrs Rust source, rebuild by hand:
 
 ```bash
-git clone https://github.com/MolCrafts/molrs.git   # beside molpy/
-cd molpy
 uv sync --extra dev --reinstall-package molcrafts-molrs
-uv run python -c "import molpy as mp; print(mp.version, mp.Frame(), mp.Element('C').symbol)"
 ```
 
-Re-run that `uv sync … --reinstall-package molcrafts-molrs` after any change
-to the molrs Rust source to recompile the extension. The path source is a
-local convenience: do not commit it outside a molrs co-development branch, and
-never release with it — `release.yml` refuses a tag while `pyproject.toml`
-carries any `[tool.uv.sources]` entry (see [Release Process](release-process.md)). See the
-[molrs build-from-source guide](https://docs.molcrafts.org/molrs/getting-started/installation/)
+`uv.lock` records molrs's package metadata (its version and dependencies), not
+a commit. When molrs's `dev` changes that metadata, `uv lock --check` fails;
+relock in a commit of its own with the recipe in `.github/partners.env`. See
+the [molrs build-from-source guide](https://docs.molcrafts.org/molrs/getting-started/installation/)
 for the native-crate and WASM build targets.
+
+
+## Partners
+
+CI and the pre-push hooks never build against your sibling's working tree.
+`.github/partners.env` names molrs's branch (`MOLRS_REF=dev`: partners are
+tracked, not pinned), and `scripts/partners.py` resolves it -- for CI
+(`partners.py resolve`, appended to `$GITHUB_ENV`) and for the hooks
+(`partners.py run`, a copy of this tree next to the resolved molrs) alike --
+to the first of:
+
+1. molrs's branch named like the one being built (CI: the pushed branch or a
+   pull request's head branch; locally: the checked-out branch), when
+   MolCrafts/molrs has one;
+2. outside CI only, that branch in your sibling clone `../molrs`, when it has
+   one and the remote does not yet;
+3. molrs's `dev`.
+
+A molpy change that needs a molrs change lands as two same-named branches,
+never by skipping a gate: create the same branch (say `converge/x`) in both
+checkouts; push molrs's first, then molpy's (its gates take molrs's branch
+from the remote, or from your sibling before it is pushed); open both pull
+requests into `dev` -- molpy's CI resolves molrs's `converge/x` -- and once
+both are green, land molrs's, then molpy's, and delete the branches.
 
 
 ## Documentation preview

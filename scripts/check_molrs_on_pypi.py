@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""Pre-push gate: molcrafts-molrs minor-line pin must hit a published PyPI release.
+"""Release gate: the molcrafts-molrs minor line molpy declares is on PyPI.
 
-Release order (see .claude/notes/release.md): ship molrs (master + tag +
-publish) before molpy may push a pin that depends on it. Editable monorepo
-builds do not count.
+release.yml runs it before testing a tag against molrs from PyPI. Release
+order (docs/developer/release-process.md): ship molrs (master + tag +
+publish) before molpy. On dev molpy builds molrs from its dev
+([tool.uv.sources]), so this does not apply there.
 
 Accepts the minor-line form only:
   molcrafts-molrs>=X.Y.0,<X.(Y+1)
@@ -19,9 +20,7 @@ import urllib.request
 from pathlib import Path
 
 # PEP 440 lower/upper minor range.
-RANGE_RE = re.compile(
-    r"molcrafts-molrs>=([0-9][^\"',\s]*),\s*<([0-9][^\"',\s]*)"
-)
+RANGE_RE = re.compile(r"molcrafts-molrs>=([0-9][^\"',\s]*),\s*<([0-9][^\"',\s]*)")
 PYPI_PROJECT = "https://pypi.org/pypi/molcrafts-molrs/json"
 
 
@@ -36,21 +35,6 @@ def _minor_tuple(ver: str) -> tuple[int, int]:
 def _is_next_minor(lo: tuple[int, int], hi: tuple[int, int]) -> bool:
     """True if hi is the next minor after lo (e.g. 0.10 → 0.11, or 0.99 → 1.0)."""
     return hi == (lo[0], lo[1] + 1) or hi == (lo[0] + 1, 0)
-
-
-def _has_uv_source_override(text: str) -> bool:
-    """True when [tool.uv.sources] redirects molcrafts-molrs off PyPI."""
-    in_sources = False
-    for raw in text.splitlines():
-        line = raw.split("#", 1)[0].rstrip()
-        if not line.strip():
-            continue
-        if line.startswith("["):
-            in_sources = line.strip() == "[tool.uv.sources]"
-            continue
-        if in_sources and line.strip().startswith("molcrafts-molrs"):
-            return any(tok in line for tok in ("git", "path", "url"))
-    return False
 
 
 def _parse_pin(text: str) -> tuple[int, int]:
@@ -88,17 +72,6 @@ def main() -> int:
         )
         return 1
 
-    # A git/path override is how an unpublished molrs line is resolved (CI +
-    # local `uv run`). Blocking the push for a missing PyPI release forces
-    # `--no-verify`, which also skips pytest. The PyPI pin still has to be
-    # well-formed; we just skip the network check.
-    if _has_uv_source_override(text):
-        print(
-            "ok: [tool.uv.sources] overrides molcrafts-molrs "
-            "(uv/CI git pin; PyPI publish not required to push)"
-        )
-        return 0
-
     try:
         data = _fetch_json(PYPI_PROJECT)
         releases = data.get("releases") or {}
@@ -111,13 +84,13 @@ def main() -> int:
                 continue
         if not matches:
             print(
-                f"BLOCK PUSH: no published molcrafts-molrs {major}.{minr}.* "
+                f"BLOCK RELEASE: no published molcrafts-molrs {major}.{minr}.* "
                 f"on PyPI.",
                 file=sys.stderr,
             )
             print(
-                "Release molrs first (master + tag vX.Y.Z + publish), then pin "
-                "molpy. See .claude/notes/release.md",
+                "Release molrs first (master + tag vX.Y.Z + publish). See "
+                "docs/developer/release-process.md",
                 file=sys.stderr,
             )
             return 1
@@ -129,19 +102,19 @@ def main() -> int:
         return 0
     except urllib.error.HTTPError as exc:
         print(
-            f"BLOCK PUSH: could not verify molcrafts-molrs on PyPI "
+            f"BLOCK RELEASE: could not verify molcrafts-molrs on PyPI "
             f"(HTTP {exc.code}).",
             file=sys.stderr,
         )
         print(
-            "Release molrs first (master + tag vX.Y.Z + publish), then pin "
-            "molpy. See .claude/notes/release.md",
+            "Release molrs first (master + tag vX.Y.Z + publish). See "
+            "docs/developer/release-process.md",
             file=sys.stderr,
         )
         return 1
-    except Exception as exc:  # noqa: BLE001 — surface network/parse failures
+    except Exception as exc:  # surface network/parse failures
         print(
-            f"BLOCK PUSH: could not verify molcrafts-molrs on PyPI "
+            f"BLOCK RELEASE: could not verify molcrafts-molrs on PyPI "
             f"({type(exc).__name__}: {exc}).",
             file=sys.stderr,
         )

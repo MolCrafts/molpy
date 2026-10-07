@@ -138,14 +138,16 @@ filterwarnings = [
     "ignore::pytest.PytestUnraisableExceptionWarning",
 ]
 
-# No [tool.uv.sources] override: the pin in [project] dependencies resolves from
-# PyPI everywhere, including a CI runner, which has no sibling checkout to point
-# at. molcrafts-molrs 0.16 must be published before this pin is pushed (the
-# pre-push molrs-pin-on-pypi hook checks); until then test against a locally
-# built molrs 0.16 wheel installed into the environment. A path or git source
-# here would silently disable .pre-commit/check_molrs_pin_on_pypi.py, and uv
-# honours a path dependency's own sources transitively, so a downstream that
-# points at this directory would inherit it.
+# On dev, molpy is built and tested against molrs's dev, not a release: uv
+# builds molcrafts-molrs from the sibling checkout ../molrs, which CI and the
+# hooks check out at the commit scripts/partners.py resolves (molrs's dev, or
+# its branch named like this one; see .github/partners.env). The wheel still
+# declares the range in [project] dependencies, and pip ignores this table; a
+# release is tested with `uv run --no-sources` against that range on PyPI
+# (docs/developer/release-process.md). uv rebuilds the molrs wheel when the
+# checkout's commit moves (molrs-python's [tool.uv] cache-keys).
+[tool.uv.sources]
+molcrafts-molrs = { path = "../molrs/molrs-python" }
 
 [tool.tox]
 requires = ["tox>=4.23"]
