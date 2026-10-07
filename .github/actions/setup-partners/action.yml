@@ -10,7 +10,8 @@ runs:
       run: |
         set -euo pipefail
         for name in $(sed -n 's/^\([A-Z][A-Z0-9_]*\)_REPOSITORY=.*/\1/p' .github/partners.env); do
-          dir="../${name,,}"
+          # macOS ships bash 3.2: no ${name,,}.
+          dir="../$(echo "$name" | tr '[:upper:]' '[:lower:]')"
           python3 scripts/partners.py fetch "$name" "$dir"
           echo "${name}_DIR=$(python3 -c 'import os, sys; print(os.path.abspath(sys.argv[1]))' "$dir")" >> "$GITHUB_ENV"
         done
