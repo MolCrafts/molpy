@@ -24,6 +24,7 @@ from typing import TYPE_CHECKING
 
 from molrs.io.lammps import *  # noqa: F403
 from molrs.io.lammps import __all__ as _native
+from molrs.io.lammps import is_lammps_log
 
 from . import _metric_reader
 
@@ -34,11 +35,12 @@ if TYPE_CHECKING:
 
     from ._metric_reader import ReadRequest
 
-# LAMMPS writes this immediately before every thermo header row; the banner
-# alone is not enough, because a log whose run never reached a thermo section
-# has nothing to plot.
-_LAMMPS_MARKER = b"Per MPI rank memory allocation"
+# Whether a text is a LAMMPS run is molrs's call (``is_lammps_log``: the
+# ``Per MPI rank memory allocation`` line that opens every thermo section, so a
+# log whose run never reached a thermo table is not one). The banner only
+# decides whether a file is worth reading past the probe window.
 _LAMMPS_BANNER = b"LAMMPS ("
+_SCAN_BYTES = 4 * 1024 * 1024
 _LOG_SUFFIXES = frozenset({".log", ".lammps", ".out", ".txt"})
 
 
@@ -67,15 +69,14 @@ class LammpsLogMetricReader:
         head = _metric_reader.head(path)
         if not head:
             return False
-        if _LAMMPS_MARKER in head:
+        if is_lammps_log(head.decode("utf-8", errors="replace")):
             return True
         if _LAMMPS_BANNER not in head[:512]:
             return False
-        # Banner present but the marker sits past the probe window — scan on
-        # in bounded chunks rather than loading the whole file.
-        with path.open("rb") as handle:
-            handle.seek(len(head))
-            return _LAMMPS_MARKER in handle.read(4 * 1024 * 1024)
+        # Banner present but the run starts past the probe window: read on, a
+        # bounded window rather than the whole file.
+        text = _metric_reader.head(path, len(head) + _SCAN_BYTES)
+        return is_lammps_log(text.decode("utf-8", errors="replace"))
 
     def read(
         self,

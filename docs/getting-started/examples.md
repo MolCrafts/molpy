@@ -42,7 +42,7 @@ Build one molecule, then fill a cube with clash-free copies through
 ```python
 # docs: skip — optional molcrafts-molpack; not a molpy runtime/doc dep
 import molpy as mp
-from molpack import GenCanPack, Target
+from molpack import GencanPack, Target
 
 water = mp.Atomistic(name="water")
 o = water.def_atom(element="O", x=0.000, y=0.000, z=0.000)
@@ -56,7 +56,7 @@ target = (
 .with_name("water")
 .with_restraint(mp.core.Cuboid([0.0, 0.0, 0.0], [30.0, 30.0, 30.0]))
 )
-packed = GenCanPack().with_seed(42).run([target], max_loops=200).frame
+packed = GencanPack().with_seed(42).run([target], max_loops=200).frame
 # → one packed Frame (1500 atoms)
 ```
 

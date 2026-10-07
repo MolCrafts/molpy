@@ -176,7 +176,7 @@ an error before coordinates are generated.
 
 ```python
 # docs: skip — needs AmberTools and molpack
-from molpack import GenCanPack, Target
+from molpack import GencanPack, Target
 
 ff = peo_ff.merge(tfsi_ff).merge(li_ff)
 
@@ -187,7 +187,7 @@ targets = [
     Target(li.to_frame(), count=10).with_restraint(box),
     Target(tfsi.to_frame(), count=10).with_restraint(box),
 ]
-system = GenCanPack().with_seed(12345).run(targets, max_loops=200).frame
+system = GencanPack().with_seed(12345).run(targets, max_loops=200).frame
 system.box = mp.Box.cube(box_size)
 ```
 

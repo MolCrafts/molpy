@@ -38,7 +38,7 @@ its molrs subsystem.
 | Apply a reaction SMARTS to a graph (bond formation / removal) | `Reaction` | [Parser](parser.md) |
 | Generate `fix bond/react` pre/post topology templates | `mp.io.lammps.BondReactTemplate`, `write_lammps_bond_react_system` | [IO](io.md) |
 | Assemble units along a site graph (chains, rings, stars, combs, backmapping) | `mp.builder.Assembler`, `GrowthPlacer`, `SitePlacer`, `AxisOrienter`, `mp.io.cgsmiles.CgSmilesIr` | [Builder](builder.md) |
-| Pack molecules into a simulation box | `molpack.GenCanPack`, `Target`, molrs regions as restraints | [Pack](pack.md) |
+| Pack molecules into a simulation box | `molpack.GencanPack`, `Target`, molrs regions as restraints | [Pack](pack.md) |
 | Generate 3D conformers from a molecular graph | `Conformer` | [Conformer](conformer.md) |
 | Assign force field types (OPLS-AA, MMFF94, GAFF via AmberTools) | `mp.ff.typifier.OplsAaTypifier`, `Mmff94Typifier`, `AtdTypifier`, `AntechamberTypifier`, `TleapTypifier` | [Typifier](typifier.md) |
 | Evaluate bond, angle, and pair potentials | `mp.ff.potential.PotentialCompiler`, `Potentials`, `compile_explicit_terms` | [Potential](potential.md) |

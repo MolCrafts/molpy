@@ -333,7 +333,7 @@ The box size follows from total molecular weight and target density. Each chain 
 # docs: skip — optional molcrafts-molpack; not a molpy runtime/doc dep
 from pathlib import Path
 
-from molpack import GenCanPack, Target
+from molpack import GencanPack, Target
 
 total_mw = sum(mass(c.atoms) for c in typed_chains)
 target_density = 0.05  # g/cm^3 (use ~1.0 for production)
@@ -350,7 +350,7 @@ for chain in typed_chains:
         .with_hydrogens(template.hydrogens)
         .with_atom_radius(template.hydrogens, 0.2)  # H relaxes away in early MD
     )
-packed = GenCanPack().with_seed(42).run(targets, max_loops=200).frame  # carries mol_id
+packed = GencanPack().with_seed(42).run(targets, max_loops=200).frame  # carries mol_id
 packed.box = mp.Box.cube(box_length)
 
 # the pair cutoff is a run setting: you declare it, molpy never invents one

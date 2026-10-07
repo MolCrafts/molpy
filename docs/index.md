@@ -170,10 +170,10 @@ library, no external binary (`pip install molcrafts-molpack`).
 
 ```python
 # docs: skip — optional molcrafts-molpack; not a molpy runtime/doc dep
-from molpack import GenCanPack, Target
+from molpack import GencanPack, Target
 
 target = Target(system, count=500).with_restraint(mp.core.Cuboid([0.0, 0.0, 0.0], [30.0, 30.0, 30.0]))
-system = GenCanPack().with_seed(42).run([target], max_loops=200).frame
+system = GencanPack().with_seed(42).run([target], max_loops=200).frame
 ```
 
 </article>

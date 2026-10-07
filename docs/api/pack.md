@@ -17,7 +17,7 @@ build. Examples below are frozen illustrations — full API lives in the
 
 | Symbol | Package | Preferred for |
 |--------|---------|---------------|
-| `GenCanPack` | `molpack` | Rigid-body packing of several species |
+| `GencanPack` | `molpack` | Rigid-body packing of several species |
 | `Target` | `molpack` | One species + count + restraints |
 | `Cuboid` / `Sphere` / `HalfSpace` | `molpy` (molrs regions) | Restraints: box, droplet, slab; combine with `&`, `\|`, `~` |
 | `State` | `molpack` | `run` result: `.frame`, `.converged`, `.fdist`, … |
@@ -28,7 +28,7 @@ build. Examples below are frozen illustrations — full API lives in the
 ```python
 # docs: skip — optional molcrafts-molpack; not a molpy runtime/doc dep
 import molpy as mp
-from molpack import GenCanPack, Target
+from molpack import GencanPack, Target
 
 water = mp.Atomistic(name="water")
 o = water.def_atom(element="O", x=0.0, y=0.0, z=0.0)
@@ -43,7 +43,7 @@ targets = [
  Target(water.to_frame(), count=100).with_name("water").with_restraint(box),
  Target(ion.to_frame(), count=10).with_name("na").with_restraint(box),
 ]
-packed = GenCanPack().with_seed(42).run(targets, max_loops=200).frame
+packed = GencanPack().with_seed(42).run(targets, max_loops=200).frame
 ```
 
 A built polymer goes in through `mp.builder.PackingTemplate`, so the atom

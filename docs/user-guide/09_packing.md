@@ -29,7 +29,7 @@ they may go) and returns a single packed, topology-complete `Frame`.
 ```python
 # docs: skip — optional molcrafts-molpack; not a molpy runtime/doc dep
 import molpy as mp
-from molpack import GenCanPack, Target
+from molpack import GencanPack, Target
 
 water, _ = mp.conformer.Conformer(seed=1).generate(mp.io.smiles.SmilesIr("O").to_atomistic())
 water_frame = water.to_frame() # one molecule, as a Frame
@@ -39,7 +39,7 @@ water = (
 .with_name("water")
 .with_restraint(mp.core.Cuboid([0.0, 0.0, 0.0], [30.0, 30.0, 30.0]))
 )
-result = GenCanPack().with_seed(42).run([water], max_loops=200)
+result = GencanPack().with_seed(42).run([water], max_loops=200)
 packed = result.frame  # 1500 atoms (3 × 500), with mol_id per copy
 ```
 
@@ -52,7 +52,7 @@ solvent) in one run.
 |---|---|
 | `Target(frame, count)` | One species: template `Frame` + number of copies. Immutable builders: `.with_name`, `.with_restraint`, … |
 | `mp.core.Cuboid(origin, lengths)` | A molrs region used as a restraint: keep atoms inside an axis-aligned box (Å). |
-| `GenCanPack()` | Rigid-body packer. Chain `.with_seed`, `.with_tolerance`, `.with_periodic_box`, … |
+| `GencanPack()` | Rigid-body packer. Chain `.with_seed`, `.with_tolerance`, `.with_periodic_box`, … |
 | `packer.run([targets], max_loops=…)` | Run packing; returns a `State` — `.frame` (the packed `Frame`), `.converged`, `.fdist`, … |
 
 ### Restraint catalog

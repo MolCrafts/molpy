@@ -120,6 +120,14 @@ class TestLammpsLogReader:
     def test_claims_a_log_with_a_thermo_table(self, lammps_log: Path):
         assert LammpsLogMetricReader().sniff(lammps_log)
 
+    def test_claims_a_log_whose_run_starts_past_the_probe_window(self, tmp_path: Path):
+        banner, _, rest = LAMMPS_LOG.partition("\n")
+        assert banner.startswith("LAMMPS (")
+        setup = "".join(f"# input line {i}\n" for i in range(8000))  # > 64 KiB
+        path = tmp_path / "log.lammps"
+        path.write_text(f"{banner}\n{setup}{rest}", encoding="utf-8")
+        assert LammpsLogMetricReader().sniff(path)
+
     def test_rejects_a_log_that_never_reached_thermo(self, tmp_path: Path):
         path = tmp_path / "log.lammps"
         path.write_text("LAMMPS (2 Aug 2023)\nERROR: bad input\n", encoding="utf-8")
