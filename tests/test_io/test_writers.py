@@ -6,7 +6,7 @@ from pathlib import Path
 
 import molpy as mp
 from molpy.core import Atomistic
-from molpy.io.lammps_bond_react import BondReactTemplate
+from molpy.io.lammps import BondReactTemplate
 
 
 def _forcefield() -> mp.ff.forcefield.ForceField:

@@ -1,6 +1,7 @@
 """Geometry optimization — :mod:`molrs.optimize`, mirrored by identity.
 
-``LBFGS`` and its ``OptReport``; ``mp.optimize.LBFGS is molrs.optimize.LBFGS``.
+``Lbfgs`` (``Lbfgs(...).minimize(x) -> (x, OptimizationReport)``) and its
+``OptimizationReport``; ``mp.optimize.Lbfgs is molrs.optimize.Lbfgs``.
 """
 
 from molrs.optimize import *  # noqa: F403

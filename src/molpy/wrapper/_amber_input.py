@@ -1,7 +1,7 @@
 """What an AmberTools program is handed for one molecule (private).
 
 Shared by the typifiers of :mod:`molpy.ff.typifier` (``AntechamberTypifier``,
-``TLeapTypifier``) and :class:`molpy.builder.AmberPolymerBuilder`, which run
+``TleapTypifier``) and :class:`molpy.builder.AmberPolymerBuilder`, which run
 antechamber on a graph: its net charge (``-nc``) and its input mol2. The mol2
 itself is written by ``molrs.io.write_mol2``; this module only says which
 frame goes in.
@@ -12,12 +12,12 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from molrs.io import write_mol2
-from molrs.store.keys import FORMAL_CHARGE
+from molrs.core.keys import FORMAL_CHARGE
 
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from molrs.system import Atomistic
+    from molrs.core import Atomistic
 
 
 def net_formal_charge(graph: Atomistic) -> int:

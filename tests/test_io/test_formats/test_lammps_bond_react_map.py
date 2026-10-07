@@ -1,6 +1,6 @@
 """Tests for LAMMPS fix bond/react serialization (semantic, not byte-golden).
 
-``TestWriteBondReactMap`` unit-tests ``write_bond_react_map``: header counts,
+``TestWriteBondReactMap`` unit-tests ``write_lammps_bond_react_map``: header counts,
 section order, 1-based IDs, and a ValueError on a pre/post atom-set mismatch.
 
 The template couples two propanes (three carbons, so the radius-2 environment
@@ -17,7 +17,7 @@ import pytest
 
 import molpy as mp
 from molpy.core import Atomistic, RelationRef
-from molpy.io.lammps_bond_react import BondReactTemplate
+from molpy.io.lammps import BondReactTemplate
 
 
 # ===================================================================
@@ -98,15 +98,15 @@ def _parse_equivalences(content: str) -> list[tuple[int, int]]:
 
 
 class TestWriteBondReactMap:
-    """Unit tests for write_bond_react_map (module does not exist yet → RED)."""
+    """Unit tests for write_lammps_bond_react_map ."""
 
     def _write_map(
         self, tmp_path: Path, test_data_dir: Path
     ) -> tuple[str, BondReactTemplate]:
-        from molpy.io import write_bond_react_map
+        from molpy.io import write_lammps_bond_react_map
 
         template = _build_reaction(test_data_dir)
-        write_bond_react_map(template, tmp_path / "rxn1")
+        write_lammps_bond_react_map(template, tmp_path / "rxn1")
         content = (tmp_path / "rxn1.map").read_text(encoding="utf-8")
         return content, template
 
@@ -158,7 +158,7 @@ class TestWriteBondReactMap:
 
     def test_map_mismatched_pre_post_raises(self, tmp_path: Path) -> None:
         """Post missing one react_id must raise ValueError, not write silently."""
-        from molpy.io import write_bond_react_map
+        from molpy.io import write_lammps_bond_react_map
 
         pre = Atomistic()
         a1 = pre.def_atom(element="C", type="c3", react_id=1)
@@ -176,4 +176,4 @@ class TestWriteBondReactMap:
             deleted_atoms=[],
         )
         with pytest.raises(ValueError):
-            write_bond_react_map(template, tmp_path / "bad")
+            write_lammps_bond_react_map(template, tmp_path / "bad")

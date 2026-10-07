@@ -109,7 +109,7 @@ class _FakeTools:
 def _ether() -> mp.Atomistic:
     """CH3-O-CH2-CH2-O-CH3 with Amber atom names and no ports."""
     graph = mp.conformer.Conformer(seed=1).generate(
-        mp.io.smiles.SmilesIR("COCCOC").to_atomistic()
+        mp.io.smiles.SmilesIr("COCCOC").to_atomistic()
     )[0]
     for index, atom in enumerate(graph.atoms, start=1):
         atom["name"] = f"{atom['element']}{index}"
@@ -157,7 +157,7 @@ def tools(TEST_DATA_DIR: Path):
     fake = _FakeTools(TEST_DATA_DIR / "prmtop" / "LiTFSI.prmtop")
     with (
         patch.object(Wrapper, "is_available", return_value=True),
-        patch("molpy.wrapper._base.subprocess.run", side_effect=fake),
+        patch("molpy.wrapper._wrapper.subprocess.run", side_effect=fake),
         patch(
             "molrs.builder.Assembler.assemble", side_effect=AssertionError("no link")
         ),
@@ -170,7 +170,7 @@ def _build(work: Path, sites: str = "{[#EO]|3}", **kwargs) -> mp.Frame:
     library = options.pop("library", {"EO": _ether()})
     cuts = options.pop("cuts", _cuts())
     builder = AmberPolymerBuilder(library, cuts, **options)
-    return builder.assemble(mp.io.smiles.CGSmilesIR(sites).to_coarsegrain())
+    return builder.assemble(mp.io.cgsmiles.CgSmilesIr(sites).to_coarsegrain())
 
 
 class TestAmberPieces:
@@ -256,7 +256,7 @@ class TestAssemble:
         assert result.forcefield.units == "real"
         assert list(result.forcefield.get_styles("bond"))
         (atom_style,) = result.forcefield.get_styles("atom")
-        assert all("id" not in t.params for t in atom_style.types)
+        assert all("id" not in t.params for t in atom_style.get_types())
 
         cuts = _controls(tmp_path)
         assert "HEAD_NAME" not in cuts["head"]
@@ -351,7 +351,7 @@ class TestGroPoBOligomer:
         shutil.copy(data / "PEO.ac", monomer / "PEO.ac")
         shutil.copy(data / "PEO_initial.mol2", monomer / "PEO.mol2")
         shutil.copy(data / "PEO_initial.frcmod", monomer / "PEO.frcmod")
-        frame = mp.io.read_ac(data / "PEO.ac")
+        frame = mp.io.read_amber_ac(data / "PEO.ac")
         del frame["atoms"]["xyz"]
         return mp.Atomistic.from_frame(frame)
 
@@ -475,7 +475,7 @@ class TestRefused:
 
     def test_unnamed_atoms_get_element_and_row(self):
         graph = mp.conformer.Conformer(seed=1).generate(
-            mp.io.smiles.SmilesIR("CO").to_atomistic()
+            mp.io.smiles.SmilesIr("CO").to_atomistic()
         )[0]
         builder = AmberPolymerBuilder({"MO": graph}, {})
         names = [str(atom["name"]) for atom in builder.library["MO"].atoms]
@@ -495,7 +495,7 @@ class TestToolFailures:
         fake = _FakeTools(TEST_DATA_DIR / "prmtop" / "LiTFSI.prmtop", fail="prepgen")
         with (
             patch.object(Wrapper, "is_available", return_value=True),
-            patch("molpy.wrapper._base.subprocess.run", side_effect=fake),
+            patch("molpy.wrapper._wrapper.subprocess.run", side_effect=fake),
             pytest.raises(RuntimeError, match="prepgen: cannot do it"),
         ):
             _build(tmp_path)
@@ -505,7 +505,7 @@ class TestToolFailures:
         with (
             patch.object(Wrapper, "is_available", return_value=True),
             patch(
-                "molpy.wrapper._base.subprocess.run",
+                "molpy.wrapper._wrapper.subprocess.run",
                 side_effect=_FakeTools(prmtop, fail="tleap"),
             ),
             pytest.raises(RuntimeError, match="tleap failed"),
@@ -514,7 +514,7 @@ class TestToolFailures:
         fake = _FakeTools(prmtop)
         with (
             patch.object(Wrapper, "is_available", return_value=True),
-            patch("molpy.wrapper._base.subprocess.run", side_effect=fake),
+            patch("molpy.wrapper._wrapper.subprocess.run", side_effect=fake),
         ):
             _build(tmp_path)
         assert fake.names() == ["tleap"]
@@ -522,7 +522,7 @@ class TestToolFailures:
 
 def test_tleap_typifier_refuses_a_graph_that_still_has_ports(tmp_path):
     graph = mp.conformer.Conformer(seed=1).generate(
-        mp.io.smiles.SmilesIR("COC").to_atomistic()
+        mp.io.smiles.SmilesIr("COC").to_atomistic()
     )[0]
     atoms = list(graph.atoms)
     for atom in atoms:
@@ -530,4 +530,4 @@ def test_tleap_typifier_refuses_a_graph_that_still_has_ports(tmp_path):
         atom["charge"] = 0.0
     graph.def_port(atoms[0], atoms[1], ">")
     with pytest.raises(ValueError, match="ports"):
-        mp.ff.typifier.TLeapTypifier(work_dir=tmp_path).typify(graph)
+        mp.ff.typifier.TleapTypifier(work_dir=tmp_path).typify(graph)

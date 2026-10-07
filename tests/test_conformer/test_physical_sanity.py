@@ -2,7 +2,7 @@
 
 ``molpy.conformer.Conformer`` subclasses :class:`molrs.conformer.Conformer` (distance
 geometry + minimization), operating on a :class:`molpy.Atomistic` graph and
-returning a fresh structure. The RDKit adapter (``molpy.adapter.RDKitAdapter``) remains
+returning a fresh structure. The RDKit adapter (``molpy.adapter.RdkitAdapter``) remains
 available as a separate external backend, but is not the trunk.
 """
 
@@ -37,7 +37,7 @@ def _bond_lengths_by_pair(mol):
 
 
 def test_generate_returns_3d_coords():
-    mol = mp.io.smiles.SmilesIR("CCO").to_atomistic()  # ethanol, heavy-atom graph
+    mol = mp.io.smiles.SmilesIr("CCO").to_atomistic()  # ethanol, heavy-atom graph
     out, _ = mp.conformer.Conformer(seed=42).generate(mol)
 
     atoms = list(out.atoms)
@@ -49,7 +49,7 @@ def test_generate_returns_3d_coords():
 
 
 def test_input_molecule_immutable():
-    mol = mp.io.smiles.SmilesIR("CCO").to_atomistic()
+    mol = mp.io.smiles.SmilesIr("CCO").to_atomistic()
     n_before = len(list(mol.atoms))
     coords_before = [(a.get("x"), a.get("y"), a.get("z")) for a in mol.atoms]
 
@@ -67,7 +67,7 @@ def test_input_molecule_immutable():
 )
 def test_conformer_physical_sanity(smiles, name):
     """Generated geometries have bond lengths within 10% of literature."""
-    mol = mp.io.smiles.SmilesIR(smiles).to_atomistic()
+    mol = mp.io.smiles.SmilesIr(smiles).to_atomistic()
     out, _ = mp.conformer.Conformer(seed=42).generate(mol)
 
     pairs = _bond_lengths_by_pair(out)

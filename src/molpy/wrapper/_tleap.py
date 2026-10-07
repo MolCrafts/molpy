@@ -9,11 +9,11 @@ import subprocess
 from dataclasses import dataclass
 
 
-from ._base import Wrapper
+from ._wrapper import Wrapper
 
 
 @dataclass
-class TLeapWrapper(Wrapper):
+class TleapWrapper(Wrapper):
     exe: str = "tleap"
 
     def run_from_script(
@@ -37,7 +37,7 @@ class TLeapWrapper(Wrapper):
             ValueError: If no workdir is set.
         """
         if self.workdir is None:
-            raise ValueError("TLeapWrapper requires a working directory. Set workdir.")
+            raise ValueError("TleapWrapper requires a working directory. Set workdir.")
 
         self.workdir.mkdir(parents=True, exist_ok=True)
         script_path = self.workdir / script_name

@@ -2,10 +2,13 @@
 
 Every native name is the molrs object (``mp.io.mrec.MrecReader is
 molrs.io.mrec.MrecReader``): the lazy store cursor ``MrecReader`` and its
-``MrecWriter``, ``SequenceSchema``, ``ForceFieldSection``, ``section_names``,
-``pack`` and the ``schema`` vocabulary. A record is read and written whole by
-``mp.io.read_mrec`` / ``write_mrec`` and their ``_system`` / ``_trajectory`` /
-``_forcefield`` partners.
+``MrecWriter``, ``SequenceSchema``, ``ForceFieldSection`` (a force field's
+record section: ``ForceFieldSection.from_forcefield(ff)`` /
+``section.to_forcefield()``), ``section_names``, ``pack_mrec_zip``, the
+``validation`` checks and the ``MOLREC_VERSION`` / ``RESERVED_META_KEYS``
+contract. A record is read and written whole by ``mp.io.read_mrec_frame`` /
+``write_mrec_frame`` and their ``_system`` / ``_trajectory`` / ``_forcefield``
+partners.
 
 molpy adds :class:`MrecMetricReader`, published in the
 ``molcrafts.metric_readers`` entry-point group for any molcrafts viewer::
@@ -21,14 +24,14 @@ from typing import TYPE_CHECKING
 from molrs.io.mrec import *  # noqa: F403
 from molrs.io.mrec import __all__ as _native
 
-from . import _metric
+from . import _metric_reader
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
     from pathlib import Path
     from typing import Any
 
-    from ._metric import ReadRequest
+    from ._metric_reader import ReadRequest
 
 
 class MrecMetricReader:
@@ -59,9 +62,9 @@ class MrecMetricReader:
     ) -> Iterator[dict[str, Any]]:
         from molrs.io import read_mrec_trajectory
 
-        stride = _metric.stride_of(request)
-        limit = _metric.limit_of(request)
-        skip = _metric.since_of(request)
+        stride = _metric_reader.stride_of(request)
+        limit = _metric_reader.limit_of(request)
+        skip = _metric_reader.since_of(request)
         trajectory = read_mrec_trajectory(path)
 
         series: dict[str, Any] = {}
@@ -83,7 +86,7 @@ class MrecMetricReader:
                     "tags": {"source": source},
                 }
                 seen += 1
-                if seen <= skip or not _metric.wanted(request, record):
+                if seen <= skip or not _metric_reader.wanted(request, record):
                     continue
                 yield record
                 emitted += 1

@@ -1,4 +1,4 @@
-"""Regions are molrs's (``mp.core.Cuboid is molrs.spatial.Cuboid``).
+"""Regions are molrs's (``mp.core.Cuboid is molrs.core.Cuboid``).
 
 molpy keeps no region classes: masking a block, filtering it, composing
 regions with ``&`` / ``|`` / ``~`` and selecting by distance are native. These
@@ -29,7 +29,7 @@ def _block() -> mp.Block:
     ["Cuboid", "Sphere", "HalfSpace", "Parallelepiped", "Cylinder", "Region"],
 )
 def test_region_names_are_molrs_objects(name):
-    assert getattr(mp.core, name) is getattr(molrs.spatial, name)
+    assert getattr(mp.core, name) is getattr(molrs.core, name)
 
 
 def test_cuboid_mask_and_filter():

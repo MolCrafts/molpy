@@ -9,10 +9,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from molrs.conformer import Conformer
-from molrs.io.smiles import SmilesIR
-from molrs.system import Atomistic
+from molrs.io.smiles import SmilesIr
+from molrs.core import Atomistic
 
-from .types import AmberCut
+from ._cut import AmberCut
 
 
 @dataclass(frozen=True)
@@ -35,7 +35,7 @@ class AmberPieces:
     def oligomer(self, *, seed: int = 42) -> tuple[Atomistic, dict[str, AmberCut]]:
         """Embed the trimer and return it with the head, chain and tail cuts."""
         smiles, head, chain, tail = _spans(self)
-        mol = Conformer(seed=seed).generate(SmilesIR(smiles).to_atomistic())[0]
+        mol = Conformer(seed=seed).generate(SmilesIr(smiles).to_atomistic())[0]
         atoms = list(mol.atoms)
         seen: dict[str, int] = {}
         for atom in atoms:
@@ -89,7 +89,7 @@ class AmberPieces:
 
 
 def _heavy_count(smiles: str) -> int:
-    mol = SmilesIR(smiles).to_atomistic()
+    mol = SmilesIr(smiles).to_atomistic()
     return sum(1 for atom in mol.atoms if atom.get("element") != "H")
 
 

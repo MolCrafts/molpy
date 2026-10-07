@@ -3,9 +3,9 @@
 The proof of the force-field IR as a protocol at the molpy layer
 (``ff-ir-02-protocol``, P-molpy): the snippet of
 ``docs/developer/extending-forcefield.md`` is run as written. It declares
-LAMMPS ``bond_style fene`` by its expression (``class Fene(StyleSpec)``),
-types a bead chain with a ``BeadSpring`` typifier (lj units) whose ``match``
-returns ``Match(nodes, links={Bond: rows}, styles=[...])``, compiles the
+LAMMPS ``bond_style fene`` by its expression (``class Fene(StyleDeclaration)``),
+types a bead chain with a ``BeadSpring`` typifier (lj units) whose ``assign``
+returns ``TypeAssignment(nodes, links={Bond: rows}, styles=[...])``, compiles the
 typed frame and writes it with its force field to ``.mrec``. Then:
 
 * the energy and forces are the analytic FENE sum (rel 1e-12 / 1e-10);
@@ -94,7 +94,7 @@ def test_the_doc_snippet_is_under_30_lines() -> None:
 
 def test_the_style_is_registered_from_molpy(snippet) -> None:
     ns, _ = snippet
-    assert mp.ff.ir.StyleSpec is molrs.ff.ir.StyleSpec
+    assert mp.ff.ir.StyleDeclaration is molrs.ff.ir.StyleDeclaration
     (info,) = [s for s in mp.ff.ir.styles("bond") if s.name == "fene"]
     assert info.expression == ns["Fene"].expression
     assert not info.builtin
@@ -132,10 +132,10 @@ def test_the_record_keeps_the_style_and_its_expression(snippet) -> None:
     (entry,) = [s for s in section.document["styles"] if s["style"] == "fene"]
     assert entry["category"] == "bond"
     assert entry["expression"] == ns["Fene"].expression
-    ff = mp.ff.forcefield.ForceField.from_section(section)
+    ff = section.to_forcefield()
     (style,) = ff.get_styles("bond")
     assert style.name == "fene"
-    assert [t.name for t in style.types] == ["B-B"]
+    assert [t.name for t in style.get_types()] == ["B-B"]
 
 
 FRESH = textwrap.dedent(
@@ -145,8 +145,8 @@ FRESH = textwrap.dedent(
 
     path = sys.argv[1]
     registered = [s.name for s in mp.ff.ir.styles("bond") if s.name == "fene"]
-    frame = mp.io.read_mrec(path)
-    ff = mp.ff.forcefield.ForceField.from_section(mp.io.read_mrec_forcefield(path))
+    frame = mp.io.read_mrec_frame(path)
+    ff = mp.io.read_mrec_forcefield(path).to_forcefield()
     e, f = mp.ff.potential.PotentialCompiler(ff).compile(frame).calc_energy_forces(frame)
     print(json.dumps({"registered": registered, "e": float(e).hex(),
                       "f": [float(x).hex() for x in f.ravel()]}))

@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from molpy.engine import Script
-from molpy.engine import CP2KEngine, LAMMPSEngine
+from molpy.engine import Cp2kEngine, LammpsEngine
 
 
 def _completed(returncode: int = 0) -> MagicMock:
@@ -22,7 +22,7 @@ class TestEngineInit:
     """Test engine initialization."""
 
     def test_init_with_defaults(self):
-        engine = LAMMPSEngine(executable="lmp", check_executable=False)
+        engine = LammpsEngine(executable="lmp", check_executable=False)
         assert engine.executable == "lmp"
         assert engine.work_dir is None
         assert engine.env_vars == {}
@@ -31,13 +31,13 @@ class TestEngineInit:
 
     def test_init_with_workdir(self):
         with tempfile.TemporaryDirectory() as tmpdir:
-            engine = LAMMPSEngine(
+            engine = LammpsEngine(
                 executable="lmp", workdir=tmpdir, check_executable=False
             )
             assert engine.work_dir == Path(tmpdir)
 
     def test_init_with_env_vars(self):
-        engine = LAMMPSEngine(
+        engine = LammpsEngine(
             executable="lmp",
             env_vars={"OMP_NUM_THREADS": "4"},
             check_executable=False,
@@ -46,39 +46,39 @@ class TestEngineInit:
 
     def test_init_env_validation(self):
         # Both None OK
-        LAMMPSEngine(executable="lmp", check_executable=False)
+        LammpsEngine(executable="lmp", check_executable=False)
 
         # Both set OK
-        LAMMPSEngine(
+        LammpsEngine(
             executable="lmp", env="myenv", env_manager="conda", check_executable=False
         )
 
         # Only env set -> raises
         with pytest.raises(ValueError, match="incomplete"):
-            LAMMPSEngine(executable="lmp", env="myenv", check_executable=False)
+            LammpsEngine(executable="lmp", env="myenv", check_executable=False)
 
         # Only env_manager set -> raises
         with pytest.raises(ValueError, match="incomplete"):
-            LAMMPSEngine(executable="lmp", env_manager="conda", check_executable=False)
+            LammpsEngine(executable="lmp", env_manager="conda", check_executable=False)
 
         # Unsupported manager -> raises
         with pytest.raises(ValueError, match="Unsupported env_manager"):
-            LAMMPSEngine(
+            LammpsEngine(
                 executable="lmp", env="x", env_manager="uv", check_executable=False
             )
 
     def test_check_executable_missing(self):
         with pytest.raises(FileNotFoundError):
-            LAMMPSEngine(executable="nonexistent_lammps_binary_xyz123")
+            LammpsEngine(executable="nonexistent_lammps_binary_xyz123")
 
     def test_repr(self):
-        engine = LAMMPSEngine(executable="lmp", check_executable=False)
+        engine = LammpsEngine(executable="lmp", check_executable=False)
         assert "lmp" in repr(engine)
-        assert "LAMMPSEngine" in repr(engine)
+        assert "LammpsEngine" in repr(engine)
 
     def test_repr_with_workdir(self):
         with tempfile.TemporaryDirectory() as tmpdir:
-            engine = LAMMPSEngine(
+            engine = LammpsEngine(
                 executable="lmp", workdir=tmpdir, check_executable=False
             )
             repr_str = repr(engine)
@@ -86,7 +86,7 @@ class TestEngineInit:
             assert tmpdir in repr_str
 
     def test_repr_with_env(self):
-        engine = LAMMPSEngine(
+        engine = LammpsEngine(
             executable="lmp",
             env="myenv",
             env_manager="conda",
@@ -99,7 +99,7 @@ class TestEngineInit:
 
     def test_prepare_removed(self):
         """Engine has no prepare() step."""
-        engine = LAMMPSEngine(executable="lmp", check_executable=False)
+        engine = LammpsEngine(executable="lmp", check_executable=False)
         assert not hasattr(engine, "prepare")
 
 
@@ -107,12 +107,12 @@ class TestEngineRun:
     """Test engine.run writes scripts; subprocess is mocked — never a real binary."""
 
     def test_run_no_scripts_raises(self):
-        engine = LAMMPSEngine(executable="lmp", check_executable=False)
+        engine = LammpsEngine(executable="lmp", check_executable=False)
         with pytest.raises(ValueError, match="At least one script is required"):
             engine.run()
 
     def test_run_empty_list_raises(self):
-        engine = LAMMPSEngine(executable="lmp", check_executable=False)
+        engine = LammpsEngine(executable="lmp", check_executable=False)
         with pytest.raises(ValueError, match="At least one script is required"):
             engine.run([])
 
@@ -120,7 +120,7 @@ class TestEngineRun:
         script = Script.from_text("input", "units real\natom_style full\n")
 
         with tempfile.TemporaryDirectory() as tmpdir:
-            engine = LAMMPSEngine(
+            engine = LammpsEngine(
                 executable="lmp", workdir=tmpdir, check_executable=False
             )
             with patch("subprocess.run", return_value=_completed()) as mock_run:
@@ -132,7 +132,7 @@ class TestEngineRun:
 
     def test_run_with_string(self):
         with tempfile.TemporaryDirectory() as tmpdir:
-            engine = LAMMPSEngine(
+            engine = LammpsEngine(
                 executable="lmp", workdir=tmpdir, check_executable=False
             )
             with patch("subprocess.run", return_value=_completed()):
@@ -146,7 +146,7 @@ class TestEngineRun:
             script_file = tmpdir_path / "my_script.lmp"
             script_file.write_text("units real\natom_style full\n")
 
-            engine = LAMMPSEngine(
+            engine = LammpsEngine(
                 executable="lmp", workdir=tmpdir, check_executable=False
             )
             with patch("subprocess.run", return_value=_completed()):
@@ -160,7 +160,7 @@ class TestEngineRun:
         script2 = Script.from_text("data", "# data file\n")
 
         with tempfile.TemporaryDirectory() as tmpdir:
-            engine = LAMMPSEngine(
+            engine = LammpsEngine(
                 executable="lmp", workdir=tmpdir, check_executable=False
             )
             with patch("subprocess.run", return_value=_completed()):
@@ -175,7 +175,7 @@ class TestEngineRun:
     def test_run_with_workdir_override(self):
         with tempfile.TemporaryDirectory() as tmpdir1:
             with tempfile.TemporaryDirectory() as tmpdir2:
-                engine = LAMMPSEngine(
+                engine = LammpsEngine(
                     executable="lmp", workdir=tmpdir1, check_executable=False
                 )
                 with patch("subprocess.run", return_value=_completed()):
@@ -193,18 +193,18 @@ class TestCP2KEngine:
     """Test CP2K engine specifics."""
 
     def test_name(self):
-        engine = CP2KEngine(executable="cp2k", check_executable=False)
+        engine = Cp2kEngine(executable="cp2k", check_executable=False)
         assert engine.name == "CP2K"
 
     def test_extension(self):
-        engine = CP2KEngine(executable="cp2k", check_executable=False)
+        engine = Cp2kEngine(executable="cp2k", check_executable=False)
         assert engine._get_default_extension() == ".inp"
 
     def test_run_with_script(self):
         script = Script.from_text("input", "&GLOBAL\n  PROJECT water\n&END GLOBAL\n")
 
         with tempfile.TemporaryDirectory() as tmpdir:
-            engine = CP2KEngine(
+            engine = Cp2kEngine(
                 executable="cp2k.psmp", workdir=tmpdir, check_executable=False
             )
             with patch("subprocess.run", return_value=_completed()):
@@ -219,18 +219,18 @@ class TestLAMMPSEngine:
     """Test LAMMPS engine specifics."""
 
     def test_name(self):
-        engine = LAMMPSEngine(executable="lmp", check_executable=False)
+        engine = LammpsEngine(executable="lmp", check_executable=False)
         assert engine.name == "LAMMPS"
 
     def test_extension(self):
-        engine = LAMMPSEngine(executable="lmp", check_executable=False)
+        engine = LammpsEngine(executable="lmp", check_executable=False)
         assert engine._get_default_extension() == ".lmp"
 
     def test_run_accepts_timeout(self):
         """Timeout parameter is forwarded to subprocess.run without TypeError."""
         script = Script.from_text("input", "units real\natom_style full\n")
         with tempfile.TemporaryDirectory() as tmpdir:
-            engine = LAMMPSEngine(
+            engine = LammpsEngine(
                 executable="lmp", workdir=tmpdir, check_executable=False
             )
             with patch("subprocess.run", return_value=_completed()) as mock_run:

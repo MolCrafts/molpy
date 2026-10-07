@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 if TYPE_CHECKING:
-    from molrs.store import Block
+    from molrs.core import Block
 
 __all__ = [
     "AtomIndexSelector",

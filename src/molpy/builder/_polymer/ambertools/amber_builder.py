@@ -16,22 +16,23 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
-from molrs.io import read_ac, read_amber_inpcrd, read_amber_prmtop
-from molrs.system import Atomistic, Bead, CoarseGrain
+from molrs.io import read_amber_ac, read_amber_inpcrd, read_amber_prmtop
+from molrs.core import Atomistic, Bead, CoarseGrain
 
 from molpy.ff._ambertools import _PrmtopAssignment
 from molpy.wrapper import (
     AntechamberWrapper,
-    EnvSpec,
+    EnvironmentSpec,
     Parmchk2Wrapper,
     PrepgenWrapper,
-    TLeapWrapper,
+    TleapWrapper,
     run_step,
 )
 from molpy.wrapper._amber_input import antechamber_input_mol2, net_formal_charge
 from molpy.wrapper._prepgen import prepgen_control_text
 
-from .types import AmberBuildResult, AmberCut
+from ._cut import AmberCut
+from ._result import AmberBuildResult
 
 Variant = Literal["head", "chain", "tail"]
 _VARIANTS: tuple[Variant, ...] = ("head", "chain", "tail")
@@ -76,7 +77,7 @@ class AmberPolymerBuilder:
             and the leaprc tleap sources.
         charge_method: The antechamber ``-c`` charge method.
         work_dir: Where the per-oligomer and per-chain directories are made.
-        env: AmberTools environment (see :class:`~molpy.wrapper.EnvSpec`).
+        env: AmberTools environment (see :class:`~molpy.wrapper.EnvironmentSpec`).
         env_manager: Its manager (``"conda"`` / ``"venv"``).
         net_charges: Bead type → oligomer net charge. ``None`` sums each
             oligomer's ``formal_charge``.
@@ -91,7 +92,7 @@ class AmberPolymerBuilder:
 
     Example:
         >>> oligomer, cuts = AmberPieces("COCC", "OCC", "OCCOC").oligomer()
-        >>> sites = mp.io.smiles.CGSmilesIR("{[#PEO]|10}").to_coarsegrain()
+        >>> sites = mp.io.cgsmiles.CgSmilesIr("{[#PEO]|10}").to_coarsegrain()
         >>> built = AmberPolymerBuilder(
         ...     {"PEO": oligomer},
         ...     {"PEO": cuts},
@@ -131,7 +132,7 @@ class AmberPolymerBuilder:
         self.charge_method = charge_method
         self.net_charges = dict(net_charges) if net_charges is not None else None
         self.work_dir = Path(work_dir).resolve()
-        spec = EnvSpec.resolve(env, env_manager)
+        spec = EnvironmentSpec.resolve(env, env_manager)
         self.env = spec.env
         self.env_manager = spec.env_manager
 
@@ -209,7 +210,7 @@ class AmberPolymerBuilder:
             self._antechamber(directory, source, ac, mol2, frcmod, charge)
             stamp.write_text(digest)
 
-        frame = read_ac(ac)
+        frame = read_amber_ac(ac)
         ac_names = [str(name) for name in frame["atoms"]["name"]]
         ac_types = dict(zip(ac_names, map(str, frame["atoms"]["type"]), strict=True))
         renamed = _rename(_atom_names(oligomer), ac_names)
@@ -338,7 +339,7 @@ class AmberPolymerBuilder:
                     "",
                 ]
             )
-            tleap = TLeapWrapper(
+            tleap = TleapWrapper(
                 name="tleap",
                 workdir=directory,
                 env=self.env,

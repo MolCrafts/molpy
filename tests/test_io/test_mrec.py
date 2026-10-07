@@ -52,12 +52,12 @@ class TestFrameSequence:
 class TestWrite:
     def test_round_trips_coordinates(self, tmp_path: Path) -> None:
         path = tmp_path / "snapshot.mrec"
-        mp.io.write_mrec(path, _coords_frame())
-        _assert_coords(mp.io.read_mrec(path))
+        mp.io.write_mrec_frame(path, _coords_frame())
+        _assert_coords(mp.io.read_mrec_frame(path))
         assert mp.io.mrec.section_names(path) == frozenset({"meta", "frame"})
         meta = mp.io.read_mrec_meta(path)
-        mp.io.mrec.schema.validate_meta(meta)
-        assert meta["molrec_version"] == mp.io.mrec.schema.MOLREC_VERSION
+        mp.io.mrec.validation.validate_meta(meta)
+        assert meta["molrec_version"] == mp.io.mrec.MOLREC_VERSION
         assert "format_name" not in meta
 
 
@@ -92,7 +92,9 @@ def _water_forcefield() -> mp.ff.forcefield.ForceField:
 
 def _ff_rows(ff: mp.ff.forcefield.ForceField) -> dict:
     return {
-        (style.category, style.name): {t.name: dict(t.params) for t in style.types}
+        (style.category, style.name): {
+            t.name: dict(t.params) for t in style.get_types()
+        }
         for style in ff.styles
     }
 
@@ -101,44 +103,42 @@ class TestForceFieldSection:
     def test_rides_along_a_snapshot(self, tmp_path: Path) -> None:
         path = tmp_path / "snapshot.mrec"
         ff = _water_forcefield()
-        mp.io.write_mrec(path, _coords_frame(), forcefield=ff)
+        mp.io.write_mrec_frame(path, _coords_frame(), forcefield=ff)
         assert "forcefield" in mp.io.mrec.section_names(path)
         section = mp.io.read_mrec_forcefield(path)
         assert isinstance(section, mp.io.mrec.ForceFieldSection)
-        loaded = mp.ff.forcefield.ForceField.from_section(section)
+        loaded = section.to_forcefield()
         assert loaded.units == "real"
         assert _ff_rows(loaded) == _ff_rows(ff)
-        _assert_coords(mp.io.read_mrec(path))
+        _assert_coords(mp.io.read_mrec_frame(path))
 
     def test_standalone_package(self, tmp_path: Path) -> None:
         path = tmp_path / "ff.mrec"
         ff = _water_forcefield()
         mp.io.write_mrec_forcefield(path, ff)
-        loaded = mp.ff.forcefield.ForceField.from_section(
-            mp.io.read_mrec_forcefield(path)
-        )
+        loaded = mp.io.read_mrec_forcefield(path).to_forcefield()
         assert _ff_rows(loaded) == _ff_rows(ff)
 
     def test_absent_section_reads_none(self, tmp_path: Path) -> None:
         path = tmp_path / "snapshot.mrec"
-        mp.io.write_mrec(path, _coords_frame())
+        mp.io.write_mrec_frame(path, _coords_frame())
         assert mp.io.read_mrec_forcefield(path) is None
 
 
 class TestSchema:
     def test_molrec_version_is_checked_only_when_present(self) -> None:
-        assert mp.io.mrec.schema.MOLREC_VERSION == 2
+        assert mp.io.mrec.MOLREC_VERSION == 2
         # Absent: no version check (molrec contract; 0.14 refused this).
-        mp.io.mrec.schema.validate_meta(
+        mp.io.mrec.validation.validate_meta(
             {"record_schema_version": 1, "format_name": "mrec"}
         )
-        mp.io.mrec.schema.validate_meta(
-            {"molrec_version": mp.io.mrec.schema.MOLREC_VERSION}
+        mp.io.mrec.validation.validate_meta(
+            {"molrec_version": mp.io.mrec.MOLREC_VERSION}
         )
 
     @pytest.mark.parametrize(
-        "bad", [None, 0, "1", 1.5, True, mp.io.mrec.schema.MOLREC_VERSION + 1]
+        "bad", [None, 0, "1", 1.5, True, mp.io.mrec.MOLREC_VERSION + 1]
     )
     def test_molrec_version_present_must_be_supported_integer(self, bad) -> None:
         with pytest.raises(Exception, match="molrec_version"):
-            mp.io.mrec.schema.validate_meta({"molrec_version": bad})
+            mp.io.mrec.validation.validate_meta({"molrec_version": bad})

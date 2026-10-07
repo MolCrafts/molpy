@@ -7,7 +7,7 @@ They are peer-level to Adapters:
 
 Wrappers MUST NOT contain high-level domain logic.
 
-Environment isolation is owned by :class:`~molpy.wrapper.EnvSpec`
+Environment isolation is owned by :class:`~molpy.wrapper.EnvironmentSpec`
 (``env`` + ``env_manager``).  See that module for supported managers.
 """
 
@@ -19,7 +19,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from ._env import EnvSpec
+from ._environment import EnvironmentSpec
 
 
 @dataclass
@@ -38,9 +38,9 @@ class Wrapper(ABC):
         if self.workdir is not None and not isinstance(self.workdir, Path):
             self.workdir = Path(self.workdir)
 
-    def process_env(self) -> EnvSpec:
-        """Return the validated :class:`EnvSpec` for this wrapper."""
-        return EnvSpec.resolve(self.env, self.env_manager)
+    def process_environment(self) -> EnvironmentSpec:
+        """Return the validated :class:`EnvironmentSpec` for this wrapper."""
+        return EnvironmentSpec.resolve(self.env, self.env_manager)
 
     def resolve_executable(self) -> str | None:
         """Resolve the configured executable to an absolute path if possible.
@@ -48,7 +48,7 @@ class Wrapper(ABC):
         Returns:
             The resolved executable path, or None if it cannot be found.
         """
-        return self.process_env().resolve_executable(self.exe)
+        return self.process_environment().resolve_executable(self.exe)
 
     def is_available(self) -> bool:
         """Return True if the executable can be resolved on this machine."""
@@ -91,7 +91,7 @@ class Wrapper(ABC):
         Returns:
             The completed process result.
         """
-        spec = self.process_env()
+        spec = self.process_environment()
         final_args = [*spec.command_prefix(), self.exe]
         if args:
             final_args.extend(args)

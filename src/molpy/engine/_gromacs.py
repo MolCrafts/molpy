@@ -1,10 +1,10 @@
 """GROMACS molecular dynamics engine.
 
-Wraps `GROMACS <https://www.gromacs.org>`_. :meth:`GROMACSEngine.generate_inputs`
+Wraps `GROMACS <https://www.gromacs.org>`_. :meth:`GromacsEngine.generate_inputs`
 writes a ready-to-run input set — coordinates (``.gro``), the whole topology
 (``.top``: directives, one ``[ moleculetype ]`` per molecule, ``[ system ]``
 and ``[ molecules ]``, from ``write_gromacs_system``) and the energy-minimisation and
-NVT ``.mdp`` templates. :meth:`GROMACSEngine.run` takes one ``.mdp`` as its
+NVT ``.mdp`` templates. :meth:`GromacsEngine.run` takes one ``.mdp`` as its
 input script and runs::
 
     gmx grompp -f <mdp> -c <prefix>.gro -p <prefix>.top -o <stem>.tpr
@@ -27,14 +27,14 @@ from typing import TYPE_CHECKING, Any
 
 from molrs.io import write_gro, write_gromacs_system
 
-from ._base import Engine
+from ._engine import Engine
 
 if TYPE_CHECKING:
     from molrs.ff.forcefield import ForceField
-    from molrs.store import Frame
+    from molrs.core import Frame
 
 
-class GROMACSEngine(Engine):
+class GromacsEngine(Engine):
     """GROMACS molecular dynamics engine.
 
     The executable is the ``gmx`` driver (``gmx``, ``gmx_mpi``, …). An input
@@ -43,7 +43,7 @@ class GROMACSEngine(Engine):
 
     Example::
 
-        engine = GROMACSEngine("gmx", check_executable=False)
+        engine = GromacsEngine("gmx", check_executable=False)
         paths = engine.generate_inputs(frame, ff, "./md")
         engine.run(Script.from_path(paths["em"]), workdir="./md")
     """
@@ -97,8 +97,8 @@ class GROMACSEngine(Engine):
             raise RuntimeError("No input script found.  Pass an .mdp to run() first.")
         mdp = self.input_script.path.name
         stem = Path(mdp).stem
-        env = self._merged_env()
-        grompp = self.process_env().command_prefix(no_capture_output=True) + [
+        env = self._merged_environment()
+        grompp = self.process_environment().command_prefix(no_capture_output=True) + [
             self.executable,
             "grompp",
             "-f",

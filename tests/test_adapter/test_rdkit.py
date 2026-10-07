@@ -1,4 +1,4 @@
-"""RDKitAdapter: the ``mp_id`` join between an Atomistic and an RDKit Mol."""
+"""RdkitAdapter: the ``mp_id`` join between an Atomistic and an RDKit Mol."""
 
 import numpy as np
 import pytest
@@ -7,7 +7,7 @@ pytest.importorskip("rdkit")
 from rdkit import Chem
 
 import molpy as mp
-from molpy.adapter import MP_ID, RDKitAdapter
+from molpy.adapter import MP_ID, RdkitAdapter
 
 
 def _ethanol_heavy() -> mp.Atomistic:
@@ -29,14 +29,14 @@ def _tagged(mol: Chem.Mol) -> Chem.Mol:
 class TestTags:
     def test_every_atom_gets_a_unique_tag(self):
         m = _ethanol_heavy()
-        RDKitAdapter(internal=m)
+        RdkitAdapter(internal=m)
         assert sorted(m.column(MP_ID).tolist()) == [0, 1, 2]
 
     def test_existing_tags_are_kept_and_holes_filled_above_them(self):
         m = _ethanol_heavy()
         first = next(iter(m.atoms))
         first[MP_ID] = 7
-        RDKitAdapter(internal=m)
+        RdkitAdapter(internal=m)
         tags = m.column(MP_ID).tolist()
         assert tags[0] == 7
         assert sorted(tags) == [7, 8, 9]
@@ -46,13 +46,13 @@ class TestTags:
         for atom in m.atoms:
             atom[MP_ID] = 1
         with pytest.raises(ValueError, match="duplicate"):
-            RDKitAdapter(internal=m)
+            RdkitAdapter(internal=m)
 
 
 class TestSyncToExternal:
     def test_mol_mirrors_atoms_bonds_tags_and_coordinates(self):
         m = _ethanol_heavy()
-        adapter = RDKitAdapter(internal=m)
+        adapter = RdkitAdapter(internal=m)
         adapter.sync_to_external()
         mol = adapter.mol
         assert [a.GetSymbol() for a in mol.GetAtoms()] == ["C", "C", "O"]
@@ -67,7 +67,7 @@ class TestSyncToExternal:
         a = m.def_atom(element="C")
         b = m.def_atom(element="O")
         m.def_bond(a, b, bond_type=2, bond_number=2)
-        adapter = RDKitAdapter(internal=m)
+        adapter = RdkitAdapter(internal=m)
         adapter.sync_to_external()
         assert adapter.mol.GetBondWithIdx(0).GetBondType() == Chem.BondType.DOUBLE
         assert adapter.mol.GetNumConformers() == 0
@@ -76,13 +76,13 @@ class TestSyncToExternal:
         m = _ethanol_heavy()
         m.def_atom(element="H")  # no x/y/z
         with pytest.raises(KeyError):
-            RDKitAdapter(internal=m).sync_to_external()
+            RdkitAdapter(internal=m).sync_to_external()
 
 
 class TestSyncToInternal:
     def test_fresh_internal_is_built_from_the_mol(self):
         mol = _tagged(Chem.AddHs(Chem.MolFromSmiles("CO")))
-        adapter = RDKitAdapter(external=mol)
+        adapter = RdkitAdapter(external=mol)
         adapter.sync_to_internal()
         m = adapter.internal
         assert list(m.atoms["element"]) == [a.GetSymbol() for a in mol.GetAtoms()]
@@ -91,7 +91,7 @@ class TestSyncToInternal:
 
     def test_negative_tags_become_new_atoms_and_bonds_are_rebuilt(self):
         m = _ethanol_heavy()
-        adapter = RDKitAdapter(internal=m)
+        adapter = RdkitAdapter(internal=m)
         adapter.sync_to_external()
         mol = Chem.AddHs(Chem.Mol(adapter.mol), addCoords=True)
         for rd_atom in mol.GetAtoms():
@@ -110,7 +110,7 @@ class TestSyncToInternal:
 
     def test_known_atoms_are_updated_in_place(self):
         m = _ethanol_heavy()
-        adapter = RDKitAdapter(internal=m)
+        adapter = RdkitAdapter(internal=m)
         adapter.sync_to_external()
         mol = Chem.Mol(adapter.mol)
         mol.GetConformer().SetAtomPosition(0, (9.0, 9.0, 9.0))
@@ -120,7 +120,7 @@ class TestSyncToInternal:
         assert m.atoms["x", "y", "z"][0].tolist() == [9.0, 9.0, 9.0]
 
     def test_an_untagged_rdkit_atom_is_an_error(self):
-        adapter = RDKitAdapter(
+        adapter = RdkitAdapter(
             internal=_ethanol_heavy(), external=Chem.MolFromSmiles("CCO")
         )
         with pytest.raises(RuntimeError, match=MP_ID):
@@ -129,7 +129,7 @@ class TestSyncToInternal:
 
 def test_generate_3d_returns_a_new_hydrogenated_structure_with_coordinates():
     m = _ethanol_heavy()
-    adapter = RDKitAdapter(internal=m)
+    adapter = RdkitAdapter(internal=m)
     out = adapter.generate_3d(optimize=False)
     assert out is not m
     assert len(out.entities()) == 9  # C2H5OH

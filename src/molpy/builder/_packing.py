@@ -10,8 +10,8 @@ hydrogens on it.
 from __future__ import annotations
 
 import numpy as np
-from molrs.store import Frame
-from molrs.system import Atomistic
+from molrs.core import Frame
+from molrs.core import Atomistic
 
 
 __all__ = ["PackingTemplate"]

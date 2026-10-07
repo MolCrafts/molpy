@@ -9,7 +9,8 @@ Public API:
 
 from .amber_builder import AmberPolymerBuilder
 from .oligomer import AmberPieces
-from .types import AmberBuildResult, AmberCut
+from ._cut import AmberCut
+from ._result import AmberBuildResult
 
 __all__ = [
     "AmberBuildResult",

@@ -1,2 +1,2 @@
-recursive-include src/molpy/data *
+recursive-include src/molpy/resources *
 global-exclude __pycache__ *.py[cod]

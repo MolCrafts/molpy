@@ -70,7 +70,7 @@ def _conda_exe() -> str:
 
 
 @dataclass(frozen=True, slots=True)
-class EnvSpec:
+class EnvironmentSpec:
     """Validated subprocess environment isolation.
 
     Construct via :meth:`resolve` (or :meth:`system`).  After resolve:
@@ -86,7 +86,7 @@ class EnvSpec:
     # -- construction -------------------------------------------------------
 
     @classmethod
-    def system(cls) -> EnvSpec:
+    def system(cls) -> EnvironmentSpec:
         """No isolation — use the current process environment."""
         return cls()
 
@@ -95,7 +95,7 @@ class EnvSpec:
         cls,
         env: str | Path | None = None,
         env_manager: str | None = None,
-    ) -> EnvSpec:
+    ) -> EnvironmentSpec:
         """Validate and normalise user ``env`` / ``env_manager`` input.
 
         Both must be set together, or both omitted for the system
@@ -107,7 +107,7 @@ class EnvSpec:
             env_manager: ``"conda"`` or ``"venv"``.
 
         Returns:
-            A frozen :class:`EnvSpec`.
+            A frozen :class:`EnvironmentSpec`.
 
         Raises:
             ValueError: If exactly one of the pair is set, or the manager
@@ -155,7 +155,7 @@ class EnvSpec:
         assert self.env is not None
         if not isinstance(self.env, Path):
             raise TypeError(
-                f"EnvSpec.env must be Path for manager {self.env_manager!r}, "
+                f"EnvironmentSpec.env must be Path for manager {self.env_manager!r}, "
                 f"got {type(self.env).__name__}: {self.env!r}"
             )
         return self.env
@@ -258,5 +258,5 @@ class EnvSpec:
 
     def __repr__(self) -> str:
         if self.is_system:
-            return "EnvSpec(system)"
-        return f"EnvSpec(env={self.env!r}, env_manager={self.env_manager!r})"
+            return "EnvironmentSpec(system)"
+        return f"EnvironmentSpec(env={self.env!r}, env_manager={self.env_manager!r})"

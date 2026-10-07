@@ -1,7 +1,7 @@
 """molpy's trajectory splitters over the native ``mp.Trajectory``.
 
-The container itself (indexing, slicing, ``map``) is ``molrs.store.Trajectory``,
-tested in molrs; ``mp.Trajectory is molrs.store.Trajectory`` is ``test_init``'s.
+The container itself (indexing, slicing, ``map``) is ``molrs.core.Trajectory``,
+tested in molrs; ``mp.Trajectory is molrs.core.Trajectory`` is ``test_init``'s.
 """
 
 import numpy as np

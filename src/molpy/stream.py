@@ -2,7 +2,8 @@
 
 The transport only: ``Publisher`` (native builds) and ``ControlCommand``.
 The wire encoding of one frame is :mod:`molpy.io`'s
-(``mp.io.read_frame_bytes`` / ``write_frame_bytes``).
+(``mp.io.read_msgpack_frame_bytes`` / ``write_msgpack_frame_bytes``,
+``read_json_frame_str`` / ``write_json_frame_str``).
 """
 
 from molrs.stream import *  # noqa: F403

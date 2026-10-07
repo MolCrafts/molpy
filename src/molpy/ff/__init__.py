@@ -4,27 +4,27 @@
 in them is the molrs object (``mp.ff.forcefield.ForceField is
 molrs.ff.forcefield.ForceField``):
 
-* :mod:`~molpy.ff.forcefield` — ``ForceField`` and its ``Style`` / ``Type``
+* :mod:`~molpy.ff.forcefield` — ``ForceField`` and its ``Style`` / ``ForceFieldType``
   handles (the data model; its file formats are :mod:`molpy.io`'s)
 * :mod:`~molpy.ff.potential` — ``PotentialCompiler``, ``Potentials``,
-  ``kernel``, ``LJCut`` and the ``Potential`` protocol
-* :mod:`~molpy.ff.typifier` — the ``Typifier`` base, its ``Match``, the
+  ``compile_explicit_terms``, ``PairLjCut`` and the ``Potential`` protocol
+* :mod:`~molpy.ff.typifier` — the ``Typifier`` base, its ``TypeAssignment``, the
   built-in typifiers and ``assign_cmaps``; plus molpy's AmberTools typifiers
 * :mod:`~molpy.ff.charge` — partial-charge models
 * :mod:`~molpy.ff.ir` — the force-field IR as a protocol (register a style or
   a category from Python)
 * :mod:`~molpy.ff.params` — the parameter tables molrs ships
-* :mod:`~molpy.ff.scale_lj` — CL&Pol fragment scaling of LJ parameters
+* :mod:`~molpy.ff.clpol_scaling` — CL&Pol fragment scaling of LJ parameters
 """
 
-from . import charge, forcefield, ir, params, potential, scale_lj, typifier
+from . import charge, clpol_scaling, forcefield, ir, params, potential, typifier
 
 __all__ = [
     "charge",
+    "clpol_scaling",
     "forcefield",
     "ir",
     "params",
     "potential",
-    "scale_lj",
     "typifier",
 ]

@@ -8,16 +8,16 @@ The engine writes an input script to the working directory and runs::
 The ``-screen none`` flag suppresses duplicate stdout output; all
 per-timestep data is written exclusively to *log.lammps*.
 
-:meth:`LAMMPSEngine.generate_inputs` is the one LAMMPS deck writer: data
+:meth:`LammpsEngine.generate_inputs` is the one LAMMPS deck writer: data
 file, force-field settings, init and input script, for a periodic frame or a
-box-free one. :meth:`LAMMPSEngine.minimize` and :meth:`LAMMPSEngine.md` run
+box-free one. :meth:`LammpsEngine.minimize` and :meth:`LammpsEngine.md` run
 the same deck with their own command block.
 
 MPI and scheduler launchers are configured on the :class:`~molpy.engine.Engine`
 base class::
 
-    engine = LAMMPSEngine("lmp", launcher=["mpirun", "-np", "16"])
-    engine = LAMMPSEngine("lmp", launcher=["srun", "--ntasks=16"])
+    engine = LammpsEngine("lmp", launcher=["mpirun", "-np", "16"])
+    engine = LammpsEngine("lmp", launcher=["srun", "--ntasks=16"])
 
 Reference:
     Thompson, A. P. et al. (2022). LAMMPS — A flexible simulation tool for
@@ -35,18 +35,18 @@ from typing import TYPE_CHECKING, Any
 
 from molrs.io import read_lammps_data, write_lammps_data, write_lammps_forcefield_str
 
-from ._base import Engine
+from ._engine import Engine
 from ._script import Script
 
 if TYPE_CHECKING:
     from molrs.ff.forcefield import ForceField
-    from molrs.store import Frame
+    from molrs.core import Frame
 
 # Common LAMMPS binary names, tried in order when no executable is given.
 _LAMMPS_CANDIDATES = ("lmp", "lmp_serial", "lmp_mpi")
 
 
-class LAMMPSEngine(Engine):
+class LammpsEngine(Engine):
     """LAMMPS molecular dynamics engine.
 
     Runs LAMMPS input scripts.  The engine binary is typically named ``lmp``,
@@ -54,21 +54,21 @@ class LAMMPSEngine(Engine):
 
     Example:
         >>> from molpy.engine import Script
-        >>> from molpy.engine import LAMMPSEngine
+        >>> from molpy.engine import LammpsEngine
         >>>
         >>> script = Script.from_text(
         ...     name="input",
         ...     text="units real\\natom_style full\\nrun 0\\n",
         ...     language="other",
         ... )
-        >>> engine = LAMMPSEngine(executable="lmp", check_executable=False)
+        >>> engine = LammpsEngine(executable="lmp", check_executable=False)
         >>> result = engine.run(script, workdir="./calc", check=False)
         >>> print(result.returncode)
         0
 
         MPI execution::
 
-            engine = LAMMPSEngine("lmp", launcher=["mpirun", "-np", "16"])
+            engine = LammpsEngine("lmp", launcher=["mpirun", "-np", "16"])
             result = engine.run(script, workdir="./calc")
     """
 
@@ -84,7 +84,7 @@ class LAMMPSEngine(Engine):
         Differs from :class:`~molpy.engine.Engine` only in that
         *executable* is optional: when omitted, the first binary found on
         ``PATH`` among ``lmp``, ``lmp_serial``, ``lmp_mpi`` is used, so
-        ``LAMMPSEngine()`` works out of the box on a typical install.
+        ``LammpsEngine()`` works out of the box on a typical install.
 
         Args:
             executable: Path or command to the LAMMPS binary.  ``None``
@@ -167,7 +167,7 @@ class LAMMPSEngine(Engine):
             text=True,
             check=check,
             timeout=timeout,
-            env=self._merged_env(),
+            env=self._merged_environment(),
         )
 
     # ------------------------------------------------------------------
@@ -304,7 +304,7 @@ class LAMMPSEngine(Engine):
 
         Typical use is removing residual overlaps after packing::
 
-            eng = LAMMPSEngine()
+            eng = LammpsEngine()
             relaxed = eng.minimize(pack_result.frame, ff)
 
         Args:

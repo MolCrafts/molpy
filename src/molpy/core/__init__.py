@@ -1,16 +1,14 @@
-"""The core data model — molrs's core subsystems, mirrored by identity, plus molpy's tools over them.
+"""The core data model — :mod:`molrs.core`, mirrored by identity, plus molpy's tools over it.
 
-molrs's core is four subsystems (Rust ``molrs::core::{store, system, spatial,
-units}``); this one module holds the public names of all four, each the molrs
-object (``mp.core.Frame is molrs.store.Frame``):
-
-* :mod:`molrs.store` — ``Block``, ``Frame`` and its metadata, ``Trajectory``
-  and its observables, the column vocabularies ``keys`` and ``schema``;
-* :mod:`molrs.system` — the molecular-graph hierarchy (``Graph``,
-  ``Atomistic``, ``CoarseGrain``) and its live node / relation views;
-* :mod:`molrs.spatial` — ``Box``, neighbour search, geometric regions
-  (``Cuboid``, ``Sphere``, ``HalfSpace``, …), triangle meshes, point paths;
-* :mod:`molrs.units` — ``UnitRegistry``, ``UnitPreset``, ``Quantity``, ….
+Every public name of :mod:`molrs.core` is here as the molrs object
+(``mp.core.Frame is molrs.core.Frame``): the column store and the frame
+(``Block``, ``Frame`` and its metadata, ``Trajectory`` and its observables),
+space (``Box``, neighbour search, geometric regions such as ``Cuboid``,
+``Sphere`` and ``HalfSpace``, triangle meshes, point paths), the molecular
+graph (``MolGraph``, ``Atomistic``, ``CoarseGrain`` and their live node /
+relation views), elements, the unit engine (``UnitRegistry``, ``UnitPreset``,
+``Quantity``, …) and the vocabularies ``keys``, ``schema`` and ``constants``
+(``mp.core.keys is molrs.core.keys``).
 
 molpy adds, acting on those types:
 
@@ -23,19 +21,13 @@ molpy adds, acting on those types:
   :class:`CustomStrategy`) — cutting a native ``Trajectory`` into segments.
 
 The data classes a user handles directly (``Frame``, ``Block``,
-``Trajectory``, ``Box``, ``Atomistic``, ``CoarseGrain``, the entity classes,
-``Element``, ``Topology``) are also promoted to the ``molpy`` root, as the
-same objects (``mp.Frame is mp.core.Frame``).
+``Trajectory``, ``Box``, ``MolGraph``, ``Atomistic``, ``CoarseGrain``, the
+entity classes, ``Element``, ``Topology``) are also promoted to the ``molpy``
+root, as the same objects (``mp.Frame is mp.core.Frame``).
 """
 
-from molrs.spatial import *  # noqa: F403
-from molrs.spatial import __all__ as _spatial
-from molrs.store import *  # noqa: F403
-from molrs.store import __all__ as _store
-from molrs.system import *  # noqa: F403
-from molrs.system import __all__ as _system
-from molrs.units import *  # noqa: F403
-from molrs.units import __all__ as _units
+from molrs.core import *  # noqa: F403
+from molrs.core import __all__ as _native
 
 from ._selector import (
     AtomIndexSelector,
@@ -52,10 +44,7 @@ from ._splitter import (
 )
 
 __all__ = [
-    *_store,
-    *_system,
-    *_spatial,
-    *_units,
+    *_native,
     "AtomIndexSelector",
     "AtomTypeSelector",
     "CustomStrategy",

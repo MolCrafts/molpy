@@ -1,6 +1,6 @@
 """Trajectory splitting: molpy's strategies over the native trajectory.
 
-The container is :class:`molrs.store.Trajectory` itself (``mp.Trajectory``):
+The container is :class:`molrs.core.Trajectory` itself (``mp.Trajectory``):
 an eager frame sequence with optional ``step`` / ``time`` labels, negative
 indices, slicing (a sub-trajectory with its labels sliced alike) and ``map``.
 molpy adds only how to cut one into segments: a :class:`SplitStrategy` picks
@@ -12,7 +12,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from collections.abc import Callable
 
-from molrs.store import Trajectory
+from molrs.core import Trajectory
 
 
 class SplitStrategy(ABC):

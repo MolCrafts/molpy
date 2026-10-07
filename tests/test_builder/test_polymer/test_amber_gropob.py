@@ -71,7 +71,7 @@ def gropob(TEST_DATA_DIR: Path) -> Path:
 
 
 def _peo_template(data: Path) -> mp.Atomistic:
-    frame = mp.io.read_ac(data / "PEO.ac")
+    frame = mp.io.read_amber_ac(data / "PEO.ac")
     del frame["atoms"]["xyz"]  # x, y, z are there too; a graph column is 1-D
     return mp.Atomistic.from_frame(frame)
 
@@ -92,7 +92,7 @@ def _build(library, cuts, work: Path, sites: str = "{[#PEO]|5}"):
         charge_method="bcc",
         work_dir=work,
         **(_ENV or {}),
-    ).assemble(mp.io.smiles.CGSmilesIR(sites).to_coarsegrain())
+    ).assemble(mp.io.cgsmiles.CgSmilesIr(sites).to_coarsegrain())
 
 
 def _type_charges(frame: mp.Frame) -> dict[str, list[float]]:

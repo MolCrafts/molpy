@@ -6,8 +6,8 @@ group, by format, and asks it for records. The contract is a structural
 Protocol — ``format`` / ``sniff`` / ``read`` plus the optional ``patterns``
 and ``tailable`` hints — so matching it is a matter of shape, not of
 dependency. The readers themselves are their formats' modules'
-(:class:`molpy.io.log.LammpsLogMetricReader`,
-:class:`molpy.io.log.MlpJsonlMetricReader`,
+(:class:`molpy.io.lammps.LammpsLogMetricReader`,
+:class:`molpy.io.mlp_jsonl.MlpJsonlMetricReader`,
 :class:`molpy.io.mrec.MrecMetricReader`); this module holds what they share.
 
 **The viewer sets the sampling policy.** ``read`` receives a request carrying

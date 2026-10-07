@@ -1,7 +1,9 @@
-"""SMILES and CGsmiles — :mod:`molrs.io.smiles`, mirrored by identity.
+"""SMILES notation — :mod:`molrs.io.smiles`, mirrored by identity.
 
-``SmilesIR``, ``SmilesError`` and the CGsmiles records (``CGSmilesIR``,
-``CGGraph``, …). One molecule straight to a graph is ``mp.io.read_smiles``.
+``SmilesIr`` (the parsed text), ``SmilesError`` (every refusal of the
+SMILES family) and ``BondingDescriptor``. One molecule straight to a graph is
+``mp.io.read_smiles_str``; one written back is ``mp.io.write_smiles_str``.
+SMARTS is :mod:`molpy.perceive`'s.
 """
 
 from molrs.io.smiles import *  # noqa: F403

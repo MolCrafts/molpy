@@ -9,7 +9,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-from ._base import Wrapper
+from ._wrapper import Wrapper
 
 
 @dataclass

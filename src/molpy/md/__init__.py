@@ -1,9 +1,9 @@
 """In-process MD — :mod:`molrs.md`, mirrored by identity.
 
 The integrators (``VelocityVerlet``, ``Langevin``), ``MaxwellBoltzmann``
-velocities, ``MDState`` and the ``MD`` driver; ``mp.md.MD is molrs.md.MD``.
-MD defines no potential: the kernels, ``Potentials`` and the ``Potential``
-protocol are :mod:`molpy.ff.potential`.
+velocities, ``MdState`` and the ``MdDriver``; ``mp.md.MdDriver is
+molrs.md.MdDriver``. MD defines no potential: the kernels, ``Potentials`` and
+the ``Potential`` protocol are :mod:`molpy.ff.potential`.
 """
 
 from molrs.md import *  # noqa: F403

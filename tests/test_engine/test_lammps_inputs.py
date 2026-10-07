@@ -1,4 +1,4 @@
-"""``LAMMPSEngine.generate_inputs``: data + settings from the force field,
+"""``LammpsEngine.generate_inputs``: data + settings from the force field,
 init and input script.
 
 The ``*_style`` lines and coefficients are molrs's LAMMPS include, for every
@@ -12,7 +12,7 @@ import subprocess
 import pytest
 
 import molpy as mp
-from molpy.engine import LAMMPSEngine
+from molpy.engine import LammpsEngine
 
 
 @pytest.fixture
@@ -33,7 +33,7 @@ def water_ff() -> mp.ff.forcefield.ForceField:
 
 def _deck(water, ff, out, **kw):
     """The water's deck, generated without a LAMMPS binary."""
-    return LAMMPSEngine(check_executable=False).generate_inputs(
+    return LammpsEngine(check_executable=False).generate_inputs(
         water.to_frame(), ff, out, prefix="w", **kw
     )
 

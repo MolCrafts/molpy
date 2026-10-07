@@ -315,7 +315,7 @@ class TestWriteLammpsData:
         """read_lammps_data -> Atomistic.from_frame must keep bonds/angles/dihedrals.
 
         Regression: the reader stored relation endpoints as a signed int, and
-        ``molrs.system.Atomistic.from_frame`` reads endpoints only as ``uint64`` — so it silently
+        ``molrs.core.Atomistic.from_frame`` reads endpoints only as ``uint64`` — so it silently
         dropped every bond on the Frame->Atomistic round-trip.
         """
         data = (
@@ -819,17 +819,17 @@ class TestForceFieldCoeffs:
         pair = {
             t.name: (t.get("epsilon"), t.get("sigma"))
             for s in ff.get_styles(mp.ff.forcefield.PairStyle)
-            for t in s.get_types(mp.ff.forcefield.Type)
+            for t in s.get_types(mp.ff.forcefield.ForceFieldType)
         }
         bond = {
             t.name: (t.get("k"), t.get("r0"))
             for s in ff.get_styles(mp.ff.forcefield.BondStyle)
-            for t in s.get_types(mp.ff.forcefield.Type)
+            for t in s.get_types(mp.ff.forcefield.ForceFieldType)
         }
         angle = {
             t.name: (t.get("k"), t.get("theta0"))
             for s in ff.get_styles(mp.ff.forcefield.AngleStyle)
-            for t in s.get_types(mp.ff.forcefield.Type)
+            for t in s.get_types(mp.ff.forcefield.ForceFieldType)
         }
         assert pair == {"1": (0.1521, 3.1507), "2": (0.046, 0.4)}
         # The force-field IR adopts the LAMMPS standard: K is stored as
@@ -875,7 +875,7 @@ class TestCoeffsAreText:
         epsilon = {
             t.name: t.get("epsilon")
             for s in ff.get_styles(mp.ff.forcefield.PairStyle)
-            for t in s.get_types(mp.ff.forcefield.Type)
+            for t in s.get_types(mp.ff.forcefield.ForceFieldType)
         }
         # A metal file is a metal force field: epsilon stays in eV, as written.
         assert epsilon["1"] == 0.1521

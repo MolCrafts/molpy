@@ -1,14 +1,10 @@
-"""CL&Pol scaleLJ epsilon scaling — ``mp.ff.scale_lj``, molrs's by identity."""
+"""CL&Pol scaleLJ epsilon scaling — ``mp.ff.clpol_scaling``, molrs's by identity."""
 
 import pytest
 
 from molpy.ff.forcefield import ForceField, PairType
-from molpy.ff.scale_lj import (
-    FragmentScaling,
-    compute_k_ij,
-    fragment_scaling_data,
-    scale_lj,
-)
+from molpy.ff.clpol_scaling import FragmentScaling, compute_k_ij, scale_lj
+from molpy.ff.params import clpol_fragment_scaling
 
 
 def _ff():
@@ -115,7 +111,7 @@ def test_missing_fragment_data_raises():
 
 # --- ac-008: data file --------------------------------------------------------
 def test_fragment_data_file_loads():
-    table = fragment_scaling_data()
+    table = clpol_fragment_scaling()
     for name in ("c2c1im", "bf4", "pf6", "ntf2", "dca"):
         assert name in table
     bf4 = table["bf4"]

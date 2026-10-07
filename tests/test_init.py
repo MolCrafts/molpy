@@ -24,10 +24,9 @@ def test_unregistered_name_raises_attribute_error() -> None:
 # --- The module map: molpy is a thin layer over molrs -------------------------
 
 #: The molrs subsystems with a molpy module of the same name; molpy may add
-#: names there (``mp.builder`` its crystals and polymers, …).
-MIRRORED = tuple(sorted(set(molrs.__all__) - {"store", "system", "spatial", "units"}))
-#: molrs's core subsystems, mirrored together by ``molpy.core``.
-CORE = ("store", "system", "spatial", "units")
+#: names there (``mp.builder`` its crystals and polymers, ``mp.core`` its
+#: selectors, …).
+MIRRORED = tuple(sorted(molrs.__all__))
 
 
 @pytest.mark.parametrize("sub", MIRRORED)
@@ -38,16 +37,9 @@ def test_a_mirrored_subsystem_keeps_every_native_name(sub: str) -> None:
     for name in native.__all__:
         ours = getattr(mine, name)
         if isinstance(ours, ModuleType) and ours.__name__.startswith("molpy."):
-            continue  # molpy's own mirror of a molrs submodule (mp.io.log, …)
+            continue  # molpy's own mirror of a molrs submodule (mp.io.lammps, …)
         assert ours is getattr(native, name), (sub, name)
     assert set(native.__all__) <= set(mine.__all__)
-
-
-@pytest.mark.parametrize("sub", CORE)
-def test_molpy_core_keeps_every_native_core_name(sub: str) -> None:
-    native = getattr(molrs, sub)
-    for name in native.__all__:
-        assert getattr(molpy.core, name) is getattr(native, name), (sub, name)
 
 
 def test_only_promoted_core_classes_are_on_the_root() -> None:

@@ -1,8 +1,10 @@
 """Parameter tables — :mod:`molrs.ff.params`, by identity.
 
-AMBER's default 1-4 scale divisors (``AMBER_SCEE``, ``AMBER_SCNB``) and the
-CL&Pol Drude table (:func:`clpol_polarizability`: the shipped ``alpha.ff``, or
-one read from a path).
+The CL&Pol tables molrs ships: the Drude polarizabilities
+(:func:`clpol_polarizability`: the shipped ``alpha.ff``, or one read from a
+path) and the fragment-scaling table (:func:`clpol_fragment_scaling`, read by
+``mp.ff.clpol_scaling.scale_lj``). AMBER's 1-4 divisors are unit facts:
+``mp.core.constants.AMBER_SCEE`` / ``AMBER_SCNB``.
 """
 
 from molrs.ff.params import *  # noqa: F403

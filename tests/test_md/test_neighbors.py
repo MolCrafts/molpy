@@ -3,13 +3,13 @@
 import numpy as np
 
 from molpy.core import Box, NeighborList
-from molpy.ff.potential import LJCut
+from molpy.ff.potential import PairLjCut
 
 
 def test_md_neighborlist_is_the_core_engine():
     import molrs
 
-    assert NeighborList is molrs.spatial.NeighborList
+    assert NeighborList is molrs.core.NeighborList
 
 
 def test_pair_inside_cutoff_is_half_shell():
@@ -28,13 +28,13 @@ def test_pair_outside_cutoff_is_absent():
 
 
 def test_lj_flags_bake_the_kernel():
-    cut = LJCut(1.0, 1.0, 2.5, shifted=False, smeared=False)
+    cut = PairLjCut(1.0, 1.0, 2.5, shifted=False, smeared=False)
     assert cut.n == 12 and cut.m == 6
     assert not cut.shifted
     assert not cut.smeared
-    shifted = LJCut(1.0, 1.0, 2.5, shifted=True)
+    shifted = PairLjCut(1.0, 1.0, 2.5, shifted=True)
     assert shifted.shifted and not shifted.smeared
-    smeared = LJCut(1.0, 1.0, 2.5, smeared=True)
+    smeared = PairLjCut(1.0, 1.0, 2.5, smeared=True)
     assert smeared.smeared and smeared.shifted
 
 
@@ -42,11 +42,11 @@ def test_lj_consumes_neighbors_table():
     pos = np.array([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]])
     nl = NeighborList(2.5)
     nl.build(pos, Box.cube(20.0))
-    lj = LJCut(1.0, 1.0, 2.5, shifted=True)
-    energy, forces = lj.eval_table(2, nl.neighbors())
+    lj = PairLjCut(1.0, 1.0, 2.5, shifted=True)
+    energy, forces = lj.energy_forces_table(2, nl.neighbors())
     assert forces.shape == (2, 3)
     np.testing.assert_allclose(forces.sum(axis=0), 0.0, atol=1e-12)
-    e2, f2 = lj.eval_pairs(
+    e2, f2 = lj.energy_forces_pairs(
         2,
         nl.neighbors().query_point_indices(),
         nl.neighbors().point_indices(),

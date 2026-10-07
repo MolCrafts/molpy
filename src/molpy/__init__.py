@@ -5,28 +5,27 @@ the root holds three kinds of name and nothing else:
 
 * **the subsystems** — one molpy module per molrs subsystem, each holding the
   same names by identity (``mp.perceive.SmartsPattern is
-  molrs.perceive.SmartsPattern``): :mod:`molpy.core` (molrs's core —
-  ``store``, ``system``, ``spatial``, ``units`` — in one module, plus molpy's
-  selectors and trajectory splitters), :mod:`molpy.io` (every file reader and
+  molrs.perceive.SmartsPattern``): :mod:`molpy.core` (:mod:`molrs.core`,
+  plus molpy's selectors and trajectory splitters), :mod:`molpy.io` (every file reader and
   writer, with one submodule per format that owns classes), :mod:`molpy.ff`,
   :mod:`molpy.perceive`, :mod:`molpy.optimize`, :mod:`molpy.conformer`,
   :mod:`molpy.builder`, :mod:`molpy.compute`, :mod:`molpy.signal`,
   :mod:`molpy.md`, :mod:`molpy.op` and :mod:`molpy.stream`; and molpy's own
-  :mod:`molpy.engine`, :mod:`molpy.adapter`, :mod:`molpy.data` and
+  :mod:`molpy.engine`, :mod:`molpy.adapter`, :mod:`molpy.resources` and
   :mod:`molpy.wrapper` (imported explicitly);
 * **the core data classes a user handles directly**, promoted from
   :mod:`molpy.core` as the same objects (``mp.Frame is mp.core.Frame is
-  molrs.store.Frame``): ``Frame``, ``Block``, ``Trajectory``, ``Box``,
-  ``Graph``, ``Atomistic``, ``CoarseGrain``, the entity classes (``Atom``,
-  ``Bond``, ``Angle``, ``Dihedral``, ``Improper``, ``Bead``, ``CGBond``,
+  molrs.core.Frame``): ``Frame``, ``Block``, ``Trajectory``, ``Box``,
+  ``MolGraph``, ``Atomistic``, ``CoarseGrain``, the entity classes (``Atom``,
+  ``Bond``, ``Angle``, ``Dihedral``, ``Improper``, ``Bead``, ``CgBond``,
   ``Port``, ``VirtualSite``, ``DrudeParticle``, ``MasslessSite``),
   ``Element`` and ``Topology``. No function, algorithm or unit preset is
   promoted: everything else is reached through its subsystem
-  (``mp.core.Cuboid``, ``mp.optimize.LBFGS``, ``mp.io.read_pdb``);
+  (``mp.core.Cuboid``, ``mp.optimize.Lbfgs``, ``mp.io.read_pdb``);
 * the version metadata, ``version`` and ``release_date``.
 
 The modules behind molpy's own additions are private, so each of their names
-has one path (``mp.engine.LAMMPSEngine``). Subsystems load lazily on first
+has one path (``mp.engine.LammpsEngine``). Subsystems load lazily on first
 attribute access (PEP 562).
 """
 
@@ -46,7 +45,6 @@ if _TYPE_CHECKING:
         compute,
         conformer,
         core,
-        data,
         engine,
         ff,
         io,
@@ -54,6 +52,7 @@ if _TYPE_CHECKING:
         op,
         optimize,
         perceive,
+        resources,
         signal,
         stream,
     )
@@ -69,7 +68,7 @@ _LAZY_SUBMODULES = frozenset(
         "compute",
         "conformer",
         "core",
-        "data",
+        "resources",
         "engine",
         "ff",
         "io",
@@ -103,13 +102,13 @@ from .core import (
     Block,
     Bond,
     Box,
-    CGBond,
+    CgBond,
     CoarseGrain,
     Dihedral,
     DrudeParticle,
     Element,
     Frame,
-    Graph,
+    MolGraph,
     Improper,
     MasslessSite,
     Port,
@@ -124,7 +123,7 @@ __all__ = [
     "compute",
     "conformer",
     "core",
-    "data",
+    "resources",
     "engine",
     "ff",
     "io",
@@ -142,13 +141,13 @@ __all__ = [
     "Block",
     "Bond",
     "Box",
-    "CGBond",
+    "CgBond",
     "CoarseGrain",
     "Dihedral",
     "DrudeParticle",
     "Element",
     "Frame",
-    "Graph",
+    "MolGraph",
     "Improper",
     "MasslessSite",
     "Port",

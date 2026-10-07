@@ -18,7 +18,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from .distributions import DPDistribution, MassDistribution
+from .distributions import DpDistribution, MassDistribution
 from .sequences import SequenceGenerator
 
 
@@ -60,7 +60,7 @@ class PolydisperseChainGenerator:
 
     Responsible for:
     - Sampling chain size:
-        - Either in DP-space via a DPDistribution (sample_dp)
+        - Either in DP-space via a DpDistribution (sample_dp)
         - Or in mass-space via a MassDistribution (sample_mass)
     - Using a SequenceGenerator to build the chain sequence
     - Computing the mass of a chain using monomer mass table and optional end-group mass
@@ -73,7 +73,7 @@ class PolydisperseChainGenerator:
         seq_generator: SequenceGenerator,
         monomer_mass: dict[str, float],
         end_group_mass: float = 0.0,
-        distribution: DPDistribution | MassDistribution | None = None,
+        distribution: DpDistribution | MassDistribution | None = None,
     ):
         """
         Initialize polydisperse chain generator.
@@ -82,7 +82,7 @@ class PolydisperseChainGenerator:
             seq_generator: Sequence generator for generating monomer sequences
             monomer_mass: Dictionary mapping monomer identifiers to their masses (g/mol)
             end_group_mass: Mass of end groups (g/mol), default 0.0
-            distribution: Distribution implementing DPDistribution or MassDistribution protocol
+            distribution: Distribution implementing DpDistribution or MassDistribution protocol
         """
         self.seq_generator = seq_generator
         self.monomer_mass = monomer_mass
@@ -106,9 +106,9 @@ class PolydisperseChainGenerator:
             raise ValueError("distribution must be set")
 
         # Determine what capabilities the distribution actually provides
-        # DPDistribution / MassDistribution are runtime_checkable Protocols:
+        # DpDistribution / MassDistribution are runtime_checkable Protocols:
         # ask the type system, do not sniff for a method name.
-        has_sample_dp = isinstance(self.distribution, DPDistribution)
+        has_sample_dp = isinstance(self.distribution, DpDistribution)
         has_sample_mass = isinstance(self.distribution, MassDistribution)
 
         # DP-based distributions may only be used via sample_dp
@@ -153,12 +153,12 @@ class PolydisperseChainGenerator:
         Returns:
             Chain object with dp, monomers, and mass
         """
-        # DPDistribution / MassDistribution are runtime_checkable Protocols:
+        # DpDistribution / MassDistribution are runtime_checkable Protocols:
         # ask the type system, do not sniff for a method name.
-        has_sample_dp = isinstance(self.distribution, DPDistribution)
+        has_sample_dp = isinstance(self.distribution, DpDistribution)
         has_sample_mass = isinstance(self.distribution, MassDistribution)
 
-        # Pure DPDistribution path: sample DP once and build fixed-length chain
+        # Pure DpDistribution path: sample DP once and build fixed-length chain
         if has_sample_dp and not has_sample_mass:
             dp = self.sample_dp(rng)
             monomers = self.seq_generator.generate_sequence(dp, rng)

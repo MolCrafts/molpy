@@ -1,11 +1,11 @@
-"""AntechamberTypifier / TLeapTypifier with the AmberTools executables faked.
+"""AntechamberTypifier / TleapTypifier with the AmberTools executables faked.
 
 ``subprocess.run`` is patched (as ``tests/test_wrapper`` does): each tool call
 copies a committed output fixture into place — ``mol2/litfsi_gaff2.mol2`` for
 antechamber, ``frcmod/litfsi_gaff2.frcmod`` for parmchk2 and
 ``prmtop/LiTFSI.prmtop`` for tleap. The tests assert what the typifiers own:
 the net charge they hand antechamber, how prmtop rows land on graph rows, the
-frcmod TLeapTypifier writes, and the errors.
+frcmod TleapTypifier writes, and the errors.
 """
 
 from __future__ import annotations
@@ -101,7 +101,7 @@ def tools(TEST_DATA_DIR: Path):
     fake = FakeAmberTools(TEST_DATA_DIR)
     with (
         patch.object(Wrapper, "is_available", return_value=True),
-        patch("molpy.wrapper._base.subprocess.run", side_effect=fake),
+        patch("molpy.wrapper._wrapper.subprocess.run", side_effect=fake),
     ):
         yield fake
 
@@ -167,7 +167,7 @@ class TestAntechamberTypifier:
         ante.typify(_litfsi())
         ff = ante.forcefield()
         (atom_style,) = ff.get_styles("atom")
-        assert {t.name for t in atom_style.types} == set(TYPES)
+        assert {t.name for t in atom_style.get_types()} == set(TYPES)
         bond = ff.get_style("bond", "harmonic").get_type_by_name("c3-f")
         assert bond["k"] == pytest.approx(356.9)
         pair = ff.get_style("pair", "lj/cut").get_type_by_name("f")
@@ -184,7 +184,7 @@ class TestAntechamberTypifier:
         fake = FakeAmberTools(TEST_DATA_DIR, fail="antechamber")
         with (
             patch.object(Wrapper, "is_available", return_value=True),
-            patch("molpy.wrapper._base.subprocess.run", side_effect=fake),
+            patch("molpy.wrapper._wrapper.subprocess.run", side_effect=fake),
             pytest.raises(RuntimeError, match="antechamber: fatal error"),
         ):
             mp.ff.typifier.AntechamberTypifier(work_dir=tmp_path).typify(_litfsi())
@@ -206,7 +206,7 @@ class TestTLeapTypifier:
         f = atoms.def_type("f", mass=19.0)
         ff.def_style("bond", "harmonic").def_type("c3-f", c3, f, k=356.9, r0=1.3497)
 
-        leap = mp.ff.typifier.TLeapTypifier(forcefield=ff, work_dir=tmp_path)
+        leap = mp.ff.typifier.TleapTypifier(forcefield=ff, work_dir=tmp_path)
         leap.typify(_typed_litfsi())
 
         lines = tools.scripts[0].splitlines()
@@ -219,7 +219,7 @@ class TestTLeapTypifier:
         assert set(tools.calls) == {"tleap"}
 
     def test_keeps_types_and_charges_and_assigns_terms(self, tools, tmp_path):
-        typed = mp.ff.typifier.TLeapTypifier(work_dir=tmp_path).typify(_typed_litfsi())
+        typed = mp.ff.typifier.TleapTypifier(work_dir=tmp_path).typify(_typed_litfsi())
         atoms = list(typed.atoms)
         assert [a["type"] for a in atoms] == TYPES
         assert [a["charge"] for a in atoms] == CHARGES
@@ -231,23 +231,23 @@ class TestTLeapTypifier:
         graph = _typed_litfsi()
         list(graph.atoms)[0]["type"] = "c3"
         with pytest.raises(ValueError, match="type c3 -> f"):
-            mp.ff.typifier.TLeapTypifier(work_dir=tmp_path).typify(graph)
+            mp.ff.typifier.TleapTypifier(work_dir=tmp_path).typify(graph)
 
     def test_charge_change_raises(self, tools, tmp_path):
         graph = _typed_litfsi()
         list(graph.atoms)[0]["charge"] = -0.2
         with pytest.raises(ValueError, match="charge -0.2 -> "):
-            mp.ff.typifier.TLeapTypifier(work_dir=tmp_path).typify(graph)
+            mp.ff.typifier.TleapTypifier(work_dir=tmp_path).typify(graph)
 
     def test_untyped_atom_raises(self, tmp_path):
         with pytest.raises(ValueError, match="needs AMBER types and charges"):
-            mp.ff.typifier.TLeapTypifier(work_dir=tmp_path).typify(_litfsi())
+            mp.ff.typifier.TleapTypifier(work_dir=tmp_path).typify(_litfsi())
 
     def test_failing_tleap_raises_with_its_stderr(self, TEST_DATA_DIR, tmp_path):
         fake = FakeAmberTools(TEST_DATA_DIR, fail="tleap")
         with (
             patch.object(Wrapper, "is_available", return_value=True),
-            patch("molpy.wrapper._base.subprocess.run", side_effect=fake),
+            patch("molpy.wrapper._wrapper.subprocess.run", side_effect=fake),
             pytest.raises(RuntimeError, match="tleap: fatal error"),
         ):
-            mp.ff.typifier.TLeapTypifier(work_dir=tmp_path).typify(_typed_litfsi())
+            mp.ff.typifier.TleapTypifier(work_dir=tmp_path).typify(_typed_litfsi())

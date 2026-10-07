@@ -9,7 +9,7 @@ side. RDKit reorders and adds atoms freely (``AddHs``, ``RemoveHs``), so the
 join cannot be positional. An RDKit atom carrying a **negative** tag is one
 RDKit created and molpy has not seen yet; it becomes a new atom on the next
 sync. An RDKit atom with no tag at all is an error — build the Mol through
-:meth:`RDKitAdapter.sync_to_external` or tag it yourself.
+:meth:`RdkitAdapter.sync_to_external` or tag it yourself.
 """
 
 from __future__ import annotations
@@ -21,15 +21,15 @@ import numpy as np
 from rdkit import Chem
 from rdkit.Chem import AllChem
 
-from molrs.store.keys import FORMAL_CHARGE
-from molrs.system import Atomistic
+from molrs.core.keys import FORMAL_CHARGE
+from molrs.core import Atomistic
 
-from ._base import Adapter
+from ._adapter import Adapter
 
 #: The join key between an ``Atomistic`` atom and an RDKit atom (see module doc).
 MP_ID = "mp_id"
 
-#: Bond class codes of the ``bond_type`` column (``molrs.store.keys.BOND_TYPE``).
+#: Bond class codes of the ``bond_type`` column (``molrs.core.keys.BOND_TYPE``).
 BOND_TYPE_UNKNOWN = 0
 BOND_TYPE_SINGLE = 1
 BOND_TYPE_DOUBLE = 2
@@ -80,7 +80,7 @@ def _bond_type_from_rdkit(bt: Chem.BondType) -> int:
     return RDKIT_TO_BOND_TYPE[bt]
 
 
-class RDKitAdapter(Adapter[Atomistic, Chem.Mol]):
+class RdkitAdapter(Adapter[Atomistic, Chem.Mol]):
     """Bridge between MolPy's atomistic representation and ``rdkit.Chem.Mol``."""
 
     def __init__(
@@ -399,11 +399,11 @@ class RDKitAdapter(Adapter[Atomistic, Chem.Mol]):
                 mol, self._internal, update_topology=update_topology
             )
 
-    def copy(self) -> RDKitAdapter:
+    def copy(self) -> RdkitAdapter:
         """A new adapter over deep copies of both representations."""
         new_internal = self._internal.copy() if self._internal is not None else None
         new_external = Chem.Mol(self._external) if self._external is not None else None
-        return RDKitAdapter(internal=new_internal, external=new_external)
+        return RdkitAdapter(internal=new_internal, external=new_external)
 
 
 # ---------------------------------------------------------------------------

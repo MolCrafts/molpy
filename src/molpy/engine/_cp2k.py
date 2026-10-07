@@ -12,8 +12,8 @@ captures output.
 MPI and scheduler launchers are configured on the :class:`~molpy.engine.Engine`
 base class::
 
-    engine = CP2KEngine("cp2k.psmp", launcher=["mpirun", "-np", "32"])
-    engine = CP2KEngine("cp2k.psmp", launcher=["srun", "--ntasks=32"])
+    engine = Cp2kEngine("cp2k.psmp", launcher=["mpirun", "-np", "32"])
+    engine = Cp2kEngine("cp2k.psmp", launcher=["srun", "--ntasks=32"])
 
 Reference:
     Kühne, T. D. et al. (2020). CP2K: An electronic structure and molecular
@@ -25,10 +25,10 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
-from ._base import Engine
+from ._engine import Engine
 
 
-class CP2KEngine(Engine):
+class Cp2kEngine(Engine):
     """CP2K quantum chemistry / molecular dynamics engine.
 
     Runs CP2K input scripts.  The typical executable name is ``cp2k.psmp``
@@ -39,7 +39,7 @@ class CP2KEngine(Engine):
 
     Example:
         >>> from molpy.engine import Script
-        >>> from molpy.engine import CP2KEngine
+        >>> from molpy.engine import Cp2kEngine
         >>>
         >>> inp = (
         ...     "&GLOBAL\\n"
@@ -51,14 +51,14 @@ class CP2KEngine(Engine):
         ...     "&END FORCE_EVAL\\n"
         ... )
         >>> script = Script.from_text(name="input", text=inp, language="other")
-        >>> engine = CP2KEngine(executable="cp2k.psmp", check_executable=False)
+        >>> engine = Cp2kEngine(executable="cp2k.psmp", check_executable=False)
         >>> result = engine.run(script, workdir="./calc", check=False)
         >>> print(result.returncode)
         0
 
         MPI execution::
 
-            engine = CP2KEngine("cp2k.psmp", launcher=["mpirun", "-np", "32"])
+            engine = Cp2kEngine("cp2k.psmp", launcher=["mpirun", "-np", "32"])
             result = engine.run(script, workdir="./calc")
     """
 
@@ -125,5 +125,5 @@ class CP2KEngine(Engine):
             text=True,
             check=check,
             timeout=timeout,
-            env=self._merged_env(),
+            env=self._merged_environment(),
         )

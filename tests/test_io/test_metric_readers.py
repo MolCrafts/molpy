@@ -16,7 +16,8 @@ import numpy as np
 import pytest
 
 import molpy as mp
-from molpy.io.log import LammpsLogMetricReader, MlpJsonlMetricReader
+from molpy.io.lammps import LammpsLogMetricReader
+from molpy.io.mlp_jsonl import MlpJsonlMetricReader
 from molpy.io.mrec import MrecMetricReader
 
 LAMMPS_LOG = """LAMMPS (2 Aug 2023)
@@ -77,9 +78,9 @@ class TestTheContractShape:
             "entry-points"
         ]["molcrafts.metric_readers"]
         assert group == {
-            "lammps_log": "molpy.io.log:LammpsLogMetricReader",
+            "lammps_log": "molpy.io.lammps:LammpsLogMetricReader",
             "mrec": "molpy.io.mrec:MrecMetricReader",
-            "mlp_jsonl": "molpy.io.log:MlpJsonlMetricReader",
+            "mlp_jsonl": "molpy.io.mlp_jsonl:MlpJsonlMetricReader",
         }
         for format_id, target in group.items():
             module, name = target.split(":")
@@ -87,7 +88,13 @@ class TestTheContractShape:
             assert reader.format == format_id
 
     @pytest.mark.parametrize(
-        "name", ["molpy.io.log", "molpy.io.mrec", "molpy.io._metric"]
+        "name",
+        [
+            "molpy.io.lammps",
+            "molpy.io.mlp_jsonl",
+            "molpy.io.mrec",
+            "molpy.io._metric_reader",
+        ],
     )
     def test_no_reader_imports_a_host(self, name):
         """The arrow points one way: molpy publishes, a host consumes.

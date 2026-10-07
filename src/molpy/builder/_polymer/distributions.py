@@ -4,7 +4,7 @@ This module provides distributions for sampling degree of polymerization (DP)
 or molecular weight during polymer system assembly.
 
 Distribution Types:
-- DPDistribution: Sample DP directly (Poisson, Uniform, Flory-Schulz)
+- DpDistribution: Sample DP directly (Poisson, Uniform, Flory-Schulz)
 - MassDistribution: Sample molecular weight directly (Schulz-Zimm)
 """
 
@@ -17,7 +17,7 @@ import numpy as np
 
 
 __all__ = [
-    "DPDistribution",
+    "DpDistribution",
     "MassDistribution",
     "UniformPolydisperse",
     "PoissonPolydisperse",
@@ -32,7 +32,7 @@ __all__ = [
 
 
 @runtime_checkable
-class DPDistribution(Protocol):
+class DpDistribution(Protocol):
     """Protocol for distributions that sample degree of polymerization directly.
 
     Distributions implementing this protocol can sample DP values without

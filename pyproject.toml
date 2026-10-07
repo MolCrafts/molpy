@@ -42,7 +42,7 @@ dev = [
     "ty==0.0.65",
     "tox>=4.23",
 ]
-rdkit = ["rdkit"]  # optional: exercises the RDKitAdapter example only
+rdkit = ["rdkit"]  # optional: exercises the RdkitAdapter example only
 doc = [
     "zensical>=0.0.53",
     # 0.2.9: equal chart margins + plain VL fences (no annotation passthrough).
@@ -56,9 +56,9 @@ all = ["molcrafts-molpy[dev,doc]"]
 # them here rather than importing a host keeps the arrow one-way: molpy says
 # what it can parse, and a platform picks it up at install time.
 [project.entry-points."molcrafts.metric_readers"]
-lammps_log = "molpy.io.log:LammpsLogMetricReader"
+lammps_log = "molpy.io.lammps:LammpsLogMetricReader"
 mrec = "molpy.io.mrec:MrecMetricReader"
-mlp_jsonl = "molpy.io.log:MlpJsonlMetricReader"
+mlp_jsonl = "molpy.io.mlp_jsonl:MlpJsonlMetricReader"
 
 [project.urls]
 Homepage = "https://github.com/MolCrafts/molpy"
@@ -80,7 +80,7 @@ version = { attr = "molpy.version.version" }
 where = ["src"]
 
 [tool.setuptools.package-data]
-"molpy.data.forcefield" = ["*.xml"]
+"molpy.resources.forcefield" = ["*.xml"]
 
 [tool.ruff]
 # Matches requires-python: the lint gate must reject syntax the floor

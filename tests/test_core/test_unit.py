@@ -15,7 +15,7 @@ REQUIRED_DIMS = ("mass", "length", "time", "energy", "temperature", "charge")
 
 def test_unit_names_are_molrs_objects():
     for name in ("Unit", "Quantity", "UnitRegistry", "UnitPreset", "UnitsError"):
-        assert getattr(mp.core, name) is getattr(molrs.units, name)
+        assert getattr(mp.core, name) is getattr(molrs.core, name)
 
 
 def test_quantity_and_conversion():

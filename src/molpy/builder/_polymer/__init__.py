@@ -17,7 +17,7 @@ from .ambertools import (
     AmberPolymerBuilder,
 )
 from .distributions import (
-    DPDistribution,
+    DpDistribution,
     FlorySchulzPolydisperse,
     MassDistribution,
     PoissonPolydisperse,
@@ -49,7 +49,7 @@ __all__ = [
     "SequenceGenerator",
     "WeightedSequenceGenerator",
     # Distributions
-    "DPDistribution",
+    "DpDistribution",
     "MassDistribution",
     "FlorySchulzPolydisperse",
     "PoissonPolydisperse",

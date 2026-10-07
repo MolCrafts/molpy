@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 
 from molpy.builder import (
-    DPDistribution,
+    DpDistribution,
     FlorySchulzPolydisperse,
     MassDistribution,
     PoissonPolydisperse,
@@ -15,7 +15,7 @@ from molpy.builder import (
 
 class TestDPDistribution:
     def test_runtime_protocol_accepts_dp_capability(self):
-        assert isinstance(UniformPolydisperse(1, 2), DPDistribution)
+        assert isinstance(UniformPolydisperse(1, 2), DpDistribution)
 
 
 class TestMassDistribution:
@@ -61,7 +61,7 @@ class TestUniformPolydisperse:
 
     def test_satisfies_dp_protocol(self):
         dist = UniformPolydisperse(min_dp=1, max_dp=10)
-        assert isinstance(dist, DPDistribution)
+        assert isinstance(dist, DpDistribution)
 
 
 # ---- PoissonPolydisperse Tests ----
@@ -98,7 +98,7 @@ class TestPoissonPolydisperse:
             PoissonPolydisperse(lambda_param=0.0)
 
     def test_satisfies_dp_protocol(self):
-        assert isinstance(PoissonPolydisperse(lambda_param=5.0), DPDistribution)
+        assert isinstance(PoissonPolydisperse(lambda_param=5.0), DpDistribution)
 
 
 # ---- FlorySchulzPolydisperse Tests ----
@@ -132,7 +132,7 @@ class TestFlorySchulzPolydisperse:
             FlorySchulzPolydisperse(a=-0.5)
 
     def test_satisfies_dp_protocol(self):
-        assert isinstance(FlorySchulzPolydisperse(a=0.5), DPDistribution)
+        assert isinstance(FlorySchulzPolydisperse(a=0.5), DpDistribution)
 
 
 # ---- SchulzZimmPolydisperse Tests ----

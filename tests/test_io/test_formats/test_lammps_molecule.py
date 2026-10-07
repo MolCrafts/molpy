@@ -126,7 +126,7 @@ class TestReadLammpsMolecule:
 
     def test_read_json_water(self, test_files):
         """Test reading JSON format water molecule."""
-        frame = mp.io.read_lammps_molecule(test_files["water_json"])
+        frame = mp.io.read_lammps_molecule_json(test_files["water_json"])
 
         # Check metadata
         assert frame.meta["format"] == "lammps_molecule"
@@ -248,7 +248,7 @@ class TestReadLammpsMolecule:
         with open(tmp_file, "w") as f:
             json.dump({"format": "invalid"}, f)
         with pytest.raises(OSError, match="JSON file must have format='molecule'"):
-            mp.io.read_lammps_molecule(tmp_file)
+            mp.io.read_lammps_molecule_json(tmp_file)
 
     def test_missing_types_section_json(self, tmp_path):
         """Test error handling for missing types section in JSON."""
@@ -258,7 +258,7 @@ class TestReadLammpsMolecule:
         with pytest.raises(
             OSError, match="JSON molecule file must contain 'types' section"
         ):
-            mp.io.read_lammps_molecule(tmp_file)
+            mp.io.read_lammps_molecule_json(tmp_file)
 
     def test_missing_types_section_native(self, tmp_path):
         """Test error handling for missing Types section in native format."""
@@ -286,7 +286,7 @@ class TestWriteLammpsMolecule:
 
         # Write to temporary file
         tmp_file = tmp_path / "test.mol"
-        mp.io.write_lammps_molecule(tmp_file, frame, format="native")
+        mp.io.write_lammps_molecule(tmp_file, frame)
 
         # Read back and compare
         frame2 = mp.io.read_lammps_molecule(tmp_file)
@@ -305,14 +305,14 @@ class TestWriteLammpsMolecule:
     def test_write_json_format(self, test_files, tmp_path):
         """Test writing in JSON format."""
         # Read a molecule first
-        frame = mp.io.read_lammps_molecule(test_files["water_json"])
+        frame = mp.io.read_lammps_molecule_json(test_files["water_json"])
 
         # Write to temporary file
         tmp_file = tmp_path / "test.json"
-        mp.io.write_lammps_molecule(tmp_file, frame, format="json")
+        mp.io.write_lammps_molecule_json(tmp_file, frame)
 
         # Read back and compare
-        frame2 = mp.io.read_lammps_molecule(tmp_file)
+        frame2 = mp.io.read_lammps_molecule_json(tmp_file)
 
         # Compare key properties
         assert frame2["atoms"].nrows == frame["atoms"].nrows
@@ -337,12 +337,12 @@ class TestWriteLammpsMolecule:
         temp_native_path = tmp_path / "test.mol"
 
         # Native -> JSON
-        mp.io.write_lammps_molecule(temp_json_path, frame, format="json")
+        mp.io.write_lammps_molecule_json(temp_json_path, frame)
 
         # JSON -> Native
-        frame_from_json = mp.io.read_lammps_molecule(temp_json_path)
+        frame_from_json = mp.io.read_lammps_molecule_json(temp_json_path)
 
-        mp.io.write_lammps_molecule(temp_native_path, frame_from_json, format="native")
+        mp.io.write_lammps_molecule(temp_native_path, frame_from_json)
 
         # Read final native and compare
         frame_final = mp.io.read_lammps_molecule(temp_native_path)
@@ -356,7 +356,7 @@ class TestWriteLammpsMolecule:
     def test_typed_meta_preservation(self, test_files, tmp_path):
         """Test that typed metadata is preserved during write/read cycle."""
         # Read original
-        frame = mp.io.read_lammps_molecule(test_files["water_json"])
+        frame = mp.io.read_lammps_molecule_json(test_files["water_json"])
 
         frame.meta = {
             **frame.meta,
@@ -368,10 +368,10 @@ class TestWriteLammpsMolecule:
 
         # Write JSON format
         tmp_file = tmp_path / "test.json"
-        mp.io.write_lammps_molecule(tmp_file, frame, format="json")
+        mp.io.write_lammps_molecule_json(tmp_file, frame)
 
         # Read back
-        frame2 = mp.io.read_lammps_molecule(tmp_file)
+        frame2 = mp.io.read_lammps_molecule_json(tmp_file)
 
         # Check if typed metadata is preserved (at least the ones we wrote)
         # Note: custom_field won't be preserved in standard LAMMPS format
@@ -396,7 +396,7 @@ class TestIntegrationWithMolpyIO:
 
         # Write using high-level function
         tmp_file = tmp_path / "test.mol"
-        mp.io.write_lammps_molecule(tmp_file, frame, format="native")
+        mp.io.write_lammps_molecule(tmp_file, frame)
 
         # Read back and verify
         frame2 = mp.io.read_lammps_molecule(tmp_file)
@@ -410,9 +410,9 @@ class TestIntegrationWithMolpyIO:
         # Write using high-level function
         tmp_file = tmp_path / "test.json"
 
-        mp.io.write_lammps_molecule(tmp_file, frame, format="json")
+        mp.io.write_lammps_molecule_json(tmp_file, frame)
 
         # Read back and verify
-        frame2 = mp.io.read_lammps_molecule(tmp_file)
+        frame2 = mp.io.read_lammps_molecule_json(tmp_file)
         assert frame2["atoms"].nrows == frame["atoms"].nrows
         assert frame2.meta["source_format"] == "json"

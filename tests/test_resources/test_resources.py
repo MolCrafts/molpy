@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from molpy.data import exists, get_path, list_files
+from molpy.resources import exists, get_path, list_files
 
 
 class TestDataAccess:
@@ -62,11 +62,11 @@ class TestDataModuleImport:
 
     def test_import_data_module(self):
         """Test importing the data module."""
-        import molpy.data
+        import molpy.resources
 
-        assert hasattr(molpy.data, "get_path")
-        assert hasattr(molpy.data, "list_files")
-        assert hasattr(molpy.data, "exists")
+        assert hasattr(molpy.resources, "get_path")
+        assert hasattr(molpy.resources, "list_files")
+        assert hasattr(molpy.resources, "exists")
         # get_path / list_files are the one door; no per-directory restatement.
-        assert not hasattr(molpy.data, "get_forcefield_path")
-        assert not hasattr(molpy.data, "list_forcefields")
+        assert not hasattr(molpy.resources, "get_forcefield_path")
+        assert not hasattr(molpy.resources, "list_forcefields")

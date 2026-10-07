@@ -1,4 +1,4 @@
-"""``GROMACSEngine.generate_inputs``: gro + the whole topology, plus the two
+"""``GromacsEngine.generate_inputs``: gro + the whole topology, plus the two
 mdp files, and ``grompp`` accepting them when GROMACS is installed."""
 
 import shutil
@@ -7,7 +7,7 @@ import subprocess
 import pytest
 
 import molpy as mp
-from molpy.engine import GROMACSEngine
+from molpy.engine import GromacsEngine
 
 #: The GROMACS driver to check the written inputs with, if one is installed.
 GMX = shutil.which("gmx") or shutil.which("gmx_d")
@@ -22,8 +22,8 @@ def system(water, tip3p):
     ``angles`` rows, so a typed system carries them.
     """
     o, h1, h2 = list(water.atoms)
-    (ow,) = [t for t in tip3p.get_styles("atom")[0].types if t.name == "OW"]
-    (hw,) = [t for t in tip3p.get_styles("atom")[0].types if t.name == "HW"]
+    (ow,) = [t for t in tip3p.get_styles("atom")[0].get_types() if t.name == "OW"]
+    (hw,) = [t for t in tip3p.get_styles("atom")[0].get_types() if t.name == "HW"]
     tip3p.def_style("angle", "harmonic").def_type(
         "HW-OW-HW", hw, ow, hw, k=55.0, theta0=104.52
     )
@@ -35,7 +35,7 @@ def system(water, tip3p):
 
 def test_writes_coordinates_topology_and_mdps(tmp_path, system):
     frame, ff = system
-    engine = GROMACSEngine(prefix="w", check_executable=False)
+    engine = GromacsEngine(prefix="w", check_executable=False)
     paths = engine.generate_inputs(frame, ff, tmp_path, temperature=280.0)
     assert {key: p.name for key, p in paths.items()} == {
         "gro": "w.gro",
@@ -67,7 +67,7 @@ def test_run_grompps_then_mdruns_the_input_mdp(tmp_path, system, monkeypatch):
         return subprocess.CompletedProcess(cmd, 0)
 
     monkeypatch.setattr(subprocess, "run", fake_run)
-    engine = GROMACSEngine(
+    engine = GromacsEngine(
         "gmx", check_executable=False, launcher=["mpirun", "-np", "4"]
     )
     paths = engine.generate_inputs(*system, tmp_path)
@@ -90,7 +90,7 @@ def test_run_grompps_then_mdruns_the_input_mdp(tmp_path, system, monkeypatch):
 
 
 def test_grompp_accepts_the_generated_inputs(tmp_path, system):
-    paths = GROMACSEngine(check_executable=False).generate_inputs(*system, tmp_path)
+    paths = GromacsEngine(check_executable=False).generate_inputs(*system, tmp_path)
     top = paths["top"].read_text()
     assert "[ moleculetype ]" in top
     assert "[ molecules ]" in top

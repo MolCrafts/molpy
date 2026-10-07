@@ -20,10 +20,10 @@ from dataclasses import dataclass
 from typing import Any
 
 import numpy as np
-from molrs.spatial import Box, Cuboid, Cylinder, Ellipsoid, HalfSpace, Parallelepiped
-from molrs.spatial import Polyhedron, Region, Sphere, SphereUnion
-from molrs.store import Frame
-from molrs.system import Atomistic
+from molrs.core import Box, Cuboid, Cylinder, Ellipsoid, HalfSpace, Parallelepiped
+from molrs.core import Polyhedron, Region, Sphere, SphereUnion
+from molrs.core import Frame
+from molrs.core import Atomistic
 from numpy.typing import ArrayLike
 
 from ._symmetry import SpaceGroup

@@ -4,14 +4,14 @@ Generates OpenMM input files (PDB + XML force field + Python simulation
 script) from :class:`~molpy.Frame` and
 :class:`~molpy.ff.forcefield.ForceField` objects.  OpenMM itself is **not**
 required for input generation; it is only needed for
-:meth:`~OpenMMEngine.serialize_system`.
+:meth:`~OpenmmEngine.serialize_system`.
 
 Two usage modes are supported:
 
 1. **Generate only** (no OpenMM required)::
 
-       config = OpenMMSimulationConfig(ensemble="NVT", n_steps=50_000)
-       engine = OpenMMEngine(check_executable=False)
+       config = OpenmmSimulationConfig(ensemble="NVT", n_steps=50_000)
+       engine = OpenmmEngine(check_executable=False)
        paths = engine.generate_inputs(frame, ff, config, "./output")
        # Hand the files to any HPC scheduler.
 
@@ -35,11 +35,11 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
 
-from ._base import Engine
+from ._engine import Engine
 
 if TYPE_CHECKING:
     from molrs.ff.forcefield import ForceField
-    from molrs.store import Frame
+    from molrs.core import Frame
 
 PathLike = str | Path
 
@@ -50,7 +50,7 @@ PathLike = str | Path
 
 
 @dataclasses.dataclass
-class OpenMMSimulationConfig:
+class OpenmmSimulationConfig:
     """Configuration for an OpenMM simulation.
 
     All fields have physical units encoded in their names.  The object
@@ -118,14 +118,14 @@ class OpenMMSimulationConfig:
         return dataclasses.asdict(self)
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "OpenMMSimulationConfig":
+    def from_dict(cls, data: dict[str, Any]) -> "OpenmmSimulationConfig":
         """Construct a config from a plain dictionary.
 
         Args:
             data: Dict as returned by :meth:`to_dict`.
 
         Returns:
-            New :class:`OpenMMSimulationConfig` instance.
+            New :class:`OpenmmSimulationConfig` instance.
         """
         return cls(**data)
 
@@ -143,14 +143,14 @@ class OpenMMSimulationConfig:
         )
 
     @classmethod
-    def from_json(cls, path: PathLike) -> "OpenMMSimulationConfig":
+    def from_json(cls, path: PathLike) -> "OpenmmSimulationConfig":
         """Load a configuration from a JSON file.
 
         Args:
             path: Path to a JSON file previously written by :meth:`to_json`.
 
         Returns:
-            New :class:`OpenMMSimulationConfig` instance.
+            New :class:`OpenmmSimulationConfig` instance.
 
         Raises:
             FileNotFoundError: If *path* does not exist.
@@ -163,7 +163,7 @@ class OpenMMSimulationConfig:
 # ---------------------------------------------------------------------------
 
 
-class OpenMMEngine(Engine):
+class OpenmmEngine(Engine):
     """OpenMM molecular dynamics engine.
 
     Generates a complete set of OpenMM input files from MolPy
@@ -180,10 +180,10 @@ class OpenMMEngine(Engine):
         result = engine.run(paths["script"], workdir="./output")
 
     Example:
-        >>> from molpy.engine import OpenMMEngine, OpenMMSimulationConfig
+        >>> from molpy.engine import OpenmmEngine, OpenmmSimulationConfig
         >>>
-        >>> config = OpenMMSimulationConfig(ensemble="NVT", n_steps=10_000)
-        >>> engine = OpenMMEngine(check_executable=False)
+        >>> config = OpenmmSimulationConfig(ensemble="NVT", n_steps=10_000)
+        >>> engine = OpenmmEngine(check_executable=False)
         >>> paths = engine.generate_inputs(frame, ff, config, "./output")
         >>> # paths["pdb"], paths["forcefield"], paths["script"]
     """
@@ -210,7 +210,7 @@ class OpenMMEngine(Engine):
             env_vars: Extra environment variables forwarded to the subprocess.
             env: Conda env name / prefix, or venv prefix (with ``env_manager``).
             env_manager: ``"conda"`` or ``"venv"`` — same contract as
-                :class:`~molpy.wrapper.EnvSpec`.
+                :class:`~molpy.wrapper.EnvironmentSpec`.
             check_executable: Verify *executable* is available at construction.
                 Set ``False`` when only using :meth:`generate_inputs`.
         """
@@ -291,7 +291,7 @@ class OpenMMEngine(Engine):
             text=True,
             check=check,
             timeout=timeout,
-            env=self._merged_env(),
+            env=self._merged_environment(),
         )
 
     # ------------------------------------------------------------------
@@ -302,7 +302,7 @@ class OpenMMEngine(Engine):
         self,
         frame: "Frame",
         forcefield: "ForceField",
-        config: OpenMMSimulationConfig,
+        config: OpenmmSimulationConfig,
         output_dir: PathLike,
         *,
         pdb_filename: str = "system.pdb",
@@ -334,10 +334,10 @@ class OpenMMEngine(Engine):
         ff_path = out / ff_filename
         script_path = out / script_filename
 
-        from molrs.io import write_forcefield_xml, write_pdb
+        from molrs.io import write_openmm_xml_forcefield, write_pdb
 
         write_pdb(pdb_path, frame)
-        write_forcefield_xml(ff_path, forcefield)
+        write_openmm_xml_forcefield(ff_path, forcefield)
 
         script_text = self._render_simulation_script(
             config, pdb_filename=pdb_filename, ff_filename=ff_filename
@@ -350,7 +350,7 @@ class OpenMMEngine(Engine):
         self,
         frame: "Frame",
         forcefield: "ForceField",
-        config: OpenMMSimulationConfig,
+        config: OpenmmSimulationConfig,
         output_dir: PathLike,
         *,
         pdb_filename: str = "system.pdb",
@@ -443,7 +443,7 @@ class OpenMMEngine(Engine):
 
     def _render_simulation_script(
         self,
-        config: OpenMMSimulationConfig,
+        config: OpenmmSimulationConfig,
         *,
         pdb_filename: str,
         ff_filename: str,
@@ -469,7 +469,7 @@ class OpenMMEngine(Engine):
         return self._render_nvt_script(config, pdb_filename, ff_filename)
 
     @staticmethod
-    def _common_header(config: OpenMMSimulationConfig) -> str:
+    def _common_header(config: OpenmmSimulationConfig) -> str:
         """Render the import block common to all ensembles."""
         constraints_import = (
             f"    {config.constraints},\n" if config.constraints != "None" else ""
@@ -496,7 +496,7 @@ class OpenMMEngine(Engine):
 
     @staticmethod
     def _system_setup(
-        config: OpenMMSimulationConfig, pdb_filename: str, ff_filename: str
+        config: OpenmmSimulationConfig, pdb_filename: str, ff_filename: str
     ) -> str:
         """Render PDB loading and system creation lines."""
         constraints_arg = "None" if config.constraints == "None" else config.constraints
@@ -512,7 +512,7 @@ class OpenMMEngine(Engine):
         )
 
     @staticmethod
-    def _integrator_and_simulation(config: OpenMMSimulationConfig) -> str:
+    def _integrator_and_simulation(config: OpenmmSimulationConfig) -> str:
         """Render integrator construction and Simulation setup lines."""
         return (
             f"integrator = LangevinMiddleIntegrator(\n"
@@ -526,7 +526,7 @@ class OpenMMEngine(Engine):
         )
 
     @staticmethod
-    def _reporters(config: OpenMMSimulationConfig) -> str:
+    def _reporters(config: OpenmmSimulationConfig) -> str:
         """Render reporter registration lines."""
         return (
             f'simulation.reporters.append(DCDReporter("{config.output_dcd}", {config.dcd_reporter_interval}))\n'
@@ -539,7 +539,7 @@ class OpenMMEngine(Engine):
 
     def _render_nvt_script(
         self,
-        config: OpenMMSimulationConfig,
+        config: OpenmmSimulationConfig,
         pdb_filename: str,
         ff_filename: str,
     ) -> str:
@@ -559,7 +559,7 @@ class OpenMMEngine(Engine):
 
     def _render_npt_script(
         self,
-        config: OpenMMSimulationConfig,
+        config: OpenmmSimulationConfig,
         pdb_filename: str,
         ff_filename: str,
     ) -> str:
@@ -588,7 +588,7 @@ class OpenMMEngine(Engine):
 
     def _render_minimize_script(
         self,
-        config: OpenMMSimulationConfig,
+        config: OpenmmSimulationConfig,
         pdb_filename: str,
         ff_filename: str,
     ) -> str:

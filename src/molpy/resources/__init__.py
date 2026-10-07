@@ -1,17 +1,11 @@
-"""
-MolPy Data Module - Access to built-in data files.
+"""molpy's bundled resource files: force-field XMLs and other data shipped with the package.
 
-This module provides a unified interface for accessing built-in data files
-such as force field parameters, molecule templates, and other resources.
+Usage::
 
-Usage:
-    from molpy.data import get_path, list_files
+    from molpy.resources import get_path, list_files
 
-    # Get path to a data file
-    path = get_path("forcefield/tip3p.xml")
-
-    # List available files in a subdirectory
-    files = list_files("forcefield")
+    path = get_path("forcefield/tip3p.xml")   # absolute path to a bundled file
+    files = list(list_files("forcefield"))     # every file in a subdirectory
 """
 
 from collections.abc import Iterator
@@ -33,21 +27,21 @@ def get_path(relative_path: str | Path) -> Path:
         FileNotFoundError: If the file does not exist
 
     Examples:
-        >>> from molpy.data import get_path
+        >>> from molpy.resources import get_path
         >>> path = get_path("forcefield/tip3p.xml")
         >>> print(path)
         /path/to/molpy/data/forcefield/tip3p.xml
     """
     relative_path = Path(relative_path)
 
-    resource = files(__package__ or "molpy.data")
+    resource = files(__package__ or "molpy.resources")
     for part in relative_path.parts:
         resource = resource / part
 
     with as_file(resource) as path:
         if not path.exists():
             raise FileNotFoundError(
-                f"Data file not found: {relative_path}. "
+                f"Resource file not found: {relative_path}. "
                 f"Available files: {list(list_files(relative_path.parent))}"
             )
         return path
@@ -67,7 +61,7 @@ def list_files(
         Relative paths to files in the subdirectory
 
     Examples:
-        >>> from molpy.data import list_files
+        >>> from molpy.resources import list_files
         >>> for file in list_files("forcefield"):
         ...     print(file)
         forcefield/tip3p.xml
@@ -82,7 +76,7 @@ def list_files(
         # Exclude Python files
         return bool(filename.endswith(".py") or filename == "__pycache__")
 
-    resource = files(__package__ or "molpy.data")
+    resource = files(__package__ or "molpy.resources")
     for part in subdirectory.parts:
         resource = resource / part
 
@@ -109,7 +103,7 @@ def exists(relative_path: str | Path) -> bool:
         True if the file exists, False otherwise
 
     Examples:
-        >>> from molpy.data import exists
+        >>> from molpy.resources import exists
         >>> if exists("forcefield/tip3p.xml"):
         ...     print("File exists")
     """
