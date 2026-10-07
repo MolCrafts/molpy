@@ -141,7 +141,7 @@ frame.box = mp.Box.cube(20.0)
 ```python
 from molpy.compute import LocalDensity
 
-nl = mp.NeighborList(5.0)
+nl = mp.core.NeighborList(5.0)
 nl.build(frame.coords, frame.box)
 nlist = nl.neighbors()
 (counts, density), = LocalDensity(r_max=5.0).compute([frame], [nlist])

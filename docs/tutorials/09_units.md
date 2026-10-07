@@ -4,8 +4,8 @@ A frame stores `x = 3.0`. Is that 3 Å or 3 nm? The array does not say.
 
 **A unit preset names the convention that gives bare numbers meaning**, and a
 unit registry converts explicitly when two conventions meet (for example
-LAMMPS `real` vs `metal`). Both are molrs's: `mp.UnitPreset` and
-`mp.UnitRegistry` are `molrs.units.UnitPreset` and `molrs.units.UnitRegistry`.
+LAMMPS `real` vs `metal`). Both are molrs's: `mp.core.UnitPreset` and
+`mp.core.UnitRegistry` are `molrs.units.UnitPreset` and `molrs.units.UnitRegistry`.
 
 What it is **not**: automatic unit tracking on every `Frame` column. Numbers stay
 plain; *you* attach a convention when you convert or compare.
@@ -23,14 +23,14 @@ Named presets mirror the LAMMPS `units` styles, plus `openmm`:
 ```python
 import molpy as mp
 
-print(mp.UnitPreset.names())
+print(mp.core.UnitPreset.names())
 # ['cgs', 'electron', 'lj', 'metal', 'micro', 'nano', 'openmm', 'real', 'si']
 
-real = mp.UnitPreset("real")  # LAMMPS 'real': Å, fs, kcal/mol, amu, e
+real = mp.core.UnitPreset("real")  # LAMMPS 'real': Å, fs, kcal/mol, amu, e
 print(real.length(), real.energy())  # angstrom kilocalorie_per_mole
 print(real.boltzmann())  # k_B in kcal/(mol·K)
 
-u = mp.UnitRegistry()
+u = mp.core.UnitRegistry()
 length = 3.0 * u.parse(real.length())
 print(length.to(u.nanometer))  # 0.3 nanometer
 ```
@@ -50,17 +50,17 @@ Register a custom convention once, then reuse it by name. A preset names one
 unit for each of its ten dimensions and carries its two constants:
 
 ```python
-real = mp.UnitPreset("real")
+real = mp.core.UnitPreset("real")
 dims = ("mass", "length", "time", "energy", "temperature", "charge",
         "pressure", "velocity", "force", "density")
 units = {dim: getattr(real, dim)() for dim in dims}
-mine = mp.UnitPreset.register(
+mine = mp.core.UnitPreset.register(
     "my_units",
     {**units, "length": "nanometer"},
     boltzmann=real.boltzmann(),
     coulomb=real.coulomb(),
 )
-print(mp.UnitPreset("my_units").length())  # nanometer
+print(mp.core.UnitPreset("my_units").length())  # nanometer
 ```
 
 `overwrite=False` (the default) refuses to replace an existing preset.
@@ -70,7 +70,7 @@ adds the reduced (Lennard-Jones) units `lj_sigma`, `lj_tau`,
 `lj_epsilon_over_kB`, … to a registry from reference `Quantity` values:
 
 ```python
-argon = mp.UnitRegistry()
+argon = mp.core.UnitRegistry()
 argon.define_lj_units(
     39.948 * argon.amu, 3.405 * argon.angstrom, 0.2381 * argon.kilocalorie_per_mole
 )
@@ -79,12 +79,12 @@ print((1.0 * argon.lj_tau).to(argon.ps).magnitude)  # ≈ 2.16
 
 ## Converting quantities
 
-Quantities are `mp.Quantity`. Multiply a number by a unit, then `.to(...)` to
+Quantities are `mp.core.Quantity`. Multiply a number by a unit, then `.to(...)` to
 convert; `.magnitude` reads the bare number. The Boltzmann constant is the
 unit `k_B`:
 
 ```python
-u = mp.UnitRegistry()
+u = mp.core.UnitRegistry()
 e = 2.5 * u.eV
 print(e.to("J"))  # convert energy (per particle)
 print((5 * u.angstrom).to("nm"))  # convert length

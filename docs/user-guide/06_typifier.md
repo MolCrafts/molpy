@@ -5,7 +5,7 @@
 Typification is the bridge between chemistry and parameters: SMARTS patterns from the force field decide which type every atom, bond, angle, and dihedral gets.
 
 !!! note "Prerequisites"
-    Nothing beyond MolPy itself: the 3D coordinates come from the native `mp.Conformer`, and the OPLS-AA rules and parameters ship with the native core.
+    Nothing beyond MolPy itself: the 3D coordinates come from the native `mp.conformer.Conformer`, and the OPLS-AA rules and parameters ship with the native core.
 
 ## The problem typification solves
 
@@ -25,8 +25,8 @@ import molpy as mp
 from molpy.ff.typifier import OPLSAATypifier
 
 # 1. Build the structure
-mol = mp.io.SmilesIR("CCO").to_atomistic()
-mol, _ = mp.Conformer(add_hydrogens=True, seed=42).generate(mol)
+mol = mp.io.smiles.SmilesIR("CCO").to_atomistic()
+mol, _ = mp.conformer.Conformer(add_hydrogens=True, seed=42).generate(mol)
 mol.generate_topology(gen_angle=True, gen_dihedral=True, clear_existing=True)  # in place
 
 print(f"atoms: {len(mol.atoms)}, bonds: {len(mol.bonds)}")
@@ -147,7 +147,7 @@ ff.get_style("pair", "lj/cut")["cutoff"] = 10.0
 ff.get_style("pair", "coul/cut")["cutoff"] = 10.0
 
 mp.io.write_lammps_data(outdir / "ethanol.data", frame)
-mp.ff.forcefield.write_lammps_forcefield(outdir / "ethanol.ff", ff, frame)
+mp.io.write_lammps_forcefield(outdir / "ethanol.ff", ff, frame)
 
 print(f"exported to {outdir}")
 ```
@@ -166,15 +166,15 @@ The structure and the coefficients are two files and two calls. `write_lammps_fo
 
 ```python
 units = {"CAPA": "C[>]", "EO": "[<]OCC[>]", "CAPB": "[<]OC"}
-conformer = mp.Conformer(seed=42)
+conformer = mp.conformer.Conformer(seed=42)
 library = {
     name: conformer.generate(
-        mp.io.SmilesIR.from_fragment(body).to_template()
+        mp.io.smiles.SmilesIR.from_fragment(body).to_template()
     )[0]
     for name, body in units.items()
 }
 
-sites = mp.io.CGSmilesIR("{[#CAPA][#EO]|6[#CAPB]}").to_coarsegrain()
+sites = mp.io.smiles.CGSmilesIR("{[#CAPA][#EO]|6[#CAPB]}").to_coarsegrain()
 chain = mp.builder.Assembler(library, mp.builder.GrowthPlacer()).assemble(sites, mp.Atomistic)
 
 typed_chain = OPLSAATypifier(strict=True).typify(chain)

@@ -9,7 +9,7 @@ import molpy as mp
 from eo_kit import library
 
 graft = "[#GR][#EO]"
-sites = mp.io.CGSmilesIR(f"{{[#EO][#BR]({graft})[#EO][#BR]({graft})[#EO]}}").to_coarsegrain()
+sites = mp.io.smiles.CGSmilesIR(f"{{[#EO][#BR]({graft})[#EO][#BR]({graft})[#EO]}}").to_coarsegrain()
 comb = mp.builder.Assembler(library(), mp.builder.GrowthPlacer()).assemble(sites, mp.Atomistic)
 ```
 

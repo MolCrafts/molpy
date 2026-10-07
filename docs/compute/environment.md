@@ -87,7 +87,7 @@ phi_edges)`. The two grids are `(n_theta, n_phi)`; the two edge arrays are one
 longer than their axis, as histogram edges always are:
 
 ```python
-nl = mp.NeighborList(4.5)
+nl = mp.core.NeighborList(4.5)
 nl.build(crystal.coords, crystal.box)
 nlist = nl.neighbors()
 counts, density, theta_edges, phi_edges = BondOrder(n_theta=36, n_phi=72).compute(

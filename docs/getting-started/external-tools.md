@@ -12,8 +12,8 @@ This page is the only place those integrations are documented as prerequisites.
 
 | Task | Use |
 |------|-----|
-| Parse SMILES / SMARTS | `mp.io.SmilesIR`, `mp.SmartsPattern` |
-| 3D coordinates | `mp.Conformer` |
+| Parse SMILES / SMARTS | `mp.io.smiles.SmilesIR`, `mp.perceive.SmartsPattern` |
+| 3D coordinates | `mp.conformer.Conformer` |
 | Polymer assembly | `mp.builder.Assembler` on a CGsmiles site graph (native); see [Polymer Topologies](../user-guide/topology/index.md) |
 | Pack a box | [molpack](https://docs.molcrafts.org/molpack/) (`molcrafts-molpack`, installed separately) |
 | OPLS-AA / MMFF94 typing | `molpy.ff.typifier` |
@@ -50,8 +50,8 @@ Pass the env into the typifier when you construct it:
 # docs: skip — needs AmberTools; typifiers unit-tested with the executables faked
 import molpy as mp
 
-mol, _ = mp.Conformer(add_hydrogens=True, seed=42).generate(
-    mp.io.SmilesIR("CCO").to_atomistic()
+mol, _ = mp.conformer.Conformer(add_hydrogens=True, seed=42).generate(
+    mp.io.smiles.SmilesIR("CCO").to_atomistic()
 )  # antechamber needs 3D coordinates
 ante = mp.ff.typifier.AntechamberTypifier(
     atom_type="gaff2", charge_method="bcc",

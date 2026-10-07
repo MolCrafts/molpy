@@ -10,7 +10,7 @@ You have built a molecular system, typed its atoms, and exported the coordinate 
 
 **An Engine is MolPy's adapter between Python data objects and a specific MD program — it knows how to write engine-readable input files and how to invoke the executable.**
 
-What the engine module does not do is equally important. It does not build molecules, assign atom types, or analyze trajectories, and it formats no file itself: the structure and force-field files come from molrs's writers (`mp.io`, `mp.ff.forcefield`). Each engine has **one** input writer, `generate_inputs`, which calls those writers and adds the control files that tell the MD program what physics to simulate and where to find them.
+What the engine module does not do is equally important. It does not build molecules, assign atom types, or analyze trajectories, and it formats no file itself: the structure and force-field files come from molrs's writers (`mp.io`). Each engine has **one** input writer, `generate_inputs`, which calls those writers and adds the control files that tell the MD program what physics to simulate and where to find them.
 
 ---
 
@@ -80,7 +80,7 @@ files = gmx.generate_inputs(water, ff, "./gromacs_run", temperature=300.0)
 print(sorted(files))  # ['em', 'gro', 'nvt', 'top']
 ```
 
-The `.top` is the whole topology `mp.ff.forcefield.write_gromacs_system`
+The `.top` is the whole topology `mp.io.write_gromacs_system`
 writes: the force field's directives, one `[ moleculetype ]` per molecule
 (by the atoms' `mol_id`) with each row's parameters, `[ system ]` and
 `[ molecules ]` — what `grompp -p` reads. GROMACS excludes every pair within
@@ -130,7 +130,7 @@ script.save("./submit/input.lmp")
 # -> ./submit/input.lmp written
 ```
 
-The include written by `mp.ff.forcefield.write_lammps_forcefield` already declares every style, so the script does not repeat them; a different `pair_style` issued after it would discard its pair coefficients (for long-range electrostatics, write the include with `skip_pair_style=True` and declare the pair style in the script before `include`). Because the script states `units` before `read_data`, write the include with `skip_units=True`: LAMMPS refuses a `units` line once the box exists. The saved control script, together with the `system.data` and `system.ff` pair produced by `mp.io.write_lammps_data` and `mp.ff.forcefield.write_lammps_forcefield` (there is no bundled `.in` — the control script above *is* the input deck, written separately by `Script.save`), is a complete LAMMPS job. Drop all three into a Slurm submission script and the cluster needs nothing from MolPy.
+The include written by `mp.io.write_lammps_forcefield` already declares every style, so the script does not repeat them; a different `pair_style` issued after it would discard its pair coefficients (for long-range electrostatics, write the include with `skip_pair_style=True` and declare the pair style in the script before `include`). Because the script states `units` before `read_data`, write the include with `skip_units=True`: LAMMPS refuses a `units` line once the box exists. The saved control script, together with the `system.data` and `system.ff` pair produced by `mp.io.write_lammps_data` and `mp.io.write_lammps_forcefield` (there is no bundled `.in` — the control script above *is* the input deck, written separately by `Script.save`), is a complete LAMMPS job. Drop all three into a Slurm submission script and the cluster needs nothing from MolPy.
 
 `Script.from_path` is the mirror image — load an existing file, modify it programmatically, and save it back or pass it to `run()`.
 

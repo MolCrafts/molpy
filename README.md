@@ -51,14 +51,16 @@ writes it or an agent calls it.
 ## Capabilities
 
 Every name is reached through `import molpy as mp`, and molpy is a thin layer
-over the native core (molrs): every native name is the molrs object. molrs
-subsystems molpy has a namespace for are mirrored under their molrs name
-(`mp.ff`, `mp.io`, `mp.compute`, `mp.builder`, …); the data model is flattened
-onto the root.
+over the native core (molrs): every native name is the molrs object. Every
+molrs subsystem is mirrored by a molpy module (`mp.core` for molrs's core —
+`store`, `system`, `spatial`, `units` — then `mp.io`, `mp.ff`, `mp.perceive`,
+`mp.compute`, `mp.builder`, …). The core data classes you handle directly
+(`mp.Frame`, `mp.Block`, `mp.Trajectory`, `mp.Box`, `mp.Atomistic`, …) are
+promoted to the root, as the same objects.
 
 | Where | Capability |
 |---|---|
-| **`mp.*`** (native) | Explicit data model — editable `Atomistic` / `CoarseGrain` graphs, `Frame` / `Block` columnar arrays, regions and neighbour search, units, perception and SMARTS (`SmartsPattern`), 3D conformers (`Conformer`), the `LBFGS` minimizer, `Box`, `Trajectory`; molpy's trajectory splitters and selectors |
+| **`mp.*`, `core`, `perceive`, `conformer`, `optimize`** | Explicit data model — `Frame` / `Block` columnar arrays, `Trajectory`, editable `Atomistic` / `CoarseGrain` graphs and `Box` on the root; regions, neighbour search, units, molpy's selectors and trajectory splitters in `mp.core`; perception and SMARTS (`mp.perceive.SmartsPattern`), 3D conformers (`mp.conformer.Conformer`), the `mp.optimize.LBFGS` minimizer |
 | **`ff`** | Force fields, mirroring `molrs.ff` — `forcefield` (`ForceField` and the force-field file formats), `potential` (`PotentialCompiler`, kernels), `typifier` (OPLS-AA, MMFF94, GAFF natively; GAFF / GAFF2 via AmberTools), `charge`, `ir` (your own styles from Python), `params`, `scale_lj` |
 | **`builder`** | Site-graph assembly (`Assembler`), graphene and nanotubes, polymer planning and polydispersity, crystals, virtual sites, packing templates |
 | **`compute`** · **`signal`** | Analysis — RDF, MSD, conductivity, order parameters, Voronoi, dielectric and vibrational spectra, … (native kernels); FFT correlation and windows |
@@ -118,8 +120,8 @@ import molpy as mp
 
 from pathlib import Path
 
-mol       = mp.io.SmilesIR("CCO").to_atomistic()     # ethanol from SMILES
-mol3d, _  = mp.Conformer(seed=42).generate(mol)   # hydrogens + 3D coordinates
+mol       = mp.io.smiles.SmilesIR("CCO").to_atomistic()     # ethanol from SMILES
+mol3d, _  = mp.conformer.Conformer(seed=42).generate(mol)   # hydrogens + 3D coordinates
 
 typifier  = mp.ff.typifier.OPLSAATypifier()          # carries the OPLS-AA library
 typed     = typifier.typify(mol3d)
@@ -135,7 +137,7 @@ ff.get_style("pair", "coul/cut")["cutoff"] = 10.0
 
 out = Path("output"); out.mkdir(exist_ok=True)
 mp.io.write_lammps_data(out / "system.data", system)
-mp.ff.forcefield.write_lammps_forcefield(out / "system.ff", ff, system)
+mp.io.write_lammps_forcefield(out / "system.ff", ff, system)
 ```
 
 More workflows — packed solvent boxes, virtual-site models, polymer

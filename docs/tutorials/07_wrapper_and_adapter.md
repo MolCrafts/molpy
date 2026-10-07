@@ -21,7 +21,7 @@ The examples below share this setup:
 ```python
 import molpy as mp
 
-mol = mp.io.SmilesIR("CCO").to_atomistic()
+mol = mp.io.smiles.SmilesIR("CCO").to_atomistic()
 ```
 
 ```python
@@ -97,7 +97,7 @@ import molpy as mp
 from molpy.adapter import RDKitAdapter
 from rdkit.Chem import AllChem
 
-mol = mp.io.SmilesIR("CCO").to_atomistic()
+mol = mp.io.smiles.SmilesIR("CCO").to_atomistic()
 
 adapter = RDKitAdapter(internal=mol)
 rd_mol = adapter.get_external()
@@ -115,7 +115,7 @@ supported one — no third-party install, and it returns a report of what each
 stage of the pipeline did:
 
 ```python
-mol_3d, report = mp.Conformer(add_hydrogens=True, seed=42).generate(mol)
+mol_3d, report = mp.conformer.Conformer(add_hydrogens=True, seed=42).generate(mol)
 ```
 
 That is the line to remember about adapters: use one to reach *their*

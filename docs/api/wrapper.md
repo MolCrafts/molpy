@@ -61,8 +61,6 @@ print(result.returncode) # 0
 
 ::: molpy.wrapper.Parmchk2Wrapper
 
-::: molpy.wrapper.write_prepgen_control_file
-
 ### TLeap
 
 ::: molpy.wrapper.TLeapWrapper

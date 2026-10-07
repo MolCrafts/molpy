@@ -177,13 +177,13 @@ Once the model is internally consistent, serialization becomes an interface prob
 ### GROMACS
 
 ```python
-mp.ff.forcefield.write_gromacs_top_ff("system.itp", ff, precision=4)
+mp.io.write_gromacs_top_ff("system.itp", ff, precision=4)
 ```
 
 ### XML
 
 ```python
-mp.ff.forcefield.write_forcefield_xml("system.xml", ff, precision=6)
+mp.io.write_forcefield_xml("system.xml", ff, precision=6)
 ```
 
 ### LAMMPS
@@ -199,7 +199,7 @@ does not write a style-level cutoff.)
 ```python
 ff.get_style("pair", "lj/cut")["cutoff"] = 10.0
 ff.get_style("pair", "coul/cut")["cutoff"] = 10.0
-print(mp.ff.forcefield.write_lammps_forcefield_str(ff, frame, precision=4))
+print(mp.io.write_lammps_forcefield_str(ff, frame, precision=4))
 ```
 
 

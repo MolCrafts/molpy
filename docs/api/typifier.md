@@ -57,8 +57,8 @@ yet; MolPy re-exports it once one is published.
 import molpy as mp
 from molpy.ff.typifier import OPLSAATypifier
 
-mol, _ = mp.Conformer(add_hydrogens=True, seed=42).generate(
-    mp.io.SmilesIR("CCO").to_atomistic()
+mol, _ = mp.conformer.Conformer(add_hydrogens=True, seed=42).generate(
+    mp.io.smiles.SmilesIR("CCO").to_atomistic()
 )
 
 typifier = OPLSAATypifier(strict=True)
@@ -116,7 +116,7 @@ class TIP3PTypifier(mp.ff.typifier.Typifier):
 
 
 tip3p = TIP3PTypifier()
-water = tip3p.typify(mp.io.SmilesIR("[H]O[H]").to_atomistic())
+water = tip3p.typify(mp.io.smiles.SmilesIR("[H]O[H]").to_atomistic())
 assert [bond["type"] for bond in water.bonds] == ["OW-HW", "OW-HW"]
 assert tip3p.forcefield().get_style("bond", "harmonic").get_type_by_name("OW-HW")["k"] == 450.0
 ```

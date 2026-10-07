@@ -16,8 +16,8 @@ Parse a SMILES string, add hydrogens and coordinates, and assign OPLS-AA types.
 ```python
 import molpy as mp
 
-mol = mp.io.SmilesIR("CCO").to_atomistic() # ethanol from SMILES (heavy atoms)
-mol, _ = mp.Conformer(add_hydrogens=True, seed=42).generate(
+mol = mp.io.smiles.SmilesIR("CCO").to_atomistic() # ethanol from SMILES (heavy atoms)
+mol, _ = mp.conformer.Conformer(add_hydrogens=True, seed=42).generate(
  mol
 ) # add hydrogens + 3D coordinates
 typifier = mp.ff.typifier.OPLSAATypifier() # embedded OPLS-AA table
@@ -25,7 +25,7 @@ typed = typifier.typify(mol) # assign force-field types
 ff = typifier.forcefield() # the parameters it assigned
 
 frame = typed.to_frame() # simulation-ready columnar arrays
-# mp.io.write_lammps_data(...) + mp.ff.forcefield.write_lammps_forcefield(path, ff, frame)
+# mp.io.write_lammps_data(...) + mp.io.write_lammps_forcefield(path, ff, frame)
 # write system.data + system.ff (set frame.box and a per-atom mol_id first —
 # see the Quickstart).
 ```
@@ -54,7 +54,7 @@ water.def_bond(o, h2)
 target = (
  Target(water.to_frame(), count=500)
 .with_name("water")
-.with_restraint(mp.Cuboid([0.0, 0.0, 0.0], [30.0, 30.0, 30.0]))
+.with_restraint(mp.core.Cuboid([0.0, 0.0, 0.0], [30.0, 30.0, 30.0]))
 )
 packed = GenCanPack().with_seed(42).run([target], max_loops=200).frame
 # → one packed Frame (1500 atoms)
@@ -110,7 +110,7 @@ Minimal linear chain, ten EO units:
 import molpy as mp
 from eo_kit import library
 
-sites = mp.io.CGSmilesIR("{[#EO]|10}").to_coarsegrain()
+sites = mp.io.smiles.CGSmilesIR("{[#EO]|10}").to_coarsegrain()
 chain = mp.builder.Assembler(library(), mp.builder.GrowthPlacer()).assemble(sites, mp.Atomistic)
 ```
 
@@ -166,7 +166,7 @@ print(f"Planned {len(plan.chains)} chains") # reproducible chain population
 from eo_kit import library  # examples/topology/
 
 first = plan.chains[0]
-sites = mp.io.CGSmilesIR("{" + "".join(f"[#{m}]" for m in first.monomers) + "}").to_coarsegrain()
+sites = mp.io.smiles.CGSmilesIR("{" + "".join(f"[#{m}]" for m in first.monomers) + "}").to_coarsegrain()
 chain = mp.builder.Assembler(library(), mp.builder.GrowthPlacer()).assemble(sites, mp.Atomistic)
 ```
 
@@ -192,7 +192,7 @@ import molpy as mp
 pieces = mp.builder.AmberPieces(head="COCC", repeat="OCC", tail="OCCOC")
 oligomer, cuts = pieces.oligomer(seed=42)  # CH3O(CH2CH2O)3CH3 and its head/chain/tail cuts
 
-sites = mp.io.CGSmilesIR("{[#PEO]|10}").to_coarsegrain()  # head, 8 x chain, tail
+sites = mp.io.smiles.CGSmilesIR("{[#PEO]|10}").to_coarsegrain()  # head, 8 x chain, tail
 built = mp.builder.AmberPolymerBuilder(
     {"PEO": oligomer}, {"PEO": cuts}, force_field="gaff2"
 ).assemble(sites)

@@ -11,15 +11,14 @@ Most polymer samples are polydisperse rather than monodisperse. This workflow st
 
 ## Each monomer is a CGsmiles fragment with two ports
 
-A styrene / methyl-acrylate copolymer grows by radical addition: each junction is a new C–C bond between the backbone carbons of neighbouring units, and one hydrogen leaves each side. That is exactly what a port expresses. Each unit is written as a CGsmiles fragment whose bonding descriptors sit on the two backbone carbons (`[<]` on one, `[>]` on the other), so `<` of one unit joins `>` of the next, head to tail. `mp.Conformer` embeds each fragment in 3D with hydrogens; the hydrogen on each port is its leaving atom.
+A styrene / methyl-acrylate copolymer grows by radical addition: each junction is a new C–C bond between the backbone carbons of neighbouring units, and one hydrogen leaves each side. That is exactly what a port expresses. Each unit is written as a CGsmiles fragment whose bonding descriptors sit on the two backbone carbons (`[<]` on one, `[>]` on the other), so `<` of one unit joins `>` of the next, head to tail. `mp.conformer.Conformer` embeds each fragment in 3D with hydrogens; the hydrogen on each port is its leaving atom.
 
 Two methyl caps, `HEAD` and `TAIL`, close the chain ends. Because every handle leaves when its port bonds, the mass a unit adds to a chain is its template mass minus its handles — the numbers the planner needs below.
 
 
 ```python
 import molpy as mp
-from molpy import Element
-
+from molpy.core import Element
 # One CGsmiles fragment per unit; its bonding descriptors are its ports.
 UNITS = {
     "Sty": "[<]CC(c1ccccc1)[>]",  # -CH2-CH(Ph)-
@@ -28,10 +27,10 @@ UNITS = {
     "TAIL": "[<]C",  # -CH3 : ends a chain
 }
 
-conformer = mp.Conformer(seed=42)
+conformer = mp.conformer.Conformer(seed=42)
 library = {
     name: conformer.generate(
-        mp.io.SmilesIR.from_fragment(body).to_template()
+        mp.io.smiles.SmilesIR.from_fragment(body).to_template()
     )[0]
     for name, body in UNITS.items()
 }
@@ -287,7 +286,7 @@ n_chains = 5  # a few chains for this guide; use len(sz_chains) for a production
 atomistic_chains = []
 for chain in sz_chains[:n_chains]:
     notation = "{[#HEAD]" + "".join(f"[#{m}]" for m in chain.monomers) + "[#TAIL]}"
-    sites = mp.io.CGSmilesIR(notation).to_coarsegrain()
+    sites = mp.io.smiles.CGSmilesIR(notation).to_coarsegrain()
     atomistic_chains.append(assembler.assemble(sites, mp.Atomistic))
 
 for chain, built in zip(sz_chains, atomistic_chains):
@@ -341,7 +340,7 @@ target_density = 0.05  # g/cm^3 (use ~1.0 for production)
 volume = (total_mw / 6.022e23) / target_density * 1e24
 box_length = volume ** (1 / 3)
 
-box = mp.Cuboid([0.0, 0.0, 0.0], [box_length] * 3)
+box = mp.core.Cuboid([0.0, 0.0, 0.0], [box_length] * 3)
 targets = []
 for chain in typed_chains:
     template = mp.builder.PackingTemplate(chain)  # frame + perceived atom roles
@@ -362,7 +361,7 @@ Path("05_output").mkdir(exist_ok=True)
 mp.io.write_lammps_data("05_output/system.data", packed)
 # the input script states `units` before `read_data`; LAMMPS refuses a second
 # `units` line once the box exists, so the include leaves it out
-mp.ff.forcefield.write_lammps_forcefield(
+mp.io.write_lammps_forcefield(
     "05_output/system.ff", ff, packed, skip_units=True
 )
 print(f"packed: {packed['atoms'].nrows} atoms, box: {box_length:.1f} A")
@@ -445,7 +444,7 @@ Input script written to: 05_output/input.lmp
 
 ## The notation describes one chain; the ensemble is code
 
-MolPy reads CGsmiles (`mp.io.CGSmilesIR`), and every chain above passed through it: the units are CGsmiles fragments and each sampled sequence is a CGsmiles string. What a CGsmiles string does not hold is the ensemble — the monomer weights, the chain-length distribution and the target system mass. Those stay ordinary Python objects (`WeightedSequenceGenerator`, a distribution, `SystemPlanner`), which are easier to inspect, debug and parameterise than a single string. BigSMILES and G-BigSMILES are not parsed.
+MolPy reads CGsmiles (`mp.io.smiles.CGSmilesIR`), and every chain above passed through it: the units are CGsmiles fragments and each sampled sequence is a CGsmiles string. What a CGsmiles string does not hold is the ensemble — the monomer weights, the chain-length distribution and the target system mass. Those stay ordinary Python objects (`WeightedSequenceGenerator`, a distribution, `SystemPlanner`), which are easier to inspect, debug and parameterise than a single string. BigSMILES and G-BigSMILES are not parsed.
 
 ## Troubleshooting
 

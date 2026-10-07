@@ -16,7 +16,7 @@ The simplest filters match one column: element symbols, type labels, and so on.
 
 ```python
 import molpy as mp
-from molpy import AtomTypeSelector, ElementSelector
+from molpy.core import AtomTypeSelector, ElementSelector
 import numpy as np
 
 # The Frame schema declares a dtype per field: `type` is the string label and
@@ -45,16 +45,16 @@ print(AtomTypeSelector(2, field="type_id")(atoms)["element"]) # ['H', 'H']
 ## Selecting by position: regions
 
 Where an atom is — a slab, a sphere, a shell — is a geometric region's job.
-The regions are molrs's (`mp.Cuboid`, `mp.Sphere`, `mp.HalfSpace`, …); each has
+The regions are molrs's (`mp.core.Cuboid`, `mp.core.Sphere`, `mp.core.HalfSpace`, …); each has
 the same `mask(block)` and is callable on a block, and they compose with `&`,
-`|` and `~` into an `mp.Region`. They read the `x`, `y`, `z` columns.
+`|` and `~` into an `mp.core.Region`. They read the `x`, `y`, `z` columns.
 
 ```python
 # x >= 2.5: the half-space whose outward normal points to -x
-right_half = mp.HalfSpace([-1.0, 0.0, 0.0], [2.5, 0.0, 0.0])(atoms)
+right_half = mp.core.HalfSpace([-1.0, 0.0, 0.0], [2.5, 0.0, 0.0])(atoms)
 print(right_half["element"]) # ['H', 'O', 'N']
 
-near_origin = mp.Sphere([0.0, 0.0, 0.0], 1.5)(atoms)
+near_origin = mp.core.Sphere([0.0, 0.0, 0.0], 1.5)(atoms)
 print(near_origin["element"]) # ['C', 'C']
 ```
 
@@ -63,7 +63,7 @@ pattern for solvation analysis: the outer sphere without the inner one.
 
 ```python
 center = [2.0, 0.0, 0.0]
-shell = (mp.Sphere(center, 2.5) & ~mp.Sphere(center, 1.0))(atoms)
+shell = (mp.core.Sphere(center, 2.5) & ~mp.core.Sphere(center, 1.0))(atoms)
 print(shell["element"])
 ```
 
@@ -73,7 +73,7 @@ The real power of selectors comes from composition. `&` means AND, `|` means OR,
 
 ```python
 # (Carbon OR Oxygen) AND (x >= 0.5): a selector composes with a region
-sel = (ElementSelector("C") | ElementSelector("O")) & mp.HalfSpace(
+sel = (ElementSelector("C") | ElementSelector("O")) & mp.core.HalfSpace(
  [-1.0, 0.0, 0.0], [0.5, 0.0, 0.0]
 )
 result = sel(atoms)
@@ -88,7 +88,7 @@ Nested combinations let you express precise scientific queries concisely.
 
 ```python
 # Heavy atoms near a specific point
-heavy_near = ~ElementSelector("H") & mp.Sphere([2.0, 0.0, 0.0], 2.5)
+heavy_near = ~ElementSelector("H") & mp.core.Sphere([2.0, 0.0, 0.0], 2.5)
 print(heavy_near(atoms)["element"])
 ```
 

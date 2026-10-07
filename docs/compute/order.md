@@ -159,7 +159,7 @@ The result is a list with one **dict** per frame, holding the degrees you asked
 for and a `(n_degrees, n_atoms)` array of per-atom values:
 
 ```python
-nl = mp.NeighborList(4.5)
+nl = mp.core.NeighborList(4.5)
 nl.build(crystal.coords, crystal.box)
 nlist = nl.neighbors()
 result, = Steinhardt(l=[4, 6]).compute([crystal], [nlist])

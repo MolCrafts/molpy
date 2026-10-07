@@ -6,24 +6,27 @@ MolPy is a layered toolkit with explicit data flow and minimal magic. This page 
 
 Each package has one job, and molpy is a thin layer over molrs: every native
 name is the molrs object, re-exported by identity, and molpy keeps no parallel
-IR, I/O, geometry, units or regions. A molrs subsystem molpy has a namespace
-for is mirrored under its molrs name; the data-model subsystems are flattened
-onto the root.
+IR, I/O, geometry, units or regions. Every molrs subsystem is mirrored by a
+molpy module — `core` for molrs's core (`store`, `system`, `spatial`,
+`units`), the rest under their molrs names — and the root holds those modules,
+the core data classes a user handles directly (promoted from `core` as the
+same objects) and the version metadata.
 
 | Package | Purpose |
 |---------|---------|
-| `molpy` (root) | The data model, flattened from `molrs.store`, `molrs.system`, `molrs.spatial` (`Box`, regions, neighbour search), `molrs.units`, `molrs.perceive`, `molrs.optimize` and `molrs.conformer`; plus molpy's trajectory splitters (over the native `Trajectory`) and the column selectors (in the private `_core` package) |
-| `ff` | Mirrors `molrs.ff`: `forcefield` (the container and force-field file formats), `potential` (compiler and kernels), `typifier` (+ molpy's `AntechamberTypifier` / `TLeapTypifier`), `charge`, `ir`, `params`, `scale_lj` |
-| `io` | Mirrors `molrs.io`: structure and trajectory formats, SMILES / CGsmiles text, `*.mrec` records (`mp.io.mrec`), by identity |
+| `molpy` (root) | The subsystems below; the promoted core data classes (`Frame`, `Block`, `Trajectory`, `Box`, `Graph`, `Atomistic`, `CoarseGrain`, the entity classes, `Element`, `Topology`); `version` / `release_date` |
+| `core` | Mirrors molrs's core — `molrs.store` (`Frame`, `Block`, `Trajectory`, `keys`, `schema`, …), `molrs.system` (the graph hierarchy), `molrs.spatial` (`Box`, regions, neighbour search) and `molrs.units` — in one module; plus molpy's column selectors and `TrajectorySplitter` with its strategies |
+| `perceive`, `optimize`, `conformer`, `stream` | Mirror the molrs subsystems of the same names: perception, `LBFGS`, conformers, frame streaming |
+| `ff` | Mirrors `molrs.ff`: `forcefield` (the `ForceField` data model), `potential` (compiler and kernels), `typifier` (+ molpy's `AntechamberTypifier` / `TLeapTypifier`), `charge`, `ir`, `params`, `scale_lj` |
+| `io` | Mirrors `molrs.io`: every file reader and writer (structure, trajectory and force-field files, SMILES, `*.mrec` records, frame bytes, LAMMPS logs) as `read_*` / `write_*`, and one submodule per format that owns classes (`smiles`, `log`, `mrec`, `trajectory`, `lammps_bond_react`); molpy's metric readers, published in the `molcrafts.metric_readers` entry-point group, are `io.log`'s and `io.mrec`'s |
 | `builder` | Mirrors `molrs.builder` (assembly, `Coarsener`, graphene and nanotubes); plus polymer planning, crystals, virtual sites, `PackingTemplate`, `AmberPolymerBuilder` |
 | `compute`, `signal`, `md`, `op` | Mirror `molrs.compute`, `molrs.signal`, `molrs.md`, `molrs.op` |
 | `engine` | External engines: one `generate_inputs` each for LAMMPS, GROMACS and OpenMM, `run`, `Script` |
 | `wrapper` | Subprocess boundaries to external CLI tools (antechamber, parmchk2, prepgen, tleap, sander) |
 | `adapter` | Optional in-memory bridge (RDKit worked example) |
 | `data` | Bundled package data: force-field files |
-| `integrations` | Capabilities other molcrafts products consume by entry point (the metric readers) |
 
-The modules behind `engine`, `wrapper`, `adapter` and `builder` are private
+The modules behind `engine`, `wrapper`, `adapter`, `builder` and molpy's additions to `core` are private
 (`molpy.engine._lammps`, …): each name has one public path, its subpackage
 (`mp.engine.LAMMPSEngine`).
 
@@ -50,7 +53,7 @@ subclassing hook. See [Extending the Data Model](extending-core.md).
 
 ## The tabular layer: Block and Frame run on molrs
 
-`Frame` and `Block` belong exclusively to the [molrs](https://github.com/MolCrafts/molrs) Rust column store. Import them from molpy (`from molpy import Frame, Block`); they are identity re-exports of the molrs types. Columns are typed (float / int / bool / str) and exposed as zero-copy NumPy views; a non-representable column is rejected fail-fast at write. `molcrafts-molrs` is a hard runtime dependency: there is no pure-Python fallback.
+`Frame` and `Block` belong exclusively to the [molrs](https://github.com/MolCrafts/molrs) Rust column store. Use them from the root (`mp.Frame`, `mp.Block`, also `molpy.core`'s); they are identity re-exports of the molrs types. Columns are typed (float / int / bool / str) and exposed as zero-copy NumPy views; a non-representable column is rejected fail-fast at write. `molcrafts-molrs` is a hard runtime dependency: there is no pure-Python fallback.
 
 The graph → arrays conversion is explicit: `Atomistic.to_frame()` delegates to the molrs world's native `to_frame()`. The box is a first-class attribute (`frame.box`), never metadata. The [molrs Backend](molrs-backend.md) page covers how neighbor lists, RDF, and the analysis catalog surface from Rust.
 
@@ -60,7 +63,7 @@ The graph → arrays conversion is explicit: `Atomistic.to_frame()` delegates to
 
 ## One column vocabulary
 
-Canonical field names (`charge`, not `q`; `mol_id`, not `mol`) are used everywhere inside MolPy. The vocabulary is molrs's: `mp.keys` is `molrs.store.keys` (`mp.keys.CHARGE.key == "charge"`) and `mp.schema` gives each column's dtype. Format-specific names exist only inside the native readers and writers, which map them at the boundary, so no molpy code translates column names. The full canonical-name catalog is in the [Naming Conventions](../tutorials/naming-conventions.md) appendix; the extension recipe is in [Adding an I/O Format](extending-io.md).
+Canonical field names (`charge`, not `q`; `mol_id`, not `mol`) are used everywhere inside MolPy. The vocabulary is molrs's: `mp.core.keys` is `molrs.store.keys` (`mp.core.keys.CHARGE.key == "charge"`) and `mp.core.schema` gives each column's dtype. Format-specific names exist only inside the native readers and writers, which map them at the boundary, so no molpy code translates column names. The full canonical-name catalog is in the [Naming Conventions](../tutorials/naming-conventions.md) appendix; the extension recipe is in [Adding an I/O Format](extending-io.md).
 
 ## The mutation contract
 

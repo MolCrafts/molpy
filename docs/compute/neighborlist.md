@@ -8,7 +8,7 @@ within some distance $r_c$.
 Doing that from scratch means comparing every atom with every other atom: for
 $N = 10^5$ atoms that is $5\times 10^9$ distance evaluations, and you would pay
 it again for each analysis. So MolPy separates the search from the analysis. The core
-`mp.NeighborList` finds the pairs once; [RDF](rdf.md), [LocalDensity](density.md),
+`mp.core.NeighborList` finds the pairs once; [RDF](rdf.md), [LocalDensity](density.md),
 [Steinhardt](order.md), [Cluster](cluster.md), and [PMFTXY](pmft.md) all consume
 the same object.
 
@@ -134,7 +134,7 @@ frame = mp.Frame()
 frame["atoms"] = {"x": xyz[:, 0], "y": xyz[:, 1], "z": xyz[:, 2]}
 frame.box = mp.Box.cube(20.0)
 
-nl = mp.NeighborList(3.0)
+nl = mp.core.NeighborList(3.0)
 nl.build(frame.coords, frame.box)
 nlist = nl.neighbors()
 print(nlist.n_pairs)   # -> 3

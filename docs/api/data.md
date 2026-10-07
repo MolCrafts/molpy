@@ -6,7 +6,7 @@ Locators for the data files bundled with MolPy — built-in force fields
 Drude table ships with molrs (`mp.ff.params.clpol_polarizability()`). These helpers
 return filesystem paths you can hand to a reader; they do not parse anything
 themselves. Available via `import molpy as mp`
-(`mp.data.get_forcefield_path`).
+(`mp.data.get_path("forcefield/tip3p.xml")`).
 
 OPLS-AA is not a bundled file: it ships with molrs and comes from
 `mp.ff.typifier.OPLSAATypifier()` — `.library()` returns every OPLS-AA type,
@@ -16,16 +16,14 @@ OPLS-AA is not a bundled file: it ships with molrs and comes from
 
 | Symbol | Summary | Preferred for |
 |--------|---------|---------------|
-| `get_forcefield_path(name)` | Path to a bundled force-field file | Loading a built-in force field |
-| `list_forcefields()` | Names of the bundled force fields | Discovering what ships with MolPy |
-| `get_path(name)` | Path to any bundled data file | Accessing a packaged asset |
-| `list_files()` | Names of all bundled data files | Enumerating packaged assets |
+| `get_path(name)` | Path to a bundled data file (`"forcefield/tip3p.xml"`) | Loading a built-in force field or any packaged asset |
+| `list_files(subdir)` | Names of the bundled data files (`list_files("forcefield")`) | Discovering what ships with MolPy |
 | `exists(name)` | Whether a bundled file is present | Guarding optional assets |
 
 ```python
 import molpy as mp
 
-ff = mp.ff.forcefield.read_forcefield_xml(mp.data.get_forcefield_path("tip3p.xml"))
+ff = mp.io.read_forcefield_xml(mp.data.get_path("forcefield/tip3p.xml"))
 
 opls = mp.ff.typifier.OPLSAATypifier().library() # all OPLS-AA types, from molrs
 ```

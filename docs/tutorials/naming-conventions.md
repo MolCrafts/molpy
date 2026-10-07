@@ -12,7 +12,7 @@ The examples below share this setup:
 
 ```python
 import molpy as mp
-from molpy import Block
+from molpy.core import Block
 
 frame = mp.Frame()
 frame["atoms"] = {"x": [0.0, 1.0], "y": [0.0, 0.0], "z": [0.0, 0.0]}
@@ -66,11 +66,11 @@ Floats are always `float64`: a float32 array is widened when it is inserted.
 The identifier and index columns (`id`, `mol_id`, `atomic_number`, `res_id`,
 `type_id`, `atomi` … `atoml`) are stored `uint64`; a narrower unsigned array is
 widened on insert, and a `*.mrec` store holding them at another width is refused
-on read. `mp.schema.column(key)` is the authoritative table.
+on read. `mp.core.schema.column(key)` is the authoritative table.
 
 Format-specific aliases such as LAMMPS `q` and `mol` exist only at the I/O boundary. Readers canonicalize them to `charge` and `mol_id`; writers localize them back when required by the target format.
 
-**Units.** `mass` is in amu and `charge` in elementary-charge units, but coordinates (`x/y/z`) and velocities (`vx/vy/vz`) carry *no intrinsic unit* — MolPy stores raw numbers. The length convention is fixed by the force field you apply (its `units=` setting, e.g. LAMMPS `real` ⇒ Å) and by the file format you read from or export to. Keep your input coordinates consistent with that convention. Readers convert to the store units on the way in: the bundled `tip3p.xml` is written in nm and kJ/mol, and `mp.ff.forcefield.read_forcefield_xml` hands back Å and kcal/mol.
+**Units.** `mass` is in amu and `charge` in elementary-charge units, but coordinates (`x/y/z`) and velocities (`vx/vy/vz`) carry *no intrinsic unit* — MolPy stores raw numbers. The length convention is fixed by the force field you apply (its `units=` setting, e.g. LAMMPS `real` ⇒ Å) and by the file format you read from or export to. Keep your input coordinates consistent with that convention. Readers convert to the store units on the way in: the bundled `tip3p.xml` is written in nm and kJ/mol, and `mp.io.read_forcefield_xml` hands back Å and kcal/mol.
 
 #### Bond Topology (`bonds`)
 

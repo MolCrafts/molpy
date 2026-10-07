@@ -12,31 +12,38 @@ path per name.
 Every native name in molpy is the molrs object itself (`mp.Atomistic is
 molrs.system.Atomistic`); molpy keeps no parallel IR, I/O, geometry, units or
 regions. molrs 0.16 puts every symbol under the subsystem that owns it
-(`molrs.store`, `molrs.system`, `molrs.spatial`, `molrs.ff`, `molrs.io`, …),
-and molpy maps those subsystems in one of two ways:
+(`molrs.store`, `molrs.system`, `molrs.spatial`, `molrs.ff`, `molrs.io`, …)
+and keeps nothing else on its root; molpy mirrors that layout one to one.
 
-- **Mirrored subpackages.** `mp.ff` mirrors `molrs.ff` submodule by submodule
-  (`forcefield`, `potential`, `typifier`, `charge`, `ir`, `params`,
-  `scale_lj`); `mp.io`, `mp.compute`, `mp.signal`, `mp.md`, `mp.op` and
-  `mp.builder` mirror `molrs.io`, `molrs.compute`, `molrs.signal`,
-  `molrs.md`, `molrs.op` and `molrs.builder`. molpy's own additions sit next
-  to the native names: the AmberTools typifiers in `mp.ff.typifier`,
-  crystals, polymers and virtual sites in `mp.builder`. `mp.io` adds nothing.
-- **The flat root.** The data model and the operations on it stay on `mp`:
-  everything in `molrs.store` (`Frame`, `Block`, `Trajectory`, `keys`,
-  `schema`, …), `molrs.system`, `molrs.spatial` (`Box`, regions, neighbour
-  search),
-  `molrs.units`, `molrs.perceive`, `molrs.optimize` and `molrs.conformer`.
+- **One molpy module per molrs subsystem.** `mp.core` mirrors molrs's core
+  — `molrs.store`, `molrs.system`, `molrs.spatial` and `molrs.units` — in
+  one module; `mp.perceive`, `mp.optimize`, `mp.conformer`, `mp.io`,
+  `mp.compute`, `mp.signal`, `mp.md`, `mp.op`, `mp.builder` and `mp.stream`
+  hold the names of the molrs subsystem they are named after; `mp.ff`
+  mirrors `molrs.ff` submodule by submodule (`forcefield`, `potential`,
+  `typifier`, `charge`, `ir`, `params`, `scale_lj`). All by identity.
+- **The root holds the subsystems, the core data classes and the version.**
+  The data classes a user handles directly — `Frame`, `Block`, `Trajectory`,
+  `Box`, `Graph`, `Atomistic`, `CoarseGrain`, the entity classes (`Atom`,
+  `Bond`, …), `Element`, `Topology` — are promoted from `mp.core` as the same
+  objects (`mp.Frame is mp.core.Frame`). No function, algorithm or unit
+  preset is on the root: `mp.optimize.LBFGS`, `mp.perceive.SmartsPattern`,
+  `mp.core.UnitRegistry`, `mp.core.Cuboid`.
+- **molpy's additions sit in the subsystem they act on**: the column
+  selectors (`ElementSelector`, …) and `TrajectorySplitter` with its
+  strategies in `mp.core`; the metric readers in `mp.io.log` and
+  `mp.io.mrec`; the AmberTools typifiers in `mp.ff.typifier`; crystals,
+  polymers and virtual sites in `mp.builder`.
 
-So a force field is `mp.ff.forcefield.ForceField`, its compiler
-`mp.ff.potential.PotentialCompiler`, a SMILES parser `mp.io.SmilesIR`, and an
-assembler `mp.builder.Assembler`. The full list of moves is under
-[Upgrading from 0.15](#upgrading-from-015).
+So a frame is `mp.Frame`, a force field `mp.ff.forcefield.ForceField`,
+its compiler `mp.ff.potential.PotentialCompiler`, a molecule from SMILES
+`mp.io.read_smiles("CCO")`, and an assembler `mp.builder.Assembler`. The full
+list of moves is under [Upgrading from 0.15](#upgrading-from-015).
 
 molpy's own packages expose each name once, at the package: the modules
-behind `mp.engine`, `molpy.wrapper`, `mp.adapter`, `mp.builder` and the root's
-selectors and splitters are private (`molpy.engine._lammps`, `molpy._core`),
-so `mp.engine.LAMMPSEngine` has no second spelling
+behind `mp.engine`, `molpy.wrapper`, `mp.adapter`, `mp.builder` and molpy's
+additions to `mp.core` are private (`molpy.engine._lammps`,
+`molpy.core._selector`), so `mp.engine.LAMMPSEngine` has no second spelling
 `molpy.engine.lammps.LAMMPSEngine`.
 
 ### `Box` and `Trajectory` are molrs's
@@ -52,7 +59,7 @@ so `mp.engine.LAMMPSEngine` has no second spelling
 - `mp.Trajectory(frames, step=None, time=None)` takes negative indices, slices
   into a sub-trajectory with its `step` / `time` sliced alike, and has `map`
   and a `repr`. It carries no `topology`.
-- The splitters (`TrajectorySplitter`, `FrameIntervalStrategy`,
+- The splitters (`mp.core.TrajectorySplitter`, `FrameIntervalStrategy`,
   `TimeIntervalStrategy`, `CustomStrategy`) are molpy's and cut a native
   `Trajectory`.
 
@@ -76,7 +83,7 @@ class Fene(mp.ff.ir.StyleSpec):  # LAMMPS bond_style fene
 ```
 
 A typifier's `Match` types terms with it (`links={mp.Bond: rows}`),
-`mp.ff.potential.PotentialCompiler` prices it, and `mp.io.mrec.write` stores
+`mp.ff.potential.PotentialCompiler` prices it, and `mp.io.write_mrec` stores
 its expression, so a process that never registered it reads the record and
 prices it the same. [Extending the Force Field](../developer/extending-forcefield.md)
 is the whole recipe in under 30 lines.
@@ -89,14 +96,22 @@ a larger one.
 ### File formats are molrs's
 
 The LAMMPS data, XYZ, AMBER, PDB and `fix bond/react` code molpy carried is in
-molrs now, and `mp.io` re-exports it:
+molrs now, and `mp.io` mirrors `molrs.io`. Every file reader and writer is a
+`read_*` / `write_*` function at the top of `mp.io` — structure, trajectory
+and force-field files, SMILES, `*.mrec` records, frame bytes, LAMMPS logs —
+and a class that belongs to one format lives in that format's submodule:
+`mp.io.smiles` (`SmilesIR`, `CGSmilesIR`, `SmilesError`, …), `mp.io.log`
+(`LammpsLog`, …), `mp.io.mrec` (`MrecReader`, `MrecWriter`, …),
+`mp.io.trajectory` (`TrajectoryReader`) and `mp.io.lammps_bond_react`
+(`BondReactTemplate`).
+
 
 - `mp.io.read_lammps_data(path, atom_style=None)` returns the `Frame`. Typed
   blocks carry `type_id` and the string `type` (the Type Labels, or the id);
   `atom_style` fixes the `Atoms` layout as LAMMPS's does (a layout the style
   does not have is an error, not a column drop). The `* Coeffs` sections stay
   text in `frame.meta["lammps_coeffs_text"]`, and
-  `mp.ff.forcefield.read_lammps_data_coeffs(frame)` makes them a force field,
+  `mp.io.read_lammps_data_coeffs(frame)` makes them a force field,
   each row named by the file's Type Labels; the header counts and Type Labels are
   `frame.meta["lammps_counts"]` and `frame.meta["<kind>_type_labels"]`.
 - `mp.io.write_lammps_data(path, frame, type_labels={"atoms": [...]})`
@@ -106,23 +121,38 @@ molrs now, and `mp.io` re-exports it:
   column and `species` as `element`; `mp.io.read_amber_inpcrd(path, frame)`
   reads coordinates into an existing frame; `mp.io.read_ac` emits `charge`.
 - `mp.io.write_pdb` writes `X` for an atom without an element.
-- `mp.io.BondReactTemplate`, `write_bond_react_map` and
+- `mp.io.lammps_bond_react.BondReactTemplate`, `write_bond_react_map` and
   `write_lammps_bond_react_system` write a `fix bond/react` system.
 - `mp.io.read_frame` / `write_frame` pick the format from the file name.
 
-Force-field file formats are `mp.ff.forcefield`'s (`read_forcefield_xml`,
-`read_gromacs_system`, `write_lammps_forcefield`, …); `mp.io` holds
-structure and trajectory formats only. A whole AMBER system is
-`mp.ff.forcefield.read_amber_prmtop_system(prmtop)` → `(ForceField, Frame)`,
+Force-field file formats are `mp.io`'s too (`read_forcefield_xml`,
+`read_gromacs_system`, `write_lammps_forcefield`, …); `mp.ff.forcefield` is
+the `ForceField` data model only. A whole AMBER system is
+`mp.io.read_amber_prmtop_system(prmtop)` → `(ForceField, Frame)`,
 as `read_gromacs_system` is for GROMACS: the frame carries a `pairs` block
 for the 1-4 pairs whose `SCEE` / `SCNB` differ from the field's
 `special_bonds` (GLYCAM beside ff14SB), which the structure reader
 `mp.io.read_amber_prmtop` does not.
 
-Every `*.mrec` door is on `mp.io.mrec` (`molrs.io.mrec`): `read` / `write`,
-`read_system` / `write_system`, `read_trajectory` / `write_trajectory`,
-`read_forcefield` / `write_forcefield`, `read_meta`, `section_names`, and the
-lazy cursor `FrameSequence` with its writer `FrameSequenceWriter`.
+A `*.mrec` record is read and written whole by `mp.io.read_mrec` /
+`write_mrec`, `read_mrec_system` / `write_mrec_system`,
+`read_mrec_trajectory` / `write_mrec_trajectory`, `read_mrec_forcefield` /
+`write_mrec_forcefield` and `read_mrec_meta`; `mp.io.mrec` (mirroring
+`molrs.io.mrec`) holds `section_names` and the lazy cursor `MrecReader` with
+its writer `MrecWriter`.
+
+One molecule from SMILES is `mp.io.read_smiles(s)` (connectivity only; a
+`.`-separated set is refused, naming `mp.io.smiles.SmilesIR(s).components()`).
+
+### Metric readers are `mp.io`'s
+
+The readers molpy publishes for any molcrafts viewer, in the
+`molcrafts.metric_readers` entry-point group, live with their formats:
+`mp.io.log.LammpsLogMetricReader` (`log.lammps` thermo tables),
+`mp.io.log.MlpJsonlMetricReader` (`*.mlp.jsonl`) and
+`mp.io.mrec.MrecMetricReader` (a record's `step` / `time` series). The
+entry-point names (`lammps_log`, `mlp_jsonl`, `mrec`) are unchanged; the
+`molpy.integrations` package is gone.
 
 ### One input writer per engine
 
@@ -136,7 +166,7 @@ one `[ moleculetype ]` per molecule, `[ system ]`, `[ molecules ]` — what
 `.mdp`). `mp.Script` is `mp.engine.Script`.
 
 Every LAMMPS style line and coefficient is molrs's LAMMPS include
-(`mp.ff.forcefield.write_lammps_forcefield_str`), read after `read_data`, so
+(`mp.io.write_lammps_forcefield_str`), read after `read_data`, so
 whatever molrs writes reaches LAMMPS: a category spanning two styles as
 `hybrid`, and `angle charmm` with its Urey-Bradley term. The relaxation keeps
 the force field's `special_bonds` and `pair_modify mix`. A frame without a
@@ -146,11 +176,11 @@ length unit.
 
 ### Regions, units and CL&Pol data are molrs's
 
-- Regions are the native solids: `mp.Cuboid(origin, lengths)`,
-  `mp.Cuboid.cube(edge)`, `mp.Sphere(center, radius)`, `mp.HalfSpace`, … with
+- Regions are the native solids: `mp.core.Cuboid(origin, lengths)`,
+  `mp.core.Cuboid.cube(edge)`, `mp.core.Sphere(center, radius)`, `mp.core.HalfSpace`, … with
   `mask(block)`, `region(block)` and `&` / `|` / `~` composition into a
-  `mp.Region`. A selector composes with a region (`selector & region`).
-- Units are `mp.UnitRegistry` and `mp.UnitPreset`, which now hold the
+  `mp.core.Region`. A selector composes with a region (`selector & region`).
+- Units are `mp.core.UnitRegistry` and `mp.core.UnitPreset`, which now hold the
   `openmm` preset, `UnitPreset.register` / `UnitPreset.names()`, `k_B` and
   `define_lj_units`.
 - The CL&Pol Drude table is `mp.ff.params.clpol_polarizability()`;
@@ -204,6 +234,21 @@ Everything molpy compiles, types and writes goes through molrs, so molrs
 Every moved or removed public path, old → new. A name not listed keeps its
 path.
 
+**The root holds the subsystems and the core data classes**
+
+| 0.15 | 0.16 |
+|------|------|
+| `mp.Frame`, `mp.Block`, `mp.Trajectory`, `mp.Box`, `mp.Graph`, `mp.Atomistic`, `mp.CoarseGrain`, `mp.Atom`, `mp.Bond`, `mp.Angle`, `mp.Dihedral`, `mp.Improper`, `mp.Bead`, `mp.CGBond`, `mp.Port`, `mp.VirtualSite`, `mp.DrudeParticle`, `mp.MasslessSite`, `mp.Element`, `mp.Topology` | unchanged (also `mp.core.<same name>`, the same object) |
+| `mp.FrameMeta`, `mp.MetaValue`, `mp.MetaDocument`, `mp.BlockDtypeError`, `mp.ScalarObservable`, `mp.VectorObservable`, `mp.keys`, `mp.schema`, `mp.NodeRef`, `mp.RelationRef`, `mp.Refs`, `mp.ExtractedSubgraph`, `mp.Region` and the other regions, `mp.NeighborList`, `mp.NeighborQuery`, `mp.Neighbors`, `mp.VerletSkin`, `mp.UnitRegistry`, `mp.UnitPreset`, `mp.Quantity`, `mp.Unit`, `mp.UnitsError` | `mp.core.<same name>` |
+| `mp.Perceive`, `mp.RingInfo`, `mp.SmartsPattern`, `mp.SmartsMatch`, `mp.Reaction`, `mp.SubgraphMatcher` | `mp.perceive.<same name>` |
+| `mp.LBFGS`, `mp.OptReport` | `mp.optimize.<same name>` |
+| `mp.Conformer`, `mp.ConformerReport`, `mp.ConformerStageReport` | `mp.conformer.<same name>` |
+| `mp.ElementSelector`, `mp.AtomTypeSelector`, `mp.AtomIndexSelector`, `mp.MaskPredicate` | `mp.core.<same name>` |
+| `mp.TrajectorySplitter`, `mp.SplitStrategy`, `mp.FrameIntervalStrategy`, `mp.TimeIntervalStrategy`, `mp.CustomStrategy` | `mp.core.<same name>` |
+| `mp.FrameCollection` | removed: write `Sequence[mp.Frame]` |
+| `mp.data.get_forcefield_path(name)`, `mp.data.list_forcefields()` | `mp.data.get_path(f"forcefield/{name}")`, `mp.data.list_files("forcefield")` |
+| `molpy.wrapper.write_prepgen_control_file(path, ...)` | removed (private to `mp.builder.AmberPolymerBuilder`) |
+
 **Force fields — `mp.ff` mirrors `molrs.ff`**
 
 | 0.15 | 0.16 |
@@ -220,17 +265,19 @@ path.
 | `molpy.core.ops.intramolecular_pairs` | `mp.ff.potential.intramolecular_pairs` |
 | `mp.builder.load_polarizability(path)`; `molpy/data/forcefield/alpha.ff` | `mp.ff.params.clpol_polarizability(path)` (molrs ships `alpha.ff`) |
 
-**I/O — `mp.io` mirrors `molrs.io`; force-field files are `mp.ff.forcefield`'s**
+**I/O — `mp.io` mirrors `molrs.io`: every file reader and writer at its top, a format's classes in its submodule**
 
 | 0.15 | 0.16 |
 |------|------|
-| `mp.SmilesIR`, `mp.CGSmilesIR`, `mp.SmilesError` | `mp.io.<same name>` |
-| `mp.io.read_xml_forcefield`, `mp.io.write_xml_forcefield` | `mp.ff.forcefield.read_forcefield_xml`, `write_forcefield_xml` |
-| `mp.io.read_gromacs_forcefield`, `mp.io.write_gromacs_forcefield` | `mp.ff.forcefield.read_gromacs_top_ff`, `write_gromacs_top_ff` |
-| `mp.io.read_lammps_forcefield`, `write_lammps_forcefield`, `write_lammps_forcefield_str`, `read_lammps_data_coeffs`, `write_lammps_data_coeffs` | `mp.ff.forcefield.<same name>` |
-| `mp.io.read_top(path)`, `mp.io.write_top(path, frame)` | `mp.ff.forcefield.read_gromacs_system(path)` → `(ForceField, Frame)`, `write_gromacs_system(path, ff, frame)` (0-based) |
+| `mp.SmilesIR`, `mp.CGSmilesIR`, `mp.SmilesError` | `mp.io.smiles.<same name>` |
+| `mp.io.TrajectoryReader` | `mp.io.trajectory.TrajectoryReader` |
+| `mp.io.LammpsLog` and the other `Lammps*` log records | `mp.io.log.<same name>` |
+| `mp.io.parse_lammps_log_text(text)` | `mp.io.read_lammps_log_str(text)` |
+| `mp.io.read_xml_forcefield`, `mp.io.write_xml_forcefield` | `mp.io.read_forcefield_xml`, `write_forcefield_xml` |
+| `mp.io.read_gromacs_forcefield`, `mp.io.write_gromacs_forcefield` | `mp.io.read_gromacs_top_ff`, `write_gromacs_top_ff` |
+| `mp.io.read_top(path)`, `mp.io.write_top(path, frame)` | `mp.io.read_gromacs_system(path)` → `(ForceField, Frame)`, `write_gromacs_system(path, ff, frame)` (0-based) |
 | `mp.io.read_amber_ac` | `mp.io.read_ac` (emits `charge`) |
-| `mp.io.read_lammps_data(path, atom_style="full")` → `LammpsDataResult` (`.frame`, `.forcefield`, `.counts`, `.type_labels`) | `mp.io.read_lammps_data(path, atom_style=None)` → `Frame`; force field: `mp.ff.forcefield.read_lammps_data_coeffs(frame)`; counts / labels: `frame.meta["lammps_counts"]`, `frame.meta["<kind>_type_labels"]` |
+| `mp.io.read_lammps_data(path, atom_style="full")` → `LammpsDataResult` (`.frame`, `.forcefield`, `.counts`, `.type_labels`) | `mp.io.read_lammps_data(path, atom_style=None)` → `Frame`; force field: `mp.io.read_lammps_data_coeffs(frame)`; counts / labels: `frame.meta["lammps_counts"]`, `frame.meta["<kind>_type_labels"]` |
 | `mp.io.LammpsDataResult` | removed |
 | a missing box axis raised `ValueError`; `frame.meta["format" / "atom_style" / "source_file"]` | recorded in `frame.meta["lammps_box_axes"]`; not set |
 | `mp.io.write_lammps_data(..., type_labels={"atom_types": [...]})` | `type_labels={"atoms": [...]}` (block names) |
@@ -238,12 +285,15 @@ path.
 | `mp.io.read_xyz` filled `atomic_number` | it does not (`mp.Element` maps symbols) |
 | `mp.io.read_amber_inpcrd` mismatch: `ValueError` | `OSError` |
 | `mp.io.write_pdb` element from `frame.meta["elements"]`; missing `x`: `ValueError` | `X`; `OSError` |
-| `mp.io.BondReactTemplate`, `write_bond_react_map`, `write_lammps_bond_react_system` (molpy's) | the same names, molrs's |
-| `molpy.io.mrec` (a molpy module) | `mp.io.mrec` is `molrs.io.mrec` |
-| `mp.io.write_mrec` / `read_mrec`, `write_mrec_system` / `read_mrec_system`, `write_mrec_trajectory` / `read_mrec_trajectory`, `write_mrec_forcefield` / `read_mrec_forcefield`, `read_mrec_meta`, `mrec_sections` | `mp.io.mrec.write` / `read`, `write_system` / `read_system`, `write_trajectory` / `read_trajectory`, `write_forcefield` / `read_forcefield`, `read_meta`, `section_names` |
-| `mp.io.mrec.TrajectoryReader`, `mp.io.mrec.TrajectoryWriter` | `mp.io.mrec.FrameSequence`, `mp.io.mrec.FrameSequenceWriter` |
-| `mp.io.read_smiles(s)` (refused a `.`-separated string) | `mp.io.SmilesIR(s).to_atomistic()` (one disconnected graph for several components; `SmilesIR(s).components()` one graph each) |
-| `mp.io.read_amber(prmtop, inpcrd)` → `(Frame, ForceField)` | `ff, frame = mp.ff.forcefield.read_amber_prmtop_system(prmtop)`; `frame = mp.io.read_amber_inpcrd(inpcrd, frame)` |
+| `mp.io.BondReactTemplate` (molpy's) | `mp.io.lammps_bond_react.BondReactTemplate` (molrs's) |
+| `mp.io.write_bond_react_map`, `write_lammps_bond_react_system` (molpy's) | the same names, molrs's |
+| `molpy.io.mrec` (molpy's record store) | `mp.io.mrec`, mirroring `molrs.io.mrec` (`MrecReader`, `MrecWriter`, `SequenceSchema`, `ForceFieldSection`, `section_names`, `pack`, `schema`) plus molpy's `MrecMetricReader` |
+| `mp.io.mrec_sections(path)` | `mp.io.mrec.section_names(path)` |
+| `mp.io.mrec.TrajectoryReader`, `mp.io.mrec.TrajectoryWriter` | `mp.io.mrec.MrecReader`, `mp.io.mrec.MrecWriter` |
+| `molpy.integrations.metric_readers.LammpsLogReader`, `MlpJsonlReader` | `mp.io.log.LammpsLogMetricReader`, `mp.io.log.MlpJsonlMetricReader` (entry points `lammps_log`, `mlp_jsonl` unchanged) |
+| `molpy.integrations.metric_readers.MrecReader` | `mp.io.mrec.MrecMetricReader` (entry point `mrec` unchanged) |
+| `molpy.integrations` | removed |
+| `mp.io.read_amber(prmtop, inpcrd)` → `(Frame, ForceField)` | `ff, frame = mp.io.read_amber_prmtop_system(prmtop)`; `frame = mp.io.read_amber_inpcrd(inpcrd, frame)` |
 | `molpy.io.readers`, `molpy.io.writers`, `molpy.io.data.*` | private / removed |
 
 **Engines — one `generate_inputs` per engine**
@@ -264,18 +314,18 @@ path.
 
 | 0.15 | 0.16 |
 |------|------|
-| `mp.BoxRegion(lengths, origin)` | `mp.Cuboid(origin, lengths)` |
-| `mp.Cube(edge, origin)` | `mp.Cuboid.cube(edge, origin)` |
-| `mp.SphereRegion(radius, center)` | `mp.Sphere(center, radius)` |
-| `mp.AndRegion(a, b)`, `mp.OrRegion(a, b)`, `mp.NotRegion(a)` | `a & b`, `a \| b`, `~a` (a `mp.Region`) |
+| `mp.BoxRegion(lengths, origin)` | `mp.core.Cuboid(origin, lengths)` |
+| `mp.Cube(edge, origin)` | `mp.core.Cuboid.cube(edge, origin)` |
+| `mp.SphereRegion(radius, center)` | `mp.core.Sphere(center, radius)` |
+| `mp.AndRegion(a, b)`, `mp.OrRegion(a, b)`, `mp.NotRegion(a)` | `a & b`, `a \| b`, `~a` (a `mp.core.Region`) |
 | `region.isin(xyz)`, `region.bounds` (`(2, 3)`) | `region.contains(xyz)`, `region.bounds()` (`(3, 2)`) |
-| `mp.DistanceSelector(center, r_max, min_distance=r_min)` | `mp.Sphere(center, r_max) & ~mp.Sphere(center, r_min)` |
-| `mp.CoordinateRangeSelector("x", lo, hi)` | `mp.HalfSpace([-1, 0, 0], [lo, 0, 0]) & mp.HalfSpace([1, 0, 0], [hi, 0, 0])` |
-| `mp.UnitSystem()` | `mp.UnitRegistry()` (`k_B` included) |
-| `mp.UnitSystem.preset(name)`, `.preset_names()`, `.register_preset(...)` | `mp.UnitPreset(name)`, `mp.UnitPreset.names()`, `mp.UnitPreset.register(name, units, boltzmann=, coulomb=)` |
-| `mp.UnitSystem.lj(mass=, sigma=, epsilon=)` | `reg = mp.UnitRegistry(); reg.define_lj_units(mass, sigma, epsilon)` |
+| `mp.DistanceSelector(center, r_max, min_distance=r_min)` | `mp.core.Sphere(center, r_max) & ~mp.core.Sphere(center, r_min)` |
+| `mp.CoordinateRangeSelector("x", lo, hi)` | `mp.core.HalfSpace([-1, 0, 0], [lo, 0, 0]) & mp.core.HalfSpace([1, 0, 0], [hi, 0, 0])` |
+| `mp.UnitSystem()` | `mp.core.UnitRegistry()` (`k_B` included) |
+| `mp.UnitSystem.preset(name)`, `.preset_names()`, `.register_preset(...)` | `mp.core.UnitPreset(name)`, `mp.core.UnitPreset.names()`, `mp.core.UnitPreset.register(name, units, boltzmann=, coulomb=)` |
+| `mp.UnitSystem.lj(mass=, sigma=, epsilon=)` | `reg = mp.core.UnitRegistry(); reg.define_lj_units(mass, sigma, epsilon)` |
 | `units.convert(q, "nm")`, `units.factor(a, b)` | `q.to(units.parse("nm"))`, `(1.0 * units.parse(a)).to(units.parse(b)).magnitude` |
-| `mp.fields.X` (a `str`), `molpy.core.fields.FieldFormatter` | `mp.keys.X` (a `Key`; `.key` is the `str`); readers emit canonical names |
+| `mp.fields.X` (a `str`), `molpy.core.fields.FieldFormatter` | `mp.core.keys.X` (a `Key`; `.key` is the `str`); readers emit canonical names |
 | `mp.compute.signal` | `mp.signal` |
 | `mp.Box(matrix, pbc, origin)` (a molpy subclass), `molpy.core.box.Box` | `mp.Box(h=..., origin=..., pbc=...)`, which is `molrs.spatial.Box` |
 | `mp.Box.Style.FREE` / `ORTHOGONAL` / `TRICLINIC` | `"free"` / `"orthogonal"` / `"triclinic"` (what `box.style` returns) |
@@ -303,7 +353,7 @@ path.
 |------|------|
 | `mp.Config`, `molpy.core.config` | removed: its one setting, `log_level`, configured the logger below |
 | `molpy.core.logger.get_logger` | removed (no caller); molpy no longer depends on `molcrafts-mollog` / `molcrafts-molcfg` |
-| `mp.Conformer` (a subclass adding an empty-molecule guard) | `mp.Conformer` is `molrs.conformer.Conformer`, which has the guard |
+| `mp.Conformer` (a subclass adding an empty-molecule guard) | `mp.conformer.Conformer` is `molrs.conformer.Conformer`, which has the guard |
 
 **Behaviour**
 
@@ -314,8 +364,10 @@ path.
 | `AtdTypifier` types the graph's bond orders | antechamber's perceived orders; `bond_orders="input"` for the old behaviour |
 | a new style: a molrs kernel, writer arms, a rebuilt wheel | `class MyStyle(mp.ff.ir.StyleSpec)` |
 
-New on the root, flattened from molrs: `Cylinder`, `Ellipsoid`,
-`Polyhedron`, `SphereUnion`, `TriMesh`, `RelationBuckets`, `AMBER_COULOMB`.
+New from molrs: `mp.core.Cylinder`, `Ellipsoid`, `Polyhedron`,
+`SphereUnion`, `TriMesh`, `mp.core.RelationBuckets`,
+`mp.core.AMBER_COULOMB`, the `mp.stream` transport, and
+`mp.io.read_frame_bytes` / `write_frame_bytes`.
 
 ## 0.15
 

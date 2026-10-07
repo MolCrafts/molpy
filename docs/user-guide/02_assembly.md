@@ -20,18 +20,18 @@ explains the pieces.
 A port is a pair *(anchor, handle)*: the anchor is the atom that forms the new bond, the
 handle is a real atom bonded to it that leaves when the bond forms — usually the hydrogen
 that caps the open valence. The simplest way to write a unit is a CGsmiles fragment whose
-bonding descriptors are its ports; `mp.Conformer` then adds hydrogens and 3D coordinates,
+bonding descriptors are its ports; `mp.conformer.Conformer` then adds hydrogens and 3D coordinates,
 and the result is an ordinary `mp.Atomistic` that still carries its ports.
 
 ```python
 import molpy as mp
 
-conformer = mp.Conformer(seed=42)
+conformer = mp.conformer.Conformer(seed=42)
 
 
 def unit(body: str) -> mp.Atomistic:
     """One CGsmiles fragment body as a 3D molecule with hydrogens and ports."""
-    return conformer.generate(mp.io.SmilesIR.from_fragment(body).to_template())[0]
+    return conformer.generate(mp.io.smiles.SmilesIR.from_fragment(body).to_template())[0]
 
 
 eo = unit("[<]OCC[>]")  # -O-CH2-CH2-
@@ -88,7 +88,7 @@ copy is turned and moved so that the anchor of its port lands on its parent's le
 handle, pointing back along that bond.
 
 ```python
-sites = mp.io.CGSmilesIR("{[#EO]|10}").to_coarsegrain()
+sites = mp.io.smiles.CGSmilesIR("{[#EO]|10}").to_coarsegrain()
 chain = mp.builder.Assembler({"EO": eo}, mp.builder.GrowthPlacer()).assemble(sites, mp.Atomistic)
 print(chain.n_atoms, chain.n_ports)  # 72 2
 ```
@@ -99,7 +99,7 @@ between units, ring closures and overlaps are not adjusted; they are left to rel
 ## Backmapping a CG model
 
 When the sites come from a CG simulation, the copies must sit where the beads were. Match
-the bead pattern of one repeat unit with `mp.SubgraphMatcher`, turn each match into a site
+the bead pattern of one repeat unit with `mp.perceive.SubgraphMatcher`, turn each match into a site
 with `mp.builder.Coarsener`, and assemble with `mp.builder.SitePlacer` (each copy's centre of mass on its
 site) and `mp.builder.AxisOrienter` (each copy turned to its site's axis and bonds).
 
@@ -118,7 +118,7 @@ for i in range(5):
         cg.def_cgbond(previous, backbone)
     previous = backbone
 
-groups = mp.SubgraphMatcher(mp.io.CGSmilesIR("{[#1][#2]}").to_coarsegrain()).find(cg)
+groups = mp.perceive.SubgraphMatcher(mp.io.smiles.CGSmilesIR("{[#1][#2]}").to_coarsegrain()).find(cg)
 sites = mp.builder.Coarsener(cg).coarsen(groups, ["MMA"] * len(groups))
 
 mma = unit("[<]CC([>])(C)C(=O)OC")
@@ -163,8 +163,8 @@ Every atom of the world gets two integer ids:
 - `mol_id` — its connected component, counted from 1.
 
 ```python
-sites = mp.io.CGSmilesIR("{[#EO]|3}").to_coarsegrain()
-sites.merge(mp.io.CGSmilesIR("{[#EO]|4}").to_coarsegrain())
+sites = mp.io.smiles.CGSmilesIR("{[#EO]|3}").to_coarsegrain()
+sites.merge(mp.io.smiles.CGSmilesIR("{[#EO]|4}").to_coarsegrain())
 two = mp.builder.Assembler({"EO": eo}, mp.builder.GrowthPlacer()).assemble(sites, mp.Atomistic)
 atoms = two.to_frame()["atoms"]
 print(sorted(set(atoms["frag_id"].tolist())))  # [0, 1, 2, 3, 4, 5, 6]

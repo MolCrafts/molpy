@@ -47,13 +47,13 @@ typifier = BeadSpring()
 frame = typifier.typify(chain).to_frame()  # chain: an mp.Atomistic of bonded beads
 ff = typifier.forcefield()
 energy, forces = PotentialCompiler(ff).compile(frame).calc_energy_forces(frame)
-mp.io.mrec.write("chain.mrec", frame, forcefield=ff)  # the expression travels along
+mp.io.write_mrec("chain.mrec", frame, forcefield=ff)  # the expression travels along
 ```
 
 Defining the class registers the style; `Fene.unregister()` takes it out
 again. The record carries the expression, so a process that registered
 nothing reads `chain.mrec` back with
-`ForceField.from_section(mp.io.mrec.read_forcefield("chain.mrec"))` and
+`ForceField.from_section(mp.io.read_mrec_forcefield("chain.mrec"))` and
 prices it identically. molpy's test suite runs this snippet as written
 (`tests/test_ff/test_user_style.py`), and proves the energy and forces
 equal the analytic FENE sum and that a fresh process prices the record bit for
@@ -113,7 +113,7 @@ and the terms land in the frame's `urey_bradleys` block.
 Exporting to an engine is molrs's job, and molpy adds no formatter of its
 own: `LAMMPSEngine.generate_inputs` (and the `minimize` / `md` runs built on
 it) takes every `*_style` line and coefficient from molrs's LAMMPS writer
-(`mp.ff.forcefield.write_lammps_forcefield_str`), so it writes whatever that can write —
+(`mp.io.write_lammps_forcefield_str`), so it writes whatever that can write —
 `hybrid` styles and `angle charmm` with its Urey-Bradley term included — and a
 style an engine cannot hold is refused by molrs, by name, never written
 half-formed. The `.mrec` record is the format that always holds a registered

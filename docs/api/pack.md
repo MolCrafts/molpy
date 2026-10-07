@@ -38,7 +38,7 @@ water.def_bond(o, water.def_atom(element="H", x=-0.239, y=0.927, z=0.0))
 ion = mp.Atomistic(name="sodium")
 ion.def_atom(element="Na", x=0.0, y=0.0, z=0.0, charge=1.0)
 
-box = mp.Cuboid([0.0, 0.0, 0.0], [30.0, 30.0, 30.0])
+box = mp.core.Cuboid([0.0, 0.0, 0.0], [30.0, 30.0, 30.0])
 targets = [
  Target(water.to_frame(), count=100).with_name("water").with_restraint(box),
  Target(ion.to_frame(), count=10).with_name("na").with_restraint(box),

@@ -67,7 +67,7 @@ assert mp.Box is molrs.spatial.Box  # it *is* the molrs box
 ```
 
 Likewise `frame.box` is accepted directly by Rust-side calls such as
-`mp.NeighborList.build`. Everything — the constructor (`Box(h=None,
+`mp.core.NeighborList.build`. Everything — the constructor (`Box(h=None,
 origin=None, pbc=None)`: a `(3, 3)` cell, a `(3,)` diagonal, or no cell for a
 free box), the geometry (`wrap`, `unwrap`, `delta`, `distances`, `to_frac`, …)
 and the factories (`Box.cube`, `Box.ortho`, `Box.from_bounds`) — is the
@@ -75,9 +75,9 @@ native box's.
 
 ## Neighbor lists come from the linked-cell kernel
 
-`mp.NeighborList` (the molrs class) searches for all pairs within a cutoff
+`mp.core.NeighborList` (the molrs class) searches for all pairs within a cutoff
 using a linked-cell algorithm (O(N) in the number of atoms). `build` indexes
-the coordinates and `neighbors()` returns the pair table, a `mp.Neighbors`:
+the coordinates and `neighbors()` returns the pair table, a `mp.core.Neighbors`:
 
 ```python
 import numpy as np
@@ -90,7 +90,7 @@ frame = mp.Frame()
 frame["atoms"] = {"x": xyz[:, 0], "y": xyz[:, 1], "z": xyz[:, 2]}
 frame.box = mp.Box.cube(20.0)
 
-nl = mp.NeighborList(8.0)
+nl = mp.core.NeighborList(8.0)
 nl.build(frame.coords, frame.box)
 neighbors = nl.neighbors()
 print(neighbors.n_pairs)  # number of pairs found
@@ -181,13 +181,13 @@ mutate the frame you pass in.
 ## 3D structures are generated through molrs embed
 
 Generating coordinates from a connectivity-only graph also runs on molrs.
-`molpy.Conformer` wraps the molrs distance-geometry + minimization
+`molpy.conformer.Conformer` wraps the molrs distance-geometry + minimization
 pipeline (ETKDGv3 → torsion refinement → MMFF94 cleanup):
 
 ```python
 
-mol = mp.io.SmilesIR("CCO").to_atomistic()  # ethanol, heavy-atom graph
-mol_3d, report = mp.Conformer(add_hydrogens=True, seed=42).generate(mol)
+mol = mp.io.smiles.SmilesIR("CCO").to_atomistic()  # ethanol, heavy-atom graph
+mol_3d, report = mp.conformer.Conformer(add_hydrogens=True, seed=42).generate(mol)
 ```
 
 `generate` returns the new structure and a report of what each stage did; the

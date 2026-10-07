@@ -94,7 +94,7 @@ shorter leaves those corners permanently unvisited:
 from molpy.compute import PMFTXY
 
 analyzer = PMFTXY(x_max=6.0, y_max=6.0, n_x=40, n_y=40)
-nl = mp.NeighborList(8.5)
+nl = mp.core.NeighborList(8.5)
 nl.build(frame.coords, frame.box)
 (counts, density, pmf), = analyzer.compute([frame], [nl.neighbors()])
 
@@ -117,7 +117,7 @@ Shorten the cutoff below the corner distance and they appear, in exactly the
 places geometry predicts:
 
 ```python
-nl = mp.NeighborList(8.0)
+nl = mp.core.NeighborList(8.0)
 nl.build(frame.coords, frame.box)
 short = nl.neighbors()
 (_, _, clipped), = analyzer.compute([frame], [short])
@@ -137,7 +137,7 @@ counts per bin.
 the end:
 
 ```python
-nl = mp.NeighborList(8.5)
+nl = mp.core.NeighborList(8.5)
 nl.build(frame.coords, frame.box)
 nlist = nl.neighbors()
 per_frame = analyzer.compute([frame, frame], [nlist, nlist])
@@ -198,7 +198,7 @@ head = np.concatenate([np.arange(n_rods), np.arange(n_rods)])
 tail = np.concatenate([np.arange(n_rods, 2 * n_rods), np.arange(n_rods, 2 * n_rods)])
 rods["orientations"] = {"atomi": head, "atomj": tail}
 
-nl = mp.NeighborList(8.5)
+nl = mp.core.NeighborList(8.5)
 nl.build(rods.coords, rods.box)
 (body_counts, _, _), = analyzer.compute([rods], [nl.neighbors()])
 print(rods["orientations"].nrows, rods["atoms"].nrows)   # -> 400 400
@@ -216,7 +216,7 @@ neighbour has been rotated into its reference rod's frame before binning:
 plain = mp.Frame()
 plain["atoms"] = {"x": xyz[:, 0], "y": xyz[:, 1], "z": xyz[:, 2]}
 plain.box = mp.Box.cube(20.0)
-nl = mp.NeighborList(8.5)
+nl = mp.core.NeighborList(8.5)
 nl.build(plain.coords, plain.box)
 (lab_counts, _, _), = analyzer.compute([plain], [nl.neighbors()])
 

@@ -38,8 +38,8 @@ import molpy as mp
 output_dir = Path("13_output")
 output_dir.mkdir(exist_ok=True)
 
-tfsi = mp.io.SmilesIR("O=S(=O)(C(F)(F)F)[N-]S(=O)(=O)C(F)(F)F").to_atomistic()
-tfsi = mp.Conformer(add_hydrogens=False, seed=42).generate(tfsi)[0]
+tfsi = mp.io.smiles.SmilesIR("O=S(=O)(C(F)(F)F)[N-]S(=O)(=O)C(F)(F)F").to_atomistic()
+tfsi = mp.conformer.Conformer(add_hydrogens=False, seed=42).generate(tfsi)[0]
 ```
 
 ```python
@@ -107,7 +107,7 @@ other architectures. The site graph is only that sequence; it must be one
 linear path.
 
 ```python
-sites = mp.io.CGSmilesIR("{[#PEO]|10}").to_coarsegrain()
+sites = mp.io.smiles.CGSmilesIR("{[#PEO]|10}").to_coarsegrain()
 ```
 
 ```python
@@ -181,7 +181,7 @@ from molpack import GenCanPack, Target
 ff = peo_ff.merge(tfsi_ff).merge(li_ff)
 
 box_size = 60.0
-box = mp.Cuboid([0.0, 0.0, 0.0], [box_size] * 3)
+box = mp.core.Cuboid([0.0, 0.0, 0.0], [box_size] * 3)
 targets = [
     Target(peo.to_frame(), count=3).with_restraint(box),
     Target(li.to_frame(), count=10).with_restraint(box),
@@ -201,7 +201,7 @@ lammps_dir.mkdir(exist_ok=True)
 # full atom style needs mol_id: one per connected molecule
 system["atoms"]["mol_id"] = mp.Topology.from_frame(system).connected_components() + 1
 mp.io.write_lammps_data(lammps_dir / "system.data", system)
-mp.ff.forcefield.write_lammps_forcefield(
+mp.io.write_lammps_forcefield(
     lammps_dir / "system.ff", ff, system, skip_pair_style=True, skip_units=True
 )
 ```

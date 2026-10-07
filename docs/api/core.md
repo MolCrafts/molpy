@@ -1,12 +1,15 @@
 # Core
 
 Foundational data structures for molecular systems. All available via
-`import molpy as mp`. The root flattens molrs's data-model subsystems —
-`molrs.store`, `molrs.system`, `molrs.spatial`, `molrs.units`,
-`molrs.perceive`, `molrs.optimize`, `molrs.conformer` — by identity
-(`mp.Frame is molrs.store.Frame`, `mp.Box is molrs.spatial.Box`,
-`mp.Trajectory is molrs.store.Trajectory`). molpy's own root names are the
-column selectors and the trajectory splitters.
+`import molpy as mp`. `mp.core` mirrors molrs's core — `molrs.store`,
+`molrs.system`, `molrs.spatial` and `molrs.units` — by identity, in one
+module (`mp.core.Cuboid is molrs.spatial.Cuboid`). The data classes you handle
+directly are promoted to the root as the same objects (`mp.Frame is
+mp.core.Frame is molrs.store.Frame`, `mp.Box`, `mp.Atomistic`, …); everything
+else is `mp.core.<Name>`. molpy's additions here are the column selectors and
+the trajectory splitters, both in `mp.core` beside the `Block` and
+`Trajectory` they act on. Perception (`SmartsPattern`, `Perceive`, …) is
+`mp.perceive`.
 
 ## Quick reference
 
@@ -96,15 +99,15 @@ Re-exported from the native core — `mp.Frame is molrs.store.Frame`:
 
 ::: molpy.Trajectory
 
-::: molpy.TrajectorySplitter
+::: molpy.core.TrajectorySplitter
 
-::: molpy.SplitStrategy
+::: molpy.core.SplitStrategy
 
-::: molpy.FrameIntervalStrategy
+::: molpy.core.FrameIntervalStrategy
 
-::: molpy.TimeIntervalStrategy
+::: molpy.core.TimeIntervalStrategy
 
-::: molpy.CustomStrategy
+::: molpy.core.CustomStrategy
 
 ### Coarse-Grain
 
@@ -116,32 +119,32 @@ Re-exported from the native core — `mp.Frame is molrs.store.Frame`:
 
 ### Node and relation handles
 
-::: molpy.NodeRef
+::: molpy.core.NodeRef
 
-::: molpy.RelationRef
+::: molpy.core.RelationRef
 
-::: molpy.Refs
+::: molpy.core.Refs
 
 ### Selector
 
-::: molpy.MaskPredicate
+::: molpy.core.MaskPredicate
 
-::: molpy.ElementSelector
+::: molpy.core.ElementSelector
 
-::: molpy.AtomTypeSelector
+::: molpy.core.AtomTypeSelector
 
-::: molpy.AtomIndexSelector
+::: molpy.core.AtomIndexSelector
 
 ### Region
 
-::: molpy.Region
+::: molpy.core.Region
 
-::: molpy.Cuboid
+::: molpy.core.Cuboid
 
-::: molpy.Sphere
+::: molpy.core.Sphere
 
 ### Units
 
-::: molpy.UnitRegistry
+::: molpy.core.UnitRegistry
 
-::: molpy.UnitPreset
+::: molpy.core.UnitPreset

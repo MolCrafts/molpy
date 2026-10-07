@@ -116,8 +116,8 @@ describes the units of a polymer and how they join.
 ```python
 import molpy as mp
 
-mol = mp.io.SmilesIR("CCO").to_atomistic()  # one molecule from SMILES
-mol, report = mp.Conformer(seed=42).generate(mol)  # hydrogens + 3D coordinates
+mol = mp.io.smiles.SmilesIR("CCO").to_atomistic()  # one molecule from SMILES
+mol, report = mp.conformer.Conformer(seed=42).generate(mol)  # hydrogens + 3D coordinates
 ```
 
 </article>
@@ -172,7 +172,7 @@ library, no external binary (`pip install molcrafts-molpack`).
 # docs: skip — optional molcrafts-molpack; not a molpy runtime/doc dep
 from molpack import GenCanPack, Target
 
-target = Target(system, count=500).with_restraint(mp.Cuboid([0.0, 0.0, 0.0], [30.0, 30.0, 30.0]))
+target = Target(system, count=500).with_restraint(mp.core.Cuboid([0.0, 0.0, 0.0], [30.0, 30.0, 30.0]))
 system = GenCanPack().with_seed(42).run([target], max_loops=200).frame
 ```
 
@@ -194,7 +194,7 @@ system["atoms"]["mol_id"] = mp.Topology.from_frame(system).connected_components(
 ff.get_style("pair", "lj/cut")["cutoff"] = 10.0
 ff.get_style("pair", "coul/cut")["cutoff"] = 10.0
 mp.io.write_lammps_data("system.data", system)
-mp.ff.forcefield.write_lammps_forcefield("system.ff", ff, system)  # the coefficients system uses
+mp.io.write_lammps_forcefield("system.ff", ff, system)  # the coefficients system uses
 ```
 
 </article>
@@ -212,7 +212,7 @@ calls, with many more analyses behind them.
 from molpy.compute import RDF
 
 system.box = mp.Box.cube(30.0)
-nl = mp.NeighborList(8.0)
+nl = mp.core.NeighborList(8.0)
 nl.build(system.coords, system.box)
 neighbors = nl.neighbors()
 result = RDF(n_bins=50, r_max=8.0).compute([system], [neighbors])  # g(r) over the box

@@ -195,7 +195,7 @@ answer in advance. Now histogram it.
 ```python
 from molpy.compute import RDF
 
-nl = mp.NeighborList(8.0)
+nl = mp.core.NeighborList(8.0)
 nl.build(frame.coords, frame.box)
 nlist = nl.neighbors()
 result = RDF(n_bins=160, r_max=8.0).compute([frame], [nlist])
@@ -215,7 +215,7 @@ trajectory is the same call with longer lists:
 
 ```python
 frames = [frame, frame]                        # in practice, your trajectory
-nl = mp.NeighborList(8.0)
+nl = mp.core.NeighborList(8.0)
 nlists = []
 for f in frames:
     nl.build(f.coords, f.box)

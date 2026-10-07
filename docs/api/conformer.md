@@ -3,7 +3,7 @@
 3D conformer generation from a molecular graph. `Conformer` takes an
 `Atomistic` (typically from a SMILES or CGsmiles parse, which carries no
 coordinates) and returns a structure with embedded 3D positions, using the native ETKDGv3 →
-torsion refinement → MMFF94 cleanup pipeline. Available via `import molpy as mp` (`mp.Conformer`).
+torsion refinement → MMFF94 cleanup pipeline. Available via `import molpy as mp` (`mp.conformer.Conformer`).
 
 ## Quick reference
 
@@ -22,8 +22,8 @@ torsion refinement → MMFF94 cleanup pipeline. Available via `import molpy as m
 
 ## Full API
 
-::: molpy.Conformer
+::: molpy.conformer.Conformer
 
-::: molpy.ConformerReport
+::: molpy.conformer.ConformerReport
 
-::: molpy.ConformerStageReport
+::: molpy.conformer.ConformerStageReport

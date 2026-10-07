@@ -31,13 +31,13 @@ they may go) and returns a single packed, topology-complete `Frame`.
 import molpy as mp
 from molpack import GenCanPack, Target
 
-water, _ = mp.Conformer(seed=1).generate(mp.io.SmilesIR("O").to_atomistic())
+water, _ = mp.conformer.Conformer(seed=1).generate(mp.io.smiles.SmilesIR("O").to_atomistic())
 water_frame = water.to_frame() # one molecule, as a Frame
 
 water = (
  Target(water_frame, count=500)
 .with_name("water")
-.with_restraint(mp.Cuboid([0.0, 0.0, 0.0], [30.0, 30.0, 30.0]))
+.with_restraint(mp.core.Cuboid([0.0, 0.0, 0.0], [30.0, 30.0, 30.0]))
 )
 result = GenCanPack().with_seed(42).run([water], max_loops=200)
 packed = result.frame  # 1500 atoms (3 × 500), with mol_id per copy
@@ -51,7 +51,7 @@ solvent) in one run.
 | Object | Role |
 |---|---|
 | `Target(frame, count)` | One species: template `Frame` + number of copies. Immutable builders: `.with_name`, `.with_restraint`, … |
-| `mp.Cuboid(origin, lengths)` | A molrs region used as a restraint: keep atoms inside an axis-aligned box (Å). |
+| `mp.core.Cuboid(origin, lengths)` | A molrs region used as a restraint: keep atoms inside an axis-aligned box (Å). |
 | `GenCanPack()` | Rigid-body packer. Chain `.with_seed`, `.with_tolerance`, `.with_periodic_box`, … |
 | `packer.run([targets], max_loops=…)` | Run packing; returns a `State` — `.frame` (the packed `Frame`), `.converged`, `.fdist`, … |
 
@@ -62,10 +62,10 @@ with repeated `.with_restraint(...)` calls.
 
 | Restraint | Keeps molecules… |
 |---|---|
-| `mp.Cuboid(origin, lengths)` | inside an axis-aligned box. |
-| `mp.Sphere(center, radius)` | inside a sphere. |
-| `~mp.Sphere(center, radius)` | outside a sphere (any region can be inverted, `&`-ed and `|`-ed). |
-| `mp.HalfSpace(...)` | on one side of a plane. |
+| `mp.core.Cuboid(origin, lengths)` | inside an axis-aligned box. |
+| `mp.core.Sphere(center, radius)` | inside a sphere. |
+| `~mp.core.Sphere(center, radius)` | outside a sphere (any region can be inverted, `&`-ed and `|`-ed). |
+| `mp.core.HalfSpace(...)` | on one side of a plane. |
 | `GaussianPlane` / `GaussianPoint` / … | collective distribution-matching (species-level profiles). |
 
 ```python
@@ -73,7 +73,7 @@ with repeated `.with_restraint(...)` calls.
 from molpack import Target
 
 # confine to a 20 Å sphere about the origin
-c = mp.Sphere([0.0, 0.0, 0.0], 20.0)
+c = mp.core.Sphere([0.0, 0.0, 0.0], 20.0)
 target = Target(water_frame, count=100).with_restraint(c)
 ```
 

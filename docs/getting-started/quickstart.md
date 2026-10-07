@@ -9,8 +9,8 @@ export — so you see every boundary you will later automate.
 ```python
 import molpy as mp
 
-mol = mp.io.SmilesIR("CCO").to_atomistic()  # ethanol from SMILES (heavy atoms)
-mol, _ = mp.Conformer(add_hydrogens=True, seed=42).generate(
+mol = mp.io.smiles.SmilesIR("CCO").to_atomistic()  # ethanol from SMILES (heavy atoms)
+mol, _ = mp.conformer.Conformer(add_hydrogens=True, seed=42).generate(
     mol
 )  # add hydrogens + 3D coordinates
 typifier = mp.ff.typifier.OPLSAATypifier()  # carries the OPLS-AA library
@@ -80,7 +80,7 @@ The reader names each bonded type by joining its endpoint atom types with `::`
 it is spelled the way the force field lists it:
 
 ```python
-ff = mp.ff.forcefield.read_forcefield_xml(mp.data.get_forcefield_path("tip3p.xml"))
+ff = mp.io.read_forcefield_xml(mp.data.get_path("forcefield/tip3p.xml"))
 print("bond types:", [t.name for t in ff.get_types("bond")])
 print("angle types:", [t.name for t in ff.get_types("angle")])
 
@@ -173,7 +173,7 @@ out_dir = Path("quickstart-output")
 out_dir.mkdir(parents=True, exist_ok=True)
 
 mp.io.write_lammps_data(out_dir / "water_box_tip3p.data", frame)
-mp.ff.forcefield.write_lammps_forcefield(out_dir / "water_box_tip3p.ff", ff, frame)
+mp.io.write_lammps_forcefield(out_dir / "water_box_tip3p.ff", ff, frame)
 
 print("wrote:", out_dir / "water_box_tip3p.data")
 print("wrote:", out_dir / "water_box_tip3p.ff")

@@ -24,7 +24,7 @@ The examples below share this setup:
 ```python
 import molpy as mp
 
-mol = mp.io.SmilesIR("CCO").to_atomistic()
+mol = mp.io.smiles.SmilesIR("CCO").to_atomistic()
 ```
 
 ```python
@@ -33,7 +33,7 @@ import molpy as mp
 from molpy.adapter import RDKitAdapter
 from rdkit.Chem import AllChem
 
-mol = mp.io.SmilesIR("CCO").to_atomistic()
+mol = mp.io.smiles.SmilesIR("CCO").to_atomistic()
 
 adapter = RDKitAdapter(internal=mol)
 rd_mol = adapter.get_external()
@@ -54,13 +54,13 @@ below, the native path is the supported one and needs no third-party install:
 | Task | Native |
 |------|--------|
 | 3D embedding | [`Conformer`](conformer.md) — ETKDGv3 → torsion refinement → MMFF94 cleanup |
-| Hydrogens / aromaticity / stereo | `mp.Perceive().find_hydrogens(...)` / `.find_aromaticity(...)` |
-| SMILES / SMARTS | `mp.io.SmilesIR(...).to_atomistic()`, `mp.SmartsPattern` — see [Parser](parser.md) |
-| Ring queries | `mp.RingInfo(mol)` |
+| Hydrogens / aromaticity / stereo | `mp.perceive.Perceive().find_hydrogens(...)` / `.find_aromaticity(...)` |
+| SMILES / SMARTS | `mp.io.smiles.SmilesIR(...).to_atomistic()`, `mp.perceive.SmartsPattern` — see [Parser](parser.md) |
+| Ring queries | `mp.perceive.RingInfo(mol)` |
 | GAFF types | [AmberTools wrapper](wrapper.md) — antechamber delegation |
 
 ```python
-mol_3d, report = mp.Conformer(add_hydrogens=True, seed=42).generate(mol)
+mol_3d, report = mp.conformer.Conformer(add_hydrogens=True, seed=42).generate(mol)
 ```
 
 ## Key behavior

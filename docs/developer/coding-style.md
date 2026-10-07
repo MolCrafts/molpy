@@ -18,7 +18,7 @@ what they added (counts, handle map) — not `self`, so do not chain them.
 ```python
 import molpy as mp
 
-mol = mp.io.SmilesIR("CCO").to_atomistic()
+mol = mp.io.smiles.SmilesIR("CCO").to_atomistic()
 mol.generate_topology(gen_angle=True, gen_dihedral=True)  # writes angles/dihedrals on mol
 work = mol.copy()                                         # independent graph
 work.generate_topology(gen_angle=True, clear_existing=True)  # mol is untouched
@@ -62,7 +62,7 @@ Public APIs must have type hints. Private helpers should have them when the sign
 
 ## Imports
 
-Order: standard library, then third-party packages, then `molpy` imports. Separate groups with a blank line. Use absolute imports within `molpy` (`from molpy import Frame`, not relative imports).
+Order: standard library, then third-party packages, then `molpy` imports. Separate groups with a blank line. Use absolute imports within `molpy` (`from molpy.core import Frame`, not relative imports).
 
 
 ## Error handling

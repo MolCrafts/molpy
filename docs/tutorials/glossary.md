@@ -8,7 +8,7 @@ Quick definitions for MolPy's core terminology. Each entry links to the page tha
 : An editable molecular graph where atoms are nodes and bonds are edges. Use it when the structure is still under construction — adding atoms, removing leaving groups, querying neighbors. See [Atomistic and Topology](01_atomistic_and_topology.md).
 
 **NodeRef**
-: A live handle onto one graph node (`mp.NodeRef`); `Atom` and `Bead` are node views. Dictionary-like: read and write properties with bracket notation. Hashing is by identity, not by value.
+: A live handle onto one graph node (`mp.core.NodeRef`); `Atom` and `Bead` are node views. Dictionary-like: read and write properties with bracket notation. Hashing is by identity, not by value.
 
 **Atom**
 : A node view representing one atom. Carries arbitrary key-value properties (`element`, `charge`, `type`, etc.).
@@ -17,7 +17,7 @@ Quick definitions for MolPy's core terminology. Each entry links to the page tha
 : A node view representing one coarse-grained site.
 
 **RelationRef**
-: A live handle onto one topology connection (`mp.RelationRef`). Holds an ordered tuple of node endpoints. Relation views: `Bond`, `Angle`, `Dihedral`, `Improper`.
+: A live handle onto one topology connection (`mp.core.RelationRef`). Holds an ordered tuple of node endpoints. Relation views: `Bond`, `Angle`, `Dihedral`, `Improper`.
 
 **Graph**
 : Native base class (`mp.Graph`) holding nodes, relations and ports. `Atomistic` and `CoarseGrain` derive from it; molpy re-exports all three by identity.
@@ -54,7 +54,7 @@ Quick definitions for MolPy's core terminology. Each entry links to the page tha
 ### Modules
 
 **Parsing**
-: `mp.io.SmilesIR` and `mp.SmartsPattern` convert SMILES and SMARTS strings into MolPy structures; `CGSmilesIR` parses CGsmiles into ported units and site graphs. BigSMILES is not parsed. See [Parsing Chemistry](../user-guide/01_parsing_chemistry.md).
+: `mp.io.smiles.SmilesIR` and `mp.perceive.SmartsPattern` convert SMILES and SMARTS strings into MolPy structures; `CGSmilesIR` parses CGsmiles into ported units and site graphs. BigSMILES is not parsed. See [Parsing Chemistry](../user-guide/01_parsing_chemistry.md).
 
 **Reaction**
 : A reaction SMARTS. It matches the reactant patterns, forms and breaks bonds, and deletes the atoms that appear on the left and not on the right (the leaving groups). See [Parser](../api/parser.md).

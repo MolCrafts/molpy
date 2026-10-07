@@ -5,9 +5,9 @@ Trajectory and structure analyses. Import with `from molpy.compute import...`.
 Numerical kernels live in the native backend, and there is no second science
 implementation in molpy. Every public name on `molpy.compute` is the backend
 class or function re-exported by identity
-(`molpy.compute.RDF is molrs.compute.density.RDF`); molpy adds no wrapper.
+(`molpy.compute.RDF is molrs.compute.RDF`); molpy adds no wrapper.
 Pair-based analyses take neighbour tables built with the core
-`mp.NeighborList` (`nl.build(frame.coords, frame.box)`, then
+`mp.core.NeighborList` (`nl.build(frame.coords, frame.box)`, then
 `nl.neighbors()`).
 
 Compose **raw Computes** with **Fits** (and an optional SI scale) yourself. The
@@ -52,7 +52,7 @@ see the [MSD](../compute/msd.md) and [VACF](../compute/vacf.md) guides.
 
 | Family | Exports on `molpy.compute` | Guide |
 |--------|-----------------|-------|
-| neighbour search | `mp.NeighborList`, `mp.Neighbors` (core, not on `molpy.compute`) | [NeighborList](../compute/neighborlist.md) |
+| neighbour search | `mp.core.NeighborList`, `mp.core.Neighbors` (core, not on `molpy.compute`) | [NeighborList](../compute/neighborlist.md) |
 | rdf | `RDF` | [RDF](../compute/rdf.md) |
 | density | `LocalDensity`, `GaussianDensity` | [Density](../compute/density.md) |
 | diffraction | `StaticStructureFactorDebye` | [Diffraction](../compute/diffraction.md) |

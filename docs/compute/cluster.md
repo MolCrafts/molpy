@@ -104,7 +104,7 @@ frame = mp.Frame()
 frame["atoms"] = {"x": xyz[:, 0], "y": xyz[:, 1], "z": xyz[:, 2]}
 frame.box = mp.Box.cube(40.0)
 
-nl = mp.NeighborList(2.0)
+nl = mp.core.NeighborList(2.0)
 nl.build(frame.coords, frame.box)
 nlist = nl.neighbors()
 result, = Cluster(min_cluster_size=5).compute([frame], [nlist])

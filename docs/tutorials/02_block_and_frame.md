@@ -138,7 +138,7 @@ frame.meta = {
 }
 ```
 
-`frame.meta` is a live mapping in insertion order: get a Python scalar, set a Python scalar. Exact dtypes stay in the store — `frame.meta.dtype(key)` reports one, `frame.meta.typed()` hands out every value as an `mp.MetaValue` — and you pass `mp.MetaValue` only when you need a specific one.
+`frame.meta` is a live mapping in insertion order: get a Python scalar, set a Python scalar. Exact dtypes stay in the store — `frame.meta.dtype(key)` reports one, `frame.meta.typed()` hands out every value as an `mp.core.MetaValue` — and you pass `mp.core.MetaValue` only when you need a specific one.
 
 ```python
 print(frame.meta["timestep"]) # 0

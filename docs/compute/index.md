@@ -30,7 +30,7 @@ frame = mp.Frame()
 frame["atoms"] = {"x": xyz[:, 0], "y": xyz[:, 1], "z": xyz[:, 2]}
 frame.box = mp.Box.cube(20.0)
 
-nl = mp.NeighborList(10.0)
+nl = mp.core.NeighborList(10.0)
 nl.build(frame.coords, frame.box)
 nlist = nl.neighbors()
 result = RDF(n_bins=100, r_max=10.0).compute([frame], [nlist])
@@ -156,7 +156,7 @@ from molpy.compute import RDF
 reader = read_lammps_trajectory("run.lammpstrj")
 frames = reader.read_all()   # list[Frame]; frame.box from BOX BOUNDS
 
-nl = mp.NeighborList(8.0)
+nl = mp.core.NeighborList(8.0)
 nlists = []
 for f in frames:
     nl.build(f.coords, f.box)

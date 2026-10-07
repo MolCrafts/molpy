@@ -12,7 +12,7 @@ the forces drop below a tolerance.
 
 **`LBFGS` moves atoms downhill on a set of potentials until the maximum force
 falls under `fmax`.** The minimizer is the native limited-memory quasi-Newton
-implementation, re-exported as `molpy.LBFGS`; it
+implementation, re-exported as `molpy.optimize.LBFGS`; it
 drives the `Potentials` that `PotentialCompiler` compiles from a force field for your frame.
 
 ## Minimizing a structure
@@ -20,13 +20,13 @@ drives the `Potentials` that `PotentialCompiler` compiles from a force field for
 ```python
 import molpy as mp
 
-mol, _ = mp.Conformer(seed=42).generate(mp.io.SmilesIR("CCO").to_atomistic())
+mol, _ = mp.conformer.Conformer(seed=42).generate(mp.io.smiles.SmilesIR("CCO").to_atomistic())
 typifier = mp.ff.typifier.OPLSAATypifier()
 frame = typifier.typify(mol).to_frame()
 forcefield = typifier.forcefield()  # OPLS-AA parameters of the types just assigned
 
 potentials = mp.ff.potential.PotentialCompiler(forcefield).compile(frame)  # bonded + pair terms
-opt = mp.LBFGS(potentials, fmax=0.05, max_steps=200)
+opt = mp.optimize.LBFGS(potentials, fmax=0.05, max_steps=200)
 frame, report = opt.run(frame)  # a new frame with the relaxed coordinates
 
 print(report.converged, report.final_energy, report.final_fmax, report.n_steps)
