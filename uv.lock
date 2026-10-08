@@ -445,7 +445,7 @@ provides-extras = ["dev", "rdkit", "doc", "all"]
 
 [[package]]
 name = "molcrafts-molrs"
-version = "0.16.0"
+version = "0.17.0"
 source = { directory = "../molrs/molrs-python" }
 dependencies = [
     { name = "numpy" },
