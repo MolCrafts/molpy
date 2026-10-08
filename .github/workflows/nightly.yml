@@ -1,6 +1,7 @@
 name: nightly
 
-# Upstream only (MolCrafts/molpy); a fork sees every job skipped.
+# Upstream only (MolCrafts/molpy); a fork sees every job but
+# `nightly / context` skipped.
 #
 #   measure + submit  (schedule, or a dispatch) one measured run of the unit
 #       suite -- tests (JUnit) and coverage -- published to the MolCrafts CI
@@ -37,9 +38,24 @@ defaults:
     shell: bash
 
 jobs:
+  # Where this run happens, decided once: MolCrafts/molcrafts-ci/actions/ci-context.
+  context:
+    name: nightly / context
+    runs-on: ubuntu-latest
+    outputs:
+      tier: ${{ steps.context.outputs.tier }}
+      upstream: ${{ steps.context.outputs.upstream }}
+      integration: ${{ steps.context.outputs.integration }}
+      skip-pr: ${{ steps.context.outputs.skip-pr }}
+      cancel: ${{ steps.context.outputs.cancel }}
+    steps:
+      - id: context
+        uses: MolCrafts/molcrafts-ci/actions/ci-context@master
+
   measure:
     name: nightly / measure
-    if: github.repository_owner == 'MolCrafts' && github.ref != 'refs/heads/nightly'
+    needs: context
+    if: needs.context.outputs.upstream == 'true' && github.ref != 'refs/heads/nightly'
     runs-on: ubuntu-latest
     env:
       MATURIN_PEP517_ARGS: --locked
@@ -94,7 +110,8 @@ jobs:
 
   build:
     name: nightly / build
-    if: github.repository_owner == 'MolCrafts' && github.ref == 'refs/heads/nightly'
+    needs: context
+    if: needs.context.outputs.upstream == 'true' && github.ref == 'refs/heads/nightly'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7

@@ -2,7 +2,7 @@ name: test
 
 # The unit suite against molrs built from the commit scripts/partners.py
 # resolves (molrs's dev, or its branch named like this one), in two tiers
-# (`test / tier` decides):
+# (`test / context` decides):
 #
 #   fast  a feature-branch push to MolCrafts: Linux, Python 3.12.
 #   full  every push to a fork (proven before its pull request), dev, master
@@ -39,26 +39,30 @@ env:
   PYTHONWARNDEFAULTENCODING: "1"
 
 jobs:
-  tier:
-    name: test / tier
-    # A pull request inside a fork was already run, full tier, by its push.
-    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository || github.repository_owner == 'MolCrafts'
+  # Where this run happens, decided once: MolCrafts/molcrafts-ci/actions/ci-context.
+  context:
+    name: test / context
     runs-on: ubuntu-latest
     outputs:
-      full: ${{ steps.tier.outputs.full }}
+      tier: ${{ steps.context.outputs.tier }}
+      upstream: ${{ steps.context.outputs.upstream }}
+      integration: ${{ steps.context.outputs.integration }}
+      skip-pr: ${{ steps.context.outputs.skip-pr }}
+      cancel: ${{ steps.context.outputs.cancel }}
     steps:
-      - id: tier
-        run: echo "full=${{ github.repository_owner != 'MolCrafts' || contains(fromJSON('["dev","master","main"]'), github.ref_name) || github.event_name != 'push' || startsWith(github.ref, 'refs/tags/') }}" | tee -a "$GITHUB_OUTPUT"
+      - id: context
+        uses: MolCrafts/molcrafts-ci/actions/ci-context@master
 
   python:
     name: test / python (${{ matrix.os }}, ${{ matrix.python }})
-    needs: tier
+    needs: context
+    if: needs.context.outputs.skip-pr != 'true'
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        os: ${{ fromJSON(needs.tier.outputs.full == 'true' && '["ubuntu-latest","macos-latest","windows-latest"]' || '["ubuntu-latest"]') }}
-        python: ${{ fromJSON(needs.tier.outputs.full == 'true' && '["3.12","3.14"]' || '["3.12"]') }}
+        os: ${{ fromJSON(needs.context.outputs.tier == 'full' && '["ubuntu-latest","macos-latest","windows-latest"]' || '["ubuntu-latest"]') }}
+        python: ${{ fromJSON(needs.context.outputs.tier == 'full' && '["3.12","3.14"]' || '["3.12"]') }}
     steps:
       - uses: actions/checkout@v7
       - uses: MolCrafts/molcrafts-ci/actions/setup-python@master

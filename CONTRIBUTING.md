@@ -78,7 +78,10 @@ So a fork branch gets the full tier on its push: push to your fork, wait for
 green, then open the pull request into MolCrafts `dev`. Branches pushed to
 MolCrafts itself (Dependabot's) get the fast tier, and their pull requests the
 full one. The `require-green-ci` (`dev`) and `protect-master` rulesets require
-the full tier's jobs and `test / tier`. Shared setup is molcrafts-ci's
+the full tier's jobs and `test / context`. Every workflow's first job,
+`<file> / context`, runs `MolCrafts/molcrafts-ci/actions/ci-context@master`,
+which decides the tier, fork vs upstream and the pull-request dedup; the other
+jobs read its outputs. Shared setup is molcrafts-ci's
 `MolCrafts/molcrafts-ci/actions/<name>@master` (`setup-rust`, `setup-python`,
 `setup-partners`).
 
