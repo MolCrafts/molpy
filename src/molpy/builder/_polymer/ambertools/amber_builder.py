@@ -14,15 +14,15 @@ from collections import defaultdict
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 from molrs.io import read_amber_ac, read_amber_inpcrd, read_amber_prmtop
 from molrs.core import Atomistic, Bead, CoarseGrain
 
+from molpy.config import load_config
 from molpy.ff._ambertools import _PrmtopAssignment
 from molpy.wrapper import (
     AntechamberWrapper,
-    EnvironmentSpec,
     Parmchk2Wrapper,
     PrepgenWrapper,
     TleapWrapper,
@@ -33,6 +33,9 @@ from molpy.wrapper._prepgen import prepgen_control_text
 
 from ._cut import AmberCut
 from ._result import AmberBuildResult
+
+if TYPE_CHECKING:
+    from molcfg import Config
 
 Variant = Literal["head", "chain", "tail"]
 _VARIANTS: tuple[Variant, ...] = ("head", "chain", "tail")
@@ -77,8 +80,9 @@ class AmberPolymerBuilder:
             and the leaprc tleap sources.
         charge_method: The antechamber ``-c`` charge method.
         work_dir: Where the per-oligomer and per-chain directories are made.
-        env: AmberTools environment (see :class:`~molpy.wrapper.EnvironmentSpec`).
-        env_manager: Its manager (``"conda"`` / ``"venv"``).
+        config: molpy's configuration (:func:`molpy.config.load_config`):
+            the AmberTools executables and environment (``[wrapper]``,
+            ``[wrapper.<tool>]``); ``None`` loads it.
         net_charges: Bead type → oligomer net charge. ``None`` sums each
             oligomer's ``formal_charge``.
 
@@ -93,11 +97,11 @@ class AmberPolymerBuilder:
     Example:
         >>> oligomer, cuts = AmberPieces("COCC", "OCC", "OCCOC").oligomer()
         >>> sites = mp.io.cgsmiles.CgSmilesIr("{[#PEO]|10}").to_coarsegrain()
+        >>> config = load_config(
+        ...     {"wrapper": {"env": "AmberTools25", "env_manager": "conda"}}
+        ... )
         >>> built = AmberPolymerBuilder(
-        ...     {"PEO": oligomer},
-        ...     {"PEO": cuts},
-        ...     env="AmberTools25",
-        ...     env_manager="conda",
+        ...     {"PEO": oligomer}, {"PEO": cuts}, config=config
         ... ).assemble(sites)
     """
 
@@ -109,8 +113,7 @@ class AmberPolymerBuilder:
         force_field: Literal["gaff", "gaff2"] = "gaff",
         charge_method: str = "bcc",
         work_dir: Path | str = "amber_work",
-        env: str | Path | None = None,
-        env_manager: str | None = None,
+        config: Config | None = None,
         net_charges: Mapping[str, int] | None = None,
     ) -> None:
         self.library = {label: _named(template) for label, template in library.items()}
@@ -132,9 +135,7 @@ class AmberPolymerBuilder:
         self.charge_method = charge_method
         self.net_charges = dict(net_charges) if net_charges is not None else None
         self.work_dir = Path(work_dir).resolve()
-        spec = EnvironmentSpec.resolve(env, env_manager)
-        self.env = spec.env
-        self.env_manager = spec.env_manager
+        self.config = config if config is not None else load_config()
 
     def assemble(self, sites: CoarseGrain) -> AmberBuildResult:
         """Build the chain described by ``sites``.
@@ -215,12 +216,7 @@ class AmberPolymerBuilder:
         ac_types = dict(zip(ac_names, map(str, frame["atoms"]["type"]), strict=True))
         renamed = _rename(_atom_names(oligomer), ac_names)
 
-        prepgen = PrepgenWrapper(
-            name="prepgen",
-            workdir=directory,
-            env=self.env,
-            env_manager=self.env_manager,
-        )
+        prepgen = PrepgenWrapper(directory, config=self.config)
         prepi: dict[Variant, Path] = {}
         for variant in _VARIANTS:
             if variant not in variants:
@@ -270,12 +266,7 @@ class AmberPolymerBuilder:
         frcmod: Path,
         charge: int,
     ) -> None:
-        antechamber = AntechamberWrapper(
-            name="antechamber",
-            workdir=directory,
-            env=self.env,
-            env_manager=self.env_manager,
-        )
+        antechamber = AntechamberWrapper(directory, config=self.config)
         for output, fmt in ((mol2, "mol2"), (ac, "ac")):
             output.unlink(missing_ok=True)
             run_step(
@@ -291,12 +282,7 @@ class AmberPolymerBuilder:
                     net_charge=charge,
                 ),
             )
-        parmchk2 = Parmchk2Wrapper(
-            name="parmchk2",
-            workdir=directory,
-            env=self.env,
-            env_manager=self.env_manager,
-        )
+        parmchk2 = Parmchk2Wrapper(directory, config=self.config)
         frcmod.unlink(missing_ok=True)
         run_step(
             parmchk2,
@@ -341,12 +327,7 @@ class AmberPolymerBuilder:
                     "",
                 ]
             )
-            tleap = TleapWrapper(
-                name="tleap",
-                workdir=directory,
-                env=self.env,
-                env_manager=self.env_manager,
-            )
+            tleap = TleapWrapper(directory, config=self.config)
             prmtop.unlink(missing_ok=True)
             run_step(
                 tleap,

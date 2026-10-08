@@ -4,26 +4,25 @@ from unittest.mock import patch
 
 import pytest
 
-from molpy.engine import Script
-from molpy.engine import Cp2kEngine
+from molpy.config import load_config
+from molpy.engine import Cp2kEngine, Script
 
 
 def test_identity_and_extension():
-    engine = Cp2kEngine(executable="cp2k.psmp", check_executable=False)
+    engine = Cp2kEngine(check_executable=False)
     assert engine.name == "CP2K"
     assert engine._get_default_extension() == ".inp"
 
 
 def test_execute_without_a_script_raises(tmp_path):
-    engine = Cp2kEngine(executable="cp2k.psmp", check_executable=False)
+    engine = Cp2kEngine(check_executable=False)
     with pytest.raises(RuntimeError, match="No input script"):
         engine._execute(tmp_path)
 
 
 def test_run_invokes_the_binary_with_input_and_log_flags(tmp_path):
-    engine = Cp2kEngine(
-        executable="cp2k.psmp", check_executable=False, launcher=["mpirun", "-np", "2"]
-    )
+    config = load_config({"engine": {"cp2k": {"launcher": ["mpirun", "-np", "2"]}}})
+    engine = Cp2kEngine(config=config, check_executable=False)
     script = Script.from_text(
         name="input", text="&GLOBAL\n&END GLOBAL\n", language="other"
     )

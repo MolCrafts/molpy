@@ -160,7 +160,7 @@ def tools(TEST_DATA_DIR: Path):
     fake = _FakeTools(TEST_DATA_DIR / "prmtop" / "LiTFSI.prmtop")
     with (
         patch.object(Wrapper, "is_available", return_value=True),
-        patch("molpy.wrapper._wrapper.subprocess.run", side_effect=fake),
+        patch("molpy.wrapper._process.subprocess.run", side_effect=fake),
         patch(
             "molrs.builder.Assembler.assemble", side_effect=AssertionError("no link")
         ),
@@ -500,7 +500,7 @@ class TestToolFailures:
         fake = _FakeTools(TEST_DATA_DIR / "prmtop" / "LiTFSI.prmtop", fail="prepgen")
         with (
             patch.object(Wrapper, "is_available", return_value=True),
-            patch("molpy.wrapper._wrapper.subprocess.run", side_effect=fake),
+            patch("molpy.wrapper._process.subprocess.run", side_effect=fake),
             pytest.raises(RuntimeError, match="prepgen: cannot do it"),
         ):
             _build(tmp_path)
@@ -510,7 +510,7 @@ class TestToolFailures:
         with (
             patch.object(Wrapper, "is_available", return_value=True),
             patch(
-                "molpy.wrapper._wrapper.subprocess.run",
+                "molpy.wrapper._process.subprocess.run",
                 side_effect=_FakeTools(prmtop, fail="tleap"),
             ),
             pytest.raises(RuntimeError, match="tleap failed"),
@@ -519,7 +519,7 @@ class TestToolFailures:
         fake = _FakeTools(prmtop)
         with (
             patch.object(Wrapper, "is_available", return_value=True),
-            patch("molpy.wrapper._wrapper.subprocess.run", side_effect=fake),
+            patch("molpy.wrapper._process.subprocess.run", side_effect=fake),
         ):
             _build(tmp_path)
         assert fake.names() == ["tleap"]

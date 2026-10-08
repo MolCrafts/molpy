@@ -60,7 +60,7 @@ molpy follows molrs's naming rules (`tests/test_public_paths.py` checks the modu
   `data`, `base`, `types`, `common`, `utils`, `helpers`, `env` — public or
   private: the bundled files are `molpy.resources`, the engine base class lives
   in `engine/_engine.py`, the wrapper environment in `wrapper/_environment.py`.
-  Classes and functions follow (`EnvironmentSpec`, `process_environment`,
+  Classes and functions follow (`EnvironmentSpec`, `tool_settings`,
   `TypeAssignment`, `source_forcefield`).
 - **Acronyms are cased as words**: `LammpsEngine`, `OpenmmEngine`,
   `RdkitAdapter`, `TleapWrapper`, `SmilesIr`, `CgBond`, `Rdf`, `Msd`,

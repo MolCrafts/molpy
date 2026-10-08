@@ -6,15 +6,13 @@ This wrapper runs ``tleap`` on a generated script file.
 from __future__ import annotations
 
 import subprocess
-from dataclasses import dataclass
 
 
 from ._wrapper import Wrapper
 
 
-@dataclass
 class TleapWrapper(Wrapper):
-    exe: str = "tleap"
+    tool = "tleap"
 
     def run_from_script(
         self,

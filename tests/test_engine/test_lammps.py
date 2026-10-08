@@ -7,8 +7,14 @@ import numpy as np
 import pytest
 
 import molpy as mp
+from molpy.config import load_config
 from molpy.engine import LammpsEngine
 from molpy.engine._lammps import _splice_coords
+
+
+def _lmp():
+    """A config naming the ``lmp`` binary (not the auto-detected one)."""
+    return load_config({"engine": {"lammps": {"executable": "lmp"}}})
 
 
 def test_relaxation_styles_come_from_the_molrs_include(tmp_path, monkeypatch):
@@ -43,7 +49,7 @@ def test_relaxation_styles_come_from_the_molrs_include(tmp_path, monkeypatch):
         seen["script"] = script.text
         shutil.copy(workdir / "system.data", workdir / "relaxed.data")
 
-    engine = LammpsEngine("lmp", check_executable=False)
+    engine = LammpsEngine(config=_lmp(), check_executable=False)
     monkeypatch.setattr(engine, "run", run)
     engine.minimize(frame, ff, workdir=tmp_path)
     script = seen["script"].splitlines()
@@ -107,7 +113,7 @@ def test_relaxation_runs_with_the_force_field_special_bonds(tmp_path, monkeypatc
         k for k in os.environ if k.startswith(("PMI", "PMIX", "SLURM", "OMPI"))
     ]:
         monkeypatch.delenv(key)
-    relaxed = LammpsEngine("lmp").minimize(frame, ff, workdir=tmp_path)
+    relaxed = LammpsEngine(config=_lmp()).minimize(frame, ff, workdir=tmp_path)
     log = (tmp_path / "log.lammps").read_text(encoding="utf-8")
     assert (
         "special_bonds lj 0.000000 0.000000 0.500000 coul 0.000000 0.000000 0.833300"

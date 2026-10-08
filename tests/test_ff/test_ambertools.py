@@ -101,7 +101,7 @@ def tools(TEST_DATA_DIR: Path):
     fake = FakeAmberTools(TEST_DATA_DIR)
     with (
         patch.object(Wrapper, "is_available", return_value=True),
-        patch("molpy.wrapper._wrapper.subprocess.run", side_effect=fake),
+        patch("molpy.wrapper._process.subprocess.run", side_effect=fake),
     ):
         yield fake
 
@@ -184,7 +184,7 @@ class TestAntechamberTypifier:
         fake = FakeAmberTools(TEST_DATA_DIR, fail="antechamber")
         with (
             patch.object(Wrapper, "is_available", return_value=True),
-            patch("molpy.wrapper._wrapper.subprocess.run", side_effect=fake),
+            patch("molpy.wrapper._process.subprocess.run", side_effect=fake),
             pytest.raises(RuntimeError, match="antechamber: fatal error"),
         ):
             mp.ff.typifier.AntechamberTypifier(work_dir=tmp_path).typify(_litfsi())
@@ -249,7 +249,7 @@ class TestTleapTypifier:
         fake = FakeAmberTools(TEST_DATA_DIR, fail="tleap")
         with (
             patch.object(Wrapper, "is_available", return_value=True),
-            patch("molpy.wrapper._wrapper.subprocess.run", side_effect=fake),
+            patch("molpy.wrapper._process.subprocess.run", side_effect=fake),
             pytest.raises(RuntimeError, match="tleap: fatal error"),
         ):
             mp.ff.typifier.TleapTypifier(work_dir=tmp_path).typify(_typed_litfsi())

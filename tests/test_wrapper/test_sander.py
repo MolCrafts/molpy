@@ -9,13 +9,13 @@ from molpy.wrapper import SanderWrapper
 
 
 def test_requires_a_working_directory(tmp_path):
-    wrapper = SanderWrapper(name="sander", exe="sander")
+    wrapper = SanderWrapper()
     with pytest.raises(ValueError, match="working directory"):
         wrapper.minimize(tmp_path / "x.prmtop", tmp_path / "x.inpcrd")
 
 
 def test_control_file_and_arguments(tmp_path):
-    wrapper = SanderWrapper(name="sander", exe="sander", workdir=tmp_path / "run")
+    wrapper = SanderWrapper(tmp_path / "run")
     seen = {}
 
     def fake_run(*, args, check):
@@ -37,7 +37,7 @@ def test_control_file_and_arguments(tmp_path):
 
 
 def test_failed_run_raises_with_the_tool_output(tmp_path):
-    wrapper = SanderWrapper(name="sander", exe="sander", workdir=tmp_path)
+    wrapper = SanderWrapper(tmp_path)
     failure = SimpleNamespace(returncode=1, stdout="", stderr="bad prmtop")
     with patch.object(SanderWrapper, "run", return_value=failure):
         with pytest.raises(RuntimeError, match="bad prmtop"):

@@ -6,36 +6,49 @@ Subprocess wrappers for external command-line tools.
 
 | Symbol | Summary | Preferred for |
 |--------|---------|---------------|
-| `Wrapper` | Base: run any CLI executable | Generic external tools |
+| `Wrapper` | Base: settings from `[wrapper.<tool>]`, logged subprocess runs | Writing a wrapper for another AmberTools program |
 | `AntechamberWrapper` | AMBER antechamber (type + charge assignment) | GAFF atom typing |
 | `Parmchk2Wrapper` | AMBER parmchk2 (missing parameter generation) | Force field completion |
 | `TleapWrapper` | AMBER tleap (topology building) | System assembly |
 | `PrepgenWrapper` | AMBER prepgen (residue template generation) | Polymer residues |
+| `SanderWrapper` | AMBER sander (energy minimisation) | Relaxing a prmtop/inpcrd |
+| `EnvironmentSpec` | The conda / venv a tool runs in, resolved from its settings | Inspecting or building a command prefix |
 | `run_step` | `run_step(tool, output, call)`: run one step, require the file it must write; raises `RuntimeError` with the tool's output | Chaining tools in a pipeline |
 
 ## Canonical example
 
 ```python
-from molpy.wrapper import Wrapper
+# docs: skip — needs AmberTools
+from molpy.config import load_config
+from molpy.wrapper import TleapWrapper
 
-echo = Wrapper(name="echo", exe="echo")
-result = echo.run(args=["hello", "world"])
-print(result.stdout) # "hello world\n"
-print(result.returncode) # 0
+config = load_config({"wrapper": {"env": "AmberTools25", "env_manager": "conda"}})
+leap = TleapWrapper("leap_work", config=config)
+result = leap.run_from_script("source leaprc.gaff2\nquit\n")
+print(result.returncode)  # 0
 ```
 
 ## Key behavior
 
-- Environment isolation is owned by `EnvironmentSpec` (`env` + `env_manager`); no auto-detection of manager type
-- Both parameters must be set together, or both omitted for the system `PATH`
-- Supported managers: `conda`, `venv` (one spelling each)
-- Safe to instantiate even if executable is missing (failure at `.run()` time)
-- All wrappers accept `workdir` for controlling working directory
+- A wrapper's executable, environment (`env` + `env_manager`), `env_vars` and
+  `timeout` are its `[wrapper.<tool>]` settings in molpy's configuration,
+  falling back to `[wrapper]` ([`molpy.config`](config.md)); the constructor
+  takes the working directory and, optionally, the `config`
+- Environment isolation is owned by `EnvironmentSpec`; no auto-detection of
+  manager type. `env` and `env_manager` are set together, or both omitted for
+  the system `PATH`; managers are `conda` and `venv` (one spelling each)
+- Safe to instantiate even if the executable is missing (`check()` /
+  `is_available()` report it; `run_step` refuses to start)
+- Every run is logged to `molpy.wrapper.<tool>` as mollog records
+  (`process started` / `finished` / `failed` / `timed out`) carrying the
+  `command`, `cwd`, `returncode` and `elapsed_s`
 
 ## Related
 
 - [Concepts: Wrapper and Adapter](../tutorials/07_wrapper_and_adapter.md)
 - [Guide: AmberTools Integration](../user-guide/13_ambertools_integration.md)
+- [Guide: Configure and Log a Run](../user-guide/14_configure_and_log.md)
+- [API: Config](config.md)
 
 ---
 

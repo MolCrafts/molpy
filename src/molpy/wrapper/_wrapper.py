@@ -7,8 +7,10 @@ They are peer-level to Adapters:
 
 Wrappers MUST NOT contain high-level domain logic.
 
-Environment isolation is owned by :class:`~molpy.wrapper.EnvironmentSpec`
-(``env`` + ``env_manager``).  See that module for supported managers.
+A wrapper's executable, environment, environment variables and time limit
+are its ``wrapper.<tool>`` settings in molpy's configuration
+(:mod:`molpy.config`); each run is logged to ``molpy.wrapper.<tool>``
+(:mod:`mollog`).
 """
 
 from __future__ import annotations
@@ -16,31 +18,68 @@ from __future__ import annotations
 import subprocess
 from abc import ABC
 from collections.abc import Callable
-from dataclasses import dataclass, field
 from pathlib import Path
+from typing import TYPE_CHECKING, ClassVar
+
+import mollog
+
+from molpy.config import load_config, tool_settings
 
 from ._environment import EnvironmentSpec
+from ._process import run_process
+
+if TYPE_CHECKING:
+    from molcfg import Config
 
 
-@dataclass
 class Wrapper(ABC):
-    """Minimal base class for external tool wrappers."""
+    """Minimal base class for external tool wrappers.
 
-    name: str
-    exe: str
-    workdir: Path | None = None  # a str is accepted and coerced in __post_init__
-    env_vars: dict[str, str] = field(default_factory=dict)
-    env: str | Path | None = None
-    env_manager: str | None = None
+    A subclass names its configuration table in :attr:`tool` (``"tleap"``
+    reads ``[wrapper.tleap]``, falling back to ``[wrapper]``).
 
-    def __post_init__(self) -> None:
-        # Public boundary accepts str | Path; internals always store Path.
-        if self.workdir is not None and not isinstance(self.workdir, Path):
-            self.workdir = Path(self.workdir)
+    Args:
+        workdir: Where the tool runs; ``None`` is the caller's directory.
+        config: molpy's configuration (:func:`molpy.config.load_config`);
+            ``None`` loads it (package defaults, user and project files).
 
-    def process_environment(self) -> EnvironmentSpec:
-        """Return the validated :class:`EnvironmentSpec` for this wrapper."""
-        return EnvironmentSpec.resolve(self.env, self.env_manager)
+    Attributes:
+        settings: The resolved :class:`~molpy.config.ToolSettings`.
+        exe: The executable (``settings.executable``).
+        environment: The :class:`EnvironmentSpec` the tool runs in.
+        env_vars: Variables set for the subprocess.
+        timeout: Seconds before the subprocess is killed (``None``: no limit).
+        logger: The tool's logger, ``molpy.wrapper.<tool>``.
+
+    Raises:
+        KeyError: :attr:`tool` is not a configured wrapper.
+        ValueError: The configured environment is incomplete or its manager
+            unsupported.
+    """
+
+    tool: ClassVar[str]
+
+    def __init__(
+        self,
+        workdir: str | Path | None = None,
+        *,
+        config: Config | None = None,
+    ) -> None:
+        self.workdir = Path(workdir) if workdir is not None else None
+        self.settings = tool_settings(
+            config if config is not None else load_config(), f"wrapper.{self.tool}"
+        )
+        if self.settings.executable is None:
+            raise ValueError(f"wrapper.{self.tool}.executable is not configured")
+        self.exe: str = self.settings.executable
+        self.environment = EnvironmentSpec.resolve(
+            self.settings.env,
+            self.settings.env_manager,
+            conda_executable=self.settings.conda_executable,
+        )
+        self.env_vars = dict(self.settings.env_vars)
+        self.timeout = self.settings.timeout
+        self.logger = mollog.get_logger(f"molpy.wrapper.{self.tool}")
 
     def resolve_executable(self) -> str | None:
         """Resolve the configured executable to an absolute path if possible.
@@ -48,7 +87,7 @@ class Wrapper(ABC):
         Returns:
             The resolved executable path, or None if it cannot be found.
         """
-        return self.process_environment().resolve_executable(self.exe)
+        return self.environment.resolve_executable(self.exe)
 
     def is_available(self) -> bool:
         """Return True if the executable can be resolved on this machine."""
@@ -67,8 +106,9 @@ class Wrapper(ABC):
         if resolved is None:
             raise FileNotFoundError(
                 f"Executable '{self.exe}' for {type(self).__name__} is not available. "
-                "Install the tool and ensure it is on PATH, or configure env/env_manager, "
-                "or set wrapper.exe to an absolute path."
+                "Install the tool and put it on PATH, or set "
+                f"wrapper.{self.tool}.executable / env / env_manager in molpy's "
+                "configuration."
             )
         return resolved
 
@@ -91,34 +131,25 @@ class Wrapper(ABC):
         Returns:
             The completed process result.
         """
-        spec = self.process_environment()
-        final_args = [*spec.command_prefix(), self.exe]
-        if args:
-            final_args.extend(args)
-
-        real_cwd = self.workdir
-        if real_cwd is not None:
-            real_cwd.mkdir(parents=True, exist_ok=True)
-
-        return subprocess.run(
-            final_args,
-            cwd=str(real_cwd) if real_cwd is not None else None,
-            input=input_text,
+        command = [*self.environment.command_prefix(), self.exe, *(args or [])]
+        if self.workdir is not None:
+            self.workdir.mkdir(parents=True, exist_ok=True)
+        return run_process(
+            self.logger,
+            command,
+            cwd=self.workdir,
+            env=self.environment.merge_environ(extra=self.env_vars),
             capture_output=capture_output,
-            text=True,
-            env=spec.merge_environ(extra=self.env_vars),
             check=check,
-            encoding="utf-8",
+            timeout=self.timeout,
+            input_text=input_text,
         )
 
     def __repr__(self) -> str:
         workdir_str = str(self.workdir) if self.workdir else "None"
-        env_bits = ""
-        if self.env is not None or self.env_manager is not None:
-            env_bits = f", env={self.env!r}, env_manager={self.env_manager!r}"
         return (
-            f"<{self.__class__.__name__}(name='{self.name}', "
-            f"exe='{self.exe}', workdir={workdir_str}{env_bits})>"
+            f"<{self.__class__.__name__}(exe='{self.exe}', "
+            f"workdir={workdir_str}, environment={self.environment!r})>"
         )
 
 
@@ -144,10 +175,12 @@ def run_step(
     """
     if not tool.is_available():
         raise RuntimeError(
-            f"{tool.exe} is not available: not on PATH or in env {tool.env!r}"
+            f"{tool.exe} is not available: not on PATH or in {tool.environment!r}"
         )
     result = call()
     if result.returncode != 0 or not output.is_file():
+        if result.returncode == 0:  # a failed exit is already logged by run()
+            tool.logger.error("step output missing", output=str(output))
         raise RuntimeError(
             f"{tool.exe} failed (exit {result.returncode}, {output.name} "
             f"{'written' if output.is_file() else 'missing'}):\n"

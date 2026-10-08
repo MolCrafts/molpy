@@ -6,7 +6,6 @@ Higher-level workflow decisions belong in compute nodes.
 from __future__ import annotations
 
 import subprocess
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
@@ -14,11 +13,10 @@ from typing import Literal
 from ._wrapper import Wrapper
 
 
-@dataclass
 class AntechamberWrapper(Wrapper):
     """Wrapper for the 'antechamber' CLI."""
 
-    exe: str = "antechamber"
+    tool = "antechamber"
 
     def run_raw(
         self,
