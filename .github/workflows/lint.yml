@@ -21,10 +21,25 @@ concurrency:
   cancel-in-progress: ${{ !contains(fromJSON('["refs/heads/dev","refs/heads/master","refs/heads/main"]'), github.ref) && !startsWith(github.ref, 'refs/tags/') }}
 
 jobs:
+  # Where this run happens, decided once: MolCrafts/molcrafts-ci/actions/ci-context.
+  context:
+    name: lint / context
+    runs-on: ubuntu-latest
+    outputs:
+      tier: ${{ steps.context.outputs.tier }}
+      upstream: ${{ steps.context.outputs.upstream }}
+      integration: ${{ steps.context.outputs.integration }}
+      skip-pr: ${{ steps.context.outputs.skip-pr }}
+      cancel: ${{ steps.context.outputs.cancel }}
+    steps:
+      - id: context
+        uses: MolCrafts/molcrafts-ci/actions/ci-context@master
+
   hooks:
     name: lint / hooks
+    needs: context
     # A pull request inside a fork was already run by its push.
-    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository || github.repository_owner == 'MolCrafts'
+    if: needs.context.outputs.skip-pr != 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
