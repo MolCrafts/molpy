@@ -68,7 +68,7 @@ full tier).
 
 | workflow | feature-branch push to MolCrafts | everything else: any push to a fork, `dev`/`master`/`main`, pull requests, tags, dispatches | upstream only |
 | --- | --- | --- | --- |
-| `lint.yml` | `lint / hooks` (commit hooks on every file, partners, `uv lock --check`) | same | — |
+| `lint.yml` | `lint / hooks` (commit hooks on every file, partners, `uv lock --check`), `lint / workflows` (`check-workflows`) | same | — |
 | `test.yml` | fast: `test / python (ubuntu-latest, 3.12)` | full: `test / python` on Linux, macOS and Windows × Python 3.12 and 3.14 | — |
 | `docs.yml` | `docs / build` (zensical `--strict`) | same | Cloudflare Pages deploys the site from MolCrafts |
 | `nightly.yml` | — | — | nightly: test and coverage snapshots to molcrafts-ci; a `nightly` branch push: `molcrafts-molpy-nightly` |

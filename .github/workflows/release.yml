@@ -8,8 +8,9 @@ name: release
 # declares (`--no-sources` drops the ../molrs path source dev builds from).
 #
 # A dispatch is the dry run, on any branch, fork or upstream: the same test
-# matrix and build, no upload and no Release. Only a tag push on MolCrafts
-# uploads.
+# matrix and build, no upload and no Release. The upload jobs (release /
+# pypi, github) run only when `release / context` says `publish` (a `v*` tag
+# pushed to MolCrafts), and test no raw event or ref.
 on:
   push:
     tags: ["v*"]
@@ -18,9 +19,7 @@ on:
 permissions:
   contents: read
 
-# One group per file, workflow, event and ref. Under workflow_call (release.yml
-# running lint/test) github.workflow and github.event_name are the caller's, so
-# a called run never shares, and so never cancels, a direct run's group.
+# One group per file, workflow, event and ref; a run is never cancelled.
 concurrency:
   group: release-${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: false
@@ -39,7 +38,7 @@ jobs:
       upstream: ${{ steps.context.outputs.upstream }}
       integration: ${{ steps.context.outputs.integration }}
       skip-pr: ${{ steps.context.outputs.skip-pr }}
-      cancel: ${{ steps.context.outputs.cancel }}
+      publish: ${{ steps.context.outputs.publish }}
     steps:
       - id: context
         uses: MolCrafts/molcrafts-ci/actions/ci-context@master
@@ -54,7 +53,7 @@ jobs:
         with:
           fetch-depth: 0
       - name: The tag is the package version, on master
-        if: github.event_name == 'push'
+        if: needs.context.outputs.publish == 'true'
         run: |
           version=$(sed -n 's/^version = "\(.*\)"/\1/p' src/molpy/version.py | head -n1)
           [ "$GITHUB_REF_NAME" = "v$version" ] || { echo "::error::tag $GITHUB_REF_NAME is not v$version"; exit 1; }
@@ -97,9 +96,9 @@ jobs:
   pypi:
     name: release / pypi
     needs: [context, test, build]
-    if: github.event_name == 'push' && needs.context.outputs.upstream == 'true'
+    if: needs.context.outputs.publish == 'true'
     runs-on: ubuntu-latest
-    environment: ${{ github.event_name == 'push' && 'pypi' || '' }}
+    environment: pypi
     permissions:
       id-token: write
     steps:
@@ -116,7 +115,7 @@ jobs:
   github:
     name: release / github
     needs: [context, pypi]
-    if: github.event_name == 'push' && needs.context.outputs.upstream == 'true'
+    if: needs.context.outputs.publish == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: write
