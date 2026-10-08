@@ -7,6 +7,7 @@ import pytest
 
 from molpy.core import Block, Frame
 from molpy.ff.forcefield import ForceField
+from molpy.config import load_config
 from molpy.engine import OpenmmEngine, OpenmmSimulationConfig
 
 
@@ -133,7 +134,8 @@ class TestOpenmmEngineInit:
         assert engine.executable == "python"
 
     def test_check_executable_false_does_not_raise(self):
-        OpenmmEngine(executable="nonexistent_binary_xyz", check_executable=False)
+        config = load_config({"engine": {"openmm": {"executable": "no_such_xyz"}}})
+        OpenmmEngine(config=config, check_executable=False)
 
 
 # ---------------------------------------------------------------------------

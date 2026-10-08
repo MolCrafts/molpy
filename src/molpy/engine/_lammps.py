@@ -13,11 +13,12 @@ file, force-field settings, init and input script, for a periodic frame or a
 box-free one. :meth:`LammpsEngine.minimize` and :meth:`LammpsEngine.md` run
 the same deck with their own command block.
 
-MPI and scheduler launchers are configured on the :class:`~molpy.engine.Engine`
-base class::
+The executable, MPI / scheduler launcher, environment and time limit are the
+``[engine.lammps]`` settings of molpy's configuration (:mod:`molpy.config`)::
 
-    engine = LammpsEngine("lmp", launcher=["mpirun", "-np", "16"])
-    engine = LammpsEngine("lmp", launcher=["srun", "--ntasks=16"])
+    [engine.lammps]
+    executable = "lmp_mpi"
+    launcher = ["mpirun", "-np", "16"]
 
 Reference:
     Thompson, A. P. et al. (2022). LAMMPS — A flexible simulation tool for
@@ -27,7 +28,6 @@ Reference:
 
 from __future__ import annotations
 
-import shutil
 import subprocess
 import tempfile
 from pathlib import Path
@@ -42,7 +42,7 @@ if TYPE_CHECKING:
     from molrs.ff.forcefield import ForceField
     from molrs.core import Frame
 
-# Common LAMMPS binary names, tried in order when no executable is given.
+# Common LAMMPS binary names, tried in order when none is configured.
 _LAMMPS_CANDIDATES = ("lmp", "lmp_serial", "lmp_mpi")
 
 
@@ -50,56 +50,45 @@ class LammpsEngine(Engine):
     """LAMMPS molecular dynamics engine.
 
     Runs LAMMPS input scripts.  The engine binary is typically named ``lmp``,
-    ``lmp_serial``, or ``lmp_mpi`` depending on the build.
+    ``lmp_serial``, or ``lmp_mpi`` depending on the build; with no
+    ``engine.lammps.executable`` configured, the first of those found in the
+    engine's environment is used, so ``LammpsEngine()`` works out of the box
+    on a typical install.  Settings: ``[engine.lammps]``; logger:
+    ``molpy.engine.lammps``.
 
     Example:
-        >>> from molpy.engine import Script
-        >>> from molpy.engine import LammpsEngine
+        >>> from molpy.config import load_config
+        >>> from molpy.engine import LammpsEngine, Script
         >>>
         >>> script = Script.from_text(
         ...     name="input",
         ...     text="units real\\natom_style full\\nrun 0\\n",
         ...     language="other",
         ... )
-        >>> engine = LammpsEngine(executable="lmp", check_executable=False)
+        >>> engine = LammpsEngine(check_executable=False)
         >>> result = engine.run(script, workdir="./calc", check=False)
         >>> print(result.returncode)
         0
 
-        MPI execution::
+        MPI execution, as a run override::
 
-            engine = LammpsEngine("lmp", launcher=["mpirun", "-np", "16"])
-            result = engine.run(script, workdir="./calc")
+            config = load_config(
+                {"engine": {"lammps": {"launcher": ["mpirun", "-np", "16"]}}}
+            )
+            result = LammpsEngine(config=config).run(script, workdir="./calc")
     """
 
-    def __init__(
-        self,
-        executable: str | None = None,
-        *,
-        check_executable: bool = True,
-        **kwargs: Any,
-    ) -> None:
-        """Initialise the LAMMPS engine.
+    tool = "lammps"
 
-        Differs from :class:`~molpy.engine.Engine` only in that
-        *executable* is optional: when omitted, the first binary found on
-        ``PATH`` among ``lmp``, ``lmp_serial``, ``lmp_mpi`` is used, so
-        ``LammpsEngine()`` works out of the box on a typical install.
+    def _default_executable(self) -> str:
+        """The first of ``lmp``, ``lmp_serial``, ``lmp_mpi`` in the environment.
 
-        Args:
-            executable: Path or command to the LAMMPS binary.  ``None``
-                auto-detects (see above).
-            check_executable: Verify the resolved executable is on ``PATH``.
-            **kwargs: Forwarded to :class:`~molpy.engine.Engine`
-                (``workdir``, ``launcher``, ``env_vars``, ``env``,
-                ``env_manager``).
+        ``lmp`` when none is found (``check_executable`` then reports it).
         """
-        if executable is None:
-            executable = next(
-                (c for c in _LAMMPS_CANDIDATES if shutil.which(c)),
-                _LAMMPS_CANDIDATES[0],
-            )
-        super().__init__(executable, check_executable=check_executable, **kwargs)
+        return next(
+            (c for c in _LAMMPS_CANDIDATES if self.environment.resolve_executable(c)),
+            _LAMMPS_CANDIDATES[0],
+        )
 
     @property
     def name(self) -> str:
@@ -123,7 +112,6 @@ class LammpsEngine(Engine):
         run_dir: Path,
         capture_output: bool = False,
         check: bool = True,
-        timeout: float | None = None,
         **kwargs: Any,
     ) -> subprocess.CompletedProcess:
         """Run LAMMPS in *run_dir*.
@@ -140,7 +128,6 @@ class LammpsEngine(Engine):
             run_dir: Directory containing the input files; used as ``cwd``.
             capture_output: Capture stdout/stderr.
             check: Raise :exc:`subprocess.CalledProcessError` on failure.
-            timeout: Timeout in seconds.
             **kwargs: Ignored (reserved for future use).
 
         Returns:
@@ -150,7 +137,8 @@ class LammpsEngine(Engine):
             RuntimeError: If no input script has been registered.
             subprocess.CalledProcessError: If *check* is ``True`` and LAMMPS
                 exits with a non-zero code.
-            subprocess.TimeoutExpired: If *timeout* is exceeded.
+            subprocess.TimeoutExpired: If the configured ``timeout`` is
+                exceeded.
         """
         if self.input_script is None or self.input_script.path is None:
             raise RuntimeError("No input script found.  Pass a script to run() first.")
@@ -160,15 +148,8 @@ class LammpsEngine(Engine):
             ["-in", input_file, "-log", "log.lammps", "-screen", "none"]
         )
 
-        return subprocess.run(
-            command,
-            cwd=run_dir,
-            capture_output=capture_output,
-            text=True,
-            check=check,
-            timeout=timeout,
-            env=self._merged_environment(),
-            encoding="utf-8",
+        return self._run_process(
+            command, run_dir, capture_output=capture_output, check=check
         )
 
     # ------------------------------------------------------------------
@@ -276,6 +257,14 @@ class LammpsEngine(Engine):
             ),
             encoding="utf-8",
         )
+        self.logger.info(
+            "inputs written",
+            output_dir=str(out),
+            files={key: path.name for key, path in paths.items()},
+            periodic=periodic,
+            units=units,
+            atom_style=atom_style,
+        )
         return paths
 
     # ------------------------------------------------------------------
@@ -296,7 +285,6 @@ class LammpsEngine(Engine):
         units: str = "real",
         workdir: str | Path | None = None,
         capture_output: bool = False,
-        timeout: float | None = None,
     ) -> Frame:
         """Energy-minimise *frame* under force field *ff* and return a new frame.
 
@@ -324,7 +312,6 @@ class LammpsEngine(Engine):
             workdir: Directory for input/output files; a temporary directory is
                 created when ``None``.
             capture_output: Capture LAMMPS stdout/stderr.
-            timeout: Subprocess timeout in seconds.
 
         Returns:
             A new :class:`~molpy.Frame` with relaxed coordinates.
@@ -345,7 +332,6 @@ class LammpsEngine(Engine):
             units=units,
             workdir=workdir,
             capture_output=capture_output,
-            timeout=timeout,
         )
 
     def md(
@@ -364,7 +350,6 @@ class LammpsEngine(Engine):
         units: str = "real",
         workdir: str | Path | None = None,
         capture_output: bool = False,
-        timeout: float | None = None,
     ) -> Frame:
         """Run short MD on *frame* under *ff* and return a new frame.
 
@@ -387,7 +372,6 @@ class LammpsEngine(Engine):
             units: LAMMPS ``units``.
             workdir: Working directory; temporary when ``None``.
             capture_output: Capture LAMMPS stdout/stderr.
-            timeout: Subprocess timeout in seconds.
 
         Returns:
             A new :class:`~molpy.Frame` with the post-MD coordinates.
@@ -426,7 +410,6 @@ class LammpsEngine(Engine):
             units=units,
             workdir=workdir,
             capture_output=capture_output,
-            timeout=timeout,
         )
 
     def _relax(
@@ -441,7 +424,6 @@ class LammpsEngine(Engine):
         units: str,
         workdir: str | Path | None,
         capture_output: bool,
-        timeout: float | None,
     ) -> Frame:
         """Shared driver behind :meth:`minimize` / :meth:`md`.
 
@@ -484,7 +466,6 @@ class LammpsEngine(Engine):
             workdir=run_dir,
             capture_output=capture_output,
             check=True,
-            timeout=timeout,
         )
 
         out_path = run_dir / out_name
@@ -494,6 +475,9 @@ class LammpsEngine(Engine):
                 f"inspect {run_dir / 'log.lammps'}."
             )
         relaxed = read_lammps_data(out_path, atom_style=atom_style)
+        self.logger.info(
+            "relaxation finished", run_dir=str(run_dir), output=out_path.name
+        )
         return _splice_coords(frame, relaxed)
 
 

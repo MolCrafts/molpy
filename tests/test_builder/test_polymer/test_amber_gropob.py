@@ -26,17 +26,18 @@ import pytest
 import molpy as mp
 from molpy.ff.forcefield import AngleType, BondType, DihedralType
 from molpy.builder import AmberCut, AmberPieces, AmberPolymerBuilder
+from molpy.config import load_config
 
 _TOOLS = ("antechamber", "parmchk2", "prepgen", "tleap")
 
 
 def _amber_env() -> dict[str, object] | None:
-    """``env`` / ``env_manager`` for the installed AmberTools, or None."""
+    """The ``[wrapper]`` run overrides for the installed AmberTools, or None."""
     if all(shutil.which(tool) for tool in _TOOLS):
         return {}
     home = os.environ.get("AMBERHOME")
     if home and all((Path(home) / "bin" / tool).is_file() for tool in _TOOLS):
-        return {"env": Path(home), "env_manager": "venv"}
+        return {"wrapper": {"env": home, "env_manager": "venv"}}
     return None
 
 
@@ -91,7 +92,7 @@ def _build(library, cuts, work: Path, sites: str = "{[#PEO]|5}"):
         force_field="gaff",
         charge_method="bcc",
         work_dir=work,
-        **(_ENV or {}),
+        config=load_config(_ENV),
     ).assemble(mp.io.cgsmiles.CgSmilesIr(sites).to_coarsegrain())
 
 

@@ -6,9 +6,10 @@
 #   pre-push    the hygiene hooks again on --all-files, the partners check,
 #               the lock, the docs build, and the unit suite (`uv run
 #               --locked`, Python 3.12, as test.yml) -- the last three in
-#               CI's sibling layout, against molrs built from the commit
-#               scripts/partners.py resolves (molrs's dev, or its branch named
-#               like this one), never the developer's ../molrs.
+#               CI's sibling layout, against the partners (molrs, mollog,
+#               molcfg) built from the commits scripts/partners.py resolves
+#               (molrs's dev, mollog's and molcfg's master, or each one's
+#               branch named like this one), never the developer's siblings.
 #
 # Tests MUST use `uv run pytest`, not tox: tox's pip ignores [tool.uv.sources].
 # The docs build and the suite compile molrs; scripts/hook-run.sh hands them
@@ -67,9 +68,9 @@ repos:
         stages: [pre-push]
 
       # lint.yml: uv.lock is committed and current against the resolved
-      # molrs (every `uv run` is --locked). Metadata only: nothing compiles.
+      # partners (every `uv run` is --locked). Metadata only: nothing compiles.
       - id: uv-lock
-        name: uv.lock is current against the resolved molrs (lint.yml)
+        name: uv.lock is current against the resolved partners (lint.yml)
         entry: python3 scripts/partners.py run -- uv lock --check
         language: system
         pass_filenames: false
@@ -77,7 +78,7 @@ repos:
         stages: [pre-push]
 
       # docs.yml: `.[doc]` in a fresh env, then zensical. Built in CI's
-      # layout (scripts/partners.py run), so molrs is the resolved commit and
+      # layout (scripts/partners.py run), so the partners are the resolved commits and
       # the theme's staged assets never land in this checkout; --strict fails
       # on any warning, an unresolved mkdocstrings reference included.
       - id: docs
@@ -94,7 +95,7 @@ repos:
       # Same command as test.yml (uv honors [tool.uv.sources], tox/pip
       # does not), on CI's floor Python, in CI's layout.
       - id: pytest
-        name: uv pytest against the resolved molrs (test.yml)
+        name: uv pytest against the resolved partners (test.yml)
         entry: >-
           scripts/hook-run.sh python3 scripts/partners.py run --
           env MATURIN_PEP517_ARGS=--locked PYTHONWARNDEFAULTENCODING=1

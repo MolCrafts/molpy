@@ -11,8 +11,8 @@ the root holds three kinds of name and nothing else:
   :mod:`molpy.perceive`, :mod:`molpy.optimize`, :mod:`molpy.conformer`,
   :mod:`molpy.builder`, :mod:`molpy.compute`, :mod:`molpy.signal`,
   :mod:`molpy.md`, :mod:`molpy.op` and :mod:`molpy.stream`; and molpy's own
-  :mod:`molpy.engine`, :mod:`molpy.adapter`, :mod:`molpy.resources` and
-  :mod:`molpy.wrapper` (imported explicitly);
+  :mod:`molpy.engine`, :mod:`molpy.adapter`, :mod:`molpy.config`,
+  :mod:`molpy.resources` and :mod:`molpy.wrapper` (imported explicitly);
 * **the core data classes a user handles directly**, promoted from
   :mod:`molpy.core` as the same objects (``mp.Frame is mp.core.Frame is
   molrs.core.Frame``): ``Frame``, ``Block``, ``Trajectory``, ``Box``,
@@ -43,6 +43,7 @@ if _TYPE_CHECKING:
         adapter,
         builder,
         compute,
+        config,
         conformer,
         core,
         engine,
@@ -66,6 +67,7 @@ _LAZY_SUBMODULES = frozenset(
         "adapter",
         "builder",
         "compute",
+        "config",
         "conformer",
         "core",
         "resources",
@@ -121,6 +123,7 @@ __all__ = [
     "adapter",
     "builder",
     "compute",
+    "config",
     "conformer",
     "core",
     "resources",

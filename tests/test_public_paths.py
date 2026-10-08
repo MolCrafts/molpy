@@ -114,7 +114,7 @@ _MIRRORS = (
 )
 
 #: molpy's own subsystems, beside the mirrors.
-_OWN = ("adapter", "engine", "resources")
+_OWN = ("adapter", "config", "engine", "resources")
 
 #: The core data classes a user handles directly, promoted to the root.
 _PROMOTED = {

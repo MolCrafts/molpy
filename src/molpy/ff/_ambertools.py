@@ -19,7 +19,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from pathlib import Path
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 from molrs.ff.forcefield import ForceField
 from molrs.ff.typifier import Typifier, TypeAssignment
@@ -27,14 +27,17 @@ from molrs.io import read_amber_prmtop_system, write_amber_frcmod
 from molrs.core import Angle, Atomistic, Bond, Dihedral, Improper
 from molrs.core.constants import AMBER_SCEE, AMBER_SCNB
 
+from molpy.config import load_config
 from molpy.wrapper import (
     AntechamberWrapper,
-    EnvironmentSpec,
     Parmchk2Wrapper,
     TleapWrapper,
     run_step,
 )
 from molpy.wrapper._amber_input import antechamber_input_mol2, net_formal_charge
+
+if TYPE_CHECKING:
+    from molcfg import Config
 
 # The mol2 writer prints charges with four decimals, so a charge tleap reads
 # back from the mol2 it was given differs from the graph's by at most half of
@@ -234,8 +237,9 @@ class AntechamberTypifier(_AmberTypifier):
             and the leaprc tleap sources.
         charge_method: The antechamber ``-c`` charge method.
         work_dir: Where the per-molecule directories are created.
-        env: AmberTools environment (see :class:`~molpy.wrapper.EnvironmentSpec`).
-        env_manager: Its manager (``"conda"`` / ``"venv"``).
+        config: molpy's configuration (:func:`molpy.config.load_config`):
+            the AmberTools executables and environment (``[wrapper]``,
+            ``[wrapper.<tool>]``); ``None`` loads it.
     """
 
     def __init__(
@@ -244,13 +248,10 @@ class AntechamberTypifier(_AmberTypifier):
         atom_type: Literal["gaff", "gaff2"] = "gaff2",
         charge_method: str = "bcc",
         work_dir: str | Path = "amber_work",
-        env: str | Path | None = None,
-        env_manager: str | None = None,
+        config: Config | None = None,
     ) -> None:
         super().__init__()
-        spec = EnvironmentSpec.resolve(env, env_manager)
-        self.env = spec.env
-        self.env_manager = spec.env_manager
+        self.config = config if config is not None else load_config()
         self.atom_type = atom_type
         self.charge_method = charge_method
         self.work_dir = Path(work_dir).resolve()
@@ -273,12 +274,7 @@ class AntechamberTypifier(_AmberTypifier):
         inpcrd = directory / f"{_UNIT}.inpcrd"
         antechamber_input_mol2(graph, source, rename=True)
 
-        ante = AntechamberWrapper(
-            name="antechamber",
-            workdir=directory,
-            env=self.env,
-            env_manager=self.env_manager,
-        )
+        ante = AntechamberWrapper(directory, config=self.config)
         run_step(
             ante,
             typed,
@@ -292,12 +288,7 @@ class AntechamberTypifier(_AmberTypifier):
                 net_charge=net,
             ),
         )
-        parmchk2 = Parmchk2Wrapper(
-            name="parmchk2",
-            workdir=directory,
-            env=self.env,
-            env_manager=self.env_manager,
-        )
+        parmchk2 = Parmchk2Wrapper(directory, config=self.config)
         run_step(
             parmchk2,
             frcmod,
@@ -305,12 +296,7 @@ class AntechamberTypifier(_AmberTypifier):
                 typed, frcmod, input_format="mol2", force_field=self.atom_type
             ),
         )
-        leap = TleapWrapper(
-            name="tleap",
-            workdir=directory,
-            env=self.env,
-            env_manager=self.env_manager,
-        )
+        leap = TleapWrapper(directory, config=self.config)
         script = (
             f"source leaprc.{self.atom_type}\n"
             f"{_UNIT} = loadmol2 {typed}\n"
@@ -342,8 +328,9 @@ class TleapTypifier(_AmberTypifier):
         forcefield: Parameters tleap loads on top of the leaprc, written as a
             frcmod; ``None`` loads none.
         work_dir: Where the per-graph directories are created.
-        env: AmberTools environment (see :class:`~molpy.wrapper.EnvironmentSpec`).
-        env_manager: Its manager (``"conda"`` / ``"venv"``).
+        config: molpy's configuration (:func:`molpy.config.load_config`):
+            the AmberTools executables and environment (``[wrapper]``,
+            ``[wrapper.<tool>]``); ``None`` loads it.
     """
 
     def __init__(
@@ -352,13 +339,10 @@ class TleapTypifier(_AmberTypifier):
         leaprc: Literal["gaff", "gaff2"] = "gaff2",
         forcefield: ForceField | None = None,
         work_dir: str | Path = "amber_work",
-        env: str | Path | None = None,
-        env_manager: str | None = None,
+        config: Config | None = None,
     ) -> None:
         super().__init__()
-        spec = EnvironmentSpec.resolve(env, env_manager)
-        self.env = spec.env
-        self.env_manager = spec.env_manager
+        self.config = config if config is not None else load_config()
         self.leaprc = leaprc
         self.parameters = forcefield
         self.work_dir = Path(work_dir).resolve()
@@ -403,12 +387,7 @@ class TleapTypifier(_AmberTypifier):
             f"saveamberparm {_UNIT} {prmtop} {inpcrd}\n"
             "quit\n"
         )
-        leap = TleapWrapper(
-            name="tleap",
-            workdir=directory,
-            env=self.env,
-            env_manager=self.env_manager,
-        )
+        leap = TleapWrapper(directory, config=self.config)
         run_step(leap, prmtop, lambda: leap.run_from_script(script))
 
         result = _Prmtop(prmtop)

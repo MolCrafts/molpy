@@ -21,7 +21,7 @@ line when co-released. Patch may drift.
 |-----------|------|
 | `pyproject.toml` | `molcrafts-molrs>=X.Y.0,<X.(Y+1)` (not `==X.Y.Z`) |
 | Import-time check | `check_molrs_version()` accepts any installed molrs with the same major.minor |
-| Release gate | `release.yml` runs `scripts/check_molrs_on_pypi.py` (some published wheel on that minor line exists on PyPI), then the test matrix against molrs from PyPI (`uv run --no-sources`) |
+| Release gate | `release.yml` runs `scripts/check_partners_on_pypi.py` (a published release in every partner range: molrs on that minor line, mollog and molcfg in theirs), then the test matrix against the partners from PyPI (`uv run --no-sources`) |
 
 **Order:** ship molrs first (`master` + tag `vX.Y.Z` + publish), then land molpy
 APIs that need the new surface. Editable local molrs does not count as a release.
@@ -36,11 +36,18 @@ CI and the hooks check out at the commit `scripts/partners.py` resolves
 (`.github/partners.env`; see [Development Setup](development-setup.md)). That
 table only steers uv; the wheel declares the minor-line range alone.
 
+mollog and molcfg are partners too, tracked at their `master` on dev
+(`[tool.uv.sources]` builds them from `../mollog` / `../molcfg`) and declared
+by major range (`molcrafts-mollog>=1.3.1,<2`). A molpy that needs a new
+mollog or molcfg API waits for that release: mollog and molcfg ship before
+molpy, and molpy's lower bound moves to it.
+
 A release keeps the table and is judged against PyPI instead: `release.yml`
-checks that the declared molrs minor line is published
-(`scripts/check_molrs_on_pypi.py`) and runs the test matrix with
-`uv run --no-sources`, i.e. against molrs from PyPI, exactly what users of the
-wheel get. `uv.lock` (which records the dev build's molrs) is not used there.
+checks that every declared partner range has a published release
+(`scripts/check_partners_on_pypi.py`) and runs the test matrix with
+`uv run --no-sources`, i.e. against the partners from PyPI, exactly what
+users of the wheel get. `uv.lock` (which records the dev build's partners) is
+not used there.
 
 
 

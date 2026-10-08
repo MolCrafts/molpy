@@ -19,9 +19,15 @@ Type TFSI with antechamber, build GAFF PEO chains from one antechamber-typed oli
     which tleap # should print a path
     ```
 
-    MolPy's AmberTools typifiers and `AmberPolymerBuilder` activate the conda environment automatically when running commands, so you do not need to keep it active in your shell. The `env="AmberTools25"` parameter in the code below tells them which environment to activate.
+    MolPy's AmberTools typifiers and `AmberPolymerBuilder` activate the conda environment automatically when running commands, so you do not need to keep it active in your shell. Which environment they activate is a setting of molpy's configuration, shared by every AmberTools program (`[wrapper]`; see [Configure and Log a Run](14_configure_and_log.md)). Put it in `molpy.toml` next to your scripts:
 
-    If you use a different environment name, replace `"AmberTools25"` throughout this guide.
+    ```toml
+    [wrapper]
+    env = "AmberTools25"
+    env_manager = "conda"
+    ```
+
+    If you use a different environment name, change it there; nothing in the code below names it.
 
 ## Workflow overview
 
@@ -42,14 +48,19 @@ tfsi = mp.io.smiles.SmilesIr("O=S(=O)(C(F)(F)F)[N-]S(=O)(=O)C(F)(F)F").to_atomis
 tfsi = mp.conformer.Conformer(add_hydrogens=False, seed=42).generate(tfsi)[0]
 ```
 
+The typifier reads the AmberTools environment from `molpy.toml`
+(`load_config()` resolves it; passing nothing does the same):
+
 ```python
 # docs: skip — needs AmberTools
+from molpy.config import load_config
+
+config = load_config()  # defaults, then ~/.molcrafts/molpy/config/config.toml, then ./molpy.toml
 tfsi_ante = mp.ff.typifier.AntechamberTypifier(
     atom_type="gaff2",
     charge_method="bcc",
     work_dir=output_dir / "tfsi",
-    env="AmberTools25",
-    env_manager="conda",
+    config=config,
 )
 tfsi = tfsi_ante.typify(tfsi)  # a typed copy: GAFF2 types, BCC charges, bonded terms
 tfsi_ff = tfsi_ante.forcefield()  # the parameters of the types just assigned
@@ -118,8 +129,7 @@ built = mp.builder.AmberPolymerBuilder(
     force_field="gaff2",
     charge_method="bcc",
     work_dir=output_dir / "peo",
-    env="AmberTools25",
-    env_manager="conda",
+    config=config,
 ).assemble(sites)
 peo = built.chain  # typed graph: tleap's coordinates, types, charges and terms
 peo_ff = built.forcefield  # units real, AMBER 1-4 scaling declared

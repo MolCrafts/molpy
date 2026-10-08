@@ -78,6 +78,7 @@ nav = [
     { "Export & Engines" = [
       { "File I/O" = "user-guide/11_io.md" },
       { "Simulation Engines" = "user-guide/12_engine.md" },
+      { "Configure and Log a Run" = "user-guide/14_configure_and_log.md" },
     ] },
     { "Tools & Ecosystem" = [
       { "AmberTools Integration" = "user-guide/13_ambertools_integration.md" },
@@ -151,6 +152,7 @@ nav = [
     { "Wrapper" = "api/wrapper.md" },
     # High-level operations
     { "Engine" = "api/engine.md" },
+    { "Config" = "api/config.md" },
     { "Optimization" = "api/optimize.md" },
     { "Compute" = "api/compute.md" },
     { "Resources" = "api/resources.md" },

@@ -7,18 +7,16 @@ parmchk2 checks and generates missing force field parameters.
 from __future__ import annotations
 
 import subprocess
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
 from ._wrapper import Wrapper
 
 
-@dataclass
 class Parmchk2Wrapper(Wrapper):
     """Wrapper for the 'parmchk2' tool."""
 
-    exe: str = "parmchk2"
+    tool = "parmchk2"
 
     def run_raw(
         self,
@@ -78,7 +76,6 @@ class Parmchk2Wrapper(Wrapper):
         return self.run_raw(args=args, check=check)
 
 
-@dataclass
 class PrepgenWrapper(Wrapper):
     """Wrapper for the 'prepgen' CLI.
 
@@ -86,7 +83,7 @@ class PrepgenWrapper(Wrapper):
     points defined by control files specifying HEAD_NAME, TAIL_NAME, etc.
 
     Example:
-        >>> wrapper = PrepgenWrapper(name="prepgen", workdir=Path("./work"))
+        >>> wrapper = PrepgenWrapper(Path("./work"))
         >>> wrapper.generate_residue(
         ...     input_file="mol.ac",
         ...     output_file="mol.prepi",
@@ -95,7 +92,7 @@ class PrepgenWrapper(Wrapper):
         ... )
     """
 
-    exe: str = "prepgen"
+    tool = "prepgen"
 
     def run_raw(
         self,

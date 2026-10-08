@@ -20,7 +20,7 @@ its molrs subsystem.
 | **Promoted core data classes** | The data classes a user handles directly, on the root as the `mp.core` objects (`mp.Frame is mp.core.Frame is molrs.core.Frame`). No function, algorithm or unit preset is promoted. | `Frame`, `Block`, `Trajectory`, `Box`, `MolGraph`, `Atomistic`, `CoarseGrain`, `Atom`, `Bond`, `Angle`, `Dihedral`, `Improper`, `Bead`, `CgBond`, `Port`, `VirtualSite`, `DrudeParticle`, `MasslessSite`, `Element`, `Topology` |
 | **Mirrors of molrs** | One molpy module per molrs subsystem, holding the same names by identity. Behaviour and docs come from the native core. | `mp.core` — molrs's core (`molrs.core`) in one module: the classes above plus `FrameMeta`, `MetaValue`, `keys`, `schema`, `NodeRef`, `Refs`, regions (`Cuboid`, `Sphere`, `HalfSpace`, `Region`, …), `NeighborList`, `VerletSkin`, `UnitRegistry`, `UnitPreset`, `Quantity`, … · `mp.perceive` (`assign_rings`, `perceive_rings`, `add_hydrogens`, `assign_aromaticity`, …, `RingSet`, `SmartsPattern`, `Reaction`, `SubgraphMatcher`, …) · `mp.optimize` (`Lbfgs`, `OptimizationReport`) · `mp.conformer` (`Conformer`, …) · `mp.io` (every `read_*` / `write_*`, with the per-format submodules `mp.io.smiles`, `mp.io.cgsmiles`, `mp.io.lammps`, `mp.io.mrec`, and the trajectory readers' `mp.io.pdb`, `mp.io.xyz`, `mp.io.gro`, `mp.io.dcd`, `mp.io.trr`, `mp.io.xtc`) · `mp.ff` (`forcefield`, `potential`, `typifier`, `charge`, `ir`, `params`, `clpol_scaling`) · `mp.compute` · `mp.signal` · `mp.md` · `mp.op` · `mp.builder` · `mp.stream` |
 | **molpy's additions** | Defined in molpy, placed in the subsystem whose types they act on. | `mp.core`: the column selectors (`ElementSelector`, `AtomTypeSelector`, `AtomIndexSelector`, `MaskPredicate`) and `TrajectorySplitter` with its strategies · `mp.io.lammps`: `LammpsLogMetricReader` · `mp.io.mlp_jsonl`: `MlpJsonlMetricReader` · `mp.io.mrec`: `MrecMetricReader` · `mp.ff.typifier`: the AmberTools typifiers · `mp.builder`: crystals, polymers, virtual sites, `PackingTemplate` |
-| **molpy's own subpackages** | No molrs counterpart. | `mp.engine` (with `Script`), `mp.adapter`, `mp.resources`, and `molpy.wrapper` (imported explicitly) |
+| **molpy's own subpackages** | No molrs counterpart. | `mp.engine` (with `Script`), `mp.adapter`, `mp.config`, `mp.resources`, and `molpy.wrapper` (imported explicitly) |
 
 ## Index of Operations and Symbols
 
@@ -50,6 +50,7 @@ its molrs subsystem.
 | Compute mean-squared displacement, correlations, RDF, clustering | `Msd`, `OnsagerCorrelation`, `Rdf` | [Compute](compute.md) |
 | Locate bundled data files and built-in force fields | `get_path`, `list_files` | [Resources](resources.md) |
 | Generate LAMMPS, GROMACS, or OpenMM input decks | `LammpsEngine.generate_inputs`, `GromacsEngine.generate_inputs`, `OpenmmEngine.generate_inputs` | [Engine](engine.md) |
+| Set an engine's or wrapper's executable, environment, launcher, time limit | `mp.config.load_config`, `tool_settings`, `molpy.toml` | [Config](config.md) |
 
 ## Package Responsibilities
 
@@ -66,6 +67,7 @@ its molrs subsystem.
 | [Adapter](adapter.md) | Optional in-memory bridge to RDKit (worked example) |
 | [Wrapper](wrapper.md) | Subprocess interfaces for AmberTools command-line executables |
 | [Engine](engine.md) | Simulation engines (LAMMPS, GROMACS, OpenMM, CP2K): one `generate_inputs` each, `run`, `Script` |
+| [Config](config.md) | Layered configuration (molcfg) the engines and wrappers read: executables, environments, launchers, time limits |
 | [Optimization](optimize.md) | Native L-BFGS minimizer (`mp.optimize.Lbfgs`, `mp.optimize.OptimizationReport`) |
 | [Compute](compute.md) | Trajectory analysis: MSD, Onsager, transport, dielectric, RDF, clustering, … |
 | [Resources](resources.md) | Locators for bundled data files and built-in force fields |

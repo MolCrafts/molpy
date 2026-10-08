@@ -44,7 +44,19 @@ conda activate AmberTools25
 which antechamber tleap prepgen parmchk2
 ```
 
-Pass the env into the typifier when you construct it:
+Name the env once, in molpy's configuration — `molpy.toml` in your project
+directory (or `~/.molcrafts/molpy/config/config.toml` for every project):
+
+```toml
+[wrapper]
+env = "AmberTools25"
+env_manager = "conda"
+```
+
+Every AmberTools program (antechamber, parmchk2, prepgen, tleap, sander) then
+runs through `conda run -n AmberTools25`; see
+[Configure and Log a Run](../user-guide/14_configure_and_log.md) for the
+layers and the per-program tables.
 
 ```python
 # docs: skip — needs AmberTools; typifiers unit-tested with the executables faked
@@ -54,9 +66,8 @@ mol, _ = mp.conformer.Conformer(add_hydrogens=True, seed=42).generate(
     mp.io.smiles.SmilesIr("CCO").to_atomistic()
 )  # antechamber needs 3D coordinates
 ante = mp.ff.typifier.AntechamberTypifier(
-    atom_type="gaff2", charge_method="bcc",
-    work_dir="amber_work", env="AmberTools25", env_manager="conda",
-)
+    atom_type="gaff2", charge_method="bcc", work_dir="amber_work"
+)  # reads [wrapper] from molpy.toml
 typed = ante.typify(mol)  # GAFF2 types, BCC charges, bonded terms
 ff = ante.forcefield()  # the parameters of the types just assigned
 ```
@@ -76,9 +87,13 @@ a binary is optional:
 
 | Engine | Generate | Run |
 |--------|----------|-----|
-| `LammpsEngine` | control script + data/ff you already wrote | `lmp` / `lmp_serial` on `PATH` |
-| `Cp2kEngine` | CP2K input | `cp2k` on `PATH` |
+| `LammpsEngine` | control script + data/ff you already wrote | `lmp` / `lmp_serial` / `lmp_mpi` on `PATH` |
+| `GromacsEngine` | `.gro`, `.top`, `.mdp` | `gmx` on `PATH` |
+| `Cp2kEngine` | CP2K input | `cp2k.psmp` on `PATH` |
 | `OpenmmEngine` | PDB + XML + `simulate.py` | Python with `openmm` importable for `run` / `serialize_system` |
+
+Each binary, its environment and launcher are `[engine.<name>]` settings in
+molpy's configuration ([Configure and Log a Run](../user-guide/14_configure_and_log.md)).
 
 ```python
 from molpy.engine import LammpsEngine

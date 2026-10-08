@@ -6,15 +6,13 @@ returns the restart (``.rst``) coordinate file it writes.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from pathlib import Path
 
 from ._wrapper import Wrapper
 
 
-@dataclass
 class SanderWrapper(Wrapper):
-    exe: str = "sander"
+    tool = "sander"
 
     def minimize(
         self,

@@ -7,6 +7,7 @@ import subprocess
 import pytest
 
 import molpy as mp
+from molpy.config import load_config
 from molpy.engine import GromacsEngine
 
 #: The GROMACS driver to check the written inputs with, if one is installed.
@@ -67,9 +68,8 @@ def test_run_grompps_then_mdruns_the_input_mdp(tmp_path, system, monkeypatch):
         return subprocess.CompletedProcess(cmd, 0)
 
     monkeypatch.setattr(subprocess, "run", fake_run)
-    engine = GromacsEngine(
-        "gmx", check_executable=False, launcher=["mpirun", "-np", "4"]
-    )
+    config = load_config({"engine": {"gromacs": {"launcher": ["mpirun", "-np", "4"]}}})
+    engine = GromacsEngine(config=config, check_executable=False)
     paths = engine.generate_inputs(*system, tmp_path)
     engine.run(Script.from_path(paths["em"]), workdir=tmp_path)
     assert calls == [

@@ -25,31 +25,33 @@ mol = mp.io.smiles.SmilesIr("CCO").to_atomistic()
 ```
 
 ```python
-from molpy.wrapper import Wrapper
+from molpy.wrapper import AntechamberWrapper
 
-echo = Wrapper(name="echo_tool", exe="echo")
-result = echo.run(args=["Hello", "from", "MolPy!"])
-
-if result.returncode == 0:
-    print(result.stdout.strip())  # Hello from MolPy!
-else:
-    print(result.stderr)
+ante = AntechamberWrapper("ante_work")
+print(ante.exe)  # antechamber
+print(ante.environment)  # EnvironmentSpec(system)
+print(ante.is_available())  # True only where AmberTools is installed
 ```
 
-The example uses `echo` because it requires no installation, but the real use cases are tools like Antechamber and tleap. The wrapper pattern is the same: create the wrapper with the executable name, run it with arguments, check the result.
-
-For tools installed in isolated environments, wrappers handle Conda or virtualenv activation automatically.
+A wrapper takes its working directory and nothing else: which executable it
+runs, in which environment, with which variables and time limit, are its
+settings in molpy's configuration (`[wrapper.antechamber]`, falling back to
+`[wrapper]`). For tools installed in an isolated environment, name it there
+and the wrapper runs every command through Conda or the virtualenv:
 
 ```python
-# Example (not runnable without AmberTools installed):
-# ac = Wrapper(
-#     name="antechamber",
-#     exe="antechamber",
-#     env="AmberTools22",
-#     env_manager="conda",
-# )
-# ac.run(args=["-i", "input.pdb", "-fi", "pdb", "-o", "out.mol2", "-fo", "mol2"])
+# docs: skip — needs AmberTools in a conda env named AmberTools25
+from molpy.config import load_config
+
+config = load_config({"wrapper": {"env": "AmberTools25", "env_manager": "conda"}})
+ante = AntechamberWrapper("ante_work", config=config)
+ante.run(args=["-i", "input.pdb", "-fi", "pdb", "-o", "out.mol2", "-fo", "mol2"])
+# runs: conda run -n AmberTools25 antechamber -i input.pdb ...
 ```
+
+Each run is logged to `molpy.wrapper.antechamber` as structured
+[mollog](https://docs.molcrafts.org/mollog/) records; see
+[Configure and Log a Run](../user-guide/14_configure_and_log.md).
 
 
 ## Adapter: synchronized state across two object models

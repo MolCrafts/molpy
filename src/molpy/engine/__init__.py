@@ -17,9 +17,14 @@ concrete engine has **one** input writer, ``generate_inputs``, and ``run``:
 Scripts are :class:`Script` objects (editable text with a path)::
 
     from molpy.engine import LammpsEngine
-    engine = LammpsEngine("lmp", launcher=["mpirun", "-np", "16"])
+    engine = LammpsEngine()
     paths = engine.generate_inputs(frame, ff, "./calc")
     result = engine.run(Script.from_path(paths["input"]), workdir="./calc")
+
+Each engine's executable, environment, launcher, environment variables and
+time limit are its ``engine.<name>`` settings in molpy's configuration
+(:mod:`molpy.config`), and each logs to ``molpy.engine.<name>``
+(:mod:`mollog`): ``lammps``, ``gromacs``, ``openmm``, ``cp2k``.
 """
 
 from ._engine import Engine
