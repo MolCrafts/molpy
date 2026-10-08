@@ -1,10 +1,10 @@
-"""Tests for native space-group expansion (molpy.builder.symmetry)."""
+"""Space-group expansion for the crystal builder (``mp.builder.SpaceGroup``)."""
 
 import numpy as np
 import pytest
 
 from molpy.builder import SpaceGroup
-from molpy.builder.symmetry import parse_triplet
+from molpy.builder._symmetry import parse_triplet
 
 
 class TestSpaceGroup:

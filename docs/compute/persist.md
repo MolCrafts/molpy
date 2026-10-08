@@ -42,7 +42,7 @@ is a direct measure of how much re-formation is happening.
 
 There is a second knob for the same problem. With a single distance threshold, a
 pair sitting right at the cutoff flickers on and off many times per picosecond
-and the continuous lifetime collapses to noise. So `Persist` takes **two** radii:
+and the continuous lifetime collapses to noise. So `pair_survival_tcf` takes **two** radii:
 a pair becomes bonded inside $r_0$ and is only considered broken once it leaves
 $r_1 > r_0$. Take $r_0$ at the first minimum of $g(r)$ and $r_1$ a little beyond.
 
@@ -60,7 +60,7 @@ config:
     orient: bottom
     direction: horizontal
     title: null
-data: {$file: data/persist/argon_survival.json}
+data: {$file: series/persist/argon_survival.json}
 mark: {type: line, strokeWidth: 2.4, interpolate: monotone}
 encoding:
   x:
@@ -94,10 +94,10 @@ $r_0$ matches the radius you integrated to and that `exclude_self` is set
 correctly. It is an implementation check, not new physics, and it is the fastest
 way to catch the two mistakes that most often silently wreck this analysis.
 
-The decay is slow. The continuous curve falls to 0.91 at 1 ps, 0.73 at 3 ps and
-0.54 at 6 ps. Fitting the tail gives a continuous residence time of about
-9.7 ps — already a mild extrapolation, since the curve only just reaches half
-its initial value inside the window. The intermittent curve decays more slowly
+The decay is slow. The continuous curve falls to 0.91 at 1 ps, 0.74 at 3 ps and
+0.56 at 6 ps. Fitting the tail gives a continuous residence time of about
+10.5 ps — an extrapolation, since the curve has not yet reached half its
+initial value inside the window. The intermittent curve decays more slowly
 still and has not come close to $1/e$ by 6 ps, so this trajectory cannot pin its
 lifetime down; treat it as "longer than 6 ps" and lengthen the run if you need
 the number. That restraint is the same one the troubleshooting section below
@@ -105,20 +105,20 @@ asks of you.
 
 The physical picture is clear even so. An argon atom keeps most of its
 neighbours for many picoseconds while itself moving very little: [MSD](msd.md)
-gives 8.0 Å², an rms displacement of 2.8 Å, over that same 6 ps — less than one
+gives 7.4 Å², an rms displacement of 2.7 Å, over that same 6 ps — less than one
 atomic diameter. So the shell is not being left behind; it travels *with* the
 atom. That is what "cage" means quantitatively, and it is the same cage
 [VACF](vacf.md) sees as a negative lobe at 440 fs.
 
 ## Computing it
 
-`Persist.pair_survival_tcf` is a static method over two coordinate arrays. Watch
+`pair_survival_tcf` is a function over two coordinate arrays. Watch
 the shapes — the argument that catches everyone is `box_lengths`, which is
 **per frame**, shape `(n_frames, 3)`, not a single box vector:
 
 ```python
 import numpy as np
-from molpy.compute import Persist
+from molpy.compute import pair_survival_tcf
 
 rng = np.random.default_rng(0)
 n_frames = 300
@@ -129,7 +129,7 @@ coords_j = np.ascontiguousarray(
 )
 box = np.tile(np.array([[30.0, 30.0, 30.0]]), (n_frames, 1))
 
-result = Persist.pair_survival_tcf(
+result = pair_survival_tcf(
     coords_i, coords_j, box, 3.5, 4.0, "continuous", 10.0, 40
 )
 print(sorted(result))                       # -> ['correlation', 'lag_times']
@@ -152,7 +152,7 @@ Now compare the two definitions on identical data:
 ```python
 curves = {}
 for method in ("continuous", "intermittent"):
-    out = Persist.pair_survival_tcf(
+    out = pair_survival_tcf(
         coords_i, coords_j, box, 3.5, 4.0, method, 10.0, 40
     )
     curve = np.asarray(out["correlation"])

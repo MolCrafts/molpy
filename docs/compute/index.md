@@ -22,7 +22,7 @@ Every analysis follows the same three beats: **configure an object, call
 ```python
 import numpy as np
 import molpy as mp
-from molpy.compute import RDF
+from molpy.compute import Rdf
 
 rng = np.random.default_rng(0)
 xyz = rng.uniform(0.0, 20.0, size=(200, 3))
@@ -30,10 +30,10 @@ frame = mp.Frame()
 frame["atoms"] = {"x": xyz[:, 0], "y": xyz[:, 1], "z": xyz[:, 2]}
 frame.box = mp.Box.cube(20.0)
 
-nl = mp.NeighborList(10.0)
+nl = mp.core.NeighborList(10.0)
 nl.build(frame.coords, frame.box)
 nlist = nl.neighbors()
-result = RDF(n_bins=100, r_max=10.0).compute([frame], [nlist])
+result = Rdf(n_bins=100, r_max=10.0).compute([frame], [nlist])
 print(result.rdf.shape, result.bin_centers.shape)  # -> (100,) (100,)
 ```
 
@@ -47,7 +47,7 @@ measurement stays identical.
 Results are not uniform across the layer, and expecting the wrong one is the
 most common early mistake.
 
-Some computes return a **result object with named fields**, like `RDF` above
+Some computes return a **result object with named fields**, like `Rdf` above
 (`.rdf`, `.bin_centers`, `.n_frames`). Others return a **plain Python list with
 one entry per frame**, where each entry is a tuple of arrays:
 
@@ -59,7 +59,7 @@ print(len(per_frame), len(per_frame[0]))           # -> 1 2
 ```
 
 One frame in, one entry out, and that entry is a 2-tuple of
-`(num_neighbors, density)`. It is an ordinary list, so you can index it, iterate
+`(n_neighbors, density)`. It is an ordinary list, so you can index it, iterate
 it more than once, and pass it around. When you have exactly one frame it reads
 better to unpack immediately:
 
@@ -150,23 +150,23 @@ For a LAMMPS dump of unwrapped coordinates:
 
 ```python
 # docs: skip — needs a trajectory file of your own
-from molpy.io import read_lammps_trajectory
-from molpy.compute import RDF
+from molpy.io import read_lammps_dump_trajectory
+from molpy.compute import Rdf
 
-reader = read_lammps_trajectory("run.lammpstrj")
+reader = read_lammps_dump_trajectory("run.lammpstrj")
 frames = reader.read_all()   # list[Frame]; frame.box from BOX BOUNDS
 
-nl = mp.NeighborList(8.0)
+nl = mp.core.NeighborList(8.0)
 nlists = []
 for f in frames:
     nl.build(f.coords, f.box)
     nlists.append(nl.neighbors())
-gr = RDF(n_bins=160, r_max=8.0).compute(frames, nlists)
+gr = Rdf(n_bins=160, r_max=8.0).compute(frames, nlists)
 ```
 
 Prefer dumps that already store continuous paths (`xu yu zu`, or `x y z` plus
 `ix iy iz` unwrapped on read). There is no molpy helper that “turns a NumPy
-array into a trajectory” for you — `MSD`, `VanHove`, and friends take a sequence
+array into a trajectory” for you — `Msd`, `VanHove`, and friends take a sequence
 of `Frame`s.
 
 Use `reader.read_frame(i)`, `read_range`, or `read_frames` instead of
@@ -175,7 +175,7 @@ Use `reader.read_frame(i)`, `read_range`, or `read_frames` instead of
 
 ### Partial (species-resolved) distributions
 
-There is no species argument on `RDF` or the other structural computes. To get
+There is no species argument on `Rdf` or the other structural computes. To get
 an O–O rather than an all-pairs $g(r)$, build a frame containing only the atoms
 you want and analyse that:
 
@@ -193,7 +193,7 @@ selected = mixture["atoms"]["type_id"] == 1
 subset = mp.Frame()
 subset["atoms"] = {k: mixture["atoms"][k][selected] for k in ("x", "y", "z")}
 subset.box = mixture.box
-print(subset["atoms"].nrows)                       # -> 143
+print(subset["atoms"].n_rows)                       # -> 143
 ```
 
 The density used for normalization then comes from the subset, which is what you
@@ -210,11 +210,11 @@ The pages are grouped the way the questions group, not the way the classes do.
 | Question | Page | Entry points |
 |---|---|---|
 | Which atoms are near which? | [NeighborList](neighborlist.md) | `NeighborList` |
-| How are neighbours spaced? | [RDF](rdf.md) | `RDF` |
+| How are neighbours spaced? | [RDF](rdf.md) | `Rdf` |
 | Where is the matter, in space? | [Density](density.md) | `LocalDensity`, `GaussianDensity` |
 | What would a diffraction experiment see? | [Diffraction](diffraction.md) | `StaticStructureFactorDebye` |
-| Where do neighbours sit around an anisotropic particle? | [PMFT](pmft.md) | `PMFTXY` |
-| How are bond lengths, angles, torsions distributed? | [Distribution](distribution.md) | `DistanceDistribution`, `AngleDistribution`, `DihedralDistribution` |
+| Where do neighbours sit around an anisotropic particle? | [PMFT](pmft.md) | `PmftXy` |
+| How are bond lengths, angles, torsions distributed? | [Distribution](distribution.md) | `DistributionFunction` |
 | Where do neighbours sit in a molecule's own frame? | [Spatial](spatial.md) | `SpatialDistribution` |
 
 ### Order, shape, and aggregates — what the structure adds up to
@@ -222,10 +222,10 @@ The pages are grouped the way the questions group, not the way the classes do.
 | Question | Page | Entry points |
 |---|---|---|
 | Crystalline, hexatic, or nematic order? | [Order](order.md) | `Steinhardt`, `Hexatic`, `Nematic`, `SolidLiquid` |
-| What does the local environment look like? | [Environment](environment.md) | `BondOrder` |
+| What does the local environment look like? | [Environment](environment.md) | `BondOrientationalOrder` |
 | How big and how anisotropic is a molecule? | [Shape](shape.md) | `RadiusOfGyration`, `GyrationTensor`, `InertiaTensor` |
 | What is connected to what? | [Cluster](cluster.md) | `Cluster`, `ClusterProperties` |
-| What are the dominant collective coordinates? | [Decomposition](decomposition.md) | `Pca2`, `KMeans` |
+| What are the dominant collective coordinates? | [Decomposition](decomposition.md) | `Pca`, `Kmeans` |
 | Which atoms are hydrogen-bonded? | [HBond](hbond.md) | `HBonds`, `HBondCriterion` |
 | How much space does each atom own? | [Voronoi](voronoi.md) | `RadicalVoronoi`, `VoronoiIntegration` |
 
@@ -233,12 +233,12 @@ The pages are grouped the way the questions group, not the way the classes do.
 
 | Question | Page | Entry points |
 |---|---|---|
-| How far do atoms wander? (self-diffusion) | [MSD](msd.md) | `MSD` |
+| How far do atoms wander? (self-diffusion) | [MSD](msd.md) | `Msd` |
 | What does the velocity remember? | [VACF](vacf.md) | `Acf`, `signal.acf_fft` |
 | Ionic conductivity, from displacements? | [PMSD](pmsd.md) | `EinsteinConductivity` → `LinearFit` |
 | …and from currents? | [JACF](jacf.md) | `GreenKuboConductivity` → `CumulativeTrapezoid` |
-| Do ions move together or independently? | [Onsager](onsager.md) | `Onsager.correlation` |
-| How long does a contact survive? | [Persist](persist.md) | `Persist.pair_survival_tcf` |
+| Do ions move together or independently? | [Onsager](onsager.md) | `OnsagerCorrelation` |
+| How long does a contact survive? | [Persist](persist.md) | `pair_survival_tcf` |
 | How does a density fluctuation decay? | [Van Hove](van_hove.md) | `VanHove` |
 | How fast do molecules tumble? | [Reorientation](reorientation.md) | `LegendreReorientation` |
 
@@ -246,8 +246,8 @@ The pages are grouped the way the questions group, not the way the classes do.
 
 | Question | Page | Entry points |
 |---|---|---|
-| What is $\varepsilon^*(\omega)$? | [Dielectric](dielectric.md) | `Dielectric`, EH/GK spectra, fits |
-| Vibrational, IR, or Raman spectrum? | [Spectra](spectra.md) | `PowerSpectrum`, `IRSpectrum`, `RamanSpectrum`, … |
+| What is $\varepsilon^*(\omega)$? | [Dielectric](dielectric.md) | `static_dielectric_constant`, EH/GK spectra, fits |
+| Vibrational, IR, or Raman spectrum? | [Spectra](spectra.md) | `PowerSpectrum`, `IrSpectrum`, `RamanSpectrum`, … |
 | How do I window, transform, and correlate a signal? | [Signal](signal.md) | `signal.acf_fft`, `apply_window` |
 
 ## Where the figures come from
@@ -255,14 +255,18 @@ The pages are grouped the way the questions group, not the way the classes do.
 Every curve on these pages is computed, not drawn. The reference system is 500
 argon atoms at 85 K and 1.374 g cm⁻³ — the Rahman state point — integrated for
 30 ps at constant energy, conserving total energy to a relative drift of
-$1.4\times10^{-5}$ (dimensionless, $|E(t)-E(0)|/|E(0)|$). The
-generator lives in `scripts/docs_data/` and writes to `docs/data/`, so any
+$3.1\times10^{-6}$ (dimensionless, $|E(t)-E(0)|/|E(0)|$). The transport pages
+([MSD](msd.md), [VACF](vacf.md)) average over eight such runs that differ only
+in the seed of their initial velocities, because one run of a chaotic liquid
+is one noisy draw, and quote each coefficient with its spread over the runs.
+Every run is a pure function of its seed, with nothing cached between runs.
+The generator lives in `scripts/docs_series/` and writes to `docs/series/`, so any
 figure can be reproduced or challenged:
 
 ```python
 # docs: skip — runs a 30 ps MD trajectory (minutes, not seconds)
-from docs_data.run import argon_trajectory
-from docs_data.structure import radial_distribution
+from docs_series.run import argon_trajectory
+from docs_series.structure import radial_distribution
 
 radial_distribution(argon_trajectory())
 ```

@@ -12,8 +12,12 @@ from eo_kit import library, report
 
 
 def main() -> None:
-    sites = mp.CGSmilesIR("{[#EO]1[#EO][#EO][#EO][#EO][#EO]1}").to_coarsegrain()
-    ring = mp.Assembler(library(), mp.GrowthPlacer()).assemble(sites, mp.Atomistic)
+    sites = mp.io.cgsmiles.CgSmilesIr(
+        "{[#EO]1[#EO][#EO][#EO][#EO][#EO]1}"
+    ).to_coarsegrain()
+    ring = mp.builder.Assembler(library(), mp.builder.GrowthPlacer()).assemble(
+        sites, mp.Atomistic
+    )
     report("ring-6", ring)
 
 

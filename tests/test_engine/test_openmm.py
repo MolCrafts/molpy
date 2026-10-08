@@ -1,13 +1,13 @@
-"""Tests for OpenMMEngine and OpenMMSimulationConfig."""
+"""Tests for OpenmmEngine and OpenmmSimulationConfig."""
 
 import json
 
 import numpy as np
 import pytest
 
-from molpy import Block, Frame
-from molpy import ForceField
-from molpy.engine.openmm import OpenMMEngine, OpenMMSimulationConfig
+from molpy.core import Block, Frame
+from molpy.ff.forcefield import ForceField
+from molpy.engine import OpenmmEngine, OpenmmSimulationConfig
 
 
 # ---------------------------------------------------------------------------
@@ -42,22 +42,22 @@ def empty_forcefield():
 
 @pytest.fixture
 def nvt_config():
-    return OpenMMSimulationConfig(ensemble="NVT", n_steps=100)
+    return OpenmmSimulationConfig(ensemble="NVT", n_steps=100)
 
 
 @pytest.fixture
 def engine():
-    return OpenMMEngine(check_executable=False)
+    return OpenmmEngine(check_executable=False)
 
 
 # ---------------------------------------------------------------------------
-# OpenMMSimulationConfig
+# OpenmmSimulationConfig
 # ---------------------------------------------------------------------------
 
 
-class TestOpenMMSimulationConfig:
+class TestOpenmmSimulationConfig:
     def test_default_values(self):
-        cfg = OpenMMSimulationConfig()
+        cfg = OpenmmSimulationConfig()
         assert cfg.ensemble == "NVT"
         assert cfg.temperature == 300.0
         assert cfg.timestep_fs == 2.0
@@ -67,62 +67,62 @@ class TestOpenMMSimulationConfig:
         assert cfg.platform == "CUDA"
 
     def test_npt_ensemble(self):
-        cfg = OpenMMSimulationConfig(ensemble="NPT", pressure=2.0)
+        cfg = OpenmmSimulationConfig(ensemble="NPT", pressure=2.0)
         assert cfg.ensemble == "NPT"
         assert cfg.pressure == 2.0
 
     def test_minimize_ensemble(self):
-        cfg = OpenMMSimulationConfig(ensemble="minimize")
+        cfg = OpenmmSimulationConfig(ensemble="minimize")
         assert cfg.ensemble == "minimize"
 
     def test_to_dict_returns_dict(self):
-        cfg = OpenMMSimulationConfig(n_steps=1000)
+        cfg = OpenmmSimulationConfig(n_steps=1000)
         d = cfg.to_dict()
         assert isinstance(d, dict)
         assert d["n_steps"] == 1000
         assert d["ensemble"] == "NVT"
 
     def test_to_dict_roundtrip(self):
-        cfg = OpenMMSimulationConfig(temperature=350.0, n_steps=2000)
-        restored = OpenMMSimulationConfig.from_dict(cfg.to_dict())
+        cfg = OpenmmSimulationConfig(temperature=350.0, n_steps=2000)
+        restored = OpenmmSimulationConfig.from_dict(cfg.to_dict())
         assert restored.temperature == 350.0
         assert restored.n_steps == 2000
 
     def test_from_dict(self):
         d = {"ensemble": "NPT", "temperature": 400.0, "n_steps": 5000}
-        cfg = OpenMMSimulationConfig.from_dict(d)
+        cfg = OpenmmSimulationConfig.from_dict(d)
         assert cfg.ensemble == "NPT"
         assert cfg.temperature == 400.0
 
     def test_to_json_creates_file(self, tmp_path):
-        cfg = OpenMMSimulationConfig(n_steps=999)
+        cfg = OpenmmSimulationConfig(n_steps=999)
         path = tmp_path / "config.json"
         cfg.to_json(path)
         assert path.exists()
 
     def test_to_json_roundtrip(self, tmp_path):
-        cfg = OpenMMSimulationConfig(temperature=280.0, n_steps=1234)
+        cfg = OpenmmSimulationConfig(temperature=280.0, n_steps=1234)
         path = tmp_path / "config.json"
         cfg.to_json(path)
-        restored = OpenMMSimulationConfig.from_json(path)
+        restored = OpenmmSimulationConfig.from_json(path)
         assert restored.temperature == 280.0
         assert restored.n_steps == 1234
 
     def test_json_file_is_valid_json(self, tmp_path):
-        cfg = OpenMMSimulationConfig()
+        cfg = OpenmmSimulationConfig()
         path = tmp_path / "config.json"
         cfg.to_json(path)
-        data = json.loads(path.read_text())
+        data = json.loads(path.read_text(encoding="utf-8"))
         assert "ensemble" in data
         assert "temperature" in data
 
 
 # ---------------------------------------------------------------------------
-# OpenMMEngine initialisation
+# OpenmmEngine initialisation
 # ---------------------------------------------------------------------------
 
 
-class TestOpenMMEngineInit:
+class TestOpenmmEngineInit:
     def test_name(self, engine):
         assert engine.name == "OpenMM"
 
@@ -133,7 +133,7 @@ class TestOpenMMEngineInit:
         assert engine.executable == "python"
 
     def test_check_executable_false_does_not_raise(self):
-        OpenMMEngine(executable="nonexistent_binary_xyz", check_executable=False)
+        OpenmmEngine(executable="nonexistent_binary_xyz", check_executable=False)
 
 
 # ---------------------------------------------------------------------------

@@ -9,7 +9,7 @@ Subprocess wrappers for external command-line tools.
 | `Wrapper` | Base: run any CLI executable | Generic external tools |
 | `AntechamberWrapper` | AMBER antechamber (type + charge assignment) | GAFF atom typing |
 | `Parmchk2Wrapper` | AMBER parmchk2 (missing parameter generation) | Force field completion |
-| `TLeapWrapper` | AMBER tleap (topology building) | System assembly |
+| `TleapWrapper` | AMBER tleap (topology building) | System assembly |
 | `PrepgenWrapper` | AMBER prepgen (residue template generation) | Polymer residues |
 | `run_step` | `run_step(tool, output, call)`: run one step, require the file it must write; raises `RuntimeError` with the tool's output | Chaining tools in a pipeline |
 
@@ -26,9 +26,9 @@ print(result.returncode) # 0
 
 ## Key behavior
 
-- Environment isolation is owned by `EnvSpec` (`env` + `env_manager`); no auto-detection of manager type
+- Environment isolation is owned by `EnvironmentSpec` (`env` + `env_manager`); no auto-detection of manager type
 - Both parameters must be set together, or both omitted for the system `PATH`
-- Supported managers: `conda`, `venv` (aliases: `pip`, `virtualenv`)
+- Supported managers: `conda`, `venv` (one spelling each)
 - Safe to instantiate even if executable is missing (failure at `.run()` time)
 - All wrappers accept `workdir` for controlling working directory
 
@@ -43,20 +43,28 @@ print(result.returncode) # 0
 
 ### Environment
 
-::: molpy.wrapper.env
+::: molpy.wrapper.EnvironmentSpec
 
 ### Base
 
-::: molpy.wrapper.base
+::: molpy.wrapper.Wrapper
+
+::: molpy.wrapper.run_step
 
 ### Antechamber
 
-::: molpy.wrapper.antechamber
+::: molpy.wrapper.AntechamberWrapper
 
 ### Prepgen
 
-::: molpy.wrapper.prepgen
+::: molpy.wrapper.PrepgenWrapper
+
+::: molpy.wrapper.Parmchk2Wrapper
 
 ### TLeap
 
-::: molpy.wrapper.tleap
+::: molpy.wrapper.TleapWrapper
+
+### Sander
+
+::: molpy.wrapper.SanderWrapper

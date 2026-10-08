@@ -118,7 +118,7 @@ page, because of the $1/3$ against $1/6$. The $1/3$ is already inside it.
     behind these pages has $\mathbf{J} \equiv 0$. Rather than plot filtered
     noise, this page defers to [VACF](vacf.md), which shows the identical
     "integrate to the plateau" figure with real data. A dedicated figure follows
-    a charged reference trajectory in `scripts/docs_data/`.
+    a charged reference trajectory in `scripts/docs_series/`.
 
 ## When it goes wrong
 

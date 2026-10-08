@@ -1,105 +1,166 @@
-name: Nightly
+name: nightly
 
-# Publishes a dev-versioned pre-release to the SEPARATE PyPI project
-# `molcrafts-molpy-nightly` (never touches the stable `molcrafts-molpy`).
+# Upstream only (MolCrafts/molpy); a fork sees every job but
+# `nightly / context` skipped.
 #
-# Trigger: every push to the `nightly` branch, plus manual dispatch.
-# Version: <current source version>.dev<UTC timestamp>  (PEP 440 dev release).
-#   Install with:  pip install --pre molcrafts-molpy-nightly
-#
-# The import package stays `molpy` — only the PyPI distribution NAME changes,
-# so `molcrafts-molpy` and `molcrafts-molpy-nightly` cannot be installed at the
-# same time (same as tensorflow vs tf-nightly). That is intentional.
-#
-# Prereq (one-time, PyPI account holder only): configure a Trusted Publisher
-# (pending publisher) for project `molcrafts-molpy-nightly`:
-#   Repository:  MolCrafts/molpy
-#   Workflow:    nightly.yml
-#   Environment: pypi-nightly        (no required reviewers — see below)
-# The `pypi-nightly` GitHub Environment must NOT have required reviewers, or
-# every nightly will block waiting for manual approval.
-
+#   measure + submit  (schedule, or a dispatch) one measured run of the unit
+#       suite -- tests (JUnit) and coverage -- published to the MolCrafts CI
+#       index, which the engineering dashboard reads. The schedule runs on
+#       master, whose records are tracked; the index skips a record it
+#       already holds. `submit` alone holds MOLCRAFTS_CI_SSH_KEY, so no
+#       third-party code shares a job with the secret.
+#   build + pypi  (a push to, or dispatch on, the `nightly` branch) a
+#       dev-versioned release, <version>.dev<UTC timestamp>, to the SEPARATE
+#       PyPI project `molcrafts-molpy-nightly`, pinned to
+#       `molcrafts-molrs-nightly` (`pip install --pre molcrafts-molpy-nightly`;
+#       the import package stays `molpy`). PyPI's trusted publisher for it
+#       names this file and the `pypi-nightly` environment, which must have
+#       no required reviewers.
 on:
+  schedule:
+    - cron: "37 3 * * *"
   push:
     branches: [nightly]
   workflow_dispatch:
 
+permissions:
+  contents: read
+
+# One group per file, workflow, event and ref. Under workflow_call (release.yml
+# running lint/test) github.workflow and github.event_name are the caller's, so
+# a called run never shares, and so never cancels, a direct run's group.
+concurrency:
+  group: nightly-${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
 jobs:
-  nightly:
-    # Repo guard: a fork that pushes `nightly` sees this workflow but the job is
-    # skipped, so nothing publishes from anywhere except the canonical repo.
-    if: github.repository == 'MolCrafts/molpy'
+  # Where this run happens, decided once: MolCrafts/molcrafts-ci/actions/ci-context.
+  context:
+    name: nightly / context
+    runs-on: ubuntu-latest
+    outputs:
+      tier: ${{ steps.context.outputs.tier }}
+      upstream: ${{ steps.context.outputs.upstream }}
+      integration: ${{ steps.context.outputs.integration }}
+      skip-pr: ${{ steps.context.outputs.skip-pr }}
+      cancel: ${{ steps.context.outputs.cancel }}
+    steps:
+      - id: context
+        uses: MolCrafts/molcrafts-ci/actions/ci-context@master
+
+  measure:
+    name: nightly / measure
+    needs: context
+    if: needs.context.outputs.upstream == 'true' && github.ref != 'refs/heads/nightly'
+    runs-on: ubuntu-latest
+    env:
+      MATURIN_PEP517_ARGS: --locked
+      PYTHONWARNDEFAULTENCODING: "1"
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: MolCrafts/molcrafts-ci/actions/setup-python@master
+      - uses: MolCrafts/molcrafts-ci/actions/setup-partners@master
+      - uses: MolCrafts/molcrafts-ci/actions/setup-rust@master
+        with:
+          toolchain-dir: ../molrs
+          cache: molrs-python
+          workspaces: ../molrs/molrs-python -> ../target
+      # A red suite is exactly the run whose record is worth keeping: the
+      # measurement never decides this job's verdict.
+      - run: |
+          uv run --locked --extra dev --with pytest-cov python -m pytest tests/ \
+            --junitxml=.ci-out/junit.xml \
+            --cov=molpy --cov-branch --cov-report=json:.ci-out/coverage.json || true
+      # Only master's records are project history.
+      - if: ${{ hashFiles('.ci-out/junit.xml') != '' }}
+        run: |
+          uvx --from git+https://github.com/MolCrafts/molcrafts-ci@master molci snapshot \
+            --out .ci-out/snapshots --junit .ci-out/junit.xml --coverage .ci-out/coverage.json \
+            ${{ github.ref == 'refs/heads/master' && '--track' || '' }}
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ci-snapshots
+          if-no-files-found: ignore
+          path: .ci-out/snapshots/*.json
+
+  submit:
+    name: nightly / submit
+    needs: measure
+    if: ${{ !cancelled() && needs.measure.result != 'skipped' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v8
+        continue-on-error: true
+        with:
+          name: ci-snapshots
+          path: snapshots
+      - if: ${{ hashFiles('snapshots/*.json') != '' }}
+        uses: MolCrafts/molcrafts-ci/actions/submit@master
+        with:
+          snapshot-path: snapshots/*.json
+          project: molpy
+          # A deploy key on molcrafts-ci: one repository, git only.
+          ssh-key: ${{ secrets.MOLCRAFTS_CI_SSH_KEY }}
+
+  build:
+    name: nightly / build
+    needs: context
+    if: needs.context.outputs.upstream == 'true' && github.ref == 'refs/heads/nightly'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: MolCrafts/molcrafts-ci/actions/setup-python@master
+        with:
+          python-version: "3.14"
+      # Stamp the dynamic version source (pyproject reads molpy.version), rename
+      # the distribution, bind the molrs pin to the matching nightly package,
+      # and drop [tool.uv.sources] (a path source cannot resolve for pip).
+      - name: Stamp the dev version and the nightly names
+        run: |
+          python - "$(date -u +%Y%m%d%H%M)" <<'PY'
+          import pathlib, re, sys
+          v = pathlib.Path("src/molpy/version.py")
+          t = v.read_text(encoding="utf-8")
+          base = re.search(r'^version\s*=\s*"(.*?)"', t, flags=re.M).group(1)
+          dev = f"{base}.dev{sys.argv[1]}"
+          print(f"nightly version: {dev}")
+          v.write_text(re.sub(r'^version\s*=\s*".*?"', f'version = "{dev}"', t, count=1, flags=re.M), encoding="utf-8")
+          p = pathlib.Path("pyproject.toml")
+          t = p.read_text(encoding="utf-8")
+          t = re.sub(r'^name\s*=\s*"molcrafts-molpy"', 'name = "molcrafts-molpy-nightly"', t, count=1, flags=re.M)
+          t, n = re.subn(r'"molcrafts-molrs>=(\d+)\.(\d+)\.\d+,<\d+\.\d+"', r'"molcrafts-molrs-nightly>=\1.\2.0.dev0"', t, count=1)
+          if n != 1:
+              raise SystemExit("molrs pin not found in pyproject.toml")
+          t = re.sub(r'\n\[tool\.uv\.sources\]\n(?:[^\[].*\n|\n)*', '\n', t, count=1)
+          p.write_text(t, encoding="utf-8")
+          PY
+      - run: uv build && uvx twine check dist/*
+      - uses: actions/upload-artifact@v7
+        with:
+          name: nightly-dist
+          path: dist
+
+  pypi:
+    name: nightly / pypi
+    needs: build
     runs-on: ubuntu-latest
     environment:
       name: pypi-nightly
       url: https://pypi.org/p/molcrafts-molpy-nightly
     permissions:
-      contents: read
       id-token: write
-
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
         with:
-          fetch-depth: 0
-
-      - name: Set up Python
-        uses: actions/setup-python@v7
+          name: nightly-dist
+          path: dist
+      - uses: pypa/gh-action-pypi-publish@release/v1
         with:
-          python-version: '3.14'
-
-      - name: Install build tools
-        run: pip install build twine
-
-      - name: Stamp dev version and rename distribution
-        run: |
-          set -euo pipefail
-          # Parse the version straight from the source file — molpy is not
-          # installed at this point, so importing it would fail.
-          BASE=$(sed -n 's/^version = "\(.*\)"/\1/p' src/molpy/version.py | head -n1)
-          DEV="${BASE}.dev$(date -u +%Y%m%d%H%M)"
-          echo "Nightly version: $DEV"
-          echo "NIGHTLY_VERSION=$DEV" >> "$GITHUB_ENV"
-          # Stamp the dynamic version source (pyproject reads molpy.version.version).
-          python - "$DEV" <<'PY'
-          import re, sys, pathlib
-          dev = sys.argv[1]
-          p = pathlib.Path("src/molpy/version.py")
-          t = p.read_text()
-          t = re.sub(r'^version\s*=\s*".*?"', f'version = "{dev}"', t, count=1, flags=re.M)
-          p.write_text(t)
-          PY
-          # Rename the PyPI distribution to the nightly project, bind the molrs
-          # pin (whatever major.minor it names) to the matching nightly package,
-          # and drop any [tool.uv.sources] table (uv-only; pip ignores it and a
-          # path source cannot resolve on a runner).
-          python - <<'PY'
-          import re, pathlib
-          p = pathlib.Path("pyproject.toml")
-          t = p.read_text()
-          t = re.sub(r'^name\s*=\s*"molcrafts-molpy"',
-                     'name = "molcrafts-molpy-nightly"', t, count=1, flags=re.M)
-          t, n = re.subn(
-              r'"molcrafts-molrs>=(\d+)\.(\d+)\.\d+,<\d+\.\d+"',
-              r'"molcrafts-molrs-nightly>=\1.\2.0.dev0"',
-              t,
-              count=1,
-          )
-          if n != 1:
-              raise SystemExit("molrs pin not found in pyproject.toml")
-          t = re.sub(r'\n\[tool\.uv\.sources\]\n(?:[^\[].*\n|\n)*', '\n', t, count=1)
-          p.write_text(t)
-          PY
-
-      - name: Build package
-        run: python -m build
-
-      - name: Check package
-        run: twine check dist/*
-
-      - name: Publish to PyPI (nightly)
-        uses: pypa/gh-action-pypi-publish@release/v1
-        with:
-          packages-dir: dist/
-          print-hash: true
+          packages-dir: dist
           skip-existing: true

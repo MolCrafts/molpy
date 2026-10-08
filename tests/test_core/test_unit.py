@@ -1,136 +1,98 @@
+"""Units are molrs's: ``mp.core.UnitRegistry`` / ``mp.core.UnitPreset`` by identity.
+
+molpy keeps no unit registry of its own; the ``openmm`` preset, preset
+registration, ``k_B`` and LJ reduced units are native. These tests pin the molpy-facing contract of those names.
+"""
+
+import molrs
 import pytest
 
-import molpy
-from molpy import UnitSystem
+import molpy as mp
+
+REQUIRED_DIMS = ("mass", "length", "time", "energy", "temperature", "charge")
 
 
-REQUIRED_DIMS = {
-    "mass",
-    "length",
-    "time",
-    "energy",
-    "temperature",
-    "charge",
-    "pressure",
-}
+def test_unit_names_are_molrs_objects():
+    for name in ("Unit", "Quantity", "UnitRegistry", "UnitPreset", "UnitsError"):
+        assert getattr(mp.core, name) is getattr(molrs.core, name)
 
 
-def test_unit_system_is_native_registry_sugar():
-    assert issubclass(UnitSystem, molpy.UnitRegistry)
-    assert molpy.UnitSystem is UnitSystem
-    assert not hasattr(UnitSystem(), "_inner")
-
-
-def test_native_quantity_and_conversion_contract():
-    units = UnitSystem()
+def test_quantity_and_conversion():
+    units = mp.core.UnitRegistry()
     quantity = 1.5 * units.angstrom
-    assert isinstance(quantity, molpy.Quantity)
-    assert quantity.magnitude == pytest.approx(1.5)
+    assert isinstance(quantity, mp.core.Quantity)
     assert quantity.to("nanometer").magnitude == pytest.approx(0.15)
     assert (1.0 * units.kilocalorie_per_mole).to("eV").magnitude == pytest.approx(
         0.0433641, rel=1e-5
     )
 
 
-def test_constructor_records_native_base_units():
-    units = UnitSystem(base_units={"length": "nm", "time": "ps"})
-    assert isinstance(units.base_units["length"], molpy.Unit)
-    assert units.base_units["length"] == units.nanometer
-    assert units.base_units["time"] == units.picosecond
-
-
-def test_all_lammps_presets_resolve_natively():
-    assert set(UnitSystem.preset_names()) == {
-        "real",
-        "metal",
-        "si",
-        "cgs",
-        "electron",
-        "micro",
-        "nano",
-        "openmm",
-    }
-    for name in UnitSystem.preset_names():
-        system = UnitSystem.preset(name)
-        assert not (REQUIRED_DIMS - set(system.base_units))
-        assert all(isinstance(unit, molpy.Unit) for unit in system.base_units.values())
-
-
-def test_preset_override_and_registration():
-    assert (
-        UnitSystem.preset("real", pressure="bar").base_units["pressure"]
-        == UnitSystem().bar
-    )
-    UnitSystem.register_preset(
-        "test_native_md", {"length": "nm", "time": "ps", "energy": "kJ/mol"}
-    )
-    assert UnitSystem.preset("test_native_md").base_units["length"] == UnitSystem().nm
-    with pytest.raises(ValueError, match="already exists"):
-        UnitSystem.register_preset("real", {"length": "angstrom"})
-
-
-def test_boltzmann_and_factor():
-    units = UnitSystem()
-    assert units.factor("k_B", "electron_volt / kelvin") == pytest.approx(
-        8.617333262e-5, rel=1e-12
-    )
-    assert units.factor("kilocalorie_per_mole", "kilojoule_per_mole") == pytest.approx(
-        4.184
-    )
-    assert units.factor(
-        "kilocalorie_per_mole / angstrom ** 2",
-        "kilojoule_per_mole / nanometer ** 2",
-    ) * 100.0 == pytest.approx(41840.0)
+def test_every_lammps_preset_and_openmm_resolve():
+    names = {"real", "metal", "si", "cgs", "electron", "micro", "nano", "openmm"}
+    assert names <= set(mp.core.UnitPreset.names())
+    units = mp.core.UnitRegistry()
+    for name in names:
+        preset = mp.core.UnitPreset(name)
+        for dim in REQUIRED_DIMS:
+            units.parse(getattr(preset, dim)())
 
 
 def test_openmm_preset_is_kj_nm():
-    system = UnitSystem.preset("openmm")
-    assert system.base_units["energy"] == UnitSystem().kilojoule_per_mole
-    assert system.base_units["length"] == UnitSystem().nanometer
+    units = mp.core.UnitRegistry()
+    preset = mp.core.UnitPreset("openmm")
+    assert units.parse(preset.energy()) == units.kilojoule_per_mole
+    assert units.parse(preset.length()) == units.nanometer
 
 
-def test_unknown_preset_fails_fast():
-    with pytest.raises(ValueError, match="unknown preset"):
-        UnitSystem.preset("nonsense")
-
-
-@pytest.fixture
-def argon():
-    source = UnitSystem()
-    return UnitSystem.lj(
-        mass=39.948 * source.amu,
-        sigma=3.405 * source.angstrom,
-        epsilon=0.2381 * source.kilocalorie_per_mole,
+def test_a_registered_preset_is_named_and_refuses_a_taken_name():
+    base = mp.core.UnitPreset("real")
+    dims = (
+        "mass",
+        "length",
+        "time",
+        "energy",
+        "temperature",
+        "charge",
+        "pressure",
+        "velocity",
+        "force",
+        "density",
     )
-
-
-def test_lj_scales_are_native_units(argon):
-    assert argon.base_units["length"] == argon.lj_sigma
-    assert argon.convert(3.405 * argon.angstrom, "lj_sigma").magnitude == pytest.approx(
-        1.0
+    units = {dim: getattr(base, dim)() for dim in dims}
+    preset = mp.core.UnitPreset.register(
+        "test_molpy_md",
+        {**units, "length": "nanometer"},
+        boltzmann=base.boltzmann(),
+        coulomb=base.coulomb(),
     )
-    assert argon.convert(1.0 * argon.lj_tau, "ps").magnitude == pytest.approx(
-        2.16, abs=0.01
-    )
-    assert argon.convert(
-        1.0 * argon.lj_epsilon_over_kB, "K"
-    ).magnitude == pytest.approx(119.8, abs=0.5)
-    assert argon.convert(4.0 * argon.angstrom, "lj_sigma").magnitude == pytest.approx(
-        1.1747, abs=1e-3
-    )
-
-
-def test_lj_rejects_wrong_dimensions_and_nonpositive_scales():
-    units = UnitSystem()
-    with pytest.raises(molpy.UnitsError, match="dimension mismatch"):
-        UnitSystem.lj(
-            mass=1.0 * units.second,
-            sigma=1.0 * units.angstrom,
-            epsilon=1.0 * units.eV,
+    assert preset.length() == "nanometer"
+    assert "test_molpy_md" in mp.core.UnitPreset.names()
+    with pytest.raises(ValueError):
+        mp.core.UnitPreset.register(
+            "real", units, boltzmann=base.boltzmann(), coulomb=base.coulomb()
         )
-    with pytest.raises(molpy.UnitsError, match="finite and positive"):
-        UnitSystem.lj(
-            mass=1.0 * units.amu,
-            sigma=0.0 * units.angstrom,
-            epsilon=1.0 * units.eV,
-        )
+
+
+def test_boltzmann_constant_is_in_the_default_registry():
+    units = mp.core.UnitRegistry()
+    assert (1.0 * units.k_B).to("electron_volt / kelvin").magnitude == pytest.approx(
+        8.617333262e-5, rel=1e-12
+    )
+
+
+def test_lj_reduced_units():
+    argon = mp.core.UnitRegistry()
+    argon.define_lj_units(
+        39.948 * argon.amu, 3.405 * argon.angstrom, 0.2381 * argon.kilocalorie_per_mole
+    )
+    assert (3.405 * argon.angstrom).to(argon.lj_sigma).magnitude == pytest.approx(1.0)
+    assert (1.0 * argon.lj_tau).to(argon.ps).magnitude == pytest.approx(2.16, abs=0.01)
+    assert (1.0 * argon.lj_epsilon_over_kB).to(argon.K).magnitude == pytest.approx(
+        119.8, abs=0.5
+    )
+
+
+def test_lj_rejects_wrong_dimensions():
+    units = mp.core.UnitRegistry()
+    with pytest.raises(mp.core.UnitsError):
+        units.define_lj_units(1.0 * units.second, 1.0 * units.angstrom, 1.0 * units.eV)

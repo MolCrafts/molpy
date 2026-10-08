@@ -1,9 +1,23 @@
-# prek: pre-commit = lint; pre-push = molrs pin + tests
-# CI: lint job + 3 OS × 3.12–3.14 matrix (ci.yml).
+# prek / pre-commit: `prek install` (installs both hook types).
+# CI parity: every job in .github/workflows/{lint,test,docs}.yml has a hook here running the
+# same command; Cloudflare Pages' docs build has one too.
+#
+#   pre-commit  file hygiene + `tox -e lint` (ruff + ty). Cheap: runs in place.
+#   pre-push    the hygiene hooks again on --all-files, the partners check,
+#               the lock, the docs build, and the unit suite (`uv run
+#               --locked`, Python 3.12, as test.yml) -- the last three in
+#               CI's sibling layout, against molrs built from the commit
+#               scripts/partners.py resolves (molrs's dev, or its branch named
+#               like this one), never the developer's ../molrs.
+#
 # Tests MUST use `uv run pytest`, not tox: tox's pip ignores [tool.uv.sources].
+# The docs build and the suite compile molrs; scripts/hook-run.sh hands them
+# to $MOLCRAFTS_HOOK_RUNNER (a compute node on the MolCrafts cluster) when set
+# and runs them in place otherwise. See "Hooks" in CONTRIBUTING.md. Never
+# --no-verify.
 
 default_install_hook_types: [pre-commit, pre-push]
-default_stages: [pre-commit, pre-push]
+default_stages: [pre-commit]
 
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
@@ -33,20 +47,58 @@ repos:
         language: system
         pass_filenames: false
         always_run: true
-        stages: [pre-commit]
 
-      - id: molrs-pin-on-pypi
-        name: molrs pin on PyPI
-        entry: python3 .pre-commit/check_molrs_pin_on_pypi.py
+      # A commit checks its staged files only. Re-run the commit-time hooks
+      # above over the whole tree, so an untouched file cannot carry a defect.
+      - id: all-files
+        name: commit hooks on --all-files
+        entry: uvx pre-commit run --all-files --hook-stage pre-commit --show-diff-on-failure
         language: system
         pass_filenames: false
         always_run: true
         stages: [pre-push]
 
-      # Same command as ci.yml `test` — uv honors [tool.uv.sources], tox/pip does not.
+      - id: partners
+        name: partners resolve; path sources resolve in CI
+        entry: python3 scripts/partners.py check
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-push]
+
+      # lint.yml: uv.lock is committed and current against the resolved
+      # molrs (every `uv run` is --locked). Metadata only: nothing compiles.
+      - id: uv-lock
+        name: uv.lock is current against the resolved molrs (lint.yml)
+        entry: python3 scripts/partners.py run -- uv lock --check
+        language: system
+        pass_filenames: false
+        files: ^(pyproject\.toml|uv\.lock|\.github/partners\.env)$
+        stages: [pre-push]
+
+      # docs.yml: `.[doc]` in a fresh env, then zensical. Built in CI's
+      # layout (scripts/partners.py run), so molrs is the resolved commit and
+      # the theme's staged assets never land in this checkout; --strict fails
+      # on any warning, an unresolved mkdocstrings reference included.
+      - id: docs
+        name: docs build (docs.yml)
+        entry: >-
+          scripts/hook-run.sh python3 scripts/partners.py run --
+          uv run --isolated --no-project --python 3.12 --with .[doc]
+          zensical build --clean --strict
+        language: system
+        pass_filenames: false
+        files: ^(docs/|zensical\.toml|src/|pyproject\.toml)
+        stages: [pre-push]
+
+      # Same command as test.yml (uv honors [tool.uv.sources], tox/pip
+      # does not), on CI's floor Python, in CI's layout.
       - id: pytest
-        name: uv pytest (CI parity)
-        entry: uv run --extra dev python -m pytest tests/ -n auto
+        name: uv pytest against the resolved molrs (test.yml)
+        entry: >-
+          scripts/hook-run.sh python3 scripts/partners.py run --
+          env MATURIN_PEP517_ARGS=--locked PYTHONWARNDEFAULTENCODING=1
+          uv run --locked --python 3.12 --extra dev python -m pytest tests/ -n auto
         language: system
         pass_filenames: false
         always_run: true

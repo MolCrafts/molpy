@@ -1,36 +1,41 @@
+"""External simulation engines.
+
+:class:`Engine` is the abstract base for running an external program
+(command construction, working directory, launcher and environment). Each
+concrete engine has **one** input writer, ``generate_inputs``, and ``run``:
+
+* :class:`LammpsEngine` — ``generate_inputs(frame, ff, out)`` writes the data
+  file, force-field settings, init and input script; ``minimize`` / ``md``
+  relax a frame through the same deck.
+* :class:`GromacsEngine` — ``generate_inputs(frame, ff, out)`` writes the
+  ``.gro``, ``.top`` and ``.mdp`` templates; ``run`` grompp's and mdrun's an
+  ``.mdp``.
+* :class:`OpenmmEngine` — ``generate_inputs(frame, ff, config, out)`` writes
+  the PDB, the force-field XML and a Python simulation script.
+* :class:`Cp2kEngine` — runs a CP2K input.
+
+Scripts are :class:`Script` objects (editable text with a path)::
+
+    from molpy.engine import LammpsEngine
+    engine = LammpsEngine("lmp", launcher=["mpirun", "-np", "16"])
+    paths = engine.generate_inputs(frame, ff, "./calc")
+    result = engine.run(Script.from_path(paths["input"]), workdir="./calc")
 """
-Engine module for MolPy.
 
-Provides :class:`~molpy.engine.base.Engine`, an abstract base for running
-external computational chemistry programs, together with concrete
-implementations for LAMMPS, CP2K, and OpenMM.
-
-Two usage modes are supported:
-
-* **Generate only** — write input files without executing::
-
-      paths = engine.generate_inputs(frame, ff, config, "./output")
-
-* **Generate and run** — write files then launch the subprocess::
-
-      result = engine.run(script, workdir="./calc")
-
-MPI and job-scheduler launchers are supported via the ``launcher`` parameter::
-
-    from molpy.engine import LAMMPSEngine
-    engine = LAMMPSEngine("lmp", launcher=["mpirun", "-np", "16"])
-    result = engine.run(script, workdir="./calc")
-"""
-
-from .base import Engine
-from .cp2k import CP2KEngine
-from .lammps import LAMMPSEngine
-from .openmm import OpenMMEngine, OpenMMSimulationConfig
+from ._engine import Engine
+from ._cp2k import Cp2kEngine
+from ._gromacs import GromacsEngine
+from ._lammps import LammpsEngine
+from ._openmm import OpenmmEngine, OpenmmSimulationConfig
+from ._script import Script, ScriptLanguage
 
 __all__ = [
-    "CP2KEngine",
+    "Cp2kEngine",
     "Engine",
-    "LAMMPSEngine",
-    "OpenMMEngine",
-    "OpenMMSimulationConfig",
+    "GromacsEngine",
+    "LammpsEngine",
+    "OpenmmEngine",
+    "OpenmmSimulationConfig",
+    "Script",
+    "ScriptLanguage",
 ]

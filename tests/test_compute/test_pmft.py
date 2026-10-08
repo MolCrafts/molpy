@@ -1,4 +1,4 @@
-"""PMFTXY — reads its query-point axes from the frame's ``orientations`` block.
+"""PmftXy — reads its query-point axes from the frame's ``orientations`` block.
 
 Regression guard: the op reads its per-particle orientation axis from the
 frame's core ``orientations`` topology block — one ``(head, tail)`` atom pair
@@ -17,7 +17,7 @@ import numpy as np
 import pytest
 
 import molpy as mp
-from molpy.compute import PMFTXY
+from molpy.compute import PmftXy
 
 
 def _pmft_frame(
@@ -39,17 +39,17 @@ def test_pmftxy_reads_orientations_from_frame(
 ):
     frame = _pmft_frame(random_periodic_frame, orientations_frame)
     nlist = self_neighbors(frame, 3.0)
-    out = PMFTXY(x_max=5.0, y_max=5.0, n_x=20, n_y=20).compute(frame, nlist)
+    out = PmftXy(x_max=5.0, y_max=5.0, n_x=20, n_y=20).compute(frame, nlist)
     assert isinstance(out, list) and len(out) == 1
     counts, _density, _pmf = out[0]
     assert np.asarray(counts).shape == (20, 20)
 
 
 def test_pmftxy_lab_frame_without_block(random_periodic_frame, self_neighbors):
-    # No orientations block => lab frame (the old `orientations=None` path).
+    # No orientations block => lab frame.
     frame = random_periodic_frame(n=20, box_len=12.0, seed=2)
     nlist = self_neighbors(frame, 3.0)
-    out = PMFTXY(x_max=5.0, y_max=5.0, n_x=8, n_y=8).compute(frame, nlist)
+    out = PmftXy(x_max=5.0, y_max=5.0, n_x=8, n_y=8).compute(frame, nlist)
     assert isinstance(out, list) and len(out) == 1
 
 
@@ -59,4 +59,4 @@ def test_pmftxy_rejects_external_orientations(
     frame = _pmft_frame(random_periodic_frame, orientations_frame)
     nlist = self_neighbors(frame, 3.0)
     with pytest.raises(TypeError):
-        PMFTXY(5.0, 5.0, 20, 20).compute(frame, nlist, [[0.0] * 20])
+        PmftXy(5.0, 5.0, 20, 20).compute(frame, nlist, [[0.0] * 20])

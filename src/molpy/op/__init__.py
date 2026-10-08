@@ -1,8 +1,7 @@
-"""molpy.op — the native numeric base, a verbatim re-export of the native ``op`` module.
+"""The numeric base — :mod:`molrs.op`, mirrored by identity.
 
-Weighted superposition (``superpose``, ``Fit``) and centroids (``centroid``)
-live in the native core. Users spell everything ``molpy.op.<Name>``; the
-objects are identical to their ``op`` counterparts.
+Weighted superposition (``superpose``, returning a ``Superposition``) and
+centroids (``centroid``); ``mp.op.superpose is molrs.op.superpose``.
 """
 
 from molrs.op import *  # noqa: F403

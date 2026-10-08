@@ -1,0 +1,55 @@
+name: docs
+
+# The site built from `.[doc]` in a fresh env, then zensical, --strict: any
+# warning (an unresolved mkdocstrings reference included) fails. Cloudflare
+# Pages deploys it from MolCrafts itself (its Git integration), so no job here
+# deploys. The user-guide notebooks are executed by scripts/render_notebooks.py
+# when they change, and their rendered pages are committed.
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: [dev, master, main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# One group per file, workflow, event and ref. Under workflow_call (release.yml
+# running lint/test) github.workflow and github.event_name are the caller's, so
+# a called run never shares, and so never cancels, a direct run's group.
+concurrency:
+  group: docs-${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: ${{ !contains(fromJSON('["refs/heads/dev","refs/heads/master","refs/heads/main"]'), github.ref) && !startsWith(github.ref, 'refs/tags/') }}
+
+jobs:
+  # Where this run happens, decided once: MolCrafts/molcrafts-ci/actions/ci-context.
+  context:
+    name: docs / context
+    runs-on: ubuntu-latest
+    outputs:
+      tier: ${{ steps.context.outputs.tier }}
+      upstream: ${{ steps.context.outputs.upstream }}
+      integration: ${{ steps.context.outputs.integration }}
+      skip-pr: ${{ steps.context.outputs.skip-pr }}
+      cancel: ${{ steps.context.outputs.cancel }}
+    steps:
+      - id: context
+        uses: MolCrafts/molcrafts-ci/actions/ci-context@master
+
+  build:
+    name: docs / build
+    needs: context
+    # A pull request inside a fork was already run by its push.
+    if: needs.context.outputs.skip-pr != 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: MolCrafts/molcrafts-ci/actions/setup-python@master
+      - uses: MolCrafts/molcrafts-ci/actions/setup-partners@master
+      - uses: MolCrafts/molcrafts-ci/actions/setup-rust@master
+        with:
+          toolchain-dir: ../molrs
+          cache: molrs-python
+          workspaces: ../molrs/molrs-python -> ../target
+      - run: uv run --isolated --no-project --python 3.12 --with '.[doc]' zensical build --clean --strict

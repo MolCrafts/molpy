@@ -9,7 +9,7 @@ from molpy.builder import PackingTemplate
 
 
 def _with_hydrogens(smiles: str) -> mp.Atomistic:
-    return mp.Perceive().find_hydrogens(mp.SmilesIR(smiles).to_atomistic())
+    return mp.perceive.add_hydrogens(mp.io.smiles.SmilesIr(smiles).to_atomistic())
 
 
 def test_hydrogens_are_the_h_rows_of_the_frame() -> None:
@@ -24,8 +24,8 @@ def test_frame_is_the_molecule_frame() -> None:
     mol = _with_hydrogens("CCO")
     template = PackingTemplate(mol)
 
-    assert template.frame["atoms"].nrows == mol.n_atoms
-    assert template.frame["bonds"].nrows == mol.to_frame()["bonds"].nrows
+    assert template.frame["atoms"].n_rows == mol.n_atoms
+    assert template.frame["bonds"].n_rows == mol.to_frame()["bonds"].n_rows
 
 
 def test_molecule_without_hydrogens_has_none() -> None:

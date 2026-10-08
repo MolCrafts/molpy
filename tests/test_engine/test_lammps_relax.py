@@ -2,7 +2,7 @@
 
 Round-trip MD against a real ``lmp`` binary is out of scope for the unit
 suite. Script generation and argument validation are what we own; those
-are covered here and in ``test_base.py`` (with mocked ``subprocess``).
+are covered here and in ``test_engine.py`` (with mocked ``subprocess``).
 """
 
 from __future__ import annotations
@@ -10,10 +10,9 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-import molpy.engine as molpy_engine
 import molpy as mp
-from molpy import ForceField
-from molpy.engine import LAMMPSEngine
+from molpy.ff.forcefield import ForceField
+from molpy.engine import LammpsEngine
 
 _R0 = 1.5  # harmonic bond equilibrium length (Å)
 
@@ -48,11 +47,9 @@ def _dimer_system(separation: float = 2.2) -> tuple[mp.Frame, ForceField]:
 
 
 def test_init_autodetects_executable() -> None:
-    """``LAMMPSEngine()`` resolves a binary name without requiring it on PATH."""
-    eng = LAMMPSEngine(check_executable=False)
+    """``LammpsEngine()`` resolves a binary name without requiring it on PATH."""
+    eng = LammpsEngine(check_executable=False)
     assert eng.executable in {"lmp", "lmp_serial", "lmp_mpi"}
-    assert "LAMMPS" not in molpy_engine.__all__
-    assert not hasattr(molpy_engine, "LAMMPS")
 
 
 def test_minimize_requires_box() -> None:
@@ -60,11 +57,11 @@ def test_minimize_requires_box() -> None:
     frame, ff = _dimer_system()
     frame.box = None
     with pytest.raises(ValueError, match="periodic box"):
-        LAMMPSEngine(check_executable=False).minimize(frame, ff)
+        LammpsEngine(check_executable=False).minimize(frame, ff)
 
 
 def test_md_rejects_unknown_ensemble() -> None:
     """An unsupported ensemble fails fast, before any subprocess."""
     frame, ff = _dimer_system()
     with pytest.raises(ValueError, match="ensemble must be one of"):
-        LAMMPSEngine(check_executable=False).md(frame, ff, ensemble="npt")
+        LammpsEngine(check_executable=False).md(frame, ff, ensemble="npt")

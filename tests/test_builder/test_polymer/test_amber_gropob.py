@@ -24,8 +24,8 @@ from pathlib import Path
 import pytest
 
 import molpy as mp
-from molpy import AngleType, BondType, DihedralType
-from molpy.builder.polymer import AmberCut, AmberPieces, AmberPolymerBuilder
+from molpy.ff.forcefield import AngleType, BondType, DihedralType
+from molpy.builder import AmberCut, AmberPieces, AmberPolymerBuilder
 
 _TOOLS = ("antechamber", "parmchk2", "prepgen", "tleap")
 
@@ -92,7 +92,7 @@ def _build(library, cuts, work: Path, sites: str = "{[#PEO]|5}"):
         charge_method="bcc",
         work_dir=work,
         **(_ENV or {}),
-    ).assemble(mp.CGSmilesIR(sites).to_coarsegrain())
+    ).assemble(mp.io.cgsmiles.CgSmilesIr(sites).to_coarsegrain())
 
 
 def _type_charges(frame: mp.Frame) -> dict[str, list[float]]:
@@ -117,12 +117,16 @@ def test_prepgen_from_their_ac_matches_the_25mer(gropob, tmp_path):
     _seed_monomer(gropob, tmp_path)
     result = _build({"PEO": _peo_template(gropob)}, _CUTS, tmp_path)
     (script,) = (tmp_path / "chains").glob("*/polymer.in")
-    assert "mol = sequence { HPE PEO PEO PEO TPE }" in script.read_text()
+    assert "mol = sequence { HPE PEO PEO PEO TPE }" in script.read_text(
+        encoding="utf-8"
+    )
 
-    reference, reference_ff = mp.io.read_amber(gropob / "PEO_25mer.prmtop")
+    reference_ff, reference = mp.io.read_amber_prmtop_system(
+        gropob / "PEO_25mer.prmtop"
+    )
     frame = result.chain.to_frame()
     atoms = frame["atoms"]
-    assert atoms.nrows == 183
+    assert atoms.n_rows == 183
     assert Counter(atoms["type"]) == Counter({"os": 25, "c3": 52, "h1": 100, "hc": 6})
     assert abs(float(sum(atoms["charge"]))) <= 0.01
     dihedrals = frame["dihedrals"]
@@ -155,7 +159,7 @@ def test_prepgen_from_their_ac_matches_the_25mer(gropob, tmp_path):
 
 def test_rerunning_antechamber_keeps_ether_oxygens(gropob, tmp_path):
     result = _build({"PEO": _peo_template(gropob)}, _CUTS, tmp_path)
-    reference, _ = mp.io.read_amber(gropob / "PEO_25mer.prmtop")
+    reference = mp.io.read_amber_prmtop(gropob / "PEO_25mer.prmtop")
     ours = _type_charges(result.chain.to_frame())
     theirs = _type_charges(reference)
     diffs = [

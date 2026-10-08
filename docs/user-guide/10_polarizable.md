@@ -1,7 +1,7 @@
 # Polarizable & Virtual-Site Models
 
 Drude shells and TIP4P M-sites put charge where no nucleus is. The
-`molpy.builder.virtualsite` builders add these **virtual sites** to a copy of
+`mp.builder` virtual-site builders add these **virtual sites** to a copy of
 your structure and redistribute charge automatically.
 
 ## What virtual sites are for
@@ -23,10 +23,10 @@ Every builder follows the same four-step pipeline and exposes one entry point,
 
 ```python
 import molpy as mp
-from molpy.builder.virtualsite import DrudeBuilder, load_polarizability
+from molpy.builder import DrudeBuilder
 
-struct, _ = mp.Conformer(seed=42).generate(mp.io.read_smiles("CCO"))
-builder = DrudeBuilder(polarizability=load_polarizability(), drude_prefix="D")
+struct, _ = mp.conformer.Conformer(seed=42).generate(mp.io.smiles.SmilesIr("CCO").to_atomistic())
+builder = DrudeBuilder(drude_prefix="D")
 
 new_struct = builder.apply(struct) # struct: Atomistic -> Atomistic (a copy)
 ```
@@ -41,16 +41,16 @@ particles) → `redistribute` (move charge onto them). You normally only call
 atom, driven by per-atom-type polarizabilities:
 
 ```python
-from molpy.builder.virtualsite import DrudeBuilder, load_polarizability
+from molpy.builder import DrudeBuilder
 
-alpha = load_polarizability() # bundled alpha.ff parameters
+alpha = mp.ff.params.clpol_polarizability()  # the CL&Pol alpha.ff table molrs ships
 drude = DrudeBuilder(polarizability=alpha, drude_prefix="D")
 polarized = drude.apply(struct)
 ```
 
 | Parameter | Meaning |
 |---|---|
-| `polarizability` | `dict[type -> dict[param -> float]]` of Drude parameters. `None` falls back to the bundled `alpha.ff`; `load_polarizability(path)` reads a custom file. |
+| `polarizability` | `dict[type -> dict[param -> float]]` of Drude parameters (`m_D`, `q_D_sign`, `k_D`, `alpha`, `a_thole`). `None` uses `mp.ff.params.clpol_polarizability()`, molrs's `alpha.ff`; `mp.io.read_clpol_alpha(path)` reads the rows of a custom `alpha.ff` (one dict per type, keyed by `type_name`). |
 | `drude_prefix` | Name prefix for the generated Drude particles (default `"D"`). |
 
 ## TIP4P M-sites
@@ -59,9 +59,9 @@ polarized = drude.apply(struct)
 protocol, a different rule:
 
 ```python
-from molpy.builder.virtualsite import Tip4pBuilder
+from molpy.builder import Tip4pBuilder
 
-water, _ = mp.Conformer(add_hydrogens=True, seed=1).generate(mp.io.read_smiles("O"))
+water, _ = mp.conformer.Conformer(add_hydrogens=True, seed=1).generate(mp.io.smiles.SmilesIr("O").to_atomistic())
 # The M-site carries the oxygen's charge, so the input must already have one.
 for atom in water.atoms:
  atom["charge"] = -0.834 if atom["element"] == "O" else 0.417

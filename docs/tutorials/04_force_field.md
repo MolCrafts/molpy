@@ -21,7 +21,7 @@ MolPy keeps structure and parameters apart on purpose. If a type is wrong or a
 key is missing, you want that while the model is still transparent data — not
 after it is baked into engine-specific arrays.
 
-## The three layers: Style, Type, Potential
+## The three layers: Style, ForceFieldType, Potential
 
 Force-field data nests in three layers:
 
@@ -34,7 +34,7 @@ ForceField
 │   ├── BondType "CT-HC"  (k=340.0, r0=1.09)
 │   └── BondType "CT-CT"  (k=268.0, r0=1.529)
 ├── AngleStyle "harmonic"
-│   └── AngleType "HC-CT-HC"  (k=33.0, theta0=1.8815 rad)
+│   └── AngleType "HC-CT-HC"  (k=33.0, theta0=107.8°)
 ├── DihedralStyle "opls"
 │   └── DihedralType "HC-CT-CT-HC"  (k1=0.0, k2=0.0, k3=0.3, k4=0.0)
 └── PairStyle "lj/cut"
@@ -42,7 +42,7 @@ ForceField
     └── PairType "HC"  (epsilon=0.030, sigma=2.50)
 ```
 
-A `Style` defines an interaction family — harmonic bonds, OPLS dihedrals, Lennard-Jones pairs — and its parameter contract. A `Type` is one concrete parameter record inside that family. The `Potentials` evaluator is the numerical realization, produced from the complete model and run against a typed `Frame`. The kernels themselves live in the native Rust core.
+A `Style` defines an interaction family — harmonic bonds, OPLS dihedrals, Lennard-Jones pairs — and its parameter contract. A `ForceFieldType` (`AtomType`, `BondType`, …) is one concrete parameter record inside that family. The `Potentials` evaluator is the numerical realization, produced from the complete model and run against a typed `Frame`. The kernels themselves live in the native Rust core.
 
 The progression is always: define styles → fill in types → evaluate as potentials.
 
@@ -57,11 +57,9 @@ Parameters are keywords: numbers go to the numeric parameters, strings
 (`element`, …) to the string ones.
 
 ```python
-import math
-
 import molpy as mp
 
-ff = mp.ForceField(name="tutorial", units="real")
+ff = mp.ff.forcefield.ForceField(name="tutorial", units="real")
 
 # "full" corresponds to LAMMPS atom_style full (charge + molecule ID per atom)
 atom_style = ff.def_style("atom", "full")
@@ -74,10 +72,11 @@ Bond, angle, dihedral, and pair styles follow the same pattern, with one
 addition: a type between atoms is given its **endpoints** — the atom-type
 handles it connects — right after its name. The name is just a name: building
 it from the endpoints (`"CT-HC"`) is a convention, and it is the label a typed
-`Frame` uses, but molpy never reads endpoints out of it. Parameters are in the
-store units: angles in radians, and harmonic bond and angle constants in the
-`½k` convention (`E = ½k(r − r₀)²`). A harmonic improper is `E = k(χ − χ₀)²`,
-the LAMMPS form, so its `k` is the LAMMPS `K` as written.
+`Frame` uses, but molpy never reads endpoints out of it. Parameters are as the
+force-field IR stores them, and the IR adopts the LAMMPS standard: each style's
+energy, factors and parameter units are its LAMMPS style's, so a harmonic bond
+is `E = k(r − r₀)²` (no ½, `k` is LAMMPS's `K`) and every angle-valued
+parameter is in degrees.
 
 ```python
 bond_style = ff.def_style("bond", "harmonic")
@@ -86,7 +85,7 @@ bond_style.def_type("CT-CT", ct, ct, k=268.0, r0=1.529)
 bond_style.def_type("CT-OH", ct, oh, k=320.0, r0=1.41)
 
 angle_style = ff.def_style("angle", "harmonic")
-angle_style.def_type("HC-CT-HC", hc, ct, hc, k=33.0, theta0=math.radians(107.8))
+angle_style.def_type("HC-CT-HC", hc, ct, hc, k=33.0, theta0=107.8)
 
 dihedral_style = ff.def_style("dihedral", "opls")
 dihedral_style.def_type("HC-CT-CT-HC", hc, ct, ct, hc, k1=0.0, k2=0.0, k3=0.3, k4=0.0)
@@ -96,6 +95,9 @@ pair_style = ff.def_style("pair", "lj/cut")
 pair_style.def_type("CT", ct, epsilon=0.066, sigma=3.50)
 pair_style.def_type("HC", hc, epsilon=0.030, sigma=2.50)
 pair_style.def_type("OH", oh, epsilon=0.170, sigma=3.12)
+
+# The atom types carry charges: their Coulomb term is a pair style too.
+ff.def_style("pair", "coul/cut")
 ```
 
 `pair_style.def_type(name, itom)` with no second atom type is the self pair of
@@ -121,10 +123,10 @@ print(f"CT-OH: k={bt['k']}, r0={bt['r0']}")
 A full listing of all styles and types gives a global snapshot of the model state.
 
 ```python
-from molpy import Style, Type
+from molpy.ff.forcefield import ForceFieldType, Style
 
 for style in ff.get_styles(Style):
-    types = style.get_types(Type)
+    types = style.get_types(ForceFieldType)
     print(f"style={style.name!r}  [{len(types)} types]")
     for t in types:
         params = dict(t.params)
@@ -143,7 +145,7 @@ print(f"CT-CT k={ct_ct['k']}")
 ## Evaluating as Potentials
 
 Evaluation is the first strict integrity test of the model.
-`mp.PotentialCompiler(ff)` compiles the force field against a typed `Frame`:
+`mp.ff.compile.PotentialCompiler(ff)` compiles the force field against a typed `Frame`:
 an `atoms` block with coordinates and a `type` column, plus bonded blocks
 (`bonds`, `angles`, …) whose `type` column names force-field types. The
 numerical kernels run in the native Rust core.
@@ -157,7 +159,7 @@ frame = mp.Frame(
     }
 )
 
-pots = mp.PotentialCompiler(ff).compile(frame)
+pots = mp.ff.compile.PotentialCompiler(ff).compile(frame)
 energy = pots.calc_energy(frame)
 forces = pots.calc_forces(frame)
 print(f"energy = {energy}")
@@ -175,13 +177,13 @@ Once the model is internally consistent, serialization becomes an interface prob
 ### GROMACS
 
 ```python
-mp.io.write_gromacs_forcefield("system.itp", ff, precision=4)
+mp.io.write_gromacs_top_forcefield("system.itp", ff, precision=4)
 ```
 
 ### XML
 
 ```python
-mp.io.write_xml_forcefield("system.xml", ff, precision=6)
+mp.io.write_openmm_xml_forcefield("system.xml", ff, precision=6)
 ```
 
 ### LAMMPS
@@ -196,13 +198,14 @@ does not write a style-level cutoff.)
 
 ```python
 ff.get_style("pair", "lj/cut")["cutoff"] = 10.0
+ff.get_style("pair", "coul/cut")["cutoff"] = 10.0
 print(mp.io.write_lammps_forcefield_str(ff, frame, precision=4))
 ```
 
 
 ## When to move beyond built-in styles
 
-Real projects eventually need interaction forms not covered by built-in styles — Morse bonds, Buckingham pairs, custom torsion profiles. The numerical kernel for a new form is added in the native Rust core; on the Python side you expose a thin named `Style` and register parameter formatters for each export backend.
+Real projects eventually need interaction forms not covered by built-in styles — a FENE spring, a custom torsion profile, a cross term of three atoms. The force-field IR is a protocol: declare the new style in Python (`class Fene(mp.ff.style_registry.StyleDeclaration)`, with its ordered parameters and its energy as an expression or a Python kernel), and it is typed, compiled and saved like a built-in, with nothing rebuilt.
 
 See [Extending Force Field](../developer/extending-forcefield.md) for the full extension recipe.
 

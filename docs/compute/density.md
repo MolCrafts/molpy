@@ -53,7 +53,7 @@ config:
     orient: bottom
     direction: horizontal
     title: null
-data: {$file: data/density/local_histogram.json}
+data: {$file: series/density/local_histogram.json}
 mark: {type: line, strokeWidth: 2.4, interpolate: monotone}
 encoding:
   x:
@@ -84,7 +84,7 @@ width:
 | Probe `r_max` | ⟨N⟩ in the sphere | mean $\rho$ (Å⁻³) | spread | Poisson would give |
 |---|---|---|---|---|
 | 4 Å | 5.5 | 0.0206 | 27 % | 43 % |
-| 8 Å | 45.1 | 0.0210 | 5.3 % | 15 % |
+| 8 Å | 45.2 | 0.0211 | 5.4 % | 15 % |
 
 A small sphere holds few atoms, so gaining or losing one moves the answer a lot;
 that is why the 4 Å curve is broad. But notice the last column. If the atoms
@@ -117,9 +117,9 @@ $$
 $$
 
 with $n(R)$ the coordination number from [RDF](rdf.md), which that page shows how
-to compute in four lines. For argon $n(8\,\text{Å}) = 44.7$, and dividing by the
+to compute in four lines. For argon $n(8\,\text{Å}) = 44.8$, and dividing by the
 sphere volume $\tfrac{4}{3}\pi 8^3 = 2145$ Å³ gives 0.0209 Å⁻³ against the
-0.0210 measured here — two different computes agreeing. The local density
+0.0211 measured here — two different computes agreeing. The local density
 approaches the bulk value only as $R$ grows past the last correlation shell.
 
 ## Computing both
@@ -136,12 +136,12 @@ frame.box = mp.Box.cube(20.0)
 ```
 
 `LocalDensity` takes frames and neighbor lists, and returns **one
-`(num_neighbors, density)` pair per frame** — two arrays of length $N$:
+`(n_neighbors, density)` pair per frame** — two arrays of length $N$:
 
 ```python
 from molpy.compute import LocalDensity
 
-nl = mp.NeighborList(5.0)
+nl = mp.core.NeighborList(5.0)
 nl.build(frame.coords, frame.box)
 nlist = nl.neighbors()
 (counts, density), = LocalDensity(r_max=5.0).compute([frame], [nlist])
@@ -211,7 +211,7 @@ above the spacing and divide by 0.971.
     slab, a droplet, a pore. The reference trajectory behind every figure in
     these pages is bulk argon, which renders as featureless noise, so there is
     nothing honest to plot. This page will get a figure when an interfacial
-    trajectory is added under `scripts/docs_data/`.
+    trajectory is added under `scripts/docs_series/`.
 
 ## When it goes wrong
 

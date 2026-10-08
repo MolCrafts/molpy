@@ -1,13 +1,17 @@
-"""Tests for the trajectory module (molrs-backed eager container + splitters)."""
+"""molpy's trajectory splitters over the native ``mp.Trajectory``.
+
+The container itself (indexing, slicing, ``map``) is ``molrs.core.Trajectory``,
+tested in molrs; ``mp.Trajectory is molrs.core.Trajectory`` is ``test_init``'s.
+"""
 
 import numpy as np
 import pytest
 
-from molpy import (
-    Frame,
-    MetaValue,
+from molpy.core import (
     CustomStrategy,
+    Frame,
     FrameIntervalStrategy,
+    MetaValue,
     SplitStrategy,
     TimeIntervalStrategy,
     Trajectory,
@@ -32,77 +36,6 @@ def _make_frame(time: float | None = None) -> Frame:
 def frames():
     """Ten real frames with time metadata 0.0, 0.5, 1.0, ..., 4.5."""
     return [_make_frame(time=i * 0.5) for i in range(10)]
-
-
-class TestTrajectory:
-    """Test the Trajectory container (init, index, split)."""
-
-    def test_init_with_list(self, frames):
-        traj = Trajectory(frames)
-        assert len(traj) == len(frames)
-        assert traj.topology is None
-
-    def test_init_with_topology(self, frames):
-        topology = object()
-        traj = Trajectory(frames, topology)
-        assert traj.topology is topology
-        assert traj.topology is topology
-
-    def test_iteration(self, frames):
-        traj = Trajectory(frames)
-        assert len(list(traj)) == len(frames)
-
-    def test_len(self, frames):
-        traj = Trajectory(frames)
-        assert len(traj) == len(frames)
-
-    def test_getitem_int_returns_frame(self, frames):
-        traj = Trajectory(frames)
-        frame = traj[3]
-        assert isinstance(frame, Frame)
-
-    def test_getitem_slice_returns_trajectory(self, frames):
-        traj = Trajectory(frames)
-        sub_traj = traj[2:5]
-
-        assert isinstance(sub_traj, Trajectory)
-        assert sub_traj.topology is traj.topology
-        assert len(sub_traj) == 3
-
-    def test_getitem_slice_preserves_topology(self, frames):
-        topology = object()
-        traj = Trajectory(frames, topology)
-        assert traj[2:5].topology is topology
-
-    def test_getitem_invalid_type_raises(self, frames):
-        traj = Trajectory(frames)
-        with pytest.raises(TypeError):
-            traj[1.5]  # type: ignore[arg-type]
-
-    def test_map_function(self, frames):
-        traj = Trajectory(frames)
-
-        def shift(frame):
-            atoms = frame["atoms"]
-            atoms["x"] = atoms["x"] + 1.0
-            return frame
-
-        mapped_traj = traj.map(shift)
-
-        assert isinstance(mapped_traj, Trajectory)
-        result = list(mapped_traj)
-        assert len(result) == len(frames)
-        # Column data round-trips through the molrs store; x shifted 0 -> 1.
-        assert all(f["atoms"]["x"][0] == 1.0 for f in result)
-
-    def test_map_preserves_topology(self, frames):
-        topology = object()
-        traj = Trajectory(frames, topology)
-        assert traj.map(lambda f: f).topology is topology
-
-    def test_repr(self, frames):
-        traj = Trajectory(frames)
-        assert "n_frames=10" in repr(traj)
 
 
 class TestSplitStrategy:
@@ -182,24 +115,3 @@ class TestTrajectorySplitter:
         segments = TrajectorySplitter(traj).split(TimeIntervalStrategy(1.0))
         assert [len(seg) for seg in segments] == [2, 2, 2, 2, 2]
         np.testing.assert_allclose(segments[1].time, [1.0, 1.5])
-
-    def test_split_preserves_topology(self, frames):
-        topology = object()
-        traj = Trajectory(frames, topology)
-        segments = TrajectorySplitter(traj).split(FrameIntervalStrategy(3))
-        assert all(seg.topology is topology for seg in segments)
-
-
-class TestErrorHandling:
-    """Edge cases."""
-
-    def test_trajectory_slicing_edge_cases(self, frames):
-        traj = Trajectory(frames)
-
-        empty_traj = traj[5:5]
-        assert isinstance(empty_traj, Trajectory)
-        assert len(empty_traj) == 0
-
-        beyond_traj = traj[8:20]
-        assert isinstance(beyond_traj, Trajectory)
-        assert len(beyond_traj) == 2  # Only frames 8 and 9

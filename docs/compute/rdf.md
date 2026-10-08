@@ -60,7 +60,7 @@ configurations from a 30 ps constant-energy trajectory.
 <div class="molcrafts-figure__body molcrafts-figure__body--chart">
 
 ```molplot preset="molplot" theme="auto" aspect="16:10"
-data: {$file: data/rdf/argon_gr.json}
+data: {$file: series/rdf/argon_gr.json}
 mark: {type: line, strokeWidth: 2.4, interpolate: monotone}
 encoding:
   x:
@@ -78,7 +78,7 @@ encoding:
 </div>
 
 **Figure 1.** $g(r)$ of liquid argon at 85 K. The excluded core, the first
-coordination shell at 3.68 Å, and the decay to $g = 1$ are all visible.
+coordination shell at 3.73 Å, and the decay to $g = 1$ are all visible.
 </figure>
 
 Walk across it from left to right.
@@ -88,7 +88,7 @@ closer than that. This is the repulsive wall of the interatomic potential, and
 it is the reason liquids are nearly incompressible. Every atom carries an
 exclusion zone that nothing else enters.
 
-**A sharp peak at 3.68 Å, reaching $g = 2.95$.** Almost three times as many
+**A sharp peak at 3.73 Å, reaching $g = 2.96$.** Almost three times as many
 neighbours sit at this distance as chance would put there. This is the first
 coordination shell — the atoms in direct contact. Its position is not arbitrary.
 Argon is modelled here as a Lennard-Jones fluid with collision diameter
@@ -97,10 +97,10 @@ $2^{1/6}\sigma = 3.82$ Å. The peak sits just inside the bottom of the pair
 potential well: atoms settle where the energy is lowest, pushed slightly closer
 by the pressure of the surrounding fluid.
 
-**A dip to $g = 0.60$ at 5.43 Å.** Depleted, not empty. Atoms in the first shell
+**A dip to $g \approx 0.58$, flat from 5.2 to 5.4 Å.** Depleted, not empty. Atoms in the first shell
 are in the way, so this separation is awkward to occupy.
 
-**A broad second peak at 7.03 Å, only $g = 1.26$.** The second shell, roughly
+**A broad second peak at 7.08 Å, only $g = 1.27$.** The second shell, roughly
 twice the first-shell distance and already much weaker.
 
 **Beyond about 9 Å, $g(r)$ wanders around 1.** Correlation has died out. An atom
@@ -137,7 +137,7 @@ you build this integral yourself, and the recipe is
 <div class="molcrafts-figure__body molcrafts-figure__body--chart">
 
 ```molplot preset="molplot" theme="auto" aspect="16:10"
-data: {$file: data/rdf/argon_coordination.json}
+data: {$file: series/rdf/argon_coordination.json}
 mark: {type: line, strokeWidth: 2.4, interpolate: monotone}
 encoding:
   x:
@@ -159,8 +159,8 @@ between the first peak and the first minimum of $g(r)$ is the first
 coordination shell.
 </figure>
 
-For this argon, $n$ at the first minimum is **12.9**. A close-packed crystal has
-exactly 12 nearest neighbours. So each atom in the liquid is packed almost as
+For this argon, $n$ at the first minimum (5.23 Å) is **12.0**. A close-packed crystal has
+exactly 12 nearest neighbours. So each atom in the liquid is packed as
 tightly as it would be in a solid — it has kept its neighbours and lost only the
 long-range order. That one number is the physical content of the whole curve,
 and it is why liquids are dense but flow.
@@ -171,7 +171,7 @@ defensible definition of "in contact" for [Cluster](cluster.md),
 
 ## Computing it
 
-`RDF` histograms distances that a [`NeighborList`](neighborlist.md) has already
+`Rdf` histograms distances that a [`NeighborList`](neighborlist.md) has already
 found, so the two are always used together. Build the frame first:
 
 ```python
@@ -193,12 +193,12 @@ That is a perfect FCC crystal, which makes a good first test: you know the
 answer in advance. Now histogram it.
 
 ```python
-from molpy.compute import RDF
+from molpy.compute import Rdf
 
-nl = mp.NeighborList(8.0)
+nl = mp.core.NeighborList(8.0)
 nl.build(frame.coords, frame.box)
 nlist = nl.neighbors()
-result = RDF(n_bins=160, r_max=8.0).compute([frame], [nlist])
+result = Rdf(n_bins=160, r_max=8.0).compute([frame], [nlist])
 
 r, g = result.bin_centers, result.rdf
 peaks = r[g > 0.1]
@@ -210,17 +210,17 @@ $a/\sqrt{2} = 3.72$, $a = 5.26$, $a\sqrt{3/2} = 6.44$, and $a\sqrt{2} = 7.44$ Å
 The peaks land on them. A crystal gives sharp spikes at the lattice distances
 and never decays to 1 — exactly the third row of the table above.
 
-`RDF` takes **lists** of frames and neighbor lists, and averages over them, so a
+`Rdf` takes **lists** of frames and neighbor lists, and averages over them, so a
 trajectory is the same call with longer lists:
 
 ```python
 frames = [frame, frame]                        # in practice, your trajectory
-nl = mp.NeighborList(8.0)
+nl = mp.core.NeighborList(8.0)
 nlists = []
 for f in frames:
     nl.build(f.coords, f.box)
     nlists.append(nl.neighbors())
-averaged = RDF(n_bins=160, r_max=8.0).compute(frames, nlists)
+averaged = Rdf(n_bins=160, r_max=8.0).compute(frames, nlists)
 print(averaged.n_frames)                       # -> 2
 ```
 
@@ -249,15 +249,15 @@ Those are the FCC shells exactly: 12 nearest neighbours, then 6 more, then 24
 more — 12, 18, 42. Because the crystal's $g(r)$ is a set of isolated spikes,
 $n(R)$ is a staircase, and any $R$ in the flat region between two shells gives
 the same integer. Run the identical four lines on the argon liquid and you get
-the 12.9 quoted above; the only difference is that the liquid's steps are
+the 12.0 quoted above; the only difference is that the liquid's steps are
 rounded, so *where* you evaluate matters.
 
 The argon curve in Figure 1 is the same calculation on a longer trajectory:
 
 ```python
 # docs: skip — runs a 30 ps MD trajectory (minutes, not seconds)
-from docs_data.run import argon_trajectory
-from docs_data.structure import radial_distribution
+from docs_series.run import argon_trajectory
+from docs_series.structure import radial_distribution
 
 radial_distribution(argon_trajectory())
 ```
@@ -276,7 +276,7 @@ you have already counted. Keep $r_\max \le L/2$. For the 28.9 Å argon box that
 means 14 Å, which is why Figure 1 stops there.
 
 **The curve is truncated or drops to zero early.**
-The neighbor list cutoff is smaller than `r_max`. `RDF` can only histogram pairs
+The neighbor list cutoff is smaller than `r_max`. `Rdf` can only histogram pairs
 the neighbor list found. Set the cutoff at least equal to `r_max`.
 
 **The first peak is low and broad, and the coordination number is too small.**

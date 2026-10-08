@@ -1,7 +1,14 @@
 # Core
 
 Foundational data structures for molecular systems. All available via
-`import molpy as mp`.
+`import molpy as mp`. `mp.core` mirrors molrs's core, `molrs.core`, by identity, in one
+module (`mp.core.Cuboid is molrs.core.Cuboid`). The data classes you handle
+directly are promoted to the root as the same objects (`mp.Frame is
+mp.core.Frame is molrs.core.Frame`, `mp.Box`, `mp.Atomistic`, …); everything
+else is `mp.core.<Name>`. molpy's additions here are the column selectors and
+the trajectory splitters, both in `mp.core` beside the `Block` and
+`Trajectory` they act on. Perception (`SmartsPattern`, `perceive_rings`, `add_hydrogens`, …) is
+`mp.perceive`.
 
 ## Quick reference
 
@@ -11,13 +18,12 @@ Foundational data structures for molecular systems. All available via
 | `Block` | Columnar table: column names → NumPy arrays | Tabular data, vectorized computation | Graph-level chemical editing |
 | `Frame` | Named Blocks + `box` + dict-like `meta` | System snapshots, file I/O | Editing individual atoms |
 | `Box` | Periodic simulation cell (3×3 matrix + PBC) | Wrapping, minimum-image distances | Non-periodic systems |
-| `Trajectory` | Ordered sequence of Frames (eager or lazy) | Time-series analysis, streaming I/O | Single-snapshot work |
+| `Trajectory` | Ordered in-memory sequence of Frames with `step` / `time` labels (slicing, `map`); lazy readers are `mp.io.read_*_trajectory` | Time-series analysis | Single-snapshot work |
 | `CoarseGrain` | CG molecular graph (beads + CG bonds) | Coarse-grained modelling; mirrors `Atomistic` | All-atom work (use `Atomistic`) |
-| `Config` | Thread-safe global configuration singleton | Logging level | Per-run overrides (use `Config.temporary`) |
-| `ForceField` | Force field container (styles → types → potentials) | Defining parameters before execution | Direct numerical computation |
+| `mp.ff.forcefield.ForceField` | Force field container (styles → types → potentials) | Defining parameters before execution | Direct numerical computation |
 | `NodeRef` / `RelationRef` / `Refs` | Live handles onto graph nodes / relations and collections of them (an `Atom` is a node view, a `Bond` a relation view) | Code generic over node / relation kinds | Everyday atom / bond editing |
-| `Region` | Geometric region (box, sphere, boolean combinations) | Spatial selection, packing constraints | Non-geometric masks (use a `Selector`) |
-| `UnitSystem` | Unit registry with named presets (`real`, `metal`, `openmm`, …) and reduced LJ units | Unit conversions and custom presets | Unit-agnostic array math |
+| `Cuboid` / `Sphere` / `HalfSpace` / … / `Region` | Geometric regions (`mask(block)`, `region(block)`, `&` / `\|` / `~` into a `Region`) | Spatial selection, packing constraints | Non-geometric masks (use a `Selector`) |
+| `UnitRegistry` / `UnitPreset` | Unit registry (with `k_B` and reduced LJ units) and named presets (`real`, `metal`, `openmm`, …) | Unit conversions and custom presets | Unit-agnostic array math |
 
 ## Canonical examples
 
@@ -45,7 +51,7 @@ wrapped = box.wrap(np.array([[21.0, 0.0, 0.0]]))
 d = box.distances(np.array([[0.0, 0.0, 0.0]]), np.array([[19.5, 0.0, 0.0]])) # minimum-image distance
 
 # ForceField: parameter data
-ff = mp.ForceField(name="demo", units="real")
+ff = mp.ff.forcefield.ForceField(name="demo", units="real")
 style = ff.def_style("atom", "full")
 ct = style.def_type("CT", mass=12.011) # returns the AtomType handle
 cc = ff.def_style("bond", "harmonic").def_type("CT-CT", ct, ct, k=536.0, r0=1.529)
@@ -68,21 +74,21 @@ cc = ff.def_style("bond", "harmonic").def_type("CT-CT", ct, ct, k=536.0, r0=1.52
 
 ### Box
 
-::: molpy.core.box
+::: molpy.Box
 
 ### Forcefield
 
-::: molpy.ForceField
+::: molpy.ff.forcefield.ForceField
 
-::: molpy.Style
+::: molpy.ff.forcefield.Style
 
-::: molpy.Type
+::: molpy.ff.forcefield.ForceFieldType
 
-::: molpy.PotentialCompiler
+::: molpy.ff.compile.PotentialCompiler
 
 ### Frame and Block
 
-Re-exported from the native core — `mp.Frame is molrs.Frame`:
+Re-exported from the native core — `mp.Frame is molrs.core.Frame`:
 
 ::: molpy.Frame
 
@@ -92,34 +98,52 @@ Re-exported from the native core — `mp.Frame is molrs.Frame`:
 
 ::: molpy.Trajectory
 
+::: molpy.core.TrajectorySplitter
+
+::: molpy.core.SplitStrategy
+
+::: molpy.core.FrameIntervalStrategy
+
+::: molpy.core.TimeIntervalStrategy
+
+::: molpy.core.CustomStrategy
+
 ### Coarse-Grain
 
 ::: molpy.CoarseGrain
 
-### Config
-
-::: molpy.core.config
-
 ### Script
 
-::: molpy.core.script
+::: molpy.engine.Script
 
 ### Node and relation handles
 
-::: molpy.NodeRef
+::: molpy.core.NodeRef
 
-::: molpy.RelationRef
+::: molpy.core.RelationRef
 
-::: molpy.Refs
+::: molpy.core.Refs
 
 ### Selector
 
-::: molpy.core.selector
+::: molpy.core.MaskPredicate
+
+::: molpy.core.ElementSelector
+
+::: molpy.core.AtomTypeSelector
+
+::: molpy.core.AtomIndexSelector
 
 ### Region
 
-::: molpy.core.region
+::: molpy.core.Region
+
+::: molpy.core.Cuboid
+
+::: molpy.core.Sphere
 
 ### Units
 
-::: molpy.core.unit
+::: molpy.core.UnitRegistry
+
+::: molpy.core.UnitPreset

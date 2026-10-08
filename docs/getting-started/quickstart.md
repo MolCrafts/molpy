@@ -9,16 +9,16 @@ export — so you see every boundary you will later automate.
 ```python
 import molpy as mp
 
-mol = mp.io.read_smiles("CCO")  # ethanol from SMILES (heavy atoms)
-mol, _ = mp.Conformer(add_hydrogens=True, seed=42).generate(
+mol = mp.io.smiles.SmilesIr("CCO").to_atomistic()  # ethanol from SMILES (heavy atoms)
+mol, _ = mp.conformer.Conformer(add_hydrogens=True, seed=42).generate(
     mol
 )  # add hydrogens + 3D coordinates
-typifier = mp.typifier.OPLSAATypifier()  # carries the OPLS-AA library
+typifier = mp.ff.typifier.OplsAaTypifier()  # carries the OPLS-AA library
 typed = typifier.typify(mol)  # assign force-field types
 ff = typifier.forcefield()  # the parameters of the types just assigned
 
 frame = typed.to_frame()  # columnar arrays
-print(frame["atoms"].nrows, "typed atoms")  # 9 typed atoms
+print(frame["atoms"].n_rows, "typed atoms")  # 9 typed atoms
 ```
 
 That is the entire MolPy story — parse, embed, typify, convert. Every guide in
@@ -73,14 +73,14 @@ Load the bundled `tip3p.xml` and put its type names on the template.
 > named sites, so the atoms, the bonds and the angle simply carry the
 > force field's type labels; the parameters are looked up by label when the
 > force field is compiled or exported. Reach for a typifier
-> (`mp.typifier.OPLSAATypifier`, …) when the types are the unknown.
+> (`mp.ff.typifier.OplsAaTypifier`, …) when the types are the unknown.
 
 The reader names each bonded type by joining its endpoint atom types with `::`
 (the atom-type names contain `-`). A label is matched to a type name exactly, so
 it is spelled the way the force field lists it:
 
 ```python
-ff = mp.io.read_xml_forcefield(mp.data.get_forcefield_path("tip3p.xml"))
+ff = mp.io.read_openmm_xml_forcefield(mp.resources.get_path("forcefield/tip3p.xml"))
 print("bond types:", [t.name for t in ff.get_types("bond")])
 print("angle types:", [t.name for t in ff.get_types("angle")])
 
@@ -149,9 +149,9 @@ frame.box = box  # box is a first-class Frame attribute; writers read frame.box
 # atom_style full needs a molecule id: one per connected component
 frame["atoms"]["mol_id"] = mp.Topology.from_frame(frame).connected_components() + 1
 
-print("atoms rows:", frame["atoms"].nrows)
-print("bonds rows:", frame["bonds"].nrows)
-print("angles rows:", frame["angles"].nrows)
+print("atoms rows:", frame["atoms"].n_rows)
+print("bonds rows:", frame["bonds"].n_rows)
+print("angles rows:", frame["angles"].n_rows)
 ```
 
 The LAMMPS data writer refuses a bonded frame without `mol_id`, so this step is

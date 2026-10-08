@@ -1,7 +1,10 @@
 # Nanostructures
 
-Nanotubes and graphene sheets are built by `molpy.builder`. `CarbonTubeBuilder` rolls an exact graphene lattice into a
-single-wall carbon nanotube; `GrapheneBuilder` emits a flat honeycomb sheet.
+Nanotubes and graphene sheets are built by `mp.builder`, whose
+`CarbonTubeBuilder` and `GrapheneBuilder` are molrs's. `CarbonTubeBuilder`
+rolls an exact graphene lattice into a single-wall carbon nanotube;
+`GrapheneBuilder` emits a flat honeycomb sheet. Each `build()` returns the
+structure as a `Frame`; `mp.Atomistic.from_frame` makes it an editable graph.
 The tube's shape is fixed when the builder is constructed;
 unit-cell enumeration, seam closure, and connectivity are implementation
 details.
@@ -11,6 +14,7 @@ details.
 The usual `(n, m)` indices select the topology:
 
 ```python
+import molpy as mp
 from molpy.builder import CarbonTubeBuilder, GrapheneBuilder
 
 zigzag = CarbonTubeBuilder(8, 0, length=30.0).build()
@@ -26,13 +30,13 @@ tubes are open along the axis and have dangling end valences.
 
 ## Periodic tubes
 
-Set `periodic=True` to close the axial bonds. `build()` returns the molecular
-graph; `cell()` returns the simulation cell those coordinates were laid out in,
-with only the z axis periodic:
+Set `periodic=True` to close the axial bonds. `build()` returns the structure;
+`cell()` returns the simulation cell those coordinates were laid out in, with
+only the z axis periodic:
 
 ```python
 builder = CarbonTubeBuilder(10, 10, length=50.0, periodic=True)
-periodic = builder.build()
+periodic = mp.Atomistic.from_frame(builder.build())
 box = builder.cell(vacuum=12.0)
 
 assert box.pbc.tolist() == [False, False, True]
@@ -54,12 +58,16 @@ general chiral tubes.
 
 ## Atom annotations and deferred topology
 
-The scalable default creates atoms and bonds only. Per-atom data can be written
-at build time, while angles and dihedrals remain optional:
+The builders create atoms and bonds only. Per-atom data can be written at
+build time; angles and dihedrals are the graph's `generate_topology`, when you
+want them:
 
 ```python
-atoms_only = CarbonTubeBuilder(8, 0, cells=20).build(atom_type="CA", charge=0.0)
-with_topology = CarbonTubeBuilder(8, 0, cells=2).build(finalize="topology")
+atoms_only = mp.Atomistic.from_frame(
+    CarbonTubeBuilder(8, 0, cells=20).build(atom_type="CA", charge=0.0)
+)
+with_topology = mp.Atomistic.from_frame(CarbonTubeBuilder(8, 0, cells=2).build())
+with_topology.generate_topology(gen_angle=True, gen_dihedral=True)
 
 assert not list(atoms_only.angles)
 assert list(with_topology.angles)

@@ -21,25 +21,27 @@ line when co-released. Patch may drift.
 |-----------|------|
 | `pyproject.toml` | `molcrafts-molrs>=X.Y.0,<X.(Y+1)` (not `==X.Y.Z`) |
 | Import-time check | `check_molrs_version()` accepts any installed molrs with the same major.minor |
-| Pre-push hook | `molrs-pin-on-pypi` verifies that **some** published wheel on that minor line exists on PyPI |
+| Release gate | `release.yml` runs `scripts/check_molrs_on_pypi.py` (some published wheel on that minor line exists on PyPI), then the test matrix against molrs from PyPI (`uv run --no-sources`) |
 
 **Order:** ship molrs first (`master` + tag `vX.Y.Z` + publish), then land molpy
 APIs that need the new surface. Editable local molrs does not count as a release.
-There is no hand-written `CHANGELOG.md` — history is git tags / GitHub Releases.
-A minor release also updates the user-facing
-[What's New](../getting-started/whats-new.md) page.
+There is no hand-written `CHANGELOG.md` and no release-notes page; the history
+is git.
 
-### Developing against an unpublished molrs minor
+### dev builds molrs's dev; a release tests PyPI
 
-While the matching molrs line is on molrs `master` but not yet on PyPI,
-`pyproject.toml` may carry a `[tool.uv.sources]` path override
-(`molcrafts-molrs = { path = "../molrs/molrs-python" }`) and CI checks molrs out
-beside molpy to build it. The release commit removes both, once molrs is
-published: `release.yml` refuses to tag while any `[tool.uv.sources]` entry is
-present, and the `molrs-pin-on-pypi` hook only checks PyPI once it is gone.
-`uv.lock` is not committed, so there is no lock file to regenerate; resolve
-once from PyPI to confirm the pin (`uv lock --refresh`, then the test command
-below).
+On `dev`, molpy tracks molrs's `dev`, not a release: `pyproject.toml`'s
+`[tool.uv.sources]` builds `molcrafts-molrs` from the sibling `../molrs`, which
+CI and the hooks check out at the commit `scripts/partners.py` resolves
+(`.github/partners.env`; see [Development Setup](development-setup.md)). That
+table only steers uv; the wheel declares the minor-line range alone.
+
+A release keeps the table and is judged against PyPI instead: `release.yml`
+checks that the declared molrs minor line is published
+(`scripts/check_molrs_on_pypi.py`) and runs the test matrix with
+`uv run --no-sources`, i.e. against molrs from PyPI, exactly what users of the
+wheel get. `uv.lock` (which records the dev build's molrs) is not used there.
+
 
 
 ## Pre-release checks
@@ -76,8 +78,11 @@ Do **not** `git push <remote> master --tags`: if the protected-master push is
 rejected, the tag still goes out as an orphan and publish refuses it.
 
 On tag push (`v*`), GitHub Actions runs `.github/workflows/release.yml`. It
-validates the tag against `molpy.version.version`, runs the test suite, builds
-artifacts, and publishes to PyPI.
+checks that the tag is `v` + `molpy.version.version` on `master`, runs the
+test matrix against molrs from PyPI, builds the sdist and wheel, publishes
+them to PyPI, and creates the GitHub Release. Dispatching **release** on a
+branch (a fork is fine) is the dry run: the same tests and build, no upload.
+PyPI's trusted publisher names `release.yml` and the `pypi` environment.
 
 
 ## Nightly releases
@@ -86,9 +91,9 @@ Nightlies are **independent** of the tagged release flow above. They ship to a
 separate PyPI project, `molcrafts-molpy-nightly`, and never touch the stable
 `molcrafts-molpy`.
 
-- **Trigger:** every push to the `nightly` branch, or a manual run of the
-  *Nightly* workflow (`.github/workflows/nightly.yml`) via
-  `workflow_dispatch`.
+- **Trigger:** every push to the `nightly` branch of MolCrafts/molpy, or a
+  dispatch of `.github/workflows/nightly.yml` on that branch. (Its scheduled
+  run on `master` only measures tests and coverage for the CI dashboard.)
 - **Versioning:** the workflow reads the current `molpy.version.version` and
   appends a UTC timestamp → `X.Y.Z.dev<YYYYMMDDHHMM>` (a PEP 440 dev release).
   No manual version bump or tag is needed; do **not** edit `version.py` for a
@@ -108,27 +113,6 @@ git push origin master:nightly      # or push your integration branch onto night
 Install a nightly with `pip install --pre molcrafts-molpy-nightly`. It imports
 as `molpy` and therefore conflicts with the stable package — test it in a
 dedicated virtual environment.
-
-
-## Release notes
-
-Use this structure on the [GitHub Releases page](https://github.com/MolCrafts/molpy/releases):
-
-```markdown
-## MolPy vX.Y.Z
-
-### Added
-- ...
-
-### Changed
-- ...
-
-### Fixed
-- ...
-
-### Breaking Changes
-- ... (or "None")
-```
 
 
 ## Hotfix

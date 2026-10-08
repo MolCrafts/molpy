@@ -22,13 +22,13 @@ That is not an approximation or a fit. It is the definition of a free energy
 read backwards. Wherever $g > 1$, neighbours accumulate, and $w < 0$: a
 favourable separation. Wherever $g < 1$, $w > 0$: a barrier.
 
-For argon, $g = 2.95$ at the first peak gives $w = -1.08\,k_BT$, and the
+For argon, $g = 2.96$ at the first peak gives $w = -1.08\,k_BT$, and the
 minimum at $g = 0.60$ gives $w = +0.50\,k_BT$ — the desolvation barrier a pair
 must cross to move from the first shell to the second. Those two numbers are the
 free-energy landscape of the liquid, obtained from nothing but a histogram of
 distances.
 
-`PMFTXY` does the same thing in two dimensions. Instead of binning neighbours by
+`PmftXy` does the same thing in two dimensions. Instead of binning neighbours by
 distance alone, it bins them by their $(x, y)$ position relative to the
 reference particle, and takes $-\ln$ of the result:
 
@@ -55,10 +55,10 @@ prefer the front. Without it, the compute still runs, but in the lab frame, and
 the result is a rotationally averaged smear that tells you nothing $g(r)$ did not
 already.
 
-That is the single most important thing to get right on this page: **`PMFTXY`
+That is the single most important thing to get right on this page: **`PmftXy`
 without an `orientations` block is not a PMFT.**
 
-One further property to expect: `PMFTXY` bins $x$ and $y$ but integrates over
+One further property to expect: `PmftXy` bins $x$ and $y$ but integrates over
 $z$. A three-dimensional coordination shell therefore appears as a fairly shallow
 two-dimensional ring, because the bins near the origin also collect distant pairs
 that happen to lie almost along $z$. Contrast in the map is weaker than in
@@ -71,7 +71,7 @@ $w(r) = -\ln g(r)$, and that is geometry, not a bug.
     pages is monatomic argon, whose map is a featureless ring with a measured
     contrast of only about $0.3\,k_BT$. Showing that would suggest PMFT maps are
     uninformative, which is the opposite of the truth, so this page has no
-    figure until an anisotropic trajectory exists under `scripts/docs_data/`.
+    figure until an anisotropic trajectory exists under `scripts/docs_series/`.
 
 ## Computing it
 
@@ -91,10 +91,10 @@ $\pm 6$ Å window reaches $6\sqrt{2} = 8.49$ Å at its corners, so anything
 shorter leaves those corners permanently unvisited:
 
 ```python
-from molpy.compute import PMFTXY
+from molpy.compute import PmftXy
 
-analyzer = PMFTXY(x_max=6.0, y_max=6.0, n_x=40, n_y=40)
-nl = mp.NeighborList(8.5)
+analyzer = PmftXy(x_max=6.0, y_max=6.0, n_x=40, n_y=40)
+nl = mp.core.NeighborList(8.5)
 nl.build(frame.coords, frame.box)
 (counts, density, pmf), = analyzer.compute([frame], [nl.neighbors()])
 
@@ -102,7 +102,7 @@ print(counts.shape, pmf.shape)          # -> (40, 40) (40, 40)
 print(int(counts.sum()))                # -> 39708
 ```
 
-`PMFTXY` returns, **per frame**, a tuple of three `(n_x, n_y)` arrays. Keep them
+`PmftXy` returns, **per frame**, a tuple of three `(n_x, n_y)` arrays. Keep them
 apart in your head: `counts` is the raw histogram, `density` is that histogram
 normalized, and `pmf` is the free energy $-\ln(\text{density})$.
 
@@ -117,7 +117,7 @@ Shorten the cutoff below the corner distance and they appear, in exactly the
 places geometry predicts:
 
 ```python
-nl = mp.NeighborList(8.0)
+nl = mp.core.NeighborList(8.0)
 nl.build(frame.coords, frame.box)
 short = nl.neighbors()
 (_, _, clipped), = analyzer.compute([frame], [short])
@@ -137,7 +137,7 @@ counts per bin.
 the end:
 
 ```python
-nl = mp.NeighborList(8.5)
+nl = mp.core.NeighborList(8.5)
 nl.build(frame.coords, frame.box)
 nlist = nl.neighbors()
 per_frame = analyzer.compute([frame, frame], [nlist, nlist])
@@ -198,14 +198,14 @@ head = np.concatenate([np.arange(n_rods), np.arange(n_rods)])
 tail = np.concatenate([np.arange(n_rods, 2 * n_rods), np.arange(n_rods, 2 * n_rods)])
 rods["orientations"] = {"atomi": head, "atomj": tail}
 
-nl = mp.NeighborList(8.5)
+nl = mp.core.NeighborList(8.5)
 nl.build(rods.coords, rods.box)
 (body_counts, _, _), = analyzer.compute([rods], [nl.neighbors()])
-print(rods["orientations"].nrows, rods["atoms"].nrows)   # -> 400 400
+print(rods["orientations"].n_rows, rods["atoms"].n_rows)   # -> 400 400
 ```
 
 Get that length wrong and the error is unhelpful — a
-`ValueError: PMFTXY orientations length dimension mismatch: expected 207,
+`ValueError: PmftXy orientations length dimension mismatch: expected 207,
 got 200`, where 207 is simply the first atom index the kernel reached that had
 no row. If you see it, count rows against atoms.
 
@@ -216,7 +216,7 @@ neighbour has been rotated into its reference rod's frame before binning:
 plain = mp.Frame()
 plain["atoms"] = {"x": xyz[:, 0], "y": xyz[:, 1], "z": xyz[:, 2]}
 plain.box = mp.Box.cube(20.0)
-nl = mp.NeighborList(8.5)
+nl = mp.core.NeighborList(8.5)
 nl.build(plain.coords, plain.box)
 (lab_counts, _, _), = analyzer.compute([plain], [nl.neighbors()])
 
@@ -260,7 +260,7 @@ logarithms.
 
 - Compute $w(r) = -\ln g(r)$ from the [RDF](rdf.md) page's argon data by hand and
   confirm the first-shell minimum is about $-1.1\,k_BT$.
-- Run `PMFTXY` on random points. The map should be flat to within noise, since
+- Run `PmftXy` on random points. The map should be flat to within noise, since
   uncorrelated particles have no free-energy landscape.
 - Halve `n_x` and `n_y` and watch how many bins stop being empty. That trade
   between resolution and statistics is the whole art of 2-D histogramming.

@@ -1,10 +1,11 @@
-"""Tests for VelocityVerlet / Langevin — constructor-owned LJCut + VerletSkin."""
+"""Tests for VelocityVerlet / Langevin — constructor-owned PairLjCut + VerletSkin."""
 
 import numpy as np
 import pytest
 
-from molpy import Box, NeighborList, VerletSkin
-from molpy.md import LJCut, Langevin, MD, VelocityVerlet
+from molpy.core import Box, NeighborList, VerletSkin
+from molpy.md import Langevin, MdDriver, VelocityVerlet
+from molpy.ff.potential import PairLjCut
 
 
 def _dimer(*, skin: float = 0.3, rc: float = 2.5):
@@ -12,7 +13,7 @@ def _dimer(*, skin: float = 0.3, rc: float = 2.5):
     pos = np.array([[0.0, 0.0, 0.0], [1.1, 0.0, 0.0]], dtype=np.float64)
     box = Box.cube(20.0)
     nl = VerletSkin(NeighborList(rc + skin), rc, pos, box, skin=skin)
-    lj = LJCut(1.0, 1.0, rc, shifted=True)
+    lj = PairLjCut(1.0, 1.0, rc, shifted=True)
     mass = np.ones(2, dtype=np.float64)
     return pos, lj, nl, mass
 
@@ -73,7 +74,7 @@ def test_mass_must_be_positive():
 
 def test_non_double_dtype_is_reserved_on_the_driver():
     with pytest.raises(ValueError, match="float64"):
-        MD(dtype=np.float32)
+        MdDriver(dtype=np.float32)
 
 
 def test_advance_n_matches_manual_advance_loop():

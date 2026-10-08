@@ -1,0 +1,244 @@
+"""Unit tests for engine base classes — script literals and mocked subprocess."""
+
+import tempfile
+from pathlib import Path
+from unittest.mock import MagicMock, patch
+
+import pytest
+
+from molpy.engine import Script
+from molpy.engine import Cp2kEngine, LammpsEngine
+
+
+def _completed(returncode: int = 0) -> MagicMock:
+    result = MagicMock()
+    result.returncode = returncode
+    result.stdout = ""
+    result.stderr = ""
+    return result
+
+
+class TestEngineInit:
+    """Test engine initialization."""
+
+    def test_init_with_defaults(self):
+        engine = LammpsEngine(executable="lmp", check_executable=False)
+        assert engine.executable == "lmp"
+        assert engine.work_dir is None
+        assert engine.env_vars == {}
+        assert engine.env is None
+        assert engine.env_manager is None
+
+    def test_init_with_workdir(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            engine = LammpsEngine(
+                executable="lmp", workdir=tmpdir, check_executable=False
+            )
+            assert engine.work_dir == Path(tmpdir)
+
+    def test_init_with_env_vars(self):
+        engine = LammpsEngine(
+            executable="lmp",
+            env_vars={"OMP_NUM_THREADS": "4"},
+            check_executable=False,
+        )
+        assert engine.env_vars == {"OMP_NUM_THREADS": "4"}
+
+    def test_init_env_validation(self):
+        # Both None OK
+        LammpsEngine(executable="lmp", check_executable=False)
+
+        # Both set OK
+        LammpsEngine(
+            executable="lmp", env="myenv", env_manager="conda", check_executable=False
+        )
+
+        # Only env set -> raises
+        with pytest.raises(ValueError, match="incomplete"):
+            LammpsEngine(executable="lmp", env="myenv", check_executable=False)
+
+        # Only env_manager set -> raises
+        with pytest.raises(ValueError, match="incomplete"):
+            LammpsEngine(executable="lmp", env_manager="conda", check_executable=False)
+
+        # Unsupported manager -> raises
+        with pytest.raises(ValueError, match="Unsupported env_manager"):
+            LammpsEngine(
+                executable="lmp", env="x", env_manager="uv", check_executable=False
+            )
+
+    def test_check_executable_missing(self):
+        with pytest.raises(FileNotFoundError):
+            LammpsEngine(executable="nonexistent_lammps_binary_xyz123")
+
+    def test_repr(self):
+        engine = LammpsEngine(executable="lmp", check_executable=False)
+        assert "lmp" in repr(engine)
+        assert "LammpsEngine" in repr(engine)
+
+    def test_repr_with_workdir(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            engine = LammpsEngine(
+                executable="lmp", workdir=tmpdir, check_executable=False
+            )
+            repr_str = repr(engine)
+            assert "lmp" in repr_str
+            assert tmpdir in repr_str
+
+    def test_repr_with_env(self):
+        engine = LammpsEngine(
+            executable="lmp",
+            env="myenv",
+            env_manager="conda",
+            check_executable=False,
+        )
+        repr_str = repr(engine)
+        assert "lmp" in repr_str
+        assert "myenv" in repr_str
+        assert "conda" in repr_str
+
+
+class TestEngineRun:
+    """Test engine.run writes scripts; subprocess is mocked — never a real binary."""
+
+    def test_run_no_scripts_raises(self):
+        engine = LammpsEngine(executable="lmp", check_executable=False)
+        with pytest.raises(ValueError, match="At least one script is required"):
+            engine.run()
+
+    def test_run_empty_list_raises(self):
+        engine = LammpsEngine(executable="lmp", check_executable=False)
+        with pytest.raises(ValueError, match="At least one script is required"):
+            engine.run([])
+
+    def test_run_with_script_saves_files(self):
+        script = Script.from_text("input", "units real\natom_style full\n")
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            engine = LammpsEngine(
+                executable="lmp", workdir=tmpdir, check_executable=False
+            )
+            with patch("subprocess.run", return_value=_completed()) as mock_run:
+                engine.run(script, capture_output=True, check=False)
+            assert (Path(tmpdir) / "input.lmp").exists()
+            assert mock_run.called
+            cmd = mock_run.call_args[0][0]
+            assert "lmp" in cmd
+
+    def test_run_with_string(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            engine = LammpsEngine(
+                executable="lmp", workdir=tmpdir, check_executable=False
+            )
+            with patch("subprocess.run", return_value=_completed()):
+                engine.run("units real\n", capture_output=True, check=False)
+            assert (Path(tmpdir) / "input.lmp").exists()
+            assert (
+                (Path(tmpdir) / "input.lmp")
+                .read_text(encoding="utf-8")
+                .startswith("units real")
+            )
+
+    def test_run_with_path(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmpdir_path = Path(tmpdir)
+            script_file = tmpdir_path / "my_script.lmp"
+            script_file.write_text("units real\natom_style full\n", encoding="utf-8")
+
+            engine = LammpsEngine(
+                executable="lmp", workdir=tmpdir, check_executable=False
+            )
+            with patch("subprocess.run", return_value=_completed()):
+                engine.run(script_file, capture_output=True, check=False)
+            assert len(engine.scripts) == 1
+            assert engine.scripts[0].path.name == "my_script.lmp"
+
+    def test_run_with_multiple_scripts(self):
+        script1 = Script.from_text("main", "units real\n")
+        script1.tags.add("input")
+        script2 = Script.from_text("data", "# data file\n")
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            engine = LammpsEngine(
+                executable="lmp", workdir=tmpdir, check_executable=False
+            )
+            with patch("subprocess.run", return_value=_completed()):
+                engine.run([script1, script2], capture_output=True, check=False)
+            assert len(engine.scripts) == 2
+            assert (Path(tmpdir) / "main.lmp").exists()
+            assert (Path(tmpdir) / "data.lmp").exists()
+            assert engine.input_script == script1
+            assert (Path(tmpdir) / "main.lmp").read_text(
+                encoding="utf-8"
+            ) == "units real\n"
+            assert (Path(tmpdir) / "data.lmp").read_text(
+                encoding="utf-8"
+            ) == "# data file\n"
+
+    def test_run_with_workdir_override(self):
+        with tempfile.TemporaryDirectory() as tmpdir1:
+            with tempfile.TemporaryDirectory() as tmpdir2:
+                engine = LammpsEngine(
+                    executable="lmp", workdir=tmpdir1, check_executable=False
+                )
+                with patch("subprocess.run", return_value=_completed()):
+                    engine.run(
+                        "units real\n",
+                        workdir=tmpdir2,
+                        capture_output=True,
+                        check=False,
+                    )
+                assert not (Path(tmpdir1) / "input.lmp").exists()
+                assert (Path(tmpdir2) / "input.lmp").exists()
+
+
+class TestCp2kEngine:
+    """Test CP2K engine specifics."""
+
+    def test_name(self):
+        engine = Cp2kEngine(executable="cp2k", check_executable=False)
+        assert engine.name == "CP2K"
+
+    def test_extension(self):
+        engine = Cp2kEngine(executable="cp2k", check_executable=False)
+        assert engine._get_default_extension() == ".inp"
+
+    def test_run_with_script(self):
+        script = Script.from_text("input", "&GLOBAL\n  PROJECT water\n&END GLOBAL\n")
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            engine = Cp2kEngine(
+                executable="cp2k.psmp", workdir=tmpdir, check_executable=False
+            )
+            with patch("subprocess.run", return_value=_completed()):
+                engine.run(script, capture_output=True, check=False)
+            assert engine.work_dir == Path(tmpdir)
+            assert len(engine.scripts) == 1
+            assert (Path(tmpdir) / "input.inp").exists()
+            assert "PROJECT water" in (Path(tmpdir) / "input.inp").read_text(
+                encoding="utf-8"
+            )
+
+
+class TestLammpsEngine:
+    """Test LAMMPS engine specifics."""
+
+    def test_name(self):
+        engine = LammpsEngine(executable="lmp", check_executable=False)
+        assert engine.name == "LAMMPS"
+
+    def test_extension(self):
+        engine = LammpsEngine(executable="lmp", check_executable=False)
+        assert engine._get_default_extension() == ".lmp"
+
+    def test_run_accepts_timeout(self):
+        """Timeout parameter is forwarded to subprocess.run without TypeError."""
+        script = Script.from_text("input", "units real\natom_style full\n")
+        with tempfile.TemporaryDirectory() as tmpdir:
+            engine = LammpsEngine(
+                executable="lmp", workdir=tmpdir, check_executable=False
+            )
+            with patch("subprocess.run", return_value=_completed()) as mock_run:
+                engine.run(script, capture_output=True, check=False, timeout=1)
+            assert mock_run.call_args.kwargs.get("timeout") == 1
+            assert (Path(tmpdir) / "input.lmp").exists()

@@ -1,389 +1,88 @@
-import numpy as np
+"""Regions are molrs's (``mp.core.Cuboid is molrs.core.Cuboid``).
+
+molpy keeps no region classes: masking a block, filtering it, composing
+regions with ``&`` / ``|`` / ``~`` and selecting by distance are native. These
+tests pin the molpy-facing contract, including the replacements for the
+deleted ``BoxRegion`` / ``SphereRegion`` / ``Cube`` and ``DistanceSelector``.
+"""
+
 import molrs
+import numpy as np
 import pytest
 
-from molpy import (
-    Block,
-    AndRegion,
-    BoxRegion,
-    Cube,
-    NotRegion,
-    OrRegion,
-    SphereRegion,
+import molpy as mp
+
+
+def _block() -> mp.Block:
+    return mp.Block(
+        {
+            "x": np.array([0.5, 3.0, 1.0, 0.0]),
+            "y": np.array([0.5, 3.0, 1.0, 0.0]),
+            "z": np.array([0.5, 3.0, 1.0, 0.0]),
+            "type_id": np.array([1, 1, 2, 2]),
+        }
+    )
+
+
+@pytest.mark.parametrize(
+    "name",
+    ["Cuboid", "Sphere", "HalfSpace", "Parallelepiped", "Cylinder", "Region"],
 )
+def test_region_names_are_molrs_objects(name):
+    assert getattr(mp.core, name) is getattr(molrs.core, name)
 
 
-def test_regions_are_native_subclasses_without_forwarding_state():
-    assert issubclass(BoxRegion, molrs.Cuboid)
-    assert issubclass(SphereRegion, molrs.Sphere)
-    box = BoxRegion([2.0, 2.0, 2.0])
-    sphere = SphereRegion(1.0)
-    composed = box & sphere
-    assert isinstance(composed, molrs.Region)
-    assert isinstance(molrs.Cuboid.__and__(box, sphere), molrs.Region)
-    for region in (box, sphere, composed):
-        assert not any(
-            hasattr(region, name)
-            for name in ("_inner", "_region", "_cuboid", "_sphere")
-        )
-
-
-class TestRegion:
-    """Test the abstract Region class."""
-
-    def test_region_is_mask_predicate(self):
-        """Test that Region inherits from MaskPredicate."""
-        box = BoxRegion(np.array([2.0, 2.0, 2.0]))
-
-        # Should have MaskPredicate methods
-        assert hasattr(box, "mask")
-        assert hasattr(box, "__call__")
-        assert hasattr(box, "__and__")
-        assert hasattr(box, "__or__")
-        assert hasattr(box, "__invert__")
-
-    @staticmethod
-    def _canonical_block() -> Block:
-        """Three points — inside, outside, inside — in canonical x/y/z columns.
-
-        Coordinates live in three scalar columns. A block built around a packed
-        ``xyz`` column is a shape no reader and no graph produces, so a masking
-        test written on one cannot notice that masking does not work on real
-        data.
-        """
-        return Block(
-            {
-                "x": np.array([0.5, 3.0, 1.0]),
-                "y": np.array([0.5, 3.0, 1.0]),
-                "z": np.array([0.5, 3.0, 1.0]),
-                "type_id": np.array([1, 2, 3]),
-            }
-        )
-
-    def test_region_mask_integration(self):
-        """Test that Region.mask works with Block."""
-        box = BoxRegion(np.array([2.0, 2.0, 2.0]))
-        mask = box.mask(self._canonical_block())
-
-        expected = np.array([True, False, True])
-        assert np.array_equal(mask, expected)
-
-    def test_region_call_filters_block(self):
-        """Test that Region.__call__ filters the Block."""
-        box = BoxRegion(np.array([2.0, 2.0, 2.0]))
-        filtered = box(self._canonical_block())
-
-        assert isinstance(filtered, Block)
-        assert len(filtered["type_id"]) == 2
-        assert np.array_equal(filtered["type_id"], np.array([1, 3]))
-
-    def test_a_region_has_no_coordinate_field_knob(self):
-        """Coordinates are ``x``/``y``/``z``. There is no other place to look.
-
-        ``coord_field`` let a region be pointed at a packed Nx3 column that
-        parallels the canonical three — and defaulted to it, so masking a
-        canonical block raised ``KeyError: 'xyz'``.
-        """
-        import inspect
-
-        assert not hasattr(BoxRegion(np.array([1.0, 1.0, 1.0])), "coord_field")
-        assert "coord_field" not in inspect.signature(BoxRegion.__init__).parameters
-
-
-class TestBoxRegion:
-    """Test BoxRegion implementation."""
-
-    def test_box_region_init(self):
-        """Test BoxRegion initialization."""
-        lengths = np.array([2.0, 3.0, 4.0])
-        origin = np.array([1.0, 1.0, 1.0])
-
-        box = BoxRegion(lengths, origin)
-
-        assert np.array_equal(box.lengths, lengths)
-        assert np.array_equal(box.origin, origin)
-
-    def test_box_region_default_origin(self):
-        """Test BoxRegion with default origin."""
-        lengths = np.array([2.0, 3.0, 4.0])
-        box = BoxRegion(lengths)
-
-        assert np.array_equal(box.origin, np.zeros(3))
-
-    def test_box_region_isin(self):
-        """Test BoxRegion.isin method."""
-        box = BoxRegion(np.array([2.0, 2.0, 2.0]), np.array([1.0, 1.0, 1.0]))
-
-        points = np.array(
-            [
-                [1.5, 1.5, 1.5],  # Inside
-                [0.5, 1.5, 1.5],  # Outside (x too small)
-                [3.5, 1.5, 1.5],  # Outside (x too large)
-                [2.0, 2.0, 2.0],  # On boundary (should be inside)
-                [1.0, 1.0, 1.0],  # On boundary (origin, should be inside)
-            ]
-        )
-
-        result = box.isin(points)
-        expected = np.array([True, False, False, True, True])
-        assert np.array_equal(result, expected)
-
-    def test_box_region_bounds(self):
-        """Test BoxRegion.bounds property."""
-        lengths = np.array([2.0, 3.0, 4.0])
-        origin = np.array([1.0, 2.0, 3.0])
-        box = BoxRegion(lengths, origin)
-
-        bounds = box.bounds
-        expected_lower = np.array([1.0, 2.0, 3.0])
-        expected_upper = np.array([3.0, 5.0, 7.0])
-
-        assert np.array_equal(bounds[0], expected_lower)
-        assert np.array_equal(bounds[1], expected_upper)
-
-
-class TestSphereRegion:
-    """Test SphereRegion implementation."""
-
-    def test_sphere_region_init(self):
-        """Test SphereRegion initialization."""
-        radius = 2.5
-        center = np.array([1.0, 2.0, 3.0])
-
-        sphere = SphereRegion(radius, center)
-
-        assert sphere.radius == radius
-        assert np.array_equal(sphere.center, center)
-
-    def test_sphere_region_default_center(self):
-        """Test SphereRegion with default center."""
-        sphere = SphereRegion(1.0)
-        assert np.array_equal(sphere.center, np.zeros(3))
-
-    def test_sphere_region_isin(self):
-        """Test SphereRegion.isin method."""
-        sphere = SphereRegion(2.0, np.array([0.0, 0.0, 0.0]))
-
-        points = np.array(
-            [
-                [0.0, 0.0, 0.0],  # Center (inside)
-                [1.0, 0.0, 0.0],  # Inside
-                [0.0, 2.0, 0.0],  # On boundary (inside)
-                [1.0, 1.0, 1.0],  # Inside (distance = sqrt(3) ≈ 1.73 < 2)
-                [2.0, 0.0, 0.0],  # On boundary (inside)
-                [3.0, 0.0, 0.0],  # Outside
-            ]
-        )
-
-        result = sphere.isin(points)
-        distances_sq = np.sum(points**2, axis=1)
-        expected = distances_sq <= 4.0  # radius^2 = 4
-
-        assert np.array_equal(result, expected)
-
-    def test_sphere_region_bounds(self):
-        """Test SphereRegion.bounds property."""
-        radius = 2.5
-        center = np.array([1.0, 2.0, 3.0])
-        sphere = SphereRegion(radius, center)
-
-        bounds = sphere.bounds
-        expected_lower = center - radius
-        expected_upper = center + radius
+def test_cuboid_mask_and_filter():
+    box = mp.core.Cuboid([0.0, 0.0, 0.0], [2.0, 2.0, 2.0])
+    assert box.mask(_block()).tolist() == [True, False, True, True]
+    assert box(_block()).n_rows == 3
 
-        assert np.array_equal(bounds[0], expected_lower)
-        assert np.array_equal(bounds[1], expected_upper)
-
 
-class TestCube:
-    """Test Cube implementation."""
+def test_cube_and_its_geometry():
+    cube = mp.core.Cuboid.cube(2.0, [1.0, 1.0, 1.0])
+    np.testing.assert_allclose(cube.origin, [1.0, 1.0, 1.0])
+    np.testing.assert_allclose(cube.lengths, [2.0, 2.0, 2.0])
+    np.testing.assert_allclose(cube.bounds(), [[1.0, 3.0]] * 3)
 
-    def test_cube_init(self):
-        """Test Cube initialization."""
-        edge = 3.0
-        origin = np.array([1.0, 1.0, 1.0])
 
-        cube = Cube(edge, origin)
+def test_sphere_geometry_and_mask():
+    sphere = mp.core.Sphere([0.0, 0.0, 0.0], 1.0)
+    np.testing.assert_allclose(sphere.center, [0.0, 0.0, 0.0])
+    assert sphere.radius == 1.0
+    assert sphere.mask(_block()).tolist() == [True, False, False, True]
 
-        assert cube.edge == edge
-        assert np.array_equal(cube.lengths, np.array([edge, edge, edge]))
-        assert np.array_equal(cube.origin, origin)
 
-    def test_cube_default_origin(self):
-        """Test Cube with default origin."""
-        cube = Cube(2.0)
-        assert np.array_equal(cube.origin, np.zeros(3))
+def test_composition():
+    box = mp.core.Cuboid.cube(2.0)
+    sphere = mp.core.Sphere([0.0, 0.0, 0.0], 1.0)
+    assert (box & sphere).mask(_block()).tolist() == [True, False, False, True]
+    assert (box | sphere).mask(_block()).tolist() == [True, False, True, True]
+    assert (box & ~sphere).mask(_block()).tolist() == [False, False, True, False]
+    assert isinstance(box & sphere, mp.core.Region)
 
-    def test_cube_inherits_box_behavior(self):
-        """Test that Cube behaves like BoxRegion."""
-        cube = Cube(2.0)
 
-        points = np.array(
-            [
-                [1.0, 1.0, 1.0],  # Inside
-                [2.5, 1.0, 1.0],  # Outside
-            ]
-        )
+def test_a_spherical_shell_replaces_the_distance_selector():
+    block = mp.Block(
+        {"x": np.array([0.0, 0.5, 1.0, 2.0]), "y": np.zeros(4), "z": np.zeros(4)}
+    )
+    shell = mp.core.Sphere([0.0, 0.0, 0.0], 1.0) & ~mp.core.Sphere([0.0, 0.0, 0.0], 0.5)
+    inside = shell.mask(block).tolist()
+    assert inside[0] is False and inside[3] is False
+    assert inside[2] is True
 
-        result = cube.isin(points)
-        expected = np.array([True, False])
-        assert np.array_equal(result, expected)
 
+def test_a_slab_replaces_the_coordinate_range_selector():
+    slab = mp.core.HalfSpace([-1.0, 0.0, 0.0], [0.4, 0.0, 0.0]) & mp.core.HalfSpace(
+        [1.0, 0.0, 0.0], [1.5, 0.0, 0.0]
+    )
+    assert slab.mask(_block()).tolist() == [True, False, True, False]
 
-class TestRegionComposition:
-    """Test boolean composition of regions."""
 
-    def setup_method(self):
-        """Set up test data."""
-        self.box = BoxRegion(np.array([2.0, 2.0, 2.0]))
-        self.sphere = SphereRegion(1.5)
+def test_a_selector_composes_with_a_region():
+    picked = mp.core.AtomTypeSelector(1, field="type_id") & mp.core.Cuboid.cube(2.0)
+    assert picked.mask(_block()).tolist() == [True, False, False, False]
 
-        self.points = np.array(
-            [
-                [0.5, 0.5, 0.5],  # Inside both
-                [1.8, 0.1, 0.1],  # Inside box, outside sphere
-                [0.1, 0.1, 1.8],  # Inside box, outside sphere
-                [3.0, 3.0, 3.0],  # Outside both
-            ]
-        )
 
-    def test_and_region(self):
-        """Test AndRegion (intersection)."""
-        and_region = self.box & self.sphere
-
-        assert isinstance(and_region, AndRegion)
-        assert and_region.a == self.box
-        assert and_region.b == self.sphere
-
-        result = and_region.isin(self.points)
-
-        # Only points inside both regions
-        box_mask = self.box.isin(self.points)
-        sphere_mask = self.sphere.isin(self.points)
-        expected = box_mask & sphere_mask
-
-        assert np.array_equal(result, expected)
-
-    def test_or_region(self):
-        """Test OrRegion (union)."""
-        or_region = self.box | self.sphere
-
-        assert isinstance(or_region, OrRegion)
-        assert or_region.a == self.box
-        assert or_region.b == self.sphere
-
-        result = or_region.isin(self.points)
-
-        # Points inside either region
-        box_mask = self.box.isin(self.points)
-        sphere_mask = self.sphere.isin(self.points)
-        expected = box_mask | sphere_mask
-
-        assert np.array_equal(result, expected)
-
-    def test_not_region(self):
-        """Test NotRegion (complement)."""
-        not_region = ~self.box
-
-        assert isinstance(not_region, NotRegion)
-        assert not_region.a == self.box
-
-        result = not_region.isin(self.points)
-
-        # Points outside the box
-        box_mask = self.box.isin(self.points)
-        expected = ~box_mask
-
-        assert np.array_equal(result, expected)
-
-    def test_complex_composition(self):
-        """Test complex boolean composition."""
-        cube = Cube(1.0)
-
-        # (box | sphere) & (~cube)
-        complex_region = (self.box | self.sphere) & (~cube)
-        result = complex_region.isin(self.points)
-
-        box_mask = self.box.isin(self.points)
-        sphere_mask = self.sphere.isin(self.points)
-        cube_mask = cube.isin(self.points)
-
-        expected = (box_mask | sphere_mask) & (~cube_mask)
-        assert np.array_equal(result, expected)
-
-    def test_and_region_bounds(self):
-        """Test AndRegion bounds calculation."""
-        box = BoxRegion(np.array([4.0, 4.0, 4.0]), np.array([1.0, 1.0, 1.0]))
-        sphere = SphereRegion(2.0, np.array([2.0, 2.0, 2.0]))
-
-        and_region = box & sphere
-        bounds = and_region.bounds
-
-        # Intersection bounds should be overlap
-        box_bounds = box.bounds
-        sphere_bounds = sphere.bounds
-
-        expected_lower = np.maximum(box_bounds[0], sphere_bounds[0])
-        expected_upper = np.minimum(box_bounds[1], sphere_bounds[1])
-
-        assert np.array_equal(bounds[0], expected_lower)
-        assert np.array_equal(bounds[1], expected_upper)
-
-    def test_or_region_bounds(self):
-        """Test OrRegion bounds calculation."""
-        box = BoxRegion(np.array([2.0, 2.0, 2.0]), np.array([1.0, 1.0, 1.0]))
-        sphere = SphereRegion(1.0, np.array([4.0, 4.0, 4.0]))
-
-        or_region = box | sphere
-        bounds = or_region.bounds
-
-        # Union bounds should encompass both
-        box_bounds = box.bounds
-        sphere_bounds = sphere.bounds
-
-        expected_lower = np.minimum(box_bounds[0], sphere_bounds[0])
-        expected_upper = np.maximum(box_bounds[1], sphere_bounds[1])
-
-        assert np.array_equal(bounds[0], expected_lower)
-        assert np.array_equal(bounds[1], expected_upper)
-
-
-class TestRegionWithBlock:
-    """Test Region integration with Block objects."""
-
-    def test_a_block_without_coordinates_names_the_missing_column(self):
-        """Masking a block that carries no x/y/z names the column it wanted."""
-        block = Block({"type_id": np.array([1, 2])})
-
-        with pytest.raises(KeyError, match=r'no column "x"'):
-            BoxRegion(np.array([2.0, 2.0, 2.0])).mask(block)
-
-    def test_region_as_selection(self):
-        """Test that Region works as a MaskPredicate/Selection."""
-        from molpy.core.selector import AtomTypeSelector
-
-        block = Block(
-            {
-                "x": np.array([0.5, 3.0, 1.0]),
-                "y": np.array([0.5, 3.0, 1.0]),
-                "z": np.array([0.5, 3.0, 1.0]),
-                "type_id": np.array([1, 1, 2]),
-            }
-        )
-
-        box = BoxRegion(np.array([2.0, 2.0, 2.0]))
-        type1 = AtomTypeSelector(1, field="type_id")
-
-        # Test region and selection separately first
-        box_filtered = box(block)
-        type_filtered = type1(block)
-
-        # Region should filter by spatial location
-        assert len(box_filtered["type_id"]) == 2  # Inside atoms
-
-        # Selection should filter by type
-        assert len(type_filtered["type_id"]) == 2  # Type 1 atoms
-        assert np.all(type_filtered["type_id"] == 1)
-
-        # Note: Direct composition of Region & AtomTypeSelector requires
-        # both to implement the same interface consistently
+def test_a_block_without_coordinates_raises():
+    with pytest.raises(KeyError):
+        mp.core.Cuboid.cube(2.0).mask(mp.Block({"type_id": np.array([1, 2])}))

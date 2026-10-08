@@ -51,7 +51,7 @@ one; every lobe moves, and nothing warns you.
     every neighbour you observe. The reference trajectory behind the other
     compute pages is monatomic argon, which has no body frame at all. A sketched
     lobe diagram would teach the wrong thing about how much sampling this needs.
-    Add a figure when a molecular trajectory exists under `scripts/docs_data/`.
+    Add a figure when a molecular trajectory exists under `scripts/docs_series/`.
 
 ## Computing it
 

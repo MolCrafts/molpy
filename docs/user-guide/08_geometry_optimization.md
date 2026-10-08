@@ -1,6 +1,6 @@
 # Geometry Optimization
 
-Take the strain out of a freshly built structure: `LBFGS` relaxes it to a
+Take the strain out of a freshly built structure: `Lbfgs` relaxes it to a
 local force-field minimum and reports why it stopped.
 
 ## When you need it
@@ -10,9 +10,9 @@ lengths, angles, and close contacts carry excess energy. Before a production
 simulation — or to compare energies meaningfully — you minimize the geometry so
 the forces drop below a tolerance.
 
-**`LBFGS` moves atoms downhill on a set of potentials until the maximum force
+**`Lbfgs` moves atoms downhill on a set of potentials until the maximum force
 falls under `fmax`.** The minimizer is the native limited-memory quasi-Newton
-implementation, re-exported as `molpy.LBFGS`; it
+implementation, re-exported as `molpy.optimize.Lbfgs`; it
 drives the `Potentials` that `PotentialCompiler` compiles from a force field for your frame.
 
 ## Minimizing a structure
@@ -20,24 +20,24 @@ drives the `Potentials` that `PotentialCompiler` compiles from a force field for
 ```python
 import molpy as mp
 
-mol, _ = mp.Conformer(seed=42).generate(mp.io.read_smiles("CCO"))
-typifier = mp.typifier.OPLSAATypifier()
+mol, _ = mp.conformer.Conformer(seed=42).generate(mp.io.smiles.SmilesIr("CCO").to_atomistic())
+typifier = mp.ff.typifier.OplsAaTypifier()
 frame = typifier.typify(mol).to_frame()
 forcefield = typifier.forcefield()  # OPLS-AA parameters of the types just assigned
 
-potentials = mp.PotentialCompiler(forcefield).compile(frame)  # bonded + pair terms
-opt = mp.LBFGS(potentials, fmax=0.05, max_steps=200)
-frame, report = opt.run(frame)  # a new frame with the relaxed coordinates
+potentials = mp.ff.compile.PotentialCompiler(forcefield).compile(frame)  # bonded + pair terms
+opt = mp.optimize.Lbfgs(potentials, fmax=0.05, max_steps=200)
+frame, report = opt.minimize(frame)  # a new frame with the relaxed coordinates
 
 print(report.converged, report.final_energy, report.final_fmax, report.n_steps)
 ```
 
-`run` never mutates its input: it returns the relaxed frame and an
-`OptReport`. Keep the returned frame; the one you passed in is unchanged.
+`minimize` never mutates its input: it returns the relaxed frame and an
+`OptimizationReport`. Keep the returned frame; the one you passed in is unchanged.
 
 ## Parameters
 
-`LBFGS(potentials, *, fmax=0.05, max_steps=500, max_step=0.2, memory=8)`:
+`Lbfgs(potentials, *, fmax=0.05, max_steps=500, max_step=0.2, memory=8)`:
 
 | Parameter | Effect |
 |---|---|
@@ -46,13 +46,13 @@ print(report.converged, report.final_energy, report.final_fmax, report.n_steps)
 | `max_step` | Largest atomic displacement per step (Å). Smaller = more stable but slower; raise it only if convergence is sluggish and stable. |
 | `memory` | Number of past steps the L-BFGS Hessian approximation keeps. More memory = better curvature estimate, more storage. |
 
-`run` also accepts a bare `(N, 3)` coordinate array (or a `(B, N, 3)` batch)
+`minimize` also accepts a bare `(N, 3)` coordinate array (or a `(B, N, 3)` batch)
 when you already hold coordinates outside a frame; it returns arrays of the
 same shape.
 
 ## Reading the result
 
-`OptReport` carries `converged`, `final_energy`, `final_fmax` and `n_steps`.
+`OptimizationReport` carries `converged`, `final_energy`, `final_fmax`, `final_grad_rms` and `n_steps`.
 Always check `converged`: a run that hit `max_steps` (`converged = False`)
 has *not* reached the minimum — loosen `fmax`, raise `max_steps`, or inspect
 the structure.

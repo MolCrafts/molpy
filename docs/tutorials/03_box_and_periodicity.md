@@ -34,7 +34,7 @@ import numpy as np
 cubic = mp.Box.cube(20.0)
 ortho = mp.Box.ortho(np.array([10.0, 20.0, 30.0]))
 tric = mp.Box(
-    mp.Box.matrix_from_lengths_tilts(
+    h=mp.Box.matrix_from_lengths_tilts(
         np.array([10.0, 12.0, 15.0]), np.array([1.0, 0.5, 0.2])
     )
 )
@@ -42,13 +42,16 @@ tric = mp.Box(
 print(cubic.style, ortho.style, tric.style) # orthogonal orthogonal triclinic
 ```
 
-You can also pass a 3×3 matrix directly. Columns are lattice vectors.
+You can also pass the cell `h` directly: a 3×3 matrix whose columns are the
+lattice vectors, or a `(3,)` diagonal. No cell (`mp.Box()`, or an all-zero
+matrix) is a free box, non-periodic unless `pbc` says otherwise. The
+constructor is `Box(h=None, origin=None, pbc=None)`; pass them by keyword.
 
 ```python
 matrix = np.array([[10.0, 1.0, 0.5],
  [0.0, 12.0, 0.2],
  [0.0, 0.0, 15.0]])
-box = mp.Box(matrix=matrix)
+box = mp.Box(h=matrix)
 print(box.lengths)
 ```
 
@@ -151,7 +154,7 @@ frame = mp.Frame(blocks={
 frame.box = mp.Box.cube(10.0)
 
 # I/O readers set frame.box automatically
-frame = mp.io.read_lammps_data("system.data", atom_style="full").frame
+frame = mp.io.read_lammps_data("system.data", atom_style="full")
 print(frame.box.lengths) # from the data file header
 ```
 

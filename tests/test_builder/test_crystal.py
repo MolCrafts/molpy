@@ -5,8 +5,7 @@ import dataclasses
 import numpy as np
 import pytest
 
-from molpy import Atomistic, Box
-from molpy import BoxRegion, SphereRegion
+from molpy.core import Atomistic, Box, Cuboid, Sphere
 from molpy.builder import Lattice, Site
 
 
@@ -84,33 +83,35 @@ class TestLattice:
         assert extended.basis == (site,)
         assert extended is not base
 
-    def test_frac_to_cart_single(self):
+    def test_box_to_cart_single(self):
         cell = np.diag([3.0, 4.0, 5.0])
         lattice = Lattice(cell=cell)
 
-        cart = lattice.frac_to_cart(np.array([0.5, 0.5, 0.5]))
+        cart = lattice.box.to_cart(np.array([[0.5, 0.5, 0.5]]))[0]
         assert np.allclose(cart, [1.5, 2.0, 2.5])
 
-    def test_frac_to_cart_multiple(self):
+    def test_box_to_cart_multiple(self):
         lattice = Lattice(cell=2.0 * np.eye(3))
 
         frac = np.array(
             [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.5, 0.5, 0.5]]
         )
-        cart = lattice.frac_to_cart(frac)
+        cart = lattice.box.to_cart(frac)
         expected = np.array(
             [[0.0, 0.0, 0.0], [2.0, 0.0, 0.0], [0.0, 2.0, 0.0], [1.0, 1.0, 1.0]]
         )
         assert np.allclose(cart, expected)
 
-    def test_cart_to_frac_inverts_frac_to_cart(self):
+    def test_box_to_frac_inverts_to_cart_and_rows_are_lattice_vectors(self):
         cell = np.array([[2.0, 0.0, 0.0], [1.0, 2.0, 0.0], [0.0, 0.0, 3.0]])
         lattice = Lattice(cell=cell)
 
         frac = np.array([[0.1, 0.2, 0.3], [0.7, 0.4, 0.9]])
-        cart = lattice.frac_to_cart(frac)
-        recovered = lattice.cart_to_frac(cart)
+        cart = lattice.box.to_cart(frac)
+        recovered = lattice.box.to_frac(cart)
         assert np.allclose(recovered, frac)
+        # The cell's rows are the lattice vectors: cart = frac @ cell.
+        assert np.allclose(cart, frac @ cell)
 
     def test_sc(self):
         lat = Lattice.sc(a=2.0, species="Cu")
@@ -249,7 +250,7 @@ class TestBuildCrystalRepeats:
 class TestBuildCrystalRegion:
     def test_box_region_infers_repeats(self):
         lat = Lattice.sc(a=2.0, species="Cu")
-        structure = lat.build(BoxRegion(lengths=[3.0, 3.0, 3.0]))
+        structure = lat.build(Cuboid.cube(3.0))
 
         # cells inferred = ceil(3/2)=2 along each axis → 8 atoms generated,
         # all inside the [0,3]³ region (positions ∈ {0, 2}).
@@ -259,14 +260,14 @@ class TestBuildCrystalRegion:
         lat = Lattice.sc(a=2.0, species="Cu")
         # Force a 3-cell tile but clip to a 3 Å box: corner atoms at x=4 etc.
         # are filtered out.
-        structure = lat.build(BoxRegion(lengths=[3.0, 3.0, 3.0]), repeats=(3, 3, 3))
+        structure = lat.build(Cuboid.cube(3.0), repeats=(3, 3, 3))
 
         assert len(list(structure.atoms)) == 8
 
     def test_sphere_region(self):
         lat = Lattice.sc(a=1.0, species="Cu")
         structure = lat.build(
-            SphereRegion(radius=1.5, center=[1.5, 1.5, 1.5]),
+            Sphere([1.5, 1.5, 1.5], 1.5),
             repeats=(4, 4, 4),
         )
 
@@ -279,8 +280,8 @@ class TestBuildCrystalRegion:
 
     def test_combined_regions(self):
         lat = Lattice.sc(a=1.0, species="Cu")
-        cube = BoxRegion(lengths=[3.0, 3.0, 3.0])
-        sphere = SphereRegion(radius=1.5, center=[1.5, 1.5, 1.5])
+        cube = Cuboid.cube(3.0)
+        sphere = Sphere([1.5, 1.5, 1.5], 1.5)
         # Intersection: atoms in both.
         structure = lat.build(cube & sphere, repeats=(4, 4, 4))
 

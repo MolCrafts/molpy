@@ -11,14 +11,9 @@ import numpy as np
 
 import pytest
 
-from molpy.builder.polymer.distributions import SchulzZimmPolydisperse
-from molpy.builder.polymer.sequences import WeightedSequenceGenerator
-from molpy.builder.polymer.system import (
-    Chain,
-    PolydisperseChainGenerator,
-    SystemPlan,
-    SystemPlanner,
-)
+from molpy.builder import SchulzZimmPolydisperse
+from molpy.builder import WeightedSequenceGenerator
+from molpy.builder import Chain, PolydisperseChainGenerator, SystemPlan, SystemPlanner
 
 
 class TestChain:
@@ -70,7 +65,7 @@ class TestPolydisperseChainGenerator:
         # Create a simple fixed DP distribution for testing
         import numpy as np
 
-        class FixedDPDistribution:
+        class FixedDpDistribution:
             def __init__(self, dp: int):
                 self.dp = dp
 
@@ -87,7 +82,7 @@ class TestPolydisperseChainGenerator:
             seq_generator=seq_gen,
             monomer_mass={"A": 100.0},
             end_group_mass=18.0,
-            distribution=FixedDPDistribution(dp=10),
+            distribution=FixedDpDistribution(dp=10),
         )
 
         rng = np.random.default_rng(42)
@@ -105,7 +100,7 @@ class TestPolydisperseChainGenerator:
         seq_gen = WeightedSequenceGenerator(monomer_weights={"A": 1.0})
 
         # Use a simple DP-based distribution for testing
-        class PoissonDPDistribution:
+        class PoissonDpDistribution:
             """Simple Poisson distribution for DP testing."""
 
             def __init__(self, mean_dp: float):
@@ -119,7 +114,7 @@ class TestPolydisperseChainGenerator:
 
                 return poisson.pmf(dp_array, self.mean_dp)
 
-        dp_dist = PoissonDPDistribution(mean_dp=15)
+        dp_dist = PoissonDpDistribution(mean_dp=15)
 
         chain_gen = PolydisperseChainGenerator(
             seq_generator=seq_gen,
@@ -179,7 +174,7 @@ class TestSystemPlanner:
         # Use fixed DP for predictable testing
         import numpy as np
 
-        class FixedDPDistribution:
+        class FixedDpDistribution:
             def __init__(self, dp: int):
                 self.dp = dp
 
@@ -195,7 +190,7 @@ class TestSystemPlanner:
             seq_generator=seq_gen,
             monomer_mass={"A": 100.0},
             end_group_mass=0.0,
-            distribution=FixedDPDistribution(dp=10),
+            distribution=FixedDpDistribution(dp=10),
         )
 
         planner = SystemPlanner(
@@ -220,7 +215,7 @@ class TestSystemPlanner:
 
         import numpy as np
 
-        class FixedDPDistribution:
+        class FixedDpDistribution:
             def __init__(self, dp: int):
                 self.dp = dp
 
@@ -236,7 +231,7 @@ class TestSystemPlanner:
             seq_generator=seq_gen,
             monomer_mass={"A": 100.0},
             end_group_mass=0.0,
-            distribution=FixedDPDistribution(dp=10),
+            distribution=FixedDpDistribution(dp=10),
         )
 
         planner = SystemPlanner(
@@ -257,7 +252,7 @@ class TestSystemPlanner:
 
         import numpy as np
 
-        class FixedDPDistribution:
+        class FixedDpDistribution:
             def __init__(self, dp: int):
                 self.dp = dp
 
@@ -273,7 +268,7 @@ class TestSystemPlanner:
             seq_generator=seq_gen,
             monomer_mass={"A": 100.0},
             end_group_mass=0.0,
-            distribution=FixedDPDistribution(dp=100),  # Large chains
+            distribution=FixedDpDistribution(dp=100),  # Large chains
         )
 
         planner = SystemPlanner(
@@ -301,7 +296,7 @@ class TestSystemPlanner:
 
         import numpy as np
 
-        class FixedDPDistribution:
+        class FixedDpDistribution:
             def __init__(self, dp: int):
                 self.dp = dp
 
@@ -317,7 +312,7 @@ class TestSystemPlanner:
             seq_generator=seq_gen,
             monomer_mass={"A": 100.0},
             end_group_mass=0.0,
-            distribution=FixedDPDistribution(dp=100),
+            distribution=FixedDpDistribution(dp=100),
         )
 
         planner = SystemPlanner(

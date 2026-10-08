@@ -9,8 +9,8 @@ import molpy as mp
 from eo_kit import library
 
 graft = "[#GR][#EO]"
-sites = mp.CGSmilesIR(f"{{[#EO][#BR]({graft})[#EO][#BR]({graft})[#EO]}}").to_coarsegrain()
-comb = mp.Assembler(library(), mp.GrowthPlacer()).assemble(sites, mp.Atomistic)
+sites = mp.io.cgsmiles.CgSmilesIr(f"{{[#EO][#BR]({graft})[#EO][#BR]({graft})[#EO]}}").to_coarsegrain()
+comb = mp.builder.Assembler(library(), mp.builder.GrowthPlacer()).assemble(sites, mp.Atomistic)
 ```
 
 **Check:** 9 units, 71 atoms, 4 open ports (two backbone ends, two graft ends).

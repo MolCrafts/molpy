@@ -12,7 +12,7 @@ The examples below share this setup:
 
 ```python
 import molpy as mp
-from molpy import Block
+from molpy.core import Block
 
 frame = mp.Frame()
 frame["atoms"] = {"x": [0.0, 1.0], "y": [0.0, 0.0], "z": [0.0, 0.0]}
@@ -66,11 +66,11 @@ Floats are always `float64`: a float32 array is widened when it is inserted.
 The identifier and index columns (`id`, `mol_id`, `atomic_number`, `res_id`,
 `type_id`, `atomi` … `atoml`) are stored `uint64`; a narrower unsigned array is
 widened on insert, and a `*.mrec` store holding them at another width is refused
-on read. `mp.schema.column(key)` is the authoritative table.
+on read. `mp.core.schema.column(key)` is the authoritative table.
 
 Format-specific aliases such as LAMMPS `q` and `mol` exist only at the I/O boundary. Readers canonicalize them to `charge` and `mol_id`; writers localize them back when required by the target format.
 
-**Units.** `mass` is in amu and `charge` in elementary-charge units, but coordinates (`x/y/z`) and velocities (`vx/vy/vz`) carry *no intrinsic unit* — MolPy stores raw numbers. The length convention is fixed by the force field you apply (its `units=` setting, e.g. LAMMPS `real` ⇒ Å) and by the file format you read from or export to. Keep your input coordinates consistent with that convention. Readers convert to the store units on the way in: the bundled `tip3p.xml` is written in nm and kJ/mol, and `read_xml_forcefield` hands back Å and kcal/mol.
+**Units.** `mass` is in amu and `charge` in elementary-charge units, but coordinates (`x/y/z`) and velocities (`vx/vy/vz`) carry *no intrinsic unit* — MolPy stores raw numbers. The length convention is fixed by the force field you apply (its `units=` setting, e.g. LAMMPS `real` ⇒ Å) and by the file format you read from or export to. Keep your input coordinates consistent with that convention. Readers convert to the store units on the way in: the bundled `tip3p.xml` is written in nm and kJ/mol, and `mp.io.read_openmm_xml_forcefield` hands back Å and kcal/mol.
 
 #### Bond Topology (`bonds`)
 
@@ -192,6 +192,31 @@ for i in range(len(frame["bonds"]["atomi"])):
 ```
 
 These conversions must be explicit and localized at the boundary between Frame and Entity layers. Mixing the two representations inside the same object is not allowed. The namespace structure in Frame ensures that all related fields (such as bond indices and bond types) are kept together during conversion, simplifying the logic and reducing the chance of misalignment errors.
+
+### Names in the Python API
+
+The API itself follows the same rules as molrs, whose names molpy re-exports
+by identity:
+
+- **Acronyms are cased as words.** `mp.engine.LammpsEngine`,
+  `mp.adapter.RdkitAdapter`, `mp.io.smiles.SmilesIr`, `mp.CgBond`,
+  `mp.compute.Rdf`, `mp.compute.Msd`, `mp.optimize.Lbfgs`,
+  `mp.ff.potential.PairLjCut`. numpy's `DType` and `HBond` (H is the element)
+  keep their spelling.
+- **Counts are `n_*`**, as in numpy and freud: `mol.n_atoms`,
+  `neighbors.n_pairs`, `ring_info.n_rings()`, `pattern.n_query_atoms`.
+- **No module is a container word** (`data`, `base`, `types`, `common`,
+  `utils`, `helpers`, `env`): a module says what it holds — the bundled files
+  are `mp.resources`, the CL&Pol LJ scaling is `mp.ff.clpol_scaling`.
+- **One I/O door per format**: `read_<fmt>[_<what>]` / `write_<fmt>[_<what>]`
+  (`read_pdb`, `read_lammps_data`, `read_gromacs_top_forcefield`), with `_str`,
+  `_bytes` and `_trajectory` for text, bytes and every frame of a multi-frame
+  file.
+
+```python
+assert mp.io.read_smiles_str("CCO").n_atoms == 3
+assert mp.perceive.SmartsPattern("[#6][#8]").n_query_atoms == 2
+```
 
 ### For contributors
 

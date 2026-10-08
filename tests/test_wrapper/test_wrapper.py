@@ -27,7 +27,7 @@ def test_wrapper_initialization():
     assert wrapper.env_vars == {}
     assert getattr(wrapper, "env", None) is None
     assert getattr(wrapper, "env_manager", None) is None
-    assert wrapper.process_env().is_system
+    assert wrapper.process_environment().is_system
 
 
 def test_wrapper_with_workdir(tmp_path: Path):

@@ -26,7 +26,6 @@ Open a pull request with a clear summary. The PR description should include what
 - [ ] Scope is focused — one logical change per PR
 - [ ] New behavior has tests
 - [ ] Public API changes have type hints and docstrings
-- [ ] Backward-incompatible changes are called out in the description
 - [ ] All commits have clear messages (`feat:`, `fix:`, `refactor:`, `docs:`, `test:`)
 
 
@@ -37,7 +36,7 @@ A good description answers five questions:
 1. **What problem does this solve?** — link to an issue or describe the pain point
 2. **What changed?** — summarize the code changes (not a line-by-line diff)
 3. **Why this approach?** — explain design choices, especially if alternatives exist
-4. **What are the risks?** — note breaking changes, performance implications, or edge cases
+4. **What are the risks?** — note API changes, performance implications, or edge cases
 5. **How was it tested?** — describe test strategy, include output or screenshots if helpful
 
 

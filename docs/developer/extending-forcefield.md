@@ -1,111 +1,133 @@
 # Extending the Force Field
 
-This page shows how to add custom interaction styles and their export support.
+A new interaction style, or a whole new category of terms, is a **registration
+from Python**. Nothing is rebuilt: no Rust, no wheel, no writer arm to add.
 
-!!! note "Discuss before you build"
-    New interaction styles are a molrs change (the Rust kernel plus the writer arms); molpy re-exports the result. Open a [GitHub issue](https://github.com/MolCrafts/molpy/issues) describing the functional form before implementation; the [Architecture Overview](architecture-overview.md) explains where the pieces live.
+The force-field IR (molrs's, which adopts the LAMMPS standard) is a
+*protocol*. A **category** says how many atoms a term has and which `Frame`
+block its terms live in; a **style** says its ordered parameters, each with a
+dimension, and its energy, as an expression or as a Python kernel. Anything of
+that form registers into the registry every `PotentialCompiler` reads, and from
+then on it is typed, priced, saved and read back exactly like a built-in.
+molpy keeps no parallel IR: `mp.ff` mirrors `molrs.ff` submodule by submodule
+(`mp.ff.ir.StyleSpec is molrs.ff.ir.StyleSpec`, a registered style's record).
+The IR's vocabulary (`ParamSpec`, `StyleSpec`, `CategorySpec`, the refusals)
+is `mp.ff.ir`; the registry, with the class you subclass to declare a style
+(`StyleDeclaration`), is `mp.ff.style_registry`; the compiler is
+`mp.ff.compile`; the kernels are `mp.ff.potential`; and the force-field
+container is `mp.ff.forcefield`.
 
-## Where the math lives
+## A new style in 30 lines
 
-The force-field model — `ForceField`, the `Style` tree, the `Type` tree, and all
-energy/force kernels — is owned by the **molrs** Rust extension. molpy does not
-maintain a parallel Python potential layer. There is no `style.to_potential()`,
-no `ff.to_potentials()`, and no Python kernel class; evaluation always goes
-through `PotentialCompiler`:
+A Kremer-Grest bead-spring chain: LAMMPS `bond_style fene`, declared by its
+expression, and a typifier that types every bead `B` and every bond with it.
 
 ```python
 import molpy as mp
+from molpy.ff.forcefield import ForceField
+from molpy.ff.compile import PotentialCompiler
+from molpy.ff.ir import ParamSpec
+from molpy.ff.style_registry import StyleDeclaration
+from molpy.ff.typifier import TypeAssignment, Typifier
 
-mol, _ = mp.Conformer(seed=42).generate(mp.io.read_smiles("CCO"))
-typifier = mp.typifier.OPLSAATypifier()
-frame = typifier.typify(mol).to_frame()
-ff = typifier.forcefield()  # the OPLS-AA types just assigned
+class Fene(StyleDeclaration):  # LAMMPS bond_style fene, by its expression
+    category, name = "bond", "fene"
+    params = [ParamSpec("k", "E/L^2"), ParamSpec("r0", "L"), ParamSpec("epsilon", "E"), ParamSpec("sigma", "L")]
+    expression = ("-0.5*k*r0^2*log(1-(r/r0)^2)"
+                  "+step(2^(1/6)*sigma-r)*(4*epsilon*((sigma/r)^12-(sigma/r)^6)+epsilon)")
 
-mp.PotentialCompiler(ff).compile(frame).calc_energy(frame)  # and .calc_forces(frame)
+class BeadSpring(Typifier):  # every bead B, every bond FENE; lj units
+    def source_forcefield(self):
+        return ForceField("bead-spring", units="lj")
+    def assign(self, graph):
+        bead = {"type": ("full", "B", (), {"mass": 1.0})}
+        spring = {"type": ("fene", "B-B", ("B", "B"),
+                           {"k": 30.0, "r0": 1.5, "epsilon": 1.0, "sigma": 1.0})}
+        bonds = graph.links.exact_bucket(mp.Bond)
+        return TypeAssignment([bead] * len(graph.atoms), links={mp.Bond: [spring] * len(bonds)},
+                     styles=[("atom", "full", {}), ("bond", "fene", {})])
+
+typifier = BeadSpring()
+frame = typifier.typify(chain).to_frame()  # chain: an mp.Atomistic of bonded beads
+ff = typifier.forcefield()
+energy, forces = PotentialCompiler(ff).compile(frame).calc_energy_forces(frame)
+mp.io.write_mrec_frame("chain.mrec", frame, forcefield=ff)  # the expression travels along
 ```
 
-This changes what "extending the force field" means:
+Defining the class registers the style; `Fene.unregister()` takes it out
+again. The record carries the expression, so a process that registered
+nothing reads `chain.mrec` back with
+`mp.io.read_mrec_forcefield("chain.mrec").to_forcefield()` and
+prices it identically. molpy's test suite runs this snippet as written
+(`tests/test_ff/test_user_style.py`), and proves the energy and forces
+equal the analytic FENE sum and that a fresh process prices the record bit for
+bit.
 
-1. **Kernel** — the numerical form (energy + forces) is implemented in molrs
-   (Rust) and registered there under its style name, so `PotentialCompiler`
-   can dispatch on it.
-2. **Style name** — on the Python side there is nothing to subclass: the style
-   name *is* the handle, `ff.def_style("bond", "morse")`.
-3. **Writer arms** — each export backend (LAMMPS, GROMACS, XML) is a molrs
-   writer; serializing a new style's parameters is a match arm in that writer,
-   not a Python formatter.
+## The pieces
 
-If molrs already ships the kernel you need, there is nothing to build: define
-the style by name and use it. Adding a brand-new functional form is a molrs
-change.
+| Name (`mp.ff.style_registry.…`; `ParamSpec` and `IrError` on `mp.ff.ir`, `ExplicitTerms` on `mp.ff.compile`) | What it does |
+|---|---|
+| `StyleDeclaration` | Subclass it: `category`, `name`, `params`, and an `expression` and/or a `kernel` method. The subclass statement registers it. |
+| `ParamSpec(name, dim, *, kind, default, mix, indexed, …)` | One parameter: its name and dimension (`"E/L^2"`; `E` `L` `A` `Q` `M` for energy, length, angle, charge, mass). `params` also takes a `{name: dim}` dict. |
+| `register_style(category, name, *, params, expression=None, kernel=None, …)` | The same as a function. |
+| `register_category(name, arity, *, coordinate="compound", order="reversible")` | A new category of 2–5 atoms; its terms live in the block `f"{name}s"`. |
+| `styles(category=None)`, `categories()`, `evaluate(...)`, `unregister_style(category, name)` | Introspection (`styles` returns `StyleSpec` records, `categories` `CategorySpec` records), a style's energy on a batch of coordinates, removal of a custom style. |
+| `ExplicitTerms(category, style, atoms, **params).compile()` | Any style's kernel over explicit instances (atom indices, one parameter row per term), no typifier needed. |
+| `IrError` | Every refusal is a subclass of it (a `ValueError`) named after what was refused (`SealedError`, `NoKernelError`, `UnboundVariableError`, …). |
 
+**Parameters arrive as stored.** An angle value (dimension `A`) is in degrees,
+as the force field stores it, and the expression converts it with
+`(pi/180)`, defining `pi` last (Lepton has no named constants):
+`k*(theta-theta0*(pi/180))^2; pi=3.141592653589793`. Coordinates (`theta`,
+`phi`) are radians.
 
-## Step 1: add the kernel in molrs
+**Variables** by category: `r` (bond, pair), `theta` (angle), `phi`
+(dihedral), `phi` and `chi = abs(phi)` (improper); any category with points
+can use `distance(p1,p3)`, `angle(p1,p2,p3)`, `dihedral(p1,p2,p3,p4)`. Pair
+expressions also see `q1`, `q2` and the self rows `x1`, `x2` of a parameter
+`x`. The grammar is Lepton's: `+ - * / ^`, `exp log sqrt sin cos tan asin acos
+atan abs min max step delta select`, definitions after `;`.
 
-A new functional form is implemented in molrs under `molrs/src/ff/potential/`
-(the Morse bond, `bond/morse.rs`, is a complete example): write the energy and
-force expressions, then register the constructor under its style name — a
-built-in goes into `KernelRegistry::builtin()` in `potential/registry.rs`
-(`r.register("bond", "morse", bond::morse::bond_morse_ctor)`), and
-`register_kernel` adds or overrides an entry at runtime. Rebuild the molrs
-wheel (`maturin develop` / `maturin build`) and reinstall it; molpy picks up
-the new kernel automatically because it re-exports the molrs hierarchy.
+**A Python kernel** instead of (or beside) an expression: a method
+`kernel(self, q, **params) -> (e, de_dq)` vectorised over the terms, or for a
+compound category `kernel(self, x, **params) -> (e, grad)` with `x` of shape
+`(n, arity, 3)`. With both, they must agree; registration checks the
+derivative against a central difference.
 
+## A new category
 
-## Step 2: use the style by name
-
-Once registered, the style name is usable directly with the generic builder.
-A type is given its name — the label a typed `Frame` uses — and then its
-endpoints, the atom types it connects:
+A Urey-Bradley 1-3 spring as its own category, typed through a custom relation
+kind of the graph:
 
 ```python
-ff = mp.ForceField(name="custom", units="real")
-atom_style = ff.def_style("atom", "full")
-c = atom_style.def_type("C", mass=12.011)
-o = atom_style.def_type("O", mass=15.999)
-ff.def_style("bond", "morse").def_type(  # dispatches to the molrs kernel
-    "C-O", c, o, D=100.0, alpha=1.8, r0=1.43
-)
+mp.ff.style_registry.register_category("urey_bradley", 3)
+
+
+class UreyBradley(mp.ff.style_registry.StyleDeclaration):
+    category, name = "urey_bradley", "harmonic"
+    params = {"k_ub": "E/L^2", "r_ub": "L"}
+    expression = "k_ub*(distance(p1,p3)-r_ub)^2"
 ```
 
-Types and parameters flow through molrs natively — there is no named `Style`
-subclass and no `def_type()` override to write.
+A typifier's `TypeAssignment` then keys its rows by the kind name
+(`links={"urey_bradleys": rows}`, after `graph.register_kind("urey_bradleys", 3)`),
+and the terms land in the frame's `urey_bradleys` block.
 
+## Engines
 
-## Step 3: add the writer arms in molrs
-
-The force-field writers are molrs functions that molpy re-exports
-(`mp.io.write_lammps_forcefield`, `mp.io.write_gromacs_forcefield`,
-`mp.io.write_xml_forcefield`). Each maps a `(category, style)` pair to the file's
-columns in one place: `coeff_fields` in `ff/forcefield/writers/lammps.rs` and
-`bonded_columns` in `ff/forcefield/writers/gromacs.rs`. Add an arm for the new
-style to each backend that should emit it; a style without an arm is refused
-with a `ValueError` naming it, never written half-formed. The Morse bond, for
-example, has a GROMACS arm (`bondtypes` function 3) and no LAMMPS arm yet.
-
-
-## Using the custom interaction
-
-Build the model, then evaluate it against a typed `Frame`:
-
-```python
-# Two atoms exactly at r0 → Morse energy is 0.
-frame = mp.Frame(
-    blocks={
-        "atoms": {"x": [0.0, 1.43], "y": [0.0, 0.0], "z": [0.0, 0.0], "type": ["C", "O"]},
-        "bonds": {"atomi": [0], "atomj": [1], "type": ["C-O"]},
-    }
-)
-
-pots = mp.PotentialCompiler(ff).compile(frame)
-print(pots.calc_energy(frame))  # 0.0 at r0
-```
-
+Exporting to an engine is molrs's job, and molpy adds no formatter of its
+own: `LammpsEngine.generate_inputs` (and the `minimize` / `md` runs built on
+it) takes every `*_style` line and coefficient from molrs's LAMMPS writer
+(`mp.io.write_lammps_forcefield_str`), so it writes whatever that can write —
+`hybrid` styles and `angle charmm` with its Urey-Bradley term included — and a
+style an engine cannot hold is refused by molrs, by name, never written
+half-formed. The `.mrec` record is the format that always holds a registered
+style: its expression travels with it.
 
 ## Checklist
 
-- [ ] Kernel implemented and registered in molrs (`ff/potential/registry.rs`), wheel rebuilt
-- [ ] Validate the kernel: energy at equilibrium = 0, monotonic increase away from it
-- [ ] Writer arms in molrs for each backend that should emit the style (LAMMPS, GROMACS, XML)
-- [ ] Tests in molrs: kernel energy/force values, writer output and refusal
-- [ ] molpy tests: `PotentialCompiler(ff).compile(frame).calc_energy(frame)` through the re-exported API
+- [ ] The style declares its parameters in LAMMPS `*_coeff` order, each with
+      its dimension
+- [ ] An expression, a kernel, or both (then they agree)
+- [ ] A test: energy and forces against a hand formula, and a `.mrec`
+      round trip if the style is to be saved

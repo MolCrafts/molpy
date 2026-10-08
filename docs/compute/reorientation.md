@@ -61,7 +61,7 @@ config:
     orient: bottom
     direction: horizontal
     title: null
-data: {$file: data/reorientation/rod_legendre.json}
+data: {$file: series/reorientation/rod_legendre.json}
 mark: {type: line, strokeWidth: 2.4, interpolate: monotone}
 encoding:
   x:

@@ -1,33 +1,33 @@
 # Builder
 
-System construction. Assembly joins copies of ported units along a site graph
-through `mp.Assembler`, re-exported on the molpy root with its placers and
-orienter; `molpy.builder` keeps the polymer planning layer, the nanostructure
-and crystal builders, virtual sites, the topology finalizer and the AmberTools
-polymer builder, which makes a GAFF chain without the assembler: prepgen cuts
-one antechamber-typed oligomer and tleap `sequence` joins the residues.
+System construction. `mp.builder` mirrors `molrs.builder` by identity —
+site-graph assembly (`Assembler` with its placers and orienter), the
+`Coarsener`, and the graphene / nanotube builders — and adds molpy's own: the
+polymer planning layer, crystals, virtual sites, `PackingTemplate`, and the
+AmberTools polymer builder, which makes a GAFF chain without the assembler:
+prepgen cuts one antechamber-typed oligomer and tleap `sequence` joins the
+residues. Every name has one path, `mp.builder.<Name>`; the modules behind it
+are private.
 
 ## Quick reference
 
 | Symbol | Summary | Preferred for |
 |--------|---------|---------------|
-| `mp.Assembler` | `Assembler(library, placer, orienter=None).assemble(sites, cls=None)`: one copy of `library[bead_type]` per site of an `mp.CoarseGrain`, each site bond joining one accepting port of each end; returns the world as `cls` (`mp.Graph` by default) | Every site-graph build: chains, blocks, rings, stars, combs, backmapping |
-| `mp.GrowthPlacer` | Grows each molecule breadth-first onto its parent's ports; needs no site positions | Topologies from CGsmiles notation |
-| `mp.SitePlacer` | Puts each copy's centre of mass on its site | Sites with positions (a coarsened CG model) |
-| `mp.AxisOrienter` | Turns each copy onto its site: backbone-to-centre along the site axis and joining atoms along the bonds for chain units; port directions fitted to bond directions for branch units | Backmapping with `SitePlacer` |
-| `mp.CGSmilesIR` | `.templates()` → name → ported `mp.Atomistic`; `.to_coarsegrain()` → site graph | Writing units and topologies |
-| `mp.SmilesIR.from_fragment` | `SmilesIR.from_fragment(body).to_template()` → one ported `mp.Atomistic` from a fragment body | Writing one unit |
-| `mp.SubgraphMatcher` / `mp.Coarsener` | Find bead groups in a CG model; turn them into sites with a position and an axis | Site graphs from a CG model |
-| `Finalization` | `ATOMS` or `TOPOLOGY` (default) | Choosing when angles and dihedrals are generated |
-| `StructureFinalizer` | `StructureFinalizer(stage).apply(graph)`: drop, or regenerate, angles and dihedrals once | Topology before MD export |
+| `mp.builder.Assembler` | `Assembler(library, placer, orienter=None).assemble(sites, cls=None)`: one copy of `library[bead_type]` per site of an `mp.CoarseGrain`, each site bond joining one accepting port of each end; returns the world as `cls` (`mp.MolGraph` by default) | Every site-graph build: chains, blocks, rings, stars, combs, backmapping |
+| `mp.builder.GrowthPlacer` | Grows each molecule breadth-first onto its parent's ports; needs no site positions | Topologies from CGsmiles notation |
+| `mp.builder.SitePlacer` | Puts each copy's centre of mass on its site | Sites with positions (a coarsened CG model) |
+| `mp.builder.AxisOrienter` | Turns each copy onto its site: backbone-to-centre along the site axis and joining atoms along the bonds for chain units; port directions fitted to bond directions for branch units | Backmapping with `SitePlacer` |
+| `mp.io.cgsmiles.CgSmilesIr` | `.templates()` → name → ported `mp.Atomistic`; `.to_coarsegrain()` → site graph | Writing units and topologies |
+| `mp.io.smiles.SmilesIr.from_fragment` | `SmilesIr.from_fragment(body).to_template()` → one ported `mp.Atomistic` from a fragment body | Writing one unit |
+| `mp.perceive.SubgraphMatcher` / `mp.builder.Coarsener` | Find bead groups in a CG model; turn them into sites with a position and an axis | Site graphs from a CG model |
 | `SystemPlanner` / `PolydisperseChainGenerator` / `Chain` / `SystemPlan` | Sample a polydisperse chain plan to a target mass | Bulk / MW-distributed systems |
-| `SchulzZimmPolydisperse` / `FlorySchulzPolydisperse` / `PoissonPolydisperse` / `UniformPolydisperse` | Chain-length distributions (`MassDistribution` / `DPDistribution` protocols) | Choosing a molecular-weight distribution |
+| `SchulzZimmPolydisperse` / `FlorySchulzPolydisperse` / `PoissonPolydisperse` / `UniformPolydisperse` | Chain-length distributions (`MassDistribution` / `DpDistribution` protocols) | Choosing a molecular-weight distribution |
 | `WeightedSequenceGenerator` / `BlockSequenceGenerator` / `AlternatingSequenceGenerator` | Monomer sequences (`SequenceGenerator` protocol) | Copolymer composition |
-| `CarbonTubeBuilder` | `CarbonTubeBuilder(n, m, ...)` → `.build()` graph + `.cell()` box | Zigzag, armchair, and chiral nanotubes |
-| `GrapheneBuilder` | `GrapheneBuilder(nx, ny, ...)` → `.build()` graph + `.cell()` box | Rectangular graphene honeycomb sheet |
-| `Lattice` / `Site` / `SpaceGroup` | Bravais lattice with basis sites (fractional coordinates) and symmetry operators | Crystals |
-| `mp.Region` / `mp.BoxRegion` / `mp.SphereRegion` / `mp.Cube` | Geometric regions with `mask(Block)`, on the molpy root | Selecting a volume |
-| `DrudeBuilder` / `Tip4pBuilder` / `VirtualSiteBuilder` / `load_polarizability` | Virtual-site augmentation | Polarizable / 4-site models |
+| `CarbonTubeBuilder` | `CarbonTubeBuilder(n, m, ...)` → `.build()` `Frame` + `.cell()` box | Zigzag, armchair, and chiral nanotubes |
+| `GrapheneBuilder` | `GrapheneBuilder(nx, ny, ...)` → `.build()` `Frame` + `.cell()` box | Rectangular graphene honeycomb sheet |
+| `Lattice` / `Site` / `SpaceGroup` | Bravais lattice with basis sites (fractional coordinates; the cell is `lattice.box`) and symmetry operators | Crystals |
+| `mp.core.Cuboid` / `mp.core.Sphere` / `mp.core.HalfSpace` / `mp.core.Region` | Native geometric regions with `mask(block)`, on the molpy root | Selecting a volume, clipping a crystal |
+| `DrudeBuilder` / `Tip4pBuilder` / `VirtualSiteBuilder` | Virtual-site augmentation (Drude parameters from `mp.ff.params.clpol_polarizability`) | Polarizable / 4-site models |
 | `AmberPolymerBuilder` | `AmberPolymerBuilder(library, cuts, force_field="gaff").assemble(sites)` → `AmberBuildResult` (`chain`, `forcefield`, prmtop / inpcrd paths): antechamber + parmchk2 on each oligomer, prepgen per residue, tleap `sequence` over a linear site graph; needs AmberTools | GAFF / GAFF2 polymer chains |
 | `AmberCut` | One prepgen residue: `omit`, `head` / `tail` connection atoms, `pre_head` / `post_tail` (or `*_type`), `charge` | Cutting an oligomer you built |
 | `AmberPieces` | `AmberPieces(head, repeat, tail).oligomer()` → the embedded oligomer and its head / chain / tail cuts, from three SMILES | Writing the oligomer and cuts from SMILES |
@@ -39,20 +39,20 @@ assembly site graph.
 
 A unit is a CGsmiles fragment whose bonding descriptors are its ports (`<`
 joins `>`, `$` joins `$`, `!` joins `!`; labels and bond orders must match),
-embedded by `mp.Conformer`. The topology is a CGsmiles string turned into a
+embedded by `mp.conformer.Conformer`. The topology is a CGsmiles string turned into a
 site graph. `GrowthPlacer` needs no coordinates.
 
 ```python
 import molpy as mp
 
-conformer = mp.Conformer(seed=42)
+conformer = mp.conformer.Conformer(seed=42)
 eo = conformer.generate(
-    mp.SmilesIR.from_fragment("[<]OCC[>]").to_template()
+    mp.io.smiles.SmilesIr.from_fragment("[<]OCC[>]").to_template()
 )[0]
 assert eo.n_ports == 2
 
-sites = mp.CGSmilesIR("{[#EO]|5}").to_coarsegrain()
-assembler = mp.Assembler({"EO": eo}, mp.GrowthPlacer())
+sites = mp.io.cgsmiles.CgSmilesIr("{[#EO]|5}").to_coarsegrain()
+assembler = mp.builder.Assembler({"EO": eo}, mp.builder.GrowthPlacer())
 chain = assembler.assemble(sites, mp.Atomistic)
 
 atoms = chain.to_frame()["atoms"]
@@ -65,23 +65,19 @@ Each bond joins one accepting port of each end, chosen by the assembler; the
 leaving handles are removed and their charge folds onto the anchors. A build
 that cannot give every bond a port raises `ValueError` naming the site. For a
 site graph coarsened from a CG model, use
-`mp.Assembler(library, mp.SitePlacer(), mp.AxisOrienter())` — see
+`mp.builder.Assembler(library, mp.builder.SitePlacer(), mp.builder.AxisOrienter())` — see
 [Guide: Assembly](../user-guide/02_assembly.md#backmapping-a-cg-model).
 
-## Finalize when needed
+## Topology when needed
 
 The assembled world has atoms and bonds only. Generate the angle and dihedral
 topology once, when an MD writer needs it:
 
 ```python
-from molpy.builder import Finalization, StructureFinalizer
-
 assert not list(chain.angles)
-chain = StructureFinalizer(Finalization.TOPOLOGY).apply(chain)
+chain.generate_topology(gen_angle=True, gen_dihedral=True)
 assert list(chain.angles)
 ```
-
-`Finalization.ATOMS` removes any angles and dihedrals instead.
 
 A walk of architectures from one ethylene-oxide kit — linear, block, ring,
 star, comb, telechelic — is the user-guide section
@@ -90,14 +86,16 @@ star, comb, telechelic — is the user-guide section
 
 ## Nanostructure topology
 
-Nanostructure builders keep their lattice planning private and expose two
-products: the molecular graph, and the simulation cell it was laid out in.
+The nanostructure builders are molrs's and keep their lattice planning
+private. They expose two products: the structure as a `Frame`, and the
+simulation cell it was laid out in; `mp.Atomistic.from_frame` makes the frame
+a graph.
 
 ```python
 from molpy.builder import CarbonTubeBuilder
 
 tube_builder = CarbonTubeBuilder(6, 6, cells=2, periodic=True)
-tube = tube_builder.build()
+tube = mp.Atomistic.from_frame(tube_builder.build())
 assert len(tube.atoms) == 48
 assert len(tube.bonds) == 72
 assert tube_builder.cell().pbc.tolist() == [False, False, True]
@@ -114,7 +112,7 @@ path with the same assembler:
 
 ```python
 import numpy as np
-from molpy.builder.polymer import (
+from molpy.builder import (
     PolydisperseChainGenerator,
     SchulzZimmPolydisperse,
     SystemPlanner,
@@ -132,7 +130,7 @@ planner = SystemPlanner(
 plan = planner.plan_system(np.random.default_rng(42))
 chains = [
     assembler.assemble(
-        mp.CGSmilesIR(
+        mp.io.cgsmiles.CgSmilesIr(
             "{" + "".join(f"[#{m}]" for m in chain.monomers) + "}"
         ).to_coarsegrain(),
         mp.Atomistic,

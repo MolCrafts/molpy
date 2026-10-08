@@ -68,7 +68,7 @@ config:
     orient: bottom
     direction: horizontal
     title: null
-data: {$file: data/shape/ideal_chain_rg.json}
+data: {$file: series/shape/ideal_chain_rg.json}
 mark: {type: line, strokeWidth: 2.2, point: true}
 encoding:
   x:
@@ -143,7 +143,7 @@ frame.box = mp.Box.cube(200.0)
 
 ```python
 masses = np.full(n_beads, 12.011)
-nl = mp.NeighborList(2.5)
+nl = mp.core.NeighborList(2.5)
 nl.build(frame.coords, frame.box)
 nlist = nl.neighbors()
 clusters = Cluster(min_cluster_size=5).compute([frame], [nlist])

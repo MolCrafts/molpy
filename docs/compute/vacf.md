@@ -25,9 +25,10 @@ C_{vv}(0) = \frac{3k_BT}{m}.
 $$
 
 That makes the zero-lag value a free thermometer, and the first thing you should
-check. For the argon trajectory used here, the measured $C_{vv}(0)$ is
-$5.295\times10^{-6}$ Å² fs⁻², and $3k_BT/m$ at the run's mean temperature of
-85.0 K is $5.306\times10^{-6}$. Agreement to 0.2 % means the velocities are in
+check. Averaged over the eight independent argon runs used here (they differ
+only in the seed of their initial velocities), the measured $C_{vv}(0)$ is
+$5.333\times10^{-6}$ Å² fs⁻², and $3k_BT/m$ at the runs' mean temperature of
+85.6 K is $5.344\times10^{-6}$. Agreement to 0.2 % means the velocities are in
 the units you think they are.
 
 As $\tau$ grows, collisions scramble the velocity and the correlation decays to
@@ -39,7 +40,7 @@ zero. *How* it decays is where the physics is.
 <div class="molcrafts-figure__body molcrafts-figure__body--chart">
 
 ```molplot preset="molplot" theme="auto" aspect="16:10"
-data: {$file: data/vacf/argon_vacf.json}
+data: {$file: series/vacf/argon_vacf.json}
 mark: {type: line, strokeWidth: 2.4, interpolate: monotone}
 encoding:
   x:
@@ -56,9 +57,9 @@ encoding:
 
 </div>
 
-**Figure 1.** Normalized velocity autocorrelation of liquid argon at 85 K. The
-correlation crosses zero at 310 fs, reaches a minimum of $-0.094$ at 440 fs,
-and has essentially decayed by 2 ps.
+**Figure 1.** Normalized velocity autocorrelation of liquid argon at 85 K,
+averaged over eight independent runs. The correlation crosses zero at 310 fs,
+reaches a minimum of $-0.105$ at 440 fs, and has essentially decayed by 2 ps.
 </figure>
 
 The shape has three features worth naming.
@@ -70,14 +71,14 @@ curvature defines the Einstein frequency $\omega_E$, the frequency at which an
 atom rattles in the cage formed by its neighbours.
 
 **It goes negative.** This is the signature of a dense liquid and it is not
-noise. At 440 fs the correlation is $-0.094$: the average atom is moving
+noise. At 440 fs the correlation is $-0.105$: the average atom is moving
 *backwards* relative to where it started. It has bounced off the wall of its
 cage of neighbours — the same first coordination shell that [$g(r)$](rdf.md)
-shows at 3.68 Å. A dilute gas has no cage and decays monotonically to zero; a
+shows at 3.73 Å. A dilute gas has no cage and decays monotonically to zero; a
 solid oscillates for far longer.
 
 **It relaxes to zero.** By 2 ps the atom has forgotten its initial velocity
-entirely. Compare that with the [MSD](msd.md) of the same run, which needs about
+entirely. Compare that with the [MSD](msd.md) of the same runs, which needs about
 5 ps before it becomes reliably linear: velocity correlations die *faster* than
 displacements become diffusive, which is why the VACF needs finely spaced
 frames and the MSD does not.
@@ -121,7 +122,7 @@ and look for where it stops changing.
 <div class="molcrafts-figure__body molcrafts-figure__body--chart">
 
 ```molplot preset="molplot" theme="auto" aspect="16:10"
-data: {$file: data/vacf/argon_running_diffusion.json}
+data: {$file: series/vacf/argon_running_diffusion.json}
 mark: {type: line, strokeWidth: 2.4, interpolate: monotone}
 encoding:
   x:
@@ -137,7 +138,8 @@ encoding:
 
 </div>
 
-**Figure 2.** Running Green–Kubo integral for argon. It overshoots while the
+**Figure 2.** Running Green–Kubo integral for argon, from the VACF averaged
+over the eight runs. It overshoots while the
 VACF is still positive, is pulled back down by the negative lobe, and settles
 onto a plateau once the correlation has decayed.
 </figure>
@@ -147,12 +149,14 @@ correlation is positive and peaks at $2.88\times10^{-5}$ cm² s⁻¹ at **310 fs
 which is exactly where Figure 1 shows the VACF crossing zero, because that is
 the moment the integrand changes sign. Then the negative lobe, the cage pushing
 atoms back, *subtracts* from the integral and drags it down to
-$2.23\times10^{-5}$ by 1.5 ps. Past 2 ps there is nothing left to add and the
+$2.06\times10^{-5}$ by 1.5 ps. Past 2 ps there is nothing left to add and the
 curve is flat.
 
 **Quote the plateau, never the peak and never the last point.** Here the plateau
-is $2.23\times10^{-5}$ cm² s⁻¹, against $2.21\times10^{-5}$ from the Einstein
-fit on the same trajectory.
+is $1.99\times10^{-5}$ cm² s⁻¹. Taking each run's own plateau gives
+$(1.99 \pm 0.06)\times10^{-5}$ cm² s⁻¹ (mean and sample standard deviation of
+the eight runs), against $(1.93 \pm 0.12)\times10^{-5}$ from the Einstein fits
+of the same runs: the two routes agree within their spreads.
 
 If there is no plateau, do not pick a number off the curve. It means the
 trajectory is too short, the lag window is too small, or centre-of-mass drift is
@@ -206,7 +210,7 @@ For a single one-dimensional series — one degree of freedom, or an
 already-collective flux — use `signal.acf_fft` instead:
 
 ```python
-from molpy.compute import signal
+from molpy import signal
 
 flux = np.ascontiguousarray(velocities.sum(axis=1)[:, 0])
 print(np.asarray(signal.acf_fft(flux, max_lag=50)).shape)   # -> (51,)
@@ -299,7 +303,7 @@ energy (an NVE run, fixed particle number, volume, and energy).
 - Integrate the VACF to get $D$, then compute $D$ from the [MSD](msd.md) of the
   same run. Agreement within a few percent means both are working.
 - Take the argon running integral and read it at 400 fs, before the negative
-  lobe has done its work. You get $2.80\times10^{-5}$ cm² s⁻¹ — 25 % above the
+  lobe has done its work. You get $2.78\times10^{-5}$ cm² s⁻¹ — 40 % above the
   plateau, and a concrete demonstration of why the plateau, not an early value,
   is the answer.
 
