@@ -79,7 +79,7 @@ pip install molcrafts-molpy
 ```
 
 Core dependencies: NumPy and
-[molrs](https://github.com/MolCrafts/molrs) (`molcrafts-molrs>=0.16.0,<0.17`)
+[molrs](https://github.com/MolCrafts/molrs) (`molcrafts-molrs>=0.17.0,<0.18`)
 plus the MolCrafts logging/config packages. Optional: RDKit (adapter example),
 AmberTools (GAFF charges).
 
