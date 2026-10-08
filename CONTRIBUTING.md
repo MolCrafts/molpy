@@ -87,6 +87,12 @@ jobs read its outputs. Shared setup is molcrafts-ci's
 `MolCrafts/molcrafts-ci/actions/<name>@master` (`setup-rust`, `setup-python`,
 `setup-partners`).
 
+Each `test / python` job also writes JUnit and coverage files, and
+`MolCrafts/molcrafts-ci/actions/report@master` puts its passed, failed and
+skipped counts and its line and branch coverage in the run and pull request
+summary. This is a report only: there are no thresholds, and it never fails
+the job.
+
 ## Code of Conduct
 
 This project adheres to a Code of Conduct that all contributors are expected to

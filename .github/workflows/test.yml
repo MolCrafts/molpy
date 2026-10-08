@@ -76,4 +76,17 @@ jobs:
           toolchain-dir: ../molrs
           cache: molrs-python
           workspaces: ../molrs/molrs-python -> ../target
-      - run: uv run --locked --python ${{ matrix.python }} --extra dev python -m pytest tests/ -n auto
+      # The pre-push hook's command, plus what the report reads: JUnit and
+      # coverage (pytest-cov, as nightly.yml measures it).
+      - run: >-
+          uv run --locked --python ${{ matrix.python }} --extra dev --with pytest-cov
+          python -m pytest tests/ -n auto --junitxml=.ci-out/junit.xml
+          --cov=molpy --cov-branch --cov-report=json:.ci-out/coverage.json
+      # Counts and coverage in the run and pull request summary; report only.
+      - name: Report
+        if: ${{ !cancelled() }}
+        uses: MolCrafts/molcrafts-ci/actions/report@master
+        with:
+          title: test / python (${{ matrix.os }}, ${{ matrix.python }})
+          junit: .ci-out/junit.xml
+          coverage: .ci-out/coverage.json
