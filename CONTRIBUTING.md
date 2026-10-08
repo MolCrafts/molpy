@@ -35,12 +35,14 @@ or `git push --no-verify`, and never merge a red pull request.**
   (ruff format + ruff check + ty), as lint.yml `lint / hooks`.
 - **pre-push**:
   - the pre-commit hooks again on `--all-files`;
-  - `scripts/partners.py check` — molrs (`.github/partners.env`) resolves,
-    and every `[tool.uv.sources]` path entry lands in a checkout CI makes;
+  - `scripts/partners.py check` — every partner in `.github/partners.env`
+    (molrs, mollog, molcfg) resolves, and every `[tool.uv.sources]` path
+    entry lands in a checkout CI makes;
   - the rest in CI's sibling layout (`scripts/partners.py run`: a copy of
-    this tree next to molrs at the commit `scripts/partners.py` resolves --
-    molrs's `dev`, or its branch named like yours; see "Partners" in the
-    Development Setup page), never your `../molrs` working tree:
+    this tree next to the partners at the commits `scripts/partners.py`
+    resolves -- molrs's `dev`, mollog's and molcfg's `master`, or each one's
+    branch named like yours; see "Partners" in the Development Setup page),
+    never your siblings' working trees:
     - `uv lock --check` (`lint / hooks`) when pyproject.toml or uv.lock
       changed;
     - the docs build (`.[doc]` in a fresh env, then `zensical build --clean
@@ -54,7 +56,7 @@ or `git push --no-verify`, and never merge a red pull request.**
   already inside a Slurm job. The cluster's shared `core.hooksPath` sets it to
   `.build-alloc/hookrun`, which runs the command on a compute node (allocation
   `$USER-hooks`; it fails after 20 minutes without a node, never passes), and
-  sets `$MOLCRAFTS_PARTNER_CACHE` so the molrs checkout and its build stay
+  sets `$MOLCRAFTS_PARTNER_CACHE` so the partner checkouts and their builds stay
   warm between pushes. Everything else runs in place, so a commit never waits
   for Slurm. Elsewhere nothing sets the variables and every hook runs locally,
   in a temp layout.

@@ -2,10 +2,13 @@ name: release
 
 # A `v*` tag on MolCrafts/molpy: guard -> the release test matrix -> the
 # pure-Python sdist + wheel to PyPI (trusted publishing) -> the GitHub
-# Release. molcrafts-molrs on the major.minor molpy declares must already be
-# on PyPI (docs/developer/release-process.md): the matrix -- 3 OS x every
-# supported Python -- runs against molrs from PyPI, exactly what the wheel
-# declares (`--no-sources` drops the ../molrs path source dev builds from).
+# Release. Every partner range molpy declares -- molcrafts-molrs on molpy's
+# major.minor, molcrafts-mollog and molcrafts-molcfg -- must already have a
+# release on PyPI (docs/developer/release-process.md;
+# scripts/check_partners_on_pypi.py): the matrix -- 3 OS x every supported
+# Python -- runs against the partners from PyPI, exactly what the wheel
+# declares (`--no-sources` drops the ../molrs, ../mollog and ../molcfg path
+# sources dev builds from).
 #
 # A dispatch is the dry run, on any branch, fork or upstream: the same test
 # matrix and build, no upload and no Release. Only a tag push on MolCrafts
@@ -76,7 +79,7 @@ jobs:
       - uses: MolCrafts/molcrafts-ci/actions/setup-python@master
         with:
           python-version: ${{ matrix.python }}
-      - run: python scripts/check_molrs_on_pypi.py
+      - run: python scripts/check_partners_on_pypi.py
       - run: uv run --no-sources --python ${{ matrix.python }} --extra dev python -m pytest tests/ -n auto
 
   build:

@@ -14,11 +14,14 @@ below.
 
 ## Quick setup
 
-Clone molpy and molrs side by side, sync with dev dependencies (this compiles
-molrs's Python extension), and run the test suite.
+Clone molpy next to its partners — molrs, mollog and molcfg — sync with dev
+dependencies (this compiles molrs's Python extension), and run the test
+suite.
 
 ```bash
 git clone https://github.com/MolCrafts/molrs.git
+git clone https://github.com/MolCrafts/mollog.git
+git clone https://github.com/MolCrafts/molcfg.git
 git clone https://github.com/MolCrafts/molpy.git
 cd molpy
 uv sync --locked --extra dev
@@ -29,15 +32,18 @@ uv run --locked --extra dev python -m pytest tests/ -n auto
 If all tests pass, the environment is ready.
 
 
-## molrs comes from its dev branch
+## Partners come from their tips
 
-On `dev`, molpy is built against molrs's `dev`, not against a release:
+On `dev`, molpy is built against its partners' tips, not against releases:
 `pyproject.toml`'s `[tool.uv.sources]` builds `molcrafts-molrs` from the
-sibling `../molrs/molrs-python`. The wheel itself still declares only the
-**major.minor** range (`>=X.Y.0,<X.(Y+1)`); pip ignores the table, and a
-release is tested against molrs from PyPI (see
-[Release Process](release-process.md)). Import-time `check_molrs_version`
-accepts patch drift inside that minor.
+sibling `../molrs/molrs-python` (molrs's `dev`), and `molcrafts-mollog` /
+`molcrafts-molcfg` — the logging and configuration libraries the engines and
+wrappers use — from `../mollog` / `../molcfg` (their `master`; they have no
+`dev`). The wheel itself still declares only ranges: molrs's
+**major.minor** (`>=X.Y.0,<X.(Y+1)`), mollog's and molcfg's major
+(`>=A.B.C,<A+1`); pip ignores the table, and a release is tested against all
+three from PyPI (see [Release Process](release-process.md)). Import-time
+`check_molrs_version` accepts patch drift inside molrs's minor.
 
 uv rebuilds molrs when the sibling's commit moves; after uncommitted changes
 to the molrs Rust source, rebuild by hand:
@@ -46,8 +52,9 @@ to the molrs Rust source, rebuild by hand:
 uv sync --extra dev --reinstall-package molcrafts-molrs
 ```
 
-`uv.lock` records molrs's package metadata (its version and dependencies), not
-a commit. When molrs's `dev` changes that metadata, `uv lock --check` fails;
+`uv.lock` records each partner's package metadata (its version and
+dependencies), not a commit. When a partner's tip changes that metadata,
+`uv lock --check` fails;
 relock in a commit of its own with the recipe in `.github/partners.env`. See
 the [molrs build-from-source guide](https://docs.molcrafts.org/molrs/getting-started/installation/)
 for the native-crate and WASM build targets.
@@ -55,22 +62,25 @@ for the native-crate and WASM build targets.
 
 ## Partners
 
-CI and the pre-push hooks never build against your sibling's working tree.
-`.github/partners.env` names molrs's branch (`MOLRS_REF=dev`: partners are
-tracked, not pinned), and `scripts/partners.py` resolves it -- for CI
-(`partners.py fetch`, into `../molrs`) and for the hooks (`partners.py run`,
-a copy of this tree next to the resolved molrs) alike -- to the first of:
+CI and the pre-push hooks never build against your siblings' working trees.
+`.github/partners.env` names each partner's branch (`MOLRS_REF=dev`,
+`MOLLOG_REF=master`, `MOLCFG_REF=master`: partners are tracked, not pinned),
+and `scripts/partners.py` resolves each -- for CI (`partners.py fetch`, into
+`../molrs`, `../mollog`, `../molcfg`) and for the hooks (`partners.py run`, a
+copy of this tree next to the resolved partners) alike -- to the first of:
 
-1. molrs's branch named like the one being built (CI: the pushed branch or a
-   pull request's head branch; locally: the checked-out branch), looked up
-   first on the fork the build comes from (`<owner>/molrs`, where `<owner>`
-   owns the pull request's head repository or the repository CI runs in; in a
-   git hook, the remote being pushed to), then on MolCrafts/molrs;
-2. outside CI only, that branch in your sibling clone `../molrs`, when it has
-   one and neither remote does yet;
-3. MolCrafts/molrs's `dev`.
+1. the partner's branch named like the one being built (CI: the pushed
+   branch or a pull request's head branch; locally: the checked-out branch),
+   looked up first on the fork the build comes from (`<owner>/<partner>`,
+   where `<owner>` owns the pull request's head repository or the repository
+   CI runs in; in a git hook, the remote being pushed to), then on
+   MolCrafts/<partner>;
+2. outside CI only, that branch in your sibling clone `../<partner>`, when it
+   has one and neither remote does yet;
+3. the partner's `<NAME>_REF` on MolCrafts (`dev` for molrs, `master` for
+   mollog and molcfg).
 
-A molpy change that needs a molrs change lands as two same-named branches,
+A molpy change that needs a partner change lands as two same-named branches,
 never by skipping a gate: create the same branch (say `converge/x`) in both
 checkouts; push both to your forks, never to MolCrafts (molpy's gates take
 molrs's branch from your fork, or from your sibling before it is pushed); each
