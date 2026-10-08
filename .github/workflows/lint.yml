@@ -2,7 +2,8 @@ name: lint
 
 # The commit-stage hooks on every file (hygiene, `tox -e lint`: ruff + ty),
 # the partners check, and uv.lock against the resolved molrs (metadata only,
-# nothing compiles). Same in every context; see "CI" in CONTRIBUTING.md.
+# nothing compiles), and the workflows against the CI scheme
+# (check-workflows). Same in every context; see "CI" in CONTRIBUTING.md.
 on:
   push:
     branches: ["**"]
@@ -13,9 +14,7 @@ on:
 permissions:
   contents: read
 
-# One group per file, workflow, event and ref. Under workflow_call (release.yml
-# running lint/test) github.workflow and github.event_name are the caller's, so
-# a called run never shares, and so never cancels, a direct run's group.
+# One group per file, workflow, event and ref; only a feature ref cancels its superseded runs.
 concurrency:
   group: lint-${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: ${{ !contains(fromJSON('["refs/heads/dev","refs/heads/master","refs/heads/main"]'), github.ref) && !startsWith(github.ref, 'refs/tags/') }}
@@ -30,7 +29,7 @@ jobs:
       upstream: ${{ steps.context.outputs.upstream }}
       integration: ${{ steps.context.outputs.integration }}
       skip-pr: ${{ steps.context.outputs.skip-pr }}
-      cancel: ${{ steps.context.outputs.cancel }}
+      publish: ${{ steps.context.outputs.publish }}
     steps:
       - id: context
         uses: MolCrafts/molcrafts-ci/actions/ci-context@master
@@ -51,3 +50,13 @@ jobs:
       - run: uvx pre-commit run --all-files --show-diff-on-failure
       - run: python3 scripts/partners.py check
       - run: uv lock --check
+
+  workflows:
+    name: lint / workflows
+    needs: context
+    # Every workflow against the CI scheme: MolCrafts/molcrafts-ci/actions/check-workflows.
+    if: needs.context.outputs.skip-pr != 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: MolCrafts/molcrafts-ci/actions/check-workflows@master

@@ -41,6 +41,15 @@ repos:
 
   - repo: local
     hooks:
+      # lint.yml's `lint / workflows`: every workflow against the CI scheme,
+      # with the validator CI runs (MolCrafts/molcrafts-ci master).
+      - id: workflows
+        name: "check-workflows (lint.yml)"
+        entry: bash -c 'd=$(mktemp -d) && trap "rm -rf $d" EXIT && git clone -q --depth 1 https://github.com/MolCrafts/molcrafts-ci "$d" && env -u VIRTUAL_ENV uv run -q --no-project --script "$d/actions/check-workflows/check_workflows.py" .'
+        language: system
+        pass_filenames: false
+        files: ^\.github/workflows/
+
       - id: tox-lint
         name: tox -e lint
         entry: uv run --no-project --with 'tox>=4.23' --with ruff==0.16.1 --with ty==0.0.65 tox -e lint
