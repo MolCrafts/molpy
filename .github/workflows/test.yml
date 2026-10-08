@@ -1,7 +1,8 @@
 name: test
 
-# The unit suite against molrs built from the commit scripts/partners.py
-# resolves (molrs's dev, or its branch named like this one), in two tiers
+# The unit suite against the partners built from the commits scripts/partners.py
+# resolves (molrs's dev, mollog's and molcfg's master, or each one's branch
+# named like this one), in two tiers
 # (`test / context` decides):
 #
 #   fast  a feature-branch push to MolCrafts: Linux, Python 3.12.
