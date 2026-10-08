@@ -13,8 +13,11 @@ on:
 permissions:
   contents: read
 
+# One group per file, workflow, event and ref. Under workflow_call (release.yml
+# running lint/test) github.workflow and github.event_name are the caller's, so
+# a called run never shares, and so never cancels, a direct run's group.
 concurrency:
-  group: lint-${{ github.event.pull_request.number || github.ref }}
+  group: lint-${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: ${{ !contains(fromJSON('["refs/heads/dev","refs/heads/master","refs/heads/main"]'), github.ref) && !startsWith(github.ref, 'refs/tags/') }}
 
 jobs:
