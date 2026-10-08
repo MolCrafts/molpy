@@ -93,7 +93,8 @@ repos:
         stages: [pre-push]
 
       # Same command as test.yml (uv honors [tool.uv.sources], tox/pip
-      # does not), on CI's floor Python, in CI's layout.
+      # does not), on CI's floor Python, in CI's layout; test.yml adds only
+      # the JUnit and coverage files its summary report reads.
       - id: pytest
         name: uv pytest against the resolved partners (test.yml)
         entry: >-
