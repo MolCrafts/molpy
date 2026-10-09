@@ -11,8 +11,7 @@ from molpy.wrapper import AntechamberWrapper
 def test_antechamber_wrapper_initialization():
     """Test AntechamberWrapper initialization."""
 
-    wrapper = AntechamberWrapper(name="antechamber", workdir=Path("tmp_ante"))
-    assert wrapper.name == "antechamber"
+    wrapper = AntechamberWrapper(Path("tmp_ante"))
     assert wrapper.exe == "antechamber"
     assert wrapper.workdir == Path("tmp_ante")
 
@@ -20,14 +19,14 @@ def test_antechamber_wrapper_initialization():
 def test_antechamber_wrapper_default_exe():
     """Test that exe defaults to 'antechamber'."""
 
-    wrapper = AntechamberWrapper(name="ante")
+    wrapper = AntechamberWrapper()
     assert wrapper.exe == "antechamber"
 
 
 def test_antechamber_wrapper_run_raw(tmp_path: Path):
     """Test run_raw() method."""
 
-    wrapper = AntechamberWrapper(name="ante", workdir=tmp_path / "work")
+    wrapper = AntechamberWrapper(tmp_path / "work")
 
     with patch("subprocess.run") as mock_run:
         mock_run.return_value.returncode = 0
@@ -55,7 +54,7 @@ def test_antechamber_wrapper_run_raw(tmp_path: Path):
 def test_antechamber_wrapper_atomtype_assign(tmp_path: Path):
     """Test atomtype_assign() method."""
 
-    wrapper = AntechamberWrapper(name="ante", workdir=tmp_path / "work")
+    wrapper = AntechamberWrapper(tmp_path / "work")
 
     with patch("subprocess.run") as mock_run:
         mock_run.return_value.returncode = 0

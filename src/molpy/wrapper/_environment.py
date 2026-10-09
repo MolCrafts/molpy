@@ -1,12 +1,16 @@
-"""Process-environment isolation for external tool wrappers.
+"""Process-environment isolation for external tool wrappers and engines.
 
-Users configure isolation **explicitly** with ``env`` + ``env_manager``.
-There is no auto-detection of manager type from paths or tool layout.
+Isolation is configured **explicitly** with ``env`` + ``env_manager`` — in
+molpy's configuration (:mod:`molpy.config`), which every engine and wrapper
+resolves its :class:`EnvironmentSpec` from. There is no auto-detection of
+manager type from paths or tool layout.
 
 Supported managers
 ------------------
 * ``None`` + ``env is None`` — system environment (current ``PATH``).
-* ``"conda"`` — ``conda run -n <name>`` or ``conda run -p <prefix>``.
+* ``"conda"`` — ``conda run -n <name>`` or ``conda run -p <prefix>``, with
+  the ``conda`` named by ``conda.executable`` (default: ``conda`` on
+  ``PATH``).
 * ``"venv"`` — inject ``<prefix>/bin`` (or ``Scripts`` on Windows) into
   ``PATH``.  Covers standard venv, virtualenv, and uv-created environments
   (same layout).
@@ -20,8 +24,7 @@ names* (no path separators) remain plain ``str``.  Subprocess argv
 receives ``str(path)`` at the OS boundary only.
 
 This module is the single owner of env-isolation logic used by
-:class:`~molpy.wrapper.Wrapper` and higher-level facades that
-construct wrappers.
+:class:`~molpy.wrapper.Wrapper` and :class:`~molpy.engine.Engine`.
 """
 
 from __future__ import annotations
@@ -60,15 +63,6 @@ def _bin_dir(prefix: Path) -> Path:
     return prefix / ("Scripts" if os.name == "nt" else "bin")
 
 
-def _conda_exe() -> str:
-    """Return a conda executable path, or the bare name ``"conda"``."""
-    conda_exe = os.environ.get("CONDA_EXE")
-    if conda_exe:
-        return conda_exe
-    found = shutil.which("conda")
-    return found if found is not None else "conda"
-
-
 @dataclass(frozen=True, slots=True)
 class EnvironmentSpec:
     """Validated subprocess environment isolation.
@@ -78,10 +72,13 @@ class EnvironmentSpec:
     * system — both fields ``None``
     * conda name — ``env: str``, ``env_manager: "conda"``
     * conda prefix / venv — ``env: Path``, ``env_manager: "conda"|"venv"``
+
+    ``conda_executable`` is the ``conda`` that ``conda run`` invokes.
     """
 
     env: str | Path | None = None
     env_manager: ManagerKind | None = None
+    conda_executable: str = "conda"
 
     # -- construction -------------------------------------------------------
 
@@ -95,6 +92,8 @@ class EnvironmentSpec:
         cls,
         env: str | Path | None = None,
         env_manager: str | None = None,
+        *,
+        conda_executable: str = "conda",
     ) -> EnvironmentSpec:
         """Validate and normalise user ``env`` / ``env_manager`` input.
 
@@ -105,6 +104,7 @@ class EnvironmentSpec:
         Args:
             env: Conda env name / prefix, or venv prefix (``str | Path``).
             env_manager: ``"conda"`` or ``"venv"``.
+            conda_executable: The ``conda`` that ``conda run`` invokes.
 
         Returns:
             A frozen :class:`EnvironmentSpec`.
@@ -140,8 +140,10 @@ class EnvironmentSpec:
 
         # conda: Path / path-like str → Path prefix; bare name stays str
         if isinstance(env, Path) or _looks_like_path(str(env)):
-            return cls(env=_as_path(env), env_manager=kind)
-        return cls(env=str(env), env_manager=kind)
+            return cls(
+                env=_as_path(env), env_manager=kind, conda_executable=conda_executable
+            )
+        return cls(env=str(env), env_manager=kind, conda_executable=conda_executable)
 
     # -- queries ------------------------------------------------------------
 
@@ -178,8 +180,7 @@ class EnvironmentSpec:
             return []
 
         assert self.env is not None
-        conda = _conda_exe()
-        prefix = [conda, "run"]
+        prefix = [self.conda_executable, "run"]
         if no_capture_output:
             prefix.append("--no-capture-output")
 

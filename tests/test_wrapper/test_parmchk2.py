@@ -11,8 +11,7 @@ from molpy.wrapper import Parmchk2Wrapper
 def test_parmchk2_wrapper_initialization():
     """Test Parmchk2Wrapper initialization."""
 
-    wrapper = Parmchk2Wrapper(name="parmchk", workdir=Path("tmp_parmchk"))
-    assert wrapper.name == "parmchk"
+    wrapper = Parmchk2Wrapper(Path("tmp_parmchk"))
     assert wrapper.exe == "parmchk2"
     assert wrapper.workdir == Path("tmp_parmchk")
 
@@ -20,14 +19,14 @@ def test_parmchk2_wrapper_initialization():
 def test_parmchk2_wrapper_default_exe():
     """Test that exe defaults to 'parmchk2'."""
 
-    wrapper = Parmchk2Wrapper(name="parmchk")
+    wrapper = Parmchk2Wrapper()
     assert wrapper.exe == "parmchk2"
 
 
 def test_parmchk2_wrapper_run_raw(tmp_path: Path):
     """Test run_raw() method."""
 
-    wrapper = Parmchk2Wrapper(name="parmchk", workdir=tmp_path / "work")
+    wrapper = Parmchk2Wrapper(tmp_path / "work")
 
     with patch("subprocess.run") as mock_run:
         mock_run.return_value.returncode = 0
@@ -53,7 +52,7 @@ def test_parmchk2_wrapper_run_raw(tmp_path: Path):
 def test_parmchk2_wrapper_generate_parameters(tmp_path: Path):
     """Test generate_parameters() method."""
 
-    wrapper = Parmchk2Wrapper(name="parmchk", workdir=tmp_path / "work")
+    wrapper = Parmchk2Wrapper(tmp_path / "work")
 
     with patch("subprocess.run") as mock_run:
         mock_run.return_value.returncode = 0

@@ -74,6 +74,13 @@ class TestEnvironmentSpecCommandPrefix:
         assert Path(prefix[3]) == env_path
         assert prefix[3] == str(env_path)
 
+    def test_conda_executable_is_the_configured_one(self):
+        spec = EnvironmentSpec.resolve(
+            "e", "conda", conda_executable="/opt/conda/bin/conda"
+        )
+        assert spec.command_prefix() == ["/opt/conda/bin/conda", "run", "-n", "e"]
+        assert EnvironmentSpec.resolve("e", "conda").command_prefix()[0] == "conda"
+
     def test_no_capture_output_flag(self):
         prefix = EnvironmentSpec.resolve("e", "conda").command_prefix(
             no_capture_output=True

@@ -36,6 +36,7 @@ From one ethylene-oxide kit to every architecture the site-graph assembler suppo
 
 - [File I/O](11_io.md) — reading and writing molecular data, trajectories, log files, and force-field formats
 - [Simulation Engines](12_engine.md) — generating input decks for LAMMPS, CP2K, and OpenMM, and running them from Python
+- [Configure and Log a Run](14_configure_and_log.md) — one `molpy.toml` for every engine's and wrapper's executable, environment and launcher, and the structured log each run leaves
 
 ## Tools & Ecosystem
 

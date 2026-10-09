@@ -1,7 +1,7 @@
 name: lint
 
 # The commit-stage hooks on every file (hygiene, `tox -e lint`: ruff + ty),
-# the partners check, and uv.lock against the resolved molrs (metadata only,
+# the partners check, and uv.lock against the resolved partners (metadata only,
 # nothing compiles). Same in every context; see "CI" in CONTRIBUTING.md.
 on:
   push:

@@ -16,109 +16,125 @@ The two supported usage modes are:
 
        result = engine.run(script, workdir="./calc")
 
-MPI and job-scheduler launchers are supported via the ``launcher`` parameter::
+MPI and job-scheduler launchers, the executable, its conda / venv
+environment, environment variables and time limit are the engine's
+``engine.<name>`` settings in molpy's configuration (:mod:`molpy.config`)::
 
-    engine = LammpsEngine("lmp", launcher=["mpirun", "-np", "16"])
-    engine = LammpsEngine("lmp", launcher=["srun", "--ntasks", "16"])
+    # molpy.toml
+    [engine.lammps]
+    launcher = ["mpirun", "-np", "16"]
+
+Every subprocess an engine starts is logged to ``molpy.engine.<name>``
+(:mod:`mollog`).
 """
+
+from __future__ import annotations
 
 import subprocess
 import tempfile
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any, ClassVar
+
+import mollog
+
+from molpy.config import load_config, tool_settings
+from molpy.wrapper import EnvironmentSpec
+from molpy.wrapper._process import run_process
 
 from ._script import Script
-from molpy.wrapper import EnvironmentSpec
+
+if TYPE_CHECKING:
+    from molcfg import Config
 
 
 class Engine(ABC):
     """Abstract base class for computational chemistry engines.
 
-    Concrete subclasses implement :meth:`_execute` and
-    :meth:`_get_default_extension`.  The base class handles script
-    normalization, working-directory management, and command prefixing
-    (launcher + environment wrapper).
+    Concrete subclasses name their configuration table in :attr:`tool`
+    (``"lammps"`` reads ``[engine.lammps]``, falling back to ``[engine]``) and
+    implement :meth:`_execute` and :meth:`_get_default_extension`. The base
+    class resolves the settings, normalises scripts, manages the working
+    directory, prefixes commands (environment wrapper + launcher) and logs
+    every subprocess.
 
-    Environment isolation uses the shared
-    :class:`~molpy.wrapper.EnvironmentSpec` contract (same as wrappers): omit
-    both ``env`` and ``env_manager`` for the system ``PATH``, or set both
-    explicitly (``"conda"`` or ``"venv"``).
+    Args:
+        config: molpy's configuration (:func:`molpy.config.load_config`);
+            ``None`` loads it (package defaults, user and project files).
+        workdir: Default working directory.  ``None`` creates a temporary
+            directory on each :meth:`run` call.
+        check_executable: Verify the executable is available at construction
+            time (system ``PATH`` or the configured env).  Set to ``False``
+            when only writing inputs, or when the binary is only available
+            on a remote node.
 
     Attributes:
+        settings: The resolved :class:`~molpy.config.ToolSettings`.
         executable: Path or command to the engine binary.
         work_dir: Default working directory; ``None`` means a temporary
             directory is created on each :meth:`run` call.
-        launcher: Optional MPI / scheduler prefix inserted before the
-            executable, e.g. ``["mpirun", "-np", "16"]`` or
-            ``["srun", "--ntasks", "16"]``.
+        launcher: MPI / scheduler prefix inserted before the executable,
+            e.g. ``["mpirun", "-np", "16"]`` (empty for none).
         env_vars: Extra environment variables forwarded to the subprocess.
-        env: Conda env name / prefix, or venv prefix, for isolation.
-        env_manager: Environment manager (``"conda"``, ``"venv"``, …).
+        timeout: Seconds before a subprocess is killed (``None``: no limit).
+        environment: The :class:`~molpy.wrapper.EnvironmentSpec` the engine
+            runs in.
+        logger: The engine's logger, ``molpy.engine.<tool>``.
         scripts: Scripts registered by the last :meth:`run` call (or ``[]``
             before the first call).
         input_script: Primary input script resolved by the last :meth:`run`
             call (or ``None`` before the first call).
 
+    Raises:
+        FileNotFoundError: If *check_executable* is ``True`` and the
+            executable is not found.
+        ValueError: If the configured environment is incomplete or its
+            manager unsupported.
+
     Example:
-        >>> from molpy.engine import Script
-        >>> from molpy.engine import LammpsEngine
+        >>> from molpy.config import load_config
+        >>> from molpy.engine import LammpsEngine, Script
         >>>
         >>> script = Script.from_text(
         ...     name="input",
         ...     text="units real\\natom_style full\\n",
         ...     language="other",
         ... )
-        >>> engine = LammpsEngine(executable="lmp", check_executable=False)
+        >>> config = load_config({"engine": {"lammps": {"executable": "lmp"}}})
+        >>> engine = LammpsEngine(config=config, check_executable=False)
         >>> result = engine.run(script, workdir="./calc", check=False)
         >>> print(result.returncode)
         0
     """
 
+    tool: ClassVar[str]
+
     def __init__(
         self,
-        executable: str,
         *,
+        config: Config | None = None,
         workdir: str | Path | None = None,
-        launcher: list[str] | None = None,
-        env_vars: dict[str, str] | None = None,
-        env: str | Path | None = None,
-        env_manager: str | None = None,
         check_executable: bool = True,
     ) -> None:
-        """Initialise the engine.
-
-        Args:
-            executable: Path or command to the engine binary (e.g. ``"lmp"``).
-            workdir: Default working directory.  ``None`` creates a temporary
-                directory on each :meth:`run` call.
-            launcher: MPI or scheduler prefix prepended before the executable,
-                e.g. ``["mpirun", "-np", "16"]`` or ``["srun", "--ntasks", "8"]``.
-            env_vars: Extra environment variables set for the subprocess.
-            env: Conda env name / prefix, or venv prefix.  Must be provided
-                together with *env_manager* (see
-                :class:`~molpy.wrapper.EnvironmentSpec`).
-            env_manager: ``"conda"`` or ``"venv"``.  Conda isolation uses
-                ``conda run --no-capture-output``; venv injects ``PATH``.
-            check_executable: Verify the executable is available at construction
-                time (system ``PATH`` or the configured env).  Set to
-                ``False`` in tests or when the binary is only available on a
-                remote node.
-
-        Raises:
-            FileNotFoundError: If *check_executable* is ``True`` and the
-                executable is not found.
-            ValueError: If exactly one of *env* / *env_manager* is provided,
-                or *env_manager* is unsupported.
-        """
-        spec = EnvironmentSpec.resolve(env, env_manager)
-        self.executable = executable
+        self.settings = tool_settings(
+            config if config is not None else load_config(), f"engine.{self.tool}"
+        )
+        self.environment = EnvironmentSpec.resolve(
+            self.settings.env,
+            self.settings.env_manager,
+            conda_executable=self.settings.conda_executable,
+        )
+        self.executable: str = (
+            self.settings.executable
+            if self.settings.executable is not None
+            else self._default_executable()
+        )
         self.work_dir = Path(workdir) if workdir is not None else None
-        self.launcher = launcher
-        self.env_vars: dict[str, str] = env_vars or {}
-        self.env = spec.env
-        self.env_manager = spec.env_manager
+        self.launcher: list[str] = list(self.settings.launcher)
+        self.env_vars: dict[str, str] = dict(self.settings.env_vars)
+        self.timeout = self.settings.timeout
+        self.logger = mollog.get_logger(f"molpy.engine.{self.tool}")
 
         # Initialised here so attribute access is always valid.
         self.scripts: list[Script] = []
@@ -137,7 +153,7 @@ class Engine(ABC):
         """Human-readable engine name (e.g. ``"LAMMPS"``).
 
         Returns:
-            A short, stable identifier used for logging and ``__repr__``.
+            A short, stable identifier used for ``__repr__``.
         """
 
     @abstractmethod
@@ -154,15 +170,14 @@ class Engine(ABC):
         run_dir: Path,
         capture_output: bool = False,
         check: bool = True,
-        timeout: float | None = None,
         **kwargs: Any,
     ) -> subprocess.CompletedProcess:
         """Run the engine subprocess.
 
         Called by :meth:`run` after scripts have been written to *run_dir*.
-        Subclasses build the concrete command and call :func:`subprocess.run`.
-        Use :meth:`_build_full_command` to obtain the correctly prefixed
-        command list (launcher + env wrapper + executable + engine flags).
+        Subclasses build the concrete command with
+        :meth:`_build_full_command` (environment wrapper + launcher +
+        executable + engine flags) and start it with :meth:`_run_process`.
 
         Args:
             run_dir: Directory where input files have been written; use as
@@ -170,8 +185,6 @@ class Engine(ABC):
             capture_output: Capture stdout/stderr into
                 ``CompletedProcess.stdout`` / ``.stderr``.
             check: Raise :exc:`subprocess.CalledProcessError` on non-zero exit.
-            timeout: Timeout in seconds; raises
-                :exc:`subprocess.TimeoutExpired` when exceeded.
             **kwargs: Additional engine-specific keyword arguments.
 
         Returns:
@@ -181,16 +194,22 @@ class Engine(ABC):
             RuntimeError: If no input script is found in *run_dir*.
             subprocess.CalledProcessError: If *check* is ``True`` and the
                 process exits with a non-zero code.
-            subprocess.TimeoutExpired: If *timeout* is exceeded.
+            subprocess.TimeoutExpired: If the configured ``timeout`` is
+                exceeded.
         """
+
+    def _default_executable(self) -> str:
+        """The executable when the configuration names none.
+
+        Raises:
+            ValueError: This engine has no fallback; configure
+                ``engine.<tool>.executable``.
+        """
+        raise ValueError(f"engine.{self.tool}.executable is not configured")
 
     # ------------------------------------------------------------------
     # Public methods
     # ------------------------------------------------------------------
-
-    def process_environment(self) -> EnvironmentSpec:
-        """Return the validated :class:`~molpy.wrapper.EnvironmentSpec` for this engine."""
-        return EnvironmentSpec.resolve(self.env, self.env_manager)
 
     def check_executable(self) -> None:
         """Verify the executable is available in the configured environment.
@@ -201,11 +220,12 @@ class Engine(ABC):
         Raises:
             FileNotFoundError: If the executable cannot be found.
         """
-        if self.process_environment().resolve_executable(self.executable) is None:
+        if self.environment.resolve_executable(self.executable) is None:
             raise FileNotFoundError(
                 f"Executable '{self.executable}' not found in the configured "
-                "environment.  Install the engine, put it on PATH, set "
-                "env/env_manager, or provide the full path."
+                "environment.  Install the engine and put it on PATH, or set "
+                f"engine.{self.tool}.executable / env / env_manager in molpy's "
+                "configuration."
             )
 
     def run(
@@ -215,7 +235,6 @@ class Engine(ABC):
         workdir: str | Path | None = None,
         capture_output: bool = False,
         check: bool = True,
-        timeout: float | None = None,
         **kwargs: Any,
     ) -> subprocess.CompletedProcess:
         """Write scripts to disk and execute the engine.
@@ -232,7 +251,6 @@ class Engine(ABC):
                 ``self.work_dir`` for the duration of the call only.
             capture_output: Capture stdout/stderr.
             check: Raise on non-zero exit code.
-            timeout: Timeout in seconds.
             **kwargs: Forwarded to :meth:`_execute`.
 
         Returns:
@@ -284,7 +302,6 @@ class Engine(ABC):
             run_dir,
             capture_output=capture_output,
             check=check,
-            timeout=timeout,
             **kwargs,
         )
 
@@ -301,7 +318,8 @@ class Engine(ABC):
 
         where *env_wrapper* comes from :meth:`EnvironmentSpec.command_prefix`
         (conda uses ``conda run --no-capture-output``; venv has an empty
-        prefix and injects ``PATH`` via :meth:`_merged_environment`).
+        prefix and injects ``PATH`` via :meth:`_merged_environment`) and
+        *launcher* is the configured ``launcher``.
 
         Args:
             engine_args: Engine-specific flags that follow the executable,
@@ -310,10 +328,36 @@ class Engine(ABC):
         Returns:
             Full command list suitable for :func:`subprocess.run`.
         """
-        cmd = self.process_environment().command_prefix(no_capture_output=True)
-        cmd += self.launcher or []
+        cmd = self.environment.command_prefix(no_capture_output=True)
+        cmd += self.launcher
         cmd += [self.executable] + engine_args
         return cmd
+
+    def _run_process(
+        self,
+        command: list[str],
+        run_dir: Path,
+        *,
+        capture_output: bool,
+        check: bool,
+        **fields: Any,
+    ) -> subprocess.CompletedProcess:
+        """Start *command* in *run_dir* with the engine's environment and timeout.
+
+        The run is logged to :attr:`logger` (``process started`` /
+        ``finished`` / ``failed`` / ``timed out``), each record carrying the
+        command, the directory and *fields* (e.g. ``step="mdrun"``).
+        """
+        return run_process(
+            self.logger,
+            command,
+            cwd=run_dir,
+            env=self._merged_environment(),
+            capture_output=capture_output,
+            check=check,
+            timeout=self.timeout,
+            **fields,
+        )
 
     def _find_input_script(self) -> Script | None:
         """Return the primary input script from :attr:`scripts`.
@@ -347,7 +391,7 @@ class Engine(ABC):
         Returns:
             Merged environment dict, or ``None`` if nothing to override.
         """
-        spec = self.process_environment()
+        spec = self.environment
         if spec.is_system and not self.env_vars and not extra:
             return None
         overlay = dict(self.env_vars)
@@ -361,8 +405,6 @@ class Engine(ABC):
             parts.append(f"workdir='{self.work_dir}'")
         if self.launcher:
             parts.append(f"launcher={self.launcher!r}")
-        if self.env is not None:
-            parts.append(f"env='{self.env}'")
-        if self.env_manager is not None:
-            parts.append(f"env_manager='{self.env_manager}'")
+        if not self.environment.is_system:
+            parts.append(f"environment={self.environment!r}")
         return f"<{self.__class__.__name__}({', '.join(parts)})>"

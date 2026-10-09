@@ -416,7 +416,7 @@ lmp_script = Script.from_text(
 # Save the script next to the data files without launching LAMMPS.
 # check_executable=False lets the call succeed in notebooks where lmp
 # may not be on PATH.
-engine = LammpsEngine("lmp", check_executable=False)
+engine = LammpsEngine(check_executable=False)
 script_path = lmp_script.save("05_output/input.lmp")
 print("Input script written to:", script_path)
 print(lmp_script.preview(max_lines=12))

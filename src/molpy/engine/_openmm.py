@@ -19,6 +19,10 @@ Two usage modes are supported:
 
        result = engine.run(paths["script"], workdir="./output")
 
+The Python interpreter that runs the script, its environment, launcher and
+time limit are the ``[engine.openmm]`` settings of molpy's configuration
+(:mod:`molpy.config`); runs are logged to ``molpy.engine.openmm``.
+
 Reference:
     Eastman, P. et al. (2017). OpenMM 7: Rapid development of high
     performance algorithms for molecular dynamics. *PLOS Comput. Biol.*
@@ -179,6 +183,10 @@ class OpenmmEngine(Engine):
 
         result = engine.run(paths["script"], workdir="./output")
 
+    which runs ``engine.openmm.executable`` (the Python interpreter, ``python``
+    by default) in the configured environment.  Settings:
+    ``[engine.openmm]``; logger: ``molpy.engine.openmm``.
+
     Example:
         >>> from molpy.engine import OpenmmEngine, OpenmmSimulationConfig
         >>>
@@ -188,41 +196,7 @@ class OpenmmEngine(Engine):
         >>> # paths["pdb"], paths["forcefield"], paths["script"]
     """
 
-    def __init__(
-        self,
-        executable: str = "python",
-        *,
-        workdir: str | Path | None = None,
-        launcher: list[str] | None = None,
-        env_vars: dict[str, str] | None = None,
-        env: str | Path | None = None,
-        env_manager: str | None = None,
-        check_executable: bool = True,
-    ) -> None:
-        """Initialise the OpenMM engine.
-
-        Args:
-            executable: Python interpreter used when :meth:`run` executes the
-                generated simulation script.  Defaults to ``"python"``.
-            workdir: Default working directory for :meth:`run`.
-            launcher: MPI / scheduler prefix, e.g. ``["mpirun", "-np", "4"]``.
-                Prepended before *executable* when running the script.
-            env_vars: Extra environment variables forwarded to the subprocess.
-            env: Conda env name / prefix, or venv prefix (with ``env_manager``).
-            env_manager: ``"conda"`` or ``"venv"`` — same contract as
-                :class:`~molpy.wrapper.EnvironmentSpec`.
-            check_executable: Verify *executable* is available at construction.
-                Set ``False`` when only using :meth:`generate_inputs`.
-        """
-        super().__init__(
-            executable=executable,
-            workdir=workdir,
-            launcher=launcher,
-            env_vars=env_vars,
-            env=env,
-            env_manager=env_manager,
-            check_executable=check_executable,
-        )
+    tool = "openmm"
 
     # ------------------------------------------------------------------
     # Abstract method implementations
@@ -250,7 +224,6 @@ class OpenmmEngine(Engine):
         run_dir: Path,
         capture_output: bool = False,
         check: bool = True,
-        timeout: float | None = None,
         **kwargs: Any,
     ) -> subprocess.CompletedProcess:
         """Run the generated Python simulation script.
@@ -266,7 +239,6 @@ class OpenmmEngine(Engine):
                 ``cwd`` for the subprocess.
             capture_output: Capture stdout/stderr.
             check: Raise :exc:`subprocess.CalledProcessError` on failure.
-            timeout: Timeout in seconds.
             **kwargs: Ignored (reserved for future use).
 
         Returns:
@@ -276,7 +248,8 @@ class OpenmmEngine(Engine):
             RuntimeError: If no input script has been registered.
             subprocess.CalledProcessError: If *check* is ``True`` and the
                 script exits with a non-zero code.
-            subprocess.TimeoutExpired: If *timeout* is exceeded.
+            subprocess.TimeoutExpired: If the configured ``timeout`` is
+                exceeded.
         """
         if self.input_script is None or self.input_script.path is None:
             raise RuntimeError(
@@ -284,15 +257,8 @@ class OpenmmEngine(Engine):
                 "script to run() first."
             )
         command = self._build_full_command([self.input_script.path.name])
-        return subprocess.run(
-            command,
-            cwd=run_dir,
-            capture_output=capture_output,
-            text=True,
-            check=check,
-            timeout=timeout,
-            env=self._merged_environment(),
-            encoding="utf-8",
+        return self._run_process(
+            command, run_dir, capture_output=capture_output, check=check
         )
 
     # ------------------------------------------------------------------
@@ -345,7 +311,15 @@ class OpenmmEngine(Engine):
         )
         script_path.write_text(script_text, encoding="utf-8")
 
-        return {"pdb": pdb_path, "forcefield": ff_path, "script": script_path}
+        paths = {"pdb": pdb_path, "forcefield": ff_path, "script": script_path}
+        self.logger.info(
+            "inputs written",
+            output_dir=str(out),
+            files={key: path.name for key, path in paths.items()},
+            ensemble=config.ensemble,
+            n_steps=config.n_steps,
+        )
+        return paths
 
     def serialize_system(
         self,

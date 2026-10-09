@@ -9,11 +9,12 @@ Standard CP2K output (log) is redirected to *cp2k.out* via the ``-o`` flag;
 stdout is therefore empty, which avoids pipe-buffer deadlocks when the caller
 captures output.
 
-MPI and scheduler launchers are configured on the :class:`~molpy.engine.Engine`
-base class::
+The executable, MPI / scheduler launcher, environment and time limit are the
+``[engine.cp2k]`` settings of molpy's configuration (:mod:`molpy.config`)::
 
-    engine = Cp2kEngine("cp2k.psmp", launcher=["mpirun", "-np", "32"])
-    engine = Cp2kEngine("cp2k.psmp", launcher=["srun", "--ntasks=32"])
+    [engine.cp2k]
+    executable = "cp2k.popt"
+    launcher = ["srun", "--ntasks=32"]
 
 Reference:
     Kühne, T. D. et al. (2020). CP2K: An electronic structure and molecular
@@ -31,8 +32,9 @@ from ._engine import Engine
 class Cp2kEngine(Engine):
     """CP2K quantum chemistry / molecular dynamics engine.
 
-    Runs CP2K input scripts.  The typical executable name is ``cp2k.psmp``
-    (MPI + OpenMP build) or ``cp2k.popt`` (MPI only).
+    Runs CP2K input scripts.  The executable is ``engine.cp2k.executable``:
+    ``cp2k.psmp`` (MPI + OpenMP build) by default, or e.g. ``cp2k.popt``
+    (MPI only).  Settings: ``[engine.cp2k]``; logger: ``molpy.engine.cp2k``.
 
     A minimal CP2K input must contain at least ``&GLOBAL``, ``&FORCE_EVAL``,
     and ``&MOTION`` (or ``&ENERGY``) sections.
@@ -51,16 +53,13 @@ class Cp2kEngine(Engine):
         ...     "&END FORCE_EVAL\\n"
         ... )
         >>> script = Script.from_text(name="input", text=inp, language="other")
-        >>> engine = Cp2kEngine(executable="cp2k.psmp", check_executable=False)
+        >>> engine = Cp2kEngine(check_executable=False)
         >>> result = engine.run(script, workdir="./calc", check=False)
         >>> print(result.returncode)
         0
-
-        MPI execution::
-
-            engine = Cp2kEngine("cp2k.psmp", launcher=["mpirun", "-np", "32"])
-            result = engine.run(script, workdir="./calc")
     """
+
+    tool = "cp2k"
 
     @property
     def name(self) -> str:
@@ -84,7 +83,6 @@ class Cp2kEngine(Engine):
         run_dir: Path,
         capture_output: bool = False,
         check: bool = True,
-        timeout: float | None = None,
         **kwargs: Any,
     ) -> subprocess.CompletedProcess:
         """Run CP2K in *run_dir*.
@@ -100,7 +98,6 @@ class Cp2kEngine(Engine):
             run_dir: Directory containing the input files; used as ``cwd``.
             capture_output: Capture stdout/stderr.
             check: Raise :exc:`subprocess.CalledProcessError` on failure.
-            timeout: Timeout in seconds.
             **kwargs: Ignored (reserved for future use).
 
         Returns:
@@ -110,7 +107,8 @@ class Cp2kEngine(Engine):
             RuntimeError: If no input script has been registered.
             subprocess.CalledProcessError: If *check* is ``True`` and CP2K
                 exits with a non-zero code.
-            subprocess.TimeoutExpired: If *timeout* is exceeded.
+            subprocess.TimeoutExpired: If the configured ``timeout`` is
+                exceeded.
         """
         if self.input_script is None or self.input_script.path is None:
             raise RuntimeError("No input script found.  Pass a script to run() first.")
@@ -118,13 +116,6 @@ class Cp2kEngine(Engine):
         input_file = self.input_script.path.name
         command = self._build_full_command(["-i", input_file, "-o", "cp2k.out"])
 
-        return subprocess.run(
-            command,
-            cwd=run_dir,
-            capture_output=capture_output,
-            text=True,
-            check=check,
-            timeout=timeout,
-            env=self._merged_environment(),
-            encoding="utf-8",
+        return self._run_process(
+            command, run_dir, capture_output=capture_output, check=check
         )

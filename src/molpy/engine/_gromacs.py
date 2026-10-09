@@ -11,6 +11,10 @@ input script and runs::
     [launcher...] gmx mdrun -deffnm <stem>
 
 Only ``mdrun`` runs under the launcher; ``grompp`` is a serial preprocessor.
+The executable, launcher, environment and time limit (per step) are the
+``[engine.gromacs]`` settings of molpy's configuration (:mod:`molpy.config`);
+each step is logged to ``molpy.engine.gromacs`` with ``step="grompp"`` or
+``step="mdrun"``.
 
 Reference:
     Abraham, M. J. et al. (2015). GROMACS: High performance molecular
@@ -30,6 +34,7 @@ from molrs.io import write_gro, write_gromacs_top_system
 from ._engine import Engine
 
 if TYPE_CHECKING:
+    from molcfg import Config
     from molrs.ff.forcefield import ForceField
     from molrs.core import Frame
 
@@ -37,35 +42,41 @@ if TYPE_CHECKING:
 class GromacsEngine(Engine):
     """GROMACS molecular dynamics engine.
 
-    The executable is the ``gmx`` driver (``gmx``, ``gmx_mpi``, …). An input
-    script is an ``.mdp`` file; :meth:`generate_inputs` writes the structure
-    and topology it is run against.
+    The executable is the ``gmx`` driver, ``engine.gromacs.executable``
+    (``gmx`` by default; ``gmx_mpi``, …). An input script is an ``.mdp``
+    file; :meth:`generate_inputs` writes the structure and topology it is run
+    against.
 
     Example::
 
-        engine = GromacsEngine("gmx", check_executable=False)
+        engine = GromacsEngine(check_executable=False)
         paths = engine.generate_inputs(frame, ff, "./md")
         engine.run(Script.from_path(paths["em"]), workdir="./md")
     """
 
+    tool = "gromacs"
+
     def __init__(
         self,
-        executable: str = "gmx",
         *,
         prefix: str = "system",
+        config: Config | None = None,
+        workdir: str | Path | None = None,
         check_executable: bool = True,
-        **kwargs: Any,
     ) -> None:
         """Initialise the GROMACS engine.
 
         Args:
-            executable: The ``gmx`` driver binary.
             prefix: Stem of the ``.gro`` / ``.top`` pair :meth:`run` passes to
                 ``grompp`` (what :meth:`generate_inputs` writes by default).
-            check_executable: Verify the executable is on ``PATH``.
-            **kwargs: Forwarded to :class:`~molpy.engine.Engine`.
+            config: molpy's configuration; ``None`` loads it (see
+                :class:`~molpy.engine.Engine`).
+            workdir: Default working directory.
+            check_executable: Verify the executable is available.
         """
-        super().__init__(executable, check_executable=check_executable, **kwargs)
+        super().__init__(
+            config=config, workdir=workdir, check_executable=check_executable
+        )
         self.prefix = prefix
 
     @property
@@ -82,7 +93,6 @@ class GromacsEngine(Engine):
         run_dir: Path,
         capture_output: bool = False,
         check: bool = True,
-        timeout: float | None = None,
         **kwargs: Any,
     ) -> subprocess.CompletedProcess:
         """Run ``grompp`` then ``mdrun`` for the input ``.mdp`` in *run_dir*.
@@ -91,14 +101,14 @@ class GromacsEngine(Engine):
             RuntimeError: If no input script has been registered.
             subprocess.CalledProcessError: If *check* is ``True`` and a step
                 exits non-zero.
-            subprocess.TimeoutExpired: If *timeout* is exceeded.
+            subprocess.TimeoutExpired: If the configured ``timeout`` is
+                exceeded by a step.
         """
         if self.input_script is None or self.input_script.path is None:
             raise RuntimeError("No input script found.  Pass an .mdp to run() first.")
         mdp = self.input_script.path.name
         stem = Path(mdp).stem
-        env = self._merged_environment()
-        grompp = self.process_environment().command_prefix(no_capture_output=True) + [
+        grompp = self.environment.command_prefix(no_capture_output=True) + [
             self.executable,
             "grompp",
             "-f",
@@ -110,27 +120,17 @@ class GromacsEngine(Engine):
             "-o",
             f"{stem}.tpr",
         ]
-        done = subprocess.run(
-            grompp,
-            cwd=run_dir,
-            capture_output=capture_output,
-            text=True,
-            check=check,
-            timeout=timeout,
-            env=env,
-            encoding="utf-8",
+        done = self._run_process(
+            grompp, run_dir, capture_output=capture_output, check=check, step="grompp"
         )
         if done.returncode != 0:
             return done
-        return subprocess.run(
+        return self._run_process(
             self._build_full_command(["mdrun", "-deffnm", stem]),
-            cwd=run_dir,
+            run_dir,
             capture_output=capture_output,
-            text=True,
             check=check,
-            timeout=timeout,
-            env=env,
-            encoding="utf-8",
+            step="mdrun",
         )
 
     def generate_inputs(
@@ -177,6 +177,12 @@ class GromacsEngine(Engine):
         paths["em"].write_text(_EM_MDP, encoding="utf-8")
         paths["nvt"].write_text(
             _NVT_MDP.format(temperature=temperature), encoding="utf-8"
+        )
+        self.logger.info(
+            "inputs written",
+            output_dir=str(out),
+            files={key: path.name for key, path in paths.items()},
+            temperature=temperature,
         )
         return paths
 

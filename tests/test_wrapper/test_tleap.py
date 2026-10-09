@@ -13,8 +13,7 @@ from molpy.wrapper import TleapWrapper
 def test_tleap_wrapper_initialization():
     """Test TleapWrapper initialization."""
 
-    wrapper = TleapWrapper(name="tleap", workdir=Path("tmp_tleap"))
-    assert wrapper.name == "tleap"
+    wrapper = TleapWrapper(Path("tmp_tleap"))
     assert wrapper.exe == "tleap"
     assert wrapper.workdir == Path("tmp_tleap")
 
@@ -22,7 +21,7 @@ def test_tleap_wrapper_initialization():
 def test_tleap_wrapper_default_exe():
     """Test that exe defaults to 'tleap'."""
 
-    wrapper = TleapWrapper(name="tleap")
+    wrapper = TleapWrapper()
     assert wrapper.exe == "tleap"
 
 
@@ -30,7 +29,7 @@ def test_tleap_wrapper_run_from_script(tmp_path: Path):
     """Test run_from_script() method."""
 
     workdir = tmp_path / "test_workdir"
-    wrapper = TleapWrapper(name="tleap", workdir=workdir)
+    wrapper = TleapWrapper(workdir)
 
     script_text = "source leaprc.gaff\nquit\n"
 
@@ -55,7 +54,7 @@ def test_tleap_wrapper_run_from_script_default_name(tmp_path: Path):
     """Test run_from_script() with default script name."""
 
     workdir = tmp_path / "test_workdir"
-    wrapper = TleapWrapper(name="tleap", workdir=workdir)
+    wrapper = TleapWrapper(workdir)
 
     script_text = "quit\n"
 
@@ -73,7 +72,7 @@ def test_tleap_wrapper_run_from_script_default_name(tmp_path: Path):
 def test_tleap_wrapper_run_from_script_no_workdir():
     """Test run_from_script() raises error when no workdir is available."""
 
-    wrapper = TleapWrapper(name="tleap", workdir=None)
+    wrapper = TleapWrapper()
 
     with pytest.raises(ValueError, match="requires a working directory"):
         wrapper.run_from_script(script_text="quit\n")
