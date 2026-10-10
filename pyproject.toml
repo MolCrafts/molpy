@@ -149,16 +149,12 @@ filterwarnings = [
     "ignore::pytest.PytestUnraisableExceptionWarning",
 ]
 
-# On dev, molpy is built and tested against its partners' tips, not their
-# releases: uv builds molcrafts-molrs from the sibling checkout ../molrs, and
-# molcrafts-mollog / molcrafts-molcfg from ../mollog / ../molcfg, which CI and
-# the hooks check out at the commit scripts/partners.py resolves (molrs's dev,
-# mollog's and molcfg's master, or each one's branch named like this one; see
-# .github/partners.env). The wheel still declares the ranges in [project]
-# dependencies, and pip ignores this table; a release is tested with
-# `uv run --no-sources` against those ranges on PyPI
-# (docs/developer/release-process.md). uv rebuilds the molrs wheel when the
-# checkout's commit moves (molrs-python's [tool.uv] cache-keys).
+# Source tests use the exact partner commits in .github/partners.env, resolved
+# into a cached sibling layout. uv builds molrs from ../molrs/molrs-python and
+# mollog/molcfg from ../mollog and ../molcfg. Published wheels declare only the
+# [project] dependency ranges; the published gate tests those with --no-sources
+# against PyPI. Updating a partner pin requires regenerating this lock inside
+# the resolved layout and rerunning verify (docs/developer/release-process.md).
 [tool.uv.sources]
 molcrafts-molrs = { path = "../molrs/molrs-python" }
 molcrafts-mollog = { path = "../mollog" }

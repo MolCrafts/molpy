@@ -429,7 +429,7 @@ requires-dist = [
     { name = "numpy", specifier = ">=2.0" },
     { name = "numpy", marker = "extra == 'dev'", specifier = ">=2.0" },
     { name = "pytest", marker = "extra == 'dev'" },
-    { name = "tox", marker = "extra == 'dev'", specifier = ">=4.23" },
+    { name = "pytest-cov", marker = "extra == 'dev'" },
     { name = "zensical", marker = "extra == 'doc'", specifier = ">=0.0.51" },
 ]
 provides-extras = ["dev", "doc"]
