@@ -30,7 +30,7 @@ jobs:
       publish: ${{ steps.context.outputs.publish }}
     steps:
       - id: context
-        uses: MolCrafts/molcrafts-ci/actions/ci-context@9da33fd962308312150ae98e3f4fa3e21368be52
+        uses: MolCrafts/molcrafts-ci/actions/ci-context@40f61db7c6783f246215158bff435ff1d384b2ae
 
   hooks:
     name: lint / hooks
@@ -40,5 +40,5 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: MolCrafts/molcrafts-ci/actions/setup-python@9da33fd962308312150ae98e3f4fa3e21368be52
+      - uses: MolCrafts/molcrafts-ci/actions/setup-python@40f61db7c6783f246215158bff435ff1d384b2ae
       - run: uvx pre-commit run --all-files --show-diff-on-failure

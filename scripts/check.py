@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -46,6 +47,30 @@ GATES = {
             "-n",
             "auto",
         ]
+    ],
+    # Release compatibility: resolve the declared published ranges, independently
+    # of the source lock. Run last; the next source gate restores its lock/env.
+    "published": [
+        [
+            "uv",
+            "run",
+            "--no-sources",
+            "--python",
+            PYTHON_VERSION,
+            "--extra",
+            "dev",
+            "python",
+            "-m",
+            "pytest",
+            "tests/",
+            "-n",
+            "auto",
+        ],
+        ["uv", "pip", "check"],
+    ],
+    "package": [
+        ["uv", "build", "--no-sources"],
+        ["uvx", "twine@6.2.0", "check"],
     ],
     "docs": [
         [
@@ -95,6 +120,8 @@ def main() -> int:
                 "dependencies",
                 "test",
                 "docs",
+                "published",
+                "package",
             ],
             cwd=ROOT,
             check=False,
@@ -108,9 +135,27 @@ def main() -> int:
         PYTHONWARNDEFAULTENCODING="1",
         PYTHONUTF8="1",
     )
+    # The resolver is bootstrapped by uv in its own tool venv. Project gates
+    # must select this project's environment, including installed-dependency checks.
+    env.pop("VIRTUAL_ENV", None)
     for gate in gates:
         print(f"== {gate}", flush=True)
+        if gate == "package":
+            shutil.rmtree(ROOT / "dist", ignore_errors=True)
         for command in GATES[gate]:
+            if command[:2] == ["uvx", "twine@6.2.0"]:
+                command = [
+                    *command,
+                    *map(
+                        str,
+                        sorted(
+                            [
+                                *(ROOT / "dist").glob("*.whl"),
+                                *(ROOT / "dist").glob("*.tar.gz"),
+                            ]
+                        ),
+                    ),
+                ]
             result = subprocess.run(command, cwd=ROOT, env=env, check=False)
             if result.returncode:
                 return result.returncode

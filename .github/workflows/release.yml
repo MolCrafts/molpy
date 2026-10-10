@@ -43,7 +43,7 @@ jobs:
       publish: ${{ steps.context.outputs.publish }}
     steps:
       - id: context
-        uses: MolCrafts/molcrafts-ci/actions/ci-context@9da33fd962308312150ae98e3f4fa3e21368be52
+        uses: MolCrafts/molcrafts-ci/actions/ci-context@40f61db7c6783f246215158bff435ff1d384b2ae
 
   guard:
     name: release / guard
@@ -74,11 +74,13 @@ jobs:
       PYTHONWARNDEFAULTENCODING: "1"
     steps:
       - uses: actions/checkout@v7
-      - uses: MolCrafts/molcrafts-ci/actions/setup-python@9da33fd962308312150ae98e3f4fa3e21368be52
+      - uses: MolCrafts/molcrafts-ci/actions/setup-python@40f61db7c6783f246215158bff435ff1d384b2ae
         with:
           python-version: ${{ matrix.python }}
       - run: python scripts/check_partners_on_pypi.py
-      - run: uv run --no-sources --python ${{ matrix.python }} --extra dev python -m pytest tests/ -n auto
+      - env:
+          UV_PYTHON: ${{ matrix.python }}
+        run: python scripts/check.py published
 
   build:
     name: release / build
@@ -86,10 +88,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: MolCrafts/molcrafts-ci/actions/setup-python@9da33fd962308312150ae98e3f4fa3e21368be52
+      - uses: MolCrafts/molcrafts-ci/actions/setup-python@40f61db7c6783f246215158bff435ff1d384b2ae
         with:
           python-version: "3.14"
-      - run: uv build && uvx twine check dist/*
+      - run: python scripts/check.py package
       - uses: actions/upload-artifact@v7
         with:
           name: dist

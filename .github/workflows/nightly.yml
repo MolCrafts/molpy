@@ -48,7 +48,7 @@ jobs:
       publish: ${{ steps.context.outputs.publish }}
     steps:
       - id: context
-        uses: MolCrafts/molcrafts-ci/actions/ci-context@9da33fd962308312150ae98e3f4fa3e21368be52
+        uses: MolCrafts/molcrafts-ci/actions/ci-context@40f61db7c6783f246215158bff435ff1d384b2ae
 
   measure:
     name: nightly / measure
@@ -62,9 +62,9 @@ jobs:
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
-      - uses: MolCrafts/molcrafts-ci/actions/setup-python@9da33fd962308312150ae98e3f4fa3e21368be52
-      - uses: MolCrafts/molcrafts-ci/actions/setup-partners@9da33fd962308312150ae98e3f4fa3e21368be52
-      - uses: MolCrafts/molcrafts-ci/actions/setup-rust@9da33fd962308312150ae98e3f4fa3e21368be52
+      - uses: MolCrafts/molcrafts-ci/actions/setup-python@40f61db7c6783f246215158bff435ff1d384b2ae
+      - uses: MolCrafts/molcrafts-ci/actions/setup-partners@40f61db7c6783f246215158bff435ff1d384b2ae
+      - uses: MolCrafts/molcrafts-ci/actions/setup-rust@40f61db7c6783f246215158bff435ff1d384b2ae
         with:
           toolchain-dir: ../molrs
           cache: molrs-python
@@ -99,7 +99,7 @@ jobs:
           name: ci-snapshots
           path: snapshots
       - if: ${{ hashFiles('snapshots/*.json') != '' }}
-        uses: MolCrafts/molcrafts-ci/actions/submit@9da33fd962308312150ae98e3f4fa3e21368be52
+        uses: MolCrafts/molcrafts-ci/actions/submit@40f61db7c6783f246215158bff435ff1d384b2ae
         with:
           snapshot-path: snapshots/*.json
           project: molpy
@@ -113,7 +113,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: MolCrafts/molcrafts-ci/actions/setup-python@9da33fd962308312150ae98e3f4fa3e21368be52
+      - uses: MolCrafts/molcrafts-ci/actions/setup-python@40f61db7c6783f246215158bff435ff1d384b2ae
         with:
           python-version: "3.14"
       # Stamp the dynamic version source (pyproject reads molpy.version), rename
@@ -138,7 +138,7 @@ jobs:
           t = re.sub(r'\n\[tool\.uv\.sources\]\n(?:[^\[].*\n|\n)*', '\n', t, count=1)
           p.write_text(t, encoding="utf-8")
           PY
-      - run: uv build && uvx twine check dist/*
+      - run: python scripts/check.py package
       - uses: actions/upload-artifact@v7
         with:
           name: nightly-dist

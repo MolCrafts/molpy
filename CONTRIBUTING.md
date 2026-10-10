@@ -35,7 +35,9 @@ or `git push --no-verify`, and never merge a red pull request.**
   layout. Every dependency comes from the full SHA in `.github/partners.env`;
   the resolver is shared with CI at `CI_REF`. `uv lock --check`, locked sync and
   `uv pip check` catch stale metadata and incompatible installed dependencies.
-  No changed-file filters skip a gate. Native CI also tests Windows and macOS.
+  It also tests the declared PyPI ranges independently of path sources and
+  builds/checks release distributions. No changed-file filters skip a gate.
+  Native CI also tests Windows and macOS.
 - **Dispatch on the MolCrafts cluster:** the docs build and the unit suite
   compile molrs. Their entries go through `scripts/hook-run.sh`, which hands
   the command to `$MOLCRAFTS_HOOK_RUNNER` when that is set and it is not
