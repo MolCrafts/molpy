@@ -1,15 +1,14 @@
 name: test
 
 # The unit suite against the partners built from the commits scripts/partners.py
-# resolves (molrs's dev, mollog's and molcfg's master, or each one's branch
-# named like this one), in two tiers
+# pins in .github/partners.env, in two tiers
 # (`test / context` decides):
 #
 #   fast  a feature-branch push to MolCrafts: Linux, Python 3.12.
 #   full  every push to a fork (proven before its pull request), dev, master
 #         and main on MolCrafts, pull requests, tags and dispatches: Linux,
-#         macOS and Windows x Python 3.12 and 3.14 (the supported range's
-#         ends; release.yml tests 3.13 too).
+#         macOS and Windows on 3.12; Linux additionally checks 3.14.
+# OS and interpreter coverage use four legs instead of six.
 on:
   push:
     branches: ["**"]
@@ -20,9 +19,7 @@ on:
 permissions:
   contents: read
 
-# One group per file, workflow, event and ref. Under workflow_call (release.yml
-# running lint/test) github.workflow and github.event_name are the caller's, so
-# a called run never shares, and so never cancels, a direct run's group.
+# Independent workflow/event/ref groups; feature pushes supersede older runs.
 concurrency:
   group: test-${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: ${{ !contains(fromJSON('["refs/heads/dev","refs/heads/master","refs/heads/main"]'), github.ref) && !startsWith(github.ref, 'refs/tags/') }}
@@ -49,10 +46,10 @@ jobs:
       upstream: ${{ steps.context.outputs.upstream }}
       integration: ${{ steps.context.outputs.integration }}
       skip-pr: ${{ steps.context.outputs.skip-pr }}
-      cancel: ${{ steps.context.outputs.cancel }}
+      publish: ${{ steps.context.outputs.publish }}
     steps:
       - id: context
-        uses: MolCrafts/molcrafts-ci/actions/ci-context@master
+        uses: MolCrafts/molcrafts-ci/actions/ci-context@9da33fd962308312150ae98e3f4fa3e21368be52
 
   python:
     name: test / python (${{ matrix.os }}, ${{ matrix.python }})
@@ -62,18 +59,24 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: ${{ fromJSON(needs.context.outputs.tier == 'full' && '["ubuntu-latest","macos-latest","windows-latest"]' || '["ubuntu-latest"]') }}
-        python: ${{ fromJSON(needs.context.outputs.tier == 'full' && '["3.12","3.14"]' || '["3.12"]') }}
+        include: ${{ fromJSON(needs.context.outputs.tier == 'full' && '[{"os":"ubuntu-latest","python":"3.12"},{"os":"ubuntu-latest","python":"3.14"},{"os":"macos-latest","python":"3.12"},{"os":"windows-latest","python":"3.12"}]' || '[{"os":"ubuntu-latest","python":"3.12"}]') }}
     steps:
       - uses: actions/checkout@v7
-      - uses: MolCrafts/molcrafts-ci/actions/setup-python@master
+      - uses: MolCrafts/molcrafts-ci/actions/setup-python@9da33fd962308312150ae98e3f4fa3e21368be52
         with:
           python-version: ${{ matrix.python }}
-      - uses: MolCrafts/molcrafts-ci/actions/setup-partners@master
+      - uses: MolCrafts/molcrafts-ci/actions/setup-partners@9da33fd962308312150ae98e3f4fa3e21368be52
       # molrs/rust-toolchain.toml pins the compiler that builds the molrs wheel.
-      - uses: MolCrafts/molcrafts-ci/actions/setup-rust@master
+      - uses: MolCrafts/molcrafts-ci/actions/setup-rust@9da33fd962308312150ae98e3f4fa3e21368be52
         with:
           toolchain-dir: ../molrs
           cache: molrs-python
           workspaces: ../molrs/molrs-python -> ../target
-      - run: uv run --locked --python ${{ matrix.python }} --extra dev python -m pytest tests/ -n auto
+      - name: Direct dependencies
+        env:
+          UV_PYTHON: ${{ matrix.python }}
+        run: python scripts/check.py dependencies
+      - name: Unit tests
+        env:
+          UV_PYTHON: ${{ matrix.python }}
+        run: python scripts/check.py test

@@ -42,7 +42,6 @@ dev = [
     "pytest-xdist>=3.0",
     "ruff==0.16.1",
     "ty==0.0.65",
-    "tox>=4.23",
 ]
 rdkit = ["rdkit"]  # optional: exercises the RdkitAdapter example only
 doc = [
@@ -164,17 +163,3 @@ filterwarnings = [
 molcrafts-molrs = { path = "../molrs/molrs-python" }
 molcrafts-mollog = { path = "../mollog" }
 molcrafts-molcfg = { path = "../molcfg" }
-
-[tool.tox]
-requires = ["tox>=4.23"]
-env_list = ["lint"]
-
-[tool.tox.env.lint]
-skip_install = true
-base_python = ["python3.14"]
-deps = ["ruff==0.16.1", "ty==0.0.65"]
-commands = [
-    ["ruff", "format", "--check", "src/", "tests/"],
-    ["ruff", "check", "src/", "tests/", "scripts/"],
-    ["ty", "check", "src/molpy/"],
-]

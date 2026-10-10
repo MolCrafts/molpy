@@ -21,9 +21,7 @@ on:
 permissions:
   contents: read
 
-# One group per file, workflow, event and ref. Under workflow_call (release.yml
-# running lint/test) github.workflow and github.event_name are the caller's, so
-# a called run never shares, and so never cancels, a direct run's group.
+# Independent workflow/event/ref groups; feature pushes supersede older runs.
 concurrency:
   group: release-${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: false
@@ -42,10 +40,10 @@ jobs:
       upstream: ${{ steps.context.outputs.upstream }}
       integration: ${{ steps.context.outputs.integration }}
       skip-pr: ${{ steps.context.outputs.skip-pr }}
-      cancel: ${{ steps.context.outputs.cancel }}
+      publish: ${{ steps.context.outputs.publish }}
     steps:
       - id: context
-        uses: MolCrafts/molcrafts-ci/actions/ci-context@master
+        uses: MolCrafts/molcrafts-ci/actions/ci-context@9da33fd962308312150ae98e3f4fa3e21368be52
 
   guard:
     name: release / guard
@@ -76,7 +74,7 @@ jobs:
       PYTHONWARNDEFAULTENCODING: "1"
     steps:
       - uses: actions/checkout@v7
-      - uses: MolCrafts/molcrafts-ci/actions/setup-python@master
+      - uses: MolCrafts/molcrafts-ci/actions/setup-python@9da33fd962308312150ae98e3f4fa3e21368be52
         with:
           python-version: ${{ matrix.python }}
       - run: python scripts/check_partners_on_pypi.py
@@ -88,7 +86,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: MolCrafts/molcrafts-ci/actions/setup-python@master
+      - uses: MolCrafts/molcrafts-ci/actions/setup-python@9da33fd962308312150ae98e3f4fa3e21368be52
         with:
           python-version: "3.14"
       - run: uv build && uvx twine check dist/*
@@ -100,9 +98,9 @@ jobs:
   pypi:
     name: release / pypi
     needs: [context, test, build]
-    if: github.event_name == 'push' && needs.context.outputs.upstream == 'true'
+    if: needs.context.outputs.publish == 'true'
     runs-on: ubuntu-latest
-    environment: ${{ github.event_name == 'push' && 'pypi' || '' }}
+    environment: pypi
     permissions:
       id-token: write
     steps:
@@ -119,7 +117,7 @@ jobs:
   github:
     name: release / github
     needs: [context, pypi]
-    if: github.event_name == 'push' && needs.context.outputs.upstream == 'true'
+    if: needs.context.outputs.publish == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: write
