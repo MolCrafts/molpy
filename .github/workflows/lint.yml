@@ -1,8 +1,7 @@
 name: lint
 
-# The commit-stage hooks on every file (hygiene, `tox -e lint`: ruff + ty),
-# the partners check, and uv.lock against the resolved partners (metadata only,
-# nothing compiles). Same in every context; see "CI" in CONTRIBUTING.md.
+# The commit-stage hooks on every file (hygiene, pinned ruff + ty),
+# static checks. Dependency resolution belongs to test / dependencies.
 on:
   push:
     branches: ["**"]
@@ -13,9 +12,7 @@ on:
 permissions:
   contents: read
 
-# One group per file, workflow, event and ref. Under workflow_call (release.yml
-# running lint/test) github.workflow and github.event_name are the caller's, so
-# a called run never shares, and so never cancels, a direct run's group.
+# Independent workflow/event/ref groups; feature pushes supersede older runs.
 concurrency:
   group: lint-${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: ${{ !contains(fromJSON('["refs/heads/dev","refs/heads/master","refs/heads/main"]'), github.ref) && !startsWith(github.ref, 'refs/tags/') }}
@@ -30,10 +27,10 @@ jobs:
       upstream: ${{ steps.context.outputs.upstream }}
       integration: ${{ steps.context.outputs.integration }}
       skip-pr: ${{ steps.context.outputs.skip-pr }}
-      cancel: ${{ steps.context.outputs.cancel }}
+      publish: ${{ steps.context.outputs.publish }}
     steps:
       - id: context
-        uses: MolCrafts/molcrafts-ci/actions/ci-context@master
+        uses: MolCrafts/molcrafts-ci/actions/ci-context@40f61db7c6783f246215158bff435ff1d384b2ae
 
   hooks:
     name: lint / hooks
@@ -43,11 +40,5 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      # tox's lint env runs on 3.14 (pyproject.toml [tool.tox.env.lint]).
-      - uses: MolCrafts/molcrafts-ci/actions/setup-python@master
-        with:
-          python-version: "3.14"
-      - uses: MolCrafts/molcrafts-ci/actions/setup-partners@master
+      - uses: MolCrafts/molcrafts-ci/actions/setup-python@40f61db7c6783f246215158bff435ff1d384b2ae
       - run: uvx pre-commit run --all-files --show-diff-on-failure
-      - run: python3 scripts/partners.py check
-      - run: uv lock --check

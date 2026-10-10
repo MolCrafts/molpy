@@ -21,9 +21,7 @@ on:
 permissions:
   contents: read
 
-# One group per file, workflow, event and ref. Under workflow_call (release.yml
-# running lint/test) github.workflow and github.event_name are the caller's, so
-# a called run never shares, and so never cancels, a direct run's group.
+# Independent workflow/event/ref groups; feature pushes supersede older runs.
 concurrency:
   group: release-${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: false
@@ -42,10 +40,10 @@ jobs:
       upstream: ${{ steps.context.outputs.upstream }}
       integration: ${{ steps.context.outputs.integration }}
       skip-pr: ${{ steps.context.outputs.skip-pr }}
-      cancel: ${{ steps.context.outputs.cancel }}
+      publish: ${{ steps.context.outputs.publish }}
     steps:
       - id: context
-        uses: MolCrafts/molcrafts-ci/actions/ci-context@master
+        uses: MolCrafts/molcrafts-ci/actions/ci-context@40f61db7c6783f246215158bff435ff1d384b2ae
 
   guard:
     name: release / guard
@@ -76,11 +74,13 @@ jobs:
       PYTHONWARNDEFAULTENCODING: "1"
     steps:
       - uses: actions/checkout@v7
-      - uses: MolCrafts/molcrafts-ci/actions/setup-python@master
+      - uses: MolCrafts/molcrafts-ci/actions/setup-python@40f61db7c6783f246215158bff435ff1d384b2ae
         with:
           python-version: ${{ matrix.python }}
       - run: python scripts/check_partners_on_pypi.py
-      - run: uv run --no-sources --python ${{ matrix.python }} --extra dev python -m pytest tests/ -n auto
+      - env:
+          UV_PYTHON: ${{ matrix.python }}
+        run: python scripts/check.py published
 
   build:
     name: release / build
@@ -88,10 +88,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: MolCrafts/molcrafts-ci/actions/setup-python@master
+      - uses: MolCrafts/molcrafts-ci/actions/setup-python@40f61db7c6783f246215158bff435ff1d384b2ae
         with:
           python-version: "3.14"
-      - run: uv build && uvx twine check dist/*
+      - run: python scripts/check.py package
       - uses: actions/upload-artifact@v7
         with:
           name: dist
@@ -100,9 +100,9 @@ jobs:
   pypi:
     name: release / pypi
     needs: [context, test, build]
-    if: github.event_name == 'push' && needs.context.outputs.upstream == 'true'
+    if: needs.context.outputs.publish == 'true'
     runs-on: ubuntu-latest
-    environment: ${{ github.event_name == 'push' && 'pypi' || '' }}
+    environment: pypi
     permissions:
       id-token: write
     steps:
@@ -119,7 +119,7 @@ jobs:
   github:
     name: release / github
     needs: [context, pypi]
-    if: github.event_name == 'push' && needs.context.outputs.upstream == 'true'
+    if: needs.context.outputs.publish == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: write

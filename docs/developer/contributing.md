@@ -14,7 +14,7 @@ Fork the repository, clone your fork, and create a branch from `master`. Branch 
 Implement the change with tests. Run local checks before pushing:
 
 ```bash
-uv run --no-project --with 'tox>=4.23' --with ruff==0.16.1 --with ty==0.0.65 tox -e lint
+python scripts/check.py lint
 uv run --extra dev python -m pytest tests/ -n auto
 ```
 

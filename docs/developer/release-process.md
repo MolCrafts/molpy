@@ -28,15 +28,15 @@ APIs that need the new surface. Editable local molrs does not count as a release
 There is no hand-written `CHANGELOG.md` and no release-notes page; the history
 is git.
 
-### dev builds molrs's dev; a release tests PyPI
+### development pins partner commits; a release tests PyPI
 
-On `dev`, molpy tracks molrs's `dev`, not a release: `pyproject.toml`'s
+Development builds use the molrs commit pinned in `.github/partners.env`: `pyproject.toml`'s
 `[tool.uv.sources]` builds `molcrafts-molrs` from the sibling `../molrs`, which
 CI and the hooks check out at the commit `scripts/partners.py` resolves
 (`.github/partners.env`; see [Development Setup](development-setup.md)). That
 table only steers uv; the wheel declares the minor-line range alone.
 
-mollog and molcfg are partners too, tracked at their `master` on dev
+mollog and molcfg are partners too, pinned to full commits
 (`[tool.uv.sources]` builds them from `../mollog` / `../molcfg`) and declared
 by major range (`molcrafts-mollog>=1.3.1,<2`). A molpy that needs a new
 mollog or molcfg API waits for that release: mollog and molcfg ship before

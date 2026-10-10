@@ -14,13 +14,10 @@ entry point, so the rules have a single home and cannot drift:
 ## Quick start
 
 ```bash
-git clone https://github.com/MolCrafts/molrs.git     # beside molpy: dev builds molrs's dev
 git clone https://github.com/YOUR_USERNAME/molpy.git
 cd molpy
-uv sync --extra dev
-prek install --hook-type pre-commit --hook-type pre-push
-uv run --no-project --with 'tox>=4.23' --with ruff==0.16.1 --with ty==0.0.65 tox -e lint
-uv run --locked --extra dev python -m pytest tests/ -n auto
+uvx pre-commit install
+python scripts/check.py verify
 ```
 
 ## Hooks
@@ -31,25 +28,16 @@ CI job has a hook running the same command. **Never `git commit --no-verify`
 or `git push --no-verify`, and never merge a red pull request.**
 
 - **pre-commit** (staged files, cheap, in place): file hygiene (whitespace,
-  final newline, YAML/TOML/JSON, merge markers, large files) and `tox -e lint`
+  final newline, YAML/TOML/JSON, merge markers, large files) and the pinned lint tools
   (ruff format + ruff check + ty), as lint.yml `lint / hooks`.
-- **pre-push**:
-  - the pre-commit hooks again on `--all-files`;
-  - `scripts/partners.py check` — every partner in `.github/partners.env`
-    (molrs, mollog, molcfg) resolves, and every `[tool.uv.sources]` path
-    entry lands in a checkout CI makes;
-  - the rest in CI's sibling layout (`scripts/partners.py run`: a copy of
-    this tree next to the partners at the commits `scripts/partners.py`
-    resolves -- molrs's `dev`, mollog's and molcfg's `master`, or each one's
-    branch named like yours; see "Partners" in the Development Setup page),
-    never your siblings' working trees:
-    - `uv lock --check` (`lint / hooks`) when pyproject.toml or uv.lock
-      changed;
-    - the docs build (`.[doc]` in a fresh env, then `zensical build --clean
-      --strict`), when docs/, src/, zensical.toml or pyproject.toml changed;
-    - the unit suite, `uv run --locked --python 3.12 --extra dev python -m
-      pytest tests/ -n auto` (`test / python`; `uv.lock` is committed, so a
-      stale lock fails here as it does in CI).
+- **pre-push**: `scripts/check.py verify` reruns hygiene/static checks on all
+  files, then checks dependencies, tests and strict docs in one cached sibling
+  layout. Every dependency comes from the full SHA in `.github/partners.env`;
+  the resolver is shared with CI at `CI_REF`. `uv lock --check`, locked sync and
+  `uv pip check` catch stale metadata and incompatible installed dependencies.
+  It also tests the declared PyPI ranges independently of path sources and
+  builds/checks release distributions. No changed-file filters skip a gate.
+  Native CI also tests Windows and macOS.
 - **Dispatch on the MolCrafts cluster:** the docs build and the unit suite
   compile molrs. Their entries go through `scripts/hook-run.sh`, which hands
   the command to `$MOLCRAFTS_HOOK_RUNNER` when that is set and it is not
@@ -59,7 +47,7 @@ or `git push --no-verify`, and never merge a red pull request.**
   sets `$MOLCRAFTS_PARTNER_CACHE` so the partner checkouts and their builds stay
   warm between pushes. Everything else runs in place, so a commit never waits
   for Slurm. Elsewhere nothing sets the variables and every hook runs locally,
-  in a temp layout.
+  in the same cached partner layout.
 
 ## CI
 
@@ -70,8 +58,8 @@ full tier).
 
 | workflow | feature-branch push to MolCrafts | everything else: any push to a fork, `dev`/`master`/`main`, pull requests, tags, dispatches | upstream only |
 | --- | --- | --- | --- |
-| `lint.yml` | `lint / hooks` (commit hooks on every file, partners, `uv lock --check`) | same | — |
-| `test.yml` | fast: `test / python (ubuntu-latest, 3.12)` | full: `test / python` on Linux, macOS and Windows × Python 3.12 and 3.14 | — |
+| `lint.yml` | `lint / hooks` (hygiene, static lint and workflow scheme on every file) | same | — |
+| `test.yml` | fast: `test / python (ubuntu-latest, 3.12)` | full: `test / python` on all three OSes with Python 3.12, plus Linux/Python 3.14 | — |
 | `docs.yml` | `docs / build` (zensical `--strict`) | same | Cloudflare Pages deploys the site from MolCrafts |
 | `nightly.yml` | — | — | nightly: test and coverage snapshots to molcrafts-ci; a `nightly` branch push: `molcrafts-molpy-nightly` |
 | `release.yml` | — | dispatch: dry run (tests, builds, uploads nothing) | `v*` tag: PyPI and the GitHub Release ([release process](docs/developer/release-process.md)) |
@@ -81,10 +69,10 @@ green, then open the pull request into MolCrafts `dev`. Branches pushed to
 MolCrafts itself (Dependabot's) get the fast tier, and their pull requests the
 full one. The `require-green-ci` (`dev`) and `protect-master` rulesets require
 the full tier's jobs and `test / context`. Every workflow's first job,
-`<file> / context`, runs `MolCrafts/molcrafts-ci/actions/ci-context@master`,
+`<file> / context`, runs the pinned `MolCrafts/molcrafts-ci/actions/ci-context`,
 which decides the tier, fork vs upstream and the pull-request dedup; the other
 jobs read its outputs. Shared setup is molcrafts-ci's
-`MolCrafts/molcrafts-ci/actions/<name>@master` (`setup-rust`, `setup-python`,
+pinned `MolCrafts/molcrafts-ci/actions/<name>` (`setup-rust`, `setup-python`,
 `setup-partners`).
 
 ## Code of Conduct
