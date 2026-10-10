@@ -201,7 +201,8 @@ gate_wasm() {
     [ "$have" = "$WASM_PACK_VERSION" ] || { echo "wasm-pack must be $WASM_PACK_VERSION (found $have)" >&2; return 1; }
     have=$(node --version)
     [[ "$have" == v24.* ]] || { echo "Node 24 is required (found $have)" >&2; return 1; }
-    have=$(wasm-opt --version | awk '{print $NF}' | tr -d '()')
+    # Release builds print "version 133 (version_133)", Homebrew builds "version 133".
+    have=version_$(wasm-opt --version | awk '{print $3}')
     if [ "$have" != "$BINARYEN_VERSION" ]; then
         echo "wasm-opt is $have, the gate pins $BINARYEN_VERSION:" >&2
         echo "https://github.com/WebAssembly/binaryen/releases/tag/$BINARYEN_VERSION" >&2

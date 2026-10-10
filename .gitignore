@@ -88,3 +88,6 @@ scripts/molrs-aarch64-*.err
 
 # Captured build/lint output (e.g. `cargo mrs-clippy > x.log`) is not source.
 *.log
+
+# Test data downloaded during development; never committed.
+/tests-data/
