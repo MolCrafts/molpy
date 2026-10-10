@@ -193,9 +193,6 @@ amber_work/
 # Snapshot inputs built by the CI publish job
 .ci-out/
 
-# tests/tests-data holds committed fixtures, never build output. The broad
-# patterns above hid two of them from git entirely — thermo_style_*.log to
-# `*.log` and test.smi to `test.*` — so they could only ever have been added
-# with `git add -f`. Re-include the whole directory rather than chasing each
-# extension, because the next fixture will have a different one.
-!tests/tests-data/**
+# Test data downloaded during development; never committed. The small
+# fixtures already tracked here stay tracked; add new ones with `git add -f`.
+tests/tests-data/
