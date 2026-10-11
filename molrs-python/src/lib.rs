@@ -1,8 +1,9 @@
 //! Python bindings for the molrs molecular simulation library.
 //!
 //! This crate builds the private native module `molrs._native`; the Python
-//! package `molrs` (`python/molrs`) gives every symbol its one public path,
-//! the Python module named after the symbol's Rust owner:
+//! package `molrs` (`python/molrs`) names every symbol after its Rust owner.
+//! The package root also re-exports the core data classes a user handles
+//! directly (`molrs.Frame is molrs.core.Frame`); nothing else has a second path:
 //!
 //! | binding                 | Rust owner          | Python module        |
 //! |-------------------------|---------------------|----------------------|

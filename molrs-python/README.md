@@ -45,9 +45,11 @@ assert forces.shape == (frame["atoms"].n_rows, 3)
 
 ## Package layout
 
-The top level is the subsystems, exactly as the Rust crate's root is; every
-symbol has one path, named after its Rust owner (`molrs.core.Frame` is
-`molrs::core::Frame`).
+The top level is the subsystems, plus the core data classes a user handles
+directly (`molrs.Frame is molrs.core.Frame`: `Frame`,
+`Block`, `Trajectory`, `Box`, `MolGraph`, `Atomistic`, `CoarseGrain`, the
+entity classes, `Element`, `Topology`). Everything else has one path, named
+after its Rust owner.
 
 | Import | Owns |
 |--------|------|

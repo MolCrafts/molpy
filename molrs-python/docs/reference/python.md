@@ -4,13 +4,14 @@
 import molrs
 ```
 
-The top level of `molrs` is its subsystems and nothing else, exactly as the
-Rust crate's root is: every symbol has one path, the Python module named after
-its Rust owner (`molrs.core.Frame` is `molrs::core::Frame`). Import the
-subsystem you use:
+The top level of `molrs` is its subsystems, plus the core data classes a user
+handles directly. Those classes are the same objects as `molrs.core`'s
+(`molrs.Frame is molrs.core.Frame`). No function,
+algorithm, region or unit preset is promoted; everything else has one path,
+the Python module named after its Rust owner. Import either way:
 
 ```python
-from molrs.core import Frame, Block
+from molrs import Frame, Block, Trajectory, Topology
 from molrs.core import Box, NeighborList
 from molrs.ff.compile import PotentialCompiler
 ```

@@ -1,9 +1,10 @@
 """One public path per symbol, mirroring the Rust owner.
 
-``molrs`` holds the subsystems and nothing else (as the Rust crate root
-does); every class, function and constant is reachable at exactly one public
-path, and a class's or function's ``__module__`` and ``__name__`` are that
-path, so ``repr``, pickle and the docs all name it the way users import it.
+``molrs`` holds the subsystems. The core data classes a user handles directly
+are also on the root, as the same objects (``molrs.Frame is molrs.core.Frame``).
+Every other class, function and constant has exactly one public path, and a
+class's or function's ``__module__`` and ``__name__`` are that path, so
+``repr``, pickle and the docs all name the owner module.
 
 The walk is over ``dir()``, not only ``__all__``: a public module exports
 exactly its ``__all__`` and nothing else, so a ``typing`` or stdlib name
@@ -33,6 +34,30 @@ SUBSYSTEMS = {
     "perceive",
     "signal",
     "stream",
+}
+
+# The core data classes a user handles directly. Same set molpy promotes.
+PROMOTED = {
+    "Angle",
+    "Atom",
+    "Atomistic",
+    "Bead",
+    "Block",
+    "Bond",
+    "Box",
+    "CgBond",
+    "CoarseGrain",
+    "Dihedral",
+    "DrudeParticle",
+    "Element",
+    "Frame",
+    "Improper",
+    "MasslessSite",
+    "MolGraph",
+    "Port",
+    "Topology",
+    "Trajectory",
+    "VirtualSite",
 }
 
 
@@ -70,9 +95,17 @@ def _named(value: object) -> bool:
     return inspect.isclass(value) or inspect.isroutine(value)
 
 
-def test_the_top_level_is_the_subsystems():
-    assert set(molrs.__all__) == SUBSYSTEMS
-    assert _public_names(molrs) == SUBSYSTEMS
+def _canonical(paths: list[str]) -> list[str]:
+    """Drop the root spelling of a promoted class. ``molrs.Frame`` is that
+    class's second path; ``molrs.core.Frame`` is the owner path."""
+    return [path for path in paths if path.rpartition(".")[0] != "molrs"]
+
+
+def test_the_top_level_is_the_subsystems_and_the_handled_classes():
+    assert set(molrs.__all__) == SUBSYSTEMS | PROMOTED
+    assert _public_names(molrs) == SUBSYSTEMS | PROMOTED
+    for name in PROMOTED:
+        assert getattr(molrs, name) is getattr(molrs.core, name)
 
 
 @pytest.mark.parametrize("path", sorted(_modules()))
@@ -88,14 +121,23 @@ def test_every_class_and_function_has_one_public_path():
     for path, value in _objects().items():
         if _named(value):
             paths.setdefault(id(value), []).append(path)
-    assert not [p for p in paths.values() if len(p) > 1]
+    assert not [p for p in paths.values() if len(_canonical(p)) != 1]
+    aliases = [
+        path.rpartition(".")[2]
+        for group in paths.values()
+        for path in group
+        if path.rpartition(".")[0] == "molrs"
+    ]
+    assert set(aliases) == PROMOTED
 
 
 def test_a_class_or_function_names_its_public_path():
     wrong = [
         (path, f"{value.__module__}.{value.__name__}")
         for path, value in _objects().items()
-        if _named(value) and f"{value.__module__}.{value.__name__}" != path
+        if _named(value)
+        and path.rpartition(".")[0] != "molrs"
+        and f"{value.__module__}.{value.__name__}" != path
     ]
     assert not wrong
 
