@@ -1,73 +1,23 @@
-# prek / pre-commit. Every gate is a `scripts/check.sh <gate>` call, the same
-# call the CI workflows make, on the toolchain rust-toolchain.toml pins for
-# both. Change a gate in check.sh, never here or in a workflow.
-#
-# pre-commit: hygiene, format and static guards.
-# pre-push: every local CI gate, without changed-file filters. Dependencies
-# come from explicit commits in partners.env. CI additionally exercises the
-# native OS matrix; a local runner cannot prove another operating system.
-
+# Same file in every repository. The profile name lives in
+# .github/partners.env as CI_PROFILE. This file does not contain a SHA.
 default_install_hook_types: [pre-commit, pre-push]
-default_stages: [pre-commit]
+default_stages: [pre-commit, pre-push]
 
 repos:
-  - repo: https://github.com/pre-commit/pre-commit-hooks
-    rev: v6.0.0
-    hooks:
-      # Byte-exact fixtures: what a writer wrote, kept as it wrote it.
-      - id: trailing-whitespace
-        exclude: ^molrs/src/ff/testdata/builtin_conformance/
-      - id: end-of-file-fixer
-        exclude: ^molrs/src/ff/testdata/builtin_conformance/
-      - id: check-yaml
-      - id: check-toml
-      - id: check-merge-conflict
-      - id: mixed-line-ending
-        args: [--fix=lf]
-
   - repo: local
     hooks:
-      # Every workflow against the CI scheme at the manifest's pinned CI_REF.
-      - id: workflows
-        name: "check-workflows (lint.yml)"
-        entry: scripts/check-workflows.sh
-        language: system
-        pass_filenames: false
-        files: ^(\.github/|scripts/check-workflows\.sh)
-
-      - id: fmt
-        name: check fmt
-        entry: scripts/check.sh fmt
+      - id: ci
+        name: molcrafts-ci
+        entry: uv run --no-project --script https://raw.githubusercontent.com/MolCrafts/molcrafts-ci/master/hooks/ci.py
         language: system
         pass_filenames: false
         always_run: true
-        stages: [pre-commit]
-
-      - id: ruff
-        name: check ruff (text I/O names its encoding)
-        entry: scripts/check.sh ruff
-        language: system
-        pass_filenames: false
-        types_or: [python, pyi, toml]
-        stages: [pre-commit]
-
-      # A bare std::os::unix / std::os::windows path is a hard compile error on
-      # the other OS, and only CI's windows/macos legs build there. Gate it:
-      # put any `#[cfg(...)]` attribute on the line directly above (or on the
-      # same line). Escape hatch, for a use inside an item already gated
-      # further up: end the line with `// os-gated: <why>`. A hit is reported
-      # from the line above the offending one (the match spans both).
-      - id: os-cfg
-        name: "std::os::unix / std::os::windows only under #[cfg]"
-        language: pygrep
-        entry: '^(?![^\n]*#\[cfg)[^\n]*\n(?![^\n]*(?:#\[cfg|os-gated))(?![ \t]*//)[^\n]*\bstd::os::(?:unix|windows)\b'
-        args: [--multiline]
-        types: [rust]
-
-      - id: verify
-        name: complete local CI gates
-        entry: scripts/check.sh verify
+        args: ["--stage", "pre-commit"]
+      - id: ci-push
+        name: molcrafts-ci pre-push
+        entry: uv run --no-project --script https://raw.githubusercontent.com/MolCrafts/molcrafts-ci/master/hooks/ci.py
         language: system
         pass_filenames: false
         always_run: true
         stages: [pre-push]
+        args: ["--stage", "pre-push"]
