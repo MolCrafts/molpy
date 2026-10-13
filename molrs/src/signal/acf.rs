@@ -1,6 +1,191 @@
+use std::sync::Arc;
+
 use ndarray::Array1;
 use rustfft::num_traits::Zero;
-use rustfft::{FftPlanner, num_complex::Complex64};
+use rustfft::{Fft, FftPlanner, num_complex::Complex64};
+
+/// Linear (zero-padded) auto- and cross-correlation of length-`n` series by
+/// the Wiener–Khinchin route, with the FFT plans made once.
+///
+/// This is the one FFT kernel behind every time-correlation function in
+/// molrs: the free functions [`acf_fft`], [`acf_fft_accumulate`], [`xcorr_fft`]
+/// and [`xcorr_fft_accumulate`] are thin wrappers over it, and the correlation
+/// engine in `molrs::compute` drives it column by column.
+///
+/// Every method accumulates `weight · r[t]` into `out[0..=max_lag]`, where `r`
+/// is the **un-normalized** linear correlation (`Σ_{τ=0}^{n-1-t} …`), so a
+/// caller can fold several columns — and per-column weights — into one curve
+/// with a single buffer. The padding is `(2n).next_power_of_two()`, which is
+/// what makes the correlation linear rather than circular.
+///
+/// A `LinearCorrelator` is `Send + Sync` (the plans are `Arc`s); only the
+/// complex scratch buffers are per-call, so threads can share one correlator
+/// and own their scratch.
+#[derive(Clone)]
+pub struct LinearCorrelator {
+    n: usize,
+    n_pad: usize,
+    fwd: Arc<dyn Fft<f64>>,
+    inv: Arc<dyn Fft<f64>>,
+}
+
+impl std::fmt::Debug for LinearCorrelator {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("LinearCorrelator")
+            .field("n", &self.n)
+            .field("n_pad", &self.n_pad)
+            .finish()
+    }
+}
+
+impl LinearCorrelator {
+    /// Plans for series of length `n` (padded to `(2n).next_power_of_two()`).
+    pub fn new(planner: &mut FftPlanner<f64>, n: usize) -> Self {
+        let n_pad = (2 * n.max(1)).next_power_of_two();
+        Self {
+            n,
+            n_pad,
+            fwd: planner.plan_fft_forward(n_pad),
+            inv: planner.plan_fft_inverse(n_pad),
+        }
+    }
+
+    /// Series length the plans were made for.
+    pub fn len(&self) -> usize {
+        self.n
+    }
+
+    /// `true` when planned for empty series (never a usable correlator).
+    pub fn is_empty(&self) -> bool {
+        self.n == 0
+    }
+
+    /// Padded transform length.
+    pub fn n_pad(&self) -> usize {
+        self.n_pad
+    }
+
+    fn check(&self, len: usize, max_lag: usize, out_len: usize) -> Result<(), SignalError> {
+        if len != self.n {
+            return Err(SignalError::MaxLagTooLarge {
+                max_lag,
+                len: len.min(self.n),
+            });
+        }
+        validate_series(self.n, max_lag)?;
+        if out_len < max_lag + 1 {
+            return Err(SignalError::MaxLagTooLarge {
+                max_lag,
+                len: out_len.saturating_sub(1).max(1),
+            });
+        }
+        Ok(())
+    }
+
+    /// `out[t] += weight · Σ_{τ} data[τ]·data[τ+t]` for `t = 0..=max_lag`.
+    ///
+    /// In-place Wiener–Khinchin: pad, forward FFT, `|X|²`, inverse FFT; each
+    /// lag is added as `weight · (re · 1/n_pad)`, one multiply per factor, so
+    /// `weight = 1.0` is bit-for-bit the unweighted sum.
+    pub fn acf_into(
+        &self,
+        data: &[f64],
+        max_lag: usize,
+        weight: f64,
+        out: &mut [f64],
+        scratch: &mut Vec<Complex64>,
+    ) -> Result<(), SignalError> {
+        self.check(data.len(), max_lag, out.len())?;
+        fill_padded(scratch, data, self.n_pad);
+        self.fwd.process(scratch);
+        for z in scratch.iter_mut() {
+            *z = Complex64::new(z.norm_sqr(), 0.0);
+        }
+        self.inv.process(scratch);
+        let scale = 1.0 / self.n_pad as f64;
+        for (k, slot) in out.iter_mut().enumerate().take(max_lag + 1) {
+            *slot += weight * (scratch[k].re * scale);
+        }
+        Ok(())
+    }
+
+    /// `out[t] += weight · Σ_{τ} a[τ]·b[τ+t]` for `t = 0..=max_lag`
+    /// (`IFFT(conj(A)·B)`, formed in place in `scratch_a`).
+    ///
+    /// `xcorr_into(a, a, …)` reproduces `acf_into(a, …)` bit for bit:
+    /// `conj(A)·A` and `|A|²` agree to the last ULP.
+    #[allow(clippy::too_many_arguments)]
+    pub fn xcorr_into(
+        &self,
+        a: &[f64],
+        b: &[f64],
+        max_lag: usize,
+        weight: f64,
+        out: &mut [f64],
+        scratch_a: &mut Vec<Complex64>,
+        scratch_b: &mut Vec<Complex64>,
+    ) -> Result<(), SignalError> {
+        self.check(a.len(), max_lag, out.len())?;
+        if b.len() != a.len() {
+            return Err(SignalError::MaxLagTooLarge {
+                max_lag,
+                len: b.len(),
+            });
+        }
+        fill_padded(scratch_a, a, self.n_pad);
+        fill_padded(scratch_b, b, self.n_pad);
+        self.fwd.process(scratch_a);
+        self.fwd.process(scratch_b);
+        for (xa, yb) in scratch_a.iter_mut().zip(scratch_b.iter()) {
+            *xa = xa.conj() * yb;
+        }
+        self.inv.process(scratch_a);
+        let scale = 1.0 / self.n_pad as f64;
+        for (k, slot) in out.iter_mut().enumerate().take(max_lag + 1) {
+            *slot += weight * (scratch_a[k].re * scale);
+        }
+        Ok(())
+    }
+
+    /// `out[t] += weight · Σ_{τ} (a[τ]·b[τ+t] + b[τ]·a[τ+t])`: the symmetric
+    /// sum `r_ab + r_ba` from one inverse FFT of `2·Re(conj(A)·B)`.
+    ///
+    /// For `a == b` this is `2 · acf` exactly (the input to the inverse FFT is
+    /// `2·|A|²`, and scaling by two commutes with every rounding).
+    #[allow(clippy::too_many_arguments)]
+    pub fn xcorr_sym_into(
+        &self,
+        a: &[f64],
+        b: &[f64],
+        max_lag: usize,
+        weight: f64,
+        out: &mut [f64],
+        scratch_a: &mut Vec<Complex64>,
+        scratch_b: &mut Vec<Complex64>,
+    ) -> Result<(), SignalError> {
+        self.check(a.len(), max_lag, out.len())?;
+        if b.len() != a.len() {
+            return Err(SignalError::MaxLagTooLarge {
+                max_lag,
+                len: b.len(),
+            });
+        }
+        fill_padded(scratch_a, a, self.n_pad);
+        fill_padded(scratch_b, b, self.n_pad);
+        self.fwd.process(scratch_a);
+        self.fwd.process(scratch_b);
+        for (xa, yb) in scratch_a.iter_mut().zip(scratch_b.iter()) {
+            let prod = xa.conj() * yb;
+            *xa = Complex64::new(2.0 * prod.re, 0.0);
+        }
+        self.inv.process(scratch_a);
+        let scale = 1.0 / self.n_pad as f64;
+        for (k, slot) in out.iter_mut().enumerate().take(max_lag + 1) {
+            *slot += weight * (scratch_a[k].re * scale);
+        }
+        Ok(())
+    }
+}
 
 /// Linear autocorrelation via the Wiener-Khinchin theorem (FFT-based).
 ///
@@ -56,8 +241,9 @@ pub fn acf_fft_with_planner(
 ///
 /// **Primitive for multi-component correlators**: call once per Cartesian
 /// component, reusing `scratch` across calls so the complex FFT workspace is
-/// allocated once. In-place Wiener–Khinchin (no temporary power-spectrum
-/// buffer). `out` length must be at least `max_lag + 1`.
+/// allocated once. [`LinearCorrelator::acf_into`] with weight 1 and a plan
+/// looked up in `planner` (rustfft caches plans, so repeated calls on one
+/// length re-plan nothing).
 pub fn acf_fft_accumulate(
     planner: &mut FftPlanner<f64>,
     data: &[f64],
@@ -65,40 +251,8 @@ pub fn acf_fft_accumulate(
     out: &mut [f64],
     scratch: &mut Vec<Complex64>,
 ) -> Result<(), SignalError> {
-    let n = data.len();
-    validate_series(n, max_lag)?;
-    if out.len() < max_lag + 1 {
-        return Err(SignalError::MaxLagTooLarge {
-            max_lag,
-            len: out.len().saturating_sub(1).max(1),
-        });
-    }
-
-    let n_pad = (2 * n).next_power_of_two();
-    let fwd = planner.plan_fft_forward(n_pad);
-    let inv = planner.plan_fft_inverse(n_pad);
-
-    // Fill / zero pad complex workspace (reuse capacity).
-    scratch.resize(n_pad, Complex64::zero());
-    for i in 0..n {
-        scratch[i] = Complex64::new(data[i], 0.0);
-    }
-    for z in scratch[n..].iter_mut() {
-        *z = Complex64::zero();
-    }
-
-    fwd.process(scratch);
-    // In-place power spectrum: |X|² as a real complex (Im = 0).
-    for z in scratch.iter_mut() {
-        *z = Complex64::new(z.norm_sqr(), 0.0);
-    }
-    inv.process(scratch);
-
-    let scale = 1.0 / n_pad as f64;
-    for k in 0..=max_lag {
-        out[k] += scratch[k].re * scale;
-    }
-    Ok(())
+    validate_series(data.len(), max_lag)?;
+    LinearCorrelator::new(planner, data.len()).acf_into(data, max_lag, 1.0, out, scratch)
 }
 
 /// Linear cross-correlation via the Wiener–Khinchin cross spectrum (FFT-based).
@@ -162,8 +316,8 @@ pub fn xcorr_fft_with_planner(
 
 /// Accumulate one un-normalized linear cross-correlation into `out[0..=max_lag]`.
 ///
-/// Reuses `scratch_a` / `scratch_b` across multi-component calls. Cross product
-/// is formed in-place into `scratch_a` (no third product buffer).
+/// Reuses `scratch_a` / `scratch_b` across multi-component calls.
+/// [`LinearCorrelator::xcorr_into`] with weight 1.
 pub fn xcorr_fft_accumulate(
     planner: &mut FftPlanner<f64>,
     a: &[f64],
@@ -173,35 +327,9 @@ pub fn xcorr_fft_accumulate(
     scratch_a: &mut Vec<Complex64>,
     scratch_b: &mut Vec<Complex64>,
 ) -> Result<(), SignalError> {
-    let n = a.len();
-    validate_series(n, max_lag)?;
-    if out.len() < max_lag + 1 {
-        return Err(SignalError::MaxLagTooLarge {
-            max_lag,
-            len: out.len().saturating_sub(1).max(1),
-        });
-    }
-
-    let n_pad = (2 * n).next_power_of_two();
-    let fwd = planner.plan_fft_forward(n_pad);
-    let inv = planner.plan_fft_inverse(n_pad);
-
-    fill_padded(scratch_a, a, n_pad);
-    fill_padded(scratch_b, b, n_pad);
-    fwd.process(scratch_a);
-    fwd.process(scratch_b);
-
-    // In-place cross spectrum into scratch_a: conj(A)·B.
-    for (xa, yb) in scratch_a.iter_mut().zip(scratch_b.iter()) {
-        *xa = xa.conj() * yb;
-    }
-    inv.process(scratch_a);
-
-    let scale = 1.0 / n_pad as f64;
-    for k in 0..=max_lag {
-        out[k] += scratch_a[k].re * scale;
-    }
-    Ok(())
+    validate_series(a.len(), max_lag)?;
+    LinearCorrelator::new(planner, a.len())
+        .xcorr_into(a, b, max_lag, 1.0, out, scratch_a, scratch_b)
 }
 
 #[inline]
@@ -237,6 +365,9 @@ pub enum SignalError {
     /// Window/axis-aware operation was asked to operate along an axis
     /// that does not exist on the input.
     AxisOutOfBounds { axis: usize, ndim: usize },
+    /// A window name [`WindowType::from_name`](super::WindowType::from_name)
+    /// does not know.
+    UnknownWindow(String),
 }
 
 impl std::fmt::Display for SignalError {
@@ -252,6 +383,10 @@ impl std::fmt::Display for SignalError {
             SignalError::AxisOutOfBounds { axis, ndim } => {
                 write!(f, "axis ({axis}) out of bounds for ndim ({ndim})")
             }
+            SignalError::UnknownWindow(name) => write!(
+                f,
+                "unknown window {name:?}; expected hann, blackman, cosine_sq or none"
+            ),
         }
     }
 }
@@ -420,5 +555,117 @@ mod tests {
         for k in 0..=max_lag {
             assert!((out[k] - (sa[k] + sb[k])).abs() < 1e-14, "k={k}");
         }
+    }
+
+    #[test]
+    fn correlator_wrappers_are_bit_identical_to_direct_kernel_use() {
+        let a = arr1(&[1.0, -2.0, 3.0, 0.5, -1.5, 4.0, 2.0, -3.0]);
+        let b = arr1(&[0.5, 1.0, -1.0, 2.0, 0.25, -0.75, 1.5, 0.0]);
+        let max_lag = 5;
+        let mut planner = FftPlanner::new();
+        let corr = LinearCorrelator::new(&mut planner, a.len());
+        let (mut sa, mut sb) = (Vec::new(), Vec::new());
+        let mut out = vec![0.0; max_lag + 1];
+        corr.acf_into(a.as_slice().unwrap(), max_lag, 1.0, &mut out, &mut sa)
+            .unwrap();
+        assert_eq!(
+            Array1::from_vec(out.clone()),
+            acf_fft_with_planner(&mut planner, &a, max_lag).unwrap()
+        );
+        let mut xc = vec![0.0; max_lag + 1];
+        corr.xcorr_into(
+            a.as_slice().unwrap(),
+            b.as_slice().unwrap(),
+            max_lag,
+            1.0,
+            &mut xc,
+            &mut sa,
+            &mut sb,
+        )
+        .unwrap();
+        assert_eq!(
+            Array1::from_vec(xc),
+            xcorr_fft_with_planner(&mut planner, &a, &b, max_lag).unwrap()
+        );
+    }
+
+    #[test]
+    fn weighted_accumulate_is_weight_times_the_unweighted_curve() {
+        let a = arr1(&[1.0, -2.0, 3.0, 0.5, -1.5, 4.0]);
+        let max_lag = 3;
+        let mut planner = FftPlanner::new();
+        let corr = LinearCorrelator::new(&mut planner, a.len());
+        let mut s = Vec::new();
+        let mut unweighted = vec![0.0; max_lag + 1];
+        corr.acf_into(a.as_slice().unwrap(), max_lag, 1.0, &mut unweighted, &mut s)
+            .unwrap();
+        let mut weighted = vec![0.0; max_lag + 1];
+        corr.acf_into(a.as_slice().unwrap(), max_lag, 3.0, &mut weighted, &mut s)
+            .unwrap();
+        for k in 0..=max_lag {
+            assert_eq!(weighted[k], 3.0 * unweighted[k], "k={k}");
+        }
+    }
+
+    #[test]
+    fn symmetric_xcorr_is_the_sum_of_both_orders_and_twice_the_acf_for_self() {
+        let a = arr1(&[1.0, -2.0, 3.0, 0.5, -1.5, 4.0, 2.0]);
+        let b = arr1(&[0.5, 1.0, -1.0, 2.0, 0.25, -0.75, 1.5]);
+        let max_lag = 4;
+        let mut planner = FftPlanner::new();
+        let corr = LinearCorrelator::new(&mut planner, a.len());
+        let (mut sa, mut sb) = (Vec::new(), Vec::new());
+        let mut sym = vec![0.0; max_lag + 1];
+        corr.xcorr_sym_into(
+            a.as_slice().unwrap(),
+            b.as_slice().unwrap(),
+            max_lag,
+            1.0,
+            &mut sym,
+            &mut sa,
+            &mut sb,
+        )
+        .unwrap();
+        let ab = xcorr_fft_with_planner(&mut planner, &a, &b, max_lag).unwrap();
+        let ba = xcorr_fft_with_planner(&mut planner, &b, &a, max_lag).unwrap();
+        for k in 0..=max_lag {
+            assert!((sym[k] - (ab[k] + ba[k])).abs() < 1e-12, "k={k}");
+        }
+        // Self: exactly twice the ACF.
+        let mut self_sym = vec![0.0; max_lag + 1];
+        corr.xcorr_sym_into(
+            a.as_slice().unwrap(),
+            a.as_slice().unwrap(),
+            max_lag,
+            1.0,
+            &mut self_sym,
+            &mut sa,
+            &mut sb,
+        )
+        .unwrap();
+        let acf = acf_fft_with_planner(&mut planner, &a, max_lag).unwrap();
+        for k in 0..=max_lag {
+            assert_eq!(self_sym[k], 2.0 * acf[k], "k={k}");
+        }
+    }
+
+    #[test]
+    fn correlator_rejects_wrong_length_and_long_lag() {
+        let mut planner = FftPlanner::new();
+        let corr = LinearCorrelator::new(&mut planner, 4);
+        let mut out = vec![0.0; 4];
+        let mut s = Vec::new();
+        assert!(
+            corr.acf_into(&[1.0, 2.0, 3.0], 2, 1.0, &mut out, &mut s)
+                .is_err()
+        );
+        assert!(
+            corr.acf_into(&[1.0, 2.0, 3.0, 4.0], 4, 1.0, &mut out, &mut s)
+                .is_err()
+        );
+        assert!(
+            corr.acf_into(&[1.0, 2.0, 3.0, 4.0], 3, 1.0, &mut out, &mut s)
+                .is_ok()
+        );
     }
 }

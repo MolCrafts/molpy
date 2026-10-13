@@ -1,138 +1,90 @@
-//! Mean-squared displacement (`molrs::compute::msd`): `Msd`, `MsdResult`,
-//! `MsdTimeSeries`.
+//! Mean-squared displacement (`molrs::compute::msd`): `Msd`, a
+//! `TimeCorrelation` of kind ``"msd"``.
 
 use super::collect_frames;
+use super::correlation::{PyTimeCorrelation, Settings, finish};
 use crate::error::py_value_err;
-use molrs::compute::{Compute, Msd, MsdMode, MsdResult, MsdTimeSeries};
-use molrs::core::Frame as CoreFrame;
-use numpy::{IntoPyArray, PyArray1, PyArray2};
+use molrs::compute::{
+    Compute, Msd, MsdMode, Normalization, TimeCorrelationSpec, displacement_correlate,
+    position_series,
+};
+use molrs::core::{Block, Frame as CoreFrame};
+use ndarray::{Array1, Array2, Array3};
+use numpy::PyReadonlyArray3;
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::types::PyAny;
 
-// ---------------------------------------------------------------------------
-// MSD
-// ---------------------------------------------------------------------------
-
-/// Per-frame MSD result (from a single time point).
-#[pyclass(module = "molrs.compute", name = "MsdResult")]
-pub struct PyMsdResult {
-    inner: MsdResult,
-}
-
-#[pymethods]
-impl PyMsdResult {
-    #[getter]
-    fn mean(&self) -> f64 {
-        self.inner.mean
-    }
-
-    #[getter]
-    fn per_particle<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<f64>> {
-        self.inner.per_particle.clone().into_pyarray(py)
-    }
-
-    fn __repr__(&self) -> String {
-        format!(
-            "MsdResult(mean={:.4}, n_particles={})",
-            self.inner.mean,
-            self.inner.per_particle.len(),
-        )
-    }
-}
-
-/// MSD time series aligned with the input frame list.
-///
-/// `series.per_frame[0]` is the reference frame (mean = 0); `series.per_frame[i]`
-/// compares frame `i` against frame `0`.
-#[pyclass(module = "molrs.compute", name = "MsdTimeSeries")]
-pub struct PyMsdTimeSeries {
-    inner: MsdTimeSeries,
-}
-
-#[pymethods]
-impl PyMsdTimeSeries {
-    #[getter]
-    fn mean<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<f64>> {
-        let v: Vec<f64> = self.inner.per_frame.iter().map(|r| r.mean).collect();
-        ndarray::Array1::from_vec(v).into_pyarray(py)
-    }
-
-    #[getter]
-    fn per_particle<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyArray2<f64>>> {
-        let t = self.inner.per_frame.len();
-        if t == 0 {
-            return Ok(ndarray::Array2::from_shape_vec((0, 0), vec![])
-                .unwrap()
-                .into_pyarray(py));
+/// The `(n_frames, n_atoms, 3)` positions of `frames_or_positions`: an
+/// ndarray as given, frames through [`position_series`].
+pub(crate) fn positions_of(frames_or_positions: &Bound<'_, PyAny>) -> PyResult<Array3<f64>> {
+    if let Ok(arr) = frames_or_positions.extract::<PyReadonlyArray3<'_, f64>>() {
+        let a = arr.as_array();
+        if a.shape()[2] != 3 {
+            return Err(PyValueError::new_err(format!(
+                "positions must have shape (n_frames, n_atoms, 3), got {:?}",
+                a.shape()
+            )));
         }
-        let n = self.inner.per_frame[0].per_particle.len();
-        let mut flat: Vec<f64> = Vec::with_capacity(t * n);
-        for row in &self.inner.per_frame {
-            if row.per_particle.len() != n {
-                return Err(PyValueError::new_err(
-                    "Msd per-particle width not constant across frames",
-                ));
+        return Ok(a.to_owned());
+    }
+    let owned = collect_frames(frames_or_positions)?;
+    let refs: Vec<&CoreFrame> = owned.iter().collect();
+    position_series(&refs).map_err(py_value_err)
+}
+
+/// Frames carrying only `x`/`y`/`z`, for the single-origin estimator.
+fn frames_from_positions(positions: &Array3<f64>) -> Vec<CoreFrame> {
+    let (t, _, _) = positions.dim();
+    (0..t)
+        .map(|k| {
+            let mut block = Block::new();
+            for (c, name) in ["x", "y", "z"].into_iter().enumerate() {
+                let column: Array1<f64> = positions.slice(ndarray::s![k, .., c]).to_owned();
+                block
+                    .insert(name, column.into_dyn())
+                    .expect("fresh block accepts a column");
             }
-            flat.extend(row.per_particle.iter().copied());
-        }
-        Ok(ndarray::Array2::from_shape_vec((t, n), flat)
-            .expect("Msd shape")
-            .into_pyarray(py))
-    }
-
-    fn __len__(&self) -> usize {
-        self.inner.per_frame.len()
-    }
-
-    fn __getitem__(&self, i: isize) -> PyResult<PyMsdResult> {
-        let n = self.inner.per_frame.len() as isize;
-        let idx = if i < 0 { i + n } else { i };
-        if idx < 0 || idx >= n {
-            return Err(PyValueError::new_err("Msd index out of range"));
-        }
-        Ok(PyMsdResult {
-            inner: self.inner.per_frame[idx as usize].clone(),
+            let mut frame = CoreFrame::new();
+            frame.insert("atoms", block);
+            frame
         })
-    }
-
-    fn __repr__(&self) -> String {
-        format!("MsdTimeSeries(n_frames={})", self.inner.per_frame.len())
-    }
+        .collect()
 }
 
-/// Mean squared displacement.
+/// Mean squared displacement, ``MSD(t) = ⟨|r(τ+t) − r(τ)|²⟩``.
 ///
 /// Two estimators of the same quantity, chosen by ``method``; they are not
 /// interchangeable and there is no default that suits both:
 ///
-/// - ``"direct"`` (default) — ``Msd(t) = ⟨|r(t) − r(0)|²⟩``, frame 0 as the one
-///   time origin.
-/// - ``"window"`` — ``Msd(t) = ⟨|r(τ+t) − r(τ)|²⟩`` averaged over **every** time
-///   origin τ. Far better statistics at long lag, which is what a diffusion
-///   coefficient needs, and O(T log T) via the Wiener–Khinchin identity rather
-///   than the O(T²) nested loop. Conventions match ``freud.msd``.
+/// - ``"direct"`` (default) — frame 0 is the one time origin:
+///   ``MSD(t) = ⟨|r(t) − r(0)|²⟩``.
+/// - ``"window"`` — averaged over **every** time origin ``τ`` (every
+///   ``stride``-th frame). Far better statistics at long lag, which is what a
+///   diffusion coefficient needs, and O(T log T) through the correlation
+///   engine's displacement route rather than the O(T²) nested loop.
+///   Conventions match ``freud.msd``.
 ///
-/// ``compute(frames)`` returns an ``MsdTimeSeries`` as long as ``frames``
-/// either way.
-///
-/// Parameters
-/// ----------
-/// method : {"direct", "window"}, optional
+/// ``compute`` takes a ``Frame``, a sequence of frames, or an
+/// ``(n_frames, n_atoms, 3)`` array of **unwrapped** positions, and returns a
+/// :class:`TimeCorrelation` of kind ``"msd"`` whose ``values`` is the
+/// atom-averaged curve and whose ``per_entity`` holds one curve per atom.
 ///
 /// Examples
 /// --------
-/// >>> molrs.compute.Msd(method="window").compute(frames).mean
+/// >>> msd = molrs.compute.Msd(method="window").compute(frames, dt=1.0)
+/// >>> D = msd.diffusion(3, window=(0.2, 0.8))
 #[pyclass(module = "molrs.compute", name = "Msd")]
 pub struct PyMsd {
-    inner: Msd,
+    mode: MsdMode,
+    stride: usize,
 }
 
 #[pymethods]
 impl PyMsd {
     #[new]
-    #[pyo3(signature = (method = "direct"))]
-    fn new(method: &str) -> PyResult<Self> {
+    #[pyo3(signature = (method = "direct", stride = 1))]
+    fn new(method: &str, stride: usize) -> PyResult<Self> {
         let mode = match method {
             "direct" => MsdMode::Direct,
             "window" => MsdMode::Window,
@@ -142,40 +94,117 @@ impl PyMsd {
                 )));
             }
         };
-        Ok(Self {
-            inner: Msd::with_mode(mode),
-        })
+        if stride == 0 {
+            return Err(PyValueError::new_err("stride must be >= 1"));
+        }
+        if mode == MsdMode::Direct && stride != 1 {
+            return Err(PyValueError::new_err(
+                "stride applies to method='window'; the direct estimator has one origin",
+            ));
+        }
+        Ok(Self { mode, stride })
     }
 
     /// The estimator this analyzer uses: ``"direct"`` or ``"window"``.
     #[getter]
     fn method(&self) -> &'static str {
-        match self.inner.mode() {
+        match self.mode {
             MsdMode::Direct => "direct",
             MsdMode::Window => "window",
         }
     }
 
-    /// Compute the MSD time series.
-    fn compute(&self, frames: &Bound<'_, PyAny>) -> PyResult<PyMsdTimeSeries> {
-        let owned = collect_frames(frames)?;
-        if owned.is_empty() {
+    /// Spacing of the time origins (window mode).
+    #[getter]
+    fn stride(&self) -> usize {
+        self.stride
+    }
+
+    /// The MSD curve.
+    ///
+    /// Parameters
+    /// ----------
+    /// frames_or_positions : Frame | Sequence[Frame] | ndarray (n_frames, n_atoms, 3)
+    /// dt : float, optional
+    ///     Frame spacing for ``lag_times``; frames when omitted.
+    /// max_lag : int, optional
+    ///     Longest lag in frames; every lag by default.
+    /// per_entity : bool
+    ///     Also return one curve per atom (default ``True``).
+    #[pyo3(signature = (frames_or_positions, dt=None, max_lag=None, per_entity=true))]
+    fn compute(
+        &self,
+        frames_or_positions: &Bound<'_, PyAny>,
+        dt: Option<f64>,
+        max_lag: Option<usize>,
+        per_entity: bool,
+    ) -> PyResult<PyTimeCorrelation> {
+        let positions = positions_of(frames_or_positions)?;
+        let (n_frames, n_atoms, _) = positions.dim();
+        if n_frames == 0 {
             return Err(PyValueError::new_err("Msd.compute requires >= 1 frame"));
         }
-        let refs: Vec<&CoreFrame> = owned.iter().collect();
-        let series = self.inner.compute(&refs, ()).map_err(py_value_err)?;
-        Ok(PyMsdTimeSeries { inner: series })
+        let settings = Settings {
+            mean_subtract: false,
+            normalization: Normalization::Unbiased,
+            stride: self.stride,
+        };
+        match self.mode {
+            MsdMode::Window => {
+                if n_frames < 2 {
+                    return Err(PyValueError::new_err(
+                        "the window estimator needs at least two frames",
+                    ));
+                }
+                let spec = TimeCorrelationSpec::new()
+                    .max_lag(max_lag.unwrap_or(usize::MAX))
+                    .origin_stride(self.stride)
+                    .per_entity(per_entity);
+                let tc = displacement_correlate(positions.view(), None, dt.unwrap_or(1.0), &spec)
+                    .map_err(py_value_err)?;
+                Ok(finish(tc, dt, "msd", settings, n_frames, None))
+            }
+            MsdMode::Direct => {
+                let frames = frames_from_positions(&positions);
+                let refs: Vec<&CoreFrame> = frames.iter().collect();
+                let series = Msd::with_mode(MsdMode::Direct)
+                    .compute(&refs, ())
+                    .map_err(py_value_err)?;
+                let values = Array1::from_iter(series.per_frame.iter().map(|r| r.mean));
+                let mut out = PyTimeCorrelation::from_curve(
+                    values,
+                    dt,
+                    "msd",
+                    settings,
+                    Some(Array1::from_elem(n_frames, 1)),
+                    n_frames,
+                );
+                if per_entity {
+                    let mut rows = Array2::<f64>::zeros((n_atoms, n_frames));
+                    for (t, r) in series.per_frame.iter().enumerate() {
+                        for (i, v) in r.per_particle.iter().enumerate() {
+                            rows[[i, t]] = *v;
+                        }
+                    }
+                    out = out.with_rows(rows);
+                } else {
+                    out = out.with_entities(n_atoms);
+                }
+                Ok(match max_lag {
+                    Some(m) => out.truncated(m + 1),
+                    None => out,
+                })
+            }
+        }
     }
 
     fn __repr__(&self) -> String {
-        format!("Msd(method={:?})", self.method())
+        format!("Msd(method={:?}, stride={})", self.method(), self.stride)
     }
 }
 
 /// Register this domain's classes and functions.
 pub(crate) fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    m.add_class::<PyMsdResult>()?;
-    m.add_class::<PyMsdTimeSeries>()?;
     m.add_class::<PyMsd>()?;
     Ok(())
 }

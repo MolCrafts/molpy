@@ -216,7 +216,7 @@ impl RoaCrossTensor {
 }
 
 macro_rules! spectrum_fit_class {
-    ($name:ident, $calc:expr) => {
+    ($name:ident, $calc:ty) => {
         #[wasm_bindgen(js_name = $name)]
         pub struct $name {
             dt_fs: F,
@@ -230,7 +230,7 @@ macro_rules! spectrum_fit_class {
             }
             pub fn fit(&self, acf: &[F]) -> Result<JsValue, JsValue> {
                 let y = array1(acf);
-                let r = $calc
+                let r = <$calc>::default()
                     .fit((&y, self.dt_fs))
                     .map_err(|e| JsValue::from_str(&format!("spectrum fit: {e}")))?;
                 js_value(&spectrum_out(r))
@@ -272,11 +272,11 @@ impl RamanSpectrum {
         let dt_fs = self.dt_fs;
         let iso = array1(acf_iso);
         let aniso = array1(acf_aniso);
-        let calc = molrs::compute::RamanSpectrum {
-            incident_frequency_cm1: self.incident_frequency_cm1,
-            temperature_k: self.temperature_k,
-            averaged: self.averaged,
-        };
+        let calc = molrs::compute::RamanSpectrum::new(
+            self.incident_frequency_cm1,
+            self.temperature_k,
+            self.averaged,
+        );
         let r = calc
             .fit((&iso, &aniso, dt_fs))
             .map_err(|e| JsValue::from_str(&format!("RamanSpectrum: {e}")))?;
@@ -309,11 +309,11 @@ impl RoaSpectrum {
     pub fn fit(&self, acf_iso: &[F], acf_aniso: &[F]) -> Result<JsValue, JsValue> {
         let iso = array1(acf_iso);
         let aniso = array1(acf_aniso);
-        let calc = molrs::compute::RoaSpectrum {
-            incident_frequency_cm1: self.0.incident_frequency_cm1,
-            temperature_k: self.0.temperature_k,
-            averaged: self.0.averaged,
-        };
+        let calc = molrs::compute::RoaSpectrum::new(
+            self.0.incident_frequency_cm1,
+            self.0.temperature_k,
+            self.0.averaged,
+        );
         let r = calc
             .fit((&iso, &aniso, self.0.dt_fs))
             .map_err(|e| JsValue::from_str(&format!("RoaSpectrum: {e}")))?;

@@ -2,20 +2,51 @@
 //! input.
 
 use molrs::core::FrameAccess;
-use ndarray::{Array1, Array2};
-use rustfft::FftPlanner;
-use rustfft::num_complex::Complex64;
+use ndarray::{Array1, Array2, Array3};
 
-use super::{acf_accumulate_into, central_diff_series};
+use super::central_diff_series;
 use crate::compute::Compute;
 use crate::compute::ComputeError;
 use crate::compute::ComputeResult;
-use crate::compute::lag_times;
+use crate::compute::{Normalization, TimeCorrelationSpec, autocorrelate, lag_times};
 
 /// Weight for diagonal anisotropy components in the Raman ACF.
 pub(super) const DIAG_ANISO_WEIGHT: f64 = 0.5;
 /// Weight for off-diagonal anisotropy components in the Raman ACF.
 pub(super) const OFFDIAG_ANISO_WEIGHT: f64 = 3.0;
+
+/// Per-column weights of the anisotropic series built by
+/// [`raman_invariant_series`]: the three diagonal differences, then the three
+/// off-diagonals.
+pub(super) const ANISO_WEIGHTS: [f64; 6] = [
+    DIAG_ANISO_WEIGHT,
+    DIAG_ANISO_WEIGHT,
+    DIAG_ANISO_WEIGHT,
+    OFFDIAG_ANISO_WEIGHT,
+    OFFDIAG_ANISO_WEIGHT,
+    OFFDIAG_ANISO_WEIGHT,
+];
+
+/// The two rotational invariants of a `(n, 6)` Voigt tensor series, as the
+/// `(n, 1, 1)` isotropic series `(xx + yy + zz)/3` and the `(n, 1, 6)`
+/// anisotropic series `(xx−yy, yy−zz, zz−xx, xy, xz, yz)`, whose weighted
+/// autocorrelation (weights [`ANISO_WEIGHTS`]) is the anisotropic
+/// correlator.
+pub(super) fn raman_invariant_series(voigt: &Array2<f64>) -> (Array3<f64>, Array3<f64>) {
+    let n = voigt.shape()[0];
+    let mut iso = Array3::<f64>::zeros((n, 1, 1));
+    let mut aniso = Array3::<f64>::zeros((n, 1, 6));
+    for t in 0..n {
+        iso[[t, 0, 0]] = (voigt[[t, 0]] + voigt[[t, 1]] + voigt[[t, 2]]) / 3.0;
+        aniso[[t, 0, 0]] = voigt[[t, 0]] - voigt[[t, 1]];
+        aniso[[t, 0, 1]] = voigt[[t, 1]] - voigt[[t, 2]];
+        aniso[[t, 0, 2]] = voigt[[t, 2]] - voigt[[t, 0]];
+        aniso[[t, 0, 3]] = voigt[[t, 3]];
+        aniso[[t, 0, 4]] = voigt[[t, 4]];
+        aniso[[t, 0, 5]] = voigt[[t, 5]];
+    }
+    (iso, aniso)
+}
 
 /// Raw isotropic + (weighted) anisotropic polarizability-derivative ACFs — the
 /// Raman-spectrum raw input.
@@ -86,57 +117,13 @@ impl Compute for RamanTensor {
         let dalpha = central_diff_series(polarizabilities, dt);
 
         // Isotropic: (α̇_xx + α̇_yy + α̇_zz) / 3.
-        let mut iso = vec![0.0_f64; flux_len];
-        for t in 0..flux_len {
-            iso[t] = (dalpha[[t, 0]] + dalpha[[t, 1]] + dalpha[[t, 2]]) / 3.0;
-        }
-
-        let mut planner = FftPlanner::new();
-        let mut scratch: Vec<Complex64> = Vec::new();
-        let mut acf_iso = Array1::<f64>::zeros(max_lag + 1);
-        acf_accumulate_into(
-            &mut planner,
-            &iso,
-            max_lag,
-            acf_iso.as_slice_mut().unwrap(),
-            1.0,
-            &mut scratch,
-        );
-
-        // Anisotropic: 3 diagonal diffs (weight ½) + 3 off-diagonals (weight 3).
-        let mut acf_aniso = Array1::<f64>::zeros(max_lag + 1);
-        let aniso_out = acf_aniso.as_slice_mut().unwrap();
-        let mut col = vec![0.0_f64; flux_len];
-
-        // Diagonal differences: xx−yy, yy−zz, zz−xx.
-        let diag_pairs = [(0usize, 1usize), (1, 2), (2, 0)];
-        for (i, j) in diag_pairs {
-            for t in 0..flux_len {
-                col[t] = dalpha[[t, i]] - dalpha[[t, j]];
-            }
-            acf_accumulate_into(
-                &mut planner,
-                &col,
-                max_lag,
-                aniso_out,
-                DIAG_ANISO_WEIGHT,
-                &mut scratch,
-            );
-        }
-        // Off-diagonals: xy, xz, yz (Voigt indices 3,4,5).
-        for off in 3..6 {
-            for t in 0..flux_len {
-                col[t] = dalpha[[t, off]];
-            }
-            acf_accumulate_into(
-                &mut planner,
-                &col,
-                max_lag,
-                aniso_out,
-                OFFDIAG_ANISO_WEIGHT,
-                &mut scratch,
-            );
-        }
+        let (iso, aniso) = raman_invariant_series(&dalpha);
+        let raw = TimeCorrelationSpec::new()
+            .max_lag(max_lag)
+            .normalization(Normalization::Raw);
+        let acf_iso = autocorrelate(iso.view(), dt, &raw)?.values;
+        let acf_aniso =
+            autocorrelate(aniso.view(), dt, &raw.component_weights(&ANISO_WEIGHTS))?.values;
 
         Ok(RamanTensorResult {
             lag_times: lag_times(max_lag, dt),

@@ -2,109 +2,137 @@
 //! (`molrs::compute::spectroscopy`), and the consistency checks that judge them
 //! (Kramers–Kronig, the conductivity sum rule, route agreement).
 
+use super::correlation::{PySpectrum, parse_window};
 use crate::error::py_value_err;
 use molrs::compute::{
     Check, ConductivitySumRule, DipoleAutocorrelationSpectrum, DipoleRateCrossSpectrum,
     EinsteinHelfandSpectrum, Fit, GreenKuboSpectrum, IrSpectrum, KramersKronig, PowerSpectrum,
     RamanSpectrum, ResonanceRamanSpectrum, RoaSpectrum, RouteAgreement, VcdSpectrum,
 };
+use molrs::signal::WindowType;
 use ndarray::Array1;
 use numpy::{IntoPyArray, PyReadonlyArray1};
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::types::{PyAny, PyAnyMethods, PyDict, PyDictMethods};
 
-// ── PowerSpectrum (VDOS) ──────────────────────────────────────────────────────
-
-fn spectrum_dict<'py>(
-    py: Python<'py>,
-    frequencies_cm1: Array1<f64>,
-    intensities: Array1<f64>,
-    resolution: usize,
-    n_frames: usize,
-) -> PyResult<Bound<'py, PyDict>> {
-    let d = PyDict::new(py);
-    d.set_item("frequencies_cm1", frequencies_cm1.into_pyarray(py))?;
-    d.set_item("intensities", intensities.into_pyarray(py))?;
-    d.set_item("resolution", resolution)?;
-    d.set_item("n_frames", n_frames)?;
-    Ok(d)
+/// The window + pad settings every one-sided spectrum transform takes.
+#[derive(Clone, Copy)]
+struct Taper {
+    window: WindowType,
+    pad_factor: usize,
 }
 
-/// Velocity power spectrum (VDOS) transform of a **raw velocity ACF**
-/// (CosineSq window + zero-padded forward FFT).
+impl Taper {
+    fn parse(window: &str, pad_factor: usize) -> PyResult<Self> {
+        if pad_factor == 0 {
+            return Err(PyValueError::new_err("pad_factor must be >= 1"));
+        }
+        Ok(Self {
+            window: parse_window(window)?,
+            pad_factor,
+        })
+    }
+
+    fn power(self) -> PowerSpectrum {
+        PowerSpectrum {
+            window: self.window,
+            pad_factor: self.pad_factor,
+        }
+    }
+}
+
+fn one_sided(taper: Taper, acf: PyReadonlyArray1<'_, f64>, dt_fs: f64) -> PyResult<PySpectrum> {
+    let a = acf.as_array().to_owned();
+    let r = taper.power().fit((&a, dt_fs)).map_err(py_value_err)?;
+    Ok(PySpectrum::from_result(r, taper.window, dt_fs))
+}
+
+// ── PowerSpectrum (VDOS) ──────────────────────────────────────────────────────
+
+/// Velocity power spectrum (VDOS) transform of a raw velocity ACF: window
+/// the one-sided curve, zero-pad to ``pad_factor`` times its length (rounded
+/// up to a power of two) and forward-FFT it. ``window`` is ``"cosine_sq"``
+/// (default; keeps ``C(0)``), ``"hann"``, ``"blackman"`` or ``"none"``.
+/// :meth:`TimeCorrelation.spectrum` is this transform on a curve.
 #[pyclass(module = "molrs.compute", name = "PowerSpectrum")]
-pub struct PyPowerSpectrum;
+pub struct PyPowerSpectrum {
+    taper: Taper,
+}
 
 #[pymethods]
 impl PyPowerSpectrum {
     #[new]
-    fn new() -> Self {
-        Self
+    #[pyo3(signature = (window="cosine_sq", pad_factor=4))]
+    fn new(window: &str, pad_factor: usize) -> PyResult<Self> {
+        Ok(Self {
+            taper: Taper::parse(window, pad_factor)?,
+        })
     }
 
-    /// Window + FFT the raw ACF (timestep ``dt_fs``) into a VDOS spectrum.
-    ///
-    /// Returns ``{"frequencies_cm1", "intensities", "resolution", "n_frames"}``.
-    fn fit<'py>(
-        &self,
-        py: Python<'py>,
-        acf: PyReadonlyArray1<'py, f64>,
-        dt_fs: f64,
-    ) -> PyResult<Bound<'py, PyDict>> {
-        let a = acf.as_array().to_owned();
-        let r = PowerSpectrum.fit((&a, dt_fs)).map_err(py_value_err)?;
-        spectrum_dict(
-            py,
-            r.frequencies_cm1,
-            r.intensities,
-            r.resolution,
-            r.n_frames,
-        )
+    /// Window + FFT the raw ACF (timestep ``dt_fs``) into a :class:`Spectrum`.
+    fn fit(&self, acf: PyReadonlyArray1<'_, f64>, dt_fs: f64) -> PyResult<PySpectrum> {
+        one_sided(self.taper, acf, dt_fs)
+    }
+
+    #[getter]
+    fn window(&self) -> &'static str {
+        self.taper.window.name()
+    }
+
+    #[getter]
+    fn pad_factor(&self) -> usize {
+        self.taper.pad_factor
     }
 }
 
 // ── IrSpectrum ───────────────────────────────────────────────────────────────
 
-/// Infrared absorption spectrum transform of a **raw dipole-flux ACF**
-/// (same window+FFT pipeline as [`PowerSpectrum`](PyPowerSpectrum); only the
-/// supplied ACF differs).
+/// Infrared absorption spectrum transform of a raw dipole-flux ACF: the
+/// :class:`PowerSpectrum` transform; only the supplied ACF differs.
 #[pyclass(module = "molrs.compute", name = "IrSpectrum")]
-pub struct PyIrSpectrum;
+pub struct PyIrSpectrum {
+    taper: Taper,
+}
 
 #[pymethods]
 impl PyIrSpectrum {
     #[new]
-    fn new() -> Self {
-        Self
+    #[pyo3(signature = (window="cosine_sq", pad_factor=4))]
+    fn new(window: &str, pad_factor: usize) -> PyResult<Self> {
+        Ok(Self {
+            taper: Taper::parse(window, pad_factor)?,
+        })
     }
 
-    /// Window + FFT the raw flux ACF (timestep ``dt_fs``) into an IR spectrum.
-    ///
-    /// Returns ``{"frequencies_cm1", "intensities", "resolution", "n_frames"}``.
-    fn fit<'py>(
-        &self,
-        py: Python<'py>,
-        acf: PyReadonlyArray1<'py, f64>,
-        dt_fs: f64,
-    ) -> PyResult<Bound<'py, PyDict>> {
+    /// Window + FFT the raw flux ACF (timestep ``dt_fs``) into a :class:`Spectrum`.
+    fn fit(&self, acf: PyReadonlyArray1<'_, f64>, dt_fs: f64) -> PyResult<PySpectrum> {
         let a = acf.as_array().to_owned();
-        let r = IrSpectrum.fit((&a, dt_fs)).map_err(py_value_err)?;
-        spectrum_dict(
-            py,
-            r.frequencies_cm1,
-            r.intensities,
-            r.resolution,
-            r.n_frames,
-        )
+        let r = IrSpectrum {
+            window: self.taper.window,
+            pad_factor: self.taper.pad_factor,
+        }
+        .fit((&a, dt_fs))
+        .map_err(py_value_err)?;
+        Ok(PySpectrum::from_result(r, self.taper.window, dt_fs))
+    }
+
+    #[getter]
+    fn window(&self) -> &'static str {
+        self.taper.window.name()
+    }
+
+    #[getter]
+    fn pad_factor(&self) -> usize {
+        self.taper.pad_factor
     }
 }
 
 // ── RamanSpectrum ────────────────────────────────────────────────────────────
 
 /// Raman spectrum transform of **raw isotropic + anisotropic ACFs**
-/// (one CosineSq window per ACF, FFT both, then the cross-section + Bose
-/// prefactors).
+/// (one window per ACF — ``"cosine_sq"`` by default — FFT both, then the
+/// cross-section + Bose prefactors).
 #[pyclass(module = "molrs.compute", name = "RamanSpectrum")]
 pub struct PyRamanSpectrum {
     inner: RamanSpectrum,
@@ -113,18 +141,28 @@ pub struct PyRamanSpectrum {
 #[pymethods]
 impl PyRamanSpectrum {
     /// ``RamanSpectrum(incident_frequency_cm1=0.0, temperature_k=0.0,
-    /// averaged=False)`` — set ``incident_frequency_cm1``/``temperature_k`` to
-    /// ``0.0`` to skip the cross-section / Bose correction.
+    /// averaged=False, window="cosine_sq", pad_factor=4)`` — set
+    /// ``incident_frequency_cm1``/``temperature_k`` to ``0.0`` to skip the
+    /// cross-section / Bose correction.
     #[new]
-    #[pyo3(signature = (incident_frequency_cm1=0.0, temperature_k=0.0, averaged=false))]
-    fn new(incident_frequency_cm1: f64, temperature_k: f64, averaged: bool) -> Self {
-        Self {
+    #[pyo3(signature = (incident_frequency_cm1=0.0, temperature_k=0.0, averaged=false, window="cosine_sq", pad_factor=4))]
+    fn new(
+        incident_frequency_cm1: f64,
+        temperature_k: f64,
+        averaged: bool,
+        window: &str,
+        pad_factor: usize,
+    ) -> PyResult<Self> {
+        let taper = Taper::parse(window, pad_factor)?;
+        Ok(Self {
             inner: RamanSpectrum {
                 incident_frequency_cm1,
                 temperature_k,
                 averaged,
+                window: taper.window,
+                pad_factor: taper.pad_factor,
             },
-        }
+        })
     }
 
     /// Window + FFT + prefactors on the raw iso/aniso ACFs (timestep ``dt_fs``).
@@ -392,36 +430,44 @@ fn raman_dict<'py>(
 }
 
 /// Vibrational circular dichroism (VCD) transform of a **raw electric/magnetic
-/// dipole cross-flux ACF** (same window+FFT pipeline as `IrSpectrum`; the signed
-/// cross-flux ACF differs).
+/// dipole cross-flux ACF** (the :class:`IrSpectrum` window+FFT pipeline; the
+/// signed cross-flux ACF differs).
 #[pyclass(module = "molrs.compute", name = "VcdSpectrum")]
-pub struct PyVcdSpectrum;
+pub struct PyVcdSpectrum {
+    taper: Taper,
+}
 
 #[pymethods]
 impl PyVcdSpectrum {
     #[new]
-    fn new() -> Self {
-        Self
+    #[pyo3(signature = (window="cosine_sq", pad_factor=4))]
+    fn new(window: &str, pad_factor: usize) -> PyResult<Self> {
+        Ok(Self {
+            taper: Taper::parse(window, pad_factor)?,
+        })
     }
 
-    /// Window + FFT the raw VCD cross-flux ACF (timestep ``dt_fs``).
-    ///
-    /// Returns ``{"frequencies_cm1", "intensities", "resolution", "n_frames"}``.
-    fn fit<'py>(
-        &self,
-        py: Python<'py>,
-        acf: PyReadonlyArray1<'py, f64>,
-        dt_fs: f64,
-    ) -> PyResult<Bound<'py, PyDict>> {
+    /// Window + FFT the raw VCD cross-flux ACF (timestep ``dt_fs``) into a
+    /// (signed) :class:`Spectrum`.
+    fn fit(&self, acf: PyReadonlyArray1<'_, f64>, dt_fs: f64) -> PyResult<PySpectrum> {
         let a = acf.as_array().to_owned();
-        let r = VcdSpectrum.fit((&a, dt_fs)).map_err(py_value_err)?;
-        spectrum_dict(
-            py,
-            r.frequencies_cm1,
-            r.intensities,
-            r.resolution,
-            r.n_frames,
-        )
+        let r = VcdSpectrum {
+            window: self.taper.window,
+            pad_factor: self.taper.pad_factor,
+        }
+        .fit((&a, dt_fs))
+        .map_err(py_value_err)?;
+        Ok(PySpectrum::from_result(r, self.taper.window, dt_fs))
+    }
+
+    #[getter]
+    fn window(&self) -> &'static str {
+        self.taper.window.name()
+    }
+
+    #[getter]
+    fn pad_factor(&self) -> usize {
+        self.taper.pad_factor
     }
 }
 
@@ -434,17 +480,27 @@ pub struct PyRoaSpectrum {
 
 #[pymethods]
 impl PyRoaSpectrum {
-    /// ``RoaSpectrum(incident_frequency_cm1=0.0, temperature_k=0.0, averaged=False)``.
+    /// ``RoaSpectrum(incident_frequency_cm1=0.0, temperature_k=0.0, averaged=False,
+    /// window="cosine_sq", pad_factor=4)``.
     #[new]
-    #[pyo3(signature = (incident_frequency_cm1=0.0, temperature_k=0.0, averaged=false))]
-    fn new(incident_frequency_cm1: f64, temperature_k: f64, averaged: bool) -> Self {
-        Self {
+    #[pyo3(signature = (incident_frequency_cm1=0.0, temperature_k=0.0, averaged=false, window="cosine_sq", pad_factor=4))]
+    fn new(
+        incident_frequency_cm1: f64,
+        temperature_k: f64,
+        averaged: bool,
+        window: &str,
+        pad_factor: usize,
+    ) -> PyResult<Self> {
+        let taper = Taper::parse(window, pad_factor)?;
+        Ok(Self {
             inner: RoaSpectrum {
                 incident_frequency_cm1,
                 temperature_k,
                 averaged,
+                window: taper.window,
+                pad_factor: taper.pad_factor,
             },
-        }
+        })
     }
 
     /// Window + FFT the raw iso/aniso ROA ACFs (timestep ``dt_fs``).
@@ -478,17 +534,27 @@ pub struct PyResonanceRamanSpectrum {
 
 #[pymethods]
 impl PyResonanceRamanSpectrum {
-    /// ``ResonanceRamanSpectrum(incident_frequency_cm1=0.0, temperature_k=0.0, averaged=False)``.
+    /// ``ResonanceRamanSpectrum(incident_frequency_cm1=0.0, temperature_k=0.0, averaged=False,
+    /// window="cosine_sq", pad_factor=4)``.
     #[new]
-    #[pyo3(signature = (incident_frequency_cm1=0.0, temperature_k=0.0, averaged=false))]
-    fn new(incident_frequency_cm1: f64, temperature_k: f64, averaged: bool) -> Self {
-        Self {
+    #[pyo3(signature = (incident_frequency_cm1=0.0, temperature_k=0.0, averaged=false, window="cosine_sq", pad_factor=4))]
+    fn new(
+        incident_frequency_cm1: f64,
+        temperature_k: f64,
+        averaged: bool,
+        window: &str,
+        pad_factor: usize,
+    ) -> PyResult<Self> {
+        let taper = Taper::parse(window, pad_factor)?;
+        Ok(Self {
             inner: ResonanceRamanSpectrum {
                 incident_frequency_cm1,
                 temperature_k,
                 averaged,
+                window: taper.window,
+                pad_factor: taper.pad_factor,
             },
-        }
+        })
     }
 
     /// Window + FFT the raw resonant iso/aniso ACFs (timestep ``dt_fs``).

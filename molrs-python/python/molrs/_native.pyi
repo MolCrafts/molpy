@@ -4321,27 +4321,22 @@ class Rdf:
         nlists: Neighbors | Sequence[Neighbors],
     ) -> RdfResult: ...
 
-class MsdResult:
-    """Msd at a single time point."""
-
-    @property
-    def mean(self) -> float: ...
-    @property
-    def per_particle(self) -> ArrayF: ...
-
-class MsdTimeSeries:
-    """Time series of per-frame MSD values (frame 0 is the reference)."""
-
-    @property
-    def mean(self) -> ArrayF: ...
-    @property
-    def per_particle(self) -> ArrayF: ...
-    def __len__(self) -> int: ...
-    def __getitem__(self, index: int) -> MsdResult: ...
-
 class Msd:
-    def __init__(self, method: str = "direct") -> None: ...
-    def compute(self, frames: Frame | Sequence[Frame]) -> MsdTimeSeries: ...
+    """Mean squared displacement: ``"direct"`` (frame 0 the one origin) or
+    ``"window"`` (every ``stride``-th time origin, FFT route)."""
+
+    def __init__(self, method: str = "direct", stride: int = 1) -> None: ...
+    @property
+    def method(self) -> str: ...
+    @property
+    def stride(self) -> int: ...
+    def compute(
+        self,
+        frames_or_positions: Frame | Sequence[Frame] | ArrayF,
+        dt: float | None = None,
+        max_lag: int | None = None,
+        per_entity: bool = True,
+    ) -> TimeCorrelation: ...
 
 class ClusterResult:
     @property
@@ -4632,23 +4627,141 @@ class VanHoveResult:
     @property
     def has_distinct(self) -> bool: ...
 
-class AcfResult:
-    """Autocorrelation curve, one entry per lag."""
+class TimeCorrelation:
+    """One time-correlation curve and the estimator that produced it.
 
+    Returned by every correlator (``Acf``, ``Vacf``, ``Oacf``, ``Msd``, the
+    transport computes, ``pair_survival_tcf``); ``np.asarray(tc)`` is
+    ``tc.values``. The derived quantities are methods, each the matching
+    ``Fit`` on the same arrays.
+    """
+
+    def __init__(
+        self,
+        values: ArrayF,
+        lags: ArrayI64 | None = None,
+        dt: float | None = None,
+        kind: str = "custom",
+        counts: ArrayI64 | None = None,
+        per_entity: ArrayF | None = None,
+        normalization: str = "unbiased",
+        mean_subtract: bool = False,
+        stride: int = 1,
+        order: int | None = None,
+        n_frames: int | None = None,
+        n_entities: int | None = None,
+        extras: dict[str, Any] | None = None,
+    ) -> None: ...
     @property
-    def lags(self) -> list[int]: ...
+    def lags(self) -> ArrayI64: ...
     @property
-    def acf(self) -> npt.NDArray: ...
+    def lag_times(self) -> ArrayF | None: ...
+    @property
+    def values(self) -> ArrayF: ...
+    @property
+    def counts(self) -> ArrayI64 | None: ...
+    @property
+    def per_entity(self) -> ArrayF | None: ...
+    @property
+    def dt(self) -> float | None: ...
+    @property
+    def kind(self) -> str: ...
+    @property
+    def normalization(self) -> str: ...
+    @property
+    def mean_subtract(self) -> bool: ...
+    @property
+    def stride(self) -> int: ...
+    @property
+    def order(self) -> int | None: ...
+    @property
+    def n_frames(self) -> int | None: ...
+    @property
+    def n_entities(self) -> int: ...
+    @property
+    def extras(self) -> dict[str, Any] | None: ...
+    def with_dt(self, dt: float) -> TimeCorrelation: ...
+    def normalized(self) -> TimeCorrelation: ...
+    def integrate(self, n_lags: int | None = None, running: bool = False) -> float | ArrayF: ...
+    def linear_fit(self, window: tuple[float, float]) -> dict[str, float]: ...
+    def fit_exponential(self) -> dict[str, float]: ...
+    def diffusion(self, n_dims: int, window: tuple[float, float]) -> float: ...
+    def spectrum(self, window: str = "cosine_sq", pad_factor: int = 4) -> Spectrum: ...
+    def to_dict(self) -> dict[str, Any]: ...
+    def __len__(self) -> int: ...
+    def __array__(self, dtype: Any = None, copy: bool | None = None) -> npt.NDArray: ...
+
+class Spectrum:
+    """A one-sided spectrum on a wavenumber grid, with the transform's
+    window and time step."""
+
+    def __init__(
+        self,
+        frequencies_cm1: ArrayF,
+        intensities: ArrayF,
+        resolution: int | None = None,
+        n_frames: int | None = None,
+        window: str = "cosine_sq",
+        dt_fs: float | None = None,
+    ) -> None: ...
+    @property
+    def frequencies_cm1(self) -> ArrayF: ...
+    @property
+    def intensities(self) -> ArrayF: ...
+    @property
+    def resolution(self) -> int: ...
+    @property
+    def n_frames(self) -> int: ...
+    @property
+    def window(self) -> str: ...
+    @property
+    def dt_fs(self) -> float | None: ...
+    def to_dict(self) -> dict[str, Any]: ...
+    def __len__(self) -> int: ...
 
 class Acf:
     """Time-autocorrelation of a vector series, averaged over all time origins.
 
-    ``C(t) = 1/(N*(T-t)) * sum_i sum_tau v_i(tau).v_i(tau+t)`` — unbiased,
-    Wiener-Khinchin (FFT). Not the same estimator as ``Vacf``.
+    ``C(t) = norm * sum_i sum_c sum_tau v_ic(tau) * v_ic(tau+t)`` over an
+    ``(n_frames, n_entities, n_components)`` series — Wiener-Khinchin (FFT).
     """
 
-    def __init__(self) -> None: ...
-    def compute(self, series: npt.NDArray, max_lag: int) -> AcfResult: ...
+    def __init__(
+        self,
+        mean_subtract: bool = False,
+        normalization: str = "unbiased",
+        stride: int = 1,
+    ) -> None: ...
+    @property
+    def mean_subtract(self) -> bool: ...
+    @property
+    def normalization(self) -> str: ...
+    @property
+    def stride(self) -> int: ...
+    def compute(
+        self,
+        series: ArrayF,
+        max_lag: int,
+        dt: float | None = None,
+        per_entity: bool = False,
+    ) -> TimeCorrelation: ...
+
+class Oacf:
+    """Orientational autocorrelation ``C_l(t) = <P_l(u(0) . u(t))>`` of a
+    unit-vector series ``(n_frames, n_vectors, 3)``."""
+
+    def __init__(self, order: int = 1, stride: int = 1) -> None: ...
+    @property
+    def order(self) -> int: ...
+    @property
+    def stride(self) -> int: ...
+    def compute(
+        self,
+        vectors: ArrayF,
+        max_lag: int,
+        dt: float | None = None,
+        per_entity: bool = False,
+    ) -> TimeCorrelation: ...
 
 class VanHove:
     """Van Hove correlation function G(r, t)."""
@@ -4772,8 +4885,12 @@ class VoronoiVoidAnalysis:
 class VcdSpectrum:
     """Vibrational circular dichroism (VCD) spectrum transform."""
 
-    def __init__(self) -> None: ...
-    def fit(self, acf: ArrayF, dt_fs: float) -> dict[str, Any]: ...
+    def __init__(self, window: str = "cosine_sq", pad_factor: int = 4) -> None: ...
+    @property
+    def window(self) -> str: ...
+    @property
+    def pad_factor(self) -> int: ...
+    def fit(self, acf: ArrayF, dt_fs: float) -> Spectrum: ...
 
 class RoaSpectrum:
     """Raman optical activity (ROA) spectrum transform."""
@@ -4783,6 +4900,8 @@ class RoaSpectrum:
         incident_frequency_cm1: float = 0.0,
         temperature_k: float = 0.0,
         averaged: bool = False,
+        window: str = "cosine_sq",
+        pad_factor: int = 4,
     ) -> None: ...
     def fit(
         self, acf_iso: ArrayF, acf_aniso: ArrayF, dt_fs: float
@@ -4796,6 +4915,8 @@ class ResonanceRamanSpectrum:
         incident_frequency_cm1: float = 0.0,
         temperature_k: float = 0.0,
         averaged: bool = False,
+        window: str = "cosine_sq",
+        pad_factor: int = 4,
     ) -> None: ...
     def fit(
         self, acf_iso: ArrayF, acf_aniso: ArrayF, dt_fs: float
@@ -5291,10 +5412,15 @@ class DipoleAutocorrelationSpectrum:
 class DipoleRateCross:
     """Raw dipole-rate x dipole cross-correlation ``C(t) = sum_a <dM'_a(0) dM_a(t)>``."""
 
-    def __init__(self) -> None: ...
+    def __init__(
+        self,
+        mean_subtract: bool = True,
+        normalization: str = "unbiased",
+        stride: int = 1,
+    ) -> None: ...
     def compute(
-        self, dipole_moments: Any, dt: float, max_correlation_time: int
-    ) -> Any: ...
+        self, dipole_moments: ArrayF, dt: float, max_lag: int
+    ) -> TimeCorrelation: ...
 
 class DipoleRateCrossSpectrum:
     """ε(ω) from the dipole-rate x dipole cross-correlation."""
@@ -5338,32 +5464,40 @@ class DebyeFit:
     def fit(self, /, phi, dt): ...
 
 class DebyeRelaxation:
-    """
-    Raw dipole-ACF compute for the Debye relaxation route. Carries the
-    unnormalized ACF, the zero-lag variance ⟨M(0)²⟩, and the V/T/Ewald-BC
-    metadata the Debye amplitude needs (invariants b, c). The relaxation *shape*
-    τ comes from [`DebyeFit`](PyDebyeFit) applied to the **normalized** ACF.
-    """
-    def __init__(self, volume, temperature, boundary="tinfoil") -> None: ...
-    def compute(self, /, dipole_moments, dt, max_correlation_time): ...
+    """The fluctuation dipole ACF of the Debye relaxation route; ``extras``
+    carries ``volume``, ``temperature``, ``boundary`` and
+    ``zero_lag_variance``. τ is ``TimeCorrelation.fit_exponential``."""
+
+    def __init__(
+        self,
+        volume: float,
+        temperature: float,
+        boundary: str = "tinfoil",
+        mean_subtract: bool = True,
+        normalization: str = "unbiased",
+        stride: int = 1,
+    ) -> None: ...
+    def compute(
+        self, dipole_moments: ArrayF, dt: float, max_lag: int
+    ) -> TimeCorrelation: ...
 
 class EinsteinConductivity:
-    """
-    Raw collective charge-dipole MSD, with **no** fitted sigma/slope.
-    `σ = slope/(6·V·k_B·T)·prefactor` is a downstream
-    [`LinearFit`](PyLinearFit) + scale step.
-    """
-    def __init__(self) -> None: ...
-    def compute(self, /, translational_dipole, dt, max_correlation_time): ...
+    """The collective charge-dipole MSD, with **no** fitted sigma:
+    ``σ = slope/(6·V·k_B·T)`` is ``TimeCorrelation.linear_fit`` plus prefactor."""
+
+    def __init__(self, stride: int = 1) -> None: ...
+    def compute(
+        self, translational_dipole: ArrayF, dt: float, max_lag: int
+    ) -> TimeCorrelation: ...
 
 class EinsteinDiffusion:
-    """
-    Raw self-MSD for the Einstein diffusion route. Delegates to
-    `Msd::windowed` — MSD math is NOT re-derived. `D = slope/(2d)` is then a
-    [`LinearFit`](PyLinearFit) + scale step.
-    """
+    """The windowed self-MSD of the Einstein diffusion route;
+    ``D = slope/(2d)`` is ``TimeCorrelation.diffusion``."""
+
     def __init__(self) -> None: ...
-    def compute(self, /, frames, dt): ...
+    def compute(
+        self, frames_or_positions: Frame | Sequence[Frame] | ArrayF, dt: float
+    ) -> TimeCorrelation: ...
 
 class EinsteinHelfandSpectrum:
     """
@@ -5377,22 +5511,23 @@ class EinsteinHelfandSpectrum:
     def fit(self, /, acf): ...
 
 class GreenKuboConductivity:
-    """
-    Raw current autocorrelation function, with **no** fitted sigma. The
-    σ = (1/(3·V·k_B·T))·∫⟨JJ⟩ step is a downstream
-    [`CumulativeTrapezoid`](PyCumulativeTrapezoid) + scale.
-    """
-    def __init__(self) -> None: ...
-    def compute(self, /, current, dt, max_correlation_time): ...
+    """The current ACF, with **no** fitted sigma: ``σ = (1/(3·V·k_B·T))·∫⟨JJ⟩``
+    is ``TimeCorrelation.integrate`` plus prefactor."""
+
+    def __init__(
+        self,
+        mean_subtract: bool = False,
+        normalization: str = "unbiased",
+        stride: int = 1,
+    ) -> None: ...
+    def compute(self, current: ArrayF, dt: float, max_lag: int) -> TimeCorrelation: ...
 
 class GreenKuboDiffusion:
-    """
-    Raw velocity ACF for the Green–Kubo diffusion route (same raw curve as
-    [`Vacf`](PyVacf)). `D = (1/d)·∫ Vacf dt` is then a
-    [`CumulativeTrapezoid`](PyCumulativeTrapezoid) + scale step.
-    """
+    """The velocity ACF of the Green–Kubo diffusion route (``Vacf`` with its
+    defaults); ``D = (1/d)·∫ C dt`` is ``TimeCorrelation.diffusion``."""
+
     def __init__(self) -> None: ...
-    def compute(self, /, velocities, dt, resolution): ...
+    def compute(self, velocities: ArrayF, dt: float, max_lag: int) -> TimeCorrelation: ...
 
 class GreenKuboSpectrum:
     """
@@ -5406,13 +5541,15 @@ class GreenKuboSpectrum:
     def fit(self, /, acf): ...
 
 class IrSpectrum:
-    """
-    Infrared absorption spectrum transform of a **raw dipole-flux ACF**
-    (same window+FFT pipeline as [`PowerSpectrum`](PyPowerSpectrum); only the
-    supplied ACF differs).
-    """
-    def __init__(self) -> None: ...
-    def fit(self, /, acf, dt_fs): ...
+    """Infrared absorption spectrum transform of a raw dipole-flux ACF (the
+    ``PowerSpectrum`` transform; only the supplied ACF differs)."""
+
+    def __init__(self, window: str = "cosine_sq", pad_factor: int = 4) -> None: ...
+    @property
+    def window(self) -> str: ...
+    @property
+    def pad_factor(self) -> int: ...
+    def fit(self, acf: ArrayF, dt_fs: float) -> Spectrum: ...
 
 class LinearFit:
     """
@@ -5431,23 +5568,34 @@ class Plateau:
     def fit(self, /, y): ...
 
 class PowerSpectrum:
-    """
-    Velocity power spectrum (VDOS) transform of a **raw velocity ACF**
-    (CosineSq window + zero-padded forward FFT).
-    """
-    def __init__(self) -> None: ...
-    def fit(self, /, acf, dt_fs): ...
+    """Velocity power spectrum (VDOS) transform of a raw velocity ACF:
+    ``window`` (``"cosine_sq"``, ``"hann"``, ``"blackman"``, ``"none"``) +
+    zero-padded (``pad_factor``) forward FFT."""
+
+    def __init__(self, window: str = "cosine_sq", pad_factor: int = 4) -> None: ...
+    @property
+    def window(self) -> str: ...
+    @property
+    def pad_factor(self) -> int: ...
+    def fit(self, acf: ArrayF, dt_fs: float) -> Spectrum: ...
 
 class RamanSpectrum:
     """
     Raman spectrum transform of **raw isotropic + anisotropic ACFs**
-    (one CosineSq window per ACF, FFT both, then the cross-section + Bose
+    (one window per ACF, FFT both, then the cross-section + Bose
     prefactors).
     """
     def __init__(
-        self, incident_frequency_cm1=0.0, temperature_k=0.0, averaged=False
+        self,
+        incident_frequency_cm1: float = 0.0,
+        temperature_k: float = 0.0,
+        averaged: bool = False,
+        window: str = "cosine_sq",
+        pad_factor: int = 4,
     ) -> None: ...
-    def fit(self, /, acf_iso, acf_aniso, dt_fs): ...
+    def fit(
+        self, acf_iso: ArrayF, acf_aniso: ArrayF, dt_fs: float
+    ) -> dict[str, Any]: ...
 
 class RingSet:
     """
@@ -5480,14 +5628,23 @@ class RingSet:
     def smallest_ring_containing_atom(self, /, atom): ...
 
 class Vacf:
-    """
-    Raw unnormalized velocity autocorrelation function (the VDOS /
-    Green–Kubo-diffusion input). Returns only the raw ACF curve — compose with
-    [`PowerSpectrum`](PyPowerSpectrum) for VDOS or
-    [`CumulativeTrapezoid`](PyCumulativeTrapezoid) for D.
-    """
-    def __init__(self) -> None: ...
-    def compute(self, /, velocities, dt, resolution): ...
+    """Velocity autocorrelation function, averaged over degrees of freedom
+    and time origins (each degree of freedom mean-subtracted). The VDOS is
+    ``.spectrum()``; Green–Kubo D is ``.diffusion()``."""
+
+    def __init__(
+        self,
+        mean_subtract: bool = True,
+        normalization: str = "unbiased",
+        stride: int = 1,
+    ) -> None: ...
+    def compute(
+        self,
+        velocities: ArrayF,
+        dt: float,
+        max_lag: int,
+        per_entity: bool = False,
+    ) -> TimeCorrelation: ...
 
 class ConductivitySumRule:
     """Conductivity sum rule check."""
@@ -5599,10 +5756,10 @@ def read_prep(path: PathInput) -> dict[str, Any]:
 class OnsagerCorrelation:
     """Onsager collective mean-displacement cross-correlation."""
 
-    def __init__(self) -> None: ...
+    def __init__(self, stride: int = 1) -> None: ...
     def compute(
-        self, p_i: ArrayF, p_j: ArrayF, dt: float, max_correlation_time: int
-    ) -> dict[str, ArrayF]: ...
+        self, p_i: ArrayF, p_j: ArrayF, dt: float, max_lag: int
+    ) -> TimeCorrelation: ...
 
 def pair_survival_tcf(
     coords_i: ArrayF,
@@ -5612,10 +5769,10 @@ def pair_survival_tcf(
     r1: float,
     method: str,
     dt: float,
-    max_correlation_time: int,
+    max_lag: int,
     exclude_self: bool = False,
-) -> dict[str, ArrayF]:
-    """Pair-survival time-correlation function."""
+) -> TimeCorrelation:
+    """Pair-survival time-correlation function (kind ``"survival"``)."""
 
 def write_openmm_forcefield(
     path: PathInput, forcefield: ForceField, precision: int | None = None

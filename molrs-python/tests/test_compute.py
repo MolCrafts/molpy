@@ -207,9 +207,39 @@ class TestMsdMethodSelection:
     def test_the_two_methods_disagree(self):
         """Otherwise the parameter would be pinning nothing."""
         frames, _ = self._random_walk_frames()
-        direct = np.asarray(molrs.compute.Msd().compute(frames).mean)
-        window = np.asarray(molrs.compute.Msd(method="window").compute(frames).mean)
+        direct = np.asarray(molrs.compute.Msd().compute(frames).values)
+        window = np.asarray(molrs.compute.Msd(method="window").compute(frames).values)
         assert not np.allclose(direct, window)
+
+    def test_frames_and_positions_give_one_curve(self):
+        frames, pos = self._random_walk_frames()
+        from_frames = molrs.compute.Msd(method="window").compute(frames, dt=2.0)
+        from_array = molrs.compute.Msd(method="window").compute(pos, dt=2.0)
+        np.testing.assert_array_equal(from_frames.values, from_array.values)
+        np.testing.assert_array_equal(from_frames.per_entity, from_array.per_entity)
+        assert from_frames.kind == "msd"
+        assert from_frames.per_entity.shape == (len(frames), pos.shape[1])
+        assert from_frames.lag_times[1] == 2.0
+        assert from_frames.values[0] == 0.0
+
+    def test_window_matches_the_nested_loop(self):
+        _, pos = self._random_walk_frames(n_frames=20, n_particles=3)
+        got = molrs.compute.Msd(method="window").compute(pos, max_lag=6)
+        for lag in range(7):
+            d = pos[lag:] - pos[: len(pos) - lag]
+            want = (d**2).sum(axis=2).mean()
+            assert got.values[lag] == pytest.approx(want, abs=1e-9)
+        assert got.counts.tolist() == [20 - lag for lag in range(7)]
+
+    def test_direct_is_the_single_origin_curve(self):
+        _, pos = self._random_walk_frames(n_frames=12, n_particles=4)
+        got = molrs.compute.Msd().compute(pos, max_lag=5)
+        want = ((pos - pos[0]) ** 2).sum(axis=2)
+        np.testing.assert_allclose(got.per_entity, want[:6])
+        np.testing.assert_allclose(got.values, want[:6].mean(axis=1))
+        assert got.counts.tolist() == [1] * 6
+        with pytest.raises(ValueError, match="stride"):
+            molrs.compute.Msd(stride=2)
 
 
 class TestAcf:
@@ -242,27 +272,35 @@ class TestAcf:
 
     def test_lag_zero_is_the_mean_square(self):
         s = self._series()
-        got = np.asarray(molrs.compute.Acf().compute(s, max_lag=3).acf)
+        got = np.asarray(molrs.compute.Acf().compute(s, max_lag=3).values)
         assert got[0] == pytest.approx((s**2).sum() / (s.shape[1] * s.shape[0]))
+
+    def test_fft_route_matches_the_direct_definition(self):
+        s = self._series(n_frames=32)
+        got = molrs.compute.Acf().compute(s, max_lag=8)
+        np.testing.assert_allclose(got.values, self._direct(s, 8), atol=1e-10)
+        assert got.kind == "acf"
+        assert got.lag_times is None
+        assert got.counts.tolist() == [32 - lag for lag in range(9)]
 
     def test_max_lag_is_clamped(self):
         s = self._series(n_frames=10)
         res = molrs.compute.Acf().compute(s, max_lag=999)
-        assert len(np.asarray(res.acf)) == 10
+        assert len(np.asarray(res.values)) == 10
         assert res.lags[-1] == 9
 
     def test_a_constant_series_is_flat(self):
         s = np.full((16, 3, 2), 2.0)
-        got = np.asarray(molrs.compute.Acf().compute(s, max_lag=6).acf)
+        got = np.asarray(molrs.compute.Acf().compute(s, max_lag=6).values)
         assert np.allclose(got, 8.0)  # n_components * value^2
 
     def test_is_not_the_same_estimator_as_vacf(self):
         """Vacf mean-subtracts and averages over degrees of freedom: the same
         estimator on a different view, so the numbers differ."""
         s = self._series()
-        acf = np.asarray(molrs.compute.Acf().compute(s, max_lag=10).acf)
+        acf = np.asarray(molrs.compute.Acf().compute(s, max_lag=10).values)
         flat = s.reshape(s.shape[0], -1)
-        vacf = np.asarray(molrs.compute.Vacf().compute(flat, 1.0, 10)["acf"])
+        vacf = np.asarray(molrs.compute.Vacf().compute(flat, 1.0, 10).values)
         assert not np.allclose(acf, vacf), "the two estimators must not coincide"
 
     def test_too_few_frames_raises(self):
@@ -287,8 +325,10 @@ class TestRustNames:
     def test_onsager_correlation_is_a_compute(self):
         p = np.cumsum(np.ones((8, 3)), axis=0)
         out = molrs.compute.OnsagerCorrelation().compute(p, p, 1.0, 4)
-        assert set(out) == {"lag_times", "correlation"}
-        assert out["lag_times"].shape == out["correlation"].shape
+        assert out.kind == "onsager"
+        assert out.lag_times.shape == out.values.shape
+        # Straight-line motion: |ΔP|² = 3 t².
+        np.testing.assert_allclose(out.values, 3.0 * np.arange(5.0) ** 2)
 
     def test_distribution_function_reads_the_observable(self):
         with pytest.raises(ValueError, match="unknown observable"):

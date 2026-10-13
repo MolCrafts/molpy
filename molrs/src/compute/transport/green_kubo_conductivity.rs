@@ -3,11 +3,11 @@
 use molrs::core::FrameAccess;
 use ndarray::{Array1, Array2, Axis};
 
-use super::correlation::lag_times;
 use crate::compute::Compute;
 use crate::compute::ComputeError;
 use crate::compute::ComputeResult;
-use crate::compute::autocorrelation;
+use crate::compute::lag_times;
+use crate::compute::{TimeCorrelationSpec, autocorrelate};
 
 /// Raw current autocorrelation function, with **no** fitted sigma.
 #[derive(Debug, Clone)]
@@ -72,7 +72,12 @@ impl Compute for GreenKuboConductivity {
 
         // ⟨J(0)·J(τ)⟩: Cartesian sum of component ACFs, no mean subtraction
         // (current is already a flux; shared unbiased helper).
-        let jacf = autocorrelation(current.view().insert_axis(Axis(1)), max_lag, false)?.acf;
+        let jacf = autocorrelate(
+            current.view().insert_axis(Axis(1)),
+            dt,
+            &TimeCorrelationSpec::new().max_lag(max_lag),
+        )?
+        .values;
         Ok(GreenKuboConductivityResult {
             lag_times: lag_times(max_lag, dt),
             jacf,

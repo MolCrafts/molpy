@@ -4,11 +4,11 @@
 use molrs::core::FrameAccess;
 use ndarray::{Array1, Array2, Axis};
 
-use super::correlation::lag_times;
 use crate::compute::Compute;
 use crate::compute::ComputeError;
 use crate::compute::ComputeResult;
-use crate::compute::autocorrelation;
+use crate::compute::lag_times;
+use crate::compute::{TimeCorrelationSpec, autocorrelate};
 
 /// Unbiased velocity autocorrelation function result.
 #[derive(Debug, Clone)]
@@ -67,7 +67,14 @@ pub(super) fn velocity_acf(
 
     // ⟨δv_d(0) δv_d(τ)⟩ averaged over the n_dof degrees of freedom: each DOF
     // is one entity of a single component.
-    let acf = autocorrelation(velocities.view().insert_axis(Axis(2)), max_lag, true)?.acf;
+    let acf = autocorrelate(
+        velocities.view().insert_axis(Axis(2)),
+        dt,
+        &TimeCorrelationSpec::new()
+            .max_lag(max_lag)
+            .mean_subtract(true),
+    )?
+    .values;
 
     Ok(VacfResult {
         lag_times: lag_times(max_lag, dt),
@@ -166,9 +173,13 @@ mod tests {
         let res = 20;
         let v = rng_series(n, n_dof, 99);
         let raw = velocity_acf(&v, dt, res).unwrap();
-        let cart = autocorrelation(v.view().insert_axis(Axis(1)), res, true)
-            .unwrap()
-            .acf;
+        let cart = autocorrelate(
+            v.view().insert_axis(Axis(1)),
+            dt,
+            &TimeCorrelationSpec::new().max_lag(res).mean_subtract(true),
+        )
+        .unwrap()
+        .values;
         for k in 0..raw.acf.len() {
             // Fused vs sequential DOF scale may differ by 1 ULP; allow tiny tol.
             assert!((raw.acf[k] - cart[k] / n_dof as f64).abs() < 1e-12, "k={k}");

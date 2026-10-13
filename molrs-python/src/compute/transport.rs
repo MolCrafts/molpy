@@ -1,67 +1,102 @@
 //! Transport raw computes (`molrs::compute::transport`): velocity and current
 //! correlations, Einstein / Green–Kubo diffusion and conductivity, Debye
-//! relaxation and its fit, Onsager cross-correlation. Each returns the raw
-//! curve; the coefficient is the caller's explicit fit.
+//! relaxation and its fit, Onsager cross-correlation. Each returns a
+//! [`TimeCorrelation`](super::correlation::PyTimeCorrelation); the coefficient
+//! is the caller's explicit fit (`.diffusion()`, `.linear_fit()`,
+//! `.integrate()`, `DebyeFit`).
 
-use super::{EMPTY_FRAMES, collect_frames};
+use super::EMPTY_FRAMES;
+use super::correlation::{PyTimeCorrelation, Settings, cartesian_series, finish, origin_counts};
+use super::msd::positions_of;
 use crate::error::py_value_err;
 use molrs::compute::{
-    Compute, DebyeFit, DebyeRelaxation, DipoleRateCross, EinsteinConductivity, EinsteinDiffusion,
-    EinsteinDiffusionArgs, EwaldBoundary, Fit, GreenKuboConductivity, GreenKuboDiffusion,
-    OnsagerCorrelation, Vacf,
+    Compute, DebyeFit, DipoleRateCross, EwaldBoundary, Fit, TimeCorrelationSpec, autocorrelate,
+    displacement_correlate,
 };
-use molrs::core::Frame as CoreFrame;
-use numpy::{IntoPyArray, PyReadonlyArray1, PyReadonlyArray2};
+use ndarray::{Array3, Axis};
+use numpy::{PyReadonlyArray1, PyReadonlyArray2, PyReadonlyArray3};
+use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::types::{PyAny, PyDict, PyDictMethods};
 
-// ═══════════════════════════════════════════════════════════════════════════
-// Raw computes
-// ═══════════════════════════════════════════════════════════════════════════
+/// A velocity array as the `(n_frames, n_dof, 1)` series the VACF averages
+/// over: `(n_frames, n_dof)` as is, `(n_frames, n_atoms, 3)` flattened.
+fn dof_series(velocities: &Bound<'_, PyAny>) -> PyResult<Array3<f64>> {
+    if let Ok(v2) = velocities.extract::<PyReadonlyArray2<'_, f64>>() {
+        return Ok(v2.as_array().to_owned().insert_axis(Axis(2)));
+    }
+    if let Ok(v3) = velocities.extract::<PyReadonlyArray3<'_, f64>>() {
+        let a = v3.as_array();
+        let (t, n, d) = a.dim();
+        let flat = a
+            .to_owned()
+            .into_shape_with_order((t, n * d, 1))
+            .map_err(|e| PyValueError::new_err(e.to_string()))?;
+        return Ok(flat);
+    }
+    Err(PyValueError::new_err(
+        "velocities must be a float64 array of shape (n_frames, n_dof) or (n_frames, n_atoms, 3)",
+    ))
+}
 
-// ── VACF ─────────────────────────────────────────────────────────────────────
+fn vacf(
+    settings: Settings,
+    velocities: &Bound<'_, PyAny>,
+    dt: f64,
+    max_lag: usize,
+    per_entity: bool,
+) -> PyResult<PyTimeCorrelation> {
+    let series = dof_series(velocities)?;
+    let tc = autocorrelate(series.view(), dt, &settings.spec(max_lag, per_entity))
+        .map_err(py_value_err)?;
+    Ok(finish(tc, Some(dt), "vacf", settings, series.dim().0, None))
+}
 
-/// Raw unnormalized velocity autocorrelation function (the VDOS /
-/// Green–Kubo-diffusion input). Returns only the raw ACF curve — compose with
-/// [`PowerSpectrum`](PyPowerSpectrum) for VDOS or
-/// [`CumulativeTrapezoid`](PyCumulativeTrapezoid) for D.
+// ── Vacf ─────────────────────────────────────────────────────────────────────
+
+/// Velocity autocorrelation function, ``C(t) = ⟨v(τ) · v(τ+t)⟩`` averaged
+/// over degrees of freedom and time origins.
+///
+/// ``velocities`` is ``(n_frames, n_dof)`` or ``(n_frames, n_atoms, 3)``;
+/// each degree of freedom loses its time mean first (``mean_subtract=True``)
+/// and the curve is the unbiased all-origins estimator — :class:`Acf` on the
+/// ``(n_frames, n_dof, 1)`` view. Compose with
+/// :meth:`TimeCorrelation.spectrum` for the VDOS or
+/// :meth:`TimeCorrelation.diffusion` (Green–Kubo) for D.
 #[pyclass(module = "molrs.compute", name = "Vacf")]
-pub struct PyVacf;
+pub struct PyVacf {
+    settings: Settings,
+}
 
 #[pymethods]
 impl PyVacf {
     #[new]
-    fn new() -> Self {
-        Self
+    #[pyo3(signature = (mean_subtract=true, normalization="unbiased", stride=1))]
+    fn new(mean_subtract: bool, normalization: &str, stride: usize) -> PyResult<Self> {
+        Ok(Self {
+            settings: Settings::parse(mean_subtract, normalization, stride)?,
+        })
     }
 
-    /// Compute the raw velocity ACF.
-    ///
-    /// Returns a dict ``{"lag_times", "acf"}`` of float64 arrays. **No** fitted
-    /// scalar.
-    fn compute<'py>(
+    /// The VACF for lags ``0..=max_lag`` (clamped to ``n_frames - 1``), with
+    /// ``dt`` the frame spacing; kind ``"vacf"``.
+    #[pyo3(signature = (velocities, dt, max_lag, per_entity=false))]
+    fn compute(
         &self,
-        py: Python<'py>,
-        velocities: PyReadonlyArray2<'py, f64>,
+        velocities: &Bound<'_, PyAny>,
         dt: f64,
-        resolution: usize,
-    ) -> PyResult<Bound<'py, PyDict>> {
-        let v = velocities.as_array().to_owned();
-        let r = Vacf
-            .compute(EMPTY_FRAMES, (&v, dt, resolution))
-            .map_err(py_value_err)?;
-        let d = PyDict::new(py);
-        d.set_item("lag_times", r.lag_times.into_pyarray(py))?;
-        d.set_item("acf", r.acf.into_pyarray(py))?;
-        Ok(d)
+        max_lag: usize,
+        per_entity: bool,
+    ) -> PyResult<PyTimeCorrelation> {
+        vacf(self.settings, velocities, dt, max_lag, per_entity)
     }
 }
 
-// ── GreenKuboDiffusion (raw velocity ACF, diffusion route) ────────────────────
+// ── GreenKuboDiffusion ────────────────────────────────────────────────────────
 
-/// Raw velocity ACF for the Green–Kubo diffusion route (same raw curve as
-/// [`Vacf`](PyVacf)). `D = (1/d)·∫ Vacf dt` is then a
-/// [`CumulativeTrapezoid`](PyCumulativeTrapezoid) + scale step.
+/// The velocity ACF for the Green–Kubo diffusion route: the same curve as
+/// :class:`Vacf` with its defaults. ``D = (1/d) ∫ C(t) dt`` is then
+/// :meth:`TimeCorrelation.diffusion`.
 #[pyclass(module = "molrs.compute", name = "GreenKuboDiffusion")]
 pub struct PyGreenKuboDiffusion;
 
@@ -72,30 +107,24 @@ impl PyGreenKuboDiffusion {
         Self
     }
 
-    /// Returns ``{"lag_times", "acf"}``; no fitted D.
-    fn compute<'py>(
+    /// ``Vacf().compute(velocities, dt, max_lag)``.
+    #[pyo3(signature = (velocities, dt, max_lag))]
+    fn compute(
         &self,
-        py: Python<'py>,
-        velocities: PyReadonlyArray2<'py, f64>,
+        velocities: &Bound<'_, PyAny>,
         dt: f64,
-        resolution: usize,
-    ) -> PyResult<Bound<'py, PyDict>> {
-        let v = velocities.as_array().to_owned();
-        let r = GreenKuboDiffusion
-            .compute(EMPTY_FRAMES, (&v, dt, resolution))
-            .map_err(py_value_err)?;
-        let d = PyDict::new(py);
-        d.set_item("lag_times", r.lag_times.into_pyarray(py))?;
-        d.set_item("acf", r.acf.into_pyarray(py))?;
-        Ok(d)
+        max_lag: usize,
+    ) -> PyResult<PyTimeCorrelation> {
+        let settings = Settings::parse(true, "unbiased", 1)?;
+        vacf(settings, velocities, dt, max_lag, false)
     }
 }
 
-// ── EinsteinDiffusion (raw self-MSD; consumes frames) ─────────────────────────
+// ── EinsteinDiffusion ─────────────────────────────────────────────────────────
 
-/// Raw self-MSD for the Einstein diffusion route. Delegates to
-/// `Msd::windowed` — MSD math is NOT re-derived. `D = slope/(2d)` is then a
-/// [`LinearFit`](PyLinearFit) + scale step.
+/// The self-MSD for the Einstein diffusion route: ``Msd(method="window")``
+/// over every lag, atom-averaged. ``D = slope / (2d)`` is then
+/// :meth:`TimeCorrelation.diffusion`.
 #[pyclass(module = "molrs.compute", name = "EinsteinDiffusion")]
 pub struct PyEinsteinDiffusion;
 
@@ -106,205 +135,249 @@ impl PyEinsteinDiffusion {
         Self
     }
 
-    /// Compute the raw self-MSD over ``frames`` (a `Frame` or list of `Frame`).
-    ///
-    /// Returns ``{"lag_times", "msd"}``; no fitted D.
-    fn compute<'py>(
+    /// The windowed MSD of ``frames_or_positions`` (a ``Frame``, a sequence
+    /// of frames, or an ``(n_frames, n_atoms, 3)`` unwrapped array) with
+    /// ``dt`` the frame spacing; kind ``"msd"``.
+    fn compute(
         &self,
-        py: Python<'py>,
-        frames: &Bound<'py, PyAny>,
+        frames_or_positions: &Bound<'_, PyAny>,
         dt: f64,
-    ) -> PyResult<Bound<'py, PyDict>> {
-        let owned = collect_frames(frames)?;
-        let refs: Vec<&CoreFrame> = owned.iter().collect();
-        let r = EinsteinDiffusion
-            .compute(&refs, EinsteinDiffusionArgs { dt })
+    ) -> PyResult<PyTimeCorrelation> {
+        let positions = positions_of(frames_or_positions)?;
+        let settings = Settings::parse(false, "unbiased", 1)?;
+        let tc = displacement_correlate(positions.view(), None, dt, &TimeCorrelationSpec::new())
             .map_err(py_value_err)?;
-        let d = PyDict::new(py);
-        d.set_item("lag_times", r.lag_times.into_pyarray(py))?;
-        d.set_item("msd", r.msd.into_pyarray(py))?;
-        Ok(d)
+        Ok(finish(
+            tc,
+            Some(dt),
+            "msd",
+            settings,
+            positions.dim().0,
+            None,
+        ))
     }
 }
 
-// ── EinsteinConductivity (raw collective charge-dipole MSD) ───────────────────
+// ── EinsteinConductivity ──────────────────────────────────────────────────────
 
-/// Raw collective charge-dipole MSD, with **no** fitted sigma/slope.
-/// `σ = slope/(6·V·k_B·T)·prefactor` is a downstream
-/// [`LinearFit`](PyLinearFit) + scale step.
+/// The collective charge-dipole MSD ``⟨|M_J(τ+t) − M_J(τ)|²⟩`` of the
+/// Einstein–Helfand conductivity route, with **no** fitted σ:
+/// ``σ = slope / (6 V k_B T)`` is the caller's :meth:`TimeCorrelation.linear_fit`
+/// plus prefactor.
 #[pyclass(module = "molrs.compute", name = "EinsteinConductivity")]
-pub struct PyEinsteinConductivity;
+pub struct PyEinsteinConductivity {
+    stride: usize,
+}
 
 #[pymethods]
 impl PyEinsteinConductivity {
     #[new]
-    fn new() -> Self {
-        Self
+    #[pyo3(signature = (stride=1))]
+    fn new(stride: usize) -> PyResult<Self> {
+        if stride == 0 {
+            return Err(PyValueError::new_err("stride must be >= 1"));
+        }
+        Ok(Self { stride })
     }
 
-    /// Compute the raw collective-dipole MSD.
-    ///
-    /// ``translational_dipole`` is ``(n_frames, 3)``. Returns
-    /// ``{"lag_times", "msd"}``; **no** ``sigma``/``slope``.
-    fn compute<'py>(
+    /// ``translational_dipole`` is ``(n_frames, 3)``; kind ``"msd"``.
+    #[pyo3(signature = (translational_dipole, dt, max_lag))]
+    fn compute(
         &self,
-        py: Python<'py>,
-        translational_dipole: PyReadonlyArray2<'py, f64>,
+        translational_dipole: PyReadonlyArray2<'_, f64>,
         dt: f64,
-        max_correlation_time: usize,
-    ) -> PyResult<Bound<'py, PyDict>> {
-        let td = translational_dipole.as_array().to_owned();
-        let r = EinsteinConductivity
-            .compute(EMPTY_FRAMES, (&td, dt, max_correlation_time))
-            .map_err(py_value_err)?;
-        let d = PyDict::new(py);
-        d.set_item("lag_times", r.lag_times.into_pyarray(py))?;
-        d.set_item("msd", r.msd.into_pyarray(py))?;
-        Ok(d)
+        max_lag: usize,
+    ) -> PyResult<PyTimeCorrelation> {
+        let m = cartesian_series(&translational_dipole, "translational_dipole")?;
+        let settings = Settings::parse(false, "unbiased", self.stride)?;
+        let tc = displacement_correlate(
+            m.view().insert_axis(Axis(1)),
+            None,
+            dt,
+            &settings.spec(max_lag, false),
+        )
+        .map_err(py_value_err)?;
+        Ok(finish(tc, Some(dt), "msd", settings, m.dim().0, None))
     }
 }
 
-// ── GreenKuboConductivity (raw current ACF) ───────────────────────────────────
+// ── GreenKuboConductivity ─────────────────────────────────────────────────────
 
-/// Raw current autocorrelation function, with **no** fitted sigma. The
-/// σ = (1/(3·V·k_B·T))·∫⟨JJ⟩ step is a downstream
-/// [`CumulativeTrapezoid`](PyCumulativeTrapezoid) + scale.
+/// The current autocorrelation ``⟨J(τ) · J(τ+t)⟩`` of the Green–Kubo
+/// conductivity route, with **no** fitted σ: ``σ = (1 / (3 V k_B T)) ∫ C dt``
+/// is the caller's :meth:`TimeCorrelation.integrate` plus prefactor. The
+/// current is not mean-subtracted by default.
 #[pyclass(module = "molrs.compute", name = "GreenKuboConductivity")]
-pub struct PyGreenKuboConductivity;
+pub struct PyGreenKuboConductivity {
+    settings: Settings,
+}
 
 #[pymethods]
 impl PyGreenKuboConductivity {
     #[new]
-    fn new() -> Self {
-        Self
+    #[pyo3(signature = (mean_subtract=false, normalization="unbiased", stride=1))]
+    fn new(mean_subtract: bool, normalization: &str, stride: usize) -> PyResult<Self> {
+        Ok(Self {
+            settings: Settings::parse(mean_subtract, normalization, stride)?,
+        })
     }
 
-    /// Compute the raw current ACF.
-    ///
-    /// ``current`` is ``(n_frames, 3)``. Returns ``{"lag_times", "jacf"}``;
-    /// **no** ``sigma``/``sigma_running``.
-    fn compute<'py>(
+    /// ``current`` is ``(n_frames, 3)``; kind ``"jacf"``.
+    #[pyo3(signature = (current, dt, max_lag))]
+    fn compute(
         &self,
-        py: Python<'py>,
-        current: PyReadonlyArray2<'py, f64>,
+        current: PyReadonlyArray2<'_, f64>,
         dt: f64,
-        max_correlation_time: usize,
-    ) -> PyResult<Bound<'py, PyDict>> {
-        let j = current.as_array().to_owned();
-        let r = GreenKuboConductivity
-            .compute(EMPTY_FRAMES, (&j, dt, max_correlation_time))
-            .map_err(py_value_err)?;
-        let d = PyDict::new(py);
-        d.set_item("lag_times", r.lag_times.into_pyarray(py))?;
-        d.set_item("jacf", r.jacf.into_pyarray(py))?;
-        Ok(d)
+        max_lag: usize,
+    ) -> PyResult<PyTimeCorrelation> {
+        let j = cartesian_series(&current, "current")?;
+        let tc = autocorrelate(
+            j.view().insert_axis(Axis(1)),
+            dt,
+            &self.settings.spec(max_lag, false),
+        )
+        .map_err(py_value_err)?;
+        Ok(finish(tc, Some(dt), "jacf", self.settings, j.dim().0, None))
     }
 }
 
-// ── DipoleRateCross (raw C_ṀM correlator) ─────────────────────────────────────
+// ── DipoleRateCross ───────────────────────────────────────────────────────────
 
-/// Raw dipole-rate × dipole cross-correlation `C(t) = Σ_α ⟨δṀ_α(0) δM_α(t)⟩`.
-///
-/// Finite-difference `Ṁ` (NumPy `gradient` / edge_order=2), mean-subtracted
-/// Cartesian xcorr. Compose with [`DipoleRateCrossSpectrum`] for ε(ω).
+/// Dipole-rate × dipole cross-correlation ``C(t) = Σ_α ⟨δṀ_α(τ) δM_α(τ+t)⟩``,
+/// with ``Ṁ`` the second-order finite difference of ``M`` (NumPy ``gradient``,
+/// ``edge_order=2``). Compose with ``DipoleRateCrossSpectrum`` for ε(ω).
 #[pyclass(module = "molrs.compute", name = "DipoleRateCross")]
-pub struct PyDipoleRateCross;
+pub struct PyDipoleRateCross {
+    settings: Settings,
+}
 
 #[pymethods]
 impl PyDipoleRateCross {
     #[new]
-    fn new() -> Self {
-        Self
+    #[pyo3(signature = (mean_subtract=true, normalization="unbiased", stride=1))]
+    fn new(mean_subtract: bool, normalization: &str, stride: usize) -> PyResult<Self> {
+        Ok(Self {
+            settings: Settings::parse(mean_subtract, normalization, stride)?,
+        })
     }
 
-    /// Compute the raw cross correlator from ``dipole_moments`` ``(n_frames, 3)``.
-    ///
-    /// Returns ``{"lag_times", "cross"}``.
-    fn compute<'py>(
+    /// ``dipole_moments`` is ``(n_frames, 3)``; kind ``"cross"``.
+    #[pyo3(signature = (dipole_moments, dt, max_lag))]
+    fn compute(
         &self,
-        py: Python<'py>,
-        dipole_moments: PyReadonlyArray2<'py, f64>,
+        dipole_moments: PyReadonlyArray2<'_, f64>,
         dt: f64,
-        max_correlation_time: usize,
-    ) -> PyResult<Bound<'py, PyDict>> {
-        let dm = dipole_moments.as_array().to_owned();
-        let r = DipoleRateCross
-            .compute(EMPTY_FRAMES, (&dm, dt, max_correlation_time))
-            .map_err(py_value_err)?;
-        let d = PyDict::new(py);
-        d.set_item("lag_times", r.lag_times.into_pyarray(py))?;
-        d.set_item("cross", r.cross.into_pyarray(py))?;
-        Ok(d)
+        max_lag: usize,
+    ) -> PyResult<PyTimeCorrelation> {
+        let dm = cartesian_series(&dipole_moments, "dipole_moments")?;
+        let n_frames = dm.dim().0;
+        let r = DipoleRateCross {
+            mean_subtract: self.settings.mean_subtract,
+            normalization: self.settings.normalization,
+            origin_stride: self.settings.stride,
+        }
+        .compute(EMPTY_FRAMES, (&dm, dt, max_lag))
+        .map_err(py_value_err)?;
+        let n_lags = r.cross.len();
+        Ok(PyTimeCorrelation::from_curve(
+            r.cross,
+            Some(dt),
+            "cross",
+            self.settings,
+            Some(origin_counts(n_frames, n_lags - 1, self.settings.stride)),
+            n_frames,
+        ))
     }
 }
 
-// ── DebyeRelaxation (raw dipole ACF + V/T/BC metadata) ────────────────────────
+// ── DebyeRelaxation ───────────────────────────────────────────────────────────
 
-/// Raw dipole-ACF compute for the Debye relaxation route. Carries the
-/// unnormalized ACF, the zero-lag variance ⟨M(0)²⟩, and the V/T/Ewald-BC
-/// metadata the Debye amplitude needs (invariants b, c). The relaxation *shape*
-/// τ comes from [`DebyeFit`](PyDebyeFit) applied to the **normalized** ACF.
-/// The same ``acf`` feeds [`DipoleAutocorrelationSpectrum`].
+/// The fluctuation dipole ACF ``⟨δM(τ) · δM(τ+t)⟩`` of the Debye relaxation
+/// route, carrying the metadata the Debye amplitude needs in ``extras``:
+/// ``volume``, ``temperature``, ``boundary`` and ``zero_lag_variance``
+/// (``values[0]``). τ is :meth:`TimeCorrelation.fit_exponential`; the same
+/// curve feeds ``EinsteinHelfandSpectrum`` and
+/// ``DipoleAutocorrelationSpectrum``.
 #[pyclass(module = "molrs.compute", name = "DebyeRelaxation")]
 pub struct PyDebyeRelaxation {
-    inner: DebyeRelaxation,
+    volume: f64,
+    temperature: f64,
+    boundary: EwaldBoundary,
+    settings: Settings,
 }
 
 #[pymethods]
 impl PyDebyeRelaxation {
-    /// ``DebyeRelaxation(volume, temperature, boundary="tinfoil")``.
+    /// ``DebyeRelaxation(volume, temperature, boundary="tinfoil",
+    /// mean_subtract=True, normalization="unbiased", stride=1)``.
     #[new]
-    #[pyo3(signature = (volume, temperature, boundary="tinfoil"))]
-    fn new(volume: f64, temperature: f64, boundary: &str) -> PyResult<Self> {
+    #[pyo3(signature = (volume, temperature, boundary="tinfoil", mean_subtract=true, normalization="unbiased", stride=1))]
+    fn new(
+        volume: f64,
+        temperature: f64,
+        boundary: &str,
+        mean_subtract: bool,
+        normalization: &str,
+        stride: usize,
+    ) -> PyResult<Self> {
+        if volume <= 0.0 {
+            return Err(PyValueError::new_err(format!(
+                "volume must be positive, got {volume}"
+            )));
+        }
+        if temperature <= 0.0 {
+            return Err(PyValueError::new_err(format!(
+                "temperature must be positive, got {temperature}"
+            )));
+        }
         Ok(Self {
-            inner: DebyeRelaxation {
-                volume,
-                temperature,
-                boundary: EwaldBoundary::from_name(boundary).map_err(py_value_err)?,
-            },
+            volume,
+            temperature,
+            boundary: EwaldBoundary::from_name(boundary).map_err(py_value_err)?,
+            settings: Settings::parse(mean_subtract, normalization, stride)?,
         })
     }
 
-    /// Compute the raw dipole ACF + metadata.
-    ///
-    /// ``dipole_moments`` is ``(n_frames, 3)``. Returns ``{"lag_times", "acf",
-    /// "zero_lag_variance", "volume", "temperature", "boundary"}``; the ACF is
-    /// **unnormalized** (``acf[0] == zero_lag_variance``).
-    fn compute<'py>(
+    /// ``dipole_moments`` is ``(n_frames, 3)``; kind ``"dipole_acf"``.
+    #[pyo3(signature = (dipole_moments, dt, max_lag))]
+    fn compute(
         &self,
-        py: Python<'py>,
-        dipole_moments: PyReadonlyArray2<'py, f64>,
+        py: Python<'_>,
+        dipole_moments: PyReadonlyArray2<'_, f64>,
         dt: f64,
-        max_correlation_time: usize,
-    ) -> PyResult<Bound<'py, PyDict>> {
-        let dm = dipole_moments.as_array().to_owned();
-        let r = self
-            .inner
-            .compute(EMPTY_FRAMES, (&dm, dt, max_correlation_time))
-            .map_err(py_value_err)?;
-        let d = PyDict::new(py);
-        d.set_item("lag_times", r.lag_times.into_pyarray(py))?;
-        d.set_item("acf", r.acf.into_pyarray(py))?;
-        d.set_item("zero_lag_variance", r.zero_lag_variance)?;
-        d.set_item("volume", r.volume)?;
-        d.set_item("temperature", r.temperature)?;
-        d.set_item(
+        max_lag: usize,
+    ) -> PyResult<PyTimeCorrelation> {
+        let dm = cartesian_series(&dipole_moments, "dipole_moments")?;
+        let tc = autocorrelate(
+            dm.view().insert_axis(Axis(1)),
+            dt,
+            &self.settings.spec(max_lag, false),
+        )
+        .map_err(py_value_err)?;
+        let zero_lag_variance = tc.values[0];
+        let mut out = finish(tc, Some(dt), "dipole_acf", self.settings, dm.dim().0, None);
+        let extras = PyDict::new(py);
+        extras.set_item("volume", self.volume)?;
+        extras.set_item("temperature", self.temperature)?;
+        extras.set_item(
             "boundary",
-            match r.boundary {
+            match self.boundary {
                 EwaldBoundary::TinFoil => "tinfoil",
                 EwaldBoundary::Vacuum => "vacuum",
             },
         )?;
-        Ok(d)
+        extras.set_item("zero_lag_variance", zero_lag_variance)?;
+        out.set_extras(extras.unbind());
+        Ok(out)
     }
 }
 
-// ── DebyeFit (time-domain log-linear ACF fit) ─────────────────────────────────
+// ── DebyeFit ──────────────────────────────────────────────────────────────────
 
-/// Single-exponential (Debye) relaxation fit of a **normalized** dipole ACF
-/// Φ(t) = A·exp(−t/τ), by log-linear least squares over the leading positive
-/// run. This is the **time-domain** ACF fit consolidated from molpy; it returns
-/// τ and the amplitude A.
+/// Single-exponential (Debye) relaxation fit of a **normalized** correlation
+/// function ``Φ(t) = A·exp(−t/τ)``, by log-linear least squares over the
+/// leading positive run; returns τ and the amplitude A.
+/// :meth:`TimeCorrelation.fit_exponential` is this fit on a curve.
 #[pyclass(module = "molrs.compute", name = "DebyeFit")]
 pub struct PyDebyeFit;
 
@@ -315,7 +388,7 @@ impl PyDebyeFit {
         Self
     }
 
-    /// Fit Φ(t) = A·exp(−t/τ) on the normalized ACF ``phi`` (sample step ``dt``).
+    /// Fit Φ(t) = A·exp(−t/τ) on the normalized curve ``phi`` (sample step ``dt``).
     ///
     /// Returns ``{"tau", "amplitude", "n_samples"}``.
     fn fit<'py>(
@@ -334,37 +407,55 @@ impl PyDebyeFit {
     }
 }
 
+// ── OnsagerCorrelation ────────────────────────────────────────────────────────
+
 /// Onsager collective mean-displacement cross-correlation
-/// `⟨ΔP_i(t) · ΔP_j(t)⟩` (the integrand of the Onsager coefficients `L_ij`).
+/// ``L_ij(t) = ⟨ΔP_i(t) · ΔP_j(t)⟩`` over all time origins (the integrand of
+/// the Onsager coefficients); ``p_i == p_j`` is that species' collective MSD.
 #[pyclass(module = "molrs.compute", name = "OnsagerCorrelation", frozen)]
-pub struct PyOnsagerCorrelation;
+pub struct PyOnsagerCorrelation {
+    stride: usize,
+}
 
 #[pymethods]
 impl PyOnsagerCorrelation {
     #[new]
-    fn new() -> Self {
-        Self
+    #[pyo3(signature = (stride=1))]
+    fn new(stride: usize) -> PyResult<Self> {
+        if stride == 0 {
+            return Err(PyValueError::new_err("stride must be >= 1"));
+        }
+        Ok(Self { stride })
     }
 
-    /// Returns a dict ``{"lag_times", "correlation"}`` of float64 arrays.
-    #[pyo3(signature = (p_i, p_j, dt, max_correlation_time))]
-    fn compute<'py>(
+    /// ``p_i`` and ``p_j`` are ``(n_frames, 3)`` unwrapped collective
+    /// coordinates; kind ``"onsager"``.
+    #[pyo3(signature = (p_i, p_j, dt, max_lag))]
+    fn compute(
         &self,
-        py: Python<'py>,
-        p_i: PyReadonlyArray2<'py, f64>,
-        p_j: PyReadonlyArray2<'py, f64>,
+        p_i: PyReadonlyArray2<'_, f64>,
+        p_j: PyReadonlyArray2<'_, f64>,
         dt: f64,
-        max_correlation_time: usize,
-    ) -> PyResult<Py<PyAny>> {
-        let pi = p_i.as_array().to_owned();
-        let pj = p_j.as_array().to_owned();
-        let result = OnsagerCorrelation
-            .compute(EMPTY_FRAMES, (&pi, &pj, dt, max_correlation_time))
-            .map_err(py_value_err)?;
-        let dict = pyo3::types::PyDict::new(py);
-        dict.set_item("lag_times", result.lag_times.into_pyarray(py))?;
-        dict.set_item("correlation", result.correlation.into_pyarray(py))?;
-        Ok(dict.into())
+        max_lag: usize,
+    ) -> PyResult<PyTimeCorrelation> {
+        let pi = cartesian_series(&p_i, "p_i")?;
+        let pj = cartesian_series(&p_j, "p_j")?;
+        if pi.dim().0 != pj.dim().0 {
+            return Err(PyValueError::new_err(format!(
+                "p_i and p_j must have one frame count, got {} and {}",
+                pi.dim().0,
+                pj.dim().0
+            )));
+        }
+        let settings = Settings::parse(false, "unbiased", self.stride)?;
+        let tc = displacement_correlate(
+            pi.view().insert_axis(Axis(1)),
+            Some(pj.view().insert_axis(Axis(1))),
+            dt,
+            &settings.spec(max_lag, false),
+        )
+        .map_err(py_value_err)?;
+        Ok(finish(tc, Some(dt), "onsager", settings, pi.dim().0, None))
     }
 }
 

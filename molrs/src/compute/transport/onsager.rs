@@ -2,12 +2,13 @@
 //! correlations.
 
 use crate::compute::ComputeResult;
-use ndarray::Array1;
+use ndarray::{Array1, Axis};
 
 use molrs::core::FrameAccess;
 
 use crate::compute::Compute;
 use crate::compute::ComputeError;
+use crate::compute::{TimeCorrelationSpec, displacement_correlate};
 
 fn validate_series(p: &ndarray::Array2<f64>, name: &'static str) -> Result<usize, ComputeError> {
     let shape = p.shape();
@@ -123,27 +124,16 @@ fn collective_cross_correlation(
         });
     }
 
-    let n_frames = n_i;
-    let max_lag = max_correlation_time.min(n_frames - 1);
-
-    let mut correlation = Array1::<f64>::zeros(max_lag + 1);
-    // τ = 0 is identically zero (Δ = 0); start at 1.
-    for tau in 1..=max_lag {
-        let count = n_frames - tau;
-        let mut acc = 0.0;
-        for t in 0..count {
-            let mut s = 0.0;
-            for d in 0..3 {
-                let di = p_i[[t + tau, d]] - p_i[[t, d]];
-                let dj = p_j[[t + tau, d]] - p_j[[t, d]];
-                s += di * dj;
-            }
-            acc += s;
-        }
-        correlation[tau] = acc / count as f64;
-    }
-
-    let lag_times = Array1::from_iter((0..=max_lag).map(|i| i as f64 * dt));
+    // The (n_frames, 1, 3) cross displacement correlation over all time
+    // origins; lag 0 is identically zero.
+    let corr = displacement_correlate(
+        p_i.view().insert_axis(Axis(1)),
+        Some(p_j.view().insert_axis(Axis(1))),
+        dt,
+        &TimeCorrelationSpec::new().max_lag(max_correlation_time),
+    )?;
+    let lag_times = corr.lag_times();
+    let correlation = corr.values;
 
     Ok(OnsagerCorrelationResult {
         lag_times,
@@ -181,6 +171,8 @@ impl ComputeResult for OnsagerCorrelationResult {}
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::needless_range_loop)]
+
     use super::*;
     use molrs::core::Frame;
     use ndarray::array;
@@ -259,5 +251,61 @@ mod tests {
                 .compute(&no_frames(), (&p3, &p3, 0.0, 1))
                 .is_err()
         );
+    }
+
+    /// Pin: the direct time-origin definition on random series, cross and
+    /// self, for the FFT displacement path to reproduce.
+    #[test]
+    fn matches_direct_oracle_on_random_series() {
+        use rand::{RngExt, SeedableRng};
+        let n = 64;
+        let max_lag = 25;
+        let mut rng = rand::rngs::StdRng::seed_from_u64(11);
+        let mut series = |_: u64| {
+            let mut s = ndarray::Array2::<f64>::zeros((n, 3));
+            for t in 0..n {
+                for d in 0..3 {
+                    s[[t, d]] = rng.random_range(-1.0..1.0);
+                }
+            }
+            s
+        };
+        let p_i = series(0);
+        let p_j = series(1);
+        let oracle = |a: &ndarray::Array2<f64>, b: &ndarray::Array2<f64>| -> Vec<f64> {
+            (0..=max_lag)
+                .map(|tau| {
+                    if tau == 0 {
+                        return 0.0;
+                    }
+                    let count = n - tau;
+                    let mut acc = 0.0;
+                    for t in 0..count {
+                        let mut s = 0.0;
+                        for d in 0..3 {
+                            let di = a[[t + tau, d]] - a[[t, d]];
+                            let dj = b[[t + tau, d]] - b[[t, d]];
+                            s += di * dj;
+                        }
+                        acc += s;
+                    }
+                    acc / count as f64
+                })
+                .collect()
+        };
+        for (a, b) in [(&p_i, &p_j), (&p_i, &p_i)] {
+            let r = OnsagerCorrelation
+                .compute(&no_frames(), (a, b, 0.5, max_lag))
+                .unwrap();
+            let want = oracle(a, b);
+            for tau in 0..=max_lag {
+                assert!(
+                    (r.correlation[tau] - want[tau]).abs() < 1e-12,
+                    "lag {tau}: {} vs {}",
+                    r.correlation[tau],
+                    want[tau]
+                );
+            }
+        }
     }
 }

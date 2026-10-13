@@ -4,9 +4,10 @@ use ndarray::Array1;
 use rustfft::FftPlanner;
 
 use super::spectra::RamanSpectrumResult;
-use super::{acf_to_intensities, acf_to_spectrum, bose_factor, cosine_sq_window};
+use super::{acf_to_intensities, acf_to_spectrum, bose_factor, windowed_acf};
 use crate::compute::ComputeError;
 use crate::compute::Fit;
+use crate::signal::WindowType;
 
 /// Parallel polarization: `I_∥ = I_iso + (4/45)·I_aniso`.
 const PARALLEL_ANISO_COEFF: f64 = 4.0 / 45.0;
@@ -15,12 +16,12 @@ const PERPENDICULAR_DENOM: f64 = 15.0;
 
 /// Raman spectrum transform of **raw isotropic + anisotropic ACFs**.
 ///
-/// Applies the one CosineSq window (`cosine_sq_window`)
-/// to each ACF, FFTs both (reusing the isotropic frequency grid), and applies
+/// Applies the one `window` (cosine² by default) to each ACF, FFTs both
+/// (reusing the isotropic frequency grid), and applies
 /// the cross-section (`(ν₀ − ν)⁴ / ν`) and Bose (`1/(1 − exp(−hcν/kT))`)
 /// prefactors. The raw iso/aniso ACFs come from the
 /// [`RamanTensor`](super::RamanTensor) raw compute.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct RamanSpectrum {
     /// Laser frequency, cm⁻¹. The cross-section correction scales as
     /// `(ν₀ − ν)⁴ / ν`. Set to `0.0` to skip.
@@ -29,6 +30,28 @@ pub struct RamanSpectrum {
     pub temperature_k: f64,
     /// If `true`, also emit parallel / perpendicular polarization spectra.
     pub averaged: bool,
+    /// Taper applied to both one-sided ACFs before the FFT.
+    pub window: WindowType,
+    /// Zero-padding factor of the transform.
+    pub pad_factor: usize,
+}
+
+impl RamanSpectrum {
+    /// Prefactors as given, cosine² window, pad factor 4.
+    pub fn new(incident_frequency_cm1: f64, temperature_k: f64, averaged: bool) -> Self {
+        Self {
+            incident_frequency_cm1,
+            temperature_k,
+            averaged,
+            window: WindowType::CosineSq,
+            pad_factor: 4,
+        }
+    }
+
+    pub fn with_window(mut self, window: WindowType) -> Self {
+        self.window = window;
+        self
+    }
 }
 
 impl Fit for RamanSpectrum {
@@ -63,14 +86,19 @@ impl Fit for RamanSpectrum {
             });
         }
 
+        if self.pad_factor == 0 {
+            return Err(ComputeError::OutOfRange {
+                field: "pad_factor",
+                value: "0".to_string(),
+            });
+        }
+
         let max_lag = n - 1;
-        // Pre-compute the CosineSq window once and apply it to both ACFs.
-        let window = cosine_sq_window(max_lag + 1);
-        let win_iso: Array1<f64> = acf_iso.iter().zip(&window).map(|(a, w)| a * w).collect();
-        let win_aniso: Array1<f64> = acf_aniso.iter().zip(&window).map(|(a, w)| a * w).collect();
+        let win_iso = windowed_acf(acf_iso, self.window);
+        let win_aniso = windowed_acf(acf_aniso, self.window);
 
         let mut planner = FftPlanner::new();
-        let n_pad = (4 * (max_lag + 1)).next_power_of_two();
+        let n_pad = (self.pad_factor * (max_lag + 1)).next_power_of_two();
         let (frequencies_cm1, raw_iso) = acf_to_spectrum(&mut planner, &win_iso, dt_fs, n_pad);
         let raw_aniso = acf_to_intensities(&mut planner, &win_aniso, n_pad);
 
@@ -201,11 +229,7 @@ mod tests {
         assert_eq!(raw.acf_iso, acf_iso); // raw, unwindowed.
         assert_eq!(raw.acf_aniso, acf_aniso);
 
-        let fit = RamanSpectrum {
-            incident_frequency_cm1: incident,
-            temperature_k: temp,
-            averaged: true,
-        };
+        let fit = RamanSpectrum::new(incident, temp, true);
         let from_raw = fit.fit((&raw.acf_iso, &raw.acf_aniso, dt)).unwrap();
         let from_manual = fit.fit((&acf_iso, &acf_aniso, dt)).unwrap();
         assert_eq!(from_raw.frequencies_cm1, from_manual.frequencies_cm1);
@@ -220,13 +244,9 @@ mod tests {
         // ac-016: shape mismatch -> DimensionMismatch.
         let iso = Array1::from_vec(vec![1.0, 2.0, 3.0]);
         let aniso = Array1::from_vec(vec![1.0, 2.0]);
-        let err = RamanSpectrum {
-            incident_frequency_cm1: 0.0,
-            temperature_k: 0.0,
-            averaged: false,
-        }
-        .fit((&iso, &aniso, 0.5))
-        .unwrap_err();
+        let err = RamanSpectrum::new(0.0, 0.0, false)
+            .fit((&iso, &aniso, 0.5))
+            .unwrap_err();
         assert!(matches!(err, ComputeError::DimensionMismatch { .. }));
     }
 }

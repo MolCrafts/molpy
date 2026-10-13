@@ -32,6 +32,74 @@ pub enum WindowType {
     None,
 }
 
+impl WindowType {
+    /// Parse a window name, case-sensitive, as every molrs entry point
+    /// spells it: `"hann"`, `"blackman"`, `"cosine_sq"`, and `"none"` /
+    /// `"None"` / `"identity"` for no taper.
+    pub fn from_name(name: &str) -> Result<Self, SignalError> {
+        match name {
+            "hann" => Ok(Self::Hann),
+            "blackman" => Ok(Self::Blackman),
+            "cosine_sq" => Ok(Self::CosineSq),
+            "none" | "None" | "identity" => Ok(Self::None),
+            other => Err(SignalError::UnknownWindow(other.to_string())),
+        }
+    }
+
+    /// The name [`from_name`](Self::from_name) accepts for this window.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Hann => "hann",
+            Self::Blackman => "blackman",
+            Self::CosineSq => "cosine_sq",
+            Self::None => "none",
+        }
+    }
+}
+
+/// The `n` coefficients of `window` (symmetric, `N − 1` denominator; a
+/// single-sample window is `[1.0]`).
+///
+/// This is the one place the window formulas are written: [`apply_window`]
+/// and every spectral taper in `molrs::compute` multiply by these numbers.
+pub fn window_coefficients(window: WindowType, n: usize) -> Vec<f64> {
+    if n == 0 {
+        return Vec::new();
+    }
+    match window {
+        WindowType::None => vec![1.0; n],
+        WindowType::Hann => (0..n)
+            .map(|k| {
+                if n == 1 {
+                    1.0
+                } else {
+                    0.5 * (1.0 - (2.0 * std::f64::consts::PI * k as f64 / (n - 1) as f64).cos())
+                }
+            })
+            .collect(),
+        WindowType::Blackman => (0..n)
+            .map(|k| {
+                if n == 1 {
+                    1.0
+                } else {
+                    0.42 - 0.5 * (2.0 * std::f64::consts::PI * k as f64 / (n - 1) as f64).cos()
+                        + 0.08 * (4.0 * std::f64::consts::PI * k as f64 / (n - 1) as f64).cos()
+                }
+            })
+            .collect(),
+        WindowType::CosineSq => (0..n)
+            .map(|k| {
+                if n == 1 {
+                    1.0
+                } else {
+                    let angle = std::f64::consts::PI * k as f64 / (2.0 * (n - 1) as f64);
+                    angle.cos().powi(2)
+                }
+            })
+            .collect(),
+    }
+}
+
 /// Apply a window function element-wise along `axis`.
 ///
 /// Returns a new array of the same shape; the input is never mutated.
@@ -52,49 +120,11 @@ pub fn apply_window(
     }
 
     let window_len = data.shape()[axis];
-    if window_len == 0 {
+    if window_len == 0 || window == WindowType::None {
         return Ok(data.clone());
     }
 
-    let w: Vec<f64> = match window {
-        WindowType::None => {
-            return Ok(data.clone());
-        }
-        WindowType::Hann => (0..window_len)
-            .map(|n| {
-                if window_len == 1 {
-                    1.0
-                } else {
-                    0.5 * (1.0
-                        - (2.0 * std::f64::consts::PI * n as f64 / (window_len - 1) as f64).cos())
-                }
-            })
-            .collect(),
-        WindowType::Blackman => (0..window_len)
-            .map(|n| {
-                if window_len == 1 {
-                    1.0
-                } else {
-                    0.42 - 0.5
-                        * (2.0 * std::f64::consts::PI * n as f64 / (window_len - 1) as f64).cos()
-                        + 0.08
-                            * (4.0 * std::f64::consts::PI * n as f64 / (window_len - 1) as f64)
-                                .cos()
-                }
-            })
-            .collect(),
-        WindowType::CosineSq => (0..window_len)
-            .map(|n| {
-                if window_len == 1 {
-                    1.0
-                } else {
-                    let angle = std::f64::consts::PI * n as f64 / (2.0 * (window_len - 1) as f64);
-                    angle.cos().powi(2)
-                }
-            })
-            .collect(),
-    };
-
+    let w = window_coefficients(window, window_len);
     let mut result = data.clone();
     for idx in ndarray::indices_of(&result) {
         let axis_idx = idx[axis];
@@ -275,5 +305,59 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn from_name_round_trips_and_rejects_unknown() {
+        for (name, want) in [
+            ("hann", WindowType::Hann),
+            ("blackman", WindowType::Blackman),
+            ("cosine_sq", WindowType::CosineSq),
+            ("none", WindowType::None),
+            ("None", WindowType::None),
+            ("identity", WindowType::None),
+        ] {
+            assert_eq!(WindowType::from_name(name).unwrap(), want);
+        }
+        assert_eq!(
+            WindowType::from_name(WindowType::Hann.name()).unwrap(),
+            WindowType::Hann
+        );
+        assert!(matches!(
+            WindowType::from_name("Hann"),
+            Err(SignalError::UnknownWindow(_))
+        ));
+        assert!(matches!(
+            WindowType::from_name("boxcar"),
+            Err(SignalError::UnknownWindow(_))
+        ));
+    }
+
+    #[test]
+    fn coefficients_match_apply_window_and_the_one_sided_taper() {
+        let n = 9;
+        let ones = ArrayD::from_elem(ndarray::IxDyn(&[n]), 1.0);
+        for w in [
+            WindowType::Hann,
+            WindowType::Blackman,
+            WindowType::CosineSq,
+            WindowType::None,
+        ] {
+            let via_apply = apply_window(&ones, w, 0).unwrap();
+            let coeffs = window_coefficients(w, n);
+            for k in 0..n {
+                assert_eq!(via_apply[k], coeffs[k], "{w:?} k={k}");
+            }
+        }
+        // The cos² taper spelled as `cos²(π k / (2 max_lag))` is the same numbers.
+        let max_lag = n - 1;
+        let denom = 2.0 * max_lag.max(1) as f64;
+        let coeffs = window_coefficients(WindowType::CosineSq, n);
+        for (k, c) in coeffs.iter().enumerate() {
+            let angle = std::f64::consts::PI * k as f64 / denom;
+            assert_eq!(*c, angle.cos().powi(2), "k={k}");
+        }
+        assert_eq!(window_coefficients(WindowType::Hann, 1), vec![1.0]);
+        assert!(window_coefficients(WindowType::Hann, 0).is_empty());
     }
 }

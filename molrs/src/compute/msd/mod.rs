@@ -9,12 +9,11 @@ pub use result::{MsdResult, MsdTimeSeries};
 use molrs::core::FrameAccess;
 use molrs::op::F;
 use ndarray::Array1;
-use rustfft::FftPlanner;
-use rustfft::num_complex::Complex as RfComplex;
 
 use crate::compute::Compute;
 use crate::compute::ComputeError;
-use crate::compute::positions::get_positions_ref_any_dim;
+use crate::compute::positions::{get_positions_ref_any_dim, position_series};
+use crate::compute::{TimeCorrelationSpec, displacement_correlate};
 
 /// Mode of MSD computation.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -107,116 +106,45 @@ fn msd_vs_reference<FA: FrameAccess>(
     Ok(MsdResult { per_particle, mean })
 }
 
-/// Unnormalised linear autocorrelation of a length-`T` real series via FFT.
+/// Windowed MSD via the correlation engine.
 ///
-/// Result `out[t] = Σ_{τ=0}^{T-1-t} x[τ] · x[τ+t]`, length `T`. The series
-/// is zero-padded to length `2T` for linear (not circular) autocorrelation.
-fn autocorrelate_fft(planner: &mut FftPlanner<F>, x: &[F]) -> Vec<F> {
-    let t = x.len();
-    let n = (2 * t).next_power_of_two();
-    let mut buf: Vec<RfComplex<F>> = (0..n)
-        .map(|i| {
-            if i < t {
-                RfComplex::new(x[i], 0.0)
-            } else {
-                RfComplex::new(0.0, 0.0)
-            }
+/// Gathers the `(n_frames, n_atoms, 3)` [`position_series`] (an absent `y`
+/// or `z` reads as zeros) and asks [`displacement_correlate`] for every lag with one row per atom;
+/// the result is laid out frame-aligned as a [`MsdTimeSeries`] — entry `t`
+/// is the MSD at lag `t`, so a trajectory of `T` frames yields `T` entries,
+/// the same contract as [`MsdMode::Direct`].
+///
+/// The arithmetic is the nMoldyn recurrence `MSD_i(t) = (S_i(t) − 2·r_i(t)) /
+/// (T − t)`, with `r_i` the zero-padded FFT autocorrelation summed over the
+/// Cartesian components; see [`displacement_correlate`] for the provenance.
+fn msd_windowed<FA: FrameAccess + Sync>(frames: &[&FA]) -> Result<MsdTimeSeries, ComputeError> {
+    let positions = position_series(frames)?;
+    let (t, n, _) = positions.dim();
+    if t == 1 || n == 0 {
+        // One frame (no lag to average) or no particles: the Direct
+        // contract gives a zero entry per frame.
+        let data = (0..t)
+            .map(|_| MsdResult {
+                per_particle: Array1::zeros(n),
+                mean: 0.0,
+            })
+            .collect();
+        return Ok(MsdTimeSeries::new(data));
+    }
+
+    let corr = displacement_correlate(
+        positions.view(),
+        None,
+        1.0,
+        &TimeCorrelationSpec::new().per_entity(true),
+    )?;
+    let rows = corr.per_entity.as_ref().expect("per_entity was requested");
+    let data = (0..t)
+        .map(|lag| MsdResult {
+            per_particle: rows.column(lag).to_owned(),
+            mean: corr.values[lag],
         })
         .collect();
-    let fwd = planner.plan_fft_forward(n);
-    fwd.process(&mut buf);
-    for c in buf.iter_mut() {
-        *c = RfComplex::new(c.norm_sqr(), 0.0);
-    }
-    let inv = planner.plan_fft_inverse(n);
-    inv.process(&mut buf);
-    let scale = 1.0 / n as F;
-    buf.iter().take(t).map(|c| c.re * scale).collect()
-}
-
-/// Windowed MSD via Wiener–Khinchin.
-///
-/// Computes, for each particle i and lag t in [0, T):
-///
-/// ```text
-///   MSD_i(t) = (1/(T-t)) Σ_τ |r_i(τ+t) - r_i(τ)|²
-/// ```
-///
-/// using the identity
-/// `|a-b|² = |a|² + |b|² - 2 a·b` and the FFT autocorrelation of each
-/// coordinate component.
-fn msd_windowed<FA: FrameAccess + Sync>(frames: &[&FA]) -> Result<MsdTimeSeries, ComputeError> {
-    let t = frames.len();
-    if t == 0 {
-        return Err(ComputeError::EmptyInput);
-    }
-    // Gather positions: positions[k] = (x: Vec<F>, y, z) at frame k.
-    let (xs0_p, _, _) = get_positions_ref_any_dim(frames[0])?;
-    let n = xs0_p.slice().len();
-    let mut x = vec![vec![0.0; t]; n];
-    let mut y = vec![vec![0.0; t]; n];
-    let mut z = vec![vec![0.0; t]; n];
-    let mut r2 = vec![vec![0.0; t]; n];
-
-    for (k, frame) in frames.iter().enumerate() {
-        let (xp, yp, zp) = get_positions_ref_any_dim(*frame)?;
-        let xs = xp.slice();
-        let ys = yp.slice();
-        let zs = zp.slice();
-        if xs.len() != n {
-            return Err(ComputeError::DimensionMismatch {
-                expected: n,
-                got: xs.len(),
-                what: "Msd particle count",
-            });
-        }
-        for i in 0..n {
-            x[i][k] = xs[i];
-            y[i][k] = ys[i];
-            z[i][k] = zs[i];
-            r2[i][k] = xs[i] * xs[i] + ys[i] * ys[i] + zs[i] * zs[i];
-        }
-    }
-
-    let mut planner = FftPlanner::<F>::new();
-    // Per-particle MSD time series.
-    let mut per_particle_per_lag = vec![vec![0.0_f64; n]; t];
-
-    for i in 0..n {
-        // Autocorrelations of each component (unnormalised).
-        let ac_x = autocorrelate_fft(&mut planner, &x[i]);
-        let ac_y = autocorrelate_fft(&mut planner, &y[i]);
-        let ac_z = autocorrelate_fft(&mut planner, &z[i]);
-
-        // S[t] = Σ_τ (|r(τ+t)|² + |r(τ)|²), τ ∈ [0, T-1-t]
-        // Recurrence: S[0] = 2 Σ_τ |r(τ)|²;
-        //              S[t] = S[t-1] − |r(t-1)|² − |r(T-t)|²
-        let mut s: F = 2.0 * r2[i].iter().sum::<F>();
-        for lag in 0..t {
-            let denom = (t - lag) as F;
-            let ac = ac_x[lag] + ac_y[lag] + ac_z[lag];
-            per_particle_per_lag[lag][i] = (s - 2.0 * ac) / denom;
-            // Update S for next lag.
-            if lag + 1 < t {
-                s -= r2[i][lag];
-                s -= r2[i][t - 1 - lag];
-            }
-        }
-    }
-
-    let mut data: Vec<MsdResult> = Vec::with_capacity(t);
-    for per_particle in per_particle_per_lag.into_iter() {
-        let pp = Array1::from_vec(per_particle);
-        let mean = if n > 0 {
-            pp.iter().sum::<F>() / n as F
-        } else {
-            0.0
-        };
-        data.push(MsdResult {
-            per_particle: pp,
-            mean,
-        });
-    }
     Ok(MsdTimeSeries::new(data))
 }
 
@@ -281,6 +209,8 @@ impl Msd {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::needless_range_loop)]
+
     use super::*;
     use molrs::core::Block;
     use molrs::core::Frame;
@@ -494,5 +424,68 @@ mod tests {
         let windowed = Msd::with_mode(MsdMode::Window).compute(&refs, ()).unwrap();
         let w: Vec<F> = windowed.per_frame.iter().map(|r| r.mean).collect();
         assert!((w[1] - ((1.0 + 4.0) / 2.0)).abs() < 1e-12, "{w:?}");
+    }
+
+    /// Pin: the Window estimator on a random walk, per particle and mean,
+    /// against the nested-loop definition. The correlation engine must
+    /// reproduce these numbers when it takes this path over.
+    #[test]
+    fn windowed_per_particle_matches_nested_loop_on_random_walk() {
+        use rand::{RngExt, SeedableRng};
+        let (t, n) = (40usize, 5usize);
+        let mut rng = rand::rngs::StdRng::seed_from_u64(2026);
+        let mut cur = vec![[0.0_f64; 3]; n];
+        let mut frames_owned: Vec<Frame> = Vec::with_capacity(t);
+        for _ in 0..t {
+            for c in cur.iter_mut() {
+                for v in c.iter_mut() {
+                    *v += rng.random_range(-0.5..0.5);
+                }
+            }
+            let xs: Vec<F> = cur.iter().map(|c| c[0]).collect();
+            let ys: Vec<F> = cur.iter().map(|c| c[1]).collect();
+            let zs: Vec<F> = cur.iter().map(|c| c[2]).collect();
+            frames_owned.push(make_frame(&xs, &ys, &zs));
+        }
+        let frames: Vec<&Frame> = frames_owned.iter().collect();
+        let computed = Msd::with_mode(MsdMode::Window)
+            .compute(&frames, ())
+            .unwrap();
+        assert_eq!(computed.len(), t);
+
+        // Per-particle nested loop.
+        let mut pos = vec![vec![[0.0_f64; 3]; n]; t];
+        for (k, f) in frames.iter().enumerate() {
+            let (xp, yp, zp) = get_positions_ref_any_dim(*f).unwrap();
+            for i in 0..n {
+                pos[k][i] = [xp.slice()[i], yp.slice()[i], zp.slice()[i]];
+            }
+        }
+        for lag in 0..t {
+            let n_origins = t - lag;
+            let mut mean = 0.0;
+            for i in 0..n {
+                let mut acc = 0.0;
+                for tau in 0..n_origins {
+                    let a = pos[tau + lag][i];
+                    let b = pos[tau][i];
+                    let d = [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
+                    acc += d[0] * d[0] + d[1] * d[1] + d[2] * d[2];
+                }
+                let want = acc / n_origins as F;
+                let got = computed.per_frame[lag].per_particle[i];
+                assert!(
+                    (got - want).abs() < 1e-9,
+                    "lag {lag} particle {i}: {got} vs {want}"
+                );
+                mean += want;
+            }
+            mean /= n as F;
+            assert!(
+                (computed.per_frame[lag].mean - mean).abs() < 1e-9,
+                "lag {lag} mean: {} vs {mean}",
+                computed.per_frame[lag].mean
+            );
+        }
     }
 }
