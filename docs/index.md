@@ -7,7 +7,7 @@ hide:
 hero:
   kicker: MolPy Manual
   title: MolPy
-  description: A programmable Python toolkit for molecular simulation workflows — from chemistry text to a runnable system and back to analysis.
+  description: Build, edit, and parameterize complex molecular systems in Python.
   install:
     label: Install
     command: pip install molcrafts-molpy
@@ -33,238 +33,158 @@ hero:
 
 <h1 class="molcrafts-sr-only">MolPy</h1>
 
-<div class="molcrafts-manual-home molpy-home" markdown>
+<div class="molcrafts-manual-home" markdown>
 
-<section class="molcrafts-manual-section molcrafts-manual-section--stack molpy-system-section" markdown>
-
-<div class="molcrafts-manual-section__header" markdown>
-
-<span class="molcrafts-manual-eyebrow">The pipeline</span>
-
-## From a molecule description to a runnable system
-
-Chemistry, coordinates, and force-field parameters stay in separate layers.
-You can stop after any stage, inspect what you have, and continue — without
-shuttling everything through disk.
-
-</div>
-
-<div class="molpy-system-panel">
-<div class="molpy-system-panel__header">
-<span>One representation · six stages</span>
-<strong>The same Atomistic graph becomes a typed, packed Frame — export it or analyze it in place</strong>
-</div>
-<div class="molpy-system-flow">
-<div>
-<span>01 · Parse / build</span>
-<a href="user-guide/01_parsing_chemistry/"><strong>SMILES, CGsmiles, or a file → an editable graph</strong></a>
-</div>
-<div>
-<span>02 · Edit</span>
-<a href="user-guide/02_assembly/"><strong>Join units along a site graph, react, and edit</strong></a>
-</div>
-<div>
-<span>03 · Typify</span>
-<a href="user-guide/06_typifier/"><strong>Assign OPLS-AA / GAFF types and parameters</strong></a>
-</div>
-<div>
-<span>04 · Pack</span>
-<a href="user-guide/09_packing/"><strong>Fill a periodic box, clash-free</strong></a>
-</div>
-<div>
-<span>05 · Export</span>
-<a href="user-guide/11_io/"><strong>LAMMPS, GROMACS, PDB, <code>*.mrec</code>, and more</strong></a>
-</div>
-<div>
-<span>06 · Analyze</span>
-<a href="compute/"><strong>RDF, MSD, order parameters, spectra — on the same Frame</strong></a>
-</div>
-</div>
-</div>
-
-The [Quickstart](getting-started/quickstart/) walks through one full system
-end to end. The [Example Gallery](getting-started/examples/) collects shorter
-copy-paste recipes.
-
-</section>
-
-<section class="molcrafts-manual-section" markdown>
+<section class="molcrafts-manual-section molcrafts-manual-section--compact" markdown>
 
 <div class="molcrafts-manual-section__header" markdown>
 
-<span class="molcrafts-manual-eyebrow">In practice</span>
+<span class="molcrafts-manual-eyebrow">Parameterize</span>
 
-## Each stage is a few lines of Python
+## Typed and relaxed
 
-The cards below follow the same six stages. Polymers show up often because
-assembly and polydispersity stress the editing machinery — not because MolPy is
-limited to polymers.
+Coordinates, force-field types, and a minimized geometry in a few calls.
+
+[Typifier guide →](user-guide/06_typifier/)
 
 </div>
-
-<div class="molcrafts-workflow-list" markdown>
-
-<article markdown>
-
-<div class="molcrafts-workflow-list__meta">01 · Parse / build</div>
-
-### [Describe chemistry as text](user-guide/01_parsing_chemistry/)
-
-One line of SMILES becomes an editable structure; one line of CGsmiles
-describes the units of a polymer and how they join.
 
 ```python
 import molpy as mp
 
-mol = mp.io.smiles.SmilesIr("CCO").to_atomistic()  # one molecule from SMILES
-mol, report = mp.conformer.Conformer(seed=42).generate(mol)  # hydrogens + 3D coordinates
+# SMILES → 3D
+mol = mp.io.smiles.SmilesIr("CCO").to_atomistic()
+mol, _ = mp.conformer.Conformer(seed=42).generate(mol)
+
+# OPLS-AA typing
+typifier = mp.ff.typifier.OplsAaTypifier()
+frame = typifier.typify(mol).to_frame()
+ff = typifier.forcefield()
+
+# minimize
+potentials = mp.ff.compile.PotentialCompiler(ff).compile(frame)
+frame, report = mp.optimize.Lbfgs(potentials, fmax=0.05).minimize(frame)
 ```
 
-</article>
+</section>
 
-<article markdown>
+<section class="molcrafts-manual-section molcrafts-manual-section--compact" markdown>
 
-<div class="molcrafts-workflow-list__meta">02 · Edit</div>
+<div class="molcrafts-manual-section__header" markdown>
 
-### [Rewire the topology](user-guide/02_assembly/)
+<span class="molcrafts-manual-eyebrow">Assemble</span>
 
-Merge structures, form and break bonds, drop leaving groups, then re-derive
-angles and dihedrals across the new junction.
+## Any architecture
+
+Define a unit once; a CGsmiles string sets the shape — chain, ring, star.
+
+[Assembly guide →](user-guide/02_assembly/)
+
+</div>
 
 ```python
-dimer = mol.copy()
-dimer.merge(mol.copy())  # combine two copies, in place
-dimer.generate_topology(gen_angle=True, gen_dihedral=True)  # derive angles/dihedrals in place
+# a unit with two ports
+eo = mp.conformer.Conformer(seed=42).generate(
+    mp.io.smiles.SmilesIr.from_fragment("[<]OCC[>]").to_template()
+)[0]
+assembler = mp.builder.Assembler({"EO": eo}, mp.builder.GrowthPlacer())
+
+def build(cgsmiles):
+    sites = mp.io.cgsmiles.CgSmilesIr(cgsmiles).to_coarsegrain()
+    return assembler.assemble(sites, mp.Atomistic)
+
+# shape from CGsmiles
+chain = build("{[#EO]|10}")
+ring = build("{[#EO]1[#EO][#EO][#EO][#EO][#EO]1}")
 ```
 
-</article>
+</section>
 
-<article markdown>
+<section class="molcrafts-manual-section molcrafts-manual-section--compact" markdown>
 
-<div class="molcrafts-workflow-list__meta">03 · Typify</div>
+<div class="molcrafts-manual-section__header" markdown>
 
-### [Assign force-field types](user-guide/06_typifier/)
+<span class="molcrafts-manual-eyebrow">Materials</span>
 
-SMARTS matching maps every atom, bond, angle, and dihedral to parameters you
-can inspect before anything is exported.
+## Beyond molecules
+
+Nanotubes and graphene sheets, bonded across the periodic boundary.
+
+[Nanostructures guide →](user-guide/04_nanostructures/)
+
+</div>
 
 ```python
-typifier = mp.ff.typifier.OplsAaTypifier()  # carries the OPLS-AA library
-typed = typifier.typify(mol)
-ff = typifier.forcefield()  # the parameters of the types just assigned
-system = typed.to_frame()  # the numeric Frame
-system.box = mp.Box.cube(30.0)
+from molpy.builder import CarbonTubeBuilder, GrapheneBuilder
+
+# (10,10) nanotube
+tube = CarbonTubeBuilder(10, 10, length=50.0, periodic=True)
+cnt = tube.build()
+cnt.box = tube.cell(vacuum=12.0)
+
+# graphene sheet
+sheet = GrapheneBuilder(8, 8, periodic_xy=True).build()
 ```
 
-</article>
+</section>
 
-<article markdown>
+<section class="molcrafts-manual-section molcrafts-manual-section--compact" markdown>
 
-<div class="molcrafts-workflow-list__meta">04 · Pack</div>
+<div class="molcrafts-manual-section__header" markdown>
 
-### [Fill a periodic box](user-guide/09_packing/)
+<span class="molcrafts-manual-eyebrow">Simulate</span>
 
-Clash-free placement at a target density via
-[molpack](https://docs.molcrafts.org/molpack/) — Packmol-grade packing as a
-library, no external binary (`pip install molcrafts-molpack`).
+## Engine-ready inputs
 
-```python
-# docs: skip — optional molcrafts-molpack; not a molpy runtime/doc dep
-from molpack import GencanPack, Target
+LAMMPS, GROMACS, CP2K, and OpenMM inputs from one system and force field.
 
-target = Target(system, count=500).with_restraint(mp.core.Cuboid([0.0, 0.0, 0.0], [30.0, 30.0, 30.0]))
-system = GencanPack().with_seed(42).run([target], max_loops=200).frame
-```
+[Engines guide →](user-guide/12_engine/)
 
-</article>
-
-<article markdown>
-
-<div class="molcrafts-workflow-list__meta">05 · Export</div>
-
-### [Write files your engine runs](user-guide/11_io/)
-
-One call per file via ``mp.io``: LAMMPS data plus force-field coefficients.
-GROMACS, PDB and the ``*.mrec`` record share the same pattern.
+</div>
 
 ```python
-# full atom style needs mol_id: one per connected molecule
-system["atoms"]["mol_id"] = mp.Topology.from_frame(system).connected_components() + 1
-# the pair cutoff is a run setting: you declare it, molpy never invents one
+frame.box = mp.Box.cube(30.0)
+# molecule IDs
+frame["atoms"]["mol_id"] = (
+    mp.Topology.from_frame(frame).connected_components() + 1
+)
+# cutoffs
 ff.get_style("pair", "lj/cut")["cutoff"] = 10.0
 ff.get_style("pair", "coul/cut")["cutoff"] = 10.0
-mp.io.write_lammps_data("system.data", system)
-mp.io.write_lammps_forcefield("system.ff", ff, system)  # the coefficients system uses
+
+lammps = mp.engine.LammpsEngine(check_executable=False)
+lammps.generate_inputs(frame, ff, "./lammps")
+
+gromacs = mp.engine.GromacsEngine(check_executable=False)
+gromacs.generate_inputs(frame, ff, "./gromacs")
 ```
 
-</article>
+</section>
 
-<article markdown>
+<section class="molcrafts-manual-section molcrafts-manual-section--compact" markdown>
 
-<div class="molcrafts-workflow-list__meta">06 · Analyze</div>
+<div class="molcrafts-manual-section__header" markdown>
 
-### [Turn trajectories into observables](compute/)
+<span class="molcrafts-manual-eyebrow">Analyze</span>
 
-Feed the same Frame into the compute layer — neighbor search and $g(r)$ in two
-calls, with many more analyses behind them.
+## Analysis in place
+
+RDF, diffusion, order parameters, and spectra, in compiled code.
+
+[Compute section →](compute/)
+
+</div>
 
 ```python
 from molpy.compute import Rdf
 
-system.box = mp.Box.cube(30.0)
+# 8 Å neighbor list
 nl = mp.core.NeighborList(8.0)
-nl.build(system.coords, system.box)
-neighbors = nl.neighbors()
-result = Rdf(n_bins=50, r_max=8.0).compute([system], [neighbors])  # g(r) over the box
+nl.build(frame.coords, frame.box)
+
+# g(r)
+rdf = Rdf(n_bins=50, r_max=8.0).compute([frame], [nl.neighbors()])
 ```
-
-</article>
-
-</div>
-
-</section>
-
-<section class="molcrafts-manual-section" markdown>
-
-<div class="molcrafts-manual-section__header" markdown>
-
-<span class="molcrafts-manual-eyebrow">By design</span>
-
-## Built to be composed, not locked in
-
-A library first: one shared data model, a high-performance core, and explicit
-seams. Take one piece, leave the rest, or extend any layer without forking the
-package.
-
-</div>
-
-<dl class="molcrafts-feature-matrix molcrafts-feature-matrix--cards">
-<div>
-<span class="molcrafts-feature-matrix__icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" x2="15.42" y1="13.51" y2="17.49"/><line x1="15.41" x2="8.59" y1="6.51" y2="10.49"/></svg></span>
-<dt><a href="tutorials/02_block_and_frame/">One data structure across the ecosystem</a></dt>
-<dd>molpack, molvis, and molmcp speak the same <code>Frame</code> / <code>Block</code>. No converters between libraries.</dd>
-</div>
-<div>
-<span class="molcrafts-feature-matrix__icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg></span>
-<dt><a href="developer/molrs-backend/">A high-performance kernel underneath</a></dt>
-<dd>Storage and compute live in the high-performance backend. Python sees zero-copy NumPy views on the public facade.</dd>
-</div>
-<div>
-<span class="molcrafts-feature-matrix__icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect width="7" height="7" x="3" y="3" rx="1"/><rect width="7" height="7" x="14" y="3" rx="1"/><rect width="7" height="7" x="14" y="14" rx="1"/><rect width="7" height="7" x="3" y="14" rx="1"/></svg></span>
-<dt><a href="developer/architecture-overview/">Use one piece or all of them</a></dt>
-<dd>Parser, builder, typifier, packer, I/O, and compute talk only through explicit data. Import the layer you need and ignore the rest.</dd>
-</div>
-<div>
-<span class="molcrafts-feature-matrix__icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M19.439 7.85c-.049.322.059.648.289.878l1.568 1.568c.47.47.706 1.087.706 1.704s-.235 1.233-.706 1.704l-1.611 1.611a.98.98 0 0 1-.837.276c-.47-.07-.802-.48-.968-.925a2.501 2.501 0 1 0-3.214 3.214c.446.166.855.497.925.968a.979.979 0 0 1-.276.837l-1.61 1.61a2.404 2.404 0 0 1-1.705.707 2.402 2.402 0 0 1-1.704-.706l-1.568-1.568a1.026 1.026 0 0 0-.877-.29c-.493.074-.84.504-1.02.968a2.5 2.5 0 1 1-3.237-3.237c.464-.18.894-.527.967-1.02a1.026 1.026 0 0 0-.289-.877l-1.568-1.568A2.402 2.402 0 0 1 1.998 12c0-.617.236-1.234.706-1.704L4.23 8.77c.24-.24.581-.353.917-.303.515.077.877.528 1.073 1.01a2.5 2.5 0 1 0 3.259-3.259c-.482-.196-.933-.558-1.01-1.073-.05-.336.062-.676.303-.917l1.525-1.525A2.402 2.402 0 0 1 12 1.998c.617 0 1.234.236 1.704.706l1.568 1.568c.23.23.556.338.877.29.493-.074.84-.504 1.02-.968a2.5 2.5 0 1 1 3.237 3.237c-.464.18-.894.527-.967 1.02Z"/></svg></span>
-<dt><a href="developer/extending-compute/">Contracts, not base classes</a></dt>
-<dd>Write a compute operator or a typifier as a plain class against a documented contract, from outside the package, without patching it.</dd>
-</div>
-<div>
-<span class="molcrafts-feature-matrix__icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.85 8.62a4 4 0 0 1 4.78-4.77 4 4 0 0 1 6.74 0 4 4 0 0 1 4.78 4.78 4 4 0 0 1 0 6.74 4 4 0 0 1-4.77 4.78 4 4 0 0 1-6.75 0 4 4 0 0 1-4.78-4.77 4 4 0 0 1 0-6.76Z"/><path d="m9 12 2 2 4-4"/></svg></span>
-<dt><a href="developer/coding-style/">Typed end to end</a></dt>
-<dd>Public APIs carry full type hints, checked in CI with Astral’s <code>ty</code>. Your editor sees real signatures, not <code>Any</code>.</dd>
-</div>
-</dl>
 
 </section>
 
@@ -274,19 +194,18 @@ package.
 
 <span class="molcrafts-manual-eyebrow">Ecosystem</span>
 
-## The structure you build is the structure everything else reads
+## One shared structure
 
-MolPy, molpack, molvis, and molmcp share the same abstract data structure. You
-do not write glue adapters between them. [Figure 1](#fig-aspirin) is
-[molvis](https://github.com/MolCrafts/molvis) drawing that structure in the
-browser — drag to rotate (needs the published molvis-stage Web Component).
+[molpack](https://docs.molcrafts.org/molpack/),
+[molvis](https://github.com/MolCrafts/molvis), and
+[molmcp](https://github.com/MolCrafts/molmcp) read it directly. Drag to rotate.
 
 </div>
 
 <figure id="fig-aspirin" class="molcrafts-figure" markdown>
 <div class="molcrafts-figure__body">
     <!-- XYZ must start on the same line as <template> (no leading blank line). -->
-    <molvis-viewer format="xyz" representation="ball-and-stick" controls="view" height="280px">
+    <molvis-viewer format="xyz" representation="ball-and-stick" controls="view" height="260px">
       <template data-molvis-source>21
 name=aspirin Connct="[0,4,0,11,1,10,1,20,2,10,3,11,4,5,4,6,5,7,5,10,6,8,6,13,7,9,7,14,8,9,8,15,9,16,11,12,12,17,12,18,12,19]"
 O   1.2333   0.5540   0.7792
@@ -313,100 +232,43 @@ H  -0.2555  -3.5916  -0.7337</template>
     </molvis-viewer>
   </div>
 
-**Figure 1.** Aspirin (PubChem) in molvis, ball-and-stick, from inline XYZ.
+**Figure 1.** Aspirin in molvis.
 </figure>
-
-<dl class="molcrafts-tile-grid">
-<div>
-<dt><a href="https://docs.molcrafts.org/molpack/">molpack</a></dt>
-<dd>Clash-free packing as a CLI, a library crate, and a Python package — same engine everywhere.</dd>
-</div>
-<div>
-<dt><a href="https://github.com/MolCrafts/molmcp">molmcp</a></dt>
-<dd>MCP server for LLM agents: code discovery plus live ecosystem providers.</dd>
-</div>
-<div>
-<dt><a href="developer/molrs-backend/">Native backend</a></dt>
-<dd>The shared high-performance molecular kernel — Frame, Block, and compute, with Python and other bindings.</dd>
-</div>
-</dl>
 
 </section>
 
-<section class="molcrafts-manual-section molcrafts-manual-section--flip" markdown>
+<section class="molcrafts-manual-section molcrafts-manual-section--body-col" markdown>
 
 <div class="molcrafts-manual-section__header" markdown>
 
-<span class="molcrafts-manual-eyebrow">Integrations</span>
+<span class="molcrafts-manual-eyebrow">Where to start</span>
 
-## Optional tools, explicit boundaries
-
-External packages plug in through adapters and wrappers. Nothing is required
-beyond the default install; every seam is visible in the API.
+## Start here
 
 </div>
 
 <dl class="molcrafts-link-list">
 <div>
-<dt><a href="api/adapter/">RDKit</a></dt>
-<dd>Bidirectional <code>Atomistic</code> ↔ <code>Mol</code> for embedding, conformers, and SMILES export.</dd>
+<dt><a href="getting-started/quickstart/">Quickstart</a></dt>
+<dd>SMILES to LAMMPS input, end to end.</dd>
 </div>
 <div>
-<dt><a href="user-guide/13_ambertools_integration/">AmberTools</a></dt>
-<dd>antechamber, parmchk2, and tleap driven from Python for GAFF charges and topologies.</dd>
+<dt><a href="tutorials/">Tutorials</a></dt>
+<dd>The data model, chapter by chapter.</dd>
 </div>
 <div>
-<dt><a href="user-guide/09_packing/">molpack</a></dt>
-<dd>Clash-free packing into periodic boxes through a typed restraint interface.</dd>
+<dt><a href="user-guide/">Guides</a></dt>
+<dd>One recipe per task.</dd>
 </div>
 <div>
-<dt><a href="user-guide/12_engine/">LAMMPS · CP2K · OpenMM</a></dt>
-<dd>Ready-to-run input decks generated from MolPy data objects.</dd>
+<dt><a href="compute/">Compute</a></dt>
+<dd>Trajectory analysis and its theory.</dd>
 </div>
 <div>
-<dt><a href="developer/molrs-backend/">Native backend</a></dt>
-<dd>High-performance column store and compute underneath.</dd>
+<dt><a href="api/">API Reference</a></dt>
+<dd>Every public class and function.</dd>
 </div>
 </dl>
-
-</section>
-
-<section class="molcrafts-manual-section" markdown>
-
-<div class="molcrafts-manual-section__header" markdown>
-
-<span class="molcrafts-manual-eyebrow">Find your page</span>
-
-## How the manual is split
-
-**Tutorials** teach: install, a first system, then the data model chapter by
-chapter. **Guides** do the work: end-to-end recipes once you know the model.
-Reach for compute, API, or developer pages when you already know the task.
-
-</div>
-
-<div class="molcrafts-doc-map molcrafts-doc-map--cards">
-<section>
-<h3><a href="tutorials/">Tutorials</a></h3>
-<p>Install, quickstart, then the data model one chapter at a time.</p>
-</section>
-<section>
-<h3><a href="user-guide/">Guides</a></h3>
-<p>Task recipes — parse, build, typify, pack, export — that assume the tutorials.</p>
-</section>
-<section>
-<h3><a href="compute/">Compute</a></h3>
-<p>Trajectory analysis: distributions, transport, order, spectra, workflows.</p>
-</section>
-<section>
-<h3><a href="api/">API Reference</a></h3>
-<p>Every public module, from core data structures to engine adapters.</p>
-</section>
-<section>
-<h3><a href="developer/">Developer Guide</a></h3>
-<p>Contributing, architecture, and how to extend compute, I/O, and typifiers.</p>
-</section>
-</div>
 
 </section>
 
