@@ -17,13 +17,13 @@ use molrs::op::{F, Idx};
 ///
 /// Atoms: `id` (1-based), `name`, `type`, `charge`, `xyz`, optional `element`.
 /// Bonds: `atomi`/`atomj` (0-based), `type` as `"typei-typej"`.
-pub fn read_amber_ac(path: impl AsRef<Path>) -> Result<Frame> {
+pub fn read_ac(path: impl AsRef<Path>) -> Result<Frame> {
     let text = fs::read_to_string(path.as_ref())?;
-    read_amber_ac_str(&text)
+    read_ac_str(&text)
 }
 
 /// Parse Antechamber `.ac` text.
-pub fn read_amber_ac_str(text: &str) -> Result<Frame> {
+pub fn read_ac_str(text: &str) -> Result<Frame> {
     let mut names: Vec<String> = Vec::new();
     let mut types: Vec<String> = Vec::new();
     let mut charges: Vec<F> = Vec::new();

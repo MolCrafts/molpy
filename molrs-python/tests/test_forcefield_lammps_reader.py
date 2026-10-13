@@ -254,8 +254,8 @@ def test_label_write_lammps_data_coeffs_str_missing_label_raises_value_error():
 def test_ff_file_io_accepts_pathlike(tmp_path):
     """``molrs.ff`` path functions take ``os.PathLike`` like ``molrs.io`` does."""
     xml = tmp_path / "hand.xml"
-    molrs.io.write_openmm_xml_forcefield(xml, _hand_ff())
-    back = molrs.io.read_openmm_xml_forcefield(xml)
+    molrs.io.write_openmm_forcefield(xml, _hand_ff())
+    back = molrs.io.read_openmm_forcefield(xml)
     assert back.get_style("bond", "harmonic").get_type_by_name("c3-c3") is not None
 
     out = tmp_path / "hand.ff"

@@ -17,7 +17,7 @@ FIXTURES = Path(__file__).resolve().parents[2] / "molrs/src/ff/testdata/openmm"
 
 
 def test_a_charmm_port_reads_every_section() -> None:
-    ff = molrs.io.read_openmm_xml_forcefield(FIXTURES / "charmm.xml")
+    ff = molrs.io.read_openmm_forcefield(FIXTURES / "charmm.xml")
     lj = ff.get_style("pair", "lj/charmm")
     assert lj.params["one_four"] == "epsilon14"
     assert lj.params["mixing"] == "arithmetic"
@@ -31,10 +31,10 @@ def test_a_charmm_port_reads_every_section() -> None:
 
 @pytest.mark.parametrize("case", ["charmm", "amber", "opls"])
 def test_written_xml_reads_back_with_the_same_types(case: str, tmp_path: Path) -> None:
-    ff = molrs.io.read_openmm_xml_forcefield(FIXTURES / f"{case}.xml")
+    ff = molrs.io.read_openmm_forcefield(FIXTURES / f"{case}.xml")
     path = tmp_path / f"{case}.xml"
-    molrs.io.write_openmm_xml_forcefield(path, ff)
-    back = molrs.io.read_openmm_xml_forcefield(path)
+    molrs.io.write_openmm_forcefield(path, ff)
+    back = molrs.io.read_openmm_forcefield(path)
     for category in ("bond", "angle", "dihedral", "improper", "pair", "cmap"):
         names = sorted(t.name for t in ff.get_types(category))
         assert sorted(t.name for t in back.get_types(category)) == names, category
@@ -65,7 +65,7 @@ def _chain() -> molrs.core.Frame:
 
 
 def test_materialize_one_four_writes_the_one_four_rows() -> None:
-    ff = molrs.io.read_openmm_xml_forcefield(FIXTURES / "charmm.xml")
+    ff = molrs.io.read_openmm_forcefield(FIXTURES / "charmm.xml")
     for name in ("lj/charmm", "coul/charmm"):
         style = ff.get_style("pair", name)
         style["inner"] = 900.0

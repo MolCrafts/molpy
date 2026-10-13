@@ -85,13 +85,13 @@ fn eat_section(lines: &[String], n_atoms: usize) -> Result<Vec<F>> {
 // ---------------------------------------------------------------------------
 
 /// Read an AMBER ASCII inpcrd / restrt file at `path`.
-pub fn read_amber_inpcrd<P: AsRef<Path>>(path: P) -> Result<Frame> {
+pub fn read_inpcrd<P: AsRef<Path>>(path: P) -> Result<Frame> {
     let file = std::fs::File::open(path.as_ref())?;
     read_frame_from(std::io::BufReader::new(file))
 }
 
 /// Merge the coordinates an AMBER inpcrd / restrt holds — `coordinates`, as
-/// [`read_amber_inpcrd`](crate::io::read_amber_inpcrd) read it — into an
+/// [`read_inpcrd`](crate::io::read_inpcrd) read it — into an
 /// existing `frame`: the structure's other half, as a prmtop pairs with its
 /// inpcrd.
 ///
@@ -285,7 +285,7 @@ fn read_frame_from<R: BufRead>(mut reader: R) -> Result<Frame> {
 /// - `frame.meta["title"]` (string); optional `frame.meta["timestep"]` (i64,
 ///   truncates the header time)
 /// - `frame.simbox`: orthorhombic cell from the first three box floats when present
-pub fn read_amber_inpcrd_str(text: &str) -> Result<Frame> {
+pub fn read_inpcrd_str(text: &str) -> Result<Frame> {
     read_frame_from(text.as_bytes())
 }
 
@@ -314,7 +314,7 @@ mod tests {
             .unwrap();
         frame.insert("atoms", atoms);
         frame.meta.insert("source", "prmtop");
-        merge_inpcrd(&mut frame, read_amber_inpcrd(&path).unwrap()).unwrap();
+        merge_inpcrd(&mut frame, read_inpcrd(&path).unwrap()).unwrap();
 
         let atoms = frame.get("atoms").unwrap();
         let z = atoms.get("z").and_then(|c| c.as_float()).unwrap();
@@ -336,7 +336,7 @@ mod tests {
             .insert("x", Array1::from_vec(vec![0.0 as F; 3]).into_dyn())
             .unwrap();
         three.insert("atoms", atoms);
-        let err = merge_inpcrd(&mut three, read_amber_inpcrd(&path).unwrap()).unwrap_err();
+        let err = merge_inpcrd(&mut three, read_inpcrd(&path).unwrap()).unwrap_err();
         let _ = std::fs::remove_file(&path);
         assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
         assert!(

@@ -924,7 +924,7 @@ impl ForceFieldWriter for OpenmmXmlWriter {
     }
 }
 
-pub fn write_openmm_xml_forcefield(
+pub fn write_openmm_forcefield(
     path: &str,
     ff: &ForceField,
     precision: Option<usize>,
@@ -934,7 +934,7 @@ pub fn write_openmm_xml_forcefield(
         .write(ff, path)
 }
 
-pub fn write_openmm_xml_forcefield_str(
+pub fn write_openmm_forcefield_str(
     ff: &ForceField,
     precision: Option<usize>,
 ) -> Result<String, ForceFieldWriteError> {
@@ -949,7 +949,7 @@ mod tests {
     use crate::ff::forcefield::{ForceField, Style};
     use crate::ff::ir::Params;
     use crate::io::openmm_xml::reader::OpenmmXmlReader;
-    use crate::io::read_openmm_xml_forcefield_str;
+    use crate::io::read_openmm_forcefield_str;
     use crate::io::reader::ForceFieldReader;
 
     fn style<'a>(ff: &'a ForceField, category: &str) -> &'a Style {
@@ -970,7 +970,7 @@ mod tests {
     }
 
     fn write(ff: &ForceField) -> String {
-        write_openmm_xml_forcefield_str(ff, None).unwrap()
+        write_openmm_forcefield_str(ff, None).unwrap()
     }
 
     fn small_ff() -> ForceField {
@@ -1008,7 +1008,7 @@ mod tests {
     #[test]
     fn what_is_written_reads_back_with_the_same_styles_and_parameters() {
         let ff = small_ff();
-        let back = read_openmm_xml_forcefield_str(&write(&ff)).unwrap();
+        let back = read_openmm_forcefield_str(&write(&ff)).unwrap();
         assert_eq!(back.name, "tiny");
         let bond = style(&back, "bond");
         assert_eq!(bond.name(), "harmonic");
@@ -1052,7 +1052,7 @@ mod tests {
             .unwrap();
         let xml = write(&ff);
         assert!(xml.contains(r#"combining_rule="geometric""#), "{xml}");
-        let back = read_openmm_xml_forcefield_str(&xml).unwrap();
+        let back = read_openmm_forcefield_str(&xml).unwrap();
         assert_eq!(style(&back, "dihedral").name(), "multi/harmonic");
         for phi in [-2.0, 0.3, 1.9] {
             close(series(&back).energy(phi), series(&ff).energy(phi), "E(φ)");
@@ -1128,7 +1128,7 @@ mod tests {
             let xml = write(&ff);
             let c = rb_coefficients(&xml);
             close(c[1], 0.54 * 4.184, "C1 = −A2");
-            let back = read_openmm_xml_forcefield_str(&xml).unwrap();
+            let back = read_openmm_forcefield_str(&xml).unwrap();
             let bp = type_params(back.get_style("dihedral", name).unwrap(), "HC-CT-CT-HC");
             for (i, v) in a.iter().enumerate() {
                 close(bp.get(&format!("a{}", i + 1)).unwrap(), *v, name);
@@ -1160,7 +1160,7 @@ mod tests {
             ),
         ] {
             let ff = one_torsion(name, p);
-            let back = read_openmm_xml_forcefield_str(&write(&ff)).unwrap();
+            let back = read_openmm_forcefield_str(&write(&ff)).unwrap();
             assert_eq!(style(&back, "dihedral").name(), "periodic");
             for phi in [-2.5, -0.4, 0.0, 1.1, 3.0] {
                 close(series(&back).energy(phi), series(&ff).energy(phi), name);
@@ -1195,7 +1195,7 @@ mod tests {
             ("phase2", 180.0),
         ];
         let ff = one_torsion("periodic", Params::from_pairs(&terms));
-        let back = read_openmm_xml_forcefield_str(&write(&ff)).unwrap();
+        let back = read_openmm_forcefield_str(&write(&ff)).unwrap();
         let p = type_params(style(&back, "dihedral"), "HC-CT-CT-HC");
         for (key, want) in terms {
             close(p.get(key).unwrap(), want, key);
@@ -1224,7 +1224,7 @@ mod tests {
             xml.contains(r#"<Improper class1="N" class2="C" class3="O" class4="CT""#),
             "{xml}"
         );
-        let back = read_openmm_xml_forcefield_str(&xml).unwrap();
+        let back = read_openmm_forcefield_str(&xml).unwrap();
         let got = improper_params(&back);
         assert_eq!(got.len(), 1, "{got:?}");
         let (name, p) = &got[0];
@@ -1250,7 +1250,7 @@ mod tests {
                     Params::from_pairs(&[("k", 1.1), ("sign", -1.0), ("periodicity", 2.0)]),
                 )
                 .unwrap();
-            write_openmm_xml_forcefield_str(&ff, None)
+            write_openmm_forcefield_str(&ff, None)
         };
         let xml = cvff(["CA", "CA", "CA", "HA"]).unwrap();
         assert!(
@@ -1281,7 +1281,7 @@ mod tests {
             "charmm",
             Params::from_pairs(&[("k", 0.2), ("periodicity", 3.0), ("phase", 0.0), ("w", 1.0)]),
         );
-        let err = write_openmm_xml_forcefield_str(&ff, None).unwrap_err();
+        let err = write_openmm_forcefield_str(&ff, None).unwrap_err();
         assert!(err.contains("w = 1"), "{err}");
     }
 
@@ -1293,7 +1293,7 @@ mod tests {
     #[test]
     fn styles_without_an_openmm_form_are_refused_by_name() {
         let ff = one_torsion("mmff_torsion", Params::from_pairs(&[("v1", 1.0)]));
-        let err = write_openmm_xml_forcefield_str(&ff, None).unwrap_err();
+        let err = write_openmm_forcefield_str(&ff, None).unwrap_err();
         assert!(
             err.contains("OpenMM XML has no form for dihedral `mmff_torsion`"),
             "{err}"
@@ -1307,7 +1307,7 @@ mod tests {
                 Params::from_pairs(&[("d0", 1.0), ("alpha", 1.0), ("r0", 1.0)]),
             )
             .unwrap();
-        let xml = write_openmm_xml_forcefield_str(&ff, None).unwrap();
+        let xml = write_openmm_forcefield_str(&ff, None).unwrap();
         assert!(
             xml.contains("<CustomBondForce energy=\"4.184*(d0*(1-exp(-alpha*(10*r-r0)))^2)\">"),
             "{xml}"
@@ -1321,7 +1321,7 @@ mod tests {
                 Params::from_pairs(&[("a", 1.0), ("rho", 1.0), ("c", 1.0)]),
             )
             .unwrap();
-        let err = write_openmm_xml_forcefield_str(&ff, None).unwrap_err();
+        let err = write_openmm_forcefield_str(&ff, None).unwrap_err();
         assert!(
             err.contains("pair `buck`") && err.contains("does not mix"),
             "{err}"
@@ -1348,7 +1348,7 @@ mod tests {
                 .unwrap();
             let xml = write(&ff);
             assert!(xml.contains(&format!("energy=\"{energy}\"")), "{xml}");
-            let got = improper_params(&read_openmm_xml_forcefield_str(&xml).unwrap());
+            let got = improper_params(&read_openmm_forcefield_str(&xml).unwrap());
             assert_eq!(got[0].0, "harmonic:C-O-N-CT");
             close(got[0].1.get("k").unwrap(), 120.0, "k");
             close(got[0].1.get("chi0").unwrap(), chi0, "chi0");
@@ -1392,7 +1392,7 @@ mod tests {
         geo.get_style_mut("pair", "lj/cut")
             .unwrap()
             .set_str_param("mixing", "geometric");
-        let err = write_openmm_xml_forcefield_str(&geo, None).unwrap_err();
+        let err = write_openmm_forcefield_str(&geo, None).unwrap_err();
         assert!(
             err.contains("Geometric") && err.contains("cross rows"),
             "{err}"
@@ -1424,7 +1424,7 @@ mod tests {
             lj: [0.0, 0.0, 0.5],
             coul: [0.0, 0.0, 0.5],
         });
-        let err = write_openmm_xml_forcefield_str(&ff, None).unwrap_err();
+        let err = write_openmm_forcefield_str(&ff, None).unwrap_err();
         assert!(err.contains("one_four"), "{err}");
         ff.get_style_mut("pair", "lj/charmm")
             .unwrap()
@@ -1437,9 +1437,9 @@ mod tests {
     fn the_precision_bounds_the_written_decimals() {
         let ff = small_ff();
         // r0 = 1.529 Å is written as 0.1529 nm.
-        let coarse = write_openmm_xml_forcefield_str(&ff, Some(2)).unwrap();
+        let coarse = write_openmm_forcefield_str(&ff, Some(2)).unwrap();
         assert!(coarse.contains("length=\"0.15\""), "{coarse}");
-        let fine = write_openmm_xml_forcefield_str(&ff, Some(4)).unwrap();
+        let fine = write_openmm_forcefield_str(&ff, Some(4)).unwrap();
         assert!(fine.contains("length=\"0.1529\""), "{fine}");
     }
 
@@ -1477,7 +1477,7 @@ mod tests {
                 Params::from_pairs(&[("k", 300.0), ("r0", 1.529)]),
             )
             .unwrap();
-        let err = write_openmm_xml_forcefield_str(&ff, None).unwrap_err();
+        let err = write_openmm_forcefield_str(&ff, None).unwrap_err();
         assert!(
             err.contains("CT-CT@other") && err.contains("same labels"),
             "{err}"
@@ -1499,7 +1499,7 @@ mod tests {
                 .def_type(&format!("t-{style}"), &["CT", "CT", "CT", "CT"], params)
                 .unwrap();
         }
-        let err = write_openmm_xml_forcefield_str(&ff, None).unwrap_err();
+        let err = write_openmm_forcefield_str(&ff, None).unwrap_err();
         assert!(err.contains("Proper"), "{err}");
     }
 
@@ -1510,7 +1510,7 @@ mod tests {
         let mut ff = small_ff();
         ff.set_units("metal");
         assert!(
-            write_openmm_xml_forcefield_str(&ff, None)
+            write_openmm_forcefield_str(&ff, None)
                 .unwrap_err()
                 .contains("metal")
         );
@@ -1528,7 +1528,7 @@ mod tests {
         )
         .unwrap();
         assert!(
-            write_openmm_xml_forcefield_str(&ff, None)
+            write_openmm_forcefield_str(&ff, None)
                 .unwrap_err()
                 .contains("shift")
         );

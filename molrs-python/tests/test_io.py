@@ -352,7 +352,7 @@ class TestInpcrdIntoFrame:
         atoms.insert("x", np.zeros(2))
         atoms.insert("charge", np.array([0.5, -0.5]))
         frame["atoms"] = atoms
-        same = molrs.io.read_amber_inpcrd(path, frame)
+        same = molrs.io.read_inpcrd(path, frame)
         assert same is frame
         np.testing.assert_allclose(frame["atoms"]["z"], [3.0, 6.0])
         np.testing.assert_allclose(frame["atoms"]["charge"], [0.5, -0.5])
@@ -366,5 +366,5 @@ class TestInpcrdIntoFrame:
         atoms.insert("x", np.zeros(3))
         frame["atoms"] = atoms
         with pytest.raises(OSError, match="rows"):
-            molrs.io.read_amber_inpcrd(path, frame)
+            molrs.io.read_inpcrd(path, frame)
         assert "y" not in frame["atoms"]
