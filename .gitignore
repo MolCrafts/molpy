@@ -152,8 +152,9 @@ docs/**
 !docs/assets/**/*.glb
 !docs/assets/**/*.js
 !docs/assets/**/*.sdf
-# molplot browser bundle: staged from monorepo molplot/core/dist (or npm) by
-# molcrafts-zensical-theme at zensical build — do not commit.
+# Chart browser bundle: staged from molcrafts-ui vega-lite dist/browser
+# by molcrafts-zensical-theme at zensical build — do not commit.
+docs/assets/molcrafts-chart/
 docs/assets/molplot/
 # molvis viewer bundles: staged the same way by molcrafts-zensical-theme at
 # zensical build — do not commit.
