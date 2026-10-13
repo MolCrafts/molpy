@@ -322,7 +322,7 @@ wheels = [
 
 [[package]]
 name = "molcrafts-molcfg"
-version = "1.6.0"
+version = "1.5.1"
 source = { directory = "../molcfg" }
 dependencies = [
     { name = "pyyaml" },
@@ -341,7 +341,7 @@ provides-extras = ["dev", "docs"]
 
 [[package]]
 name = "molcrafts-mollog"
-version = "1.3.0"
+version = "1.3.1"
 source = { directory = "../mollog" }
 dependencies = [
     { name = "rich" },
