@@ -1572,7 +1572,7 @@ fn define_bonded(
     Ok(lookup)
 }
 
-/// How [`read_gromacs_top_forcefield`] and [`read_gromacs_top_system`]
+/// How [`read_top_forcefield`] and [`read_top_system`]
 /// read a topology: [`GromacsTopForcefieldReader`]'s settings as values.
 #[derive(Debug, Clone, Default)]
 pub struct GromacsTopReadOptions {
@@ -1609,7 +1609,7 @@ impl GromacsTopForcefieldReader {
 /// # Errors
 ///
 /// An unreadable file and every refusal of the module documentation.
-pub fn read_gromacs_top_forcefield(
+pub fn read_top_forcefield(
     path: impl AsRef<std::path::Path>,
     options: &GromacsTopReadOptions,
 ) -> Result<ForceField, String> {
@@ -1624,7 +1624,7 @@ pub fn read_gromacs_top_forcefield(
 /// # Errors
 ///
 /// An unreadable file and every refusal of the module documentation.
-pub fn read_gromacs_top_system(
+pub fn read_top_system(
     path: impl AsRef<std::path::Path>,
     options: &GromacsTopReadOptions,
 ) -> Result<(ForceField, Frame), String> {

@@ -21,12 +21,12 @@ use molrs::op::F;
 /// - `"atoms"` block: `symbol` (str), `x`/`y`/`z` (float, Å Cartesian)
 /// - `simbox`: triclinic periodic box derived from the POSCAR header
 /// - `"grid"` block: a [`Block`] of shape `[nx, ny, nz]` carrying the `"total"`
-///   column and, for spin-polarized files, `"diff"` (see [`read_vasp_chgcar_str`])
+///   column and, for spin-polarized files, `"diff"` (see [`read_chgcar_str`])
 ///
 /// # Errors
 ///
 /// Returns [`MolRsError`] on any I/O or parse failure.
-pub fn read_vasp_chgcar<P: AsRef<Path>>(path: P) -> Result<Frame, MolRsError> {
+pub fn read_chgcar<P: AsRef<Path>>(path: P) -> Result<Frame, MolRsError> {
     let file = std::fs::File::open(path.as_ref()).map_err(MolRsError::Io)?;
     read_frame_from(BufReader::new(file))
 }
@@ -346,14 +346,14 @@ fn is_dim_line(line: &str, nx: usize, ny: usize, nz: usize) -> bool {
 /// # Grid axis convention
 ///
 /// The VASP/FORTRAN data is x-fastest (column-major).
-/// `read_vasp_chgcar` converts to C row-major `(ix, iy, iz)` order so that
+/// `read_chgcar` converts to C row-major `(ix, iy, iz)` order so that
 /// the column data at index `ix*ny*nz + iy*nz + iz` is `ρ(ix, iy, iz) × V`.
 ///
 /// # Atom positions
 ///
 /// Atom positions are returned in Cartesian Å.  If the file uses `Direct`
 /// coordinates they are multiplied by the lattice matrix on read.
-pub fn read_vasp_chgcar_str(text: &str) -> Result<Frame, MolRsError> {
+pub fn read_chgcar_str(text: &str) -> Result<Frame, MolRsError> {
     read_frame_from(text.as_bytes())
 }
 

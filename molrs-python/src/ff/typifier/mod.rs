@@ -29,7 +29,6 @@ use molrs::ff::typifier::ElementTypifier;
 use molrs::ff::typifier::OplsAaTypifier;
 use molrs::ff::typifier::mmff::{Mmff94Typifier, Mmff94sTypifier};
 use molrs::ff::typifier::{Annotation, TypeAssignment, Typifier, Typing};
-use molrs::io::{read_openmm_xml_forcefield_str, read_openmm_xml_opls_typing_str};
 
 use crate::core::frame::PyFrame;
 use crate::core::graph_views::RelationClass;
@@ -604,13 +603,9 @@ impl PyOplsAaTypifier {
     #[pyo3(signature = (source = None, *, strict = true))]
     fn new(source: Option<&Bound<'_, PyAny>>, strict: bool) -> PyResult<(Self, PyTypifier)> {
         let typifier = match oplsaa_source_xml(source)? {
-            Some(xml) => {
-                // A caller's OPLS-AA XML: the typing half and the force field,
-                // each read by its `molrs::io` reader.
-                let meta = read_openmm_xml_opls_typing_str(&xml).map_err(PyValueError::new_err)?;
-                let ff = read_openmm_xml_forcefield_str(&xml).map_err(PyValueError::new_err)?;
-                OplsAaTypifier::new(meta, ff)
-            }
+            Some(xml) => molrs::io::openmm_xml::OpenmmXmlReader::new()
+                .read_opls_typifier_str(&xml)
+                .map_err(PyValueError::new_err)?,
             None => OplsAaTypifier::oplsaa(),
         }
         .with_strict(strict);

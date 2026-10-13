@@ -375,12 +375,12 @@ impl ForceFieldWriter for AmberFrcmodWriter {
 }
 
 /// Write `forcefield` to `path` as an AMBER frcmod file.
-pub fn write_amber_frcmod(path: &str, forcefield: &ForceField) -> Result<(), ForceFieldWriteError> {
+pub fn write_frcmod(path: &str, forcefield: &ForceField) -> Result<(), ForceFieldWriteError> {
     AmberFrcmodWriter::new().write(forcefield, path)
 }
 
 /// `forcefield` as the text of an AMBER frcmod file.
-pub fn write_amber_frcmod_str(forcefield: &ForceField) -> Result<String, ForceFieldWriteError> {
+pub fn write_frcmod_str(forcefield: &ForceField) -> Result<String, ForceFieldWriteError> {
     AmberFrcmodWriter::new().write_str(forcefield)
 }
 
@@ -410,7 +410,7 @@ mod tests {
     }
 
     fn write(ff: &ForceField) -> String {
-        write_amber_frcmod_str(ff).unwrap_or_else(|e| panic!("write: {e}"))
+        write_frcmod_str(ff).unwrap_or_else(|e| panic!("write: {e}"))
     }
 
     /// One `category/style` with one type over `ends`.
@@ -596,7 +596,7 @@ mod tests {
             &["c3", "os"],
             Params::from_pairs(&[("d0", 1.0), ("alpha", 2.0), ("r0", 1.4)]),
         );
-        let err = write_amber_frcmod_str(&ff).unwrap_err();
+        let err = write_frcmod_str(&ff).unwrap_err();
         assert!(
             err.contains("AMBER frcmod has no form for bond `morse`"),
             "{err}"
@@ -611,7 +611,7 @@ mod tests {
             &["c3", "os"],
             Params::from_pairs(&[("sigma", 3.0), ("epsilon", 0.1)]),
         );
-        let err = write_amber_frcmod_str(&ff).unwrap_err();
+        let err = write_frcmod_str(&ff).unwrap_err();
         assert!(err.contains("c3-os"), "{err}");
     }
 
@@ -620,7 +620,7 @@ mod tests {
         let mut ff = ForceField::new("t");
         ff.def_style("pair", "lj/cut", Params::from_pairs(&[("shift", 1.0)]))
             .unwrap();
-        let err = write_amber_frcmod_str(&ff).unwrap_err();
+        let err = write_frcmod_str(&ff).unwrap_err();
         assert!(err.contains("shift"), "{err}");
     }
 
@@ -629,7 +629,7 @@ mod tests {
         let mut ff = ForceField::new("t");
         ff.def_style("pair", "lj/cut", Params::from_pairs(&[("cutoff", 9.0)]))
             .unwrap();
-        let text = write_amber_frcmod_str(&ff).unwrap();
+        let text = write_frcmod_str(&ff).unwrap();
         assert!(!text.contains('9'), "{text}");
     }
 
@@ -648,7 +648,7 @@ mod tests {
                 Params::from_pairs(&[("sigma", 2.0), ("epsilon", 0.01)]),
             )
             .unwrap();
-        let text = write_amber_frcmod_str(&ff).unwrap();
+        let text = write_frcmod_str(&ff).unwrap();
         assert!(text.contains("Li+  6.940000"), "{text}");
         assert!(text.contains("  Li+  "), "{text}");
     }
@@ -661,7 +661,7 @@ mod tests {
             &["c3x", "os"],
             Params::from_pairs(&[("k", 2.0), ("r0", 1.2)]),
         );
-        let err = write_amber_frcmod_str(&ff).unwrap_err();
+        let err = write_frcmod_str(&ff).unwrap_err();
         assert!(err.contains("c3x"), "{err}");
     }
 

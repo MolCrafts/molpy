@@ -18,7 +18,7 @@ The form — categories, styles, parameters, refusals — is `molrs::ff::ir`
 field against it is `molrs::ff::compile` and `molrs.ff.compile`. molpy
 re-exports the Python modules. The engine files a registered
 style is read from and written to are `molrs.io`'s (`read_lammps_forcefield`,
-`write_openmm_xml_forcefield`, `write_mrec_frame`, …; the same names in Rust's
+`write_openmm_forcefield`, `write_mrec_frame`, …; the same names in Rust's
 `molrs::io`), the one owner of every file reader and writer.
 
 ## The form
@@ -440,7 +440,7 @@ numbers pinned in `ff_ir_extension_lammps.tsv` by the same script:
 | `pair lj/smooth/linear` by expression and by a numpy kernel = LAMMPS, its 5 Å cutoff straddling the pairs; `compile_typed` (an integrator's first force call) = `compile` | rel ≤ 1e-10; doors rel ≤ 1e-12 | 2.5·10⁻¹⁵ (expression), 2.9·10⁻¹⁵ (numpy); doors bit for bit |
 | `.mrec` round trip; a subprocess that registered nothing | bit for bit, expression byte for byte | bit for bit |
 | a callable-only style in a fresh process | `NoKernel` naming the style and `molrs.ff.style_registry.register_style` | as stated |
-| refusals: unknown function, unbound variable, sealed `bond harmonic`, wrong `def_type` arity, kernel of the wrong shape, kernel raising, `write_gromacs_top_forcefield`, missing parameter | each its `IrError` subclass naming the item | as stated |
+| refusals: unknown function, unbound variable, sealed `bond harmonic`, wrong `def_type` arity, kernel of the wrong shape, kernel raising, `write_top_forcefield`, missing parameter | each its `IrError` subclass naming the item | as stated |
 | `dihedral table/linear` (`table: f64[N]`) by a numpy kernel = hand linear interpolation; round trip | rel ≤ 1e-12; bits | 0 |
 | class2 bond-angle: expression = numpy = −π/60 (= the Rust form) | rel ≤ 1e-12 | 2.4·10⁻¹⁵ |
 

@@ -665,7 +665,7 @@ def _gromacs(tmp: Path) -> None:
     ff.def_style("bond", "fene/proof").def_type(
         "B-B", t["B"], t["B"], k=K, r0=R0, epsilon=EPS, sigma=SIG
     )
-    molrs.io.write_gromacs_top_forcefield(tmp / "x.top", ff)
+    molrs.io.write_top_forcefield(tmp / "x.top", ff)
 
 
 REFUSALS = [
@@ -685,7 +685,7 @@ REFUSALS = [
      ir.KernelShapeError, {"style": "short/proof"}),
     ("kernel raising", lambda tmp: _compile_with(_raising, "raising/proof"),
      ir.KernelShapeError, {"style": "raising/proof"}),
-    ("write_gromacs_top_forcefield", _gromacs,
+    ("write_top_forcefield", _gromacs,
      ir.NoEngineFormError, {"engine": "GROMACS", "category": "bond", "style": "fene/proof"}),
     ("missing param at compile",
      lambda tmp: price(fene_ff("fene/proof", sigma=None), bead_frame()),

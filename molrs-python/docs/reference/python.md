@@ -173,7 +173,7 @@ One module per file format. Every door is a function named after its format:
 `read_X` / `write_X` for one frame, `read_X_trajectory` /
 `write_X_trajectory` for a sequence, `_str` / `_bytes` for text and bytes in
 memory; family formats carry the family name (`read_lammps_data`,
-`read_amber_prmtop`, `read_vasp_poscar`). No door picks the format for the
+`read_prmtop`, `read_poscar`). No door picks the format for the
 caller. Every reader emits the canonical column names (`molrs.core.keys`).
 Each `read_X_trajectory` returns its format's lazy reader,
 `molrs.io.X.<X>Reader`, over one path or a list of paths.
@@ -210,11 +210,11 @@ Each `read_X_trajectory` returns its format's lazy reader,
 
 ::: molrs.io.write_cube
 
-::: molrs.io.read_vasp_poscar
+::: molrs.io.read_poscar
 
-::: molrs.io.write_vasp_poscar
+::: molrs.io.write_poscar
 
-::: molrs.io.read_vasp_chgcar
+::: molrs.io.read_chgcar
 
 ::: molrs.io.read_stl
 
@@ -290,15 +290,15 @@ Each `read_X_trajectory` returns its format's lazy reader,
 
 ### AMBER
 
-::: molrs.io.read_amber_prmtop
+::: molrs.io.read_prmtop
 
-::: molrs.io.read_amber_inpcrd
+::: molrs.io.read_inpcrd
 
-::: molrs.io.read_amber_ac
+::: molrs.io.read_ac
 
-::: molrs.io.read_amber_prep
+::: molrs.io.read_prep
 
-::: molrs.io.write_amber_prep
+::: molrs.io.write_prep
 
 ### Record files (`molrs.io.mrec`)
 
@@ -346,27 +346,27 @@ The [Record files guide](../guides/records.md) shows these in use.
 
 ::: molrs.io.write_lammps_data_coeffs_str
 
-::: molrs.io.read_gromacs_top_forcefield
+::: molrs.io.read_top_forcefield
 
-::: molrs.io.write_gromacs_top_forcefield
+::: molrs.io.write_top_forcefield
 
-::: molrs.io.read_gromacs_top_system
+::: molrs.io.read_top_system
 
-::: molrs.io.write_gromacs_top_system
+::: molrs.io.write_top_system
 
-::: molrs.io.read_amber_prmtop_forcefield
+::: molrs.io.read_prmtop_forcefield
 
-::: molrs.io.read_amber_prmtop_system
+::: molrs.io.read_prmtop_system
 
-::: molrs.io.write_amber_frcmod
+::: molrs.io.write_frcmod
 
-::: molrs.io.read_openmm_xml_forcefield
+::: molrs.io.read_openmm_forcefield
 
-::: molrs.io.write_openmm_xml_forcefield
+::: molrs.io.write_openmm_forcefield
 
-::: molrs.io.read_molrs_xml_forcefield
+::: molrs.io.read_xml_forcefield
 
-::: molrs.io.write_molrs_xml_forcefield
+::: molrs.io.write_xml_forcefield
 
 ### SMILES and CGsmiles
 

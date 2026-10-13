@@ -208,14 +208,14 @@ pub fn write_gro_trajectory(path: PathBuf, frames: Vec<PyRef<'_, PyFrame>>) -> P
 ///
 /// Examples
 /// --------
-/// >>> frame = molrs.io.read_vasp_chgcar("CHGCAR")
+/// >>> frame = molrs.io.read_chgcar("CHGCAR")
 /// >>> grid = frame["chgcar"]
 /// >>> total = grid["total"]          # shape (nx, ny, nz)
 /// >>> density = total / frame.box.volume()
 #[pyfunction]
-pub fn read_vasp_chgcar(path: PathBuf) -> PyResult<PyFrame> {
+pub fn read_chgcar(path: PathBuf) -> PyResult<PyFrame> {
     let path = path_str(&path)?;
-    let frame = molrs::io::read_vasp_chgcar(path).map_err(molrs_error_to_pyerr)?;
+    let frame = molrs::io::read_chgcar(path).map_err(molrs_error_to_pyerr)?;
     PyFrame::from_core_frame(frame)
 }
 
@@ -305,7 +305,7 @@ pub fn read_mol2(path: PathBuf) -> PyResult<PyFrame> {
 /// Frame with ``id``, ``name``, ``x``/``y``/``z``, optional ``vel`` (shape
 /// ``[n, 3]``), optional box, and meta ``title`` / ``timestep``.
 ///
-/// With ``frame`` (say, the structure :func:`read_amber_prmtop` read), the
+/// With ``frame`` (say, the structure :func:`read_prmtop` read), the
 /// file's coordinates go into that frame in place and it is returned: ``x`` /
 /// ``y`` / ``z`` (and ``vel``) replace those atom columns, every other column
 /// stays; the file's box and meta keys are set. A frame without an ``atoms``
@@ -330,7 +330,7 @@ pub fn read_mol2(path: PathBuf) -> PyResult<PyFrame> {
 ///     differs from the file's (``frame`` is then unchanged).
 #[pyfunction]
 #[pyo3(signature = (path, frame = None))]
-pub fn read_amber_inpcrd<'py>(
+pub fn read_inpcrd<'py>(
     py: Python<'py>,
     path: PathBuf,
     frame: Option<Bound<'py, PyFrame>>,
@@ -338,11 +338,11 @@ pub fn read_amber_inpcrd<'py>(
     let path = path_str(&path)?;
     match frame {
         None => {
-            let frame = molrs::io::read_amber_inpcrd(path).map_err(io_error_to_pyerr)?;
+            let frame = molrs::io::read_inpcrd(path).map_err(io_error_to_pyerr)?;
             Ok(Bound::new(py, PyFrame::from_core_frame(frame)?)?.into_any())
         }
         Some(target) => {
-            let coordinates = molrs::io::read_amber_inpcrd(path).map_err(io_error_to_pyerr)?;
+            let coordinates = molrs::io::read_inpcrd(path).map_err(io_error_to_pyerr)?;
             target
                 .borrow()
                 .with_frame_mut(|f| molrs::io::amber::merge_inpcrd(f, coordinates))?
@@ -373,34 +373,34 @@ pub fn read_amber_inpcrd<'py>(
 /// IOError
 ///     If the file cannot be opened or parsed.
 #[pyfunction]
-pub fn read_amber_prmtop(path: PathBuf) -> PyResult<PyFrame> {
+pub fn read_prmtop(path: PathBuf) -> PyResult<PyFrame> {
     let path = path_str(&path)?;
-    let frame = molrs::io::read_amber_prmtop(path).map_err(io_error_to_pyerr)?;
+    let frame = molrs::io::read_prmtop(path).map_err(io_error_to_pyerr)?;
     PyFrame::from_core_frame(frame)
 }
 
 /// Read an Antechamber ``.ac`` file into a Frame.
 #[pyfunction]
-pub fn read_amber_ac(path: PathBuf) -> PyResult<PyFrame> {
+pub fn read_ac(path: PathBuf) -> PyResult<PyFrame> {
     let path = path_str(&path)?;
-    let frame = molrs::io::read_amber_ac(path).map_err(io_error_to_pyerr)?;
+    let frame = molrs::io::read_ac(path).map_err(io_error_to_pyerr)?;
     PyFrame::from_core_frame(frame)
 }
 
 /// Read an Amber prep file into a nested dict (serde JSON shape).
 #[pyfunction]
-pub fn read_amber_prep<'py>(py: Python<'py>, path: PathBuf) -> PyResult<Bound<'py, PyDict>> {
+pub fn read_prep<'py>(py: Python<'py>, path: PathBuf) -> PyResult<Bound<'py, PyDict>> {
     let path = path_str(&path)?;
-    let res = molrs::io::read_amber_prep(path).map_err(io_error_to_pyerr)?;
+    let res = molrs::io::read_prep(path).map_err(io_error_to_pyerr)?;
     prep_residue_to_pydict(py, &res)
 }
 
 /// Write an Amber prep residue from a nested dict.
 #[pyfunction]
-pub fn write_amber_prep(path: PathBuf, residue: &Bound<'_, PyAny>) -> PyResult<()> {
+pub fn write_prep(path: PathBuf, residue: &Bound<'_, PyAny>) -> PyResult<()> {
     let path = path_str(&path)?;
     let res = py_to_prep_residue(residue)?;
-    molrs::io::write_amber_prep(path, &res).map_err(io_error_to_pyerr)
+    molrs::io::write_prep(path, &res).map_err(io_error_to_pyerr)
 }
 
 pub(super) fn py_to_prep_residue(residue: &Bound<'_, PyAny>) -> PyResult<PrepResidue> {
@@ -787,25 +787,25 @@ pub fn write_cif(path: PathBuf, frame: &PyFrame) -> PyResult<()> {
 /// -------
 /// Frame
 #[pyfunction]
-pub fn read_vasp_poscar(path: PathBuf) -> PyResult<PyFrame> {
+pub fn read_poscar(path: PathBuf) -> PyResult<PyFrame> {
     let path = path_str(&path)?;
-    let frame = molrs::io::read_vasp_poscar(path).map_err(io_error_to_pyerr)?;
+    let frame = molrs::io::read_poscar(path).map_err(io_error_to_pyerr)?;
     PyFrame::from_core_frame(frame)
 }
 
 /// Write a frame as a VASP POSCAR file — the inverse of
-/// :func:`read_vasp_poscar`.
+/// :func:`read_poscar`.
 #[pyfunction]
-pub fn write_vasp_poscar(path: PathBuf, frame: &PyFrame) -> PyResult<()> {
+pub fn write_poscar(path: PathBuf, frame: &PyFrame) -> PyResult<()> {
     let path = path_str(&path)?;
-    frame.with_frame(|f| molrs::io::write_vasp_poscar(path, f).map_err(io_error_to_pyerr))?
+    frame.with_frame(|f| molrs::io::write_poscar(path, f).map_err(io_error_to_pyerr))?
 }
 
 pub(crate) fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    crate::add_function(m, "molrs.io", wrap_pyfunction!(read_amber_ac, m)?)?;
-    crate::add_function(m, "molrs.io", wrap_pyfunction!(read_amber_inpcrd, m)?)?;
-    crate::add_function(m, "molrs.io", wrap_pyfunction!(read_amber_prep, m)?)?;
-    crate::add_function(m, "molrs.io", wrap_pyfunction!(read_amber_prmtop, m)?)?;
+    crate::add_function(m, "molrs.io", wrap_pyfunction!(read_ac, m)?)?;
+    crate::add_function(m, "molrs.io", wrap_pyfunction!(read_inpcrd, m)?)?;
+    crate::add_function(m, "molrs.io", wrap_pyfunction!(read_prep, m)?)?;
+    crate::add_function(m, "molrs.io", wrap_pyfunction!(read_prmtop, m)?)?;
     crate::add_function(m, "molrs.io", wrap_pyfunction!(read_cif, m)?)?;
     crate::add_function(m, "molrs.io", wrap_pyfunction!(read_cube, m)?)?;
     crate::add_function(m, "molrs.io", wrap_pyfunction!(read_gro, m)?)?;
@@ -819,11 +819,11 @@ pub(crate) fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     crate::add_function(m, "molrs.io", wrap_pyfunction!(read_mol2, m)?)?;
     crate::add_function(m, "molrs.io", wrap_pyfunction!(read_pdb, m)?)?;
     crate::add_function(m, "molrs.io", wrap_pyfunction!(read_sdf, m)?)?;
-    crate::add_function(m, "molrs.io", wrap_pyfunction!(read_vasp_chgcar, m)?)?;
-    crate::add_function(m, "molrs.io", wrap_pyfunction!(read_vasp_poscar, m)?)?;
+    crate::add_function(m, "molrs.io", wrap_pyfunction!(read_chgcar, m)?)?;
+    crate::add_function(m, "molrs.io", wrap_pyfunction!(read_poscar, m)?)?;
     crate::add_function(m, "molrs.io", wrap_pyfunction!(read_xsf, m)?)?;
     crate::add_function(m, "molrs.io", wrap_pyfunction!(read_xyz, m)?)?;
-    crate::add_function(m, "molrs.io", wrap_pyfunction!(write_amber_prep, m)?)?;
+    crate::add_function(m, "molrs.io", wrap_pyfunction!(write_prep, m)?)?;
     crate::add_function(m, "molrs.io", wrap_pyfunction!(write_cif, m)?)?;
     crate::add_function(m, "molrs.io", wrap_pyfunction!(write_cube, m)?)?;
     crate::add_function(m, "molrs.io", wrap_pyfunction!(write_gro, m)?)?;
@@ -838,7 +838,7 @@ pub(crate) fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     crate::add_function(m, "molrs.io", wrap_pyfunction!(write_mol2, m)?)?;
     crate::add_function(m, "molrs.io", wrap_pyfunction!(write_pdb, m)?)?;
     crate::add_function(m, "molrs.io", wrap_pyfunction!(write_pdb_trajectory, m)?)?;
-    crate::add_function(m, "molrs.io", wrap_pyfunction!(write_vasp_poscar, m)?)?;
+    crate::add_function(m, "molrs.io", wrap_pyfunction!(write_poscar, m)?)?;
     crate::add_function(m, "molrs.io", wrap_pyfunction!(write_xsf, m)?)?;
     crate::add_function(m, "molrs.io", wrap_pyfunction!(write_xyz, m)?)?;
     crate::add_function(m, "molrs.io", wrap_pyfunction!(write_xyz_trajectory, m)?)?;

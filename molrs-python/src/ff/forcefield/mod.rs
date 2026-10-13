@@ -241,7 +241,7 @@ pub(crate) fn params_to_dict<'py>(
 impl PyForceField {
     /// Construct an empty force field. Populate it with :meth:`def_style` and
     /// the style handles' ``def_type``, or load one with a reader
-    /// (:func:`molrs.io.read_openmm_xml_forcefield`, …). ``units`` declares the unit system
+    /// (:func:`molrs.io.read_openmm_forcefield`, …). ``units`` declares the unit system
     /// when given; left out, the force field declares none and :attr:`units`
     /// reads ``"real"``.
     #[new]

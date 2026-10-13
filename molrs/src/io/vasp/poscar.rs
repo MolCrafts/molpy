@@ -45,7 +45,7 @@ use crate::io::writer::{FrameWriter, Writer};
 ///   - `vx`, `vy`, `vz` — atomic velocities, if present.
 /// - `frame.simbox` — periodic [`SimBox`](molrs::core::SimBox) from the lattice vectors.
 /// - `frame.meta` — `title`, plus `poscar_mode = "direct" | "cartesian"`.
-pub fn read_vasp_poscar<P: AsRef<Path>>(path: P) -> Result<Frame> {
+pub fn read_poscar<P: AsRef<Path>>(path: P) -> Result<Frame> {
     let file = std::fs::File::open(path.as_ref())?;
     read_frame_from(std::io::BufReader::new(file))
 }
@@ -218,7 +218,7 @@ impl<R: BufRead> FrameReader for VaspPoscarReader<R> {
 // ---------------------------------------------------------------------------
 
 /// Write a Frame as a POSCAR file at `path`.
-pub fn write_vasp_poscar<P: AsRef<Path>>(path: P, frame: &Frame) -> Result<()> {
+pub fn write_poscar<P: AsRef<Path>>(path: P, frame: &Frame) -> Result<()> {
     let file = std::fs::File::create(path.as_ref())?;
     let mut w = BufWriter::new(file);
     write_frame_to(&mut w, frame)?;
@@ -383,12 +383,12 @@ impl<W: Write> FrameWriter for VaspPoscarWriter<W> {
 // ---------------------------------------------------------------------------
 
 /// Read one POSCAR / CONTCAR structure from its text.
-pub fn read_vasp_poscar_str(text: &str) -> Result<Frame> {
+pub fn read_poscar_str(text: &str) -> Result<Frame> {
     read_frame_from(text.as_bytes())
 }
 
-/// Write one frame as POSCAR text — the inverse of [`read_vasp_poscar_str`].
-pub fn write_vasp_poscar_str(frame: &Frame) -> Result<String> {
+/// Write one frame as POSCAR text — the inverse of [`read_poscar_str`].
+pub fn write_poscar_str(frame: &Frame) -> Result<String> {
     let mut buf = Vec::new();
     write_frame_to(&mut buf, frame)?;
     String::from_utf8(buf).map_err(crate::io::invalid_data)

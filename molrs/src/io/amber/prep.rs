@@ -42,13 +42,13 @@ pub struct PrepResidue {
 }
 
 /// Read a prep file from disk.
-pub fn read_amber_prep(path: impl AsRef<Path>) -> Result<PrepResidue> {
+pub fn read_prep(path: impl AsRef<Path>) -> Result<PrepResidue> {
     let text = fs::read_to_string(path.as_ref())?;
-    read_amber_prep_str(&text)
+    read_prep_str(&text)
 }
 
 /// Parse prep text into a residue.
-pub fn read_amber_prep_str(text: &str) -> Result<PrepResidue> {
+pub fn read_prep_str(text: &str) -> Result<PrepResidue> {
     let lines: Vec<&str> = text.lines().collect();
     let mut name = String::new();
     let mut atoms = Vec::new();
@@ -125,7 +125,7 @@ pub fn read_amber_prep_str(text: &str) -> Result<PrepResidue> {
 }
 
 /// Format a residue as prep text.
-pub fn write_amber_prep_str(res: &PrepResidue) -> String {
+pub fn write_prep_str(res: &PrepResidue) -> String {
     let mut lines = vec![
         "    0    0    2".to_string(),
         res.name.clone(),
@@ -163,10 +163,10 @@ pub fn write_amber_prep_str(res: &PrepResidue) -> String {
 }
 
 /// Write prep to disk.
-pub fn write_amber_prep(path: impl AsRef<Path>, res: &PrepResidue) -> Result<()> {
+pub fn write_prep(path: impl AsRef<Path>, res: &PrepResidue) -> Result<()> {
     let path = path.as_ref();
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }
-    fs::write(path, write_amber_prep_str(res))
+    fs::write(path, write_prep_str(res))
 }

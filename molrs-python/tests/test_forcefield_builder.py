@@ -262,7 +262,7 @@ _OPLS_GEOMETRIC = """<ForceField name="OPLS-AA" combining_rule="geometric">
 def test_read_opls_xml_returns_the_force_field_with_its_mixing(tmp_path):
     path = tmp_path / "opls.xml"
     path.write_text(_OPLS_GEOMETRIC, encoding="utf-8")
-    ff = molrs.io.read_openmm_xml_forcefield(path)
+    ff = molrs.io.read_openmm_forcefield(path)
     assert type(ff) is molrs.ff.forcefield.ForceField
     assert ff.get_style("pair", "lj/cut")["mixing"] == "geometric"
 
@@ -272,8 +272,8 @@ def test_a_written_force_field_reads_back_through_a_pathlike(tmp_path):
     (ct,) = _atoms(ff, "CT")
     ff.def_style("bond", "harmonic").def_type("CT-CT", ct, ct, k=300.0, r0=1.5)
     path = tmp_path / "ff.xml"
-    molrs.io.write_openmm_xml_forcefield(path, ff)
-    back = molrs.io.read_openmm_xml_forcefield(path)
+    molrs.io.write_openmm_forcefield(path, ff)
+    back = molrs.io.read_openmm_forcefield(path)
     assert type(back) is molrs.ff.forcefield.ForceField
     # The file is in nm and kJ/mol: the trip is exact to the conversions' ulp.
     ((name, params),) = _rows(back.get_style("bond", "harmonic"))
