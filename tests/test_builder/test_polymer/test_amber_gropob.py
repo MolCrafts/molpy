@@ -72,7 +72,7 @@ def gropob(TEST_DATA_DIR: Path) -> Path:
 
 
 def _peo_template(data: Path) -> mp.Atomistic:
-    frame = mp.io.read_amber_ac(data / "PEO.ac")
+    frame = mp.io.read_ac(data / "PEO.ac")
     del frame["atoms"]["xyz"]  # x, y, z are there too; a graph column is 1-D
     return mp.Atomistic.from_frame(frame)
 
@@ -122,9 +122,7 @@ def test_prepgen_from_their_ac_matches_the_25mer(gropob, tmp_path):
         encoding="utf-8"
     )
 
-    reference_ff, reference = mp.io.read_amber_prmtop_system(
-        gropob / "PEO_25mer.prmtop"
-    )
+    reference_ff, reference = mp.io.read_prmtop_system(gropob / "PEO_25mer.prmtop")
     frame = result.chain.to_frame()
     atoms = frame["atoms"]
     assert atoms.n_rows == 183
@@ -160,7 +158,7 @@ def test_prepgen_from_their_ac_matches_the_25mer(gropob, tmp_path):
 
 def test_rerunning_antechamber_keeps_ether_oxygens(gropob, tmp_path):
     result = _build({"PEO": _peo_template(gropob)}, _CUTS, tmp_path)
-    reference = mp.io.read_amber_prmtop(gropob / "PEO_25mer.prmtop")
+    reference = mp.io.read_prmtop(gropob / "PEO_25mer.prmtop")
     ours = _type_charges(result.chain.to_frame())
     theirs = _type_charges(reference)
     diffs = [
