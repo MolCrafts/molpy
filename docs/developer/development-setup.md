@@ -38,9 +38,11 @@ the wheel continues to declare its published dependency ranges.
 
 Run `python scripts/check.py verify` before pushing. The pre-push hook runs
 all hygiene/lint gates, then creates one partner layout, validates `uv.lock`,
-installs the dependency graph, runs `uv pip check`, tests and strict docs. It
-also runs the suite against published dependency ranges (`--no-sources`) and
-checks the release distributions.
+installs the dependency graph, runs `uv pip check`, tests and strict docs,
+and checks the release distributions. A push to `master` or `nightly` — the
+branches that ship to PyPI — also runs the suite against the published
+dependency ranges (`--no-sources`); on `dev` and topic branches a partner's
+next minor line is legitimately unpublished, so that gate is skipped there.
 Set `MOLCRAFTS_PARTNER_CACHE` to a persistent directory to reuse builds.
 
 For coordinated changes, publish the partner commit and update the declared
