@@ -80,7 +80,7 @@ The reader names each bonded type by joining its endpoint atom types with `::`
 it is spelled the way the force field lists it:
 
 ```python
-ff = mp.io.read_openmm_xml_forcefield(mp.resources.get_path("forcefield/tip3p.xml"))
+ff = mp.io.read_openmm_forcefield(mp.resources.get_path("forcefield/tip3p.xml"))
 print("bond types:", [t.name for t in ff.get_types("bond")])
 print("angle types:", [t.name for t in ff.get_types("angle")])
 

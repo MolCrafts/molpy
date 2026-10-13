@@ -29,10 +29,10 @@ adds its metric readers to `mp.io.lammps` and `mp.io.mrec`, and
 | `read_xyz` / `write_xyz` | XYZ | read/write |
 | `read_xsf` / `write_xsf` | XSF (crystallographic) | read/write |
 | `read_cube` / `write_cube` | Gaussian Cube | read/write |
-| `read_vasp_chgcar` | VASP CHGCAR | read |
-| `read_amber_inpcrd` | AMBER inpcrd (optionally into an existing frame) | read |
-| `read_amber_prmtop` | AMBER prmtop (structure) | read |
-| `read_amber_ac` | Antechamber AC | read |
+| `read_chgcar` | VASP CHGCAR | read |
+| `read_inpcrd` | AMBER inpcrd (optionally into an existing frame) | read |
+| `read_prmtop` | AMBER prmtop (structure) | read |
+| `read_ac` | Antechamber AC | read |
 | `read_smiles_str` / `write_smiles_str` | one molecule from / to SMILES (connectivity only; a `.`-separated set is refused) | read |
 | `read_cgsmiles_str` | one molecule from CGsmiles, its lowest level expanded into atoms (topology only) | read |
 | `smiles.SmilesIr`, `cgsmiles.CgSmilesIr` | SMILES / CGsmiles text (`SmilesIr(s).to_atomistic()`, `.components()`) | parse / emit |
@@ -47,13 +47,14 @@ The files map onto `mp.ff.forcefield.ForceField`, the data model
 
 | Function | Format | Direction |
 |----------|--------|-----------|
-| `read_openmm_xml_forcefield` / `write_openmm_xml_forcefield` | OpenMM/OPLS XML | read/write |
+| `read_xml_forcefield` / `write_xml_forcefield` | Force-field XML: every style one element, in the declared units | read/write (lossless) |
+| `read_openmm_forcefield` / `write_openmm_forcefield` | OpenMM force-field XML (nm, kJ/mol) | read/write |
 | `read_lammps_forcefield` / `write_lammps_forcefield` | LAMMPS `*.ff` include | read/write (engine units ↔ LAMMPS `real`) |
 | `read_lammps_data_coeffs` / `read_lammps_data_coeffs_str` / `write_lammps_data_coeffs_str` | LAMMPS data `* Coeffs` | read (file or text) / write (text) |
-| `read_gromacs_top_forcefield` / `write_gromacs_top_forcefield` | GROMACS `.top` / `.itp` directives | read/write |
-| `read_gromacs_top_system` / `write_gromacs_top_system` | GROMACS topology: force field + typed frame | read/write |
-| `read_amber_prmtop_forcefield` / `write_amber_frcmod` | AMBER prmtop / frcmod | read / write |
-| `read_amber_prmtop_system` | AMBER prmtop: force field + typed frame (per-pair 1-4 weights in `pairs`) | read |
+| `read_top_forcefield` / `write_top_forcefield` | GROMACS `.top` / `.itp` directives | read/write |
+| `read_top_system` / `write_top_system` | GROMACS topology: force field + typed frame | read/write |
+| `read_prmtop_forcefield` / `write_frcmod` | AMBER prmtop / frcmod | read / write |
+| `read_prmtop_system` | AMBER prmtop: force field + typed frame (per-pair 1-4 weights in `pairs`) | read |
 
 ### Trajectories
 
@@ -112,7 +113,7 @@ frame = mp.io.read_pdb("molecule.pdb")
 mp.io.write_lammps_data("system.data", frame)
 
 # Read force field (XML or LAMMPS *.ff)
-ff = mp.io.read_openmm_xml_forcefield(mp.resources.get_path("forcefield/tip3p.xml"))
+ff = mp.io.read_openmm_forcefield(mp.resources.get_path("forcefield/tip3p.xml"))
 ff = mp.io.read_lammps_forcefield("system.ff")
 
 # Write the LAMMPS coefficients the frame's type labels use

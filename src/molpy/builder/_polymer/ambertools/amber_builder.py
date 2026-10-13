@@ -16,7 +16,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
-from molrs.io import read_amber_ac, read_amber_inpcrd, read_amber_prmtop
+from molrs.io import read_ac, read_inpcrd, read_prmtop
 from molrs.core import Atomistic, Bead, CoarseGrain
 
 from molpy.config import load_config
@@ -211,7 +211,7 @@ class AmberPolymerBuilder:
             self._antechamber(directory, source, ac, mol2, frcmod, charge)
             stamp.write_text(digest, encoding="utf-8")
 
-        frame = read_amber_ac(ac)
+        frame = read_ac(ac)
         ac_names = [str(name) for name in frame["atoms"]["name"]]
         ac_types = dict(zip(ac_names, map(str, frame["atoms"]["type"]), strict=True))
         renamed = _rename(_atom_names(oligomer), ac_names)
@@ -334,7 +334,7 @@ class AmberPolymerBuilder:
                 prmtop,
                 lambda: tleap.run_from_script(script, script_name="polymer.in"),
             )
-        frame = read_amber_inpcrd(inpcrd, read_amber_prmtop(prmtop))
+        frame = read_inpcrd(inpcrd, read_prmtop(prmtop))
         assignment = _PrmtopAssignment(prmtop)
         chain = assignment.typify(Atomistic.from_frame(frame))
         return AmberBuildResult(

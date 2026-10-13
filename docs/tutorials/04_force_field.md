@@ -177,13 +177,13 @@ Once the model is internally consistent, serialization becomes an interface prob
 ### GROMACS
 
 ```python
-mp.io.write_gromacs_top_forcefield("system.itp", ff, precision=4)
+mp.io.write_top_forcefield("system.itp", ff, precision=4)
 ```
 
 ### XML
 
 ```python
-mp.io.write_openmm_xml_forcefield("system.xml", ff, precision=6)
+mp.io.write_openmm_forcefield("system.xml", ff, precision=6)
 ```
 
 ### LAMMPS

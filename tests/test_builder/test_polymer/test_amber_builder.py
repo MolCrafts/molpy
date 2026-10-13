@@ -356,7 +356,7 @@ class TestGropobOligomer:
         shutil.copy(data / "PEO.ac", monomer / "PEO.ac")
         shutil.copy(data / "PEO_initial.mol2", monomer / "PEO.mol2")
         shutil.copy(data / "PEO_initial.frcmod", monomer / "PEO.frcmod")
-        frame = mp.io.read_amber_ac(data / "PEO.ac")
+        frame = mp.io.read_ac(data / "PEO.ac")
         del frame["atoms"]["xyz"]
         return mp.Atomistic.from_frame(frame)
 
