@@ -110,6 +110,12 @@ Acronyms used across the [Compute](../compute/index.md) analyses.
 **VDOS** — vibrational density of states
 : Spectral density of atomic motion, `∝ FFT[VACF]`. See [VACF](../compute/vacf.md).
 
+**OACF** — orientational autocorrelation function
+: `C_ℓ(t) = ⟨P_ℓ(û(0)·û(t))⟩` of a molecular unit vector; `ℓ = 1` is what dielectric relaxation sees, `ℓ = 2` what NMR and Raman see. See [OACF](../compute/oacf.md).
+
+**TimeCorrelation**
+: The one object every correlator returns: the curve (`values`), its lag axis (`lags`, `lag_times`), the time-origin counts, and the derived quantities as methods. See [VACF](../compute/vacf.md).
+
 **MCD** — mean-displacement correlation (distinct diffusion)
 : Cross-correlated displacements between different species — the *distinct* part of diffusion, beyond the single-particle MSD. See [MSD](../compute/msd.md).
 

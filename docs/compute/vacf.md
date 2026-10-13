@@ -164,7 +164,9 @@ adding a constant that integrates without bound.
 
 ## Computing it
 
-`Acf` takes a `(n_frames, n_entities, n_components)` array — do not flatten it.
+`Acf` takes a `(n_frames, n_entities, n_components)` array — do not flatten it
+— and returns a `TimeCorrelation`: the curve is `.values`, one entry per lag,
+and every time correlation in `molpy.compute` returns the same kind of object.
 
 ```python
 import numpy as np
@@ -173,35 +175,42 @@ from molpy.compute import Acf, CumulativeTrapezoid
 rng = np.random.default_rng(0)
 velocities = np.ascontiguousarray(rng.normal(0.0, 0.02, size=(2000, 64, 3)))
 
-result = Acf().compute(velocities, max_lag=50)
-print(round(float(result.acf[0]), 6))        # -> 0.001203
-print(result.acf.shape)                      # -> (51,)
+result = Acf().compute(velocities, max_lag=50, dt=10.0)
+print(round(float(result.values[0]), 6))     # -> 0.001203
+print(result.values.shape)                   # -> (51,)
 ```
 
 `max_lag` counts **frames, not femtoseconds**, despite sitting next to arguments
 that are times. Fifty lags at a 10 fs frame spacing reaches 500 fs, and the
 result has `max_lag + 1` entries because lag 0 is included. The same is true of
-`max_correlation_time` on the transport computes.
+`max_lag` on the transport computes. The `dt` is optional and only sets
+`result.lag_times`; pass it and the derived quantities below know the time unit.
 
 These velocities are uncorrelated noise with a per-component width of
 0.02 Å fs⁻¹, so $C_{vv}(0)$ should be $3\sigma^2 = 0.0012$, and it is. The next
 lag is already down by a factor of a thousand:
 
 ```python
-print(round(float(result.acf[1] / result.acf[0]), 4))   # -> 0.0009
+print(round(float(result.values[1] / result.values[0]), 4))   # -> 0.0009
 ```
 
 White noise has no memory. Real velocities do, and that difference is the whole
 measurement.
 
-Integrate with `CumulativeTrapezoid`, which returns the running integral rather
-than a single number, precisely so you can look for the plateau:
+Integrate with `result.integrate(running=True)`, which returns the running
+integral rather than a single number, precisely so you can look for the
+plateau (it is `CumulativeTrapezoid` on the same arrays):
 
 ```python
-running = CumulativeTrapezoid().fit(result.acf, dt=10.0)["integral"]
+running = result.integrate(running=True)
 diffusion = np.asarray(running) / 3.0
 print(diffusion.shape)                        # -> (51,)
+print(np.allclose(running, CumulativeTrapezoid().fit(result.values, dt=10.0)["integral"]))  # -> True
 ```
+
+`result.diffusion(3, window=(0.8, 1.0))` reads the plateau of that running
+integral over the last fifth of the curve and divides by the dimension — the
+Green–Kubo $D$ in one call, once you have checked that a plateau exists.
 
 Units follow your inputs. Velocities in Å fs⁻¹ give $D$ in Å² fs⁻¹, and
 1 Å² fs⁻¹ = 0.1 cm² s⁻¹.
@@ -238,16 +247,24 @@ atoms actually perform contributes. The zero-frequency weight is proportional to
 $D$ — the same integral as above, seen as the $\omega \to 0$ limit — so a liquid
 has $g(0) > 0$ while a solid (after removing drift) has $g(0) = 0$.
 
-`PowerSpectrum` takes the correlation function and the frame spacing in fs, and
-returns wavenumbers in cm⁻¹ paired with intensities:
+`result.spectrum()` windows the correlation function, pads it and transforms
+it, reading `dt` as femtoseconds, and returns a `Spectrum`: wavenumbers in
+cm⁻¹ paired with intensities. It is `PowerSpectrum().fit(result.values,
+dt_fs)`, which you call directly when the curve is a plain array:
 
 ```python
 from molpy.compute import PowerSpectrum
 
-vdos = PowerSpectrum().fit(result.acf, dt_fs=10.0)
-print(sorted(vdos))
-# -> ['frequencies_cm1', 'intensities', 'n_frames', 'resolution']
+vdos = result.spectrum()
+print(vdos.frequencies_cm1.shape == vdos.intensities.shape, vdos.window)
+# -> True cosine_sq
+same = PowerSpectrum().fit(result.values, dt_fs=10.0)
+print(np.array_equal(vdos.intensities, same.intensities))   # -> True
 ```
+
+The window is selectable (`"cosine_sq"`, `"hann"`, `"blackman"`, `"none"`);
+the default cosine² taper is one at lag zero, so the integral of the spectrum
+— $D$ again — is untouched.
 
 Read `resolution` as a **count**, not a frequency: it echoes the number of lags
 you supplied, and `n_frames` is that plus one. The actual spectral resolution

@@ -13,6 +13,13 @@ from positions and charges.
     conductivity, or dielectric spectra. Prefer a molrs `Compute` + `LinearFit`
     composition; molpy only wraps frame extraction when needed.
 
+    A time correlation in particular is never a new kernel: molrs has one
+    engine (`autocorrelate`, `cross_correlate`, `displacement_correlate`) and
+    every correlator — `Vacf`, `Oacf`, `Msd`, the conductivities — is a front
+    end that builds its series and names its settings, then returns a
+    `TimeCorrelation`. A new quantity of that shape is a new front end over
+    the same engine, in molrs, returning the same object.
+
 ## The contract: one method, called `compute`
 
 There is **no base class to subclass**. A compute in molpy is an ordinary

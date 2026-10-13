@@ -38,12 +38,15 @@ shared contract / result types.
 
 | Layer | Role | Examples |
 |-------|------|----------|
-| Raw Compute | Correlation / MSD / ACF curve only | `EinsteinConductivity`, `GreenKuboConductivity`, `DebyeRelaxation`, `Msd` |
-| Fit | Integrate or slope-fit the curve | `CumulativeTrapezoid`, `LinearFit`, `DebyeFit`, `EinsteinHelfandSpectrum`, `GreenKuboSpectrum` |
+| Raw Compute | Correlation / MSD / ACF curve only, as a `TimeCorrelation` | `EinsteinConductivity`, `GreenKuboConductivity`, `DebyeRelaxation`, `Msd`, `Vacf`, `Oacf` |
+| Fit | Integrate or slope-fit the curve | `CumulativeTrapezoid`, `LinearFit`, `DebyeFit`, `EinsteinHelfandSpectrum`, `GreenKuboSpectrum` — or the `TimeCorrelation` methods `integrate`, `linear_fit`, `fit_exponential`, `diffusion`, `spectrum`, which delegate to them |
 | Scale | MD → SI prefactor in your script | $1/(6 V k_B T)$ (Einstein conductivity), $1/(3 V k_B T)$ (Green–Kubo conductivity), $1/(2d)$ (self-diffusion from an MSD slope in $d$ dimensions, so $1/6$ in 3D) |
 
-Self-diffusion uses `Msd` (Einstein) and `Acf` / `signal.acf_fft` (Green–Kubo);
-see the [MSD](../compute/msd.md) and [VACF](../compute/vacf.md) guides.
+Self-diffusion uses `Msd` (Einstein) and `Vacf` / `Acf` (Green–Kubo); see the
+[MSD](../compute/msd.md) and [VACF](../compute/vacf.md) guides. Every time
+correlation is one engine underneath (`molrs::compute::correlation`): the
+front ends differ in what series they build and which estimator settings
+(`mean_subtract`, `normalization`, `stride`) they default to.
 
 ## Family index
 
@@ -63,13 +66,16 @@ see the [MSD](../compute/msd.md) and [VACF](../compute/vacf.md) guides.
 | decomposition | `DescriptorRow`, `Pca`, `Kmeans` | [Decomposition](../compute/decomposition.md) |
 | hbond | `HBonds`, `HBondCriterion` | [HBond](../compute/hbond.md) |
 | voronoi | radical Voronoi tessellation | [Voronoi](../compute/voronoi.md) |
-| msd | `Msd` | [MSD](../compute/msd.md) |
+| correlation | `TimeCorrelation`, `Acf`, `Spectrum` | [VACF](../compute/vacf.md) |
+| msd | `Msd`, `EinsteinDiffusion` | [MSD](../compute/msd.md) |
+| vacf | `Vacf`, `GreenKuboDiffusion` | [VACF](../compute/vacf.md) |
 | pmsd | `EinsteinConductivity` | [PMSD](../compute/pmsd.md) |
 | jacf | `GreenKuboConductivity` | [JACF](../compute/jacf.md) |
 | onsager | `OnsagerCorrelation` | [Onsager](../compute/onsager.md) |
 | persist | `pair_survival_tcf` | [Persist](../compute/persist.md) |
 | van hove | `VanHove` | [Van Hove](../compute/van_hove.md) |
 | reorientation | `LegendreReorientation` | [Reorientation](../compute/reorientation.md) |
+| oacf | `Oacf` | [OACF](../compute/oacf.md) |
 | `signal` | `acf_fft`, windows, frequency grid | [Signal](../compute/signal.md) |
 
 Two more families:

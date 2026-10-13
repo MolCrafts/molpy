@@ -132,8 +132,8 @@ box = np.tile(np.array([[30.0, 30.0, 30.0]]), (n_frames, 1))
 result = pair_survival_tcf(
     coords_i, coords_j, box, 3.5, 4.0, "continuous", 10.0, 40
 )
-print(sorted(result))                       # -> ['correlation', 'lag_times']
-print(round(float(result["correlation"][0]), 2))   # -> 3.48
+print(result.kind, result.values.shape)     # -> survival (41,)
+print(round(float(result.values[0]), 2))    # -> 3.48
 ```
 
 Pass a plain `(3,)` box and you get
@@ -142,8 +142,7 @@ Pass a plain `(3,)` box and you get
 you see it, tile your box to one row per frame.
 
 The positional arguments in order are `coords_i`, `coords_j`, `box_lengths`,
-`r0`, `r1`, `method`, `dt`, `max_correlation_time`, and optionally
-`exclude_self`. Set `exclude_self=True` whenever the two coordinate arrays are
+`r0`, `r1`, `method`, `dt`, `max_lag`, and optionally `exclude_self`. Set `exclude_self=True` whenever the two coordinate arrays are
 the same set of atoms, or every atom is found paired with itself at distance
 zero forever.
 
@@ -155,7 +154,7 @@ for method in ("continuous", "intermittent"):
     out = pair_survival_tcf(
         coords_i, coords_j, box, 3.5, 4.0, method, 10.0, 40
     )
-    curve = np.asarray(out["correlation"])
+    curve = np.asarray(out.values)
     curves[method] = curve / curve[0]
 
 print(round(float(curves["continuous"][20]), 2))     # -> 0.41
@@ -183,13 +182,13 @@ Nothing is re-forming — plausible in a dilute gas, suspicious in a dense liqui
 Check that the buffer is not so wide that pairs can never break.
 
 **The curve is still near 1 at the longest lag.**
-`max_correlation_time` is too short to see the decay. You cannot fit a residence
+`max_lag` is too short to see the decay. You cannot fit a residence
 time you have not observed; extend the window, or the trajectory.
 
 **It takes minutes.**
 It does. The kernel examines pairs at every lag, so cost grows with frames,
 particles, and lag window together. The argon figure above takes several minutes
-to generate. Reduce `max_correlation_time` first.
+to generate. Reduce `max_lag` first.
 
 ## Check yourself
 

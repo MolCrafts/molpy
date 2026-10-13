@@ -68,7 +68,7 @@ def mean_squared_displacement(trajectories: Sequence[Trajectory]) -> dict[str, f
     """Ensemble-mean MSD(tau) and the Einstein diffusion coefficient per seed."""
     curves = np.array(
         [
-            np.asarray(Msd(method="window").compute(_unwrapped_frames(t)).mean)
+            np.asarray(Msd(method="window").compute(_unwrapped_frames(t)).values)
             for t in trajectories
         ]
     )
@@ -149,7 +149,7 @@ def velocity_autocorrelation(trajectories: Sequence[Trajectory]) -> dict[str, fl
             np.asarray(
                 Acf()
                 .compute(np.ascontiguousarray(t.velocities), max_lag=VACF_MAX_LAG)
-                .acf
+                .values
             )
             for t in trajectories
         ]
@@ -232,8 +232,8 @@ def pair_survival(trajectories: Sequence[Trajectory]) -> dict[str, float]:
         result = pair_survival_tcf(
             positions, positions, box, 5.4, 5.9, method, trajectory.dt, 600, True
         )
-        correlation = np.asarray(result["correlation"])
-        lag = np.asarray(result["lag_times"])
+        correlation = np.asarray(result.values)
+        lag = np.asarray(result.lag_times)
         rows.extend(
             {
                 "t": round(float(a), 1),
