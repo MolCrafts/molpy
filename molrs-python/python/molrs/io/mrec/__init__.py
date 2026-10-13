@@ -31,7 +31,12 @@ The names are those of ``molrs::io::mrec`` — ``MrecReader``, ``MrecWriter``,
 ``SequenceSchema``, ``section_names``.
 """
 
-from ..._native import mrec as _mrec
+try:
+    from ..._native import mrec as _mrec
+except ImportError as exc:
+    raise ImportError(
+        "molrs.io.mrec needs the fs feature; this build does not include it"
+    ) from exc
 from . import validation
 
 ForceFieldSection = _mrec.ForceFieldSection
