@@ -327,9 +327,8 @@ fn bond_on_small_ring(mol: &Atomistic, a: NodeId, b: NodeId, max_ring_size: usiz
 /// Rings come back smallest-first.
 pub fn perceive_rings(mol: &Atomistic) -> RingSet {
     // ---- 1. Project onto the core index space ------------------------------
-    // Atom index `i` == the `i`-th atom of `mol.atoms()`; edge index `i` == the
-    // `i`-th bond of `mol.bonds()` (`Topology::from_edges` preserves edge
-    // insertion order), so the mapping back below is unambiguous.
+    // Atom index `i` == the `i`-th atom of `mol.atoms()`; ring edges are lifted
+    // back onto bonds by their endpoint pair (`bond_map`), never by position.
     let atom_vec: Vec<NodeId> = mol.atoms().map(|(id, _)| id).collect();
     let atom_to_idx: HashMap<NodeId, usize> = atom_vec
         .iter()
@@ -350,7 +349,8 @@ pub fn perceive_rings(mol: &Atomistic) -> RingSet {
     }
 
     // ---- 2. The one and only SSSR in the tree -------------------------------
-    let topo = Topology::from_edges(atom_vec.len(), &edges);
+    let mut topo = Topology::with_atoms(atom_vec.len());
+    topo.add_bonds(&edges);
     let cycles = sssr(&topo);
 
     // ---- 3. Lift node-index cycles → NodeId rings ---------------------------
@@ -743,16 +743,23 @@ fn symmetric_difference(a: &[usize], b: &[usize]) -> Vec<usize> {
 mod tests {
     use super::*;
 
+    /// `n` atoms joined by `edges`.
+    fn bonded(n: usize, edges: &[[usize; 2]]) -> Topology {
+        let mut topo = Topology::with_atoms(n);
+        topo.add_bonds(edges);
+        topo
+    }
+
     #[test]
     fn sssr_linear() {
-        let topo = Topology::from_edges(4, &[[0, 1], [1, 2], [2, 3]]);
+        let topo = bonded(4, &[[0, 1], [1, 2], [2, 3]]);
         assert_eq!(sssr(&topo).n_rings(), 0);
     }
 
     #[test]
     fn sssr_single_6ring() {
         // Hexagon: 0-1-2-3-4-5-0
-        let topo = Topology::from_edges(6, &[[0, 1], [1, 2], [2, 3], [3, 4], [4, 5], [5, 0]]);
+        let topo = bonded(6, &[[0, 1], [1, 2], [2, 3], [3, 4], [4, 5], [5, 0]]);
         let ri = sssr(&topo);
         assert_eq!(ri.n_rings(), 1);
         assert_eq!(ri.ring_sizes(), vec![6]);
@@ -772,7 +779,7 @@ mod tests {
     #[test]
     fn sssr_naphthalene() {
         // Two fused 6-membered rings
-        let topo = Topology::from_edges(
+        let topo = bonded(
             10,
             &[
                 [0, 1],
@@ -933,7 +940,7 @@ mod tests {
         // *dependent* candidate was accepted as independent and displaced a
         // real ring from a basis capped at the cycle rank.
         for (name, n_atoms, edges) in bridgeless_polycycles() {
-            let topo = Topology::from_edges(n_atoms, &edges);
+            let topo = bonded(n_atoms, &edges);
             let rank = edges.len() - n_atoms + topo.n_components();
             assert_eq!(
                 sssr(&topo).n_rings(),
@@ -948,7 +955,7 @@ mod tests {
         // A cycle basis spans the cycle space, so an edge missing from every
         // basis ring would have to lie on no cycle at all — impossible here.
         for (name, n_atoms, edges) in bridgeless_polycycles() {
-            let topo = Topology::from_edges(n_atoms, &edges);
+            let topo = bonded(n_atoms, &edges);
             let mask = sssr(&topo).bond_ring_mask(topo.n_bonds());
             assert_eq!(
                 mask.iter().filter(|&&covered| !covered).count(),

@@ -609,7 +609,15 @@ mod tests {
     use molrs::ff::potential::pair::PairLjCut;
 
     use super::*;
+    use molrs::core::Topology;
     use molrs::ff::potential::SpecialWeights;
+
+    /// `n` atoms joined by `edges`.
+    fn bonded(n: usize, edges: &[[usize; 2]]) -> Topology {
+        let mut topo = Topology::with_atoms(n);
+        topo.add_bonds(edges);
+        topo
+    }
 
     fn cell() -> SimBox {
         SimBox::cube(12.0, array![0.0_f64, 0.0, 0.0], [true; 3]).unwrap()
@@ -929,7 +937,6 @@ mod tests {
     #[test]
     fn a_fully_excluded_molecule_has_no_non_bonded_energy() {
         use molrs::core::BondDistanceWeights;
-        use molrs::core::Topology;
         use molrs::ff::ir::CombiningRule;
 
         let bx = SimBox::cube(20.0, array![0.0_f64, 0.0, 0.0], [true; 3]).unwrap();
@@ -941,7 +948,7 @@ mod tests {
         ];
         let n = pos.nrows();
 
-        let topo = Topology::from_edges(n, &[[0, 1], [1, 2]]);
+        let topo = bonded(n, &[[0, 1], [1, 2]]);
         let weights = BondDistanceWeights::from_exclusion_depth(3);
         let special = SpecialWeights::new(&topo.special_weights(&weights));
 
@@ -1007,7 +1014,6 @@ mod tests {
     #[test]
     fn exclusions_follow_a_molecule_through_a_face() {
         use molrs::core::BondDistanceWeights;
-        use molrs::core::Topology;
         use molrs::ff::ir::CombiningRule;
 
         let l = 20.0_f64;
@@ -1024,7 +1030,7 @@ mod tests {
             [6.9, 1.5, 0.4],
         ];
         let n = shape.nrows();
-        let topo = Topology::from_edges(n, &[[0, 1], [1, 2], [3, 4], [4, 5]]);
+        let topo = bonded(n, &[[0, 1], [1, 2], [3, 4], [4, 5]]);
         let weights = BondDistanceWeights::from_exclusion_depth(3);
         let special = SpecialWeights::new(&topo.special_weights(&weights));
 
@@ -1140,7 +1146,6 @@ mod tests {
     fn both_doors_keep_the_1_3_pairs_a_fene_field_asks_for() {
         use molrs::core::Block;
         use molrs::core::Frame;
-        use molrs::core::Topology;
         use molrs::ff::forcefield::ForceField;
         use molrs::ff::ir::{Params, SpecialBonds};
         use molrs::ff::potential::intramolecular_pairs;
@@ -1155,7 +1160,7 @@ mod tests {
         ];
         let n = pts.nrows();
         let bonds = [[0usize, 1], [1, 2]];
-        let topo = Topology::from_edges(n, &bonds);
+        let topo = bonded(n, &bonds);
 
         let mut frame = Frame::new();
         let mut atoms = Block::new();
@@ -1259,7 +1264,6 @@ mod tests {
     #[test]
     fn the_minimum_image_route_excludes_the_same_pairs() {
         use molrs::core::BondDistanceWeights;
-        use molrs::core::Topology;
         use molrs::ff::ir::CombiningRule;
 
         let bx = SimBox::cube(20.0, array![0.0_f64, 0.0, 0.0], [true; 3]).unwrap();
@@ -1269,7 +1273,7 @@ mod tests {
             [11.3, 11.2, 10.0]
         ];
         let n = pos.nrows();
-        let topo = Topology::from_edges(n, &[[0, 1], [1, 2]]);
+        let topo = bonded(n, &[[0, 1], [1, 2]]);
         let weights = BondDistanceWeights::from_exclusion_depth(3);
         let special = SpecialWeights::new(&topo.special_weights(&weights));
 

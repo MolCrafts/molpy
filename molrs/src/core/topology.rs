@@ -4,7 +4,7 @@
 //! automated detection of angles, dihedrals, and impropers via neighbor
 //! traversal.
 
-use std::collections::VecDeque;
+use std::collections::{HashSet, VecDeque};
 
 use crate::core::BondDistanceWeights;
 use crate::core::MolRsError;
@@ -122,32 +122,20 @@ impl Topology {
         }
     }
 
-    /// Create a topology from edge pairs.
-    pub fn from_edges(n_atoms: usize, edges: &[[usize; 2]]) -> Self {
-        let mut topo = Self::with_atoms(n_atoms);
-        // `from_edges` does not deduplicate (matching the prior graph backend),
-        // so push every edge as-is.
-        for e in edges {
-            topo.edges.push([e[0], e[1]]);
-            topo.adj[e[0]].push(e[1]);
-            topo.adj[e[1]].push(e[0]);
-        }
-        topo
-    }
-
     /// Read connectivity from a [`Frame`]'s `atoms` / `bonds` blocks.
     ///
     /// Atom count comes from `atoms.n_rows()`. Edges come from uint
-    /// [`keys::ATOMI`] / [`keys::ATOMJ`] columns and are replayed through
-    /// [`from_edges`](Self::from_edges), so neighbour slices follow bonds-block
+    /// [`keys::ATOMI`] / [`keys::ATOMJ`] columns and are added through
+    /// [`add_bonds`](Self::add_bonds), so neighbour slices follow bonds-block
     /// insertion order and are **never sorted**. Sorting them would reshape a
-    /// consumer's growth tree (molpack picks the first neighbour).
+    /// consumer's growth tree (molpack picks the first neighbour). A bond
+    /// listed twice is one bond.
     ///
     /// Coordinates are not read. A fixture with only an `id` column is valid.
     /// Binders must not invent an `i`/`j` column vocabulary; this reader
     /// recognizes `atomi` / `atomj` only.
     ///
-    /// In-range self-loops `(a, a)` are dropped before `from_edges` (a
+    /// In-range self-loops `(a, a)` are dropped before `add_bonds` (a
     /// `from_frame`-only policy). Endpoints are range-checked first: `(n, n)`
     /// on an `n`-atom frame is a validation error, not a dropped loop.
     ///
@@ -171,10 +159,10 @@ impl Topology {
             .n_rows()
             .ok_or(TopologyError::NoRows { block: ATOMS })?;
         let Some(bonds) = frame.get(BONDS) else {
-            return Ok(Self::from_edges(n, &[]));
+            return Ok(Self::with_atoms(n));
         };
         match bonds.n_rows() {
-            None | Some(0) => return Ok(Self::from_edges(n, &[])),
+            None | Some(0) => return Ok(Self::with_atoms(n)),
             Some(_) => {}
         }
         let endpoint = |column: &'static str| {
@@ -203,7 +191,9 @@ impl Topology {
             }
             edges.push([a, b]);
         }
-        Ok(Self::from_edges(n, &edges))
+        let mut topology = Self::with_atoms(n);
+        topology.add_bonds(&edges);
+        Ok(topology)
     }
 
     /// Per-atom partners whose bond-distance weight is exactly `0.0`.
@@ -603,17 +593,31 @@ impl Topology {
     /// Add a bond between atoms `i` and `j` if not already connected.
     pub fn add_bond(&mut self, i: usize, j: usize) {
         if !self.are_bonded(i, j) {
-            self.edges.push([i, j]);
-            self.adj[i].push(j);
-            self.adj[j].push(i);
+            self.push_bond(i, j);
         }
     }
 
-    /// Add multiple bonds from pairs. Skips duplicates.
+    /// Add every bond of `pairs`, in order, skipping any already present
+    /// (either orientation) — the same rule as [`add_bond`](Self::add_bond),
+    /// in one `O(existing + pairs)` pass instead of a neighbour scan per pair.
+    /// Edge indices follow first occurrence, so a duplicate-free list keeps
+    /// its positions.
     pub fn add_bonds(&mut self, pairs: &[[usize; 2]]) {
-        for pair in pairs {
-            self.add_bond(pair[0], pair[1]);
+        let key = |a: usize, b: usize| (a.min(b), a.max(b));
+        let mut present: HashSet<(usize, usize)> =
+            self.edges.iter().map(|&[a, b]| key(a, b)).collect();
+        for &[i, j] in pairs {
+            if present.insert(key(i, j)) {
+                self.push_bond(i, j);
+            }
         }
+    }
+
+    /// Record the bond `i–j` (no duplicate check).
+    fn push_bond(&mut self, i: usize, j: usize) {
+        self.edges.push([i, j]);
+        self.adj[i].push(j);
+        self.adj[j].push(i);
     }
 
     /// Delete a bond by edge index.
@@ -653,6 +657,12 @@ impl Default for Topology {
 
 #[cfg(test)]
 mod tests {
+    /// `n` atoms joined by `edges`.
+    fn bonded(n: usize, edges: &[[usize; 2]]) -> Topology {
+        let mut topo = Topology::with_atoms(n);
+        topo.add_bonds(edges);
+        topo
+    }
 
     /// `special_weights` says *how much*, where `exclusions` only says *which*.
     ///
@@ -663,7 +673,7 @@ mod tests {
     #[test]
     fn special_weights_carries_the_scale_an_exclusion_list_cannot() {
         // A four-atom chain: 0-1-2-3.
-        let topo = Topology::from_edges(4, &[[0, 1], [1, 2], [2, 3]]);
+        let topo = bonded(4, &[[0, 1], [1, 2], [2, 3]]);
         // 1-2 and 1-3 excluded, 1-4 at half, everything beyond at full.
         let w = BondDistanceWeights::new(vec![0.0, 0.0, 0.5, 1.0]).unwrap();
 
@@ -691,7 +701,7 @@ mod tests {
     /// Every list is sorted, because callers binary-search them.
     #[test]
     fn special_weights_lists_are_sorted_by_partner() {
-        let topo = Topology::from_edges(5, &[[0, 1], [1, 2], [2, 3], [3, 4], [0, 4]]);
+        let topo = bonded(5, &[[0, 1], [1, 2], [2, 3], [3, 4], [0, 4]]);
         let w = BondDistanceWeights::new(vec![0.0, 0.0, 0.5, 1.0]).unwrap();
         for (root, list) in topo.special_weights(&w).iter().enumerate() {
             assert!(
@@ -713,7 +723,7 @@ mod tests {
     #[test]
     fn test_distances_path_and_disconnected() {
         // Path 0-1-2-3 plus an isolated atom 4.
-        let topo = Topology::from_edges(5, &[[0, 1], [1, 2], [2, 3]]);
+        let topo = bonded(5, &[[0, 1], [1, 2], [2, 3]]);
         assert_eq!(topo.distances(0), vec![0, 1, 2, 3, -1]);
         assert_eq!(topo.distances(3), vec![3, 2, 1, 0, -1]);
         // Isolated atom: only itself reachable.
@@ -761,6 +771,19 @@ mod tests {
         let mut topo = Topology::with_atoms(4);
         topo.add_bonds(&[[0, 1], [1, 2], [2, 3]]);
         assert_eq!(topo.n_bonds(), 3);
+    }
+
+    /// A bond listed twice — in either orientation, in one batch or against
+    /// one already present — is one bond, exactly as `add_bond` decides;
+    /// first occurrences keep their order.
+    #[test]
+    fn add_bonds_skips_duplicates_like_add_bond() {
+        let mut topo = Topology::with_atoms(4);
+        topo.add_bond(2, 3);
+        topo.add_bonds(&[[0, 1], [1, 0], [1, 2], [3, 2], [0, 1]]);
+        assert_eq!(topo.bonds(), &[[2, 3], [0, 1], [1, 2]]);
+        assert_eq!(topo.degree(1), 2);
+        assert_eq!(topo.neighbors(2), vec![3, 1]);
     }
 
     #[test]
@@ -844,7 +867,7 @@ mod tests {
     #[test]
     fn trivalent_impropers_is_one_per_three_neighbour_centre() {
         // Formaldehyde-shaped: centre 0 bonded to 1, 2, 3.
-        let topo = Topology::from_edges(4, &[[0, 1], [0, 2], [0, 3]]);
+        let topo = bonded(4, &[[0, 1], [0, 2], [0, 3]]);
         assert_eq!(topo.trivalent_impropers(), vec![[0, 1, 2, 3]]);
     }
 
@@ -853,14 +876,14 @@ mod tests {
         // Methane-shaped: the geometric enumeration gives C(4,3) = 4 quartets,
         // the molecular-mechanics one gives none — an sp3 centre carries no
         // out-of-plane term.
-        let topo = Topology::from_edges(5, &[[0, 1], [0, 2], [0, 3], [0, 4]]);
+        let topo = bonded(5, &[[0, 1], [0, 2], [0, 3], [0, 4]]);
         assert_eq!(topo.impropers().len(), 4);
         assert!(topo.trivalent_impropers().is_empty());
     }
 
     #[test]
     fn trivalent_impropers_puts_the_centre_first_and_sorts_the_legs() {
-        let topo = Topology::from_edges(4, &[[0, 3], [0, 1], [0, 2]]);
+        let topo = bonded(4, &[[0, 3], [0, 1], [0, 2]]);
         let quartets = topo.trivalent_impropers();
         assert_eq!(quartets.len(), 1);
         assert_eq!(quartets[0][0], 0, "centre first");
@@ -885,8 +908,8 @@ mod tests {
     }
 
     #[test]
-    fn test_from_edges() {
-        let topo = Topology::from_edges(4, &[[0, 1], [1, 2], [2, 3]]);
+    fn test_add_bonds_builds_a_chain() {
+        let topo = bonded(4, &[[0, 1], [1, 2], [2, 3]]);
         assert_eq!(topo.n_atoms(), 4);
         assert_eq!(topo.n_bonds(), 3);
         assert_eq!(topo.n_angles(), 2);
@@ -895,7 +918,7 @@ mod tests {
 
     #[test]
     fn test_neighbors() {
-        let topo = Topology::from_edges(4, &[[0, 1], [1, 2], [2, 3]]);
+        let topo = bonded(4, &[[0, 1], [1, 2], [2, 3]]);
         let mut n = topo.neighbors(1);
         n.sort();
         assert_eq!(n, vec![0, 2]);
@@ -903,21 +926,21 @@ mod tests {
 
     #[test]
     fn test_degree() {
-        let topo = Topology::from_edges(4, &[[0, 1], [1, 2], [2, 3]]);
+        let topo = bonded(4, &[[0, 1], [1, 2], [2, 3]]);
         assert_eq!(topo.degree(0), 1);
         assert_eq!(topo.degree(1), 2);
     }
 
     #[test]
     fn test_are_bonded() {
-        let topo = Topology::from_edges(3, &[[0, 1], [1, 2]]);
+        let topo = bonded(3, &[[0, 1], [1, 2]]);
         assert!(topo.are_bonded(0, 1));
         assert!(!topo.are_bonded(0, 2));
     }
 
     #[test]
     fn test_connected_components_single() {
-        let topo = Topology::from_edges(3, &[[0, 1], [1, 2]]);
+        let topo = bonded(3, &[[0, 1], [1, 2]]);
         let cc = topo.connected_components();
         assert_eq!(cc.len(), 3);
         assert_eq!(cc[0], cc[1]);
@@ -927,7 +950,7 @@ mod tests {
 
     #[test]
     fn test_connected_components_two() {
-        let topo = Topology::from_edges(4, &[[0, 1], [2, 3]]);
+        let topo = bonded(4, &[[0, 1], [2, 3]]);
         let cc = topo.connected_components();
         assert_eq!(cc[0], cc[1]);
         assert_eq!(cc[2], cc[3]);
@@ -967,7 +990,7 @@ mod tests {
     fn test_single_edge_graph() {
         // A single bond 0-1: one angle path is impossible (degree 1 each), no
         // dihedral, no improper; two connected atoms.
-        let topo = Topology::from_edges(2, &[[0, 1]]);
+        let topo = bonded(2, &[[0, 1]]);
         assert_eq!(topo.n_atoms(), 2);
         assert_eq!(topo.n_bonds(), 1);
         assert!(topo.angles().is_empty());
@@ -981,7 +1004,7 @@ mod tests {
     #[test]
     fn test_disconnected_distances_multiple_sources() {
         // Two components: {0-1-2} and {3-4}.
-        let topo = Topology::from_edges(5, &[[0, 1], [1, 2], [3, 4]]);
+        let topo = bonded(5, &[[0, 1], [1, 2], [3, 4]]);
         assert_eq!(topo.n_components(), 2);
         // Source in first component never reaches second.
         assert_eq!(topo.distances(0), vec![0, 1, 2, -1, -1]);
@@ -994,7 +1017,7 @@ mod tests {
     #[test]
     fn test_delete_atom_swap_remove_relabels() {
         // 0-1-2-3 chain; deleting atom 1 swaps node 3 into slot 1.
-        let mut topo = Topology::from_edges(4, &[[0, 1], [1, 2], [2, 3]]);
+        let mut topo = bonded(4, &[[0, 1], [1, 2], [2, 3]]);
         topo.delete_atom(1);
         assert_eq!(topo.n_atoms(), 3);
         // Edge [0,1] and [1,2] are removed; edge [2,3] survives but relabeled
