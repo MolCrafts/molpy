@@ -65,3 +65,14 @@ pub(crate) fn random_points(n: usize, box_len: F, seed: u64) -> ndarray::Array2<
     }
     points
 }
+
+/// Build a self-query [`Neighbors`] table over `positions` in `simbox` at
+/// `cutoff`, every column materialized. Row order is unspecified.
+pub(crate) fn neighbors_of(
+    positions: &[[F; 3]],
+    simbox: &molrs::core::SimBox,
+    cutoff: F,
+) -> Neighbors {
+    let points = ndarray::Array2::from_shape_fn((positions.len(), 3), |(i, c)| positions[i][c]);
+    self_neighbors(points.view(), simbox, cutoff)
+}

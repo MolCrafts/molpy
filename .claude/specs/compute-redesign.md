@@ -521,6 +521,35 @@ the configured `UnitPreset`; `StaticDielectric`, the four routes and
 stating that no prefactor carries a time unit: ω is in radians per unit of the
 lag spacing, any consistent time unit works.
 
+*As built (06):*
+- **`BondAverage<B: BondBasis>`** (`order/bond_average.rs`, crate-internal,
+  itself a `Compute` over `&Neighbors`) is the one `q_ℓm` / `ψ_k`
+  implementation: `BondBasis` (`order`, `n_components`, `planar`,
+  `evaluate(disp, out) -> bool`, provided `parity`) with
+  `SphericalHarmonic { l }` (core `ylm_all`; `SphericalHarmonic::angles(disp)`
+  is the one bond→(θ, φ) conversion, also used by BOO) and
+  `PlanarHarmonic { k }` (`e^{ikθ}` via `Complex::from_polar` — not `Y_lm`,
+  which would need a normalisation and move ψ_k by ULPs). The point count is
+  `require_self_query`'s `SelfQuery { n_points }` (the guard now returns it);
+  a pair index past it is `OutOfRange` (was a panic). The Lechner–Dellago
+  average is `QlmTable::neighbor_average` (crate-internal). Summation order
+  is the old one, so every order golden holds bit-for-bit or within its
+  window.
+- **PMFT** binning goes through `Axis::index` into an integer `ArrayD<u64>`,
+  not `Histogram<N>`: `Histogram`'s `N` is a const generic and a coordinate's
+  `DIM` is an associated const (`Histogram<{ C::DIM }>` needs the unstable
+  `generic_const_exprs`), and PMFT counts are integers (`raw_counts` goldens
+  are `u64`). The bin rule is still `Axis`'s alone.
+- `require.rs` also holds the orientation guards `require_quaternions`
+  (`N × 4`, normalised), `require_directions` (`N × 3`, normalised) and
+  `require_angles` (finite), and `is_half_shell(mode)` replacing the inline
+  `matches!(…SelfQuery…)` copies in BOO, EnvironmentMatch and PMFT.
+- `EnvironmentMatch`'s `Dsu` is gone: matches are edges of a
+  `Topology::with_atoms(n)` (+ `add_bonds`), labelled by
+  `connected_components` (same labels: components in order of their lowest
+  particle). Memory is now O(matches) instead of O(n) — a dense bucket of
+  identical environments stores its match edges.
+
 ### 4. Public surface — every current symbol and where it goes
 
 Legend:
@@ -791,6 +820,72 @@ its type; `D = slope / 2d` is `Msd` → `LinearFit`. `DebyeFit` moved to
 | `PmftR12/Xy/Xyt/Xyz` (+`Args`, `Result`) | → `Pmft<R12 / Xy / Xyt / Xyz>`, `PmftResult<C>` |
 | `orientation_quaternions`, `planar_orientation_angles` | deleted. Callers pass the quaternion or angle arrays they read from the frame. |
 
+*As built (06):* every type below is a per-snapshot `Compute` (many
+snapshots: `Batch`); `Input`s are named-field structs; no frame is read.
+- **`QlmTable`** (public): `order()`, `is_planar()`, `n_particles()`,
+  `values()` (`N × n_components` `Complex`, column `m + ℓ`), `norms()`,
+  `ql()` (`|ψ_k|` on a planar table), `wl(normalize) -> Result` (`OutOfRange`
+  on a planar table), `bond_coherence(&Neighbors) -> Result<Array1>`
+  (`Re Σ_m conj(q_i) q_j` per pair; `DimensionMismatch` for another point
+  set).
+- **`Steinhardt::new(&[l])`** (+ `with_average/with_wl/with_wl_normalize`),
+  `compute(SteinhardtInput { neighbors })` → `SteinhardtResult { l, tables:
+  Vec<QlmTable>, .. }` with `qlm(l) -> Option<&QlmTable>`, `ql()` /
+  `wl()` (`N × n_l` views; was `Vec<Vec>` indexed `[l][particle]`) and
+  `FeatureMatrix` (rows = particles, columns = `q_ℓ` then `w_ℓ`).
+- **`SolidLiquid::new()`** (`Default`; *deviation:* `l` leaves the
+  configuration — it is the table's), `with_q_threshold(t) -> Result` (NaN is
+  `OutOfRange`), `with_n_threshold`, `with_normalize_q`;
+  `compute(SolidLiquidInput { qlm, neighbors })`.
+  **`ContinuousCoordination::new(power)`** — *deviation:* the `l: &[u32]` list
+  (Link 01 audit: "stays in `new`") is gone, because the input is one
+  `(&QlmTable, &Neighbors)`; several ℓ are several calls. Result `{ l, coord:
+  Vec<F> }` (was `Vec<Vec<F>>` per ℓ).
+- **`Hexatic::new(k)`**, `compute(HexaticInput { neighbors })` →
+  `HexaticResult { k, psi }` (the planar `BondAverage`).
+- **`Nematic`**, `compute(NematicInput { directors: N × 3 })`;
+  **`Cubatic::new()`** with `with_seed`, and `with_initial_temp`,
+  `with_cooling_rate` (`0 < r < 1`), `with_min_temp` (the former `1e-6`),
+  `with_n_steps`, `with_n_chains` all `-> Result`; `compute(CubaticInput {
+  directors })`. Its rotations are `op::so3::unit_vector_from_uniform` +
+  `op::rigid::axis_angle` (same RNG draw order).
+- **`BondOrientationalOrder::new(n_θ, n_φ)`** (holds its two `Axis`),
+  `compute(BondOrientationalOrderInput { neighbors })`.
+  **`LocalDescriptors::new(l_max)`**, `compute(LocalDescriptorsInput {
+  neighbors })` → `LocalDescriptorsResult { l_max, n_sphs, .. }` with
+  `descriptor(pair, l, m) -> Option<Complex>` and `FeatureMatrix` (one row per
+  pair, `(Re, Im)` interleaved, `2·n_sphs` columns; the flat `Vec<Complex>`
+  field is gone). **`LocalBondProjection`** (unit struct),
+  `compute(LocalBondProjectionInput { neighbors, proj_vectors: n × 3,
+  orientations: Option<N_q × 4> })`.
+- **`EnvironmentMatch::new(rmsd)`**, `with_registration`,
+  `with_max_neighbors_for_registration(n) -> Result` (default 8, 0 is
+  `OutOfRange`), `compute(EnvironmentMatchInput { neighbors })`; the result
+  is a `Partition`.
+- **`AngularSeparationGlobal`** `compute({ query: N × 4, global: M × 4 })`,
+  **`AngularSeparationNeighbor`** `compute({ neighbors, query_orientations,
+  point_orientations })` (one per point of each set, `DimensionMismatch`
+  otherwise). `angular_distance` is a private helper of the module.
+- **`Pmft<C: PairCoordinate>`** with `R12`, `Xy`, `Xyt`, `Xyz`; one inherent
+  `new` per instantiation taking the old scalars (`Pmft::<Xy>::new(x_max,
+  y_max, n_x, n_y)`, …); `compute(PmftInput { pairs: &Neighbors,
+  orientations: Option<C::Orientations> })` → `PmftResult<C> { density,
+  raw_counts, pmf: Array<_, C::Dim>, edges: Vec<Array1> }`. `PairCoordinate`:
+  `Orientation` (`F` / `Quat`), `Orientations<'a>` (`ArrayView1` angles /
+  `ArrayView2` `N × 4`), `Dim`, `DIM`, `LAB_FRAME` (`Some` for `Xy`/`Xyz`,
+  `None` → `BadShape` for `R12`/`Xyt`), `orientations`, `axes`, `coords(disp,
+  oi, oj, out)`, `ref_measure(box)`, `bin_measure(center)` (default: product
+  of widths). *Deviations:* (a) per snapshot, not per trajectory — the "frame
+  loop" that exists once is `Batch`; (b) the box is the table's
+  `Neighbors::simbox()` (`None` is `BadShape`; was the frame's); (c) one
+  orientation array indexes both `i` and `j`, so it must have one entry per
+  point of each set (`DimensionMismatch`); (d) half-open `Axis` bins now
+  include `x = −x_max` (measure zero; no golden moved); a wrapped angle that
+  rounds to `2π` is `0`; (e) **bug fixed:** `PmftR12`'s bin measure was
+  `2π r_c dθ₁ dθ₂` (the `dr` factor missing, so an ideal gas had
+  `PMF = −ln dr`); it is `2π r_c dr dθ₁ dθ₂`, pinned by
+  `bin_measures_tile_the_disc`. No golden covered R12's density.
+
 **Groups and learning.**
 
 | Symbol | Fate |
@@ -888,6 +983,20 @@ that owns the file.
     `HBondCriterion` out of range is `OutOfRange` in `HBonds::new`; non-finite
     positions are `NonFinite` in `HBonds` / `VanHove`.
 - **Cubatic:** `with_n_chains(n.max(1))` becomes an error.
+- *As built (06):* every orientation item is done with a unit test on its
+  variant: a zero quaternion is `OutOfRange` in `AngularSeparation*`
+  (was distance 0), `LocalBondProjection` and `Pmft<Xyz>` (was the
+  identity); a zero director is `OutOfRange` in `Nematic` / `Cubatic` (was
+  skipped) and a zero reference direction in `LocalBondProjection` (was a
+  zero projection). `planar_orientation_angles` is deleted, so its z-axis
+  assumption went with it (callers pass angles). EnvironmentMatch: above the
+  registration limit is `OutOfRange` (was a silent switch to magnitude-only
+  matching); a superposition failure propagates as `OutOfRange` (was
+  `INFINITY`); a non-finite bond is `NonFinite` (was a sort panic). Cubatic:
+  `with_n_chains(0)` and every schedule constant out of range are
+  `OutOfRange`. Also: `R12`/`Xyt` without orientations are `BadShape`; a pair
+  index past a table's point count is `OutOfRange` in the bond average,
+  EnvironmentMatch, AngularSeparationNeighbor and PMFT (were panics).
 - **Panics:** `Rdf::with_dimensionality` `assert!`, `DiffractionPattern::with_axis`
   `assert!` and the `SpatialDistribution` unchecked index panic all become
   errors. The silent 3-D fallback at `rdf/result.rs:114` is removed.
@@ -1064,6 +1173,21 @@ regression.
 6. **Fallbacks become errors** (§5). Inputs that used to "work" with a silently
    wrong answer now fail.
 
+*Link 06 note (no golden literal moved):* behaviour change 5 has no core
+site left in 06 — the only core place that turned `(head, tail)` pairs into
+axes was `pmft/orientation.rs` (already head − tail), deleted here; callers
+pass angles / quaternions / directors. Its named re-pins (Python `Nematic`
+without minimum image, WASM `setOrientationPairs`) live in the bindings and
+move to link 10. Non-golden assertions that changed: the per-type
+`empty_frames_*` / `mismatched_nlist_count_is_error` tests are gone (there are
+no frames; `Batch` of nothing is an empty `Vec`); the multi-frame /
+`parallel_matches_serial` tests run through `Batch`; `ContinuousCoordination`'s
+`empty_l_or_negative_power_errors` became `negative_power_errors`; Steinhardt
+`wl[0].len() == 7` reads `wl().nrows() == 7` (same number, `N × n_l` layout).
+New goldens: FCC/BCC/SC `q_4`/`q_6` on `BondAverage` (Steinhardt–Nelson–
+Ronchetti Table I, 1e-5; SC analytic, 1e-12), and a two-particle PMF per
+coordinate system (`−ln 50`, `−ln 200`, `−ln(640/π)`, `−ln 4000`).
+
 *Link 05 note:* moving pair survival onto `PairPresence` → `Survival` changed
 two hand-computed assertions of the deleted `pair_survival_tcf` tests (now
 in `dynamics/presence.rs`): `coordination_number_at_lag_zero` `C(0) = 2.0` →
@@ -1097,7 +1221,7 @@ happens inside the chain.
 | 03-spectra-dielectric (code-complete 2026-10-14) | As built: fits on `{&TimeCorrelation, channel}`, `CumulativeTrapezoid` → `TimeCorrelation`; `Spectrum` is the only vibrational transform; `PolarizabilityParts` + `RamanSpectrum`; `DipoleMoment`, `StaticDielectric`, `KineticEnergy`; four routes `new(window, units)` / `compute(DielectricSpectrumInput)`; checks as `Compute` + `Verdict`; one `DielectricPrefactor`; behaviour change 1 applied; `center_of_mass_velocity` kept until 07 (deviations in §3, §4, §5, Behaviour change 1). Scope: Fits on `TimeCorrelation`, `Spectrum` unification, the Raman family with `PolarizabilityParts`, `DipoleMoment`, `StaticDielectric`, the four ε(ω) routes, the checks, the one prefactor implementation (fixes the fs/ps doc contradiction at `dielectric_spectrum.rs:59,281`), `KineticEnergy`. | 02 |
 | 04-histogram-grid (code-complete 2026-10-14) | As built: `binning/` (`Axis`, `Histogram<N>`) and `grid/` (`RegularGrid<D>`, `SpreadKernel`, `Gaussian`, `Indicator`) are the one binning / spreading implementation; `Rdf` is one `Stream` over `&dyn PairSource` (`RdfMode`, `compute_self/cross/frame`, public `RdfAccumulator::new` deleted); CorrelationFunction, LocalDensity, S(k) ×2, DiffractionPattern, Gaussian/Sphere density per-snapshot `Compute`s; DF / CDF<N> / SDF `Stream`s with all data in `compute`; `Histogram1d`, `AxisSpec`, `renormalize_density`, `AtomGroups`, `GridSpec`, `InternalCoordinate::from_kind` deleted; the 2-D FFT routed through `Spectrum` (deviations in D6, §3, §4, §5, Behaviour changes' link 04 note). Scope: `Axis`, `Histogram<N>`, `RegularGrid`, `SpreadKernel`; migrate Rdf (`Stream` over `PairSource`), CorrelationFunction, LocalDensity, distributions, S(k) ×2, DiffractionPattern, Gaussian/Sphere density, SpatialDistribution. | 01 |
 | 05-dynamics (code-complete 2026-10-14) | As built: `Presence` + `PairPresence` (hysteresis `r0`/`r1`, core neighbour tables as data, `Option` output) feed `Survival`; `HBonds::new(criterion)` with selections, trajectory and per-frame cross-query tables in `compute`, `HBondsResult::presence()` / `components(frame)`; `VanHove` on `Axis`/`Histogram` + `Origins`, boxes as data; `pair_survival_tcf`, `PairSurvivalResult`, `SurvivalMethod`, `hbond_lifetimes`, `HBondLifetimeResult`, `presence_from_hbonds`, `hbond_components`, `HBondNetworkResult` deleted (deviations in D4, §4, §5, Behaviour change 3 and the 05 note). Scope: `Presence`/`PairPresence`, survival through `Correlator`, H-bond input/presence/components, VanHove on `Histogram` + `core::NeighborQuery`. | 02, 04 |
-| 06-order-environment | `BondBasis`/`BondAverage`/`QlmTable`; Steinhardt, Hexatic, SolidLiquid, ContinuousCoordination, BOO, LocalDescriptors, LocalBondProjection, EnvironmentMatch, AngularSeparation, Nematic, Cubatic; `Pmft<C>`. | 01, 04 |
+| 06-order-environment (code-complete 2026-10-14) | As built: `order/bond_average.rs` (`BondBasis` + `SphericalHarmonic`/`PlanarHarmonic`, `BondAverage`, public `QlmTable`) is the one q_ℓm/ψ_k; every order/environment type is a per-snapshot `Compute`; SolidLiquid/ContinuousCoordination read `(&QlmTable, &Neighbors)`; `Pmft<C: PairCoordinate>` (`R12`/`Xy`/`Xyt`/`Xyz`) replaces the four PMFTs; `steinhardt_qlm`, `angular_distance`, `pmft/orientation.rs`, every `*Args`, `Dsu` deleted; zero orientations error everywhere; R12 bin-measure bug fixed (deviations in §3, §4, §5, Link 06 note). Scope: `BondBasis`/`BondAverage`/`QlmTable`; Steinhardt, Hexatic, SolidLiquid, ContinuousCoordination, BOO, LocalDescriptors, LocalBondProjection, EnvironmentMatch, AngularSeparation, Nematic, Cubatic; `Pmft<C>`. | 01, 04 |
 | 07-groups | `GroupReduce`; Cluster (`connected_components`, `merge`), CenterOfMass, GyrationTensor, InertiaTensor; delete ClusterCenters, RadiusOfGyration, ClusterProperties; Pca (`eigh_sym`, `n_components`), Kmeans (`FeatureMatrix`). | 01, 06 (FeatureMatrix producers) |
 | 08-voronoi | `Compute` impls, core cell list, explicit units, `FiniteFieldPolarizability`, `GridField`. | 04, 07 |
 | 09-retire-legacy | Delete `LegacyCompute`, `analysis_contract.rs`, `positions.rs`; rewrite the `compute/mod.rs` module docs (removes the stale `molpy.compute.Workflow` reference). Run the §4 closing greps. | 02–08 |

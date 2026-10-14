@@ -1,24 +1,19 @@
 //! Hexatic order parameter `ψ_k` for 2-D systems.
 
-use crate::compute::ComputeResult;
 use molrs::core::Complex;
-use molrs::core::FrameAccess;
 use molrs::core::Neighbors;
-use molrs::op::F;
 
-use crate::compute::ComputeError;
-use crate::compute::LegacyCompute;
-use crate::compute::positions::get_positions_ref;
-use crate::compute::{require_disp, require_self_query};
+use super::bond_average::{BondAverage, PlanarHarmonic};
+use crate::compute::{Compute, ComputeError};
 
 /// Hexatic order parameter calculator.
 ///
-/// Stateless parameter container: just the symmetry order `k`.
-/// [`compute`](LegacyCompute::compute) takes `&Vec<Neighbors>` — one neighbor table
-/// per frame, index-aligned with `frames`, each carrying the `disp` column (Å);
-/// a table without it is [`ComputeError::BadShape`], never a silent zero.
+/// Configuration: the symmetry order `k`. Data: one snapshot's neighbor
+/// table, carrying the `disp` column (Å); a table without it is
+/// [`ComputeError::BadShape`], never a silent zero. Many snapshots go through
+/// [`Batch`](crate::compute::Batch).
 ///
-/// Each table must also be a half-shell
+/// The table must also be a half-shell
 /// [`SelfQuery`](molrs::core::QueryMode::SelfQuery): every row is
 /// visited once and credited to *both* of its particles, which double-counts on
 /// a [`CrossQuery`](molrs::core::QueryMode::CrossQuery) table, so
@@ -39,14 +34,15 @@ use crate::compute::{require_disp, require_self_query};
 /// dimensionless complex number with `|ψ_k| ≤ 1`: the magnitude is 1 when the
 /// bonds sit at perfect `2π/k` spacing and 0 when their `k`-fold phases cancel
 /// (four bonds at 90° give `|ψ_6| = 0`), and the argument is the local lattice
-/// orientation. Isolated particles get `|ψ_k| = 0`.
+/// orientation. Isolated particles get `|ψ_k| = 0`. It is the planar
+/// bond-harmonic average — the same engine as Steinhardt's `q_ℓm`.
 ///
 /// The z-component of the bond vector is ignored — callers must arrange
 /// that the configuration is genuinely planar (typically `Lz = 1`,
 /// `pbc.z = false`).
 ///
 /// A self-query table is half-shell — it holds each bond once, as `(i, j)` with
-/// `i < j` — so the accumulator visits a pair once and updates *both*
+/// `i < j` — so the average visits a pair once and updates *both*
 /// particles: from `j`'s side the same bond points the other way, `θ + π`, and
 /// `e^{i k (θ + π)} = (−1)^k e^{i k θ}`.
 ///
@@ -57,12 +53,18 @@ use crate::compute::{require_disp, require_self_query};
 /// [`NeighborColumns::DISP`](molrs::core::NeighborColumns::DISP)
 /// or [`FULL`](molrs::core::NeighborColumns::FULL). A `DIST_SQ`
 /// or `INDICES_ONLY` table stores no directions and reads back `None` rather
-/// than zeros, so [`Hexatic::compute`](LegacyCompute::compute) answers
-/// [`ComputeError::BadShape`] naming the missing column instead of indexing an
-/// empty view.
+/// than zeros, so `compute` answers [`ComputeError::BadShape`] naming the
+/// missing column instead of indexing an empty view.
 #[derive(Debug, Clone, Copy)]
 pub struct Hexatic {
     k: u32,
+}
+
+/// The data a [`Hexatic`] analyses.
+#[derive(Debug, Clone, Copy)]
+pub struct HexaticInput<'a> {
+    /// One snapshot's half-shell self-query table with the `disp` column.
+    pub neighbors: &'a Neighbors,
 }
 
 impl Hexatic {
@@ -87,148 +89,76 @@ impl Hexatic {
     pub fn k(&self) -> u32 {
         self.k
     }
+}
 
-    fn one_frame<FA: FrameAccess>(
-        &self,
-        frame: &FA,
-        nlist: &Neighbors,
-    ) -> Result<HexaticResult, ComputeError> {
-        let (xs_p, _, _) = get_positions_ref(frame)?;
-        let n = xs_p.slice().len();
+impl Compute for Hexatic {
+    type Input<'a> = HexaticInput<'a>;
+    type Output = HexaticResult;
 
-        let mut psi = vec![Complex::ZERO; n];
-        let mut count = vec![0_u32; n];
-
-        let i_idx = nlist.query_point_indices();
-        let j_idx = nlist.point_indices();
-        let n_pairs = nlist.n_pairs();
-        // The bond directions are the whole computation: a table without the
-        // `disp` column cannot supply them, and zeros would be silent nonsense.
-        let disp = require_disp(nlist)?;
-        // The loop below reads each row once and updates both `i` and `j`, using
-        // the parity of `e^{i k (θ + π)}` for the `j` side. That credits `j` as
-        // if it indexed the same point set as `i`, which only a self-query
-        // guarantees: on a cross table `j` indexes the *reference* set, so the
-        // bond is attributed to whichever frame particle happens to share that
-        // index — or panics outright once `j >= n`. And when the two sets are
-        // the same coordinates, every bond arrives in both orderings, so each
-        // particle's `count` is `2·N_i`. Refuse the table instead.
-        require_self_query(nlist)?;
-
-        // For the j-side of each self-query bond, the bond direction is
-        // reversed: θ + π. `exp(i k (θ + π)) = (-1)^k exp(i k θ)`.
-        let parity = if self.k & 1 == 0 { 1.0 } else { -1.0 };
-
-        for kp in 0..n_pairs {
-            let i = i_idx[kp] as usize;
-            let j = j_idx[kp] as usize;
-            let dx = disp[[kp, 0]];
-            let dy = disp[[kp, 1]];
-            if dx == 0.0 && dy == 0.0 {
-                continue;
-            }
-            let theta = dy.atan2(dx);
-            let phase = Complex::from_polar(1.0, self.k as F * theta);
-            psi[i] += phase;
-            psi[j] += phase.scale(parity);
-            count[i] += 1;
-            count[j] += 1;
-        }
-        for i in 0..n {
-            if count[i] > 0 {
-                let inv = 1.0 / count[i] as F;
-                psi[i] = psi[i].scale(inv);
-            }
-        }
-        Ok(HexaticResult { k: self.k, psi })
+    /// # Errors
+    /// [`ComputeError::BadShape`] for a table without `disp` or a cross-query
+    /// table.
+    fn compute(&self, input: HexaticInput<'_>) -> Result<HexaticResult, ComputeError> {
+        let table = BondAverage::new(PlanarHarmonic { k: self.k }).compute(input.neighbors)?;
+        Ok(HexaticResult {
+            k: self.k,
+            psi: table.values().column(0).to_vec(),
+        })
     }
 }
 
-impl LegacyCompute for Hexatic {
-    type Args<'a> = &'a [Neighbors];
-    type Output = Vec<HexaticResult>;
-
-    fn compute<'a, FA: FrameAccess + Sync + 'a>(
-        &self,
-        frames: &[&'a FA],
-        nlists: &'a [Neighbors],
-    ) -> Result<Vec<HexaticResult>, ComputeError> {
-        if frames.is_empty() {
-            return Err(ComputeError::EmptyInput);
-        }
-        if frames.len() != nlists.len() {
-            return Err(ComputeError::DimensionMismatch {
-                expected: frames.len(),
-                got: nlists.len(),
-                what: "neighbor-list count",
-            });
-        }
-        #[cfg(feature = "rayon")]
-        const PAR_THRESHOLD: usize = 2;
-
-        #[cfg(feature = "rayon")]
-        if frames.len() >= PAR_THRESHOLD {
-            use rayon::prelude::*;
-            return frames
-                .par_iter()
-                .zip(nlists.par_iter())
-                .map(|(f, nl)| self.one_frame(*f, nl))
-                .collect();
-        }
-
-        let mut out = Vec::with_capacity(frames.len());
-        for (f, nl) in frames.iter().zip(nlists.iter()) {
-            out.push(self.one_frame(*f, nl)?);
-        }
-        Ok(out)
-    }
-}
-
-/// Per-frame hexatic order parameter result.
+/// One snapshot's hexatic order parameter.
 #[derive(Debug, Clone, Default)]
 pub struct HexaticResult {
     /// Rotational symmetry order `k` the parameter was computed for.
     pub k: u32,
-    /// Per-particle complex `ψ_k(i)`, one entry per particle in frame order.
+    /// Per-particle complex `ψ_k(i)`, one entry per particle in table order.
     /// Dimensionless, with `|ψ_k| ≤ 1`; its argument is the local lattice
     /// orientation (radians, modulo `2π/k`).
     pub psi: Vec<Complex>,
 }
 
-impl ComputeResult for HexaticResult {}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::compute::fixtures::nlist_from_frame;
-    use molrs::core::Block;
-    use molrs::core::Frame;
+    use crate::compute::Batch;
+    use crate::compute::fixtures::neighbors_of;
     use molrs::core::SimBox;
-    use ndarray::{Array1 as A1, array};
+    use molrs::op::F;
+    use ndarray::array;
 
-    fn frame_with(positions: &[[F; 3]], box_len: F) -> Frame {
-        let x = A1::from_iter(positions.iter().map(|p| p[0]));
-        let y = A1::from_iter(positions.iter().map(|p| p[1]));
-        let z = A1::from_iter(positions.iter().map(|p| p[2]));
-        let mut block = Block::new();
-        block.insert("x", x.into_dyn()).unwrap();
-        block.insert("y", y.into_dyn()).unwrap();
-        block.insert("z", z.into_dyn()).unwrap();
-        let mut frame = Frame::new();
-        frame.insert("atoms", block);
-        frame.simbox = Some(
-            SimBox::ortho(
+    /// A planar snapshot: positions in a `box_len × box_len × 1` open box.
+    struct Snapshot {
+        positions: Vec<[F; 3]>,
+        simbox: SimBox,
+    }
+
+    fn frame_with(positions: &[[F; 3]], box_len: F) -> Snapshot {
+        Snapshot {
+            positions: positions.to_vec(),
+            simbox: SimBox::ortho(
                 array![box_len, box_len, 1.0_f64],
                 array![0.0 as F, 0.0 as F, 0.0 as F],
                 [false, false, false],
             )
             .unwrap(),
-        );
-        frame
+        }
+    }
+
+    fn nlist_from_frame(frame: &Snapshot, cutoff: F) -> Neighbors {
+        neighbors_of(&frame.positions, &frame.simbox, cutoff)
+    }
+
+    fn psi(k: u32, nl: &Neighbors) -> Vec<Complex> {
+        Hexatic::new(k)
+            .unwrap()
+            .compute(HexaticInput { neighbors: nl })
+            .unwrap()
+            .psi
     }
 
     /// Six neighbors on a regular hexagon around a centre particle.
-    fn hex_environment(box_len: F) -> Frame {
+    fn hex_environment(box_len: F) -> Snapshot {
         let c = box_len * 0.5;
         let mut positions = vec![[c, c, 0.0]];
         for k in 0..6 {
@@ -239,7 +169,7 @@ mod tests {
     }
 
     /// Four neighbors on a square around a centre particle.
-    fn square_environment(box_len: F) -> Frame {
+    fn square_environment(box_len: F) -> Snapshot {
         let c = box_len * 0.5;
         let positions = [
             [c, c, 0.0],
@@ -255,9 +185,7 @@ mod tests {
     fn psi_6_on_perfect_hexagon_is_unity() {
         let frame = hex_environment(20.0);
         let nl = nlist_from_frame(&frame, 1.2);
-        let res = Hexatic::new(6).unwrap().compute(&[&frame], &[nl]).unwrap();
-        // ψ_6 at the centre should have magnitude ≈ 1.
-        let psi_center = res[0].psi[0];
+        let psi_center = psi(6, &nl)[0];
         assert!(
             (psi_center.norm() - 1.0).abs() < 1e-10,
             "|ψ_6(centre)| = {} (expected ≈ 1)",
@@ -269,8 +197,7 @@ mod tests {
     fn psi_4_on_perfect_square_is_unity() {
         let frame = square_environment(20.0);
         let nl = nlist_from_frame(&frame, 1.2);
-        let res = Hexatic::new(4).unwrap().compute(&[&frame], &[nl]).unwrap();
-        let psi_center = res[0].psi[0];
+        let psi_center = psi(4, &nl)[0];
         assert!(
             (psi_center.norm() - 1.0).abs() < 1e-10,
             "|ψ_4(square)| = {} (expected ≈ 1)",
@@ -284,8 +211,7 @@ mod tests {
         // + e^{i 6π} + e^{i 9π} = 1 − 1 + 1 − 1 = 0.
         let frame = square_environment(20.0);
         let nl = nlist_from_frame(&frame, 1.2);
-        let res = Hexatic::new(6).unwrap().compute(&[&frame], &[nl]).unwrap();
-        let psi_center = res[0].psi[0];
+        let psi_center = psi(6, &nl)[0];
         assert!(
             psi_center.norm() < 1e-10,
             "ψ_6(square) should be 0, got {}",
@@ -297,23 +223,12 @@ mod tests {
     fn isolated_particle_psi_is_zero() {
         let frame = frame_with(&[[5.0, 5.0, 0.0]], 10.0);
         let nl = nlist_from_frame(&frame, 1.0);
-        let res = Hexatic::new(6).unwrap().compute(&[&frame], &[nl]).unwrap();
-        assert_eq!(res[0].psi[0], Complex::ZERO);
+        assert_eq!(psi(6, &nl)[0], Complex::ZERO);
     }
 
     #[test]
     fn k_zero_is_error() {
         assert!(Hexatic::new(0).is_err());
-    }
-
-    #[test]
-    fn empty_frames_is_error() {
-        let frames: Vec<&Frame> = Vec::new();
-        let err = Hexatic::new(6)
-            .unwrap()
-            .compute(&frames, &Vec::<Neighbors>::new())
-            .unwrap_err();
-        assert!(matches!(err, ComputeError::EmptyInput));
     }
 
     /// ac-002 (spec neighborlist-03-compute): `ψ_k` is built entirely from bond
@@ -329,7 +244,6 @@ mod tests {
     fn hexatic_indices_only_neighbors_is_bad_shape() {
         use molrs::core::{NeighborColumns, NeighborPair, QueryMode};
 
-        let frame = hex_environment(20.0);
         let pairs: Vec<NeighborPair> = (0..6u32)
             .map(|k| {
                 let theta = 2.0 * std::f64::consts::PI * k as F / 6.0;
@@ -356,7 +270,7 @@ mod tests {
 
         let err = Hexatic::new(6)
             .unwrap()
-            .compute(&[&frame], &[nl])
+            .compute(HexaticInput { neighbors: &nl })
             .unwrap_err();
         assert!(
             matches!(err, ComputeError::BadShape { .. }),
@@ -384,7 +298,6 @@ mod tests {
     fn hexatic_cross_query_table_is_bad_shape() {
         use molrs::core::{NeighborColumns, NeighborPair, QueryMode};
 
-        let frame = hex_environment(20.0);
         let mut pairs: Vec<NeighborPair> = Vec::with_capacity(12);
         for k in 0..6u32 {
             let theta = 2.0 * std::f64::consts::PI * k as F / 6.0;
@@ -419,7 +332,10 @@ mod tests {
 
         // Deliberately not `expect_err`: the Ok payload is a ψ_k vector per
         // frame, and dumping it buries the one thing the failure says.
-        let Err(err) = Hexatic::new(6).unwrap().compute(&[&frame], &[nl]) else {
+        let Err(err) = Hexatic::new(6)
+            .unwrap()
+            .compute(HexaticInput { neighbors: &nl })
+        else {
             panic!("Hexatic::compute must refuse a cross-query table outright, but returned Ok");
         };
         assert!(
@@ -433,8 +349,7 @@ mod tests {
         // Rotate the hexagon by an arbitrary angle and check |ψ_6| unchanged.
         let frame = hex_environment(20.0);
         let nl = nlist_from_frame(&frame, 1.2);
-        let a = Hexatic::new(6).unwrap().compute(&[&frame], &[nl]).unwrap();
-        let mag = a[0].psi[0].norm();
+        let mag = psi(6, &nl)[0].norm();
 
         let c = 10.0_f64;
         let shift = 0.3_f64;
@@ -445,30 +360,29 @@ mod tests {
         }
         let frame2 = frame_with(&positions, 20.0);
         let nl2 = nlist_from_frame(&frame2, 1.2);
-        let b = Hexatic::new(6)
-            .unwrap()
-            .compute(&[&frame2], &[nl2])
-            .unwrap();
+        let b = psi(6, &nl2);
         assert!(
-            (b[0].psi[0].norm() - mag).abs() < 1e-10,
+            (b[0].norm() - mag).abs() < 1e-10,
             "|ψ_6| should be rotation-invariant: {} vs {}",
             mag,
-            b[0].psi[0].norm(),
+            b[0].norm(),
         );
     }
 
-    /// The `frames.len() >= PAR_THRESHOLD` rayon branch must return exactly
-    /// what the serial path does, in frame order: two identical frames →
-    /// two identical results, each equal to the single-frame result.
+    /// [`Batch`] (rayon when enabled) must return exactly what one call
+    /// does, in input order: two identical snapshots → two identical results,
+    /// each equal to the single-snapshot result.
     #[test]
     fn parallel_matches_serial() {
         let frame = hex_environment(20.0);
         let nl = nlist_from_frame(&frame, 1.2);
         let hx = Hexatic::new(6).unwrap();
-        let solo = hx.compute(&[&frame], std::slice::from_ref(&nl)).unwrap();
-        let par = hx.compute(&[&frame, &frame], &[nl.clone(), nl]).unwrap();
+        let solo = hx.compute(HexaticInput { neighbors: &nl }).unwrap();
+        let par = Batch(hx)
+            .compute(vec![HexaticInput { neighbors: &nl }; 2])
+            .unwrap();
         assert_eq!(par.len(), 2);
-        assert_eq!(par[0].psi, solo[0].psi);
-        assert_eq!(par[1].psi, solo[0].psi);
+        assert_eq!(par[0].psi, solo.psi);
+        assert_eq!(par[1].psi, solo.psi);
     }
 }

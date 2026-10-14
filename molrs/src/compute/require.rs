@@ -32,13 +32,20 @@
 //! without it. That is a wrong number rather than a missing one, so it too is
 //! refused rather than computed.
 //!
-//! All three helpers are free functions rather than methods on [`Neighbors`] /
+//! The table helpers are free functions rather than methods on [`Neighbors`] /
 //! [`PairSource`]:
 //! the owning type lives in `core`, one layer below this one, and must not learn
 //! about [`ComputeError`] to answer a question `core` never asks.
+//!
+//! The orientation guards are the other input every orientation kernel
+//! validates the same way: an orientation is a rotation (a quaternion), a
+//! direction (a director) or a planar angle, and a zero quaternion or a zero
+//! director names none of them. Each is an error here, once, instead of the
+//! identity, a skipped particle or a zero angle at each kernel.
 
 use molrs::core::{Neighbors, PairSource, QueryMode};
-use molrs::op::Fnx3View;
+use molrs::op::{F, Fnx3View, Quat, Vec3};
+use ndarray::{ArrayView1, ArrayView2};
 
 use super::error::ComputeError;
 
@@ -115,9 +122,12 @@ pub(crate) fn require_dist_sq(source: &dyn PairSource) -> Result<(), ComputeErro
 /// [`QueryMode::CrossQuery`]. The `expected` text names the mode the kernel
 /// needs and the pair count it was reading, and `got` says why a cross table is
 /// not a substitute.
-pub(crate) fn require_self_query(nlist: &Neighbors) -> Result<(), ComputeError> {
+///
+/// On success, the size of the one point set both indices address — the
+/// particle count of the snapshot, read off the table rather than off a frame.
+pub(crate) fn require_self_query(nlist: &Neighbors) -> Result<usize, ComputeError> {
     match nlist.mode() {
-        QueryMode::SelfQuery { .. } => Ok(()),
+        QueryMode::SelfQuery { n_points } => Ok(n_points),
         QueryMode::CrossQuery { .. } => Err(ComputeError::BadShape {
             expected: format!(
                 "SelfQuery half-shell Neighbors for {} pairs — this kernel updates both \
@@ -129,6 +139,98 @@ pub(crate) fn require_self_query(nlist: &Neighbors) -> Result<(), ComputeError> 
                 .to_string(),
         }),
     }
+}
+
+/// Whether a table is half-shell: a [`QueryMode::SelfQuery`] holds each
+/// unordered pair once, so a kernel that adapts to the mode (rather than
+/// refusing a cross table) credits the reversed bond itself.
+pub(crate) fn is_half_shell(mode: QueryMode) -> bool {
+    matches!(mode, QueryMode::SelfQuery { .. })
+}
+
+/// Unit quaternions `(w, x, y, z)` from an `N × 4` array, each divided by its
+/// norm.
+///
+/// # Errors
+/// [`ComputeError::DimensionMismatch`] when the array does not have 4
+/// columns; [`ComputeError::NonFinite`] at the first non-finite component
+/// (flat index); [`ComputeError::OutOfRange`] for a row of zero norm — a zero
+/// quaternion is no rotation, and reading it as the identity would be a
+/// silent answer.
+pub(crate) fn require_quaternions(
+    q: ArrayView2<'_, F>,
+    field: &'static str,
+) -> Result<Vec<Quat>, ComputeError> {
+    unit_rows::<4>(q, field)
+}
+
+/// Unit directions from an `N × 3` array, each divided by its length.
+///
+/// # Errors
+/// [`ComputeError::DimensionMismatch`] when the array does not have 3
+/// columns; [`ComputeError::NonFinite`] at the first non-finite component
+/// (flat index); [`ComputeError::OutOfRange`] for a row of zero length — a
+/// zero vector has no direction.
+pub(crate) fn require_directions(
+    v: ArrayView2<'_, F>,
+    field: &'static str,
+) -> Result<Vec<Vec3>, ComputeError> {
+    unit_rows::<3>(v, field)
+}
+
+/// Planar orientation angles (radians), one per particle.
+///
+/// # Errors
+/// [`ComputeError::NonFinite`] at the first non-finite angle.
+pub(crate) fn require_angles(
+    angles: ArrayView1<'_, F>,
+    field: &'static str,
+) -> Result<Vec<F>, ComputeError> {
+    if let Some(index) = angles.iter().position(|a| !a.is_finite()) {
+        return Err(ComputeError::NonFinite {
+            where_: field,
+            index,
+        });
+    }
+    Ok(angles.to_vec())
+}
+
+/// The rows of an `N × D` array, each normalised; the shared body of
+/// [`require_quaternions`] and [`require_directions`].
+fn unit_rows<const D: usize>(
+    rows: ArrayView2<'_, F>,
+    field: &'static str,
+) -> Result<Vec<[F; D]>, ComputeError> {
+    if rows.ncols() != D {
+        return Err(ComputeError::DimensionMismatch {
+            expected: D,
+            got: rows.ncols(),
+            what: field,
+        });
+    }
+    rows.outer_iter()
+        .enumerate()
+        .map(|(item, row)| {
+            let mut unit = [0.0; D];
+            for (c, &v) in row.iter().enumerate() {
+                if !v.is_finite() {
+                    return Err(ComputeError::NonFinite {
+                        where_: field,
+                        index: item * D + c,
+                    });
+                }
+                unit[c] = v;
+            }
+            let norm = unit.iter().map(|v| v * v).sum::<F>().sqrt();
+            if norm == 0.0 {
+                return Err(ComputeError::OutOfRange {
+                    field,
+                    value: format!("row {item} has zero norm; an orientation needs one"),
+                });
+            }
+            Ok(unit.map(|v| v / norm))
+        })
+        .collect()
 }
 
 /// The shared error text: `expected` names the column *and* the pair count it

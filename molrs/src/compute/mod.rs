@@ -72,7 +72,7 @@
 //!
 //! | Needs | Kernels | Materialize the table with |
 //! |---|---|---|
-//! | `disp` — bond *directions* | [`Steinhardt`], [`Hexatic`], [`SolidLiquid`], [`ContinuousCoordination`] (the last three via [`steinhardt_qlm`]), every PMFT kernel, [`BondOrientationalOrder`], [`LocalDescriptors`], [`LocalBondProjection`], [`EnvironmentMatch`] | `NeighborColumns::DISP` or `FULL` |
+//! | `disp` — bond *directions* | [`Steinhardt`], [`Hexatic`] (and through Steinhardt's [`QlmTable`], [`SolidLiquid`] and [`ContinuousCoordination`]), [`Pmft`], [`BondOrientationalOrder`], [`LocalDescriptors`], [`LocalBondProjection`], [`EnvironmentMatch`] | `NeighborColumns::DISP` or `FULL` |
 //! | `dist_sq` — distances only | [`Rdf`], [`CorrelationFunction`], [`LocalDensity`] (each takes any [`PairSource`](molrs::core::PairSource)) | `NeighborColumns::DIST_SQ` or `FULL` |
 //! | indices only — connectivity | [`Cluster`], [`AngularSeparationNeighbor`] | any policy, `INDICES_ONLY` included |
 //!
@@ -189,10 +189,10 @@
 //! | `decomposition` | PCA projection |
 //! | `kmeans` | k-means over a PCA projection |
 //! | `density` | correlation function, Gaussian/local density, spatial distribution, voxelization |
-//! | `order` | Steinhardt, hexatic, nematic, cubatic, solid-liquid, … |
+//! | `order` | the one bond-harmonic average ([`QlmTable`]) behind Steinhardt, hexatic, solid-liquid, continuous coordination; nematic, cubatic |
 //! | `environment` | bond order, local descriptors, environment matching, … |
 //! | `diffraction` | S(k) (Debye & direct), diffraction pattern |
-//! | `pmft` | potentials of mean force and torque (R12/XY/XYT/XYZ) |
+//! | `pmft` | potentials of mean force and torque: one [`Pmft`] over a [`PairCoordinate`] ([`R12`], [`Xy`], [`Xyt`], [`Xyz`]) |
 //! | `distribution` | distance/angle/dihedral distribution functions |
 //! | `hbond` | hydrogen-bond detection, presence series, network components |
 //! | `kinetic` | [`KineticEnergy`] (and its temperature), centre-of-mass velocity of one state |
@@ -262,10 +262,11 @@ pub use dynamics::{
     PairPresence, PairPresenceInput, Presence, VanHove, VanHoveInput, VanHoveResult,
 };
 pub use environment::{
-    AngularSeparationGlobal, AngularSeparationGlobalArgs, AngularSeparationGlobalResult,
-    AngularSeparationNeighbor, AngularSeparationNeighborArgs, AngularSeparationNeighborResult,
-    BondOrientationalOrder, BondOrientationalOrderResult, EnvironmentMatch, EnvironmentMatchResult,
-    LocalBondProjection, LocalBondProjectionArgs, LocalBondProjectionResult, LocalDescriptors,
+    AngularSeparationGlobal, AngularSeparationGlobalInput, AngularSeparationGlobalResult,
+    AngularSeparationNeighbor, AngularSeparationNeighborInput, AngularSeparationNeighborResult,
+    BondOrientationalOrder, BondOrientationalOrderInput, BondOrientationalOrderResult,
+    EnvironmentMatch, EnvironmentMatchInput, EnvironmentMatchResult, LocalBondProjection,
+    LocalBondProjectionInput, LocalBondProjectionResult, LocalDescriptors, LocalDescriptorsInput,
     LocalDescriptorsResult,
 };
 pub use error::ComputeError;
@@ -280,15 +281,12 @@ pub use kinetic::{
 };
 pub use kmeans::{Kmeans, KmeansResult};
 pub use order::{
-    ContinuousCoordination, ContinuousCoordinationResult, Cubatic, CubaticResult, Hexatic,
-    HexaticResult, Nematic, NematicResult, SolidLiquid, SolidLiquidResult, Steinhardt,
-    SteinhardtResult, steinhardt_qlm,
+    ContinuousCoordination, ContinuousCoordinationInput, ContinuousCoordinationResult, Cubatic,
+    CubaticInput, CubaticResult, Hexatic, HexaticInput, HexaticResult, Nematic, NematicInput,
+    NematicResult, QlmTable, SolidLiquid, SolidLiquidInput, SolidLiquidResult, Steinhardt,
+    SteinhardtInput, SteinhardtResult,
 };
-pub use pmft::{
-    PmftR12, PmftR12Args, PmftR12Result, PmftXy, PmftXyArgs, PmftXyResult, PmftXyt, PmftXytArgs,
-    PmftXytResult, PmftXyz, PmftXyzArgs, PmftXyzResult, orientation_quaternions,
-    planar_orientation_angles,
-};
+pub use pmft::{PairCoordinate, Pmft, PmftInput, PmftResult, R12, Xy, Xyt, Xyz};
 pub use rdf::{Rdf, RdfAccumulator, RdfResult};
 /// Crate-internal: the input guards every neighbor-consuming kernel calls
 /// before it reads `disp` (Å) or `dist_sq` (Å²), or before it updates both
@@ -300,7 +298,10 @@ pub use rdf::{Rdf, RdfAccumulator, RdfResult};
 /// [`Neighbors::mode()`](molrs::core::Neighbors::mode), which
 /// answer `Option` / [`QueryMode`](molrs::core::QueryMode) rather
 /// than [`ComputeError`].
-pub(crate) use require::{require_disp, require_dist_sq, require_self_query};
+pub(crate) use require::{
+    is_half_shell, require_angles, require_directions, require_disp, require_dist_sq,
+    require_quaternions, require_self_query,
+};
 pub use shape::{
     CenterOfMass, CenterOfMassResult, ClusterCenters, ClusterCentersResult, GyrationTensor,
     GyrationTensorResult, InertiaTensor, InertiaTensorResult, RadiusOfGyration,
