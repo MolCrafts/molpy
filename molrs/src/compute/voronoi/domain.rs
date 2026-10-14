@@ -3,7 +3,7 @@
 use molrs::op::F;
 
 use super::cell::VoronoiCells;
-use crate::compute::ComputeError;
+use crate::compute::{Compute, ComputeError};
 use crate::core::Topology;
 
 /// Outcome of a [`VoronoiDomainAnalysis`].
@@ -21,6 +21,8 @@ pub struct VoronoiDomainResult {
 
 /// Partition cells into same-label face-adjacent domains.
 ///
+/// Configuration: none. Data: the tessellation and one label per cell.
+///
 /// Merges face-adjacent cells that share the same user label into connected
 /// domains via the native connected-components over the cell-adjacency graph —
 /// the aggregation reference implementation performs in `src/domain.cpp` /
@@ -29,14 +31,32 @@ pub struct VoronoiDomainResult {
 #[derive(Debug, Clone, Copy, Default)]
 pub struct VoronoiDomainAnalysis;
 
+/// The data a [`VoronoiDomainAnalysis`] aggregates.
+#[derive(Clone, Copy)]
+pub struct VoronoiDomainInput<'a> {
+    /// The tessellation.
+    pub cells: &'a VoronoiCells,
+    /// One label per cell; face-adjacent cells with equal labels merge.
+    pub labels: &'a [i64],
+}
+
 impl VoronoiDomainAnalysis {
-    /// Merge face-adjacent cells sharing the same `labels[i]` into domains.
-    /// `labels` length must equal the cell count.
-    pub fn analyze(
-        &self,
-        cells: &VoronoiCells,
-        labels: &[i64],
-    ) -> Result<VoronoiDomainResult, ComputeError> {
+    /// No configuration.
+    pub fn new() -> Self {
+        Self
+    }
+}
+
+impl Compute for VoronoiDomainAnalysis {
+    type Input<'a> = VoronoiDomainInput<'a>;
+    type Output = VoronoiDomainResult;
+
+    /// # Errors
+    /// [`ComputeError::DimensionMismatch`] unless there is one label per cell;
+    /// [`ComputeError::EmptyInput`] for an empty tessellation (the largest
+    /// fraction is undefined).
+    fn compute(&self, input: VoronoiDomainInput<'_>) -> Result<VoronoiDomainResult, ComputeError> {
+        let VoronoiDomainInput { cells, labels } = input;
         let n = cells.len();
         if labels.len() != n {
             return Err(ComputeError::DimensionMismatch {
@@ -44,6 +64,9 @@ impl VoronoiDomainAnalysis {
                 got: labels.len(),
                 what: "domain labels length",
             });
+        }
+        if n == 0 {
+            return Err(ComputeError::EmptyInput);
         }
         // Build the same-label cell-adjacency graph and cluster it with the
         // native connected-components (BFS) facility instead of a local
@@ -76,11 +99,8 @@ impl VoronoiDomainAnalysis {
         let mut sizes: Vec<usize> = size_of.into_iter().filter(|&c| c > 0).collect();
         sizes.sort_unstable_by(|a, b| b.cmp(a));
         let count = sizes.len();
-        let largest_fraction = if n == 0 {
-            0.0
-        } else {
-            sizes.first().copied().unwrap_or(0) as F / n as F
-        };
+        // n > 0, so there is at least one domain.
+        let largest_fraction = sizes[0] as F / n as F;
 
         Ok(VoronoiDomainResult {
             sizes,
@@ -88,5 +108,65 @@ impl VoronoiDomainAnalysis {
             largest_fraction,
             domain_of,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::compute::VoronoiFace;
+
+    /// A ring of four cells, each face-adjacent to its two ring neighbours.
+    fn ring() -> VoronoiCells {
+        let face = |neighbor| VoronoiFace {
+            area: 1.0,
+            neighbor,
+        };
+        VoronoiCells {
+            volumes: vec![1.0; 4],
+            faces: (0..4i64)
+                .map(|i| vec![face((i + 1) % 4), face((i + 3) % 4)])
+                .collect(),
+        }
+    }
+
+    #[test]
+    fn same_label_neighbours_merge() {
+        let cells = ring();
+        let r = VoronoiDomainAnalysis::new()
+            .compute(VoronoiDomainInput {
+                cells: &cells,
+                labels: &[0, 0, 1, 0],
+            })
+            .unwrap();
+        // 0–1 and 3–0 merge (3 cells); 2 stands alone.
+        assert_eq!(r.sizes, vec![3, 1]);
+        assert_eq!(r.count, 2);
+        assert!((r.largest_fraction - 0.75).abs() < 1e-15);
+        assert_eq!(r.domain_of[0], r.domain_of[3]);
+        assert_ne!(r.domain_of[0], r.domain_of[2]);
+    }
+
+    #[test]
+    fn errors() {
+        let cells = ring();
+        assert!(matches!(
+            VoronoiDomainAnalysis::new().compute(VoronoiDomainInput {
+                cells: &cells,
+                labels: &[0, 0],
+            }),
+            Err(ComputeError::DimensionMismatch { .. })
+        ));
+        let empty = VoronoiCells {
+            volumes: vec![],
+            faces: vec![],
+        };
+        assert!(matches!(
+            VoronoiDomainAnalysis::new().compute(VoronoiDomainInput {
+                cells: &empty,
+                labels: &[],
+            }),
+            Err(ComputeError::EmptyInput)
+        ));
     }
 }

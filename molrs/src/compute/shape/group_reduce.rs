@@ -122,6 +122,12 @@ impl GroupReduce {
         &self.keys
     }
 
+    /// The row of `item`'s group in [`keys`](Self::keys); `None` when the item
+    /// is in no group.
+    pub(crate) fn group_of(&self, item: usize) -> Option<usize> {
+        self.group[item]
+    }
+
     /// The weighted centroid of every group. `name` labels the weights in an
     /// error (`"masses"`, `"weights"`).
     ///

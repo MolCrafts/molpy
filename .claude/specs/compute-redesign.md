@@ -577,6 +577,33 @@ lag spacing, any consistent time unit works.
   test-only `fixtures::nlist_from_frame` would be dead code under
   `clippy -D warnings`.
 
+*As built (08):*
+- **Cell-list neighbour search (Voronoi rows).** `radical.rs`'s `CellGrid` is
+  gone: the periodic copies within the search radius come from
+  `core::GhostSet::borders` (every image, not the minimum image — a small box
+  needs several images of one generator, which `NeighborList` /
+  `NeighborQuery` cannot report), and a `core::LinkCell` over the open box that
+  holds `[generators | copies]` is walked per generator through the
+  crate-internal `LinkCell::visit_neighbors_of_pt` (streaming; a materialised
+  `NeighborQuery::query` table would hold every generator's ~250 candidates at
+  once). Candidates sort by `(d², search-point index)`, a total order.
+  `integrate.rs`'s `CellList` is gone: `PowerCellLocator` runs the same
+  pruning guard + exhaustive fallback on a `LinkCell` in the caller's box, so
+  the voxel owner stays bit-identical to brute force (the moved
+  `cell_list_nearest_matches_brute_force`). A before/after capture of the old
+  code on five tessellations (random polydisperse with generators outside the
+  box, one atom, two atoms, an SC lattice, 400 random) is bit-identical; the
+  integrated moments agree to 1e-14 relative (centroid through `GroupReduce`,
+  voxel volume through `RegularGrid`'s determinant, rayon reassociation).
+- **Grid.** `DensityGrid` → `RegularGrid<3>` + a `density: ArrayView3` shaped
+  as `grid.dims()`. `RegularGrid` gains `voxel_corner(index)` — the lattice
+  node point-sampled data (a Gaussian cube) sits on; `voxel_center` is the same
+  private `lattice_point(index, t)` at `t = ½`, same arithmetic.
+- **Group reduction.** `VoronoiIntegration`'s Pass-A centre of nuclear charge
+  is `GroupReduce::centroids(Z)`; `GroupReduce` gains the crate-internal
+  `group_of(item) -> Option<usize>` (the row of an item's group), which Pass B
+  needs to credit a voxel to its owner's molecule.
+
 ### 4. Public surface — every current symbol and where it goes
 
 Legend:
@@ -989,6 +1016,43 @@ features are `&(dyn Partition + Sync)` / `&(dyn FeatureMatrix + Sync)` so
 | `MolecularMoments`, `VoronoiCells`, `VoronoiFace`, `VORONOI_BOUNDARY` | K |
 | `polarizability_finite_field` | → `FiniteFieldPolarizability`; the unused `moments_zero` argument is deleted |
 
+*As built (08):* every type below is a per-snapshot `Compute` (many
+snapshots: `Batch`) with a named `Input`; no frame is read.
+- **`RadicalVoronoi::new()`** (unit struct, `Default`),
+  `compute(RadicalVoronoiInput { positions: N × 3, simbox, radii: ArrayView1 })`
+  → `VoronoiCells`.
+- **`VoronoiIntegration::new(unit: LengthUnit)`** (no `Default`: the density
+  unit must be stated), `compute(VoronoiIntegrationInput { positions, radii,
+  nuclear_charges: ArrayView1<F>, partition: &(dyn Partition + Sync), simbox,
+  grid: &RegularGrid<3>, density: ArrayView3 })` → `MolecularMoments`, which
+  gains `groups: Vec<u64>` (rows are the partition's groups, ascending; was
+  `0..n_mol`). **`LengthUnit`** is a `named_enum!` (`angstrom`, `bohr`): the
+  density is electrons per cubic unit; positions and grid geometry are Å.
+  *Deviations:* (a) the input carries no `VoronoiCells`: the integrator's
+  cells are the power-distance argmin of `(positions, radii)`, exactly the
+  cells `RadicalVoronoi` builds, so the tessellation would be unused data;
+  (b) `atomic_numbers: &[i32]` → `nuclear_charges: ArrayView1<F>` (they are
+  `GroupReduce` weights; a pseudopotential density's valence charges fit);
+  (c) the minimum image is the box's own (`SimBox::mic`: periodicity and tilt
+  honoured) — the old code forced `Mic::ortho(lengths)`, periodic on every
+  axis even for a cube-read box (pbc off) and wrong for a tilted one; a
+  periodic system read from a cube needs its box's pbc set by the caller;
+  (d) `DensityGrid::from_cube_frame` is gone with the frame read: the caller
+  builds `RegularGrid::over_box(&cube_box, dims)` (the cube reader's box is
+  voxel axes × dims from the cube origin, so the voxel corners are the cube's
+  sample points), takes the density column as a `dims`-shaped array, and
+  picks the unit (`bohr` for a cube's volumetric block).
+- **`VoronoiDomainAnalysis::new()`**, `compute(VoronoiDomainInput { cells,
+  labels: &[i64] })`; **`VoronoiVoidAnalysis::new()`**,
+  `compute(VoronoiVoidInput { cells, is_void: &[bool], box_volume })`.
+- **`FiniteFieldPolarizability::new(field) -> Result`** (zero / non-finite is
+  `OutOfRange`), `compute(FiniteFieldPolarizabilityInput { plus, minus:
+  &MolecularMoments })` → `Array2<F>` (`n_mol × 3`, the column `∂μ/∂E_j`);
+  runs over different molecules (`groups`) are `BadShape`.
+- *Deviation (chain row):* the chain table named a `GridField` type; none was
+  added — it would be a data wrapper the caller builds (D2). The grid is
+  `RegularGrid` and the values are an `ArrayView3` in the `Input`.
+
 After the chain, `compute` exports no `pub fn` at module level and no `pub type`
 alias of another public type.
 
@@ -1038,6 +1102,24 @@ that owns the file.
 - **Voronoi:**
   - The `.unwrap_or(false)` Bohr assumption becomes an explicit `LengthUnit`.
   - `dims.max(1)` and the out-of-cell clamps become errors.
+  - *As built (08):* the unit is a required `VoronoiIntegration::new`
+    argument (no `Default`). `dims.max(1)` went with the frame read; a zero
+    dimension is `RegularGrid::new`'s `OutOfRange` and a density not shaped as
+    the grid is `BadShape`. The out-of-cell clamps (`radical.rs:286,325`,
+    `integrate.rs:427`) went with the private grids; their reachable trigger,
+    a non-finite coordinate (NaN landed in cell 0), is `NonFinite` (positions,
+    radii, nuclear charges, density values), each with a unit test. A point
+    outside the box is wrapped (periodic axis) or binned to the edge cell
+    (open axis) by the core `LinkCell` — complete, not a clamp. Also: a
+    chargeless molecule (its reference fell back to its first atom) is
+    `OutOfRange` (`GroupReduce`'s zero total); a generator in no molecule is
+    `OutOfRange`; no generators is `EmptyInput` (was an index panic);
+    `RadicalVoronoi` on a triclinic or not fully periodic box is `BadShape`
+    (was tessellated as a periodic orthorhombic box of the lattice lengths);
+    `VoronoiDomainAnalysis` on an empty tessellation is `EmptyInput`
+    (`largest_fraction` was 0/0 → 0); a search radius needing more periodic
+    copies than `ImageRange::MAX_IMAGES` is `OutOfRange`; the `leak()` label
+    workaround is gone (static labels).
 - **EnvironmentMatch:**
   - The silent fallback above 8 neighbours becomes an explicit-limit error.
   - `Err(_) => INFINITY` becomes error propagation.
@@ -1266,6 +1348,17 @@ regression.
 6. **Fallbacks become errors** (§5). Inputs that used to "work" with a silently
    wrong answer now fail.
 
+*Link 08 note (no golden literal moved):* the Voronoi goldens moved with
+their kernels: `det3_and_point_indexing` → `RegularGrid`'s
+`voxel_corners_are_the_lattice_nodes` (voxel volume 1, node `(1, 0, 1)`),
+`cell_list_nearest_matches_brute_force` onto the `LinkCell` locator, the
+polarizability `recovers_known_alpha_tensor` onto the type (same α, 1e-9);
+`zero_field_is_error` also covers NaN / ∞. New: tessellation goldens (single
+generator fills the box, SC unit cubes, the radical-plane split, Σ V = box on
+a polydisperse packing with symmetric adjacency), integration goldens
+(neutral diatomic, ±1 e transfer in both units, the −1 e·Å displaced
+electron), domain / void aggregation, and the error variants.
+
 *Link 07 note (no golden literal moved):* non-golden assertions that
 changed: `Cluster`'s `empty_frames_is_error` and `keyed_empty_frames_is_error`
 are gone (no frames; `Batch` of nothing is an empty `Vec`) and
@@ -1330,7 +1423,7 @@ happens inside the chain.
 | 05-dynamics (code-complete 2026-10-14) | As built: `Presence` + `PairPresence` (hysteresis `r0`/`r1`, core neighbour tables as data, `Option` output) feed `Survival`; `HBonds::new(criterion)` with selections, trajectory and per-frame cross-query tables in `compute`, `HBondsResult::presence()` / `components(frame)`; `VanHove` on `Axis`/`Histogram` + `Origins`, boxes as data; `pair_survival_tcf`, `PairSurvivalResult`, `SurvivalMethod`, `hbond_lifetimes`, `HBondLifetimeResult`, `presence_from_hbonds`, `hbond_components`, `HBondNetworkResult` deleted (deviations in D4, §4, §5, Behaviour change 3 and the 05 note). Scope: `Presence`/`PairPresence`, survival through `Correlator`, H-bond input/presence/components, VanHove on `Histogram` + `core::NeighborQuery`. | 02, 04 |
 | 06-order-environment (code-complete 2026-10-14) | As built: `order/bond_average.rs` (`BondBasis` + `SphericalHarmonic`/`PlanarHarmonic`, `BondAverage`, public `QlmTable`) is the one q_ℓm/ψ_k; every order/environment type is a per-snapshot `Compute`; SolidLiquid/ContinuousCoordination read `(&QlmTable, &Neighbors)`; `Pmft<C: PairCoordinate>` (`R12`/`Xy`/`Xyt`/`Xyz`) replaces the four PMFTs; `steinhardt_qlm`, `angular_distance`, `pmft/orientation.rs`, every `*Args`, `Dsu` deleted; zero orientations error everywhere; R12 bin-measure bug fixed (deviations in §3, §4, §5, Link 06 note). Scope: `BondBasis`/`BondAverage`/`QlmTable`; Steinhardt, Hexatic, SolidLiquid, ContinuousCoordination, BOO, LocalDescriptors, LocalBondProjection, EnvironmentMatch, AngularSeparation, Nematic, Cubatic; `Pmft<C>`. | 01, 04 |
 | 07-groups (code-complete 2026-10-14) | As built: `shape/group_reduce.rs` (`GroupReduce`, crate-internal: anchor + core-MIC offsets, weighted centroid, weighted second moment) behind `CenterOfMass` / `GyrationTensor` / `InertiaTensor` (configuration-free; `compute({ positions, simbox, partition, masses/weights })`); `Cluster` on `Topology::connected_components` with `merge`; `ClusterResult` / `KmeansResult` are `Partition`s, `PcaResult` a `FeatureMatrix`; `Pca::new(n_components)` on `eigh_sym`; `Kmeans::new(k)` + `with_max_iter` / `with_seed` (core defaults 100 / 0) over any `FeatureMatrix`; `Partition::sizes`; `ClusterCenters`, `RadiusOfGyration`, `ClusterProperties`, `compute_keyed`, `center_of_mass_velocity`, the power iteration and (dead after 07) `positions.rs` deleted (deviations in §3, §4, §5, Behaviour change 2). Scope: `GroupReduce`; Cluster (`connected_components`, `merge`), CenterOfMass, GyrationTensor, InertiaTensor; delete ClusterCenters, RadiusOfGyration, ClusterProperties; Pca (`eigh_sym`, `n_components`), Kmeans (`FeatureMatrix`). | 01, 06 (FeatureMatrix producers) |
-| 08-voronoi | `Compute` impls, core cell list, explicit units, `FiniteFieldPolarizability`, `GridField`. | 04, 07 |
+| 08-voronoi (code-complete 2026-10-14) | As built: `RadicalVoronoi`, `VoronoiIntegration` (`new(LengthUnit)`), `VoronoiDomainAnalysis`, `VoronoiVoidAnalysis`, `FiniteFieldPolarizability` (`new(field)`) are per-snapshot `Compute`s with named `Input`s; candidate search on core `LinkCell` (+ `GhostSet` copies for the tessellation's multi-image search); `DensityGrid` → `RegularGrid` (+ `voxel_corner`) and an `ArrayView3`; Pass A on `GroupReduce`; `CellGrid`, `CellList`, `DensityGrid`, `from_cube_frame`, `polarizability_finite_field`, `leak` deleted; no `GridField` (deviations in §3, §4, §5, Link 08 note). Scope: `Compute` impls, core cell list, explicit units, `FiniteFieldPolarizability`, `GridField`. | 04, 07 |
 | 09-retire-legacy | Delete `LegacyCompute`, `analysis_contract.rs`, `positions.rs`; rewrite the `compute/mod.rs` module docs (removes the stale `molpy.compute.Workflow` reference). Run the §4 closing greps. | 02–08 |
 | 10-bindings | §6 in molrs-python, molrs-wasm, molrs-cxxapi; full pre-push gate; Atomiverse consumer note. | 09 |
 | 11-catalog | §7; molvis `registry.ts` migration (cross-repo). | 10 |

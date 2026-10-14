@@ -4,14 +4,13 @@ use molrs::op::F;
 use ndarray::Array2;
 
 use super::integrate::MolecularMoments;
-use crate::compute::ComputeError;
+use crate::compute::{Compute, ComputeError};
 
 /// Per-molecule polarizability column `∂μ/∂E_j` (e·Å per field unit), shape
-/// `(n_mol, 3)`, from the `+E` and `−E` dipole sets at field magnitude `field`.
+/// `(n_mol, 3)`, by central difference of the dipoles at `+E` and `−E`.
 ///
-/// `moments_zero` (the field-off set) is accepted for API symmetry with
-/// the reference implementation's three-point workflow and to validate molecule alignment; the
-/// central difference itself uses only `plus`/`minus`.
+/// Configuration: the field magnitude `E` the two runs were made at. Data: the
+/// [`MolecularMoments`] of the `+E ê_j` and `−E ê_j` runs.
 ///
 /// Ported from the reference implementation's polarizability workflow (`src/dpol.cpp`): three external
 /// field directions, each a ±E pair of Voronoi-integrated dipole sets, combined
@@ -27,35 +26,80 @@ use crate::compute::ComputeError;
 /// One call handles **one** field direction `j` and returns the column
 /// `∂μ/∂E_j` (a 3-vector per molecule); assemble the full 3×3 tensor from three
 /// orthogonal field runs (see the test). For a linear response
-/// `μ(E) = μ₀ + α E`, the central difference is exact.
-pub fn polarizability_finite_field(
-    moments_zero: &MolecularMoments,
-    plus: &MolecularMoments,
-    minus: &MolecularMoments,
+/// `μ(E) = μ₀ + α E`, the central difference is exact, so the field-off run is
+/// not needed.
+#[derive(Debug, Clone, Copy)]
+pub struct FiniteFieldPolarizability {
     field: F,
-) -> Result<Array2<F>, ComputeError> {
-    if field == 0.0 || !field.is_finite() {
-        return Err(ComputeError::OutOfRange {
-            field: "polarizability::field",
-            value: field.to_string(),
-        });
-    }
-    let n = moments_zero.charges.len();
-    if plus.charges.len() != n || minus.charges.len() != n {
-        return Err(ComputeError::DimensionMismatch {
-            expected: n,
-            got: plus.charges.len().min(minus.charges.len()),
-            what: "moment set molecule count",
-        });
-    }
-    let mut col = Array2::<F>::zeros((n, 3));
-    let inv = 1.0 / (2.0 * field);
-    for m in 0..n {
-        for c in 0..3 {
-            col[[m, c]] = (plus.dipoles[[m, c]] - minus.dipoles[[m, c]]) * inv;
+}
+
+/// The two runs a [`FiniteFieldPolarizability`] differences.
+#[derive(Clone, Copy)]
+pub struct FiniteFieldPolarizabilityInput<'a> {
+    /// Moments at field `+E ê_j`.
+    pub plus: &'a MolecularMoments,
+    /// Moments at field `−E ê_j`.
+    pub minus: &'a MolecularMoments,
+}
+
+impl FiniteFieldPolarizability {
+    /// Difference runs made at field magnitude `field`.
+    ///
+    /// # Errors
+    /// [`ComputeError::OutOfRange`] for a zero or non-finite field.
+    pub fn new(field: F) -> Result<Self, ComputeError> {
+        if field == 0.0 || !field.is_finite() {
+            return Err(ComputeError::OutOfRange {
+                field: "FiniteFieldPolarizability::field",
+                value: field.to_string(),
+            });
         }
+        Ok(Self { field })
     }
-    Ok(col)
+
+    /// The configured field magnitude.
+    pub fn field(&self) -> F {
+        self.field
+    }
+}
+
+impl Compute for FiniteFieldPolarizability {
+    type Input<'a> = FiniteFieldPolarizabilityInput<'a>;
+    type Output = Array2<F>;
+
+    /// # Errors
+    /// [`ComputeError::BadShape`] when the two runs do not report the same
+    /// molecules (group keys) or their dipoles are not one `3`-vector per
+    /// molecule.
+    fn compute(
+        &self,
+        input: FiniteFieldPolarizabilityInput<'_>,
+    ) -> Result<Array2<F>, ComputeError> {
+        let FiniteFieldPolarizabilityInput { plus, minus } = input;
+        if plus.groups != minus.groups {
+            return Err(ComputeError::BadShape {
+                expected: format!("the same molecules in both runs, {:?}", plus.groups),
+                got: format!("{:?}", minus.groups),
+            });
+        }
+        let n = plus.groups.len();
+        for dipoles in [&plus.dipoles, &minus.dipoles] {
+            if dipoles.dim() != (n, 3) {
+                return Err(ComputeError::BadShape {
+                    expected: format!("dipoles ({n}, 3)"),
+                    got: format!("{:?}", dipoles.dim()),
+                });
+            }
+        }
+        let mut col = Array2::<F>::zeros((n, 3));
+        let inv = 1.0 / (2.0 * self.field);
+        for m in 0..n {
+            for c in 0..3 {
+                col[[m, c]] = (plus.dipoles[[m, c]] - minus.dipoles[[m, c]]) * inv;
+            }
+        }
+        Ok(col)
+    }
 }
 
 #[cfg(test)]
@@ -66,6 +110,7 @@ mod tests {
     fn moments(dipoles: Array2<F>) -> MolecularMoments {
         let n = dipoles.nrows();
         MolecularMoments {
+            groups: (0..n as u64).collect(),
             charges: vec![0.0; n],
             dipoles,
             references: Array2::zeros((n, 3)),
@@ -78,7 +123,7 @@ mod tests {
         let alpha = [[2.0, 0.3, 0.0], [0.3, 1.5, 0.1], [0.0, 0.1, 1.0]];
         let mu0 = [0.4, -0.2, 0.05];
         let e = 1e-3;
-        let zero = moments(Array2::from_shape_vec((1, 3), mu0.to_vec()).unwrap());
+        let polarizability = FiniteFieldPolarizability::new(e).unwrap();
 
         let mut recovered = [[0.0; 3]; 3];
         for j in 0..3 {
@@ -87,7 +132,12 @@ mod tests {
             let minus_v: Vec<F> = (0..3).map(|i| mu0[i] - e * alpha[i][j]).collect();
             let plus = moments(Array2::from_shape_vec((1, 3), plus_v).unwrap());
             let minus = moments(Array2::from_shape_vec((1, 3), minus_v).unwrap());
-            let col = polarizability_finite_field(&zero, &plus, &minus, e).unwrap();
+            let col = polarizability
+                .compute(FiniteFieldPolarizabilityInput {
+                    plus: &plus,
+                    minus: &minus,
+                })
+                .unwrap();
             for i in 0..3 {
                 recovered[i][j] = col[[0, i]];
             }
@@ -106,7 +156,25 @@ mod tests {
 
     #[test]
     fn zero_field_is_error() {
-        let z = moments(Array2::zeros((1, 3)));
-        assert!(polarizability_finite_field(&z, &z, &z, 0.0).is_err());
+        for field in [0.0, F::NAN, F::INFINITY] {
+            assert!(matches!(
+                FiniteFieldPolarizability::new(field),
+                Err(ComputeError::OutOfRange { .. })
+            ));
+        }
+    }
+
+    #[test]
+    fn runs_over_different_molecules_are_an_error() {
+        let plus = moments(Array2::zeros((2, 3)));
+        let minus = moments(Array2::zeros((1, 3)));
+        let err = FiniteFieldPolarizability::new(1e-3)
+            .unwrap()
+            .compute(FiniteFieldPolarizabilityInput {
+                plus: &plus,
+                minus: &minus,
+            })
+            .unwrap_err();
+        assert!(matches!(err, ComputeError::BadShape { .. }));
     }
 }

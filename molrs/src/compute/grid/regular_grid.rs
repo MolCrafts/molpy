@@ -137,6 +137,14 @@ impl<const D: usize> RegularGrid<D> {
         self.image_center(index.map(|i| i as isize))
     }
 
+    /// The corner of voxel `index`, `origin + Σ_d index[d] · basis[d]` — the
+    /// lattice node point-sampled data sits on. A Gaussian cube stores its
+    /// value `(i, j, k)` there (not at the voxel centre), each sample standing
+    /// for the voxel volume around it.
+    pub fn voxel_corner(&self, index: [usize; D]) -> [F; D] {
+        self.lattice_point(index.map(|i| i as isize), 0.0)
+    }
+
     /// The voxel holding `point`, wrapped along periodic axes; `None` when the
     /// point lies outside the grid along a non-periodic axis.
     ///
@@ -259,15 +267,21 @@ impl<const D: usize> RegularGrid<D> {
 
     /// Centre of the (possibly out-of-range) voxel image `index`.
     fn image_center(&self, index: [isize; D]) -> [F; D] {
+        self.lattice_point(index, 0.5)
+    }
+
+    /// `origin + Σ_d (index[d] + t) · basis[d]`: the point at fractional
+    /// offset `t` along every axis of the voxel image `index`.
+    fn lattice_point(&self, index: [isize; D], t: F) -> [F; D] {
         let mut c = self.origin;
         if self.diagonal {
             for d in 0..D {
-                c[d] += (index[d] as F + 0.5) * self.basis[d][d];
+                c[d] += (index[d] as F + t) * self.basis[d][d];
             }
             return c;
         }
         for (d, edge) in self.basis.iter().enumerate() {
-            let t = index[d] as F + 0.5;
+            let t = index[d] as F + t;
             for k in 0..D {
                 c[k] += t * edge[k];
             }
@@ -519,6 +533,20 @@ mod tests {
         })
         .unwrap();
         assert!((at_center - k.normalization(3)).abs() < 1e-15);
+    }
+
+    /// Voxel corners are the lattice nodes, in index order (the former
+    /// Voronoi `DensityGrid::point` golden).
+    #[test]
+    fn voxel_corners_are_the_lattice_nodes() {
+        let g = cube(2, false);
+        assert!((g.voxel_volume() - 1.0).abs() < 1e-12);
+        // m = ((i*ny)+j)*nz + k ; m=5 → i=1,j=0,k=1
+        assert_eq!(g.voxel_corner([1, 0, 1]), [1.0, 0.0, 1.0]);
+        let sheared =
+            RegularGrid::new([0.5, 0.0], [[2.0, 0.0], [1.0, 1.0]], [4, 4], [false; 2]).unwrap();
+        assert_eq!(sheared.voxel_corner([1, 2]), [4.5, 2.0]);
+        assert_eq!(sheared.voxel_corner([0, 0]), sheared.origin());
     }
 
     #[test]

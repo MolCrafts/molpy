@@ -197,7 +197,7 @@
 //! | `distribution` | distance/angle/dihedral distribution functions |
 //! | `hbond` | hydrogen-bond detection, presence series, network components |
 //! | `kinetic` | [`KineticEnergy`] (and its temperature) of one state |
-//! | `voronoi` | radical Voronoi cells, domains, voids (feature `voronoi`) |
+//! | `voronoi` | radical Voronoi cells, domains, voids, density integration, finite-field polarizability (feature `voronoi`) |
 
 mod analysis_contract;
 mod binning;
@@ -323,9 +323,10 @@ pub use time_series::{
 };
 #[cfg(feature = "voronoi")]
 pub use voronoi::{
-    DensityGrid, MolecularMoments, RadicalVoronoi, VORONOI_BOUNDARY, VoronoiCells,
-    VoronoiDomainAnalysis, VoronoiDomainResult, VoronoiFace, VoronoiIntegration,
-    VoronoiVoidAnalysis, VoronoiVoidResult, polarizability_finite_field,
+    FiniteFieldPolarizability, FiniteFieldPolarizabilityInput, LengthUnit, MolecularMoments,
+    RadicalVoronoi, RadicalVoronoiInput, VORONOI_BOUNDARY, VoronoiCells, VoronoiDomainAnalysis,
+    VoronoiDomainInput, VoronoiDomainResult, VoronoiFace, VoronoiIntegration,
+    VoronoiIntegrationInput, VoronoiVoidAnalysis, VoronoiVoidInput, VoronoiVoidResult,
 };
 
 // ---------------------------------------------------------------------------
