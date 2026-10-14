@@ -619,6 +619,77 @@ pub trait PairSource {
     /// Visit every pair once as `(i, j, dist_sq, disp)`. A column outside
     /// [`columns`](Self::columns) arrives as `None`, never as a zero.
     fn visit_pairs(&self, visitor: &mut dyn FnMut(u32, u32, Option<F>, Option<[F; 3]>));
+
+    /// Hand the `dist_sq` column (Å²) to `visitor` in bulk: one or more
+    /// contiguous slices which, concatenated, are every pair's squared
+    /// distance in [`visit_pairs`](Self::visit_pairs) order.
+    ///
+    /// The column-access path for a kernel that needs only distances (a
+    /// radial histogram): it pays one dynamic call per slice instead of one
+    /// per pair. A materialized [`Neighbors`] table hands over its stored
+    /// column as a single slice; a streaming source batches what it
+    /// computes. Slice boundaries are not part of the contract.
+    ///
+    /// Returns `false`, without calling `visitor`, when the source has no
+    /// `dist_sq` column — an absent column is never handed over as zeros.
+    ///
+    /// The provided implementation batches [`visit_pairs`](Self::visit_pairs).
+    ///
+    /// # Panics
+    /// When [`columns`](Self::columns) reports `dist_sq` but `visit_pairs`
+    /// delivers `None` — an implementor bug, not a data condition.
+    #[must_use = "`false` means the source has no dist_sq column and nothing was visited"]
+    fn visit_dist_sq(&self, visitor: &mut dyn FnMut(&[F])) -> bool {
+        if !self.columns().dist_sq {
+            return false;
+        }
+        let mut chunks = DistSqChunks::new(visitor);
+        self.visit_pairs(&mut |_, _, dist_sq, _| {
+            chunks.push(dist_sq.expect("columns() reports dist_sq, so every pair carries it"));
+        });
+        chunks.flush();
+        true
+    }
+}
+
+/// Pairs per slice a streaming [`PairSource::visit_dist_sq`] hands over:
+/// 8 KiB of `f64`, small enough to stay on the stack and in L1.
+const DIST_SQ_CHUNK: usize = 1024;
+
+/// Batches streamed squared distances into [`DIST_SQ_CHUNK`]-sized slices for
+/// [`PairSource::visit_dist_sq`] — shared by the provided method and the
+/// [`NeighborList`] override, which streams straight from its backend.
+struct DistSqChunks<'v> {
+    buf: [F; DIST_SQ_CHUNK],
+    len: usize,
+    visitor: &'v mut dyn FnMut(&[F]),
+}
+
+impl<'v> DistSqChunks<'v> {
+    fn new(visitor: &'v mut dyn FnMut(&[F])) -> Self {
+        Self {
+            buf: [0.0; DIST_SQ_CHUNK],
+            len: 0,
+            visitor,
+        }
+    }
+
+    #[inline(always)]
+    fn push(&mut self, dist_sq: F) {
+        self.buf[self.len] = dist_sq;
+        self.len += 1;
+        if self.len == DIST_SQ_CHUNK {
+            (self.visitor)(&self.buf);
+            self.len = 0;
+        }
+    }
+
+    /// Hand over the partial last slice, if any.
+    fn flush(self) {
+        if self.len > 0 {
+            (self.visitor)(&self.buf[..self.len]);
+        }
+    }
 }
 
 impl PairSource for Neighbors {
@@ -636,6 +707,15 @@ impl PairSource for Neighbors {
 
     fn visit_pairs(&self, visitor: &mut dyn FnMut(u32, u32, Option<F>, Option<[F; 3]>)) {
         self.for_each_pair(visitor);
+    }
+
+    /// The stored column, as one slice.
+    fn visit_dist_sq(&self, visitor: &mut dyn FnMut(&[F])) -> bool {
+        if !self.columns.dist_sq {
+            return false;
+        }
+        visitor(&self.dist_sq);
+        true
     }
 }
 
@@ -658,6 +738,16 @@ impl PairSource for NeighborList {
     fn visit_pairs(&self, visitor: &mut dyn FnMut(u32, u32, Option<F>, Option<[F; 3]>)) {
         self.backend
             .visit_pairs(&mut |i, j, dist_sq, disp| visitor(i, j, Some(dist_sq), Some(disp)));
+    }
+
+    /// Streams straight from the backend's visitor into the slice buffer —
+    /// one dynamic call per pair (the backend's), not two.
+    fn visit_dist_sq(&self, visitor: &mut dyn FnMut(&[F])) -> bool {
+        let mut chunks = DistSqChunks::new(visitor);
+        self.backend
+            .visit_pairs(&mut |_, _, dist_sq, _| chunks.push(dist_sq));
+        chunks.flush();
+        true
     }
 }
 
@@ -2318,5 +2408,94 @@ mod geometry_tests {
         let rows = visited(&lean);
         assert_eq!(rows.len(), 3);
         assert!(rows.iter().all(|r| r.2.is_none() && r.3.is_none()));
+    }
+
+    /// A source that implements only the required methods, so
+    /// `visit_dist_sq` runs the trait's provided (batching) implementation.
+    struct ProvidedOnly<'a>(&'a Neighbors);
+
+    impl PairSource for ProvidedOnly<'_> {
+        fn mode(&self) -> QueryMode {
+            self.0.mode()
+        }
+        fn simbox(&self) -> Option<&SimBox> {
+            self.0.simbox()
+        }
+        fn columns(&self) -> NeighborColumns {
+            self.0.columns()
+        }
+        fn visit_pairs(&self, visitor: &mut dyn FnMut(u32, u32, Option<F>, Option<[F; 3]>)) {
+            PairSource::visit_pairs(self.0, visitor);
+        }
+    }
+
+    /// `visit_dist_sq`'s slices, concatenated, and how many there were.
+    fn dist_sq_column(source: &dyn PairSource) -> Option<(Vec<F>, usize)> {
+        let (mut column, mut n_slices) = (Vec::new(), 0usize);
+        let present = source.visit_dist_sq(&mut |slice| {
+            column.extend_from_slice(slice);
+            n_slices += 1;
+        });
+        present.then_some((column, n_slices))
+    }
+
+    /// The `dist_sq` that `visit_pairs` reports, in its order.
+    fn visited_dist_sq(source: &dyn PairSource) -> Vec<F> {
+        let mut column = Vec::new();
+        source.visit_pairs(&mut |_, _, d2, _| column.push(d2.unwrap()));
+        column
+    }
+
+    /// The bulk column path is the `dist_sq` column of `visit_pairs`, in
+    /// the same order, for a table (one slice), a streaming list and the
+    /// provided implementation (batched across slice boundaries).
+    #[test]
+    fn visit_dist_sq_is_the_visited_column_in_order() {
+        let bx = small_box();
+        let mut state = 0x2545_f491_4f6c_dd1d_u64;
+        let mut uniform = move || {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            (state >> 11) as F / (1u64 << 53) as F
+        };
+        let points =
+            ndarray::Array2::from_shape_fn((400, 3), |(_, k)| uniform() * [10.0, 8.0, 6.0][k]);
+        let mut nl = NeighborList::new(2.5);
+        nl.build(points.view(), &bx);
+        let full = nl.neighbors(NeighborColumns::FULL);
+        let dist_only = nl.neighbors(NeighborColumns::DIST_SQ);
+        assert!(
+            full.n_pairs() > 2 * DIST_SQ_CHUNK,
+            "fixture must span slices"
+        );
+
+        let (list_column, list_slices) = dist_sq_column(&nl).unwrap();
+        assert_eq!(list_column, visited_dist_sq(&nl));
+        assert!(list_slices > 1);
+
+        for table in [&full, &dist_only] {
+            let (column, n_slices) = dist_sq_column(table).unwrap();
+            assert_eq!(column, visited_dist_sq(table));
+            assert_eq!(n_slices, 1, "a table hands over its stored column");
+
+            let provided = ProvidedOnly(table);
+            let (column, n_slices) = dist_sq_column(&provided).unwrap();
+            assert_eq!(column, visited_dist_sq(table));
+            assert_eq!(n_slices, table.n_pairs().div_ceil(DIST_SQ_CHUNK));
+        }
+    }
+
+    /// A source without the `dist_sq` column hands nothing over — no zeros —
+    /// and says so.
+    #[test]
+    fn lean_source_has_no_dist_sq_to_hand_over() {
+        let bx = small_box();
+        let mut nl = NeighborList::new(1.5);
+        nl.build(small_points().view(), &bx);
+        let lean = nl.neighbors(NeighborColumns::INDICES_ONLY);
+
+        assert_eq!(dist_sq_column(&lean), None);
+        assert_eq!(dist_sq_column(&ProvidedOnly(&lean)), None);
     }
 }

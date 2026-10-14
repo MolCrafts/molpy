@@ -77,6 +77,7 @@ impl Axis {
     }
 
     /// The lower edge of bin `i` (`i = n_bins` gives the last upper edge).
+    #[inline]
     fn edge(&self, i: usize) -> F {
         self.min + i as F * self.width
     }
@@ -98,14 +99,22 @@ impl Axis {
     /// [`ComputeError::NonFinite`] for a NaN or infinite sample (`index` 0:
     /// the axis sees one sample at a time). A non-finite sample never lands
     /// in a bin.
+    ///
+    /// `#[inline]` so that, inside a caller's per-sample loop, the
+    /// sample-independent part of [`locate`](Self::locate) (the inverse bin
+    /// scale) is hoisted out of the loop.
+    #[inline]
     pub fn index(&self, x: F) -> Result<Option<usize>, ComputeError> {
+        // In range first: NaN fails both comparisons and ±∞ lies outside
+        // the finite bounds, so the finiteness check runs only off the hot
+        // path.
+        if x >= self.min && x < self.max {
+            return Ok(Some(self.locate(x)));
+        }
         if !x.is_finite() {
             return Err(Self::non_finite());
         }
-        if x < self.min || x >= self.max {
-            return Ok(None);
-        }
-        Ok(Some(self.locate(x)))
+        Ok(None)
     }
 
     /// Like [`index`](Self::index), with the upper edge closed: `x = max` is
@@ -115,6 +124,7 @@ impl Axis {
     ///
     /// # Errors
     /// [`ComputeError::NonFinite`] for a NaN or infinite sample.
+    #[inline]
     pub fn index_closed(&self, x: F) -> Result<Option<usize>, ComputeError> {
         if !x.is_finite() {
             return Err(Self::non_finite());
@@ -128,10 +138,32 @@ impl Axis {
     /// Bin of an in-range `x`. The proportional guess is corrected against
     /// the edges, so the bins are exactly the half-open intervals
     /// [`edges`](Self::edges) reports.
+    ///
+    /// The guess is `⌊t⌋` with `t = (x − min) · n_bins / (max − min)`; the
+    /// inverse scale depends on the axis alone, so an inlined caller's loop
+    /// computes it once. The guess is returned without consulting the edges
+    /// when `t` lies more than [`guess_margin`](Self::guess_margin) from an
+    /// integer — the rounding of `t` and of every edge cannot then put `x` on
+    /// the other side of either edge of bin `⌊t⌋`. Otherwise the edge
+    /// correction decides, which makes the result independent of how the
+    /// guess rounds.
+    #[inline]
     fn locate(&self, x: F) -> usize {
         let last = self.n_bins - 1;
-        let guess = ((x - self.min) / (self.max - self.min) * self.n_bins as F) as usize;
-        let mut i = guess.min(last);
+        let t = (x - self.min) * (self.n_bins as F / (self.max - self.min));
+        let guess = (t as usize).min(last);
+        // Exact: `guess as F` is an integer in `[t − 1, t]` (Sterbenz), so
+        // the subtraction does not round. A clamped guess (`t ≥ n_bins`) has
+        // `frac ≥ 1` and takes the edge path.
+        let frac = t - guess as F;
+        let margin = self.guess_margin();
+        if frac > margin && frac < 1.0 - margin {
+            return guess;
+        }
+        let mut i = guess;
+        if x >= self.edge(i) && (i == last || x < self.edge(i + 1)) {
+            return i;
+        }
         while i > 0 && x < self.edge(i) {
             i -= 1;
         }
@@ -139,6 +171,25 @@ impl Axis {
             i += 1;
         }
         i
+    }
+
+    /// How far (in bins) `t` must lie from an integer for `⌊t⌋` to be the
+    /// bin [`locate`](Self::locate) would find by comparing against the
+    /// edges.
+    ///
+    /// With unit roundoff `u = 2⁻⁵³`, `n = n_bins` and `τ(y) = (y − min) · n
+    /// / (max − min)` the exact scale: the computed `t` differs from `τ(x)`
+    /// by at most `4.01 · n · u` (three roundings and that of `max − min`),
+    /// and the computed edge `min + i · width` from `τ⁻¹(i)` by at most
+    /// `n · u · (4.01 + |min| / (max − min))` bins. A margin above their sum
+    /// orders `x` against both edges of `⌊t⌋` the way the comparison would.
+    /// This returns `n · 2u · (8 + (|min| + |max|) / (max − min))`, over
+    /// twice the sum; a margin of ½ or more disables the shortcut.
+    #[inline]
+    fn guess_margin(&self) -> F {
+        self.n_bins as F
+            * F::EPSILON
+            * (8.0 + (self.min.abs() + self.max.abs()) / (self.max - self.min))
     }
 
     /// The cloud-in-cell (linear) split of a sample between the two bins
@@ -257,6 +308,57 @@ mod tests {
         assert_eq!(axis.index(-1e-15).unwrap(), None);
         assert_eq!(axis.index_closed(1.0).unwrap(), Some(9));
         assert_eq!(axis.index_closed(1.0 + 1e-12).unwrap(), None);
+    }
+
+    /// `locate`'s shortcut (return `⌊t⌋` without consulting the edges) never
+    /// disagrees with the edge comparison it skips: the bin is the largest
+    /// `i` with `edges[i] ≤ x`, for samples on and a few ulps either side of
+    /// every edge, and uniform ones, over axes with and without an offset.
+    #[test]
+    fn locate_shortcut_matches_the_edges() {
+        fn by_edges(axis: &Axis, x: F) -> Option<usize> {
+            if !(x >= axis.min() && x < axis.max()) {
+                return None;
+            }
+            let edges = axis.edges();
+            let i = edges.iter().rposition(|&e| e <= x).unwrap();
+            Some(i.min(axis.n_bins() - 1))
+        }
+        let mut state = 0x9e37_79b9_7f4a_7c15_u64;
+        let mut uniform = move || {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            (state >> 11) as F / (1u64 << 53) as F
+        };
+        for (min, max, n) in [
+            (0.0, 8.0, 200),
+            (0.0, 1.0, 10),
+            (0.0, 0.3, 3),
+            (-3.0, 5.0, 7),
+            (1.0e6, 1.0e6 + 1.0, 1000),
+            (-1.0e-3, 2.0e9, 4096),
+            (0.0, 1.0, 1),
+        ] {
+            let axis = Axis::new(min, max, n).unwrap();
+            let mut samples: Vec<F> = Vec::new();
+            for &e in axis.edges().iter() {
+                let (mut up, mut down) = (e, e);
+                for _ in 0..4 {
+                    samples.extend([up, down]);
+                    up = up.next_up();
+                    down = down.next_down();
+                }
+            }
+            samples.extend((0..20_000).map(|_| min + uniform() * (max - min)));
+            for x in samples {
+                assert_eq!(
+                    axis.index(x).unwrap(),
+                    by_edges(&axis, x),
+                    "axis ({min}, {max}, {n}), x = {x:e}"
+                );
+            }
+        }
     }
 
     #[test]

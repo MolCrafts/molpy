@@ -2,9 +2,10 @@
 
 use molrs::core::{PairSource, QueryMode};
 use molrs::op::F;
+use ndarray::Array1;
 
 use super::{Rdf, RdfResult};
-use crate::compute::{Accumulate, ComputeError, Histogram, require_dist_sq};
+use crate::compute::{Accumulate, Axis, ComputeError, Histogram, require_dist_sq};
 
 /// Streaming g(r) accumulator (bounded memory), obtained from a configured
 /// [`Rdf`] through [`Stream::accumulator`](crate::compute::Stream::accumulator).
@@ -48,31 +49,68 @@ impl RdfAccumulator {
 
     /// Bin every pair distance of one source into a fresh histogram, so a
     /// rejected frame leaves the running state untouched.
+    ///
+    /// Reads the distances through [`PairSource::visit_dist_sq`], the bulk
+    /// column path: a table's column is binned in one tight loop, and a
+    /// streaming list batches its distances, so no per-pair dynamic call or
+    /// `Option` reaches this loop. The bin is [`Axis::index`](crate::compute::Axis::index)'s.
     fn bin(&self, source: &dyn PairSource) -> Result<Histogram<1>, ComputeError> {
-        let mut histogram = Histogram::new([self.rdf.axis()]);
+        let axis = self.rdf.axis();
+        let mut counts = vec![0u64; axis.n_bins()];
         let mut failure: Option<ComputeError> = None;
-        let mut k = 0usize;
-        source.visit_pairs(&mut |_, _, dist_sq, _| {
+        let mut offset = 0usize;
+        let visited = source.visit_dist_sq(&mut |chunk| {
             if failure.is_some() {
                 return;
             }
-            // `require_dist_sq` has vouched for the column. A coincident pair
-            // (d² = 0) has no shell and is skipped.
-            if let Some(d2) = dist_sq
-                && (d2 > 0.0 || d2.is_nan())
-                && histogram.add([d2.sqrt()]).is_err()
-            {
+            if let Err(k) = Self::bin_chunk(axis, chunk, &mut counts) {
                 failure = Some(ComputeError::NonFinite {
                     where_: "pair dist_sq",
-                    index: k,
+                    index: offset + k,
                 });
             }
-            k += 1;
+            offset += chunk.len();
         });
+        // `push` ran `require_dist_sq` first, which vouched for the column.
+        debug_assert!(visited, "require_dist_sq vouched for the dist_sq column");
         match failure {
             Some(err) => Err(err),
-            None => Ok(histogram),
+            // Integer counts convert exactly (a frame holds far fewer than
+            // 2⁵³ pairs), so this equals adding 1.0 per pair.
+            None => {
+                let counts = counts.iter().map(|&c| c as F).collect::<Array1<F>>();
+                Ok(Histogram::from_counts([axis], counts.into_dyn()))
+            }
         }
+    }
+}
+
+impl RdfAccumulator {
+    /// Count one slice of squared distances into `counts`.
+    ///
+    /// The axis arrives by value and the counts as a plain slice, so the
+    /// optimizer keeps the axis in registers across the loop and hoists the
+    /// sample-independent part of [`Axis::index`](crate::compute::Axis::index).
+    ///
+    /// # Errors
+    /// The slice position of the first non-finite distance; the counts up to
+    /// it are already added, which is harmless because the caller discards
+    /// the whole frame on error.
+    #[inline]
+    fn bin_chunk(axis: Axis, chunk: &[F], counts: &mut [u64]) -> Result<(), usize> {
+        for (k, &d2) in chunk.iter().enumerate() {
+            // A coincident pair (d² = 0) has no shell and is skipped; a NaN
+            // goes on to `Axis::index`, which rejects it.
+            if !(d2 > 0.0 || d2.is_nan()) {
+                continue;
+            }
+            match axis.index(d2.sqrt()) {
+                Ok(Some(i)) => counts[i] += 1,
+                Ok(None) => {}
+                Err(_) => return Err(k),
+            }
+        }
+        Ok(())
     }
 }
 
@@ -151,7 +189,7 @@ impl Accumulate for RdfAccumulator {
             .counts()
             .iter()
             .copied()
-            .collect::<ndarray::Array1<F>>();
+            .collect::<Array1<F>>();
 
         let rdf = if self_query {
             let n = self.n_points as F / nf;
