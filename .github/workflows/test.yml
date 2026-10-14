@@ -6,14 +6,14 @@ name: test
 #
 #   fast  a feature-branch push to MolCrafts: Linux, Python 3.12.
 #   full  every push to a fork (proven before its pull request), dev, master
-#         and main on MolCrafts, pull requests, tags and dispatches: Linux,
+#         and master on MolCrafts, pull requests, tags and dispatches: Linux,
 #         macOS and Windows on 3.12; Linux additionally checks 3.14.
 # OS and interpreter coverage use four legs instead of six.
 on:
   push:
     branches: ["**"]
   pull_request:
-    branches: [dev, master, main]
+    branches: [dev, master]
   workflow_dispatch:
 
 permissions:
@@ -22,7 +22,7 @@ permissions:
 # Independent workflow/event/ref groups; feature pushes supersede older runs.
 concurrency:
   group: test-${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
-  cancel-in-progress: ${{ !contains(fromJSON('["refs/heads/dev","refs/heads/master","refs/heads/main"]'), github.ref) && !startsWith(github.ref, 'refs/tags/') }}
+  cancel-in-progress: ${{ !contains(fromJSON('["refs/heads/dev","refs/heads/master"]'), github.ref) && !startsWith(github.ref, 'refs/tags/') }}
 
 defaults:
   run:
@@ -49,7 +49,7 @@ jobs:
       publish: ${{ steps.context.outputs.publish }}
     steps:
       - id: context
-        uses: MolCrafts/molcrafts-ci/actions/ci-context@40f61db7c6783f246215158bff435ff1d384b2ae
+        uses: MolCrafts/molcrafts-ci/actions/ci-context@cc46e4eb85fdcfb950d9a4df02c2e04e94ba90f7
 
   python:
     name: test / python (${{ matrix.os }}, ${{ matrix.python }})
@@ -62,12 +62,12 @@ jobs:
         include: ${{ fromJSON(needs.context.outputs.tier == 'full' && '[{"os":"ubuntu-latest","python":"3.12"},{"os":"ubuntu-latest","python":"3.14"},{"os":"macos-latest","python":"3.12"},{"os":"windows-latest","python":"3.12"}]' || '[{"os":"ubuntu-latest","python":"3.12"}]') }}
     steps:
       - uses: actions/checkout@v7
-      - uses: MolCrafts/molcrafts-ci/actions/setup-python@40f61db7c6783f246215158bff435ff1d384b2ae
+      - uses: MolCrafts/molcrafts-ci/actions/setup-python@cc46e4eb85fdcfb950d9a4df02c2e04e94ba90f7
         with:
           python-version: ${{ matrix.python }}
-      - uses: MolCrafts/molcrafts-ci/actions/setup-partners@40f61db7c6783f246215158bff435ff1d384b2ae
+      - uses: MolCrafts/molcrafts-ci/actions/setup-partners@cc46e4eb85fdcfb950d9a4df02c2e04e94ba90f7
       # molrs/rust-toolchain.toml pins the compiler that builds the molrs wheel.
-      - uses: MolCrafts/molcrafts-ci/actions/setup-rust@40f61db7c6783f246215158bff435ff1d384b2ae
+      - uses: MolCrafts/molcrafts-ci/actions/setup-rust@cc46e4eb85fdcfb950d9a4df02c2e04e94ba90f7
         with:
           toolchain-dir: ../molrs
           cache: molrs-python
