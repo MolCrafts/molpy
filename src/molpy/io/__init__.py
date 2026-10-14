@@ -11,8 +11,8 @@ format has one of two shapes, as in molrs:
   ``read_<fmt>_bytes`` / ``write_<fmt>_bytes`` for bytes: structure and
   trajectory files (PDB, XYZ, LAMMPS data and dumps, GROMACS, AMBER, MOL2,
   CIF, XSF, Cube, VASP, DCD/TRR/XTC, …), force-field files
-  (:func:`read_lammps_forcefield`, :func:`read_gromacs_top_system`,
-  :func:`read_amber_prmtop_system`, :func:`read_openmm_xml_forcefield`, …),
+  (:func:`read_lammps_forcefield`, :func:`read_top_system`,
+  :func:`read_prmtop_system`, :func:`read_openmm_forcefield`, …),
   ``*.mrec`` records (:func:`read_mrec_frame`, :func:`read_mrec_trajectory`,
   …), wire-encoded frames (:func:`read_msgpack_frame_bytes`), LAMMPS logs
   (:func:`read_lammps_log`, :func:`read_lammps_log_str`) and line notations

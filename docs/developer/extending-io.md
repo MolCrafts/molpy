@@ -2,7 +2,7 @@
 
 `mp.io` has one door per format and direction, named after the format:
 `read_<fmt>[_<what>]` / `write_<fmt>[_<what>]` for a path (`read_pdb`,
-`read_lammps_data`, `read_gromacs_top_forcefield`), `_str` for text in memory
+`read_lammps_data`, `read_top_forcefield`), `_str` for text in memory
 (`read_smiles_str`), `_bytes` for bytes and `_trajectory` for every frame of a
 multi-frame file. No door picks a format for the caller from a file
 extension. There are no reader or writer classes to subclass. Parsing and serialization belong in the
@@ -42,7 +42,7 @@ buffers frames for the native writer: the native doors accept `str` and
 A format's behaviour — merging inpcrd coordinates into an existing frame,
 joining an n-wide XYZ property, Type Labels and `fix drude` flags of a LAMMPS
 data file, `fix bond/react` maps, an AMBER prmtop's per-pair 1-4 weights
-(`mp.io.read_amber_prmtop_system`) — is molrs's, so every caller
+(`mp.io.read_prmtop_system`) — is molrs's, so every caller
 gets it. molpy keeps no reader of its own: `mp.io` is `molrs.io` by identity,
 and a convenience that only composes native doors (a prmtop plus its inpcrd,
 a SMILES string to a graph) is two native calls at the call site, not a molpy
@@ -71,8 +71,8 @@ Key canonical fields: `charge` (not `q`), `mol_id` (not `mol`), `id`, `type`,
 Every force-field reader and writer — LAMMPS `*.ff` includes and data-file
 `* Coeffs`, GROMACS directives and systems, OpenMM XML, AMBER prmtop / frcmod
 — is a native molrs function on `mp.io`, by identity
-(`read_openmm_xml_forcefield` / `write_openmm_xml_forcefield`, `read_gromacs_top_forcefield` /
-`write_gromacs_top_forcefield`, the LAMMPS family). The
+(`read_openmm_forcefield` / `write_openmm_forcefield`, `read_top_forcefield` /
+`write_top_forcefield`, the LAMMPS family). The
 LAMMPS writers take the system as well: the coefficients written are selected by
 the frame's type labels, each matched to a type name exactly. The pair cutoff is
 a run setting the caller declares on the pair styles; no reader or writer
@@ -81,7 +81,7 @@ invents one.
 ```python
 import molpy as mp
 
-ff = mp.io.read_openmm_xml_forcefield(mp.resources.get_path("forcefield/tip3p.xml"))
+ff = mp.io.read_openmm_forcefield(mp.resources.get_path("forcefield/tip3p.xml"))
 water = mp.Frame(
     blocks={
         "atoms": {

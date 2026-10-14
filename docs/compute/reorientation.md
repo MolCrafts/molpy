@@ -94,9 +94,11 @@ molecule is turning by some other mechanism.
 ## Computing it
 
 `LegendreReorientation` reads the tracked vectors from each frame's **`bonds`**
-topology block — `(atomi, atomj)`, giving the vector from atom *i* to atom *j*.
-There is no separate vector argument. Whatever you want to track, express it as
-a bond.
+topology block — `(atomi, atomj)`, giving the vector from atom *i* to atom *j*
+under the frame's minimum-image convention — and returns $C_1$ and $C_2$
+together. When the vector you want is not a bond, or you want one order, a
+stride, the per-vector curves or the correlation time directly, build the unit
+vectors yourself and use [`Oacf`](oacf.md); it is the same kernel.
 
 ```python
 import numpy as np
@@ -153,7 +155,9 @@ print(round(tau1 / tau2, 2))                             # -> 3.02
 ```
 
 `max_lag` is in **frames**, not time, and `stride` sets the spacing between time
-origins — raise it to trade statistics for speed on long trajectories.
+origins — raise it to trade statistics for speed on long trajectories. On a
+`TimeCorrelation` from `Oacf` the same fit is `.fit_exponential()["tau"]`, and
+the integral of the curve, `.integrate()`, is the model-free $\tau_\ell$.
 
 ## When it goes wrong
 
@@ -198,6 +202,7 @@ crystalline environment, or a constraint you forgot. In a liquid it must decay.
 
 ## See also
 
+- [OACF](oacf.md) — the same correlation from unit vectors you build yourself
 - [Van Hove](van_hove.md) — the translational partner of this measurement
 - [Dielectric](dielectric.md) — where $C_1$ becomes a measurable spectrum
 - [Persist](persist.md) — how long the neighbours it turns among survive

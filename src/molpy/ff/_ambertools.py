@@ -23,7 +23,7 @@ from typing import TYPE_CHECKING, Literal
 
 from molrs.ff.forcefield import ForceField
 from molrs.ff.typifier import Typifier, TypeAssignment
-from molrs.io import read_amber_prmtop_system, write_amber_frcmod
+from molrs.io import read_prmtop_system, write_frcmod
 from molrs.core import Angle, Atomistic, Bond, Dihedral, Improper
 from molrs.core.constants import AMBER_SCEE, AMBER_SCNB
 
@@ -56,7 +56,7 @@ class _Prmtop:
     """
 
     def __init__(self, prmtop: Path) -> None:
-        self.forcefield, self.frame = read_amber_prmtop_system(prmtop)
+        self.forcefield, self.frame = read_prmtop_system(prmtop)
 
     def assignment(self, graph: Atomistic, charges: Sequence[float]) -> TypeAssignment:
         """Regenerate ``graph``'s terms to the prmtop's set and annotate them.
@@ -380,7 +380,7 @@ class TleapTypifier(_AmberTypifier):
         script = f"source leaprc.{self.leaprc}\n"
         if self.parameters is not None:
             frcmod = directory / "forcefield.frcmod"
-            write_amber_frcmod(frcmod, self.parameters)
+            write_frcmod(frcmod, self.parameters)
             script += f"loadamberparams {frcmod}\n"
         script += (
             f"{_UNIT} = loadmol2 {source}\n"

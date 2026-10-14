@@ -42,7 +42,7 @@ its molrs subsystem.
 | Assign force field types (OPLS-AA, MMFF94, GAFF via AmberTools) | `mp.ff.typifier.OplsAaTypifier`, `Mmff94Typifier`, `AtdTypifier`, `AntechamberTypifier`, `TleapTypifier` | [Typifier](typifier.md) |
 | Evaluate bond, angle, and pair potentials | `mp.ff.compile.PotentialCompiler`, `ExplicitTerms`, `mp.ff.potential.Potentials` | [Potential](potential.md) |
 | Register a force-field style or category from Python | `mp.ff.style_registry.StyleDeclaration`, `register_style`, `register_category` | [Potential](potential.md) |
-| Read and write molecular files (PDB, LAMMPS, GRO, …) | `mp.io.read_pdb`, `mp.io.write_lammps_data`, `mp.io.read_openmm_xml_forcefield` | [I/O](io.md) |
+| Read and write molecular files (PDB, LAMMPS, GRO, …) | `mp.io.read_pdb`, `mp.io.write_lammps_data`, `mp.io.read_openmm_forcefield` | [I/O](io.md) |
 | Store a frame, trajectory or force field as a `*.mrec` record | `mp.io.write_mrec_frame`, `mp.io.read_mrec_trajectory`, `mp.io.read_mrec_forcefield` | [I/O](io.md) |
 | Bridge to a third-party library (in-memory) | `Adapter`, `RdkitAdapter` (optional example) | [Adapter](adapter.md) |
 | Invoke external CLI tools (antechamber, tleap) | `Wrapper`, `AntechamberWrapper` | [Wrapper](wrapper.md) |

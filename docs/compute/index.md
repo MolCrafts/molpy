@@ -94,25 +94,29 @@ from molpy.compute import EinsteinConductivity, LinearFit
 rng = np.random.default_rng(0)
 M = np.ascontiguousarray(np.cumsum(rng.normal(0, 0.01, size=(80, 3)), axis=0))
 
-raw = EinsteinConductivity().compute(M, dt=10.0, max_correlation_time=20)
-print(sorted(raw))                                 # -> ['lag_times', 'msd']
+raw = EinsteinConductivity().compute(M, dt=10.0, max_lag=20)
+print(raw.kind, raw.values.shape)                  # -> msd (21,)
 ```
 
 Two details in those two lines regularly trip people up.
 
-**A conductivity returns something called `msd`.** That is not a mistake. The
+**A conductivity returns a curve of kind `msd`.** That is not a mistake. The
 Einstein route to conductivity is the mean squared displacement of the
 collective charge dipole $\mathbf{M}(t) = \sum_a q_a \mathbf{r}_a$ — the same
 mathematics as a [particle MSD](msd.md), applied to a different vector. See
-[PMSD](pmsd.md).
+[PMSD](pmsd.md). Every time correlation returns the same `TimeCorrelation`
+object: `.values` is the curve, `.lag_times` the time axis, and the derived
+quantities (`.integrate()`, `.linear_fit()`, `.fit_exponential()`,
+`.diffusion()`, `.spectrum()`) are methods on it.
 
 **The fit window is a fraction, not a time.** `LinearFit(0.1, 0.5)` fits the
 straight line over the portion of the curve from 10 % to 50 % of its length,
 which is how you exclude the short-time transient and the noisy tail:
 
 ```python
-fit = LinearFit(0.1, 0.5).fit(raw["lag_times"], raw["msd"])
+fit = LinearFit(0.1, 0.5).fit(raw.lag_times, raw.values)
 print(sorted(fit))     # -> ['fit_end', 'fit_start', 'intercept', 'r2', 'slope']
+print(fit == raw.linear_fit((0.1, 0.5)))   # -> True
 ```
 
 `r2` is there so you can check the window really was linear before quoting the
@@ -234,13 +238,13 @@ The pages are grouped the way the questions group, not the way the classes do.
 | Question | Page | Entry points |
 |---|---|---|
 | How far do atoms wander? (self-diffusion) | [MSD](msd.md) | `Msd` |
-| What does the velocity remember? | [VACF](vacf.md) | `Acf`, `signal.acf_fft` |
+| What does the velocity remember? | [VACF](vacf.md) | `Vacf`, `Acf`, `signal.acf_fft` |
 | Ionic conductivity, from displacements? | [PMSD](pmsd.md) | `EinsteinConductivity` → `LinearFit` |
 | …and from currents? | [JACF](jacf.md) | `GreenKuboConductivity` → `CumulativeTrapezoid` |
 | Do ions move together or independently? | [Onsager](onsager.md) | `OnsagerCorrelation` |
 | How long does a contact survive? | [Persist](persist.md) | `pair_survival_tcf` |
 | How does a density fluctuation decay? | [Van Hove](van_hove.md) | `VanHove` |
-| How fast do molecules tumble? | [Reorientation](reorientation.md) | `LegendreReorientation` |
+| How fast do molecules tumble? | [Reorientation](reorientation.md), [OACF](oacf.md) | `Oacf`, `LegendreReorientation` |
 
 ### Spectra and composition
 

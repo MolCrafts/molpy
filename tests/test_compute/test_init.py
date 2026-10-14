@@ -9,3 +9,12 @@ from molpy.compute import Compute
 
 def test_compute_protocol_is_the_molrs_one():
     assert Compute is MolrsCompute
+
+
+def test_time_correlation_family_is_the_molrs_one():
+    import molrs
+
+    import molpy as mp
+
+    for name in ("TimeCorrelation", "Spectrum", "Acf", "Oacf", "Vacf", "Msd"):
+        assert getattr(mp.compute, name) is getattr(molrs.compute, name)

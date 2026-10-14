@@ -71,8 +71,8 @@ from molpy.compute import EinsteinConductivity, LinearFit
 rng = np.random.default_rng(1)
 M = np.ascontiguousarray(np.cumsum(rng.normal(0, 0.02, size=(400, 3)), axis=0))
 
-raw = EinsteinConductivity().compute(M, dt=10.0, max_correlation_time=100)
-print(sorted(raw), raw["msd"].shape)     # -> ['lag_times', 'msd'] (101,)
+raw = EinsteinConductivity().compute(M, dt=10.0, max_lag=100)
+print(raw.kind, raw.values.shape)        # -> msd (101,)
 ```
 
 In real work `M` comes from your own charges and unwrapped positions:
@@ -90,7 +90,7 @@ the window is a *fraction* of the curve, so `(0.1, 0.5)` means from 10 % to 50 %
 of the way along it:
 
 ```python
-fit = LinearFit(0.1, 0.5).fit(raw["lag_times"], raw["msd"])
+fit = raw.linear_fit((0.1, 0.5))          # LinearFit(0.1, 0.5).fit(raw.lag_times, raw.values)
 print(round(fit["r2"], 3))                # -> 0.989
 ```
 

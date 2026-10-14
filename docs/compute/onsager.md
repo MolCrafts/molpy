@@ -77,16 +77,16 @@ p_anion = np.ascontiguousarray(
 )
 
 onsager = OnsagerCorrelation()
-l_same = onsager.compute(p_cation, p_cation, dt=10.0, max_correlation_time=100)
-l_cross = onsager.compute(p_cation, p_anion, dt=10.0, max_correlation_time=100)
-print(sorted(l_same))              # -> ['correlation', 'lag_times']
+l_same = onsager.compute(p_cation, p_cation, dt=10.0, max_lag=100)
+l_cross = onsager.compute(p_cation, p_anion, dt=10.0, max_lag=100)
+print(l_same.kind, l_same.values.shape)   # -> onsager (101,)
 ```
 
 The ratio of the two slopes should recover that 0.6 coupling:
 
 ```python
-same = LinearFit(0.1, 0.5).fit(l_same["lag_times"], l_same["correlation"])
-cross = LinearFit(0.1, 0.5).fit(l_cross["lag_times"], l_cross["correlation"])
+same = LinearFit(0.1, 0.5).fit(l_same.lag_times, l_same.values)
+cross = l_cross.linear_fit((0.1, 0.5))    # the same fit, as a method
 print(round(cross["slope"] / same["slope"], 2))     # -> 0.72
 ```
 
