@@ -554,11 +554,21 @@ The Rust compute facade is flat, and so is `molrs.compute`: every analysis is
 
 ### Dynamics
 
+Every time correlation returns a `TimeCorrelation`; its derived quantities
+(`integrate`, `linear_fit`, `fit_exponential`, `diffusion`, `spectrum`) are the
+fits below, applied to the curve.
+
+::: molrs.compute.TimeCorrelation
+
+::: molrs.compute.Acf
+
+::: molrs.compute.Oacf
+
 ::: molrs.compute.Msd
 
-::: molrs.compute.MsdResult
+::: molrs.compute.Vacf
 
-::: molrs.compute.MsdTimeSeries
+::: molrs.compute.LegendreReorientation
 
 ### Descriptors
 
@@ -578,6 +588,33 @@ Electrolyte transport kernels (ports of the *tame* recipes). Worked examples,
 units, and signatures are in the
 [molpy documentation](https://docs.molcrafts.org/molpy/).
 
+::: molrs.compute.EinsteinDiffusion
+
+::: molrs.compute.GreenKuboDiffusion
+
+::: molrs.compute.EinsteinConductivity
+
+::: molrs.compute.GreenKuboConductivity
+
+::: molrs.compute.DebyeRelaxation
+
+::: molrs.compute.DipoleRateCross
+
 ::: molrs.compute.OnsagerCorrelation
 
 ::: molrs.compute.pair_survival_tcf
+
+### Spectra
+
+The one-sided transforms return a `Spectrum`; the window is selectable
+(`"cosine_sq"` by default).
+
+::: molrs.compute.Spectrum
+
+::: molrs.compute.PowerSpectrum
+
+::: molrs.compute.IrSpectrum
+
+::: molrs.compute.VcdSpectrum
+
+::: molrs.compute.RamanSpectrum

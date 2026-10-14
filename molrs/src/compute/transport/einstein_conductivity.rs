@@ -2,13 +2,12 @@
 //! to σ.
 
 use molrs::core::FrameAccess;
-use ndarray::{Array1, Array2};
-use rustfft::FftPlanner;
+use ndarray::{Array1, Array2, Axis};
 
 use crate::compute::Compute;
 use crate::compute::ComputeError;
 use crate::compute::ComputeResult;
-use molrs::signal as sig;
+use crate::compute::{TimeCorrelationSpec, displacement_correlate};
 
 /// Raw collective charge-dipole MSD, with **no** fitted sigma/slope.
 #[derive(Debug, Clone)]
@@ -60,49 +59,16 @@ impl Compute for EinsteinConductivity {
                 value: dt.to_string(),
             });
         }
-        let max_lag = max_correlation_time.min(n_frames - 1);
-        let n = n_frames;
-
-        // Collective-dipole MSD via the FFT algorithm (Kneller / nMoldyn):
-        //   MSD(τ) = S1(τ) − 2·S2(τ)/(n−τ),
-        // where S2(τ) = Σ_d acf_d(τ) is the per-component autocorrelation (FFT)
-        // and S1(τ) = (1/(n−τ)) Σ_{t} (D[t] + D[t+τ]) with D[t] = |M(t)|², built
-        // by an O(n) running-sum recurrence. Algebraically identical to the
-        // direct time-origin double sum, at O(n log n) instead of O(n·τ).
-        let sq: Vec<f64> = (0..n)
-            .map(|t| (0..3).map(|d| dipole[[t, d]] * dipole[[t, d]]).sum::<f64>())
-            .collect();
-
-        let mut planner = FftPlanner::new();
-        let mut s2 = Array1::<f64>::zeros(max_lag + 1);
-        for d in 0..3 {
-            let col: Array1<f64> = (0..n).map(|t| dipole[[t, d]]).collect();
-            let acf = sig::acf_fft_with_planner(&mut planner, &col, max_lag).map_err(|e| {
-                ComputeError::OutOfRange {
-                    field: "acf_fft",
-                    value: e.to_string(),
-                }
-            })?;
-            for k in 0..=max_lag {
-                s2[k] += acf[k];
-            }
-        }
-
-        let mut msd = Array1::<f64>::zeros(max_lag + 1);
-        let mut q = 2.0 * sq.iter().sum::<f64>();
-        for tau in 0..=max_lag {
-            // Running sum of D[t] + D[t+τ] over valid origins: peel D[τ−1] and
-            // D[n−τ] as τ advances (both zero at τ = 0, i.e. D[−1] = D[n] = 0).
-            if tau >= 1 {
-                q -= sq[tau - 1] + sq[n - tau];
-            }
-            let count = (n - tau) as f64;
-            msd[tau] = q / count - 2.0 * s2[tau] / count;
-        }
-        // MSD(0) is exactly 0 by definition (the FFT S2(0) carries roundoff).
-        msd[0] = 0.0;
-
-        let lag_times = Array1::from_iter((0..=max_lag).map(|i| i as f64 * dt));
+        // Collective-dipole MSD by the FFT route (Kneller / nMoldyn):
+        // the (n_frames, 1, 3) displacement correlation over all time origins.
+        let corr = displacement_correlate(
+            dipole.view().insert_axis(Axis(1)),
+            None,
+            dt,
+            &TimeCorrelationSpec::new().max_lag(max_correlation_time),
+        )?;
+        let lag_times = corr.lag_times();
+        let msd = corr.values;
         Ok(EinsteinConductivityResult { lag_times, msd })
     }
 }

@@ -14,8 +14,11 @@
 //! | [`LinearFit`] | `(x, y)` curve | [`LinearFitResult`] (slope/intercept/r²) | Einstein–Helfand conductivity OLS |
 //! | [`CumulativeTrapezoid`] | curve + dt | [`CumulativeTrapezoidResult`] (cumulative trapezoid) | Green–Kubo conductivity trapezoid |
 //! | [`Plateau`] | curve | [`PlateauResult`] (windowed mean/std) | new |
+//! | [`DebyeFit`] | normalized decay + dt | [`DebyeFitResult`] (τ, amplitude) | Debye dipole relaxation |
 //!
-//! Debye relaxation fitting lives in [`crate::compute::DebyeFit`].
+//! A [`TimeCorrelation`](crate::compute::TimeCorrelation) reaches these through
+//! its derived-quantity methods (`linear_fit`, `integral`, `exponential_fit`,
+//! `diffusion_coefficient`), which are one-line delegations to the fits here.
 //!
 //! # Shared numerical primitives
 //!
@@ -30,10 +33,12 @@
 //! [`crate::signal::forward_fft_onesided`].
 
 mod cumulative_trapezoid;
+mod debye_fit;
 mod linear_fit;
 mod plateau;
 
 pub use cumulative_trapezoid::{CumulativeTrapezoid, CumulativeTrapezoidResult};
+pub use debye_fit::{DebyeFit, DebyeFitResult};
 pub use linear_fit::{LinearFit, LinearFitResult};
 pub use plateau::{Plateau, PlateauResult};
 

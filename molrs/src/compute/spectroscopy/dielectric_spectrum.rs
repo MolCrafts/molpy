@@ -12,6 +12,7 @@ use ndarray::Array1;
 use rustfft::FftPlanner;
 use rustfft::num_complex::Complex64;
 
+use super::windowed_acf;
 use crate::compute::ComputeError;
 use crate::compute::ComputeResult;
 use crate::compute::{Check, Fit, Verdict};
@@ -170,14 +171,9 @@ fn piecewise_linear_onesided_ft(y: &Array1<f64>, dt: f64, pad_factor: usize) -> 
 /// the [`DebyeRelaxationResult.acf`](crate::compute::DebyeRelaxationResult::acf).
 fn taper_derivative_spectrum(acf: &Array1<f64>, dt: f64) -> RawSpectrum {
     let max_lag = acf.len() - 1;
-    let mut tapered = acf.clone();
 
     // One-sided cosine² taper: 1 at C(0), 0 at C(max_lag).
-    let denom = 2.0 * max_lag.max(1) as f64;
-    for k in 0..=max_lag {
-        let angle = std::f64::consts::PI * k as f64 / denom;
-        tapered[k] *= angle.cos().powi(2);
-    }
+    let tapered = windowed_acf(acf, sig::WindowType::CosineSq);
 
     // Central finite-difference derivative of the tapered ACF. C′(0) = 0
     // exactly because the autocorrelation is even; the tail uses a one-sided
@@ -193,20 +189,13 @@ fn taper_derivative_spectrum(acf: &Array1<f64>, dt: f64) -> RawSpectrum {
     piecewise_linear_onesided_ft(&deriv, dt, DIELECTRIC_PAD_FACTOR)
 }
 
+/// [`WindowType::from_name`](sig::WindowType::from_name) with the error
+/// mapped onto the `window_type` field.
 fn parse_window_type(s: &str) -> Result<sig::WindowType, ComputeError> {
-    match s {
-        "hann" => Ok(sig::WindowType::Hann),
-        "blackman" => Ok(sig::WindowType::Blackman),
-        // Preferred for one-sided ACFs (1 at t=0, 0 at t=max_lag).
-        // Hann/Blackman zero out C(0), the static-ε signal.
-        "cosine_sq" => Ok(sig::WindowType::CosineSq),
-        // Match external DRS scripts / slides that use window="none".
-        "none" | "None" | "identity" => Ok(sig::WindowType::None),
-        other => Err(ComputeError::OutOfRange {
-            field: "window_type",
-            value: other.into(),
-        }),
-    }
+    sig::WindowType::from_name(s).map_err(|_| ComputeError::OutOfRange {
+        field: "window_type",
+        value: s.into(),
+    })
 }
 
 /// Window a raw current ACF and take its continuous one-sided FT
@@ -222,19 +211,8 @@ fn windowed_acf_spectrum(
     dt: f64,
     window_type: &str,
 ) -> Result<RawSpectrum, ComputeError> {
-    let max_lag = acf.len() - 1;
     let wt = parse_window_type(window_type)?;
-
-    let acf_dyn = ndarray::ArrayD::from_shape_vec(ndarray::IxDyn(&[max_lag + 1]), acf.to_vec())
-        .map_err(|e| ComputeError::BadShape {
-            expected: "1d".into(),
-            got: e.to_string(),
-        })?;
-    let windowed = sig::apply_window(&acf_dyn, wt, 0).map_err(|e| ComputeError::OutOfRange {
-        field: "apply_window",
-        value: e.to_string(),
-    })?;
-    let windowed_1d: Array1<f64> = windowed.iter().copied().collect();
+    let windowed_1d = windowed_acf(acf, wt);
 
     Ok(piecewise_linear_onesided_ft(
         &windowed_1d,

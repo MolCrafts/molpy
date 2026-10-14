@@ -4,7 +4,6 @@
 
 use molrs::signal::{self as sig, WindowType};
 use numpy::{IntoPyArray, PyArray1, PyArrayDyn, PyReadonlyArray1, PyReadonlyArrayDyn};
-use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 
 use crate::error::py_value_err;
@@ -29,17 +28,7 @@ pub(crate) fn apply_window<'py>(
     window_type: &str,
     axis: usize,
 ) -> PyResult<Bound<'py, PyArrayDyn<f64>>> {
-    let wt = match window_type {
-        "hann" => WindowType::Hann,
-        "blackman" => WindowType::Blackman,
-        "cosine_sq" => WindowType::CosineSq,
-        "none" | "None" | "identity" => WindowType::None,
-        other => {
-            return Err(PyValueError::new_err(format!(
-                "unknown window type: '{other}', expected 'hann', 'blackman', 'cosine_sq', or 'none'"
-            )));
-        }
-    };
+    let wt = WindowType::from_name(window_type).map_err(py_value_err)?;
     let arr = data.as_array().to_owned();
     let result = sig::apply_window(&arr, wt, axis).map_err(py_value_err)?;
     Ok(result.into_pyarray(py))

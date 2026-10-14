@@ -1,13 +1,13 @@
 //! IR dipole-flux ACF raw compute — the IR-spectrum raw input.
 
 use molrs::core::FrameAccess;
-use ndarray::Array2;
+use ndarray::{Array2, Axis};
 
-use super::{central_diff_series, sum_column_acf};
+use super::central_diff_series;
 use crate::compute::Compute;
 use crate::compute::ComputeError;
 use crate::compute::ComputeResult;
-use crate::compute::lag_times;
+use crate::compute::{Normalization, TimeCorrelationSpec, autocorrelate, lag_times};
 
 /// Raw dipole-flux autocorrelation function — the IR-spectrum raw input.
 #[derive(Debug, Clone)]
@@ -70,7 +70,14 @@ impl Compute for IrFlux {
         let max_lag = resolution.min(flux_len.saturating_sub(1));
         // Shared primitives: central-diff flux → unnormalized Σ_α ACF.
         let flux = central_diff_series(dipole_moments, dt);
-        let acf = sum_column_acf(&flux, max_lag);
+        let acf = autocorrelate(
+            flux.view().insert_axis(Axis(1)),
+            dt,
+            &TimeCorrelationSpec::new()
+                .max_lag(max_lag)
+                .normalization(Normalization::Raw),
+        )?
+        .values;
         Ok(IrFluxResult {
             lag_times: lag_times(max_lag, dt),
             acf,

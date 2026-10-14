@@ -9,6 +9,7 @@
 
 use molrs::core::FrameAccess;
 use molrs::op::F;
+use ndarray::Array3;
 
 use super::error::ComputeError;
 
@@ -103,4 +104,47 @@ pub(crate) fn get_positions_ref_any_dim<'a, FA: FrameAccess>(
     let ys = axis("y")?;
     let zs = axis("z")?;
     Ok((xs, ys, zs))
+}
+
+/// The `(n_frames, n_atoms, 3)` position series of a trajectory: the
+/// `atoms` block's `x`/`y`/`z` of every frame, in frame order, an absent `y`
+/// or `z` reading as zeros (a one- or two-dimensional series is a legitimate
+/// input to a displacement; a frame with no `x` is not).
+///
+/// This is the series the displacement correlations run on —
+/// [`Msd`](crate::compute::Msd) in window mode,
+/// [`EinsteinDiffusion`](crate::compute::EinsteinDiffusion) — and what a
+/// caller hands to [`displacement_correlate`](crate::compute::displacement_correlate)
+/// for a lag range or origin stride those front ends do not expose.
+///
+/// # Errors
+///
+/// [`ComputeError::EmptyInput`] for no frames;
+/// [`ComputeError::DimensionMismatch`] when a frame's atom count differs from
+/// the first frame's; whatever the column read refuses (a missing `x`).
+pub fn position_series<FA: FrameAccess>(frames: &[&FA]) -> Result<Array3<F>, ComputeError> {
+    let n_frames = frames.len();
+    if n_frames == 0 {
+        return Err(ComputeError::EmptyInput);
+    }
+    let (xs0, _, _) = get_positions_ref_any_dim(frames[0])?;
+    let n_atoms = xs0.slice().len();
+    let mut positions = Array3::<F>::zeros((n_frames, n_atoms, 3));
+    for (k, frame) in frames.iter().enumerate() {
+        let (xp, yp, zp) = get_positions_ref_any_dim(*frame)?;
+        let (xs, ys, zs) = (xp.slice(), yp.slice(), zp.slice());
+        if xs.len() != n_atoms {
+            return Err(ComputeError::DimensionMismatch {
+                expected: n_atoms,
+                got: xs.len(),
+                what: "position_series atom count",
+            });
+        }
+        for i in 0..n_atoms {
+            positions[[k, i, 0]] = xs[i];
+            positions[[k, i, 1]] = ys[i];
+            positions[[k, i, 2]] = zs[i];
+        }
+    }
+    Ok(positions)
 }

@@ -2,13 +2,13 @@
 //! VCD-spectrum raw input.
 
 use molrs::core::FrameAccess;
-use ndarray::Array2;
+use ndarray::{Array2, Axis};
 
-use super::{central_diff_series, sum_column_xcorr};
+use super::central_diff_series;
 use crate::compute::Compute;
 use crate::compute::ComputeError;
 use crate::compute::ComputeResult;
-use crate::compute::lag_times;
+use crate::compute::{Normalization, TimeCorrelationSpec, cross_correlate, lag_times};
 
 /// Raw VCD cross-correlation — the VCD-spectrum raw input.
 #[derive(Debug, Clone)]
@@ -79,10 +79,77 @@ impl Compute for VcdCrossFlux {
         let max_lag = resolution.min(flux_len.saturating_sub(1));
         let mu_dot = central_diff_series(electric, dt);
         let m_dot = central_diff_series(magnetic, dt);
-        let acf = sum_column_xcorr(&mu_dot, &m_dot, max_lag);
+        let acf = cross_correlate(
+            mu_dot.view().insert_axis(Axis(1)),
+            m_dot.view().insert_axis(Axis(1)),
+            dt,
+            &TimeCorrelationSpec::new()
+                .max_lag(max_lag)
+                .normalization(Normalization::Raw),
+        )?
+        .values;
         Ok(VcdCrossFluxResult {
             lag_times: lag_times(max_lag, dt),
             acf,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::compute::Compute;
+    use molrs::core::Frame;
+    use molrs::signal as sig;
+    use ndarray::Array1;
+    use rand::{RngExt, SeedableRng};
+
+    fn no_frames() -> Vec<&'static Frame> {
+        Vec::new()
+    }
+
+    fn rng_series(n: usize, cols: usize, seed: u64) -> Array2<f64> {
+        let mut rng = rand::rngs::StdRng::seed_from_u64(seed);
+        let mut s = Array2::zeros((n, cols));
+        for t in 0..n {
+            for c in 0..cols {
+                s[[t, c]] = rng.random_range(-1.0..1.0);
+            }
+        }
+        s
+    }
+
+    /// Pin, bit for bit: central-difference derivatives, per-component
+    /// cross-correlation, summed over the 3 components in order.
+    #[test]
+    fn matches_manual_xcorr_sum_path() {
+        let n = 128;
+        let dt = 0.5;
+        let res = 40;
+        let mu = rng_series(n, 3, 31);
+        let m = rng_series(n, 3, 32);
+        let flux_len = n - 2;
+        let max_lag = res.min(flux_len - 1);
+        let inv_2dt = 0.5 / dt;
+        let diff = |s: &Array2<f64>, c: usize| -> Array1<f64> {
+            (1..n - 1)
+                .map(|t| (s[[t + 1, c]] - s[[t - 1, c]]) * inv_2dt)
+                .collect()
+        };
+        let mut planner = rustfft::FftPlanner::new();
+        let mut want = Array1::<f64>::zeros(max_lag + 1);
+        for c in 0..3 {
+            let xc =
+                sig::xcorr_fft_with_planner(&mut planner, &diff(&mu, c), &diff(&m, c), max_lag)
+                    .unwrap();
+            for k in 0..=max_lag {
+                want[k] += xc[k];
+            }
+        }
+        let raw = VcdCrossFlux
+            .compute(&no_frames(), (&mu, &m, dt, res))
+            .unwrap();
+        assert_eq!(raw.acf, want);
+        assert_eq!(raw.lag_times.len(), max_lag + 1);
     }
 }

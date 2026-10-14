@@ -1,52 +1,59 @@
 //! Infrared absorption-spectrum transform.
 
 use ndarray::Array1;
-use rustfft::FftPlanner;
 
+use super::power_spectrum::PowerSpectrum;
 use super::spectra::SpectrumResult;
-use super::window_and_fft;
 use crate::compute::ComputeError;
 use crate::compute::Fit;
+use crate::signal::WindowType;
 
 /// Infrared absorption spectrum transform of a **raw dipole-flux ACF**.
 ///
-/// Identical window+FFT pipeline as [`PowerSpectrum`](super::PowerSpectrum);
-/// the difference between IR and the power spectrum is entirely in *which* ACF
-/// is supplied (dipole flux vs velocity), computed upstream by the
-/// [`IrFlux`](super::IrFlux) raw compute.
-#[derive(Debug, Clone, Copy, Default)]
-pub struct IrSpectrum;
+/// Identical window + FFT pipeline as [`PowerSpectrum`](super::PowerSpectrum)
+/// (it delegates there); the difference between IR and the power spectrum is
+/// entirely in *which* ACF is supplied (dipole flux vs velocity), computed
+/// upstream by the [`IrFlux`](super::IrFlux) raw compute.
+///
+/// `Default` is the cosine² window with a pad factor of 4.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct IrSpectrum {
+    /// Taper applied to the one-sided ACF before the FFT.
+    pub window: WindowType,
+    /// Zero-padding factor of the transform.
+    pub pad_factor: usize,
+}
+
+impl Default for IrSpectrum {
+    fn default() -> Self {
+        let PowerSpectrum { window, pad_factor } = PowerSpectrum::default();
+        Self { window, pad_factor }
+    }
+}
+
+impl IrSpectrum {
+    /// The default transform with another window.
+    pub fn with_window(window: WindowType) -> Self {
+        Self {
+            window,
+            ..Self::default()
+        }
+    }
+}
 
 impl Fit for IrSpectrum {
-    /// `(acf, dt_fs)` — the raw dipole-flux ACF (1D) and timestep (fs, > 0).
+    /// `(acf, dt_fs)` — the raw correlation (1D) and timestep (fs, > 0).
     type Input<'a> = (&'a Array1<f64>, f64);
     type Output = SpectrumResult;
 
-    /// Window + FFT the raw flux ACF into an IR spectrum.
-    ///
-    /// # Errors
-    /// * [`ComputeError::EmptyInput`] if the ACF is empty.
-    /// * [`ComputeError::OutOfRange`] if `dt_fs <= 0`.
+    /// Window + FFT the raw correlation into a spectrum; see
+    /// [`PowerSpectrum::fit`](super::PowerSpectrum) for the errors.
     fn fit<'a>(&self, input: Self::Input<'a>) -> Result<Self::Output, ComputeError> {
-        let (acf, dt_fs) = input;
-        let n = acf.len();
-        if n == 0 {
-            return Err(ComputeError::EmptyInput);
+        PowerSpectrum {
+            window: self.window,
+            pad_factor: self.pad_factor,
         }
-        if dt_fs <= 0.0 {
-            return Err(ComputeError::OutOfRange {
-                field: "dt_fs",
-                value: dt_fs.to_string(),
-            });
-        }
-        let mut planner = FftPlanner::new();
-        let (frequencies_cm1, intensities) = window_and_fft(&mut planner, acf, dt_fs)?;
-        Ok(SpectrumResult {
-            frequencies_cm1,
-            intensities,
-            resolution: n - 1,
-            n_frames: n,
-        })
+        .fit(input)
     }
 }
 
@@ -58,6 +65,7 @@ mod tests {
     use molrs::core::Frame;
     use molrs::signal as sig;
     use ndarray::Array2;
+    use rustfft::FftPlanner;
 
     /// Empty frame slice for the series-based raw computes.
     fn no_frames() -> Vec<&'static Frame> {
@@ -106,9 +114,23 @@ mod tests {
         let raw = IrFlux.compute(&no_frames(), (&dm, dt, res)).unwrap();
         assert_eq!(raw.acf, acf); // IrFlux returns the raw unwindowed ACF.
 
-        let from_raw = IrSpectrum.fit((&raw.acf, dt)).unwrap();
-        let from_manual = IrSpectrum.fit((&acf, dt)).unwrap();
+        let from_raw = IrSpectrum::default().fit((&raw.acf, dt)).unwrap();
+        let from_manual = IrSpectrum::default().fit((&acf, dt)).unwrap();
         assert_eq!(from_raw.frequencies_cm1, from_manual.frequencies_cm1);
         assert_eq!(from_raw.intensities, from_manual.intensities);
+    }
+
+    #[test]
+    fn ir_is_the_power_spectrum_transform_and_the_window_is_selectable() {
+        let acf =
+            Array1::from_iter((0..64).map(|k| (-(k as f64) / 10.0).exp() * (k as f64 * 0.4).cos()));
+        let ir = IrSpectrum::default().fit((&acf, 0.5)).unwrap();
+        let power = PowerSpectrum::default().fit((&acf, 0.5)).unwrap();
+        assert_eq!(ir.intensities, power.intensities);
+        let hann = IrSpectrum::with_window(WindowType::Hann)
+            .fit((&acf, 0.5))
+            .unwrap();
+        assert_eq!(hann.frequencies_cm1, ir.frequencies_cm1);
+        assert_ne!(hann.intensities, ir.intensities);
     }
 }

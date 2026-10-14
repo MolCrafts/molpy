@@ -3,15 +3,13 @@
 
 use molrs::core::FrameAccess;
 use ndarray::{Array1, Array2};
-use rustfft::FftPlanner;
-use rustfft::num_complex::Complex64;
 
-use super::raman_tensor::{DIAG_ANISO_WEIGHT, OFFDIAG_ANISO_WEIGHT};
-use super::{central_diff_series, xcorr_accumulate_into};
+use super::central_diff_series;
+use super::raman_tensor::{ANISO_WEIGHTS, raman_invariant_series};
 use crate::compute::Compute;
 use crate::compute::ComputeError;
 use crate::compute::ComputeResult;
-use crate::compute::lag_times;
+use crate::compute::{Normalization, TimeCorrelationSpec, cross_correlate, lag_times};
 
 /// Raw ROA cross-correlation iso/aniso curves — the ROA-spectrum raw input.
 #[derive(Debug, Clone)]
@@ -88,72 +86,123 @@ impl Compute for RoaCrossTensor {
         let a = central_diff_series(el_pol, dt);
         let g = central_diff_series(g_tensor, dt);
 
-        let mut planner = FftPlanner::new();
-        let mut sa: Vec<Complex64> = Vec::new();
-        let mut sb: Vec<Complex64> = Vec::new();
-
-        // Isotropic: trace × trace.
-        let mut a_iso = vec![0.0_f64; flux_len];
-        let mut g_iso = vec![0.0_f64; flux_len];
-        for t in 0..flux_len {
-            a_iso[t] = (a[[t, 0]] + a[[t, 1]] + a[[t, 2]]) / 3.0;
-            g_iso[t] = (g[[t, 0]] + g[[t, 1]] + g[[t, 2]]) / 3.0;
-        }
-        let mut acf_iso = Array1::<f64>::zeros(max_lag + 1);
-        xcorr_accumulate_into(
-            &mut planner,
-            &a_iso,
-            &g_iso,
-            max_lag,
-            acf_iso.as_slice_mut().unwrap(),
-            1.0,
-            &mut sa,
-            &mut sb,
-        );
-
-        // Anisotropic: 3 diagonal diffs (½) + 3 off-diagonals (3).
-        let mut acf_aniso = Array1::<f64>::zeros(max_lag + 1);
-        let aniso_out = acf_aniso.as_slice_mut().unwrap();
-        let mut av = vec![0.0_f64; flux_len];
-        let mut gv = vec![0.0_f64; flux_len];
-        let diag_pairs = [(0usize, 1usize), (1, 2), (2, 0)];
-        for (i, j) in diag_pairs {
-            for t in 0..flux_len {
-                av[t] = a[[t, i]] - a[[t, j]];
-                gv[t] = g[[t, i]] - g[[t, j]];
-            }
-            xcorr_accumulate_into(
-                &mut planner,
-                &av,
-                &gv,
-                max_lag,
-                aniso_out,
-                DIAG_ANISO_WEIGHT,
-                &mut sa,
-                &mut sb,
-            );
-        }
-        for off in 3..6 {
-            for t in 0..flux_len {
-                av[t] = a[[t, off]];
-                gv[t] = g[[t, off]];
-            }
-            xcorr_accumulate_into(
-                &mut planner,
-                &av,
-                &gv,
-                max_lag,
-                aniso_out,
-                OFFDIAG_ANISO_WEIGHT,
-                &mut sa,
-                &mut sb,
-            );
-        }
+        let (a_iso, a_aniso) = raman_invariant_series(&a);
+        let (g_iso, g_aniso) = raman_invariant_series(&g);
+        let raw = TimeCorrelationSpec::new()
+            .max_lag(max_lag)
+            .normalization(Normalization::Raw);
+        let acf_iso = cross_correlate(a_iso.view(), g_iso.view(), dt, &raw)?.values;
+        let acf_aniso = cross_correlate(
+            a_aniso.view(),
+            g_aniso.view(),
+            dt,
+            &raw.component_weights(&ANISO_WEIGHTS),
+        )?
+        .values;
 
         Ok(RoaCrossTensorResult {
             lag_times: lag_times(max_lag, dt),
             acf_iso,
             acf_aniso,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::super::raman_tensor::{DIAG_ANISO_WEIGHT, OFFDIAG_ANISO_WEIGHT};
+    use super::*;
+    use crate::compute::Compute;
+    use molrs::core::Frame;
+    use molrs::signal as sig;
+    use rand::{RngExt, SeedableRng};
+    use rustfft::FftPlanner;
+
+    fn no_frames() -> Vec<&'static Frame> {
+        Vec::new()
+    }
+
+    fn rng_series(n: usize, cols: usize, seed: u64) -> Array2<f64> {
+        let mut rng = rand::rngs::StdRng::seed_from_u64(seed);
+        let mut s = Array2::zeros((n, cols));
+        for t in 0..n {
+            for c in 0..cols {
+                s[[t, c]] = rng.random_range(-1.0..1.0);
+            }
+        }
+        s
+    }
+
+    /// Pin, bit for bit: central-difference fluxes, trace/3 iso cross-
+    /// correlation, weighted (½ diagonal differences, 3 off-diagonals)
+    /// anisotropic cross-correlation, components accumulated in that order.
+    #[test]
+    fn matches_manual_weighted_xcorr_path() {
+        let n = 128;
+        let dt = 0.5;
+        let res = 40;
+        let el = rng_series(n, 6, 21);
+        let g = rng_series(n, 6, 22);
+        let flux_len = n - 2;
+        let max_lag = res.min(flux_len - 1);
+        let inv_2dt = 0.5 / dt;
+        let diff = |s: &Array2<f64>, c: usize| -> Array1<f64> {
+            (1..n - 1)
+                .map(|t| (s[[t + 1, c]] - s[[t - 1, c]]) * inv_2dt)
+                .collect()
+        };
+        let mut planner = FftPlanner::new();
+        let a_iso: Array1<f64> = (0..flux_len)
+            .map(|t| (diff(&el, 0)[t] + diff(&el, 1)[t] + diff(&el, 2)[t]) / 3.0)
+            .collect();
+        let g_iso: Array1<f64> = (0..flux_len)
+            .map(|t| (diff(&g, 0)[t] + diff(&g, 1)[t] + diff(&g, 2)[t]) / 3.0)
+            .collect();
+        let iso = sig::xcorr_fft_with_planner(&mut planner, &a_iso, &g_iso, max_lag).unwrap();
+        let mut aniso = Array1::<f64>::zeros(max_lag + 1);
+        for (i, j) in [(0usize, 1usize), (1, 2), (2, 0)] {
+            let av = &diff(&el, i) - &diff(&el, j);
+            let gv = &diff(&g, i) - &diff(&g, j);
+            let xc = sig::xcorr_fft_with_planner(&mut planner, &av, &gv, max_lag).unwrap();
+            for k in 0..=max_lag {
+                aniso[k] += DIAG_ANISO_WEIGHT * xc[k];
+            }
+        }
+        for off in 3..6 {
+            let xc =
+                sig::xcorr_fft_with_planner(&mut planner, &diff(&el, off), &diff(&g, off), max_lag)
+                    .unwrap();
+            for k in 0..=max_lag {
+                aniso[k] += OFFDIAG_ANISO_WEIGHT * xc[k];
+            }
+        }
+        let raw = RoaCrossTensor
+            .compute(&no_frames(), (&el, &g, dt, res))
+            .unwrap();
+        assert_eq!(raw.acf_iso, iso);
+        assert_eq!(raw.acf_aniso, aniso);
+        assert_eq!(raw.lag_times.len(), max_lag + 1);
+    }
+
+    #[test]
+    fn rejects_bad_shapes() {
+        let ok = rng_series(10, 6, 1);
+        let bad = rng_series(10, 3, 1);
+        let short = rng_series(8, 6, 1);
+        assert!(
+            RoaCrossTensor
+                .compute(&no_frames(), (&ok, &bad, 1.0, 4))
+                .is_err()
+        );
+        assert!(
+            RoaCrossTensor
+                .compute(&no_frames(), (&ok, &short, 1.0, 4))
+                .is_err()
+        );
+        assert!(
+            RoaCrossTensor
+                .compute(&no_frames(), (&ok, &ok, 0.0, 4))
+                .is_err()
+        );
     }
 }

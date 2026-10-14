@@ -881,7 +881,7 @@ dependencies = [
 
 [[package]]
 name = "molcrafts-molrs"
-version = "0.17.0"
+version = "0.18.0"
 dependencies = [
  "flate2",
  "getrandom 0.4.3",
@@ -907,7 +907,7 @@ dependencies = [
 
 [[package]]
 name = "molcrafts-molrs-capi"
-version = "0.17.0"
+version = "0.18.0"
 dependencies = [
  "cbindgen",
  "molcrafts-molrs",
@@ -919,7 +919,7 @@ dependencies = [
 
 [[package]]
 name = "molcrafts-molrs-ffi"
-version = "0.17.0"
+version = "0.18.0"
 dependencies = [
  "molcrafts-molrs",
  "slotmap",

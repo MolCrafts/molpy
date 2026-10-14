@@ -6,7 +6,8 @@ use ndarray::Array1;
 use crate::compute::Compute;
 use crate::compute::ComputeError;
 use crate::compute::ComputeResult;
-use crate::compute::{Fit, LinearFit, Msd, MsdMode};
+use crate::compute::correlation::einstein_diffusion_coefficient;
+use crate::compute::{Msd, MsdMode};
 
 /// Raw self-MSD for the Einstein diffusion route.
 #[derive(Debug, Clone)]
@@ -22,31 +23,28 @@ impl ComputeResult for EinsteinDiffusionResult {}
 
 impl EinsteinDiffusionResult {
     /// The self-diffusion coefficient by the Einstein relation,
-    /// `D = slope / (2 · n_dims)`, where `slope` is the [`LinearFit`] of
+    /// `D = slope / (2 · n_dims)`, where `slope` is the
+    /// [`LinearFit`](crate::compute::LinearFit) of
     /// [`msd`](Self::msd) against [`lag_times`](Self::lag_times) over `window`
-    /// (fractions of the last lag, as [`LinearFit::window`]). Units:
+    /// (fractions of the last lag, as
+    /// [`LinearFit::window`](crate::compute::LinearFit::window)). Units:
     /// `[length]² / [dt]`.
     ///
-    /// This is the one place molrs turns an MSD slope into `D`; every binding
-    /// calls it.
+    /// The same number as
+    /// [`TimeCorrelation::diffusion_coefficient`](crate::compute::TimeCorrelation::diffusion_coefficient)
+    /// on the displacement curve; both delegate to one function.
     ///
     /// # Errors
     ///
     /// [`ComputeError::OutOfRange`] for `n_dims == 0`; otherwise whatever the
-    /// [`LinearFit`] refuses (a bad window, too few points).
+    /// [`LinearFit`](crate::compute::LinearFit) refuses (a bad window, too
+    /// few points).
     pub fn diffusion_coefficient(
         &self,
         n_dims: usize,
         window: (f64, f64),
     ) -> Result<f64, ComputeError> {
-        if n_dims == 0 {
-            return Err(ComputeError::OutOfRange {
-                field: "n_dims",
-                value: n_dims.to_string(),
-            });
-        }
-        let fit = LinearFit { window }.fit((&self.lag_times, &self.msd))?;
-        Ok(fit.slope / (2.0 * n_dims as f64))
+        einstein_diffusion_coefficient(&self.lag_times, &self.msd, n_dims, window)
     }
 }
 

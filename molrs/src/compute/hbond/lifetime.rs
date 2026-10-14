@@ -1,13 +1,13 @@
 //! Hydrogen-bond lifetime correlation functions.
 
 use molrs::op::F;
-use molrs::signal as sig;
-use ndarray::Array1;
-use rustfft::FftPlanner;
+use ndarray::{Array1, Array3};
 use std::collections::HashMap;
 
 use super::detect::HBondsResult;
 use crate::compute::ComputeError;
+use crate::compute::fitting::running_trapezoid;
+use crate::compute::{TimeCorrelationSpec, autocorrelate};
 
 /// Lifetime TCFs for a set of bond presence series.
 #[derive(Debug, Clone)]
@@ -22,17 +22,6 @@ pub struct HBondLifetimeResult {
     pub tau_continuous: F,
     /// Intermittent lifetime `τ_i = ∫ C_HB(t) dt` (trapezoidal).
     pub tau_intermittent: F,
-}
-
-fn trapz(y: &Array1<F>, dt: F) -> F {
-    if y.len() < 2 {
-        return 0.0;
-    }
-    let mut s = 0.0;
-    for w in y.windows(2).into_iter() {
-        s += 0.5 * (w[0] + w[1]) * dt;
-    }
-    s
 }
 
 /// Compute continuous / intermittent lifetime TCFs from per-bond binary presence
@@ -98,32 +87,43 @@ pub fn hbond_lifetimes(
     // un-normalized autocorrelation of the binary presence series (Wiener–
     // Khinchin), evaluated in O(n log n) per series with the FFT. Each series is
     // independent, so both accumulators fan out over series and reduce.
-    let (acc_c, acc_i) = accumulate_survival(present, n_frames, max_lag);
+    // Continuous: the forward walk from every present origin, summed over
+    // bonds (integer counts, so the sum order does not matter).
+    let acc_c = accumulate_continuous(present, n_frames, max_lag);
     let acc_c = acc_c.as_slice().expect("contiguous acc_c");
-    let acc_i = acc_i.as_slice().expect("contiguous acc_i");
 
-    // Per-lag normalization: divide by the number of valid (bond, origin) pairs
-    // at that lag → ⟨h(0)h(tau)⟩, then divide by the tau=0 value so C(0)=1.
+    // Intermittent: the 0/1 presence autocorrelation over all origins, one
+    // bond per entity, averaged over bonds and origins by the engine.
+    let mut presence = Array3::<F>::zeros((n_frames, n_series, 1));
+    for (b, h) in present.iter().enumerate() {
+        for (t, &on) in h.iter().enumerate() {
+            if on {
+                presence[[t, b, 0]] = 1.0;
+            }
+        }
+    }
+    let inter_raw = autocorrelate(
+        presence.view(),
+        dt,
+        &TimeCorrelationSpec::new().max_lag(max_lag),
+    )?
+    .values;
+
     let mut cont = Array1::<F>::zeros(max_lag + 1);
     let mut inter = Array1::<F>::zeros(max_lag + 1);
-    let mean = |acc: &[f64], tau: usize| -> F {
-        let n_pairs = (n_series * (n_frames - tau)) as F;
-        if n_pairs > 0.0 {
-            acc[tau] / n_pairs
-        } else {
-            0.0
-        }
-    };
-    let c0 = mean(acc_c, 0);
-    let i0 = mean(acc_i, 0);
+    let mean_c = |tau: usize| -> F { acc_c[tau] / (n_series * (n_frames - tau)) as F };
+    let c0 = mean_c(0);
+    let i0 = inter_raw[0];
     for tau in 0..=max_lag {
-        cont[tau] = if c0 > 0.0 { mean(acc_c, tau) / c0 } else { 0.0 };
-        inter[tau] = if i0 > 0.0 { mean(acc_i, tau) / i0 } else { 0.0 };
+        cont[tau] = if c0 > 0.0 { mean_c(tau) / c0 } else { 0.0 };
+        inter[tau] = if i0 > 0.0 { inter_raw[tau] / i0 } else { 0.0 };
     }
 
     let lag_times = Array1::from_iter((0..=max_lag).map(|i| i as F * dt));
-    let tau_continuous = trapz(&cont, dt);
-    let tau_intermittent = trapz(&inter, dt);
+    // τ = ∫ C(t) dt by the trapezoid rule (the running integral's last value).
+    let last = |y: &Array1<F>| running_trapezoid(y.as_slice().expect("contiguous"), dt)[max_lag];
+    let tau_continuous = last(&cont);
+    let tau_intermittent = last(&inter);
 
     Ok(HBondLifetimeResult {
         lag_times,
@@ -134,26 +134,9 @@ pub fn hbond_lifetimes(
     })
 }
 
-/// Accumulate the continuous and intermittent survival numerators over all
-/// presence series.
-///
-/// For one series `h`:
-/// * continuous `c[tau]` — count origins `t0` (present) whose bond survives
-///   unbroken through lag `tau` (walk forward, stop at the first absence);
-/// * intermittent `i[tau]` — the un-normalized autocorrelation
-///   `Σ_{t0} h[t0]·h[t0+tau]`, computed via FFT (Wiener–Khinchin).
-///
-/// Series are independent, so with `rayon` the per-series `(c, i)` pairs are
-/// produced in parallel — each worker reusing its own `FftPlanner` — and summed
-/// by the reduction. `acf_fft_with_planner` cannot error here: `max_lag` is
-/// clamped to `n_frames − 1 < n_frames = series length`.
-fn accumulate_survival(
-    present: &[Vec<bool>],
-    n_frames: usize,
-    max_lag: usize,
-) -> (Array1<f64>, Array1<f64>) {
-    let per_series = |planner: &mut FftPlanner<f64>, h: &Vec<bool>| -> (Array1<f64>, Array1<f64>) {
-        // Continuous: forward survival with an early break at the first absence.
+/// Continuous-survival counts `Σ_bonds Σ_{t0: h(t0)} Π_{k≤τ} h(t0+k)` per lag.
+fn accumulate_continuous(present: &[Vec<bool>], n_frames: usize, max_lag: usize) -> Array1<f64> {
+    let per_series = |h: &Vec<bool>| -> Array1<f64> {
         let mut c = Array1::<f64>::zeros(max_lag + 1);
         for t0 in 0..n_frames {
             if !h[t0] {
@@ -169,18 +152,7 @@ fn accumulate_survival(
                 }
             }
         }
-        // Intermittent: FFT autocorrelation of the 0/1 presence series.
-        let series = Array1::from_iter(h.iter().map(|&b| if b { 1.0 } else { 0.0 }));
-        let i = sig::acf_fft_with_planner(planner, &series, max_lag)
-            .expect("max_lag < n_frames guaranteed by clamp");
-        (c, i)
-    };
-
-    let zeros = || {
-        (
-            Array1::<f64>::zeros(max_lag + 1),
-            Array1::<f64>::zeros(max_lag + 1),
-        )
+        c
     };
 
     #[cfg(feature = "rayon")]
@@ -188,19 +160,16 @@ fn accumulate_survival(
         use rayon::prelude::*;
         present
             .par_iter()
-            .map_init(FftPlanner::<f64>::new, |planner, h| per_series(planner, h))
-            .reduce(zeros, |(ca, ia), (cb, ib)| (ca + cb, ia + ib))
+            .map(per_series)
+            .reduce(|| Array1::<f64>::zeros(max_lag + 1), |a, b| a + b)
     }
     #[cfg(not(feature = "rayon"))]
     {
-        let mut planner = FftPlanner::<f64>::new();
-        let (mut acc_c, mut acc_i) = zeros();
+        let mut acc = Array1::<f64>::zeros(max_lag + 1);
         for h in present {
-            let (c, i) = per_series(&mut planner, h);
-            acc_c += &c;
-            acc_i += &i;
+            acc += &per_series(h);
         }
-        (acc_c, acc_i)
+        acc
     }
 }
 
@@ -228,4 +197,109 @@ pub fn presence_from_hbonds(res: &HBondsResult) -> (Vec<(u32, u32)>, Vec<Vec<boo
         }
     }
     (keys, present)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rand::{RngExt, SeedableRng};
+
+    fn presence(n_series: usize, n_frames: usize, seed: u64) -> Vec<Vec<bool>> {
+        let mut rng = rand::rngs::StdRng::seed_from_u64(seed);
+        (0..n_series)
+            .map(|_| {
+                (0..n_frames)
+                    .map(|_| rng.random_range(0.0..1.0) < 0.6)
+                    .collect()
+            })
+            .collect()
+    }
+
+    /// The definitions: intermittent `Σ h(t0) h(t0+τ)`, continuous forward
+    /// walk, both per-lag normalized and scaled to 1 at lag 0.
+    fn direct(present: &[Vec<bool>], max_lag: usize) -> (Vec<F>, Vec<F>) {
+        let n_frames = present[0].len();
+        let n_series = present.len();
+        let mut inter = vec![0.0; max_lag + 1];
+        let mut cont = vec![0.0; max_lag + 1];
+        for h in present {
+            for t0 in 0..n_frames {
+                if !h[t0] {
+                    continue;
+                }
+                let mut alive = true;
+                for tau in 0..=max_lag.min(n_frames - 1 - t0) {
+                    if h[t0 + tau] {
+                        inter[tau] += 1.0;
+                    } else {
+                        alive = false;
+                    }
+                    if alive {
+                        cont[tau] += 1.0;
+                    }
+                }
+            }
+        }
+        let norm = |acc: &mut Vec<F>| {
+            for (tau, v) in acc.iter_mut().enumerate() {
+                *v /= (n_series * (n_frames - tau)) as F;
+            }
+            let c0 = acc[0];
+            for v in acc.iter_mut() {
+                *v /= c0;
+            }
+        };
+        norm(&mut inter);
+        norm(&mut cont);
+        (cont, inter)
+    }
+
+    #[test]
+    fn matches_the_direct_definitions() {
+        let present = presence(5, 30, 17);
+        let max_lag = 12;
+        let dt = 0.5;
+        let got = hbond_lifetimes(&present, dt, max_lag).unwrap();
+        let (cont, inter) = direct(&present, max_lag);
+        for tau in 0..=max_lag {
+            assert!(
+                (got.intermittent[tau] - inter[tau]).abs() < 1e-12,
+                "intermittent lag {tau}: {} vs {}",
+                got.intermittent[tau],
+                inter[tau]
+            );
+            assert!(
+                (got.continuous[tau] - cont[tau]).abs() < 1e-12,
+                "continuous lag {tau}: {} vs {}",
+                got.continuous[tau],
+                cont[tau]
+            );
+        }
+        assert!((got.intermittent[0] - 1.0).abs() < 1e-12);
+        assert!((got.continuous[0] - 1.0).abs() < 1e-12);
+        // τ = trapezoid of the normalized curve.
+        let mut trap = 0.0;
+        for tau in 1..=max_lag {
+            trap += 0.5 * (inter[tau - 1] + inter[tau]) * dt;
+        }
+        assert!((got.tau_intermittent - trap).abs() < 1e-12);
+        assert!((got.lag_times[3] - 3.0 * dt).abs() < 1e-12);
+    }
+
+    #[test]
+    fn always_present_bond_never_decays() {
+        let present = vec![vec![true; 10]; 2];
+        let got = hbond_lifetimes(&present, 1.0, 5).unwrap();
+        for tau in 0..=5 {
+            assert!((got.intermittent[tau] - 1.0).abs() < 1e-12);
+            assert!((got.continuous[tau] - 1.0).abs() < 1e-12);
+        }
+    }
+
+    #[test]
+    fn bad_input_errors() {
+        assert!(hbond_lifetimes(&[], 1.0, 2).is_err());
+        assert!(hbond_lifetimes(&[vec![true, false], vec![true]], 1.0, 1).is_err());
+        assert!(hbond_lifetimes(&[vec![true, false]], 0.0, 1).is_err());
+    }
 }

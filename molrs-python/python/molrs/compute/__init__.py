@@ -11,11 +11,12 @@ The Rust compute facade is flat, and so is this module: every analysis is
   ``PmftXy``, ``DistributionFunction`` / ``CombinedDistribution``, ``HBonds``, ``BondOrientationalOrder``,
   ``RadicalVoronoi`` / ``VoronoiIntegration``), order (``Steinhardt``,
   ``Nematic``, ``Hexatic``, ``SolidLiquid``, ``LegendreReorientation``),
-  dynamics (``Msd``, ``Acf``, ``VanHove``, ``pair_survival_tcf``) and transport raw
-  curves (``Vacf``, ``EinsteinDiffusion``, ``GreenKuboDiffusion``,
-  ``EinsteinConductivity``, ``GreenKuboConductivity``, ``DipoleRateCross``,
-  ``DebyeRelaxation``, ``OnsagerCorrelation``), the dielectric raw
-  observables (``dipole_moment``, ``current_density``,
+  dynamics (``Msd``, ``Acf``, ``Oacf``, ``VanHove``, ``pair_survival_tcf``)
+  and transport raw curves (``Vacf``, ``EinsteinDiffusion``,
+  ``GreenKuboDiffusion``, ``EinsteinConductivity``, ``GreenKuboConductivity``,
+  ``DipoleRateCross``, ``DebyeRelaxation``, ``OnsagerCorrelation``) — every
+  time correlation among these returns one ``TimeCorrelation`` — the
+  dielectric raw observables (``dipole_moment``, ``current_density``,
   ``static_dielectric_constant``, ``decompose_current``), the Voronoi
   analyses (``VoronoiDomainAnalysis``, ``VoronoiVoidAnalysis``) and ``Pca`` /
   ``Kmeans`` over descriptor rows, and the kinetic readings of one state
@@ -25,9 +26,11 @@ The Rust compute facade is flat, and so is this module: every analysis is
   spectra (``PowerSpectrum``, ``IrSpectrum``, ``RamanSpectrum``,
   ``EinsteinHelfandSpectrum``, ``GreenKuboSpectrum``,
   ``DipoleRateCrossSpectrum``, ``DipoleAutocorrelationSpectrum``,
-  ``VcdSpectrum``, ``RoaSpectrum``, ``ResonanceRamanSpectrum``). A raw
-  compute never returns a fitted coefficient: the fit is the analyst's
-  explicit choice.
+  ``VcdSpectrum``, ``RoaSpectrum``, ``ResonanceRamanSpectrum``; the one-sided
+  ones return a ``Spectrum``). A ``TimeCorrelation`` reaches the fits through
+  its methods (``integrate``, ``linear_fit``, ``fit_exponential``,
+  ``diffusion``, ``spectrum``). A raw compute never returns a fitted
+  coefficient: the fit is the analyst's explicit choice.
 * **Checks** judge a result: ``KramersKronig``, ``ConductivitySumRule``,
   ``RouteAgreement`` (each ``.check(...)``).
 
@@ -40,7 +43,6 @@ satisfies — a :func:`typing.runtime_checkable` protocol with one method,
 
 from .._native import (
     Acf,
-    AcfResult,
     BondOrientationalOrder,
     CenterOfMass,
     CenterOfMassResult,
@@ -85,9 +87,8 @@ from .._native import (
     LocalDensity,
     MolecularMoments,
     Msd,
-    MsdResult,
-    MsdTimeSeries,
     Nematic,
+    Oacf,
     OnsagerCorrelation,
     Pca,
     PcaResult,
@@ -105,8 +106,10 @@ from .._native import (
     SolidLiquid,
     SpatialDistribution,
     SpatialDistributionResult,
+    Spectrum,
     StaticStructureFactorDebye,
     Steinhardt,
+    TimeCorrelation,
     Vacf,
     VanHove,
     VanHoveResult,
@@ -132,7 +135,6 @@ Compute.__module__ = __name__
 __all__ = [
     "Compute",
     "Acf",
-    "AcfResult",
     "BondOrientationalOrder",
     "CenterOfMass",
     "CenterOfMassResult",
@@ -177,9 +179,8 @@ __all__ = [
     "LocalDensity",
     "MolecularMoments",
     "Msd",
-    "MsdResult",
-    "MsdTimeSeries",
     "Nematic",
+    "Oacf",
     "OnsagerCorrelation",
     "Pca",
     "PcaResult",
@@ -197,8 +198,10 @@ __all__ = [
     "SolidLiquid",
     "SpatialDistribution",
     "SpatialDistributionResult",
+    "Spectrum",
     "StaticStructureFactorDebye",
     "Steinhardt",
+    "TimeCorrelation",
     "Vacf",
     "VanHove",
     "VanHoveResult",

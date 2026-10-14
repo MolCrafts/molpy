@@ -2,8 +2,8 @@
 //! relaxation — the raw [`Compute`](crate::compute::Compute) observables the
 //! [`fitting`](crate::compute::fitting) layer turns into D, σ, and τ_D.
 
-mod correlation;
 mod debye_relaxation;
+mod dipole_rate_cross;
 mod einstein_conductivity;
 mod einstein_diffusion;
 mod green_kubo_conductivity;
@@ -12,14 +12,10 @@ mod onsager;
 mod vacf;
 mod vacf_accumulator;
 
-pub use correlation::{
-    DipoleRateCross, DipoleRateCrossArgs, DipoleRateCrossResult, lag_times,
-    unbiased_cartesian_xcorr,
-};
 pub use debye_relaxation::{
-    DebyeFit, DebyeFitResult, DebyeRelaxation, DebyeRelaxationArgs, DebyeRelaxationResult,
-    EwaldBoundary,
+    DebyeRelaxation, DebyeRelaxationArgs, DebyeRelaxationResult, EwaldBoundary,
 };
+pub use dipole_rate_cross::{DipoleRateCross, DipoleRateCrossArgs, DipoleRateCrossResult};
 pub use einstein_conductivity::{
     EinsteinConductivity, EinsteinConductivityArgs, EinsteinConductivityResult,
 };

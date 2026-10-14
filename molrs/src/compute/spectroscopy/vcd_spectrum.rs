@@ -1,53 +1,60 @@
 //! VCD spectrum transform.
 
 use ndarray::Array1;
-use rustfft::FftPlanner;
 
+use super::power_spectrum::PowerSpectrum;
 use super::spectra::SpectrumResult;
-use super::window_and_fft;
 use crate::compute::ComputeError;
 use crate::compute::Fit;
+use crate::signal::WindowType;
 
 /// VCD (vibrational circular dichroism) spectrum transform of a **raw VCD
 /// cross-correlation** `⟨μ̇(0)·ṁ(τ)⟩` from [`VcdCrossFlux`](super::VcdCrossFlux).
 ///
 /// Identical window + one-sided FFT pipeline as [`IrSpectrum`](super::IrSpectrum)
-/// (calls `window_and_fft`), so the cm⁻¹ grid matches
-/// IR/Raman exactly — only the supplied cross-correlation differs. The
-/// resulting intensities are **signed**: enantiomers produce sign-flipped
-/// spectra and an achiral system gives ≈ 0.
-#[derive(Debug, Clone, Copy, Default)]
-pub struct VcdSpectrum;
+/// (both delegate to [`PowerSpectrum`](super::PowerSpectrum)), so the cm⁻¹
+/// grid matches IR/Raman exactly — only the supplied cross-correlation
+/// differs. The resulting intensities are **signed**: enantiomers produce
+/// sign-flipped spectra and an achiral system gives ≈ 0.
+///
+/// `Default` is the cosine² window with a pad factor of 4.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct VcdSpectrum {
+    /// Taper applied to the one-sided ACF before the FFT.
+    pub window: WindowType,
+    /// Zero-padding factor of the transform.
+    pub pad_factor: usize,
+}
+
+impl Default for VcdSpectrum {
+    fn default() -> Self {
+        let PowerSpectrum { window, pad_factor } = PowerSpectrum::default();
+        Self { window, pad_factor }
+    }
+}
+
+impl VcdSpectrum {
+    /// The default transform with another window.
+    pub fn with_window(window: WindowType) -> Self {
+        Self {
+            window,
+            ..Self::default()
+        }
+    }
+}
 
 impl Fit for VcdSpectrum {
-    /// `(acf, dt_fs)` — the raw VCD cross-correlation (1D) and timestep (fs, > 0).
+    /// `(acf, dt_fs)` — the raw correlation (1D) and timestep (fs, > 0).
     type Input<'a> = (&'a Array1<f64>, f64);
     type Output = SpectrumResult;
 
-    /// Window + FFT the raw VCD cross-correlation into a (signed) VCD spectrum.
-    ///
-    /// # Errors
-    /// * [`ComputeError::EmptyInput`] if the ACF is empty.
-    /// * [`ComputeError::OutOfRange`] if `dt_fs <= 0`.
+    /// Window + FFT the raw correlation into a spectrum; see
+    /// [`PowerSpectrum::fit`](super::PowerSpectrum) for the errors.
     fn fit<'a>(&self, input: Self::Input<'a>) -> Result<Self::Output, ComputeError> {
-        let (acf, dt_fs) = input;
-        let n = acf.len();
-        if n == 0 {
-            return Err(ComputeError::EmptyInput);
+        PowerSpectrum {
+            window: self.window,
+            pad_factor: self.pad_factor,
         }
-        if dt_fs <= 0.0 {
-            return Err(ComputeError::OutOfRange {
-                field: "dt_fs",
-                value: dt_fs.to_string(),
-            });
-        }
-        let mut planner = FftPlanner::new();
-        let (frequencies_cm1, intensities) = window_and_fft(&mut planner, acf, dt_fs)?;
-        Ok(SpectrumResult {
-            frequencies_cm1,
-            intensities,
-            resolution: n - 1,
-            n_frames: n,
-        })
+        .fit(input)
     }
 }
