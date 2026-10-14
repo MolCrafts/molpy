@@ -276,6 +276,13 @@ calls the crate-internal `Spectrum::onesided(signal, n_fft)` — the same single
 FFT. `DiffractionPattern`'s 2-D FFT still imports `rustfft` directly; link 04
 decides between a 2-D `Spectrum` form and amending ac-005.
 
+*As built (04):* routed, not exempted. The 2-D power spectrum is the
+crate-internal `Spectrum::power_2d_centered(image)` (row then column FFTs,
+`|F|²`, FFT-shifted — the former `fft2_power_shifted`, same plans, same
+numbers) in `time_series/spectrum.rs`; `DiffractionPattern` calls it, so
+`rustfft` is imported only in `correlator.rs` and `spectrum.rs` and ac-005 holds
+as written.
+
 **D7. A closed set of lag kernels is an enum, not a generic.**
 `Correlator { kernel: LagKernel, … }` is one concrete type. That keeps it
 bindable: one Python/WASM class with a kernel argument. The set of kernels is
@@ -445,6 +452,54 @@ routed through it — link 03. That taper's cos² now goes through
 squared-displacement FFT centres each column first (a displacement does not see
 an offset; this only removes cancellation) and sets lag 0 to exactly 0.
 
+*As built (04):*
+- **`Axis`** (`binning/axis.rs`) is the one bin rule: `Axis::new(min, max, n)
+  -> Result`; `index(x)` is half-open and exact against `edges()` (a
+  proportional guess corrected against `min + i·width`, the `.min(n − 1)`
+  clamp lives only here); `index_closed(x)` also puts `x = max` in the last bin
+  (polar/azimuthal angles in BOO, the closed `k ≤ k_max` reciprocal-lattice
+  binning of `StaticStructureFactorDirect`); the crate-internal
+  `linear(x)` is the cloud-in-cell split of the reference `CDF::AddToBin`
+  (former `cic_split`, same formula, closed support `[min, max]` because its
+  last half-bin includes `max`); `shell_volumes(dim)` (2 or 3, else
+  `OutOfRange`; `min < 0` is `OutOfRange`). A non-finite sample is `NonFinite`
+  (`index` 0 — a caller with a position re-labels it). **`Histogram<const N>`**
+  (`binning/histogram.rs`) holds `ArrayD` counts indexed by bin tuple plus the
+  binned weight; `add` (nearest, half-open), `add_linear` (tensor-product CIC),
+  `merge`, `from_counts` are crate-internal; `density()` errors `EmptyInput`
+  when empty.
+- **`RegularGrid<const D = 3>`** (`grid/regular_grid.rs`): origin, voxel-edge
+  basis, dims, pbc; `new`, `centered(extent, dims)`, `over_box(simbox, dims)`
+  (3-D), `voxel_center`, `voxel_volume`, `index_of` (wraps periodic axes,
+  `None` outside an open one, `NonFinite` on NaN — it used to land in voxel 0),
+  `stencil(center, r, visit)` and `spread(kernel, center, visit)`. A general
+  (sheared) basis indexes through `M⁻¹`; a diagonal one divides, so the ortho
+  numbers are bit-identical to the old per-file loops. **`SpreadKernel`**
+  (`cutoff`, `normalization(dim)`, `profile(r²)`) with **`Gaussian`**
+  (`new(σ)`, `with_cutoff(r)`, default `3σ` = `DEFAULT_CUTOFF_SIGMAS`) and
+  **`Indicator`** (`new(radius)`), in `grid/kernel.rs`.
+- **Stencil reach unified.** One rule: the candidate range along each axis is
+  `⌊t − reach − ½⌋ … ⌈t + reach − ½⌉` around the fractional coordinate `t`,
+  a superset of every centre within `r`, and the inclusive `r² ≤ cutoff²` test
+  alone decides membership. That is the old `ceil` reach (`SphereVoxelization`,
+  `DiffractionPattern`: numbers unchanged); `GaussianDensity`'s freud-parity
+  `floor` reach skipped voxels whose centres lie inside `r_max`, which it now
+  includes — see Behaviour changes (04 note). Wrapping happens only on periodic
+  axes; `DiffractionPattern`'s unconditional `rem_euclid` is gone.
+- Replaced and deleted: `rdf/mod.rs` edges/centers/`accumulate_d2` and
+  `rdf/result.rs` shell volumes; `correlation_function.rs` bins;
+  `histogram1d.rs` (`Histogram1d`, `cic_split`, `renormalize_density`);
+  `combined.rs` `AxisSpec`; the isotropic bin of `direct.rs`; the BOO θ/φ bins
+  (BOO stays on `LegacyCompute` until 06 but bins through `Axis`);
+  `density::wrap_index`; `GridSpec`. VanHove keeps its own closed-range
+  nearest-bin closure until 05 (only its doc links to `Histogram1d` changed);
+  PMFT needed no rewiring beyond `pmft/orientation.rs` reading its
+  `orientations` endpoint columns inline (it used `AtomGroups::from_frame`;
+  deleted with that file in 06).
+- `require_dist_sq` now guards a `&dyn PairSource` (returns `()`; the column
+  arrives through `visit_pairs`); `Rdf`, `CorrelationFunction` and
+  `LocalDensity` call it.
+
 *As built (03):* `current_density` is gone (`Derivative { Backward }` of the
 `DipoleMoment` series, over the volume; no NaN row) and the Einstein–Helfand
 taper derivative runs on `Derivative` (`Central` inside, `Backward` on the last
@@ -609,6 +664,73 @@ its type; `D = slope / 2d` is `Msd` → `LinearFit`. `DebyeFit` moved to
 | `StaticStructureFactorDebye*` | K. All-pairs non-periodic by definition, stated in its doc; `compute` takes positions only (no box); `1e-9` becomes a field. |
 | `StaticStructureFactorDirect*`, `DiffractionPattern*` | K (`Axis` / `RegularGrid`) |
 
+*As built (04):*
+- **`Rdf`**: `new(n_bins, r_max, r_min) -> Result` (builds the `Axis`;
+  `r_min < 0` is `OutOfRange`), `with_dimensionality(2 | 3) -> Result`;
+  `Compute { Input = &[&(dyn PairSource + Sync)] }` (one source per frame),
+  body `self.accumulator().fold(..)`; `Stream { Accumulator = RdfAccumulator }`
+  whose constructor is private. The accumulator latches the pairing from frame
+  0 (`QueryMode`), requires each source's `simbox()` (`None` is `BadShape`),
+  validates the volume once per push, bins into a fresh `Histogram<1>` and
+  merges only on success. `RdfResult` keeps its fields minus `finalized` and
+  `mode`, plus `self_query: bool` (what `RdfMode` recorded); it keeps
+  `DescriptorRow` until 09 (PCA still reads it). *Deviation:* the
+  `(n_bins, r_max, r_min)` form was kept over an `Axis` argument (freud order,
+  binding-friendly); `Rdf::axis()` exposes the `Axis`.
+- **`CorrelationFunction`**: `new(n_bins, r_max, r_min)`, `compute({ pairs:
+  &(dyn PairSource + Sync), values_a, values_b: ArrayView1 })`; the fields must
+  have one value per query / reference point (`DimensionMismatch`; it used to
+  fail only when a pair indexed past them). **`LocalDensity`**: `new(r_max)`,
+  `with_diameter(d) -> Result` (was `debug_assert`), `compute({ pairs })`; the
+  per-point count is the source's `n_query_points` (was the frame's atom
+  count). Both are per-snapshot; many snapshots go through `Batch`.
+- **`DistributionFunction<O>`**: `new(observable, axis)`,
+  `over_natural_range(observable, n_bins) -> Result`; a `Stream` with
+  `Input = &[DistributionFrame { positions: N×3, simbox: Option<&SimBox>,
+  tuples: n×arity usize }]` (`None` box = open boundaries, minimum image
+  otherwise) and `DistributionAccumulator<O>`. `DistributionResult {
+  histogram: Histogram<1>, density, density_sin_corrected, n_raw_samples,
+  n_frames }`. **`CombinedDistribution<const N>`** (N ∈ {2, 3}, else
+  `OutOfRange`): `new([InternalCoordinate; N], [Axis; N]) -> Result`,
+  `with_sin_weight(axis) -> Result`; per frame `CombinedDistributionFrame {
+  positions, simbox, tuples: [ArrayView2<usize>; N] }`; result `{ histogram:
+  Histogram<N>, density: ArrayD, n_raw_samples, n_frames, sin_corrected }` with
+  `marginal(axis) -> Result<DistributionResult>` and `free_energy(T)`.
+  `Observable::sample_into(positions, &Mic, tuples, out)` (no frame, no
+  generic — the trait is now dyn-compatible); every observable checks arity
+  and indices (`OutOfRange` instead of an index panic).
+  `InternalCoordinate` is a `named_enum!` (`distance`, `angle`, `dihedral`)
+  implementing `Observable` by dispatch. *Deviation:* the three trajectory
+  histograms (DF, CDF, SDF) are `Stream`s whose fold is serial — the per-frame
+  rayon `try_fold` paths are gone (ac-007 fixes the body); the CIC sums were
+  already order-tolerant, and integer counts are unchanged.
+- **`StaticStructureFactorDebye`**: `new(&k)` / `linspace(..)`,
+  `with_sinc_tolerance(t) -> Result` (the former `1e-9`,
+  `DEFAULT_SINC_TOLERANCE`), `compute({ positions })` — all pairs, open
+  system, stated in its doc. **`StaticStructureFactorDirect`**: `new(&k_vecs)`
+  / `isotropic(k_max, n_bins)` (an `Axis`), `compute({ positions, simbox:
+  Option<&SimBox> })`; the isotropic form without a box is `BadShape`.
+- **`DiffractionPattern`**: `new(n_grid, σ)`, `with_axis(a) -> Result` (was
+  `assert!`), `with_cutoff(r) -> Result` (the former `3σ`), `compute({
+  positions, simbox })`; the image is a `RegularGrid<2>` over the box face.
+- **`GaussianDensity`** `new(dims: [usize; 3], σ)`, `with_r_max(r) -> Result`
+  (was `debug_assert`); **`SphereVoxelization`** `new(dims, r_max)`; both
+  `compute({ positions, simbox })` and return the `grid: RegularGrid<3>` they
+  used. *Deviation:* §4 says "`RegularGrid` in `new`" for these two; their grid
+  *is* the box divided into `dims` voxels, and the box is per-snapshot data
+  (D2), so `new` takes `dims` and `compute` builds
+  `RegularGrid::over_box(simbox, dims)`. Triclinic boxes stay `OutOfRange`
+  (unchanged; `RegularGrid` itself supports them).
+- **`SpatialDistribution`**: `new(grid: RegularGrid<3>)` (`GridSpec { n,
+  extent }` → `RegularGrid::centered(extent, n)`), `with_bulk_density(ρ) ->
+  Result` (a non-positive ρ used to be ignored silently); a `Stream` over
+  `SpatialDistributionFrame { positions, simbox, reference, template, target,
+  orientation: Option<&[(head, tail)]> }` — the Link 01 audit row. Orientation
+  pairs are `(head, tail)`, axis = head − tail (minimum image): the slot order
+  of behaviour change 5, numbers unchanged. Orientation pairs must be present
+  on every frame or none (`BadShape`). The result carries `grid` instead of
+  `n` / `extent`.
+
 **Order, environment, PMFT.**
 
 | Symbol | Fate |
@@ -715,6 +837,19 @@ that owns the file.
 - **Panics:** `Rdf::with_dimensionality` `assert!`, `DiffractionPattern::with_axis`
   `assert!` and the `SpatialDistribution` unchecked index panic all become
   errors. The silent 3-D fallback at `rdf/result.rs:114` is removed.
+- *As built (04):* every histogram and panic item above is done, each with a
+  unit test on its variant (`Axis::new` / `index`, `Histogram::density`,
+  `Rdf::with_dimensionality`, `DiffractionPattern::with_axis`, the SDF index).
+  Also: a NaN distance in `Rdf` / `CorrelationFunction` / `LocalDensity` and a
+  NaN sample in the distributions are `NonFinite` (they reached bin 0); an
+  observable's out-of-range atom index is `OutOfRange` (was a panic);
+  `LocalDensity::with_diameter` and `GaussianDensity::with_r_max` validate
+  (were `debug_assert`); `SpatialDistribution::with_bulk_density(ρ ≤ 0)` errors
+  (was ignored); an `Rdf` over sources with no points is `EmptyInput` (was an
+  all-zero g(r)); the sin θ-corrected density with no positive integral is
+  `OutOfRange` (was zeros); `RegularGrid::index_of` on NaN is `NonFinite` (was
+  voxel 0). `StaticStructureFactorDebye`/`Direct` on zero particles still
+  return `S = 0` (pinned by `empty_frame_*` tests; not a §5 item).
 - **C++ API:** every swallowed error becomes a `Result` (a C++ exception).
 
 ### 6. Bindings (link 10) — derived, thin, identical
@@ -808,12 +943,12 @@ the named link.
 | Type | Data it holds today | Moves to | Link |
 |---|---|---|---|
 | `CenterOfMass`, `InertiaTensor`, `RadiusOfGyration`, `ClusterProperties` | `with_masses(&[F])` → `masses: Option<Vec<F>>` | `compute(…, masses)`; `RadiusOfGyration` / `ClusterProperties` deleted | 07 |
-| `SpatialDistribution` | `new(reference: Vec<usize>, template: Array2, target: Vec<usize>, grid)`; `with_orientation(pairs)` | reference/target indices, template coordinates and orientation pairs → `compute`; `grid` stays in `new` | 04 |
+| `SpatialDistribution` | `new(reference: Vec<usize>, template: Array2, target: Vec<usize>, grid)`; `with_orientation(pairs)` | reference/target indices, template coordinates and orientation pairs → `compute`; `grid` stays in `new` | 04 (done) |
 | `HBonds` | `new(donors: Vec<(u32, u32)>, acceptors: Vec<u32>, …)` | donor/acceptor selections → `compute` | 05 |
-| `AtomGroups` | `new(arity, flat: Vec<Idx>)` (data wrapper) | deleted; the index-tuple array → `compute` of the distributions | 04 |
+| `AtomGroups` | `new(arity, flat: Vec<Idx>)` (data wrapper) | deleted; the index-tuple array → `compute` of the distributions | 04 (done) |
 | `DensityGrid` | `new(origin, basis, dims, density: Vec<F>)` (data wrapper) | `RegularGrid` + values array → `VoronoiIntegration::compute` | 08 |
-| `RdfAccumulator` | public `new(rdf: Rdf)` | private; reached only through `Rdf::accumulator()` | 04 |
-| `Histogram1d` | `counts: Array1<F>` (a mutable accumulator posing as a type) | replaced by `Histogram<N>` output + accumulator | 04 |
+| `RdfAccumulator` | public `new(rdf: Rdf)` | private; reached only through `Rdf::accumulator()` | 04 (done) |
+| `Histogram1d` | `counts: Array1<F>` (a mutable accumulator posing as a type) | replaced by `Histogram<N>` output + accumulator | 04 (done) |
 | `MsdTimeSeries::new(per_frame)`, `ClusterCentersResult::new(centers)` | result constructors | deleted with their types | 02 / 07 |
 
 Configuration that legitimately looks like data and stays in `new`:
@@ -873,6 +1008,14 @@ regression.
 6. **Fallbacks become errors** (§5). Inputs that used to "work" with a silently
    wrong answer now fail.
 
+*Link 04 note (no golden literal moved):* unifying the grid stencil reach on the
+`ceil`-equivalent rule makes `GaussianDensity` include voxels whose centres
+lie within `r_max` but which freud's `floor` reach skipped (a small,
+uniform addition in the bulk; its tests are tolerance-based and pass
+unchanged). `Axis::index` is exact against the reported edges, so a sample
+lying exactly on a bin edge (to the last ULP) can move one bin relative to
+the old per-file formulas — measure-zero, no test affected.
+
 ## Chain
 
 Every link runs `cargo test -p molcrafts-molrs --lib --features full,filesystem
@@ -886,7 +1029,7 @@ happens inside the chain.
 | 01-contract (code-complete 2026-10-14) | New `Compute`/`Verdict`/`Accumulate`/`Stream`/`Batch` (`Batch<C>` is itself a `Compute`: `Input = Vec<C::Input>`, earliest error wins); the old trait renamed `LegacyCompute`. The per-type `Input` struct convention (named data arguments, no `new`). `Partition` / `FeatureMatrix` traits, implemented for label arrays / `Array2`. An audit table of every `new`/`with_*` that takes data (D2), each assigned to its migrating link. `Neighbors` gains `SimBox`; `PairSource` trait. `named_enum!`. `ComputeError` changes. | — |
 | 02-time-series (code-complete 2026-10-14) | As built: `compute/time_series/` holds `Correlator` (+ `CorrelatorAccumulator`), the eight D4 surfaces, `TimeCorrelation`, `Derivative`, `Unwrap`, `Window`/`Spectrum`/`FrequencyGrid`; `signal`, `transport/`, `msd/`, `dynamics/acf.rs` deleted; legacy spectra/dielectric/hbond rewired with unchanged numbers (deviations noted in D4, D6, D7, §1, §3, §4, §5, Behaviour change 1). Scope: `Correlator` (all five kernels, FFT + streaming ring, equal to FFT round-off), `Derivative`, `Unwrap`, the D4 surfaces with their fixed configurations pinned against today's goldens, `TimeCorrelation`, `Window`, `Spectrum`, `FrequencyGrid`. Delete `signal` (module + feature). Migrate or delete the time-correlation rows of §4. | 01 |
 | 03-spectra-dielectric (code-complete 2026-10-14) | As built: fits on `{&TimeCorrelation, channel}`, `CumulativeTrapezoid` → `TimeCorrelation`; `Spectrum` is the only vibrational transform; `PolarizabilityParts` + `RamanSpectrum`; `DipoleMoment`, `StaticDielectric`, `KineticEnergy`; four routes `new(window, units)` / `compute(DielectricSpectrumInput)`; checks as `Compute` + `Verdict`; one `DielectricPrefactor`; behaviour change 1 applied; `center_of_mass_velocity` kept until 07 (deviations in §3, §4, §5, Behaviour change 1). Scope: Fits on `TimeCorrelation`, `Spectrum` unification, the Raman family with `PolarizabilityParts`, `DipoleMoment`, `StaticDielectric`, the four ε(ω) routes, the checks, the one prefactor implementation (fixes the fs/ps doc contradiction at `dielectric_spectrum.rs:59,281`), `KineticEnergy`. | 02 |
-| 04-histogram-grid | `Axis`, `Histogram<N>`, `RegularGrid`, `SpreadKernel`; migrate Rdf (`Stream` over `PairSource`), CorrelationFunction, LocalDensity, distributions, S(k) ×2, DiffractionPattern, Gaussian/Sphere density, SpatialDistribution. | 01 |
+| 04-histogram-grid (code-complete 2026-10-14) | As built: `binning/` (`Axis`, `Histogram<N>`) and `grid/` (`RegularGrid<D>`, `SpreadKernel`, `Gaussian`, `Indicator`) are the one binning / spreading implementation; `Rdf` is one `Stream` over `&dyn PairSource` (`RdfMode`, `compute_self/cross/frame`, public `RdfAccumulator::new` deleted); CorrelationFunction, LocalDensity, S(k) ×2, DiffractionPattern, Gaussian/Sphere density per-snapshot `Compute`s; DF / CDF<N> / SDF `Stream`s with all data in `compute`; `Histogram1d`, `AxisSpec`, `renormalize_density`, `AtomGroups`, `GridSpec`, `InternalCoordinate::from_kind` deleted; the 2-D FFT routed through `Spectrum` (deviations in D6, §3, §4, §5, Behaviour changes' link 04 note). Scope: `Axis`, `Histogram<N>`, `RegularGrid`, `SpreadKernel`; migrate Rdf (`Stream` over `PairSource`), CorrelationFunction, LocalDensity, distributions, S(k) ×2, DiffractionPattern, Gaussian/Sphere density, SpatialDistribution. | 01 |
 | 05-dynamics | `Presence`/`PairPresence`, survival through `Correlator`, H-bond input/presence/components, VanHove on `Histogram` + `core::NeighborQuery`. | 02, 04 |
 | 06-order-environment | `BondBasis`/`BondAverage`/`QlmTable`; Steinhardt, Hexatic, SolidLiquid, ContinuousCoordination, BOO, LocalDescriptors, LocalBondProjection, EnvironmentMatch, AngularSeparation, Nematic, Cubatic; `Pmft<C>`. | 01, 04 |
 | 07-groups | `GroupReduce`; Cluster (`connected_components`, `merge`), CenterOfMass, GyrationTensor, InertiaTensor; delete ClusterCenters, RadiusOfGyration, ClusterProperties; Pca (`eigh_sym`, `n_components`), Kmeans (`FeatureMatrix`). | 01, 06 (FeatureMatrix producers) |

@@ -1,8 +1,9 @@
 //! The per-particle orientations a PMFT reads off a frame — one extractor,
 //! shared by every binding.
 
-use crate::compute::{AtomGroups, ComputeError};
+use crate::compute::ComputeError;
 use crate::core::Frame;
+use crate::core::FrameAccess;
 use crate::core::keys;
 use crate::op::{F, Quat};
 
@@ -72,16 +73,32 @@ pub fn planar_orientation_angles(frame: &Frame) -> Result<Option<Vec<F>>, Comput
         }),
         (Some(quats), false) => Ok(Some(quats.iter().map(|q| 2.0 * q[3].atan2(q[0])).collect())),
         (None, true) => {
-            let groups = AtomGroups::from_frame(frame, ORIENTATIONS, 2)?;
+            // The block's first two endpoint columns: (head, tail) per row.
+            let mut ends: Vec<Vec<crate::op::Idx>> = Vec::with_capacity(2);
+            for &col in &keys::ENDPOINTS[..2] {
+                let view = frame
+                    .column(ORIENTATIONS, col)
+                    .and_then(|c| c.as_uint())
+                    .ok_or(ComputeError::MissingColumn {
+                        block: ORIENTATIONS,
+                        col,
+                    })?;
+                ends.push(view.iter().copied().collect());
+            }
+            if ends[0].len() != ends[1].len() {
+                return Err(ComputeError::BadShape {
+                    expected: "2 endpoint columns of equal length".into(),
+                    got: "mismatched endpoint column lengths".into(),
+                });
+            }
             let xyz = frame.coords().map_err(|e| ComputeError::OutOfRange {
                 field: "orientations coordinates",
                 value: e.to_string(),
             })?;
             let n = xyz.nrows();
-            (0..groups.len())
+            (0..ends[0].len())
                 .map(|g| {
-                    let pair = groups.tuple(g);
-                    let (head, tail) = (pair[0] as usize, pair[1] as usize);
+                    let (head, tail) = (ends[0][g] as usize, ends[1][g] as usize);
                     if head >= n || tail >= n {
                         return Err(ComputeError::OutOfRange {
                             field: "orientations atom index",

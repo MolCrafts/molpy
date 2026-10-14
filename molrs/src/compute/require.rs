@@ -32,12 +32,13 @@
 //! without it. That is a wrong number rather than a missing one, so it too is
 //! refused rather than computed.
 //!
-//! All three helpers are free functions rather than methods on [`Neighbors`]:
+//! All three helpers are free functions rather than methods on [`Neighbors`] /
+//! [`PairSource`]:
 //! the owning type lives in `core`, one layer below this one, and must not learn
 //! about [`ComputeError`] to answer a question `core` never asks.
 
-use molrs::core::{Neighbors, QueryMode};
-use molrs::op::{F, Fnx3View};
+use molrs::core::{Neighbors, PairSource, QueryMode};
+use molrs::op::Fnx3View;
 
 use super::error::ComputeError;
 
@@ -63,25 +64,30 @@ pub(crate) fn require_disp(nlist: &Neighbors) -> Result<Fnx3View<'_>, ComputeErr
         .ok_or_else(|| missing_column("disp", nlist.n_pairs()))
 }
 
-/// The squared-distance column (Å²), or [`ComputeError::BadShape`].
+/// Require that a pair source reports the squared-distance column (Å²), or
+/// [`ComputeError::BadShape`].
 ///
-/// On success the slice has exactly [`n_pairs()`](Neighbors::n_pairs) elements,
-/// aligned row-for-row with the index columns. Element `k` is the squared
-/// minimum-image distance of pair `k` in Å²; the square root is left to the
-/// caller, since most consumers compare against a squared cutoff and never need
-/// it.
+/// On success every pair [`visit_pairs`](PairSource::visit_pairs) reports
+/// carries `Some(dist_sq)`: the squared minimum-image distance in Å², the
+/// square root left to the caller (most consumers compare against a squared
+/// cutoff, and a binning kernel takes it once per pair). A built
+/// [`NeighborList`](molrs::core::NeighborList) always qualifies; a
+/// materialized table does when it kept the column.
 ///
 /// # Errors
 ///
-/// [`ComputeError::BadShape`] when the table was materialized without
+/// [`ComputeError::BadShape`] when the source was materialized without
 /// [`NeighborColumns::dist_sq`](molrs::core::NeighborColumns::dist_sq)
 /// — that is, with any policy other than `DIST_SQ` or `FULL`. The `expected`
 /// text names the missing column and the pair count it was needed for, and
 /// `got` describes the table that arrived.
-pub(crate) fn require_dist_sq(nlist: &Neighbors) -> Result<&[F], ComputeError> {
-    nlist
-        .dist_sq()
-        .ok_or_else(|| missing_column("dist_sq", nlist.n_pairs()))
+pub(crate) fn require_dist_sq(source: &dyn PairSource) -> Result<(), ComputeError> {
+    if source.columns().dist_sq {
+        return Ok(());
+    }
+    let mut n_pairs = 0usize;
+    source.visit_pairs(&mut |_, _, _, _| n_pairs += 1);
+    Err(missing_column("dist_sq", n_pairs))
 }
 
 /// Assert the table is a half-shell [`QueryMode::SelfQuery`], for kernels that

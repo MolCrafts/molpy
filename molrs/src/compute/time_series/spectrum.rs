@@ -4,7 +4,7 @@
 use std::f64::consts::PI;
 
 use molrs::op::F;
-use ndarray::{Array1, ArrayView1};
+use ndarray::{Array1, Array2, ArrayView1, ArrayView2};
 use rustfft::FftPlanner;
 use rustfft::num_complex::Complex64;
 use rustfft::num_traits::Zero;
@@ -190,6 +190,45 @@ impl Spectrum {
         bins.truncate(n_fft / 2 + 1);
         bins
     }
+
+    /// The power `|F(k)|²` of the 2-D discrete Fourier transform of a real
+    /// `n × n` image (rows then columns, unscaled), FFT-shifted so `k = 0`
+    /// sits at `(n/2, n/2)` (the `numpy.fft.fftshift` convention).
+    ///
+    /// The second form of the one FFT owner in `compute`: a 2-D power
+    /// spectrum is not a windowed one-sided 1-D spectrum, but its transforms
+    /// are planned here so no other file plans an FFT.
+    pub(crate) fn power_2d_centered(image: ArrayView2<'_, F>) -> Array2<F> {
+        let (rows, cols) = image.dim();
+        let mut buf: Vec<Complex64> = image.iter().map(|&x| Complex64::new(x, 0.0)).collect();
+        let mut planner = FftPlanner::<F>::new();
+        // Row pass: FFT every row of length `cols`.
+        let row_fft = planner.plan_fft_forward(cols);
+        for row in buf.chunks_exact_mut(cols) {
+            row_fft.process(row);
+        }
+        // Column pass: gather column → FFT → scatter back.
+        let col_fft = planner.plan_fft_forward(rows);
+        let mut column = vec![Complex64::zero(); rows];
+        for j in 0..cols {
+            for (i, c) in column.iter_mut().enumerate() {
+                *c = buf[i * cols + j];
+            }
+            col_fft.process(&mut column);
+            for (i, c) in column.iter().enumerate() {
+                buf[i * cols + j] = *c;
+            }
+        }
+        // Magnitude squared + FFT-shift (swap halves along both axes).
+        let mut shifted = Array2::<F>::zeros((rows, cols));
+        for i in 0..rows {
+            for j in 0..cols {
+                shifted[[(i + rows / 2) % rows, (j + cols / 2) % cols]] =
+                    buf[i * cols + j].norm_sqr();
+            }
+        }
+        shifted
+    }
 }
 
 impl Compute for Spectrum {
@@ -252,6 +291,19 @@ mod tests {
 
     fn ones(n: usize) -> Array1<F> {
         Array1::ones(n)
+    }
+
+    /// The 2-D power of a constant image is all at `k = 0`, shifted to the
+    /// centre: `|Σ x|² = (n²)²`.
+    #[test]
+    fn power_2d_of_a_constant_image_is_centred_dc() {
+        let n = 4;
+        let image = ndarray::Array2::<F>::ones((n, n));
+        let power = Spectrum::power_2d_centered(image.view());
+        for ((i, j), &p) in power.indexed_iter() {
+            let want = if (i, j) == (n / 2, n / 2) { 256.0 } else { 0.0 };
+            assert!((p - want).abs() < 1e-9, "({i}, {j}): {p}");
+        }
     }
 
     #[test]

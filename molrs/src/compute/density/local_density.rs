@@ -1,24 +1,21 @@
 //! Per-particle local number density in a sphere of radius `r_max`.
 
-use crate::compute::ComputeResult;
 use molrs::core::FOUR_THIRDS_PI;
-use molrs::core::FrameAccess;
-use molrs::core::Neighbors;
+use molrs::core::{PairSource, QueryMode};
 use molrs::op::F;
 
-use crate::compute::ComputeError;
-use crate::compute::LegacyCompute;
-use crate::compute::positions::get_positions_ref;
-use crate::compute::require_dist_sq;
+use crate::compute::{Compute, ComputeError, require_dist_sq};
 
 /// Local-density calculator.
 ///
 /// Mirrors `freud.density.LocalDensity`
 /// ([source](https://github.com/glotzerlab/freud/blob/main/freud/density/LocalDensity.cc)).
 ///
-/// For each query point `i` the analyzer counts neighbors within `r_max`
-/// and reports `density_i = count_i / (4/3 π r_max³)` (number per unit
-/// volume).
+/// Configuration: the cutoff `r_max` and the smoothing `diameter`. Data: one
+/// snapshot's pair source. For each query point `i` the analyzer counts
+/// neighbors within `r_max` and reports `density_i = count_i / (4/3 π
+/// r_max³)` (number per unit volume). A half-shell self-query credits each
+/// pair to both ends; a cross-query credits the query point.
 ///
 /// freud also supports a `diameter` correction that subtracts the "hard-
 /// sphere fraction" near the edge of the cutoff sphere — for two unit
@@ -31,15 +28,26 @@ use crate::compute::require_dist_sq;
 /// ```
 ///
 /// which collapses to the standard `1.0` count when `diameter = 0`. The
-/// identical formula appears in `LocalDensity::compute` in freud.
-#[derive(Debug, Clone, Copy)]
+/// identical formula appears in `LocalDensity::compute` in freud. The source
+/// must reach `r_max + diameter/2`.
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct LocalDensity {
     r_max: F,
     diameter: F,
 }
 
+/// The data a [`LocalDensity`] analyses.
+#[derive(Clone, Copy)]
+pub struct LocalDensityInput<'a> {
+    /// The snapshot's pairs; must carry the `dist_sq` column.
+    pub pairs: &'a (dyn PairSource + Sync),
+}
+
 impl LocalDensity {
     /// New analyzer with a cutoff `r_max` and no smoothing (`diameter = 0`).
+    ///
+    /// # Errors
+    /// [`ComputeError::OutOfRange`] for a non-positive or NaN `r_max`.
     pub fn new(r_max: F) -> Result<Self, ComputeError> {
         if r_max.is_nan() || r_max <= 0.0 {
             return Err(ComputeError::OutOfRange {
@@ -54,69 +62,99 @@ impl LocalDensity {
     }
 
     /// Apply a "hard-sphere diameter" smoothing at the cutoff edge.
-    pub fn with_diameter(mut self, diameter: F) -> Self {
-        debug_assert!(diameter >= 0.0, "diameter must be ≥ 0");
+    ///
+    /// # Errors
+    /// [`ComputeError::OutOfRange`] for a negative or non-finite diameter.
+    pub fn with_diameter(mut self, diameter: F) -> Result<Self, ComputeError> {
+        if !(diameter.is_finite() && diameter >= 0.0) {
+            return Err(ComputeError::OutOfRange {
+                field: "LocalDensity::diameter",
+                value: diameter.to_string(),
+            });
+        }
         self.diameter = diameter;
-        self
+        Ok(self)
     }
 
+    /// The cutoff, Å.
     pub fn r_max(&self) -> F {
         self.r_max
     }
+
+    /// The smoothing diameter, Å.
     pub fn diameter(&self) -> F {
         self.diameter
     }
+}
 
-    fn one_frame<FA: FrameAccess>(
-        &self,
-        frame: &FA,
-        nlist: &Neighbors,
-    ) -> Result<LocalDensityResult, ComputeError> {
-        let (xs_p, _, _) = get_positions_ref(frame)?;
-        let n_query = xs_p.slice().len();
+impl Compute for LocalDensity {
+    type Input<'a> = LocalDensityInput<'a>;
+    type Output = LocalDensityResult;
 
-        let i_idx = nlist.query_point_indices();
-        let n_pairs = nlist.n_pairs();
-        // Each neighbor's contribution is weighted by its distance.
-        let dist_sq = require_dist_sq(nlist)?;
+    /// # Errors
+    /// [`ComputeError::BadShape`] for a source without `dist_sq`;
+    /// [`ComputeError::NonFinite`] for a non-finite distance.
+    fn compute(&self, input: LocalDensityInput<'_>) -> Result<LocalDensityResult, ComputeError> {
+        let pairs = input.pairs;
+        let (n_query, symmetric) = match pairs.mode() {
+            QueryMode::SelfQuery { n_points } => (n_points, true),
+            QueryMode::CrossQuery { n_query_points, .. } => (n_query_points, false),
+        };
+        require_dist_sq(pairs)?;
 
         let mut num = vec![0.0_f64; n_query];
-
-        // freud convention: each neighbor pair is visited once from the query
-        // side. For a self-query Neighbors we get i<j pairs only, so we
-        // must add the symmetric contribution. For a cross-query nlist we
-        // take i as the query point and j as the reference.
-        let symmetric = matches!(nlist.mode(), molrs::core::QueryMode::SelfQuery { .. });
-
         let half_diam = self.diameter * 0.5;
         let inv_diam = if self.diameter > 0.0 {
             1.0 / self.diameter
         } else {
             0.0
         };
-
-        for k in 0..n_pairs {
-            let r = dist_sq[k].sqrt();
+        let mut failure: Option<ComputeError> = None;
+        let mut k = 0usize;
+        pairs.visit_pairs(&mut |i, j, dist_sq, _| {
+            let index = k;
+            k += 1;
+            if failure.is_some() {
+                return;
+            }
+            let Some(d2) = dist_sq else {
+                return;
+            };
+            if !d2.is_finite() {
+                failure = Some(ComputeError::NonFinite {
+                    where_: "pair dist_sq",
+                    index,
+                });
+                return;
+            }
+            let r = d2.sqrt();
             if r > self.r_max + half_diam {
-                continue;
+                return;
             }
             let weight = if self.diameter == 0.0 {
                 if r <= self.r_max { 1.0 } else { 0.0 }
             } else {
                 ((self.r_max + half_diam - r) * inv_diam).clamp(0.0, 1.0)
             };
-            let i = i_idx[k] as usize;
+            let (i, j) = (i as usize, j as usize);
+            if i >= n_query || (symmetric && j >= n_query) {
+                failure = Some(ComputeError::OutOfRange {
+                    field: "pair index",
+                    value: format!("({i}, {j}) of pair {index} past the source's point counts"),
+                });
+                return;
+            }
             num[i] += weight;
             if symmetric {
-                let j = nlist.point_indices()[k] as usize;
                 num[j] += weight;
             }
+        });
+        if let Some(err) = failure {
+            return Err(err);
         }
 
-        let vol = FOUR_THIRDS_PI * self.r_max.powi(3);
-        let inv_vol = if vol > 0.0 { 1.0 / vol } else { 0.0 };
+        let inv_vol = 1.0 / (FOUR_THIRDS_PI * self.r_max.powi(3));
         let density: Vec<F> = num.iter().map(|&c| c * inv_vol).collect();
-
         Ok(LocalDensityResult {
             n_neighbors: num,
             density,
@@ -124,88 +162,46 @@ impl LocalDensity {
     }
 }
 
-impl LegacyCompute for LocalDensity {
-    type Args<'a> = &'a [Neighbors];
-    type Output = Vec<LocalDensityResult>;
-
-    fn compute<'a, FA: FrameAccess + Sync + 'a>(
-        &self,
-        frames: &[&'a FA],
-        nlists: &'a [Neighbors],
-    ) -> Result<Vec<LocalDensityResult>, ComputeError> {
-        if frames.is_empty() {
-            return Err(ComputeError::EmptyInput);
-        }
-        if frames.len() != nlists.len() {
-            return Err(ComputeError::DimensionMismatch {
-                expected: frames.len(),
-                got: nlists.len(),
-                what: "neighbor-list count",
-            });
-        }
-        let mut out = Vec::with_capacity(frames.len());
-        for (f, nl) in frames.iter().zip(nlists.iter()) {
-            out.push(self.one_frame(*f, nl)?);
-        }
-        Ok(out)
-    }
-}
-
-/// Per-frame local-density result.
-#[derive(Debug, Clone, Default)]
+/// One snapshot's local densities.
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct LocalDensityResult {
-    /// Fractional (or integer when `diameter = 0`) neighbor count per particle.
+    /// Fractional (or integer when `diameter = 0`) neighbor count per query
+    /// point.
     pub n_neighbors: Vec<F>,
-    /// Number density per particle: `n_neighbors / (4/3 π r_max³)`.
+    /// Number density per query point: `n_neighbors / (4/3 π r_max³)`.
     pub density: Vec<F>,
 }
-
-impl ComputeResult for LocalDensityResult {}
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::compute::fixtures::nlist_from_frame;
-    use molrs::core::Block;
-    use molrs::core::Frame;
-    use molrs::core::SimBox;
-    use ndarray::{Array1 as A1, array};
+    use crate::compute::fixtures::self_neighbors;
+    use molrs::core::{Neighbors, SimBox};
+    use ndarray::{Array2, array};
 
-    fn frame_with(positions: &[[F; 3]], box_len: F, pbc: [bool; 3]) -> Frame {
-        let x = A1::from_iter(positions.iter().map(|p| p[0]));
-        let y = A1::from_iter(positions.iter().map(|p| p[1]));
-        let z = A1::from_iter(positions.iter().map(|p| p[2]));
-        let mut block = Block::new();
-        block.insert("x", x.into_dyn()).unwrap();
-        block.insert("y", y.into_dyn()).unwrap();
-        block.insert("z", z.into_dyn()).unwrap();
-        let mut frame = Frame::new();
-        frame.insert("atoms", block);
-        frame.simbox =
-            Some(SimBox::cube(box_len, array![0.0 as F, 0.0 as F, 0.0 as F], pbc).unwrap());
-        frame
+    fn table(positions: &[[F; 3]], box_len: F, cutoff: F) -> Neighbors {
+        let points = Array2::from_shape_fn((positions.len(), 3), |(i, c)| positions[i][c]);
+        let simbox =
+            SimBox::cube(box_len, array![0.0 as F, 0.0 as F, 0.0 as F], [false; 3]).unwrap();
+        self_neighbors(points.view(), &simbox, cutoff)
+    }
+
+    fn density(ld: &LocalDensity, nl: &Neighbors) -> LocalDensityResult {
+        ld.compute(LocalDensityInput { pairs: nl }).unwrap()
     }
 
     #[test]
     fn isolated_particle_has_zero_density() {
-        let frame = frame_with(&[[5.0, 5.0, 5.0]], 20.0, [false; 3]);
-        let nl = nlist_from_frame(&frame, 2.0);
-        let r = &LocalDensity::new(2.0)
-            .unwrap()
-            .compute(&[&frame], &[nl])
-            .unwrap()[0];
+        let nl = table(&[[5.0, 5.0, 5.0]], 20.0, 2.0);
+        let r = density(&LocalDensity::new(2.0).unwrap(), &nl);
         assert_eq!(r.n_neighbors[0], 0.0);
         assert_eq!(r.density[0], 0.0);
     }
 
     #[test]
     fn pair_counts_symmetric_in_self_query() {
-        let frame = frame_with(&[[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]], 20.0, [false; 3]);
-        let nl = nlist_from_frame(&frame, 2.0);
-        let r = &LocalDensity::new(2.0)
-            .unwrap()
-            .compute(&[&frame], &[nl])
-            .unwrap()[0];
+        let nl = table(&[[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]], 20.0, 2.0);
+        let r = density(&LocalDensity::new(2.0).unwrap(), &nl);
         // Each of the two particles has exactly 1 neighbor within 2.0.
         assert!((r.n_neighbors[0] - 1.0).abs() < 1e-12);
         assert!((r.n_neighbors[1] - 1.0).abs() < 1e-12);
@@ -219,13 +215,12 @@ mod tests {
         let r_max = 3.0;
         let diameter = 1.0;
         let r = r_max + diameter / 2.0 - 1e-9;
-        let frame = frame_with(&[[0.0, 0.0, 0.0], [r, 0.0, 0.0]], 20.0, [false; 3]);
-        let nl = nlist_from_frame(&frame, r + 1.0);
-        let res = &LocalDensity::new(r_max)
+        let nl = table(&[[0.0, 0.0, 0.0], [r, 0.0, 0.0]], 20.0, r + 1.0);
+        let ld = LocalDensity::new(r_max)
             .unwrap()
             .with_diameter(diameter)
-            .compute(&[&frame], &[nl])
-            .unwrap()[0];
+            .unwrap();
+        let res = density(&ld, &nl);
         assert!(
             res.n_neighbors[0] < 1e-8,
             "weight at edge should be ≈ 0, got {}",
@@ -234,13 +229,8 @@ mod tests {
 
         // At r = r_max − diameter/2 → weight = 1 (fully inside).
         let r_in = r_max - diameter / 2.0;
-        let frame2 = frame_with(&[[0.0, 0.0, 0.0], [r_in, 0.0, 0.0]], 20.0, [false; 3]);
-        let nl2 = nlist_from_frame(&frame2, r + 1.0);
-        let res2 = &LocalDensity::new(r_max)
-            .unwrap()
-            .with_diameter(diameter)
-            .compute(&[&frame2], &[nl2])
-            .unwrap()[0];
+        let nl2 = table(&[[0.0, 0.0, 0.0], [r_in, 0.0, 0.0]], 20.0, r + 1.0);
+        let res2 = density(&ld, &nl2);
         assert!((res2.n_neighbors[0] - 1.0).abs() < 1e-9);
     }
 
@@ -250,13 +240,16 @@ mod tests {
         assert!(LocalDensity::new(-1.0).is_err());
     }
 
+    /// A negative diameter used to pass a `debug_assert` in release builds;
+    /// it is an error.
     #[test]
-    fn empty_frames_is_error() {
-        let frames: Vec<&Frame> = Vec::new();
-        let err = LocalDensity::new(2.0)
-            .unwrap()
-            .compute(&frames, &Vec::<Neighbors>::new())
-            .unwrap_err();
-        assert!(matches!(err, ComputeError::EmptyInput));
+    fn invalid_diameter_is_out_of_range() {
+        let ld = LocalDensity::new(2.0).unwrap();
+        for bad in [-1.0, F::NAN, F::INFINITY] {
+            assert!(matches!(
+                ld.with_diameter(bad),
+                Err(ComputeError::OutOfRange { .. })
+            ));
+        }
     }
 }

@@ -1,13 +1,13 @@
 //! Angle observable: the angle θ ∈ [0, π] at the vertex of each atom triple.
 
-use molrs::core::FrameAccess;
 use molrs::op::F;
 
 use crate::compute::ComputeError;
 
-use super::observable::{AtomGroups, Observable, displacement, positions};
+use super::observable::{Observable, check_tuples, displacement};
 use crate::op::vec3::{dot, norm};
-use molrs::core::{Mic, SimBox};
+use molrs::core::Mic;
+use ndarray::ArrayView2;
 
 /// Angle θ ∈ [0, π] (radians) at atom `j` of each triple i–j–k (arity 3).
 ///
@@ -32,39 +32,21 @@ impl Observable for AngleObservable {
         Some((0.0, std::f64::consts::PI))
     }
 
-    fn sample<FA: FrameAccess>(
+    fn sample_into(
         &self,
-        frame: &FA,
-        groups: &AtomGroups,
-    ) -> Result<Vec<F>, ComputeError> {
-        let mut out = Vec::with_capacity(groups.len());
-        self.sample_into(frame, groups, &mut out)?;
-        Ok(out)
-    }
-
-    fn sample_into<FA: FrameAccess>(
-        &self,
-        frame: &FA,
-        groups: &AtomGroups,
+        positions: ArrayView2<'_, F>,
+        mic: &Mic,
+        tuples: ArrayView2<'_, usize>,
         out: &mut Vec<F>,
     ) -> Result<(), ComputeError> {
-        if groups.arity() != 3 {
-            return Err(ComputeError::BadShape {
-                expected: "arity 3".to_string(),
-                got: format!("arity {}", groups.arity()),
-            });
-        }
-        let (xp, yp, zp) = positions(frame)?;
-        let (xs, ys, zs) = (xp.slice(), yp.slice(), zp.slice());
-        let mic = frame.simbox_ref().map_or(Mic::Free, SimBox::mic);
+        check_tuples(self.arity(), positions, tuples)?;
         out.clear();
-        out.reserve(groups.len());
-        for g in 0..groups.len() {
-            let t = groups.tuple(g);
-            let (i, j, k) = (t[0] as usize, t[1] as usize, t[2] as usize);
+        out.reserve(tuples.nrows());
+        for (g, t) in tuples.outer_iter().enumerate() {
+            let (i, j, k) = (t[0], t[1], t[2]);
             // r_ij = i - j, r_kj = k - j (j is the vertex).
-            let r_ij = displacement(&mic, xs, ys, zs, j, i);
-            let r_kj = displacement(&mic, xs, ys, zs, j, k);
+            let r_ij = displacement(mic, positions, j, i);
+            let r_kj = displacement(mic, positions, j, k);
             let n_ij = norm(r_ij);
             let n_kj = norm(r_kj);
             if n_ij == 0.0 || n_kj == 0.0 {

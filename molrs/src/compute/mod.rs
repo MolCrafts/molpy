@@ -73,7 +73,7 @@
 //! | Needs | Kernels | Materialize the table with |
 //! |---|---|---|
 //! | `disp` — bond *directions* | [`Steinhardt`], [`Hexatic`], [`SolidLiquid`], [`ContinuousCoordination`] (the last three via [`steinhardt_qlm`]), every PMFT kernel, [`BondOrientationalOrder`], [`LocalDescriptors`], [`LocalBondProjection`], [`EnvironmentMatch`] | `NeighborColumns::DISP` or `FULL` |
-//! | `dist_sq` — distances only | [`Rdf`] when fed a materialized table, [`CorrelationFunction`], [`LocalDensity`] | `NeighborColumns::DIST_SQ` or `FULL` |
+//! | `dist_sq` — distances only | [`Rdf`], [`CorrelationFunction`], [`LocalDensity`] (each takes any [`PairSource`](molrs::core::PairSource)) | `NeighborColumns::DIST_SQ` or `FULL` |
 //! | indices only — connectivity | [`Cluster`], [`AngularSeparationNeighbor`] | any policy, `INDICES_ONLY` included |
 //!
 //! `FULL` means *every column is present*. It never means a bidirectional pair
@@ -84,13 +84,21 @@
 //! against a separate reference set and is directed, with both orderings
 //! present. Radial-distribution normalization is the one place that distinction
 //! changes a number — a half-shell count is short by a factor of two — see
-//! [`RdfMode`].
+//! [`RdfResult`].
 //!
-//! Some entry points take no table at all, because they run a search of their
-//! own per call: [`Rdf::compute_self`], [`Rdf::compute_frame`] and
-//! [`Rdf::compute_cross`] stream pairs straight out of the cell list without
-//! ever materializing them, and [`HBonds`] and [`VanHove`] build a cross-query
+//! A kernel that only streams pairs takes a
+//! [`PairSource`](molrs::core::PairSource): a materialized table, or a built
+//! [`NeighborList`](molrs::core::NeighborList), which streams pairs straight
+//! out of its cell list without ever materializing them — the bounded-memory
+//! path for large systems. [`HBonds`] and [`VanHove`] build a cross-query
 //! internally, one per frame and one per time origin respectively.
+//!
+//! # Binning and grids
+//!
+//! Every histogram bins through [`Axis`] (half-open `[lo, hi)` bins; a NaN
+//! sample is [`ComputeError::NonFinite`]) into a [`Histogram`], and every
+//! density grid spreads a [`SpreadKernel`] ([`Gaussian`], [`Indicator`]) over
+//! a [`RegularGrid`], which wraps only its periodic axes.
 //!
 //! # Results
 //!
@@ -167,6 +175,8 @@
 //!
 //! | Folder | Methods |
 //! |----------|---------|
+//! | `binning` | [`Axis`], [`Histogram`] — the one binning implementation |
+//! | `grid` | [`RegularGrid`], [`SpreadKernel`] ([`Gaussian`], [`Indicator`]) — the one grid-spreading implementation |
 //! | `rdf` | pair distribution g(r) (+ streaming [`RdfAccumulator`]) |
 //! | `time_series` | [`Correlator`] and its surfaces (MSD, VACF, Onsager, dipole / current ACFs, reorientation, survival), [`Derivative`], [`Unwrap`], [`Spectrum`] |
 //! | `spectroscopy` | [`PolarizabilityParts`], [`RamanSpectrum`], the four ε(ω) routes and their checks |
@@ -188,6 +198,7 @@
 //! | `voronoi` | radical Voronoi cells, domains, voids (feature `voronoi`) |
 
 mod analysis_contract;
+mod binning;
 mod cluster;
 mod contract;
 mod decomposition;
@@ -201,6 +212,7 @@ mod error;
 mod fitting;
 #[cfg(test)]
 pub(crate) mod fixtures;
+mod grid;
 mod hbond;
 mod kinetic;
 mod kmeans;
@@ -218,27 +230,32 @@ mod voronoi;
 
 // Re-exports
 pub use analysis_contract::{Check, ComputeResult, DescriptorRow, Fit, LegacyCompute};
+pub use binning::{Axis, Histogram};
 pub use cluster::{Cluster, ClusterProperties, ClusterPropertiesResult, ClusterResult};
 pub use contract::{Accumulate, Batch, Compute, FeatureMatrix, Partition, Stream, Verdict};
 pub use decomposition::{Pca, PcaResult};
 pub use density::{
-    CorrelationFunction, CorrelationFunctionArgs, CorrelationFunctionResult, GaussianDensity,
-    GaussianDensityResult, GridSpec, LocalDensity, LocalDensityResult, SpatialDistribution,
-    SpatialDistributionResult, SphereVoxelization, SphereVoxelizationResult,
+    CorrelationFunction, CorrelationFunctionInput, CorrelationFunctionResult, GaussianDensity,
+    GaussianDensityInput, GaussianDensityResult, LocalDensity, LocalDensityInput,
+    LocalDensityResult, SpatialDistribution, SpatialDistributionAccumulator,
+    SpatialDistributionFrame, SpatialDistributionResult, SphereVoxelization,
+    SphereVoxelizationInput, SphereVoxelizationResult,
 };
 pub use dielectric::{
     DipoleMoment, DipoleMomentInput, DipoleMomentResult, EwaldBoundary, StaticDielectric,
     StaticDielectricInput, StaticDielectricResult,
 };
 pub use diffraction::{
-    DiffractionPattern, DiffractionPatternResult, StaticStructureFactorDebye,
-    StaticStructureFactorDebyeResult, StaticStructureFactorDirect,
+    DiffractionPattern, DiffractionPatternInput, DiffractionPatternResult,
+    StaticStructureFactorDebye, StaticStructureFactorDebyeInput, StaticStructureFactorDebyeResult,
+    StaticStructureFactorDirect, StaticStructureFactorDirectInput,
     StaticStructureFactorDirectResult,
 };
 pub use distribution::{
-    AngleObservable, AtomGroups, AxisSpec, CombinedDistribution, CombinedDistributionResult,
-    DihedralObservable, DistanceObservable, DistributionFunction, DistributionResult, Histogram1d,
-    InternalCoordinate, Observable, renormalize_density,
+    AngleObservable, CombinedDistribution, CombinedDistributionAccumulator,
+    CombinedDistributionFrame, CombinedDistributionResult, DihedralObservable, DistanceObservable,
+    DistributionAccumulator, DistributionFrame, DistributionFunction, DistributionResult,
+    InternalCoordinate, Observable,
 };
 pub use dynamics::{PairSurvivalResult, SurvivalMethod, VanHove, VanHoveResult, pair_survival_tcf};
 pub use environment::{
@@ -253,6 +270,7 @@ pub use fitting::{
     CumulativeTrapezoid, CumulativeTrapezoidInput, DebyeFit, DebyeFitInput, DebyeFitResult,
     LinearFit, LinearFitInput, LinearFitResult, Plateau, PlateauInput, PlateauResult,
 };
+pub use grid::{Gaussian, Indicator, RegularGrid, SpreadKernel};
 pub use hbond::{
     HBond, HBondCriterion, HBondDistanceKind, HBondLifetimeResult, HBondNetworkResult, HBonds,
     HBondsResult, hbond_components, hbond_lifetimes, presence_from_hbonds,
@@ -271,7 +289,7 @@ pub use pmft::{
     PmftXytResult, PmftXyz, PmftXyzArgs, PmftXyzResult, orientation_quaternions,
     planar_orientation_angles,
 };
-pub use rdf::{Rdf, RdfAccumulator, RdfMode, RdfResult};
+pub use rdf::{Rdf, RdfAccumulator, RdfResult};
 /// Crate-internal: the input guards every neighbor-consuming kernel calls
 /// before it reads `disp` (Å) or `dist_sq` (Å²), or before it updates both
 /// endpoints of a row and so depends on the table being half-shell.
@@ -388,13 +406,14 @@ mod require_tests {
         }
     }
 
-    /// Basics: on a `FULL` table the squared-distance column comes back as a
-    /// slice of `n_pairs` values, in table order (Å², exact copies).
+    /// Basics: a `FULL` table passes, and its squared-distance column is the
+    /// `n_pairs` values in table order (Å², exact copies).
     #[test]
-    fn require_dist_sq_returns_the_full_table_column() {
+    fn require_dist_sq_accepts_the_full_table() {
         let nb = table(NeighborColumns::FULL);
-        let d2 = require_dist_sq(&nb).expect("FULL table has a dist_sq column");
+        require_dist_sq(&nb).expect("FULL table has a dist_sq column");
 
+        let d2 = nb.dist_sq().unwrap();
         assert_eq!(d2.len(), nb.n_pairs());
         assert_eq!(d2, &[2.0_f64, 9.0_f64][..]);
     }

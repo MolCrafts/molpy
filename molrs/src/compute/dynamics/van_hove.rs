@@ -36,7 +36,8 @@ use crate::compute::positions::get_positions_ref;
 /// Accordingly the **definition** follows van Hove 1954 / Hansen-McDonald, the
 /// **distinct-part binning + shell normalization** mirror the RDF pair-binning
 /// convention molrs already ports (`CDF::AddToBin`, reference implementation `src/df.cpp`, here
-/// reused through [`Histogram1d`](crate::compute::Histogram1d) and
+/// a closed-range nearest-bin rule that link 05 of compute-redesign moves onto
+/// [`Axis`](crate::compute::Axis)) and
 /// the `4π/3 (r_o³−r_i³)` shell volume of [`Rdf`](crate::compute::Rdf)), and the
 /// **multi-time-origin averaging** mirrors the ACF origin accumulation in
 /// reference implementation `src/reordyn.cpp` / `src/acf.cpp`. Any deviation from a literal
@@ -166,11 +167,10 @@ impl LegacyCompute for VanHove {
 
         let n_rbins = self.n_rbins;
         let r_max = self.r_max;
-        // Nearest-bin factor, identical to `Histogram1d::new(n_rbins, 0.0, r_max)`
-        // (`fac = n_bins / (max − min)`, `min = 0`).
+        // Nearest-bin factor `fac = n_bins / (max − min)`, `min = 0`.
         let fac = n_rbins as F / r_max;
 
-        // Deposit one in-range magnitude with the exact `Histogram1d::add_nearest`
+        // Deposit one in-range magnitude with the closed-range nearest-bin
         // rule: with `min = 0` the range test is `0 ≤ d ≤ r_max` and the bin index
         // is `⌊d·fac⌋` clamped to the last bin. Counts are integer `+1.0`
         // increments, so accumulating them across origins/lags in any order (serial
@@ -275,7 +275,7 @@ impl LegacyCompute for VanHove {
             (sc, dc, no)
         };
 
-        // g_self: probability density of |Δr| (`Histogram1d::density`:
+        // g_self: probability density of |Δr| (a histogram density:
         // counts / (binned · bin_width), binned = Σ counts, bin_width = dr).
         // g_distinct: number density of others at r → ρ g(r) at lag 0.
         for (li, &n_orig) in origins_per_lag.iter().enumerate() {

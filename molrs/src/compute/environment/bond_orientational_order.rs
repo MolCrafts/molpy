@@ -5,8 +5,9 @@ use molrs::core::FrameAccess;
 use molrs::core::Neighbors;
 use molrs::op::F;
 use ndarray::Array2;
-use std::f64::consts::{PI, TAU};
+use std::f64::consts::PI;
 
+use crate::compute::Axis;
 use crate::compute::ComputeError;
 use crate::compute::LegacyCompute;
 use crate::compute::positions::get_positions_ref;
@@ -62,11 +63,14 @@ impl BondOrientationalOrder {
         let _ = xs_p; // suppress unused — we only need the frame to be
         // FrameAccess-valid; nlist already carries disp.
 
-        let d_theta = PI / self.n_theta as F;
-        let d_phi = TAU / self.n_phi as F;
-
-        let theta_edges: Vec<F> = (0..=self.n_theta).map(|i| i as F * d_theta).collect();
-        let phi_edges: Vec<F> = (0..=self.n_phi).map(|i| -PI + i as F * d_phi).collect();
+        // θ ∈ [0, π] and φ ∈ [−π, π] are attained at both ends, so both
+        // axes bin with the upper edge closed.
+        let theta_axis = Axis::new(0.0, PI, self.n_theta)?;
+        let phi_axis = Axis::new(-PI, PI, self.n_phi)?;
+        let d_theta = theta_axis.width();
+        let d_phi = phi_axis.width();
+        let theta_edges: Vec<F> = theta_axis.edges().to_vec();
+        let phi_edges: Vec<F> = phi_axis.edges().to_vec();
 
         let mut counts = Array2::<u64>::zeros((self.n_theta, self.n_phi));
         let n_pairs = nlist.n_pairs();
@@ -82,10 +86,10 @@ impl BondOrientationalOrder {
             if r == 0.0 {
                 continue;
             }
-            push_angle(&mut counts, dx, dy, dz, r, self.n_theta, self.n_phi);
+            push_angle(&mut counts, [dx, dy, dz], r, &theta_axis, &phi_axis)?;
             if symmetric {
                 // j-side bond is reversed: (-dx, -dy, -dz).
-                push_angle(&mut counts, -dx, -dy, -dz, r, self.n_theta, self.n_phi);
+                push_angle(&mut counts, [-dx, -dy, -dz], r, &theta_axis, &phi_axis)?;
             }
         }
 
@@ -110,15 +114,22 @@ impl BondOrientationalOrder {
     }
 }
 
+/// Count one bond direction `d` (length `r`) in its (θ, φ) bin.
 #[inline]
-fn push_angle(counts: &mut Array2<u64>, dx: F, dy: F, dz: F, r: F, n_theta: usize, n_phi: usize) {
-    let theta = (dz / r).clamp(-1.0, 1.0).acos(); // [0, π]
-    let phi = dy.atan2(dx); // [-π, π]
-    let it = ((theta / PI) * n_theta as F) as usize;
-    let it = it.min(n_theta - 1);
-    let ip = (((phi + PI) / TAU) * n_phi as F) as usize;
-    let ip = ip.min(n_phi - 1);
-    counts[[it, ip]] += 1;
+fn push_angle(
+    counts: &mut Array2<u64>,
+    d: [F; 3],
+    r: F,
+    theta_axis: &Axis,
+    phi_axis: &Axis,
+) -> Result<(), ComputeError> {
+    let theta = (d[2] / r).clamp(-1.0, 1.0).acos(); // [0, π]
+    let phi = d[1].atan2(d[0]); // [-π, π]
+    // Both angles lie in their closed ranges by construction.
+    if let (Some(it), Some(ip)) = (theta_axis.index_closed(theta)?, phi_axis.index_closed(phi)?) {
+        counts[[it, ip]] += 1;
+    }
+    Ok(())
 }
 
 impl LegacyCompute for BondOrientationalOrder {

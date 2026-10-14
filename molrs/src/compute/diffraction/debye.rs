@@ -1,13 +1,9 @@
 //! Closed-form Debye static structure factor.
 
-use crate::compute::ComputeResult;
-use molrs::core::FrameAccess;
 use molrs::op::F;
-use ndarray::Array1;
+use ndarray::{Array1, ArrayView2};
 
-use crate::compute::ComputeError;
-use crate::compute::LegacyCompute;
-use crate::compute::positions::get_positions_ref;
+use crate::compute::{Compute, ComputeError};
 
 /// Debye structure-factor calculator.
 ///
@@ -32,13 +28,29 @@ use crate::compute::positions::get_positions_ref;
 /// - `S(0) = N` exactly (per `lim_{k→0} sin(k r) / (k r) = 1`).
 /// - The asymptote `S(k → ∞) → 1` is approached as the off-diagonal sum
 ///   averages to zero.
-/// - Periodic boxes: distances are *not* minimum-imaged here. freud's
-///   `Debye` uses the raw inter-particle distance and warns the user that
-///   PBC should usually be turned off for a meaningful Debye calculation
-///   (the formula assumes an open system).
-#[derive(Debug, Clone)]
+/// - **All pairs, non-periodic, by definition.** Debye's equation is the
+///   scattering of an isolated (open) particle set: every pair contributes at
+///   its raw Cartesian distance, with no cutoff and no minimum image. So
+///   `compute` takes the positions alone — no box. For a periodic system use
+///   [`StaticStructureFactorDirect`](crate::compute::StaticStructureFactorDirect)
+///   on the reciprocal lattice of the box. (freud's Debye likewise uses the
+///   raw distance and warns that PBC should be off.)
+/// - `sin(kr)/(kr)` is taken as its limit 1 when `|kr|` falls below the
+///   configured tolerance ([`with_sinc_tolerance`](Self::with_sinc_tolerance),
+///   default `1e-9`), avoiding `0/0`.
+///
+/// For many snapshots, wrap in [`Batch`](crate::compute::Batch).
+#[derive(Debug, Clone, PartialEq)]
 pub struct StaticStructureFactorDebye {
     k_values: Array1<F>,
+    sinc_tolerance: F,
+}
+
+/// The data a [`StaticStructureFactorDebye`] analyses.
+#[derive(Debug, Clone, Copy)]
+pub struct StaticStructureFactorDebyeInput<'a> {
+    /// Positions, `N × 3`, Å.
+    pub positions: ArrayView2<'a, F>,
 }
 
 impl StaticStructureFactorDebye {
@@ -53,7 +65,26 @@ impl StaticStructureFactorDebye {
         }
         Ok(Self {
             k_values: Array1::from_vec(k_values.to_vec()),
+            sinc_tolerance: Self::DEFAULT_SINC_TOLERANCE,
         })
+    }
+
+    /// The `|kr|` below which `sin(kr)/(kr)` is taken as 1.
+    pub const DEFAULT_SINC_TOLERANCE: F = 1e-9;
+
+    /// Take `sin(kr)/(kr)` as its limit 1 below `|kr| = tolerance`.
+    ///
+    /// # Errors
+    /// [`ComputeError::OutOfRange`] for a negative or non-finite tolerance.
+    pub fn with_sinc_tolerance(mut self, tolerance: F) -> Result<Self, ComputeError> {
+        if !(tolerance.is_finite() && tolerance >= 0.0) {
+            return Err(ComputeError::OutOfRange {
+                field: "StaticStructureFactorDebye::sinc_tolerance",
+                value: tolerance.to_string(),
+            });
+        }
+        self.sinc_tolerance = tolerance;
+        Ok(self)
     }
 
     /// Convenience: build a linearly-spaced k grid `[k_min, k_max]` with
@@ -83,16 +114,26 @@ impl StaticStructureFactorDebye {
     pub fn k_values(&self) -> &Array1<F> {
         &self.k_values
     }
+}
 
-    fn one_frame<FA: FrameAccess>(
+impl Compute for StaticStructureFactorDebye {
+    type Input<'a> = StaticStructureFactorDebyeInput<'a>;
+    type Output = StaticStructureFactorDebyeResult;
+
+    /// # Errors
+    /// [`ComputeError::BadShape`] for positions without 3 columns.
+    fn compute(
         &self,
-        frame: &FA,
+        input: StaticStructureFactorDebyeInput<'_>,
     ) -> Result<StaticStructureFactorDebyeResult, ComputeError> {
-        let (xs_p, ys_p, zs_p) = get_positions_ref(frame)?;
-        let xs = xs_p.slice();
-        let ys = ys_p.slice();
-        let zs = zs_p.slice();
-        let n = xs.len();
+        let positions = input.positions;
+        if positions.ncols() != 3 {
+            return Err(ComputeError::BadShape {
+                expected: "positions N × 3".into(),
+                got: format!("N × {}", positions.ncols()),
+            });
+        }
+        let n = positions.nrows();
         let n_k = self.k_values.len();
         let mut sk = Array1::<F>::zeros(n_k);
 
@@ -121,13 +162,12 @@ impl StaticStructureFactorDebye {
         #[cfg(feature = "rayon")]
         {
             use rayon::prelude::*;
-            let k_values = &self.k_values;
             let off = (0..n)
                 .into_par_iter()
                 .fold(
                     || Array1::<F>::zeros(n_k),
                     |mut acc, i| {
-                        accumulate_row(&mut acc, xs, ys, zs, k_values, i);
+                        self.accumulate_row(&mut acc, positions, i);
                         acc
                     },
                 )
@@ -142,7 +182,7 @@ impl StaticStructureFactorDebye {
         }
         #[cfg(not(feature = "rayon"))]
         for i in 0..n {
-            accumulate_row(&mut sk, xs, ys, zs, &self.k_values, i);
+            self.accumulate_row(&mut sk, positions, i);
         }
 
         // Normalise by N: S(k) = (1/N) Σ_{i, j} sin(k r_ij) / (k r_ij)
@@ -158,62 +198,40 @@ impl StaticStructureFactorDebye {
     }
 }
 
-/// Accumulate particle `i`'s off-diagonal Debye contributions (all pairs
-/// `j > i`) into `acc`, one term per k value. Shared verbatim by the
-/// serial and rayon-parallel paths so the pair math lives in exactly one
-/// place — the serial path stays bit-for-bit identical to the pre-parallel
-/// implementation.
-fn accumulate_row(
-    acc: &mut Array1<F>,
-    xs: &[F],
-    ys: &[F],
-    zs: &[F],
-    k_values: &Array1<F>,
-    i: usize,
-) {
-    let n = xs.len();
-    for j in (i + 1)..n {
-        let dx = xs[i] - xs[j];
-        let dy = ys[i] - ys[j];
-        let dz = zs[i] - zs[j];
-        let r = (dx * dx + dy * dy + dz * dz).sqrt();
-        if r == 0.0 {
-            // Treat coincident pair as contributing 2 (lim sinx/x = 1).
-            for v in acc.iter_mut() {
-                *v += 2.0;
+impl StaticStructureFactorDebye {
+    /// Accumulate particle `i`'s off-diagonal Debye contributions (all pairs
+    /// `j > i`) into `acc`, one term per k value. Shared verbatim by the
+    /// serial and rayon-parallel paths so the pair math lives in exactly one
+    /// place.
+    fn accumulate_row(&self, acc: &mut Array1<F>, positions: ArrayView2<'_, F>, i: usize) {
+        let n = positions.nrows();
+        for j in (i + 1)..n {
+            let dx = positions[[i, 0]] - positions[[j, 0]];
+            let dy = positions[[i, 1]] - positions[[j, 1]];
+            let dz = positions[[i, 2]] - positions[[j, 2]];
+            let r = (dx * dx + dy * dy + dz * dz).sqrt();
+            if r == 0.0 {
+                // Treat coincident pair as contributing 2 (lim sinx/x = 1).
+                for v in acc.iter_mut() {
+                    *v += 2.0;
+                }
+                continue;
             }
-            continue;
-        }
-        for (idx, &k) in k_values.iter().enumerate() {
-            let kr = k * r;
-            let term = if kr.abs() < 1e-9 { 1.0 } else { kr.sin() / kr };
-            acc[idx] += 2.0 * term;
+            for (idx, &k) in self.k_values.iter().enumerate() {
+                let kr = k * r;
+                let term = if kr.abs() < self.sinc_tolerance {
+                    1.0
+                } else {
+                    kr.sin() / kr
+                };
+                acc[idx] += 2.0 * term;
+            }
         }
     }
 }
 
-impl LegacyCompute for StaticStructureFactorDebye {
-    type Args<'a> = ();
-    type Output = Vec<StaticStructureFactorDebyeResult>;
-
-    fn compute<'a, FA: FrameAccess + Sync + 'a>(
-        &self,
-        frames: &[&'a FA],
-        _: (),
-    ) -> Result<Vec<StaticStructureFactorDebyeResult>, ComputeError> {
-        if frames.is_empty() {
-            return Err(ComputeError::EmptyInput);
-        }
-        let mut out = Vec::with_capacity(frames.len());
-        for f in frames {
-            out.push(self.one_frame(*f)?);
-        }
-        Ok(out)
-    }
-}
-
-/// Per-frame Debye structure-factor result.
-#[derive(Debug, Clone, Default)]
+/// One snapshot's Debye structure factor.
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct StaticStructureFactorDebyeResult {
     /// k values (Å⁻¹), copied from input.
     pub k_values: Array1<F>,
@@ -223,31 +241,23 @@ pub struct StaticStructureFactorDebyeResult {
     pub n_particles: usize,
 }
 
-impl ComputeResult for StaticStructureFactorDebyeResult {}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use molrs::core::Block;
-    use molrs::core::Frame;
-    use molrs::core::SimBox;
-    use ndarray::{Array1 as A1, array};
+    use ndarray::Array2;
 
-    fn frame_with(positions: &[[F; 3]]) -> Frame {
-        let x = A1::from_iter(positions.iter().map(|p| p[0]));
-        let y = A1::from_iter(positions.iter().map(|p| p[1]));
-        let z = A1::from_iter(positions.iter().map(|p| p[2]));
-        let mut block = Block::new();
-        block.insert("x", x.into_dyn()).unwrap();
-        block.insert("y", y.into_dyn()).unwrap();
-        block.insert("z", z.into_dyn()).unwrap();
-        let mut frame = Frame::new();
-        frame.insert("atoms", block);
-        // freud's Debye is open-system; supply a generous non-PBC box so the
-        // FrameAccess plumbing is happy.
-        frame.simbox =
-            Some(SimBox::cube(1000.0, array![0.0 as F, 0.0 as F, 0.0 as F], [false; 3]).unwrap());
-        frame
+    fn frame_with(positions: &[[F; 3]]) -> Array2<F> {
+        Array2::from_shape_fn((positions.len(), 3), |(i, c)| positions[i][c])
+    }
+
+    fn sk(
+        s: &StaticStructureFactorDebye,
+        positions: &Array2<F>,
+    ) -> StaticStructureFactorDebyeResult {
+        s.compute(StaticStructureFactorDebyeInput {
+            positions: positions.view(),
+        })
+        .unwrap()
     }
 
     const TOL: F = 1e-10;
@@ -257,7 +267,7 @@ mod tests {
         let positions = [[0.0_f64, 0.0, 0.0], [1.0, 0.0, 0.0], [2.0, 0.0, 0.0]];
         let frame = frame_with(&positions);
         let s = StaticStructureFactorDebye::new(&[0.0]).unwrap();
-        let r = &s.compute(&[&frame], ()).unwrap()[0];
+        let r = sk(&s, &frame);
         // S(0) = (1/N) · N² = N
         assert!((r.sk[0] - 3.0).abs() < TOL);
         assert_eq!(r.n_particles, 3);
@@ -283,7 +293,7 @@ mod tests {
             .collect();
         let frame = frame_with(&positions);
         let s = StaticStructureFactorDebye::linspace(50.0, 60.0, 11).unwrap();
-        let r = &s.compute(&[&frame], ()).unwrap()[0];
+        let r = sk(&s, &frame);
         let mean: F = r.sk.iter().copied().sum::<F>() / r.sk.len() as F;
         assert!(
             (mean - 1.0).abs() < 0.2,
@@ -300,7 +310,7 @@ mod tests {
         let frame = frame_with(&[[0.0, 0.0, 0.0], [d, 0.0, 0.0]]);
         let k_vals = [0.5_f64, 1.0, 2.0, 5.0];
         let s = StaticStructureFactorDebye::new(&k_vals).unwrap();
-        let r = &s.compute(&[&frame], ()).unwrap()[0];
+        let r = sk(&s, &frame);
         for (i, &k) in k_vals.iter().enumerate() {
             let expected = 1.0 + (k * d).sin() / (k * d);
             assert!(
@@ -317,7 +327,7 @@ mod tests {
         // sinc(0) = 1. S(k) = (1/2)(2 + 2·1) = 2 for any k.
         let frame = frame_with(&[[1.0, 1.0, 1.0], [1.0, 1.0, 1.0]]);
         let s = StaticStructureFactorDebye::new(&[1.0, 5.0, 10.0]).unwrap();
-        let r = &s.compute(&[&frame], ()).unwrap()[0];
+        let r = sk(&s, &frame);
         for &v in r.sk.iter() {
             assert!((v - 2.0).abs() < TOL);
         }
@@ -327,7 +337,7 @@ mod tests {
     fn empty_frame_gives_zero_sk() {
         let frame = frame_with(&[]);
         let s = StaticStructureFactorDebye::new(&[1.0]).unwrap();
-        let r = &s.compute(&[&frame], ()).unwrap()[0];
+        let r = sk(&s, &frame);
         assert_eq!(r.sk[0], 0.0);
         assert_eq!(r.n_particles, 0);
     }
@@ -347,13 +357,39 @@ mod tests {
     }
 
     #[test]
-    fn multi_frame_returns_one_result_per_frame() {
+    fn batch_returns_one_result_per_snapshot() {
         let f1 = frame_with(&[[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]]);
         let f2 = frame_with(&[[0.0, 0.0, 0.0], [2.0, 0.0, 0.0]]);
         let s = StaticStructureFactorDebye::new(&[1.0]).unwrap();
-        let r = s.compute(&[&f1, &f2], ()).unwrap();
+        let r = crate::compute::Batch(s)
+            .compute(vec![
+                StaticStructureFactorDebyeInput {
+                    positions: f1.view(),
+                },
+                StaticStructureFactorDebyeInput {
+                    positions: f2.view(),
+                },
+            ])
+            .unwrap();
         assert_eq!(r.len(), 2);
         // Different distances → different S(k) values.
         assert!((r[0].sk[0] - r[1].sk[0]).abs() > 1e-3);
+    }
+
+    /// The `1e-9` small-`kr` cut is configuration; a larger one takes the
+    /// limit for a pair whose `kr` falls below it.
+    #[test]
+    fn sinc_tolerance_is_configurable() {
+        let frame = frame_with(&[[0.0, 0.0, 0.0], [0.1, 0.0, 0.0]]);
+        let s = StaticStructureFactorDebye::new(&[1.0]).unwrap();
+        assert_eq!(s.clone().with_sinc_tolerance(1e-9).unwrap(), s);
+        let exact = sk(&s, &frame);
+        let cut = sk(&s.clone().with_sinc_tolerance(0.5).unwrap(), &frame);
+        assert!((exact.sk[0] - (1.0 + 0.1_f64.sin() / 0.1)).abs() < 1e-12);
+        assert_eq!(cut.sk[0], 2.0);
+        assert!(matches!(
+            s.with_sinc_tolerance(-1.0),
+            Err(ComputeError::OutOfRange { .. })
+        ));
     }
 }
