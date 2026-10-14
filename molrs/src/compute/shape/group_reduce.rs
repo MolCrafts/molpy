@@ -124,6 +124,7 @@ impl GroupReduce {
 
     /// The row of `item`'s group in [`keys`](Self::keys); `None` when the item
     /// is in no group.
+    #[cfg(feature = "voronoi")]
     pub(crate) fn group_of(&self, item: usize) -> Option<usize> {
         self.group[item]
     }
