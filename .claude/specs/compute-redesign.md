@@ -239,6 +239,10 @@ origin stride (the old `with_stride` is dropped; all origins). `Survival` takes
 until `PairPresence` (05). Every surface also implements `Stream` by handing out
 its correlator's accumulator.
 
+*As built (05):* `Ssp` is gone: the stable-states picture is
+`PairPresence::new(r0, exclude_self)?.with_r1(r1)?` (hysteresis: enter at
+`d ≤ r0`, stay while `d ≤ r1`) followed by `Survival { Continuous }`.
+
 **D5. A neighbour table knows its geometry.**
 - `core::Neighbors` records the box it was searched in:
   `Neighbors::simbox() -> Option<&SimBox>`.
@@ -647,6 +651,46 @@ its type; `D = slope / 2d` is `Msd` → `LinearFit`. `DebyeFit` moved to
 | `hbond_components`, `HBondNetworkResult` | M `HBondsResult::components(frame)`, returning a label array that implements `Partition` |
 | `hbond_lifetimes`, `HBondLifetimeResult` | → `Survival` surface on `HBondsResult::presence()` + `CumulativeTrapezoid` |
 
+*As built (05):*
+- **`Presence { pairs: Vec<(u32, u32)>, values: T × n_pairs }`** (`dynamics/presence.rs`),
+  columns in ascending pair order, never empty; `values.view()` is `SurvivalInput::presence`.
+- **`PairPresence::new(r0, exclude_self) -> Result`**, `with_r1(r1) -> Result` (`r1 ≥ r0`, default
+  `r0`); `compute(PairPresenceInput { frames: &[&(dyn PairSource + Sync)] })` → `Option<Presence>`
+  (`None` = no pair ever within `r0`). One table per frame from core search (any box shape), with
+  `dist_sq` and a cutoff ≥ `r1` (a pair the search did not report is absent — documented, not
+  checkable); all frames one `QueryMode` (`BadShape`). `exclude_self` has no default (behaviour
+  change 4) and is `OutOfRange` unless the tables are a cross-query with equal point counts.
+  *Deviation:* the survival curve is now per pair (`Survival`'s mean over pairs), not per reference
+  particle: `C(0) = ⟨h⟩` instead of the coordination number; and an SSP origin counts whenever the
+  pair is in the bonded stable state (inside `r1` after entering `r0`), not only when `d ≤ r0` at
+  that origin. Two `pair_survival_tcf` assertions moved with this (see Behaviour changes, 05 note).
+- **`HBonds::new(criterion) -> Result`** (validates the criterion), `Default`;
+  `compute(HBondsInput { positions: T × N × 3, donors: &[(D, H)], acceptors: &[A], pairs:
+  &[&Neighbors] })` → `HBondsResult { per_frame, counts, n_atoms }`. Each table is the caller's
+  cross-query of the donor sites (D or H per `dist_kind`, `donors` order) against the acceptors;
+  the kernel gates on the table's own `dist_sq ≤ dist_cutoff²` (a wider search does not widen the
+  criterion). *Deviation:* the box is not a separate argument — it is each table's
+  `Neighbors::simbox()` (D5), so it cannot disagree with the search; a table without one is
+  `BadShape`. The input is the whole trajectory (not per snapshot through `Batch`), because
+  `presence()` spans frames.
+- **`HBondCriterion`** gains `donor_acceptor_margin` (default 1.05 Å, the former `+ 1.05`) and
+  `with_donor_acceptor_margin`.
+- **`HBondsResult::presence() -> Option<Presence>`** keyed `(donor, acceptor)`, ascending (was
+  first appearance); `None` when no bond formed in any frame — the §5 "explicit Option" lives here,
+  upstream of `Survival` → `CumulativeTrapezoid`. Lifetimes are `∫ S / S(0)`.
+- **`HBondsResult::components(frame) -> Result<Vec<u32>>`**: a label per atom (a `Partition`), on
+  `Topology::connected_components`; each bond joins donor–hydrogen–acceptor. *Deviation:* the old
+  function took caller-defined nodes/edges and returned sorted sizes; sizes are now
+  `Partition`-derived.
+- **`VanHove::new(axis: Axis, lags) -> Result`** (axis must start at `r ≥ 0`; no separate
+  `RadialAxis` type — `Axis::shell_volumes(3)` is the radial part), `with_origins(Origins) ->
+  Result`, `with_stride(n) -> Result` (`Origins::First` with a stride ≠ 1 is `OutOfRange`);
+  `compute(VanHoveInput { positions: T × N × 3, boxes: &[SimBox] })` → `VanHoveResult` (no
+  `has_distinct`). Bins through `Histogram<1>` (half-open), one core `NeighborQuery` per origin
+  in that origin's box. *Additions:* a wrapped trajectory is `Wrapped` (D9, the shared guard
+  `time_series::guards::first_wrapped_item`, now `pub(crate)`); a lag whose displacements all
+  fall outside the axis is `EmptyInput` (`Histogram::density`, was a zero row).
+
 **Histograms, distributions, density, diffraction.**
 
 | Symbol | Fate |
@@ -833,6 +877,16 @@ that owns the file.
   - An empty donor/acceptor selection becomes `EmptyInput`.
   - Lifetimes that are all zero because no bond ever formed become explicit
     `Option`s.
+  - *As built (05):* all done, with VanHove's four items: `exclude_self` →
+    `OutOfRange`; empty selection → `EmptyInput` (was an empty bond list);
+    no bond ever → `HBondsResult::presence()` / `PairPresence` return `None`;
+    the `max_lag` clamps went with `pair_survival_tcf` / `hbond_lifetimes`
+    (`Survival` already errors). VanHove: a lag `≥ T` → `OutOfRange` (was
+    dropped), `with_stride(0)` → `OutOfRange` (was `max(1)`), `n_orig.max(1)`
+    is gone (every lag has origin 0), no box → the boxes are required data
+    (`DimensionMismatch` when not one per frame; was zeros + a flag). Also: an
+    `HBondCriterion` out of range is `OutOfRange` in `HBonds::new`; non-finite
+    positions are `NonFinite` in `HBonds` / `VanHove`.
 - **Cubatic:** `with_n_chains(n.max(1))` becomes an error.
 - **Panics:** `Rdf::with_dimensionality` `assert!`, `DiffractionPattern::with_axis`
   `assert!` and the `SpatialDistribution` unchecked index panic all become
@@ -944,7 +998,7 @@ the named link.
 |---|---|---|---|
 | `CenterOfMass`, `InertiaTensor`, `RadiusOfGyration`, `ClusterProperties` | `with_masses(&[F])` → `masses: Option<Vec<F>>` | `compute(…, masses)`; `RadiusOfGyration` / `ClusterProperties` deleted | 07 |
 | `SpatialDistribution` | `new(reference: Vec<usize>, template: Array2, target: Vec<usize>, grid)`; `with_orientation(pairs)` | reference/target indices, template coordinates and orientation pairs → `compute`; `grid` stays in `new` | 04 (done) |
-| `HBonds` | `new(donors: Vec<(u32, u32)>, acceptors: Vec<u32>, …)` | donor/acceptor selections → `compute` | 05 |
+| `HBonds` | `new(donors: Vec<(u32, u32)>, acceptors: Vec<u32>, …)` | donor/acceptor selections → `compute` | 05 (done) |
 | `AtomGroups` | `new(arity, flat: Vec<Idx>)` (data wrapper) | deleted; the index-tuple array → `compute` of the distributions | 04 (done) |
 | `DensityGrid` | `new(origin, basis, dims, density: Vec<F>)` (data wrapper) | `RegularGrid` + values array → `VoronoiIntegration::compute` | 08 |
 | `RdfAccumulator` | public `new(rdf: Rdf)` | private; reached only through `Rdf::accumulator()` | 04 (done) |
@@ -989,6 +1043,8 @@ regression.
      Re-pinned in 07.
 3. **VanHove bin edges.** VanHove now uses half-open bins like Rdf, so d = r_max
    is no longer clamped into the last bin. Re-pinned in 05.
+   - *As built (05):* VanHove had no golden test, so no literal moved; the new
+     `a_distance_of_exactly_r_max_is_outside_the_axis` pins the rule.
 4. **Defaults.** Every binding and catalog default becomes the core default:
    - Cubatic 1.0 / 0.95 / 500 / 4
    - EnvironmentMatch `max_neighbors` 8
@@ -1007,6 +1063,16 @@ regression.
    - Re-pinned in 06.
 6. **Fallbacks become errors** (§5). Inputs that used to "work" with a silently
    wrong answer now fail.
+
+*Link 05 note:* moving pair survival onto `PairPresence` → `Survival` changed
+two hand-computed assertions of the deleted `pair_survival_tcf` tests (now
+in `dynamics/presence.rs`): `coordination_number_at_lag_zero` `C(0) = 2.0` →
+`every_pair_is_a_column` `1.0` (per pair, not per reference particle), and
+`ssp_uses_inner_birth_outer_survival_cutoff` `C(0) = 0.5` →
+`hysteresis_enters_at_r0_and_leaves_beyond_r1` `1.0` (frame 1 is in the bonded
+stable state). Every other pair-survival and `hbond_lifetimes` literal is
+unchanged; `a_bond_that_never_forms_gives_zero_curves` became
+`no_bond_ever_is_no_presence` (§5).
 
 *Link 04 note (no golden literal moved):* unifying the grid stencil reach on the
 `ceil`-equivalent rule makes `GaussianDensity` include voxels whose centres
@@ -1030,7 +1096,7 @@ happens inside the chain.
 | 02-time-series (code-complete 2026-10-14) | As built: `compute/time_series/` holds `Correlator` (+ `CorrelatorAccumulator`), the eight D4 surfaces, `TimeCorrelation`, `Derivative`, `Unwrap`, `Window`/`Spectrum`/`FrequencyGrid`; `signal`, `transport/`, `msd/`, `dynamics/acf.rs` deleted; legacy spectra/dielectric/hbond rewired with unchanged numbers (deviations noted in D4, D6, D7, §1, §3, §4, §5, Behaviour change 1). Scope: `Correlator` (all five kernels, FFT + streaming ring, equal to FFT round-off), `Derivative`, `Unwrap`, the D4 surfaces with their fixed configurations pinned against today's goldens, `TimeCorrelation`, `Window`, `Spectrum`, `FrequencyGrid`. Delete `signal` (module + feature). Migrate or delete the time-correlation rows of §4. | 01 |
 | 03-spectra-dielectric (code-complete 2026-10-14) | As built: fits on `{&TimeCorrelation, channel}`, `CumulativeTrapezoid` → `TimeCorrelation`; `Spectrum` is the only vibrational transform; `PolarizabilityParts` + `RamanSpectrum`; `DipoleMoment`, `StaticDielectric`, `KineticEnergy`; four routes `new(window, units)` / `compute(DielectricSpectrumInput)`; checks as `Compute` + `Verdict`; one `DielectricPrefactor`; behaviour change 1 applied; `center_of_mass_velocity` kept until 07 (deviations in §3, §4, §5, Behaviour change 1). Scope: Fits on `TimeCorrelation`, `Spectrum` unification, the Raman family with `PolarizabilityParts`, `DipoleMoment`, `StaticDielectric`, the four ε(ω) routes, the checks, the one prefactor implementation (fixes the fs/ps doc contradiction at `dielectric_spectrum.rs:59,281`), `KineticEnergy`. | 02 |
 | 04-histogram-grid (code-complete 2026-10-14) | As built: `binning/` (`Axis`, `Histogram<N>`) and `grid/` (`RegularGrid<D>`, `SpreadKernel`, `Gaussian`, `Indicator`) are the one binning / spreading implementation; `Rdf` is one `Stream` over `&dyn PairSource` (`RdfMode`, `compute_self/cross/frame`, public `RdfAccumulator::new` deleted); CorrelationFunction, LocalDensity, S(k) ×2, DiffractionPattern, Gaussian/Sphere density per-snapshot `Compute`s; DF / CDF<N> / SDF `Stream`s with all data in `compute`; `Histogram1d`, `AxisSpec`, `renormalize_density`, `AtomGroups`, `GridSpec`, `InternalCoordinate::from_kind` deleted; the 2-D FFT routed through `Spectrum` (deviations in D6, §3, §4, §5, Behaviour changes' link 04 note). Scope: `Axis`, `Histogram<N>`, `RegularGrid`, `SpreadKernel`; migrate Rdf (`Stream` over `PairSource`), CorrelationFunction, LocalDensity, distributions, S(k) ×2, DiffractionPattern, Gaussian/Sphere density, SpatialDistribution. | 01 |
-| 05-dynamics | `Presence`/`PairPresence`, survival through `Correlator`, H-bond input/presence/components, VanHove on `Histogram` + `core::NeighborQuery`. | 02, 04 |
+| 05-dynamics (code-complete 2026-10-14) | As built: `Presence` + `PairPresence` (hysteresis `r0`/`r1`, core neighbour tables as data, `Option` output) feed `Survival`; `HBonds::new(criterion)` with selections, trajectory and per-frame cross-query tables in `compute`, `HBondsResult::presence()` / `components(frame)`; `VanHove` on `Axis`/`Histogram` + `Origins`, boxes as data; `pair_survival_tcf`, `PairSurvivalResult`, `SurvivalMethod`, `hbond_lifetimes`, `HBondLifetimeResult`, `presence_from_hbonds`, `hbond_components`, `HBondNetworkResult` deleted (deviations in D4, §4, §5, Behaviour change 3 and the 05 note). Scope: `Presence`/`PairPresence`, survival through `Correlator`, H-bond input/presence/components, VanHove on `Histogram` + `core::NeighborQuery`. | 02, 04 |
 | 06-order-environment | `BondBasis`/`BondAverage`/`QlmTable`; Steinhardt, Hexatic, SolidLiquid, ContinuousCoordination, BOO, LocalDescriptors, LocalBondProjection, EnvironmentMatch, AngularSeparation, Nematic, Cubatic; `Pmft<C>`. | 01, 04 |
 | 07-groups | `GroupReduce`; Cluster (`connected_components`, `merge`), CenterOfMass, GyrationTensor, InertiaTensor; delete ClusterCenters, RadiusOfGyration, ClusterProperties; Pca (`eigh_sym`, `n_components`), Kmeans (`FeatureMatrix`). | 01, 06 (FeatureMatrix producers) |
 | 08-voronoi | `Compute` impls, core cell list, explicit units, `FiniteFieldPolarizability`, `GridField`. | 04, 07 |

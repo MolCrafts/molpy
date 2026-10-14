@@ -53,7 +53,7 @@ mod correlator;
 mod current_acf;
 mod derivative;
 mod dipole_acf;
-mod guards;
+pub(crate) mod guards;
 mod msd;
 mod onsager;
 mod options;

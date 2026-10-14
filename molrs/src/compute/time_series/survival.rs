@@ -26,7 +26,11 @@ named_enum! {
 /// intermittent:  C(t) = ⟨ h(τ) h(τ + t) ⟩
 /// ```
 ///
-/// averaged over bonds and every origin `τ`; `S(0) = C(0) = ⟨h⟩`. Divide by
+/// averaged over bonds and every origin `τ`; `S(0) = C(0) = ⟨h⟩`. The
+/// series is a [`Presence`](crate::compute::Presence)'s `values`, from
+/// [`PairPresence`](crate::compute::PairPresence) (distance criterion, with
+/// hysteresis for the stable-states picture) or
+/// [`HBondsResult::presence`](crate::compute::HBondsResult::presence). Divide by
 /// the value at lag 0 for the normalised curves, and integrate
 /// ([`CumulativeTrapezoid`](crate::compute::CumulativeTrapezoid)) for a
 /// lifetime. A [`Correlator`] with the [`LagKernel::Persistence`] kernel

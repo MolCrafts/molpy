@@ -1,4 +1,5 @@
-//! Input guards shared by the batch and streaming correlator.
+//! Input guards shared by the batch and streaming correlator (and the
+//! wrapped-trajectory check of [`VanHove`](crate::compute::VanHove)).
 
 use molrs::core::SimBox;
 use molrs::op::F;
@@ -35,7 +36,7 @@ pub(super) fn require_presence(values: impl IntoIterator<Item = F>) -> Result<()
 /// The first item whose step from `prev` to `now` is longer than half the
 /// shortest perpendicular height of `simbox` along its periodic axes; `None`
 /// if every step is shorter or the box has no periodic axis.
-pub(super) fn first_wrapped_item(
+pub(crate) fn first_wrapped_item(
     prev: ArrayView2<'_, F>,
     now: ArrayView2<'_, F>,
     simbox: &SimBox,

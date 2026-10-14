@@ -1,19 +1,18 @@
 //! Van Hove correlation function `G(r, t)` — self and distinct parts.
 
-use crate::compute::ComputeResult;
-use molrs::core::FrameAccess;
-use molrs::core::NeighborQuery;
+use molrs::core::{NeighborQuery, SimBox};
 use molrs::op::F;
-use ndarray::{Array1, Array2};
+use ndarray::{Array1, Array2, ArrayView3, Axis as NdAxis};
 
-use crate::compute::ComputeError;
-use crate::compute::LegacyCompute;
-use crate::compute::positions::get_positions_ref;
+use crate::compute::time_series::guards::first_wrapped_item;
+use crate::compute::{Axis, Compute, ComputeError, Histogram, Origins};
 
-/// Van Hove correlation analyzer.
+/// Van Hove space–time correlation `G(r, t)`, self and distinct parts.
 ///
-/// Stateless parameter bag: the r-grid (`n_rbins`, `r_max`), the set of integer
-/// frame-lag times to evaluate, and the time-origin `stride`.
+/// Configuration: the radial [`Axis`], the integer frame `lags` to evaluate
+/// and the time [`Origins`] (all origins, optionally every `stride`-th, or
+/// the first frame only). The data — an unwrapped `T × N × 3` trajectory and
+/// one box per frame — goes to [`compute`](Compute::compute).
 ///
 /// The Van Hove function is the space–time generalization of the radial
 /// distribution function (L. van Hove, *Phys. Rev.* **1954**, 95, 249; Hansen
@@ -31,55 +30,80 @@ use crate::compute::positions::get_positions_ref;
 ///
 /// # Provenance
 ///
-/// reference implementation (the reference implementation for this `analysis-parity` chain) does
-/// **not** ship a dedicated Van Hove analyzer — only its RDF and ACF machinery.
-/// Accordingly the **definition** follows van Hove 1954 / Hansen-McDonald, the
-/// **distinct-part binning + shell normalization** mirror the RDF pair-binning
-/// convention molrs already ports (`CDF::AddToBin`, reference implementation `src/df.cpp`, here
-/// a closed-range nearest-bin rule that link 05 of compute-redesign moves onto
-/// [`Axis`](crate::compute::Axis)) and
-/// the `4π/3 (r_o³−r_i³)` shell volume of [`Rdf`](crate::compute::Rdf)), and the
-/// **multi-time-origin averaging** mirrors the ACF origin accumulation in
-/// reference implementation `src/reordyn.cpp` / `src/acf.cpp`. Any deviation from a literal
-/// reference implementation port is therefore unavoidable (no source to port) and is documented
-/// here.
+/// The reference implementation ships no dedicated Van Hove analyzer — only
+/// its RDF and ACF machinery. The **definition** follows van Hove 1954 /
+/// Hansen–McDonald; the **binning** is the one [`Axis`] rule (half-open
+/// bins, like [`Rdf`](crate::compute::Rdf)) and the distinct-part shell
+/// normalization uses [`Axis::shell_volumes`]; the **multi-time-origin
+/// averaging** mirrors the ACF origin accumulation of the reference
+/// implementation (`src/reordyn.cpp` / `src/acf.cpp`).
 ///
 /// # Conventions
 ///
 /// - `g_self[t]` is the probability **density of the displacement magnitude**
-///   `|Δr|` at lag `t`: `∫ g_self dr = 1`, so its second moment
-///   `∫ r² g_self dr` is the MSD. (It is the radial-weighted self-part
+///   `|Δr|` over the axis: `∫ g_self dr = 1` over the displacements that fall
+///   inside it, so with an axis covering every displacement its second moment
+///   `∫ r² g_self dr` is the MSD. (It is the radial-weighted self part
 ///   `4π r² G_s^{3D}`, the directly histogrammable quantity.)
 /// - `g_distinct[t]` is the **number density** of other particles at distance
 ///   `r` from a reference particle, `ρ g(r)` at `t = 0`.
-/// - Self displacements use the raw (unwrapped) coordinate difference — exactly
-///   as [`Msd`](crate::compute::Msd) does — so the second-moment bridge holds.
-///   Distinct distances use the minimum image (matching `rdf`).
+/// - Self displacements use the raw coordinate difference — exactly as
+///   [`Msd`](crate::compute::Msd) does — so the trajectory must be unwrapped
+///   (see [`Unwrap`](crate::compute::Unwrap)); a frame-to-frame step longer
+///   than half the box is [`ComputeError::Wrapped`]. Distinct distances use
+///   the minimum image of the origin frame's box, through core
+///   [`NeighborQuery`] (any box shape): its pair set depends on the origin
+///   and the lag, so the search is built here, once per origin, and not
+///   taken from the caller.
 #[derive(Debug, Clone)]
 pub struct VanHove {
-    n_rbins: usize,
-    r_max: F,
+    axis: Axis,
     lags: Vec<usize>,
+    origins: Origins,
     stride: usize,
 }
 
+/// The trajectory a [`VanHove`] analyses.
+#[derive(Debug, Clone, Copy)]
+pub struct VanHoveInput<'a> {
+    /// Unwrapped positions, `T × N × 3`, Å.
+    pub positions: ArrayView3<'a, F>,
+    /// One box per frame.
+    pub boxes: &'a [SimBox],
+}
+
+/// Result of a [`VanHove`] computation.
+///
+/// Rows are lag times (`lags`), columns are r-bins (`r_centers`).
+#[derive(Debug, Clone)]
+pub struct VanHoveResult {
+    /// r-bin edges (`n_bins + 1`), Å.
+    pub r_edges: Array1<F>,
+    /// r-bin centers (`n_bins`), Å.
+    pub r_centers: Array1<F>,
+    /// The lag times evaluated (frame units), aligned with rows.
+    pub lags: Vec<usize>,
+    /// Self part `g_self[t]`: probability density of `|Δr|` over the axis.
+    pub g_self: Array2<F>,
+    /// Distinct part `g_distinct[t]`: number density of others at `r`
+    /// (`ρ g(r)` at `t = 0`).
+    pub g_distinct: Array2<F>,
+    /// Bin width, Å.
+    pub dr: F,
+}
+
 impl VanHove {
-    /// New analyzer binning distances in `[0, r_max]` into `n_rbins` bins,
-    /// evaluated at the given integer frame `lags` (e.g. `[0, 1, 5, 10]`).
+    /// Bin distances on `axis` (Å, starting at `r ≥ 0`), at the integer frame
+    /// `lags` (e.g. `[0, 1, 5, 10]`), over all time origins.
     ///
-    /// Lags `≥` the trajectory length are silently dropped at compute time
-    /// (you cannot form that displacement); lag `0` is always meaningful.
-    pub fn new(n_rbins: usize, r_max: F, lags: Vec<usize>) -> Result<Self, ComputeError> {
-        if n_rbins == 0 {
+    /// # Errors
+    /// [`ComputeError::OutOfRange`] for an axis starting below zero or an
+    /// empty `lags`.
+    pub fn new(axis: Axis, lags: Vec<usize>) -> Result<Self, ComputeError> {
+        if axis.min() < 0.0 {
             return Err(ComputeError::OutOfRange {
-                field: "VanHove::n_rbins",
-                value: n_rbins.to_string(),
-            });
-        }
-        if !(r_max.is_finite() && r_max > 0.0) {
-            return Err(ComputeError::OutOfRange {
-                field: "VanHove::r_max",
-                value: r_max.to_string(),
+                field: "VanHove::axis (a radial axis starts at r ≥ 0)",
+                value: axis.min().to_string(),
             });
         }
         if lags.is_empty() {
@@ -89,248 +113,406 @@ impl VanHove {
             });
         }
         Ok(Self {
-            n_rbins,
-            r_max,
+            axis,
             lags,
+            origins: Origins::All,
             stride: 1,
         })
     }
 
-    /// Set the time-origin stride (default 1 = use every frame as an origin).
-    pub fn with_stride(mut self, stride: usize) -> Self {
-        self.stride = stride.max(1);
-        self
+    /// Average over these time origins (default [`Origins::All`]).
+    ///
+    /// # Errors
+    /// [`ComputeError::OutOfRange`] for [`Origins::First`] with a stride
+    /// other than 1 (a single origin has no stride).
+    pub fn with_origins(mut self, origins: Origins) -> Result<Self, ComputeError> {
+        self.origins = origins;
+        self.check_origins()?;
+        Ok(self)
     }
 
-    fn shell_volume(&self, r_inner: F, r_outer: F) -> F {
-        crate::core::FOUR_THIRDS_PI * (r_outer.powi(3) - r_inner.powi(3))
+    /// Take every `stride`-th frame as a time origin (default 1).
+    ///
+    /// # Errors
+    /// [`ComputeError::OutOfRange`] for `stride == 0`, or a stride other than
+    /// 1 with [`Origins::First`].
+    pub fn with_stride(mut self, stride: usize) -> Result<Self, ComputeError> {
+        if stride == 0 {
+            return Err(ComputeError::OutOfRange {
+                field: "VanHove::stride",
+                value: stride.to_string(),
+            });
+        }
+        self.stride = stride;
+        self.check_origins()?;
+        Ok(self)
+    }
+
+    fn check_origins(&self) -> Result<(), ComputeError> {
+        if self.origins == Origins::First && self.stride != 1 {
+            return Err(ComputeError::OutOfRange {
+                field: "VanHove::stride (a single first origin has no stride)",
+                value: self.stride.to_string(),
+            });
+        }
+        Ok(())
+    }
+
+    /// The radial axis.
+    pub fn axis(&self) -> Axis {
+        self.axis
+    }
+
+    /// The lags evaluated, in frames.
+    pub fn lags(&self) -> &[usize] {
+        &self.lags
+    }
+
+    /// The time origins.
+    pub fn origins(&self) -> Origins {
+        self.origins
+    }
+
+    /// The origin stride.
+    pub fn stride(&self) -> usize {
+        self.stride
+    }
+
+    /// Validate the trajectory; returns `(T, N)`.
+    fn validate(&self, input: &VanHoveInput<'_>) -> Result<(usize, usize), ComputeError> {
+        let (n_frames, n_particles, n_dim) = input.positions.dim();
+        if n_frames == 0 || n_particles == 0 {
+            return Err(ComputeError::EmptyInput);
+        }
+        if n_dim != 3 {
+            return Err(ComputeError::DimensionMismatch {
+                expected: 3,
+                got: n_dim,
+                what: "VanHove positions (T × N × 3)",
+            });
+        }
+        if input.boxes.len() != n_frames {
+            return Err(ComputeError::DimensionMismatch {
+                expected: n_frames,
+                got: input.boxes.len(),
+                what: "VanHove boxes (one per frame)",
+            });
+        }
+        if let Some(&lag) = self.lags.iter().find(|&&lag| lag >= n_frames) {
+            return Err(ComputeError::OutOfRange {
+                field: "VanHove::lags",
+                value: format!(
+                    "{lag} exceeds n_frames - 1 = {}: that lag has no time origin",
+                    n_frames - 1
+                ),
+            });
+        }
+        if let Some(index) = input.positions.iter().position(|v| !v.is_finite()) {
+            return Err(ComputeError::NonFinite {
+                where_: "VanHove positions",
+                index,
+            });
+        }
+        let frames = input.positions.outer_iter();
+        let steps = frames.clone().zip(frames.skip(1));
+        for (frame, ((prev, now), simbox)) in steps.zip(&input.boxes[1..]).enumerate() {
+            if let Some(item) = first_wrapped_item(prev, now, simbox)? {
+                return Err(ComputeError::Wrapped {
+                    frame: frame + 1,
+                    item,
+                });
+            }
+        }
+        Ok((n_frames, n_particles))
+    }
+
+    /// The self and distinct histograms (one per lag) of one origin `tau`.
+    ///
+    /// The `NeighborQuery` over `r_i(τ)` is built once and serves every lag;
+    /// each lag queries `r_j(τ + lag)` against it within `r_max` — every pair
+    /// beyond `r_max` lies outside the axis anyway. Self pairs `i == j` are
+    /// left out of the distinct part.
+    fn origin_histograms(
+        &self,
+        input: &VanHoveInput<'_>,
+        tau: usize,
+    ) -> Result<Vec<(Histogram<1>, Histogram<1>)>, ComputeError> {
+        let n_frames = input.positions.len_of(NdAxis(0));
+        let reference = input.positions.index_axis(NdAxis(0), tau);
+        let query = NeighborQuery::new(&input.boxes[tau], reference, self.axis.max());
+        let mut out = Vec::with_capacity(self.lags.len());
+        for &lag in &self.lags {
+            let mut self_part = Histogram::new([self.axis]);
+            let mut distinct = Histogram::new([self.axis]);
+            if tau + lag < n_frames {
+                let later = input.positions.index_axis(NdAxis(0), tau + lag);
+                for (r0, r1) in reference.outer_iter().zip(later.outer_iter()) {
+                    let d2: F = r0
+                        .iter()
+                        .zip(r1.iter())
+                        .map(|(a, b)| (b - a) * (b - a))
+                        .sum();
+                    self_part.add([d2.sqrt()])?;
+                }
+                let pairs = query.query(later);
+                let d2 = pairs
+                    .dist_sq()
+                    .expect("NeighborQuery::query stores dist_sq");
+                let reference_index = pairs.point_indices();
+                let later_index = pairs.query_point_indices();
+                for k in 0..pairs.n_pairs() {
+                    if reference_index[k] != later_index[k] {
+                        distinct.add([d2[k].sqrt()])?;
+                    }
+                }
+            }
+            out.push((self_part, distinct));
+        }
+        Ok(out)
     }
 }
 
-impl LegacyCompute for VanHove {
-    type Args<'a> = ();
+impl Compute for VanHove {
+    type Input<'a> = VanHoveInput<'a>;
     type Output = VanHoveResult;
 
-    fn compute<'a, FA: FrameAccess + Sync + 'a>(
-        &self,
-        frames: &[&'a FA],
-        _args: (),
-    ) -> Result<VanHoveResult, ComputeError> {
-        if frames.is_empty() {
-            return Err(ComputeError::EmptyInput);
-        }
-        let n_frames = frames.len();
-
-        // Gather positions per frame as three contiguous SoA columns (x/y/z),
-        // matching molrs's native Store layout — no interleaved `Array2`. The
-        // distinct part hands these straight to `NeighborQuery`'s SoA entry.
-        let mut pos: Vec<[Vec<F>; 3]> = Vec::with_capacity(n_frames);
-        let mut n_particles: Option<usize> = None;
-        for frame in frames {
-            let (xp, yp, zp) = get_positions_ref(*frame)?;
-            let (xs, ys, zs) = (xp.slice(), yp.slice(), zp.slice());
-            let m = xs.len();
-            match n_particles {
-                None => n_particles = Some(m),
-                Some(n0) if n0 != m => {
-                    return Err(ComputeError::DimensionMismatch {
-                        expected: n0,
-                        got: m,
-                        what: "VanHove particle count",
-                    });
-                }
-                _ => {}
-            }
-            pos.push([xs.to_vec(), ys.to_vec(), zs.to_vec()]);
-        }
-        let n = n_particles.unwrap_or(0);
-
-        // Distinct part needs a box volume for the ρ = N/V normalization.
-        let simbox = frames[0].simbox_ref();
-        let volume = simbox.map(|b| b.volume());
-
-        let dr = self.r_max / self.n_rbins as F;
-        let edges = Array1::from_iter((0..=self.n_rbins).map(|i| i as F * dr));
-        let centers = Array1::from_iter((0..self.n_rbins).map(|i| (i as F + 0.5) * dr));
-
-        // Keep only realizable lags (< n_frames).
-        let used_lags: Vec<usize> = self
-            .lags
-            .iter()
-            .copied()
-            .filter(|&t| t < n_frames)
-            .collect();
-        let n_lags = used_lags.len();
-
-        let mut g_self = Array2::<F>::zeros((n_lags, self.n_rbins));
-        let mut g_distinct = Array2::<F>::zeros((n_lags, self.n_rbins));
-
-        let n_rbins = self.n_rbins;
-        let r_max = self.r_max;
-        // Nearest-bin factor `fac = n_bins / (max − min)`, `min = 0`.
-        let fac = n_rbins as F / r_max;
-
-        // Deposit one in-range magnitude with the closed-range nearest-bin
-        // rule: with `min = 0` the range test is `0 ≤ d ≤ r_max` and the bin index
-        // is `⌊d·fac⌋` clamped to the last bin. Counts are integer `+1.0`
-        // increments, so accumulating them across origins/lags in any order (serial
-        // or the rayon reduce below) is bit-identical.
-        let bin = |counts: &mut [F], base: usize, d: F| {
-            if d < 0.0 || d > r_max {
-                return;
-            }
-            let mut ip = (d * fac) as usize;
-            if ip >= n_rbins {
-                ip = n_rbins - 1;
-            }
-            counts[base + ip] += 1.0;
+    /// # Errors
+    /// * [`ComputeError::EmptyInput`] for no frames or no particles, and for
+    ///   a lag at which no displacement falls inside the axis (its self
+    ///   density is undefined — widen the axis).
+    /// * [`ComputeError::DimensionMismatch`] for positions that are not
+    ///   `T × N × 3` or a box count other than `T`.
+    /// * [`ComputeError::OutOfRange`] for a lag `≥ T` (it has no origin).
+    /// * [`ComputeError::NonFinite`] for a non-finite position.
+    /// * [`ComputeError::Wrapped`] for a trajectory wrapped into the box.
+    fn compute(&self, input: VanHoveInput<'_>) -> Result<VanHoveResult, ComputeError> {
+        let (n_frames, n_particles) = self.validate(&input)?;
+        let origins: Vec<usize> = match self.origins {
+            Origins::All => (0..n_frames).step_by(self.stride).collect(),
+            Origins::First => vec![0],
         };
 
-        // Per-origin work: build the `NeighborQuery` spatial index over r_i(τ)
-        // ONCE, then reuse it for every realizable lag (each lag queries a
-        // different r_j(τ+lag) set). The index is built once per origin, not
-        // once per (lag, origin), and the pair set is the same either way: the
-        // query takes `&self` and never mutates the index.
-        //
-        // Distinct part uses the same cutoff-`r_max` search as `compute::rdf`
-        // (O(N·neighbours), not O(N²)); every pair beyond `r_max` would be dropped
-        // by the histogram anyway. The self pair (i == j) is excluded. Self part
-        // uses the raw (unwrapped) displacement magnitude — matching `msd`.
-        let accumulate =
-            |tau: usize, self_counts: &mut [F], dist_counts: &mut [F], n_origins: &mut [usize]| {
-                let [axs, ays, azs] = &pos[tau];
-                let nq = simbox.map(|sb| NeighborQuery::from_columns(sb, axs, ays, azs, r_max));
-                for (li, &lag) in used_lags.iter().enumerate() {
-                    if tau + lag >= n_frames {
-                        continue;
-                    }
-                    n_origins[li] += 1;
-                    let base = li * n_rbins;
-                    let [bxs, bys, bzs] = &pos[tau + lag];
-                    for i in 0..n {
-                        let dx = bxs[i] - axs[i];
-                        let dy = bys[i] - ays[i];
-                        let dz = bzs[i] - azs[i];
-                        bin(self_counts, base, (dx * dx + dy * dy + dz * dz).sqrt());
-                    }
-                    if let Some(ref nq) = nq {
-                        let nlist = nq.query_columns(bxs, bys, bzs);
-                        let ref_i = nlist.point_indices(); // index into a (= r_i(τ))
-                        let oth_j = nlist.query_point_indices(); // index into b (= r_j(τ+lag))
-                        let d2 = nlist
-                            .dist_sq()
-                            .expect("NeighborQuery::query_columns stores dist_sq");
-                        for k in 0..nlist.n_pairs() {
-                            if ref_i[k] == oth_j[k] {
-                                continue;
-                            }
-                            bin(dist_counts, base, d2[k].sqrt());
-                        }
-                    }
-                }
-            };
-
-        // Time origins τ = 0, stride, 2·stride, … < n_frames, gathered once and
-        // fanned out over lags inside `accumulate` (each lag keeps the origins
-        // with `tau + lag < n_frames`).
-        let origins: Vec<usize> = (0..n_frames).step_by(self.stride).collect();
-
-        let n_cells = n_lags * self.n_rbins;
-        let zero = || {
-            (
-                vec![0.0 as F; n_cells],
-                vec![0.0 as F; n_cells],
-                vec![0usize; n_lags],
-            )
-        };
-
+        // Integer counts: merging the per-origin histograms in any order is
+        // bit-identical, so the parallel and serial paths agree exactly.
         #[cfg(feature = "rayon")]
-        let (self_counts, dist_counts, origins_per_lag) = {
+        let per_origin: Vec<Vec<(Histogram<1>, Histogram<1>)>> = {
             use rayon::prelude::*;
             origins
                 .par_iter()
-                .fold(zero, |(mut sc, mut dc, mut no), &tau| {
-                    accumulate(tau, &mut sc, &mut dc, &mut no);
-                    (sc, dc, no)
-                })
-                .reduce(zero, |(mut sca, mut dca, mut noa), (scb, dcb, nob)| {
-                    for (x, y) in sca.iter_mut().zip(scb.iter()) {
-                        *x += *y;
-                    }
-                    for (x, y) in dca.iter_mut().zip(dcb.iter()) {
-                        *x += *y;
-                    }
-                    for (x, y) in noa.iter_mut().zip(nob.iter()) {
-                        *x += *y;
-                    }
-                    (sca, dca, noa)
-                })
+                .map(|&tau| self.origin_histograms(&input, tau))
+                .collect::<Result<_, _>>()?
         };
         #[cfg(not(feature = "rayon"))]
-        let (self_counts, dist_counts, origins_per_lag) = {
-            let (mut sc, mut dc, mut no) = zero();
-            for &tau in &origins {
-                accumulate(tau, &mut sc, &mut dc, &mut no);
-            }
-            (sc, dc, no)
-        };
+        let per_origin: Vec<Vec<(Histogram<1>, Histogram<1>)>> = origins
+            .iter()
+            .map(|&tau| self.origin_histograms(&input, tau))
+            .collect::<Result<_, _>>()?;
 
-        // g_self: probability density of |Δr| (a histogram density:
-        // counts / (binned · bin_width), binned = Σ counts, bin_width = dr).
-        // g_distinct: number density of others at r → ρ g(r) at lag 0.
-        for (li, &n_orig) in origins_per_lag.iter().enumerate() {
-            let base = li * self.n_rbins;
-            let self_slice = &self_counts[base..base + self.n_rbins];
-            let binned: F = self_slice.iter().sum();
-            if binned > 0.0 {
-                let denom = binned * dr;
-                for (k, gk) in g_self.row_mut(li).iter_mut().enumerate() {
-                    *gk = self_slice[k] / denom;
-                }
+        let shells = self.axis.shell_volumes(3)?;
+        let n_bins = self.axis.n_bins();
+        let mut g_self = Array2::<F>::zeros((self.lags.len(), n_bins));
+        let mut g_distinct = Array2::<F>::zeros((self.lags.len(), n_bins));
+        for (li, &lag) in self.lags.iter().enumerate() {
+            let mut self_part = Histogram::new([self.axis]);
+            let mut distinct = Histogram::new([self.axis]);
+            for histograms in &per_origin {
+                self_part.merge(&histograms[li].0);
+                distinct.merge(&histograms[li].1);
             }
-            if volume.is_some() {
-                let denom = (n as F) * (n_orig.max(1) as F);
-                for (k, gk) in g_distinct.row_mut(li).iter_mut().enumerate() {
-                    let shell = self.shell_volume(edges[k], edges[k + 1]);
-                    if shell > 0.0 {
-                        *gk = dist_counts[base + k] / (denom * shell);
-                    }
-                }
+            // Every lag is below T, so origin 0 always contributes.
+            let n_origins = origins.iter().filter(|&&tau| tau + lag < n_frames).count();
+            g_self.row_mut(li).assign(
+                &self_part
+                    .density()?
+                    .into_dimensionality::<ndarray::Ix1>()
+                    .expect("a 1-D histogram"),
+            );
+            let denom = (n_particles * n_origins) as F;
+            for (k, g) in g_distinct.row_mut(li).iter_mut().enumerate() {
+                *g = distinct.counts()[[k]] / (denom * shells[k]);
             }
         }
 
         Ok(VanHoveResult {
-            r_edges: edges,
-            r_centers: centers,
-            lags: used_lags,
+            r_edges: self.axis.edges(),
+            r_centers: self.axis.centers(),
+            lags: self.lags.clone(),
             g_self,
             g_distinct,
-            dr,
-            has_distinct: volume.is_some(),
+            dr: self.axis.width(),
         })
     }
 }
 
-/// Result of a [`VanHove`] computation.
-///
-/// Rows are lag times (`lags`), columns are r-bins (`r_centers`).
-#[derive(Debug, Clone)]
-pub struct VanHoveResult {
-    /// r-bin edges (`n_rbins + 1`), Å.
-    pub r_edges: Array1<F>,
-    /// r-bin centers (`n_rbins`), Å.
-    pub r_centers: Array1<F>,
-    /// Realizable lag times actually evaluated (frame units), aligned with rows.
-    pub lags: Vec<usize>,
-    /// Self part `g_self[t]`: probability density of `|Δr|`, `∫ g_self dr = 1`.
-    pub g_self: Array2<F>,
-    /// Distinct part `g_distinct[t]`: number density of others at `r`
-    /// (`ρ g(r)` at `t = 0`). All zero when the frame had no `SimBox`.
-    pub g_distinct: Array2<F>,
-    /// Bin width, Å.
-    pub dr: F,
-    /// Whether the distinct part was computed (requires a `SimBox`).
-    pub has_distinct: bool,
-}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::compute::time_series::test_support::trajectory;
+    use ndarray::{Array3, array};
 
-impl ComputeResult for VanHoveResult {}
+    fn cube(l: F) -> SimBox {
+        SimBox::cube(l, array![0.0, 0.0, 0.0], [true, true, true]).unwrap()
+    }
+
+    fn run(analysis: &VanHove, x: &Array3<F>, l: F) -> Result<VanHoveResult, ComputeError> {
+        let boxes = vec![cube(l); x.len_of(NdAxis(0))];
+        analysis.compute(VanHoveInput {
+            positions: x.view(),
+            boxes: &boxes,
+        })
+    }
+
+    /// Two particles 1 Å apart; particle 0 steps +0.25 Å per frame along x,
+    /// particle 1 sits still. Axis [0, 2) in 8 bins of 0.25.
+    fn walker() -> Array3<F> {
+        trajectory(&[
+            vec![[1.0, 1.0, 1.0], [2.0, 1.0, 1.0]],
+            vec![[1.25, 1.0, 1.0], [2.0, 1.0, 1.0]],
+            vec![[1.5, 1.0, 1.0], [2.0, 1.0, 1.0]],
+        ])
+    }
+
+    #[test]
+    fn self_and_distinct_parts_by_hand() {
+        let vh = VanHove::new(Axis::new(0.0, 2.0, 8).unwrap(), vec![0, 1, 2]).unwrap();
+        let res = run(&vh, &walker(), 20.0).unwrap();
+        let dr = 0.25;
+        assert_eq!(res.dr, dr);
+        assert_eq!(res.lags, vec![0, 1, 2]);
+
+        // Self part. Lag 0: every |Δr| = 0 → bin 0. Lag 1: 0.25 (bin 1) and 0
+        // (bin 0), over two origins. Lag 2: 0.5 (bin 2) and 0 (bin 0).
+        let density = |counts: [F; 8], total: F| counts.map(|c| c / (total * dr));
+        let lag0 = density([6.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], 6.0);
+        let lag1 = density([2.0, 2.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], 4.0);
+        let lag2 = density([1.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0], 2.0);
+        for (li, want) in [lag0, lag1, lag2].iter().enumerate() {
+            assert_eq!(res.g_self.row(li).to_vec(), want.to_vec(), "self lag {li}");
+        }
+
+        // Distinct part at lag 0: the pair at d = 1.0, 0.75, 0.5 in frames
+        // 0, 1, 2 — each seen from both ends: 2 counts per frame in bins 4,
+        // 3, 2, over N = 2 particles and 3 origins.
+        let shells = Axis::new(0.0, 2.0, 8).unwrap().shell_volumes(3).unwrap();
+        for k in [2, 3, 4] {
+            let want = 2.0 / (2.0 * 3.0 * shells[k]);
+            assert!((res.g_distinct[[0, k]] - want).abs() < 1e-12, "bin {k}");
+        }
+        assert_eq!(
+            res.g_distinct.row(0).iter().filter(|&&g| g != 0.0).count(),
+            3
+        );
+    }
+
+    /// Behaviour change 3: half-open bins, like `Rdf`. A displacement of
+    /// exactly `r_max` is outside the axis; it used to be clamped into the
+    /// last bin.
+    #[test]
+    fn a_distance_of_exactly_r_max_is_outside_the_axis() {
+        // Particle 0 jumps exactly 2.0 = r_max; particle 1 stays.
+        let x = trajectory(&[
+            vec![[1.0, 1.0, 1.0], [5.0, 5.0, 5.0]],
+            vec![[3.0, 1.0, 1.0], [5.0, 5.0, 5.0]],
+        ]);
+        let vh = VanHove::new(Axis::new(0.0, 2.0, 4).unwrap(), vec![1]).unwrap();
+        let res = run(&vh, &x, 20.0).unwrap();
+        // Only particle 1's zero displacement is binned: all weight in bin 0.
+        assert_eq!(res.g_self.row(0).to_vec(), vec![2.0, 0.0, 0.0, 0.0]);
+    }
+
+    #[test]
+    fn origin_stride_and_first_origin() {
+        let x = walker();
+        let axis = Axis::new(0.0, 2.0, 8).unwrap();
+        // Stride 2: origins 0 and 2; lag 1 only has origin 0 (0.25 and 0).
+        let strided = VanHove::new(axis, vec![1]).unwrap().with_stride(2).unwrap();
+        let first = VanHove::new(axis, vec![1])
+            .unwrap()
+            .with_origins(Origins::First)
+            .unwrap();
+        let a = run(&strided, &x, 20.0).unwrap();
+        let b = run(&first, &x, 20.0).unwrap();
+        assert_eq!(a.g_self, b.g_self);
+        assert_eq!(a.g_self[[0, 0]], 2.0);
+        assert_eq!(a.g_self[[0, 1]], 2.0);
+    }
+
+    /// Every former fallback is an error with its own variant.
+    #[test]
+    fn former_fallbacks_are_errors() {
+        let axis = Axis::new(0.0, 2.0, 8).unwrap();
+        let x = walker();
+
+        // A lag with no origin used to be dropped silently.
+        let vh = VanHove::new(axis, vec![1, 3]).unwrap();
+        assert!(matches!(
+            run(&vh, &x, 20.0),
+            Err(ComputeError::OutOfRange {
+                field: "VanHove::lags",
+                ..
+            })
+        ));
+
+        // A zero stride used to be clamped to 1.
+        assert!(matches!(
+            VanHove::new(axis, vec![0]).unwrap().with_stride(0),
+            Err(ComputeError::OutOfRange {
+                field: "VanHove::stride",
+                ..
+            })
+        ));
+        assert!(matches!(
+            VanHove::new(axis, vec![0])
+                .unwrap()
+                .with_stride(2)
+                .unwrap()
+                .with_origins(Origins::First),
+            Err(ComputeError::OutOfRange { .. })
+        ));
+
+        // No box used to give an all-zero distinct part and a flag; the box
+        // is now required data, one per frame.
+        let vh = VanHove::new(axis, vec![0]).unwrap();
+        assert!(matches!(
+            vh.compute(VanHoveInput {
+                positions: x.view(),
+                boxes: &[],
+            }),
+            Err(ComputeError::DimensionMismatch { .. })
+        ));
+
+        // A lag at which nothing falls inside the axis has no self density.
+        let far = trajectory(&[vec![[1.0, 1.0, 1.0]], vec![[4.0, 1.0, 1.0]]]);
+        assert!(matches!(
+            run(&VanHove::new(axis, vec![1]).unwrap(), &far, 20.0),
+            Err(ComputeError::EmptyInput)
+        ));
+    }
+
+    #[test]
+    fn rejects_bad_configuration_and_data() {
+        assert!(matches!(
+            VanHove::new(Axis::new(0.0, 2.0, 8).unwrap(), vec![]),
+            Err(ComputeError::OutOfRange { .. })
+        ));
+        assert!(matches!(
+            VanHove::new(Axis::new(-1.0, 2.0, 8).unwrap(), vec![0]),
+            Err(ComputeError::OutOfRange { .. })
+        ));
+
+        let vh = VanHove::new(Axis::new(0.0, 2.0, 8).unwrap(), vec![1]).unwrap();
+        // A step of 6 Å in a 10 Å box: wrapped.
+        let wrapped = trajectory(&[vec![[0.5, 1.0, 1.0]], vec![[9.5, 1.0, 1.0]]]);
+        assert!(matches!(
+            run(&vh, &wrapped, 10.0),
+            Err(ComputeError::Wrapped { frame: 1, item: 0 })
+        ));
+
+        let mut nan = walker();
+        nan[[1, 0, 0]] = F::NAN;
+        assert!(matches!(
+            run(&vh, &nan, 20.0),
+            Err(ComputeError::NonFinite { .. })
+        ));
+    }
+}

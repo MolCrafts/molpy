@@ -90,8 +90,9 @@
 //! [`PairSource`](molrs::core::PairSource): a materialized table, or a built
 //! [`NeighborList`](molrs::core::NeighborList), which streams pairs straight
 //! out of its cell list without ever materializing them — the bounded-memory
-//! path for large systems. [`HBonds`] and [`VanHove`] build a cross-query
-//! internally, one per frame and one per time origin respectively.
+//! path for large systems. [`HBonds`] and [`PairPresence`] take the caller's
+//! per-frame tables; only [`VanHove`] builds its own cross-query, one per time
+//! origin, because its pair set depends on the origin and the lag.
 //!
 //! # Binning and grids
 //!
@@ -122,7 +123,7 @@
 //! | [`DipoleAcf`] | dipole fluctuation ACF | [`DebyeFit`] (τ_D) / [`DipoleAutocorrelationSpectrum`] |
 //! | [`OnsagerCorrelation`] | Onsager L_ij displacement correlations | [`LinearFit`] per pair |
 //! | [`ReorientationAcf`], [`RotationalAutocorrelation`] | orientational decay | [`DebyeFit`] |
-//! | [`Survival`] | continuous / intermittent survival | [`CumulativeTrapezoid`] (lifetime) |
+//! | [`Survival`] | continuous / intermittent survival of a [`Presence`] ([`PairPresence`], [`HBondsResult::presence`]) | [`CumulativeTrapezoid`] (lifetime) |
 //!
 //! Units follow the MD convention of the caller (time in the `dt` unit,
 //! velocities/dipoles as supplied); the fits document the MD→SI prefactors.
@@ -169,7 +170,7 @@
 //!   (`freud.density.Rdf`)
 //! - Voronoi kernels are catalogued under **locality**
 //!   (`freud.locality.Voronoi`)
-//! - van Hove / pair survival live under **transport** (with VACF/diffusion)
+//! - van Hove / pair presence live under **transport** (with VACF/diffusion)
 //! - static dielectric is under **spectroscopy**
 //! - cluster radius-of-gyration is under **cluster** (freud.cluster.ClusterProperties)
 //!
@@ -181,7 +182,7 @@
 //! | `time_series` | [`Correlator`] and its surfaces (MSD, VACF, Onsager, dipole / current ACFs, reorientation, survival), [`Derivative`], [`Unwrap`], [`Spectrum`] |
 //! | `spectroscopy` | [`PolarizabilityParts`], [`RamanSpectrum`], the four ε(ω) routes and their checks |
 //! | `fitting` | fits on a [`TimeCorrelation`]: [`LinearFit`], [`CumulativeTrapezoid`], [`Plateau`], [`DebyeFit`] |
-//! | `dynamics` | van Hove G(r, t), pair survival |
+//! | `dynamics` | van Hove G(r, t), pair presence |
 //! | `dielectric` | [`DipoleMoment`], [`StaticDielectric`], [`EwaldBoundary`] |
 //! | `cluster` | cluster analysis (freud's `Cluster`): connected components by distance + per-cluster properties |
 //! | `shape` | center of mass, cluster centers, gyration/inertia tensors, Rg |
@@ -193,7 +194,7 @@
 //! | `diffraction` | S(k) (Debye & direct), diffraction pattern |
 //! | `pmft` | potentials of mean force and torque (R12/XY/XYT/XYZ) |
 //! | `distribution` | distance/angle/dihedral distribution functions |
-//! | `hbond` | hydrogen-bond detection, lifetimes, network components |
+//! | `hbond` | hydrogen-bond detection, presence series, network components |
 //! | `kinetic` | [`KineticEnergy`] (and its temperature), centre-of-mass velocity of one state |
 //! | `voronoi` | radical Voronoi cells, domains, voids (feature `voronoi`) |
 
@@ -257,7 +258,9 @@ pub use distribution::{
     DistributionAccumulator, DistributionFrame, DistributionFunction, DistributionResult,
     InternalCoordinate, Observable,
 };
-pub use dynamics::{PairSurvivalResult, SurvivalMethod, VanHove, VanHoveResult, pair_survival_tcf};
+pub use dynamics::{
+    PairPresence, PairPresenceInput, Presence, VanHove, VanHoveInput, VanHoveResult,
+};
 pub use environment::{
     AngularSeparationGlobal, AngularSeparationGlobalArgs, AngularSeparationGlobalResult,
     AngularSeparationNeighbor, AngularSeparationNeighborArgs, AngularSeparationNeighborResult,
@@ -271,10 +274,7 @@ pub use fitting::{
     LinearFit, LinearFitInput, LinearFitResult, Plateau, PlateauInput, PlateauResult,
 };
 pub use grid::{Gaussian, Indicator, RegularGrid, SpreadKernel};
-pub use hbond::{
-    HBond, HBondCriterion, HBondDistanceKind, HBondLifetimeResult, HBondNetworkResult, HBonds,
-    HBondsResult, hbond_components, hbond_lifetimes, presence_from_hbonds,
-};
+pub use hbond::{HBond, HBondCriterion, HBondDistanceKind, HBonds, HBondsInput, HBondsResult};
 pub use kinetic::{
     KineticEnergy, KineticEnergyInput, KineticEnergyResult, center_of_mass_velocity,
 };
