@@ -84,6 +84,18 @@ impl Compute for Plateau {
     }
 }
 
+crate::compute::spec::compute_spec! {
+    Plateau as "Plateau";
+    params |s| {
+        start: Float;
+        end: Float;
+    }
+    inputs {
+        correlation: Upstream("TimeCorrelation");
+        channel: Index;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::super::curve;

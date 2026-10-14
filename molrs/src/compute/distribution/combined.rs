@@ -325,6 +325,26 @@ impl<const N: usize> CombinedDistributionResult<N> {
     }
 }
 
+crate::compute::spec::compute_spec! {
+    @[const N: usize] CombinedDistribution<N> as "CombinedDistribution", Frames;
+    params |s| {
+        observables: ChoiceList(InternalCoordinate::NAMES);
+        axes: AxisList;
+        sin_weight: IntList
+            = crate::compute::ParamDefault::UNSET
+            => s.sin_weight.contains(&true).then(|| {
+                crate::compute::ParamValue::IntList(
+                    (0..N).filter(|&axis| s.sin_weight[axis]).map(|axis| axis as u64).collect(),
+                )
+            });
+    }
+    inputs {
+        positions: Positions;
+        simbox: SimBox, optional;
+        tuples: TuplesList;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

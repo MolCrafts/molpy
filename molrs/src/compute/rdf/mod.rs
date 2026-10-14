@@ -41,6 +41,9 @@ pub struct Rdf {
 }
 
 impl Rdf {
+    /// The dimensionality of the shell normalisation when not set: 3.
+    pub const DEFAULT_DIMENSIONALITY: u8 = 3;
+
     /// Bin pair distances in `[r_min, r_max)` (Å) into `n_bins` bins, with
     /// the 3-D shell normalization.
     ///
@@ -59,7 +62,7 @@ impl Rdf {
         }
         Ok(Self {
             axis: Axis::new(r_min, r_max, n_bins)?,
-            dimensionality: 3,
+            dimensionality: Self::DEFAULT_DIMENSIONALITY,
         })
     }
 
@@ -129,6 +132,19 @@ impl Stream for Rdf {
 
     fn accumulator(&self) -> RdfAccumulator {
         RdfAccumulator::new(*self)
+    }
+}
+
+crate::compute::spec::compute_spec! {
+    Rdf as "Rdf", Frames;
+    params |s| {
+        n_bins: Int;
+        r_max: Float;
+        r_min: Float;
+        dimensionality: Int = Rdf::DEFAULT_DIMENSIONALITY => s.dimensionality;
+    }
+    inputs {
+        pairs: PairSource;
     }
 }
 

@@ -357,6 +357,22 @@ pub struct SpatialDistributionResult {
     pub n_frames: usize,
 }
 
+crate::compute::spec::compute_spec! {
+    SpatialDistribution as "SpatialDistribution", Frames;
+    params |s| {
+        grid: Grid;
+        bulk_density: Float = crate::compute::ParamDefault::UNSET => s.bulk_density;
+    }
+    inputs {
+        positions: Positions;
+        simbox: SimBox, optional;
+        reference: Indices;
+        template: Positions;
+        target: Indices;
+        orientation: IndexPairs, optional;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -87,6 +87,15 @@ impl Compute for DebyeFit {
     }
 }
 
+crate::compute::spec::compute_spec! {
+    DebyeFit as "DebyeFit";
+    params |s| {}
+    inputs {
+        correlation: Upstream("TimeCorrelation");
+        channel: Index;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::super::curve;

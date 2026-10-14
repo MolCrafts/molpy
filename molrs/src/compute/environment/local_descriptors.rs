@@ -140,6 +140,16 @@ impl FeatureMatrix for LocalDescriptorsResult {
     }
 }
 
+crate::compute::spec::compute_spec! {
+    LocalDescriptors as "LocalDescriptors";
+    params |s| {
+        l_max: Int;
+    }
+    inputs {
+        neighbors: Neighbors;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

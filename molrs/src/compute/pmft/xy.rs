@@ -67,6 +67,20 @@ impl PairCoordinate for Xy {
     }
 }
 
+crate::compute::spec::compute_spec! {
+    Pmft<Xy> as "PmftXy";
+    params |s| {
+        x_max: Float;
+        y_max: Float;
+        n_x: Int;
+        n_y: Int;
+    }
+    inputs {
+        pairs: Neighbors;
+        orientations: Angles, optional;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

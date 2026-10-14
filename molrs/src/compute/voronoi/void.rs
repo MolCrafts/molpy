@@ -129,6 +129,16 @@ impl Compute for VoronoiVoidAnalysis {
     }
 }
 
+crate::compute::spec::compute_spec! {
+    VoronoiVoidAnalysis as "VoronoiVoidAnalysis";
+    params |s| {}
+    inputs {
+        cells: Upstream("VoronoiCells");
+        is_void: Mask;
+        box_volume: Scalar;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

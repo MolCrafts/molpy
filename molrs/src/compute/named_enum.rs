@@ -1,8 +1,10 @@
 //! `named_enum!` — the one way a user choice that has a name becomes an enum.
 //!
 //! An enum declared through it carries its canonical names: `as_str`, the
-//! `ALL` / `NAMES` tables, `Display`, and a `FromStr` that accepts exactly the
-//! canonical names — no aliases, no case folding. Bindings parse user strings
+//! `ALL` / `NAMES` tables, `Display`, a `FromStr` that accepts exactly the
+//! canonical names — no aliases, no case folding — and the conversion into a
+//! [`ParamValue::Name`](crate::compute::ParamValue::Name) its
+//! [`ComputeSpec`](crate::compute::ComputeSpec) entries use. Bindings parse user strings
 //! through this `FromStr` and never `match` on a string themselves, so every
 //! binding accepts the same spellings and reports the same error.
 
@@ -56,6 +58,18 @@ macro_rules! named_enum {
         impl ::std::fmt::Display for $name {
             fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
                 f.write_str(self.as_str())
+            }
+        }
+
+        impl ::std::convert::From<$name> for $crate::compute::ParamValue {
+            fn from(choice: $name) -> Self {
+                Self::Name(choice.as_str())
+            }
+        }
+
+        impl ::std::convert::From<$name> for $crate::compute::ParamDefault {
+            fn from(choice: $name) -> Self {
+                Self::Value(choice.into())
             }
         }
 

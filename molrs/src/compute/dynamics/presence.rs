@@ -265,6 +265,18 @@ impl Compute for PairPresence {
     }
 }
 
+crate::compute::spec::compute_spec! {
+    PairPresence as "PairPresence";
+    params |s| {
+        r0: Float;
+        exclude_self: Bool;
+        r1: Float = crate::compute::ParamDefault::SameAs("r0") => s.r1;
+    }
+    inputs {
+        frames: PairSourceFrames;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

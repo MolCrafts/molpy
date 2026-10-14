@@ -91,6 +91,17 @@ impl Compute for GyrationTensor {
     }
 }
 
+crate::compute::spec::compute_spec! {
+    GyrationTensor as "GyrationTensor";
+    params |s| {}
+    inputs {
+        positions: Positions;
+        simbox: SimBox, optional;
+        partition: Partition;
+        weights: Scalars;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

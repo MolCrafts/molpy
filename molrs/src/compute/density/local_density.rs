@@ -44,6 +44,9 @@ pub struct LocalDensityInput<'a> {
 }
 
 impl LocalDensity {
+    /// The hard-sphere smoothing diameter when not set: 0, a sharp cutoff.
+    pub const DEFAULT_DIAMETER: F = 0.0;
+
     /// New analyzer with a cutoff `r_max` and no smoothing (`diameter = 0`).
     ///
     /// # Errors
@@ -57,7 +60,7 @@ impl LocalDensity {
         }
         Ok(Self {
             r_max,
-            diameter: 0.0,
+            diameter: Self::DEFAULT_DIAMETER,
         })
     }
 
@@ -170,6 +173,17 @@ pub struct LocalDensityResult {
     pub n_neighbors: Vec<F>,
     /// Number density per query point: `n_neighbors / (4/3 π r_max³)`.
     pub density: Vec<F>,
+}
+
+crate::compute::spec::compute_spec! {
+    LocalDensity as "LocalDensity";
+    params |s| {
+        r_max: Float;
+        diameter: Float = LocalDensity::DEFAULT_DIAMETER => s.diameter;
+    }
+    inputs {
+        pairs: PairSource;
+    }
 }
 
 #[cfg(test)]

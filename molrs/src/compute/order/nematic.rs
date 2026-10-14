@@ -101,6 +101,14 @@ pub struct NematicResult {
     pub q_tensor: [[F; 3]; 3],
 }
 
+crate::compute::spec::compute_spec! {
+    Nematic as "Nematic";
+    params |s| {}
+    inputs {
+        directors: Vectors;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

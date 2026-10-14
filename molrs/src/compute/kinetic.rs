@@ -140,6 +140,17 @@ impl Compute for KineticEnergy {
     }
 }
 
+crate::compute::spec::compute_spec! {
+    KineticEnergy as "KineticEnergy";
+    params |s| {
+        units: Units;
+    }
+    inputs {
+        masses: Scalars;
+        velocities: Vectors;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

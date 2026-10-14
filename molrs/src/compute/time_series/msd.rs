@@ -96,6 +96,20 @@ impl Stream for Msd {
     }
 }
 
+crate::compute::spec::compute_spec! {
+    Msd as "Msd";
+    params |s| {
+        max_lag: Int;
+        origins: Choice(Origins::NAMES) = Origins::default() => s.correlator.origins();
+        reduction: Choice(Reduction::NAMES) = Reduction::default() => s.correlator.reduction();
+    }
+    inputs {
+        positions: Trajectory;
+        dt: Scalar;
+        boxes: Boxes, optional;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::super::test_support::{rng_series, trajectory};

@@ -183,6 +183,20 @@ pub struct CorrelationFunctionResult {
     pub correlation: Array1<F>,
 }
 
+crate::compute::spec::compute_spec! {
+    CorrelationFunction as "CorrelationFunction";
+    params |s| {
+        n_bins: Int;
+        r_max: Float;
+        r_min: Float;
+    }
+    inputs {
+        pairs: PairSource;
+        values_a: Scalars;
+        values_b: Scalars;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

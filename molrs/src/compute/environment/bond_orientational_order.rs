@@ -144,6 +144,17 @@ pub struct BondOrientationalOrderResult {
     pub phi_edges: Vec<F>,
 }
 
+crate::compute::spec::compute_spec! {
+    BondOrientationalOrder as "BondOrientationalOrder";
+    params |s| {
+        n_theta: Int;
+        n_phi: Int;
+    }
+    inputs {
+        neighbors: Neighbors;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

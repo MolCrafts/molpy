@@ -71,6 +71,13 @@ pub struct SteinhardtInput<'a> {
 }
 
 impl Steinhardt {
+    /// Average `q_lm` over the neighbourhood (Lechner–Dellago) when not set.
+    pub const DEFAULT_AVERAGE: bool = false;
+    /// Also emit the third-order invariant `w_l` when not set.
+    pub const DEFAULT_WL: bool = false;
+    /// Normalize `w_l` by `(Σ|q_lm|²)^{3/2}` when not set.
+    pub const DEFAULT_WL_NORMALIZE: bool = false;
+
     /// Build a calculator for the listed ℓ values (must be non-empty).
     ///
     /// ℓ is the degree of the spherical harmonic the parameter is built from —
@@ -90,9 +97,9 @@ impl Steinhardt {
         }
         Ok(Self {
             l: l.to_vec(),
-            average: false,
-            wl: false,
-            wl_normalize: false,
+            average: Self::DEFAULT_AVERAGE,
+            wl: Self::DEFAULT_WL,
+            wl_normalize: Self::DEFAULT_WL_NORMALIZE,
         })
     }
 
@@ -210,6 +217,19 @@ impl FeatureMatrix for SteinhardtResult {
 
     fn row(&self, row: usize) -> ArrayView1<'_, F> {
         self.features.row(row)
+    }
+}
+
+crate::compute::spec::compute_spec! {
+    Steinhardt as "Steinhardt";
+    params |s| {
+        l: IntList;
+        average: Bool = Steinhardt::DEFAULT_AVERAGE => s.average;
+        wl: Bool = Steinhardt::DEFAULT_WL => s.wl;
+        wl_normalize: Bool = Steinhardt::DEFAULT_WL_NORMALIZE => s.wl_normalize;
+    }
+    inputs {
+        neighbors: Neighbors;
     }
 }
 

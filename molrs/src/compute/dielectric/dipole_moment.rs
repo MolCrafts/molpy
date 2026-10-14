@@ -166,6 +166,16 @@ impl Compute for DipoleMoment {
     }
 }
 
+crate::compute::spec::compute_spec! {
+    DipoleMoment as "DipoleMoment";
+    params |s| {}
+    inputs {
+        positions: Trajectory;
+        charges: Scalars;
+        partition: Partition, optional;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

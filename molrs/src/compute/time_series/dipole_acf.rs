@@ -73,6 +73,17 @@ impl Stream for DipoleAcf {
     }
 }
 
+crate::compute::spec::compute_spec! {
+    DipoleAcf as "DipoleAcf";
+    params |s| {
+        max_lag: Int;
+    }
+    inputs {
+        dipoles: Series;
+        dt: Scalar;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::super::test_support::rng_series;

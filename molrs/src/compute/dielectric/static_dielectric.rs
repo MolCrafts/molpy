@@ -62,12 +62,16 @@ pub struct StaticDielectricResult {
 }
 
 impl StaticDielectric {
+    /// The high-frequency (electronic) permittivity ε_∞ when none is given:
+    /// 1, a non-polarizable model. The ε(ω) routes share it.
+    pub const DEFAULT_EPSILON_INF: F = 1.0;
+
     /// The static permittivity in `units`, with `ε_∞ = 1` (a non-polarizable
     /// force field).
     pub fn new(units: UnitPreset) -> Self {
         Self {
             units,
-            epsilon_inf: 1.0,
+            epsilon_inf: Self::DEFAULT_EPSILON_INF,
         }
     }
 
@@ -168,6 +172,20 @@ impl Compute for StaticDielectric {
             epsilon_inf: self.epsilon_inf,
             n_frames,
         })
+    }
+}
+
+crate::compute::spec::compute_spec! {
+    StaticDielectric as "StaticDielectric";
+    params |s| {
+        units: Units;
+        epsilon_inf: Float = StaticDielectric::DEFAULT_EPSILON_INF => s.epsilon_inf;
+    }
+    inputs {
+        dipoles: Series;
+        volume: Scalar;
+        temperature: Scalar;
+        boundary: Choice(EwaldBoundary::NAMES);
     }
 }
 

@@ -90,6 +90,18 @@ impl Stream for Survival {
     }
 }
 
+crate::compute::spec::compute_spec! {
+    Survival as "Survival";
+    params |s| {
+        kind: Choice(SurvivalKind::NAMES);
+        max_lag: Int;
+    }
+    inputs {
+        presence: Series;
+        dt: Scalar;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

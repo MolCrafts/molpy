@@ -303,6 +303,14 @@
 //! | frequency  | cm⁻¹ ([`RamanSpectrum`]); rad per unit of dt ([`Spectrum`], ε(ω)) |
 //! | intensity  | arb. |
 //!
+//! # Every compute describes itself
+//!
+//! Each type above implements [`Described`]: a [`ComputeSpec`] with its name,
+//! its parameters (kind, and a default read from the type itself — never
+//! retyped) and the fields of its `Input`. [`ComputeSpec::all`] lists every
+//! one; bindings and catalogs read it instead of restating signatures, and
+//! [`Described::tunables`] reports what a built instance holds.
+//!
 //! # Where things live
 //!
 //! One folder per kernel family; every public type is re-exported here.
@@ -310,6 +318,7 @@
 //! | Folder | Contents |
 //! |----------|---------|
 //! | `contract` | [`Compute`], [`Verdict`], [`Accumulate`], [`Stream`], [`Batch`], [`Partition`], [`FeatureMatrix`] |
+//! | `spec` | [`ComputeSpec`], [`Described`] and the registry [`ComputeSpec::all`] |
 //! | `binning` | [`Axis`], [`Histogram`] — the one binning implementation |
 //! | `grid` | [`RegularGrid`], [`SpreadKernel`] ([`Gaussian`], [`Indicator`]) — the one grid-spreading implementation |
 //! | `time_series` | [`Correlator`] and its surfaces, [`TimeCorrelation`], [`Derivative`], [`Unwrap`], [`Window`], [`Spectrum`], [`FrequencyGrid`] |
@@ -356,6 +365,7 @@ mod pmft;
 mod rdf;
 pub(crate) mod require;
 mod shape;
+mod spec;
 mod spectroscopy;
 mod time_series;
 #[cfg(feature = "voronoi")]
@@ -434,6 +444,10 @@ pub(crate) use require::{
 pub use shape::{
     CenterOfMass, CenterOfMassInput, CenterOfMassResult, GyrationTensor, GyrationTensorInput,
     GyrationTensorResult, InertiaTensor, InertiaTensorInput, InertiaTensorResult,
+};
+pub use spec::{
+    ComputeSpec, Described, InputForm, InputKind, InputSpec, ParamDefault, ParamKind, ParamSpec,
+    ParamValue,
 };
 pub use spectroscopy::{
     ConductivitySumRule, DielectricSpectrumInput, DielectricSpectrumResult,

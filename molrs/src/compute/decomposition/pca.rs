@@ -177,6 +177,16 @@ impl Compute for Pca {
     }
 }
 
+crate::compute::spec::compute_spec! {
+    Pca as "Pca";
+    params |s| {
+        n_components: Int;
+    }
+    inputs {
+        features: FeatureMatrix;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

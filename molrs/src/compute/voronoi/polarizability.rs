@@ -102,6 +102,17 @@ impl Compute for FiniteFieldPolarizability {
     }
 }
 
+crate::compute::spec::compute_spec! {
+    FiniteFieldPolarizability as "FiniteFieldPolarizability";
+    params |s| {
+        field: Float;
+    }
+    inputs {
+        plus: Upstream("MolecularMoments");
+        minus: Upstream("MolecularMoments");
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

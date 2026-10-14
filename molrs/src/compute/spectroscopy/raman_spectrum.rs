@@ -82,11 +82,12 @@ pub struct RamanSpectrumInput<'a> {
 }
 
 impl Default for RamanSpectrum {
-    /// A [`Window::CosineSq`] taper, 4× zero padding, no cross-section, not
-    /// averaged.
+    /// The default [`Window`] taper ([`Window::CosineSq`]),
+    /// [`Spectrum::DEFAULT_PAD`] zero padding, no cross-section, not averaged.
     fn default() -> Self {
         Self {
-            spectrum: Spectrum::new(Window::CosineSq, 4).expect("pad 4 is valid"),
+            spectrum: Spectrum::new(Window::default(), Spectrum::DEFAULT_PAD)
+                .expect("the default pad is valid"),
             incident_frequency_cm1: None,
             averaged: false,
         }
@@ -94,16 +95,25 @@ impl Default for RamanSpectrum {
 }
 
 impl RamanSpectrum {
-    /// A Raman transform with `window` and zero padding to `pad` times the
-    /// correlation length.
+    /// The default transform (see [`Default`]); tune it with the setters.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Taper the correlations with `window`.
+    pub fn with_window(mut self, window: Window) -> Self {
+        self.spectrum = self.spectrum.with_window(window);
+        self
+    }
+
+    /// Zero-pad to `pad` times the correlation length (rounded up to a power
+    /// of two).
     ///
     /// # Errors
     /// [`ComputeError::OutOfRange`] for `pad == 0`.
-    pub fn new(window: Window, pad: usize) -> Result<Self, ComputeError> {
-        Ok(Self {
-            spectrum: Spectrum::new(window, pad)?,
-            ..Self::default()
-        })
+    pub fn with_pad(mut self, pad: usize) -> Result<Self, ComputeError> {
+        self.spectrum = Spectrum::new(self.spectrum.window(), pad)?;
+        Ok(self)
     }
 
     /// Apply the scattering cross-section `(ν̃₀ − ν̃)⁴ / ν̃` of a laser at
@@ -241,6 +251,25 @@ impl Compute for RamanSpectrum {
             perpendicular,
             resolution: acf_iso.len() - 1,
         })
+    }
+}
+
+crate::compute::spec::compute_spec! {
+    RamanSpectrum as "RamanSpectrum";
+    params |s| {
+        window: Choice(Window::NAMES)
+            = RamanSpectrum::new().spectrum.window()
+            => s.spectrum.window();
+        pad: Int = RamanSpectrum::new().spectrum.pad() => s.spectrum.pad();
+        incident_frequency: Float
+            = RamanSpectrum::new().incident_frequency_cm1
+            => s.incident_frequency_cm1;
+        averaged: Bool = RamanSpectrum::new().averaged => s.averaged;
+    }
+    inputs {
+        isotropic: Upstream("TimeCorrelation");
+        anisotropic: Upstream("TimeCorrelation");
+        temperature: Scalar, optional;
     }
 }
 

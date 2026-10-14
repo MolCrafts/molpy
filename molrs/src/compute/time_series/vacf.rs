@@ -73,6 +73,17 @@ impl Stream for Vacf {
     }
 }
 
+crate::compute::spec::compute_spec! {
+    Vacf as "Vacf";
+    params |s| {
+        max_lag: Int;
+    }
+    inputs {
+        velocities: Series;
+        dt: Scalar;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::super::test_support::rng_series;

@@ -245,6 +245,18 @@ impl Compute for Kmeans {
     }
 }
 
+crate::compute::spec::compute_spec! {
+    Kmeans as "Kmeans";
+    params |s| {
+        k: Int;
+        max_iter: Int = Kmeans::DEFAULT_MAX_ITER => s.max_iter;
+        seed: Int = Kmeans::DEFAULT_SEED => s.seed;
+    }
+    inputs {
+        features: FeatureMatrix;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

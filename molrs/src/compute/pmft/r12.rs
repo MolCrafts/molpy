@@ -94,6 +94,20 @@ impl PairCoordinate for R12 {
     }
 }
 
+crate::compute::spec::compute_spec! {
+    Pmft<R12> as "PmftR12";
+    params |s| {
+        r_max: Float;
+        n_r: Int;
+        n_t1: Int;
+        n_t2: Int;
+    }
+    inputs {
+        pairs: Neighbors;
+        orientations: Angles, optional;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

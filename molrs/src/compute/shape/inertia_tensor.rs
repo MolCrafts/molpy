@@ -76,6 +76,17 @@ impl Compute for InertiaTensor {
     }
 }
 
+crate::compute::spec::compute_spec! {
+    InertiaTensor as "InertiaTensor";
+    params |s| {}
+    inputs {
+        positions: Positions;
+        simbox: SimBox, optional;
+        partition: Partition;
+        masses: Scalars;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -117,6 +117,17 @@ impl Compute for Derivative {
     }
 }
 
+crate::compute::spec::compute_spec! {
+    Derivative as "Derivative";
+    params |s| {
+        stencil: Choice(Stencil::NAMES);
+    }
+    inputs {
+        series: Series;
+        dt: Scalar;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

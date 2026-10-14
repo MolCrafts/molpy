@@ -155,6 +155,18 @@ impl Compute for LinearFit {
     }
 }
 
+crate::compute::spec::compute_spec! {
+    LinearFit as "LinearFit";
+    params |s| {
+        start: Float;
+        end: Float;
+    }
+    inputs {
+        correlation: Upstream("TimeCorrelation");
+        channel: Index;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

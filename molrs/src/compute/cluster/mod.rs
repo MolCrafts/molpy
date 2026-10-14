@@ -175,6 +175,17 @@ impl Compute for Cluster {
     }
 }
 
+crate::compute::spec::compute_spec! {
+    Cluster as "Cluster";
+    params |s| {
+        min_cluster_size: Int = Cluster::new().min_cluster_size => s.min_cluster_size;
+    }
+    inputs {
+        pairs: Neighbors;
+        merge: Partition, optional;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

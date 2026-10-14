@@ -66,6 +66,12 @@ pub struct EnvironmentMatchInput<'a> {
 }
 
 impl EnvironmentMatch {
+    /// Rotation-invariant registration when not set: off (compare bond
+    /// vectors as they are).
+    pub const DEFAULT_REGISTRATION: bool = false;
+    /// The largest environment registration accepts when not set.
+    pub const DEFAULT_MAX_NEIGHBORS_FOR_REGISTRATION: usize = 8;
+
     /// Environments match when their best-fit RMSD ≤ `rmsd_threshold` (Å).
     /// Registration off; registration limit 8 neighbors.
     ///
@@ -80,8 +86,8 @@ impl EnvironmentMatch {
         }
         Ok(Self {
             rmsd_threshold,
-            registration: false,
-            max_neighbors_for_registration: 8,
+            registration: Self::DEFAULT_REGISTRATION,
+            max_neighbors_for_registration: Self::DEFAULT_MAX_NEIGHBORS_FOR_REGISTRATION,
         })
     }
 
@@ -92,7 +98,8 @@ impl EnvironmentMatch {
         self
     }
 
-    /// The largest environment registration accepts (default 8). An
+    /// The largest environment registration accepts (default
+    /// [`DEFAULT_MAX_NEIGHBORS_FOR_REGISTRATION`](Self::DEFAULT_MAX_NEIGHBORS_FOR_REGISTRATION)). An
     /// environment with more neighbors makes [`compute`](Compute::compute)
     /// fail with [`ComputeError::OutOfRange`].
     ///
@@ -372,6 +379,20 @@ impl Partition for EnvironmentMatchResult {
 
     fn group_of(&self, item: usize) -> Option<u64> {
         Some(u64::from(self.cluster_idx[item]))
+    }
+}
+
+crate::compute::spec::compute_spec! {
+    EnvironmentMatch as "EnvironmentMatch";
+    params |s| {
+        rmsd_threshold: Float;
+        registration: Bool = EnvironmentMatch::DEFAULT_REGISTRATION => s.registration;
+        max_neighbors_for_registration: Int
+            = EnvironmentMatch::DEFAULT_MAX_NEIGHBORS_FOR_REGISTRATION
+            => s.max_neighbors_for_registration;
+    }
+    inputs {
+        neighbors: Neighbors;
     }
 }
 

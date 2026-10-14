@@ -288,6 +288,21 @@ pub struct CubaticResult {
     pub director_basis: [[F; 3]; 3],
 }
 
+crate::compute::spec::compute_spec! {
+    Cubatic as "Cubatic";
+    params |s| {
+        seed: Int = Cubatic::new().seed => s.seed;
+        initial_temp: Float = Cubatic::new().initial_temp => s.initial_temp;
+        cooling_rate: Float = Cubatic::new().cooling_rate => s.cooling_rate;
+        min_temp: Float = Cubatic::new().min_temp => s.min_temp;
+        n_steps: Int = Cubatic::new().n_steps => s.n_steps;
+        n_chains: Int = Cubatic::new().n_chains => s.n_chains;
+    }
+    inputs {
+        directors: Vectors;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

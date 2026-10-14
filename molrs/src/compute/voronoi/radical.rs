@@ -425,6 +425,16 @@ impl ImageSearch {
     }
 }
 
+crate::compute::spec::compute_spec! {
+    RadicalVoronoi as "RadicalVoronoi";
+    params |s| {}
+    inputs {
+        positions: Positions;
+        simbox: SimBox;
+        radii: Scalars;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

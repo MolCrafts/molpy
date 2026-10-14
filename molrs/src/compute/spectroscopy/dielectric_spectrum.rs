@@ -9,7 +9,7 @@ use num_complex::Complex64;
 use crate::compute::dielectric::DielectricPrefactor;
 use crate::compute::{
     Compute, ComputeError, CumulativeTrapezoid, Derivative, DerivativeInput, EwaldBoundary,
-    FrequencyGrid, Plateau, Spectrum, Stencil, TimeCorrelation, Window,
+    FrequencyGrid, Plateau, Spectrum, StaticDielectric, Stencil, TimeCorrelation, Window,
 };
 
 /// The frequency-dependent permittivity `ε*(ω) = ε′(ω) − i·ε″(ω)`.
@@ -71,12 +71,14 @@ struct Prepared<'a> {
 }
 
 impl RouteConfig {
-    /// 4× zero padding, ε_∞ = 1.
-    fn new(window: Window, units: UnitPreset) -> Self {
+    /// The default [`Window`], [`Spectrum::DEFAULT_PAD`] zero padding and
+    /// [`StaticDielectric::DEFAULT_EPSILON_INF`].
+    fn new(units: UnitPreset) -> Self {
         Self {
-            spectrum: Spectrum::new(window, 4).expect("pad 4 is valid"),
+            spectrum: Spectrum::new(Window::default(), Spectrum::DEFAULT_PAD)
+                .expect("the default pad is valid"),
             units,
-            epsilon_inf: 1.0,
+            epsilon_inf: StaticDielectric::DEFAULT_EPSILON_INF,
         }
     }
 
@@ -165,8 +167,15 @@ impl RouteConfig {
 /// The builder methods every route shares.
 macro_rules! route_config_methods {
     () => {
+        /// Taper the correlation with `window` (default: the [`Window`]
+        /// default, [`Window::CosineSq`]).
+        pub fn with_window(mut self, window: Window) -> Self {
+            self.config.spectrum = self.config.spectrum.with_window(window);
+            self
+        }
+
         /// Zero-pad the transform to `pad` times the correlation length
-        /// (rounded up to a power of two). Default 4.
+        /// (rounded up to a power of two). Default [`Spectrum::DEFAULT_PAD`].
         ///
         /// # Errors
         /// [`ComputeError::OutOfRange`] for `pad == 0`.
@@ -175,7 +184,8 @@ macro_rules! route_config_methods {
             Ok(self)
         }
 
-        /// The high-frequency (electronic) permittivity ε_∞. Default 1.
+        /// The high-frequency (electronic) permittivity ε_∞. Default
+        /// [`StaticDielectric::DEFAULT_EPSILON_INF`].
         pub fn with_epsilon_inf(mut self, epsilon_inf: F) -> Self {
             self.config.epsilon_inf = epsilon_inf;
             self
@@ -228,10 +238,11 @@ pub struct EinsteinHelfandSpectrum {
 }
 
 impl EinsteinHelfandSpectrum {
-    /// The route with taper `window`, its prefactor in `units`.
-    pub fn new(window: Window, units: UnitPreset) -> Self {
+    /// The route with its prefactor in `units`, the default taper and
+    /// padding, and ε_∞ = [`StaticDielectric::DEFAULT_EPSILON_INF`].
+    pub fn new(units: UnitPreset) -> Self {
         Self {
-            config: RouteConfig::new(window, units),
+            config: RouteConfig::new(units),
         }
     }
 
@@ -322,10 +333,11 @@ pub struct GreenKuboSpectrum {
 }
 
 impl GreenKuboSpectrum {
-    /// The route with `window` on the correlation, its prefactor in `units`.
-    pub fn new(window: Window, units: UnitPreset) -> Self {
+    /// The route with its prefactor in `units`, the default taper and
+    /// padding, and ε_∞ = [`StaticDielectric::DEFAULT_EPSILON_INF`].
+    pub fn new(units: UnitPreset) -> Self {
         Self {
-            config: RouteConfig::new(window, units),
+            config: RouteConfig::new(units),
         }
     }
 
@@ -393,10 +405,11 @@ pub struct DipoleRateCrossSpectrum {
 }
 
 impl DipoleRateCrossSpectrum {
-    /// The route with `window` on the correlation, its prefactor in `units`.
-    pub fn new(window: Window, units: UnitPreset) -> Self {
+    /// The route with its prefactor in `units`, the default taper and
+    /// padding, and ε_∞ = [`StaticDielectric::DEFAULT_EPSILON_INF`].
+    pub fn new(units: UnitPreset) -> Self {
         Self {
-            config: RouteConfig::new(window, units),
+            config: RouteConfig::new(units),
         }
     }
 
@@ -455,11 +468,12 @@ pub struct DipoleAutocorrelationSpectrum {
 }
 
 impl DipoleAutocorrelationSpectrum {
-    /// The route with `window` on the correlation, its prefactor in `units`,
-    /// and no plateau subtraction.
-    pub fn new(window: Window, units: UnitPreset) -> Self {
+    /// The route with its prefactor in `units`, the default taper and
+    /// padding, ε_∞ = [`StaticDielectric::DEFAULT_EPSILON_INF`], and no
+    /// plateau subtraction.
+    pub fn new(units: UnitPreset) -> Self {
         Self {
-            config: RouteConfig::new(window, units),
+            config: RouteConfig::new(units),
             plateau: None,
         }
     }
@@ -523,6 +537,40 @@ impl Compute for DipoleAutocorrelationSpectrum {
         })
     }
 }
+
+/// One [`ComputeSpec`](crate::compute::ComputeSpec) per ε(ω) route: they
+/// share the configuration and the input, and differ in name (and the
+/// autocorrelation route's plateau).
+macro_rules! route_spec {
+    (|$s:ident| $route:ident $(, $extra:ident: $kind:ident = $default:expr => $read:expr)?) => {
+        crate::compute::spec::compute_spec! {
+            $route as stringify!($route);
+            params |$s| {
+                units: Units;
+                window: Choice(Window::NAMES) = Window::default() => $s.config.spectrum.window();
+                pad: Int = Spectrum::DEFAULT_PAD => $s.config.spectrum.pad();
+                epsilon_inf: Float
+                    = StaticDielectric::DEFAULT_EPSILON_INF
+                    => $s.config.epsilon_inf;
+                $($extra: $kind = $default => $read;)?
+            }
+            inputs {
+                correlation: Upstream("TimeCorrelation");
+                volume: Scalar;
+                temperature: Scalar;
+                boundary: Choice(EwaldBoundary::NAMES);
+            }
+        }
+    };
+}
+
+route_spec!(|s| EinsteinHelfandSpectrum);
+route_spec!(|s| GreenKuboSpectrum);
+route_spec!(|s| DipoleRateCrossSpectrum);
+route_spec!(
+    |s| DipoleAutocorrelationSpectrum,
+    plateau: Range = crate::compute::ParamDefault::UNSET => s.plateau.map(|p| p.window())
+);
 
 #[cfg(test)]
 mod tests;

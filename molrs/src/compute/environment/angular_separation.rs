@@ -221,6 +221,31 @@ pub struct AngularSeparationNeighborResult {
     pub angles: Vec<F>,
 }
 
+crate::compute::spec::compute_spec! {
+    AngularSeparationGlobal as "AngularSeparationGlobal";
+    params |s| {
+        equivalent_orientations: Bool
+            = AngularSeparationGlobal::new().equivalent_orientations => s.equivalent_orientations;
+    }
+    inputs {
+        query: Quaternions;
+        global: Quaternions;
+    }
+}
+
+crate::compute::spec::compute_spec! {
+    AngularSeparationNeighbor as "AngularSeparationNeighbor";
+    params |s| {
+        equivalent_orientations: Bool
+            = AngularSeparationNeighbor::new().equivalent_orientations => s.equivalent_orientations;
+    }
+    inputs {
+        neighbors: Neighbors;
+        query_orientations: Quaternions;
+        point_orientations: Quaternions;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

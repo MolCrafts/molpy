@@ -118,6 +118,16 @@ pub struct HexaticResult {
     pub psi: Vec<Complex>,
 }
 
+crate::compute::spec::compute_spec! {
+    Hexatic as "Hexatic";
+    params |s| {
+        k: Int;
+    }
+    inputs {
+        neighbors: Neighbors;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

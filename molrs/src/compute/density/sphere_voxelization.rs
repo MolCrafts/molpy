@@ -118,6 +118,18 @@ pub struct SphereVoxelizationResult {
     pub grid: RegularGrid<3>,
 }
 
+crate::compute::spec::compute_spec! {
+    SphereVoxelization as "SphereVoxelization";
+    params |s| {
+        dims: IntList;
+        r_max: Float;
+    }
+    inputs {
+        positions: Positions;
+        simbox: SimBox;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

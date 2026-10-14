@@ -3,7 +3,7 @@ title: Compute redesign — one contract, one entry per quantity, one implementa
 slug: compute-redesign
 status: approved
 created: 2026-10-14
-chain: compute-redesign (01-contract → 02-time-series → 03-spectra-dielectric → 04-histogram-grid → 05-dynamics → 06-order-environment → 07-groups → 08-voronoi → 09-retire-legacy → 10-bindings → 11-catalog → 12-molpy)
+chain: compute-redesign (01-contract → 02-time-series → 03-spectra-dielectric → 04-histogram-grid → 05-dynamics → 06-order-environment → 07-groups → 08-voronoi → 09-retire-legacy → 10a-compute-spec → 10-bindings → 11-catalog → 12-molpy)
 repos: molrs (01–11), molvis (11, consumer), Atomiverse (10, consumer), molpy (12)
 ---
 
@@ -1281,7 +1281,7 @@ that owns the file.
     Callers compose `Correlator` → `LinearFit`.
   - Atomiverse follows as a consumer change.
 
-### 7. Catalog (link 11)
+### 7. Catalog (links 10a, 11)
 
 - **Core descriptors.** Each core compute type implements
   `const SPEC: ComputeSpec` via one `compute_spec!` macro. The spec holds:
@@ -1295,6 +1295,108 @@ that owns the file.
   load.
 - **Invalid literals.** The `volume = 0.0` and `"3.14159265"` literals cease to
   exist, because nothing types a default anymore.
+
+*As built (10a, core only):* `compute/spec/` holds the descriptor. The
+generated catalog (`computeSpecs()`, deleting `catalog.rs`, molvis) is still
+link 11.
+
+- **Types** (re-exported from `molrs::compute`):
+  - `ComputeSpec { name, params: Vec<ParamSpec>, inputs: &'static [InputSpec], form: InputForm }`,
+    with `param(name)` / `input(name)`. `InputForm` is `Single` (one `Input`
+    struct) or `Frames` (a slice of per-frame records: `Rdf`,
+    `DistributionFunction`, `CombinedDistribution`, `SpatialDistribution`).
+  - `ParamSpec { name, kind: ParamKind, default: ParamDefault }`, `is_required()`.
+    `name` is the constructor argument or the `with_*` setter suffix.
+  - `ParamKind`: `Float`, `Int`, `Bool`, `Choice(NAMES)`, `ChoiceList(NAMES)`,
+    `FloatList`, `IntList`, `Vec3List`, `Axis`, `AxisList`, `Grid`, `Range`,
+    `LagKernel`, `Units`.
+  - `ParamValue`: `Float`, `Int(u64)`, `Bool`, `Name(&'static str)`,
+    `FloatList`, `IntList`, `Range(start, end)`, `Unset` (an option left off).
+  - `ParamDefault`:
+    - `Required`;
+    - `RequiredIn(ctor)` for mutually exclusive constructor forms
+      (`StaticStructureFactorDirect::new` / `::isotropic`,
+      `DistributionFunction::new` / `::over_natural_range`);
+    - `Value(v)`, with `ParamDefault::UNSET` = `Value(Unset)`;
+    - `SameAs(param)` (`PairPresence.r1` = `r0`);
+    - `Scaled { of, factor }` (`GaussianDensity.r_max` and
+      `DiffractionPattern.cutoff` = `Gaussian::DEFAULT_CUTOFF_SIGMAS · sigma`).
+  - `InputSpec { name, kind: InputKind, optional }`. `InputKind` names the
+    data's role and shape: `Positions`, `Vectors`, `Trajectory`, `Series`,
+    `Scalars`, `Scalar`, `Index`, `Indices`, `IndexPairs`, `Tuples`,
+    `TuplesList`, `Mask`, `Images`, `Quaternions`, `Angles`, `SimBox`, `Boxes`,
+    `Neighbors`, `NeighborFrames`, `PairSource`, `PairSourceFrames`,
+    `Partition`, `FeatureMatrix`, `Grid`, `Field`, `Choice(NAMES)`,
+    `Upstream(type)`, `UpstreamList(type)`.
+  - All derive `Debug, Clone, PartialEq` and, under `serde`, `Serialize`.
+- **Trait** `Described: Compute { fn spec() -> ComputeSpec; fn tunables(&self) -> Vec<(&'static str, ParamValue)>; }`.
+  `tunables` reads the instance's value of every defaulted parameter, in spec
+  order. On an instance built from the required arguments alone it equals the
+  spec defaults. *Deviation from "`const SPEC: ComputeSpec`":* `spec()` is a
+  function and `params` a `Vec`, because defaults are read from the type at
+  run time (`Origins::default()` is not `const`).
+- **Macro** `compute_spec!` (crate-internal, `spec/mod.rs`) is invoked next to
+  each type, so readbacks see private fields. Its grammar:
+  `name: Kind [= default [=> readback]];` per parameter,
+  `name: Kind[, optional];` per input, `, Frames` for the frame form, and
+  `@[const N: usize]` for a generic impl (`CombinedDistribution<N>`).
+  `named_enum!` now also generates `From<Enum> for ParamValue / ParamDefault`
+  (the canonical name).
+- **Registry** `ComputeSpec::all() -> &'static [ComputeSpec]` (a `LazyLock` in
+  `spec/registry.rs`) and `ComputeSpec::find(name)`.
+  - 64 entries, 69 with `voronoi`.
+  - `Pmft<C>` registers as `PmftR12` / `PmftXy` / `PmftXyt` / `PmftXyz`.
+  - `DistributionFunction` is the `<InternalCoordinate>` instantiation.
+    `CombinedDistribution` is one entry covering every `N`.
+  - Not registered: `Batch` (its spec is the inner compute's) and the
+    crate-internal `BondAverage`.
+- **Where defaults come from.** A descriptor never holds a literal default. It
+  reads one of:
+  - the instance from a no-argument constructor (`Cubatic::new().seed`,
+    `HBonds::default().criterion.*`, `RamanSpectrum::new()`, …);
+  - an enum's `Default` (`Origins`, `MeanPolicy`, `Normalization`,
+    `Reduction`, `Window`);
+  - a `DEFAULT_*` constant the constructor itself uses. The new ones are
+    `Spectrum::DEFAULT_PAD` (4), `StaticDielectric::DEFAULT_EPSILON_INF` (1),
+    `ConductivitySumRule::DEFAULT_TOLERANCE`,
+    `Steinhardt::DEFAULT_{AVERAGE,WL,WL_NORMALIZE}`,
+    `EnvironmentMatch::DEFAULT_{REGISTRATION,MAX_NEIGHBORS_FOR_REGISTRATION}`,
+    `LocalDensity::DEFAULT_DIAMETER`, `DiffractionPattern::DEFAULT_AXIS`,
+    `Rdf::DEFAULT_DIMENSIONALITY` and `VanHove::DEFAULT_STRIDE`.
+
+  `VanHove` now starts from `Origins::default()` (it was the literal
+  `Origins::All`, the same value). Required parameters stay required:
+  `max_lag`, bins, cutoffs, `start` / `end`, `units`, and `Spectrum`'s
+  `window` and `pad`.
+- **Core defaults that existed only in bindings (D8).**
+  - The four ε(ω) routes are `new(units)` + `with_window(window)` (was
+    `new(window, units)`), defaulting to `Window::default()` = `CosineSq`.
+  - *Behaviour change for bindings:* when link 10 drops the binding literals,
+    Python's `"none"` default for `DipoleRateCrossSpectrum` /
+    `DipoleAutocorrelationSpectrum` and its `"hann"` for `GreenKuboSpectrum`
+    become `cosine_sq`.
+  - `RamanSpectrum` is `new()` (= `Default`) + `with_window` / `with_pad` (was
+    `new(window, pad)`, which had no caller).
+  - No golden literal moved. The route tests pass their windows through
+    `with_window`.
+- **Tests** (`spec/registry/tests.rs`):
+  - `the_registry_names_every_compute_type` scans the non-test `compute`
+    source for `impl … Compute for` lines. The registry must equal that set,
+    minus the two exclusions and with `Pmft` expanded.
+  - `every_default_is_what_the_constructor_produces` builds every registered
+    type from its required arguments only and compares `tunables()` with every
+    `Value` / `SameAs` / `Scaled` default. It was verified to fail when a
+    constructor drifts from its constant.
+  - `every_name_is_unique_and_found`, `every_default_fits_its_kind`,
+    `tunables_read_the_instance`, `bindings_read_defaults_and_inputs`.
+- **For link 10.**
+  - Enumerate with `ComputeSpec::all()`. Every binding class name must be a
+    `spec.name`.
+  - Construct with only the required arguments, then assert `core.tunables()`
+    equals the spec's defaults (`spec.params.iter().filter(|p| !p.is_required())`).
+  - `compute` kwargs are the `spec.inputs` names.
+- **For link 11.** `computeSpecs()` serialises `ComputeSpec::all()` through
+  serde, and molvis joins its labels and ranges on `(spec.name, param.name)`.
 
 ### 8. molpy (link 12)
 
@@ -1482,7 +1584,8 @@ happens inside the chain.
 | 07-groups (code-complete 2026-10-14) | As built: `shape/group_reduce.rs` (`GroupReduce`, crate-internal: anchor + core-MIC offsets, weighted centroid, weighted second moment) behind `CenterOfMass` / `GyrationTensor` / `InertiaTensor` (configuration-free; `compute({ positions, simbox, partition, masses/weights })`); `Cluster` on `Topology::connected_components` with `merge`; `ClusterResult` / `KmeansResult` are `Partition`s, `PcaResult` a `FeatureMatrix`; `Pca::new(n_components)` on `eigh_sym`; `Kmeans::new(k)` + `with_max_iter` / `with_seed` (core defaults 100 / 0) over any `FeatureMatrix`; `Partition::sizes`; `ClusterCenters`, `RadiusOfGyration`, `ClusterProperties`, `compute_keyed`, `center_of_mass_velocity`, the power iteration and (dead after 07) `positions.rs` deleted (deviations in §3, §4, §5, Behaviour change 2). Scope: `GroupReduce`; Cluster (`connected_components`, `merge`), CenterOfMass, GyrationTensor, InertiaTensor; delete ClusterCenters, RadiusOfGyration, ClusterProperties; Pca (`eigh_sym`, `n_components`), Kmeans (`FeatureMatrix`). | 01, 06 (FeatureMatrix producers) |
 | 08-voronoi (code-complete 2026-10-14) | As built: `RadicalVoronoi`, `VoronoiIntegration` (`new(LengthUnit)`), `VoronoiDomainAnalysis`, `VoronoiVoidAnalysis`, `FiniteFieldPolarizability` (`new(field)`) are per-snapshot `Compute`s with named `Input`s; candidate search on core `LinkCell` (+ `GhostSet` copies for the tessellation's multi-image search); `DensityGrid` → `RegularGrid` (+ `voxel_corner`) and an `ArrayView3`; Pass A on `GroupReduce`; `CellGrid`, `CellList`, `DensityGrid`, `from_cube_frame`, `polarizability_finite_field`, `leak` deleted; no `GridField` (deviations in §3, §4, §5, Link 08 note). Scope: `Compute` impls, core cell list, explicit units, `FiniteFieldPolarizability`, `GridField`. | 04, 07 |
 | 09-retire-legacy (code-complete 2026-10-14) | As built: `analysis_contract.rs` deleted (`LegacyCompute`, `Fit`, `Check`, `ComputeResult`, `DescriptorRow`; `RdfResult`'s impl); `ComputeError` cut to the seven variants with a producer (also `NotConverged`, `MolRs` — deviation in §1); `compute/mod.rs` docs rewritten (contract, config/data, no frames, `Batch`/`Stream`, `Partition`/`FeatureMatrix`, `PairSource`, surfaces, spectra, folders; five doctests); `VoronoiDomainAnalysis` on `&dyn Partition` (result is a `Partition`); the Voronoi exhaustive fallback proven complete or `OutOfRange` (§5 09 note); `DipoleMoment` partition `+ Sync`; ac-010's missing `DipoleMoment → Msd → LinearFit` test added; acceptance audit below ("Link 09 acceptance audit"). `positions.rs` was already gone (07). Scope: Delete `LegacyCompute`, `analysis_contract.rs`, `positions.rs`; rewrite the `compute/mod.rs` module docs (removes the stale `molpy.compute.Workflow` reference). Run the §4 closing greps. | 02–08 |
-| 10-bindings | §6 in molrs-python, molrs-wasm, molrs-cxxapi; full pre-push gate; Atomiverse consumer note. | 09 |
+| 10a-compute-spec (code-complete 2026-10-14) | As built: `ComputeSpec` / `ParamSpec` / `ParamKind` / `ParamValue` / `ParamDefault` / `InputSpec` / `InputKind` / `InputForm`, trait `Described` (`spec()`, `tunables()`), crate-internal `compute_spec!` next to every type, registry `ComputeSpec::all()` / `find()` (64 entries; 69 with `voronoi`); defaults read from the type (no-arg instance, enum `Default`, or a `DEFAULT_*` the constructor uses — 12 new constants); ε(ω) routes `new(units)` + `with_window` (core `Window` default) and `RamanSpectrum::new()` + `with_window` / `with_pad`; completeness (source scan), unique-name and defaults-equal-constructor tests (deviations in §7). Scope: the core-only machine-readable descriptor of every public compute, the prerequisite of 10's parity tests and 11's generated catalog. | 09 |
+| 10-bindings | §6 in molrs-python, molrs-wasm, molrs-cxxapi; full pre-push gate; Atomiverse consumer note. | 10a |
 | 11-catalog | §7; molvis `registry.ts` migration (cross-repo). | 10 |
 | 12-molpy | §8, after the molrs release that carries 01–11. | molrs tag |
 

@@ -73,6 +73,18 @@ impl Stream for ReorientationAcf {
     }
 }
 
+crate::compute::spec::compute_spec! {
+    ReorientationAcf as "ReorientationAcf";
+    params |s| {
+        l: Int;
+        max_lag: Int;
+    }
+    inputs {
+        vectors: Trajectory;
+        dt: Scalar;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::super::test_support::trajectory;

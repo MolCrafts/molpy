@@ -134,6 +134,16 @@ impl Compute for Unwrap {
     }
 }
 
+crate::compute::spec::compute_spec! {
+    Unwrap as "Unwrap";
+    params |s| {}
+    inputs {
+        positions: Trajectory;
+        images: Images, optional;
+        boxes: Boxes;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -134,6 +134,24 @@ pub struct GaussianDensityResult {
     pub grid: RegularGrid<3>,
 }
 
+crate::compute::spec::compute_spec! {
+    GaussianDensity as "GaussianDensity";
+    params |s| {
+        dims: IntList;
+        sigma: Float;
+        r_max: Float
+            = crate::compute::ParamDefault::Scaled {
+                of: "sigma",
+                factor: Gaussian::DEFAULT_CUTOFF_SIGMAS,
+            }
+            => crate::compute::SpreadKernel::cutoff(&s.kernel);
+    }
+    inputs {
+        positions: Positions;
+        simbox: SimBox;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -235,6 +235,19 @@ pub struct StaticStructureFactorDirectResult {
     pub n_particles: usize,
 }
 
+crate::compute::spec::compute_spec! {
+    StaticStructureFactorDirect as "StaticStructureFactorDirect";
+    params |s| {
+        k_vecs: Vec3List = crate::compute::ParamDefault::RequiredIn("new");
+        k_max: Float = crate::compute::ParamDefault::RequiredIn("isotropic");
+        n_bins: Int = crate::compute::ParamDefault::RequiredIn("isotropic");
+    }
+    inputs {
+        positions: Positions;
+        simbox: SimBox, optional;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

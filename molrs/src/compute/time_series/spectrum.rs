@@ -154,6 +154,11 @@ pub struct OneSidedSpectrum {
 }
 
 impl Spectrum {
+    /// The zero-padding factor of the transforms built on a `Spectrum` when
+    /// none is given ([`RamanSpectrum`](crate::compute::RamanSpectrum), the
+    /// four ε(ω) routes): 4× the correlation length.
+    pub const DEFAULT_PAD: usize = 4;
+
     /// A spectrum tapered by `window` and zero-padded to `pad` times the
     /// signal length (rounded up to a power of two).
     ///
@@ -167,6 +172,11 @@ impl Spectrum {
             });
         }
         Ok(Self { window, pad })
+    }
+
+    /// The same transform with taper `window`; the padding is already valid.
+    pub(crate) fn with_window(self, window: Window) -> Self {
+        Self { window, ..self }
     }
 
     /// The taper.
@@ -259,6 +269,18 @@ impl Compute for Spectrum {
             imag: bins.iter().map(|b| b.im).collect(),
             n_fft,
         })
+    }
+}
+
+crate::compute::spec::compute_spec! {
+    Spectrum as "Spectrum";
+    params |s| {
+        window: Choice(Window::NAMES);
+        pad: Int;
+    }
+    inputs {
+        signal: Scalars;
+        dt: Scalar;
     }
 }
 

@@ -41,7 +41,7 @@ fn state(correlation: &TimeCorrelation, volume: F, temperature: F) -> Dielectric
 
 /// The continuous transform with 4× padding (the reference's own).
 fn piecewise_linear_onesided_ft(y: &Array1<f64>, dt: f64) -> RawSpectrum {
-    RouteConfig::new(Window::None, UnitPreset::real())
+    RouteConfig::new(UnitPreset::real())
         .continuous_transform(y, dt)
         .unwrap()
 }
@@ -230,7 +230,8 @@ fn eh_fit_matches_the_reference_bit_for_bit() {
     let (freq_l, re_l, im_l) = reference_einstein_helfand(&dm, dt, vol, temp, eps_inf, mct);
 
     let acf = dipole_acf(&dm, dt, mct);
-    let fit = EinsteinHelfandSpectrum::new(Window::CosineSq, UnitPreset::real())
+    let fit = EinsteinHelfandSpectrum::new(UnitPreset::real())
+        .with_window(Window::CosineSq)
         .with_epsilon_inf(eps_inf)
         .compute(state(&acf, vol, temp))
         .unwrap();
@@ -271,7 +272,8 @@ fn gk_fit_matches_the_reference_bit_for_bit() {
         let (freq_l, re_l, im_l) =
             reference_green_kubo_from_acf(&raw_acf, dt, vol, temp, eps_inf, name);
 
-        let fit = GreenKuboSpectrum::new(window, UnitPreset::real())
+        let fit = GreenKuboSpectrum::new(UnitPreset::real())
+            .with_window(window)
             .with_epsilon_inf(eps_inf)
             .compute(state(&raw, vol, temp))
             .unwrap();
@@ -330,7 +332,8 @@ fn eh_dc_bin_recovers_neumann_static() {
         .epsilon;
 
     let acf = dipole_acf(&dm, dt, 50);
-    let fit = EinsteinHelfandSpectrum::new(Window::CosineSq, UnitPreset::real())
+    let fit = EinsteinHelfandSpectrum::new(UnitPreset::real())
+        .with_window(Window::CosineSq)
         .with_epsilon_inf(eps_inf)
         .compute(state(&acf, vol, temp))
         .unwrap();
@@ -345,7 +348,8 @@ fn eh_loss_finite_to_nyquist() {
     let dt = 1.0;
     let dm = rng_dipole(n, 11);
     let acf = dipole_acf(&dm, dt, 100);
-    let fit = EinsteinHelfandSpectrum::new(Window::CosineSq, UnitPreset::real())
+    let fit = EinsteinHelfandSpectrum::new(UnitPreset::real())
+        .with_window(Window::CosineSq)
         .compute(state(&acf, 1000.0, 300.0))
         .unwrap();
     assert!(fit.eps_imag.iter().all(|x| x.is_finite()));
@@ -356,12 +360,15 @@ fn eh_loss_finite_to_nyquist() {
 fn fits_reject_short_acf() {
     let tiny = curve(&[1.0], 1.0);
     assert!(matches!(
-        EinsteinHelfandSpectrum::new(Window::CosineSq, UnitPreset::real())
+        EinsteinHelfandSpectrum::new(UnitPreset::real())
+            .with_window(Window::CosineSq)
             .compute(state(&tiny, 1.0, 1.0)),
         Err(ComputeError::EmptyInput)
     ));
     assert!(matches!(
-        GreenKuboSpectrum::new(Window::Hann, UnitPreset::real()).compute(state(&tiny, 1.0, 1.0)),
+        GreenKuboSpectrum::new(UnitPreset::real())
+            .with_window(Window::Hann)
+            .compute(state(&tiny, 1.0, 1.0)),
         Err(ComputeError::EmptyInput)
     ));
 }
@@ -387,10 +394,26 @@ type Route = dyn Fn(DielectricSpectrumInput<'_>) -> Result<DielectricSpectrumRes
 fn routes_check_state_boundary_and_channels() {
     let acf = curve(&[1.0, 0.6, 0.3, 0.1], 0.5);
     let routes: [&Route; 4] = [
-        &|i| EinsteinHelfandSpectrum::new(Window::CosineSq, UnitPreset::real()).compute(i),
-        &|i| GreenKuboSpectrum::new(Window::CosineSq, UnitPreset::real()).compute(i),
-        &|i| DipoleRateCrossSpectrum::new(Window::None, UnitPreset::real()).compute(i),
-        &|i| DipoleAutocorrelationSpectrum::new(Window::None, UnitPreset::real()).compute(i),
+        &|i| {
+            EinsteinHelfandSpectrum::new(UnitPreset::real())
+                .with_window(Window::CosineSq)
+                .compute(i)
+        },
+        &|i| {
+            GreenKuboSpectrum::new(UnitPreset::real())
+                .with_window(Window::CosineSq)
+                .compute(i)
+        },
+        &|i| {
+            DipoleRateCrossSpectrum::new(UnitPreset::real())
+                .with_window(Window::None)
+                .compute(i)
+        },
+        &|i| {
+            DipoleAutocorrelationSpectrum::new(UnitPreset::real())
+                .with_window(Window::None)
+                .compute(i)
+        },
     ];
     let two = TimeCorrelation {
         lag_times: acf.lag_times.clone(),
@@ -444,14 +467,16 @@ fn dacs_subtracts_only_an_explicit_plateau() {
         .unwrap()
         .fluctuation();
 
-    let bare = DipoleAutocorrelationSpectrum::new(Window::None, units.clone())
+    let bare = DipoleAutocorrelationSpectrum::new(units.clone())
+        .with_window(Window::None)
         .compute(state(&acf, 1000.0, 300.0))
         .unwrap();
     assert!((bare.eps_real[0] - (1.0 + a * y[0])).abs() < 1e-12);
 
     let plateau = Plateau::new(0.75, 1.0).unwrap();
     let c_inf = plateau.read(&y).unwrap().value;
-    let relaxed = DipoleAutocorrelationSpectrum::new(Window::None, units)
+    let relaxed = DipoleAutocorrelationSpectrum::new(units)
+        .with_window(Window::None)
         .with_plateau(plateau)
         .compute(state(&acf, 1000.0, 300.0))
         .unwrap();
@@ -465,7 +490,8 @@ fn dipole_acf_to_kramers_kronig_pipeline() {
     use crate::compute::{KramersKronig, KramersKronigInput, Verdict};
     let dm = rng_dipole(512, 3);
     let acf = dipole_acf(&dm, 1.0, 64);
-    let spectrum = EinsteinHelfandSpectrum::new(Window::CosineSq, UnitPreset::real())
+    let spectrum = EinsteinHelfandSpectrum::new(UnitPreset::real())
+        .with_window(Window::CosineSq)
         .compute(state(&acf, 1000.0, 300.0))
         .unwrap();
     let verdict = KramersKronig::new()

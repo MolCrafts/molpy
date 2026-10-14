@@ -90,6 +90,19 @@ impl Stream for RotationalAutocorrelation {
     }
 }
 
+crate::compute::spec::compute_spec! {
+    RotationalAutocorrelation as "RotationalAutocorrelation";
+    params |s| {
+        l: Int;
+        max_lag: Int;
+        reduction: Choice(Reduction::NAMES) = Reduction::default() => s.correlator.reduction();
+    }
+    inputs {
+        orientations: Trajectory;
+        dt: Scalar;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

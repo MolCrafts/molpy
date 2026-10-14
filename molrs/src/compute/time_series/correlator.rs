@@ -768,6 +768,25 @@ impl ColumnFft {
     }
 }
 
+crate::compute::spec::compute_spec! {
+    Correlator as "Correlator";
+    params |s| {
+        kernel: LagKernel;
+        max_lag: Int;
+        origins: Choice(Origins::NAMES) = Origins::default() => s.origins;
+        mean: Choice(MeanPolicy::NAMES) = MeanPolicy::default() => s.mean;
+        normalization: Choice(Normalization::NAMES) = Normalization::default() => s.norm;
+        reduction: Choice(Reduction::NAMES) = Reduction::default() => s.reduce;
+        dimension: Int = crate::compute::ParamDefault::UNSET => s.dimension;
+    }
+    inputs {
+        a: Trajectory;
+        b: Trajectory, optional;
+        dt: Scalar;
+        boxes: Boxes, optional;
+    }
+}
+
 #[cfg(test)]
 mod product_tests;
 #[cfg(test)]

@@ -231,6 +231,20 @@ impl DistributionResult {
     }
 }
 
+crate::compute::spec::compute_spec! {
+    DistributionFunction<InternalCoordinate> as "DistributionFunction", Frames;
+    params |s| {
+        observable: Choice(InternalCoordinate::NAMES);
+        axis: Axis = crate::compute::ParamDefault::RequiredIn("new");
+        n_bins: Int = crate::compute::ParamDefault::RequiredIn("over_natural_range");
+    }
+    inputs {
+        positions: Positions;
+        simbox: SimBox, optional;
+        tuples: Tuples;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

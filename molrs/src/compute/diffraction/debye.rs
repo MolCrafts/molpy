@@ -241,6 +241,19 @@ pub struct StaticStructureFactorDebyeResult {
     pub n_particles: usize,
 }
 
+crate::compute::spec::compute_spec! {
+    StaticStructureFactorDebye as "StaticStructureFactorDebye";
+    params |s| {
+        k_values: FloatList;
+        sinc_tolerance: Float
+            = StaticStructureFactorDebye::DEFAULT_SINC_TOLERANCE
+            => s.sinc_tolerance;
+    }
+    inputs {
+        positions: Positions;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

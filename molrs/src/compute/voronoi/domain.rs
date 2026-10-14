@@ -161,6 +161,15 @@ impl Compute for VoronoiDomainAnalysis {
     }
 }
 
+crate::compute::spec::compute_spec! {
+    VoronoiDomainAnalysis as "VoronoiDomainAnalysis";
+    params |s| {}
+    inputs {
+        cells: Upstream("VoronoiCells");
+        partition: Partition;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

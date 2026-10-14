@@ -76,6 +76,19 @@ impl Stream for OnsagerCorrelation {
     }
 }
 
+crate::compute::spec::compute_spec! {
+    OnsagerCorrelation as "OnsagerCorrelation";
+    params |s| {
+        max_lag: Int;
+    }
+    inputs {
+        a: Series;
+        b: Series;
+        dt: Scalar;
+        boxes: Boxes, optional;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::super::test_support::rng_series;

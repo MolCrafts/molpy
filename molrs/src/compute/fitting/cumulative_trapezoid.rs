@@ -129,6 +129,17 @@ impl Compute for CumulativeTrapezoid {
     }
 }
 
+crate::compute::spec::compute_spec! {
+    CumulativeTrapezoid as "CumulativeTrapezoid";
+    params |s| {
+        n_lags: Int = CumulativeTrapezoid::new().n_lags => s.n_lags;
+    }
+    inputs {
+        correlation: Upstream("TimeCorrelation");
+        channel: Index;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::super::curve;

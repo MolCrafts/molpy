@@ -109,6 +109,16 @@ pub struct LocalBondProjectionResult {
     pub projections: Array2<F>,
 }
 
+crate::compute::spec::compute_spec! {
+    LocalBondProjection as "LocalBondProjection";
+    params |s| {}
+    inputs {
+        neighbors: Neighbors;
+        proj_vectors: Vectors;
+        orientations: Quaternions, optional;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

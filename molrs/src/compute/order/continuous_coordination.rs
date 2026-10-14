@@ -112,6 +112,17 @@ pub struct ContinuousCoordinationResult {
     pub coord: Vec<F>,
 }
 
+crate::compute::spec::compute_spec! {
+    ContinuousCoordination as "ContinuousCoordination";
+    params |s| {
+        power: Float;
+    }
+    inputs {
+        qlm: Upstream("QlmTable");
+        neighbors: Neighbors;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

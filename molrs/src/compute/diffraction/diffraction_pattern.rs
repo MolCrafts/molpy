@@ -47,6 +47,9 @@ pub struct DiffractionPatternInput<'a> {
 }
 
 impl DiffractionPattern {
+    /// The projection axis when not set: 2 (z).
+    pub const DEFAULT_AXIS: usize = 2;
+
     /// New analyzer with `n_grid × n_grid` pixels and Gaussian smearing
     /// `sigma` (in box-length units), projected along `z`.
     ///
@@ -63,7 +66,7 @@ impl DiffractionPattern {
         Ok(Self {
             n_grid,
             kernel: Gaussian::new(sigma)?,
-            axis: 2,
+            axis: Self::DEFAULT_AXIS,
         })
     }
 
@@ -171,6 +174,25 @@ pub struct DiffractionPatternResult {
     /// Real-space Gaussian-smeared image used as the FFT input
     /// (`(n_grid, n_grid)`).
     pub image: Array2<F>,
+}
+
+crate::compute::spec::compute_spec! {
+    DiffractionPattern as "DiffractionPattern";
+    params |s| {
+        n_grid: Int;
+        sigma: Float;
+        axis: Int = DiffractionPattern::DEFAULT_AXIS => s.axis;
+        cutoff: Float
+            = crate::compute::ParamDefault::Scaled {
+                of: "sigma",
+                factor: Gaussian::DEFAULT_CUTOFF_SIGMAS,
+            }
+            => crate::compute::SpreadKernel::cutoff(&s.kernel);
+    }
+    inputs {
+        positions: Positions;
+        simbox: SimBox;
+    }
 }
 
 #[cfg(test)]

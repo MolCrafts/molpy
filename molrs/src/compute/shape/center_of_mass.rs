@@ -98,6 +98,17 @@ impl Compute for CenterOfMass {
     }
 }
 
+crate::compute::spec::compute_spec! {
+    CenterOfMass as "CenterOfMass";
+    params |s| {}
+    inputs {
+        positions: Positions;
+        simbox: SimBox, optional;
+        partition: Partition;
+        masses: Scalars;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -146,6 +146,19 @@ pub struct SolidLiquidResult {
     pub is_solid: Vec<bool>,
 }
 
+crate::compute::spec::compute_spec! {
+    SolidLiquid as "SolidLiquid";
+    params |s| {
+        q_threshold: Float = SolidLiquid::new().q_threshold => s.q_threshold;
+        n_threshold: Int = SolidLiquid::new().n_threshold => s.n_threshold;
+        normalize_q: Bool = SolidLiquid::new().normalize_q => s.normalize_q;
+    }
+    inputs {
+        qlm: Upstream("QlmTable");
+        neighbors: Neighbors;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

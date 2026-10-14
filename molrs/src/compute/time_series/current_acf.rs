@@ -70,6 +70,17 @@ impl Stream for CurrentAcf {
     }
 }
 
+crate::compute::spec::compute_spec! {
+    CurrentAcf as "CurrentAcf";
+    params |s| {
+        max_lag: Int;
+    }
+    inputs {
+        current: Series;
+        dt: Scalar;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::super::test_support::rng_series;

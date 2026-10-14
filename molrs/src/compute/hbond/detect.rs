@@ -393,6 +393,26 @@ impl HBondsResult {
     }
 }
 
+crate::compute::spec::compute_spec! {
+    HBonds as "HBonds";
+    params |s| {
+        dist_cutoff: Float = HBonds::default().criterion.dist_cutoff => s.criterion.dist_cutoff;
+        dist_kind: Choice(HBondDistanceKind::NAMES)
+            = HBonds::default().criterion.dist_kind
+            => s.criterion.dist_kind;
+        angle_cutoff: Float = HBonds::default().criterion.angle_cutoff => s.criterion.angle_cutoff;
+        donor_acceptor_margin: Float
+            = HBonds::default().criterion.donor_acceptor_margin
+            => s.criterion.donor_acceptor_margin;
+    }
+    inputs {
+        positions: Trajectory;
+        donors: IndexPairs;
+        acceptors: Indices;
+        pairs: NeighborFrames;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

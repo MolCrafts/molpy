@@ -447,6 +447,22 @@ impl<'a> PowerCellLocator<'a> {
     }
 }
 
+crate::compute::spec::compute_spec! {
+    VoronoiIntegration as "VoronoiIntegration";
+    params |s| {
+        unit: Choice(LengthUnit::NAMES);
+    }
+    inputs {
+        positions: Positions;
+        radii: Scalars;
+        nuclear_charges: Scalars;
+        partition: Partition;
+        simbox: SimBox;
+        grid: Grid;
+        density: Field;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

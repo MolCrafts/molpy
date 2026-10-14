@@ -93,6 +93,9 @@ pub struct VanHoveResult {
 }
 
 impl VanHove {
+    /// The time-origin stride when not set: every frame.
+    pub const DEFAULT_STRIDE: usize = 1;
+
     /// Bin distances on `axis` (Å, starting at `r ≥ 0`), at the integer frame
     /// `lags` (e.g. `[0, 1, 5, 10]`), over all time origins.
     ///
@@ -115,8 +118,8 @@ impl VanHove {
         Ok(Self {
             axis,
             lags,
-            origins: Origins::All,
-            stride: 1,
+            origins: Origins::default(),
+            stride: Self::DEFAULT_STRIDE,
         })
     }
 
@@ -131,7 +134,8 @@ impl VanHove {
         Ok(self)
     }
 
-    /// Take every `stride`-th frame as a time origin (default 1).
+    /// Take every `stride`-th frame as a time origin (default
+    /// [`DEFAULT_STRIDE`](Self::DEFAULT_STRIDE)).
     ///
     /// # Errors
     /// [`ComputeError::OutOfRange`] for `stride == 0`, or a stride other than
@@ -341,6 +345,20 @@ impl Compute for VanHove {
             g_distinct,
             dr: self.axis.width(),
         })
+    }
+}
+
+crate::compute::spec::compute_spec! {
+    VanHove as "VanHove";
+    params |s| {
+        axis: Axis;
+        lags: IntList;
+        origins: Choice(Origins::NAMES) = Origins::default() => s.origins;
+        stride: Int = VanHove::DEFAULT_STRIDE => s.stride;
+    }
+    inputs {
+        positions: Trajectory;
+        boxes: Boxes;
     }
 }
 

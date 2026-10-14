@@ -211,11 +211,14 @@ pub struct SumRuleInput<'a> {
 }
 
 impl ConductivitySumRule {
+    /// The relative error the sum rule tolerates when none is given.
+    pub const DEFAULT_TOLERANCE: F = 0.05;
+
     /// The sum rule in `units`, passing at a relative error below 0.05.
     pub fn new(units: UnitPreset) -> Self {
         Self {
             units,
-            tolerance: 0.05,
+            tolerance: Self::DEFAULT_TOLERANCE,
         }
     }
 
@@ -457,6 +460,47 @@ fn require_tolerance(field: &'static str, value: F) -> Result<(), ComputeError> 
         });
     }
     Ok(())
+}
+
+crate::compute::spec::compute_spec! {
+    KramersKronig as "KramersKronig";
+    params |s| {
+        relative_tolerance: Float
+            = KramersKronig::new().relative_tolerance
+            => s.relative_tolerance;
+        absolute_tolerance: Float
+            = KramersKronig::new().absolute_tolerance
+            => s.absolute_tolerance;
+    }
+    inputs {
+        spectrum: Upstream("DielectricSpectrumResult");
+    }
+}
+
+crate::compute::spec::compute_spec! {
+    ConductivitySumRule as "ConductivitySumRule";
+    params |s| {
+        units: Units;
+        tolerance: Float = ConductivitySumRule::DEFAULT_TOLERANCE => s.tolerance;
+    }
+    inputs {
+        frequencies: Scalars;
+        conductivity: Scalars;
+        current_sq_mean: Scalar;
+        volume: Scalar;
+        temperature: Scalar;
+    }
+}
+
+crate::compute::spec::compute_spec! {
+    RouteAgreement as "RouteAgreement";
+    params |s| {
+        part: Choice(PermittivityPart::NAMES) = RouteAgreement::new().part => s.part;
+        tolerance: Float = RouteAgreement::new().tolerance => s.tolerance;
+    }
+    inputs {
+        spectra: UpstreamList("DielectricSpectrumResult");
+    }
 }
 
 #[cfg(test)]

@@ -112,6 +112,14 @@ impl Compute for PolarizabilityParts {
     }
 }
 
+crate::compute::spec::compute_spec! {
+    PolarizabilityParts as "PolarizabilityParts";
+    params |s| {}
+    inputs {
+        alpha: Series;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
