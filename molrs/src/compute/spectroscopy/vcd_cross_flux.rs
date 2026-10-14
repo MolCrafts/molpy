@@ -5,9 +5,9 @@ use molrs::core::FrameAccess;
 use ndarray::Array2;
 
 use super::{central_diff_series, sum_column_xcorr};
-use crate::compute::Compute;
 use crate::compute::ComputeError;
 use crate::compute::ComputeResult;
+use crate::compute::LegacyCompute;
 use crate::compute::lag_times;
 
 /// Raw VCD cross-correlation — the VCD-spectrum raw input.
@@ -41,7 +41,7 @@ pub struct VcdCrossFlux;
 /// derivatives drop the first and last frame.
 pub type VcdCrossFluxArgs<'a> = (&'a Array2<f64>, &'a Array2<f64>, f64, usize);
 
-impl Compute for VcdCrossFlux {
+impl LegacyCompute for VcdCrossFlux {
     type Args<'a> = VcdCrossFluxArgs<'a>;
     type Output = VcdCrossFluxResult;
 

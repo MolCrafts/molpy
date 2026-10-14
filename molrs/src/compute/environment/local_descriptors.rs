@@ -6,8 +6,8 @@ use molrs::core::FrameAccess;
 use molrs::core::Neighbors;
 use molrs::core::ylm_all;
 
-use crate::compute::Compute;
 use crate::compute::ComputeError;
+use crate::compute::LegacyCompute;
 use crate::compute::require_disp;
 
 /// `LocalDescriptors` analyzer (Sph-mode).
@@ -87,7 +87,7 @@ impl LocalDescriptors {
     }
 }
 
-impl Compute for LocalDescriptors {
+impl LegacyCompute for LocalDescriptors {
     type Args<'a> = &'a [Neighbors];
     type Output = Vec<LocalDescriptorsResult>;
 

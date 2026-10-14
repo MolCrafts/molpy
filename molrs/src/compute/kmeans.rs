@@ -5,9 +5,9 @@ use molrs::op::F;
 use rand::rngs::StdRng;
 use rand::{RngExt, SeedableRng};
 
-use crate::compute::Compute;
 use crate::compute::ComputeError;
 use crate::compute::ComputeResult;
+use crate::compute::LegacyCompute;
 use crate::compute::PcaResult;
 
 /// Per-row cluster labels in `0..k`.
@@ -103,7 +103,7 @@ impl Kmeans {
     }
 }
 
-impl Compute for Kmeans {
+impl LegacyCompute for Kmeans {
     type Args<'a> = &'a PcaResult;
     type Output = KmeansResult;
 

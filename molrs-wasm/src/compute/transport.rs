@@ -3,8 +3,8 @@
 
 use super::{SeriesOut, array1, array2, js_value};
 use crate::core::frame::Frame;
-use molrs::compute::Compute;
 use molrs::compute::Fit;
+use molrs::compute::LegacyCompute;
 use molrs::op::F;
 use serde::Serialize;
 use wasm_bindgen::prelude::*;

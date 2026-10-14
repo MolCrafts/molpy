@@ -10,8 +10,8 @@ use molrs::core::Neighbors;
 use molrs::op::F;
 
 use super::steinhardt::steinhardt_qlm;
-use crate::compute::Compute;
 use crate::compute::ComputeError;
+use crate::compute::LegacyCompute;
 use crate::compute::positions::get_positions_ref;
 
 /// Continuous-coordination calculator.
@@ -116,7 +116,7 @@ impl ContinuousCoordination {
     }
 }
 
-impl Compute for ContinuousCoordination {
+impl LegacyCompute for ContinuousCoordination {
     type Args<'a> = &'a [Neighbors];
     type Output = Vec<ContinuousCoordinationResult>;
 

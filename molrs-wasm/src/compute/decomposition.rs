@@ -2,9 +2,9 @@
 //! `molrs::compute`'s `decomposition` ([`molrs::compute::Pca`]).
 
 use js_sys::Float64Array;
-use molrs::compute::Compute;
 use molrs::compute::ComputeResult;
 use molrs::compute::DescriptorRow;
+use molrs::compute::LegacyCompute;
 use molrs::compute::{Pca as RsPca, PcaResult as RsPcaResult};
 use molrs::op::F;
 use wasm_bindgen::prelude::*;

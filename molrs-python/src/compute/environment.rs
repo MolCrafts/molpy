@@ -4,7 +4,7 @@
 
 use super::{collect_frames, collect_neighbors};
 use crate::error::py_value_err;
-use molrs::compute::{BondOrientationalOrder, Compute};
+use molrs::compute::{BondOrientationalOrder, LegacyCompute};
 use molrs::core::Frame as CoreFrame;
 use ndarray::Array1;
 use numpy::{IntoPyArray, PyArray1, PyArray2};

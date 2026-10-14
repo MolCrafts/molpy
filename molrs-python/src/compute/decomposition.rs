@@ -2,7 +2,7 @@
 
 use super::analysis_contract::PyDescriptorRow;
 use crate::error::py_value_err;
-use molrs::compute::{Compute, Pca, PcaResult};
+use molrs::compute::{LegacyCompute, Pca, PcaResult};
 use molrs::core::Frame as CoreFrame;
 use numpy::{IntoPyArray, PyArray2};
 use pyo3::exceptions::PyValueError;

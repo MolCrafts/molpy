@@ -2,7 +2,7 @@
 
 use crate::core::frame::Frame;
 use crate::core::nd_array::JsFloatArray;
-use molrs::compute::Compute;
+use molrs::compute::LegacyCompute;
 use molrs::compute::{Msd as RsMsd, MsdResult as RsMsdResult};
 use molrs::op::F;
 use wasm_bindgen::prelude::*;

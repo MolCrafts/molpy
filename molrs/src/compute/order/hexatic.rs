@@ -6,15 +6,15 @@ use molrs::core::FrameAccess;
 use molrs::core::Neighbors;
 use molrs::op::F;
 
-use crate::compute::Compute;
 use crate::compute::ComputeError;
+use crate::compute::LegacyCompute;
 use crate::compute::positions::get_positions_ref;
 use crate::compute::{require_disp, require_self_query};
 
 /// Hexatic order parameter calculator.
 ///
 /// Stateless parameter container: just the symmetry order `k`.
-/// [`compute`](Compute::compute) takes `&Vec<Neighbors>` — one neighbor table
+/// [`compute`](LegacyCompute::compute) takes `&Vec<Neighbors>` — one neighbor table
 /// per frame, index-aligned with `frames`, each carrying the `disp` column (Å);
 /// a table without it is [`ComputeError::BadShape`], never a silent zero.
 ///
@@ -57,7 +57,7 @@ use crate::compute::{require_disp, require_self_query};
 /// [`NeighborColumns::DISP`](molrs::core::NeighborColumns::DISP)
 /// or [`FULL`](molrs::core::NeighborColumns::FULL). A `DIST_SQ`
 /// or `INDICES_ONLY` table stores no directions and reads back `None` rather
-/// than zeros, so [`Hexatic::compute`](Compute::compute) answers
+/// than zeros, so [`Hexatic::compute`](LegacyCompute::compute) answers
 /// [`ComputeError::BadShape`] naming the missing column instead of indexing an
 /// empty view.
 #[derive(Debug, Clone, Copy)]
@@ -144,7 +144,7 @@ impl Hexatic {
     }
 }
 
-impl Compute for Hexatic {
+impl LegacyCompute for Hexatic {
     type Args<'a> = &'a [Neighbors];
     type Output = Vec<HexaticResult>;
 

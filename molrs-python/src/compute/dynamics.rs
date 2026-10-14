@@ -4,7 +4,7 @@
 use super::collect_frames;
 use crate::error::py_value_err;
 use molrs::compute::{
-    AcfResult, Compute, SurvivalMethod, VanHove, VanHoveResult, pair_survival_tcf,
+    AcfResult, LegacyCompute, SurvivalMethod, VanHove, VanHoveResult, pair_survival_tcf,
 };
 use molrs::core::Frame as CoreFrame;
 use numpy::{IntoPyArray, PyArray1, PyArray2, PyReadonlyArray2, PyReadonlyArray3};

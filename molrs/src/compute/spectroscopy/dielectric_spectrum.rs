@@ -924,7 +924,7 @@ impl ComputeResult for RouteAgreementCheck {}
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::compute::Compute;
+    use crate::compute::LegacyCompute;
     use crate::compute::{DebyeRelaxation, EwaldBoundary, GreenKuboConductivity};
     use molrs::core::Frame;
     use ndarray::Array2;

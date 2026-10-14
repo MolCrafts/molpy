@@ -5,9 +5,9 @@ use ndarray::{Array1, Array3, ArrayView3, s};
 use rustfft::FftPlanner;
 use rustfft::num_complex::Complex64;
 
-use crate::compute::Compute;
 use crate::compute::ComputeError;
 use crate::compute::ComputeResult;
+use crate::compute::LegacyCompute;
 use crate::signal as sig;
 use molrs::core::FrameAccess;
 
@@ -137,7 +137,7 @@ pub fn autocorrelation(
     })
 }
 
-impl Compute for Acf {
+impl LegacyCompute for Acf {
     /// `(series (n_frames, n_entities, n_components), max_lag)`. The `frames`
     /// slice is unused — an autocorrelation is a property of the series, and
     /// the series need not be positions.

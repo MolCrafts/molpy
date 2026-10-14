@@ -6,8 +6,8 @@ use molrs::core::Neighbors;
 use molrs::op::F;
 use ndarray::Array2;
 
-use crate::compute::Compute;
 use crate::compute::ComputeError;
+use crate::compute::LegacyCompute;
 use crate::op::Quat;
 use crate::op::{quat_dot, quat_norm};
 
@@ -93,7 +93,7 @@ pub struct AngularSeparationGlobalArgs<'a> {
     pub global: &'a [Quat],
 }
 
-impl Compute for AngularSeparationGlobal {
+impl LegacyCompute for AngularSeparationGlobal {
     type Args<'a> = AngularSeparationGlobalArgs<'a>;
     type Output = Vec<AngularSeparationGlobalResult>;
 
@@ -169,7 +169,7 @@ pub struct AngularSeparationNeighborArgs<'a> {
     pub point_orientations: &'a [Vec<Quat>],
 }
 
-impl Compute for AngularSeparationNeighbor {
+impl LegacyCompute for AngularSeparationNeighbor {
     type Args<'a> = AngularSeparationNeighborArgs<'a>;
     type Output = Vec<AngularSeparationNeighborResult>;
 

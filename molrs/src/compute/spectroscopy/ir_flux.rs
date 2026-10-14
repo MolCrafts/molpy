@@ -4,9 +4,9 @@ use molrs::core::FrameAccess;
 use ndarray::Array2;
 
 use super::{central_diff_series, sum_column_acf};
-use crate::compute::Compute;
 use crate::compute::ComputeError;
 use crate::compute::ComputeResult;
+use crate::compute::LegacyCompute;
 use crate::compute::lag_times;
 
 /// Raw dipole-flux autocorrelation function — the IR-spectrum raw input.
@@ -37,7 +37,7 @@ pub struct IrFlux;
 /// first and last frame, so the effective flux length is `n_frames − 2`.
 pub type IrFluxArgs<'a> = (&'a Array2<f64>, f64, usize);
 
-impl Compute for IrFlux {
+impl LegacyCompute for IrFlux {
     type Args<'a> = IrFluxArgs<'a>;
     type Output = IrFluxResult;
 

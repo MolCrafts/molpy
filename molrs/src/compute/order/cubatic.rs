@@ -8,8 +8,8 @@ use rand::rngs::StdRng;
 use molrs::core::FrameAccess;
 use molrs::op::F;
 
-use crate::compute::Compute;
 use crate::compute::ComputeError;
+use crate::compute::LegacyCompute;
 
 /// Cubatic calculator. Stateless: SA seed, schedule, and chain count live
 /// on the struct.
@@ -234,7 +234,7 @@ fn perturb_basis(basis: &[[F; 3]; 3], temp: F, rng: &mut StdRng) -> [[F; 3]; 3] 
     out
 }
 
-impl Compute for Cubatic {
+impl LegacyCompute for Cubatic {
     type Args<'a> = &'a [[F; 3]];
     type Output = Vec<CubaticResult>;
 

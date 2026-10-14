@@ -4,9 +4,9 @@ use molrs::core::FrameAccess;
 use molrs::op::F;
 use ndarray::Array1;
 
-use crate::compute::Compute;
 use crate::compute::ComputeError;
 use crate::compute::ComputeResult;
+use crate::compute::LegacyCompute;
 
 use super::observable::{AtomGroups, Observable};
 use super::{AngleObservable, DihedralObservable, DistanceObservable, DistributionResult};
@@ -406,7 +406,7 @@ impl CombinedDistribution {
     }
 }
 
-impl Compute for CombinedDistribution {
+impl LegacyCompute for CombinedDistribution {
     /// One [`AtomGroups`] per observable/axis, aligned by tuple index.
     type Args<'a> = &'a [AtomGroups];
     type Output = CombinedDistributionResult;

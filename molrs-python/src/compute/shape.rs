@@ -5,8 +5,8 @@ use super::cluster::PyClusterResult;
 use super::{collect_frames, was_batched};
 use crate::error::py_value_err;
 use molrs::compute::{
-    CenterOfMass, CenterOfMassResult, ClusterCenters, ClusterCentersResult, ClusterResult, Compute,
-    GyrationTensor, InertiaTensor, RadiusOfGyration, RadiusOfGyrationResult,
+    CenterOfMass, CenterOfMassResult, ClusterCenters, ClusterCentersResult, ClusterResult,
+    GyrationTensor, InertiaTensor, LegacyCompute, RadiusOfGyration, RadiusOfGyrationResult,
 };
 use molrs::core::Frame as CoreFrame;
 use molrs::op::F;

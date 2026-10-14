@@ -5,9 +5,9 @@ use molrs::core::FrameAccess;
 use ndarray::{Array1, Array2, Axis};
 
 use super::correlation::lag_times;
-use crate::compute::Compute;
 use crate::compute::ComputeError;
 use crate::compute::ComputeResult;
+use crate::compute::LegacyCompute;
 use crate::compute::autocorrelation;
 
 /// Unbiased velocity autocorrelation function result.
@@ -75,7 +75,7 @@ pub(super) fn velocity_acf(
     })
 }
 
-impl Compute for Vacf {
+impl LegacyCompute for Vacf {
     /// `(velocities (n_frames, n_dof), dt, resolution)`. The `frames` slice is
     /// unused.
     type Args<'a> = VacfArgs<'a>;

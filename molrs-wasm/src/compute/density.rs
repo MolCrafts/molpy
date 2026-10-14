@@ -4,7 +4,7 @@
 use super::{Grid3Out, array2, js_value, usize_pairs};
 use crate::core::frame::Frame;
 use crate::core::neighbors::Neighbors;
-use molrs::compute::Compute;
+use molrs::compute::LegacyCompute;
 use molrs::op::F;
 use serde::Serialize;
 use wasm_bindgen::prelude::*;

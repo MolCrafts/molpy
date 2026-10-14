@@ -7,8 +7,8 @@ use molrs::core::Neighbors;
 use molrs::op::F;
 use ndarray::Array3;
 
-use crate::compute::Compute;
 use crate::compute::ComputeError;
+use crate::compute::LegacyCompute;
 use crate::compute::require_disp;
 use crate::op::{quat_conj, rotate_by_quat};
 
@@ -209,7 +209,7 @@ pub struct PmftXyzArgs<'a> {
     pub query_orientations: Option<&'a [Vec<[F; 4]>]>,
 }
 
-impl Compute for PmftXyz {
+impl LegacyCompute for PmftXyz {
     type Args<'a> = PmftXyzArgs<'a>;
     type Output = Vec<PmftXyzResult>;
 

@@ -3,9 +3,9 @@
 use molrs::core::FrameAccess;
 use ndarray::Array1;
 
-use crate::compute::Compute;
 use crate::compute::ComputeError;
 use crate::compute::ComputeResult;
+use crate::compute::LegacyCompute;
 use crate::compute::{Fit, LinearFit, Msd, MsdMode};
 
 /// Raw self-MSD for the Einstein diffusion route.
@@ -64,7 +64,7 @@ pub struct EinsteinDiffusionArgs {
     pub dt: f64,
 }
 
-impl Compute for EinsteinDiffusion {
+impl LegacyCompute for EinsteinDiffusion {
     /// Frame spacing only; positions come from `frames`.
     type Args<'a> = EinsteinDiffusionArgs;
     type Output = EinsteinDiffusionResult;

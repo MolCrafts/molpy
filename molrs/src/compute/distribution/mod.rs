@@ -20,14 +20,14 @@ use molrs::core::FrameAccess;
 use molrs::op::F;
 use ndarray::Array1;
 
-use crate::compute::Compute;
 use crate::compute::ComputeError;
 use crate::compute::ComputeResult;
+use crate::compute::LegacyCompute;
 
 /// A 1-D distribution function over the samples of an [`Observable`].
 ///
 /// Stateless parameter bag (the observable plus histogram bounds); the
-/// histogram is accumulated inside [`compute`](Compute::compute). For an
+/// histogram is accumulated inside [`compute`](LegacyCompute::compute). For an
 /// angular observable the sin θ-corrected density is computed alongside the raw
 /// one.
 ///
@@ -157,7 +157,7 @@ impl<O: Observable> DistributionFunction<O> {
     }
 }
 
-impl<O: Observable + Sync> Compute for DistributionFunction<O> {
+impl<O: Observable + Sync> LegacyCompute for DistributionFunction<O> {
     type Args<'a> = &'a AtomGroups;
     type Output = DistributionResult;
 

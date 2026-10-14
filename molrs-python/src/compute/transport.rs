@@ -6,9 +6,9 @@
 use super::{EMPTY_FRAMES, collect_frames};
 use crate::error::py_value_err;
 use molrs::compute::{
-    Compute, DebyeFit, DebyeRelaxation, DipoleRateCross, EinsteinConductivity, EinsteinDiffusion,
+    DebyeFit, DebyeRelaxation, DipoleRateCross, EinsteinConductivity, EinsteinDiffusion,
     EinsteinDiffusionArgs, EwaldBoundary, Fit, GreenKuboConductivity, GreenKuboDiffusion,
-    OnsagerCorrelation, Vacf,
+    LegacyCompute, OnsagerCorrelation, Vacf,
 };
 use molrs::core::Frame as CoreFrame;
 use numpy::{IntoPyArray, PyReadonlyArray1, PyReadonlyArray2};

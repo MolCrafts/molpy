@@ -6,8 +6,8 @@ use ndarray::Array1;
 
 use molrs::core::FrameAccess;
 
-use crate::compute::Compute;
 use crate::compute::ComputeError;
+use crate::compute::LegacyCompute;
 
 fn validate_series(p: &ndarray::Array2<f64>, name: &'static str) -> Result<usize, ComputeError> {
     let shape = p.shape();
@@ -151,7 +151,7 @@ fn collective_cross_correlation(
     })
 }
 
-impl Compute for OnsagerCorrelation {
+impl LegacyCompute for OnsagerCorrelation {
     /// `(p_i, p_j, dt, max_correlation_time)`. The `frames` slice is unused (the
     /// collective coordinates are pre-assembled by the caller).
     type Args<'a> = OnsagerCorrelationArgs<'a>;

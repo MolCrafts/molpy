@@ -8,7 +8,7 @@ use crate::compute::ComputeError;
 use crate::compute::ComputeResult;
 use crate::compute::autocorrelation;
 use crate::compute::fitting::ols_slope_intercept_r2;
-use crate::compute::{Compute, Fit};
+use crate::compute::{Fit, LegacyCompute};
 
 /// Ewald boundary condition under which the dipole fluctuations were sampled.
 ///
@@ -86,7 +86,7 @@ pub struct DebyeRelaxation {
 /// `(dipole_moments, dt, max_correlation_time)` bundle for [`DebyeRelaxation`].
 pub type DebyeRelaxationArgs<'a> = (&'a Array2<f64>, f64, usize);
 
-impl Compute for DebyeRelaxation {
+impl LegacyCompute for DebyeRelaxation {
     type Args<'a> = DebyeRelaxationArgs<'a>;
     type Output = DebyeRelaxationResult;
 

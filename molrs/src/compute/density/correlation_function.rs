@@ -6,8 +6,8 @@ use molrs::core::Neighbors;
 use molrs::op::F;
 use ndarray::Array1;
 
-use crate::compute::Compute;
 use crate::compute::ComputeError;
+use crate::compute::LegacyCompute;
 use crate::compute::require_dist_sq;
 
 /// Correlation-function calculator. Stateless container of bin parameters.
@@ -150,7 +150,7 @@ pub struct CorrelationFunctionArgs<'a> {
     pub values_b: &'a [Vec<F>],
 }
 
-impl Compute for CorrelationFunction {
+impl LegacyCompute for CorrelationFunction {
     type Args<'a> = CorrelationFunctionArgs<'a>;
     type Output = Vec<CorrelationFunctionResult>;
 

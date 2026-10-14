@@ -6,8 +6,8 @@
 use super::{collect_frames, collect_neighbors};
 use crate::error::py_value_err;
 use molrs::compute::{
-    AtomGroups, Compute, Hexatic, LegendreReorientation, LegendreReorientationResult, Nematic,
-    SolidLiquid, Steinhardt,
+    AtomGroups, Hexatic, LegacyCompute, LegendreReorientation, LegendreReorientationResult,
+    Nematic, SolidLiquid, Steinhardt,
 };
 use molrs::core::Frame as CoreFrame;
 use molrs::op::F;

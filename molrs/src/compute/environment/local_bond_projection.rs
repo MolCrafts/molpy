@@ -6,8 +6,8 @@ use molrs::core::Neighbors;
 use molrs::op::F;
 use ndarray::Array2;
 
-use crate::compute::Compute;
 use crate::compute::ComputeError;
+use crate::compute::LegacyCompute;
 use crate::compute::require_disp;
 use crate::op::rotate_by_quat;
 
@@ -56,7 +56,7 @@ pub struct LocalBondProjectionArgs<'a> {
     pub query_orientations: Option<&'a [Vec<[F; 4]>]>,
 }
 
-impl Compute for LocalBondProjection {
+impl LegacyCompute for LocalBondProjection {
     type Args<'a> = LocalBondProjectionArgs<'a>;
     type Output = Vec<LocalBondProjectionResult>;
 

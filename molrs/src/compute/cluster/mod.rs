@@ -12,8 +12,8 @@ use molrs::op::Idx;
 use ndarray::Array1;
 use std::collections::HashMap;
 
-use crate::compute::Compute;
 use crate::compute::ComputeError;
+use crate::compute::LegacyCompute;
 
 /// Distance-based cluster analysis using BFS on the neighbor graph.
 ///
@@ -247,7 +247,7 @@ impl Cluster {
     }
 }
 
-impl Compute for Cluster {
+impl LegacyCompute for Cluster {
     type Args<'a> = &'a [Neighbors];
     type Output = Vec<ClusterResult>;
 

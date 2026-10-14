@@ -8,7 +8,7 @@
 //! math to molrs; no analysis math lives here. The engine measures; molrs
 //! analyzes.
 
-use molrs::compute::Compute;
+use molrs::compute::LegacyCompute;
 use molrs::core::Frame;
 use ndarray::Array2;
 

@@ -594,7 +594,70 @@ impl NeighborList {
             columns,
         );
         self.backend.materialize_into(&mut out);
+        out.simbox = self.bx.clone();
         out
+    }
+}
+
+/// A set of neighbor pairs a pair kernel can stream: a materialized
+/// [`Neighbors`] table, or a built [`NeighborList`] that streams pairs straight
+/// out of its spatial index without materializing a table.
+///
+/// Both answer the same questions, so a kernel that only needs to see every
+/// pair once takes `&dyn PairSource` and serves both — the table when the
+/// caller already holds one, the list when the table would not fit in memory.
+pub trait PairSource {
+    /// Pair direction: a half-shell self-query or a directed cross-query.
+    fn mode(&self) -> QueryMode;
+
+    /// The box the pairs were searched in, if a search produced them.
+    fn simbox(&self) -> Option<&SimBox>;
+
+    /// The physical columns [`visit_pairs`](Self::visit_pairs) reports.
+    fn columns(&self) -> NeighborColumns;
+
+    /// Visit every pair once as `(i, j, dist_sq, disp)`. A column outside
+    /// [`columns`](Self::columns) arrives as `None`, never as a zero.
+    fn visit_pairs(&self, visitor: &mut dyn FnMut(u32, u32, Option<F>, Option<[F; 3]>));
+}
+
+impl PairSource for Neighbors {
+    fn mode(&self) -> QueryMode {
+        self.mode
+    }
+
+    fn simbox(&self) -> Option<&SimBox> {
+        self.simbox.as_ref()
+    }
+
+    fn columns(&self) -> NeighborColumns {
+        self.columns
+    }
+
+    fn visit_pairs(&self, visitor: &mut dyn FnMut(u32, u32, Option<F>, Option<[F; 3]>)) {
+        self.for_each_pair(visitor);
+    }
+}
+
+impl PairSource for NeighborList {
+    fn mode(&self) -> QueryMode {
+        QueryMode::SelfQuery {
+            n_points: self.n_points,
+        }
+    }
+
+    fn simbox(&self) -> Option<&SimBox> {
+        self.bx.as_ref()
+    }
+
+    /// A streaming search computes both physical columns for every pair.
+    fn columns(&self) -> NeighborColumns {
+        NeighborColumns::FULL
+    }
+
+    fn visit_pairs(&self, visitor: &mut dyn FnMut(u32, u32, Option<F>, Option<[F; 3]>)) {
+        self.backend
+            .visit_pairs(&mut |i, j, dist_sq, disp| visitor(i, j, Some(dist_sq), Some(disp)));
     }
 }
 
@@ -771,6 +834,9 @@ pub struct Neighbors {
     pub(crate) disp_flat: Vec<F>,
     /// Query identity: self vs cross, plus the point-set sizes.
     pub(crate) mode: QueryMode,
+    /// The box the pairs were searched in. `None` for a table nothing searched
+    /// in a box — hand-built rows, ghost-image tables, topology pair lists.
+    pub(crate) simbox: Option<SimBox>,
 }
 
 impl Neighbors {
@@ -827,7 +893,23 @@ impl Neighbors {
             dist_sq: Vec::new(),
             disp_flat: Vec::new(),
             mode,
+            simbox: None,
         }
+    }
+
+    /// The box the pairs were searched in, or `None` if no search produced
+    /// this table. A pair kernel that needs a volume reads it from here and
+    /// rejects `None`; it never invents one.
+    #[inline]
+    pub fn simbox(&self) -> Option<&SimBox> {
+        self.simbox.as_ref()
+    }
+
+    /// The same table, recording `simbox` as the box its pairs live in — for a
+    /// table built by hand with [`from_pairs`](Self::from_pairs).
+    pub fn with_simbox(mut self, simbox: SimBox) -> Self {
+        self.simbox = Some(simbox);
+        self
     }
 
     pub(crate) fn clear(&mut self) {
@@ -1015,6 +1097,7 @@ impl Neighbors {
                 Vec::new()
             },
             mode: self.mode,
+            simbox: self.simbox.clone(),
         }
     }
 
@@ -2107,5 +2190,133 @@ mod engine_tests {
             "fixture must contain a pair with i > j to prove no half-shell \
              constraint is imposed on a cross-query"
         );
+    }
+}
+
+#[cfg(test)]
+mod geometry_tests {
+    //! A table remembers the box it was searched in, and a materialized table
+    //! and a built [`NeighborList`] answer the same [`PairSource`] questions.
+    use super::test_fixtures::{SMALL_GOLDEN, small_box, small_points};
+    use super::*;
+    use crate::core::filter_rad;
+
+    fn same_box(a: &SimBox, b: &SimBox) -> bool {
+        a.matrix() == b.matrix() && a.volume() == b.volume()
+    }
+
+    /// One visited pair: `(i, j, dist_sq, disp)`.
+    type Row = (u32, u32, Option<F>, Option<[F; 3]>);
+
+    /// Visit a source and return its rows sorted by `(i, j)`.
+    fn visited(source: &dyn PairSource) -> Vec<Row> {
+        let mut rows = Vec::new();
+        source.visit_pairs(&mut |i, j, d2, dr| rows.push((i, j, d2, dr)));
+        rows.sort_by_key(|r| (r.0, r.1));
+        rows
+    }
+
+    #[test]
+    fn neighbor_list_table_carries_the_build_box() {
+        let bx = small_box();
+        let mut nl = NeighborList::new(1.5);
+        nl.build(small_points().view(), &bx);
+
+        let nb = nl.neighbors(NeighborColumns::FULL);
+
+        assert!(same_box(
+            nb.simbox().expect("a searched table has a box"),
+            &bx
+        ));
+    }
+
+    #[test]
+    fn query_tables_carry_the_query_box() {
+        let bx = small_box();
+        let pts = small_points();
+        let q = NeighborQuery::new(&bx, pts.view(), 1.5);
+
+        let self_table = q.query_self();
+        let cross_table = q.query(pts.view());
+
+        assert!(same_box(self_table.simbox().expect("self query"), &bx));
+        assert!(same_box(cross_table.simbox().expect("cross query"), &bx));
+    }
+
+    #[test]
+    fn hand_built_table_has_no_box_until_given_one() {
+        let pairs = SMALL_GOLDEN.map(|(i, j, dist_sq, disp)| NeighborPair {
+            i,
+            j,
+            dist_sq,
+            disp,
+        });
+        let nb = Neighbors::from_pairs(
+            pairs,
+            NeighborColumns::FULL,
+            QueryMode::SelfQuery { n_points: 4 },
+        );
+        assert!(nb.simbox().is_none());
+
+        let bx = small_box();
+        let boxed = nb.with_simbox(bx.clone());
+        assert!(same_box(boxed.simbox().expect("box was attached"), &bx));
+    }
+
+    #[test]
+    fn repack_and_filters_keep_the_box() {
+        let bx = small_box();
+        let mut nl = NeighborList::new(1.5);
+        nl.build(small_points().view(), &bx);
+        let nb = nl.neighbors(NeighborColumns::FULL);
+
+        assert!(same_box(
+            nb.repack(NeighborColumns::DIST_SQ).simbox().unwrap(),
+            &bx
+        ));
+        assert!(same_box(filter_rad(&nb, 1.0).simbox().unwrap(), &bx));
+    }
+
+    /// The streamed list and its materialized table are one pair set: same
+    /// rows, same physical values, same mode and box.
+    #[test]
+    fn table_and_list_are_the_same_pair_source() {
+        let bx = small_box();
+        let mut nl = NeighborList::new(1.5);
+        nl.build(small_points().view(), &bx);
+        let nb = nl.neighbors(NeighborColumns::FULL);
+
+        let from_list = visited(&nl);
+        let from_table = visited(&nb);
+
+        assert_eq!(from_list.len(), SMALL_GOLDEN.len());
+        for (row, (gi, gj, gd2, gdr)) in from_list.iter().zip(SMALL_GOLDEN) {
+            assert_eq!((row.0, row.1), (gi, gj));
+            assert!((row.2.unwrap() - gd2).abs() <= 1e-12);
+            for (got, want) in row.3.unwrap().iter().zip(gdr) {
+                assert!((got - want).abs() <= 1e-12);
+            }
+        }
+        assert_eq!(from_list, from_table);
+        assert_eq!(PairSource::mode(&nl), PairSource::mode(&nb));
+        assert_eq!(PairSource::columns(&nl), NeighborColumns::FULL);
+        assert!(same_box(
+            PairSource::simbox(&nl).unwrap(),
+            PairSource::simbox(&nb).unwrap()
+        ));
+    }
+
+    /// A lean table reports its absent columns as absent: `None`, never zero.
+    #[test]
+    fn lean_table_visits_absent_columns_as_none() {
+        let bx = small_box();
+        let mut nl = NeighborList::new(1.5);
+        nl.build(small_points().view(), &bx);
+        let lean = nl.neighbors(NeighborColumns::INDICES_ONLY);
+
+        assert_eq!(PairSource::columns(&lean), NeighborColumns::INDICES_ONLY);
+        let rows = visited(&lean);
+        assert_eq!(rows.len(), 3);
+        assert!(rows.iter().all(|r| r.2.is_none() && r.3.is_none()));
     }
 }

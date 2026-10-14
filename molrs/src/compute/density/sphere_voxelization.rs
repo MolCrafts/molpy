@@ -8,8 +8,8 @@ use molrs::core::BoxKind;
 use molrs::core::FrameAccess;
 use molrs::op::F;
 
-use crate::compute::Compute;
 use crate::compute::ComputeError;
+use crate::compute::LegacyCompute;
 use crate::compute::positions::get_positions_ref;
 
 /// Sphere-voxelisation calculator.
@@ -136,7 +136,7 @@ impl SphereVoxelization {
     }
 }
 
-impl Compute for SphereVoxelization {
+impl LegacyCompute for SphereVoxelization {
     type Args<'a> = ();
     type Output = Vec<SphereVoxelizationResult>;
 

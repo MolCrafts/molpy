@@ -12,8 +12,8 @@ use ndarray::Array2;
 use rustfft::FftPlanner;
 use rustfft::num_complex::Complex as RfComplex;
 
-use crate::compute::Compute;
 use crate::compute::ComputeError;
+use crate::compute::LegacyCompute;
 use crate::compute::positions::get_positions_ref;
 
 /// `DiffractionPattern` analyzer.
@@ -202,7 +202,7 @@ fn fft2_power_shifted(image: &Array2<F>, n: usize) -> Array2<F> {
     shifted
 }
 
-impl Compute for DiffractionPattern {
+impl LegacyCompute for DiffractionPattern {
     type Args<'a> = ();
     type Output = Vec<DiffractionPatternResult>;
 

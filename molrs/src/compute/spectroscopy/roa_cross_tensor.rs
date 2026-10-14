@@ -8,9 +8,9 @@ use rustfft::num_complex::Complex64;
 
 use super::raman_tensor::{DIAG_ANISO_WEIGHT, OFFDIAG_ANISO_WEIGHT};
 use super::{central_diff_series, xcorr_accumulate_into};
-use crate::compute::Compute;
 use crate::compute::ComputeError;
 use crate::compute::ComputeResult;
+use crate::compute::LegacyCompute;
 use crate::compute::lag_times;
 
 /// Raw ROA cross-correlation iso/aniso curves — the ROA-spectrum raw input.
@@ -47,7 +47,7 @@ pub struct RoaCrossTensor;
 /// both in Voigt notation `[xx, yy, zz, xy, xz, yz]`.
 pub type RoaCrossTensorArgs<'a> = (&'a Array2<f64>, &'a Array2<f64>, f64, usize);
 
-impl Compute for RoaCrossTensor {
+impl LegacyCompute for RoaCrossTensor {
     type Args<'a> = RoaCrossTensorArgs<'a>;
     type Output = RoaCrossTensorResult;
 

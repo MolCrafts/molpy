@@ -5,9 +5,9 @@ use ndarray::{Array1, Array2};
 use rustfft::FftPlanner;
 use rustfft::num_complex::Complex64;
 
-use crate::compute::Compute;
 use crate::compute::ComputeError;
 use crate::compute::ComputeResult;
+use crate::compute::LegacyCompute;
 use molrs::signal as sig;
 
 // ── Shared primitives ────────────────────────────────────────────────────────
@@ -208,7 +208,7 @@ impl ComputeResult for DipoleRateCrossResult {}
 /// `(dipole_moments (n,3), dt, max_correlation_time)` for [`DipoleRateCross`].
 pub type DipoleRateCrossArgs<'a> = (&'a Array2<f64>, f64, usize);
 
-impl Compute for DipoleRateCross {
+impl LegacyCompute for DipoleRateCross {
     type Args<'a> = DipoleRateCrossArgs<'a>;
     type Output = DipoleRateCrossResult;
 

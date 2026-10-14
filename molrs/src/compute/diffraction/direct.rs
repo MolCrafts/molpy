@@ -7,8 +7,8 @@ use molrs::op::F;
 use ndarray::Array1;
 use std::f64::consts::TAU;
 
-use crate::compute::Compute;
 use crate::compute::ComputeError;
+use crate::compute::LegacyCompute;
 use crate::compute::positions::get_positions_ref;
 
 #[derive(Debug, Clone)]
@@ -187,7 +187,7 @@ impl StaticStructureFactorDirect {
     }
 }
 
-impl Compute for StaticStructureFactorDirect {
+impl LegacyCompute for StaticStructureFactorDirect {
     type Args<'a> = ();
     type Output = Vec<StaticStructureFactorDirectResult>;
 

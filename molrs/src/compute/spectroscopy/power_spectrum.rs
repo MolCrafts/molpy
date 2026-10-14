@@ -53,7 +53,7 @@ impl Fit for PowerSpectrum {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::compute::Compute;
+    use crate::compute::LegacyCompute;
     use crate::compute::Vacf;
     use molrs::core::Frame;
     use molrs::signal as sig;

@@ -7,8 +7,8 @@ use molrs::core::Neighbors;
 use molrs::op::F;
 use ndarray::Array2;
 
-use crate::compute::Compute;
 use crate::compute::ComputeError;
+use crate::compute::LegacyCompute;
 use crate::compute::require_disp;
 
 /// `PmftXy` analyzer.
@@ -215,7 +215,7 @@ impl<'a> From<&'a [Neighbors]> for PmftXyArgs<'a> {
     }
 }
 
-impl Compute for PmftXy {
+impl LegacyCompute for PmftXy {
     type Args<'a> = PmftXyArgs<'a>;
     type Output = Vec<PmftXyResult>;
 

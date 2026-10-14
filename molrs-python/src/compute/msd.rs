@@ -3,7 +3,7 @@
 
 use super::collect_frames;
 use crate::error::py_value_err;
-use molrs::compute::{Compute, Msd, MsdMode, MsdResult, MsdTimeSeries};
+use molrs::compute::{LegacyCompute, Msd, MsdMode, MsdResult, MsdTimeSeries};
 use molrs::core::Frame as CoreFrame;
 use numpy::{IntoPyArray, PyArray1, PyArray2};
 use pyo3::exceptions::PyValueError;

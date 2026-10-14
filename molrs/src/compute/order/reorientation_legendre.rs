@@ -5,8 +5,8 @@ use molrs::core::FrameAccess;
 use molrs::op::F;
 use ndarray::Array1;
 
-use crate::compute::Compute;
 use crate::compute::ComputeError;
+use crate::compute::LegacyCompute;
 use crate::compute::positions::get_positions_ref;
 use crate::op::vec3::sub;
 use molrs::core::{Mic, SimBox};
@@ -15,7 +15,7 @@ use molrs::core::{Mic, SimBox};
 ///
 /// Stateless parameter bag: the maximum lag (correlation depth, in frames) and
 /// the time-origin stride. The molecular vectors are selected by the `Args`
-/// passed to [`compute`](Compute::compute): one `(a, b)` atom-index pair per
+/// passed to [`compute`](LegacyCompute::compute): one `(a, b)` atom-index pair per
 /// molecule, defining `û = normalize(r_b − r_a)` (minimum-image).
 ///
 /// For a molecular **unit vector** `û` (an O–H bond, a dipole axis, …) the
@@ -85,7 +85,7 @@ fn p2(x: F) -> F {
     0.5 * (3.0 * x * x - 1.0)
 }
 
-impl Compute for LegendreReorientation {
+impl LegacyCompute for LegendreReorientation {
     /// One `(atom_a, atom_b)` index pair per molecular vector.
     type Args<'a> = &'a [(u32, u32)];
     type Output = LegendreReorientationResult;

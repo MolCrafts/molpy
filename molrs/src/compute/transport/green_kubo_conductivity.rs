@@ -4,9 +4,9 @@ use molrs::core::FrameAccess;
 use ndarray::{Array1, Array2, Axis};
 
 use super::correlation::lag_times;
-use crate::compute::Compute;
 use crate::compute::ComputeError;
 use crate::compute::ComputeResult;
+use crate::compute::LegacyCompute;
 use crate::compute::autocorrelation;
 
 /// Raw current autocorrelation function, with **no** fitted sigma.
@@ -40,7 +40,7 @@ pub struct GreenKuboConductivity;
 /// `(current, dt, max_correlation_time)` bundle.
 pub type GreenKuboConductivityArgs<'a> = (&'a Array2<f64>, f64, usize);
 
-impl Compute for GreenKuboConductivity {
+impl LegacyCompute for GreenKuboConductivity {
     type Args<'a> = GreenKuboConductivityArgs<'a>;
     type Output = GreenKuboConductivityResult;
 

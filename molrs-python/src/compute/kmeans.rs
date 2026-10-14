@@ -2,7 +2,7 @@
 
 use super::decomposition::PyPcaResult;
 use crate::error::py_value_err;
-use molrs::compute::{Compute, Kmeans, KmeansResult};
+use molrs::compute::{Kmeans, KmeansResult, LegacyCompute};
 use molrs::core::Frame as CoreFrame;
 use numpy::{IntoPyArray, PyArray1};
 use pyo3::prelude::*;

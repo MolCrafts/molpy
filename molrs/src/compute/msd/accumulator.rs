@@ -149,7 +149,7 @@ fn sum_sq_disp(a: &[F], b: &[F], n_atoms: usize) -> F {
 mod tests {
     use super::super::Msd;
     use super::*;
-    use crate::compute::Compute;
+    use crate::compute::LegacyCompute;
     use crate::compute::MsdMode;
     use molrs::core::Block;
     use molrs::core::Frame;

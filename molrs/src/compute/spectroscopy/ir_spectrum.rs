@@ -54,7 +54,7 @@ impl Fit for IrSpectrum {
 mod tests {
     use super::super::ir_flux::IrFlux;
     use super::*;
-    use crate::compute::Compute;
+    use crate::compute::LegacyCompute;
     use molrs::core::Frame;
     use molrs::signal as sig;
     use ndarray::Array2;

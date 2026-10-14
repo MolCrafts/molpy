@@ -8,9 +8,9 @@ use molrs::core::FrameAccess;
 use molrs::op::F;
 
 use super::ClusterResult;
-use crate::compute::Compute;
 use crate::compute::ComputeError;
 use crate::compute::ComputeResult;
+use crate::compute::LegacyCompute;
 use crate::compute::positions::get_positions_ref;
 use crate::op::vec3::sub;
 use molrs::core::{Mic, SimBox};
@@ -195,7 +195,7 @@ impl ClusterProperties {
     }
 }
 
-impl Compute for ClusterProperties {
+impl LegacyCompute for ClusterProperties {
     type Args<'a> = &'a Vec<ClusterResult>;
     type Output = Vec<ClusterPropertiesResult>;
 

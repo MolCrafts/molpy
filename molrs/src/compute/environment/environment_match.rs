@@ -13,8 +13,8 @@ use molrs::core::FrameAccess;
 use molrs::core::Neighbors;
 use molrs::op::F;
 
-use crate::compute::Compute;
 use crate::compute::ComputeError;
+use crate::compute::LegacyCompute;
 use crate::compute::positions::get_positions_ref;
 use crate::compute::require_disp;
 
@@ -353,7 +353,7 @@ impl EnvironmentMatch {
     }
 }
 
-impl Compute for EnvironmentMatch {
+impl LegacyCompute for EnvironmentMatch {
     type Args<'a> = &'a [Neighbors];
     type Output = Vec<EnvironmentMatchResult>;
 

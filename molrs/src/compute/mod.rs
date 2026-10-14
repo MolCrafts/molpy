@@ -186,6 +186,7 @@
 
 mod analysis_contract;
 mod cluster;
+mod contract;
 mod decomposition;
 mod density;
 mod dielectric;
@@ -201,6 +202,7 @@ mod hbond;
 mod kinetic;
 mod kmeans;
 mod msd;
+mod named_enum;
 mod order;
 mod pmft;
 pub(crate) mod positions;
@@ -213,8 +215,9 @@ mod transport;
 mod voronoi;
 
 // Re-exports
-pub use analysis_contract::{Check, Compute, ComputeResult, DescriptorRow, Fit, Verdict};
+pub use analysis_contract::{Check, ComputeResult, DescriptorRow, Fit, LegacyCompute};
 pub use cluster::{Cluster, ClusterProperties, ClusterPropertiesResult, ClusterResult};
+pub use contract::{Accumulate, Batch, Compute, FeatureMatrix, Partition, Stream, Verdict};
 pub use decomposition::{Pca, PcaResult};
 pub use density::{
     CorrelationFunction, CorrelationFunctionArgs, CorrelationFunctionResult, GaussianDensity,

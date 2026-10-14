@@ -6,8 +6,8 @@ use molrs::core::NeighborQuery;
 use molrs::op::F;
 use ndarray::{Array1, Array2};
 
-use crate::compute::Compute;
 use crate::compute::ComputeError;
+use crate::compute::LegacyCompute;
 use crate::compute::positions::get_positions_ref;
 
 /// Van Hove correlation analyzer.
@@ -106,7 +106,7 @@ impl VanHove {
     }
 }
 
-impl Compute for VanHove {
+impl LegacyCompute for VanHove {
     type Args<'a> = ();
     type Output = VanHoveResult;
 

@@ -2,8 +2,8 @@
 //! the `molrs::compute` spectroscopy family.
 
 use super::{SeriesOut, array1, array2, js_value};
-use molrs::compute::Compute;
 use molrs::compute::Fit;
+use molrs::compute::LegacyCompute;
 use molrs::op::F;
 use serde::Serialize;
 use wasm_bindgen::prelude::*;

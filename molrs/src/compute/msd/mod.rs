@@ -12,8 +12,8 @@ use ndarray::Array1;
 use rustfft::FftPlanner;
 use rustfft::num_complex::Complex as RfComplex;
 
-use crate::compute::Compute;
 use crate::compute::ComputeError;
+use crate::compute::LegacyCompute;
 use crate::compute::positions::get_positions_ref_any_dim;
 
 /// Mode of MSD computation.
@@ -220,7 +220,7 @@ fn msd_windowed<FA: FrameAccess + Sync>(frames: &[&FA]) -> Result<MsdTimeSeries,
     Ok(MsdTimeSeries::new(data))
 }
 
-impl Compute for Msd {
+impl LegacyCompute for Msd {
     type Args<'a> = ();
     type Output = MsdTimeSeries;
 

@@ -6,7 +6,7 @@
 use super::{collect_frames, collect_neighbors};
 use crate::error::py_value_err;
 use molrs::compute::{
-    AtomGroups, Compute, GaussianDensity, GridSpec, LocalDensity, SpatialDistribution,
+    AtomGroups, GaussianDensity, GridSpec, LegacyCompute, LocalDensity, SpatialDistribution,
     SpatialDistributionResult,
 };
 use molrs::core::{Frame as CoreFrame, FrameAccess};

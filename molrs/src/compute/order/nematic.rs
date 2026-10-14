@@ -9,8 +9,8 @@ use crate::op::eigh_sym_3x3;
 use molrs::core::FrameAccess;
 use molrs::op::F;
 
-use crate::compute::Compute;
 use crate::compute::ComputeError;
+use crate::compute::LegacyCompute;
 
 /// Nematic order parameter calculator.
 ///
@@ -88,7 +88,7 @@ impl Nematic {
     }
 }
 
-impl Compute for Nematic {
+impl LegacyCompute for Nematic {
     type Args<'a> = &'a [[F; 3]];
     type Output = Vec<NematicResult>;
 

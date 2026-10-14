@@ -2,7 +2,7 @@
 
 use super::collect_frames;
 use crate::error::py_value_err;
-use molrs::compute::{Compute, HBondCriterion, HBondDistanceKind, HBonds, HBondsResult};
+use molrs::compute::{HBondCriterion, HBondDistanceKind, HBonds, HBondsResult, LegacyCompute};
 use molrs::core::Frame as CoreFrame;
 use numpy::{PyReadonlyArray1, PyReadonlyArray2};
 use pyo3::exceptions::PyValueError;

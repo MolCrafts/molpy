@@ -6,8 +6,8 @@ use molrs::op::F;
 
 use crate::compute::CenterOfMassResult;
 use crate::compute::ClusterResult;
-use crate::compute::Compute;
 use crate::compute::ComputeError;
+use crate::compute::LegacyCompute;
 use crate::compute::positions::get_positions_ref;
 use crate::op::vec3::sub;
 use molrs::core::{Mic, SimBox};
@@ -102,7 +102,7 @@ impl RadiusOfGyration {
     }
 }
 
-impl Compute for RadiusOfGyration {
+impl LegacyCompute for RadiusOfGyration {
     type Args<'a> = (&'a Vec<ClusterResult>, &'a Vec<CenterOfMassResult>);
     type Output = Vec<RadiusOfGyrationResult>;
 

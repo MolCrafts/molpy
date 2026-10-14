@@ -146,6 +146,7 @@ impl NeighborQuery {
                 });
         }
 
+        nlist.simbox = Some(self.simbox.clone());
         nlist
     }
 
@@ -174,6 +175,7 @@ impl NeighborQuery {
             NeighborColumns::FULL,
         );
         self.lc.materialize_into(&mut out);
+        out.simbox = Some(self.simbox.clone());
         out
     }
 

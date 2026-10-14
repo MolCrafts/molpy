@@ -123,7 +123,7 @@ impl Fit for RamanSpectrum {
 mod tests {
     use super::super::raman_tensor::RamanTensor;
     use super::*;
-    use crate::compute::Compute;
+    use crate::compute::LegacyCompute;
     use molrs::core::Frame;
     use molrs::signal as sig;
     use ndarray::Array2;

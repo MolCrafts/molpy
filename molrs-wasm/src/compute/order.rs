@@ -4,7 +4,7 @@
 use super::{js_value, quats};
 use crate::core::frame::Frame;
 use crate::core::neighbors::Neighbors;
-use molrs::compute::Compute;
+use molrs::compute::LegacyCompute;
 use molrs::op::F;
 use serde::Serialize;
 use wasm_bindgen::prelude::*;

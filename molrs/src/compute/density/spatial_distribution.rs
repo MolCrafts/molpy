@@ -6,9 +6,9 @@ use molrs::core::FrameAccess;
 use molrs::op::F;
 use ndarray::{Array2, Array3, Array4};
 
-use crate::compute::Compute;
 use crate::compute::ComputeError;
 use crate::compute::ComputeResult;
+use crate::compute::LegacyCompute;
 use crate::compute::positions::get_positions_ref;
 use crate::op::vec3::{normalize, sub};
 use crate::op::{DEFAULT_GAP_TOL, Freedom, centroid, superpose};
@@ -66,7 +66,7 @@ impl GridSpec {
 
 /// Spatial Distribution Function calculator.
 ///
-/// All inputs live on `&self` (the [`Compute::Args`] are `()`): a rigid
+/// All inputs live on `&self` (the [`LegacyCompute::Args`] are `()`): a rigid
 /// reference atom selection and its canonical `template`, a target selection,
 /// the grid, and optional bulk density / orientation vectors.
 ///
@@ -183,7 +183,7 @@ impl SpatialDistribution {
     }
 
     /// Bin one frame's targets into `counts` (and, when supplied, the orientation
-    /// accumulators). Factored out of [`Compute::compute`] so the same body serves
+    /// accumulators). Factored out of [`LegacyCompute::compute`] so the same body serves
     /// both the serial loop and the frame-parallel fast path.
     ///
     /// The minimum-image convention is resolved **once per frame** here (box kind
@@ -265,7 +265,7 @@ impl SpatialDistribution {
     }
 }
 
-impl Compute for SpatialDistribution {
+impl LegacyCompute for SpatialDistribution {
     type Args<'a> = ();
     type Output = SpatialDistributionResult;
 

@@ -8,8 +8,8 @@ use molrs::core::FrameAccess;
 use molrs::op::F;
 
 use super::wrap_index;
-use crate::compute::Compute;
 use crate::compute::ComputeError;
+use crate::compute::LegacyCompute;
 use crate::compute::positions::get_positions_ref;
 
 /// Gaussian-density calculator.
@@ -186,7 +186,7 @@ impl GaussianDensity {
     }
 }
 
-impl Compute for GaussianDensity {
+impl LegacyCompute for GaussianDensity {
     type Args<'a> = ();
     type Output = Vec<GaussianDensityResult>;
 

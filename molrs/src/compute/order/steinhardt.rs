@@ -11,8 +11,8 @@ use molrs::core::wigner_3j;
 use molrs::core::ylm_all;
 use molrs::op::F;
 
-use crate::compute::Compute;
 use crate::compute::ComputeError;
+use crate::compute::LegacyCompute;
 use crate::compute::positions::get_positions_ref;
 use crate::compute::{require_disp, require_self_query};
 
@@ -20,7 +20,7 @@ use crate::compute::{require_disp, require_self_query};
 ///
 /// Stateless parameter container: configured ℓ values + variant flags.
 ///
-/// [`compute`](Compute::compute) takes `&Vec<Neighbors>` — one neighbor table
+/// [`compute`](LegacyCompute::compute) takes `&Vec<Neighbors>` — one neighbor table
 /// per frame, index-aligned with `frames`, each carrying the `disp` column
 /// (Å); see *Required neighbor columns* below.
 ///
@@ -356,7 +356,7 @@ impl Steinhardt {
     }
 }
 
-impl Compute for Steinhardt {
+impl LegacyCompute for Steinhardt {
     type Args<'a> = &'a [Neighbors];
     type Output = Vec<SteinhardtResult>;
 

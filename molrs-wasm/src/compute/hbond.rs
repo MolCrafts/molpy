@@ -3,7 +3,7 @@
 
 use super::{js_value, u32_pairs, usize_pairs};
 use crate::core::frame::Frame;
-use molrs::compute::Compute;
+use molrs::compute::LegacyCompute;
 use molrs::op::F;
 use serde::Serialize;
 use wasm_bindgen::prelude::*;

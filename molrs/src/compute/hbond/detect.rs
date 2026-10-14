@@ -5,9 +5,9 @@ use molrs::core::NeighborQuery;
 use molrs::op::F;
 
 use super::criterion::{HBondCriterion, HBondDistanceKind};
-use crate::compute::Compute;
 use crate::compute::ComputeError;
 use crate::compute::ComputeResult;
+use crate::compute::LegacyCompute;
 use crate::compute::positions::get_positions_ref;
 use crate::op::vec3::{dot, norm, sub};
 use molrs::core::{Mic, SimBox};
@@ -193,7 +193,7 @@ impl HBonds {
     }
 }
 
-impl Compute for HBonds {
+impl LegacyCompute for HBonds {
     type Args<'a> = ();
     type Output = HBondsResult;
 

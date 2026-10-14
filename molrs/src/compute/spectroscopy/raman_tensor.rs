@@ -7,9 +7,9 @@ use rustfft::FftPlanner;
 use rustfft::num_complex::Complex64;
 
 use super::{acf_accumulate_into, central_diff_series};
-use crate::compute::Compute;
 use crate::compute::ComputeError;
 use crate::compute::ComputeResult;
+use crate::compute::LegacyCompute;
 use crate::compute::lag_times;
 
 /// Weight for diagonal anisotropy components in the Raman ACF.
@@ -50,7 +50,7 @@ pub struct RamanTensor;
 /// loses the first and last frame.
 pub type RamanTensorArgs<'a> = (&'a Array2<f64>, f64, usize);
 
-impl Compute for RamanTensor {
+impl LegacyCompute for RamanTensor {
     type Args<'a> = RamanTensorArgs<'a>;
     type Output = RamanTensorResult;
 

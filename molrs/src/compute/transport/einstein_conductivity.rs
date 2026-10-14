@@ -5,9 +5,9 @@ use molrs::core::FrameAccess;
 use ndarray::{Array1, Array2};
 use rustfft::FftPlanner;
 
-use crate::compute::Compute;
 use crate::compute::ComputeError;
 use crate::compute::ComputeResult;
+use crate::compute::LegacyCompute;
 use molrs::signal as sig;
 
 /// Raw collective charge-dipole MSD, with **no** fitted sigma/slope.
@@ -32,7 +32,7 @@ pub struct EinsteinConductivity;
 /// `(translational_dipole, dt, max_correlation_time)` bundle.
 pub type EinsteinConductivityArgs<'a> = (&'a Array2<f64>, f64, usize);
 
-impl Compute for EinsteinConductivity {
+impl LegacyCompute for EinsteinConductivity {
     type Args<'a> = EinsteinConductivityArgs<'a>;
     type Output = EinsteinConductivityResult;
 

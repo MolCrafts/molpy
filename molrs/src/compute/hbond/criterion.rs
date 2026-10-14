@@ -2,13 +2,14 @@
 
 use molrs::op::F;
 
-/// Which interatomic distance the cutoff applies to when pairing candidates.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum HBondDistanceKind {
-    /// Cutoff on the donor–acceptor distance r(D···A) (reference implementation `m_frAD`).
-    DonorAcceptor,
-    /// Cutoff on the hydrogen–acceptor distance r(H···A) (reference implementation `m_frAH`).
-    HydrogenAcceptor,
+crate::compute::named_enum::named_enum! {
+    /// Which interatomic distance the cutoff applies to when pairing candidates.
+    pub enum HBondDistanceKind {
+        /// Cutoff on the donor–acceptor distance r(D···A) (reference implementation `m_frAD`).
+        DonorAcceptor => "donor_acceptor",
+        /// Cutoff on the hydrogen–acceptor distance r(H···A) (reference implementation `m_frAH`).
+        HydrogenAcceptor => "hydrogen_acceptor",
+    }
 }
 
 /// Frozen geometric parameters for hydrogen-bond detection.

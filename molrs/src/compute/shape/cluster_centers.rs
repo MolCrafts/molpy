@@ -5,8 +5,8 @@ use molrs::core::FrameAccess;
 use molrs::op::F;
 
 use crate::compute::ClusterResult;
-use crate::compute::Compute;
 use crate::compute::ComputeError;
+use crate::compute::LegacyCompute;
 use crate::compute::positions::get_positions_ref;
 use crate::op::vec3::sub;
 use molrs::core::{Mic, SimBox};
@@ -82,7 +82,7 @@ impl ClusterCenters {
     }
 }
 
-impl Compute for ClusterCenters {
+impl LegacyCompute for ClusterCenters {
     type Args<'a> = &'a Vec<ClusterResult>;
     type Output = Vec<ClusterCentersResult>;
 

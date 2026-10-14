@@ -5,8 +5,8 @@ use std::marker::PhantomData;
 use molrs::core::FrameAccess;
 use molrs::op::F;
 
-use crate::compute::Compute;
 use crate::compute::ComputeError;
+use crate::compute::LegacyCompute;
 use crate::compute::{ComputeResult, DescriptorRow};
 
 /// Result of a 2-component PCA projection.
@@ -24,7 +24,7 @@ impl ComputeResult for PcaResult {}
 /// row type.
 ///
 /// Construct with `Pca::<T>::new()` where `T: DescriptorRow`. Each
-/// [`compute`](Compute::compute) call expects an `&Vec<T>` of length ≥ 3.
+/// [`compute`](LegacyCompute::compute) call expects an `&Vec<T>` of length ≥ 3.
 ///
 /// [`Pca`] is a [`Compute`] that consumes any upstream `Vec<T>` where
 /// `T: DescriptorRow` — each descriptor row is one observation. PCA
@@ -74,7 +74,7 @@ const POWER_ITER_TOL: F = 1e-12;
 const POWER_ITER_MAX: usize = 200;
 const STD_FLOOR: F = 1e-12;
 
-impl<T: DescriptorRow + Clone + Send + Sync + 'static> Compute for Pca<T> {
+impl<T: DescriptorRow + Clone + Send + Sync + 'static> LegacyCompute for Pca<T> {
     type Args<'a> = &'a Vec<T>;
     type Output = PcaResult;
 

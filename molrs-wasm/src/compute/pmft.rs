@@ -4,7 +4,7 @@
 use super::js_value;
 use crate::core::frame::Frame;
 use crate::core::neighbors::Neighbors;
-use molrs::compute::Compute;
+use molrs::compute::LegacyCompute;
 use molrs::core::keys;
 use molrs::op::F;
 use serde::Serialize;

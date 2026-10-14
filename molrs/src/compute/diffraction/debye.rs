@@ -5,8 +5,8 @@ use molrs::core::FrameAccess;
 use molrs::op::F;
 use ndarray::Array1;
 
-use crate::compute::Compute;
 use crate::compute::ComputeError;
+use crate::compute::LegacyCompute;
 use crate::compute::positions::get_positions_ref;
 
 /// Debye structure-factor calculator.
@@ -192,7 +192,7 @@ fn accumulate_row(
     }
 }
 
-impl Compute for StaticStructureFactorDebye {
+impl LegacyCompute for StaticStructureFactorDebye {
     type Args<'a> = ();
     type Output = Vec<StaticStructureFactorDebyeResult>;
 

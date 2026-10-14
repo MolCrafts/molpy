@@ -40,6 +40,25 @@ pub enum ComputeError {
     /// `frames` slice is empty but the compute needs at least one frame.
     EmptyInput,
 
+    /// A name given for a named choice (kernel, window, mode, …) is not one of
+    /// its canonical names.
+    UnknownName {
+        kind: &'static str,
+        got: String,
+        expected: &'static [&'static str],
+    },
+
+    /// A displacement analysis was given a trajectory that is wrapped into the
+    /// box: between `frame - 1` and `frame`, `item` moved further than half
+    /// the box.
+    Wrapped { frame: usize, item: usize },
+
+    /// An iterative solver stopped without meeting its tolerance.
+    NotConverged {
+        what: &'static str,
+        iterations: usize,
+    },
+
     /// Forwarded from `molrs::core`.
     MolRs(MolRsError),
 }
@@ -70,6 +89,24 @@ impl fmt::Display for ComputeError {
                 write!(f, "{field} out of range: {value}")
             }
             Self::EmptyInput => write!(f, "empty frames slice"),
+            Self::UnknownName {
+                kind,
+                got,
+                expected,
+            } => write!(
+                f,
+                "unknown {kind} {got:?}; expected one of: {}",
+                expected.join(", ")
+            ),
+            Self::Wrapped { frame, item } => write!(
+                f,
+                "item {item} moved more than half the box between frames {} and {frame}: \
+                 the trajectory is wrapped; unwrap it before a displacement analysis",
+                frame.saturating_sub(1)
+            ),
+            Self::NotConverged { what, iterations } => {
+                write!(f, "{what} did not converge in {iterations} iterations")
+            }
             Self::MolRs(e) => write!(f, "{e}"),
         }
     }

@@ -3,7 +3,7 @@
 
 use super::{collect_frames, collect_neighbors, was_batched};
 use crate::error::py_value_err;
-use molrs::compute::{Cluster, ClusterProperties, ClusterResult, Compute};
+use molrs::compute::{Cluster, ClusterProperties, ClusterResult, LegacyCompute};
 use molrs::core::Frame as CoreFrame;
 use molrs::op::F;
 use ndarray::{Array1, Array2, Array3};

@@ -5,6 +5,7 @@ use molrs::core::FrameAccess;
 use molrs::op::F;
 
 use crate::compute::ComputeError;
+use crate::compute::contract::Verdict;
 
 /// Run an analysis over a sequence of frames and produce a finalized result.
 ///
@@ -34,7 +35,7 @@ use crate::compute::ComputeError;
 /// struct CenterOfMassResult { /* ... */ }
 /// impl ComputeResult for CenterOfMassResult {}
 ///
-/// impl Compute for CenterOfMass {
+/// impl LegacyCompute for CenterOfMass {
 ///     type Args<'a> = &'a Vec<ClusterResult>;
 ///     type Output = Vec<CenterOfMassResult>;
 ///     fn compute<'a, FA: FrameAccess + 'a>(
@@ -47,7 +48,7 @@ use crate::compute::ComputeError;
 ///     }
 /// }
 /// ```
-pub trait Compute {
+pub trait LegacyCompute {
     /// Non-frame inputs, with a borrow tied to the frame-slice lifetime.
     type Args<'a>;
 
@@ -89,7 +90,7 @@ pub trait Compute {
 ///   so a fit may borrow its upstream input (`&Array1<f64>`, a raw ACF, …)
 ///   without cloning.
 /// - `Output: ComputeResult + Clone + Send + Sync + 'static` — same shareable
-///   bound as [`Compute::Output`], so fit outputs slot into the same
+///   bound as [`LegacyCompute::Output`], so fit outputs slot into the same
 ///   downstream consumers.
 /// - Reuses [`ComputeError`]; no new error enum. Degenerate fit windows use
 ///   [`ComputeError::OutOfRange`], shape mismatches use
@@ -123,16 +124,6 @@ pub trait Fit {
     /// windows, shape mismatches, or input too short to cover the requested
     /// lag range.
     fn fit<'a>(&self, input: Self::Input<'a>) -> Result<Self::Output, ComputeError>;
-}
-
-/// The conclusion of a [`Check`], alongside the diagnostics that produced it.
-///
-/// Every check output must be able to answer "did it pass" without the caller
-/// knowing which check ran. The diagnostics (residual, integral vs expected,
-/// per-pair RMS, …) stay on the concrete type.
-pub trait Verdict {
-    /// Whether the data satisfied the criterion.
-    fn passed(&self) -> bool;
 }
 
 /// Judge an **upstream result** against physics and return a verdict.

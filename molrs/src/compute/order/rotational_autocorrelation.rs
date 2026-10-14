@@ -4,8 +4,8 @@ use crate::compute::ComputeResult;
 use molrs::core::FrameAccess;
 use molrs::op::F;
 
-use crate::compute::Compute;
 use crate::compute::ComputeError;
+use crate::compute::LegacyCompute;
 use crate::op::Quat;
 use crate::op::{quat_conj, quat_mul, quat_norm};
 
@@ -79,7 +79,7 @@ pub struct RotationalAutocorrelationArgs<'a> {
     pub orientations: &'a [Quat],
 }
 
-impl Compute for RotationalAutocorrelation {
+impl LegacyCompute for RotationalAutocorrelation {
     type Args<'a> = RotationalAutocorrelationArgs<'a>;
     type Output = Vec<RotationalAutocorrelationResult>;
 

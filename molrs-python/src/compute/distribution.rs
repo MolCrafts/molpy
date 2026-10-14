@@ -5,8 +5,8 @@ use super::collect_frames;
 use crate::error::py_value_err;
 use molrs::compute::{
     AngleObservable, AtomGroups, AxisSpec, CombinedDistribution, CombinedDistributionResult,
-    Compute, DihedralObservable, DistanceObservable, DistributionFunction, DistributionResult,
-    InternalCoordinate,
+    DihedralObservable, DistanceObservable, DistributionFunction, DistributionResult,
+    InternalCoordinate, LegacyCompute,
 };
 use molrs::core::Frame as CoreFrame;
 use numpy::{IntoPyArray, PyArray1};

@@ -3,8 +3,8 @@
 use molrs::core::FrameAccess;
 
 use super::vacf::{VacfArgs, VacfResult, velocity_acf};
-use crate::compute::Compute;
 use crate::compute::ComputeError;
+use crate::compute::LegacyCompute;
 
 /// Named workflow over the unbiased [`Vacf`](super::Vacf) curve for Green–Kubo
 /// self-diffusion. Same math as `Vacf` — not a second estimator.
@@ -15,7 +15,7 @@ use crate::compute::ComputeError;
 #[derive(Debug, Clone, Copy, Default)]
 pub struct GreenKuboDiffusion;
 
-impl Compute for GreenKuboDiffusion {
+impl LegacyCompute for GreenKuboDiffusion {
     type Args<'a> = VacfArgs<'a>;
     type Output = VacfResult;
 

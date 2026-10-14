@@ -7,8 +7,8 @@ use molrs::op::F;
 use ndarray::Array2;
 use std::f64::consts::{PI, TAU};
 
-use crate::compute::Compute;
 use crate::compute::ComputeError;
+use crate::compute::LegacyCompute;
 use crate::compute::positions::get_positions_ref;
 use crate::compute::require_disp;
 
@@ -121,7 +121,7 @@ fn push_angle(counts: &mut Array2<u64>, dx: F, dy: F, dz: F, r: F, n_theta: usiz
     counts[[it, ip]] += 1;
 }
 
-impl Compute for BondOrientationalOrder {
+impl LegacyCompute for BondOrientationalOrder {
     type Args<'a> = &'a [Neighbors];
     type Output = Vec<BondOrientationalOrderResult>;
 

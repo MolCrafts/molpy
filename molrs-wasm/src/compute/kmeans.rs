@@ -2,8 +2,8 @@
 //! `kmeans` ([`molrs::compute::Kmeans`]).
 
 use js_sys::Int32Array;
-use molrs::compute::Compute;
 use molrs::compute::Kmeans as RsKmeans;
+use molrs::compute::LegacyCompute;
 use molrs::op::F;
 use wasm_bindgen::prelude::*;
 

@@ -13,8 +13,8 @@ use ndarray::Array3;
 use std::f64::consts::TAU;
 
 use super::orientation::wrap_2pi;
-use crate::compute::Compute;
 use crate::compute::ComputeError;
+use crate::compute::LegacyCompute;
 use crate::compute::require_disp;
 
 /// `PmftR12` analyzer.
@@ -190,7 +190,7 @@ impl PmftR12 {
     }
 }
 
-impl Compute for PmftR12 {
+impl LegacyCompute for PmftR12 {
     type Args<'a> = PmftR12Args<'a>;
     type Output = Vec<PmftR12Result>;
 

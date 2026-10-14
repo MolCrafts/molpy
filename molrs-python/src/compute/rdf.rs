@@ -3,7 +3,7 @@
 
 use super::{collect_frames, collect_neighbors};
 use crate::error::py_value_err;
-use molrs::compute::{Compute, Rdf, RdfResult};
+use molrs::compute::{LegacyCompute, Rdf, RdfResult};
 use molrs::core::Frame as CoreFrame;
 use molrs::core::Neighbors;
 use numpy::{IntoPyArray, PyArray1};

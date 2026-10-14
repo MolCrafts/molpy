@@ -5,8 +5,8 @@ use molrs::core::FrameAccess;
 use ndarray::Array2;
 
 use super::raman_tensor::{RamanTensor, RamanTensorResult};
-use crate::compute::Compute;
 use crate::compute::ComputeError;
+use crate::compute::LegacyCompute;
 
 /// Raw resonance-Raman iso/aniso ACFs — identical machinery to [`RamanTensor`]
 /// but consuming a caller-supplied **resonant** (excitation-frequency-dependent)
@@ -24,7 +24,7 @@ pub struct ResonanceRamanTensor;
 /// [`RamanTensorArgs`](super::raman_tensor::RamanTensorArgs).
 pub type ResonanceRamanTensorArgs<'a> = (&'a Array2<f64>, f64, usize);
 
-impl Compute for ResonanceRamanTensor {
+impl LegacyCompute for ResonanceRamanTensor {
     type Args<'a> = ResonanceRamanTensorArgs<'a>;
     type Output = RamanTensorResult;
 

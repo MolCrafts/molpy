@@ -8,8 +8,8 @@ use molrs::op::F;
 
 use crate::compute::ClusterCentersResult;
 use crate::compute::ClusterResult;
-use crate::compute::Compute;
 use crate::compute::ComputeError;
+use crate::compute::LegacyCompute;
 use crate::compute::positions::get_positions_ref;
 use crate::op::vec3::sub;
 use molrs::core::{Mic, SimBox};
@@ -97,7 +97,7 @@ impl GyrationTensor {
     }
 }
 
-impl Compute for GyrationTensor {
+impl LegacyCompute for GyrationTensor {
     type Args<'a> = (&'a Vec<ClusterResult>, &'a Vec<ClusterCentersResult>);
     type Output = Vec<GyrationTensorResult>;
 

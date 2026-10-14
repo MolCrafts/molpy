@@ -11,8 +11,8 @@ use molrs::core::Neighbors;
 use molrs::op::F;
 
 use super::steinhardt::steinhardt_qlm;
-use crate::compute::Compute;
 use crate::compute::ComputeError;
+use crate::compute::LegacyCompute;
 use crate::compute::positions::get_positions_ref;
 
 /// Frenkel-ten Wolde solid/liquid classifier.
@@ -133,7 +133,7 @@ impl SolidLiquid {
     }
 }
 
-impl Compute for SolidLiquid {
+impl LegacyCompute for SolidLiquid {
     type Args<'a> = &'a [Neighbors];
     type Output = Vec<SolidLiquidResult>;
 

@@ -85,6 +85,7 @@ pub fn filter_sann(nlist: &Neighbors) -> Neighbors {
     let (offsets, mut order) = pairs_by_query(nlist);
 
     let mut out = Neighbors::empty(nlist.mode(), nlist.columns());
+    out.simbox = nlist.simbox.clone();
     let dist_sq = nlist
         .dist_sq()
         .expect("filter_sann needs the dist_sq column; rerun the search with it stored");
@@ -206,6 +207,7 @@ pub fn filter_rad(nlist: &Neighbors, acceptance: F) -> Neighbors {
     let (offsets, mut order) = pairs_by_query(nlist);
 
     let mut out = Neighbors::empty(nlist.mode(), nlist.columns());
+    out.simbox = nlist.simbox.clone();
     let dist_sq = nlist
         .dist_sq()
         .expect("filter_rad needs the dist_sq column; rerun the search with it stored");

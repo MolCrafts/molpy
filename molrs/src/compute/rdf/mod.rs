@@ -13,8 +13,8 @@ use molrs::core::{LinkCell, NeighborList, Neighbors};
 use molrs::op::{F, Fnx3View};
 use ndarray::Array1;
 
-use crate::compute::Compute;
 use crate::compute::ComputeError;
+use crate::compute::LegacyCompute;
 use crate::compute::positions::get_positions_ref;
 use crate::compute::require_dist_sq;
 
@@ -22,7 +22,7 @@ use crate::compute::require_dist_sq;
 ///
 /// Stateless parameter container: bin count, radial cutoffs, and precomputed
 /// bin edges/centers. Actual histograms are built inside each
-/// [`compute`](Compute::compute) call.
+/// [`compute`](LegacyCompute::compute) call.
 ///
 /// Accumulates pair distances from neighbor lists (one per frame) into a
 /// histogram between `r_min` and `r_max`, then normalizes by the ideal-gas
@@ -288,7 +288,7 @@ impl Rdf {
     }
 }
 
-impl Compute for Rdf {
+impl LegacyCompute for Rdf {
     type Args<'a> = &'a [Neighbors];
     type Output = RdfResult;
 

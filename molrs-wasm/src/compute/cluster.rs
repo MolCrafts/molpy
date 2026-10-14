@@ -2,7 +2,7 @@
 
 use crate::core::frame::Frame;
 use crate::core::neighbors::Neighbors;
-use molrs::compute::Compute;
+use molrs::compute::LegacyCompute;
 use molrs::compute::{Cluster as RsCluster, ClusterResult as RsClusterResult};
 use wasm_bindgen::prelude::*;
 

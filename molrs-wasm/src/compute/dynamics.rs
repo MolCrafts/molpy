@@ -3,7 +3,7 @@
 
 use super::{SeriesOut, array2, js_value};
 use crate::core::frame::Frame;
-use molrs::compute::Compute;
+use molrs::compute::LegacyCompute;
 use molrs::op::F;
 use ndarray::Array3;
 use serde::Serialize;
