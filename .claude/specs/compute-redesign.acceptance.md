@@ -12,7 +12,7 @@ criteria:
       `LegacyCompute` do not occur under `molrs/src/compute/`. Every
       `impl Compute for` block contains no method other than `compute`. No type
       that implements `Compute` has another `pub fn compute_*` method.
-    status: pending
+    status: pass  # 09: one analysis trait; legacy names absent; 71 impl Compute blocks define only compute; no pub fn compute_*
   - id: ac-002
     summary: No public free functions in compute; signal is gone
     type: code
@@ -20,7 +20,7 @@ criteria:
       `grep -rnE '^pub fn ' molrs/src/compute` is empty. `molrs/src/signal/`
       does not exist. `molrs/Cargo.toml` has no `signal` feature and `compute`
       takes `dep:rustfft` directly.
-    status: pending
+    status: pass  # 09: no module-level pub fn; signal/ gone; compute = ["dep:rustfft"]
   - id: ac-003
     summary: Compute knows no frames and no field names
     type: code
@@ -34,7 +34,7 @@ criteria:
       not exist. The same holds for the compute bindings: no
       `from_frame`/`from_frames` and no frame column reads in
       `molrs-python/src/compute` or `molrs-wasm/src/compute`.
-    status: pending
+    status: pass  # 09 (core): no Frame/FrameAccess/FrameView/schema/keys/from_frame or field literals outside tests; bindings part is link 10
   - id: ac-016
     summary: new takes configuration, compute takes data
     type: code
@@ -52,7 +52,7 @@ criteria:
       or orientations, `dt`, a `SimBox`, or `Neighbors`. Every analysed datum
       reaches the kernel through `compute`. The same holds for every Python and
       WASM constructor in the compute bindings.
-    status: pending
+    status: pass  # 09 (core): constructors take configuration only; exemptions (Orientations GAT, evaluation lists, value types) in spec "Link 09 acceptance audit"; bindings part is link 10
   - id: ac-004
     summary: Every deleted entry is gone and every kept entry is migrated
     type: code
@@ -64,7 +64,7 @@ criteria:
       every surface in the D4 table) holds a `Correlator`, has a `compute`
       body that is a single delegating call, and contains no other numeric
       code.
-    status: pending
+    status: pass  # 09: → symbols absent, K/S re-exported with one impl Compute, M methods present, surfaces delegate in one call
   - id: ac-005
     summary: One implementation per algorithm
     type: code
@@ -80,7 +80,7 @@ criteria:
         `CellList` or `Dsu` exists, and no function named `power_iteration`
         exists.
       - PMFT: `pmft/` holds one generic `Pmft<C>` plus coordinate impls.
-    status: pending
+    status: pass  # 09: rustfft only in correlator.rs/spectrum.rs; no CellGrid/CellList/Dsu/power_iteration; non-trapezoid 0.5*( exemptions in spec
   - id: ac-006
     summary: No silent fallback
     type: code
@@ -92,7 +92,7 @@ criteria:
       - `debug_assert` is not used for input validation.
       - `assert!` is not used on a user-supplied parameter.
       Each item has a unit test asserting the specific `ComputeError` variant.
-    status: pending
+    status: pass  # 09: fallback greps empty outside tests; no debug_assert/assert! on inputs; variant tests per as-built notes
   - id: ac-007
     summary: Streaming equals batch
     type: runtime
@@ -101,7 +101,7 @@ criteria:
       `Correlator` (`Product`, `SquaredDisplacement`) and `Rdf`, unit tests
       assert streaming == batch for every lag ≤ cap (or every bin) to ≤1e-12
       relative error.
-    status: pending
+    status: pass  # 09 (core): Stream bodies fold; Correlator FFT exception pinned by streaming_equals_batch_at_every_lag; Rdf bitwise test
   - id: ac-008
     summary: Primitive correctness
     type: runtime
@@ -116,7 +116,7 @@ criteria:
       - `Pmft<C>` goldens
       - each D4 surface equals its explicitly configured `Correlator`
       - `Wrapped` rejection
-    status: pending
+    status: pass  # 09 (core): every listed primitive test present and passing (names in spec audit)
   - id: ac-009
     summary: Goldens are invariant except the declared re-pins
     type: runtime
@@ -125,7 +125,7 @@ criteria:
       assertion literals unchanged, except the tests named under "Behaviour
       changes" items 1–5. Each changed literal is introduced in the link that
       implements its re-pin item.
-    status: pending
+    status: pass  # 09: all 38 pre-chain fractional assertion literals present; renamed/deleted tests per 02–08 notes
   - id: ac-010
     summary: Composition works generically
     type: runtime
@@ -140,7 +140,7 @@ criteria:
       - `HBonds` → `presence()` → `Survival`
       - `DipoleAcf` → `EinsteinHelfandSpectrum` →
         `KramersKronig` (Verdict)
-    status: pending
+    status: pass  # 09 (core): six pipeline tests; DipoleMoment → Msd → LinearFit added in 09
   - id: ac-011
     summary: Bindings carry no defaults, parsing or physics
     type: runtime

@@ -5,8 +5,6 @@
 use molrs::op::F;
 use ndarray::Array1;
 
-use crate::compute::DescriptorRow;
-
 /// The radial distribution function over one or more frames.
 ///
 /// `g(r)` is the ratio of the number of pairs found at separation `r` to the
@@ -50,12 +48,4 @@ pub struct RdfResult {
     pub n_frames: usize,
     /// Dimensionality used for the shell-volume normalization (2 or 3).
     pub dimensionality: u8,
-}
-
-impl DescriptorRow for RdfResult {
-    fn as_row(&self) -> &[F] {
-        self.rdf
-            .as_slice()
-            .expect("RdfResult::rdf must be contiguous")
-    }
 }

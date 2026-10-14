@@ -1,52 +1,210 @@
-//! Analysis compute modules for molrs molecular simulation.
+//! Analysis of molecular simulation data: one contract, one entry per
+//! quantity, one implementation per algorithm.
 //!
-//! Trajectory analysis (RDF, MSD, transport, spectroscopy, clustering,
-//! shape descriptors, PCA/k-means) built around a single unified [`Compute`]
-//! trait. Every analysis is stateless — orchestrate from the caller.
+//! Every analysis in this module — a pair distribution, a correlation curve, a
+//! fit of that curve, a spectrum, a check on the spectrum — is a type that
+//! implements the one trait [`Compute`], whose one method is
+//! [`compute`](Compute::compute). A fit is a `Compute` whose input is an
+//! upstream result; a check is a `Compute` whose output implements
+//! [`Verdict`]. Because there is only one verb, any output can be the next
+//! analysis's input with no glue in between.
 //!
-//! # Stateless `Compute` — orchestrate from the caller
+//! # `new` is configuration, `compute` is data
 //!
-//! Each [`Compute`] impl is a pure function: `&self` is an immutable
-//! parameter bag. Two `compute` calls with identical `frames` + `args`
-//! always produce identical output. There is no hidden mutable state,
-//! no DAG, no store — just the trait and per-category modules.
+//! A constructor (`new`, and the `with_*` setters that refine it) takes only
+//! what *configures* an analysis: bin axes, cutoffs, a maximum lag, kernels,
+//! windows, tolerances, seeds and the unit system. It validates them and
+//! returns a reusable instrument. Every default lives here, in the core type.
 //!
-//! For DAG orchestration (topological order, diamond reuse, external
-//! input validation), use `molpy.compute.Workflow` on the Python side.
-//! It composes `Compute` nodes via Python's stdlib `graphlib` and
-//! calls each Rust kernel directly.
+//! [`compute`](Compute::compute) takes everything being analysed: arrays,
+//! a [`SimBox`](molrs::core::SimBox), a neighbour table, a sample interval,
+//! a volume or a temperature, an upstream result. These arrive as the
+//! analysis's [`Input`](Compute::Input) — a plain struct of borrowed fields
+//! written as a struct literal at the call site, which is Rust's spelling of
+//! named arguments. An `Input` has no constructor: there is no data object to
+//! build before calling `compute`, and the Python and WASM bindings expose its
+//! fields as the keyword arguments of `compute`. `&self` never changes, so
+//! identical configuration and data always give an identical result, and a
+//! result is final when it is returned.
 //!
-//! # Unified trait
+//! ```
+//! use molrs::compute::{Compute, CumulativeTrapezoid, CumulativeTrapezoidInput, Vacf, VacfInput};
+//! use ndarray::Array2;
 //!
-//! Every analysis implements [`Compute`]. A single frame, a trajectory, and a
-//! whole dataset are the same kind of input — a slice `&[&F]` — and each
-//! impl decides how to interpret it:
+//! // Configuration: lags 0 … 16. Data: the velocities and their frame spacing.
+//! let velocities = Array2::from_shape_fn((64, 3), |(t, d)| ((t * 3 + d) as f64 * 0.7).sin());
+//! let raw = Vacf::new(16).compute(VacfInput { velocities: velocities.view(), dt: 1.0 })?;
 //!
-//! - **Whole-sequence accumulators** (RDF) iterate every frame.
-//! - **Time-series analyses** (MSD) use `frames[0]` as a reference.
-//! - **Per-frame analyses** (Cluster, COM) return one result per frame.
-//! - **Matrix consumers** (PCA, k-means) take any [`FeatureMatrix`] — an
-//!   `Array2` or a descriptor result — and their results feed each other.
+//! // A fit is a `Compute` whose input is the upstream curve: no glue.
+//! let running = CumulativeTrapezoid::new()
+//!     .compute(CumulativeTrapezoidInput { correlation: &raw, channel: 0 })?; // D·d in MD units
+//! assert_eq!(running.values.nrows(), raw.values.nrows());
+//! # Ok::<(), molrs::compute::ComputeError>(())
+//! ```
 //!
-//! # Neighbor tables: what `Args` carries, and which columns a kernel needs
+//! # Compute reads no frames
+//!
+//! No type here takes a `Frame`, and no type here names a field. Reading the
+//! velocity column, the masses or the quaternions out of a frame is the
+//! caller's step, through the `Frame`/`Block` API; the analysis receives the
+//! arrays. So one kernel serves a trajectory file, an in-memory MD run and a
+//! NumPy array alike, and a binding adds no frame-reading code of its own.
+//! Every out-of-contract input — a length that does not match, a NaN, a value
+//! outside its physical range, nothing to analyse — is a [`ComputeError`];
+//! nothing is silently clamped, defaulted or skipped.
+//!
+//! # Many snapshots, and long trajectories
+//!
+//! A per-snapshot analysis takes one snapshot's data. The same analysis over
+//! many independent snapshots is [`Batch`], itself a `Compute`: it maps the
+//! inner analysis over a `Vec` of inputs — in parallel when the `rayon`
+//! feature is on — returns the results in input order, and reports the
+//! earliest failing input's error, so the outcome never depends on scheduling.
+//!
+//! ```
+//! use molrs::compute::{Batch, Compute, KineticEnergy, KineticEnergyInput};
+//! use molrs::core::UnitPreset;
+//! use ndarray::array;
+//!
+//! let masses = array![2.0, 1.0];
+//! let snapshots = [
+//!     array![[1.0, 0.0, 0.0], [0.0, 2.0, 2.0]],
+//!     array![[0.0, 0.0, 0.0], [0.0, 0.0, 1.0]],
+//! ];
+//! let per_snapshot = Batch(KineticEnergy::new(UnitPreset::si())?).compute(
+//!     snapshots
+//!         .iter()
+//!         .map(|v| KineticEnergyInput { masses: masses.view(), velocities: v.view() })
+//!         .collect(),
+//! )?;
+//! assert_eq!(per_snapshot.iter().map(|k| k.energy).collect::<Vec<_>>(), vec![5.0, 0.5]);
+//! # Ok::<(), molrs::compute::ComputeError>(())
+//! ```
+//!
+//! An analysis that runs over a whole trajectory and can fold it in bounded
+//! memory also implements [`Stream`]: [`Stream::accumulator`] hands out an
+//! [`Accumulate`] that receives one frame at a time through
+//! [`push`](Accumulate::push), and [`finish`](Accumulate::finish) reports the
+//! result so far without consuming it, so a long run can be inspected and
+//! continued. The algorithm lives once, in the accumulator: a `Stream`'s
+//! `compute` is `self.accumulator().fold(input)`. The one exception is
+//! [`Correlator`] (and so every correlation surface), whose `compute` is the
+//! faster FFT evaluation; its tests pin the FFT and the fold equal at every
+//! lag.
+//!
+//! ```
+//! use molrs::compute::{Accumulate, Compute, CorrelatorFrame, Stream, Vacf, VacfInput};
+//! use ndarray::{Array2, Axis};
+//!
+//! let velocities = Array2::from_shape_fn((40, 6), |(t, d)| ((t * 6 + d) as f64 * 0.37).sin());
+//! let vacf = Vacf::new(8);
+//! let batch = vacf.compute(VacfInput { velocities: velocities.view(), dt: 0.5 })?;
+//!
+//! // The same curve, one frame of `n_dof × 1` velocities at a time.
+//! let mut running = vacf.accumulator();
+//! for frame in velocities.outer_iter() {
+//!     running.push(CorrelatorFrame {
+//!         a: frame.insert_axis(Axis(1)),
+//!         b: None,
+//!         dt: 0.5,
+//!         simbox: None,
+//!     })?;
+//! }
+//! let streamed = running.finish()?;
+//! for (s, b) in streamed.values.iter().zip(batch.values.iter()) {
+//!     assert!((s - b).abs() <= 1e-10 * b.abs().max(1.0));
+//! }
+//! # Ok::<(), molrs::compute::ComputeError>(())
+//! ```
+//!
+//! # Composition through traits, not wrappers
+//!
+//! Two traits let one analysis consume another's output — or the caller's own
+//! arrays — without a conversion step:
+//!
+//! - [`Partition`] says which group each item belongs to. A label array
+//!   (`&[u32]`, `Vec<u32>`, `Array1<u32>` — a `mol_id` column, say) is one, and
+//!   so is every result that partitions items: [`ClusterResult`],
+//!   [`KmeansResult`], [`EnvironmentMatchResult`], `VoronoiDomainResult` (feature `voronoi`)
+//!   and the label array of [`HBondsResult::components`]. Group reductions
+//!   ([`CenterOfMass`], [`GyrationTensor`], [`InertiaTensor`],
+//!   [`DipoleMoment`], `VoronoiIntegration`, `VoronoiDomainAnalysis`) and
+//!   [`Cluster`]'s `merge` accept any of them.
+//! - [`FeatureMatrix`] is a table of samples, one row each. An `Array2` is
+//!   one, and so are the descriptor results [`SteinhardtResult`],
+//!   [`LocalDescriptorsResult`] and [`PcaResult`]; [`Pca`] and [`Kmeans`]
+//!   accept any of them.
+//!
+//! ```
+//! use molrs::compute::{
+//!     CenterOfMass, CenterOfMassInput, Compute, Kmeans, KmeansInput, Pca, PcaInput,
+//! };
+//! use ndarray::{Array1, array};
+//!
+//! // Two well-separated groups of three particles.
+//! let positions = array![
+//!     [0.0, 0.1, 0.3], [0.2, 0.0, 0.1], [0.1, 0.3, 0.0],
+//!     [9.0, 9.2, 9.1], [9.3, 9.0, 9.2], [9.1, 9.1, 9.0],
+//! ];
+//! // Positions are a feature matrix; the projection is one; the clustering
+//! // is a partition the group reduction consumes.
+//! let projected = Pca::new(2)?.compute(PcaInput { features: &positions })?;
+//! let clusters = Kmeans::new(2)?.compute(KmeansInput { features: &projected })?;
+//! let centres = CenterOfMass::new().compute(CenterOfMassInput {
+//!     positions: positions.view(),
+//!     simbox: None,
+//!     partition: &clusters,
+//!     masses: Array1::ones(6).view(),
+//! })?;
+//! assert_eq!(centres.total_masses.to_vec(), vec![3.0, 3.0]);
+//! # Ok::<(), molrs::compute::ComputeError>(())
+//! ```
+//!
+//! # Neighbour tables: pair sources, and which columns a kernel needs
 //!
 //! Most analyses here are *pair* analyses: they answer a question about every
-//! pair of particles lying closer together than a fixed **cutoff** distance.
-//! Finding those pairs is not their job. The search lives in
-//! [`molrs::core::NeighborList`], and what it
-//! produces — a [`Neighbors`](molrs::core::Neighbors) table, a
-//! column store holding one row per pair — is handed to the kernel as its
-//! `Args`:
-//! `&Neighbors` for a single frame, `&Vec<Neighbors>` for a trajectory, in
-//! which case there is **one table per frame, index-aligned with `frames`**. A
-//! length mismatch is [`ComputeError::DimensionMismatch`], never a silent
-//! truncation.
+//! pair of particles closer together than a cutoff. Finding those pairs is not
+//! their job. The search lives in [`NeighborList`](molrs::core::NeighborList)
+//! and [`NeighborQuery`](molrs::core::NeighborQuery), and its product is
+//! passed to `compute` as data, one table per snapshot.
+//!
+//! A kernel that only streams pairs takes a
+//! [`PairSource`](molrs::core::PairSource): either a materialised
+//! [`Neighbors`](molrs::core::Neighbors) table or a built `NeighborList`,
+//! which streams pairs straight out of its cell list without ever
+//! materialising them — the bounded-memory path for large systems. A kernel
+//! that needs columns or random access takes `&Neighbors`. A table knows the
+//! box it was searched in, [`Neighbors::simbox`](molrs::core::Neighbors::simbox):
+//! it is `Some` for every table a search produced and `None` for one built by
+//! hand, and a kernel that needs a volume rejects `None` rather than invent a
+//! box. [`HBonds`] and [`PairPresence`] take the caller's per-frame tables;
+//! only [`VanHove`] searches for itself, one cross-query per time origin,
+//! because its pair set depends on the origin and the lag.
+//!
+//! ```
+//! use molrs::compute::{Compute, Rdf};
+//! use molrs::core::{NeighborColumns, NeighborList, SimBox};
+//! use ndarray::{Array2, array};
+//!
+//! let simbox = SimBox::cube(10.0, array![0.0, 0.0, 0.0], [true; 3]).unwrap();
+//! let points = Array2::from_shape_fn((64, 3), |(i, d)| 2.5 * ((i >> (2 * d)) & 3) as f64 + 0.3);
+//! let mut nl = NeighborList::new(4.0);
+//! nl.build(points.view(), &simbox);
+//!
+//! let rdf = Rdf::new(20, 4.0, 0.0)?;
+//! let streamed = rdf.compute(&[&nl])?; // pairs straight from the cell list
+//! let table = nl.neighbors(NeighborColumns::DIST_SQ);
+//! assert!(table.simbox().is_some()); // the table knows its box
+//! let materialized = rdf.compute(&[&table])?;
+//! assert_eq!(streamed.n_r, materialized.n_r);
+//! # Ok::<(), molrs::compute::ComputeError>(())
+//! ```
 //!
 //! ## Columns are opt-in, and a missing one is an error rather than a zero
 //!
 //! Every table stores each pair's two particle indices `(i, j)`. Its two
 //! *physical* columns are stored only if the caller asked for them when the
-//! table was materialized, by naming a
+//! table was materialised, by naming a
 //! [`NeighborColumns`](molrs::core::NeighborColumns) policy:
 //!
 //! - `dist_sq` — the squared pair distance `|r_j − r_i|²` in Å², taken under
@@ -54,7 +212,7 @@
 //!   tiled through space, so a pair has one separation per periodic copy
 //!   ("image") of the box, and the search reports only the shortest of them.
 //! - `disp` — the displacement `r_j − r_i` itself in Å, from that same
-//!   minimum image, pointing from `i` to `j` and **not** normalized. Its length
+//!   minimum image, pointing from `i` to `j` and **not** normalised. Its length
 //!   is the pair distance, so a caller who wants a direction divides by that
 //!   length.
 //!
@@ -64,35 +222,25 @@
 //! needs a column rejects `None` instead of substituting anything, and every
 //! kernel rejects it the same way — [`ComputeError::BadShape`], whose
 //! `expected` text names the missing column and the number of pairs it was
-//! needed for. Nothing here indexes an absent column, which would be an
-//! out-of-bounds panic on a native target and an `unreachable` trap under
-//! WebAssembly.
+//! needed for.
 //!
 //! Which column a kernel needs follows from what it measures:
 //!
-//! | Needs | Kernels | Materialize the table with |
+//! | Needs | Kernels | Materialise the table with |
 //! |---|---|---|
-//! | `disp` — bond *directions* | [`Steinhardt`], [`Hexatic`] (and through Steinhardt's [`QlmTable`], [`SolidLiquid`] and [`ContinuousCoordination`]), [`Pmft`], [`BondOrientationalOrder`], [`LocalDescriptors`], [`LocalBondProjection`], [`EnvironmentMatch`] | `NeighborColumns::DISP` or `FULL` |
-//! | `dist_sq` — distances only | [`Rdf`], [`CorrelationFunction`], [`LocalDensity`] (each takes any [`PairSource`](molrs::core::PairSource)) | `NeighborColumns::DIST_SQ` or `FULL` |
-//! | indices only — connectivity | [`Cluster`], [`AngularSeparationNeighbor`] | any policy, `INDICES_ONLY` included |
+//! | `disp` — bond *directions* | [`Steinhardt`], [`Hexatic`], [`Pmft`], [`BondOrientationalOrder`], [`LocalDescriptors`], [`LocalBondProjection`], [`EnvironmentMatch`] | `NeighborColumns::DISP` or `FULL` |
+//! | `dist_sq` — distances | [`Rdf`], [`CorrelationFunction`], [`LocalDensity`], [`PairPresence`] (each takes any `PairSource`); [`HBonds`] | `NeighborColumns::DIST_SQ` or `FULL` |
+//! | indices only — connectivity | [`Cluster`], [`AngularSeparationNeighbor`], and the pairs of a [`QlmTable`] in [`SolidLiquid`] and [`ContinuousCoordination`] | any policy, `INDICES_ONLY` included |
 //!
 //! `FULL` means *every column is present*. It never means a bidirectional pair
 //! list — pair direction is an independent property, recorded by the table's
-//! [`QueryMode`](molrs::core::QueryMode). A **self-query**
-//! searches one point set against itself and is half-shell: each unordered pair
-//! appears exactly once, with `i < j`. A **cross-query** searches query points
-//! against a separate reference set and is directed, with both orderings
-//! present. Radial-distribution normalization is the one place that distinction
+//! [`QueryMode`](molrs::core::QueryMode). A **self-query** searches one point
+//! set against itself and is half-shell: each unordered pair appears exactly
+//! once, with `i < j`. A **cross-query** searches query points against a
+//! separate reference set and is directed, with both orderings present.
+//! Radial-distribution normalisation is the one place that distinction
 //! changes a number — a half-shell count is short by a factor of two — see
 //! [`RdfResult`].
-//!
-//! A kernel that only streams pairs takes a
-//! [`PairSource`](molrs::core::PairSource): a materialized table, or a built
-//! [`NeighborList`](molrs::core::NeighborList), which streams pairs straight
-//! out of its cell list without ever materializing them — the bounded-memory
-//! path for large systems. [`HBonds`] and [`PairPresence`] take the caller's
-//! per-frame tables; only [`VanHove`] builds its own cross-query, one per time
-//! origin, because its pair set depends on the origin and the lag.
 //!
 //! # Binning and grids
 //!
@@ -101,48 +249,39 @@
 //! density grid spreads a [`SpreadKernel`] ([`Gaussian`], [`Indicator`]) over
 //! a [`RegularGrid`], which wraps only its periodic axes.
 //!
-//! # Results
-//!
-//! Every Compute output implements [`ComputeResult`]. Accumulating outputs
-//! (RDF) override [`finalize`](ComputeResult::finalize) to normalize; other
-//! outputs use the default no-op.
-//!
 //! # Time correlation: one estimator, named surfaces
 //!
-//! Every lagged correlation is one configuration of [`Correlator`] (FFT batch
-//! evaluation plus a bounded-memory streaming accumulator) and returns a
-//! [`TimeCorrelation`]. The quantities chemists name are thin surfaces over it;
-//! the step that turns a curve into a coefficient is the analyst's explicit,
-//! parameterized choice:
+//! Every lagged correlation is one configuration of [`Correlator`] — a
+//! [`LagKernel`] (product, squared displacement, Legendre, Wigner-D,
+//! persistence), a maximum lag, the [`Origins`], [`MeanPolicy`],
+//! [`Normalization`] and [`Reduction`] — evaluated by FFT, or folded frame by
+//! frame through its accumulator, into a [`TimeCorrelation`]. The quantities
+//! chemists know by name are thin surfaces over it: each holds one
+//! `Correlator` with the configuration that defines the quantity fixed,
+//! exposes only what a user legitimately tunes, and delegates `compute` in one
+//! line. A correlation with no named surface is a `Correlator` configured
+//! directly.
 //!
-//! | Surface | Raw curve | Downstream fit |
+//! The raw curve is an observable; the step that turns it into a coefficient
+//! is the analyst's explicit, parameterised choice of fit:
+//!
+//! | Surface | Raw curve | Then |
 //! |--------|-----------|----------------|
 //! | [`Vacf`] | velocity ACF | [`Spectrum`] (VDOS) / [`CumulativeTrapezoid`] (D) |
-//! | [`Msd`] | self-MSD; on the collective charge dipole, the Einstein–Helfand curve | [`LinearFit`] (D = slope/2d, σ) |
-//! | [`CurrentAcf`] | current ACF | [`CumulativeTrapezoid`] (σ) |
+//! | [`Msd`] | self-MSD; on the [`DipoleMoment`] series, the Einstein–Helfand curve | [`LinearFit`] (D = slope / 2d; σ) |
+//! | [`OnsagerCorrelation`] | Onsager L_ij displacement cross-correlation | [`LinearFit`] per pair |
+//! | [`CurrentAcf`] | current ACF of the [`Derivative`] of the dipole series | [`CumulativeTrapezoid`] (σ) |
 //! | [`DipoleAcf`] | dipole fluctuation ACF | [`DebyeFit`] (τ_D) / [`DipoleAutocorrelationSpectrum`] |
-//! | [`OnsagerCorrelation`] | Onsager L_ij displacement correlations | [`LinearFit`] per pair |
 //! | [`ReorientationAcf`], [`RotationalAutocorrelation`] | orientational decay | [`DebyeFit`] |
 //! | [`Survival`] | continuous / intermittent survival of a [`Presence`] ([`PairPresence`], [`HBondsResult::presence`]) | [`CumulativeTrapezoid`] (lifetime) |
 //!
-//! Units follow the MD convention of the caller (time in the `dt` unit,
-//! velocities/dipoles as supplied); the fits document the MD→SI prefactors.
-//!
-//! ```
-//! use molrs::compute::{Compute, CumulativeTrapezoid, CumulativeTrapezoidInput, Vacf, VacfInput};
-//! use ndarray::Array2;
-//!
-//! let velocities = Array2::from_shape_fn((64, 3), |(t, d)| ((t * 3 + d) as f64 * 0.7).sin());
-//! let raw = Vacf::new(16).compute(VacfInput { velocities: velocities.view(), dt: 1.0 })?;
-//! let running = CumulativeTrapezoid::new()
-//!     .compute(CumulativeTrapezoidInput { correlation: &raw, channel: 0 })?; // D·d in MD units
-//! # Ok::<(), molrs::compute::ComputeError>(())
-//! ```
+//! Units follow the caller's MD convention: time in the unit of `dt`,
+//! velocities and dipoles as supplied; the fits document their prefactors.
 //!
 //! # Raw observable, then transform: spectra
 //!
 //! Each spectrum is an explicit composition — a series operation, a
-//! correlation, a transform; no spectrum owns an estimator or an FFT:
+//! correlation, a transform. No spectrum owns an estimator or an FFT:
 //!
 //! | Spectrum | Series → correlation | Transform |
 //! |----------|----------------------|-----------|
@@ -153,7 +292,10 @@
 //! | ROA | parts of α̇ and Ġ′ → [`Correlator`] cross | [`RamanSpectrum`] |
 //! | Dielectric ε(ω) | [`DipoleAcf`] / [`CurrentAcf`] / [`Correlator`] cross of (Ṁ, M) | [`EinsteinHelfandSpectrum`] / [`GreenKuboSpectrum`] / [`DipoleAutocorrelationSpectrum`] / [`DipoleRateCrossSpectrum`] |
 //!
-//! Spectral units:
+//! A permittivity spectrum is checked by a `Compute` whose output is a
+//! [`Verdict`]: [`KramersKronig`] ([`KramersKronigCheck`]),
+//! [`ConductivitySumRule`] ([`SumRuleCheck`]) and [`RouteAgreement`]
+//! ([`RouteAgreementCheck`]). The static permittivity is [`StaticDielectric`].
 //!
 //! | quantity   | unit |
 //! |------------|------|
@@ -161,45 +303,35 @@
 //! | frequency  | cm⁻¹ ([`RamanSpectrum`]); rad per unit of dt ([`Spectrum`], ε(ω)) |
 //! | intensity  | arb. |
 //!
-//! # Implementation modules (`compute/<name>/`)
+//! # Where things live
 //!
-//! One folder per kernel family. **UI/catalog categories** (see
-//! `molrs-wasm` `molrsComputeCatalog`, catalog v3) follow freud's top-level
-//! modules and are not always 1:1 with folder names:
-//! - g(r) ([`Rdf`]) lives in `rdf/` but is catalogued under **density**
-//!   (`freud.density.Rdf`)
-//! - Voronoi kernels are catalogued under **locality**
-//!   (`freud.locality.Voronoi`)
-//! - van Hove / pair presence live under **transport** (with VACF/diffusion)
-//! - static dielectric is under **spectroscopy**
-//! - cluster radius-of-gyration ([`GyrationTensorResult::radius_of_gyration`]) is
-//!   under **cluster** (freud.cluster.ClusterProperties)
+//! One folder per kernel family; every public type is re-exported here.
 //!
-//! | Folder | Methods |
+//! | Folder | Contents |
 //! |----------|---------|
+//! | `contract` | [`Compute`], [`Verdict`], [`Accumulate`], [`Stream`], [`Batch`], [`Partition`], [`FeatureMatrix`] |
 //! | `binning` | [`Axis`], [`Histogram`] — the one binning implementation |
 //! | `grid` | [`RegularGrid`], [`SpreadKernel`] ([`Gaussian`], [`Indicator`]) — the one grid-spreading implementation |
-//! | `rdf` | pair distribution g(r) (+ streaming [`RdfAccumulator`]) |
-//! | `time_series` | [`Correlator`] and its surfaces (MSD, VACF, Onsager, dipole / current ACFs, reorientation, survival), [`Derivative`], [`Unwrap`], [`Spectrum`] |
+//! | `time_series` | [`Correlator`] and its surfaces, [`TimeCorrelation`], [`Derivative`], [`Unwrap`], [`Window`], [`Spectrum`], [`FrequencyGrid`] |
+//! | `fitting` | fits of a [`TimeCorrelation`]: [`LinearFit`], [`CumulativeTrapezoid`], [`Plateau`], [`DebyeFit`] |
 //! | `spectroscopy` | [`PolarizabilityParts`], [`RamanSpectrum`], the four ε(ω) routes and their checks |
-//! | `fitting` | fits on a [`TimeCorrelation`]: [`LinearFit`], [`CumulativeTrapezoid`], [`Plateau`], [`DebyeFit`] |
-//! | `dynamics` | van Hove G(r, t), pair presence |
 //! | `dielectric` | [`DipoleMoment`], [`StaticDielectric`], [`EwaldBoundary`] |
-//! | `cluster` | cluster analysis (freud's `Cluster`): connected components of a neighbor table, optionally merged by keys; the result is a [`Partition`] |
-//! | `shape` | per-group [`CenterOfMass`], [`GyrationTensor`] (and R_g), [`InertiaTensor`] over a [`Partition`] — the one group reduction |
-//! | `decomposition` | [`Pca`] of any [`FeatureMatrix`] |
-//! | `kmeans` | [`Kmeans`] over any [`FeatureMatrix`]; the result is a [`Partition`] |
-//! | `density` | correlation function, Gaussian/local density, spatial distribution, voxelization |
-//! | `order` | the one bond-harmonic average ([`QlmTable`]) behind Steinhardt, hexatic, solid-liquid, continuous coordination; nematic, cubatic |
-//! | `environment` | bond order, local descriptors, environment matching, … |
-//! | `diffraction` | S(k) (Debye & direct), diffraction pattern |
-//! | `pmft` | potentials of mean force and torque: one [`Pmft`] over a [`PairCoordinate`] ([`R12`], [`Xy`], [`Xyt`], [`Xyz`]) |
-//! | `distribution` | distance/angle/dihedral distribution functions |
-//! | `hbond` | hydrogen-bond detection, presence series, network components |
 //! | `kinetic` | [`KineticEnergy`] (and its temperature) of one state |
-//! | `voronoi` | radical Voronoi cells, domains, voids, density integration, finite-field polarizability (feature `voronoi`) |
+//! | `rdf` | [`Rdf`], the pair distribution g(r), and its [`RdfAccumulator`] |
+//! | `density` | [`CorrelationFunction`], [`LocalDensity`], [`GaussianDensity`], [`SphereVoxelization`], [`SpatialDistribution`] |
+//! | `distribution` | [`DistributionFunction`] and [`CombinedDistribution`] of distances, angles and dihedrals |
+//! | `diffraction` | [`StaticStructureFactorDebye`], [`StaticStructureFactorDirect`], [`DiffractionPattern`] |
+//! | `dynamics` | [`VanHove`] G(r, t), [`PairPresence`] and its [`Presence`] series |
+//! | `hbond` | [`HBonds`]: detection, presence series and network components |
+//! | `order` | the one bond-harmonic average ([`QlmTable`]) behind [`Steinhardt`], [`Hexatic`], [`SolidLiquid`], [`ContinuousCoordination`]; [`Nematic`], [`Cubatic`] |
+//! | `environment` | [`BondOrientationalOrder`], [`LocalDescriptors`], [`LocalBondProjection`], [`EnvironmentMatch`], angular separation |
+//! | `pmft` | one [`Pmft`] over a [`PairCoordinate`] ([`R12`], [`Xy`], [`Xyt`], [`Xyz`]) |
+//! | `cluster` | [`Cluster`]: connected components of a neighbour table, optionally merged by a partition |
+//! | `shape` | the one group reduction behind [`CenterOfMass`], [`GyrationTensor`], [`InertiaTensor`] |
+//! | `decomposition` | [`Pca`] of any [`FeatureMatrix`] |
+//! | `kmeans` | [`Kmeans`] over any [`FeatureMatrix`] |
+//! | `voronoi` | `RadicalVoronoi`, `VoronoiDomainAnalysis`, `VoronoiVoidAnalysis`, `VoronoiIntegration`, `FiniteFieldPolarizability` (feature `voronoi`) |
 
-mod analysis_contract;
 mod binning;
 mod cluster;
 mod contract;
@@ -230,7 +362,6 @@ mod time_series;
 mod voronoi;
 
 // Re-exports
-pub use analysis_contract::{Check, ComputeResult, DescriptorRow, Fit, LegacyCompute};
 pub use binning::{Axis, Histogram};
 pub use cluster::{Cluster, ClusterInput, ClusterResult};
 pub use contract::{Accumulate, Batch, Compute, FeatureMatrix, Partition, Stream, Verdict};

@@ -4,8 +4,10 @@ use crate::op::vec3::{cross, dot, norm, sub};
 use molrs::op::F;
 
 /// One bounding face of a cell: its area and the index of the neighbour cell
-/// across it. `neighbor < 0` marks a residual initial-box face (should not
-/// survive a fully-bounded periodic tessellation).
+/// across it. `neighbor < 0` ([`VORONOI_BOUNDARY`]) marks a residual
+/// initial-box face; a [`RadicalVoronoi`](crate::compute::RadicalVoronoi)
+/// tessellation never leaves one, because every periodic cell is bounded by
+/// real neighbours — its own images at the least.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct VoronoiFace {
     /// Face area (Å²).

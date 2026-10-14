@@ -386,6 +386,18 @@ and a different `dt` later is `OutOfRange`.
 The `MissingBlock` / `MissingColumn` / `MissingSimBox` variants are deleted,
 because compute no longer reads frames.
 
+*As built (09):* `analysis_contract.rs` is deleted with `LegacyCompute`, `Fit`,
+`Check`, `ComputeResult` (and its `Vec<T>` impl) and `DescriptorRow` (its last
+implementor was `RdfResult`). `ComputeError` keeps exactly the variants that
+have a producer: `DimensionMismatch`, `BadShape`, `NonFinite`, `OutOfRange`,
+`EmptyInput`, `UnknownName`, `Wrapped`. *Deviation:* besides the three
+frame-reading variants, `NotConverged` and `MolRs` (with its
+`From<MolRsError>`) are deleted too — `NotConverged`'s only intended producer
+was PCA's power iteration, gone with `eigh_sym` in 07 (a full Jacobi
+decomposition has no convergence flag), and no compute kernel calls a core API
+returning `MolRsError` (verified by compiling without the conversion). Either
+comes back with its first producer.
+
 ### 2. Data at the `compute` boundary — no wrapper types
 
 Every row below is passed to `compute`, never to `new` (D2). No row is a type
@@ -1053,6 +1065,20 @@ snapshots: `Batch`) with a named `Input`; no frame is read.
   added — it would be a data wrapper the caller builds (D2). The grid is
   `RegularGrid` and the values are an `ArrayView3` in the `Input`.
 
+*As built (09):*
+- **`VoronoiDomainInput { cells, partition: &(dyn Partition + Sync) }`** (was
+  `labels: &[i64]`), like every other grouping input: a label array or an
+  upstream partition (`ClusterResult`, `KmeansResult`, …). A cell in no group
+  (`group_of = None`) joins no domain and does not bridge its neighbours.
+  `VoronoiDomainResult::domain_of` is `Vec<Option<usize>>` (contiguous ids in
+  order of each domain's lowest cell), `largest_fraction` is over the grouped
+  cells, no grouped cell is `EmptyInput`, and the result is itself a
+  `Partition` (key = domain id). *Note:* the old signed `i64` labels are not a
+  `Partition` (keys are unsigned); a caller with signed labels maps them.
+- **`DipoleMomentInput::partition`** is `Option<&(dyn Partition + Sync)>` (was
+  `Option<&dyn Partition>`), so it matches every other partition input and the
+  input is `Send` for `Batch`.
+
 After the chain, `compute` exports no `pub fn` at module level and no `pub type`
 alias of another public type.
 
@@ -1120,6 +1146,37 @@ that owns the file.
     (`largest_fraction` was 0/0 → 0); a search radius needing more periodic
     copies than `ImageRange::MAX_IMAGES` is `OutOfRange`; the `leak()` label
     workaround is gone (static labels).
+  - *As built (09) — the exhaustive fallback.* On inspection the 08 hand-off
+    ("a cell still unbounded after three shells is reported as boundary
+    faces") was not the real defect, so it was not made an error as worded:
+    the initial polyhedron is `box_cell(L)` (half-widths `L`, twice the box)
+    and a generator's own shell-1 images always cut it at `±L/2`, so with
+    in-box generators no boundary face survives shell 1 and the three-shell
+    loop was dead. It was reached only through a bug: the fallback offset the
+    *raw* positions while its generator was *wrapped*, so a generator given
+    outside the box missed its own shell-1 image (residual face → more
+    shells). The real silent fallback was that the fallback returned at the
+    first shell with no box face, **without proving** that no farther image
+    could cut — unlike the fast path, which is accepted only once `r_cut ≥
+    d_stop`. Fixed: the fast path now reports the termination bound `reach =
+    d_stop(R_max)` of the cell it clipped (which contains the true cell); the
+    fallback takes every image within `reach` of every **wrapped** generator
+    from the core `ImageRange::new(cell, reach)` (half-width `⌈reach/L⌉` per
+    axis, complete for wrapped points) and clips them through the same
+    nearest-first loop as the fast path (`clip_nearest_first`, one
+    implementation). It is complete by the same bound, so no cell can be
+    unbounded; a reach needing more images than `ImageRange::MAX_IMAGES` is
+    `OutOfRange { field: "RadicalVoronoi exhaustive reach" }` instead of a cell
+    from a truncated image set (`MAX_SHELL`, `FACE_EPS` and the residual-face
+    test are gone). Tests: `sparse_cells_are_exact_on_the_exhaustive_path`
+    (4 × 4 × 40 box, two stacked generators: the fast path provably fails, the
+    cells are the exact 320 Å³ columns with no boundary face, bit-identical when
+    the generators are given whole boxes away) and
+    `an_exhaustive_reach_beyond_the_image_limit_is_an_error` (2 × 2 × 200).
+    Behaviour: a fallback cell now clips in distance order rather than
+    generator order (round-off only; every Voronoi test passes unchanged), and
+    a pathologically elongated sparse box (aspect ≳ 30:1 with a near-empty
+    column) that the old code tessellated without proof is now `OutOfRange`.
 - **EnvironmentMatch:**
   - The silent fallback above 8 neighbours becomes an explicit-limit error.
   - `Err(_) => INFINITY` becomes error propagation.
@@ -1424,10 +1481,31 @@ happens inside the chain.
 | 06-order-environment (code-complete 2026-10-14) | As built: `order/bond_average.rs` (`BondBasis` + `SphericalHarmonic`/`PlanarHarmonic`, `BondAverage`, public `QlmTable`) is the one q_ℓm/ψ_k; every order/environment type is a per-snapshot `Compute`; SolidLiquid/ContinuousCoordination read `(&QlmTable, &Neighbors)`; `Pmft<C: PairCoordinate>` (`R12`/`Xy`/`Xyt`/`Xyz`) replaces the four PMFTs; `steinhardt_qlm`, `angular_distance`, `pmft/orientation.rs`, every `*Args`, `Dsu` deleted; zero orientations error everywhere; R12 bin-measure bug fixed (deviations in §3, §4, §5, Link 06 note). Scope: `BondBasis`/`BondAverage`/`QlmTable`; Steinhardt, Hexatic, SolidLiquid, ContinuousCoordination, BOO, LocalDescriptors, LocalBondProjection, EnvironmentMatch, AngularSeparation, Nematic, Cubatic; `Pmft<C>`. | 01, 04 |
 | 07-groups (code-complete 2026-10-14) | As built: `shape/group_reduce.rs` (`GroupReduce`, crate-internal: anchor + core-MIC offsets, weighted centroid, weighted second moment) behind `CenterOfMass` / `GyrationTensor` / `InertiaTensor` (configuration-free; `compute({ positions, simbox, partition, masses/weights })`); `Cluster` on `Topology::connected_components` with `merge`; `ClusterResult` / `KmeansResult` are `Partition`s, `PcaResult` a `FeatureMatrix`; `Pca::new(n_components)` on `eigh_sym`; `Kmeans::new(k)` + `with_max_iter` / `with_seed` (core defaults 100 / 0) over any `FeatureMatrix`; `Partition::sizes`; `ClusterCenters`, `RadiusOfGyration`, `ClusterProperties`, `compute_keyed`, `center_of_mass_velocity`, the power iteration and (dead after 07) `positions.rs` deleted (deviations in §3, §4, §5, Behaviour change 2). Scope: `GroupReduce`; Cluster (`connected_components`, `merge`), CenterOfMass, GyrationTensor, InertiaTensor; delete ClusterCenters, RadiusOfGyration, ClusterProperties; Pca (`eigh_sym`, `n_components`), Kmeans (`FeatureMatrix`). | 01, 06 (FeatureMatrix producers) |
 | 08-voronoi (code-complete 2026-10-14) | As built: `RadicalVoronoi`, `VoronoiIntegration` (`new(LengthUnit)`), `VoronoiDomainAnalysis`, `VoronoiVoidAnalysis`, `FiniteFieldPolarizability` (`new(field)`) are per-snapshot `Compute`s with named `Input`s; candidate search on core `LinkCell` (+ `GhostSet` copies for the tessellation's multi-image search); `DensityGrid` → `RegularGrid` (+ `voxel_corner`) and an `ArrayView3`; Pass A on `GroupReduce`; `CellGrid`, `CellList`, `DensityGrid`, `from_cube_frame`, `polarizability_finite_field`, `leak` deleted; no `GridField` (deviations in §3, §4, §5, Link 08 note). Scope: `Compute` impls, core cell list, explicit units, `FiniteFieldPolarizability`, `GridField`. | 04, 07 |
-| 09-retire-legacy | Delete `LegacyCompute`, `analysis_contract.rs`, `positions.rs`; rewrite the `compute/mod.rs` module docs (removes the stale `molpy.compute.Workflow` reference). Run the §4 closing greps. | 02–08 |
+| 09-retire-legacy (code-complete 2026-10-14) | As built: `analysis_contract.rs` deleted (`LegacyCompute`, `Fit`, `Check`, `ComputeResult`, `DescriptorRow`; `RdfResult`'s impl); `ComputeError` cut to the seven variants with a producer (also `NotConverged`, `MolRs` — deviation in §1); `compute/mod.rs` docs rewritten (contract, config/data, no frames, `Batch`/`Stream`, `Partition`/`FeatureMatrix`, `PairSource`, surfaces, spectra, folders; five doctests); `VoronoiDomainAnalysis` on `&dyn Partition` (result is a `Partition`); the Voronoi exhaustive fallback proven complete or `OutOfRange` (§5 09 note); `DipoleMoment` partition `+ Sync`; ac-010's missing `DipoleMoment → Msd → LinearFit` test added; acceptance audit below ("Link 09 acceptance audit"). `positions.rs` was already gone (07). Scope: Delete `LegacyCompute`, `analysis_contract.rs`, `positions.rs`; rewrite the `compute/mod.rs` module docs (removes the stale `molpy.compute.Workflow` reference). Run the §4 closing greps. | 02–08 |
 | 10-bindings | §6 in molrs-python, molrs-wasm, molrs-cxxapi; full pre-push gate; Atomiverse consumer note. | 09 |
 | 11-catalog | §7; molvis `registry.ts` migration (cross-repo). | 10 |
 | 12-molpy | §8, after the molrs release that carries 01–11. | molrs tag |
+
+## Link 09 acceptance audit
+
+Run on 2026-10-14 against the molrs core (`molrs/src/compute`) after link 09.
+Bindings parts of ac-003 / ac-016 and ac-011–015 belong to links 10–12.
+"Non-test" means outside `#[cfg(test)]` items and the `tests.rs` /
+`product_tests.rs` test modules.
+
+| Criterion | Status | Evidence |
+|---|---|---|
+| ac-001 | pass | `pub trait` under compute: `Compute` is the one analysis trait (the others are `Verdict`, `Accumulate`, `Stream`, `Partition`, `FeatureMatrix`, `Observable`, `PairCoordinate`, `SpreadKernel`, crate-internal `BondBasis`); `grep -rnE 'trait Fit\|trait Check\|ComputeResult\|DescriptorRow\|LegacyCompute'` empty; all 71 `impl Compute for` blocks define only `compute`; `grep 'pub fn compute_'` empty. |
+| ac-002 | pass | `grep -rnE '^pub fn ' molrs/src/compute` empty; `molrs/src/signal/` absent; `Cargo.toml`: `compute = ["dep:rustfft"]`, no `signal` feature. Also no `pub type` under compute. |
+| ac-003 (core) | pass | Non-test code: no `FrameAccess`/`FrameView`/`core::Frame`/`core::schema`/`keys`, no `from_frame(s)`, zero field-name-literal hits; `positions.rs`, `pmft/orientation.rs` absent. Prose only: `contract.rs` / `mod.rs` say compute takes no `Frame`, and "Frame spacing" field docs. |
+| ac-016 (core) | pass (exemptions) | No `TimeSeries`/`Snapshot`/`Weights`/`SeriesPair`/`Labels`/`ThermoState` type. Every public compute `new`/`with_*` takes scalars, `Axis`, `RegularGrid`, `Window`, `LagKernel`, `Origins`, `Reduction`, `MeanPolicy`, `Normalization`, `Stencil`, `UnitPreset`, named enums, or config values (`HBondCriterion`, `Plateau`, an `Observable`). Exempt: (a) `PairCoordinate::Orientations<'a>` is an associated type naming the `ArrayView` an orientation input *is* — not a wrapper anyone builds; (b) `Steinhardt::new(&[l])`, `VanHove::new(axis, lags)`, `StaticStructureFactorDebye::new(&k)`, `StaticStructureFactorDirect::new(&k_vecs)` take where-to-evaluate lists, the Link 01 audit's "configuration that legitimately looks like data"; (c) `FrequencyGrid::new(n_fft, dt)` and `RegularGrid::over_box(simbox, dims)` are value-type constructors, not compute types; `DielectricPrefactor`, `GroupReduce`, `BondAverage`, `Histogram::new`, `DistributionResult::new` are crate-internal. |
+| ac-004 | pass | Every "→" symbol of §4 is absent from the re-exports and has no definition (remaining hits are "the former `X`" comments and freud URLs); all 66 K/S compute types checked (Correlator, the eight surfaces, fits, spectra, checks and every kept analysis) are re-exported with exactly one `impl Compute for`; M methods exist (`SteinhardtResult::qlm`, `HBondsResult::presence` / `components`, `GyrationTensorResult::radius_of_gyration`, `KineticEnergyResult::temperature`); the eight D4 surfaces hold `correlator: Correlator` and their `compute` is one `self.correlator.compute(CorrelatorInput { .. })` (axis insertion only). |
+| ac-005 | pass (exemptions) | `rustfft` imported only in `time_series/correlator.rs` and `time_series/spectrum.rs`; no `CellGrid`/`CellList`/`Dsu`/`power_iteration`; `pmft/` = `mod.rs` + `r12`/`xy`/`xyt`/`xyz`; no non-test `.min(n − 1)` bin clamp. Non-test `0.5 * (` hits that are not trapezoid sums: the Kramers–Kronig quadrature weight (exempt since 03), the Hann/Blackman window formulas in `Window`, and the Voronoi radical-plane offset `½(d² + Rᵢ² − Rⱼ²)` (one site, `clip_nearest_first`). |
+| ac-006 | pass | Non-test grep `map_or(1.0 \| unwrap_or(1.0 \| .max(1) \| min(n…-1)` empty (09 rewrote `DipoleMoment`'s structural `groups.len().max(1)` as an explicit one-series branch); no non-test `debug_assert!` / `assert!`; the remaining `.clamp(-1, 1)` are `acos` round-off guards and `LocalDensity`'s smoothing weight, not input fallbacks. Each §5 item's variant test is recorded in the 02–08 as-built notes; 09 adds `an_exhaustive_reach_beyond_the_image_limit_is_an_error` and `an_ungrouped_cell_is_in_no_domain`. |
+| ac-007 (core) | pass | `Rdf`, `DistributionFunction`, `CombinedDistribution`, `SpatialDistribution` `compute` = `self.accumulator().fold(..)`; `Correlator` + surfaces are the documented FFT exception, pinned by `correlator::tests::streaming_equals_batch_at_every_lag` (every kernel incl. `Product` / `SquaredDisplacement`, every lag, 1e-12 relative), `vacf::streaming_matches_batch_fft_vacf`, msd streaming tests, and `rdf::streaming_accumulator_matches_batch_bitwise`. |
+| ac-008 (core) | pass | `batch_matches_the_definition_for_every_kernel_and_option` (five kernels); `axis::{edges_and_centers, bins_are_half_open, non_finite_samples_are_errors, shell_volumes_match_closed_forms}`, `histogram::nan_sample_is_non_finite_and_counts_nothing`; `regular_grid::stencil_wraps_only_periodic_axes`; `group_reduce::a_group_straddling_the_boundary_is_unwrapped_about_its_anchor`; `bond_average::lattice_shells_give_the_tabulated_invariants`; `pmft::{r12,xy,xyt,xyz}::two_particle_pmf_golden`; eight `surface_is_its_correlator`; `a_wrapped_step_is_refused_and_an_unwrapped_one_is_not`. All pass. |
+| ac-009 | pass | Every one of the 38 distinct fractional assertion literals in the pre-chain (`9db8de95`) compute/signal tests is present in the current tree; of 351 pre-chain test names, 80 are gone — renamed, merged into the new primitives' tests, or deleted with their types/fallbacks as recorded in the 02–08 notes (e.g. `test_hann_*` → `Window`, `coordination_number_at_lag_zero` → 05 re-pin). 09 changed no golden literal. |
+| ac-010 (core) | pass | `vacf::velocities_to_diffusion_through_cumulative_trapezoid`; `dipole_moment::dipole_series_feeds_msd_then_linear_fit` (**added in 09** — no test covered it); `kmeans::steinhardt_pca_kmeans_composes`; `shape::cluster_feeds_the_shape_computes_as_a_partition`; `hbond::hbonds_presence_survival_lifetimes`; `dielectric_spectrum::tests::dipole_acf_to_kramers_kronig_pipeline`. |
 
 ## Testing strategy
 

@@ -47,7 +47,7 @@ pub struct DipoleMomentInput<'a> {
     /// One charge per item, length `N`.
     pub charges: ArrayView1<'a, F>,
     /// Groups to sum separately; `None` sums the whole system.
-    pub partition: Option<&'a dyn Partition>,
+    pub partition: Option<&'a (dyn Partition + Sync)>,
 }
 
 /// One dipole series per group.
@@ -149,7 +149,9 @@ impl Compute for DipoleMoment {
             }
         };
 
-        let n_series = groups.len().max(1);
+        // Without a partition there is one series, the whole system (a given
+        // partition with no group was refused above).
+        let n_series = if groups.is_empty() { 1 } else { groups.len() };
         let mut moments = Array3::<F>::zeros((n_frames, n_series, 3));
         for t in 0..n_frames {
             for (i, col) in column.iter().enumerate() {
@@ -167,13 +169,15 @@ impl Compute for DipoleMoment {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::compute::{Derivative, DerivativeInput, Stencil};
+    use crate::compute::{
+        Derivative, DerivativeInput, LinearFit, LinearFitInput, Msd, MsdInput, Origins, Stencil,
+    };
     use ndarray::{Array2, Array3, arr1, array};
 
     fn dipoles(
         positions: &Array3<F>,
         charges: &[F],
-        partition: Option<&dyn Partition>,
+        partition: Option<&(dyn Partition + Sync)>,
     ) -> Result<DipoleMomentResult, ComputeError> {
         let charges = arr1(charges);
         DipoleMoment::new().compute(DipoleMomentInput {
@@ -300,5 +304,40 @@ mod tests {
             })
             .unwrap();
         assert!(j.iter().all(|v| v.abs() < 1e-10));
+    }
+
+    /// Acceptance ac-010: `DipoleMoment` → `Msd` → `LinearFit`, with no glue
+    /// between steps — the dipole series is `Msd`'s positions as returned.
+    /// One charge `q = 2` at `x(t) = √t` gives `M(t) = 2√t`, so the
+    /// single-origin mean squared displacement of `M` is `4 t` (t in frames):
+    /// with `dt = 0.5` the Einstein–Helfand curve is the line of slope 8.
+    #[test]
+    fn dipole_series_feeds_msd_then_linear_fit() {
+        let positions =
+            Array3::from_shape_fn(
+                (11, 1, 3),
+                |(t, _, d)| {
+                    if d == 0 { (t as F).sqrt() } else { 0.0 }
+                },
+            );
+        let series = dipoles(&positions, &[2.0], None).unwrap();
+        let curve = Msd::new(10)
+            .with_origins(Origins::First)
+            .compute(MsdInput {
+                positions: series.moments.view(),
+                dt: 0.5,
+                boxes: None,
+            })
+            .unwrap();
+        let fit = LinearFit::new(0.0, 1.0)
+            .unwrap()
+            .compute(LinearFitInput {
+                correlation: &curve,
+                channel: 0,
+            })
+            .unwrap();
+        assert!((fit.slope - 8.0).abs() < 1e-10, "slope {}", fit.slope);
+        assert!(fit.intercept.abs() < 1e-10);
+        assert!((fit.r2 - 1.0).abs() < 1e-12);
     }
 }

@@ -1,11 +1,11 @@
 //! Native periodic radical (Laguerre) Voronoi tessellation.
 
 use molrs::core::neighbors::Backend;
-use molrs::core::{BoxKind, GhostSet, LinkCell, SimBox};
+use molrs::core::{BoxKind, GhostSet, ImageRange, LinkCell, SimBox};
 use molrs::op::F;
 use ndarray::{Array2, ArrayView1, ArrayView2, array};
 
-use super::cell::{Poly, VORONOI_BOUNDARY, VoronoiCells, VoronoiFace};
+use super::cell::{Poly, VoronoiCells, VoronoiFace};
 use crate::compute::{Compute, ComputeError};
 
 /// The periodic radical-Voronoi tessellation of one snapshot. Orthorhombic,
@@ -44,12 +44,18 @@ use crate::compute::{Compute, ComputeError};
 /// the bound is monotone and safe.
 ///
 /// If the search radius turns out too small to reach `d_stop` for a cell
-/// (sparse regions, large voids, a lone atom whose cell is the whole box),
-/// that cell is rebuilt by an exact exhaustive growing-shell search — the same
-/// plane-cut semantics, so the result is identical; only the *candidate set*
-/// differs, and the fast path is accepted only once it provably contains every
-/// cutting plane. Correctness is pinned by `Σ volume == box volume` and the
-/// analytic radical-plane / single-atom tests.
+/// (sparse regions, large voids, a slab's vacuum gap), that cell is rebuilt
+/// exhaustively: every periodic image of every generator within the `d_stop`
+/// of the cell the fast path left — which contains the true cell, so no plane
+/// beyond it can cut — is clipped in a fixed order. The plane-cut semantics are
+/// the same, so the result is identical; only the *candidate set* differs, and
+/// each path is accepted only once it provably contains every cutting plane.
+/// A cell whose exhaustive reach would need more periodic images than the core
+/// enumeration allows ([`ImageRange::MAX_IMAGES`]) is an error, never a cell
+/// built from a truncated image set. Every cell is bounded by real
+/// neighbours (its own periodic images at the least), so no initial-box face
+/// survives. Correctness is pinned by `Σ volume == box volume` and the
+/// analytic radical-plane / single-atom / exhaustive-path tests.
 ///
 /// # Radical plane
 /// Between generators i, j at displacement `r = x_j − x_i` with radii `Rᵢ`,
@@ -86,17 +92,14 @@ pub struct RadicalVoronoiInput<'a> {
     pub radii: ArrayView1<'a, F>,
 }
 
-/// Largest periodic shell searched by the exhaustive fallback before accepting
-/// a cell (a residual box face at shell 3 means the configuration is
-/// pathologically sparse).
-const MAX_SHELL: i32 = 3;
-/// Area below which a residual boundary face is treated as numerical dust.
-const FACE_EPS: F = 1e-9;
+/// One clipping candidate: `(d², displacement, generator, image key)`. The
+/// image key — the search-point index (an owned point or one periodic copy) on
+/// the fast path, `generator × n_shifts + shift` on the exhaustive one — makes
+/// the distance order total, so equal distances clip in a fixed order.
+type Candidate = (F, [F; 3], usize, u64);
 
-/// One clipping candidate: `(d², displacement, generator, search-point index)`.
-/// The search-point index (an owned point or one periodic copy) makes the
-/// distance order total, so equal distances clip in a fixed order.
-type Candidate = (F, [F; 3], usize, u32);
+/// One finished cell: its volume (Å³) and bounding faces.
+type Cell = (F, Vec<VoronoiFace>);
 
 /// Conservative termination radius: no neighbour farther than this can still
 /// cut a cell whose farthest vertex is at `rmax`. `r_star2` is the largest
@@ -124,8 +127,9 @@ impl Compute for RadicalVoronoi {
     /// a non-finite position or radius; [`ComputeError::BadShape`] for a
     /// triclinic box or one that is not periodic along every axis (the
     /// tessellation is periodic and orthorhombic by construction);
-    /// [`ComputeError::OutOfRange`] when the search radius would need more
-    /// periodic copies than the core image enumeration allows.
+    /// [`ComputeError::OutOfRange`] when the search radius, or the exhaustive
+    /// reach of a cell the search radius cannot prove complete, would need
+    /// more periodic copies than the core image enumeration allows.
     fn compute(&self, input: RadicalVoronoiInput<'_>) -> Result<VoronoiCells, ComputeError> {
         let RadicalVoronoiInput {
             positions,
@@ -195,17 +199,20 @@ impl Compute for RadicalVoronoi {
         // buffer reuse) and `collect` preserves generator order, so the result is
         // bit-identical to the serial build — only the geometry algorithm's driver
         // loop is parallelized, never the geometry itself.
-        let build = |i: usize, cand: &mut Vec<Candidate>| -> (F, Vec<VoronoiFace>) {
-            let gi = search.wrapped(i);
+        let build = |i: usize, cand: &mut Vec<Candidate>| -> Result<Cell, ComputeError> {
             let ri2 = radii[i] * radii[i];
             match build_cell_fast(&search, i, ri2, r_star2, &radii, &l, r_cut, cand) {
-                Some(res) => res,
-                None => build_cell_exhaustive(positions, &radii, i, &gi, ri2, &l),
+                Ok(cell) => Ok(cell),
+                Err(reach) => {
+                    build_cell_exhaustive(&search, i, ri2, r_star2, &radii, &l, reach, cand)
+                }
             }
         };
 
+        // Collected in generator order, then the first failing cell's error —
+        // so the outcome never depends on scheduling.
         #[cfg(feature = "rayon")]
-        let cells: Vec<(F, Vec<VoronoiFace>)> = {
+        let cells: Vec<Result<Cell, ComputeError>> = {
             use rayon::prelude::*;
             (0..n)
                 .into_par_iter()
@@ -213,10 +220,11 @@ impl Compute for RadicalVoronoi {
                 .collect()
         };
         #[cfg(not(feature = "rayon"))]
-        let cells: Vec<(F, Vec<VoronoiFace>)> = {
+        let cells: Vec<Result<Cell, ComputeError>> = {
             let mut cand: Vec<Candidate> = Vec::new();
             (0..n).map(|i| build(i, &mut cand)).collect()
         };
+        let cells: Vec<Cell> = cells.into_iter().collect::<Result<_, _>>()?;
 
         let mut volumes = Vec::with_capacity(n);
         let mut faces = Vec::with_capacity(n);
@@ -230,9 +238,10 @@ impl Compute for RadicalVoronoi {
 }
 
 /// Fast path: clip against the search candidates in increasing distance,
-/// stopping at the termination bound. Returns `None` (→ exhaustive fallback)
-/// if the search radius `r_cut` cannot be proven to contain every cutting
-/// plane.
+/// stopping at the termination bound. When the search radius `r_cut` cannot be
+/// proven to contain every cutting plane, returns `Err(reach)`: the
+/// termination bound of the cell clipped so far, which contains the true cell,
+/// so every plane that can still cut comes from within `reach`.
 #[allow(clippy::too_many_arguments)]
 fn build_cell_fast(
     search: &ImageSearch,
@@ -243,10 +252,25 @@ fn build_cell_fast(
     l: &[F; 3],
     r_cut: F,
     cand: &mut Vec<Candidate>,
-) -> Option<(F, Vec<VoronoiFace>)> {
+) -> Result<Cell, F> {
     search.collect(i, r_cut, cand);
-    cand.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.3.cmp(&b.3)));
+    let poly = clip_nearest_first(cand, ri2, r_star2, radii, l);
 
+    // Accept only if r_cut provably reached the termination bound, i.e. no
+    // unseen neighbour beyond r_cut could still cut this cell.
+    let reach = d_stop(poly.max_vertex_dist(), ri2, r_star2);
+    if r_cut + 1e-12 >= reach {
+        Ok((poly.volume(), poly.cell_faces()))
+    } else {
+        Err(reach)
+    }
+}
+
+/// Clip a box-sized cell against `cand` in increasing distance (ties by image
+/// key), stopping at the termination bound — no farther candidate can cut a
+/// cell whose bound has already been passed, and the bound only shrinks.
+fn clip_nearest_first(cand: &mut [Candidate], ri2: F, r_star2: F, radii: &[F], l: &[F; 3]) -> Poly {
+    cand.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.3.cmp(&b.3)));
     let mut poly = Poly::box_cell(l[0], l[1], l[2]);
     for &(d2, dr, j, _) in cand.iter() {
         let d = d2.sqrt();
@@ -257,64 +281,61 @@ fn build_cell_fast(
         let off = 0.5 * (d2 + ri2 - rj2);
         poly.clip(dr, off, j as i64);
     }
-
-    // Accept only if r_cut provably reached the termination bound, i.e. no
-    // unseen neighbour beyond r_cut could still cut this cell.
-    if r_cut + 1e-12 >= d_stop(poly.max_vertex_dist(), ri2, r_star2) {
-        Some((poly.volume(), poly.cell_faces()))
-    } else {
-        None
-    }
+    poly
 }
 
-/// Exact exhaustive fallback: clip against every atom across a growing
-/// periodic shell until the cell is bounded by real neighbours. Used only
-/// for the rare cells the search radius cannot prove complete.
+/// Exact exhaustive fallback for a cell the search radius could not prove
+/// complete: the same nearest-first clipping over every periodic image, within
+/// `reach` of the generator, of every generator.
+///
+/// The images come from the core [`ImageRange`] for `reach`: with every
+/// generator wrapped into `[0, L)`, an image within `reach` along an axis is
+/// at most `⌈reach / L⌉` cells away, which is the range's half-width. `reach`
+/// is the termination bound of a cell that contains the true one, so every
+/// plane that can cut is among these candidates.
+///
+/// # Errors
+/// [`ComputeError::OutOfRange`] when the range would exceed
+/// [`ImageRange::MAX_IMAGES`] — a cell is never built from a truncated image
+/// set.
+#[allow(clippy::too_many_arguments)]
 fn build_cell_exhaustive(
-    positions: ArrayView2<F>,
-    radii: &[F],
+    search: &ImageSearch,
     i: usize,
-    gi: &[F; 3],
     ri2: F,
+    r_star2: F,
+    radii: &[F],
     l: &[F; 3],
-) -> (F, Vec<VoronoiFace>) {
-    let n = positions.nrows();
-    let (lx, ly, lz) = (l[0], l[1], l[2]);
-    let mut shell = 1;
-    loop {
-        let mut poly = Poly::box_cell(lx, ly, lz);
-        for j in 0..n {
-            let rj2 = radii[j] * radii[j];
-            for sx in -shell..=shell {
-                for sy in -shell..=shell {
-                    for sz in -shell..=shell {
-                        if i == j && sx == 0 && sy == 0 && sz == 0 {
-                            continue;
-                        }
-                        let dr = [
-                            positions[[j, 0]] + sx as F * lx - gi[0],
-                            positions[[j, 1]] + sy as F * ly - gi[1],
-                            positions[[j, 2]] + sz as F * lz - gi[2],
-                        ];
-                        let rr = dr[0] * dr[0] + dr[1] * dr[1] + dr[2] * dr[2];
-                        if rr < 1e-18 {
-                            continue;
-                        }
-                        let off = 0.5 * (rr + ri2 - rj2);
-                        poly.clip(dr, off, j as i64);
-                    }
-                }
+    reach: F,
+    cand: &mut Vec<Candidate>,
+) -> Result<Cell, ComputeError> {
+    let images = ImageRange::new(&search.cell, reach).map_err(|e| ComputeError::OutOfRange {
+        field: "RadicalVoronoi exhaustive reach",
+        value: format!("{reach} for generator {i}: {e}"),
+    })?;
+    let shifts = images.shifts();
+    let gi = search.wrapped(i);
+    let reach2 = reach * reach;
+    cand.clear();
+    for j in 0..radii.len() {
+        let pj = search.wrapped(j);
+        for (k, &[sx, sy, sz]) in shifts.iter().enumerate() {
+            let dr = [
+                pj[0] + sx as F * l[0] - gi[0],
+                pj[1] + sy as F * l[1] - gi[1],
+                pj[2] + sz as F * l[2] - gi[2],
+            ];
+            let d2 = dr[0] * dr[0] + dr[1] * dr[1] + dr[2] * dr[2];
+            // The generator itself (zero distance) and images past the reach
+            // are not candidates.
+            if d2 < 1e-18 || d2 > reach2 {
+                continue;
             }
+            cand.push((d2, dr, j, (j * shifts.len() + k) as u64));
         }
-        let cf = poly.cell_faces();
-        let unbounded = cf
-            .iter()
-            .any(|f| f.neighbor == VORONOI_BOUNDARY && f.area > FACE_EPS);
-        if !unbounded || shell >= MAX_SHELL {
-            return (poly.volume(), cf);
-        }
-        shell += 1;
     }
+    let poly = clip_nearest_first(cand, ri2, r_star2, radii, l);
+    Ok((poly.volume(), poly.cell_faces()))
 }
 
 /// The generators wrapped into `[0, L)` plus every periodic copy within the
@@ -329,6 +350,8 @@ struct ImageSearch {
     n_owned: usize,
     index: LinkCell,
     open_box: SimBox,
+    /// The periodic cell `[0, L)` the generators are wrapped into.
+    cell: SimBox,
 }
 
 impl ImageSearch {
@@ -367,6 +390,7 @@ impl ImageSearch {
             n_owned: n,
             index,
             open_box,
+            cell,
         })
     }
 
@@ -396,7 +420,7 @@ impl ImageSearch {
                 } else {
                     self.owner[k - self.n_owned] as usize
                 };
-                out.push((d2, dr, j, p));
+                out.push((d2, dr, j, u64::from(p)));
             });
     }
 }
@@ -497,6 +521,67 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// Two generators stacked in a tall box: each cell is a 4 × 4 × 20 column
+    /// reaching across the empty half of the box, too long for the search
+    /// radius to prove, so both cells are built on the exhaustive path — and
+    /// are still exact, bounded by real neighbours only, and unchanged when the
+    /// generators are given whole boxes away.
+    #[test]
+    fn sparse_cells_are_exact_on_the_exhaustive_path() {
+        let simbox = periodic([4.0, 4.0, 40.0]);
+        let p = array![[2.0, 2.0, 1.0], [2.0, 2.0, 3.0]];
+        let radii = [0.0, 0.0];
+
+        // The fast path cannot prove generator 0's cell (its search radius is
+        // 4 · (640 / 2)^(1/3) ≈ 27 Å; the column needs ≈ 80 Å).
+        let l = [4.0, 4.0, 40.0];
+        let r_cut = 4.0 * (640.0_f64 / 2.0).cbrt();
+        let search = ImageSearch::new(p.view(), &l, r_cut).unwrap();
+        let mut cand = Vec::new();
+        assert!(build_cell_fast(&search, 0, 0.0, 0.0, &radii, &l, r_cut, &mut cand).is_err());
+
+        let cells = tessellate(&p, &radii, &simbox);
+        for i in 0..2 {
+            assert!(
+                (cells.volumes[i] - 320.0).abs() < 1e-9,
+                "{:?}",
+                cells.volumes
+            );
+            assert!(cells.faces[i].iter().all(|f| f.neighbor >= 0));
+        }
+        assert_eq!(cells.neighbors(0), vec![0, 1]);
+
+        let shifted = array![[-2.0, 6.0, 81.0], [2.0, 2.0, -77.0]];
+        let moved = tessellate(&shifted, &radii, &simbox);
+        assert_eq!(moved.volumes, cells.volumes);
+    }
+
+    /// A cell whose exhaustive reach would need more periodic images than the
+    /// core enumeration allows is an error, not a cell from a truncated set.
+    #[test]
+    fn an_exhaustive_reach_beyond_the_image_limit_is_an_error() {
+        // 2 × 2 × 200: each column is ~100 Å long, so proving it needs images
+        // ~200 boxes away along x and y.
+        let p = array![[1.0, 1.0, 1.0], [1.0, 1.0, 3.0]];
+        let err = RadicalVoronoi::new()
+            .compute(RadicalVoronoiInput {
+                positions: p.view(),
+                simbox: &periodic([2.0, 2.0, 200.0]),
+                radii: array![0.0, 0.0].view(),
+            })
+            .unwrap_err();
+        assert!(
+            matches!(
+                err,
+                ComputeError::OutOfRange {
+                    field: "RadicalVoronoi exhaustive reach",
+                    ..
+                }
+            ),
+            "{err:?}"
+        );
     }
 
     #[test]
