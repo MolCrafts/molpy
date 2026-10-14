@@ -101,7 +101,7 @@ impl Axis {
     /// in a bin.
     ///
     /// `#[inline]` so that, inside a caller's per-sample loop, the
-    /// sample-independent part of [`locate`](Self::locate) (the inverse bin
+    /// sample-independent part of the bin lookup (the inverse bin
     /// scale) is hoisted out of the loop.
     #[inline]
     pub fn index(&self, x: F) -> Result<Option<usize>, ComputeError> {
