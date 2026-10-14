@@ -445,6 +445,23 @@ routed through it — link 03. That taper's cos² now goes through
 squared-displacement FFT centres each column first (a displacement does not see
 an offset; this only removes cancellation) and sets lag 0 to exactly 0.
 
+*As built (03):* `current_density` is gone (`Derivative { Backward }` of the
+`DipoleMoment` series, over the volume; no NaN row) and the Einstein–Helfand
+taper derivative runs on `Derivative` (`Central` inside, `Backward` on the last
+two lags, `C′(0) = 0` by evenness). The one trapezoid recurrence is the
+crate-internal `CumulativeTrapezoid::running(y, step)` (uniform or per-interval
+step); the dielectric DC bin, the conductivity sum rule and `hbond_lifetimes`
+call it. Two `0.5 * (` hits remain that are not trapezoid sums and are exempt
+from the ac-005 grep: the Kramers–Kronig principal-value quadrature weight
+`½(ω_{j+1} − ω_{j−1})` and test-only hand-written references. The one
+prefactor implementation is `dielectric::DielectricPrefactor` (`fluctuation`
+= 4πκ/(3Vk_BT), `current_density` = V/(3k_BT), `total_current` =
+1/(3Vk_BT), `inverse_permittivity` = 4πκ), built from the compute-time V, T and
+the configured `UnitPreset`; `StaticDielectric`, the four routes and
+`ConductivitySumRule` all use it. The fs/ps contradiction is resolved by
+stating that no prefactor carries a time unit: ω is in radians per unit of the
+lag spacing, any consistent time unit works.
+
 ### 4. Public surface — every current symbol and where it goes
 
 Legend:
@@ -517,6 +534,52 @@ its type; `D = slope / 2d` is `Msd` → `LinearFit`. `DebyeFit` moved to
 | `kinetic_energy` | → `KineticEnergy` |
 | `kinetic_temperature` | M `KineticEnergyResult::temperature(n_dof)` (units from `KineticEnergy::new(units)`) |
 | `center_of_mass_velocity` | → `CenterOfMass` on velocities with no box |
+
+*As built (03):*
+- **Fits** take `{ correlation: &TimeCorrelation, channel }`; `LinearFit::new(start, end)` /
+  `Plateau::new(start, end)` validate `0 ≤ start < end ≤ 1`; `DebyeFit` (unit struct) reads
+  the lag times off the curve. `CumulativeTrapezoid::new().with_n_lags(m)` returns a
+  `TimeCorrelation` (the running integral on the input lag grid), so
+  `CumulativeTrapezoid → Plateau` chains with no glue; `CumulativeTrapezoidResult` is deleted.
+- **`Window` default** is `CosineSq` (behaviour change 4's "GreenKubo window, chosen once in 03").
+- **`RamanSpectrum`**: `new(window, pad)` (`Default` = cos², 4×), `with_incident_frequency(ν̃₀)`
+  (`Result`; replaces the 0.0 sentinel), `with_averaged(bool)`; `compute({ isotropic, anisotropic:
+  &TimeCorrelation, temperature: Option<F> })`. *Deviation:* the brief put temperature in `new`;
+  it is `compute` data per D2 (a state's temperature). `None` = no Bose factor; `Some(T ≤ 0)` is
+  `OutOfRange`. `RamanSpectrumResult.n_frames` (actually the lag count) is dropped.
+- **`PolarizabilityParts`**: `compute({ alpha: T × 6 Voigt })` → `{ isotropic: T × 1, anisotropic: T × 6 }`;
+  the anisotropic columns carry `√½` / `√3`, so their squared norm is γ² and the Raman anisotropic
+  correlation is a plain `Correlator { Product }` summed over components. `RoaSpectrum` /
+  `ResonanceRamanSpectrum` are `RamanSpectrum` on cross / resonant correlations (documented).
+- **ε(ω) routes**: `new(window, units: UnitPreset)` + `with_pad` (default 4) + `with_epsilon_inf`
+  (default 1); `compute(DielectricSpectrumInput { correlation, volume, temperature, boundary })`
+  on a single-channel correlation (no channel index); `dt` is read off the lag grid; the EH DC bin
+  uses `C(0)` (the old `zero_lag_variance` field). `DielectricSpectrumResult` gains `epsilon_inf`.
+  `DipoleAutocorrelationSpectrum::with_plateau(Plateau)` replaces `subtract_plateau: Option<bool>`
+  and the auto `|C∞/C0| > 0.1` trigger; it subtracts the plateau's windowed mean (was: the last
+  sample). No plateau = no subtraction.
+- **`EwaldBoundary`** is a `named_enum!` (`tin_foil`, `vacuum`). *Deviation:* no route ever used the
+  boundary numerically (all formulas are tin-foil); `Vacuum` is now `OutOfRange` in every
+  permittivity compute instead of being silently treated as tin-foil. Implementing the Neumann
+  vacuum correction is new physics, out of scope.
+- **Checks**: `KramersKronig::new().with_tolerance(rel, abs)` (0.1 / 0.01) on
+  `{ spectrum: &DielectricSpectrumResult }`; `RouteAgreement::new().with_part(PermittivityPart)
+  .with_tolerance(t)` (`imaginary`, 0.10) on `{ spectra: &[&DielectricSpectrumResult] }`, pairwise
+  `(i, j, rms)`, one frequency grid required (`BadShape`); `ConductivitySumRule::new(units)
+  .with_tolerance(t)` (0.05) on `SumRuleInput { frequencies, conductivity, current_sq_mean, volume,
+  temperature }` — σ(ω) is not part of `DielectricSpectrumResult`, so it is data, not the result.
+- **`DipoleMoment`** → `DipoleMomentResult { groups: Vec<u64>, moments: T × G × 3 }` (`groups`
+  empty without a partition) + `series(column) -> T × 3`; `moments` feeds `Msd` / `Correlator` directly.
+- **`StaticDielectric::new(units).with_epsilon_inf(ε∞)`**, `compute({ dipoles, volume, temperature,
+  boundary })` → `StaticDielectricResult { epsilon, epsilon_axes, dipole_mean, dipole_sq_mean,
+  fluctuation, epsilon_inf, n_frames }` (`eps` → `epsilon_axes`, `eps_mean` dropped: `epsilon` is
+  the isotropic value).
+- **`KineticEnergy::new(units) -> Result`** applies the preset's `mass·velocity² → energy` factor
+  (LAMMPS `mvv2e`, through `UnitRegistry`; exactly 1 in `si`) so `KineticEnergyResult { energy,
+  boltzmann }::temperature(n_dof)` is in the preset's temperature unit.
+- **`center_of_mass_velocity` is kept until 07** (`md::maxwell` needs it and `CenterOfMass` still
+  reads frames); its zero-total-mass fallback is now `OutOfRange`. 07's `CenterOfMass` on velocities
+  with no box replaces it and deletes the function.
 
 **Dynamics and H-bonds.**
 
@@ -612,6 +675,12 @@ that owns the file.
   - The Raman 0.0 "skip" sentinel becomes `Option`.
   - The dielectric auto-plateau magic `0.1` becomes an explicit `Plateau`
     input.
+  - *As built (03):* all three done, plus the `max_lag` clamps of the deleted
+    `IrFlux` / `VcdCrossFlux` / `RamanTensor` / `RoaCrossTensor`; `LinearFit`
+    widening and `Plateau` collapsing are `OutOfRange` (`FractionalWindow`);
+    `current_density`'s NaN row is gone with the function;
+    `center_of_mass_velocity` with zero mass is `OutOfRange`; a vacuum
+    `EwaldBoundary` is `OutOfRange` (was silently tin-foil).
 - **Dielectric and kinetic:**
   - `current_density`'s NaN row 0 disappears, because the derivative stencil
     defines its edges.
@@ -770,6 +839,13 @@ regression.
    - *As built (02):* deferred to 03. The IR / VCD / Raman / ROA raw
      correlators run on `Correlator` with `Normalization::None`, so their
      numbers are unchanged in 02.
+   - *As built (03):* applied. IR = `CurrentAcf` of the central `Derivative`
+     of the dipole series; VCD, Raman and ROA = `Correlator { Product }` with
+     the default `Normalization::Unbiased`. Re-pinned: the hand-written
+     references of `irflux_plus_ir_transform_matches_manual_acf_path` and
+     `ramantensor_plus_raman_transform_matches_manual_acf_path` now divide each
+     lagged sum by `T − k` (`spectroscopy/mod.rs` tests); VCD and ROA gained
+     the same pinned reference tests. No other literal moved.
 2. **Gyration weighting.**
    - Before: `GyrationTensor` was unweighted about the geometric centre, while
      `RadiusOfGyration` and `ClusterProperties` were mass-weighted about the
@@ -809,7 +885,7 @@ happens inside the chain.
 |---|---|---|
 | 01-contract (code-complete 2026-10-14) | New `Compute`/`Verdict`/`Accumulate`/`Stream`/`Batch` (`Batch<C>` is itself a `Compute`: `Input = Vec<C::Input>`, earliest error wins); the old trait renamed `LegacyCompute`. The per-type `Input` struct convention (named data arguments, no `new`). `Partition` / `FeatureMatrix` traits, implemented for label arrays / `Array2`. An audit table of every `new`/`with_*` that takes data (D2), each assigned to its migrating link. `Neighbors` gains `SimBox`; `PairSource` trait. `named_enum!`. `ComputeError` changes. | — |
 | 02-time-series (code-complete 2026-10-14) | As built: `compute/time_series/` holds `Correlator` (+ `CorrelatorAccumulator`), the eight D4 surfaces, `TimeCorrelation`, `Derivative`, `Unwrap`, `Window`/`Spectrum`/`FrequencyGrid`; `signal`, `transport/`, `msd/`, `dynamics/acf.rs` deleted; legacy spectra/dielectric/hbond rewired with unchanged numbers (deviations noted in D4, D6, D7, §1, §3, §4, §5, Behaviour change 1). Scope: `Correlator` (all five kernels, FFT + streaming ring, equal to FFT round-off), `Derivative`, `Unwrap`, the D4 surfaces with their fixed configurations pinned against today's goldens, `TimeCorrelation`, `Window`, `Spectrum`, `FrequencyGrid`. Delete `signal` (module + feature). Migrate or delete the time-correlation rows of §4. | 01 |
-| 03-spectra-dielectric | Fits on `TimeCorrelation`, `Spectrum` unification, the Raman family with `PolarizabilityParts`, `DipoleMoment`, `StaticDielectric`, the four ε(ω) routes, the checks, the one prefactor implementation (fixes the fs/ps doc contradiction at `dielectric_spectrum.rs:59,281`), `KineticEnergy`. | 02 |
+| 03-spectra-dielectric (code-complete 2026-10-14) | As built: fits on `{&TimeCorrelation, channel}`, `CumulativeTrapezoid` → `TimeCorrelation`; `Spectrum` is the only vibrational transform; `PolarizabilityParts` + `RamanSpectrum`; `DipoleMoment`, `StaticDielectric`, `KineticEnergy`; four routes `new(window, units)` / `compute(DielectricSpectrumInput)`; checks as `Compute` + `Verdict`; one `DielectricPrefactor`; behaviour change 1 applied; `center_of_mass_velocity` kept until 07 (deviations in §3, §4, §5, Behaviour change 1). Scope: Fits on `TimeCorrelation`, `Spectrum` unification, the Raman family with `PolarizabilityParts`, `DipoleMoment`, `StaticDielectric`, the four ε(ω) routes, the checks, the one prefactor implementation (fixes the fs/ps doc contradiction at `dielectric_spectrum.rs:59,281`), `KineticEnergy`. | 02 |
 | 04-histogram-grid | `Axis`, `Histogram<N>`, `RegularGrid`, `SpreadKernel`; migrate Rdf (`Stream` over `PairSource`), CorrelationFunction, LocalDensity, distributions, S(k) ×2, DiffractionPattern, Gaussian/Sphere density, SpatialDistribution. | 01 |
 | 05-dynamics | `Presence`/`PairPresence`, survival through `Correlator`, H-bond input/presence/components, VanHove on `Histogram` + `core::NeighborQuery`. | 02, 04 |
 | 06-order-environment | `BondBasis`/`BondAverage`/`QlmTable`; Steinhardt, Hexatic, SolidLiquid, ContinuousCoordination, BOO, LocalDescriptors, LocalBondProjection, EnvironmentMatch, AngularSeparation, Nematic, Cubatic; `Pmft<C>`. | 01, 04 |

@@ -1,122 +1,150 @@
 //! [`LinearFit`] — ordinary-least-squares line fit over a fractional window.
 
-use ndarray::Array1;
+use molrs::op::F;
 
-use super::ols_slope_intercept_r2;
-use crate::compute::ComputeError;
-use crate::compute::ComputeResult;
-use crate::compute::Fit;
+use super::FractionalWindow;
+use crate::compute::{Compute, ComputeError, TimeCorrelation};
 
-/// Result of a linear (OLS) fit of `y = slope·x + intercept`.
+/// Result of a linear (OLS) fit of `C(t) = slope · t + intercept`.
 #[derive(Debug, Clone)]
 pub struct LinearFitResult {
-    /// Fitted slope d`y`/d`x`. Units: `[y]/[x]`.
-    pub slope: f64,
-    /// Fitted intercept (value of `y` at `x = 0`). Units: `[y]`.
-    pub intercept: f64,
-    /// Coefficient of determination r², dimensionless in `[0, 1]`. `1.0` for a
-    /// perfect fit.
-    pub r2: f64,
-    /// Inclusive start index of the fitted window into the input curve.
+    /// Fitted slope dC/dt. Units: `[C]/[t]`.
+    pub slope: F,
+    /// Fitted intercept (the value of the line at `t = 0`). Units: `[C]`.
+    pub intercept: F,
+    /// Coefficient of determination r², dimensionless in `[0, 1]`; `1.0` for
+    /// a perfect fit.
+    pub r2: F,
+    /// Inclusive first lag index of the fitted window.
     pub fit_start: usize,
-    /// Inclusive end index of the fitted window into the input curve.
+    /// Inclusive last lag index of the fitted window.
     pub fit_end: usize,
 }
 
-impl ComputeResult for LinearFitResult {}
-
-/// Ordinary-least-squares line fit over a fractional window of an `(x, y)`
-/// curve.
+/// Ordinary-least-squares line through one channel of a correlation curve,
+/// against its lag times, over a fractional window.
 ///
-/// The window is given as `(start_frac, end_frac)` fractions of the curve's
-/// last index `n − 1`, matching the `fit_start_frac` / `fit_end_frac` semantics
-/// of the Einstein–Helfand ionic conductivity:
+/// The window `(start, end)` is given as fractions of the last lag index
+/// `n − 1`:
 ///
 /// ```text
-///     fit_start = round((n − 1)·start_frac)
-///     fit_end   = round((n − 1)·end_frac)
+///     fit_start = round((n − 1) · start)
+///     fit_end   = round((n − 1) · end)
 /// ```
 ///
-/// with the same end clamp (`fit_end ≤ n − 1`) and a guard guaranteeing at
-/// least two fit points.
+/// A window covering fewer than two lags is an error; it is never widened.
+/// Typical uses: the diffusion coefficient `D = slope / 2d` of an
+/// [`Msd`](crate::compute::Msd) curve, the Einstein–Helfand conductivity slope
+/// of the collective-dipole MSD, the Onsager coefficients of an
+/// [`OnsagerCorrelation`](crate::compute::OnsagerCorrelation).
 ///
-/// Consumes an `(x, y)` curve (e.g. `(lag_times, msd)`) and returns the OLS
-/// slope, intercept, coefficient of determination, and the inclusive index
-/// bounds of the window actually fitted. The slope arithmetic is the same OLS
-/// lifted into `ols_slope_intercept_r2` from
-/// the Einstein–Helfand ionic-conductivity OLS, so a `LinearFit` over the same
-/// curve and fractions reproduces that function's slope bit-for-bit.
-#[derive(Debug, Clone, Copy)]
+/// ```
+/// use molrs::compute::{Compute, LinearFit, LinearFitInput, TimeCorrelation};
+/// use ndarray::{Array1, Array2};
+///
+/// // C(t) = 3t + 2 on t = 0 … 9.
+/// let lag_times = Array1::from_iter((0..10).map(|k| k as f64));
+/// let values = lag_times.mapv(|t| 3.0 * t + 2.0).insert_axis(ndarray::Axis(1));
+/// let curve = TimeCorrelation { lag_times, values };
+/// let fit = LinearFit::new(0.0, 1.0)?.compute(LinearFitInput { correlation: &curve, channel: 0 })?;
+/// assert!((fit.slope - 3.0).abs() < 1e-12);
+/// # Ok::<(), molrs::compute::ComputeError>(())
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct LinearFit {
-    /// `(start_frac, end_frac)` window as fractions of the last index, with
-    /// `0 ≤ start_frac < end_frac ≤ 1`.
-    pub window: (f64, f64),
+    window: FractionalWindow,
 }
 
-impl Fit for LinearFit {
-    /// `(x, y)` — the abscissa and ordinate curves, equal length.
-    type Input<'a> = (&'a Array1<f64>, &'a Array1<f64>);
-    type Output = LinearFitResult;
+/// The curve a [`LinearFit`] fits.
+#[derive(Debug, Clone, Copy)]
+pub struct LinearFitInput<'a> {
+    /// The correlation curve; its lag times are the abscissa.
+    pub correlation: &'a TimeCorrelation,
+    /// Which of its channels to fit.
+    pub channel: usize,
+}
 
-    /// Fit `y = slope·x + intercept` over `[fit_start, fit_end]`.
+impl LinearFit {
+    /// A fit over the window `(start, end)`, fractions of the last lag.
     ///
     /// # Errors
-    /// * [`ComputeError::EmptyInput`] if either curve has fewer than two points.
-    /// * [`ComputeError::DimensionMismatch`] if `x.len() != y.len()`.
-    /// * [`ComputeError::OutOfRange`] if `start_frac >= end_frac`, the fractions
-    ///   are out of `[0, 1]`, or the window is degenerate (all `x` equal).
-    fn fit<'a>(&self, input: Self::Input<'a>) -> Result<Self::Output, ComputeError> {
-        let (x, y) = input;
-        let n = x.len();
-        if n != y.len() {
-            return Err(ComputeError::DimensionMismatch {
-                expected: n,
-                got: y.len(),
-                what: "LinearFit (x, y) lengths",
-            });
-        }
-        if n < 2 {
-            return Err(ComputeError::EmptyInput);
-        }
+    /// [`ComputeError::OutOfRange`] unless `0 ≤ start < end ≤ 1`.
+    pub fn new(start: F, end: F) -> Result<Self, ComputeError> {
+        Ok(Self {
+            window: FractionalWindow::new(start, end)?,
+        })
+    }
 
-        let (start_frac, end_frac) = self.window;
-        if !(0.0..=1.0).contains(&start_frac)
-            || !(0.0..=1.0).contains(&end_frac)
-            || start_frac >= end_frac
-        {
-            return Err(ComputeError::OutOfRange {
-                field: "window (require 0 <= start < end <= 1)",
-                value: format!("{start_frac}/{end_frac}"),
-            });
-        }
+    /// The window, `(start, end)` fractions of the last lag.
+    pub fn window(&self) -> (F, F) {
+        self.window.fractions()
+    }
 
-        let last = n - 1;
-        // Same index derivation as the Einstein–Helfand conductivity (max_lag = last).
-        let mut fit_start = (last as f64 * start_frac).round() as usize;
-        let mut fit_end = (last as f64 * end_frac).round() as usize;
-        if fit_end >= last {
-            fit_end = last;
+    /// Ordinary least squares of `y = slope · x + intercept` over the
+    /// inclusive index range `[start, end]`: `(slope, intercept, r²)`, or
+    /// `None` when every `x` in the range is equal (no line is defined).
+    pub(crate) fn ordinary_least_squares(
+        x: &[F],
+        y: &[F],
+        start: usize,
+        end: usize,
+    ) -> Option<(F, F, F)> {
+        let np = (end - start + 1) as F;
+        let (mut sx, mut sy, mut sxx, mut sxy) = (0.0, 0.0, 0.0, 0.0);
+        for i in start..=end {
+            let xi = x[i];
+            let yi = y[i];
+            sx += xi;
+            sy += yi;
+            sxx += xi * xi;
+            sxy += xi * yi;
         }
-        if fit_end < fit_start + 1 {
-            fit_start = fit_start.min(last.saturating_sub(1));
-            fit_end = (fit_start + 1).min(last);
+        let denom = np * sxx - sx * sx;
+        if denom.abs() < F::EPSILON {
+            return None;
         }
+        let slope = (np * sxy - sx * sy) / denom;
+        let intercept = (sy - slope * sx) / np;
 
-        let xs = x.as_slice().ok_or(ComputeError::BadShape {
-            expected: "contiguous x".into(),
-            got: "non-contiguous".into(),
-        })?;
-        let ys = y.as_slice().ok_or(ComputeError::BadShape {
-            expected: "contiguous y".into(),
-            got: "non-contiguous".into(),
-        })?;
+        // r² = 1 − SS_res / SS_tot.
+        let y_mean = sy / np;
+        let mut ss_res = 0.0;
+        let mut ss_tot = 0.0;
+        for i in start..=end {
+            let resid = y[i] - (slope * x[i] + intercept);
+            ss_res += resid * resid;
+            let dev = y[i] - y_mean;
+            ss_tot += dev * dev;
+        }
+        // Perfectly flat y (ss_tot == 0): the line is exact iff residuals vanish.
+        let r2 = if ss_tot.abs() < F::EPSILON {
+            if ss_res.abs() < F::EPSILON { 1.0 } else { 0.0 }
+        } else {
+            1.0 - ss_res / ss_tot
+        };
+        Some((slope, intercept, r2))
+    }
+}
 
-        let (slope, intercept, r2) =
-            ols_slope_intercept_r2(xs, ys, fit_start, fit_end).ok_or(ComputeError::OutOfRange {
-                field: "fit window (degenerate: all x equal)",
+impl Compute for LinearFit {
+    type Input<'a> = LinearFitInput<'a>;
+    type Output = LinearFitResult;
+
+    /// # Errors
+    /// * [`ComputeError::OutOfRange`] when the window covers fewer than two
+    ///   lags, the channel does not exist, or every lag time in the window is
+    ///   equal.
+    /// * [`ComputeError::NonFinite`] for a non-finite value in the channel.
+    fn compute(&self, input: LinearFitInput<'_>) -> Result<LinearFitResult, ComputeError> {
+        let y = input.correlation.require_channel(input.channel)?;
+        let (fit_start, fit_end) = self.window.indices(y.len())?;
+        let xs = input.correlation.lag_times.to_vec();
+        let ys = y.to_vec();
+        let (slope, intercept, r2) = Self::ordinary_least_squares(&xs, &ys, fit_start, fit_end)
+            .ok_or(ComputeError::OutOfRange {
+                field: "fit window (degenerate: all lag times equal)",
                 value: format!("[{fit_start}, {fit_end}]"),
             })?;
-
         Ok(LinearFitResult {
             slope,
             intercept,
@@ -130,17 +158,50 @@ impl Fit for LinearFit {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ndarray::{Array1, Array2};
 
-    fn linspace(n: usize) -> Array1<f64> {
-        Array1::from_iter((0..n).map(|i| i as f64))
+    fn line(x: &[F], y: &[F]) -> TimeCorrelation {
+        TimeCorrelation {
+            lag_times: Array1::from_vec(x.to_vec()),
+            values: Array2::from_shape_vec((y.len(), 1), y.to_vec()).unwrap(),
+        }
+    }
+
+    fn fit(window: (F, F), x: &[F], y: &[F]) -> Result<LinearFitResult, ComputeError> {
+        let c = line(x, y);
+        LinearFit::new(window.0, window.1)?.compute(LinearFitInput {
+            correlation: &c,
+            channel: 0,
+        })
+    }
+
+    fn linspace(n: usize) -> Vec<F> {
+        (0..n).map(|i| i as F).collect()
+    }
+
+    #[test]
+    fn ols_recovers_exact_line() {
+        let x: Vec<f64> = (0..10).map(|i| i as f64).collect();
+        let y: Vec<f64> = x.iter().map(|&xi| 3.0 * xi + 2.0).collect();
+        let (slope, intercept, r2) = LinearFit::ordinary_least_squares(&x, &y, 0, 9).unwrap();
+        assert!((slope - 3.0).abs() < 1e-12);
+        assert!((intercept - 2.0).abs() < 1e-12);
+        assert!((r2 - 1.0).abs() < 1e-12);
+    }
+
+    #[test]
+    fn ols_degenerate_returns_none() {
+        let x = vec![5.0, 5.0, 5.0];
+        let y = vec![1.0, 2.0, 3.0];
+        assert!(LinearFit::ordinary_least_squares(&x, &y, 0, 2).is_none());
     }
 
     #[test]
     fn recovers_known_slope_intercept_r2() {
         // ac-002: y = 3x + 2 on a uniform grid, window (0,1).
         let x = linspace(10);
-        let y: Array1<f64> = x.iter().map(|&xi| 3.0 * xi + 2.0).collect();
-        let res = LinearFit { window: (0.0, 1.0) }.fit((&x, &y)).unwrap();
+        let y: Vec<F> = x.iter().map(|&xi| 3.0 * xi + 2.0).collect();
+        let res = fit((0.0, 1.0), &x, &y).unwrap();
         assert!((res.slope - 3.0).abs() < 1e-12, "slope {}", res.slope);
         assert!((res.intercept - 2.0).abs() < 1e-12);
         assert!((res.r2 - 1.0).abs() < 1e-12);
@@ -151,8 +212,8 @@ mod tests {
     #[test]
     fn full_window_uses_whole_curve() {
         let x = linspace(21);
-        let y: Array1<f64> = x.iter().map(|&xi| -0.5 * xi + 7.0).collect();
-        let res = LinearFit { window: (0.0, 1.0) }.fit((&x, &y)).unwrap();
+        let y: Vec<F> = x.iter().map(|&xi| -0.5 * xi + 7.0).collect();
+        let res = fit((0.0, 1.0), &x, &y).unwrap();
         assert_eq!(res.fit_start, 0);
         assert_eq!(res.fit_end, 20);
         assert!((res.slope + 0.5).abs() < 1e-12);
@@ -162,33 +223,37 @@ mod tests {
     fn degenerate_window_start_ge_end_errors() {
         // ac-016: start >= end.
         let x = linspace(10);
-        let y = x.clone();
-        let err = LinearFit { window: (0.7, 0.3) }.fit((&x, &y)).unwrap_err();
+        let err = fit((0.7, 0.3), &x, &x).unwrap_err();
         assert!(matches!(err, ComputeError::OutOfRange { .. }));
     }
 
     #[test]
     fn degenerate_all_x_equal_errors() {
         // ac-016: all x in the window equal -> denom ~ 0.
-        let x = Array1::from_vec(vec![5.0; 6]);
-        let y = Array1::from_vec(vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0]);
-        let err = LinearFit { window: (0.0, 1.0) }.fit((&x, &y)).unwrap_err();
+        let x = vec![5.0; 6];
+        let y = vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0];
+        let err = fit((0.0, 1.0), &x, &y).unwrap_err();
         assert!(matches!(err, ComputeError::OutOfRange { .. }));
     }
 
     #[test]
     fn mismatched_lengths_error() {
-        let x = linspace(5);
-        let y = linspace(4);
-        let err = LinearFit { window: (0.0, 1.0) }.fit((&x, &y)).unwrap_err();
+        let err = fit((0.0, 1.0), &linspace(5), &linspace(4)).unwrap_err();
         assert!(matches!(err, ComputeError::DimensionMismatch { .. }));
     }
 
+    /// Spec §5: the old fit widened a one-lag window to two lags; it is now
+    /// refused (`too_short_errors` used to expect `EmptyInput`).
     #[test]
     fn too_short_errors() {
-        let x = linspace(1);
-        let y = linspace(1);
-        let err = LinearFit { window: (0.0, 1.0) }.fit((&x, &y)).unwrap_err();
-        assert!(matches!(err, ComputeError::EmptyInput));
+        let err = fit((0.0, 1.0), &linspace(1), &linspace(1)).unwrap_err();
+        assert!(matches!(err, ComputeError::OutOfRange { .. }));
+        // n = 11, (0.42, 0.46): [round(4.2), round(4.6)] = [4, 5] — two lags, fine.
+        assert!(fit((0.42, 0.46), &linspace(11), &linspace(11)).is_ok());
+        // n = 11, (0.41, 0.44): [4, 4] — one lag: refused, not widened.
+        assert!(matches!(
+            fit((0.41, 0.44), &linspace(11), &linspace(11)),
+            Err(ComputeError::OutOfRange { .. })
+        ));
     }
 }

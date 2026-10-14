@@ -120,37 +120,36 @@
 //! velocities/dipoles as supplied); the fits document the MD→SI prefactors.
 //!
 //! ```
-//! use molrs::compute::{Compute, CumulativeTrapezoid, Fit, Vacf, VacfInput};
+//! use molrs::compute::{Compute, CumulativeTrapezoid, CumulativeTrapezoidInput, Vacf, VacfInput};
 //! use ndarray::Array2;
 //!
 //! let velocities = Array2::from_shape_fn((64, 3), |(t, d)| ((t * 3 + d) as f64 * 0.7).sin());
 //! let raw = Vacf::new(16).compute(VacfInput { velocities: velocities.view(), dt: 1.0 })?;
-//! let d = CumulativeTrapezoid.fit((&raw.channel(0).to_owned(), 1.0, None))?; // D·d in MD units
+//! let running = CumulativeTrapezoid::new()
+//!     .compute(CumulativeTrapezoidInput { correlation: &raw, channel: 0 })?; // D·d in MD units
 //! # Ok::<(), molrs::compute::ComputeError>(())
 //! ```
 //!
-//! # Raw observable, then fit: spectra
+//! # Raw observable, then transform: spectra
 //!
-//! Each spectrum is an explicit two-step composition — a raw compute produces
-//! an (unwindowed) correlation function, a fit applies window + FFT (+
-//! physical prefactors):
+//! Each spectrum is an explicit composition — a series operation, a
+//! correlation, a transform; no spectrum owns an estimator or an FFT:
 //!
-//! | Spectrum | Raw compute | Fit transform |
-//! |----------|-------------|---------------|
-//! | VDOS | [`Vacf`] (velocity ACF) | [`PowerSpectrum`] |
-//! | IR | [`IrFlux`] (dipole-flux ACF) | [`IrSpectrum`] |
-//! | Raman | [`RamanTensor`] (polarizability iso/aniso ACFs) | [`RamanSpectrum`] |
-//! | VCD | [`VcdCrossFlux`] (μ̇ × ṁ cross-correlation) | [`VcdSpectrum`] |
-//! | ROA | [`RoaCrossTensor`] (α̇ × Ġ′ cross-correlations) | [`RoaSpectrum`] |
-//! | Resonance Raman | [`ResonanceRamanTensor`] (resonant iso/aniso ACFs) | [`ResonanceRamanSpectrum`] |
+//! | Spectrum | Series → correlation | Transform |
+//! |----------|----------------------|-----------|
+//! | VDOS | velocities → [`Vacf`] | [`Spectrum`] |
+//! | IR | [`DipoleMoment`] → [`Derivative`] → [`CurrentAcf`] | [`Spectrum`] |
+//! | VCD | [`Derivative`] of μ and m → [`Correlator`] cross | [`Spectrum`] |
+//! | Raman / resonance Raman | [`PolarizabilityParts`] → [`Derivative`] → [`Correlator`] | [`RamanSpectrum`] |
+//! | ROA | parts of α̇ and Ġ′ → [`Correlator`] cross | [`RamanSpectrum`] |
 //! | Dielectric ε(ω) | [`DipoleAcf`] / [`CurrentAcf`] / [`Correlator`] cross of (Ṁ, M) | [`EinsteinHelfandSpectrum`] / [`GreenKuboSpectrum`] / [`DipoleAutocorrelationSpectrum`] / [`DipoleRateCrossSpectrum`] |
 //!
 //! Spectral units:
 //!
 //! | quantity   | unit |
 //! |------------|------|
-//! | time / dt  | fs   |
-//! | frequency  | cm⁻¹ |
+//! | time / dt  | fs (vibrational spectra); any consistent unit (ε(ω)) |
+//! | frequency  | cm⁻¹ ([`RamanSpectrum`]); rad per unit of dt ([`Spectrum`], ε(ω)) |
 //! | intensity  | arb. |
 //!
 //! # Implementation modules (`compute/<name>/`)
@@ -170,10 +169,10 @@
 //! |----------|---------|
 //! | `rdf` | pair distribution g(r) (+ streaming [`RdfAccumulator`]) |
 //! | `time_series` | [`Correlator`] and its surfaces (MSD, VACF, Onsager, dipole / current ACFs, reorientation, survival), [`Derivative`], [`Unwrap`], [`Spectrum`] |
-//! | `spectroscopy` | IR / Raman / VCD / ROA / resonance-Raman raw correlators + spectral transforms, dielectric spectra |
-//! | `fitting` | generic curve fits: [`LinearFit`], [`CumulativeTrapezoid`], [`Plateau`], [`DebyeFit`] |
+//! | `spectroscopy` | [`PolarizabilityParts`], [`RamanSpectrum`], the four ε(ω) routes and their checks |
+//! | `fitting` | fits on a [`TimeCorrelation`]: [`LinearFit`], [`CumulativeTrapezoid`], [`Plateau`], [`DebyeFit`] |
 //! | `dynamics` | van Hove G(r, t), pair survival |
-//! | `dielectric` | static dielectric constant from dipole fluctuations |
+//! | `dielectric` | [`DipoleMoment`], [`StaticDielectric`], [`EwaldBoundary`] |
 //! | `cluster` | cluster analysis (freud's `Cluster`): connected components by distance + per-cluster properties |
 //! | `shape` | center of mass, cluster centers, gyration/inertia tensors, Rg |
 //! | `decomposition` | PCA projection |
@@ -185,7 +184,7 @@
 //! | `pmft` | potentials of mean force and torque (R12/XY/XYT/XYZ) |
 //! | `distribution` | distance/angle/dihedral distribution functions |
 //! | `hbond` | hydrogen-bond detection, lifetimes, network components |
-//! | `kinetic` | kinetic energy, kinetic temperature, centre-of-mass velocity of one state |
+//! | `kinetic` | [`KineticEnergy`] (and its temperature), centre-of-mass velocity of one state |
 //! | `voronoi` | radical Voronoi cells, domains, voids (feature `voronoi`) |
 
 mod analysis_contract;
@@ -228,8 +227,8 @@ pub use density::{
     SpatialDistributionResult, SphereVoxelization, SphereVoxelizationResult,
 };
 pub use dielectric::{
-    EwaldBoundary, StaticDielectricResult, current_density, decompose_current, dipole_moment,
-    static_dielectric_constant, static_dielectric_constant_components,
+    DipoleMoment, DipoleMomentInput, DipoleMomentResult, EwaldBoundary, StaticDielectric,
+    StaticDielectricInput, StaticDielectricResult,
 };
 pub use diffraction::{
     DiffractionPattern, DiffractionPatternResult, StaticStructureFactorDebye,
@@ -251,14 +250,16 @@ pub use environment::{
 };
 pub use error::ComputeError;
 pub use fitting::{
-    CumulativeTrapezoid, CumulativeTrapezoidResult, DebyeFit, DebyeFitResult, LinearFit,
-    LinearFitResult, Plateau, PlateauResult,
+    CumulativeTrapezoid, CumulativeTrapezoidInput, DebyeFit, DebyeFitInput, DebyeFitResult,
+    LinearFit, LinearFitInput, LinearFitResult, Plateau, PlateauInput, PlateauResult,
 };
 pub use hbond::{
     HBond, HBondCriterion, HBondDistanceKind, HBondLifetimeResult, HBondNetworkResult, HBonds,
     HBondsResult, hbond_components, hbond_lifetimes, presence_from_hbonds,
 };
-pub use kinetic::{center_of_mass_velocity, kinetic_energy, kinetic_temperature};
+pub use kinetic::{
+    KineticEnergy, KineticEnergyInput, KineticEnergyResult, center_of_mass_velocity,
+};
 pub use kmeans::{Kmeans, KmeansResult};
 pub use order::{
     ContinuousCoordination, ContinuousCoordinationResult, Cubatic, CubaticResult, Hexatic,
@@ -288,13 +289,12 @@ pub use shape::{
     RadiusOfGyrationResult,
 };
 pub use spectroscopy::{
-    ConductivitySumRule, DielectricSpectrumResult, DipoleAutocorrelationSpectrum,
-    DipoleRateCrossSpectrum, EinsteinHelfandSpectrum, GreenKuboSpectrum, IrFlux, IrFluxArgs,
-    IrFluxResult, IrSpectrum, KramersKronig, KramersKronigCheck, PowerSpectrum, RamanSpectrum,
-    RamanSpectrumResult, RamanTensor, RamanTensorArgs, RamanTensorResult, ResonanceRamanSpectrum,
-    ResonanceRamanTensor, ResonanceRamanTensorArgs, RoaCrossTensor, RoaCrossTensorArgs,
-    RoaCrossTensorResult, RoaSpectrum, RouteAgreement, RouteAgreementCheck, SpectrumResult,
-    SumRuleCheck, VcdCrossFlux, VcdCrossFluxArgs, VcdCrossFluxResult, VcdSpectrum,
+    ConductivitySumRule, DielectricSpectrumInput, DielectricSpectrumResult,
+    DipoleAutocorrelationSpectrum, DipoleRateCrossSpectrum, EinsteinHelfandSpectrum,
+    GreenKuboSpectrum, KramersKronig, KramersKronigCheck, KramersKronigInput, PermittivityPart,
+    PolarizabilityParts, PolarizabilityPartsInput, PolarizabilityPartsResult, RamanSpectrum,
+    RamanSpectrumInput, RamanSpectrumResult, RouteAgreement, RouteAgreementCheck,
+    RouteAgreementInput, SumRuleCheck, SumRuleInput,
 };
 pub use time_series::{
     Correlator, CorrelatorAccumulator, CorrelatorFrame, CorrelatorInput, CurrentAcf,

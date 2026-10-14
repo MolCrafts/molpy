@@ -74,7 +74,7 @@ impl Stream for CurrentAcf {
 mod tests {
     use super::super::test_support::rng_series;
     use super::*;
-    use crate::compute::{CumulativeTrapezoid, Fit};
+    use crate::compute::{CumulativeTrapezoid, CumulativeTrapezoidInput};
     use ndarray::{Array1, Array2};
 
     fn current_acf(j: &Array2<F>, dt: F, max_lag: usize) -> Result<TimeCorrelation, ComputeError> {
@@ -141,19 +141,26 @@ mod tests {
 
         let raw = current_acf(&current, dt, mct).unwrap();
         let jacf = raw.channel(0).to_owned();
-        let integ = CumulativeTrapezoid.fit((&jacf, dt, None)).unwrap();
+        let integ = CumulativeTrapezoid::new()
+            .compute(CumulativeTrapezoidInput {
+                correlation: &raw,
+                channel: 0,
+            })
+            .unwrap()
+            .channel(0)
+            .to_owned();
 
         let mut manual = 0.0;
         for tau in 1..jacf.len() {
             manual += 0.5 * (jacf[tau - 1] + jacf[tau]) * dt;
         }
-        let last = integ.integral.len() - 1;
-        assert!((integ.integral[last] - manual).abs() < 1e-12);
+        let last = integ.len() - 1;
+        assert!((integ[last] - manual).abs() < 1e-12);
 
         // Green–Kubo 1/3 prefactor.
         let prefactor = (E_C * E_C * angstrom_m * angstrom_m / femtosecond_s)
             / (3.0 * angstrom_m.powi(3) * K_B_SI);
-        let sigma = prefactor * integ.integral[last] / (volume * temperature);
+        let sigma = prefactor * integ[last] / (volume * temperature);
         assert!(sigma.is_finite());
     }
 

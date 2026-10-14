@@ -77,7 +77,9 @@ impl Stream for Vacf {
 mod tests {
     use super::super::test_support::rng_series;
     use super::*;
-    use crate::compute::{Accumulate, CorrelatorFrame, CumulativeTrapezoid, Fit};
+    use crate::compute::{
+        Accumulate, CorrelatorFrame, CumulativeTrapezoid, CumulativeTrapezoidInput,
+    };
     use ndarray::{Array1, Array2};
 
     fn vacf(v: &Array2<F>, dt: F, max_lag: usize) -> Result<TimeCorrelation, ComputeError> {
@@ -194,13 +196,16 @@ mod tests {
         let v = rng_series(200, 3, 5);
         let dt = 0.5;
         let curve = vacf(&v, dt, 40).unwrap();
-        let integral = CumulativeTrapezoid
-            .fit((&curve.channel(0).to_owned(), dt, None))
+        let integral = CumulativeTrapezoid::new()
+            .compute(CumulativeTrapezoidInput {
+                correlation: &curve,
+                channel: 0,
+            })
             .unwrap();
         let manual: F = (1..curve.n_lags())
             .map(|k| 0.5 * (curve.values[[k - 1, 0]] + curve.values[[k, 0]]) * dt)
             .sum();
-        assert!((integral.integral[integral.integral.len() - 1] - manual).abs() < 1e-12);
+        assert!((integral.values[[integral.n_lags() - 1, 0]] - manual).abs() < 1e-12);
     }
 
     // ── Streaming (the former `VacfAccumulator`) ──

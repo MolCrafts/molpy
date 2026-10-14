@@ -18,6 +18,11 @@ named_enum! {
     ///
     /// Hann and Blackman use the symmetric (`N − 1` denominator) form of
     /// `scipy.signal.windows.{hann, blackman}(M, sym=True)`.
+    ///
+    /// The default is [`CosineSq`](Self::CosineSq): a one-sided correlation
+    /// keeps its `t = 0` value (the static signal, which Hann and Blackman
+    /// zero) and still tapers to zero at the last lag.
+    #[derive(Default)]
     pub enum Window {
         /// `w[n] = ½ (1 − cos(2πn / (N − 1)))` — zero at both ends.
         Hann => "hann",
@@ -26,6 +31,7 @@ named_enum! {
         Blackman => "blackman",
         /// `w[n] = cos²(πn / (2 (N − 1)))` — one at `n = 0`, zero at the last
         /// sample: tapers only the tail of a one-sided correlation function.
+        #[default]
         CosineSq => "cosine_sq",
         /// No taper.
         None => "none",

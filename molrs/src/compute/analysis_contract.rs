@@ -151,15 +151,26 @@ pub trait Fit {
 /// # Examples
 ///
 /// ```
-/// use molrs::compute::{Check, ConductivitySumRule, Verdict};
-/// use ndarray::Array1;
+/// use molrs::compute::{Check, ComputeError, ComputeResult, Verdict};
 ///
-/// let omega = Array1::from_vec(vec![0.0, 1.0, 2.0]);
-/// let sigma = Array1::from_vec(vec![1.0, 1.0, 1.0]);
-/// let rule = ConductivitySumRule { current_sq_mean: 1.0, volume: 1.0, temperature: 300.0 };
+/// #[derive(Clone)]
+/// struct Positive { passed: bool }
+/// impl ComputeResult for Positive {}
+/// impl Verdict for Positive { fn passed(&self) -> bool { self.passed } }
+///
+/// /// Every value is positive.
+/// struct AllPositive;
+/// impl Check for AllPositive {
+///     type Input<'a> = &'a [f64];
+///     type Output = Positive;
+///     fn check<'a>(&self, values: &'a [f64]) -> Result<Positive, ComputeError> {
+///         if values.is_empty() { return Err(ComputeError::EmptyInput); }
+///         Ok(Positive { passed: values.iter().all(|v| *v > 0.0) })
+///     }
+/// }
 ///
 /// // Runs fine, and reports a verdict — pass or fail is data, not an error.
-/// let v = rule.check((&omega, &sigma)).unwrap();
+/// let v = AllPositive.check(&[1.0, -1.0]).unwrap();
 /// let _: bool = v.passed();
 /// ```
 pub trait Check {

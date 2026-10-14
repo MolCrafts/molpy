@@ -1,9 +1,10 @@
-//! Kinetic observables of one configuration: kinetic energy, kinetic
-//! temperature and the centre-of-mass velocity.
+//! Kinetic readings of one configuration: [`KineticEnergy`] and its
+//! equipartition temperature, and the centre-of-mass velocity.
 
+use molrs::core::{UnitPreset, UnitRegistry};
 use ndarray::{Array1, ArrayView1, ArrayView2, Zip};
 
-use crate::compute::ComputeError;
+use crate::compute::{Compute, ComputeError};
 use crate::op::F;
 
 fn check_rows(mass: ArrayView1<'_, F>, vel: ArrayView2<'_, F>) -> Result<(), ComputeError> {
@@ -23,60 +24,131 @@ fn check_rows(mass: ArrayView1<'_, F>, vel: ArrayView2<'_, F>) -> Result<(), Com
     Ok(())
 }
 
-/// Kinetic energy `K = ½ Σᵢ mᵢ |vᵢ|²` of the `(n_atoms, 3)` velocities `vel`
-/// with per-atom masses `mass`.
+/// Kinetic energy `K = ½ Σᵢ mᵢ |vᵢ|²` of one configuration, in the energy
+/// unit of the configured [`UnitPreset`].
 ///
-/// An instantaneous thermodynamic reading of an MD state — what a `thermo`
-/// line prints — and a pure function of the arrays handed in. Units are the
-/// caller's: with masses in g/mol and velocities in Å/fs the energy is in
-/// g·Å²/(mol·fs²), and [`kinetic_temperature`] comes out in K only when `kb`
-/// is Boltzmann's constant in that same energy unit.
+/// Masses and velocities are in the preset's mass and velocity units; the
+/// preset's `mass · velocity²` → `energy` factor (LAMMPS' `mvv2e`, 2390.06 in
+/// `real`, exactly 1 in `si`) is applied, and its Boltzmann constant gives
+/// the equipartition temperature through [`KineticEnergyResult::temperature`].
 ///
-/// # Errors
+/// ```
+/// use molrs::compute::{Compute, KineticEnergy, KineticEnergyInput};
+/// use molrs::core::UnitPreset;
+/// use ndarray::array;
 ///
-/// [`ComputeError::BadShape`] when `vel` is not `(n, 3)`;
-/// [`ComputeError::DimensionMismatch`] when `mass` does not have one entry per
-/// row of `vel`.
-pub fn kinetic_energy(mass: ArrayView1<'_, F>, vel: ArrayView2<'_, F>) -> Result<F, ComputeError> {
-    check_rows(mass, vel)?;
-    let mut twice = 0.0;
-    Zip::from(mass).and(vel.rows()).for_each(|&m, v| {
-        twice += m * v.dot(&v);
-    });
-    Ok(0.5 * twice)
+/// let masses = array![2.0, 1.0];                               // kg
+/// let velocities = array![[1.0, 0.0, 0.0], [0.0, 2.0, 2.0]];   // m/s
+/// let k = KineticEnergy::new(UnitPreset::si())?
+///     .compute(KineticEnergyInput { masses: masses.view(), velocities: velocities.view() })?;
+/// assert_eq!(k.energy, 5.0);                                   // J
+/// # Ok::<(), molrs::compute::ComputeError>(())
+/// ```
+#[derive(Debug, Clone)]
+pub struct KineticEnergy {
+    units: UnitPreset,
+    mvv2e: F,
 }
 
-/// Kinetic temperature `T = 2K / (n_dof · k_B)` by equipartition: `n_dof` is
-/// the number of unconstrained degrees of freedom (`3N` less any removed by
-/// constraints or a fixed centre of mass) and `kb` Boltzmann's constant in the
-/// unit of `kinetic_energy`.
-///
-/// # Errors
-///
-/// [`ComputeError::OutOfRange`] when `n_dof` is zero or `kb` is not a positive
-/// finite number.
-pub fn kinetic_temperature(kinetic_energy: F, n_dof: usize, kb: F) -> Result<F, ComputeError> {
-    if n_dof == 0 {
-        return Err(ComputeError::OutOfRange {
-            field: "n_dof",
-            value: n_dof.to_string(),
-        });
+/// The configuration a [`KineticEnergy`] reads.
+#[derive(Debug, Clone, Copy)]
+pub struct KineticEnergyInput<'a> {
+    /// Per-atom masses, length `N`.
+    pub masses: ArrayView1<'a, F>,
+    /// Velocities, `N × 3`.
+    pub velocities: ArrayView2<'a, F>,
+}
+
+/// A kinetic energy, with the Boltzmann constant of its unit system.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct KineticEnergyResult {
+    /// `K` in the preset's energy unit.
+    pub energy: F,
+    /// Boltzmann's constant in the preset's energy per temperature unit.
+    pub boltzmann: F,
+}
+
+impl KineticEnergyResult {
+    /// Kinetic temperature `T = 2K / (n_dof k_B)` by equipartition: `n_dof`
+    /// is the number of unconstrained degrees of freedom (`3N` less any
+    /// removed by constraints or a fixed centre of mass).
+    ///
+    /// # Errors
+    /// [`ComputeError::OutOfRange`] when `n_dof` is zero or `k_B` is not
+    /// positive.
+    pub fn temperature(&self, n_dof: usize) -> Result<F, ComputeError> {
+        if n_dof == 0 {
+            return Err(ComputeError::OutOfRange {
+                field: "n_dof",
+                value: n_dof.to_string(),
+            });
+        }
+        if !(self.boltzmann.is_finite() && self.boltzmann > 0.0) {
+            return Err(ComputeError::OutOfRange {
+                field: "kb",
+                value: self.boltzmann.to_string(),
+            });
+        }
+        Ok(2.0 * self.energy / (n_dof as F * self.boltzmann))
     }
-    if !(kb.is_finite() && kb > 0.0) {
-        return Err(ComputeError::OutOfRange {
-            field: "kb",
-            value: kb.to_string(),
-        });
+}
+
+impl KineticEnergy {
+    /// The kinetic energy in `units`.
+    ///
+    /// # Errors
+    /// [`ComputeError::OutOfRange`] when the unit registry cannot convert the
+    /// preset's `mass · velocity²` to its energy unit.
+    pub fn new(units: UnitPreset) -> Result<Self, ComputeError> {
+        let from = format!("({})*({})**2", units.mass(), units.velocity());
+        let mvv2e = UnitRegistry::global()
+            .factor(&from, units.energy())
+            .map_err(|e| ComputeError::OutOfRange {
+                field: "units",
+                value: format!("{}: {from} -> {}: {e}", units.name(), units.energy()),
+            })?;
+        Ok(Self { units, mvv2e })
     }
-    Ok(2.0 * kinetic_energy / (n_dof as F * kb))
+
+    /// The unit system.
+    pub fn units(&self) -> &UnitPreset {
+        &self.units
+    }
+}
+
+impl Compute for KineticEnergy {
+    type Input<'a> = KineticEnergyInput<'a>;
+    type Output = KineticEnergyResult;
+
+    /// # Errors
+    /// [`ComputeError::BadShape`] when the velocities are not `N × 3`;
+    /// [`ComputeError::DimensionMismatch`] when the masses do not have one
+    /// entry per atom.
+    fn compute(&self, input: KineticEnergyInput<'_>) -> Result<KineticEnergyResult, ComputeError> {
+        check_rows(input.masses, input.velocities)?;
+        let mut twice = 0.0;
+        Zip::from(input.masses)
+            .and(input.velocities.rows())
+            .for_each(|&m, v| {
+                twice += m * v.dot(&v);
+            });
+        Ok(KineticEnergyResult {
+            energy: 0.5 * twice * self.mvv2e,
+            boltzmann: self.units.boltzmann(),
+        })
+    }
 }
 
 /// The mass-weighted centre-of-mass velocity `Σᵢ mᵢ vᵢ / Σᵢ mᵢ` of the
-/// `(n_atoms, 3)` velocities `vel`; zero when the total mass is zero.
+/// `(n_atoms, 3)` velocities `vel`.
+///
+/// Kept as a function until link 07 of the compute redesign, whose
+/// `CenterOfMass` (on velocities, with no box) replaces it.
 ///
 /// # Errors
 ///
-/// As [`kinetic_energy`].
+/// As [`KineticEnergy`]; [`ComputeError::OutOfRange`] when the total mass is
+/// zero (the centre of mass is undefined).
 pub fn center_of_mass_velocity(
     mass: ArrayView1<'_, F>,
     vel: ArrayView2<'_, F>,
@@ -91,7 +163,10 @@ pub fn center_of_mass_velocity(
         p[2] += m * v[2];
     });
     if total == 0.0 {
-        return Ok(Array1::zeros(3));
+        return Err(ComputeError::OutOfRange {
+            field: "mass (total)",
+            value: "0: the centre of mass of a massless set is undefined".into(),
+        });
     }
     Ok(Array1::from_vec(vec![
         p[0] / total,
@@ -105,21 +180,59 @@ mod tests {
     use super::*;
     use ndarray::array;
 
+    fn kinetic(
+        units: UnitPreset,
+        mass: ArrayView1<'_, F>,
+        vel: ArrayView2<'_, F>,
+    ) -> Result<KineticEnergyResult, ComputeError> {
+        KineticEnergy::new(units)?.compute(KineticEnergyInput {
+            masses: mass,
+            velocities: vel,
+        })
+    }
+
     #[test]
     fn kinetic_energy_is_half_m_v_squared() {
         let mass = array![2.0, 1.0];
         let vel = array![[1.0, 0.0, 0.0], [0.0, 2.0, 2.0]];
         // ½(2·1 + 1·8) = 5
-        assert_eq!(kinetic_energy(mass.view(), vel.view()).unwrap(), 5.0);
-        assert!(kinetic_energy(array![1.0].view(), vel.view()).is_err());
+        assert_eq!(
+            kinetic(UnitPreset::si(), mass.view(), vel.view())
+                .unwrap()
+                .energy,
+            5.0
+        );
+        assert!(kinetic(UnitPreset::si(), array![1.0].view(), vel.view()).is_err());
+    }
+
+    /// In `real` units g/mol · (Å/fs)² is 2390.057… kcal/mol (LAMMPS
+    /// `mvv2e` = 48.88821291²).
+    #[test]
+    fn real_units_convert_to_kcal_per_mol() {
+        let k = kinetic(
+            UnitPreset::real(),
+            array![1.0].view(),
+            array![[1.0, 0.0, 0.0]].view(),
+        )
+        .unwrap();
+        assert!((k.energy / 0.5 - 48.888_212_91_f64.powi(2)).abs() / 2390.0 < 1e-6);
+        assert_eq!(k.boltzmann, UnitPreset::real().boltzmann());
     }
 
     #[test]
     fn temperature_is_equipartition() {
         // 2K/(n_dof kb) with K = 3, n_dof = 6, kb = 0.5 → 2
-        assert_eq!(kinetic_temperature(3.0, 6, 0.5).unwrap(), 2.0);
-        assert!(kinetic_temperature(3.0, 0, 0.5).is_err());
-        assert!(kinetic_temperature(3.0, 6, 0.0).is_err());
+        let k = KineticEnergyResult {
+            energy: 3.0,
+            boltzmann: 0.5,
+        };
+        assert_eq!(k.temperature(6).unwrap(), 2.0);
+        assert!(k.temperature(0).is_err());
+        let no_kb = KineticEnergyResult {
+            energy: 3.0,
+            boltzmann: 0.0,
+        };
+        assert!(no_kb.temperature(6).is_err());
     }
 
     #[test]
@@ -128,7 +241,15 @@ mod tests {
         let vel = array![[1.0, 0.0, 0.0], [-3.0, 4.0, 0.0]];
         let v = center_of_mass_velocity(mass.view(), vel.view()).unwrap();
         assert_eq!(v.to_vec(), vec![0.0, 1.0, 0.0]);
-        let zero = center_of_mass_velocity(array![0.0, 0.0].view(), vel.view()).unwrap();
-        assert_eq!(zero.to_vec(), vec![0.0; 3]);
+    }
+
+    /// Spec §5: a zero total mass used to return a zero velocity.
+    #[test]
+    fn a_massless_set_has_no_centre_of_mass_velocity() {
+        let vel = array![[1.0, 0.0, 0.0], [-3.0, 4.0, 0.0]];
+        assert!(matches!(
+            center_of_mass_velocity(array![0.0, 0.0].view(), vel.view()),
+            Err(ComputeError::OutOfRange { .. })
+        ));
     }
 }

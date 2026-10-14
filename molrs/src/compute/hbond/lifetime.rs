@@ -5,7 +5,9 @@ use ndarray::{Array1, Array2};
 use std::collections::HashMap;
 
 use super::detect::HBondsResult;
-use crate::compute::{Compute, ComputeError, Survival, SurvivalInput, SurvivalKind};
+use crate::compute::{
+    Compute, ComputeError, CumulativeTrapezoid, Survival, SurvivalInput, SurvivalKind,
+};
 
 /// Lifetime TCFs for a set of bond presence series.
 #[derive(Debug, Clone)]
@@ -20,17 +22,6 @@ pub struct HBondLifetimeResult {
     pub tau_continuous: F,
     /// Intermittent lifetime `τ_i = ∫ C_HB(t) dt` (trapezoidal).
     pub tau_intermittent: F,
-}
-
-fn trapz(y: &Array1<F>, dt: F) -> F {
-    if y.len() < 2 {
-        return 0.0;
-    }
-    let mut s = 0.0;
-    for w in y.windows(2).into_iter() {
-        s += 0.5 * (w[0] + w[1]) * dt;
-    }
-    s
 }
 
 /// Compute continuous / intermittent lifetime TCFs from per-bond binary presence
@@ -110,8 +101,8 @@ pub fn hbond_lifetimes(
     let inter = survival(SurvivalKind::Intermittent)?;
 
     let lag_times = Array1::from_iter((0..=max_lag).map(|i| i as F * dt));
-    let tau_continuous = trapz(&cont, dt);
-    let tau_intermittent = trapz(&inter, dt);
+    let tau_continuous = CumulativeTrapezoid::total(&cont.to_vec(), dt);
+    let tau_intermittent = CumulativeTrapezoid::total(&inter.to_vec(), dt);
 
     Ok(HBondLifetimeResult {
         lag_times,

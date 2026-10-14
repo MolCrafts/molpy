@@ -1,84 +1,67 @@
 //! [`Plateau`] — windowed mean (and spread) of a curve.
 
-use ndarray::Array1;
+use molrs::op::F;
 
-use crate::compute::ComputeError;
-use crate::compute::ComputeResult;
-use crate::compute::Fit;
+use super::FractionalWindow;
+use crate::compute::{Compute, ComputeError, TimeCorrelation};
 
 /// Result of a plateau (windowed-mean) read.
 #[derive(Debug, Clone)]
 pub struct PlateauResult {
-    /// Mean of the curve over the window. Units: `[y]`.
-    pub value: f64,
+    /// Mean of the curve over the window. Units: `[C]`.
+    pub value: F,
     /// Number of samples inside the window (`fit_end − fit_start + 1`).
     pub n_samples: usize,
-    /// Population standard deviation of the curve over the window. Units: `[y]`.
-    pub std: f64,
+    /// Population standard deviation of the curve over the window. Units: `[C]`.
+    pub std: F,
 }
 
-impl ComputeResult for PlateauResult {}
-
-/// Windowed-mean plateau reader over a fractional window of a curve.
+/// Windowed mean of one channel of a curve over a fractional window.
 ///
-/// The window `(a, b)` maps to the inclusive index range
-/// `[round(a·(n−1)), round(b·(n−1))]`, where `n` is the curve length.
-///
-/// Reads a plateau value off a curve by averaging it over a fractional window.
-/// Typical use: reading the Green–Kubo running-integral plateau, where the
-/// transport coefficient is the converged tail value of the running integral.
-#[derive(Debug, Clone, Copy)]
+/// The window `(start, end)` maps to the inclusive index range
+/// `[round(start · (n − 1)), round(end · (n − 1))]`; one covering fewer than
+/// two samples is an error. Typical uses: the converged tail of a Green–Kubo
+/// running integral ([`CumulativeTrapezoid`](crate::compute::CumulativeTrapezoid)),
+/// and the non-relaxing plateau `C(∞)` of a dipole ACF that
+/// [`DipoleAutocorrelationSpectrum`](crate::compute::DipoleAutocorrelationSpectrum)
+/// subtracts.
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Plateau {
-    /// `(a, b)` window as fractions of the last index, `0 ≤ a < b ≤ 1`.
-    pub window: (f64, f64),
+    window: FractionalWindow,
 }
 
-impl Fit for Plateau {
-    /// The curve to average.
-    type Input<'a> = &'a Array1<f64>;
-    type Output = PlateauResult;
+/// The curve a [`Plateau`] reads.
+#[derive(Debug, Clone, Copy)]
+pub struct PlateauInput<'a> {
+    /// The curve.
+    pub correlation: &'a TimeCorrelation,
+    /// Which of its channels to average.
+    pub channel: usize,
+}
 
-    /// Average the curve over the fractional window.
+impl Plateau {
+    /// A plateau over the window `(start, end)`, fractions of the last lag.
     ///
     /// # Errors
-    /// * [`ComputeError::EmptyInput`] if the curve is empty.
-    /// * [`ComputeError::OutOfRange`] if `a >= b` or the fractions are out of
-    ///   `[0, 1]`.
-    fn fit<'a>(&self, input: Self::Input<'a>) -> Result<Self::Output, ComputeError> {
-        let y = input;
-        let n = y.len();
-        if n == 0 {
-            return Err(ComputeError::EmptyInput);
-        }
-        let (a, b) = self.window;
-        if !(0.0..=1.0).contains(&a) || !(0.0..=1.0).contains(&b) || a >= b {
-            return Err(ComputeError::OutOfRange {
-                field: "window (require 0 <= a < b <= 1)",
-                value: format!("{a}/{b}"),
-            });
-        }
+    /// [`ComputeError::OutOfRange`] unless `0 ≤ start < end ≤ 1`.
+    pub fn new(start: F, end: F) -> Result<Self, ComputeError> {
+        Ok(Self {
+            window: FractionalWindow::new(start, end)?,
+        })
+    }
 
-        let last = n - 1;
-        let fit_start = (last as f64 * a).round() as usize;
-        let mut fit_end = (last as f64 * b).round() as usize;
-        if fit_end > last {
-            fit_end = last;
-        }
-        // Single-element curve degenerates to the lone point.
-        let fit_end = fit_end.max(fit_start);
+    /// The window, `(start, end)` fractions of the last lag.
+    pub fn window(&self) -> (F, F) {
+        self.window.fractions()
+    }
 
+    /// The windowed mean and spread of `y`.
+    pub(crate) fn read(&self, y: &[F]) -> Result<PlateauResult, ComputeError> {
+        let (fit_start, fit_end) = self.window.indices(y.len())?;
         let n_samples = fit_end - fit_start + 1;
-        let mut sum = 0.0;
-        for i in fit_start..=fit_end {
-            sum += y[i];
-        }
-        let value = sum / n_samples as f64;
-        let mut var = 0.0;
-        for i in fit_start..=fit_end {
-            let d = y[i] - value;
-            var += d * d;
-        }
-        var /= n_samples as f64;
+        let window = &y[fit_start..=fit_end];
+        let value = window.iter().sum::<F>() / n_samples as F;
+        let var = window.iter().map(|v| (v - value) * (v - value)).sum::<F>() / n_samples as F;
         Ok(PlateauResult {
             value,
             n_samples,
@@ -87,20 +70,43 @@ impl Fit for Plateau {
     }
 }
 
+impl Compute for Plateau {
+    type Input<'a> = PlateauInput<'a>;
+    type Output = PlateauResult;
+
+    /// # Errors
+    /// [`ComputeError::OutOfRange`] when the window covers fewer than two
+    /// samples or the channel does not exist; [`ComputeError::NonFinite`] for
+    /// a non-finite value in the channel.
+    fn compute(&self, input: PlateauInput<'_>) -> Result<PlateauResult, ComputeError> {
+        let y = input.correlation.require_channel(input.channel)?;
+        self.read(&y.to_vec())
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    use super::super::curve;
     use super::*;
+
+    fn plateau(window: (F, F), y: &[F]) -> Result<PlateauResult, ComputeError> {
+        let c = curve(y, 1.0);
+        Plateau::new(window.0, window.1)?.compute(PlateauInput {
+            correlation: &c,
+            channel: 0,
+        })
+    }
 
     #[test]
     fn windowed_mean_of_plateau() {
         // ac-005: curve == P over (a, b). n=11, a=0.5, b=1.0 ->
         // [round(5), round(10)] = [5, 10], 6 samples.
         let p = 4.2;
-        let mut y = Array1::zeros(11);
-        for i in 5..=10 {
-            y[i] = p;
+        let mut y = vec![0.0; 11];
+        for v in y.iter_mut().skip(5) {
+            *v = p;
         }
-        let res = Plateau { window: (0.5, 1.0) }.fit(&y).unwrap();
+        let res = plateau((0.5, 1.0), &y).unwrap();
         assert!((res.value - p).abs() < 1e-12);
         assert_eq!(res.n_samples, 6);
         assert!(res.std < 1e-12);
@@ -109,12 +115,8 @@ mod tests {
     #[test]
     fn sample_count_matches_rounded_bounds() {
         // n=21, a=0.25, b=0.75 -> [round(5), round(15)] = [5, 15] => 11 samples.
-        let y = Array1::from_iter((0..21).map(|i| i as f64));
-        let res = Plateau {
-            window: (0.25, 0.75),
-        }
-        .fit(&y)
-        .unwrap();
+        let y: Vec<F> = (0..21).map(|i| i as f64).collect();
+        let res = plateau((0.25, 0.75), &y).unwrap();
         assert_eq!(res.n_samples, 11);
         // Mean of 5..=15 = 10.
         assert!((res.value - 10.0).abs() < 1e-12);
@@ -122,8 +124,8 @@ mod tests {
 
     #[test]
     fn nonzero_std_for_varying_window() {
-        let y = Array1::from_vec(vec![0.0, 0.0, 1.0, 3.0, 5.0]);
-        let res = Plateau { window: (0.5, 1.0) }.fit(&y).unwrap();
+        let y = [0.0, 0.0, 1.0, 3.0, 5.0];
+        let res = plateau((0.5, 1.0), &y).unwrap();
         // window [round(2), round(4)] = [2, 4] => {1,3,5}, mean 3, std sqrt(8/3).
         assert!((res.value - 3.0).abs() < 1e-12);
         assert!((res.std - (8.0_f64 / 3.0).sqrt()).abs() < 1e-12);
@@ -131,19 +133,32 @@ mod tests {
 
     #[test]
     fn degenerate_window_errors() {
-        let y = Array1::from_iter((0..10).map(|i| i as f64));
         assert!(matches!(
-            Plateau { window: (0.8, 0.2) }.fit(&y),
+            Plateau::new(0.8, 0.2),
+            Err(ComputeError::OutOfRange { .. })
+        ));
+    }
+
+    /// Spec §5: the old reader collapsed a short curve to its lone point and
+    /// returned it; a window of fewer than two samples is now an error.
+    #[test]
+    fn collapsing_window_errors() {
+        assert!(matches!(
+            plateau((0.0, 1.0), &[3.0]),
+            Err(ComputeError::OutOfRange { .. })
+        ));
+        // n = 5, (0.9, 1.0): [round(3.6), round(4.0)] = [4, 4].
+        assert!(matches!(
+            plateau((0.9, 1.0), &[1.0, 2.0, 3.0, 4.0, 5.0]),
             Err(ComputeError::OutOfRange { .. })
         ));
     }
 
     #[test]
     fn empty_curve_errors() {
-        let y: Array1<f64> = Array1::from_vec(vec![]);
         assert!(matches!(
-            Plateau { window: (0.0, 1.0) }.fit(&y),
-            Err(ComputeError::EmptyInput)
+            plateau((0.0, 1.0), &[]),
+            Err(ComputeError::OutOfRange { .. })
         ));
     }
 }

@@ -100,7 +100,7 @@ impl Stream for Msd {
 mod tests {
     use super::super::test_support::{rng_series, trajectory};
     use super::*;
-    use crate::compute::{Accumulate, CorrelatorFrame, Fit, LinearFit};
+    use crate::compute::{Accumulate, CorrelatorFrame, LinearFit, LinearFitInput};
     use ndarray::{Array2, Array3, Axis, array};
     use rand::{RngExt, SeedableRng};
 
@@ -555,11 +555,13 @@ mod tests {
 
         let raw = dipole_msd(&dipole, dt, mct);
         let msd = raw.channel(0).to_owned();
-        let fit = LinearFit {
-            window: (start_frac, end_frac),
-        }
-        .fit((&raw.lag_times, &msd))
-        .unwrap();
+        let fit = LinearFit::new(start_frac, end_frac)
+            .unwrap()
+            .compute(LinearFitInput {
+                correlation: &raw,
+                channel: 0,
+            })
+            .unwrap();
 
         // Manual OLS over [fit_start, fit_end] on (lag_times, msd).
         let (fs, fe) = (fit.fit_start, fit.fit_end);
@@ -633,8 +635,12 @@ mod tests {
             }
 
             let raw = dipole_msd(&dipole, dt, n_frames / 5);
-            let fit = LinearFit { window: (0.1, 0.5) }
-                .fit((&raw.lag_times, &raw.channel(0).to_owned()))
+            let fit = LinearFit::new(0.1, 0.5)
+                .unwrap()
+                .compute(LinearFitInput {
+                    correlation: &raw,
+                    channel: 0,
+                })
                 .unwrap();
             sigma_eh_sum += eh_prefactor * fit.slope / (volume * temperature);
 
