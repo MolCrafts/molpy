@@ -44,6 +44,7 @@ pub struct StaticDielectricInput<'a> {
 
 /// Static permittivity, isotropic and per axis, with the dipole statistics.
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct StaticDielectricResult {
     /// Isotropic static permittivity ε(0), dimensionless.
     pub epsilon: F,

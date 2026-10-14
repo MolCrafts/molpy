@@ -25,7 +25,7 @@ The generated `pkg/` directory is not committed.
 | Chunk-fed streams (the one reader of their format) | `XyzStream`, `PdbStream`, `SdfStream`, `LammpsDataStream`, `LammpsDumpStream`, `DcdStream`, `XtcStream`, `TrrStream` (`FrameOffset`) |
 | Record files (`*.mrec`) | `readMrecFrame`, `sectionNames` (each over a file map or packed bytes), `MrecReader` (`fromZip`, `fromStorage`) |
 | Perception | `assignRings`, `assignAromaticity`, `addHydrogens`, `removeHydrogens`, `assignKekuleBondOrders` |
-| Analysis (`molrs::compute`) | `Rdf`, `Msd`, `Cluster`, `Vacf`, `Steinhardt`, `PmftXy`, `DistributionFunction`, … (one class per molrs analysis type, under its Rust name); `staticDielectricConstant`, `hbondLifetimes`, `hbondComponents`, `pairSurvivalTcf`, … (molrs's free functions); `molrsComputeCatalog()` lists them all |
+| Analysis (`molrs::compute`) | `Rdf`, `Msd`, `Cluster`, `Vacf`, `Steinhardt`, `PmftXy`, `DistributionFunction`, … (one class per molrs compute type, under its Rust name); `molrsComputeCatalog()` lists them all |
 | Force fields | `UffTypifier`, `Mmff94Typifier`, `Mmff94sTypifier` (`typify`, `forcefield` → `ForceField`), `PotentialCompiler` (`compile` → `Potentials`), `Potentials` (`calcEnergyForces`), `Lbfgs` (pairs from a `NeighborList`'s `Neighbors`) |
 | Schema | `schemaDocument`, `keysDocument`, `schemaColumnDtype` |
 

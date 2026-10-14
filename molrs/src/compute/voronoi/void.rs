@@ -8,6 +8,7 @@ use crate::core::Topology;
 
 /// Outcome of a [`VoronoiVoidAnalysis`].
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct VoronoiVoidResult {
     /// Cavity volumes (Å³), descending.
     pub cavity_volumes: Vec<F>,

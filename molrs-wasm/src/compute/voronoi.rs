@@ -1,207 +1,210 @@
-//! Radical (Laguerre) Voronoi and its domain / void consumers — WASM face
-//! of the `molrs::compute` voronoi family.
+//! Radical Voronoi tessellation and its consumers — the WASM face of
+//! `molrs::compute::voronoi`.
+//!
+//! ```js
+//! const cells = new RadicalVoronoi().compute({ positions, simbox, radii });
+//! const voids = new VoronoiVoidAnalysis().compute({
+//!     cells, is_void: mask, box_volume: simbox.volume(),
+//! });
+//! ```
 
-use super::js_value;
-use crate::core::frame::Frame;
-use crate::core::frame_coords;
+use molrs::compute::{self as mc, Compute};
 use molrs::op::F;
-use serde::Serialize;
 use wasm_bindgen::prelude::*;
 
-/// Per-atom covalent radii from the frame's `element` column.
-fn covalent_radii_from_frame(frame: &molrs::core::Frame) -> Result<Vec<F>, JsValue> {
-    let atoms = frame
-        .get("atoms")
-        .ok_or_else(|| JsValue::from_str("Frame has no 'atoms' block"))?;
-    let column = atoms
-        .get("element")
-        .and_then(|c| c.as_string())
-        .ok_or_else(|| {
-            JsValue::from_str(
-                "radii weighting needs a string 'element' column on the atoms block; \
-             construct with useAtomRadii = false for a plain Voronoi diagram",
-            )
-        })?;
-    column
-        .iter()
-        .map(|symbol| {
-            molrs::core::Element::by_symbol(symbol)
-                .map(|el| F::from(el.covalent_radius()))
-                .ok_or_else(|| JsValue::from_str(&format!("unknown element symbol {symbol}")))
-        })
-        .collect()
+use super::config::RegularGrid;
+use super::handle::{described, output};
+use super::wire::Fields;
+use crate::core::NDArray;
+
+output! {
+    /// One radical Voronoi cell per generator: `volumes`, `faces`. The input
+    /// of `VoronoiDomainAnalysis` and `VoronoiVoidAnalysis`.
+    VoronoiCells => mc::VoronoiCells
 }
 
-/// Tessellate a frame and report the box volume used for normalization.
-///
-/// With `use_atom_radii` the cells are Laguerre-weighted by covalent radius;
-/// without it every generator has radius zero, which is a plain Voronoi diagram.
-fn voronoi_cells(
-    frame: &molrs::core::Frame,
-    use_atom_radii: bool,
-) -> Result<(molrs::compute::VoronoiCells, F), JsValue> {
-    let positions = frame_coords(frame)?;
-    let n = positions.nrows();
-    let simbox = frame.simbox.as_ref().ok_or_else(|| {
-        JsValue::from_str("Radical Voronoi needs a periodic simulation box (frame.simbox is unset)")
-    })?;
-    let radii = if use_atom_radii {
-        covalent_radii_from_frame(frame)?
-    } else {
-        vec![0.0; n]
-    };
-    if radii.len() != n {
-        return Err(JsValue::from_str(
-            "Radical Voronoi: the element column length does not match the atom count",
-        ));
-    }
-    let cells = molrs::compute::RadicalVoronoi
-        .build(positions.view(), &radii, simbox)
-        .map_err(|e| JsValue::from_str(&format!("RadicalVoronoi: {e}")))?;
-    Ok((cells, simbox.volume()))
+output! {
+    /// Voronoi-integrated charges, dipoles and references per molecule. The
+    /// input of `FiniteFieldPolarizability`.
+    MolecularMoments => mc::MolecularMoments
 }
 
-#[wasm_bindgen(js_name = RadicalVoronoi)]
+output! {
+    /// Face-connected domains of each group: `sizes`, `count`,
+    /// `largest_fraction`, `domain_of`. A `Partition`.
+    VoronoiDomainResult => mc::VoronoiDomainResult
+}
+
+output! {
+    /// Cavities of the void cells: `cavity_volumes`, `total_void_volume`,
+    /// `void_fraction`.
+    VoronoiVoidResult => mc::VoronoiVoidResult
+}
+
+/// Radical (Laguerre) Voronoi tessellation of weighted points.
+#[wasm_bindgen]
 pub struct RadicalVoronoi {
-    use_atom_radii: bool,
+    inner: mc::RadicalVoronoi,
 }
 
-#[wasm_bindgen(js_class = RadicalVoronoi)]
+#[wasm_bindgen]
 impl RadicalVoronoi {
-    /// With `use_atom_radii` the tessellation is Laguerre-weighted by each
-    /// atom's covalent radius, read from the frame's `element` column.
     #[wasm_bindgen(constructor)]
-    pub fn new(use_atom_radii: bool) -> Self {
-        Self { use_atom_radii }
+    #[allow(clippy::new_without_default)]
+    pub fn new() -> RadicalVoronoi {
+        Self {
+            inner: mc::RadicalVoronoi::new(),
+        }
     }
 
-    /// Cell volumes plus the face graph. `faceNeighbors` / `faceAreas` are the
-    /// concatenation of every cell's faces; cell `i` owns the slice
-    /// `[faceOffsets[i], faceOffsets[i + 1])`. A negative neighbour id is a box
-    /// boundary rather than another cell.
-    pub fn compute(&self, frame: &Frame) -> Result<JsValue, JsValue> {
-        #[derive(Serialize)]
-        #[serde(rename_all = "camelCase")]
-        struct Out {
-            volumes: Vec<F>,
-            total_volume: F,
-            box_volume: F,
-            face_neighbors: Vec<i64>,
-            face_areas: Vec<F>,
-            face_offsets: Vec<usize>,
-        }
-        frame.with_frame(|rs_frame| {
-            let (cells, box_volume) = voronoi_cells(rs_frame, self.use_atom_radii)?;
-            let mut face_neighbors = Vec::new();
-            let mut face_areas = Vec::new();
-            let mut face_offsets = Vec::with_capacity(cells.len() + 1);
-            face_offsets.push(0);
-            for faces in &cells.faces {
-                for face in faces {
-                    face_neighbors.push(face.neighbor);
-                    face_areas.push(face.area);
-                }
-                face_offsets.push(face_neighbors.len());
-            }
-            js_value(&Out {
-                total_volume: cells.total_volume(),
-                volumes: cells.volumes.clone(),
-                box_volume,
-                face_neighbors,
-                face_areas,
-                face_offsets,
-            })
+    /// `{ positions, simbox, radii }`.
+    pub fn compute(&self, data: &JsValue) -> Result<VoronoiCells, JsError> {
+        let data = Fields::new(data, "RadicalVoronoi")?;
+        let positions = data.matrix("positions", Some(3))?;
+        let simbox = data.simbox("simbox")?;
+        let radii = data.reals("radii")?;
+        let input = mc::RadicalVoronoiInput {
+            positions: positions.view(),
+            simbox: &simbox,
+            radii: radii.view(),
+        };
+        Ok(self.inner.compute(input)?.into())
+    }
+}
+
+/// Molecular charges and dipoles integrated over Voronoi cells of a density.
+#[wasm_bindgen]
+pub struct VoronoiIntegration {
+    inner: mc::VoronoiIntegration,
+}
+
+#[wasm_bindgen]
+impl VoronoiIntegration {
+    /// `unit` is a [`LengthUnit`](mc::LengthUnit) name: the unit of the
+    /// positions, box and grid.
+    #[wasm_bindgen(constructor)]
+    pub fn new(unit: &str) -> Result<VoronoiIntegration, JsError> {
+        Ok(Self {
+            inner: mc::VoronoiIntegration::new(unit.parse()?),
         })
     }
+
+    /// `{ positions, radii, nuclear_charges, partition, simbox, grid, density }`:
+    /// `grid` a `RegularGrid`, `density` its `nx × ny × nz` values.
+    pub fn compute(&self, data: &JsValue) -> Result<MolecularMoments, JsError> {
+        let data = Fields::new(data, "VoronoiIntegration")?;
+        let positions = data.matrix("positions", Some(3))?;
+        let radii = data.reals("radii")?;
+        let nuclear_charges = data.reals("nuclear_charges")?;
+        let partition = data.partition("partition")?;
+        let simbox = data.simbox("simbox")?;
+        let grid = data.handle::<RegularGrid>("grid", "RegularGrid")?;
+        let density = data.cube("density")?;
+        let input = mc::VoronoiIntegrationInput {
+            positions: positions.view(),
+            radii: radii.view(),
+            nuclear_charges: nuclear_charges.view(),
+            partition: partition.as_dyn(),
+            simbox: &simbox,
+            grid: &grid.inner,
+            density: density.view(),
+        };
+        Ok(self.inner.compute(input)?.into())
+    }
 }
 
-#[wasm_bindgen(js_name = VoronoiDomainAnalysis)]
+/// Face-connected domains of each group over Voronoi cells.
+#[wasm_bindgen]
 pub struct VoronoiDomainAnalysis {
-    use_atom_radii: bool,
+    inner: mc::VoronoiDomainAnalysis,
 }
 
-#[wasm_bindgen(js_class = VoronoiDomainAnalysis)]
+#[wasm_bindgen]
 impl VoronoiDomainAnalysis {
     #[wasm_bindgen(constructor)]
-    pub fn new(use_atom_radii: bool) -> Self {
-        Self { use_atom_radii }
-    }
-
-    /// Merge face-adjacent cells that share a `labels` value into domains.
-    pub fn compute(&self, frame: &Frame, labels: &[i32]) -> Result<JsValue, JsValue> {
-        #[derive(Serialize)]
-        #[serde(rename_all = "camelCase")]
-        struct Out {
-            sizes: Vec<usize>,
-            count: usize,
-            largest_fraction: F,
-            domain_of: Vec<usize>,
-        }
-        frame.with_frame(|rs_frame| {
-            let (cells, _) = voronoi_cells(rs_frame, self.use_atom_radii)?;
-            if labels.len() != cells.len() {
-                return Err(JsValue::from_str(
-                    "VoronoiDomainAnalysis: labels must have one entry per atom",
-                ));
-            }
-            let labels: Vec<i64> = labels.iter().map(|&v| i64::from(v)).collect();
-            let r = molrs::compute::VoronoiDomainAnalysis
-                .analyze(&cells, &labels)
-                .map_err(|e| JsValue::from_str(&format!("VoronoiDomainAnalysis: {e}")))?;
-            js_value(&Out {
-                sizes: r.sizes,
-                count: r.count,
-                largest_fraction: r.largest_fraction,
-                domain_of: r.domain_of,
-            })
-        })
-    }
-}
-
-#[wasm_bindgen(js_name = VoronoiVoidAnalysis)]
-pub struct VoronoiVoidAnalysis {
-    use_atom_radii: bool,
-    box_volume: Option<F>,
-}
-
-#[wasm_bindgen(js_class = VoronoiVoidAnalysis)]
-impl VoronoiVoidAnalysis {
-    /// `box_volume` overrides the frame's box volume when normalizing the void
-    /// fraction; pass `null` to use the frame's own box.
-    #[wasm_bindgen(constructor)]
-    pub fn new(use_atom_radii: bool, box_volume: Option<F>) -> Self {
+    #[allow(clippy::new_without_default)]
+    pub fn new() -> VoronoiDomainAnalysis {
         Self {
-            use_atom_radii,
-            box_volume,
+            inner: mc::VoronoiDomainAnalysis::new(),
         }
     }
 
-    /// A non-zero `isVoid[i]` marks cell `i` a void probe; adjacent probe cells
-    /// merge into one cavity. `boxVolume` defaults to the frame's box volume.
-    pub fn compute(&self, frame: &Frame, is_void: &[u8]) -> Result<JsValue, JsValue> {
-        #[derive(Serialize)]
-        #[serde(rename_all = "camelCase")]
-        struct Out {
-            cavity_volumes: Vec<F>,
-            total_void_volume: F,
-            void_fraction: F,
-        }
-        frame.with_frame(|rs_frame| {
-            let (cells, frame_volume) = voronoi_cells(rs_frame, self.use_atom_radii)?;
-            if is_void.len() != cells.len() {
-                return Err(JsValue::from_str(
-                    "VoronoiVoidAnalysis: isVoid must have one entry per atom",
-                ));
-            }
-            let mask: Vec<bool> = is_void.iter().map(|&v| v != 0).collect();
-            let r = molrs::compute::VoronoiVoidAnalysis
-                .analyze(&cells, &mask, self.box_volume.unwrap_or(frame_volume))
-                .map_err(|e| JsValue::from_str(&format!("VoronoiVoidAnalysis: {e}")))?;
-            js_value(&Out {
-                cavity_volumes: r.cavity_volumes,
-                total_void_volume: r.total_void_volume,
-                void_fraction: r.void_fraction,
-            })
-        })
+    /// `{ cells, partition }`: `cells` a `VoronoiCells`.
+    pub fn compute(&self, data: &JsValue) -> Result<VoronoiDomainResult, JsError> {
+        let data = Fields::new(data, "VoronoiDomainAnalysis")?;
+        let cells = data.handle::<VoronoiCells>("cells", "VoronoiCells")?;
+        let partition = data.partition("partition")?;
+        let input = mc::VoronoiDomainInput {
+            cells: &cells.inner,
+            partition: partition.as_dyn(),
+        };
+        Ok(self.inner.compute(input)?.into())
     }
 }
+
+/// Connected cavities of the cells marked void.
+#[wasm_bindgen]
+pub struct VoronoiVoidAnalysis {
+    inner: mc::VoronoiVoidAnalysis,
+}
+
+#[wasm_bindgen]
+impl VoronoiVoidAnalysis {
+    #[wasm_bindgen(constructor)]
+    #[allow(clippy::new_without_default)]
+    pub fn new() -> VoronoiVoidAnalysis {
+        Self {
+            inner: mc::VoronoiVoidAnalysis::new(),
+        }
+    }
+
+    /// `{ cells, is_void, box_volume }`.
+    pub fn compute(&self, data: &JsValue) -> Result<VoronoiVoidResult, JsError> {
+        let data = Fields::new(data, "VoronoiVoidAnalysis")?;
+        let cells = data.handle::<VoronoiCells>("cells", "VoronoiCells")?;
+        let is_void = data.mask("is_void")?;
+        let input = mc::VoronoiVoidInput {
+            cells: &cells.inner,
+            is_void: &is_void,
+            box_volume: data.scalar("box_volume")?,
+        };
+        Ok(self.inner.compute(input)?.into())
+    }
+}
+
+/// Molecular polarizabilities from moments under `±field`.
+#[wasm_bindgen]
+pub struct FiniteFieldPolarizability {
+    inner: mc::FiniteFieldPolarizability,
+}
+
+#[wasm_bindgen]
+impl FiniteFieldPolarizability {
+    #[wasm_bindgen(constructor)]
+    pub fn new(field: F) -> Result<FiniteFieldPolarizability, JsError> {
+        Ok(Self {
+            inner: mc::FiniteFieldPolarizability::new(field)?,
+        })
+    }
+
+    /// `{ plus, minus }`: the `MolecularMoments` under `+field` and `−field`;
+    /// returns one polarizability row per molecule.
+    pub fn compute(&self, data: &JsValue) -> Result<NDArray, JsError> {
+        let data = Fields::new(data, "FiniteFieldPolarizability")?;
+        let plus = data.handle::<MolecularMoments>("plus", "MolecularMoments")?;
+        let minus = data.handle::<MolecularMoments>("minus", "MolecularMoments")?;
+        let input = mc::FiniteFieldPolarizabilityInput {
+            plus: &plus.inner,
+            minus: &minus.inner,
+        };
+        Ok(NDArray::from_ndarray(&self.inner.compute(input)?))
+    }
+}
+
+described!(
+    RadicalVoronoi => mc::RadicalVoronoi,
+    VoronoiIntegration => mc::VoronoiIntegration,
+    VoronoiDomainAnalysis => mc::VoronoiDomainAnalysis,
+    VoronoiVoidAnalysis => mc::VoronoiVoidAnalysis,
+    FiniteFieldPolarizability => mc::FiniteFieldPolarizability,
+);

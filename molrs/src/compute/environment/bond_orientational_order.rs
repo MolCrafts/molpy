@@ -133,6 +133,7 @@ impl Compute for BondOrientationalOrder {
 
 /// One snapshot's bond-order histogram.
 #[derive(Debug, Clone, Default)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct BondOrientationalOrderResult {
     /// `(n_θ, n_φ)` bond-count histogram normalised by solid angle.
     pub bond_order: Array2<F>,

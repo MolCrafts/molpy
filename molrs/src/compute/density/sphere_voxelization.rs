@@ -108,6 +108,7 @@ impl Compute for SphereVoxelization {
 
 /// One snapshot's sphere voxelisation.
 #[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct SphereVoxelizationResult {
     /// Boolean voxel grid: `1` if any particle's sphere covers the voxel
     /// centre, `0` otherwise.

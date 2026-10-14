@@ -142,6 +142,7 @@ pub struct SpectrumInput<'a> {
 
 /// What a [`Spectrum`] returns.
 #[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct OneSidedSpectrum {
     /// Angular frequencies, radians per unit of `dt` (the [`FrequencyGrid`]).
     pub frequencies: Array1<F>,

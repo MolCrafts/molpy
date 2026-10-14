@@ -9,6 +9,7 @@ use molrs::op::F;
 /// tessellation never leaves one, because every periodic cell is bounded by
 /// real neighbours — its own images at the least.
 #[derive(Debug, Clone, Copy, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct VoronoiFace {
     /// Face area (Å²).
     pub area: F,
@@ -36,6 +37,7 @@ pub const VORONOI_BOUNDARY: i64 = -1;
 /// - Rycroft, *Chaos* **2009**, 19, 041111 (voro++ cell-by-cell algorithm).
 /// - Aurenhammer, *SIAM J. Comput.* **1987**, 16, 78 (power diagrams).
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct VoronoiCells {
     /// Cell volume per generator (Å³).
     pub volumes: Vec<F>,

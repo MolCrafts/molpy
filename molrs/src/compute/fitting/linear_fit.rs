@@ -7,6 +7,7 @@ use crate::compute::{Compute, ComputeError, TimeCorrelation};
 
 /// Result of a linear (OLS) fit of `C(t) = slope · t + intercept`.
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct LinearFitResult {
     /// Fitted slope dC/dt. Units: `[C]/[t]`.
     pub slope: F,

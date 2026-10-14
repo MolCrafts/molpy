@@ -52,6 +52,7 @@ pub struct DipoleMomentInput<'a> {
 
 /// One dipole series per group.
 #[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct DipoleMomentResult {
     /// The group key of each series, ascending; empty when no partition was
     /// given (the single series is the whole system).

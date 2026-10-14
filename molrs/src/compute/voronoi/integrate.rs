@@ -28,6 +28,7 @@ named_enum! {
 
 /// Per-molecule electromagnetic moments for one frame.
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct MolecularMoments {
     /// The group (molecule) key of each row, ascending.
     pub groups: Vec<u64>,

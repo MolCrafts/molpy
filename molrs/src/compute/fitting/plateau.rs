@@ -7,6 +7,7 @@ use crate::compute::{Compute, ComputeError, TimeCorrelation};
 
 /// Result of a plateau (windowed-mean) read.
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct PlateauResult {
     /// Mean of the curve over the window. Units: `[C]`.
     pub value: F,

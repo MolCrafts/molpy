@@ -1309,7 +1309,7 @@ link 11.
     `name` is the constructor argument or the `with_*` setter suffix.
   - `ParamKind`: `Float`, `Int`, `Bool`, `Choice(NAMES)`, `ChoiceList(NAMES)`,
     `FloatList`, `IntList`, `Vec3List`, `Axis`, `AxisList`, `Grid`, `Range`,
-    `LagKernel`, `Units`.
+    `Units`. (*10b:* `LagKernel` removed — the kernel is a `Choice`.)
   - `ParamValue`: `Float`, `Int(u64)`, `Bool`, `Name(&'static str)`,
     `FloatList`, `IntList`, `Range(start, end)`, `Unset` (an option left off).
   - `ParamDefault`:
@@ -1395,6 +1395,23 @@ link 11.
   - Construct with only the required arguments, then assert `core.tunables()`
     equals the spec's defaults (`spec.params.iter().filter(|p| !p.is_required())`).
   - `compute` kwargs are the `spec.inputs` names.
+- *As built (10b follow-ups):*
+  - `TimeCorrelation::channel` returns `Result` (`OutOfRange` for a missing
+    channel); the binding bounds checks are gone.
+  - `LagKernelKind` (`named_enum!`: `product`, `squared_displacement`,
+    `legendre`, `wigner_d`, `persistence`) and `LagKernel::new(kind, l)`
+    (`l` required for `legendre` / `wigner_d`, refused otherwise) replace
+    `LagKernel::NAMES` / `name()` and both bindings' kernel parsers.
+    `Correlator`'s spec is `kernel: Choice(LagKernelKind::NAMES)`, `max_lag`,
+    `l: Int = UNSET` (read back as `kernel.order()`); the conditional
+    requirement of `l` is enforced by `LagKernel::new`, not described.
+  - `AngularSeparationGlobalInput.global` → `reference` (a Python keyword).
+  - `KineticEnergy::with_constants(mvv2e, boltzmann)` (both positive,
+    finite); `new(units)` delegates to it. Spec: `units` `RequiredIn("new")`,
+    `mvv2e` / `boltzmann` `RequiredIn("with_constants")`. Python
+    `KineticEnergy(*, units= | mvv2e=, boltzmann=)`, WASM
+    `KineticEnergy.withConstants`. `molrs.md.MdDriver`'s thermo uses it
+    (`mvv2e = 1`, the caller's `kb`).
 - **For link 11.** `computeSpecs()` serialises `ComputeSpec::all()` through
   serde, and molvis joins its labels and ranges on `(spec.name, param.name)`.
 

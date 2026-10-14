@@ -213,6 +213,7 @@ fn pair_index(i: u32, j: u32, n: usize, k: usize) -> Result<(usize, usize), Comp
 /// [`ContinuousCoordination`](crate::compute::ContinuousCoordination), so the
 /// harmonics are evaluated once. Values are dimensionless.
 #[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct QlmTable {
     order: u32,
     planar: bool,

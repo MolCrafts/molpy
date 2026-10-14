@@ -147,7 +147,7 @@ mod tests {
     use ndarray::Array1;
 
     fn integral(c: &TimeCorrelation) -> Array1<F> {
-        c.channel(0).to_owned()
+        c.channel(0).unwrap().to_owned()
     }
 
     fn integrate(y: &[F], dt: F, n_lags: Option<usize>) -> Result<TimeCorrelation, ComputeError> {

@@ -106,7 +106,7 @@ mod tests {
         let out = Spectrum::new(Window::CosineSq, 4)
             .unwrap()
             .compute(SpectrumInput {
-                signal: acf.channel(0),
+                signal: acf.channel(0).unwrap(),
                 dt: acf.lag_times[1],
             })
             .unwrap();
@@ -154,7 +154,7 @@ mod tests {
         }
         let raw = vacf(&v, dt, res);
         assert_close(
-            raw.channel(0).as_slice().unwrap(),
+            raw.channel(0).unwrap().as_slice().unwrap(),
             acf.as_slice().unwrap(),
             1e-12,
             "acf",
@@ -214,7 +214,7 @@ mod tests {
             })
             .unwrap();
         assert_close(
-            raw.channel(0).as_slice().unwrap(),
+            raw.channel(0).unwrap().as_slice().unwrap(),
             acf.as_slice().unwrap(),
             1e-12,
             "acf",
@@ -254,7 +254,12 @@ mod tests {
                 expected[k] += c[k];
             }
         }
-        assert_close(raw.channel(0).as_slice().unwrap(), &expected, 1e-12, "vcd");
+        assert_close(
+            raw.channel(0).unwrap().as_slice().unwrap(),
+            &expected,
+            1e-12,
+            "vcd",
+        );
         // Swapping the enantiomer (m → −m) flips the sign of the spectrum.
         let flipped = product(&mu_dot, Some(&(-&m_dot)), res, dt);
         let (_, i) = vibrational(&raw);
@@ -356,9 +361,14 @@ mod tests {
         let pol = voigt_wave(n, dt, 30.0, 0.0);
         let (acf_iso, acf_aniso) = raman_acfs(&pol, None, dt, res);
         let (iso, aniso) = raman_correlations(&pol, None, dt, res);
-        assert_close(iso.channel(0).as_slice().unwrap(), &acf_iso, 1e-12, "iso");
         assert_close(
-            aniso.channel(0).as_slice().unwrap(),
+            iso.channel(0).unwrap().as_slice().unwrap(),
+            &acf_iso,
+            1e-12,
+            "iso",
+        );
+        assert_close(
+            aniso.channel(0).unwrap().as_slice().unwrap(),
             &acf_aniso,
             1e-12,
             "aniso",
@@ -425,13 +435,13 @@ mod tests {
         let (acf_iso, acf_aniso) = raman_acfs(&alpha, Some(&g), dt, res);
         let (iso, aniso) = raman_correlations(&alpha, Some(&g), dt, res);
         assert_close(
-            iso.channel(0).as_slice().unwrap(),
+            iso.channel(0).unwrap().as_slice().unwrap(),
             &acf_iso,
             1e-12,
             "roa iso",
         );
         assert_close(
-            aniso.channel(0).as_slice().unwrap(),
+            aniso.channel(0).unwrap().as_slice().unwrap(),
             &acf_aniso,
             1e-12,
             "roa aniso",

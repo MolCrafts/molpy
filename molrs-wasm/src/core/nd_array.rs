@@ -6,7 +6,7 @@
 //! that is too large or structured for individual typed-array columns.
 
 use molrs::op::F;
-use ndarray::{Array2, ArrayView2};
+use ndarray::{Array2, ArrayRef, ArrayView2, Dimension};
 use wasm_bindgen::prelude::*;
 
 pub(crate) type JsFloatArray = js_sys::Float64Array;
@@ -132,6 +132,15 @@ impl NDArray {
         self.shape.clone()
     }
 
+    /// An independent copy of this array.
+    #[wasm_bindgen(js_name = clone)]
+    pub fn duplicate(&self) -> NDArray {
+        NDArray {
+            data: self.data.clone(),
+            shape: self.shape.clone(),
+        }
+    }
+
     /// Return a raw pointer to the underlying data buffer.
     ///
     /// This is intended for advanced interop with other WASM modules
@@ -241,6 +250,19 @@ impl NDArray {
 impl NDArray {
     pub(crate) fn from_vec(data: Vec<F>, shape: Box<[usize]>) -> Self {
         Self { data, shape }
+    }
+
+    /// An array of any rank, in row-major order.
+    pub(crate) fn from_ndarray<D: Dimension>(array: &ArrayRef<F, D>) -> Self {
+        Self {
+            data: array.iter().copied().collect(),
+            shape: array.shape().into(),
+        }
+    }
+
+    /// The flat row-major data and the shape.
+    pub(crate) fn into_parts(self) -> (Vec<F>, Box<[usize]>) {
+        (self.data, self.shape)
     }
 
     pub(crate) fn as_array2(&self, rows: usize, cols: usize) -> Result<ArrayView2<'_, F>, String> {

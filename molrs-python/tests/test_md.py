@@ -79,3 +79,32 @@ class TestMaxwellBoltzmann:
         vel = mb.velocities(pos, np.ones(4))
         assert vel.shape == (4, 3)
         assert np.all(np.isfinite(vel))
+
+
+class TestMdDriverThermo:
+    def test_thermo_reads_kinetic_energy_in_the_callers_units(self) -> None:
+        """``ke`` is ``½ Σ m v²`` and ``temp`` its equipartition temperature
+        under the caller's ``kb`` — the core ``KineticEnergy`` with
+        ``mvv2e = 1``, not a second formula."""
+        atoms = molrs.core.Block()
+        pos = np.array([[0.1, 0.0, 0.0], [0.0, -0.2, 0.3]])
+        for d, key in enumerate("xyz"):
+            atoms.insert(key, np.ascontiguousarray(pos[:, d]))
+        for d, key in enumerate(("vx", "vy", "vz")):
+            atoms.insert(key, np.array([0.5, -0.25]) * (d + 1))
+        atoms.insert("mass", np.array([1.0, 2.0]))
+        frame = molrs.core.Frame()
+        frame["atoms"] = atoms
+
+        kb = 0.5
+        driver = MdDriver().set_potential(Harmonic())
+        driver.run(frame, 4, dt=0.01, kb=kb, thermo=2)
+
+        assert [row["step"] for row in driver.thermo] == [0, 2, 4]
+        first = driver.thermo[0]
+        vel = np.array([[0.5, 1.0, 1.5], [-0.25, -0.5, -0.75]])
+        ke = 0.5 * float(np.sum(np.array([1.0, 2.0])[:, None] * vel**2))
+        assert first["ke"] == pytest.approx(ke)
+        assert first["etotal"] == pytest.approx(first["pe"] + ke)
+        n_dof = 3 * 2 - int(driver._integrator.removed_dof)
+        assert first["temp"] == pytest.approx(2.0 * ke / (n_dof * kb))

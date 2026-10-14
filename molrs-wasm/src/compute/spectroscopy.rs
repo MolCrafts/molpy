@@ -1,410 +1,342 @@
-//! Vibrational and dielectric spectra (IR, Raman, VCD, ROA) — WASM face of
-//! the `molrs::compute` spectroscopy family.
+//! Dielectric and Raman spectra and their consistency checks — the WASM face
+//! of `molrs::compute::spectroscopy`.
+//!
+//! The four ε(ω) routes share one configuration (`units`, then the optional
+//! `window`, `pad`, `epsilonInf`) and one data object: the route's
+//! correlation curve and the state it was sampled in.
+//!
+//! ```js
+//! const acf = new DipoleAcf(400).compute({ dipoles, dt: 2.0 });
+//! const eps = new DipoleAutocorrelationSpectrum("real").compute({
+//!     correlation: acf, volume, temperature: 300, boundary: "tin_foil",
+//! });
+//! const check = new KramersKronig().compute({ spectrum: eps });
+//! console.log(check.toJSON().passed);
+//! ```
 
-use super::{SeriesOut, array1, array2, js_value};
-use molrs::compute::Fit;
-use molrs::compute::LegacyCompute;
+use molrs::compute::{self as mc, Compute, ComputeError, Described, ParamValue};
 use molrs::op::F;
-use serde::Serialize;
 use wasm_bindgen::prelude::*;
 
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-struct SpectrumOut {
-    frequencies: Vec<F>,
-    intensities: Vec<F>,
-    resolution: usize,
-    n_frames: usize,
+use super::config::{Given, fixed, unit_preset};
+use super::handle::{described, output};
+use super::time_series::TimeCorrelation;
+use super::wire::Fields;
+
+output! {
+    /// ε(ω) on a frequency grid: `frequencies`, `eps_real`, `eps_imag`,
+    /// `epsilon_inf`. The input of `KramersKronig` and `RouteAgreement`.
+    DielectricSpectrumResult => mc::DielectricSpectrumResult
 }
 
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-struct RamanSpectrumOut {
-    frequencies: Vec<F>,
-    isotropic: Vec<F>,
-    anisotropic: Vec<F>,
-    parallel: Option<Vec<F>>,
-    perpendicular: Option<Vec<F>>,
-    resolution: usize,
-    n_frames: usize,
+output! {
+    /// A Kramers–Kronig check: the `recovered` real part, `mae`, `tolerance`,
+    /// `passed`.
+    KramersKronigCheck => mc::KramersKronigCheck
 }
 
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-struct DielectricSpectrumOut {
-    frequencies: Vec<F>,
-    eps_real: Vec<F>,
-    eps_imag: Vec<F>,
+output! {
+    /// A conductivity sum-rule check: `integral`, `expected`,
+    /// `relative_error`, `passed`.
+    SumRuleCheck => mc::SumRuleCheck
 }
 
-fn spectrum_out(r: molrs::compute::SpectrumResult) -> SpectrumOut {
-    SpectrumOut {
-        frequencies: r.frequencies_cm1.to_vec(),
-        intensities: r.intensities.to_vec(),
-        resolution: r.resolution,
-        n_frames: r.n_frames,
-    }
+output! {
+    /// Agreement between ε(ω) routes: `pairwise` RMS, `max_rms`, `passed`.
+    RouteAgreementCheck => mc::RouteAgreementCheck
 }
 
-fn raman_out(r: molrs::compute::RamanSpectrumResult) -> RamanSpectrumOut {
-    RamanSpectrumOut {
-        frequencies: r.frequencies_cm1.to_vec(),
-        isotropic: r.isotropic.to_vec(),
-        anisotropic: r.anisotropic.to_vec(),
-        parallel: r.parallel.map(|v| v.to_vec()),
-        perpendicular: r.perpendicular.map(|v| v.to_vec()),
-        resolution: r.resolution,
-        n_frames: r.n_frames,
-    }
+output! {
+    /// The isotropic and anisotropic parts of a polarizability series.
+    PolarizabilityPartsResult => mc::PolarizabilityPartsResult
 }
 
-fn dielectric_spectrum_out(r: molrs::compute::DielectricSpectrumResult) -> DielectricSpectrumOut {
-    DielectricSpectrumOut {
-        frequencies: r.frequencies.to_vec(),
-        eps_real: r.eps_real.to_vec(),
-        eps_imag: r.eps_imag.to_vec(),
-    }
+output! {
+    /// A Raman spectrum: `frequencies_cm1`, the isotropic / anisotropic (and,
+    /// when averaged, parallel / perpendicular) intensities.
+    RamanSpectrumResult => mc::RamanSpectrumResult
 }
 
-#[wasm_bindgen(js_name = IrFlux)]
-pub struct IrFlux {
-    dt: F,
-    resolution: usize,
+/// The `{ correlation, volume, temperature, boundary }` data of every route.
+fn route_data(
+    data: &JsValue,
+    owner: &'static str,
+) -> Result<(TimeCorrelation, F, F, mc::EwaldBoundary), ComputeError> {
+    let data = Fields::new(data, owner)?;
+    Ok((
+        data.handle::<TimeCorrelation>("correlation", "TimeCorrelation")?,
+        data.scalar("volume")?,
+        data.scalar("temperature")?,
+        data.choice("boundary")?,
+    ))
 }
 
-#[wasm_bindgen(js_class = IrFlux)]
-impl IrFlux {
-    #[wasm_bindgen(constructor)]
-    pub fn new(dt: F, resolution: usize) -> Self {
-        Self { dt, resolution }
-    }
-
-    pub fn compute(&self, dipoles: &[F], n_frames: usize) -> Result<JsValue, JsValue> {
-        let dt = self.dt;
-        let resolution = self.resolution;
-        let dipoles = array2(dipoles, n_frames, 3, "IrFlux dipoles")?;
-        let frames: [&molrs::core::Frame; 0] = [];
-        let calc = molrs::compute::IrFlux;
-        let r = calc
-            .compute(&frames, (&dipoles, dt, resolution))
-            .map_err(|e| JsValue::from_str(&format!("IrFlux: {e}")))?;
-        js_value(&SeriesOut {
-            lag_times: r.lag_times.to_vec(),
-            values: r.acf.to_vec(),
-        })
-    }
-}
-
-#[wasm_bindgen(js_name = RamanTensor)]
-pub struct RamanTensor {
-    dt: F,
-    resolution: usize,
-}
-
-#[wasm_bindgen(js_class = RamanTensor)]
-impl RamanTensor {
-    #[wasm_bindgen(constructor)]
-    pub fn new(dt: F, resolution: usize) -> Self {
-        Self { dt, resolution }
-    }
-
-    pub fn compute(&self, polarizabilities: &[F], n_frames: usize) -> Result<JsValue, JsValue> {
-        let dt = self.dt;
-        let resolution = self.resolution;
-        #[derive(Serialize)]
-        #[serde(rename_all = "camelCase")]
-        struct Out {
-            lag_times: Vec<F>,
-            acf_iso: Vec<F>,
-            acf_aniso: Vec<F>,
-        }
-        let p = array2(
-            polarizabilities,
-            n_frames,
-            6,
-            "RamanTensor polarizabilities",
-        )?;
-        let frames: [&molrs::core::Frame; 0] = [];
-        let calc = molrs::compute::RamanTensor;
-        let r = calc
-            .compute(&frames, (&p, dt, resolution))
-            .map_err(|e| JsValue::from_str(&format!("RamanTensor: {e}")))?;
-        js_value(&Out {
-            lag_times: r.lag_times.to_vec(),
-            acf_iso: r.acf_iso.to_vec(),
-            acf_aniso: r.acf_aniso.to_vec(),
-        })
-    }
-}
-
-#[wasm_bindgen(js_name = VcdCrossFlux)]
-pub struct VcdCrossFlux {
-    dt: F,
-    resolution: usize,
-}
-
-#[wasm_bindgen(js_class = VcdCrossFlux)]
-impl VcdCrossFlux {
-    #[wasm_bindgen(constructor)]
-    pub fn new(dt: F, resolution: usize) -> Self {
-        Self { dt, resolution }
-    }
-
-    pub fn compute(
-        &self,
-        electric: &[F],
-        magnetic: &[F],
-        n_frames: usize,
-    ) -> Result<JsValue, JsValue> {
-        let dt = self.dt;
-        let resolution = self.resolution;
-        let e = array2(electric, n_frames, 3, "VcdCrossFlux electric")?;
-        let m = array2(magnetic, n_frames, 3, "VcdCrossFlux magnetic")?;
-        let frames: [&molrs::core::Frame; 0] = [];
-        let calc = molrs::compute::VcdCrossFlux;
-        let r = calc
-            .compute(&frames, (&e, &m, dt, resolution))
-            .map_err(|e| JsValue::from_str(&format!("VcdCrossFlux: {e}")))?;
-        js_value(&SeriesOut {
-            lag_times: r.lag_times.to_vec(),
-            values: r.acf.to_vec(),
-        })
-    }
-}
-
-#[wasm_bindgen(js_name = RoaCrossTensor)]
-pub struct RoaCrossTensor {
-    dt: F,
-    resolution: usize,
-}
-
-#[wasm_bindgen(js_class = RoaCrossTensor)]
-impl RoaCrossTensor {
-    #[wasm_bindgen(constructor)]
-    pub fn new(dt: F, resolution: usize) -> Self {
-        Self { dt, resolution }
-    }
-
-    pub fn compute(
-        &self,
-        electric_pol: &[F],
-        g_tensor: &[F],
-        n_frames: usize,
-    ) -> Result<JsValue, JsValue> {
-        let dt = self.dt;
-        let resolution = self.resolution;
-        #[derive(Serialize)]
-        #[serde(rename_all = "camelCase")]
-        struct Out {
-            lag_times: Vec<F>,
-            acf_iso: Vec<F>,
-            acf_aniso: Vec<F>,
-        }
-        let a = array2(electric_pol, n_frames, 6, "RoaCrossTensor electricPol")?;
-        let g = array2(g_tensor, n_frames, 6, "RoaCrossTensor gTensor")?;
-        let frames: [&molrs::core::Frame; 0] = [];
-        let calc = molrs::compute::RoaCrossTensor;
-        let r = calc
-            .compute(&frames, (&a, &g, dt, resolution))
-            .map_err(|e| JsValue::from_str(&format!("RoaCrossTensor: {e}")))?;
-        js_value(&Out {
-            lag_times: r.lag_times.to_vec(),
-            acf_iso: r.acf_iso.to_vec(),
-            acf_aniso: r.acf_aniso.to_vec(),
-        })
-    }
-}
-
-macro_rules! spectrum_fit_class {
-    ($name:ident, $calc:expr) => {
-        #[wasm_bindgen(js_name = $name)]
+/// One ε(ω) route class: `units` plus the shared optional configuration, and
+/// its own optional parameters through `$extra`.
+macro_rules! route {
+    (
+        $(#[$meta:meta])*
+        $name:ident $(, $extra:ident: $extra_ty:ty => |$c:ident, $v:ident| $set:expr)?
+    ) => {
+        $(#[$meta])*
+        #[wasm_bindgen]
         pub struct $name {
-            dt_fs: F,
+            inner: mc::$name,
         }
-        #[wasm_bindgen(js_class = $name)]
+
+        #[wasm_bindgen]
         impl $name {
-            /// `dt_fs` is the trajectory timestep in femtoseconds.
+            /// `units` is a registered unit preset name; `window` a
+            /// [`Window`](mc::Window) name, `pad` the zero-padding factor.
             #[wasm_bindgen(constructor)]
-            pub fn new(dt_fs: F) -> Self {
-                Self { dt_fs }
+            pub fn new(
+                units: &str,
+                window: Option<String>,
+                pad: Option<usize>,
+                epsilon_inf: Option<F>,
+                $($extra: Option<$extra_ty>,)?
+            ) -> Result<$name, JsError> {
+                let inner = mc::$name::new(unit_preset(units)?)
+                    .given(window, |c, v| Ok(c.with_window(v.parse()?)))?
+                    .given(pad, |c, v| c.with_pad(v))?
+                    .given(epsilon_inf, |c, v| Ok(c.with_epsilon_inf(v)))?
+                    $(.given($extra, |$c, $v| $set)?)?;
+                Ok(Self { inner })
             }
-            pub fn fit(&self, acf: &[F]) -> Result<JsValue, JsValue> {
-                let y = array1(acf);
-                let r = $calc
-                    .fit((&y, self.dt_fs))
-                    .map_err(|e| JsValue::from_str(&format!("spectrum fit: {e}")))?;
-                js_value(&spectrum_out(r))
+
+            /// `{ correlation, volume, temperature, boundary }`.
+            pub fn compute(&self, data: &JsValue) -> Result<DielectricSpectrumResult, JsError> {
+                let (correlation, volume, temperature, boundary) =
+                    route_data(data, stringify!($name))?;
+                let input = mc::DielectricSpectrumInput {
+                    correlation: &correlation.inner,
+                    volume,
+                    temperature,
+                    boundary,
+                };
+                Ok(self.inner.compute(input)?.into())
             }
         }
     };
 }
 
-spectrum_fit_class!(PowerSpectrum, molrs::compute::PowerSpectrum);
-spectrum_fit_class!(IrSpectrum, molrs::compute::IrSpectrum);
-spectrum_fit_class!(VcdSpectrum, molrs::compute::VcdSpectrum);
-
-#[wasm_bindgen(js_name = RamanSpectrum)]
-pub struct RamanSpectrum {
-    dt_fs: F,
-    incident_frequency_cm1: F,
-    temperature_k: F,
-    averaged: bool,
+route! {
+    /// ε(ω) from the dipole mean squared displacement (Einstein–Helfand).
+    EinsteinHelfandSpectrum
 }
 
-#[wasm_bindgen(js_class = RamanSpectrum)]
+route! {
+    /// ε(ω) from the current autocorrelation (Green–Kubo).
+    GreenKuboSpectrum
+}
+
+route! {
+    /// ε(ω) from the dipole–dipole-rate cross correlation.
+    DipoleRateCrossSpectrum
+}
+
+route! {
+    /// ε(ω) from the dipole autocorrelation; `plateau` (`[start, end]`)
+    /// subtracts the curve's mean over that window first.
+    DipoleAutocorrelationSpectrum,
+    plateau: Vec<F> => |c, v| {
+        let [start, end] = fixed::<F, 2>(&v, "plateau window [start, end]")?;
+        Ok(c.with_plateau(mc::Plateau::new(start, end)?))
+    }
+}
+
+/// The real number `name` an instance of `T` holds (its core default when the
+/// instance is fresh).
+fn tunable<T: Described>(compute: &T, name: &str) -> Option<F> {
+    compute
+        .tunables()
+        .into_iter()
+        .find_map(|(param, value)| match value {
+            ParamValue::Float(v) if param == name => Some(v),
+            _ => None,
+        })
+}
+
+/// Kramers–Kronig consistency of an ε(ω).
+#[wasm_bindgen]
+pub struct KramersKronig {
+    inner: mc::KramersKronig,
+}
+
+#[wasm_bindgen]
+impl KramersKronig {
+    /// The tolerance is set as a pair: a tolerance left out keeps the core's.
+    #[wasm_bindgen(constructor)]
+    pub fn new(
+        relative_tolerance: Option<F>,
+        absolute_tolerance: Option<F>,
+    ) -> Result<KramersKronig, JsError> {
+        let fresh = mc::KramersKronig::new();
+        if relative_tolerance.is_none() && absolute_tolerance.is_none() {
+            return Ok(Self { inner: fresh });
+        }
+        let held = |name| {
+            tunable(&fresh, name).ok_or(ComputeError::OutOfRange {
+                field: "KramersKronig tolerance",
+                value: name.to_string(),
+            })
+        };
+        let relative = match relative_tolerance {
+            Some(v) => v,
+            None => held("relative_tolerance")?,
+        };
+        let absolute = match absolute_tolerance {
+            Some(v) => v,
+            None => held("absolute_tolerance")?,
+        };
+        Ok(Self {
+            inner: fresh.with_tolerance(relative, absolute)?,
+        })
+    }
+
+    /// `{ spectrum }`: a `DielectricSpectrumResult`.
+    pub fn compute(&self, data: &JsValue) -> Result<KramersKronigCheck, JsError> {
+        let data = Fields::new(data, "KramersKronig")?;
+        let spectrum =
+            data.handle::<DielectricSpectrumResult>("spectrum", "DielectricSpectrumResult")?;
+        let input = mc::KramersKronigInput {
+            spectrum: &spectrum.inner,
+        };
+        Ok(self.inner.compute(input)?.into())
+    }
+}
+
+/// The f-sum rule of a conductivity spectrum.
+#[wasm_bindgen]
+pub struct ConductivitySumRule {
+    inner: mc::ConductivitySumRule,
+}
+
+#[wasm_bindgen]
+impl ConductivitySumRule {
+    #[wasm_bindgen(constructor)]
+    pub fn new(units: &str, tolerance: Option<F>) -> Result<ConductivitySumRule, JsError> {
+        let inner = mc::ConductivitySumRule::new(unit_preset(units)?)
+            .given(tolerance, |c, v| c.with_tolerance(v))?;
+        Ok(Self { inner })
+    }
+
+    /// `{ frequencies, conductivity, current_sq_mean, volume, temperature }`.
+    pub fn compute(&self, data: &JsValue) -> Result<SumRuleCheck, JsError> {
+        let data = Fields::new(data, "ConductivitySumRule")?;
+        let frequencies = data.reals("frequencies")?;
+        let conductivity = data.reals("conductivity")?;
+        let input = mc::SumRuleInput {
+            frequencies: frequencies.view(),
+            conductivity: conductivity.view(),
+            current_sq_mean: data.scalar("current_sq_mean")?,
+            volume: data.scalar("volume")?,
+            temperature: data.scalar("temperature")?,
+        };
+        Ok(self.inner.compute(input)?.into())
+    }
+}
+
+/// Agreement of two or more ε(ω) routes on one frequency grid.
+#[wasm_bindgen]
+pub struct RouteAgreement {
+    inner: mc::RouteAgreement,
+}
+
+#[wasm_bindgen]
+impl RouteAgreement {
+    /// `part` is a [`PermittivityPart`](mc::PermittivityPart) name.
+    #[wasm_bindgen(constructor)]
+    pub fn new(part: Option<String>, tolerance: Option<F>) -> Result<RouteAgreement, JsError> {
+        let inner = mc::RouteAgreement::new()
+            .given(part, |c, v| Ok(c.with_part(v.parse()?)))?
+            .given(tolerance, |c, v| c.with_tolerance(v))?;
+        Ok(Self { inner })
+    }
+
+    /// `{ spectra }`: an array of `DielectricSpectrumResult`.
+    pub fn compute(&self, data: &JsValue) -> Result<RouteAgreementCheck, JsError> {
+        let data = Fields::new(data, "RouteAgreement")?;
+        let held =
+            data.handles::<DielectricSpectrumResult>("spectra", "DielectricSpectrumResult")?;
+        let spectra: Vec<&mc::DielectricSpectrumResult> = held.iter().map(|s| &*s.inner).collect();
+        let input = mc::RouteAgreementInput { spectra: &spectra };
+        Ok(self.inner.compute(input)?.into())
+    }
+}
+
+/// Isotropic / anisotropic split of a polarizability series.
+#[wasm_bindgen]
+pub struct PolarizabilityParts {
+    inner: mc::PolarizabilityParts,
+}
+
+#[wasm_bindgen]
+impl PolarizabilityParts {
+    #[wasm_bindgen(constructor)]
+    #[allow(clippy::new_without_default)]
+    pub fn new() -> PolarizabilityParts {
+        Self {
+            inner: mc::PolarizabilityParts::new(),
+        }
+    }
+
+    /// `{ alpha }`: `T × 6`, Voigt order `[xx, yy, zz, xy, xz, yz]`.
+    pub fn compute(&self, data: &JsValue) -> Result<PolarizabilityPartsResult, JsError> {
+        let data = Fields::new(data, "PolarizabilityParts")?;
+        let alpha = data.matrix("alpha", Some(6))?;
+        let input = mc::PolarizabilityPartsInput {
+            alpha: alpha.view(),
+        };
+        Ok(self.inner.compute(input)?.into())
+    }
+}
+
+/// A Raman spectrum from the isotropic and anisotropic correlations.
+#[wasm_bindgen]
+pub struct RamanSpectrum {
+    inner: mc::RamanSpectrum,
+}
+
+#[wasm_bindgen]
 impl RamanSpectrum {
     #[wasm_bindgen(constructor)]
     pub fn new(
-        incident_frequency_cm1: Option<F>,
-        temperature_k: Option<F>,
+        window: Option<String>,
+        pad: Option<usize>,
+        incident_frequency: Option<F>,
         averaged: Option<bool>,
-        dt_fs: F,
-    ) -> Self {
-        Self {
-            dt_fs,
-            incident_frequency_cm1: incident_frequency_cm1.unwrap_or(0.0),
-            temperature_k: temperature_k.unwrap_or(0.0),
-            averaged: averaged.unwrap_or(false),
-        }
+    ) -> Result<RamanSpectrum, JsError> {
+        let inner = mc::RamanSpectrum::new()
+            .given(window, |c, v| Ok(c.with_window(v.parse()?)))?
+            .given(pad, |c, v| c.with_pad(v))?
+            .given(incident_frequency, |c, v| c.with_incident_frequency(v))?
+            .given(averaged, |c, v| Ok(c.with_averaged(v)))?;
+        Ok(Self { inner })
     }
 
-    pub fn fit(&self, acf_iso: &[F], acf_aniso: &[F]) -> Result<JsValue, JsValue> {
-        let dt_fs = self.dt_fs;
-        let iso = array1(acf_iso);
-        let aniso = array1(acf_aniso);
-        let calc = molrs::compute::RamanSpectrum {
-            incident_frequency_cm1: self.incident_frequency_cm1,
-            temperature_k: self.temperature_k,
-            averaged: self.averaged,
+    /// `{ isotropic, anisotropic, temperature? }`: two `TimeCorrelation`s.
+    pub fn compute(&self, data: &JsValue) -> Result<RamanSpectrumResult, JsError> {
+        let data = Fields::new(data, "RamanSpectrum")?;
+        let isotropic = data.handle::<TimeCorrelation>("isotropic", "TimeCorrelation")?;
+        let anisotropic = data.handle::<TimeCorrelation>("anisotropic", "TimeCorrelation")?;
+        let input = mc::RamanSpectrumInput {
+            isotropic: &isotropic.inner,
+            anisotropic: &anisotropic.inner,
+            temperature: data.opt_scalar("temperature")?,
         };
-        let r = calc
-            .fit((&iso, &aniso, dt_fs))
-            .map_err(|e| JsValue::from_str(&format!("RamanSpectrum: {e}")))?;
-        js_value(&raman_out(r))
+        Ok(self.inner.compute(input)?.into())
     }
 }
 
-#[wasm_bindgen(js_name = RoaSpectrum)]
-pub struct RoaSpectrum(RamanSpectrum);
-
-#[wasm_bindgen(js_class = RoaSpectrum)]
-impl RoaSpectrum {
-    /// Same optical configuration as [`RamanSpectrum`]; ROA differs only in
-    /// which cross-correlations are supplied to [`fit`](Self::fit).
-    #[wasm_bindgen(constructor)]
-    pub fn new(
-        incident_frequency_cm1: Option<F>,
-        temperature_k: Option<F>,
-        averaged: Option<bool>,
-        dt_fs: F,
-    ) -> Self {
-        Self(RamanSpectrum::new(
-            incident_frequency_cm1,
-            temperature_k,
-            averaged,
-            dt_fs,
-        ))
-    }
-
-    pub fn fit(&self, acf_iso: &[F], acf_aniso: &[F]) -> Result<JsValue, JsValue> {
-        let iso = array1(acf_iso);
-        let aniso = array1(acf_aniso);
-        let calc = molrs::compute::RoaSpectrum {
-            incident_frequency_cm1: self.0.incident_frequency_cm1,
-            temperature_k: self.0.temperature_k,
-            averaged: self.0.averaged,
-        };
-        let r = calc
-            .fit((&iso, &aniso, self.0.dt_fs))
-            .map_err(|e| JsValue::from_str(&format!("RoaSpectrum: {e}")))?;
-        js_value(&raman_out(r))
-    }
-}
-
-#[wasm_bindgen(js_name = EinsteinHelfandSpectrum)]
-pub struct EinsteinHelfandSpectrum {
-    dt: F,
-    volume: F,
-    temperature: F,
-    epsilon_inf: F,
-    zero_lag_variance: F,
-}
-
-#[wasm_bindgen(js_class = EinsteinHelfandSpectrum)]
-impl EinsteinHelfandSpectrum {
-    #[wasm_bindgen(constructor)]
-    pub fn new(
-        dt: F,
-        volume: F,
-        temperature: F,
-        epsilon_inf: Option<F>,
-        zero_lag_variance: F,
-    ) -> Self {
-        Self {
-            dt,
-            volume,
-            temperature,
-            epsilon_inf: epsilon_inf.unwrap_or(1.0),
-            zero_lag_variance,
-        }
-    }
-
-    pub fn fit(&self, acf: &[F]) -> Result<JsValue, JsValue> {
-        let acf = array1(acf);
-        let calc = molrs::compute::EinsteinHelfandSpectrum {
-            dt: self.dt,
-            volume: self.volume,
-            temperature: self.temperature,
-            epsilon_inf: self.epsilon_inf,
-            zero_lag_variance: self.zero_lag_variance,
-        };
-        let r = calc
-            .fit(&acf)
-            .map_err(|e| JsValue::from_str(&format!("EinsteinHelfandSpectrum: {e}")))?;
-        js_value(&dielectric_spectrum_out(r))
-    }
-}
-
-#[wasm_bindgen(js_name = GreenKuboSpectrum)]
-pub struct GreenKuboSpectrum {
-    dt: F,
-    volume: F,
-    temperature: F,
-    epsilon_inf: F,
-    window_type: String,
-}
-
-#[wasm_bindgen(js_class = GreenKuboSpectrum)]
-impl GreenKuboSpectrum {
-    #[wasm_bindgen(constructor)]
-    pub fn new(
-        dt: F,
-        volume: F,
-        temperature: F,
-        epsilon_inf: Option<F>,
-        window_type: Option<String>,
-    ) -> Self {
-        Self {
-            dt,
-            volume,
-            temperature,
-            epsilon_inf: epsilon_inf.unwrap_or(1.0),
-            window_type: window_type.unwrap_or_else(|| "cosine_sq".to_string()),
-        }
-    }
-
-    pub fn fit(&self, jacf: &[F]) -> Result<JsValue, JsValue> {
-        let jacf = array1(jacf);
-        let calc = molrs::compute::GreenKuboSpectrum {
-            dt: self.dt,
-            volume: self.volume,
-            temperature: self.temperature,
-            epsilon_inf: self.epsilon_inf,
-            window_type: self.window_type.clone(),
-        };
-        let r = calc
-            .fit(&jacf)
-            .map_err(|e| JsValue::from_str(&format!("GreenKuboSpectrum: {e}")))?;
-        js_value(&dielectric_spectrum_out(r))
-    }
-}
+described!(
+    EinsteinHelfandSpectrum => mc::EinsteinHelfandSpectrum,
+    GreenKuboSpectrum => mc::GreenKuboSpectrum,
+    DipoleRateCrossSpectrum => mc::DipoleRateCrossSpectrum,
+    DipoleAutocorrelationSpectrum => mc::DipoleAutocorrelationSpectrum,
+    KramersKronig => mc::KramersKronig,
+    ConductivitySumRule => mc::ConductivitySumRule,
+    RouteAgreement => mc::RouteAgreement,
+    PolarizabilityParts => mc::PolarizabilityParts,
+    RamanSpectrum => mc::RamanSpectrum,
+);

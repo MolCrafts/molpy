@@ -229,6 +229,7 @@ impl Compute for StaticStructureFactorDirect {
 /// spherically averaged `S(|k|)` and `k_magnitudes` is the bin-centres
 /// array.
 #[derive(Debug, Clone, Default, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct StaticStructureFactorDirectResult {
     pub k_magnitudes: Array1<F>,
     pub sk: Array1<F>,

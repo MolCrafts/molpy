@@ -13,6 +13,11 @@ use crate::compute::ComputeError;
 /// tuple. [`binned`](Self::binned) is the total weight that landed inside the
 /// axes; samples outside them are not counted.
 #[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(
+    feature = "serde",
+    derive(serde::Serialize),
+    serde(bound(serialize = "[Axis; N]: serde::Serialize"))
+)]
 pub struct Histogram<const N: usize> {
     axes: [Axis; N],
     counts: ArrayD<F>,

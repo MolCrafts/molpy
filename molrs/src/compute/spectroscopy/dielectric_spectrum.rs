@@ -26,6 +26,7 @@ use crate::compute::{
 /// the same physical frequency. Volume, dipole and charge are in the units of
 /// the route's [`UnitPreset`] (`real`: Å³, e·Å, e).
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct DielectricSpectrumResult {
     /// Angular frequency grid, `n_fft / 2 + 1` points from DC to Nyquist
     /// `π / dt`, with `n_fft = (pad · n_lags).next_power_of_two()`.

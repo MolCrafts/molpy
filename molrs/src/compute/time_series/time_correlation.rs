@@ -16,6 +16,7 @@ use crate::compute::ComputeError;
 /// The lag grid is uniform, `t_k = k · dt`; the fits and spectra read their
 /// sample interval off it.
 #[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct TimeCorrelation {
     /// Lag times `t_k = k · dt`, `k = 0 … max_lag`, in the unit of `dt`.
     pub lag_times: Array1<F>,
@@ -36,10 +37,16 @@ impl TimeCorrelation {
 
     /// The curve of one channel, indexed by lag.
     ///
-    /// # Panics
-    /// If `channel >= n_channels()`.
-    pub fn channel(&self, channel: usize) -> ArrayView1<'_, F> {
-        self.values.index_axis(Axis(1), channel)
+    /// # Errors
+    /// [`ComputeError::OutOfRange`] when `channel >= n_channels()`.
+    pub fn channel(&self, channel: usize) -> Result<ArrayView1<'_, F>, ComputeError> {
+        if channel >= self.n_channels() {
+            return Err(ComputeError::OutOfRange {
+                field: "channel",
+                value: format!("{channel} (the correlation has {})", self.n_channels()),
+            });
+        }
+        Ok(self.values.index_axis(Axis(1), channel))
     }
 
     /// The curve of `channel`, after checking that it exists, that the lag
@@ -56,13 +63,7 @@ impl TimeCorrelation {
                 what: "lag_times against the rows of values",
             });
         }
-        if channel >= self.n_channels() {
-            return Err(ComputeError::OutOfRange {
-                field: "channel",
-                value: format!("{channel} (the correlation has {})", self.n_channels()),
-            });
-        }
-        let curve = self.channel(channel);
+        let curve = self.channel(channel)?;
         if let Some(index) = curve.iter().position(|v| !v.is_finite()) {
             return Err(ComputeError::NonFinite {
                 where_: "correlation channel",
@@ -122,6 +123,14 @@ mod tests {
     #[test]
     fn guards_report_their_specific_errors() {
         let c = curve();
+        assert_eq!(c.channel(1).unwrap().to_vec(), vec![2.0, 1.0, 0.5]);
+        assert!(matches!(
+            c.channel(2),
+            Err(ComputeError::OutOfRange {
+                field: "channel",
+                ..
+            })
+        ));
         assert_eq!(c.require_channel(1).unwrap().to_vec(), vec![2.0, 1.0, 0.5]);
         assert_eq!(c.sample_interval().unwrap(), 0.5);
         assert!(matches!(

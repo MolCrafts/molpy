@@ -90,6 +90,7 @@ impl Compute for Nematic {
 
 /// One snapshot's nematic order parameter.
 #[derive(Debug, Clone, Default)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct NematicResult {
     /// Largest eigenvalue of `Q` (scalar order parameter).
     pub order: F,

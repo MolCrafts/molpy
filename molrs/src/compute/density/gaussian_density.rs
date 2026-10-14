@@ -127,6 +127,7 @@ impl Compute for GaussianDensity {
 
 /// One snapshot's Gaussian-density grid.
 #[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct GaussianDensityResult {
     /// Density per voxel, shape `dims`, in particles per unit volume.
     pub density: Array3<F>,

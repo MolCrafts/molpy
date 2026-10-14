@@ -1,136 +1,133 @@
-//! Hydrogen bonds (`molrs::compute::hbond`).
+//! Geometric hydrogen bonds (`molrs::compute::HBonds`): the bonds of every
+//! frame, their presence series and per-frame networks.
 
-use super::collect_frames;
-use crate::error::py_value_err;
-use molrs::compute::{HBondCriterion, HBondDistanceKind, HBonds, HBondsResult, LegacyCompute};
-use molrs::core::Frame as CoreFrame;
-use numpy::{PyReadonlyArray1, PyReadonlyArray2};
-use pyo3::exceptions::PyValueError;
+use molrs::compute::{Compute, HBond, HBondCriterion, HBonds, HBondsInput, HBondsResult};
+use numpy::{PyArray1, PyReadonlyArray3};
 use pyo3::prelude::*;
-use pyo3::types::{PyAny, PyAnyMethods};
 
-// ---------------------------------------------------------------------------
-// Hydrogen bonds
-// ---------------------------------------------------------------------------
+use super::dynamics::PyPresence;
+use super::error::Result;
+use super::output::{ToPy, list, py_result};
+use super::spec::described;
+use crate::core::neighborlist::PyNeighbors;
 
-/// Geometric hydrogen-bond criterion (Luzar–Chandler defaults).
-#[pyclass(module = "molrs.compute", name = "HBondCriterion", from_py_object)]
-#[derive(Clone)]
-pub struct PyHBondCriterion {
-    inner: HBondCriterion,
+py_result! {
+    /// One hydrogen bond (``molrs::compute::HBond``): donor, hydrogen and
+    /// acceptor indices, the D···A distance (Å) and the D–H···A angle (deg).
+    PyHBond(HBond) as "HBond" { donor, hydrogen, acceptor, distance, angle }
 }
 
-#[pymethods]
-impl PyHBondCriterion {
-    /// ``HBondCriterion(dist_cutoff=3.5, dist_kind="donor_acceptor", angle_cutoff=150.0)``.
-    /// `dist_kind` is ``"donor_acceptor"`` or ``"hydrogen_acceptor"``.
-    #[new]
-    #[pyo3(signature = (dist_cutoff=3.5, dist_kind="donor_acceptor".to_string(), angle_cutoff=150.0))]
-    fn new(dist_cutoff: f64, dist_kind: String, angle_cutoff: f64) -> PyResult<Self> {
-        let kind = match dist_kind.as_str() {
-            "donor_acceptor" => HBondDistanceKind::DonorAcceptor,
-            "hydrogen_acceptor" => HBondDistanceKind::HydrogenAcceptor,
-            other => {
-                return Err(PyValueError::new_err(format!(
-                    "dist_kind must be 'donor_acceptor' or 'hydrogen_acceptor', got {other:?}"
-                )));
-            }
-        };
-        Ok(Self {
-            inner: HBondCriterion::new(dist_cutoff, kind, angle_cutoff),
-        })
+impl ToPy for Vec<HBond> {
+    fn to_py<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+        list(py, self)
     }
 }
 
-#[pyclass(module = "molrs.compute", name = "HBondsResult")]
-pub struct PyHBondsResult {
-    inner: HBondsResult,
+impl ToPy for Vec<Vec<HBond>> {
+    fn to_py<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+        list(py, self)
+    }
 }
 
-/// Per-frame hydrogen bonds: lists of `(donor, hydrogen, acceptor, distance, angle)`.
-type PerFrameHBonds = Vec<Vec<(u32, u32, u32, f64, f64)>>;
+py_result! {
+    /// The hydrogen bonds of every frame (``molrs::compute::HBondsResult``):
+    /// ``per_frame[t]`` lists frame ``t``'s ``HBond``s, ``counts[t]`` their
+    /// number.
+    PyHBondsResult(HBondsResult) as "HBondsResult" { per_frame, counts, n_atoms }
+}
 
 #[pymethods]
 impl PyHBondsResult {
-    /// Per-frame hydrogen bonds as a list of lists of
-    /// `(donor, hydrogen, acceptor, distance, angle)` tuples.
-    #[getter]
-    fn per_frame(&self) -> PerFrameHBonds {
-        self.inner
-            .per_frame
-            .iter()
-            .map(|frame| {
-                frame
-                    .iter()
-                    .map(|b| (b.donor, b.hydrogen, b.acceptor, b.distance, b.angle))
-                    .collect()
-            })
-            .collect()
+    /// The (donor, acceptor) presence series, for ``Survival``; ``None`` when
+    /// no bond is ever present.
+    fn presence(&self) -> Option<PyPresence> {
+        self.inner.presence().map(PyPresence::from)
     }
 
-    /// H-bond count per frame.
-    #[getter]
-    fn counts(&self) -> Vec<usize> {
-        self.inner.counts.clone()
+    /// The hydrogen-bond network component label of every atom in ``frame``.
+    fn components<'py>(&self, py: Python<'py>, frame: usize) -> Result<Bound<'py, PyArray1<u32>>> {
+        Ok(PyArray1::from_vec(py, self.inner.components(frame)?))
     }
 }
 
-/// Detect hydrogen bonds per frame from explicit donor `(D, H)` pairs and
-/// acceptor atoms under a geometric criterion.
-#[pyclass(module = "molrs.compute", name = "HBonds")]
-pub struct PyHBonds {
+/// Geometric hydrogen-bond detection, frame by frame
+/// (``molrs::compute::HBonds``).
+///
+/// Parameters
+/// ----------
+/// dist_cutoff : float, optional
+/// dist_kind : str, optional
+///     ``"donor_acceptor"`` or ``"hydrogen_acceptor"``.
+/// angle_cutoff : float, optional
+/// donor_acceptor_margin : float, optional
+///     The criterion fields; each ``None`` keeps the core default criterion.
+///
+/// ``compute(positions=, donors=, acceptors=, pairs=)``: a ``(T, N, 3)``
+/// trajectory, ``(donor, hydrogen)`` index pairs, acceptor indices and one
+/// ``Neighbors`` cross-query per frame (donor sites against acceptors).
+#[pyclass(module = "molrs.compute", name = "HBonds", frozen)]
+pub(crate) struct PyHBonds {
     inner: HBonds,
 }
 
 #[pymethods]
 impl PyHBonds {
-    /// `donors`: `(N, 2)` int array of `(donor, hydrogen)` pairs.
-    /// `acceptors`: 1-D int array of acceptor atom indices.
     #[new]
-    #[pyo3(signature = (donors, acceptors, criterion=None))]
+    #[pyo3(signature = (
+        *,
+        dist_cutoff = None,
+        dist_kind = None,
+        angle_cutoff = None,
+        donor_acceptor_margin = None,
+    ))]
     fn new(
-        donors: PyReadonlyArray2<'_, i64>,
-        acceptors: PyReadonlyArray1<'_, i64>,
-        criterion: Option<PyHBondCriterion>,
-    ) -> PyResult<Self> {
-        let da = donors.as_array();
-        if da.ncols() != 2 {
-            return Err(PyValueError::new_err(
-                "donors must have 2 columns (donor, hydrogen)",
-            ));
+        dist_cutoff: Option<f64>,
+        dist_kind: Option<&str>,
+        angle_cutoff: Option<f64>,
+        donor_acceptor_margin: Option<f64>,
+    ) -> Result<Self> {
+        let mut criterion = HBondCriterion::default();
+        if let Some(dist_cutoff) = dist_cutoff {
+            criterion.dist_cutoff = dist_cutoff;
         }
-        let mut donor_pairs: Vec<(u32, u32)> = Vec::with_capacity(da.nrows());
-        for row in da.rows() {
-            if row[0] < 0 || row[1] < 0 {
-                return Err(PyValueError::new_err("atom indices must be non-negative"));
-            }
-            donor_pairs.push((row[0] as u32, row[1] as u32));
+        if let Some(dist_kind) = dist_kind {
+            criterion.dist_kind = dist_kind.parse()?;
         }
-        let mut acc: Vec<u32> = Vec::with_capacity(acceptors.len()?);
-        for &v in acceptors.as_array().iter() {
-            if v < 0 {
-                return Err(PyValueError::new_err("atom indices must be non-negative"));
-            }
-            acc.push(v as u32);
+        if let Some(angle_cutoff) = angle_cutoff {
+            criterion.angle_cutoff = angle_cutoff;
         }
-        let crit = criterion.map(|c| c.inner).unwrap_or_default();
+        if let Some(margin) = donor_acceptor_margin {
+            criterion = criterion.with_donor_acceptor_margin(margin);
+        }
         Ok(Self {
-            inner: HBonds::new(donor_pairs, acc, crit),
+            inner: HBonds::new(criterion)?,
         })
     }
 
-    /// Detect hydrogen bonds in each frame.
-    fn compute(&self, frames: &Bound<'_, PyAny>) -> PyResult<PyHBondsResult> {
-        let owned = collect_frames(frames)?;
-        let refs: Vec<&CoreFrame> = owned.iter().collect();
-        let inner = self.inner.compute(&refs, ()).map_err(py_value_err)?;
-        Ok(PyHBondsResult { inner })
+    #[pyo3(signature = (*, positions, donors, acceptors, pairs))]
+    fn compute(
+        &self,
+        positions: PyReadonlyArray3<'_, f64>,
+        donors: Vec<[u32; 2]>,
+        acceptors: Vec<u32>,
+        pairs: Vec<PyRef<'_, PyNeighbors>>,
+    ) -> Result<PyHBondsResult> {
+        let donors: Vec<(u32, u32)> = donors.into_iter().map(|[d, h]| (d, h)).collect();
+        let pairs: Vec<_> = pairs.iter().map(|table| &table.inner).collect();
+        let out = self.inner.compute(HBondsInput {
+            positions: positions.as_array(),
+            donors: &donors,
+            acceptors: &acceptors,
+            pairs: &pairs,
+        })?;
+        Ok(out.into())
     }
 }
 
-/// Register this domain's classes and functions.
+described!(PyHBonds, HBonds);
+
 pub(crate) fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    m.add_class::<PyHBondCriterion>()?;
+    m.add_class::<PyHBond>()?;
     m.add_class::<PyHBondsResult>()?;
     m.add_class::<PyHBonds>()?;
     Ok(())

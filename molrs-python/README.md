@@ -60,14 +60,23 @@ after its Rust owner.
 | `molrs.ff.*` | `forcefield`, `potential`, `typifier`, `charge`, `ir`, `params`, `clpol_scaling` |
 | `molrs.optimize` | `Lbfgs`, `OptimizationReport` |
 | `molrs.md` | Integrators and the `MD` driver |
-| `molrs.compute` | RDF, MSD, transport, dielectric, … (flat) |
+| `molrs.compute` | One class per `molrs::compute` type, under its core name (flat): RDF, MSD, correlations, fits, spectra, order, clusters, … |
 | `molrs.conformer` | 3D generation |
 | `molrs.perceive` | Rings, aromaticity, SMARTS, reactions |
 | `molrs.builder` | Structure builders, site-graph assembly, `Coarsener` |
 
-Analysis kernels take `dt` in the time unit of your trajectory, and
-time-valued results come back in that unit. MSD needs **unwrapped**
-coordinates. VACF is the unbiased \(C(\tau)\) used for Green–Kubo D and VDOS.
+An analysis is configured when it is built and given its data when it
+computes: `Msd(max_lag)` then `msd.compute(positions=..., dt=...)`. The
+constructor takes configuration only, every optional setting is `None` unless
+given (all defaults live in the core; `Msd.spec()` lists them), and
+`compute` takes the data as keyword arguments named after the core input's
+fields. A result is a read-only object that the next compute accepts as is —
+`LinearFit(0.2, 0.8).compute(correlation=msd_result, channel=0)`.
+
+Kernels take `dt` in the time unit of your trajectory, and time-valued
+results come back in that unit. MSD needs **unwrapped** coordinates
+(`Unwrap` produces them). VACF is the unbiased \(C(\tau)\) used for
+Green–Kubo D and VDOS.
 
 ## Development
 

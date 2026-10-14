@@ -11,7 +11,7 @@ instead of copying signatures or rustdoc text.
 
 Always compiled inside `molcrafts-molrs`: `core`, `perceive`, `op` and the
 `optimize` engine. Feature-gated modules: `builder`, `io` (with `smiles`
-inside it), `ff`, `conformer`, `compute`, `voronoi`, `signal`, `md` and
+inside it), `ff`, `conformer`, `compute`, `voronoi`, `md` and
 `stream`. `full` bundles every one of those except `stream`. Record files
 (`io::mrec`) need `zarr`, and their path-based doors need `filesystem`.
 The crate's default features are `rayon` only, so name what you use:

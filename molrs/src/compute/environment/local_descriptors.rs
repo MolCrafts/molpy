@@ -102,6 +102,7 @@ impl Compute for LocalDescriptors {
 /// `(Re, Im)` column pairs, in `(ℓ, m)` order: `Y_00`, `Y_1,−1`, `Y_10`,
 /// `Y_11`, `Y_2,−2`, ….
 #[derive(Debug, Clone, Default)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct LocalDescriptorsResult {
     /// `l_max` used for this run.
     pub l_max: u32,

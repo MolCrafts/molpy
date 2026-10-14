@@ -43,6 +43,7 @@ pub struct PcaInput<'a> {
 
 /// A PCA projection.
 #[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct PcaResult {
     /// The scores, `n_rows × n_components`.
     pub coords: Array2<F>,

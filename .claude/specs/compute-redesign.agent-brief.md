@@ -1,7 +1,7 @@
 # compute-redesign — brief for each link's implementing agent
 
 ## Where to work
-- Work only inside the worktree `/Users/roykid/work/molcrafts/molrs/.claude/worktrees/compute-redesign` (branch `feat/compute-redesign`).
+- Work only inside the worktree `/private/tmp/molrs-compute-redesign` (branch `feat/compute-redesign`).
 - Never touch `/Users/roykid/work/molcrafts/molrs`, which is the main checkout with the user's uncommitted work.
 - Do not push. Commit only at the end of your link.
 
@@ -34,7 +34,7 @@
 7. **The old trait `LegacyCompute`, `Fit`, `Check`, `ComputeResult` and `DescriptorRow` still exist until link 09.** Migrate your scope's types onto the new `Compute`. Code outside your scope may keep using the old traits.
 
 ## Verification
-The `cargo mrs-*` aliases are mangled by a shell hook, so use these exact commands from the worktree root:
+Use these exact commands from the worktree root. Never put a worktree inside the molrs repo tree: cargo merges the parent `.cargo/config.toml` and concatenates the `mrs-*` alias arrays:
 - Tests: `rtk proxy cargo test -p molcrafts-molrs --lib --features full,filesystem,stream -- compute`, then the full run without the filter before finishing.
 - Doctests: `rtk proxy cargo test --doc -p molcrafts-molrs --features full,filesystem,stream -- compute`
 - Lint: `rtk proxy cargo fmt --all`, then `rtk proxy cargo clippy -p molcrafts-molrs --all-targets --features full,filesystem,stream -- -D warnings`. Both must end clean.

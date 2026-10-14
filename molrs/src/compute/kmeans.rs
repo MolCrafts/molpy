@@ -35,6 +35,7 @@ pub struct KmeansInput<'a> {
 
 /// One cluster label per row, and the centroids.
 #[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct KmeansResult {
     /// Row → cluster label in `0..k`.
     pub labels: Vec<u32>,

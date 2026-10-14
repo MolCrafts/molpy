@@ -70,7 +70,7 @@ impl Lbfgs {
         Lbfgs {
             ff: pots.ff.clone(),
             pots: Arc::clone(&pots.inner),
-            neighbors: neighbors.inner.clone(),
+            neighbors: RsNeighbors::clone(&neighbors.inner),
             settings: LbfgsSettings {
                 fmax: fmax.unwrap_or(defaults.fmax).max(1e-8),
                 max_step: max_step.unwrap_or(defaults.max_step).max(1e-6),

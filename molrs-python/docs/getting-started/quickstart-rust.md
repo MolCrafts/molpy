@@ -12,8 +12,8 @@ molrs = { package = "molcrafts-molrs", version = "0.17", features = ["full", "fi
 ```
 
 The crate's default features are `rayon` only — core, no I/O. `full` enables
-the builder, I/O, SMILES, compute, force-field, conformer, MD, Voronoi, and
-signal subsystems. `filesystem` adds the path-based record-file doors
+the builder, I/O, SMILES, compute, force-field, conformer, MD and Voronoi
+subsystems. `filesystem` adds the path-based record-file doors
 (`molrs::io::write_mrec_frame`, …) and the native zstd codec; it is not
 part of `full`, and neither is `stream`. Once you know which layers your
 application uses, replace `full` with a narrower list.
@@ -68,10 +68,9 @@ that dtype. Floats are always `f64`. `write_mrec_frame` saves the frame as a
 | `molrs::io::smiles`, `molrs::io::cgsmiles` | `smiles` | SMILES and CGsmiles parsing and graph conversion |
 | `molrs::io::mrec` | `zarr` (+ `filesystem` for paths) | `*.mrec` record files |
 | `molrs::conformer` | `conformer` | 3D coordinate generation |
-| `molrs::compute` | `compute` | RDF, MSD, clusters, descriptors |
+| `molrs::compute` | `compute` | RDF, correlations (MSD, VACF, …), spectra, clusters, descriptors |
 | `molrs::ff` | `ff` | Force fields, typing, potentials |
 | `molrs::md` | `md` | In-process velocity-Verlet / Langevin dynamics |
-| `molrs::signal` | `signal` | FFT autocorrelation, windows, frequency grids |
 | `molrs::stream` | `stream` | MessagePack/JSON frames, WebSocket transport |
 
 The [docs.rs reference](https://docs.rs/molcrafts-molrs) documents every

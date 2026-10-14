@@ -339,6 +339,7 @@ impl Accumulate for SpatialDistributionAccumulator {
 
 /// Accumulated SDF grid plus optional bulk-normalized density and orientation.
 #[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct SpatialDistributionResult {
     /// Raw voxel counts, summed across frames.
     pub counts: Array3<F>,

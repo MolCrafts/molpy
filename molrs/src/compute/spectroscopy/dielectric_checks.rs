@@ -14,6 +14,7 @@ use crate::compute::{Compute, ComputeError, CumulativeTrapezoid, Verdict};
 
 /// Outcome of the Kramers–Kronig consistency check.
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct KramersKronigCheck {
     /// ε′(ω) recovered from ε″(ω).
     pub recovered: Array1<F>,
@@ -170,6 +171,7 @@ impl Compute for KramersKronig {
 
 /// Outcome of the conductivity sum-rule check.
 #[derive(Debug, Clone, Copy)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct SumRuleCheck {
     /// Trapezoidal ∫ σ(ω) dω.
     pub integral: F,
@@ -302,6 +304,7 @@ named_enum! {
 
 /// Outcome of the route-agreement check.
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct RouteAgreementCheck {
     /// `(i, j, relative_rms)` for each pair `i < j` of input spectra, in
     /// input order.

@@ -4,6 +4,7 @@
 use molrs::core::legendre_plm;
 use molrs::op::{F, Quat, quat_conj, quat_mul, quat_norm};
 
+use crate::compute::ComputeError;
 use crate::compute::named_enum::named_enum;
 
 /// What a [`Correlator`](super::Correlator) evaluates between a sample at time
@@ -47,25 +48,59 @@ pub enum LagKernel {
     Persistence,
 }
 
-impl LagKernel {
-    /// The canonical kind names, in declaration order. The order `l` of
-    /// `legendre` / `wigner_d` is a separate parameter.
-    pub const NAMES: &'static [&'static str] = &[
-        "product",
-        "squared_displacement",
-        "legendre",
-        "wigner_d",
-        "persistence",
-    ];
+named_enum! {
+    /// The kind of a [`LagKernel`], by its canonical name. `legendre` and
+    /// `wigner_d` also take an order `l` ([`LagKernel::new`]).
+    pub enum LagKernelKind {
+        /// [`LagKernel::Product`].
+        Product => "product",
+        /// [`LagKernel::SquaredDisplacement`].
+        SquaredDisplacement => "squared_displacement",
+        /// [`LagKernel::Legendre`].
+        Legendre => "legendre",
+        /// [`LagKernel::WignerD`].
+        WignerD => "wigner_d",
+        /// [`LagKernel::Persistence`].
+        Persistence => "persistence",
+    }
+}
 
-    /// The canonical name of this kernel's kind.
-    pub const fn name(self) -> &'static str {
+impl LagKernel {
+    /// The kernel of `kind`, with its order `l`.
+    ///
+    /// # Errors
+    /// [`ComputeError::OutOfRange`] when `l` is missing for `legendre` /
+    /// `wigner_d`, which require it, or given for any other kind, which
+    /// takes none.
+    pub fn new(kind: LagKernelKind, l: Option<u32>) -> Result<Self, ComputeError> {
+        use LagKernelKind as K;
+        match (kind, l) {
+            (K::Product, None) => Ok(Self::Product),
+            (K::SquaredDisplacement, None) => Ok(Self::SquaredDisplacement),
+            (K::Persistence, None) => Ok(Self::Persistence),
+            (K::Legendre, Some(l)) => Ok(Self::Legendre { l }),
+            (K::WignerD, Some(l)) => Ok(Self::WignerD { l }),
+            (K::Legendre | K::WignerD, None) => Err(ComputeError::OutOfRange {
+                field: "l (required by legendre / wigner_d)",
+                value: format!("{kind} without l"),
+            }),
+            (K::Product | K::SquaredDisplacement | K::Persistence, Some(l)) => {
+                Err(ComputeError::OutOfRange {
+                    field: "l (only legendre / wigner_d take one)",
+                    value: format!("{kind} with l = {l}"),
+                })
+            }
+        }
+    }
+
+    /// The kind of this kernel.
+    pub const fn kind(self) -> LagKernelKind {
         match self {
-            Self::Product => "product",
-            Self::SquaredDisplacement => "squared_displacement",
-            Self::Legendre { .. } => "legendre",
-            Self::WignerD { .. } => "wigner_d",
-            Self::Persistence => "persistence",
+            Self::Product => LagKernelKind::Product,
+            Self::SquaredDisplacement => LagKernelKind::SquaredDisplacement,
+            Self::Legendre { .. } => LagKernelKind::Legendre,
+            Self::WignerD { .. } => LagKernelKind::WignerD,
+            Self::Persistence => LagKernelKind::Persistence,
         }
     }
 
@@ -116,8 +151,8 @@ impl LagKernel {
 impl std::fmt::Display for LagKernel {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self.order() {
-            Some(l) => write!(f, "{}(l={l})", self.name()),
-            None => f.write_str(self.name()),
+            Some(l) => write!(f, "{}(l={l})", self.kind()),
+            None => write!(f, "{}", self.kind()),
         }
     }
 }

@@ -154,6 +154,11 @@ impl<C: PairCoordinate> Copy for PmftInput<'_, C> {}
 /// One snapshot's PMFT in the coordinate system `C`; every array is indexed
 /// by bin, in the order of the coordinate's axes.
 #[derive(Debug, Clone)]
+#[cfg_attr(
+    feature = "serde",
+    derive(serde::Serialize),
+    serde(bound(serialize = "C::Dim: serde::Serialize"))
+)]
 pub struct PmftResult<C: PairCoordinate> {
     /// Pair density per bin: count over bin measure.
     pub density: Array<F, C::Dim>,

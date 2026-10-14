@@ -8,6 +8,7 @@ use crate::compute::Partition;
 /// One snapshot's clusters; a [`Partition`] of the particles (a filtered
 /// particle is in no group).
 #[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct ClusterResult {
     /// Particle → cluster ID (`0..n_clusters`), clusters numbered in order of
     /// their lowest particle; `-1` for a particle whose cluster was dropped

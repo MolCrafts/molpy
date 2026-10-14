@@ -76,6 +76,7 @@ pub struct VanHoveInput<'a> {
 ///
 /// Rows are lag times (`lags`), columns are r-bins (`r_centers`).
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct VanHoveResult {
     /// r-bin edges (`n_bins + 1`), Å.
     pub r_edges: Array1<F>,

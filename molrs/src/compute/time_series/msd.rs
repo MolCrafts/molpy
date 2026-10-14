@@ -331,11 +331,11 @@ mod tests {
         let series = Array3::from_shape_vec((3, 1, 1), vec![0.0, 1.0, 3.0]).unwrap();
 
         let direct = msd(&series, 2, Origins::First);
-        let means: Vec<F> = direct.channel(0).to_vec();
+        let means: Vec<F> = direct.channel(0).unwrap().to_vec();
         assert_eq!(means, vec![0.0, 1.0, 9.0]);
 
         // and the windowed estimator agrees with the nested loop in 1-D too
-        let w = msd(&series, 2, Origins::All).channel(0).to_vec();
+        let w = msd(&series, 2, Origins::All).channel(0).unwrap().to_vec();
         assert!((w[1] - ((1.0 + 4.0) / 2.0)).abs() < 1e-12, "{w:?}");
     }
 
@@ -568,7 +568,7 @@ mod tests {
         let dipole = rng_series(n, 3, 17);
 
         let raw = dipole_msd(&dipole, dt, mct);
-        let msd = raw.channel(0).to_owned();
+        let msd = raw.channel(0).unwrap().to_owned();
         let fit = LinearFit::new(start_frac, end_frac)
             .unwrap()
             .compute(LinearFitInput {

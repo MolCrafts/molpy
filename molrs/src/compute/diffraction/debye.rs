@@ -232,6 +232,7 @@ impl StaticStructureFactorDebye {
 
 /// One snapshot's Debye structure factor.
 #[derive(Debug, Clone, Default, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct StaticStructureFactorDebyeResult {
     /// k values (Å⁻¹), copied from input.
     pub k_values: Array1<F>,

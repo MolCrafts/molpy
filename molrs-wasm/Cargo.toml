@@ -36,7 +36,8 @@ io      = ["molrs/io"]
 # Live-stream wire encoding (MessagePack / JSON). On wasm32 this pulls only
 # the codec and `ControlCommand`; `FrameServer` is native-only upstream.
 stream  = ["io", "molrs/stream"]
-compute = ["molrs/compute"]
+# `serde`: every compute result reaches JS as its core type, serialised.
+compute = ["molrs/compute", "molrs/serde"]
 conformer = ["molrs/conformer"]
 # Radical Voronoi tessellation + its domain/void consumers. Pure Rust, no FFI,
 # so it is WASM-clean and ships in the default build.

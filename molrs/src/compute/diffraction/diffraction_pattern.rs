@@ -167,6 +167,7 @@ impl Compute for DiffractionPattern {
 
 /// One snapshot's diffraction pattern.
 #[derive(Debug, Clone, Default, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct DiffractionPatternResult {
     /// Power spectrum `|F(k)|²`, shape `(n_grid, n_grid)`. FFT-shifted so
     /// the k=0 component is at the centre.

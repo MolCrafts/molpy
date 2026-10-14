@@ -72,7 +72,7 @@ pub use derivative::{Derivative, DerivativeInput, Stencil};
 pub use dipole_acf::{DipoleAcf, DipoleAcfInput};
 pub use msd::{Msd, MsdInput};
 pub use onsager::{OnsagerCorrelation, OnsagerInput};
-pub use options::{LagKernel, MeanPolicy, Normalization, Origins, Reduction};
+pub use options::{LagKernel, LagKernelKind, MeanPolicy, Normalization, Origins, Reduction};
 pub use reorientation_acf::{ReorientationAcf, ReorientationAcfInput};
 pub use rotational_autocorrelation::{RotationalAutocorrelation, RotationalAutocorrelationInput};
 pub use spectrum::{FrequencyGrid, OneSidedSpectrum, Spectrum, SpectrumInput, Window};

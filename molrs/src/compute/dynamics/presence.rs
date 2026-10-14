@@ -18,6 +18,7 @@ use crate::compute::{Compute, ComputeError, require_dist_sq};
 /// one pair — a run in which nothing ever formed has no presence series, and
 /// its producer says so with `None`.
 #[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct Presence {
     /// The pair behind each column, in ascending order. What the two indices
     /// mean is the producer's: query / reference point for [`PairPresence`],

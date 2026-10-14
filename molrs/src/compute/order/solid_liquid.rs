@@ -137,6 +137,7 @@ impl Compute for SolidLiquid {
 
 /// One snapshot's solid/liquid classification.
 #[derive(Debug, Clone, Default)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct SolidLiquidResult {
     /// ℓ of the `q_ℓm` the bonds were scored with.
     pub l: u32,

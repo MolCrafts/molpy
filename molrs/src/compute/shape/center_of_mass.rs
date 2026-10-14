@@ -61,6 +61,7 @@ pub struct CenterOfMassInput<'a> {
 
 /// Per-group centres of mass of one snapshot.
 #[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct CenterOfMassResult {
     /// The group key of each row, ascending.
     pub groups: Vec<u64>,

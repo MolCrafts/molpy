@@ -7,6 +7,7 @@ use crate::compute::{Compute, ComputeError, TimeCorrelation};
 
 /// Result of a single-exponential / Debye relaxation fit.
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct DebyeFitResult {
     /// Relaxation time τ, in the unit of the lag times. Positive for a
     /// decaying curve.

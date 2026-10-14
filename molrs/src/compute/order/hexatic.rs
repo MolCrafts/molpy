@@ -109,6 +109,7 @@ impl Compute for Hexatic {
 
 /// One snapshot's hexatic order parameter.
 #[derive(Debug, Clone, Default)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct HexaticResult {
     /// Rotational symmetry order `k` the parameter was computed for.
     pub k: u32,

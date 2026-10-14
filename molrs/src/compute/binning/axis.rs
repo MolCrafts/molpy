@@ -21,6 +21,7 @@ pub(crate) type LinearSplit = ([usize; 2], [F; 2]);
 /// An `Axis` is configuration: it is validated once, in [`new`](Self::new),
 /// and handed to an analysis's constructor.
 #[derive(Debug, Clone, Copy, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct Axis {
     min: F,
     max: F,

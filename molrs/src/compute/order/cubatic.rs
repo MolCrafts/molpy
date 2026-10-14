@@ -280,6 +280,7 @@ fn perturb_basis(basis: &Mat3, temp: F, rng: &mut StdRng) -> Result<Mat3, Comput
 
 /// One snapshot's cubatic order parameter.
 #[derive(Debug, Clone, Default)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct CubaticResult {
     /// The best `P_4` found.
     pub order: F,

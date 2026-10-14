@@ -1,80 +1,57 @@
-//! Matrix decomposition (`molrs::compute::Pca`): `Pca` and `PcaResult`.
+//! Decomposition of a feature matrix (`molrs::compute::Pca`): `Pca` and its
+//! output `PcaResult`, itself a feature matrix.
 
-use super::analysis_contract::PyDescriptorRow;
-use crate::error::py_value_err;
-use molrs::compute::{LegacyCompute, Pca, PcaResult};
-use molrs::core::Frame as CoreFrame;
-use numpy::{IntoPyArray, PyArray2};
-use pyo3::exceptions::PyValueError;
+use molrs::compute::{Compute, Pca, PcaInput, PcaResult};
 use pyo3::prelude::*;
 
-/// Two-component PCA result.
-#[pyclass(module = "molrs.compute", name = "PcaResult", from_py_object)]
-#[derive(Clone)]
-pub struct PyPcaResult {
-    pub(crate) inner: PcaResult,
+use super::args;
+use super::error::Result;
+use super::output::py_result;
+use super::spec::described;
+
+py_result! {
+    /// Principal components (``molrs::compute::PcaResult``): the
+    /// ``(n_rows, n_components)`` projected ``coords`` and the ``variance``
+    /// of each component. A feature matrix.
+    PyPcaResult(PcaResult) as "PcaResult" { coords, variance }
 }
 
-#[pymethods]
-impl PyPcaResult {
-    /// Row-major `(n_rows, 2)` projected coordinates.
-    #[getter]
-    fn coords<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyArray2<f64>>> {
-        let n = self.inner.coords.len() / 2;
-        let flat: Vec<f64> = self.inner.coords.to_vec();
-        Ok(ndarray::Array2::from_shape_vec((n, 2), flat)
-            .map_err(|e| PyValueError::new_err(e.to_string()))?
-            .into_pyarray(py))
-    }
-
-    /// `[var_pc1, var_pc2]` — explained variance per component.
-    #[getter]
-    fn variance(&self) -> (f64, f64) {
-        (self.inner.variance[0], self.inner.variance[1])
-    }
-
-    fn __repr__(&self) -> String {
-        format!(
-            "PcaResult(n_rows={}, variance=[{:.4}, {:.4}])",
-            self.inner.coords.len() / 2,
-            self.inner.variance[0],
-            self.inner.variance[1],
-        )
-    }
-}
-
-/// Two-component PCA calculator.
-#[pyclass(module = "molrs.compute", name = "Pca")]
-pub struct PyPca {
-    inner: Pca<PyDescriptorRow>,
+/// Principal component analysis of the rows of a feature matrix
+/// (``molrs::compute::Pca``).
+///
+/// Parameters
+/// ----------
+/// n_components : int
+///     The number of components kept.
+///
+/// ``compute(features=)`` decomposes a 2-D float array or a descriptor result
+/// (``SteinhardtResult``, ``LocalDescriptorsResult``, ``PcaResult``) and
+/// returns a ``PcaResult``.
+#[pyclass(module = "molrs.compute", name = "Pca", frozen)]
+pub(crate) struct PyPca {
+    inner: Pca,
 }
 
 #[pymethods]
 impl PyPca {
     #[new]
-    fn new() -> Self {
-        Self {
-            inner: Pca::<PyDescriptorRow>::new(),
-        }
+    fn new(n_components: usize) -> Result<Self> {
+        Ok(Self {
+            inner: Pca::new(n_components)?,
+        })
     }
 
-    /// Compute PCA over a list of `DescriptorRow` objects.
-    fn compute(&self, rows: Vec<PyRef<'_, PyDescriptorRow>>) -> PyResult<PyPcaResult> {
-        let owned: Vec<PyDescriptorRow> = rows.iter().map(|r| (*r).clone()).collect();
-        // Wrap an empty FrameAccess slice — Pca does not touch frames.
-        let frames: [&CoreFrame; 0] = [];
-        let pca = self.inner.compute(&frames, &owned).map_err(py_value_err)?;
-        Ok(PyPcaResult { inner: pca })
-    }
-
-    fn __repr__(&self) -> String {
-        "Pca()".to_string()
+    #[pyo3(signature = (*, features))]
+    fn compute<'py>(&self, features: &Bound<'py, PyAny>) -> Result<PyPcaResult> {
+        let features = args::FeatureArg::extract(features)?;
+        let out = self.inner.compute(PcaInput {
+            features: features.features(),
+        })?;
+        Ok(out.into())
     }
 }
 
-// ---------------------------------------------------------------------------
-// Kmeans
-// ---------------------------------------------------------------------------
+described!(PyPca, Pca);
 
 pub(crate) fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyPcaResult>()?;

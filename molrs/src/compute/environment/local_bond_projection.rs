@@ -104,6 +104,7 @@ impl Compute for LocalBondProjection {
 
 /// One snapshot's projections.
 #[derive(Debug, Clone, Default)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct LocalBondProjectionResult {
     /// `(n_pairs, n_proj_vectors)` cosines, pairs in table order.
     pub projections: Array2<F>,

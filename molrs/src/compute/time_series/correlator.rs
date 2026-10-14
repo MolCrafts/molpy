@@ -11,7 +11,9 @@ use rustfft::num_traits::Zero;
 use rustfft::{Fft, FftPlanner};
 
 use super::guards::{first_wrapped_item, require_finite, require_presence};
-use super::{LagKernel, MeanPolicy, Normalization, Origins, Reduction, TimeCorrelation};
+use super::{
+    LagKernel, LagKernelKind, MeanPolicy, Normalization, Origins, Reduction, TimeCorrelation,
+};
 use crate::compute::{Compute, ComputeError};
 
 /// Items per parallel work unit of the FFT path. Fixed, so the summation
@@ -771,8 +773,9 @@ impl ColumnFft {
 crate::compute::spec::compute_spec! {
     Correlator as "Correlator";
     params |s| {
-        kernel: LagKernel;
+        kernel: Choice(LagKernelKind::NAMES);
         max_lag: Int;
+        l: Int = crate::compute::ParamDefault::UNSET => s.kernel.order();
         origins: Choice(Origins::NAMES) = Origins::default() => s.origins;
         mean: Choice(MeanPolicy::NAMES) = MeanPolicy::default() => s.mean;
         normalization: Choice(Normalization::NAMES) = Normalization::default() => s.norm;

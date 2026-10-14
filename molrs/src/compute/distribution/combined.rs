@@ -258,6 +258,11 @@ impl<const N: usize> Accumulate for CombinedDistributionAccumulator<N> {
 /// density, and the [`marginal`](Self::marginal) /
 /// [`free_energy`](Self::free_energy) views.
 #[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(
+    feature = "serde",
+    derive(serde::Serialize),
+    serde(bound(serialize = "Histogram<N>: serde::Serialize, [bool; N]: serde::Serialize"))
+)]
 pub struct CombinedDistributionResult<const N: usize> {
     /// Joint counts, indexed by bin tuple, summed across frames.
     pub histogram: Histogram<N>,

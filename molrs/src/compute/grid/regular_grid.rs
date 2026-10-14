@@ -19,6 +19,14 @@ use crate::compute::ComputeError;
 /// The one implementation of "which voxel holds this point" and "which voxels
 /// lie within `r` of it" in `compute`.
 #[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(
+    feature = "serde",
+    derive(serde::Serialize),
+    serde(bound(
+        serialize = "[F; D]: serde::Serialize, [[F; D]; D]: serde::Serialize, \
+        [usize; D]: serde::Serialize, [bool; D]: serde::Serialize"
+    ))
+)]
 pub struct RegularGrid<const D: usize = 3> {
     origin: [F; D],
     basis: [[F; D]; D],

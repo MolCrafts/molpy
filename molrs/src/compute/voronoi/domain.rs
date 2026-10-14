@@ -11,6 +11,7 @@ use crate::core::Topology;
 /// The domains are themselves a [`Partition`] of the cells (key = domain id),
 /// so they feed any group reduction directly.
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct VoronoiDomainResult {
     /// Domain sizes (cells per domain), descending.
     pub sizes: Vec<usize>,

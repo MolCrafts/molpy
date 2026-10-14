@@ -18,6 +18,7 @@ const MAX_EXP_ARG: F = 700.0;
 
 /// Raman spectrum with its isotropic / anisotropic decomposition.
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct RamanSpectrumResult {
     /// Frequency grid in cm⁻¹, `n_fft / 2 + 1` points.
     pub frequencies_cm1: Array1<F>,

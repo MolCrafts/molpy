@@ -167,6 +167,7 @@ impl Compute for LocalDensity {
 
 /// One snapshot's local densities.
 #[derive(Debug, Clone, Default, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct LocalDensityResult {
     /// Fractional (or integer when `diameter = 0`) neighbor count per query
     /// point.

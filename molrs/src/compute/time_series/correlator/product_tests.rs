@@ -298,8 +298,26 @@ fn kernel_names_are_canonical() {
         LagKernel::WignerD { l: 4 },
         LagKernel::Persistence,
     ];
-    let names: Vec<&str> = kernels.iter().map(|k| k.name()).collect();
-    assert_eq!(names, LagKernel::NAMES);
+    let kinds: Vec<LagKernelKind> = kernels.iter().map(|k| k.kind()).collect();
+    assert_eq!(kinds, LagKernelKind::ALL);
+    for kernel in kernels {
+        assert_eq!(
+            LagKernel::new(kernel.kind(), kernel.order()).unwrap(),
+            kernel
+        );
+    }
+    assert!(matches!(
+        LagKernel::new(LagKernelKind::Legendre, None),
+        Err(ComputeError::OutOfRange { .. })
+    ));
+    assert!(matches!(
+        LagKernel::new(LagKernelKind::Product, Some(2)),
+        Err(ComputeError::OutOfRange { .. })
+    ));
+    assert!(matches!(
+        "spline".parse::<LagKernelKind>(),
+        Err(ComputeError::UnknownName { .. })
+    ));
     assert_eq!(LagKernel::Legendre { l: 2 }.to_string(), "legendre(l=2)");
     assert_eq!(LagKernel::Product.to_string(), "product");
     assert_eq!(LagKernel::WignerD { l: 4 }.order(), Some(4));

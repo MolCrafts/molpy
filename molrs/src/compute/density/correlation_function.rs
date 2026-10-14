@@ -172,6 +172,7 @@ impl Compute for CorrelationFunction {
 
 /// One snapshot's correlation function.
 #[derive(Debug, Clone, Default, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct CorrelationFunctionResult {
     /// Bin edges (length `n_bins + 1`).
     pub bin_edges: Array1<F>,

@@ -43,6 +43,7 @@ pub struct GyrationTensorInput<'a> {
 
 /// Per-group gyration tensors of one snapshot.
 #[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct GyrationTensorResult {
     /// The group key of each tensor, ascending.
     pub groups: Vec<u64>,

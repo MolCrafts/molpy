@@ -36,6 +36,7 @@ pub struct InertiaTensorInput<'a> {
 
 /// Per-group inertia tensors of one snapshot.
 #[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct InertiaTensorResult {
     /// The group key of each tensor, ascending.
     pub groups: Vec<u64>,

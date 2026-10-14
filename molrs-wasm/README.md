@@ -153,15 +153,23 @@ const report   = new Lbfgs(pots, nl.neighbors()).minimize(typed);  // pairs come
 ### Analysis (`molrs::compute`)
 
 ```js
-import { NeighborList, Rdf } from "@molcrafts/molrs";
+import { NeighborList, Rdf, Msd, LinearFit, Cluster, CenterOfMass, ComputeSpec } from "@molcrafts/molrs";
 
 const nl = new NeighborList(5.0);         // cutoff = 5.0 A, O(N) cell list
 nl.build(frame);                          // index only — no pair table
-const nlist = nl.neighbors();             // materialize: distSq + disp
+const pairs = nl.neighbors();             // materialize: distSq + disp
 
-const rdf = new Rdf(100, 5.0);
-const result = rdf.compute(frame);        // streams its own neighbor search
-console.log(result.binCenters(), result.rdf());
+// Constructor = configuration; compute({ ... }) = data, named as the core Input.
+const gr = new Rdf(100, 5.0, 0.0).compute([{ pairs }]);   // one object per frame
+console.log(gr.toJSON().rdf.data);
+
+const curve = new Msd(200).compute({ positions: traj, dt: 0.5 });  // TimeCorrelation
+const fit = new LinearFit(0.2, 0.8).compute({ correlation: curve, channel: 0 });
+
+const clusters = new Cluster(5).compute({ pairs });
+const com = new CenterOfMass().compute({ positions, partition: clusters, masses });
+
+ComputeSpec.all();                        // every compute: params, defaults, inputs
 ```
 
 A self search is **half-shell**: each unordered pair appears once, with
@@ -178,20 +186,23 @@ fabricated zero array. `disp` is the unnormalized minimum-image displacement
   `pointIndices()`, `distSq()`, `disp()`)
 - **`NeighborQuery`** — the cross search: `new NeighborQuery(refFrame, cutoff)`
   indexes a reference frame, `query(otherFrame)` returns the directed pairs
-- **`Rdf`** — radial distribution function (periodic and free-boundary)
-- **`Msd`** — mean squared displacement
-- **`Cluster`** — distance-based cluster analysis
-- **`Vacf`**, **`Steinhardt`**, **`HBonds`**, **`PmftXy`**, **`RadicalVoronoi`**,
-  **`DistributionFunction`**, … — one class per molrs analysis type, under its
-  Rust name
-- `staticDielectricConstant`, `hbondLifetimes`, `hbondComponents`,
-  `pairSurvivalTcf`, … — what molrs has as a free function is a free function
-- `computeCatalog()` lists every analysis with its parameters and how to
-  call it
-
-Neighbor searches support frames without a simulation box. RDF additionally
-needs a normalization volume: for a frame without a box, pass it as the fourth
-constructor argument, e.g. `new Rdf(100, 5.0, undefined, 1000.0)`.
+- **One class per entry of `ComputeSpec.all()`**, under its molrs name (`Rdf`,
+  `Msd`, `Correlator`, `Steinhardt`, `HBonds`, `PmftXy`, `RadicalVoronoi`, …).
+  The constructor takes the configuration only (optional parameters
+  `undefined` keep the molrs default; choices are their canonical names);
+  `compute(data)` takes one object whose fields are the core `Input`'s, with
+  the snake_case names `spec().inputs` lists. Shaped data is an `NDArray`, a
+  `{ dim, data }` object, or (for `N × 3` / `N × 4` rows) a flat array.
+- Every `compute` returns a **handle** of the molrs output type
+  (`TimeCorrelation`, `RdfResult`, `ClusterResult`, …): `toJSON()` gives its
+  data with the molrs field names, and the handle itself is what a downstream
+  compute takes (`TimeCorrelation` → `LinearFit`, `ClusterResult` →
+  `CenterOfMass`, `PcaResult` → `Kmeans`, `SteinhardtResult.qlm(6)` →
+  `SolidLiquid`).
+- `ComputeSpec.all()` / `ComputeSpec.find(name)` and each class's static
+  `spec()` serialise the molrs descriptors; `tunables()` reads an instance's
+  parameter values. Labels, units and ranges are the UI's.
+- Errors are the molrs `ComputeError`, thrown as an `Error`.
 
 ### Block column conventions
 

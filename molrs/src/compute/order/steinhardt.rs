@@ -172,6 +172,7 @@ impl Compute for Steinhardt {
 /// the order of [`l`](Self::l), followed by the `w_ℓ` columns when they were
 /// requested.
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct SteinhardtResult {
     /// ℓ values, in the order requested.
     pub l: Vec<u32>,

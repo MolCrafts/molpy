@@ -78,9 +78,11 @@ conformer = ["ff"]
 # the one `ff::potential::Potential`/`Potentials` seam, so it enables `ff`; its
 # kinetic observables (kinetic energy, centre-of-mass velocity) are `compute`'s.
 md        = ["ff", "compute"]
-# serde `Serialize`/`Deserialize` for the core model (Frame/Block/Column/SimBox).
-# No new deps — serde is already always-on; the feature just enables the impls.
-serde     = []
+# serde `Serialize`/`Deserialize` for the core model (Frame/Block/Column/SimBox)
+# and `Serialize` for the compute outputs (the WASM binding's results). No new
+# deps — serde is already always-on; the feature enables the impls, and
+# ndarray's for the outputs' array fields.
+serde     = ["ndarray/serde"]
 # Live Frame streaming — MolRec-aligned MessagePack/JSON encoding, plus native
 # WebSocket transport. On WASM only the wire codec is compiled. Not in `full`.
 stream    = ["serde", "dep:rmp-serde", "dep:tokio", "dep:tokio-tungstenite", "dep:futures-util"]

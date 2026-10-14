@@ -8,7 +8,7 @@
 //! |-----------|-------------|----------------|
 //! | `frame`   | `core::Frame` (via `molrs_ffi::FrameRef`) | `FrameRef`, `frame_*`, `KeyedMetaValue` |
 //! | `io`      | `io` | `read_xyz` / `write_xyz`, `read_mrec_frame` / `write_mrec_frame`, `read_mrec_trajectory_frame`, `MrecWriterRef` |
-//! | `compute` | `compute` | `Msd`, `EinsteinDiffusion`, `Vacf`, `Rdf`, `*Accumulator` |
+//! | `compute` | `compute` | `Msd`, `Vacf` (+ `CorrelatorAccumulator`), `TimeCorrelation`, `LinearFit`, `Rdf` (+ `RdfAccumulator`) |
 //! | `charge`  | `ff::charge` | `BccModel` (`bcc_model_new`, `assign`, `correct`) |
 //! | `region`  | `core::Region` (via `molrs_ffi::RegionRef`) | `RegionRef`, `region_*` |
 //!

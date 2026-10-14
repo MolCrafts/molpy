@@ -105,6 +105,7 @@ impl Compute for ContinuousCoordination {
 
 /// One snapshot's continuous coordination numbers.
 #[derive(Debug, Clone, Default)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct ContinuousCoordinationResult {
     /// ℓ of the `q_ℓm` the weights came from.
     pub l: u32,

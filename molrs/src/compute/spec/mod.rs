@@ -134,9 +134,6 @@ pub enum ParamKind {
     Grid,
     /// A `(start, end)` window of a curve, as fractions of its length.
     Range,
-    /// A [`LagKernel`](crate::compute::LagKernel): one of its `NAMES`, plus the
-    /// order `l` for `legendre` / `wigner_d`.
-    LagKernel,
     /// A [`UnitPreset`](molrs::core::UnitPreset), by name.
     Units,
 }

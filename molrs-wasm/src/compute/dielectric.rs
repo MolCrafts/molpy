@@ -1,85 +1,149 @@
-//! Static dielectric constant — WASM face of the `molrs::compute`
-//! dielectric family: `static_dielectric_constant` and
-//! `static_dielectric_constant_components`, free functions as in Rust and
-//! Python.
+//! Dipoles, the static dielectric constant and kinetic energy — the WASM face
+//! of `molrs::compute::{dielectric, kinetic}`.
+//!
+//! ```js
+//! const moments = new DipoleMoment().compute({ positions: traj, charges });
+//! const dipoles = moments.toJSON().moments;   // { dim: [T, 1, 3], data }
+//! const eps = new StaticDielectric("real").compute({
+//!     dipoles: { dim: [dipoles.dim[0], 3], data: dipoles.data },
+//!     volume, temperature: 300, boundary: "tin_foil",
+//! });
+//! ```
 
-use super::{array2, js_value};
-use molrs::op::F;
-use serde::Serialize;
+use molrs::compute::{self as mc, Compute};
 use wasm_bindgen::prelude::*;
 
-/// Neumann static dielectric constant from the fluctuation of the total
-/// dipole — molrs `compute::static_dielectric_constant`.
-///
-/// `dipoleMoments` is the flat `(nFrames, 3)` total dipole per frame (e Å),
-/// `volume` the box volume (Å³), `temperature` in K; `epsilonInf` defaults to
-/// 1 (conducting boundary).
-#[wasm_bindgen(js_name = staticDielectricConstant)]
-pub fn static_dielectric_constant(
-    dipole_moments: &[F],
-    n_frames: usize,
-    volume: F,
-    temperature: F,
-    epsilon_inf: Option<F>,
-) -> Result<F, JsValue> {
-    let dipoles = array2(
-        dipole_moments,
-        n_frames,
-        3,
-        "staticDielectricConstant dipoleMoments",
-    )?;
-    molrs::compute::static_dielectric_constant(
-        &dipoles,
-        volume,
-        temperature,
-        epsilon_inf.unwrap_or(1.0),
-    )
-    .map_err(|e| JsValue::from_str(&format!("staticDielectricConstant: {e}")))
+use super::config::{Given, unit_preset};
+use super::handle::{described, output};
+use super::wire::Fields;
+
+output! {
+    /// Kinetic energy `energy` and the Boltzmann constant `boltzmann` in the
+    /// configured units.
+    KineticEnergyResult => mc::KineticEnergyResult
 }
 
-/// The per-axis terms of [`staticDielectricConstant`](static_dielectric_constant)
-/// — molrs `compute::static_dielectric_constant_components`, a
-/// `StaticDielectricResult`: `{ eps, epsMean, fluctuation, dipoleMean,
-/// dipoleSqMean, epsilonInf, nFrames }`.
-#[wasm_bindgen(js_name = staticDielectricConstantComponents)]
-pub fn static_dielectric_constant_components(
-    dipole_moments: &[F],
-    n_frames: usize,
-    volume: F,
-    temperature: F,
-    epsilon_inf: Option<F>,
-) -> Result<JsValue, JsValue> {
-    #[derive(Serialize)]
-    #[serde(rename_all = "camelCase")]
-    struct Out {
-        eps: Vec<F>,
-        eps_mean: F,
-        fluctuation: Vec<F>,
-        dipole_mean: Vec<F>,
-        dipole_sq_mean: Vec<F>,
-        epsilon_inf: F,
-        n_frames: usize,
+#[wasm_bindgen]
+impl KineticEnergyResult {
+    /// The temperature these `nDof` degrees of freedom carry.
+    pub fn temperature(&self, n_dof: usize) -> Result<f64, JsError> {
+        Ok(self.inner.temperature(n_dof)?)
     }
-    let dipoles = array2(
-        dipole_moments,
-        n_frames,
-        3,
-        "staticDielectricConstantComponents dipoleMoments",
-    )?;
-    let c = molrs::compute::static_dielectric_constant_components(
-        &dipoles,
-        volume,
-        temperature,
-        epsilon_inf.unwrap_or(1.0),
-    )
-    .map_err(|e| JsValue::from_str(&format!("staticDielectricConstantComponents: {e}")))?;
-    js_value(&Out {
-        eps: c.eps.to_vec(),
-        eps_mean: c.eps_mean,
-        fluctuation: c.fluctuation.to_vec(),
-        dipole_mean: c.dipole_mean.to_vec(),
-        dipole_sq_mean: c.dipole_sq_mean.to_vec(),
-        epsilon_inf: c.epsilon_inf,
-        n_frames: c.n_frames,
-    })
 }
+
+output! {
+    /// Dipole moment per frame and group: `groups`, `moments` (`T × G × 3`).
+    DipoleMomentResult => mc::DipoleMomentResult
+}
+
+output! {
+    /// The static dielectric constant and its fluctuation terms.
+    StaticDielectricResult => mc::StaticDielectricResult
+}
+
+/// Kinetic energy of one snapshot: from a unit preset (`new`) or explicit
+/// constants (`withConstants`).
+#[wasm_bindgen]
+pub struct KineticEnergy {
+    inner: mc::KineticEnergy,
+}
+
+#[wasm_bindgen]
+impl KineticEnergy {
+    /// `units` is a registered unit preset name.
+    #[wasm_bindgen(constructor)]
+    pub fn new(units: &str) -> Result<KineticEnergy, JsError> {
+        Ok(Self {
+            inner: mc::KineticEnergy::new(unit_preset(units)?)?,
+        })
+    }
+
+    /// Explicit constants: `mvv2e` (the `mass · velocity²` → energy factor,
+    /// 1 for consistent units) and Boltzmann's constant `boltzmann` in that
+    /// energy unit, both positive.
+    #[wasm_bindgen(js_name = withConstants)]
+    pub fn with_constants(mvv2e: f64, boltzmann: f64) -> Result<KineticEnergy, JsError> {
+        Ok(Self {
+            inner: mc::KineticEnergy::with_constants(mvv2e, boltzmann)?,
+        })
+    }
+
+    /// `{ masses, velocities }`: `masses` is `N`, `velocities` `N × 3`.
+    pub fn compute(&self, data: &JsValue) -> Result<KineticEnergyResult, JsError> {
+        let data = Fields::new(data, "KineticEnergy")?;
+        let masses = data.reals("masses")?;
+        let velocities = data.matrix("velocities", Some(3))?;
+        let input = mc::KineticEnergyInput {
+            masses: masses.view(),
+            velocities: velocities.view(),
+        };
+        Ok(self.inner.compute(input)?.into())
+    }
+}
+
+/// Total (or per-group) dipole moment of every frame.
+#[wasm_bindgen]
+pub struct DipoleMoment {
+    inner: mc::DipoleMoment,
+}
+
+#[wasm_bindgen]
+impl DipoleMoment {
+    #[wasm_bindgen(constructor)]
+    #[allow(clippy::new_without_default)]
+    pub fn new() -> DipoleMoment {
+        Self {
+            inner: mc::DipoleMoment::new(),
+        }
+    }
+
+    /// `{ positions, charges, partition? }`: `positions` is `T × N × 3`.
+    pub fn compute(&self, data: &JsValue) -> Result<DipoleMomentResult, JsError> {
+        let data = Fields::new(data, "DipoleMoment")?;
+        let positions = data.cube("positions")?;
+        let charges = data.reals("charges")?;
+        let partition = data.opt_partition("partition")?;
+        let input = mc::DipoleMomentInput {
+            positions: positions.view(),
+            charges: charges.view(),
+            partition: partition.as_ref().map(|p| p.as_dyn()),
+        };
+        Ok(self.inner.compute(input)?.into())
+    }
+}
+
+/// The static dielectric constant from total-dipole fluctuations.
+#[wasm_bindgen]
+pub struct StaticDielectric {
+    inner: mc::StaticDielectric,
+}
+
+#[wasm_bindgen]
+impl StaticDielectric {
+    #[wasm_bindgen(constructor)]
+    pub fn new(units: &str, epsilon_inf: Option<f64>) -> Result<StaticDielectric, JsError> {
+        let inner = mc::StaticDielectric::new(unit_preset(units)?)
+            .given(epsilon_inf, |c, v| Ok(c.with_epsilon_inf(v)))?;
+        Ok(Self { inner })
+    }
+
+    /// `{ dipoles, volume, temperature, boundary }`: `dipoles` is `T × 3`,
+    /// `boundary` an [`EwaldBoundary`](mc::EwaldBoundary) name.
+    pub fn compute(&self, data: &JsValue) -> Result<StaticDielectricResult, JsError> {
+        let data = Fields::new(data, "StaticDielectric")?;
+        let dipoles = data.matrix("dipoles", Some(3))?;
+        let input = mc::StaticDielectricInput {
+            dipoles: dipoles.view(),
+            volume: data.scalar("volume")?,
+            temperature: data.scalar("temperature")?,
+            boundary: data.choice("boundary")?,
+        };
+        Ok(self.inner.compute(input)?.into())
+    }
+}
+
+described!(
+    KineticEnergy => mc::KineticEnergy,
+    DipoleMoment => mc::DipoleMoment,
+    StaticDielectric => mc::StaticDielectric,
+);

@@ -48,6 +48,7 @@ pub struct PolarizabilityPartsInput<'a> {
 
 /// The isotropic and anisotropic parts of a polarizability series.
 #[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct PolarizabilityPartsResult {
     /// Mean polarizability per frame, `T × 1`.
     pub isotropic: Array2<F>,

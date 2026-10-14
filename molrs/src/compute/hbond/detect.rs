@@ -13,6 +13,7 @@ use crate::op::vec3::{dot, norm, sub};
 
 /// A single detected D–H···A hydrogen bond (atom indices into the frame).
 #[derive(Debug, Clone, Copy, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct HBond {
     /// Donor heavy-atom index.
     pub donor: u32,
@@ -92,6 +93,7 @@ pub struct HBondsInput<'a> {
 
 /// Result of [`HBonds`]: the satisfied bonds per frame plus per-frame counts.
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct HBondsResult {
     /// `per_frame[t]` is the list of bonds detected in frame `t`.
     pub per_frame: Vec<Vec<HBond>>,

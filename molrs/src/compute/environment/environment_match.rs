@@ -362,6 +362,7 @@ impl Compute for EnvironmentMatch {
 
 /// One snapshot's environment classes; a [`Partition`] of the particles.
 #[derive(Debug, Clone, Default)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct EnvironmentMatchResult {
     /// Particle → environment-class label (`0..n_clusters`), classes numbered
     /// in order of their lowest particle.

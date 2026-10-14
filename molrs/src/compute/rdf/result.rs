@@ -22,6 +22,7 @@ use ndarray::Array1;
 ///   reference neighbours, both orderings present — so it is not:
 ///   `g = n(r) / (N_a N_b V_shell / V · n_frames)`.
 #[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct RdfResult {
     /// Bin edges in angstrom (n_bins + 1).
     pub bin_edges: Array1<F>,

@@ -16,7 +16,7 @@
 //! `AngularSeparationNeighbor`
 //! ([source](https://github.com/glotzerlab/freud/blob/main/freud/environment/AngularSeparation.cc)):
 //!
-//! - [`AngularSeparationGlobal`]: dense `(N_query × N_global)` table between
+//! - [`AngularSeparationGlobal`]: dense `(N_query × N_reference)` table between
 //!   every query orientation and every reference orientation.
 //! - [`AngularSeparationNeighbor`]: sparse, one angular distance per neighbor
 //!   pair.
@@ -40,7 +40,7 @@ fn angular_distance(q1: Quat, q2: Quat, equivalent_orientations: bool) -> F {
 }
 
 // ---------------------------------------------------------------------------
-// Global: dense (N_query × N_global) table
+// Global: dense (N_query × N_reference) table
 // ---------------------------------------------------------------------------
 
 /// Dense angular separation between query and reference orientations.
@@ -58,8 +58,8 @@ pub struct AngularSeparationGlobal {
 pub struct AngularSeparationGlobalInput<'a> {
     /// Query quaternions, `N_query × 4`.
     pub query: ArrayView2<'a, F>,
-    /// Reference quaternions, `N_global × 4`.
-    pub global: ArrayView2<'a, F>,
+    /// Reference quaternions, `N_reference × 4`.
+    pub reference: ArrayView2<'a, F>,
 }
 
 impl Default for AngularSeparationGlobal {
@@ -97,14 +97,14 @@ impl Compute for AngularSeparationGlobal {
         input: AngularSeparationGlobalInput<'_>,
     ) -> Result<AngularSeparationGlobalResult, ComputeError> {
         let query = require_quaternions(input.query, "query")?;
-        let global = require_quaternions(input.global, "global")?;
-        if query.is_empty() || global.is_empty() {
+        let reference = require_quaternions(input.reference, "reference")?;
+        if query.is_empty() || reference.is_empty() {
             return Err(ComputeError::EmptyInput);
         }
-        // O(n_query × n_global) by definition: the observable *is* the full
+        // O(n_query × n_reference) by definition: the observable *is* the full
         // matrix of pairwise angular distances.
-        let angles = Array2::from_shape_fn((query.len(), global.len()), |(i, j)| {
-            angular_distance(query[i], global[j], self.equivalent_orientations)
+        let angles = Array2::from_shape_fn((query.len(), reference.len()), |(i, j)| {
+            angular_distance(query[i], reference[j], self.equivalent_orientations)
         });
         Ok(AngularSeparationGlobalResult { angles })
     }
@@ -208,13 +208,15 @@ impl Compute for AngularSeparationNeighbor {
 
 /// The dense angular-separation table.
 #[derive(Debug, Clone, Default)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct AngularSeparationGlobalResult {
-    /// `(n_query, n_global)` table of angular distances (radians).
+    /// `(n_query, n_reference)` table of angular distances (radians).
     pub angles: Array2<F>,
 }
 
 /// The per-pair angular separations.
 #[derive(Debug, Clone, Default)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct AngularSeparationNeighborResult {
     /// One angle per neighbor pair, in radians; index matches the
     /// underlying [`Neighbors`] pair index.
@@ -229,7 +231,7 @@ crate::compute::spec::compute_spec! {
     }
     inputs {
         query: Quaternions;
-        global: Quaternions;
+        reference: Quaternions;
     }
 }
 
@@ -295,7 +297,7 @@ mod tests {
         let r = &AngularSeparationGlobal::new()
             .compute(AngularSeparationGlobalInput {
                 query: q.view(),
-                global: g.view(),
+                reference: g.view(),
             })
             .unwrap();
         assert_eq!(r.angles.dim(), (2, 1));
@@ -312,7 +314,7 @@ mod tests {
         let err = AngularSeparationGlobal::new()
             .compute(AngularSeparationGlobalInput {
                 query: none.view(),
-                global: g.view(),
+                reference: g.view(),
             })
             .unwrap_err();
         assert!(matches!(err, ComputeError::EmptyInput));
@@ -327,7 +329,7 @@ mod tests {
         let err = AngularSeparationGlobal::new()
             .compute(AngularSeparationGlobalInput {
                 query: q.view(),
-                global: g.view(),
+                reference: g.view(),
             })
             .unwrap_err();
         assert!(matches!(err, ComputeError::OutOfRange { .. }));

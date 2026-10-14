@@ -241,8 +241,21 @@ each item after the molrs owner it fronts:
 | `read_xyz`, `write_xyz` (one frame; `append` adds it after the frames already there) | `io::read_xyz`, `io::xyz::XyzWriter` |
 | `read_mrec_frame`, `write_mrec_frame` | `io::read_mrec_frame`, `io::write_mrec_frame` (a record's `frame` section) |
 | `read_mrec_trajectory_frame`, `MrecWriterRef` (`mrec_writer_create` / `open` / `append` / `flush` / `committed` / `close`) | `io::mrec::MrecReader::frame`, `io::mrec::MrecWriter` |
-| `Msd`, `EinsteinDiffusion`, `Vacf`, `Rdf`, `RdfAccumulator`, `MsdAccumulator`, `VacfAccumulator` | `compute::` the same names |
+| `Msd` (`msd_new(max_lag)`, `set_origins`), `Vacf` (`vacf_new(max_lag)`) — `compute(...)` over a whole trajectory, `accumulator()` → `CorrelatorAccumulator` (`push` one frame, `n_frames`, `finish`) | `compute::Msd`, `compute::Vacf`, `compute::CorrelatorAccumulator` (`Stream` / `Accumulate`) |
+| `TimeCorrelation` (`lag_times`, `n_lags`, `n_channels`, `channel`) | `compute::TimeCorrelation` |
+| `LinearFit` (`linear_fit_new(start, end)`, `compute(correlation, channel)` → `LinearFitResult`) | `compute::LinearFit` (Einstein `D = slope / 2d` of an `Msd` curve) |
+| `Rdf` (`rdf_new(n_bins, r_max, r_min)`, `compute(positions, boxes, n_frames)` → `RdfResult`), `accumulator()` → `RdfAccumulator` (`push(positions, h)`, `n_frames`, `finish`) | `compute::Rdf`, `compute::RdfAccumulator` over a `core::NeighborList` self-query |
 | `BccModel` (`bcc_model_new`, `assign`, `correct`) | `ff::charge::BccModel` (`BccParameterSet::from_name`, `assign`, `correct`) |
+
+The compute items follow the molrs contract: a constructor takes
+configuration only, `compute` takes a whole trajectory and the accumulator
+takes one frame per `push`. A trajectory crosses as a flat row-major
+`[n_frames, D·n]` buffer, each frame blocked by component (`x|y|z` positions,
+or `n_dof` velocity values), and a box as its 9-value H; an optional box is an
+empty slice. Every fallible call returns `Result`, so a bad argument, a ragged
+buffer or a compute error throws `rust::Error` — no call answers an error with
+an empty curve, a NaN or `false`. There is no fused MSD-plus-fit call: the
+diffusion coefficient is `Msd` → `TimeCorrelation` → `LinearFit`.
 
 In-house Rust consumers (molpack, the binders) do **not** go through this C
 ABI — they take Path A or Path B directly, and every one of them links molrs

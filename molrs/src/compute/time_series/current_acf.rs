@@ -151,7 +151,7 @@ mod tests {
         let current = rng_series(n, 3, 19);
 
         let raw = current_acf(&current, dt, mct).unwrap();
-        let jacf = raw.channel(0).to_owned();
+        let jacf = raw.channel(0).unwrap().to_owned();
         let integ = CumulativeTrapezoid::new()
             .compute(CumulativeTrapezoidInput {
                 correlation: &raw,
@@ -159,6 +159,7 @@ mod tests {
             })
             .unwrap()
             .channel(0)
+            .unwrap()
             .to_owned();
 
         let mut manual = 0.0;

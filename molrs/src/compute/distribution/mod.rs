@@ -171,6 +171,7 @@ impl<O: Observable> Accumulate for DistributionAccumulator<O> {
 /// observable, `density_sin_corrected` is `density / sin θ` renormalized to
 /// unit integral (the solid-angle-corrected ADF).
 #[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct DistributionResult {
     /// Per-bin counts summed across frames; its axis gives the edges and
     /// centres (in the observable's units, Å or radians).
