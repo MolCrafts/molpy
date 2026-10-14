@@ -107,7 +107,10 @@ pub trait Accumulate {
 /// The algorithm lives once, in the accumulator: a `Stream` type's
 /// [`compute`](Compute::compute) body is exactly
 /// `self.accumulator().fold(items)`, so batch and streaming answers cannot
-/// drift apart.
+/// drift apart. The one exception is an estimator with a faster batch
+/// algorithm than its fold — the [`Correlator`](crate::compute::Correlator)'s
+/// FFT — whose `compute` stays the batch algorithm; its unit tests pin the
+/// two equal at every output point.
 pub trait Stream: Compute {
     /// The accumulator this configuration produces.
     type Accumulator: Accumulate<Output = Self::Output>;

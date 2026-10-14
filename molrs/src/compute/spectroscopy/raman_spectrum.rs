@@ -1,10 +1,9 @@
 //! Raman spectrum transform (window + FFT + cross-section/Bose prefactors).
 
 use ndarray::Array1;
-use rustfft::FftPlanner;
 
 use super::spectra::RamanSpectrumResult;
-use super::{acf_to_intensities, acf_to_spectrum, bose_factor, cosine_sq_window};
+use super::{bose_factor, cosine_sq_spectrum};
 use crate::compute::ComputeError;
 use crate::compute::Fit;
 
@@ -15,8 +14,8 @@ const PERPENDICULAR_DENOM: f64 = 15.0;
 
 /// Raman spectrum transform of **raw isotropic + anisotropic ACFs**.
 ///
-/// Applies the one CosineSq window (`cosine_sq_window`)
-/// to each ACF, FFTs both (reusing the isotropic frequency grid), and applies
+/// Applies the one cos²-windowed spectrum (`cosine_sq_spectrum`) to each
+/// ACF on one frequency grid, and applies
 /// the cross-section (`(ν₀ − ν)⁴ / ν`) and Bose (`1/(1 − exp(−hcν/kT))`)
 /// prefactors. The raw iso/aniso ACFs come from the
 /// [`RamanTensor`](super::RamanTensor) raw compute.
@@ -64,15 +63,9 @@ impl Fit for RamanSpectrum {
         }
 
         let max_lag = n - 1;
-        // Pre-compute the CosineSq window once and apply it to both ACFs.
-        let window = cosine_sq_window(max_lag + 1);
-        let win_iso: Array1<f64> = acf_iso.iter().zip(&window).map(|(a, w)| a * w).collect();
-        let win_aniso: Array1<f64> = acf_aniso.iter().zip(&window).map(|(a, w)| a * w).collect();
-
-        let mut planner = FftPlanner::new();
-        let n_pad = (4 * (max_lag + 1)).next_power_of_two();
-        let (frequencies_cm1, raw_iso) = acf_to_spectrum(&mut planner, &win_iso, dt_fs, n_pad);
-        let raw_aniso = acf_to_intensities(&mut planner, &win_aniso, n_pad);
+        // The same cos²-windowed spectrum of both ACFs, on one grid.
+        let (frequencies_cm1, raw_iso) = cosine_sq_spectrum(acf_iso, dt_fs)?;
+        let (_, raw_aniso) = cosine_sq_spectrum(acf_aniso, dt_fs)?;
 
         let mut iso_int = raw_iso;
         let mut aniso_int = raw_aniso;
@@ -124,8 +117,8 @@ mod tests {
     use super::super::raman_tensor::RamanTensor;
     use super::*;
     use crate::compute::LegacyCompute;
+    use crate::compute::time_series::test_support::{assert_close, direct_lagged_sum};
     use molrs::core::Frame;
-    use molrs::signal as sig;
     use ndarray::Array2;
 
     /// Empty frame slice for the series-based raw computes.
@@ -133,7 +126,8 @@ mod tests {
         Vec::new()
     }
 
-    /// Rebuild the raw iso/aniso ACFs the RamanTensor compute / RamanSpectrum consume.
+    /// The raw iso/aniso ACFs the RamanTensor compute / RamanSpectrum
+    /// consume, written out.
     fn raman_acfs(pol: &Array2<f64>, dt_fs: f64, max_lag: usize) -> (Array1<f64>, Array1<f64>) {
         const DIAG_W: f64 = 0.5;
         const OFFDIAG_W: f64 = 3.0;
@@ -156,14 +150,11 @@ mod tests {
             comps[4].push((q[4] - p[4]) * inv_2dt);
             comps[5].push((q[5] - p[5]) * inv_2dt);
         }
-        let mut planner = FftPlanner::new();
-        let iso_series = Array1::from_vec(iso);
-        let acf_iso = sig::acf_fft_with_planner(&mut planner, &iso_series, max_lag).unwrap();
+        let acf_iso = Array1::from_vec(direct_lagged_sum(&iso, &iso, max_lag));
         let mut acf_aniso = Array1::<f64>::zeros(max_lag + 1);
-        for (c, comp) in comps.iter_mut().enumerate() {
+        for (c, comp) in comps.iter().enumerate() {
             let w = if c < 3 { DIAG_W } else { OFFDIAG_W };
-            let col = Array1::from_vec(std::mem::take(comp));
-            let acf = sig::acf_fft_with_planner(&mut planner, &col, max_lag).unwrap();
+            let acf = direct_lagged_sum(comp, comp, max_lag);
             for k in 0..=max_lag {
                 acf_aniso[k] += w * acf[k];
             }
@@ -171,10 +162,20 @@ mod tests {
         (acf_iso, acf_aniso)
     }
 
+    fn close(got: &Option<Array1<f64>>, want: &Option<Array1<f64>>, what: &str) {
+        let (got, want) = (got.as_ref().unwrap(), want.as_ref().unwrap());
+        assert_close(
+            got.as_slice().unwrap(),
+            want.as_slice().unwrap(),
+            1e-12,
+            what,
+        );
+    }
+
     #[test]
     fn ramantensor_plus_raman_transform_matches_manual_acf_path() {
-        // ac-003/ac-007 (Raman): RamanTensor returns the unwindowed iso/aniso
-        // ACFs; RamanTensor + RamanSpectrum == manual path (iso/aniso/par/perp).
+        // RamanTensor returns the unwindowed iso/aniso ACFs; RamanTensor +
+        // RamanSpectrum == manual path (iso/aniso/par/perp).
         let n = 256;
         let dt = 0.5;
         let res = 60;
@@ -193,13 +194,21 @@ mod tests {
         }
         let incident = 10000.0;
         let temp = 300.0;
-        let flux_len = n - 2;
-        let max_lag = res.min(flux_len - 1);
-        let (acf_iso, acf_aniso) = raman_acfs(&pol, dt, max_lag);
+        let (acf_iso, acf_aniso) = raman_acfs(&pol, dt, res);
 
         let raw = RamanTensor.compute(&no_frames(), (&pol, dt, res)).unwrap();
-        assert_eq!(raw.acf_iso, acf_iso); // raw, unwindowed.
-        assert_eq!(raw.acf_aniso, acf_aniso);
+        assert_close(
+            raw.acf_iso.as_slice().unwrap(),
+            acf_iso.as_slice().unwrap(),
+            1e-12,
+            "iso",
+        );
+        assert_close(
+            raw.acf_aniso.as_slice().unwrap(),
+            acf_aniso.as_slice().unwrap(),
+            1e-12,
+            "aniso",
+        );
 
         let fit = RamanSpectrum {
             incident_frequency_cm1: incident,
@@ -209,10 +218,27 @@ mod tests {
         let from_raw = fit.fit((&raw.acf_iso, &raw.acf_aniso, dt)).unwrap();
         let from_manual = fit.fit((&acf_iso, &acf_aniso, dt)).unwrap();
         assert_eq!(from_raw.frequencies_cm1, from_manual.frequencies_cm1);
-        assert_eq!(from_raw.isotropic, from_manual.isotropic);
-        assert_eq!(from_raw.anisotropic, from_manual.anisotropic);
-        assert_eq!(from_raw.parallel, from_manual.parallel);
-        assert_eq!(from_raw.perpendicular, from_manual.perpendicular);
+        for (got, want, what) in [
+            (&from_raw.isotropic, &from_manual.isotropic, "isotropic"),
+            (
+                &from_raw.anisotropic,
+                &from_manual.anisotropic,
+                "anisotropic",
+            ),
+        ] {
+            assert_close(
+                got.as_slice().unwrap(),
+                want.as_slice().unwrap(),
+                1e-12,
+                what,
+            );
+        }
+        close(&from_raw.parallel, &from_manual.parallel, "parallel");
+        close(
+            &from_raw.perpendicular,
+            &from_manual.perpendicular,
+            "perpendicular",
+        );
     }
 
     #[test]

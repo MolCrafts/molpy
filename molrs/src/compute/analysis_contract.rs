@@ -72,7 +72,7 @@ pub trait LegacyCompute {
 /// Fit / smooth / spectral-transform an **upstream compute result** into a
 /// scalar, curve, or spectrum.
 ///
-/// `Fit` is the companion of [`Compute`]: where a `Compute` consumes raw
+/// `Fit` is the companion of [`LegacyCompute`]: where a `Compute` consumes raw
 /// frames and produces a raw observable (MSD curve, ACF, …), a `Fit` consumes
 /// that observable — a single [`Array1<f64>`](ndarray::Array1) curve or a
 /// metadata-carrying raw result — and produces a derived quantity (an OLS
@@ -128,7 +128,7 @@ pub trait Fit {
 
 /// Judge an **upstream result** against physics and return a verdict.
 ///
-/// The third stage after [`Compute`] (frames → raw observable) and [`Fit`]
+/// The third stage after [`LegacyCompute`] (frames → raw observable) and [`Fit`]
 /// (raw observable → derived quantity). A `Check` consumes what those produce
 /// — a spectrum, a set of route results — and reports whether it is
 /// physically self-consistent.

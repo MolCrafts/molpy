@@ -1,10 +1,9 @@
 //! VCD spectrum transform.
 
 use ndarray::Array1;
-use rustfft::FftPlanner;
 
+use super::cosine_sq_spectrum;
 use super::spectra::SpectrumResult;
-use super::window_and_fft;
 use crate::compute::ComputeError;
 use crate::compute::Fit;
 
@@ -12,7 +11,7 @@ use crate::compute::Fit;
 /// cross-correlation** `⟨μ̇(0)·ṁ(τ)⟩` from [`VcdCrossFlux`](super::VcdCrossFlux).
 ///
 /// Identical window + one-sided FFT pipeline as [`IrSpectrum`](super::IrSpectrum)
-/// (calls `window_and_fft`), so the cm⁻¹ grid matches
+/// (calls `cosine_sq_spectrum`), so the cm⁻¹ grid matches
 /// IR/Raman exactly — only the supplied cross-correlation differs. The
 /// resulting intensities are **signed**: enantiomers produce sign-flipped
 /// spectra and an achiral system gives ≈ 0.
@@ -41,8 +40,7 @@ impl Fit for VcdSpectrum {
                 value: dt_fs.to_string(),
             });
         }
-        let mut planner = FftPlanner::new();
-        let (frequencies_cm1, intensities) = window_and_fft(&mut planner, acf, dt_fs)?;
+        let (frequencies_cm1, intensities) = cosine_sq_spectrum(acf, dt_fs)?;
         Ok(SpectrumResult {
             frequencies_cm1,
             intensities,

@@ -2,7 +2,7 @@
 //!
 //! The window + one-sided-FFT machinery lives in
 //! [`compute::spectroscopy`](crate::compute::spectroscopy) (a windowed
-//! transform is a fit), routing every window through [`molrs::signal`]. This
+//! transform is a fit), routing every window through [`Window`](crate::compute::Window). This
 //! file holds the two result types and the shared input validator.
 
 use ndarray::Array1;

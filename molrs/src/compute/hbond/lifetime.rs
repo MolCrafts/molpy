@@ -1,13 +1,11 @@
 //! Hydrogen-bond lifetime correlation functions.
 
 use molrs::op::F;
-use molrs::signal as sig;
-use ndarray::Array1;
-use rustfft::FftPlanner;
+use ndarray::{Array1, Array2};
 use std::collections::HashMap;
 
 use super::detect::HBondsResult;
-use crate::compute::ComputeError;
+use crate::compute::{Compute, ComputeError, Survival, SurvivalInput, SurvivalKind};
 
 /// Lifetime TCFs for a set of bond presence series.
 #[derive(Debug, Clone)]
@@ -50,10 +48,8 @@ fn trapz(y: &Array1<F>, dt: F) -> F {
 /// S_HB(t) = ⟨h(0) Θ(t) h(t)⟩ / ⟨h⟩       (continuous — bond never broke in [0,t])
 /// ```
 ///
-/// The continuous / intermittent accumulation mirrors molrs's
-/// [`pair_survival_tcf`](crate::compute::pair_survival_tcf) exactly
-/// (`SurvivalMethod::Continuous` walks forward until the first absence;
-/// `Intermittent` counts every lag where the bond is present).
+/// Both curves are the [`Survival`] correlation of the presence series
+/// (`SurvivalKind::Continuous` / `Intermittent`), normalised to 1 at lag 0.
 ///
 /// **Documented deviation:** `pair_survival_tcf`'s presence model is a *distance*
 /// cutoff and cannot express the D–H···A *angle* criterion, so its API cannot be
@@ -90,36 +86,28 @@ pub fn hbond_lifetimes(
     let max_lag = max_lag.min(n_frames - 1);
     let n_series = present.len();
 
-    // acc_*[tau] = Σ over (bond, origin t0) of the survival indicator at lag tau.
-    //
-    // Continuous (`acc_c`) stops at the first absence — a forward walk, not an
-    // autocorrelation — so it stays a direct sum. Intermittent (`acc_i`) counts
-    // every present lag: `acc_i[tau] = Σ_series Σ_{t0} h[t0]·h[t0+tau]`, i.e. the
-    // un-normalized autocorrelation of the binary presence series (Wiener–
-    // Khinchin), evaluated in O(n log n) per series with the FFT. Each series is
-    // independent, so both accumulators fan out over series and reduce.
-    let (acc_c, acc_i) = accumulate_survival(present, n_frames, max_lag);
-    let acc_c = acc_c.as_slice().expect("contiguous acc_c");
-    let acc_i = acc_i.as_slice().expect("contiguous acc_i");
-
-    // Per-lag normalization: divide by the number of valid (bond, origin) pairs
-    // at that lag → ⟨h(0)h(tau)⟩, then divide by the tau=0 value so C(0)=1.
-    let mut cont = Array1::<F>::zeros(max_lag + 1);
-    let mut inter = Array1::<F>::zeros(max_lag + 1);
-    let mean = |acc: &[f64], tau: usize| -> F {
-        let n_pairs = (n_series * (n_frames - tau)) as F;
-        if n_pairs > 0.0 {
-            acc[tau] / n_pairs
+    // ⟨h(0) h(t)⟩ (intermittent) and ⟨h(0) Θ(t) h(t)⟩ (continuous) per
+    // (bond, origin), then normalised so the curve is 1 at lag 0.
+    let presence = Array2::from_shape_fn((n_frames, n_series), |(t, bond)| {
+        if present[bond][t] { 1.0 } else { 0.0 }
+    });
+    let survival = |kind| -> Result<Array1<F>, ComputeError> {
+        let mean = Survival::new(kind, max_lag)
+            .compute(SurvivalInput {
+                presence: presence.view(),
+                dt,
+            })?
+            .channel(0)
+            .to_owned();
+        let at_zero = mean[0];
+        Ok(if at_zero > 0.0 {
+            mean / at_zero
         } else {
-            0.0
-        }
+            Array1::zeros(max_lag + 1)
+        })
     };
-    let c0 = mean(acc_c, 0);
-    let i0 = mean(acc_i, 0);
-    for tau in 0..=max_lag {
-        cont[tau] = if c0 > 0.0 { mean(acc_c, tau) / c0 } else { 0.0 };
-        inter[tau] = if i0 > 0.0 { mean(acc_i, tau) / i0 } else { 0.0 };
-    }
+    let cont = survival(SurvivalKind::Continuous)?;
+    let inter = survival(SurvivalKind::Intermittent)?;
 
     let lag_times = Array1::from_iter((0..=max_lag).map(|i| i as F * dt));
     let tau_continuous = trapz(&cont, dt);
@@ -132,76 +120,6 @@ pub fn hbond_lifetimes(
         tau_continuous,
         tau_intermittent,
     })
-}
-
-/// Accumulate the continuous and intermittent survival numerators over all
-/// presence series.
-///
-/// For one series `h`:
-/// * continuous `c[tau]` — count origins `t0` (present) whose bond survives
-///   unbroken through lag `tau` (walk forward, stop at the first absence);
-/// * intermittent `i[tau]` — the un-normalized autocorrelation
-///   `Σ_{t0} h[t0]·h[t0+tau]`, computed via FFT (Wiener–Khinchin).
-///
-/// Series are independent, so with `rayon` the per-series `(c, i)` pairs are
-/// produced in parallel — each worker reusing its own `FftPlanner` — and summed
-/// by the reduction. `acf_fft_with_planner` cannot error here: `max_lag` is
-/// clamped to `n_frames − 1 < n_frames = series length`.
-fn accumulate_survival(
-    present: &[Vec<bool>],
-    n_frames: usize,
-    max_lag: usize,
-) -> (Array1<f64>, Array1<f64>) {
-    let per_series = |planner: &mut FftPlanner<f64>, h: &Vec<bool>| -> (Array1<f64>, Array1<f64>) {
-        // Continuous: forward survival with an early break at the first absence.
-        let mut c = Array1::<f64>::zeros(max_lag + 1);
-        for t0 in 0..n_frames {
-            if !h[t0] {
-                continue;
-            }
-            let lmax = max_lag.min(n_frames - 1 - t0);
-            c[0] += 1.0;
-            for tau in 1..=lmax {
-                if h[t0 + tau] {
-                    c[tau] += 1.0;
-                } else {
-                    break;
-                }
-            }
-        }
-        // Intermittent: FFT autocorrelation of the 0/1 presence series.
-        let series = Array1::from_iter(h.iter().map(|&b| if b { 1.0 } else { 0.0 }));
-        let i = sig::acf_fft_with_planner(planner, &series, max_lag)
-            .expect("max_lag < n_frames guaranteed by clamp");
-        (c, i)
-    };
-
-    let zeros = || {
-        (
-            Array1::<f64>::zeros(max_lag + 1),
-            Array1::<f64>::zeros(max_lag + 1),
-        )
-    };
-
-    #[cfg(feature = "rayon")]
-    {
-        use rayon::prelude::*;
-        present
-            .par_iter()
-            .map_init(FftPlanner::<f64>::new, |planner, h| per_series(planner, h))
-            .reduce(zeros, |(ca, ia), (cb, ib)| (ca + cb, ia + ib))
-    }
-    #[cfg(not(feature = "rayon"))]
-    {
-        let mut planner = FftPlanner::<f64>::new();
-        let (mut acc_c, mut acc_i) = zeros();
-        for h in present {
-            let (c, i) = per_series(&mut planner, h);
-            acc_c += &c;
-            acc_i += &i;
-        }
-        (acc_c, acc_i)
-    }
 }
 
 /// Build per-bond presence series from an [`HBondsResult`], keyed by the ordered
@@ -228,4 +146,42 @@ pub fn presence_from_hbonds(res: &HBondsResult) -> (Vec<(u32, u32)>, Vec<Vec<boo
         }
     }
     (keys, present)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// One bond present at frames 0, 1, 3, 4, 5 (absent at 2), dt = 0.5.
+    #[test]
+    fn lifetimes_by_hand() {
+        let present = vec![vec![true, true, false, true, true, true]];
+        let res = hbond_lifetimes(&present, 0.5, 3).unwrap();
+        // ⟨h⟩ = 5/6. Continuous: 3/5 and 1/4 unbroken, then none; gapped:
+        // 3/5, 2/4, 2/3 — each divided by ⟨h⟩.
+        let h = 5.0 / 6.0;
+        let continuous = [1.0, 0.6 / h, 0.25 / h, 0.0];
+        let intermittent = [1.0, 0.6 / h, 0.5 / h, (2.0 / 3.0) / h];
+        for lag in 0..=3 {
+            assert!(
+                (res.continuous[lag] - continuous[lag]).abs() < 1e-12,
+                "S({lag})"
+            );
+            assert!(
+                (res.intermittent[lag] - intermittent[lag]).abs() < 1e-12,
+                "C({lag})"
+            );
+        }
+        let trapz = |y: &[F]| y.windows(2).map(|w| 0.25 * (w[0] + w[1])).sum::<F>();
+        assert!((res.tau_continuous - trapz(&continuous)).abs() < 1e-12);
+        assert!((res.tau_intermittent - trapz(&intermittent)).abs() < 1e-12);
+        assert_eq!(res.lag_times.to_vec(), vec![0.0, 0.5, 1.0, 1.5]);
+    }
+
+    #[test]
+    fn a_bond_that_never_forms_gives_zero_curves() {
+        let res = hbond_lifetimes(&[vec![false; 4]], 1.0, 2).unwrap();
+        assert!(res.continuous.iter().all(|v| *v == 0.0));
+        assert!(res.intermittent.iter().all(|v| *v == 0.0));
+    }
 }

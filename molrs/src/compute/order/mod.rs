@@ -8,8 +8,6 @@
 //! | [`Cubatic`] | cubatic order parameter via simulated annealing |
 //! | [`SolidLiquid`] | Frenkel–ten Wolde solid/liquid bond classification from `q_ℓm` |
 //! | [`ContinuousCoordination`] | continuous (Voronoi-weighted) coordination numbers |
-//! | [`LegendreReorientation`] | Legendre reorientational TCFs `C_ℓ(t)` over lag time |
-//! | [`RotationalAutocorrelation`] | rotational autocorrelation of an orientation time series |
 //!
 //! Every method is a [`Compute`](crate::compute::Compute): construct with its
 //! parameters, then `compute(&frames, args)` — `args` carries per-frame
@@ -19,8 +17,6 @@ mod continuous_coordination;
 mod cubatic;
 mod hexatic;
 mod nematic;
-mod reorientation_legendre;
-mod rotational_autocorrelation;
 mod solid_liquid;
 mod steinhardt;
 
@@ -28,9 +24,5 @@ pub use continuous_coordination::{ContinuousCoordination, ContinuousCoordination
 pub use cubatic::{Cubatic, CubaticResult};
 pub use hexatic::{Hexatic, HexaticResult};
 pub use nematic::{Nematic, NematicResult};
-pub use reorientation_legendre::{LegendreReorientation, LegendreReorientationResult};
-pub use rotational_autocorrelation::{
-    RotationalAutocorrelation, RotationalAutocorrelationArgs, RotationalAutocorrelationResult,
-};
 pub use solid_liquid::{SolidLiquid, SolidLiquidResult};
 pub use steinhardt::{Steinhardt, SteinhardtResult, steinhardt_qlm};

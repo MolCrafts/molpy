@@ -4,11 +4,11 @@
 use molrs::core::FrameAccess;
 use ndarray::Array2;
 
-use super::{central_diff_series, sum_column_xcorr};
+use super::{central_flux, raw_column_correlation};
 use crate::compute::ComputeError;
 use crate::compute::ComputeResult;
 use crate::compute::LegacyCompute;
-use crate::compute::lag_times;
+use crate::compute::Reduction;
 
 /// Raw VCD cross-correlation — the VCD-spectrum raw input.
 #[derive(Debug, Clone)]
@@ -77,12 +77,12 @@ impl LegacyCompute for VcdCrossFlux {
         }
         let flux_len = n_frames - 2;
         let max_lag = resolution.min(flux_len.saturating_sub(1));
-        let mu_dot = central_diff_series(electric, dt);
-        let m_dot = central_diff_series(magnetic, dt);
-        let acf = sum_column_xcorr(&mu_dot, &m_dot, max_lag);
+        let mu_dot = central_flux(electric, dt)?;
+        let m_dot = central_flux(magnetic, dt)?;
+        let raw = raw_column_correlation(&mu_dot, Some(&m_dot), max_lag, dt, Reduction::Mean)?;
         Ok(VcdCrossFluxResult {
-            lag_times: lag_times(max_lag, dt),
-            acf,
+            acf: raw.channel(0).to_owned(),
+            lag_times: raw.lag_times,
         })
     }
 }

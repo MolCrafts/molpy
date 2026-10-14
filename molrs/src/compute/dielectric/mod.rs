@@ -1,5 +1,9 @@
 //! Dielectric raw observables + static dielectric constant.
 
+mod ewald_boundary;
+
+pub use ewald_boundary::EwaldBoundary;
+
 use ndarray::{Array1, Array2, Array3};
 
 use crate::compute::ComputeError;
@@ -152,10 +156,9 @@ pub fn current_density(
 /// [`current_density`] and [`decompose_current`].
 ///
 /// The frequency-dependent permittivity ε*(ω) = ε′(ω) − i·ε″(ω) is **not**
-/// computed by these functions: the raw fluctuation dipole / current ACFs come from the
-/// [`DebyeRelaxation`](crate::compute::DebyeRelaxation) /
-/// [`GreenKuboConductivity`](crate::compute::GreenKuboConductivity) raw
-/// computes, and the window + FFT + prefactor transform is the
+/// computed by these functions: the raw fluctuation dipole / current ACFs come from
+/// [`DipoleAcf`](crate::compute::DipoleAcf) /
+/// [`CurrentAcf`](crate::compute::CurrentAcf), and the window + FFT + prefactor transform is the
 /// [`EinsteinHelfandSpectrum`](crate::compute::EinsteinHelfandSpectrum) /
 /// [`GreenKuboSpectrum`](crate::compute::GreenKuboSpectrum)
 /// [`Fit`](crate::compute::Fit) (windowing + transforming a raw ACF into
@@ -391,9 +394,9 @@ pub fn decompose_current(
 }
 
 // The Einstein–Helfand ionic conductivity is the explicit composition of
-// the raw [`EinsteinConductivity`](crate::compute::EinsteinConductivity) collective-dipole
-// MSD compute with the [`LinearFit`](crate::compute::LinearFit) slope and a
-// caller-applied `slope / (6·V·k_B·T)` MD→SI prefactor.
+// [`Msd`](crate::compute::Msd) on the collective charge-dipole series with the
+// [`LinearFit`](crate::compute::LinearFit) slope and a caller-applied
+// `slope / (6·V·k_B·T)` MD→SI prefactor.
 
 /// Per-axis static dielectric constant result (MDAnalysis-compatible).
 ///

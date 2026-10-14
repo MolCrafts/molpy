@@ -229,6 +229,16 @@ The physics outside the estimator moves to where it belongs:
 *Why:* the algorithm exists once (`Correlator`), while users find the quantity
 under the name they know.
 
+*As built (02):* `Correlator` also carries `with_dimension(d)` (the component
+count every item must have), which `DipoleAcf`, `CurrentAcf` and
+`OnsagerCorrelation` fix to 3 — it is how their `(T, 2)` rejection survives
+without numeric code in the surface. `ReorientationAcf::new(l, max_lag)` is one
+order per instance (the old type returned `C_1` and `C_2` together) and has no
+origin stride (the old `with_stride` is dropped; all origins). `Survival` takes
+`SurvivalKind { Continuous, Intermittent }`; `Ssp` stays with `pair_survival_tcf`
+until `PairPresence` (05). Every surface also implements `Stream` by handing out
+its correlator's accumulator.
+
 **D5. A neighbour table knows its geometry.**
 - `core::Neighbors` records the box it was searched in:
   `Neighbors::simbox() -> Option<&SimBox>`.
@@ -258,10 +268,24 @@ under the name they know.
 - Windows, FFT planning and frequency grids become types: `Window`, `Spectrum`,
   `FrequencyGrid`.
 
+*As built (02):* `Spectrum::new(window, pad)` returns `OneSidedSpectrum`
+(`frequencies` on the `FrequencyGrid`, the **unscaled** real/imaginary bins,
+`n_fft`); each caller applies its own scale (`1/n_fft`, `dt`). The dielectric
+piecewise-linear transform pads a *derived* signal to a length of its own, so it
+calls the crate-internal `Spectrum::onesided(signal, n_fft)` — the same single
+FFT. `DiffractionPattern`'s 2-D FFT still imports `rustfft` directly; link 04
+decides between a 2-D `Spectrum` form and amending ac-005.
+
 **D7. A closed set of lag kernels is an enum, not a generic.**
 `Correlator { kernel: LagKernel, … }` is one concrete type. That keeps it
 bindable: one Python/WASM class with a kernel argument. The set of kernels is
 the set molrs ships, so it is closed.
+
+*As built (02):* because `Legendre { l }` / `WignerD { l }` carry data,
+`LagKernel` is a hand-written enum (`name()`, `NAMES`, `order()`, `Display`),
+not a `named_enum!`, and has no `FromStr`; a binding parses the kind name plus
+`l` (link 10). `Origins`, `MeanPolicy`, `Normalization`, `Reduction`, `Window`,
+`Stencil` and `SurvivalKind` are `named_enum!`s.
 
 **D8. Defaults live only in core.**
 - Every tunable has its default in the core type: `Default`, or `new` plus
@@ -328,6 +352,14 @@ The following are deleted:
 
 Until link 09, the old trait is renamed `LegacyCompute` so the tree compiles
 while families migrate one link at a time.
+
+*As built (02):* `Correlator` implements `Stream`, but its `compute` is the FFT
+batch algorithm, not `self.accumulator().fold(..)` — the fold is `O(T · L)`.
+The `Stream` doc names this as the one exception, and unit tests pin batch ==
+fold at every lag for every kernel and option (ac-007). Because
+`Stream::accumulator()` takes no data, the per-frame item
+`CorrelatorFrame { a, b, dt, simbox }` carries `dt`; the first frame latches it
+and a different `dt` later is `OutOfRange`.
 
 **Named enums.** Each core enum that is a user choice, such as `LagKernel` or
 `Window`, uses one in-tree `named_enum!` macro. The macro generates `FromStr`
@@ -404,6 +436,15 @@ location is deleted.
 | Frame field reading | **none in compute.** The caller uses the `Frame`/`Block` API (D2) | `positions.rs` (deleted), `cluster/mod.rs:43,154`, `rdf`, `msd`, `einstein_diffusion`, `shape/*`, `pmft/orientation.rs`, `voronoi/integrate.rs:54,66,90`, Python `order.rs:29,130-147,312`, `density.rs:211-221`, `distribution.rs:174-182,303-305`, WASM `voronoi.rs:12-33`, `pmft.rs:13-26` |
 | Input guards (`disp`, `dist_sq`, self-query) | `require.rs` (kept) — called by every kernel, including PMFT, `LocalDensity`, `CorrelationFunction`, BOO, `EnvironmentMatch`, which inline `matches!` today | inline `symmetric = matches!(…)` copies |
 
+*As built (02):* `Derivative` has `Stencil::{Central, Gradient, Backward}` and
+replaces `spectroscopy/mod.rs:177` and `correlation.rs:137`. `current_density`
+(`dielectric/mod.rs:108-118`, link 03 removes its NaN row) and the even-function
+stencil inside the Einstein–Helfand taper (`dielectric_spectrum.rs`) are not yet
+routed through it — link 03. That taper's cos² now goes through
+`Window::CosineSq`, so `Window` is the only cos² implementation. The
+squared-displacement FFT centres each column first (a displacement does not see
+an offset; this only removes cancellation) and sets lag 0 to exactly 0.
+
 ### 4. Public surface — every current symbol and where it goes
 
 Legend:
@@ -440,6 +481,14 @@ Legend:
 | `DipoleRateCross*` | → `Correlator{Product}` cross on (Ṁ, M) |
 | `lag_times`, `unbiased_cartesian_xcorr`, `apply_unbiased_norm`, `component_means`, `gradient_axis0_order2` | → `Correlator` / `Derivative` internals |
 | `signal::{acf_fft*, xcorr_fft*, forward_fft_onesided, frequency_grid, apply_window, WindowType, SignalError}` | → `Correlator`, `Spectrum`, `FrequencyGrid`, `Window`, `ComputeError` |
+
+*As built (02):* all of the above are deleted, along with `transport/` and
+`msd/`. `EinsteinDiffusionResult::diffusion_coefficient` (a façade) went with
+its type; `D = slope / 2d` is `Msd` → `LinearFit`. `DebyeFit` moved to
+`fitting/` in 02 (not 03) because `transport/` is gone; `EwaldBoundary` moved to
+`dielectric/` unchanged (its `from_name` → `named_enum!` is 03's).
+`LegendreReorientation*` → `ReorientationAcf` and `RotationalAutocorrelation*`
+→ the surface landed in 02. `hbond_lifetimes` now runs on `Survival`.
 
 **Fits and spectra.**
 
@@ -550,6 +599,11 @@ that owns the file.
 - **Lag windows:**
   - `max_lag.min(n-1)` everywhere becomes `OutOfRange`, and the
     `clamps_not_panics` test (`vacf.rs:155`) is rewritten to expect the error.
+    *As built (02):* done for `Correlator` and every surface (batch and
+    stream). A series of fewer than two frames is `EmptyInput` (the old
+    `signal::acf_fft` accepted one sample). The clamps left in the legacy
+    `IrFlux` / `VcdCrossFlux` / `RamanTensor` / `RoaCrossTensor` (03),
+    `hbond_lifetimes` and `pair_survival_tcf` (05) go with their owners.
   - VanHove: dropped lags, `stride.max(1)` and `n_orig.max(1)` become errors.
     With no `SimBox` it errors instead of returning zeros plus a flag.
 - **Fit windows:** `LinearFit` widening and `Plateau` collapsing become errors.
@@ -713,6 +767,9 @@ regression.
    - VDOS and IR now use the same estimator.
    - Goldens re-pinned in 02/03: `ir_flux`, `vcd_cross_flux`, `raman_tensor`,
      `roa_cross_tensor`, `spectroscopy/*`.
+   - *As built (02):* deferred to 03. The IR / VCD / Raman / ROA raw
+     correlators run on `Correlator` with `Normalization::None`, so their
+     numbers are unchanged in 02.
 2. **Gyration weighting.**
    - Before: `GyrationTensor` was unweighted about the geometric centre, while
      `RadiusOfGyration` and `ClusterProperties` were mass-weighted about the
@@ -751,7 +808,7 @@ happens inside the chain.
 | Link | Scope | Depends |
 |---|---|---|
 | 01-contract (code-complete 2026-10-14) | New `Compute`/`Verdict`/`Accumulate`/`Stream`/`Batch` (`Batch<C>` is itself a `Compute`: `Input = Vec<C::Input>`, earliest error wins); the old trait renamed `LegacyCompute`. The per-type `Input` struct convention (named data arguments, no `new`). `Partition` / `FeatureMatrix` traits, implemented for label arrays / `Array2`. An audit table of every `new`/`with_*` that takes data (D2), each assigned to its migrating link. `Neighbors` gains `SimBox`; `PairSource` trait. `named_enum!`. `ComputeError` changes. | — |
-| 02-time-series | `Correlator` (all five kernels, FFT + streaming ring, equal to FFT round-off), `Derivative`, `Unwrap`, the D4 surfaces with their fixed configurations pinned against today's goldens, `TimeCorrelation`, `Window`, `Spectrum`, `FrequencyGrid`. Delete `signal` (module + feature). Migrate or delete the time-correlation rows of §4. | 01 |
+| 02-time-series (code-complete 2026-10-14) | As built: `compute/time_series/` holds `Correlator` (+ `CorrelatorAccumulator`), the eight D4 surfaces, `TimeCorrelation`, `Derivative`, `Unwrap`, `Window`/`Spectrum`/`FrequencyGrid`; `signal`, `transport/`, `msd/`, `dynamics/acf.rs` deleted; legacy spectra/dielectric/hbond rewired with unchanged numbers (deviations noted in D4, D6, D7, §1, §3, §4, §5, Behaviour change 1). Scope: `Correlator` (all five kernels, FFT + streaming ring, equal to FFT round-off), `Derivative`, `Unwrap`, the D4 surfaces with their fixed configurations pinned against today's goldens, `TimeCorrelation`, `Window`, `Spectrum`, `FrequencyGrid`. Delete `signal` (module + feature). Migrate or delete the time-correlation rows of §4. | 01 |
 | 03-spectra-dielectric | Fits on `TimeCorrelation`, `Spectrum` unification, the Raman family with `PolarizabilityParts`, `DipoleMoment`, `StaticDielectric`, the four ε(ω) routes, the checks, the one prefactor implementation (fixes the fs/ps doc contradiction at `dielectric_spectrum.rs:59,281`), `KineticEnergy`. | 02 |
 | 04-histogram-grid | `Axis`, `Histogram<N>`, `RegularGrid`, `SpreadKernel`; migrate Rdf (`Stream` over `PairSource`), CorrelationFunction, LocalDensity, distributions, S(k) ×2, DiffractionPattern, Gaussian/Sphere density, SpatialDistribution. | 01 |
 | 05-dynamics | `Presence`/`PairPresence`, survival through `Correlator`, H-bond input/presence/components, VanHove on `Histogram` + `core::NeighborQuery`. | 02, 04 |

@@ -76,31 +76,3 @@ pub(crate) fn get_positions_ref<'a, FA: FrameAccess>(
     let zs = column_to_positions(frame, "z")?;
     Ok((xs, ys, zs))
 }
-
-/// Positions of a frame that may carry fewer than three spatial axes: an
-/// absent `y` or `z` reads as zeros.
-///
-/// For quantities that are **dimension-agnostic** — a displacement, a
-/// correlation — a one- or two-dimensional series is a legitimate input, and a
-/// caller should not have to fabricate zero columns to be allowed to ask.
-///
-/// Deliberately *not* what [`get_positions_ref`] does, and it must not become
-/// so. A hydrogen-bond geometry or a Steinhardt order parameter on a frame
-/// missing `z` is a broken frame, not a two-dimensional system: there the
-/// missing column has to stay an error, because zeros would answer confidently
-/// and wrongly. `x` is always required — a frame with no positions at all is
-/// not a low-dimensional frame.
-pub(crate) fn get_positions_ref_any_dim<'a, FA: FrameAccess>(
-    frame: &'a FA,
-) -> Result<(Positions<'a>, Positions<'a>, Positions<'a>), ComputeError> {
-    let xs = column_to_positions(frame, "x")?;
-    let n = xs.slice().len();
-    let axis = |col: &'static str| match column_to_positions(frame, col) {
-        Ok(p) => Ok(p),
-        Err(ComputeError::MissingColumn { .. }) => Ok(Positions::Owned(vec![0.0; n])),
-        Err(e) => Err(e),
-    };
-    let ys = axis("y")?;
-    let zs = axis("z")?;
-    Ok((xs, ys, zs))
-}

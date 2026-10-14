@@ -5,18 +5,16 @@
 //! `taper_derivative_spectrum`, `windowed_acf_spectrum`) was relocated here
 //! from `compute::dielectric` in compute-fit-04-dielectric: windowing +
 //! transforming a raw ACF into ε(ω) is a *fit*, so it belongs in the [`Fit`]
-//! layer. Window coefficients always route through [`molrs::signal`] (never
-//! reimplemented).
+//! layer. Windows are [`Window`]'s, the FFT is [`Spectrum`]'s and the grid
+//! is [`FrequencyGrid`]'s (never reimplemented).
 
 use ndarray::Array1;
-use rustfft::FftPlanner;
-use rustfft::num_complex::Complex64;
+use num_complex::Complex64;
 
 use crate::compute::ComputeError;
 use crate::compute::ComputeResult;
 use crate::compute::{Check, Fit, Verdict};
-use crate::signal::forward_fft_onesided;
-use molrs::signal as sig;
+use crate::compute::{FrequencyGrid, Spectrum, Window};
 
 /// Zero-padding multiplier for the dielectric one-sided FT.
 ///
@@ -43,10 +41,9 @@ use molrs::core::{FOUR_PI, FOUR_THIRDS_PI, UnitPreset};
 /// for EH — the zero-lag variance ⟨|δM|²⟩) and applies window + FFT +
 /// prefactors to produce this frequency-dependent permittivity.
 ///
-/// The raw, unwindowed ACFs these fits consume come from the raw computes
-/// [`DebyeRelaxation`](crate::compute::DebyeRelaxation) (fluctuation dipole ACF +
-/// ⟨M(0)²⟩ + V/T/Ewald-BC) and
-/// [`GreenKuboConductivity`](crate::compute::GreenKuboConductivity) (current ACF).
+/// The raw, unwindowed ACFs these fits consume come from
+/// [`DipoleAcf`](crate::compute::DipoleAcf) (fluctuation dipole ACF, ⟨M²⟩ at
+/// lag 0) and [`CurrentAcf`](crate::compute::CurrentAcf) (current ACF).
 ///
 /// # Units
 ///
@@ -105,7 +102,11 @@ type RawSpectrum = (Array1<f64>, Array1<f64>, Array1<f64>);
 ///
 /// `pad_factor` controls zero-padding of the difference array before the
 /// rFFT (`n_fft = next_pow2(max(n, pad_factor·n))`).
-fn piecewise_linear_onesided_ft(y: &Array1<f64>, dt: f64, pad_factor: usize) -> RawSpectrum {
+fn piecewise_linear_onesided_ft(
+    y: &Array1<f64>,
+    dt: f64,
+    pad_factor: usize,
+) -> Result<RawSpectrum, ComputeError> {
     let n = y.len();
     debug_assert!(n >= 2 && dt > 0.0);
     let n_fft = (n.max(pad_factor.saturating_mul(n).max(1))).next_power_of_two();
@@ -116,10 +117,8 @@ fn piecewise_linear_onesided_ft(y: &Array1<f64>, dt: f64, pad_factor: usize) -> 
         dy.push(y[k + 1] - y[k]);
     }
 
-    let mut planner = FftPlanner::new();
-    let dy_bins = forward_fft_onesided(&mut planner, &dy, n_fft);
-
-    let frequencies = sig::frequency_grid(n_fft, dt);
+    let dy_bins = Spectrum::onesided(&dy, n_fft);
+    let frequencies = FrequencyGrid::new(n_fft, dt)?.angular();
     let n_freq = frequencies.len();
     let mut spec_re = Array1::zeros(n_freq);
     let mut spec_im = Array1::zeros(n_freq);
@@ -152,7 +151,7 @@ fn piecewise_linear_onesided_ft(y: &Array1<f64>, dt: f64, pad_factor: usize) -> 
         spec_im[j] = out.im;
     }
 
-    (frequencies, spec_re, spec_im)
+    Ok((frequencies, spec_re, spec_im))
 }
 
 /// One-sided cosine² taper → central-difference derivative → one-sided FT of a
@@ -167,17 +166,11 @@ fn piecewise_linear_onesided_ft(y: &Array1<f64>, dt: f64, pad_factor: usize) -> 
 ///
 /// The input `acf` must be the **fluctuation** (mean-subtracted) dipole ACF
 /// `C(k) = ⟨δM(0)·δM(k·dt)⟩` summed over the 3 Cartesian components — exactly
-/// the [`DebyeRelaxationResult.acf`](crate::compute::DebyeRelaxationResult::acf).
-fn taper_derivative_spectrum(acf: &Array1<f64>, dt: f64) -> RawSpectrum {
+/// the [`DipoleAcf`](crate::compute::DipoleAcf) curve.
+fn taper_derivative_spectrum(acf: &Array1<f64>, dt: f64) -> Result<RawSpectrum, ComputeError> {
     let max_lag = acf.len() - 1;
-    let mut tapered = acf.clone();
-
     // One-sided cosine² taper: 1 at C(0), 0 at C(max_lag).
-    let denom = 2.0 * max_lag.max(1) as f64;
-    for k in 0..=max_lag {
-        let angle = std::f64::consts::PI * k as f64 / denom;
-        tapered[k] *= angle.cos().powi(2);
-    }
+    let tapered = Window::CosineSq.apply(acf.view());
 
     // Central finite-difference derivative of the tapered ACF. C′(0) = 0
     // exactly because the autocorrelation is even; the tail uses a one-sided
@@ -193,15 +186,15 @@ fn taper_derivative_spectrum(acf: &Array1<f64>, dt: f64) -> RawSpectrum {
     piecewise_linear_onesided_ft(&deriv, dt, DIELECTRIC_PAD_FACTOR)
 }
 
-fn parse_window_type(s: &str) -> Result<sig::WindowType, ComputeError> {
+fn parse_window_type(s: &str) -> Result<Window, ComputeError> {
     match s {
-        "hann" => Ok(sig::WindowType::Hann),
-        "blackman" => Ok(sig::WindowType::Blackman),
+        "hann" => Ok(Window::Hann),
+        "blackman" => Ok(Window::Blackman),
         // Preferred for one-sided ACFs (1 at t=0, 0 at t=max_lag).
         // Hann/Blackman zero out C(0), the static-ε signal.
-        "cosine_sq" => Ok(sig::WindowType::CosineSq),
+        "cosine_sq" => Ok(Window::CosineSq),
         // Match external DRS scripts / slides that use window="none".
-        "none" | "None" | "identity" => Ok(sig::WindowType::None),
+        "none" | "None" | "identity" => Ok(Window::None),
         other => Err(ComputeError::OutOfRange {
             field: "window_type",
             value: other.into(),
@@ -215,32 +208,14 @@ fn parse_window_type(s: &str) -> Result<sig::WindowType, ComputeError> {
 /// Returns `(frequencies, spec_re, spec_im)` where `spec_re + i·spec_im` is
 /// `X(ω) = ∫₀^T C_win(t) e^{−iωt} dt`. The input `acf` must be the unbiased
 /// current ACF `C(k) = ⟨J(0)·J(k·dt)⟩` summed over the 3 Cartesian components
-/// — exactly the
-/// [`GreenKuboConductivityResult.jacf`](crate::compute::GreenKuboConductivityResult::jacf).
+/// — exactly the [`CurrentAcf`](crate::compute::CurrentAcf) curve.
 fn windowed_acf_spectrum(
     acf: &Array1<f64>,
     dt: f64,
     window_type: &str,
 ) -> Result<RawSpectrum, ComputeError> {
-    let max_lag = acf.len() - 1;
-    let wt = parse_window_type(window_type)?;
-
-    let acf_dyn = ndarray::ArrayD::from_shape_vec(ndarray::IxDyn(&[max_lag + 1]), acf.to_vec())
-        .map_err(|e| ComputeError::BadShape {
-            expected: "1d".into(),
-            got: e.to_string(),
-        })?;
-    let windowed = sig::apply_window(&acf_dyn, wt, 0).map_err(|e| ComputeError::OutOfRange {
-        field: "apply_window",
-        value: e.to_string(),
-    })?;
-    let windowed_1d: Array1<f64> = windowed.iter().copied().collect();
-
-    Ok(piecewise_linear_onesided_ft(
-        &windowed_1d,
-        dt,
-        DIELECTRIC_PAD_FACTOR,
-    ))
+    let windowed = parse_window_type(window_type)?.apply(acf.view());
+    piecewise_linear_onesided_ft(&windowed, dt, DIELECTRIC_PAD_FACTOR)
 }
 
 // ── Einstein–Helfand ε(ω) transform ──────────────────────────────────────────
@@ -249,9 +224,8 @@ fn windowed_acf_spectrum(
 ///
 /// Consumes the **raw fluctuation dipole ACF** `C(k) = ⟨δM(0)·δM(k·dt)⟩`
 /// (summed over the 3 Cartesian components) — the
-/// [`DebyeRelaxationResult.acf`](crate::compute::DebyeRelaxationResult::acf) — together
-/// with `dt`, `V`, `T`, `ε_∞`, and the zero-lag variance ⟨|δM|²⟩ (the
-/// [`zero_lag_variance`](crate::compute::DebyeRelaxationResult::zero_lag_variance), which
+/// [`DipoleAcf`](crate::compute::DipoleAcf) curve — together with `dt`, `V`,
+/// `T`, `ε_∞`, and the zero-lag variance ⟨|δM|²⟩ (the curve at lag 0, which
 /// pins the exact DC bin).
 ///
 /// Implements the integration-by-parts form of Caillol-Levesque-Weis Eq. (30):
@@ -288,7 +262,7 @@ pub struct EinsteinHelfandSpectrum {
     /// High-frequency / electronic permittivity ε_∞, dimensionless.
     pub epsilon_inf: f64,
     /// Zero-lag variance ⟨|δM|²⟩ = `acf[0]`, **(e·Å)²** — the exact DC term
-    /// (the [`DebyeRelaxationResult.zero_lag_variance`](crate::compute::DebyeRelaxationResult::zero_lag_variance)).
+    /// (the [`DipoleAcf`](crate::compute::DipoleAcf) curve at lag 0).
     pub zero_lag_variance: f64,
 }
 
@@ -308,7 +282,7 @@ impl Fit for EinsteinHelfandSpectrum {
         }
         validate_thermo(self.dt, self.volume, self.temperature)?;
 
-        let (frequencies, dre, dim) = taper_derivative_spectrum(acf, self.dt);
+        let (frequencies, dre, dim) = taper_derivative_spectrum(acf, self.dt)?;
 
         // ε*(ω) − ε_∞ = −A·Ĉ′(ω), with ε* = ε′ − i·ε″ (positive-loss convention).
         let prefactor = FOUR_THIRDS_PI * KAPPA
@@ -339,8 +313,7 @@ impl Fit for EinsteinHelfandSpectrum {
 ///
 /// Consumes the **raw current ACF** `C(k) = ⟨J(0)·J(k·dt)⟩` (summed over the 3
 /// Cartesian components) — the
-/// [`GreenKuboConductivityResult.jacf`](crate::compute::GreenKuboConductivityResult::jacf)
-/// — together with `dt`, `V`, `T`, `ε_∞`, and the window choice.
+/// [`CurrentAcf`](crate::compute::CurrentAcf) curve — together with `dt`, `V`, `T`, `ε_∞`, and the window choice.
 ///
 /// Implements
 ///
@@ -924,15 +897,20 @@ impl ComputeResult for RouteAgreementCheck {}
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::compute::LegacyCompute;
-    use crate::compute::{DebyeRelaxation, EwaldBoundary, GreenKuboConductivity};
-    use molrs::core::Frame;
+    use crate::compute::time_series::test_support::direct_lagged_sum;
+    use crate::compute::{Compute, CurrentAcf, CurrentAcfInput, DipoleAcf, DipoleAcfInput};
     use ndarray::Array2;
-    use rustfft::FftPlanner;
 
-    /// Empty frame slice for the series-based raw computes.
-    fn no_frames() -> Vec<&'static Frame> {
-        Vec::new()
+    /// The fluctuation dipole ACF (the former `DebyeRelaxation` raw curve).
+    fn dipole_acf(dm: &Array2<f64>, dt: f64, max_lag: usize) -> Array1<f64> {
+        DipoleAcf::new(max_lag)
+            .compute(DipoleAcfInput {
+                dipoles: dm.view(),
+                dt,
+            })
+            .unwrap()
+            .channel(0)
+            .to_owned()
     }
 
     fn rng_dipole(n: usize, seed: u64) -> Array2<f64> {
@@ -986,13 +964,12 @@ mod tests {
         m_sq /= n;
 
         // Fluctuation ACF, summed over components, unbiased estimator.
-        let mut planner = FftPlanner::new();
         let mut acf = Array1::<f64>::zeros(max_lag + 1);
         for d in 0..3 {
-            let col: Array1<f64> = (0..n_frames)
+            let col: Vec<f64> = (0..n_frames)
                 .map(|t| dipole_moments[[t, d]] - mean_m[d])
                 .collect();
-            let component = sig::acf_fft_with_planner(&mut planner, &col, max_lag).unwrap();
+            let component = direct_lagged_sum(&col, &col, max_lag);
             for k in 0..=max_lag {
                 acf[k] += component[k];
             }
@@ -1016,7 +993,7 @@ mod tests {
             deriv[max_lag] = (acf[max_lag] - acf[max_lag - 1]) / dt;
         }
         let (frequencies, dre, dim) =
-            piecewise_linear_onesided_ft(&deriv, dt, DIELECTRIC_PAD_FACTOR);
+            piecewise_linear_onesided_ft(&deriv, dt, DIELECTRIC_PAD_FACTOR).unwrap();
 
         let prefactor =
             FOUR_THIRDS_PI * KAPPA / (volume * UnitPreset::real().boltzmann() * temperature);
@@ -1032,7 +1009,7 @@ mod tests {
         (frequencies, eps_real, eps_imag)
     }
 
-    /// The unbiased current ACF, FFT-based, over the post-NaN `start=1`
+    /// The unbiased current ACF, summed directly, over the post-NaN `start=1`
     /// series. Returned so a test can lock the Fit's transform tail to the
     /// reference tail on the *same* ACF (bit-for-bit), independent of the
     /// raw-compute estimator.
@@ -1040,11 +1017,10 @@ mod tests {
         let n_frames = current.shape()[0];
         let start = 1;
         let n_eff = n_frames - start;
-        let mut planner = FftPlanner::new();
         let mut acf_sum = Array1::<f64>::zeros(max_lag + 1);
         for d in 0..3 {
-            let col: Array1<f64> = (start..n_frames).map(|t| current[[t, d]]).collect();
-            let acf = sig::acf_fft_with_planner(&mut planner, &col, max_lag).unwrap();
+            let col: Vec<f64> = (start..n_frames).map(|t| current[[t, d]]).collect();
+            let acf = direct_lagged_sum(&col, &col, max_lag);
             for k in 0..=max_lag {
                 acf_sum[k] += acf[k];
             }
@@ -1065,14 +1041,29 @@ mod tests {
         epsilon_inf: f64,
         window_type: &str,
     ) -> (Array1<f64>, Array1<f64>, Array1<f64>) {
-        let max_lag = acf.len() - 1;
-        let wt = parse_window_type(window_type).unwrap();
-        let acf_dyn =
-            ndarray::ArrayD::from_shape_vec(ndarray::IxDyn(&[max_lag + 1]), acf.to_vec()).unwrap();
-        let windowed = sig::apply_window(&acf_dyn, wt, 0).unwrap();
-        let windowed_1d: Array1<f64> = windowed.iter().copied().collect();
+        // The window, written out (symmetric N − 1 forms).
+        let n = acf.len();
+        let last = (n - 1) as f64;
+        let pi = std::f64::consts::PI;
+        let windowed_1d: Array1<f64> = acf
+            .iter()
+            .enumerate()
+            .map(|(i, x)| {
+                let i = i as f64;
+                let w = match window_type {
+                    "hann" => 0.5 * (1.0 - (2.0 * pi * i / last).cos()),
+                    "blackman" => {
+                        0.42 - 0.5 * (2.0 * pi * i / last).cos()
+                            + 0.08 * (4.0 * pi * i / last).cos()
+                    }
+                    "cosine_sq" => (pi * i / (2.0 * last)).cos().powi(2),
+                    other => panic!("no reference window {other}"),
+                };
+                x * w
+            })
+            .collect();
         let (frequencies, spec_re, spec_im) =
-            piecewise_linear_onesided_ft(&windowed_1d, dt, DIELECTRIC_PAD_FACTOR);
+            piecewise_linear_onesided_ft(&windowed_1d, dt, DIELECTRIC_PAD_FACTOR).unwrap();
 
         let sigma_prefactor = volume / (3.0 * UnitPreset::real().boltzmann() * temperature);
         let eps0_factor = FOUR_PI * KAPPA;
@@ -1111,7 +1102,7 @@ mod tests {
 
     #[test]
     fn eh_fit_matches_the_reference_bit_for_bit() {
-        // ac-001: DebyeRelaxation raw ACF + EinsteinHelfandSpectrum matches the
+        // ac-001: DipoleAcf raw ACF + EinsteinHelfandSpectrum matches the
         // inline reference (tight ULP tolerance).
         let n = 256;
         let dt = 0.001;
@@ -1121,21 +1112,15 @@ mod tests {
 
         let (freq_l, re_l, im_l) = reference_einstein_helfand(&dm, dt, vol, temp, eps_inf, mct);
 
-        let raw = DebyeRelaxation {
-            volume: vol,
-            temperature: temp,
-            boundary: EwaldBoundary::TinFoil,
-        }
-        .compute(&no_frames(), (&dm, dt, mct))
-        .unwrap();
+        let acf = dipole_acf(&dm, dt, mct);
         let fit = EinsteinHelfandSpectrum {
             dt,
             volume: vol,
             temperature: temp,
             epsilon_inf: eps_inf,
-            zero_lag_variance: raw.zero_lag_variance,
+            zero_lag_variance: acf[0],
         }
-        .fit(&raw.acf)
+        .fit(&acf)
         .unwrap();
 
         assert_eq!(fit.frequencies, freq_l);
@@ -1186,8 +1171,8 @@ mod tests {
 
     #[test]
     fn gk_raw_compute_acf_matches_the_reference_fft_acf() {
-        // The GreenKuboConductivity raw compute (direct-summation estimator) and
-        // the reference FFT-based ACF agree to FP tolerance on the same series,
+        // The CurrentAcf compute (FFT estimator) and the reference
+        // direct-summation ACF agree to FP tolerance on the same series,
         // so composing the raw compute with GreenKuboSpectrum matches the
         // reference ε(ω) within that tolerance.
         let n = 256;
@@ -1203,12 +1188,15 @@ mod tests {
         let reference = reference_gk_acf(&current, max_lag);
 
         let post: Array2<f64> = current.slice(ndarray::s![start.., ..]).to_owned();
-        let raw = GreenKuboConductivity
-            .compute(&no_frames(), (&post, dt, max_lag))
+        let raw = CurrentAcf::new(max_lag)
+            .compute(CurrentAcfInput {
+                current: post.view(),
+                dt,
+            })
             .unwrap();
-        assert_eq!(raw.jacf.len(), reference.len());
+        assert_eq!(raw.n_lags(), reference.len());
         for k in 0..reference.len() {
-            assert!((raw.jacf[k] - reference[k]).abs() < 1e-9, "k={k}");
+            assert!((raw.values[[k, 0]] - reference[k]).abs() < 1e-9, "k={k}");
         }
     }
 
@@ -1222,21 +1210,15 @@ mod tests {
         let dm = rng_dipole(n, 99);
         let static_eps = static_dielectric_constant(&dm, vol, temp, eps_inf).unwrap();
 
-        let raw = DebyeRelaxation {
-            volume: vol,
-            temperature: temp,
-            boundary: EwaldBoundary::TinFoil,
-        }
-        .compute(&no_frames(), (&dm, dt, 50))
-        .unwrap();
+        let acf = dipole_acf(&dm, dt, 50);
         let fit = EinsteinHelfandSpectrum {
             dt,
             volume: vol,
             temperature: temp,
             epsilon_inf: eps_inf,
-            zero_lag_variance: raw.zero_lag_variance,
+            zero_lag_variance: acf[0],
         }
-        .fit(&raw.acf)
+        .fit(&acf)
         .unwrap();
         assert!((fit.eps_real[0] - static_eps).abs() < 1e-10);
         assert_eq!(fit.eps_imag[0], 0.0);
@@ -1248,21 +1230,15 @@ mod tests {
         let n = 2048;
         let dt = 1.0;
         let dm = rng_dipole(n, 11);
-        let raw = DebyeRelaxation {
-            volume: 1000.0,
-            temperature: 300.0,
-            boundary: EwaldBoundary::TinFoil,
-        }
-        .compute(&no_frames(), (&dm, dt, 100))
-        .unwrap();
+        let acf = dipole_acf(&dm, dt, 100);
         let fit = EinsteinHelfandSpectrum {
             dt,
             volume: 1000.0,
             temperature: 300.0,
             epsilon_inf: 1.0,
-            zero_lag_variance: raw.zero_lag_variance,
+            zero_lag_variance: acf[0],
         }
-        .fit(&raw.acf)
+        .fit(&acf)
         .unwrap();
         assert!(fit.eps_imag.iter().all(|x| x.is_finite()));
         assert!(fit.eps_real.iter().all(|x| x.is_finite()));

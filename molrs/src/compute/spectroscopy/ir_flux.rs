@@ -3,11 +3,11 @@
 use molrs::core::FrameAccess;
 use ndarray::Array2;
 
-use super::{central_diff_series, sum_column_acf};
+use super::{central_flux, raw_column_correlation};
 use crate::compute::ComputeError;
 use crate::compute::ComputeResult;
 use crate::compute::LegacyCompute;
-use crate::compute::lag_times;
+use crate::compute::Reduction;
 
 /// Raw dipole-flux autocorrelation function — the IR-spectrum raw input.
 #[derive(Debug, Clone)]
@@ -68,12 +68,12 @@ impl LegacyCompute for IrFlux {
 
         let flux_len = n_frames - 2;
         let max_lag = resolution.min(flux_len.saturating_sub(1));
-        // Shared primitives: central-diff flux → unnormalized Σ_α ACF.
-        let flux = central_diff_series(dipole_moments, dt);
-        let acf = sum_column_acf(&flux, max_lag);
+        // Central-difference flux → unnormalized Σ_α ACF.
+        let flux = central_flux(dipole_moments, dt)?;
+        let raw = raw_column_correlation(&flux, None, max_lag, dt, Reduction::Mean)?;
         Ok(IrFluxResult {
-            lag_times: lag_times(max_lag, dt),
-            acf,
+            acf: raw.channel(0).to_owned(),
+            lag_times: raw.lag_times,
         })
     }
 }

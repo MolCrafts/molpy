@@ -5,17 +5,16 @@
 //! frames (an MSD curve, a current ACF, a velocity ACF), a
 //! [`Fit`](crate::compute::Fit) post-processes
 //! that observable into a derived quantity. This module hosts the
-//! **domain-agnostic** curve transforms; the physical raw computes live in
-//! [`transport`](crate::compute::transport) and the spectral transforms in
-//! [`spectroscopy`](crate::compute::spectroscopy).
+//! **domain-agnostic** curve transforms; the raw correlation curves come from
+//! [`Correlator`](crate::compute::Correlator) and its surfaces, and the
+//! spectral transforms live in `spectroscopy`.
 //!
 //! | Fit | Input | Output | Lifted from |
 //! |-----|-------|--------|-------------|
 //! | [`LinearFit`] | `(x, y)` curve | [`LinearFitResult`] (slope/intercept/r²) | Einstein–Helfand conductivity OLS |
 //! | [`CumulativeTrapezoid`] | curve + dt | [`CumulativeTrapezoidResult`] (cumulative trapezoid) | Green–Kubo conductivity trapezoid |
 //! | [`Plateau`] | curve | [`PlateauResult`] (windowed mean/std) | new |
-//!
-//! Debye relaxation fitting lives in [`crate::compute::DebyeFit`].
+//! | [`DebyeFit`] | normalised decay + dt | [`DebyeFitResult`] (τ, amplitude) | Debye relaxation |
 //!
 //! # Shared numerical primitives
 //!
@@ -26,14 +25,16 @@
 //! - `running_trapezoid` — cumulative trapezoidal integral (the Green–Kubo
 //!   conductivity integral).
 //!
-//! The one-sided forward FFT the spectra share is a signal primitive:
-//! [`crate::signal::forward_fft_onesided`].
+//! The one-sided forward FFT the spectra share is
+//! [`Spectrum`](crate::compute::Spectrum).
 
 mod cumulative_trapezoid;
+mod debye_fit;
 mod linear_fit;
 mod plateau;
 
 pub use cumulative_trapezoid::{CumulativeTrapezoid, CumulativeTrapezoidResult};
+pub use debye_fit::{DebyeFit, DebyeFitResult};
 pub use linear_fit::{LinearFit, LinearFitResult};
 pub use plateau::{Plateau, PlateauResult};
 

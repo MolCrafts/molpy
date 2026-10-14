@@ -26,7 +26,7 @@ impl ComputeResult for PcaResult {}
 /// Construct with `Pca::<T>::new()` where `T: DescriptorRow`. Each
 /// [`compute`](LegacyCompute::compute) call expects an `&Vec<T>` of length ≥ 3.
 ///
-/// [`Pca`] is a [`Compute`] that consumes any upstream `Vec<T>` where
+/// [`Pca`] is a [`LegacyCompute`](crate::compute::LegacyCompute) that consumes any upstream `Vec<T>` where
 /// `T: DescriptorRow` — each descriptor row is one observation. PCA
 /// standardizes the columns, computes covariance, and projects onto the top
 /// two eigenvectors via power iteration with deflation. No external

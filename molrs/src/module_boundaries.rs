@@ -145,7 +145,6 @@ fn op_names_no_other_module() {
         "io",
         "ff",
         "compute",
-        "signal",
         "conformer",
         "md",
         "builder",

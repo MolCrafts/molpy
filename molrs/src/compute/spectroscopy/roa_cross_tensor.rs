@@ -3,15 +3,13 @@
 
 use molrs::core::FrameAccess;
 use ndarray::{Array1, Array2};
-use rustfft::FftPlanner;
-use rustfft::num_complex::Complex64;
 
-use super::raman_tensor::{DIAG_ANISO_WEIGHT, OFFDIAG_ANISO_WEIGHT};
-use super::{central_diff_series, xcorr_accumulate_into};
+use super::raman_tensor::{iso_aniso, raman_parts};
+use super::{central_flux, raw_column_correlation};
 use crate::compute::ComputeError;
 use crate::compute::ComputeResult;
 use crate::compute::LegacyCompute;
-use crate::compute::lag_times;
+use crate::compute::Reduction;
 
 /// Raw ROA cross-correlation iso/aniso curves — the ROA-spectrum raw input.
 #[derive(Debug, Clone)]
@@ -84,74 +82,15 @@ impl LegacyCompute for RoaCrossTensor {
         let flux_len = n_frames - 2;
         let max_lag = resolution.min(flux_len.saturating_sub(1));
 
-        // One central-diff pass each — no 12 separate column allocations.
-        let a = central_diff_series(el_pol, dt);
-        let g = central_diff_series(g_tensor, dt);
-
-        let mut planner = FftPlanner::new();
-        let mut sa: Vec<Complex64> = Vec::new();
-        let mut sb: Vec<Complex64> = Vec::new();
-
-        // Isotropic: trace × trace.
-        let mut a_iso = vec![0.0_f64; flux_len];
-        let mut g_iso = vec![0.0_f64; flux_len];
-        for t in 0..flux_len {
-            a_iso[t] = (a[[t, 0]] + a[[t, 1]] + a[[t, 2]]) / 3.0;
-            g_iso[t] = (g[[t, 0]] + g[[t, 1]] + g[[t, 2]]) / 3.0;
-        }
-        let mut acf_iso = Array1::<f64>::zeros(max_lag + 1);
-        xcorr_accumulate_into(
-            &mut planner,
-            &a_iso,
-            &g_iso,
-            max_lag,
-            acf_iso.as_slice_mut().unwrap(),
-            1.0,
-            &mut sa,
-            &mut sb,
-        );
-
-        // Anisotropic: 3 diagonal diffs (½) + 3 off-diagonals (3).
-        let mut acf_aniso = Array1::<f64>::zeros(max_lag + 1);
-        let aniso_out = acf_aniso.as_slice_mut().unwrap();
-        let mut av = vec![0.0_f64; flux_len];
-        let mut gv = vec![0.0_f64; flux_len];
-        let diag_pairs = [(0usize, 1usize), (1, 2), (2, 0)];
-        for (i, j) in diag_pairs {
-            for t in 0..flux_len {
-                av[t] = a[[t, i]] - a[[t, j]];
-                gv[t] = g[[t, i]] - g[[t, j]];
-            }
-            xcorr_accumulate_into(
-                &mut planner,
-                &av,
-                &gv,
-                max_lag,
-                aniso_out,
-                DIAG_ANISO_WEIGHT,
-                &mut sa,
-                &mut sb,
-            );
-        }
-        for off in 3..6 {
-            for t in 0..flux_len {
-                av[t] = a[[t, off]];
-                gv[t] = g[[t, off]];
-            }
-            xcorr_accumulate_into(
-                &mut planner,
-                &av,
-                &gv,
-                max_lag,
-                aniso_out,
-                OFFDIAG_ANISO_WEIGHT,
-                &mut sa,
-                &mut sb,
-            );
-        }
+        // One central-diff pass each, then one unnormalised cross-correlation
+        // per Raman part of α̇ against the same part of Ġ′.
+        let a = raman_parts(&central_flux(el_pol, dt)?);
+        let g = raman_parts(&central_flux(g_tensor, dt)?);
+        let raw = raw_column_correlation(&a, Some(&g), max_lag, dt, Reduction::PerComponent)?;
+        let (acf_iso, acf_aniso) = iso_aniso(&raw.values);
 
         Ok(RoaCrossTensorResult {
-            lag_times: lag_times(max_lag, dt),
+            lag_times: raw.lag_times,
             acf_iso,
             acf_aniso,
         })

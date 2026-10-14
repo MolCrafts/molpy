@@ -98,30 +98,35 @@
 //! (RDF) override [`finalize`](ComputeResult::finalize) to normalize; other
 //! outputs use the default no-op.
 //!
-//! # Raw observable, then fit: transport
+//! # Time correlation: one estimator, named surfaces
 //!
-//! Every transport method returns **only a raw curve + scalar metadata**; the fit
-//! step (slope, integral, Debye τ) is the analyst's explicit, parameterized
-//! choice:
+//! Every lagged correlation is one configuration of [`Correlator`] (FFT batch
+//! evaluation plus a bounded-memory streaming accumulator) and returns a
+//! [`TimeCorrelation`]. The quantities chemists name are thin surfaces over it;
+//! the step that turns a curve into a coefficient is the analyst's explicit,
+//! parameterized choice:
 //!
-//! | Method | Raw output | Downstream fit |
+//! | Surface | Raw curve | Downstream fit |
 //! |--------|-----------|----------------|
-//! | [`Vacf`] / [`GreenKuboDiffusion`] | velocity ACF | [`PowerSpectrum`] (VDOS) / [`CumulativeTrapezoid`] (D) |
-//! | [`EinsteinDiffusion`] | self-MSD curve | [`LinearFit`] (D = slope/2d) |
-//! | [`EinsteinConductivity`] | collective charge-dipole MSD | [`LinearFit`] (σ) |
-//! | [`GreenKuboConductivity`] | current ACF | [`CumulativeTrapezoid`] (σ) |
-//! | [`DebyeRelaxation`] | dipole ACF + ⟨M²⟩ + V/T/BC | [`DebyeFit`] (τ_D, amplitude) / [`DipoleAutocorrelationSpectrum`] |
-//! | [`DipoleRateCross`] | `C_{ṀM}` (FD Ṁ × M) | [`DipoleRateCrossSpectrum`] |
+//! | [`Vacf`] | velocity ACF | [`Spectrum`] (VDOS) / [`CumulativeTrapezoid`] (D) |
+//! | [`Msd`] | self-MSD; on the collective charge dipole, the Einstein–Helfand curve | [`LinearFit`] (D = slope/2d, σ) |
+//! | [`CurrentAcf`] | current ACF | [`CumulativeTrapezoid`] (σ) |
+//! | [`DipoleAcf`] | dipole fluctuation ACF | [`DebyeFit`] (τ_D) / [`DipoleAutocorrelationSpectrum`] |
 //! | [`OnsagerCorrelation`] | Onsager L_ij displacement correlations | [`LinearFit`] per pair |
+//! | [`ReorientationAcf`], [`RotationalAutocorrelation`] | orientational decay | [`DebyeFit`] |
+//! | [`Survival`] | continuous / intermittent survival | [`CumulativeTrapezoid`] (lifetime) |
 //!
-//! [`VacfAccumulator`] is the streaming (frame-by-frame, bounded-memory)
-//! counterpart of [`Vacf`] for on-the-fly MD analysis. Units follow the MD
-//! convention of the caller (time in the `dt` unit, velocities/dipoles as
-//! supplied); the fits document the MD→SI prefactors.
+//! Units follow the MD convention of the caller (time in the `dt` unit,
+//! velocities/dipoles as supplied); the fits document the MD→SI prefactors.
 //!
-//! ```ignore
-//! let raw = Vacf.compute(&[] as &[&Frame], (&velocities, dt, resolution))?;
-//! let d = CumulativeTrapezoid.fit((&raw.acf, dt, None))?; // D = integral/3 in MD units
+//! ```
+//! use molrs::compute::{Compute, CumulativeTrapezoid, Fit, Vacf, VacfInput};
+//! use ndarray::Array2;
+//!
+//! let velocities = Array2::from_shape_fn((64, 3), |(t, d)| ((t * 3 + d) as f64 * 0.7).sin());
+//! let raw = Vacf::new(16).compute(VacfInput { velocities: velocities.view(), dt: 1.0 })?;
+//! let d = CumulativeTrapezoid.fit((&raw.channel(0).to_owned(), 1.0, None))?; // D·d in MD units
+//! # Ok::<(), molrs::compute::ComputeError>(())
 //! ```
 //!
 //! # Raw observable, then fit: spectra
@@ -138,7 +143,7 @@
 //! | VCD | [`VcdCrossFlux`] (μ̇ × ṁ cross-correlation) | [`VcdSpectrum`] |
 //! | ROA | [`RoaCrossTensor`] (α̇ × Ġ′ cross-correlations) | [`RoaSpectrum`] |
 //! | Resonance Raman | [`ResonanceRamanTensor`] (resonant iso/aniso ACFs) | [`ResonanceRamanSpectrum`] |
-//! | Dielectric ε(ω) | [`DebyeRelaxation`] / [`GreenKuboConductivity`] / [`DipoleRateCross`] | [`EinsteinHelfandSpectrum`] / [`GreenKuboSpectrum`] / [`DipoleAutocorrelationSpectrum`] / [`DipoleRateCrossSpectrum`] |
+//! | Dielectric ε(ω) | [`DipoleAcf`] / [`CurrentAcf`] / [`Correlator`] cross of (Ṁ, M) | [`EinsteinHelfandSpectrum`] / [`GreenKuboSpectrum`] / [`DipoleAutocorrelationSpectrum`] / [`DipoleRateCrossSpectrum`] |
 //!
 //! Spectral units:
 //!
@@ -164,8 +169,7 @@
 //! | Folder | Methods |
 //! |----------|---------|
 //! | `rdf` | pair distribution g(r) (+ streaming [`RdfAccumulator`]) |
-//! | `msd` | mean squared displacement (+ streaming [`MsdAccumulator`]) |
-//! | `transport` | VACF (+ streaming [`VacfAccumulator`]), Einstein/Green–Kubo diffusion & conductivity, Debye relaxation, Onsager |
+//! | `time_series` | [`Correlator`] and its surfaces (MSD, VACF, Onsager, dipole / current ACFs, reorientation, survival), [`Derivative`], [`Unwrap`], [`Spectrum`] |
 //! | `spectroscopy` | IR / Raman / VCD / ROA / resonance-Raman raw correlators + spectral transforms, dielectric spectra |
 //! | `fitting` | generic curve fits: [`LinearFit`], [`CumulativeTrapezoid`], [`Plateau`], [`DebyeFit`] |
 //! | `dynamics` | van Hove G(r, t), pair survival |
@@ -201,7 +205,6 @@ pub(crate) mod fixtures;
 mod hbond;
 mod kinetic;
 mod kmeans;
-mod msd;
 mod named_enum;
 mod order;
 mod pmft;
@@ -210,7 +213,7 @@ mod rdf;
 pub(crate) mod require;
 mod shape;
 mod spectroscopy;
-mod transport;
+mod time_series;
 #[cfg(feature = "voronoi")]
 mod voronoi;
 
@@ -225,7 +228,7 @@ pub use density::{
     SpatialDistributionResult, SphereVoxelization, SphereVoxelizationResult,
 };
 pub use dielectric::{
-    StaticDielectricResult, current_density, decompose_current, dipole_moment,
+    EwaldBoundary, StaticDielectricResult, current_density, decompose_current, dipole_moment,
     static_dielectric_constant, static_dielectric_constant_components,
 };
 pub use diffraction::{
@@ -238,10 +241,7 @@ pub use distribution::{
     DihedralObservable, DistanceObservable, DistributionFunction, DistributionResult, Histogram1d,
     InternalCoordinate, Observable, renormalize_density,
 };
-pub use dynamics::{
-    Acf, AcfArgs, AcfResult, PairSurvivalResult, SurvivalMethod, VanHove, VanHoveResult,
-    autocorrelation, pair_survival_tcf,
-};
+pub use dynamics::{PairSurvivalResult, SurvivalMethod, VanHove, VanHoveResult, pair_survival_tcf};
 pub use environment::{
     AngularSeparationGlobal, AngularSeparationGlobalArgs, AngularSeparationGlobalResult,
     AngularSeparationNeighbor, AngularSeparationNeighborArgs, AngularSeparationNeighborResult,
@@ -251,8 +251,8 @@ pub use environment::{
 };
 pub use error::ComputeError;
 pub use fitting::{
-    CumulativeTrapezoid, CumulativeTrapezoidResult, LinearFit, LinearFitResult, Plateau,
-    PlateauResult,
+    CumulativeTrapezoid, CumulativeTrapezoidResult, DebyeFit, DebyeFitResult, LinearFit,
+    LinearFitResult, Plateau, PlateauResult,
 };
 pub use hbond::{
     HBond, HBondCriterion, HBondDistanceKind, HBondLifetimeResult, HBondNetworkResult, HBonds,
@@ -260,12 +260,10 @@ pub use hbond::{
 };
 pub use kinetic::{center_of_mass_velocity, kinetic_energy, kinetic_temperature};
 pub use kmeans::{Kmeans, KmeansResult};
-pub use msd::{Msd, MsdAccumulator, MsdMode, MsdResult, MsdTimeSeries};
 pub use order::{
     ContinuousCoordination, ContinuousCoordinationResult, Cubatic, CubaticResult, Hexatic,
-    HexaticResult, LegendreReorientation, LegendreReorientationResult, Nematic, NematicResult,
-    RotationalAutocorrelation, RotationalAutocorrelationArgs, RotationalAutocorrelationResult,
-    SolidLiquid, SolidLiquidResult, Steinhardt, SteinhardtResult, steinhardt_qlm,
+    HexaticResult, Nematic, NematicResult, SolidLiquid, SolidLiquidResult, Steinhardt,
+    SteinhardtResult, steinhardt_qlm,
 };
 pub use pmft::{
     PmftR12, PmftR12Args, PmftR12Result, PmftXy, PmftXyArgs, PmftXyResult, PmftXyt, PmftXytArgs,
@@ -298,14 +296,14 @@ pub use spectroscopy::{
     RoaCrossTensorResult, RoaSpectrum, RouteAgreement, RouteAgreementCheck, SpectrumResult,
     SumRuleCheck, VcdCrossFlux, VcdCrossFluxArgs, VcdCrossFluxResult, VcdSpectrum,
 };
-pub use transport::{
-    DebyeFit, DebyeFitResult, DebyeRelaxation, DebyeRelaxationArgs, DebyeRelaxationResult,
-    DipoleRateCross, DipoleRateCrossArgs, DipoleRateCrossResult, EinsteinConductivity,
-    EinsteinConductivityArgs, EinsteinConductivityResult, EinsteinDiffusion, EinsteinDiffusionArgs,
-    EinsteinDiffusionResult, EwaldBoundary, GreenKuboConductivity, GreenKuboConductivityArgs,
-    GreenKuboConductivityResult, GreenKuboDiffusion, OnsagerCorrelation, OnsagerCorrelationArgs,
-    OnsagerCorrelationResult, Vacf, VacfAccumulator, VacfArgs, VacfResult, lag_times,
-    unbiased_cartesian_xcorr,
+pub use time_series::{
+    Correlator, CorrelatorAccumulator, CorrelatorFrame, CorrelatorInput, CurrentAcf,
+    CurrentAcfInput, Derivative, DerivativeInput, DipoleAcf, DipoleAcfInput, FrequencyGrid,
+    LagKernel, MeanPolicy, Msd, MsdInput, Normalization, OneSidedSpectrum, OnsagerCorrelation,
+    OnsagerInput, Origins, Reduction, ReorientationAcf, ReorientationAcfInput,
+    RotationalAutocorrelation, RotationalAutocorrelationInput, Spectrum, SpectrumInput, Stencil,
+    Survival, SurvivalInput, SurvivalKind, TimeCorrelation, Unwrap, UnwrapInput, Vacf, VacfInput,
+    Window,
 };
 #[cfg(feature = "voronoi")]
 pub use voronoi::{

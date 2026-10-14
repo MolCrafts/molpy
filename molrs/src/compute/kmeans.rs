@@ -18,7 +18,7 @@ impl ComputeResult for KmeansResult {}
 
 /// Configuration handle for k-means clustering.
 ///
-/// [`Kmeans`] is a [`Compute`] consuming an upstream [`PcaResult`]. The 2D
+/// [`Kmeans`] is a [`LegacyCompute`](crate::compute::LegacyCompute) consuming an upstream [`PcaResult`]. The 2D
 /// PCA scores are interpreted as a row-major `[n_rows, 2]` matrix and
 /// clustered via Lloyd's algorithm with k-means++ init. Deterministic given a
 /// fixed seed.

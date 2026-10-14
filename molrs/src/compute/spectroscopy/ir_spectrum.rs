@@ -1,10 +1,9 @@
 //! Infrared absorption-spectrum transform.
 
 use ndarray::Array1;
-use rustfft::FftPlanner;
 
+use super::cosine_sq_spectrum;
 use super::spectra::SpectrumResult;
-use super::window_and_fft;
 use crate::compute::ComputeError;
 use crate::compute::Fit;
 
@@ -39,8 +38,7 @@ impl Fit for IrSpectrum {
                 value: dt_fs.to_string(),
             });
         }
-        let mut planner = FftPlanner::new();
-        let (frequencies_cm1, intensities) = window_and_fft(&mut planner, acf, dt_fs)?;
+        let (frequencies_cm1, intensities) = cosine_sq_spectrum(acf, dt_fs)?;
         Ok(SpectrumResult {
             frequencies_cm1,
             intensities,
@@ -55,8 +53,8 @@ mod tests {
     use super::super::ir_flux::IrFlux;
     use super::*;
     use crate::compute::LegacyCompute;
+    use crate::compute::time_series::test_support::{assert_close, direct_lagged_sum};
     use molrs::core::Frame;
-    use molrs::signal as sig;
     use ndarray::Array2;
 
     /// Empty frame slice for the series-based raw computes.
@@ -64,17 +62,17 @@ mod tests {
         Vec::new()
     }
 
-    /// Rebuild the raw dipole-flux ACF the IrFlux compute / IrSpectrum consume.
+    /// The raw dipole-flux ACF the IrFlux compute / IrSpectrum consume,
+    /// written out: central-difference flux, direct ACF, Σ over components.
     fn ir_acf(dm: &Array2<f64>, dt_fs: f64, max_lag: usize) -> Array1<f64> {
         let n_frames = dm.shape()[0];
         let inv_2dt = 0.5 / dt_fs;
-        let mut planner = FftPlanner::new();
         let mut acf_sum = Array1::<f64>::zeros(max_lag + 1);
         for d in 0..3 {
-            let flux: Array1<f64> = (1..n_frames - 1)
+            let flux: Vec<f64> = (1..n_frames - 1)
                 .map(|t| (dm[[t + 1, d]] - dm[[t - 1, d]]) * inv_2dt)
                 .collect();
-            let acf = sig::acf_fft_with_planner(&mut planner, &flux, max_lag).unwrap();
+            let acf = direct_lagged_sum(&flux, &flux, max_lag);
             for k in 0..=max_lag {
                 acf_sum[k] += acf[k];
             }
@@ -84,8 +82,8 @@ mod tests {
 
     #[test]
     fn irflux_plus_ir_transform_matches_manual_acf_path() {
-        // ac-003/ac-007 (IR): IrFlux returns the unwindowed dipole-flux ACF the
-        // IrSpectrum transform consumes; IrFlux + IrSpectrum == manual path.
+        // IrFlux returns the unwindowed dipole-flux ACF the IrSpectrum
+        // transform consumes; IrFlux + IrSpectrum == manual path.
         let n = 1024;
         let dt = 0.5;
         let res = 200;
@@ -99,16 +97,24 @@ mod tests {
                 * tf)
                 .sin();
         }
-        let flux_len = n - 2;
-        let max_lag = res.min(flux_len - 1);
-        let acf = ir_acf(&dm, dt, max_lag);
+        let acf = ir_acf(&dm, dt, res);
 
         let raw = IrFlux.compute(&no_frames(), (&dm, dt, res)).unwrap();
-        assert_eq!(raw.acf, acf); // IrFlux returns the raw unwindowed ACF.
+        assert_close(
+            raw.acf.as_slice().unwrap(),
+            acf.as_slice().unwrap(),
+            1e-12,
+            "acf",
+        );
 
         let from_raw = IrSpectrum.fit((&raw.acf, dt)).unwrap();
         let from_manual = IrSpectrum.fit((&acf, dt)).unwrap();
         assert_eq!(from_raw.frequencies_cm1, from_manual.frequencies_cm1);
-        assert_eq!(from_raw.intensities, from_manual.intensities);
+        assert_close(
+            from_raw.intensities.as_slice().unwrap(),
+            from_manual.intensities.as_slice().unwrap(),
+            1e-12,
+            "intensities",
+        );
     }
 }

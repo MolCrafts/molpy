@@ -3,19 +3,39 @@
 
 use molrs::core::FrameAccess;
 use ndarray::{Array1, Array2};
-use rustfft::FftPlanner;
-use rustfft::num_complex::Complex64;
 
-use super::{acf_accumulate_into, central_diff_series};
+use super::{central_flux, raw_column_correlation};
 use crate::compute::ComputeError;
 use crate::compute::ComputeResult;
 use crate::compute::LegacyCompute;
-use crate::compute::lag_times;
+use crate::compute::Reduction;
 
-/// Weight for diagonal anisotropy components in the Raman ACF.
-pub(super) const DIAG_ANISO_WEIGHT: f64 = 0.5;
-/// Weight for off-diagonal anisotropy components in the Raman ACF.
-pub(super) const OFFDIAG_ANISO_WEIGHT: f64 = 3.0;
+/// Weight of each anisotropy part in the Raman ACF: the three diagonal
+/// differences `xx−yy, yy−zz, zz−xx` (½) and the off-diagonals `xy, xz, yz` (3).
+const ANISO_WEIGHTS: [f64; 6] = [0.5, 0.5, 0.5, 3.0, 3.0, 3.0];
+
+/// The seven Raman parts of a Voigt tensor-derivative series `(T, 6)`:
+/// column 0 the isotropic trace / 3, columns 1–6 the anisotropy parts in
+/// [`ANISO_WEIGHTS`] order.
+pub(super) fn raman_parts(dalpha: &Array2<f64>) -> Array2<f64> {
+    Array2::from_shape_fn((dalpha.nrows(), 7), |(t, c)| match c {
+        0 => (dalpha[[t, 0]] + dalpha[[t, 1]] + dalpha[[t, 2]]) / 3.0,
+        1 => dalpha[[t, 0]] - dalpha[[t, 1]],
+        2 => dalpha[[t, 1]] - dalpha[[t, 2]],
+        3 => dalpha[[t, 2]] - dalpha[[t, 0]],
+        voigt => dalpha[[t, voigt - 1]],
+    })
+}
+
+/// `(iso, aniso)` from the per-part correlations `(max_lag + 1, 7)`: part 0,
+/// and the [`ANISO_WEIGHTS`]-weighted sum of parts 1–6.
+pub(super) fn iso_aniso(parts: &Array2<f64>) -> (Array1<f64>, Array1<f64>) {
+    let mut aniso = Array1::<f64>::zeros(parts.nrows());
+    for (offset, weight) in ANISO_WEIGHTS.iter().enumerate() {
+        aniso.scaled_add(*weight, &parts.column(offset + 1));
+    }
+    (parts.column(0).to_owned(), aniso)
+}
 
 /// Raw isotropic + (weighted) anisotropic polarizability-derivative ACFs — the
 /// Raman-spectrum raw input.
@@ -82,64 +102,14 @@ impl LegacyCompute for RamanTensor {
         let flux_len = n_frames - 2;
         let max_lag = resolution.min(flux_len.saturating_sub(1));
 
-        // One central-diff pass over the Voigt tensor → (flux_len, 6).
-        let dalpha = central_diff_series(polarizabilities, dt);
-
-        // Isotropic: (α̇_xx + α̇_yy + α̇_zz) / 3.
-        let mut iso = vec![0.0_f64; flux_len];
-        for t in 0..flux_len {
-            iso[t] = (dalpha[[t, 0]] + dalpha[[t, 1]] + dalpha[[t, 2]]) / 3.0;
-        }
-
-        let mut planner = FftPlanner::new();
-        let mut scratch: Vec<Complex64> = Vec::new();
-        let mut acf_iso = Array1::<f64>::zeros(max_lag + 1);
-        acf_accumulate_into(
-            &mut planner,
-            &iso,
-            max_lag,
-            acf_iso.as_slice_mut().unwrap(),
-            1.0,
-            &mut scratch,
-        );
-
-        // Anisotropic: 3 diagonal diffs (weight ½) + 3 off-diagonals (weight 3).
-        let mut acf_aniso = Array1::<f64>::zeros(max_lag + 1);
-        let aniso_out = acf_aniso.as_slice_mut().unwrap();
-        let mut col = vec![0.0_f64; flux_len];
-
-        // Diagonal differences: xx−yy, yy−zz, zz−xx.
-        let diag_pairs = [(0usize, 1usize), (1, 2), (2, 0)];
-        for (i, j) in diag_pairs {
-            for t in 0..flux_len {
-                col[t] = dalpha[[t, i]] - dalpha[[t, j]];
-            }
-            acf_accumulate_into(
-                &mut planner,
-                &col,
-                max_lag,
-                aniso_out,
-                DIAG_ANISO_WEIGHT,
-                &mut scratch,
-            );
-        }
-        // Off-diagonals: xy, xz, yz (Voigt indices 3,4,5).
-        for off in 3..6 {
-            for t in 0..flux_len {
-                col[t] = dalpha[[t, off]];
-            }
-            acf_accumulate_into(
-                &mut planner,
-                &col,
-                max_lag,
-                aniso_out,
-                OFFDIAG_ANISO_WEIGHT,
-                &mut scratch,
-            );
-        }
+        // One central-diff pass over the Voigt tensor → (flux_len, 6), then
+        // one unnormalised ACF per Raman part.
+        let parts = raman_parts(&central_flux(polarizabilities, dt)?);
+        let raw = raw_column_correlation(&parts, None, max_lag, dt, Reduction::PerComponent)?;
+        let (acf_iso, acf_aniso) = iso_aniso(&raw.values);
 
         Ok(RamanTensorResult {
-            lag_times: lag_times(max_lag, dt),
+            lag_times: raw.lag_times,
             acf_iso,
             acf_aniso,
         })
