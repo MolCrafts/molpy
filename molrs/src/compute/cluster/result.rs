@@ -3,23 +3,31 @@
 
 use ndarray::Array1;
 
-use crate::compute::ComputeResult;
-use molrs::op::Idx;
+use crate::compute::Partition;
 
-/// Result of a cluster analysis on one frame.
-#[derive(Debug, Clone)]
+/// One snapshot's clusters; a [`Partition`] of the particles (a filtered
+/// particle is in no group).
+#[derive(Debug, Clone, PartialEq)]
 pub struct ClusterResult {
-    /// Particle -> cluster ID (0-indexed). `-1` for unassigned (filtered).
+    /// Particle → cluster ID (`0..n_clusters`), clusters numbered in order of
+    /// their lowest particle; `-1` for a particle whose cluster was dropped
+    /// by the minimum size.
     pub cluster_idx: Array1<i64>,
-    /// Number of clusters found.
+    /// Number of clusters kept.
     pub n_clusters: usize,
     /// Size (particle count) of each cluster, indexed by cluster ID.
     pub cluster_sizes: Vec<usize>,
-    /// The membership keys present in each cluster, indexed by cluster ID
-    /// (freud's `cluster_keys`). Empty when clustering without keys; for
-    /// key-based grouping each entry holds the single key defining that
-    /// cluster.
-    pub cluster_keys: Vec<Vec<Idx>>,
+    /// The `merge` keys present in each cluster, ascending, indexed by cluster
+    /// ID (freud's `cluster_keys`). Empty when clustering without `merge`.
+    pub cluster_keys: Vec<Vec<u64>>,
 }
 
-impl ComputeResult for ClusterResult {}
+impl Partition for ClusterResult {
+    fn n_items(&self) -> usize {
+        self.cluster_idx.len()
+    }
+
+    fn group_of(&self, item: usize) -> Option<u64> {
+        u64::try_from(self.cluster_idx[item]).ok()
+    }
+}

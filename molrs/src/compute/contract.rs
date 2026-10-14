@@ -39,6 +39,8 @@
 //! `Compute` whose output implements [`Verdict`]. One verb is what lets any
 //! output feed the next step without glue.
 
+use std::collections::BTreeMap;
+
 use molrs::op::F;
 use ndarray::{ArrayBase, ArrayView1, Axis, Data, Ix1, Ix2};
 
@@ -167,6 +169,19 @@ pub trait Partition {
     /// The group key of `item`, or `None` if the item belongs to no group.
     /// `item` must be below [`n_items`](Self::n_items).
     fn group_of(&self, item: usize) -> Option<u64>;
+
+    /// The number of items in each group, keyed — and so iterated — by
+    /// ascending group key, the order every group reduction reports its
+    /// groups in. Items in no group are not counted.
+    fn sizes(&self) -> BTreeMap<u64, usize> {
+        let mut sizes = BTreeMap::new();
+        for item in 0..self.n_items() {
+            if let Some(key) = self.group_of(item) {
+                *sizes.entry(key).or_insert(0) += 1;
+            }
+        }
+        sizes
+    }
 }
 
 /// A label array is a partition: every item belongs to the group its label
@@ -429,6 +444,13 @@ mod tests {
         let owned: Vec<u32> = vec![5, 5];
         let p: &dyn Partition = &owned;
         assert_eq!(p.group_of(1), Some(5));
+    }
+
+    #[test]
+    fn sizes_are_ordered_by_ascending_key() {
+        let mol_id: &[u64] = &[7, 3, 7, 9];
+        let sizes: Vec<(u64, usize)> = (&mol_id as &dyn Partition).sizes().into_iter().collect();
+        assert_eq!(sizes, vec![(3, 1), (7, 2), (9, 1)]);
     }
 
     #[test]

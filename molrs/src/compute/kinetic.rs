@@ -1,8 +1,9 @@
 //! Kinetic readings of one configuration: [`KineticEnergy`] and its
-//! equipartition temperature, and the centre-of-mass velocity.
+//! equipartition temperature. (The centre-of-mass velocity is
+//! [`CenterOfMass`](crate::compute::CenterOfMass) on the velocities.)
 
 use molrs::core::{UnitPreset, UnitRegistry};
-use ndarray::{Array1, ArrayView1, ArrayView2, Zip};
+use ndarray::{ArrayView1, ArrayView2, Zip};
 
 use crate::compute::{Compute, ComputeError};
 use crate::op::F;
@@ -139,42 +140,6 @@ impl Compute for KineticEnergy {
     }
 }
 
-/// The mass-weighted centre-of-mass velocity `Σᵢ mᵢ vᵢ / Σᵢ mᵢ` of the
-/// `(n_atoms, 3)` velocities `vel`.
-///
-/// Kept as a function until link 07 of the compute redesign, whose
-/// `CenterOfMass` (on velocities, with no box) replaces it.
-///
-/// # Errors
-///
-/// As [`KineticEnergy`]; [`ComputeError::OutOfRange`] when the total mass is
-/// zero (the centre of mass is undefined).
-pub fn center_of_mass_velocity(
-    mass: ArrayView1<'_, F>,
-    vel: ArrayView2<'_, F>,
-) -> Result<Array1<F>, ComputeError> {
-    check_rows(mass, vel)?;
-    let mut p = [0.0; 3];
-    let mut total = 0.0;
-    Zip::from(vel.rows()).and(mass).for_each(|v, &m| {
-        total += m;
-        p[0] += m * v[0];
-        p[1] += m * v[1];
-        p[2] += m * v[2];
-    });
-    if total == 0.0 {
-        return Err(ComputeError::OutOfRange {
-            field: "mass (total)",
-            value: "0: the centre of mass of a massless set is undefined".into(),
-        });
-    }
-    Ok(Array1::from_vec(vec![
-        p[0] / total,
-        p[1] / total,
-        p[2] / total,
-    ]))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -233,23 +198,5 @@ mod tests {
             boltzmann: 0.0,
         };
         assert!(no_kb.temperature(6).is_err());
-    }
-
-    #[test]
-    fn center_of_mass_velocity_is_mass_weighted() {
-        let mass = array![3.0, 1.0];
-        let vel = array![[1.0, 0.0, 0.0], [-3.0, 4.0, 0.0]];
-        let v = center_of_mass_velocity(mass.view(), vel.view()).unwrap();
-        assert_eq!(v.to_vec(), vec![0.0, 1.0, 0.0]);
-    }
-
-    /// Spec §5: a zero total mass used to return a zero velocity.
-    #[test]
-    fn a_massless_set_has_no_centre_of_mass_velocity() {
-        let vel = array![[1.0, 0.0, 0.0], [-3.0, 4.0, 0.0]];
-        assert!(matches!(
-            center_of_mass_velocity(array![0.0, 0.0].view(), vel.view()),
-            Err(ComputeError::OutOfRange { .. })
-        ));
     }
 }

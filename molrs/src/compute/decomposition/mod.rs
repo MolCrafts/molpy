@@ -1,13 +1,13 @@
-//! Matrix decomposition of descriptor rows: principal component analysis.
+//! Matrix decomposition of feature matrices: principal component analysis.
 //!
-//! | Method | Args | Output |
-//! |--------|------|--------|
-//! | [`Pca`] | `&Vec<T: DescriptorRow>` | [`PcaResult`] — 2-component projection |
+//! | Method | Input | Output |
+//! |--------|-------|--------|
+//! | [`Pca`] | any [`FeatureMatrix`](crate::compute::FeatureMatrix) | [`PcaResult`] — `n_components` scores per row, itself a `FeatureMatrix` |
 //!
-//! It consumes the descriptor rows produced by the
-//! [`shape`](crate::compute::GyrationTensor) analyses (gyration/inertia
-//! invariants, Rg, …) via [`DescriptorRow`](crate::compute::DescriptorRow).
+//! It consumes the descriptor results ([`SteinhardtResult`](crate::compute::SteinhardtResult),
+//! [`LocalDescriptorsResult`](crate::compute::LocalDescriptorsResult)) or a
+//! plain `Array2`, and feeds [`Kmeans`](crate::compute::Kmeans).
 
 mod pca;
 
-pub use pca::{Pca, PcaResult};
+pub use pca::{Pca, PcaInput, PcaResult};

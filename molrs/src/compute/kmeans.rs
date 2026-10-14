@@ -1,27 +1,24 @@
 //! k-means clustering with k-means++ initialization.
 
-use molrs::core::FrameAccess;
 use molrs::op::F;
+use ndarray::{Array2, ArrayView1};
 use rand::rngs::StdRng;
 use rand::{RngExt, SeedableRng};
 
-use crate::compute::ComputeError;
-use crate::compute::ComputeResult;
-use crate::compute::LegacyCompute;
-use crate::compute::PcaResult;
+use crate::compute::{Compute, ComputeError, FeatureMatrix, Partition};
 
-/// Per-row cluster labels in `0..k`.
-#[derive(Debug, Clone, Default)]
-pub struct KmeansResult(pub Vec<i32>);
-
-impl ComputeResult for KmeansResult {}
-
-/// Configuration handle for k-means clustering.
+/// k-means clustering of the rows of a [`FeatureMatrix`] (Lloyd's algorithm
+/// with k-means++ initialization).
 ///
-/// [`Kmeans`] is a [`LegacyCompute`](crate::compute::LegacyCompute) consuming an upstream [`PcaResult`]. The 2D
-/// PCA scores are interpreted as a row-major `[n_rows, 2]` matrix and
-/// clustered via Lloyd's algorithm with k-means++ init. Deterministic given a
-/// fixed seed.
+/// Configuration: `k`, the iteration cap and the RNG seed. Data: any
+/// [`FeatureMatrix`] — a [`PcaResult`](crate::compute::PcaResult), a
+/// descriptor result or an `Array2` — clustered in its own dimensionality
+/// (`n_cols`). Deterministic for a fixed seed. The result is a [`Partition`]
+/// of the rows.
+///
+/// Defaults: [`DEFAULT_MAX_ITER`](Self::DEFAULT_MAX_ITER) Lloyd iterations
+/// and seed [`DEFAULT_SEED`](Self::DEFAULT_SEED). Lloyd stops early once no
+/// centroid moves by more than `1e-8` in total (squared move `< 1e-16`).
 #[derive(Debug, Clone, Copy)]
 pub struct Kmeans {
     k: usize,
@@ -29,32 +26,187 @@ pub struct Kmeans {
     seed: u64,
 }
 
+/// The data a [`Kmeans`] clusters.
+#[derive(Clone, Copy)]
+pub struct KmeansInput<'a> {
+    /// The samples, one row each.
+    pub features: &'a (dyn FeatureMatrix + Sync),
+}
+
+/// One cluster label per row, and the centroids.
+#[derive(Debug, Clone, PartialEq)]
+pub struct KmeansResult {
+    /// Row → cluster label in `0..k`.
+    pub labels: Vec<u32>,
+    /// The final centroids, `k × n_cols`.
+    pub centroids: Array2<F>,
+}
+
+impl Partition for KmeansResult {
+    fn n_items(&self) -> usize {
+        self.labels.len()
+    }
+
+    fn group_of(&self, item: usize) -> Option<u64> {
+        Some(u64::from(self.labels[item]))
+    }
+}
+
+/// Squared total centroid move below which Lloyd's iteration has converged.
 const CENTROID_MOVE_SQ: F = 1e-16;
 
 impl Kmeans {
-    /// `k` clusters, at most `max_iter` Lloyd iterations, deterministic RNG `seed`.
-    pub fn new(k: usize, max_iter: usize, seed: u64) -> Result<Self, ComputeError> {
+    /// The Lloyd iteration cap unless [`with_max_iter`](Self::with_max_iter)
+    /// sets one.
+    pub const DEFAULT_MAX_ITER: usize = 100;
+
+    /// The k-means++ RNG seed unless [`with_seed`](Self::with_seed) sets one.
+    pub const DEFAULT_SEED: u64 = 0;
+
+    /// `k` clusters.
+    ///
+    /// # Errors
+    /// [`ComputeError::OutOfRange`] for `k = 0`.
+    pub fn new(k: usize) -> Result<Self, ComputeError> {
         if k == 0 {
             return Err(ComputeError::OutOfRange {
                 field: "Kmeans::k",
                 value: k.to_string(),
             });
         }
+        Ok(Self {
+            k,
+            max_iter: Self::DEFAULT_MAX_ITER,
+            seed: Self::DEFAULT_SEED,
+        })
+    }
+
+    /// At most `max_iter` Lloyd iterations.
+    ///
+    /// # Errors
+    /// [`ComputeError::OutOfRange`] for 0.
+    pub fn with_max_iter(mut self, max_iter: usize) -> Result<Self, ComputeError> {
         if max_iter == 0 {
             return Err(ComputeError::OutOfRange {
                 field: "Kmeans::max_iter",
                 value: max_iter.to_string(),
             });
         }
-        Ok(Self { k, max_iter, seed })
+        self.max_iter = max_iter;
+        Ok(self)
     }
 
-    fn fit_coords(
-        &self,
-        coords: &[F],
-        n_rows: usize,
-        n_dims: usize,
-    ) -> Result<Vec<i32>, ComputeError> {
+    /// The seed of the k-means++ initialization.
+    pub fn with_seed(mut self, seed: u64) -> Self {
+        self.seed = seed;
+        self
+    }
+
+    /// The number of clusters.
+    pub fn k(&self) -> usize {
+        self.k
+    }
+
+    /// The Lloyd iteration cap.
+    pub fn max_iter(&self) -> usize {
+        self.max_iter
+    }
+
+    /// The RNG seed.
+    pub fn seed(&self) -> u64 {
+        self.seed
+    }
+
+    /// k-means++: the first centroid uniformly, each next one with
+    /// probability proportional to its squared distance from the nearest
+    /// chosen centroid.
+    fn initial_centroids(&self, x: &Array2<F>, rng: &mut StdRng) -> Array2<F> {
+        let n_rows = x.nrows();
+        let mut centroids = Array2::<F>::zeros((self.k, x.ncols()));
+        let first = rng.random_range(0..n_rows);
+        centroids.row_mut(0).assign(&x.row(first));
+
+        let mut min_sq = vec![F::INFINITY; n_rows];
+        for c in 0..self.k {
+            if c > 0 {
+                let total: F = min_sq.iter().sum();
+                let next = if total > 0.0 {
+                    let mut target: F = rng.random::<F>() * total;
+                    let mut chosen = n_rows - 1;
+                    for (i, &d) in min_sq.iter().enumerate() {
+                        target -= d;
+                        if target <= 0.0 {
+                            chosen = i;
+                            break;
+                        }
+                    }
+                    chosen
+                } else {
+                    rng.random_range(0..n_rows)
+                };
+                centroids.row_mut(c).assign(&x.row(next));
+            }
+            for (i, row) in x.rows().into_iter().enumerate() {
+                min_sq[i] = min_sq[i].min(Self::sq_dist(row, centroids.row(c)));
+            }
+        }
+        centroids
+    }
+
+    /// The nearest centroid of every row.
+    fn assign(x: &Array2<F>, centroids: &Array2<F>, labels: &mut [u32]) {
+        for (label, row) in labels.iter_mut().zip(x.rows()) {
+            let mut best = 0;
+            let mut best_d2 = F::INFINITY;
+            for (c, centroid) in centroids.rows().into_iter().enumerate() {
+                let d2 = Self::sq_dist(row, centroid);
+                if d2 < best_d2 {
+                    best_d2 = d2;
+                    best = c;
+                }
+            }
+            *label = best as u32;
+        }
+    }
+
+    /// The mean of each cluster's rows; an emptied cluster keeps its previous
+    /// centroid.
+    fn update(x: &Array2<F>, labels: &[u32], previous: &Array2<F>) -> Array2<F> {
+        let mut sums = Array2::<F>::zeros(previous.dim());
+        let mut counts = vec![0usize; previous.nrows()];
+        for (&label, row) in labels.iter().zip(x.rows()) {
+            let c = label as usize;
+            counts[c] += 1;
+            let mut sum = sums.row_mut(c);
+            sum += &row;
+        }
+        for (c, &count) in counts.iter().enumerate() {
+            if count == 0 {
+                sums.row_mut(c).assign(&previous.row(c));
+            } else {
+                let inv = 1.0 / count as F;
+                sums.row_mut(c).mapv_inplace(|v| v * inv);
+            }
+        }
+        sums
+    }
+
+    fn sq_dist(a: ArrayView1<'_, F>, b: ArrayView1<'_, F>) -> F {
+        a.iter().zip(b.iter()).map(|(x, y)| (x - y).powi(2)).sum()
+    }
+}
+
+impl Compute for Kmeans {
+    type Input<'a> = KmeansInput<'a>;
+    type Output = KmeansResult;
+
+    /// # Errors
+    /// [`ComputeError::OutOfRange`] when there are no feature columns or
+    /// fewer rows than `k`; [`ComputeError::NonFinite`] for a non-finite
+    /// feature.
+    fn compute(&self, input: KmeansInput<'_>) -> Result<KmeansResult, ComputeError> {
+        let features = input.features;
+        let (n_rows, n_dims) = (features.n_rows(), features.n_cols());
         if n_dims == 0 {
             return Err(ComputeError::OutOfRange {
                 field: "Kmeans::n_dims",
@@ -67,195 +219,43 @@ impl Kmeans {
                 value: format!("k={} exceeds n_rows={}", self.k, n_rows),
             });
         }
-        if coords.len() != n_rows * n_dims {
-            return Err(ComputeError::DimensionMismatch {
-                expected: n_rows * n_dims,
-                got: coords.len(),
-                what: "Kmeans coords length",
+        let x = Array2::from_shape_fn((n_rows, n_dims), |(i, j)| features.row(i)[j]);
+        if let Some(index) = x.iter().position(|v| !v.is_finite()) {
+            return Err(ComputeError::NonFinite {
+                where_: "Kmeans features",
+                index,
             });
-        }
-        for (i, &v) in coords.iter().enumerate() {
-            if !v.is_finite() {
-                return Err(ComputeError::NonFinite {
-                    where_: "Kmeans coords",
-                    index: i,
-                });
-            }
         }
 
         let mut rng = StdRng::seed_from_u64(self.seed);
-        let mut centroids = kmeans_pp_init(coords, n_rows, n_dims, self.k, &mut rng);
-        let mut labels = vec![0i32; n_rows];
-
+        let mut centroids = self.initial_centroids(&x, &mut rng);
+        let mut labels = vec![0u32; n_rows];
         for _ in 0..self.max_iter {
-            assign_labels(coords, n_rows, n_dims, &centroids, self.k, &mut labels);
-            let new_centroids =
-                recompute_centroids(coords, n_rows, n_dims, &labels, self.k, &centroids);
-            let move_sq = centroid_move_sq(&centroids, &new_centroids);
-            centroids = new_centroids;
-            if move_sq < CENTROID_MOVE_SQ {
+            Self::assign(&x, &centroids, &mut labels);
+            let next = Self::update(&x, &labels, &centroids);
+            let moved: F = (&next - &centroids).mapv(|d| d * d).sum();
+            centroids = next;
+            if moved < CENTROID_MOVE_SQ {
                 break;
             }
         }
-        assign_labels(coords, n_rows, n_dims, &centroids, self.k, &mut labels);
+        Self::assign(&x, &centroids, &mut labels);
 
-        Ok(labels)
+        Ok(KmeansResult { labels, centroids })
     }
-}
-
-impl LegacyCompute for Kmeans {
-    type Args<'a> = &'a PcaResult;
-    type Output = KmeansResult;
-
-    fn compute<'a, FA: FrameAccess + Sync + 'a>(
-        &self,
-        _frames: &[&'a FA],
-        pca: &'a PcaResult,
-    ) -> Result<KmeansResult, ComputeError> {
-        let n_dims = 2usize;
-        if !pca.coords.len().is_multiple_of(n_dims) {
-            return Err(ComputeError::BadShape {
-                expected: "coords length divisible by 2".into(),
-                got: format!("len = {}", pca.coords.len()),
-            });
-        }
-        let n_rows = pca.coords.len() / n_dims;
-        let labels = self.fit_coords(&pca.coords, n_rows, n_dims)?;
-        Ok(KmeansResult(labels))
-    }
-}
-
-fn kmeans_pp_init(
-    coords: &[F],
-    n_rows: usize,
-    n_dims: usize,
-    k: usize,
-    rng: &mut StdRng,
-) -> Vec<F> {
-    let mut centroids = Vec::with_capacity(k * n_dims);
-    let first = rng.random_range(0..n_rows);
-    centroids.extend_from_slice(&coords[first * n_dims..(first + 1) * n_dims]);
-
-    let mut min_sq = vec![F::INFINITY; n_rows];
-    update_min_sq(coords, n_rows, n_dims, &centroids[0..n_dims], &mut min_sq);
-
-    for _c in 1..k {
-        let total: F = min_sq.iter().sum();
-        let next_idx = if total > 0.0 {
-            let mut target: F = rng.random::<F>() * total;
-            let mut chosen = n_rows - 1;
-            for (i, &d) in min_sq.iter().enumerate() {
-                target -= d;
-                if target <= 0.0 {
-                    chosen = i;
-                    break;
-                }
-            }
-            chosen
-        } else {
-            rng.random_range(0..n_rows)
-        };
-        let start = centroids.len();
-        centroids.extend_from_slice(&coords[next_idx * n_dims..(next_idx + 1) * n_dims]);
-        update_min_sq(
-            coords,
-            n_rows,
-            n_dims,
-            &centroids[start..start + n_dims],
-            &mut min_sq,
-        );
-    }
-
-    centroids
-}
-
-fn update_min_sq(coords: &[F], n_rows: usize, n_dims: usize, new_centroid: &[F], min_sq: &mut [F]) {
-    for i in 0..n_rows {
-        let p = &coords[i * n_dims..(i + 1) * n_dims];
-        let d2 = sq_dist(p, new_centroid);
-        if d2 < min_sq[i] {
-            min_sq[i] = d2;
-        }
-    }
-}
-
-fn assign_labels(
-    coords: &[F],
-    n_rows: usize,
-    n_dims: usize,
-    centroids: &[F],
-    k: usize,
-    labels: &mut [i32],
-) {
-    for i in 0..n_rows {
-        let p = &coords[i * n_dims..(i + 1) * n_dims];
-        let mut best = 0usize;
-        let mut best_d2 = F::INFINITY;
-        for c in 0..k {
-            let cc = &centroids[c * n_dims..(c + 1) * n_dims];
-            let d2 = sq_dist(p, cc);
-            if d2 < best_d2 {
-                best_d2 = d2;
-                best = c;
-            }
-        }
-        labels[i] = best as i32;
-    }
-}
-
-fn recompute_centroids(
-    coords: &[F],
-    n_rows: usize,
-    n_dims: usize,
-    labels: &[i32],
-    k: usize,
-    prev: &[F],
-) -> Vec<F> {
-    let mut sums = vec![0.0 as F; k * n_dims];
-    let mut counts = vec![0usize; k];
-    for i in 0..n_rows {
-        let lab = labels[i] as usize;
-        counts[lab] += 1;
-        let start = lab * n_dims;
-        for d in 0..n_dims {
-            sums[start + d] += coords[i * n_dims + d];
-        }
-    }
-    let mut out = vec![0.0 as F; k * n_dims];
-    for (c, &count) in counts.iter().enumerate() {
-        let start = c * n_dims;
-        if count == 0 {
-            out[start..start + n_dims].copy_from_slice(&prev[start..start + n_dims]);
-        } else {
-            let inv = 1.0 / count as F;
-            for d in 0..n_dims {
-                out[start + d] = sums[start + d] * inv;
-            }
-        }
-    }
-    out
-}
-
-fn centroid_move_sq(a: &[F], b: &[F]) -> F {
-    debug_assert_eq!(a.len(), b.len());
-    a.iter().zip(b.iter()).map(|(x, y)| (x - y).powi(2)).sum()
-}
-
-fn sq_dist(a: &[F], b: &[F]) -> F {
-    debug_assert_eq!(a.len(), b.len());
-    a.iter().zip(b.iter()).map(|(x, y)| (x - y).powi(2)).sum()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::compute::fixtures::{random_points, self_neighbors};
+    use crate::compute::{Pca, PcaInput, Steinhardt, SteinhardtInput};
     use crate::op::standard_normal;
-    use molrs::core::Frame;
-    use rand::SeedableRng;
-    use rand::rngs::StdRng;
+    use molrs::core::SimBox;
+    use ndarray::array;
     use std::collections::HashSet;
 
-    fn three_blobs(n_per_cluster: usize, seed: u64) -> PcaResult {
+    fn three_blobs(n_per_cluster: usize, seed: u64) -> Array2<F> {
         let centers = [(0.0, 0.0), (10.0, 0.0), (5.0, 10.0)];
         let sigma: F = 0.5;
         let mut rng = StdRng::seed_from_u64(seed);
@@ -267,36 +267,50 @@ mod tests {
                 coords.push(cy + sigma * standard_normal(&mut rng));
             }
         }
-        PcaResult {
-            coords,
-            variance: [1.0, 1.0],
-        }
+        Array2::from_shape_vec((total, 2), coords).unwrap()
+    }
+
+    fn kmeans(k: usize, max_iter: usize, seed: u64) -> Kmeans {
+        Kmeans::new(k)
+            .unwrap()
+            .with_max_iter(max_iter)
+            .unwrap()
+            .with_seed(seed)
     }
 
     #[test]
     fn new_rejects_zero_k() {
-        assert!(Kmeans::new(0, 100, 42).is_err());
+        assert!(Kmeans::new(0).is_err());
     }
 
     #[test]
     fn new_rejects_zero_max_iter() {
-        assert!(Kmeans::new(3, 0, 42).is_err());
+        assert!(Kmeans::new(3).unwrap().with_max_iter(0).is_err());
+    }
+
+    #[test]
+    fn defaults_live_in_core() {
+        let km = Kmeans::new(3).unwrap();
+        assert_eq!(km.max_iter(), Kmeans::DEFAULT_MAX_ITER);
+        assert_eq!(km.seed(), Kmeans::DEFAULT_SEED);
+        assert_eq!((Kmeans::DEFAULT_MAX_ITER, Kmeans::DEFAULT_SEED), (100, 0));
     }
 
     #[test]
     fn three_blobs_produce_three_clusters() {
-        let pca = three_blobs(20, 7);
-        let km = Kmeans::new(3, 100, 42).unwrap();
-        let frame = Frame::new();
-        let labels = km.compute(&[&frame], &pca).unwrap();
+        let blobs = three_blobs(20, 7);
+        let labels = kmeans(3, 100, 42)
+            .compute(KmeansInput { features: &blobs })
+            .unwrap();
 
-        assert_eq!(labels.0.len(), pca.coords.len() / 2);
-        let unique: HashSet<i32> = labels.0.iter().copied().collect();
+        assert_eq!(labels.labels.len(), blobs.nrows());
+        assert_eq!(labels.centroids.dim(), (3, 2));
+        let unique: HashSet<u32> = labels.labels.iter().copied().collect();
         assert_eq!(unique.len(), 3);
 
-        let expected = (pca.coords.len() / 2) as i32 / 3;
-        for c in 0..3i32 {
-            let count = labels.0.iter().filter(|&&l| l == c).count() as i32;
+        let expected = blobs.nrows() as i32 / 3;
+        for c in 0..3u32 {
+            let count = labels.labels.iter().filter(|&&l| l == c).count() as i32;
             assert!(
                 (count - expected).abs() <= 5,
                 "cluster {c} size {count} not within ±5 of {expected}"
@@ -306,35 +320,90 @@ mod tests {
 
     #[test]
     fn same_seed_identical_labels() {
-        let pca = three_blobs(20, 7);
-        let km = Kmeans::new(3, 100, 42).unwrap();
-        let frame = Frame::new();
-        let a = km.compute(&[&frame], &pca).unwrap();
-        let b = km.compute(&[&frame], &pca).unwrap();
-        assert_eq!(a.0, b.0);
+        let blobs = three_blobs(20, 7);
+        let km = kmeans(3, 100, 42);
+        let a = km.compute(KmeansInput { features: &blobs }).unwrap();
+        let b = km.compute(KmeansInput { features: &blobs }).unwrap();
+        assert_eq!(a.labels, b.labels);
     }
 
     #[test]
     fn err_when_k_exceeds_rows() {
-        let pca = PcaResult {
-            coords: vec![0.0, 0.0, 1.0, 1.0],
-            variance: [1.0, 1.0],
-        };
-        let km = Kmeans::new(5, 10, 42).unwrap();
-        let frame = Frame::new();
-        let err = km.compute(&[&frame], &pca).unwrap_err();
+        let rows = array![[0.0, 0.0], [1.0, 1.0]];
+        let err = kmeans(5, 10, 42)
+            .compute(KmeansInput { features: &rows })
+            .unwrap_err();
         assert!(matches!(err, ComputeError::OutOfRange { .. }));
     }
 
     #[test]
     fn err_on_nan_input() {
-        let pca = PcaResult {
-            coords: vec![0.0, F::NAN, 1.0, 1.0, 2.0, 2.0],
-            variance: [1.0, 1.0],
-        };
-        let km = Kmeans::new(2, 10, 42).unwrap();
-        let frame = Frame::new();
-        let err = km.compute(&[&frame], &pca).unwrap_err();
+        let rows = array![[0.0, F::NAN], [1.0, 1.0], [2.0, 2.0]];
+        let err = kmeans(2, 10, 42)
+            .compute(KmeansInput { features: &rows })
+            .unwrap_err();
         assert!(matches!(err, ComputeError::NonFinite { .. }));
+    }
+
+    /// The dimensionality is the matrix's (it was hardcoded to 2): three
+    /// blobs separated only along z are found in 3-D.
+    #[test]
+    fn clusters_in_the_dimensionality_of_the_matrix() {
+        let rows = Array2::from_shape_fn((30, 3), |(i, d)| {
+            let blob = (i / 10) as F;
+            let jitter = 0.01 * ((i * 3 + d) as F).sin();
+            if d == 2 { 10.0 * blob + jitter } else { jitter }
+        });
+        let result = kmeans(3, 100, 0)
+            .compute(KmeansInput { features: &rows })
+            .unwrap();
+        assert_eq!(result.centroids.ncols(), 3);
+        for blob in 0..3 {
+            let members = &result.labels[blob * 10..(blob + 1) * 10];
+            assert!(members.iter().all(|&l| l == members[0]));
+        }
+        let distinct: HashSet<u32> = result.labels.iter().copied().collect();
+        assert_eq!(distinct.len(), 3);
+        assert_eq!(
+            result.sizes().into_values().collect::<Vec<_>>(),
+            vec![10, 10, 10]
+        );
+    }
+
+    /// Acceptance ac-010: Steinhardt → Pca(3) → Kmeans, with no glue between
+    /// steps — each result is the next step's `FeatureMatrix`, and k-means
+    /// clusters in 3-D.
+    #[test]
+    fn steinhardt_pca_kmeans_composes() {
+        let box_len = 6.0;
+        let simbox = SimBox::cube(box_len, array![0.0, 0.0, 0.0], [true; 3]).unwrap();
+        let points = random_points(200, box_len, 11);
+        let neighbors = self_neighbors(points.view(), &simbox, 1.6);
+
+        let descriptors = Steinhardt::new(&[4, 6, 8])
+            .unwrap()
+            .with_wl(true)
+            .compute(SteinhardtInput {
+                neighbors: &neighbors,
+            })
+            .unwrap();
+        let projection = Pca::new(3)
+            .unwrap()
+            .compute(PcaInput {
+                features: &descriptors,
+            })
+            .unwrap();
+        let clusters = Kmeans::new(2)
+            .unwrap()
+            .compute(KmeansInput {
+                features: &projection,
+            })
+            .unwrap();
+
+        assert_eq!(projection.coords.dim(), (200, 3));
+        assert_eq!(clusters.centroids.dim(), (2, 3));
+        assert_eq!(clusters.n_items(), 200);
+        assert!(clusters.labels.iter().all(|&l| l < 2));
+        assert_eq!(clusters.sizes().len(), 2);
     }
 }

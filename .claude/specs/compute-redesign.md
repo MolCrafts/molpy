@@ -550,6 +550,33 @@ lag spacing, any consistent time unit works.
   particle). Memory is now O(matches) instead of O(n) — a dense bucket of
   identical environments stores its match edges.
 
+*As built (07):*
+- **`GroupReduce`** (`shape/group_reduce.rs`, `pub(crate) mod`, so link 08's
+  Voronoi reference can reach it) is built once per snapshot from
+  `(positions N × 3, Option<&SimBox>, &dyn Partition)`: groups in ascending
+  key order through `Partition::sizes`, items with `group_of = None` skipped,
+  each group's anchor its lowest member, each member stored as
+  `SimBox::mic().apply(r − anchor)` (the core MIC). `centroids(weights,
+  name)` → centres `anchor + Σ w d / Σ w`, totals; `second_moments(weights,
+  centroids)` → unnormalised `S = Σ w s sᵀ` with `s = d − (centre − anchor)`:
+  the moment is taken on the already-unwrapped offsets, not through a second
+  minimum image about the centre as the old copies did (identical for a
+  group within half a box of its anchor; round-off only). Gyration is `S / W`,
+  inertia `tr(S) δ − S`. Link 08 reads the Voronoi Pass-A centre of nuclear
+  charge as `centroids(Z)`; a per-item `unwrapped(item)` accessor is not
+  added until a caller needs it.
+- **Connected components:** `Cluster` builds a `Topology::with_atoms(n)` +
+  `add_bonds` from the pairs (and from each `merge` group, joined as a star
+  on its first member) and labels with `connected_components` — the same
+  labels as the old BFS (components in order of their lowest particle).
+- **Eigensolver:** `Pca` calls `op::linalg::eigh_sym` (already
+  `pub(crate)`); `power_iteration`, `rayleigh_quotient`, `mat_vec`,
+  `vec_norm` and the `pub(crate) fn fit_transform` are deleted.
+- **`positions.rs` deleted here, not in 09:** after 07 nothing outside a test
+  read it (the cluster/shape kernels were its last users), so it and the
+  test-only `fixtures::nlist_from_frame` would be dead code under
+  `clippy -D warnings`.
+
 ### 4. Public surface — every current symbol and where it goes
 
 Legend:
@@ -901,6 +928,56 @@ snapshots: `Batch`); `Input`s are named-field structs; no frame is read.
 | `Kmeans` | K. Input `&dyn FeatureMatrix`; `n_dims` comes from the matrix. |
 | `PcaResult`, `KmeansResult` | `FeatureMatrix` / `Partition` |
 
+*As built (07):* every type below is a per-snapshot `Compute` (many
+snapshots: `Batch`); `Input`s are named-field structs whose partition /
+features are `&(dyn Partition + Sync)` / `&(dyn FeatureMatrix + Sync)` so
+`Batch` can send them.
+- **`Partition::sizes() -> BTreeMap<u64, usize>`** (provided method): group
+  sizes keyed — and iterated — by ascending key; the "group sizes" of the
+  former `ClusterProperties`.
+- **`CenterOfMass`**, **`GyrationTensor`**, **`InertiaTensor`**: unit structs
+  (`new()`, `Default`); `compute({ positions: N × 3, simbox: Option<&SimBox>,
+  partition, masses | weights: ArrayView1 })` — `GyrationTensor` takes
+  `weights`, the other two `masses`. Results: `CenterOfMassResult { groups:
+  Vec<u64>, centers: G × 3, total_masses }`, `GyrationTensorResult { groups,
+  tensors: G × 3 × 3 }` with `radius_of_gyration() -> Array1` (`√tr G`, no
+  clamp: `G` is a non-negative-weighted sum of squares), `InertiaTensorResult
+  { groups, tensors }`. *Deviation:* `GyrationTensor` / `InertiaTensor` no
+  longer take an upstream centres result (`ClusterCentersResult` /
+  `CenterOfMassResult`); each reduces about its own weighted centre through
+  `GroupReduce`, which is what keeps the centre and the moment one weighting.
+  The geometric centre is `CenterOfMass` with `Array1::ones(n)`; the
+  centre-of-mass velocity is `CenterOfMass` on velocities, `simbox: None`,
+  a one-group partition (`md::maxwell` does this).
+- **`Cluster::new()`** (minimum size 1, `Default`) +
+  **`with_min_cluster_size(n) -> Result`** (0 is `OutOfRange`). *Deviation:*
+  the old `new(min_cluster_size)` positional argument became a setter so the
+  default lives in core (D8). `compute(ClusterInput { pairs: &Neighbors,
+  merge: Option<&(dyn Partition + Sync)> })`; the particle count is the
+  table's `SelfQuery { n_points }` (`require_self_query`; a cross-query is
+  `BadShape`, a pair past the count `OutOfRange` — was an index panic).
+  *Deviation (freud semantics):* `merge` joins its groups **on top of** the
+  pairs, like freud's `keys`; the old `compute_keyed` ignored geometry, which
+  is now `merge` over a table with no pairs (the keyed tests do exactly
+  that). `ClusterResult { cluster_idx: Array1<i64> (−1 = dropped), n_clusters,
+  cluster_sizes, cluster_keys: Vec<Vec<u64>> }` (keys ascending and distinct
+  per cluster, empty without `merge`), a `Partition` (`−1` → `None`).
+- **`Pca::new(n_components) -> Result`** (0 is `OutOfRange`),
+  `compute(PcaInput { features })` → `PcaResult { coords: n_rows ×
+  n_components, variance: Array1 }`, a `FeatureMatrix`. Fewer columns than
+  components is `OutOfRange`; no rows `EmptyInput`. Each axis's sign is fixed
+  so its largest-magnitude loading is positive (the old power iteration's
+  sign followed its start vector).
+- **`Kmeans::new(k) -> Result`**, `with_max_iter(n) -> Result` (0 is
+  `OutOfRange`), `with_seed(s)`; defaults `Kmeans::DEFAULT_MAX_ITER = 100`
+  and `Kmeans::DEFAULT_SEED = 0` — the values Python and WASM already used,
+  so behaviour change 4 moves no visible default. `compute(KmeansInput {
+  features })` in the matrix's own `n_cols`; `KmeansResult { labels:
+  Vec<u32>, centroids: k × n_cols }` (was `KmeansResult(Vec<i32>)`), a
+  `Partition`. The k-means++ draw order is unchanged.
+- `DescriptorRow` is no longer read by `Pca` / `Kmeans`; its last
+  implementor is `RdfResult` (09 deletes the trait).
+
 **Voronoi.**
 
 | Symbol | Fate |
@@ -948,6 +1025,11 @@ that owns the file.
   - `center_of_mass_velocity` with zero total mass becomes an error.
 - **Masses and weights:** the shape kernels' `map_or(1.0, …)` disappears;
   masses are a required `compute` argument.
+  *As built (07):* done in `GroupReduce`, with unit tests on each variant:
+  weights not one per item → `DimensionMismatch`, non-finite → `NonFinite`,
+  negative → `OutOfRange`, a group of total weight zero → `OutOfRange` (was a
+  zero centre / zero tensor); the old zero-mass `OutOfRange` of
+  `center_of_mass_velocity` is this.
 - **Orientations:**
   - Zero quaternions get three different answers today; all three become
     errors.
@@ -963,6 +1045,10 @@ that owns the file.
   - An unconverged result becomes `NotConverged`; this disappears entirely once
     PCA uses `eigh_sym`.
   - Negative eigenvalues are no longer clamped with `max(0.0)`.
+  - *As built (07):* both done: `eigh_sym` is a full Jacobi
+    decomposition with no convergence flag to drop, and `variance` is the
+    eigenvalues as computed (`a_rank_one_matrix_has_one_axis` pins a zero
+    eigenvalue reported unclamped).
 - **Histograms:**
   - `debug_assert`-only validation becomes `Axis::new` returning `Result`.
   - A NaN sample becomes `NonFinite`.
@@ -1105,14 +1191,14 @@ the named link.
 
 | Type | Data it holds today | Moves to | Link |
 |---|---|---|---|
-| `CenterOfMass`, `InertiaTensor`, `RadiusOfGyration`, `ClusterProperties` | `with_masses(&[F])` → `masses: Option<Vec<F>>` | `compute(…, masses)`; `RadiusOfGyration` / `ClusterProperties` deleted | 07 |
+| `CenterOfMass`, `InertiaTensor`, `RadiusOfGyration`, `ClusterProperties` | `with_masses(&[F])` → `masses: Option<Vec<F>>` | `compute(…, masses)`; `RadiusOfGyration` / `ClusterProperties` deleted | 07 (done) |
 | `SpatialDistribution` | `new(reference: Vec<usize>, template: Array2, target: Vec<usize>, grid)`; `with_orientation(pairs)` | reference/target indices, template coordinates and orientation pairs → `compute`; `grid` stays in `new` | 04 (done) |
 | `HBonds` | `new(donors: Vec<(u32, u32)>, acceptors: Vec<u32>, …)` | donor/acceptor selections → `compute` | 05 (done) |
 | `AtomGroups` | `new(arity, flat: Vec<Idx>)` (data wrapper) | deleted; the index-tuple array → `compute` of the distributions | 04 (done) |
 | `DensityGrid` | `new(origin, basis, dims, density: Vec<F>)` (data wrapper) | `RegularGrid` + values array → `VoronoiIntegration::compute` | 08 |
 | `RdfAccumulator` | public `new(rdf: Rdf)` | private; reached only through `Rdf::accumulator()` | 04 (done) |
 | `Histogram1d` | `counts: Array1<F>` (a mutable accumulator posing as a type) | replaced by `Histogram<N>` output + accumulator | 04 (done) |
-| `MsdTimeSeries::new(per_frame)`, `ClusterCentersResult::new(centers)` | result constructors | deleted with their types | 02 / 07 |
+| `MsdTimeSeries::new(per_frame)`, `ClusterCentersResult::new(centers)` | result constructors | deleted with their types | 02 / 07 (done) |
 
 Configuration that legitimately looks like data and stays in `new`:
 - `Steinhardt` / `ContinuousCoordination` `l: &[u32]`
@@ -1150,6 +1236,13 @@ regression.
      centre of mass.
    - After: both take an explicit weights array in `compute`, and Rg = √tr(G) of the same weighting.
      Re-pinned in 07.
+   - *As built (07):* no golden literal moved. Each old test passes the
+     weighting its type used to imply: the former unweighted
+     `GyrationTensor` tests pass `ones`, the former `RadiusOfGyration` /
+     `ClusterProperties` tests their masses (or `ones` where they defaulted),
+     and every literal holds within its tolerance. The new
+     `the_weighting_is_the_callers` pins the change (masses 3, 1 at x = 0, 4:
+     `G_xx = 3` weighted, `4` number-averaged).
 3. **VanHove bin edges.** VanHove now uses half-open bins like Rdf, so d = r_max
    is no longer clamped into the last bin. Re-pinned in 05.
    - *As built (05):* VanHove had no golden test, so no literal moved; the new
@@ -1172,6 +1265,20 @@ regression.
    - Re-pinned in 06.
 6. **Fallbacks become errors** (§5). Inputs that used to "work" with a silently
    wrong answer now fail.
+
+*Link 07 note (no golden literal moved):* non-golden assertions that
+changed: `Cluster`'s `empty_frames_is_error` and `keyed_empty_frames_is_error`
+are gone (no frames; `Batch` of nothing is an empty `Vec`) and
+`multi_frame_runs_per_frame` runs through `Batch`; `keyed_length_mismatch`
+is a `merge` partition of the wrong length; the shape `masses_dimension_*`
+tests assert the same `DimensionMismatch` on the `masses` / `weights` array;
+the k-means / PCA tests build their inputs as `Array2` (labels compared as
+`u32`, was `i32`). The `kinetic.rs` centre-of-mass-velocity tests moved to
+`CenterOfMass` with their literals. New: `GroupReduce` boundary straddle
+(ac-008), the weight-validation variants, `Cluster`'s cross-query / pair
+index / `min_cluster_size = 0` / freud `merge` union, the PCA rank-one axis,
+k-means in 3-D, and ac-010's `Cluster → CenterOfMass / GyrationTensor` and
+`Steinhardt → Pca(3) → Kmeans`.
 
 *Link 06 note (no golden literal moved):* behaviour change 5 has no core
 site left in 06 — the only core place that turned `(head, tail)` pairs into
@@ -1222,7 +1329,7 @@ happens inside the chain.
 | 04-histogram-grid (code-complete 2026-10-14) | As built: `binning/` (`Axis`, `Histogram<N>`) and `grid/` (`RegularGrid<D>`, `SpreadKernel`, `Gaussian`, `Indicator`) are the one binning / spreading implementation; `Rdf` is one `Stream` over `&dyn PairSource` (`RdfMode`, `compute_self/cross/frame`, public `RdfAccumulator::new` deleted); CorrelationFunction, LocalDensity, S(k) ×2, DiffractionPattern, Gaussian/Sphere density per-snapshot `Compute`s; DF / CDF<N> / SDF `Stream`s with all data in `compute`; `Histogram1d`, `AxisSpec`, `renormalize_density`, `AtomGroups`, `GridSpec`, `InternalCoordinate::from_kind` deleted; the 2-D FFT routed through `Spectrum` (deviations in D6, §3, §4, §5, Behaviour changes' link 04 note). Scope: `Axis`, `Histogram<N>`, `RegularGrid`, `SpreadKernel`; migrate Rdf (`Stream` over `PairSource`), CorrelationFunction, LocalDensity, distributions, S(k) ×2, DiffractionPattern, Gaussian/Sphere density, SpatialDistribution. | 01 |
 | 05-dynamics (code-complete 2026-10-14) | As built: `Presence` + `PairPresence` (hysteresis `r0`/`r1`, core neighbour tables as data, `Option` output) feed `Survival`; `HBonds::new(criterion)` with selections, trajectory and per-frame cross-query tables in `compute`, `HBondsResult::presence()` / `components(frame)`; `VanHove` on `Axis`/`Histogram` + `Origins`, boxes as data; `pair_survival_tcf`, `PairSurvivalResult`, `SurvivalMethod`, `hbond_lifetimes`, `HBondLifetimeResult`, `presence_from_hbonds`, `hbond_components`, `HBondNetworkResult` deleted (deviations in D4, §4, §5, Behaviour change 3 and the 05 note). Scope: `Presence`/`PairPresence`, survival through `Correlator`, H-bond input/presence/components, VanHove on `Histogram` + `core::NeighborQuery`. | 02, 04 |
 | 06-order-environment (code-complete 2026-10-14) | As built: `order/bond_average.rs` (`BondBasis` + `SphericalHarmonic`/`PlanarHarmonic`, `BondAverage`, public `QlmTable`) is the one q_ℓm/ψ_k; every order/environment type is a per-snapshot `Compute`; SolidLiquid/ContinuousCoordination read `(&QlmTable, &Neighbors)`; `Pmft<C: PairCoordinate>` (`R12`/`Xy`/`Xyt`/`Xyz`) replaces the four PMFTs; `steinhardt_qlm`, `angular_distance`, `pmft/orientation.rs`, every `*Args`, `Dsu` deleted; zero orientations error everywhere; R12 bin-measure bug fixed (deviations in §3, §4, §5, Link 06 note). Scope: `BondBasis`/`BondAverage`/`QlmTable`; Steinhardt, Hexatic, SolidLiquid, ContinuousCoordination, BOO, LocalDescriptors, LocalBondProjection, EnvironmentMatch, AngularSeparation, Nematic, Cubatic; `Pmft<C>`. | 01, 04 |
-| 07-groups | `GroupReduce`; Cluster (`connected_components`, `merge`), CenterOfMass, GyrationTensor, InertiaTensor; delete ClusterCenters, RadiusOfGyration, ClusterProperties; Pca (`eigh_sym`, `n_components`), Kmeans (`FeatureMatrix`). | 01, 06 (FeatureMatrix producers) |
+| 07-groups (code-complete 2026-10-14) | As built: `shape/group_reduce.rs` (`GroupReduce`, crate-internal: anchor + core-MIC offsets, weighted centroid, weighted second moment) behind `CenterOfMass` / `GyrationTensor` / `InertiaTensor` (configuration-free; `compute({ positions, simbox, partition, masses/weights })`); `Cluster` on `Topology::connected_components` with `merge`; `ClusterResult` / `KmeansResult` are `Partition`s, `PcaResult` a `FeatureMatrix`; `Pca::new(n_components)` on `eigh_sym`; `Kmeans::new(k)` + `with_max_iter` / `with_seed` (core defaults 100 / 0) over any `FeatureMatrix`; `Partition::sizes`; `ClusterCenters`, `RadiusOfGyration`, `ClusterProperties`, `compute_keyed`, `center_of_mass_velocity`, the power iteration and (dead after 07) `positions.rs` deleted (deviations in §3, §4, §5, Behaviour change 2). Scope: `GroupReduce`; Cluster (`connected_components`, `merge`), CenterOfMass, GyrationTensor, InertiaTensor; delete ClusterCenters, RadiusOfGyration, ClusterProperties; Pca (`eigh_sym`, `n_components`), Kmeans (`FeatureMatrix`). | 01, 06 (FeatureMatrix producers) |
 | 08-voronoi | `Compute` impls, core cell list, explicit units, `FiniteFieldPolarizability`, `GridField`. | 04, 07 |
 | 09-retire-legacy | Delete `LegacyCompute`, `analysis_contract.rs`, `positions.rs`; rewrite the `compute/mod.rs` module docs (removes the stale `molpy.compute.Workflow` reference). Run the §4 closing greps. | 02–08 |
 | 10-bindings | §6 in molrs-python, molrs-wasm, molrs-cxxapi; full pre-push gate; Atomiverse consumer note. | 09 |

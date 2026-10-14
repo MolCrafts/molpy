@@ -25,8 +25,8 @@
 //! - **Whole-sequence accumulators** (RDF) iterate every frame.
 //! - **Time-series analyses** (MSD) use `frames[0]` as a reference.
 //! - **Per-frame analyses** (Cluster, COM) return one result per frame.
-//! - **Matrix consumers** (PCA, k-means) take upstream per-frame outputs as
-//!   rows (via [`DescriptorRow`]).
+//! - **Matrix consumers** (PCA, k-means) take any [`FeatureMatrix`] — an
+//!   `Array2` or a descriptor result — and their results feed each other.
 //!
 //! # Neighbor tables: what `Args` carries, and which columns a kernel needs
 //!
@@ -172,7 +172,8 @@
 //!   (`freud.locality.Voronoi`)
 //! - van Hove / pair presence live under **transport** (with VACF/diffusion)
 //! - static dielectric is under **spectroscopy**
-//! - cluster radius-of-gyration is under **cluster** (freud.cluster.ClusterProperties)
+//! - cluster radius-of-gyration ([`GyrationTensorResult::radius_of_gyration`]) is
+//!   under **cluster** (freud.cluster.ClusterProperties)
 //!
 //! | Folder | Methods |
 //! |----------|---------|
@@ -184,10 +185,10 @@
 //! | `fitting` | fits on a [`TimeCorrelation`]: [`LinearFit`], [`CumulativeTrapezoid`], [`Plateau`], [`DebyeFit`] |
 //! | `dynamics` | van Hove G(r, t), pair presence |
 //! | `dielectric` | [`DipoleMoment`], [`StaticDielectric`], [`EwaldBoundary`] |
-//! | `cluster` | cluster analysis (freud's `Cluster`): connected components by distance + per-cluster properties |
-//! | `shape` | center of mass, cluster centers, gyration/inertia tensors, Rg |
-//! | `decomposition` | PCA projection |
-//! | `kmeans` | k-means over a PCA projection |
+//! | `cluster` | cluster analysis (freud's `Cluster`): connected components of a neighbor table, optionally merged by keys; the result is a [`Partition`] |
+//! | `shape` | per-group [`CenterOfMass`], [`GyrationTensor`] (and R_g), [`InertiaTensor`] over a [`Partition`] — the one group reduction |
+//! | `decomposition` | [`Pca`] of any [`FeatureMatrix`] |
+//! | `kmeans` | [`Kmeans`] over any [`FeatureMatrix`]; the result is a [`Partition`] |
 //! | `density` | correlation function, Gaussian/local density, spatial distribution, voxelization |
 //! | `order` | the one bond-harmonic average ([`QlmTable`]) behind Steinhardt, hexatic, solid-liquid, continuous coordination; nematic, cubatic |
 //! | `environment` | bond order, local descriptors, environment matching, … |
@@ -195,7 +196,7 @@
 //! | `pmft` | potentials of mean force and torque: one [`Pmft`] over a [`PairCoordinate`] ([`R12`], [`Xy`], [`Xyt`], [`Xyz`]) |
 //! | `distribution` | distance/angle/dihedral distribution functions |
 //! | `hbond` | hydrogen-bond detection, presence series, network components |
-//! | `kinetic` | [`KineticEnergy`] (and its temperature), centre-of-mass velocity of one state |
+//! | `kinetic` | [`KineticEnergy`] (and its temperature) of one state |
 //! | `voronoi` | radical Voronoi cells, domains, voids (feature `voronoi`) |
 
 mod analysis_contract;
@@ -220,7 +221,6 @@ mod kmeans;
 mod named_enum;
 mod order;
 mod pmft;
-pub(crate) mod positions;
 mod rdf;
 pub(crate) mod require;
 mod shape;
@@ -232,9 +232,9 @@ mod voronoi;
 // Re-exports
 pub use analysis_contract::{Check, ComputeResult, DescriptorRow, Fit, LegacyCompute};
 pub use binning::{Axis, Histogram};
-pub use cluster::{Cluster, ClusterProperties, ClusterPropertiesResult, ClusterResult};
+pub use cluster::{Cluster, ClusterInput, ClusterResult};
 pub use contract::{Accumulate, Batch, Compute, FeatureMatrix, Partition, Stream, Verdict};
-pub use decomposition::{Pca, PcaResult};
+pub use decomposition::{Pca, PcaInput, PcaResult};
 pub use density::{
     CorrelationFunction, CorrelationFunctionInput, CorrelationFunctionResult, GaussianDensity,
     GaussianDensityInput, GaussianDensityResult, LocalDensity, LocalDensityInput,
@@ -276,10 +276,8 @@ pub use fitting::{
 };
 pub use grid::{Gaussian, Indicator, RegularGrid, SpreadKernel};
 pub use hbond::{HBond, HBondCriterion, HBondDistanceKind, HBonds, HBondsInput, HBondsResult};
-pub use kinetic::{
-    KineticEnergy, KineticEnergyInput, KineticEnergyResult, center_of_mass_velocity,
-};
-pub use kmeans::{Kmeans, KmeansResult};
+pub use kinetic::{KineticEnergy, KineticEnergyInput, KineticEnergyResult};
+pub use kmeans::{Kmeans, KmeansInput, KmeansResult};
 pub use order::{
     ContinuousCoordination, ContinuousCoordinationInput, ContinuousCoordinationResult, Cubatic,
     CubaticInput, CubaticResult, Hexatic, HexaticInput, HexaticResult, Nematic, NematicInput,
@@ -303,9 +301,8 @@ pub(crate) use require::{
     require_quaternions, require_self_query,
 };
 pub use shape::{
-    CenterOfMass, CenterOfMassResult, ClusterCenters, ClusterCentersResult, GyrationTensor,
-    GyrationTensorResult, InertiaTensor, InertiaTensorResult, RadiusOfGyration,
-    RadiusOfGyrationResult,
+    CenterOfMass, CenterOfMassInput, CenterOfMassResult, GyrationTensor, GyrationTensorInput,
+    GyrationTensorResult, InertiaTensor, InertiaTensorInput, InertiaTensorResult,
 };
 pub use spectroscopy::{
     ConductivitySumRule, DielectricSpectrumInput, DielectricSpectrumResult,
