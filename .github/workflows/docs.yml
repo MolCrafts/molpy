@@ -7,7 +7,7 @@ on:
   push:
     branches: ["**"]
   pull_request:
-    branches: [dev, master, main]
+    branches: [dev, master]
   workflow_dispatch:
 
 permissions:
@@ -16,7 +16,7 @@ permissions:
 # One group per file, workflow, event and ref; only a feature ref cancels its superseded runs.
 concurrency:
   group: docs-${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
-  cancel-in-progress: ${{ !contains(fromJSON('["refs/heads/dev","refs/heads/master","refs/heads/main"]'), github.ref) && !startsWith(github.ref, 'refs/tags/') }}
+  cancel-in-progress: ${{ !contains(fromJSON('["refs/heads/dev","refs/heads/master"]'), github.ref) && !startsWith(github.ref, 'refs/tags/') }}
 
 jobs:
   # Where this run happens, decided once: MolCrafts/molcrafts-ci/actions/ci-context.
@@ -31,7 +31,7 @@ jobs:
       publish: ${{ steps.context.outputs.publish }}
     steps:
       - id: context
-        uses: MolCrafts/molcrafts-ci/actions/ci-context@40f61db7c6783f246215158bff435ff1d384b2ae
+        uses: MolCrafts/molcrafts-ci/actions/ci-context@cc46e4eb85fdcfb950d9a4df02c2e04e94ba90f7
 
   build:
     name: docs / build
@@ -41,8 +41,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: MolCrafts/molcrafts-ci/actions/setup-rust@40f61db7c6783f246215158bff435ff1d384b2ae
+      - uses: MolCrafts/molcrafts-ci/actions/setup-rust@cc46e4eb85fdcfb950d9a4df02c2e04e94ba90f7
         with:
           cache: docs
-      - uses: MolCrafts/molcrafts-ci/actions/setup-python@40f61db7c6783f246215158bff435ff1d384b2ae
+      - uses: MolCrafts/molcrafts-ci/actions/setup-python@cc46e4eb85fdcfb950d9a4df02c2e04e94ba90f7
       - run: scripts/check.sh docs
