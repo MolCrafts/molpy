@@ -92,6 +92,31 @@ GATES = {
 }
 
 
+#: Branches whose pushes ship to PyPI (a release from master, a nightly build
+#: from nightly). Only there must the declared ranges resolve from PyPI; on
+#: dev and topic branches a partner's next minor line is legitimately
+#: unpublished, and the source gates already test the pinned partner commits.
+PUBLISHING_BRANCHES = {"master", "nightly"}
+
+
+def target_branch() -> str:
+    """The branch being pushed to, else the checked-out branch.
+
+    pre-commit exports ``PRE_COMMIT_REMOTE_BRANCH`` (``refs/heads/<name>``)
+    to pre-push hooks; a manual ``check.py verify`` falls back to HEAD.
+    """
+    remote = os.environ.get("PRE_COMMIT_REMOTE_BRANCH", "")
+    if remote:
+        return remote.removeprefix("refs/heads/")
+    return subprocess.run(
+        ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    ).stdout.strip()
+
+
 def main() -> int:
     gates = sys.argv[1:]
     if gates == ["verify"]:
@@ -120,7 +145,7 @@ def main() -> int:
                 "dependencies",
                 "test",
                 "docs",
-                "published",
+                *(["published"] if target_branch() in PUBLISHING_BRANCHES else []),
                 "package",
             ],
             cwd=ROOT,

@@ -186,9 +186,9 @@ from molpy.io import read_lammps_dump_trajectory
 from molpy.compute import Msd
 
 frames = read_lammps_dump_trajectory("run.lammpstrj").read_all()
-series = Msd(method="window").compute(frames)
-msd = np.asarray(series.mean)
-lag = np.arange(len(msd)) * 10.0   # fs, whatever Δt your dump used
+series = Msd(method="window").compute(frames, dt=10.0)   # fs, whatever Δt your dump used
+msd = np.asarray(series.values)
+lag = np.asarray(series.lag_times)
 ```
 
 There is no separate “unwrap” step in molpy’s compute path: **the frames you
@@ -225,9 +225,11 @@ estimator has exactly one sample at the longest lag, while the windowed one has
 $T - \tau$ of them, and it costs $\mathcal{O}(T\log T)$ rather than
 $\mathcal{O}(T^2)$ because it goes through an FFT.
 
-The result is an `MsdTimeSeries`; `series.mean` is the curve, one value per lag,
-with lag $k$ corresponding to $k \times \Delta t$ in the time unit of your dump
-spacing.
+The result is a `TimeCorrelation`; `series.values` is the atom-averaged curve,
+one value per lag, `series.per_entity` holds one curve per atom, and
+`series.lag_times` is the lag axis in the unit of the `dt` you passed (frames
+when you passed none). `compute` also accepts an `(n_frames, n_atoms, 3)`
+array of unwrapped positions in place of frames.
 
 To extract $D$, fit a straight line over the part of the curve that is actually
 linear — not the whole thing:
@@ -238,6 +240,7 @@ from molpy.compute import LinearFit
 
 window = (lag >= 5000.0) & (lag <= 20000.0)   # fs; match your ballistic→diffusive crossover
 fit = LinearFit(0.0, 1.0).fit(lag[window], msd[window])
+# or, with the window as fractions of the curve: series.diffusion(3, (0.25, 1.0))
 D = fit["slope"] / 6.0                        # Å² / fs in 3D
 ```
 

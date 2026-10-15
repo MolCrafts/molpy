@@ -10,8 +10,8 @@ It is called once on ``import molpy`` so a stale major/minor pin surfaces
 immediately.
 """
 
-version = "0.17.0"
-release_date = "2026-10-09"
+version = "0.18.0"
+release_date = "2026-10-13"
 
 
 def _minor_tuple(ver: str) -> tuple[int, int]:

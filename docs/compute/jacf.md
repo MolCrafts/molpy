@@ -61,8 +61,8 @@ from molpy.compute import GreenKuboConductivity, CumulativeTrapezoid
 rng = np.random.default_rng(2)
 J = np.ascontiguousarray(rng.normal(0.0, 1.0, size=(400, 3)))
 
-raw = GreenKuboConductivity().compute(J, dt=10.0, max_correlation_time=100)
-print(sorted(raw), raw["jacf"].shape)     # -> ['jacf', 'lag_times'] (101,)
+raw = GreenKuboConductivity().compute(J, dt=10.0, max_lag=100)
+print(raw.kind, raw.values.shape)         # -> jacf (101,)
 ```
 
 In real work:
@@ -73,14 +73,16 @@ J = np.array([(charges[:, None] * velocities[i]).sum(axis=0)
               for i in range(len(velocities))])
 ```
 
-The compute gives you $\langle\mathbf{J}(0)\cdot\mathbf{J}(t)\rangle$ and stops.
-Integrating is a separate step, and `CumulativeTrapezoid` deliberately returns
-the **running** integral rather than one number, so you can see whether it has
-converged:
+The compute gives you $\langle\mathbf{J}(0)\cdot\mathbf{J}(t)\rangle$ as a
+`TimeCorrelation` and stops. Integrating is a separate step, and
+`integrate(running=True)` deliberately returns the **running** integral rather
+than one number, so you can see whether it has converged (it is
+`CumulativeTrapezoid` on `raw.values`):
 
 ```python
-running = np.asarray(CumulativeTrapezoid().fit(raw["jacf"], dt=10.0)["integral"])
+running = np.asarray(raw.integrate(running=True))
 print(running.shape)                      # -> (101,)
+print(np.allclose(running, CumulativeTrapezoid().fit(raw.values, dt=10.0)["integral"]))  # -> True
 ```
 
 Quote the plateau of that curve, not its last point. The [VACF](vacf.md) page

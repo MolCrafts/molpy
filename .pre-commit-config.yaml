@@ -1,47 +1,23 @@
-# pre-commit: hygiene and lint. pre-push: one layout, every gate, no file filters.
+# Same file in every repository. The profile name lives in
+# .github/partners.env as CI_PROFILE. This file does not contain a SHA.
 default_install_hook_types: [pre-commit, pre-push]
-default_stages: [pre-commit]
+default_stages: [pre-commit, pre-push]
 
 repos:
-  - repo: https://github.com/pre-commit/pre-commit-hooks
-    rev: v6.0.0
-    hooks:
-      # Fixture bytes under tests/tests-data are test inputs (ragged spacing,
-      # missing final newlines); the fixers must not rewrite them.
-      - id: trailing-whitespace
-        exclude: ^tests/tests-data/
-      - id: end-of-file-fixer
-        exclude: ^tests/tests-data/
-      - id: check-yaml
-        args: ["--unsafe"]
-      - id: check-added-large-files
-        args: ["--maxkb=1024"]
-      - id: check-merge-conflict
-      - id: mixed-line-ending
-        exclude: ^tests/tests-data/
-      - id: check-toml
-      - id: check-json
-
   - repo: local
     hooks:
-      - id: workflows
-        name: pinned workflow scheme
-        entry: scripts/check-workflows.sh
-        language: system
-        pass_filenames: false
-        files: ^(\.github/|scripts/check-workflows\.sh)
-
-      - id: lint
-        name: format, lint and types
-        entry: python3 scripts/check.py lint
+      - id: ci
+        name: molcrafts-ci
+        entry: uv run --no-project --script https://raw.githubusercontent.com/MolCrafts/molcrafts-ci/master/hooks/ci.py
         language: system
         pass_filenames: false
         always_run: true
-
-      - id: verify
-        name: complete local CI gates against pinned direct dependencies
-        entry: scripts/hook-run.sh python3 scripts/check.py verify
+        args: ["--stage", "pre-commit"]
+      - id: ci-push
+        name: molcrafts-ci pre-push
+        entry: uv run --no-project --script https://raw.githubusercontent.com/MolCrafts/molcrafts-ci/master/hooks/ci.py
         language: system
         pass_filenames: false
         always_run: true
         stages: [pre-push]
+        args: ["--stage", "pre-push"]

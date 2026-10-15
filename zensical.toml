@@ -123,6 +123,7 @@ nav = [
     { "Dynamics" = [
       { "Van Hove" = "compute/van_hove.md" },
       { "Reorientation" = "compute/reorientation.md" },
+      { "OACF" = "compute/oacf.md" },
     ] },
     { "Spectroscopy" = [
       { "Dielectric" = "compute/dielectric.md" },
@@ -183,12 +184,12 @@ nav = [
 ]
 
 # Theme injects MathJax config + document$ re-typeset.
-# MolPlot: theme stages monorepo ../molplot/core/dist (or MOLPLOT_ELEMENTS_DIR /
-# node_modules) into docs/assets/molplot at build — gitignored, not vendored.
-# MolVis still CDN until a monorepo stage path is wired the same way.
+# Embed bundles come from pinned npm releases on the CDN: the Cloudflare build
+# has no sibling molplot/molvis checkouts, so locally staged assets 404 there.
+# <molplot-chart> (molplot fences) and <molvis-viewer> (molvis fences).
 extra_javascript = [
-  { path = "https://cdn.jsdelivr.net/npm/@molcrafts/molvis-stage@latest/dist/viewer.js", type = "module" },
-  { path = "assets/molplot/elements.js", type = "module" },
+  { path = "https://cdn.jsdelivr.net/npm/@molcrafts/molvis-stage-viewer@0.3.0/dist/main.js", type = "module" },
+  { path = "https://cdn.jsdelivr.net/npm/@molcrafts/molplot@0.1.7/dist/elements.js", type = "module" },
   "https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js",
 ]
 

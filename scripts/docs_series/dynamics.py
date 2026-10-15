@@ -80,9 +80,9 @@ def voronoi_volumes(trajectory: Trajectory) -> dict[str, float]:
 def vibrational_dos(trajectory: Trajectory) -> dict[str, float]:
     """VDOS of liquid argon from the velocity autocorrelation."""
     acf = Acf().compute(np.ascontiguousarray(trajectory.velocities), max_lag=400)
-    spectrum = PowerSpectrum().fit(acf.acf, dt_fs=trajectory.dt)
-    frequency = np.asarray(spectrum["frequencies_cm1"])
-    intensity = np.asarray(spectrum["intensities"])
+    spectrum = PowerSpectrum().fit(acf.values, dt_fs=trajectory.dt)
+    frequency = np.asarray(spectrum.frequencies_cm1)
+    intensity = np.asarray(spectrum.intensities)
 
     keep = frequency <= 200.0
     normalized = intensity[keep] / intensity[keep].max()

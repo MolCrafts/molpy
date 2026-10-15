@@ -146,17 +146,20 @@ from molpy.compute import Acf, PowerSpectrum
 rng = np.random.default_rng(0)
 velocities = np.ascontiguousarray(rng.normal(0.0, 0.02, size=(1024, 32, 3)))
 
-vacf = np.asarray(Acf().compute(velocities, max_lag=256).acf)
+vacf = np.asarray(Acf().compute(velocities, max_lag=256).values)
 vdos = PowerSpectrum().fit(vacf, dt_fs=0.5)
 
-print(sorted(vdos))
-# -> ['frequencies_cm1', 'intensities', 'n_frames', 'resolution']
-print(round(float(np.asarray(vdos["frequencies_cm1"]).max())))   # -> 33356
+print(vdos)
+# -> Spectrum(n_bins=1025, window="cosine_sq", resolution=256, dt_fs=0.5)
+print(round(float(np.asarray(vdos.frequencies_cm1).max())))   # -> 33356
 ```
 
 33 356 cm⁻¹ is exactly $16678/0.5$ — the Nyquist limit, confirming the
 $\Delta t$ you passed is the one you meant. Read `resolution` as a **count** of
-lags, not a frequency; the real resolution is $1/(cT)$ as above.
+lags, not a frequency; the real resolution is $1/(cT)$ as above. A
+`TimeCorrelation` that carries its `dt` does the same in one call,
+`Acf().compute(velocities, max_lag=256, dt=0.5).spectrum()`, and `window=`
+selects the taper on either route.
 
 Infrared takes the same shape of input — an ACF and `dt_fs` — but the ACF must be
 built from the **dipole flux** rather than velocities:
@@ -193,10 +196,10 @@ from molpy.compute import IrSpectrum
 
 flux_acf = np.asarray(Acf().compute(
     np.ascontiguousarray(flux[:, None, :]), max_lag=256
-).acf)
+).values)
 ir = IrSpectrum().fit(flux_acf, dt_fs=0.5)
-print(sorted(ir))
-# -> ['frequencies_cm1', 'intensities', 'n_frames', 'resolution']
+print(sorted(ir.to_dict()))
+# -> ['dt_fs', 'frequencies_cm1', 'intensities', 'n_frames', 'resolution', 'window']
 ```
 
 The positions here are a random walk, so this spectrum means nothing physically

@@ -151,18 +151,18 @@ exposing an intermediate you might be tempted to plot.
 from molpy.compute import DebyeRelaxation, EinsteinHelfandSpectrum
 
 relax = DebyeRelaxation(volume, temperature).compute(
-    M, dt=dt, max_correlation_time=100      # lags in FRAMES, so 1 ps here
+    M, dt=dt, max_lag=100                   # lags in FRAMES, so 1 ps here
 )
-print(sorted(relax))
-# -> ['acf', 'boundary', 'lag_times', 'temperature', 'volume', 'zero_lag_variance']
+print(relax.kind, sorted(relax.extras))
+# -> dipole_acf ['boundary', 'temperature', 'volume', 'zero_lag_variance']
 
 spectrum = EinsteinHelfandSpectrum(
-    dt,                            # frame spacing, fs
-    volume,                        # Å³
-    temperature,                   # K
-    1.0,                           # epsilon_inf
-    relax["zero_lag_variance"],    # from the DebyeRelaxation result
-).fit(relax["acf"])
+    dt,                                 # frame spacing, fs
+    volume,                             # Å³
+    temperature,                        # K
+    1.0,                                # epsilon_inf
+    relax.extras["zero_lag_variance"],  # from the DebyeRelaxation result
+).fit(relax.values)
 print(sorted(spectrum))                   # -> ['eps_imag', 'eps_real', 'frequencies']
 ```
 
@@ -171,8 +171,8 @@ naming them in a comment as above, because transposing `volume` and
 `temperature` produces a plausible-looking spectrum that is wrong by orders of
 magnitude.
 
-`max_correlation_time` is a count of **frames**, not a time — 100 frames at
-`dt = 10` fs is a 1 ps window.
+`max_lag` is a count of **frames**, not a time — 100 frames at `dt = 10` fs is
+a 1 ps window.
 
 `frequencies` are in **rad fs⁻¹** when `dt` is in fs. To get to the wavenumbers
 an experimentalist quotes, divide by $2\pi c$: multiply by
@@ -248,10 +248,10 @@ For a quick time-domain estimate, fit the normalized ACF directly:
 ```python
 from molpy.compute import DebyeFit
 
-phi = np.asarray(relax["acf"]) / np.asarray(relax["acf"])[0]
-fit = DebyeFit().fit(phi, dt=dt)
+fit = relax.fit_exponential()             # DebyeFit on relax.normalized().values
 print(sorted(fit))                        # -> ['amplitude', 'n_samples', 'tau']
 print(round(float(fit["tau"])))           # -> 516
+print(fit == DebyeFit().fit(relax.values / relax.values[0], dt=dt))   # -> True
 ```
 
 516 fs against the 500 fs built into the process — a 3 % recovery, and the
@@ -262,10 +262,9 @@ Now widen the correlation window and watch it break:
 
 ```python
 long_window = DebyeRelaxation(volume, temperature).compute(
-    M, dt=dt, max_correlation_time=300      # 3 ps, six relaxation times
+    M, dt=dt, max_lag=300                   # 3 ps, six relaxation times
 )
-long_phi = np.asarray(long_window["acf"]) / np.asarray(long_window["acf"])[0]
-print(round(float(DebyeFit().fit(long_phi, dt=dt)["tau"])))   # -> 909
+print(round(float(long_window.fit_exponential()["tau"])))   # -> 909
 ```
 
 Nearly double the true value, from *more* data. Past about 2 ps the correlation
