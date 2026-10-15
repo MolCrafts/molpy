@@ -1,13 +1,19 @@
 name: release
 
-# A `v*` tag on MolCrafts/molrs: guard -> lint + the full test tier -> every
-# channel. crates.io (molcrafts-molrs), npm (@molcrafts/molrs), PyPI (desktop
-# abi3 wheels + the Pyodide wheel), and the GitHub Release with the C API
-# archives (lib + header + LICENSE + sha256).
+# A `v*` tag on MolCrafts/molrs: guard -> build -> every channel. crates.io
+# (molcrafts-molrs), npm (@molcrafts/molrs), PyPI (desktop abi3 wheels + the
+# Pyodide wheel), and the GitHub Release with the C API archives (lib +
+# header + LICENSE + sha256).
 #
-# A dispatch is the dry run, on any branch, fork or upstream: the same guard,
-# gates and builds, `cargo publish --dry-run` and `npm pack --dry-run`, and no
-# upload anywhere. Building and uploading are separate jobs: every upload job
+# No lint and no test suite here: the tagged commit was already proven, by
+# the pre-push gate and by test.yml's full tier on master. `release / guard`
+# reads that commit's `test / *` check runs and refuses a commit whose CI is
+# not green; then this workflow only builds and publishes. `cargo publish`
+# verifies the crate tarball, once.
+#
+# A dispatch is the dry run, on any branch, fork or upstream: the same guard
+# (any green `test / *` runs of the commit) and builds, `cargo publish
+# --dry-run` and `npm pack --dry-run`, and no upload anywhere. Building and uploading are separate jobs: every upload job
 # (release / crate, npm, pypi, github) runs only when `release / context`
 # says `publish` (a `v*` tag pushed to MolCrafts), and tests no raw event or
 # ref. Every upload skips a version the registry already has, so a partial
@@ -52,6 +58,10 @@ jobs:
     needs: context
     if: github.event_name == 'workflow_dispatch' || needs.context.outputs.upstream == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 100
+    permissions:
+      contents: read
+      checks: read
     steps:
       - uses: actions/checkout@v7
         with:
@@ -62,28 +72,70 @@ jobs:
           version=$(python3 -c 'import tomllib; print(tomllib.load(open("Cargo.toml", "rb"))["workspace"]["package"]["version"])')
           [ "$GITHUB_REF_NAME" = "v$version" ] || { echo "::error::tag $GITHUB_REF_NAME is not v$version"; exit 1; }
           git merge-base --is-ancestor "$GITHUB_SHA" origin/master || { echo "::error::tag is not on master"; exit 1; }
+      # The commit's test.yml run, instead of running it again. A tag waits
+      # for every job of the full tier to have succeeded on this SHA (pushed
+      # to master first); a dispatch, for whatever `test / *` runs the commit
+      # has. Any failed run fails the release; a re-run's newer result wins.
+      - name: The commit's CI is green
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PUBLISH: ${{ needs.context.outputs.publish }}
+          REQUIRED: >-
+            test / context|test / rust|test / python (ubuntu-latest)|test / python (macos-latest)|test / python (windows-latest)|test / docs|test / capi|test / capi (windows-latest)|test / wasm|test / mrec
+        run: |
+          python3 - <<'PY'
+          import json, os, subprocess, sys, time
 
-  lint:
-    needs: guard
-    uses: ./.github/workflows/lint.yml
-
-  test:
-    needs: guard
-    uses: ./.github/workflows/test.yml
+          repo, sha = os.environ["GITHUB_REPOSITORY"], os.environ["GITHUB_SHA"]
+          required = set(os.environ["REQUIRED"].split("|")) if os.environ["PUBLISH"] == "true" else set()
+          deadline = time.monotonic() + 90 * 60
+          query = '.check_runs[] | select(.name | startswith("test / ")) | {name, status, conclusion, started_at}'
+          while True:
+              out = subprocess.run(
+                  ["gh", "api", "--paginate", f"repos/{repo}/commits/{sha}/check-runs?filter=all&per_page=100", "--jq", query],
+                  check=True, capture_output=True, text=True,
+              ).stdout
+              latest = {}
+              for run in sorted((json.loads(line) for line in out.splitlines() if line.strip()),
+                                key=lambda r: r["started_at"] or ""):
+                  # A skipped run (an in-fork pull request) never hides a real one.
+                  if run["conclusion"] == "skipped" and run["name"] in latest:
+                      continue
+                  latest[run["name"]] = run
+              failed = sorted(n for n, r in latest.items()
+                              if r["status"] == "completed" and r["conclusion"] not in ("success", "skipped", "neutral"))
+              if failed:
+                  sys.exit(f"::error::{sha} has failed CI: {', '.join(failed)}")
+              pending = sorted(n for n, r in latest.items() if r["status"] != "completed")
+              missing = sorted(n for n in required if (latest.get(n) or {}).get("conclusion") != "success")
+              if latest and not pending and not missing:
+                  print(f"{sha}: {len(latest)} test runs green")
+                  break
+              if time.monotonic() > deadline:
+                  sys.exit(f"::error::{sha}: CI not green in time (pending: {pending or '-'}; missing: {missing or '-'})")
+              print(f"waiting: pending {pending or '-'}, missing {missing or '-'}", flush=True)
+              time.sleep(60)
+          PY
 
   # The crate as crates.io would take it: package and verify, upload nothing.
+  # Dispatch only; on a tag, `release / crate`'s publish is that verification.
   crate-check:
     name: release / crate (dry run)
-    needs: guard
+    needs: [context, guard]
+    if: needs.context.outputs.publish != 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
       - uses: MolCrafts/molcrafts-ci/actions/setup-rust@cc46e4eb85fdcfb950d9a4df02c2e04e94ba90f7
+      - name: The crate ships the repository's LICENSE
+        run: |
+          cmp LICENSE molrs/LICENSE
+          cargo package --list --locked --manifest-path molrs/Cargo.toml | grep -qx LICENSE
       - run: cargo publish --dry-run --locked --manifest-path molrs/Cargo.toml
 
   crate:
     name: release / crate
-    needs: [context, lint, test, crate-check]
+    needs: [context, guard]
     if: needs.context.outputs.publish == 'true'
     runs-on: ubuntu-latest
     environment: crates-io
@@ -92,6 +144,10 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: MolCrafts/molcrafts-ci/actions/setup-rust@cc46e4eb85fdcfb950d9a4df02c2e04e94ba90f7
+      - name: The crate ships the repository's LICENSE
+        run: |
+          cmp LICENSE molrs/LICENSE
+          cargo package --list --locked --manifest-path molrs/Cargo.toml | grep -qx LICENSE
       - id: auth
         uses: rust-lang/crates-io-auth-action@v1
       - env:
@@ -134,7 +190,7 @@ jobs:
 
   npm:
     name: release / npm
-    needs: [context, lint, test, npm-pack]
+    needs: [context, guard, npm-pack]
     if: needs.context.outputs.publish == 'true'
     runs-on: ubuntu-latest
     environment: npm
@@ -235,7 +291,7 @@ jobs:
 
   pypi:
     name: release / pypi
-    needs: [context, lint, test, wheels, pyodide]
+    needs: [context, guard, wheels, pyodide]
     if: needs.context.outputs.publish == 'true'
     runs-on: ubuntu-latest
     environment: pypi
@@ -296,7 +352,7 @@ jobs:
 
   github:
     name: release / github
-    needs: [context, lint, test, capi]
+    needs: [context, guard, capi]
     if: needs.context.outputs.publish == 'true'
     runs-on: ubuntu-latest
     permissions:

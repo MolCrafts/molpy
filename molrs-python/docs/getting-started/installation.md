@@ -107,7 +107,7 @@ cd molrs
 cargo mrs-build          # compile the library
 cargo mrs-test           # unit tests
 cargo mrs-doctest        # rustdoc examples
-scripts/check.sh all     # every CI gate
+scripts/check.sh verify  # the pre-push gate: every check, once
 ```
 
 The binding crates (`molrs-python`, `molrs-wasm`, `molrs-capi`,

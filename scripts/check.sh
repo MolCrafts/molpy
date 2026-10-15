@@ -1,17 +1,25 @@
 #!/usr/bin/env bash
 # The one definition of every gate. prek (.pre-commit-config.yaml) and CI
-# (.github/workflows/{lint,test,docs}.yml) both call this script, and rust-toolchain.toml
+# (.github/workflows/test.yml) both call this script, and rust-toolchain.toml
 # pins the compiler for both, so a gate that passes locally is the same
 # command on the same rustc / clippy / rustdoc that CI runs.
 #
 #   scripts/check.sh fmt clippy     # run the named gates, in order
-#   scripts/check.sh all            # every gate (CI parity)
+#   scripts/check.sh verify         # the pre-push gate: every check, once
 #   scripts/check.sh --report .ci-out test python
 #                                   # + each test gate's numbers, for
 #                                   # MolCrafts/molcrafts-ci/actions/report
 #
-# Gates: fmt ruff partners clippy doc test features package ffi cxx ext python capi
-# wasm mrec docs. Root-workspace cargo calls go through the `cargo mrs-*`
+# Gates: fmt ruff partners clippy doc test ffi cxx ext capi python wasm mrec
+# docs. Every check runs once, in one place:
+#   - static checks (fmt ruff partners clippy doc, and the hooks' workflows /
+#     os-cfg) run only locally: pre-commit, and `verify` at pre-push. CI does
+#     not repeat them.
+#   - the tests run once locally in `verify` and once per OS in test.yml;
+#     the wheel `python` built and tested is the one `mrec` and `docs` use.
+#   - every build is the dev profile; release/LTO artifacts are built only by
+#     release.yml, and `cargo publish` there verifies the crate tarball once.
+# Root-workspace cargo calls go through the `cargo mrs-*`
 # aliases (.cargo/config.toml) so they share one feature set and one build.
 # Every cargo / maturin / wasm-pack call is --locked and every uv call runs
 # on CI's Python (3.12) against the committed lock: a gate that would have to
@@ -37,7 +45,8 @@ BINDERS=(molrs-ffi molrs-python molrs-wasm molrs-capi molrs-cxxapi)
 # Every standalone workspace root besides the root one: the binders, and the
 # force-field IR extension proof crate.
 ROOTS=("${BINDERS[@]}" molrs-ext-example)
-# wasm-opt release the wasm gate runs; CI installs exactly this one.
+# wasm-opt release that release.yml's npm build runs (.github/actions/setup-wasm
+# reads it from here). The wasm gate is `wasm-pack test`, which runs no wasm-opt.
 BINARYEN_VERSION=version_133
 WASM_PACK_VERSION=0.15.0
 TARGET_DIR=${CARGO_TARGET_DIR:-$PWD/target}
@@ -46,8 +55,17 @@ TARGET_DIR=${CARGO_TARGET_DIR:-$PWD/target}
 # lines are the totals), junit.xml and coverage.json (python). Nothing reads
 # them here; CI turns them into the run's summary.
 REPORT=
-# Only a wheel built and tested in this invocation may be reused.
-MOLRS_TESTED_WHEEL=
+# The wheel `mrec` and `docs` install instead of building their own. `python`
+# sets it to the wheel it just built and tested. CI's test.yml passes it in
+# the environment to the `mrec` and `docs` jobs: the Linux wheel the
+# `test / python (ubuntu-latest)` job of the SAME run built and tested,
+# downloaded as an artifact. It must never name any other wheel (a stale
+# local build, a PyPI download): these gates would then judge a binary no test
+# ran against.
+MOLRS_TESTED_WHEEL=${MOLRS_TESTED_WHEEL:-}
+# Set by CI's `test / python (ubuntu-latest)`: `python` writes the wheel it
+# tests here, kept after exit, so the job can upload that same file.
+MOLRS_WHEEL_DIR=${MOLRS_WHEEL_DIR:-}
 
 # `cargo test` that also appends its output to the report log.
 cargo_test() {
@@ -89,6 +107,8 @@ gate_partners() {
     uv --directory molrs-python lock --check
 }
 
+# Native clippy of the core and every binder, except molrs-wasm: that one is a
+# wasm32 crate, linted only for wasm32.
 gate_clippy() {
     cargo --locked mrs-clippy -- -D warnings
     for crate in molrs-ffi molrs-cxxapi molrs-ext-example molrs-python molrs-capi; do
@@ -107,39 +127,6 @@ gate_test() {
     cargo_test --locked mrs-doctest
 }
 
-# Each sub-system must build on its own, without molrs's native defaults,
-# and so must its tests: --all-targets, so a test that reaches past its
-# feature (an `ff` test naming `io::mrec`, which is `zarr`'s) fails here.
-features_clippy() {
-    cargo clippy --locked -p molcrafts-molrs --all-targets "$@" -- -D warnings
-}
-
-gate_features() {
-    features_clippy
-    features_clippy --no-default-features
-    for feature in io smiles compute ff conformer md builder serde stream zarr filesystem voronoi full; do
-        features_clippy --no-default-features --features "$feature"
-    done
-}
-
-# Compiles the unpacked crates.io archive, catching files left out of it.
-gate_package() {
-    cargo package --locked --allow-dirty --manifest-path molrs/Cargo.toml
-    python3 - "$TARGET_DIR" <<'PY'
-import sys
-import tarfile
-import tomllib
-from pathlib import Path
-
-version = tomllib.loads(Path("Cargo.toml").read_text(encoding="utf-8"))["workspace"]["package"]["version"]
-name = f"molcrafts-molrs-{version}"
-with tarfile.open(Path(sys.argv[1]) / "package" / f"{name}.crate") as package:
-    license_file = package.extractfile(f"{name}/LICENSE")
-    assert license_file is not None, "Package is missing LICENSE"
-    assert license_file.read() == Path("LICENSE").read_bytes(), "Package license differs from repository license"
-PY
-}
-
 gate_ffi() {
     cargo_test test --locked --manifest-path molrs-ffi/Cargo.toml
 }
@@ -156,8 +143,9 @@ gate_ext() {
     cargo_test test --locked --manifest-path molrs-ext-example/Cargo.toml
 }
 
-# Build one non-editable release wheel and test it in the locked uv environment.
-# No second tox/pip resolver or second copy of pytest/numpy/maturin.
+# Build one non-editable dev-profile wheel (no --release, no LTO) and test it
+# in the locked uv environment. No second tox/pip resolver or second copy of
+# pytest/numpy/maturin. `mrec` and `docs` reuse this wheel.
 gate_python() {
     uv --directory molrs-python sync --locked --no-install-project --extra dev
     # Ask the selected environment for its real executable, including .exe.
@@ -166,10 +154,17 @@ gate_python() {
     interpreter=$(uv --directory molrs-python run --no-sync python -c \
         'import sys; print(sys.executable, end="")')
     uv pip check --python "$interpreter"
-    work=$(uv --directory molrs-python run --no-sync python -c \
-        'import tempfile; print(tempfile.mkdtemp(prefix="molrs-wheel-"), end="")')
-    CLEANUP+=("$work")
-    uv --directory molrs-python run --no-sync maturin build --release --locked \
+    if [ -n "$MOLRS_WHEEL_DIR" ]; then
+        mkdir -p "$MOLRS_WHEEL_DIR"
+        work=$(cd "$MOLRS_WHEEL_DIR" && pwd)
+        if command -v cygpath >/dev/null; then work=$(cygpath -m "$work"); fi
+        rm -f "$work"/molcrafts_molrs-*.whl
+    else
+        work=$(uv --directory molrs-python run --no-sync python -c \
+            'import tempfile; print(tempfile.mkdtemp(prefix="molrs-wheel-"), end="")')
+        CLEANUP+=("$work")
+    fi
+    uv --directory molrs-python run --no-sync maturin build --locked \
         --interpreter "$interpreter" --out "$work"
     wheel=$(ls "$work"/molcrafts_molrs-*.whl)
     uv pip install -q --python "$interpreter" --no-deps --reinstall "$wheel"
@@ -194,30 +189,24 @@ gate_capi() {
     ctest --test-dir molrs-capi/build-test --build-config Debug --output-on-failure
 }
 
-# Building proves the wasm compiles; the Node suite proves it works.
+# `wasm-pack test` compiles the wasm32 crate once and runs the Node suite on
+# it. No `wasm-pack build --release`: release.yml builds the npm artifact.
 gate_wasm() {
     local have
     have=$(wasm-pack --version | awk '{print $NF}')
     [ "$have" = "$WASM_PACK_VERSION" ] || { echo "wasm-pack must be $WASM_PACK_VERSION (found $have)" >&2; return 1; }
     have=$(node --version)
     [[ "$have" == v24.* ]] || { echo "Node 24 is required (found $have)" >&2; return 1; }
-    # Release builds print "version 133 (version_133)", Homebrew builds "version 133".
-    have=version_$(wasm-opt --version | awk '{print $3}')
-    if [ "$have" != "$BINARYEN_VERSION" ]; then
-        echo "wasm-opt is $have, the gate pins $BINARYEN_VERSION:" >&2
-        echo "https://github.com/WebAssembly/binaryen/releases/tag/$BINARYEN_VERSION" >&2
-        return 1
-    fi
-    (cd molrs-wasm && wasm-pack build --release --target bundler --scope molcrafts --out-name molrs -- --locked)
     (cd molrs-wasm && wasm-pack test --node -- --locked)
 }
 
 # molrec's conformance suite through molrs.io.mrec (test.yml's `test / mrec`;
 # nightly.yml's conformance snapshot runs the same suite): molrec at the
 # commit scripts/partners.py resolves (fetched into
-# a temp dir, never a sibling's working tree), the extension built by `maturin
-# develop` into a fresh venv on CI's Python, scripts/ci-conformance.py judging
-# every case. Any case that does not pass fails the gate.
+# a temp dir, never a sibling's working tree), the tested wheel (or, run on
+# its own, the extension built by `maturin develop`) in a fresh venv on CI's
+# Python, scripts/ci-conformance.py judging every case. Any case that does not
+# pass fails the gate.
 gate_mrec() {
     scratch
     local work=$WORK
@@ -227,11 +216,12 @@ gate_mrec() {
     local bin="$work/venv/bin"
     [ -d "$bin" ] || bin="$work/venv/Scripts"
     source "$bin/activate"
-    uv pip install -q maturin "$work/molrec" \
+    uv pip install -q "$work/molrec" \
         "molcrafts-ci @ git+https://github.com/MolCrafts/molcrafts-ci@$(sed -n 's/^CI_REF=//p' .github/partners.env)"
     if [ -n "$MOLRS_TESTED_WHEEL" ]; then
         uv pip install -q "$MOLRS_TESTED_WHEEL"
     else
+        uv pip install -q maturin
         maturin develop --locked --manifest-path molrs-python/Cargo.toml
     fi
     python scripts/ci-conformance.py --suite "$work/molrec/tests" --out "$work/conformance.json"
@@ -239,7 +229,7 @@ gate_mrec() {
 }
 
 # Strict docs in the same locked tool environment. Reuse the tested wheel
-# on pre-push; standalone docs builds one dev wheel for API imports.
+# (pre-push, CI); run on its own, it builds one dev wheel for API imports.
 gate_docs() {
     uv --directory molrs-python sync --locked --no-install-project --extra dev --extra doc
     local interpreter
@@ -258,14 +248,18 @@ gate_docs() {
     uv --directory molrs-python run --no-sync zensical build --clean --strict
 }
 
+# The pre-push gate. The pre-commit stage (the CI profile's workflows, fmt,
+# ruff, os-cfg, partners) on every file, then every remaining gate once.
+# `partners` is not repeated here: the pre-commit stage ran it.
+VERIFY=(clippy doc test ffi cxx ext capi python wasm mrec docs)
 gate_verify() {
     uvx pre-commit run --all-files --hook-stage pre-commit --show-diff-on-failure
-    for gate in partners clippy doc test features package ffi cxx ext python capi wasm mrec docs; do
+    for gate in "${VERIFY[@]}"; do
         "gate_$gate"
     done
 }
 
-ALL=(fmt ruff partners clippy doc test features package ffi cxx ext python capi wasm mrec docs)
+ALL=(fmt ruff partners "${VERIFY[@]}")
 # Gates that compile nothing; everything else goes to MOLCRAFTS_HOOK_RUNNER.
 CHEAP=(fmt ruff partners)
 

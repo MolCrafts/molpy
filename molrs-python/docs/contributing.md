@@ -28,17 +28,27 @@ zensical serve -a localhost:8000        # live preview
 
 ## Hooks
 
-Every CI gate is a `scripts/check.sh <gate>` call, and `.pre-commit-config.yaml`
-runs the same calls as git hooks. Install both hook types once with
+Every gate is a `scripts/check.sh <gate>` call, and `.pre-commit-config.yaml`
+runs the same calls as git hooks. Every check runs exactly once: static checks
+run only in the hooks (CI does not repeat them), and each test suite runs once
+per OS. Install both hook types once with
 `prek install` (or `pre-commit install`). **Never `git commit --no-verify` or
 `git push --no-verify`, and never merge a red pull request**: a hook that
 fails is a CI job that would have failed.
 
 | Stage | Hooks |
 | --- | --- |
-| pre-commit | file hygiene (whitespace, final newline, YAML/TOML, merge markers, line endings), `fmt`, `ruff`, and `os-cfg`. Nothing compiles. |
-| pre-push | the pre-commit hooks again on `--all-files`; `partners`; `clippy doc test` (molrs core); `features package ffi cxx ext python capi wasm mrec docs`, every time, without file filters. |
-| CI additionally | native Linux/macOS/Windows builds. A local host only proves its own OS. |
+| pre-commit | the CI profile's commit stage: `workflows` (the CI scheme), `fmt`, `ruff`, `os-cfg`, `partners`. Nothing compiles. |
+| pre-push | `scripts/check.sh verify`: the commit stage once on `--all-files`, then `clippy doc test ffi cxx ext capi python wasm mrec docs`, each once, without file filters. |
+| CI (`test.yml`) | the tests only, on native Linux/macOS/Windows runners. A local host only proves its own OS. |
+
+- `clippy` — `-D warnings` on the core (`cargo mrs-clippy`, the one `full`
+  feature set: no per-feature matrix) and each binder; `molrs-wasm` is linted
+  for wasm32 only.
+- `python` — one dev-profile wheel (no `--release`, no LTO), installed and
+  tested once; `mrec` and `docs` install that same wheel.
+- `wasm` — `wasm-pack test --node`, which compiles the crate once and runs the
+  suite. The release npm build is `release.yml`'s.
 
 - `ruff` — `ruff.toml`'s one rule, PLW1514: text-mode file I/O (`open`,
   `read_text`, `write_text`) names its encoding. Unnamed, Python decodes with
@@ -50,8 +60,8 @@ fails is a CI job that would have failed.
   and no workflow spells a partner commit of its own.
 - `mrec` — molrec's conformance suite through `molrs.io.mrec`, exactly as
   `test.yml`'s `test / mrec` runs it: molrec fetched at its resolved commit into a temp
-  dir (never your sibling's working tree), the wheel already tested in this push (or `maturin develop` in a standalone
-  Python 3.12 gate), `scripts/ci-conformance.py`. Any case that does not pass
+  dir (never your sibling's working tree), the wheel already tested in this push (or `maturin develop` when run on
+  its own), in a fresh Python 3.12 venv, `scripts/ci-conformance.py`. Any case that does not pass
   fails it.
 - `docs` — the site using the locked `dev,doc` tools and the tested wheel,
   then `zensical build --clean`, with `--strict`, so an mkdocstrings
@@ -72,8 +82,8 @@ node — it never passes a gate it did not run). So a commit never waits for
 Slurm, and every push runs the complete gate catalogue. Anywhere else
 the variable is unset and every gate runs locally, exactly as CI runs it.
 
-For the complete local gates, install CMake and a C++20 compiler, Node 24,
-wasm-pack 0.15.0 and Binaryen `version_133`, in addition to uv and rustup. On Windows,
+For the complete local gates, install CMake and a C++20 compiler, Node 24 and
+wasm-pack 0.15.0, in addition to uv and rustup. On Windows,
 use Git Bash for shell hooks and a C++ compiler matching the Rust target
 (Visual Studio Build Tools for MSVC). The C API test links the import library
 and copies its DLL beside the test executable. Native CI verifies that path;
@@ -81,9 +91,11 @@ WSL only verifies Linux behavior.
 
 ## CI
 
-One workflow per kind of work, each job a `scripts/check.sh` call. Every
-push of any branch runs `lint`, `test` and `docs`, on a fork as on
-MolCrafts. A pull request into `dev` or `master` runs them again unless it is
+CI runs only what a laptop cannot: the cross-OS tests (`test.yml`) and the
+release artifacts (`release.yml`). Formatting, linters, clippy, rustdoc, the
+workflow scheme and the partner pins were proven by the hooks before the push
+and are not run again. Every job is a `scripts/check.sh` call. Every push of
+any branch runs `test`, on a fork as on MolCrafts. A pull request into `dev` or `master` runs them again unless it is
 a pull request inside a fork (that was already run by its push). Those
 decisions (tier, fork or upstream, the duplicate pull request) are made in
 one place: every workflow's first job, `<file> / context`, runs
@@ -92,11 +104,9 @@ its outputs.
 
 | workflow | feature-branch push to MolCrafts | everything else: any push to a fork, `dev`/`master` on MolCrafts, pull requests, tags, dispatches | upstream only |
 | --- | --- | --- | --- |
-| `lint.yml` | `lint / hooks` (commit hooks including workflow scheme, `partners`) | same | — |
-| `test.yml` | fast: `test / rust` (`clippy doc test`), `test / python (ubuntu-latest)` | full: `test / rust` (+ `ffi cxx ext package`), `test / python` on Linux, macOS and Windows, `test / features`, `test / capi` on Linux and Windows, `test / wasm`, `test / mrec` | — |
-| `docs.yml` | `docs / build` (`docs`) | same | Cloudflare Pages deploys the site from MolCrafts |
+| `test.yml` | fast: `test / rust` (`test`), `test / python (ubuntu-latest)`, `test / docs` | full: `test / rust` (+ `ffi cxx ext`), `test / python` on Linux, macOS and Windows, `test / docs`, `test / capi` on Linux and Windows, `test / wasm`, `test / mrec` | Cloudflare Pages deploys the site from MolCrafts |
 | `nightly.yml` | — | — | nightly: tests, coverage and conformance snapshots to molcrafts-ci; a `nightly` branch push: wheels to `molcrafts-molrs-nightly` |
-| `release.yml` | — | dispatch: dry run (builds, uploads nothing) | `v*` tag: crates.io, npm, PyPI, GitHub Release (`docs/releasing.md`) |
+| `release.yml` | — | dispatch: dry run (builds, uploads nothing) | `v*` tag: a guard that the commit's `test.yml` is green (no lint or test run of its own), then crates.io, npm, PyPI, GitHub Release (`docs/releasing.md`) |
 
 So a fork branch gets the full tier on its push: push to your fork, wait for
 green, then open the pull request into MolCrafts `dev`. Branches pushed to
@@ -106,8 +116,10 @@ full one. The `require-green-ci` (`dev`) and `protect-master` rulesets require
 pinned `MolCrafts/molcrafts-ci/actions/<name>` (`setup-rust`, `setup-python`);
 only `setup-wasm` is molrs's own, in `.github/actions/`.
 
-`test / rust` and `test / python` run their gates as `scripts/check.sh
---report .ci-out <gate>`, which also writes what the tests ran
+`test / python (ubuntu-latest)` uploads the wheel it built and tested;
+`test / docs` and `test / mrec` download that file (`MOLRS_TESTED_WHEEL`) and
+compile nothing. `test / rust` and `test / python` run their gates as
+`scripts/check.sh --report .ci-out <gate>`, which also writes what the tests ran
 (`cargo-test.log`; `junit.xml` and the Python layer's `coverage.json`).
 the pinned `MolCrafts/molcrafts-ci/actions/report` turns them into a table of passed,
 failed and skipped counts and line and branch coverage, in the run and pull
@@ -126,7 +138,7 @@ For a coordinated change, push the partner commit, update its repository/SHA
 in the manifest, then run `scripts/check.sh verify`. A release keeps those
 same pins. Updating a dependency is a reviewed source change.
 
-Pre-push runs all local gates, including feature isolation and package
-validation. Clippy only lints; binder gates only test. The native CI job runs
-Clippy, rustdoc and tests in distinct steps sharing one checkout/cache.
-Windows/macOS behavior is additionally checked on native CI runners.
+Pre-push runs every local gate once. Clippy only lints; binder gates only
+test. CI runs the tests again only on the operating systems the pushing host
+is not; the crates.io tarball is verified once, by `cargo publish` in
+`release.yml`.

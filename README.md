@@ -111,7 +111,7 @@ cd molrs
 cargo mrs-build   # compile the Rust library
 cargo mrs-test    # unit tests
 cargo mrs-doctest # rustdoc examples
-scripts/check.sh all  # every CI gate (prek runs the same script)
+scripts/check.sh verify  # the pre-push gate: every check, once
 ```
 
 Binding crates are standalone workspaces. Build each with

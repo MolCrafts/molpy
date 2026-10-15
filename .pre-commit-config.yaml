@@ -12,6 +12,9 @@ repos:
         language: system
         pass_filenames: false
         always_run: true
+        # pre-commit only: the pre-push gate (the profile's `verify`) runs
+        # this stage itself, so listing it for pre-push too would run it twice.
+        stages: [pre-commit]
         args: ["--stage", "pre-commit"]
       - id: ci-push
         name: molcrafts-ci pre-push

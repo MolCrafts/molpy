@@ -1,28 +1,32 @@
 name: test
 
-# Every test gate of scripts/check.sh, in two tiers (`test / context` decides):
+# The tests a laptop cannot run: every OS. Static checks (fmt, ruff, clippy,
+# rustdoc, workflows, partners) run only locally, at pre-commit and in the
+# pre-push `scripts/check.sh verify`; this workflow does not repeat them.
+# Each job is a scripts/check.sh test gate, run once, in two tiers
+# (`test / context` decides):
 #
-#   fast  a feature-branch push to MolCrafts: core Rust tests and the Python
-#         suite on Linux.
+#   fast  a feature-branch push to MolCrafts: core Rust tests, the Python
+#         suite on Linux and the docs on its wheel.
 #   full  every push to a fork (proven before its pull request), dev, master
-#         and master on MolCrafts, pull requests, tags and dispatches:
-#         + ffi/cxx/ext/package, the OS
-#         matrix, the feature matrix, C API, WASM and molrec's conformance
-#         suite (mrec).
+#         and master on MolCrafts, pull requests and dispatches:
+#         + ffi/cxx/ext, the Python OS matrix, C API (Linux, Windows), WASM
+#         and molrec's conformance suite (mrec).
+#
+# One dev-profile wheel per OS, built and tested once by `test / python`. The
+# Linux one is uploaded and `test / docs` and `test / mrec` install that same
+# file instead of compiling the extension again.
 on:
   push:
     branches: ["**"]
   pull_request:
     branches: [dev, master]
   workflow_dispatch:
-  workflow_call:
 
 permissions:
   contents: read
 
-# One group per file, workflow, event and ref. Under workflow_call (release.yml
-# running lint/test) github.workflow and github.event_name are the caller's, so
-# a called run never shares, and so never cancels, a direct run's group.
+# One group per file, workflow, event and ref; only a feature ref cancels its superseded runs.
 concurrency:
   group: test-${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: ${{ !contains(fromJSON('["refs/heads/dev","refs/heads/master"]'), github.ref) && !startsWith(github.ref, 'refs/tags/') }}
@@ -56,14 +60,7 @@ jobs:
       - uses: MolCrafts/molcrafts-ci/actions/setup-rust@cc46e4eb85fdcfb950d9a4df02c2e04e94ba90f7
         with:
           cache: native
-      # Native lint and tests share the checkout and Cargo cache; no second
-      # runner compiles the same binder graph merely to run clippy.
-      - name: Native lint
-        run: scripts/check.sh clippy
-      - name: Rustdoc
-        run: scripts/check.sh doc
-      - name: Native tests and package
-        run: scripts/check.sh --report .ci-out test ${{ needs.context.outputs.tier == 'full' && 'ffi cxx ext package' || '' }}
+      - run: scripts/check.sh --report .ci-out test ${{ needs.context.outputs.tier == 'full' && 'ffi cxx ext' || '' }}
       # The counts in the run and pull request summary; report only. No
       # coverage here: instrumenting the build is the nightly's job.
       - name: Report
@@ -89,7 +86,18 @@ jobs:
         with:
           cache: python
       - uses: MolCrafts/molcrafts-ci/actions/setup-python@cc46e4eb85fdcfb950d9a4df02c2e04e94ba90f7
-      - run: scripts/check.sh --report .ci-out python
+      # The wheel is written to .ci-out/wheel and kept: the file this step
+      # tested is the file the Linux leg uploads.
+      - env:
+          MOLRS_WHEEL_DIR: .ci-out/wheel
+        run: scripts/check.sh --report .ci-out python
+      - if: matrix.os == 'ubuntu-latest'
+        uses: actions/upload-artifact@v7
+        with:
+          name: tested-wheel-linux
+          path: .ci-out/wheel/*.whl
+          if-no-files-found: error
+          retention-days: 1
       # The counts and the Python layer's coverage in the run and pull
       # request summary; report only.
       - name: Report
@@ -100,17 +108,26 @@ jobs:
           junit: .ci-out/junit.xml
           coverage: .ci-out/coverage.json
 
-  features:
-    name: test / features
-    needs: context
-    if: needs.context.outputs.skip-pr != 'true' && needs.context.outputs.tier == 'full'
+  # The site as Cloudflare Pages builds it, --strict: any warning fails.
+  # Cloudflare Pages deploys it from MolCrafts itself (its Git integration),
+  # so no job here deploys. The API reference imports the tested wheel.
+  docs:
+    name: test / docs
+    needs: [context, python]
+    if: needs.context.outputs.skip-pr != 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: MolCrafts/molcrafts-ci/actions/setup-rust@cc46e4eb85fdcfb950d9a4df02c2e04e94ba90f7
+      - uses: MolCrafts/molcrafts-ci/actions/setup-python@cc46e4eb85fdcfb950d9a4df02c2e04e94ba90f7
+      - uses: actions/download-artifact@v8
         with:
-          cache: features
-      - run: scripts/check.sh features
+          name: tested-wheel-linux
+          path: .ci-out/wheel
+      - name: Docs on the tested wheel
+        run: |
+          MOLRS_TESTED_WHEEL=$(ls "$PWD"/.ci-out/wheel/molcrafts_molrs-*.whl)
+          export MOLRS_TESTED_WHEEL
+          scripts/check.sh docs
 
   capi:
     name: test / capi${{ matrix.os == 'windows-latest' && ' (windows-latest)' || '' }}
@@ -143,16 +160,21 @@ jobs:
       - run: scripts/check.sh wasm
 
   # molrec's conformance suite through molrs.io's *.mrec doors, molrec at the
-  # immutable commit declared in .github/partners.env.
+  # immutable commit declared in .github/partners.env, on the tested wheel.
   mrec:
     name: test / mrec
-    needs: context
+    needs: [context, python]
     if: needs.context.outputs.skip-pr != 'true' && needs.context.outputs.tier == 'full'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: MolCrafts/molcrafts-ci/actions/setup-rust@cc46e4eb85fdcfb950d9a4df02c2e04e94ba90f7
-        with:
-          cache: mrec
       - uses: MolCrafts/molcrafts-ci/actions/setup-python@cc46e4eb85fdcfb950d9a4df02c2e04e94ba90f7
-      - run: scripts/check.sh mrec
+      - uses: actions/download-artifact@v8
+        with:
+          name: tested-wheel-linux
+          path: .ci-out/wheel
+      - name: Conformance on the tested wheel
+        run: |
+          MOLRS_TESTED_WHEEL=$(ls "$PWD"/.ci-out/wheel/molcrafts_molrs-*.whl)
+          export MOLRS_TESTED_WHEEL
+          scripts/check.sh mrec
