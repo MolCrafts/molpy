@@ -38,9 +38,12 @@ the wheel continues to declare its published dependency ranges.
 
 Run `python scripts/check.py verify` before pushing. The pre-push hook runs
 all hygiene/lint gates, then creates one partner layout, validates `uv.lock`,
-installs the dependency graph, runs `uv pip check`, tests and strict docs. It
-also runs the suite against published dependency ranges (`--no-sources`) and
-checks the release distributions.
+installs the dependency graph, runs `uv pip check`, tests and strict docs,
+and checks the release distributions. It does not test the published
+dependency ranges, on any branch: a partner's next minor line is legitimately
+unpublished while it is being developed. That check (`check.py published`,
+`--no-sources`) runs once, in the release workflow on the tagged commit, on
+Linux with Python 3.12 and the partners from PyPI.
 Set `MOLCRAFTS_PARTNER_CACHE` to a persistent directory to reuse builds.
 
 For coordinated changes, publish the partner commit and update the declared
@@ -53,7 +56,7 @@ python scripts/partners.py run -- sh -c 'uv lock && cp uv.lock "$PARTNERS_SOURCE
 
 CI covers OS differences on Python 3.12 and interpreter differences on Linux
 3.14: four independent legs rather than a six-leg Cartesian product. A release
-also checks the published dependencies using `--no-sources`.
+reuses those results and adds the one published-dependency run.
 
 ## Developing across operating systems
 

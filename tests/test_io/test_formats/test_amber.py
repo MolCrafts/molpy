@@ -30,7 +30,7 @@ def test_inpcrd_basic_coords_only(tmp_inpcrd_dir):
     )
     inpcrd_file.write_text(content, encoding="utf-8")
 
-    frame = mp.io.read_amber_inpcrd(inpcrd_file)
+    frame = mp.io.read_inpcrd(inpcrd_file)
 
     assert "atoms" in frame
     assert frame["atoms"].n_rows == 3
@@ -65,7 +65,7 @@ def test_inpcrd_with_time(tmp_inpcrd_dir):
     )
     inpcrd_file.write_text(content, encoding="utf-8")
 
-    frame = mp.io.read_amber_inpcrd(inpcrd_file)
+    frame = mp.io.read_inpcrd(inpcrd_file)
 
     assert frame["atoms"].n_rows == 2
     assert frame.meta["timestep"] == 100
@@ -91,7 +91,7 @@ def test_inpcrd_with_velocities(tmp_inpcrd_dir):
     )
     inpcrd_file.write_text(content, encoding="utf-8")
 
-    frame = mp.io.read_amber_inpcrd(inpcrd_file)
+    frame = mp.io.read_inpcrd(inpcrd_file)
 
     assert frame["atoms"].n_rows == 2
     assert "vel" in frame["atoms"]
@@ -116,7 +116,7 @@ def test_inpcrd_with_box(tmp_inpcrd_dir):
     )
     inpcrd_file.write_text(content, encoding="utf-8")
 
-    frame = mp.io.read_amber_inpcrd(inpcrd_file)
+    frame = mp.io.read_inpcrd(inpcrd_file)
 
     assert frame.box is not None
     # Box should use first 3 values as diagonal
@@ -140,7 +140,7 @@ def test_inpcrd_with_velocities_and_box(tmp_inpcrd_dir):
     )
     inpcrd_file.write_text(content, encoding="utf-8")
 
-    frame = mp.io.read_amber_inpcrd(inpcrd_file)
+    frame = mp.io.read_inpcrd(inpcrd_file)
 
     assert frame["atoms"].n_rows == 2
     assert "vel" in frame["atoms"]
@@ -174,13 +174,13 @@ def test_inpcrd_update_existing_frame(tmp_inpcrd_dir):
 
     existing_frame.meta["source"] = "mine"
 
-    frame = mp.io.read_amber_inpcrd(inpcrd_file, existing_frame)
+    frame = mp.io.read_inpcrd(inpcrd_file, existing_frame)
 
     # Should update coordinates but preserve name
     assert frame["atoms"]["name"][0] == "CA"
     # Meta merges: own keys stay, the file's keys keep their stored dtype tags.
     assert frame.meta["source"] == "mine"
-    loaded = mp.io.read_amber_inpcrd(inpcrd_file)
+    loaded = mp.io.read_inpcrd(inpcrd_file)
     assert len(loaded.meta) > 0
     for key in loaded.meta:
         assert frame.meta[key] == loaded.meta[key]
@@ -199,7 +199,7 @@ def test_inpcrd_too_short_file(tmp_inpcrd_dir):
     inpcrd_file.write_text(content, encoding="utf-8")
 
     with pytest.raises(OSError, match="too short"):
-        mp.io.read_amber_inpcrd(inpcrd_file)
+        mp.io.read_inpcrd(inpcrd_file)
 
 
 def test_inpcrd_insufficient_coords(tmp_inpcrd_dir):
@@ -219,7 +219,7 @@ def test_inpcrd_insufficient_coords(tmp_inpcrd_dir):
     inpcrd_file.write_text(content, encoding="utf-8")
 
     with pytest.raises(OSError, match="Not enough lines"):
-        mp.io.read_amber_inpcrd(inpcrd_file)
+        mp.io.read_inpcrd(inpcrd_file)
 
 
 def test_inpcrd_atom_count_mismatch(tmp_inpcrd_dir):
@@ -248,7 +248,7 @@ def test_inpcrd_atom_count_mismatch(tmp_inpcrd_dir):
     }
 
     with pytest.raises(OSError, match="atoms block has 2 rows, but the inpcrd has 3"):
-        mp.io.read_amber_inpcrd(inpcrd_file, existing_frame)
+        mp.io.read_inpcrd(inpcrd_file, existing_frame)
 
 
 def test_inpcrd_large_system(tmp_inpcrd_dir):
@@ -271,7 +271,7 @@ def test_inpcrd_large_system(tmp_inpcrd_dir):
 
     inpcrd_file.write_text("\n".join(lines), encoding="utf-8")
 
-    frame = mp.io.read_amber_inpcrd(inpcrd_file)
+    frame = mp.io.read_inpcrd(inpcrd_file)
 
     assert frame["atoms"].n_rows == 10
     # Check first and last atoms
@@ -297,7 +297,7 @@ def test_inpcrd_fixed_width_no_whitespace(tmp_inpcrd_dir):
     )
     inpcrd_file.write_text(content, encoding="utf-8")
 
-    frame = mp.io.read_amber_inpcrd(inpcrd_file)
+    frame = mp.io.read_inpcrd(inpcrd_file)
 
     assert frame["atoms"].n_rows == 2
     np.testing.assert_allclose(frame["atoms"]["x"], [50.5413286, -44.5678901])

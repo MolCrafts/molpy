@@ -73,19 +73,20 @@ encoding:
 
 </div>
 
-**Figure 1.** Self part of the Van Hove function for liquid argon at 85 K, at
+**Figure 1.** Self part of the Van Hove function for liquid argon, from the
+reference run (seed 0, 88.3 K), at
 four lags. The distribution starts narrow and spreads; its root-mean-square
 width grows from 0.22 Å at 0.1 ps to 2.62 Å at 6 ps.
 </figure>
 
 Every curve is a normalized probability distribution — they all integrate to 1,
 which is the first thing to confirm. What changes is the width, and the widths
-are not arbitrary. Taking $\int r^2 G_s\,\mathrm{d}r$ at each lag gives 0.050,
-0.66, 2.46 and 6.87 Å², against [MSD](msd.md) values of 0.050, 0.66, 2.53 and
-7.18 Å² from the same trajectory's unwrapped positions at the same time origins.
-They agree to within a few percent, the residual coming from the finite
-$r_\max$ and bin width of the histogram, which clip the tail that carries the
-largest displacements.
+are not arbitrary. Taking $\int r^2 G_s\,\mathrm{d}r$ at each lag gives 0.054,
+0.71, 2.71 and 7.67 Å², against [MSD](msd.md) values of 0.053, 0.70, 2.71 and
+7.67 Å² from the same trajectory's unwrapped positions at the same time origins.
+They agree to within 2 %, the residual coming from the bin width of the
+histogram, which matters most at the shortest lag where the whole distribution
+spans a few bins.
 
 That is the cross-check to run on your own system: if the second moment of your
 $G_s$ does not reproduce your MSD, one of the two is wrong.
@@ -104,37 +105,79 @@ Compute it from the moments of $G_s$; it is not a field on the result.
 
 ## Computing it
 
-`VanHove` takes the lags up front, **in frames**, and needs
-[unwrapped](msd.md) coordinates for the same reason the MSD does. Load an
-unwrapped dump and pass the frame list straight in:
+`VanHove` is configured with the radial binning — an `Axis` over $[0,
+r_\max)$ — and the lags to evaluate, **in frames**. The data is the
+trajectory: `(n_frames, n_atoms, 3)` [unwrapped](msd.md) positions, for the
+same reason the MSD needs them, and one box per frame, which the distinct part
+needs for the minimum image. Given those boxes, a wrapped trajectory is refused
+rather than analysed.
+
+A random walk in a periodic box makes a test whose answers are known: every
+$G_s$ is a Gaussian shell, and its second moment is the walk's MSD.
 
 ```python
-# docs: skip — needs your own trajectory file
-from molpy.compute import VanHove
-from molpy.io import read_lammps_dump_trajectory
+import numpy as np
+import molpy as mp
+from molpy.compute import Axis, Msd, VanHove
 
-frames = read_lammps_dump_trajectory("run.lammpstrj").read_all()
-result = VanHove(
-    n_rbins=100, r_max=12.0, lags=[10, 50, 200], stride=10
-).compute(frames)
+rng = np.random.default_rng(0)
+L, n_frames, n_atoms = 20.0, 200, 200
+start = rng.uniform(0.0, L, size=(n_atoms, 3))
+positions = start + np.cumsum(rng.normal(0.0, 0.1, size=(n_frames, n_atoms, 3)), axis=0)
+boxes = [mp.Box.cube(L)] * n_frames
 
-g_self = np.asarray(result.g_self)
-print(g_self.shape)    # -> (n_lags, n_rbins), one row per requested lag
+result = VanHove(Axis(0.0, 6.0, 60), lags=[10, 50, 150]).compute(
+    positions=positions, boxes=boxes
+)
+print(result.g_self.shape, result.lags)   # -> (3, 60) [ 10  50 150]
 ```
 
-Useful fields: `g_self`, `g_distinct` (when requested), `r_centers`, `r_edges`,
-`dr`, `lags`. Each self-part row should integrate to 1 over $r$ — check
-`(g_self[i] * dr).sum()`. The second moment $\int r^{2} G_s(r,t)\,\mathrm{d}r$
-is the MSD at that lag, so it should match [`Msd`](msd.md) on the same frames.
+On your own data the positions are the coordinate columns of each frame,
+stacked: `np.stack([frame.coords for frame in frames])`, with
+`[frame.box for frame in frames]` as the boxes.
 
-Choose `r_max` from the longest lag you care about: it must cover the bulk of
-$G_s$, not just the peak. If `r_max` is too small the second moment falls short
-of the true MSD while the integral can still read 1.000 — the distribution is
-renormalized over whatever grid you gave it, so normalization alone will not
-tell you that you clipped the tail. Only the moments will.
+The result holds `g_self` and `g_distinct`, one row per requested lag, on the
+bins `r_centers` / `r_edges` of width `dr`. Each self-part row is a probability
+density in $r$ and integrates to 1, and its second moment reproduces the MSD:
 
-`stride` sets the spacing between time origins — raise it to trade statistics
-for speed. `has_distinct` reports whether the distinct part was accumulated.
+```python
+r, dr = result.r_centers, result.dr
+print(np.round((result.g_self * dr).sum(axis=1), 6))      # -> [1. 1. 1.]
+second = (r**2 * result.g_self * dr).sum(axis=1)
+msd = Msd(max_lag=150).compute(positions=positions, dt=1.0).values[result.lags, 0]
+print(np.round(second / msd, 3))                          # -> [1.004 1.001 1.001]
+```
+
+The distinct part is a number density: it tends to $\rho = N/V$ where the
+neighbours have forgotten each other, so `g_distinct / rho` is the curve that
+starts at $g(r)$ and flattens toward 1. The non-Gaussian parameter is
+arithmetic on the moments of `g_self`. For a random walk the true value is
+zero at every lag:
+
+```python
+fourth = (r**4 * result.g_self * dr).sum(axis=1)
+alpha2 = 3 * fourth / (5 * second**2) - 1
+print(np.round(alpha2, 2))                                # -> [0.   0.06 0.1 ]
+```
+
+The growth with lag is not physics. At 150 frames each atom has only a
+handful of independent displacements left, so the fourth moment of 200 atoms is
+a noisy estimate — computing $\alpha_2$ straight from the raw displacements
+gives the same three numbers. Before reading heterogeneity into $\alpha_2$,
+check that it is larger than this floor for a run of your length.
+
+Choose $r_\max$ from the longest lag you care about: it must cover the bulk of
+$G_s$, not just the peak. If $r_\max$ is too small the second moment falls
+short of the true MSD while the integral can still read 1.000 — the
+distribution is renormalized over whatever grid you gave it, so normalization
+alone will not tell you that you clipped the tail. Only the moments will.
+
+Three options tune the estimator. `origins="all"` (the default) averages over
+every time origin and `"first"` uses frame 0 alone; `stride` spaces the
+origins — raise it to trade statistics for speed. `upper_edge` decides the one
+sample that lands exactly on $r_\max$: `"open"` (the default) keeps every bin
+half-open, $[r_k, r_{k+1})$, and drops it; `"closed"` counts it in the last
+bin, the convention of codes whose final bin is $[r_{n-1}, r_\max]$.
 
 ## When it goes wrong
 
@@ -147,19 +190,22 @@ width.
 still come out as 1, so this failure is invisible unless you check the moment.
 Raise `r_max` until the answer stops changing.
 
-**$G_s$ has weight at large $r$ that grows with lag.**
-Wrapped coordinates. Displacement kernels need unwrapping; see [MSD](msd.md).
+**The compute refuses the trajectory as wrapped.**
+It is. Displacement kernels need continuous paths; run `Unwrap` first, see
+[MSD](msd.md).
 
 **$G_d(r,0)$ does not equal $g(r)$.**
-It must, by definition. A mismatch means a different density normalization
-between the two calls.
+It must, by definition, once divided by the number density $\rho = N/V$. A
+remaining mismatch means a different density normalization between the two
+calls.
 
 **The curves at large lag are noisy.**
 Few time origins remain out there. Lower `stride`, or shorten the longest lag.
 
-**It uses far more memory than expected.**
-Cost scales as `n_rbins × len(lags)` times the number of origins processed. Ask
-for the handful of lags you will actually plot, not a dense sweep.
+**It is slow.**
+Cost scales as the number of bins × `len(lags)` times the number of origins
+processed. Ask for the handful of lags you will actually plot, not a dense
+sweep, and raise `stride`.
 
 ## Check yourself
 

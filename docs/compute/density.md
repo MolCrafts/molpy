@@ -73,8 +73,8 @@ encoding:
 
 </div>
 
-**Figure 1.** Distribution of local densities in bulk liquid argon at
-85 K, for probe radii of 4 Å and 8 Å. Both are centred on the same physical
+**Figure 1.** Distribution of local densities in bulk liquid argon, from
+the reference run (seed 0, 88.3 K), for probe radii of 4 Å and 8 Å. Both are centred on the same physical
 density; the narrow one is not "better data", it is more smoothing.
 </figure>
 
@@ -84,7 +84,7 @@ width:
 | Probe `r_max` | ⟨N⟩ in the sphere | mean $\rho$ (Å⁻³) | spread | Poisson would give |
 |---|---|---|---|---|
 | 4 Å | 5.5 | 0.0206 | 27 % | 43 % |
-| 8 Å | 45.2 | 0.0211 | 5.4 % | 15 % |
+| 8 Å | 45.1 | 0.0210 | 5.3 % | 15 % |
 
 A small sphere holds few atoms, so gaining or losing one moves the answer a lot;
 that is why the 4 Å curve is broad. But notice the last column. If the atoms
@@ -117,9 +117,9 @@ $$
 $$
 
 with $n(R)$ the coordination number from [RDF](rdf.md), which that page shows how
-to compute in four lines. For argon $n(8\,\text{Å}) = 44.8$, and dividing by the
-sphere volume $\tfrac{4}{3}\pi 8^3 = 2145$ Å³ gives 0.0209 Å⁻³ against the
-0.0211 measured here — two different computes agreeing. The local density
+to compute in four lines. For argon $n(8\,\text{Å}) = 44.7$, and dividing by the
+sphere volume $\tfrac{4}{3}\pi 8^3 = 2145$ Å³ gives 0.0208 Å⁻³ against the
+0.0210 measured here — two different computes agreeing. The local density
 approaches the bulk value only as $R$ grows past the last correlation shell.
 
 ## Computing both
@@ -135,8 +135,11 @@ frame["atoms"] = {"x": xyz[:, 0], "y": xyz[:, 1], "z": xyz[:, 2]}
 frame.box = mp.Box.cube(20.0)
 ```
 
-`LocalDensity` takes frames and neighbor lists, and returns **one
-`(n_neighbors, density)` pair per frame** — two arrays of length $N$:
+`LocalDensity` is configured with the probe radius and computed on one
+snapshot's pairs — a [neighbour table](neighborlist.md) or the built search
+itself. It returns a result with two arrays of length $N$: `n_neighbors`, the
+(possibly fractional) count inside the probe, and `density`, that count over
+the probe volume:
 
 ```python
 from molpy.compute import LocalDensity
@@ -144,11 +147,14 @@ from molpy.compute import LocalDensity
 nl = mp.core.NeighborList(5.0)
 nl.build(frame.coords, frame.box)
 nlist = nl.neighbors()
-(counts, density), = LocalDensity(r_max=5.0).compute([frame], [nlist])
+local = LocalDensity(r_max=5.0).compute(pairs=nlist)
 
-print(counts.shape, density.shape)          # -> (400,) (400,)
-print(round(float(density.mean()), 4))      # -> 0.0507
+print(local.n_neighbors.shape, local.density.shape)   # -> (400,) (400,)
+print(round(float(local.density.mean()), 4))          # -> 0.0507
 ```
+
+A trajectory is a loop: one table per frame, one result per table, and the
+per-atom densities concatenated or averaged as the question requires.
 
 Random points have no structure, so the mean local density here should be the
 bulk value $400/20^3 = 0.05$ Å⁻³, and it is. That is a good habit: run a compute
@@ -174,37 +180,86 @@ which reduces to plain counting when $d = 0$. Use it when you care about the
 density of *finite-sized* particles rather than of points, or when a jumpy
 per-atom density is causing trouble downstream.
 
-`GaussianDensity` takes frames alone and returns one `(nx, ny, nz)` grid per
-frame:
+`GaussianDensity` needs no pairs: it is configured with the grid resolution
+and the kernel width, and computed on one snapshot's positions and the box the
+grid divides. The positions are columns you read from the frame:
 
 ```python
 from molpy.compute import GaussianDensity
 
-grid, = GaussianDensity(nx=32, ny=32, nz=32, sigma=1.5).compute([frame])
-print(grid.shape)                            # -> (32, 32, 32)
+field = GaussianDensity(dims=(32, 32, 32), sigma=1.5).compute(
+    positions=frame.coords, simbox=frame.box
+)
+print(field.density.shape)                   # -> (32, 32, 32)
+print(round(field.grid.voxel_volume, 4))     # -> 0.2441
 ```
 
-Grid spacing is the box edge divided by the resolution — here 20/32 = 0.63 Å.
+The result carries the field `density` and the `grid` it lives on (origin,
+voxel basis, periodicity), so nothing downstream has to re-derive the voxel
+geometry. Grid spacing is the box edge divided by the resolution — here
+20/32 = 0.63 Å.
 Keep $\sigma$ at or above the spacing, or you are sampling a Gaussian narrower
 than your own grid and the field becomes a set of spikes.
 
 One property of this kernel is worth knowing before you integrate anything from
-it. Each Gaussian is truncated at $3\sigma$ and the remaining tail is *not*
-folded back in, so the grid integrates to 97.1 % of the particle count rather
-than 100 %:
+it. Each Gaussian is truncated at $3\sigma$ (or at `r_max`, if you set one) and
+the remaining tail is *not* folded back in, so the grid integrates to 97.1 % of
+the particle count rather than 100 %:
 
 ```python
-voxel = (20.0 / 32) ** 3
-print(round(float(grid.sum() * voxel), 2))   # -> 388.28, not 400
+voxel = field.grid.voxel_volume
+print(round(float(field.density.sum() * voxel), 2))   # -> 388.28, not 400
 ```
 
 The deficit is the fraction of a 3-D Gaussian lying beyond $3\sigma$, so as long
 as the grid actually resolves the Gaussian it is a fixed 2.9 %, whatever
 $\sigma$ and resolution you choose. Under-resolve it and you lose more: at
-`nx=16` with $\sigma = 0.3$ Å the spacing is 1.25 Å, four times $\sigma$, and
-the integral falls to 344. That is harmless for visualization and for ratios,
-but if you need absolute particle counts from the field, keep $\sigma$ at or
-above the spacing and divide by 0.971.
+`dims=(16, 16, 16)` with $\sigma = 0.3$ Å the spacing is 1.25 Å, four times
+$\sigma$, and only the voxel centres that happen to fall inside the truncation
+sphere receive any mass.
+
+How many of those centres a particle reaches is a convention, and the
+constructor names it with `reach`. The default, `reach="ceil"`, visits every
+voxel whose centre lies within the truncation radius. `reach="floor"` is
+freud's stencil: it stops $\lfloor r_\max/\Delta\rfloor$ voxels from the
+particle's own voxel and so skips the outermost shell of centres. When the grid
+resolves the Gaussian the two agree; when it does not, they differ visibly:
+
+```python
+coarse = {
+    reach: GaussianDensity(dims=(16, 16, 16), sigma=0.3, reach=reach).compute(
+        positions=frame.coords, simbox=frame.box
+    )
+    for reach in ("ceil", "floor")
+}
+for reach, out in coarse.items():
+    print(reach, round(float(out.density.sum() * out.grid.voxel_volume), 1))
+# -> ceil 373.9
+# -> floor 343.8
+```
+
+Pick `floor` only to reproduce numbers from freud. Either way the lesson is the
+same: the loss is harmless for visualization and for ratios, but if you need
+absolute particle counts from the field, keep $\sigma$ at or above the spacing
+and divide by 0.971.
+
+When you want to know *whether* space is occupied rather than how much,
+replace the Gaussian with a hard sphere. `SphereVoxelization` marks every voxel
+whose centre lies within `r_max` of some particle; `voxels` is the 0/1
+occupancy and `raw_counts` how many spheres cover each voxel. For random points
+the occupied fraction is the Poisson probability that a sphere of radius
+`r_max` around a voxel holds at least one particle, $1 - e^{-\rho\,4\pi r^3/3}$:
+
+```python
+from molpy.compute import SphereVoxelization
+
+cover = SphereVoxelization(dims=(32, 32, 32), r_max=1.5).compute(
+    positions=frame.coords, simbox=frame.box
+)
+rho = 400 / 20.0**3
+print(round(float(cover.voxels.mean()), 3))                       # -> 0.504
+print(round(float(1 - np.exp(-rho * 4 / 3 * np.pi * 1.5**3)), 3))  # -> 0.507
+```
 
 !!! note "No figure for `GaussianDensity` yet — TODO"
     A density-field slice only says anything for an inhomogeneous system: a

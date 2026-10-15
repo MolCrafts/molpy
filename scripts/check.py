@@ -49,7 +49,8 @@ GATES = {
         ]
     ],
     # Release compatibility: resolve the declared published ranges, independently
-    # of the source lock. Run last; the next source gate restores its lock/env.
+    # of the source lock. Run once, by the release workflow on the tagged commit
+    # (not by `verify`); the next source gate restores its lock/env.
     "published": [
         [
             "uv",
@@ -92,8 +93,33 @@ GATES = {
 }
 
 
+def with_report(command: list[str], report: str) -> list[str]:
+    """The test gate's pytest command, also writing JUnit and coverage to ``report``.
+
+    CI's ``test / python`` passes ``--report``; the files feed
+    MolCrafts/molcrafts-ci/actions/report. The hook runs the plain command.
+    """
+    at = command.index("python")
+    return [
+        *command[:at],
+        "--with",
+        "pytest-cov",
+        *command[at:],
+        f"--junitxml={report}/junit.xml",
+        "--cov=molpy",
+        "--cov-branch",
+        f"--cov-report=json:{report}/coverage.json",
+    ]
+
+
 def main() -> int:
     gates = sys.argv[1:]
+    report = None
+    if gates[:1] == ["--report"]:
+        if len(gates) < 2:
+            print("usage: check.py --report <dir> <gate>...", file=sys.stderr)
+            return 2
+        report, gates = gates[1], gates[2:]
     if gates == ["verify"]:
         # Install/lock once and keep one resolved partner layout for every gate.
         subprocess.run(
@@ -120,7 +146,6 @@ def main() -> int:
                 "dependencies",
                 "test",
                 "docs",
-                "published",
                 "package",
             ],
             cwd=ROOT,
@@ -156,6 +181,8 @@ def main() -> int:
                         ),
                     ),
                 ]
+            if report and gate == "test":
+                command = with_report(command, report)
             result = subprocess.run(command, cwd=ROOT, env=env, check=False)
             if result.returncode:
                 return result.returncode

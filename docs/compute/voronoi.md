@@ -47,7 +47,8 @@ encoding:
 
 </div>
 
-**Figure 1.** Radical-Voronoi cell volumes in liquid argon at 85 K (equal
+**Figure 1.** Radical-Voronoi cell volumes in liquid argon, from the
+reference run (seed 0, 88.3 K; equal
 radii, so an ordinary Voronoi tessellation). Mean 48.28 Å³ = $V/N$ exactly,
 standard deviation 4.5 Å³ — about 9 %.
 </figure>
@@ -66,8 +67,9 @@ parameter-free coordination number — no cutoff, no first-minimum argument. And
 
 ## Computing it
 
-`RadicalVoronoi` builds the tessellation with
-`build(positions, radii, box)`.
+A tessellation of one snapshot needs three pieces of data — the positions, the
+box, and one radius per atom — and no configuration at all, so `RadicalVoronoi`
+is built empty and everything goes into `compute`:
 
 ```python
 import numpy as np
@@ -76,11 +78,12 @@ from molpy.compute import RadicalVoronoi
 
 rng = np.random.default_rng(0)
 n_atoms, box_length = 400, 20.0
-xyz = np.ascontiguousarray(rng.uniform(0.0, box_length, size=(n_atoms, 3)))
+xyz = rng.uniform(0.0, box_length, size=(n_atoms, 3))
+box = mp.Box.cube(box_length)
 radii = np.zeros(n_atoms)                       # equal radii -> plain Voronoi
 
-cells = RadicalVoronoi().build(xyz, radii, mp.Box.cube(box_length))
-volumes = np.asarray(cells.volumes)
+cells = RadicalVoronoi().compute(positions=xyz, simbox=box, radii=radii)
+volumes = cells.volumes
 
 print(volumes.shape)                                    # -> (400,)
 print(round(float(volumes.sum()), 1), box_length**3)    # -> 8000.0 8000.0
@@ -89,41 +92,101 @@ print(round(float(volumes.mean()), 2))                  # -> 20.0
 
 The volumes sum to the box volume to the digit, and the mean is $V/N = 20$ Å³.
 Run that assertion on your own system before anything else: if it fails, the box
-or the coordinates are wrong and nothing downstream is worth reading.
+or the coordinates are wrong and nothing downstream is worth reading. On a
+trajectory, read `frame.coords` and `frame.box` from each frame and tessellate
+it; each snapshot is one call.
 
-`cells.neighbors(i)` lists the cells face-adjacent to cell `i` and `cells.total_volume` the
-sum. For a mixture, pass real radii — that is the point of the radical
-construction:
+`cells.neighbors(i)` lists the cells face-adjacent to cell `i`, `cells.faces[i]`
+the faces themselves with their areas, and `cells.total_volume()` the sum. For
+a mixture, pass real radii — that is the point of the radical construction:
 
 ```python
 mixed = rng.uniform(0.5, 1.5, n_atoms)
-cells_mixed = RadicalVoronoi().build(xyz, mixed, mp.Box.cube(box_length))
-big = np.asarray(cells_mixed.volumes)
-print(float(np.corrcoef(mixed, big)[0, 1]) > 0.3)       # -> True
+cells_mixed = RadicalVoronoi().compute(positions=xyz, simbox=box, radii=mixed)
+print(float(np.corrcoef(mixed, cells_mixed.volumes)[0, 1]) > 0.3)  # -> True
 ```
 
 Cell volume now correlates with particle radius. With `radii = 0` it does not.
 
-### Domains and voids
+### Domains and voids are computes on the cells
 
-`VoronoiDomainAnalysis().analyze(cells, labels)` merges face-adjacent cells that share a label — use it to turn
-a per-atom classification (say solid/liquid from [Order](order.md)) into
-connected regions without inventing another cutoff. It returns `sizes`,
-`count`, `largest_fraction`, and `domain_of`.
+The tessellation is a result that other computes consume. Face adjacency is a
+neighbour definition with no cutoff, so the natural next step is to merge
+face-adjacent cells into regions.
 
-`VoronoiVoidAnalysis().analyze(cells, is_void, box_volume)` does the same for
-empty space: give it a per-cell boolean mask marking probe cells as void, and it merges them into cavities, returning
-`cavity_volumes`, `total_void_volume`, and `void_fraction`. That is the
-parameter-free route to porosity in a framework material.
+`VoronoiDomainAnalysis` does it for a per-atom classification. It takes the
+cells and a **partition** — one unsigned label per atom, from your own
+`mol_id`-style column, a `SolidLiquid` classification from [Order](order.md),
+or a [`Cluster`](cluster.md) or `Kmeans` result — and merges face-adjacent
+cells that share a label into connected domains, without inventing another
+cutoff. Split the random box into a left and a right half:
+
+```python
+from molpy.compute import VoronoiDomainAnalysis
+
+side = (xyz[:, 0] < box_length / 2).astype(np.uint32)
+domains = VoronoiDomainAnalysis().compute(cells=cells, partition=side)
+print(domains.count, sorted(domains.sizes.tolist()))    # -> 2 [187, 213]
+```
+
+Two labels, two connected slabs. `domain_of` gives each cell's domain and
+`largest_fraction` the share of cells in the biggest one; the result is itself
+a partition, so the domains can be measured next with the group computes on
+[Shape](shape.md).
+
+`VoronoiVoidAnalysis` does the same for empty space: give it a per-cell boolean
+mask marking which cells are void — probe particles, or simply the loosest
+cells — and the box volume, and it merges the marked cells into cavities:
+
+```python
+from molpy.compute import VoronoiVoidAnalysis
+
+loose = volumes > np.quantile(volumes, 0.9)
+voids = VoronoiVoidAnalysis().compute(
+    cells=cells, is_void=loose.tolist(), box_volume=box_length**3
+)
+print(np.round(voids.cavity_volumes, 1).tolist(), round(voids.void_fraction, 3))
+# -> [1491.4, 33.4] 0.191
+```
+
+The 40 loosest cells of a random point set are not scattered: almost all of
+them touch, forming one large cavity. That is the parameter-free route to
+porosity in a framework material.
 
 ### Integrating an electron density
 
 `VoronoiIntegration` partitions a volumetric electron density over the cells and
 returns per-molecule charges and dipole moments. It is the standard route from
 *ab initio* MD to infrared intensities, because the dipole flux the
-[Spectra](spectra.md) page needs has to come from somewhere. Call
-`VoronoiIntegration().integrate(positions, radii, atomic_numbers, atom_to_mol,
-n_mol, grid, box)`.
+[Spectra](spectra.md) page needs has to come from somewhere.
+
+Its only configuration is the length unit of the density grid (`"angstrom"`
+or `"bohr"` — a cube file is usually in bohr, and the unit is never guessed).
+Its data is everything that describes the snapshot: positions, radii and
+nuclear charges of the atoms, the partition that says which atom belongs to
+which molecule, the box, the `RegularGrid` the density lives on, and the
+density values themselves. A uniform density that holds one electron per atom
+must leave every molecule neutral:
+
+```python
+from molpy.compute import RegularGrid, VoronoiIntegration
+
+cell = mp.Box.cube(4.0)
+sites = np.array([[x, y, z] for x in (1.1, 3.1) for y in (1.1, 3.1) for z in (1.1, 3.1)])
+molecule = np.array([0, 0, 0, 0, 1, 1, 1, 1], dtype=np.uint32)
+grid = RegularGrid.over_box(cell, [16, 16, 16])
+density = np.full((16, 16, 16), 8 / cell.volume())     # one electron per atom
+
+moments = VoronoiIntegration("angstrom").compute(
+    positions=sites, radii=np.ones(8), nuclear_charges=np.ones(8),
+    partition=molecule, simbox=cell, grid=grid, density=density,
+)
+print(moments.groups.tolist(), np.round(moments.charges, 6).tolist())  # -> [0, 1] [0.0, 0.0]
+```
+
+`moments.dipoles` holds one dipole per molecule, and two such results — the
+density under a field $+E$ and under $-E$ — are what `FiniteFieldPolarizability`
+differentiates into a polarizability.
 
 Its accuracy is set by the density grid spacing, and the convergence test is to
 halve the spacing until the total charge and the resulting spectrum stop moving.

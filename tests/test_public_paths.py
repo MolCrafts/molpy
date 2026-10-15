@@ -109,7 +109,6 @@ _MIRRORS = (
     "op",
     "optimize",
     "perceive",
-    "signal",
     "stream",
 )
 
@@ -219,7 +218,12 @@ def test_every_molrs_subsystem_has_its_molpy_module(name: str) -> None:
 
 
 def test_the_molrs_root_has_no_subsystem_molpy_lacks() -> None:
-    assert set(molrs.__all__) == set(_MIRRORS)
+    subsystems = {
+        name for name in molrs.__all__ if isinstance(getattr(molrs, name), ModuleType)
+    }
+    assert subsystems == set(_MIRRORS)
+    # molrs promotes the same core data classes to its root as molpy does.
+    assert set(molrs.__all__) - subsystems == _PROMOTED
 
 
 def test_a_fresh_import_binds_molpys_io_format_modules() -> None:
@@ -277,21 +281,22 @@ def test_each_ff_submodule_is_a_molpy_module_mirroring_molrs(sub: str) -> None:
         ("io.read_smiles_str", "io.read_smiles_str"),
         ("io.write_smiles_str", "io.write_smiles_str"),
         ("io.read_cgsmiles_str", "io.read_cgsmiles_str"),
-        ("io.read_amber_prmtop_system", "io.read_amber_prmtop_system"),
-        ("io.read_amber_ac", "io.read_amber_ac"),
-        ("io.write_gromacs_top_system", "io.write_gromacs_top_system"),
+        ("io.read_prmtop_system", "io.read_prmtop_system"),
+        ("io.read_ac", "io.read_ac"),
+        ("io.write_top_system", "io.write_top_system"),
         ("io.read_lammps_log_str", "io.read_lammps_log_str"),
         ("io.read_msgpack_frame_bytes", "io.read_msgpack_frame_bytes"),
         ("io.read_json_frame_str", "io.read_json_frame_str"),
         ("io.read_mrec_frame", "io.read_mrec_frame"),
         ("io.read_mrec_trajectory", "io.read_mrec_trajectory"),
-        ("io.read_openmm_xml_forcefield", "io.read_openmm_xml_forcefield"),
-        ("io.write_openmm_xml_forcefield", "io.write_openmm_xml_forcefield"),
-        ("io.read_molrs_xml_forcefield", "io.read_molrs_xml_forcefield"),
+        ("io.read_openmm_forcefield", "io.read_openmm_forcefield"),
+        ("io.write_openmm_forcefield", "io.write_openmm_forcefield"),
+        ("io.read_xml_forcefield", "io.read_xml_forcefield"),
+        ("io.write_xml_forcefield", "io.write_xml_forcefield"),
         ("io.read_lammps_cmap_forcefield", "io.read_lammps_cmap_forcefield"),
         ("io.write_lammps_bond_react_map", "io.write_lammps_bond_react_map"),
         ("io.read_csv_block", "io.read_csv_block"),
-        ("io.read_vasp_chgcar", "io.read_vasp_chgcar"),
+        ("io.read_chgcar", "io.read_chgcar"),
         ("io.smiles.SmilesIr", "io.smiles.SmilesIr"),
         ("io.cgsmiles.CgSmilesIr", "io.cgsmiles.CgSmilesIr"),
         ("io.mrec.MrecReader", "io.mrec.MrecReader"),
@@ -327,12 +332,6 @@ def test_each_ff_submodule_is_a_molpy_module_mirroring_molrs(sub: str) -> None:
         ("stream.ControlCommand", "stream.ControlCommand"),
         ("md.MdDriver", "md.MdDriver"),
         ("md.MdState", "md.MdState"),
-        ("compute.Msd", "compute.Msd"),
-        ("compute.Rdf", "compute.Rdf"),
-        ("compute.Pca", "compute.Pca"),
-        ("compute.Kmeans", "compute.Kmeans"),
-        ("compute.DistributionFunction", "compute.DistributionFunction"),
-        ("compute.BondOrientationalOrder", "compute.BondOrientationalOrder"),
         ("ff.forcefield.ForceField", "ff.forcefield.ForceField"),
         ("ff.forcefield.ForceFieldType", "ff.forcefield.ForceFieldType"),
         ("ff.potential.PairLjCut", "ff.potential.PairLjCut"),
@@ -465,6 +464,6 @@ def test_the_box_and_the_trajectory_are_the_native_classes() -> None:
 
 def test_read_smiles_str_and_the_amber_system_reader_are_on_io() -> None:
     assert "read_smiles_str" in molpy.io.__all__
-    assert "read_amber_prmtop_system" in molpy.io.__all__
+    assert "read_prmtop_system" in molpy.io.__all__
     mol = molpy.io.read_smiles_str("CCO")
     assert isinstance(mol, molpy.Atomistic)

@@ -11,8 +11,8 @@ format has one of two shapes, as in molrs:
   ``read_<fmt>_bytes`` / ``write_<fmt>_bytes`` for bytes: structure and
   trajectory files (PDB, XYZ, LAMMPS data and dumps, GROMACS, AMBER, MOL2,
   CIF, XSF, Cube, VASP, DCD/TRR/XTC, …), force-field files
-  (:func:`read_lammps_forcefield`, :func:`read_gromacs_top_system`,
-  :func:`read_amber_prmtop_system`, :func:`read_openmm_xml_forcefield`, …),
+  (:func:`read_lammps_forcefield`, :func:`read_top_system`,
+  :func:`read_prmtop_system`, :func:`read_openmm_forcefield`, …),
   ``*.mrec`` records (:func:`read_mrec_frame`, :func:`read_mrec_trajectory`,
   …), wire-encoded frames (:func:`read_msgpack_frame_bytes`), LAMMPS logs
   (:func:`read_lammps_log`, :func:`read_lammps_log_str`) and line notations
@@ -70,8 +70,13 @@ _FORMATS = (
 # The star import bound molrs's per-format modules under these names. Loading
 # molpy's mirror of each rebinds the attribute to it (``from . import`` would
 # not: it returns an existing attribute without importing the submodule).
-for _module in [f"{__name__}.{fmt}" for fmt in _FORMATS]:
-    _import_module(_module)
+# A format molrs did not export (mrec, without the fs feature) stays absent.
+for _fmt in _FORMATS:
+    try:
+        _import_module(f"{__name__}.{_fmt}")
+    except ImportError:
+        if _fmt in _native:
+            raise
 
 from . import mlp_jsonl  # molpy's own format module
 

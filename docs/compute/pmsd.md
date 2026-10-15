@@ -60,38 +60,56 @@ injects a spurious jump of $qL$ into the collective sum.
 
 ## Computing it
 
-MolPy will not scan a trajectory for you here, because only you know which atoms
-carry which charge. Assemble $\mathbf{M}(t)$ yourself, shape `(n_frames, 3)`,
-then hand it over:
+There is no conductivity class to call, because there is nothing new to
+compute: the Einstein conductivity is two existing computes in a row. The
+collective dipole $\mathbf{M}(t)$ is a `DipoleMoment`, and its mean squared
+displacement is an `Msd` of a "trajectory" with a single item in it.
+
+`DipoleMoment` takes unwrapped positions, shape `(n_frames, n_atoms, 3)`, and
+one charge per atom. Without a `partition` it sums the whole system, and
+`series(0)` hands back $\mathbf{M}(t)$ as an `(n_frames, 3)` array. Only you
+know which atoms carry which charge, so the charges come from your own
+topology — typically the `q` column of the atoms block:
 
 ```python
 import numpy as np
-from molpy.compute import EinsteinConductivity, LinearFit
+from molpy.compute import DipoleMoment
 
 rng = np.random.default_rng(1)
-M = np.ascontiguousarray(np.cumsum(rng.normal(0, 0.02, size=(400, 3)), axis=0))
+charges = np.array([1.0, -1.0, 1.0, -1.0])
+unwrapped = np.cumsum(rng.normal(0.0, 0.05, size=(400, 4, 3)), axis=0)
 
-raw = EinsteinConductivity().compute(M, dt=10.0, max_correlation_time=100)
-print(sorted(raw), raw["msd"].shape)     # -> ['lag_times', 'msd'] (101,)
+M = DipoleMoment().compute(positions=unwrapped, charges=charges).series(0)
+print(M.shape)                            # -> (400, 3)
 ```
 
-In real work `M` comes from your own charges and unwrapped positions:
+`Msd` wants an `(n_frames, n_items, 3)` array; $\mathbf{M}$ is one item, so
+give it the axis it lacks. To keep the example's answer known in advance, the
+$\mathbf{M}$ used from here on is a pure random walk:
 
 ```python
-# docs: skip — needs your own trajectory and charge array
-M = np.array([
-    (charges[:, None] * unwrapped[i]).sum(axis=0)
-    for i in range(len(unwrapped))
-])
+from molpy.compute import Msd
+
+walk = np.random.default_rng(1)
+M = np.cumsum(walk.normal(0, 0.02, size=(400, 3)), axis=0)
+raw = Msd(max_lag=100).compute(positions=M[:, None, :], dt=10.0)
+print(raw.n_lags, raw.n_channels)         # -> 101 1
 ```
 
-The compute returns the raw curve and stops. Fit the linear region yourself —
-the window is a *fraction* of the curve, so `(0.1, 0.5)` means from 10 % to 50 %
-of the way along it:
+A partition splits the sum by species: give `DipoleMoment` one unsigned label
+per atom (`partition=labels`) and `moments[frame, group, :]` holds one
+$\mathbf{P}_\alpha(t)$ per label — the input of the [Onsager](onsager.md)
+cross-correlations.
+
+The `Msd` returns the raw curve and stops. Fitting its linear region is the
+next compute, `LinearFit`, and its window is a *fraction* of the lag axis, so
+`(0.1, 0.5)` means from 10 % to 50 % of the way along it:
 
 ```python
-fit = LinearFit(0.1, 0.5).fit(raw["lag_times"], raw["msd"])
-print(round(fit["r2"], 3))                # -> 0.989
+from molpy.compute import LinearFit
+
+fit = LinearFit(0.1, 0.5).compute(correlation=raw, channel=0)
+print(round(fit.r2, 3))                   # -> 0.989
 ```
 
 Check `r2` before believing the slope. This synthetic $\mathbf{M}$ is a pure
@@ -100,9 +118,15 @@ from 1 is finite-sample noise, not curvature. A real $\mathrm{MSD}_M$ with a
 caging shoulder scores much worse if you include the shoulder in the window,
 which is precisely the warning you want.
 
+Unwrapping belongs before `DipoleMoment`, not after it. Run `Unwrap` on the
+ion positions (with their image flags, or by continuity from the per-frame
+boxes) so no wrapped ion ever enters $\mathbf{M}$. Do not pass `boxes=` to the
+`Msd` of $\mathbf{M}$: a dipole is not a position in the box, and the
+half-box check that guards a particle MSD means nothing for it.
+
 ### Getting to S/m
 
-`fit["slope"]` is in $e^2\,\text{Å}^2\,\text{fs}^{-1}$ when charges are in
+`fit.slope` is in $e^2\,\text{Å}^2\,\text{fs}^{-1}$ when charges are in
 elementary units, positions in Å, and `dt` in fs. Converting to SI is one
 constant:
 

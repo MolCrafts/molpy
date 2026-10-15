@@ -55,7 +55,12 @@ one; every lobe moves, and nothing warns you.
 
 ## Computing it
 
-Everything is configured up front; the call takes only frames.
+The configuration is the instrument: the body-frame voxel grid the targets
+are binned on and, optionally, the bulk density that turns counts into
+$g_{\mathrm{SDF}}$. Everything that describes the system — the positions, the
+box, which atoms form the reference, their canonical geometry, which atoms are
+binned — is data, passed to `compute` as one entry per frame. Here is one frame
+with a three-atom reference molecule at the box centre:
 
 ```python
 import numpy as np
@@ -72,35 +77,46 @@ frame["atoms"] = {"x": xyz[:, 0], "y": xyz[:, 1], "z": xyz[:, 2]}
 frame.box = mp.Box.cube(20.0)
 ```
 
+`RegularGrid.centered(extent, dims)` lays `dims` voxels over a box of total
+width `extent` centred on the reference's centre of mass, so a width of 12 Å
+reaches $\pm 6$ Å:
+
 ```python
+from molpy.compute import RegularGrid
+
 template = np.array([[0.0, 0, 0], [0.76, 0.59, 0], [-0.76, 0.59, 0]])
+grid = RegularGrid.centered([12.0, 12.0, 12.0], [16, 16, 16])
+sdf = SpatialDistribution(grid, bulk_density=300 / 20.0**3)
 
-sdf = SpatialDistribution(
-    reference=[0, 1, 2],              # atoms defining the body frame
-    template=template,                # their canonical geometry, same order
-    target=list(range(3, 300)),       # atoms whose density is binned
-    n=(16, 16, 16),                   # voxels per axis
-    extent=(6.0, 6.0, 6.0),           # half-width of the grid, Å
-    bulk_density=300 / 20.0**3,       # for the g_SDF normalization
+result = sdf.compute(
+    positions=[frame.coords],
+    simbox=[frame.box],
+    reference=[[0, 1, 2]],                # atoms defining the body frame
+    template=[template],                  # their canonical geometry, same order
+    target=[list(range(3, 300))],         # atoms whose density is binned
 )
-result = sdf.compute([frame])
 
-print(np.asarray(result.density).shape)     # -> (16, 16, 16)
-print(int(np.asarray(result.counts).sum())) # -> 6
+print(result.density.shape)            # -> (16, 16, 16)
+print(int(result.counts.sum()))        # -> 62
+print(round(float(result.g_sdf.max())))  # -> 126
 ```
 
-Six target atoms fell inside a $\pm 6$ Å box in this single frame, which is the
-honest scale of the problem: one frame gives you almost nothing, and `g_sdf`
-computed from it is meaningless. Real use means thousands of frames.
+Sixty-two target atoms fell inside the $\pm 6$ Å box in this single frame,
+spread over 4096 voxels — which is the honest scale of the problem: one frame
+gives you almost nothing, and a `g_sdf` peaking at 126 for a structureless
+random gas is pure counting noise. Real use means thousands of frames, passed
+as longer lists.
 
-Note that `target` must not be the reference atoms. Pointing `target` at an atom
-that is part of `reference` bins nothing, silently.
+Keep `target` disjoint from `reference`. The reference atoms are binned like any
+other target if you list them, landing exactly on their template positions,
+and they put spurious spikes at the centre of the map.
 
-The result carries `counts` (raw), `density` (per unit volume),
-`g_sdf` (normalized by `bulk_density`), plus `extent`, `n`, `voxel_volume`, and
-`n_frames` for bookkeeping. An optional `orientations` block adds the per-voxel
-mean orientation of a head–tail vector on the target species, using the same
-per-atom contract described on the [PMFT](pmft.md) page.
+The result carries `counts` (raw), `density` (per unit volume, averaged over
+frames), `g_sdf` (normalized by `bulk_density`, `None` without it), plus the
+`grid`, `voxel_volume` and `n_frames` for bookkeeping. The optional
+`orientation` input adds, per frame, one `(head, tail)` atom-index pair per
+target atom in the same order; the result's `orientation` field is then the
+per-voxel mean body-frame direction of `head − tail`.
 
 ## When it goes wrong
 
@@ -110,8 +126,8 @@ neighbour in a 0.05 Å³ voxel produces a huge ratio. Add frames, or coarsen the
 grid.
 
 **Everything is zero.**
-`target` overlaps `reference`, or the extent is smaller than the distance to the
-nearest target atom.
+The grid is narrower than the distance to the nearest target atom, or `target`
+is empty.
 
 **The lobes are in the wrong place, or rotate between runs.**
 Reference-atom order does not match the template order. This is the most common
@@ -123,8 +139,8 @@ The reference molecule is flexible, so the Kabsch fit onto a rigid template
 leaves residual distortion. Use a more rigid subset of atoms as the reference.
 
 **The grid clips the first solvation shell.**
-`extent` is a half-width, not a diameter. To see a shell at 5 Å you need extent
-above 5, and more if you want the second.
+The `extent` of `RegularGrid.centered` is the full width, not a radius. To see
+a shell at 5 Å you need an extent above 10, and more if you want the second.
 
 ## Check yourself
 

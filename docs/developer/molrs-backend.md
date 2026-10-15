@@ -108,66 +108,76 @@ print(np.sqrt(neighbors.dist_sq())[:5])  # pair distances (Å) from stored dist_
 
 $$ g(r) = \frac{V}{N\,N_q}\,\frac{\langle n(r)\rangle}{4\pi r^2\,\Delta r} $$
 
-from one or more frames plus the neighbor list for each. Passing the neighbor
-list in explicitly keeps the expensive pair search out of the histogram loop
-and lets you reuse a single search for several analyses:
+from one pair table per frame. Passing the pair tables in explicitly keeps the
+expensive pair search out of the histogram loop and lets you reuse a single
+search for several analyses. The constructor takes the binning, and
+`compute` takes the data by keyword:
 
 ```python
 from molpy.compute import Rdf
 
-result = Rdf(n_bins=50, r_max=8.0).compute(frame, neighbors)
-print(result.bin_centers)  # r at each bin centre
-print(result.rdf)  # g(r)
+result = Rdf(n_bins=50, r_max=8.0, r_min=0.0).compute(pairs=[neighbors])
+print(result.bin_centers.shape)  # -> (50,)
+print(result.n_frames)           # -> 1
 ```
 
 For an ideal gas (uniformly random points) the middle bins of `result.rdf`
 sit near 1.0, which is the standard sanity check for a correct normalization.
-Multiple frames are averaged when you pass lists:
-`Rdf(...).compute(frames, neighbor_lists)`.
+Several frames are averaged by passing one pair table per frame; a built
+`NeighborList` can be passed in place of its table, and the histogram then
+streams its pairs without materialising them.
 
 ## The wider analysis catalog is exposed as molpy operators
 
 A range of standard trajectory analyses live in molrs. `mp.compute`
 re-exports each class by identity, so the table is a catalogue of molrs
-analyses, each with a `compute(...)` method:
+analyses, each configured by its constructor and fed by its `compute(...)`:
 
 | Operator | What it computes |
 |----------|------------------|
-| `Msd` | mean-squared displacement vs. lag time |
-| `Cluster`, `ClusterCenters`, `ClusterProperties` | connected-component clustering, centroids, and per-cluster size/mass/gyration |
-| `CenterOfMass` | mass-weighted centroid |
-| `GyrationTensor`, `RadiusOfGyration`, `InertiaTensor` | shape descriptors |
-| `Pca`, `Kmeans` | two-component PCA and k-means partitioning |
+| `Msd`, `Vacf`, `ReorientationAcf`, `Survival`, … | time correlations, each a configuration of the one `Correlator` |
+| `LinearFit`, `Plateau`, `DebyeFit`, `CumulativeTrapezoid` | fits that read a `TimeCorrelation` |
+| `Cluster` | connected-component clustering; its result is a partition |
+| `CenterOfMass`, `GyrationTensor`, `InertiaTensor` | per-group shape descriptors over any partition |
+| `Pca`, `Kmeans` | principal components and k-means over any feature matrix |
 | `Steinhardt`, `Hexatic`, `SolidLiquid`, `Nematic` | bond-orientational order, hexatic order, solid-liquid classification, nematic Q-tensor |
 | `LocalDensity`, `GaussianDensity` | per-particle local density and Gaussian-smeared density grid |
 | `StaticStructureFactorDebye` | static structure factor S(k) via the Debye equation |
 | `BondOrientationalOrder` | neighbor bond-direction diagram on a (θ, φ) grid |
 | `PmftXy` | 2-D potential of mean force and torque |
 
-They follow the same call convention as `Rdf`. The
-neighbor-based operators take `(frames, nlists)`; a few take other inputs
-(`GaussianDensity` and `StaticStructureFactorDebye` take just `frames`,
-`Nematic` reads per-particle directors from the frame's `orientations` topology
-block, `ClusterProperties` takes the `Cluster` result):
+Every one follows the same convention as `Rdf`: configuration in the
+constructor, data by keyword in `compute`. None of them reads a frame; the
+columns come from the Frame/Block API on the caller's side. Results chain into
+the next compute as they are — a `ClusterResult` is the partition
+`GyrationTensor` groups by, a `SteinhardtResult` the feature matrix `Pca`
+reads, an `Msd` curve what `LinearFit` fits:
 
 ```python
 from molpy.compute import (
-    Msd,
     Cluster,
-    ClusterCenters,
     GyrationTensor,
-    Steinhardt,
+    LinearFit,
+    Msd,
     StaticStructureFactorDebye,
+    Steinhardt,
 )
 
-trajectory = mp.Trajectory([frame, frame])
-clusters = Cluster(min_cluster_size=5).compute([frame], [neighbors])
-centers = ClusterCenters().compute([frame], clusters)
+positions = frame.coords
+clusters = Cluster(min_cluster_size=5).compute(pairs=neighbors)
+rg = GyrationTensor().compute(
+    positions=positions,
+    simbox=frame.box,
+    partition=clusters,
+    weights=np.ones(len(positions)),
+).radius_of_gyration()                                    # one R_g per cluster
+q6 = Steinhardt(l=[6]).compute(neighbors=neighbors).ql   # (N, n_l): q6 per particle
+sk = StaticStructureFactorDebye(np.linspace(0.5, 6.0, 32)).compute(positions=positions)
 
-msd = Msd(method="window").compute(trajectory)  # time series over a trajectory
-rg2 = GyrationTensor().compute([frame], clusters, centers)  # per cluster
-q6 = Steinhardt(l=[6]).compute([frame], [neighbors])  # Steinhardt q6 per particle
-sk = StaticStructureFactorDebye(np.linspace(0.5, 6.0, 32)).compute([frame])  # S(k)
+walk = np.cumsum(rng.normal(0.0, 0.1, size=(200, 10, 3)), axis=0)  # (T, N, 3)
+msd = Msd(max_lag=50).compute(positions=walk, dt=10.0)
+slope = LinearFit(0.2, 0.8).compute(correlation=msd, channel=0).slope
+print(rg.shape == (clusters.n_clusters,), q6.shape, sk.sk.shape)  # -> True (500, 1) (32,)
 ```
 
 ## One coordinate copy, and only one

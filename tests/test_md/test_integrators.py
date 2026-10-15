@@ -66,10 +66,16 @@ def test_removed_dof_follows_the_scheme():
 def test_mass_must_be_positive():
     pos, lj, nl, _ = _dimer()
     with pytest.raises(ValueError, match="strictly positive"):
-        VelocityVerlet(0.01, potential=lj, neighbors=nl, mass=-1.0)
+        VelocityVerlet(0.01, potential=lj, neighbors=nl, mass=np.full(2, -1.0))
     pos, lj, nl, _ = _dimer()
     with pytest.raises(ValueError, match="strictly positive"):
         VelocityVerlet(0.01, potential=lj, neighbors=nl, mass=np.array([1.0, -2.0]))
+
+
+def test_mass_is_a_per_atom_array():
+    pos, lj, nl, _ = _dimer()
+    with pytest.raises(TypeError, match=r"per-atom masses \(N,\)"):
+        VelocityVerlet(0.01, potential=lj, neighbors=nl, mass=1.0)
 
 
 def test_non_double_dtype_is_reserved_on_the_driver():

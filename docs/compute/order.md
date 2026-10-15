@@ -87,7 +87,7 @@ anything** — not to a table, not to a paper, not to your own earlier run.
 
 ## What a liquid looks like
 
-Liquid argon at its first-shell cutoff gives $q_6 = 0.342 \pm 0.065$.
+Liquid argon at its first-shell cutoff gives $q_6 = 0.340 \pm 0.065$.
 
 <figure id="fig-q6" class="molcrafts-figure" markdown>
 <div class="molcrafts-figure__body molcrafts-figure__body--chart">
@@ -119,7 +119,8 @@ encoding:
 </div>
 
 **Figure 1.** Per-atom $q_6$ for a perfect FCC crystal (a single spike at
-0.5745) and for liquid argon at 85 K (broad, centred on 0.34). The gap between
+0.5745) and for liquid argon from the reference run (seed 0, 88.3 K; broad,
+centred on 0.34). The gap between
 them is what makes per-atom classification possible.
 </figure>
 
@@ -136,7 +137,11 @@ order to label individual atoms.
 
 ## Computing it
 
-`Steinhardt` takes a **list** of degrees — `l=[4, 6]`. Passing `l=6` raises
+A Steinhardt calculation needs one thing: the neighbour table of one
+configuration. Positions and the box are read from the frame and handed to a
+`NeighborList`; the table it produces is the data the compute consumes. The
+degrees to evaluate are configuration, so they go into the constructor, as a
+**list** — `l=[4, 6]`. Passing `l=6` raises
 `TypeError: argument 'l': 'int' object is not an instance of 'Sequence'`.
 
 ```python
@@ -155,19 +160,19 @@ crystal["atoms"] = {"x": xyz[:, 0], "y": xyz[:, 1], "z": xyz[:, 2]}
 crystal.box = mp.Box.cube(5 * a)
 ```
 
-The result is a list with one **dict** per frame, holding the degrees you asked
-for and a `(n_degrees, n_atoms)` array of per-atom values:
+The result holds the degrees you asked for and an `(n_atoms, n_degrees)` array
+of per-atom values, one column per degree:
 
 ```python
 nl = mp.core.NeighborList(4.5)
 nl.build(crystal.coords, crystal.box)
 nlist = nl.neighbors()
-result, = Steinhardt(l=[4, 6]).compute([crystal], [nlist])
+result = Steinhardt(l=[4, 6]).compute(neighbors=nlist)
 
-print(sorted(result))                        # -> ['l', 'ql']
-q = np.asarray(result["ql"])
-print(q.shape)                               # -> (2, 500)
-print(round(float(q[0].mean()), 4), round(float(q[1].mean()), 4))  # -> 0.1909 0.5745
+print([int(l) for l in result.l])            # -> [4, 6]
+print(result.ql.shape)                       # -> (500, 2)
+q4, q6 = result.ql.mean(axis=0)
+print(round(float(q4), 4), round(float(q6), 4))  # -> 0.1909 0.5745
 ```
 
 Confirm the cutoff caught the shell you meant, using the identity from
@@ -179,23 +184,29 @@ print(2 * nlist.n_pairs / crystal["atoms"].n_rows)   # -> 12.0
 
 Twelve neighbours per atom — the FCC first shell, so the reference values apply.
 
+The per-atom rows also make the result a feature matrix: it can be handed
+directly to `Pca` or `Kmeans` as their `features`, which is how the
+[Decomposition](decomposition.md) page separates phases without labelling
+anything by hand.
+
 ### Classifying atoms one by one
 
 `SolidLiquid` builds on $q_\ell$: two neighbouring atoms form a *solid-like
 bond* when their $q_{\ell m}$ vectors are sufficiently aligned, and an atom
 counts as solid when it has enough such bonds.
 
-Note the argument, because it is genuinely inconsistent with `Steinhardt`:
-`SolidLiquid` computes one bond correlation at a single degree, so its `l` is a
-plain **int**. `Steinhardt` evaluates several degrees at once, so its `l` is a
-**Sequence**. `SolidLiquid(l=[6])` is as much an error as `Steinhardt(l=6)`.
+Those $q_{\ell m}$ vectors are not recomputed. The Steinhardt result keeps the
+complex coefficients of every degree it evaluated, and `result.qlm(6)` hands
+over the table for $\ell = 6$. `SolidLiquid` reads its degree from that table,
+so it has no `l` of its own: the choice of $\ell$ was made once, upstream. Its
+constructor takes only the two thresholds that define "solid".
 
 ```python
 from molpy.compute import SolidLiquid
 
-n_solid_bonds, is_solid = SolidLiquid(l=6).compute([crystal], [nlist])[0]
-n_solid_bonds, is_solid = np.asarray(n_solid_bonds), np.asarray(is_solid)
-print(int(n_solid_bonds[0]), bool(is_solid.all()))    # -> 12 True
+q6_table = result.qlm(6)
+solid = SolidLiquid().compute(qlm=q6_table, neighbors=nlist)
+print(solid.l, int(solid.n_solid_bonds[0]), bool(solid.is_solid.all()))  # -> 6 12 True
 ```
 
 Every atom in the perfect crystal has all 12 of its bonds solid-like. The same
@@ -205,15 +216,20 @@ classifies 10 of 30 000 atom-frames (0.03 %) as solid. The defaults (`q_threshol
 exactly why you must retune them on a real system, where the margin is narrow
 and the answer depends on where you put the line.
 
+The same table feeds `ContinuousCoordination(power)`, a smooth alternative that
+weighs each bond by how coherent it is instead of counting the bonds that pass
+a threshold.
+
 ### Orientational order of anisotropic particles
 
 `Nematic` asks whether elongated particles point the same way, regardless of
-where they sit. It reads per-particle directors from the frame's `orientations`
-block — the same `(atomi, atomj)` schema and the same **one row per atom** rule
-described on the [PMFT](pmft.md) page.
-
-It also breaks the pattern of every other compute here: it returns a **single
-tuple aggregated over all frames**, not one entry per frame.
+where they sit. What it consumes is one **director** per particle — an
+`(N, 3)` array of axis vectors. Where those axes come from is your decision,
+not the compute's: for a rod modelled as two atoms joined by a bond, the
+director is the head-minus-tail vector, and both ends are read from the
+frame's own blocks. The length and sign of each vector do not matter; the
+compute normalizes them and a nematic is symmetric under $\mathbf{u} \to
+-\mathbf{u}$.
 
 ```python
 from molpy.compute import Nematic
@@ -222,19 +238,21 @@ rng = np.random.default_rng(0)
 n_rods = 400
 centres = rng.uniform(0.0, 30.0, size=(n_rods, 3))
 
-# Each rod is two atoms joined by an `orientations` pair (atomi, atomj).
+# Each rod is two atoms joined by a bond (atomi, atomj).
 isotropic = rng.normal(size=(n_rods, 3))
 isotropic /= np.linalg.norm(isotropic, axis=1, keepdims=True)
 pos = np.concatenate([centres + 0.5 * isotropic, centres - 0.5 * isotropic])
 frame = mp.Frame()
 frame["atoms"] = {"x": pos[:, 0], "y": pos[:, 1], "z": pos[:, 2]}
 frame.box = mp.Box.cube(30.0)
-frame["orientations"] = {
-    "atomi": np.arange(n_rods),
-    "atomj": np.arange(n_rods, 2 * n_rods),
+frame["bonds"] = {
+    "atomi": np.arange(n_rods, dtype=np.uint32),
+    "atomj": np.arange(n_rods, 2 * n_rods, dtype=np.uint32),
 }
-order, eigenvalues, director, q_tensor = Nematic().compute([frame])
-print(round(float(order), 3))                # -> 0.058
+
+bonds = frame["bonds"]
+directors = frame.coords[bonds["atomi"]] - frame.coords[bonds["atomj"]]
+print(round(float(Nematic().compute(directors=directors).order), 3))  # -> 0.058
 ```
 
 $S \approx 0$ for randomly oriented rods, as it must be. Align them along $z$
@@ -245,18 +263,26 @@ aligned = np.array([0.0, 0.0, 1.0]) + rng.normal(0.0, 0.15, size=(n_rods, 3))
 aligned /= np.linalg.norm(aligned, axis=1, keepdims=True)
 pos = np.concatenate([centres + 0.5 * aligned, centres - 0.5 * aligned])
 frame["atoms"] = {"x": pos[:, 0], "y": pos[:, 1], "z": pos[:, 2]}
-order, _, director, _ = Nematic().compute([frame])
-print(round(float(order), 3))                # -> 0.934
-print(np.round(np.abs(director), 2).tolist())  # -> [0.01, 0.01, 1.0]
+
+directors = frame.coords[bonds["atomi"]] - frame.coords[bonds["atomj"]]
+nematic = Nematic().compute(directors=directors)
+print(round(float(nematic.order), 3))                  # -> 0.934
+print(np.round(np.abs(nematic.director), 2).tolist())  # -> [0.01, 0.01, 1.0]
 ```
 
 $S = 0.934$, and the recovered `director` is the $z$ axis — the compute found
 the alignment direction without being told it. $S$ runs from 0 (isotropic) to 1
-(perfectly aligned); real nematic liquid crystals sit around 0.4–0.7.
+(perfectly aligned); real nematic liquid crystals sit around 0.4–0.7. The full
+order tensor is there too, as `nematic.q_tensor`, with its `eigenvalues`.
 
 Note the 0.058 for the isotropic case. That is not zero, and with $N$ particles
 it never will be: $S$ has a finite-size floor of roughly $1/\sqrt{N}$. Always
 compare weak order against a randomized control at the same $N$.
+
+`Cubatic` reads the same director array and asks the harder question of
+four-fold, cube-like alignment. It has no closed form and searches for the
+best cubic frame by simulated annealing, which is why its constructor carries
+a `seed` and the annealing schedule.
 
 ### Two-dimensional systems
 
@@ -272,6 +298,27 @@ lattice, $\to 0$ for a 2-D liquid. The intermediate hexatic phase — orientatio
 order surviving after positional order is lost — is the reason the parameter
 exists at all.
 
+A perfect triangular lattice in the $xy$ plane is the check: every atom has six
+neighbours at exactly 60° apart, so every $|\psi_6|$ is one.
+
+```python
+from molpy.compute import Hexatic
+
+nx, ny = 12, 12
+sheet = np.array(
+    [[i + 0.5 * (j % 2), j * np.sqrt(3) / 2, 0.0] for i in range(nx) for j in range(ny)]
+)
+sheet_box = mp.Box.ortho(np.array([nx, ny * np.sqrt(3) / 2, 10.0]))
+nl = mp.core.NeighborList(1.2)
+nl.build(sheet, sheet_box)
+psi = Hexatic(k=6).compute(neighbors=nl.neighbors()).psi
+print(psi.dtype, round(float(np.abs(psi).mean()), 3))  # -> complex128 1.0
+```
+
+`psi` is complex: its modulus is the local order and its phase the local
+orientation of the hexagons, which is what you correlate in space to tell a
+hexatic from a crystal.
+
 ## When it goes wrong
 
 **Your crystal does not reproduce the reference $q_\ell$.**
@@ -279,9 +326,13 @@ Almost always the cutoff. Check `2 * n_pairs / n_atoms` against the coordination
 number of your lattice before anything else.
 
 **`TypeError: argument 'l': 'int' object is not an instance of 'Sequence'`.**
-Pass `l=[6]`, not `l=6` — but only to `Steinhardt`. `SolidLiquid` takes a bare
-int, and giving *it* a list fails the other way. The two differ because one
-evaluates several degrees and the other exactly one.
+Pass `l=[6]`, not `l=6`. `Steinhardt` evaluates several degrees at once, so its
+`l` is always a list. `SolidLiquid` and `ContinuousCoordination` take no `l` at
+all: they read the degree from the `qlm` table you give them.
+
+**`result.qlm(6)` is `None`.**
+You did not ask `Steinhardt` for $\ell = 6$. A table exists only for the
+degrees in its `l`.
 
 **Liquid $q_6$ is not zero and you expected zero.**
 It should not be zero. Finite coordination leaves a residual of order
@@ -326,5 +377,5 @@ normalized. All three change the numbers, and papers often omit which was used.
 - [Environment](environment.md) — the bond-orientational diagram behind $q_\ell$
 - [RDF](rdf.md) — where the first-shell cutoff comes from
 - [Cluster](cluster.md) — grouping the atoms an order parameter has labelled
-- [PMFT](pmft.md) — the `orientations` block contract
+- [Decomposition](decomposition.md) — Steinhardt results as features for PCA and k-means
 - [API reference](../api/compute.md)

@@ -1,14 +1,21 @@
 name: test
 
-# The unit suite against the partners built from the commits scripts/partners.py
-# pins in .github/partners.env, in two tiers
+# The tests a laptop cannot run: every OS. Static checks (ruff, ty, the
+# workflow scheme) run only locally, at pre-commit and in the pre-push
+# `scripts/check.py verify`; this workflow does not repeat them. The unit
+# suite runs once per leg against the partners built from the commits
+# scripts/partners.py pins in .github/partners.env, in two tiers
 # (`test / context` decides):
 #
 #   fast  a feature-branch push to MolCrafts: Linux, Python 3.12.
 #   full  every push to a fork (proven before its pull request), dev, master
-#         and master on MolCrafts, pull requests, tags and dispatches: Linux,
+#         and master on MolCrafts, pull requests and dispatches: Linux,
 #         macOS and Windows on 3.12; Linux additionally checks 3.14.
 # OS and interpreter coverage use four legs instead of six.
+#
+# The strict docs build runs in the Linux 3.12 leg, after its tests, in the
+# same environment: the molrs it imports is the one that leg built and
+# tested, not a second compile.
 on:
   push:
     branches: ["**"]
@@ -76,7 +83,26 @@ jobs:
         env:
           UV_PYTHON: ${{ matrix.python }}
         run: python scripts/check.py dependencies
+      # The pre-push test gate, plus what the report reads: JUnit and coverage.
       - name: Unit tests
         env:
           UV_PYTHON: ${{ matrix.python }}
-        run: python scripts/check.py test
+        run: python scripts/check.py --report .ci-out test
+      # Counts and coverage in the run and pull request summary; report only.
+      - name: Report
+        if: ${{ !cancelled() }}
+        uses: MolCrafts/molcrafts-ci/actions/report@cc46e4eb85fdcfb950d9a4df02c2e04e94ba90f7
+        with:
+          title: test / python (${{ matrix.os }}, ${{ matrix.python }})
+          junit: .ci-out/junit.xml
+          coverage: .ci-out/coverage.json
+      # The site as Cloudflare Pages builds it, zensical --strict: any warning
+      # (an unresolved mkdocstrings reference included) fails. Cloudflare
+      # Pages deploys it from MolCrafts itself, so no job here deploys. The
+      # user-guide notebooks are executed by scripts/render_notebooks.py when
+      # they change, and their rendered pages are committed.
+      - name: Docs
+        if: matrix.os == 'ubuntu-latest' && matrix.python == '3.12'
+        env:
+          UV_PYTHON: ${{ matrix.python }}
+        run: python scripts/check.py docs
