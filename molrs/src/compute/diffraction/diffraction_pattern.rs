@@ -4,7 +4,7 @@ use molrs::core::{BoxKind, SimBox};
 use molrs::op::F;
 use ndarray::{Array2, ArrayView2};
 
-use crate::compute::{Compute, ComputeError, Gaussian, RegularGrid, Spectrum};
+use crate::compute::{Compute, ComputeError, Gaussian, RegularGrid, Spectrum, StencilReach};
 
 /// `DiffractionPattern` analyzer.
 ///
@@ -156,7 +156,8 @@ impl Compute for DiffractionPattern {
 
         let mut image = Array2::<F>::zeros((n, n));
         for p in input.positions.outer_iter() {
-            grid.spread(&self.kernel, [p[a0], p[a1]], |[i, j], w| {
+            let center = [p[a0], p[a1]];
+            grid.spread(&self.kernel, center, StencilReach::Ceil, |[i, j], w| {
                 image[[i, j]] += w;
             })?;
         }

@@ -483,6 +483,38 @@ fn dacs_subtracts_only_an_explicit_plateau() {
     assert!((relaxed.eps_real[0] - (1.0 + a * (y[0] - c_inf))).abs() < 1e-12);
 }
 
+/// The former forced subtraction, selectable: `C(∞)` is the curve's last
+/// sample (`subtract_plateau = Some(true)` on `dev`), read as the end of a
+/// plateau window ending at 1. Without a window, `End` is an error.
+#[test]
+fn dacs_end_value_is_the_last_sample() {
+    let y: Vec<F> = (0..32)
+        .map(|k| 0.5 + 0.5 * (-(k as F) / 3.0).exp())
+        .collect();
+    let acf = curve(&y, 0.1);
+    let units = UnitPreset::real();
+    let a = DielectricPrefactor::new(&units, 1000.0, 300.0)
+        .unwrap()
+        .fluctuation();
+    let end = DipoleAutocorrelationSpectrum::new(units.clone())
+        .with_window(Window::None)
+        .with_plateau(Plateau::new(0.75, 1.0).unwrap())
+        .with_plateau_value(PlateauValue::End)
+        .compute(state(&acf, 1000.0, 300.0))
+        .unwrap();
+    assert!((end.eps_real[0] - (1.0 + a * (y[0] - y[31]))).abs() < 1e-12);
+
+    assert!(matches!(
+        DipoleAutocorrelationSpectrum::new(units)
+            .with_plateau_value(PlateauValue::End)
+            .compute(state(&acf, 1000.0, 300.0)),
+        Err(ComputeError::OutOfRange {
+            field: "plateau_value",
+            ..
+        })
+    ));
+}
+
 /// ac-010: dipole series → `DipoleAcf` → `EinsteinHelfandSpectrum` →
 /// `KramersKronig`, each output feeding the next input with no glue.
 #[test]

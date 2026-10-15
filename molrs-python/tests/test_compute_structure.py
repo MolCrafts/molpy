@@ -66,6 +66,8 @@ class TestDensity:
         out = mc.GaussianDensity((4, 4, 4), 0.5).compute(positions=points, simbox=box)
         assert out.density.shape == (4, 4, 4)
         assert isinstance(out.grid, mc.RegularGrid)
+        floor = mc.GaussianDensity((4, 4, 4), 0.5, reach="floor")
+        assert dict(floor.tunables())["reach"] == "floor"
 
     def test_sphere_voxelization(self, box, points):
         out = mc.SphereVoxelization((4, 4, 4), 1.0).compute(
@@ -183,6 +185,8 @@ class TestDynamics:
             ]
             == "first"
         )
+        closed = mc.VanHove(mc.Axis(0.0, 3.0, 6), [1], upper_edge="closed")
+        assert dict(closed.tunables())["upper_edge"] == "closed"
 
 
 class TestHBonds:

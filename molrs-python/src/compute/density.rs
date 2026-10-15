@@ -161,6 +161,9 @@ described!(PyLocalDensity, LocalDensity);
 ///     The Gaussian width.
 /// r_max : float, optional
 ///     The cutoff of the Gaussian.
+/// reach : str, optional
+///     ``"ceil"`` (every voxel centre within ``r_max``) or ``"floor"``
+///     (freud's narrower stencil).
 ///
 /// ``compute(positions=, simbox=)``.
 #[pyclass(module = "molrs.compute", name = "GaussianDensity", frozen)]
@@ -171,11 +174,14 @@ pub(crate) struct PyGaussianDensity {
 #[pymethods]
 impl PyGaussianDensity {
     #[new]
-    #[pyo3(signature = (dims, sigma, *, r_max = None))]
-    fn new(dims: [usize; 3], sigma: f64, r_max: Option<f64>) -> Result<Self> {
+    #[pyo3(signature = (dims, sigma, *, r_max = None, reach = None))]
+    fn new(dims: [usize; 3], sigma: f64, r_max: Option<f64>, reach: Option<&str>) -> Result<Self> {
         let mut inner = GaussianDensity::new(dims, sigma)?;
         if let Some(r_max) = r_max {
             inner = inner.with_r_max(r_max)?;
+        }
+        if let Some(reach) = reach {
+            inner = inner.with_reach(reach.parse()?);
         }
         Ok(Self { inner })
     }

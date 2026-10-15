@@ -49,7 +49,13 @@ pub struct Presence {
 /// continuous survival with `r1 > r0` is the "SSP" pair survival, the
 /// intermittent one with `r1 = r0` the usual `⟨h(0) h(t)⟩` (Rapaport, *Mol.
 /// Phys.* **50**, 1151 (1983); Luzar & Chandler, *Phys. Rev. Lett.* **76**,
-/// 928 (1996)).
+/// 928 (1996)). Origins wherever the pair is in the bonded stable state, and
+/// one curve per pair, are `Survival`'s defaults; its
+/// [`SurvivalOrigin::Inner`](crate::compute::SurvivalOrigin::Inner) starts
+/// runs only inside `r0` — pass the presence of a second `PairPresence` with
+/// `r1 = r0` (same columns) as `inner` — and
+/// [`SurvivalNormalization::PerReference`](crate::compute::SurvivalNormalization::PerReference)
+/// averages per reference particle (`C(0)` the coordination number).
 ///
 /// The pairs come from core neighbour search
 /// ([`NeighborQuery`](molrs::core::NeighborQuery) cross-queries,
@@ -82,7 +88,12 @@ pub struct Presence {
 /// assert_eq!(presence.values.column(0).to_vec(), vec![1.0, 1.0, 1.0]);
 ///
 /// let survival = Survival::new(SurvivalKind::Continuous, 2)
-///     .compute(SurvivalInput { presence: presence.values.view(), dt: 1.0 })?;
+///     .compute(SurvivalInput {
+///         presence: presence.values.view(),
+///         dt: 1.0,
+///         inner: None,
+///         n_reference: None,
+///     })?;
 /// assert_eq!(survival.values[[2, 0]], 1.0);
 /// # Ok::<(), molrs::compute::ComputeError>(())
 /// ```
@@ -281,7 +292,10 @@ crate::compute::spec::compute_spec! {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::compute::{Survival, SurvivalInput, SurvivalKind, TimeCorrelation};
+    use crate::compute::{
+        Survival, SurvivalInput, SurvivalKind, SurvivalNormalization, SurvivalOrigin,
+        TimeCorrelation,
+    };
     use molrs::core::{NeighborColumns, NeighborPair, NeighborQuery, Neighbors, SimBox};
     use ndarray::{Array2, array};
 
@@ -320,6 +334,8 @@ mod tests {
             .compute(SurvivalInput {
                 presence: p.values.view(),
                 dt: 1.0,
+                inner: None,
+                n_reference: None,
             })
             .unwrap()
     }
@@ -420,6 +436,64 @@ mod tests {
         assert_eq!(p.pairs, vec![(0, 0), (1, 0)]);
         let c = survival(SurvivalKind::Intermittent, &p, 1);
         assert!((c.values[[0, 0]] - 1.0).abs() < 1e-12, "C(0)");
+    }
+
+    /// The former convention, selectable: per reference particle, `C(0)` is
+    /// the coordination number. `pair_survival_tcf`'s
+    /// `coordination_number_at_lag_zero` on `dev`: one `i`, two `j` within
+    /// the cutoff ⇒ `C(0) = 2.0`.
+    #[test]
+    fn per_reference_survival_is_the_coordination_number() {
+        let ci = vec![vec![[0.0, 0.0, 0.0]]; 2];
+        let cj = vec![vec![[0.5, 0.0, 0.0], [0.0, 0.5, 0.0]]; 2];
+        let p = presence(
+            PairPresence::new(1.0, false).unwrap(),
+            &tables(&ci, &cj, &cube(100.0), 1.0),
+        )
+        .unwrap();
+        let c = Survival::new(SurvivalKind::Intermittent, 1)
+            .with_normalization(SurvivalNormalization::PerReference)
+            .compute(SurvivalInput {
+                presence: p.values.view(),
+                dt: 1.0,
+                inner: None,
+                n_reference: Some(ci[0].len()),
+            })
+            .unwrap();
+        assert!((c.values[[0, 0]] - 2.0).abs() < 1e-12, "C(0)");
+    }
+
+    /// The former SSP origin, selectable: runs start only where the pair is
+    /// inside `r0` (the single-cutoff presence) and survive while within
+    /// `r1` (the hysteresis presence). `pair_survival_tcf`'s
+    /// `ssp_uses_inner_birth_outer_survival_cutoff` on `dev`: born only at
+    /// frame 0 ⇒ `C(0) = 0.5`; still within `r1` at frame 1 ⇒ `C(1) = 1.0`.
+    #[test]
+    fn inner_origins_reproduce_the_former_ssp() {
+        let (ci, cj) = one_pair(&[0.5, 1.5]);
+        let t = tables(&ci, &cj, &cube(100.0), 2.0);
+        let stable = presence(
+            PairPresence::new(1.0, false).unwrap().with_r1(2.0).unwrap(),
+            &t,
+        )
+        .unwrap();
+        let inner = presence(PairPresence::new(1.0, false).unwrap(), &t).unwrap();
+        assert_eq!(inner.pairs, stable.pairs);
+        let ssp = Survival::new(SurvivalKind::Continuous, 1)
+            .with_origin(SurvivalOrigin::Inner)
+            .with_normalization(SurvivalNormalization::PerReference)
+            .compute(SurvivalInput {
+                presence: stable.values.view(),
+                dt: 1.0,
+                inner: Some(inner.values.view()),
+                n_reference: Some(1),
+            })
+            .unwrap();
+        assert!((ssp.values[[0, 0]] - 0.5).abs() < 1e-12, "C(0)");
+        assert!((ssp.values[[1, 0]] - 1.0).abs() < 1e-12, "C(1)");
+        // With a single cutoff 1.0 it would have died at τ = 1.
+        let cont = survival(SurvivalKind::Continuous, &inner, 1);
+        assert!(cont.values[[1, 0]].abs() < 1e-12);
     }
 
     #[test]

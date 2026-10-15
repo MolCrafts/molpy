@@ -234,7 +234,8 @@ impl Correlator {
                     value: format!("{what} is undefined for the {} kernel", self.kernel),
                 })
             };
-            if cross {
+            // Persistence crosses: `a` gates the origin, `b` must persist.
+            if cross && self.kernel != LagKernel::Persistence {
                 return refuse("b", "a cross-correlation");
             }
             if self.reduce == Reduction::PerComponent {
@@ -317,7 +318,10 @@ impl Correlator {
         }
         self.check_layout(n_components, input.b.is_some())?;
         if self.kernel == LagKernel::Persistence {
-            require_presence(input.a.iter().copied())?;
+            require_presence(input.a.iter().copied(), "a")?;
+            if let Some(b) = input.b {
+                require_presence(b.iter().copied(), "b")?;
+            }
         }
         if let Some(boxes) = input.boxes {
             if self.kernel != LagKernel::SquaredDisplacement {
@@ -472,7 +476,8 @@ impl Correlator {
             (a, b)
         };
         let samples = self.kernel_samples(a)?;
-        let runs = (self.kernel == LagKernel::Persistence).then(|| presence_runs(a));
+        // Persistence runs of the series that must persist: `b` when crossed.
+        let runs = (self.kernel == LagKernel::Persistence).then(|| presence_runs(b.unwrap_or(a)));
 
         let lag_row = |lag: usize| -> Vec<F> {
             let mut row = vec![0.0; n_channels];
@@ -496,7 +501,7 @@ impl Correlator {
                         }
                         LagKernel::Persistence => {
                             let runs = runs.as_ref().expect("runs exist for persistence");
-                            if runs[[late, item]] > lag {
+                            if a[[origin, item, 0]] == 1.0 && runs[[late, item]] > lag {
                                 row[self.channel_of(item, 0)] += 1.0;
                             }
                         }

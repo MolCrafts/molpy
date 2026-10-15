@@ -4,7 +4,7 @@ use molrs::core::{BoxKind, SimBox};
 use molrs::op::F;
 use ndarray::{Array3, ArrayView2};
 
-use crate::compute::{Compute, ComputeError, Indicator, RegularGrid, SpreadKernel};
+use crate::compute::{Compute, ComputeError, Indicator, RegularGrid, SpreadKernel, StencilReach};
 
 /// Sphere-voxelisation calculator.
 ///
@@ -93,7 +93,8 @@ impl Compute for SphereVoxelization {
         let mut voxels = Array3::<u8>::zeros(self.dims);
         let mut counts = Array3::<u32>::zeros(self.dims);
         for p in input.positions.outer_iter() {
-            grid.spread(&self.sphere, [p[0], p[1], p[2]], |[i, j, k], _| {
+            let center = [p[0], p[1], p[2]];
+            grid.spread(&self.sphere, center, StencilReach::Ceil, |[i, j, k], _| {
                 voxels[[i, j, k]] = 1;
                 counts[[i, j, k]] += 1;
             })?;

@@ -76,7 +76,10 @@ pub use options::{LagKernel, LagKernelKind, MeanPolicy, Normalization, Origins, 
 pub use reorientation_acf::{ReorientationAcf, ReorientationAcfInput};
 pub use rotational_autocorrelation::{RotationalAutocorrelation, RotationalAutocorrelationInput};
 pub use spectrum::{FrequencyGrid, OneSidedSpectrum, Spectrum, SpectrumInput, Window};
-pub use survival::{Survival, SurvivalInput, SurvivalKind};
+pub use survival::{
+    Survival, SurvivalAccumulator, SurvivalFrame, SurvivalInput, SurvivalKind,
+    SurvivalNormalization, SurvivalOrigin,
+};
 pub use time_correlation::TimeCorrelation;
 pub use unwrap::{Unwrap, UnwrapInput};
 pub use vacf::{Vacf, VacfInput};

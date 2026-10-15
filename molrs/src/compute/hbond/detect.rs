@@ -623,6 +623,8 @@ mod tests {
                 .compute(SurvivalInput {
                     presence: presence.values.view(),
                     dt: 0.5,
+                    inner: None,
+                    n_reference: None,
                 })
                 .unwrap()
         };

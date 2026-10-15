@@ -3,7 +3,7 @@
 use molrs::op::F;
 use ndarray::{ArrayD, IxDyn};
 
-use super::Axis;
+use super::{Axis, UpperEdge};
 use crate::compute::ComputeError;
 
 /// Weighted counts over `N` [`Axis`] — the output every binning analysis
@@ -80,16 +80,17 @@ impl<const N: usize> Histogram<N> {
         Ok(self.counts.mapv(|c| c / denom))
     }
 
-    /// Count one sample in the half-open bin holding it ([`Axis::index`]).
-    /// Returns whether it was inside every axis.
+    /// Count one sample in the bin holding it under the `upper` edge rule
+    /// ([`Axis::index_by`]: half-open bins, or the last one closed). Returns
+    /// whether it was inside every axis.
     ///
     /// # Errors
     /// [`ComputeError::NonFinite`] for a non-finite coordinate; nothing is
     /// counted.
-    pub(crate) fn add(&mut self, x: [F; N]) -> Result<bool, ComputeError> {
+    pub(crate) fn add(&mut self, x: [F; N], upper: UpperEdge) -> Result<bool, ComputeError> {
         let mut bin = [0usize; N];
         for (a, axis) in self.axes.iter().enumerate() {
-            match axis.index(x[a])? {
+            match axis.index_by(x[a], upper)? {
                 Some(i) => bin[a] = i,
                 None => return Ok(false),
             }
@@ -149,13 +150,17 @@ mod tests {
     #[test]
     fn add_counts_half_open_bins() {
         let mut h = Histogram::new([axis(0.0, 4.0, 4)]);
-        assert!(h.add([0.0]).unwrap());
-        assert!(h.add([1.0]).unwrap());
-        assert!(h.add([3.99]).unwrap());
-        assert!(!h.add([4.0]).unwrap());
-        assert!(!h.add([-0.1]).unwrap());
+        assert!(h.add([0.0], UpperEdge::Open).unwrap());
+        assert!(h.add([1.0], UpperEdge::Open).unwrap());
+        assert!(h.add([3.99], UpperEdge::Open).unwrap());
+        assert!(!h.add([4.0], UpperEdge::Open).unwrap());
+        assert!(!h.add([-0.1], UpperEdge::Open).unwrap());
         assert_eq!(h.counts().as_slice().unwrap(), &[1.0, 1.0, 0.0, 1.0]);
         assert_eq!(h.binned(), 3.0);
+        // A closed upper edge keeps `max` in the last bin.
+        assert!(h.add([4.0], UpperEdge::Closed).unwrap());
+        assert!(!h.add([4.0 + 1e-12], UpperEdge::Closed).unwrap());
+        assert_eq!(h.counts().as_slice().unwrap(), &[1.0, 1.0, 0.0, 2.0]);
     }
 
     /// A NaN sample used to land in bin 0; it is an error and counts nothing.
@@ -163,7 +168,7 @@ mod tests {
     fn nan_sample_is_non_finite_and_counts_nothing() {
         let mut h = Histogram::new([axis(0.0, 1.0, 2), axis(0.0, 1.0, 2)]);
         assert!(matches!(
-            h.add([0.5, F::NAN]),
+            h.add([0.5, F::NAN], UpperEdge::Open),
             Err(ComputeError::NonFinite { .. })
         ));
         assert!(matches!(
@@ -217,9 +222,9 @@ mod tests {
     fn merge_sums_counts_and_weight() {
         let mut a = Histogram::new([axis(0.0, 2.0, 2)]);
         let mut b = a.clone();
-        a.add([0.5]).unwrap();
-        b.add([1.5]).unwrap();
-        b.add([1.5]).unwrap();
+        a.add([0.5], UpperEdge::Open).unwrap();
+        b.add([1.5], UpperEdge::Open).unwrap();
+        b.add([1.5], UpperEdge::Open).unwrap();
         a.merge(&b);
         assert_eq!(a.counts().as_slice().unwrap(), &[1.0, 2.0]);
         assert_eq!(a.binned(), 3.0);

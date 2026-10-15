@@ -20,7 +20,7 @@ use crate::compute::named_enum::named_enum;
 /// | `SquaredDisplacement` | `Σ_d (x_d(τ+t) − x_d(τ)) · (y_d(τ+t) − y_d(τ))` | FFT + `S` recurrence |
 /// | `Legendre { l }` | `P_l(x̂(τ) · x̂(τ+t))` of the normalised vectors | direct |
 /// | `WignerD { l }` | `χ_l(θ) / (2l + 1)`, `θ` the angle of `q(τ+t) · q(τ)*` | direct |
-/// | `Persistence` | `1` if the 0/1 presence stayed `1` over `[τ, τ+t]` | direct |
+/// | `Persistence` | `1` if `x(τ) = 1` and the 0/1 presence `y` stayed `1` over `[τ, τ+t]` | direct |
 ///
 /// `Product` and `SquaredDisplacement` are linear in each component, so they
 /// decompose over components and evaluate in `O(T log T)` per column; the
@@ -44,7 +44,8 @@ pub enum LagKernel {
         /// Angular order.
         l: u32,
     },
-    /// Continuous persistence of a 0/1 presence series.
+    /// Continuous persistence of a 0/1 presence series. Crossed, the first
+    /// series gates the origin (`x(τ) = 1`) and the second must persist.
     Persistence,
 }
 

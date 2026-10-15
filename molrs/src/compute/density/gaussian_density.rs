@@ -4,7 +4,7 @@ use molrs::core::{BoxKind, SimBox};
 use molrs::op::F;
 use ndarray::{Array3, ArrayView2};
 
-use crate::compute::{Compute, ComputeError, Gaussian, RegularGrid};
+use crate::compute::{Compute, ComputeError, Gaussian, RegularGrid, StencilReach};
 
 /// Gaussian-density calculator.
 ///
@@ -23,7 +23,10 @@ use crate::compute::{Compute, ComputeError, Gaussian, RegularGrid};
 ///
 /// Every voxel whose centre lies within `r_max` of a particle (boundary
 /// included) receives its share; `r_max = 3σ` captures ≳ 99% of the mass, so
-/// `Σ_v ρ_v · ΔV = N_particles` to within the truncation.
+/// `Σ_v ρ_v · ΔV = N_particles` to within the truncation. freud's stencil,
+/// which reaches only `⌊r_max / Δ⌋` voxels from the particle's own and so
+/// skips the outermost shell of those centres, is
+/// [`with_reach`](Self::with_reach)`(`[`StencilReach::Floor`]`)`.
 ///
 /// # Conventions
 ///
@@ -40,6 +43,7 @@ use crate::compute::{Compute, ComputeError, Gaussian, RegularGrid};
 pub struct GaussianDensity {
     dims: [usize; 3],
     kernel: Gaussian,
+    reach: StencilReach,
 }
 
 /// The data a [`GaussianDensity`] analyses.
@@ -67,6 +71,7 @@ impl GaussianDensity {
         Ok(Self {
             dims,
             kernel: Gaussian::new(sigma)?,
+            reach: StencilReach::default(),
         })
     }
 
@@ -77,6 +82,19 @@ impl GaussianDensity {
     pub fn with_r_max(mut self, r_max: F) -> Result<Self, ComputeError> {
         self.kernel = self.kernel.with_cutoff(r_max)?;
         Ok(self)
+    }
+
+    /// Spread over every voxel centre within `r_max` (default
+    /// [`StencilReach::Ceil`]) or over freud's narrower stencil
+    /// ([`StencilReach::Floor`]).
+    pub fn with_reach(mut self, reach: StencilReach) -> Self {
+        self.reach = reach;
+        self
+    }
+
+    /// The stencil reach.
+    pub fn reach(&self) -> StencilReach {
+        self.reach
     }
 
     /// Voxels per axis.
@@ -117,9 +135,14 @@ impl Compute for GaussianDensity {
         let grid = RegularGrid::over_box(input.simbox, self.dims)?;
         let mut density = Array3::<F>::zeros(self.dims);
         for p in input.positions.outer_iter() {
-            grid.spread(&self.kernel, [p[0], p[1], p[2]], |[i, j, k], w| {
-                density[[i, j, k]] += w;
-            })?;
+            grid.spread(
+                &self.kernel,
+                [p[0], p[1], p[2]],
+                self.reach,
+                |[i, j, k], w| {
+                    density[[i, j, k]] += w;
+                },
+            )?;
         }
         Ok(GaussianDensityResult { density, grid })
     }
@@ -146,6 +169,7 @@ crate::compute::spec::compute_spec! {
                 factor: Gaussian::DEFAULT_CUTOFF_SIGMAS,
             }
             => crate::compute::SpreadKernel::cutoff(&s.kernel);
+        reach: Choice(StencilReach::NAMES) = StencilReach::default() => s.reach;
     }
     inputs {
         positions: Positions;
@@ -277,6 +301,52 @@ mod tests {
                 .with_r_max(-1.0),
             Err(ComputeError::OutOfRange { .. })
         ));
+    }
+
+    /// The former freud-parity stencil, selectable: `Floor` is the `dev`
+    /// `GaussianDensity` loop written out — offsets up to `⌊r_max / Δ⌋`
+    /// voxels from the particle's own, then the `r ≤ r_max` test — on every
+    /// voxel. The voxel 1.51 Å away on x (inside `r_max = 1.6`, two voxels
+    /// out) is what `Ceil` adds.
+    #[test]
+    fn floor_reach_is_the_former_freud_stencil() {
+        let (points, simbox) = setup(&[[5.99, 5.5, 5.5], [0.3, 9.6, 2.2]], 10.0, [true; 3]);
+        let (sigma, r_max, n) = (0.5, 1.6, 10usize);
+        let gd = GaussianDensity::new([n; 3], sigma)
+            .unwrap()
+            .with_r_max(r_max)
+            .unwrap();
+        let floor = run(&gd.with_reach(StencilReach::Floor), &points, &simbox).density;
+        let ceil = run(&gd, &points, &simbox).density;
+
+        let dx = 10.0 / n as F;
+        let half = (r_max / dx).floor() as isize;
+        let two_sigma_sq = 2.0 * sigma * sigma;
+        let pref = (two_sigma_sq * std::f64::consts::PI).powf(-1.5);
+        let mut want = Array3::<F>::zeros([n; 3]);
+        for p in points.outer_iter() {
+            let home = [0, 1, 2].map(|d| (p[d] / dx).floor() as isize);
+            for ix in home[0] - half..=home[0] + half {
+                for iy in home[1] - half..=home[1] + half {
+                    for iz in home[2] - half..=home[2] + half {
+                        let offset = [ix, iy, iz];
+                        let r2: F = (0..3)
+                            .map(|d| ((offset[d] as F + 0.5) * dx - p[d]).powi(2))
+                            .sum();
+                        if r2 <= r_max * r_max {
+                            let wrap = offset.map(|i| i.rem_euclid(n as isize) as usize);
+                            want[wrap] += pref * (-r2 / two_sigma_sq).exp();
+                        }
+                    }
+                }
+            }
+        }
+        for (got, want) in floor.iter().zip(want.iter()) {
+            assert!((got - want).abs() < 1e-12, "{got} vs {want}");
+        }
+        assert_eq!(floor[[7, 5, 5]], 0.0);
+        let r2 = (7.5 - 5.99_f64).powi(2);
+        assert!((ceil[[7, 5, 5]] - pref * (-r2 / two_sigma_sq).exp()).abs() < 1e-12);
     }
 
     /// Many snapshots go through `Batch`, in order.

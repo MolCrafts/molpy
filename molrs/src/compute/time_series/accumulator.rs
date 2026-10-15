@@ -176,7 +176,10 @@ impl CorrelatorAccumulator {
             require_finite(b.iter(), "b")?;
         }
         if self.correlator.kernel() == LagKernel::Persistence {
-            require_presence(frame.a.iter().copied())?;
+            require_presence(frame.a.iter().copied(), "a")?;
+            if let Some(b) = frame.b {
+                require_presence(b.iter().copied(), "b")?;
+            }
         }
         if let Some(simbox) = frame.simbox {
             if self.correlator.kernel() != LagKernel::SquaredDisplacement {
@@ -270,8 +273,9 @@ fn add_lag(
                 }
             }
             LagKernel::Persistence => {
-                // The presence that began `lag` frames ago is still unbroken.
-                if runs[item] > lag {
+                // Present at the origin, and the presence that began `lag`
+                // frames ago is still unbroken.
+                if xe[0] == 1.0 && runs[item] > lag {
                     row[correlator.channel_of(item, 0)] += 1.0;
                 }
             }
@@ -296,7 +300,8 @@ impl Accumulate for CorrelatorAccumulator {
             .prepare_sample(a.view_mut(), self.n_frames)?;
         let b = frame.b.map(|b| b.as_standard_layout().into_owned());
         if self.correlator.kernel() == LagKernel::Persistence {
-            for (run, present) in self.runs.iter_mut().zip(a.iter()) {
+            // The runs of the series that must persist: `b` when crossed.
+            for (run, present) in self.runs.iter_mut().zip(b.as_ref().unwrap_or(&a).iter()) {
                 *run = if *present == 1.0 { *run + 1 } else { 0 };
             }
         }

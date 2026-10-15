@@ -172,8 +172,9 @@ dielectric_route! {
     /// (``molrs::compute::DipoleAutocorrelationSpectrum``).
     ///
     /// Parameters as ``EinsteinHelfandSpectrum``, plus ``plateau``: an optional
-    /// ``(start, end)`` fraction window whose mean is subtracted from the
-    /// correlation (a conductor's plateau). ``compute`` as
+    /// ``(start, end)`` fraction window whose value is subtracted from the
+    /// correlation (a conductor's plateau), and ``plateau_value``: ``"mean"``
+    /// (the window's mean) or ``"end"`` (its last sample). ``compute`` as
     /// ``EinsteinHelfandSpectrum``.
     PyDipoleAutocorrelationSpectrum(DipoleAutocorrelationSpectrum)
         as "DipoleAutocorrelationSpectrum"
@@ -237,6 +238,7 @@ impl PyDipoleAutocorrelationSpectrum {
         pad = None,
         epsilon_inf = None,
         plateau = None,
+        plateau_value = None,
     ))]
     fn new(
         units: &Bound<'_, PyAny>,
@@ -244,10 +246,14 @@ impl PyDipoleAutocorrelationSpectrum {
         pad: Option<usize>,
         epsilon_inf: Option<f64>,
         plateau: Option<(f64, f64)>,
+        plateau_value: Option<&str>,
     ) -> Result<Self> {
         let mut inner = Self::configure(units, window, pad, epsilon_inf)?;
         if let Some((start, end)) = plateau {
             inner = inner.with_plateau(Plateau::new(start, end)?);
+        }
+        if let Some(plateau_value) = plateau_value {
+            inner = inner.with_plateau_value(plateau_value.parse()?);
         }
         Ok(Self { inner })
     }

@@ -277,6 +277,12 @@ described!(PyOnsagerCorrelation, OnsagerCorrelation);
 /// Dipole autocorrelation of a ``(T, 3)`` dipole series
 /// (``molrs::compute::DipoleAcf``).
 ///
+/// Parameters
+/// ----------
+/// max_lag : int
+/// normalization : str, optional
+///     ``"unbiased"`` or ``"none"`` (the raw lagged sum).
+///
 /// ``compute(dipoles=, dt=)``.
 #[pyclass(module = "molrs.compute", name = "DipoleAcf", frozen)]
 pub(crate) struct PyDipoleAcf {
@@ -286,10 +292,13 @@ pub(crate) struct PyDipoleAcf {
 #[pymethods]
 impl PyDipoleAcf {
     #[new]
-    fn new(max_lag: usize) -> Self {
-        Self {
-            inner: DipoleAcf::new(max_lag),
+    #[pyo3(signature = (max_lag, *, normalization = None))]
+    fn new(max_lag: usize, normalization: Option<&str>) -> Result<Self> {
+        let mut inner = DipoleAcf::new(max_lag);
+        if let Some(normalization) = normalization {
+            inner = inner.with_normalization(normalization.parse()?);
         }
+        Ok(Self { inner })
     }
 
     #[pyo3(signature = (*, dipoles, dt))]
@@ -307,6 +316,13 @@ described!(PyDipoleAcf, DipoleAcf);
 /// Current autocorrelation of a ``(T, 3)`` current series
 /// (``molrs::compute::CurrentAcf``).
 ///
+/// Parameters
+/// ----------
+/// max_lag : int
+/// normalization : str, optional
+///     ``"unbiased"`` or ``"none"`` (the raw lagged sum, the former IR flux
+///     correlation).
+///
 /// ``compute(current=, dt=)``.
 #[pyclass(module = "molrs.compute", name = "CurrentAcf", frozen)]
 pub(crate) struct PyCurrentAcf {
@@ -316,10 +332,13 @@ pub(crate) struct PyCurrentAcf {
 #[pymethods]
 impl PyCurrentAcf {
     #[new]
-    fn new(max_lag: usize) -> Self {
-        Self {
-            inner: CurrentAcf::new(max_lag),
+    #[pyo3(signature = (max_lag, *, normalization = None))]
+    fn new(max_lag: usize, normalization: Option<&str>) -> Result<Self> {
+        let mut inner = CurrentAcf::new(max_lag);
+        if let Some(normalization) = normalization {
+            inner = inner.with_normalization(normalization.parse()?);
         }
+        Ok(Self { inner })
     }
 
     #[pyo3(signature = (*, current, dt))]
@@ -409,8 +428,14 @@ described!(PyRotationalAutocorrelation, RotationalAutocorrelation);
 /// kind : str
 ///     ``"continuous"`` or ``"intermittent"``.
 /// max_lag : int
+/// normalization : str, optional
+///     ``"per_pair"`` or ``"per_reference"`` (``C(0)`` the coordination
+///     number; ``compute`` then takes ``n_reference``).
+/// origin : str, optional
+///     ``"present"`` or ``"inner"`` (runs start only where ``inner`` is 1,
+///     e.g. a ``PairPresence`` with ``r1 = r0``).
 ///
-/// ``compute(presence=, dt=)``.
+/// ``compute(presence=, dt=, inner=None, n_reference=None)``.
 #[pyclass(module = "molrs.compute", name = "Survival", frozen)]
 pub(crate) struct PySurvival {
     inner: Survival,
@@ -419,17 +444,36 @@ pub(crate) struct PySurvival {
 #[pymethods]
 impl PySurvival {
     #[new]
-    fn new(kind: &str, max_lag: usize) -> Result<Self> {
-        Ok(Self {
-            inner: Survival::new(kind.parse()?, max_lag),
-        })
+    #[pyo3(signature = (kind, max_lag, *, normalization = None, origin = None))]
+    fn new(
+        kind: &str,
+        max_lag: usize,
+        normalization: Option<&str>,
+        origin: Option<&str>,
+    ) -> Result<Self> {
+        let mut inner = Survival::new(kind.parse()?, max_lag);
+        if let Some(normalization) = normalization {
+            inner = inner.with_normalization(normalization.parse()?);
+        }
+        if let Some(origin) = origin {
+            inner = inner.with_origin(origin.parse()?);
+        }
+        Ok(Self { inner })
     }
 
-    #[pyo3(signature = (*, presence, dt))]
-    fn compute(&self, presence: PyReadonlyArray2<'_, f64>, dt: f64) -> Result<PyTimeCorrelation> {
+    #[pyo3(signature = (*, presence, dt, inner = None, n_reference = None))]
+    fn compute(
+        &self,
+        presence: PyReadonlyArray2<'_, f64>,
+        dt: f64,
+        inner: Option<PyReadonlyArray2<'_, f64>>,
+        n_reference: Option<usize>,
+    ) -> Result<PyTimeCorrelation> {
         let out = self.inner.compute(SurvivalInput {
             presence: presence.as_array(),
             dt,
+            inner: inner.as_ref().map(|i| i.as_array()),
+            n_reference,
         })?;
         Ok(out.into())
     }

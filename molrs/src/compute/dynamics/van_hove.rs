@@ -5,7 +5,7 @@ use molrs::op::F;
 use ndarray::{Array1, Array2, ArrayView3, Axis as NdAxis};
 
 use crate::compute::time_series::guards::first_wrapped_item;
-use crate::compute::{Axis, Compute, ComputeError, Histogram, Origins};
+use crate::compute::{Axis, Compute, ComputeError, Histogram, Origins, UpperEdge};
 
 /// Van Hove space–time correlation `G(r, t)`, self and distinct parts.
 ///
@@ -33,7 +33,9 @@ use crate::compute::{Axis, Compute, ComputeError, Histogram, Origins};
 /// The reference implementation ships no dedicated Van Hove analyzer — only
 /// its RDF and ACF machinery. The **definition** follows van Hove 1954 /
 /// Hansen–McDonald; the **binning** is the one [`Axis`] rule (half-open
-/// bins, like [`Rdf`](crate::compute::Rdf)) and the distinct-part shell
+/// bins by default, like [`Rdf`](crate::compute::Rdf); the closed last bin
+/// of the former VanHove, which keeps `d = r_max`, through
+/// [`with_upper_edge`](VanHove::with_upper_edge)) and the distinct-part shell
 /// normalization uses [`Axis::shell_volumes`]; the **multi-time-origin
 /// averaging** mirrors the ACF origin accumulation of the reference
 /// implementation (`src/reordyn.cpp` / `src/acf.cpp`).
@@ -61,6 +63,7 @@ pub struct VanHove {
     lags: Vec<usize>,
     origins: Origins,
     stride: usize,
+    upper_edge: UpperEdge,
 }
 
 /// The trajectory a [`VanHove`] analyses.
@@ -121,7 +124,16 @@ impl VanHove {
             lags,
             origins: Origins::default(),
             stride: Self::DEFAULT_STRIDE,
+            upper_edge: UpperEdge::default(),
         })
+    }
+
+    /// Count a distance of exactly the axis maximum in the last bin
+    /// ([`UpperEdge::Closed`]) or leave it out (default
+    /// [`UpperEdge::Open`]).
+    pub fn with_upper_edge(mut self, upper_edge: UpperEdge) -> Self {
+        self.upper_edge = upper_edge;
+        self
     }
 
     /// Average over these time origins (default [`Origins::All`]).
@@ -181,6 +193,11 @@ impl VanHove {
     /// The origin stride.
     pub fn stride(&self) -> usize {
         self.stride
+    }
+
+    /// Whether the axis maximum is in the last bin.
+    pub fn upper_edge(&self) -> UpperEdge {
+        self.upper_edge
     }
 
     /// Validate the trajectory; returns `(T, N)`.
@@ -257,7 +274,7 @@ impl VanHove {
                         .zip(r1.iter())
                         .map(|(a, b)| (b - a) * (b - a))
                         .sum();
-                    self_part.add([d2.sqrt()])?;
+                    self_part.add([d2.sqrt()], self.upper_edge)?;
                 }
                 let pairs = query.query(later);
                 let d2 = pairs
@@ -267,7 +284,7 @@ impl VanHove {
                 let later_index = pairs.query_point_indices();
                 for k in 0..pairs.n_pairs() {
                     if reference_index[k] != later_index[k] {
-                        distinct.add([d2[k].sqrt()])?;
+                        distinct.add([d2[k].sqrt()], self.upper_edge)?;
                     }
                 }
             }
@@ -356,6 +373,7 @@ crate::compute::spec::compute_spec! {
         lags: IntList;
         origins: Choice(Origins::NAMES) = Origins::default() => s.origins;
         stride: Int = VanHove::DEFAULT_STRIDE => s.stride;
+        upper_edge: Choice(UpperEdge::NAMES) = UpperEdge::default() => s.upper_edge;
     }
     inputs {
         positions: Trajectory;
@@ -437,6 +455,36 @@ mod tests {
         let res = run(&vh, &x, 20.0).unwrap();
         // Only particle 1's zero displacement is binned: all weight in bin 0.
         assert_eq!(res.g_self.row(0).to_vec(), vec![2.0, 0.0, 0.0, 0.0]);
+    }
+
+    /// The former convention, selectable: a closed last bin keeps
+    /// `d = r_max`. Same jump as above: bin 0 holds particle 1's zero
+    /// displacement and the last bin particle 0's 2.0, so the density over
+    /// `binned = 2`, `dr = 0.5` is `[1, 0, 0, 1]`. A distinct pair exactly
+    /// `r_max` apart is in the last bin too, and outside the open axis.
+    #[test]
+    fn a_closed_upper_edge_keeps_r_max_in_the_last_bin() {
+        let x = trajectory(&[
+            vec![[1.0, 1.0, 1.0], [5.0, 5.0, 5.0]],
+            vec![[3.0, 1.0, 1.0], [5.0, 5.0, 5.0]],
+        ]);
+        let axis = Axis::new(0.0, 2.0, 4).unwrap();
+        let closed = VanHove::new(axis, vec![1])
+            .unwrap()
+            .with_upper_edge(UpperEdge::Closed);
+        let res = run(&closed, &x, 20.0).unwrap();
+        assert_eq!(res.g_self.row(0).to_vec(), vec![1.0, 0.0, 0.0, 1.0]);
+
+        let pair = trajectory(&[vec![[1.0, 1.0, 1.0], [3.0, 1.0, 1.0]]]);
+        let open = VanHove::new(axis, vec![0]).unwrap();
+        let shut = open.clone().with_upper_edge(UpperEdge::Closed);
+        let (open, shut) = (
+            run(&open, &pair, 20.0).unwrap(),
+            run(&shut, &pair, 20.0).unwrap(),
+        );
+        assert_eq!(open.g_distinct.row(0).to_vec(), vec![0.0; 4]);
+        assert!(shut.g_distinct[[0, 3]] > 0.0);
+        assert_eq!(shut.g_distinct.row(0).sum(), shut.g_distinct[[0, 3]]);
     }
 
     #[test]

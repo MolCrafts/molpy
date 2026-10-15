@@ -243,6 +243,7 @@ impl PyInputSpec {
             InputKind::Scalars => "scalars",
             InputKind::Scalar => "scalar",
             InputKind::Index => "index",
+            InputKind::Count => "count",
             InputKind::Indices => "indices",
             InputKind::IndexPairs => "index_pairs",
             InputKind::Tuples => "tuples",

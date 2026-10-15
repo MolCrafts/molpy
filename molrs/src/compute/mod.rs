@@ -259,8 +259,9 @@
 //! chemists know by name are thin surfaces over it: each holds one
 //! `Correlator` with the configuration that defines the quantity fixed,
 //! exposes only what a user legitimately tunes, and delegates `compute` in one
-//! line. A correlation with no named surface is a `Correlator` configured
-//! directly.
+//! line ([`Survival`] adds its two conventions — per-reference averaging and
+//! inner-cutoff origins — around that call). A correlation with no named
+//! surface is a `Correlator` configured directly.
 //!
 //! The raw curve is an observable; the step that turns it into a coefficient
 //! is the analyst's explicit, parameterised choice of fit:
@@ -372,7 +373,7 @@ mod time_series;
 mod voronoi;
 
 // Re-exports
-pub use binning::{Axis, Histogram};
+pub use binning::{Axis, Histogram, UpperEdge};
 pub use cluster::{Cluster, ClusterInput, ClusterResult};
 pub use contract::{Accumulate, Batch, Compute, FeatureMatrix, Partition, Stream, Verdict};
 pub use decomposition::{Pca, PcaInput, PcaResult};
@@ -415,7 +416,7 @@ pub use fitting::{
     CumulativeTrapezoid, CumulativeTrapezoidInput, DebyeFit, DebyeFitInput, DebyeFitResult,
     LinearFit, LinearFitInput, LinearFitResult, Plateau, PlateauInput, PlateauResult,
 };
-pub use grid::{Gaussian, Indicator, RegularGrid, SpreadKernel};
+pub use grid::{Gaussian, Indicator, RegularGrid, SpreadKernel, StencilReach};
 pub use hbond::{HBond, HBondCriterion, HBondDistanceKind, HBonds, HBondsInput, HBondsResult};
 pub use kinetic::{KineticEnergy, KineticEnergyInput, KineticEnergyResult};
 pub use kmeans::{Kmeans, KmeansInput, KmeansResult};
@@ -453,8 +454,8 @@ pub use spectroscopy::{
     ConductivitySumRule, DielectricSpectrumInput, DielectricSpectrumResult,
     DipoleAutocorrelationSpectrum, DipoleRateCrossSpectrum, EinsteinHelfandSpectrum,
     GreenKuboSpectrum, KramersKronig, KramersKronigCheck, KramersKronigInput, PermittivityPart,
-    PolarizabilityParts, PolarizabilityPartsInput, PolarizabilityPartsResult, RamanSpectrum,
-    RamanSpectrumInput, RamanSpectrumResult, RouteAgreement, RouteAgreementCheck,
+    PlateauValue, PolarizabilityParts, PolarizabilityPartsInput, PolarizabilityPartsResult,
+    RamanSpectrum, RamanSpectrumInput, RamanSpectrumResult, RouteAgreement, RouteAgreementCheck,
     RouteAgreementInput, SumRuleCheck, SumRuleInput,
 };
 pub use time_series::{
@@ -463,7 +464,8 @@ pub use time_series::{
     LagKernel, LagKernelKind, MeanPolicy, Msd, MsdInput, Normalization, OneSidedSpectrum,
     OnsagerCorrelation, OnsagerInput, Origins, Reduction, ReorientationAcf, ReorientationAcfInput,
     RotationalAutocorrelation, RotationalAutocorrelationInput, Spectrum, SpectrumInput, Stencil,
-    Survival, SurvivalInput, SurvivalKind, TimeCorrelation, Unwrap, UnwrapInput, Vacf, VacfInput,
+    Survival, SurvivalAccumulator, SurvivalFrame, SurvivalInput, SurvivalKind,
+    SurvivalNormalization, SurvivalOrigin, TimeCorrelation, Unwrap, UnwrapInput, Vacf, VacfInput,
     Window,
 };
 #[cfg(feature = "voronoi")]

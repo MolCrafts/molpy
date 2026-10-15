@@ -76,7 +76,7 @@ fn route_data(
 macro_rules! route {
     (
         $(#[$meta:meta])*
-        $name:ident $(, $extra:ident: $extra_ty:ty => |$c:ident, $v:ident| $set:expr)?
+        $name:ident $(, $extra:ident: $extra_ty:ty => |$c:ident, $v:ident| $set:expr)*
     ) => {
         $(#[$meta])*
         #[wasm_bindgen]
@@ -94,13 +94,13 @@ macro_rules! route {
                 window: Option<String>,
                 pad: Option<usize>,
                 epsilon_inf: Option<F>,
-                $($extra: Option<$extra_ty>,)?
+                $($extra: Option<$extra_ty>,)*
             ) -> Result<$name, JsError> {
                 let inner = mc::$name::new(unit_preset(units)?)
                     .given(window, |c, v| Ok(c.with_window(v.parse()?)))?
                     .given(pad, |c, v| c.with_pad(v))?
                     .given(epsilon_inf, |c, v| Ok(c.with_epsilon_inf(v)))?
-                    $(.given($extra, |$c, $v| $set)?)?;
+                    $(.given($extra, |$c, $v| $set)?)*;
                 Ok(Self { inner })
             }
 
@@ -137,12 +137,15 @@ route! {
 
 route! {
     /// ε(ω) from the dipole autocorrelation; `plateau` (`[start, end]`)
-    /// subtracts the curve's mean over that window first.
+    /// subtracts the curve's value over that window first — its mean, or its
+    /// last sample with `plateau_value` `"end"` (a
+    /// [`PlateauValue`](mc::PlateauValue) name).
     DipoleAutocorrelationSpectrum,
     plateau: Vec<F> => |c, v| {
         let [start, end] = fixed::<F, 2>(&v, "plateau window [start, end]")?;
         Ok(c.with_plateau(mc::Plateau::new(start, end)?))
-    }
+    },
+    plateau_value: String => |c, v| Ok(c.with_plateau_value(v.parse()?))
 }
 
 /// The real number `name` an instance of `T` holds (its core default when the

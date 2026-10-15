@@ -7,4 +7,4 @@ mod kernel;
 mod regular_grid;
 
 pub use kernel::{Gaussian, Indicator, SpreadKernel};
-pub use regular_grid::RegularGrid;
+pub use regular_grid::{RegularGrid, StencilReach};

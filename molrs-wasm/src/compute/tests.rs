@@ -291,11 +291,11 @@ fn every_class_built_from_required_arguments_holds_the_core_defaults() {
     holds_spec_defaults(ok(Msd::new(4, None, None)), &[]);
     holds_spec_defaults(Vacf::new(4), &[]);
     holds_spec_defaults(OnsagerCorrelation::new(4), &[]);
-    holds_spec_defaults(DipoleAcf::new(4), &[]);
-    holds_spec_defaults(CurrentAcf::new(4), &[]);
+    holds_spec_defaults(ok(DipoleAcf::new(4, None)), &[]);
+    holds_spec_defaults(ok(CurrentAcf::new(4, None)), &[]);
     holds_spec_defaults(ReorientationAcf::new(2, 4), &[]);
     holds_spec_defaults(ok(RotationalAutocorrelation::new(2, 4, None)), &[]);
-    holds_spec_defaults(ok(Survival::new("continuous", 4)), &[]);
+    holds_spec_defaults(ok(Survival::new("continuous", 4, None, None)), &[]);
     holds_spec_defaults(ok(Derivative::new("central")), &[]);
     holds_spec_defaults(Unwrap::new(), &[]);
     holds_spec_defaults(ok(Spectrum::new("hann", 2)), &[]);
@@ -321,7 +321,7 @@ fn every_class_built_from_required_arguments_holds_the_core_defaults() {
     );
     holds_spec_defaults(
         ok(DipoleAutocorrelationSpectrum::new(
-            "real", None, None, None, None,
+            "real", None, None, None, None, None,
         )),
         &[],
     );
@@ -335,7 +335,7 @@ fn every_class_built_from_required_arguments_holds_the_core_defaults() {
     holds_spec_defaults(ok(CorrelationFunction::new(10, 3.0, 0.0)), &[]);
     holds_spec_defaults(ok(LocalDensity::new(3.0, None)), &[]);
     holds_spec_defaults(
-        ok(GaussianDensity::new(vec![4, 4, 4], 0.5, None)),
+        ok(GaussianDensity::new(vec![4, 4, 4], 0.5, None, None)),
         &[("sigma", Float(0.5))],
     );
     holds_spec_defaults(ok(SphereVoxelization::new(vec![4, 4, 4], 1.0)), &[]);
@@ -382,7 +382,7 @@ fn every_class_built_from_required_arguments_holds_the_core_defaults() {
         ok(PairPresence::new(1.5, false, None)),
         &[("r0", Float(1.5))],
     );
-    holds_spec_defaults(ok(VanHove::new(&axis, vec![1, 2], None, None)), &[]);
+    holds_spec_defaults(ok(VanHove::new(&axis, vec![1, 2], None, None, None)), &[]);
     holds_spec_defaults(ok(HBonds::new(None, None, None, None)), &[]);
 
     holds_spec_defaults(ok(Steinhardt::new(vec![6], None, None, None)), &[]);
@@ -543,11 +543,33 @@ fn presence_round_trips_into_survival_through_to_json() {
             .compute(&object(vec![("frames", list(frames))])))
         .expect("the pair is present");
     let values = get(&ok(presence.to_json()), "values");
-    let tcf = ok(ok(Survival::new("continuous", 2)).compute(&object(vec![
+    let tcf = ok(
+        ok(Survival::new("continuous", 2, None, None)).compute(&object(vec![
+            ("presence", values.clone()),
+            ("dt", JsValue::from(1.0)),
+        ])),
+    );
+    assert_eq!(tcf.inner.values.column(0).to_vec(), [1.0, 1.0, 1.0]);
+
+    // The previous conventions: options by name, their data as fields.
+    let per_reference = ok(Survival::new(
+        "continuous",
+        2,
+        Some("per_reference".into()),
+        Some("inner".into()),
+    ));
+    let tcf = ok(per_reference.compute(&object(vec![
+        ("presence", values.clone()),
+        ("inner", values.clone()),
+        ("dt", JsValue::from(1.0)),
+        ("n_reference", JsValue::from(1)),
+    ])));
+    assert_eq!(tcf.inner.values.column(0).to_vec(), [1.0, 1.0, 1.0]);
+    let missing = message(per_reference.compute(&object(vec![
         ("presence", values),
         ("dt", JsValue::from(1.0)),
     ])));
-    assert_eq!(tcf.inner.values.column(0).to_vec(), [1.0, 1.0, 1.0]);
+    assert!(missing.contains("inner"), "{missing}");
 }
 
 #[wasm_bindgen_test]
@@ -659,7 +681,7 @@ fn errors_are_the_core_compute_error() {
     )])));
     assert!(err.contains("Msd input `dt`"), "{err}");
     // An unknown choice lists the canonical names, from the core parser.
-    let err = message(Survival::new("forever", 2));
+    let err = message(Survival::new("forever", 2, None, None));
     assert!(err.contains("continuous, intermittent"), "{err}");
     // A kernel's order is required where the core needs one and refused elsewhere.
     let err = message(Correlator::new(

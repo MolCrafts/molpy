@@ -215,6 +215,9 @@ pub enum InputKind {
     Scalar,
     /// One index (a channel of an upstream curve).
     Index,
+    /// A number of items (the reference particles a per-reference average
+    /// divides by).
+    Count,
     /// A list of item indices.
     Indices,
     /// A list of `(i, j)` index pairs.

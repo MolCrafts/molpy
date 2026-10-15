@@ -173,11 +173,14 @@ class TestSpectroscopy:
             for route in (
                 EinsteinHelfandSpectrum("real"),
                 DipoleAutocorrelationSpectrum("real", plateau=(0.8, 1.0)),
+                DipoleAutocorrelationSpectrum(
+                    "real", plateau=(0.8, 1.0), plateau_value="end"
+                ),
             )
         ]
         check = RouteAgreement().compute(spectra=spectra)
         assert isinstance(check, RouteAgreementCheck)
-        assert len(check.pairwise) == 1
+        assert len(check.pairwise) == 3
 
     @pytest.mark.parametrize("route", [GreenKuboSpectrum, DipoleRateCrossSpectrum])
     def test_each_route_computes(self, route) -> None:

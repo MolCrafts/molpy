@@ -85,17 +85,20 @@ pub struct VanHove {
 
 #[wasm_bindgen]
 impl VanHove {
-    /// `origins` is an [`Origins`](mc::Origins) name.
+    /// `origins` is an [`Origins`](mc::Origins) name, `upper_edge` an
+    /// [`UpperEdge`](mc::UpperEdge) name.
     #[wasm_bindgen(constructor)]
     pub fn new(
         axis: &Axis,
         lags: Vec<usize>,
         origins: Option<String>,
         stride: Option<usize>,
+        upper_edge: Option<String>,
     ) -> Result<VanHove, JsError> {
         let inner = mc::VanHove::new(axis.inner, lags)?
             .given(origins, |c, v| c.with_origins(v.parse()?))?
-            .given(stride, |c, v| c.with_stride(v))?;
+            .given(stride, |c, v| c.with_stride(v))?
+            .given(upper_edge, |c, v| Ok(c.with_upper_edge(v.parse()?)))?;
         Ok(Self { inner })
     }
 

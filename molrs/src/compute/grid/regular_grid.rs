@@ -6,6 +6,24 @@ use molrs::op::F;
 
 use super::SpreadKernel;
 use crate::compute::ComputeError;
+use crate::compute::named_enum::named_enum;
+
+named_enum! {
+    /// How far a [`RegularGrid::stencil`] looks for voxels within `r` along
+    /// each grid axis, in voxels around the point.
+    #[derive(Default)]
+    pub enum StencilReach {
+        /// Every voxel whose centre lies within `r`: the candidate range is
+        /// `⌈·⌉`-wide enough to hold the whole ball.
+        #[default]
+        Ceil => "ceil",
+        /// Only voxels at most `⌊r / Δ⌋` voxels from the one holding the
+        /// point (`Δ` the voxel spacing along the axis), and within `r` —
+        /// freud's `GaussianDensity` stencil, which skips the outermost shell
+        /// of voxel centres inside `r`.
+        Floor => "floor",
+    }
+}
 
 /// A regular lattice of `dims[0] × … × dims[D−1]` voxels in `D` dimensions.
 ///
@@ -176,9 +194,11 @@ impl<const D: usize> RegularGrid<D> {
     /// `center` to that voxel image's centre. Indices wrap along periodic
     /// axes; images beyond a non-periodic edge are skipped.
     ///
-    /// The candidate range along each axis covers every centre within `r`
-    /// (the reach is `r` times the length of the matching row of `M⁻¹`), so
-    /// the distance test alone decides membership.
+    /// With [`StencilReach::Ceil`] the candidate range along each axis
+    /// covers every centre within `r` (the reach is `r` times the length of
+    /// the matching row of `M⁻¹`), so the distance test alone decides
+    /// membership. [`StencilReach::Floor`] narrows it to `⌊reach⌋` voxels on
+    /// either side of the voxel holding `center`.
     ///
     /// # Errors
     /// [`ComputeError::NonFinite`] for a non-finite centre or radius;
@@ -187,6 +207,7 @@ impl<const D: usize> RegularGrid<D> {
         &self,
         center: [F; D],
         r: F,
+        reach: StencilReach,
         mut visit: impl FnMut([usize; D], F),
     ) -> Result<(), ComputeError> {
         check_finite(&center)?;
@@ -207,9 +228,17 @@ impl<const D: usize> RegularGrid<D> {
         let mut hi = [0isize; D];
         for d in 0..D {
             let t = self.fractional(center, d);
-            let reach = r * self.inverse[d].iter().map(|v| v * v).sum::<F>().sqrt();
-            lo[d] = (t - reach - 0.5).floor() as isize;
-            hi[d] = (t + reach - 0.5).ceil() as isize;
+            let voxels = r * self.inverse[d].iter().map(|v| v * v).sum::<F>().sqrt();
+            (lo[d], hi[d]) = match reach {
+                StencilReach::Ceil => (
+                    (t - voxels - 0.5).floor() as isize,
+                    (t + voxels - 0.5).ceil() as isize,
+                ),
+                StencilReach::Floor => {
+                    let (home, half) = (t.floor() as isize, voxels.floor() as isize);
+                    (home - half, home + half)
+                }
+            };
         }
         let mut image = lo;
         loop {
@@ -255,10 +284,11 @@ impl<const D: usize> RegularGrid<D> {
         &self,
         kernel: &K,
         center: [F; D],
+        reach: StencilReach,
         mut visit: impl FnMut([usize; D], F),
     ) -> Result<(), ComputeError> {
         let norm = kernel.normalization(D);
-        self.stencil(center, kernel.cutoff(), |index, r_sq| {
+        self.stencil(center, kernel.cutoff(), reach, |index, r_sq| {
             visit(index, norm * kernel.profile(r_sq));
         })
     }
@@ -474,14 +504,18 @@ mod tests {
     fn stencil_wraps_only_periodic_axes() {
         let mut periodic = Vec::new();
         cube(10, true)
-            .stencil([0.1, 5.0, 5.0], 1.0, |i, _| periodic.push(i))
+            .stencil([0.1, 5.0, 5.0], 1.0, StencilReach::Ceil, |i, _| {
+                periodic.push(i)
+            })
             .unwrap();
         assert!(periodic.contains(&[9, 4, 4]), "wrapped image of voxel -1");
         assert!(periodic.contains(&[0, 4, 4]));
 
         let mut open = Vec::new();
         cube(10, false)
-            .stencil([0.1, 5.0, 5.0], 1.0, |i, _| open.push(i))
+            .stencil([0.1, 5.0, 5.0], 1.0, StencilReach::Ceil, |i, _| {
+                open.push(i)
+            })
             .unwrap();
         assert!(
             open.iter().all(|i| i[0] <= 1),
@@ -502,7 +536,8 @@ mod tests {
             ([0.2, 11.7, 6.0], 3.1),
         ] {
             let mut got = Vec::new();
-            g.stencil(center, r, |i, r_sq| got.push((i, r_sq))).unwrap();
+            g.stencil(center, r, StencilReach::Ceil, |i, r_sq| got.push((i, r_sq)))
+                .unwrap();
             let mut want = Vec::new();
             for i in 0..12 {
                 for j in 0..12 {
@@ -525,16 +560,19 @@ mod tests {
     fn spread_weights_are_the_kernel() {
         let g = cube(8, true);
         let mut total = 0.0;
-        g.spread(&Indicator::new(1.0).unwrap(), [4.5, 4.5, 4.5], |_, w| {
-            total += w
-        })
+        g.spread(
+            &Indicator::new(1.0).unwrap(),
+            [4.5, 4.5, 4.5],
+            StencilReach::Ceil,
+            |_, w| total += w,
+        )
         .unwrap();
         // The centre voxel and its six face neighbours.
         assert_eq!(total, 7.0);
 
         let k = Gaussian::new(0.5).unwrap();
         let mut at_center = 0.0;
-        g.spread(&k, [4.5, 4.5, 4.5], |i, w| {
+        g.spread(&k, [4.5, 4.5, 4.5], StencilReach::Ceil, |i, w| {
             if i == [4, 4, 4] {
                 at_center = w;
             }

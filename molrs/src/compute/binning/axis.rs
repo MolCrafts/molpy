@@ -6,6 +6,19 @@ use molrs::op::F;
 use ndarray::Array1;
 
 use crate::compute::ComputeError;
+use crate::compute::named_enum::named_enum;
+
+named_enum! {
+    /// Whether a binned range includes its upper edge `max`.
+    #[derive(Default)]
+    pub enum UpperEdge {
+        /// Half-open bins, `[min, max)`: [`Axis::index`].
+        #[default]
+        Open => "open",
+        /// The last bin closed, `[min, max]`: [`Axis::index_closed`].
+        Closed => "closed",
+    }
+}
 
 /// A linear (cloud-in-cell) split: two bins and their weights.
 pub(crate) type LinearSplit = ([usize; 2], [F; 2]);
@@ -133,6 +146,19 @@ impl Axis {
             return Ok(None);
         }
         Ok(Some(self.locate(x)))
+    }
+
+    /// The bin holding `x` under the `upper` edge rule: [`index`](Self::index)
+    /// or [`index_closed`](Self::index_closed).
+    ///
+    /// # Errors
+    /// [`ComputeError::NonFinite`] for a NaN or infinite sample.
+    #[inline]
+    pub fn index_by(&self, x: F, upper: UpperEdge) -> Result<Option<usize>, ComputeError> {
+        match upper {
+            UpperEdge::Open => self.index(x),
+            UpperEdge::Closed => self.index_closed(x),
+        }
     }
 
     /// Bin of an in-range `x`. The proportional guess is corrected against

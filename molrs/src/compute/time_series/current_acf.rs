@@ -3,7 +3,9 @@
 use molrs::op::F;
 use ndarray::{ArrayView2, Axis};
 
-use super::{Correlator, CorrelatorAccumulator, CorrelatorInput, LagKernel, TimeCorrelation};
+use super::{
+    Correlator, CorrelatorAccumulator, CorrelatorInput, LagKernel, Normalization, TimeCorrelation,
+};
 use crate::compute::{Compute, ComputeError, Stream};
 
 /// Autocorrelation of a collective current, summed over the Cartesian
@@ -20,6 +22,12 @@ use crate::compute::{Compute, ComputeError, Stream};
 /// ([`CumulativeTrapezoid`](crate::compute::CumulativeTrapezoid)); with the
 /// dipole rate `J = Ṁ` (a [`Derivative`](super::Derivative) of the dipole
 /// series) it is the IR flux correlation.
+///
+/// The estimator is unbiased by default. The raw lagged sum
+/// `Σ_τ J(τ) · J(τ + t)` ([`Normalization::None`], through
+/// [`with_normalization`](Self::with_normalization)) is the convention the
+/// former `IrFlux` used; an IR spectrum in arbitrary units keeps its shape
+/// either way.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct CurrentAcf {
     correlator: Correlator,
@@ -40,6 +48,12 @@ impl CurrentAcf {
         Self {
             correlator: Correlator::new(LagKernel::Product, max_lag).with_dimension(3),
         }
+    }
+
+    /// Scale the lagged sums by `norm` (default [`Normalization::Unbiased`]).
+    pub fn with_normalization(mut self, norm: Normalization) -> Self {
+        self.correlator = self.correlator.with_normalization(norm);
+        self
     }
 
     /// The correlator this ACF is.
@@ -74,6 +88,8 @@ crate::compute::spec::compute_spec! {
     CurrentAcf as "CurrentAcf";
     params |s| {
         max_lag: Int;
+        normalization: Choice(Normalization::NAMES)
+            = Normalization::default() => s.correlator.normalization();
     }
     inputs {
         current: Series;

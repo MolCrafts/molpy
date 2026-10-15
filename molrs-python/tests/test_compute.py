@@ -352,6 +352,29 @@ class TestTimeSeries:
         tc = molrs.compute.Survival("continuous", 3).compute(presence=presence, dt=1.0)
         np.testing.assert_allclose(tc.values[:, 0], 1.0)
 
+    def test_convention_options_reach_the_core(self):
+        """The previous conventions are ``__init__`` keywords parsed by the
+        core; their data rides on ``compute``."""
+        presence = np.ones((4, 2))
+        per_reference = molrs.compute.Survival(
+            "intermittent", 1, normalization="per_reference"
+        ).compute(presence=presence, dt=1.0, n_reference=1)
+        np.testing.assert_allclose(per_reference.values[:, 0], 2.0)
+        inner = np.zeros((4, 2))
+        inner[0] = 1.0
+        gated = molrs.compute.Survival("continuous", 1, origin="inner").compute(
+            presence=presence, dt=1.0, inner=inner
+        )
+        assert gated.values[0, 0] == pytest.approx(2.0 / 8.0)
+        with pytest.raises(ValueError, match="n_reference"):
+            molrs.compute.Survival("continuous", 1).compute(
+                presence=presence, dt=1.0, n_reference=1
+            )
+        raw = molrs.compute.CurrentAcf(2, normalization="none")
+        assert dict(raw.tunables())["normalization"] == "none"
+        with pytest.raises(ValueError, match="unknown SurvivalOrigin"):
+            molrs.compute.Survival("continuous", 1, origin="born")
+
     def test_derivative_unwrap_spectrum(self):
         series = np.arange(10.0)[:, None] * np.ones((1, 2))
         d = molrs.compute.Derivative("central").compute(series=series, dt=2.0)

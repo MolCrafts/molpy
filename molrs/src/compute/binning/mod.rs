@@ -5,5 +5,5 @@
 mod axis;
 mod histogram;
 
-pub use axis::Axis;
+pub use axis::{Axis, UpperEdge};
 pub use histogram::Histogram;

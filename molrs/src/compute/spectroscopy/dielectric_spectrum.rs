@@ -7,6 +7,7 @@ use ndarray::{Array1, ArrayView1, Axis, s};
 use num_complex::Complex64;
 
 use crate::compute::dielectric::DielectricPrefactor;
+use crate::compute::named_enum::named_enum;
 use crate::compute::{
     Compute, ComputeError, CumulativeTrapezoid, Derivative, DerivativeInput, EwaldBoundary,
     FrequencyGrid, Plateau, Spectrum, StaticDielectric, Stencil, TimeCorrelation, Window,
@@ -442,6 +443,21 @@ impl Compute for DipoleRateCrossSpectrum {
 
 // ── Dipole autocorrelation (PACF) route ──────────────────────────────────────
 
+named_enum! {
+    /// Which value of the [`Plateau`] window
+    /// [`DipoleAutocorrelationSpectrum`] subtracts as `C(∞)`.
+    #[derive(Default)]
+    pub enum PlateauValue {
+        /// The mean of the correlation over the window.
+        #[default]
+        Mean => "mean",
+        /// The correlation at the window's last lag; with the window ending
+        /// at `1` that is the curve's last sample — the forced subtraction of
+        /// the former `subtract_plateau = Some(true)`.
+        End => "end",
+    }
+}
+
 /// Permittivity from the **fluctuation dipole autocorrelation**
 /// `C(t) = Σ_α ⟨δM_α(0) δM_α(t)⟩` (the
 /// [`DipoleAcf`](crate::compute::DipoleAcf) curve) via the Fourier identity
@@ -461,11 +477,13 @@ impl Compute for DipoleRateCrossSpectrum {
 /// [`with_plateau`](Self::with_plateau) subtracts the curve's
 /// [`Plateau`] value `C(∞)` first, applying the formula to the relaxational
 /// `C(t) − C(∞)`. Whether to subtract is the caller's decision; the route
-/// never guesses it from the data.
+/// never guesses it from the data. `C(∞)` is the window's mean by default,
+/// or its last sample ([`with_plateau_value`](Self::with_plateau_value)).
 #[derive(Debug, Clone)]
 pub struct DipoleAutocorrelationSpectrum {
     config: RouteConfig,
     plateau: Option<Plateau>,
+    plateau_value: PlateauValue,
 }
 
 impl DipoleAutocorrelationSpectrum {
@@ -476,6 +494,7 @@ impl DipoleAutocorrelationSpectrum {
         Self {
             config: RouteConfig::new(units),
             plateau: None,
+            plateau_value: PlateauValue::default(),
         }
     }
 
@@ -488,9 +507,35 @@ impl DipoleAutocorrelationSpectrum {
         self
     }
 
+    /// Read `C(∞)` off the plateau window as its mean (default
+    /// [`PlateauValue::Mean`]) or its last sample ([`PlateauValue::End`]).
+    /// Applies only with a [`with_plateau`](Self::with_plateau) window.
+    pub fn with_plateau_value(mut self, plateau_value: PlateauValue) -> Self {
+        self.plateau_value = plateau_value;
+        self
+    }
+
     /// The plateau subtracted, if any.
     pub fn plateau(&self) -> Option<Plateau> {
         self.plateau
+    }
+
+    /// Which value of the plateau window is `C(∞)`.
+    pub fn plateau_value(&self) -> PlateauValue {
+        self.plateau_value
+    }
+
+    /// The `C(∞)` to subtract from `acf`: `0` without a plateau.
+    fn c_inf(&self, acf: &[F]) -> Result<F, ComputeError> {
+        match (self.plateau, self.plateau_value) {
+            (Some(plateau), PlateauValue::Mean) => Ok(plateau.read(acf)?.value),
+            (Some(plateau), PlateauValue::End) => plateau.end_value(acf),
+            (None, PlateauValue::Mean) => Ok(0.0),
+            (None, PlateauValue::End) => Err(ComputeError::OutOfRange {
+                field: "plateau_value",
+                value: "end, but no plateau window is subtracted".into(),
+            }),
+        }
     }
 }
 
@@ -500,16 +545,14 @@ impl Compute for DipoleAutocorrelationSpectrum {
 
     /// # Errors
     /// As [`EinsteinHelfandSpectrum`], and the [`Plateau`] errors when its
-    /// window covers fewer than two lags.
+    /// window covers fewer than two lags; [`ComputeError::OutOfRange`] for
+    /// [`PlateauValue::End`] without a plateau window.
     fn compute(
         &self,
         input: DielectricSpectrumInput<'_>,
     ) -> Result<DielectricSpectrumResult, ComputeError> {
         let Prepared { acf, dt, prefactor } = self.config.prepare(&input)?;
-        let c_inf = match self.plateau {
-            Some(plateau) => plateau.read(&acf.to_vec())?.value,
-            None => 0.0,
-        };
+        let c_inf = self.c_inf(&acf.to_vec())?;
         let series = acf.mapv(|v| v - c_inf);
         let c0 = acf[0] - c_inf;
         let (frequencies, re, im) = self.config.windowed_transform(series.view(), dt)?;
@@ -543,7 +586,7 @@ impl Compute for DipoleAutocorrelationSpectrum {
 /// share the configuration and the input, and differ in name (and the
 /// autocorrelation route's plateau).
 macro_rules! route_spec {
-    (|$s:ident| $route:ident $(, $extra:ident: $kind:ident = $default:expr => $read:expr)?) => {
+    (|$s:ident| $route:ident $(, $extra:ident: $kind:ident $(($($karg:tt)*))? = $default:expr => $read:expr)*) => {
         crate::compute::spec::compute_spec! {
             $route as stringify!($route);
             params |$s| {
@@ -553,7 +596,7 @@ macro_rules! route_spec {
                 epsilon_inf: Float
                     = StaticDielectric::DEFAULT_EPSILON_INF
                     => $s.config.epsilon_inf;
-                $($extra: $kind = $default => $read;)?
+                $($extra: $kind $(($($karg)*))? = $default => $read;)*
             }
             inputs {
                 correlation: Upstream("TimeCorrelation");
@@ -570,7 +613,8 @@ route_spec!(|s| GreenKuboSpectrum);
 route_spec!(|s| DipoleRateCrossSpectrum);
 route_spec!(
     |s| DipoleAutocorrelationSpectrum,
-    plateau: Range = crate::compute::ParamDefault::UNSET => s.plateau.map(|p| p.window())
+    plateau: Range = crate::compute::ParamDefault::UNSET => s.plateau.map(|p| p.window()),
+    plateau_value: Choice(PlateauValue::NAMES) = PlateauValue::default() => s.plateau_value
 );
 
 #[cfg(test)]

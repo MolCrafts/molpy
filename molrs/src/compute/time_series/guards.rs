@@ -18,15 +18,18 @@ pub(super) fn require_finite<'a>(
     }
 }
 
-/// A presence series holds only `0` and `1`.
-pub(super) fn require_presence(values: impl IntoIterator<Item = F>) -> Result<(), ComputeError> {
+/// A presence series (the input `field`) holds only `0` and `1`.
+pub(super) fn require_presence(
+    values: impl IntoIterator<Item = F>,
+    field: &'static str,
+) -> Result<(), ComputeError> {
     match values
         .into_iter()
         .enumerate()
         .find(|(_, v)| *v != 0.0 && *v != 1.0)
     {
         Some((index, value)) => Err(ComputeError::OutOfRange {
-            field: "a",
+            field,
             value: format!("presence value {value} at index {index} is neither 0 nor 1"),
         }),
         None => Ok(()),

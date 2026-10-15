@@ -81,7 +81,7 @@ pub(super) fn definition(c: &Correlator, a: &Array3<F>, b: Option<&Array3<F>>) -
                         };
                     }
                     LagKernel::Persistence => {
-                        if (tau..=tau + lag).all(|s| x[[s, i, 0]] == 1.0) {
+                        if x[[tau, i, 0]] == 1.0 && (tau..=tau + lag).all(|s| y[[s, i, 0]] == 1.0) {
                             out[[lag, channel(i, 0)]] += 1.0;
                         }
                     }
@@ -124,6 +124,16 @@ fn presence() -> Array3<F> {
             0.0
         }
     })
+}
+
+/// The frames of [`presence`] that may start a run: a subset of its ones,
+/// so the crossed persistence gates some origins away.
+fn presence_starts() -> Array3<F> {
+    let mut starts = presence();
+    for (t, item) in [(1, 0), (5, 1), (6, 1), (8, 2), (0, 3), (4, 3), (9, 3)] {
+        starts[[t, item, 0]] = 0.0;
+    }
+    starts
 }
 
 pub(super) fn input<'a>(a: &'a Array3<F>, b: Option<&'a Array3<F>>) -> CorrelatorInput<'a> {
@@ -170,6 +180,10 @@ fn configurations() -> Vec<(Correlator, Array3<F>, Option<Array3<F>>)> {
                     .with_reduction(reduce);
                 out.push((c, a, None));
             }
+            let crossed = Correlator::new(LagKernel::Persistence, max_lag)
+                .with_origins(origins)
+                .with_reduction(reduce);
+            out.push((crossed, presence_starts(), Some(presence())));
         }
     }
     out
@@ -454,6 +468,14 @@ fn orientation_and_presence_kernels_refuse_what_they_cannot_mean() {
             input(&not_presence, None)
         )),
         "a"
+    );
+    let present = Array3::from_elem((4, 1, 1), 1.0);
+    assert_eq!(
+        field(refusal(
+            Correlator::new(LagKernel::Persistence, 1),
+            input(&present, Some(&not_presence))
+        )),
+        "b"
     );
 }
 

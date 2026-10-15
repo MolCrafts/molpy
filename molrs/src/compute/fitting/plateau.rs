@@ -56,6 +56,12 @@ impl Plateau {
         self.window.fractions()
     }
 
+    /// The value of `y` at the window's last sample.
+    pub(crate) fn end_value(&self, y: &[F]) -> Result<F, ComputeError> {
+        let (_, fit_end) = self.window.indices(y.len())?;
+        Ok(y[fit_end])
+    }
+
     /// The windowed mean and spread of `y`.
     pub(crate) fn read(&self, y: &[F]) -> Result<PlateauResult, ComputeError> {
         let (fit_start, fit_end) = self.window.indices(y.len())?;

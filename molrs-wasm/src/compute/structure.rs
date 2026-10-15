@@ -152,11 +152,19 @@ pub struct GaussianDensity {
 
 #[wasm_bindgen]
 impl GaussianDensity {
-    /// `dims` is the voxel count per axis (3 values).
+    /// `dims` is the voxel count per axis (3 values); `reach` a
+    /// [`StencilReach`](mc::StencilReach) name.
     #[wasm_bindgen(constructor)]
-    pub fn new(dims: Vec<usize>, sigma: F, r_max: Option<F>) -> Result<GaussianDensity, JsError> {
+    pub fn new(
+        dims: Vec<usize>,
+        sigma: F,
+        r_max: Option<F>,
+        reach: Option<String>,
+    ) -> Result<GaussianDensity, JsError> {
         let dims = fixed::<usize, 3>(&dims, "GaussianDensity dims (3 values)")?;
-        let inner = mc::GaussianDensity::new(dims, sigma)?.given(r_max, |c, v| c.with_r_max(v))?;
+        let inner = mc::GaussianDensity::new(dims, sigma)?
+            .given(r_max, |c, v| c.with_r_max(v))?
+            .given(reach, |c, v| Ok(c.with_reach(v.parse()?)))?;
         Ok(Self { inner })
     }
 

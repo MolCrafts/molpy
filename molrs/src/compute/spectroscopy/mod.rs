@@ -15,8 +15,12 @@
 //! | ROA | parts of `α̇` and of `Ġ′` | [`Correlator`](crate::compute::Correlator) cross of each part | [`RamanSpectrum`] |
 //! | ε(ω) | dipole / current series | [`DipoleAcf`](crate::compute::DipoleAcf), [`CurrentAcf`](crate::compute::CurrentAcf), `Ṁ × M` cross | [`EinsteinHelfandSpectrum`] / [`GreenKuboSpectrum`] / [`DipoleAutocorrelationSpectrum`] / [`DipoleRateCrossSpectrum`] |
 //!
-//! Every correlation is the unbiased estimator (`1 / (T − t)` per lag), so a
-//! VDOS and an IR spectrum are on the same footing. The vibrational
+//! Every correlation is the unbiased estimator (`1 / (T − t)` per lag) by
+//! default, so a VDOS and an IR spectrum are on the same footing; the raw
+//! lagged sums the former IR / VCD / Raman / ROA correlators returned are
+//! [`Normalization::None`](crate::compute::Normalization::None) on
+//! [`CurrentAcf`](crate::compute::CurrentAcf) or the
+//! [`Correlator`](crate::compute::Correlator). The vibrational
 //! intensities are in arbitrary units; the permittivity carries its physical
 //! prefactor. The checks [`KramersKronig`], [`ConductivitySumRule`] and
 //! [`RouteAgreement`] judge a permittivity spectrum and return a
@@ -33,7 +37,7 @@ pub use dielectric_checks::{
 };
 pub use dielectric_spectrum::{
     DielectricSpectrumInput, DielectricSpectrumResult, DipoleAutocorrelationSpectrum,
-    DipoleRateCrossSpectrum, EinsteinHelfandSpectrum, GreenKuboSpectrum,
+    DipoleRateCrossSpectrum, EinsteinHelfandSpectrum, GreenKuboSpectrum, PlateauValue,
 };
 pub use polarizability_parts::{
     PolarizabilityParts, PolarizabilityPartsInput, PolarizabilityPartsResult,
@@ -55,8 +59,8 @@ mod tests {
     use crate::compute::time_series::test_support::{assert_close, direct_lagged_sum};
     use crate::compute::{
         Compute, Correlator, CorrelatorInput, CurrentAcf, CurrentAcfInput, Derivative,
-        DerivativeInput, LagKernel, Spectrum, SpectrumInput, Stencil, TimeCorrelation, Vacf,
-        VacfInput, Window,
+        DerivativeInput, LagKernel, Normalization, Spectrum, SpectrumInput, Stencil,
+        TimeCorrelation, Vacf, VacfInput, Window,
     };
     use molrs::op::F;
     use ndarray::{Array1, Array2, ArrayView2, Axis};
@@ -236,6 +240,39 @@ mod tests {
         );
     }
 
+    /// The former convention, still selectable: the raw IR flux correlation
+    /// `Σ_τ Ṁ(τ) · Ṁ(τ + k)`, unnormalised (`IrFlux`'s `sum_column_acf`).
+    #[test]
+    fn ir_flux_unnormalised_sum_is_selectable() {
+        let (n, dt, res) = (1024, 0.5, 200);
+        let wave = sine(n, dt, 10.0);
+        let dm = Array2::from_shape_fn((n, 3), |(t, d)| if d == 2 { wave(t) } else { 0.0 });
+        let rate = central(dm.view(), dt);
+        let mut sums = vec![0.0; res + 1];
+        for d in 0..3 {
+            let column = rate.column(d).to_vec();
+            for (k, s) in direct_lagged_sum(&column, &column, res)
+                .into_iter()
+                .enumerate()
+            {
+                sums[k] += s;
+            }
+        }
+        let raw = CurrentAcf::new(res)
+            .with_normalization(Normalization::None)
+            .compute(CurrentAcfInput {
+                current: rate.view(),
+                dt,
+            })
+            .unwrap();
+        assert_close(
+            raw.channel(0).unwrap().as_slice().unwrap(),
+            &sums,
+            1e-12,
+            "unnormalised acf",
+        );
+    }
+
     // ── VCD (former VcdCrossFlux + VcdSpectrum) ──
 
     #[test]
@@ -269,6 +306,38 @@ mod tests {
             &(-&i).to_vec(),
             1e-12,
             "sign",
+        );
+    }
+
+    /// The composed correlations select the former unnormalised sum on the
+    /// `Correlator` itself (`VcdCrossFlux`'s `sum_column_xcorr`).
+    #[test]
+    fn vcd_cross_flux_unnormalised_sum_is_selectable() {
+        use crate::compute::time_series::test_support::rng_series;
+        let (n, dt, res) = (300, 0.5, 60);
+        let mu_dot = central(rng_series(n, 3, 21).view(), dt);
+        let m_dot = central(rng_series(n, 3, 22).view(), dt);
+        let raw = Correlator::new(LagKernel::Product, res)
+            .with_normalization(Normalization::None)
+            .compute(CorrelatorInput {
+                a: mu_dot.view().insert_axis(Axis(1)),
+                b: Some(m_dot.view().insert_axis(Axis(1))),
+                dt,
+                boxes: None,
+            })
+            .unwrap();
+        let mut sums = vec![0.0; res + 1];
+        for d in 0..3 {
+            let c = direct_lagged_sum(&mu_dot.column(d).to_vec(), &m_dot.column(d).to_vec(), res);
+            for k in 0..=res {
+                sums[k] += c[k];
+            }
+        }
+        assert_close(
+            raw.channel(0).unwrap().as_slice().unwrap(),
+            &sums,
+            1e-12,
+            "unnormalised vcd",
         );
     }
 

@@ -4,7 +4,8 @@ use molrs::op::F;
 use ndarray::{ArrayView2, Axis};
 
 use super::{
-    Correlator, CorrelatorAccumulator, CorrelatorInput, LagKernel, MeanPolicy, TimeCorrelation,
+    Correlator, CorrelatorAccumulator, CorrelatorInput, LagKernel, MeanPolicy, Normalization,
+    TimeCorrelation,
 };
 use crate::compute::{Compute, ComputeError, Stream};
 
@@ -21,6 +22,11 @@ use crate::compute::{Compute, ComputeError, Stream};
 /// decay gives the Debye relaxation time
 /// ([`DebyeFit`](crate::compute::DebyeFit)). The volume, temperature and Ewald
 /// boundary that turn it into ε(ω) belong to the spectrum route, not here.
+///
+/// The estimator is unbiased by default; the raw lagged sum
+/// ([`Normalization::None`], through
+/// [`with_normalization`](Self::with_normalization)) is selectable like on
+/// every other product correlation.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct DipoleAcf {
     correlator: Correlator,
@@ -43,6 +49,12 @@ impl DipoleAcf {
                 .with_mean(MeanPolicy::Subtract)
                 .with_dimension(3),
         }
+    }
+
+    /// Scale the lagged sums by `norm` (default [`Normalization::Unbiased`]).
+    pub fn with_normalization(mut self, norm: Normalization) -> Self {
+        self.correlator = self.correlator.with_normalization(norm);
+        self
     }
 
     /// The correlator this ACF is.
@@ -77,6 +89,8 @@ crate::compute::spec::compute_spec! {
     DipoleAcf as "DipoleAcf";
     params |s| {
         max_lag: Int;
+        normalization: Choice(Normalization::NAMES)
+            = Normalization::default() => s.correlator.normalization();
     }
     inputs {
         dipoles: Series;
@@ -163,6 +177,24 @@ mod tests {
             / 128.0;
         assert!(res.values[[0, 0]] > 0.0);
         assert!((res.values[[0, 0]] - variance).abs() < 1e-12);
+    }
+
+    /// `Normalization::None` leaves the raw lagged sum of the fluctuations.
+    #[test]
+    fn the_raw_lagged_sum_is_selectable() {
+        let dm = rng_series(40, 3, 6);
+        let unbiased = dipole_acf(&dm, 1.0, 10).unwrap();
+        let raw = DipoleAcf::new(10)
+            .with_normalization(Normalization::None)
+            .compute(DipoleAcfInput {
+                dipoles: dm.view(),
+                dt: 1.0,
+            })
+            .unwrap();
+        for k in 0..=10 {
+            let expected = unbiased.values[[k, 0]] * (40 - k) as F;
+            assert!((raw.values[[k, 0]] - expected).abs() < 1e-12, "k={k}");
+        }
     }
 
     #[test]

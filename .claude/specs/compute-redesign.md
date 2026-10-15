@@ -759,6 +759,8 @@ its type; `D = slope / 2d` is `Msd` → `LinearFit`. `DebyeFit` moved to
   particle: `C(0) = ⟨h⟩` instead of the coordination number; and an SSP origin counts whenever the
   pair is in the bonded stable state (inside `r1` after entering `r0`), not only when `d ≤ r0` at
   that origin. Two `pair_survival_tcf` assertions moved with this (see Behaviour changes, 05 note).
+  Both former conventions are selectable since 10d (`SurvivalNormalization::PerReference`,
+  `SurvivalOrigin::Inner`).
 - **`HBonds::new(criterion) -> Result`** (validates the criterion), `Default`;
   `compute(HBondsInput { positions: T × N × 3, donors: &[(D, H)], acceptors: &[A], pairs:
   &[&Neighbors] })` → `HBondsResult { per_frame, counts, n_atoms }`. Each table is the caller's
@@ -1488,6 +1490,15 @@ regression.
      `ramantensor_plus_raman_transform_matches_manual_acf_path` now divide each
      lagged sum by `T − k` (`spectroscopy/mod.rs` tests); VCD and ROA gained
      the same pinned reference tests. No other literal moved.
+   - *Convention option (10d):* default unbiased; the previous unnormalised
+     sums are selectable via `CurrentAcf::with_normalization(Normalization::None)`
+     (IR) and, on the composed VCD / Raman / ROA paths, the existing
+     `Correlator::with_normalization`. `DipoleAcf::with_normalization` was
+     added for parity on the dipole path (`dev`'s `DebyeRelaxation` was
+     already unbiased, so it has no old convention to reproduce). Tests:
+     `ir_flux_unnormalised_sum_is_selectable`,
+     `vcd_cross_flux_unnormalised_sum_is_selectable`,
+     `dipole_acf::the_raw_lagged_sum_is_selectable`.
 2. **Gyration weighting.**
    - Before: `GyrationTensor` was unweighted about the geometric centre, while
      `RadiusOfGyration` and `ClusterProperties` were mass-weighted about the
@@ -1505,6 +1516,13 @@ regression.
    is no longer clamped into the last bin. Re-pinned in 05.
    - *As built (05):* VanHove had no golden test, so no literal moved; the new
      `a_distance_of_exactly_r_max_is_outside_the_axis` pins the rule.
+   - *Convention option (10d):* default half-open; the previous closed range
+     is selectable via `VanHove::with_upper_edge(UpperEdge::Closed)`. The
+     rule still comes from `Axis`: `Axis::index_by(x, UpperEdge)` dispatches
+     to `index` / `index_closed`, and `Histogram::add` takes the `UpperEdge`.
+     Test `a_closed_upper_edge_keeps_r_max_in_the_last_bin` (hand-computed
+     `[1, 0, 0, 1]`, plus a distinct pair exactly `r_max` apart; `dev` had no
+     VanHove golden).
 4. **Defaults.** Every binding and catalog default becomes the core default:
    - Cubatic 1.0 / 0.95 / 500 / 4
    - EnvironmentMatch `max_neighbors` 8
@@ -1523,6 +1541,64 @@ regression.
    - Re-pinned in 06.
 6. **Fallbacks become errors** (§5). Inputs that used to "work" with a silently
    wrong answer now fail.
+
+*Link 10d — conventions are configuration (operator ruling 2026-10-15).*
+Where the redesign changed a result between two legitimate conventions, the
+redesign's behaviour stays the default and the previous one is a
+`named_enum!` choice on a `with_*` setter (Python `__init__` keyword `None`,
+WASM optional constructor argument, `ComputeSpec` `Choice` parameter). No
+current golden moved; each old-convention test reproduces the `dev` literal
+or the `dev` algorithm written out.
+- **Correlation normalisation** (behaviour change 1) and **VanHove bins**
+  (behaviour change 3): see those items.
+- **Survival normalisation** (link 05): default per pair (`C(0) = ⟨h⟩`); the
+  previous per-reference-particle average is
+  `Survival::with_normalization(SurvivalNormalization::PerReference)`, which
+  scales the per-pair curve by `n_pairs / n_reference` with the reference
+  count given as data (`SurvivalInput::n_reference`; required by
+  `per_reference`, refused by `per_pair`, zero is `OutOfRange`). Test
+  `presence::per_reference_survival_is_the_coordination_number` reproduces
+  `dev`'s `coordination_number_at_lag_zero` `C(0) = 2.0`.
+- **SSP origin** (link 05): a convention, not a bug. `dev`'s `C(0) = 0.5`
+  counted an origin only when the pair was inside `r0` at that frame (the
+  stable-states initial condition: start in the inner region, break on
+  leaving `r1`); the redesign counts every frame of the hysteresis bonded
+  state. Default stays the latter; the former is
+  `Survival::with_origin(SurvivalOrigin::Inner)` with
+  `SurvivalInput::inner` = the presence of a second `PairPresence` with
+  `r1 = r0` (same columns, same order). It runs on the `Correlator` crossed
+  with `a = inner`, `b = presence`: the `Persistence` kernel now accepts a
+  cross series (`a` gates the origin, `b` must persist; batch, stream and
+  `definition` tests extended), and the intermittent kind is `Product`
+  crossed. An `inner` 1 where the presence is 0 (e.g. swapped arguments) is
+  `OutOfRange`. Test `presence::inner_origins_reproduce_the_former_ssp`
+  reproduces `dev`'s `ssp_uses_inner_birth_outer_survival_cutoff`
+  `C(0) = 0.5`, `C(1) = 1.0`. *Deviation from D4:* `Survival::compute` is no
+  longer one delegating line (it validates `inner` / `n_reference` and
+  applies the scale), and its stream is a `SurvivalAccumulator` over
+  `SurvivalFrame { presence, dt, inner, n_reference }` wrapping the
+  `Correlator` accumulator (stream = batch for every convention, tested).
+- **`GaussianDensity` stencil reach** (link 04): default `ceil` (every voxel
+  centre within `r_max`); freud's `floor` stencil is
+  `GaussianDensity::with_reach(StencilReach::Floor)`. `RegularGrid::stencil`
+  / `spread` take the `StencilReach` explicitly (the one range rule;
+  `SphereVoxelization` and `DiffractionPattern` pass `Ceil`, as `dev` did).
+  Test `floor_reach_is_the_former_freud_stencil` compares every voxel with
+  `dev`'s loop written out (`dev` had no literal).
+- **`DipoleAutocorrelationSpectrum` plateau** (link 03): default the windowed
+  `Plateau` mean; `dev`'s forced subtraction of the last sample is
+  `with_plateau_value(PlateauValue::End)` with a window ending at 1
+  (`End` reads the window's last lag). `End` without a plateau window is
+  `OutOfRange`. The `|C∞/C0| > 0.1` auto-trigger stays removed (a silent
+  fallback, §5). Test `dacs_end_value_is_the_last_sample`.
+- **Not options** (no second legitimate convention): explicit gyration
+  weights and the `Window` / binding defaults (behaviour changes 2 and 4) are
+  already selectable arguments; the orientation pair order (5) changes no
+  order parameter (quadratic in the director) and the Python `Nematic`
+  without minimum image was a bug; the fallbacks (6), the vacuum Ewald
+  boundary and removed clamps stay errors; the `PmftR12` bin measure was a
+  bug; `Axis` edge exactness (link 04) and `Pmft` half-open bins at
+  `x = −x_max` (link 06) are measure-zero round-off, not conventions.
 
 *Link 08 note (no golden literal moved):* the Voronoi goldens moved with
 their kernels: `det3_and_point_indexing` → `RegularGrid`'s
@@ -1605,6 +1681,7 @@ happens inside the chain.
 | 10-bindings | §6 in molrs-python, molrs-wasm, molrs-cxxapi; full pre-push gate; Atomiverse consumer note. | 10a |
 | 11-catalog | §7; molvis `registry.ts` migration (cross-repo). | 10 |
 | 10c-perf (code-complete 2026-10-14) | As built: RDF performance regression fixed under the "no regression above 10%" budget. **Root cause:** each pair crossed two `dyn FnMut` calls carrying `Option`s (one for a table), then binned through `Histogram<1>::add` (an `IxDyn` index per sample) and `Axis::locate`, which divided per sample and recomputed both edges (`min + i·width`) to correct the guess. **Fix:** `PairSource::visit_dist_sq(&mut dyn FnMut(&[F])) -> bool`, a provided bulk-column method (it batches `visit_pairs` into 1024-pair slices; `Neighbors` hands over its stored column as one slice; `NeighborList` batches straight from the backend visitor; `false` and no call when the column is absent, never zeros). `RdfAccumulator::bin` folds the slices through `Axis::index` into `u64` counts and builds the `Histogram` with `from_counts`. `Axis::locate` (still the one binning rule) multiplies by a hoistable inverse scale and returns `⌊t⌋` without consulting the edges when `t` is farther than a rounding-error bound (`guess_margin`) from an integer; otherwise the unchanged edge correction decides (test `locate_shortcut_matches_the_edges` compares against a brute-force edge search near every edge). `Axis::index` tests the range before finiteness (same results). No golden changed; bench checksums unchanged (199.935064). **Performance** (release, thin LTO, best of 5, interleaved runs on a shared machine; 10 frames × 6000 atoms, cutoff 8 Å, L = 40 Å, 200 bins): `Rdf` over `DIST_SQ` tables: old `dev` 0.0080 s / before 10c 0.0264 s / after **0.0075 s**; `Rdf` streaming a built `NeighborList`: old `compute_self` (search included) 0.127 s / before 0.152 s / after **0.130 s**. Other `PairSource` users, before → after: `CorrelationFunction` tables 0.0368 → 0.0305 s, streamed 0.159 → 0.157 s; `LocalDensity` tables 0.0206 → 0.0205 s, streamed 0.134 → 0.134 s; `PairPresence` (3 tables) 0.0118 → 0.0118 s. | 11 |
+| 10d-style-options (code-complete 2026-10-15) | As built: previous conventions selectable, current behaviour the default (see "Link 10d" under Behaviour changes): `CurrentAcf` / `DipoleAcf::with_normalization`, `Survival::with_normalization(SurvivalNormalization)` + `with_origin(SurvivalOrigin)` (inputs `inner`, `n_reference`; `SurvivalAccumulator` / `SurvivalFrame`; `Persistence` crossable), `VanHove::with_upper_edge(UpperEdge)` (`Axis::index_by`), `GaussianDensity::with_reach(StencilReach)` (`RegularGrid::stencil` / `spread` take it), `DipoleAutocorrelationSpectrum::with_plateau_value(PlateauValue)`; `InputKind::Count`; Python / WASM / `.pyi` / `ComputeSpec` carry each. | 10c |
 | 12-molpy | §8, after the molrs release that carries 01–11. | molrs tag |
 
 ## Link 09 acceptance audit

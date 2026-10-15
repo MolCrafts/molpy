@@ -255,13 +255,21 @@ impl<'a> Fields<'a> {
 
     /// A non-negative integer (`Index`).
     pub(crate) fn index(&self, key: &str) -> Result<usize, ComputeError> {
-        let expected = "a non-negative integer";
-        let value = self.require(key, expected)?;
+        let value = self.require(key, "a non-negative integer")?;
+        self.natural_of(key, &value)
+    }
+
+    /// An optional non-negative integer (`Count`).
+    pub(crate) fn opt_count(&self, key: &str) -> Result<Option<usize>, ComputeError> {
+        self.optional(key, |value| self.natural_of(key, value))
+    }
+
+    fn natural_of(&self, key: &str, value: &JsValue) -> Result<usize, ComputeError> {
         value
             .as_f64()
             .filter(|x| x.fract() == 0.0 && *x >= 0.0 && *x <= F::from(u32::MAX))
             .map(|x| x as usize)
-            .ok_or_else(|| self.fail(key, expected, &value))
+            .ok_or_else(|| self.fail(key, "a non-negative integer", value))
     }
 
     /// One of a choice's canonical names, parsed by the core `FromStr`.

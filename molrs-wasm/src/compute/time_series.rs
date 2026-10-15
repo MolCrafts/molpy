@@ -179,11 +179,12 @@ pub struct DipoleAcf {
 
 #[wasm_bindgen]
 impl DipoleAcf {
+    /// `normalization` is a [`Normalization`](mc::Normalization) name.
     #[wasm_bindgen(constructor)]
-    pub fn new(max_lag: usize) -> DipoleAcf {
-        Self {
-            inner: mc::DipoleAcf::new(max_lag),
-        }
+    pub fn new(max_lag: usize, normalization: Option<String>) -> Result<DipoleAcf, JsError> {
+        let inner = mc::DipoleAcf::new(max_lag)
+            .given(normalization, |c, v| Ok(c.with_normalization(v.parse()?)))?;
+        Ok(Self { inner })
     }
 
     /// `{ dipoles, dt }`: `dipoles` is `T × 3`.
@@ -206,11 +207,13 @@ pub struct CurrentAcf {
 
 #[wasm_bindgen]
 impl CurrentAcf {
+    /// `normalization` is a [`Normalization`](mc::Normalization) name
+    /// (`"none"`: the raw lagged sum of the former IR flux correlation).
     #[wasm_bindgen(constructor)]
-    pub fn new(max_lag: usize) -> CurrentAcf {
-        Self {
-            inner: mc::CurrentAcf::new(max_lag),
-        }
+    pub fn new(max_lag: usize, normalization: Option<String>) -> Result<CurrentAcf, JsError> {
+        let inner = mc::CurrentAcf::new(max_lag)
+            .given(normalization, |c, v| Ok(c.with_normalization(v.parse()?)))?;
+        Ok(Self { inner })
     }
 
     /// `{ current, dt }`: `current` is `T × 3`.
@@ -291,22 +294,35 @@ pub struct Survival {
 
 #[wasm_bindgen]
 impl Survival {
-    /// `kind` is a [`SurvivalKind`](mc::SurvivalKind) name.
+    /// `kind` is a [`SurvivalKind`](mc::SurvivalKind) name, `normalization`
+    /// a [`SurvivalNormalization`](mc::SurvivalNormalization) name, `origin`
+    /// a [`SurvivalOrigin`](mc::SurvivalOrigin) name.
     #[wasm_bindgen(constructor)]
-    pub fn new(kind: &str, max_lag: usize) -> Result<Survival, JsError> {
-        Ok(Self {
-            inner: mc::Survival::new(kind.parse()?, max_lag),
-        })
+    pub fn new(
+        kind: &str,
+        max_lag: usize,
+        normalization: Option<String>,
+        origin: Option<String>,
+    ) -> Result<Survival, JsError> {
+        let inner = mc::Survival::new(kind.parse()?, max_lag)
+            .given(normalization, |c, v| Ok(c.with_normalization(v.parse()?)))?
+            .given(origin, |c, v| Ok(c.with_origin(v.parse()?)))?;
+        Ok(Self { inner })
     }
 
-    /// `{ presence, dt }`: `presence` is `T × n_bonds` of 0 / 1 — e.g. the
-    /// `values` of a `Presence`.
+    /// `{ presence, dt, inner?, n_reference? }`: `presence` is `T × n_bonds`
+    /// of 0 / 1 — e.g. the `values` of a `Presence`; `inner` (same shape)
+    /// for the `inner` origin rule, `n_reference` for the `per_reference`
+    /// normalization.
     pub fn compute(&self, data: &JsValue) -> Result<TimeCorrelation, JsError> {
         let data = Fields::new(data, "Survival")?;
         let presence = data.matrix("presence", None)?;
+        let inner = data.opt_matrix("inner", None)?;
         let input = mc::SurvivalInput {
             presence: presence.view(),
             dt: data.scalar("dt")?,
+            inner: inner.as_ref().map(|i| i.view()),
+            n_reference: data.opt_count("n_reference")?,
         };
         Ok(self.inner.compute(input)?.into())
     }

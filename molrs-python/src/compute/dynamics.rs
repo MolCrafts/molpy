@@ -102,6 +102,9 @@ described!(PyPairPresence, PairPresence);
 ///     ``"all"`` or ``"first"``.
 /// stride : int, optional
 ///     Origin stride.
+/// upper_edge : str, optional
+///     ``"open"`` (half-open bins) or ``"closed"`` (``r_max`` in the last
+///     bin).
 ///
 /// ``compute(positions=, boxes=)``: an unwrapped ``(T, N, 3)`` trajectory
 /// and one box per frame.
@@ -113,12 +116,13 @@ pub(crate) struct PyVanHove {
 #[pymethods]
 impl PyVanHove {
     #[new]
-    #[pyo3(signature = (axis, lags, *, origins = None, stride = None))]
+    #[pyo3(signature = (axis, lags, *, origins = None, stride = None, upper_edge = None))]
     fn new(
         axis: PyRef<'_, PyAxis>,
         lags: Vec<usize>,
         origins: Option<&str>,
         stride: Option<usize>,
+        upper_edge: Option<&str>,
     ) -> Result<Self> {
         let mut inner = VanHove::new(axis.inner, lags)?;
         if let Some(origins) = origins {
@@ -126,6 +130,9 @@ impl PyVanHove {
         }
         if let Some(stride) = stride {
             inner = inner.with_stride(stride)?;
+        }
+        if let Some(upper_edge) = upper_edge {
+            inner = inner.with_upper_edge(upper_edge.parse()?);
         }
         Ok(Self { inner })
     }
