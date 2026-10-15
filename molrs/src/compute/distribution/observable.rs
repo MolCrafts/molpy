@@ -1,155 +1,23 @@
-//! The `Observable` abstraction: frame + atom-group selection → scalar samples.
+//! The `Observable` abstraction: positions + atom-index tuples → one scalar
+//! sample per tuple.
 
-use molrs::core::FrameAccess;
 use molrs::core::Mic;
-use molrs::core::keys;
-use molrs::op::{F, Idx};
+use molrs::op::F;
+use ndarray::ArrayView2;
 
 use crate::compute::ComputeError;
-use crate::compute::positions::{Positions, get_positions_ref};
 use crate::op::vec3::sub;
 
-/// A frozen container of atom-index tuples, all of one arity.
+/// A per-snapshot geometric extractor: each atom-index tuple → one scalar.
 ///
-/// `arity` is 2 for a distance, 3 for an angle (vertex in the middle), 4 for a
-/// dihedral. Indices are stored row-major in `flat` (`flat.len() == arity *
-/// n_groups`). This is the minimal selection surface; richer selection (SMARTS,
-/// a DSL) is explicitly out of scope for this link.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AtomGroups {
-    arity: usize,
-    flat: Vec<Idx>,
-}
-
-impl AtomGroups {
-    /// Build from row-major flat indices. Returns
-    /// [`ComputeError::BadShape`] if `flat.len()` is not a multiple of `arity`,
-    /// or [`ComputeError::OutOfRange`] if `arity` is 0.
-    pub fn new(arity: usize, flat: Vec<Idx>) -> Result<Self, ComputeError> {
-        if arity == 0 {
-            return Err(ComputeError::OutOfRange {
-                field: "AtomGroups::arity",
-                value: "0".to_string(),
-            });
-        }
-        if !flat.len().is_multiple_of(arity) {
-            return Err(ComputeError::BadShape {
-                expected: format!("multiple of arity {arity}"),
-                got: format!("{} indices", flat.len()),
-            });
-        }
-        Ok(Self { arity, flat })
-    }
-
-    /// Build atom groups of the given `arity` from a Frame topology `block`
-    /// (e.g. `"bonds"`, `"angles"`, `"dihedrals"`), reading the first `arity`
-    /// endpoint columns (`atomi`, `atomj`, …) row-major over the block's rows.
-    ///
-    /// Returns [`ComputeError::MissingBlock`] / [`ComputeError::MissingColumn`]
-    /// if the block or a required endpoint column is absent, or
-    /// [`ComputeError::BadShape`] if the endpoint columns differ in length.
-    /// Endpoint indices are stored as unsigned integers.
-    pub fn from_frame<FA: FrameAccess>(
-        frame: &FA,
-        block: &'static str,
-        arity: usize,
-    ) -> Result<Self, ComputeError> {
-        if arity == 0 || arity > keys::ENDPOINTS.len() {
-            return Err(ComputeError::OutOfRange {
-                field: "AtomGroups::arity",
-                value: arity.to_string(),
-            });
-        }
-        if !frame.contains_block(block) {
-            return Err(ComputeError::MissingBlock { name: block });
-        }
-        let mut columns: Vec<Vec<Idx>> = Vec::with_capacity(arity);
-        for &col in &keys::ENDPOINTS[..arity] {
-            let view = frame
-                .column(block, col)
-                .and_then(|c| c.as_uint())
-                .ok_or(ComputeError::MissingColumn { block, col })?;
-            columns.push(view.iter().copied().collect());
-        }
-        let n = columns[0].len();
-        if columns.iter().any(|c| c.len() != n) {
-            return Err(ComputeError::BadShape {
-                expected: format!("{arity} endpoint columns of equal length"),
-                got: "mismatched endpoint column lengths".to_string(),
-            });
-        }
-        let mut flat = Vec::with_capacity(n * arity);
-        for row in 0..n {
-            for col in &columns {
-                flat.push(col[row]);
-            }
-        }
-        Self::new(arity, flat)
-    }
-
-    /// Convenience: pairs (arity 2) from `[(i, j), ...]`.
-    pub fn pairs(tuples: &[(Idx, Idx)]) -> Self {
-        let mut flat = Vec::with_capacity(tuples.len() * 2);
-        for &(i, j) in tuples {
-            flat.push(i);
-            flat.push(j);
-        }
-        Self { arity: 2, flat }
-    }
-
-    /// Convenience: triples (arity 3) from `[(i, j, k), ...]` with `j` the vertex.
-    pub fn triples(tuples: &[(Idx, Idx, Idx)]) -> Self {
-        let mut flat = Vec::with_capacity(tuples.len() * 3);
-        for &(i, j, k) in tuples {
-            flat.push(i);
-            flat.push(j);
-            flat.push(k);
-        }
-        Self { arity: 3, flat }
-    }
-
-    /// Convenience: quadruples (arity 4) from `[(i, j, k, l), ...]`.
-    pub fn quads(tuples: &[(Idx, Idx, Idx, Idx)]) -> Self {
-        let mut flat = Vec::with_capacity(tuples.len() * 4);
-        for &(i, j, k, l) in tuples {
-            flat.push(i);
-            flat.push(j);
-            flat.push(k);
-            flat.push(l);
-        }
-        Self { arity: 4, flat }
-    }
-
-    pub fn arity(&self) -> usize {
-        self.arity
-    }
-
-    /// Number of tuples.
-    pub fn len(&self) -> usize {
-        self.flat.len() / self.arity
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.flat.is_empty()
-    }
-
-    /// The `i`-th tuple as a slice of length `arity`.
-    pub fn tuple(&self, i: usize) -> &[Idx] {
-        &self.flat[i * self.arity..(i + 1) * self.arity]
-    }
-}
-
-/// A stateless per-frame extractor: each selected tuple → one scalar sample.
+/// The tuples are an `n_tuples × arity` index array — 2 columns for a
+/// distance, 3 for an angle (vertex in the middle), 4 for a dihedral — passed
+/// as data with the positions; the observable holds no selection. `&self` is
+/// an immutable parameter bag and identical inputs yield identical samples.
 ///
-/// The contract mirrors the stateless [`Compute`](crate::compute::Compute)
-/// trait: `&self` is an immutable parameter bag and identical inputs yield
-/// identical samples.
-///
-/// Mirrors the reference implementation's separation between *what* atoms an analysis runs over
-/// (`CAtomGroup` / the observation list assembled in `src/tddf.cpp` and
-/// `src/geodens.cpp`) and the geometric quantity extracted per tuple. Here the
-/// selection is the frozen [`AtomGroups`] index container and the extractor is
-/// any [`Observable`] (distance / angle / dihedral).
+/// Mirrors the reference implementation's separation between *which* atoms an
+/// analysis runs over (its observation lists, `src/tddf.cpp`,
+/// `src/geodens.cpp`) and the geometric quantity extracted per tuple.
 pub trait Observable {
     /// Atom indices consumed per sample (2 / 3 / 4).
     fn arity(&self) -> usize;
@@ -166,119 +34,95 @@ pub trait Observable {
         None
     }
 
-    /// Extract one scalar per group from `frame`. Returns
-    /// [`ComputeError::BadShape`] if `groups.arity()` ≠ [`arity`](Self::arity),
-    /// and propagates degenerate-geometry errors (e.g. zero-length vectors).
-    fn sample<FA: FrameAccess>(
-        &self,
-        frame: &FA,
-        groups: &AtomGroups,
-    ) -> Result<Vec<F>, ComputeError>;
-
-    /// Sample into a caller-provided buffer (cleared first), reusing its
-    /// allocation across frames.
+    /// Extract one scalar per tuple into `out` (cleared first, its allocation
+    /// reused across frames).
     ///
-    /// The default delegates to [`sample`](Self::sample); the built-in
-    /// observables override it to fill `out` in place, so the per-frame
-    /// histogram loop avoids allocating a fresh `Vec` for every frame. Values
-    /// are identical to [`sample`](Self::sample) — this is a pure allocation
-    /// optimization.
-    fn sample_into<FA: FrameAccess>(
+    /// `positions` is `N × 3`; `mic` is the frame's minimum-image convention
+    /// ([`Mic::Free`] for open boundaries); `tuples` is `n_tuples ×`
+    /// [`arity`](Self::arity).
+    ///
+    /// # Errors
+    /// [`ComputeError::BadShape`] for a tuple array of the wrong arity or
+    /// positions without 3 columns; [`ComputeError::OutOfRange`] for an atom
+    /// index outside the positions; degenerate-geometry errors (e.g.
+    /// zero-length vectors).
+    fn sample_into(
         &self,
-        frame: &FA,
-        groups: &AtomGroups,
+        positions: ArrayView2<'_, F>,
+        mic: &Mic,
+        tuples: ArrayView2<'_, usize>,
         out: &mut Vec<F>,
-    ) -> Result<(), ComputeError> {
-        out.clear();
-        out.extend(self.sample(frame, groups)?);
-        Ok(())
-    }
+    ) -> Result<(), ComputeError>;
 }
 
-/// The x/y/z columns of a frame's `atoms` block as three parallel slices.
-///
-/// Each entry is a [`Positions`] — a zero-copy borrow for the contiguous
-/// `Frame`/`FrameView` case, an owned `Vec` only for non-contiguous views.
-/// Reach the raw `&[F]` via [`Positions::slice`].
-pub(crate) type PosCols<'a> = (Positions<'a>, Positions<'a>, Positions<'a>);
-
-/// Borrow the `atoms` x/y/z columns as three parallel slices.
-///
-/// Thin wrapper over the shared column extractor
-/// (`compute::positions::get_positions_ref`). Unlike a materialized `N×3` array this keeps
-/// the columns in their native SoA layout — observables index `xs[i]`/`ys[i]`/
-/// `zs[i]` directly, with no per-frame copy.
-pub(crate) fn positions<FA: FrameAccess>(frame: &FA) -> Result<PosCols<'_>, ComputeError> {
-    let (xp, yp, zp) = get_positions_ref(frame)?;
-    let n = xp.slice().len();
-    if yp.slice().len() != n || zp.slice().len() != n {
-        return Err(ComputeError::DimensionMismatch {
-            expected: n,
-            got: yp.slice().len().min(zp.slice().len()),
-            what: "atoms x/y/z length",
+/// Check that `tuples` has `arity` columns and indexes rows of the `N × 3`
+/// `positions` — the guard every observable runs before reading a position.
+pub(super) fn check_tuples(
+    arity: usize,
+    positions: ArrayView2<'_, F>,
+    tuples: ArrayView2<'_, usize>,
+) -> Result<(), ComputeError> {
+    if positions.ncols() != 3 {
+        return Err(ComputeError::BadShape {
+            expected: "positions N × 3".into(),
+            got: format!("N × {}", positions.ncols()),
         });
     }
-    Ok((xp, yp, zp))
+    if tuples.ncols() != arity {
+        return Err(ComputeError::BadShape {
+            expected: format!("atom-index tuples of arity {arity}"),
+            got: format!("arity {}", tuples.ncols()),
+        });
+    }
+    let n_atoms = positions.nrows();
+    if let Some(&bad) = tuples.iter().find(|&&i| i >= n_atoms) {
+        return Err(ComputeError::OutOfRange {
+            field: "atom index",
+            value: format!("{bad} (positions hold {n_atoms} atoms)"),
+        });
+    }
+    Ok(())
 }
 
-/// Minimum-image displacement `b - a` using a per-frame [`Mic`] hoisted by
-/// the caller (built once with [`SimBox::mic`](molrs::core::SimBox::mic) rather than resolved per
-/// pair). Free boundaries fall back to the raw separation. This is the one
-/// minimum-image implementation across `compute`, so distance DFs agree with
-/// [`Rdf`](crate::compute::Rdf) on the same pair (ac-003).
+/// Minimum-image displacement `r_b − r_a` under the frame's [`Mic`], resolved
+/// once per frame by the caller. The one minimum-image use across the
+/// observables, so a distance DF agrees with [`Rdf`](crate::compute::Rdf) on
+/// the same pair (ac-003).
 #[inline]
-pub(crate) fn displacement(mic: &Mic, xs: &[F], ys: &[F], zs: &[F], a: usize, b: usize) -> [F; 3] {
-    let from = [xs[a], ys[a], zs[a]];
-    let to = [xs[b], ys[b], zs[b]];
+pub(super) fn displacement(mic: &Mic, positions: ArrayView2<'_, F>, a: usize, b: usize) -> [F; 3] {
+    let from = [positions[[a, 0]], positions[[a, 1]], positions[[a, 2]]];
+    let to = [positions[[b, 0]], positions[[b, 1]], positions[[b, 2]]];
     mic.apply(sub(to, from))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ndarray::array;
 
     #[test]
-    fn atomgroups_validates_arity_multiple() {
-        assert!(AtomGroups::new(3, vec![0, 1, 2, 3]).is_err());
-        assert!(AtomGroups::new(0, vec![]).is_err());
-        let g = AtomGroups::new(2, vec![0, 1, 2, 3]).unwrap();
-        assert_eq!(g.len(), 2);
-        assert_eq!(g.tuple(1), &[2, 3]);
-    }
-
-    #[test]
-    fn empty_groups_report_empty() {
-        let g = AtomGroups::pairs(&[]);
-        assert!(g.is_empty());
-        assert_eq!(g.len(), 0);
-    }
-
-    #[test]
-    fn from_frame_reads_topology_block() {
-        use molrs::core::Block;
-        use molrs::core::Frame;
-        use ndarray::Array1;
-
-        let mut frame = Frame::new();
-        let mut angles = Block::new();
-        angles
-            .insert("atomi", Array1::from_vec(vec![0 as Idx, 3]).into_dyn())
-            .unwrap();
-        angles
-            .insert("atomj", Array1::from_vec(vec![1 as Idx, 4]).into_dyn())
-            .unwrap();
-        angles
-            .insert("atomk", Array1::from_vec(vec![2 as Idx, 5]).into_dyn())
-            .unwrap();
-        frame.insert("angles", angles);
-
-        let g = AtomGroups::from_frame(&frame, "angles", 3).unwrap();
-        assert_eq!(g.len(), 2);
-        assert_eq!(g.tuple(0), &[0, 1, 2]);
-        assert_eq!(g.tuple(1), &[3, 4, 5]);
-
-        // Missing block and missing endpoint column both error.
-        assert!(AtomGroups::from_frame(&frame, "bonds", 2).is_err());
-        assert!(AtomGroups::from_frame(&frame, "angles", 4).is_err());
+    fn tuples_are_checked_against_arity_and_positions() {
+        let positions = array![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]];
+        let pairs = array![[0usize, 1]];
+        assert!(check_tuples(2, positions.view(), pairs.view()).is_ok());
+        assert!(matches!(
+            check_tuples(3, positions.view(), pairs.view()),
+            Err(ComputeError::BadShape { .. })
+        ));
+        // An index past the positions used to panic on the read; it is an
+        // error.
+        let out_of_range = array![[0usize, 2]];
+        assert!(matches!(
+            check_tuples(2, positions.view(), out_of_range.view()),
+            Err(ComputeError::OutOfRange {
+                field: "atom index",
+                ..
+            })
+        ));
+        let flat = array![[0.0, 0.0], [1.0, 0.0]];
+        assert!(matches!(
+            check_tuples(2, flat.view(), pairs.view()),
+            Err(ComputeError::BadShape { .. })
+        ));
     }
 }

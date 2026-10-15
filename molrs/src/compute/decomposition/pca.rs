@@ -1,318 +1,224 @@
-//! 2-component Principal Component Analysis (PCA).
+//! Principal component analysis of a feature matrix.
 
-use std::marker::PhantomData;
-
-use molrs::core::FrameAccess;
 use molrs::op::F;
+use ndarray::{Array1, Array2, ArrayView1};
 
-use crate::compute::Compute;
-use crate::compute::ComputeError;
-use crate::compute::{ComputeResult, DescriptorRow};
+use crate::compute::{Compute, ComputeError, FeatureMatrix};
+use crate::op::linalg::eigh_sym;
 
-/// Result of a 2-component PCA projection.
-#[derive(Debug, Clone, Default)]
-pub struct PcaResult {
-    /// Projected coordinates, row-major of shape `[n_rows, 2]`.
-    pub coords: Vec<F>,
-    /// Explained variance per component, `variance[0] >= variance[1] >= 0`.
-    pub variance: [F; 2],
-}
-
-impl ComputeResult for PcaResult {}
-
-/// Stateless PCA calculator with two components, generic over the descriptor
-/// row type.
+/// Principal component analysis: the projection of every sample onto the
+/// `n_components` leading principal axes of the standardised features.
 ///
-/// Construct with `Pca::<T>::new()` where `T: DescriptorRow`. Each
-/// [`compute`](Compute::compute) call expects an `&Vec<T>` of length ≥ 3.
-///
-/// [`Pca`] is a [`Compute`] that consumes any upstream `Vec<T>` where
-/// `T: DescriptorRow` — each descriptor row is one observation. PCA
-/// standardizes the columns, computes covariance, and projects onto the top
-/// two eigenvectors via power iteration with deflation. No external
-/// linear-algebra crate is required; matrices are small (tens of columns).
+/// Configuration: the number of components. Data: any [`FeatureMatrix`] — an
+/// `Array2`, or a descriptor result such as
+/// [`SteinhardtResult`](crate::compute::SteinhardtResult) or
+/// [`LocalDescriptorsResult`](crate::compute::LocalDescriptorsResult) — one
+/// row per sample. The result is itself a [`FeatureMatrix`], so it feeds
+/// [`Kmeans`](crate::compute::Kmeans) directly.
 ///
 /// # Algorithm
 ///
-/// 1. Collect rows into an `n_rows × n_cols` matrix (row-major).
-/// 2. Standardize each column: `(x - mean) / std`. Zero-variance columns are
-///    rejected.
-/// 3. Covariance `C = (Z^T Z) / (n_rows - 1)`.
-/// 4. Top two eigenvectors via power iteration with deflation.
-/// 5. Project every row onto the two eigenvectors → `[n_rows, 2]` scores.
-///
-/// Same input → identical output (deterministic initial vector, deflation).
-#[derive(Debug)]
-pub struct Pca<T: DescriptorRow + Clone + Send + Sync + 'static> {
-    _marker: PhantomData<fn() -> T>,
+/// 1. Standardise each column: `z = (x − mean) / std` (sample standard
+///    deviation). A zero-variance column carries no direction and is an
+///    error.
+/// 2. Covariance `C = Zᵀ Z / (n_rows − 1)` — the correlation matrix.
+/// 3. Full symmetric eigendecomposition of `C` (the crate's one cyclic-Jacobi
+///    solver); the `n_components` largest eigenpairs are the axes and their
+///    explained variances. The eigenvalues are reported as computed, never
+///    clamped. Each axis's sign is fixed so its largest-magnitude loading is
+///    positive, so the projection does not depend on the solver's sign
+///    choice.
+/// 4. Project every standardised row onto the axes.
+#[derive(Debug, Clone, Copy)]
+pub struct Pca {
+    n_components: usize,
 }
 
-impl<T: DescriptorRow + Clone + Send + Sync + 'static> Pca<T> {
-    /// No parameters — fixed 2-component projection.
-    pub fn new() -> Self {
-        Self {
-            _marker: PhantomData,
-        }
+/// The data a [`Pca`] decomposes.
+#[derive(Clone, Copy)]
+pub struct PcaInput<'a> {
+    /// The samples, one row each.
+    pub features: &'a (dyn FeatureMatrix + Sync),
+}
+
+/// A PCA projection.
+#[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+pub struct PcaResult {
+    /// The scores, `n_rows × n_components`.
+    pub coords: Array2<F>,
+    /// Explained variance of each component, descending (the covariance
+    /// eigenvalues; they sum to `n_cols` over all components).
+    pub variance: Array1<F>,
+}
+
+impl FeatureMatrix for PcaResult {
+    fn n_rows(&self) -> usize {
+        self.coords.nrows()
+    }
+
+    fn n_cols(&self) -> usize {
+        self.coords.ncols()
+    }
+
+    fn row(&self, row: usize) -> ArrayView1<'_, F> {
+        self.coords.row(row)
     }
 }
 
-impl<T: DescriptorRow + Clone + Send + Sync + 'static> Clone for Pca<T> {
-    fn clone(&self) -> Self {
-        *self
-    }
-}
-
-impl<T: DescriptorRow + Clone + Send + Sync + 'static> Copy for Pca<T> {}
-
-impl<T: DescriptorRow + Clone + Send + Sync + 'static> Default for Pca<T> {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-const POWER_ITER_TOL: F = 1e-12;
-const POWER_ITER_MAX: usize = 200;
+/// Below this sample standard deviation a column is treated as constant.
 const STD_FLOOR: F = 1e-12;
 
-impl<T: DescriptorRow + Clone + Send + Sync + 'static> Compute for Pca<T> {
-    type Args<'a> = &'a Vec<T>;
-    type Output = PcaResult;
-
-    fn compute<'a, FA: FrameAccess + Sync + 'a>(
-        &self,
-        _frames: &[&'a FA],
-        rows: &'a Vec<T>,
-    ) -> Result<PcaResult, ComputeError> {
-        if rows.is_empty() {
-            return Err(ComputeError::EmptyInput);
+impl Pca {
+    /// Keep the `n_components` leading components.
+    ///
+    /// # Errors
+    /// [`ComputeError::OutOfRange`] for 0.
+    pub fn new(n_components: usize) -> Result<Self, ComputeError> {
+        if n_components == 0 {
+            return Err(ComputeError::OutOfRange {
+                field: "Pca::n_components",
+                value: "0".into(),
+            });
         }
-        let first = rows[0].as_row();
-        let n_cols = first.len();
-        let n_rows = rows.len();
-        let mut matrix = Vec::with_capacity(n_rows * n_cols);
-        for (i, row) in rows.iter().enumerate() {
-            let r = row.as_row();
-            if r.len() != n_cols {
-                return Err(ComputeError::BadShape {
-                    expected: format!("row length {n_cols}"),
-                    got: format!("row {i} length {}", r.len()),
+        Ok(Self { n_components })
+    }
+
+    /// The number of components kept.
+    pub fn n_components(&self) -> usize {
+        self.n_components
+    }
+
+    /// `(x − mean) / std` per column, the sample standard deviation.
+    ///
+    /// # Errors
+    /// [`ComputeError::OutOfRange`] for a column whose deviation is below
+    /// [`STD_FLOOR`].
+    fn standardized(mut x: Array2<F>) -> Result<Array2<F>, ComputeError> {
+        let n_minus_1 = (x.nrows() - 1) as F;
+        for (j, mut column) in x.columns_mut().into_iter().enumerate() {
+            let mean = column.sum() / column.len() as F;
+            column.mapv_inplace(|v| v - mean);
+            let std = (column.dot(&column) / n_minus_1).sqrt();
+            if std < STD_FLOOR {
+                return Err(ComputeError::OutOfRange {
+                    field: "Pca::column_std",
+                    value: format!("column {j} stddev {std:e} below floor {STD_FLOOR:e}"),
                 });
             }
-            matrix.extend_from_slice(r);
+            column.mapv_inplace(|v| v / std);
         }
-        fit_transform(&matrix, n_rows, n_cols)
+        Ok(x)
     }
 }
 
-/// Standardize columns, compute the covariance matrix, and project rows onto
-/// the top two eigenvectors.
-pub(crate) fn fit_transform(
-    matrix: &[F],
-    n_rows: usize,
-    n_cols: usize,
-) -> Result<PcaResult, ComputeError> {
-    if n_rows < 3 {
-        return Err(ComputeError::OutOfRange {
-            field: "PCA::n_rows",
-            value: n_rows.to_string(),
-        });
-    }
-    if n_cols < 2 {
-        return Err(ComputeError::OutOfRange {
-            field: "PCA::n_cols",
-            value: n_cols.to_string(),
-        });
-    }
-    if matrix.len() != n_rows * n_cols {
-        return Err(ComputeError::DimensionMismatch {
-            expected: n_rows * n_cols,
-            got: matrix.len(),
-            what: "PCA matrix length",
-        });
-    }
-    for (i, &v) in matrix.iter().enumerate() {
-        if !v.is_finite() {
-            return Err(ComputeError::NonFinite {
-                where_: "PCA matrix",
-                index: i,
-            });
-        }
-    }
+impl Compute for Pca {
+    type Input<'a> = PcaInput<'a>;
+    type Output = PcaResult;
 
-    let mut mean = vec![0.0 as F; n_cols];
-    for i in 0..n_rows {
-        for j in 0..n_cols {
-            mean[j] += matrix[i * n_cols + j];
+    /// # Errors
+    /// [`ComputeError::EmptyInput`] for no rows; [`ComputeError::OutOfRange`]
+    /// for fewer than 3 rows, fewer columns than components, or a
+    /// zero-variance column; [`ComputeError::NonFinite`] for a non-finite
+    /// feature.
+    fn compute(&self, input: PcaInput<'_>) -> Result<PcaResult, ComputeError> {
+        let features = input.features;
+        let (n_rows, n_cols) = (features.n_rows(), features.n_cols());
+        if n_rows == 0 {
+            return Err(ComputeError::EmptyInput);
         }
-    }
-    let inv_n = 1.0 / n_rows as F;
-    for m in mean.iter_mut() {
-        *m *= inv_n;
-    }
-
-    let mut var = vec![0.0 as F; n_cols];
-    for i in 0..n_rows {
-        for j in 0..n_cols {
-            let d = matrix[i * n_cols + j] - mean[j];
-            var[j] += d * d;
-        }
-    }
-    let n_minus_1 = (n_rows - 1) as F;
-    for v in var.iter_mut() {
-        *v /= n_minus_1;
-    }
-    let mut std = vec![0.0 as F; n_cols];
-    for (j, &v) in var.iter().enumerate() {
-        let s = v.sqrt();
-        if s < STD_FLOOR {
+        if n_rows < 3 {
             return Err(ComputeError::OutOfRange {
-                field: "PCA::column_std",
-                value: format!("column {j} stddev {s:e} below floor {STD_FLOOR:e}"),
+                field: "Pca::n_rows",
+                value: format!("{n_rows} (at least 3 samples)"),
             });
         }
-        std[j] = s;
-    }
-
-    let mut z = vec![0.0 as F; n_rows * n_cols];
-    for i in 0..n_rows {
-        for j in 0..n_cols {
-            z[i * n_cols + j] = (matrix[i * n_cols + j] - mean[j]) / std[j];
+        if n_cols < self.n_components {
+            return Err(ComputeError::OutOfRange {
+                field: "Pca::n_cols",
+                value: format!("{n_cols} features for {} components", self.n_components),
+            });
         }
-    }
-
-    let mut cov = vec![0.0 as F; n_cols * n_cols];
-    for a in 0..n_cols {
-        for b in a..n_cols {
-            let mut s = 0.0 as F;
-            for i in 0..n_rows {
-                s += z[i * n_cols + a] * z[i * n_cols + b];
-            }
-            let c = s / n_minus_1;
-            cov[a * n_cols + b] = c;
-            cov[b * n_cols + a] = c;
+        let x = Array2::from_shape_fn((n_rows, n_cols), |(i, j)| features.row(i)[j]);
+        if let Some(index) = x.iter().position(|v| !v.is_finite()) {
+            return Err(ComputeError::NonFinite {
+                where_: "Pca features",
+                index,
+            });
         }
-    }
 
-    let v1 = power_iteration(&cov, n_cols);
-    let lam1 = rayleigh_quotient(&cov, &v1, n_cols);
-    let mut cov2 = cov.clone();
-    for a in 0..n_cols {
-        for b in 0..n_cols {
-            cov2[a * n_cols + b] -= lam1 * v1[a] * v1[b];
-        }
-    }
-    let v2 = power_iteration(&cov2, n_cols);
-    let lam2 = rayleigh_quotient(&cov, &v2, n_cols);
-
-    let mut coords = vec![0.0 as F; n_rows * 2];
-    for i in 0..n_rows {
-        let mut pc1 = 0.0 as F;
-        let mut pc2 = 0.0 as F;
-        for j in 0..n_cols {
-            let zij = z[i * n_cols + j];
-            pc1 += zij * v1[j];
-            pc2 += zij * v2[j];
-        }
-        coords[2 * i] = pc1;
-        coords[2 * i + 1] = pc2;
-    }
-
-    let variance = [lam1.max(0.0), lam2.max(0.0)];
-    Ok(PcaResult { coords, variance })
-}
-
-fn power_iteration(mat: &[F], n: usize) -> Vec<F> {
-    let mut v = vec![1.0 / (n as F).sqrt(); n];
-    for _ in 0..POWER_ITER_MAX {
-        let mut next = mat_vec(mat, &v, n);
-        let norm = vec_norm(&next);
-        if norm <= 0.0 {
-            return v;
-        }
-        for x in next.iter_mut() {
-            *x /= norm;
-        }
-        let dot: F = v.iter().zip(next.iter()).map(|(a, b)| a * b).sum();
-        if dot < 0.0 {
-            for x in next.iter_mut() {
-                *x = -*x;
+        let z = Self::standardized(x)?;
+        let n_minus_1 = (n_rows - 1) as F;
+        let mut cov = vec![0.0; n_cols * n_cols];
+        for a in 0..n_cols {
+            for b in a..n_cols {
+                let c = z.column(a).dot(&z.column(b)) / n_minus_1;
+                cov[a * n_cols + b] = c;
+                cov[b * n_cols + a] = c;
             }
         }
-        let diff: F = v
-            .iter()
-            .zip(next.iter())
-            .map(|(a, b)| (a - b).powi(2))
-            .sum::<F>()
-            .sqrt();
-        v = next;
-        if diff < POWER_ITER_TOL {
-            break;
+
+        let (values, vectors) = eigh_sym(&cov, n_cols);
+        let k = self.n_components;
+        let mut axes = Array2::from_shape_fn((n_cols, k), |(r, c)| vectors[r * n_cols + c]);
+        for mut axis in axes.columns_mut() {
+            let largest = axis
+                .iter()
+                .copied()
+                .fold(0.0, |m: F, v| if v.abs() > m.abs() { v } else { m });
+            if largest < 0.0 {
+                axis.mapv_inplace(|v| -v);
+            }
         }
+
+        Ok(PcaResult {
+            coords: z.dot(&axes),
+            variance: Array1::from_iter(values.into_iter().take(k)),
+        })
     }
-    v
 }
 
-fn rayleigh_quotient(mat: &[F], v: &[F], n: usize) -> F {
-    let mv = mat_vec(mat, v, n);
-    v.iter().zip(mv.iter()).map(|(a, b)| a * b).sum()
-}
-
-fn mat_vec(mat: &[F], v: &[F], n: usize) -> Vec<F> {
-    let mut out = vec![0.0 as F; n];
-    for a in 0..n {
-        let mut s = 0.0 as F;
-        for b in 0..n {
-            s += mat[a * n + b] * v[b];
-        }
-        out[a] = s;
+crate::compute::spec::compute_spec! {
+    Pca as "Pca";
+    params |s| {
+        n_components: Int;
     }
-    out
-}
-
-fn vec_norm(v: &[F]) -> F {
-    v.iter().map(|&x| x * x).sum::<F>().sqrt()
+    inputs {
+        features: FeatureMatrix;
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::op::standard_normal;
-    use molrs::core::Frame;
+    use ndarray::array;
     use rand::SeedableRng;
     use rand::rngs::StdRng;
 
-    /// Descriptor row wrapping a Vec<F>.
-    #[derive(Clone)]
-    struct Row(Vec<F>);
-    impl DescriptorRow for Row {
-        fn as_row(&self) -> &[F] {
-            &self.0
-        }
-    }
-    impl ComputeResult for Row {}
-
-    fn three_blobs_rows(n_per_cluster: usize, seed: u64) -> Vec<Row> {
+    fn three_blobs_rows(n_per_cluster: usize, seed: u64) -> Array2<F> {
         let centers = [(0.0, 0.0), (10.0, 0.0), (5.0, 10.0)];
         let sigma: F = 0.5;
         let mut rng = StdRng::seed_from_u64(seed);
-        let mut rows = Vec::with_capacity(3 * n_per_cluster);
+        let mut rows = Vec::with_capacity(6 * n_per_cluster);
         for (cx, cy) in centers.iter().copied() {
             for _ in 0..n_per_cluster {
-                rows.push(Row(vec![
-                    cx + sigma * standard_normal(&mut rng),
-                    cy + sigma * standard_normal(&mut rng),
-                ]));
+                rows.push(cx + sigma * standard_normal(&mut rng));
+                rows.push(cy + sigma * standard_normal(&mut rng));
             }
         }
-        rows
+        Array2::from_shape_vec((3 * n_per_cluster, 2), rows).unwrap()
+    }
+
+    fn pca(n_components: usize, rows: &Array2<F>) -> Result<PcaResult, ComputeError> {
+        Pca::new(n_components)?.compute(PcaInput { features: rows })
     }
 
     #[test]
     fn fit_transform_on_three_blobs() {
         let rows = three_blobs_rows(20, 42);
-        let frame = Frame::new();
-        let result = Pca::<Row>::new().compute(&[&frame], &rows).unwrap();
-        assert_eq!(result.coords.len(), 2 * rows.len());
+        let result = pca(2, &rows).unwrap();
+        assert_eq!(result.coords.dim(), (rows.nrows(), 2));
         assert!(result.variance[0] > 0.0);
         assert!(result.variance[1] > 0.0);
         assert!(result.variance[0] >= result.variance[1]);
@@ -320,43 +226,38 @@ mod tests {
 
     #[test]
     fn err_on_too_few_rows() {
-        let rows = vec![Row(vec![1.0, 2.0]), Row(vec![3.0, 4.0])];
-        let frame = Frame::new();
-        let err = Pca::<Row>::new().compute(&[&frame], &rows).unwrap_err();
+        let rows = array![[1.0, 2.0], [3.0, 4.0]];
+        let err = pca(2, &rows).unwrap_err();
         assert!(matches!(err, ComputeError::OutOfRange { .. }));
     }
 
     #[test]
     fn err_on_too_few_cols() {
-        let rows = vec![Row(vec![1.0]); 5];
-        let frame = Frame::new();
-        let err = Pca::<Row>::new().compute(&[&frame], &rows).unwrap_err();
+        let rows = Array2::<F>::ones((5, 1));
+        let err = pca(2, &rows).unwrap_err();
         assert!(matches!(err, ComputeError::OutOfRange { .. }));
     }
 
     #[test]
     fn err_on_nan_input() {
-        let mut rows = vec![Row(vec![0.0; 4]); 5];
-        rows[1].0[2] = F::NAN;
-        let frame = Frame::new();
-        let err = Pca::<Row>::new().compute(&[&frame], &rows).unwrap_err();
+        let mut rows = Array2::<F>::zeros((5, 4));
+        rows[[1, 2]] = F::NAN;
+        let err = pca(2, &rows).unwrap_err();
         assert!(matches!(err, ComputeError::NonFinite { .. }));
     }
 
     #[test]
     fn err_on_zero_variance_column() {
         // column 1 constant across 5 rows
-        let rows: Vec<Row> = (0..5).map(|i| Row(vec![i as F, 1.0])).collect();
-        let frame = Frame::new();
-        let err = Pca::<Row>::new().compute(&[&frame], &rows).unwrap_err();
+        let rows = Array2::from_shape_fn((5, 2), |(i, j)| if j == 0 { i as F } else { 1.0 });
+        let err = pca(2, &rows).unwrap_err();
         assert!(matches!(err, ComputeError::OutOfRange { .. }));
     }
 
     #[test]
     fn variance_sum_tracks_trace() {
         let rows = three_blobs_rows(40, 7);
-        let frame = Frame::new();
-        let result = Pca::<Row>::new().compute(&[&frame], &rows).unwrap();
+        let result = pca(2, &rows).unwrap();
         let sum = result.variance[0] + result.variance[1];
         assert!(
             (sum - 2.0).abs() < 1e-6,
@@ -365,10 +266,48 @@ mod tests {
     }
 
     #[test]
-    fn ragged_rows_error() {
-        let rows = vec![Row(vec![1.0, 2.0]), Row(vec![3.0])];
-        let frame = Frame::new();
-        let err = Pca::<Row>::new().compute(&[&frame], &rows).unwrap_err();
-        assert!(matches!(err, ComputeError::BadShape { .. }));
+    fn zero_components_is_out_of_range() {
+        assert!(matches!(
+            Pca::new(0),
+            Err(ComputeError::OutOfRange {
+                field: "Pca::n_components",
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn no_rows_is_empty_input() {
+        assert!(matches!(
+            pca(1, &Array2::<F>::zeros((0, 2))),
+            Err(ComputeError::EmptyInput)
+        ));
+    }
+
+    /// Two perfectly correlated columns: the correlation matrix is
+    /// `[[1, 1], [1, 1]]`, eigenvalues 2 and 0, the first axis `(1, 1)/√2`.
+    /// The second eigenvalue is reported as the solver returns it (spec §5:
+    /// no `max(0.0)` clamp) — zero to round-off, of either sign.
+    #[test]
+    fn a_rank_one_matrix_has_one_axis() {
+        let rows = array![[0.0, 1.0], [1.0, 3.0], [2.0, 5.0], [3.0, 7.0]];
+        let result = pca(2, &rows).unwrap();
+        assert!((result.variance[0] - 2.0).abs() < 1e-12);
+        assert!(result.variance[1].abs() < 1e-12);
+        // Scores on axis 1 are (z₀ + z₁)/√2 = √2 z₀, z₀ ∝ (−1.5, −0.5, 0.5, 1.5).
+        let std = (5.0_f64 / 3.0).sqrt();
+        for (i, &x0) in [-1.5, -0.5, 0.5, 1.5].iter().enumerate() {
+            let expected = std::f64::consts::SQRT_2 * x0 / std;
+            assert!((result.coords[[i, 0]] - expected).abs() < 1e-12);
+        }
+    }
+
+    #[test]
+    fn the_projection_is_a_feature_matrix() {
+        let rows = three_blobs_rows(5, 1);
+        let result = pca(1, &rows).unwrap();
+        let f: &dyn FeatureMatrix = &result;
+        assert_eq!((f.n_rows(), f.n_cols()), (15, 1));
+        assert_eq!(f.row(3)[0], result.coords[[3, 0]]);
     }
 }

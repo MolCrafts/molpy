@@ -1,247 +1,236 @@
-//! Local environments (bond order, descriptors, angular separation,
-//! environment matching) — WASM face of the `molrs::compute` environment family.
+//! Local environments — the WASM face of `molrs::compute::environment`.
+//!
+//! ```js
+//! const env = new EnvironmentMatch(0.3).compute({ neighbors });
+//! const com = new CenterOfMass().compute({ positions, partition: env, masses });
+//! ```
 
-use super::{Grid2Out, js_value, quats};
-use crate::core::frame::Frame;
-use crate::core::nd_array::JsFloatArray;
-use crate::core::neighbors::Neighbors;
-use molrs::compute::Compute;
+use molrs::compute::{self as mc, Compute};
 use molrs::op::F;
-use serde::Serialize;
 use wasm_bindgen::prelude::*;
 
-#[wasm_bindgen(js_name = BondOrientationalOrder)]
-pub struct BondOrientationalOrder {
-    inner: molrs::compute::BondOrientationalOrder,
+use super::config::Given;
+use super::handle::{described, output};
+use super::wire::Fields;
+
+output! {
+    /// The bond-orientational order diagram on a (θ, φ) grid.
+    BondOrientationalOrderResult => mc::BondOrientationalOrderResult
 }
 
-#[wasm_bindgen(js_class = BondOrientationalOrder)]
+output! {
+    /// Spherical-harmonic descriptors per particle (`l_max`, `n_sphs`,
+    /// `features`). A `FeatureMatrix` for `Pca` / `Kmeans`.
+    LocalDescriptorsResult => mc::LocalDescriptorsResult
+}
+
+output! {
+    /// Projections of each bond onto the reference vectors.
+    LocalBondProjectionResult => mc::LocalBondProjectionResult
+}
+
+output! {
+    /// Environment clusters: `cluster_idx`, `n_clusters`, `fingerprints`. A
+    /// `Partition` for the group computes.
+    EnvironmentMatchResult => mc::EnvironmentMatchResult
+}
+
+output! {
+    /// Angles between every query and every reference orientation.
+    AngularSeparationGlobalResult => mc::AngularSeparationGlobalResult
+}
+
+output! {
+    /// Angle between the orientations of each neighbour pair.
+    AngularSeparationNeighborResult => mc::AngularSeparationNeighborResult
+}
+
+/// Bond-orientational order diagram.
+#[wasm_bindgen]
+pub struct BondOrientationalOrder {
+    inner: mc::BondOrientationalOrder,
+}
+
+#[wasm_bindgen]
 impl BondOrientationalOrder {
     #[wasm_bindgen(constructor)]
-    pub fn new(n_theta: usize, n_phi: usize) -> Result<Self, JsValue> {
+    pub fn new(n_theta: usize, n_phi: usize) -> Result<BondOrientationalOrder, JsError> {
         Ok(Self {
-            inner: molrs::compute::BondOrientationalOrder::new(n_theta, n_phi)
-                .map_err(|e| JsValue::from_str(&format!("BondOrientationalOrder: {e}")))?,
+            inner: mc::BondOrientationalOrder::new(n_theta, n_phi)?,
         })
     }
 
-    pub fn compute(&self, frame: &Frame, neighbors: &Neighbors) -> Result<JsValue, JsValue> {
-        #[derive(Serialize)]
-        #[serde(rename_all = "camelCase")]
-        struct Out {
-            bond_order: Grid2Out,
-            raw_counts: Vec<u64>,
-            shape: [usize; 2],
-            theta_edges: Vec<F>,
-            phi_edges: Vec<F>,
-        }
-        frame.with_frame(|rs_frame| {
-            let nlists = std::slice::from_ref(&neighbors.inner);
-            let mut out = self
-                .inner
-                .compute(&[rs_frame], nlists)
-                .map_err(|e| JsValue::from_str(&format!("BondOrientationalOrder compute: {e}")))?;
-            let r = out
-                .pop()
-                .ok_or_else(|| JsValue::from_str("BondOrientationalOrder: empty result"))?;
-            let shape = [r.bond_order.nrows(), r.bond_order.ncols()];
-            js_value(&Out {
-                bond_order: Grid2Out {
-                    data: r.bond_order.iter().copied().collect(),
-                    shape,
-                },
-                raw_counts: r.raw_counts.iter().copied().collect(),
-                shape,
-                theta_edges: r.theta_edges,
-                phi_edges: r.phi_edges,
-            })
-        })
+    /// `{ neighbors }`.
+    pub fn compute(&self, data: &JsValue) -> Result<BondOrientationalOrderResult, JsError> {
+        let data = Fields::new(data, "BondOrientationalOrder")?;
+        let neighbors = data.neighbors("neighbors")?;
+        let input = mc::BondOrientationalOrderInput {
+            neighbors: &neighbors,
+        };
+        Ok(self.inner.compute(input)?.into())
     }
 }
 
-#[wasm_bindgen(js_name = LocalDescriptors)]
+/// Spherical-harmonic descriptors up to `lMax`.
+#[wasm_bindgen]
 pub struct LocalDescriptors {
-    inner: molrs::compute::LocalDescriptors,
+    inner: mc::LocalDescriptors,
 }
 
-#[wasm_bindgen(js_class = LocalDescriptors)]
+#[wasm_bindgen]
 impl LocalDescriptors {
     #[wasm_bindgen(constructor)]
-    pub fn new(l_max: u32) -> Self {
+    pub fn new(l_max: u32) -> LocalDescriptors {
         Self {
-            inner: molrs::compute::LocalDescriptors::new(l_max),
+            inner: mc::LocalDescriptors::new(l_max),
         }
     }
 
-    pub fn compute(&self, frame: &Frame, neighbors: &Neighbors) -> Result<JsValue, JsValue> {
-        #[derive(Serialize)]
-        #[serde(rename_all = "camelCase")]
-        struct Out {
-            l_max: u32,
-            n_sphs: usize,
-            descriptors_re_im: Vec<F>,
-        }
-        frame.with_frame(|rs_frame| {
-            let nlists = std::slice::from_ref(&neighbors.inner);
-            let mut out = self
-                .inner
-                .compute(&[rs_frame], nlists)
-                .map_err(|e| JsValue::from_str(&format!("LocalDescriptors compute: {e}")))?;
-            let r = out
-                .pop()
-                .ok_or_else(|| JsValue::from_str("LocalDescriptors: empty result"))?;
-            js_value(&Out {
-                l_max: r.l_max,
-                n_sphs: r.n_sphs,
-                descriptors_re_im: r.descriptors.iter().flat_map(|c| [c.re, c.im]).collect(),
-            })
-        })
-    }
-}
-
-/// Angle between every query orientation and every global orientation —
-/// molrs `compute::AngularSeparationGlobal`. Orientations are flat unit
-/// quaternions `[w, x, y, z, …]`; `equivalentOrientations` (default `true`)
-/// identifies `q` with `-q`.
-#[wasm_bindgen(js_name = AngularSeparationGlobal)]
-pub struct AngularSeparationGlobal {
-    inner: molrs::compute::AngularSeparationGlobal,
-}
-
-#[wasm_bindgen(js_class = AngularSeparationGlobal)]
-impl AngularSeparationGlobal {
-    #[wasm_bindgen(constructor)]
-    pub fn new(equivalent_orientations: Option<bool>) -> Self {
-        let inner = molrs::compute::AngularSeparationGlobal::new();
-        Self {
-            inner: match equivalent_orientations {
-                Some(on) => inner.with_equivalent_orientations(on),
-                None => inner,
-            },
-        }
-    }
-
-    /// `{ data, shape: [nQuery, nGlobal] }` of angles (radians).
-    pub fn compute(&self, query: &[F], global: &[F]) -> Result<JsValue, JsValue> {
-        let query = quats(query, "AngularSeparationGlobal query")?;
-        let global = quats(global, "AngularSeparationGlobal global")?;
-        let dummy = molrs::core::Frame::new();
-        let args = molrs::compute::AngularSeparationGlobalArgs {
-            query: &query,
-            global: &global,
+    /// `{ neighbors }`.
+    pub fn compute(&self, data: &JsValue) -> Result<LocalDescriptorsResult, JsError> {
+        let data = Fields::new(data, "LocalDescriptors")?;
+        let neighbors = data.neighbors("neighbors")?;
+        let input = mc::LocalDescriptorsInput {
+            neighbors: &neighbors,
         };
-        let mut out = self
-            .inner
-            .compute(&[&dummy], args)
-            .map_err(|e| JsValue::from_str(&format!("AngularSeparationGlobal: {e}")))?;
-        let r = out
-            .pop()
-            .ok_or_else(|| JsValue::from_str("AngularSeparationGlobal: empty result"))?;
-        let shape = [r.angles.nrows(), r.angles.ncols()];
-        js_value(&Grid2Out {
-            data: r.angles.iter().copied().collect(),
-            shape,
-        })
+        Ok(self.inner.compute(input)?.into())
     }
 }
 
-/// Angle between each neighbour pair's orientations — molrs
-/// `compute::AngularSeparationNeighbor`. Orientations are flat unit
-/// quaternions; `equivalentOrientations` (default `true`) identifies `q`
-/// with `-q`.
-#[wasm_bindgen(js_name = AngularSeparationNeighbor)]
-pub struct AngularSeparationNeighbor {
-    inner: molrs::compute::AngularSeparationNeighbor,
+/// Bond projections onto reference vectors, in each particle's frame.
+#[wasm_bindgen]
+pub struct LocalBondProjection {
+    inner: mc::LocalBondProjection,
 }
 
-#[wasm_bindgen(js_class = AngularSeparationNeighbor)]
-impl AngularSeparationNeighbor {
+#[wasm_bindgen]
+impl LocalBondProjection {
     #[wasm_bindgen(constructor)]
-    pub fn new(equivalent_orientations: Option<bool>) -> Self {
-        let inner = molrs::compute::AngularSeparationNeighbor::new();
+    #[allow(clippy::new_without_default)]
+    pub fn new() -> LocalBondProjection {
         Self {
-            inner: match equivalent_orientations {
-                Some(on) => inner.with_equivalent_orientations(on),
-                None => inner,
-            },
+            inner: mc::LocalBondProjection::new(),
         }
     }
 
-    /// One angle (radians) per pair of `neighbors`, in pair order.
-    pub fn compute(
-        &self,
-        frame: &Frame,
-        neighbors: &Neighbors,
-        query: &[F],
-        points: &[F],
-    ) -> Result<JsFloatArray, JsValue> {
-        let query = quats(query, "AngularSeparationNeighbor query")?;
-        let points = quats(points, "AngularSeparationNeighbor points")?;
-        frame.with_frame(|rs_frame| {
-            let nlists = std::slice::from_ref(&neighbors.inner);
-            let q = vec![query];
-            let p = vec![points];
-            let args = molrs::compute::AngularSeparationNeighborArgs {
-                nlists,
-                query_orientations: &q,
-                point_orientations: &p,
-            };
-            let mut out = self
-                .inner
-                .compute(&[rs_frame], args)
-                .map_err(|e| JsValue::from_str(&format!("AngularSeparationNeighbor: {e}")))?;
-            let r = out
-                .pop()
-                .ok_or_else(|| JsValue::from_str("AngularSeparationNeighbor: empty result"))?;
-            Ok(JsFloatArray::from(r.angles.as_slice()))
-        })
+    /// `{ neighbors, proj_vectors, orientations? }`: `proj_vectors` `M × 3`,
+    /// `orientations` `N × 4`.
+    pub fn compute(&self, data: &JsValue) -> Result<LocalBondProjectionResult, JsError> {
+        let data = Fields::new(data, "LocalBondProjection")?;
+        let neighbors = data.neighbors("neighbors")?;
+        let proj_vectors = data.matrix("proj_vectors", Some(3))?;
+        let orientations = data.opt_matrix("orientations", Some(4))?;
+        let input = mc::LocalBondProjectionInput {
+            neighbors: &neighbors,
+            proj_vectors: proj_vectors.view(),
+            orientations: orientations.as_ref().map(|o| o.view()),
+        };
+        Ok(self.inner.compute(input)?.into())
     }
 }
 
-#[wasm_bindgen(js_name = EnvironmentMatch)]
+/// Cluster particles whose neighbour environments match within an RMSD.
+#[wasm_bindgen]
 pub struct EnvironmentMatch {
-    inner: molrs::compute::EnvironmentMatch,
+    inner: mc::EnvironmentMatch,
 }
 
-#[wasm_bindgen(js_class = EnvironmentMatch)]
+#[wasm_bindgen]
 impl EnvironmentMatch {
     #[wasm_bindgen(constructor)]
     pub fn new(
         rmsd_threshold: F,
         registration: Option<bool>,
         max_neighbors_for_registration: Option<usize>,
-    ) -> Result<Self, JsValue> {
-        let mut inner = molrs::compute::EnvironmentMatch::new(rmsd_threshold)
-            .map_err(|e| JsValue::from_str(&format!("EnvironmentMatch: {e}")))?;
-        inner = inner.with_registration(registration.unwrap_or(false));
-        if let Some(n) = max_neighbors_for_registration {
-            inner = inner.with_max_neighbors_for_registration(n);
-        }
+    ) -> Result<EnvironmentMatch, JsError> {
+        let inner = mc::EnvironmentMatch::new(rmsd_threshold)?
+            .given(registration, |c, v| Ok(c.with_registration(v)))?
+            .given(max_neighbors_for_registration, |c, v| {
+                c.with_max_neighbors_for_registration(v)
+            })?;
         Ok(Self { inner })
     }
 
-    pub fn compute(&self, frame: &Frame, neighbors: &Neighbors) -> Result<JsValue, JsValue> {
-        #[derive(Serialize)]
-        #[serde(rename_all = "camelCase")]
-        struct Out {
-            cluster_idx: Vec<u32>,
-            n_clusters: usize,
-            fingerprints: Vec<Vec<F>>,
-        }
-        frame.with_frame(|rs_frame| {
-            let nlists = std::slice::from_ref(&neighbors.inner);
-            let mut out = self
-                .inner
-                .compute(&[rs_frame], nlists)
-                .map_err(|e| JsValue::from_str(&format!("EnvironmentMatch compute: {e}")))?;
-            let r = out
-                .pop()
-                .ok_or_else(|| JsValue::from_str("EnvironmentMatch: empty result"))?;
-            js_value(&Out {
-                cluster_idx: r.cluster_idx,
-                n_clusters: r.n_clusters,
-                fingerprints: r.fingerprints,
-            })
-        })
+    /// `{ neighbors }`.
+    pub fn compute(&self, data: &JsValue) -> Result<EnvironmentMatchResult, JsError> {
+        let data = Fields::new(data, "EnvironmentMatch")?;
+        let neighbors = data.neighbors("neighbors")?;
+        let input = mc::EnvironmentMatchInput {
+            neighbors: &neighbors,
+        };
+        Ok(self.inner.compute(input)?.into())
     }
 }
+
+/// Angles between query orientations and a reference set.
+#[wasm_bindgen]
+pub struct AngularSeparationGlobal {
+    inner: mc::AngularSeparationGlobal,
+}
+
+#[wasm_bindgen]
+impl AngularSeparationGlobal {
+    #[wasm_bindgen(constructor)]
+    pub fn new(equivalent_orientations: Option<bool>) -> Result<AngularSeparationGlobal, JsError> {
+        let inner = mc::AngularSeparationGlobal::new().given(equivalent_orientations, |c, v| {
+            Ok(c.with_equivalent_orientations(v))
+        })?;
+        Ok(Self { inner })
+    }
+
+    /// `{ query, reference }`: quaternions, `N × 4` and `M × 4`.
+    pub fn compute(&self, data: &JsValue) -> Result<AngularSeparationGlobalResult, JsError> {
+        let data = Fields::new(data, "AngularSeparationGlobal")?;
+        let query = data.matrix("query", Some(4))?;
+        let reference = data.matrix("reference", Some(4))?;
+        let input = mc::AngularSeparationGlobalInput {
+            query: query.view(),
+            reference: reference.view(),
+        };
+        Ok(self.inner.compute(input)?.into())
+    }
+}
+
+/// Angles between the orientations of neighbouring particles.
+#[wasm_bindgen]
+pub struct AngularSeparationNeighbor {
+    inner: mc::AngularSeparationNeighbor,
+}
+
+#[wasm_bindgen]
+impl AngularSeparationNeighbor {
+    #[wasm_bindgen(constructor)]
+    pub fn new(
+        equivalent_orientations: Option<bool>,
+    ) -> Result<AngularSeparationNeighbor, JsError> {
+        let inner = mc::AngularSeparationNeighbor::new()
+            .given(equivalent_orientations, |c, v| {
+                Ok(c.with_equivalent_orientations(v))
+            })?;
+        Ok(Self { inner })
+    }
+
+    /// `{ neighbors, query_orientations, point_orientations }`: quaternions,
+    /// `N × 4`.
+    pub fn compute(&self, data: &JsValue) -> Result<AngularSeparationNeighborResult, JsError> {
+        let data = Fields::new(data, "AngularSeparationNeighbor")?;
+        let neighbors = data.neighbors("neighbors")?;
+        let query_orientations = data.matrix("query_orientations", Some(4))?;
+        let point_orientations = data.matrix("point_orientations", Some(4))?;
+        let input = mc::AngularSeparationNeighborInput {
+            neighbors: &neighbors,
+            query_orientations: query_orientations.view(),
+            point_orientations: point_orientations.view(),
+        };
+        Ok(self.inner.compute(input)?.into())
+    }
+}
+
+described!(
+    BondOrientationalOrder => mc::BondOrientationalOrder,
+    LocalDescriptors => mc::LocalDescriptors,
+    LocalBondProjection => mc::LocalBondProjection,
+    EnvironmentMatch => mc::EnvironmentMatch,
+    AngularSeparationGlobal => mc::AngularSeparationGlobal,
+    AngularSeparationNeighbor => mc::AngularSeparationNeighbor,
+);

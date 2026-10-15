@@ -1,13 +1,13 @@
 //! Dihedral observable: the IUPAC-signed torsion φ ∈ (−π, π] of atom quadruples.
 
-use molrs::core::FrameAccess;
 use molrs::op::F;
 
 use crate::compute::ComputeError;
 
-use super::observable::{AtomGroups, Observable, displacement, positions};
+use super::observable::{Observable, check_tuples, displacement};
 use crate::op::vec3::{cross, dot, norm};
-use molrs::core::{Mic, SimBox};
+use molrs::core::Mic;
+use ndarray::ArrayView2;
 
 /// Signed dihedral φ ∈ (−π, π] (radians) over each quadruple i–j–k–l (arity 4).
 ///
@@ -41,39 +41,21 @@ impl Observable for DihedralObservable {
         Some((-std::f64::consts::PI, std::f64::consts::PI))
     }
 
-    fn sample<FA: FrameAccess>(
+    fn sample_into(
         &self,
-        frame: &FA,
-        groups: &AtomGroups,
-    ) -> Result<Vec<F>, ComputeError> {
-        let mut out = Vec::with_capacity(groups.len());
-        self.sample_into(frame, groups, &mut out)?;
-        Ok(out)
-    }
-
-    fn sample_into<FA: FrameAccess>(
-        &self,
-        frame: &FA,
-        groups: &AtomGroups,
+        positions: ArrayView2<'_, F>,
+        mic: &Mic,
+        tuples: ArrayView2<'_, usize>,
         out: &mut Vec<F>,
     ) -> Result<(), ComputeError> {
-        if groups.arity() != 4 {
-            return Err(ComputeError::BadShape {
-                expected: "arity 4".to_string(),
-                got: format!("arity {}", groups.arity()),
-            });
-        }
-        let (xp, yp, zp) = positions(frame)?;
-        let (xs, ys, zs) = (xp.slice(), yp.slice(), zp.slice());
-        let mic = frame.simbox_ref().map_or(Mic::Free, SimBox::mic);
+        check_tuples(self.arity(), positions, tuples)?;
         out.clear();
-        out.reserve(groups.len());
-        for g in 0..groups.len() {
-            let t = groups.tuple(g);
-            let (i, j, k, l) = (t[0] as usize, t[1] as usize, t[2] as usize, t[3] as usize);
-            let b1 = displacement(&mic, xs, ys, zs, i, j); // j - i
-            let b2 = displacement(&mic, xs, ys, zs, j, k); // k - j
-            let b3 = displacement(&mic, xs, ys, zs, k, l); // l - k
+        out.reserve(tuples.nrows());
+        for (g, t) in tuples.outer_iter().enumerate() {
+            let (i, j, k, l) = (t[0], t[1], t[2], t[3]);
+            let b1 = displacement(mic, positions, i, j); // j - i
+            let b2 = displacement(mic, positions, j, k); // k - j
+            let b3 = displacement(mic, positions, k, l); // l - k
             let n2 = norm(b2);
             if n2 == 0.0 {
                 return Err(ComputeError::NonFinite {

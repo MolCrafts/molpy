@@ -13,12 +13,11 @@ from numpy.typing import NDArray
 
 from .._native import (
     ForceField,
+    KineticEnergy,
     NeighborList,
     PotentialCompiler,
     Potentials,
     VerletSkin,
-    kinetic_energy,
-    kinetic_temperature,
 )
 from .._native import md as _md
 
@@ -387,19 +386,21 @@ class MdDriver:
             interval = int(thermo)
             if interval < 1:
                 raise ValueError(f"thermo must be >= 1, got {thermo}")
-            kb = float(kb)
             n_dof = max(1, 3 * pos.shape[0] - int(integrator.removed_dof))
+            # Unit-agnostic, like the integrators: the caller's units are
+            # consistent (mvv2e = 1) and kb is Boltzmann's constant in them.
+            kinetic = KineticEnergy(mvv2e=1.0, boltzmann=float(kb))
 
             def record(step: int, state: _md.MdState) -> None:
-                ke = kinetic_energy(mass_arr, state.vel)
+                k = kinetic.compute(masses=mass_arr, velocities=state.vel)
                 pe = float(state.energy)
                 self.thermo.append(
                     {
                         "step": step,
                         "pe": pe,
-                        "ke": ke,
-                        "etotal": pe + ke,
-                        "temp": kinetic_temperature(ke, n_dof, kb),
+                        "ke": k.energy,
+                        "etotal": pe + k.energy,
+                        "temp": k.temperature(n_dof),
                     }
                 )
 

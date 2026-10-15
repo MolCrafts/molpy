@@ -35,7 +35,6 @@ path are the same words:
 * :mod:`molrs.builder` — structure builders, site-graph assembly,
   coarse-graining.
 * :mod:`molrs.compute` — trajectory analysis.
-* :mod:`molrs.signal` — FFT autocorrelation, windows, frequency grids.
 * :mod:`molrs.stream` — live Frame streaming (the transport).
 
 A name that is not one of those handled classes has exactly one spelling —
@@ -54,7 +53,6 @@ from . import (
     op,
     optimize,
     perceive,
-    signal,
     stream,
 )
 from ._native import __version__ as __version__
@@ -98,7 +96,6 @@ __all__ = [
     "op",
     "optimize",
     "perceive",
-    "signal",
     "stream",
     "Angle",
     "Atom",

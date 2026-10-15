@@ -1,53 +1,38 @@
-//! Pairwise angular separation between unit quaternions.
+//! Pairwise angular separation between orientation quaternions.
+//!
+//! The angular distance between two rotations `q₁`, `q₂` (unit quaternions)
+//! is
+//!
+//! ```text
+//!   θ = 2 · arccos( |q₁ · q₂| )
+//! ```
+//!
+//! where the absolute value accounts for the double cover (`q` and `−q`
+//! represent the same rotation), giving `0 ≤ θ ≤ π` in radians. Without the
+//! double-cover identification (`equivalent_orientations = false`, freud's
+//! name) the absolute value is dropped and `θ ∈ [0, 2π]`.
+//!
+//! Mirrors `freud.environment.AngularSeparationGlobal` and
+//! `AngularSeparationNeighbor`
+//! ([source](https://github.com/glotzerlab/freud/blob/main/freud/environment/AngularSeparation.cc)):
+//!
+//! - [`AngularSeparationGlobal`]: dense `(N_query × N_reference)` table between
+//!   every query orientation and every reference orientation.
+//! - [`AngularSeparationNeighbor`]: sparse, one angular distance per neighbor
+//!   pair.
+//!
+//! Quaternions are `(w, x, y, z)` rows of an `N × 4` array, normalised here;
+//! a zero quaternion is no rotation and is an error (it used to give 0).
 
-use crate::compute::ComputeResult;
-use molrs::core::FrameAccess;
 use molrs::core::Neighbors;
-use molrs::op::F;
-use ndarray::Array2;
+use molrs::op::{F, Quat, quat_dot};
+use ndarray::{Array2, ArrayView2};
 
-use crate::compute::Compute;
-use crate::compute::ComputeError;
-use crate::op::Quat;
-use crate::op::{quat_dot, quat_norm};
+use crate::compute::{Compute, ComputeError, require_quaternions};
 
-/// Angular distance between two unit quaternions, in radians.
-///
-/// `θ = 2 · arccos(|q₁ · q₂|)` when `equivalent_orientations = true`
-/// (the default), giving values in `[0, π/2]`. When `false`, the absolute
-/// value is dropped and the result lies in `[0, π]`.
-///
-/// Mirrors `freud.environment.AngularSeparationGlobal` and
-/// `AngularSeparationNeighbor`
-/// ([source](https://github.com/glotzerlab/freud/blob/main/freud/environment/AngularSeparation.cc)).
-///
-/// For two unit quaternions `q₁` and `q₂` the (rotational) angular
-/// distance is
-///
-/// ```text
-///   θ = 2 · arccos( |q₁ · q₂| )
-/// ```
-///
-/// where the absolute value accounts for the double cover (`q` and `−q`
-/// represent the same rotation). The result is in radians, `0 ≤ θ ≤ π/2`
-/// (between rotations), or `0 ≤ θ ≤ π` if the user does *not* want the
-/// double-cover identification (`equivalent_orientations = false` in
-/// freud).
-///
-/// Two flavours are provided:
-///
-/// - [`AngularSeparationGlobal`]: dense `(N_query × N_global)` table of
-///   angular distances between every query orientation and every reference
-///   orientation.
-/// - [`AngularSeparationNeighbor`]: sparse, one angular distance per
-///   neighbor pair, driven by a `Neighbors`.
-pub fn angular_distance(q1: Quat, q2: Quat, equivalent_orientations: bool) -> F {
-    let n1 = quat_norm(q1);
-    let n2 = quat_norm(q2);
-    if n1 == 0.0 || n2 == 0.0 {
-        return 0.0;
-    }
-    let mut d = quat_dot(q1, q2) / (n1 * n2);
+/// The angular distance between unit quaternions, radians.
+fn angular_distance(q1: Quat, q2: Quat, equivalent_orientations: bool) -> F {
+    let mut d = quat_dot(q1, q2);
     if equivalent_orientations {
         d = d.abs();
     }
@@ -55,12 +40,26 @@ pub fn angular_distance(q1: Quat, q2: Quat, equivalent_orientations: bool) -> F 
 }
 
 // ---------------------------------------------------------------------------
-// Global: dense (N_query × N_global) table
+// Global: dense (N_query × N_reference) table
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Clone)]
+/// Dense angular separation between query and reference orientations.
+///
+/// Configuration: whether `q` and `−q` are the same orientation. Data: the
+/// query quaternions (typically one per particle) and a small fixed list of
+/// reference quaternions (e.g. point-group symmetries).
+#[derive(Debug, Clone, Copy)]
 pub struct AngularSeparationGlobal {
     equivalent_orientations: bool,
+}
+
+/// The data an [`AngularSeparationGlobal`] analyses.
+#[derive(Debug, Clone, Copy)]
+pub struct AngularSeparationGlobalInput<'a> {
+    /// Query quaternions, `N_query × 4`.
+    pub query: ArrayView2<'a, F>,
+    /// Reference quaternions, `N_reference × 4`.
+    pub reference: ArrayView2<'a, F>,
 }
 
 impl Default for AngularSeparationGlobal {
@@ -70,64 +69,44 @@ impl Default for AngularSeparationGlobal {
 }
 
 impl AngularSeparationGlobal {
-    /// Defaults: symmetry-equivalent orientations enabled.
+    /// Defaults: `q` and `−q` are the same orientation.
     pub fn new() -> Self {
         Self {
             equivalent_orientations: true,
         }
     }
 
-    /// Also minimize over symmetry-equivalent orientations when `on` (default true).
+    /// Identify `q` with `−q` when `on` (default true).
     pub fn with_equivalent_orientations(mut self, on: bool) -> Self {
         self.equivalent_orientations = on;
         self
     }
 }
 
-/// Args for `AngularSeparationGlobal`: (per-particle query quaternions,
-/// global reference quaternions). The query set typically comes from the
-/// frame's atom orientations; the reference set is a small fixed list of
-/// canonical orientations (e.g. crystallographic point-group symmetries).
-pub struct AngularSeparationGlobalArgs<'a> {
-    pub query: &'a [Quat],
-    pub global: &'a [Quat],
-}
-
 impl Compute for AngularSeparationGlobal {
-    type Args<'a> = AngularSeparationGlobalArgs<'a>;
-    type Output = Vec<AngularSeparationGlobalResult>;
+    type Input<'a> = AngularSeparationGlobalInput<'a>;
+    type Output = AngularSeparationGlobalResult;
 
-    fn compute<'a, FA: FrameAccess + Sync + 'a>(
+    /// # Errors
+    /// [`ComputeError::EmptyInput`] when either set is empty;
+    /// [`ComputeError::DimensionMismatch`] for an array that is not `N × 4`;
+    /// [`ComputeError::NonFinite`] / [`ComputeError::OutOfRange`] for a
+    /// non-finite or zero quaternion.
+    fn compute(
         &self,
-        frames: &[&'a FA],
-        args: AngularSeparationGlobalArgs<'a>,
-    ) -> Result<Vec<AngularSeparationGlobalResult>, ComputeError> {
-        if frames.is_empty() {
+        input: AngularSeparationGlobalInput<'_>,
+    ) -> Result<AngularSeparationGlobalResult, ComputeError> {
+        let query = require_quaternions(input.query, "query")?;
+        let reference = require_quaternions(input.reference, "reference")?;
+        if query.is_empty() || reference.is_empty() {
             return Err(ComputeError::EmptyInput);
         }
-        if args.query.is_empty() || args.global.is_empty() {
-            return Err(ComputeError::EmptyInput);
-        }
-        let n_query = args.query.len();
-        let n_global = args.global.len();
-        let mut out = Vec::with_capacity(frames.len());
-        for _ in frames {
-            // O(n_query × n_global) by definition: the observable *is* the
-            // full matrix of pairwise angular distances, every entry of which
-            // is returned.
-            let mut a = Array2::<F>::zeros((n_query, n_global));
-            for i in 0..n_query {
-                for j in 0..n_global {
-                    a[[i, j]] = angular_distance(
-                        args.query[i],
-                        args.global[j],
-                        self.equivalent_orientations,
-                    );
-                }
-            }
-            out.push(AngularSeparationGlobalResult { angles: a });
-        }
-        Ok(out)
+        // O(n_query × n_reference) by definition: the observable *is* the full
+        // matrix of pairwise angular distances.
+        let angles = Array2::from_shape_fn((query.len(), reference.len()), |(i, j)| {
+            angular_distance(query[i], reference[j], self.equivalent_orientations)
+        });
+        Ok(AngularSeparationGlobalResult { angles })
     }
 }
 
@@ -135,9 +114,25 @@ impl Compute for AngularSeparationGlobal {
 // Neighbor: sparse, one angle per pair
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Clone)]
+/// Angular separation between the orientations of every neighbor pair.
+///
+/// Configuration: whether `q` and `−q` are the same orientation. Data: one
+/// snapshot's neighbor table (any columns), the query points' and the
+/// reference points' quaternions.
+#[derive(Debug, Clone, Copy)]
 pub struct AngularSeparationNeighbor {
     equivalent_orientations: bool,
+}
+
+/// The data an [`AngularSeparationNeighbor`] analyses.
+#[derive(Debug, Clone, Copy)]
+pub struct AngularSeparationNeighborInput<'a> {
+    /// One snapshot's neighbor table.
+    pub neighbors: &'a Neighbors,
+    /// Query-point quaternions (indexed by `i`), `n_query_points × 4`.
+    pub query_orientations: ArrayView2<'a, F>,
+    /// Reference-point quaternions (indexed by `j`), `n_points × 4`.
+    pub point_orientations: ArrayView2<'a, F>,
 }
 
 impl Default for AngularSeparationNeighbor {
@@ -147,108 +142,119 @@ impl Default for AngularSeparationNeighbor {
 }
 
 impl AngularSeparationNeighbor {
-    /// Defaults: symmetry-equivalent orientations enabled.
+    /// Defaults: `q` and `−q` are the same orientation.
     pub fn new() -> Self {
         Self {
             equivalent_orientations: true,
         }
     }
 
-    /// Also minimize over symmetry-equivalent orientations when `on` (default true).
+    /// Identify `q` with `−q` when `on` (default true).
     pub fn with_equivalent_orientations(mut self, on: bool) -> Self {
         self.equivalent_orientations = on;
         self
     }
 }
 
-pub struct AngularSeparationNeighborArgs<'a> {
-    pub nlists: &'a [Neighbors],
-    /// Per-frame query orientations (indexed by `query_point_indices`).
-    pub query_orientations: &'a [Vec<Quat>],
-    /// Per-frame point orientations (indexed by `point_indices`).
-    pub point_orientations: &'a [Vec<Quat>],
-}
-
 impl Compute for AngularSeparationNeighbor {
-    type Args<'a> = AngularSeparationNeighborArgs<'a>;
-    type Output = Vec<AngularSeparationNeighborResult>;
+    type Input<'a> = AngularSeparationNeighborInput<'a>;
+    type Output = AngularSeparationNeighborResult;
 
-    fn compute<'a, FA: FrameAccess + Sync + 'a>(
+    /// # Errors
+    /// [`ComputeError::DimensionMismatch`] for an orientation array that is
+    /// not `N × 4` or not one per point of its set;
+    /// [`ComputeError::NonFinite`] / [`ComputeError::OutOfRange`] for a
+    /// non-finite or zero quaternion.
+    fn compute(
         &self,
-        frames: &[&'a FA],
-        args: AngularSeparationNeighborArgs<'a>,
-    ) -> Result<Vec<AngularSeparationNeighborResult>, ComputeError> {
-        if frames.is_empty() {
-            return Err(ComputeError::EmptyInput);
-        }
-        let nf = frames.len();
-        if args.nlists.len() != nf
-            || args.query_orientations.len() != nf
-            || args.point_orientations.len() != nf
-        {
+        input: AngularSeparationNeighborInput<'_>,
+    ) -> Result<AngularSeparationNeighborResult, ComputeError> {
+        let nl = input.neighbors;
+        let q = require_quaternions(input.query_orientations, "query_orientations")?;
+        let p = require_quaternions(input.point_orientations, "point_orientations")?;
+        if q.len() != nl.n_query_points() {
             return Err(ComputeError::DimensionMismatch {
-                expected: nf,
-                got: args
-                    .nlists
-                    .len()
-                    .min(args.query_orientations.len())
-                    .min(args.point_orientations.len()),
-                what: "AngularSeparationNeighbor frame-aligned inputs",
+                expected: nl.n_query_points(),
+                got: q.len(),
+                what: "query_orientations (one per query point)",
             });
         }
-        let mut out = Vec::with_capacity(nf);
-        for k in 0..nf {
-            let nl = &args.nlists[k];
-            let q = &args.query_orientations[k];
-            let p = &args.point_orientations[k];
-            let i_idx = nl.query_point_indices();
-            let j_idx = nl.point_indices();
-            let mut angles = Vec::with_capacity(nl.n_pairs());
-            for pk in 0..nl.n_pairs() {
-                let i = i_idx[pk] as usize;
-                let j = j_idx[pk] as usize;
-                if i >= q.len() || j >= p.len() {
-                    return Err(ComputeError::DimensionMismatch {
-                        expected: i.max(j) + 1,
-                        got: q.len().min(p.len()),
-                        what: "AngularSeparationNeighbor orientations length",
-                    });
-                }
-                angles.push(angular_distance(q[i], p[j], self.equivalent_orientations));
-            }
-            out.push(AngularSeparationNeighborResult { angles });
+        if p.len() != nl.n_points() {
+            return Err(ComputeError::DimensionMismatch {
+                expected: nl.n_points(),
+                got: p.len(),
+                what: "point_orientations (one per reference point)",
+            });
         }
-        Ok(out)
+        let mut angles = Vec::with_capacity(nl.n_pairs());
+        for (k, (&i, &j)) in nl
+            .query_point_indices()
+            .iter()
+            .zip(nl.point_indices())
+            .enumerate()
+        {
+            let (i, j) = (i as usize, j as usize);
+            if i >= q.len() || j >= p.len() {
+                return Err(ComputeError::OutOfRange {
+                    field: "pair index",
+                    value: format!("({i}, {j}) of pair {k} past the table's point counts"),
+                });
+            }
+            angles.push(angular_distance(q[i], p[j], self.equivalent_orientations));
+        }
+        Ok(AngularSeparationNeighborResult { angles })
     }
 }
 
+/// The dense angular-separation table.
 #[derive(Debug, Clone, Default)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct AngularSeparationGlobalResult {
-    /// `(n_query, n_global)` table of angular distances (radians).
+    /// `(n_query, n_reference)` table of angular distances (radians).
     pub angles: Array2<F>,
 }
 
-impl ComputeResult for AngularSeparationGlobalResult {}
-
+/// The per-pair angular separations.
 #[derive(Debug, Clone, Default)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct AngularSeparationNeighborResult {
     /// One angle per neighbor pair, in radians; index matches the
     /// underlying [`Neighbors`] pair index.
     pub angles: Vec<F>,
 }
 
-impl ComputeResult for AngularSeparationNeighborResult {}
+crate::compute::spec::compute_spec! {
+    AngularSeparationGlobal as "AngularSeparationGlobal";
+    params |s| {
+        equivalent_orientations: Bool
+            = AngularSeparationGlobal::new().equivalent_orientations => s.equivalent_orientations;
+    }
+    inputs {
+        query: Quaternions;
+        reference: Quaternions;
+    }
+}
+
+crate::compute::spec::compute_spec! {
+    AngularSeparationNeighbor as "AngularSeparationNeighbor";
+    params |s| {
+        equivalent_orientations: Bool
+            = AngularSeparationNeighbor::new().equivalent_orientations => s.equivalent_orientations;
+    }
+    inputs {
+        neighbors: Neighbors;
+        query_orientations: Quaternions;
+        point_orientations: Quaternions;
+    }
+}
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use molrs::core::Frame;
+    use molrs::core::{NeighborColumns, NeighborPair, QueryMode};
+    use ndarray::array;
 
     const TOL: F = 1e-10;
-
-    fn frame() -> Frame {
-        Frame::new()
-    }
 
     #[test]
     fn identity_quaternion_zero_distance() {
@@ -286,17 +292,14 @@ mod tests {
 
     #[test]
     fn global_shape_and_values() {
-        let q = vec![[1.0_f64, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0]];
-        let g = vec![[1.0_f64, 0.0, 0.0, 0.0]];
+        let q = array![[1.0_f64, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0]];
+        let g = array![[1.0_f64, 0.0, 0.0, 0.0]];
         let r = &AngularSeparationGlobal::new()
-            .compute(
-                &[&frame()],
-                AngularSeparationGlobalArgs {
-                    query: &q,
-                    global: &g,
-                },
-            )
-            .unwrap()[0];
+            .compute(AngularSeparationGlobalInput {
+                query: q.view(),
+                reference: g.view(),
+            })
+            .unwrap();
         assert_eq!(r.angles.dim(), (2, 1));
         assert!(r.angles[[0, 0]].abs() < TOL);
         // (0,1,0,0) is a 180° rotation about x; cf. equivalent_orientations
@@ -306,15 +309,66 @@ mod tests {
 
     #[test]
     fn empty_inputs_error() {
+        let none = Array2::<F>::zeros((0, 4));
+        let g = array![[1.0, 0.0, 0.0, 0.0]];
         let err = AngularSeparationGlobal::new()
-            .compute(
-                &[&frame()],
-                AngularSeparationGlobalArgs {
-                    query: &[],
-                    global: &[[1.0, 0.0, 0.0, 0.0]],
-                },
-            )
+            .compute(AngularSeparationGlobalInput {
+                query: none.view(),
+                reference: g.view(),
+            })
             .unwrap_err();
         assert!(matches!(err, ComputeError::EmptyInput));
+    }
+
+    /// A zero quaternion used to give distance 0 to everything; it is no
+    /// rotation, so it is an error now.
+    #[test]
+    fn zero_quaternion_is_out_of_range() {
+        let q = array![[0.0, 0.0, 0.0, 0.0]];
+        let g = array![[1.0, 0.0, 0.0, 0.0]];
+        let err = AngularSeparationGlobal::new()
+            .compute(AngularSeparationGlobalInput {
+                query: q.view(),
+                reference: g.view(),
+            })
+            .unwrap_err();
+        assert!(matches!(err, ComputeError::OutOfRange { .. }));
+    }
+
+    /// One angle per pair: `(0, 1)` between the identity and a 90° turn
+    /// about z.
+    #[test]
+    fn neighbor_angles_follow_the_table() {
+        let nl = Neighbors::from_pairs(
+            [NeighborPair {
+                i: 0,
+                j: 1,
+                dist_sq: 1.0,
+                disp: [1.0, 0.0, 0.0],
+            }],
+            NeighborColumns::INDICES_ONLY,
+            QueryMode::SelfQuery { n_points: 2 },
+        );
+        let h = std::f64::consts::FRAC_PI_4;
+        let q = array![[1.0, 0.0, 0.0, 0.0], [h.cos(), 0.0, 0.0, h.sin()]];
+        let r = AngularSeparationNeighbor::new()
+            .compute(AngularSeparationNeighborInput {
+                neighbors: &nl,
+                query_orientations: q.view(),
+                point_orientations: q.view(),
+            })
+            .unwrap();
+        assert_eq!(r.angles.len(), 1);
+        assert!((r.angles[0] - std::f64::consts::FRAC_PI_2).abs() < 1e-12);
+
+        let short = array![[1.0, 0.0, 0.0, 0.0]];
+        assert!(matches!(
+            AngularSeparationNeighbor::new().compute(AngularSeparationNeighborInput {
+                neighbors: &nl,
+                query_orientations: short.view(),
+                point_orientations: q.view(),
+            }),
+            Err(ComputeError::DimensionMismatch { .. })
+        ));
     }
 }

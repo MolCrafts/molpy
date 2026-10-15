@@ -4,9 +4,12 @@ use crate::op::vec3::{cross, dot, norm, sub};
 use molrs::op::F;
 
 /// One bounding face of a cell: its area and the index of the neighbour cell
-/// across it. `neighbor < 0` marks a residual initial-box face (should not
-/// survive a fully-bounded periodic tessellation).
+/// across it. `neighbor < 0` ([`VORONOI_BOUNDARY`]) marks a residual
+/// initial-box face; a [`RadicalVoronoi`](crate::compute::RadicalVoronoi)
+/// tessellation never leaves one, because every periodic cell is bounded by
+/// real neighbours — its own images at the least.
 #[derive(Debug, Clone, Copy, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct VoronoiFace {
     /// Face area (Å²).
     pub area: F,
@@ -34,6 +37,7 @@ pub const VORONOI_BOUNDARY: i64 = -1;
 /// - Rycroft, *Chaos* **2009**, 19, 041111 (voro++ cell-by-cell algorithm).
 /// - Aurenhammer, *SIAM J. Comput.* **1987**, 16, 78 (power diagrams).
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct VoronoiCells {
     /// Cell volume per generator (Å³).
     pub volumes: Vec<F>,

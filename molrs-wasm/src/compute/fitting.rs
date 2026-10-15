@@ -1,114 +1,155 @@
-//! Curve fitting and integration helpers — WASM face of the
-//! `molrs::compute` fitting family.
+//! Fits and integrals of a correlation curve — the WASM face of
+//! `molrs::compute::fitting`. Each reads one channel of a
+//! [`TimeCorrelation`] a time-series compute returned.
+//!
+//! ```js
+//! const curve = new Vacf(200).compute({ velocities, dt: 1.0 });
+//! const integral = new CumulativeTrapezoid().compute({ correlation: curve, channel: 0 });
+//! const plateau = new Plateau(0.5, 1.0).compute({ correlation: integral, channel: 0 });
+//! ```
 
-use super::{array1, js_value};
-use crate::core::nd_array::JsFloatArray;
-use molrs::compute::Fit;
-use molrs::op::F;
-use serde::Serialize;
+use molrs::compute::{self as mc, Compute};
 use wasm_bindgen::prelude::*;
 
-#[wasm_bindgen(js_name = LinearFit)]
-pub struct LinearFit {
-    start_frac: F,
-    end_frac: F,
+use super::config::Given;
+use super::handle::{described, output};
+use super::time_series::TimeCorrelation;
+use super::wire::Fields;
+
+output! {
+    /// A straight-line fit: `slope`, `intercept`, `r2` and the fitted lag range.
+    LinearFitResult => mc::LinearFitResult
 }
 
-#[wasm_bindgen(js_class = LinearFit)]
-impl LinearFit {
-    #[wasm_bindgen(constructor)]
-    pub fn new(start_frac: F, end_frac: F) -> Self {
-        Self {
-            start_frac,
-            end_frac,
-        }
-    }
-
-    pub fn fit(&self, x: &[F], y: &[F]) -> Result<JsValue, JsValue> {
-        #[derive(Serialize)]
-        #[serde(rename_all = "camelCase")]
-        struct Out {
-            slope: F,
-            intercept: F,
-            r2: F,
-            fit_start: usize,
-            fit_end: usize,
-        }
-        let x = array1(x);
-        let y = array1(y);
-        let r = molrs::compute::LinearFit {
-            window: (self.start_frac, self.end_frac),
-        }
-        .fit((&x, &y))
-        .map_err(|e| JsValue::from_str(&format!("LinearFit: {e}")))?;
-        js_value(&Out {
-            slope: r.slope,
-            intercept: r.intercept,
-            r2: r.r2,
-            fit_start: r.fit_start,
-            fit_end: r.fit_end,
-        })
-    }
+output! {
+    /// The mean of a curve over a window: `value`, `std`, `n_samples`.
+    PlateauResult => mc::PlateauResult
 }
 
-#[wasm_bindgen(js_name = CumulativeTrapezoid)]
+output! {
+    /// A single-exponential (Debye) fit: `tau`, `amplitude`, `n_samples`.
+    DebyeFitResult => mc::DebyeFitResult
+}
+
+/// The `{ correlation, channel }` data every fit takes.
+fn curve(data: &Fields<'_>) -> Result<(TimeCorrelation, usize), mc::ComputeError> {
+    Ok((
+        data.handle::<TimeCorrelation>("correlation", "TimeCorrelation")?,
+        data.index("channel")?,
+    ))
+}
+
+/// The running trapezoid integral of a curve, as a curve.
+#[wasm_bindgen]
 pub struct CumulativeTrapezoid {
-    dt: F,
-    n_lags: Option<usize>,
+    inner: mc::CumulativeTrapezoid,
 }
 
-#[wasm_bindgen(js_class = CumulativeTrapezoid)]
+#[wasm_bindgen]
 impl CumulativeTrapezoid {
     #[wasm_bindgen(constructor)]
-    pub fn new(dt: F, n_lags: Option<usize>) -> Self {
-        Self { dt, n_lags }
+    pub fn new(n_lags: Option<usize>) -> Result<CumulativeTrapezoid, JsError> {
+        let inner = mc::CumulativeTrapezoid::new().given(n_lags, |c, v| Ok(c.with_n_lags(v)))?;
+        Ok(Self { inner })
     }
 
-    pub fn fit(&self, y: &[F]) -> Result<JsFloatArray, JsValue> {
-        let dt = self.dt;
-        let n_lags = self.n_lags;
-        let y = array1(y);
-        let r = molrs::compute::CumulativeTrapezoid
-            .fit((&y, dt, n_lags))
-            .map_err(|e| JsValue::from_str(&format!("CumulativeTrapezoid: {e}")))?;
-        Ok(JsFloatArray::from(r.integral.as_slice().unwrap()))
+    /// `{ correlation, channel }`.
+    pub fn compute(&self, data: &JsValue) -> Result<TimeCorrelation, JsError> {
+        let data = Fields::new(data, "CumulativeTrapezoid")?;
+        let (correlation, channel) = curve(&data)?;
+        let input = mc::CumulativeTrapezoidInput {
+            correlation: &correlation.inner,
+            channel,
+        };
+        Ok(self.inner.compute(input)?.into())
     }
 }
 
-#[wasm_bindgen(js_name = Plateau)]
-pub struct Plateau {
-    start_frac: F,
-    end_frac: F,
+/// A Debye (single-exponential) fit of a decaying curve.
+#[wasm_bindgen]
+pub struct DebyeFit {
+    inner: mc::DebyeFit,
 }
 
-#[wasm_bindgen(js_class = Plateau)]
-impl Plateau {
+#[wasm_bindgen]
+impl DebyeFit {
     #[wasm_bindgen(constructor)]
-    pub fn new(start_frac: F, end_frac: F) -> Self {
+    #[allow(clippy::new_without_default)]
+    pub fn new() -> DebyeFit {
         Self {
-            start_frac,
-            end_frac,
+            inner: mc::DebyeFit,
         }
     }
 
-    pub fn fit(&self, y: &[F]) -> Result<JsValue, JsValue> {
-        #[derive(Serialize)]
-        #[serde(rename_all = "camelCase")]
-        struct Out {
-            value: F,
-            n_samples: usize,
-            std: F,
-        }
-        let y = array1(y);
-        let r = molrs::compute::Plateau {
-            window: (self.start_frac, self.end_frac),
-        }
-        .fit(&y)
-        .map_err(|e| JsValue::from_str(&format!("Plateau: {e}")))?;
-        js_value(&Out {
-            value: r.value,
-            n_samples: r.n_samples,
-            std: r.std,
+    /// `{ correlation, channel }`.
+    pub fn compute(&self, data: &JsValue) -> Result<DebyeFitResult, JsError> {
+        let data = Fields::new(data, "DebyeFit")?;
+        let (correlation, channel) = curve(&data)?;
+        let input = mc::DebyeFitInput {
+            correlation: &correlation.inner,
+            channel,
+        };
+        Ok(self.inner.compute(input)?.into())
+    }
+}
+
+/// A least-squares line over the `[start, end)` fraction of a curve.
+#[wasm_bindgen]
+pub struct LinearFit {
+    inner: mc::LinearFit,
+}
+
+#[wasm_bindgen]
+impl LinearFit {
+    #[wasm_bindgen(constructor)]
+    pub fn new(start: f64, end: f64) -> Result<LinearFit, JsError> {
+        Ok(Self {
+            inner: mc::LinearFit::new(start, end)?,
         })
     }
+
+    /// `{ correlation, channel }`.
+    pub fn compute(&self, data: &JsValue) -> Result<LinearFitResult, JsError> {
+        let data = Fields::new(data, "LinearFit")?;
+        let (correlation, channel) = curve(&data)?;
+        let input = mc::LinearFitInput {
+            correlation: &correlation.inner,
+            channel,
+        };
+        Ok(self.inner.compute(input)?.into())
+    }
 }
+
+/// The mean of a curve over the `[start, end)` fraction of its lags.
+#[wasm_bindgen]
+pub struct Plateau {
+    inner: mc::Plateau,
+}
+
+#[wasm_bindgen]
+impl Plateau {
+    #[wasm_bindgen(constructor)]
+    pub fn new(start: f64, end: f64) -> Result<Plateau, JsError> {
+        Ok(Self {
+            inner: mc::Plateau::new(start, end)?,
+        })
+    }
+
+    /// `{ correlation, channel }`.
+    pub fn compute(&self, data: &JsValue) -> Result<PlateauResult, JsError> {
+        let data = Fields::new(data, "Plateau")?;
+        let (correlation, channel) = curve(&data)?;
+        let input = mc::PlateauInput {
+            correlation: &correlation.inner,
+            channel,
+        };
+        Ok(self.inner.compute(input)?.into())
+    }
+}
+
+described!(
+    CumulativeTrapezoid => mc::CumulativeTrapezoid,
+    DebyeFit => mc::DebyeFit,
+    LinearFit => mc::LinearFit,
+    Plateau => mc::Plateau,
+);

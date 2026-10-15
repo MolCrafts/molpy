@@ -52,17 +52,15 @@ pub struct RotatableBond {
 }
 
 /// Build the [`Topology`] snapshot for `graph`, indexing atoms by the order of
-/// [`Atomistic::atoms`] and edges by the order of [`Atomistic::bonds`].
-///
-/// Because [`Topology::from_edges`] preserves edge insertion order, a
-/// [`Topology::bond_ring_mask`] over the returned topology aligns positionally
-/// with `graph.bonds()`.
+/// [`Atomistic::atoms`]; a bond listed twice in `graph` is one edge.
 fn build_topology(graph: &Atomistic, id_to_idx: &HashMap<NodeId, usize>) -> Topology {
     let edges: Vec<[usize; 2]> = graph
         .bonds()
         .map(|(_, b)| [id_to_idx[&b.nodes[0]], id_to_idx[&b.nodes[1]]])
         .collect();
-    Topology::from_edges(id_to_idx.len(), &edges)
+    let mut topo = Topology::with_atoms(id_to_idx.len());
+    topo.add_bonds(&edges);
+    topo
 }
 
 /// Shared detection core. Returns the positional `(j, k)` index pair of every
@@ -81,20 +79,21 @@ fn scan_rotatable(
     let id_to_idx: HashMap<NodeId, usize> =
         ids.iter().enumerate().map(|(i, &id)| (id, i)).collect();
 
-    // Collect bonds once so the edge index used for `bond_ring_mask` and the
-    // index used for per-bond filtering are guaranteed identical.
     let bonds: Vec<_> = graph.bonds().collect();
-    let edges: Vec<[usize; 2]> = bonds
-        .iter()
-        .map(|(_, b)| [id_to_idx[&b.nodes[0]], id_to_idx[&b.nodes[1]]])
+    let topo = build_topology(graph, &id_to_idx);
+    // Ring membership by endpoint pair, so a bond listed twice in `graph`
+    // (one topology edge) reads the same answer as its twin.
+    let ring_pairs: HashSet<(usize, usize)> = topo
+        .bonds()
+        .into_iter()
+        .zip(super::rings::ring_bond_mask(&topo))
+        .filter(|&(_, in_ring)| in_ring)
+        .map(|([a, b], _)| (a.min(b), a.max(b)))
         .collect();
-    let topo = Topology::from_edges(ids.len(), &edges);
-    let ring_mask = super::rings::ring_bond_mask(&topo);
 
     let rotatable = bonds
         .iter()
-        .enumerate()
-        .filter_map(|(bi, (_, bond))| {
+        .filter_map(|(_, bond)| {
             // A *single* bond, as a class. An aromatic bond whose Kekulé phase
             // happens to be single does not rotate, so this must not read the
             // localized number.
@@ -111,7 +110,7 @@ fn scan_rotatable(
             }
 
             // Acyclic: bond is not part of any ring.
-            if ring_mask[bi] {
+            if ring_pairs.contains(&(j.min(k), j.max(k))) {
                 return None;
             }
 

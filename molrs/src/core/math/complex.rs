@@ -11,6 +11,7 @@ use crate::op::F;
 /// `num_complex::Complex<F>` (two contiguous `F`s) so a downstream crate that
 /// does depend on `num-complex` can transmute slices if profiling warrants.
 #[derive(Debug, Default, Clone, Copy, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[repr(C)]
 pub struct Complex {
     pub re: F,

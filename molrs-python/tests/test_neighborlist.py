@@ -291,3 +291,21 @@ class TestNeighborQueryCross:
 # --------------------------------------------------------------------------
 # ac-003 runtime: the default path feeds an order parameter without a trap
 # --------------------------------------------------------------------------
+
+
+def test_neighbor_query_unbounded() -> None:
+    points = np.array([[0.0, 0.0, 0.0], [0.5, 0.0, 0.0], [2.0, 0.0, 0.0]])
+    query = molrs.core.NeighborQuery.unbounded(points, 1.0)
+    result = query.query(np.array([[0.0, 0.0, 0.0]]))
+
+    assert np.array_equal(result.point_indices(), np.array([0, 1], dtype=np.uint32))
+    assert np.allclose(np.sqrt(result.dist_sq()), [0.0, 0.5])
+
+
+def test_neighbor_query_rejects_non_positive_cutoff() -> None:
+    points = np.zeros((1, 3))
+    box = molrs.core.Box.cube(1.0)
+    with pytest.raises(ValueError, match="positive"):
+        molrs.core.NeighborQuery(box, points, 0.0)
+    with pytest.raises(ValueError, match="positive"):
+        molrs.core.NeighborQuery.unbounded(points, 0.0)

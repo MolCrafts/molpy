@@ -1,34 +1,22 @@
 //! 2-D FFT diffraction pattern of a projected frame.
 
-// 2-D grid kernel reads naturally with double index loops; FFT2 helper
-// also needs explicit row/column index ordering.
-#![allow(clippy::needless_range_loop)]
-
-use crate::compute::ComputeResult;
-use molrs::core::BoxKind;
-use molrs::core::FrameAccess;
+use molrs::core::{BoxKind, SimBox};
 use molrs::op::F;
-use ndarray::Array2;
-use rustfft::FftPlanner;
-use rustfft::num_complex::Complex as RfComplex;
+use ndarray::{Array2, ArrayView2};
 
-use crate::compute::Compute;
-use crate::compute::ComputeError;
-use crate::compute::positions::get_positions_ref;
+use crate::compute::{Compute, ComputeError, Gaussian, RegularGrid, Spectrum, StencilReach};
 
 /// `DiffractionPattern` analyzer.
 ///
 /// Mirrors `freud.diffraction.DiffractionPattern`
 /// ([source](https://github.com/glotzerlab/freud/blob/main/freud/diffraction/DiffractionPattern.cc)).
 ///
-/// Builds a 2-D Gaussian-smeared image of the projected particle positions,
-/// takes a 2-D FFT (composed from `rustfft`'s 1-D plans), and returns the
-/// power spectrum `|F(k)|²`. Projection axis defaults to `+z`, mapping
-/// particles onto the `xy` plane.
-///
-/// This is the first analyzer in the port to use `rustfft 6` for real 2-D
-/// Fourier work; the FFT planner is built once per frame and reused for
-/// both row and column passes.
+/// Configuration: the image size `n_grid`, the projection axis, and the
+/// [`Gaussian`] smearing kernel (width `σ`, truncated at `3σ` unless set).
+/// Data: one snapshot's positions and its box. The particles are projected
+/// along the axis onto the box face, spread as 2-D Gaussians on an
+/// `n_grid × n_grid` [`RegularGrid`] over that face, and the image's 2-D FFT
+/// power `|F(k)|²` is returned.
 ///
 /// # Conventions
 ///
@@ -37,17 +25,37 @@ use crate::compute::positions::get_positions_ref;
 ///   `numpy.fft.fftshift` convention).
 /// - Square grid `(n_grid × n_grid)`; rectangular grids are a follow-up.
 /// - Orthorhombic boxes only (matches `freud.DiffractionPattern.compute`).
-#[derive(Debug, Clone, Copy)]
+/// - The smearing wraps across an in-plane box face only when that box axis
+///   is periodic.
+///
+/// For many snapshots, wrap in [`Batch`](crate::compute::Batch).
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct DiffractionPattern {
     n_grid: usize,
-    sigma: F,
+    kernel: Gaussian,
     /// Projection axis: 0 = x, 1 = y, 2 = z (default).
     axis: usize,
 }
 
+/// The data a [`DiffractionPattern`] analyses.
+#[derive(Debug, Clone, Copy)]
+pub struct DiffractionPatternInput<'a> {
+    /// Positions, `N × 3`.
+    pub positions: ArrayView2<'a, F>,
+    /// The box whose face the image covers.
+    pub simbox: &'a SimBox,
+}
+
 impl DiffractionPattern {
+    /// The projection axis when not set: 2 (z).
+    pub const DEFAULT_AXIS: usize = 2;
+
     /// New analyzer with `n_grid × n_grid` pixels and Gaussian smearing
-    /// `sigma` (in box-length units).
+    /// `sigma` (in box-length units), projected along `z`.
+    ///
+    /// # Errors
+    /// [`ComputeError::OutOfRange`] for `n_grid == 0` or a non-positive
+    /// `sigma`.
     pub fn new(n_grid: usize, sigma: F) -> Result<Self, ComputeError> {
         if n_grid == 0 {
             return Err(ComputeError::OutOfRange {
@@ -55,38 +63,67 @@ impl DiffractionPattern {
                 value: "0".into(),
             });
         }
-        if sigma.is_nan() || sigma <= 0.0 {
-            return Err(ComputeError::OutOfRange {
-                field: "DiffractionPattern::sigma",
-                value: sigma.to_string(),
-            });
-        }
         Ok(Self {
             n_grid,
-            sigma,
-            axis: 2,
+            kernel: Gaussian::new(sigma)?,
+            axis: Self::DEFAULT_AXIS,
         })
     }
 
     /// Set the projection axis (0/1/2 = x/y/z).
-    pub fn with_axis(mut self, axis: usize) -> Self {
-        assert!(axis < 3);
+    ///
+    /// # Errors
+    /// [`ComputeError::OutOfRange`] for an axis other than 0, 1 or 2 (it
+    /// used to `assert!`).
+    pub fn with_axis(mut self, axis: usize) -> Result<Self, ComputeError> {
+        if axis >= 3 {
+            return Err(ComputeError::OutOfRange {
+                field: "DiffractionPattern::axis (0, 1 or 2)",
+                value: axis.to_string(),
+            });
+        }
         self.axis = axis;
-        self
+        Ok(self)
     }
 
+    /// Truncate the smearing Gaussian at `cutoff` instead of `3σ`.
+    ///
+    /// # Errors
+    /// [`ComputeError::OutOfRange`] for a non-positive or non-finite cutoff.
+    pub fn with_cutoff(mut self, cutoff: F) -> Result<Self, ComputeError> {
+        self.kernel = self.kernel.with_cutoff(cutoff)?;
+        Ok(self)
+    }
+
+    /// Pixels per side.
     pub fn n_grid(&self) -> usize {
         self.n_grid
     }
+
+    /// The smearing width `σ`.
     pub fn sigma(&self) -> F {
-        self.sigma
+        self.kernel.sigma()
     }
 
-    fn one_frame<FA: FrameAccess>(
+    /// The projection axis (0/1/2 = x/y/z).
+    pub fn axis(&self) -> usize {
+        self.axis
+    }
+}
+
+impl Compute for DiffractionPattern {
+    type Input<'a> = DiffractionPatternInput<'a>;
+    type Output = DiffractionPatternResult;
+
+    /// # Errors
+    /// [`ComputeError::OutOfRange`] for a triclinic box;
+    /// [`ComputeError::BadShape`] for positions without 3 columns;
+    /// [`ComputeError::NonFinite`] for a non-finite position.
+    fn compute(
         &self,
-        frame: &FA,
+        input: DiffractionPatternInput<'_>,
     ) -> Result<DiffractionPatternResult, ComputeError> {
-        let simbox = frame.simbox_ref().ok_or(ComputeError::MissingSimBox)?;
+        let simbox = input.simbox;
         let lens = match simbox.kind() {
             BoxKind::Ortho { len, .. } => [len[0], len[1], len[2]],
             BoxKind::Triclinic => {
@@ -96,143 +133,42 @@ impl DiffractionPattern {
                 });
             }
         };
+        if input.positions.ncols() != 3 {
+            return Err(ComputeError::BadShape {
+                expected: "positions N × 3".into(),
+                got: format!("N × {}", input.positions.ncols()),
+            });
+        }
         let (a0, a1) = match self.axis {
             0 => (1, 2),
             1 => (0, 2),
             _ => (0, 1),
         };
-        let l0 = lens[a0];
-        let l1 = lens[a1];
-
-        let (xs_p, ys_p, zs_p) = get_positions_ref(frame)?;
-        let coords = [xs_p.slice(), ys_p.slice(), zs_p.slice()];
-
         let n = self.n_grid;
-        let d0 = l0 / n as F;
-        let d1 = l1 / n as F;
-        let r_max = 3.0 * self.sigma;
-        let half_k0 = (r_max / d0).ceil() as isize;
-        let half_k1 = (r_max / d1).ceil() as isize;
-        let two_sigma_sq = 2.0 * self.sigma * self.sigma;
-        let pref = (two_sigma_sq * std::f64::consts::PI).powf(-1.0);
-        let r_max_sq = r_max * r_max;
+        let origin = simbox.origin_view();
+        let pbc = simbox.pbc();
+        let grid = RegularGrid::new(
+            [origin[a0], origin[a1]],
+            [[lens[a0] / n as F, 0.0], [0.0, lens[a1] / n as F]],
+            [n, n],
+            [pbc[a0], pbc[a1]],
+        )?;
 
         let mut image = Array2::<F>::zeros((n, n));
-        let origin = simbox.origin_view();
-        let o0 = origin[a0];
-        let o1 = origin[a1];
-
-        for k in 0..coords[0].len() {
-            let p0 = coords[a0][k];
-            let p1 = coords[a1][k];
-            let c0 = ((p0 - o0) / d0).floor() as isize;
-            let c1 = ((p1 - o1) / d1).floor() as isize;
-            for i0 in (c0 - half_k0)..=(c0 + half_k0) {
-                let v0 = o0 + (i0 as F + 0.5) * d0 - p0;
-                if v0.abs() > r_max {
-                    continue;
-                }
-                let g0 = i0.rem_euclid(n as isize) as usize;
-                for i1 in (c1 - half_k1)..=(c1 + half_k1) {
-                    let v1 = o1 + (i1 as F + 0.5) * d1 - p1;
-                    let r2 = v0 * v0 + v1 * v1;
-                    if r2 > r_max_sq {
-                        continue;
-                    }
-                    let g1 = i1.rem_euclid(n as isize) as usize;
-                    image[[g0, g1]] += pref * (-r2 / two_sigma_sq).exp();
-                }
-            }
+        for p in input.positions.outer_iter() {
+            let center = [p[a0], p[a1]];
+            grid.spread(&self.kernel, center, StencilReach::Ceil, |[i, j], w| {
+                image[[i, j]] += w;
+            })?;
         }
-
-        let diffraction = fft2_power_shifted(&image, n);
-
+        let diffraction = Spectrum::power_2d_centered(image.view());
         Ok(DiffractionPatternResult { diffraction, image })
     }
 }
 
-/// 2-D FFT via row+column 1-D FFTs, return `|F|²` shifted so k=0 is at
-/// the grid centre.
-fn fft2_power_shifted(image: &Array2<F>, n: usize) -> Array2<F> {
-    let mut planner = FftPlanner::<F>::new();
-    let fft = planner.plan_fft_forward(n);
-
-    // Build a complex buffer.
-    let mut buf: Vec<RfComplex<F>> = vec![RfComplex::new(0.0, 0.0); n * n];
-    for i in 0..n {
-        for j in 0..n {
-            buf[i * n + j] = RfComplex::new(image[[i, j]], 0.0);
-        }
-    }
-
-    // Row pass: FFT every row of length `n`.
-    {
-        let mut scratch = vec![RfComplex::new(0.0, 0.0); n];
-        for i in 0..n {
-            scratch.copy_from_slice(&buf[i * n..(i + 1) * n]);
-            fft.process(&mut scratch);
-            buf[i * n..(i + 1) * n].copy_from_slice(&scratch);
-        }
-    }
-    // Column pass: gather column → FFT → scatter back.
-    {
-        let mut col = vec![RfComplex::new(0.0, 0.0); n];
-        for j in 0..n {
-            for i in 0..n {
-                col[i] = buf[i * n + j];
-            }
-            fft.process(&mut col);
-            for i in 0..n {
-                buf[i * n + j] = col[i];
-            }
-        }
-    }
-
-    // Magnitude squared + FFT-shift (swap upper-half and lower-half along
-    // both axes) so DC sits at (n/2, n/2).
-    let mut shifted = Array2::<F>::zeros((n, n));
-    let half = n / 2;
-    for i in 0..n {
-        for j in 0..n {
-            let si = (i + half) % n;
-            let sj = (j + half) % n;
-            shifted[[si, sj]] = buf[i * n + j].norm_sqr();
-        }
-    }
-    shifted
-}
-
-impl Compute for DiffractionPattern {
-    type Args<'a> = ();
-    type Output = Vec<DiffractionPatternResult>;
-
-    fn compute<'a, FA: FrameAccess + Sync + 'a>(
-        &self,
-        frames: &[&'a FA],
-        _: (),
-    ) -> Result<Vec<DiffractionPatternResult>, ComputeError> {
-        if frames.is_empty() {
-            return Err(ComputeError::EmptyInput);
-        }
-        #[cfg(feature = "rayon")]
-        const PAR_THRESHOLD: usize = 2;
-
-        #[cfg(feature = "rayon")]
-        if frames.len() >= PAR_THRESHOLD {
-            use rayon::prelude::*;
-            return frames.par_iter().map(|f| self.one_frame(*f)).collect();
-        }
-
-        let mut out = Vec::with_capacity(frames.len());
-        for f in frames {
-            out.push(self.one_frame(*f)?);
-        }
-        Ok(out)
-    }
-}
-
-/// Per-frame diffraction-pattern result.
-#[derive(Debug, Clone, Default)]
+/// One snapshot's diffraction pattern.
+#[derive(Debug, Clone, Default, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct DiffractionPatternResult {
     /// Power spectrum `|F(k)|²`, shape `(n_grid, n_grid)`. FFT-shifted so
     /// the k=0 component is at the centre.
@@ -242,38 +178,58 @@ pub struct DiffractionPatternResult {
     pub image: Array2<F>,
 }
 
-impl ComputeResult for DiffractionPatternResult {}
+crate::compute::spec::compute_spec! {
+    DiffractionPattern as "DiffractionPattern";
+    params |s| {
+        n_grid: Int;
+        sigma: Float;
+        axis: Int = DiffractionPattern::DEFAULT_AXIS => s.axis;
+        cutoff: Float
+            = crate::compute::ParamDefault::Scaled {
+                of: "sigma",
+                factor: Gaussian::DEFAULT_CUTOFF_SIGMAS,
+            }
+            => crate::compute::SpreadKernel::cutoff(&s.kernel);
+    }
+    inputs {
+        positions: Positions;
+        simbox: SimBox;
+    }
+}
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use molrs::core::Block;
-    use molrs::core::Frame;
-    use molrs::core::SimBox;
-    use ndarray::{Array1 as A1, array};
+    use ndarray::array;
+
+    struct Frame {
+        positions: Array2<F>,
+        simbox: SimBox,
+    }
+
+    impl Frame {
+        fn input(&self) -> DiffractionPatternInput<'_> {
+            DiffractionPatternInput {
+                positions: self.positions.view(),
+                simbox: &self.simbox,
+            }
+        }
+    }
 
     fn frame_with(positions: &[[F; 3]], box_len: F) -> Frame {
-        let x = A1::from_iter(positions.iter().map(|p| p[0]));
-        let y = A1::from_iter(positions.iter().map(|p| p[1]));
-        let z = A1::from_iter(positions.iter().map(|p| p[2]));
-        let mut block = Block::new();
-        block.insert("x", x.into_dyn()).unwrap();
-        block.insert("y", y.into_dyn()).unwrap();
-        block.insert("z", z.into_dyn()).unwrap();
-        let mut frame = Frame::new();
-        frame.insert("atoms", block);
-        frame.simbox =
-            Some(SimBox::cube(box_len, array![0.0 as F, 0.0 as F, 0.0 as F], [true; 3]).unwrap());
-        frame
+        Frame {
+            positions: Array2::from_shape_fn((positions.len(), 3), |(i, c)| positions[i][c]),
+            simbox: SimBox::cube(box_len, array![0.0 as F, 0.0 as F, 0.0 as F], [true; 3]).unwrap(),
+        }
     }
 
     #[test]
     fn empty_frame_image_is_zero() {
         let frame = frame_with(&[], 10.0);
-        let r = &DiffractionPattern::new(32, 0.3)
+        let r = DiffractionPattern::new(32, 0.3)
             .unwrap()
-            .compute(&[&frame], ())
-            .unwrap()[0];
+            .compute(frame.input())
+            .unwrap();
         let s: F = r.image.iter().copied().sum();
         assert_eq!(s, 0.0);
     }
@@ -283,10 +239,10 @@ mod tests {
         // For a single Gaussian at the centre, |F(k=0)|² should be the
         // largest entry in the shifted diffraction image.
         let frame = frame_with(&[[5.0, 5.0, 5.0]], 10.0);
-        let r = &DiffractionPattern::new(32, 0.4)
+        let r = DiffractionPattern::new(32, 0.4)
             .unwrap()
-            .compute(&[&frame], ())
-            .unwrap()[0];
+            .compute(frame.input())
+            .unwrap();
         let dc = r.diffraction[[16, 16]];
         let mut max_off = 0.0_f64;
         for ((i, j), &v) in r.diffraction.indexed_iter() {
@@ -311,10 +267,10 @@ mod tests {
             }
         }
         let frame = frame_with(&positions, a * 4.0);
-        let r = &DiffractionPattern::new(32, 0.2)
+        let r = DiffractionPattern::new(32, 0.2)
             .unwrap()
-            .compute(&[&frame], ())
-            .unwrap()[0];
+            .compute(frame.input())
+            .unwrap();
         // Some off-DC element must be larger than typical background.
         let dc = r.diffraction[[16, 16]];
         let mut max_off = 0.0_f64;
@@ -336,5 +292,42 @@ mod tests {
         assert!(DiffractionPattern::new(0, 0.3).is_err());
         assert!(DiffractionPattern::new(32, 0.0).is_err());
         assert!(DiffractionPattern::new(32, -1.0).is_err());
+        assert!(
+            DiffractionPattern::new(32, 0.3)
+                .unwrap()
+                .with_cutoff(0.0)
+                .is_err()
+        );
+    }
+
+    /// `with_axis` used to `assert!`; an axis past z is an error.
+    #[test]
+    fn invalid_projection_axis_is_out_of_range() {
+        let dp = DiffractionPattern::new(8, 0.3).unwrap();
+        assert!(matches!(
+            dp.with_axis(3),
+            Err(ComputeError::OutOfRange { .. })
+        ));
+        assert_eq!(dp.with_axis(0).unwrap().axis(), 0);
+    }
+
+    /// The smearing wraps across a periodic face only; an open face drops
+    /// what falls past it (it used to wrap regardless).
+    #[test]
+    fn smearing_wraps_only_periodic_faces() {
+        let positions = array![[0.05, 5.0, 5.0]];
+        let open = SimBox::cube(10.0, array![0.0, 0.0, 0.0], [false; 3]).unwrap();
+        let periodic = SimBox::cube(10.0, array![0.0, 0.0, 0.0], [true; 3]).unwrap();
+        let dp = DiffractionPattern::new(20, 0.3).unwrap();
+        let image = |simbox: &SimBox| {
+            dp.compute(DiffractionPatternInput {
+                positions: positions.view(),
+                simbox,
+            })
+            .unwrap()
+            .image
+        };
+        assert!(image(&periodic)[[19, 10]] > 0.0);
+        assert_eq!(image(&open)[[19, 10]], 0.0);
     }
 }

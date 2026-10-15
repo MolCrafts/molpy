@@ -1,10 +1,10 @@
 //! Maxwell-Boltzmann velocity distribution. Not a hook — draw only.
 
-use ndarray::{Array2, ArrayView1, ArrayView2, Zip};
+use ndarray::{Array1, Array2, ArrayView1, ArrayView2, Zip};
 use rand::SeedableRng;
 use rand::rngs::StdRng;
 
-use crate::compute::center_of_mass_velocity;
+use crate::compute::{CenterOfMass, CenterOfMassInput, Compute};
 use crate::op::standard_normal;
 use molrs::op::{F, Fnx3};
 
@@ -94,21 +94,26 @@ impl MaxwellBoltzmann {
             }
         });
         if self.remove_com {
-            remove_com_velocity(&mut vel, mass);
+            let com = Self::com_velocity(vel.view(), mass)?;
+            Zip::from(vel.rows_mut()).for_each(|mut v| v -= &com);
         }
         Ok(vel)
     }
-}
 
-/// Subtract the centre-of-mass velocity from every row of `vel`.
-fn remove_com_velocity(vel: &mut Array2<F>, mass: ArrayView1<'_, F>) {
-    let com = center_of_mass_velocity(mass, vel.view())
-        .expect("velocities() checked the shapes before drawing");
-    Zip::from(vel.rows_mut()).for_each(|mut v| {
-        v[0] -= com[0];
-        v[1] -= com[1];
-        v[2] -= com[2];
-    });
+    /// The centre-of-mass velocity: [`CenterOfMass`] on the velocities, no
+    /// box, every atom in one group.
+    fn com_velocity(vel: ArrayView2<'_, F>, mass: ArrayView1<'_, F>) -> Result<Array1<F>, MdError> {
+        let one_group: Vec<u8> = vec![0; vel.nrows()];
+        let com = CenterOfMass::new()
+            .compute(CenterOfMassInput {
+                positions: vel,
+                simbox: None,
+                partition: &one_group,
+                masses: mass,
+            })
+            .map_err(|e| MdError::Invalid(format!("centre-of-mass velocity: {e}")))?;
+        Ok(com.centers.row(0).to_owned())
+    }
 }
 
 #[cfg(test)]
@@ -140,7 +145,7 @@ mod tests {
             .unwrap()
             .velocities(pos.view(), mass.view())
             .unwrap();
-        let com = center_of_mass_velocity(mass.view(), vel.view()).unwrap();
+        let com = MaxwellBoltzmann::com_velocity(vel.view(), mass.view()).unwrap();
         assert!(com.iter().all(|c| c.abs() < 1e-12));
     }
 
@@ -151,7 +156,7 @@ mod tests {
         let mb = MaxwellBoltzmann::new(200.0, 1).unwrap().keep_com();
         assert!(!mb.remove_com());
         let vel = mb.velocities(pos.view(), mass.view()).unwrap();
-        let com = center_of_mass_velocity(mass.view(), vel.view()).unwrap();
+        let com = MaxwellBoltzmann::com_velocity(vel.view(), mass.view()).unwrap();
         assert!(com.iter().any(|c| c.abs() > 1e-8));
     }
 

@@ -1,55 +1,44 @@
-//! Streaming (frame-by-frame) RDF accumulation.
+//! Streaming (frame-by-frame) RDF accumulation — the one g(r) algorithm.
 
-use molrs::core::FrameAccess;
-use molrs::core::Neighbors;
+use molrs::core::{PairSource, QueryMode};
 use molrs::op::F;
 use ndarray::Array1;
 
-use super::{Rdf, RdfMode, RdfResult};
-use crate::compute::ComputeError;
+use super::{Rdf, RdfResult};
+use crate::compute::{Accumulate, Axis, ComputeError, Histogram, require_dist_sq};
 
-/// Streaming g(r) accumulator (bounded memory).
+/// Streaming g(r) accumulator (bounded memory), obtained from a configured
+/// [`Rdf`] through [`Stream::accumulator`](crate::compute::Stream::accumulator).
 ///
-/// Construct from a configured [`Rdf`], feed frames one at a time, finalize
-/// once.
-///
-/// [`RdfAccumulator`] is the bounded-memory streaming counterpart of the batch
-/// [`Rdf`](super::Rdf) compute: feed one frame + neighbor list at a time via
-/// [`accumulate`](RdfAccumulator::accumulate), then read the normalized g(r)
-/// from [`finalize`](RdfAccumulator::finalize). State is O(`n_bins`) — never
-/// O(trajectory) — so an arbitrarily long MD run can stream through it.
-///
-/// It folds exactly the per-frame sums the batch path folds (`n_r`, point
-/// counts, volume), in the same order, so `finalize()` reproduces
-/// `Rdf::compute` over the same frames bit-for-bit. The batch compute is
-/// itself implemented on top of this accumulator — one source of truth for
-/// the accumulation math.
+/// Push one pair source per frame; [`finish`](Accumulate::finish) normalizes
+/// the running histogram into an [`RdfResult`] without consuming it, so a long
+/// run can be inspected and continued. State is O(`n_bins`) — never
+/// O(trajectory). [`Rdf::compute`](crate::compute::Compute::compute) is this
+/// accumulator folded over a slice of sources, so batch and stream give the
+/// same numbers bit for bit.
 #[derive(Debug, Clone)]
 pub struct RdfAccumulator {
     rdf: Rdf,
-    n_r: Array1<F>,
+    histogram: Histogram<1>,
     n_points: usize,
     n_query_points: usize,
     volume: F,
     n_frames: usize,
-    /// Pairing latched from frame 0, count-free: the per-frame point counts go
-    /// into `n_points` / `n_query_points`, and only the pairing has to stay
-    /// constant across the stream.
-    mode: Option<RdfMode>,
+    /// Pairing latched from frame 0: `true` for a half-shell self-query. Only
+    /// the pairing must stay constant; the point counts may vary per frame.
+    self_query: Option<bool>,
 }
 
 impl RdfAccumulator {
-    /// New accumulator over the given RDF configuration.
-    pub fn new(rdf: Rdf) -> Self {
-        let n_bins = rdf.n_bins();
+    pub(super) fn new(rdf: Rdf) -> Self {
         Self {
+            histogram: Histogram::new([rdf.axis()]),
             rdf,
-            n_r: Array1::zeros(n_bins),
             n_points: 0,
             n_query_points: 0,
             volume: 0.0,
             n_frames: 0,
-            mode: None,
+            self_query: None,
         }
     }
 
@@ -58,82 +47,190 @@ impl RdfAccumulator {
         self.n_frames
     }
 
-    /// The RDF configuration this accumulator bins with.
-    pub fn rdf(&self) -> &Rdf {
-        &self.rdf
-    }
-
-    /// Fold one frame's pair distances into the running histogram.
+    /// Bin every pair distance of one source into a fresh histogram, so a
+    /// rejected frame leaves the running state untouched.
     ///
-    /// Errors mirror the batch path: a neighbor-list pairing that differs from
-    /// frame 0, a table with no `dist_sq` column, a missing `SimBox`, or a
-    /// non-finite/non-positive volume all reject the frame (the accumulator
-    /// state is left unchanged).
-    pub fn accumulate<FA: FrameAccess>(
-        &mut self,
-        frame: &FA,
-        nlist: &Neighbors,
-    ) -> Result<(), ComputeError> {
-        // Only the pairing has to match frame 0; the point counts the neighbor
-        // list carries legitimately vary from frame to frame, which is why the
-        // comparison is on the count-free `RdfMode` and not on `QueryMode`.
-        let mode = RdfMode::from(nlist.mode());
-        match self.mode {
-            Some(latched) if latched != mode => {
-                return Err(ComputeError::BadShape {
-                    expected: format!("{latched:?} (frame 0)"),
-                    got: format!("{mode:?} (frame {})", self.n_frames),
+    /// Reads the distances through [`PairSource::visit_dist_sq`], the bulk
+    /// column path: a table's column is binned in one tight loop, and a
+    /// streaming list batches its distances, so no per-pair dynamic call or
+    /// `Option` reaches this loop. The bin is [`Axis::index`](crate::compute::Axis::index)'s.
+    fn bin(&self, source: &dyn PairSource) -> Result<Histogram<1>, ComputeError> {
+        let axis = self.rdf.axis();
+        let mut counts = vec![0u64; axis.n_bins()];
+        let mut failure: Option<ComputeError> = None;
+        let mut offset = 0usize;
+        let visited = source.visit_dist_sq(&mut |chunk| {
+            if failure.is_some() {
+                return;
+            }
+            if let Err(k) = Self::bin_chunk(axis, chunk, &mut counts) {
+                failure = Some(ComputeError::NonFinite {
+                    where_: "pair dist_sq",
+                    index: offset + k,
                 });
             }
-            _ => {}
+            offset += chunk.len();
+        });
+        // `push` ran `require_dist_sq` first, which vouched for the column.
+        debug_assert!(visited, "require_dist_sq vouched for the dist_sq column");
+        match failure {
+            Some(err) => Err(err),
+            // Integer counts convert exactly (a frame holds far fewer than
+            // 2⁵³ pairs), so this equals adding 1.0 per pair.
+            None => {
+                let counts = counts.iter().map(|&c| c as F).collect::<Array1<F>>();
+                Ok(Histogram::from_counts([axis], counts.into_dyn()))
+            }
         }
-        let simbox = frame.simbox_ref().ok_or(ComputeError::MissingSimBox)?;
-        let vol = simbox.volume();
-        if !(vol.is_finite() && vol > 0.0) {
-            return Err(ComputeError::OutOfRange {
-                field: "Rdf::volume",
-                value: vol.to_string(),
+    }
+}
+
+impl RdfAccumulator {
+    /// Count one slice of squared distances into `counts`.
+    ///
+    /// The axis arrives by value and the counts as a plain slice, so the
+    /// optimizer keeps the axis in registers across the loop and hoists the
+    /// sample-independent part of [`Axis::index`](crate::compute::Axis::index).
+    ///
+    /// # Errors
+    /// The slice position of the first non-finite distance; the counts up to
+    /// it are already added, which is harmless because the caller discards
+    /// the whole frame on error.
+    #[inline]
+    fn bin_chunk(axis: Axis, chunk: &[F], counts: &mut [u64]) -> Result<(), usize> {
+        for (k, &d2) in chunk.iter().enumerate() {
+            // A coincident pair (d² = 0) has no shell and is skipped; a NaN
+            // goes on to `Axis::index`, which rejects it.
+            if !(d2 > 0.0 || d2.is_nan()) {
+                continue;
+            }
+            match axis.index(d2.sqrt()) {
+                Ok(Some(i)) => counts[i] += 1,
+                Ok(None) => {}
+                Err(_) => return Err(k),
+            }
+        }
+        Ok(())
+    }
+}
+
+impl Accumulate for RdfAccumulator {
+    type Item<'a> = &'a (dyn PairSource + Sync);
+    type Output = RdfResult;
+
+    /// Fold one frame's pairs into the running histogram.
+    ///
+    /// # Errors
+    /// The frame is rejected — and the state left unchanged — when:
+    /// - its pairing (self vs cross) differs from frame 0's
+    ///   ([`ComputeError::BadShape`]);
+    /// - the source carries no box ([`ComputeError::BadShape`]: g(r) needs
+    ///   the box volume, and none is invented);
+    /// - the box volume is not finite and positive
+    ///   ([`ComputeError::OutOfRange`]);
+    /// - the source has no `dist_sq` column ([`ComputeError::BadShape`]);
+    /// - a distance is not finite ([`ComputeError::NonFinite`]).
+    fn push(&mut self, source: &(dyn PairSource + Sync)) -> Result<(), ComputeError> {
+        let mode = source.mode();
+        let self_query = matches!(mode, QueryMode::SelfQuery { .. });
+        if let Some(latched) = self.self_query
+            && latched != self_query
+        {
+            return Err(ComputeError::BadShape {
+                expected: format!("{} (frame 0)", pairing(latched)),
+                got: format!("{} (frame {})", pairing(self_query), self.n_frames),
             });
         }
-        // Binning first: it is the last thing that can reject the frame, and
-        // nothing above it has touched the accumulator yet, so a rejected frame
-        // really does leave the state alone.
-        self.rdf.accumulate_into(nlist, &mut self.n_r)?;
-        if self.mode.is_none() {
-            self.mode = Some(mode);
+        let simbox = source.simbox().ok_or_else(|| ComputeError::BadShape {
+            expected: "a pair source searched in a SimBox (its volume normalizes g(r))".into(),
+            got: "a source with no box — attach one with Neighbors::with_simbox".into(),
+        })?;
+        let volume = simbox.volume();
+        if !(volume.is_finite() && volume > 0.0) {
+            return Err(ComputeError::OutOfRange {
+                field: "Rdf::volume",
+                value: volume.to_string(),
+            });
         }
-        self.n_points += nlist.n_points();
-        self.n_query_points += nlist.n_query_points();
-        self.volume += vol;
+        require_dist_sq(source)?;
+        let histogram = self.bin(source)?;
+
+        self.histogram.merge(&histogram);
+        self.self_query = Some(self_query);
+        let (n_query_points, n_points) = match mode {
+            QueryMode::SelfQuery { n_points } => (n_points, n_points),
+            QueryMode::CrossQuery {
+                n_query_points,
+                n_points,
+            } => (n_query_points, n_points),
+        };
+        self.n_points += n_points;
+        self.n_query_points += n_query_points;
+        self.volume += volume;
         self.n_frames += 1;
         Ok(())
     }
 
-    /// Normalize the accumulated histogram into a finalized [`RdfResult`].
+    /// Normalize the accumulated histogram into an [`RdfResult`].
     ///
-    /// Errors with [`ComputeError::EmptyInput`] when no frame has been
-    /// accumulated. The accumulator itself is unchanged and may keep
-    /// accumulating afterwards.
-    pub fn finalize(&self) -> Result<RdfResult, ComputeError> {
-        if self.n_frames == 0 {
+    /// # Errors
+    /// [`ComputeError::EmptyInput`] before any frame, or when the frames
+    /// held no points (no density to normalize by).
+    fn finish(&self) -> Result<RdfResult, ComputeError> {
+        let Some(self_query) = self.self_query else {
             return Err(ComputeError::EmptyInput);
-        }
-        let mut result = RdfResult {
-            bin_edges: self.rdf.bin_edges.clone(),
-            bin_centers: self.rdf.bin_centers.clone(),
-            rdf: Array1::zeros(self.rdf.n_bins()),
-            n_r: self.n_r.clone(),
+        };
+        let nf = self.n_frames as F;
+        let vol = self.volume / nf;
+        let axis = self.rdf.axis();
+        let shells = axis.shell_volumes(self.rdf.dimensionality())?;
+        let n_r = self
+            .histogram
+            .counts()
+            .iter()
+            .copied()
+            .collect::<Array1<F>>();
+
+        let rdf = if self_query {
+            let n = self.n_points as F / nf;
+            if n <= 0.0 {
+                return Err(ComputeError::EmptyInput);
+            }
+            let rho = n / vol;
+            ndarray::Zip::from(&n_r)
+                .and(&shells)
+                .map_collect(|&count, &v_shell| 2.0 * count / (rho * v_shell * n * nf))
+        } else {
+            let n_a = self.n_query_points as F / nf;
+            let n_b = self.n_points as F / nf;
+            if n_a <= 0.0 || n_b <= 0.0 {
+                return Err(ComputeError::EmptyInput);
+            }
+            ndarray::Zip::from(&n_r)
+                .and(&shells)
+                .map_collect(|&count, &v_shell| count / (n_a * n_b * v_shell / vol * nf))
+        };
+
+        Ok(RdfResult {
+            bin_edges: axis.edges(),
+            bin_centers: axis.centers(),
+            rdf,
+            n_r,
             n_points: self.n_points,
             n_query_points: self.n_query_points,
-            mode: self.mode.expect("mode latched with the first frame"),
+            self_query,
             volume: self.volume,
-            r_min: self.rdf.r_min(),
+            r_min: axis.min(),
             n_frames: self.n_frames,
             dimensionality: self.rdf.dimensionality(),
-            finalized: false,
-        };
-        use crate::compute::ComputeResult;
-        result.finalize();
-        Ok(result)
+        })
+    }
+}
+
+fn pairing(self_query: bool) -> &'static str {
+    if self_query {
+        "half-shell self-query"
+    } else {
+        "directed cross-query"
     }
 }

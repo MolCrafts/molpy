@@ -240,6 +240,7 @@ impl VerletSkin {
             scratch_r2: Vec::new(),
             scratch_disp: Vec::new(),
         };
+        skin.pairs_buf.simbox = Some(skin.simbox.clone());
         skin.rebuild_edges();
         skin.hold(positions);
         Ok(skin)

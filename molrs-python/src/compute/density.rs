@@ -1,241 +1,339 @@
-//! Density fields (`molrs::compute::density`): local and Gaussian density,
-//! spatial distribution.
+//! Densities and pair correlations on bins and grids
+//! (`molrs::compute::density`): `CorrelationFunction`, `LocalDensity`,
+//! `GaussianDensity`, `SphereVoxelization` (one snapshot each) and
+//! `SpatialDistribution` (folded over frames), with their outputs.
 
-#![allow(clippy::type_complexity)]
-
-use super::{collect_frames, collect_neighbors};
-use crate::error::py_value_err;
 use molrs::compute::{
-    AtomGroups, Compute, GaussianDensity, GridSpec, LocalDensity, SpatialDistribution,
-    SpatialDistributionResult,
+    Compute, CorrelationFunction, CorrelationFunctionInput, CorrelationFunctionResult,
+    GaussianDensity, GaussianDensityInput, GaussianDensityResult, LocalDensity, LocalDensityInput,
+    LocalDensityResult, SpatialDistribution, SpatialDistributionFrame, SpatialDistributionResult,
+    SphereVoxelization, SphereVoxelizationInput, SphereVoxelizationResult,
 };
-use molrs::core::{Frame as CoreFrame, FrameAccess};
-use molrs::op::F;
-use ndarray::{Array1, Array2};
-use numpy::{IntoPyArray, PyArray1, PyArray3, PyArray4, PyReadonlyArray2};
-use pyo3::exceptions::PyValueError;
+use numpy::{PyReadonlyArray1, PyReadonlyArray2};
 use pyo3::prelude::*;
-use pyo3::types::PyAny;
 
-// ---------------------------------------------------------------------------
-// LocalDensity
-// ---------------------------------------------------------------------------
+use super::args::PairSourceArg;
+use super::distribution::{frame_boxes, same_frames};
+use super::error::Result;
+use super::output::py_result;
+use super::spec::described;
+use super::values::PyRegularGrid;
+use crate::core::simbox::PyBox;
 
-#[pyclass(module = "molrs.compute", name = "LocalDensity")]
-pub struct PyLocalDensity {
+py_result! {
+    /// A pair correlation of per-point values on radial bins
+    /// (``molrs::compute::CorrelationFunctionResult``).
+    PyCorrelationFunctionResult(CorrelationFunctionResult) as "CorrelationFunctionResult" {
+        bin_edges,
+        bin_centers,
+        bin_counts,
+        correlation,
+    }
+}
+
+py_result! {
+    /// Per-point neighbour count and local number density
+    /// (``molrs::compute::LocalDensityResult``).
+    PyLocalDensityResult(LocalDensityResult) as "LocalDensityResult" { n_neighbors, density }
+}
+
+py_result! {
+    /// A Gaussian-smeared density on a grid
+    /// (``molrs::compute::GaussianDensityResult``).
+    PyGaussianDensityResult(GaussianDensityResult) as "GaussianDensityResult" { density, grid }
+}
+
+py_result! {
+    /// Occupied voxels of spheres on a grid
+    /// (``molrs::compute::SphereVoxelizationResult``).
+    PySphereVoxelizationResult(SphereVoxelizationResult) as "SphereVoxelizationResult" {
+        voxels,
+        raw_counts,
+        grid,
+    }
+}
+
+py_result! {
+    /// A spatial distribution in a reference body frame
+    /// (``molrs::compute::SpatialDistributionResult``).
+    PySpatialDistributionResult(SpatialDistributionResult) as "SpatialDistributionResult" {
+        counts,
+        density,
+        g_sdf,
+        orientation,
+        grid,
+        voxel_volume,
+        n_frames,
+    }
+}
+
+/// Radial correlation of two per-point value arrays over a pair source
+/// (``molrs::compute::CorrelationFunction``).
+///
+/// Parameters
+/// ----------
+/// n_bins : int
+/// r_max, r_min : float
+///
+/// ``compute(pairs=, values_a=, values_b=)``: ``pairs`` is a ``Neighbors`` or
+/// a ``NeighborList``; ``values_a`` / ``values_b`` are per query / reference
+/// point.
+#[pyclass(module = "molrs.compute", name = "CorrelationFunction", frozen)]
+pub(crate) struct PyCorrelationFunction {
+    inner: CorrelationFunction,
+}
+
+#[pymethods]
+impl PyCorrelationFunction {
+    #[new]
+    fn new(n_bins: usize, r_max: f64, r_min: f64) -> Result<Self> {
+        Ok(Self {
+            inner: CorrelationFunction::new(n_bins, r_max, r_min)?,
+        })
+    }
+
+    #[pyo3(signature = (*, pairs, values_a, values_b))]
+    fn compute(
+        &self,
+        pairs: &Bound<'_, PyAny>,
+        values_a: PyReadonlyArray1<'_, f64>,
+        values_b: PyReadonlyArray1<'_, f64>,
+    ) -> Result<PyCorrelationFunctionResult> {
+        let pairs = PairSourceArg::extract(pairs)?;
+        let out = self.inner.compute(CorrelationFunctionInput {
+            pairs: pairs.source()?,
+            values_a: values_a.as_array(),
+            values_b: values_b.as_array(),
+        })?;
+        Ok(out.into())
+    }
+}
+
+described!(PyCorrelationFunction, CorrelationFunction);
+
+/// Local number density within ``r_max`` of each point
+/// (``molrs::compute::LocalDensity``).
+///
+/// Parameters
+/// ----------
+/// r_max : float
+/// diameter : float, optional
+///     The particle diameter smoothing the sphere edge.
+///
+/// ``compute(pairs=)``: a ``Neighbors`` or a ``NeighborList``.
+#[pyclass(module = "molrs.compute", name = "LocalDensity", frozen)]
+pub(crate) struct PyLocalDensity {
     inner: LocalDensity,
 }
 
 #[pymethods]
 impl PyLocalDensity {
     #[new]
-    #[pyo3(signature = (r_max, diameter=0.0))]
-    fn new(r_max: f64, diameter: f64) -> PyResult<Self> {
-        let inner = LocalDensity::new(r_max)
-            .map_err(py_value_err)?
-            .with_diameter(diameter);
+    #[pyo3(signature = (r_max, *, diameter = None))]
+    fn new(r_max: f64, diameter: Option<f64>) -> Result<Self> {
+        let mut inner = LocalDensity::new(r_max)?;
+        if let Some(diameter) = diameter {
+            inner = inner.with_diameter(diameter)?;
+        }
         Ok(Self { inner })
     }
 
-    /// Returns `(n_neighbors, density)` ndarrays per frame.
-    fn compute<'py>(
-        &self,
-        py: Python<'py>,
-        frames: &Bound<'py, PyAny>,
-        nlists: &Bound<'py, PyAny>,
-    ) -> PyResult<Vec<(Bound<'py, PyArray1<f64>>, Bound<'py, PyArray1<f64>>)>> {
-        let owned = collect_frames(frames)?;
-        let refs: Vec<&CoreFrame> = owned.iter().collect();
-        let neighbors = collect_neighbors(nlists)?;
-        let results = self
-            .inner
-            .compute(&refs, &neighbors)
-            .map_err(py_value_err)?;
-        Ok(results
-            .into_iter()
-            .map(|r| {
-                (
-                    Array1::from_vec(r.n_neighbors).into_pyarray(py),
-                    Array1::from_vec(r.density).into_pyarray(py),
-                )
-            })
-            .collect())
+    #[pyo3(signature = (*, pairs))]
+    fn compute(&self, pairs: &Bound<'_, PyAny>) -> Result<PyLocalDensityResult> {
+        let pairs = PairSourceArg::extract(pairs)?;
+        let out = self.inner.compute(LocalDensityInput {
+            pairs: pairs.source()?,
+        })?;
+        Ok(out.into())
     }
 }
 
-// ---------------------------------------------------------------------------
-// GaussianDensity
-// ---------------------------------------------------------------------------
+described!(PyLocalDensity, LocalDensity);
 
-#[pyclass(module = "molrs.compute", name = "GaussianDensity")]
-pub struct PyGaussianDensity {
+/// Gaussian-smeared density of points on a grid over the box
+/// (``molrs::compute::GaussianDensity``).
+///
+/// Parameters
+/// ----------
+/// dims : tuple[int, int, int]
+///     Voxels per cell vector.
+/// sigma : float
+///     The Gaussian width.
+/// r_max : float, optional
+///     The cutoff of the Gaussian.
+/// reach : str, optional
+///     ``"ceil"`` (every voxel centre within ``r_max``) or ``"floor"``
+///     (freud's narrower stencil).
+///
+/// ``compute(positions=, simbox=)``.
+#[pyclass(module = "molrs.compute", name = "GaussianDensity", frozen)]
+pub(crate) struct PyGaussianDensity {
     inner: GaussianDensity,
 }
 
 #[pymethods]
 impl PyGaussianDensity {
     #[new]
-    fn new(nx: usize, ny: usize, nz: usize, sigma: f64) -> PyResult<Self> {
-        Ok(Self {
-            inner: GaussianDensity::new(nx, ny, nz, sigma).map_err(py_value_err)?,
-        })
+    #[pyo3(signature = (dims, sigma, *, r_max = None, reach = None))]
+    fn new(dims: [usize; 3], sigma: f64, r_max: Option<f64>, reach: Option<&str>) -> Result<Self> {
+        let mut inner = GaussianDensity::new(dims, sigma)?;
+        if let Some(r_max) = r_max {
+            inner = inner.with_r_max(r_max)?;
+        }
+        if let Some(reach) = reach {
+            inner = inner.with_reach(reach.parse()?);
+        }
+        Ok(Self { inner })
     }
 
-    /// Returns a list of 3-D density grids `(nx, ny, nz)`, one per frame.
-    fn compute<'py>(
+    #[pyo3(signature = (*, positions, simbox))]
+    fn compute(
         &self,
-        py: Python<'py>,
-        frames: &Bound<'py, PyAny>,
-    ) -> PyResult<Vec<Bound<'py, PyArray3<f64>>>> {
-        let owned = collect_frames(frames)?;
-        let refs: Vec<&CoreFrame> = owned.iter().collect();
-        let results = self.inner.compute(&refs, ()).map_err(py_value_err)?;
-        Ok(results
-            .into_iter()
-            .map(|r| r.density.into_pyarray(py))
-            .collect())
+        positions: PyReadonlyArray2<'_, f64>,
+        simbox: PyRef<'_, PyBox>,
+    ) -> Result<PyGaussianDensityResult> {
+        let out = self.inner.compute(GaussianDensityInput {
+            positions: positions.as_array(),
+            simbox: &simbox.inner,
+        })?;
+        Ok(out.into())
     }
 }
 
-// ---------------------------------------------------------------------------
-// Spatial distribution function (SDF)
-// ---------------------------------------------------------------------------
+described!(PyGaussianDensity, GaussianDensity);
 
-#[pyclass(module = "molrs.compute", name = "SpatialDistributionResult")]
-pub struct PySpatialDistributionResult {
-    inner: SpatialDistributionResult,
+/// Voxels covered by spheres of radius ``r_max`` around the points
+/// (``molrs::compute::SphereVoxelization``).
+///
+/// Parameters
+/// ----------
+/// dims : tuple[int, int, int]
+/// r_max : float
+///
+/// ``compute(positions=, simbox=)``.
+#[pyclass(module = "molrs.compute", name = "SphereVoxelization", frozen)]
+pub(crate) struct PySphereVoxelization {
+    inner: SphereVoxelization,
 }
 
 #[pymethods]
-impl PySpatialDistributionResult {
-    #[getter]
-    fn counts<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray3<f64>> {
-        self.inner.counts.clone().into_pyarray(py)
+impl PySphereVoxelization {
+    #[new]
+    fn new(dims: [usize; 3], r_max: f64) -> Result<Self> {
+        Ok(Self {
+            inner: SphereVoxelization::new(dims, r_max)?,
+        })
     }
-    #[getter]
-    fn density<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray3<f64>> {
-        self.inner.density.clone().into_pyarray(py)
-    }
-    #[getter]
-    fn g_sdf<'py>(&self, py: Python<'py>) -> Option<Bound<'py, PyArray3<f64>>> {
-        self.inner
-            .g_sdf
-            .as_ref()
-            .map(|g| g.clone().into_pyarray(py))
-    }
-    /// Per-voxel mean body-frame orientation `(nx, ny, nz, 3)` (only present
-    /// when the frames carried an `"orientations"` topology block).
-    #[getter]
-    fn orientation<'py>(&self, py: Python<'py>) -> Option<Bound<'py, PyArray4<f64>>> {
-        self.inner
-            .orientation
-            .as_ref()
-            .map(|o| o.clone().into_pyarray(py))
-    }
-    #[getter]
-    fn n(&self) -> [usize; 3] {
-        self.inner.n
-    }
-    #[getter]
-    fn extent(&self) -> [f64; 3] {
-        self.inner.extent
-    }
-    #[getter]
-    fn voxel_volume(&self) -> f64 {
-        self.inner.voxel_volume
-    }
-    #[getter]
-    fn n_frames(&self) -> usize {
-        self.inner.n_frames
+
+    #[pyo3(signature = (*, positions, simbox))]
+    fn compute(
+        &self,
+        positions: PyReadonlyArray2<'_, f64>,
+        simbox: PyRef<'_, PyBox>,
+    ) -> Result<PySphereVoxelizationResult> {
+        let out = self.inner.compute(SphereVoxelizationInput {
+            positions: positions.as_array(),
+            simbox: &simbox.inner,
+        })?;
+        Ok(out.into())
     }
 }
 
-/// Spatial distribution function: target-atom density on a body-fixed grid,
-/// aligned to a reference template via Kabsch superposition.
-#[pyclass(module = "molrs.compute", name = "SpatialDistribution")]
-pub struct PySpatialDistribution {
+described!(PySphereVoxelization, SphereVoxelization);
+
+/// Spatial distribution of target atoms in the body frame of a rigid
+/// reference, over frames (``molrs::compute::SpatialDistribution``).
+///
+/// Parameters
+/// ----------
+/// grid : RegularGrid
+///     The body-frame grid.
+/// bulk_density : float, optional
+///     Normalise ``g_sdf`` by this bulk density.
+///
+/// ``compute(positions=, simbox=None, reference=, template=, target=,
+/// orientation=None)`` takes one entry per frame in every list: positions
+/// ``(N, 3)``, a box (or ``None``), reference indices, the ``(n_ref, 3)``
+/// body-frame template, target indices and optional ``(head, tail)`` pairs.
+#[pyclass(module = "molrs.compute", name = "SpatialDistribution", frozen)]
+pub(crate) struct PySpatialDistribution {
     inner: SpatialDistribution,
 }
 
 #[pymethods]
 impl PySpatialDistribution {
-    /// Parameters
-    /// ----------
-    /// reference, target : list[int]
-    ///     Reference (≥3, for alignment) and target (binned) atom indices.
-    /// template : (R, 3) float array
-    ///     Body-frame template coordinates for the reference atoms.
-    /// n : (int, int, int)
-    ///     Grid voxel counts per axis.
-    /// extent : (float, float, float)
-    ///     Grid extent (Å) per axis.
-    /// bulk_density : float, optional
-    ///     If set, also produce ``g_sdf = density / bulk_density``.
-    ///
-    /// A per-voxel mean orientation field is produced when the frames carry an
-    /// ``"orientations"`` topology block — one `(head, tail)` atom pair per
-    /// target atom — read at compute time (no constructor array).
     #[new]
-    #[pyo3(signature = (reference, template, target, n, extent, bulk_density=None))]
-    fn new(
-        reference: Vec<usize>,
-        template: PyReadonlyArray2<'_, f64>,
-        target: Vec<usize>,
-        n: [usize; 3],
-        extent: [F; 3],
-        bulk_density: Option<F>,
-    ) -> PyResult<Self> {
-        let tmpl: Array2<F> = template.as_array().to_owned();
-        let grid = GridSpec { n, extent };
-        let mut sdf =
-            SpatialDistribution::new(reference, tmpl, target, grid).map_err(py_value_err)?;
-        if let Some(rho) = bulk_density {
-            sdf = sdf.with_bulk_density(rho);
+    #[pyo3(signature = (grid, *, bulk_density = None))]
+    fn new(grid: PyRef<'_, PyRegularGrid>, bulk_density: Option<f64>) -> Result<Self> {
+        let mut inner = SpatialDistribution::new(grid.inner.clone());
+        if let Some(bulk_density) = bulk_density {
+            inner = inner.with_bulk_density(bulk_density)?;
         }
-        Ok(Self { inner: sdf })
+        Ok(Self { inner })
     }
 
-    /// Accumulate the SDF over a trajectory (list of frames).
-    ///
-    /// If the first frame carries an `"orientations"` topology block (one
-    /// `(head, tail)` atom pair per target atom, in `target` order), a per-voxel
-    /// mean body-frame orientation of the unit `head − tail` vector is
-    /// accumulated; otherwise the SDF is orientation-free.
-    fn compute(&self, frames: &Bound<'_, PyAny>) -> PyResult<PySpatialDistributionResult> {
-        let owned = collect_frames(frames)?;
-        let refs: Vec<&CoreFrame> = owned.iter().collect();
-        let first = refs
-            .first()
-            .copied()
-            .ok_or_else(|| PyValueError::new_err("no frames provided"))?;
-        let inner = if first.contains_block("orientations") {
-            let groups = AtomGroups::from_frame(first, "orientations", 2).map_err(py_value_err)?;
-            // The block stores `(head, tail)`; `with_orientation` expects
-            // `(tail, head)` and forms the unit `head − tail` vector internally
-            // (with minimum-image), so swap the endpoint order.
-            let tuples: Vec<(usize, usize)> = (0..groups.len())
-                .map(|i| {
-                    let t = groups.tuple(i);
-                    (t[1] as usize, t[0] as usize)
-                })
-                .collect();
-            self.inner
-                .clone()
-                .with_orientation(tuples)
-                .compute(&refs, ())
-                .map_err(py_value_err)?
-        } else {
-            self.inner.compute(&refs, ()).map_err(py_value_err)?
+    #[allow(clippy::too_many_arguments, reason = "one argument per input field")]
+    #[pyo3(signature = (
+        *,
+        positions,
+        simbox = None,
+        reference,
+        template,
+        target,
+        orientation = None,
+    ))]
+    fn compute(
+        &self,
+        positions: Vec<PyReadonlyArray2<'_, f64>>,
+        simbox: Option<Vec<Option<PyRef<'_, PyBox>>>>,
+        reference: Vec<Vec<usize>>,
+        template: Vec<PyReadonlyArray2<'_, f64>>,
+        target: Vec<Vec<usize>>,
+        orientation: Option<Vec<Option<Vec<[usize; 2]>>>>,
+    ) -> Result<PySpatialDistributionResult> {
+        let n_frames = positions.len();
+        let boxes = frame_boxes(&simbox, n_frames)?;
+        same_frames(n_frames, reference.len(), "reference")?;
+        same_frames(n_frames, template.len(), "template")?;
+        same_frames(n_frames, target.len(), "target")?;
+        let orientation: Vec<Option<Vec<(usize, usize)>>> = match orientation {
+            None => vec![None; n_frames],
+            Some(frames) => {
+                same_frames(n_frames, frames.len(), "orientation")?;
+                frames
+                    .into_iter()
+                    .map(|pairs| {
+                        pairs.map(|pairs| pairs.into_iter().map(|[h, t]| (h, t)).collect())
+                    })
+                    .collect()
+            }
         };
-        Ok(PySpatialDistributionResult { inner })
+        let frames: Vec<SpatialDistributionFrame<'_>> = (0..n_frames)
+            .map(|t| SpatialDistributionFrame {
+                positions: positions[t].as_array(),
+                simbox: boxes[t],
+                reference: &reference[t],
+                template: template[t].as_array(),
+                target: &target[t],
+                orientation: orientation[t].as_deref(),
+            })
+            .collect();
+        Ok(self.inner.compute(&frames)?.into())
     }
 }
 
-/// Register this domain's classes and functions.
+described!(PySpatialDistribution, SpatialDistribution);
+
 pub(crate) fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    m.add_class::<PyCorrelationFunctionResult>()?;
+    m.add_class::<PyLocalDensityResult>()?;
+    m.add_class::<PyGaussianDensityResult>()?;
+    m.add_class::<PySphereVoxelizationResult>()?;
+    m.add_class::<PySpatialDistributionResult>()?;
+    m.add_class::<PyCorrelationFunction>()?;
     m.add_class::<PyLocalDensity>()?;
     m.add_class::<PyGaussianDensity>()?;
-    m.add_class::<PySpatialDistributionResult>()?;
+    m.add_class::<PySphereVoxelization>()?;
     m.add_class::<PySpatialDistribution>()?;
     Ok(())
 }

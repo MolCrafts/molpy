@@ -3,7 +3,7 @@
 //! Unified molecular simulation toolkit. A single crate whose sub-systems are
 //! modules. Four are always compiled — `op`, `core`, `perceive` and
 //! `optimize` (whose force-field optimizers need `ff`) — and the rest are
-//! feature-gated: `builder`, `io`, `signal`, `compute`, `ff`, `md`, `smiles`,
+//! feature-gated: `builder`, `io`, `compute`, `ff`, `md`, `smiles`,
 //! `conformer`, and `stream`.
 //!
 //! ```toml
@@ -28,12 +28,12 @@
 //! - `builder`   — structure builders and site-graph assembly
 //! - `io`        — file I/O (PDB, XYZ, LAMMPS, CHGCAR, Cube, …; `*.mrec`
 //!   record files need `zarr`, their path doors `filesystem`)
-//! - `compute`   — trajectory analysis (RDF, MSD, clustering, tensors)
+//! - `compute`   — trajectory analysis (RDF, MSD and every time correlation,
+//!   spectra, clustering, tensors)
 //! - `smiles`    — the line notations: SMILES and CGsmiles (`io::smiles`,
 //!   `io::cgsmiles`) and SMARTS (`perceive::smarts`), over one shared grammar
 //! - `ff`        — force fields (MMFF94, PME, typifier)
 //! - `conformer` — 3D conformer generation
-//! - `signal`    — signal processing (FFT-based ACF, windowing, frequency grids)
 //! - `md`        — in-process molecular dynamics: integrators and force
 //!   providers; the kernels are `ff::potential` (enables `ff`)
 //! - `voronoi`   — radical Voronoi tessellation (enables `compute`)
@@ -98,9 +98,6 @@ pub(crate) mod line_notation;
 
 #[cfg(feature = "io")]
 pub mod io;
-
-#[cfg(feature = "signal")]
-pub mod signal;
 
 #[cfg(feature = "compute")]
 pub mod compute;

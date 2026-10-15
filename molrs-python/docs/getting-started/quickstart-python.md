@@ -96,8 +96,11 @@ the workflow and keep it consistent.
 
 ## 5. Build a Neighbor List and RDF
 
-Neighbor search turns coordinates into pair lists. RDF then consumes the frame
-and the neighbor list rather than doing its own distance search.
+Neighbor search turns coordinates into pair lists. An analysis is configured
+when it is built and given its data when it computes: `Rdf` takes its bins at
+construction and one pair source (a `Neighbors` table or a built
+`NeighborList`) per frame in `compute`, rather than doing its own distance
+search or reading the frame.
 
 ```python
 points = np.column_stack(
@@ -112,15 +115,16 @@ print("pairs:", neigh.n_pairs)
 print("first pairs:", neigh.query_point_indices()[:5], neigh.point_indices()[:5])
 
 from molrs.compute import Rdf
-rdf = Rdf(64, 6.0)
-rdf_result = rdf.compute(frame, neigh)
+rdf = Rdf(64, 6.0, 0.0)                  # n_bins, r_max, r_min
+rdf_result = rdf.compute(pairs=[neigh])  # one pair source per frame
 print("rdf bins:", len(rdf_result.bin_centers))
 print("first g(r):", rdf_result.rdf[:5])
 ```
 
 For a single ethanol molecule in a large box, the RDF is just a small example
-of the API shape. For real RDF work, pass frames from a trajectory and build
-neighbor lists with the same cutoff and boundary assumptions for each frame.
+of the API shape. For real RDF work, build one neighbor list per trajectory
+frame, with the same cutoff and boundary assumptions, and pass them all in one
+`compute(pairs=[...])` call.
 
 ## 6. Evaluate MMFF94 Energy
 
@@ -229,7 +233,7 @@ This quickstart crossed the main molrs boundaries:
 - `Conformer.generate` produced coordinates and diagnostics.
 - `to_frame` produced the columnar representation used by I/O and analysis.
 - `Box` supplied the boundary model for neighbor search.
-- `Rdf` consumed an explicit neighbor list.
+- `Rdf` was configured with its bins and computed over explicit pair sources.
 - `Mmff94Typifier` typed the graph, and `PotentialCompiler` compiled its
   force field into potentials for energy and force evaluation.
 - `write_xyz` and `write_mrec_frame` wrote the result to disk.

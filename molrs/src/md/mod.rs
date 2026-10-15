@@ -29,7 +29,7 @@
 //!
 //! * The kinetic readings of a state (kinetic energy, temperature,
 //!   centre-of-mass velocity) are analyses, and live in [`crate::compute`]
-//!   ([`crate::compute::kinetic_energy`] and its siblings); `md` holds
+//!   ([`crate::compute::KineticEnergy`] and its siblings); `md` holds
 //!   integrators and force providers only.
 //!
 //! # Periodic régimes

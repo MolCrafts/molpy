@@ -223,6 +223,14 @@ impl Box {
         self.inner.volume()
     }
 
+    /// An independent copy of this box.
+    #[wasm_bindgen(js_name = clone)]
+    pub fn duplicate(&self) -> Box {
+        Box {
+            inner: self.inner.clone(),
+        }
+    }
+
     /// Return the box origin as a `NDArray` with shape `[3]`.
     ///
     /// The origin is the lower-left corner of the box in angstrom (A).

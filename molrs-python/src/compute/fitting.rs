@@ -1,138 +1,203 @@
-//! Generic curve fits (`molrs::compute::fitting`), in scipy's vocabulary:
-//! `LinearFit`, `CumulativeTrapezoid`, `Plateau`.
+//! Fits of a correlation curve (`molrs::compute::fitting`): `CumulativeTrapezoid`,
+//! `DebyeFit`, `LinearFit` and `Plateau`, each reading one channel of a
+//! `TimeCorrelation`; their outputs `DebyeFitResult`, `LinearFitResult` and
+//! `PlateauResult`.
 
-use crate::error::py_value_err;
-use molrs::compute::{CumulativeTrapezoid, Fit, LinearFit, Plateau};
-use numpy::{IntoPyArray, PyReadonlyArray1};
+use molrs::compute::{
+    Compute, CumulativeTrapezoid, CumulativeTrapezoidInput, DebyeFit, DebyeFitInput,
+    DebyeFitResult, LinearFit, LinearFitInput, LinearFitResult, Plateau, PlateauInput,
+    PlateauResult,
+};
 use pyo3::prelude::*;
-use pyo3::types::{PyDict, PyDictMethods};
 
-// ═══════════════════════════════════════════════════════════════════════════
-// Fits / transforms
-// ═══════════════════════════════════════════════════════════════════════════
+use super::error::Result;
+use super::output::py_result;
+use super::spec::described;
+use super::time_series::PyTimeCorrelation;
 
-// ── LinearFit ─────────────────────────────────────────────────────────────────
+py_result! {
+    /// A single-exponential fit ``C(t) = amplitude · exp(−t / tau)``
+    /// (``molrs::compute::DebyeFitResult``) over ``n_samples`` lags.
+    PyDebyeFitResult(DebyeFitResult) as "DebyeFitResult" { tau, amplitude, n_samples }
+}
 
-/// Ordinary-least-squares line fit over a fractional ``(start, end)`` window of
-/// an ``(x, y)`` curve.
-#[pyclass(module = "molrs.compute", name = "LinearFit")]
-pub struct PyLinearFit {
+py_result! {
+    /// A least-squares line ``slope · t + intercept``
+    /// (``molrs::compute::LinearFitResult``) with its ``r2``, fitted over the
+    /// lags ``[fit_start, fit_end)``.
+    PyLinearFitResult(LinearFitResult) as "LinearFitResult" {
+        slope, intercept, r2, fit_start, fit_end
+    }
+}
+
+py_result! {
+    /// The mean ``value`` (and its ``std``) of a curve over a window of
+    /// ``n_samples`` lags (``molrs::compute::PlateauResult``).
+    PyPlateauResult(PlateauResult) as "PlateauResult" { value, n_samples, std }
+}
+
+/// The running trapezoid integral of one channel of a correlation
+/// (``molrs::compute::CumulativeTrapezoid``) — a Green–Kubo integral.
+///
+/// Parameters
+/// ----------
+/// n_lags : int, optional
+///     Integrate only the first ``n_lags`` lags; ``None`` keeps the core
+///     default (every lag).
+///
+/// ``compute(correlation=, channel=)`` returns the integral as a
+/// ``TimeCorrelation``.
+#[pyclass(module = "molrs.compute", name = "CumulativeTrapezoid", frozen)]
+pub(crate) struct PyCumulativeTrapezoid {
+    inner: CumulativeTrapezoid,
+}
+
+#[pymethods]
+impl PyCumulativeTrapezoid {
+    #[new]
+    #[pyo3(signature = (*, n_lags = None))]
+    fn new(n_lags: Option<usize>) -> Self {
+        let mut inner = CumulativeTrapezoid::new();
+        if let Some(n_lags) = n_lags {
+            inner = inner.with_n_lags(n_lags);
+        }
+        Self { inner }
+    }
+
+    #[pyo3(signature = (*, correlation, channel))]
+    fn compute(
+        &self,
+        correlation: PyRef<'_, PyTimeCorrelation>,
+        channel: usize,
+    ) -> Result<PyTimeCorrelation> {
+        let out = self.inner.compute(CumulativeTrapezoidInput {
+            correlation: &correlation.inner,
+            channel,
+        })?;
+        Ok(out.into())
+    }
+}
+
+described!(PyCumulativeTrapezoid, CumulativeTrapezoid);
+
+/// Single-exponential (Debye) relaxation fit of one channel of a correlation
+/// (``molrs::compute::DebyeFit``).
+///
+/// ``compute(correlation=, channel=)`` returns a ``DebyeFitResult``.
+#[pyclass(module = "molrs.compute", name = "DebyeFit", frozen)]
+pub(crate) struct PyDebyeFit {
+    inner: DebyeFit,
+}
+
+#[pymethods]
+impl PyDebyeFit {
+    #[new]
+    fn new() -> Self {
+        Self { inner: DebyeFit }
+    }
+
+    #[pyo3(signature = (*, correlation, channel))]
+    fn compute(
+        &self,
+        correlation: PyRef<'_, PyTimeCorrelation>,
+        channel: usize,
+    ) -> Result<PyDebyeFitResult> {
+        let out = self.inner.compute(DebyeFitInput {
+            correlation: &correlation.inner,
+            channel,
+        })?;
+        Ok(out.into())
+    }
+}
+
+described!(PyDebyeFit, DebyeFit);
+
+/// Least-squares line through one channel of a correlation over a window of
+/// its lags (``molrs::compute::LinearFit``) — e.g. the diffusive regime of an
+/// MSD.
+///
+/// Parameters
+/// ----------
+/// start, end : float
+///     The window, as fractions of the curve length.
+///
+/// ``compute(correlation=, channel=)`` returns a ``LinearFitResult``.
+#[pyclass(module = "molrs.compute", name = "LinearFit", frozen)]
+pub(crate) struct PyLinearFit {
     inner: LinearFit,
 }
 
 #[pymethods]
 impl PyLinearFit {
-    /// ``LinearFit(start_frac, end_frac)`` — window as fractions of the last
-    /// index, ``0 <= start_frac < end_frac <= 1``.
     #[new]
-    fn new(start_frac: f64, end_frac: f64) -> Self {
-        Self {
-            inner: LinearFit {
-                window: (start_frac, end_frac),
-            },
-        }
+    fn new(start: f64, end: f64) -> Result<Self> {
+        Ok(Self {
+            inner: LinearFit::new(start, end)?,
+        })
     }
 
-    /// Fit ``y = slope*x + intercept`` over the window.
-    ///
-    /// Returns ``{"slope", "intercept", "r2", "fit_start", "fit_end"}``.
-    fn fit<'py>(
+    #[pyo3(signature = (*, correlation, channel))]
+    fn compute(
         &self,
-        py: Python<'py>,
-        x: PyReadonlyArray1<'py, f64>,
-        y: PyReadonlyArray1<'py, f64>,
-    ) -> PyResult<Bound<'py, PyDict>> {
-        let xa = x.as_array().to_owned();
-        let ya = y.as_array().to_owned();
-        let r = self.inner.fit((&xa, &ya)).map_err(py_value_err)?;
-        let d = PyDict::new(py);
-        d.set_item("slope", r.slope)?;
-        d.set_item("intercept", r.intercept)?;
-        d.set_item("r2", r.r2)?;
-        d.set_item("fit_start", r.fit_start)?;
-        d.set_item("fit_end", r.fit_end)?;
-        Ok(d)
+        correlation: PyRef<'_, PyTimeCorrelation>,
+        channel: usize,
+    ) -> Result<PyLinearFitResult> {
+        let out = self.inner.compute(LinearFitInput {
+            correlation: &correlation.inner,
+            channel,
+        })?;
+        Ok(out.into())
     }
 }
 
-// ── CumulativeTrapezoid ──────────────────────────────────────────────────────────
+described!(PyLinearFit, LinearFit);
 
-/// Cumulative trapezoidal integral of a uniformly-sampled curve.
-#[pyclass(module = "molrs.compute", name = "CumulativeTrapezoid")]
-pub struct PyCumulativeTrapezoid;
-
-#[pymethods]
-impl PyCumulativeTrapezoid {
-    #[new]
-    fn new() -> Self {
-        Self
-    }
-
-    /// Integrate ``y`` cumulatively with the trapezoid rule on step ``dt``.
-    ///
-    /// ``n_lags`` (optional) integrates only the first ``n_lags`` samples and
-    /// **errors** (never silently truncates) if it exceeds the curve length.
-    /// Returns ``{"integral"}`` (float64 array; ``integral[0] == 0``).
-    #[pyo3(signature = (y, dt, n_lags=None))]
-    fn fit<'py>(
-        &self,
-        py: Python<'py>,
-        y: PyReadonlyArray1<'py, f64>,
-        dt: f64,
-        n_lags: Option<usize>,
-    ) -> PyResult<Bound<'py, PyDict>> {
-        let ya = y.as_array().to_owned();
-        let r = CumulativeTrapezoid
-            .fit((&ya, dt, n_lags))
-            .map_err(py_value_err)?;
-        let d = PyDict::new(py);
-        d.set_item("integral", r.integral.into_pyarray(py))?;
-        Ok(d)
-    }
-}
-
-// ── Plateau ──────────────────────────────────────────────────────────────────
-
-/// Windowed-mean plateau reader over a fractional ``(a, b)`` window of a curve
-/// (e.g. reading the converged tail of a Green–Kubo running integral).
-#[pyclass(module = "molrs.compute", name = "Plateau")]
-pub struct PyPlateau {
+/// The mean of one channel of a correlation over a window of its lags
+/// (``molrs::compute::Plateau``) — e.g. the plateau of a Green–Kubo integral.
+///
+/// Parameters
+/// ----------
+/// start, end : float
+///     The window, as fractions of the curve length.
+///
+/// ``compute(correlation=, channel=)`` returns a ``PlateauResult``.
+#[pyclass(module = "molrs.compute", name = "Plateau", frozen)]
+pub(crate) struct PyPlateau {
     inner: Plateau,
 }
 
 #[pymethods]
 impl PyPlateau {
-    /// ``Plateau(a, b)`` — window as fractions of the last index,
-    /// ``0 <= a < b <= 1``.
     #[new]
-    fn new(a: f64, b: f64) -> Self {
-        Self {
-            inner: Plateau { window: (a, b) },
-        }
+    fn new(start: f64, end: f64) -> Result<Self> {
+        Ok(Self {
+            inner: Plateau::new(start, end)?,
+        })
     }
 
-    /// Average the curve over the window.
-    ///
-    /// Returns ``{"value", "n_samples", "std"}``.
-    fn fit<'py>(
+    #[pyo3(signature = (*, correlation, channel))]
+    fn compute(
         &self,
-        py: Python<'py>,
-        y: PyReadonlyArray1<'py, f64>,
-    ) -> PyResult<Bound<'py, PyDict>> {
-        let ya = y.as_array().to_owned();
-        let r = self.inner.fit(&ya).map_err(py_value_err)?;
-        let d = PyDict::new(py);
-        d.set_item("value", r.value)?;
-        d.set_item("n_samples", r.n_samples)?;
-        d.set_item("std", r.std)?;
-        Ok(d)
+        correlation: PyRef<'_, PyTimeCorrelation>,
+        channel: usize,
+    ) -> Result<PyPlateauResult> {
+        let out = self.inner.compute(PlateauInput {
+            correlation: &correlation.inner,
+            channel,
+        })?;
+        Ok(out.into())
     }
 }
 
-/// Register this domain's classes and functions.
+described!(PyPlateau, Plateau);
+
 pub(crate) fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    m.add_class::<PyLinearFit>()?;
+    m.add_class::<PyDebyeFitResult>()?;
+    m.add_class::<PyLinearFitResult>()?;
+    m.add_class::<PyPlateauResult>()?;
     m.add_class::<PyCumulativeTrapezoid>()?;
+    m.add_class::<PyDebyeFit>()?;
+    m.add_class::<PyLinearFit>()?;
     m.add_class::<PyPlateau>()?;
     Ok(())
 }

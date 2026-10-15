@@ -117,7 +117,7 @@ features_clippy() {
 gate_features() {
     features_clippy
     features_clippy --no-default-features
-    for feature in io smiles signal compute ff conformer md builder serde stream zarr filesystem voronoi full; do
+    for feature in io smiles compute ff conformer md builder serde stream zarr filesystem voronoi full; do
         features_clippy --no-default-features --features "$feature"
     done
 }

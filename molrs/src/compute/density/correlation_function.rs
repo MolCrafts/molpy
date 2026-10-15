@@ -1,236 +1,228 @@
 //! Generic distance-binned correlation `⟨A_i · B_j⟩(r)`.
 
-use crate::compute::ComputeResult;
-use molrs::core::FrameAccess;
-use molrs::core::Neighbors;
+use molrs::core::{PairSource, QueryMode};
 use molrs::op::F;
-use ndarray::Array1;
+use ndarray::{Array1, ArrayView1};
 
-use crate::compute::Compute;
-use crate::compute::ComputeError;
-use crate::compute::require_dist_sq;
+use crate::compute::{Axis, Compute, ComputeError, require_dist_sq};
 
-/// Correlation-function calculator. Stateless container of bin parameters.
+/// Distance-binned correlation of two per-point fields.
 ///
 /// Mirrors `freud.density.CorrelationFunction`
 /// ([source](https://github.com/glotzerlab/freud/blob/main/freud/density/CorrelationFunction.cc)).
 ///
-/// Given per-particle real scalar fields `A_i` and `B_j` and a neighbor
-/// list, builds the histogram `⟨A_i · B_j⟩(r)` averaged over all pairs
-/// that fall into each shell `[r, r + dr)`. Empty bins return 0.
+/// Configuration: the radial bins (`[r_min, r_max)` Å, half-open). Data: one
+/// snapshot's pair source and the real scalar fields `A` (on the query
+/// points) and `B` (on the reference points). The result is the histogram
+/// `⟨A_i · B_j⟩(r)` averaged over all pairs in each shell `[r, r + dr)`;
+/// empty bins report 0. A half-shell self-query contributes each pair from
+/// both ends (`A_i B_j` and `A_j B_i`).
 ///
 /// freud also supports complex-valued fields with the convention
-/// `A_i · conj(B_j)`; the real version is implemented here. The complex
-/// variant requires only a handful of extra lines and will follow when the
-/// first downstream consumer (e.g. `LocalDescriptors` in Phase 6) needs it.
-#[derive(Debug, Clone)]
+/// `A_i · conj(B_j)`; the real version is implemented here. For many
+/// snapshots, wrap in [`Batch`](crate::compute::Batch).
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct CorrelationFunction {
-    n_bins: usize,
-    r_min: F,
-    r_max: F,
-    bin_width: F,
-    bin_edges: Array1<F>,
-    bin_centers: Array1<F>,
+    axis: Axis,
+}
+
+/// The data a [`CorrelationFunction`] analyses.
+#[derive(Clone, Copy)]
+pub struct CorrelationFunctionInput<'a> {
+    /// The snapshot's pairs; must carry the `dist_sq` column.
+    pub pairs: &'a (dyn PairSource + Sync),
+    /// `A` on the query points (`i` side), one value per query point.
+    pub values_a: ArrayView1<'a, F>,
+    /// `B` on the reference points (`j` side), one value per reference point.
+    pub values_b: ArrayView1<'a, F>,
 }
 
 impl CorrelationFunction {
-    /// `n_bins` radial bins over `[r_min, r_max]` (Å).
+    /// `n_bins` radial bins over `[r_min, r_max)` (Å).
+    ///
+    /// # Errors
+    /// [`ComputeError::OutOfRange`] for `r_min < 0` (or NaN), `n_bins == 0`
+    /// or `r_max ≤ r_min`.
     pub fn new(n_bins: usize, r_max: F, r_min: F) -> Result<Self, ComputeError> {
-        if n_bins == 0 {
-            return Err(ComputeError::OutOfRange {
-                field: "CorrelationFunction::n_bins",
-                value: "0".into(),
-            });
-        }
         if r_min.is_nan() || r_min < 0.0 {
             return Err(ComputeError::OutOfRange {
                 field: "CorrelationFunction::r_min",
                 value: r_min.to_string(),
             });
         }
-        if r_max.is_nan() || r_max <= r_min {
-            return Err(ComputeError::OutOfRange {
-                field: "CorrelationFunction::r_max",
-                value: format!("r_max={r_max}, r_min={r_min}"),
-            });
-        }
-        let bin_width = (r_max - r_min) / n_bins as F;
-        let bin_edges = Array1::from_iter((0..=n_bins).map(|i| r_min + i as F * bin_width));
-        let bin_centers =
-            Array1::from_iter((0..n_bins).map(|i| r_min + (i as F + 0.5) * bin_width));
         Ok(Self {
-            n_bins,
-            r_min,
-            r_max,
-            bin_width,
-            bin_edges,
-            bin_centers,
+            axis: Axis::new(r_min, r_max, n_bins)?,
         })
     }
 
-    pub fn n_bins(&self) -> usize {
-        self.n_bins
+    /// The radial bins.
+    pub fn axis(&self) -> Axis {
+        self.axis
     }
-    pub fn bin_edges(&self) -> &Array1<F> {
-        &self.bin_edges
-    }
-    pub fn bin_centers(&self) -> &Array1<F> {
-        &self.bin_centers
-    }
+}
 
-    fn one_frame(
+impl Compute for CorrelationFunction {
+    type Input<'a> = CorrelationFunctionInput<'a>;
+    type Output = CorrelationFunctionResult;
+
+    /// # Errors
+    /// [`ComputeError::DimensionMismatch`] when `values_a` / `values_b` do
+    /// not have one value per query / reference point;
+    /// [`ComputeError::BadShape`] for a source without `dist_sq`;
+    /// [`ComputeError::NonFinite`] for a non-finite distance.
+    fn compute(
         &self,
-        nlist: &Neighbors,
-        values_a: &[F],
-        values_b: &[F],
+        input: CorrelationFunctionInput<'_>,
     ) -> Result<CorrelationFunctionResult, ComputeError> {
-        let r_min_sq = self.r_min * self.r_min;
-        let r_max_sq = self.r_max * self.r_max;
-        let i_idx = nlist.query_point_indices();
-        let j_idx = nlist.point_indices();
-        let n_pairs = nlist.n_pairs();
-        // Every pair is binned by its separation; a table without `dist_sq`
-        // cannot say which bin.
-        let dist_sq = require_dist_sq(nlist)?;
-        let symmetric = matches!(nlist.mode(), molrs::core::QueryMode::SelfQuery { .. });
+        let pairs = input.pairs;
+        let (n_query, n_points, symmetric) = match pairs.mode() {
+            QueryMode::SelfQuery { n_points } => (n_points, n_points, true),
+            QueryMode::CrossQuery {
+                n_query_points,
+                n_points,
+            } => (n_query_points, n_points, false),
+        };
+        if input.values_a.len() != n_query {
+            return Err(ComputeError::DimensionMismatch {
+                expected: n_query,
+                got: input.values_a.len(),
+                what: "CorrelationFunction values_a (one per query point)",
+            });
+        }
+        if input.values_b.len() != n_points {
+            return Err(ComputeError::DimensionMismatch {
+                expected: n_points,
+                got: input.values_b.len(),
+                what: "CorrelationFunction values_b (one per reference point)",
+            });
+        }
+        require_dist_sq(pairs)?;
 
-        let mut sum = Array1::<F>::zeros(self.n_bins);
-        let mut counts = Array1::<u64>::zeros(self.n_bins);
-
-        for k in 0..n_pairs {
-            let d2 = dist_sq[k];
-            if d2 < r_min_sq || d2 >= r_max_sq || d2 == 0.0 {
-                continue;
+        let n_bins = self.axis.n_bins();
+        let mut sum = Array1::<F>::zeros(n_bins);
+        let mut counts = Array1::<u64>::zeros(n_bins);
+        let (a, b) = (input.values_a, input.values_b);
+        let mut failure: Option<ComputeError> = None;
+        let mut k = 0usize;
+        pairs.visit_pairs(&mut |i, j, dist_sq, _| {
+            let index = k;
+            k += 1;
+            if failure.is_some() {
+                return;
             }
-            let d = d2.sqrt();
-            let b = ((d - self.r_min) / self.bin_width) as usize;
-            if b >= self.n_bins {
-                continue;
+            let Some(d2) = dist_sq else {
+                return;
+            };
+            if d2 == 0.0 {
+                return;
             }
-            let i = i_idx[k] as usize;
-            let j = j_idx[k] as usize;
-            if i >= values_a.len() || j >= values_b.len() {
-                return Err(ComputeError::DimensionMismatch {
-                    expected: i.max(j) + 1,
-                    got: values_a.len().min(values_b.len()),
-                    what: "CorrelationFunction values length",
+            let bin = match self.axis.index(d2.sqrt()) {
+                Ok(Some(bin)) => bin,
+                Ok(None) => return,
+                Err(_) => {
+                    failure = Some(ComputeError::NonFinite {
+                        where_: "pair dist_sq",
+                        index,
+                    });
+                    return;
+                }
+            };
+            let (i, j) = (i as usize, j as usize);
+            // A self-query indexes one set from both ends.
+            let (i_limit, j_limit) = if symmetric {
+                (n_points, n_points)
+            } else {
+                (n_query, n_points)
+            };
+            if i >= i_limit || j >= j_limit {
+                failure = Some(ComputeError::OutOfRange {
+                    field: "pair index",
+                    value: format!("({i}, {j}) of pair {index} past the source's point counts"),
                 });
+                return;
             }
-            sum[b] += values_a[i] * values_b[j];
-            counts[b] += 1;
+            sum[bin] += a[i] * b[j];
+            counts[bin] += 1;
             if symmetric {
-                // For a self-query list, the symmetric pair (j → i) is
-                // implicit; honour it for ⟨A · B⟩.
-                sum[b] += values_a[j] * values_b[i];
-                counts[b] += 1;
+                // A self-query holds each unordered pair once; the reversed
+                // pair (j → i) is implicit.
+                sum[bin] += a[j] * b[i];
+                counts[bin] += 1;
             }
+        });
+        if let Some(err) = failure {
+            return Err(err);
         }
 
-        let mut correlation = Array1::<F>::zeros(self.n_bins);
-        for b in 0..self.n_bins {
-            if counts[b] > 0 {
-                correlation[b] = sum[b] / counts[b] as F;
+        let correlation = Array1::from_iter((0..n_bins).map(|bin| {
+            if counts[bin] > 0 {
+                sum[bin] / counts[bin] as F
+            } else {
+                0.0
             }
-        }
+        }));
         Ok(CorrelationFunctionResult {
-            bin_edges: self.bin_edges.clone(),
-            bin_centers: self.bin_centers.clone(),
+            bin_edges: self.axis.edges(),
+            bin_centers: self.axis.centers(),
             bin_counts: counts,
             correlation,
         })
     }
 }
 
-/// `Args` for [`CorrelationFunction`]: parallel per-frame triplets of
-/// `(neighbor list, A values, B values)`. All three slices must have the
-/// same length as `frames`.
-pub struct CorrelationFunctionArgs<'a> {
-    pub nlists: &'a [Neighbors],
-    pub values_a: &'a [Vec<F>],
-    pub values_b: &'a [Vec<F>],
-}
-
-impl Compute for CorrelationFunction {
-    type Args<'a> = CorrelationFunctionArgs<'a>;
-    type Output = Vec<CorrelationFunctionResult>;
-
-    fn compute<'a, FA: FrameAccess + Sync + 'a>(
-        &self,
-        frames: &[&'a FA],
-        args: CorrelationFunctionArgs<'a>,
-    ) -> Result<Vec<CorrelationFunctionResult>, ComputeError> {
-        if frames.is_empty() {
-            return Err(ComputeError::EmptyInput);
-        }
-        let nf = frames.len();
-        if args.nlists.len() != nf || args.values_a.len() != nf || args.values_b.len() != nf {
-            return Err(ComputeError::DimensionMismatch {
-                expected: nf,
-                got: args
-                    .nlists
-                    .len()
-                    .min(args.values_a.len())
-                    .min(args.values_b.len()),
-                what: "CorrelationFunction frame-aligned inputs",
-            });
-        }
-        #[cfg(feature = "rayon")]
-        const PAR_THRESHOLD: usize = 2;
-
-        #[cfg(feature = "rayon")]
-        if nf >= PAR_THRESHOLD {
-            use rayon::prelude::*;
-            return (0..nf)
-                .into_par_iter()
-                .map(|k| self.one_frame(&args.nlists[k], &args.values_a[k], &args.values_b[k]))
-                .collect();
-        }
-
-        let mut out = Vec::with_capacity(nf);
-        for k in 0..nf {
-            out.push(self.one_frame(&args.nlists[k], &args.values_a[k], &args.values_b[k])?);
-        }
-        Ok(out)
-    }
-}
-
-/// Per-frame correlation result.
-#[derive(Debug, Clone, Default)]
+/// One snapshot's correlation function.
+#[derive(Debug, Clone, Default, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct CorrelationFunctionResult {
     /// Bin edges (length `n_bins + 1`).
     pub bin_edges: Array1<F>,
     /// Bin centres (length `n_bins`).
     pub bin_centers: Array1<F>,
-    /// Running pair count per bin (length `n_bins`).
+    /// Pair count per bin (length `n_bins`).
     pub bin_counts: Array1<u64>,
     /// `⟨A · B⟩(r)` per bin (length `n_bins`); zero for empty bins.
     pub correlation: Array1<F>,
 }
 
-impl ComputeResult for CorrelationFunctionResult {}
+crate::compute::spec::compute_spec! {
+    CorrelationFunction as "CorrelationFunction";
+    params |s| {
+        n_bins: Int;
+        r_max: Float;
+        r_min: Float;
+    }
+    inputs {
+        pairs: PairSource;
+        values_a: Scalars;
+        values_b: Scalars;
+    }
+}
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::compute::fixtures::nlist_from_frame;
-    use molrs::core::Block;
-    use molrs::core::Frame;
-    use molrs::core::SimBox;
-    use ndarray::{Array1 as A1, array};
+    use crate::compute::Batch;
+    use crate::compute::fixtures::self_neighbors;
+    use molrs::core::{NeighborColumns, Neighbors, SimBox};
+    use ndarray::{Array2, array};
 
-    fn frame_with(positions: &[[F; 3]], box_len: F) -> Frame {
-        let x = A1::from_iter(positions.iter().map(|p| p[0]));
-        let y = A1::from_iter(positions.iter().map(|p| p[1]));
-        let z = A1::from_iter(positions.iter().map(|p| p[2]));
-        let mut block = Block::new();
-        block.insert("x", x.into_dyn()).unwrap();
-        block.insert("y", y.into_dyn()).unwrap();
-        block.insert("z", z.into_dyn()).unwrap();
-        let mut frame = Frame::new();
-        frame.insert("atoms", block);
-        frame.simbox =
-            Some(SimBox::cube(box_len, array![0.0 as F, 0.0 as F, 0.0 as F], [false; 3]).unwrap());
-        frame
+    fn table(positions: &[[F; 3]], box_len: F, cutoff: F) -> Neighbors {
+        let points = Array2::from_shape_fn((positions.len(), 3), |(i, c)| positions[i][c]);
+        let simbox =
+            SimBox::cube(box_len, array![0.0 as F, 0.0 as F, 0.0 as F], [false; 3]).unwrap();
+        self_neighbors(points.view(), &simbox, cutoff)
+    }
+
+    fn correlate(
+        cf: &CorrelationFunction,
+        nl: &Neighbors,
+        vals: &Array1<F>,
+    ) -> Result<CorrelationFunctionResult, ComputeError> {
+        cf.compute(CorrelationFunctionInput {
+            pairs: nl,
+            values_a: vals.view(),
+            values_b: vals.view(),
+        })
     }
 
     #[test]
@@ -242,20 +234,10 @@ mod tests {
             [3.0, 1.0, 1.0],
             [4.0, 1.0, 1.0],
         ];
-        let frame = frame_with(&positions, 20.0);
-        let nl = nlist_from_frame(&frame, 5.0);
-        let vals = vec![1.0_f64; positions.len()];
+        let nl = table(&positions, 20.0, 5.0);
+        let vals = Array1::from_elem(positions.len(), 1.0_f64);
         let cf = CorrelationFunction::new(10, 5.0, 0.0).unwrap();
-        let r = &cf
-            .compute(
-                &[&frame],
-                CorrelationFunctionArgs {
-                    nlists: &[nl],
-                    values_a: std::slice::from_ref(&vals),
-                    values_b: std::slice::from_ref(&vals),
-                },
-            )
-            .unwrap()[0];
+        let r = correlate(&cf, &nl, &vals).unwrap();
         for b in 0..10 {
             if r.bin_counts[b] > 0 {
                 assert!(
@@ -278,20 +260,10 @@ mod tests {
             [2.0, 0.0, 0.0],
             [3.0, 0.0, 0.0],
         ];
-        let frame = frame_with(&positions, 20.0);
-        let nl = nlist_from_frame(&frame, 1.2);
-        let vals = vec![1.0_f64, -1.0, 1.0, -1.0];
+        let nl = table(&positions, 20.0, 1.2);
+        let vals = array![1.0_f64, -1.0, 1.0, -1.0];
         let cf = CorrelationFunction::new(5, 1.5, 0.0).unwrap();
-        let r = &cf
-            .compute(
-                &[&frame],
-                CorrelationFunctionArgs {
-                    nlists: &[nl],
-                    values_a: std::slice::from_ref(&vals),
-                    values_b: std::slice::from_ref(&vals),
-                },
-            )
-            .unwrap()[0];
+        let r = correlate(&cf, &nl, &vals).unwrap();
         // The first non-empty bin contains the unit-spacing NN pairs.
         let first = r.bin_counts.iter().position(|&c| c > 0).unwrap();
         assert!((r.correlation[first] + 1.0).abs() < 1e-12);
@@ -299,20 +271,10 @@ mod tests {
 
     #[test]
     fn empty_bin_returns_zero() {
-        let frame = frame_with(&[[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]], 20.0);
-        let nl = nlist_from_frame(&frame, 1.5);
-        let vals = vec![1.0_f64, 1.0];
+        let nl = table(&[[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]], 20.0, 1.5);
+        let vals = array![1.0_f64, 1.0];
         let cf = CorrelationFunction::new(10, 5.0, 0.0).unwrap();
-        let r = &cf
-            .compute(
-                &[&frame],
-                CorrelationFunctionArgs {
-                    nlists: &[nl],
-                    values_a: std::slice::from_ref(&vals),
-                    values_b: std::slice::from_ref(&vals),
-                },
-            )
-            .unwrap()[0];
+        let r = correlate(&cf, &nl, &vals).unwrap();
         // Bins beyond 1.5 should all be empty.
         for b in 4..10 {
             assert_eq!(r.bin_counts[b], 0);
@@ -327,45 +289,46 @@ mod tests {
         assert!(CorrelationFunction::new(10, 0.5, 1.0).is_err());
     }
 
-    /// The `nf >= PAR_THRESHOLD` rayon branch must match the serial path
-    /// exactly, in frame order (frame-aligned nlists / values indexing).
+    /// A field with one value per point is required — a short field used to
+    /// fail only when a pair happened to index past it.
     #[test]
-    fn parallel_matches_serial() {
+    fn field_length_must_match_the_points() {
+        let nl = table(
+            &[[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [2.0, 0.0, 0.0]],
+            20.0,
+            1.5,
+        );
+        let cf = CorrelationFunction::new(10, 5.0, 0.0).unwrap();
+        assert!(matches!(
+            correlate(&cf, &nl, &array![1.0, 1.0]),
+            Err(ComputeError::DimensionMismatch { .. })
+        ));
+        let lean = nl.repack(NeighborColumns::INDICES_ONLY);
+        assert!(matches!(
+            correlate(&cf, &lean, &array![1.0, 1.0, 1.0]),
+            Err(ComputeError::BadShape { .. })
+        ));
+    }
+
+    /// Many snapshots go through `Batch`, in order.
+    #[test]
+    fn batch_matches_single_snapshots() {
         let positions = [
             [1.0_f64, 1.0, 1.0],
             [2.0, 1.0, 1.0],
             [3.0, 1.0, 1.0],
             [4.0, 1.0, 1.0],
         ];
-        let frame = frame_with(&positions, 20.0);
-        let nl = nlist_from_frame(&frame, 5.0);
-        let vals = vec![1.0_f64; positions.len()];
+        let nl = table(&positions, 20.0, 5.0);
+        let vals = Array1::from_elem(positions.len(), 1.0_f64);
         let cf = CorrelationFunction::new(10, 5.0, 0.0).unwrap();
-        let solo = cf
-            .compute(
-                &[&frame],
-                CorrelationFunctionArgs {
-                    nlists: std::slice::from_ref(&nl),
-                    values_a: std::slice::from_ref(&vals),
-                    values_b: std::slice::from_ref(&vals),
-                },
-            )
-            .unwrap();
-        let nls = vec![nl.clone(), nl];
-        let vs = vec![vals.clone(), vals];
-        let par = cf
-            .compute(
-                &[&frame, &frame],
-                CorrelationFunctionArgs {
-                    nlists: &nls,
-                    values_a: &vs,
-                    values_b: &vs,
-                },
-            )
-            .unwrap();
-        assert_eq!(par.len(), 2);
-        assert_eq!(par[0].correlation, solo[0].correlation);
-        assert_eq!(par[0].bin_counts, solo[0].bin_counts);
-        assert_eq!(par[1].correlation, solo[0].correlation);
+        let solo = correlate(&cf, &nl, &vals).unwrap();
+        let input = CorrelationFunctionInput {
+            pairs: &nl,
+            values_a: vals.view(),
+            values_b: vals.view(),
+        };
+        let many = Batch(cf).compute(vec![input, input]).unwrap();
+        assert_eq!(many, vec![solo.clone(), solo]);
     }
 }

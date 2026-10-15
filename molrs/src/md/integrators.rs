@@ -917,8 +917,19 @@ mod ghost_path_tests {
 
         let mass = uniform_masses(12.0, pos0.nrows()).unwrap();
         let mut state = ig.initial(pos0, vel0).unwrap();
+        // The md test is unit-agnostic; the SI preset's mass·velocity² →
+        // energy factor is exactly 1, so this is the bare ½ m v².
+        let kinetic = crate::compute::KineticEnergy::new(crate::core::UnitPreset::si()).unwrap();
         let total = |st: &MdState| {
-            st.energy + crate::compute::kinetic_energy(mass.view(), st.vel.view()).unwrap()
+            use crate::compute::Compute;
+            st.energy
+                + kinetic
+                    .compute(crate::compute::KineticEnergyInput {
+                        masses: mass.view(),
+                        velocities: st.vel.view(),
+                    })
+                    .unwrap()
+                    .energy
         };
         let e0 = total(&state);
         let scale = e0.abs().max(1.0);

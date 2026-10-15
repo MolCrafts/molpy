@@ -32,7 +32,6 @@ SUBSYSTEMS = {
     "op",
     "optimize",
     "perceive",
-    "signal",
     "stream",
 }
 
@@ -412,6 +411,18 @@ def test_function_names_are_snake_case():
         if inspect.isroutine(value) and value.__name__ != value.__name__.lower()
     )
     assert not wrong
+
+
+def test_compute_is_classes_only():
+    """``molrs.compute`` mirrors ``molrs::compute``, which has no public free
+    function: every export is a class (or the ``Compute`` protocol), and the
+    retired ``molrs.signal`` module is gone."""
+    assert not [
+        name
+        for name in molrs.compute.__all__
+        if not inspect.isclass(getattr(molrs.compute, name))
+    ]
+    assert not hasattr(molrs, "signal")
 
 
 def test_smarts_is_perceptions_wholly():
