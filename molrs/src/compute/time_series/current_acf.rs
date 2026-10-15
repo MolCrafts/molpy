@@ -4,7 +4,8 @@ use molrs::op::F;
 use ndarray::{ArrayView2, Axis};
 
 use super::{
-    Correlator, CorrelatorAccumulator, CorrelatorInput, LagKernel, Normalization, TimeCorrelation,
+    Correlator, CorrelatorAccumulator, CorrelatorInput, LagKernel, MeanPolicy, Normalization,
+    TimeCorrelation,
 };
 use crate::compute::{Compute, ComputeError, Stream};
 
@@ -16,7 +17,8 @@ use crate::compute::{Compute, ComputeError, Stream};
 /// ```
 ///
 /// A [`Correlator`] with the [`LagKernel::Product`] kernel on one `T × 3`
-/// series, unbiased, with no mean subtraction (a current is already a flux).
+/// series, unbiased, with no mean subtraction by default (a current is already
+/// a flux; [`with_mean`](Self::with_mean) selects the fluctuation `δJ`).
 /// With `J = Σ_a q_a v_a` it is the Green–Kubo conductivity integrand,
 /// `σ = 1/(3 V k_B T) ∫ C(t) dt`
 /// ([`CumulativeTrapezoid`](crate::compute::CumulativeTrapezoid)); with the
@@ -46,7 +48,20 @@ impl CurrentAcf {
     /// The current ACF over lags `0 … max_lag` frames.
     pub fn new(max_lag: usize) -> Self {
         Self {
-            correlator: Correlator::new(LagKernel::Product, max_lag).with_dimension(3),
+            correlator: Correlator::new(LagKernel::Product, max_lag)
+                .with_mean(Self::DEFAULT_MEAN)
+                .with_dimension(3),
+        }
+    }
+
+    /// The mean policy when not set: the current is correlated as given.
+    pub const DEFAULT_MEAN: MeanPolicy = MeanPolicy::Keep;
+
+    /// Subtract each column's time mean first, or correlate the values as
+    /// given (default [`DEFAULT_MEAN`](Self::DEFAULT_MEAN)).
+    pub fn with_mean(self, mean: MeanPolicy) -> Self {
+        Self {
+            correlator: self.correlator.with_mean(mean),
         }
     }
 
@@ -102,6 +117,7 @@ crate::compute::spec::compute_spec! {
         normalization: Choice(Normalization::NAMES)
             = Normalization::default() => s.correlator.normalization();
         stride: Int = Correlator::DEFAULT_STRIDE => s.correlator.stride();
+        mean: Choice(MeanPolicy::NAMES) = CurrentAcf::DEFAULT_MEAN => s.correlator.mean();
     }
     inputs {
         current: Series;
@@ -121,6 +137,42 @@ mod tests {
             current: j.view(),
             dt,
         })
+    }
+
+    /// The mean policy is configuration: `Subtract` is the product correlator
+    /// with that policy; the default stays `Keep`.
+    #[test]
+    fn the_mean_policy_is_configurable() {
+        let x = rng_series(50, 3, 12) + 0.7;
+        assert_eq!(CurrentAcf::DEFAULT_MEAN, MeanPolicy::Keep);
+        assert_eq!(CurrentAcf::new(9).correlator().mean(), MeanPolicy::Keep);
+        let surface = CurrentAcf::new(9).with_mean(MeanPolicy::Subtract);
+        let explicit = Correlator::new(LagKernel::Product, 9)
+            .with_mean(MeanPolicy::Subtract)
+            .with_dimension(3);
+        assert_eq!(*surface.correlator(), explicit);
+        let got = surface
+            .compute(CurrentAcfInput {
+                current: x.view(),
+                dt: 1.0,
+            })
+            .unwrap();
+        let via_correlator = explicit
+            .compute(CorrelatorInput {
+                a: x.view().insert_axis(Axis(1)),
+                b: None,
+                dt: 1.0,
+                boxes: None,
+            })
+            .unwrap();
+        assert_eq!(got, via_correlator);
+        let default = CurrentAcf::new(9)
+            .compute(CurrentAcfInput {
+                current: x.view(),
+                dt: 1.0,
+            })
+            .unwrap();
+        assert_ne!(got, default);
     }
 
     #[test]

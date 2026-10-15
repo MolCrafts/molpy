@@ -286,6 +286,16 @@ impl Vacf {
         Ok(())
     }
 
+    /// Subtract or keep each component's time mean — molrs
+    /// `Vacf::with_mean`, parsed by the molrs `MeanPolicy` names.
+    ///
+    /// # Errors
+    /// [`ComputeError::UnknownName`] for any other name.
+    pub fn set_mean(&mut self, mean: &str) -> Result<(), ComputeError> {
+        self.inner = self.inner.with_mean(mean.parse()?);
+        Ok(())
+    }
+
     /// The VACF of a `[n_frames, n_dof]` velocity buffer at frame spacing `dt`.
     ///
     /// # Errors
@@ -586,6 +596,12 @@ mod tests {
         ));
         vacf.set_normalization("biased").unwrap();
         vacf.set_stride(2).unwrap();
+        assert!(matches!(
+            vacf.set_mean("weird"),
+            Err(ComputeError::UnknownName { .. })
+        ));
+        vacf.set_mean("keep").unwrap();
+        assert_eq!(vacf.inner.correlator().mean(), mc::MeanPolicy::Keep);
         let batch = vacf.compute(&velocities, t as u64, 1.0).unwrap();
         let mut acc = vacf.accumulator();
         for frame in velocities.chunks(n_dof) {

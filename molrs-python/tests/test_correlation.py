@@ -158,6 +158,32 @@ class TestSurfaces:
         ).compute(a=flat[:, :, None], dt=0.5)
         np.testing.assert_array_equal(strided.values, explicit.values)
 
+    def test_the_mean_policy_is_configuration(self):
+        """``mean=`` is a convention each product surface exposes; its default
+        is the surface's historical one (Vacf / DipoleAcf subtract, CurrentAcf
+        keeps), and ``"keep"`` on Vacf is the plain Green–Kubo integrand."""
+        s = _series() + 0.3
+        flat = s.reshape(s.shape[0], -1)
+        keep = Vacf(10, mean="keep").compute(velocities=flat, dt=0.5)
+        acf = Correlator("product", 10, mean="keep").compute(a=flat[:, :, None], dt=0.5)
+        np.testing.assert_array_equal(keep.values, acf.values)
+        assert not np.allclose(keep.values, Vacf(10).compute(velocities=flat, dt=0.5).values)
+        j = flat[:, :3]
+        np.testing.assert_allclose(
+            DipoleAcf(8, mean="keep").compute(dipoles=j, dt=1.0).channel(0),
+            _acf_direct(j[:, None, :], 8),
+            atol=1e-10,
+        )
+        np.testing.assert_allclose(
+            CurrentAcf(8, mean="subtract").compute(current=j, dt=1.0).channel(0),
+            _acf_direct(j[:, None, :], 8, mean_subtract=True),
+            atol=1e-10,
+        )
+        for cls, default in ((Vacf, "subtract"), (DipoleAcf, "subtract"), (CurrentAcf, "keep")):
+            assert dict(cls(4).tunables())["mean"] == default
+        with pytest.raises(ValueError, match="MeanPolicy"):
+            Vacf(4, mean="median")
+
     def test_an_array_of_the_wrong_rank_or_dtype_says_what_it_expected(self):
         with pytest.raises(
             TypeError,

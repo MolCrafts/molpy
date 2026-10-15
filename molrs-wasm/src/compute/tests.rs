@@ -289,10 +289,10 @@ fn every_class_built_from_required_arguments_holds_the_core_defaults() {
         &[],
     );
     holds_spec_defaults(ok(Msd::new(4, None, None, None)), &[]);
-    holds_spec_defaults(ok(Vacf::new(4, None, None)), &[]);
+    holds_spec_defaults(ok(Vacf::new(4, None, None, None)), &[]);
     holds_spec_defaults(ok(OnsagerCorrelation::new(4, None)), &[]);
-    holds_spec_defaults(ok(DipoleAcf::new(4, None, None)), &[]);
-    holds_spec_defaults(ok(CurrentAcf::new(4, None, None)), &[]);
+    holds_spec_defaults(ok(DipoleAcf::new(4, None, None, None)), &[]);
+    holds_spec_defaults(ok(CurrentAcf::new(4, None, None, None)), &[]);
     holds_spec_defaults(ok(ReorientationAcf::new(2, 4, None, None)), &[]);
     holds_spec_defaults(ok(RotationalAutocorrelation::new(2, 4, None)), &[]);
     holds_spec_defaults(ok(Survival::new("continuous", 4, None, None)), &[]);

@@ -240,6 +240,9 @@ described!(PyMsd, Msd);
 ///     ``"unbiased"``, ``"biased"`` or ``"none"``.
 /// stride : int, optional
 ///     Every ``stride``-th frame is an origin.
+/// mean : str, optional
+///     ``"subtract"`` (default) correlates each component's fluctuation about
+///     its time mean; ``"keep"`` correlates the velocities as given.
 ///
 /// ``compute(velocities=, dt=)`` over a ``(T, C)`` velocity series.
 #[pyclass(module = "molrs.compute", name = "Vacf", frozen)]
@@ -250,14 +253,22 @@ pub(crate) struct PyVacf {
 #[pymethods]
 impl PyVacf {
     #[new]
-    #[pyo3(signature = (max_lag, *, normalization = None, stride = None))]
-    fn new(max_lag: usize, normalization: Option<&str>, stride: Option<usize>) -> Result<Self> {
+    #[pyo3(signature = (max_lag, *, normalization = None, stride = None, mean = None))]
+    fn new(
+        max_lag: usize,
+        normalization: Option<&str>,
+        stride: Option<usize>,
+        mean: Option<&str>,
+    ) -> Result<Self> {
         let mut inner = Vacf::new(max_lag);
         if let Some(normalization) = normalization {
             inner = inner.with_normalization(normalization.parse()?);
         }
         if let Some(stride) = stride {
             inner = inner.with_stride(stride)?;
+        }
+        if let Some(mean) = mean {
+            inner = inner.with_mean(mean.parse()?);
         }
         Ok(Self { inner })
     }
@@ -328,6 +339,8 @@ described!(PyOnsagerCorrelation, OnsagerCorrelation);
 ///     ``"unbiased"``, ``"biased"`` or ``"none"`` (the raw lagged sum).
 /// stride : int, optional
 ///     Every ``stride``-th frame is an origin.
+/// mean : str, optional
+///     ``"subtract"`` (default, the fluctuation ``δM``) or ``"keep"``.
 ///
 /// ``compute(dipoles=, dt=)``.
 #[pyclass(module = "molrs.compute", name = "DipoleAcf", frozen)]
@@ -338,14 +351,22 @@ pub(crate) struct PyDipoleAcf {
 #[pymethods]
 impl PyDipoleAcf {
     #[new]
-    #[pyo3(signature = (max_lag, *, normalization = None, stride = None))]
-    fn new(max_lag: usize, normalization: Option<&str>, stride: Option<usize>) -> Result<Self> {
+    #[pyo3(signature = (max_lag, *, normalization = None, stride = None, mean = None))]
+    fn new(
+        max_lag: usize,
+        normalization: Option<&str>,
+        stride: Option<usize>,
+        mean: Option<&str>,
+    ) -> Result<Self> {
         let mut inner = DipoleAcf::new(max_lag);
         if let Some(normalization) = normalization {
             inner = inner.with_normalization(normalization.parse()?);
         }
         if let Some(stride) = stride {
             inner = inner.with_stride(stride)?;
+        }
+        if let Some(mean) = mean {
+            inner = inner.with_mean(mean.parse()?);
         }
         Ok(Self { inner })
     }
@@ -373,6 +394,8 @@ described!(PyDipoleAcf, DipoleAcf);
 ///     former IR flux correlation).
 /// stride : int, optional
 ///     Every ``stride``-th frame is an origin.
+/// mean : str, optional
+///     ``"keep"`` (default) or ``"subtract"`` (the fluctuation ``δJ``).
 ///
 /// ``compute(current=, dt=)``.
 #[pyclass(module = "molrs.compute", name = "CurrentAcf", frozen)]
@@ -383,14 +406,22 @@ pub(crate) struct PyCurrentAcf {
 #[pymethods]
 impl PyCurrentAcf {
     #[new]
-    #[pyo3(signature = (max_lag, *, normalization = None, stride = None))]
-    fn new(max_lag: usize, normalization: Option<&str>, stride: Option<usize>) -> Result<Self> {
+    #[pyo3(signature = (max_lag, *, normalization = None, stride = None, mean = None))]
+    fn new(
+        max_lag: usize,
+        normalization: Option<&str>,
+        stride: Option<usize>,
+        mean: Option<&str>,
+    ) -> Result<Self> {
         let mut inner = CurrentAcf::new(max_lag);
         if let Some(normalization) = normalization {
             inner = inner.with_normalization(normalization.parse()?);
         }
         if let Some(stride) = stride {
             inner = inner.with_stride(stride)?;
+        }
+        if let Some(mean) = mean {
+            inner = inner.with_mean(mean.parse()?);
         }
         Ok(Self { inner })
     }

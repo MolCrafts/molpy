@@ -16,9 +16,16 @@ use crate::compute::{Compute, ComputeError, Stream};
 /// ```
 ///
 /// A [`Correlator`] with the [`LagKernel::Product`] kernel over every
-/// origin, each degree of freedom mean-subtracted, unbiased, averaged over
-/// degrees of freedom. `C(0)` is the mean square fluctuation of one velocity
-/// component. The same curve feeds the vibrational density of states (a
+/// origin, each degree of freedom mean-subtracted by default, unbiased,
+/// averaged over degrees of freedom. `C(0)` is the mean square fluctuation of
+/// one velocity component.
+///
+/// The mean policy is a convention ([`with_mean`](Self::with_mean)).
+/// Subtracting each velocity's time mean removes any drift, but a finite run's
+/// sample mean is not the ensemble mean, and the Green–Kubo integral up to
+/// `τ_max` comes out low by a relative amount of order `2 τ_max / T`. [`MeanPolicy::Keep`] correlates the
+/// velocities as given (the ensemble mean velocity is zero), which is the
+/// unbiased Green–Kubo integrand for a run without centre-of-mass drift. The same curve feeds the vibrational density of states (a
 /// [`Spectrum`](super::Spectrum)) and Green–Kubo self-diffusion,
 /// `D = (1/d) ∫ C(t) dt` (a [`CumulativeTrapezoid`](crate::compute::CumulativeTrapezoid)).
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -39,8 +46,19 @@ impl Vacf {
     /// The VACF over lags `0 … max_lag` frames.
     pub fn new(max_lag: usize) -> Self {
         Self {
-            correlator: Correlator::new(LagKernel::Product, max_lag)
-                .with_mean(MeanPolicy::Subtract),
+            correlator: Correlator::new(LagKernel::Product, max_lag).with_mean(Self::DEFAULT_MEAN),
+        }
+    }
+
+    /// The mean policy when not set: each velocity component's time mean is
+    /// subtracted.
+    pub const DEFAULT_MEAN: MeanPolicy = MeanPolicy::Subtract;
+
+    /// Subtract each column's time mean first, or correlate the values as
+    /// given (default [`DEFAULT_MEAN`](Self::DEFAULT_MEAN)).
+    pub fn with_mean(self, mean: MeanPolicy) -> Self {
+        Self {
+            correlator: self.correlator.with_mean(mean),
         }
     }
 
@@ -100,6 +118,7 @@ crate::compute::spec::compute_spec! {
         normalization: Choice(Normalization::NAMES)
             = Normalization::default() => s.correlator.normalization();
         stride: Int = Correlator::DEFAULT_STRIDE => s.correlator.stride();
+        mean: Choice(MeanPolicy::NAMES) = Vacf::DEFAULT_MEAN => s.correlator.mean();
     }
     inputs {
         velocities: Series;
@@ -152,6 +171,54 @@ mod tests {
             })
             .unwrap();
         assert_eq!(vacf(&v, 0.25, 12).unwrap(), via_correlator);
+    }
+
+    /// `Keep` is the product correlator with the mean kept, and differs from
+    /// the default on a series with a nonzero mean.
+    #[test]
+    fn keep_is_the_product_correlator_with_the_mean_kept() {
+        let v = rng_series(64, 6, 3) + 0.4;
+        let keep = Vacf::new(12).with_mean(MeanPolicy::Keep);
+        let explicit = Correlator::new(LagKernel::Product, 12).with_mean(MeanPolicy::Keep);
+        assert_eq!(*keep.correlator(), explicit);
+        let got = keep
+            .compute(VacfInput {
+                velocities: v.view(),
+                dt: 0.5,
+            })
+            .unwrap();
+        let via_correlator = explicit
+            .compute(CorrelatorInput {
+                a: v.view().insert_axis(Axis(2)),
+                b: None,
+                dt: 0.5,
+                boxes: None,
+            })
+            .unwrap();
+        assert_eq!(got, via_correlator);
+        assert_ne!(got, vacf(&v, 0.5, 12).unwrap());
+        assert_eq!(Vacf::new(12).correlator().mean(), Vacf::DEFAULT_MEAN);
+        assert_eq!(Vacf::DEFAULT_MEAN, MeanPolicy::Subtract);
+
+        // The streaming form follows the configured policy.
+        let mut acc = keep.accumulator();
+        for row in v.outer_iter() {
+            acc.push(CorrelatorFrame {
+                a: row.insert_axis(Axis(1)),
+                b: None,
+                dt: 0.5,
+                simbox: None,
+            })
+            .unwrap();
+        }
+        let streamed = acc.finish().unwrap();
+        for k in 0..=12 {
+            let (s, b) = (streamed.values[[k, 0]], got.values[[k, 0]]);
+            assert!(
+                (s - b).abs() < 1e-12 * b.abs().max(1.0),
+                "lag {k}: {s} vs {b}"
+            );
+        }
     }
 
     #[test]

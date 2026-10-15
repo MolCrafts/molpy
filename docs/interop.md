@@ -241,7 +241,7 @@ each item after the molrs owner it fronts:
 | `read_xyz`, `write_xyz` (one frame; `append` adds it after the frames already there) | `io::read_xyz`, `io::xyz::XyzWriter` |
 | `read_mrec_frame`, `write_mrec_frame` | `io::read_mrec_frame`, `io::write_mrec_frame` (a record's `frame` section) |
 | `read_mrec_trajectory_frame`, `MrecWriterRef` (`mrec_writer_create` / `open` / `append` / `flush` / `committed` / `close`) | `io::mrec::MrecReader::frame`, `io::mrec::MrecWriter` |
-| `Msd` (`msd_new(max_lag)`, `set_origins`), `Vacf` (`vacf_new(max_lag)`) — `compute(...)` over a whole trajectory, `accumulator()` → `CorrelatorAccumulator` (`push` one frame, `n_frames`, `finish`) | `compute::Msd`, `compute::Vacf`, `compute::CorrelatorAccumulator` (`Stream` / `Accumulate`) |
+| `Msd` (`msd_new(max_lag)`, `set_origins`), `Vacf` (`vacf_new(max_lag)`, `set_normalization`, `set_stride`, `set_mean`) — `compute(...)` over a whole trajectory, `accumulator()` → `CorrelatorAccumulator` (`push` one frame, `n_frames`, `finish`) | `compute::Msd`, `compute::Vacf`, `compute::CorrelatorAccumulator` (`Stream` / `Accumulate`) |
 | `TimeCorrelation` (`lag_times`, `n_lags`, `n_channels`, `channel`) | `compute::TimeCorrelation` |
 | `LinearFit` (`linear_fit_new(start, end)`, `compute(correlation, channel)` → `LinearFitResult`) | `compute::LinearFit` (Einstein `D = slope / 2d` of an `Msd` curve) |
 | `Rdf` (`rdf_new(n_bins, r_max, r_min)`, `compute(positions, boxes, n_frames)` → `RdfResult`), `accumulator()` → `RdfAccumulator` (`push(positions, h)`, `n_frames`, `finish`) | `compute::Rdf`, `compute::RdfAccumulator` over a `core::NeighborList` self-query |

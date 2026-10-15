@@ -332,9 +332,11 @@ __MOLRS_ELEMENT_VARIANTS__    }
         // degrees of freedom. `compute` takes velocities [n_frames, n_dof] and dt.
         type Vacf;
         fn vacf_new(max_lag: u64) -> Box<Vacf>;
-        // "unbiased" (default), "biased" or "none"; every `stride`-th origin.
+        // "unbiased" (default), "biased" or "none"; every `stride`-th origin;
+        // "subtract" (default) or "keep" each component's time mean.
         fn set_normalization(self: &mut Vacf, normalization: &str) -> Result<()>;
         fn set_stride(self: &mut Vacf, stride: u64) -> Result<()>;
+        fn set_mean(self: &mut Vacf, mean: &str) -> Result<()>;
         fn compute(
             self: &Vacf,
             velocities: &[f64],

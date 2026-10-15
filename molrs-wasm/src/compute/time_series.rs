@@ -126,16 +126,19 @@ pub struct Vacf {
 #[wasm_bindgen]
 impl Vacf {
     /// `normalization` is a [`Normalization`](mc::Normalization) name;
-    /// `stride` takes every `stride`-th frame as an origin.
+    /// `stride` takes every `stride`-th frame as an origin; `mean` is a
+    /// [`MeanPolicy`](mc::MeanPolicy) name (default `"subtract"`).
     #[wasm_bindgen(constructor)]
     pub fn new(
         max_lag: usize,
         normalization: Option<String>,
         stride: Option<usize>,
+        mean: Option<String>,
     ) -> Result<Vacf, JsError> {
         let inner = mc::Vacf::new(max_lag)
             .given(normalization, |c, v| Ok(c.with_normalization(v.parse()?)))?
-            .given(stride, |c, v| c.with_stride(v))?;
+            .given(stride, |c, v| c.with_stride(v))?
+            .given(mean, |c, v| Ok(c.with_mean(v.parse()?)))?;
         Ok(Self { inner })
     }
 
@@ -190,16 +193,19 @@ pub struct DipoleAcf {
 
 #[wasm_bindgen]
 impl DipoleAcf {
-    /// `normalization` is a [`Normalization`](mc::Normalization) name.
+    /// `normalization` is a [`Normalization`](mc::Normalization) name;
+    /// `mean` a [`MeanPolicy`](mc::MeanPolicy) name (default `"subtract"`).
     #[wasm_bindgen(constructor)]
     pub fn new(
         max_lag: usize,
         normalization: Option<String>,
         stride: Option<usize>,
+        mean: Option<String>,
     ) -> Result<DipoleAcf, JsError> {
         let inner = mc::DipoleAcf::new(max_lag)
             .given(normalization, |c, v| Ok(c.with_normalization(v.parse()?)))?
-            .given(stride, |c, v| c.with_stride(v))?;
+            .given(stride, |c, v| c.with_stride(v))?
+            .given(mean, |c, v| Ok(c.with_mean(v.parse()?)))?;
         Ok(Self { inner })
     }
 
@@ -224,16 +230,19 @@ pub struct CurrentAcf {
 #[wasm_bindgen]
 impl CurrentAcf {
     /// `normalization` is a [`Normalization`](mc::Normalization) name
-    /// (`"none"`: the raw lagged sum of the former IR flux correlation).
+    /// (`"none"`: the raw lagged sum of the former IR flux correlation);
+    /// `mean` a [`MeanPolicy`](mc::MeanPolicy) name (default `"keep"`).
     #[wasm_bindgen(constructor)]
     pub fn new(
         max_lag: usize,
         normalization: Option<String>,
         stride: Option<usize>,
+        mean: Option<String>,
     ) -> Result<CurrentAcf, JsError> {
         let inner = mc::CurrentAcf::new(max_lag)
             .given(normalization, |c, v| Ok(c.with_normalization(v.parse()?)))?
-            .given(stride, |c, v| c.with_stride(v))?;
+            .given(stride, |c, v| c.with_stride(v))?
+            .given(mean, |c, v| Ok(c.with_mean(v.parse()?)))?;
         Ok(Self { inner })
     }
 
