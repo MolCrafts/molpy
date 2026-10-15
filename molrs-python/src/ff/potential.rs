@@ -29,6 +29,7 @@
 //! integrators and `molrs.optimize.Lbfgs` consume potentials through here.
 
 use super::ir;
+use crate::array::{ArrayArg1, ArrayArg2};
 use crate::core::block::PyBlock;
 use crate::core::frame::PyFrame;
 use crate::core::neighborlist::{PyNeighbors, PyVerletSkin};
@@ -39,7 +40,7 @@ use molrs::ff::potential::pair::{PairLjCut, PairPotential};
 use molrs::ff::potential::{ForceTerm, Potential, Potentials};
 use molrs::op::F;
 use ndarray::Array2;
-use numpy::{IntoPyArray, PyArray2, PyReadonlyArray1, PyReadonlyArray2, ToPyArray};
+use numpy::{IntoPyArray, PyArray2, ToPyArray};
 use pyo3::exceptions::{PyTypeError, PyValueError};
 use pyo3::prelude::*;
 use std::sync::{Arc, Mutex};
@@ -126,7 +127,7 @@ impl PyPairLjCut {
     fn calc_energy_forces<'py>(
         &self,
         py: Python<'py>,
-        pos: PyReadonlyArray2<'_, f64>,
+        pos: ArrayArg2<'_, f64>,
     ) -> PyResult<(F, Bound<'py, PyArray2<f64>>)> {
         check_nx3(&pos, "pos")?;
         let view = pos.as_array();
@@ -151,7 +152,7 @@ impl PyPairLjCut {
         &self,
         py: Python<'py>,
         neighbors: &mut PyVerletSkin,
-        pos: PyReadonlyArray2<'_, f64>,
+        pos: ArrayArg2<'_, f64>,
     ) -> PyResult<(F, Bound<'py, PyArray2<f64>>)> {
         check_nx3(&pos, "pos")?;
         let nl = neighbors.get_mut()?;
@@ -180,10 +181,10 @@ impl PyPairLjCut {
         &self,
         py: Python<'py>,
         n_atoms: usize,
-        i: PyReadonlyArray1<'_, u32>,
-        j: PyReadonlyArray1<'_, u32>,
-        disp: PyReadonlyArray2<'_, f64>,
-        dist_sq: Option<PyReadonlyArray1<'_, f64>>,
+        i: ArrayArg1<'_, u32>,
+        j: ArrayArg1<'_, u32>,
+        disp: ArrayArg2<'_, f64>,
+        dist_sq: Option<ArrayArg1<'_, f64>>,
     ) -> PyResult<(F, Bound<'py, PyArray2<f64>>)> {
         check_nx3(&disp, "disp")?;
         let d2 = match dist_sq.as_ref() {
@@ -314,7 +315,7 @@ impl PyPotentials {
                 PotBacking::Moved => return Err(potentials_moved_err()),
             }
         } else {
-            let arr = arg.extract::<numpy::PyReadonlyArray1<'_, f64>>()?;
+            let arr = arg.extract::<crate::array::ArrayArg1<'_, f64>>()?;
             let slice = arr.as_slice()?;
             self.inner.compiled()?.calc_energy_forces(slice)
         };
@@ -475,7 +476,7 @@ pub fn intramolecular_pairs_py(
     PyBlock::from_core_block(block)
 }
 
-pub(crate) fn check_nx3(arr: &PyReadonlyArray2<'_, f64>, label: &str) -> PyResult<()> {
+pub(crate) fn check_nx3(arr: &ArrayArg2<'_, f64>, label: &str) -> PyResult<()> {
     if arr.as_array().ncols() != 3 {
         return Err(PyValueError::new_err(format!(
             "{label} must have shape (N, 3)"
@@ -522,7 +523,7 @@ impl SubclassPotential {
             .obj
             .bind(py)
             .call_method1("calc_energy_forces", (pos,))?;
-        let (energy, forces): (F, PyReadonlyArray2<'_, f64>) = result.extract().map_err(|_| {
+        let (energy, forces): (F, ArrayArg2<'_, f64>) = result.extract().map_err(|_| {
             PyValueError::new_err(
                 "Potential.calc_energy_forces must return \
                  (energy: float, forces: float64 (N, 3) ndarray)",

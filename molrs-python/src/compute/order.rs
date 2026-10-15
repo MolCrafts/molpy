@@ -2,13 +2,13 @@
 //! `QlmTable`, `Steinhardt`, `Hexatic`, `SolidLiquid`,
 //! `ContinuousCoordination`, `Nematic` and `Cubatic`.
 
+use crate::array::ArrayArg2;
 use molrs::compute::{
     Compute, ContinuousCoordination, ContinuousCoordinationInput, ContinuousCoordinationResult,
     Cubatic, CubaticInput, CubaticResult, Hexatic, HexaticInput, HexaticResult, Nematic,
     NematicInput, NematicResult, QlmTable, SolidLiquid, SolidLiquidInput, SolidLiquidResult,
     Steinhardt, SteinhardtInput, SteinhardtResult,
 };
-use numpy::PyReadonlyArray2;
 use pyo3::prelude::*;
 
 use super::error::Result;
@@ -344,7 +344,7 @@ impl PyNematic {
     }
 
     #[pyo3(signature = (*, directors))]
-    fn compute(&self, directors: PyReadonlyArray2<'_, f64>) -> Result<PyNematicResult> {
+    fn compute(&self, directors: ArrayArg2<'_, f64>) -> Result<PyNematicResult> {
         let out = self.inner.compute(NematicInput {
             directors: directors.as_array(),
         })?;
@@ -411,7 +411,7 @@ impl PyCubatic {
     }
 
     #[pyo3(signature = (*, directors))]
-    fn compute(&self, directors: PyReadonlyArray2<'_, f64>) -> Result<PyCubaticResult> {
+    fn compute(&self, directors: ArrayArg2<'_, f64>) -> Result<PyCubaticResult> {
         let out = self.inner.compute(CubaticInput {
             directors: directors.as_array(),
         })?;

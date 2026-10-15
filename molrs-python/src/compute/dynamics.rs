@@ -2,11 +2,11 @@
 //! are bound at each frame, with hysteresis) and the van Hove correlation
 //! `VanHove`; the `Presence` series `Survival` consumes.
 
+use crate::array::ArrayArg3;
 use molrs::compute::{
     Compute, PairPresence, PairPresenceInput, Presence, VanHove, VanHoveInput, VanHoveResult,
 };
 use ndarray::Array2;
-use numpy::PyReadonlyArray3;
 use pyo3::prelude::*;
 
 use super::args::{self, PairSourceArg};
@@ -140,7 +140,7 @@ impl PyVanHove {
     #[pyo3(signature = (*, positions, boxes))]
     fn compute(
         &self,
-        positions: PyReadonlyArray3<'_, f64>,
+        positions: ArrayArg3<'_, f64>,
         boxes: Vec<PyRef<'_, PyBox>>,
     ) -> Result<PyVanHoveResult> {
         let boxes = args::boxes(&boxes);

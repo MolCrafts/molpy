@@ -3,13 +3,14 @@
 //! `GaussianDensity`, `SphereVoxelization` (one snapshot each) and
 //! `SpatialDistribution` (folded over frames), with their outputs.
 
+use crate::array::{ArrayArg1, ArrayArg2};
 use molrs::compute::{
     Compute, CorrelationFunction, CorrelationFunctionInput, CorrelationFunctionResult,
     GaussianDensity, GaussianDensityInput, GaussianDensityResult, LocalDensity, LocalDensityInput,
     LocalDensityResult, SpatialDistribution, SpatialDistributionFrame, SpatialDistributionResult,
     SphereVoxelization, SphereVoxelizationInput, SphereVoxelizationResult,
 };
-use numpy::{PyReadonlyArray1, PyReadonlyArray2};
+
 use pyo3::prelude::*;
 
 use super::args::PairSourceArg;
@@ -96,8 +97,8 @@ impl PyCorrelationFunction {
     fn compute(
         &self,
         pairs: &Bound<'_, PyAny>,
-        values_a: PyReadonlyArray1<'_, f64>,
-        values_b: PyReadonlyArray1<'_, f64>,
+        values_a: ArrayArg1<'_, f64>,
+        values_b: ArrayArg1<'_, f64>,
     ) -> Result<PyCorrelationFunctionResult> {
         let pairs = PairSourceArg::extract(pairs)?;
         let out = self.inner.compute(CorrelationFunctionInput {
@@ -189,7 +190,7 @@ impl PyGaussianDensity {
     #[pyo3(signature = (*, positions, simbox))]
     fn compute(
         &self,
-        positions: PyReadonlyArray2<'_, f64>,
+        positions: ArrayArg2<'_, f64>,
         simbox: PyRef<'_, PyBox>,
     ) -> Result<PyGaussianDensityResult> {
         let out = self.inner.compute(GaussianDensityInput {
@@ -228,7 +229,7 @@ impl PySphereVoxelization {
     #[pyo3(signature = (*, positions, simbox))]
     fn compute(
         &self,
-        positions: PyReadonlyArray2<'_, f64>,
+        positions: ArrayArg2<'_, f64>,
         simbox: PyRef<'_, PyBox>,
     ) -> Result<PySphereVoxelizationResult> {
         let out = self.inner.compute(SphereVoxelizationInput {
@@ -284,10 +285,10 @@ impl PySpatialDistribution {
     ))]
     fn compute(
         &self,
-        positions: Vec<PyReadonlyArray2<'_, f64>>,
+        positions: Vec<ArrayArg2<'_, f64>>,
         simbox: Option<Vec<Option<PyRef<'_, PyBox>>>>,
         reference: Vec<Vec<usize>>,
-        template: Vec<PyReadonlyArray2<'_, f64>>,
+        template: Vec<ArrayArg2<'_, f64>>,
         target: Vec<Vec<usize>>,
         orientation: Option<Vec<Option<Vec<[usize; 2]>>>>,
     ) -> Result<PySpatialDistributionResult> {

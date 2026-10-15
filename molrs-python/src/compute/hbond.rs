@@ -1,8 +1,9 @@
 //! Geometric hydrogen bonds (`molrs::compute::HBonds`): the bonds of every
 //! frame, their presence series and per-frame networks.
 
+use crate::array::ArrayArg3;
 use molrs::compute::{Compute, HBond, HBondCriterion, HBonds, HBondsInput, HBondsResult};
-use numpy::{PyArray1, PyReadonlyArray3};
+use numpy::PyArray1;
 use pyo3::prelude::*;
 
 use super::dynamics::PyPresence;
@@ -107,7 +108,7 @@ impl PyHBonds {
     #[pyo3(signature = (*, positions, donors, acceptors, pairs))]
     fn compute(
         &self,
-        positions: PyReadonlyArray3<'_, f64>,
+        positions: ArrayArg3<'_, f64>,
         donors: Vec<[u32; 2]>,
         acceptors: Vec<u32>,
         pairs: Vec<PyRef<'_, PyNeighbors>>,

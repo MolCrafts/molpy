@@ -1,8 +1,9 @@
 //! Kinetic energy of one configuration (`molrs::compute::KineticEnergy`) and
 //! its output `KineticEnergyResult`.
 
+use crate::array::{ArrayArg1, ArrayArg2};
 use molrs::compute::{Compute, KineticEnergy, KineticEnergyInput, KineticEnergyResult};
-use numpy::{PyReadonlyArray1, PyReadonlyArray2};
+
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 
@@ -73,8 +74,8 @@ impl PyKineticEnergy {
     #[pyo3(signature = (*, masses, velocities))]
     fn compute(
         &self,
-        masses: PyReadonlyArray1<'_, f64>,
-        velocities: PyReadonlyArray2<'_, f64>,
+        masses: ArrayArg1<'_, f64>,
+        velocities: ArrayArg2<'_, f64>,
     ) -> Result<PyKineticEnergyResult> {
         let out = self.inner.compute(KineticEnergyInput {
             masses: masses.as_array(),

@@ -6,6 +6,7 @@
 //! Also the frames-form plumbing the other per-frame computes of this binding
 //! share: every field is one list, an entry per frame, of the same length.
 
+use crate::array::ArrayArg2;
 use molrs::compute::{
     Axis, CombinedDistribution, CombinedDistributionFrame, CombinedDistributionResult, Compute,
     ComputeError, Described, DistributionFrame, DistributionFunction, DistributionResult,
@@ -13,7 +14,7 @@ use molrs::compute::{
 };
 use molrs::core::SimBox;
 use ndarray::Array2;
-use numpy::{IntoPyArray, PyArrayDyn, PyReadonlyArray2};
+use numpy::{IntoPyArray, PyArrayDyn};
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 
@@ -116,7 +117,7 @@ impl PyDistributionFunction {
     #[pyo3(signature = (*, positions, simbox = None, tuples))]
     fn compute(
         &self,
-        positions: Vec<PyReadonlyArray2<'_, f64>>,
+        positions: Vec<ArrayArg2<'_, f64>>,
         simbox: Option<Vec<Option<PyRef<'_, PyBox>>>>,
         tuples: Vec<Vec<Vec<usize>>>,
     ) -> Result<PyDistributionResult> {
@@ -198,7 +199,7 @@ fn build<const N: usize>(
 
 fn run<const N: usize>(
     inner: &CombinedDistribution<N>,
-    positions: &[PyReadonlyArray2<'_, f64>],
+    positions: &[ArrayArg2<'_, f64>],
     boxes: &[Option<&SimBox>],
     tables: &[Vec<Array2<usize>>],
 ) -> Result<CombinedDistributionResult<N>> {
@@ -268,7 +269,7 @@ impl PyCombinedDistribution {
     #[pyo3(signature = (*, positions, simbox = None, tuples))]
     fn compute(
         &self,
-        positions: Vec<PyReadonlyArray2<'_, f64>>,
+        positions: Vec<ArrayArg2<'_, f64>>,
         simbox: Option<Vec<Option<PyRef<'_, PyBox>>>>,
         tuples: Vec<Vec<Vec<Vec<usize>>>>,
     ) -> Result<PyCombinedDistributionResult> {

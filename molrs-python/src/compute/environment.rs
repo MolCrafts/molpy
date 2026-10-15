@@ -3,6 +3,7 @@
 //! `EnvironmentMatch`, `AngularSeparationGlobal` and
 //! `AngularSeparationNeighbor`.
 
+use crate::array::ArrayArg2;
 use molrs::compute::{
     AngularSeparationGlobal, AngularSeparationGlobalInput, AngularSeparationGlobalResult,
     AngularSeparationNeighbor, AngularSeparationNeighborInput, AngularSeparationNeighborResult,
@@ -12,7 +13,6 @@ use molrs::compute::{
     LocalDescriptorsInput, LocalDescriptorsResult,
 };
 use ndarray::Array2;
-use numpy::PyReadonlyArray2;
 use pyo3::prelude::*;
 use pyo3::types::PyComplex;
 
@@ -175,8 +175,8 @@ impl PyLocalBondProjection {
     fn compute(
         &self,
         neighbors: PyRef<'_, PyNeighbors>,
-        proj_vectors: PyReadonlyArray2<'_, f64>,
-        orientations: Option<PyReadonlyArray2<'_, f64>>,
+        proj_vectors: ArrayArg2<'_, f64>,
+        orientations: Option<ArrayArg2<'_, f64>>,
     ) -> Result<PyLocalBondProjectionResult> {
         let out = self.inner.compute(LocalBondProjectionInput {
             neighbors: &neighbors.inner,
@@ -258,8 +258,8 @@ impl PyAngularSeparationGlobal {
     #[pyo3(signature = (*, query, reference))]
     fn compute(
         &self,
-        query: PyReadonlyArray2<'_, f64>,
-        reference: PyReadonlyArray2<'_, f64>,
+        query: ArrayArg2<'_, f64>,
+        reference: ArrayArg2<'_, f64>,
     ) -> Result<PyAngularSeparationGlobalResult> {
         let out = self.inner.compute(AngularSeparationGlobalInput {
             query: query.as_array(),
@@ -296,8 +296,8 @@ impl PyAngularSeparationNeighbor {
     fn compute(
         &self,
         neighbors: PyRef<'_, PyNeighbors>,
-        query_orientations: PyReadonlyArray2<'_, f64>,
-        point_orientations: PyReadonlyArray2<'_, f64>,
+        query_orientations: ArrayArg2<'_, f64>,
+        point_orientations: ArrayArg2<'_, f64>,
     ) -> Result<PyAngularSeparationNeighborResult> {
         let out = self.inner.compute(AngularSeparationNeighborInput {
             neighbors: &neighbors.inner,

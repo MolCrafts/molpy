@@ -158,6 +158,22 @@ class TestSurfaces:
         ).compute(a=flat[:, :, None], dt=0.5)
         np.testing.assert_array_equal(strided.values, explicit.values)
 
+    def test_an_array_of_the_wrong_rank_or_dtype_says_what_it_expected(self):
+        with pytest.raises(
+            TypeError,
+            match=r"velocities.*expected a 2-D float64 array, "
+            r"got a 3-D float64 array of shape \(10, 4, 3\)",
+        ):
+            Vacf(5).compute(velocities=np.zeros((10, 4, 3)), dt=1.0)
+        with pytest.raises(
+            TypeError,
+            match=r"velocities.*expected a 2-D float64 array, "
+            r"got a 2-D int64 array of shape \(100, 32\)",
+        ):
+            Vacf(5).compute(velocities=np.zeros((100, 32), dtype=np.int64), dt=1.0)
+        with pytest.raises(TypeError, match=r"'a': expected a 3-D float64 array, got list"):
+            Correlator("product", 2).compute(a=[[[1.0]]], dt=1.0)
+
     def test_msd_all_origins_is_the_nested_loop(self):
         pos = np.cumsum(_series(n_frames=20, n_items=3), axis=0)
         got = Msd(6).compute(positions=pos, dt=1.0)

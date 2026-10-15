@@ -5,6 +5,7 @@
 //! An optimizer minimizes a `molrs.ff.potential.Potentials` over a coordinate
 //! vector; it neither builds the potentials nor owns a force field.
 
+use crate::array::ArrayArgDyn;
 use pyo3::prelude::*;
 
 use molrs::ff::compile::PotentialCompiler;
@@ -15,7 +16,7 @@ use crate::ff::ir;
 use crate::ff::potential::{PotBacking, PyPotentials, potentials_moved_err};
 
 use ndarray::{Array2, Array3};
-use numpy::{PyArray2, PyArray3, PyReadonlyArrayDyn, ToPyArray};
+use numpy::{PyArray2, PyArray3, ToPyArray};
 
 /// Outcome of a minimization, exposed to Python as
 /// `molrs.optimize.OptimizationReport`.
@@ -175,7 +176,7 @@ impl PyLbfgs {
 
         let pots = self.potentials.borrow(py);
         let pot = pots.inner.compiled()?;
-        let readonly = arg.extract::<PyReadonlyArrayDyn<'_, f64>>()?;
+        let readonly = arg.extract::<ArrayArgDyn<'_, f64>>()?;
         let arr = readonly.as_array();
         let shape = arr.shape();
         match shape.len() {

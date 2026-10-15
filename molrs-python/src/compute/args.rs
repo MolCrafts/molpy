@@ -14,10 +14,11 @@
 //! A choice by name is parsed with the core `FromStr` (`"all".parse::<Origins>()`)
 //! at the call site; nothing here retypes a choice's names.
 
+use crate::array::{ArrayArg1, ArrayArg2};
 use molrs::compute::{ComputeError, FeatureMatrix, Partition};
 use molrs::core::{PairSource, SimBox, UnitPreset, lookup_unit_preset};
 use ndarray::Array2;
-use numpy::{PyReadonlyArray1, PyReadonlyArray2};
+
 use pyo3::exceptions::{PyTypeError, PyValueError};
 use pyo3::prelude::*;
 
@@ -133,7 +134,7 @@ impl<'py> PartitionArg<'py> {
 /// The labels of a 1-D numpy array of an unsigned integer dtype.
 fn unsigned_labels(obj: &Bound<'_, PyAny>) -> Option<Vec<u64>> {
     fn widen<T: numpy::Element + Copy + Into<u64>>(obj: &Bound<'_, PyAny>) -> Option<Vec<u64>> {
-        let array = obj.extract::<PyReadonlyArray1<'_, T>>().ok()?;
+        let array = obj.extract::<ArrayArg1<'_, T>>().ok()?;
         Some(array.as_array().iter().map(|&label| label.into()).collect())
     }
     widen::<u64>(obj)
@@ -161,7 +162,7 @@ impl<'py> FeatureArg<'py> {
         if let Ok(result) = obj.extract::<PyRef<'py, PyPcaResult>>() {
             return Ok(Self::Pca(result));
         }
-        if let Ok(matrix) = obj.extract::<PyReadonlyArray2<'py, f64>>() {
+        if let Ok(matrix) = obj.extract::<ArrayArg2<'py, f64>>() {
             return Ok(Self::Matrix(matrix.as_array().to_owned()));
         }
         Err(PyTypeError::new_err(format!(

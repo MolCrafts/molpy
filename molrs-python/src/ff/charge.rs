@@ -31,7 +31,8 @@
 //! their GAFF or OPLS types in `keys.TYPE` *and* gets BCC charges — which is exactly
 //! what the standard AM1-BCC workflow needs.
 
-use numpy::{IntoPyArray, PyArray1, PyReadonlyArray1};
+use crate::array::ArrayArg1;
+use numpy::{IntoPyArray, PyArray1};
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 
@@ -61,7 +62,7 @@ fn charge_err(e: ChargeError) -> PyErr {
 /// `as_array().to_vec()` rather than `as_slice()`: a non-contiguous view is a legal
 /// argument (a strided slice of a bigger charge table), and copying is what keeps the
 /// caller's array read-only — `correct` must not consume the buffer it was given.
-fn qm_charges(qm: Option<PyReadonlyArray1<'_, f64>>) -> Option<Vec<f64>> {
+fn qm_charges(qm: Option<ArrayArg1<'_, f64>>) -> Option<Vec<f64>> {
     qm.map(|array| array.as_array().to_vec())
 }
 
@@ -150,7 +151,7 @@ impl PyBccModel {
         &self,
         py: Python<'py>,
         mol: &PyAtomistic,
-        qm: Option<PyReadonlyArray1<'_, f64>>,
+        qm: Option<ArrayArg1<'_, f64>>,
     ) -> PyResult<Bound<'py, PyArray1<f64>>> {
         let qm = qm_charges(qm);
         let charges = self
@@ -187,7 +188,7 @@ impl PyBccModel {
         &self,
         py: Python<'py>,
         mol: &PyAtomistic,
-        am1: PyReadonlyArray1<'_, f64>,
+        am1: ArrayArg1<'_, f64>,
     ) -> PyResult<Bound<'py, PyArray1<f64>>> {
         let am1 = am1.as_array().to_vec();
         let charges = self.inner.correct(mol.core(), &am1).map_err(charge_err)?;
@@ -247,7 +248,7 @@ impl PyMullikenModel {
         &self,
         py: Python<'py>,
         mol: &PyAtomistic,
-        qm: Option<PyReadonlyArray1<'_, f64>>,
+        qm: Option<ArrayArg1<'_, f64>>,
     ) -> PyResult<Bound<'py, PyArray1<f64>>> {
         let qm = qm_charges(qm);
         let charges = MullikenModel
@@ -317,7 +318,7 @@ impl PyGasteigerModel {
         &self,
         py: Python<'py>,
         mol: &PyAtomistic,
-        qm: Option<PyReadonlyArray1<'_, f64>>,
+        qm: Option<ArrayArg1<'_, f64>>,
     ) -> PyResult<Bound<'py, PyArray1<f64>>> {
         let qm = qm_charges(qm);
         let charges = GasteigerModel

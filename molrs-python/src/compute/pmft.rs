@@ -2,9 +2,10 @@
 //! per registered pair coordinate system — `PmftR12`, `PmftXy`, `PmftXyt`,
 //! `PmftXyz` — all returning a `PmftResult`.
 
+use crate::array::{ArrayArg1, ArrayArg2};
 use molrs::compute::{Compute, PairCoordinate, Pmft, PmftInput, R12, Xy, Xyt, Xyz};
 use ndarray::{Array1, ArrayD};
-use numpy::{PyReadonlyArray1, PyReadonlyArray2};
+
 use pyo3::prelude::*;
 
 use super::error::Result;
@@ -89,7 +90,7 @@ pmft_class! {
     /// ``compute(pairs=, orientations=None)`` with ``(N,)`` angles.
     PyPmftR12(R12) as "PmftR12",
     (r_max: f64, n_r: usize, n_t1: usize, n_t2: usize),
-    PyReadonlyArray1<'_, f64>
+    ArrayArg1<'_, f64>
 }
 
 pmft_class! {
@@ -99,7 +100,7 @@ pmft_class! {
     /// ``compute(pairs=, orientations=None)`` with ``(N,)`` angles.
     PyPmftXy(Xy) as "PmftXy",
     (x_max: f64, y_max: f64, n_x: usize, n_y: usize),
-    PyReadonlyArray1<'_, f64>
+    ArrayArg1<'_, f64>
 }
 
 pmft_class! {
@@ -108,7 +109,7 @@ pmft_class! {
     /// ``compute(pairs=, orientations=None)`` with ``(N,)`` angles.
     PyPmftXyt(Xyt) as "PmftXyt",
     (x_max: f64, y_max: f64, n_x: usize, n_y: usize, n_t: usize),
-    PyReadonlyArray1<'_, f64>
+    ArrayArg1<'_, f64>
 }
 
 pmft_class! {
@@ -118,7 +119,7 @@ pmft_class! {
     /// ``compute(pairs=, orientations=None)`` with ``(N, 4)`` quaternions.
     PyPmftXyz(Xyz) as "PmftXyz",
     (x_max: f64, y_max: f64, z_max: f64, n_x: usize, n_y: usize, n_z: usize),
-    PyReadonlyArray2<'_, f64>
+    ArrayArg2<'_, f64>
 }
 
 pub(crate) fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {

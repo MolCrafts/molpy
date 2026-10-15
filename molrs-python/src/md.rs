@@ -12,6 +12,7 @@
 //! `calc_energy_forces`. MD has no unit knowledge. Integrators own the
 //! optional `VerletSkin`.
 
+use crate::array::{ArrayArg1, ArrayArg2};
 use crate::core::neighborlist::PyVerletSkin;
 use crate::core::simbox::PyBox;
 use crate::ff::potential::{ErrSlot, Members, PyPairLjCut, check_nx3, take_err, take_members};
@@ -22,7 +23,7 @@ use molrs::md::{
 };
 use molrs::op::{F, I};
 use ndarray::Array1;
-use numpy::{IntoPyArray, PyArray2, PyReadonlyArray1, PyReadonlyArray2};
+use numpy::{IntoPyArray, PyArray2};
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 
@@ -62,9 +63,9 @@ fn provider(
 }
 
 fn extract_state(state: &Bound<'_, PyAny>) -> PyResult<MdState> {
-    let pos: PyReadonlyArray2<f64> = state.getattr("pos")?.extract()?;
-    let vel: PyReadonlyArray2<f64> = state.getattr("vel")?.extract()?;
-    let forces: PyReadonlyArray2<f64> = state.getattr("forces")?.extract()?;
+    let pos: ArrayArg2<f64> = state.getattr("pos")?.extract()?;
+    let vel: ArrayArg2<f64> = state.getattr("vel")?.extract()?;
+    let forces: ArrayArg2<f64> = state.getattr("forces")?.extract()?;
     let energy: F = state.getattr("energy")?.extract()?;
     check_nx3(&pos, "pos")?;
     check_nx3(&vel, "vel")?;
@@ -86,7 +87,7 @@ fn mass_from(mass: &Bound<'_, PyAny>) -> PyResult<Array1<F>> {
         }
         return Ok(ndarray::array![v]);
     }
-    let arr: PyReadonlyArray1<f64> = mass.extract().map_err(|_| {
+    let arr: ArrayArg1<f64> = mass.extract().map_err(|_| {
         PyValueError::new_err("mass must be a positive scalar or a 1-D float array")
     })?;
     Ok(arr.as_array().to_owned())
@@ -106,9 +107,9 @@ pub struct PyMdState {
 impl PyMdState {
     #[new]
     fn new(
-        pos: PyReadonlyArray2<'_, f64>,
-        vel: PyReadonlyArray2<'_, f64>,
-        forces: PyReadonlyArray2<'_, f64>,
+        pos: ArrayArg2<'_, f64>,
+        vel: ArrayArg2<'_, f64>,
+        forces: ArrayArg2<'_, f64>,
         energy: F,
     ) -> PyResult<Self> {
         check_nx3(&pos, "pos")?;
@@ -156,7 +157,7 @@ impl PyMdState {
     }
 
     #[setter]
-    fn set_images(&mut self, value: PyReadonlyArray2<'_, I>) -> PyResult<()> {
+    fn set_images(&mut self, value: ArrayArg2<'_, I>) -> PyResult<()> {
         let v = value.as_array();
         if v.ncols() != 3 || v.nrows() != self.inner.pos.nrows() {
             return Err(PyValueError::new_err(
@@ -186,19 +187,19 @@ impl PyMdState {
     }
 
     #[setter]
-    fn set_pos(&mut self, pos: PyReadonlyArray2<'_, f64>) -> PyResult<()> {
+    fn set_pos(&mut self, pos: ArrayArg2<'_, f64>) -> PyResult<()> {
         check_nx3(&pos, "pos")?;
         self.inner.pos = pos.as_array().to_owned();
         Ok(())
     }
     #[setter]
-    fn set_vel(&mut self, vel: PyReadonlyArray2<'_, f64>) -> PyResult<()> {
+    fn set_vel(&mut self, vel: ArrayArg2<'_, f64>) -> PyResult<()> {
         check_nx3(&vel, "vel")?;
         self.inner.vel = vel.as_array().to_owned();
         Ok(())
     }
     #[setter]
-    fn set_forces(&mut self, forces: PyReadonlyArray2<'_, f64>) -> PyResult<()> {
+    fn set_forces(&mut self, forces: ArrayArg2<'_, f64>) -> PyResult<()> {
         check_nx3(&forces, "forces")?;
         self.inner.forces = forces.as_array().to_owned();
         Ok(())
@@ -290,11 +291,7 @@ impl PyVelocityVerlet {
         self.inner.forces().neighbor_stats().ago
     }
 
-    fn initial(
-        &mut self,
-        pos: PyReadonlyArray2<'_, f64>,
-        vel: PyReadonlyArray2<'_, f64>,
-    ) -> PyResult<PyMdState> {
+    fn initial(&mut self, pos: ArrayArg2<'_, f64>, vel: ArrayArg2<'_, f64>) -> PyResult<PyMdState> {
         check_nx3(&pos, "pos")?;
         check_nx3(&vel, "vel")?;
         let result = self
@@ -436,11 +433,7 @@ impl PyLangevin {
         self.inner.forces().neighbor_stats().ago
     }
 
-    fn initial(
-        &mut self,
-        pos: PyReadonlyArray2<'_, f64>,
-        vel: PyReadonlyArray2<'_, f64>,
-    ) -> PyResult<PyMdState> {
+    fn initial(&mut self, pos: ArrayArg2<'_, f64>, vel: ArrayArg2<'_, f64>) -> PyResult<PyMdState> {
         check_nx3(&pos, "pos")?;
         check_nx3(&vel, "vel")?;
         let result = self
@@ -452,11 +445,7 @@ impl PyLangevin {
         })
     }
 
-    fn step(
-        &mut self,
-        state: &Bound<'_, PyAny>,
-        noise: PyReadonlyArray2<'_, f64>,
-    ) -> PyResult<PyMdState> {
+    fn step(&mut self, state: &Bound<'_, PyAny>, noise: ArrayArg2<'_, f64>) -> PyResult<PyMdState> {
         check_nx3(&noise, "noise")?;
         let result = self.inner.step(extract_state(state)?, noise.as_array());
         take_err(&self.err_slots)?;
@@ -519,7 +508,7 @@ impl PyMaxwellBoltzmann {
     fn velocities<'py>(
         &self,
         py: Python<'py>,
-        pos: PyReadonlyArray2<'_, f64>,
+        pos: ArrayArg2<'_, f64>,
         mass: Bound<'_, PyAny>,
     ) -> PyResult<Bound<'py, PyArray2<f64>>> {
         check_nx3(&pos, "pos")?;

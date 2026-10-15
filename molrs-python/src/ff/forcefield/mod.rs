@@ -12,6 +12,7 @@ mod forms;
 pub mod handles;
 mod param_columns;
 
+use crate::array::ArrayArgDyn;
 use pyo3::exceptions::PyTypeError;
 use pyo3::intern;
 use pyo3::prelude::*;
@@ -24,7 +25,7 @@ use crate::core::frame::PyFrame;
 use crate::error::py_value_err;
 use crate::ff::ir;
 
-use numpy::{PyReadonlyArrayDyn, ToPyArray};
+use numpy::ToPyArray;
 
 /// Force-field definition metadata exposed to Python as `molrs.ff.forcefield.ForceField`.
 ///
@@ -59,7 +60,7 @@ pub(crate) fn array_param(value: &Bound<'_, PyAny>) -> PyResult<Option<ndarray::
                 "an array param must be numbers of one rectangular shape: {e}"
             ))
         })?;
-    let array: PyReadonlyArrayDyn<'_, f64> = converted.extract()?;
+    let array: ArrayArgDyn<'_, f64> = converted.extract()?;
     Ok(Some(array.as_array().to_owned()))
 }
 

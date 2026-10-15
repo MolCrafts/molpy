@@ -28,6 +28,7 @@
 //! length is the pair distance, not 1. All lengths are in the unit of the input
 //! coordinates, which is Å everywhere in molrs, so `dist_sq` is in Å².
 
+use crate::array::ArrayArg2;
 use crate::core::simbox::PyBox;
 use molrs::core::SimBox;
 use molrs::core::{
@@ -36,14 +37,14 @@ use molrs::core::{
     VerletSkin as RsVerletSkin,
 };
 use ndarray::{Array2, ArrayView1};
-use numpy::{IntoPyArray, PyArray1, PyArray2, PyReadonlyArray2};
+use numpy::{IntoPyArray, PyArray1, PyArray2};
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 
 /// Reject a coordinate array that is not `(N, 3)` before it reaches the core,
 /// whose own check is an `assert!` — and a panic must not cross this seam.
 /// `label` names the offending argument in the error.
-fn check_points(points: &PyReadonlyArray2<'_, f64>, label: &str) -> PyResult<()> {
+fn check_points(points: &ArrayArg2<'_, f64>, label: &str) -> PyResult<()> {
     if points.as_array().ncols() != 3 {
         return Err(PyValueError::new_err(format!(
             "{label} must have shape (N, 3)"
@@ -363,7 +364,7 @@ impl PyNeighborList {
     #[pyo3(signature = (cutoff, points=None, r#box=None, brute_force=false))]
     fn new(
         cutoff: f64,
-        points: Option<PyReadonlyArray2<'_, f64>>,
+        points: Option<ArrayArg2<'_, f64>>,
         r#box: Option<&PyBox>,
         brute_force: bool,
     ) -> PyResult<Self> {
@@ -427,7 +428,7 @@ impl PyNeighborList {
     /// ------
     /// ValueError
     ///     If ``points`` does not have shape ``(N, 3)``.
-    fn build(&mut self, points: PyReadonlyArray2<'_, f64>, r#box: &PyBox) -> PyResult<()> {
+    fn build(&mut self, points: ArrayArg2<'_, f64>, r#box: &PyBox) -> PyResult<()> {
         check_points(&points, "points")?;
         self.get_mut()?.build(points.as_array(), &r#box.inner);
         self.points = Some(points.as_array().to_owned());
@@ -453,7 +454,7 @@ impl PyNeighborList {
     ///     If ``points`` does not have shape ``(N, 3)``, or if no ``build`` has
     ///     run yet — the box is then unknown, and guessing one would fold
     ///     minimum images against a box the caller never named.
-    fn update(&mut self, points: PyReadonlyArray2<'_, f64>) -> PyResult<()> {
+    fn update(&mut self, points: ArrayArg2<'_, f64>) -> PyResult<()> {
         check_points(&points, "points")?;
         let engine = self.get_mut()?;
         // The core panics on an update before a build (the box is unknown);
@@ -570,7 +571,7 @@ impl PyNeighborQuery {
     ///     positive.
     #[new]
     #[pyo3(signature = (r#box, points, cutoff))]
-    fn new(r#box: &PyBox, points: PyReadonlyArray2<'_, f64>, cutoff: f64) -> PyResult<Self> {
+    fn new(r#box: &PyBox, points: ArrayArg2<'_, f64>, cutoff: f64) -> PyResult<Self> {
         check_points(&points, "points")?;
         check_cutoff(cutoff)?;
         Ok(Self {
@@ -591,7 +592,7 @@ impl PyNeighborQuery {
     ///     positive.
     #[staticmethod]
     #[pyo3(signature = (points, cutoff))]
-    fn unbounded(points: PyReadonlyArray2<'_, f64>, cutoff: f64) -> PyResult<Self> {
+    fn unbounded(points: ArrayArg2<'_, f64>, cutoff: f64) -> PyResult<Self> {
         check_points(&points, "points")?;
         check_cutoff(cutoff)?;
         Ok(Self {
@@ -615,7 +616,7 @@ impl PyNeighborQuery {
     /// ------
     /// ValueError
     ///     If ``query_points`` does not have shape ``(M, 3)``.
-    fn query(&self, query_points: PyReadonlyArray2<'_, f64>) -> PyResult<PyNeighbors> {
+    fn query(&self, query_points: ArrayArg2<'_, f64>) -> PyResult<PyNeighbors> {
         check_points(&query_points, "query_points")?;
         Ok(PyNeighbors {
             inner: self.inner.query(query_points.as_array()),
@@ -706,7 +707,7 @@ impl PyVerletSkin {
     fn new(
         neighbors: &mut PyNeighborList,
         cutoff: f64,
-        positions: PyReadonlyArray2<'_, f64>,
+        positions: ArrayArg2<'_, f64>,
         r#box: &PyBox,
         skin: f64,
         every: usize,
@@ -775,7 +776,7 @@ impl PyVerletSkin {
         Ok(self.get()?.ago())
     }
 
-    fn update(&mut self, positions: PyReadonlyArray2<'_, f64>) -> PyResult<bool> {
+    fn update(&mut self, positions: ArrayArg2<'_, f64>) -> PyResult<bool> {
         check_points(&positions, "positions")?;
         let rebuilt = self
             .get_mut()?
@@ -787,7 +788,7 @@ impl PyVerletSkin {
         Ok(rebuilt)
     }
 
-    fn rebuild(&mut self, positions: PyReadonlyArray2<'_, f64>) -> PyResult<()> {
+    fn rebuild(&mut self, positions: ArrayArg2<'_, f64>) -> PyResult<()> {
         check_points(&positions, "positions")?;
         self.get_mut()?
             .rebuild(positions.as_array())

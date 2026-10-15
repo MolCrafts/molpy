@@ -29,7 +29,8 @@
 //! `#[pyclass(module = "molrs.…")]`, a flat function by [`add_function`], and
 //! everything on a submodule by that submodule's name. Cross-cutting plumbing
 //! has one home each: exceptions and Rust-error mapping in [`error`], the
-//! pickle protocol in [`pickle`], path arguments in [`path`].
+//! pickle protocol in [`pickle`], path arguments in [`path`], array arguments
+//! in [`array`].
 //!
 //! # Float Precision
 //!
@@ -38,6 +39,7 @@
 
 use pyo3::prelude::*;
 
+mod array;
 mod error;
 mod path;
 mod pickle;

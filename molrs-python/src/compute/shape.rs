@@ -1,12 +1,13 @@
 //! Group shape (`molrs::compute::shape`): `CenterOfMass`, `GyrationTensor`
 //! and `InertiaTensor` of the groups of a partition, and their outputs.
 
+use crate::array::{ArrayArg1, ArrayArg2};
 use molrs::compute::{
     CenterOfMass, CenterOfMassInput, CenterOfMassResult, Compute, GyrationTensor,
     GyrationTensorInput, GyrationTensorResult, InertiaTensor, InertiaTensorInput,
     InertiaTensorResult,
 };
-use numpy::{PyReadonlyArray1, PyReadonlyArray2};
+
 use pyo3::prelude::*;
 
 use super::args;
@@ -66,10 +67,10 @@ impl PyCenterOfMass {
     #[pyo3(signature = (*, positions, simbox = None, partition, masses))]
     fn compute<'py>(
         &self,
-        positions: PyReadonlyArray2<'py, f64>,
+        positions: ArrayArg2<'py, f64>,
         simbox: Option<PyRef<'py, PyBox>>,
         partition: &Bound<'py, PyAny>,
-        masses: PyReadonlyArray1<'py, f64>,
+        masses: ArrayArg1<'py, f64>,
     ) -> Result<PyCenterOfMassResult> {
         let partition = args::PartitionArg::extract(partition)?;
         let out = self.inner.compute(CenterOfMassInput {
@@ -105,10 +106,10 @@ impl PyGyrationTensor {
     #[pyo3(signature = (*, positions, simbox = None, partition, weights))]
     fn compute<'py>(
         &self,
-        positions: PyReadonlyArray2<'py, f64>,
+        positions: ArrayArg2<'py, f64>,
         simbox: Option<PyRef<'py, PyBox>>,
         partition: &Bound<'py, PyAny>,
-        weights: PyReadonlyArray1<'py, f64>,
+        weights: ArrayArg1<'py, f64>,
     ) -> Result<PyGyrationTensorResult> {
         let partition = args::PartitionArg::extract(partition)?;
         let out = self.inner.compute(GyrationTensorInput {
@@ -144,10 +145,10 @@ impl PyInertiaTensor {
     #[pyo3(signature = (*, positions, simbox = None, partition, masses))]
     fn compute<'py>(
         &self,
-        positions: PyReadonlyArray2<'py, f64>,
+        positions: ArrayArg2<'py, f64>,
         simbox: Option<PyRef<'py, PyBox>>,
         partition: &Bound<'py, PyAny>,
-        masses: PyReadonlyArray1<'py, f64>,
+        masses: ArrayArg1<'py, f64>,
     ) -> Result<PyInertiaTensorResult> {
         let partition = args::PartitionArg::extract(partition)?;
         let out = self.inner.compute(InertiaTensorInput {

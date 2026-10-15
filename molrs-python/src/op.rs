@@ -7,12 +7,13 @@
 //! [`SuperpositionError`](molrs::op::SuperpositionError) is a `ValueError`
 //! carrying the Rust message.
 
+use crate::array::ArrayArgDyn;
 use molrs::op;
 use molrs::op::Rigid;
 use molrs::op::{DEFAULT_GAP_TOL, Freedom, Superposition};
 use molrs::op::{Mat3, Vec3};
 use ndarray::{Array1, Array2};
-use numpy::{IntoPyArray, PyArray1, PyArray2, PyReadonlyArrayDyn};
+use numpy::{IntoPyArray, PyArray1, PyArray2};
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 
@@ -23,7 +24,7 @@ use crate::error::py_value_err;
 // ---------------------------------------------------------------------------
 
 /// Read an `(n, 3)` float64 array as points, refusing any other shape.
-fn points_from_array(array: &PyReadonlyArrayDyn<'_, f64>, name: &str) -> PyResult<Vec<Vec3>> {
+fn points_from_array(array: &ArrayArgDyn<'_, f64>, name: &str) -> PyResult<Vec<Vec3>> {
     let view = array.as_array();
     let shape = view.shape();
     if shape.len() != 2 || shape[1] != 3 {
@@ -39,7 +40,7 @@ fn points_from_array(array: &PyReadonlyArrayDyn<'_, f64>, name: &str) -> PyResul
 }
 
 /// Read an `(n, 3, 3)` float64 array as row-major rotation matrices.
-fn matrices_from_array(array: &PyReadonlyArrayDyn<'_, f64>, name: &str) -> PyResult<Vec<Mat3>> {
+fn matrices_from_array(array: &ArrayArgDyn<'_, f64>, name: &str) -> PyResult<Vec<Mat3>> {
     let view = array.as_array();
     let shape = view.shape();
     if shape.len() != 3 || shape[1] != 3 || shape[2] != 3 {
@@ -54,8 +55,8 @@ fn matrices_from_array(array: &PyReadonlyArrayDyn<'_, f64>, name: &str) -> PyRes
 
 /// Pair `rotations (N, 3, 3)` with `translations (N, 3)` into rigid motions.
 pub(crate) fn rigids_from_arrays(
-    rotations: &PyReadonlyArrayDyn<'_, f64>,
-    translations: &PyReadonlyArrayDyn<'_, f64>,
+    rotations: &ArrayArgDyn<'_, f64>,
+    translations: &ArrayArgDyn<'_, f64>,
 ) -> PyResult<Vec<Rigid>> {
     let rotations = matrices_from_array(rotations, "rotations")?;
     let translations = points_from_array(translations, "translations")?;
@@ -85,10 +86,7 @@ pub(crate) fn vector_to_py<'py>(py: Python<'py>, v: &Vec3) -> Bound<'py, PyArray
 }
 
 /// Read `weights`, or `k` ones when `None`.
-fn weights_or_uniform(
-    weights: Option<PyReadonlyArrayDyn<'_, f64>>,
-    k: usize,
-) -> PyResult<Vec<f64>> {
+fn weights_or_uniform(weights: Option<ArrayArgDyn<'_, f64>>, k: usize) -> PyResult<Vec<f64>> {
     match weights {
         None => Ok(vec![1.0; k]),
         Some(w) => {
@@ -227,9 +225,9 @@ impl PySuperposition {
 #[pyfunction(name = "superpose")]
 #[pyo3(signature = (reference, target, weights=None, *, gap_tol=DEFAULT_GAP_TOL))]
 fn py_superpose(
-    reference: PyReadonlyArrayDyn<'_, f64>,
-    target: PyReadonlyArrayDyn<'_, f64>,
-    weights: Option<PyReadonlyArrayDyn<'_, f64>>,
+    reference: ArrayArgDyn<'_, f64>,
+    target: ArrayArgDyn<'_, f64>,
+    weights: Option<ArrayArgDyn<'_, f64>>,
     gap_tol: f64,
 ) -> PyResult<PySuperposition> {
     let reference = points_from_array(&reference, "reference")?;
@@ -263,8 +261,8 @@ fn py_superpose(
 #[pyo3(signature = (points, weights=None))]
 fn py_centroid<'py>(
     py: Python<'py>,
-    points: PyReadonlyArrayDyn<'_, f64>,
-    weights: Option<PyReadonlyArrayDyn<'_, f64>>,
+    points: ArrayArgDyn<'_, f64>,
+    weights: Option<ArrayArgDyn<'_, f64>>,
 ) -> PyResult<Option<Bound<'py, PyArray1<f64>>>> {
     let points = points_from_array(&points, "points")?;
     let weights = weights_or_uniform(weights, points.len())?;

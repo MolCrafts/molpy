@@ -29,13 +29,14 @@
 //! `extends = PyMolGraph` necessarily has one, and the leaf-first accessors above
 //! make sure nothing ever reads it.
 
+use crate::array::ArrayArgDyn;
 use std::collections::HashMap;
 
 use std::str::FromStr;
 
 use ndarray::Array2;
 
-use numpy::{IntoPyArray, PyArray1, PyArray2, PyReadonlyArrayDyn};
+use numpy::{IntoPyArray, PyArray1, PyArray2};
 
 use pyo3::exceptions::{PyTypeError, PyValueError};
 
@@ -2444,12 +2445,12 @@ impl PyCoarseGrain {
 /// ``frag_ids`` as ``i32`` (an ``int32`` array read directly, any other
 /// integer sequence element by element, out-of-range values refused).
 fn replicate_args(
-    rotations: &PyReadonlyArrayDyn<'_, f64>,
-    translations: &PyReadonlyArrayDyn<'_, f64>,
+    rotations: &ArrayArgDyn<'_, f64>,
+    translations: &ArrayArgDyn<'_, f64>,
     frag_ids: &Bound<'_, PyAny>,
 ) -> PyResult<(Vec<molrs::op::Rigid>, Vec<i32>)> {
     let transforms = crate::op::rigids_from_arrays(rotations, translations)?;
-    let frag_ids = match frag_ids.extract::<PyReadonlyArrayDyn<'_, i32>>() {
+    let frag_ids = match frag_ids.extract::<ArrayArgDyn<'_, i32>>() {
         Ok(array) => {
             let view = array.as_array();
             if view.ndim() != 1 {
@@ -2505,8 +2506,8 @@ macro_rules! replicate_impl {
             fn replicate(
                 slf: &Bound<'_, Self>,
                 template: &Bound<'_, Self>,
-                rotations: PyReadonlyArrayDyn<'_, f64>,
-                translations: PyReadonlyArrayDyn<'_, f64>,
+                rotations: ArrayArgDyn<'_, f64>,
+                translations: ArrayArgDyn<'_, f64>,
                 frag_ids: &Bound<'_, PyAny>,
             ) -> PyResult<Vec<u64>> {
                 // Checked before either borrow: borrowing one object both

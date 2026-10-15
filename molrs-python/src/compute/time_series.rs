@@ -5,6 +5,7 @@
 //! `Derivative` and `Unwrap`, and the transform `Spectrum`; their outputs
 //! `TimeCorrelation` and `OneSidedSpectrum`.
 
+use crate::array::{ArrayArg1, ArrayArg2, ArrayArg3};
 use molrs::compute::{
     Compute, Correlator, CorrelatorInput, CurrentAcf, CurrentAcfInput, Derivative, DerivativeInput,
     DipoleAcf, DipoleAcfInput, LagKernel, Msd, MsdInput, OneSidedSpectrum, OnsagerCorrelation,
@@ -12,9 +13,7 @@ use molrs::compute::{
     RotationalAutocorrelationInput, Spectrum, SpectrumInput, Survival, SurvivalInput,
     TimeCorrelation, Unwrap, UnwrapInput, Vacf, VacfInput,
 };
-use numpy::{
-    IntoPyArray, PyArray2, PyArray3, PyReadonlyArray1, PyReadonlyArray2, PyReadonlyArray3,
-};
+use numpy::{IntoPyArray, PyArray2, PyArray3};
 use pyo3::IntoPyObjectExt;
 use pyo3::prelude::*;
 
@@ -37,7 +36,7 @@ py_result! {
 #[pymethods]
 impl PyTimeCorrelation {
     #[new]
-    fn new(lag_times: PyReadonlyArray1<'_, f64>, values: PyReadonlyArray2<'_, f64>) -> Self {
+    fn new(lag_times: ArrayArg1<'_, f64>, values: ArrayArg2<'_, f64>) -> Self {
         Self {
             inner: TimeCorrelation {
                 lag_times: lag_times.as_array().to_owned(),
@@ -155,8 +154,8 @@ impl PyCorrelator {
     #[pyo3(signature = (*, a, b = None, dt, boxes = None))]
     fn compute(
         &self,
-        a: PyReadonlyArray3<'_, f64>,
-        b: Option<PyReadonlyArray3<'_, f64>>,
+        a: ArrayArg3<'_, f64>,
+        b: Option<ArrayArg3<'_, f64>>,
         dt: f64,
         boxes: Option<Vec<PyRef<'_, PyBox>>>,
     ) -> Result<PyTimeCorrelation> {
@@ -216,7 +215,7 @@ impl PyMsd {
     #[pyo3(signature = (*, positions, dt, boxes = None))]
     fn compute(
         &self,
-        positions: PyReadonlyArray3<'_, f64>,
+        positions: ArrayArg3<'_, f64>,
         dt: f64,
         boxes: Option<Vec<PyRef<'_, PyBox>>>,
     ) -> Result<PyTimeCorrelation> {
@@ -264,7 +263,7 @@ impl PyVacf {
     }
 
     #[pyo3(signature = (*, velocities, dt))]
-    fn compute(&self, velocities: PyReadonlyArray2<'_, f64>, dt: f64) -> Result<PyTimeCorrelation> {
+    fn compute(&self, velocities: ArrayArg2<'_, f64>, dt: f64) -> Result<PyTimeCorrelation> {
         let out = self.inner.compute(VacfInput {
             velocities: velocities.as_array(),
             dt,
@@ -301,8 +300,8 @@ impl PyOnsagerCorrelation {
     #[pyo3(signature = (*, a, b, dt, boxes = None))]
     fn compute(
         &self,
-        a: PyReadonlyArray2<'_, f64>,
-        b: PyReadonlyArray2<'_, f64>,
+        a: ArrayArg2<'_, f64>,
+        b: ArrayArg2<'_, f64>,
         dt: f64,
         boxes: Option<Vec<PyRef<'_, PyBox>>>,
     ) -> Result<PyTimeCorrelation> {
@@ -352,7 +351,7 @@ impl PyDipoleAcf {
     }
 
     #[pyo3(signature = (*, dipoles, dt))]
-    fn compute(&self, dipoles: PyReadonlyArray2<'_, f64>, dt: f64) -> Result<PyTimeCorrelation> {
+    fn compute(&self, dipoles: ArrayArg2<'_, f64>, dt: f64) -> Result<PyTimeCorrelation> {
         let out = self.inner.compute(DipoleAcfInput {
             dipoles: dipoles.as_array(),
             dt,
@@ -397,7 +396,7 @@ impl PyCurrentAcf {
     }
 
     #[pyo3(signature = (*, current, dt))]
-    fn compute(&self, current: PyReadonlyArray2<'_, f64>, dt: f64) -> Result<PyTimeCorrelation> {
+    fn compute(&self, current: ArrayArg2<'_, f64>, dt: f64) -> Result<PyTimeCorrelation> {
         let out = self.inner.compute(CurrentAcfInput {
             current: current.as_array(),
             dt,
@@ -443,7 +442,7 @@ impl PyReorientationAcf {
     }
 
     #[pyo3(signature = (*, vectors, dt))]
-    fn compute(&self, vectors: PyReadonlyArray3<'_, f64>, dt: f64) -> Result<PyTimeCorrelation> {
+    fn compute(&self, vectors: ArrayArg3<'_, f64>, dt: f64) -> Result<PyTimeCorrelation> {
         let out = self.inner.compute(ReorientationAcfInput {
             vectors: vectors.as_array(),
             dt,
@@ -476,11 +475,7 @@ impl PyRotationalAutocorrelation {
     }
 
     #[pyo3(signature = (*, orientations, dt))]
-    fn compute(
-        &self,
-        orientations: PyReadonlyArray3<'_, f64>,
-        dt: f64,
-    ) -> Result<PyTimeCorrelation> {
+    fn compute(&self, orientations: ArrayArg3<'_, f64>, dt: f64) -> Result<PyTimeCorrelation> {
         let out = self.inner.compute(RotationalAutocorrelationInput {
             orientations: orientations.as_array(),
             dt,
@@ -535,9 +530,9 @@ impl PySurvival {
     #[pyo3(signature = (*, presence, dt, inner = None, n_reference = None))]
     fn compute(
         &self,
-        presence: PyReadonlyArray2<'_, f64>,
+        presence: ArrayArg2<'_, f64>,
         dt: f64,
-        inner: Option<PyReadonlyArray2<'_, f64>>,
+        inner: Option<ArrayArg2<'_, f64>>,
         n_reference: Option<usize>,
     ) -> Result<PyTimeCorrelation> {
         let out = self.inner.compute(SurvivalInput {
@@ -579,7 +574,7 @@ impl PyDerivative {
     fn compute<'py>(
         &self,
         py: Python<'py>,
-        series: PyReadonlyArray2<'py, f64>,
+        series: ArrayArg2<'py, f64>,
         dt: f64,
     ) -> Result<Bound<'py, PyArray2<f64>>> {
         let out = self.inner.compute(DerivativeInput {
@@ -615,8 +610,8 @@ impl PyUnwrap {
     fn compute<'py>(
         &self,
         py: Python<'py>,
-        positions: PyReadonlyArray3<'py, f64>,
-        images: Option<PyReadonlyArray3<'py, i32>>,
+        positions: ArrayArg3<'py, f64>,
+        images: Option<ArrayArg3<'py, i32>>,
         boxes: Vec<PyRef<'py, PyBox>>,
     ) -> Result<Bound<'py, PyArray3<f64>>> {
         let boxes = args::boxes(&boxes);
@@ -658,7 +653,7 @@ impl PySpectrum {
     }
 
     #[pyo3(signature = (*, signal, dt))]
-    fn compute(&self, signal: PyReadonlyArray1<'_, f64>, dt: f64) -> Result<PyOneSidedSpectrum> {
+    fn compute(&self, signal: ArrayArg1<'_, f64>, dt: f64) -> Result<PyOneSidedSpectrum> {
         let out = self.inner.compute(SpectrumInput {
             signal: signal.as_array(),
             dt,

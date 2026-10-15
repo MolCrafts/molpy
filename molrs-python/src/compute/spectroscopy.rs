@@ -4,6 +4,7 @@
 //! `ConductivitySumRule`, `RouteAgreement`) and the Raman family
 //! (`PolarizabilityParts`, `RamanSpectrum`); their outputs.
 
+use crate::array::{ArrayArg1, ArrayArg2};
 use molrs::compute::{
     Compute, ConductivitySumRule, DielectricSpectrumInput, DielectricSpectrumResult,
     DipoleAutocorrelationSpectrum, DipoleRateCrossSpectrum, EinsteinHelfandSpectrum,
@@ -12,7 +13,7 @@ use molrs::compute::{
     RamanSpectrumInput, RamanSpectrumResult, RouteAgreement, RouteAgreementCheck,
     RouteAgreementInput, SumRuleCheck, SumRuleInput,
 };
-use numpy::{PyReadonlyArray1, PyReadonlyArray2};
+
 use pyo3::prelude::*;
 
 use super::args;
@@ -337,8 +338,8 @@ impl PyConductivitySumRule {
     #[pyo3(signature = (*, frequencies, conductivity, current_sq_mean, volume, temperature))]
     fn compute(
         &self,
-        frequencies: PyReadonlyArray1<'_, f64>,
-        conductivity: PyReadonlyArray1<'_, f64>,
+        frequencies: ArrayArg1<'_, f64>,
+        conductivity: ArrayArg1<'_, f64>,
         current_sq_mean: f64,
         volume: f64,
         temperature: f64,
@@ -423,7 +424,7 @@ impl PyPolarizabilityParts {
     }
 
     #[pyo3(signature = (*, alpha))]
-    fn compute(&self, alpha: PyReadonlyArray2<'_, f64>) -> Result<PyPolarizabilityPartsResult> {
+    fn compute(&self, alpha: ArrayArg2<'_, f64>) -> Result<PyPolarizabilityPartsResult> {
         let out = self.inner.compute(PolarizabilityPartsInput {
             alpha: alpha.as_array(),
         })?;

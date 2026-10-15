@@ -2,13 +2,13 @@
 //! by the Debye sum (`StaticStructureFactorDebye`) and by direct k-vectors
 //! (`StaticStructureFactorDirect`), and the 2-D `DiffractionPattern`.
 
+use crate::array::ArrayArg2;
 use molrs::compute::{
     Compute, DiffractionPattern, DiffractionPatternInput, DiffractionPatternResult,
     StaticStructureFactorDebye, StaticStructureFactorDebyeInput, StaticStructureFactorDebyeResult,
     StaticStructureFactorDirect, StaticStructureFactorDirectInput,
     StaticStructureFactorDirectResult,
 };
-use numpy::PyReadonlyArray2;
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 
@@ -67,10 +67,7 @@ impl PyStaticStructureFactorDebye {
     }
 
     #[pyo3(signature = (*, positions))]
-    fn compute(
-        &self,
-        positions: PyReadonlyArray2<'_, f64>,
-    ) -> Result<PyStaticStructureFactorDebyeResult> {
+    fn compute(&self, positions: ArrayArg2<'_, f64>) -> Result<PyStaticStructureFactorDebyeResult> {
         let out = self.inner.compute(StaticStructureFactorDebyeInput {
             positions: positions.as_array(),
         })?;
@@ -127,7 +124,7 @@ impl PyStaticStructureFactorDirect {
     #[pyo3(signature = (*, positions, simbox = None))]
     fn compute(
         &self,
-        positions: PyReadonlyArray2<'_, f64>,
+        positions: ArrayArg2<'_, f64>,
         simbox: Option<PyRef<'_, PyBox>>,
     ) -> Result<PyStaticStructureFactorDirectResult> {
         let out = self.inner.compute(StaticStructureFactorDirectInput {
@@ -178,7 +175,7 @@ impl PyDiffractionPattern {
     #[pyo3(signature = (*, positions, simbox))]
     fn compute(
         &self,
-        positions: PyReadonlyArray2<'_, f64>,
+        positions: ArrayArg2<'_, f64>,
         simbox: PyRef<'_, PyBox>,
     ) -> Result<PyDiffractionPatternResult> {
         let out = self.inner.compute(DiffractionPatternInput {

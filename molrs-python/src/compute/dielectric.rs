@@ -3,11 +3,12 @@
 //! fluctuation); their outputs `DipoleMomentResult` and
 //! `StaticDielectricResult`.
 
+use crate::array::{ArrayArg1, ArrayArg2, ArrayArg3};
 use molrs::compute::{
     Compute, DipoleMoment, DipoleMomentInput, DipoleMomentResult, StaticDielectric,
     StaticDielectricInput, StaticDielectricResult,
 };
-use numpy::{PyReadonlyArray1, PyReadonlyArray2, PyReadonlyArray3};
+
 use pyo3::prelude::*;
 
 use super::args;
@@ -67,8 +68,8 @@ impl PyDipoleMoment {
     #[pyo3(signature = (*, positions, charges, partition = None))]
     fn compute<'py>(
         &self,
-        positions: PyReadonlyArray3<'py, f64>,
-        charges: PyReadonlyArray1<'py, f64>,
+        positions: ArrayArg3<'py, f64>,
+        charges: ArrayArg1<'py, f64>,
         partition: Option<Bound<'py, PyAny>>,
     ) -> Result<PyDipoleMomentResult> {
         let partition = partition
@@ -118,7 +119,7 @@ impl PyStaticDielectric {
     #[pyo3(signature = (*, dipoles, volume, temperature, boundary))]
     fn compute(
         &self,
-        dipoles: PyReadonlyArray2<'_, f64>,
+        dipoles: ArrayArg2<'_, f64>,
         volume: f64,
         temperature: f64,
         boundary: &str,

@@ -5,13 +5,14 @@
 //! `VoronoiCells`, `VoronoiFace`, `MolecularMoments`, `VoronoiDomainResult`
 //! and `VoronoiVoidResult`.
 
+use crate::array::{ArrayArg1, ArrayArg2, ArrayArg3};
 use molrs::compute::{
     Compute, FiniteFieldPolarizability, FiniteFieldPolarizabilityInput, MolecularMoments,
     RadicalVoronoi, RadicalVoronoiInput, VoronoiCells, VoronoiDomainAnalysis, VoronoiDomainInput,
     VoronoiDomainResult, VoronoiFace, VoronoiIntegration, VoronoiIntegrationInput,
     VoronoiVoidAnalysis, VoronoiVoidInput, VoronoiVoidResult,
 };
-use numpy::{IntoPyArray, PyArray2, PyReadonlyArray1, PyReadonlyArray2, PyReadonlyArray3};
+use numpy::{IntoPyArray, PyArray2};
 use pyo3::prelude::*;
 
 use super::args;
@@ -116,9 +117,9 @@ impl PyRadicalVoronoi {
     #[pyo3(signature = (*, positions, simbox, radii))]
     fn compute(
         &self,
-        positions: PyReadonlyArray2<'_, f64>,
+        positions: ArrayArg2<'_, f64>,
         simbox: PyRef<'_, PyBox>,
-        radii: PyReadonlyArray1<'_, f64>,
+        radii: ArrayArg1<'_, f64>,
     ) -> Result<PyVoronoiCells> {
         let out = self.inner.compute(RadicalVoronoiInput {
             positions: positions.as_array(),
@@ -163,13 +164,13 @@ impl PyVoronoiIntegration {
     #[pyo3(signature = (*, positions, radii, nuclear_charges, partition, simbox, grid, density))]
     fn compute<'py>(
         &self,
-        positions: PyReadonlyArray2<'py, f64>,
-        radii: PyReadonlyArray1<'py, f64>,
-        nuclear_charges: PyReadonlyArray1<'py, f64>,
+        positions: ArrayArg2<'py, f64>,
+        radii: ArrayArg1<'py, f64>,
+        nuclear_charges: ArrayArg1<'py, f64>,
         partition: &Bound<'py, PyAny>,
         simbox: PyRef<'py, PyBox>,
         grid: PyRef<'py, PyRegularGrid>,
-        density: PyReadonlyArray3<'py, f64>,
+        density: ArrayArg3<'py, f64>,
     ) -> Result<PyMolecularMoments> {
         let partition = args::PartitionArg::extract(partition)?;
         let out = self.inner.compute(VoronoiIntegrationInput {

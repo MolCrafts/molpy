@@ -27,6 +27,7 @@
 //! a downstream extension built on the same molrs line (molpack) can evaluate
 //! it in place without marshalling.
 
+use crate::array::{ArrayArg1, ArrayArg2};
 use crate::core::mesh::PyTriMesh;
 use crate::core::simbox::PyBox;
 use molrs::core::{
@@ -35,7 +36,7 @@ use molrs::core::{
 };
 use molrs::op::Fnx3;
 use ndarray::{Array1, Array2};
-use numpy::{IntoPyArray, PyArray1, PyArray2, PyReadonlyArray1, PyReadonlyArray2};
+use numpy::{IntoPyArray, PyArray1, PyArray2};
 use pyo3::exceptions::{PyTypeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyCapsule, PyTuple};
@@ -52,7 +53,7 @@ type DynRegion = Arc<dyn Region + Send + Sync>;
 fn contains_impl<'py>(
     region: &dyn Region,
     py: Python<'py>,
-    points: PyReadonlyArray2<'_, f64>,
+    points: ArrayArg2<'_, f64>,
 ) -> PyResult<Bound<'py, PyArray1<bool>>> {
     let arr = points.as_array().to_owned();
     if arr.ncols() != 3 {
@@ -67,7 +68,7 @@ fn contains_impl<'py>(
 fn distance_impl<'py>(
     region: &dyn Region,
     py: Python<'py>,
-    points: PyReadonlyArray2<'_, f64>,
+    points: ArrayArg2<'_, f64>,
 ) -> PyResult<Bound<'py, PyArray1<f64>>> {
     let arr = points.as_array();
     if arr.ncols() != 3 {
@@ -215,7 +216,7 @@ fn mask_impl<'py>(
 ) -> PyResult<Bound<'py, PyArray1<bool>>> {
     let py = block.py();
     let xyz = block.get_item(("x", "y", "z"))?;
-    let points: PyReadonlyArray2<'_, f64> = xyz.extract()?;
+    let points: ArrayArg2<'_, f64> = xyz.extract()?;
     contains_impl(region, py, points)
 }
 
@@ -258,7 +259,7 @@ macro_rules! region_methods {
             fn contains<'py>(
                 &self,
                 py: Python<'py>,
-                points: PyReadonlyArray2<'_, f64>,
+                points: ArrayArg2<'_, f64>,
             ) -> PyResult<Bound<'py, PyArray1<bool>>> {
                 contains_impl(self.inner.as_ref(), py, points)
             }
@@ -283,7 +284,7 @@ macro_rules! region_methods {
             fn distance<'py>(
                 &self,
                 py: Python<'py>,
-                points: PyReadonlyArray2<'_, f64>,
+                points: ArrayArg2<'_, f64>,
             ) -> PyResult<Bound<'py, PyArray1<f64>>> {
                 distance_impl(self.inner.as_ref(), py, points)
             }
@@ -535,7 +536,7 @@ impl PyParallelepiped {
     /// ValueError
     ///     If shapes are wrong or ``h`` is singular.
     #[new]
-    fn new(h: PyReadonlyArray2<'_, f64>, origin: Vec<f64>) -> PyResult<Self> {
+    fn new(h: ArrayArg2<'_, f64>, origin: Vec<f64>) -> PyResult<Self> {
         let h_arr = h.as_array();
         if h_arr.shape() != [3, 3] {
             return Err(PyValueError::new_err("h must have shape (3, 3)"));
@@ -910,7 +911,7 @@ impl PySphereUnion {
     #[new]
     #[pyo3(signature = (centers, radii, r#box=None))]
     fn new(
-        centers: PyReadonlyArray2<'_, f64>,
+        centers: ArrayArg2<'_, f64>,
         radii: &Bound<'_, PyAny>,
         r#box: Option<&PyBox>,
     ) -> PyResult<Self> {
@@ -921,7 +922,7 @@ impl PySphereUnion {
         let r: Vec<f64> = if let Ok(scalar) = radii.extract::<f64>() {
             vec![scalar; c.nrows()]
         } else {
-            let arr: PyReadonlyArray1<'_, f64> = radii.extract()?;
+            let arr: ArrayArg1<'_, f64> = radii.extract()?;
             arr.as_slice()?.to_vec()
         };
         let inner = match r#box {
