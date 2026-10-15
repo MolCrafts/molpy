@@ -1,46 +1,94 @@
-//! Kinetic observables of one configuration (`molrs::compute`):
-//! `kinetic_energy`, `kinetic_temperature`, `center_of_mass_velocity`.
+//! Kinetic energy of one configuration (`molrs::compute::KineticEnergy`) and
+//! its output `KineticEnergyResult`.
 
-use molrs::compute::{center_of_mass_velocity, kinetic_energy, kinetic_temperature};
-use numpy::{IntoPyArray, PyArray1, PyReadonlyArray1, PyReadonlyArray2};
+use crate::array::{ArrayArg1, ArrayArg2};
+use molrs::compute::{Compute, KineticEnergy, KineticEnergyInput, KineticEnergyResult};
+
+use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 
-use crate::error::py_value_err;
+use super::args;
+use super::error::Result;
+use super::output::py_result;
+use super::spec::described;
 
-/// Kinetic energy ``0.5 * sum_i m_i |v_i|^2`` of ``(n_atoms, 3)`` velocities.
-#[pyfunction(name = "kinetic_energy")]
-fn kinetic_energy_py(
-    mass: PyReadonlyArray1<'_, f64>,
-    vel: PyReadonlyArray2<'_, f64>,
-) -> PyResult<f64> {
-    kinetic_energy(mass.as_array(), vel.as_array()).map_err(py_value_err)
+py_result! {
+    /// A kinetic energy (``molrs::compute::KineticEnergyResult``) with the
+    /// Boltzmann constant of its unit preset.
+    PyKineticEnergyResult(KineticEnergyResult) as "KineticEnergyResult" { energy, boltzmann }
 }
 
-/// Kinetic temperature ``2 K / (n_dof * kb)`` by equipartition; ``kb`` is
-/// Boltzmann's constant in the unit of ``kinetic_energy``.
-#[pyfunction(name = "kinetic_temperature")]
-fn kinetic_temperature_py(kinetic_energy: f64, n_dof: usize, kb: f64) -> PyResult<f64> {
-    kinetic_temperature(kinetic_energy, n_dof, kb).map_err(py_value_err)
+#[pymethods]
+impl PyKineticEnergyResult {
+    /// The equipartition temperature ``2 K / (n_dof · k_B)``.
+    fn temperature(&self, n_dof: usize) -> Result<f64> {
+        Ok(self.inner.temperature(n_dof)?)
+    }
 }
 
-/// Mass-weighted centre-of-mass velocity, shape ``(3,)``.
-#[pyfunction(name = "center_of_mass_velocity")]
-fn center_of_mass_velocity_py<'py>(
-    py: Python<'py>,
-    mass: PyReadonlyArray1<'py, f64>,
-    vel: PyReadonlyArray2<'py, f64>,
-) -> PyResult<Bound<'py, PyArray1<f64>>> {
-    let v = center_of_mass_velocity(mass.as_array(), vel.as_array()).map_err(py_value_err)?;
-    Ok(v.into_pyarray(py))
+/// Kinetic energy ``½ Σ m v² · mvv2e`` (``molrs::compute::KineticEnergy``).
+///
+/// Parameters
+/// ----------
+/// units : str or UnitPreset, optional
+///     The unit system of masses and velocities (``"real"``, ``"metal"``, …):
+///     the core ``KineticEnergy::new``.
+/// mvv2e, boltzmann : float, optional
+///     The ``mass · velocity²`` → energy factor and Boltzmann's constant in
+///     that energy unit, both positive: the core
+///     ``KineticEnergy::with_constants``. Give either ``units`` or both of
+///     these.
+///
+/// ``compute(masses=, velocities=)`` over ``(N,)`` masses and ``(N, 3)``
+/// velocities returns a ``KineticEnergyResult``.
+#[pyclass(module = "molrs.compute", name = "KineticEnergy", frozen)]
+pub(crate) struct PyKineticEnergy {
+    inner: KineticEnergy,
 }
+
+#[pymethods]
+impl PyKineticEnergy {
+    #[new]
+    #[pyo3(signature = (*, units = None, mvv2e = None, boltzmann = None))]
+    fn new(
+        units: Option<&Bound<'_, PyAny>>,
+        mvv2e: Option<f64>,
+        boltzmann: Option<f64>,
+    ) -> Result<Self> {
+        let inner = match (units, mvv2e, boltzmann) {
+            (Some(units), None, None) => KineticEnergy::new(args::units(units)?)?,
+            (None, Some(mvv2e), Some(boltzmann)) => {
+                KineticEnergy::with_constants(mvv2e, boltzmann)?
+            }
+            _ => {
+                return Err(PyValueError::new_err(
+                    "KineticEnergy takes either units (a unit preset) or both mvv2e \
+                     and boltzmann (explicit constants)",
+                )
+                .into());
+            }
+        };
+        Ok(Self { inner })
+    }
+
+    #[pyo3(signature = (*, masses, velocities))]
+    fn compute(
+        &self,
+        masses: ArrayArg1<'_, f64>,
+        velocities: ArrayArg2<'_, f64>,
+    ) -> Result<PyKineticEnergyResult> {
+        let out = self.inner.compute(KineticEnergyInput {
+            masses: masses.as_array(),
+            velocities: velocities.as_array(),
+        })?;
+        Ok(out.into())
+    }
+}
+
+described!(PyKineticEnergy, KineticEnergy);
 
 pub(crate) fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    for f in [
-        wrap_pyfunction!(kinetic_energy_py, m)?,
-        wrap_pyfunction!(kinetic_temperature_py, m)?,
-        wrap_pyfunction!(center_of_mass_velocity_py, m)?,
-    ] {
-        crate::add_function(m, "molrs.compute", f)?;
-    }
+    m.add_class::<PyKineticEnergyResult>()?;
+    m.add_class::<PyKineticEnergy>()?;
     Ok(())
 }

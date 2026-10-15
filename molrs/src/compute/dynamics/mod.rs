@@ -1,26 +1,14 @@
-//! Space–time correlation dynamics: reorientation, the van Hove function and
-//! pair-persistence survival correlators.
+//! Space–time dynamics: the van Hove function and pair presence. Plain time
+//! correlations are [`Correlator`](crate::compute::Correlator)'s; survival
+//! correlations are [`Survival`](crate::compute::Survival) on a [`Presence`].
 //!
 //! | Method | Input | Output |
 //! |--------|-------|--------|
-//! | [`Oacf`] | a unit-vector series | [`TimeCorrelation`](crate::compute::TimeCorrelation) — `C_ℓ(t) = ⟨P_ℓ(û(0)·û(t))⟩` |
-//! | [`VanHove`] | trajectory frames | [`VanHoveResult`] — self/distinct G(r, t) |
-//! | [`pair_survival_tcf`] | per-frame pair presence | [`PairSurvivalResult`] — survival time-correlation |
-//!
-//! Complements [`transport`](crate::compute::transport) (which reduces motion
-//! to scalar coefficients): these methods keep the full space- and/or
-//! time-resolved correlation structure. The bare time-correlation engine —
-//! [`Acf`](crate::compute::Acf) and the `autocorrelate` family — lives in
-//! [`correlation`](crate::compute::correlation).
-//!
-//! ```ignore
-//! let gvh = VanHove::new(n_rbins, r_max, vec![0, 10, 100])?.compute(&frames, ())?;
-//! ```
+//! | [`VanHove`] | unwrapped trajectory + boxes | [`VanHoveResult`] — self/distinct G(r, t) |
+//! | [`PairPresence`] | one neighbour table per frame | [`Presence`] — 0/1 series per pair, for [`Survival`](crate::compute::Survival) |
 
-mod oacf;
-mod pair_survival;
+mod presence;
 mod van_hove;
 
-pub use oacf::{Oacf, OacfArgs};
-pub use pair_survival::{PairSurvivalResult, SurvivalMethod, pair_survival_tcf};
-pub use van_hove::{VanHove, VanHoveResult};
+pub use presence::{PairPresence, PairPresenceInput, Presence};
+pub use van_hove::{VanHove, VanHoveInput, VanHoveResult};

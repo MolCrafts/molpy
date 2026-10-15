@@ -442,7 +442,8 @@ impl Atomistic {
                 edges.push([pos[&n[0]], pos[&n[1]]]);
             }
         }
-        let topo = Topology::from_edges(atoms.len(), &edges);
+        let mut topo = Topology::with_atoms(atoms.len());
+        topo.add_bonds(&edges);
 
         let mut n_ang = 0usize;
         let mut n_dih = 0usize;

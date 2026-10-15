@@ -28,7 +28,7 @@
 //! | `core`      | `core` | Frame, Block, Box, NDArray, schema, Topology, `covalentRadius`, regions, TriMesh, NeighborList / NeighborQuery / Neighbors |
 //! | `io`        | `io` | File readers/writers (XYZ, PDB, LAMMPS, `*.mrec` records, …), `readSmilesStr` |
 //! | `perceive`  | `perceive` | Chemical perception, Frame in / Frame out (`assignRings`, `assignAromaticity`, `addHydrogens`, …) |
-//! | `compute`   | `compute` | Analysis: `Rdf`, `Msd`, `Cluster`, …, the free functions molrs has (`staticDielectricConstant`, …) and the compute catalog |
+//! | `compute`   | `compute` | Analysis: one class per `ComputeSpec` entry (`Rdf`, `Msd`, `Cluster`, …), their result handles, and the `ComputeSpec` registry |
 //! | `conformer` | `conformer` | 3D conformer generation (`Conformer`) |
 //! | `ff`        | `ff` | Typifiers (UFF, MMFF94, MMFF94s), the `ForceField` they output, `PotentialCompiler` and the `Potentials` it compiles |
 //! | `optimize`  | `optimize` | `Lbfgs` / `OptimizationReport` |

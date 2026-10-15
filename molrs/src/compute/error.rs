@@ -1,57 +1,60 @@
-//! [`ComputeError`] — the single error enum shared by every `Compute` and
-//! `Fit`; variants name the offending input (missing block/column/SimBox,
-//! shape or range violations, non-finite values).
+//! [`ComputeError`] — the one error type of every [`Compute`](crate::compute::Compute),
+//! [`Accumulate`](crate::compute::Accumulate) and configuration setter.
+//!
+//! Compute reads no frames, so no variant speaks of a missing block, column or
+//! box: whatever an analysis needs is a typed field of its `Input`, and the
+//! compiler has already checked that it is there. What is left to go wrong is
+//! the data itself — a length that does not match, an array of the wrong
+//! shape, a NaN, a value outside its physical range, nothing to analyse, a
+//! name that is not one of a choice's canonical names, a trajectory still
+//! wrapped into its box. Each variant names the offending input, so the
+//! message points at the argument to fix. No analysis substitutes a default
+//! for an out-of-contract input; it returns one of these instead.
 
 use std::fmt;
 
-use molrs::core::MolRsError;
-
-/// Error type for compute operations.
+/// Why an analysis refused its configuration or its data.
 #[derive(Debug)]
 pub enum ComputeError {
-    /// Required block not found in Frame.
-    MissingBlock { name: &'static str },
-
-    /// Required column not found in a block.
-    MissingColumn {
-        block: &'static str,
-        col: &'static str,
-    },
-
-    /// Frame has no SimBox but the compute requires one.
-    MissingSimBox,
-
-    /// Array dimensions do not match expectations.
+    /// Two lengths that must agree do not: `what` names the array whose length
+    /// (or column count) is `got` where `expected` was required.
     DimensionMismatch {
         expected: usize,
         got: usize,
         what: &'static str,
     },
 
-    /// A composite value has the wrong shape (e.g. ragged matrix).
+    /// A composite value has the wrong structure: a ragged or wrongly shaped
+    /// array, a neighbour table without a column the kernel needs, a pairing
+    /// mode the kernel cannot use, a box of an unsupported kind.
     BadShape { expected: String, got: String },
 
     /// Non-finite value (NaN / ±Inf) at the given flat index of the named field.
     NonFinite { where_: &'static str, index: usize },
 
-    /// Scalar input out of its valid range.
+    /// A scalar — a configuration value or a datum — outside its valid range.
     OutOfRange { field: &'static str, value: String },
 
-    /// `frames` slice is empty but the compute needs at least one frame.
+    /// There is nothing to analyse: no samples, no items, no frames.
     EmptyInput,
 
-    /// Forwarded from `molrs::core`.
-    MolRs(MolRsError),
+    /// A name given for a named choice (kernel, window, mode, …) is not one of
+    /// its canonical names.
+    UnknownName {
+        kind: &'static str,
+        got: String,
+        expected: &'static [&'static str],
+    },
+
+    /// A displacement analysis was given a trajectory that is wrapped into the
+    /// box: between `frame - 1` and `frame`, `item` moved further than half
+    /// the box.
+    Wrapped { frame: usize, item: usize },
 }
 
 impl fmt::Display for ComputeError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::MissingBlock { name } => write!(f, "missing block '{name}' in Frame"),
-            Self::MissingColumn { block, col } => {
-                write!(f, "missing column '{col}' in block '{block}'")
-            }
-            Self::MissingSimBox => write!(f, "Frame has no SimBox"),
             Self::DimensionMismatch {
                 expected,
                 got,
@@ -69,23 +72,24 @@ impl fmt::Display for ComputeError {
             Self::OutOfRange { field, value } => {
                 write!(f, "{field} out of range: {value}")
             }
-            Self::EmptyInput => write!(f, "empty frames slice"),
-            Self::MolRs(e) => write!(f, "{e}"),
+            Self::EmptyInput => write!(f, "empty input: nothing to analyse"),
+            Self::UnknownName {
+                kind,
+                got,
+                expected,
+            } => write!(
+                f,
+                "unknown {kind} {got:?}; expected one of: {}",
+                expected.join(", ")
+            ),
+            Self::Wrapped { frame, item } => write!(
+                f,
+                "item {item} moved more than half the box between frames {} and {frame}: \
+                 the trajectory is wrapped; unwrap it before a displacement analysis",
+                frame.saturating_sub(1)
+            ),
         }
     }
 }
 
-impl std::error::Error for ComputeError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            Self::MolRs(e) => Some(e),
-            _ => None,
-        }
-    }
-}
-
-impl From<MolRsError> for ComputeError {
-    fn from(err: MolRsError) -> Self {
-        Self::MolRs(err)
-    }
-}
+impl std::error::Error for ComputeError {}

@@ -1,22 +1,19 @@
 //! Direct k-grid evaluation of the static structure factor.
 
-use crate::compute::ComputeResult;
-use molrs::core::BoxKind;
-use molrs::core::FrameAccess;
+use molrs::core::{BoxKind, SimBox};
 use molrs::op::F;
-use ndarray::Array1;
+use ndarray::{Array1, ArrayView2};
 use std::f64::consts::TAU;
 
-use crate::compute::Compute;
-use crate::compute::ComputeError;
-use crate::compute::positions::get_positions_ref;
+use crate::compute::{Axis, Compute, ComputeError};
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 enum KMode {
     /// User-supplied k-vectors. `sk[i]` = `S(k_vecs[i])`.
     Explicit { k_vecs: Vec<[F; 3]> },
-    /// Spherically averaged S(|k|) on a reciprocal-lattice grid.
-    Isotropic { k_max: F, n_bins: usize },
+    /// Spherically averaged S(|k|) on a reciprocal-lattice grid, binned on
+    /// `[0, k_max]` (the upper edge closed).
+    Isotropic { axis: Axis },
 }
 
 /// Direct k-grid static-structure-factor calculator.
@@ -39,11 +36,25 @@ enum KMode {
 ///   builds a 3-D reciprocal-lattice grid with k ≤ k_max and spherically
 ///   averages into uniformly spaced k-magnitude bins.
 ///
-/// Unlike [`StaticStructureFactorDebye`](crate::compute::StaticStructureFactorDebye), this analyzer respects the supplied SimBox: the
-/// reciprocal-lattice spacing comes from `2π / L_d` along each axis.
-#[derive(Debug, Clone)]
+/// Unlike [`StaticStructureFactorDebye`](crate::compute::StaticStructureFactorDebye),
+/// the isotropic form reads the box given to `compute`: the reciprocal-lattice
+/// spacing comes from `2π / L_d` along each axis. Explicit k-vectors need no
+/// box.
+///
+/// For many snapshots, wrap in [`Batch`](crate::compute::Batch).
+#[derive(Debug, Clone, PartialEq)]
 pub struct StaticStructureFactorDirect {
     mode: KMode,
+}
+
+/// The data a [`StaticStructureFactorDirect`] analyses.
+#[derive(Debug, Clone, Copy)]
+pub struct StaticStructureFactorDirectInput<'a> {
+    /// Positions, `N × 3`, Å.
+    pub positions: ArrayView2<'a, F>,
+    /// The box whose reciprocal lattice the isotropic form samples; unused
+    /// with explicit k-vectors.
+    pub simbox: Option<&'a SimBox>,
 }
 
 impl StaticStructureFactorDirect {
@@ -73,19 +84,17 @@ impl StaticStructureFactorDirect {
             });
         }
         Ok(Self {
-            mode: KMode::Isotropic { k_max, n_bins },
+            mode: KMode::Isotropic {
+                axis: Axis::new(0.0, k_max, n_bins)?,
+            },
         })
     }
 
-    fn evaluate_explicit<FA: FrameAccess>(
-        frame: &FA,
+    fn evaluate_explicit(
+        positions: ArrayView2<'_, F>,
         k_vecs: &[[F; 3]],
-    ) -> Result<StaticStructureFactorDirectResult, ComputeError> {
-        let (xs_p, ys_p, zs_p) = get_positions_ref(frame)?;
-        let xs = xs_p.slice();
-        let ys = ys_p.slice();
-        let zs = zs_p.slice();
-        let n = xs.len();
+    ) -> StaticStructureFactorDirectResult {
+        let n = positions.nrows();
         let inv_n = if n > 0 { 1.0 / n as F } else { 0.0 };
 
         let mut sk = Array1::<F>::zeros(k_vecs.len());
@@ -96,26 +105,31 @@ impl StaticStructureFactorDirect {
             // definition of the estimator. The FFT route is `diffraction_pattern`.
             let mut re: F = 0.0;
             let mut im: F = 0.0;
-            for j in 0..n {
-                let phase = k[0] * xs[j] + k[1] * ys[j] + k[2] * zs[j];
+            for r in positions.outer_iter() {
+                let phase = k[0] * r[0] + k[1] * r[1] + k[2] * r[2];
                 re += phase.cos();
                 im += phase.sin();
             }
             sk[idx] = inv_n * (re * re + im * im);
         }
-        Ok(StaticStructureFactorDirectResult {
+        StaticStructureFactorDirectResult {
             k_magnitudes: kmags,
             sk,
             n_particles: n,
-        })
+        }
     }
 
-    fn evaluate_isotropic<FA: FrameAccess>(
-        frame: &FA,
-        k_max: F,
-        n_bins: usize,
+    fn evaluate_isotropic(
+        positions: ArrayView2<'_, F>,
+        simbox: Option<&SimBox>,
+        axis: Axis,
     ) -> Result<StaticStructureFactorDirectResult, ComputeError> {
-        let simbox = frame.simbox_ref().ok_or(ComputeError::MissingSimBox)?;
+        let simbox = simbox.ok_or_else(|| ComputeError::BadShape {
+            expected: "a SimBox: the isotropic S(k) samples its reciprocal lattice".into(),
+            got: "no box".into(),
+        })?;
+        let k_max = axis.max();
+        let n_bins = axis.n_bins();
         let (lx, ly, lz) = match simbox.kind() {
             BoxKind::Ortho { len, .. } => (len[0], len[1], len[2]),
             BoxKind::Triclinic => {
@@ -132,14 +146,9 @@ impl StaticStructureFactorDirect {
         let ny = (k_max / dky).ceil() as i32;
         let nz = (k_max / dkz).ceil() as i32;
 
-        let (xs_p, ys_p, zs_p) = get_positions_ref(frame)?;
-        let xs = xs_p.slice();
-        let ys = ys_p.slice();
-        let zs = zs_p.slice();
-        let n_atoms = xs.len();
+        let n_atoms = positions.nrows();
         let inv_n = if n_atoms > 0 { 1.0 / n_atoms as F } else { 0.0 };
 
-        let dk = k_max / n_bins as F;
         let mut sk_sum = vec![0.0_f64; n_bins];
         let mut counts = vec![0_u64; n_bins];
 
@@ -153,15 +162,14 @@ impl StaticStructureFactorDirect {
                     let ky = iy as F * dky;
                     let kz = iz as F * dkz;
                     let kmag = (kx * kx + ky * ky + kz * kz).sqrt();
-                    if kmag > k_max || kmag <= 0.0 {
+                    let Some(bin) = axis.index_closed(kmag)? else {
                         continue;
-                    }
-                    let bin = ((kmag / dk) as usize).min(n_bins - 1);
+                    };
                     // Same direct sum over the reciprocal lattice: O(N × N_k).
                     let mut re: F = 0.0;
                     let mut im: F = 0.0;
-                    for j in 0..n_atoms {
-                        let phase = kx * xs[j] + ky * ys[j] + kz * zs[j];
+                    for r in positions.outer_iter() {
+                        let phase = kx * r[0] + ky * r[1] + kz * r[2];
                         re += phase.cos();
                         im += phase.sin();
                     }
@@ -172,15 +180,13 @@ impl StaticStructureFactorDirect {
         }
 
         let mut sk = Array1::<F>::zeros(n_bins);
-        let mut kmags = Array1::<F>::zeros(n_bins);
         for b in 0..n_bins {
-            kmags[b] = (b as F + 0.5) * dk;
             if counts[b] > 0 {
                 sk[b] = sk_sum[b] / counts[b] as F;
             }
         }
         Ok(StaticStructureFactorDirectResult {
-            k_magnitudes: kmags,
+            k_magnitudes: axis.centers(),
             sk,
             n_particles: n_atoms,
         })
@@ -188,49 +194,33 @@ impl StaticStructureFactorDirect {
 }
 
 impl Compute for StaticStructureFactorDirect {
-    type Args<'a> = ();
-    type Output = Vec<StaticStructureFactorDirectResult>;
+    type Input<'a> = StaticStructureFactorDirectInput<'a>;
+    type Output = StaticStructureFactorDirectResult;
 
-    fn compute<'a, FA: FrameAccess + Sync + 'a>(
+    /// # Errors
+    /// [`ComputeError::BadShape`] for positions without 3 columns, or the
+    /// isotropic form without a box; [`ComputeError::OutOfRange`] for a
+    /// triclinic box (isotropic form).
+    fn compute(
         &self,
-        frames: &[&'a FA],
-        _: (),
-    ) -> Result<Vec<StaticStructureFactorDirectResult>, ComputeError> {
-        if frames.is_empty() {
-            return Err(ComputeError::EmptyInput);
+        input: StaticStructureFactorDirectInput<'_>,
+    ) -> Result<StaticStructureFactorDirectResult, ComputeError> {
+        if input.positions.ncols() != 3 {
+            return Err(ComputeError::BadShape {
+                expected: "positions N × 3".into(),
+                got: format!("N × {}", input.positions.ncols()),
+            });
         }
-        #[cfg(feature = "rayon")]
-        const PAR_THRESHOLD: usize = 2;
-
-        #[cfg(feature = "rayon")]
-        if frames.len() >= PAR_THRESHOLD {
-            use rayon::prelude::*;
-            return frames
-                .par_iter()
-                .map(|f| match &self.mode {
-                    KMode::Explicit { k_vecs } => Self::evaluate_explicit(*f, k_vecs),
-                    KMode::Isotropic { k_max, n_bins } => {
-                        Self::evaluate_isotropic(*f, *k_max, *n_bins)
-                    }
-                })
-                .collect();
+        match &self.mode {
+            KMode::Explicit { k_vecs } => Ok(Self::evaluate_explicit(input.positions, k_vecs)),
+            KMode::Isotropic { axis } => {
+                Self::evaluate_isotropic(input.positions, input.simbox, *axis)
+            }
         }
-
-        let mut out = Vec::with_capacity(frames.len());
-        for f in frames {
-            let r = match &self.mode {
-                KMode::Explicit { k_vecs } => Self::evaluate_explicit(*f, k_vecs)?,
-                KMode::Isotropic { k_max, n_bins } => {
-                    Self::evaluate_isotropic(*f, *k_max, *n_bins)?
-                }
-            };
-            out.push(r);
-        }
-        Ok(out)
     }
 }
 
-/// Per-frame direct-SSF result.
+/// One snapshot's direct structure factor.
 ///
 /// When the analyzer was constructed via [`StaticStructureFactorDirect::new`]
 /// (explicit k-vectors), `sk` holds `S(k_vec)` for each input k-vector and
@@ -238,36 +228,52 @@ impl Compute for StaticStructureFactorDirect {
 /// [`isotropic`](StaticStructureFactorDirect::isotropic), `sk` is the
 /// spherically averaged `S(|k|)` and `k_magnitudes` is the bin-centres
 /// array.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct StaticStructureFactorDirectResult {
     pub k_magnitudes: Array1<F>,
     pub sk: Array1<F>,
     pub n_particles: usize,
 }
 
-impl ComputeResult for StaticStructureFactorDirectResult {}
+crate::compute::spec::compute_spec! {
+    StaticStructureFactorDirect as "StaticStructureFactorDirect";
+    params |s| {
+        k_vecs: Vec3List = crate::compute::ParamDefault::RequiredIn("new");
+        k_max: Float = crate::compute::ParamDefault::RequiredIn("isotropic");
+        n_bins: Int = crate::compute::ParamDefault::RequiredIn("isotropic");
+    }
+    inputs {
+        positions: Positions;
+        simbox: SimBox, optional;
+    }
+}
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use molrs::core::Block;
-    use molrs::core::Frame;
-    use molrs::core::SimBox;
-    use ndarray::{Array1 as A1, array};
+    use crate::compute::Batch;
+    use ndarray::{Array2, array};
+
+    struct Frame {
+        positions: Array2<F>,
+        simbox: SimBox,
+    }
+
+    impl Frame {
+        fn input(&self) -> StaticStructureFactorDirectInput<'_> {
+            StaticStructureFactorDirectInput {
+                positions: self.positions.view(),
+                simbox: Some(&self.simbox),
+            }
+        }
+    }
 
     fn frame_with(positions: &[[F; 3]], box_len: F, pbc: [bool; 3]) -> Frame {
-        let x = A1::from_iter(positions.iter().map(|p| p[0]));
-        let y = A1::from_iter(positions.iter().map(|p| p[1]));
-        let z = A1::from_iter(positions.iter().map(|p| p[2]));
-        let mut block = Block::new();
-        block.insert("x", x.into_dyn()).unwrap();
-        block.insert("y", y.into_dyn()).unwrap();
-        block.insert("z", z.into_dyn()).unwrap();
-        let mut frame = Frame::new();
-        frame.insert("atoms", block);
-        frame.simbox =
-            Some(SimBox::cube(box_len, array![0.0 as F, 0.0 as F, 0.0 as F], pbc).unwrap());
-        frame
+        Frame {
+            positions: Array2::from_shape_fn((positions.len(), 3), |(i, c)| positions[i][c]),
+            simbox: SimBox::cube(box_len, array![0.0 as F, 0.0 as F, 0.0 as F], pbc).unwrap(),
+        }
     }
 
     const TOL: F = 1e-10;
@@ -280,10 +286,10 @@ mod tests {
             10.0,
             [false; 3],
         );
-        let r = &StaticStructureFactorDirect::new(&[[0.0, 0.0, 0.0]])
+        let r = StaticStructureFactorDirect::new(&[[0.0, 0.0, 0.0]])
             .unwrap()
-            .compute(&[&frame], ())
-            .unwrap()[0];
+            .compute(frame.input())
+            .unwrap();
         assert!((r.sk[0] - 3.0).abs() < TOL);
     }
 
@@ -297,10 +303,10 @@ mod tests {
         let frame = frame_with(&[[0.0, 0.0, 0.0], [d, 0.0, 0.0]], 10.0, [false; 3]);
         let kx_vals = [0.5_f64, 1.2, 2.7];
         let k_vecs: Vec<[F; 3]> = kx_vals.iter().map(|&k| [k, 0.0, 0.0]).collect();
-        let r = &StaticStructureFactorDirect::new(&k_vecs)
+        let r = StaticStructureFactorDirect::new(&k_vecs)
             .unwrap()
-            .compute(&[&frame], ())
-            .unwrap()[0];
+            .compute(frame.input())
+            .unwrap();
         for (i, &k) in kx_vals.iter().enumerate() {
             let expected = 1.0 + (k * d).cos();
             assert!(
@@ -325,10 +331,10 @@ mod tests {
             }
         }
         let frame = frame_with(&positions, 4.0, [true, true, true]);
-        let r = &StaticStructureFactorDirect::isotropic(8.0, 16)
+        let r = StaticStructureFactorDirect::isotropic(8.0, 16)
             .unwrap()
-            .compute(&[&frame], ())
-            .unwrap()[0];
+            .compute(frame.input())
+            .unwrap();
         // Find the largest S(k) in the range [5.5, 7.0]
         let mut max_sk = 0.0_f64;
         let mut max_k = 0.0_f64;
@@ -356,18 +362,17 @@ mod tests {
     #[test]
     fn empty_frame_returns_zero_sk() {
         let frame = frame_with(&[], 10.0, [false; 3]);
-        let r = &StaticStructureFactorDirect::new(&[[1.0, 0.0, 0.0]])
+        let r = StaticStructureFactorDirect::new(&[[1.0, 0.0, 0.0]])
             .unwrap()
-            .compute(&[&frame], ())
-            .unwrap()[0];
+            .compute(frame.input())
+            .unwrap();
         assert_eq!(r.n_particles, 0);
         assert_eq!(r.sk[0], 0.0);
     }
 
-    /// The `frames.len() >= PAR_THRESHOLD` rayon branch must match the
-    /// serial path exactly, in frame order.
+    /// Many snapshots go through `Batch`, in order.
     #[test]
-    fn parallel_matches_serial() {
+    fn batch_matches_single_snapshots() {
         let frame = frame_with(
             &[[0.0, 0.0, 0.0], [1.5, 0.0, 0.0], [0.0, 1.5, 0.0]],
             10.0,
@@ -375,10 +380,44 @@ mod tests {
         );
         let k_vecs: Vec<[F; 3]> = [0.5_f64, 1.2, 2.7].iter().map(|&k| [k, 0.0, 0.0]).collect();
         let s = StaticStructureFactorDirect::new(&k_vecs).unwrap();
-        let solo = s.compute(&[&frame], ()).unwrap();
-        let par = s.compute(&[&frame, &frame], ()).unwrap();
+        let solo = s.compute(frame.input()).unwrap();
+        let par = Batch(s)
+            .compute(vec![frame.input(), frame.input()])
+            .unwrap();
         assert_eq!(par.len(), 2);
-        assert_eq!(par[0].sk, solo[0].sk);
-        assert_eq!(par[1].sk, solo[0].sk);
+        assert_eq!(par[0].sk, solo.sk);
+        assert_eq!(par[1].sk, solo.sk);
+    }
+
+    /// The isotropic form samples the box's reciprocal lattice; without a
+    /// box it is an error, not a guess.
+    #[test]
+    fn isotropic_without_a_box_is_an_error() {
+        let positions = array![[0.0, 0.0, 0.0]];
+        let s = StaticStructureFactorDirect::isotropic(4.0, 4).unwrap();
+        assert!(matches!(
+            s.compute(StaticStructureFactorDirectInput {
+                positions: positions.view(),
+                simbox: None,
+            }),
+            Err(ComputeError::BadShape { .. })
+        ));
+    }
+
+    /// A reciprocal-lattice point at exactly `k_max` is in the last bin.
+    #[test]
+    fn isotropic_upper_edge_is_closed() {
+        let frame = frame_with(
+            &[[0.0, 0.0, 0.0], [0.3, 0.0, 0.0]],
+            2.0 * std::f64::consts::PI,
+            [true; 3],
+        );
+        // L = 2π → Δk = 1; k_max = 1 holds the six (±1, 0, 0)-type points.
+        let r = StaticStructureFactorDirect::isotropic(1.0, 2)
+            .unwrap()
+            .compute(frame.input())
+            .unwrap();
+        assert!(r.sk[1] > 0.0);
+        assert_eq!(r.sk[0], 0.0);
     }
 }

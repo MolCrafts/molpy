@@ -417,8 +417,8 @@ pub fn write_cube_str(frame: &Frame) -> Result<String, MolRsError> {
 /// step, concatenated back-to-back with no blank separator lines (as the
 /// reference `bqb_cubeframe.cpp` consumes them); each is parsed by the
 /// single-cube reader. Reading stops cleanly at EOF. Every frame is normalised
-/// to Å; the volumetric block stays in its native `e/Bohr³` (the Voronoi
-/// integrator converts to `e/Å³`).
+/// to Å; the volumetric block stays in its native `e/Bohr³` (give the Voronoi
+/// integrator `LengthUnit::Bohr` and it converts to `e/Å³`).
 pub fn read_cube_trajectory<P: AsRef<Path>>(path: P) -> Result<Vec<Frame>, MolRsError> {
     let file = std::fs::File::open(path).map_err(MolRsError::Io)?;
     let mut reader = BufReader::new(file);

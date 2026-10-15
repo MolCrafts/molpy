@@ -1,27 +1,25 @@
 //! Frenkel–ten Wolde solid/liquid classification from `q_ℓm` bond correlations.
 
-// Index-based loops over flat qℓm arrays read naturally; iterator forms
-// would require chunks_exact + enumerate without gaining clarity.
-#![allow(clippy::needless_range_loop)]
-
-use crate::compute::ComputeResult;
-use molrs::core::Complex;
-use molrs::core::FrameAccess;
 use molrs::core::Neighbors;
 use molrs::op::F;
 
-use super::steinhardt::steinhardt_qlm;
-use crate::compute::Compute;
-use crate::compute::ComputeError;
-use crate::compute::positions::get_positions_ref;
+use super::bond_average::QlmTable;
+use crate::compute::{Compute, ComputeError};
 
 /// Frenkel-ten Wolde solid/liquid classifier.
 ///
 /// Mirrors `freud.order.SolidLiquid`
 /// ([source](https://github.com/glotzerlab/freud/blob/main/freud/order/SolidLiquid.cc)).
 ///
+/// Configuration: the two thresholds and the normalisation. Data: a
+/// [`QlmTable`] (from [`SteinhardtResult::qlm`](crate::compute::SteinhardtResult::qlm))
+/// and the half-shell neighbor table whose bonds are classified — the `q_ℓm`
+/// are read, never recomputed.
+///
 /// For each neighbor pair `(i, j)` we compute the normalised dot product
-/// of their Steinhardt qℓm vectors:
+/// of their Steinhardt qℓm vectors (the table's
+/// [`bond_coherence`](QlmTable::bond_coherence) over its
+/// [`norms`](QlmTable::norms)):
 ///
 /// ```text
 ///   d_ij = ( Σ_m q_ℓm(i) · conj q_ℓm(j) ) / ( |q_ℓm(i)| · |q_ℓm(j)| )
@@ -30,23 +28,33 @@ use crate::compute::positions::get_positions_ref;
 /// A bond is **solid-like** when `Re(d_ij) > q_threshold` (typically `0.7`).
 /// A particle is **solid** when it has at least `n_threshold` solid-like
 /// bonds. The output is a per-particle solid-bond count plus the boolean
-/// solid mask.
-///
-/// This phase reuses [`steinhardt_qlm`] directly
-/// — no qℓm recomputation, no duplicate spherical-harmonic evaluations.
+/// solid mask. A pair with a particle whose `q_ℓm` all vanish scores 0.
 #[derive(Debug, Clone, Copy)]
 pub struct SolidLiquid {
-    l: u32,
     q_threshold: F,
     n_threshold: u32,
     normalize_q: bool,
 }
 
+/// The data a [`SolidLiquid`] analyses.
+#[derive(Debug, Clone, Copy)]
+pub struct SolidLiquidInput<'a> {
+    /// The particles' `q_ℓm`.
+    pub qlm: &'a QlmTable,
+    /// The bonds to classify: a half-shell self-query over the same particles.
+    pub neighbors: &'a Neighbors,
+}
+
+impl Default for SolidLiquid {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl SolidLiquid {
-    /// Steinhardt order `l`; defaults: q_threshold 0.7, n_threshold 6, normalized `q_ℓm`.
-    pub fn new(l: u32) -> Self {
+    /// Defaults: q_threshold 0.7, n_threshold 6, normalized `q_ℓm`.
+    pub fn new() -> Self {
         Self {
-            l,
             q_threshold: 0.7,
             n_threshold: 6,
             normalize_q: true,
@@ -54,9 +62,19 @@ impl SolidLiquid {
     }
 
     /// Dot-product threshold for a solid-like bond (default 0.7).
-    pub fn with_q_threshold(mut self, t: F) -> Self {
+    ///
+    /// # Errors
+    /// [`ComputeError::OutOfRange`] for a NaN threshold, which no bond could
+    /// ever be compared against.
+    pub fn with_q_threshold(mut self, t: F) -> Result<Self, ComputeError> {
+        if t.is_nan() {
+            return Err(ComputeError::OutOfRange {
+                field: "SolidLiquid::q_threshold",
+                value: t.to_string(),
+            });
+        }
         self.q_threshold = t;
-        self
+        Ok(self)
     }
 
     /// Minimum solid-like bonds for a solid particle (default 6).
@@ -71,112 +89,57 @@ impl SolidLiquid {
         self.normalize_q = on;
         self
     }
+}
 
-    fn one_frame<FA: FrameAccess>(
-        &self,
-        frame: &FA,
-        nlist: &Neighbors,
-    ) -> Result<SolidLiquidResult, ComputeError> {
-        let (xs_p, _, _) = get_positions_ref(frame)?;
-        let n = xs_p.slice().len();
-        let m_count = (2 * self.l + 1) as usize;
+impl Compute for SolidLiquid {
+    type Input<'a> = SolidLiquidInput<'a>;
+    type Output = SolidLiquidResult;
 
-        let qlm = steinhardt_qlm(frame, nlist, self.l)?;
-
-        // |qℓm(i)| for normalisation. Skip particles with no neighbors → norm = 0.
-        let mut norms = vec![0.0_f64; n];
-        for i in 0..n {
-            let off = i * m_count;
-            let mut s: F = 0.0;
-            for m in 0..m_count {
-                s += qlm[off + m].norm_sqr();
-            }
-            norms[i] = s.sqrt();
-        }
-
-        let i_idx = nlist.query_point_indices();
-        let j_idx = nlist.point_indices();
-        let n_pairs = nlist.n_pairs();
-        let mut n_solid_bonds = vec![0_u32; n];
-
-        for k in 0..n_pairs {
-            let i = i_idx[k] as usize;
-            let j = j_idx[k] as usize;
-            let mut dot = Complex::ZERO;
-            let off_i = i * m_count;
-            let off_j = j * m_count;
-            for m in 0..m_count {
-                // conj(a) * b = (a.re·b.re + a.im·b.im) + i(a.re·b.im − a.im·b.re)
-                dot += qlm[off_i + m].conj() * qlm[off_j + m];
-            }
+    /// # Errors
+    /// [`ComputeError::BadShape`] for a cross-query table;
+    /// [`ComputeError::DimensionMismatch`] when the table is over a different
+    /// number of particles than `qlm`.
+    fn compute(&self, input: SolidLiquidInput<'_>) -> Result<SolidLiquidResult, ComputeError> {
+        let qlm = input.qlm;
+        let nlist = input.neighbors;
+        let coherence = qlm.bond_coherence(nlist)?;
+        let norms = qlm.norms();
+        let mut n_solid_bonds = vec![0_u32; qlm.n_particles()];
+        for ((&i, &j), &dot) in nlist
+            .query_point_indices()
+            .iter()
+            .zip(nlist.point_indices())
+            .zip(&coherence)
+        {
+            let (i, j) = (i as usize, j as usize);
             let real = if self.normalize_q {
                 let denom = norms[i] * norms[j];
-                if denom > 0.0 { dot.re / denom } else { 0.0 }
+                if denom > 0.0 { dot / denom } else { 0.0 }
             } else {
-                dot.re
+                dot
             };
             if real > self.q_threshold {
                 n_solid_bonds[i] += 1;
                 n_solid_bonds[j] += 1;
             }
         }
-
         let is_solid: Vec<bool> = n_solid_bonds
             .iter()
             .map(|&c| c >= self.n_threshold)
             .collect();
         Ok(SolidLiquidResult {
-            l: self.l,
+            l: qlm.order(),
             n_solid_bonds,
             is_solid,
         })
     }
 }
 
-impl Compute for SolidLiquid {
-    type Args<'a> = &'a [Neighbors];
-    type Output = Vec<SolidLiquidResult>;
-
-    fn compute<'a, FA: FrameAccess + Sync + 'a>(
-        &self,
-        frames: &[&'a FA],
-        nlists: &'a [Neighbors],
-    ) -> Result<Vec<SolidLiquidResult>, ComputeError> {
-        if frames.is_empty() {
-            return Err(ComputeError::EmptyInput);
-        }
-        if frames.len() != nlists.len() {
-            return Err(ComputeError::DimensionMismatch {
-                expected: frames.len(),
-                got: nlists.len(),
-                what: "neighbor-list count",
-            });
-        }
-        #[cfg(feature = "rayon")]
-        const PAR_THRESHOLD: usize = 2;
-
-        #[cfg(feature = "rayon")]
-        if frames.len() >= PAR_THRESHOLD {
-            use rayon::prelude::*;
-            return frames
-                .par_iter()
-                .zip(nlists.par_iter())
-                .map(|(f, nl)| self.one_frame(*f, nl))
-                .collect();
-        }
-
-        let mut out = Vec::with_capacity(frames.len());
-        for (f, nl) in frames.iter().zip(nlists.iter()) {
-            out.push(self.one_frame(*f, nl)?);
-        }
-        Ok(out)
-    }
-}
-
-/// Per-frame solid/liquid classification.
+/// One snapshot's solid/liquid classification.
 #[derive(Debug, Clone, Default)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct SolidLiquidResult {
-    /// ℓ used for the qℓm dot product.
+    /// ℓ of the `q_ℓm` the bonds were scored with.
     pub l: u32,
     /// Solid-like bond count per particle.
     pub n_solid_bonds: Vec<u32>,
@@ -184,35 +147,61 @@ pub struct SolidLiquidResult {
     pub is_solid: Vec<bool>,
 }
 
-impl ComputeResult for SolidLiquidResult {}
+crate::compute::spec::compute_spec! {
+    SolidLiquid as "SolidLiquid";
+    params |s| {
+        q_threshold: Float = SolidLiquid::new().q_threshold => s.q_threshold;
+        n_threshold: Int = SolidLiquid::new().n_threshold => s.n_threshold;
+        normalize_q: Bool = SolidLiquid::new().normalize_q => s.normalize_q;
+    }
+    inputs {
+        qlm: Upstream("QlmTable");
+        neighbors: Neighbors;
+    }
+}
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::compute::fixtures::nlist_from_frame;
-    use molrs::core::Block;
-    use molrs::core::Frame;
+    use crate::compute::fixtures::neighbors_of;
+    use crate::compute::order::bond_average::{BondAverage, SphericalHarmonic};
     use molrs::core::SimBox;
-    use ndarray::{Array1 as A1, array};
+    use ndarray::array;
 
-    fn frame_with(positions: &[[F; 3]], box_len: F, pbc: [bool; 3]) -> Frame {
-        let x = A1::from_iter(positions.iter().map(|p| p[0]));
-        let y = A1::from_iter(positions.iter().map(|p| p[1]));
-        let z = A1::from_iter(positions.iter().map(|p| p[2]));
-        let mut block = Block::new();
-        block.insert("x", x.into_dyn()).unwrap();
-        block.insert("y", y.into_dyn()).unwrap();
-        block.insert("z", z.into_dyn()).unwrap();
-        let mut frame = Frame::new();
-        frame.insert("atoms", block);
-        frame.simbox =
-            Some(SimBox::cube(box_len, array![0.0 as F, 0.0 as F, 0.0 as F], pbc).unwrap());
-        frame
+    /// A snapshot: positions in a cube of side `box_len` at the origin.
+    struct Snapshot {
+        positions: Vec<[F; 3]>,
+        simbox: SimBox,
+    }
+
+    fn frame_with(positions: &[[F; 3]], box_len: F, pbc: [bool; 3]) -> Snapshot {
+        Snapshot {
+            positions: positions.to_vec(),
+            simbox: SimBox::cube(box_len, array![0.0 as F, 0.0 as F, 0.0 as F], pbc).unwrap(),
+        }
+    }
+
+    fn nlist_from_frame(frame: &Snapshot, cutoff: F) -> Neighbors {
+        neighbors_of(&frame.positions, &frame.simbox, cutoff)
+    }
+
+    fn q6(nl: &Neighbors) -> QlmTable {
+        BondAverage::new(SphericalHarmonic { l: 6 })
+            .compute(nl)
+            .unwrap()
+    }
+
+    fn classify(sl: SolidLiquid, nl: &Neighbors) -> SolidLiquidResult {
+        sl.compute(SolidLiquidInput {
+            qlm: &q6(nl),
+            neighbors: nl,
+        })
+        .unwrap()
     }
 
     /// Two octahedra sharing the same orientation: every neighbor pair across
     /// the symmetry-mate has qℓm dot ≈ 1 (identical environments).
-    fn paired_octahedra(box_len: F) -> Frame {
+    fn paired_octahedra(box_len: F) -> Snapshot {
         let mut p: Vec<[F; 3]> = Vec::new();
         for &(cx, cy, cz) in &[(5.0_f64, 5.0, 5.0), (10.0_f64, 5.0, 5.0)] {
             p.push([cx, cy, cz]);
@@ -251,11 +240,13 @@ mod tests {
             [false; 3],
         );
         let nl = nlist_from_frame(&frame, 1.2);
-        let r = &SolidLiquid::new(6)
-            .with_q_threshold(-2.0) // count every bond as "solid"
-            .with_n_threshold(1)
-            .compute(&[&frame], &[nl])
-            .unwrap()[0];
+        let r = &classify(
+            SolidLiquid::new()
+                .with_q_threshold(-2.0) // count every bond as "solid"
+                .unwrap()
+                .with_n_threshold(1),
+            &nl,
+        );
         // Centre particle has 6 bonds, each counted once.
         assert_eq!(r.n_solid_bonds[0], 6);
         // Outer particles each have 1 bond.
@@ -305,8 +296,6 @@ mod tests {
     fn identical_environments_score_one() {
         use molrs::core::{NeighborColumns, NeighborPair, QueryMode};
 
-        let frame = paired_octahedra(20.0);
-
         // The six octahedral spokes, in the order `paired_octahedra` lays the
         // outer atoms out around each centre: `r_outer − r_centre` (Å).
         const SPOKES: [[F; 3]; 6] = [
@@ -343,11 +332,11 @@ mod tests {
 
         // Premise of the derivation above, checked rather than assumed: the two
         // centres really do end up with the same q₆ₘ vector.
-        let qlm = steinhardt_qlm(&frame, &nl, 6).unwrap();
+        let qlm = q6(&nl);
         let m = 13_usize; // 2·6 + 1
         for k in 0..m {
-            let a = qlm[k];
-            let b = qlm[7 * m + k];
+            let a = qlm.values()[[0, k]];
+            let b = qlm.values()[[7, k]];
             assert!(
                 (a.re - b.re).abs() < 1e-12 && (a.im - b.im).abs() < 1e-12,
                 "centre q₆ₘ components must match across symmetric octahedra"
@@ -356,10 +345,7 @@ mod tests {
 
         // Default q_threshold (0.7) keeps only the centre-centre bond;
         // n_threshold 1 then makes the two centres — and nothing else — solid.
-        let r = &SolidLiquid::new(6)
-            .with_n_threshold(1)
-            .compute(&[&frame], &[nl])
-            .unwrap()[0];
+        let r = &classify(SolidLiquid::new().with_n_threshold(1), &nl);
         let expected_bonds: Vec<u32> = (0..14).map(|i| u32::from(i == 0 || i == 7)).collect();
         assert_eq!(
             r.n_solid_bonds, expected_bonds,
@@ -377,30 +363,46 @@ mod tests {
     fn deterministic_across_calls() {
         let frame = paired_octahedra(20.0);
         let nl = nlist_from_frame(&frame, 1.2);
-        let sl = SolidLiquid::new(6);
-        let a = sl.compute(&[&frame], std::slice::from_ref(&nl)).unwrap();
-        let b = sl.compute(&[&frame], &[nl]).unwrap();
-        assert_eq!(a[0].n_solid_bonds, b[0].n_solid_bonds);
-        assert_eq!(a[0].is_solid, b[0].is_solid);
+        let sl = SolidLiquid::new();
+        let a = classify(sl, &nl);
+        let b = classify(sl, &nl);
+        assert_eq!(a.n_solid_bonds, b.n_solid_bonds);
+        assert_eq!(a.is_solid, b.is_solid);
     }
 
     #[test]
-    fn empty_frames_is_error() {
-        let frames: Vec<&Frame> = Vec::new();
-        let err = SolidLiquid::new(6)
-            .compute(&frames, &Vec::<Neighbors>::new())
+    fn nan_threshold_is_out_of_range() {
+        assert!(matches!(
+            SolidLiquid::new().with_q_threshold(F::NAN),
+            Err(ComputeError::OutOfRange { .. })
+        ));
+    }
+
+    /// The q_ℓm table and the bond table must describe the same particles.
+    #[test]
+    fn a_table_over_other_particles_is_a_dimension_mismatch() {
+        let frame = paired_octahedra(20.0);
+        let nl = nlist_from_frame(&frame, 1.2);
+        let small = nlist_from_frame(&frame_with(&[[5.0, 5.0, 5.0]], 20.0, [false; 3]), 1.2);
+        let err = SolidLiquid::new()
+            .compute(SolidLiquidInput {
+                qlm: &q6(&small),
+                neighbors: &nl,
+            })
             .unwrap_err();
-        assert!(matches!(err, ComputeError::EmptyInput));
+        assert!(matches!(err, ComputeError::DimensionMismatch { .. }));
     }
 
     #[test]
     fn high_threshold_makes_nothing_solid() {
         let frame = paired_octahedra(20.0);
         let nl = nlist_from_frame(&frame, 1.2);
-        let r = &SolidLiquid::new(6)
-            .with_q_threshold(2.0) // impossible — cosine ≤ 1
-            .compute(&[&frame], &[nl])
-            .unwrap()[0];
+        let r = &classify(
+            SolidLiquid::new()
+                .with_q_threshold(2.0) // impossible — cosine ≤ 1
+                .unwrap(),
+            &nl,
+        );
         assert!(r.is_solid.iter().all(|&s| !s));
     }
 }

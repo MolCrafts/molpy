@@ -4,13 +4,14 @@
 import molrs
 ```
 
-The top level of `molrs` is its subsystems and nothing else, exactly as the
-Rust crate's root is: every symbol has one path, the Python module named after
-its Rust owner (`molrs.core.Frame` is `molrs::core::Frame`). Import the
-subsystem you use:
+The top level of `molrs` is its subsystems, plus the core data classes a user
+handles directly. Those classes are the same objects as `molrs.core`'s
+(`molrs.Frame is molrs.core.Frame`). No function,
+algorithm, region or unit preset is promoted; everything else has one path,
+the Python module named after its Rust owner. Import either way:
 
 ```python
-from molrs.core import Frame, Block
+from molrs import Frame, Block, Trajectory, Topology
 from molrs.core import Box, NeighborList
 from molrs.ff.compile import PotentialCompiler
 ```
@@ -47,20 +48,21 @@ and the docs build.
 | `molrs.md` | `molrs::md` | `VelocityVerlet`, `Langevin`, `MdState`, `MaxwellBoltzmann`, `MdDriver` |
 | `molrs.conformer` | `molrs::conformer` | `Conformer`, `ConformerReport`, `ConformerStageReport` |
 | `molrs.builder` | `molrs::builder` | `GrapheneBuilder`, `CarbonTubeBuilder`, `Assembler` and its placers / orienter, `Coarsener` |
-| `molrs.compute` | `molrs::compute` | every analysis, flat, and the `Compute` protocol |
-| `molrs.signal` | `molrs::signal` | `acf_fft`, `xcorr_fft`, `apply_window`, `frequency_grid` |
+| `molrs.compute` | `molrs::compute` | one class per compute type, flat; their results; `ComputeSpec`; the `Compute` protocol |
 | `molrs.stream` | `molrs::stream` | `Publisher`, `ControlCommand` |
 
 ### Where Python's shape differs from Rust's
 
-Two binding classes have no one-to-one Rust type. Both are deliberate:
-they make the Python object behave the way Python code uses it, and the
-Rust names they map onto are listed here.
+These binding classes have no one-to-one Rust type. Each is deliberate:
+it makes the Python object behave the way Python code uses it, and the
+Rust names it maps onto are listed here.
 
 | Python | Rust | Why |
 |---|---|---|
 | `molrs.core.RelationRef` and its per-kind subclasses `Bond` (`itom`, `jtom`), `Angle`, `Dihedral`, `Improper`, `CgBond`, `Port` (`anchor`, `handle_atom`) | one `molrs::core::Relation` (a kind name, endpoint handles and fields) | A view's class is its relation kind, so `isinstance(r, Bond)` and the named endpoints work; every view reads and writes the same graph row a `Relation` does. A user-registered kind is a plain `RelationRef`. |
 | `molrs.ff.typifier.Typifier` and the built-in typifiers (`Mmff94Typifier`, `GaffTypifier`, …): `assign`, `typify`, `forcefield` | the trait `molrs::ff::typifier::Typifier` (`assign`, `source_forcefield`) plus the driver `Typing<T>` (`typify`, `forcefield`) | Rust splits them because a trait cannot hold the output force field that typing accumulates; a Python class can, so one object is both. `Typifier.assign` is the trait's method; `typify` and `forcefield` are `Typing`'s. |
+| `molrs.compute.CombinedDistribution` and its `CombinedDistributionResult` | `CombinedDistribution<N>` / `CombinedDistributionResult<N>` for `N` = 2, 3 | A Python class cannot be generic over a constant, so the number of `observables` picks `N`; `spec()` is the one registered `CombinedDistribution` descriptor. |
+| `molrs.compute.PmftResult`, `molrs.compute.Histogram` | `PmftResult<C>` for each `Pmft<C>` (`PmftR12`, `PmftXy`, `PmftXyt`, `PmftXyz`); `Histogram<N>` | One result class per generic type: the arrays carry their own dimension. |
 
 ## `molrs.core`
 
@@ -501,46 +503,276 @@ arrays (a CMAP `grid`).
 
 ## `molrs.compute`
 
-The Rust compute facade is flat, and so is `molrs.compute`: every analysis is
-`molrs.compute.<Name>`.
+The Rust compute module is flat, and so is `molrs.compute`: every class is
+`molrs.compute.<Name>`, the core type of the same name. A compute's
+constructor takes configuration only — every optional setting is `None`
+unless given, and every default lives in the core — and `compute(...)` takes
+the data by keyword. A result is a read-only object that the next compute
+takes as is (`Msd` → `TimeCorrelation` → `LinearFit`, `Steinhardt` →
+`SteinhardtResult` → `Pca`, `Cluster` → `ClusterResult` → `CenterOfMass`).
 
-### Structure
+### Contract and descriptors
+
+Every class is configured at construction and answers one call, `compute`,
+whose keyword arguments are the fields of the core input. `ComputeSpec`
+describes each one: its parameters (kind, default, required) and inputs.
+
+::: molrs.compute.Compute
+
+::: molrs.compute.ComputeSpec
+
+::: molrs.compute.ParamSpec
+
+::: molrs.compute.InputSpec
+
+### Values
+
+::: molrs.compute.Axis
+
+::: molrs.compute.RegularGrid
+
+::: molrs.compute.Histogram
+
+### Time series
+
+`Correlator` is the one estimator; `Msd`, `Vacf`, `OnsagerCorrelation`,
+`DipoleAcf`, `CurrentAcf`, `ReorientationAcf`, `RotationalAutocorrelation`
+and `Survival` are its fixed configurations. Each returns a
+`TimeCorrelation`, which the fits and spectra take as is (and which pickles).
+The origin set is tunable (`origins`, and `stride` for every `stride`-th
+origin), as is the normalisation (`"unbiased"`, `"biased"`, `"none"`).
+`ReorientationAcf` is the orientational autocorrelation (OACF) of unit
+vectors; orders 1 and 2 run by FFT. A curve's derived quantities are the fits
+applied to it: `CumulativeTrapezoid` (integral, correlation time), `LinearFit`
+(Einstein slope), `Plateau` (Green–Kubo plateau), `DebyeFit` (exponential
+decay), and `Spectrum` (power spectrum).
+
+::: molrs.compute.Correlator
+
+::: molrs.compute.TimeCorrelation
+
+::: molrs.compute.Msd
+
+::: molrs.compute.Vacf
+
+::: molrs.compute.OnsagerCorrelation
+
+::: molrs.compute.DipoleAcf
+
+::: molrs.compute.CurrentAcf
+
+::: molrs.compute.ReorientationAcf
+
+::: molrs.compute.RotationalAutocorrelation
+
+::: molrs.compute.Survival
+
+::: molrs.compute.Derivative
+
+::: molrs.compute.Unwrap
+
+::: molrs.compute.Spectrum
+
+::: molrs.compute.OneSidedSpectrum
+
+### Fits
+
+::: molrs.compute.LinearFit
+
+::: molrs.compute.LinearFitResult
+
+::: molrs.compute.Plateau
+
+::: molrs.compute.PlateauResult
+
+::: molrs.compute.DebyeFit
+
+::: molrs.compute.DebyeFitResult
+
+::: molrs.compute.CumulativeTrapezoid
+
+### Dielectric and spectroscopy
+
+::: molrs.compute.KineticEnergy
+
+::: molrs.compute.KineticEnergyResult
+
+::: molrs.compute.DipoleMoment
+
+::: molrs.compute.DipoleMomentResult
+
+::: molrs.compute.StaticDielectric
+
+::: molrs.compute.StaticDielectricResult
+
+::: molrs.compute.EinsteinHelfandSpectrum
+
+::: molrs.compute.GreenKuboSpectrum
+
+::: molrs.compute.DipoleRateCrossSpectrum
+
+::: molrs.compute.DipoleAutocorrelationSpectrum
+
+::: molrs.compute.DielectricSpectrumResult
+
+::: molrs.compute.KramersKronig
+
+::: molrs.compute.KramersKronigCheck
+
+::: molrs.compute.ConductivitySumRule
+
+::: molrs.compute.SumRuleCheck
+
+::: molrs.compute.RouteAgreement
+
+::: molrs.compute.RouteAgreementCheck
+
+::: molrs.compute.PolarizabilityParts
+
+::: molrs.compute.PolarizabilityPartsResult
+
+::: molrs.compute.RamanSpectrum
+
+::: molrs.compute.RamanSpectrumResult
+
+### Binned and gridded structure
+
+`Rdf`, `DistributionFunction`, `CombinedDistribution` and
+`SpatialDistribution` fold frames: their `compute` takes one list per input
+field, an entry per frame.
 
 ::: molrs.compute.Rdf
 
 ::: molrs.compute.RdfResult
 
-::: molrs.compute.GaussianDensity
+::: molrs.compute.CorrelationFunction
+
+::: molrs.compute.CorrelationFunctionResult
 
 ::: molrs.compute.LocalDensity
 
+::: molrs.compute.LocalDensityResult
+
+::: molrs.compute.GaussianDensity
+
+::: molrs.compute.GaussianDensityResult
+
+::: molrs.compute.SphereVoxelization
+
+::: molrs.compute.SphereVoxelizationResult
+
+::: molrs.compute.SpatialDistribution
+
+::: molrs.compute.SpatialDistributionResult
+
+::: molrs.compute.DistributionFunction
+
+::: molrs.compute.DistributionResult
+
+::: molrs.compute.CombinedDistribution
+
+::: molrs.compute.CombinedDistributionResult
+
 ::: molrs.compute.StaticStructureFactorDebye
 
-::: molrs.compute.PmftXy
+::: molrs.compute.StaticStructureFactorDebyeResult
 
-::: molrs.compute.BondOrientationalOrder
+::: molrs.compute.StaticStructureFactorDirect
 
-### Order
+::: molrs.compute.StaticStructureFactorDirectResult
+
+::: molrs.compute.DiffractionPattern
+
+::: molrs.compute.DiffractionPatternResult
+
+### Dynamics
+
+::: molrs.compute.PairPresence
+
+::: molrs.compute.Presence
+
+::: molrs.compute.VanHove
+
+::: molrs.compute.VanHoveResult
+
+::: molrs.compute.HBonds
+
+::: molrs.compute.HBondsResult
+
+::: molrs.compute.HBond
+
+### Order and environment
 
 ::: molrs.compute.Steinhardt
 
-::: molrs.compute.Nematic
+::: molrs.compute.SteinhardtResult
+
+::: molrs.compute.QlmTable
 
 ::: molrs.compute.Hexatic
 
+::: molrs.compute.HexaticResult
+
 ::: molrs.compute.SolidLiquid
 
-### Clusters and shape
+::: molrs.compute.SolidLiquidResult
+
+::: molrs.compute.ContinuousCoordination
+
+::: molrs.compute.ContinuousCoordinationResult
+
+::: molrs.compute.Nematic
+
+::: molrs.compute.NematicResult
+
+::: molrs.compute.Cubatic
+
+::: molrs.compute.CubaticResult
+
+::: molrs.compute.BondOrientationalOrder
+
+::: molrs.compute.BondOrientationalOrderResult
+
+::: molrs.compute.LocalDescriptors
+
+::: molrs.compute.LocalDescriptorsResult
+
+::: molrs.compute.LocalBondProjection
+
+::: molrs.compute.LocalBondProjectionResult
+
+::: molrs.compute.EnvironmentMatch
+
+::: molrs.compute.EnvironmentMatchResult
+
+::: molrs.compute.AngularSeparationGlobal
+
+::: molrs.compute.AngularSeparationGlobalResult
+
+::: molrs.compute.AngularSeparationNeighbor
+
+::: molrs.compute.AngularSeparationNeighborResult
+
+::: molrs.compute.PmftR12
+
+::: molrs.compute.PmftXy
+
+::: molrs.compute.PmftXyt
+
+::: molrs.compute.PmftXyz
+
+::: molrs.compute.PmftResult
+
+### Groups and features
+
+A partition argument is an unsigned-int label array or any partition result
+(`ClusterResult`, `KmeansResult`, `EnvironmentMatchResult`,
+`VoronoiDomainResult`); a feature matrix is a 2-D float array or a descriptor
+result (`SteinhardtResult`, `LocalDescriptorsResult`, `PcaResult`).
 
 ::: molrs.compute.Cluster
 
 ::: molrs.compute.ClusterResult
-
-::: molrs.compute.ClusterCenters
-
-::: molrs.compute.ClusterCentersResult
-
-::: molrs.compute.ClusterProperties
 
 ::: molrs.compute.CenterOfMass
 
@@ -548,31 +780,11 @@ The Rust compute facade is flat, and so is `molrs.compute`: every analysis is
 
 ::: molrs.compute.GyrationTensor
 
+::: molrs.compute.GyrationTensorResult
+
 ::: molrs.compute.InertiaTensor
 
-::: molrs.compute.RadiusOfGyration
-
-### Dynamics
-
-Every time correlation returns a `TimeCorrelation`; its derived quantities
-(`integrate`, `linear_fit`, `fit_exponential`, `diffusion`, `spectrum`) are the
-fits below, applied to the curve.
-
-::: molrs.compute.TimeCorrelation
-
-::: molrs.compute.Acf
-
-::: molrs.compute.Oacf
-
-::: molrs.compute.Msd
-
-::: molrs.compute.Vacf
-
-::: molrs.compute.LegendreReorientation
-
-### Descriptors
-
-::: molrs.compute.DescriptorRow
+::: molrs.compute.InertiaTensorResult
 
 ::: molrs.compute.Pca
 
@@ -582,39 +794,24 @@ fits below, applied to the curve.
 
 ::: molrs.compute.KmeansResult
 
-### Transport
+### Voronoi
 
-Electrolyte transport kernels (ports of the *tame* recipes). Worked examples,
-units, and signatures are in the
-[molpy documentation](https://docs.molcrafts.org/molpy/).
+::: molrs.compute.RadicalVoronoi
 
-::: molrs.compute.EinsteinDiffusion
+::: molrs.compute.VoronoiCells
 
-::: molrs.compute.GreenKuboDiffusion
+::: molrs.compute.VoronoiFace
 
-::: molrs.compute.EinsteinConductivity
+::: molrs.compute.VoronoiDomainAnalysis
 
-::: molrs.compute.GreenKuboConductivity
+::: molrs.compute.VoronoiDomainResult
 
-::: molrs.compute.DebyeRelaxation
+::: molrs.compute.VoronoiVoidAnalysis
 
-::: molrs.compute.DipoleRateCross
+::: molrs.compute.VoronoiVoidResult
 
-::: molrs.compute.OnsagerCorrelation
+::: molrs.compute.VoronoiIntegration
 
-::: molrs.compute.pair_survival_tcf
+::: molrs.compute.MolecularMoments
 
-### Spectra
-
-The one-sided transforms return a `Spectrum`; the window is selectable
-(`"cosine_sq"` by default).
-
-::: molrs.compute.Spectrum
-
-::: molrs.compute.PowerSpectrum
-
-::: molrs.compute.IrSpectrum
-
-::: molrs.compute.VcdSpectrum
-
-::: molrs.compute.RamanSpectrum
+::: molrs.compute.FiniteFieldPolarizability

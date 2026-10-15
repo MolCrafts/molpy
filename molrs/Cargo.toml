@@ -51,7 +51,7 @@ sha2 = "0.11"
 default = ["rayon"]
 # Full bundle (every sub-system). Not `stream` (tokio + WebSocket) and not the
 # `filesystem` / `rayon` knobs.
-full = ["io", "compute", "smiles", "ff", "conformer", "signal", "voronoi", "md", "builder"]
+full = ["io", "compute", "smiles", "ff", "conformer", "voronoi", "md", "builder"]
 
 # Sub-system modules (each gates its module + its unique optional deps).
 # Structure builders (graphene, nanotubes, self-avoiding walks); no unique deps.
@@ -61,9 +61,9 @@ io        = ["dep:flate2"]
 # SMILES format in `io::smiles` and the SMARTS matcher (`perceive::smarts`)
 # both compile from it.
 smiles    = ["io"]
-signal    = ["dep:rustfft"]
-# `compute` depends on the `signal` module (gets rustfft via it).
-compute   = ["signal"]
+# Trajectory analysis. Owns its FFT (time correlations, spectra) through
+# rustfft directly.
+compute   = ["dep:rustfft"]
 # Radical (Laguerre) Voronoi tessellation + domain/void analysis. Native
 # pure-Rust (WASM-clean); lives in the `compute` module.
 voronoi   = ["compute"]
@@ -78,9 +78,11 @@ conformer = ["ff"]
 # the one `ff::potential::Potential`/`Potentials` seam, so it enables `ff`; its
 # kinetic observables (kinetic energy, centre-of-mass velocity) are `compute`'s.
 md        = ["ff", "compute"]
-# serde `Serialize`/`Deserialize` for the core model (Frame/Block/Column/SimBox).
-# No new deps — serde is already always-on; the feature just enables the impls.
-serde     = []
+# serde `Serialize`/`Deserialize` for the core model (Frame/Block/Column/SimBox)
+# and `Serialize` for the compute outputs (the WASM binding's results). No new
+# deps — serde is already always-on; the feature enables the impls, and
+# ndarray's for the outputs' array fields.
+serde     = ["ndarray/serde"]
 # Live Frame streaming — MolRec-aligned MessagePack/JSON encoding, plus native
 # WebSocket transport. On WASM only the wire codec is compiled. Not in `full`.
 stream    = ["serde", "dep:rmp-serde", "dep:tokio", "dep:tokio-tungstenite", "dep:futures-util"]
@@ -143,7 +145,7 @@ zarrs          = { version = "0.23", optional = true, default-features = false, 
 ruzstd         = { version = "0.9", optional = true, default-features = false, features = ["std"] }    # zarr: pure-Rust zstd decode (wasm32)
 inventory      = { version = "0.3", optional = true }                                               # zarr: registers the ruzstd codec with zarrs
 flate2         = { version = "1.1", optional = true, features = ["rust_backend"] }                  # io (compressed formats)
-rustfft        = { version = "6", optional = true }                                                 # signal + ff + compute
+rustfft        = { version = "6", optional = true }                                                 # ff + compute
 roxmltree      = { version = "0.21", optional = true }                                              # ff (io's force-field XML readers)
 rmp-serde      = { version = "1", optional = true }                                                 # stream (MessagePack wire encoding)
 # `io/mrec/zarr_storage/pack.rs` and nothing else: `zip` writes the `.mrec.zip` a closed

@@ -3,11 +3,12 @@
 use molrs::op::F;
 
 use super::cell::VoronoiCells;
-use crate::compute::ComputeError;
+use crate::compute::{Compute, ComputeError};
 use crate::core::Topology;
 
 /// Outcome of a [`VoronoiVoidAnalysis`].
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct VoronoiVoidResult {
     /// Cavity volumes (Å³), descending.
     pub cavity_volumes: Vec<F>,
@@ -18,6 +19,9 @@ pub struct VoronoiVoidResult {
 }
 
 /// Aggregate probe cells of a combined atom+probe tessellation into cavities.
+///
+/// Configuration: none. Data: the tessellation, the probe mask and the box
+/// volume.
 ///
 /// Following the reference implementation's domain-style void aggregation (`src/void.cpp`): a set of
 /// **probe generators** is tessellated *together with* the atoms, and the cells
@@ -32,15 +36,38 @@ pub struct VoronoiVoidResult {
 #[derive(Debug, Clone, Copy, Default)]
 pub struct VoronoiVoidAnalysis;
 
+/// The data a [`VoronoiVoidAnalysis`] aggregates.
+#[derive(Clone, Copy)]
+pub struct VoronoiVoidInput<'a> {
+    /// The tessellation of atoms and probes together.
+    pub cells: &'a VoronoiCells,
+    /// `is_void[i]` marks cell `i` as a void probe.
+    pub is_void: &'a [bool],
+    /// The box volume (Å³) that normalizes the void fraction.
+    pub box_volume: F,
+}
+
 impl VoronoiVoidAnalysis {
-    /// `is_void[i]` marks cell `i` as a void probe. Adjacent probe cells merge
-    /// into one cavity. `box_volume` normalizes the void fraction.
-    pub fn analyze(
-        &self,
-        cells: &VoronoiCells,
-        is_void: &[bool],
-        box_volume: F,
-    ) -> Result<VoronoiVoidResult, ComputeError> {
+    /// No configuration.
+    pub fn new() -> Self {
+        Self
+    }
+}
+
+impl Compute for VoronoiVoidAnalysis {
+    type Input<'a> = VoronoiVoidInput<'a>;
+    type Output = VoronoiVoidResult;
+
+    /// # Errors
+    /// [`ComputeError::DimensionMismatch`] unless there is one mask entry per
+    /// cell; [`ComputeError::OutOfRange`] for a non-positive or non-finite box
+    /// volume.
+    fn compute(&self, input: VoronoiVoidInput<'_>) -> Result<VoronoiVoidResult, ComputeError> {
+        let VoronoiVoidInput {
+            cells,
+            is_void,
+            box_volume,
+        } = input;
         let n = cells.len();
         if is_void.len() != n {
             return Err(ComputeError::DimensionMismatch {
@@ -93,12 +120,80 @@ impl VoronoiVoidAnalysis {
         }
 
         let mut cavity_volumes: Vec<F> = (0..n).filter(|&c| seen[c]).map(|c| vol_of[c]).collect();
-        cavity_volumes.sort_unstable_by(|a, b| b.partial_cmp(a).unwrap());
+        cavity_volumes.sort_unstable_by(|a, b| b.total_cmp(a));
 
         Ok(VoronoiVoidResult {
             cavity_volumes,
             total_void_volume: total,
             void_fraction: total / box_volume,
         })
+    }
+}
+
+crate::compute::spec::compute_spec! {
+    VoronoiVoidAnalysis as "VoronoiVoidAnalysis";
+    params |s| {}
+    inputs {
+        cells: Upstream("VoronoiCells");
+        is_void: Mask;
+        box_volume: Scalar;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::compute::VoronoiFace;
+
+    /// A chain 0–1–2–3 with volumes 1, 2, 3, 4.
+    fn chain() -> VoronoiCells {
+        let face = |neighbor| VoronoiFace {
+            area: 1.0,
+            neighbor,
+        };
+        VoronoiCells {
+            volumes: vec![1.0, 2.0, 3.0, 4.0],
+            faces: vec![
+                vec![face(1)],
+                vec![face(0), face(2)],
+                vec![face(1), face(3)],
+                vec![face(2)],
+            ],
+        }
+    }
+
+    #[test]
+    fn adjacent_probes_merge_into_one_cavity() {
+        let cells = chain();
+        let r = VoronoiVoidAnalysis::new()
+            .compute(VoronoiVoidInput {
+                cells: &cells,
+                is_void: &[true, true, false, true],
+                box_volume: 20.0,
+            })
+            .unwrap();
+        assert_eq!(r.cavity_volumes, vec![4.0, 3.0]);
+        assert_eq!(r.total_void_volume, 7.0);
+        assert!((r.void_fraction - 0.35).abs() < 1e-15);
+    }
+
+    #[test]
+    fn errors() {
+        let cells = chain();
+        let run = |is_void: &[bool], box_volume| {
+            VoronoiVoidAnalysis::new().compute(VoronoiVoidInput {
+                cells: &cells,
+                is_void,
+                box_volume,
+            })
+        };
+        assert!(matches!(
+            run(&[true], 1.0),
+            Err(ComputeError::DimensionMismatch { .. })
+        ));
+        assert!(matches!(
+            run(&[true; 4], 0.0),
+            Err(ComputeError::OutOfRange { .. })
+        ));
     }
 }

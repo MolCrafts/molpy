@@ -8,17 +8,17 @@ GitHub Releases.
 
 ## Local verification
 
-Run every CI gate from the repository root:
+Run the pre-push gate from the repository root:
 
 ```bash
-scripts/check.sh all
+scripts/check.sh verify
 ```
 
 It is the same script, on the same pinned `rust-toolchain.toml` compiler, that
-the prek hooks and the CI workflows call. The `package` gate compiles the
-unpacked crates.io archive, catching files accidentally omitted from the
-release; inspect `cargo package --list --manifest-path molrs/Cargo.toml` as
-well. Downstream molpy pins the major.minor ABI line and must be released
+the prek hooks and the CI workflows call. No gate compiles the crates.io
+archive: `cargo publish` in `release.yml` verifies it once (the dispatch dry
+run, `cargo publish --dry-run`, rehearses that). Inspect
+`cargo package --list --manifest-path molrs/Cargo.toml` for files left out. Downstream molpy pins the major.minor ABI line and must be released
 after molrs.
 
 Check version metadata before tagging. One version appears in:
@@ -60,14 +60,16 @@ the Pyodide wheel), and the GitHub Release with the C API archives.
 
 | run | what it does |
 | --- | --- |
-| `v*` tag on MolCrafts | `release / guard` (tag = `v` + the workspace version, on `master`), `lint.yml` and the full `test.yml` tier, the builds and dry runs, then every upload (`release / crate`, `npm`, `pypi`, `github`) |
-| dispatch (any branch, fork or upstream) | the dry run: the same guard, gates and builds, `release / crate (dry run)` (`cargo publish --dry-run`) and `release / npm (dry run)` (`npm pack --dry-run`); the upload jobs are skipped, so no upload and no Release |
+| `v*` tag on MolCrafts | `release / guard` (tag = `v` + the workspace version, on `master`; every job of the commit's full `test.yml` tier succeeded, waited for if still running), the builds, then every upload (`release / crate`, whose `cargo publish` verifies the tarball, `npm`, `pypi`, `github`). No lint or test run of its own: the commit was proven before the tag |
+| dispatch (any branch, fork or upstream) | the dry run: the same guard (the commit's `test / *` runs that exist are green), the builds, `release / crate (dry run)` (`cargo publish --dry-run`) and `release / npm (dry run)` (`npm pack --dry-run`); the upload jobs are skipped, so no upload and no Release |
 
 The upload jobs run only when `release / context` reports `publish` (a `v*`
 tag pushed to MolCrafts, from `MolCrafts/molcrafts-ci/actions/ci-context`);
-`lint / hooks` fails any upload job that tests the event or ref itself.
+the `workflows` pre-commit hook (check-workflows) fails any upload job that
+tests the event or ref itself.
 
-1. Finish the checks and review the release diff.
+1. Finish the checks and review the release diff. Push it to `master` and
+   wait for its `test.yml` run: the tag's guard reads it.
 2. Dispatch **release** on the branch for a rehearsal (a fork is fine).
 3. Merge the reviewed revision into `master`, then create and push `vX.Y.Z`,
    matching `[workspace.package].version` in `Cargo.toml`.

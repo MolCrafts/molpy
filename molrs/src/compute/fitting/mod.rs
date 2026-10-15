@@ -1,126 +1,95 @@
-//! Generic curve fitting / smoothing — the [`Fit`](crate::compute::Fit) companion of
-//! [`Compute`](crate::compute::Compute).
+//! Fits: the computes that turn a [`TimeCorrelation`] into a coefficient.
 //!
-//! Where a [`Compute`](crate::compute::Compute) measures a raw observable from
-//! frames (an MSD curve, a current ACF, a velocity ACF), a
-//! [`Fit`](crate::compute::Fit) post-processes
-//! that observable into a derived quantity. This module hosts the
-//! **domain-agnostic** curve transforms; the physical raw computes live in
-//! [`transport`](crate::compute::transport) and the spectral transforms in
-//! [`spectroscopy`](crate::compute::spectroscopy).
+//! A raw correlation curve comes from [`Correlator`](crate::compute::Correlator)
+//! or one of its surfaces; a fit is a [`Compute`](crate::compute::Compute)
+//! whose input is that curve — one channel of it, named by index — and whose
+//! configuration is the fit window. Every fit reads the lag grid off the
+//! curve, so no sample interval travels separately.
 //!
-//! | Fit | Input | Output | Lifted from |
-//! |-----|-------|--------|-------------|
-//! | [`LinearFit`] | `(x, y)` curve | [`LinearFitResult`] (slope/intercept/r²) | Einstein–Helfand conductivity OLS |
-//! | [`CumulativeTrapezoid`] | curve + dt | [`CumulativeTrapezoidResult`] (cumulative trapezoid) | Green–Kubo conductivity trapezoid |
-//! | [`Plateau`] | curve | [`PlateauResult`] (windowed mean/std) | new |
-//! | [`DebyeFit`] | normalized decay + dt | [`DebyeFitResult`] (τ, amplitude) | Debye dipole relaxation |
+//! | Fit | Reads | Output |
+//! |-----|-------|--------|
+//! | [`LinearFit`] | `C(t)` over a window | [`LinearFitResult`] (slope / intercept / r²) |
+//! | [`CumulativeTrapezoid`] | `C(t)` | the running integral `∫₀ᵗ C`, itself a [`TimeCorrelation`] |
+//! | [`Plateau`] | `C(t)` over a window | [`PlateauResult`] (windowed mean / spread) |
+//! | [`DebyeFit`] | the leading positive run of `C(t)` | [`DebyeFitResult`] (τ, amplitude) |
 //!
-//! A [`TimeCorrelation`](crate::compute::TimeCorrelation) reaches these through
-//! its derived-quantity methods (`linear_fit`, `integral`, `exponential_fit`,
-//! `diffusion_coefficient`), which are one-line delegations to the fits here.
-//!
-//! # Shared numerical primitives
-//!
-//! Helpers are lifted here so the fits share one implementation:
-//!
-//! - `ols_slope_intercept_r2` — ordinary-least-squares line fit (the
-//!   Einstein–Helfand conductivity slope).
-//! - `running_trapezoid` — cumulative trapezoidal integral (the Green–Kubo
-//!   conductivity integral).
-//!
-//! The one-sided forward FFT the spectra share is a signal primitive:
-//! [`crate::signal::forward_fft_onesided`].
+//! A window is given as fractions `(start, end)` of the last lag. A window
+//! that covers fewer than two samples is an error — a fit never widens or
+//! collapses its window to make the data fit.
 
 mod cumulative_trapezoid;
 mod debye_fit;
 mod linear_fit;
 mod plateau;
 
-pub use cumulative_trapezoid::{CumulativeTrapezoid, CumulativeTrapezoidResult};
-pub use debye_fit::{DebyeFit, DebyeFitResult};
-pub use linear_fit::{LinearFit, LinearFitResult};
-pub use plateau::{Plateau, PlateauResult};
+pub use cumulative_trapezoid::{CumulativeTrapezoid, CumulativeTrapezoidInput};
+pub use debye_fit::{DebyeFit, DebyeFitInput, DebyeFitResult};
+pub use linear_fit::{LinearFit, LinearFitInput, LinearFitResult};
+pub use plateau::{Plateau, PlateauInput, PlateauResult};
 
-/// Ordinary least-squares fit of `y = slope·x + intercept` over the inclusive
-/// index range `[start, end]`.
-///
-/// Lifted verbatim (slope block) from
-/// the Einstein–Helfand ionic conductivity:
-/// `denom = np·sxx − sx·sx`, `slope = (np·sxy − sx·sy)/denom`, extended with
-/// `intercept = (sy − slope·sx)/np` and the coefficient of determination `r²`.
-///
-/// # Returns
-/// `(slope, intercept, r2)`. Units: `slope` is `[y]/[x]`, `intercept` is `[y]`,
-/// `r2` is dimensionless in `[0, 1]`.
-///
-/// # Errors
-/// Returns `None` when the design is degenerate (`denom ≈ 0`, i.e. all `x` in
-/// the window are equal) — the caller maps this to
-/// [`ComputeError::OutOfRange`](crate::compute::ComputeError::OutOfRange).
-pub(crate) fn ols_slope_intercept_r2(
-    x: &[f64],
-    y: &[f64],
-    start: usize,
-    end: usize,
-) -> Option<(f64, f64, f64)> {
-    let np = (end - start + 1) as f64;
-    let (mut sx, mut sy, mut sxx, mut sxy) = (0.0, 0.0, 0.0, 0.0);
-    for i in start..=end {
-        let xi = x[i];
-        let yi = y[i];
-        sx += xi;
-        sy += yi;
-        sxx += xi * xi;
-        sxy += xi * yi;
-    }
-    let denom = np * sxx - sx * sx;
-    if denom.abs() < f64::EPSILON {
-        return None;
-    }
-    let slope = (np * sxy - sx * sy) / denom;
-    let intercept = (sy - slope * sx) / np;
+use molrs::op::F;
 
-    // r² = 1 − SS_res / SS_tot.
-    let y_mean = sy / np;
-    let mut ss_res = 0.0;
-    let mut ss_tot = 0.0;
-    for i in start..=end {
-        let pred = slope * x[i] + intercept;
-        let resid = y[i] - pred;
-        ss_res += resid * resid;
-        let dev = y[i] - y_mean;
-        ss_tot += dev * dev;
-    }
-    // Perfectly-flat y (ss_tot == 0): the line is exact iff residuals vanish.
-    let r2 = if ss_tot.abs() < f64::EPSILON {
-        if ss_res.abs() < f64::EPSILON {
-            1.0
-        } else {
-            0.0
-        }
-    } else {
-        1.0 - ss_res / ss_tot
-    };
-    Some((slope, intercept, r2))
+use crate::compute::ComputeError;
+
+#[cfg(test)]
+use crate::compute::TimeCorrelation;
+
+/// A fit window `(start, end)` as fractions of a curve's last index, with
+/// `0 ≤ start < end ≤ 1`. It maps to the inclusive index range
+/// `[round(start · (n − 1)), round(end · (n − 1))]`.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct FractionalWindow {
+    start: F,
+    end: F,
 }
 
-/// Cumulative trapezoidal integral of `y` on uniform step `dt`.
-///
-/// Lifted from the Green–Kubo ionic conductivity:
-/// `integral += 0.5·(y[k−1] + y[k])·dt; out[k] = integral`. Element `0` is `0`.
-///
-/// # Returns
-/// A length-`y.len()` array; `out[k] = ∫₀^{k·dt} y(t) dt` (trapezoid rule).
-pub(crate) fn running_trapezoid(y: &[f64], dt: f64) -> Vec<f64> {
-    let n = y.len();
-    let mut out = vec![0.0; n];
-    let mut integral = 0.0;
-    for k in 1..n {
-        integral += 0.5 * (y[k - 1] + y[k]) * dt;
-        out[k] = integral;
+impl FractionalWindow {
+    /// # Errors
+    /// [`ComputeError::OutOfRange`] unless `0 ≤ start < end ≤ 1`.
+    pub(crate) fn new(start: F, end: F) -> Result<Self, ComputeError> {
+        if !(0.0..=1.0).contains(&start) || !(0.0..=1.0).contains(&end) || start >= end {
+            return Err(ComputeError::OutOfRange {
+                field: "window (require 0 <= start < end <= 1)",
+                value: format!("{start}/{end}"),
+            });
+        }
+        Ok(Self { start, end })
     }
-    out
+
+    /// `(start, end)` fractions.
+    pub(crate) fn fractions(&self) -> (F, F) {
+        (self.start, self.end)
+    }
+
+    /// The inclusive index range on a curve of `n` samples.
+    ///
+    /// # Errors
+    /// [`ComputeError::OutOfRange`] when the range holds fewer than two
+    /// samples (a curve too short for the window).
+    pub(crate) fn indices(&self, n: usize) -> Result<(usize, usize), ComputeError> {
+        let last = n.saturating_sub(1) as F;
+        let first = (last * self.start).round() as usize;
+        let final_ = (last * self.end).round() as usize;
+        if n < 2 || final_ <= first {
+            return Err(ComputeError::OutOfRange {
+                field: "window (covers fewer than two samples of the curve)",
+                value: format!(
+                    "{}/{} of {n} samples -> [{first}, {final_}]",
+                    self.start, self.end
+                ),
+            });
+        }
+        Ok((first, final_))
+    }
+}
+
+/// A single-channel correlation `y(t_k)` on the lag grid `t_k = k · dt`.
+#[cfg(test)]
+pub(crate) fn curve(y: &[F], dt: F) -> TimeCorrelation {
+    TimeCorrelation {
+        lag_times: ndarray::Array1::from_iter((0..y.len()).map(|k| k as F * dt)),
+        values: ndarray::Array2::from_shape_vec((y.len(), 1), y.to_vec()).unwrap(),
+    }
 }
 
 #[cfg(test)]
@@ -128,28 +97,27 @@ mod tests {
     use super::*;
 
     #[test]
-    fn ols_recovers_exact_line() {
-        let x: Vec<f64> = (0..10).map(|i| i as f64).collect();
-        let y: Vec<f64> = x.iter().map(|&xi| 3.0 * xi + 2.0).collect();
-        let (slope, intercept, r2) = ols_slope_intercept_r2(&x, &y, 0, 9).unwrap();
-        assert!((slope - 3.0).abs() < 1e-12);
-        assert!((intercept - 2.0).abs() < 1e-12);
-        assert!((r2 - 1.0).abs() < 1e-12);
-    }
-
-    #[test]
-    fn ols_degenerate_returns_none() {
-        let x = vec![5.0, 5.0, 5.0];
-        let y = vec![1.0, 2.0, 3.0];
-        assert!(ols_slope_intercept_r2(&x, &y, 0, 2).is_none());
-    }
-
-    #[test]
-    fn trapezoid_of_constant() {
-        let y = vec![2.0; 5];
-        let out = running_trapezoid(&y, 0.5);
-        for (k, &v) in out.iter().enumerate() {
-            assert!((v - 2.0 * k as f64 * 0.5).abs() < 1e-12);
+    fn windows_validate_and_map_to_indices() {
+        let w = FractionalWindow::new(0.25, 0.75).unwrap();
+        assert_eq!(w.indices(21).unwrap(), (5, 15));
+        assert_eq!(w.fractions(), (0.25, 0.75));
+        for (a, b) in [(0.7, 0.3), (0.5, 0.5), (-0.1, 0.5), (0.0, 1.5)] {
+            assert!(matches!(
+                FractionalWindow::new(a, b),
+                Err(ComputeError::OutOfRange { .. })
+            ));
         }
+    }
+
+    /// A window that would cover one sample is refused, never widened.
+    #[test]
+    fn a_collapsing_window_is_an_error() {
+        let w = FractionalWindow::new(0.4, 0.5).unwrap();
+        // n = 5: [round(1.6), round(2.0)] = [2, 2] — one sample.
+        assert!(matches!(w.indices(5), Err(ComputeError::OutOfRange { .. })));
+        assert!(matches!(
+            FractionalWindow::new(0.0, 1.0).unwrap().indices(1),
+            Err(ComputeError::OutOfRange { .. })
+        ));
     }
 }

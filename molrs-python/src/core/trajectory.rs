@@ -2,13 +2,14 @@
 // Hosts `molrs.core.Trajectory` and `molrs.core.ObservableRecord`.
 #![allow(clippy::too_many_arguments)]
 
+use crate::array::{ArrayArg1, ArrayArgDyn};
 use molrs::core::Column;
 use molrs::core::{
     ObservableKind, ObservableRecord, ObservableValues, Trajectory as CoreTrajectory,
 };
 use molrs::op::{F, I, Idx};
 use ndarray::{ArrayD, IxDyn};
-use numpy::{IntoPyArray, PyArrayDyn, PyReadonlyArray1, PyReadonlyArrayDyn};
+use numpy::{IntoPyArray, PyArrayDyn};
 use pyo3::exceptions::{PyIndexError, PyTypeError};
 use pyo3::prelude::*;
 use pyo3::types::{PyAny, PyList, PySlice};
@@ -75,8 +76,8 @@ impl PyTrajectory {
     #[pyo3(signature = (frames, step=None, time=None))]
     fn new(
         frames: Vec<PyRef<'_, PyFrame>>,
-        step: Option<PyReadonlyArray1<'_, i64>>,
-        time: Option<PyReadonlyArray1<'_, f64>>,
+        step: Option<ArrayArg1<'_, i64>>,
+        time: Option<ArrayArg1<'_, f64>>,
     ) -> PyResult<Self> {
         let core_frames: Vec<_> = frames
             .iter()
@@ -384,33 +385,33 @@ fn set_observable_metadata(
 }
 
 fn py_any_to_column(value: &Bound<'_, PyAny>) -> PyResult<Column> {
-    if let Ok(arr) = value.extract::<PyReadonlyArrayDyn<'_, f32>>() {
+    if let Ok(arr) = value.extract::<ArrayArgDyn<'_, f32>>() {
         return Ok(Column::from_float(
             arr.as_array().mapv(|v| v as F).into_dyn(),
         ));
     }
-    if let Ok(arr) = value.extract::<PyReadonlyArrayDyn<'_, f64>>() {
+    if let Ok(arr) = value.extract::<ArrayArgDyn<'_, f64>>() {
         return Ok(Column::from_float(
             arr.as_array().mapv(|v| v as F).into_dyn(),
         ));
     }
-    if let Ok(arr) = value.extract::<PyReadonlyArrayDyn<'_, i32>>() {
+    if let Ok(arr) = value.extract::<ArrayArgDyn<'_, i32>>() {
         return Ok(Column::from_int(arr.as_array().mapv(|v| v as I).into_dyn()));
     }
-    if let Ok(arr) = value.extract::<PyReadonlyArrayDyn<'_, i64>>() {
+    if let Ok(arr) = value.extract::<ArrayArgDyn<'_, i64>>() {
         return Ok(Column::from_int(arr.as_array().mapv(|v| v as I).into_dyn()));
     }
-    if let Ok(arr) = value.extract::<PyReadonlyArrayDyn<'_, u32>>() {
+    if let Ok(arr) = value.extract::<ArrayArgDyn<'_, u32>>() {
         return Ok(Column::from_uint(
             arr.as_array().mapv(|v| v as Idx).into_dyn(),
         ));
     }
-    if let Ok(arr) = value.extract::<PyReadonlyArrayDyn<'_, u64>>() {
+    if let Ok(arr) = value.extract::<ArrayArgDyn<'_, u64>>() {
         return Ok(Column::from_uint(
             arr.as_array().mapv(|v| v as Idx).into_dyn(),
         ));
     }
-    if let Ok(arr) = value.extract::<PyReadonlyArrayDyn<'_, bool>>() {
+    if let Ok(arr) = value.extract::<ArrayArgDyn<'_, bool>>() {
         return Ok(Column::from_bool(arr.as_array().to_owned().into_dyn()));
     }
     if let Ok(strings) = value.extract::<Vec<String>>() {

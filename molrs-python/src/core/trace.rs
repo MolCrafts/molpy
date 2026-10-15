@@ -1,8 +1,9 @@
 //! Python wrapper for [`molrs::core::Trace`], an ordered path of 3D points.
 
+use crate::array::ArrayArg2;
 use molrs::core::Trace;
 use ndarray::Array2;
-use numpy::{IntoPyArray, PyArray2, PyReadonlyArray2};
+use numpy::{IntoPyArray, PyArray2};
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 
@@ -41,7 +42,7 @@ pub struct PyTrace {
 #[pymethods]
 impl PyTrace {
     #[new]
-    fn new(points: PyReadonlyArray2<'_, f64>) -> PyResult<Self> {
+    fn new(points: ArrayArg2<'_, f64>) -> PyResult<Self> {
         let array = points.as_array();
         if array.ncols() != 3 {
             return Err(PyValueError::new_err(format!(

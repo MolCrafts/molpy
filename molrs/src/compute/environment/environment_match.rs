@@ -1,34 +1,24 @@
-// Union-Find traversal and per-bucket O(b²) compare loops read more
-// clearly with explicit indexing than iterator combinators.
-#![allow(clippy::needless_range_loop, clippy::if_same_then_else)]
-
 //! Environment matching by neighbor-bond fingerprint, with optional
 //! rotation-invariant registration.
 
-use crate::compute::ComputeResult;
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 
 use crate::op::{DEFAULT_GAP_TOL, SuperpositionError, superpose};
-use molrs::core::FrameAccess;
-use molrs::core::Neighbors;
-use molrs::op::F;
+use molrs::core::{Neighbors, QueryMode, Topology};
+use molrs::op::{F, Vec3};
 
-use crate::compute::Compute;
-use crate::compute::ComputeError;
-use crate::compute::positions::get_positions_ref;
-use crate::compute::require_disp;
+use crate::compute::{Compute, ComputeError, Partition, is_half_shell, require_disp};
 
 /// `EnvironmentMatch` analyzer.
-///
-/// See below for the two matching modes and
-/// their complexity (linear fingerprint build; quadratic per-bucket
-/// comparison).
 ///
 /// Environment matching / clustering by neighbor-vector geometry.
 ///
 /// Mirrors `freud.environment.EnvironmentCluster` / `EnvironmentMatch`
 /// ([source](https://github.com/glotzerlab/freud/blob/main/freud/environment/EnvironmentMatch.cc)).
-/// Two modes:
+///
+/// Configuration: the RMSD threshold, the matching mode and the registration
+/// neighbor limit. Data: one snapshot's neighbor table with the `disp`
+/// column. Two modes:
 ///
 /// - **No-rotation** (`with_registration(false)`, the default): two
 ///   particles match when their **sorted bond magnitudes** agree
@@ -40,36 +30,53 @@ use crate::compute::require_disp;
 ///   Horn's quaternion method ([`crate::op::superpose`]), rotation only:
 ///   the bond vectors are already relative to the centre particle, so no
 ///   translation is fitted.
-///   Permutations are enumerated by Heap's algorithm — viable for the
-///   typical neighborhood sizes `n ≤ 12` (12! ≈ 4.8 × 10⁸ but with
-///   early-exit on `rmsd > threshold` the practical count is much lower).
+///   Permutations are enumerated by Heap's algorithm, so registration costs
+///   up to `n!` per comparison; an environment with more neighbors than
+///   [`max_neighbors_for_registration`](Self::with_max_neighbors_for_registration)
+///   (default 8 → 40 320 permutations) is an error rather than a silent
+///   switch to magnitude-only matching.
 ///
 /// After per-pair match decisions, particles are clustered into
-/// environment classes by union-find.
+/// environment classes: the connected components of the "matches" graph
+/// ([`Topology::connected_components`]), labelled in order of their lowest
+/// particle index. The result is a [`Partition`].
+///
+/// A half-shell table credits each bond to both particles (the `j` side
+/// reversed); a cross-query table to the query particle only.
 ///
 /// # Performance
 ///
 /// Per-particle bond fingerprints are built in a **single O(n_pairs)
-/// pass** over the neighbor list — linear in the total neighbor count
-/// (≈ O(N·k) for `N` particles with `k` neighbors each). Particles are
-/// then bucketed by neighbor count, and matching compares every pair
-/// *within* a bucket: O(b²) per bucket of size `b`. That quadratic
-/// comparison is intrinsic to environment matching (freud does the same)
-/// and is the dominant cost at scale. In registration mode each
-/// comparison additionally enumerates up to `n!` permutations, bounded by
-/// [`EnvironmentMatch::with_max_neighbors_for_registration`].
+/// pass** over the neighbor list. Particles are then bucketed by neighbor
+/// count, and matching compares every pair *within* a bucket: O(b²) per
+/// bucket of size `b`. That quadratic comparison is intrinsic to environment
+/// matching (freud does the same) and is the dominant cost at scale.
 #[derive(Debug, Clone, Copy)]
 pub struct EnvironmentMatch {
     rmsd_threshold: F,
     registration: bool,
-    /// Hard cap on `n_neighbors` accepted in registration mode — guards
-    /// against accidentally invoking O(n!) brute force for huge
-    /// neighborhoods. Defaults to 8 (matches freud's safety bound).
     max_neighbors_for_registration: usize,
 }
 
+/// The data an [`EnvironmentMatch`] analyses.
+#[derive(Debug, Clone, Copy)]
+pub struct EnvironmentMatchInput<'a> {
+    /// One snapshot's neighbor table with the `disp` column.
+    pub neighbors: &'a Neighbors,
+}
+
 impl EnvironmentMatch {
+    /// Rotation-invariant registration when not set: off (compare bond
+    /// vectors as they are).
+    pub const DEFAULT_REGISTRATION: bool = false;
+    /// The largest environment registration accepts when not set.
+    pub const DEFAULT_MAX_NEIGHBORS_FOR_REGISTRATION: usize = 8;
+
     /// Environments match when their best-fit RMSD ≤ `rmsd_threshold` (Å).
+    /// Registration off; registration limit 8 neighbors.
+    ///
+    /// # Errors
+    /// [`ComputeError::OutOfRange`] for a negative or NaN threshold.
     pub fn new(rmsd_threshold: F) -> Result<Self, ComputeError> {
         if rmsd_threshold.is_nan() || rmsd_threshold < 0.0 {
             return Err(ComputeError::OutOfRange {
@@ -79,8 +86,8 @@ impl EnvironmentMatch {
         }
         Ok(Self {
             rmsd_threshold,
-            registration: false,
-            max_neighbors_for_registration: 8,
+            registration: Self::DEFAULT_REGISTRATION,
+            max_neighbors_for_registration: Self::DEFAULT_MAX_NEIGHBORS_FOR_REGISTRATION,
         })
     }
 
@@ -91,15 +98,42 @@ impl EnvironmentMatch {
         self
     }
 
-    /// Set the hard cap on neighborhood size in registration mode
-    /// (`n!` cost grows fast — default 8 → 40 320 perms).
-    pub fn with_max_neighbors_for_registration(mut self, n: usize) -> Self {
+    /// The largest environment registration accepts (default
+    /// [`DEFAULT_MAX_NEIGHBORS_FOR_REGISTRATION`](Self::DEFAULT_MAX_NEIGHBORS_FOR_REGISTRATION)). An
+    /// environment with more neighbors makes [`compute`](Compute::compute)
+    /// fail with [`ComputeError::OutOfRange`].
+    ///
+    /// # Errors
+    /// [`ComputeError::OutOfRange`] for 0.
+    pub fn with_max_neighbors_for_registration(mut self, n: usize) -> Result<Self, ComputeError> {
+        if n == 0 {
+            return Err(ComputeError::OutOfRange {
+                field: "EnvironmentMatch::max_neighbors_for_registration",
+                value: "0".into(),
+            });
+        }
         self.max_neighbors_for_registration = n;
-        self
+        Ok(self)
     }
 
+    /// The match threshold, Å.
     pub fn rmsd_threshold(&self) -> F {
         self.rmsd_threshold
+    }
+
+    /// The registration neighbor limit.
+    pub fn max_neighbors_for_registration(&self) -> usize {
+        self.max_neighbors_for_registration
+    }
+
+    /// Whether environments `a` and `b` (same bond count) match.
+    fn matches(&self, a: &[Vec3], b: &[Vec3], mags: (&[F], &[F])) -> Result<bool, ComputeError> {
+        let rmsd = if self.registration {
+            rmsd_with_registration(a, b, self.rmsd_threshold)?
+        } else {
+            rmsd_no_rotation(mags.0, mags.1)
+        };
+        Ok(rmsd <= self.rmsd_threshold)
     }
 }
 
@@ -107,68 +141,75 @@ impl EnvironmentMatch {
 /// O(n_pairs) pass over the neighbor list. In self-query mode each pair
 /// contributes to both endpoints (the `j`-side bond reversed); in
 /// cross-query only the query-side (`i`) endpoint. Within each
-/// particle's list bonds land in ascending pair-index order — the same
-/// order a per-particle scan would produce — so downstream fingerprints,
-/// magnitude sorting, and registration RMSD are unchanged. Pair indices
-/// outside `0..n` are ignored.
+/// particle's list bonds land in ascending pair-index order.
 ///
-/// A table without the `disp` column carries no bond vectors at all, so it is
-/// rejected as [`ComputeError::BadShape`] — the caller's neighbor list is an
-/// input, and a bad input is an error rather than a panic.
-fn build_all_bond_vectors(n: usize, nlist: &Neighbors) -> Result<Vec<Vec<[F; 3]>>, ComputeError> {
-    let mut bonds: Vec<Vec<[F; 3]>> = vec![Vec::new(); n];
-    let i_idx = nlist.query_point_indices();
-    let j_idx = nlist.point_indices();
+/// # Errors
+/// [`ComputeError::BadShape`] for a table without `disp`;
+/// [`ComputeError::NonFinite`] for a non-finite bond;
+/// [`ComputeError::OutOfRange`] for a pair index past the point counts.
+fn build_all_bond_vectors(nlist: &Neighbors) -> Result<Vec<Vec<Vec3>>, ComputeError> {
     let disp = require_disp(nlist)?;
-    let symmetric = matches!(nlist.mode(), molrs::core::QueryMode::SelfQuery { .. });
-    for k in 0..nlist.n_pairs() {
-        let i = i_idx[k] as usize;
-        let v = [disp[[k, 0]], disp[[k, 1]], disp[[k, 2]]];
-        if i < n {
-            bonds[i].push(v);
+    let symmetric = is_half_shell(nlist.mode());
+    let n = match nlist.mode() {
+        QueryMode::SelfQuery { n_points } => n_points,
+        QueryMode::CrossQuery { n_query_points, .. } => n_query_points,
+    };
+    let mut bonds: Vec<Vec<Vec3>> = vec![Vec::new(); n];
+    for (k, ((&i, &j), row)) in nlist
+        .query_point_indices()
+        .iter()
+        .zip(nlist.point_indices())
+        .zip(disp.outer_iter())
+        .enumerate()
+    {
+        let v = [row[0], row[1], row[2]];
+        if let Some(c) = v.iter().position(|x| !x.is_finite()) {
+            return Err(ComputeError::NonFinite {
+                where_: "pair disp",
+                index: 3 * k + c,
+            });
         }
+        let (i, j) = (i as usize, j as usize);
+        if i >= n || (symmetric && j >= n) {
+            return Err(ComputeError::OutOfRange {
+                field: "pair index",
+                value: format!("({i}, {j}) of pair {k} past the table's {n} points"),
+            });
+        }
+        bonds[i].push(v);
+        // A self-query has no self-pairs (i < j), so the reversed bond is
+        // never the same row twice.
         if symmetric {
-            let j = j_idx[k] as usize;
-            // Skip self-pairs so the reversed bond is not double-counted.
-            if j != i && j < n {
-                bonds[j].push([-v[0], -v[1], -v[2]]);
-            }
+            bonds[j].push([-v[0], -v[1], -v[2]]);
         }
     }
     Ok(bonds)
 }
 
 /// Magnitude-only fingerprint derived from bond vectors (for the
-/// no-rotation mode).
-fn magnitudes_sorted(bonds: &[[F; 3]]) -> Vec<F> {
+/// no-rotation mode). Bonds are finite, so the order is total.
+fn magnitudes_sorted(bonds: &[Vec3]) -> Vec<F> {
     let mut mags: Vec<F> = bonds
         .iter()
         .map(|b| (b[0] * b[0] + b[1] * b[1] + b[2] * b[2]).sqrt())
         .collect();
-    mags.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    mags.sort_by(F::total_cmp);
     mags
 }
 
-/// RMSD between sorted-magnitude fingerprints (no rotation).
+/// RMSD between sorted-magnitude fingerprints of equal length (no rotation).
 fn rmsd_no_rotation(a: &[F], b: &[F]) -> F {
-    if a.len() != b.len() {
-        return F::INFINITY;
-    }
     if a.is_empty() {
         return 0.0;
     }
-    let mut s: F = 0.0;
-    for k in 0..a.len() {
-        let d = a[k] - b[k];
-        s += d * d;
-    }
+    let s: F = a.iter().zip(b).map(|(x, y)| (x - y) * (x - y)).sum();
     (s / a.len() as F).sqrt()
 }
 
 /// Optimal-rotation RMSD between two bond-vector sets `a[i] ↔ b[i]`,
 /// `√(min_R Σ |R aᵢ − bᵢ|² / n)` over proper rotations `R` only (no
 /// translation: the vectors are relative to the centre particle, as in freud's
-/// `MatchEnv` registration). Assumes `a.len() == b.len()`.
+/// `MatchEnv` registration).
 ///
 /// [`superpose`] centres both sets, which would add a translation degree of
 /// freedom. It is fed the point-reflection-symmetric sets `{aᵢ} ∪ {−aᵢ}` and
@@ -176,34 +217,43 @@ fn rmsd_no_rotation(a: &[F], b: &[F]) -> F {
 /// cross-covariance `S = Σ a bᵀ` merely doubles (same optimal `R`), and the
 /// weighted RMSD² over the `2n` points, `2 Σ |R aᵢ − bᵢ|² / 2n`, equals the
 /// rotation-only RMSD² over the original `n`.
-fn rmsd_horn(a: &[[F; 3]], b: &[[F; 3]]) -> F {
-    let reference: Vec<[F; 3]> = a
+///
+/// # Errors
+/// [`ComputeError::OutOfRange`] carrying any superposition failure other than
+/// "no points" (two empty environments coincide); the bonds are finite and
+/// the weights unit, so none is expected.
+fn rmsd_horn(a: &[Vec3], b: &[Vec3]) -> Result<F, ComputeError> {
+    let reference: Vec<Vec3> = a
         .iter()
         .copied()
         .chain(a.iter().map(|v| [-v[0], -v[1], -v[2]]))
         .collect();
-    let target: Vec<[F; 3]> = b
+    let target: Vec<Vec3> = b
         .iter()
         .copied()
         .chain(b.iter().map(|v| [-v[0], -v[1], -v[2]]))
         .collect();
     let weights = vec![1.0; reference.len()];
     match superpose(&reference, &target, &weights, DEFAULT_GAP_TOL) {
-        Ok(fit) => fit.rmsd,
-        // No bonds: two empty environments coincide.
-        Err(SuperpositionError::NoPoints) => 0.0,
-        // A non-finite bond vector never matches.
-        Err(_) => F::INFINITY,
+        Ok(fit) => Ok(fit.rmsd),
+        Err(SuperpositionError::NoPoints) => Ok(0.0),
+        Err(e) => Err(ComputeError::OutOfRange {
+            field: "EnvironmentMatch registration",
+            value: e.to_string(),
+        }),
     }
 }
 
 /// Heap's algorithm: enumerate every permutation of `b`, callback per perm.
-/// Early-terminates when `cb` returns `false`.
-fn for_each_permutation(b: &mut [[F; 3]], cb: &mut impl FnMut(&[[F; 3]]) -> bool) -> bool {
+/// Stops when `cb` returns `Ok(false)` or an error.
+fn for_each_permutation(
+    b: &mut [Vec3],
+    cb: &mut impl FnMut(&[Vec3]) -> Result<bool, ComputeError>,
+) -> Result<(), ComputeError> {
     let n = b.len();
     let mut c = vec![0usize; n];
-    if !cb(b) {
-        return false;
+    if !cb(b)? {
+        return Ok(());
     }
     let mut i = 0;
     while i < n {
@@ -213,8 +263,8 @@ fn for_each_permutation(b: &mut [[F; 3]], cb: &mut impl FnMut(&[[F; 3]]) -> bool
             } else {
                 b.swap(c[i], i);
             }
-            if !cb(b) {
-                return false;
+            if !cb(b)? {
+                return Ok(());
             }
             c[i] += 1;
             i = 0;
@@ -223,127 +273,84 @@ fn for_each_permutation(b: &mut [[F; 3]], cb: &mut impl FnMut(&[[F; 3]]) -> bool
             i += 1;
         }
     }
-    true
+    Ok(())
 }
 
-/// Best RMSD over all permutations of `b`, using Horn's optimal rotation
-/// per permutation. Early-exits when a perm meets `threshold`.
-fn rmsd_with_registration(a: &[[F; 3]], b: &[[F; 3]], threshold: F) -> F {
-    if a.len() != b.len() {
-        return F::INFINITY;
-    }
+/// Best RMSD over all permutations of `b` (same length as `a`), using Horn's
+/// optimal rotation per permutation. Early-exits when a perm meets
+/// `threshold`.
+fn rmsd_with_registration(a: &[Vec3], b: &[Vec3], threshold: F) -> Result<F, ComputeError> {
     if a.is_empty() {
-        return 0.0;
+        return Ok(0.0);
     }
     let mut b_work = b.to_vec();
     let mut best = F::INFINITY;
     for_each_permutation(&mut b_work, &mut |perm| {
-        let r = rmsd_horn(a, perm);
-        if r < best {
-            best = r;
-        }
+        best = best.min(rmsd_horn(a, perm)?);
         // Continue while we haven't yet matched.
-        best > threshold
-    });
-    best
+        Ok(best > threshold)
+    })?;
+    Ok(best)
 }
 
-/// Single-pass disjoint-set union for environment clustering.
-struct Dsu {
-    parent: Vec<u32>,
-}
+impl Compute for EnvironmentMatch {
+    type Input<'a> = EnvironmentMatchInput<'a>;
+    type Output = EnvironmentMatchResult;
 
-impl Dsu {
-    fn new(n: usize) -> Self {
-        Self {
-            parent: (0..n as u32).collect(),
-        }
-    }
-    fn find(&mut self, mut x: u32) -> u32 {
-        while self.parent[x as usize] != x {
-            let next = self.parent[x as usize];
-            self.parent[x as usize] = self.parent[next as usize];
-            x = next;
-        }
-        x
-    }
-    fn union(&mut self, a: u32, b: u32) {
-        let ra = self.find(a);
-        let rb = self.find(b);
-        if ra != rb {
-            self.parent[ra as usize] = rb;
-        }
-    }
-}
-
-impl EnvironmentMatch {
-    fn one_frame<FA: FrameAccess>(
+    /// # Errors
+    /// [`ComputeError::BadShape`] for a table without `disp`;
+    /// [`ComputeError::NonFinite`] for a non-finite bond;
+    /// [`ComputeError::OutOfRange`] in registration mode for an environment
+    /// with more neighbors than the registration limit.
+    fn compute(
         &self,
-        frame: &FA,
-        nlist: &Neighbors,
+        input: EnvironmentMatchInput<'_>,
     ) -> Result<EnvironmentMatchResult, ComputeError> {
-        let (xs_p, _, _) = get_positions_ref(frame)?;
-        let n = xs_p.slice().len();
+        let bonds = build_all_bond_vectors(input.neighbors)?;
+        let n = bonds.len();
+        let fingerprints: Vec<Vec<F>> = bonds.iter().map(|b| magnitudes_sorted(b)).collect();
 
-        let bonds = build_all_bond_vectors(n, nlist)?;
-
-        // Group particles by neighbor count first — only same-length
-        // bond sets can match.
-        let mut by_len: HashMap<usize, Vec<usize>> = HashMap::new();
+        // Only same-length bond sets can match: bucket by neighbor count.
+        let mut by_len: BTreeMap<usize, Vec<usize>> = BTreeMap::new();
         for (i, b) in bonds.iter().enumerate() {
             by_len.entry(b.len()).or_default().push(i);
         }
+        if self.registration
+            && let Some((&too_many, bucket)) = by_len
+                .range(self.max_neighbors_for_registration + 1..)
+                .next()
+        {
+            return Err(ComputeError::OutOfRange {
+                field: "EnvironmentMatch::max_neighbors_for_registration",
+                value: format!(
+                    "particle {} has {too_many} neighbors, above the registration limit {} \
+                     (raise it with with_max_neighbors_for_registration, or match without \
+                     registration)",
+                    bucket[0], self.max_neighbors_for_registration
+                ),
+            });
+        }
 
-        let mut dsu = Dsu::new(n);
+        let mut edges: Vec<[usize; 2]> = Vec::new();
         for bucket in by_len.values() {
-            if bucket.is_empty() {
-                continue;
-            }
-            let bucket_len = bonds[bucket[0]].len();
-            // Decide mode for this bucket: registration is off iff
-            // (a) caller disabled it, or
-            // (b) bucket_len exceeds the safety cap.
-            let use_registration =
-                self.registration && bucket_len <= self.max_neighbors_for_registration;
-            // Pre-compute sorted magnitudes for non-registration path.
-            let mags: Vec<Vec<F>> = if !use_registration {
-                bucket
-                    .iter()
-                    .map(|&i| magnitudes_sorted(&bonds[i]))
-                    .collect()
-            } else {
-                Vec::new()
-            };
-            for ai in 0..bucket.len() {
-                let a = bucket[ai];
-                for bi in (ai + 1)..bucket.len() {
-                    let b = bucket[bi];
-                    let r = if use_registration {
-                        rmsd_with_registration(&bonds[a], &bonds[b], self.rmsd_threshold)
-                    } else {
-                        rmsd_no_rotation(&mags[ai], &mags[bi])
-                    };
-                    if r <= self.rmsd_threshold {
-                        dsu.union(a as u32, b as u32);
+            for (ai, &a) in bucket.iter().enumerate() {
+                for &b in &bucket[ai + 1..] {
+                    let mags = (fingerprints[a].as_slice(), fingerprints[b].as_slice());
+                    if self.matches(&bonds[a], &bonds[b], mags)? {
+                        edges.push([a, b]);
                     }
                 }
             }
         }
-
-        // Compact root labels into 0..n_clusters.
-        let mut label_for: HashMap<u32, u32> = HashMap::new();
-        let mut cluster_idx = vec![0_u32; n];
-        for i in 0..n {
-            let r = dsu.find(i as u32);
-            let next = label_for.len() as u32;
-            let lbl = *label_for.entry(r).or_insert(next);
-            cluster_idx[i] = lbl;
-        }
-        let n_clusters = label_for.len();
-
-        // Expose magnitude fingerprints for inspection (same shape as
-        // before; bond-vector fingerprints are internal-only).
-        let fingerprints: Vec<Vec<F>> = bonds.iter().map(|b| magnitudes_sorted(b)).collect();
+        let mut matches = Topology::with_atoms(n);
+        matches.add_bonds(&edges);
+        // Components are labelled 0, 1, … in order of their lowest particle.
+        let cluster_idx: Vec<u32> = matches
+            .connected_components()
+            .into_iter()
+            .map(|label| label as u32)
+            .collect();
+        let n_clusters = cluster_idx.iter().max().map_or(0, |&m| m as usize + 1);
 
         Ok(EnvironmentMatchResult {
             cluster_idx,
@@ -353,74 +360,76 @@ impl EnvironmentMatch {
     }
 }
 
-impl Compute for EnvironmentMatch {
-    type Args<'a> = &'a [Neighbors];
-    type Output = Vec<EnvironmentMatchResult>;
-
-    fn compute<'a, FA: FrameAccess + Sync + 'a>(
-        &self,
-        frames: &[&'a FA],
-        nlists: &'a [Neighbors],
-    ) -> Result<Vec<EnvironmentMatchResult>, ComputeError> {
-        if frames.is_empty() {
-            return Err(ComputeError::EmptyInput);
-        }
-        if frames.len() != nlists.len() {
-            return Err(ComputeError::DimensionMismatch {
-                expected: frames.len(),
-                got: nlists.len(),
-                what: "neighbor-list count",
-            });
-        }
-        let mut out = Vec::with_capacity(frames.len());
-        for (f, nl) in frames.iter().zip(nlists.iter()) {
-            out.push(self.one_frame(*f, nl)?);
-        }
-        Ok(out)
-    }
-}
-
-/// Per-frame environment-matching result.
+/// One snapshot's environment classes; a [`Partition`] of the particles.
 #[derive(Debug, Clone, Default)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct EnvironmentMatchResult {
-    /// Particle → environment-class label (`0..n_clusters`).
+    /// Particle → environment-class label (`0..n_clusters`), classes numbered
+    /// in order of their lowest particle.
     pub cluster_idx: Vec<u32>,
     /// Number of distinct environment classes.
     pub n_clusters: usize,
-    /// Per-particle sorted-bond fingerprint (the raw feature).
+    /// Per-particle sorted bond magnitudes, Å (the raw feature).
     pub fingerprints: Vec<Vec<F>>,
 }
 
-impl ComputeResult for EnvironmentMatchResult {}
+impl Partition for EnvironmentMatchResult {
+    fn n_items(&self) -> usize {
+        self.cluster_idx.len()
+    }
+
+    fn group_of(&self, item: usize) -> Option<u64> {
+        Some(u64::from(self.cluster_idx[item]))
+    }
+}
+
+crate::compute::spec::compute_spec! {
+    EnvironmentMatch as "EnvironmentMatch";
+    params |s| {
+        rmsd_threshold: Float;
+        registration: Bool = EnvironmentMatch::DEFAULT_REGISTRATION => s.registration;
+        max_neighbors_for_registration: Int
+            = EnvironmentMatch::DEFAULT_MAX_NEIGHBORS_FOR_REGISTRATION
+            => s.max_neighbors_for_registration;
+    }
+    inputs {
+        neighbors: Neighbors;
+    }
+}
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::compute::fixtures::nlist_from_frame;
-    use molrs::core::Block;
-    use molrs::core::Frame;
+    use crate::compute::fixtures::neighbors_of;
     use molrs::core::SimBox;
-    use ndarray::{Array1 as A1, array};
+    use ndarray::array;
 
-    fn frame_with(positions: &[[F; 3]], box_len: F) -> Frame {
-        let x = A1::from_iter(positions.iter().map(|p| p[0]));
-        let y = A1::from_iter(positions.iter().map(|p| p[1]));
-        let z = A1::from_iter(positions.iter().map(|p| p[2]));
-        let mut block = Block::new();
-        block.insert("x", x.into_dyn()).unwrap();
-        block.insert("y", y.into_dyn()).unwrap();
-        block.insert("z", z.into_dyn()).unwrap();
-        let mut frame = Frame::new();
-        frame.insert("atoms", block);
-        frame.simbox =
-            Some(SimBox::cube(box_len, array![0.0 as F, 0.0 as F, 0.0 as F], [false; 3]).unwrap());
-        frame
+    /// A snapshot: positions in an open cube of side `box_len` at the origin.
+    struct Snapshot {
+        positions: Vec<[F; 3]>,
+        simbox: SimBox,
+    }
+
+    fn frame_with(positions: &[[F; 3]], box_len: F) -> Snapshot {
+        Snapshot {
+            positions: positions.to_vec(),
+            simbox: SimBox::cube(box_len, array![0.0 as F, 0.0 as F, 0.0 as F], [false; 3])
+                .unwrap(),
+        }
+    }
+
+    fn nlist_from_frame(frame: &Snapshot, cutoff: F) -> Neighbors {
+        neighbors_of(&frame.positions, &frame.simbox, cutoff)
+    }
+
+    fn classify(m: EnvironmentMatch, nl: &Neighbors) -> EnvironmentMatchResult {
+        m.compute(EnvironmentMatchInput { neighbors: nl }).unwrap()
     }
 
     /// Two identical octahedra at different centres should be classed
     /// together; their satellite atoms (each with a single bond) form a
     /// second class.
-    fn paired_octahedra() -> Frame {
+    fn paired_octahedra() -> Snapshot {
         let mut p: Vec<[F; 3]> = Vec::new();
         for &(cx, cy, cz) in &[(5.0_f64, 5.0, 5.0), (10.0_f64, 5.0, 5.0)] {
             p.push([cx, cy, cz]); // centre (6 bonds of length 1)
@@ -442,10 +451,7 @@ mod tests {
     fn two_octahedra_centres_share_a_class() {
         let frame = paired_octahedra();
         let nl = nlist_from_frame(&frame, 1.2);
-        let r = &EnvironmentMatch::new(1e-9)
-            .unwrap()
-            .compute(&[&frame], &[nl])
-            .unwrap()[0];
+        let r = &classify(EnvironmentMatch::new(1e-9).unwrap(), &nl);
         // Centres are particles 0 and 7. Their fingerprints are both
         // [1,1,1,1,1,1] → same class.
         assert_eq!(r.cluster_idx[0], r.cluster_idx[7]);
@@ -467,10 +473,7 @@ mod tests {
             10.0,
         );
         let nl = nlist_from_frame(&frame, 1.5);
-        let r = &EnvironmentMatch::new(1e-9)
-            .unwrap()
-            .compute(&[&frame], &[nl])
-            .unwrap()[0];
+        let r = &classify(EnvironmentMatch::new(1e-9).unwrap(), &nl);
         // 0 and 2 each have one bond of length 1 → same class.
         assert_eq!(r.cluster_idx[0], r.cluster_idx[2]);
         // 1 has two bonds → different class.
@@ -496,16 +499,10 @@ mod tests {
         }
         let frame = frame_with(&p, 20.0);
         let nl = nlist_from_frame(&frame, 1.5);
-        let merged = &EnvironmentMatch::new(0.05)
-            .unwrap()
-            .compute(&[&frame], std::slice::from_ref(&nl))
-            .unwrap()[0];
+        let merged = &classify(EnvironmentMatch::new(0.05).unwrap(), &nl);
         assert_eq!(merged.cluster_idx[0], merged.cluster_idx[5]);
 
-        let split = &EnvironmentMatch::new(0.001)
-            .unwrap()
-            .compute(&[&frame], &[nl])
-            .unwrap()[0];
+        let split = &classify(EnvironmentMatch::new(0.001).unwrap(), &nl);
         assert_ne!(split.cluster_idx[0], split.cluster_idx[5]);
     }
 
@@ -527,10 +524,7 @@ mod tests {
             10.0,
         );
         let nl = nlist_from_frame(&frame, 1.6);
-        let r = &EnvironmentMatch::new(1e-9)
-            .unwrap()
-            .compute(&[&frame], &[nl])
-            .unwrap()[0];
+        let r = &classify(EnvironmentMatch::new(1e-9).unwrap(), &nl);
 
         let approx = |a: &[F], b: &[F]| {
             a.len() == b.len() && a.iter().zip(b).all(|(x, y)| (x - y).abs() < 1e-9)
@@ -557,14 +551,69 @@ mod tests {
         assert!(EnvironmentMatch::new(-1.0).is_err());
     }
 
+    /// The result is a partition: one group key per particle.
     #[test]
-    fn empty_frames_error() {
-        let frames: Vec<&Frame> = Vec::new();
+    fn result_is_a_partition() {
+        let frame = paired_octahedra();
+        let nl = nlist_from_frame(&frame, 1.2);
+        let r = classify(EnvironmentMatch::new(1e-9).unwrap(), &nl);
+        let p: &dyn Partition = &r;
+        assert_eq!(p.n_items(), 14);
+        assert_eq!(p.group_of(0), p.group_of(7));
+        assert_ne!(p.group_of(0), p.group_of(1));
+    }
+
+    /// Registration above its neighbor limit used to fall back silently to
+    /// magnitude-only matching; it is an error now.
+    #[test]
+    fn registration_above_the_limit_is_out_of_range() {
+        let frame = paired_octahedra();
+        let nl = nlist_from_frame(&frame, 1.2);
+        let err = EnvironmentMatch::new(1e-6)
+            .unwrap()
+            .with_registration(true)
+            .with_max_neighbors_for_registration(5)
+            .unwrap()
+            .compute(EnvironmentMatchInput { neighbors: &nl })
+            .unwrap_err();
+        assert!(matches!(err, ComputeError::OutOfRange { .. }));
+        // Without registration the limit does not apply.
+        let r = classify(
+            EnvironmentMatch::new(1e-6)
+                .unwrap()
+                .with_max_neighbors_for_registration(5)
+                .unwrap(),
+            &nl,
+        );
+        assert_eq!(r.n_clusters, 2);
+        assert!(matches!(
+            EnvironmentMatch::new(1e-6)
+                .unwrap()
+                .with_max_neighbors_for_registration(0),
+            Err(ComputeError::OutOfRange { .. })
+        ));
+    }
+
+    /// A non-finite bond used to sort with a panic or match nothing; it is
+    /// an error now.
+    #[test]
+    fn non_finite_bond_is_non_finite() {
+        use molrs::core::{NeighborColumns, NeighborPair};
+        let nl = Neighbors::from_pairs(
+            [NeighborPair {
+                i: 0,
+                j: 1,
+                dist_sq: 1.0,
+                disp: [F::NAN, 0.0, 0.0],
+            }],
+            NeighborColumns::FULL,
+            QueryMode::SelfQuery { n_points: 2 },
+        );
         let err = EnvironmentMatch::new(0.1)
             .unwrap()
-            .compute(&frames, &Vec::<Neighbors>::new())
+            .compute(EnvironmentMatchInput { neighbors: &nl })
             .unwrap_err();
-        assert!(matches!(err, ComputeError::EmptyInput));
+        assert!(matches!(err, ComputeError::NonFinite { .. }));
     }
 
     /// Two octahedra at different orientations: the magnitude-only mode
@@ -601,11 +650,10 @@ mod tests {
         }
         let frame = frame_with(&p, 30.0);
         let nl = nlist_from_frame(&frame, 1.2);
-        let r = &EnvironmentMatch::new(1e-6)
-            .unwrap()
-            .with_registration(true)
-            .compute(&[&frame], &[nl])
-            .unwrap()[0];
+        let r = &classify(
+            EnvironmentMatch::new(1e-6).unwrap().with_registration(true),
+            &nl,
+        );
         // The two centres (indices 0 and 7) must share a class under
         // registration mode.
         assert_eq!(r.cluster_idx[0], r.cluster_idx[7]);

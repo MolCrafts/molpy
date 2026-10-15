@@ -59,6 +59,32 @@ __MOLRS_ELEMENT_VARIANTS__    }
         f64_values: Vec<f64>,
     }
 
+    /// A line fitted through one channel of a `TimeCorrelation` (molrs
+    /// `compute::LinearFitResult`); `fit_start..=fit_end` are lag indices.
+    struct LinearFitResult {
+        slope: f64,
+        intercept: f64,
+        r2: f64,
+        fit_start: u64,
+        fit_end: u64,
+    }
+
+    /// g(r) over one or more frames (molrs `compute::RdfResult`): bin edges and
+    /// centers in Å, the normalized curve and the raw counts.
+    struct RdfResult {
+        bin_edges: Vec<f64>,
+        bin_centers: Vec<f64>,
+        rdf: Vec<f64>,
+        n_r: Vec<f64>,
+        n_points: u64,
+        n_query_points: u64,
+        self_query: bool,
+        volume: f64,
+        r_min: f64,
+        n_frames: u64,
+        dimensionality: u8,
+    }
+
     extern "Rust" {
         // ── Exact consumer contract ───────────────────────────────
         // Capabilities let consumers fail loudly when a required surface was
@@ -252,104 +278,102 @@ __MOLRS_ELEMENT_VARIANTS__    }
         fn mrec_writer_close(writer: Box<MrecWriterRef>) -> Result<()>;
 
         // ── Trajectory analysis (mirrors molrs::compute) ─────────
-        // Two shapes, named as molrs names them. One-shot analyses (`Msd`,
-        // `EinsteinDiffusion`, `Vacf`, `Rdf`): construct with the config
-        // (`*_new`), then `compute(...)` over the whole raw trajectory. Their
-        // streaming counterparts (`RdfAccumulator`, `MsdAccumulator`,
-        // `VacfAccumulator`) further down take one frame per call. Each
-        // rebuilds transient molrs frames from the flat buffers and delegates
-        // the math to molrs; no analysis math lives in C++.
+        // Each type is the molrs analysis of the same name. Its constructor
+        // (`*_new`, plus `set_*` for an optional choice) takes configuration
+        // only; data goes to `compute` (a whole trajectory) or to `push` on
+        // the streaming accumulator that `accumulator()` hands out (one frame
+        // per call, bounded memory, numerically equal to `compute`). Every
+        // fallible call returns `Result`: a bad argument, a ragged buffer or a
+        // molrs compute error throws `rust::Error` — never an empty curve, a
+        // NaN or `false`.
+        //
+        // Buffers: a trajectory is a row-major [n_frames, D * n] buffer, each
+        // frame blocked by component (positions x[0..n) y[..) z[..), D = 3;
+        // velocities any n_dof values, D = 1); a box is a 9-value row-major
+        // cell matrix H. An optional box argument is empty for "no box".
 
-        // Mean squared displacement (MsdMode::Direct): MSD(t) = <|r(t) - r(0)|^2>
-        // over a row-major [n_frames, n_dof] position buffer (per frame blocked
-        // x|y|z, n_dof = 3*n_atoms), first frame = reference (LAMMPS `compute
-        // msd`). `compute` returns the mean-MSD curve (index 0 = 0); empty on < 2
-        // frames / bad shape.
+        // A correlation curve (molrs TimeCorrelation): `lag_times` in the unit
+        // of dt, one curve per channel (`channel` throws for a missing one).
+        type TimeCorrelation;
+        fn lag_times(self: &TimeCorrelation) -> Vec<f64>;
+        fn n_lags(self: &TimeCorrelation) -> u64;
+        fn n_channels(self: &TimeCorrelation) -> u64;
+        fn channel(self: &TimeCorrelation, channel: u64) -> Result<Vec<f64>>;
+
+        // The streaming accumulator of Msd / Vacf (molrs CorrelatorAccumulator).
+        // `push` takes one frame, the sample interval dt (the same every frame)
+        // and, for Msd, the frame's H to reject a wrapped trajectory (empty to
+        // skip); `finish` reads the curve so far without consuming the state.
+        type CorrelatorAccumulator;
+        fn push(self: &mut CorrelatorAccumulator, frame: &[f64], dt: f64, h: &[f64]) -> Result<()>;
+        fn n_frames(self: &CorrelatorAccumulator) -> u64;
+        fn finish(self: &CorrelatorAccumulator) -> Result<Box<TimeCorrelation>>;
+
+        // Mean squared displacement over lags 0..=max_lag frames. Origins
+        // default to "all" (windowed estimator); "first" measures from frame 0.
+        // `compute` takes unwrapped positions [n_frames, 3 * n_atoms], dt and
+        // one H per frame (or empty). The Einstein D is a LinearFit of the
+        // curve: D = slope / (2 * dims).
         type Msd;
-        fn msd_new() -> Box<Msd>;
-        fn compute(self: &Msd, positions: &[f64], n_frames: i64, n_dof: i64) -> Vec<f64>;
-
-        // Einstein self-diffusion coefficient D (molrs
-        // EinsteinDiffusionResult::diffusion_coefficient) from the windowed-MSD
-        // slope over [fit_lo, fit_hi] (fractions of the last lag). `dt` = time
-        // between frames; `dims` = spatial dimensionality. `compute` takes the
-        // same [n_frames, n_dof] position buffer as Msd and returns D; NaN on
-        // < 2 frames / bad shape / fit error.
-        type EinsteinDiffusion;
-        fn einstein_diffusion_new(
+        fn msd_new(max_lag: u64) -> Box<Msd>;
+        fn set_origins(self: &mut Msd, origins: &str) -> Result<()>;
+        // Every `stride`-th frame is a time origin (origins "all"); 0 is an error.
+        fn set_stride(self: &mut Msd, stride: u64) -> Result<()>;
+        fn compute(
+            self: &Msd,
+            positions: &[f64],
+            n_frames: u64,
             dt: f64,
-            dims: i32,
-            fit_lo: f64,
-            fit_hi: f64,
-        ) -> Box<EinsteinDiffusion>;
-        fn compute(self: &EinsteinDiffusion, positions: &[f64], n_frames: i64, n_dof: i64) -> f64;
+            boxes: &[f64],
+        ) -> Result<Box<TimeCorrelation>>;
+        fn accumulator(self: &Msd) -> Box<CorrelatorAccumulator>;
 
-        // Velocity autocorrelation function (VDOS / Green-Kubo input). `dt` = time
-        // between frames; `resolution` caps the max lag. `compute` takes a
-        // row-major [n_frames, n_dof] velocity buffer (n_dof = 3*n_atoms) and
-        // returns the DOF-averaged VACF curve (index 0 = zero lag); empty on < 2
-        // frames / bad args. molrs owns the FFT-ACF math (compute::Vacf).
+        // Velocity autocorrelation over lags 0..=max_lag frames, averaged over
+        // degrees of freedom. `compute` takes velocities [n_frames, n_dof] and dt.
         type Vacf;
-        fn vacf_new(dt: f64, resolution: i64) -> Box<Vacf>;
-        fn compute(self: &Vacf, velocities: &[f64], n_frames: i64, n_dof: i64) -> Vec<f64>;
+        fn vacf_new(max_lag: u64) -> Box<Vacf>;
+        // "unbiased" (default), "biased" or "none"; every `stride`-th origin;
+        // "subtract" (default) or "keep" each component's time mean.
+        fn set_normalization(self: &mut Vacf, normalization: &str) -> Result<()>;
+        fn set_stride(self: &mut Vacf, stride: u64) -> Result<()>;
+        fn set_mean(self: &mut Vacf, mean: &str) -> Result<()>;
+        fn compute(
+            self: &Vacf,
+            velocities: &[f64],
+            n_frames: u64,
+            dt: f64,
+        ) -> Result<Box<TimeCorrelation>>;
+        fn accumulator(self: &Vacf) -> Box<CorrelatorAccumulator>;
 
-        // Radial distribution function g(r). Config: n_bins, r_max, r_min (Å).
-        // `compute` takes raw [n_frames, 3*n_atoms] positions (blocked x|y|z per
-        // frame) + [n_frames, 9] per-frame cell matrices H (supports NPT),
-        // builds a self-neighbor list per frame (cutoff = r_max), and returns
-        // the g(r) curve (one value per bin; the caller derives bin-center radii
-        // r_min + (i+0.5)*bin_width). Empty on bad args/shape, a singular H,
-        // or a compute error. All math is molrs (compute::Rdf).
+        // Ordinary-least-squares line through one channel of a curve, over
+        // the window (start, end) given as fractions of the last lag.
+        type LinearFit;
+        fn linear_fit_new(start: f64, end: f64) -> Result<Box<LinearFit>>;
+        fn compute(
+            self: &LinearFit,
+            correlation: &TimeCorrelation,
+            channel: u64,
+        ) -> Result<LinearFitResult>;
+
+        // Radial distribution function g(r) over [r_min, r_max) Å in n_bins
+        // bins (note r_max before r_min). Each frame's pairs come from a
+        // periodic cell-list self-query with cutoff r_max. `compute` takes
+        // positions [n_frames, 3 * n_atoms] and boxes [n_frames, 9] (NPT
+        // supported); the accumulator takes one frame and its H per `push`.
         type Rdf;
-        fn rdf_new(n_bins: i64, r_max: f64, r_min: f64) -> Box<Rdf>;
+        fn rdf_new(n_bins: u64, r_max: f64, r_min: f64) -> Result<Box<Rdf>>;
         fn compute(
             self: &Rdf,
             positions: &[f64],
             boxes: &[f64],
-            n_frames: i64,
-            n_atoms: i64,
-        ) -> Vec<f64>;
+            n_frames: u64,
+        ) -> Result<RdfResult>;
+        fn accumulator(self: &Rdf) -> Box<RdfAccumulator>;
 
-        // ── Streaming accumulators (bounded memory) ──────────────
-        // Frame-by-frame counterparts of the analyses above: construct with
-        // the same config, feed ONE frame per `accumulate` call, read the
-        // result once at the end. State is O(bins / window·n_dof /
-        // resolution·n_dof) — never O(trajectory) — so arbitrarily long MD
-        // runs stream through without growing memory. All math is molrs
-        // (compute::{RdfAccumulator, MsdAccumulator, VacfAccumulator});
-        // `accumulate` returns false when a frame is rejected (shape/DOF
-        // mismatch, bad box), leaving state unchanged.
-
-        // Streaming g(r): one flat blocked-x|y|z position frame + row-major
-        // 3x3 H per call; `finalize` returns the normalized g(r) (empty
-        // before the first accepted frame). Identical numerics to Rdf over
-        // the same frames.
         type RdfAccumulator;
-        fn rdf_accumulator_new(n_bins: i64, r_max: f64, r_min: f64) -> Box<RdfAccumulator>;
-        fn accumulate(self: &mut RdfAccumulator, positions: &[f64], box9: &[f64]) -> bool;
-        fn n_frames(self: &RdfAccumulator) -> i64;
-        fn finalize(self: &RdfAccumulator) -> Vec<f64>;
-
-        // Streaming MSD: Direct-mode curve (frame 0 = reference, exact) plus
-        // windowed-MSD sums capped at `window` lags (ring buffer). `diffusion`
-        // is molrs EinsteinDiffusionResult::diffusion_coefficient over the
-        // windowed curve within [fit_lo, fit_hi] fractions of the max resolved
-        // lag; NaN on bad args / too few frames / window = 0.
-        type MsdAccumulator;
-        fn msd_accumulator_new(window: i64) -> Box<MsdAccumulator>;
-        fn accumulate(self: &mut MsdAccumulator, positions: &[f64]) -> bool;
-        fn n_frames(self: &MsdAccumulator) -> i64;
-        fn direct_curve(self: &MsdAccumulator) -> Vec<f64>;
-        fn diffusion(self: &MsdAccumulator, dt: f64, dims: i32, fit_lo: f64, fit_hi: f64) -> f64;
-
-        // Streaming DOF-averaged velocity ACF, lags 0..=resolution
-        // (resolution >= 1). Matches Vacf (FFT batch path) to FFT round-off
-        // over the same frames.
-        type VacfAccumulator;
-        fn vacf_accumulator_new(resolution: i64) -> Box<VacfAccumulator>;
-        fn accumulate(self: &mut VacfAccumulator, velocities: &[f64]) -> bool;
-        fn n_frames(self: &VacfAccumulator) -> i64;
-        fn finalize(self: &VacfAccumulator) -> Vec<f64>;
+        fn push(self: &mut RdfAccumulator, positions: &[f64], h: &[f64]) -> Result<()>;
+        fn n_frames(self: &RdfAccumulator) -> u64;
+        fn finish(self: &RdfAccumulator) -> Result<RdfResult>;
     }
 }
 "#;

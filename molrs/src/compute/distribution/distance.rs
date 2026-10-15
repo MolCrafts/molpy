@@ -1,20 +1,20 @@
 //! Distance observable: minimum-image separation of selected atom pairs.
 
-use molrs::core::FrameAccess;
 use molrs::op::F;
 
 use crate::compute::ComputeError;
 
-use super::observable::{AtomGroups, Observable, displacement, positions};
+use super::observable::{Observable, check_tuples, displacement};
 use crate::op::vec3::norm;
-use molrs::core::{Mic, SimBox};
+use molrs::core::Mic;
+use ndarray::ArrayView2;
 
 /// Distance between the two atoms of each pair (arity 2), minimum-image under PBC.
 ///
 /// The pairwise distance distribution generalizes the RDF to arbitrary
 /// user-selected pairs (reference implementation distance DF, `src/tddf.cpp` /
 /// `CTimeDiff`/`CDF` distance mode). The minimum-image convention is delegated
-/// to [`SimBox::delta`](molrs::core::SimBox::delta) so a
+/// to the frame's [`Mic`] so a
 /// distance DF and [`Rdf`](crate::compute::Rdf) return the same value
 /// for the same pair under PBC.
 #[derive(Debug, Clone, Default)]
@@ -25,36 +25,18 @@ impl Observable for DistanceObservable {
         2
     }
 
-    fn sample<FA: FrameAccess>(
+    fn sample_into(
         &self,
-        frame: &FA,
-        groups: &AtomGroups,
-    ) -> Result<Vec<F>, ComputeError> {
-        let mut out = Vec::with_capacity(groups.len());
-        self.sample_into(frame, groups, &mut out)?;
-        Ok(out)
-    }
-
-    fn sample_into<FA: FrameAccess>(
-        &self,
-        frame: &FA,
-        groups: &AtomGroups,
+        positions: ArrayView2<'_, F>,
+        mic: &Mic,
+        tuples: ArrayView2<'_, usize>,
         out: &mut Vec<F>,
     ) -> Result<(), ComputeError> {
-        if groups.arity() != 2 {
-            return Err(ComputeError::BadShape {
-                expected: "arity 2".to_string(),
-                got: format!("arity {}", groups.arity()),
-            });
-        }
-        let (xp, yp, zp) = positions(frame)?;
-        let (xs, ys, zs) = (xp.slice(), yp.slice(), zp.slice());
-        let mic = frame.simbox_ref().map_or(Mic::Free, SimBox::mic);
+        check_tuples(self.arity(), positions, tuples)?;
         out.clear();
-        out.reserve(groups.len());
-        for g in 0..groups.len() {
-            let t = groups.tuple(g);
-            let d = displacement(&mic, xs, ys, zs, t[0] as usize, t[1] as usize);
+        out.reserve(tuples.nrows());
+        for t in tuples.outer_iter() {
+            let d = displacement(mic, positions, t[0], t[1]);
             out.push(norm(d));
         }
         Ok(())

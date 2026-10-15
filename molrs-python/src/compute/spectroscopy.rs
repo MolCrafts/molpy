@@ -1,715 +1,521 @@
-//! Spectra from raw correlation functions and polarizabilities
-//! (`molrs::compute::spectroscopy`), and the consistency checks that judge them
-//! (Kramers–Kronig, the conductivity sum rule, route agreement).
+//! Spectroscopy (`molrs::compute::spectroscopy`): the four ε(ω) routes
+//! (`EinsteinHelfandSpectrum`, `GreenKuboSpectrum`, `DipoleRateCrossSpectrum`,
+//! `DipoleAutocorrelationSpectrum`), their checks (`KramersKronig`,
+//! `ConductivitySumRule`, `RouteAgreement`) and the Raman family
+//! (`PolarizabilityParts`, `RamanSpectrum`); their outputs.
 
-use super::correlation::{PySpectrum, parse_window};
-use crate::error::py_value_err;
+use crate::array::{ArrayArg1, ArrayArg2};
 use molrs::compute::{
-    Check, ConductivitySumRule, DipoleAutocorrelationSpectrum, DipoleRateCrossSpectrum,
-    EinsteinHelfandSpectrum, Fit, GreenKuboSpectrum, IrSpectrum, KramersKronig, PowerSpectrum,
-    RamanSpectrum, ResonanceRamanSpectrum, RoaSpectrum, RouteAgreement, VcdSpectrum,
+    Compute, ConductivitySumRule, DielectricSpectrumInput, DielectricSpectrumResult,
+    DipoleAutocorrelationSpectrum, DipoleRateCrossSpectrum, EinsteinHelfandSpectrum,
+    GreenKuboSpectrum, KramersKronig, KramersKronigCheck, KramersKronigInput, Plateau,
+    PolarizabilityParts, PolarizabilityPartsInput, PolarizabilityPartsResult, RamanSpectrum,
+    RamanSpectrumInput, RamanSpectrumResult, RouteAgreement, RouteAgreementCheck,
+    RouteAgreementInput, SumRuleCheck, SumRuleInput,
 };
-use molrs::signal::WindowType;
-use ndarray::Array1;
-use numpy::{IntoPyArray, PyReadonlyArray1};
-use pyo3::exceptions::PyValueError;
+
 use pyo3::prelude::*;
-use pyo3::types::{PyAny, PyAnyMethods, PyDict, PyDictMethods};
 
-/// The window + pad settings every one-sided spectrum transform takes.
-#[derive(Clone, Copy)]
-struct Taper {
-    window: WindowType,
-    pad_factor: usize,
+use super::args;
+use super::error::Result;
+use super::output::py_result;
+use super::spec::described;
+use super::time_series::PyTimeCorrelation;
+
+py_result! {
+    /// A complex permittivity ε(ω) = ``eps_real`` − i ``eps_imag`` at
+    /// ``frequencies`` (``molrs::compute::DielectricSpectrumResult``).
+    PyDielectricSpectrumResult(DielectricSpectrumResult) as "DielectricSpectrumResult" {
+        frequencies, eps_real, eps_imag, epsilon_inf
+    }
 }
 
-impl Taper {
-    fn parse(window: &str, pad_factor: usize) -> PyResult<Self> {
-        if pad_factor == 0 {
-            return Err(PyValueError::new_err("pad_factor must be >= 1"));
+py_result! {
+    /// The Kramers–Kronig consistency of a spectrum
+    /// (``molrs::compute::KramersKronigCheck``): ε′ ``recovered`` from ε″, its
+    /// mean absolute error against ε′, the tolerance and the verdict.
+    PyKramersKronigCheck(KramersKronigCheck) as "KramersKronigCheck" {
+        recovered, mae, tolerance, passed
+    }
+}
+
+py_result! {
+    /// The conductivity sum rule (``molrs::compute::SumRuleCheck``): the
+    /// integral, its expected value, their relative error and the verdict.
+    PySumRuleCheck(SumRuleCheck) as "SumRuleCheck" { integral, expected, relative_error, passed }
+}
+
+py_result! {
+    /// The agreement of several ε(ω) routes
+    /// (``molrs::compute::RouteAgreementCheck``): the RMS difference of every
+    /// pair ``(i, j, rms)``, the largest and the verdict.
+    PyRouteAgreementCheck(RouteAgreementCheck) as "RouteAgreementCheck" {
+        pairwise, max_rms, passed
+    }
+}
+
+py_result! {
+    /// The rotational invariants of a polarizability series
+    /// (``molrs::compute::PolarizabilityPartsResult``): ``isotropic`` ``(T, 1)``
+    /// and ``anisotropic`` ``(T, 6)``.
+    PyPolarizabilityPartsResult(PolarizabilityPartsResult) as "PolarizabilityPartsResult" {
+        isotropic, anisotropic
+    }
+}
+
+py_result! {
+    /// A Raman spectrum (``molrs::compute::RamanSpectrumResult``): the
+    /// isotropic and anisotropic intensities at ``frequencies_cm1``, the
+    /// polarized / depolarized combinations when averaged, and the spectral
+    /// resolution.
+    PyRamanSpectrumResult(RamanSpectrumResult) as "RamanSpectrumResult" {
+        frequencies_cm1, isotropic, anisotropic, parallel, perpendicular, resolution
+    }
+}
+
+/// One ε(ω) route class: the pyclass over the core route, its `compute` over
+/// a `DielectricSpectrumInput`, its descriptor methods, and `configure`, the
+/// settings every route shares (units, window, pad, ε_∞). Each class adds its
+/// own `#[new]` on top of `configure`.
+macro_rules! dielectric_route {
+    ($(#[$meta:meta])* $py:ident($core:ident) as $name:literal) => {
+        $(#[$meta])*
+        #[pyclass(module = "molrs.compute", name = $name, frozen)]
+        pub(crate) struct $py {
+            inner: $core,
         }
-        Ok(Self {
-            window: parse_window(window)?,
-            pad_factor,
-        })
-    }
 
-    fn power(self) -> PowerSpectrum {
-        PowerSpectrum {
-            window: self.window,
-            pad_factor: self.pad_factor,
+        impl $py {
+            /// The core route with the shared settings applied where given.
+            fn configure(
+                units: &Bound<'_, PyAny>,
+                window: Option<&str>,
+                pad: Option<usize>,
+                epsilon_inf: Option<f64>,
+            ) -> Result<$core> {
+                let mut inner = $core::new(args::units(units)?);
+                if let Some(window) = window {
+                    inner = inner.with_window(window.parse()?);
+                }
+                if let Some(pad) = pad {
+                    inner = inner.with_pad(pad)?;
+                }
+                if let Some(epsilon_inf) = epsilon_inf {
+                    inner = inner.with_epsilon_inf(epsilon_inf);
+                }
+                Ok(inner)
+            }
         }
-    }
-}
 
-fn one_sided(taper: Taper, acf: PyReadonlyArray1<'_, f64>, dt_fs: f64) -> PyResult<PySpectrum> {
-    let a = acf.as_array().to_owned();
-    let r = taper.power().fit((&a, dt_fs)).map_err(py_value_err)?;
-    Ok(PySpectrum::from_result(r, taper.window, dt_fs))
-}
-
-// ── PowerSpectrum (VDOS) ──────────────────────────────────────────────────────
-
-/// Velocity power spectrum (VDOS) transform of a raw velocity ACF: window
-/// the one-sided curve, zero-pad to ``pad_factor`` times its length (rounded
-/// up to a power of two) and forward-FFT it. ``window`` is ``"cosine_sq"``
-/// (default; keeps ``C(0)``), ``"hann"``, ``"blackman"`` or ``"none"``.
-/// :meth:`TimeCorrelation.spectrum` is this transform on a curve.
-#[pyclass(module = "molrs.compute", name = "PowerSpectrum")]
-pub struct PyPowerSpectrum {
-    taper: Taper,
-}
-
-#[pymethods]
-impl PyPowerSpectrum {
-    #[new]
-    #[pyo3(signature = (window="cosine_sq", pad_factor=4))]
-    fn new(window: &str, pad_factor: usize) -> PyResult<Self> {
-        Ok(Self {
-            taper: Taper::parse(window, pad_factor)?,
-        })
-    }
-
-    /// Window + FFT the raw ACF (timestep ``dt_fs``) into a :class:`Spectrum`.
-    fn fit(&self, acf: PyReadonlyArray1<'_, f64>, dt_fs: f64) -> PyResult<PySpectrum> {
-        one_sided(self.taper, acf, dt_fs)
-    }
-
-    #[getter]
-    fn window(&self) -> &'static str {
-        self.taper.window.name()
-    }
-
-    #[getter]
-    fn pad_factor(&self) -> usize {
-        self.taper.pad_factor
-    }
-}
-
-// ── IrSpectrum ───────────────────────────────────────────────────────────────
-
-/// Infrared absorption spectrum transform of a raw dipole-flux ACF: the
-/// :class:`PowerSpectrum` transform; only the supplied ACF differs.
-#[pyclass(module = "molrs.compute", name = "IrSpectrum")]
-pub struct PyIrSpectrum {
-    taper: Taper,
-}
-
-#[pymethods]
-impl PyIrSpectrum {
-    #[new]
-    #[pyo3(signature = (window="cosine_sq", pad_factor=4))]
-    fn new(window: &str, pad_factor: usize) -> PyResult<Self> {
-        Ok(Self {
-            taper: Taper::parse(window, pad_factor)?,
-        })
-    }
-
-    /// Window + FFT the raw flux ACF (timestep ``dt_fs``) into a :class:`Spectrum`.
-    fn fit(&self, acf: PyReadonlyArray1<'_, f64>, dt_fs: f64) -> PyResult<PySpectrum> {
-        let a = acf.as_array().to_owned();
-        let r = IrSpectrum {
-            window: self.taper.window,
-            pad_factor: self.taper.pad_factor,
+        #[pymethods]
+        impl $py {
+            #[pyo3(signature = (*, correlation, volume, temperature, boundary))]
+            fn compute(
+                &self,
+                correlation: PyRef<'_, PyTimeCorrelation>,
+                volume: f64,
+                temperature: f64,
+                boundary: &str,
+            ) -> Result<PyDielectricSpectrumResult> {
+                let out = self.inner.compute(DielectricSpectrumInput {
+                    correlation: &correlation.inner,
+                    volume,
+                    temperature,
+                    boundary: boundary.parse()?,
+                })?;
+                Ok(out.into())
+            }
         }
-        .fit((&a, dt_fs))
-        .map_err(py_value_err)?;
-        Ok(PySpectrum::from_result(r, self.taper.window, dt_fs))
-    }
 
-    #[getter]
-    fn window(&self) -> &'static str {
-        self.taper.window.name()
-    }
-
-    #[getter]
-    fn pad_factor(&self) -> usize {
-        self.taper.pad_factor
-    }
+        described!($py, $core);
+    };
 }
 
-// ── RamanSpectrum ────────────────────────────────────────────────────────────
-
-/// Raman spectrum transform of **raw isotropic + anisotropic ACFs**
-/// (one window per ACF — ``"cosine_sq"`` by default — FFT both, then the
-/// cross-section + Bose prefactors).
-#[pyclass(module = "molrs.compute", name = "RamanSpectrum")]
-pub struct PyRamanSpectrum {
-    inner: RamanSpectrum,
-}
-
-#[pymethods]
-impl PyRamanSpectrum {
-    /// ``RamanSpectrum(incident_frequency_cm1=0.0, temperature_k=0.0,
-    /// averaged=False, window="cosine_sq", pad_factor=4)`` — set
-    /// ``incident_frequency_cm1``/``temperature_k`` to ``0.0`` to skip the
-    /// cross-section / Bose correction.
-    #[new]
-    #[pyo3(signature = (incident_frequency_cm1=0.0, temperature_k=0.0, averaged=false, window="cosine_sq", pad_factor=4))]
-    fn new(
-        incident_frequency_cm1: f64,
-        temperature_k: f64,
-        averaged: bool,
-        window: &str,
-        pad_factor: usize,
-    ) -> PyResult<Self> {
-        let taper = Taper::parse(window, pad_factor)?;
-        Ok(Self {
-            inner: RamanSpectrum {
-                incident_frequency_cm1,
-                temperature_k,
-                averaged,
-                window: taper.window,
-                pad_factor: taper.pad_factor,
-            },
-        })
-    }
-
-    /// Window + FFT + prefactors on the raw iso/aniso ACFs (timestep ``dt_fs``).
+dielectric_route! {
+    /// ε(ω) by the Einstein–Helfand route from the fluctuation dipole ACF
+    /// (``molrs::compute::EinsteinHelfandSpectrum``), e.g. ``DipoleAcf``'s
+    /// curve.
     ///
-    /// Returns ``{"frequencies_cm1", "isotropic", "anisotropic", "parallel",
-    /// "perpendicular", "resolution", "n_frames"}`` (``parallel`` /
-    /// ``perpendicular`` are ``None`` unless ``averaged=True``).
-    fn fit<'py>(
-        &self,
-        py: Python<'py>,
-        acf_iso: PyReadonlyArray1<'py, f64>,
-        acf_aniso: PyReadonlyArray1<'py, f64>,
-        dt_fs: f64,
-    ) -> PyResult<Bound<'py, PyDict>> {
-        let iso = acf_iso.as_array().to_owned();
-        let aniso = acf_aniso.as_array().to_owned();
-        let r = self
-            .inner
-            .fit((&iso, &aniso, dt_fs))
-            .map_err(py_value_err)?;
-        let d = PyDict::new(py);
-        d.set_item("frequencies_cm1", r.frequencies_cm1.into_pyarray(py))?;
-        d.set_item("isotropic", r.isotropic.into_pyarray(py))?;
-        d.set_item("anisotropic", r.anisotropic.into_pyarray(py))?;
-        match r.parallel {
-            Some(p) => d.set_item("parallel", p.into_pyarray(py))?,
-            None => d.set_item("parallel", py.None())?,
-        }
-        match r.perpendicular {
-            Some(p) => d.set_item("perpendicular", p.into_pyarray(py))?,
-            None => d.set_item("perpendicular", py.None())?,
-        }
-        d.set_item("resolution", r.resolution)?;
-        d.set_item("n_frames", r.n_frames)?;
-        Ok(d)
-    }
+    /// Parameters
+    /// ----------
+    /// units : str or UnitPreset
+    /// window : str, optional
+    ///     ``"hann"``, ``"blackman"``, ``"cosine_sq"`` or ``"none"``.
+    /// pad : int, optional
+    ///     Zero-padding factor of the transform.
+    /// epsilon_inf : float, optional
+    ///     ε_∞.
+    ///
+    /// ``None`` keeps the core default. ``compute(correlation=, volume=,
+    /// temperature=, boundary=)`` returns a ``DielectricSpectrumResult``;
+    /// ``boundary`` is ``"tin_foil"`` or ``"vacuum"``.
+    PyEinsteinHelfandSpectrum(EinsteinHelfandSpectrum) as "EinsteinHelfandSpectrum"
 }
 
-// ── EinsteinHelfandSpectrum (dielectric ε(ω), dipole route) ───────────────────
-
-fn dielectric_dict<'py>(
-    py: Python<'py>,
-    frequencies: Array1<f64>,
-    eps_real: Array1<f64>,
-    eps_imag: Array1<f64>,
-) -> PyResult<Bound<'py, PyDict>> {
-    let d = PyDict::new(py);
-    d.set_item("frequencies", frequencies.into_pyarray(py))?;
-    d.set_item("eps_real", eps_real.into_pyarray(py))?;
-    d.set_item("eps_imag", eps_imag.into_pyarray(py))?;
-    Ok(d)
+dielectric_route! {
+    /// ε(ω) by the Green–Kubo route from the current ACF
+    /// (``molrs::compute::GreenKuboSpectrum``), e.g. ``CurrentAcf``'s curve.
+    ///
+    /// Parameters and ``compute`` as ``EinsteinHelfandSpectrum``.
+    PyGreenKuboSpectrum(GreenKuboSpectrum) as "GreenKuboSpectrum"
 }
 
-/// Einstein–Helfand ε(ω) transform of a **raw fluctuation dipole ACF** (the
-/// [`DebyeRelaxation`](PyDebyeRelaxation) ACF): one-sided cos² taper +
-/// derivative-FT + the `4π·KAPPA/(3·V·k_B·T)` prefactor.
-#[pyclass(module = "molrs.compute", name = "EinsteinHelfandSpectrum")]
+dielectric_route! {
+    /// ε(ω) by the dipole–current cross-correlation route
+    /// (``molrs::compute::DipoleRateCrossSpectrum``).
+    ///
+    /// Parameters and ``compute`` as ``EinsteinHelfandSpectrum``.
+    PyDipoleRateCrossSpectrum(DipoleRateCrossSpectrum) as "DipoleRateCrossSpectrum"
+}
 
-pub struct PyEinsteinHelfandSpectrum {
-    inner: EinsteinHelfandSpectrum,
+dielectric_route! {
+    /// ε(ω) by the dipole-autocorrelation route
+    /// (``molrs::compute::DipoleAutocorrelationSpectrum``).
+    ///
+    /// Parameters as ``EinsteinHelfandSpectrum``, plus ``plateau``: an optional
+    /// ``(start, end)`` fraction window whose value is subtracted from the
+    /// correlation (a conductor's plateau), and ``plateau_value``: ``"mean"``
+    /// (the window's mean) or ``"end"`` (its last sample). ``compute`` as
+    /// ``EinsteinHelfandSpectrum``.
+    PyDipoleAutocorrelationSpectrum(DipoleAutocorrelationSpectrum)
+        as "DipoleAutocorrelationSpectrum"
 }
 
 #[pymethods]
 impl PyEinsteinHelfandSpectrum {
-    /// ``EinsteinHelfandSpectrum(dt, volume, temperature, epsilon_inf,
-    /// zero_lag_variance)`` — ``zero_lag_variance`` is ⟨|δM|²⟩ (the
-    /// ``DebyeRelaxation`` ``zero_lag_variance``), which pins the exact DC bin.
     #[new]
+    #[pyo3(signature = (units, *, window = None, pad = None, epsilon_inf = None))]
     fn new(
-        dt: f64,
-        volume: f64,
-        temperature: f64,
-        epsilon_inf: f64,
-        zero_lag_variance: f64,
-    ) -> Self {
-        Self {
-            inner: EinsteinHelfandSpectrum {
-                dt,
-                volume,
-                temperature,
-                epsilon_inf,
-                zero_lag_variance,
-            },
-        }
+        units: &Bound<'_, PyAny>,
+        window: Option<&str>,
+        pad: Option<usize>,
+        epsilon_inf: Option<f64>,
+    ) -> Result<Self> {
+        Ok(Self {
+            inner: Self::configure(units, window, pad, epsilon_inf)?,
+        })
     }
-
-    /// Transform the raw fluctuation dipole ``acf`` into ε(ω).
-    ///
-    /// Returns ``{"frequencies", "eps_real", "eps_imag"}`` (float64 arrays).
-    fn fit<'py>(
-        &self,
-        py: Python<'py>,
-        acf: PyReadonlyArray1<'py, f64>,
-    ) -> PyResult<Bound<'py, PyDict>> {
-        let a = acf.as_array().to_owned();
-        let r = self.inner.fit(&a).map_err(py_value_err)?;
-        dielectric_dict(py, r.frequencies, r.eps_real, r.eps_imag)
-    }
-}
-
-// ── GreenKuboSpectrum (dielectric ε(ω), current route) ────────────────────────
-
-/// Green–Kubo ε(ω) transform of a **raw current ACF** (the
-/// [`GreenKuboConductivity`](PyGreenKuboConductivity) ACF over the post-NaN
-/// series): window + FFT → σ(ω) → ε(ω).
-#[pyclass(module = "molrs.compute", name = "GreenKuboSpectrum")]
-pub struct PyGreenKuboSpectrum {
-    inner: GreenKuboSpectrum,
 }
 
 #[pymethods]
 impl PyGreenKuboSpectrum {
-    /// ``GreenKuboSpectrum(dt, volume, temperature, epsilon_inf,
-    /// window_type="hann")`` — ``window_type`` is ``"cosine_sq"``, ``"hann"``,
-    /// or ``"blackman"``.
     #[new]
-    #[pyo3(signature = (dt, volume, temperature, epsilon_inf, window_type="hann"))]
-    fn new(dt: f64, volume: f64, temperature: f64, epsilon_inf: f64, window_type: &str) -> Self {
-        Self {
-            inner: GreenKuboSpectrum {
-                dt,
-                volume,
-                temperature,
-                epsilon_inf,
-                window_type: window_type.to_string(),
-            },
-        }
+    #[pyo3(signature = (units, *, window = None, pad = None, epsilon_inf = None))]
+    fn new(
+        units: &Bound<'_, PyAny>,
+        window: Option<&str>,
+        pad: Option<usize>,
+        epsilon_inf: Option<f64>,
+    ) -> Result<Self> {
+        Ok(Self {
+            inner: Self::configure(units, window, pad, epsilon_inf)?,
+        })
     }
-
-    /// Transform the raw current ``acf`` into ε(ω).
-    ///
-    /// Returns ``{"frequencies", "eps_real", "eps_imag"}`` (float64 arrays).
-    fn fit<'py>(
-        &self,
-        py: Python<'py>,
-        acf: PyReadonlyArray1<'py, f64>,
-    ) -> PyResult<Bound<'py, PyDict>> {
-        let a = acf.as_array().to_owned();
-        let r = self.inner.fit(&a).map_err(py_value_err)?;
-        dielectric_dict(py, r.frequencies, r.eps_real, r.eps_imag)
-    }
-}
-
-// ── DipoleRateCrossSpectrum (⟨Ṁ(0)·M(t)⟩ → ε(ω)) ─────────────────────────────
-
-/// ε(ω) from the dipole-rate × dipole cross-correlation
-/// `C(t) = Σ_α ⟨δṀ_α(0) δM_α(t)⟩` (piecewise-linear FT + conducting-BC prefactor).
-#[pyclass(module = "molrs.compute", name = "DipoleRateCrossSpectrum")]
-
-pub struct PyDipoleRateCrossSpectrum {
-    inner: DipoleRateCrossSpectrum,
 }
 
 #[pymethods]
 impl PyDipoleRateCrossSpectrum {
-    /// ``DipoleRateCrossSpectrum(dt, volume, temperature, epsilon_inf,
-    /// window_type="none")``.
     #[new]
-    #[pyo3(signature = (dt, volume, temperature, epsilon_inf, window_type="none"))]
-    fn new(dt: f64, volume: f64, temperature: f64, epsilon_inf: f64, window_type: &str) -> Self {
-        Self {
-            inner: DipoleRateCrossSpectrum {
-                dt,
-                volume,
-                temperature,
-                epsilon_inf,
-                window_type: window_type.to_string(),
-            },
-        }
+    #[pyo3(signature = (units, *, window = None, pad = None, epsilon_inf = None))]
+    fn new(
+        units: &Bound<'_, PyAny>,
+        window: Option<&str>,
+        pad: Option<usize>,
+        epsilon_inf: Option<f64>,
+    ) -> Result<Self> {
+        Ok(Self {
+            inner: Self::configure(units, window, pad, epsilon_inf)?,
+        })
     }
-
-    /// Transform the raw cross correlator into ε(ω).
-    ///
-    /// Returns ``{"frequencies", "eps_real", "eps_imag"}``.
-    fn fit<'py>(
-        &self,
-        py: Python<'py>,
-        cross: PyReadonlyArray1<'py, f64>,
-    ) -> PyResult<Bound<'py, PyDict>> {
-        let a = cross.as_array().to_owned();
-        let r = self.inner.fit(&a).map_err(py_value_err)?;
-        dielectric_dict(py, r.frequencies, r.eps_real, r.eps_imag)
-    }
-}
-
-// ── DipoleAutocorrelationSpectrum (PACF → ε(ω) via C(0)−iωĈ) ─────────────────
-
-/// ε(ω) from the fluctuation dipole ACF via `χ = A [C(0) − iω Ĉ(ω)]`.
-///
-/// Optional conductive-plateau handling: when ``subtract_plateau`` is
-/// ``None`` (default), subtract ``C(∞)`` automatically if
-/// ``|C(∞)/C(0)| > 0.1``.
-#[pyclass(module = "molrs.compute", name = "DipoleAutocorrelationSpectrum")]
-
-pub struct PyDipoleAutocorrelationSpectrum {
-    inner: DipoleAutocorrelationSpectrum,
 }
 
 #[pymethods]
 impl PyDipoleAutocorrelationSpectrum {
-    /// ``DipoleAutocorrelationSpectrum(dt, volume, temperature, epsilon_inf,
-    /// window_type="none", subtract_plateau=None)``.
     #[new]
-    #[pyo3(signature = (dt, volume, temperature, epsilon_inf, window_type="none", subtract_plateau=None))]
+    #[pyo3(signature = (
+        units,
+        *,
+        window = None,
+        pad = None,
+        epsilon_inf = None,
+        plateau = None,
+        plateau_value = None,
+    ))]
     fn new(
-        dt: f64,
-        volume: f64,
-        temperature: f64,
-        epsilon_inf: f64,
-        window_type: &str,
-        subtract_plateau: Option<bool>,
-    ) -> Self {
-        Self {
-            inner: DipoleAutocorrelationSpectrum {
-                dt,
-                volume,
-                temperature,
-                epsilon_inf,
-                window_type: window_type.to_string(),
-                subtract_plateau,
-            },
+        units: &Bound<'_, PyAny>,
+        window: Option<&str>,
+        pad: Option<usize>,
+        epsilon_inf: Option<f64>,
+        plateau: Option<(f64, f64)>,
+        plateau_value: Option<&str>,
+    ) -> Result<Self> {
+        let mut inner = Self::configure(units, window, pad, epsilon_inf)?;
+        if let Some((start, end)) = plateau {
+            inner = inner.with_plateau(Plateau::new(start, end)?);
         }
-    }
-
-    /// Transform the raw dipole PACF into ε(ω).
-    ///
-    /// Returns ``{"frequencies", "eps_real", "eps_imag"}``.
-    fn fit<'py>(
-        &self,
-        py: Python<'py>,
-        acf: PyReadonlyArray1<'py, f64>,
-    ) -> PyResult<Bound<'py, PyDict>> {
-        let a = acf.as_array().to_owned();
-        let r = self.inner.fit(&a).map_err(py_value_err)?;
-        dielectric_dict(py, r.frequencies, r.eps_real, r.eps_imag)
-    }
-}
-
-// ═══════════════════════════════════════════════════════════════════════════
-// Registration
-// ═══════════════════════════════════════════════════════════════════════════
-
-// ── Chiral / resonance spectra (analysis parity) ───────────────────────────────
-
-/// Build the Raman-family result dict (shared by ROA / resonance-Raman).
-fn raman_dict<'py>(
-    py: Python<'py>,
-    r: molrs::compute::RamanSpectrumResult,
-) -> PyResult<Bound<'py, PyDict>> {
-    let d = PyDict::new(py);
-    d.set_item("frequencies_cm1", r.frequencies_cm1.into_pyarray(py))?;
-    d.set_item("isotropic", r.isotropic.into_pyarray(py))?;
-    d.set_item("anisotropic", r.anisotropic.into_pyarray(py))?;
-    match r.parallel {
-        Some(p) => d.set_item("parallel", p.into_pyarray(py))?,
-        None => d.set_item("parallel", py.None())?,
-    }
-    match r.perpendicular {
-        Some(p) => d.set_item("perpendicular", p.into_pyarray(py))?,
-        None => d.set_item("perpendicular", py.None())?,
-    }
-    d.set_item("resolution", r.resolution)?;
-    d.set_item("n_frames", r.n_frames)?;
-    Ok(d)
-}
-
-/// Vibrational circular dichroism (VCD) transform of a **raw electric/magnetic
-/// dipole cross-flux ACF** (the :class:`IrSpectrum` window+FFT pipeline; the
-/// signed cross-flux ACF differs).
-#[pyclass(module = "molrs.compute", name = "VcdSpectrum")]
-pub struct PyVcdSpectrum {
-    taper: Taper,
-}
-
-#[pymethods]
-impl PyVcdSpectrum {
-    #[new]
-    #[pyo3(signature = (window="cosine_sq", pad_factor=4))]
-    fn new(window: &str, pad_factor: usize) -> PyResult<Self> {
-        Ok(Self {
-            taper: Taper::parse(window, pad_factor)?,
-        })
-    }
-
-    /// Window + FFT the raw VCD cross-flux ACF (timestep ``dt_fs``) into a
-    /// (signed) :class:`Spectrum`.
-    fn fit(&self, acf: PyReadonlyArray1<'_, f64>, dt_fs: f64) -> PyResult<PySpectrum> {
-        let a = acf.as_array().to_owned();
-        let r = VcdSpectrum {
-            window: self.taper.window,
-            pad_factor: self.taper.pad_factor,
+        if let Some(plateau_value) = plateau_value {
+            inner = inner.with_plateau_value(plateau_value.parse()?);
         }
-        .fit((&a, dt_fs))
-        .map_err(py_value_err)?;
-        Ok(PySpectrum::from_result(r, self.taper.window, dt_fs))
-    }
-
-    #[getter]
-    fn window(&self) -> &'static str {
-        self.taper.window.name()
-    }
-
-    #[getter]
-    fn pad_factor(&self) -> usize {
-        self.taper.pad_factor
+        Ok(Self { inner })
     }
 }
 
-/// Raman optical activity (ROA) transform of **raw iso/aniso ROA
-/// cross-correlations** (shares the Raman window+FFT+prefactor pipeline).
-#[pyclass(module = "molrs.compute", name = "RoaSpectrum")]
-pub struct PyRoaSpectrum {
-    inner: RoaSpectrum,
-}
-
-#[pymethods]
-impl PyRoaSpectrum {
-    /// ``RoaSpectrum(incident_frequency_cm1=0.0, temperature_k=0.0, averaged=False,
-    /// window="cosine_sq", pad_factor=4)``.
-    #[new]
-    #[pyo3(signature = (incident_frequency_cm1=0.0, temperature_k=0.0, averaged=false, window="cosine_sq", pad_factor=4))]
-    fn new(
-        incident_frequency_cm1: f64,
-        temperature_k: f64,
-        averaged: bool,
-        window: &str,
-        pad_factor: usize,
-    ) -> PyResult<Self> {
-        let taper = Taper::parse(window, pad_factor)?;
-        Ok(Self {
-            inner: RoaSpectrum {
-                incident_frequency_cm1,
-                temperature_k,
-                averaged,
-                window: taper.window,
-                pad_factor: taper.pad_factor,
-            },
-        })
-    }
-
-    /// Window + FFT the raw iso/aniso ROA ACFs (timestep ``dt_fs``).
-    ///
-    /// Returns ``{"frequencies_cm1", "isotropic", "anisotropic", "parallel",
-    /// "perpendicular", "resolution", "n_frames"}``.
-    fn fit<'py>(
-        &self,
-        py: Python<'py>,
-        acf_iso: PyReadonlyArray1<'py, f64>,
-        acf_aniso: PyReadonlyArray1<'py, f64>,
-        dt_fs: f64,
-    ) -> PyResult<Bound<'py, PyDict>> {
-        let iso = acf_iso.as_array().to_owned();
-        let aniso = acf_aniso.as_array().to_owned();
-        let r = self
-            .inner
-            .fit((&iso, &aniso, dt_fs))
-            .map_err(py_value_err)?;
-        raman_dict(py, r)
-    }
-}
-
-/// Resonance-Raman transform of **raw resonant iso/aniso ACFs** (identical
-/// pipeline to `RamanSpectrum`; the ACFs come from a resonant polarizability
-/// series upstream).
-#[pyclass(module = "molrs.compute", name = "ResonanceRamanSpectrum")]
-pub struct PyResonanceRamanSpectrum {
-    inner: ResonanceRamanSpectrum,
-}
-
-#[pymethods]
-impl PyResonanceRamanSpectrum {
-    /// ``ResonanceRamanSpectrum(incident_frequency_cm1=0.0, temperature_k=0.0, averaged=False,
-    /// window="cosine_sq", pad_factor=4)``.
-    #[new]
-    #[pyo3(signature = (incident_frequency_cm1=0.0, temperature_k=0.0, averaged=false, window="cosine_sq", pad_factor=4))]
-    fn new(
-        incident_frequency_cm1: f64,
-        temperature_k: f64,
-        averaged: bool,
-        window: &str,
-        pad_factor: usize,
-    ) -> PyResult<Self> {
-        let taper = Taper::parse(window, pad_factor)?;
-        Ok(Self {
-            inner: ResonanceRamanSpectrum {
-                incident_frequency_cm1,
-                temperature_k,
-                averaged,
-                window: taper.window,
-                pad_factor: taper.pad_factor,
-            },
-        })
-    }
-
-    /// Window + FFT the raw resonant iso/aniso ACFs (timestep ``dt_fs``).
-    ///
-    /// Returns the same dict as ``RoaSpectrum.fit``.
-    fn fit<'py>(
-        &self,
-        py: Python<'py>,
-        acf_iso: PyReadonlyArray1<'py, f64>,
-        acf_aniso: PyReadonlyArray1<'py, f64>,
-        dt_fs: f64,
-    ) -> PyResult<Bound<'py, PyDict>> {
-        let iso = acf_iso.as_array().to_owned();
-        let aniso = acf_aniso.as_array().to_owned();
-        let r = self
-            .inner
-            .fit((&iso, &aniso, dt_fs))
-            .map_err(py_value_err)?;
-        raman_dict(py, r)
-    }
-}
-
-/// Kramers–Kronig consistency check of a dielectric spectrum: rebuilds
-/// ``eps_real`` from ``eps_imag`` and compares.
+/// Kramers–Kronig consistency check of a ε(ω) spectrum
+/// (``molrs::compute::KramersKronig``).
+///
+/// Parameters
+/// ----------
+/// relative_tolerance, absolute_tolerance : float, optional
+///     The pass tolerance; one not given keeps the core's value.
+///
+/// ``compute(spectrum=)`` over a ``DielectricSpectrumResult`` returns a
+/// ``KramersKronigCheck``.
 #[pyclass(module = "molrs.compute", name = "KramersKronig", frozen)]
-pub struct PyKramersKronig {
+pub(crate) struct PyKramersKronig {
     inner: KramersKronig,
 }
 
 #[pymethods]
 impl PyKramersKronig {
     #[new]
-    fn new(eps_inf: f64) -> Self {
-        Self {
-            inner: KramersKronig { eps_inf },
+    #[pyo3(signature = (*, relative_tolerance = None, absolute_tolerance = None))]
+    fn new(relative_tolerance: Option<f64>, absolute_tolerance: Option<f64>) -> Result<Self> {
+        let mut inner = KramersKronig::new();
+        if relative_tolerance.is_some() || absolute_tolerance.is_some() {
+            // The core sets both together; the one not given keeps its value.
+            let (relative, absolute) = inner.tolerance();
+            inner = inner.with_tolerance(
+                relative_tolerance.unwrap_or(relative),
+                absolute_tolerance.unwrap_or(absolute),
+            )?;
         }
+        Ok(Self { inner })
     }
 
-    /// Returns ``{"passed", "mae", "eps_real_recovered"}``.
-    fn check<'py>(
+    #[pyo3(signature = (*, spectrum))]
+    fn compute(
         &self,
-        py: Python<'py>,
-        frequency: PyReadonlyArray1<'py, f64>,
-        eps_real: PyReadonlyArray1<'py, f64>,
-        eps_imag: PyReadonlyArray1<'py, f64>,
-    ) -> PyResult<Py<PyAny>> {
-        let out = self
-            .inner
-            .check((
-                &frequency.as_array().to_owned(),
-                &eps_real.as_array().to_owned(),
-                &eps_imag.as_array().to_owned(),
-            ))
-            .map_err(py_value_err)?;
-        let dict = PyDict::new(py);
-        dict.set_item("passed", out.passed)?;
-        dict.set_item("mae", out.mae)?;
-        dict.set_item("eps_real_recovered", out.recovered.into_pyarray(py))?;
-        Ok(dict.into())
+        spectrum: PyRef<'_, PyDielectricSpectrumResult>,
+    ) -> Result<PyKramersKronigCheck> {
+        let out = self.inner.compute(KramersKronigInput {
+            spectrum: &spectrum.inner,
+        })?;
+        Ok(out.into())
     }
 }
 
-/// Conductivity sum rule: the integral of Re σ(ω) against the equal-time
-/// current fluctuation.
+described!(PyKramersKronig, KramersKronig);
+
+/// The conductivity sum rule ``∫ σ(ω) dω`` against its static value
+/// (``molrs::compute::ConductivitySumRule``).
+///
+/// Parameters
+/// ----------
+/// units : str or UnitPreset
+/// tolerance : float, optional
+///     The pass tolerance on the relative error; ``None`` keeps the core
+///     default.
+///
+/// ``compute(frequencies=, conductivity=, current_sq_mean=, volume=,
+/// temperature=)`` returns a ``SumRuleCheck``.
 #[pyclass(module = "molrs.compute", name = "ConductivitySumRule", frozen)]
-pub struct PyConductivitySumRule {
+pub(crate) struct PyConductivitySumRule {
     inner: ConductivitySumRule,
 }
 
 #[pymethods]
 impl PyConductivitySumRule {
     #[new]
-    fn new(current_sq_mean: f64, volume: f64, temperature: f64) -> Self {
-        Self {
-            inner: ConductivitySumRule {
-                current_sq_mean,
-                volume,
-                temperature,
-            },
+    #[pyo3(signature = (units, *, tolerance = None))]
+    fn new(units: &Bound<'_, PyAny>, tolerance: Option<f64>) -> Result<Self> {
+        let mut inner = ConductivitySumRule::new(args::units(units)?);
+        if let Some(tolerance) = tolerance {
+            inner = inner.with_tolerance(tolerance)?;
         }
+        Ok(Self { inner })
     }
 
-    /// Returns ``{"passed", "relative_error", "integral", "expected"}``.
-    fn check<'py>(
+    #[pyo3(signature = (*, frequencies, conductivity, current_sq_mean, volume, temperature))]
+    fn compute(
         &self,
-        py: Python<'py>,
-        frequency: PyReadonlyArray1<'py, f64>,
-        conductivity: PyReadonlyArray1<'py, f64>,
-    ) -> PyResult<Py<PyAny>> {
-        let out = self
-            .inner
-            .check((
-                &frequency.as_array().to_owned(),
-                &conductivity.as_array().to_owned(),
-            ))
-            .map_err(py_value_err)?;
-        let dict = PyDict::new(py);
-        dict.set_item("passed", out.passed)?;
-        dict.set_item("relative_error", out.relative_error)?;
-        dict.set_item("integral", out.integral)?;
-        dict.set_item("expected", out.expected)?;
-        Ok(dict.into())
+        frequencies: ArrayArg1<'_, f64>,
+        conductivity: ArrayArg1<'_, f64>,
+        current_sq_mean: f64,
+        volume: f64,
+        temperature: f64,
+    ) -> Result<PySumRuleCheck> {
+        let out = self.inner.compute(SumRuleInput {
+            frequencies: frequencies.as_array(),
+            conductivity: conductivity.as_array(),
+            current_sq_mean,
+            volume,
+            temperature,
+        })?;
+        Ok(out.into())
     }
 }
 
-/// Agreement of the same spectrum computed by several routes (pairwise RMS).
+described!(PyConductivitySumRule, ConductivitySumRule);
+
+/// Agreement of several ε(ω) routes on one system
+/// (``molrs::compute::RouteAgreement``).
+///
+/// Parameters
+/// ----------
+/// part : str, optional
+///     ``"imaginary"`` or ``"real"``.
+/// tolerance : float, optional
+///
+/// ``None`` keeps the core default. ``compute(spectra=)`` over a list of
+/// ``DielectricSpectrumResult`` returns a ``RouteAgreementCheck``.
 #[pyclass(module = "molrs.compute", name = "RouteAgreement", frozen)]
-pub struct PyRouteAgreement;
+pub(crate) struct PyRouteAgreement {
+    inner: RouteAgreement,
+}
 
 #[pymethods]
 impl PyRouteAgreement {
     #[new]
-    fn new() -> Self {
-        Self
+    #[pyo3(signature = (*, part = None, tolerance = None))]
+    fn new(part: Option<&str>, tolerance: Option<f64>) -> Result<Self> {
+        let mut inner = RouteAgreement::new();
+        if let Some(part) = part {
+            inner = inner.with_part(part.parse()?);
+        }
+        if let Some(tolerance) = tolerance {
+            inner = inner.with_tolerance(tolerance)?;
+        }
+        Ok(Self { inner })
     }
 
-    /// ``results`` maps a route name to its 1-D float64 curve. Returns
-    /// ``{"passed", "pairwise_rms"}``.
-    fn check<'py>(&self, py: Python<'py>, results: &Bound<'py, PyDict>) -> PyResult<Py<PyAny>> {
-        let mut entries = Vec::with_capacity(results.len());
-        for (key, value) in results.iter() {
-            let name: String = key.extract()?;
-            let arr: PyReadonlyArray1<f64> = value.extract().map_err(|_| {
-                PyValueError::new_err(format!(
-                    "RouteAgreement: value for '{name}' must be a 1-D float64 array"
-                ))
-            })?;
-            entries.push((name, arr.as_array().to_owned()));
-        }
-        let out = RouteAgreement.check(&entries).map_err(py_value_err)?;
-        let pairwise = PyDict::new(py);
-        for (label, rms) in &out.pairwise {
-            pairwise.set_item(label, rms)?;
-        }
-        let dict = PyDict::new(py);
-        dict.set_item("passed", out.passed)?;
-        dict.set_item("pairwise_rms", pairwise)?;
-        Ok(dict.into())
+    #[pyo3(signature = (*, spectra))]
+    fn compute(
+        &self,
+        spectra: Vec<PyRef<'_, PyDielectricSpectrumResult>>,
+    ) -> Result<PyRouteAgreementCheck> {
+        let spectra: Vec<&DielectricSpectrumResult> =
+            spectra.iter().map(|spectrum| &spectrum.inner).collect();
+        let out = self
+            .inner
+            .compute(RouteAgreementInput { spectra: &spectra })?;
+        Ok(out.into())
     }
 }
 
-/// Register this domain's classes and functions.
+described!(PyRouteAgreement, RouteAgreement);
+
+/// Split a polarizability series into its Raman invariants
+/// (``molrs::compute::PolarizabilityParts``).
+///
+/// ``compute(alpha=)`` over a ``(T, 6)`` series in Voigt order
+/// ``[xx, yy, zz, xy, xz, yz]`` returns a ``PolarizabilityPartsResult``.
+#[pyclass(module = "molrs.compute", name = "PolarizabilityParts", frozen)]
+pub(crate) struct PyPolarizabilityParts {
+    inner: PolarizabilityParts,
+}
+
+#[pymethods]
+impl PyPolarizabilityParts {
+    #[new]
+    fn new() -> Self {
+        Self {
+            inner: PolarizabilityParts::new(),
+        }
+    }
+
+    #[pyo3(signature = (*, alpha))]
+    fn compute(&self, alpha: ArrayArg2<'_, f64>) -> Result<PyPolarizabilityPartsResult> {
+        let out = self.inner.compute(PolarizabilityPartsInput {
+            alpha: alpha.as_array(),
+        })?;
+        Ok(out.into())
+    }
+}
+
+described!(PyPolarizabilityParts, PolarizabilityParts);
+
+/// Raman spectrum from the isotropic and anisotropic polarizability
+/// correlations (``molrs::compute::RamanSpectrum``).
+///
+/// Parameters
+/// ----------
+/// window : str, optional
+///     ``"hann"``, ``"blackman"``, ``"cosine_sq"`` or ``"none"``.
+/// pad : int, optional
+///     Zero-padding factor of the transform.
+/// incident_frequency : float, optional
+///     The laser wavenumber (cm⁻¹) of the scattering cross-section prefactor.
+/// averaged : bool, optional
+///     Report the orientation-averaged polarized / depolarized intensities.
+///
+/// ``None`` keeps the core default. ``compute(isotropic=, anisotropic=,
+/// temperature=None)`` over two single-channel ``TimeCorrelation`` curves
+/// returns a ``RamanSpectrumResult``; a ``temperature`` applies the Bose
+/// factor.
+#[pyclass(module = "molrs.compute", name = "RamanSpectrum", frozen)]
+pub(crate) struct PyRamanSpectrum {
+    inner: RamanSpectrum,
+}
+
+#[pymethods]
+impl PyRamanSpectrum {
+    #[new]
+    #[pyo3(signature = (*, window = None, pad = None, incident_frequency = None, averaged = None))]
+    fn new(
+        window: Option<&str>,
+        pad: Option<usize>,
+        incident_frequency: Option<f64>,
+        averaged: Option<bool>,
+    ) -> Result<Self> {
+        let mut inner = RamanSpectrum::new();
+        if let Some(window) = window {
+            inner = inner.with_window(window.parse()?);
+        }
+        if let Some(pad) = pad {
+            inner = inner.with_pad(pad)?;
+        }
+        if let Some(incident_frequency) = incident_frequency {
+            inner = inner.with_incident_frequency(incident_frequency)?;
+        }
+        if let Some(averaged) = averaged {
+            inner = inner.with_averaged(averaged);
+        }
+        Ok(Self { inner })
+    }
+
+    #[pyo3(signature = (*, isotropic, anisotropic, temperature = None))]
+    fn compute(
+        &self,
+        isotropic: PyRef<'_, PyTimeCorrelation>,
+        anisotropic: PyRef<'_, PyTimeCorrelation>,
+        temperature: Option<f64>,
+    ) -> Result<PyRamanSpectrumResult> {
+        let out = self.inner.compute(RamanSpectrumInput {
+            isotropic: &isotropic.inner,
+            anisotropic: &anisotropic.inner,
+            temperature,
+        })?;
+        Ok(out.into())
+    }
+}
+
+described!(PyRamanSpectrum, RamanSpectrum);
+
 pub(crate) fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    m.add_class::<PyPowerSpectrum>()?;
-    m.add_class::<PyIrSpectrum>()?;
-    m.add_class::<PyRamanSpectrum>()?;
+    m.add_class::<PyDielectricSpectrumResult>()?;
+    m.add_class::<PyKramersKronigCheck>()?;
+    m.add_class::<PySumRuleCheck>()?;
+    m.add_class::<PyRouteAgreementCheck>()?;
+    m.add_class::<PyPolarizabilityPartsResult>()?;
+    m.add_class::<PyRamanSpectrumResult>()?;
     m.add_class::<PyEinsteinHelfandSpectrum>()?;
     m.add_class::<PyGreenKuboSpectrum>()?;
     m.add_class::<PyDipoleRateCrossSpectrum>()?;
     m.add_class::<PyDipoleAutocorrelationSpectrum>()?;
-    m.add_class::<PyVcdSpectrum>()?;
-    m.add_class::<PyRoaSpectrum>()?;
-    m.add_class::<PyResonanceRamanSpectrum>()?;
     m.add_class::<PyKramersKronig>()?;
     m.add_class::<PyConductivitySumRule>()?;
     m.add_class::<PyRouteAgreement>()?;
+    m.add_class::<PyPolarizabilityParts>()?;
+    m.add_class::<PyRamanSpectrum>()?;
     Ok(())
 }

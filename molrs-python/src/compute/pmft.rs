@@ -1,103 +1,132 @@
-//! Potentials of mean force and torque (`molrs::compute::pmft`): `PmftXy`.
+//! Potentials of mean force and torque (`molrs::compute::Pmft<C>`): one class
+//! per registered pair coordinate system — `PmftR12`, `PmftXy`, `PmftXyt`,
+//! `PmftXyz` — all returning a `PmftResult`.
 
-#![allow(clippy::type_complexity)]
+use crate::array::{ArrayArg1, ArrayArg2};
+use molrs::compute::{Compute, PairCoordinate, Pmft, PmftInput, R12, Xy, Xyt, Xyz};
+use ndarray::{Array1, ArrayD};
 
-use super::{collect_frames, collect_neighbors};
-use crate::error::py_value_err;
-use molrs::compute::{Compute, PmftXy, PmftXyArgs, planar_orientation_angles};
-use molrs::core::Frame as CoreFrame;
-use molrs::op::F;
-use numpy::{IntoPyArray, PyArray2};
-use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
-use pyo3::types::PyAny;
 
-// ---------------------------------------------------------------------------
-// PmftXy
-// ---------------------------------------------------------------------------
+use super::error::Result;
+use super::output::py_result;
+use super::spec::described;
+use crate::core::neighborlist::PyNeighbors;
 
-#[pyclass(module = "molrs.compute", name = "PmftXy")]
-pub struct PyPmftXy {
-    inner: PmftXy,
+/// A `PmftResult<C>` with its dimension erased, so the four coordinate
+/// systems share one Python result class.
+#[derive(Clone)]
+pub(crate) struct PmftArrays {
+    density: ArrayD<f64>,
+    raw_counts: ArrayD<u64>,
+    pmf: ArrayD<f64>,
+    edges: Vec<Array1<f64>>,
 }
 
-#[pymethods]
-impl PyPmftXy {
-    #[new]
-    fn new(x_max: f64, y_max: f64, n_x: usize, n_y: usize) -> PyResult<Self> {
-        Ok(Self {
-            inner: PmftXy::new(x_max, y_max, n_x, n_y).map_err(py_value_err)?,
-        })
+impl<C: PairCoordinate> From<molrs::compute::PmftResult<C>> for PmftArrays {
+    fn from(result: molrs::compute::PmftResult<C>) -> Self {
+        Self {
+            density: result.density.into_dyn(),
+            raw_counts: result.raw_counts.into_dyn(),
+            pmf: result.pmf.into_dyn(),
+            edges: result.edges,
+        }
     }
+}
 
-    /// Returns per-frame `(raw_counts, density, pmf)`. If the first frame states
-    /// per-particle orientations — the quaternion columns (`quatw`..`quatk`) on
-    /// `atoms`, or an `"orientations"` topology block of `(head, tail)` atom
-    /// pairs, one per query particle — every bond is rotated into that
-    /// particle's local frame (molrs `compute::planar_orientation_angles`,
-    /// per frame). Without one the analyzer works in the lab frame.
-    fn compute<'py>(
-        &self,
-        py: Python<'py>,
-        frames: &Bound<'py, PyAny>,
-        nlists: &Bound<'py, PyAny>,
-    ) -> PyResult<
-        Vec<(
-            Bound<'py, PyArray2<u64>>,
-            Bound<'py, PyArray2<f64>>,
-            Bound<'py, PyArray2<f64>>,
-        )>,
-    > {
-        let owned = collect_frames(frames)?;
-        let refs: Vec<&CoreFrame> = owned.iter().collect();
-        let neighbors = collect_neighbors(nlists)?;
-        let first = refs
-            .first()
-            .copied()
-            .ok_or_else(|| PyValueError::new_err("no frames provided"))?;
-        // Per-frame per-particle orientation angles (quaternion z-rotations or
-        // `orientations` head–tail axes), or `None` (lab frame) when the first
-        // frame states none.
-        let orient_angles: Option<Vec<Vec<F>>> = if planar_orientation_angles(first)
-            .map_err(py_value_err)?
-            .is_some()
-        {
-            let per_frame = refs
-                .iter()
-                .map(|f| {
-                    planar_orientation_angles(f)
-                        .map_err(py_value_err)?
-                        .ok_or_else(|| {
-                            PyValueError::new_err(
-                                "every frame must state the orientations the first one does",
-                            )
-                        })
+py_result! {
+    /// A potential of mean force on a pair-coordinate grid
+    /// (``molrs::compute::PmftResult``): pair ``density`` and ``raw_counts``
+    /// per bin, ``pmf = −ln(ρ / ρ_ref)`` (``+inf`` where nothing was binned)
+    /// and the bin ``edges`` of each axis.
+    PyPmftResult(PmftArrays) as "PmftResult" { density, raw_counts, pmf, edges }
+}
+
+/// Declare the class of one `Pmft<C>` instantiation: its constructor
+/// arguments and the array type of its orientations.
+macro_rules! pmft_class {
+    (
+        $(#[$meta:meta])*
+        $py:ident($coord:ty) as $name:literal,
+        ($($arg:ident: $ty:ty),+),
+        $orientations:ty
+    ) => {
+        $(#[$meta])*
+        #[pyclass(module = "molrs.compute", name = $name, frozen)]
+        pub(crate) struct $py {
+            inner: Pmft<$coord>,
+        }
+
+        #[pymethods]
+        impl $py {
+            #[new]
+            fn new($($arg: $ty),+) -> Result<Self> {
+                Ok(Self {
+                    inner: Pmft::<$coord>::new($($arg),+)?,
                 })
-                .collect::<PyResult<Vec<_>>>()?;
-            Some(per_frame)
-        } else {
-            None
-        };
-        let args = PmftXyArgs {
-            nlists: &neighbors,
-            query_orientations: orient_angles.as_deref(),
-        };
-        let results = self.inner.compute(&refs, args).map_err(py_value_err)?;
-        Ok(results
-            .into_iter()
-            .map(|r| {
-                (
-                    r.raw_counts.into_pyarray(py),
-                    r.density.into_pyarray(py),
-                    r.pmf.into_pyarray(py),
-                )
-            })
-            .collect())
-    }
+            }
+
+            #[pyo3(signature = (*, pairs, orientations = None))]
+            fn compute(
+                &self,
+                pairs: PyRef<'_, PyNeighbors>,
+                orientations: Option<$orientations>,
+            ) -> Result<PyPmftResult> {
+                let out = self.inner.compute(PmftInput {
+                    pairs: &pairs.inner,
+                    orientations: orientations.as_ref().map(|o| o.as_array()),
+                })?;
+                Ok(PmftArrays::from(out).into())
+            }
+        }
+
+        described!($py, Pmft<$coord>);
+    };
 }
 
-/// Register this domain's classes and functions.
+pmft_class! {
+    /// PMFT in ``(r, θ1, θ2)`` of 2-D pairs (``molrs::compute::Pmft<R12>``).
+    ///
+    /// ``compute(pairs=, orientations=None)`` with ``(N,)`` angles.
+    PyPmftR12(R12) as "PmftR12",
+    (r_max: f64, n_r: usize, n_t1: usize, n_t2: usize),
+    ArrayArg1<'_, f64>
+}
+
+pmft_class! {
+    /// PMFT in the ``(x, y)`` frame of a 2-D particle
+    /// (``molrs::compute::Pmft<Xy>``).
+    ///
+    /// ``compute(pairs=, orientations=None)`` with ``(N,)`` angles.
+    PyPmftXy(Xy) as "PmftXy",
+    (x_max: f64, y_max: f64, n_x: usize, n_y: usize),
+    ArrayArg1<'_, f64>
+}
+
+pmft_class! {
+    /// PMFT in ``(x, y, θ)`` of 2-D pairs (``molrs::compute::Pmft<Xyt>``).
+    ///
+    /// ``compute(pairs=, orientations=None)`` with ``(N,)`` angles.
+    PyPmftXyt(Xyt) as "PmftXyt",
+    (x_max: f64, y_max: f64, n_x: usize, n_y: usize, n_t: usize),
+    ArrayArg1<'_, f64>
+}
+
+pmft_class! {
+    /// PMFT in the ``(x, y, z)`` frame of a 3-D particle
+    /// (``molrs::compute::Pmft<Xyz>``).
+    ///
+    /// ``compute(pairs=, orientations=None)`` with ``(N, 4)`` quaternions.
+    PyPmftXyz(Xyz) as "PmftXyz",
+    (x_max: f64, y_max: f64, z_max: f64, n_x: usize, n_y: usize, n_z: usize),
+    ArrayArg2<'_, f64>
+}
+
 pub(crate) fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    m.add_class::<PyPmftResult>()?;
+    m.add_class::<PyPmftR12>()?;
     m.add_class::<PyPmftXy>()?;
+    m.add_class::<PyPmftXyt>()?;
+    m.add_class::<PyPmftXyz>()?;
     Ok(())
 }

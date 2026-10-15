@@ -1,335 +1,233 @@
-//! Distance-based cluster detection and per-cluster properties.
+//! Distance-based cluster detection: connected components of a neighbor
+//! table, optionally merged by membership keys.
 
-mod properties;
 mod result;
 
-pub use properties::{ClusterProperties, ClusterPropertiesResult};
 pub use result::ClusterResult;
 
-use molrs::core::FrameAccess;
-use molrs::core::Neighbors;
-use molrs::op::Idx;
+use std::collections::{BTreeSet, HashMap};
+
+use molrs::core::{Neighbors, Topology};
 use ndarray::Array1;
-use std::collections::HashMap;
 
-use crate::compute::Compute;
-use crate::compute::ComputeError;
+use crate::compute::{Compute, ComputeError, Partition, require_self_query};
 
-/// Distance-based cluster analysis using BFS on the neighbor graph.
+/// Cluster analysis: two particles belong to the same cluster when they are
+/// connected, directly or transitively, by a pair of the neighbor table — or
+/// share a group of the optional `merge` partition.
 ///
-/// Two particles belong to the same cluster if they are connected (directly
-/// or transitively) within the neighbor cutoff. Uses CSR adjacency for
-/// cache-friendly traversal. One [`ClusterResult`] per input frame: the
-/// per-particle cluster IDs and the cluster sizes. Ported from
-/// `freud.cluster.Cluster`; feed its result to [`ClusterProperties`] for the
-/// per-cluster centers, gyration tensors and radii of gyration.
-#[derive(Debug, Clone)]
+/// Mirrors `freud.cluster.Cluster`; `merge` is freud's `keys`.
+///
+/// Configuration: the minimum cluster size. Data: one snapshot's half-shell
+/// self-query [`Neighbors`] table (any column policy — only the pair indices
+/// are read; the particle count is the table's `SelfQuery { n_points }`) and,
+/// optionally, a [`Partition`] whose groups are joined whole (a `mol_id`
+/// column keeps every molecule in one piece even when a bond is longer than
+/// the cutoff). Clustering purely by key is `merge` over a table with no
+/// pairs. Many snapshots go through [`Batch`](crate::compute::Batch).
+///
+/// The components are the connected components of
+/// [`Topology::connected_components`], numbered in order of their lowest
+/// particle. The result is a [`Partition`], so it feeds the shape computes
+/// ([`CenterOfMass`](crate::compute::CenterOfMass),
+/// [`GyrationTensor`](crate::compute::GyrationTensor), …) directly.
+#[derive(Debug, Clone, Copy)]
 pub struct Cluster {
     min_cluster_size: usize,
 }
 
+/// The data a [`Cluster`] analyses.
+#[derive(Clone, Copy)]
+pub struct ClusterInput<'a> {
+    /// One snapshot's self-query table; its pairs are the bonds.
+    pub pairs: &'a Neighbors,
+    /// Groups joined whole (freud's `keys`), one entry per particle; `None`
+    /// joins nothing beyond the pairs.
+    pub merge: Option<&'a (dyn Partition + Sync)>,
+}
+
+impl Default for Cluster {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Cluster {
-    /// Keep only clusters with at least `min_cluster_size` particles.
-    pub fn new(min_cluster_size: usize) -> Self {
-        Self { min_cluster_size }
+    /// Every cluster is kept (minimum size 1).
+    pub fn new() -> Self {
+        Self {
+            min_cluster_size: 1,
+        }
     }
 
-    fn cluster_one<FA: FrameAccess>(
-        &self,
-        frame: &FA,
-        neighbors: &Neighbors,
-    ) -> Result<ClusterResult, ComputeError> {
-        let n = frame
-            .visit_block("atoms", |b| b.n_rows().unwrap_or(0))
-            .ok_or(ComputeError::MissingBlock { name: "atoms" })?;
-
+    /// Drop clusters with fewer than `n` particles; their particles are in no
+    /// cluster.
+    ///
+    /// # Errors
+    /// [`ComputeError::OutOfRange`] for 0.
+    pub fn with_min_cluster_size(mut self, n: usize) -> Result<Self, ComputeError> {
         if n == 0 {
-            return Ok(ClusterResult {
-                cluster_idx: Array1::zeros(0),
-                n_clusters: 0,
-                cluster_sizes: vec![],
-                cluster_keys: vec![],
+            return Err(ComputeError::OutOfRange {
+                field: "Cluster::min_cluster_size",
+                value: "0".into(),
             });
         }
-
-        let n_pairs = neighbors.n_pairs();
-        let query_indices = neighbors.query_point_indices();
-        let point_indices = neighbors.point_indices();
-
-        let mut degree = vec![0u32; n];
-        for k in 0..n_pairs {
-            degree[query_indices[k] as usize] += 1;
-            degree[point_indices[k] as usize] += 1;
-        }
-
-        let mut offsets = vec![0usize; n + 1];
-        for i in 0..n {
-            offsets[i + 1] = offsets[i] + degree[i] as usize;
-        }
-
-        let mut flat_adj = vec![0u32; 2 * n_pairs];
-        let mut cursor = offsets[..n].to_vec();
-        for k in 0..n_pairs {
-            let i = query_indices[k] as usize;
-            let j = point_indices[k] as usize;
-            flat_adj[cursor[i]] = j as u32;
-            cursor[i] += 1;
-            flat_adj[cursor[j]] = i as u32;
-            cursor[j] += 1;
-        }
-
-        let mut cluster_idx = vec![-1_i64; n];
-        let mut current_id: i64 = 0;
-        let mut cluster_sizes: Vec<usize> = Vec::new();
-        let mut queue: Vec<usize> = Vec::new();
-
-        for start in 0..n {
-            if cluster_idx[start] >= 0 {
-                continue;
-            }
-
-            queue.clear();
-            queue.push(start);
-            cluster_idx[start] = current_id;
-            let mut size = 0;
-            let mut head = 0;
-
-            while head < queue.len() {
-                let node = queue[head];
-                head += 1;
-                size += 1;
-
-                for &nbr in &flat_adj[offsets[node]..offsets[node + 1]] {
-                    let neighbor = nbr as usize;
-                    if cluster_idx[neighbor] < 0 {
-                        cluster_idx[neighbor] = current_id;
-                        queue.push(neighbor);
-                    }
-                }
-            }
-
-            cluster_sizes.push(size);
-            current_id += 1;
-        }
-
-        if self.min_cluster_size > 1 {
-            let mut remap = vec![-1_i64; cluster_sizes.len()];
-            let mut new_id: i64 = 0;
-            let mut new_sizes = Vec::new();
-
-            for (old_id, &size) in cluster_sizes.iter().enumerate() {
-                if size >= self.min_cluster_size {
-                    remap[old_id] = new_id;
-                    new_sizes.push(size);
-                    new_id += 1;
-                }
-            }
-
-            for cid in cluster_idx.iter_mut() {
-                if *cid >= 0 {
-                    *cid = remap[*cid as usize];
-                }
-            }
-
-            cluster_sizes = new_sizes;
-        }
-
-        let n_clusters = cluster_sizes.len();
-
-        Ok(ClusterResult {
-            cluster_idx: Array1::from_vec(cluster_idx),
-            n_clusters,
-            cluster_sizes,
-            cluster_keys: vec![],
-        })
+        self.min_cluster_size = n;
+        Ok(self)
     }
 
-    /// Cluster a single frame by membership key (one cluster per distinct key).
-    fn keyed_one<FA: FrameAccess>(
-        &self,
-        frame: &FA,
-        keys: &[Idx],
-    ) -> Result<ClusterResult, ComputeError> {
-        let n = frame
-            .visit_block("atoms", |b| b.n_rows().unwrap_or(0))
-            .ok_or(ComputeError::MissingBlock { name: "atoms" })?;
-
-        if keys.len() != n {
-            return Err(ComputeError::DimensionMismatch {
-                expected: n,
-                got: keys.len(),
-                what: "membership-key count",
-            });
-        }
-
-        if n == 0 {
-            return Ok(ClusterResult {
-                cluster_idx: Array1::zeros(0),
-                n_clusters: 0,
-                cluster_sizes: vec![],
-                cluster_keys: vec![],
-            });
-        }
-
-        // Group by key, assigning cluster ids in order of first appearance.
-        let mut key_to_id: HashMap<Idx, usize> = HashMap::new();
-        let mut order_keys: Vec<Idx> = Vec::new();
-        let mut sizes: Vec<usize> = Vec::new();
-        let mut raw_idx = vec![0usize; n];
-        for (i, &k) in keys.iter().enumerate() {
-            let id = *key_to_id.entry(k).or_insert_with(|| {
-                order_keys.push(k);
-                sizes.push(0);
-                order_keys.len() - 1
-            });
-            raw_idx[i] = id;
-            sizes[id] += 1;
-        }
-
-        let mut cluster_idx = vec![-1_i64; n];
-
-        // Drop groups below min_cluster_size, mirroring the spatial path.
-        if self.min_cluster_size > 1 {
-            let mut remap = vec![-1_i64; sizes.len()];
-            let mut new_id: i64 = 0;
-            let mut new_sizes = Vec::new();
-            let mut new_keys = Vec::new();
-            for (old, &sz) in sizes.iter().enumerate() {
-                if sz >= self.min_cluster_size {
-                    remap[old] = new_id;
-                    new_sizes.push(sz);
-                    new_keys.push(vec![order_keys[old]]);
-                    new_id += 1;
-                }
-            }
-            for (i, &raw) in raw_idx.iter().enumerate() {
-                cluster_idx[i] = remap[raw];
-            }
-            return Ok(ClusterResult {
-                cluster_idx: Array1::from_vec(cluster_idx),
-                n_clusters: new_sizes.len(),
-                cluster_sizes: new_sizes,
-                cluster_keys: new_keys,
-            });
-        }
-
-        for (i, &raw) in raw_idx.iter().enumerate() {
-            cluster_idx[i] = raw as i64;
-        }
-        Ok(ClusterResult {
-            cluster_idx: Array1::from_vec(cluster_idx),
-            n_clusters: sizes.len(),
-            cluster_sizes: sizes,
-            cluster_keys: order_keys.into_iter().map(|k| vec![k]).collect(),
-        })
-    }
-
-    /// Cluster every frame by membership key: all particles sharing a key
-    /// (e.g. a molecule id) form one cluster, independent of geometry. Unlike
-    /// [`Cluster::compute`], this needs no neighbor list and is robust for
-    /// per-molecule properties (e.g. per-chain radius of gyration) even when
-    /// molecules overlap in space or a bond exceeds any spatial cutoff
-    /// (freud's `Cluster.compute(..., keys=...)`). The same `keys` apply to
-    /// every frame; their length must equal each frame's atom count.
-    pub fn compute_keyed<'a, FA: FrameAccess + Sync + 'a>(
-        &self,
-        frames: &[&'a FA],
-        keys: &[Idx],
-    ) -> Result<Vec<ClusterResult>, ComputeError> {
-        if frames.is_empty() {
-            return Err(ComputeError::EmptyInput);
-        }
-        let mut out = Vec::with_capacity(frames.len());
-        for frame in frames {
-            out.push(self.keyed_one(*frame, keys)?);
-        }
-        Ok(out)
+    /// The minimum cluster size.
+    pub fn min_cluster_size(&self) -> usize {
+        self.min_cluster_size
     }
 }
 
 impl Compute for Cluster {
-    type Args<'a> = &'a [Neighbors];
-    type Output = Vec<ClusterResult>;
+    type Input<'a> = ClusterInput<'a>;
+    type Output = ClusterResult;
 
-    fn compute<'a, FA: FrameAccess + Sync + 'a>(
-        &self,
-        frames: &[&'a FA],
-        neighbors: &'a [Neighbors],
-    ) -> Result<Vec<ClusterResult>, ComputeError> {
-        if frames.is_empty() {
-            return Err(ComputeError::EmptyInput);
-        }
-        if neighbors.len() != frames.len() {
-            return Err(ComputeError::DimensionMismatch {
-                expected: frames.len(),
-                got: neighbors.len(),
-                what: "neighbor-list count",
-            });
-        }
-        // Cluster has heavy per-frame work (CSR build + BFS, ~100 µs per
-        // 5k-atom frame), so rayon pays off from 2 frames onward.
-        #[cfg(feature = "rayon")]
-        const PAR_THRESHOLD: usize = 2;
-
-        #[cfg(feature = "rayon")]
-        if frames.len() >= PAR_THRESHOLD {
-            use rayon::prelude::*;
-            return frames
-                .par_iter()
-                .zip(neighbors.par_iter())
-                .map(|(frame, nlist)| self.cluster_one(*frame, nlist))
-                .collect();
+    /// # Errors
+    /// [`ComputeError::BadShape`] for a cross-query table;
+    /// [`ComputeError::OutOfRange`] for a pair index past the table's point
+    /// count; [`ComputeError::DimensionMismatch`] when `merge` does not have
+    /// one entry per particle.
+    fn compute(&self, input: ClusterInput<'_>) -> Result<ClusterResult, ComputeError> {
+        let n = require_self_query(input.pairs)?;
+        let mut bonds: Vec<[usize; 2]> = Vec::with_capacity(input.pairs.n_pairs());
+        for (&i, &j) in input
+            .pairs
+            .query_point_indices()
+            .iter()
+            .zip(input.pairs.point_indices())
+        {
+            let (i, j) = (i as usize, j as usize);
+            if i >= n || j >= n {
+                return Err(ComputeError::OutOfRange {
+                    field: "Neighbors pair index",
+                    value: format!("({i}, {j}) with {n} points"),
+                });
+            }
+            bonds.push([i, j]);
         }
 
-        let mut out = Vec::with_capacity(frames.len());
-        for (frame, nlist) in frames.iter().zip(neighbors.iter()) {
-            out.push(self.cluster_one(*frame, nlist)?);
+        if let Some(merge) = input.merge {
+            if merge.n_items() != n {
+                return Err(ComputeError::DimensionMismatch {
+                    expected: n,
+                    got: merge.n_items(),
+                    what: "merge partition items against the table's points",
+                });
+            }
+            // Join each group as a star on its first member.
+            let mut first: HashMap<u64, usize> = HashMap::new();
+            for item in 0..n {
+                if let Some(key) = merge.group_of(item) {
+                    let root = *first.entry(key).or_insert(item);
+                    if root != item {
+                        bonds.push([root, item]);
+                    }
+                }
+            }
         }
-        Ok(out)
+
+        let mut graph = Topology::with_atoms(n);
+        graph.add_bonds(&bonds);
+        let components = graph.connected_components();
+        let n_components = components.iter().max().map_or(0, |&c| c as usize + 1);
+
+        let mut sizes = vec![0usize; n_components];
+        for &c in &components {
+            sizes[c as usize] += 1;
+        }
+        // Components below the minimum size are dropped; the rest keep their
+        // order (lowest particle first) and are renumbered densely.
+        let mut remap = vec![-1_i64; n_components];
+        let mut cluster_sizes = Vec::new();
+        for (c, &size) in sizes.iter().enumerate() {
+            if size >= self.min_cluster_size {
+                remap[c] = cluster_sizes.len() as i64;
+                cluster_sizes.push(size);
+            }
+        }
+        let cluster_idx: Array1<i64> = components.iter().map(|&c| remap[c as usize]).collect();
+
+        let cluster_keys = match input.merge {
+            None => Vec::new(),
+            Some(merge) => {
+                let mut keys = vec![BTreeSet::new(); cluster_sizes.len()];
+                for (item, &c) in cluster_idx.iter().enumerate() {
+                    if c >= 0
+                        && let Some(key) = merge.group_of(item)
+                    {
+                        keys[c as usize].insert(key);
+                    }
+                }
+                keys.into_iter().map(|k| k.into_iter().collect()).collect()
+            }
+        };
+
+        Ok(ClusterResult {
+            cluster_idx,
+            n_clusters: cluster_sizes.len(),
+            cluster_sizes,
+            cluster_keys,
+        })
+    }
+}
+
+crate::compute::spec::compute_spec! {
+    Cluster as "Cluster";
+    params |s| {
+        min_cluster_size: Int = Cluster::new().min_cluster_size => s.min_cluster_size;
+    }
+    inputs {
+        pairs: Neighbors;
+        merge: Partition, optional;
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::compute::fixtures::nlist_from_frame;
-    use molrs::core::Block;
-    use molrs::core::Frame;
-    use molrs::core::SimBox;
+    use crate::compute::Batch;
+    use crate::compute::fixtures::neighbors_of;
+    use molrs::core::{NeighborColumns, NeighborPair, QueryMode, SimBox};
     use molrs::op::F;
-    use ndarray::{Array1 as A1, array};
+    use ndarray::array;
 
-    fn make_frame_with_positions(positions: &[[F; 3]], box_len: F) -> Frame {
-        let x = A1::from_iter(positions.iter().map(|p| p[0]));
-        let y = A1::from_iter(positions.iter().map(|p| p[1]));
-        let z = A1::from_iter(positions.iter().map(|p| p[2]));
-
-        let mut block = Block::new();
-        block.insert("x", x.into_dyn()).unwrap();
-        block.insert("y", y.into_dyn()).unwrap();
-        block.insert("z", z.into_dyn()).unwrap();
-
-        let mut frame = Frame::new();
-        frame.insert("atoms", block);
-        frame.simbox = Some(
-            SimBox::cube(
-                box_len,
-                array![0.0 as F, 0.0 as F, 0.0 as F],
-                [false, false, false],
-            )
-            .unwrap(),
-        );
-        frame
+    fn cube(len: F, pbc: [bool; 3]) -> SimBox {
+        SimBox::cube(len, array![0.0, 0.0, 0.0], pbc).unwrap()
     }
 
-    fn build_neighbors(frame: &Frame, cutoff: F) -> Neighbors {
-        nlist_from_frame(frame, cutoff)
+    fn cluster(positions: &[[F; 3]], box_len: F, cutoff: F, min: usize) -> ClusterResult {
+        let pairs = neighbors_of(positions, &cube(box_len, [false; 3]), cutoff);
+        Cluster::new()
+            .with_min_cluster_size(min)
+            .unwrap()
+            .compute(ClusterInput {
+                pairs: &pairs,
+                merge: None,
+            })
+            .unwrap()
     }
 
-    fn cluster_single(frame: &Frame, nlist: Neighbors, min: usize) -> ClusterResult {
-        let out = Cluster::new(min).compute(&[frame], &[nlist]).unwrap();
-        assert_eq!(out.len(), 1);
-        out.into_iter().next().unwrap()
+    /// A table over `n` points with no pairs: clustering by `merge` alone.
+    fn no_pairs(n: usize) -> Neighbors {
+        Neighbors::from_pairs(
+            std::iter::empty::<NeighborPair>(),
+            NeighborColumns::INDICES_ONLY,
+            QueryMode::SelfQuery { n_points: n },
+        )
+    }
+
+    fn keyed(n: usize, keys: &[u64], min: usize) -> Result<ClusterResult, ComputeError> {
+        let keys = keys.to_vec();
+        Cluster::new()
+            .with_min_cluster_size(min)?
+            .compute(ClusterInput {
+                pairs: &no_pairs(n),
+                merge: Some(&keys),
+            })
     }
 
     #[test]
@@ -342,9 +240,7 @@ mod tests {
             [8.5, 8.0, 8.0],
             [8.0, 8.5, 8.0],
         ];
-        let frame = make_frame_with_positions(&positions, 20.0);
-        let nbrs = build_neighbors(&frame, 2.0);
-        let result = cluster_single(&frame, nbrs, 1);
+        let result = cluster(&positions, 20.0, 2.0, 1);
 
         assert_eq!(result.n_clusters, 2);
         assert_eq!(result.cluster_idx[0], result.cluster_idx[1]);
@@ -357,13 +253,12 @@ mod tests {
     #[test]
     fn min_cluster_size_filters_small() {
         let positions = [[1.0, 1.0, 1.0], [1.5, 1.0, 1.0], [8.0, 8.0, 8.0]];
-        let frame = make_frame_with_positions(&positions, 20.0);
-        let nbrs = build_neighbors(&frame, 2.0);
-        let result = cluster_single(&frame, nbrs, 2);
+        let result = cluster(&positions, 20.0, 2.0, 2);
 
         assert_eq!(result.n_clusters, 1);
         assert_eq!(result.cluster_idx[2], -1);
         assert!(result.cluster_idx[0] >= 0);
+        assert_eq!(result.group_of(2), None);
     }
 
     #[test]
@@ -374,9 +269,7 @@ mod tests {
             [1.0, 1.5, 1.0],
             [1.5, 1.5, 1.0],
         ];
-        let frame = make_frame_with_positions(&positions, 20.0);
-        let nbrs = build_neighbors(&frame, 2.0);
-        let result = cluster_single(&frame, nbrs, 1);
+        let result = cluster(&positions, 20.0, 2.0, 1);
 
         assert_eq!(result.n_clusters, 1);
         assert_eq!(result.cluster_sizes[0], 4);
@@ -390,9 +283,7 @@ mod tests {
             [4.0, 5.0, 5.0],
             [3.0, 5.0, 5.0],
         ];
-        let frame = make_frame_with_positions(&positions, 10.0);
-        let nbrs = build_neighbors(&frame, 2.01);
-        let result = cluster_single(&frame, nbrs, 1);
+        let result = cluster(&positions, 10.0, 2.01, 1);
         assert_eq!(result.n_clusters, 1);
         assert_eq!(result.cluster_sizes[0], 4);
     }
@@ -400,9 +291,7 @@ mod tests {
     #[test]
     fn all_isolated() {
         let positions = [[1.0, 1.0, 1.0], [5.0, 5.0, 5.0], [9.0, 9.0, 9.0]];
-        let frame = make_frame_with_positions(&positions, 20.0);
-        let nbrs = build_neighbors(&frame, 0.5);
-        let result = cluster_single(&frame, nbrs, 1);
+        let result = cluster(&positions, 20.0, 0.5, 1);
         assert_eq!(result.n_clusters, 3);
         for &s in &result.cluster_sizes {
             assert_eq!(s, 1);
@@ -414,28 +303,21 @@ mod tests {
     #[test]
     fn coincident_particles() {
         let positions = [[3.0, 3.0, 3.0], [3.0, 3.0, 3.0], [3.0, 3.0, 3.0]];
-        let frame = make_frame_with_positions(&positions, 10.0);
-        let nbrs = build_neighbors(&frame, 0.5);
-        let result = cluster_single(&frame, nbrs, 1);
+        let result = cluster(&positions, 10.0, 0.5, 1);
         assert_eq!(result.n_clusters, 1);
         assert_eq!(result.cluster_sizes[0], 3);
     }
 
     #[test]
     fn empty_frame() {
-        let frame = make_frame_with_positions(&[], 10.0);
-        let nbrs = build_neighbors(&frame, 1.0);
-        let result = cluster_single(&frame, nbrs, 1);
+        let result = cluster(&[], 10.0, 1.0, 1);
         assert_eq!(result.n_clusters, 0);
         assert!(result.cluster_idx.is_empty());
     }
 
     #[test]
     fn single_particle() {
-        let positions = [[5.0, 5.0, 5.0]];
-        let frame = make_frame_with_positions(&positions, 10.0);
-        let nbrs = build_neighbors(&frame, 1.0);
-        let result = cluster_single(&frame, nbrs, 1);
+        let result = cluster(&[[5.0, 5.0, 5.0]], 10.0, 1.0, 1);
         assert_eq!(result.n_clusters, 1);
         assert_eq!(result.cluster_idx[0], 0);
     }
@@ -448,9 +330,7 @@ mod tests {
             [3.0, 5.0, 5.0],
             [4.0, 5.0, 5.0],
         ];
-        let frame = make_frame_with_positions(&positions, 10.0);
-        let nbrs = build_neighbors(&frame, 1.5);
-        let result = cluster_single(&frame, nbrs, 1);
+        let result = cluster(&positions, 10.0, 1.5, 1);
         assert_eq!(result.n_clusters, 1);
         assert_eq!(result.cluster_sizes[0], 4);
     }
@@ -458,48 +338,39 @@ mod tests {
     #[test]
     fn pbc_wrapping_cluster() {
         let positions = [[0.5, 5.0, 5.0], [9.5, 5.0, 5.0]];
-        let x = A1::from_iter(positions.iter().map(|p| p[0]));
-        let y = A1::from_iter(positions.iter().map(|p| p[1]));
-        let z = A1::from_iter(positions.iter().map(|p| p[2]));
-        let mut block = Block::new();
-        block.insert("x", x.into_dyn()).unwrap();
-        block.insert("y", y.into_dyn()).unwrap();
-        block.insert("z", z.into_dyn()).unwrap();
-        let mut frame = Frame::new();
-        frame.insert("atoms", block);
-        frame.simbox = Some(
-            SimBox::cube(
-                10.0,
-                array![0.0 as F, 0.0 as F, 0.0 as F],
-                [true, true, true],
-            )
-            .unwrap(),
-        );
-        let nbrs = build_neighbors(&frame, 2.0);
-        let result = cluster_single(&frame, nbrs, 1);
+        let pairs = neighbors_of(&positions, &cube(10.0, [true; 3]), 2.0);
+        let result = Cluster::new()
+            .compute(ClusterInput {
+                pairs: &pairs,
+                merge: None,
+            })
+            .unwrap();
         assert_eq!(result.n_clusters, 1);
     }
 
     #[test]
     fn multi_frame_runs_per_frame() {
-        let f1 = make_frame_with_positions(&[[1.0, 1.0, 1.0], [1.5, 1.0, 1.0]], 10.0);
-        let f2 = make_frame_with_positions(&[[5.0, 5.0, 5.0], [7.0, 5.0, 5.0]], 10.0);
-        let n1 = build_neighbors(&f1, 1.0);
-        let n2 = build_neighbors(&f2, 1.0);
-        let out = Cluster::new(1).compute(&[&f1, &f2], &[n1, n2]).unwrap();
+        let b = cube(10.0, [false; 3]);
+        let n1 = neighbors_of(&[[1.0, 1.0, 1.0], [1.5, 1.0, 1.0]], &b, 1.0);
+        let n2 = neighbors_of(&[[5.0, 5.0, 5.0], [7.0, 5.0, 5.0]], &b, 1.0);
+        let out = Batch(Cluster::new())
+            .compute(vec![
+                ClusterInput {
+                    pairs: &n1,
+                    merge: None,
+                },
+                ClusterInput {
+                    pairs: &n2,
+                    merge: None,
+                },
+            ])
+            .unwrap();
         assert_eq!(out.len(), 2);
         assert_eq!(out[0].n_clusters, 1);
         assert_eq!(out[1].n_clusters, 2);
     }
 
-    #[test]
-    fn empty_frames_is_error() {
-        let frames: Vec<&Frame> = Vec::new();
-        let err = Cluster::new(1)
-            .compute(&frames, &Vec::<Neighbors>::new())
-            .unwrap_err();
-        assert!(matches!(err, ComputeError::EmptyInput));
-    }
+    // --- `merge` (freud's keys; the former `compute_keyed`) ---
 
     #[test]
     fn keyed_groups_by_key_ignoring_geometry() {
@@ -514,17 +385,12 @@ mod tests {
             [1.3, 1.1, 1.0],
             [1.5, 1.1, 1.0],
         ];
-        let frame = make_frame_with_positions(&positions, 20.0);
         // Spatial clustering merges all six into one.
-        let nbrs = build_neighbors(&frame, 2.0);
-        let spatial = cluster_single(&frame, nbrs, 1);
+        let spatial = cluster(&positions, 20.0, 2.0, 1);
         assert_eq!(spatial.n_clusters, 1);
 
         // Keyed clustering by mol-id splits into two clusters of three.
-        let keys = [0u64, 0, 0, 1, 1, 1];
-        let out = Cluster::new(1).compute_keyed(&[&frame], &keys).unwrap();
-        assert_eq!(out.len(), 1);
-        let r = &out[0];
+        let r = keyed(6, &[0, 0, 0, 1, 1, 1], 1).unwrap();
         assert_eq!(r.n_clusters, 2);
         assert_eq!(r.cluster_sizes, vec![3, 3]);
         assert_eq!(r.cluster_idx[0], r.cluster_idx[1]);
@@ -537,11 +403,7 @@ mod tests {
 
     #[test]
     fn keyed_respects_first_appearance_order() {
-        let positions = [[0.0, 0.0, 0.0]; 4];
-        let frame = make_frame_with_positions(&positions, 20.0);
-        let keys = [7u64, 3, 7, 3];
-        let out = Cluster::new(1).compute_keyed(&[&frame], &keys).unwrap();
-        let r = &out[0];
+        let r = keyed(4, &[7, 3, 7, 3], 1).unwrap();
         assert_eq!(r.n_clusters, 2);
         // key 7 seen first -> cluster 0, key 3 -> cluster 1
         assert_eq!(r.cluster_idx.to_vec(), vec![0, 1, 0, 1]);
@@ -550,12 +412,8 @@ mod tests {
 
     #[test]
     fn keyed_min_cluster_size_filters() {
-        let positions = [[0.0, 0.0, 0.0]; 4];
-        let frame = make_frame_with_positions(&positions, 20.0);
         // key 0 has 3 members, key 1 has 1 member.
-        let keys = [0u64, 0, 0, 1];
-        let out = Cluster::new(2).compute_keyed(&[&frame], &keys).unwrap();
-        let r = &out[0];
+        let r = keyed(4, &[0, 0, 0, 1], 2).unwrap();
         assert_eq!(r.n_clusters, 1);
         assert_eq!(r.cluster_sizes, vec![3]);
         assert_eq!(r.cluster_idx[3], -1);
@@ -564,17 +422,84 @@ mod tests {
 
     #[test]
     fn keyed_length_mismatch_is_error() {
-        let frame = make_frame_with_positions(&[[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]], 20.0);
-        let err = Cluster::new(1)
-            .compute_keyed(&[&frame], &[0u64])
-            .unwrap_err();
+        let err = keyed(2, &[0], 1).unwrap_err();
         assert!(matches!(err, ComputeError::DimensionMismatch { .. }));
     }
 
+    /// `merge` joins groups on top of the pairs (freud's semantics): two
+    /// spatial clusters sharing a key are one cluster carrying both keys.
     #[test]
-    fn keyed_empty_frames_is_error() {
-        let frames: Vec<&Frame> = Vec::new();
-        let err = Cluster::new(1).compute_keyed(&frames, &[]).unwrap_err();
-        assert!(matches!(err, ComputeError::EmptyInput));
+    fn merge_joins_spatial_clusters_that_share_a_key() {
+        let positions = [
+            [1.0, 1.0, 1.0],
+            [1.5, 1.0, 1.0],
+            [8.0, 8.0, 8.0],
+            [8.5, 8.0, 8.0],
+            [15.0, 15.0, 15.0],
+        ];
+        let pairs = neighbors_of(&positions, &cube(20.0, [false; 3]), 1.0);
+        let keys: Vec<u32> = vec![4, 9, 9, 2, 6];
+        let r = Cluster::new()
+            .compute(ClusterInput {
+                pairs: &pairs,
+                merge: Some(&keys),
+            })
+            .unwrap();
+        assert_eq!(r.n_clusters, 2);
+        assert_eq!(r.cluster_idx.to_vec(), vec![0, 0, 0, 0, 1]);
+        assert_eq!(r.cluster_keys, vec![vec![2, 4, 9], vec![6]]);
+    }
+
+    #[test]
+    fn min_cluster_size_zero_is_out_of_range() {
+        assert!(matches!(
+            Cluster::new().with_min_cluster_size(0),
+            Err(ComputeError::OutOfRange {
+                field: "Cluster::min_cluster_size",
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn a_cross_query_table_is_bad_shape() {
+        let table = Neighbors::from_pairs(
+            std::iter::empty::<NeighborPair>(),
+            NeighborColumns::INDICES_ONLY,
+            QueryMode::CrossQuery {
+                n_query_points: 2,
+                n_points: 2,
+            },
+        );
+        assert!(matches!(
+            Cluster::new().compute(ClusterInput {
+                pairs: &table,
+                merge: None
+            }),
+            Err(ComputeError::BadShape { .. })
+        ));
+    }
+
+    /// A hand-built table naming a point past its own count used to panic in
+    /// the adjacency build.
+    #[test]
+    fn a_pair_past_the_point_count_is_out_of_range() {
+        let table = Neighbors::from_pairs(
+            [NeighborPair {
+                i: 0,
+                j: 5,
+                dist_sq: 1.0,
+                disp: [1.0, 0.0, 0.0],
+            }],
+            NeighborColumns::INDICES_ONLY,
+            QueryMode::SelfQuery { n_points: 2 },
+        );
+        assert!(matches!(
+            Cluster::new().compute(ClusterInput {
+                pairs: &table,
+                merge: None
+            }),
+            Err(ComputeError::OutOfRange { .. })
+        ));
     }
 }

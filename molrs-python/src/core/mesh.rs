@@ -4,9 +4,10 @@
 //! `molrs.io.read_stl` reads and what a
 //! [`Polyhedron`](crate::core::region::PyPolyhedron) is bounded by.
 
+use crate::array::ArrayArg2;
 use molrs::core::TriMesh;
 use ndarray::Array2;
-use numpy::{IntoPyArray, PyArray2, PyReadonlyArray2};
+use numpy::{IntoPyArray, PyArray2};
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 
@@ -43,10 +44,7 @@ impl PyTriMesh {
     /// ValueError
     ///     If a face points past the vertex table, or the shapes are wrong.
     #[new]
-    fn new(
-        vertices: PyReadonlyArray2<'_, f64>,
-        faces: PyReadonlyArray2<'_, u32>,
-    ) -> PyResult<Self> {
+    fn new(vertices: ArrayArg2<'_, f64>, faces: ArrayArg2<'_, u32>) -> PyResult<Self> {
         let v = vertices.as_array();
         let f = faces.as_array();
         if v.ncols() != 3 {

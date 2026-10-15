@@ -1,80 +1,145 @@
-//! Dielectric raw observables (`molrs::compute`): the free functions
-//! `dipole_moment`, `current_density`, `static_dielectric_constant` and
-//! `decompose_current`, at the same names as in Rust.
+//! Dielectric observables (`molrs::compute::dielectric`): `DipoleMoment`
+//! (per-group dipole series) and `StaticDielectric` (ε from the dipole
+//! fluctuation); their outputs `DipoleMomentResult` and
+//! `StaticDielectricResult`.
 
+use crate::array::{ArrayArg1, ArrayArg2, ArrayArg3};
 use molrs::compute::{
-    current_density, decompose_current, dipole_moment, static_dielectric_constant,
+    Compute, DipoleMoment, DipoleMomentInput, DipoleMomentResult, StaticDielectric,
+    StaticDielectricInput, StaticDielectricResult,
 };
-use numpy::{
-    IntoPyArray, PyArray1, PyArray2, PyReadonlyArray1, PyReadonlyArray2, PyReadonlyArray3,
-};
+
 use pyo3::prelude::*;
 
-use crate::error::py_value_err;
+use super::args;
+use super::error::Result;
+use super::output::{ToPy, py_result};
+use super::spec::described;
 
-/// Total dipole moment `M = Σ q_i r_i` (e·Å) of one configuration: `charges`
-/// shape `(n_atoms,)` in e, `positions` shape `(n_atoms, 3)` in Å, unwrapped.
-#[pyfunction(name = "dipole_moment")]
-fn dipole_moment_py<'py>(
-    py: Python<'py>,
-    charges: PyReadonlyArray1<'py, f64>,
-    positions: PyReadonlyArray2<'py, f64>,
-) -> PyResult<Bound<'py, PyArray1<f64>>> {
-    let c = charges.as_array().to_owned();
-    let p = positions.as_array().to_owned();
-    let result = dipole_moment(&c, &p).map_err(py_value_err)?;
-    Ok(result.into_pyarray(py))
+py_result! {
+    /// Dipole series per group (``molrs::compute::DipoleMomentResult``):
+    /// ``moments[frame, group, :]`` for the group keys ``groups``.
+    PyDipoleMomentResult(DipoleMomentResult) as "DipoleMomentResult" { groups, moments }
 }
 
-/// Polarisation current density `(dM/dt) / V`, shape `(n_frames, 3)`, by
-/// finite differences of `dipole_moments`; row 0 is NaN.
-#[pyfunction(name = "current_density")]
-fn current_density_py<'py>(
-    py: Python<'py>,
-    dipole_moments: PyReadonlyArray2<'py, f64>,
-    dt: f64,
-    volume: f64,
-) -> PyResult<Bound<'py, PyArray2<f64>>> {
-    let dm = dipole_moments.as_array().to_owned();
-    let result = current_density(&dm, dt, volume).map_err(py_value_err)?;
-    Ok(result.into_pyarray(py))
+#[pymethods]
+impl PyDipoleMomentResult {
+    /// The ``(T, 3)`` dipole series at ``column`` (``0`` for the whole system).
+    fn series<'py>(&self, py: Python<'py>, column: usize) -> PyResult<Bound<'py, PyAny>> {
+        let n_series = self.inner.moments.shape()[1];
+        if column >= n_series {
+            return Err(pyo3::exceptions::PyIndexError::new_err(format!(
+                "column {column} out of range for {n_series} series"
+            )));
+        }
+        self.inner.series(column).to_owned().to_py(py)
+    }
 }
 
-/// Neumann static dielectric constant from dipole fluctuations.
-#[pyfunction(name = "static_dielectric_constant")]
-fn static_dielectric_constant_py<'py>(
-    dipole_moments: PyReadonlyArray2<'py, f64>,
-    volume: f64,
-    temperature: f64,
-    epsilon_inf: f64,
-) -> PyResult<f64> {
-    let dm = dipole_moments.as_array().to_owned();
-    static_dielectric_constant(&dm, volume, temperature, epsilon_inf).map_err(py_value_err)
+py_result! {
+    /// The static permittivity (``molrs::compute::StaticDielectricResult``):
+    /// ``epsilon``, per-axis ``epsilon_axes``, the dipole moments behind it and
+    /// the number of frames.
+    PyStaticDielectricResult(StaticDielectricResult) as "StaticDielectricResult" {
+        epsilon, epsilon_axes, dipole_mean, dipole_sq_mean, fluctuation, epsilon_inf, n_frames
+    }
 }
 
-/// Split a `(n_particles, n_frames, 3)` per-particle current into the
-/// `water_mask` part and the rest, each `(n_frames, 3)`.
-#[allow(clippy::type_complexity)]
-#[pyfunction(name = "decompose_current")]
-fn decompose_current_py<'py>(
-    py: Python<'py>,
-    per_particle_current: PyReadonlyArray3<'py, f64>,
-    water_mask: PyReadonlyArray1<'py, bool>,
-) -> PyResult<(Bound<'py, PyArray2<f64>>, Bound<'py, PyArray2<f64>>)> {
-    let current = per_particle_current.as_array().to_owned();
-    let mask = water_mask.as_array().to_owned();
-    let (j_w, j_i) = decompose_current(&current, &mask).map_err(py_value_err)?;
-    Ok((j_w.into_pyarray(py), j_i.into_pyarray(py)))
+/// The dipole moment ``Σ q r`` of each group in each frame
+/// (``molrs::compute::DipoleMoment``).
+///
+/// ``compute(positions=, charges=, partition=None)`` over ``(T, N, 3)``
+/// positions and ``(N,)`` charges; ``partition`` (labels or a partition
+/// result) splits the items into groups, else the whole system is one.
+#[pyclass(module = "molrs.compute", name = "DipoleMoment", frozen)]
+pub(crate) struct PyDipoleMoment {
+    inner: DipoleMoment,
 }
+
+#[pymethods]
+impl PyDipoleMoment {
+    #[new]
+    fn new() -> Self {
+        Self {
+            inner: DipoleMoment::new(),
+        }
+    }
+
+    #[pyo3(signature = (*, positions, charges, partition = None))]
+    fn compute<'py>(
+        &self,
+        positions: ArrayArg3<'py, f64>,
+        charges: ArrayArg1<'py, f64>,
+        partition: Option<Bound<'py, PyAny>>,
+    ) -> Result<PyDipoleMomentResult> {
+        let partition = partition
+            .as_ref()
+            .map(args::PartitionArg::extract)
+            .transpose()?;
+        let out = self.inner.compute(DipoleMomentInput {
+            positions: positions.as_array(),
+            charges: charges.as_array(),
+            partition: partition.as_ref().map(args::PartitionArg::partition),
+        })?;
+        Ok(out.into())
+    }
+}
+
+described!(PyDipoleMoment, DipoleMoment);
+
+/// Static permittivity from the fluctuation of the total dipole
+/// (``molrs::compute::StaticDielectric``).
+///
+/// Parameters
+/// ----------
+/// units : str or UnitPreset
+///     The unit system of dipoles, volume and temperature.
+/// epsilon_inf : float, optional
+///     The high-frequency permittivity ε_∞; ``None`` keeps the core default.
+///
+/// ``compute(dipoles=, volume=, temperature=, boundary=)`` over a ``(T, 3)``
+/// dipole series; ``boundary`` is ``"tin_foil"`` or ``"vacuum"``.
+#[pyclass(module = "molrs.compute", name = "StaticDielectric", frozen)]
+pub(crate) struct PyStaticDielectric {
+    inner: StaticDielectric,
+}
+
+#[pymethods]
+impl PyStaticDielectric {
+    #[new]
+    #[pyo3(signature = (units, *, epsilon_inf = None))]
+    fn new(units: &Bound<'_, PyAny>, epsilon_inf: Option<f64>) -> Result<Self> {
+        let mut inner = StaticDielectric::new(args::units(units)?);
+        if let Some(epsilon_inf) = epsilon_inf {
+            inner = inner.with_epsilon_inf(epsilon_inf);
+        }
+        Ok(Self { inner })
+    }
+
+    #[pyo3(signature = (*, dipoles, volume, temperature, boundary))]
+    fn compute(
+        &self,
+        dipoles: ArrayArg2<'_, f64>,
+        volume: f64,
+        temperature: f64,
+        boundary: &str,
+    ) -> Result<PyStaticDielectricResult> {
+        let out = self.inner.compute(StaticDielectricInput {
+            dipoles: dipoles.as_array(),
+            volume,
+            temperature,
+            boundary: boundary.parse()?,
+        })?;
+        Ok(out.into())
+    }
+}
+
+described!(PyStaticDielectric, StaticDielectric);
 
 pub(crate) fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    for f in [
-        wrap_pyfunction!(dipole_moment_py, m)?,
-        wrap_pyfunction!(current_density_py, m)?,
-        wrap_pyfunction!(static_dielectric_constant_py, m)?,
-        wrap_pyfunction!(decompose_current_py, m)?,
-    ] {
-        crate::add_function(m, "molrs.compute", f)?;
-    }
+    m.add_class::<PyDipoleMomentResult>()?;
+    m.add_class::<PyStaticDielectricResult>()?;
+    m.add_class::<PyDipoleMoment>()?;
+    m.add_class::<PyStaticDielectric>()?;
     Ok(())
 }

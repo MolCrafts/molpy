@@ -1,13 +1,36 @@
-//! Python bindings for `molrs::compute` (`molrs.compute`): one binding file
-//! per Rust compute domain, every class at the one path `molrs.compute.<Name>`
-//! — the Rust facade is flat, so the Python module is too.
+//! Python bindings for `molrs::compute` (`molrs.compute`).
 //!
-//! This file holds what every domain binding shares: how a `compute(...)`
-//! call takes its frames and neighbour tables (one or a list of them).
+//! Every entry of `ComputeSpec::all()` is one class here, under its core
+//! name, and every class has the same two-step shape the core has:
+//!
+//! - `__init__` takes **configuration only** — the constructor arguments and
+//!   `with_*` settings of the core type, by their spec names. An optional one
+//!   is `None` in the signature, and the core setter is called only when it is
+//!   given, so every default lives in the core.
+//! - `compute(...)` takes **the data**, as keyword arguments named after the
+//!   fields of the core `Input` struct. A compute whose core input is a slice
+//!   of per-frame records (`Rdf`, `DistributionFunction`,
+//!   `CombinedDistribution`, `SpatialDistribution`) takes one list per field.
+//!
+//! Each core output is a frozen class with read-only getters ([`py_result!`]),
+//! and an output another compute consumes is passed back as that object
+//! (`TimeCorrelation` into the fits, `SteinhardtResult` into `Pca`, …).
+//!
+//! Shared plumbing has one home each: the error mapping in [`error`], the
+//! adapters from Python arguments to core inputs in [`args`], the output
+//! conversion in [`output`], the descriptor classes in [`spec`] and the
+//! configuration value types (`Axis`, `RegularGrid`, `Histogram`) in
+//! [`values`].
+//!
+//! [`py_result!`]: output::py_result
 
-mod analysis_contract;
+mod args;
+mod error;
+mod output;
+mod spec;
+mod values;
+
 mod cluster;
-mod correlation;
 mod decomposition;
 mod density;
 mod dielectric;
@@ -19,81 +42,38 @@ mod fitting;
 mod hbond;
 mod kinetic;
 mod kmeans;
-mod msd;
 mod order;
 mod pmft;
 mod rdf;
 mod shape;
 mod spectroscopy;
-mod transport;
+mod time_series;
 mod voronoi;
 
 use pyo3::prelude::*;
 
-use crate::core::frame::PyFrame;
-
-/// No frames: what a compute over arrays alone passes where its trait takes
-/// a frame slice.
-const EMPTY_FRAMES: &[&molrs::core::Frame] = &[];
-
-pub(crate) fn was_batched(frames: &Bound<'_, PyAny>) -> bool {
-    frames.extract::<PyRef<'_, PyFrame>>().is_err()
-}
-
-// Sibling analysis submodules (mirrors molrs core `compute/`).
-/// Collect owned core [`Frame`]s from a single `Frame` or a list of them.
-/// Used by every batch-`compute` binding to accept both shapes.
-///
-/// [`Frame`]: molrs::core::Frame
-pub(crate) fn collect_frames(frames: &Bound<'_, PyAny>) -> PyResult<Vec<molrs::core::Frame>> {
-    use crate::core::frame::PyFrame;
-    if let Ok(single) = frames.extract::<PyRef<'_, PyFrame>>() {
-        return Ok(vec![single.clone_core_frame()?]);
-    }
-    let list: Vec<PyRef<'_, PyFrame>> = frames.extract()?;
-    list.iter().map(|f| f.clone_core_frame()).collect()
-}
-
-/// Collect owned [`Neighbors`] tables from a single wrapper or a list of them.
-///
-/// The analyses take one materialized table per frame, so this is where the
-/// binder accepts either shape. The engine that produced a table
-/// (`NeighborList`) is deliberately not accepted: it would have to guess a
-/// column policy, and a guess that drops `disp` would fail silently.
-///
-/// [`Neighbors`]: molrs::core::Neighbors
-pub(crate) fn collect_neighbors(arg: &Bound<'_, PyAny>) -> PyResult<Vec<molrs::core::Neighbors>> {
-    use crate::core::neighborlist::PyNeighbors;
-    if let Ok(single) = arg.extract::<PyRef<'_, PyNeighbors>>() {
-        return Ok(vec![single.inner.clone()]);
-    }
-    let list: Vec<PyRef<'_, PyNeighbors>> = arg.extract()?;
-    Ok(list.iter().map(|n| n.inner.clone()).collect())
-}
-
-/// Register every compute domain on the native module.
+/// Register every compute class on the native module.
 pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    analysis_contract::register(m)?;
-    cluster::register(m)?;
-    correlation::register(m)?;
-    kmeans::register(m)?;
-    decomposition::register(m)?;
-    density::register(m)?;
-    dielectric::register(m)?;
-    diffraction::register(m)?;
-    distribution::register(m)?;
-    dynamics::register(m)?;
-    environment::register(m)?;
+    spec::register(m)?;
+    values::register(m)?;
+    time_series::register(m)?;
     fitting::register(m)?;
-    hbond::register(m)?;
     kinetic::register(m)?;
-    msd::register(m)?;
-    order::register(m)?;
-    pmft::register(m)?;
-    rdf::register(m)?;
-    shape::register(m)?;
+    dielectric::register(m)?;
     spectroscopy::register(m)?;
-    transport::register(m)?;
+    rdf::register(m)?;
+    density::register(m)?;
+    distribution::register(m)?;
+    diffraction::register(m)?;
+    dynamics::register(m)?;
+    hbond::register(m)?;
+    order::register(m)?;
+    environment::register(m)?;
+    pmft::register(m)?;
+    cluster::register(m)?;
+    shape::register(m)?;
+    decomposition::register(m)?;
+    kmeans::register(m)?;
     voronoi::register(m)?;
     Ok(())
 }

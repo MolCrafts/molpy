@@ -80,6 +80,10 @@ A ``*.mrec`` scientific record is read and written whole by
 ``_system`` / ``_trajectory`` / ``_forcefield`` partners, plus
 :func:`read_mrec_meta`; a run too large for memory goes through
 :class:`molrs.io.mrec.MrecReader` / :class:`~molrs.io.mrec.MrecWriter`.
+Those doors need the ``fs`` feature (the zarr store). A Pyodide build does
+not include them: they are absent, the same way :class:`molrs.stream.Publisher`
+is, and ``import molrs.io`` still succeeds. LAMMPS logs are not in that set.
+:func:`read_lammps_log` and :func:`read_lammps_log_str` are in every build.
 
 :func:`read_msgpack_frame_bytes` / :func:`write_msgpack_frame_bytes` and
 :func:`read_json_frame_str` / :func:`write_json_frame_str` read and write a
@@ -137,11 +141,6 @@ from .._native import (
     read_lammps_molecule_json,
     read_mol2,
     read_mol2_str,
-    read_mrec_forcefield,
-    read_mrec_frame,
-    read_mrec_meta,
-    read_mrec_system,
-    read_mrec_trajectory,
     read_msgpack_frame_bytes,
     read_openmm_forcefield,
     read_openmm_forcefield_str,
@@ -204,10 +203,6 @@ from .._native import (
     write_lammps_molecule_json,
     write_mol2,
     write_mol2_str,
-    write_mrec_forcefield,
-    write_mrec_frame,
-    write_mrec_system,
-    write_mrec_trajectory,
     write_msgpack_frame_bytes,
     write_openmm_forcefield,
     write_openmm_forcefield_str,
@@ -229,14 +224,13 @@ from .._native import (
     write_xyz_str,
     write_xyz_trajectory,
 )
-from . import cgsmiles, dcd, gro, lammps, mrec, pdb, smiles, trr, xtc, xyz
+from . import cgsmiles, dcd, gro, lammps, pdb, smiles, trr, xtc, xyz
 
 __all__ = [
     "cgsmiles",
     "dcd",
     "gro",
     "lammps",
-    "mrec",
     "pdb",
     "read_ac",
     "read_ac_str",
@@ -282,11 +276,6 @@ __all__ = [
     "read_lammps_molecule_json",
     "read_mol2",
     "read_mol2_str",
-    "read_mrec_forcefield",
-    "read_mrec_frame",
-    "read_mrec_meta",
-    "read_mrec_system",
-    "read_mrec_trajectory",
     "read_msgpack_frame_bytes",
     "read_openmm_forcefield",
     "read_openmm_forcefield_str",
@@ -351,10 +340,6 @@ __all__ = [
     "write_lammps_molecule_json",
     "write_mol2",
     "write_mol2_str",
-    "write_mrec_forcefield",
-    "write_mrec_frame",
-    "write_mrec_system",
-    "write_mrec_trajectory",
     "write_msgpack_frame_bytes",
     "write_openmm_forcefield",
     "write_openmm_forcefield_str",
@@ -378,3 +363,35 @@ __all__ = [
     "xtc",
     "xyz",
 ]
+
+# mrec is the zarr record store (`fs` / `molrs/filesystem`). A Pyodide build
+# omits it. Absent, not an import failure of this module — the same rule as
+# `molrs.stream.Publisher`.
+try:
+    from .._native import (
+        read_mrec_forcefield,
+        read_mrec_frame,
+        read_mrec_meta,
+        read_mrec_system,
+        read_mrec_trajectory,
+        write_mrec_forcefield,
+        write_mrec_frame,
+        write_mrec_system,
+        write_mrec_trajectory,
+    )
+    from . import mrec as mrec
+except ImportError:
+    pass
+else:
+    __all__ += [
+        "mrec",
+        "read_mrec_forcefield",
+        "read_mrec_frame",
+        "read_mrec_meta",
+        "read_mrec_system",
+        "read_mrec_trajectory",
+        "write_mrec_forcefield",
+        "write_mrec_frame",
+        "write_mrec_system",
+        "write_mrec_trajectory",
+    ]

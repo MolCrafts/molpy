@@ -13,6 +13,8 @@
 //!
 //! All distances are in angstrom (Å).
 
+use std::rc::Rc;
+
 use js_sys::Uint32Array;
 use molrs::core::{
     NeighborColumns as RsNeighborColumns, NeighborList as RsNeighborList,
@@ -206,7 +208,7 @@ impl NeighborList {
             },
         };
         Ok(Neighbors {
-            inner: self.inner.neighbors(policy),
+            inner: Rc::new(self.inner.neighbors(policy)),
         })
     }
 }
@@ -304,12 +306,22 @@ fn column_flag(columns: &JsValue, key: &str) -> Result<bool, JsValue> {
 /// ```
 #[wasm_bindgen(js_name = Neighbors)]
 pub struct Neighbors {
-    /// Crate-visible so the force-field optimizer can read pair indices.
-    pub(crate) inner: RsNeighbors,
+    /// Crate-visible so the force-field optimizer and the analyses can read
+    /// the table. Shared, so [`clone`](Self::duplicate) — the handle a
+    /// compute's data argument borrows — copies no pairs.
+    pub(crate) inner: Rc<RsNeighbors>,
 }
 
 #[wasm_bindgen(js_class = Neighbors)]
 impl Neighbors {
+    /// A second handle to the same table; no pair is copied.
+    #[wasm_bindgen(js_name = clone)]
+    pub fn duplicate(&self) -> Neighbors {
+        Neighbors {
+            inner: Rc::clone(&self.inner),
+        }
+    }
+
     /// Number of neighbor pairs — the row count every column shares.
     #[wasm_bindgen(getter, js_name = nPairs)]
     pub fn n_pairs(&self) -> usize {
@@ -467,7 +479,7 @@ impl NeighborQuery {
         frame.with_frame(|rs_frame| {
             let pos = frame_coords(rs_frame)?;
             Ok(Neighbors {
-                inner: self.inner.query(pos.view()),
+                inner: Rc::new(self.inner.query(pos.view())),
             })
         })
     }

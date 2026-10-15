@@ -1,9 +1,16 @@
 """molrs — Rust-backed molecular simulation primitives.
 
-**The top level is the subsystems, and nothing else** — exactly as the Rust
-crate's root is. Every symbol lives in the module named after its Rust owner,
-so the Python path and the Rust path are the same words
-(``molrs.core.Frame`` is ``molrs::core::Frame``):
+**The top level is the subsystems, plus the core data classes a user handles
+directly.** Those classes are the same objects as :mod:`molrs.core`'s
+(``molrs.Frame is molrs.core.Frame``): ``Frame``,
+``Block``, ``Trajectory``, ``Box``, ``MolGraph``, ``Atomistic``,
+``CoarseGrain``, the entity classes (``Atom``, ``Bond``, ``Angle``,
+``Dihedral``, ``Improper``, ``Bead``, ``CgBond``, ``Port``, ``VirtualSite``,
+``DrudeParticle``, ``MasslessSite``), ``Element`` and ``Topology``.
+
+No function, algorithm, region or unit preset is promoted. Everything else
+lives in the module named after its Rust owner, so that path and the Rust
+path are the same words:
 
 * :mod:`molrs.core` — the core data model: the column store and the frame
   (``Block``, ``Frame``, ``Trajectory``), space (``Box``, neighbour search,
@@ -28,11 +35,11 @@ so the Python path and the Rust path are the same words
 * :mod:`molrs.builder` — structure builders, site-graph assembly,
   coarse-graining.
 * :mod:`molrs.compute` — trajectory analysis.
-* :mod:`molrs.signal` — FFT autocorrelation, windows, frequency grids.
 * :mod:`molrs.stream` — live Frame streaming (the transport).
 
-Each name has exactly one spelling — ``molrs.io.smiles.SmilesIr`` and nothing
-else — so there is one thing to learn, document, and grep for.
+A name that is not one of those handled classes has exactly one spelling —
+``molrs.io.smiles.SmilesIr`` and nothing else — so there is one thing to
+learn, document, and grep for.
 """
 
 from . import (
@@ -46,7 +53,6 @@ from . import (
     op,
     optimize,
     perceive,
-    signal,
     stream,
 )
 from ._native import __version__ as __version__
@@ -54,6 +60,30 @@ from ._native import __version__ as __version__
 # FFI ABI handshake, read by name by downstream handle-bridge extensions
 # (molpack) at their import time.
 from ._native import _ffi_abi_token  # noqa: F401
+
+# The core data classes a user handles directly. Same objects as molrs.core.
+from .core import (
+    Angle,
+    Atom,
+    Atomistic,
+    Bead,
+    Block,
+    Bond,
+    Box,
+    CgBond,
+    CoarseGrain,
+    Dihedral,
+    DrudeParticle,
+    Element,
+    Frame,
+    Improper,
+    MasslessSite,
+    MolGraph,
+    Port,
+    Topology,
+    Trajectory,
+    VirtualSite,
+)
 
 __all__ = [
     "builder",
@@ -66,6 +96,25 @@ __all__ = [
     "op",
     "optimize",
     "perceive",
-    "signal",
     "stream",
+    "Angle",
+    "Atom",
+    "Atomistic",
+    "Bead",
+    "Block",
+    "Bond",
+    "Box",
+    "CgBond",
+    "CoarseGrain",
+    "Dihedral",
+    "DrudeParticle",
+    "Element",
+    "Frame",
+    "Improper",
+    "MasslessSite",
+    "MolGraph",
+    "Port",
+    "Topology",
+    "Trajectory",
+    "VirtualSite",
 ]

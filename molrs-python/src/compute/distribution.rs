@@ -1,326 +1,370 @@
-//! Geometric distributions read from a frame's topology blocks
-//! (`molrs::compute::distribution`).
+//! Internal-coordinate distributions (`molrs::compute::distribution`):
+//! `DistributionFunction` (one coordinate) and `CombinedDistribution` (2 or
+//! 3 coordinates jointly), both folded over frames; their outputs
+//! `DistributionResult` and `CombinedDistributionResult`.
+//!
+//! Also the frames-form plumbing the other per-frame computes of this binding
+//! share: every field is one list, an entry per frame, of the same length.
 
-use super::collect_frames;
-use crate::error::py_value_err;
+use crate::array::ArrayArg2;
 use molrs::compute::{
-    AngleObservable, AtomGroups, AxisSpec, CombinedDistribution, CombinedDistributionResult,
-    Compute, DihedralObservable, DistanceObservable, DistributionFunction, DistributionResult,
+    Axis, CombinedDistribution, CombinedDistributionFrame, CombinedDistributionResult, Compute,
+    ComputeError, Described, DistributionFrame, DistributionFunction, DistributionResult,
     InternalCoordinate,
 };
-use molrs::core::Frame as CoreFrame;
-use numpy::{IntoPyArray, PyArray1};
+use molrs::core::SimBox;
+use ndarray::Array2;
+use numpy::{IntoPyArray, PyArrayDyn};
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
-use pyo3::types::PyAny;
 
-// ---------------------------------------------------------------------------
-// Distribution functions (ADF / DDF / distance-DF)
-// ---------------------------------------------------------------------------
+use super::args;
+use super::error::Result;
+use super::output::{ToPy, py_result};
+use super::spec::{self, PyComputeSpec, described};
+use super::values::PyAxis;
+use crate::core::simbox::PyBox;
 
-/// Shared result of the geometric distribution functions.
-#[pyclass(module = "molrs.compute", name = "DistributionResult")]
-pub struct PyDistributionResult {
-    inner: DistributionResult,
-}
-
-#[pymethods]
-impl PyDistributionResult {
-    #[getter]
-    fn bin_centers<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<f64>> {
-        self.inner.bin_centers.clone().into_pyarray(py)
-    }
-    #[getter]
-    fn bin_edges<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<f64>> {
-        self.inner.bin_edges.clone().into_pyarray(py)
-    }
-    #[getter]
-    fn counts<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<f64>> {
-        self.inner.counts.clone().into_pyarray(py)
-    }
-    #[getter]
-    fn density<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<f64>> {
-        self.inner.density.clone().into_pyarray(py)
-    }
-    #[getter]
-    fn density_sin_corrected<'py>(&self, py: Python<'py>) -> Option<Bound<'py, PyArray1<f64>>> {
-        self.inner
-            .density_sin_corrected
-            .as_ref()
-            .map(|d| d.clone().into_pyarray(py))
-    }
-    #[getter]
-    fn bin_width(&self) -> f64 {
-        self.inner.bin_width
-    }
-    #[getter]
-    fn n_binned(&self) -> f64 {
-        self.inner.n_binned
-    }
-    #[getter]
-    fn n_raw_samples(&self) -> usize {
-        self.inner.n_raw_samples
-    }
-    #[getter]
-    fn n_frames(&self) -> usize {
-        self.inner.n_frames
-    }
-    #[getter]
-    fn angular(&self) -> bool {
-        self.inner.angular
+/// Refuse a per-frame list whose length is not the frame count.
+pub(crate) fn same_frames(n_frames: usize, got: usize, what: &'static str) -> Result<()> {
+    if got == n_frames {
+        Ok(())
+    } else {
+        Err(ComputeError::DimensionMismatch {
+            expected: n_frames,
+            got,
+            what,
+        }
+        .into())
     }
 }
 
-/// The three instantiations of the generic Rust `DistributionFunction<O>`.
-enum DistributionKernel {
-    Distance(DistributionFunction<DistanceObservable>),
-    Angle(DistributionFunction<AngleObservable>),
-    Dihedral(DistributionFunction<DihedralObservable>),
-}
-
-/// One-dimensional distribution function of an internal coordinate over the
-/// atom groups of a frame's topology — Rust `DistributionFunction<O>` with the
-/// observable named by ``observable``:
-///
-/// * ``"distance"`` — pairs from the ``bonds`` block; ``min`` and ``max`` (in
-///   the coordinates' length unit) are **required**, a distance has no natural
-///   range.
-/// * ``"angle"`` — triplets from the ``angles`` block, angle at the middle atom
-///   (ADF). Bounds in **radians**; omit both for the natural range ``[0, π]``.
-///   The sin θ correction divides by a vanishing quantity at both ends, so the
-///   corrected density amplifies counting noise near θ = 0 and θ = π.
-/// * ``"dihedral"`` — quadruplets from the ``dihedrals`` block (DDF). Bounds in
-///   **radians**; omit both for the natural range ``(−π, π]``. The default stays
-///   **signed**: folding to ``|φ|`` would collapse g+ onto g− and cannot be
-///   undone.
-///
-/// Supplying exactly one bound is a ``ValueError``.
-#[pyclass(module = "molrs.compute", name = "DistributionFunction")]
-pub struct PyDistributionFunction {
-    kernel: DistributionKernel,
-}
-
-/// Build a kernel over `min..max`, or over the observable's natural range when
-/// both are omitted.
-fn ranged<O: molrs::compute::Observable>(
-    observable: O,
-    n_bins: usize,
-    min: Option<f64>,
-    max: Option<f64>,
-    name: &str,
-) -> PyResult<DistributionFunction<O>> {
-    match (min, max) {
-        (None, None) => DistributionFunction::over_natural_range(observable, n_bins),
-        (Some(min), Some(max)) => DistributionFunction::new(observable, n_bins, min, max),
-        _ => {
-            return Err(PyValueError::new_err(format!(
-                "DistributionFunction({name:?}): supply both `min` and `max` (radians), \
-                 or neither to use the observable's natural range"
-            )));
+/// The per-frame boxes of an optional `simbox` field: `None` is no box in any
+/// frame, a list gives each frame's box (or `None`).
+pub(crate) fn frame_boxes<'a>(
+    simbox: &'a Option<Vec<Option<PyRef<'_, PyBox>>>>,
+    n_frames: usize,
+) -> Result<Vec<Option<&'a SimBox>>> {
+    match simbox {
+        None => Ok(vec![None; n_frames]),
+        Some(boxes) => {
+            same_frames(n_frames, boxes.len(), "simbox")?;
+            Ok(boxes
+                .iter()
+                .map(|simbox| simbox.as_ref().map(|simbox| &simbox.inner))
+                .collect())
         }
     }
-    .map_err(py_value_err)
+}
+
+py_result! {
+    /// A 1-D distribution (``molrs::compute::DistributionResult``): the raw
+    /// ``histogram``, the normalised ``density`` and, for an angular
+    /// coordinate, the sin θ-corrected density.
+    PyDistributionResult(DistributionResult) as "DistributionResult" {
+        histogram,
+        density,
+        density_sin_corrected,
+        n_raw_samples,
+        n_frames,
+    }
+}
+
+/// Distribution of one internal coordinate over frames
+/// (``molrs::compute::DistributionFunction``).
+///
+/// Parameters
+/// ----------
+/// observable : str
+///     ``"distance"``, ``"angle"`` or ``"dihedral"``.
+/// axis : Axis, optional
+///     Bin on this axis (the core ``new``).
+/// n_bins : int, optional
+///     Bin the coordinate's natural range into ``n_bins`` (the core
+///     ``over_natural_range``). Give exactly one of ``axis`` / ``n_bins``.
+///
+/// ``compute(positions=, simbox=None, tuples=)`` takes one ``(N, 3)``
+/// position array, box (or ``None``) and ``(M, arity)`` index table per frame.
+#[pyclass(module = "molrs.compute", name = "DistributionFunction", frozen)]
+pub(crate) struct PyDistributionFunction {
+    inner: DistributionFunction<InternalCoordinate>,
 }
 
 #[pymethods]
 impl PyDistributionFunction {
     #[new]
-    #[pyo3(signature = (observable, n_bins, min=None, max=None))]
-    fn new(observable: &str, n_bins: usize, min: Option<f64>, max: Option<f64>) -> PyResult<Self> {
-        let kernel = match observable {
-            "distance" => {
-                let (Some(min), Some(max)) = (min, max) else {
-                    return Err(PyValueError::new_err(
-                        "DistributionFunction(\"distance\"): `min` and `max` are required; \
-                         a distance has no natural range",
-                    ));
-                };
-                DistributionKernel::Distance(
-                    DistributionFunction::new(DistanceObservable, n_bins, min, max)
-                        .map_err(py_value_err)?,
+    #[pyo3(signature = (observable, *, axis = None, n_bins = None))]
+    fn new(
+        observable: &str,
+        axis: Option<PyRef<'_, PyAxis>>,
+        n_bins: Option<usize>,
+    ) -> Result<Self> {
+        let observable: InternalCoordinate = observable.parse()?;
+        let inner = match (axis, n_bins) {
+            (Some(axis), None) => DistributionFunction::new(observable, axis.inner),
+            (None, Some(n_bins)) => DistributionFunction::over_natural_range(observable, n_bins)?,
+            _ => {
+                return Err(PyValueError::new_err(
+                    "DistributionFunction takes exactly one of axis (bin on it) or n_bins \
+                     (bin the natural range)",
                 )
-            }
-            "angle" => {
-                DistributionKernel::Angle(ranged(AngleObservable, n_bins, min, max, observable)?)
-            }
-            "dihedral" => DistributionKernel::Dihedral(ranged(
-                DihedralObservable,
-                n_bins,
-                min,
-                max,
-                observable,
-            )?),
-            other => {
-                return Err(PyValueError::new_err(format!(
-                    "DistributionFunction: unknown observable {other:?} \
-                     (expected \"distance\", \"angle\" or \"dihedral\")"
-                )));
+                .into());
             }
         };
-        Ok(Self { kernel })
+        Ok(Self { inner })
     }
 
-    /// The atom groups are read from the first frame's topology block
-    /// (``bonds`` / ``angles`` / ``dihedrals``).
-    fn compute(&self, frames: &Bound<'_, PyAny>) -> PyResult<PyDistributionResult> {
-        let owned = collect_frames(frames)?;
-        let refs: Vec<&CoreFrame> = owned.iter().collect();
-        let first = refs
-            .first()
-            .copied()
-            .ok_or_else(|| PyValueError::new_err("no frames provided"))?;
-        let inner = match &self.kernel {
-            DistributionKernel::Distance(k) => {
-                let groups = AtomGroups::from_frame(first, "bonds", 2).map_err(py_value_err)?;
-                k.compute(&refs, &groups)
-            }
-            DistributionKernel::Angle(k) => {
-                let groups = AtomGroups::from_frame(first, "angles", 3).map_err(py_value_err)?;
-                k.compute(&refs, &groups)
-            }
-            DistributionKernel::Dihedral(k) => {
-                let groups = AtomGroups::from_frame(first, "dihedrals", 4).map_err(py_value_err)?;
-                k.compute(&refs, &groups)
-            }
+    #[pyo3(signature = (*, positions, simbox = None, tuples))]
+    fn compute(
+        &self,
+        positions: Vec<ArrayArg2<'_, f64>>,
+        simbox: Option<Vec<Option<PyRef<'_, PyBox>>>>,
+        tuples: Vec<Vec<Vec<usize>>>,
+    ) -> Result<PyDistributionResult> {
+        let n_frames = positions.len();
+        let boxes = frame_boxes(&simbox, n_frames)?;
+        same_frames(n_frames, tuples.len(), "tuples")?;
+        let tables = tuples
+            .into_iter()
+            .map(|rows| args::tuples(rows, "tuples"))
+            .collect::<Result<Vec<_>>>()?;
+        let frames: Vec<DistributionFrame<'_>> = positions
+            .iter()
+            .zip(&boxes)
+            .zip(&tables)
+            .map(|((positions, &simbox), tuples)| DistributionFrame {
+                positions: positions.as_array(),
+                simbox,
+                tuples: tuples.view(),
+            })
+            .collect();
+        Ok(self.inner.compute(&frames)?.into())
+    }
+}
+
+described!(
+    PyDistributionFunction,
+    DistributionFunction<InternalCoordinate>
+);
+
+/// A `CombinedDistribution` of a dimension this binding instantiates.
+enum Combined {
+    Two(CombinedDistribution<2>),
+    Three(CombinedDistribution<3>),
+}
+
+/// A `CombinedDistributionResult` of either dimension.
+enum CombinedResult {
+    Two(CombinedDistributionResult<2>),
+    Three(CombinedDistributionResult<3>),
+}
+
+/// Evaluate `$body` with `$result` bound to the result of either dimension.
+macro_rules! with_result {
+    ($self:expr, $result:ident => $body:expr) => {
+        match &$self.inner {
+            CombinedResult::Two($result) => $body,
+            CombinedResult::Three($result) => $body,
         }
-        .map_err(py_value_err)?;
-        Ok(PyDistributionResult { inner })
-    }
+    };
 }
 
-// ---------------------------------------------------------------------------
-// Combined (multi-axis) distribution
-// ---------------------------------------------------------------------------
-
-/// Map an observable-kind string to its `InternalCoordinate` variant + arity.
-#[pyclass(module = "molrs.compute", name = "CombinedDistributionResult")]
-
-pub struct PyCombinedDistributionResult {
-    inner: CombinedDistributionResult,
+fn build<const N: usize>(
+    observables: Vec<InternalCoordinate>,
+    axes: Vec<Axis>,
+    sin_weight: &Option<Vec<usize>>,
+) -> Result<CombinedDistribution<N>> {
+    let n_axes = axes.len();
+    let observables: [InternalCoordinate; N] =
+        observables
+            .try_into()
+            .map_err(|given: Vec<_>| ComputeError::DimensionMismatch {
+                expected: N,
+                got: given.len(),
+                what: "observables",
+            })?;
+    let axes: [Axis; N] = axes
+        .try_into()
+        .map_err(|_| ComputeError::DimensionMismatch {
+            expected: N,
+            got: n_axes,
+            what: "axes",
+        })?;
+    let mut inner = CombinedDistribution::new(observables, axes)?;
+    for &axis in sin_weight.iter().flatten() {
+        inner = inner.with_sin_weight(axis)?;
+    }
+    Ok(inner)
 }
 
-#[pymethods]
-impl PyCombinedDistributionResult {
-    /// Per-axis bin edges (`bins + 1` each).
-    #[getter]
-    fn edges<'py>(&self, py: Python<'py>) -> Vec<Bound<'py, PyArray1<f64>>> {
-        self.inner
-            .edges
-            .iter()
-            .map(|e| e.clone().into_pyarray(py))
-            .collect()
+fn run<const N: usize>(
+    inner: &CombinedDistribution<N>,
+    positions: &[ArrayArg2<'_, f64>],
+    boxes: &[Option<&SimBox>],
+    tables: &[Vec<Array2<usize>>],
+) -> Result<CombinedDistributionResult<N>> {
+    for frame in tables {
+        same_frames(N, frame.len(), "tuples")?;
     }
-    /// Per-axis bin centers (`bins` each).
-    #[getter]
-    fn centers<'py>(&self, py: Python<'py>) -> Vec<Bound<'py, PyArray1<f64>>> {
-        self.inner
-            .centers
-            .iter()
-            .map(|c| c.clone().into_pyarray(py))
-            .collect()
-    }
-    /// Flat row-major counts (axis 0 fastest).
-    #[getter]
-    fn counts<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<f64>> {
-        self.inner.counts.clone().into_pyarray(py)
-    }
-    /// Flat row-major normalized joint density.
-    #[getter]
-    fn density<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<f64>> {
-        self.inner.density.clone().into_pyarray(py)
-    }
-    #[getter]
-    fn binned(&self) -> f64 {
-        self.inner.binned
-    }
-    #[getter]
-    fn n_raw_samples(&self) -> usize {
-        self.inner.n_raw_samples
-    }
-    #[getter]
-    fn n_frames(&self) -> usize {
-        self.inner.n_frames
-    }
-    #[getter]
-    fn ndim(&self) -> usize {
-        self.inner.ndim()
-    }
-    /// Flat row-major index for a multi-axis bin coordinate.
-    fn flat_index(&self, idx: Vec<usize>) -> usize {
-        self.inner.flat_index(&idx)
-    }
-    /// Product of all axis bin widths (the N-D cell "volume").
-    fn bin_width_product(&self) -> f64 {
-        self.inner.bin_width_product()
-    }
+    let frames: Vec<CombinedDistributionFrame<'_, N>> = positions
+        .iter()
+        .zip(boxes)
+        .zip(tables)
+        .map(|((positions, &simbox), tables)| CombinedDistributionFrame {
+            positions: positions.as_array(),
+            simbox,
+            tuples: std::array::from_fn(|axis| tables[axis].view()),
+        })
+        .collect();
+    Ok(inner.compute(&frames)?)
 }
 
-/// Joint multi-axis distribution over several geometric observables (the reference implementation
-/// combined-DF). Each axis is `(kind, bins, min, max, sin_weight)` where `kind`
-/// is ``"distance"`` / ``"angle"`` / ``"dihedral"``.
-#[pyclass(module = "molrs.compute", name = "CombinedDistribution")]
-pub struct PyCombinedDistribution {
-    inner: CombinedDistribution,
-    arities: Vec<usize>,
+/// Joint distribution of 2 or 3 internal coordinates over frames
+/// (``molrs::compute::CombinedDistribution``).
+///
+/// Parameters
+/// ----------
+/// observables : list[str]
+///     One of ``"distance"``, ``"angle"``, ``"dihedral"`` per axis (2 or 3).
+/// axes : list[Axis]
+///     One binning axis per observable.
+/// sin_weight : list[int], optional
+///     The angular axes whose marginal carries the sin θ-corrected density.
+///
+/// ``compute(positions=, simbox=None, tuples=)`` takes, per frame, the
+/// ``(N, 3)`` positions, a box (or ``None``) and one index table per axis.
+#[pyclass(module = "molrs.compute", name = "CombinedDistribution", frozen)]
+pub(crate) struct PyCombinedDistribution {
+    inner: Combined,
 }
 
 #[pymethods]
 impl PyCombinedDistribution {
-    /// `axes`: list of `(kind, bins, min, max, sin_weight)` — one per dimension.
     #[new]
-    fn new(axes: Vec<(String, usize, f64, f64, bool)>) -> PyResult<Self> {
-        let mut observables = Vec::with_capacity(axes.len());
-        let mut specs = Vec::with_capacity(axes.len());
-        let mut arities = Vec::with_capacity(axes.len());
-        for (kind, bins, min, max, sin_weight) in &axes {
-            let (obs, arity) = InternalCoordinate::from_kind(kind).map_err(py_value_err)?;
-            observables.push(obs);
-            arities.push(arity);
-            specs.push(
-                AxisSpec::new(*bins, *min, *max)
-                    .map_err(py_value_err)?
-                    .with_sin_weight(*sin_weight),
-            );
-        }
-        let inner = CombinedDistribution::new(observables, specs).map_err(py_value_err)?;
-        Ok(Self { inner, arities })
+    #[pyo3(signature = (observables, axes, *, sin_weight = None))]
+    fn new(
+        observables: Vec<String>,
+        axes: Vec<PyRef<'_, PyAxis>>,
+        sin_weight: Option<Vec<usize>>,
+    ) -> Result<Self> {
+        let parsed = observables
+            .iter()
+            .map(|name| name.parse::<InternalCoordinate>())
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        let axes: Vec<Axis> = axes.iter().map(|axis| axis.inner).collect();
+        let inner = match parsed.len() {
+            2 => Combined::Two(build(parsed, axes, &sin_weight)?),
+            3 => Combined::Three(build(parsed, axes, &sin_weight)?),
+            n => {
+                return Err(ComputeError::OutOfRange {
+                    field: "CombinedDistribution observables",
+                    value: format!("{n} (only 2-D and 3-D supported)"),
+                }
+                .into());
+            }
+        };
+        Ok(Self { inner })
     }
 
-    /// Per-axis atom groups are read from the first frame's topology block that
-    /// matches each axis arity (2 → `bonds`, 3 → `angles`, 4 → `dihedrals`).
-    fn compute(&self, frames: &Bound<'_, PyAny>) -> PyResult<PyCombinedDistributionResult> {
-        let owned = collect_frames(frames)?;
-        let refs: Vec<&CoreFrame> = owned.iter().collect();
-        let first = refs
-            .first()
-            .copied()
-            .ok_or_else(|| PyValueError::new_err("no frames provided"))?;
-        let group_objs: Vec<AtomGroups> = self
-            .arities
-            .iter()
-            .map(|&arity| {
-                let block = match arity {
-                    2 => "bonds",
-                    3 => "angles",
-                    4 => "dihedrals",
-                    _ => {
-                        return Err(PyValueError::new_err(format!(
-                            "no topology block for axis arity {arity}"
-                        )));
-                    }
-                };
-                AtomGroups::from_frame(first, block, arity).map_err(py_value_err)
+    #[pyo3(signature = (*, positions, simbox = None, tuples))]
+    fn compute(
+        &self,
+        positions: Vec<ArrayArg2<'_, f64>>,
+        simbox: Option<Vec<Option<PyRef<'_, PyBox>>>>,
+        tuples: Vec<Vec<Vec<Vec<usize>>>>,
+    ) -> Result<PyCombinedDistributionResult> {
+        let n_frames = positions.len();
+        let boxes = frame_boxes(&simbox, n_frames)?;
+        same_frames(n_frames, tuples.len(), "tuples")?;
+        let tables = tuples
+            .into_iter()
+            .map(|frame| {
+                frame
+                    .into_iter()
+                    .map(|rows| args::tuples(rows, "tuples"))
+                    .collect::<Result<Vec<_>>>()
             })
-            .collect::<PyResult<_>>()?;
-        let inner = self
-            .inner
-            .compute(&refs, &group_objs)
-            .map_err(py_value_err)?;
+            .collect::<Result<Vec<_>>>()?;
+        let inner = match &self.inner {
+            Combined::Two(inner) => CombinedResult::Two(run(inner, &positions, &boxes, &tables)?),
+            Combined::Three(inner) => {
+                CombinedResult::Three(run(inner, &positions, &boxes, &tables)?)
+            }
+        };
         Ok(PyCombinedDistributionResult { inner })
+    }
+
+    /// The descriptor of this compute type.
+    #[staticmethod]
+    fn spec() -> PyComputeSpec {
+        PyComputeSpec {
+            inner: <CombinedDistribution<2> as Described>::spec(),
+        }
+    }
+
+    /// The value this instance holds for every parameter that has a default,
+    /// as ``[(name, value), …]`` in spec order.
+    fn tunables<'py>(&self, py: Python<'py>) -> PyResult<Vec<(&'static str, Bound<'py, PyAny>)>> {
+        let values = match &self.inner {
+            Combined::Two(inner) => inner.tunables(),
+            Combined::Three(inner) => inner.tunables(),
+        };
+        spec::tunables(py, values)
     }
 }
 
-/// Register this domain's classes and functions.
+/// A joint distribution (``molrs::compute::CombinedDistributionResult``):
+/// the N-D ``histogram`` and normalised ``density``, with which axes are
+/// sin θ-corrected.
+#[pyclass(module = "molrs.compute", name = "CombinedDistributionResult", frozen)]
+pub(crate) struct PyCombinedDistributionResult {
+    inner: CombinedResult,
+}
+
+#[pymethods]
+impl PyCombinedDistributionResult {
+    #[getter]
+    fn histogram<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+        with_result!(self, result => result.histogram.to_py(py))
+    }
+
+    #[getter]
+    fn density<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+        with_result!(self, result => result.density.to_py(py))
+    }
+
+    #[getter]
+    fn n_raw_samples(&self) -> usize {
+        with_result!(self, result => result.n_raw_samples)
+    }
+
+    #[getter]
+    fn n_frames(&self) -> usize {
+        with_result!(self, result => result.n_frames)
+    }
+
+    #[getter]
+    fn sin_corrected<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+        with_result!(self, result => result.sin_corrected.to_py(py))
+    }
+
+    /// The 1-D distribution along ``axis``, summed over the others.
+    fn marginal(&self, axis: usize) -> Result<PyDistributionResult> {
+        Ok(with_result!(self, result => result.marginal(axis))?.into())
+    }
+
+    /// The free-energy surface ``-kT ln p`` at ``temperature`` (K), as the
+    /// core ``free_energy`` defines it.
+    fn free_energy<'py>(&self, py: Python<'py>, temperature: f64) -> Bound<'py, PyArrayDyn<f64>> {
+        with_result!(self, result => result.free_energy(temperature)).into_pyarray(py)
+    }
+
+    fn __repr__(&self) -> String {
+        "CombinedDistributionResult(histogram, density, n_raw_samples, n_frames, sin_corrected)"
+            .to_string()
+    }
+}
+
 pub(crate) fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyDistributionResult>()?;
     m.add_class::<PyDistributionFunction>()?;

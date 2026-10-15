@@ -1,133 +1,163 @@
-//! Time-correlated dynamics (`molrs::compute::dynamics`): Van Hove and pair
-//! persistence. The correlators (`Acf`, `Oacf`) are in `correlation.rs`.
+//! Pair dynamics (`molrs::compute::dynamics`): `PairPresence` (which pairs
+//! are bound at each frame, with hysteresis) and the van Hove correlation
+//! `VanHove`; the `Presence` series `Survival` consumes.
 
-use super::collect_frames;
-use super::correlation::{PyTimeCorrelation, Settings, origin_counts};
-use crate::error::py_value_err;
+use crate::array::ArrayArg3;
 use molrs::compute::{
-    Compute, Normalization, SurvivalMethod, VanHove, VanHoveResult, pair_survival_tcf,
+    Compute, PairPresence, PairPresenceInput, Presence, VanHove, VanHoveInput, VanHoveResult,
 };
-use molrs::core::Frame as CoreFrame;
-use numpy::{IntoPyArray, PyArray1, PyArray2, PyReadonlyArray2, PyReadonlyArray3};
+use ndarray::Array2;
 use pyo3::prelude::*;
-use pyo3::types::PyAny;
 
-// ---------------------------------------------------------------------------
-// Van Hove correlation function
-// ---------------------------------------------------------------------------
+use super::args::{self, PairSourceArg};
+use super::error::Result;
+use super::output::{ToPy, py_result};
+use super::spec::described;
+use super::values::PyAxis;
+use crate::core::simbox::PyBox;
 
-#[pyclass(module = "molrs.compute", name = "VanHoveResult")]
-pub struct PyVanHoveResult {
-    inner: VanHoveResult,
+/// A list of index pairs is an ``(n, 2)`` uint32 array.
+impl ToPy for Vec<(u32, u32)> {
+    fn to_py<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+        let flat: Vec<u32> = self.iter().flat_map(|&(i, j)| [i, j]).collect();
+        Array2::from_shape_vec((self.len(), 2), flat)
+            .expect("two columns per pair")
+            .to_py(py)
+    }
+}
+
+py_result! {
+    /// A presence series (``molrs::compute::Presence``): ``values[t, k]`` is
+    /// 1 when pair ``pairs[k]`` is present at frame ``t``. Pass ``values`` to
+    /// ``Survival`` as its ``presence``.
+    PyPresence(Presence) as "Presence" { pairs, values }
+}
+
+py_result! {
+    /// The self and distinct van Hove functions at each lag
+    /// (``molrs::compute::VanHoveResult``).
+    PyVanHoveResult(VanHoveResult) as "VanHoveResult" {
+        r_edges,
+        r_centers,
+        lags,
+        g_self,
+        g_distinct,
+        dr,
+    }
+}
+
+/// Pair presence with hysteresis over frames
+/// (``molrs::compute::PairPresence``): a pair enters at distance ``≤ r0`` and
+/// stays while within ``r1``.
+///
+/// Parameters
+/// ----------
+/// r0 : float
+/// exclude_self : bool
+///     Drop ``i == j`` pairs.
+/// r1 : float, optional
+///     The exit distance (``≥ r0``).
+///
+/// ``compute(frames=)`` takes one pair source (``Neighbors`` or
+/// ``NeighborList``) per frame and returns a ``Presence``, or ``None`` when no
+/// pair is ever present.
+#[pyclass(module = "molrs.compute", name = "PairPresence", frozen)]
+pub(crate) struct PyPairPresence {
+    inner: PairPresence,
 }
 
 #[pymethods]
-impl PyVanHoveResult {
-    #[getter]
-    fn r_edges<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<f64>> {
-        self.inner.r_edges.clone().into_pyarray(py)
+impl PyPairPresence {
+    #[new]
+    #[pyo3(signature = (r0, exclude_self, *, r1 = None))]
+    fn new(r0: f64, exclude_self: bool, r1: Option<f64>) -> Result<Self> {
+        let mut inner = PairPresence::new(r0, exclude_self)?;
+        if let Some(r1) = r1 {
+            inner = inner.with_r1(r1)?;
+        }
+        Ok(Self { inner })
     }
-    #[getter]
-    fn r_centers<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<f64>> {
-        self.inner.r_centers.clone().into_pyarray(py)
-    }
-    #[getter]
-    fn lags(&self) -> Vec<usize> {
-        self.inner.lags.clone()
-    }
-    #[getter]
-    fn g_self<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray2<f64>> {
-        self.inner.g_self.clone().into_pyarray(py)
-    }
-    #[getter]
-    fn g_distinct<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray2<f64>> {
-        self.inner.g_distinct.clone().into_pyarray(py)
-    }
-    #[getter]
-    fn dr(&self) -> f64 {
-        self.inner.dr
-    }
-    #[getter]
-    fn has_distinct(&self) -> bool {
-        self.inner.has_distinct
+
+    #[pyo3(signature = (*, frames))]
+    fn compute(&self, frames: Vec<Bound<'_, PyAny>>) -> Result<Option<PyPresence>> {
+        let frames = PairSourceArg::extract_all(&frames)?;
+        let frames = args::sources(&frames)?;
+        let out = self.inner.compute(PairPresenceInput { frames: &frames })?;
+        Ok(out.map(PyPresence::from))
     }
 }
 
-/// Van Hove correlation function `G(r, t)` (self + distinct parts).
-#[pyclass(module = "molrs.compute", name = "VanHove")]
-pub struct PyVanHove {
+described!(PyPairPresence, PairPresence);
+
+/// The van Hove correlation G(r, t) over a trajectory
+/// (``molrs::compute::VanHove``).
+///
+/// Parameters
+/// ----------
+/// axis : Axis
+///     The distance bins.
+/// lags : list[int]
+///     The lags, in frames.
+/// origins : str, optional
+///     ``"all"`` or ``"first"``.
+/// stride : int, optional
+///     Origin stride.
+/// upper_edge : str, optional
+///     ``"open"`` (half-open bins) or ``"closed"`` (``r_max`` in the last
+///     bin).
+///
+/// ``compute(positions=, boxes=)``: an unwrapped ``(T, N, 3)`` trajectory
+/// and one box per frame.
+#[pyclass(module = "molrs.compute", name = "VanHove", frozen)]
+pub(crate) struct PyVanHove {
     inner: VanHove,
 }
 
 #[pymethods]
 impl PyVanHove {
     #[new]
-    #[pyo3(signature = (n_rbins, r_max, lags, stride=1))]
-    fn new(n_rbins: usize, r_max: f64, lags: Vec<usize>, stride: usize) -> PyResult<Self> {
-        let inner = VanHove::new(n_rbins, r_max, lags)
-            .map_err(py_value_err)?
-            .with_stride(stride);
+    #[pyo3(signature = (axis, lags, *, origins = None, stride = None, upper_edge = None))]
+    fn new(
+        axis: PyRef<'_, PyAxis>,
+        lags: Vec<usize>,
+        origins: Option<&str>,
+        stride: Option<usize>,
+        upper_edge: Option<&str>,
+    ) -> Result<Self> {
+        let mut inner = VanHove::new(axis.inner, lags)?;
+        if let Some(origins) = origins {
+            inner = inner.with_origins(origins.parse()?)?;
+        }
+        if let Some(stride) = stride {
+            inner = inner.with_stride(stride)?;
+        }
+        if let Some(upper_edge) = upper_edge {
+            inner = inner.with_upper_edge(upper_edge.parse()?);
+        }
         Ok(Self { inner })
     }
 
-    /// Compute `G(r, t)` from a trajectory (list of frames, time-ordered).
-    fn compute(&self, frames: &Bound<'_, PyAny>) -> PyResult<PyVanHoveResult> {
-        let owned = collect_frames(frames)?;
-        let refs: Vec<&CoreFrame> = owned.iter().collect();
-        let inner = self.inner.compute(&refs, ()).map_err(py_value_err)?;
-        Ok(PyVanHoveResult { inner })
+    #[pyo3(signature = (*, positions, boxes))]
+    fn compute(
+        &self,
+        positions: ArrayArg3<'_, f64>,
+        boxes: Vec<PyRef<'_, PyBox>>,
+    ) -> Result<PyVanHoveResult> {
+        let boxes = args::boxes(&boxes);
+        let out = self.inner.compute(VanHoveInput {
+            positions: positions.as_array(),
+            boxes: &boxes,
+        })?;
+        Ok(out.into())
     }
 }
 
-/// Pair-survival time-correlation function of the `(i, j)` pairs that start
-/// within `[r0, r1]`, over all time origins up to ``max_lag`` frames.
-///
-/// Returns a :class:`TimeCorrelation` of kind ``"survival"``.
-#[pyfunction(name = "pair_survival_tcf")]
-#[pyo3(signature = (coords_i, coords_j, box_lengths, r0, r1, method, dt, max_lag, exclude_self=false))]
-#[allow(clippy::too_many_arguments)]
-fn pair_survival_tcf_py<'py>(
-    coords_i: PyReadonlyArray3<'py, f64>,
-    coords_j: PyReadonlyArray3<'py, f64>,
-    box_lengths: PyReadonlyArray2<'py, f64>,
-    r0: f64,
-    r1: f64,
-    method: &str,
-    dt: f64,
-    max_lag: usize,
-    exclude_self: bool,
-) -> PyResult<PyTimeCorrelation> {
-    let ci = coords_i.as_array().to_owned();
-    let cj = coords_j.as_array().to_owned();
-    let bl = box_lengths.as_array().to_owned();
-    let m = SurvivalMethod::parse(method).map_err(py_value_err)?;
-    let n_frames = ci.dim().0;
-    let result = pair_survival_tcf(&ci, &cj, &bl, r0, r1, m, dt, max_lag, exclude_self)
-        .map_err(py_value_err)?;
-    let n_lags = result.correlation.len();
-    let settings = Settings {
-        mean_subtract: false,
-        normalization: Normalization::Unbiased,
-        stride: 1,
-    };
-    Ok(PyTimeCorrelation::from_curve(
-        result.correlation,
-        Some(dt),
-        "survival",
-        settings,
-        Some(origin_counts(n_frames, n_lags - 1, 1)),
-        n_frames,
-    ))
-}
+described!(PyVanHove, VanHove);
 
-/// Register this domain's classes and functions.
 pub(crate) fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    m.add_class::<PyPresence>()?;
     m.add_class::<PyVanHoveResult>()?;
+    m.add_class::<PyPairPresence>()?;
     m.add_class::<PyVanHove>()?;
-    crate::add_function(
-        m,
-        "molrs.compute",
-        wrap_pyfunction!(pair_survival_tcf_py, m)?,
-    )?;
     Ok(())
 }

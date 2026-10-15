@@ -72,6 +72,62 @@ class TestDispatch:
         assert vv is not None
 
 
+class _Free:
+    """No force: the atom drifts at constant velocity."""
+
+    def calc_energy_forces(self, pos):
+        pos = np.asarray(pos, dtype=np.float64)
+        return 0.0, np.zeros_like(pos)
+
+
+class TestImageFlags:
+    def test_a_crossing_survives_later_advances(self) -> None:
+        """``images`` accumulates the crossings over every ``advance``: the
+        flag set when the atom leaves the cell is still there steps later,
+        and ``pos + L·images`` is the straight unwrapped path."""
+        edge, dt, v = 10.0, 0.5, 1.0
+        vv = VelocityVerlet(
+            dt, potential=_Free(), mass=np.ones(1), box=molrs.core.Box.cube(edge)
+        )
+        state = vv.initial(np.array([[9.2, 5.0, 5.0]]), np.array([[v, 0.0, 0.0]]))
+        n_steps = 6  # crosses x = 10 on the second step
+        for _ in range(n_steps):
+            state = vv.advance(state)
+        assert state.images.tolist() == [[1, 0, 0]]
+        unwrapped = state.pos + edge * state.images
+        np.testing.assert_allclose(unwrapped, [[9.2 + n_steps * dt * v, 5.0, 5.0]])
+        state = vv.advance_n(state, 4)
+        assert state.images.tolist() == [[1, 0, 0]]
+
+    def test_a_duck_typed_state_carries_its_images(self) -> None:
+        vv = VelocityVerlet(
+            0.5, potential=_Free(), mass=np.ones(1), box=molrs.core.Box.cube(10.0)
+        )
+        seed = vv.initial(np.array([[5.0, 5.0, 5.0]]), np.array([[1.0, 0.0, 0.0]]))
+
+        class State:
+            pos = seed.pos
+            vel = seed.vel
+            forces = seed.forces
+            energy = seed.energy
+            images = np.array([[2, 0, -1]], dtype=np.int32)
+
+        assert vv.advance(State()).images.tolist() == [[2, 0, -1]]
+
+
+class TestMass:
+    def test_a_scalar_mass_is_refused_with_the_array_spelling(self) -> None:
+        """Integrators are built before they see ``N``; the mass is per atom."""
+        with pytest.raises(TypeError, match=r"np\.full\(n_atoms, mass\)"):
+            VelocityVerlet(0.001, potential=_Free(), mass=39.948)
+        with pytest.raises(TypeError, match=r"mass.*1-D float64"):
+            VelocityVerlet(0.001, potential=_Free(), mass=np.ones((2, 1)))
+        with pytest.raises(TypeError, match="scalar"):
+            MaxwellBoltzmann(1.0).velocities(np.zeros((2, 3)), 1.0)
+        vv = VelocityVerlet(0.001, potential=_Free(), mass=np.full(2, 39.948))
+        assert vv.initial(np.zeros((2, 3)), np.zeros((2, 3))).pos.shape == (2, 3)
+
+
 class TestMaxwellBoltzmann:
     def test_kbt_constructor(self) -> None:
         mb = MaxwellBoltzmann(molrs.core.UnitPreset("real").boltzmann() * 300.0, seed=1)
@@ -79,3 +135,32 @@ class TestMaxwellBoltzmann:
         vel = mb.velocities(pos, np.ones(4))
         assert vel.shape == (4, 3)
         assert np.all(np.isfinite(vel))
+
+
+class TestMdDriverThermo:
+    def test_thermo_reads_kinetic_energy_in_the_callers_units(self) -> None:
+        """``ke`` is ``½ Σ m v²`` and ``temp`` its equipartition temperature
+        under the caller's ``kb`` — the core ``KineticEnergy`` with
+        ``mvv2e = 1``, not a second formula."""
+        atoms = molrs.core.Block()
+        pos = np.array([[0.1, 0.0, 0.0], [0.0, -0.2, 0.3]])
+        for d, key in enumerate("xyz"):
+            atoms.insert(key, np.ascontiguousarray(pos[:, d]))
+        for d, key in enumerate(("vx", "vy", "vz")):
+            atoms.insert(key, np.array([0.5, -0.25]) * (d + 1))
+        atoms.insert("mass", np.array([1.0, 2.0]))
+        frame = molrs.core.Frame()
+        frame["atoms"] = atoms
+
+        kb = 0.5
+        driver = MdDriver().set_potential(Harmonic())
+        driver.run(frame, 4, dt=0.01, kb=kb, thermo=2)
+
+        assert [row["step"] for row in driver.thermo] == [0, 2, 4]
+        first = driver.thermo[0]
+        vel = np.array([[0.5, 1.0, 1.5], [-0.25, -0.5, -0.75]])
+        ke = 0.5 * float(np.sum(np.array([1.0, 2.0])[:, None] * vel**2))
+        assert first["ke"] == pytest.approx(ke)
+        assert first["etotal"] == pytest.approx(first["pe"] + ke)
+        n_dof = 3 * 2 - int(driver._integrator.removed_dof)
+        assert first["temp"] == pytest.approx(2.0 * ke / (n_dof * kb))

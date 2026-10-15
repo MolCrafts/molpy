@@ -46,10 +46,9 @@ One crate, `molcrafts-molrs`, whose sub-systems are feature-gated modules
 | `core`, `perceive` *(always on)* | Frame / Block column store, MolGraph topology, elements, `SimBox` + minimum-image convention, spatial regions, neighbor search, chemical perception, SMARTS matching |
 | `builder` | Structure builders: graphene, nanotubes, lattices, self-avoiding walks, site-graph assembly (`Assembler`, placers, orienters) |
 | `io` | Readers / writers for PDB, XYZ, mol2, SDF, CIF, GRO, POSCAR, CHGCAR, Cube, LAMMPS data/dump, DCD, TRR, XTC; `*.mrec` record files following the [molrec](https://docs.molcrafts.org/molrec/) contract — frames, topologies, trajectories and force fields (`zarr` / `filesystem`); SMILES / CGsmiles parser under the `smiles` feature |
-| `compute` | Trajectory analysis: RDF, MSD, clustering, gyration / inertia tensors, PCA, k-means, density, diffraction, PMFT, order parameters, dielectric, environment matching |
+| `compute` | Trajectory analysis on one `Compute` contract (`new` = configuration, `compute` = data): one `Correlator` behind `Msd` / `Vacf` / … and the spectra (FFT, windows, frequency grids), RDF, clustering, gyration / inertia tensors, PCA, k-means, density, diffraction, PMFT, order parameters, dielectric, environment matching |
 | `ff` | Force fields and potentials — `def_style` / `def_type` model, MMFF94 / OPLS-AA / GAFF / UFF typing through `Typing`, `PotentialCompiler`, LJ, PME; LAMMPS / GROMACS / OpenMM XML read and write; L-BFGS geometry optimization over a `Potential` |
 | `conformer` | 3D conformer generation: ETKDGv3 distance geometry, experimental-torsion refinement, MMFF94 cleanup, stereo guards |
-| `signal` | Signal processing — FFT-based autocorrelation, window functions, frequency grids |
 | `md` | In-process molecular dynamics: velocity-Verlet and Langevin integration over force-field potentials |
 | `stream` | MessagePack/JSON frame transport and native WebSocket streaming |
 
@@ -64,7 +63,7 @@ cargo add molcrafts-molrs
 
 The default build is core only (`core`, `perceive`, the `optimize` contract)
 plus `rayon`. Every sub-system is opt-in: name the modules you need, or `full`
-for all of them (`builder`, `io`, `smiles`, `signal`, `compute`, `voronoi`,
+for all of them (`builder`, `io`, `smiles`, `compute`, `voronoi`,
 `ff`, `conformer`, `md`). `full` does not enable `stream` or `filesystem`
 (path-backed Zarr); add them explicitly. `default-features = false` also
 drops `rayon` (wasm, Pyodide).
@@ -112,7 +111,7 @@ cd molrs
 cargo mrs-build   # compile the Rust library
 cargo mrs-test    # unit tests
 cargo mrs-doctest # rustdoc examples
-scripts/check.sh all  # every CI gate (prek runs the same script)
+scripts/check.sh verify  # the pre-push gate: every check, once
 ```
 
 Binding crates are standalone workspaces. Build each with

@@ -1,8 +1,9 @@
 //! Python bindings for the molrs molecular simulation library.
 //!
 //! This crate builds the private native module `molrs._native`; the Python
-//! package `molrs` (`python/molrs`) gives every symbol its one public path,
-//! the Python module named after the symbol's Rust owner:
+//! package `molrs` (`python/molrs`) names every symbol after its Rust owner.
+//! The package root also re-exports the core data classes a user handles
+//! directly (`molrs.Frame is molrs.core.Frame`); nothing else has a second path:
 //!
 //! | binding                 | Rust owner          | Python module        |
 //! |-------------------------|---------------------|----------------------|
@@ -16,7 +17,6 @@
 //! | [`conformer`]           | `molrs::conformer`  | `molrs.conformer`    |
 //! | [`builder`]             | `molrs::builder`    | `molrs.builder`      |
 //! | [`compute`]             | `molrs::compute`    | `molrs.compute`      |
-//! | [`signal`]              | `molrs::signal`     | `molrs.signal`       |
 //! | [`stream`]              | `molrs::stream`     | `molrs.stream`       |
 //!
 //! Every subsystem binding registers its own classes and functions through
@@ -29,7 +29,8 @@
 //! `#[pyclass(module = "molrs.…")]`, a flat function by [`add_function`], and
 //! everything on a submodule by that submodule's name. Cross-cutting plumbing
 //! has one home each: exceptions and Rust-error mapping in [`error`], the
-//! pickle protocol in [`pickle`], path arguments in [`path`].
+//! pickle protocol in [`pickle`], path arguments in [`path`], array arguments
+//! in [`array`].
 //!
 //! # Float Precision
 //!
@@ -38,6 +39,7 @@
 
 use pyo3::prelude::*;
 
+mod array;
 mod error;
 mod path;
 mod pickle;
@@ -52,7 +54,6 @@ mod md;
 mod op;
 mod optimize;
 mod perceive;
-mod signal;
 mod stream;
 
 /// The FFI ABI handshake token of this build.
@@ -127,7 +128,6 @@ fn molrs_native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     conformer::register(m)?;
     builder::register(m)?;
     compute::register(m)?;
-    signal::register(m)?;
     stream::register(m)?;
 
     add_submodule(m, "op", "molrs.op", op::register)?;
