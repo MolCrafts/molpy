@@ -5774,7 +5774,7 @@ class md:
             *,
             potential: PairLjCut | Potentials | WeightedTerms | Any,
             neighbors: VerletSkin | None = None,
-            mass: float | ArrayF,
+            mass: ArrayF,
             box: Box | None = None,
         ) -> None: ...
         @property
@@ -5806,7 +5806,7 @@ class md:
             kbt: float,
             potential: PairLjCut | Potentials | WeightedTerms | Any,
             neighbors: VerletSkin | None = None,
-            mass: float | ArrayF,
+            mass: ArrayF,
             seed: int = 0,
             box: Box | None = None,
         ) -> None: ...
@@ -5852,7 +5852,7 @@ class md:
         def seed(self) -> int: ...
         @property
         def remove_com(self) -> bool: ...
-        def velocities(self, pos: ArrayF, mass: float | ArrayF) -> ArrayF: ...
+        def velocities(self, pos: ArrayF, mass: ArrayF) -> ArrayF: ...
 
 class ir:
     """The ``_native.ir`` submodule: the force-field IR registry

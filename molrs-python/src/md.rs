@@ -24,7 +24,7 @@ use molrs::md::{
 use molrs::op::{F, I};
 use ndarray::Array1;
 use numpy::{IntoPyArray, PyArray2};
-use pyo3::exceptions::PyValueError;
+use pyo3::exceptions::{PyTypeError, PyValueError};
 use pyo3::prelude::*;
 
 fn md_err(e: MdError) -> PyErr {
@@ -62,16 +62,29 @@ fn provider(
     })
 }
 
+/// The state an integrator advances: an [`MdState`] as is (its accumulated
+/// image flags and all), or any object with `pos`, `vel`, `forces`, `energy`
+/// and `images` attributes.
+///
+/// The image flags are part of the state — `pos + H·images` is the continuous
+/// trajectory — so they are read like every other field. Rebuilding them as
+/// zeros here would make each `advance` restart the count, and the flags
+/// would only ever hold the crossings of the last call.
 fn extract_state(state: &Bound<'_, PyAny>) -> PyResult<MdState> {
+    if let Ok(state) = state.cast::<PyMdState>() {
+        return Ok(state.borrow().inner.clone());
+    }
     let pos: ArrayArg2<f64> = state.getattr("pos")?.extract()?;
     let vel: ArrayArg2<f64> = state.getattr("vel")?.extract()?;
     let forces: ArrayArg2<f64> = state.getattr("forces")?.extract()?;
+    let images: ArrayArg2<I> = state.getattr("images")?.extract()?;
     let energy: F = state.getattr("energy")?.extract()?;
     check_nx3(&pos, "pos")?;
     check_nx3(&vel, "vel")?;
     check_nx3(&forces, "forces")?;
+    check_images(images.as_array(), pos.as_array().nrows())?;
     Ok(MdState {
-        images: numpy::ndarray::Array2::zeros((pos.as_array().nrows(), 3)),
+        images: images.as_array().to_owned(),
         pos: pos.as_array().to_owned(),
         vel: vel.as_array().to_owned(),
         forces: forces.as_array().to_owned(),
@@ -80,17 +93,34 @@ fn extract_state(state: &Bound<'_, PyAny>) -> PyResult<MdState> {
     })
 }
 
-fn mass_from(mass: &Bound<'_, PyAny>) -> PyResult<Array1<F>> {
-    if let Ok(v) = mass.extract::<F>() {
-        if !v.is_finite() || v <= 0.0 {
-            return Err(PyValueError::new_err("mass must be strictly positive"));
-        }
-        return Ok(ndarray::array![v]);
+fn check_images(images: ndarray::ArrayView2<'_, I>, n_atoms: usize) -> PyResult<()> {
+    if images.ncols() != 3 || images.nrows() != n_atoms {
+        return Err(PyValueError::new_err(format!(
+            "images must have shape ({n_atoms}, 3) matching pos, got {:?}",
+            images.shape()
+        )));
     }
-    let arr: ArrayArg1<f64> = mass.extract().map_err(|_| {
-        PyValueError::new_err("mass must be a positive scalar or a 1-D float array")
-    })?;
-    Ok(arr.as_array().to_owned())
+    Ok(())
+}
+
+/// Per-atom masses, a 1-D float64 array `(N,)`.
+///
+/// The integrators are built before they see a configuration, so they cannot
+/// broadcast a scalar to `N` atoms; a homogeneous system passes
+/// `np.full(N, m)`. A scalar is refused here rather than read as a one-atom
+/// array that fails later against `N`.
+fn mass_from(mass: &Bound<'_, PyAny>) -> PyResult<Array1<F>> {
+    match mass.extract::<ArrayArg1<f64>>() {
+        Ok(arr) => Ok(arr.as_array().to_owned()),
+        Err(_) if mass.extract::<F>().is_ok() => Err(PyTypeError::new_err(
+            "mass: expected a 1-D float64 array of per-atom masses (N,), got a scalar; \
+             for a homogeneous system pass np.full(n_atoms, mass)",
+        )),
+        Err(e) => Err(PyTypeError::new_err(format!(
+            "mass: {}",
+            e.value(mass.py())
+        ))),
+    }
 }
 
 /// Dynamical state advanced by the integrators.
@@ -158,13 +188,8 @@ impl PyMdState {
 
     #[setter]
     fn set_images(&mut self, value: ArrayArg2<'_, I>) -> PyResult<()> {
-        let v = value.as_array();
-        if v.ncols() != 3 || v.nrows() != self.inner.pos.nrows() {
-            return Err(PyValueError::new_err(
-                "images must have shape (N, 3) matching pos",
-            ));
-        }
-        self.inner.images = v.to_owned();
+        check_images(value.as_array(), self.inner.pos.nrows())?;
+        self.inner.images = value.as_array().to_owned();
         Ok(())
     }
 
