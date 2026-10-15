@@ -63,4 +63,4 @@ def test_read_clpol_alpha_reads_a_file(tmp_path):
         for a in (2.0, 3.0)
     ]
     assert molrs.io.read_clpol_alpha(path) == rows
-    assert molrs.io.read_clpol_alpha_str(text) == rows
+    assert molrs.io.read_clpol_alpha(molrs.io.Text(text)) == rows

@@ -42,6 +42,7 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<trajectory::PyTrajectory>()?;
     m.add_class::<trajectory::PyObservableRecord>()?;
 
+    m.add_class::<simbox::PyCell>()?;
     m.add_class::<simbox::PyBox>()?;
     m.add_class::<neighborlist::PyNeighborList>()?;
     m.add_class::<neighborlist::PyNeighbors>()?;
@@ -81,7 +82,6 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<graph_views::PyPort>()?;
     m.add_class::<graph_views::PyCgBond>()?;
     m.add_class::<graph_views::PyRefs>()?;
-    m.add_class::<graph_views::PyRelationBuckets>()?;
 
     units::register(m)?;
 

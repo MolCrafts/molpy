@@ -652,7 +652,7 @@ fn tleap(
                     out.push(ImproperTerm {
                         atoms,
                         types,
-                        params: Params::from_pairs(&[
+                        params: Params::from_iter([
                             ("k", row.row.force),
                             ("periodicity", row.row.periodicity),
                             ("phase", row.row.phase),

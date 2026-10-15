@@ -5,7 +5,7 @@ use ndarray::{Array2, ArrayView2};
 
 use crate::ff::potential::flat_coords::{term_table, validate_coords};
 use crate::ff::potential::pair::charmm::lj_coeffs;
-use crate::ff::potential::{IndexedTerms, Potential};
+use crate::ff::potential::{Accumulator, IndexedTerms, Potential};
 use molrs::op::F;
 
 const MIN_R2: F = 1e-24;
@@ -158,17 +158,11 @@ impl PairExceptions {
 }
 
 impl Potential for PairExceptions {
-    fn calc_energy_forces(&self, coords: &[F]) -> (F, Vec<F>) {
-        let mut out = vec![0.0; coords.len()];
-        let e = self.accumulate(coords, &mut out);
-        (e, out)
-    }
-
-    fn accumulate(&self, coords: &[F], out: &mut [F]) -> F {
-        let (v, c) = self.fold(coords, out, self.len(), |t| {
+    fn evaluate(&self, coords: &[F], acc: &mut Accumulator<'_>) {
+        let (v, c) = self.fold(coords, acc.forces_without_virial(), self.len(), |t| {
             (self.atom_i[t], self.atom_j[t])
         });
-        v + c
+        acc.add_energy(v + c);
     }
 }
 
@@ -177,21 +171,11 @@ impl IndexedTerms for PairExceptions {
         term_table(&[&self.atom_i, &self.atom_j])
     }
 
-    fn calc_energy_forces_with_terms(
-        &self,
-        coords: &[F],
-        terms: ArrayView2<'_, u32>,
-    ) -> (F, Vec<F>) {
-        let mut out = vec![0.0; coords.len()];
-        let e = self.accumulate_with_terms(coords, terms, &mut out);
-        (e, out)
-    }
-
-    fn accumulate_with_terms(&self, coords: &[F], terms: ArrayView2<'_, u32>, out: &mut [F]) -> F {
+    fn evaluate_terms(&self, coords: &[F], terms: ArrayView2<'_, u32>, acc: &mut Accumulator<'_>) {
         debug_assert_eq!(terms.nrows(), self.len());
-        let (v, c) = self.fold(coords, out, terms.nrows(), |t| {
+        let (v, c) = self.fold(coords, acc.forces_without_virial(), terms.nrows(), |t| {
             (terms[[t, 0]] as usize, terms[[t, 1]] as usize)
         });
-        v + c
+        acc.add_energy(v + c);
     }
 }

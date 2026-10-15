@@ -1,6 +1,6 @@
 //! Reader of a CL&Pol `alpha.ff` polarisation table.
 
-use std::path::Path;
+use crate::io::{Source, invalid_data};
 
 /// One `alpha.ff` row read from a file; fields and units as
 /// [`ClpolPolarizability`](crate::ff::params::ClpolPolarizability).
@@ -20,8 +20,9 @@ pub struct ClpolAlphaRow {
     pub a_thole: f64,
 }
 
-/// Parse `alpha.ff` text, rows in file order (a type given twice keeps both
-/// rows; the later one is the file's last word).
+/// Read the `alpha.ff` table `src` holds — a path or a whole file's bytes —
+/// rows in file order (a type given twice keeps both rows; the later one is
+/// the file's last word).
 ///
 /// The file is whitespace-separated rows `type m_D q_D k_D alpha a_thole`;
 /// `#` starts a comment, and a line with fewer than six fields (blank, a
@@ -30,10 +31,28 @@ pub struct ClpolAlphaRow {
 /// reads a caller's own (an edited or newer `alpha.ff`) into the same row
 /// shape, with owned type names.
 ///
+/// The table is records, not a [`ForceField`](crate::ff::forcefield::ForceField),
+/// so its door is a function like the frame doors' rather than a
+/// [`ForceFieldReader`](crate::io::reader::ForceFieldReader).
+///
+/// ```
+/// use molrs::io::read_clpol_alpha;
+///
+/// let rows = read_clpol_alpha(b"NBT 0.4 -1.0 4184.0 1.698 2.6\n").unwrap();
+/// assert_eq!(rows[0].type_name, "NBT");
+/// ```
+///
 /// # Errors
 ///
-/// `Err` naming the line for a row whose numeric fields do not parse.
-pub fn read_clpol_alpha_str(text: &str) -> Result<Vec<ClpolAlphaRow>, String> {
+/// The OS error of a path that cannot be read;
+/// [`InvalidData`](std::io::ErrorKind::InvalidData) naming the line for a row
+/// whose numeric fields do not parse.
+pub fn read_clpol_alpha<'a>(src: impl Into<Source<'a>>) -> std::io::Result<Vec<ClpolAlphaRow>> {
+    parse(&src.into().text()?).map_err(invalid_data)
+}
+
+/// The rows of `alpha.ff` text ([`read_clpol_alpha`]).
+fn parse(text: &str) -> Result<Vec<ClpolAlphaRow>, String> {
     let mut rows = Vec::new();
     for (lineno, raw) in text.lines().enumerate() {
         let fields: Vec<&str> = raw
@@ -67,18 +86,6 @@ pub fn read_clpol_alpha_str(text: &str) -> Result<Vec<ClpolAlphaRow>, String> {
     Ok(rows)
 }
 
-/// Read an `alpha.ff` file; see [`read_clpol_alpha_str`].
-///
-/// # Errors
-///
-/// The file's I/O error, or [`read_clpol_alpha_str`]'s.
-pub fn read_clpol_alpha(path: impl AsRef<Path>) -> Result<Vec<ClpolAlphaRow>, String> {
-    let path = path.as_ref();
-    let text =
-        std::fs::read_to_string(path).map_err(|e| format!("read {}: {e}", path.display()))?;
-    read_clpol_alpha_str(&text)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -87,7 +94,7 @@ mod tests {
     #[test]
     fn rows_comments_and_headers() {
         let text = "# alpha.ff\n# type m_D q_D k_D alpha a_thole\nNBT 0.4 -1.0 4184.0 1.698 2.6 # imide N\n\nHC 0.0 0.0 0.0 0.323 0.0\n";
-        let rows = read_clpol_alpha_str(text).unwrap();
+        let rows = read_clpol_alpha(text.as_bytes()).unwrap();
         assert_eq!(rows.len(), 2);
         assert_eq!(rows[0].type_name, "NBT");
         assert_eq!(rows[0].alpha, 1.698);
@@ -96,8 +103,9 @@ mod tests {
 
     #[test]
     fn a_bad_number_names_its_line() {
-        let err = read_clpol_alpha_str("X 0.4 -1 big 1 2.6\n").unwrap_err();
-        assert!(err.contains("line 1"), "{err}");
+        let err = read_clpol_alpha(b"X 0.4 -1 big 1 2.6\n").unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
+        assert!(err.to_string().contains("line 1"), "{err}");
     }
 
     #[test]
@@ -111,7 +119,7 @@ mod tests {
                 )
             })
             .collect();
-        let rows = read_clpol_alpha_str(&text).unwrap();
+        let rows = read_clpol_alpha(text.as_bytes()).unwrap();
         assert_eq!(rows.len(), CLPOL_POLARIZABILITY.len());
         for (row, want) in rows.iter().zip(CLPOL_POLARIZABILITY) {
             assert_eq!(row.type_name, want.type_name);

@@ -7,7 +7,7 @@ use crate::ff::typifier::{AtdParameterSet, AtdTypifier};
 
 use super::error::ChargeError;
 use super::model::{
-    ChargeModel, atom_ids, charge_error, element_of, reject_dummy_types, without_type_columns,
+    ChargeModel, atom_ids, atomic_number_of, charge_error, reject_dummy_types, without_type_columns,
 };
 
 /// antechamber's `CONVERG`: the loop stops when the RMS charge change of a sweep
@@ -92,20 +92,51 @@ const CHI_FLOOR: f64 = 1.0e-10;
 /// # Examples
 ///
 /// ```
-/// use molrs::core::Atomistic;
+/// use molrs::core::{Atomistic, Element, keys};
+/// use molrs::props;
 /// use molrs::ff::charge::{ChargeModel, GasteigerModel};
 ///
 /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
 /// // Methanol, as a user has it: elements, coordinates, bonds. Nothing else.
 /// let mut mol = Atomistic::new();
-/// let c = mol.add_atom_xyz("C", -0.383, 0.0, 0.0);
-/// let o = mol.add_atom_xyz("O", 0.383, 0.0, 0.0);
-/// let h1 = mol.add_atom_xyz("H", -0.762, 0.478, 0.907);
-/// let h2 = mol.add_atom_xyz("H", -0.762, 0.535, -0.870);
-/// let h3 = mol.add_atom_xyz("H", -0.762, -1.013, -0.037);
-/// let ho = mol.add_atom_xyz("H", 0.712, -0.898, 0.0);
+/// let c = mol.add_atom(props! {
+///     keys::ATOMIC_NUMBER => Element::C,
+///     keys::X => -0.383,
+///     keys::Y => 0.0,
+///     keys::Z => 0.0,
+/// })?;
+/// let o = mol.add_atom(props! {
+///     keys::ATOMIC_NUMBER => Element::O,
+///     keys::X => 0.383,
+///     keys::Y => 0.0,
+///     keys::Z => 0.0,
+/// })?;
+/// let h1 = mol.add_atom(props! {
+///     keys::ATOMIC_NUMBER => Element::H,
+///     keys::X => -0.762,
+///     keys::Y => 0.478,
+///     keys::Z => 0.907,
+/// })?;
+/// let h2 = mol.add_atom(props! {
+///     keys::ATOMIC_NUMBER => Element::H,
+///     keys::X => -0.762,
+///     keys::Y => 0.535,
+///     keys::Z => -0.870,
+/// })?;
+/// let h3 = mol.add_atom(props! {
+///     keys::ATOMIC_NUMBER => Element::H,
+///     keys::X => -0.762,
+///     keys::Y => -1.013,
+///     keys::Z => -0.037,
+/// })?;
+/// let ho = mol.add_atom(props! {
+///     keys::ATOMIC_NUMBER => Element::H,
+///     keys::X => 0.712,
+///     keys::Y => -0.898,
+///     keys::Z => 0.0,
+/// })?;
 /// for (a, b) in [(c, o), (c, h1), (c, h2), (c, h3), (o, ho)] {
-///     mol.add_bond(a, b)?;
+///     mol.add_bond(a, b, props! {})?;
 /// }
 ///
 /// // No QM charges — that is the whole point of this model.
@@ -153,10 +184,14 @@ impl ChargeModel for GasteigerModel {
     /// or types it as one `GASPARM.DAT` has no row for (a lone pair). Never a
     /// fallback value.
     fn assign(&self, mol: &Atomistic, _qm: Option<&[f64]>) -> Result<Vec<f64>, ChargeError> {
-        let work = without_type_columns(mol)?;
+        let mut perceived = without_type_columns(mol)?;
         let set = AtdParameterSet::Gas;
         let typifier = AtdTypifier::new(set);
-        let perceived = typifier.perceive_bond_types(&work);
+        typifier
+            .perceive_bond_types(&mut perceived)
+            .map_err(|e| ChargeError::Malformed {
+                detail: e.to_string(),
+            })?;
         let types = typifier.types_of(&perceived).map_err(charge_error)?;
         reject_dummy_types(&perceived, &types, set.table().name)?;
 
@@ -181,16 +216,16 @@ fn parameter_rows(
     types
         .iter()
         .enumerate()
-        .map(|(atom, ty)| {
-            GASTEIGER_PARAMS
-                .iter()
-                .find(|row| row.atom_type == *ty)
-                .ok_or_else(|| ChargeError::MissingAtomType {
+        .map(
+            |(atom, ty)| match GASTEIGER_PARAMS.iter().find(|row| row.atom_type == *ty) {
+                Some(row) => Ok(row),
+                None => Err(ChargeError::MissingAtomType {
                     table: "GASPARM.DAT",
                     atom,
-                    element: element_of(mol, atom),
-                })
-        })
+                    atomic_number: atomic_number_of(mol, atom)?,
+                }),
+            },
+        )
         .collect()
 }
 
@@ -308,20 +343,36 @@ fn rms_change(previous: &[f64], current: &[f64]) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::props;
+    use molrs::core::Element;
     use molrs::core::keys;
 
     /// Methane — the smallest molecule that still needs seven sweeps.
     fn methane() -> Atomistic {
         let mut mol = Atomistic::new();
-        let c = mol.add_atom_xyz("C", 0.0, 0.0, 0.0);
+        let c = mol
+            .add_atom(props! {
+                keys::ATOMIC_NUMBER => Element::C,
+                keys::X => 0.0,
+                keys::Y => 0.0,
+                keys::Z => 0.0,
+            })
+            .unwrap();
         for [x, y, z] in [
             [0.63, 0.63, 0.63],
             [-0.63, -0.63, 0.63],
             [-0.63, 0.63, -0.63],
             [0.63, -0.63, -0.63],
         ] {
-            let h = mol.add_atom_xyz("H", x, y, z);
-            mol.add_bond(c, h).expect("add C-H");
+            let h = mol
+                .add_atom(props! {
+                    keys::ATOMIC_NUMBER => Element::H,
+                    keys::X => x,
+                    keys::Y => y,
+                    keys::Z => z,
+                })
+                .unwrap();
+            mol.add_bond(c, h, props! {}).expect("add C-H");
         }
         mol
     }
@@ -411,7 +462,7 @@ mod tests {
             ChargeError::MissingAtomType {
                 table: "GASPARM.DAT",
                 atom: 4,
-                element: "H".to_owned(),
+                atomic_number: Element::H.z(),
             }
         );
     }

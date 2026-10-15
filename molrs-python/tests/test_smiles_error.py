@@ -57,14 +57,14 @@ def test_smiles_error_is_a_public_value_error() -> None:
 
 def test_cgsmiles_parse_error_raises_the_typed_exception() -> None:
     with pytest.raises(molrs.io.smiles.SmilesError):
-        molrs.io.cgsmiles.CgSmilesIr(UNTERMINATED_BLOCK)
+        molrs.io.cgsmiles.CgSmilesIr.parse(UNTERMINATED_BLOCK)
 
 
 def test_cgsmiles_error_kind_is_the_rust_variant_name() -> None:
     """``kind`` crosses as the ``SmilesErrorKind`` variant name, payload
     dropped — ``UnexpectedEnd`` for a block that never closes."""
     with pytest.raises(molrs.io.smiles.SmilesError) as excinfo:
-        molrs.io.cgsmiles.CgSmilesIr(UNTERMINATED_BLOCK)
+        molrs.io.cgsmiles.CgSmilesIr.parse(UNTERMINATED_BLOCK)
 
     kind = excinfo.value.kind
     assert isinstance(kind, str)
@@ -74,7 +74,7 @@ def test_cgsmiles_error_kind_is_the_rust_variant_name() -> None:
 
 def test_cgsmiles_error_span_is_a_two_tuple_of_ints() -> None:
     with pytest.raises(molrs.io.smiles.SmilesError) as excinfo:
-        molrs.io.cgsmiles.CgSmilesIr(UNTERMINATED_BLOCK)
+        molrs.io.cgsmiles.CgSmilesIr.parse(UNTERMINATED_BLOCK)
 
     span = excinfo.value.span
     assert isinstance(span, tuple)
@@ -94,14 +94,14 @@ def test_cgsmiles_error_span_stays_within_the_input() -> None:
     the end: the seam must land the end inside the text it publishes.
     """
     with pytest.raises(molrs.io.smiles.SmilesError) as excinfo:
-        molrs.io.cgsmiles.CgSmilesIr(UNTERMINATED_BLOCK)
+        molrs.io.cgsmiles.CgSmilesIr.parse(UNTERMINATED_BLOCK)
 
     assert excinfo.value.span[1] <= len(UNTERMINATED_BLOCK)
 
 
 def test_cgsmiles_error_echoes_the_offending_input() -> None:
     with pytest.raises(molrs.io.smiles.SmilesError) as excinfo:
-        molrs.io.cgsmiles.CgSmilesIr(UNTERMINATED_BLOCK)
+        molrs.io.cgsmiles.CgSmilesIr.parse(UNTERMINATED_BLOCK)
 
     assert excinfo.value.input == UNTERMINATED_BLOCK
 
@@ -110,14 +110,14 @@ def test_cgsmiles_error_names_the_cgsmiles_notation() -> None:
     """``notation`` crosses as the lowercase variant name, like every other
     enum at this seam (see ``test_cgsmiles.py``)."""
     with pytest.raises(molrs.io.smiles.SmilesError) as excinfo:
-        molrs.io.cgsmiles.CgSmilesIr(UNTERMINATED_BLOCK)
+        molrs.io.cgsmiles.CgSmilesIr.parse(UNTERMINATED_BLOCK)
 
     assert excinfo.value.notation == "cgsmiles"
 
 
 def test_cgsmiles_error_renders_the_rust_message() -> None:
     with pytest.raises(molrs.io.smiles.SmilesError) as excinfo:
-        molrs.io.cgsmiles.CgSmilesIr(UNTERMINATED_BLOCK)
+        molrs.io.cgsmiles.CgSmilesIr.parse(UNTERMINATED_BLOCK)
 
     assert str(excinfo.value).startswith("CGsmiles parse error at position ")
 
@@ -129,14 +129,14 @@ def test_cgsmiles_error_renders_the_rust_message() -> None:
 
 def test_smiles_error_names_the_smiles_notation() -> None:
     with pytest.raises(molrs.io.smiles.SmilesError) as excinfo:
-        molrs.io.smiles.SmilesIr(UNCLOSED_BRANCH)
+        molrs.io.smiles.SmilesIr.parse(UNCLOSED_BRANCH)
 
     assert excinfo.value.notation == "smiles"
 
 
 def test_smiles_unclosed_branch_crosses_its_kind() -> None:
     with pytest.raises(molrs.io.smiles.SmilesError) as excinfo:
-        molrs.io.smiles.SmilesIr(UNCLOSED_BRANCH)
+        molrs.io.smiles.SmilesIr.parse(UNCLOSED_BRANCH)
 
     assert excinfo.value.kind == "UnclosedBranch"
 
@@ -145,7 +145,7 @@ def test_smiles_unclosed_branch_span_points_at_the_open_paren() -> None:
     """``parse_branch`` spans from the ``(`` that was opened, byte 1 of
     ``C(``."""
     with pytest.raises(molrs.io.smiles.SmilesError) as excinfo:
-        molrs.io.smiles.SmilesIr(UNCLOSED_BRANCH)
+        molrs.io.smiles.SmilesIr.parse(UNCLOSED_BRANCH)
 
     assert excinfo.value.span[0] == 1
 
@@ -158,19 +158,19 @@ def test_unknown_bracket_element_is_refused_by_the_constructor() -> None:
     refusal belongs to the parser, so it happens here.
     """
     with pytest.raises(molrs.io.smiles.SmilesError):
-        molrs.io.smiles.SmilesIr(UNKNOWN_BRACKET_ELEMENT)
+        molrs.io.smiles.SmilesIr.parse(UNKNOWN_BRACKET_ELEMENT)
 
 
 def test_unknown_bracket_element_kind_is_invalid_element() -> None:
     with pytest.raises(molrs.io.smiles.SmilesError) as excinfo:
-        molrs.io.smiles.SmilesIr(UNKNOWN_BRACKET_ELEMENT)
+        molrs.io.smiles.SmilesIr.parse(UNKNOWN_BRACKET_ELEMENT)
 
     assert excinfo.value.kind == "InvalidElement"
 
 
 def test_unknown_bracket_element_names_the_smiles_notation() -> None:
     with pytest.raises(molrs.io.smiles.SmilesError) as excinfo:
-        molrs.io.smiles.SmilesIr(UNKNOWN_BRACKET_ELEMENT)
+        molrs.io.smiles.SmilesIr.parse(UNKNOWN_BRACKET_ELEMENT)
 
     assert excinfo.value.notation == "smiles"
 
@@ -182,14 +182,14 @@ def test_unknown_bracket_element_names_the_smiles_notation() -> None:
 
 def test_base_only_string_is_not_expandable_to_atomistic() -> None:
     with pytest.raises(molrs.io.smiles.SmilesError) as excinfo:
-        molrs.io.cgsmiles.CgSmilesIr(BASE_ONLY).to_atomistic()
+        molrs.io.cgsmiles.CgSmilesIr.parse(BASE_ONLY).to_atomistic()
 
     assert excinfo.value.kind == "CgNotExpandable"
 
 
 def test_base_only_string_has_no_templates() -> None:
     with pytest.raises(molrs.io.smiles.SmilesError) as excinfo:
-        molrs.io.cgsmiles.CgSmilesIr(BASE_ONLY).templates()
+        molrs.io.cgsmiles.CgSmilesIr.parse(BASE_ONLY).templates()
 
     assert excinfo.value.kind == "CgNotExpandable"
 
@@ -203,7 +203,7 @@ def test_a_smiles_error_is_a_value_error() -> None:
     """``SmilesError`` subclasses ``ValueError``, so ``except ValueError``
     catches it."""
     with pytest.raises(ValueError) as excinfo:
-        molrs.io.cgsmiles.CgSmilesIr(UNTERMINATED_BLOCK)
+        molrs.io.cgsmiles.CgSmilesIr.parse(UNTERMINATED_BLOCK)
 
     assert isinstance(excinfo.value, molrs.io.smiles.SmilesError)
 
@@ -212,7 +212,7 @@ def test_smiles_error_has_no_second_spelling_of_its_facts() -> None:
     """Four attributes cross, and only four: position/offset/message/args-style
     aliases would give every fact two spellings."""
     with pytest.raises(molrs.io.smiles.SmilesError) as excinfo:
-        molrs.io.cgsmiles.CgSmilesIr(UNTERMINATED_BLOCK)
+        molrs.io.cgsmiles.CgSmilesIr.parse(UNTERMINATED_BLOCK)
 
     error = excinfo.value
     for absent in ("position", "offset", "start", "end", "message", "text"):

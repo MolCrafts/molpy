@@ -69,7 +69,10 @@ class TestFits:
 
     def test_msd_feeds_linear_fit(self) -> None:
         positions = np.cumsum(RNG.normal(size=(60, 4, 3)), axis=0)
-        msd = Msd(20).compute(positions=positions, dt=1.0)
+        acc = Msd(20).accumulator()
+        for frame in positions:
+            acc.push(frame, dt=1.0)
+        msd = acc.finish()
         fit = LinearFit(0.2, 0.8).compute(correlation=msd, channel=0)
         assert isinstance(fit, LinearFitResult)
         assert fit.slope > 0.0
@@ -77,7 +80,10 @@ class TestFits:
 
     def test_vacf_feeds_cumulative_trapezoid_then_plateau(self) -> None:
         velocities = RNG.normal(size=(80, 6))
-        vacf = Vacf(20).compute(velocities=velocities, dt=0.5)
+        acc = Vacf(20).accumulator()
+        for frame in velocities:
+            acc.push(frame.reshape(-1, 1), dt=0.5)
+        vacf = acc.finish()
         integral = CumulativeTrapezoid().compute(correlation=vacf, channel=0)
         assert isinstance(integral, TimeCorrelation)
         assert integral.values.shape == vacf.values.shape
@@ -96,31 +102,36 @@ class TestKinetic:
     def test_kinetic_energy_and_temperature(self) -> None:
         masses = np.array([1.0, 2.0, 3.0])
         velocities = RNG.normal(size=(3, 3))
-        out = KineticEnergy(units="real").compute(masses=masses, velocities=velocities)
+        out = KineticEnergy("real").compute(masses=masses, velocities=velocities)
         assert isinstance(out, KineticEnergyResult)
         assert out.energy > 0.0
         assert out.temperature(6) > 0.0
 
     def test_units_may_be_a_preset_object(self) -> None:
         preset = molrs.core.UnitPreset("metal")
-        out = KineticEnergy(units=preset).compute(
+        out = KineticEnergy(preset).compute(
             masses=np.ones(2), velocities=np.ones((2, 3))
         )
         assert out.boltzmann == pytest.approx(preset.boltzmann())
 
-    def test_explicit_constants_are_the_alternative_constructor(self) -> None:
+    def test_constants_override_the_preset(self) -> None:
         masses, velocities = np.array([2.0, 1.0]), np.array([[1.0, 0, 0], [0, 2, 2]])
-        out = KineticEnergy(mvv2e=1.0, boltzmann=0.5).compute(
+        out = KineticEnergy("real", mvv2e=1.0, boltzmann=0.5).compute(
             masses=masses, velocities=velocities
         )
         assert (out.energy, out.boltzmann) == (5.0, 0.5)
         assert out.temperature(6) == pytest.approx(2.0 * 5.0 / (6 * 0.5))
-        with pytest.raises(ValueError, match="either units"):
-            KineticEnergy(units="real", mvv2e=1.0, boltzmann=0.5)
-        with pytest.raises(ValueError, match="either units"):
-            KineticEnergy(mvv2e=1.0)
+        real = KineticEnergy("real").compute(masses=masses, velocities=velocities)
+        only_k = KineticEnergy("real", boltzmann=0.5).compute(
+            masses=masses, velocities=velocities
+        )
+        assert (only_k.energy, only_k.boltzmann) == (real.energy, 0.5)
+        with pytest.raises(TypeError):
+            KineticEnergy(mvv2e=1.0, boltzmann=0.5)  # type: ignore[call-arg]
         with pytest.raises(ValueError, match="boltzmann out of range"):
-            KineticEnergy(mvv2e=1.0, boltzmann=0.0)
+            KineticEnergy("real", boltzmann=0.0)
+        with pytest.raises(ValueError, match="mvv2e out of range"):
+            KineticEnergy("real", mvv2e=-1.0)
 
 
 class TestDielectric:

@@ -2,20 +2,20 @@
 //!
 //! | JS | molrs |
 //! |----|-------|
-//! | `readXsfStr` | `read_xsf_str` |
-//! | `writeXsfStr` | `write_xsf_str` |
+//! | `readXsf` | `read_xsf` |
+//! | `writeXsf` | `write_xsf` |
 //!
 //! molrs reads XSF with functions only, so JS has no reader class.
 
 use wasm_bindgen::prelude::*;
 
 read_door!(
-    /// Read XCrySDen XSF text: a periodic box from `CRYSTAL` + `PRIMVEC`, a
-    /// free one from `MOLECULE`; atoms with `atomic_number`, `element` and
-    /// `x`/`y`/`z` (Å).
-    readXsfStr => read_xsf_str(text: &str), "XSF"
+    /// Read XCrySDen XSF (the file's text or bytes): a periodic box from `CRYSTAL` + `PRIMVEC`, a
+    /// free one from `MOLECULE`; atoms with `atomic_number` (u64, as the file
+    /// states it — no `element` symbols are synthesized) and `x`/`y`/`z` (Å).
+    readXsf => read_xsf, "XSF"
 );
 write_door!(
     /// Write `frame` as XCrySDen XSF text.
-    writeXsfStr => write_xsf_str -> String, "XSF"
+    writeXsf => write_xsf, "XSF"
 );

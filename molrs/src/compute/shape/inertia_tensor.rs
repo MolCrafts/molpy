@@ -91,12 +91,13 @@ crate::compute::spec::compute_spec! {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ndarray::{Array2, arr1, array};
+    use crate::core::Cell;
+    use ndarray::{Array2, arr1};
 
     fn inertia(rows: &[[F; 3]], box_len: F, masses: &[F]) -> InertiaTensorResult {
         let positions = Array2::from_shape_fn((rows.len(), 3), |(i, d)| rows[i][d]);
         let one_group: Vec<u8> = vec![0; rows.len()];
-        let b = SimBox::cube(box_len, array![0.0, 0.0, 0.0], [false; 3]).unwrap();
+        let b = SimBox::new(Cell::Lengths([box_len; 3]), [0.0, 0.0, 0.0], [false; 3]).unwrap();
         InertiaTensor::new()
             .compute(InertiaTensorInput {
                 positions: positions.view(),

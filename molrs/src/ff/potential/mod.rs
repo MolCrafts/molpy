@@ -30,7 +30,6 @@ pub(crate) mod param_reads;
 pub mod soft;
 
 pub use error::CompileError;
-pub use neighbor_pairs::intramolecular_pairs_from_neighbors;
 
 use std::collections::{HashMap, HashSet};
 
@@ -95,7 +94,23 @@ const BYTES_PER_PAIR_ROW: usize = 4 + 4 + 1;
 ///
 /// [`SpecialBonds::default`](crate::ff::ir::SpecialBonds::default)
 /// excludes both classes.
-pub fn intramolecular_pairs(frame: &Frame, special: &SpecialBonds) -> Result<Block, String> {
+///
+/// # Candidate pairs
+///
+/// With `neighbors: None` the candidates are every `i < j` pair of the
+/// frame's atoms (refused past [`MAX_ATOMS_FOR_A_FULL_PAIR_LIST`]). With
+/// `Some(table)` they are the pairs of that cutoff-bounded neighbour table,
+/// by the same rules: each unordered pair appears once, as `(lo, hi)`, in the
+/// order the table first reports it, so a full (both-direction) table and a
+/// half-shell one give the same block.
+pub fn intramolecular_pairs(
+    frame: &Frame,
+    special: &SpecialBonds,
+    neighbors: Option<&Neighbors>,
+) -> Result<Block, String> {
+    if let Some(neighbors) = neighbors {
+        return neighbor_pairs::over_neighbors(frame, special, neighbors);
+    }
     let [keep_12, keep_13] = special.compiled_inclusion()?;
     let n_atoms = frame.get(ATOMS).and_then(|b| b.n_rows()).unwrap_or(0);
     if n_atoms > MAX_ATOMS_FOR_A_FULL_PAIR_LIST {
@@ -137,17 +152,17 @@ pub fn intramolecular_pairs(frame: &Frame, special: &SpecialBonds) -> Result<Blo
     if !pi.is_empty() {
         let overrides = carried_overrides(frame, &pi, &pj)?;
         pairs
-            .insert(ATOMI, Array1::from_vec(pi).into_dyn())
+            .insert(ATOMI, Array1::from_vec(pi).into_dyn(), None)
             .expect("fresh pairs block");
         pairs
-            .insert(ATOMJ, Array1::from_vec(pj).into_dyn())
+            .insert(ATOMJ, Array1::from_vec(pj).into_dyn(), None)
             .expect("fresh pairs block");
         pairs
-            .insert(IS_14, Array1::from_vec(p14).into_dyn())
+            .insert(IS_14, Array1::from_vec(p14).into_dyn(), None)
             .expect("fresh pairs block");
         for (key, values, valid) in overrides {
             pairs
-                .insert_nullable(key, Array1::from_vec(values).into_dyn(), valid)
+                .insert(key, Array1::from_vec(values).into_dyn(), Some(valid))
                 .map_err(|e| e.to_string())?;
         }
     } else if let Some((i, j)) = override_pairs(frame)?.into_iter().next() {
@@ -170,8 +185,8 @@ fn carried_overrides(frame: &Frame, pi: &[Idx], pj: &[Idx]) -> Result<Vec<Overri
         return Ok(Vec::new());
     };
     let (Some(oi), Some(oj)) = (
-        old.get(ATOMI).and_then(|c| c.as_uint()),
-        old.get(ATOMJ).and_then(|c| c.as_uint()),
+        old.get(ATOMI).and_then(|c| c.get::<u64>()),
+        old.get(ATOMJ).and_then(|c| c.get::<u64>()),
     ) else {
         return Ok(Vec::new());
     };
@@ -187,7 +202,7 @@ fn carried_overrides(frame: &Frame, pi: &[Idx], pj: &[Idx]) -> Result<Vec<Overri
             continue;
         };
         let values = col
-            .as_float()
+            .get::<f64>()
             .ok_or_else(|| format!("pairs: the per-pair override column '{key}' must be float"))?;
         let valid = old.validity(key);
         let mut new_values = vec![0.0; pi.len()];
@@ -216,8 +231,8 @@ fn override_pairs(frame: &Frame) -> Result<Vec<(usize, usize)>, String> {
         return Ok(Vec::new());
     };
     let (Some(oi), Some(oj)) = (
-        old.get(ATOMI).and_then(|c| c.as_uint()),
-        old.get(ATOMJ).and_then(|c| c.as_uint()),
+        old.get(ATOMI).and_then(|c| c.get::<u64>()),
+        old.get(ATOMJ).and_then(|c| c.get::<u64>()),
     ) else {
         return Ok(Vec::new());
     };
@@ -257,8 +272,8 @@ pub(crate) fn end_pairs(
         return Vec::new();
     };
     let (Some(a_col), Some(b_col)) = (
-        b.get(col_a).and_then(|c| c.as_uint()),
-        b.get(col_b).and_then(|c| c.as_uint()),
+        b.get(col_a).and_then(|c| c.get::<u64>()),
+        b.get(col_b).and_then(|c| c.get::<u64>()),
     ) else {
         return Vec::new();
     };
@@ -270,6 +285,182 @@ pub(crate) fn end_pairs(
             (i.min(j), i.max(j))
         })
         .collect()
+}
+
+// ---------------------------------------------------------------------------
+// Accumulator
+// ---------------------------------------------------------------------------
+
+/// What an evaluation adds into: the running energy, a force buffer, and —
+/// when the caller asked for it — the virial `Σ f ⊗ r`.
+///
+/// Every evaluation primitive ([`Potential::evaluate`],
+/// [`IndexedTerms::evaluate_terms`], [`PairDriven::evaluate_pairs`]) takes
+/// one of these and *adds* to it, so energy-only, forces-only, energy and
+/// forces, and energy-forces-virial are one call each: build the accumulator
+/// for the channels wanted, call the primitive, read the channels back. An
+/// aggregate passes the same accumulator to every member, which is what lets
+/// a whole step own one force buffer instead of one allocation per member.
+///
+/// # The channels
+///
+/// * **energy** — always tallied. It is one add per term.
+/// * **forces** — always tallied, into a buffer of `coords.len()` (`3·N`):
+///   one the accumulator owns ([`new`](Self::new)), or the caller's
+///   ([`adding_into`](Self::adding_into)). Not optional, because no kernel
+///   has a cheaper energy-only path: `dE/dr` is the energy's own derivative,
+///   evaluated in the same expression, and skipping it would save the stores
+///   and nothing else. An energy-only caller reads [`energy`](Self::energy)
+///   and drops the buffer.
+/// * **virial** — only when requested ([`with_virial`](Self::with_virial)).
+///   It is the one channel that costs real work per pair, so a kernel that
+///   can tally one asks [`forces_with_virial`](Self::forces_with_virial)
+///   whether to, once per call, and runs a loop monomorphised on the answer
+///   — the inner loop never branches on it.
+///
+/// # A missing virial is `None`, never zero
+///
+/// A kernel adds forces through exactly one of two doors.
+/// [`forces_with_virial`](Self::forces_with_virial) is for a kernel that
+/// tallies the virial of what it adds; [`forces_without_virial`](Self::forces_without_virial)
+/// is for every other one, and taking it marks a requested virial *lost* —
+/// [`virial`](Self::virial) then answers `None` for the whole evaluation. A
+/// virial missing a term is not a small error, it is a different quantity,
+/// and a pressure computed from it would look entirely plausible. Because the
+/// door is the declaration, an aggregate needs no bookkeeping of its own: a
+/// bonded member, an external field or a compiled pair list loses the virial
+/// by adding its forces, and a member that adds no force has no virial to
+/// lose.
+#[derive(Debug)]
+pub struct Accumulator<'a> {
+    energy: F,
+    forces: ForceBuffer<'a>,
+    virial: VirialChannel,
+}
+
+/// Where an [`Accumulator`]'s forces land.
+#[derive(Debug)]
+enum ForceBuffer<'a> {
+    /// Zeroed at construction and handed back by [`Accumulator::into_forces`].
+    Owned(Vec<F>),
+    /// The caller's buffer, added into.
+    Borrowed(&'a mut [F]),
+}
+
+/// The state of an [`Accumulator`]'s virial channel.
+#[derive(Clone, Copy, Debug)]
+enum VirialChannel {
+    /// Not requested: kernels skip the tally.
+    Off,
+    /// Requested, and every force added so far came with its virial.
+    Open(Virial),
+    /// Requested, and some force was added without one.
+    Lost,
+}
+
+impl Accumulator<'static> {
+    /// Energy and forces into a zeroed buffer of `n_coords` (`3·N`)
+    /// components the accumulator owns.
+    pub fn new(n_coords: usize) -> Self {
+        Self {
+            energy: 0.0,
+            forces: ForceBuffer::Owned(vec![0.0; n_coords]),
+            virial: VirialChannel::Off,
+        }
+    }
+}
+
+impl<'a> Accumulator<'a> {
+    /// Energy and forces added into `forces`, the caller's buffer — which
+    /// keeps whatever it already held.
+    pub fn adding_into(forces: &'a mut [F]) -> Self {
+        Self {
+            energy: 0.0,
+            forces: ForceBuffer::Borrowed(forces),
+            virial: VirialChannel::Off,
+        }
+    }
+
+    /// Also tally the virial `Σ f ⊗ r` — see [`virial`](Self::virial).
+    pub fn with_virial(mut self) -> Self {
+        self.virial = VirialChannel::Open(Virial::ZERO);
+        self
+    }
+
+    /// The energy added so far.
+    pub fn energy(&self) -> F {
+        self.energy
+    }
+
+    /// The force buffer: `-∇E` of everything added so far, plus whatever a
+    /// borrowed buffer held before.
+    pub fn forces(&self) -> &[F] {
+        match &self.forces {
+            ForceBuffer::Owned(v) => v,
+            ForceBuffer::Borrowed(s) => s,
+        }
+    }
+
+    /// The force buffer as a vector: an owned one moves out; a borrowed one is
+    /// copied (its caller already holds it, so has no reason to ask).
+    pub fn into_forces(self) -> Vec<F> {
+        match self.forces {
+            ForceBuffer::Owned(v) => v,
+            ForceBuffer::Borrowed(s) => s.to_vec(),
+        }
+    }
+
+    /// The virial `Σ f ⊗ r` of everything added so far.
+    ///
+    /// `None` when it was not requested, or when some contribution added
+    /// forces without one (see the type's documentation) — never a zero
+    /// standing in for a term nobody tallied.
+    pub fn virial(&self) -> Option<Virial> {
+        match self.virial {
+            VirialChannel::Open(w) => Some(w),
+            VirialChannel::Off | VirialChannel::Lost => None,
+        }
+    }
+
+    /// Kernel side: add `energy` to the running total.
+    #[inline]
+    pub fn add_energy(&mut self, energy: F) {
+        self.energy += energy;
+    }
+
+    /// Kernel side: the force buffer, for a kernel that does **not** tally the
+    /// virial of what it adds. A requested virial is lost from here on.
+    #[inline]
+    pub fn forces_without_virial(&mut self) -> &mut [F] {
+        if let VirialChannel::Open(_) = self.virial {
+            self.virial = VirialChannel::Lost;
+        }
+        self.forces_mut()
+    }
+
+    /// Kernel side: the force buffer and, when the virial was requested and
+    /// is still whole, the running virial to add this kernel's `Σ f ⊗ r` to.
+    ///
+    /// Ask once per call and branch once on the answer, outside the loop.
+    #[inline]
+    pub fn forces_with_virial(&mut self) -> (&mut [F], Option<&mut Virial>) {
+        let virial = match &mut self.virial {
+            VirialChannel::Open(w) => Some(w),
+            VirialChannel::Off | VirialChannel::Lost => None,
+        };
+        let forces: &mut [F] = match &mut self.forces {
+            ForceBuffer::Owned(v) => v,
+            ForceBuffer::Borrowed(s) => s,
+        };
+        (forces, virial)
+    }
+
+    fn forces_mut(&mut self) -> &mut [F] {
+        match &mut self.forces {
+            ForceBuffer::Owned(v) => v,
+            ForceBuffer::Borrowed(s) => s,
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -292,6 +483,10 @@ pub(crate) fn end_pairs(
 /// * [`PairDriven`] — the sum runs over whatever pairs a neighbour search turns
 ///   up. Every pair kernel.
 ///
+/// Each of the three has exactly one evaluation primitive, and all three add
+/// into an [`Accumulator`]; which channels come back is the accumulator's
+/// business, not a family of methods'.
+///
 /// [`ForceTerm`] is the three of them as one value, chosen when the kernel is
 /// built. It exists because a `Box<dyn Potential>` cannot be asked which of the
 /// two it also is, and `terms()` is the wrong place to ask: its job is to
@@ -300,38 +495,16 @@ pub(crate) fn end_pairs(
 /// The geometry optimizer ([`crate::optimize::Lbfgs`]) depends on this trait —
 /// not the other way around.
 pub trait Potential: Send + Sync {
-    /// Compute energy and forces (= -gradient) in one pass.
-    /// Returns `(energy, forces)` where forces has length `coords.len()`.
-    fn calc_energy_forces(&self, coords: &[F]) -> (F, Vec<F>);
-
-    /// Compute total potential energy (kcal/mol).
-    fn calc_energy(&self, coords: &[F]) -> F {
-        self.calc_energy_forces(coords).0
-    }
-
-    /// Add this potential's forces into `out` (length `coords.len()`) and
-    /// return its energy.
+    /// Add this potential's energy and forces (`-∇E`) at `coords` — flat
+    /// `[x0, y0, z0, x1, …]` — into `acc`.
     ///
-    /// The default goes through [`calc_energy_forces`](Potential::calc_energy_forces)
-    /// and so allocates once; a kernel overrides it to fold straight into the
-    /// caller's buffer, which is what lets an aggregate own one accumulator for
-    /// a whole step instead of one allocation per member per step.
-    fn accumulate(&self, coords: &[F], out: &mut [F]) -> F {
-        let (energy, forces) = self.calc_energy_forces(coords);
-        debug_assert_eq!(forces.len(), out.len());
-        for (o, f) in out.iter_mut().zip(&forces) {
-            *o += f;
-        }
-        energy
-    }
-
-    /// Evaluate with a per-step pair table the loop computed once and shares
-    /// with every pair potential. Default ignores `pairs` and calls
-    /// [`calc_energy_forces`](Potential::calc_energy_forces).
-    fn calc_energy_forces_with_pairs(&self, coords: &[F], pairs: &Neighbors) -> (F, Vec<F>) {
-        let _ = pairs;
-        self.calc_energy_forces(coords)
-    }
+    /// A kernel that tallies no virial adds its forces through
+    /// [`Accumulator::forces_without_virial`]; one that does, through
+    /// [`Accumulator::forces_with_virial`].
+    ///
+    /// Required: there is no default, so every implementor states how it
+    /// adds its energy and forces.
+    fn evaluate(&self, coords: &[F], acc: &mut Accumulator<'_>);
 }
 
 /// A potential whose rows are named by an index table the caller can replace.
@@ -351,7 +524,8 @@ pub trait IndexedTerms: Potential {
     /// improper.
     fn terms(&self) -> Array2<u32>;
 
-    /// Evaluate with `terms` in place of the indices resolved at construction.
+    /// [`Potential::evaluate`] with `terms` in place of the indices resolved
+    /// at construction.
     ///
     /// `terms` must have the shape [`terms`](IndexedTerms::terms) returned: the
     /// row *set* is fixed — it is the terms the force field declared — and only
@@ -360,22 +534,7 @@ pub trait IndexedTerms: Potential {
     /// There is no default. A default that ignored `terms` would be a correct
     /// fallback for a kernel holding no indices and a silently wrong answer for
     /// one that does, and only the second kind is in this trait.
-    fn calc_energy_forces_with_terms(
-        &self,
-        coords: &[F],
-        terms: ArrayView2<'_, u32>,
-    ) -> (F, Vec<F>);
-
-    /// [`calc_energy_forces_with_terms`](IndexedTerms::calc_energy_forces_with_terms)
-    /// folded into the caller's buffer; see [`Potential::accumulate`].
-    fn accumulate_with_terms(&self, coords: &[F], terms: ArrayView2<'_, u32>, out: &mut [F]) -> F {
-        let (energy, forces) = self.calc_energy_forces_with_terms(coords, terms);
-        debug_assert_eq!(forces.len(), out.len());
-        for (o, f) in out.iter_mut().zip(&forces) {
-            *o += f;
-        }
-        energy
-    }
+    fn evaluate_terms(&self, coords: &[F], terms: ArrayView2<'_, u32>, acc: &mut Accumulator<'_>);
 }
 
 /// A potential summed over whatever pairs a neighbour search turns up.
@@ -385,11 +544,8 @@ pub trait IndexedTerms: Potential {
 /// answered honestly, and a potential that ignores the table cannot answer
 /// them.
 pub trait PairDriven: Potential {
-    /// Add this kernel's contribution over a pair table into `out`, scaling
-    /// each pair.
-    ///
-    /// Three things at once, and each of them is the reason the other two are
-    /// here:
+    /// Add this kernel's contribution over the pair table `pairs` into `acc`,
+    /// scaling each pair.
     ///
     /// * **`factor`** is one weight per pair, aligned with the table's rows, or
     ///   empty meaning all ones. A weight of exactly zero *skips* the pair
@@ -397,26 +553,26 @@ pub trait PairDriven: Potential {
     ///   where a repulsive term is enormous. Carrying the weights per pair is
     ///   what lets a caller stop rebuilding the pair table once per distinct
     ///   weight.
-    /// * **`out`** is the caller's accumulator, `3 · n_atoms` long, added into
-    ///   rather than returned. A provider summing several members then owns one
-    ///   buffer for the whole step instead of one allocation per member per
-    ///   step — and a thread can be handed a slice of something the caller owns,
-    ///   where it cannot be handed a slice of something the callee allocates.
-    /// * **the virial** comes back with the energy, from the same loop, for the
-    ///   reason [`calc_energy_forces_with_pairs_virial`](PairDriven::calc_energy_forces_with_pairs_virial)
-    ///   gives.
+    /// * **the virial**, when `acc` asks for one, is tallied in the same loop
+    ///   that makes the forces. It cannot be recovered from the forces
+    ///   afterwards: under periodic boundaries `Σ_a f_a ⊗ x_a` over the stored
+    ///   coordinates depends on where the cell's origin happens to be, and a
+    ///   sum over separations does not — so a kernel tallies it here, where
+    ///   both terms of each pair are still in hand. A kernel that cannot (one
+    ///   bound to a compiled pair list) adds through
+    ///   [`Accumulator::forces_without_virial`], and the virial reads `None`.
     ///
     /// No default: one that ignored `factor` would be right for a potential
     /// that does not sum over the pair table and would silently lose a force
     /// field's exclusions for one that does. Only the second kind is in this
     /// trait, so the question is asked of every implementor.
-    fn accumulate_pairs(
+    fn evaluate_pairs(
         &self,
         coords: &[F],
         pairs: &Neighbors,
         factor: &[F],
-        out: &mut [F],
-    ) -> (F, Option<Virial>);
+        acc: &mut Accumulator<'_>,
+    );
 
     /// Whether this kernel's parameters are bound to one fixed pair list.
     ///
@@ -431,27 +587,6 @@ pub trait PairDriven: Potential {
     /// the same Rust type in molrs (the list is a private source variant), so
     /// the answer cannot be inferred and has to be given.
     fn binds_a_fixed_pair_list(&self) -> bool;
-
-    /// Energy, forces, and the virial `Σ f ⊗ r`, over a pair table.
-    ///
-    /// The virial cannot be recovered from the forces afterwards. Under
-    /// periodic boundaries `Σ_a f_a ⊗ x_a` over the stored coordinates depends
-    /// on where the cell's origin happens to be, and a sum over separations
-    /// does not — so a kernel that can tally one tallies it *here*, in the same
-    /// loop that made the forces, where both terms of each pair are still in
-    /// hand.
-    ///
-    /// Default: evaluate normally and report none. `None` is not zero: a
-    /// pressure computed from a fabricated zero is wrong and looks entirely
-    /// plausible.
-    fn calc_energy_forces_with_pairs_virial(
-        &self,
-        coords: &[F],
-        pairs: &Neighbors,
-    ) -> (F, Vec<F>, Option<Virial>) {
-        let (e, f) = self.calc_energy_forces_with_pairs(coords, pairs);
-        (e, f, None)
-    }
 
     /// Extend per-atom state onto periodic copies.
     ///
@@ -551,31 +686,14 @@ impl std::fmt::Debug for ForceTerm {
 }
 
 impl Potential for ForceTerm {
-    fn calc_energy_forces(&self, coords: &[F]) -> (F, Vec<F>) {
-        self.as_potential().calc_energy_forces(coords)
-    }
-
-    fn accumulate(&self, coords: &[F], out: &mut [F]) -> F {
-        self.as_potential().accumulate(coords, out)
-    }
-
-    fn calc_energy_forces_with_pairs(&self, coords: &[F], pairs: &Neighbors) -> (F, Vec<F>) {
-        self.as_potential()
-            .calc_energy_forces_with_pairs(coords, pairs)
+    fn evaluate(&self, coords: &[F], acc: &mut Accumulator<'_>) {
+        self.as_potential().evaluate(coords, acc);
     }
 }
 
 impl Potential for Box<dyn Potential> {
-    fn calc_energy_forces(&self, coords: &[F]) -> (F, Vec<F>) {
-        (**self).calc_energy_forces(coords)
-    }
-
-    fn accumulate(&self, coords: &[F], out: &mut [F]) -> F {
-        (**self).accumulate(coords, out)
-    }
-
-    fn calc_energy_forces_with_pairs(&self, coords: &[F], pairs: &Neighbors) -> (F, Vec<F>) {
-        (**self).calc_energy_forces_with_pairs(coords, pairs)
+    fn evaluate(&self, coords: &[F], acc: &mut Accumulator<'_>) {
+        (**self).evaluate(coords, acc);
     }
 }
 
@@ -885,7 +1003,7 @@ impl Potentials {
     /// rebinding the bonded terms onto copies while the nonbonded one reads a
     /// neighbour table — needs them one at a time, because the index table a
     /// member wants is the member's own. Summing them all is what
-    /// [`calc_energy_forces`](Self::calc_energy_forces) is for.
+    /// [`Potential::evaluate`] on the aggregate is for.
     pub fn members(&self) -> &[ForceTerm] {
         &self.inner
     }
@@ -893,45 +1011,6 @@ impl Potentials {
     /// Give up the members, for a caller that wants to own them individually.
     pub fn into_members(self) -> Vec<ForceTerm> {
         self.inner
-    }
-
-    /// Same as [`calc_energy_forces`](Self::calc_energy_forces) but forwards
-    /// one shared pair table to every member.
-    pub fn calc_energy_forces_with_pairs(&self, coords: &[F], pairs: &Neighbors) -> (F, Vec<F>) {
-        let n = coords.len();
-        let mut total_e: F = 0.0;
-        let mut total_f = vec![0.0; n];
-        for p in &self.inner {
-            let (e, f) = p.calc_energy_forces_with_pairs(coords, pairs);
-            total_e += e;
-            for (t, fi) in total_f.iter_mut().zip(f.iter()) {
-                *t += fi;
-            }
-        }
-        (total_e, total_f)
-    }
-
-    /// Compute total energy and forces in one pass over all potentials.
-    pub fn calc_energy_forces(&self, coords: &[F]) -> (F, Vec<F>) {
-        let mut total_f = vec![0.0; coords.len()];
-        let total_e = self.accumulate(coords, &mut total_f);
-        (total_e, total_f)
-    }
-
-    /// Add every member's forces into `out` and return the summed energy —
-    /// one buffer for the whole aggregate, no allocation per member.
-    pub fn accumulate(&self, coords: &[F], out: &mut [F]) -> F {
-        self.inner.iter().map(|p| p.accumulate(coords, out)).sum()
-    }
-
-    /// Total potential energy (kcal/mol).
-    pub fn calc_energy(&self, coords: &[F]) -> F {
-        self.calc_energy_forces(coords).0
-    }
-
-    /// Total forces (= -gradient), length 3N.
-    pub fn calc_forces(&self, coords: &[F]) -> Vec<F> {
-        self.calc_energy_forces(coords).1
     }
 }
 
@@ -943,18 +1022,13 @@ impl Default for Potentials {
 
 /// Make the aggregate usable wherever a single [`Potential`] is expected (the
 /// geometry optimizer in [`crate::optimize`], an MD integrator, another
-/// [`Potentials`]), forwarding to the summed evaluation over all kernels.
+/// [`Potentials`]): every member adds into the one accumulator it is handed —
+/// one buffer for the whole aggregate, no allocation per member.
 impl Potential for Potentials {
-    fn calc_energy_forces(&self, coords: &[F]) -> (F, Vec<F>) {
-        Potentials::calc_energy_forces(self, coords)
-    }
-
-    fn accumulate(&self, coords: &[F], out: &mut [F]) -> F {
-        Potentials::accumulate(self, coords, out)
-    }
-
-    fn calc_energy_forces_with_pairs(&self, coords: &[F], pairs: &Neighbors) -> (F, Vec<F>) {
-        Potentials::calc_energy_forces_with_pairs(self, coords, pairs)
+    fn evaluate(&self, coords: &[F], acc: &mut Accumulator<'_>) {
+        for member in &self.inner {
+            member.evaluate(coords, acc);
+        }
     }
 }
 
@@ -964,91 +1038,36 @@ impl Potential for Potentials {
 /// The split is the member's own [`ForceTerm`] variant, which its
 /// constructor chose.
 impl PairDriven for Potentials {
-    /// Every member accumulates into the same buffer, and one member that
-    /// cannot report a virial makes the aggregate's `None`.
+    /// Every member adds into the same accumulator.
     ///
     /// A per-pair weight belongs to a member that reads the pair table. A
     /// bonded member ignores the table, and its own interaction is the thing
     /// the weights exist to avoid double-counting — scaling it would be
     /// scaling the wrong side of that.
-    fn accumulate_pairs(
+    ///
+    /// The virial needs no bookkeeping here: a pair member tallies its own,
+    /// and every other member adds its forces through
+    /// [`Accumulator::forces_without_virial`], which makes the aggregate's
+    /// virial `None` — the honest answer when one member cannot report.
+    fn evaluate_pairs(
         &self,
         coords: &[F],
         pairs: &Neighbors,
         factor: &[F],
-        out: &mut [F],
-    ) -> (F, Option<Virial>) {
-        let mut total_e: F = 0.0;
-        let mut total_w = Some(Virial::ZERO);
-        for m in &self.inner {
-            let (e, w) = match m {
-                ForceTerm::Pair(p) => p.accumulate_pairs(coords, pairs, factor, out),
-                other => {
-                    let (e, f) = other.calc_energy_forces_with_pairs(coords, pairs);
-                    for (acc, v) in out.iter_mut().zip(&f) {
-                        *acc += v;
-                    }
-                    (e, None)
-                }
-            };
-            total_e += e;
-            match (total_w.as_mut(), w) {
-                (Some(acc), Some(part)) => {
-                    for c in 0..6 {
-                        acc.components[c] += part.components[c];
-                    }
-                }
-                (_, None) => total_w = None,
-                (None, _) => {}
+        acc: &mut Accumulator<'_>,
+    ) {
+        for member in &self.inner {
+            match member {
+                ForceTerm::Pair(p) => p.evaluate_pairs(coords, pairs, factor, acc),
+                other => other.evaluate(coords, acc),
             }
         }
-        (total_e, total_w)
     }
 
     /// True if *any* member is. One compiled kernel is enough to make the
     /// aggregate's answer independent of the table it is handed.
     fn binds_a_fixed_pair_list(&self) -> bool {
         self.inner.iter().any(ForceTerm::binds_a_fixed_pair_list)
-    }
-
-    /// The members' virials, summed — and `None` the moment one of them
-    /// declines to report.
-    ///
-    /// Taking the default here would have been worse than wrong: an aggregate
-    /// whose members all tally would report `None` and look like a kernel that
-    /// simply cannot, so every pressure computed through a force field would
-    /// be unavailable for no stated reason.
-    fn calc_energy_forces_with_pairs_virial(
-        &self,
-        coords: &[F],
-        pairs: &Neighbors,
-    ) -> (F, Vec<F>, Option<Virial>) {
-        let mut total_e: F = 0.0;
-        let mut total_f = vec![0.0; coords.len()];
-        let mut total_w = Some(Virial::ZERO);
-        for m in &self.inner {
-            let (e, f, w) = match m {
-                ForceTerm::Pair(p) => p.calc_energy_forces_with_pairs_virial(coords, pairs),
-                other => {
-                    let (e, f) = other.calc_energy_forces_with_pairs(coords, pairs);
-                    (e, f, None)
-                }
-            };
-            total_e += e;
-            for (t, fi) in total_f.iter_mut().zip(f.iter()) {
-                *t += fi;
-            }
-            match (total_w.as_mut(), w) {
-                (Some(acc), Some(part)) => {
-                    for c in 0..6 {
-                        acc.components[c] += part.components[c];
-                    }
-                }
-                (_, None) => total_w = None,
-                (None, _) => {}
-            }
-        }
-        (total_e, total_f, total_w)
     }
 
     /// Every member gathers. An aggregate that swallowed this would leave a
@@ -1069,6 +1088,7 @@ impl PairDriven for Potentials {
 mod tests {
     use super::*;
     use crate::ff::compile::PotentialCompiler;
+    use crate::ff::potential::fixtures::OneShot;
 
     /// The default scales nothing, and says so.
     ///
@@ -1098,8 +1118,11 @@ mod tests {
     }
 
     impl Potential for DummyPotential {
-        fn calc_energy_forces(&self, coords: &[F]) -> (F, Vec<F>) {
-            (self.value, vec![self.value; coords.len()])
+        fn evaluate(&self, _coords: &[F], acc: &mut Accumulator<'_>) {
+            acc.add_energy(self.value);
+            for f in acc.forces_without_virial() {
+                *f += self.value;
+            }
         }
     }
 
@@ -1107,13 +1130,25 @@ mod tests {
         let mut frame = Frame::new();
         let mut atoms = Block::new();
         atoms
-            .insert("x", Array1::from_vec(vec![0.0 as F, 2.0 as F]).into_dyn())
+            .insert(
+                "x",
+                Array1::from_vec(vec![0.0 as F, 2.0 as F]).into_dyn(),
+                None,
+            )
             .unwrap();
         atoms
-            .insert("y", Array1::from_vec(vec![0.0 as F, 0.0 as F]).into_dyn())
+            .insert(
+                "y",
+                Array1::from_vec(vec![0.0 as F, 0.0 as F]).into_dyn(),
+                None,
+            )
             .unwrap();
         atoms
-            .insert("z", Array1::from_vec(vec![0.0 as F, 0.0 as F]).into_dyn())
+            .insert(
+                "z",
+                Array1::from_vec(vec![0.0 as F, 0.0 as F]).into_dyn(),
+                None,
+            )
             .unwrap();
         frame.insert("atoms", atoms);
         frame
@@ -1159,24 +1194,28 @@ mod tests {
             .insert(
                 "x",
                 Array1::from_vec(vec![0.0 as F, 1.5, 2.1, 3.4]).into_dyn(),
+                None,
             )
             .unwrap();
         atoms
             .insert(
                 "y",
                 Array1::from_vec(vec![0.0 as F, 0.2, 1.4, 1.1]).into_dyn(),
+                None,
             )
             .unwrap();
         atoms
             .insert(
                 "z",
                 Array1::from_vec(vec![0.0 as F, 0.9, 0.3, 1.8]).into_dyn(),
+                None,
             )
             .unwrap();
         atoms
             .insert(
                 "type",
                 Array1::from_vec(vec!["A".to_string(); 4]).into_dyn(),
+                None,
             )
             .unwrap();
         frame.insert("atoms", atoms);
@@ -1185,32 +1224,32 @@ mod tests {
         let ty = |n: usize, name: &str| Array1::from_vec(vec![name.to_string(); n]).into_dyn();
 
         let mut bonds = Block::new();
-        bonds.insert("atomi", idx(vec![0, 1, 2])).unwrap();
-        bonds.insert("atomj", idx(vec![1, 2, 3])).unwrap();
-        bonds.insert("type", ty(3, "A-A")).unwrap();
+        bonds.insert("atomi", idx(vec![0, 1, 2]), None).unwrap();
+        bonds.insert("atomj", idx(vec![1, 2, 3]), None).unwrap();
+        bonds.insert("type", ty(3, "A-A"), None).unwrap();
         frame.insert("bonds", bonds);
 
         let mut angles = Block::new();
-        angles.insert("atomi", idx(vec![0, 1])).unwrap();
-        angles.insert("atomj", idx(vec![1, 2])).unwrap();
-        angles.insert("atomk", idx(vec![2, 3])).unwrap();
-        angles.insert("type", ty(2, "A-A-A")).unwrap();
+        angles.insert("atomi", idx(vec![0, 1]), None).unwrap();
+        angles.insert("atomj", idx(vec![1, 2]), None).unwrap();
+        angles.insert("atomk", idx(vec![2, 3]), None).unwrap();
+        angles.insert("type", ty(2, "A-A-A"), None).unwrap();
         frame.insert("angles", angles);
 
         let mut dihedrals = Block::new();
-        dihedrals.insert("atomi", idx(vec![0])).unwrap();
-        dihedrals.insert("atomj", idx(vec![1])).unwrap();
-        dihedrals.insert("atomk", idx(vec![2])).unwrap();
-        dihedrals.insert("atoml", idx(vec![3])).unwrap();
-        dihedrals.insert("type", ty(1, "A-A-A-A")).unwrap();
+        dihedrals.insert("atomi", idx(vec![0]), None).unwrap();
+        dihedrals.insert("atomj", idx(vec![1]), None).unwrap();
+        dihedrals.insert("atomk", idx(vec![2]), None).unwrap();
+        dihedrals.insert("atoml", idx(vec![3]), None).unwrap();
+        dihedrals.insert("type", ty(1, "A-A-A-A"), None).unwrap();
         frame.insert("dihedrals", dihedrals);
 
         let mut impropers = Block::new();
-        impropers.insert("atomi", idx(vec![1])).unwrap();
-        impropers.insert("atomj", idx(vec![0])).unwrap();
-        impropers.insert("atomk", idx(vec![2])).unwrap();
-        impropers.insert("atoml", idx(vec![3])).unwrap();
-        impropers.insert("type", ty(1, "A-A-A-A")).unwrap();
+        impropers.insert("atomi", idx(vec![1]), None).unwrap();
+        impropers.insert("atomj", idx(vec![0]), None).unwrap();
+        impropers.insert("atomk", idx(vec![2]), None).unwrap();
+        impropers.insert("atoml", idx(vec![3]), None).unwrap();
+        impropers.insert("type", ty(1, "A-A-A-A"), None).unwrap();
         frame.insert("impropers", impropers);
 
         frame
@@ -1233,7 +1272,7 @@ mod tests {
             .def_type(
                 "A-A",
                 &["A", "A"],
-                Params::from_pairs(&[("k", 300.0), ("r0", 1.5)]),
+                Params::from_iter([("k", 300.0), ("r0", 1.5)]),
             )
             .unwrap();
         ff.def_style("angle", "harmonic", Params::new())
@@ -1241,7 +1280,7 @@ mod tests {
             .def_type(
                 "A-A-A",
                 &["A", "A", "A"],
-                Params::from_pairs(&[("k", 50.0), ("theta0", 109.5)]),
+                Params::from_iter([("k", 50.0), ("theta0", 109.5)]),
             )
             .unwrap();
         ff.def_style("dihedral", "opls", Params::new())
@@ -1249,7 +1288,7 @@ mod tests {
             .def_type(
                 "A-A-A-A",
                 &["A", "A", "A", "A"],
-                Params::from_pairs(&[("k1", 1.3), ("k2", -0.05), ("k3", 0.24), ("k4", 0.0)]),
+                Params::from_iter([("k1", 1.3), ("k2", -0.05), ("k3", 0.24), ("k4", 0.0)]),
             )
             .unwrap();
         ff.def_style("improper", "harmonic", Params::new())
@@ -1257,7 +1296,7 @@ mod tests {
             .def_type(
                 "A-A-A-A",
                 &["A", "A", "A", "A"],
-                Params::from_pairs(&[("k", 10.0), ("chi0", 0.0)]),
+                Params::from_iter([("k", 10.0), ("chi0", 0.0)]),
             )
             .unwrap();
 
@@ -1273,8 +1312,8 @@ mod tests {
             let ForceTerm::Indexed(pot) = member else {
                 unreachable!("only an indexed member answers with a table")
             };
-            let (e0, f0) = pot.calc_energy_forces(&coords);
-            let (e1, f1) = pot.calc_energy_forces_with_terms(&coords, terms.view());
+            let (e0, f0) = pot.energy_forces_at(&coords);
+            let (e1, f1) = pot.over_terms(&coords, terms.view());
             assert_eq!(
                 e0.to_bits(),
                 e1.to_bits(),
@@ -1304,13 +1343,17 @@ mod tests {
         let mut frame = make_atoms_only_frame();
         let mut bonds = Block::new();
         bonds
-            .insert("atomi", Array1::from_vec(vec![0 as Idx]).into_dyn())
+            .insert("atomi", Array1::from_vec(vec![0 as Idx]).into_dyn(), None)
             .unwrap();
         bonds
-            .insert("atomj", Array1::from_vec(vec![1 as Idx]).into_dyn())
+            .insert("atomj", Array1::from_vec(vec![1 as Idx]).into_dyn(), None)
             .unwrap();
         bonds
-            .insert("type", Array1::from_vec(vec!["A-A".to_string()]).into_dyn())
+            .insert(
+                "type",
+                Array1::from_vec(vec!["A-A".to_string()]).into_dyn(),
+                None,
+            )
             .unwrap();
         frame.insert("bonds", bonds);
         frame
@@ -1326,13 +1369,14 @@ mod tests {
             .insert(
                 "type",
                 Array1::from_vec(vec!["A".to_string(), "A".to_string()]).into_dyn(),
+                None,
             )
             .unwrap();
 
         // Build the neighbour list the real way — `intramolecular_pairs` owns
         // the atomi/atomj/is_14 convention; with no bonds it yields the single
         // unexcluded (0,1) pair, is_14 = false.
-        let pairs = intramolecular_pairs(&frame, &SpecialBonds::default()).unwrap();
+        let pairs = intramolecular_pairs(&frame, &SpecialBonds::default(), None).unwrap();
         frame.insert("pairs", pairs);
 
         frame
@@ -1347,26 +1391,35 @@ mod tests {
         assert_eq!(pots.len(), 2);
 
         let coords: Vec<F> = vec![0.0; 6];
-        assert!((pots.calc_energy(&coords) - 3.0).abs() < 1e-5);
+        assert!((pots.energy_at(&coords) - 3.0).abs() < 1e-5);
 
-        let forces = pots.calc_forces(&coords);
+        let (_, forces) = pots.energy_forces_at(&coords);
         for f in &forces {
             assert!((*f - 3.0).abs() < 1e-5);
         }
     }
 
+    /// Prices each row of the table it is handed at 1, and nothing without one.
     struct PairCounting;
 
     impl Potential for PairCounting {
-        fn calc_energy_forces(&self, coords: &[F]) -> (F, Vec<F>) {
-            (0.0, vec![0.0; coords.len()])
+        fn evaluate(&self, _coords: &[F], _acc: &mut Accumulator<'_>) {}
+    }
+
+    impl PairDriven for PairCounting {
+        fn evaluate_pairs(
+            &self,
+            _coords: &[F],
+            pairs: &Neighbors,
+            _factor: &[F],
+            acc: &mut Accumulator<'_>,
+        ) {
+            // No force, so no virial to lose.
+            acc.add_energy(pairs.query_point_indices().len() as F);
         }
 
-        fn calc_energy_forces_with_pairs(&self, coords: &[F], pairs: &Neighbors) -> (F, Vec<F>) {
-            (
-                pairs.query_point_indices().len() as F,
-                vec![0.0; coords.len()],
-            )
+        fn binds_a_fixed_pair_list(&self) -> bool {
+            false
         }
     }
 
@@ -1391,11 +1444,54 @@ mod tests {
             molrs::core::QueryMode::SelfQuery { n_points: 3 },
         );
         let mut pots = Potentials::new();
-        pots.push(ForceTerm::plain(PairCounting));
-        pots.push(ForceTerm::plain(DummyPotential { value: 1.0 }));
+        pots.push(ForceTerm::pair(PairCounting));
+        pots.push(ForceTerm::pair(PairCounting));
         let coords: Vec<F> = vec![0.0; 9];
-        let (e, _) = pots.calc_energy_forces_with_pairs(&coords, &pairs);
-        assert!((e - 3.0).abs() < 1e-12);
+        let (e, _, w) = pots.over_pairs_virial(&coords, &pairs);
+        assert!((e - 4.0).abs() < 1e-12);
+        assert_eq!(
+            w,
+            Some(Virial::ZERO),
+            "every member tallied, so the sum is reported"
+        );
+
+        // A member that adds forces without a virial makes the aggregate's
+        // `None` — not a total missing one term.
+        pots.push(ForceTerm::plain(DummyPotential { value: 1.0 }));
+        let (e, _, w) = pots.over_pairs_virial(&coords, &pairs);
+        assert!((e - 5.0).abs() < 1e-12);
+        assert_eq!(w, None);
+    }
+
+    /// The accumulator's channels: a borrowed buffer keeps what it held, an
+    /// unrequested virial is `None`, and a requested one survives only while
+    /// every contribution came with one.
+    #[test]
+    fn an_accumulator_reports_only_the_channels_it_was_given() {
+        let mut buf = vec![1.0; 6];
+        let mut acc = Accumulator::adding_into(&mut buf);
+        DummyPotential { value: 2.0 }.evaluate(&[0.0; 6], &mut acc);
+        assert_eq!(acc.energy(), 2.0);
+        assert_eq!(acc.virial(), None, "not requested");
+        assert_eq!(acc.into_forces(), vec![3.0; 6]);
+        assert_eq!(buf, vec![3.0; 6], "added into, not overwritten");
+
+        let mut acc = Accumulator::new(6).with_virial();
+        assert_eq!(
+            acc.virial(),
+            Some(Virial::ZERO),
+            "requested and nothing added"
+        );
+        if let (_, Some(w)) = acc.forces_with_virial() {
+            w.add_outer([1.0, 0.0, 0.0], [2.0, 0.0, 0.0]);
+        }
+        assert_eq!(acc.virial().map(|w| w.components[0]), Some(2.0));
+        acc.forces_without_virial();
+        assert_eq!(acc.virial(), None, "a contribution without one loses it");
+        assert!(
+            acc.forces_with_virial().1.is_none(),
+            "and nobody tallies into a lost one"
+        );
     }
 
     #[test]
@@ -1404,7 +1500,7 @@ mod tests {
         let mut ff = ForceField::new("test");
         ff.def_style("bond", "nonexistent", Params::new())
             .unwrap()
-            .def_type("A-A", &["A", "A"], Params::from_pairs(&[("k", 1.0)]))
+            .def_type("A-A", &["A", "A"], Params::from_iter([("k", 1.0)]))
             .unwrap();
         let frame = make_bond_frame();
         let err = PotentialCompiler::new(&ff).compile(&frame).unwrap_err();
@@ -1439,7 +1535,7 @@ mod tests {
         let pots = PotentialCompiler::new(&ff).compile(&frame).unwrap();
         let coords: Vec<F> = frame.coords().unwrap().into_iter().collect();
         // the custom kernel ran: DummyPotential yields its constant value.
-        assert!((pots.calc_energy(&coords) - 42.0).abs() < 1e-9);
+        assert!((pots.energy_at(&coords) - 42.0).abs() < 1e-9);
     }
 
     #[test]
@@ -1466,12 +1562,12 @@ mod tests {
     #[test]
     fn test_compile_energy() {
         let mut ff = ForceField::new("test");
-        ff.def_style("pair", "lj/cut", Params::from_pairs(&[("cutoff", 10.0)]))
+        ff.def_style("pair", "lj/cut", Params::from_iter([("cutoff", 10.0)]))
             .unwrap()
             .def_type(
                 "A",
                 &["A"],
-                Params::from_pairs(&[("epsilon", 1.0), ("sigma", 1.0)]),
+                Params::from_iter([("epsilon", 1.0), ("sigma", 1.0)]),
             )
             .unwrap();
 
@@ -1479,7 +1575,7 @@ mod tests {
         let pots = PotentialCompiler::new(&ff).compile(&frame).unwrap();
         let coords: Vec<F> = frame.coords().unwrap().into_iter().collect();
 
-        let (energy, _) = pots.calc_energy_forces(&coords);
+        let (energy, _) = pots.energy_forces_at(&coords);
         let expected: F = 4.0 * (1.0 / 4096.0 - 1.0 / 64.0);
         assert!((energy - expected).abs() < 1e-5);
     }
@@ -1487,12 +1583,12 @@ mod tests {
     #[test]
     fn a_pair_type_is_found_through_its_endpoints_not_its_name() {
         let mut ff = ForceField::new("test");
-        ff.def_style("pair", "lj/cut", Params::from_pairs(&[("cutoff", 10.0)]))
+        ff.def_style("pair", "lj/cut", Params::from_iter([("cutoff", 10.0)]))
             .unwrap()
             .def_type(
                 "anything",
                 &["A"],
-                Params::from_pairs(&[("epsilon", 1.0), ("sigma", 1.0)]),
+                Params::from_iter([("epsilon", 1.0), ("sigma", 1.0)]),
             )
             .unwrap();
 
@@ -1500,7 +1596,7 @@ mod tests {
         let pots = PotentialCompiler::new(&ff).compile(&frame).unwrap();
         let coords: Vec<F> = frame.coords().unwrap().into_iter().collect();
 
-        let (energy, _) = pots.calc_energy_forces(&coords);
+        let (energy, _) = pots.energy_forces_at(&coords);
         let expected: F = 4.0 * (1.0 / 4096.0 - 1.0 / 64.0);
         assert!((energy - expected).abs() < 1e-5);
     }
@@ -1508,12 +1604,12 @@ mod tests {
     #[test]
     fn test_compile_forces() {
         let mut ff = ForceField::new("test");
-        ff.def_style("pair", "lj/cut", Params::from_pairs(&[("cutoff", 10.0)]))
+        ff.def_style("pair", "lj/cut", Params::from_iter([("cutoff", 10.0)]))
             .unwrap()
             .def_type(
                 "A",
                 &["A"],
-                Params::from_pairs(&[("epsilon", 1.0), ("sigma", 1.0)]),
+                Params::from_iter([("epsilon", 1.0), ("sigma", 1.0)]),
             )
             .unwrap();
 
@@ -1521,7 +1617,7 @@ mod tests {
         let pots = PotentialCompiler::new(&ff).compile(&frame).unwrap();
         let coords: Vec<F> = frame.coords().unwrap().into_iter().collect();
 
-        let (_, forces) = pots.calc_energy_forces(&coords);
+        let (_, forces) = pots.energy_forces_at(&coords);
 
         for dim in 0..3 {
             let sum = forces[dim] + forces[3 + dim];
@@ -1537,7 +1633,11 @@ mod tests {
         frame
             .get_mut("atoms")
             .unwrap()
-            .insert("x", Array1::from_vec(vec![0.0 as F, 2.5 as F]).into_dyn())
+            .insert(
+                "x",
+                Array1::from_vec(vec![0.0 as F, 2.5 as F]).into_dyn(),
+                None,
+            )
             .unwrap();
         frame
             .get_mut("atoms")
@@ -1545,11 +1645,12 @@ mod tests {
             .insert(
                 "type",
                 Array1::from_vec(vec!["A".to_string(), "B".to_string()]).into_dyn(),
+                None,
             )
             .unwrap();
         frame.insert(
             "pairs",
-            intramolecular_pairs(&frame, &SpecialBonds::default()).unwrap(),
+            intramolecular_pairs(&frame, &SpecialBonds::default(), None).unwrap(),
         );
 
         let mut ff = ForceField::new("test");
@@ -1558,19 +1659,19 @@ mod tests {
             .def_type(
                 "A",
                 &["A"],
-                Params::from_pairs(&[("epsilon", 1.0), ("sigma", 1.0)]),
+                Params::from_iter([("epsilon", 1.0), ("sigma", 1.0)]),
             )
             .unwrap()
             .def_type(
                 "B",
                 &["B"],
-                Params::from_pairs(&[("epsilon", 4.0), ("sigma", 3.0)]),
+                Params::from_iter([("epsilon", 4.0), ("sigma", 3.0)]),
             )
             .unwrap();
 
         let pots = PotentialCompiler::new(&ff).compile(&frame).unwrap();
         let coords: Vec<F> = frame.coords().unwrap().into_iter().collect();
-        let (energy, _) = pots.calc_energy_forces(&coords);
+        let (energy, _) = pots.energy_forces_at(&coords);
 
         // ε = √(1·4) = 2, σ = (1+3)/2 = 2, at r = 2.5.
         let (eps, sigma, r) = (2.0_f64, 2.0_f64, 2.5_f64);
@@ -1593,50 +1694,68 @@ mod tests {
             .insert(
                 "x",
                 Array1::from_vec(vec![0.0 as F, 1.0, 2.0, 3.0]).into_dyn(),
+                None,
             )
             .unwrap();
         for col in ["y", "z"] {
             atoms
-                .insert(col, Array1::from_vec(vec![0.0 as F; 4]).into_dyn())
+                .insert(col, Array1::from_vec(vec![0.0 as F; 4]).into_dyn(), None)
                 .unwrap();
         }
         atoms
             .insert(
                 "type",
                 Array1::from_vec(vec!["A".to_string(); 4]).into_dyn(),
+                None,
             )
             .unwrap();
         frame.insert("atoms", atoms);
 
         let mut bonds = Block::new();
         bonds
-            .insert("atomi", Array1::from_vec(vec![0 as Idx, 1, 2]).into_dyn())
+            .insert(
+                "atomi",
+                Array1::from_vec(vec![0 as Idx, 1, 2]).into_dyn(),
+                None,
+            )
             .unwrap();
         bonds
-            .insert("atomj", Array1::from_vec(vec![1 as Idx, 2, 3]).into_dyn())
+            .insert(
+                "atomj",
+                Array1::from_vec(vec![1 as Idx, 2, 3]).into_dyn(),
+                None,
+            )
             .unwrap();
         frame.insert("bonds", bonds);
 
         let mut angles = Block::new();
         angles
-            .insert("atomi", Array1::from_vec(vec![0 as Idx, 1]).into_dyn())
+            .insert(
+                "atomi",
+                Array1::from_vec(vec![0 as Idx, 1]).into_dyn(),
+                None,
+            )
             .unwrap();
         angles
-            .insert("atomk", Array1::from_vec(vec![2 as Idx, 3]).into_dyn())
+            .insert(
+                "atomk",
+                Array1::from_vec(vec![2 as Idx, 3]).into_dyn(),
+                None,
+            )
             .unwrap();
         frame.insert("angles", angles);
 
         let mut dihedrals = Block::new();
         dihedrals
-            .insert("atomi", Array1::from_vec(vec![0 as Idx]).into_dyn())
+            .insert("atomi", Array1::from_vec(vec![0 as Idx]).into_dyn(), None)
             .unwrap();
         dihedrals
-            .insert("atoml", Array1::from_vec(vec![3 as Idx]).into_dyn())
+            .insert("atoml", Array1::from_vec(vec![3 as Idx]).into_dyn(), None)
             .unwrap();
         frame.insert("dihedrals", dihedrals);
 
         // The real neighbour list: only (0,3), flagged is_14.
-        let pairs = intramolecular_pairs(&frame, &SpecialBonds::default()).unwrap();
+        let pairs = intramolecular_pairs(&frame, &SpecialBonds::default(), None).unwrap();
         assert_eq!(
             pairs.n_rows(),
             Some(1),
@@ -1650,7 +1769,7 @@ mod tests {
             .def_type(
                 "A",
                 &["A"],
-                Params::from_pairs(&[("epsilon", 1.0), ("sigma", 1.0)]),
+                Params::from_iter([("epsilon", 1.0), ("sigma", 1.0)]),
             )
             .unwrap();
         let mut sb = *ff.special_bonds();
@@ -1659,7 +1778,7 @@ mod tests {
 
         let pots = PotentialCompiler::new(&ff).compile(&frame).unwrap();
         let coords: Vec<F> = frame.coords().unwrap().into_iter().collect();
-        let (energy, _) = pots.calc_energy_forces(&coords);
+        let (energy, _) = pots.energy_forces_at(&coords);
 
         // (0,3) at r = 3, ε = σ = 1, scaled by the 0.5 1-4 weight.
         let sr6 = (1.0_f64 / 3.0).powi(6);
@@ -1677,7 +1796,7 @@ mod tests {
         let pots = PotentialCompiler::new(&ff).compile(&frame).unwrap();
         let coords: Vec<F> = frame.coords().unwrap().into_iter().collect();
 
-        let (energy, forces) = pots.calc_energy_forces(&coords);
+        let (energy, forces) = pots.energy_forces_at(&coords);
         assert!(energy.abs() < 1e-5);
         assert_eq!(forces.len(), 6);
         assert!(forces.iter().all(|x| x.abs() < 1e-5));
@@ -1688,12 +1807,12 @@ mod tests {
         // A style whose topology block is absent from the frame contributes
         // nothing (no rows of that kind) — skipped, not an error.
         let mut ff = ForceField::new("test");
-        ff.def_style("pair", "lj/cut", Params::from_pairs(&[("cutoff", 10.0)]))
+        ff.def_style("pair", "lj/cut", Params::from_iter([("cutoff", 10.0)]))
             .unwrap()
             .def_type(
                 "A",
                 &["A"],
-                Params::from_pairs(&[("epsilon", 1.0), ("sigma", 1.0)]),
+                Params::from_iter([("epsilon", 1.0), ("sigma", 1.0)]),
             )
             .unwrap();
 
@@ -1701,7 +1820,7 @@ mod tests {
         let pots = PotentialCompiler::new(&ff).compile(&frame).unwrap();
         assert_eq!(pots.len(), 0);
         let coords: Vec<F> = frame.coords().unwrap().into_iter().collect();
-        assert!(pots.calc_energy(&coords).abs() < 1e-9);
+        assert!(pots.energy_at(&coords).abs() < 1e-9);
     }
 
     /// A frame too large for a full pair list is refused, not enumerated.
@@ -1718,11 +1837,15 @@ mod tests {
         let mut frame = Frame::new();
         let mut atoms = Block::new();
         atoms
-            .insert("type", Array1::from(vec!["a".to_string(); n]).into_dyn())
+            .insert(
+                "type",
+                Array1::from(vec!["a".to_string(); n]).into_dyn(),
+                None,
+            )
             .unwrap();
         frame.insert("atoms", atoms);
 
-        let err = intramolecular_pairs(&frame, &SpecialBonds::default())
+        let err = intramolecular_pairs(&frame, &SpecialBonds::default(), None)
             .expect_err("a list this size is not an answer");
         assert!(err.contains("neighbour list"), "{err}");
         assert!(err.contains("compile_typed"), "{err}");
@@ -1735,29 +1858,82 @@ mod tests {
             .insert(
                 "type",
                 Array1::from(vec!["a".to_string(); MAX_ATOMS_FOR_A_FULL_PAIR_LIST]).into_dyn(),
+                None,
             )
             .unwrap();
         small.insert("atoms", atoms);
-        assert!(intramolecular_pairs(&small, &SpecialBonds::default()).is_ok());
+        assert!(intramolecular_pairs(&small, &SpecialBonds::default(), None).is_ok());
     }
 }
 
 #[cfg(test)]
 pub(crate) mod fixtures {
-    use super::Potential;
+    use super::{Accumulator, IndexedTerms, PairDriven, Potential};
+    use molrs::core::{Neighbors, Virial};
     use molrs::op::F;
+    use ndarray::ArrayView2;
+
+    /// One evaluation in fresh storage, for a test that wants the totals:
+    /// a new [`Accumulator`], one call of the primitive, its channels read
+    /// back. Test-only — the API is the primitive and the accumulator.
+    pub(crate) trait OneShot: Potential {
+        /// [`Potential::evaluate`]: energy and forces.
+        fn energy_forces_at(&self, coords: &[F]) -> (F, Vec<F>) {
+            let mut acc = Accumulator::new(coords.len());
+            self.evaluate(coords, &mut acc);
+            (acc.energy(), acc.into_forces())
+        }
+
+        /// [`Potential::evaluate`]: energy.
+        fn energy_at(&self, coords: &[F]) -> F {
+            self.energy_forces_at(coords).0
+        }
+
+        /// [`PairDriven::evaluate_pairs`], unweighted: energy and forces.
+        fn over_pairs(&self, coords: &[F], pairs: &Neighbors) -> (F, Vec<F>)
+        where
+            Self: PairDriven,
+        {
+            let (e, f, _) = self.over_pairs_virial(coords, pairs);
+            (e, f)
+        }
+
+        /// [`PairDriven::evaluate_pairs`], unweighted, with the virial
+        /// requested.
+        fn over_pairs_virial(&self, coords: &[F], pairs: &Neighbors) -> (F, Vec<F>, Option<Virial>)
+        where
+            Self: PairDriven,
+        {
+            let mut acc = Accumulator::new(coords.len()).with_virial();
+            self.evaluate_pairs(coords, pairs, &[], &mut acc);
+            let (e, w) = (acc.energy(), acc.virial());
+            (e, acc.into_forces(), w)
+        }
+
+        /// [`IndexedTerms::evaluate_terms`]: energy and forces.
+        fn over_terms(&self, coords: &[F], terms: ArrayView2<'_, u32>) -> (F, Vec<F>)
+        where
+            Self: IndexedTerms,
+        {
+            let mut acc = Accumulator::new(coords.len());
+            self.evaluate_terms(coords, terms, &mut acc);
+            (acc.energy(), acc.into_forces())
+        }
+    }
+
+    impl<P: Potential + ?Sized> OneShot for P {}
 
     /// Central-difference check that every force component is `-dE/dx`.
     pub(crate) fn assert_forces_are_negative_gradient(pot: &dyn Potential, coords: &[F], tol: F) {
         let h: F = 1e-6;
-        let (_, f) = pot.calc_energy_forces(coords);
+        let (_, f) = pot.energy_forces_at(coords);
         let mut worst: F = 0.0;
         for i in 0..coords.len() {
             let mut plus = coords.to_vec();
             let mut minus = coords.to_vec();
             plus[i] += h;
             minus[i] -= h;
-            let numeric = -(pot.calc_energy(&plus) - pot.calc_energy(&minus)) / (2.0 * h);
+            let numeric = -(pot.energy_at(&plus) - pot.energy_at(&minus)) / (2.0 * h);
             worst = worst.max((f[i] - numeric).abs());
         }
         assert!(worst < tol, "max |F + dE/dx| = {worst:.3e}");

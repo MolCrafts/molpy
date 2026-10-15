@@ -31,6 +31,7 @@
 //! [`Style::type_rows`]: crate::ff::forcefield::Style::type_rows
 //! [`StyleDefs::Relation`]: crate::ff::forcefield::StyleDefs::Relation
 
+use crate::ff::forcefield::Category;
 use std::collections::{BTreeMap, BTreeSet};
 
 use indexmap::IndexMap;
@@ -43,7 +44,7 @@ use super::forcefield_section::{
 use crate::core::{Block, Column, DType};
 use crate::ff::forcefield::{ForceField, Style};
 use crate::ff::ir::ENDPOINT_COLUMNS;
-use crate::ff::ir::{Params, SpecialBonds};
+use crate::ff::ir::{ParamValue, Params, SpecialBonds};
 use crate::ff::style_registry::Registry;
 
 /// The string style params that are entry fields of `document.styles`.
@@ -70,29 +71,19 @@ impl Value<'_> {
     }
 }
 
-/// The params of `params` as one sorted map, refusing a key held on two
-/// sides (number, string, array).
-fn merged<'a>(
-    params: &'a Params,
-    what: &dyn Fn() -> String,
-) -> Result<BTreeMap<&'a str, Value<'a>>, String> {
-    let mut out: BTreeMap<&str, Value<'_>> =
-        params.iter().map(|(k, v)| (k, Value::Number(v))).collect();
-    let others = params
-        .iter_strings()
-        .map(|(k, v)| (k, Value::Text(v)))
-        .chain(params.iter_arrays().map(|(k, v)| (k, Value::Array(v))));
-    for (key, value) in others {
-        let kind = value.kind();
-        if let Some(earlier) = out.insert(key, value) {
-            return Err(format!(
-                "{}: param {key:?} is both {} and {kind}",
-                what(),
-                earlier.kind()
-            ));
-        }
-    }
-    Ok(out)
+/// The params of `params` as one sorted map.
+fn merged(params: &Params) -> BTreeMap<&str, Value<'_>> {
+    params
+        .iter()
+        .map(|(key, value)| {
+            let value = match value {
+                ParamValue::Num(n) => Value::Number(*n),
+                ParamValue::Text(t) => Value::Text(t),
+                ParamValue::Array(a) => Value::Array(a),
+            };
+            (key, value)
+        })
+        .collect()
 }
 
 fn units_document(units: &str) -> Result<JsonValue, String> {
@@ -117,14 +108,18 @@ fn units_document(units: &str) -> Result<JsonValue, String> {
 /// `registry` holds (not a sealed built-in) — the registry's, so a process
 /// that registered nothing can price what it reads (protocol D16).
 fn persisted_expression<'a>(style: &'a Style, registry: &'a Registry) -> Option<&'a str> {
-    style.params().get_str("expression").or_else(|| {
-        if registry.is_sealed(style.category(), style.name()) {
-            return None;
-        }
-        registry
-            .style(style.category(), style.name())
-            .and_then(|(spec, _)| spec.expression.as_deref())
-    })
+    style
+        .params()
+        .get("expression")
+        .and_then(|v| v.as_text())
+        .or_else(|| {
+            if registry.is_sealed(style.category(), style.name()) {
+                return None;
+            }
+            registry
+                .style(style.category(), style.name())
+                .and_then(|(spec, _)| spec.expression.as_deref())
+        })
 }
 
 fn section_style(style: &Style, registry: &Registry) -> Result<JsonValue, String> {
@@ -134,7 +129,7 @@ fn section_style(style: &Style, registry: &Registry) -> Result<JsonValue, String
     entry.insert("style".into(), style.name().into());
     let mut params = JsonMap::new();
     let mut fields = JsonMap::new();
-    for (key, value) in merged(style.params(), &what)? {
+    for (key, value) in merged(style.params()) {
         match value {
             Value::Text(text) if ENTRY_FIELDS.contains(&key) => {
                 fields.insert(key.into(), text.into());
@@ -175,7 +170,7 @@ fn section_style(style: &Style, registry: &Registry) -> Result<JsonValue, String
 
 fn strings(values: Vec<String>) -> Column {
     let n = values.len();
-    Column::from_string(ArrayD::from_shape_vec(vec![n], values).expect("one value per row"))
+    Column::from(ArrayD::from_shape_vec(vec![n], values).expect("one value per row"))
 }
 
 /// The `f64[T, S…]` column of an array param: every row's array at one shape
@@ -224,7 +219,7 @@ fn array_column(
     }
     let mut full = vec![arrays.len()];
     full.extend(&shape);
-    Ok(Column::from_float(
+    Ok(Column::from(
         ArrayD::from_shape_vec(full, values).expect("one array per row"),
     ))
 }
@@ -281,9 +276,9 @@ fn param_column(
             .collect();
         let shape = vec![numbers.len()];
         match canonical {
-            None | Some(DType::Float) => Column::from_float(
-                ArrayD::from_shape_vec(shape, numbers).expect("one value per row"),
-            ),
+            None | Some(DType::Float) => {
+                Column::from(ArrayD::from_shape_vec(shape, numbers).expect("one value per row"))
+            }
             Some(DType::Uint) => {
                 let mut values = Vec::with_capacity(numbers.len());
                 for (n, valid) in numbers.iter().zip(&validity) {
@@ -296,7 +291,7 @@ fn param_column(
                     }
                     values.push(*n as u64);
                 }
-                Column::from_uint(ArrayD::from_shape_vec(shape, values).expect("one per row"))
+                Column::from(ArrayD::from_shape_vec(shape, values).expect("one per row"))
             }
             Some(other) => {
                 return Err(format!(
@@ -317,9 +312,10 @@ fn style_table(style: &Style) -> Result<Block, String> {
     let mut block = Block::new();
     let column_err = |e: molrs::core::BlockError| format!("{}: {e}", what());
     block
-        .insert_column(
+        .insert(
             "name",
             strings(rows.iter().map(|(name, _, _)| (*name).to_owned()).collect()),
+            None,
         )
         .map_err(column_err)?;
     for (position, endpoint) in ENDPOINT_COLUMNS[..arity].iter().enumerate() {
@@ -328,14 +324,14 @@ fn style_table(style: &Style) -> Result<Block, String> {
             .map(|(_, ends, _)| ends[position].to_owned())
             .collect();
         block
-            .insert_column(*endpoint, strings(values))
+            .insert(*endpoint, strings(values), None)
             .map_err(column_err)?;
     }
 
     let mut per_row = Vec::with_capacity(rows.len());
     let mut keys = BTreeSet::new();
-    for (name, _, params) in &rows {
-        let row = merged(params, &|| format!("{} type {name:?}", what()))?;
+    for (_, _, params) in &rows {
+        let row = merged(params);
         keys.extend(row.keys().copied());
         per_row.push(row);
     }
@@ -348,7 +344,7 @@ fn style_table(style: &Style) -> Result<Block, String> {
         }
         let cells: Vec<Option<Value<'_>>> = per_row.iter().map(|r| r.get(key).cloned()).collect();
         let (column, validity) = param_column(key, &cells, &what)?;
-        block.insert_column(key, column).map_err(column_err)?;
+        block.insert(key, column, None).map_err(column_err)?;
         block.set_validity(key, validity).map_err(column_err)?;
     }
     Ok(block)
@@ -407,19 +403,19 @@ fn row_params(table: &Block, row: usize) -> Params {
         if table.validity(key).is_some_and(|mask| !mask[row]) {
             continue;
         }
-        if let Some(values) = column.as_string() {
-            params.set_str(key, &values[[row]]);
-        } else if let Some(values) = column.as_float() {
+        if let Some(values) = column.get::<String>() {
+            params.set(key, values[[row]].as_str());
+        } else if let Some(values) = column.get::<f64>() {
             if values.ndim() > 1 {
-                params.set_array(key, values.index_axis(Axis(0), row).to_owned());
+                params.set(key, values.index_axis(Axis(0), row).to_owned());
             } else {
                 params.set(key, values[[row]]);
             }
-        } else if let Some(values) = column.as_uint() {
+        } else if let Some(values) = column.get::<u64>() {
             params.set(key, values[[row]] as f64);
-        } else if let Some(values) = column.as_int() {
+        } else if let Some(values) = column.get::<i32>() {
             params.set(key, f64::from(values[[row]]));
-        } else if let Some(values) = column.as_i64() {
+        } else if let Some(values) = column.get::<i64>() {
             params.set(key, values[[row]] as f64);
         }
     }
@@ -458,26 +454,20 @@ impl ForceFieldSection {
     /// let mut ff = ForceField::new("example");
     /// ff.def_style("bond", "harmonic", Params::new())
     ///     .unwrap()
-    ///     .def_type("A-B", &["A", "B"], Params::from_pairs(&[("k", 300.0), ("r0", 1.5)]))
+    ///     .def_type("A-B", &["A", "B"], Params::from_iter([("k", 300.0), ("r0", 1.5)]))
     ///     .unwrap();
     /// let section = ForceFieldSection::from_forcefield(&ff).unwrap();
     /// assert!(section.table("bond", "harmonic").is_some());
     /// let back = section.to_forcefield().unwrap();
-    /// assert_eq!(back.get_bondtypes()[0].params.get("k"), Some(300.0));
+    /// assert_eq!(back.get_bondtypes()[0].params.get("k").and_then(|v| v.as_num()), Some(300.0));
     /// ```
     pub fn from_forcefield(ff: &ForceField) -> Result<ForceFieldSection, String> {
-        crate::ff::style_registry::with_global_registry(|registry| {
-            Self::from_forcefield_in(ff, registry)
-        })
+        ff.read_registry(|registry| Self::section_of(ff, registry))
     }
 
-    /// [`Self::from_forcefield`] against `registry` instead of the
-    /// process-wide one: the registry whose custom styles' expressions a
-    /// style without its own is written with.
-    pub fn from_forcefield_in(
-        ff: &ForceField,
-        registry: &Registry,
-    ) -> Result<ForceFieldSection, String> {
+    /// The section of `ff`, a style without its own expression written with
+    /// `registry`'s.
+    fn section_of(ff: &ForceField, registry: &Registry) -> Result<ForceFieldSection, String> {
         let mut document = JsonMap::new();
         document.insert("name".into(), ff.name.clone().into());
         document.insert("units".into(), units_document(ff.units())?);
@@ -542,7 +532,7 @@ impl ForceFieldSection {
             .iter()
             .filter(|s| s.category == "atom")
             .filter_map(|s| section.tables.get(&s.block_name()))
-            .filter_map(|t| t.get("name").and_then(Column::as_string))
+            .filter_map(|t| t.get("name").and_then(Column::get::<String>))
             .flat_map(|names| names.iter().map(String::as_str))
             .collect();
         for entry in &styles {
@@ -550,12 +540,12 @@ impl ForceFieldSection {
             let mut params = Params::new();
             for (key, value) in entry.params.into_iter().flatten() {
                 match value {
-                    JsonValue::String(text) => params.set_str(key, text),
+                    JsonValue::String(text) => params.set(key, text.as_str()),
                     number => params.set(key, number.as_f64().expect("validated: a number")),
                 }
             }
             if let Some(expression) = entry.expression {
-                params.set_str("expression", expression);
+                params.set("expression", expression);
             }
             let table = &section.tables[&entry.block_name()];
             match entry.endpoint_key {
@@ -567,7 +557,8 @@ impl ForceFieldSection {
                 }
                 EndpointKey::Class => {
                     for endpoint in ENDPOINT_COLUMNS {
-                        let Some(values) = table.get(endpoint).and_then(Column::as_string) else {
+                        let Some(values) = table.get(endpoint).and_then(Column::get::<String>)
+                        else {
                             continue;
                         };
                         if let Some(class) = values
@@ -580,19 +571,23 @@ impl ForceFieldSection {
                             ));
                         }
                     }
-                    params.set_str("endpoint_key", EndpointKey::Class.as_str());
+                    params.set("endpoint_key", EndpointKey::Class.as_str());
                 }
             }
             let endpoint_columns: Vec<&ArrayD<String>> = ENDPOINT_COLUMNS
                 .iter()
-                .filter_map(|c| table.get(c).and_then(Column::as_string))
+                .filter_map(|c| table.get(c).and_then(Column::get::<String>))
                 .collect();
             let style = ff
-                .def_style_with_arity(entry.category, endpoint_columns.len(), entry.style, params)
+                .def_style(
+                    Category::new(entry.category).arity(endpoint_columns.len()),
+                    entry.style,
+                    params,
+                )
                 .map_err(|e| format!("{what}: {e}"))?;
             let names = table
                 .get("name")
-                .and_then(Column::as_string)
+                .and_then(Column::get::<String>)
                 .expect("validated: a name column");
             for (row, name) in names.iter().enumerate() {
                 let endpoints: Vec<&str> = endpoint_columns
@@ -611,7 +606,9 @@ impl ForceFieldSection {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ff::forcefield::Category;
     use crate::ff::forcefield::tests::assert_same_definitions;
+    use crate::ff::potential::fixtures::OneShot;
     use crate::ff::typifier::Typifier;
     use crate::io::reader::ForceFieldReader;
 
@@ -636,15 +633,15 @@ mod tests {
             for (key, column) in x.iter() {
                 let other = y.get(key).unwrap();
                 assert_eq!(x.validity(key), y.validity(key), "{what}: {name}.{key}");
-                match (column.as_float(), other.as_float()) {
+                match (column.get::<f64>(), other.get::<f64>()) {
                     (Some(p), Some(q)) => {
                         let bits =
                             |a: &ArrayD<f64>| a.iter().map(|v| v.to_bits()).collect::<Vec<_>>();
                         assert_eq!(bits(p), bits(q), "{what}: {name}.{key}");
                     }
                     _ => assert_eq!(
-                        (column.as_string(), column.as_uint()),
-                        (other.as_string(), other.as_uint()),
+                        (column.get::<String>(), column.get::<u64>()),
+                        (other.get::<String>(), other.get::<u64>()),
                         "{what}: {name}.{key}"
                     ),
                 }
@@ -670,8 +667,13 @@ mod tests {
         {
             let dir = tempfile::tempdir().unwrap();
             let path = dir.path().join("ff.mrec");
-            molrs::io::write_mrec_forcefield(&path, &section, None).unwrap();
-            let stored = molrs::io::read_mrec_forcefield(&path).unwrap().unwrap();
+            let mut record = crate::io::mrec::MolRec::new();
+            record.forcefield = Some(section.clone());
+            molrs::io::write_mrec(&path, &record).unwrap();
+            let stored = crate::io::mrec::MrecFile::open(&path)
+                .and_then(|f| f.forcefield())
+                .unwrap()
+                .unwrap();
             assert_eq!(stored.document, section.document, "{what}: stored document");
             let from_store = stored
                 .to_forcefield()
@@ -730,12 +732,18 @@ mod tests {
                     improper_style harmonic\n\
                     improper_coeff c3-oh-c3-c3 1.1 180.0\n";
         let ff = crate::io::lammps::forcefield_reader::LammpsForcefieldReader::new()
-            .read_str(text)
+            .read(text.as_bytes())
             .unwrap();
         // The cross pair_coeff (NBFIX) is a pair row with itom != jtom.
         let section = ForceFieldSection::from_forcefield(&ff).unwrap();
         let pairs = section.table("pair", "lj/cut").unwrap();
-        let ends = |c: &str| pairs.get(c).and_then(Column::as_string).unwrap().to_owned();
+        let ends = |c: &str| {
+            pairs
+                .get(c)
+                .and_then(Column::get::<String>)
+                .unwrap()
+                .to_owned()
+        };
         let (itom, jtom) = (ends("itom"), ends("jtom"));
         let rows: Vec<(&str, &str)> = itom
             .iter()
@@ -756,7 +764,7 @@ mod tests {
                     [ angletypes ]\nHC CT HC 1 107.8 276.144\n\
                     [ dihedraltypes ]\nX CT CT X 1 0.0 0.6276 3\n";
         let ff = crate::io::gromacs::top_reader::GromacsTopForcefieldReader::new()
-            .read_str(text)
+            .read(text.as_bytes())
             .unwrap();
         // The GROMACS bond_type is the atom table's `class`.
         let section = ForceFieldSection::from_forcefield(&ff).unwrap();
@@ -765,7 +773,10 @@ mod tests {
         assert_eq!(atoms.dtype("atomic_number"), Some(DType::Uint));
         // `X` is the empty-string wildcard.
         let dihedrals = section.table("dihedral", "periodic").unwrap();
-        let itom = dihedrals.get("itom").and_then(Column::as_string).unwrap();
+        let itom = dihedrals
+            .get("itom")
+            .and_then(Column::get::<String>)
+            .unwrap();
         assert_eq!(itom[[0]], "");
         round_trips(&ff, "GROMACS");
     }
@@ -786,7 +797,7 @@ mod tests {
   </NonbondedForce>
 </ForceField>"#;
         let ff = crate::io::openmm_xml::reader::OpenmmXmlReader::new()
-            .read_str(xml)
+            .read(xml.as_bytes())
             .unwrap();
         let section = ForceFieldSection::from_forcefield(&ff).unwrap();
         let atoms = section.table("atom", "full").unwrap();
@@ -812,7 +823,7 @@ mod tests {
                        B 12.0 0.0 A 0.36 1.6736\n\
                        [ nonbond_params ]\nA B 1 0.20 3.7656\n";
         let ff = crate::io::gromacs::top_reader::GromacsTopForcefieldReader::new()
-            .read_str(gromacs)
+            .read(gromacs.as_bytes())
             .unwrap();
         round_trips(&ff, "GROMACS nonbond_params");
         let back = ForceFieldSection::from_forcefield(&ff)
@@ -827,17 +838,18 @@ mod tests {
             .insert(
                 "type",
                 Array1::from_vec(vec!["A".to_string(), "B".to_string()]).into_dyn(),
+                None,
             )
             .unwrap();
         let mut pairs = Block::new();
         pairs
-            .insert("atomi", Array1::from_vec(vec![0 as Idx]).into_dyn())
+            .insert("atomi", Array1::from_vec(vec![0 as Idx]).into_dyn(), None)
             .unwrap();
         pairs
-            .insert("atomj", Array1::from_vec(vec![1 as Idx]).into_dyn())
+            .insert("atomj", Array1::from_vec(vec![1 as Idx]).into_dyn(), None)
             .unwrap();
         atoms
-            .insert("charge", Array1::from_vec(vec![0.0, 0.0]).into_dyn())
+            .insert("charge", Array1::from_vec(vec![0.0, 0.0]).into_dyn(), None)
             .unwrap();
         let mut frame = Frame::new();
         frame.insert("atoms", atoms);
@@ -849,7 +861,7 @@ mod tests {
         let e = PotentialCompiler::new(&back)
             .compile(&frame)
             .unwrap()
-            .calc_energy(&coords);
+            .energy_at(&coords);
         assert!((e - want).abs() < 1e-9, "E = {e}, cross row gives {want}");
     }
 
@@ -858,14 +870,14 @@ mod tests {
     #[test]
     fn lj_charmm_one_four_round_trips_and_an_unknown_value_is_refused() {
         let mut ff = ForceField::new("x");
-        let mut sp = Params::from_pairs(&[("inner", 8.0), ("cutoff", 10.0)]);
-        sp.set_str("one_four", "epsilon14");
+        let mut sp = Params::from_iter([("inner", 8.0), ("cutoff", 10.0)]);
+        sp.set("one_four", "epsilon14");
         ff.def_style("pair", "lj/charmm", sp)
             .unwrap()
             .def_type(
                 "A",
                 &["A"],
-                Params::from_pairs(&[
+                Params::from_iter([
                     ("epsilon", 0.1),
                     ("sigma", 3.0),
                     ("epsilon14", 0.04),
@@ -879,7 +891,8 @@ mod tests {
             back.get_style("pair", "lj/charmm")
                 .unwrap()
                 .params()
-                .get_str("one_four"),
+                .get("one_four")
+                .and_then(|v| v.as_text()),
             Some("epsilon14")
         );
         round_trips(&ff, "lj/charmm one_four");
@@ -887,7 +900,7 @@ mod tests {
         let mut bad = ff.clone();
         bad.get_style_mut("pair", "lj/charmm")
             .unwrap()
-            .set_str_param("one_four", "both");
+            .set_param("one_four", "both");
         assert!(
             ForceFieldSection::from_forcefield(&bad)
                 .unwrap_err()
@@ -902,11 +915,11 @@ mod tests {
     #[test]
     fn style_level_strings_become_entry_fields_and_mixing_a_param() {
         let mut ff = ForceField::new("custom");
-        let mut lj = Params::from_pairs(&[("cutoff", 10.0)]);
-        lj.set_str("mixing", "geometric");
+        let mut lj = Params::from_iter([("cutoff", 10.0)]);
+        lj.set("mixing", "geometric");
         ff.def_style("pair", "lj/cut", lj).unwrap();
         let mut fene = Params::new();
-        fene.set_str("expression", "-0.5*K*R0^2*log(1-(r/R0)^2)");
+        fene.set("expression", "-0.5*K*R0^2*log(1-(r/R0)^2)");
         ff.def_style("bond", "fene", fene).unwrap();
         let section = ForceFieldSection::from_forcefield(&ff).unwrap();
         let styles = &section.document["styles"];
@@ -961,9 +974,9 @@ mod tests {
         let mut smirks = section;
         smirks.document["styles"][0]["endpoint_key"] = json!("smirks");
         let mut rows = Block::new();
-        rows.insert_column("name", strings(vec!["b1".into()]))
+        rows.insert("name", strings(vec!["b1".into()]), None)
             .unwrap();
-        rows.insert_column("smirks", strings(vec!["[#6:1]-[#1:2]".into()]))
+        rows.insert("smirks", strings(vec!["[#6:1]-[#1:2]".into()]), None)
             .unwrap();
         smirks.tables.insert("bond.harmonic".into(), rows);
         assert!(smirks.to_forcefield().unwrap_err().contains("smirks"));
@@ -977,9 +990,9 @@ mod tests {
         let mut ff = ForceField::new("charmm");
         let style = ff.def_style("cmap", "charmm", Params::new()).unwrap();
         for (i, g) in grids.iter().enumerate() {
-            let mut params = Params::from_pairs(&[("id", i as f64)]);
+            let mut params = Params::from_iter([("id", i as f64)]);
             if let Some(g) = g {
-                params.set_array("grid", g.clone());
+                params.set("grid", g.clone());
             }
             style
                 .def_type(&format!("c{i}"), &["C", "NH1", "CT1", "C", "NH1"], params)
@@ -999,17 +1012,17 @@ mod tests {
         assert_eq!(table.get("grid").unwrap().shape(), &[3, 24, 24]);
         assert_eq!(table.validity("grid"), Some(&[true, false, true][..]));
         assert_eq!(
-            table.get("mtom").and_then(Column::as_string).unwrap()[[0]],
+            table.get("mtom").and_then(Column::get::<String>).unwrap()[[0]],
             "NH1"
         );
         round_trips(&ff, "cmap");
         let back = section.to_forcefield().unwrap();
         let rows = back.get_cmaptypes();
         assert_eq!(
-            rows[2].params.get_array("grid"),
+            rows[2].params.get("grid").and_then(|v| v.as_array()),
             Some(&grid(24, -1.0 / 3.0))
         );
-        assert_eq!(rows[1].params.get_array("grid"), None);
+        assert_eq!(rows[1].params.get("grid").and_then(|v| v.as_array()), None);
     }
 
     /// A grid the section cannot hold is refused by `from_forcefield`, not
@@ -1029,24 +1042,14 @@ mod tests {
         assert!(err.contains("cmap grid"), "{err}");
 
         let mut params = Params::new();
-        params.set_array("grid", grid(2, 1.0));
+        params.set("grid", grid(2, 1.0));
         let mut ff = ForceField::new("t");
         ff.def_style("cmap", "charmm", params).unwrap();
         let err = ForceFieldSection::from_forcefield(&ff).unwrap_err();
         assert!(err.contains("style param"), "{err}");
 
-        let mut both = Params::from_pairs(&[("grid", 1.0)]);
-        both.set_array("grid", grid(2, 1.0));
-        let mut ff = ForceField::new("t");
-        ff.def_style("cmap", "charmm", Params::new())
-            .unwrap()
-            .def_type("c", &["A", "B", "C", "D", "E"], both)
-            .unwrap();
-        let err = ForceFieldSection::from_forcefield(&ff).unwrap_err();
-        assert!(err.contains("both a number and an array"), "{err}");
-
         let mut scalar = Params::new();
-        scalar.set_array("grid", ArrayD::from_elem(vec![], 1.0));
+        scalar.set("grid", ArrayD::from_elem(vec![], 1.0));
         let mut ff = ForceField::new("t");
         ff.def_style("cmap", "charmm", Params::new())
             .unwrap()
@@ -1066,11 +1069,11 @@ mod tests {
             .def_style("dihedral", "table/linear", Params::new())
             .unwrap();
         let table = |s: f64| ArrayD::from_shape_fn(vec![12], |ix| s * ix[0] as f64 - 0.1);
-        let mut a = Params::from_pairs(&[("n", 12.0)]);
-        a.set_array("table", table(0.25));
-        a.set_array("grid", grid(3, 1.0 / 7.0));
-        let mut b = Params::from_pairs(&[("n", 12.0)]);
-        b.set_array("table", table(-1.0 / 3.0));
+        let mut a = Params::from_iter([("n", 12.0)]);
+        a.set("table", table(0.25));
+        a.set("grid", grid(3, 1.0 / 7.0));
+        let mut b = Params::from_iter([("n", 12.0)]);
+        b.set("table", table(-1.0 / 3.0));
         style
             .def_type("a", &["A", "B", "B", "A"], a)
             .unwrap()
@@ -1092,15 +1095,11 @@ mod tests {
         let mut ff = ForceField::new("t");
         ff.def_style("virtual_site", "tip4p", Params::new())
             .unwrap()
-            .def_type("M", &[], Params::from_pairs(&[("d", 0.15)]))
+            .def_type("M", &[], Params::from_iter([("d", 0.15)]))
             .unwrap();
-        ff.def_style_with_arity("bespoke", 4, "x", Params::new())
+        ff.def_style(Category::new("bespoke").arity(4), "x", Params::new())
             .unwrap()
-            .def_type(
-                "q",
-                &["A", "B", "C", "D"],
-                Params::from_pairs(&[("k", 1.5)]),
-            )
+            .def_type("q", &["A", "B", "C", "D"], Params::from_iter([("k", 1.5)]))
             .unwrap();
         let section = ForceFieldSection::from_forcefield(&ff).unwrap();
         let bespoke = section.table("bespoke", "x").unwrap();
@@ -1115,24 +1114,11 @@ mod tests {
     #[test]
     fn a_force_field_without_a_section_form_is_refused_by_name() {
         let mut ff = ForceField::new("t");
-        let mut a = Params::from_pairs(&[("k", 1.0)]);
-        a.set_str("k", "one");
-        ff.def_style("bond", "harmonic", Params::new())
-            .unwrap()
-            .def_type("A-B", &["A", "B"], a)
-            .unwrap();
-        assert!(
-            ForceFieldSection::from_forcefield(&ff)
-                .unwrap_err()
-                .contains("\"k\"")
-        );
-
-        let mut ff = ForceField::new("t");
         let mut odd = Params::new();
-        odd.set_str("w", "x");
+        odd.set("w", "x");
         ff.def_style("bond", "harmonic", Params::new())
             .unwrap()
-            .def_type("A-B", &["A", "B"], Params::from_pairs(&[("w", 1.0)]))
+            .def_type("A-B", &["A", "B"], Params::from_iter([("w", 1.0)]))
             .unwrap()
             .def_type("A-C", &["A", "C"], odd)
             .unwrap();
@@ -1163,7 +1149,7 @@ mod tests {
 
         let mut ff = ForceField::new("charmm");
         let mut params = Params::new();
-        params.set_array("grid", alanine());
+        params.set("grid", alanine());
         ff.def_style("cmap", "charmm", Params::new())
             .unwrap()
             .def_type("ala", &["C", "NH1", "CT1", "C", "NH1"], params)
@@ -1180,11 +1166,15 @@ mod tests {
             .enumerate()
         {
             cmaps
-                .insert(key, Array1::from_vec(vec![p as u64]).into_dyn())
+                .insert(key, Array1::from_vec(vec![p as u64]).into_dyn(), None)
                 .unwrap();
         }
         cmaps
-            .insert("type", Array1::from_vec(vec!["ala".to_owned()]).into_dyn())
+            .insert(
+                "type",
+                Array1::from_vec(vec!["ala".to_owned()]).into_dyn(),
+                None,
+            )
             .unwrap();
         let mut frame = molrs::core::Frame::new();
         frame.insert("cmaps", cmaps);
@@ -1193,7 +1183,7 @@ mod tests {
             PotentialCompiler::new(ff)
                 .compile(&frame)
                 .unwrap()
-                .calc_energy(&x)
+                .energy_at(&x)
         };
         assert_eq!(e(&ff).to_bits(), e(&back).to_bits());
         assert!(e(&ff) != 0.0);

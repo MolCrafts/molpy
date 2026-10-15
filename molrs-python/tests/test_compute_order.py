@@ -32,7 +32,7 @@ def square_points() -> np.ndarray:
 
 
 def neighbors(points: np.ndarray, cutoff: float) -> molrs.core.Neighbors:
-    box = molrs.core.Box.cube(BOX)
+    box = molrs.core.Box(molrs.core.Cell.lengths([BOX] * 3))
     return molrs.core.NeighborQuery(box, points, cutoff).query_self()
 
 

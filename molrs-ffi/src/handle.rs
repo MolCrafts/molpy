@@ -12,7 +12,7 @@ new_key_type! {
     ///
     /// Properties:
     /// - Copy, comparable, FFI-safe
-    /// - Valid until frame_drop() is called
+    /// - Valid until `FrameArena::drop_frame` is called
     /// - JS can represent without precision loss (two u32 instead of u64)
     pub struct FrameId;
 }
@@ -23,8 +23,8 @@ new_key_type! {
 ///
 /// Becomes invalid when:
 /// - Frame is dropped
-/// - Block is removed via remove_block(key)
-/// - Block is replaced via set_block(key, new_block)
+/// - Block is removed via `FrameArena::del_block`
+/// - Block is replaced via `FrameArena::set_block`
 /// - Frame is cleared
 ///
 /// Not resurrected if same key is reinserted later.

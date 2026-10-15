@@ -84,7 +84,7 @@ fn try_force_field(name: &str) -> Result<ForceField, DefError> {
                 let vdw = ff.def_style(
                     "pair",
                     style.name,
-                    Params::from_pairs(&[
+                    Params::from_iter([
                         ("B", MMFF_VDW_STYLE.b),
                         ("Beta", MMFF_VDW_STYLE.beta),
                         ("DARAD", MMFF_VDW_STYLE.darad),
@@ -96,7 +96,7 @@ fn try_force_field(name: &str) -> Result<ForceField, DefError> {
                     vdw.def_type(
                         &atom_type,
                         &[&atom_type],
-                        Params::from_pairs(&[
+                        Params::from_iter([
                             ("alpha", row.alpha_i),
                             ("n_eff", row.n_i),
                             ("a_i", row.a_i),
@@ -116,7 +116,7 @@ fn try_force_field(name: &str) -> Result<ForceField, DefError> {
                 ff.def_style(
                     "pair",
                     style.name,
-                    Params::from_pairs(&[
+                    Params::from_iter([
                         ("coulomb", MMFF_ELE_STYLE.coulomb),
                         ("dielectric", MMFF_ELE_STYLE.dielectric),
                         ("delta", MMFF_ELE_STYLE.delta),

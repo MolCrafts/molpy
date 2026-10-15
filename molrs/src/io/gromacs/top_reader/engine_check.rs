@@ -1,6 +1,6 @@
 //! GROMACS-read force fields against GROMACS and LAMMPS, term by term.
 //!
-//! Four systems read with [`GromacsTopForcefieldReader::read_system_str`] — an
+//! Four systems read with [`GromacsTopForcefieldReader::read_system`] — an
 //! ACE-ALA-ALA-NME dipeptide under GROMACS's charmm27 (Urey-Bradley, CMAP,
 //! `[ pairtypes ]`, plus a `[ nonbond_params ]` row), amber99sb-ildn (funct-9
 //! multi-term dihedrals, funct-4 impropers, gen-pairs 0.5 / 0.8333) and oplsaa
@@ -38,6 +38,7 @@
 // The engines' numbers are kept as they printed them.
 #![allow(clippy::excessive_precision)]
 
+use crate::ff::potential::fixtures::OneShot;
 use std::io::Cursor;
 use std::path::Path;
 
@@ -46,8 +47,8 @@ use crate::ff::compile::PotentialCompiler;
 use crate::ff::compile::exceptions;
 use crate::ff::forcefield::ForceField;
 use crate::ff::ir::Params;
-use crate::io::writer::ForceFieldWriter;
-use crate::io::{lammps::LammpsForcefieldWriteOptions, lammps::LammpsForcefieldWriter};
+use crate::io::lammps::LammpsForcefieldWriter;
+use crate::io::writer::WrittenText;
 use molrs::core::Frame;
 use molrs::core::TypeLabels;
 use molrs::core::constants::COULOMB_REAL;
@@ -199,7 +200,7 @@ const GROMACS_TOL: [F; 10] = [
 /// frame with the .gro's coordinates, and the coordinates.
 fn load(f: &Fixture) -> (ForceField, Frame, Vec<F>) {
     let (mut ff, mut frame) = GromacsTopForcefieldReader::new()
-        .read_system_str(f.top)
+        .read_system(f.top.as_bytes())
         .unwrap_or_else(|e| panic!("{}: {e}", f.name));
     let gro = GroReader::new(Cursor::new(f.gro))
         .read()
@@ -208,8 +209,8 @@ fn load(f: &Fixture) -> (ForceField, Frame, Vec<F>) {
     let g = gro.get("atoms").expect("gro atoms");
     let atoms = frame.get_mut("atoms").expect("atoms");
     for key in ["x", "y", "z"] {
-        let col = g.get(key).and_then(|c| c.as_float()).expect("coordinate");
-        atoms.insert(key, col.to_owned()).unwrap();
+        let col = g.get(key).and_then(|c| c.get::<f64>()).expect("coordinate");
+        atoms.insert(key, col.to_owned(), None).unwrap();
     }
     frame.simbox = gro.simbox.clone();
     let names: Vec<String> = ff
@@ -239,7 +240,7 @@ fn only(ff: &ForceField, frame: &Frame, category: &str, name: &str) -> (ForceFie
         .unwrap();
     for (type_name, ends, p) in style.type_rows() {
         let mut p = p.clone();
-        if p.get("w").is_some() {
+        if p.get("w").and_then(|v| v.as_num()).is_some() {
             p.set("w", 0.0);
         }
         s.def_type(type_name, &ends, p).unwrap();
@@ -259,7 +260,7 @@ fn only(ff: &ForceField, frame: &Frame, category: &str, name: &str) -> (ForceFie
     };
     if let Some(block) = frame.get(block_name) {
         let names: Vec<&str> = style.type_rows().iter().map(|r| r.0).collect();
-        let types = block.get("type").unwrap().as_string().unwrap();
+        let types = block.get("type").unwrap().get::<String>().unwrap();
         let keep: Vec<usize> = (0..types.len())
             .filter(|&i| names.contains(&types[i].as_str()))
             .collect();
@@ -273,7 +274,7 @@ fn energy(ff: &ForceField, frame: &Frame, coords: &[F]) -> F {
     PotentialCompiler::new(ff)
         .compile(frame)
         .unwrap()
-        .calc_energy(coords)
+        .energy_at(coords)
 }
 
 /// `frame` with only the `pairs` rows `keep` selects.
@@ -307,7 +308,7 @@ fn terms(ff: &ForceField, frame: &Frame, coords: &[F]) -> [Option<F>; 10] {
     let pairs = frame.get("pairs").unwrap();
     let is_14 = pairs
         .get("is_14")
-        .and_then(|c| c.as_bool())
+        .and_then(|c| c.get::<bool>())
         .unwrap()
         .clone();
     let overridden = |r: usize| {
@@ -341,24 +342,27 @@ fn write_lammps(dir: &Path, ff: &ForceField, frame: &Frame) {
     for block in ["pairs", "exclusions", "constraints"] {
         lammps.remove(block);
     }
-    write_lammps_data(dir.join("data.lmp"), &lammps).unwrap();
+    write_lammps_data(&dir.join("data.lmp"), &lammps).unwrap();
     let labels = TypeLabels::from_frame(&lammps).unwrap();
     let has_cmap = lammps.get("cmaps").is_some();
-    let options = LammpsForcefieldWriteOptions {
-        precision: 16,
-        skip_units: true,
-        cmap_file: has_cmap.then(|| "charmm.cmap".to_owned()),
-        ..LammpsForcefieldWriteOptions::default()
+    let writer = LammpsForcefieldWriter::new(&labels)
+        .with_precision(16)
+        .with_skip_units(true);
+    let writer = if has_cmap {
+        writer.with_cmap_file("charmm.cmap")
+    } else {
+        writer
     };
-    let writer = LammpsForcefieldWriter::with_options(&labels, options);
-    let include = writer.write_str(ff).unwrap();
+    let include = writer.written(ff).unwrap();
     let (pre, rest): (Vec<&str>, Vec<&str>) = include
         .lines()
         .partition(|l| l.starts_with("fix cmap") || l.starts_with("fix_modify cmap"));
     std::fs::write(dir.join("pre.lmp"), pre.join("\n") + "\n").unwrap();
     std::fs::write(dir.join("system.ff"), rest.join("\n") + "\n").unwrap();
     if has_cmap {
-        std::fs::write(dir.join("charmm.cmap"), writer.write_cmap_str(ff).unwrap()).unwrap();
+        writer
+            .write_cmap(dir.join("charmm.cmap").as_path(), ff)
+            .unwrap();
     }
     let extra = if has_cmap {
         "fix cmap crossterm CMAP"
@@ -505,13 +509,13 @@ fn fixture_directives_survive_write_then_read() {
     });
     let close = |a: f64, b: f64| (a - b).abs() <= 1e-12 * a.abs().max(b.abs()).max(1e-3);
     for f in &FIXTURES[..3] {
-        let ff = reader.read_str(f.top).unwrap();
+        let ff = reader.read(f.top.as_bytes()).unwrap();
         let text = GromacsTopForcefieldWriter::new()
             .with_precision(17)
-            .write_str(&ff)
+            .written(&ff)
             .unwrap_or_else(|e| panic!("{}: {e}", f.name));
         let back = reader
-            .read_str(&text)
+            .read(text.as_bytes())
             .unwrap_or_else(|e| panic!("{}: {e}\n{text}", f.name));
         assert_eq!(back.special_bonds(), ff.special_bonds(), "{}", f.name);
         let key = |ff: &ForceField| {
@@ -528,12 +532,29 @@ fn fixture_directives_survive_write_then_read() {
             let other = back.get_style(style.category(), style.name()).unwrap();
             let what = format!("{} {}/{}", f.name, style.category(), style.name());
             assert_eq!(
-                other.params().iter_strings().collect::<Vec<_>>().len(),
-                style.params().iter_strings().count(),
+                other
+                    .params()
+                    .iter()
+                    .filter_map(|(k, v)| v.as_text().map(|s| (k, s)))
+                    .collect::<Vec<_>>()
+                    .len(),
+                style
+                    .params()
+                    .iter()
+                    .filter_map(|(k, v)| v.as_text().map(|s| (k, s)))
+                    .count(),
                 "{what}: string params"
             );
-            for (k, v) in style.params().iter_strings() {
-                assert_eq!(other.params().get_str(k), Some(v), "{what}: {k}");
+            for (k, v) in style
+                .params()
+                .iter()
+                .filter_map(|(k, v)| v.as_text().map(|s| (k, s)))
+            {
+                assert_eq!(
+                    other.params().get(k).and_then(|v| v.as_text()),
+                    Some(v),
+                    "{what}: {k}"
+                );
             }
             let mut want = style.type_rows();
             let mut got = other.type_rows();
@@ -545,17 +566,25 @@ fn fixture_directives_survive_write_then_read() {
             assert_eq!(names(&got), names(&want), "{what}: type names");
             for ((name, ends, p), (_, got_ends, q)) in want.iter().zip(&got) {
                 assert_eq!(got_ends, ends, "{what} {name}: endpoints");
-                let mut keys: Vec<&str> = p.iter().map(|(k, _)| k).collect();
-                let mut got_keys: Vec<&str> = q.iter().map(|(k, _)| k).collect();
+                let mut keys: Vec<&str> = p
+                    .iter()
+                    .filter_map(|(k, v)| v.as_num().map(|x| (k, x)))
+                    .map(|(k, _)| k)
+                    .collect();
+                let mut got_keys: Vec<&str> = q
+                    .iter()
+                    .filter_map(|(k, v)| v.as_num().map(|x| (k, x)))
+                    .map(|(k, _)| k)
+                    .collect();
                 keys.sort_unstable();
                 got_keys.sort_unstable();
                 assert_eq!(got_keys, keys, "{what} {name}: keys");
-                for (k, v) in p.iter() {
-                    let g = q.get(k).unwrap();
+                for (k, v) in p.iter().filter_map(|(k, v)| v.as_num().map(|x| (k, x))) {
+                    let g = q.get(k).and_then(|v| v.as_num()).unwrap();
                     assert!(close(g, v), "{what} {name}.{k}: {g} vs {v}");
                 }
-                for (k, a) in p.iter_arrays() {
-                    let b = q.get_array(k).expect("array param");
+                for (k, a) in p.iter().filter_map(|(k, v)| v.as_array().map(|a| (k, a))) {
+                    let b = q.get(k).and_then(|v| v.as_array()).expect("array param");
                     assert_eq!(a.shape(), b.shape(), "{what} {name}.{k}");
                     assert!(
                         a.iter().zip(b).all(|(x, y)| close(*x, *y)),

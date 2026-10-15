@@ -12,6 +12,8 @@
 //! and the include holding the `fix` line, then runs `lmp` on them and prints
 //! the values.
 
+use crate::core::Cell;
+use crate::io::writer::WrittenText;
 use std::path::Path;
 
 use ndarray::{Array1, ArrayD, Axis};
@@ -21,9 +23,9 @@ use crate::ff::compile::PotentialCompiler;
 use crate::ff::forcefield::ForceField;
 use crate::ff::ir::CMAP_GRID;
 use crate::ff::ir::Params;
+use crate::ff::potential::fixtures::OneShot;
 use crate::ff::typifier::cmap::assign_cmaps;
-use crate::io::writer::ForceFieldWriter;
-use crate::io::{lammps::LammpsForcefieldWriteOptions, lammps::LammpsForcefieldWriter};
+use crate::io::lammps::LammpsForcefieldWriter;
 use molrs::core::Block;
 use molrs::core::Frame;
 use molrs::core::SimBox;
@@ -58,12 +60,12 @@ fn system() -> (ForceField, Frame, Vec<F>) {
     let mut ff = ForceField::new("charmm");
     let style = ff.def_style("cmap", "charmm", Params::new()).unwrap();
     let mut ala = Params::new();
-    ala.set_array(CMAP_GRID, alanine());
+    ala.set(CMAP_GRID, alanine());
     style
         .def_type("ala", &["C", "NH1", "CT1", "C", "NH1"], ala)
         .unwrap();
     let mut swapped = Params::new();
-    swapped.set_array(
+    swapped.set(
         CMAP_GRID,
         alanine().reversed_axes().as_standard_layout().to_owned(),
     );
@@ -90,36 +92,46 @@ fn system() -> (ForceField, Frame, Vec<F>) {
     let mut atoms = Block::new();
     for (k, key) in ["x", "y", "z"].into_iter().enumerate() {
         let col: Vec<F> = x.iter().skip(k).step_by(3).copied().collect();
-        atoms.insert(key, Array1::from_vec(col).into_dyn()).unwrap();
+        atoms
+            .insert(key, Array1::from_vec(col).into_dyn(), None)
+            .unwrap();
     }
     let types: Vec<String> = TYPES.iter().map(|t| t.to_string()).collect();
     atoms
-        .insert("type", Array1::from_vec(types).into_dyn())
+        .insert("type", Array1::from_vec(types).into_dyn(), None)
         .unwrap();
     let masses: Vec<F> = TYPES
         .iter()
         .map(|t| if t.starts_with('N') { 14.007 } else { 12.011 })
         .collect();
     atoms
-        .insert("mass", Array1::from_vec(masses).into_dyn())
+        .insert("mass", Array1::from_vec(masses).into_dyn(), None)
         .unwrap();
     atoms
-        .insert("charge", Array1::from_vec(vec![0.0 as F; 8]).into_dyn())
+        .insert(
+            "charge",
+            Array1::from_vec(vec![0.0 as F; 8]).into_dyn(),
+            None,
+        )
         .unwrap();
     atoms
-        .insert("mol_id", Array1::from_vec(vec![1 as Idx; 8]).into_dyn())
+        .insert(
+            "mol_id",
+            Array1::from_vec(vec![1 as Idx; 8]).into_dyn(),
+            None,
+        )
         .unwrap();
     let mut dihedrals = Block::new();
     for (p, key) in ["atomi", "atomj", "atomk", "atoml"].into_iter().enumerate() {
         let col: Vec<Idx> = (0..5).map(|d| (d + p) as Idx).collect();
         dihedrals
-            .insert(key, Array1::from_vec(col).into_dyn())
+            .insert(key, Array1::from_vec(col).into_dyn(), None)
             .unwrap();
     }
     let mut frame = Frame::new();
     frame.insert("atoms", atoms);
     frame.insert("dihedrals", dihedrals);
-    frame.simbox = Some(SimBox::cube(40.0, ndarray::array![0.0, 0.0, 0.0], [true; 3]).unwrap());
+    frame.simbox = Some(SimBox::new(Cell::Lengths([40.0; 3]), [0.0, 0.0, 0.0], [true; 3]).unwrap());
     assert_eq!(assign_cmaps(&mut frame, &ff).unwrap(), 3);
     (ff, frame, x)
 }
@@ -128,23 +140,24 @@ fn system() -> (ForceField, Frame, Vec<F>) {
 fn stage_inputs(dir: &Path, ff: &ForceField, frame: &Frame) {
     let mut lammps = frame.clone();
     lammps.remove("dihedrals");
-    write_lammps_data(dir.join("data.lmp"), &lammps).unwrap();
+    write_lammps_data(&dir.join("data.lmp"), &lammps).unwrap();
     let labels = TypeLabels::from_frame(&lammps).unwrap();
-    let options = LammpsForcefieldWriteOptions {
-        skip_pair_style: true,
-        cmap_file: Some("charmm.cmap".into()),
-        ..LammpsForcefieldWriteOptions::default()
-    };
-    let writer = LammpsForcefieldWriter::with_options(&labels, options);
-    std::fs::write(dir.join("charmm.cmap"), writer.write_cmap_str(ff).unwrap()).unwrap();
-    std::fs::write(dir.join("system.ff"), writer.write_str(ff).unwrap()).unwrap();
+    let writer = LammpsForcefieldWriter::new(&labels)
+        .with_skip_pair_style(true)
+        .with_cmap_file("charmm.cmap");
+    std::fs::write(
+        dir.join("charmm.cmap"),
+        crate::io::writer::written_with(|b| writer.write_cmap(b, ff)).unwrap(),
+    )
+    .unwrap();
+    std::fs::write(dir.join("system.ff"), writer.written(ff).unwrap()).unwrap();
 }
 
 #[test]
 fn energy_and_forces_are_lammps_fix_cmap() {
     let (ff, frame, x) = system();
     let pots = PotentialCompiler::new(&ff).compile(&frame).unwrap();
-    let (energy, forces) = pots.calc_energy_forces(&x);
+    let (energy, forces) = pots.energy_forces_at(&x);
     if let Some(dir) = std::env::var_os("MOLRS_LAMMPS_CMAP_DIR") {
         stage_inputs(Path::new(&dir), &ff, &frame);
         println!("molrs energy {energy:.17e}");

@@ -15,16 +15,26 @@ import numpy as np
 import pytest
 
 
+def cube_box(edge: float = 10.0) -> molrs.core.Box:
+    """A periodic cubic box of edge ``edge`` at the origin.
+
+    Plain function (not a fixture) so helpers and parametrizations can call it.
+    """
+    return molrs.core.Box(molrs.core.Cell.lengths([edge, edge, edge]))
+
+
 @pytest.fixture
 def cubic_box():
     """A 10x10x10 cubic box."""
-    return molrs.core.Box.cube(10.0)
+    return cube_box(10.0)
 
 
 @pytest.fixture
 def ortho_box():
     """A 5x10x15 orthorhombic box."""
-    return molrs.core.Box.ortho(np.array([5.0, 10.0, 15.0], dtype=np.float64))
+    return molrs.core.Box(
+        molrs.core.Cell.lengths(np.array([5.0, 10.0, 15.0], dtype=np.float64))
+    )
 
 
 @pytest.fixture
@@ -46,11 +56,12 @@ def _water_frame(*, for_lammps: bool = False) -> molrs.core.Frame:
     """Minimal 3-atom frame with box.
 
     Keep columns minimal so writers (esp. extended XYZ) do not emit fields the
-    matching reader cannot parse. LAMMPS data needs ``type`` (+ optional charge).
+    matching reader cannot parse. LAMMPS data needs ``type_id`` and ``mass``
+    (+ optional charge).
     """
     f = molrs.core.Frame()
     b = molrs.core.Block()
-    b.insert("symbol", ["O", "H", "H"])
+    b.insert("element", ["O", "H", "H"])
     b.insert("x", np.array([0.0, 0.96, -0.24], dtype=np.float64))
     b.insert("y", np.array([0.0, 0.0, 0.93], dtype=np.float64))
     b.insert("z", np.array([0.0, 0.0, 0.0], dtype=np.float64))
@@ -62,9 +73,19 @@ def _water_frame(*, for_lammps: bool = False) -> molrs.core.Frame:
         b.insert("type_id", np.array([1, 2, 2], dtype=np.uint32))
         b.insert("charge", np.array([-0.834, 0.417, 0.417], dtype=np.float64))
         b.insert("mol_id", np.array([1, 1, 1], dtype=np.uint32))
+        # LAMMPS data writes a Masses section per atom type; there is no
+        # default mass.
+        b.insert("mass", np.array([15.999, 1.008, 1.008], dtype=np.float64))
     f["atoms"] = b
-    f.box = molrs.core.Box.cube(10.0)
+    f.box = cube_box(10.0)
     return f
+
+
+def _write_frames(writer, frames) -> None:
+    """Write ``frames`` through a multi-frame ``<Fmt>Writer`` and close it."""
+    for frame in frames:
+        writer.write(frame)
+    writer.close()
 
 
 @pytest.fixture
@@ -76,21 +97,21 @@ def water_frame() -> molrs.core.Frame:
 @pytest.fixture
 def water_xyz(tmp_path: Path) -> Path:
     path = tmp_path / "water.xyz"
-    molrs.io.write_xyz(str(path), _water_frame())
+    molrs.io.write_xyz(path, _water_frame())
     return path
 
 
 @pytest.fixture
 def water_pdb(tmp_path: Path) -> Path:
     path = tmp_path / "water.pdb"
-    molrs.io.write_pdb(str(path), _water_frame())
+    molrs.io.write_pdb(path, _water_frame())
     return path
 
 
 @pytest.fixture
 def water_gro(tmp_path: Path) -> Path:
     path = tmp_path / "water.gro"
-    molrs.io.write_gro(str(path), _water_frame())
+    molrs.io.write_gro(path, _water_frame())
     return path
 
 
@@ -98,7 +119,7 @@ def water_gro(tmp_path: Path) -> Path:
 def water_dcd(tmp_path: Path) -> Path:
     path = tmp_path / "water.dcd"
     frame = _water_frame()
-    molrs.io.write_dcd_trajectory(str(path), [frame, frame])
+    _write_frames(molrs.io.dcd.DcdWriter(path), [frame, frame])
     return path
 
 
@@ -106,7 +127,7 @@ def water_dcd(tmp_path: Path) -> Path:
 def water_trr(tmp_path: Path) -> Path:
     path = tmp_path / "water.trr"
     frame = _water_frame()
-    molrs.io.write_trr_trajectory(str(path), [frame, frame])
+    _write_frames(molrs.io.trr.TrrWriter(path), [frame, frame])
     return path
 
 
@@ -114,7 +135,7 @@ def water_trr(tmp_path: Path) -> Path:
 def water_xtc(tmp_path: Path) -> Path:
     path = tmp_path / "water.xtc"
     frame = _water_frame()
-    molrs.io.write_xtc_trajectory(str(path), [frame, frame])
+    _write_frames(molrs.io.xtc.XtcWriter(path), [frame, frame])
     return path
 
 
@@ -122,14 +143,14 @@ def water_xtc(tmp_path: Path) -> Path:
 def water_lammpstrj(tmp_path: Path) -> Path:
     path = tmp_path / "water.lammpstrj"
     frame = _water_frame(for_lammps=True)
-    molrs.io.write_lammps_dump_trajectory(str(path), [frame, frame])
+    _write_frames(molrs.io.lammps.LammpsDumpWriter(path), [frame, frame])
     return path
 
 
 @pytest.fixture
 def water_lammps_data(tmp_path: Path) -> Path:
     path = tmp_path / "water.data"
-    molrs.io.write_lammps_data(str(path), _water_frame(for_lammps=True))
+    molrs.io.write_lammps_data(path, _water_frame(for_lammps=True))
     return path
 
 
@@ -145,7 +166,7 @@ def make_frame(pts, box_len=10.0):
     block.insert("y", np.ascontiguousarray(pts[:, 1], dtype=np.float64))
     block.insert("z", np.ascontiguousarray(pts[:, 2], dtype=np.float64))
     frame["atoms"] = block
-    frame.box = molrs.core.Box.cube(box_len)
+    frame.box = cube_box(box_len)
     return frame
 
 

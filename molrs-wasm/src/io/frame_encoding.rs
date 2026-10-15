@@ -6,67 +6,84 @@
 //!
 //! | JS | molrs |
 //! |----|-------|
-//! | `readMsgpackFrameBytes`, `writeMsgpackFrameBytes` | MessagePack wire bytes |
-//! | `readJsonFrameStr`, `writeJsonFrameStr` | JSON wire text |
+//! | `FrameEncoding` | `stream::FrameEncoding` (`MessagePack`, `Json`) |
+//! | `readWireFrame`, `writeWireFrame` | `read_wire_frame`, `write_wire_frame` |
 
+use molrs::stream::FrameEncoding as RsFrameEncoding;
 use wasm_bindgen::prelude::*;
 
 use crate::core::frame::Frame;
+use crate::io::{JsSource, source_bytes};
 
-/// Rebuild a [`Frame`] from `molrs::stream` MessagePack wire bytes — what a
-/// publisher puts on the socket, so a page subscribed to a live run decodes
-/// payloads with this and never re-derives the layout in JavaScript. The
-/// inverse of `writeMsgpackFrameBytes`.
+/// The encoding of a frame on the `molrs::stream` wire —
+/// `stream::FrameEncoding`.
+#[wasm_bindgen]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FrameEncoding {
+    /// MessagePack: compact binary, what a publisher sends by default.
+    MessagePack = "msgpack",
+    /// JSON: UTF-8 text, for debugging and interop.
+    Json = "json",
+}
+
+impl FrameEncoding {
+    fn rs(self) -> Result<RsFrameEncoding, JsValue> {
+        match self {
+            FrameEncoding::MessagePack => Ok(RsFrameEncoding::MessagePack),
+            FrameEncoding::Json => Ok(RsFrameEncoding::Json),
+            FrameEncoding::__Invalid => Err(JsValue::from_str(
+                "FrameEncoding must be \"msgpack\" or \"json\"",
+            )),
+        }
+    }
+}
+
+/// Rebuild a [`Frame`] from its `molrs::stream` wire form in `encoding` —
+/// what a publisher puts on the socket. The inverse of `writeWireFrame`.
+///
+/// `source` is the payload: a `Uint8Array` (either encoding) or a `string`
+/// (JSON text).
+///
+/// # Errors
+///
+/// Throws if `source` is neither a string nor a `Uint8Array`, or is not a
+/// frame in `encoding`.
 ///
 /// # Example (JavaScript)
 ///
 /// ```js
 /// socket.onmessage = (ev) => {
-///   const frame = readMsgpackFrameBytes(new Uint8Array(ev.data));
+///   const frame = readWireFrame(new Uint8Array(ev.data), "msgpack");
 /// };
 /// ```
-#[wasm_bindgen(js_name = readMsgpackFrameBytes)]
-pub fn read_msgpack_frame_bytes(data: &[u8]) -> Result<Frame, JsValue> {
-    let rs_frame =
-        molrs::io::read_msgpack_frame_bytes(data).map_err(|e| JsValue::from_str(&e.to_string()))?;
+#[wasm_bindgen(js_name = readWireFrame)]
+pub fn read_wire_frame(source: &JsSource, encoding: FrameEncoding) -> Result<Frame, JsValue> {
+    let bytes = source_bytes("readWireFrame", source)?;
+    let rs_frame = molrs::io::read_wire_frame(&bytes, encoding.rs()?)
+        .map_err(|e| JsValue::from_str(&format!("wire frame read error: {e}")))?;
     Frame::from_rs(rs_frame)
 }
 
-/// Encode `frame` in the `molrs::stream` MessagePack wire encoding — what a
-/// publisher puts on the socket. The inverse of `readMsgpackFrameBytes`.
-#[wasm_bindgen(js_name = writeMsgpackFrameBytes)]
-pub fn write_msgpack_frame_bytes(frame: &Frame) -> Result<Vec<u8>, JsValue> {
+/// Encode `frame` in the `molrs::stream` wire `encoding` — what a publisher
+/// puts on the socket; for JSON, UTF-8 text (`new TextDecoder().decode(…)`).
+/// The inverse of `readWireFrame`.
+#[wasm_bindgen(js_name = writeWireFrame)]
+pub fn write_wire_frame(frame: &Frame, encoding: FrameEncoding) -> Result<Vec<u8>, JsValue> {
+    let encoding = encoding.rs()?;
     frame.with_frame(|f| {
-        molrs::io::write_msgpack_frame_bytes(f).map_err(|e| JsValue::from_str(&e.to_string()))
-    })
-}
-
-/// Rebuild a [`Frame`] from `molrs::stream` JSON wire text. The inverse of
-/// `writeJsonFrameStr`.
-#[wasm_bindgen(js_name = readJsonFrameStr)]
-pub fn read_json_frame_str(text: &str) -> Result<Frame, JsValue> {
-    let rs_frame =
-        molrs::io::read_json_frame_str(text).map_err(|e| JsValue::from_str(&e.to_string()))?;
-    Frame::from_rs(rs_frame)
-}
-
-/// Encode `frame` in the `molrs::stream` JSON wire encoding. The inverse of
-/// `readJsonFrameStr`.
-#[wasm_bindgen(js_name = writeJsonFrameStr)]
-pub fn write_json_frame_str(frame: &Frame) -> Result<String, JsValue> {
-    frame.with_frame(|f| {
-        molrs::io::write_json_frame_str(f).map_err(|e| JsValue::from_str(&e.to_string()))
+        molrs::io::write_wire_frame(f, encoding)
+            .map_err(|e| JsValue::from_str(&format!("wire frame writing error: {e}")))
     })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::io::test_fixtures::float_col;
+    use crate::io::test_fixtures::{bytes, float_col, text};
     use wasm_bindgen_test::*;
 
     #[wasm_bindgen_test]
-    fn stream_bytes_round_trip_through_io() {
+    fn a_frame_round_trips_through_both_encodings() {
         use crate::core::nd_array::JsFloatArray;
 
         let frame = Frame::new();
@@ -80,16 +97,16 @@ mod tests {
             )
             .expect("x");
 
-        let from_msgpack =
-            read_msgpack_frame_bytes(&write_msgpack_frame_bytes(&frame).expect("encode"))
-                .expect("decode");
-        let from_json =
-            read_json_frame_str(&write_json_frame_str(&frame).expect("encode")).expect("decode");
-        for back in [from_msgpack, from_json] {
+        let msgpack = write_wire_frame(&frame, FrameEncoding::MessagePack).expect("encode");
+        let json = write_wire_frame(&frame, FrameEncoding::Json).expect("encode");
+        let json_text = String::from_utf8(json.clone()).expect("JSON is UTF-8");
+        for back in [
+            read_wire_frame(&bytes(&msgpack), FrameEncoding::MessagePack).expect("decode"),
+            read_wire_frame(&bytes(&json), FrameEncoding::Json).expect("decode"),
+            read_wire_frame(&text(&json_text), FrameEncoding::Json).expect("decode"),
+        ] {
             let x = float_col(&back.get("atoms").expect("atoms"), "x");
-            assert_eq!(x.length(), 2);
-            assert_eq!(x.get_index(0), 1.0);
-            assert_eq!(x.get_index(1), 4.0);
+            assert_eq!(x.to_vec(), vec![1.0, 4.0]);
         }
     }
 }

@@ -17,7 +17,7 @@ between the graph representation (`Atomistic`) and the table representation
 ```python
 import molrs
 
-ir = molrs.io.smiles.SmilesIr("CCO")  # ethanol
+ir = molrs.io.smiles.SmilesIr.parse("CCO")  # ethanol
 mol = ir.to_atomistic()
 
 print("components:", ir.n_components)
@@ -76,13 +76,16 @@ hand, use `np.float64` for scientific floating-point columns.
 
 Several analyses need to know whether coordinates are periodic. Attach a
 `Box` before building neighbor lists if the system should be interpreted as a
-periodic simulation cell.
+periodic simulation cell. A box is built from a `Cell` — `Cell.lengths`,
+`Cell.matrix`, `Cell.lengths_angles`, `Cell.lengths_tilts` or
+`Cell.undefined()` — plus an origin and per-axis periodicity;
+`Box.bounding(points, padding, pbc)` encloses a point cloud.
 
 ```python
 import numpy as np
 
-frame.box = molrs.core.Box.cube(
-    20.0,
+frame.box = molrs.core.Box(
+    molrs.core.Cell.lengths([20.0, 20.0, 20.0]),
     pbc=np.array([True, True, True], dtype=np.bool_),
 )
 
@@ -146,7 +149,7 @@ ff = typifier.forcefield()
 typed_frame["pairs"] = molrs.ff.potential.intramolecular_pairs(typed_frame, ff)
 potentials = molrs.ff.compile.PotentialCompiler(ff).compile(typed_frame)
 
-energy, forces = potentials.calc_energy_forces(typed_frame)
+energy, forces = potentials.evaluate(typed_frame)
 print("energy:", energy)
 print("coords shape:", typed_frame.coords.shape)
 print("forces shape:", forces.shape)
@@ -175,7 +178,7 @@ A typifier of your own subclasses `molrs.ff.typifier.Typifier` and implements
 only `assign(graph)`. It returns a `TypeAssignment` with one mapping of annotations per
 atom and, in `links`, per term of any relation kind: keyed by a relation class
 (`Bond`, `Angle`, …) or a kind name (`"bonds"`, or a custom
-`"urey_bradleys"` the graph registered with `register_kind`, whose types land
+`"urey_bradleys"` term block the graph holds through `add_term`, whose types land
 in the category `urey_bradley`). A type annotation is
 `(style, name, endpoints, params)`; endpoints are empty for an atom type. The
 base class's `typify` copies the graph, stamps the assignment onto the copy and
@@ -195,7 +198,7 @@ class EveryAtomX(Typifier):
 
 custom = EveryAtomX()
 custom.typify(mol3d)
-print([(s.category, s.name) for s in custom.forcefield().styles])
+print([(s.category, s.name) for s in custom.forcefield().get_styles(molrs.ff.forcefield.Style)])
 ```
 
 The built-in typifiers (`OplsAaTypifier`, `Mmff94Typifier`, …) can be
@@ -209,8 +212,10 @@ The I/O layer writes frames. This is the final boundary where the graph-based
 work has become a portable coordinate table.
 
 ```python
-molrs.io.write_xyz("ethanol.xyz", frame)
-roundtrip = molrs.io.read_xyz("ethanol.xyz")
+from pathlib import Path
+
+molrs.io.write_xyz(Path("ethanol.xyz"), frame)
+roundtrip = molrs.io.read_xyz(Path("ethanol.xyz"))
 print("roundtrip atoms:", roundtrip["atoms"].n_rows)
 ```
 
@@ -221,8 +226,8 @@ and column at its dtype, typed metadata, the box, the force field, and whole
 trajectories:
 
 ```python
-molrs.io.write_mrec_frame("ethanol.mrec", typed_frame, forcefield=ff)
-print(sorted(molrs.io.mrec.section_names("ethanol.mrec")))
+molrs.io.write_mrec(Path("ethanol.mrec"), frame=typed_frame, forcefield=ff)
+print(molrs.io.mrec.MrecFile(Path("ethanol.mrec")).sections())
 ```
 
 ## Summary
@@ -236,4 +241,4 @@ This quickstart crossed the main molrs boundaries:
 - `Rdf` was configured with its bins and computed over explicit pair sources.
 - `Mmff94Typifier` typed the graph, and `PotentialCompiler` compiled its
   force field into potentials for energy and force evaluation.
-- `write_xyz` and `write_mrec_frame` wrote the result to disk.
+- `write_xyz` and `write_mrec` wrote the result to disk.

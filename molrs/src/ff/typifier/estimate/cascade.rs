@@ -442,7 +442,7 @@ impl Parmchk2Estimator {
     /// directly ([`Parmchk2Estimator::estimate`]) wants to hear that the torsion
     /// is missing, not to be handed a placeholder for it.
     pub(super) fn no_torsion(&self) -> Params {
-        Params::from_pairs(&[("k1", 0.0), ("k2", 0.0), ("k3", 0.0), ("k4", 0.0)])
+        Params::from_iter([("k1", 0.0), ("k2", 0.0), ("k3", 0.0), ("k4", 0.0)])
     }
 
     /// The penalty charged for [`no_torsion`](Self::no_torsion).
@@ -496,7 +496,7 @@ impl Parmchk2Estimator {
             }
             None => {
                 let (barrier, phase_deg, periodicity) = DEFAULT_IMPROPER;
-                let params = Params::from_pairs(&[
+                let params = Params::from_iter([
                     ("k", barrier),
                     ("periodicity", f64::from(periodicity)),
                     ("phase", phase_deg),
@@ -590,13 +590,13 @@ impl Parmchk2Estimator {
     pub(super) fn empirical_bond(&self, types: &[String; 2]) -> Option<Estimate> {
         let e1 = self.element_of(&types[0])?;
         let e2 = self.element_of(&types[1])?;
-        let ln_kij = self.empirical.bond_ln_k(&e1, &e2)?;
-        let rref = self.empirical.bond_length(&e1, &e2)?;
+        let ln_kij = self.empirical.bond_ln_k(e1, e2)?;
+        let rref = self.empirical.bond_length(e1, e2)?;
         // The formula reproduces `gaff.dat`'s own un-halved `K`, which is
         // molrs's (LAMMPS's) `k` as it stands.
         let k = empirical::bond_k(ln_kij, rref, self.empirical.bond_power);
         Some(Estimate::estimated(
-            Params::from_pairs(&[("k", k), ("r0", rref)]),
+            Params::from_iter([("k", k), ("r0", rref)]),
             Provenance::empirical(self.default_penalty(Arity::Bond)),
         ))
     }
@@ -617,15 +617,15 @@ impl Parmchk2Estimator {
         );
         // Un-halved `K`, molrs's (LAMMPS's) `k`; the formula wants θ₀ in radians.
         let k = empirical::angle_k(
-            self.empirical.angle_z(&ea)?,
-            self.empirical.angle_c(&eb)?,
-            self.empirical.angle_z(&ec)?,
-            self.empirical.bond_length(&ea, &eb)?,
-            self.empirical.bond_length(&eb, &ec)?,
+            self.empirical.angle_z(ea)?,
+            self.empirical.angle_c(eb)?,
+            self.empirical.angle_z(ec)?,
+            self.empirical.bond_length(ea, eb)?,
+            self.empirical.bond_length(eb, ec)?,
             theta0.to_radians(),
         );
         Some(Estimate::estimated(
-            Params::from_pairs(&[("k", k), ("theta0", theta0)]),
+            Params::from_iter([("k", k), ("theta0", theta0)]),
             Provenance::empirical(self.default_penalty(Arity::Angle)),
         ))
     }
@@ -640,7 +640,7 @@ impl Parmchk2Estimator {
                 && self
                     .sequence_penalty(&cand.pattern, &query, &inner, Arity::Angle)
                     .is_some())
-            .then(|| cand.params.get("theta0"))
+            .then(|| cand.params.get("theta0").and_then(|v| v.as_num()))
             .flatten()
         })
     }

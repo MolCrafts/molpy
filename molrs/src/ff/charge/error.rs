@@ -2,6 +2,8 @@
 
 use std::fmt;
 
+use crate::ff::typifier::species_label;
+
 /// Why a [`ChargeModel`](super::ChargeModel) could not produce charges.
 ///
 /// Every variant is a refusal, never a fallback: molrs does not answer with a
@@ -42,8 +44,8 @@ pub enum ChargeError {
         table: &'static str,
         /// The atom's 0-based index in graph atom order.
         atom: usize,
-        /// The atom's element symbol.
-        element: String,
+        /// The atom's atomic number (`0` for a wildcard).
+        atomic_number: u8,
     },
     /// No `BCCPARM*.DAT` row covers a perceived bond.
     ///
@@ -60,8 +62,8 @@ pub enum ChargeError {
     },
     /// The molecule itself could not be read.
     ///
-    /// A malformed graph (an atom with no element, a bond whose endpoints are
-    /// gone) — a defect in the input, not in the parameter set.
+    /// A malformed graph (an atom with no valid atomic number, a bond whose
+    /// endpoints are gone) — a defect in the input, not in the parameter set.
     Malformed {
         /// What the graph layer said.
         detail: String,
@@ -82,8 +84,12 @@ impl fmt::Display for ChargeError {
             Self::MissingAtomType {
                 table,
                 atom,
-                element,
-            } => write!(f, "missing {table} atom type for atom {atom} ({element})"),
+                atomic_number,
+            } => write!(
+                f,
+                "missing {table} atom type for atom {atom} ({})",
+                species_label(*atomic_number)
+            ),
             Self::MissingCorrection {
                 left,
                 right,

@@ -282,10 +282,72 @@ class TestRegionSelection:
         with pytest.raises(TypeError):
             sphere & 3
 
-    def test_shape_parameters_and_cube(self):
-        cube = molrs.core.Cuboid.cube(2.0, [1.0, 1.0, 1.0])
+    def test_shape_parameters_of_a_cube(self):
+        cube = molrs.core.Cuboid([1.0, 1.0, 1.0], [2.0, 2.0, 2.0])
         np.testing.assert_allclose(cube.origin, [1.0, 1.0, 1.0])
         np.testing.assert_allclose(cube.lengths, [2.0, 2.0, 2.0])
         sphere = molrs.core.Sphere([1.0, 2.0, 3.0], 4.0)
         np.testing.assert_allclose(sphere.center, [1.0, 2.0, 3.0])
         assert sphere.radius == 4.0
+
+
+class TestParallelepiped:
+    def test_a_cube_from_cell_lengths(self):
+        p = molrs.core.Parallelepiped(molrs.core.Cell.lengths([2.0, 2.0, 2.0]), [1.0, 1.0, 1.0])
+        assert p.volume() == pytest.approx(8.0)
+        np.testing.assert_allclose(p.origin, [1.0, 1.0, 1.0])
+        np.testing.assert_allclose(p.h, np.diag([2.0, 2.0, 2.0]))
+        pts = np.array([[2.0, 2.0, 2.0], [0.5, 2.0, 2.0], [3.0, 3.0, 3.0]])
+        assert list(p.contains(pts)) == [True, False, True]
+        np.testing.assert_allclose(p.distance(pts[:1]), [-1.0])
+
+    def test_an_oblique_cell_from_its_matrix(self):
+        h = np.array([[2.0, 1.0, 0.0], [0.0, 2.0, 0.0], [0.0, 0.0, 2.0]])
+        p = molrs.core.Parallelepiped(molrs.core.Cell.matrix(h), [0.0, 0.0, 0.0])
+        assert p.volume() == pytest.approx(8.0)
+        # The centre of the oblique cell, H @ (0.5, 0.5, 0.5).
+        assert p.contains(np.array([[1.5, 1.0, 1.0]]))[0]
+        # Inside the bounding box but outside the oblique cell.
+        assert not p.contains(np.array([[0.1, 1.9, 1.0]]))[0]
+
+    def test_lengths_tilts_and_lengths_angles_cells(self):
+        tilted = molrs.core.Parallelepiped(
+            molrs.core.Cell.lengths_tilts([2.0, 2.0, 2.0], [1.0, 0.0, 0.0]), [0.0, 0.0, 0.0]
+        )
+        np.testing.assert_allclose(
+            tilted.h, [[2.0, 1.0, 0.0], [0.0, 2.0, 0.0], [0.0, 0.0, 2.0]]
+        )
+        right = molrs.core.Parallelepiped(
+            molrs.core.Cell.lengths_angles([1.0, 2.0, 3.0], [90.0, 90.0, 90.0]),
+            [0.0, 0.0, 0.0],
+        )
+        assert right.volume() == pytest.approx(6.0)
+
+    def test_refuses_an_undefined_or_singular_cell(self):
+        with pytest.raises(ValueError, match="Undefined"):
+            molrs.core.Parallelepiped(molrs.core.Cell.undefined(), [0.0, 0.0, 0.0])
+        with pytest.raises(ValueError, match="singular"):
+            molrs.core.Parallelepiped(
+                molrs.core.Cell.matrix(np.zeros((3, 3))), [0.0, 0.0, 0.0]
+            )
+        with pytest.raises(ValueError, match="positive"):
+            molrs.core.Parallelepiped(
+                molrs.core.Cell.lengths([1.0, 0.0, 1.0]), [0.0, 0.0, 0.0]
+            )
+        with pytest.raises(ValueError, match="length 3"):
+            molrs.core.Parallelepiped(molrs.core.Cell.lengths([1.0, 1.0, 1.0]), [0.0])
+
+    def test_pickles_and_composes(self):
+        import pickle
+
+        p = molrs.core.Parallelepiped(
+            molrs.core.Cell.lengths_tilts([2.0, 2.0, 2.0], [1.0, 0.0, 0.0]), [1.0, 0.0, 0.0]
+        )
+        back = pickle.loads(pickle.dumps(p))
+        np.testing.assert_allclose(back.h, p.h)
+        np.testing.assert_allclose(back.origin, p.origin)
+        pts = np.array([[2.5, 1.0, 1.0], [0.0, 0.0, 0.0]])
+        assert list((p & ~molrs.core.Sphere([2.5, 1.0, 1.0], 0.1)).contains(pts)) == [
+            False,
+            False,
+        ]

@@ -4,7 +4,6 @@
 use crate::array::{ArrayArg1, ArrayArg2};
 use molrs::compute::{Compute, KineticEnergy, KineticEnergyInput, KineticEnergyResult};
 
-use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 
 use super::args;
@@ -30,14 +29,16 @@ impl PyKineticEnergyResult {
 ///
 /// Parameters
 /// ----------
-/// units : str or UnitPreset, optional
+/// units : str or UnitPreset
 ///     The unit system of masses and velocities (``"real"``, ``"metal"``, …):
-///     the core ``KineticEnergy::new``.
-/// mvv2e, boltzmann : float, optional
-///     The ``mass · velocity²`` → energy factor and Boltzmann's constant in
-///     that energy unit, both positive: the core
-///     ``KineticEnergy::with_constants``. Give either ``units`` or both of
-///     these.
+///     the core ``KineticEnergy::new``, which takes the preset's
+///     ``mass · velocity²`` → energy factor and Boltzmann constant.
+/// mvv2e : float, optional
+///     Replace the preset's ``mass · velocity²`` → energy factor (positive):
+///     the core ``with_mvv2e``.
+/// boltzmann : float, optional
+///     Replace the preset's Boltzmann constant, in the energy unit
+///     (positive): the core ``with_boltzmann``.
 ///
 /// ``compute(masses=, velocities=)`` over ``(N,)`` masses and ``(N, 3)``
 /// velocities returns a ``KineticEnergyResult``.
@@ -49,25 +50,15 @@ pub(crate) struct PyKineticEnergy {
 #[pymethods]
 impl PyKineticEnergy {
     #[new]
-    #[pyo3(signature = (*, units = None, mvv2e = None, boltzmann = None))]
-    fn new(
-        units: Option<&Bound<'_, PyAny>>,
-        mvv2e: Option<f64>,
-        boltzmann: Option<f64>,
-    ) -> Result<Self> {
-        let inner = match (units, mvv2e, boltzmann) {
-            (Some(units), None, None) => KineticEnergy::new(args::units(units)?)?,
-            (None, Some(mvv2e), Some(boltzmann)) => {
-                KineticEnergy::with_constants(mvv2e, boltzmann)?
-            }
-            _ => {
-                return Err(PyValueError::new_err(
-                    "KineticEnergy takes either units (a unit preset) or both mvv2e \
-                     and boltzmann (explicit constants)",
-                )
-                .into());
-            }
-        };
+    #[pyo3(signature = (units, *, mvv2e = None, boltzmann = None))]
+    fn new(units: &Bound<'_, PyAny>, mvv2e: Option<f64>, boltzmann: Option<f64>) -> Result<Self> {
+        let mut inner = KineticEnergy::new(args::units(units)?)?;
+        if let Some(mvv2e) = mvv2e {
+            inner = inner.with_mvv2e(mvv2e)?;
+        }
+        if let Some(boltzmann) = boltzmann {
+            inner = inner.with_boltzmann(boltzmann)?;
+        }
         Ok(Self { inner })
     }
 

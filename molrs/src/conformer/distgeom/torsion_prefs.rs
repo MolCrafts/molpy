@@ -35,7 +35,7 @@ use std::collections::HashMap;
 
 use molrs::core::Atomistic;
 use molrs::core::NodeId;
-use molrs::core::PropValue;
+use molrs::core::{BondOrder, keys};
 use molrs::perceive::smarts::{MatchOptions, SmartsPattern};
 
 use super::mol_features::DgFeatures;
@@ -108,10 +108,12 @@ fn aromatic_working_copy(mol: &Atomistic, p: &DgFeatures) -> Atomistic {
     let mut g = mol.clone();
     for (i, &aid) in p.atom_ids.iter().enumerate() {
         if p.atoms[i].aromatic {
-            let _ = g.set_atom(aid, "is_aromatic", 1_i32);
+            g.set_atom(aid, keys::IS_AROMATIC, true)
+                .expect("a live atom takes a bool under the bool schema key is_aromatic");
         }
     }
-    // Flag aromatic bonds so `:` and `BondFacts.aromatic` agree.
+    // Class aromatic bonds so `:` and `BondFacts.aromatic` agree: the SMARTS
+    // engine reads bond aromaticity from the bond class, never a flag.
     let bond_ids: Vec<_> = g
         .bonds()
         .map(|(bid, b)| (bid, [b.nodes[0], b.nodes[1]]))
@@ -127,7 +129,11 @@ fn aromatic_working_copy(mol: &Atomistic, p: &DgFeatures) -> Atomistic {
             continue;
         };
         if p.is_aromatic_bond(ia, ib) {
-            let _ = g.set_bond_prop(bid, "is_aromatic", PropValue::Int(1));
+            let number = g
+                .bond_number(bid)
+                .expect("the bond id was just read from this graph");
+            g.set_bond_class(bid, BondOrder::Aromatic, number)
+                .expect("the bond id was just read from this graph");
         }
     }
     g

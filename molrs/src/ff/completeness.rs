@@ -1364,7 +1364,7 @@ fn every_molrec_class_i_style_is_priced_or_refused_by_name() {
         let ends: Vec<&str> = vec!["a"; arity];
         ff.def_style(category, style, Params::new())
             .unwrap()
-            .def_type("t", &ends, Params::from_pairs(&[("k", 1.0)]))
+            .def_type("t", &ends, Params::from_iter([("k", 1.0)]))
             .unwrap();
         let frame = probe_frame(category, arity);
         let err = PotentialCompiler::new(&ff)
@@ -1385,6 +1385,7 @@ fn probe_frame(category: &str, arity: usize) -> molrs::core::Frame {
         .insert(
             "type",
             Array1::from_vec(vec!["a".to_owned(); arity]).into_dyn(),
+            None,
         )
         .unwrap();
     for key in ["x", "y", "z"] {
@@ -1392,6 +1393,7 @@ fn probe_frame(category: &str, arity: usize) -> molrs::core::Frame {
             .insert(
                 key,
                 Array1::from_vec((0..arity).map(|i| i as f64).collect()).into_dyn(),
+                None,
             )
             .unwrap();
     }
@@ -1401,11 +1403,15 @@ fn probe_frame(category: &str, arity: usize) -> molrs::core::Frame {
         .iter()
         .enumerate()
     {
-        rows.insert(*key, Array1::from_vec(vec![i as Idx]).into_dyn())
+        rows.insert(*key, Array1::from_vec(vec![i as Idx]).into_dyn(), None)
             .unwrap();
     }
-    rows.insert("type", Array1::from_vec(vec!["t".to_owned()]).into_dyn())
-        .unwrap();
+    rows.insert(
+        "type",
+        Array1::from_vec(vec!["t".to_owned()]).into_dyn(),
+        None,
+    )
+    .unwrap();
     frame.insert(format!("{category}s").as_str(), rows);
     frame
 }
@@ -1423,7 +1429,7 @@ fn every_registered_style_persists_through_a_record() {
             .def_type(
                 "a",
                 &[],
-                Params::from_pairs(&[("mass", 1.0), ("charge", 0.1)]),
+                Params::from_iter([("mass", 1.0), ("charge", 0.1)]),
             )
             .unwrap();
         let arity = match category {
@@ -1434,15 +1440,15 @@ fn every_registered_style_persists_through_a_record() {
             _ => 1,
         };
         let ends: Vec<&str> = vec!["a"; arity];
-        let mut params = Params::from_pairs(&[("k", 1.5), ("x0", 0.25)]);
+        let mut params = Params::from_iter([("k", 1.5), ("x0", 0.25)]);
         if category == "cmap" {
             params = Params::new();
-            params.set_array(
+            params.set(
                 crate::ff::ir::CMAP_GRID,
                 ndarray::Array2::from_shape_fn((4, 4), |(i, j)| (i * 4 + j) as f64).into_dyn(),
             );
         }
-        ff.def_style(category, style, Params::from_pairs(&[("cutoff", 9.0)]))
+        ff.def_style(category, style, Params::from_iter([("cutoff", 9.0)]))
             .unwrap()
             .def_type("t", &ends, params)
             .unwrap();
@@ -1452,7 +1458,11 @@ fn every_registered_style_persists_through_a_record() {
             .to_forcefield()
             .unwrap_or_else(|e| panic!("{category} {style}: {e}"));
         let s = back.get_style(category, style).expect(style);
-        assert_eq!(s.params().get("cutoff"), Some(9.0), "{category} {style}");
+        assert_eq!(
+            s.params().get("cutoff").and_then(|v| v.as_num()),
+            Some(9.0),
+            "{category} {style}"
+        );
         let (_, mut got_ends, got) = s.type_rows().into_iter().next().expect("a type");
         if category == "pair" {
             // A self row is one type's, however its endpoints are spelled.

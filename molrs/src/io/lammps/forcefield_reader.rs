@@ -9,6 +9,7 @@ use crate::ff::ir::{Params, SpecialBonds};
 use crate::ff::style_registry::{Registry, RegistryRef};
 use crate::io::lammps::units::parse_lammps_units_style;
 use crate::io::reader::ForceFieldReader;
+use crate::io::{Source, invalid_data};
 use molrs::core::FrameAccess;
 use molrs::core::constants::{COULOMB_METAL, COULOMB_REAL};
 use molrs::core::{TypeLabels, TypeName};
@@ -150,8 +151,9 @@ impl LammpsTypeLabelMaps {
 /// # CMAP crossterms (`fix cmap`)
 ///
 /// A `fix <id> <group> cmap <file>` line reads `<file>` (relative to the
-/// include's directory when the include is read from a path) with
-/// [`read_lammps_cmap_str`] into a `cmap charmm` style: map `t` of the file is
+/// include's directory when the include is read from a path, else to the
+/// working directory) as [`read_cmap`](LammpsForcefieldReader::read_cmap)
+/// does into a `cmap charmm` style: map `t` of the file is
 /// the row named `"t"` — the crossterm type a data file's `CMAP` section
 /// gives — with the synthetic endpoints `t-t-t-t-t`. A `fix_modify` line for
 /// that fix is accepted and changes nothing; any other fix style is refused.
@@ -185,12 +187,15 @@ impl Default for LammpsForcefieldReader {
 }
 
 impl LammpsForcefieldReader {
+    /// The reader: `real` units for a file without a `units` line, the
+    /// process-wide registry.
     pub fn new() -> Self {
         Self::default()
     }
 
     /// Read each style through its codec in `registry` instead of the
-    /// process-wide one.
+    /// process-wide one; the force field read carries it
+    /// ([`ForceField::registry`]).
     pub fn with_registry(mut self, registry: Arc<Registry>) -> Self {
         self.registry = RegistryRef::Own(registry);
         self
@@ -198,7 +203,8 @@ impl LammpsForcefieldReader {
 
     /// The force field a LAMMPS data file's `* Coeffs` sections define, from
     /// the frame the data reader returned
-    /// ([`read_lammps_data`](crate::io::lammps::data::read_lammps_data)).
+    /// ([`read_lammps_data`](crate::io::read_lammps_data)) — the file is read
+    /// once, for the system and its coefficients alike.
     ///
     /// The sections are the frame's
     /// [`LAMMPS_COEFFS_TEXT`](crate::core::keys::LAMMPS_COEFFS_TEXT)
@@ -229,10 +235,20 @@ impl LammpsForcefieldReader {
     ///
     /// # Errors
     ///
-    /// A frame with no `* Coeffs` sections, a `units` that disagrees with the
-    /// one the file stated, a malformed type-label inventory, an unsupported
-    /// hinted style, plus every error of the `*_coeff` parse.
+    /// [`InvalidData`](std::io::ErrorKind::InvalidData), as the frame doors
+    /// fail: a frame with no `* Coeffs` sections, a `units` that disagrees
+    /// with the one the file stated, a malformed type-label inventory, an
+    /// unsupported hinted style, plus every error of the `*_coeff` parse.
     pub fn read_data_coeffs(
+        &self,
+        frame: &impl FrameAccess,
+        units: Option<&str>,
+    ) -> std::io::Result<ForceField> {
+        self.data_coeffs(frame, units).map_err(invalid_data)
+    }
+
+    /// [`read_data_coeffs`](Self::read_data_coeffs), its error the message.
+    fn data_coeffs(
         &self,
         frame: &impl FrameAccess,
         units: Option<&str>,
@@ -313,26 +329,51 @@ impl LammpsForcefieldReader {
         self.read_str_with_labels(&synthetic, labels, None)
     }
 
-    /// Read a LAMMPS `fix cmap` file ([`read_lammps_cmap_str`]) into a force
-    /// field of one `cmap charmm` style: map `t` (1-based, the crossterm type
-    /// of a data file's `CMAP` section) is the row named `"t"`, with the
-    /// synthetic endpoints `t-t-t-t-t` (the file names no atom types), its
-    /// `grid` the map as written.
+    /// Read the LAMMPS `fix cmap` file (CHARMM layout) `src` holds — a path
+    /// or a whole file's bytes — into a force field of one `cmap charmm`
+    /// style: map `t` (1-based, the crossterm type of a data file's `CMAP`
+    /// section) is the row named `"t"`, with the synthetic endpoints
+    /// `t-t-t-t-t` (the file names no atom types), its `grid` the map as
+    /// written. The inverse of
+    /// [`LammpsForcefieldWriter::write_cmap`](crate::io::lammps::LammpsForcefieldWriter::write_cmap).
     ///
-    /// The force field is in the file's `UNITS:` tag, or
+    /// The file is read as `FixCMAP::read_grid_map` reads it: every `#`
+    /// starts a comment to the end of its line; what is left is
+    /// whitespace-separated numbers, 576 (24 × 24) per map, maps one after
+    /// the other in φ-major order. The force field is in the units of the
+    /// first line's `UNITS: <style>` tag, or
     /// [`default_units`](Self::default_units) when it has none.
+    ///
+    /// ```
+    /// use molrs::io::lammps::LammpsForcefieldReader;
+    ///
+    /// let text = format!("# UNITS: real\n# map 1\n{}", "0.5\n".repeat(576));
+    /// let ff = LammpsForcefieldReader::new().read_cmap(text.as_bytes()).unwrap();
+    /// assert_eq!(ff.units(), "real");
+    /// assert!(ff.get_style("cmap", "charmm").is_some());
+    /// ```
     ///
     /// # Errors
     ///
-    /// Every error of [`read_lammps_cmap_str`], and a `UNITS:` tag that is no
+    /// The OS error of a path that cannot be read;
+    /// [`InvalidData`](std::io::ErrorKind::InvalidData) where LAMMPS is
+    /// lenient and reading is total — a trailing incomplete map, a line whose
+    /// values run past the end of a map, a seventh map — and for a
+    /// non-numeric token, a file with no map, and a `UNITS:` tag that is no
     /// LAMMPS unit style.
-    pub fn read_cmap_str(&self, text: &str) -> Result<ForceField, String> {
-        let file = read_lammps_cmap_str(text)?;
+    pub fn read_cmap<'a>(&self, src: impl Into<Source<'a>>) -> std::io::Result<ForceField> {
+        self.cmap(&src.into().text()?).map_err(invalid_data)
+    }
+
+    /// The force field of the `fix cmap` file `text` ([`read_cmap`](Self::read_cmap)).
+    fn cmap(&self, text: &str) -> Result<ForceField, String> {
+        let file = parse_cmap_file(text)?;
         let units = match &file.units {
             Some(units) => parse_lammps_units_style(units)?,
             None => self.default_units,
         };
         let mut ff = ForceField::new("LAMMPS");
+        ff.registry = self.registry.clone();
         add_cmap_rows(&mut ff, &file.maps)?;
         ff.set_units(units);
         Ok(ff)
@@ -357,6 +398,7 @@ impl LammpsForcefieldReader {
     ) -> Result<ForceField, String> {
         let mut file_units = self.default_units;
         let mut ff = ForceField::new("LAMMPS");
+        ff.registry = self.registry.clone();
         let mut pair_rows: Vec<PairRow> = Vec::new();
         let mut pair_line = PairLine::LjCut {
             lj: None,
@@ -467,7 +509,7 @@ impl LammpsForcefieldReader {
                     let text = std::fs::read_to_string(&path).map_err(|e| {
                         format!("{}: fix cmap file {}: {e}", where_(), path.display())
                     })?;
-                    let maps = read_lammps_cmap_str(&text)
+                    let maps = parse_cmap_file(&text)
                         .map_err(|e| format!("{}: {}: {e}", where_(), path.display()))?;
                     add_cmap_rows(&mut ff, &maps.maps)?;
                     cmap_fix = Some(((*id).to_owned(), maps.units));
@@ -516,16 +558,14 @@ impl LammpsForcefieldReader {
 }
 
 impl ForceFieldReader for LammpsForcefieldReader {
-    fn read_str(&self, text: &str) -> Result<ForceField, String> {
-        self.read_str_with_labels(text, &LammpsTypeLabelMaps::default(), None)
-    }
-
-    /// Read the include at `path`; a `fix cmap` file it names is found
-    /// relative to the include's directory.
-    fn read(&self, path: &str) -> Result<ForceField, String> {
-        let text = std::fs::read_to_string(path).map_err(|e| format!("read {path}: {e}"))?;
-        let dir = Path::new(path).parent();
+    /// Read the include `src` holds; a `fix cmap` file it names is found
+    /// relative to the include's directory when `src` is a path.
+    fn read<'a>(&self, src: impl Into<Source<'a>>) -> std::io::Result<ForceField> {
+        let src = src.into();
+        let text = src.text()?;
+        let dir = src.path().and_then(Path::parent);
         self.read_str_with_labels(&text, &LammpsTypeLabelMaps::default(), dir)
+            .map_err(invalid_data)
     }
 }
 
@@ -537,9 +577,11 @@ pub const LAMMPS_CMAP_DIM: usize = 24;
 /// The most maps one `fix cmap` file holds (`CMAPMAX`).
 pub const LAMMPS_CMAP_MAX: usize = 6;
 
-/// The maps of a LAMMPS `fix cmap` file (CHARMM format).
+/// The maps of a LAMMPS `fix cmap` file (CHARMM format), as
+/// [`parse_cmap_file`] reads them; the door,
+/// [`LammpsForcefieldReader::read_cmap`], returns the force field they are.
 #[derive(Debug, Clone, PartialEq)]
-pub struct LammpsCmapFile {
+pub(crate) struct LammpsCmapFile {
     /// The unit style of the first line's `UNITS: <style>` tag, as LAMMPS
     /// reads it (the word after a `UNITS:` token); `None` without one —
     /// LAMMPS's own `charmm36.cmap` spells it `UNITS:real`, which LAMMPS does
@@ -562,16 +604,7 @@ pub struct LammpsCmapFile {
 /// line whose values run past the end of a map (LAMMPS drops the rest of the
 /// line), and a seventh map (LAMMPS reads six and ignores the rest) are
 /// refused, as are a non-numeric token and a file with no map.
-///
-/// ```
-/// use molrs::io::read_lammps_cmap_str;
-///
-/// let text = format!("# UNITS: real\n# map 1\n{}", "0.5\n".repeat(576));
-/// let file = read_lammps_cmap_str(&text).unwrap();
-/// assert_eq!(file.units.as_deref(), Some("real"));
-/// assert_eq!(file.maps[0].shape(), &[24, 24]);
-/// ```
-pub fn read_lammps_cmap_str(text: &str) -> Result<LammpsCmapFile, String> {
+pub(crate) fn parse_cmap_file(text: &str) -> Result<LammpsCmapFile, String> {
     const PER_MAP: usize = LAMMPS_CMAP_DIM * LAMMPS_CMAP_DIM;
     let units = text.lines().next().and_then(|first| {
         let mut words = first.split_whitespace();
@@ -634,7 +667,7 @@ fn add_cmap_rows(ff: &mut ForceField, maps: &[ArrayD<f64>]) -> Result<(), String
     for (t, grid) in maps.iter().enumerate() {
         let name = (t + 1).to_string();
         let mut params = Params::new();
-        params.set_array("grid", grid.clone());
+        params.set("grid", grid.clone());
         let ends = [name.as_str(); 5];
         style
             .def_type(&name, &ends, params)
@@ -658,75 +691,6 @@ fn coulomb_constant(units: &str) -> f64 {
         "lj" => 1.0,
         _ => COULOMB_REAL,
     }
-}
-
-/// The text of the file at `path`, or an error naming it.
-fn read_text(path: &Path) -> Result<String, String> {
-    std::fs::read_to_string(path).map_err(|e| format!("read {}: {e}", path.display()))
-}
-
-/// Read a LAMMPS force-field include (`*.ff`): the `*_style` / `*_coeff`
-/// lines [`write_lammps_forcefield`](crate::io::write_lammps_forcefield)
-/// writes, as [`LammpsForcefieldReader`] reads them.
-///
-/// # Errors
-///
-/// An unreadable file, and every error of [`read_lammps_forcefield_str`].
-pub fn read_lammps_forcefield(path: impl AsRef<Path>) -> Result<ForceField, String> {
-    read_lammps_forcefield_str(&read_text(path.as_ref())?)
-}
-
-/// [`read_lammps_forcefield`] on in-memory text.
-///
-/// # Errors
-///
-/// An unsupported style, a coefficient before its style declaration, a
-/// wrong-arity type label, or a non-numeric parameter (reading is total).
-pub fn read_lammps_forcefield_str(text: &str) -> Result<ForceField, String> {
-    LammpsForcefieldReader::new().read_str(text)
-}
-
-/// Read the force field a LAMMPS data file's `* Coeffs` sections define:
-/// [`read_lammps_data`](crate::io::read_lammps_data), then
-/// [`LammpsForcefieldReader::read_data_coeffs`] on its frame. `units` is the
-/// unit style of the coefficients: the one the file stated when `None`, else
-/// `real`.
-///
-/// # Errors
-///
-/// An unreadable or malformed data file, and every error of
-/// [`LammpsForcefieldReader::read_data_coeffs`].
-pub fn read_lammps_data_coeffs(
-    path: impl AsRef<Path>,
-    units: Option<&str>,
-) -> Result<ForceField, String> {
-    let path = path.as_ref();
-    let frame =
-        crate::io::read_lammps_data(path).map_err(|e| format!("read {}: {e}", path.display()))?;
-    LammpsForcefieldReader::new().read_data_coeffs(&frame, units)
-}
-
-/// [`read_lammps_data_coeffs`] on the in-memory text of a whole data file.
-///
-/// # Errors
-///
-/// A malformed data file, and every error of
-/// [`LammpsForcefieldReader::read_data_coeffs`].
-pub fn read_lammps_data_coeffs_str(text: &str, units: Option<&str>) -> Result<ForceField, String> {
-    let frame = crate::io::read_lammps_data_bytes(text.as_bytes()).map_err(|e| e.to_string())?;
-    LammpsForcefieldReader::new().read_data_coeffs(&frame, units)
-}
-
-/// Read a LAMMPS `fix cmap` file (CHARMM layout) as a force field of one
-/// `cmap charmm` style ([`LammpsForcefieldReader::read_cmap_str`]); its raw
-/// maps are [`read_lammps_cmap_str`]'s.
-///
-/// # Errors
-///
-/// An unreadable file, and every error of
-/// [`LammpsForcefieldReader::read_cmap_str`].
-pub fn read_lammps_cmap_forcefield(path: impl AsRef<Path>) -> Result<ForceField, String> {
-    LammpsForcefieldReader::new().read_cmap_str(&read_text(path.as_ref())?)
 }
 
 /// The data-file sections of the `class2` cross-term lines: heading,
@@ -1305,7 +1269,7 @@ fn build_pairs(
                 "coul/long/pme"
             }
         };
-        Some((name, Params::from_pairs(&p)))
+        Some((name, Params::from_iter(p.iter().copied())))
     };
     // LAMMPS mixes **geometrically** unless `pair_modify mix` says otherwise,
     // and the CHARMM styles **arithmetically**; record it explicitly rather
@@ -1313,11 +1277,16 @@ fn build_pairs(
     let mut styles: Vec<(String, Params)> = Vec::new();
     let coulomb_style = match line {
         PairLine::LjCut { lj, coul } => {
-            let mut p = Params::from_pairs(&lj.map(|c| vec![("cutoff", c)]).unwrap_or_default());
+            let mut p = Params::from_iter(
+                lj.map(|c| vec![("cutoff", c)])
+                    .unwrap_or_default()
+                    .iter()
+                    .copied(),
+            );
             if shift {
                 p.set("shift", 1.0);
             }
-            p.set_str("mixing", mix.unwrap_or("geometric"));
+            p.set("mixing", mix.unwrap_or("geometric"));
             styles.push(("lj/cut".into(), p));
             coul_style(coul)
         }
@@ -1329,12 +1298,12 @@ fn build_pairs(
                         .into(),
                 );
             }
-            let mut p = Params::from_pairs(&[("inner", lj.0), ("cutoff", lj.1)]);
-            p.set_str("mixing", mix.unwrap_or("arithmetic"));
+            let mut p = Params::from_iter([("inner", lj.0), ("cutoff", lj.1)]);
+            p.set("mixing", mix.unwrap_or("arithmetic"));
             styles.push(("lj/charmm".into(), p));
             Some((
                 "coul/charmm",
-                Params::from_pairs(&[
+                Params::from_iter([
                     ("coulomb", coulomb),
                     ("dielectric", VACUUM_DIELECTRIC),
                     ("inner", coul.0),
@@ -1349,7 +1318,7 @@ fn build_pairs(
                     .expect("a sub-style read through its codec");
                 let mut p = sub.params;
                 if spec.style_param("mixing").is_some() {
-                    p.set_str(
+                    p.set(
                         "mixing",
                         codec.fixed_mixing().or(mix).unwrap_or("geometric"),
                     );
@@ -1755,6 +1724,7 @@ fn parse_special_bonds(rest: &[&str], where_: &dyn Fn() -> String) -> Result<Spe
 mod tests {
     use super::*;
     use crate::ff::forcefield::{AngleType, DihedralType, Style, StyleDefs};
+    use crate::ff::potential::fixtures::OneShot;
 
     /// A LAMMPS include covering every style, with values copied from a real
     /// GAFF2 PEO `.ff` (figure5).
@@ -1791,31 +1761,56 @@ dihedral_coeff c3-c3-oh-ho 1 0.060000 3 0.000000
 
     #[test]
     fn reads_lammps_units() {
-        let ff = LammpsForcefieldReader::new().read_str(MINI).unwrap();
+        let ff = LammpsForcefieldReader::new().read(MINI.as_bytes()).unwrap();
 
         // Every coefficient is stored as written: bond K, r0.
         let bond = ff.get_style("bond", "harmonic").unwrap();
         let bt = bond.get_bondtype("c3", "c3").unwrap();
-        assert_eq!(bt.params.get("k"), Some(228.89), "k");
-        assert_eq!(bt.params.get("r0"), Some(1.5354), "r0");
+        assert_eq!(
+            bt.params.get("k").and_then(|v| v.as_num()),
+            Some(228.89),
+            "k"
+        );
+        assert_eq!(
+            bt.params.get("r0").and_then(|v| v.as_num()),
+            Some(1.5354),
+            "r0"
+        );
 
         // angle: K, theta0 in degrees.
         let angle = ff.get_style("angle", "harmonic").unwrap();
         let at = &angle_types(angle)[0];
-        assert_eq!(at.params.get("k"), Some(76.79), "ak");
-        assert_eq!(at.params.get("theta0"), Some(109.66), "theta0");
+        assert_eq!(
+            at.params.get("k").and_then(|v| v.as_num()),
+            Some(76.79),
+            "ak"
+        );
+        assert_eq!(
+            at.params.get("theta0").and_then(|v| v.as_num()),
+            Some(109.66),
+            "theta0"
+        );
 
         // dihedral fourier is molrs's `periodic`: k1/periodicity1/phase1 (deg).
         assert!(ff.get_style("dihedral", "fourier").is_none());
         let dih = ff.get_style("dihedral", "periodic").unwrap();
         let dt = &dihedral_types(dih)[0];
-        assert!((dt.params.get("k1").unwrap() - 0.06).abs() < 1e-12, "k1");
         assert!(
-            (dt.params.get("periodicity1").unwrap() - 3.0).abs() < 1e-12,
+            (dt.params.get("k1").and_then(|v| v.as_num()).unwrap() - 0.06).abs() < 1e-12,
+            "k1"
+        );
+        assert!(
+            (dt.params
+                .get("periodicity1")
+                .and_then(|v| v.as_num())
+                .unwrap()
+                - 3.0)
+                .abs()
+                < 1e-12,
             "periodicity1"
         );
         assert!(
-            (dt.params.get("phase1").unwrap() - 0.0).abs() < 1e-12,
+            (dt.params.get("phase1").and_then(|v| v.as_num()).unwrap() - 0.0).abs() < 1e-12,
             "phase1"
         );
 
@@ -1823,11 +1818,11 @@ dihedral_coeff c3-c3-oh-ho 1 0.060000 3 0.000000
         let lj = ff.get_style("pair", "lj/cut").unwrap();
         let pt = lj.get_pairtype("c3", None).unwrap();
         assert!(
-            (pt.params.get("epsilon").unwrap() - 0.1078).abs() < 1e-9,
+            (pt.params.get("epsilon").and_then(|v| v.as_num()).unwrap() - 0.1078).abs() < 1e-9,
             "eps"
         );
         assert!(
-            (pt.params.get("sigma").unwrap() - 3.39771).abs() < 1e-9,
+            (pt.params.get("sigma").and_then(|v| v.as_num()).unwrap() - 3.39771).abs() < 1e-9,
             "sig"
         );
         assert!(ff.get_style("pair", "coul/cut").is_some(), "coul style");
@@ -1835,12 +1830,25 @@ dihedral_coeff c3-c3-oh-ho 1 0.060000 3 0.000000
         // The cutoffs on the `pair_style` line belong to the force field: without
         // them a written-back include is not a runnable LAMMPS input.
         assert!(
-            (lj.params().get("cutoff").unwrap_or(0.0) - 10.0).abs() < 1e-12,
+            (lj.params()
+                .get("cutoff")
+                .and_then(|v| v.as_num())
+                .unwrap_or(0.0)
+                - 10.0)
+                .abs()
+                < 1e-12,
             "lj cutoff"
         );
         let coul = ff.get_style("pair", "coul/cut").unwrap();
         assert!(
-            (coul.params().get("cutoff").unwrap_or(0.0) - 10.0).abs() < 1e-12,
+            (coul
+                .params()
+                .get("cutoff")
+                .and_then(|v| v.as_num())
+                .unwrap_or(0.0)
+                - 10.0)
+                .abs()
+                < 1e-12,
             "coulomb cutoff"
         );
 
@@ -1868,18 +1876,19 @@ dihedral_coeff c3-c3-oh-ho 1 0.060000 3 0.000000
         let text = "special_bonds amber\n\
                     improper_style harmonic\n\
                     improper_coeff a-b-c-d 10.0 10.0\n";
-        let ff = LammpsForcefieldReader::new().read_str(text).unwrap();
+        let ff = LammpsForcefieldReader::new().read(text.as_bytes()).unwrap();
 
         let mut impropers = Block::new();
         for (key, atom) in [("atomi", 0), ("atomj", 1), ("atomk", 2), ("atoml", 3)] {
             impropers
-                .insert(key, Array1::from_vec(vec![atom as Idx]).into_dyn())
+                .insert(key, Array1::from_vec(vec![atom as Idx]).into_dyn(), None)
                 .unwrap();
         }
         impropers
             .insert(
                 "type",
                 Array1::from_vec(vec!["a-b-c-d".to_string()]).into_dyn(),
+                None,
             )
             .unwrap();
         let mut frame = Frame::new();
@@ -1893,22 +1902,25 @@ dihedral_coeff c3-c3-oh-ho 1 0.060000 3 0.000000
         let coords = [0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 1.0, cos, sin];
         // LAMMPS: E = K·(χ − χ₀)² = 10 · (20°)² kcal/mol, in radians².
         let lammps = 10.0 * 20.0_f64.to_radians().powi(2);
-        let e = pots.calc_energy(&coords);
+        let e = pots.energy_at(&coords);
         assert!((e - lammps).abs() < 1e-10, "E = {e}, LAMMPS gives {lammps}");
     }
 
     #[test]
     fn special_bonds_presets_and_absent_line() {
         let amber = LammpsForcefieldReader::new()
-            .read_str("special_bonds amber\npair_style lj/cut 10.0\npair_coeff c3 c3 0.1 3.4\n")
+            .read(
+                "special_bonds amber\npair_style lj/cut 10.0\npair_coeff c3 c3 0.1 3.4\n"
+                    .as_bytes(),
+            )
             .unwrap();
         assert!((amber.special_bonds().coul_14() - 5.0 / 6.0).abs() < 1e-12);
         assert_eq!(amber.special_bonds().lj_14(), 0.5);
 
         let err = LammpsForcefieldReader::new()
-            .read_str("pair_style lj/cut 10.0\npair_coeff c3 c3 0.1 3.4\n")
+            .read("pair_style lj/cut 10.0\npair_coeff c3 c3 0.1 3.4\n".as_bytes())
             .unwrap_err();
-        assert!(err.contains("special_bonds"), "{err}");
+        assert!(err.to_string().contains("special_bonds"), "{err}");
     }
 
     /// Reduced units stay reduced: an `lj` include declares `lj`, it is not
@@ -1916,9 +1928,10 @@ dihedral_coeff c3-c3-oh-ho 1 0.060000 3 0.000000
     #[test]
     fn units_lj_include_declares_lj_units() {
         let ff = LammpsForcefieldReader::new()
-            .read_str(
+            .read(
                 "units lj\nspecial_bonds lj 0.0 0.0 0.0 coul 0.0 0.0 0.0\n\
-                 pair_style lj/cut 2.5\npair_coeff A A 1.0 1.0\n",
+                 pair_style lj/cut 2.5\npair_coeff A A 1.0 1.0\n"
+                    .as_bytes(),
             )
             .unwrap();
         assert_eq!(ff.units(), "lj");
@@ -1928,7 +1941,10 @@ dihedral_coeff c3-c3-oh-ho 1 0.060000 3 0.000000
     #[test]
     fn include_without_a_units_line_reads_as_real() {
         let ff = LammpsForcefieldReader::new()
-            .read_str("special_bonds amber\npair_style lj/cut 10.0\npair_coeff c3 c3 0.1 3.4\n")
+            .read(
+                "special_bonds amber\npair_style lj/cut 10.0\npair_coeff c3 c3 0.1 3.4\n"
+                    .as_bytes(),
+            )
             .unwrap();
         assert_eq!(ff.units(), "real");
     }
@@ -1936,25 +1952,28 @@ dihedral_coeff c3-c3-oh-ho 1 0.060000 3 0.000000
     #[test]
     fn unknown_keyword_errors() {
         let err = LammpsForcefieldReader::new()
-            .read_str("mystery_style foo\n")
+            .read("mystery_style foo\n".as_bytes())
             .unwrap_err();
-        assert!(err.contains("unknown LAMMPS keyword"), "err: {err}");
+        assert!(
+            err.to_string().contains("unknown LAMMPS keyword"),
+            "err: {err}"
+        );
     }
 
     #[test]
     fn coeff_before_style_errors() {
         let err = LammpsForcefieldReader::new()
-            .read_str("bond_coeff c3-c3 1.0 1.5\n")
+            .read("bond_coeff c3-c3 1.0 1.5\n".as_bytes())
             .unwrap_err();
-        assert!(err.contains("before its"), "err: {err}");
+        assert!(err.to_string().contains("before its"), "err: {err}");
     }
 
     #[test]
     fn wrong_arity_type_label_errors() {
         let err = LammpsForcefieldReader::new()
-            .read_str("bond_style harmonic\nbond_coeff c3-c3-oh 1.0 1.5\n")
+            .read("bond_style harmonic\nbond_coeff c3-c3-oh 1.0 1.5\n".as_bytes())
             .unwrap_err();
-        assert!(err.contains("expected 2"), "err: {err}");
+        assert!(err.to_string().contains("expected 2"), "err: {err}");
     }
 
     /// A cross `pair_coeff i j` (NBFIX) is a pair type of its own. The reader used
@@ -1968,11 +1987,11 @@ pair_coeff c3 c3 0.1078 3.39771
 pair_coeff oh oh 0.0930 3.24287
 pair_coeff c3 oh 0.2500 3.10000
 ";
-        let ff = LammpsForcefieldReader::new().read_str(text).unwrap();
+        let ff = LammpsForcefieldReader::new().read(text.as_bytes()).unwrap();
         let lj = ff.get_style("pair", "lj/cut").unwrap();
         let pt = lj.get_pairtype("c3", Some("oh")).expect("cross row c3-oh");
-        assert!((pt.params.get("epsilon").unwrap() - 0.25).abs() < 1e-12);
-        assert!((pt.params.get("sigma").unwrap() - 3.1).abs() < 1e-12);
+        assert!((pt.params.get("epsilon").and_then(|v| v.as_num()).unwrap() - 0.25).abs() < 1e-12);
+        assert!((pt.params.get("sigma").and_then(|v| v.as_num()).unwrap() - 3.1).abs() < 1e-12);
         assert!(lj.get_pairtype("c3", None).is_some());
     }
 
@@ -1987,12 +2006,21 @@ pair_coeff c3 c3 0.2000 3.00000
 pair_coeff c3 oh 0.2500 3.10000
 pair_coeff oh c3 0.3000 3.20000
 ";
-        let ff = LammpsForcefieldReader::new().read_str(text).unwrap();
+        let ff = LammpsForcefieldReader::new().read(text.as_bytes()).unwrap();
         let lj = ff.get_style("pair", "lj/cut").unwrap();
         let own = lj.get_pairtype("c3", None).unwrap();
-        assert!((own.params.get("epsilon").unwrap() - 0.2).abs() < 1e-12);
+        assert!((own.params.get("epsilon").and_then(|v| v.as_num()).unwrap() - 0.2).abs() < 1e-12);
         let cross = lj.get_pairtype("c3", Some("oh")).expect("cross row");
-        assert!((cross.params.get("epsilon").unwrap() - 0.3).abs() < 1e-12);
+        assert!(
+            (cross
+                .params
+                .get("epsilon")
+                .and_then(|v| v.as_num())
+                .unwrap()
+                - 0.3)
+                .abs()
+                < 1e-12
+        );
     }
 
     /// `pair_coeff 1 *` names a cross pair against every type; expanding it is
@@ -2004,7 +2032,7 @@ special_bonds amber
 pair_style lj/cut 10.0
 pair_coeff c3 * 0.1078 3.39771
 ";
-        assert!(LammpsForcefieldReader::new().read_str(text).is_err());
+        assert!(LammpsForcefieldReader::new().read(text.as_bytes()).is_err());
     }
 
     /// The `hybrid/overlay` pair form round-trips: both cutoffs come back and the
@@ -2017,14 +2045,31 @@ pair_style hybrid/overlay lj/cut 10.0 coul/cut 12.0
 pair_coeff * * coul/cut
 pair_coeff c3 c3 lj/cut 0.1078 3.39771
 ";
-        let ff = LammpsForcefieldReader::new().read_str(text).unwrap();
+        let ff = LammpsForcefieldReader::new().read(text.as_bytes()).unwrap();
         let lj = ff.get_style("pair", "lj/cut").unwrap();
-        assert!((lj.params().get("cutoff").unwrap_or(0.0) - 10.0).abs() < 1e-12);
+        assert!(
+            (lj.params()
+                .get("cutoff")
+                .and_then(|v| v.as_num())
+                .unwrap_or(0.0)
+                - 10.0)
+                .abs()
+                < 1e-12
+        );
         let pt = lj.get_pairtype("c3", None).unwrap();
-        assert!((pt.params.get("epsilon").unwrap() - 0.1078).abs() < 1e-9);
-        assert!((pt.params.get("sigma").unwrap() - 3.39771).abs() < 1e-9);
+        assert!((pt.params.get("epsilon").and_then(|v| v.as_num()).unwrap() - 0.1078).abs() < 1e-9);
+        assert!((pt.params.get("sigma").and_then(|v| v.as_num()).unwrap() - 3.39771).abs() < 1e-9);
         let coul = ff.get_style("pair", "coul/cut").unwrap();
-        assert!((coul.params().get("cutoff").unwrap_or(0.0) - 12.0).abs() < 1e-12);
+        assert!(
+            (coul
+                .params()
+                .get("cutoff")
+                .and_then(|v| v.as_num())
+                .unwrap_or(0.0)
+                - 12.0)
+                .abs()
+                < 1e-12
+        );
     }
 
     /// A hybrid line whose sub-styles carry no cutoff (`hybrid lj/cut coul/cut`)
@@ -2040,30 +2085,54 @@ pair_style lj/charmm/coul/charmm 8.0 10.0
 pair_coeff CT CT 0.055 3.875 0.01 3.385
 pair_coeff OH OH 0.1521 3.1508
 ";
-        let ff = LammpsForcefieldReader::new().read_str(text).unwrap();
+        let ff = LammpsForcefieldReader::new().read(text.as_bytes()).unwrap();
         let lj = ff.get_style("pair", "lj/charmm").unwrap();
-        assert_eq!(lj.params().get("inner"), Some(8.0));
-        assert_eq!(lj.params().get("cutoff"), Some(10.0));
-        assert_eq!(lj.params().get_str("mixing"), Some("arithmetic"));
+        assert_eq!(lj.params().get("inner").and_then(|v| v.as_num()), Some(8.0));
+        assert_eq!(
+            lj.params().get("cutoff").and_then(|v| v.as_num()),
+            Some(10.0)
+        );
+        assert_eq!(
+            lj.params().get("mixing").and_then(|v| v.as_text()),
+            Some("arithmetic")
+        );
         let ct = &lj.get_pairtype("CT", None).unwrap().params;
         assert_eq!(
-            (ct.get("epsilon14"), ct.get("sigma14")),
+            (
+                ct.get("epsilon14").and_then(|v| v.as_num()),
+                ct.get("sigma14").and_then(|v| v.as_num())
+            ),
             (Some(0.01), Some(3.385))
         );
         let oh = &lj.get_pairtype("OH", None).unwrap().params;
         assert_eq!(
-            (oh.get("epsilon14"), oh.get("sigma14")),
+            (
+                oh.get("epsilon14").and_then(|v| v.as_num()),
+                oh.get("sigma14").and_then(|v| v.as_num())
+            ),
             (Some(0.1521), Some(3.1508))
         );
         let coul = ff.get_style("pair", "coul/charmm").unwrap();
-        assert_eq!(coul.params().get("inner"), Some(8.0));
-        assert_eq!(coul.params().get("cutoff"), Some(10.0));
+        assert_eq!(
+            coul.params().get("inner").and_then(|v| v.as_num()),
+            Some(8.0)
+        );
+        assert_eq!(
+            coul.params().get("cutoff").and_then(|v| v.as_num()),
+            Some(10.0)
+        );
 
         let four = text.replace("8.0 10.0", "8.0 10.0 9.0 12.0");
-        let ff = LammpsForcefieldReader::new().read_str(&four).unwrap();
+        let ff = LammpsForcefieldReader::new().read(four.as_bytes()).unwrap();
         let coul = ff.get_style("pair", "coul/charmm").unwrap();
-        assert_eq!(coul.params().get("inner"), Some(9.0));
-        assert_eq!(coul.params().get("cutoff"), Some(12.0));
+        assert_eq!(
+            coul.params().get("inner").and_then(|v| v.as_num()),
+            Some(9.0)
+        );
+        assert_eq!(
+            coul.params().get("cutoff").and_then(|v| v.as_num()),
+            Some(12.0)
+        );
 
         for bad in [
             text.replace("8.0 10.0", "10.0"),
@@ -2071,7 +2140,7 @@ pair_coeff OH OH 0.1521 3.1508
             text.replace("lj/charmm/coul/charmm", "lj/charmm/coul/long"),
         ] {
             assert!(
-                LammpsForcefieldReader::new().read_str(&bad).is_err(),
+                LammpsForcefieldReader::new().read(bad.as_bytes()).is_err(),
                 "{bad}"
             );
         }
@@ -2083,14 +2152,18 @@ pair_coeff OH OH 0.1521 3.1508
 pair_style hybrid lj/cut coul/cut
 pair_coeff c3 c3 lj/cut 0.1078 3.39771
 ";
-        let ff = LammpsForcefieldReader::new().read_str(text).unwrap();
+        let ff = LammpsForcefieldReader::new().read(text.as_bytes()).unwrap();
         let lj = ff.get_style("pair", "lj/cut").unwrap();
-        assert!(lj.params().get("cutoff").is_none(), "no lj cutoff recorded");
+        assert!(
+            lj.params().get("cutoff").and_then(|v| v.as_num()).is_none(),
+            "no lj cutoff recorded"
+        );
         assert!(
             (lj.get_pairtype("c3", None)
                 .unwrap()
                 .params
                 .get("sigma")
+                .and_then(|v| v.as_num())
                 .unwrap()
                 - 3.39771)
                 .abs()
@@ -2111,23 +2184,33 @@ pair_coeff c3 c3 1.0 3.4
 bond_style harmonic
 bond_coeff c3-c3 1.0 1.5
 ";
-        let ff = LammpsForcefieldReader::new().read_str(text).unwrap();
+        let ff = LammpsForcefieldReader::new().read(text.as_bytes()).unwrap();
         assert_eq!(ff.units(), "metal");
         let lj = ff.get_style("pair", "lj/cut").unwrap();
         assert_eq!(
-            lj.get_pairtype("c3", None).unwrap().params.get("epsilon"),
+            lj.get_pairtype("c3", None)
+                .unwrap()
+                .params
+                .get("epsilon")
+                .and_then(|v| v.as_num()),
             Some(1.0)
         );
-        assert_eq!(lj.params().get("cutoff"), Some(10.0));
+        assert_eq!(
+            lj.params().get("cutoff").and_then(|v| v.as_num()),
+            Some(10.0)
+        );
         let bt = ff
             .get_style("bond", "harmonic")
             .unwrap()
             .get_bondtype("c3", "c3")
             .unwrap();
-        assert_eq!(bt.params.get("k"), Some(1.0));
-        assert_eq!(bt.params.get("r0"), Some(1.5));
+        assert_eq!(bt.params.get("k").and_then(|v| v.as_num()), Some(1.0));
+        assert_eq!(bt.params.get("r0").and_then(|v| v.as_num()), Some(1.5));
         let coul = ff.get_style("pair", "coul/cut").unwrap();
-        assert_eq!(coul.params().get("coulomb"), Some(COULOMB_METAL));
+        assert_eq!(
+            coul.params().get("coulomb").and_then(|v| v.as_num()),
+            Some(COULOMB_METAL)
+        );
     }
 
     #[test]
@@ -2172,11 +2255,11 @@ Pair Coeffs
             .unwrap();
         let bond = ff.get_style("bond", "harmonic").unwrap();
         let bt = bond.get_bondtype("OW", "HW").unwrap();
-        assert_eq!(bt.params.get("k"), Some(450.0));
-        assert!((bt.params.get("r0").unwrap() - 0.9572).abs() < 1e-9);
+        assert_eq!(bt.params.get("k").and_then(|v| v.as_num()), Some(450.0));
+        assert!((bt.params.get("r0").and_then(|v| v.as_num()).unwrap() - 0.9572).abs() < 1e-9);
         let lj = ff.get_style("pair", "lj/cut").unwrap();
         let pt = lj.get_pairtype("OW", None).unwrap();
-        assert!((pt.params.get("epsilon").unwrap() - 0.1521).abs() < 1e-9);
+        assert!((pt.params.get("epsilon").and_then(|v| v.as_num()).unwrap() - 0.1521).abs() < 1e-9);
     }
 
     /// A data file whose `* Type Labels` number the types out of sorted order
@@ -2243,7 +2326,7 @@ Angles
 ";
 
     fn data_frame(text: &str) -> crate::core::Frame {
-        crate::io::read_lammps_data_bytes(text.as_bytes()).unwrap()
+        crate::io::read_lammps_data(text.as_bytes()).unwrap()
     }
 
     /// The frame the data reader returned is the whole input: the rows are
@@ -2256,43 +2339,50 @@ Angles
             .unwrap();
         assert_eq!(ff.units(), "real");
         let lj = ff.get_style("pair", "lj/cut").unwrap();
-        let eps = |t: &str| lj.get_pairtype(t, None).unwrap().params.get("epsilon");
+        let eps = |t: &str| {
+            lj.get_pairtype(t, None)
+                .unwrap()
+                .params
+                .get("epsilon")
+                .and_then(|v| v.as_num())
+        };
         assert_eq!(eps("hc"), Some(0.0157));
         assert_eq!(eps("c3"), Some(0.1094));
         let bond = ff.get_style("bond", "harmonic").unwrap();
         assert_eq!(
-            bond.get_bondtype("c3", "hc").unwrap().params.get("k"),
+            bond.get_bondtype("c3", "hc")
+                .unwrap()
+                .params
+                .get("k")
+                .and_then(|v| v.as_num()),
             Some(340.0)
         );
         assert!(ff.get_style("angle", "harmonic").is_some());
     }
 
-    /// The path and string doors read the data file and then its frame's
-    /// `* Coeffs`: the force field `read_data_coeffs` gives on that frame.
+    /// `read_data_coeffs` reads the frame the data door returned, whether
+    /// that read a path or bytes: the same force field.
     #[test]
-    fn data_coeffs_doors_read_the_whole_data_file() {
-        use crate::io::writer::ForceFieldWriter;
+    fn data_coeffs_read_the_frame_of_a_path_or_of_bytes() {
+        use crate::io::writer::WrittenText;
         let include = |ff: &ForceField| {
             let frame = data_frame(LABELLED_DATA);
             crate::io::lammps::forcefield_writer::LammpsForcefieldWriter::new(
                 &TypeLabels::from_frame(&frame).unwrap(),
             )
-            .write_str(ff)
+            .written(ff)
             .unwrap()
         };
-        let by_frame = LammpsForcefieldReader::new()
+        let reader = LammpsForcefieldReader::new();
+        let by_bytes = reader
             .read_data_coeffs(&data_frame(LABELLED_DATA), None)
             .unwrap();
-        let by_str = crate::io::read_lammps_data_coeffs_str(LABELLED_DATA, None).unwrap();
-        assert_eq!(include(&by_str), include(&by_frame));
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("labelled.data");
         std::fs::write(&path, LABELLED_DATA).unwrap();
-        let by_path = crate::io::read_lammps_data_coeffs(&path, None).unwrap();
-        assert_eq!(include(&by_path), include(&by_frame));
-        let err =
-            crate::io::read_lammps_data_coeffs(dir.path().join("absent.data"), None).unwrap_err();
-        assert!(err.contains("absent.data"), "{err}");
+        let frame = crate::io::read_lammps_data(path.as_path()).unwrap();
+        let by_path = reader.read_data_coeffs(&frame, None).unwrap();
+        assert_eq!(include(&by_path), include(&by_bytes));
     }
 
     /// LAMMPS data -> force field -> LAMMPS data (the frame plus the force
@@ -2300,16 +2390,18 @@ Angles
     #[test]
     fn data_coeffs_round_trip_through_a_written_data_file() {
         use crate::io::lammps::forcefield_writer::LammpsForcefieldWriter;
-        use crate::io::writer::ForceFieldWriter;
         use crate::io::writer::FrameWriter;
+        use crate::io::writer::WrittenText;
         let frame = data_frame(LABELLED_DATA);
         let ff = LammpsForcefieldReader::new()
             .read_data_coeffs(&frame, None)
             .unwrap();
         let labels = TypeLabels::from_frame(&frame).unwrap();
-        let coeffs = LammpsForcefieldWriter::new(&labels)
-            .write_data_coeffs_str(&ff)
+        let mut coeffs = Vec::new();
+        LammpsForcefieldWriter::new(&labels)
+            .write_data_coeffs(&mut coeffs, &ff)
             .unwrap();
+        let coeffs = String::from_utf8(coeffs).unwrap();
         let mut written = Vec::new();
         crate::io::lammps::data::LammpsDataWriter::new(&mut written)
             .write(&frame)
@@ -2321,7 +2413,7 @@ Angles
             .unwrap();
         let include = |ff: &ForceField, frame: &crate::core::Frame| {
             LammpsForcefieldWriter::new(&TypeLabels::from_frame(frame).unwrap())
-                .write_str(ff)
+                .written(ff)
                 .unwrap()
         };
         assert_eq!(include(&again, &again_frame), include(&ff, &frame));
@@ -2336,11 +2428,14 @@ Angles
         let err = LammpsForcefieldReader::new()
             .read_data_coeffs(&frame, Some("metal"))
             .unwrap_err();
-        assert!(err.contains("metal") && err.contains("real"), "{err}");
+        assert!(
+            err.to_string().contains("metal") && err.to_string().contains("real"),
+            "{err}"
+        );
         let err = LammpsForcefieldReader::new()
             .read_data_coeffs(&crate::core::Frame::new(), None)
             .unwrap_err();
-        assert!(err.contains("lammps_coeffs_text"), "{err}");
+        assert!(err.to_string().contains("lammps_coeffs_text"), "{err}");
     }
 
     /// `PairIJ Coeffs` rows are pair_coeff lines: the self rows are the types'
@@ -2362,10 +2457,21 @@ PairIJ Coeffs # lj/cut
             .unwrap();
         let lj = ff.get_style("pair", "lj/cut").unwrap();
         let cross = lj.get_pairtype("c3", Some("oh")).expect("cross row c3-oh");
-        assert!((cross.params.get("epsilon").unwrap() - 0.25).abs() < 1e-12);
-        assert!((cross.params.get("sigma").unwrap() - 3.1).abs() < 1e-12);
+        assert!(
+            (cross
+                .params
+                .get("epsilon")
+                .and_then(|v| v.as_num())
+                .unwrap()
+                - 0.25)
+                .abs()
+                < 1e-12
+        );
+        assert!((cross.params.get("sigma").and_then(|v| v.as_num()).unwrap() - 3.1).abs() < 1e-12);
         let own = lj.get_pairtype("oh", None).expect("self row oh");
-        assert!((own.params.get("epsilon").unwrap() - 0.093).abs() < 1e-12);
+        assert!(
+            (own.params.get("epsilon").and_then(|v| v.as_num()).unwrap() - 0.093).abs() < 1e-12
+        );
         assert_eq!(lj.type_rows().len(), 3);
     }
 
@@ -2415,10 +2521,17 @@ PairIJ Coeffs # lj/cut
     fn data_coeffs_pair_morse_hint_reads_through_its_codec() {
         let ff = read_data("Pair Coeffs # morse\n\n1 1.0 2.0 3.0\n").unwrap();
         let morse = ff.get_style("pair", "morse").unwrap();
-        assert_eq!(morse.params().get("cutoff"), Some(DATA_PAIR_CUTOFF));
+        assert_eq!(
+            morse.params().get("cutoff").and_then(|v| v.as_num()),
+            Some(DATA_PAIR_CUTOFF)
+        );
         let p = morse.type_params("1").unwrap();
         assert_eq!(
-            (p.get("d0"), p.get("alpha"), p.get("r0")),
+            (
+                p.get("d0").and_then(|v| v.as_num()),
+                p.get("alpha").and_then(|v| v.as_num()),
+                p.get("r0").and_then(|v| v.as_num())
+            ),
             (Some(1.0), Some(2.0), Some(3.0))
         );
     }
@@ -2428,8 +2541,11 @@ PairIJ Coeffs # lj/cut
         let ff = read_data("Angle Coeffs # harmonic\n\n1 50.0 109.5\n").unwrap();
         let a = ff.get_style("angle", "harmonic").unwrap();
         let at = &angle_types(a)[0];
-        assert_eq!(at.params.get("k"), Some(50.0));
-        assert_eq!(at.params.get("theta0"), Some(109.5));
+        assert_eq!(at.params.get("k").and_then(|v| v.as_num()), Some(50.0));
+        assert_eq!(
+            at.params.get("theta0").and_then(|v| v.as_num()),
+            Some(109.5)
+        );
     }
 
     #[test]
@@ -2440,8 +2556,8 @@ PairIJ Coeffs # lj/cut
             .unwrap()
             .get_bondtype("1", "1")
             .unwrap();
-        assert_eq!(bt.params.get("k"), Some(450.0));
-        assert!((bt.params.get("r0").unwrap() - 0.9572).abs() < 1e-12);
+        assert_eq!(bt.params.get("k").and_then(|v| v.as_num()), Some(450.0));
+        assert!((bt.params.get("r0").and_then(|v| v.as_num()).unwrap() - 0.9572).abs() < 1e-12);
     }
 
     #[test]
@@ -2452,8 +2568,10 @@ PairIJ Coeffs # lj/cut
             .unwrap()
             .get_pairtype("1", None)
             .unwrap();
-        assert!((pt.params.get("epsilon").unwrap() - 0.1521).abs() < 1e-12);
-        assert!((pt.params.get("sigma").unwrap() - 3.1507).abs() < 1e-12);
+        assert!(
+            (pt.params.get("epsilon").and_then(|v| v.as_num()).unwrap() - 0.1521).abs() < 1e-12
+        );
+        assert!((pt.params.get("sigma").and_then(|v| v.as_num()).unwrap() - 3.1507).abs() < 1e-12);
     }
 
     /// The hint selects the dihedral kernel and its coefficient layout: four
@@ -2463,7 +2581,7 @@ PairIJ Coeffs # lj/cut
         let ff = read_data("Dihedral Coeffs # opls/omp\n\n1 1.0 2.0 3.0 4.0\n").unwrap();
         let d = ff.get_style("dihedral", "opls").unwrap();
         let dt = &dihedral_types(d)[0];
-        assert!((dt.params.get("k4").unwrap() - 4.0).abs() < 1e-12);
+        assert!((dt.params.get("k4").and_then(|v| v.as_num()).unwrap() - 4.0).abs() < 1e-12);
     }
 
     /// A section without a `# style` hint keeps the documented default.
@@ -2475,7 +2593,7 @@ PairIJ Coeffs # lj/cut
             .unwrap()
             .get_bondtype("1", "1")
             .unwrap();
-        assert_eq!(bt.params.get("k"), Some(450.0));
+        assert_eq!(bt.params.get("k").and_then(|v| v.as_num()), Some(450.0));
     }
 
     #[test]
@@ -2485,11 +2603,11 @@ special_bonds amber
 dihedral_style opls
 dihedral_coeff CT-CT-CT-CT 1.0 2.0 3.0 4.0
 ";
-        let ff = LammpsForcefieldReader::new().read_str(text).unwrap();
+        let ff = LammpsForcefieldReader::new().read(text.as_bytes()).unwrap();
         let d = ff.get_style("dihedral", "opls").unwrap();
         let dt = &dihedral_types(d)[0];
-        assert!((dt.params.get("k1").unwrap() - 1.0).abs() < 1e-12);
-        assert!((dt.params.get("k4").unwrap() - 4.0).abs() < 1e-12);
+        assert!((dt.params.get("k1").and_then(|v| v.as_num()).unwrap() - 1.0).abs() < 1e-12);
+        assert!((dt.params.get("k4").and_then(|v| v.as_num()).unwrap() - 4.0).abs() < 1e-12);
     }
 
     /// `lammps_coeff_params` returns the params the reader stores, for each
@@ -2497,11 +2615,18 @@ dihedral_coeff CT-CT-CT-CT 1.0 2.0 3.0 4.0
     #[test]
     fn lammps_coeff_params_is_the_identity_on_values() {
         let close = |p: &Params, key: &str, want: f64| {
-            let got = p.get(key).unwrap_or_else(|| panic!("missing `{key}`"));
+            let got = p
+                .get(key)
+                .and_then(|v| v.as_num())
+                .unwrap_or_else(|| panic!("missing `{key}`"));
             assert!((got - want).abs() < 1e-12, "{key}: {got} != {want}");
         };
         let keys = |p: &Params| {
-            let mut k: Vec<String> = p.iter().map(|(k, _)| k.to_owned()).collect();
+            let mut k: Vec<String> = p
+                .iter()
+                .filter_map(|(k, v)| v.as_num().map(|x| (k, x)))
+                .map(|(k, _)| k.to_owned())
+                .collect();
             k.sort();
             k
         };
@@ -2617,12 +2742,20 @@ special_bonds charmm
 dihedral_style charmm
 dihedral_coeff A-B-C-D 0.2 3 180 1.0
 ";
-        let ff = LammpsForcefieldReader::new().read_str(text).unwrap();
+        let ff = LammpsForcefieldReader::new().read(text.as_bytes()).unwrap();
         let d = ff.get_style("dihedral", "charmm").unwrap();
         let dt = &dihedral_types(d)[0];
-        assert!((dt.params.get("k").unwrap() - 0.2).abs() < 1e-12);
-        assert!((dt.params.get("periodicity").unwrap() - 3.0).abs() < 1e-12);
-        assert_eq!(dt.params.get("phase"), Some(180.0));
+        assert!((dt.params.get("k").and_then(|v| v.as_num()).unwrap() - 0.2).abs() < 1e-12);
+        assert!(
+            (dt.params
+                .get("periodicity")
+                .and_then(|v| v.as_num())
+                .unwrap()
+                - 3.0)
+                .abs()
+                < 1e-12
+        );
+        assert_eq!(dt.params.get("phase").and_then(|v| v.as_num()), Some(180.0));
         assert!(ff.get_style("dihedral", "periodic").is_none());
     }
 
@@ -2643,15 +2776,17 @@ bond_coeff 10-10 200.0 1.2
 dihedral_style harmonic
 dihedral_coeff 10-10-10-10 0.2 1.0 180.0
 ";
-        let ff = LammpsForcefieldReader::new().read_str(text).unwrap();
+        let ff = LammpsForcefieldReader::new().read(text.as_bytes()).unwrap();
         let lj = ff.get_style("pair", "lj/cut").unwrap();
         let p1 = lj.get_pairtype("1", None).unwrap();
         let p2 = lj.get_pairtype("2", None).unwrap();
         let p10 = lj.get_pairtype("10", None).unwrap();
-        assert!((p1.params.get("epsilon").unwrap() - 0.11).abs() < 1e-12);
-        assert!((p2.params.get("epsilon").unwrap() - 0.08).abs() < 1e-12);
-        assert!((p10.params.get("epsilon").unwrap() - 0.046).abs() < 1e-12);
-        assert!((p10.params.get("sigma").unwrap() - 0.4).abs() < 1e-12);
+        assert!((p1.params.get("epsilon").and_then(|v| v.as_num()).unwrap() - 0.11).abs() < 1e-12);
+        assert!((p2.params.get("epsilon").and_then(|v| v.as_num()).unwrap() - 0.08).abs() < 1e-12);
+        assert!(
+            (p10.params.get("epsilon").and_then(|v| v.as_num()).unwrap() - 0.046).abs() < 1e-12
+        );
+        assert!((p10.params.get("sigma").and_then(|v| v.as_num()).unwrap() - 0.4).abs() < 1e-12);
     }
 
     // ── fix cmap ────────────────────────────────────────────────────────────
@@ -2663,7 +2798,7 @@ dihedral_coeff 10-10-10-10 0.2 1.0 180.0
     /// LAMMPS.
     #[test]
     fn a_charmm_cmap_file_reads_phi_major() {
-        let file = read_lammps_cmap_str(ALANINE).unwrap();
+        let file = parse_cmap_file(ALANINE).unwrap();
         assert_eq!(file.units, None);
         assert_eq!(file.maps.len(), 1);
         let map = &file.maps[0];
@@ -2674,19 +2809,22 @@ dihedral_coeff 10-10-10-10 0.2 1.0 180.0
         assert_eq!(map[[1, 0]], -0.127133);
 
         let ff = LammpsForcefieldReader::new()
-            .read_cmap_str(ALANINE)
+            .read_cmap(ALANINE.as_bytes())
             .unwrap();
         assert_eq!(ff.units(), "real");
         let rows = ff.get_cmaptypes();
         assert_eq!((rows[0].name.as_str(), rows[0].mtom.as_str()), ("1", "1"));
-        assert_eq!(rows[0].params.get_array("grid"), Some(map));
+        assert_eq!(
+            rows[0].params.get("grid").and_then(|v| v.as_array()),
+            Some(map)
+        );
     }
 
     #[test]
     fn a_cmap_file_fix_cmap_would_misread_is_refused() {
         let map = "0.5\n".repeat(576);
         let tagged = format!("# UNITS: metal\n{map}{map}");
-        let file = read_lammps_cmap_str(&tagged).unwrap();
+        let file = parse_cmap_file(&tagged).unwrap();
         assert_eq!((file.units.as_deref(), file.maps.len()), (Some("metal"), 2));
 
         for (text, why) in [
@@ -2699,7 +2837,7 @@ dihedral_coeff 10-10-10-10 0.2 1.0 180.0
             ("# nothing\n".to_owned(), "no CMAP map"),
             (format!("{}x\n", "0.5\n".repeat(575)), "not a number"),
         ] {
-            let err = read_lammps_cmap_str(&text).unwrap_err();
+            let err = parse_cmap_file(&text).unwrap_err();
             assert!(err.contains(why), "{why}: {err}");
         }
     }
@@ -2714,9 +2852,7 @@ dihedral_coeff 10-10-10-10 0.2 1.0 180.0
                        special_bonds charmm\n";
         let path = dir.path().join("sys.ff");
         std::fs::write(&path, include).unwrap();
-        let ff = LammpsForcefieldReader::new()
-            .read(path.to_str().unwrap())
-            .unwrap();
+        let ff = LammpsForcefieldReader::new().read(path.as_path()).unwrap();
         assert_eq!(ff.get_cmaptypes().len(), 1);
 
         for (text, why) in [
@@ -2731,9 +2867,9 @@ dihedral_coeff 10-10-10-10 0.2 1.0 180.0
         ] {
             std::fs::write(&path, text).unwrap();
             let err = LammpsForcefieldReader::new()
-                .read(path.to_str().unwrap())
+                .read(path.as_path())
                 .unwrap_err();
-            assert!(err.contains(why), "{err}");
+            assert!(err.to_string().contains(why), "{err}");
         }
         std::fs::write(
             dir.path().join("c.cmap"),
@@ -2742,16 +2878,19 @@ dihedral_coeff 10-10-10-10 0.2 1.0 180.0
         .unwrap();
         std::fs::write(&path, include).unwrap();
         let err = LammpsForcefieldReader::new()
-            .read(path.to_str().unwrap())
+            .read(path.as_path())
             .unwrap_err();
-        assert!(err.contains("UNITS: metal"), "{err}");
+        assert!(err.to_string().contains("UNITS: metal"), "{err}");
     }
 
     /// `pair_style lj/cut` prices no charge in LAMMPS: no Coulomb style.
     #[test]
     fn a_bare_lj_cut_has_no_coulomb_style() {
         let ff = LammpsForcefieldReader::new()
-            .read_str("special_bonds amber\npair_style lj/cut 10.0\npair_coeff c3 c3 0.1 3.4\n")
+            .read(
+                "special_bonds amber\npair_style lj/cut 10.0\npair_coeff c3 c3 0.1 3.4\n"
+                    .as_bytes(),
+            )
             .unwrap();
         assert!(ff.get_style("pair", "lj/cut").is_some());
         assert!(ff.get_style("pair", "coul/cut").is_none());
@@ -2769,15 +2908,25 @@ dihedral_coeff 10-10-10-10 0.2 1.0 180.0
             "pair_style hybrid/overlay lj/cut 10.0 coul/long 12.0",
         ] {
             let ff = LammpsForcefieldReader::new()
-                .read_str(&format!(
-                    "special_bonds amber\n{line}\npair_coeff c3 c3 0.1 3.4\n"
-                ))
+                .read(format!("special_bonds amber\n{line}\npair_coeff c3 c3 0.1 3.4\n").as_bytes())
                 .unwrap();
             assert!(ff.get_style("pair", "coul/cut").is_none(), "{line}");
             let coul = ff.get_style("pair", "coul/long/pme").expect(line);
-            assert_eq!(coul.params().get("cutoff"), Some(12.0), "{line}");
-            assert_eq!(coul.params().get("coulomb"), Some(COULOMB_REAL), "{line}");
-            assert_eq!(coul.params().get("alpha"), None, "{line}");
+            assert_eq!(
+                coul.params().get("cutoff").and_then(|v| v.as_num()),
+                Some(12.0),
+                "{line}"
+            );
+            assert_eq!(
+                coul.params().get("coulomb").and_then(|v| v.as_num()),
+                Some(COULOMB_REAL),
+                "{line}"
+            );
+            assert_eq!(
+                coul.params().get("alpha").and_then(|v| v.as_num()),
+                None,
+                "{line}"
+            );
         }
     }
 
@@ -2786,11 +2935,15 @@ dihedral_coeff 10-10-10-10 0.2 1.0 180.0
     fn another_lj_cut_coulomb_is_refused() {
         for style in ["lj/cut/coul/debye 10.0", "lj/cut/coul/dsf 0.2 10.0"] {
             let err = LammpsForcefieldReader::new()
-                .read_str(&format!(
-                    "special_bonds amber\npair_style {style}\npair_coeff c3 c3 0.1 3.4\n"
-                ))
+                .read(
+                    format!("special_bonds amber\npair_style {style}\npair_coeff c3 c3 0.1 3.4\n")
+                        .as_bytes(),
+                )
                 .unwrap_err();
-            assert!(err.contains(style.split(' ').next().unwrap()), "{err}");
+            assert!(
+                err.to_string().contains(style.split(' ').next().unwrap()),
+                "{err}"
+            );
         }
     }
 
@@ -2799,21 +2952,23 @@ dihedral_coeff 10-10-10-10 0.2 1.0 180.0
     #[test]
     fn pair_modify_shift_is_the_lj_cut_shift() {
         let ff = LammpsForcefieldReader::new()
-            .read_str(
-                "special_bonds amber\npair_style lj/cut 10.0\npair_modify mix arithmetic shift yes\n\
-                 pair_coeff c3 c3 0.1 3.4\n",
-            )
+            .read("special_bonds amber\npair_style lj/cut 10.0\npair_modify mix arithmetic shift yes\n\
+                 pair_coeff c3 c3 0.1 3.4\n".as_bytes())
             .unwrap();
         let lj = ff.get_style("pair", "lj/cut").unwrap();
-        assert_eq!(lj.params().get("shift"), Some(1.0));
-        assert_eq!(lj.params().get_str("mixing"), Some("arithmetic"));
+        assert_eq!(lj.params().get("shift").and_then(|v| v.as_num()), Some(1.0));
+        assert_eq!(
+            lj.params().get("mixing").and_then(|v| v.as_text()),
+            Some("arithmetic")
+        );
         let err = LammpsForcefieldReader::new()
-            .read_str(
+            .read(
                 "special_bonds charmm\npair_style lj/charmm/coul/charmm 8.0 10.0\n\
                  pair_modify shift yes\n\
-                 pair_coeff c3 c3 0.1 3.4\n",
+                 pair_coeff c3 c3 0.1 3.4\n"
+                    .as_bytes(),
             )
             .unwrap_err();
-        assert!(err.contains("shift"), "{err}");
+        assert!(err.to_string().contains("shift"), "{err}");
     }
 }

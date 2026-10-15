@@ -17,6 +17,7 @@
 //! the hand value of OpenMM's formula. An OpenMM- or GROMACS-read Coulomb
 //! style states that engine's own constant.
 
+use crate::ff::potential::fixtures::OneShot;
 use std::collections::BTreeMap;
 
 use ndarray::Array1;
@@ -61,7 +62,7 @@ fn per_style(ff: &ForceField, frame: &Frame) -> BTreeMap<String, f64> {
             && let Some(block) = frame.get(block_name)
         {
             let names: Vec<&str> = style.type_rows().iter().map(|r| r.0).collect();
-            let types = block.get("type").unwrap().as_string().unwrap();
+            let types = block.get("type").unwrap().get::<String>().unwrap();
             let keep: Vec<usize> = (0..types.len())
                 .filter(|&i| names.contains(&types[i].as_str()))
                 .collect();
@@ -71,7 +72,7 @@ fn per_style(ff: &ForceField, frame: &Frame) -> BTreeMap<String, f64> {
         let pots = PotentialCompiler::new(&one).compile(&frame).unwrap();
         out.insert(
             format!("{}/{}", style.category(), style.name()),
-            pots.calc_energy(&coords),
+            pots.energy_at(&coords),
         );
     }
     out
@@ -224,9 +225,9 @@ fn relation_block(ff: &ForceField, category: &str, rows: &[Vec<usize>]) -> Optio
     }
     let mut block = Block::new();
     for (c, col) in atoms.into_iter().enumerate() {
-        block.insert(cols[c], col_i(col)).unwrap();
+        block.insert(cols[c], col_i(col), None).unwrap();
     }
-    block.insert("type", col_s(names)).unwrap();
+    block.insert("type", col_s(names), None).unwrap();
     Some(block)
 }
 
@@ -235,16 +236,19 @@ pub(crate) fn hand_frame(ff: &ForceField) -> Frame {
     let mut atoms = Block::new();
     for (d, key) in ["x", "y", "z"].iter().enumerate() {
         atoms
-            .insert(*key, col_f(XYZ.iter().map(|p| p[d]).collect()))
+            .insert(*key, col_f(XYZ.iter().map(|p| p[d]).collect()), None)
             .unwrap();
     }
     atoms
         .insert(
             "type",
             col_s(TYPES.iter().map(|t| (*t).to_owned()).collect()),
+            None,
         )
         .unwrap();
-    atoms.insert("charge", col_f(CHARGES.to_vec())).unwrap();
+    atoms
+        .insert("charge", col_f(CHARGES.to_vec()), None)
+        .unwrap();
     frame.insert("atoms", atoms);
     let bonds: Vec<Vec<usize>> = BONDS.iter().map(|r| r.to_vec()).collect();
     let angles: Vec<Vec<usize>> = ANGLES.iter().map(|r| r.to_vec()).collect();
@@ -260,7 +264,7 @@ pub(crate) fn hand_frame(ff: &ForceField) -> Frame {
             frame.insert(block, b);
         }
     }
-    let pairs = intramolecular_pairs(&frame, ff.special_bonds()).unwrap();
+    let pairs = intramolecular_pairs(&frame, ff.special_bonds(), None).unwrap();
     frame.insert("pairs", pairs);
     frame
 }
@@ -400,7 +404,7 @@ improper_coeff N-C-H-CT 10.5 12.0
 #[test]
 fn file_read_fields_price_at_the_reference_energies() {
     let gmx = GromacsTopForcefieldReader::new()
-        .read_str(GROMACS_FF)
+        .read(GROMACS_FF.as_bytes())
         .unwrap();
     let mut gmx_energies = per_style(&gmx, &hand_frame(&gmx));
     // A GROMACS-read field is priced with GROMACS's own Coulomb constant
@@ -426,7 +430,7 @@ fn file_read_fields_price_at_the_reference_energies() {
             ("pair/lj/cut", 1.264689101097666),
         ],
     );
-    let omm = OpenmmXmlReader::new().read_str(OPENMM_FF).unwrap();
+    let omm = OpenmmXmlReader::new().read(OPENMM_FF.as_bytes()).unwrap();
     let mut omm_energies = per_style(&omm, &hand_frame(&omm));
     // 0.0013423609738289378 is this improper over the dihedral of OpenMM's
     // file order (centre first), which is not what OpenMM prices.
@@ -452,7 +456,9 @@ fn file_read_fields_price_at_the_reference_energies() {
         ],
     );
     assert!(improper > 0.0013423609738289378 * 2.0, "{improper}");
-    let lmp = LammpsForcefieldReader::new().read_str(LAMMPS_FF).unwrap();
+    let lmp = LammpsForcefieldReader::new()
+        .read(LAMMPS_FF.as_bytes())
+        .unwrap();
     assert_energies(
         "LAMMPS",
         &per_style(&lmp, &hand_frame(&lmp)),
@@ -476,9 +482,9 @@ fn file_read_fields_price_at_the_reference_energies() {
 #[test]
 fn an_openmm_improper_prices_as_gromacs_and_openmm_do() {
     let gmx = GromacsTopForcefieldReader::new()
-        .read_str(GROMACS_FF)
+        .read(GROMACS_FF.as_bytes())
         .unwrap();
-    let omm = OpenmmXmlReader::new().read_str(OPENMM_FF).unwrap();
+    let omm = OpenmmXmlReader::new().read(OPENMM_FF.as_bytes()).unwrap();
     let e_gmx = per_style(&gmx, &hand_frame(&gmx))["improper/periodic"];
     let e_omm = per_style(&omm, &hand_frame(&omm))["improper/periodic"];
     let coords: Vec<F> = XYZ.iter().flatten().copied().collect();
@@ -563,10 +569,10 @@ fn typed_frame(typed: &molrs::core::Atomistic, ff: &ForceField) -> Frame {
     if atoms.get("charge").is_none() {
         let n = atoms.n_rows().unwrap();
         let q: Vec<f64> = (0..n).map(|i| 0.1 * ((i % 5) as f64 - 2.0)).collect();
-        atoms.insert("charge", col_f(q)).unwrap();
+        atoms.insert("charge", col_f(q), None).unwrap();
         frame.insert("atoms", atoms);
     }
-    let pairs = intramolecular_pairs(&frame, ff.special_bonds()).unwrap();
+    let pairs = intramolecular_pairs(&frame, ff.special_bonds(), None).unwrap();
     frame.insert("pairs", pairs);
     frame
 }

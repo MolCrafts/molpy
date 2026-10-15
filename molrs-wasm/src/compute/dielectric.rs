@@ -41,8 +41,8 @@ output! {
     StaticDielectricResult => mc::StaticDielectricResult
 }
 
-/// Kinetic energy of one snapshot: from a unit preset (`new`) or explicit
-/// constants (`withConstants`).
+/// Kinetic energy of one snapshot, in a unit preset's units — one
+/// constructor, as `KineticEnergy::new(units).with_mvv2e(..).with_boltzmann(..)`.
 #[wasm_bindgen]
 pub struct KineticEnergy {
     inner: mc::KineticEnergy,
@@ -50,22 +50,25 @@ pub struct KineticEnergy {
 
 #[wasm_bindgen]
 impl KineticEnergy {
-    /// `units` is a registered unit preset name.
+    /// `units` is a registered unit preset name. `mvv2e` replaces the
+    /// preset's `mass · velocity²` → energy factor (1 for consistent units)
+    /// and `boltzmann` its Boltzmann constant in that energy unit, each only
+    /// when given (both positive).
+    ///
+    /// ```js
+    /// const ke  = new KineticEnergy("real");
+    /// const raw = new KineticEnergy("real", 1.0, 0.0019872);
+    /// ```
     #[wasm_bindgen(constructor)]
-    pub fn new(units: &str) -> Result<KineticEnergy, JsError> {
-        Ok(Self {
-            inner: mc::KineticEnergy::new(unit_preset(units)?)?,
-        })
-    }
-
-    /// Explicit constants: `mvv2e` (the `mass · velocity²` → energy factor,
-    /// 1 for consistent units) and Boltzmann's constant `boltzmann` in that
-    /// energy unit, both positive.
-    #[wasm_bindgen(js_name = withConstants)]
-    pub fn with_constants(mvv2e: f64, boltzmann: f64) -> Result<KineticEnergy, JsError> {
-        Ok(Self {
-            inner: mc::KineticEnergy::with_constants(mvv2e, boltzmann)?,
-        })
+    pub fn new(
+        units: &str,
+        mvv2e: Option<f64>,
+        boltzmann: Option<f64>,
+    ) -> Result<KineticEnergy, JsError> {
+        let inner = mc::KineticEnergy::new(unit_preset(units)?)?
+            .given(mvv2e, mc::KineticEnergy::with_mvv2e)?
+            .given(boltzmann, mc::KineticEnergy::with_boltzmann)?;
+        Ok(Self { inner })
     }
 
     /// `{ masses, velocities }`: `masses` is `N`, `velocities` `N × 3`.

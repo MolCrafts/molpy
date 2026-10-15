@@ -33,8 +33,7 @@ use std::rc::Rc;
 use molrs::core::Frame;
 use molrs::core::MetaMap;
 use molrs::core::SimBox;
-use molrs::core::{Block, DType};
-use molrs::op::{F, I, Idx};
+use molrs::core::{Block, BlockDtype, DType};
 
 use crate::error::FfiError;
 use crate::frame_arena::FrameArena;
@@ -44,7 +43,7 @@ use crate::handle::{BlockHandle, FrameId};
 /// `FrameArenaCell::default()`.
 pub type FrameArenaCell = Rc<RefCell<FrameArena>>;
 
-/// An owned numeric column as `(values, shape)`, or `None` when absent.
+/// An owned column as `(values, shape)`, or `None` when absent.
 pub type OwnedColumn<T> = Option<(Vec<T>, Vec<usize>)>;
 
 // =====================================================================
@@ -64,13 +63,6 @@ pub struct FrameRef {
 impl FrameRef {
     /// Wrap an existing arena + id.
     pub fn new(arena: FrameArenaCell, id: FrameId) -> Self {
-        Self { id, arena }
-    }
-
-    /// Create a new empty frame inside a fresh [`FrameArenaCell`].
-    pub fn new_standalone() -> Self {
-        let arena = FrameArenaCell::default();
-        let id = arena.borrow_mut().frame_new();
         Self { id, arena }
     }
 
@@ -110,9 +102,7 @@ impl FrameRef {
 
     /// Clone the simbox out of the frame (if any).
     pub fn box_clone(&self) -> Result<Option<SimBox>, FfiError> {
-        self.arena
-            .borrow()
-            .with_frame_box(self.id, |sb| sb.cloned())
+        self.with(|f| f.simbox.clone())
     }
 
     /// Replace / clear the simbox.
@@ -127,7 +117,16 @@ impl FrameRef {
 
     /// Drop the frame from the arena, invalidating every handle to it.
     pub fn drop_frame(self) -> Result<(), FfiError> {
-        self.arena.borrow_mut().frame_drop(self.id)
+        self.arena.borrow_mut().drop_frame(self.id)
+    }
+}
+
+impl Default for FrameRef {
+    /// A new empty frame inside a fresh [`FrameArenaCell`].
+    fn default() -> Self {
+        let arena = FrameArenaCell::default();
+        let id = arena.borrow_mut().frame_new();
+        Self { id, arena }
     }
 }
 
@@ -195,143 +194,113 @@ impl BlockRef {
         self.arena.borrow().clone_block(&self.handle)
     }
 
-    // ---- Typed column borrows (zero-copy closures) ----
+    // ---- Typed column access ----
 
-    /// Borrow an `F` column as a contiguous slice.
+    /// Borrow a column of dtype `T` as a contiguous slice (zero-copy).
     ///
     /// * `Ok(None)` — column is absent (schema flexibility).
-    /// * `Ok(Some(R))` — column is `F`, closure ran, result returned.
-    /// * `Err(DTypeMismatch)` — column exists but isn't `F`.
-    /// * `Err(NonContiguous)` — column is `F` but not contiguous.
+    /// * `Ok(Some(R))` — column is `T`, closure ran, result returned.
+    /// * `Err(DTypeMismatch)` — column exists but isn't `T`.
+    /// * `Err(NonContiguous)` — column is `T` but not contiguous.
     /// * `Err(InvalidBlockHandle)` — handle stale.
-    pub fn borrow_f<R>(
+    pub fn borrow<T: BlockDtype, R>(
         &self,
         key: &str,
-        f: impl FnOnce(&[F], &[usize]) -> R,
+        f: impl FnOnce(&[T], &[usize]) -> R,
     ) -> Result<Option<R>, FfiError> {
         self.with(|b| -> Result<Option<R>, FfiError> {
-            match b.dtype(key) {
-                None => Ok(None),
-                Some(DType::Float) => {
-                    let arr = b
-                        .get(key)
-                        .and_then(|c| c.as_float())
-                        .ok_or(FfiError::InvalidBlockHandle)?;
-                    let slice =
-                        arr.as_slice_memory_order()
-                            .ok_or_else(|| FfiError::NonContiguous {
-                                key: key.to_string(),
-                            })?;
-                    Ok(Some(f(slice, arr.shape())))
-                }
-                Some(actual) => Err(FfiError::DTypeMismatch {
+            let Some(actual) = b.dtype(key) else {
+                return Ok(None);
+            };
+            if actual != T::dtype() {
+                return Err(FfiError::DTypeMismatch {
                     key: key.to_string(),
-                    expected: DType::Float,
+                    expected: T::dtype(),
                     actual,
-                }),
+                });
             }
+            let arr = b
+                .get(key)
+                .and_then(|c| c.get::<T>())
+                .ok_or(FfiError::InvalidBlockHandle)?;
+            let slice = arr
+                .as_slice_memory_order()
+                .ok_or_else(|| FfiError::NonContiguous {
+                    key: key.to_string(),
+                })?;
+            Ok(Some(f(slice, arr.shape())))
         })?
     }
 
-    /// Borrow an `I` column as a contiguous slice. See [`borrow_f`](Self::borrow_f).
-    pub fn borrow_i<R>(
-        &self,
-        key: &str,
-        f: impl FnOnce(&[I], &[usize]) -> R,
-    ) -> Result<Option<R>, FfiError> {
-        self.with(|b| -> Result<Option<R>, FfiError> {
-            match b.dtype(key) {
-                None => Ok(None),
-                Some(DType::Int) => {
-                    let arr = b
-                        .get(key)
-                        .and_then(|c| c.as_int())
-                        .ok_or(FfiError::InvalidBlockHandle)?;
-                    let slice =
-                        arr.as_slice_memory_order()
-                            .ok_or_else(|| FfiError::NonContiguous {
-                                key: key.to_string(),
-                            })?;
-                    Ok(Some(f(slice, arr.shape())))
-                }
-                Some(actual) => Err(FfiError::DTypeMismatch {
-                    key: key.to_string(),
-                    expected: DType::Int,
-                    actual,
-                }),
-            }
-        })?
+    /// Owned copy of a column of dtype `T` as `(values, shape)`. Same
+    /// Ok/Err semantics as [`borrow`](Self::borrow).
+    pub fn copy<T: BlockDtype>(&self, key: &str) -> Result<OwnedColumn<T>, FfiError> {
+        self.borrow::<T, _>(key, |slice, shape| (slice.to_vec(), shape.to_vec()))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use molrs::op::{F, Idx};
+    use ndarray::Array1;
+
+    fn frame_with_atoms() -> FrameRef {
+        let frame = FrameRef::default();
+        let mut atoms = Block::new();
+        atoms
+            .insert("x", Array1::from_vec(vec![1.0 as F, 2.0]).into_dyn(), None)
+            .unwrap();
+        atoms
+            .insert("id", Array1::from_vec(vec![7 as Idx, 9]).into_dyn(), None)
+            .unwrap();
+        atoms
+            .insert(
+                "name",
+                Array1::from_vec(vec!["a".to_string(), "b".to_string()]).into_dyn(),
+                None,
+            )
+            .unwrap();
+        frame
+            .arena
+            .borrow_mut()
+            .set_block(frame.id, "atoms", atoms)
+            .unwrap();
+        frame
     }
 
-    /// Borrow a `U` column as a contiguous slice. See [`borrow_f`](Self::borrow_f).
-    pub fn borrow_u<R>(
-        &self,
-        key: &str,
-        f: impl FnOnce(&[Idx], &[usize]) -> R,
-    ) -> Result<Option<R>, FfiError> {
-        self.with(|b| -> Result<Option<R>, FfiError> {
-            match b.dtype(key) {
-                None => Ok(None),
-                Some(DType::Uint) => {
-                    let arr = b
-                        .get(key)
-                        .and_then(|c| c.as_uint())
-                        .ok_or(FfiError::InvalidBlockHandle)?;
-                    let slice =
-                        arr.as_slice_memory_order()
-                            .ok_or_else(|| FfiError::NonContiguous {
-                                key: key.to_string(),
-                            })?;
-                    Ok(Some(f(slice, arr.shape())))
-                }
-                Some(actual) => Err(FfiError::DTypeMismatch {
-                    key: key.to_string(),
-                    expected: DType::Uint,
-                    actual,
-                }),
-            }
-        })?
+    #[test]
+    fn borrow_and_copy_dispatch_on_the_requested_dtype() {
+        let atoms = frame_with_atoms().block("atoms").unwrap();
+        let sum = atoms
+            .borrow::<F, _>("x", |x, _| x.iter().sum::<F>())
+            .unwrap();
+        assert_eq!(sum, Some(3.0));
+        assert_eq!(
+            atoms.copy::<Idx>("id").unwrap(),
+            Some((vec![7, 9], vec![2]))
+        );
+        assert_eq!(
+            atoms.copy::<String>("name").unwrap().map(|(v, _)| v),
+            Some(vec!["a".to_string(), "b".to_string()])
+        );
+        assert_eq!(atoms.copy::<F>("absent").unwrap(), None);
+        assert!(matches!(
+            atoms.copy::<F>("id"),
+            Err(FfiError::DTypeMismatch {
+                expected: DType::Float,
+                actual: DType::Uint,
+                ..
+            })
+        ));
     }
 
-    // ---- String column (always owned copy — strings aren't in contiguous
-    // scalar memory, so zero-copy isn't meaningful) ----
-
-    /// Copy a `String` column. See [`borrow_f`](Self::borrow_f) for the
-    /// Ok/Err semantics.
-    pub fn col_str(&self, key: &str) -> Result<Option<Vec<String>>, FfiError> {
-        self.with(|b| -> Result<Option<Vec<String>>, FfiError> {
-            match b.dtype(key) {
-                None => Ok(None),
-                Some(DType::String) => {
-                    let arr = b
-                        .get(key)
-                        .and_then(|c| c.as_string())
-                        .ok_or(FfiError::InvalidBlockHandle)?;
-                    Ok(Some(arr.iter().cloned().collect()))
-                }
-                Some(actual) => Err(FfiError::DTypeMismatch {
-                    key: key.to_string(),
-                    expected: DType::String,
-                    actual,
-                }),
-            }
-        })?
-    }
-
-    // ---- Owned copies of numeric columns ----
-
-    /// Owned copy of an `F` column. Same dtype semantics as [`borrow_f`].
-    pub fn copy_f(&self, key: &str) -> Result<OwnedColumn<F>, FfiError> {
-        self.borrow_f(key, |slice, shape| (slice.to_vec(), shape.to_vec()))
-    }
-
-    /// Owned copy of an `I` column.
-    pub fn copy_i(&self, key: &str) -> Result<OwnedColumn<I>, FfiError> {
-        self.borrow_i(key, |slice, shape| (slice.to_vec(), shape.to_vec()))
-    }
-
-    /// Owned copy of a `U` column.
-    pub fn copy_u(&self, key: &str) -> Result<OwnedColumn<Idx>, FfiError> {
-        self.borrow_u(key, |slice, shape| (slice.to_vec(), shape.to_vec()))
+    #[test]
+    fn box_clone_reads_through_the_frame_and_drop_frame_invalidates() {
+        let frame = frame_with_atoms();
+        assert!(frame.box_clone().unwrap().is_none());
+        let stale = frame.clone();
+        frame.drop_frame().unwrap();
+        assert!(matches!(stale.box_clone(), Err(FfiError::InvalidFrameId)));
     }
 }

@@ -16,7 +16,6 @@ pub use dtype::{BlockDtype, DType};
 pub use error::BlockError;
 
 use indexmap::IndexMap;
-use ndarray::ArrayD;
 use std::ops::{Index, IndexMut};
 
 /// A dictionary from string keys to ndarray arrays with a consistent axis-0 length.
@@ -37,9 +36,8 @@ use std::ops::{Index, IndexMut};
 /// which of those values mean anything — the mask lives in a side map on the
 /// block, not in the column, so a consumer that knows nothing about
 /// nullability reads the filled values exactly as it did before. The mask is
-/// attached to a column of any dtype with [`set_validity`](Self::set_validity)
-/// ([`insert_nullable`](Self::insert_nullable) is the typed-array shorthand
-/// for insert-then-mask). Ask [`validity`](Self::validity) for the mask; it is
+/// attached to a column of any dtype when it is [inserted](Self::insert), or
+/// afterwards with [`set_validity`](Self::set_validity). Ask [`validity`](Self::validity) for the mask; it is
 /// `Some` iff at least one row of that column is null.
 ///
 /// # Column order
@@ -63,12 +61,12 @@ use std::ops::{Index, IndexMut};
 /// let pos = Array1::from_vec(vec![1.0 as F, 2.0 as F, 3.0 as F]).into_dyn();
 /// let ids = Array1::from_vec(vec![10 as Idx, 20 as Idx, 30 as Idx]).into_dyn();
 ///
-/// block.insert("pos", pos).unwrap();
-/// block.insert("id", ids).unwrap();
+/// block.insert("pos", pos, None).unwrap();
+/// block.insert("id", ids, None).unwrap();
 ///
 /// // The column comes back whole. dtype is a property of that column.
-/// let pos_ref = block.get("pos").and_then(|c| c.as_float()).unwrap();
-/// let ids_ref = block.get("id").and_then(|c| c.as_uint()).unwrap();
+/// let pos_ref = block.get("pos").and_then(|c| c.get::<f64>()).unwrap();
+/// let ids_ref = block.get("id").and_then(|c| c.get::<u64>()).unwrap();
 ///
 /// assert_eq!(block.n_rows(), Some(3));
 /// assert_eq!(block.len(), 2);
@@ -77,7 +75,7 @@ use std::ops::{Index, IndexMut};
 pub struct Block {
     map: IndexMap<String, Column>,
     /// Per-column validity masks, each of length `n_rows`. A column absent from
-    /// this map is fully valid; see [`Block::insert_nullable`].
+    /// this map is fully valid; see [`Block::insert`].
     validity: IndexMap<String, Vec<bool>>,
     /// Declared [precision](crate::core::check_precision) per `f64` column. A
     /// column absent from this map is stored as given.
@@ -114,18 +112,6 @@ impl Block {
     pub fn new() -> Self {
         Self {
             map: IndexMap::new(),
-            validity: IndexMap::new(),
-            precision: IndexMap::new(),
-            targets: IndexMap::new(),
-            n_rows: None,
-            shape: None,
-        }
-    }
-
-    /// Creates an empty Block with the specified capacity.
-    pub fn with_capacity(cap: usize) -> Self {
-        Self {
-            map: IndexMap::with_capacity(cap),
             validity: IndexMap::new(),
             precision: IndexMap::new(),
             targets: IndexMap::new(),
@@ -220,17 +206,35 @@ impl Block {
         self.map.contains_key(key)
     }
 
-    /// Inserts an array under `key`, enforcing consistent axis-0 length.
+    /// Inserts a column under `key`, enforcing consistent axis-0 length.
     ///
-    /// This method uses generic dispatch via the `BlockDtype` trait to accept
-    /// any supported type (float, int, bool) without requiring users to
-    /// manually construct Column enums.
+    /// `col` is anything that converts into a [`Column`]: an owned
+    /// `ArrayD<T>` of any [`BlockDtype`], a pre-built [`Column`] (the zero-copy
+    /// path for moving a column between blocks), or a [`ColumnArray`].
+    ///
+    /// `validity` is the column's per-row validity mask, or `None` for a
+    /// column whose every row holds a value. `mask[i] == false` marks row `i`
+    /// as holding *no* value: the array still carries something at that row —
+    /// whatever the caller put there, typically the type's default — and every
+    /// reader that does not ask for the mask sees that filled value. An
+    /// all-`true` mask states nothing `None` does not, so it is dropped rather
+    /// than stored: [`validity`](Self::validity) returns `Some` **iff** at
+    /// least one row of `key` is null.
+    ///
+    /// Re-inserting an existing key replaces its column outright, mask
+    /// included.
     ///
     /// # Errors
     ///
-    /// - Returns `BlockError::RankZero` if the array has rank 0
-    /// - Returns `BlockError::RaggedAxis0` if the array's axis-0 length doesn't
-    ///   match the Block's existing `n_rows`
+    /// - [`BlockError::RankZero`] if the column has rank 0;
+    /// - [`BlockError::ValidityLength`] if `validity` does not have exactly one
+    ///   entry per row of the column;
+    /// - [`BlockError::SchemaDtype`] / [`BlockError::SchemaShape`] if `key` is
+    ///   a canonical column the value does not fit;
+    /// - [`BlockError::RaggedAxis0`] if the column's axis-0 length doesn't
+    ///   match the Block's existing `n_rows`.
+    ///
+    /// The block is unchanged on error.
     ///
     /// # Examples
     ///
@@ -243,119 +247,74 @@ impl Block {
     ///
     /// // Insert float array
     /// let arr_float = Array1::from_vec(vec![1.0 as F, 2.0 as F]).into_dyn();
-    /// block.insert("x", arr_float).unwrap();
+    /// block.insert("x", arr_float, None).unwrap();
     ///
     /// // Insert int array with same n_rows
     /// let arr_int = Array1::from_vec(vec![10 as Idx, 20 as Idx]).into_dyn();
-    /// block.insert("id", arr_int).unwrap();
+    /// block.insert("id", arr_int, None).unwrap();
     ///
     /// // `id` is UInt in the Frame schema, so a signed column is refused —
     /// // the vocabulary binds the key wherever it appears, without the block
     /// // knowing whether it is `atoms` or `bonds`.
     /// let signed = Array1::from_vec(vec![10 as I, 20 as I]).into_dyn();
-    /// assert!(block.insert("id", signed).is_err());
+    /// assert!(block.insert("id", signed, None).is_err());
     ///
     /// // This would error - different n_rows
     /// let arr_bad = Array1::from_vec(vec![1.0 as F, 2.0 as F, 3.0 as F]).into_dyn();
-    /// assert!(block.insert("bad", arr_bad).is_err());
-    /// ```
-    pub fn insert<T: BlockDtype>(
-        &mut self,
-        key: impl Into<String>,
-        arr: ArrayD<T>,
-    ) -> Result<(), BlockError> {
-        let key = key.into();
-        let shape = arr.shape();
-
-        // Check rank >= 1
-        if shape.is_empty() {
-            return Err(BlockError::RankZero { key });
-        }
-
-        check_schema(&key, T::dtype(), shape)?;
-
-        let len0 = shape[0];
-
-        // Check axis-0 consistency
-        match self.n_rows {
-            None => {
-                // First insertion defines n_rows
-                self.n_rows = Some(len0);
-            }
-            Some(expected) => {
-                if len0 != expected {
-                    return Err(BlockError::RaggedAxis0 {
-                        key,
-                        expected,
-                        got: len0,
-                    });
-                }
-            }
-        }
-
-        let col = promote_canonical_uint(&key, T::into_column(arr));
-        // A plain insert replaces the column outright, mask included: the
-        // rows it describes are gone.
-        self.validity.shift_remove(&key);
-        self.keep_precision_if_float(&key, col.dtype());
-        self.keep_target_if_uint(&key, col.dtype());
-        self.map.insert(key, col);
-        Ok(())
-    }
-
-    /// Inserts an array under `key` together with a per-row validity mask.
+    /// assert!(block.insert("bad", arr_bad, None).is_err());
     ///
-    /// `validity[i] == false` marks row `i` as holding *no* value. The array
-    /// still carries something at that row — whatever the caller put there,
-    /// typically the type's default — and every reader that does not ask for
-    /// the mask sees that filled value, exactly as it did before nullable
-    /// columns existed. The mask is the only place the distinction lives.
-    ///
-    /// **Normalisation.** An all-`true` mask states nothing that
-    /// [`insert`](Self::insert) does not, so it is dropped rather than stored:
-    /// [`validity`](Self::validity) returns `Some` **iff** at least one row of
-    /// `key` is null.
-    ///
-    /// # Errors
-    ///
-    /// Everything [`insert`](Self::insert) refuses, plus
-    /// [`BlockError::ValidityLength`] when `validity` does not have exactly one
-    /// entry per row of `arr`.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use molrs::core::Block;
-    /// use molrs::op::I;
-    /// use ndarray::Array1;
-    ///
-    /// let mut block = Block::new();
-    /// let frag = Array1::from_vec(vec![7 as I, 0, 0]).into_dyn();
-    /// block.insert_nullable("frag_id", frag, vec![true, false, false]).unwrap();
-    ///
-    /// assert_eq!(block.validity("frag_id"), Some(&[true, false, false][..]));
+    /// // A nullable column: rows 1 and 2 hold no value.
+    /// let frag = Array1::from_vec(vec![7 as I, 0]).into_dyn();
+    /// block.insert("frag_id", frag, Some(vec![true, false])).unwrap();
+    /// assert_eq!(block.validity("frag_id"), Some(&[true, false][..]));
     /// // The values stay readable: row 1 reads as the filled 0.
-    /// assert_eq!(block.get("frag_id").and_then(|c| c.as_int()).unwrap()[[1]], 0);
+    /// assert_eq!(block.get("frag_id").and_then(|c| c.get::<I>()).unwrap()[[1]], 0);
     /// ```
-    pub fn insert_nullable<T: BlockDtype>(
+    pub fn insert(
         &mut self,
         key: impl Into<String>,
-        arr: ArrayD<T>,
-        validity: Vec<bool>,
+        col: impl Into<Column>,
+        validity: Option<Vec<bool>>,
     ) -> Result<(), BlockError> {
         let key = key.into();
-        // A rank-0 array has no rows to mask; `insert` names that condition.
-        if let Some(&rows) = arr.shape().first()
-            && validity.len() != rows
+        let col = col.into();
+        let Some(&len0) = col.shape().first() else {
+            return Err(BlockError::RankZero { key });
+        };
+        if let Some(mask) = &validity
+            && mask.len() != len0
         {
             return Err(BlockError::ValidityLength {
                 key,
-                expected: rows,
-                got: validity.len(),
+                expected: len0,
+                got: mask.len(),
             });
         }
-        self.insert(key.clone(), arr)?;
-        self.put_validity(key, validity);
+        check_schema(&key, col.dtype(), col.shape())?;
+
+        match self.n_rows {
+            // The first insertion defines n_rows.
+            None => self.n_rows = Some(len0),
+            Some(expected) if len0 != expected => {
+                return Err(BlockError::RaggedAxis0 {
+                    key,
+                    expected,
+                    got: len0,
+                });
+            }
+            Some(_) => {}
+        }
+
+        let col = promote_canonical_uint(&key, col);
+        // An insert replaces the column outright, mask included: the rows it
+        // describes are gone.
+        self.validity.shift_remove(&key);
+        self.keep_precision_if_float(&key, col.dtype());
+        self.keep_target_if_uint(&key, col.dtype());
+        self.map.insert(key.clone(), col);
+        if let Some(mask) = validity {
+            self.put_validity(key, mask);
+        }
         Ok(())
     }
 
@@ -363,7 +322,7 @@ impl Block {
     /// or every one of its rows holds a value.
     ///
     /// `mask[i] == false` means row `i` holds no value; see
-    /// [`insert_nullable`](Self::insert_nullable).
+    /// [`insert`](Self::insert).
     #[inline]
     pub fn validity(&self, key: &str) -> Option<&[bool]> {
         self.validity.get(key).map(Vec::as_slice)
@@ -372,10 +331,9 @@ impl Block {
     /// Attach `mask` as the validity mask of the already-inserted column
     /// `key`, whatever its dtype.
     ///
-    /// This is the one primitive that makes a column nullable: insert the
-    /// values by any door ([`insert`](Self::insert),
-    /// [`insert_column`](Self::insert_column) for a pre-built [`Column`] of
-    /// any dtype), then mark the rows that hold no value. `mask[i] == false`
+    /// This makes an already-inserted column nullable (or changes its mask):
+    /// [`insert`](Self::insert) the values, then mark the rows that hold no
+    /// value. `mask[i] == false`
     /// marks row `i` null. The mask replaces any mask the column had, and the
     /// normalisation [`validity`](Self::validity) documents applies: an
     /// all-`true` mask clears it.
@@ -394,7 +352,7 @@ impl Block {
     ///
     /// let mut block = Block::new();
     /// let labels = ArrayD::from_shape_vec(vec![2], vec!["a".to_string(), String::new()]).unwrap();
-    /// block.insert_column("label", Column::from_string(labels)).unwrap();
+    /// block.insert("label", Column::from(labels), None).unwrap();
     /// block.set_validity("label", vec![true, false]).unwrap();
     /// assert_eq!(block.validity("label"), Some(&[true, false][..]));
     ///
@@ -427,46 +385,6 @@ impl Block {
         } else {
             self.validity.insert(key, mask);
         }
-    }
-
-    /// Insert a pre-built [`Column`] under `key`, validating axis-0 length.
-    ///
-    /// This is the zero-copy insert path: the caller owns a [`Column`]
-    /// (which internally holds an `Arc<ArrayD<T>>`) and hands it over
-    /// without unwrapping the Arc. Useful when moving a column between
-    /// blocks or re-inserting a clone.
-    pub fn insert_column(&mut self, key: impl Into<String>, col: Column) -> Result<(), BlockError> {
-        let key = key.into();
-        let shape = col.shape().to_vec();
-
-        if shape.is_empty() {
-            return Err(BlockError::RankZero { key });
-        }
-
-        check_schema(&key, col.dtype(), &shape)?;
-        let len0 = shape[0];
-        let col = promote_canonical_uint(&key, col);
-
-        match self.n_rows {
-            None => {
-                self.n_rows = Some(len0);
-            }
-            Some(expected) => {
-                if len0 != expected {
-                    return Err(BlockError::RaggedAxis0 {
-                        key,
-                        expected,
-                        got: len0,
-                    });
-                }
-            }
-        }
-
-        self.validity.shift_remove(&key);
-        self.keep_precision_if_float(&key, col.dtype());
-        self.keep_target_if_uint(&key, col.dtype());
-        self.map.insert(key, col);
-        Ok(())
     }
 
     /// A declared precision survives a column being replaced by another `f64`
@@ -510,8 +428,8 @@ impl Block {
     /// use ndarray::Array1;
     ///
     /// let mut members = Block::new();
-    /// members.insert("ibead", Array1::from_vec(vec![0_u64, 0]).into_dyn()).unwrap();
-    /// members.insert("atom", Array1::from_vec(vec![3_u64, 4]).into_dyn()).unwrap();
+    /// members.insert("ibead", Array1::from_vec(vec![0_u64, 0]).into_dyn(), None).unwrap();
+    /// members.insert("atom", Array1::from_vec(vec![3_u64, 4]).into_dyn(), None).unwrap();
     /// members.set_target("atom", "/frame/atoms").unwrap();
     /// assert_eq!(members.target("atom"), Some("/frame/atoms"));
     /// assert!(members.set_target("atom", "/trajectory/atoms").is_err());
@@ -569,7 +487,7 @@ impl Block {
     /// use ndarray::Array1;
     ///
     /// let mut block = Block::new();
-    /// block.insert("x", Array1::from_vec(vec![0.1234_f64, 1.5]).into_dyn()).unwrap();
+    /// block.insert("x", Array1::from_vec(vec![0.1234_f64, 1.5]).into_dyn(), None).unwrap();
     /// block.set_precision("x", 1e-3).unwrap();
     /// assert_eq!(block.precision("x"), Some(1e-3));
     /// assert!(block.set_precision("x", 0.0).is_err());
@@ -624,9 +542,9 @@ impl Block {
                 "row index {bad} out of range (n_rows={n_rows})"
             )));
         }
-        let mut out = Block::with_capacity(self.map.len());
+        let mut out = Block::new();
         for (k, col) in &self.map {
-            out.insert_column(k.clone(), col.select_rows(indices))?;
+            out.insert(k.clone(), col.select_rows(indices), None)?;
         }
         for (k, mask) in &self.validity {
             out.put_validity(k.clone(), indices.iter().map(|&i| mask[i]).collect());
@@ -639,13 +557,13 @@ impl Block {
     /// New Block holding only the `keys` columns, with their validity masks. Errors naming the first key the block lacks — a
     /// selection never silently skips a column.
     pub fn select_columns(&self, keys: &[&str]) -> Result<Block, BlockError> {
-        let mut out = Block::with_capacity(keys.len());
+        let mut out = Block::new();
         for &key in keys {
             let col = self
                 .map
                 .get(key)
                 .ok_or_else(|| BlockError::validation(format!("column '{key}' not found")))?;
-            out.insert_column(key.to_owned(), col.clone())?;
+            out.insert(key.to_owned(), col.clone(), None)?;
             if let Some(mask) = self.validity.get(key) {
                 out.put_validity(key.to_owned(), mask.clone());
             }
@@ -683,8 +601,8 @@ impl Block {
 
     /// The column for `key`, or `None` when the key is absent.
     ///
-    /// Project a dtype with [`Column::as_float`] and the other `as_*` methods.
-    /// `None` from a projection means the column has a different dtype, which is
+    /// Project a dtype with [`Column::get::<T>`](Column::get). `None` from a
+    /// projection means the column has a different dtype, which is
     /// not the same as a missing key.
     #[inline]
     pub fn get(&self, key: &str) -> Option<&Column> {
@@ -693,8 +611,8 @@ impl Block {
 
     /// A mutable column for `key`, or `None` when the key is absent.
     ///
-    /// Project a dtype with [`Column::as_float_mut`] and the other `as_*_mut`
-    /// methods. `None` from a projection means the column has a different dtype.
+    /// Project a dtype with [`Column::get_mut::<T>`](Column::get_mut). `None`
+    /// from a projection means the column has a different dtype.
     ///
     /// # Warning
     ///
@@ -703,36 +621,6 @@ impl Block {
     #[inline]
     pub fn get_mut(&mut self, key: &str) -> Option<&mut Column> {
         self.map.get_mut(key)
-    }
-
-    /// `key` exists and is an `f64` column.
-    #[inline]
-    pub fn has_f64(&self, key: &str) -> bool {
-        self.get(key).is_some_and(|c| c.dtype() == DType::Float)
-    }
-
-    /// `key` exists and is a signed integer column (`i8`, `i16`, `i32`, or `i64`).
-    #[inline]
-    pub fn has_int(&self, key: &str) -> bool {
-        matches!(
-            self.get(key).map(|c| c.dtype()),
-            Some(DType::Int | DType::I8 | DType::I16 | DType::I64)
-        )
-    }
-
-    /// `key` exists and is an unsigned integer column (`u8`, `u16`, `u32`, or `u64`).
-    #[inline]
-    pub fn has_uint(&self, key: &str) -> bool {
-        matches!(
-            self.get(key).map(|c| c.dtype()),
-            Some(DType::Uint | DType::U8 | DType::U16 | DType::U32)
-        )
-    }
-
-    /// `key` exists and is a string column.
-    #[inline]
-    pub fn has_string(&self, key: &str) -> bool {
-        self.get(key).is_some_and(|c| c.dtype() == DType::String)
     }
 
     /// Removes and returns the column for `key`, if present.
@@ -766,7 +654,7 @@ impl Block {
     /// use ndarray::Array1;
     ///
     /// let mut block = Block::new();
-    /// block.insert("x", Array1::from_vec(vec![1.0 as F]).into_dyn()).unwrap();
+    /// block.insert("x", Array1::from_vec(vec![1.0 as F]).into_dyn(), None).unwrap();
     ///
     /// block.rename_column("x", "position_x").unwrap();
     /// assert!(!block.contains_key("x"));
@@ -905,11 +793,11 @@ impl Block {
     /// use ndarray::Array1;
     ///
     /// let mut block = Block::new();
-    /// block.insert("x", Array1::from_vec(vec![1.0 as F, 2.0 as F]).into_dyn()).unwrap();
+    /// block.insert("x", Array1::from_vec(vec![1.0 as F, 2.0 as F]).into_dyn(), None).unwrap();
     ///
     /// block.resize(4).unwrap();
     /// assert_eq!(block.n_rows(), Some(4));
-    /// let x = block.get("x").and_then(|c| c.as_float()).unwrap();
+    /// let x = block.get("x").and_then(|c| c.get::<f64>()).unwrap();
     /// assert_eq!(x.as_slice_memory_order().unwrap(), &[1.0, 2.0, 0.0, 0.0]);
     /// ```
     pub fn resize(&mut self, new_nrows: usize) -> Result<(), crate::core::MolRsError> {
@@ -963,10 +851,10 @@ impl Block {
     /// use ndarray::Array1;
     ///
     /// let mut block1 = Block::new();
-    /// block1.insert("x", Array1::from_vec(vec![1.0 as F, 2.0 as F]).into_dyn()).unwrap();
+    /// block1.insert("x", Array1::from_vec(vec![1.0 as F, 2.0 as F]).into_dyn(), None).unwrap();
     ///
     /// let mut block2 = Block::new();
-    /// block2.insert("x", Array1::from_vec(vec![3.0 as F, 4.0 as F]).into_dyn()).unwrap();
+    /// block2.insert("x", Array1::from_vec(vec![3.0 as F, 4.0 as F]).into_dyn(), None).unwrap();
     ///
     /// block1.merge(&block2).unwrap();
     /// assert_eq!(block1.n_rows(), Some(4));
@@ -1036,16 +924,16 @@ impl Block {
     /// use ndarray::Array1;
     ///
     /// let mut a = Block::new();
-    /// a.insert("x", Array1::from_vec(vec![0.0 as F, 1.0]).into_dyn()).unwrap();
-    /// a.insert("type", Array1::from_vec(vec!["A".to_string(), "B".into()]).into_dyn()).unwrap();
+    /// a.insert("x", Array1::from_vec(vec![0.0 as F, 1.0]).into_dyn(), None).unwrap();
+    /// a.insert("type", Array1::from_vec(vec!["A".to_string(), "B".into()]).into_dyn(), None).unwrap();
     /// let mut b = Block::new();
-    /// b.insert("x", Array1::from_vec(vec![2.0 as F]).into_dyn()).unwrap();
+    /// b.insert("x", Array1::from_vec(vec![2.0 as F]).into_dyn(), None).unwrap();
     ///
     /// let s = Block::stack([&a, &b]).unwrap();
     /// assert_eq!(s.n_rows(), Some(3));
     /// assert_eq!(s.keys().collect::<Vec<_>>(), ["x", "type"]);
     /// // `b` had no `type`: its row is filled with "" and marked null.
-    /// assert_eq!(s.get("type").and_then(|c| c.as_string()).unwrap()[[2]], "");
+    /// assert_eq!(s.get("type").and_then(|c| c.get::<String>()).unwrap()[[2]], "");
     /// assert_eq!(s.validity("type"), Some(&[true, true, false][..]));
     /// assert_eq!(s.validity("x"), None);
     /// ```
@@ -1080,7 +968,7 @@ impl Block {
 
         let rows: Vec<usize> = parts.iter().map(|b| b.n_rows.unwrap_or(0)).collect();
         let total: usize = rows.iter().sum();
-        let mut out = Block::with_capacity(union.len());
+        let mut out = Block::new();
         for (&key, &first) in &union {
             let mut pieces = Vec::with_capacity(parts.len());
             let mut mask: Option<Vec<bool>> = None;
@@ -1106,7 +994,7 @@ impl Block {
                 }
                 offset += n;
             }
-            out.insert_column(key, concat_columns(key, &pieces)?)?;
+            out.insert(key, concat_columns(key, &pieces)?, None)?;
             if let Some(mask) = mask {
                 out.put_validity(key.to_owned(), mask);
             }
@@ -1156,7 +1044,7 @@ impl Block {
             let col = self.get(key).ok_or_else(|| BlockError::MissingColumn {
                 key: key.to_owned(),
             })?;
-            let values = col.as_float().ok_or_else(|| BlockError::SchemaDtype {
+            let values = col.get::<f64>().ok_or_else(|| BlockError::SchemaDtype {
                 key: key.to_owned(),
                 expected: DType::Float,
                 got: col.dtype(),
@@ -1195,7 +1083,7 @@ impl Block {
         // `x` goes first, so a row-count mismatch is refused before any
         // column is replaced.
         for (axis, key) in COORDS.into_iter().enumerate() {
-            self.insert(key, coords.column(axis).to_owned().into_dyn())?;
+            self.insert(key, coords.column(axis).to_owned().into_dyn(), None)?;
         }
         Ok(())
     }
@@ -1374,19 +1262,19 @@ fn concat_columns(key: &str, pieces: &[Column]) -> Result<Column, BlockError> {
         }};
     }
     let merged = match &pieces[0] {
-        Column::Float(_) => cat!(Float, Column::from_float),
-        Column::Int(_) => cat!(Int, Column::from_int),
-        Column::I8(_) => cat!(I8, Column::from_i8),
-        Column::I16(_) => cat!(I16, Column::from_i16),
-        Column::I64(_) => cat!(I64, Column::from_i64),
-        Column::Uint(_) => cat!(Uint, Column::from_uint),
-        Column::U8(_) => cat!(U8, Column::from_u8),
-        Column::U16(_) => cat!(U16, Column::from_u16),
-        Column::U32(_) => cat!(U32, Column::from_u32),
-        Column::Bool(_) => cat!(Bool, Column::from_bool),
-        Column::String(_) => cat!(String, Column::from_string),
-        Column::C64(_) => cat!(C64, Column::from_c64),
-        Column::C128(_) => cat!(C128, Column::from_c128),
+        Column::Float(_) => cat!(Float, Column::from),
+        Column::Int(_) => cat!(Int, Column::from),
+        Column::I8(_) => cat!(I8, Column::from),
+        Column::I16(_) => cat!(I16, Column::from),
+        Column::I64(_) => cat!(I64, Column::from),
+        Column::Uint(_) => cat!(Uint, Column::from),
+        Column::U8(_) => cat!(U8, Column::from),
+        Column::U16(_) => cat!(U16, Column::from),
+        Column::U32(_) => cat!(U32, Column::from),
+        Column::Bool(_) => cat!(Bool, Column::from),
+        Column::String(_) => cat!(String, Column::from),
+        Column::C64(_) => cat!(C64, Column::from),
+        Column::C128(_) => cat!(C128, Column::from),
     };
     merged.map_err(|e| {
         BlockError::validation(format!("Failed to concatenate {dtype} column '{key}': {e}"))
@@ -1402,7 +1290,7 @@ fn concat_columns(key: &str, pieces: &[Column]) -> Result<Column, BlockError> {
 /// two keys.
 /// Identifiers (`id`, `atomi`, `type_id`, …) are [`Idx`]. A caller that
 /// hands us a narrower unsigned array is naming the same quantity; store it
-/// at identifier width so `Column::as_uint` and the writers that consume it agree.
+/// at identifier width so `Column::get::<u64>` and the writers that consume it agree.
 ///
 /// This leniency is for the in-memory API only. The `*.mrec` store readers
 /// refuse a canonical identifier stored at another width before it reaches
@@ -1417,9 +1305,9 @@ fn promote_canonical_uint(key: &str, col: Column) -> Column {
     }
     match col {
         Column::Uint(_) => col,
-        Column::U8(h) => Column::from_uint(h.array().mapv(Idx::from)),
-        Column::U16(h) => Column::from_uint(h.array().mapv(Idx::from)),
-        Column::U32(h) => Column::from_uint(h.array().mapv(Idx::from)),
+        Column::U8(h) => Column::from(h.array().mapv(Idx::from)),
+        Column::U16(h) => Column::from(h.array().mapv(Idx::from)),
+        Column::U32(h) => Column::from(h.array().mapv(Idx::from)),
         other => other,
     }
 }
@@ -1465,21 +1353,21 @@ fn check_schema(key: &str, dtype: DType, shape: &[usize]) -> Result<(), BlockErr
 mod tests {
     use super::*;
     use crate::op::{F, I, Idx};
-    use ndarray::Array1;
+    use ndarray::{Array1, ArrayD};
 
     /// Block with float columns `c`, `a`, `b` inserted in that order, one row
     /// each, `a` masked null.
     fn cab() -> Block {
         let mut b = Block::new();
-        b.insert("c", Array1::from_vec(vec![1.0 as F]).into_dyn())
+        b.insert("c", Array1::from_vec(vec![1.0 as F]).into_dyn(), None)
             .unwrap();
-        b.insert_nullable(
+        b.insert(
             "a",
             Array1::from_vec(vec![0.0 as F]).into_dyn(),
-            vec![false],
+            Some(vec![false]),
         )
         .unwrap();
-        b.insert("b", Array1::from_vec(vec![3.0 as F]).into_dyn())
+        b.insert("b", Array1::from_vec(vec![3.0 as F]).into_dyn(), None)
             .unwrap();
         b
     }
@@ -1492,7 +1380,7 @@ mod tests {
     #[test]
     fn remove_keeps_the_remaining_keys_in_order() {
         let mut b = cab();
-        b.insert("d", Array1::from_vec(vec![4.0 as F]).into_dyn())
+        b.insert("d", Array1::from_vec(vec![4.0 as F]).into_dyn(), None)
             .unwrap();
         b.remove("a");
         // shift_remove keeps [c, b, d]; swap_remove would give [c, d, b].
@@ -1502,7 +1390,7 @@ mod tests {
     #[test]
     fn reinserting_a_key_keeps_its_position() {
         let mut b = cab();
-        b.insert("c", Array1::from_vec(vec![9.0 as F]).into_dyn())
+        b.insert("c", Array1::from_vec(vec![9.0 as F]).into_dyn(), None)
             .unwrap();
         assert_eq!(b.keys().collect::<Vec<_>>(), ["c", "a", "b"]);
     }
@@ -1549,10 +1437,10 @@ mod tests {
     #[test]
     fn deep_copy_keeps_masks_rows_and_shape_on_new_buffers() {
         let mut b = Block::new();
-        b.insert_nullable(
+        b.insert(
             "tag",
             Array1::from_vec(vec![1 as I, 0, 3, 0]).into_dyn(),
-            vec![true, false, true, false],
+            Some(vec![true, false, true, false]),
         )
         .unwrap();
         b.set_shape(&[2, 2]).unwrap();
@@ -1563,12 +1451,15 @@ mod tests {
         assert_eq!(copy.n_rows(), Some(4));
         assert_eq!(copy.structural_shape(), Some(&[2, 2][..]));
         assert_ne!(
-            b.get("tag").and_then(|c| c.as_int()).unwrap().as_ptr(),
-            copy.get("tag").and_then(|c| c.as_int()).unwrap().as_ptr()
+            b.get("tag").and_then(|c| c.get::<i32>()).unwrap().as_ptr(),
+            copy.get("tag")
+                .and_then(|c| c.get::<i32>())
+                .unwrap()
+                .as_ptr()
         );
         assert_eq!(
             copy.get("tag")
-                .and_then(|c| c.as_int())
+                .and_then(|c| c.get::<i32>())
                 .unwrap()
                 .as_slice_memory_order(),
             Some(&[1 as I, 0, 3, 0][..])
@@ -1578,12 +1469,16 @@ mod tests {
     #[test]
     fn select_columns_keeps_exactly_the_named_columns() {
         let mut b = Block::new();
-        b.insert("id", Array1::from_vec(vec![1 as Idx, 2]).into_dyn())
+        b.insert("id", Array1::from_vec(vec![1 as Idx, 2]).into_dyn(), None)
             .unwrap();
-        b.insert("x", Array1::from_vec(vec![1.5 as F, 2.5]).into_dyn())
+        b.insert("x", Array1::from_vec(vec![1.5 as F, 2.5]).into_dyn(), None)
             .unwrap();
-        b.insert("charge", Array1::from_vec(vec![0.1 as F, -0.1]).into_dyn())
-            .unwrap();
+        b.insert(
+            "charge",
+            Array1::from_vec(vec![0.1 as F, -0.1]).into_dyn(),
+            None,
+        )
+        .unwrap();
 
         let sel = b.select_columns(&["x", "id"]).unwrap();
         let mut keys: Vec<&str> = sel.keys().collect();
@@ -1598,16 +1493,24 @@ mod tests {
     #[test]
     fn test_select_rows_and_sort() {
         let mut b = Block::new();
-        b.insert("id", Array1::from_vec(vec![3 as Idx, 1, 2]).into_dyn())
-            .unwrap();
-        b.insert("x", Array1::from_vec(vec![3.5 as F, 1.5, 2.5]).into_dyn())
-            .unwrap();
+        b.insert(
+            "id",
+            Array1::from_vec(vec![3 as Idx, 1, 2]).into_dyn(),
+            None,
+        )
+        .unwrap();
+        b.insert(
+            "x",
+            Array1::from_vec(vec![3.5 as F, 1.5, 2.5]).into_dyn(),
+            None,
+        )
+        .unwrap();
 
         // select_rows gathers in order.
         let sel = b.select_rows(&[2, 0]).unwrap();
         assert_eq!(
             sel.get("id")
-                .and_then(|c| c.as_uint())
+                .and_then(|c| c.get::<u64>())
                 .unwrap()
                 .iter()
                 .copied()
@@ -1622,7 +1525,7 @@ mod tests {
         let s = b.sort_by("id", false).unwrap();
         assert_eq!(
             s.get("id")
-                .and_then(|c| c.as_uint())
+                .and_then(|c| c.get::<u64>())
                 .unwrap()
                 .iter()
                 .copied()
@@ -1631,7 +1534,7 @@ mod tests {
         );
         assert_eq!(
             s.get("x")
-                .and_then(|c| c.as_float())
+                .and_then(|c| c.get::<f64>())
                 .unwrap()
                 .iter()
                 .copied()
@@ -1643,7 +1546,7 @@ mod tests {
         let r = b.sort_by("id", true).unwrap();
         assert_eq!(
             r.get("id")
-                .and_then(|c| c.as_uint())
+                .and_then(|c| c.get::<u64>())
                 .unwrap()
                 .iter()
                 .copied()
@@ -1664,10 +1567,10 @@ mod tests {
         let arr_i64 = Array1::from_vec(vec![10 as I, 20, 30]).into_dyn();
         let arr_bool = Array1::from_vec(vec![true, false, true]).into_dyn();
 
-        assert!(block.insert("x", arr_float).is_ok());
-        assert!(block.insert("y", arr_float_2).is_ok());
-        assert!(block.insert("count", arr_i64).is_ok());
-        assert!(block.insert("mask", arr_bool).is_ok());
+        assert!(block.insert("x", arr_float, None).is_ok());
+        assert!(block.insert("y", arr_float_2, None).is_ok());
+        assert!(block.insert("count", arr_i64, None).is_ok());
+        assert!(block.insert("mask", arr_bool, None).is_ok());
 
         assert_eq!(block.len(), 4);
         assert_eq!(block.n_rows(), Some(3));
@@ -1680,8 +1583,8 @@ mod tests {
         let arr1 = Array1::from_vec(vec![1.0 as F, 2.0 as F, 3.0 as F]).into_dyn();
         let arr2 = Array1::from_vec(vec![1.0 as F, 2.0 as F]).into_dyn();
 
-        block.insert("x", arr1).unwrap();
-        let result = block.insert("y", arr2);
+        block.insert("x", arr1, None).unwrap();
+        let result = block.insert("y", arr2, None);
 
         assert!(result.is_err());
         match result {
@@ -1700,23 +1603,23 @@ mod tests {
         let arr_float = Array1::from_vec(vec![1.0 as F, 2.0 as F]).into_dyn();
         let arr_i64 = Array1::from_vec(vec![10 as I, 20]).into_dyn();
 
-        block.insert("x", arr_float).unwrap();
-        block.insert("count", arr_i64).unwrap();
+        block.insert("x", arr_float, None).unwrap();
+        block.insert("count", arr_i64, None).unwrap();
 
         // Correct type access
-        assert!(block.get("x").and_then(|c| c.as_float()).is_some());
-        assert!(block.get("count").and_then(|c| c.as_int()).is_some());
+        assert!(block.get("x").and_then(|c| c.get::<f64>()).is_some());
+        assert!(block.get("count").and_then(|c| c.get::<i32>()).is_some());
 
         // Wrong type access returns None
-        assert!(block.get("x").and_then(|c| c.as_int()).is_none());
-        assert!(block.get("count").and_then(|c| c.as_float()).is_none());
+        assert!(block.get("x").and_then(|c| c.get::<i32>()).is_none());
+        assert!(block.get("count").and_then(|c| c.get::<f64>()).is_none());
 
         // Mutable access
-        if let Some(x_mut) = block.get_mut("x").and_then(|c| c.as_float_mut()) {
+        if let Some(x_mut) = block.get_mut("x").and_then(|c| c.get_mut::<f64>()) {
             x_mut[[0]] = 99.0;
         }
         assert_eq!(
-            block.get("x").and_then(|c| c.as_float()).unwrap()[[0]],
+            block.get("x").and_then(|c| c.get::<f64>()).unwrap()[[0]],
             99.0
         );
     }
@@ -1726,7 +1629,7 @@ mod tests {
         let mut block = Block::new();
 
         let arr = Array1::from_vec(vec![1.0 as F, 2.0 as F]).into_dyn();
-        block.insert("x", arr).unwrap();
+        block.insert("x", arr, None).unwrap();
 
         // Immutable index
         let col = &block["x"];
@@ -1734,11 +1637,11 @@ mod tests {
 
         // Mutable index
         let col_mut = &mut block["x"];
-        if let Some(arr_mut) = col_mut.as_float_mut() {
+        if let Some(arr_mut) = col_mut.get_mut::<f64>() {
             arr_mut[[0]] = 42.0;
         }
         assert_eq!(
-            block.get("x").and_then(|c| c.as_float()).unwrap()[[0]],
+            block.get("x").and_then(|c| c.get::<f64>()).unwrap()[[0]],
             42.0
         );
     }
@@ -1755,7 +1658,7 @@ mod tests {
         let mut block = Block::new();
 
         let arr = Array1::from_vec(vec![1.0 as F, 2.0 as F]).into_dyn();
-        block.insert("x", arr).unwrap();
+        block.insert("x", arr, None).unwrap();
 
         assert_eq!(block.n_rows(), Some(2));
 
@@ -1771,8 +1674,8 @@ mod tests {
         let arr1 = Array1::from_vec(vec![1.0 as F, 2.0 as F]).into_dyn();
         let arr2 = Array1::from_vec(vec![10 as I, 20]).into_dyn();
 
-        block.insert("x", arr1).unwrap();
-        block.insert("count", arr2).unwrap();
+        block.insert("x", arr1, None).unwrap();
+        block.insert("count", arr2, None).unwrap();
 
         let keys: Vec<&str> = block.keys().collect();
         assert_eq!(keys.len(), 2);
@@ -1791,7 +1694,7 @@ mod tests {
         // Create a rank-0 array (scalar)
         let arr = ArrayD::<F>::zeros(vec![]);
 
-        let result = block.insert("scalar", arr);
+        let result = block.insert("scalar", arr, None);
         assert!(result.is_err());
         match result {
             Err(BlockError::RankZero { key }) => {
@@ -1808,8 +1711,8 @@ mod tests {
         let arr_float = Array1::from_vec(vec![1.0 as F]).into_dyn();
         let arr_i64 = Array1::from_vec(vec![10 as I]).into_dyn();
 
-        block.insert("x", arr_float).unwrap();
-        block.insert("count", arr_i64).unwrap();
+        block.insert("x", arr_float, None).unwrap();
+        block.insert("count", arr_i64, None).unwrap();
 
         assert_eq!(block.dtype("x"), Some(DType::Float));
         assert_eq!(block.dtype("count"), Some(DType::Int));
@@ -1824,13 +1727,13 @@ mod tests {
         let arr1 = Array1::from_vec(vec![1.0 as F, 2.0 as F]).into_dyn();
         let arr2 = Array1::from_vec(vec![3.0 as F, 4.0 as F]).into_dyn();
 
-        block1.insert("x", arr1).unwrap();
-        block2.insert("x", arr2).unwrap();
+        block1.insert("x", arr1, None).unwrap();
+        block2.insert("x", arr2, None).unwrap();
 
         block1.merge(&block2).unwrap();
 
         assert_eq!(block1.n_rows(), Some(4));
-        let x = block1.get("x").and_then(|c| c.as_float()).unwrap();
+        let x = block1.get("x").and_then(|c| c.get::<f64>()).unwrap();
         assert_eq!(x.as_slice_memory_order().unwrap(), &[1.0, 2.0, 3.0, 4.0]);
     }
 
@@ -1845,7 +1748,7 @@ mod tests {
 
         // Merge non-empty into empty
         let arr = Array1::from_vec(vec![1.0 as F, 2.0 as F]).into_dyn();
-        block2.insert("x", arr).unwrap();
+        block2.insert("x", arr, None).unwrap();
         block1.merge(&block2).unwrap();
         assert_eq!(block1.n_rows(), Some(2));
 
@@ -1863,8 +1766,8 @@ mod tests {
         let arr1 = Array1::from_vec(vec![1.0 as F, 2.0 as F]).into_dyn();
         let arr2 = Array1::from_vec(vec![3.0 as F, 4.0 as F]).into_dyn();
 
-        block1.insert("x", arr1).unwrap();
-        block2.insert("y", arr2).unwrap();
+        block1.insert("x", arr1, None).unwrap();
+        block2.insert("y", arr2, None).unwrap();
 
         let result = block1.merge(&block2);
         assert!(result.is_err());
@@ -1878,8 +1781,8 @@ mod tests {
         let arr1 = Array1::from_vec(vec![1.0 as F, 2.0 as F]).into_dyn();
         let arr2 = Array1::from_vec(vec![3 as I, 4]).into_dyn();
 
-        block1.insert("value", arr1).unwrap();
-        block2.insert("value", arr2).unwrap();
+        block1.insert("value", arr1, None).unwrap();
+        block2.insert("value", arr2, None).unwrap();
 
         let result = block1.merge(&block2);
         assert!(result.is_err());
@@ -1891,25 +1794,33 @@ mod tests {
         let mut block2 = Block::new();
 
         block1
-            .insert("x", Array1::from_vec(vec![1.0 as F, 2.0 as F]).into_dyn())
+            .insert(
+                "x",
+                Array1::from_vec(vec![1.0 as F, 2.0 as F]).into_dyn(),
+                None,
+            )
             .unwrap();
         block1
-            .insert("id", Array1::from_vec(vec![10 as Idx, 20]).into_dyn())
+            .insert("id", Array1::from_vec(vec![10 as Idx, 20]).into_dyn(), None)
             .unwrap();
 
         block2
-            .insert("x", Array1::from_vec(vec![3.0 as F, 4.0 as F]).into_dyn())
+            .insert(
+                "x",
+                Array1::from_vec(vec![3.0 as F, 4.0 as F]).into_dyn(),
+                None,
+            )
             .unwrap();
         block2
-            .insert("id", Array1::from_vec(vec![30 as Idx, 40]).into_dyn())
+            .insert("id", Array1::from_vec(vec![30 as Idx, 40]).into_dyn(), None)
             .unwrap();
 
         block1.merge(&block2).unwrap();
 
         assert_eq!(block1.n_rows(), Some(4));
-        let x = block1.get("x").and_then(|c| c.as_float()).unwrap();
+        let x = block1.get("x").and_then(|c| c.get::<f64>()).unwrap();
         assert_eq!(x.as_slice_memory_order().unwrap(), &[1.0, 2.0, 3.0, 4.0]);
-        let id = block1.get("id").and_then(|c| c.as_uint()).unwrap();
+        let id = block1.get("id").and_then(|c| c.get::<u64>()).unwrap();
         assert_eq!(id.as_slice_memory_order().unwrap(), &[10, 20, 30, 40]);
     }
 
@@ -1917,10 +1828,18 @@ mod tests {
     fn test_rename_column() {
         let mut block = Block::new();
         block
-            .insert("x", Array1::from_vec(vec![1.0 as F, 2.0 as F]).into_dyn())
+            .insert(
+                "x",
+                Array1::from_vec(vec![1.0 as F, 2.0 as F]).into_dyn(),
+                None,
+            )
             .unwrap();
         block
-            .insert("y", Array1::from_vec(vec![3.0 as F, 4.0 as F]).into_dyn())
+            .insert(
+                "y",
+                Array1::from_vec(vec![3.0 as F, 4.0 as F]).into_dyn(),
+                None,
+            )
             .unwrap();
 
         // Successful rename
@@ -1930,7 +1849,7 @@ mod tests {
         assert_eq!(
             block
                 .get("position_x")
-                .and_then(|c| c.as_float())
+                .and_then(|c| c.get::<f64>())
                 .unwrap()
                 .as_slice_memory_order()
                 .unwrap(),
@@ -1948,35 +1867,44 @@ mod tests {
     fn test_has_typed_columns() {
         let mut block = Block::new();
         block
-            .insert("x", Array1::from_vec(vec![1.0 as F, 2.0 as F]).into_dyn())
+            .insert(
+                "x",
+                Array1::from_vec(vec![1.0 as F, 2.0 as F]).into_dyn(),
+                None,
+            )
             .unwrap();
         block
-            .insert("id", Array1::from_vec(vec![1 as Idx, 2]).into_dyn())
+            .insert("id", Array1::from_vec(vec![1 as Idx, 2]).into_dyn(), None)
             .unwrap();
         block
-            .insert("res_seq", Array1::from_vec(vec![1 as I, 2]).into_dyn())
+            .insert(
+                "res_seq",
+                Array1::from_vec(vec![1 as I, 2]).into_dyn(),
+                None,
+            )
             .unwrap();
         block
             .insert(
                 "name",
                 Array1::from_vec(vec!["CA".to_string(), "N".to_string()]).into_dyn(),
+                None,
             )
             .unwrap();
 
         block
-            .insert("charge_i64", Array1::from_vec(vec![1_i64, 2]).into_dyn())
+            .insert(
+                "charge_i64",
+                Array1::from_vec(vec![1_i64, 2]).into_dyn(),
+                None,
+            )
             .unwrap();
 
-        assert!(block.has_f64("x"));
-        assert!(block.has_uint("id"));
-        assert!(block.has_int("res_seq"));
-        assert!(block.has_int("charge_i64"));
-        assert!(!block.has_f64("charge_i64"));
-        assert!(block.has_string("name"));
-        assert!(!block.has_uint("res_seq"));
-        assert!(!block.has_int("id"));
-        assert!(!block.has_f64("missing"));
-        assert!(!block.has_string("x"));
+        assert_eq!(block.dtype("x"), Some(DType::Float));
+        assert_eq!(block.dtype("id"), Some(DType::Uint));
+        assert_eq!(block.dtype("res_seq"), Some(DType::Int));
+        assert_eq!(block.dtype("charge_i64"), Some(DType::I64));
+        assert_eq!(block.dtype("name"), Some(DType::String));
+        assert_eq!(block.dtype("missing"), None);
     }
 
     #[test]
@@ -1986,21 +1914,23 @@ mod tests {
             .insert(
                 "x",
                 Array1::from_vec(vec![1.0 as F, 2.0, 3.0, 4.0]).into_dyn(),
+                None,
             )
             .unwrap();
         block
             .insert(
                 "id",
                 Array1::from_vec(vec![10 as Idx, 20, 30, 40]).into_dyn(),
+                None,
             )
             .unwrap();
 
         block.resize(2).unwrap();
 
         assert_eq!(block.n_rows(), Some(2));
-        let x = block.get("x").and_then(|c| c.as_float()).unwrap();
+        let x = block.get("x").and_then(|c| c.get::<f64>()).unwrap();
         assert_eq!(x.as_slice_memory_order().unwrap(), &[1.0, 2.0]);
-        let id = block.get("id").and_then(|c| c.as_uint()).unwrap();
+        let id = block.get("id").and_then(|c| c.get::<u64>()).unwrap();
         assert_eq!(id.as_slice_memory_order().unwrap(), &[10, 20]);
     }
 
@@ -2008,19 +1938,19 @@ mod tests {
     fn test_resize_grow() {
         let mut block = Block::new();
         block
-            .insert("x", Array1::from_vec(vec![1.0 as F, 2.0]).into_dyn())
+            .insert("x", Array1::from_vec(vec![1.0 as F, 2.0]).into_dyn(), None)
             .unwrap();
         block
-            .insert("id", Array1::from_vec(vec![10 as Idx, 20]).into_dyn())
+            .insert("id", Array1::from_vec(vec![10 as Idx, 20]).into_dyn(), None)
             .unwrap();
 
         block.resize(4).unwrap();
 
         assert_eq!(block.n_rows(), Some(4));
-        let x = block.get("x").and_then(|c| c.as_float()).unwrap();
+        let x = block.get("x").and_then(|c| c.get::<f64>()).unwrap();
         // Original data preserved, new rows are 0.0
         assert_eq!(x.as_slice_memory_order().unwrap(), &[1.0, 2.0, 0.0, 0.0]);
-        let id = block.get("id").and_then(|c| c.as_uint()).unwrap();
+        let id = block.get("id").and_then(|c| c.get::<u64>()).unwrap();
         // Original data preserved, new rows are 0
         assert_eq!(id.as_slice_memory_order().unwrap(), &[10, 20, 0, 0]);
     }
@@ -2029,13 +1959,17 @@ mod tests {
     fn test_resize_same() {
         let mut block = Block::new();
         block
-            .insert("x", Array1::from_vec(vec![1.0 as F, 2.0, 3.0]).into_dyn())
+            .insert(
+                "x",
+                Array1::from_vec(vec![1.0 as F, 2.0, 3.0]).into_dyn(),
+                None,
+            )
             .unwrap();
 
         block.resize(3).unwrap();
 
         assert_eq!(block.n_rows(), Some(3));
-        let x = block.get("x").and_then(|c| c.as_float()).unwrap();
+        let x = block.get("x").and_then(|c| c.get::<f64>()).unwrap();
         assert_eq!(x.as_slice_memory_order().unwrap(), &[1.0, 2.0, 3.0]);
     }
 
@@ -2062,12 +1996,12 @@ mod tests {
         )
         .unwrap()
         .into_dyn();
-        block.insert("pos", pos).unwrap();
+        block.insert("pos", pos, None).unwrap();
 
         // Shrink 4x3 -> 2x3
         block.resize(2).unwrap();
         assert_eq!(block.n_rows(), Some(2));
-        let pos = block.get("pos").and_then(|c| c.as_float()).unwrap();
+        let pos = block.get("pos").and_then(|c| c.get::<f64>()).unwrap();
         assert_eq!(pos.shape(), &[2, 3]);
         assert_eq!(
             pos.as_slice_memory_order().unwrap(),
@@ -2077,7 +2011,7 @@ mod tests {
         // Grow 2x3 -> 5x3
         block.resize(5).unwrap();
         assert_eq!(block.n_rows(), Some(5));
-        let pos = block.get("pos").and_then(|c| c.as_float()).unwrap();
+        let pos = block.get("pos").and_then(|c| c.get::<f64>()).unwrap();
         assert_eq!(pos.shape(), &[5, 3]);
         // Original data followed by zeros
         assert_eq!(
@@ -2092,19 +2026,32 @@ mod tests {
     fn test_resize_mixed_dtypes() {
         let mut block = Block::new();
         block
-            .insert("x", Array1::from_vec(vec![1.0 as F, 2.0, 3.0]).into_dyn())
+            .insert(
+                "x",
+                Array1::from_vec(vec![1.0 as F, 2.0, 3.0]).into_dyn(),
+                None,
+            )
             .unwrap();
         block
-            .insert("id", Array1::from_vec(vec![10 as Idx, 20, 30]).into_dyn())
+            .insert(
+                "id",
+                Array1::from_vec(vec![10 as Idx, 20, 30]).into_dyn(),
+                None,
+            )
             .unwrap();
         block
-            .insert("mask", Array1::from_vec(vec![true, false, true]).into_dyn())
+            .insert(
+                "mask",
+                Array1::from_vec(vec![true, false, true]).into_dyn(),
+                None,
+            )
             .unwrap();
         block
             .insert(
                 "name",
                 Array1::from_vec(vec!["a".to_string(), "b".to_string(), "c".to_string()])
                     .into_dyn(),
+                None,
             )
             .unwrap();
 
@@ -2112,19 +2059,19 @@ mod tests {
         block.resize(5).unwrap();
         assert_eq!(block.n_rows(), Some(5));
 
-        let x = block.get("x").and_then(|c| c.as_float()).unwrap();
+        let x = block.get("x").and_then(|c| c.get::<f64>()).unwrap();
         assert_eq!(
             x.as_slice_memory_order().unwrap(),
             &[1.0, 2.0, 3.0, 0.0, 0.0]
         );
-        let id = block.get("id").and_then(|c| c.as_uint()).unwrap();
+        let id = block.get("id").and_then(|c| c.get::<u64>()).unwrap();
         assert_eq!(id.as_slice_memory_order().unwrap(), &[10, 20, 30, 0, 0]);
-        let mask = block.get("mask").and_then(|c| c.as_bool()).unwrap();
+        let mask = block.get("mask").and_then(|c| c.get::<bool>()).unwrap();
         assert_eq!(
             mask.as_slice_memory_order().unwrap(),
             &[true, false, true, false, false]
         );
-        let name = block.get("name").and_then(|c| c.as_string()).unwrap();
+        let name = block.get("name").and_then(|c| c.get::<String>()).unwrap();
         assert_eq!(name[[0]], "a");
         assert_eq!(name[[1]], "b");
         assert_eq!(name[[2]], "c");
@@ -2135,13 +2082,13 @@ mod tests {
         block.resize(2).unwrap();
         assert_eq!(block.n_rows(), Some(2));
 
-        let x = block.get("x").and_then(|c| c.as_float()).unwrap();
+        let x = block.get("x").and_then(|c| c.get::<f64>()).unwrap();
         assert_eq!(x.as_slice_memory_order().unwrap(), &[1.0, 2.0]);
-        let id = block.get("id").and_then(|c| c.as_uint()).unwrap();
+        let id = block.get("id").and_then(|c| c.get::<u64>()).unwrap();
         assert_eq!(id.as_slice_memory_order().unwrap(), &[10, 20]);
-        let mask = block.get("mask").and_then(|c| c.as_bool()).unwrap();
+        let mask = block.get("mask").and_then(|c| c.get::<bool>()).unwrap();
         assert_eq!(mask.as_slice_memory_order().unwrap(), &[true, false]);
-        let name = block.get("name").and_then(|c| c.as_string()).unwrap();
+        let name = block.get("name").and_then(|c| c.get::<String>()).unwrap();
         assert_eq!(name[[0]], "a");
         assert_eq!(name[[1]], "b");
     }
@@ -2149,20 +2096,20 @@ mod tests {
     // ---- nullable columns -------------------------------------------------
 
     #[test]
-    fn insert_nullable_refuses_a_mask_that_does_not_cover_every_row() {
+    fn insert_refuses_a_mask_that_does_not_cover_every_row() {
         let mut block = Block::new();
         let arr = Array1::from_vec(vec![1.0 as F, 2.0, 3.0]).into_dyn();
-        assert!(block.insert_nullable("x", arr, vec![true, false]).is_err());
+        assert!(block.insert("x", arr, Some(vec![true, false])).is_err());
     }
 
     #[test]
-    fn insert_nullable_records_the_mask_it_was_given() {
+    fn insert_records_the_mask_it_was_given() {
         let mut block = Block::new();
         block
-            .insert_nullable(
+            .insert(
                 "x",
                 Array1::from_vec(vec![1.0 as F, 0.0, 3.0]).into_dyn(),
-                vec![true, false, true],
+                Some(vec![true, false, true]),
             )
             .unwrap();
         assert_eq!(block.validity("x"), Some(&[true, false, true][..]));
@@ -2172,7 +2119,11 @@ mod tests {
     fn insert_leaves_the_column_without_a_mask() {
         let mut block = Block::new();
         block
-            .insert("x", Array1::from_vec(vec![1.0 as F, 2.0, 3.0]).into_dyn())
+            .insert(
+                "x",
+                Array1::from_vec(vec![1.0 as F, 2.0, 3.0]).into_dyn(),
+                None,
+            )
             .unwrap();
         assert_eq!(block.validity("x"), None);
     }
@@ -2181,15 +2132,19 @@ mod tests {
     fn remove_drops_the_mask_with_the_column() {
         let mut block = Block::new();
         block
-            .insert_nullable(
+            .insert(
                 "x",
                 Array1::from_vec(vec![1.0 as F, 0.0, 3.0]).into_dyn(),
-                vec![true, false, true],
+                Some(vec![true, false, true]),
             )
             .unwrap();
         block.remove("x");
         block
-            .insert("x", Array1::from_vec(vec![4.0 as F, 5.0, 6.0]).into_dyn())
+            .insert(
+                "x",
+                Array1::from_vec(vec![4.0 as F, 5.0, 6.0]).into_dyn(),
+                None,
+            )
             .unwrap();
         assert_eq!(block.validity("x"), None);
     }
@@ -2198,10 +2153,10 @@ mod tests {
     fn clone_keeps_the_mask() {
         let mut block = Block::new();
         block
-            .insert_nullable(
+            .insert(
                 "x",
                 Array1::from_vec(vec![1.0 as F, 0.0, 3.0]).into_dyn(),
-                vec![true, false, true],
+                Some(vec![true, false, true]),
             )
             .unwrap();
         let copy = block.clone();
@@ -2214,7 +2169,7 @@ mod tests {
     fn set_validity_masks_a_column_of_any_dtype() {
         let mut block = Block::new();
         let c = ArrayD::from_shape_vec(vec![2], vec![1i64, 0]).unwrap();
-        block.insert_column("q", Column::from_i64(c)).unwrap();
+        block.insert("q", Column::from(c), None).unwrap();
         block.set_validity("q", vec![true, false]).unwrap();
         assert_eq!(block.validity("q"), Some(&[true, false][..]));
     }
@@ -2223,7 +2178,7 @@ mod tests {
     fn set_validity_refuses_a_missing_column_and_a_short_mask() {
         let mut block = Block::new();
         block
-            .insert("x", Array1::from_vec(vec![1.0 as F, 2.0]).into_dyn())
+            .insert("x", Array1::from_vec(vec![1.0 as F, 2.0]).into_dyn(), None)
             .unwrap();
         assert!(matches!(
             block.set_validity("y", vec![true, false]),
@@ -2245,16 +2200,16 @@ mod tests {
     #[test]
     fn stack_fills_a_missing_column_as_null() {
         let mut a = Block::new();
-        a.insert("x", floats(&[0.0, 1.0])).unwrap();
+        a.insert("x", floats(&[0.0, 1.0]), None).unwrap();
         let mut b = Block::new();
-        b.insert("x", floats(&[2.0])).unwrap();
-        b.insert("q", floats(&[-1.0])).unwrap();
+        b.insert("x", floats(&[2.0]), None).unwrap();
+        b.insert("q", floats(&[-1.0]), None).unwrap();
 
         let s = Block::stack([&a, &b]).unwrap();
         assert_eq!(s.keys().collect::<Vec<_>>(), ["x", "q"]);
         assert_eq!(
             s.get("q")
-                .and_then(|c| c.as_float())
+                .and_then(|c| c.get::<f64>())
                 .unwrap()
                 .as_slice_memory_order(),
             Some(&[0.0, 0.0, -1.0][..])
@@ -2266,10 +2221,10 @@ mod tests {
     #[test]
     fn stack_carries_each_parts_own_mask() {
         let mut a = Block::new();
-        a.insert_nullable("x", floats(&[0.0, 1.0]), vec![false, true])
+        a.insert("x", floats(&[0.0, 1.0]), Some(vec![false, true]))
             .unwrap();
         let mut b = Block::new();
-        b.insert("x", floats(&[2.0])).unwrap();
+        b.insert("x", floats(&[2.0]), None).unwrap();
         let s = Block::stack([&b, &a]).unwrap();
         assert_eq!(s.validity("x"), Some(&[true, false, true][..]));
     }
@@ -2279,7 +2234,7 @@ mod tests {
         let mut empty = Block::new();
         empty.resize(2).unwrap();
         let mut b = Block::new();
-        b.insert("x", floats(&[5.0])).unwrap();
+        b.insert("x", floats(&[5.0]), None).unwrap();
         let s = Block::stack([&empty, &b]).unwrap();
         assert_eq!(s.n_rows(), Some(3));
         assert_eq!(s.validity("x"), Some(&[false, false, true][..]));
@@ -2292,12 +2247,12 @@ mod tests {
     #[test]
     fn stack_keeps_trailing_axes_of_a_filled_column() {
         let mut a = Block::new();
-        a.insert("v", ArrayD::<F>::ones(vec![1, 3])).unwrap();
+        a.insert("v", ArrayD::<F>::ones(vec![1, 3]), None).unwrap();
         let mut b = Block::new();
-        b.insert("x", floats(&[1.0, 2.0])).unwrap();
+        b.insert("x", floats(&[1.0, 2.0]), None).unwrap();
         let s = Block::stack([&a, &b]).unwrap();
         assert_eq!(
-            s.get("v").and_then(|c| c.as_float()).unwrap().shape(),
+            s.get("v").and_then(|c| c.get::<f64>()).unwrap().shape(),
             &[3, 3]
         );
     }
@@ -2305,10 +2260,10 @@ mod tests {
     #[test]
     fn stack_refuses_a_dtype_clash_naming_the_part() {
         let mut a = Block::new();
-        a.insert("label", Array1::from_vec(vec![1 as I]).into_dyn())
+        a.insert("label", Array1::from_vec(vec![1 as I]).into_dyn(), None)
             .unwrap();
         let mut b = Block::new();
-        b.insert("label", Array1::from_vec(vec![1i64]).into_dyn())
+        b.insert("label", Array1::from_vec(vec![1i64]).into_dyn(), None)
             .unwrap();
         let err = Block::stack([&a, &a, &b]).unwrap_err();
         assert_eq!(
@@ -2325,9 +2280,9 @@ mod tests {
     #[test]
     fn stack_refuses_a_per_row_shape_clash() {
         let mut a = Block::new();
-        a.insert("v", ArrayD::<F>::ones(vec![1, 3])).unwrap();
+        a.insert("v", ArrayD::<F>::ones(vec![1, 3]), None).unwrap();
         let mut b = Block::new();
-        b.insert("v", ArrayD::<F>::ones(vec![1, 2])).unwrap();
+        b.insert("v", ArrayD::<F>::ones(vec![1, 2]), None).unwrap();
         assert!(matches!(
             Block::stack([&a, &b]),
             Err(BlockError::StackShape { part: 1, .. })
@@ -2339,9 +2294,9 @@ mod tests {
     #[test]
     fn coords_gathers_x_y_z_row_by_row() {
         let mut block = Block::new();
-        block.insert("x", floats(&[1.0, 2.0])).unwrap();
-        block.insert("y", floats(&[0.5, 1.5])).unwrap();
-        block.insert("z", floats(&[3.0, 4.0])).unwrap();
+        block.insert("x", floats(&[1.0, 2.0]), None).unwrap();
+        block.insert("y", floats(&[0.5, 1.5]), None).unwrap();
+        block.insert("z", floats(&[3.0, 4.0]), None).unwrap();
         assert_eq!(
             block.coords().unwrap(),
             ndarray::array![[1.0, 0.5, 3.0], [2.0, 1.5, 4.0]]
@@ -2351,7 +2306,7 @@ mod tests {
     #[test]
     fn coords_names_the_missing_axis() {
         let mut block = Block::new();
-        block.insert("x", floats(&[1.0])).unwrap();
+        block.insert("x", floats(&[1.0]), None).unwrap();
         assert_eq!(
             block.coords().unwrap_err(),
             BlockError::MissingColumn { key: "y".into() }
@@ -2371,9 +2326,9 @@ mod tests {
     #[test]
     fn set_precision_declares_on_an_f64_column_only() {
         let mut block = Block::new();
-        block.insert("x", floats(&[1.0, 2.0])).unwrap();
+        block.insert("x", floats(&[1.0, 2.0]), None).unwrap();
         block
-            .insert("id", Array1::from_vec(vec![1 as Idx, 2]).into_dyn())
+            .insert("id", Array1::from_vec(vec![1 as Idx, 2]).into_dyn(), None)
             .unwrap();
         block.set_precision("x", 1e-3).unwrap();
         assert_eq!(block.precision("x"), Some(1e-3));
@@ -2393,8 +2348,8 @@ mod tests {
     #[test]
     fn precision_follows_its_column() {
         let mut block = Block::new();
-        block.insert("x", floats(&[1.0, 2.0])).unwrap();
-        block.insert("y", floats(&[3.0, 4.0])).unwrap();
+        block.insert("x", floats(&[1.0, 2.0]), None).unwrap();
+        block.insert("y", floats(&[3.0, 4.0]), None).unwrap();
         block.set_precision("x", 1e-3).unwrap();
         block.set_precision("y", 1e-2).unwrap();
 
@@ -2404,10 +2359,10 @@ mod tests {
         assert_eq!(block.precision("x"), None);
 
         // Replacing with another f64 column keeps it; another dtype drops it.
-        block.insert("px", floats(&[5.0, 6.0])).unwrap();
+        block.insert("px", floats(&[5.0, 6.0]), None).unwrap();
         assert_eq!(block.precision("px"), Some(1e-3));
         block
-            .insert("px", Array1::from_vec(vec![1 as I, 2]).into_dyn())
+            .insert("px", Array1::from_vec(vec![1 as I, 2]).into_dyn(), None)
             .unwrap();
         assert_eq!(block.precision("px"), None);
 
@@ -2432,9 +2387,9 @@ mod tests {
     fn set_target_declares_on_a_u64_column_with_a_well_formed_target() {
         let mut block = Block::new();
         block
-            .insert("site", Array1::from_vec(vec![0 as Idx, 1]).into_dyn())
+            .insert("site", Array1::from_vec(vec![0 as Idx, 1]).into_dyn(), None)
             .unwrap();
-        block.insert("x", floats(&[1.0, 2.0])).unwrap();
+        block.insert("x", floats(&[1.0, 2.0]), None).unwrap();
         block.set_target("site", "sites").unwrap();
         assert_eq!(block.target("site"), Some("sites"));
         assert!(block.set_target("x", "atoms").is_err());
@@ -2449,7 +2404,7 @@ mod tests {
             Some("sites")
         );
         assert_eq!(block.deep_copy().target("ref"), Some("sites"));
-        block.insert("ref", floats(&[0.0, 1.0])).unwrap();
+        block.insert("ref", floats(&[0.0, 1.0]), None).unwrap();
         assert_eq!(block.target("ref"), None);
     }
 }

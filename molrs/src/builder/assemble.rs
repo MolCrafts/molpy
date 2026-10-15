@@ -11,7 +11,6 @@ use crate::builder::orient::direction_fit;
 use crate::builder::{OrientError, Orienter, SiteLink, SiteView};
 use crate::builder::{ParentJoin, PlaceError, PlaceSite, Placer};
 use crate::core::CoarseGrain;
-use crate::core::FromMolGraph;
 use crate::core::LinkManyError;
 use crate::core::MolGraph;
 use crate::core::MolRsError;
@@ -19,6 +18,7 @@ use crate::core::NodeId;
 use crate::core::Port;
 use crate::core::RelationId;
 use crate::core::keys;
+use crate::core::{Graph, GraphAccess};
 use crate::op::I;
 use crate::op::Vec3;
 use crate::op::vec3::sub;
@@ -30,7 +30,7 @@ const MAX_ASSIGNMENTS: usize = 5040;
 /// Why [`Assembler::assemble`] refused its input.
 ///
 /// `site` is a 0-based ordinal of the site graph's beads, in
-/// [`node_ids`](crate::core::MolGraph::node_ids) order — the
+/// [`bead_ids`](CoarseGrain::bead_ids) order — the
 /// unit's `frag_id`.
 #[derive(Debug)]
 pub enum AssembleError {
@@ -181,9 +181,9 @@ struct TemplatePort {
 }
 
 /// The sites that use one template: its copies, in site order.
-struct Group<'a> {
+struct Group<'a, G> {
     name: &'a str,
-    template: &'a MolGraph,
+    template: &'a G,
     ports: Vec<TemplatePort>,
     /// Site ordinals, one per copy.
     sites: Vec<usize>,
@@ -203,13 +203,13 @@ struct SiteGraph {
 
 impl SiteGraph {
     fn read(sites: &CoarseGrain) -> Result<Self, AssembleError> {
-        let ids: Vec<NodeId> = sites.node_ids().collect();
+        let ids: Vec<NodeId> = sites.bead_ids().collect();
         let n = ids.len();
         if I::try_from(n).is_err() {
             return Err(AssembleError::TooManyUnits { units: n });
         }
         let names = sites.bead_types(&ids).map_err(AssembleError::Sites)?;
-        let table = sites.node_table();
+        let table = sites.bead_table();
         let carried = |key: &str| ids.iter().any(|&id| table.has(id, key));
         let positions = if carried(keys::X) {
             Some(sites.positions(&ids).map_err(AssembleError::Sites)?)
@@ -261,12 +261,14 @@ enum PortChoice {
 /// Builds every molecule of a site graph as one placed, linked world graph,
 /// returned as the graph type the caller names.
 ///
-/// The assembler holds a library (name → one template [`MolGraph`], with or
-/// without ports — any graph type, handed over as its inner graph), a
-/// [`Placer`] and an [`Orienter`]. Its one verb,
+/// The assembler holds a library (name → one template of the graph type `G`
+/// — a [`MolGraph`], an [`Atomistic`](crate::core::Atomistic) or a
+/// [`CoarseGrain`], with or without ports), a [`Placer`] and an
+/// [`Orienter`] of that type. Its one verb,
 /// [`assemble`](Assembler::assemble), reads a site graph (a [`CoarseGrain`]
 /// whose beads are the sites and whose bonds say which sites join) and
-/// builds every molecule in it in one call: one template copy per site,
+/// builds every molecule in it in one call, as one world of the library's
+/// type `G`: one template copy per site,
 /// turned and placed, the copies of bonded sites joined through their ports,
 /// each atom stamped with its unit (`frag_id`) and its molecule (`mol_id`).
 /// Any topology is accepted: chains, branches and rings (operator,
@@ -334,31 +336,56 @@ enum PortChoice {
 /// use molrs::core::CoarseGrain;
 /// use molrs::core::Atomistic;
 /// use molrs::core::PortKind;
+/// use molrs::props;
+/// use molrs::core::Element;
 ///
 /// // Joining carbons C0 (`<`, hydrogen on −x) and C1 (`>`, hydrogen on +x).
 /// let mut unit = Atomistic::new();
-/// let c0 = unit.add_atom_xyz("C", 0.0, 0.0, 0.0);
-/// let c1 = unit.add_atom_xyz("C", 1.5, 0.0, 0.0);
-/// let h0 = unit.add_atom_xyz("H", -1.0, 0.0, 0.0);
-/// let h1 = unit.add_atom_xyz("H", 2.5, 0.0, 0.0);
+/// let c0 = unit.add_atom(props! {
+///     keys::ATOMIC_NUMBER => Element::C,
+///     keys::X => 0.0,
+///     keys::Y => 0.0,
+///     keys::Z => 0.0,
+/// }).unwrap();
+/// let c1 = unit.add_atom(props! {
+///     keys::ATOMIC_NUMBER => Element::C,
+///     keys::X => 1.5,
+///     keys::Y => 0.0,
+///     keys::Z => 0.0,
+/// }).unwrap();
+/// let h0 = unit.add_atom(props! {
+///     keys::ATOMIC_NUMBER => Element::H,
+///     keys::X => -1.0,
+///     keys::Y => 0.0,
+///     keys::Z => 0.0,
+/// }).unwrap();
+/// let h1 = unit.add_atom(props! {
+///     keys::ATOMIC_NUMBER => Element::H,
+///     keys::X => 2.5,
+///     keys::Y => 0.0,
+///     keys::Z => 0.0,
+/// }).unwrap();
 /// for (a, b) in [(c0, c1), (c0, h0), (c1, h1)] {
-///     unit.add_bond(a, b).unwrap();
+///     unit.add_bond(a, b, props! {}).unwrap();
 /// }
 /// unit.add_port(c0, h0, PortKind::Left, "", BondNumber::Single).unwrap();
 /// unit.add_port(c1, h1, PortKind::Right, "", BondNumber::Single).unwrap();
 ///
 /// // A three-site chain with no positions: grown copy by copy.
 /// let mut sites = CoarseGrain::new();
-/// let ids: Vec<_> = (0..3).map(|_| sites.add_bead_bare("U")).collect();
-/// sites.add_bond(ids[0], ids[1]).unwrap();
-/// sites.add_bond(ids[1], ids[2]).unwrap();
+/// let ids: Vec<_> = (0..3).map(|_| sites.add_bead(props! {
+///     keys::BEAD_TYPE => "U",
+/// }).unwrap()).collect();
+/// sites.add_bond(ids[0], ids[1], props! {}).unwrap();
+/// sites.add_bond(ids[1], ids[2], props! {}).unwrap();
 ///
 /// let assembler = Assembler::new(
-///     HashMap::from([("U".to_owned(), unit.into_inner())]),
+///     HashMap::from([("U".to_owned(), unit)]),
 ///     Box::new(GrowthPlacer::new()),
 ///     None,
 /// );
-/// let world: Atomistic = assembler.assemble(&sites).unwrap();
+/// // The world is an `Atomistic`, the type of the library's templates.
+/// let world = assembler.assemble(&sites).unwrap();
 ///
 /// // Three copies of 4 atoms, two links remove 4 hydrogens.
 /// assert_eq!(world.n_atoms(), 8);
@@ -367,21 +394,21 @@ enum PortChoice {
 ///
 /// [`SitePlacer`]: crate::builder::SitePlacer
 /// [`GrowthPlacer`]: crate::builder::GrowthPlacer
-pub struct Assembler {
-    library: HashMap<String, MolGraph>,
-    placer: Box<dyn Placer>,
-    orienter: Option<Box<dyn Orienter>>,
+pub struct Assembler<G: Graph> {
+    library: HashMap<String, G>,
+    placer: Box<dyn Placer<G>>,
+    orienter: Option<Box<dyn Orienter<G>>>,
 }
 
-impl Assembler {
-    /// An assembler over `library` (name → template graph, any graph type's
-    /// inner [`MolGraph`]), giving each copy its pose with `placer` after
-    /// turning it with `orienter`, when given. A portless molecule is a
-    /// template with no ports.
+impl<G: Graph> Assembler<G> {
+    /// An assembler over `library` (name → template graph, every template of
+    /// the one graph type `G` the world is built as), giving each copy its
+    /// pose with `placer` after turning it with `orienter`, when given. A
+    /// portless molecule is a template with no ports.
     pub fn new(
-        library: HashMap<String, MolGraph>,
-        placer: Box<dyn Placer>,
-        orienter: Option<Box<dyn Orienter>>,
+        library: HashMap<String, G>,
+        placer: Box<dyn Placer<G>>,
+        orienter: Option<Box<dyn Orienter<G>>>,
     ) -> Self {
         Self {
             library,
@@ -391,9 +418,9 @@ impl Assembler {
     }
 
     /// One copy of `library[bead_type]` per site of `sites`, turned, placed
-    /// and joined along the site bonds; returns the world as a `G` (a
-    /// [`MolGraph`], an `Atomistic`, …). See the type docs for the rules. An
-    /// empty site graph gives an empty world.
+    /// and joined along the site bonds; returns the world as a `G`, the
+    /// library's graph type. See the type docs for the rules. An empty site
+    /// graph gives an empty world.
     ///
     /// # Errors
     ///
@@ -413,13 +440,13 @@ impl Assembler {
     /// O(S + B + A) for S sites, B site bonds and A world atoms, times the
     /// port choices tried at a site (one along a `<`/`>` chain, at most 5040)
     /// and the walks retried per component (two for a `<`/`>` chain).
-    pub fn assemble<G: FromMolGraph>(&self, sites: &CoarseGrain) -> Result<G, AssembleError> {
+    pub fn assemble(&self, sites: &CoarseGrain) -> Result<G, AssembleError> {
         let graph = SiteGraph::read(sites)?;
         let n = graph.names.len();
 
         // ---- group sites by template ----
         let mut group_of_name: HashMap<&str, usize> = HashMap::new();
-        let mut groups: Vec<Group<'_>> = Vec::new();
+        let mut groups: Vec<Group<'_, G>> = Vec::new();
         let mut group_of: Vec<(usize, usize)> = Vec::with_capacity(n);
         for (site, name) in graph.names.iter().enumerate() {
             let g = match group_of_name.get(name.as_str()) {
@@ -435,7 +462,7 @@ impl Assembler {
                     groups.push(Group {
                         name: key,
                         template,
-                        ports: Self::template_ports(key, template)?,
+                        ports: Self::template_ports(key, template.graph())?,
                         sites: Vec::new(),
                     });
                     groups.len() - 1
@@ -572,10 +599,11 @@ impl Assembler {
                 .iter()
                 .map(|&u| I::try_from(u).expect("TooManyUnits bounds every site ordinal"))
                 .collect();
+            let template = group.template.graph();
             let atoms = world
-                .replicate(group.template, &rigids, &frag_ids)
+                .replicate(template, &rigids, &frag_ids)
                 .map_err(replicate_err)?;
-            let per_copy = group.template.n_nodes();
+            let per_copy = template.n_nodes();
             for (c, &u) in group.sites.iter().enumerate() {
                 let mol_id =
                     I::try_from(mol_of[u] + 1).expect("TooManyUnits bounds every component");
@@ -591,8 +619,8 @@ impl Assembler {
         // ---- one scan of the world's ports ----
         let mut world_ports: HashMap<(NodeId, NodeId), RelationId> =
             HashMap::with_capacity(world.n_ports());
-        for id in world.ports() {
-            if let Ok(port) = world.port(id) {
+        for id in world.port_ids() {
+            if let Ok(port) = world.get_port(id) {
                 world_ports.insert((port.anchor, port.handle), id);
             }
         }
@@ -600,7 +628,7 @@ impl Assembler {
             let (g, c) = group_of[u];
             let group = &groups[g];
             let tp = port_of(u, b);
-            let base = c * group.template.n_nodes();
+            let base = c * group.template.graph().n_nodes();
             let key = (
                 copies[g][base + tp.anchor_row],
                 copies[g][base + tp.handle_row],
@@ -634,7 +662,7 @@ impl Assembler {
             }
         })?;
 
-        G::from_molgraph(world).map_err(AssembleError::Output)
+        G::from_graph(world).map_err(AssembleError::Output)
     }
 
     /// Every site of `start`'s connected component, each stamped `mol` in
@@ -661,7 +689,7 @@ impl Assembler {
     /// site itself has no choice, the first failure is returned.
     fn walk(
         members: &[usize],
-        groups: &[Group<'_>],
+        groups: &[Group<'_, G>],
         group_of: &[(usize, usize)],
         graph: &SiteGraph,
         chosen: &mut [[Option<usize>; 2]],
@@ -700,7 +728,7 @@ impl Assembler {
     fn try_walk(
         root: usize,
         pick: usize,
-        groups: &[Group<'_>],
+        groups: &[Group<'_, G>],
         group_of: &[(usize, usize)],
         graph: &SiteGraph,
         chosen: &mut [[Option<usize>; 2]],
@@ -733,7 +761,7 @@ impl Assembler {
     /// the `pick`-th choice (the walk's first site on a retry).
     fn choose_ports(
         u: usize,
-        groups: &[Group<'_>],
+        groups: &[Group<'_, G>],
         group_of: &[(usize, usize)],
         graph: &SiteGraph,
         chosen: &mut [[Option<usize>; 2]],
@@ -842,8 +870,8 @@ impl Assembler {
             .center(&template.node_ids().collect::<Vec<_>>())
             .ok();
         let mut out = Vec::new();
-        for id in template.ports() {
-            let port = template.port(id).map_err(refuse)?;
+        for id in template.port_ids() {
+            let port = template.get_port(id).map_err(refuse)?;
             let handle = position(port.handle);
             out.push(TemplatePort {
                 id,
@@ -913,6 +941,8 @@ fn enumerate(
 
 #[cfg(test)]
 mod tests {
+    use crate::core::Element;
+    use crate::props;
     use std::collections::HashMap;
     use std::sync::Arc;
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -923,10 +953,10 @@ mod tests {
     use crate::core::Atomistic;
     use crate::core::BondNumber;
     use crate::core::CoarseGrain;
-    use crate::core::MolGraph;
     use crate::core::NodeId;
     use crate::core::PortKind;
     use crate::core::keys;
+    use crate::op::I;
     use crate::op::Vec3;
     use crate::op::{Rigid, rotation_about};
 
@@ -942,22 +972,29 @@ mod tests {
     // and adds one C1–C0 bond. An n-unit M chain therefore has
     // 5n − 2(n−1) atoms, 4n − 2(n−1) + (n−1) bonds and 2 ports.
 
-    fn atom(f: &mut Atomistic, symbol: &str, xyz: Vec3, mass: f64) -> NodeId {
-        let id = f.add_atom_xyz(symbol, xyz[0], xyz[1], xyz[2]);
-        f.set_node(id, keys::MASS, mass).expect("stamp mass");
+    fn atom(f: &mut Atomistic, element: Element, xyz: Vec3, mass: f64) -> NodeId {
+        let id = f
+            .add_atom(props! {
+                keys::ATOMIC_NUMBER => element,
+                keys::X => xyz[0],
+                keys::Y => xyz[1],
+                keys::Z => xyz[2],
+            })
+            .unwrap();
+        f.set_atom(id, keys::MASS, mass).expect("stamp mass");
         id
     }
 
     /// Monomer M with its `<` port labelled `left` and `>` labelled `right`.
     fn monomer_labelled(left: &str, right: &str) -> Atomistic {
         let mut m = Atomistic::new();
-        let c0 = atom(&mut m, "C", [0.0, 0.0, 0.0], 12.0);
-        let c1 = atom(&mut m, "C", [1.5, 0.0, 0.0], 12.0);
-        let h0 = atom(&mut m, "H", [-1.0, 0.0, 0.0], 1.0);
-        let h1 = atom(&mut m, "H", [2.5, 0.0, 0.0], 1.0);
-        let o = atom(&mut m, "O", [0.75, 1.2, 0.0], 16.0);
+        let c0 = atom(&mut m, Element::C, [0.0, 0.0, 0.0], 12.0);
+        let c1 = atom(&mut m, Element::C, [1.5, 0.0, 0.0], 12.0);
+        let h0 = atom(&mut m, Element::H, [-1.0, 0.0, 0.0], 1.0);
+        let h1 = atom(&mut m, Element::H, [2.5, 0.0, 0.0], 1.0);
+        let o = atom(&mut m, Element::O, [0.75, 1.2, 0.0], 16.0);
         for (a, b) in [(c0, c1), (c0, h0), (c1, h1), (c0, o)] {
-            m.add_bond(a, b).expect("bond");
+            m.add_bond(a, b, props! {}).expect("bond");
         }
         m.add_port(c0, h0, PortKind::Left, left, BondNumber::Single)
             .expect("port <");
@@ -969,7 +1006,7 @@ mod tests {
     /// Li: one atom, no port.
     fn lithium() -> Atomistic {
         let mut li = Atomistic::new();
-        atom(&mut li, "Li", [0.0; 3], 6.94);
+        atom(&mut li, Element::Li, [0.0; 3], 6.94);
         li
     }
 
@@ -981,7 +1018,7 @@ mod tests {
     /// `n` ports of `kind` on one C, one H handle each, along ±x, ±y, …
     fn hub_of(n: usize, kind: PortKind) -> Atomistic {
         let mut f = Atomistic::new();
-        let c = atom(&mut f, "C", [0.0; 3], 12.0);
+        let c = atom(&mut f, Element::C, [0.0; 3], 12.0);
         let dirs = [
             [1.0, 0.0, 0.0],
             [-1.0, 0.0, 0.0],
@@ -989,22 +1026,22 @@ mod tests {
             [0.0, -1.0, 0.0],
         ];
         for d in dirs.iter().take(n) {
-            let h = atom(&mut f, "H", *d, 1.0);
-            f.add_bond(c, h).expect("C–H");
+            let h = atom(&mut f, Element::H, *d, 1.0);
+            f.add_bond(c, h, props! {}).expect("C–H");
             f.add_port(c, h, kind, "", BondNumber::Single)
                 .expect("port");
         }
         f
     }
 
-    fn library() -> HashMap<String, MolGraph> {
+    fn library() -> HashMap<String, Atomistic> {
         HashMap::from([
-            ("M".to_owned(), monomer_labelled("", "").into_inner()),
-            ("P".to_owned(), monomer_labelled("x", "y").into_inner()),
-            ("Li".to_owned(), lithium().into_inner()),
-            ("E".to_owned(), hub(1).into_inner()),
-            ("S".to_owned(), hub(2).into_inner()),
-            ("X".to_owned(), hub(3).into_inner()),
+            ("M".to_owned(), monomer_labelled("", "")),
+            ("P".to_owned(), monomer_labelled("x", "y")),
+            ("Li".to_owned(), lithium()),
+            ("E".to_owned(), hub(1)),
+            ("S".to_owned(), hub(2)),
+            ("X".to_owned(), hub(3)),
         ])
     }
 
@@ -1015,17 +1052,24 @@ mod tests {
         let ids: Vec<_> = beads
             .iter()
             .map(|(name, p)| {
-                let id = cg.add_bead(name, p[0], p[1], p[2]);
+                let id = cg
+                    .add_bead(props! {
+                        keys::BEAD_TYPE => *name,
+                        keys::X => p[0],
+                        keys::Y => p[1],
+                        keys::Z => p[2],
+                    })
+                    .unwrap();
                 if let Some(a) = axis {
                     for (key, v) in keys::AXIS.into_iter().zip(a) {
-                        cg.set_node(id, key, v).expect("axis");
+                        cg.set_bead(id, key, v).expect("axis");
                     }
                 }
                 id
             })
             .collect();
         for &(i, j) in bonds {
-            cg.add_bond(ids[i], ids[j]).expect("site bond");
+            cg.add_bond(ids[i], ids[j], props! {}).expect("site bond");
         }
         cg
     }
@@ -1033,17 +1077,17 @@ mod tests {
     /// Turns nothing, so a test of ports, ids or links sees no rotation.
     struct Unturned;
 
-    impl Orienter for Unturned {
+    impl Orienter<Atomistic> for Unturned {
         fn orient_many(
             &self,
-            _template: &MolGraph,
+            _template: &Atomistic,
             sites: &[SiteView<'_>],
         ) -> Result<Vec<Rigid>, OrientError> {
             Ok(vec![Rigid::IDENTITY; sites.len()])
         }
     }
 
-    fn assembler() -> Assembler {
+    fn assembler() -> Assembler<Atomistic> {
         Assembler::new(
             library(),
             Box::new(SitePlacer::new()),
@@ -1056,7 +1100,7 @@ mod tests {
         let atoms = frame.get("atoms").expect("an atoms block");
         atoms
             .get(keys::MOL_ID)
-            .and_then(|c| c.as_uint())
+            .and_then(|c| c.get::<u64>())
             .expect("a uint mol_id column")
             .iter()
             .copied()
@@ -1076,16 +1120,14 @@ mod tests {
             &[(0, 1), (1, 2)],
             None,
         );
-        let world = assembler()
-            .assemble::<Atomistic>(&sites)
-            .expect("a 3-site chain");
+        let world = assembler().assemble(&sites).expect("a 3-site chain");
 
         assert_eq!(world.n_atoms(), 11);
         assert_eq!(world.n_bonds(), 10);
         assert_eq!(world.n_ports(), 2);
-        let mut frag_ids: Vec<u32> = world
-            .node_ids()
-            .map(|id| world.frag_id(id).expect("frag_id"))
+        let mut frag_ids: Vec<I> = world
+            .atoms()
+            .map(|(_, a)| a.get_int(keys::FRAG_ID).expect("frag_id"))
             .collect();
         frag_ids.sort_unstable();
         frag_ids.dedup();
@@ -1104,9 +1146,7 @@ mod tests {
             &[(1, 2)],
             None,
         );
-        let world = assembler()
-            .assemble::<Atomistic>(&sites)
-            .expect("Li and an M pair");
+        let world = assembler().assemble(&sites).expect("Li and an M pair");
 
         // Li is component 0 (lowest ordinal), the M pair component 1.
         assert_eq!(world.n_atoms(), 1 + 8);
@@ -1126,7 +1166,7 @@ mod tests {
             &[(0, 1), (1, 2), (2, 0)],
             None,
         );
-        let world = assembler().assemble::<Atomistic>(&sites).expect("a 3-ring");
+        let world = assembler().assemble(&sites).expect("a 3-ring");
 
         // Three links: 15 − 6 atoms, no port left.
         assert_eq!(world.n_atoms(), 9);
@@ -1146,7 +1186,7 @@ mod tests {
             &[(0, 1), (1, 2), (1, 3)],
             None,
         );
-        let world = assembler().assemble::<Atomistic>(&sites).expect("a star");
+        let world = assembler().assemble(&sites).expect("a star");
 
         // 4 + 3·2 atoms, three links remove 6: 4 atoms, no port left.
         assert_eq!(world.n_atoms(), 4);
@@ -1168,13 +1208,13 @@ mod tests {
             &[(0, 1), (1, 2)],
             None,
         );
-        let world = assembler().assemble::<Atomistic>(&sites).expect("E–X–E");
+        let world = assembler().assemble(&sites).expect("E–X–E");
 
         assert_eq!(world.n_ports(), 1);
         let kept: Vec<Vec3> = world
-            .nodes()
-            .filter(|(id, a)| {
-                a.get_str(keys::ELEMENT) == Some("H") && world.frag_id(*id) == Some(1)
+            .atoms()
+            .filter(|(_, a)| {
+                a.atomic_number() == Some(Element::H.z()) && a.get_int(keys::FRAG_ID) == Some(1)
             })
             .map(|(_, a)| a.position().expect("xyz"))
             .collect();
@@ -1187,9 +1227,9 @@ mod tests {
     /// B: M with an extra `>` port labelled `g` on C1 (a third H at y = 1).
     fn branch_labelled() -> Atomistic {
         let mut b = monomer_labelled("", "");
-        let c1 = b.node_ids().nth(1).expect("C1");
-        let h = atom(&mut b, "H", [1.5, 1.0, 0.0], 1.0);
-        b.add_bond(c1, h).expect("C1–H");
+        let c1 = b.atom_ids().nth(1).expect("C1");
+        let h = atom(&mut b, Element::H, [1.5, 1.0, 0.0], 1.0);
+        b.add_bond(c1, h, props! {}).expect("C1–H");
         b.add_port(c1, h, PortKind::Right, "g", BondNumber::Single)
             .expect("port >g");
         b
@@ -1198,9 +1238,9 @@ mod tests {
     /// G: one `<` port labelled `g`.
     fn graft_start() -> Atomistic {
         let mut g = Atomistic::new();
-        let c = atom(&mut g, "C", [0.0; 3], 12.0);
-        let h = atom(&mut g, "H", [-1.0, 0.0, 0.0], 1.0);
-        g.add_bond(c, h).expect("C–H");
+        let c = atom(&mut g, Element::C, [0.0; 3], 12.0);
+        let h = atom(&mut g, Element::H, [-1.0, 0.0, 0.0], 1.0);
+        g.add_bond(c, h, props! {}).expect("C–H");
         g.add_port(c, h, PortKind::Left, "g", BondNumber::Single)
             .expect("port <g");
         g
@@ -1211,11 +1251,11 @@ mod tests {
         // M – B(–G) – M: B's two `>` ports differ only by label, and the first
         // unconstrained choice must not hand `>g` to the unlabelled M.
         let mut lib = library();
-        lib.insert("B".to_owned(), branch_labelled().into_inner());
-        lib.insert("G".to_owned(), graft_start().into_inner());
+        lib.insert("B".to_owned(), branch_labelled());
+        lib.insert("G".to_owned(), graft_start());
         let sites = topology(&["M", "B", "G", "M"], &[(0, 1), (1, 2), (1, 3)]);
         let world = Assembler::new(lib, Box::new(GrowthPlacer::new()), None)
-            .assemble::<Atomistic>(&sites)
+            .assemble(&sites)
             .expect("a labelled branch");
 
         assert_eq!(world.n_ports(), 2);
@@ -1224,7 +1264,7 @@ mod tests {
     #[test]
     fn assemble_of_no_sites_is_an_empty_fragment() {
         let world = assembler()
-            .assemble::<Atomistic>(&CoarseGrain::new())
+            .assemble(&CoarseGrain::new())
             .expect("nothing to build");
         assert_eq!(world.n_atoms(), 0);
     }
@@ -1232,8 +1272,8 @@ mod tests {
     /// Counts `place` calls, then delegates to `SitePlacer`.
     struct CountingPlacer(Arc<AtomicUsize>);
 
-    impl Placer for CountingPlacer {
-        fn place(&self, template: &MolGraph, site: &PlaceSite) -> Result<Rigid, PlaceError> {
+    impl Placer<Atomistic> for CountingPlacer {
+        fn place(&self, template: &Atomistic, site: &PlaceSite) -> Result<Rigid, PlaceError> {
             self.0.fetch_add(1, Ordering::SeqCst);
             SitePlacer::new().place(template, site)
         }
@@ -1252,7 +1292,7 @@ mod tests {
             &[(0, 1)],
             None,
         );
-        assembler.assemble::<Atomistic>(&sites).expect("M and Li");
+        assembler.assemble(&sites).expect("M and Li");
 
         assert_eq!(calls.load(Ordering::SeqCst), 3);
     }
@@ -1260,21 +1300,24 @@ mod tests {
     /// A site graph without positions: `(name)` per site and bonds.
     fn topology(names: &[&str], bonds: &[(usize, usize)]) -> CoarseGrain {
         let mut cg = CoarseGrain::new();
-        let ids: Vec<_> = names.iter().map(|n| cg.add_bead_bare(n)).collect();
+        let ids: Vec<_> = names
+            .iter()
+            .map(|n| cg.add_bead(props! { keys::BEAD_TYPE => *n }).unwrap())
+            .collect();
         for &(i, j) in bonds {
-            cg.add_bond(ids[i], ids[j]).expect("site bond");
+            cg.add_bond(ids[i], ids[j], props! {}).expect("site bond");
         }
         cg
     }
 
-    fn grower() -> Assembler {
+    fn grower() -> Assembler<Atomistic> {
         Assembler::new(library(), Box::new(GrowthPlacer::new()), None)
     }
 
     #[test]
     fn a_grown_chain_joins_each_copy_at_the_parent_handle_distance() {
         let world = grower()
-            .assemble::<Atomistic>(&topology(&["M", "M", "M"], &[(0, 1), (1, 2)]))
+            .assemble(&topology(&["M", "M", "M"], &[(0, 1), (1, 2)]))
             .expect("a grown M chain");
 
         assert_eq!(world.n_atoms(), 3 * 5 - 4);
@@ -1282,19 +1325,10 @@ mod tests {
         let mut joins = Vec::new();
         for (_, bond) in world.bonds() {
             let (a, b) = (bond.nodes[0], bond.nodes[1]);
-            if world.frag_id(a) != world.frag_id(b) {
-                let pa = world
-                    .as_molgraph()
-                    .get_node(a)
-                    .expect("a")
-                    .position()
-                    .expect("xyz");
-                let pb = world
-                    .as_molgraph()
-                    .get_node(b)
-                    .expect("b")
-                    .position()
-                    .expect("xyz");
+            let (pa, pb) = (world.get_atom(a).expect("a"), world.get_atom(b).expect("b"));
+            if pa.get_int(keys::FRAG_ID) != pb.get_int(keys::FRAG_ID) {
+                let pa = pa.position().expect("xyz");
+                let pb = pb.position().expect("xyz");
                 joins.push(crate::op::vec3::norm(crate::op::vec3::sub(pa, pb)));
             }
         }
@@ -1310,13 +1344,13 @@ mod tests {
         // end, whose first choice (`<`) would leave `<` facing K; the retry
         // takes `>` and every arm then meets K with `>`.
         let mut lib = library();
-        lib.insert("K".to_owned(), hub_of(3, PortKind::Left).into_inner());
+        lib.insert("K".to_owned(), hub_of(3, PortKind::Left));
         let sites = topology(
             &["K", "M", "M", "M", "M", "M", "M"],
             &[(0, 1), (1, 2), (0, 3), (3, 4), (0, 5), (5, 6)],
         );
         let world = Assembler::new(lib, Box::new(GrowthPlacer::new()), None)
-            .assemble::<Atomistic>(&sites)
+            .assemble(&sites)
             .expect("a three-arm star");
 
         // 4 + 6·5 atoms, six links remove 12.
@@ -1327,14 +1361,14 @@ mod tests {
     /// A quarter turn about +z around the template's centre of mass.
     struct QuarterTurn;
 
-    impl Orienter for QuarterTurn {
+    impl Orienter<Atomistic> for QuarterTurn {
         fn orient_many(
             &self,
-            template: &MolGraph,
+            template: &Atomistic,
             sites: &[SiteView<'_>],
         ) -> Result<Vec<Rigid>, OrientError> {
             let c = template
-                .center(&template.node_ids().collect::<Vec<_>>())
+                .center(&template.atom_ids().collect::<Vec<_>>())
                 .map_err(OrientError::Center)?;
             let rz = [[0.0, -1.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]];
             Ok(vec![rotation_about(rz, c); sites.len()])
@@ -1352,11 +1386,11 @@ mod tests {
             Some(Box::new(QuarterTurn)),
         );
         let world = assembler
-            .assemble::<Atomistic>(&graph(&[("E", [7.0, 0.0, 0.0])], &[], None))
+            .assemble(&graph(&[("E", [7.0, 0.0, 0.0])], &[], None))
             .expect("one E");
 
         let xs: Vec<f64> = world
-            .nodes()
+            .atoms()
             .map(|(_, a)| a.get_f64(keys::X).expect("x"))
             .collect();
         assert!(
@@ -1379,11 +1413,11 @@ mod tests {
             Box::new(SitePlacer::new()),
             Some(Box::new(AxisOrienter::new())),
         )
-        .assemble::<Atomistic>(&sites)
+        .assemble(&sites)
         .expect("an oriented M pair");
 
-        for (_, a) in world.nodes() {
-            if a.get_str(keys::ELEMENT) == Some("O") {
+        for (_, a) in world.atoms() {
+            if a.atomic_number() == Some(Element::O.z()) {
                 assert!(
                     a.get_f64(keys::Y).expect("y").abs() < TOL,
                     "O left the xz plane"
@@ -1393,12 +1427,47 @@ mod tests {
         }
     }
 
+    #[test]
+    fn assemble_builds_the_world_as_the_library_graph_type() {
+        // A coarse-grained library gives a coarse-grained world: one bead
+        // template, two unbonded sites, each copy's bead on its site.
+        let mut bead = CoarseGrain::new();
+        let b = bead
+            .add_bead(props! {
+                keys::BEAD_TYPE => "W",
+                keys::X => 0.0,
+                keys::Y => 0.0,
+                keys::Z => 0.0,
+            })
+            .unwrap();
+        bead.set_bead(b, keys::MASS, 72.0).expect("mass");
+        let assembler = Assembler::new(
+            HashMap::from([("W".to_owned(), bead)]),
+            Box::new(SitePlacer::new()),
+            None,
+        );
+        let world: CoarseGrain = assembler
+            .assemble(&graph(
+                &[("W", [1.0, 2.0, 3.0]), ("W", [4.0, 5.0, 6.0])],
+                &[],
+                None,
+            ))
+            .expect("two W beads");
+
+        let beads: Vec<NodeId> = world.bead_ids().collect();
+        assert_eq!(
+            world.positions(&beads).expect("xyz"),
+            vec![[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]]
+        );
+        assert_eq!(world.bead_types(&beads).expect("types"), ["W", "W"]);
+    }
+
     // ---- refusals ------------------------------------------------------------
 
     #[test]
     fn assemble_names_an_unknown_template_by_site() {
         let err = assembler()
-            .assemble::<Atomistic>(&graph(
+            .assemble(&graph(
                 &[("M", [0.0; 3]), ("Q", [1.0, 0.0, 0.0])],
                 &[],
                 None,
@@ -1423,7 +1492,7 @@ mod tests {
             None,
         );
         let err = assembler()
-            .assemble::<Atomistic>(&sites)
+            .assemble(&sites)
             .expect_err("E cannot take two bonds");
         assert!(
             matches!(&err, AssembleError::Ports { site: 1, name, .. } if name == "E"),
@@ -1436,9 +1505,7 @@ mod tests {
         // P's `>` is labelled y and its `<` x: no port of the first P can join
         // any port of the second, so the walk's first site is refused.
         let sites = graph(&[("P", [0.0; 3]), ("P", [5.0, 0.0, 0.0])], &[(0, 1)], None);
-        let err = assembler()
-            .assemble::<Atomistic>(&sites)
-            .expect_err("mismatched labels");
+        let err = assembler().assemble(&sites).expect_err("mismatched labels");
         assert!(
             matches!(err, AssembleError::Ports { site: 0, .. }),
             "{err:?}"
@@ -1463,7 +1530,7 @@ mod tests {
             Box::new(SitePlacer::new()),
             Some(Box::new(AxisOrienter::new())),
         )
-        .assemble::<Atomistic>(&sites)
+        .assemble(&sites)
         .expect_err("no axis");
         assert!(
             matches!(
@@ -1478,11 +1545,9 @@ mod tests {
     #[test]
     fn assemble_maps_a_non_finite_position_to_its_site() {
         let mut sites = graph(&[("M", [0.0; 3]), ("M", [5.0, 0.0, 0.0])], &[], None);
-        let second = sites.node_ids().nth(1).expect("two sites");
-        sites.set_node(second, keys::X, f64::NAN).expect("x");
-        let err = assembler()
-            .assemble::<Atomistic>(&sites)
-            .expect_err("a NaN site");
+        let second = sites.bead_ids().nth(1).expect("two sites");
+        sites.set_bead(second, keys::X, f64::NAN).expect("x");
+        let err = assembler().assemble(&sites).expect_err("a NaN site");
         assert!(matches!(err, AssembleError::Sites(_)), "{err:?}");
     }
 }

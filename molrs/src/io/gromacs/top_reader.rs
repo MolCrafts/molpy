@@ -2,12 +2,16 @@
 //!
 //! Two products from one parser:
 //!
-//! - [`ForceFieldReader::read`] / [`read_str`](ForceFieldReader::read_str)
-//!   read the force-field **directives** of a topology (`forcefield.itp` with
-//!   its includes, or a `.top`'s directive sections) into a [`ForceField`];
-//! - [`GromacsTopForcefieldReader::read_system`] / [`read_system_str`](GromacsTopForcefieldReader::read_system_str)
-//!   read a whole `.top` — directives **and** molecules — into the
-//!   [`ForceField`] and a typed [`Frame`] (see [`system`](self#whole-systems)).
+//! - [`ForceFieldReader::read`] reads the force-field **directives** of a
+//!   topology (`forcefield.itp` with its includes, or a `.top`'s directive
+//!   sections) into a [`ForceField`];
+//! - [`GromacsTopForcefieldReader::read_system`] reads a whole `.top` —
+//!   directives **and** molecules — into the [`ForceField`] and a typed
+//!   [`Frame`] (see [`system`](self#whole-systems)).
+//!
+//! Both take a [`Source`]: a path, whose `#include`s resolve against its
+//! directory and then the include directories, or a whole file's bytes, whose
+//! relative `#include`s resolve against the include directories only.
 //!
 //! The file speaks nm, kJ/mol, degrees and e; the force field is the molrs
 //! force-field IR, whose definitions follow LAMMPS (`real`: Å, kcal/mol,
@@ -219,6 +223,7 @@ use crate::ff::ir::same_lj;
 use crate::ff::ir::torsion::rb_polynomial;
 use crate::ff::ir::{Params, SpecialBonds};
 use crate::io::reader::ForceFieldReader;
+use crate::io::{Source, invalid_data};
 use molrs::core::Frame;
 use molrs::core::TypeName;
 
@@ -284,8 +289,8 @@ const NO_IR_FORM: &[&str] = &[
 /// Reader for GROMACS topologies.
 ///
 /// Configure with the builders, then read the force-field directives with
-/// [`ForceFieldReader::read`] / [`ForceFieldReader::read_str`], or a whole
-/// system with [`read_system`](Self::read_system). The supported directives,
+/// [`ForceFieldReader::read`], or a whole system with
+/// [`read_system`](Self::read_system). The supported directives,
 /// conversions and refusals are listed in the module documentation.
 ///
 /// # Examples
@@ -301,17 +306,17 @@ const NO_IR_FORM: &[&str] = &[
 /// [ bondtypes ]
 /// CT  HC  1  0.10900  284512.0
 /// ";
-/// let ff = GromacsTopForcefieldReader::new().read_str(text)?;
+/// let ff = GromacsTopForcefieldReader::new().read(text.as_bytes())?;
 ///
 /// // comb-rule 3 is geometric mixing, declared on the lj/cut style.
 /// let lj = ff.get_style("pair", "lj/cut").expect("lj/cut style");
-/// assert_eq!(lj.params().get_str("mixing"), Some("geometric"));
+/// assert_eq!(lj.params().get("mixing").and_then(|v| v.as_text()), Some("geometric"));
 ///
 /// // b₀ = 0.109 nm is r0 = 1.09 Å.
 /// let bonds = ff.get_bondtypes();
-/// let r0 = bonds[0].params.get("r0").expect("r0");
+/// let r0 = bonds[0].params.get("r0").and_then(|v| v.as_num()).expect("r0");
 /// assert!((r0 - 1.09).abs() < 1e-12);
-/// # Ok::<(), String>(())
+/// # Ok::<(), std::io::Error>(())
 /// ```
 #[derive(Debug, Clone, Default)]
 pub struct GromacsTopForcefieldReader {
@@ -352,25 +357,25 @@ impl GromacsTopForcefieldReader {
         self
     }
 
-    /// Read a whole topology file — its directives and its molecules — into
-    /// the force field and a typed frame (module docs, "Whole systems").
+    /// Read the whole topology `src` holds — its directives and its
+    /// molecules — into the force field and a typed frame (module docs,
+    /// "Whole systems").
     ///
     /// # Errors
     ///
-    /// Every refusal of the module documentation, naming the file, line and
-    /// row.
-    pub fn read_system(&self, path: &str) -> Result<(ForceField, Frame), String> {
-        let scan = self.scan_file(path, true)?;
-        let mut directives = scan.directives()?;
-        let frame = system::build(&scan.rows, &mut directives)?;
-        Ok((directives.ff, frame))
+    /// The OS error of a path that cannot be read;
+    /// [`InvalidData`](std::io::ErrorKind::InvalidData) for every refusal of
+    /// the module documentation, naming the file, line and row.
+    pub fn read_system<'a>(
+        &self,
+        src: impl Into<Source<'a>>,
+    ) -> std::io::Result<(ForceField, Frame)> {
+        let scan = self.scan_source(&src.into(), true)?;
+        self.system(scan).map_err(invalid_data)
     }
 
-    /// [`read_system`](Self::read_system) on in-memory text (`#include` of a
-    /// relative path resolves only against the include directories).
-    pub fn read_system_str(&self, text: &str) -> Result<(ForceField, Frame), String> {
-        let mut scan = Scan::default();
-        self.scan(text, "<string>", None, true, &mut scan)?;
+    /// The force field and frame of a preprocessed whole topology.
+    fn system(&self, scan: Scan) -> Result<(ForceField, Frame), String> {
         let mut directives = scan.directives()?;
         let frame = system::build(&scan.rows, &mut directives)?;
         Ok((directives.ff, frame))
@@ -415,22 +420,23 @@ impl GromacsTopForcefieldReader {
         ))
     }
 
-    /// Preprocess the file at `path`.
-    fn scan_file(&self, path: &str, system: bool) -> Result<Scan, String> {
-        let p = Path::new(path);
-        if !p.is_file() {
-            return Err(format!("file not found: {path}"));
-        }
-        let text = std::fs::read_to_string(p).map_err(|e| format!("read {path}: {e}"))?;
+    /// Preprocess the topology `src` holds: a path names itself in errors
+    /// and resolves `#include` against its directory; bytes are `<bytes>`.
+    fn scan_source(&self, src: &Source<'_>, system: bool) -> std::io::Result<Scan> {
+        let text = src.text()?;
         let mut scan = Scan::default();
-        scan.visited.insert(p.to_path_buf());
-        self.scan(
-            &text,
-            path,
-            Some(p.parent().unwrap_or(Path::new("."))),
-            system,
-            &mut scan,
-        )?;
+        let (origin, dir) = match src.path() {
+            Some(p) => {
+                scan.visited.insert(p.to_path_buf());
+                (
+                    p.display().to_string(),
+                    Some(p.parent().unwrap_or(Path::new("."))),
+                )
+            }
+            None => ("<bytes>".to_owned(), None),
+        };
+        self.scan(&text, &origin, dir, system, &mut scan)
+            .map_err(invalid_data)?;
         Ok(scan)
     }
 
@@ -595,8 +601,8 @@ impl GromacsTopForcefieldReader {
         let Some(path) = candidates.iter().find(|p| p.is_file()).cloned() else {
             if candidates.is_empty() {
                 return Err(format!(
-                    "{at}: #include \"{name}\" is relative, and text read from a string has \
-                     no directory to resolve it against (add one with with_include_dir)"
+                    "{at}: #include \"{name}\" is relative, and a topology read from bytes \
+                     has no directory to resolve it against (add one with with_include_dir)"
                 ));
             }
             let tried: Vec<String> = candidates.iter().map(|p| p.display().to_string()).collect();
@@ -621,14 +627,9 @@ impl GromacsTopForcefieldReader {
 }
 
 impl ForceFieldReader for GromacsTopForcefieldReader {
-    fn read_str(&self, text: &str) -> Result<ForceField, String> {
-        let mut scan = Scan::default();
-        self.scan(text, "<string>", None, false, &mut scan)?;
-        Ok(scan.directives()?.ff)
-    }
-
-    fn read(&self, path: &str) -> Result<ForceField, String> {
-        Ok(self.scan_file(path, false)?.directives()?.ff)
+    fn read<'a>(&self, src: impl Into<Source<'a>>) -> std::io::Result<ForceField> {
+        let scan = self.scan_source(&src.into(), false)?;
+        Ok(scan.directives().map_err(invalid_data)?.ff)
     }
 }
 
@@ -768,16 +769,16 @@ impl Row {
         if !matches!(ptype, "A" | "S" | "V" | "D" | "B") {
             return Err(self.err(&format!("ptype '{ptype}' is not one of A S V D B")));
         }
-        let mut atom = Params::from_pairs(&[
+        let mut atom = Params::from_iter([
             ("mass", self.number(tail[0], "mass")?),
             ("charge", self.number(tail[1], "charge")?),
         ]);
         if let Some(tok) = at_num {
             atom.set("atomic_number", self.number(tok, "at.num")?);
         }
-        atom.set_str("ptype", ptype);
+        atom.set("ptype", ptype);
         if let Some(bond_type) = bond_type {
-            atom.set_str("class", bond_type);
+            atom.set("class", bond_type);
         }
         let lj = (
             self.number(tail[4], "W (epsilon)")? / KCAL_TO_KJ.get(),
@@ -1009,7 +1010,7 @@ pub(super) fn convert(kind: Kind, funct: u32, v: &[f64]) -> Result<Converted, St
                 "bond",
                 "harmonic",
                 // GROMACS ½k_b → LAMMPS K = k_b/2.
-                Params::from_pairs(&[
+                Params::from_iter([
                     ("r0", v[0] * NM_TO_ANGSTROM.get()),
                     ("k", v[1] / kb_scale / 2.0),
                 ]),
@@ -1021,7 +1022,7 @@ pub(super) fn convert(kind: Kind, funct: u32, v: &[f64]) -> Result<Converted, St
             done(
                 "bond",
                 "morse",
-                Params::from_pairs(&[
+                Params::from_iter([
                     ("d0", v[1] / KCAL_TO_KJ.get()),
                     ("alpha", v[2] / NM_TO_ANGSTROM.get()),
                     ("r0", v[0] * NM_TO_ANGSTROM.get()),
@@ -1035,7 +1036,7 @@ pub(super) fn convert(kind: Kind, funct: u32, v: &[f64]) -> Result<Converted, St
                 "angle",
                 "harmonic",
                 // GROMACS ½k_θ → LAMMPS K = k_θ/2; θ₀ stays in degrees.
-                Params::from_pairs(&[("theta0", v[0]), ("k", v[1] / KCAL_TO_KJ.get() / 2.0)]),
+                Params::from_iter([("theta0", v[0]), ("k", v[1] / KCAL_TO_KJ.get() / 2.0)]),
                 Table::Angle(1),
             )
         }
@@ -1045,7 +1046,7 @@ pub(super) fn convert(kind: Kind, funct: u32, v: &[f64]) -> Result<Converted, St
                 "angle",
                 "charmm",
                 // Both GROMACS terms are ½k forms; LAMMPS's are not.
-                Params::from_pairs(&[
+                Params::from_iter([
                     ("k", v[1] / KCAL_TO_KJ.get() / 2.0),
                     ("theta0", v[0]),
                     ("k_ub", v[3] / kb_scale / 2.0),
@@ -1056,7 +1057,7 @@ pub(super) fn convert(kind: Kind, funct: u32, v: &[f64]) -> Result<Converted, St
         }
         (Kind::Dihedral, 1 | 9 | 4) => {
             exactly(3)?;
-            let params = Params::from_pairs(&[
+            let params = Params::from_iter([
                 ("k", v[1] / KCAL_TO_KJ.get()),
                 ("periodicity", whole(v[2])?),
                 ("phase", v[0]),
@@ -1085,7 +1086,7 @@ pub(super) fn convert(kind: Kind, funct: u32, v: &[f64]) -> Result<Converted, St
             done(
                 "improper",
                 "harmonic",
-                Params::from_pairs(&[("k", v[1] / (2.0 * KCAL_TO_KJ.get())), ("chi0", chi0)]),
+                Params::from_iter([("k", v[1] / (2.0 * KCAL_TO_KJ.get())), ("chi0", chi0)]),
                 Table::Idihs,
             )
         }
@@ -1099,7 +1100,7 @@ pub(super) fn convert(kind: Kind, funct: u32, v: &[f64]) -> Result<Converted, St
             done(
                 "dihedral",
                 "opls",
-                Params::from_pairs(&[
+                Params::from_iter([
                     ("k1", v[0] / KCAL_TO_KJ.get()),
                     ("k2", v[1] / KCAL_TO_KJ.get()),
                     ("k3", v[2] / KCAL_TO_KJ.get()),
@@ -1128,7 +1129,7 @@ pub(super) fn convert(kind: Kind, funct: u32, v: &[f64]) -> Result<Converted, St
 /// (one term: the single-term spelling).
 fn periodic_terms(terms: &[[f64; 3]]) -> Params {
     if let [[k, n, phase]] = terms {
-        return Params::from_pairs(&[("k", *k), ("periodicity", *n), ("phase", *phase)]);
+        return Params::from_iter([("k", *k), ("periodicity", *n), ("phase", *phase)]);
     }
     let mut p = Params::new();
     for (m, [k, n, phase]) in terms.iter().enumerate() {
@@ -1309,8 +1310,8 @@ impl Scan {
                     (
                         a.name.to_owned(),
                         (
-                            a.atom.get("mass").unwrap_or(0.0),
-                            a.atom.get("charge").unwrap_or(0.0),
+                            a.atom.get("mass").and_then(|v| v.as_num()).unwrap_or(0.0),
+                            a.atom.get("charge").and_then(|v| v.as_num()).unwrap_or(0.0),
                         ),
                     )
                 })
@@ -1413,12 +1414,12 @@ fn define_lj(
         ("lj/cut", "coul/cut")
     };
     let mut style_params = Params::new();
-    style_params.set_str("mixing", d.mixing.name());
+    style_params.set("mixing", d.mixing.name());
     if uses_14 {
-        style_params.set_str("one_four", "epsilon14");
+        style_params.set("one_four", "epsilon14");
     }
     let lj_params = |(eps, sigma): (f64, f64), t: Option<(f64, f64)>| {
-        let mut p = Params::from_pairs(&[("epsilon", eps), ("sigma", sigma)]);
+        let mut p = Params::from_iter([("epsilon", eps), ("sigma", sigma)]);
         if let Some((eps14, sigma14)) = t {
             p.set("epsilon14", eps14);
             p.set("sigma14", sigma14);
@@ -1447,7 +1448,7 @@ fn define_lj(
         ff.def_style(
             "pair",
             coul_name,
-            Params::from_pairs(&[
+            Params::from_iter([
                 ("coulomb", crate::core::constants::gromacs_coulomb_real()),
                 ("dielectric", VACUUM_DIELECTRIC),
             ]),
@@ -1560,7 +1561,7 @@ fn define_bonded(
         let refs: Vec<&str> = labels.iter().map(String::as_str).collect();
         let name = TypeName::join(&refs).map_err(|e| row.err(&e))?;
         let mut params = Params::new();
-        params.set_array(CMAP_GRID, grid);
+        params.set(CMAP_GRID, grid);
         ff.def_style("cmap", "charmm", Params::new())
             .and_then(|s| s.def_type(name.as_str(), &refs, params))
             .map_err(|e| row.err(&e.to_string()))?;
@@ -1570,72 +1571,6 @@ fn define_bonded(
         });
     }
     Ok(lookup)
-}
-
-/// How [`read_top_forcefield`] and [`read_top_system`]
-/// read a topology: [`GromacsTopForcefieldReader`]'s settings as values.
-#[derive(Debug, Clone, Default)]
-pub struct GromacsTopReadOptions {
-    /// Follow `#include` ([`GromacsTopForcefieldReader::with_include`];
-    /// default `false`).
-    pub include: bool,
-    /// Directories an `#include` is resolved against after the including
-    /// file's ([`GromacsTopForcefieldReader::with_include_dir`]).
-    pub include_dirs: Vec<PathBuf>,
-    /// Sections read past instead of refused, bracket-less and
-    /// case-insensitive ([`GromacsTopForcefieldReader::with_skipped_directive`]).
-    pub skip_directives: Vec<String>,
-}
-
-impl GromacsTopForcefieldReader {
-    /// The reader `options` configure.
-    pub fn with_options(options: &GromacsTopReadOptions) -> Self {
-        let reader = options
-            .include_dirs
-            .iter()
-            .fold(Self::new().with_include(options.include), |reader, dir| {
-                reader.with_include_dir(dir)
-            });
-        options
-            .skip_directives
-            .iter()
-            .fold(reader, |reader, name| reader.with_skipped_directive(name))
-    }
-}
-
-/// Read the force-field directives of the GROMACS topology at `path`
-/// ([`GromacsTopForcefieldReader`]'s `read`).
-///
-/// # Errors
-///
-/// An unreadable file and every refusal of the module documentation.
-pub fn read_top_forcefield(
-    path: impl AsRef<std::path::Path>,
-    options: &GromacsTopReadOptions,
-) -> Result<ForceField, String> {
-    let path = path_text(path.as_ref())?;
-    GromacsTopForcefieldReader::with_options(options).read(path)
-}
-
-/// Read the whole GROMACS topology at `path` — its directives and molecules
-/// — into a force field and a typed frame
-/// ([`GromacsTopForcefieldReader::read_system`]).
-///
-/// # Errors
-///
-/// An unreadable file and every refusal of the module documentation.
-pub fn read_top_system(
-    path: impl AsRef<std::path::Path>,
-    options: &GromacsTopReadOptions,
-) -> Result<(ForceField, Frame), String> {
-    let path = path_text(path.as_ref())?;
-    GromacsTopForcefieldReader::with_options(options).read_system(path)
-}
-
-/// `path` as UTF-8, the form the reader resolves `#include` from.
-fn path_text(path: &std::path::Path) -> Result<&str, String> {
-    path.to_str()
-        .ok_or_else(|| format!("{}: not a UTF-8 path", path.display()))
 }
 
 #[cfg(test)]
@@ -1654,14 +1589,15 @@ mod tests {
 
     fn read(text: &str) -> ForceField {
         GromacsTopForcefieldReader::new()
-            .read_str(text)
-            .unwrap_or_else(|e| panic!("read_str: {e}"))
+            .read(text.as_bytes())
+            .unwrap_or_else(|e| panic!("read: {e}"))
     }
 
     fn read_err(text: &str) -> String {
         GromacsTopForcefieldReader::new()
-            .read_str(text)
-            .expect_err("expected Err from read_str")
+            .read(text.as_bytes())
+            .expect_err("expected Err from read")
+            .to_string()
     }
 
     /// `[ defaults ]` (comb-rule 3) then one `[ section ]` holding `rows`.
@@ -1751,6 +1687,7 @@ mod tests {
     fn assert_param(p: &Params, key: &str, want: f64, tol: f64) {
         let got = p
             .get(key)
+            .and_then(|v| v.as_num())
             .unwrap_or_else(|| panic!("missing `{key}` in {p:?}"));
         assert!((got - want).abs() < tol, "`{key}`: got {got}, want {want}");
     }
@@ -1767,7 +1704,10 @@ mod tests {
     fn comb_rule_3_declares_geometric_mixing_on_lj_cut() {
         let ff = read(&with_section("atomtypes", OPLS_135));
         assert_eq!(
-            style(&ff, "pair", "lj/cut").params().get_str("mixing"),
+            style(&ff, "pair", "lj/cut")
+                .params()
+                .get("mixing")
+                .and_then(|v| v.as_text()),
             Some("geometric")
         );
     }
@@ -1777,7 +1717,10 @@ mod tests {
         let text = format!("[ defaults ]\n1  2  yes  0.5  0.5\n[ atomtypes ]\n{OPLS_135}\n");
         let ff = read(&text);
         assert_eq!(
-            style(&ff, "pair", "lj/cut").params().get_str("mixing"),
+            style(&ff, "pair", "lj/cut")
+                .params()
+                .get("mixing")
+                .and_then(|v| v.as_text()),
             Some("arithmetic")
         );
     }
@@ -1829,13 +1772,21 @@ mod tests {
         let ff = read(&with_section("atomtypes", OPLS_135));
 
         let a = &atom_type(&ff, "opls_135").params;
-        assert_eq!(a.get("mass"), Some(12.011));
-        assert_eq!(a.get("charge"), Some(-0.18));
-        assert_eq!(a.get("atomic_number"), Some(6.0));
-        assert_eq!(a.get_str("class"), Some("CT"));
-        assert_eq!(a.get_str("ptype"), Some("A"));
-        assert_eq!(a.get("sigma"), None, "σ belongs on lj/cut");
-        assert_eq!(a.get("epsilon"), None, "ε belongs on lj/cut");
+        assert_eq!(a.get("mass").and_then(|v| v.as_num()), Some(12.011));
+        assert_eq!(a.get("charge").and_then(|v| v.as_num()), Some(-0.18));
+        assert_eq!(a.get("atomic_number").and_then(|v| v.as_num()), Some(6.0));
+        assert_eq!(a.get("class").and_then(|v| v.as_text()), Some("CT"));
+        assert_eq!(a.get("ptype").and_then(|v| v.as_text()), Some("A"));
+        assert_eq!(
+            a.get("sigma").and_then(|v| v.as_num()),
+            None,
+            "σ belongs on lj/cut"
+        );
+        assert_eq!(
+            a.get("epsilon").and_then(|v| v.as_num()),
+            None,
+            "ε belongs on lj/cut"
+        );
 
         let lj = lj_self_row(&ff, "opls_135");
         assert_eq!(
@@ -1852,7 +1803,7 @@ mod tests {
         let ff = read(&with_section("atomtypes", OPLS_135));
         let p = style(&ff, "pair", "coul/cut").params();
         assert_eq!(
-            p.get("coulomb"),
+            p.get("coulomb").and_then(|v| v.as_num()),
             Some(crate::core::constants::gromacs_coulomb_real())
         );
         // GROMACS's ONE_4PI_EPS0 is LAMMPS real's to 9.9e-9.
@@ -1860,7 +1811,10 @@ mod tests {
             (crate::core::constants::gromacs_coulomb_real() / COULOMB_REAL - 1.0 - 9.9e-9).abs()
                 < 1e-10
         );
-        assert_eq!(p.get("dielectric"), Some(VACUUM_DIELECTRIC));
+        assert_eq!(
+            p.get("dielectric").and_then(|v| v.as_num()),
+            Some(VACUUM_DIELECTRIC)
+        );
     }
 
     #[test]
@@ -1870,8 +1824,8 @@ mod tests {
             "opls_135  12.011  -0.18  A  0.35  0.276144",
         ));
         let p = &atom_type(&ff, "opls_135").params;
-        assert_eq!(p.get_str("class"), None);
-        assert_eq!(p.get("atomic_number"), None);
+        assert_eq!(p.get("class").and_then(|v| v.as_text()), None);
+        assert_eq!(p.get("atomic_number").and_then(|v| v.as_num()), None);
         assert_param(&lj_self_row(&ff, "opls_135").params, "sigma", 3.5, 1e-12);
     }
 
@@ -1883,9 +1837,9 @@ mod tests {
             "opls_135  6  12.011  -0.18  A  0.35  0.276144",
         ));
         let p = &atom_type(&ff, "opls_135").params;
-        assert_eq!(p.get("atomic_number"), Some(6.0));
-        assert_eq!(p.get_str("class"), None);
-        assert_eq!(p.get("mass"), Some(12.011));
+        assert_eq!(p.get("atomic_number").and_then(|v| v.as_num()), Some(6.0));
+        assert_eq!(p.get("class").and_then(|v| v.as_text()), None);
+        assert_eq!(p.get("mass").and_then(|v| v.as_num()), Some(12.011));
     }
 
     /// Seven columns with a non-integer second token: `name bond_type mass …`.
@@ -1896,9 +1850,9 @@ mod tests {
             "opls_135  CT  12.011  -0.18  A  0.35  0.276144",
         ));
         let p = &atom_type(&ff, "opls_135").params;
-        assert_eq!(p.get_str("class"), Some("CT"));
-        assert_eq!(p.get("atomic_number"), None);
-        assert_eq!(p.get("mass"), Some(12.011));
+        assert_eq!(p.get("class").and_then(|v| v.as_text()), Some("CT"));
+        assert_eq!(p.get("atomic_number").and_then(|v| v.as_num()), None);
+        assert_eq!(p.get("mass").and_then(|v| v.as_num()), Some(12.011));
     }
 
     #[test]
@@ -2016,7 +1970,7 @@ mod tests {
         ));
         let (ends, p) = only_type(&ff, "angle", "harmonic");
         assert_eq!(ends, ["HC", "CT", "HC"]);
-        assert_eq!(p.get("theta0"), Some(107.8));
+        assert_eq!(p.get("theta0").and_then(|v| v.as_num()), Some(107.8));
         assert_param(p, "k", 33.0, 1e-9);
     }
 
@@ -2079,7 +2033,7 @@ mod tests {
         let (_, p) = only_type(&ff, "dihedral", "nharmonic");
         assert_param(p, "a1", 1.0, 1e-12);
         assert_param(p, "a6", -2.0, 1e-12);
-        assert_eq!(p.get("a7"), None);
+        assert_eq!(p.get("a7").and_then(|v| v.as_num()), None);
     }
 
     /// GROMACS `X` is the canonical empty-endpoint wildcard.
@@ -2119,7 +2073,7 @@ mod tests {
         assert_eq!(ends, ["", "", "N", "H"]);
         assert_param(p, "k", 2.5, 1e-12);
         assert_param(p, "periodicity", 2.0, 1e-12);
-        assert_eq!(p.get("phase"), Some(180.0));
+        assert_eq!(p.get("phase").and_then(|v| v.as_num()), Some(180.0));
     }
 
     /// ½k_ξ(ξ−0)² = K(χ−0)² with K = 167.36 ÷ (2·4.184) = 20 kcal/mol/rad²;
@@ -2130,7 +2084,7 @@ mod tests {
         let (ends, p) = only_type(&ff, "improper", "harmonic");
         assert_eq!(ends, ["", "", "C", "O"]);
         assert_param(p, "k", 20.0, 1e-12);
-        assert_eq!(p.get("chi0"), Some(0.0));
+        assert_eq!(p.get("chi0").and_then(|v| v.as_num()), Some(0.0));
     }
 
     /// ξ₀ = ±180°: |ξ − 180°| wrapped is 180° − |ξ|, so the signed form is
@@ -2143,7 +2097,7 @@ mod tests {
                 &format!("X  X  C  O  2  {xi0}  167.36"),
             ));
             let (_, p) = only_type(&ff, "improper", "harmonic");
-            assert_eq!(p.get("chi0"), Some(180.0));
+            assert_eq!(p.get("chi0").and_then(|v| v.as_num()), Some(180.0));
         }
     }
 
@@ -2175,7 +2129,11 @@ mod tests {
             assert_param(p, &format!("periodicity{}", m + 1), *n, 1e-12);
             assert_param(p, &format!("phase{}", m + 1), 180.0, 1e-12);
         }
-        assert_eq!(p.get("k"), None, "multi-term spelling only");
+        assert_eq!(
+            p.get("k").and_then(|v| v.as_num()),
+            None,
+            "multi-term spelling only"
+        );
         assert_param(types[1].1, "k", 0.1, 1e-12);
     }
 
@@ -2278,7 +2236,11 @@ mod tests {
             [&t.itom, &t.jtom, &t.ktom, &t.ltom, &t.mtom],
             ["C", "NH1", "CT1", "C", "NH1"]
         );
-        let grid = t.params.get_array("grid").expect("grid");
+        let grid = t
+            .params
+            .get("grid")
+            .and_then(|v| v.as_array())
+            .expect("grid");
         assert_eq!(grid.shape(), [2, 2]);
         assert_eq!(
             grid.iter().copied().collect::<Vec<_>>(),
@@ -2320,8 +2282,14 @@ mod tests {
         ));
         assert!(ff.get_style("pair", "lj/cut").is_none());
         let lj = style(&ff, "pair", "lj/charmm");
-        assert_eq!(lj.params().get_str("one_four"), Some("epsilon14"));
-        assert_eq!(lj.params().get_str("mixing"), Some("arithmetic"));
+        assert_eq!(
+            lj.params().get("one_four").and_then(|v| v.as_text()),
+            Some("epsilon14")
+        );
+        assert_eq!(
+            lj.params().get("mixing").and_then(|v| v.as_text()),
+            Some("arithmetic")
+        );
         let row = lj.get_pairtype("CT1", None).expect("CT1 self row");
         assert_param(&row.params, "epsilon", 0.1, 1e-12);
         assert_param(&row.params, "sigma", 4.0, 1e-12);
@@ -2329,7 +2297,7 @@ mod tests {
         assert_param(&row.params, "sigma14", 3.0, 1e-12);
         let ha = lj.get_pairtype("HA", None).expect("HA self row");
         assert_eq!(
-            ha.params.get("epsilon14"),
+            ha.params.get("epsilon14").and_then(|v| v.as_num()),
             None,
             "HA's 1-4 is its regular LJ"
         );
@@ -2432,7 +2400,10 @@ mod tests {
         assert_eq!(cross.name, "opls_135-opls_140");
         assert_param(&cross.params, "sigma", 3.0, 1e-12);
         assert_param(&cross.params, "epsilon", 0.1, 1e-12);
-        assert_eq!(lj.params().get_str("mixing"), Some("geometric"));
+        assert_eq!(
+            lj.params().get("mixing").and_then(|v| v.as_text()),
+            Some("geometric")
+        );
     }
 
     /// `j i` restating `i j` is one row; a different restatement is an error.
@@ -2481,7 +2452,7 @@ mod tests {
         );
         let ff = GromacsTopForcefieldReader::new()
             .with_skipped_directive("constrainttypes")
-            .read_str(&text)
+            .read(text.as_bytes())
             .unwrap_or_else(|e| panic!("skipped section still refused: {e}"));
         assert_eq!(ff.get_bondtypes().len(), 1);
     }
@@ -2495,9 +2466,9 @@ mod tests {
         );
         let err = GromacsTopForcefieldReader::new()
             .with_skipped_directive("constrainttypes")
-            .read_str(&text)
+            .read(text.as_bytes())
             .expect_err("implicit_genborn_params is not skipped");
-        assert_names(&err, &["implicit_genborn_params"]);
+        assert_names(&err.to_string(), &["implicit_genborn_params"]);
     }
 
     #[test]
@@ -2544,7 +2515,7 @@ mod tests {
         let ff = GromacsTopForcefieldReader::new()
             .with_skipped_directive("moleculetype")
             .with_skipped_directive("atoms")
-            .read_str(&text)
+            .read(text.as_bytes())
             .unwrap_or_else(|e| panic!("skipped sections still refused: {e}"));
         assert_eq!(ff.get_bondtypes().len(), 1);
         assert!(ff.get_atomtypes().is_empty(), "[ atoms ] defined a type");
@@ -2691,7 +2662,7 @@ mod tests {
         let path = dir.path().join("forcefield.itp");
         let ff = GromacsTopForcefieldReader::new()
             .with_include(true)
-            .read(path.to_str().expect("utf-8 path"))
+            .read(path.as_path())
             .unwrap_or_else(|e| panic!("read: {e}"));
         assert_eq!(ff.get_bondtypes().len(), 1);
     }
@@ -2713,13 +2684,13 @@ mod tests {
         let ff = GromacsTopForcefieldReader::new()
             .with_include(true)
             .with_include_dir(&share)
-            .read(top.to_str().expect("utf-8 path"))
+            .read(top.as_path())
             .unwrap_or_else(|e| panic!("read: {e}"));
         assert_eq!(ff.get_bondtypes().len(), 1);
         let err = GromacsTopForcefieldReader::new()
             .with_include(true)
-            .read(top.to_str().expect("utf-8 path"))
+            .read(top.as_path())
             .expect_err("no include dir");
-        assert_names(&err, &["x.ff/forcefield.itp"]);
+        assert_names(&err.to_string(), &["x.ff/forcefield.itp"]);
     }
 }

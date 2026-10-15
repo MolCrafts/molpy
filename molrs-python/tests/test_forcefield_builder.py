@@ -84,7 +84,7 @@ def test_special_bonds_reads_the_declared_triples():
 def test_empty_forcefield_constructs():
     ff = molrs.ff.forcefield.ForceField("scratch")
     assert ff.name == "scratch"
-    assert ff.styles == []
+    assert ff.get_styles(molrs.ff.forcefield.Style) == []
 
 
 def _atoms(ff: molrs.ff.forcefield.ForceField, *names: str) -> list[molrs.ff.forcefield.AtomType]:
@@ -262,7 +262,7 @@ _OPLS_GEOMETRIC = """<ForceField name="OPLS-AA" combining_rule="geometric">
 def test_read_opls_xml_returns_the_force_field_with_its_mixing(tmp_path):
     path = tmp_path / "opls.xml"
     path.write_text(_OPLS_GEOMETRIC, encoding="utf-8")
-    ff = molrs.io.read_openmm_forcefield(path)
+    ff = molrs.io.openmm_xml.OpenmmXmlReader().read(path)
     assert type(ff) is molrs.ff.forcefield.ForceField
     assert ff.get_style("pair", "lj/cut")["mixing"] == "geometric"
 
@@ -272,8 +272,8 @@ def test_a_written_force_field_reads_back_through_a_pathlike(tmp_path):
     (ct,) = _atoms(ff, "CT")
     ff.def_style("bond", "harmonic").def_type("CT-CT", ct, ct, k=300.0, r0=1.5)
     path = tmp_path / "ff.xml"
-    molrs.io.write_openmm_forcefield(path, ff)
-    back = molrs.io.read_openmm_forcefield(path)
+    molrs.io.openmm_xml.OpenmmXmlWriter().write(path, ff)
+    back = molrs.io.openmm_xml.OpenmmXmlReader().read(path)
     assert type(back) is molrs.ff.forcefield.ForceField
     # The file is in nm and kJ/mol: the trip is exact to the conversions' ulp.
     ((name, params),) = _rows(back.get_style("bond", "harmonic"))
@@ -353,8 +353,8 @@ def test_a_force_field_pickles_with_its_whole_definition():
     back = pickle.loads(pickle.dumps(ff))
     assert type(back) is molrs.ff.forcefield.ForceField
     assert (back.name, back.units) == ("full", "metal")
-    assert [(s.category, s.name, s.params) for s in back.styles] == [
-        (s.category, s.name, s.params) for s in ff.styles
+    assert [(s.category, s.name, s.params) for s in back.get_styles(molrs.ff.forcefield.Style)] == [
+        (s.category, s.name, s.params) for s in ff.get_styles(molrs.ff.forcefield.Style)
     ]
     assert [
         (t.name, t.params, [e.name for e in t.endpoints])
@@ -419,7 +419,7 @@ def test_defer_returns_empty_potentials_that_bind_on_evaluation():
     assert isinstance(deferred, molrs.ff.potential.Potentials)
     assert len(deferred) == 0
     frame = _bonded_pair()
-    assert deferred.calc_energy(frame) == compiler.compile(frame).calc_energy(frame)
+    assert deferred.evaluate(frame)[0] == compiler.compile(frame).evaluate(frame)[0]
 
 
 def test_compile_typed_returns_typed_potentials():
@@ -460,7 +460,7 @@ def _lj_pair_energy(ff: molrs.ff.forcefield.ForceField, r: float) -> float:
     frame = molrs.core.Frame()
     frame["atoms"] = atoms
     frame["pairs"] = pairs
-    return molrs.ff.compile.PotentialCompiler(ff).compile(frame).calc_energy(frame)
+    return molrs.ff.compile.PotentialCompiler(ff).compile(frame).evaluate(frame)[0]
 
 
 def _lj(eps: float, sigma: float, r: float) -> float:
@@ -509,5 +509,34 @@ def test_style_setitem_takes_a_string_param():
     style = ff.def_style("pair", "lj/cut")
     style["mixing"] = "geometric"
     assert ff.get_style("pair", "lj/cut")["mixing"] == "geometric"
-    with pytest.raises(TypeError, match="number or a str"):
+    with pytest.raises(TypeError, match="numbers of one rectangular shape"):
         style["mixing"] = ["geometric"]
+    with pytest.raises(TypeError, match="a number, a str or an array of numbers"):
+        style["mixing"] = object()
+
+
+def test_style_setitem_takes_every_param_value_kind():
+    """``Style::set_param`` takes any ``ParamValue``: a number, a str, or an
+    array of numbers (stored as float64), as a type's ``__setitem__`` does."""
+    ff = molrs.ff.forcefield.ForceField("t")
+    style = ff.def_style("pair", "lj/cut")
+    style["cutoff"] = 10.0
+    style["table"] = [[1, 2], [3, 4]]
+    got = ff.get_style("pair", "lj/cut")
+    assert got["cutoff"] == 10.0
+    np.testing.assert_array_equal(got["table"], np.array([[1.0, 2.0], [3.0, 4.0]]))
+    assert got["table"].dtype == np.float64
+
+
+def test_style_del_type_removes_one_type_by_name():
+    ff = molrs.ff.forcefield.ForceField("t")
+    atoms = ff.def_style("atom", "full")
+    c, h = atoms.def_type("C", mass=12.0), atoms.def_type("H", mass=1.0)
+    bonds = ff.def_style("bond", "harmonic")
+    bonds.def_type("C-H", c, h, k=300.0, r0=1.1)
+    bonds.def_type("C-C", c, c, k=300.0, r0=1.5)
+    assert bonds.del_type("C-H") == 1
+    assert [t.name for t in bonds.get_types()] == ["C-C"]
+    assert bonds.get_type_by_name("C-H") is None
+    assert bonds.del_type("C-H") == 0
+    assert [t.name for t in ff.get_types("bond")] == ["C-C"]

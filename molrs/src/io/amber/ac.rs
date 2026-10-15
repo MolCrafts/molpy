@@ -1,34 +1,34 @@
 //! Antechamber `.ac` file reader (ATOM / BOND sections → Frame).
 
 use crate::io::frame_columns::insert_column;
-use crate::io::invalid_data;
-use std::fs;
+use crate::io::{Source, invalid_data};
 use std::io::Result;
-use std::path::Path;
 
 use ndarray::{Array1, IxDyn};
 
 use molrs::core::Block;
-use molrs::core::Element;
 use molrs::core::Frame;
 use molrs::op::{F, Idx};
 
 /// Read an Antechamber `.ac` file into a Frame.
 ///
-/// Atoms: `id` (1-based), `name`, `type`, `charge`, `xyz`, optional `element`.
+/// Atoms: `id` (1-based), `name`, `type`, `charge`, `xyz`.
 /// Bonds: `atomi`/`atomj` (0-based), `type` as `"typei-typej"`.
-pub fn read_ac(path: impl AsRef<Path>) -> Result<Frame> {
-    let text = fs::read_to_string(path.as_ref())?;
-    read_ac_str(&text)
+///
+/// An `.ac` ATOM record spells no species field, so the frame carries no
+/// `element` / `atomic_number` column: species is not guessed from the atom
+/// name or type. A consumer that needs one sets `element` itself and runs
+/// `Element::fill_atomic_numbers`.
+pub fn read_ac<'a>(src: impl Into<Source<'a>>) -> Result<Frame> {
+    parse_ac(&src.into().text()?)
 }
 
 /// Parse Antechamber `.ac` text.
-pub fn read_ac_str(text: &str) -> Result<Frame> {
+fn parse_ac(text: &str) -> Result<Frame> {
     let mut names: Vec<String> = Vec::new();
     let mut types: Vec<String> = Vec::new();
     let mut charges: Vec<F> = Vec::new();
     let mut xyz: Vec<[F; 3]> = Vec::new();
-    let mut elements: Vec<String> = Vec::new();
     let mut bond_i: Vec<Idx> = Vec::new();
     let mut bond_j: Vec<Idx> = Vec::new();
     let mut bond_type: Vec<String> = Vec::new();
@@ -50,11 +50,10 @@ pub fn read_ac_str(text: &str) -> Result<Frame> {
             let z: F = parts[7].parse().map_err(invalid_data)?;
             let charge: F = parts[8].parse().map_err(invalid_data)?;
             let atype = parts[9].to_string();
-            names.push(name.clone());
-            types.push(atype.clone());
+            names.push(name);
+            types.push(atype);
             charges.push(charge);
             xyz.push([x, y, z]);
-            elements.push(guess_element(&name, &atype));
         } else if line.starts_with("BOND") {
             let parts: Vec<&str> = line.split_whitespace().collect();
             // BOND id i j order [names...]  — i,j 1-based
@@ -66,11 +65,17 @@ pub fn read_ac_str(text: &str) -> Result<Frame> {
             if i == 0 || j == 0 {
                 return Err(invalid_data("BOND atom index 0"));
             }
+            let atom_type = |k: usize| {
+                types.get(k - 1).ok_or_else(|| {
+                    invalid_data(format!(
+                        "BOND names atom {k}, but only {} ATOM records precede it: {line}",
+                        types.len()
+                    ))
+                })
+            };
+            bond_type.push(format!("{}-{}", atom_type(i)?, atom_type(j)?));
             bond_i.push((i - 1) as Idx);
             bond_j.push((j - 1) as Idx);
-            let ti = types.get(i - 1).cloned().unwrap_or_default();
-            let tj = types.get(j - 1).cloned().unwrap_or_default();
-            bond_type.push(format!("{ti}-{tj}"));
         }
     }
 
@@ -88,13 +93,10 @@ pub fn read_ac_str(text: &str) -> Result<Frame> {
             .into_shape_with_order(IxDyn(&[n, 3]))
             .map_err(invalid_data)?
             .into_dyn();
-        atoms.insert("xyz", arr).map_err(invalid_data)?;
+        atoms.insert("xyz", arr, None).map_err(invalid_data)?;
         insert_column(&mut atoms, "x", xyz.iter().map(|r| r[0]).collect())?;
         insert_column(&mut atoms, "y", xyz.iter().map(|r| r[1]).collect())?;
         insert_column(&mut atoms, "z", xyz.iter().map(|r| r[2]).collect())?;
-        if elements.iter().any(|e| !e.is_empty()) {
-            insert_column(&mut atoms, "element", elements)?;
-        }
         frame.insert("atoms", atoms);
     }
 
@@ -111,37 +113,32 @@ pub fn read_ac_str(text: &str) -> Result<Frame> {
     Ok(frame)
 }
 
-fn guess_element(name: &str, atype: &str) -> String {
-    for source in [name, atype] {
-        let alpha: String = source.chars().filter(|c| c.is_ascii_alphabetic()).collect();
-        if alpha.is_empty() {
-            continue;
-        }
-        // Try 2-letter then 1-letter symbols.
-        let candidates = [
-            alpha.to_ascii_uppercase(),
-            alpha
-                .chars()
-                .next()
-                .map(|c| c.to_ascii_uppercase().to_string())
-                .unwrap_or_default(),
-        ];
-        for cand in candidates {
-            if cand.is_empty() {
-                continue;
-            }
-            // Element::by_symbol is case-insensitive for common symbols via capitalize
-            let title = {
-                let mut cs = cand.chars();
-                match cs.next() {
-                    Some(f) => f.to_uppercase().collect::<String>() + &cs.as_str().to_lowercase(),
-                    None => String::new(),
-                }
-            };
-            if Element::by_symbol(&title).is_some() {
-                return title;
-            }
-        }
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const AC: &str = "\
+ATOM      1  C1  MOL     1       0.000   0.000   0.000 -0.100000        c3
+ATOM      2  H1  MOL     1       1.090   0.000   0.000  0.100000        hc
+BOND    1    1    2    1     C1   H1
+";
+
+    #[test]
+    fn reads_atoms_and_bonds_without_guessing_species() {
+        let frame = read_ac(AC.as_bytes()).unwrap();
+        let atoms = frame.get("atoms").unwrap();
+        assert_eq!(atoms.n_rows(), Some(2));
+        assert!(atoms.get("element").is_none());
+        assert!(atoms.get("atomic_number").is_none());
+        let bonds = frame.get("bonds").unwrap();
+        let ty = bonds.get("type").and_then(|c| c.get::<String>()).unwrap();
+        assert_eq!(ty[[0]], "c3-hc");
     }
-    String::new()
+
+    #[test]
+    fn bond_to_an_unread_atom_errors() {
+        let text = "ATOM      1  C1  MOL     1       0.000   0.000   0.000 -0.1  c3\n\
+                    BOND    1    1    2    1     C1   H1\n";
+        assert!(read_ac(text.as_bytes()).is_err());
+    }
 }

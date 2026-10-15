@@ -2,7 +2,7 @@
 //! electromagnetic moments (charge + dipole).
 
 use molrs::core::neighbors::Backend;
-use molrs::core::{LinkCell, Mic, SimBox};
+use molrs::core::{LinkCell, Mic, Points, SimBox};
 use molrs::op::F;
 use ndarray::{Array2, ArrayView1, ArrayView2, ArrayView3};
 
@@ -83,11 +83,11 @@ pub struct MolecularMoments {
 /// use molrs::compute::{
 ///     Compute, LengthUnit, RegularGrid, VoronoiIntegration, VoronoiIntegrationInput,
 /// };
-/// use molrs::core::SimBox;
+/// use molrs::core::{Cell, SimBox};
 /// use ndarray::{Array3, array};
 ///
 /// // One hydrogen-like atom, one electron spread uniformly over the box.
-/// let simbox = SimBox::cube(2.0, array![0.0, 0.0, 0.0], [true; 3]).unwrap();
+/// let simbox = SimBox::new(Cell::Lengths([2.0; 3]), [0.0, 0.0, 0.0], [true; 3]).unwrap();
 /// let grid = RegularGrid::over_box(&simbox, [4, 4, 4])?;
 /// let density = Array3::from_elem((4, 4, 4), 1.0 / 8.0); // e/Å³
 /// let moments = VoronoiIntegration::new(LengthUnit::Angstrom).compute(
@@ -397,7 +397,7 @@ impl<'a> PowerCellLocator<'a> {
             });
         }
         let mut index = LinkCell::new().cutoff(r_cut);
-        index.build_index(positions, simbox);
+        index.build_index(Points::Rows(positions), simbox);
         Ok(Self {
             index,
             simbox,
@@ -467,10 +467,16 @@ crate::compute::spec::compute_spec! {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::Cell;
     use ndarray::{Array1, Array3, array};
 
     fn periodic(l: [F; 3]) -> SimBox {
-        SimBox::ortho(array![l[0], l[1], l[2]], array![0.0, 0.0, 0.0], [true; 3]).unwrap()
+        SimBox::new(
+            Cell::Lengths([l[0], l[1], l[2]]),
+            [0.0, 0.0, 0.0],
+            [true; 3],
+        )
+        .unwrap()
     }
 
     #[test]

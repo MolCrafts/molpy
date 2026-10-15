@@ -27,12 +27,34 @@ pub(crate) mod scanner;
 pub(crate) mod validation;
 pub(crate) mod writer;
 
+/// Line-notation helpers over the schema keys
+/// [`IS_AROMATIC`](crate::core::keys::IS_AROMATIC),
+/// [`H_COUNT`](crate::core::keys::H_COUNT),
+/// [`ISOTOPE`](crate::core::keys::ISOTOPE) and
+/// [`STEREO`](crate::core::keys::STEREO), shared by the SMILES builder, the
+/// SMILES writer, the SMARTS matcher and the CGsmiles expansion.
+pub(crate) mod atom_keys {
+    pub(crate) use crate::core::keys::{H_COUNT, IS_AROMATIC, ISOTOPE, STEREO};
+
+    /// The atomic number of the wildcard atom `*`, which names no element.
+    pub(crate) const WILDCARD_Z: u8 = 0;
+
+    /// Whether `atom` is marked aromatic: its [`IS_AROMATIC`] is `true`.
+    /// Absent means "not declared aromatic"; the schema declares the key
+    /// `bool`, so no other value can be stored under it.
+    pub(crate) fn is_aromatic(atom: &crate::core::Props) -> bool {
+        matches!(
+            atom.get(IS_AROMATIC),
+            Some(crate::core::PropValue::Bool(true))
+        )
+    }
+}
+
 /// The element symbol a SMILES atom symbol denotes.
 ///
 /// SMILES writes aromatic atoms in lowercase (`c`, `n`, `se`); that is
-/// notation, not an element symbol. Every consumer that keys off `element` —
-/// mass tables, typifiers, force-field parameter lookup — expects the
-/// canonical capitalisation, so both validation and graph construction
+/// notation, not an element symbol. [`Element::by_symbol`] is looked up on
+/// the canonical capitalisation, so both validation and graph construction
 /// normalise through here.
 pub(crate) fn canonical_element_symbol(symbol: &str) -> String {
     let mut chars = symbol.chars();

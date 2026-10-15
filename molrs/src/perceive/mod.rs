@@ -30,13 +30,12 @@
 //!   [`perceive_equivalence_classes`], [`perceive_bond_orders`],
 //!   [`perceive_hybridizations`], [`perceive_conjugated_atoms`],
 //!   [`perceive_ring_classes`].
-//! - **`assign_<fact>(mol) -> Atomistic`** writes a perceived fact onto a
-//!   *clone* of the graph as atom / bond props and returns it — graph in /
-//!   graph out, non-mutating, so the steps compose: [`assign_rings`],
+//! - **`assign_<fact>(&mut mol) -> Result`** writes a perceived fact onto the
+//!   graph itself, as atom / bond props: [`assign_rings`],
 //!   [`assign_aromaticity`], [`assign_stereo`], [`assign_rotatable_bonds`],
 //!   [`assign_bond_orders`], [`assign_kekule_bond_orders`],
-//!   [`assign_bcc_bond_types`], [`assign_bcc_bond_types_from_connectivity`],
-//!   [`assign_equivalence_classes`].
+//!   [`assign_bcc_bond_types`], [`assign_equivalence_classes`]. A caller that
+//!   must keep its input clones it first.
 //!
 //! [`add_hydrogens`] / [`remove_hydrogens`] are edits of the graph, not
 //! perceptions, and keep their verbs.
@@ -51,8 +50,7 @@
 //! | [`assign_rotatable_bonds`] | — | `is_rotatable` (0/1) |
 //! | [`assign_bond_orders`] | — | `bond_number`, `bond_type` (antechamber's Kekulé structure) |
 //! | [`assign_kekule_bond_orders`] | — | `bond_number` of every aromatic bond |
-//! | [`assign_bcc_bond_types`] | — | `bcc_bond_type` (1/2/3/6/7/8/9) |
-//! | [`assign_bcc_bond_types_from_connectivity`] | — | `bcc_bond_type`, from connectivity-judged orders |
+//! | [`assign_bcc_bond_types`] | — | `bcc_bond_type` (1/2/3/6/7/8/9), from the [`BondOrderSource`] named |
 //! | [`assign_equivalence_classes`] | `equiv_class` (0-based class id) | — |
 //!
 //! The modules are private; every name is re-exported here, so the Rust path
@@ -82,10 +80,7 @@ mod subgraph;
 mod valence;
 
 pub use aromaticity::assign_aromaticity;
-// The in-place marker, for SMARTS reactions and the conformer pipeline.
-#[cfg(feature = "smiles")]
-pub(crate) use aromaticity::mark_aromaticity;
-pub use bcc_bond_class::{assign_bcc_bond_types, assign_bcc_bond_types_from_connectivity};
+pub use bcc_bond_class::{BondOrderSource, assign_bcc_bond_types};
 pub use bond_order::{assign_bond_orders, perceive_bond_orders};
 pub use equivalence::{
     EquivalenceClasses, EquivalenceLevel, EquivalenceOptions, assign_equivalence_classes,
@@ -100,7 +95,7 @@ pub use ring_class::{
 pub use rings::{RingSet, assign_rings, perceive_rings, small_ring_closure};
 pub use rotatable::{
     RotatableBond, UnknownBondPolicy, assign_rotatable_bonds, downstream_atoms,
-    perceive_rotatable_bonds, perceive_rotatable_bonds_with_downstream,
+    perceive_rotatable_bonds,
 };
 pub use stereo::{
     BondStereo, TetrahedralStereo, assign_stereo, chiral_volume, perceive_bond_stereo,

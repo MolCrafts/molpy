@@ -16,8 +16,8 @@ pub enum LinkError {
     /// A port did not read back (stale id or malformed descriptor).
     Port(MolRsError),
     /// The port reads back, but its anchor–handle bond no longer exists: the
-    /// bond was removed through the inner graph after
-    /// [`MolGraph::add_port`] checked it, so the port has no leaving group.
+    /// bond was deleted after [`MolGraph::add_port`] checked it, so the port
+    /// has no leaving group.
     StalePort {
         /// The stale port.
         port: RelationId,
@@ -254,14 +254,16 @@ impl MolGraph {
     /// use molrs::core::BondNumber;
     /// use molrs::core::Atomistic;
     /// use molrs::core::PortKind;
+    /// use molrs::props;
+    /// use molrs::core::Element;
     ///
     /// let mut world = Atomistic::new();
     /// let mut unit = |q_c: f64, kind: PortKind| -> Result<_, molrs::core::MolRsError> {
-    ///     let c = world.add_atom_bare("C");
-    ///     let h = world.add_atom_bare("H");
-    ///     world.set_node(c, keys::CHARGE, q_c)?;
-    ///     world.set_node(h, keys::CHARGE, 0.125)?;
-    ///     world.add_bond(c, h)?;
+    ///     let c = world.add_atom(props! { keys::ATOMIC_NUMBER => Element::C }).unwrap();
+    ///     let h = world.add_atom(props! { keys::ATOMIC_NUMBER => Element::H }).unwrap();
+    ///     world.set_atom(c, keys::CHARGE, q_c)?;
+    ///     world.set_atom(h, keys::CHARGE, 0.125)?;
+    ///     world.add_bond(c, h, props! {})?;
     ///     let port = world.add_port(c, h, kind, "p", BondNumber::Single)?;
     ///     Ok((c, port))
     /// };
@@ -270,7 +272,7 @@ impl MolGraph {
     ///
     /// world.link(p0, p1)?;
     ///
-    /// let q = |atom| world.get_node(atom).map(|a| a.get_f64(keys::CHARGE));
+    /// let q = |atom| world.get_atom(atom).map(|a| a.get_f64(keys::CHARGE));
     /// assert_eq!(q(c0)?, Some(-0.125));
     /// assert_eq!(q(c1)?, Some(0.0));
     /// assert_eq!(world.n_atoms(), 2);
@@ -332,7 +334,7 @@ impl MolGraph {
             .chain(&plan.branch_b)
             .copied()
             .collect();
-        self.remove_nodes(&doomed).expect(VALIDATED);
+        self.del_nodes(&doomed).expect(VALIDATED);
         Ok(self.bond_anchors(&plan))
     }
 
@@ -373,13 +375,13 @@ impl MolGraph {
     ///
     /// O(E + Σ|D| + pairs), with E the relation count and Σ|D| the total
     /// leaving-group size: checks 2–4 are hash lookups and the removal is one
-    /// [`remove_nodes`](crate::core::MolGraph::remove_nodes) call,
+    /// [`del_nodes`](crate::core::MolGraph::del_nodes) call,
     /// which scans every relation once. A loop over `link` costs
     /// O(pairs · E).
     ///
     /// # Row order
     ///
-    /// `remove_nodes` swap-removes rows, so the surviving atoms' row order
+    /// `del_nodes` swap-removes rows, so the surviving atoms' row order
     /// (the order [`to_frame`](Self::to_frame) writes) is not their order
     /// before the call, and not the order a loop over `link` leaves either.
     /// Handles are unaffected.
@@ -448,7 +450,7 @@ impl MolGraph {
             second: j.max(k),
         };
         // `doomed` lists the removal set in pair order, so the rows
-        // `remove_nodes` swaps are the same on every run.
+        // `del_nodes` swaps are the same on every run.
         let mut doomed: Vec<NodeId> = Vec::new();
         let mut doomed_owner: HashMap<NodeId, usize> = HashMap::new();
         for (k, plan) in plans.iter().enumerate() {
@@ -477,15 +479,15 @@ impl MolGraph {
                 self.fold_charge(anchor, fold);
             }
         }
-        self.remove_nodes(&doomed).expect(VALIDATED);
+        self.del_nodes(&doomed).expect(VALIDATED);
         Ok(plans.iter().map(|plan| self.bond_anchors(plan)).collect())
     }
 
     /// Validate joining port `a` to port `b` without writing anything, in the
     /// refusal order [`link`](Self::link) documents.
     fn plan_link(&self, a: RelationId, b: RelationId) -> Result<LinkPlan, LinkError> {
-        let pa = self.port(a).map_err(LinkError::Port)?;
-        let pb = self.port(b).map_err(LinkError::Port)?;
+        let pa = self.get_port(a).map_err(LinkError::Port)?;
+        let pb = self.get_port(b).map_err(LinkError::Port)?;
         // `leaving_group`'s only error is a missing anchor–handle bond.
         let branch_a = self
             .leaving_group(&pa)
@@ -567,7 +569,7 @@ impl MolGraph {
         if let Some(fold) = fold {
             let q = self
                 .node_table()
-                .get_f64(anchor, keys::CHARGE)
+                .get::<f64>(anchor, keys::CHARGE)
                 .expect(VALIDATED);
             self.set_node(anchor, keys::CHARGE, q + fold)
                 .expect(VALIDATED);
@@ -589,11 +591,14 @@ impl MolGraph {
 
 #[cfg(test)]
 mod tests {
+    use crate::core::Element;
+    use crate::props;
     use std::collections::BTreeMap;
 
     use super::{LinkError, LinkManyError};
     use crate::core::Atomistic;
     use crate::core::BondNumber;
+    use crate::core::GraphAccess;
     use crate::core::MolRsError;
     use crate::core::NodeId;
     use crate::core::PropValue;
@@ -608,14 +613,18 @@ mod tests {
     // binary floating point and the goldens are compared with `==`.
 
     /// Add an atom of `element` carrying `charge` and (when given) `frag_id`.
-    fn atom(world: &mut Atomistic, element: &str, charge: Option<f64>, frag: u32) -> NodeId {
-        let a = world.add_atom_bare(element);
+    fn atom(world: &mut Atomistic, element: Element, charge: Option<f64>, frag: i32) -> NodeId {
+        let a = world
+            .add_atom(props! { keys::ATOMIC_NUMBER => element })
+            .expect("fixture atom has a species");
         if let Some(q) = charge {
             world
-                .set_node(a, keys::CHARGE, q)
+                .set_atom(a, keys::CHARGE, q)
                 .expect("fixture atom takes a charge");
         }
-        world.set_frag_id(a, frag).expect("fixture frag_id fits");
+        world
+            .set_atom(a, keys::FRAG_ID, PropValue::Int(frag))
+            .expect("fixture frag_id fits");
         a
     }
 
@@ -624,24 +633,31 @@ mod tests {
     /// Returns `(anchor, handle, port)`.
     fn h_unit(
         world: &mut Atomistic,
-        anchor_element: &str,
+        anchor_element: Element,
         anchor_q: Option<f64>,
         handle_q: Option<f64>,
         kind: PortKind,
-        frag: u32,
+        frag: i32,
     ) -> (NodeId, NodeId, RelationId) {
         let anchor = atom(world, anchor_element, anchor_q, frag);
-        let handle = atom(world, "H", handle_q, frag);
-        world.add_bond(anchor, handle).expect("fixture bond");
+        let handle = atom(world, Element::H, handle_q, frag);
+        world
+            .add_bond(anchor, handle, props! {})
+            .expect("fixture bond");
         let port = world
             .add_port(anchor, handle, kind, "p", BondNumber::Single)
             .expect("a bonded H handle is a legal port");
         (anchor, handle, port)
     }
 
+    /// The `frag_id` of atom `a`, if labelled.
+    fn frag_of(world: &Atomistic, a: NodeId) -> Option<i32> {
+        world.get_atom(a).expect("live atom").get_int(keys::FRAG_ID)
+    }
+
     fn charge(world: &Atomistic, a: NodeId) -> f64 {
         world
-            .get_node(a)
+            .get_atom(a)
             .expect("live atom")
             .get_f64(keys::CHARGE)
             .expect("atom carries a charge")
@@ -649,18 +665,18 @@ mod tests {
 
     fn total_charge(world: &Atomistic) -> f64 {
         world
-            .nodes()
+            .atoms()
             .map(|(_, atom)| atom.get_f64(keys::CHARGE).unwrap_or(0.0))
             .sum()
     }
 
     /// Per-`frag_id` charge sums (atoms without a charge count as 0).
-    fn frag_sums(world: &Atomistic) -> BTreeMap<u32, f64> {
+    fn frag_sums(world: &Atomistic) -> BTreeMap<i32, f64> {
         let mut sums = BTreeMap::new();
-        for id in world.node_ids().collect::<Vec<_>>() {
-            let frag = world.frag_id(id).expect("fixture atoms carry frag_id");
+        for id in world.atom_ids().collect::<Vec<_>>() {
+            let frag = frag_of(world, id).expect("fixture atoms carry frag_id");
             let q = world
-                .get_node(id)
+                .get_atom(id)
                 .expect("live atom")
                 .get_f64(keys::CHARGE)
                 .unwrap_or(0.0);
@@ -669,10 +685,10 @@ mod tests {
         sums
     }
 
-    fn frag_count(world: &Atomistic, frag: u32) -> usize {
+    fn frag_count(world: &Atomistic, frag: i32) -> usize {
         world
-            .node_ids()
-            .filter(|&id| world.frag_id(id) == Some(frag))
+            .atom_ids()
+            .filter(|&id| frag_of(world, id) == Some(frag))
             .count()
     }
 
@@ -695,11 +711,14 @@ mod tests {
     fn snapshot(world: &Atomistic) -> Snapshot {
         Snapshot {
             atoms: world
-                .nodes()
+                .atoms()
                 .map(|(id, atom)| (id, atom.get_f64(keys::CHARGE)))
                 .collect(),
             bonds: world.bonds().map(|(_, bond)| bond.nodes.to_vec()).collect(),
-            ports: world.ports().map(|id| (id, world.port(id).ok())).collect(),
+            ports: world
+                .port_ids()
+                .map(|id| (id, world.get_port(id).ok()))
+                .collect(),
         }
     }
 
@@ -721,10 +740,17 @@ mod tests {
     #[test]
     fn c1_single_h_handle_folds_onto_anchor() {
         let mut world = Atomistic::new();
-        let (a0, h0, p0) = h_unit(&mut world, "C", Some(-0.25), Some(0.125), PortKind::Left, 0);
+        let (a0, h0, p0) = h_unit(
+            &mut world,
+            Element::C,
+            Some(-0.25),
+            Some(0.125),
+            PortKind::Left,
+            0,
+        );
         let (a1, h1, p1) = h_unit(
             &mut world,
-            "C",
+            Element::C,
             Some(-0.125),
             Some(0.125),
             PortKind::Right,
@@ -735,9 +761,9 @@ mod tests {
 
         assert_eq!(charge(&world, a0), -0.125, "C1: -0.25 + 0.125");
         assert_eq!(charge(&world, a1), 0.0, "partner: -0.125 + 0.125");
-        assert!(world.get_node(h0).is_err(), "the handle H is removed");
+        assert!(world.get_atom(h0).is_err(), "the handle H is removed");
         assert!(
-            world.get_node(h1).is_err(),
+            world.get_atom(h1).is_err(),
             "the partner handle H is removed"
         );
         assert_eq!(world.n_atoms(), 2);
@@ -752,17 +778,17 @@ mod tests {
     #[test]
     fn c2_oh_branch_folds_onto_carbon() {
         let mut world = Atomistic::new();
-        let c = atom(&mut world, "C", Some(0.5), 0);
-        let o = atom(&mut world, "O", Some(-0.625), 0);
-        let h = atom(&mut world, "H", Some(0.375), 0);
-        world.add_bond(c, o).unwrap();
-        world.add_bond(o, h).unwrap();
+        let c = atom(&mut world, Element::C, Some(0.5), 0);
+        let o = atom(&mut world, Element::O, Some(-0.625), 0);
+        let h = atom(&mut world, Element::H, Some(0.375), 0);
+        world.add_bond(c, o, props! {}).unwrap();
+        world.add_bond(o, h, props! {}).unwrap();
         let p0 = world
             .add_port(c, o, PortKind::Left, "p", BondNumber::Single)
             .expect("a bonded O leaving group is a legal handle");
         let (n, nh, p1) = h_unit(
             &mut world,
-            "N",
+            Element::N,
             Some(-0.125),
             Some(0.125),
             PortKind::Right,
@@ -777,20 +803,20 @@ mod tests {
             1,
             "the OH branch's 2 atoms are removed"
         );
-        assert!(world.get_node(o).is_err(), "O is removed");
-        assert!(world.get_node(h).is_err(), "the hydroxyl H is removed");
-        assert!(world.get_node(nh).is_err(), "the partner handle is removed");
+        assert!(world.get_atom(o).is_err(), "O is removed");
+        assert!(world.get_atom(h).is_err(), "the hydroxyl H is removed");
+        assert!(world.get_atom(nh).is_err(), "the partner handle is removed");
         assert!(is_bonded(&world, c, n), "C is bonded to the partner anchor");
     }
 
     #[test]
     fn c3_two_h_handles_both_linked() {
         let mut world = Atomistic::new();
-        let a = atom(&mut world, "C", Some(-0.5), 0);
-        let h1 = atom(&mut world, "H", Some(0.125), 0);
-        let h2 = atom(&mut world, "H", Some(0.125), 0);
-        world.add_bond(a, h1).unwrap();
-        world.add_bond(a, h2).unwrap();
+        let a = atom(&mut world, Element::C, Some(-0.5), 0);
+        let h1 = atom(&mut world, Element::H, Some(0.125), 0);
+        let h2 = atom(&mut world, Element::H, Some(0.125), 0);
+        world.add_bond(a, h1, props! {}).unwrap();
+        world.add_bond(a, h2, props! {}).unwrap();
         let pa1 = world
             .add_port(a, h1, PortKind::Left, "p", BondNumber::Single)
             .unwrap();
@@ -799,7 +825,7 @@ mod tests {
             .unwrap();
         let (b1, _, pb1) = h_unit(
             &mut world,
-            "C",
+            Element::C,
             Some(-0.125),
             Some(0.125),
             PortKind::Right,
@@ -807,7 +833,7 @@ mod tests {
         );
         let (b2, _, pb2) = h_unit(
             &mut world,
-            "C",
+            Element::C,
             Some(-0.125),
             Some(0.125),
             PortKind::Right,
@@ -832,13 +858,27 @@ mod tests {
     fn c4_neutral_units_stay_neutral_per_frag_id() {
         let mut world = Atomistic::new();
         // unit 0: C(-0.25) – C anchor(+0.125) – H handle(+0.125); sum 0
-        let c0 = atom(&mut world, "C", Some(-0.25), 0);
-        let (a0, _, p0) = h_unit(&mut world, "C", Some(0.125), Some(0.125), PortKind::Left, 0);
-        world.add_bond(c0, a0).unwrap();
+        let c0 = atom(&mut world, Element::C, Some(-0.25), 0);
+        let (a0, _, p0) = h_unit(
+            &mut world,
+            Element::C,
+            Some(0.125),
+            Some(0.125),
+            PortKind::Left,
+            0,
+        );
+        world.add_bond(c0, a0, props! {}).unwrap();
         // unit 1: O anchor(-0.5) – H handle(+0.25), plus H(+0.25) on O; sum 0
-        let (a1, _, p1) = h_unit(&mut world, "O", Some(-0.5), Some(0.25), PortKind::Right, 1);
-        let h = atom(&mut world, "H", Some(0.25), 1);
-        world.add_bond(a1, h).unwrap();
+        let (a1, _, p1) = h_unit(
+            &mut world,
+            Element::O,
+            Some(-0.5),
+            Some(0.25),
+            PortKind::Right,
+            1,
+        );
+        let h = atom(&mut world, Element::H, Some(0.25), 1);
+        world.add_bond(a1, h, props! {}).unwrap();
 
         world.link(p0, p1).expect("link");
 
@@ -852,11 +892,25 @@ mod tests {
     fn c5_integer_charged_units_keep_minus_one_per_frag_id() {
         let mut world = Atomistic::new();
         // unit 0: O anchor(-1.25) + H handle(+0.25); sum -1
-        let (_, _, p0) = h_unit(&mut world, "O", Some(-1.25), Some(0.25), PortKind::Left, 0);
+        let (_, _, p0) = h_unit(
+            &mut world,
+            Element::O,
+            Some(-1.25),
+            Some(0.25),
+            PortKind::Left,
+            0,
+        );
         // unit 1: C anchor(-0.5) + O(-0.625) + H handle(+0.125); sum -1
-        let (a1, _, p1) = h_unit(&mut world, "C", Some(-0.5), Some(0.125), PortKind::Right, 1);
-        let o = atom(&mut world, "O", Some(-0.625), 1);
-        world.add_bond(a1, o).unwrap();
+        let (a1, _, p1) = h_unit(
+            &mut world,
+            Element::C,
+            Some(-0.5),
+            Some(0.125),
+            PortKind::Right,
+            1,
+        );
+        let o = atom(&mut world, Element::O, Some(-0.625), 1);
+        world.add_bond(a1, o, props! {}).unwrap();
 
         world.link(p0, p1).expect("link");
 
@@ -871,12 +925,12 @@ mod tests {
     #[test]
     fn link_returns_the_anchor_bond_classed_from_the_port_order() {
         let mut world = Atomistic::new();
-        let a = atom(&mut world, "C", None, 0);
-        let ha = atom(&mut world, "H", None, 0);
-        let b = atom(&mut world, "C", None, 1);
-        let hb = atom(&mut world, "H", None, 1);
-        world.add_bond(a, ha).unwrap();
-        world.add_bond(b, hb).unwrap();
+        let a = atom(&mut world, Element::C, None, 0);
+        let ha = atom(&mut world, Element::H, None, 0);
+        let b = atom(&mut world, Element::C, None, 1);
+        let hb = atom(&mut world, Element::H, None, 1);
+        world.add_bond(a, ha, props! {}).unwrap();
+        world.add_bond(b, hb, props! {}).unwrap();
         let pa = world
             .add_port(a, ha, PortKind::Left, "p", BondNumber::Double)
             .unwrap();
@@ -886,10 +940,7 @@ mod tests {
 
         let bid = world.link(pa, pb).expect("link");
 
-        let bonds = world.kind_id("bonds").expect("'bonds' registered");
-        let bond = world
-            .get_relation(bonds, bid)
-            .expect("the returned bond is live");
+        let bond = world.get_bond(bid).expect("the returned bond is live");
         let mut ends = bond.nodes.to_vec();
         ends.sort();
         let mut expected = vec![a, b];
@@ -907,10 +958,27 @@ mod tests {
     #[test]
     fn same_kind_ports_are_incompatible() {
         let mut world = Atomistic::new();
-        let (_, _, p0) = h_unit(&mut world, "C", Some(-0.25), Some(0.25), PortKind::Left, 0);
-        let (_, _, p1) = h_unit(&mut world, "C", Some(-0.25), Some(0.25), PortKind::Left, 1);
+        let (_, _, p0) = h_unit(
+            &mut world,
+            Element::C,
+            Some(-0.25),
+            Some(0.25),
+            PortKind::Left,
+            0,
+        );
+        let (_, _, p1) = h_unit(
+            &mut world,
+            Element::C,
+            Some(-0.25),
+            Some(0.25),
+            PortKind::Left,
+            1,
+        );
         assert!(
-            !world.port(p0).unwrap().accepts(&world.port(p1).unwrap()),
+            !world
+                .get_port(p0)
+                .unwrap()
+                .accepts(&world.get_port(p1).unwrap()),
             "fixture: Port::accepts refuses `<`/`<`"
         );
 
@@ -925,15 +993,18 @@ mod tests {
     #[test]
     fn label_mismatch_is_incompatible_through_port_accepts() {
         let mut world = Atomistic::new();
-        let (_, _, p0) = h_unit(&mut world, "C", None, None, PortKind::Left, 0);
-        let b = atom(&mut world, "C", None, 1);
-        let hb = atom(&mut world, "H", None, 1);
-        world.add_bond(b, hb).unwrap();
+        let (_, _, p0) = h_unit(&mut world, Element::C, None, None, PortKind::Left, 0);
+        let b = atom(&mut world, Element::C, None, 1);
+        let hb = atom(&mut world, Element::H, None, 1);
+        world.add_bond(b, hb, props! {}).unwrap();
         let p1 = world
             .add_port(b, hb, PortKind::Right, "q", BondNumber::Single)
             .unwrap();
         assert!(
-            !world.port(p0).unwrap().accepts(&world.port(p1).unwrap()),
+            !world
+                .get_port(p0)
+                .unwrap()
+                .accepts(&world.get_port(p1).unwrap()),
             "fixture: Port::accepts refuses unequal labels"
         );
 
@@ -947,16 +1018,16 @@ mod tests {
         let mut world = Atomistic::new();
         // Triangle C0–C1–C2–C0; the port handle C1 sits on the ring, so its
         // branch after cutting C0–C1 still reaches C0.
-        let c0 = atom(&mut world, "C", None, 0);
-        let c1 = atom(&mut world, "C", None, 0);
-        let c2 = atom(&mut world, "C", None, 0);
-        world.add_bond(c0, c1).unwrap();
-        world.add_bond(c1, c2).unwrap();
-        world.add_bond(c2, c0).unwrap();
+        let c0 = atom(&mut world, Element::C, None, 0);
+        let c1 = atom(&mut world, Element::C, None, 0);
+        let c2 = atom(&mut world, Element::C, None, 0);
+        world.add_bond(c0, c1, props! {}).unwrap();
+        world.add_bond(c1, c2, props! {}).unwrap();
+        world.add_bond(c2, c0, props! {}).unwrap();
         let p0 = world
             .add_port(c0, c1, PortKind::Left, "p", BondNumber::Single)
             .expect("a bonded heavy handle is a legal port");
-        let (_, _, p1) = h_unit(&mut world, "C", None, None, PortKind::Right, 1);
+        let (_, _, p1) = h_unit(&mut world, Element::C, None, None, PortKind::Right, 1);
 
         let err = refuse(&mut world, p0, p1);
 
@@ -970,11 +1041,11 @@ mod tests {
     fn shared_handle_branches_overlap() {
         let mut world = Atomistic::new();
         // A – X – B, with X the handle of both ports.
-        let a = atom(&mut world, "C", None, 0);
-        let x = atom(&mut world, "O", None, 0);
-        let b = atom(&mut world, "C", None, 1);
-        world.add_bond(a, x).unwrap();
-        world.add_bond(x, b).unwrap();
+        let a = atom(&mut world, Element::C, None, 0);
+        let x = atom(&mut world, Element::O, None, 0);
+        let b = atom(&mut world, Element::C, None, 1);
+        world.add_bond(a, x, props! {}).unwrap();
+        world.add_bond(x, b, props! {}).unwrap();
         let pa = world
             .add_port(a, x, PortKind::Left, "p", BondNumber::Single)
             .unwrap();
@@ -992,13 +1063,13 @@ mod tests {
         let mut world = Atomistic::new();
         // H1 – A – Y – B: port a = (A, H1), port b = (B, Y). b's branch
         // {Y, A, H1} holds anchor A.
-        let h1 = atom(&mut world, "H", None, 0);
-        let a = atom(&mut world, "C", None, 0);
-        let y = atom(&mut world, "C", None, 1);
-        let b = atom(&mut world, "C", None, 1);
-        world.add_bond(h1, a).unwrap();
-        world.add_bond(a, y).unwrap();
-        world.add_bond(y, b).unwrap();
+        let h1 = atom(&mut world, Element::H, None, 0);
+        let a = atom(&mut world, Element::C, None, 0);
+        let y = atom(&mut world, Element::C, None, 1);
+        let b = atom(&mut world, Element::C, None, 1);
+        world.add_bond(h1, a, props! {}).unwrap();
+        world.add_bond(a, y, props! {}).unwrap();
+        world.add_bond(y, b, props! {}).unwrap();
         let pa = world
             .add_port(a, h1, PortKind::Left, "p", BondNumber::Single)
             .unwrap();
@@ -1014,10 +1085,10 @@ mod tests {
     #[test]
     fn charged_anchor_with_uncharged_handle_is_one_sided() {
         let mut world = Atomistic::new();
-        let (a0, _, p0) = h_unit(&mut world, "C", Some(-0.25), None, PortKind::Left, 0);
+        let (a0, _, p0) = h_unit(&mut world, Element::C, Some(-0.25), None, PortKind::Left, 0);
         let (_, _, p1) = h_unit(
             &mut world,
-            "C",
+            Element::C,
             Some(-0.125),
             Some(0.125),
             PortKind::Right,
@@ -1037,13 +1108,20 @@ mod tests {
         let mut world = Atomistic::new();
         let (_, _, p0) = h_unit(
             &mut world,
-            "C",
+            Element::C,
             Some(-0.125),
             Some(0.125),
             PortKind::Left,
             0,
         );
-        let (a1, _, p1) = h_unit(&mut world, "C", None, Some(0.125), PortKind::Right, 1);
+        let (a1, _, p1) = h_unit(
+            &mut world,
+            Element::C,
+            None,
+            Some(0.125),
+            PortKind::Right,
+            1,
+        );
 
         let err = refuse(&mut world, p0, p1);
 
@@ -1058,13 +1136,16 @@ mod tests {
     #[test]
     fn link_refuses_anchors_that_are_already_bonded() {
         let mut world = Atomistic::new();
-        let (a0, _, p0) = h_unit(&mut world, "C", None, None, PortKind::Left, 0);
-        let (a1, _, p1) = h_unit(&mut world, "C", None, None, PortKind::Right, 1);
+        let (a0, _, p0) = h_unit(&mut world, Element::C, None, None, PortKind::Left, 0);
+        let (a1, _, p1) = h_unit(&mut world, Element::C, None, None, PortKind::Right, 1);
         world
-            .add_bond(a0, a1)
+            .add_bond(a0, a1, props! {})
             .expect("fixture: the anchors are bonded");
         assert!(
-            world.port(p0).unwrap().accepts(&world.port(p1).unwrap()),
+            world
+                .get_port(p0)
+                .unwrap()
+                .accepts(&world.get_port(p1).unwrap()),
             "fixture: the ports themselves are compatible"
         );
 
@@ -1081,11 +1162,11 @@ mod tests {
     #[test]
     fn link_refuses_two_ports_on_one_anchor() {
         let mut world = Atomistic::new();
-        let c = atom(&mut world, "C", None, 0);
-        let h1 = atom(&mut world, "H", None, 0);
-        let h2 = atom(&mut world, "H", None, 0);
-        world.add_bond(c, h1).unwrap();
-        world.add_bond(c, h2).unwrap();
+        let c = atom(&mut world, Element::C, None, 0);
+        let h1 = atom(&mut world, Element::H, None, 0);
+        let h2 = atom(&mut world, Element::H, None, 0);
+        world.add_bond(c, h1, props! {}).unwrap();
+        world.add_bond(c, h2, props! {}).unwrap();
         let p0 = world
             .add_port(c, h1, PortKind::Left, "p", BondNumber::Single)
             .unwrap();
@@ -1093,7 +1174,10 @@ mod tests {
             .add_port(c, h2, PortKind::Right, "p", BondNumber::Single)
             .unwrap();
         assert!(
-            world.port(p0).unwrap().accepts(&world.port(p1).unwrap()),
+            world
+                .get_port(p0)
+                .unwrap()
+                .accepts(&world.get_port(p1).unwrap()),
             "fixture: the ports themselves are compatible"
         );
 
@@ -1106,25 +1190,19 @@ mod tests {
     }
 
     /// The anchor–handle bond is checked only at
-    /// `add_port`; removing it through the inner graph leaves a port that
+    /// `add_port`; deleting it later leaves a port that
     /// still reads back but is stale.
     #[test]
     fn link_refuses_a_port_whose_handle_bond_is_gone() {
         let mut world = Atomistic::new();
-        let (a0, h0, p0) = h_unit(&mut world, "C", None, None, PortKind::Left, 0);
-        let (_, _, p1) = h_unit(&mut world, "C", None, None, PortKind::Right, 1);
-        let bonds = world.kind_id("bonds").expect("'bonds' registered");
+        let (a0, h0, p0) = h_unit(&mut world, Element::C, None, None, PortKind::Left, 0);
+        let (_, _, p1) = h_unit(&mut world, Element::C, None, None, PortKind::Right, 1);
         let cut = world
-            .neighbor_relations(a0)
-            .find(|&(kind, _, other)| kind == bonds && other == h0)
-            .map(|(_, rid, _)| rid)
+            .bond_between(a0, h0)
             .expect("fixture: the anchor–handle bond exists");
-        world
-            .as_molgraph_mut()
-            .remove_relation(bonds, cut)
-            .expect("the inner graph removes the bond");
+        world.del_bond(cut).expect("the bond is deleted");
         assert!(
-            world.port(p0).is_ok(),
+            world.get_port(p0).is_ok(),
             "fixture: the stale port still reads back"
         );
 
@@ -1137,18 +1215,19 @@ mod tests {
     }
 
     /// Refusal step 1: a port whose kind glyph was overwritten through
-    /// `DerefMut` does not read back through `MolGraph::port`.
+    /// the raw graph does not read back through `MolGraph::get_port`.
     #[test]
     fn link_refuses_a_port_that_does_not_read_back() {
         let mut world = Atomistic::new();
-        let (_, _, p0) = h_unit(&mut world, "C", None, None, PortKind::Left, 0);
-        let (_, _, p1) = h_unit(&mut world, "C", None, None, PortKind::Right, 1);
-        let ports = world.kind_id("ports").expect("'ports' registered");
+        let (_, _, p0) = h_unit(&mut world, Element::C, None, None, PortKind::Left, 0);
+        let (_, _, p1) = h_unit(&mut world, Element::C, None, None, PortKind::Right, 1);
+        let ports = world.graph().kind_id("ports").expect("'ports' registered");
         world
+            .graph_mut()
             .set_relation_prop(ports, p0, "port_kind", "Z")
             .expect("the inner graph overwrites the glyph");
         assert!(
-            world.port(p0).is_err(),
+            world.get_port(p0).is_err(),
             "fixture: the corrupted port does not read back"
         );
 
@@ -1172,14 +1251,14 @@ mod tests {
         right: RelationId,
     }
 
-    fn chain(world: &mut Atomistic, n: u32) -> Vec<ChainUnit> {
+    fn chain(world: &mut Atomistic, n: i32) -> Vec<ChainUnit> {
         (0..n)
             .map(|frag| {
-                let anchor = atom(world, "C", Some(-0.25), frag);
-                let left_h = atom(world, "H", Some(0.125), frag);
-                let right_h = atom(world, "H", Some(0.125), frag);
-                world.add_bond(anchor, left_h).unwrap();
-                world.add_bond(anchor, right_h).unwrap();
+                let anchor = atom(world, Element::C, Some(-0.25), frag);
+                let left_h = atom(world, Element::H, Some(0.125), frag);
+                let right_h = atom(world, Element::H, Some(0.125), frag);
+                world.add_bond(anchor, left_h, props! {}).unwrap();
+                world.add_bond(anchor, right_h, props! {}).unwrap();
                 let left = world
                     .add_port(anchor, left_h, PortKind::Left, "p", BondNumber::Single)
                     .unwrap();
@@ -1205,7 +1284,7 @@ mod tests {
     /// Row-order-free world state: atoms by handle with their charge bits,
     /// bonds as sorted endpoint pairs with their property bag, ports by
     /// handle. Two worlds reached by different edit orders compare equal
-    /// here even though `remove_nodes` swap-removes rows.
+    /// here even though `del_nodes` swap-removes rows.
     /// A bond as sorted endpoints plus its sorted property bag.
     type BondState = (NodeId, NodeId, Vec<(String, PropValue)>);
 
@@ -1218,7 +1297,7 @@ mod tests {
 
     fn world_state(world: &Atomistic) -> WorldState {
         let mut atoms: Vec<_> = world
-            .nodes()
+            .atoms()
             .map(|(id, atom)| (id, atom.get_f64(keys::CHARGE).map(f64::to_bits)))
             .collect();
         atoms.sort_by_key(|&(id, _)| id);
@@ -1226,13 +1305,20 @@ mod tests {
             .bonds()
             .map(|(_, bond)| {
                 let (x, y) = (bond.nodes[0], bond.nodes[1]);
-                let mut props: Vec<(String, PropValue)> = bond.props.into_iter().collect();
+                let mut props: Vec<(String, PropValue)> = bond
+                    .props
+                    .iter()
+                    .map(|(k, v)| (k.to_owned(), v.clone()))
+                    .collect();
                 props.sort_by(|p, q| p.0.cmp(&q.0));
                 (x.min(y), x.max(y), props)
             })
             .collect();
         bonds.sort_by_key(|&(x, y, _)| (x, y));
-        let mut ports: Vec<_> = world.ports().map(|id| (id, world.port(id).ok())).collect();
+        let mut ports: Vec<_> = world
+            .port_ids()
+            .map(|id| (id, world.get_port(id).ok()))
+            .collect();
         ports.sort_by_key(|&(id, _)| id);
         WorldState {
             atoms,
@@ -1246,6 +1332,7 @@ mod tests {
     fn refuse_many(world: &mut Atomistic, pairs: &[(RelationId, RelationId)]) -> LinkManyError {
         let before = snapshot(world);
         let err = world
+            .graph_mut()
             .link_many(pairs)
             .expect_err("this batch must be refused");
         assert_eq!(
@@ -1263,18 +1350,18 @@ mod tests {
         let pairs = chain_pairs(&units);
         let mut looped = world.clone();
 
-        let bonds = world.link_many(&pairs).expect("three chain pairs link");
+        let bonds = world
+            .graph_mut()
+            .link_many(&pairs)
+            .expect("three chain pairs link");
         for &(a, b) in &pairs {
             looped.link(a, b).expect("each chain pair links in turn");
         }
 
         assert_eq!(world_state(&world), world_state(&looped));
         assert_eq!(bonds.len(), 3, "one bond per pair");
-        let bond_kind = world.kind_id("bonds").expect("'bonds' registered");
         for (k, &bid) in bonds.iter().enumerate() {
-            let bond = world
-                .get_relation(bond_kind, bid)
-                .expect("a returned bond is live");
+            let bond = world.get_bond(bid).expect("a returned bond is live");
             let mut ends = bond.nodes.to_vec();
             ends.sort();
             let mut expected = vec![units[k].anchor, units[k + 1].anchor];
@@ -1289,7 +1376,10 @@ mod tests {
         chain(&mut world, 2);
         let before = snapshot(&world);
 
-        let bonds = world.link_many(&[]).expect("an empty batch succeeds");
+        let bonds = world
+            .graph_mut()
+            .link_many(&[])
+            .expect("an empty batch succeeds");
 
         assert!(bonds.is_empty());
         assert_eq!(snapshot(&world), before);
@@ -1299,11 +1389,11 @@ mod tests {
     #[test]
     fn link_many_folds_a_shared_anchor_in_pair_order() {
         let mut world = Atomistic::new();
-        let a = atom(&mut world, "C", Some(-0.5), 0);
-        let h1 = atom(&mut world, "H", Some(0.125), 0);
-        let h2 = atom(&mut world, "H", Some(0.125), 0);
-        world.add_bond(a, h1).unwrap();
-        world.add_bond(a, h2).unwrap();
+        let a = atom(&mut world, Element::C, Some(-0.5), 0);
+        let h1 = atom(&mut world, Element::H, Some(0.125), 0);
+        let h2 = atom(&mut world, Element::H, Some(0.125), 0);
+        world.add_bond(a, h1, props! {}).unwrap();
+        world.add_bond(a, h2, props! {}).unwrap();
         let pa1 = world
             .add_port(a, h1, PortKind::Left, "p", BondNumber::Single)
             .unwrap();
@@ -1312,7 +1402,7 @@ mod tests {
             .unwrap();
         let (b1, _, pb1) = h_unit(
             &mut world,
-            "C",
+            Element::C,
             Some(-0.125),
             Some(0.125),
             PortKind::Right,
@@ -1320,7 +1410,7 @@ mod tests {
         );
         let (b2, _, pb2) = h_unit(
             &mut world,
-            "C",
+            Element::C,
             Some(-0.125),
             Some(0.125),
             PortKind::Right,
@@ -1328,6 +1418,7 @@ mod tests {
         );
 
         world
+            .graph_mut()
             .link_many(&[(pa1, pb1), (pa2, pb2)])
             .expect("two pairs on one anchor link in one batch");
 
@@ -1389,8 +1480,8 @@ mod tests {
     #[test]
     fn link_many_refuses_two_pairs_on_one_anchor_couple() {
         let mut world = Atomistic::new();
-        let a = atom(&mut world, "C", None, 0);
-        let b = atom(&mut world, "C", None, 1);
+        let a = atom(&mut world, Element::C, None, 0);
+        let b = atom(&mut world, Element::C, None, 1);
         let mut ports = Vec::new();
         for (anchor, kind, frag) in [
             (a, PortKind::Left, 0),
@@ -1398,8 +1489,8 @@ mod tests {
             (b, PortKind::Right, 1),
             (b, PortKind::Right, 1),
         ] {
-            let h = atom(&mut world, "H", None, frag);
-            world.add_bond(anchor, h).unwrap();
+            let h = atom(&mut world, Element::H, None, frag);
+            world.add_bond(anchor, h, props! {}).unwrap();
             ports.push(
                 world
                     .add_port(anchor, h, kind, "p", BondNumber::Single)
@@ -1428,19 +1519,19 @@ mod tests {
     #[test]
     fn link_many_refuses_leaving_groups_that_share_an_atom() {
         let mut world = Atomistic::new();
-        let a = atom(&mut world, "C", None, 0);
-        let x = atom(&mut world, "O", None, 0);
-        let c = atom(&mut world, "C", None, 0);
-        world.add_bond(a, x).unwrap();
-        world.add_bond(x, c).unwrap();
+        let a = atom(&mut world, Element::C, None, 0);
+        let x = atom(&mut world, Element::O, None, 0);
+        let c = atom(&mut world, Element::C, None, 0);
+        world.add_bond(a, x, props! {}).unwrap();
+        world.add_bond(x, c, props! {}).unwrap();
         let pa = world
             .add_port(a, x, PortKind::Left, "p", BondNumber::Single)
             .unwrap();
         let pc = world
             .add_port(c, x, PortKind::Left, "p", BondNumber::Single)
             .unwrap();
-        let (_, _, pb) = h_unit(&mut world, "C", None, None, PortKind::Right, 1);
-        let (_, _, pd) = h_unit(&mut world, "C", None, None, PortKind::Right, 2);
+        let (_, _, pb) = h_unit(&mut world, Element::C, None, None, PortKind::Right, 1);
+        let (_, _, pd) = h_unit(&mut world, Element::C, None, None, PortKind::Right, 2);
 
         let err = refuse_many(&mut world, &[(pa, pb), (pc, pd)]);
 
@@ -1463,16 +1554,16 @@ mod tests {
     #[test]
     fn link_many_refuses_an_anchor_inside_another_leaving_group_a_loop_accepts() {
         let mut world = Atomistic::new();
-        let c = atom(&mut world, "C", None, 0);
-        let o = atom(&mut world, "O", None, 0);
-        world.add_bond(c, o).unwrap();
+        let c = atom(&mut world, Element::C, None, 0);
+        let o = atom(&mut world, Element::O, None, 0);
+        world.add_bond(c, o, props! {}).unwrap();
         let pk = world
             .add_port(c, o, PortKind::Left, "p", BondNumber::Single)
             .unwrap();
-        let (n, _, pj) = h_unit(&mut world, "N", None, None, PortKind::Left, 0);
-        world.add_bond(o, n).unwrap();
-        let (_, _, pm) = h_unit(&mut world, "C", None, None, PortKind::Right, 1);
-        let (_, _, pp) = h_unit(&mut world, "C", None, None, PortKind::Right, 2);
+        let (n, _, pj) = h_unit(&mut world, Element::N, None, None, PortKind::Left, 0);
+        world.add_bond(o, n, props! {}).unwrap();
+        let (_, _, pm) = h_unit(&mut world, Element::C, None, None, PortKind::Right, 1);
+        let (_, _, pp) = h_unit(&mut world, Element::C, None, None, PortKind::Right, 2);
         let pairs = [(pj, pm), (pk, pp)];
         let mut looped = world.clone();
 
@@ -1497,25 +1588,26 @@ mod tests {
     fn link_many_leaves_unlinked_end_ports_untouched() {
         let mut world = Atomistic::new();
         let units = chain(&mut world, 3);
-        let head = world.port(units[0].left).expect("head port");
-        let tail = world.port(units[2].right).expect("tail port");
+        let head = world.get_port(units[0].left).expect("head port");
+        let tail = world.get_port(units[2].right).expect("tail port");
 
         world
+            .graph_mut()
             .link_many(&chain_pairs(&units))
             .expect("two chain pairs link");
 
         assert_eq!(world.n_ports(), 2, "only the two end ports remain");
-        assert_eq!(world.port(units[0].left).ok(), Some(head));
-        assert_eq!(world.port(units[2].right).ok(), Some(tail));
-        assert!(world.get_node(units[0].left_h).is_ok(), "head H survives");
-        assert!(world.get_node(units[2].right_h).is_ok(), "tail H survives");
+        assert_eq!(world.get_port(units[0].left).ok(), Some(head));
+        assert_eq!(world.get_port(units[2].right).ok(), Some(tail));
+        assert!(world.get_atom(units[0].left_h).is_ok(), "head H survives");
+        assert!(world.get_atom(units[2].right_h).is_ok(), "tail H survives");
         for inner in [
             units[0].right_h,
             units[1].left_h,
             units[1].right_h,
             units[2].left_h,
         ] {
-            assert!(world.get_node(inner).is_err(), "inner H is removed");
+            assert!(world.get_atom(inner).is_err(), "inner H is removed");
         }
     }
 }

@@ -30,7 +30,7 @@ use crate::conformer::{ConformerReport, ConformerStageReport, StageKind};
 use molrs::core::Atomistic;
 use molrs::core::MolRsError;
 use molrs::ff::compile::PotentialCompiler;
-use molrs::ff::potential::intramolecular_pairs;
+use molrs::ff::potential::{Accumulator, Potential, intramolecular_pairs};
 use molrs::ff::typifier::Typing;
 use molrs::ff::typifier::mmff::Mmff94Typifier;
 use molrs::perceive::add_hydrogens;
@@ -455,7 +455,10 @@ fn mmff_cleanup(mol: &Atomistic, coords3d: &mut [f64]) -> Result<(f64, usize, bo
     // it is MMFF's call, so the list is built from MMFF's own weights rather
     // than from an assumption about them.
     let ff = typing.forcefield();
-    frame.insert("pairs", intramolecular_pairs(&frame, ff.special_bonds())?);
+    frame.insert(
+        "pairs",
+        intramolecular_pairs(&frame, ff.special_bonds(), None)?,
+    );
     let potentials = PotentialCompiler::new(ff)
         .compile(&frame)
         .map_err(|e| e.to_string())?;
@@ -466,7 +469,9 @@ fn mmff_cleanup(mol: &Atomistic, coords3d: &mut [f64]) -> Result<(f64, usize, bo
     // `MMFFOptimizeMolecule` grad tol) under a generous iteration cap, so the
     // freshly-embedded geometry is relaxed all the way to the MMFF minimum.
     let report = crate::optimize::minimize_lbfgs_rms(coords3d, 1000, 1e-3, |p| {
-        potentials.calc_energy_forces(p)
+        let mut acc = Accumulator::new(p.len());
+        potentials.evaluate(p, &mut acc);
+        (acc.energy(), acc.into_forces())
     });
     Ok((report.final_energy, report.n_steps, report.converged))
 }

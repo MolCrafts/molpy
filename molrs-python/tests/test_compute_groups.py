@@ -41,7 +41,7 @@ BOX_LEN = 10.0
 
 def _two_dimers() -> tuple[molrs.core.Box, np.ndarray, molrs.core.Neighbors]:
     """Two bonded pairs far apart: (0, 1) and (2, 3)."""
-    box = molrs.core.Box.cube(BOX_LEN)
+    box = molrs.core.Box(molrs.core.Cell.lengths([BOX_LEN] * 3))
     pts = np.array(
         [[1.0, 1.0, 1.0], [2.0, 1.0, 1.0], [6.0, 6.0, 6.0], [7.0, 6.0, 6.0]],
         dtype=np.float64,
@@ -52,7 +52,7 @@ def _two_dimers() -> tuple[molrs.core.Box, np.ndarray, molrs.core.Neighbors]:
 
 def _lattice() -> tuple[molrs.core.Box, np.ndarray]:
     """A 2 x 2 x 2 simple-cubic lattice filling a periodic box of side 4."""
-    box = molrs.core.Box.cube(4.0)
+    box = molrs.core.Box(molrs.core.Cell.lengths([4.0] * 3))
     grid = np.arange(2) * 2.0 + 1.0
     pts = np.array(
         [[x, y, z] for x in grid for y in grid for z in grid], dtype=np.float64

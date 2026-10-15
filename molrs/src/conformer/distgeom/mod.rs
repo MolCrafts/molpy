@@ -74,7 +74,7 @@ impl DgConstraints {
         if mol.n_atoms() == 0 {
             return Err(MolRsError::validation("molecule has no atoms"));
         }
-        let p = mol_features::perceive_dg_features(mol);
+        let p = mol_features::perceive_dg_features(mol)?;
 
         let mut bounds = bounds::set_topol_bounds(&p);
         triangle_smoothing::smooth_bounds(&mut bounds)?;

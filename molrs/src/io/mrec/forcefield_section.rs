@@ -493,7 +493,7 @@ fn check_style_table(
         .get("name")
         .ok_or_else(|| fail("no name column".into()))?;
     let names = names
-        .as_string()
+        .get::<String>()
         .filter(|_| table.validity("name").is_none())
         .ok_or_else(|| fail("name is a string column, never null".into()))?;
     let mut seen = std::collections::HashSet::with_capacity(names.len());
@@ -508,7 +508,7 @@ fn check_style_table(
         .collect();
     match (style.endpoint_key, category_arity(style.category)) {
         (EndpointKey::Smirks, _) => {
-            let smirks = table.get("smirks").and_then(|c| c.as_string());
+            let smirks = table.get("smirks").and_then(|c| c.get::<String>());
             if !present.is_empty() || smirks.is_none() || table.validity("smirks").is_some() {
                 return Err(fail(
                     "smirks-keyed: no endpoint columns, and a smirks column never null".into(),
@@ -597,7 +597,7 @@ fn check_array_param(
 ) -> Result<(), String> {
     let shape = values.shape();
     let array = values
-        .as_float()
+        .get::<f64>()
         .filter(|_| table.precision(column).is_none())
         .filter(|_| shape[1..].iter().all(|&n| n >= 1))
         .ok_or_else(|| {
@@ -628,7 +628,7 @@ fn check_array_param(
 fn check_cmap_grid(table: &Block, values: &crate::core::Column) -> Result<(), String> {
     let shape = values.shape();
     let grid = values
-        .as_float()
+        .get::<f64>()
         .filter(|_| table.precision(CMAP_GRID).is_none())
         .filter(|_| matches!(shape, [_, n, m] if n == m && *n >= 2))
         .ok_or_else(|| {
@@ -668,7 +668,7 @@ pub fn check_pair_restatements(table: &Block) -> Result<(), String> {
     let strings = |column: &str| {
         table
             .get(column)
-            .and_then(|c| c.as_string())
+            .and_then(|c| c.get::<String>())
             .expect("a validated pair table: a string column")
     };
     let (names, itom, jtom) = (strings("name"), strings("itom"), strings("jtom"));
@@ -839,7 +839,7 @@ mod tests {
     use serde_json::json;
 
     fn strings(values: &[&str]) -> Column {
-        Column::from_string(
+        Column::from(
             ArrayD::from_shape_vec(
                 vec![values.len()],
                 values.iter().map(|s| s.to_string()).collect(),
@@ -849,13 +849,13 @@ mod tests {
     }
 
     fn floats(values: &[f64]) -> Column {
-        Column::from_float(ArrayD::from_shape_vec(vec![values.len()], values.to_vec()).unwrap())
+        Column::from(ArrayD::from_shape_vec(vec![values.len()], values.to_vec()).unwrap())
     }
 
     fn table(columns: Vec<(&str, Column)>) -> Block {
         let mut block = Block::new();
         for (name, column) in columns {
-            block.insert_column(name, column).unwrap();
+            block.insert(name, column, None).unwrap();
         }
         block
     }
@@ -961,8 +961,8 @@ mod tests {
         assert!(ff.validate().is_err(), "wrong arity");
 
         let mut ff = harmonic_section();
-        let n = Column::from_i64(ArrayD::from_shape_vec(vec![1], vec![3i64]).unwrap());
-        ff.tables["bond.harmonic"].insert_column("n", n).unwrap();
+        let n = Column::from(ArrayD::from_shape_vec(vec![1], vec![3i64]).unwrap());
+        ff.tables["bond.harmonic"].insert("n", n, None).unwrap();
         assert!(ff.validate().is_err(), "param dtype");
 
         let mut ff = harmonic_section();
@@ -975,7 +975,7 @@ mod tests {
         ff.document["styles"][1]["endpoint_key"] = json!("class");
         assert!(ff.validate().is_err(), "class key without class");
         ff.tables["atom.full"]
-            .insert_column("class", strings(&["CT", "HC"]))
+            .insert("class", strings(&["CT", "HC"]), None)
             .unwrap();
         ff.validate().unwrap();
     }
@@ -1047,13 +1047,13 @@ mod tests {
         );
         ff.validate().unwrap();
         ff.tables["cross_term.custom"]
-            .insert_column("ltom", strings(&["C"]))
+            .insert("ltom", strings(&["C"]), None)
             .unwrap();
         assert!(ff.validate().is_err(), "itom jtom ltom is no prefix");
     }
 
     fn grids(shape: &[usize], values: Vec<f64>) -> Column {
-        Column::from_float(ArrayD::from_shape_vec(shape.to_vec(), values).unwrap())
+        Column::from(ArrayD::from_shape_vec(shape.to_vec(), values).unwrap())
     }
 
     /// `base` with a `cmap charmm` style of two rows, whose `grid` column is
@@ -1123,14 +1123,14 @@ mod tests {
     fn any_parameter_may_be_an_array() {
         let mut ff = with_cmap(grids(&[2, 2, 2], vec![0.0; 8]));
         ff.tables["cmap.charmm"]
-            .insert_column("other", grids(&[2, 2, 3], vec![0.0; 12]))
+            .insert("other", grids(&[2, 2, 3], vec![0.0; 12]), None)
             .unwrap();
         ff.validate().unwrap();
 
         let with_bond_column = |key: &str, column: Column| {
             let mut ff = harmonic_section();
             ff.tables["bond.harmonic"]
-                .insert_column(key, column)
+                .insert(key, column, None)
                 .unwrap();
             ff
         };
@@ -1158,8 +1158,9 @@ mod tests {
             (
                 with_bond_column(
                     "table",
-                    Column::from_string(
-                        ArrayD::from_shape_vec(vec![1, 2], vec!["a".into(), "b".into()]).unwrap(),
+                    Column::from(
+                        ArrayD::from_shape_vec(vec![1, 2], vec!["a".to_owned(), "b".to_owned()])
+                            .unwrap(),
                     ),
                 ),
                 "a string array",
@@ -1228,7 +1229,7 @@ mod tests {
         let mut ff = with_pairs("pair14", &rows);
         ff.validate().unwrap();
         pair_table(&mut ff, "pair14")
-            .insert_column("ktom", strings(&["C", "C"]))
+            .insert("ktom", strings(&["C", "C"]), None)
             .unwrap();
         ff.validate().unwrap();
     }
@@ -1278,12 +1279,12 @@ mod tests {
         let mut ff = with_pairs("pair", &rows);
         for annotation in ANNOTATION_COLUMNS {
             pair_table(&mut ff, "pair")
-                .insert_column(annotation, strings(&["one", "other"]))
+                .insert(annotation, strings(&["one", "other"]), None)
                 .unwrap();
         }
         ff.validate().unwrap();
         pair_table(&mut ff, "pair")
-            .insert_column("flavour", strings(&["one", "other"]))
+            .insert("flavour", strings(&["one", "other"]), None)
             .unwrap();
         let err = ff.validate().unwrap_err().to_string();
         assert!(err.contains("[\"flavour\"]"), "{err}");
@@ -1353,6 +1354,7 @@ mod tests {
         b.insert(
             "x",
             ndarray::Array1::from_vec(vec![0.5, -1.25, 3.0]).into_dyn(),
+            None,
         )
         .unwrap();
         b

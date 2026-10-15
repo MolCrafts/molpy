@@ -24,13 +24,14 @@ use super::{MatchOptions, SmartsMatch};
 /// Resolve bond facts between two molecule atoms, if they are bonded.
 fn bond_facts(ctx: &SmartsTarget, a: NodeId, b: NodeId) -> Option<BondFacts> {
     let mol = ctx.mol;
-    for (bid, other) in mol.incident_bond_ids(a) {
+    for (other, bid) in mol.neighbor_bonds(a) {
         if other == b {
             // §11.2: `:` reads the bond *class*. §11.3: an explicit `-`/`=`/`#`
             // reads the localized integer. Two questions, two fields — never a
             // number doing both jobs.
-            let aromatic = mol.bond_type(bid).is_aromatic();
-            let order = mol.bond_number(bid).count().max(1) as f64;
+            const LIVE: &str = "neighbor_bonds yields live bonds";
+            let aromatic = mol.bond_type(bid).expect(LIVE).is_aromatic();
+            let order = mol.bond_number(bid).expect(LIVE).count().max(1) as f64;
             let in_ring = ctx.rings.is_bond_in_ring(bid);
             return Some(BondFacts {
                 order,
@@ -207,7 +208,7 @@ fn try_place(
 /// Find every non-uniquified embedding of `query` in `mol`.
 pub fn find(query: &QueryGraph, mol: &Atomistic, options: MatchOptions<'_>) -> Vec<SmartsMatch> {
     let ctx = match options.labels {
-        Some(labels) => SmartsTarget::with_labels(mol, labels),
+        Some(labels) => SmartsTarget::new(mol).with_labels(labels),
         None => SmartsTarget::new(mol),
     };
     find_in_target(query, &ctx, options.root, options.limit)
@@ -252,17 +253,24 @@ pub fn has_match(query: &QueryGraph, mol: &Atomistic, mut options: MatchOptions<
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::BondOrder;
+    use crate::core::{BondNumber, BondOrder, Element, keys};
     use crate::perceive::smarts::MatchOptions;
+    use crate::props;
 
     /// Ethanol without hydrogens: C0–C1–O2, single bonds.
     fn ethanol() -> Atomistic {
         let mut mol = Atomistic::new();
-        let c0 = mol.add_atom_bare("C");
-        let c1 = mol.add_atom_bare("C");
-        let o = mol.add_atom_bare("O");
-        mol.add_bond(c0, c1).unwrap();
-        mol.add_bond(c1, o).unwrap();
+        let c0 = mol
+            .add_atom(props! { keys::ATOMIC_NUMBER => Element::C })
+            .unwrap();
+        let c1 = mol
+            .add_atom(props! { keys::ATOMIC_NUMBER => Element::C })
+            .unwrap();
+        let o = mol
+            .add_atom(props! { keys::ATOMIC_NUMBER => Element::O })
+            .unwrap();
+        mol.add_bond(c0, c1, props! {}).unwrap();
+        mol.add_bond(c1, o, props! {}).unwrap();
         mol
     }
 
@@ -285,12 +293,13 @@ mod tests {
     /// two-connected with one hydrogen, and the H still one-connected.
     #[test]
     fn a_port_is_not_counted_as_a_bond() {
-        use crate::core::BondNumber;
         use crate::core::PortKind;
         let mut mol = ethanol();
         let o = mol.atoms().map(|(id, _)| id).nth(2).expect("O");
-        let h = mol.add_atom_bare("H");
-        mol.add_bond(o, h).unwrap();
+        let h = mol
+            .add_atom(props! { keys::ATOMIC_NUMBER => Element::H })
+            .unwrap();
+        mol.add_bond(o, h, props! {}).unwrap();
         mol.add_port(o, h, PortKind::Left, "", BondNumber::Single)
             .expect("a bonded H is a legal handle");
 
@@ -323,7 +332,8 @@ mod tests {
     fn bond_primitives_are_checked_against_the_molecule() {
         let mut mol = ethanol();
         let bonds: Vec<_> = mol.bonds().map(|(id, _)| id).collect();
-        mol.set_bond_type(bonds[1], BondOrder::Double).unwrap();
+        mol.set_bond_class(bonds[1], BondOrder::Double, BondNumber::Double)
+            .unwrap();
         assert_eq!(matches("C=O", &mol).len(), 1);
         assert!(matches("C-O", &mol).is_empty());
         assert_eq!(matches("C~O", &mol).len(), 1, "`~` is any bond");

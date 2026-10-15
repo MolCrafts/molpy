@@ -10,13 +10,14 @@ use crate::ff::potential::flat_coords::validate_coords;
 use crate::ff::potential::gather_copies;
 use crate::ff::potential::pair::PairPotential;
 use crate::ff::potential::pair::atom_type_index;
-use crate::ff::potential::pair::fold_chunks;
-use crate::ff::potential::{CompileError, ForceTerm, PairDriven, Potential, param_reads};
+use crate::ff::potential::pair::fold_pairs;
+use crate::ff::potential::{
+    Accumulator, CompileError, ForceTerm, PairDriven, Potential, param_reads,
+};
 use molrs::core::Frame;
+use molrs::core::Neighbors;
 use molrs::core::Virial;
-use molrs::core::{Neighbors, VerletSkin};
 use molrs::op::F;
-use ndarray::{Array2, ArrayView2};
 
 const MIN_R2: F = 1e-24;
 
@@ -501,14 +502,16 @@ impl PairLjCut {
     /// where `(σ, ε)` comes from: there, one style-level pair; here, the
     /// type-pair table. The geometry is already reduced either way — this
     /// kernel never learns whether a neighbour is an owned atom or a copy.
-    fn fold_typed(&self, out: &mut [F], factor: &[F], pairs: &Neighbors) -> (F, Virial) {
-        let n_pairs = pairs.query_point_indices().len();
-        fold_chunks(out, n_pairs, |acc, rows| {
-            self.fold_typed_rows(acc, factor, pairs, rows)
-        })
+    fn fold_typed(&self, acc: &mut Accumulator<'_>, factor: &[F], pairs: &Neighbors) {
+        fold_pairs(
+            acc,
+            pairs.query_point_indices().len(),
+            |out: &mut [F], rows| self.fold_typed_rows::<false>(out, factor, pairs, rows),
+            |out: &mut [F], rows| self.fold_typed_rows::<true>(out, factor, pairs, rows),
+        );
     }
 
-    fn fold_typed_rows(
+    fn fold_typed_rows<const VIRIAL: bool>(
         &self,
         out: &mut [F],
         factor: &[F],
@@ -576,7 +579,9 @@ impl PairLjCut {
             };
             let f = [w * f[0], w * f[1], w * f[2]];
             energy += w * e;
-            virial.add_outer(f, d);
+            if VIRIAL {
+                virial.add_outer(f, d);
+            }
             let (bj, bi) = (3 * ja, 3 * ia);
             out[bj] += f[0];
             out[bj + 1] += f[1];
@@ -588,14 +593,16 @@ impl PairLjCut {
         (energy, virial)
     }
 
-    fn fold_neighbors(&self, out: &mut [F], factor: &[F], pairs: &Neighbors) -> (F, Virial) {
-        let n_pairs = pairs.query_point_indices().len();
-        fold_chunks(out, n_pairs, |acc, rows| {
-            self.fold_neighbors_rows(acc, factor, pairs, rows)
-        })
+    fn fold_neighbors(&self, acc: &mut Accumulator<'_>, factor: &[F], pairs: &Neighbors) {
+        fold_pairs(
+            acc,
+            pairs.query_point_indices().len(),
+            |out: &mut [F], rows| self.fold_neighbors_rows::<false>(out, factor, pairs, rows),
+            |out: &mut [F], rows| self.fold_neighbors_rows::<true>(out, factor, pairs, rows),
+        );
     }
 
-    fn fold_neighbors_rows(
+    fn fold_neighbors_rows<const VIRIAL: bool>(
         &self,
         out: &mut [F],
         factor: &[F],
@@ -629,7 +636,9 @@ impl PairLjCut {
             };
             let f = [w * f[0], w * f[1], w * f[2]];
             energy += w * e;
-            virial.add_outer(f, d);
+            if VIRIAL {
+                virial.add_outer(f, d);
+            }
             let bj = 3 * ja;
             let bi = 3 * ia;
             out[bj] += f[0];
@@ -641,95 +650,49 @@ impl PairLjCut {
         }
         (energy, virial)
     }
-
-    /// Compose `pairs_at` + table fold. Neighbour search stays the caller's.
-    pub fn energy_forces_skin(
-        &self,
-        neighbors: &mut VerletSkin,
-        pos: ArrayView2<'_, F>,
-    ) -> Result<(F, Array2<F>), String> {
-        let table = neighbors.pairs_at(pos).map_err(|e| e.to_string())?;
-        let n = pos.nrows();
-        let coords: Vec<F> = match pos.as_slice() {
-            Some(s) => s.to_vec(),
-            None => pos.iter().copied().collect(),
-        };
-        let (e, f) = self.calc_energy_forces_with_pairs(&coords, table);
-        let forces = Array2::from_shape_vec((n, 3), f).map_err(|err| err.to_string())?;
-        Ok((e, forces))
-    }
 }
 
 impl PairPotential for PairLjCut {
-    fn pair_energy(&self, r2: F, disp: [F; 3]) -> Option<F> {
-        self.pair_kernel(r2, disp).map(|(e, _)| e)
-    }
-    fn pair_force(&self, r2: F, disp: [F; 3]) -> Option<[F; 3]> {
-        self.pair_kernel(r2, disp).map(|(_, f)| f)
-    }
     fn pair_energy_force(&self, r2: F, disp: [F; 3]) -> Option<(F, [F; 3])> {
         self.pair_kernel(r2, disp)
     }
 }
 
 impl Potential for PairLjCut {
-    fn calc_energy_forces(&self, coords: &[F]) -> (F, Vec<F>) {
-        let mut out = vec![0.0; coords.len()];
-        let energy = self.accumulate(coords, &mut out);
-        (energy, out)
-    }
-
-    fn accumulate(&self, coords: &[F], out: &mut [F]) -> F {
+    fn evaluate(&self, coords: &[F], acc: &mut Accumulator<'_>) {
         match &self.source {
-            PairSource::Compiled { .. } => self.fold_compiled(coords, out),
+            PairSource::Compiled { .. } => {
+                let energy = self.fold_compiled(coords, acc.forces_without_virial());
+                acc.add_energy(energy);
+            }
             // Both need a pair table nobody handed over: nothing to add.
-            PairSource::Loop | PairSource::Typed { .. } => 0.0,
+            PairSource::Loop | PairSource::Typed { .. } => {}
         }
-    }
-
-    fn calc_energy_forces_with_pairs(&self, coords: &[F], pairs: &Neighbors) -> (F, Vec<F>) {
-        let (e, f, _) = self.calc_energy_forces_with_pairs_virial(coords, pairs);
-        (e, f)
     }
 }
 
 impl PairDriven for PairLjCut {
-    fn accumulate_pairs(
+    fn evaluate_pairs(
         &self,
         coords: &[F],
         pairs: &Neighbors,
         factor: &[F],
-        out: &mut [F],
-    ) -> (F, Option<Virial>) {
+        acc: &mut Accumulator<'_>,
+    ) {
         match &self.source {
             // A compiled list is an intramolecular sum with no periodicity;
             // a virial from its raw differences would be a number
             // about nothing, and it cannot read a per-pair weight either.
             PairSource::Compiled { .. } => {
                 debug_assert!(factor.is_empty());
-                (self.fold_compiled(coords, out), None)
+                self.evaluate(coords, acc);
             }
-            PairSource::Loop => {
-                let (e, w) = self.fold_neighbors(out, factor, pairs);
-                (e, Some(w))
-            }
-            PairSource::Typed { .. } => {
-                let (e, w) = self.fold_typed(out, factor, pairs);
-                (e, Some(w))
-            }
+            PairSource::Loop => self.fold_neighbors(acc, factor, pairs),
+            PairSource::Typed { .. } => self.fold_typed(acc, factor, pairs),
         }
     }
     fn binds_a_fixed_pair_list(&self) -> bool {
         matches!(self.source, PairSource::Compiled { .. })
-    }
-    fn calc_energy_forces_with_pairs_virial(
-        &self,
-        coords: &[F],
-        pairs: &Neighbors,
-    ) -> (F, Vec<F>, Option<Virial>) {
-        let mut forces = vec![0.0; coords.len()];
-        let (e, w) = self.accumulate_pairs(coords, pairs, &[], &mut forces);
-        (e, forces, w)
     }
     fn gather_onto_copies(&mut self, owner: &[u32]) {
         let PairSource::Typed {
@@ -867,7 +830,10 @@ pub fn pair_lj_cut_constructor(
     frame: &Frame,
 ) -> Result<ForceTerm, crate::ff::potential::CompileError> {
     let type_map: HashMap<&str, &Params> = type_params.iter().copied().collect();
-    let scale_14 = style_params.get("lj14scale").unwrap_or(1.0) as F;
+    let scale_14 = style_params
+        .get("lj14scale")
+        .and_then(|v| v.as_num())
+        .unwrap_or(1.0) as F;
     let mixing = mixing_of("lj/cut", style_params)?;
     let (n_exp, m_exp) = exponents(style_params)?;
     let cutoff = param_reads::pair_cutoff("lj/cut", style_params)?;
@@ -878,20 +844,20 @@ pub fn pair_lj_cut_constructor(
         .ok_or_else(|| "PairLjCut: frame missing \"atoms\" block".to_string())?;
     let atom_types = atoms
         .get("type")
-        .and_then(|c| c.as_string())
+        .and_then(|c| c.get::<String>())
         .ok_or_else(|| "PairLjCut: atoms block missing \"type\" column".to_string())?;
     let block = frame
         .get(PAIRS)
         .ok_or_else(|| "PairLjCut: frame missing \"pairs\" block".to_string())?;
     let i_col = block
         .get("atomi")
-        .and_then(|c| c.as_uint())
+        .and_then(|c| c.get::<u64>())
         .ok_or_else(|| "PairLjCut: pairs block missing \"atomi\" column".to_string())?;
     let j_col = block
         .get("atomj")
-        .and_then(|c| c.as_uint())
+        .and_then(|c| c.get::<u64>())
         .ok_or_else(|| "PairLjCut: pairs block missing \"atomj\" column".to_string())?;
-    let is_14 = block.get("is_14").and_then(|c| c.as_bool());
+    let is_14 = block.get("is_14").and_then(|c| c.get::<bool>());
 
     let n = i_col.len();
     let mut atom_i = Vec::with_capacity(n);
@@ -983,6 +949,7 @@ pub fn lj_ab_to_sigma_epsilon(a: F, b: F) -> (F, F) {
 
 #[cfg(test)]
 mod tests {
+    use crate::core::Cell;
 
     /// The fold gives the same number, bit for bit, however many threads ran.
     ///
@@ -1003,7 +970,7 @@ mod tests {
         let side = 10_usize;
         let n = side * side * side;
         let l = side as F * 3.0;
-        let bx = SimBox::cube(l, ndarray::array![0.0, 0.0, 0.0], [true; 3]).unwrap();
+        let bx = SimBox::new(Cell::Lengths([l; 3]), [0.0, 0.0, 0.0], [true; 3]).unwrap();
         let pos = ndarray::Array2::from_shape_fn((n, 3), |(a, k)| {
             let (i, j, m) = (a % side, (a / side) % side, a / (side * side));
             let base = [i, j, m][k] as F * 3.0;
@@ -1047,8 +1014,7 @@ mod tests {
                 .build()
                 .unwrap();
             pool.install(|| {
-                let mut out = vec![0.0; flat.len()];
-                let (e, w) = kernel.accumulate_pairs(&flat, &table, &[], &mut out);
+                let (e, out, w) = kernel.over_pairs_virial(&flat, &table);
                 (e, out, w.unwrap())
             })
         };
@@ -1073,6 +1039,8 @@ mod tests {
 
     use super::*;
 
+    use crate::ff::potential::fixtures::OneShot;
+
     #[test]
     fn mie_c_is_four_for_12_6() {
         assert!((mie_c(12, 6) - 4.0).abs() < 1e-12);
@@ -1082,7 +1050,7 @@ mod tests {
     fn loop_without_pairs_is_explicit_zero() {
         let lj = PairLjCut::lj126(1.0, 1.0, 2.5).unwrap();
         let coords: Vec<F> = vec![0.0, 0.0, 0.0, 1.1, 0.0, 0.0];
-        let (e, f) = Potential::calc_energy_forces(&lj, &coords);
+        let (e, f) = lj.energy_forces_at(&coords);
         assert_eq!(e, 0.0);
         assert!(f.iter().all(|&x| x == 0.0));
     }
@@ -1091,7 +1059,7 @@ mod tests {
     fn compiled_newton_third_law() {
         let pot = PairLjCut::compiled(vec![0], vec![1], vec![0.5], vec![1.0]);
         let coords: Vec<F> = vec![0.0, 0.0, 0.0, 1.5, 0.3, 0.1];
-        let (e, forces) = pot.calc_energy_forces(&coords);
+        let (e, forces) = pot.energy_forces_at(&coords);
         assert!(e.is_finite());
         for dim in 0..3 {
             assert!((forces[dim] + forces[3 + dim]).abs() < 1e-12);
@@ -1102,7 +1070,7 @@ mod tests {
     fn compiled_ignores_loop_pairs() {
         let pot = PairLjCut::compiled(vec![0], vec![1], vec![1.0], vec![1.0]);
         let coords: Vec<F> = vec![0.0, 0.0, 0.0, 2.0, 0.0, 0.0];
-        let (e0, _) = pot.calc_energy_forces(&coords);
+        let (e0, _) = pot.energy_forces_at(&coords);
         let extra = Neighbors::from_pairs(
             [molrs::core::NeighborPair {
                 i: 0,
@@ -1113,7 +1081,7 @@ mod tests {
             molrs::core::NeighborColumns::FULL,
             molrs::core::QueryMode::SelfQuery { n_points: 2 },
         );
-        let (e1, _) = pot.calc_energy_forces_with_pairs(&coords, &extra);
+        let (e1, _) = pot.over_pairs(&coords, &extra);
         assert_eq!(e0, e1);
     }
 
@@ -1125,7 +1093,7 @@ mod tests {
         use ndarray::Array1;
         let rows = [(
             "A".to_string(),
-            Params::from_pairs(&[("epsilon", 0.2), ("sigma", 3.0)]),
+            Params::from_iter([("epsilon", 0.2), ("sigma", 3.0)]),
         )];
         let tp: Vec<(&str, &Params)> = rows.iter().map(|(k, p)| (k.as_str(), p)).collect();
         let mut frame = ab_frame();
@@ -1135,18 +1103,19 @@ mod tests {
                 .insert(
                     "type",
                     Array1::from_vec(vec!["A".to_string(), "A".to_string()]).into_dyn(),
+                    None,
                 )
                 .unwrap();
             atoms
         });
         let coords = [0.0, 0.0, 0.0, 3.7, 0.0, 0.0];
         for (n, m) in [(12.0, 6.0), (9.0, 6.0), (10.0, 4.0)] {
-            let style = gathered(Params::from_pairs(&[("cutoff", 100.0), ("n", n), ("m", m)]));
+            let style = gathered(Params::from_iter([("cutoff", 100.0), ("n", n), ("m", m)]));
             let compiled = pair_lj_cut_constructor(&style, &tp, &frame).unwrap();
             let typed = pair_lj_cut_typed_constructor(&style, &tp, &frame).unwrap();
             let c = (n / (n - m)) * (n / m).powf(m / (n - m));
             let want = c * 0.2 * ((3.0_f64 / 3.7).powf(n) - (3.0_f64 / 3.7).powf(m));
-            let e_c = compiled.as_potential().calc_energy(&coords);
+            let e_c = compiled.as_potential().energy_at(&coords);
             assert!((e_c - want).abs() < 1e-12, "{n}-{m}: {e_c} vs {want}");
             let pair = Neighbors::from_pairs(
                 vec![molrs::core::NeighborPair {
@@ -1161,7 +1130,7 @@ mod tests {
             let ForceTerm::Pair(typed) = typed else {
                 panic!("a pair member")
             };
-            let e_t = typed.calc_energy_forces_with_pairs(&coords, &pair).0;
+            let e_t = typed.over_pairs(&coords, &pair).0;
             assert!((e_t - want).abs() < 1e-12, "{n}-{m} typed: {e_t} vs {want}");
         }
     }
@@ -1228,8 +1197,8 @@ mod tests {
             QueryMode::SelfQuery { n_points: 4 },
         );
 
-        let (e_c, f_c) = compiled.calc_energy_forces(&coords);
-        let (e_t, f_t) = typed.calc_energy_forces_with_pairs(&coords, &neighbors);
+        let (e_c, f_c) = compiled.energy_forces_at(&coords);
+        let (e_t, f_t) = typed.over_pairs(&coords, &neighbors);
 
         assert!(
             e_c.abs() > 1e-6,
@@ -1244,7 +1213,7 @@ mod tests {
         crate::ff::potential::pair::fixtures::assert_virial_matches_forces(
             "lj/cut",
             &coords,
-            typed.calc_energy_forces_with_pairs_virial(&coords, &neighbors),
+            typed.over_pairs_virial(&coords, &neighbors),
         );
     }
 
@@ -1301,8 +1270,8 @@ mod tests {
             .unwrap();
             assert_same(
                 &format!("shift {shifted}"),
-                compiled.calc_energy_forces(&coords),
-                typed.calc_energy_forces_with_pairs(&coords, &table_over(&coords, &links)),
+                compiled.energy_forces_at(&coords),
+                typed.over_pairs(&coords, &table_over(&coords, &links)),
             );
         }
     }
@@ -1327,14 +1296,15 @@ mod tests {
             .insert(
                 "type",
                 Array1::from_vec(vec!["A".to_string(), "B".to_string()]).into_dyn(),
+                None,
             )
             .unwrap();
         let mut pairs = Block::new();
         pairs
-            .insert("atomi", Array1::from_vec(vec![0 as Idx]).into_dyn())
+            .insert("atomi", Array1::from_vec(vec![0 as Idx]).into_dyn(), None)
             .unwrap();
         pairs
-            .insert("atomj", Array1::from_vec(vec![1 as Idx]).into_dyn())
+            .insert("atomj", Array1::from_vec(vec![1 as Idx]).into_dyn(), None)
             .unwrap();
         let mut frame = Frame::new();
         frame.insert(ATOMS, atoms);
@@ -1348,17 +1318,17 @@ mod tests {
         let mut rows = vec![
             (
                 "A".to_string(),
-                Params::from_pairs(&[("epsilon", 0.1), ("sigma", 3.0)]),
+                Params::from_iter([("epsilon", 0.1), ("sigma", 3.0)]),
             ),
             (
                 "B".to_string(),
-                Params::from_pairs(&[("epsilon", 0.4), ("sigma", 3.6)]),
+                Params::from_iter([("epsilon", 0.4), ("sigma", 3.6)]),
             ),
         ];
         if let Some((a, b)) = cross {
             rows.push((
                 pair_key(a, b).unwrap(),
-                Params::from_pairs(&[("epsilon", 0.9), ("sigma", 2.0)]),
+                Params::from_iter([("epsilon", 0.9), ("sigma", 2.0)]),
             ));
         }
         rows
@@ -1383,18 +1353,18 @@ mod tests {
 
     fn compiled_energy(rows: &[(String, Params)]) -> F {
         let mut style = Params::new();
-        style.set_str("mixing", "geometric");
+        style.set("mixing", "geometric");
         let style = gathered(style);
         let refs: Vec<(&str, &Params)> = rows.iter().map(|(k, p)| (k.as_str(), p)).collect();
         let member = pair_lj_cut_constructor(&style, &refs, &ab_frame()).unwrap();
         let coords: Vec<F> = vec![0.0, 0.0, 0.0, R_AB, 0.0, 0.0];
-        member.as_potential().calc_energy_forces(&coords).0
+        member.as_potential().energy_forces_at(&coords).0
     }
 
     fn typed_energy(rows: &[(String, Params)]) -> F {
         use molrs::core::{NeighborColumns, NeighborPair, QueryMode};
-        let mut style = Params::from_pairs(&[("cutoff", 10.0)]);
-        style.set_str("mixing", "geometric");
+        let mut style = Params::from_iter([("cutoff", 10.0)]);
+        style.set("mixing", "geometric");
         let style = gathered(style);
         let refs: Vec<(&str, &Params)> = rows.iter().map(|(k, p)| (k.as_str(), p)).collect();
         let ForceTerm::Pair(kernel) =
@@ -1413,7 +1383,7 @@ mod tests {
             QueryMode::SelfQuery { n_points: 2 },
         );
         let coords: Vec<F> = vec![0.0, 0.0, 0.0, R_AB, 0.0, 0.0];
-        kernel.calc_energy_forces_with_pairs(&coords, &neighbors).0
+        kernel.over_pairs(&coords, &neighbors).0
     }
 
     /// A pair with an explicit cross row is priced with that row, not with the
@@ -1433,7 +1403,7 @@ mod tests {
     fn a_cross_row_is_found_in_either_order() {
         use crate::ff::forcefield::ForceField;
         let lj_params =
-            |eps: f64, sigma: f64| Params::from_pairs(&[("epsilon", eps), ("sigma", sigma)]);
+            |eps: f64, sigma: f64| Params::from_iter([("epsilon", eps), ("sigma", sigma)]);
         let mut ff = ForceField::new("t");
         let style = ff.def_style("pair", "lj/cut", Params::new()).unwrap();
         style

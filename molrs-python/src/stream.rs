@@ -1,12 +1,12 @@
 //! Live Frame streaming over WebSocket — Python view of `molrs::stream`.
 //!
 //! A producer (an MD loop in Python, Rust, or anything that can build a
-//! [`Frame`]) binds a [`PyPublisher`] and calls `send()` once per step. The
+//! [`Frame`]) binds a [`PyPublisher`] (or dials a relay with one) configured
+//! by a [`PyPublisherConfig`], and calls `send()` once per step. The
 //! call never blocks on network I/O: frames go through a bounded buffer that
 //! drops the oldest payload when a client cannot keep up, so a slow viewer
 //! slows nothing down. Viewers dial the socket and read the payloads back with
-//! `molrs.io.read_msgpack_frame_bytes` (or `read_json_frame_str` from a JSON
-//! publisher; [`crate::io`]).
+//! `molrs.io.read_wire_frame` ([`crate::io`]).
 //!
 //! Traffic in the other direction is [`PyControlCommand`]: a viewer asks the
 //! producer to pause, change rate, or restrict the atom subset. The producer
@@ -14,9 +14,10 @@
 //!
 //! # Platform
 //!
-//! [`PyControlCommand`] is portable; [`PyPublisher`] binds a TCP listener and
-//! is therefore native-only, gated exactly like `molrs::stream::publisher`. A Pyodide
-//! build has the command type and no server.
+//! [`PyControlCommand`] is portable; [`PyPublisher`] and [`PyPublisherConfig`]
+//! open TCP sockets and are therefore native-only, gated exactly like
+//! `molrs::stream::publisher`. A Pyodide build has the command type and no
+//! server.
 //!
 //! [`Frame`]: molrs::core::Frame
 
@@ -194,7 +195,7 @@ impl PyControlCommand {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-pub use server::PyPublisher;
+pub use server::{PyPublisher, PyPublisherConfig};
 
 #[cfg(not(target_arch = "wasm32"))]
 mod server {
@@ -210,20 +211,116 @@ mod server {
     use crate::core::frame::PyFrame;
     use crate::error::{io_error_to_pyerr, py_value_err};
 
-    /// WebSocket server that broadcasts frames to every connected viewer.
+    /// How a :class:`Publisher` streams: ``molrs::stream::PublisherConfig``.
     ///
-    /// ``send`` is safe to call from inside a simulation loop: it encodes the
-    /// frame, hands it to a background thread, and returns. When the buffer is
-    /// full the oldest pending frame is dropped rather than stalling the
-    /// producer, so the stream degrades to "latest frames only" instead of
-    /// throttling the science.
+    /// Parameters
+    /// ----------
+    /// format : {"msgpack", "json"}
+    ///     Wire encoding for outbound frames. Viewers must decode with the
+    ///     same format.
+    /// buffer_size : int
+    ///     How many encoded frames may be in flight before the oldest is
+    ///     dropped. Must be at least 1.
+    /// token : str or None
+    ///     Shared secret clients must present in a ``hello`` handshake before
+    ///     they receive frames. ``None`` accepts every connection — fine for
+    ///     loopback, wrong for a shared bind.
+    ///
+    /// Raises
+    /// ------
+    /// ValueError
+    ///     An unknown ``format`` or a ``buffer_size`` of 0.
+    #[pyclass(
+        module = "molrs.stream",
+        name = "PublisherConfig",
+        frozen,
+        from_py_object
+    )]
+    #[derive(Clone)]
+    pub struct PyPublisherConfig {
+        format: String,
+        buffer_size: usize,
+        token: Option<String>,
+    }
+
+    #[pymethods]
+    impl PyPublisherConfig {
+        #[new]
+        #[pyo3(signature = (*, format = "msgpack", buffer_size = 4, token = None))]
+        fn new(format: &str, buffer_size: usize, token: Option<String>) -> PyResult<Self> {
+            frame_encoding(format)?;
+            if buffer_size == 0 {
+                return Err(PyValueError::new_err(
+                    "buffer_size must be at least 1; 0 would drop every frame",
+                ));
+            }
+            Ok(Self {
+                format: format.to_string(),
+                buffer_size,
+                token,
+            })
+        }
+
+        /// The wire encoding, ``"msgpack"`` or ``"json"``.
+        #[getter]
+        fn format(&self) -> &str {
+            &self.format
+        }
+
+        /// Encoded frames that may be in flight before the oldest is dropped.
+        #[getter]
+        fn buffer_size(&self) -> usize {
+            self.buffer_size
+        }
+
+        /// The shared secret clients must present, or ``None``.
+        #[getter]
+        fn token(&self) -> Option<String> {
+            self.token.clone()
+        }
+
+        fn __repr__(&self) -> String {
+            format!(
+                "PublisherConfig(format={:?}, buffer_size={}, token={})",
+                self.format,
+                self.buffer_size,
+                if self.token.is_some() {
+                    "'***'"
+                } else {
+                    "None"
+                }
+            )
+        }
+    }
+
+    impl PyPublisherConfig {
+        fn to_core(&self) -> PyResult<PublisherConfig> {
+            Ok(PublisherConfig {
+                format: frame_encoding(&self.format)?,
+                buffer_size: self.buffer_size,
+                max_frame_rate: 0.0,
+                token: self.token.clone(),
+            })
+        }
+    }
+
+    /// WebSocket publisher that streams frames to viewers.
+    ///
+    /// Built by one of two doors, as in Rust: :meth:`bind` listens for viewers
+    /// (a server), :meth:`connect` dials a relay. ``send`` is safe to call
+    /// from inside a simulation loop: it encodes the frame, hands it to a
+    /// background thread, and returns. When the buffer is full the oldest
+    /// pending frame is dropped rather than stalling the producer, so the
+    /// stream degrades to "latest frames only" instead of throttling the
+    /// science.
     ///
     /// Use it as a context manager, or call :meth:`close` — either shuts the
-    /// listener down and joins the background thread.
+    /// connection down and joins the background thread.
     ///
     /// Examples
     /// --------
-    /// >>> with molrs.stream.Publisher("127.0.0.1:8765") as server:  # doctest: +SKIP
+    /// >>> config = molrs.stream.PublisherConfig()  # doctest: +SKIP
+    /// >>> with molrs.stream.Publisher.bind("127.0.0.1:8765", config) as server:  # doctest: +SKIP
     /// ...     for _ in range(steps):
     /// ...         integrator.step()
     /// ...         server.send(integrator.frame)
@@ -240,57 +337,59 @@ mod server {
 
     #[pymethods]
     impl PyPublisher {
-        /// Bind a WebSocket listener.
+        /// Bind a WebSocket listener viewers dial.
         ///
         /// Parameters
         /// ----------
         /// address : str
         ///     ``"host:port"``. Port ``0`` asks the OS for a free one; read
         ///     :attr:`address` afterwards to learn which.
-        /// format : {"msgpack", "json"}
-        ///     Wire encoding for outbound frames. Viewers must decode with the
-        ///     same format.
-        /// buffer_size : int
-        ///     How many encoded frames may be in flight before the oldest is
-        ///     dropped. Must be at least 1.
-        /// token : str or None
-        ///     Shared secret clients must present in a ``hello`` handshake
-        ///     before they receive frames. ``None`` (default) accepts every
-        ///     connection — fine for loopback, wrong for a shared bind.
-        #[new]
-        #[pyo3(signature = (address = "127.0.0.1:0", *, format = "msgpack", buffer_size = 4, token = None))]
-        fn new(
-            address: &str,
-            format: &str,
-            buffer_size: usize,
-            token: Option<String>,
-        ) -> PyResult<Self> {
-            if buffer_size == 0 {
-                return Err(PyValueError::new_err(
-                    "buffer_size must be at least 1; 0 would drop every frame",
-                ));
-            }
-            let config = PublisherConfig {
-                format: frame_encoding(format)?,
-                buffer_size,
-                max_frame_rate: 0.0,
-                token,
-            };
-            let address_for_error = address;
-            let server = Publisher::bind_with(address, config).map_err(io_error_to_pyerr)?;
+        /// config : PublisherConfig
+        ///     Wire format, buffer size and token.
+        ///
+        /// Raises
+        /// ------
+        /// OSError
+        ///     The address cannot be bound.
+        #[staticmethod]
+        fn bind(address: &str, config: &PyPublisherConfig) -> PyResult<Self> {
+            let server = Publisher::bind(address, config.to_core()?).map_err(io_error_to_pyerr)?;
             // A bound server always has one; `local_addr` is Option only
             // because a dialed publisher has no address to hand out.
             let bound = server
                 .local_addr()
                 .map(|a| a.to_string())
-                .unwrap_or_else(|| address_for_error.to_string());
+                .unwrap_or_else(|| address.to_string());
             Ok(Self {
                 inner: Some(server),
                 address: bound,
             })
         }
 
-        /// The bound ``"host:port"``, resolved after an ephemeral-port bind.
+        /// Dial a relay at ``url`` (``"ws://host:port/path"``) and stream to it.
+        ///
+        /// Parameters
+        /// ----------
+        /// url : str
+        ///     The relay's WebSocket URL.
+        /// config : PublisherConfig
+        ///     Wire format, buffer size and token.
+        ///
+        /// Raises
+        /// ------
+        /// OSError
+        ///     The URL cannot be dialed.
+        #[staticmethod]
+        fn connect(url: &str, config: &PyPublisherConfig) -> PyResult<Self> {
+            let server = Publisher::connect(url, config.to_core()?).map_err(io_error_to_pyerr)?;
+            Ok(Self {
+                inner: Some(server),
+                address: url.to_string(),
+            })
+        }
+
+        /// The bound ``"host:port"`` (resolved after an ephemeral-port bind),
+        /// or the URL a connected publisher dialed.
         #[getter]
         fn address(&self) -> &str {
             &self.address
@@ -389,6 +488,8 @@ mod server {
 /// Register `molrs.stream`.
 pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyControlCommand>()?;
+    #[cfg(not(target_arch = "wasm32"))]
+    m.add_class::<PyPublisherConfig>()?;
     #[cfg(not(target_arch = "wasm32"))]
     m.add_class::<PyPublisher>()?;
     Ok(())

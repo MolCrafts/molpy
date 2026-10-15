@@ -3,20 +3,23 @@
 //! operations ([`Derivative`], [`Unwrap`], [`Spectrum`]).
 //!
 //! The sample interval `dt` is data: it is a field of every `compute` call.
+//! `Msd` and `Vacf` are frame-form, as their core types are accumulator-only:
+//! `compute` takes one record per frame and folds them, in order, through
+//! the core accumulator (`accumulator → push → finish`).
 //!
 //! ```js
-//! const msd = new Msd(100);                                  // maxLag
-//! const curve = msd.compute({ positions: traj, dt: 0.5 });   // TimeCorrelation
+//! const msd = new Msd(100);                                    // maxLag
+//! const curve = msd.compute(frames.map((xyz) => ({ a: xyz, dt: 0.5 })));
 //! const fit = new LinearFit(0.2, 0.8).compute({ correlation: curve, channel: 0 });
-//! console.log(fit.toJSON().slope / 6);                       // D
+//! console.log(fit.toJSON().slope / 6);                         // D
 //! ```
 
-use molrs::compute::{self as mc, Compute};
+use molrs::compute::{self as mc, Accumulate, Compute, Stream};
 use wasm_bindgen::prelude::*;
 
 use super::config::Given;
 use super::handle::{described, output};
-use super::wire::Fields;
+use super::wire::{Fields, records};
 use crate::core::NDArray;
 
 output! {
@@ -103,17 +106,24 @@ impl Msd {
         Ok(Self { inner })
     }
 
-    /// `{ positions, dt, boxes? }`: `positions` is `T × N × D`, unwrapped.
-    pub fn compute(&self, data: &JsValue) -> Result<TimeCorrelation, JsError> {
-        let data = Fields::new(data, "Msd")?;
-        let positions = data.cube("positions")?;
-        let boxes = data.opt_boxes("boxes")?;
-        let input = mc::MsdInput {
-            positions: positions.view(),
-            dt: data.scalar("dt")?,
-            boxes: boxes.as_deref(),
-        };
-        Ok(self.inner.compute(input)?.into())
+    /// `[{ a, dt, simbox? }, …]`, one record per frame, in time order: `a`
+    /// is that frame's unwrapped positions (`N × 3`), `dt` the sample
+    /// interval (the same on every frame), `simbox` the frame's `Box` for the
+    /// wrapped-trajectory check.
+    pub fn compute(&self, frames: &JsValue) -> Result<TimeCorrelation, JsError> {
+        let mut accumulator = self.inner.accumulator();
+        for frame in records(frames, "Msd")? {
+            let data = Fields::new(&frame, "Msd")?;
+            let a = data.matrix("a", Some(3))?;
+            let simbox = data.opt_simbox("simbox")?;
+            accumulator.push(mc::CorrelatorFrame {
+                a: a.view(),
+                b: None,
+                dt: data.scalar("dt")?,
+                simbox: simbox.as_ref(),
+            })?;
+        }
+        Ok(accumulator.finish()?.into())
     }
 }
 
@@ -142,15 +152,22 @@ impl Vacf {
         Ok(Self { inner })
     }
 
-    /// `{ velocities, dt }`: `velocities` is `T × n_dof`.
-    pub fn compute(&self, data: &JsValue) -> Result<TimeCorrelation, JsError> {
-        let data = Fields::new(data, "Vacf")?;
-        let velocities = data.matrix("velocities", None)?;
-        let input = mc::VacfInput {
-            velocities: velocities.view(),
-            dt: data.scalar("dt")?,
-        };
-        Ok(self.inner.compute(input)?.into())
+    /// `[{ a, dt }, …]`, one record per frame, in time order: `a` is that
+    /// frame's velocities, flat (`n_dof`, one degree of freedom per entry),
+    /// `dt` the sample interval (the same on every frame).
+    pub fn compute(&self, frames: &JsValue) -> Result<TimeCorrelation, JsError> {
+        let mut accumulator = self.inner.accumulator();
+        for frame in records(frames, "Vacf")? {
+            let data = Fields::new(&frame, "Vacf")?;
+            let a = data.reals("a")?;
+            accumulator.push(mc::CorrelatorFrame {
+                a: a.view().insert_axis(ndarray::Axis(1)),
+                b: None,
+                dt: data.scalar("dt")?,
+                simbox: None,
+            })?;
+        }
+        Ok(accumulator.finish()?.into())
     }
 }
 

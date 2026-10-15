@@ -50,8 +50,9 @@ use crate::io::cgsmiles::validate::validate_ir;
 use crate::io::cgsmiles::{
     CgBondOrder, CgEdge, CgFragmentDef, CgGraph, CgNode, CgSmilesIr, EdgeOrigin, FragmentBody,
 };
-use crate::io::smiles::{BondKind, BondingDescriptor, DescriptorKind, SmilesIr, Span};
+use crate::io::smiles::{BondKind, BondingDescriptor, DescriptorKind, FragmentIr, Span};
 use crate::io::smiles::{Notation, SmilesError, SmilesErrorKind};
+use crate::line_notation::parser::parse_fragment_smiles;
 use crate::line_notation::scanner::Scanner;
 use crate::line_notation::validation::validate_descriptor;
 use crate::op::F;
@@ -451,8 +452,8 @@ impl<'a> CgParser<'a> {
             let graph = CgParser::new(input).parse_body(body)?;
             return Ok(FragmentBody::Graph(graph));
         }
-        match SmilesIr::from_fragment(&input[body.start..body.end]) {
-            Ok(ir) => Ok(FragmentBody::Smiles(ir)),
+        match parse_fragment_smiles(&input[body.start..body.end]) {
+            Ok(ir) => Ok(FragmentBody::Smiles(FragmentIr::new(ir))),
             Err(err) => Err(Self::rebase(err, body.start, input)),
         }
     }
@@ -1929,7 +1930,7 @@ mod tests {
     /// The atomistic body stored for `name` in fragment table `table`.
     fn smiles_body<'a>(ir: &'a CgSmilesIr, table: usize, name: &str) -> &'a SmilesIr {
         match &ir.fragments[table][name].body {
-            FragmentBody::Smiles(body) => body,
+            FragmentBody::Smiles(body) => body.ir(),
             FragmentBody::Graph(_) => panic!("fragment {name:?} holds a coarse-graph body"),
         }
     }

@@ -52,11 +52,11 @@ use crate::io::cgsmiles::{
     CgBondOrder, CgEdge, CgFragmentDef, CgGraph, CgSmilesIr, EdgeOrigin, FragmentBody, PairEnd,
     ResolvedPair,
 };
-use crate::io::smiles::{BondKind, BondingDescriptor, DescriptorKind, SmilesIr};
+use crate::io::smiles::{BondKind, BondingDescriptor, DescriptorKind, FragmentIr};
 use crate::io::smiles::{Notation, SmilesError, SmilesErrorKind};
+use crate::line_notation::atom_keys;
 use molrs::core::Atomistic;
 use molrs::core::NodeId;
-use molrs::core::PropValue;
 
 /// Pair the bonding descriptors of every level of `ir`, coarsest level first.
 ///
@@ -289,7 +289,7 @@ fn last_level_ports(
                 end: PairEnd::Body { instance, port },
                 // What `Builder` stamped on a freshly converted body can only
                 // have come from the notation: no perception has run on it.
-                aromatic: matches!(props.get("is_aromatic"), Some(PropValue::Int(v)) if *v != 0),
+                aromatic: atom_keys::is_aromatic(&props),
                 consumed: false,
             });
         }
@@ -471,7 +471,7 @@ pub(super) type ConvertedBody = (Atomistic, Vec<(NodeId, BondingDescriptor)>);
 /// converted once however many instances name it.
 ///
 /// It is also the **only** route from this module to
-/// [`SmilesIr::to_atomistic_with_descriptors`](crate::io::smiles::SmilesIr::to_atomistic_with_descriptors): no
+/// [`FragmentIr::to_atomistic`](crate::io::smiles::FragmentIr::to_atomistic): no
 /// other code under `cgsmiles/` calls the converter, so there is one walker
 /// over a fragment body and one place a converted body can come from.
 ///
@@ -503,7 +503,7 @@ impl FragmentCache {
     /// # Errors
     ///
     /// Whatever
-    /// [`SmilesIr::to_atomistic_with_descriptors`](crate::io::smiles::SmilesIr::to_atomistic_with_descriptors)
+    /// [`FragmentIr::to_atomistic`](crate::io::smiles::FragmentIr::to_atomistic)
     /// returns for `body` — an unmatched ring closure inside it, say. The
     /// error is the converter's own, carrying a span into the whole
     /// `CGsmiles` string; callers holding that string re-stamp it into
@@ -511,11 +511,11 @@ impl FragmentCache {
     pub(super) fn get_or_build(
         &mut self,
         name: &str,
-        body: &SmilesIr,
+        body: &FragmentIr,
     ) -> Result<&ConvertedBody, SmilesError> {
         match self.entries.entry(name.to_owned()) {
             Entry::Occupied(entry) => Ok(entry.into_mut()),
-            Entry::Vacant(entry) => Ok(entry.insert(body.to_atomistic_with_descriptors()?)),
+            Entry::Vacant(entry) => Ok(entry.insert(body.to_atomistic()?)),
         }
     }
 }
@@ -528,11 +528,11 @@ impl FragmentCache {
 mod tests {
     use super::*;
 
-    use crate::io::cgsmiles::fixtures::{body, pair};
+    use crate::io::cgsmiles::fixtures::{body, fragment, pair};
     use crate::io::cgsmiles::parser::CgParser;
     use crate::io::cgsmiles::{CgBondOrder, CgSmilesIr, EdgeOrigin, PairEnd, ResolvedPair};
     use crate::io::smiles::{
-        BondKind, DescriptorKind, Notation, SmilesError, SmilesErrorKind, SmilesIr, Span,
+        BondKind, DescriptorKind, Notation, SmilesError, SmilesErrorKind, Span,
     };
 
     // Every expectation below is hand-derived from § Domain basis of
@@ -542,7 +542,7 @@ mod tests {
     // free compatible pair wins), R4.13 (both descriptors consumed), R4.14
     // (explicit symbol > written-aromatic pair > single), R4.15 (an
     // unmatchable edge is an error) and R4.16 (edges in parse order) — and
-    // from the port lists the one walker `to_atomistic_with_descriptors` returns. No
+    // from the port lists the one walker `FragmentIr::to_atomistic` returns. No
     // external program produced any value here.
 
     // -- helpers ------------------------------------------------------------
@@ -1010,17 +1010,15 @@ mod tests {
 
     // -- the port order is the walker's order -------------------------------
 
-    /// A port index is a position in the map `to_atomistic_with_descriptors` returns,
+    /// A port index is a position in the map `FragmentIr::to_atomistic` returns,
     /// and that map is in **visit** order, not text order: in `C([$]O)[>]` the
     /// `$` written inside the branch is visited before the `>` written after
     /// it, and both are anchored on the same atom — the carbon the branch
     /// hangs off.
     #[test]
     fn test_fragment_to_atomistic_map_is_in_walker_order() {
-        let ir = SmilesIr::from_fragment("C([$]O)[>]").expect("fragment body must parse");
-        let (mol, ports) = ir
-            .to_atomistic_with_descriptors()
-            .expect("fragment body must convert");
+        let ir = fragment("C([$]O)[>]");
+        let (mol, ports) = ir.to_atomistic().expect("fragment body must convert");
         assert_eq!(mol.n_atoms(), 2);
         let kinds: Vec<DescriptorKind> = ports.iter().map(|(_, d)| d.kind).collect();
         assert_eq!(
@@ -1036,7 +1034,7 @@ mod tests {
     /// conversion: the cache is keyed by definition name.
     #[test]
     fn test_fragment_cache_builds_one_entry_for_three_lookups() {
-        let body = SmilesIr::from_fragment("[>]COC[<]").expect("fragment body must parse");
+        let body = fragment("[>]COC[<]");
         let mut cache = FragmentCache::default();
         for _ in 0..3 {
             cache
@@ -1050,7 +1048,7 @@ mod tests {
     /// three heavy atoms with a port on each terminal carbon.
     #[test]
     fn test_fragment_cache_returns_the_body_and_its_ports() {
-        let body = SmilesIr::from_fragment("[>]COC[<]").expect("fragment body must parse");
+        let body = fragment("[>]COC[<]");
         let mut cache = FragmentCache::default();
         let (mol, ports) = cache
             .get_or_build("PEO", &body)

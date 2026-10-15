@@ -14,7 +14,8 @@ use crate::compute::{
     Stencil, SurvivalKind, Window,
 };
 
-/// `impl Compute for` types that are deliberately not in the registry.
+/// `impl Compute for` / `impl Stream for` types that are deliberately not in
+/// the registry.
 const NOT_REGISTERED: &[(&str, &str)] = &[
     (
         "Batch",
@@ -30,9 +31,11 @@ const NOT_REGISTERED: &[(&str, &str)] = &[
 const INSTANTIATIONS: &[(&str, &[&str])] =
     &[("Pmft", &["PmftR12", "PmftXy", "PmftXyt", "PmftXyz"])];
 
-/// Every type the non-test source of `compute` implements `Compute` for,
-/// read off the `impl … Compute for Name` lines at the start of a line (test
-/// modules are indented or live in `tests.rs` / `product_tests.rs`).
+/// Every type the non-test source of `compute` implements `Compute` or
+/// `Stream` for — a batch analysis or an accumulator-only one (`Msd`, `Vacf`,
+/// `Rdf`) — read off the `impl … Compute for Name` / `impl … Stream for Name`
+/// lines at the start of a line (test modules are indented or live in
+/// `tests.rs` / `product_tests.rs`).
 fn compute_impls() -> BTreeSet<String> {
     fn visit(dir: &Path, found: &mut BTreeSet<String>) {
         for entry in fs::read_dir(dir).expect("compute source is readable") {
@@ -49,7 +52,11 @@ fn compute_impls() -> BTreeSet<String> {
             }
             let text = fs::read_to_string(&path).expect("source file is readable");
             for line in text.lines().filter(|line| line.starts_with("impl")) {
-                if let Some(rest) = line.split(" Compute for ").nth(1) {
+                let rest = line
+                    .split(" Compute for ")
+                    .nth(1)
+                    .or_else(|| line.split(" Stream for ").nth(1));
+                if let Some(rest) = rest {
                     found.insert(
                         rest.chars()
                             .take_while(|c| c.is_alphanumeric() || *c == '_')
@@ -79,7 +86,10 @@ fn the_registry_names_every_compute_type() {
         "the source scan found {impls:?}"
     );
     for name in &excluded {
-        assert!(impls.contains(*name), "{name} no longer implements Compute");
+        assert!(
+            impls.contains(*name),
+            "{name} no longer implements Compute or Stream"
+        );
     }
 
     let expected: BTreeSet<&str> = impls
@@ -362,8 +372,9 @@ fn bindings_read_defaults_and_inputs() {
     );
     assert!(gk.param("units").unwrap().is_required());
     let msd = ComputeSpec::find("Msd").unwrap();
-    assert_eq!(msd.input("positions").unwrap().kind, InputKind::Trajectory);
-    assert!(msd.input("boxes").unwrap().optional);
+    assert_eq!(msd.form, crate::compute::InputForm::Frames);
+    assert_eq!(msd.input("a").unwrap().kind, InputKind::Positions);
+    assert!(msd.input("simbox").unwrap().optional);
     assert_eq!(
         ComputeSpec::find("Rdf").unwrap().form,
         crate::compute::InputForm::Frames

@@ -1,8 +1,8 @@
 //! LAMMPS data file format reader and writer.
 
+use crate::core::Points;
 use crate::io::frame_columns::insert_column_of_length;
 use crate::io::frame_index::{FrameIndexBuilder, FrameOffset};
-use crate::io::invalid_data;
 use crate::io::lammps::atom_style::{
     AtomStyleLayout, DataField, field_column_key, infer_write_style, is_int_token,
     is_noninteger_float_token, layout_for_atom_style, layout_from_column_count,
@@ -15,21 +15,22 @@ use crate::io::lammps::fields::{
 };
 use crate::io::reader::{FrameReader, Reader};
 use crate::io::writer::FrameWriter;
+use crate::io::{Sink, Source, invalid_data};
 use molrs::core::Block;
+use molrs::core::BlockTypeLabels;
 use molrs::core::Frame;
 use molrs::core::FrameAccess;
+use molrs::core::MetaValue;
 use molrs::core::SimBox;
 use molrs::core::TypeLabels;
 use molrs::core::keys;
 use molrs::op::{F, I, Idx, Pbc3};
 use ndarray::ArrayViewD;
 use std::collections::{HashMap, HashSet};
-use std::fs::File;
-use std::io::{BufRead, BufReader, Cursor, Seek, SeekFrom, Write};
-use std::path::Path;
+use std::io::{BufRead, Seek, SeekFrom, Write};
 use std::sync::OnceLock;
 
-use crate::core::keys::{LAMMPS_COEFFS_TEXT, LAMMPS_UNITS};
+use crate::core::keys::{LAMMPS_COEFFS_TEXT, LAMMPS_TYPE_MASSES, LAMMPS_UNITS};
 
 // ============================================================================
 // Header
@@ -959,7 +960,7 @@ fn insert_topology_block(
 /// label `labels` (id → label, as the `* Type Labels` section declared it)
 /// gives that id, else the id itself.
 fn insert_type_labels(block: &mut Block, labels: &HashMap<String, String>) -> std::io::Result<()> {
-    let Some(ids) = block.get(keys::TYPE_ID).and_then(|c| c.as_uint()) else {
+    let Some(ids) = block.get(keys::TYPE_ID).and_then(|c| c.get::<u64>()) else {
         return Ok(());
     };
     let by_id: HashMap<Idx, &str> = labels
@@ -999,14 +1000,21 @@ struct ParsedDataFile {
 fn build_frame(mut parsed: ParsedDataFile) -> std::io::Result<Frame> {
     let mut frame = Frame::new();
 
-    // Apply per-type Masses when no per-atom mass column was set.
+    // Apply per-type Masses when no per-atom mass column was set. A Masses
+    // section lists every atom type (as LAMMPS's read_data requires); an atom
+    // whose type it does not list is refused rather than given a made-up mass.
     if !parsed.atoms.mass.present && !parsed.type_masses.is_empty() {
         let label_to_id = invert_type_labels(&parsed.atom_type_labels);
         let n = parsed.atoms.len();
         parsed.atoms.mass.values.resize(n, 0.0);
         for (i, tref) in parsed.atoms.type_refs.iter().enumerate() {
             let tid = tref.resolve(&label_to_id);
-            parsed.atoms.mass.values[i] = parsed.type_masses.get(&tid).copied().unwrap_or(0.0);
+            parsed.atoms.mass.values[i] =
+                parsed.type_masses.get(&tid).copied().ok_or_else(|| {
+                    invalid_data(format!(
+                        "Masses section has no entry for atom type {tid} (atoms row {i})"
+                    ))
+                })?;
         }
         parsed.atoms.mass.present = true;
     }
@@ -1110,6 +1118,27 @@ fn build_frame(mut parsed: ParsedDataFile) -> std::io::Result<Frame> {
         if let Some(s) = labels_to_meta(labels) {
             frame.meta.insert(key.to_string(), s);
         }
+    }
+
+    // The Masses section per type label, so a type no atom uses keeps its
+    // mass through a read → write round trip.
+    if !parsed.type_masses.is_empty() {
+        let masses: serde_json::Map<String, serde_json::Value> = parsed
+            .type_masses
+            .iter()
+            .map(|(&tid, &m)| {
+                let label = parsed
+                    .atom_type_labels
+                    .get(&tid.to_string())
+                    .cloned()
+                    .unwrap_or_else(|| tid.to_string());
+                (label, serde_json::Value::from(m))
+            })
+            .collect();
+        frame.meta.insert(
+            LAMMPS_TYPE_MASSES,
+            MetaValue::Json(serde_json::Value::Object(masses)),
+        );
     }
 
     // Header counts (may exceed body rows when types are unused).
@@ -1539,15 +1568,22 @@ fn write_type_label_section<W: Write>(
 fn drude_flags(frame: &impl FrameAccess, type_ids: &[Idx], n_types: usize) -> Option<String> {
     let n = type_ids.len();
     let mut shell = vec![false; n];
-    if let Some(vsite) = frame.column("atoms", "vsite").and_then(|c| c.as_string()) {
+    if let Some(vsite) = frame
+        .column("atoms", "vsite")
+        .and_then(|c| c.get::<String>())
+    {
         for (i, v) in vsite.iter().enumerate().take(n) {
             shell[i] = v == "drude";
         }
     }
     let pairs = |block: &str| -> Vec<(usize, usize)> {
         match (
-            frame.column(block, keys::ATOMI).and_then(|c| c.as_uint()),
-            frame.column(block, keys::ATOMJ).and_then(|c| c.as_uint()),
+            frame
+                .column(block, keys::ATOMI)
+                .and_then(|c| c.get::<u64>()),
+            frame
+                .column(block, keys::ATOMJ)
+                .and_then(|c| c.get::<u64>()),
         ) {
             (Some(i), Some(j)) => i
                 .iter()
@@ -1598,42 +1634,103 @@ fn drude_flags(frame: &impl FrameAccess, type_ids: &[Idx], n_types: usize) -> Op
 
 /// Per-row atom IDs: existing ``id`` column, else 1..N (file artifact).
 fn resolve_atom_ids(frame: &impl FrameAccess, n: usize) -> Vec<Idx> {
-    if let Some(col) = frame.column("atoms", keys::ID).and_then(|c| c.as_uint()) {
+    if let Some(col) = frame.column("atoms", keys::ID).and_then(|c| c.get::<u64>()) {
         return (0..n).map(|i| col[[i]]).collect();
     }
-    if let Some(col) = frame.column("atoms", keys::ID).and_then(|c| c.as_int()) {
+    if let Some(col) = frame.column("atoms", keys::ID).and_then(|c| c.get::<i32>()) {
         return (0..n).map(|i| col[[i]] as Idx).collect();
     }
     (1..=n as Idx).collect()
 }
 
-/// Per-row masses: the stored `mass` column when there is one, else the
-/// element's periodic-table mass, else 1.0 (an unknown symbol such as a
-/// Drude shell's `"D"`).
-fn resolve_row_masses(frame: &impl FrameAccess, n: usize) -> Vec<F> {
-    // A stated mass wins: a Drude core is lighter than its element by the
-    // shell's mass, a united atom heavier.
-    if let Some(col) = frame.column("atoms", keys::MASS).and_then(|c| c.as_float()) {
-        return (0..n).map(|i| col[[i]]).collect();
-    }
-    let mut masses: Vec<F> = vec![1.0; n];
-    if let Some(el) = frame
-        .column("atoms", keys::ELEMENT)
-        .and_then(|c| c.as_string())
-    {
-        // One periodic-table lookup per distinct symbol, not per row.
-        let mut memo: HashMap<&str, Option<F>> = HashMap::new();
-        for (i, mass) in masses.iter_mut().enumerate() {
-            let sym = el[[i]].as_str();
-            let known = *memo.entry(sym).or_insert_with(|| {
-                crate::core::Element::by_symbol(sym).map(|e| F::from(e.atomic_mass()))
-            });
-            if let Some(m) = known {
-                *mass = m;
+/// Per-row masses: the frame's `mass` column, `None` without one. A data
+/// file needs a mass for every atom type, and it is never derived from the
+/// species — a Drude core is lighter than its element by the shell's mass, a
+/// united atom heavier — nor defaulted; [`no_mass_column`] is the error.
+fn resolve_row_masses(frame: &impl FrameAccess, n: usize) -> Option<Vec<F>> {
+    let col = frame
+        .column("atoms", keys::MASS)
+        .and_then(|c| c.get::<f64>())?;
+    Some((0..n).map(|i| col[[i]]).collect())
+}
+
+/// The mass of every atom type `1..=n_types`, in id order: the `mass` of the
+/// type's first atom when the frame has a `mass` column, else the type's
+/// entry in [`LAMMPS_TYPE_MASSES`]. Nothing is derived from the species and
+/// nothing defaulted.
+///
+/// # Errors
+///
+/// `InvalidData` when [`LAMMPS_TYPE_MASSES`] is not an object of numbers, or
+/// when a type has a mass from neither source (the message names the type
+/// and both ways to state it).
+fn resolve_type_masses(
+    frame: &impl FrameAccess,
+    atom_rt: &BlockTypeLabels,
+    n_types: usize,
+    row_masses: Option<&[F]>,
+) -> std::io::Result<Vec<F>> {
+    let declared: HashMap<&str, F> = match frame.meta_ref().get(LAMMPS_TYPE_MASSES) {
+        None => HashMap::new(),
+        Some(MetaValue::Json(serde_json::Value::Object(map))) => map
+            .iter()
+            .map(|(label, m)| {
+                m.as_f64().map(|m| (label.as_str(), m as F)).ok_or_else(|| {
+                    invalid_data(format!(
+                        "meta['{LAMMPS_TYPE_MASSES}']['{label}'] is {m}, not a mass"
+                    ))
+                })
+            })
+            .collect::<std::io::Result<_>>()?,
+        Some(other) => {
+            return Err(invalid_data(format!(
+                "meta['{LAMMPS_TYPE_MASSES}'] must be an object from type label to mass, \
+                 got a {}",
+                other.dtype()
+            )));
+        }
+    };
+    let mut from_rows: Vec<Option<F>> = vec![None; n_types];
+    if let Some(rows) = row_masses {
+        for (&t, &m) in atom_rt.type_ids().iter().zip(rows) {
+            if let Some(slot) = (t as usize)
+                .checked_sub(1)
+                .and_then(|k| from_rows.get_mut(k))
+                && slot.is_none()
+            {
+                *slot = Some(m);
             }
         }
     }
-    masses
+    (1..=n_types)
+        .map(|t| {
+            let label = atom_rt
+                .labels()
+                .and_then(|l| l.get(t - 1))
+                .cloned()
+                .unwrap_or_else(|| t.to_string());
+            from_rows[t - 1]
+                .or_else(|| declared.get(label.as_str()).copied())
+                .ok_or_else(|| {
+                    invalid_data(format!(
+                        "atom type {t} ({label}) has no mass: no atom of it carries a \
+                         'mass' and meta['{LAMMPS_TYPE_MASSES}'] has no entry for it — \
+                         set frame['atoms']['mass'] or that entry before writing"
+                    ))
+                })
+        })
+        .collect()
+}
+
+/// The error of a write that needs per-atom masses from a frame with no
+/// `mass` column.
+fn no_mass_column() -> std::io::Error {
+    invalid_data(
+        "frame['atoms'] has no float 'mass' column, which this atom style writes per \
+         atom — set 'mass' before writing (the force field's masses, or the \
+         periodic-table mass of each atom's atomic_number via \
+         `Element::by_number(z).atomic_mass()`)",
+    )
 }
 
 /// Does the atoms block have an int or float column for this data-file field?
@@ -1642,41 +1739,37 @@ fn frame_has_atom_field(frame: &impl FrameAccess, field: DataField) -> bool {
     if field == DataField::Mol {
         return frame
             .column("atoms", keys::MOL_ID)
-            .and_then(|c| c.as_uint())
+            .and_then(|c| c.get::<u64>())
             .is_some();
     }
-    // Mass may be resolved from element without a mass column.
+    // Mass is only ever the frame's own `mass` column.
     if field == DataField::Mass {
         return frame
             .column("atoms", keys::MASS)
-            .and_then(|c| c.as_float())
-            .is_some()
-            || frame
-                .column("atoms", keys::ELEMENT)
-                .and_then(|c| c.as_string())
-                .is_some();
+            .and_then(|c| c.get::<f64>())
+            .is_some();
     }
     // Type is always present when write proceeds (resolved separately).
     if field == DataField::Type {
         return frame
             .column("atoms", keys::TYPE_ID)
-            .and_then(|c| c.as_uint())
+            .and_then(|c| c.get::<u64>())
             .is_some()
             || frame
                 .column("atoms", keys::TYPE_ID)
-                .and_then(|c| c.as_int())
+                .and_then(|c| c.get::<i32>())
                 .is_some()
             || frame
                 .column("atoms", keys::TYPE)
-                .and_then(|c| c.as_string())
+                .and_then(|c| c.get::<String>())
                 .is_some()
             || frame
                 .column("atoms", keys::TYPE)
-                .and_then(|c| c.as_uint())
+                .and_then(|c| c.get::<u64>())
                 .is_some()
             || frame
                 .column("atoms", keys::TYPE)
-                .and_then(|c| c.as_int())
+                .and_then(|c| c.get::<i32>())
                 .is_some();
     }
     if field == DataField::Id {
@@ -1685,15 +1778,15 @@ fn frame_has_atom_field(frame: &impl FrameAccess, field: DataField) -> bool {
     }
     frame
         .column("atoms", key)
-        .and_then(|c| c.as_int())
+        .and_then(|c| c.get::<i32>())
         .is_some()
         || frame
             .column("atoms", key)
-            .and_then(|c| c.as_uint())
+            .and_then(|c| c.get::<u64>())
             .is_some()
         || frame
             .column("atoms", key)
-            .and_then(|c| c.as_float())
+            .and_then(|c| c.get::<f64>())
             .is_some()
 }
 
@@ -1714,37 +1807,44 @@ impl<'a> AtomColumn<'a> {
         frame: &'a impl FrameAccess,
         field: DataField,
         type_ids: &'a [Idx],
-        row_masses: &'a [F],
+        row_masses: Option<&'a [F]>,
     ) -> std::io::Result<Self> {
         let key = field_column_key(field);
         let col = match field {
             DataField::Type => Self::IdxRows(type_ids),
-            DataField::Mass => Self::FloatRows(row_masses),
+            DataField::Mass => match row_masses {
+                Some(rows) => Self::FloatRows(rows),
+                // The style has a per-atom mass field: the same error the
+                // Masses section gives.
+                None => return Err(no_mass_column()),
+            },
             DataField::Bodyflag
             | DataField::ShapeFlag
             | DataField::Espin
             | DataField::Status
             | DataField::TemplateIndex
-            | DataField::TemplateAtom => match frame.column("atoms", key).and_then(|c| c.as_uint())
+            | DataField::TemplateAtom => match frame
+                .column("atoms", key)
+                .and_then(|c| c.get::<u64>())
             {
                 Some(col) => Self::Uint(col),
                 None => Self::Int(
                     frame
                         .column("atoms", key)
-                        .and_then(|c| c.as_int())
+                        .and_then(|c| c.get::<i32>())
                         .ok_or_else(|| invalid_data(format!("Missing integer column '{key}'")))?,
                 ),
             },
             DataField::Mol => Self::Uint(
                 frame
                     .column("atoms", keys::MOL_ID)
-                    .and_then(|c| c.as_uint())
+                    .and_then(|c| c.get::<u64>())
                     .ok_or_else(|| invalid_data("Missing mol_id column"))?,
             ),
             _ => Self::Float(
                 frame
                     .column("atoms", key)
-                    .and_then(|c| c.as_float())
+                    .and_then(|c| c.get::<f64>())
                     .ok_or_else(|| invalid_data(format!("Missing float column '{key}'")))?,
             ),
         };
@@ -1770,12 +1870,12 @@ fn write_atoms_section<W: Write>(
     fields: &[DataField],
     atom_ids: &[Idx],
     type_ids: &[Idx],
-    row_masses: &[F],
+    row_masses: Option<&[F]>,
 ) -> std::io::Result<()> {
     let images = match (
-        frame.column("atoms", keys::IX).and_then(|c| c.as_int()),
-        frame.column("atoms", keys::IY).and_then(|c| c.as_int()),
-        frame.column("atoms", keys::IZ).and_then(|c| c.as_int()),
+        frame.column("atoms", keys::IX).and_then(|c| c.get::<i32>()),
+        frame.column("atoms", keys::IY).and_then(|c| c.get::<i32>()),
+        frame.column("atoms", keys::IZ).and_then(|c| c.get::<i32>()),
     ) {
         (Some(ix), Some(iy), Some(iz)) => Some([ix, iy, iz]),
         _ => None,
@@ -1829,7 +1929,7 @@ fn write_topology_section<W: Write>(
         cols.push(
             frame
                 .column(block, k)
-                .and_then(|c| c.as_uint())
+                .and_then(|c| c.get::<u64>())
                 .ok_or_else(|| invalid_data(format!("Missing '{block}.{k}'")))?,
         );
     }
@@ -1876,26 +1976,19 @@ fn enclosing_bounds(coords: &[Vec<F>]) -> std::io::Result<([F; 3], [F; 3])> {
              written inside the bounds of its coordinates",
         ));
     }
-    let free = SimBox::free_from_xyz(&coords[0], &coords[1], &coords[2], BOXLESS_MARGIN)
-        .map_err(|e| invalid_data(format!("the box of a box-less frame: {e:?}")))?;
-    let (o, l) = (free.origin_view(), free.lengths());
+    let free = SimBox::bounding(
+        Points::Columns([&coords[0], &coords[1], &coords[2]]),
+        [BOXLESS_MARGIN; 3],
+        [false; 3],
+    )
+    .map_err(|e| invalid_data(format!("the box of a box-less frame: {e:?}")))?;
+    let (o, l) = (free.origin(), free.lengths());
     Ok(([o[0], o[1], o[2]], [l[0], l[1], l[2]]))
 }
 
 fn write_lammps_data_frame<W: Write>(
     writer: &mut W,
     frame: &impl FrameAccess,
-) -> std::io::Result<()> {
-    write_lammps_data_frame_with(writer, frame, &HashMap::new())
-}
-
-/// [`write_lammps_data_frame`], with the mass of an atom type no row uses
-/// (a declared inventory label) taken from `label_masses` instead of the
-/// placeholder `1`.
-fn write_lammps_data_frame_with<W: Write>(
-    writer: &mut W,
-    frame: &impl FrameAccess,
-    label_masses: &HashMap<String, F>,
 ) -> std::io::Result<()> {
     writeln!(writer, "# LAMMPS data file generated by molrs")?;
     writeln!(writer)?;
@@ -1913,7 +2006,7 @@ fn write_lammps_data_frame_with<W: Write>(
     for key in [keys::X, keys::Y, keys::Z] {
         let col = frame
             .column("atoms", key)
-            .and_then(|c| c.as_float())
+            .and_then(|c| c.get::<f64>())
             .ok_or_else(|| invalid_data(format!("Missing '{key}' column")))?;
         coords.push(col.iter().copied().collect::<Vec<F>>());
     }
@@ -1970,6 +2063,25 @@ fn write_lammps_data_frame_with<W: Write>(
 
     let atom_ids = resolve_atom_ids(frame, n_atoms);
     let row_masses = resolve_row_masses(frame, n_atoms);
+    let (style_name, layout) = infer_write_style(|f| frame_has_atom_field(frame, f));
+    // A style that carries a per-atom mass (body's `mass`, sphere's / peri's /
+    // line's / ellipsoid's `density`, smd's mass) has no per-type mass, and
+    // LAMMPS refuses a Masses section for it. Every other style writes one,
+    // resolved here — a type without a mass refused before any section.
+    let per_atom_mass = layout
+        .fields
+        .iter()
+        .any(|f| matches!(f, DataField::Mass | DataField::Density | DataField::SmdMass));
+    let type_masses = if per_atom_mass {
+        None
+    } else {
+        Some(resolve_type_masses(
+            frame,
+            atom_rt,
+            atom_rt.n_types().max(1),
+            row_masses.as_deref(),
+        )?)
+    };
 
     let n_bonds = frame
         .visit_block("bonds", |b| b.n_rows().unwrap_or(0))
@@ -2035,7 +2147,7 @@ fn write_lammps_data_frame_with<W: Write>(
     // a region of space.
     let simbox = frame.simbox_ref().filter(|sb| sb.is_cell_defined());
     let (box_origin, box_lengths, tilts) = if let Some(sb) = simbox {
-        let o = sb.origin_view();
+        let o = sb.origin();
         let l = sb.lengths();
         let t = sb.tilts();
         ([o[0], o[1], o[2]], [l[0], l[1], l[2]], [t[0], t[1], t[2]])
@@ -2084,35 +2196,12 @@ fn write_lammps_data_frame_with<W: Write>(
         improper_rt.and_then(|r| r.labels()),
     )?;
 
-    // Masses: always emit for non-body styles. First-seen mass per type;
-    // unused inventory slots get mass 1.0.
-    let (style_name, layout) = infer_write_style(|f| frame_has_atom_field(frame, f));
-    let body_style = style_name == "body";
-    if !body_style {
+    // Masses, for every style without a per-atom mass.
+    if let Some(type_masses) = &type_masses {
         writeln!(writer, "Masses")?;
         writeln!(writer)?;
-        let mut type_mass = vec![1.0_f64; n_atom_types + 1];
-        let mut seen = vec![false; n_atom_types + 1];
-        for (i, &mass) in row_masses.iter().enumerate().take(n_atoms) {
-            let t = atom_rt.type_ids()[i] as usize;
-            if t > 0 && t <= n_atom_types && !seen[t] {
-                seen[t] = true;
-                type_mass[t] = mass;
-            }
-        }
-        if let Some(labels) = atom_rt.labels() {
-            for (k, label) in labels.iter().enumerate() {
-                let t = k + 1;
-                if t <= n_atom_types
-                    && !seen[t]
-                    && let Some(&m) = label_masses.get(label)
-                {
-                    type_mass[t] = m;
-                }
-            }
-        }
-        for (t, m) in type_mass.iter().enumerate().take(n_atom_types + 1).skip(1) {
-            writeln!(writer, "{t} {m}")?;
+        for (k, m) in type_masses.iter().enumerate() {
+            writeln!(writer, "{} {m}", k + 1)?;
         }
         writeln!(writer)?;
     }
@@ -2124,14 +2213,14 @@ fn write_lammps_data_frame_with<W: Write>(
         layout.fields,
         &atom_ids,
         atom_rt.type_ids(),
-        &row_masses,
+        row_masses.as_deref(),
     )?;
 
     // Velocities section when all three components exist.
     if let (Some(vx), Some(vy), Some(vz)) = (
-        frame.column("atoms", keys::VX).and_then(|c| c.as_float()),
-        frame.column("atoms", keys::VY).and_then(|c| c.as_float()),
-        frame.column("atoms", keys::VZ).and_then(|c| c.as_float()),
+        frame.column("atoms", keys::VX).and_then(|c| c.get::<f64>()),
+        frame.column("atoms", keys::VY).and_then(|c| c.get::<f64>()),
+        frame.column("atoms", keys::VZ).and_then(|c| c.get::<f64>()),
     ) {
         writeln!(writer, "Velocities")?;
         writeln!(writer)?;
@@ -2185,7 +2274,7 @@ fn write_lammps_data_frame_with<W: Write>(
         improper_rt.map(|r| r.type_ids()).unwrap_or(&[]),
     )?;
     // The type is the map's index in the `fix cmap` file, which
-    // `LammpsForcefieldWriter::write_cmap_str` writes in this same label id order.
+    // `LammpsForcefieldWriter::write_cmap` writes in this same label id order.
     write_topology_section(
         writer,
         frame,
@@ -2203,55 +2292,29 @@ fn write_lammps_data_frame_with<W: Write>(
 // Public API + streaming index
 // ============================================================================
 
-pub fn read_lammps_data<P: AsRef<Path>>(path: P) -> std::io::Result<Frame> {
-    let file = File::open(path)?;
-    let mut reader = LammpsDataReader::new(BufReader::new(file));
-    reader
+/// Read a LAMMPS data file.
+pub fn read_lammps_data<'a>(src: impl Into<Source<'a>>) -> std::io::Result<Frame> {
+    let src = src.into();
+    LammpsDataReader::new(src.reader()?)
         .read()?
-        .ok_or_else(|| invalid_data("No frame found in LAMMPS data file"))
+        .ok_or_else(|| invalid_data(format!("{}: no LAMMPS data frame", src.name())))
 }
 
-pub fn write_lammps_data<P: AsRef<Path>>(path: P, frame: &impl FrameAccess) -> std::io::Result<()> {
-    let file = File::create(path)?;
-    let mut writer = std::io::BufWriter::new(file);
-    write_lammps_data_frame(&mut writer, frame)
-}
-
-/// Read LAMMPS data `text` — [`read_lammps_data`] on text in memory.
-pub fn read_lammps_data_str(text: &str) -> std::io::Result<Frame> {
-    LammpsDataReader::new(Cursor::new(text.as_bytes()))
-        .read()?
-        .ok_or_else(|| invalid_data("No frame found in LAMMPS data text"))
-}
-
-/// Write a frame as LAMMPS data text — [`write_lammps_data`] into memory.
-pub fn write_lammps_data_str(frame: &impl FrameAccess) -> std::io::Result<String> {
-    let mut buf = Vec::new();
-    write_lammps_data_frame(&mut buf, frame)?;
-    String::from_utf8(buf).map_err(invalid_data)
-}
-
-/// [`write_lammps_data`], giving each declared atom type no row uses the mass
-/// `label_masses` holds for its label (instead of the placeholder `1`). The
-/// `fix bond/react` file set needs it: a type only a template uses is
-/// declared in the data file, and LAMMPS reads its mass from there.
-#[cfg(feature = "ff")]
-pub(crate) fn write_lammps_data_with_masses<P: AsRef<Path>>(
-    path: P,
+/// Write `frame` as a LAMMPS data file.
+///
+/// The atoms block needs `x`/`y`/`z` and a `type` or `type_id`. For every
+/// atom style without a per-atom mass the Masses section states each type's
+/// mass from the frame — the `mass` of its first atom, else its entry in
+/// [`meta[LAMMPS_TYPE_MASSES]`](LAMMPS_TYPE_MASSES) (which is how a type the
+/// labels declare but no atom uses gets one) — and is never derived from the
+/// species nor defaulted.
+pub fn write_lammps_data<'a>(
+    sink: impl Into<Sink<'a>>,
     frame: &impl FrameAccess,
-    label_masses: &HashMap<String, F>,
 ) -> std::io::Result<()> {
-    let file = File::create(path)?;
-    let mut writer = std::io::BufWriter::new(file);
-    write_lammps_data_frame_with(&mut writer, frame, label_masses)?;
+    let mut writer = sink.into().writer()?;
+    write_lammps_data_frame(&mut writer, frame)?;
     writer.flush()
-}
-
-pub fn read_lammps_data_bytes(bytes: &[u8]) -> std::io::Result<Frame> {
-    let mut reader = LammpsDataReader::new(Cursor::new(bytes));
-    reader
-        .read()?
-        .ok_or_else(|| invalid_data("No frame found in LAMMPS data slice"))
 }
 
 pub struct LammpsDataIndexBuilder {
@@ -2331,7 +2394,7 @@ mod streaming_tests {
         for cs in [1usize, 7, 31, 64, bytes.len()] {
             assert_eq!(one, build_chunked(bytes, cs));
         }
-        let frame = read_lammps_data_bytes(bytes).expect("parse");
+        let frame = read_lammps_data(bytes).expect("parse");
         assert_eq!(frame.get("atoms").unwrap().n_rows().unwrap(), 2);
     }
 }
@@ -2339,25 +2402,27 @@ mod streaming_tests {
 #[cfg(test)]
 mod atom_style_tests {
     use super::*;
+    use crate::core::Cell;
     use molrs::core::FrameAccess;
+    use std::io::Cursor;
 
     fn parse_text(text: &str) -> Frame {
-        read_lammps_data_bytes(text.as_bytes()).expect("parse")
+        read_lammps_data(text.as_bytes()).expect("parse")
     }
 
     fn xyz(frame: &Frame, i: usize) -> (f64, f64, f64) {
         (
             frame
                 .column("atoms", keys::X)
-                .and_then(|c| c.as_float())
+                .and_then(|c| c.get::<f64>())
                 .unwrap()[i],
             frame
                 .column("atoms", keys::Y)
-                .and_then(|c| c.as_float())
+                .and_then(|c| c.get::<f64>())
                 .unwrap()[i],
             frame
                 .column("atoms", keys::Z)
-                .and_then(|c| c.as_float())
+                .and_then(|c| c.get::<f64>())
                 .unwrap()[i],
         )
     }
@@ -2415,7 +2480,7 @@ mod atom_style_tests {
         assert_eq!(
             frame
                 .column("atoms", keys::MOL_ID)
-                .and_then(|c| c.as_uint())
+                .and_then(|c| c.get::<u64>())
                 .unwrap()[0],
             42
         );
@@ -2423,14 +2488,14 @@ mod atom_style_tests {
         assert_eq!(
             frame
                 .column("atoms", keys::IZ)
-                .and_then(|c| c.as_int())
+                .and_then(|c| c.get::<i32>())
                 .unwrap()[0],
             1
         );
         assert!(
             frame
                 .column("atoms", keys::CHARGE)
-                .and_then(|c| c.as_float())
+                .and_then(|c| c.get::<f64>())
                 .is_none()
         );
     }
@@ -2447,7 +2512,7 @@ mod atom_style_tests {
             assert_eq!(
                 frame
                     .column("atoms", keys::MOL_ID)
-                    .and_then(|c| c.as_uint())
+                    .and_then(|c| c.get::<u64>())
                     .unwrap()[0],
                 3
             );
@@ -2465,7 +2530,7 @@ mod atom_style_tests {
         let f = parse_text(full);
         assert!(
             (f.column("atoms", keys::CHARGE)
-                .and_then(|c| c.as_float())
+                .and_then(|c| c.get::<f64>())
                 .unwrap()[0]
                 + 0.8)
                 .abs()
@@ -2473,7 +2538,9 @@ mod atom_style_tests {
         );
         assert_eq!(xyz(&f, 0), (1.0, 2.0, 3.0));
         assert_eq!(
-            f.column("atoms", "ix").and_then(|c| c.as_int()).unwrap()[0],
+            f.column("atoms", "ix")
+                .and_then(|c| c.get::<i32>())
+                .unwrap()[0],
             1
         );
 
@@ -2494,7 +2561,7 @@ mod atom_style_tests {
         assert_eq!(xyz(&f, 0), (3.0, 4.0, 5.0));
         assert!(
             (f.column("atoms", "diameter")
-                .and_then(|c| c.as_float())
+                .and_then(|c| c.get::<f64>())
                 .unwrap()[0]
                 - 1.0)
                 .abs()
@@ -2509,7 +2576,7 @@ mod atom_style_tests {
         let f = parse_text(body);
         assert!(
             (f.column("atoms", keys::MASS)
-                .and_then(|c| c.as_float())
+                .and_then(|c| c.get::<f64>())
                 .unwrap()[0]
                 - 6.0)
                 .abs()
@@ -2525,7 +2592,7 @@ mod atom_style_tests {
         let f = parse_text(dipole);
         assert!(
             (f.column("atoms", keys::MUX)
-                .and_then(|c| c.as_float())
+                .and_then(|c| c.get::<f64>())
                 .unwrap()[0]
                 - 0.1)
                 .abs()
@@ -2548,14 +2615,14 @@ mod atom_style_tests {
         assert_eq!(
             frame
                 .column("atoms", keys::MOL_ID)
-                .and_then(|c| c.as_uint())
+                .and_then(|c| c.get::<u64>())
                 .unwrap()[0],
             45539
         );
         assert!(
             (frame
                 .column("atoms", keys::MASS)
-                .and_then(|c| c.as_float())
+                .and_then(|c| c.get::<f64>())
                 .unwrap()[0]
                 - 12.0)
                 .abs()
@@ -2564,7 +2631,7 @@ mod atom_style_tests {
         assert!(
             (frame
                 .column("atoms", keys::MASS)
-                .and_then(|c| c.as_float())
+                .and_then(|c| c.get::<f64>())
                 .unwrap()[1]
                 - 1.0)
                 .abs()
@@ -2589,11 +2656,11 @@ mod atom_style_tests {
             (
                 frame
                     .column("bonds", keys::ATOMI)
-                    .and_then(|c| c.as_uint())
+                    .and_then(|c| c.get::<u64>())
                     .unwrap()[0],
                 frame
                     .column("bonds", keys::ATOMJ)
-                    .and_then(|c| c.as_uint())
+                    .and_then(|c| c.get::<u64>())
                     .unwrap()[0]
             ),
             (0, 1)
@@ -2611,7 +2678,7 @@ mod atom_style_tests {
         assert_eq!(
             frame
                 .column("atoms", keys::MOL_ID)
-                .and_then(|c| c.as_uint())
+                .and_then(|c| c.get::<u64>())
                 .unwrap()[0],
             42
         );
@@ -2641,12 +2708,12 @@ mod atom_style_tests {
         // Image flags preserved
         assert!(out.contains("0 0 1") || out.contains(" 0 0 1\n"), "{out}");
 
-        let frame2 = read_lammps_data_bytes(out.as_bytes()).expect("re-read");
+        let frame2 = read_lammps_data(out.as_bytes()).expect("re-read");
         assert_eq!(frame2.get("atoms").unwrap().n_rows().unwrap(), 2);
         assert!(
             (frame2
                 .column("atoms", keys::CHARGE)
-                .and_then(|c| c.as_float())
+                .and_then(|c| c.get::<f64>())
                 .unwrap()[0]
                 + 0.5)
                 .abs()
@@ -2655,7 +2722,7 @@ mod atom_style_tests {
         assert!(
             (frame2
                 .column("atoms", keys::VX)
-                .and_then(|c| c.as_float())
+                .and_then(|c| c.get::<f64>())
                 .unwrap()[0]
                 - 0.1)
                 .abs()
@@ -2664,7 +2731,7 @@ mod atom_style_tests {
         assert_eq!(
             frame2
                 .column("atoms", "iz")
-                .and_then(|c| c.as_int())
+                .and_then(|c| c.get::<i32>())
                 .unwrap()[0],
             1
         );
@@ -2682,10 +2749,10 @@ mod atom_style_tests {
         write_lammps_data_frame(&mut buf, &frame).expect("write");
         let out = String::from_utf8(buf).unwrap();
         assert!(out.contains("Atoms # sphere"), "{out}");
-        let f2 = read_lammps_data_bytes(out.as_bytes()).unwrap();
+        let f2 = read_lammps_data(out.as_bytes()).unwrap();
         assert!(
             (f2.column("atoms", "diameter")
-                .and_then(|c| c.as_float())
+                .and_then(|c| c.get::<f64>())
                 .unwrap()[0]
                 - 1.0)
                 .abs()
@@ -2694,13 +2761,13 @@ mod atom_style_tests {
         assert_eq!(
             (
                 f2.column("atoms", keys::X)
-                    .and_then(|c| c.as_float())
+                    .and_then(|c| c.get::<f64>())
                     .unwrap()[0],
                 f2.column("atoms", keys::Y)
-                    .and_then(|c| c.as_float())
+                    .and_then(|c| c.get::<f64>())
                     .unwrap()[0],
                 f2.column("atoms", keys::Z)
-                    .and_then(|c| c.as_float())
+                    .and_then(|c| c.get::<f64>())
                     .unwrap()[0],
             ),
             (3.0, 4.0, 5.0)
@@ -2709,6 +2776,7 @@ mod atom_style_tests {
         let dipole = concat!(
             "LAMMPS data file\n\n1 atoms\n1 atom types\n\n",
             "0 1 xlo xhi\n0 1 ylo yhi\n0 1 zlo zhi\n\n",
+            "Masses\n\n1 1.5\n\n",
             "Atoms # dipole\n\n1 1 0.5 1.0 2.0 3.0 0.1 0.2 0.3\n",
         );
         let frame = parse_text(dipole);
@@ -2716,10 +2784,10 @@ mod atom_style_tests {
         write_lammps_data_frame(&mut buf, &frame).expect("write");
         let out = String::from_utf8(buf).unwrap();
         assert!(out.contains("Atoms # dipole"), "{out}");
-        let f2 = read_lammps_data_bytes(out.as_bytes()).unwrap();
+        let f2 = read_lammps_data(out.as_bytes()).unwrap();
         assert!(
             (f2.column("atoms", keys::MUX)
-                .and_then(|c| c.as_float())
+                .and_then(|c| c.get::<f64>())
                 .unwrap()[0]
                 - 0.1)
                 .abs()
@@ -2733,6 +2801,7 @@ mod atom_style_tests {
             "LAMMPS data file\n\n3 atoms\n2 bonds\n1 angles\n1 atom types\n",
             "1 bond types\n1 angle types\n\n",
             "0 10 xlo xhi\n0 10 ylo yhi\n0 10 zlo zhi\n\n",
+            "Masses\n\n1 12.011\n\n",
             "Atoms # molecular\n\n",
             "1 1 1 0 0 0\n2 1 1 1 0 0\n3 1 1 2 0 0\n\n",
             "Bonds\n\n1 1 1 2\n2 1 2 3\n\n",
@@ -2745,7 +2814,7 @@ mod atom_style_tests {
         assert!(out.contains("2 bonds"), "{out}");
         assert!(out.contains("1 angles"), "{out}");
         assert!(out.contains("Atoms # molecular"), "{out}");
-        let f2 = read_lammps_data_bytes(out.as_bytes()).unwrap();
+        let f2 = read_lammps_data(out.as_bytes()).unwrap();
         assert_eq!(f2.get("bonds").unwrap().n_rows().unwrap(), 2);
         assert_eq!(f2.get("angles").unwrap().n_rows().unwrap(), 1);
     }
@@ -2766,13 +2835,21 @@ mod atom_style_tests {
             .insert(
                 keys::TYPE,
                 ArrayD::from_shape_vec(ndarray::IxDyn(&[3]), vec!["c".to_string(); 3]).unwrap(),
+                None,
             )
             .unwrap();
-        atoms.insert(keys::X, column(vec![-2.0, 3.5, 0.0])).unwrap();
         atoms
-            .insert(keys::Y, column(vec![10.0, 12.0, 11.0]))
+            .insert(keys::X, column(vec![-2.0, 3.5, 0.0]), None)
             .unwrap();
-        atoms.insert(keys::Z, column(vec![0.0, 0.0, 0.0])).unwrap();
+        atoms
+            .insert(keys::Y, column(vec![10.0, 12.0, 11.0]), None)
+            .unwrap();
+        atoms
+            .insert(keys::Z, column(vec![0.0, 0.0, 0.0]), None)
+            .unwrap();
+        atoms
+            .insert(keys::MASS, column(vec![12.011, 12.011, 12.011]), None)
+            .unwrap();
         let mut frame = CoreFrame::new();
         frame.insert("atoms", atoms);
         let mut buf = Vec::new();
@@ -2784,15 +2861,7 @@ mod atom_style_tests {
 
         // A free box has no cell: its identity placeholder is no box either.
         let mut free = frame.clone();
-        free.simbox = Some(
-            SimBox::new_cell(
-                ndarray::Array2::eye(3),
-                ndarray::array![0.0, 0.0, 0.0],
-                [false; 3],
-                false,
-            )
-            .unwrap(),
-        );
+        free.simbox = Some(SimBox::new(Cell::Undefined, [0.0, 0.0, 0.0], [false; 3]).unwrap());
         let mut buf = Vec::new();
         write_lammps_data_frame(&mut buf, &free).expect("write");
         assert_eq!(String::from_utf8(buf).unwrap(), out);
@@ -2800,7 +2869,7 @@ mod atom_style_tests {
         let mut nan = frame.clone();
         let atoms = nan.get_mut("atoms").unwrap();
         atoms
-            .insert(keys::Z, column(vec![0.0, f64::NAN, 0.0]))
+            .insert(keys::Z, column(vec![0.0, f64::NAN, 0.0]), None)
             .unwrap();
         let err = write_lammps_data_frame(&mut Vec::new(), &nan).unwrap_err();
         assert!(err.to_string().contains("no box"), "{err}");
@@ -2818,6 +2887,7 @@ mod atom_style_tests {
             .insert(
                 keys::TYPE,
                 ArrayD::from_shape_vec(ndarray::IxDyn(&[2]), vec!["c".to_string(); 2]).unwrap(),
+                None,
             )
             .unwrap();
         for key in [keys::X, keys::Y, keys::Z] {
@@ -2825,6 +2895,7 @@ mod atom_style_tests {
                 .insert(
                     key,
                     ArrayD::from_shape_vec(ndarray::IxDyn(&[2]), vec![0.0_f64, 1.0]).unwrap(),
+                    None,
                 )
                 .unwrap();
         }
@@ -2835,6 +2906,7 @@ mod atom_style_tests {
                 .insert(
                     key,
                     ArrayD::from_shape_vec(ndarray::IxDyn(&[1]), vec![v]).unwrap(),
+                    None,
                 )
                 .unwrap();
         }
@@ -2862,17 +2934,20 @@ mod atom_style_tests {
                     vec!["c3".to_string(), "c3".to_string(), "h1".to_string()],
                 )
                 .unwrap(),
+                None,
             )
             .unwrap();
         for (key, vals) in [
             (keys::X, vec![0.0_f64, 1.0, 2.0]),
             (keys::Y, vec![0.0_f64, 0.0, 0.0]),
             (keys::Z, vec![0.0_f64, 0.0, 0.0]),
+            (keys::MASS, vec![12.011_f64, 12.011, 1.008]),
         ] {
             atoms
                 .insert(
                     key,
                     ArrayD::from_shape_vec(ndarray::IxDyn(&[3]), vals).unwrap(),
+                    None,
                 )
                 .unwrap();
         }
@@ -2880,6 +2955,7 @@ mod atom_style_tests {
             .insert(
                 keys::MOL_ID,
                 ArrayD::from_shape_vec(ndarray::IxDyn(&[3]), vec![1_u32; 3]).unwrap(),
+                None,
             )
             .unwrap();
         frame.insert("atoms", atoms);
@@ -2893,6 +2969,7 @@ mod atom_style_tests {
                     vec!["c3-c3-h1".to_string(), "h1-c3-c3".to_string()],
                 )
                 .unwrap(),
+                None,
             )
             .unwrap();
         for (key, vals) in [
@@ -2904,6 +2981,7 @@ mod atom_style_tests {
                 .insert(
                     key,
                     ArrayD::from_shape_vec(ndarray::IxDyn(&[2]), vals).unwrap(),
+                    None,
                 )
                 .unwrap();
         }
@@ -2918,9 +2996,9 @@ mod atom_style_tests {
     }
 
     #[test]
-    fn write_resolves_string_types_ids_and_masses_without_prepare() {
-        // Frame carries only string `type` + coords + element — no type_id,
-        // no id, no mass column. Writer must still emit a complete data file.
+    fn write_resolves_string_types_and_ids_without_prepare() {
+        // Frame carries only string `type` + coords + element + mass — no
+        // type_id, no id. Writer must still emit a complete data file.
         use crate::core::Block;
         use crate::core::Frame as CoreFrame;
         use ndarray::ArrayD;
@@ -2936,6 +3014,7 @@ mod atom_style_tests {
                     vec!["O".to_string(), "C".to_string(), "H".to_string()],
                 )
                 .unwrap(),
+                None,
             )
             .unwrap();
         atoms
@@ -2946,17 +3025,20 @@ mod atom_style_tests {
                     vec!["O".to_string(), "C".to_string(), "H".to_string()],
                 )
                 .unwrap(),
+                None,
             )
             .unwrap();
         for (key, vals) in [
             (keys::X, vec![0.0_f64, 1.0, 0.0]),
             (keys::Y, vec![0.0_f64, 0.0, 1.0]),
             (keys::Z, vec![0.0_f64, 0.0, 0.0]),
+            (keys::MASS, vec![15.999_f64, 12.011, 1.008]),
         ] {
             atoms
                 .insert(
                     key,
                     ArrayD::from_shape_vec(ndarray::IxDyn(&[n]), vals).unwrap(),
+                    None,
                 )
                 .unwrap();
         }
@@ -2977,6 +3059,55 @@ mod atom_style_tests {
         assert!(out.contains("\n1 "), "{out}");
         assert!(out.contains("\n2 "), "{out}");
         assert!(out.contains("\n3 "), "{out}");
+        // Sorted label order C, H, O: each type's mass is the frame's own.
+        assert!(out.contains("\n1 12.011\n2 1.008\n3 15.999\n"), "{out}");
+
+        // Without a mass column there is no mass to write: the element
+        // column is species data, never a mass source.
+        let atoms = frame.get_mut("atoms").unwrap();
+        atoms.remove(keys::MASS);
+        let err = write_lammps_data_frame(&mut Vec::new(), &frame).unwrap_err();
+        assert!(err.to_string().contains("has no mass"), "{err}");
+    }
+
+    /// A type the labels declare but no atom uses keeps its Masses row
+    /// through read → write: the reader records the section per type label in
+    /// `meta[LAMMPS_TYPE_MASSES]`, and the writer takes it from there.
+    #[test]
+    fn an_unused_declared_type_keeps_its_mass_through_the_frame() {
+        let text = "test\n\n1 atoms\n2 atom types\n\n0 1 xlo xhi\n0 1 ylo yhi\n0 1 zlo zhi\n\n\
+                    Atom Type Labels\n\n1 OW\n2 HW\n\nMasses\n\n1 15.9994\n2 1.008\n\n\
+                    Atoms # atomic\n\n1 1 0.1 0.2 0.3\n";
+        let mut frame = read_lammps_data(text.as_bytes()).unwrap();
+        let mut out = Vec::new();
+        write_lammps_data_frame(&mut out, &frame).unwrap();
+        let out = String::from_utf8(out).unwrap();
+        // Labels number in sorted order: HW = 1, OW = 2.
+        assert!(out.contains("Masses\n\n1 1.008\n2 15.9994\n"), "{out}");
+
+        // Without the per-type masses the unused type has none: refused.
+        frame.meta.remove(LAMMPS_TYPE_MASSES);
+        let err = write_lammps_data_frame(&mut Vec::new(), &frame).unwrap_err();
+        assert!(err.to_string().contains("atom type 1 (HW)"), "{err}");
+
+        // The per-type masses alone are enough: no `mass` column needed.
+        frame.get_mut("atoms").unwrap().remove(keys::MASS);
+        frame.meta.insert(
+            LAMMPS_TYPE_MASSES,
+            MetaValue::Json(serde_json::json!({"OW": 16.0, "HW": 1.0})),
+        );
+        let mut out = Vec::new();
+        write_lammps_data_frame(&mut out, &frame).unwrap();
+        let out = String::from_utf8(out).unwrap();
+        assert!(out.contains("Masses\n\n1 1\n2 16\n"), "{out}");
+    }
+
+    #[test]
+    fn a_masses_section_missing_a_used_type_is_refused() {
+        let text = "test\n\n2 atoms\n2 atom types\n\n0 1 xlo xhi\n0 1 ylo yhi\n0 1 zlo zhi\n\n\
+                    Masses\n\n1 12.0\n\nAtoms # atomic\n\n1 1 0.1 0.2 0.3\n2 2 0.4 0.5 0.6\n";
+        let err = read_lammps_data(text.as_bytes()).unwrap_err();
+        assert!(err.to_string().contains("atom type 2"), "{err}");
     }
 
     #[test]
@@ -3005,7 +3136,7 @@ mod atom_style_tests {
     }
 
     fn refusal(text: &str) -> std::io::Error {
-        match read_lammps_data_bytes(text.as_bytes()) {
+        match read_lammps_data(text.as_bytes()) {
             Ok(_) => panic!("expected the reader to refuse:\n{text}"),
             Err(e) => e,
         }
@@ -3022,7 +3153,7 @@ mod atom_style_tests {
         let frame = parse_text(&text);
         let q = frame
             .column("atoms", keys::CHARGE)
-            .and_then(|c| c.as_float())
+            .and_then(|c| c.get::<f64>())
             .expect("Charges must create the charge column");
         let expected = [-0.25, -0.25, 0.5];
         for (i, want) in expected.iter().enumerate() {
@@ -3042,7 +3173,7 @@ mod atom_style_tests {
         let frame = parse_text(text);
         let q = frame
             .column("atoms", keys::CHARGE)
-            .and_then(|c| c.as_float())
+            .and_then(|c| c.get::<f64>())
             .unwrap();
         let expected = [0.4, -0.8, 0.4];
         for (i, want) in expected.iter().enumerate() {
@@ -3131,7 +3262,7 @@ mod atom_style_tests {
         let frame = parse_text(text);
         let mass = frame
             .column("atoms", keys::MASS)
-            .and_then(|c| c.as_float())
+            .and_then(|c| c.get::<f64>())
             .expect("the CA mass row must yield a mass column");
         for i in 0..3 {
             assert!((mass[i] - 12.011).abs() < 1e-12, "row {i}: {}", mass[i]);
@@ -3216,6 +3347,16 @@ mod atom_style_tests {
             "3 1 1 2.0 0.0 0.0\n",
             "3 1 1 2.0 0.0 0.0\n4 1 1 3.0 0.0 0.0\n5 1 1 4.0 0.0 0.0\n6 1 1 5.0 0.0 0.0\n",
         ));
+        // The data file states a mass per type; the fixture has no Masses.
+        frame
+            .get_mut("atoms")
+            .unwrap()
+            .insert(
+                keys::MASS,
+                ndarray::Array1::from_vec(vec![12.011 as F; 6]).into_dyn(),
+                None,
+            )
+            .unwrap();
         let mut cmaps = Block::new();
         for (p, key) in [
             keys::ATOMI,
@@ -3229,13 +3370,14 @@ mod atom_style_tests {
         {
             let col: Vec<Idx> = vec![p as Idx, p as Idx + 1];
             cmaps
-                .insert(key, ndarray::Array1::from_vec(col).into_dyn())
+                .insert(key, ndarray::Array1::from_vec(col).into_dyn(), None)
                 .unwrap();
         }
         cmaps
             .insert(
                 keys::TYPE,
                 ndarray::Array1::from_vec(vec!["psi".to_owned(), "phi".to_owned()]).into_dyn(),
+                None,
             )
             .unwrap();
         frame.insert("cmaps", cmaps);
@@ -3255,7 +3397,7 @@ mod atom_style_tests {
             block
                 .get(k)
                 .unwrap()
-                .as_uint()
+                .get::<u64>()
                 .unwrap()
                 .iter()
                 .copied()
@@ -3275,6 +3417,7 @@ mod atom_style_tests {
 #[cfg(test)]
 mod label_and_drude_tests {
     use super::*;
+    use std::io::Cursor;
 
     const LABELLED: &str = "\
 test
@@ -3297,6 +3440,11 @@ Bond Type Labels
 
 1 OW-HW
 
+Masses
+
+1 15.9994
+2 1.008
+
 Atoms # full
 
 1 1 1 -0.8 0 0 0
@@ -3311,7 +3459,7 @@ Bonds
     fn strings(frame: &Frame, block: &str) -> Vec<String> {
         frame[block]
             .get("type")
-            .and_then(|c| c.as_string())
+            .and_then(|c| c.get::<String>())
             .unwrap()
             .iter()
             .cloned()
@@ -3320,12 +3468,12 @@ Bonds
 
     #[test]
     fn typed_blocks_carry_their_labels_as_type() {
-        let frame = read_lammps_data_bytes(LABELLED.as_bytes()).unwrap();
+        let frame = read_lammps_data(LABELLED.as_bytes()).unwrap();
         assert_eq!(strings(&frame, "atoms"), ["OW", "HW", "HW"]);
         assert_eq!(strings(&frame, "bonds"), ["OW-HW"]);
         let ids: Vec<Idx> = frame["atoms"]
             .get("type_id")
-            .and_then(|c| c.as_uint())
+            .and_then(|c| c.get::<u64>())
             .unwrap()
             .iter()
             .copied()
@@ -3338,7 +3486,7 @@ Bonds
         let text = LABELLED
             .replace("Atom Type Labels\n\n1 OW\n2 HW\n\n", "")
             .replace("Bond Type Labels\n\n1 OW-HW\n\n", "");
-        let frame = read_lammps_data_bytes(text.as_bytes()).unwrap();
+        let frame = read_lammps_data(text.as_bytes()).unwrap();
         assert_eq!(strings(&frame, "atoms"), ["1", "2", "2"]);
         assert_eq!(strings(&frame, "bonds"), ["1"]);
     }
@@ -3356,7 +3504,10 @@ Bonds
             .unwrap();
         let atoms = &frame["atoms"];
         assert!(!atoms.contains_key("charge") && !atoms.contains_key("mol_id"));
-        assert_eq!(atoms.get("z").and_then(|c| c.as_float()).unwrap()[[1]], 0.6);
+        assert_eq!(
+            atoms.get("z").and_then(|c| c.get::<f64>()).unwrap()[[1]],
+            0.6
+        );
         assert!(
             LammpsDataReader::new(Cursor::new(text.as_bytes()))
                 .with_atom_style("nonsense")
@@ -3367,13 +3518,14 @@ Bonds
     #[test]
     fn a_drude_system_writes_fix_drude_flags_in_type_order() {
         // types (sorted labels): CT=1 (core), DCT=2 (shell), HC=3 (plain).
-        let mut frame = read_lammps_data_bytes(LABELLED.as_bytes()).unwrap();
+        let mut frame = read_lammps_data(LABELLED.as_bytes()).unwrap();
         let atoms = frame.get_mut("atoms").unwrap();
         atoms
             .insert(
                 "type",
                 ndarray::Array1::from_vec(vec!["CT".to_string(), "DCT".into(), "HC".into()])
                     .into_dyn(),
+                None,
             )
             .unwrap();
         frame.meta.remove(keys::ATOM_TYPE_LABELS);
@@ -3389,12 +3541,12 @@ Bonds
             "{text}"
         );
         // The comment sits in the header, where LAMMPS and this reader skip it.
-        read_lammps_data_bytes(text.as_bytes()).unwrap();
+        read_lammps_data(text.as_bytes()).unwrap();
     }
 
     #[test]
     fn a_frame_without_drude_particles_writes_no_flags() {
-        let frame = read_lammps_data_bytes(LABELLED.as_bytes()).unwrap();
+        let frame = read_lammps_data(LABELLED.as_bytes()).unwrap();
         let mut out = Vec::new();
         write_lammps_data_frame(&mut out, &frame).unwrap();
         assert!(!String::from_utf8(out).unwrap().contains("fix drude"));

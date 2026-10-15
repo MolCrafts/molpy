@@ -153,7 +153,7 @@ impl Analogs {
                     out.bonds.insert(
                         name,
                         AnalogEstimate {
-                            params: Params::from_pairs(&[("k", row.k), ("r0", row.r0)]),
+                            params: Params::from_iter([("k", row.k), ("r0", row.r0)]),
                             provenance,
                         },
                     );
@@ -186,7 +186,7 @@ impl Analogs {
                         out.angles.insert(
                             name,
                             AnalogEstimate {
-                                params: Params::from_pairs(&[("k", row.k), ("theta0", row.theta0)]),
+                                params: Params::from_iter([("k", row.k), ("theta0", row.theta0)]),
                                 provenance,
                             },
                         );

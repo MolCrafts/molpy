@@ -41,7 +41,7 @@ for nightly testing.
     python - <<'PY'
     import molrs
 
-    ir = molrs.io.smiles.SmilesIr("O")
+    ir = molrs.io.smiles.SmilesIr.parse("O")
     print("components:", ir.n_components)
     print("atoms:", ir.to_atomistic().n_atoms)
     PY
@@ -62,10 +62,10 @@ for nightly testing.
     In `src/main.rs`:
 
     ```rust
-    use molrs::io::read_smiles_str;
+    use molrs::io::smiles::SmilesIr;
 
     fn main() -> Result<(), Box<dyn std::error::Error>> {
-        let mol = read_smiles_str("O")?;
+        let mol = SmilesIr::parse("O")?.to_atomistic()?;
         println!("atoms: {}", mol.n_atoms());
         Ok(())
     }
@@ -123,7 +123,7 @@ crate and installs it into the active virtualenv as `molrs`:
 ```bash
 pip install maturin
 maturin develop -m molrs-python/Cargo.toml --release
-python -c "import molrs; print(molrs.io.smiles.SmilesIr('O').n_components)"
+python -c "import molrs; print(molrs.io.smiles.SmilesIr.parse('O').n_components)"
 ```
 
 ### WASM / npm

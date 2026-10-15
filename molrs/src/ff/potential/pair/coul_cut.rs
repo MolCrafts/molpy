@@ -3,9 +3,9 @@
 use crate::ff::ir::Params;
 use crate::ff::potential::flat_coords::validate_coords;
 use crate::ff::potential::gather_copies;
-use crate::ff::potential::pair::fold_chunks;
+use crate::ff::potential::pair::{fold_pairs, fold_pairs_untallied};
 use crate::ff::potential::param_reads;
-use crate::ff::potential::{ForceTerm, PairDriven, Potential};
+use crate::ff::potential::{Accumulator, ForceTerm, PairDriven, Potential};
 use molrs::core::Frame;
 use molrs::core::Neighbors;
 use molrs::core::Virial;
@@ -165,22 +165,31 @@ impl PairCoulCut {
         ))
     }
 
-    /// The accumulation, adding into the caller's buffer and scaling each pair.
+    /// The accumulation, once, into `acc`, scaling each pair. Only where the
+    /// pairs and the parameters come from differs between the two entry
+    /// points; `tally` is whether this source can report a virial (a
+    /// compiled list cannot).
     fn fold_into(
         &self,
-        out: &mut [F],
+        acc: &mut Accumulator<'_>,
         factor: &[F],
         n_pairs: usize,
+        tally: bool,
         pair: impl Fn(usize) -> (usize, usize, F, [F; 3], F) + Sync,
-    ) -> (F, Virial) {
-        fold_chunks(out, n_pairs, |acc, rows| {
-            self.fold_rows(acc, factor, rows, &pair)
-        })
+    ) {
+        let plain = |out: &mut [F], rows| self.fold_rows::<false>(out, factor, rows, &pair);
+        if tally {
+            fold_pairs(acc, n_pairs, plain, |out: &mut [F], rows| {
+                self.fold_rows::<true>(out, factor, rows, &pair)
+            });
+        } else {
+            fold_pairs_untallied(acc, n_pairs, plain);
+        }
     }
 
     /// One contiguous range of pairs, into `out`. The whole fold when it runs
     /// serially; one chunk of it when it does not.
-    fn fold_rows(
+    fn fold_rows<const VIRIAL: bool>(
         &self,
         out: &mut [F],
         factor: &[F],
@@ -204,7 +213,9 @@ impl PairCoulCut {
             };
             let f = [w * f[0], w * f[1], w * f[2]];
             energy += w * e;
-            virial.add_outer(f, disp);
+            if VIRIAL {
+                virial.add_outer(f, disp);
+            }
             out[j * 3] += f[0];
             out[j * 3 + 1] += f[1];
             out[j * 3 + 2] += f[2];
@@ -217,13 +228,7 @@ impl PairCoulCut {
 }
 
 impl Potential for PairCoulCut {
-    fn calc_energy_forces(&self, coords: &[F]) -> (F, Vec<F>) {
-        let mut out = vec![0.0; coords.len()];
-        let energy = self.accumulate(coords, &mut out);
-        (energy, out)
-    }
-
-    fn accumulate(&self, coords: &[F], out: &mut [F]) -> F {
+    fn evaluate(&self, coords: &[F], acc: &mut Accumulator<'_>) {
         let n_atoms = validate_coords(coords);
         // `k/D` is a style-level constant: hoist it out of the pair loop. At
         // D = 1 this is exactly `k` (IEEE: `x / 1.0 == x`), so the δ = 0, D = 1
@@ -237,9 +242,9 @@ impl Potential for PairCoulCut {
         } = &self.charges
         else {
             // Per-atom charges need a pair table, and nobody handed one over.
-            return 0.0;
+            return;
         };
-        let (energy, _) = self.fold_into(out, &[], atom_i.len(), |idx| {
+        self.fold_into(acc, &[], atom_i.len(), false, |idx| {
             let i = atom_i[idx];
             let j = atom_j[idx];
             debug_assert!(i < n_atoms && j < n_atoms);
@@ -251,23 +256,17 @@ impl Potential for PairCoulCut {
             let r2 = d[0] * d[0] + d[1] * d[1] + d[2] * d[2];
             (i, j, k_over_d * qiqj[idx], d, r2)
         });
-        energy
-    }
-
-    fn calc_energy_forces_with_pairs(&self, coords: &[F], pairs: &Neighbors) -> (F, Vec<F>) {
-        let (e, f, _) = self.calc_energy_forces_with_pairs_virial(coords, pairs);
-        (e, f)
     }
 }
 
 impl PairDriven for PairCoulCut {
-    fn accumulate_pairs(
+    fn evaluate_pairs(
         &self,
         coords: &[F],
         pairs: &Neighbors,
         factor: &[F],
-        out: &mut [F],
-    ) -> (F, Option<Virial>) {
+        acc: &mut Accumulator<'_>,
+    ) {
         let k_over_d = self.coulomb / self.dielectric;
         let Charges::PerAtom { q, .. } = &self.charges else {
             // A compiled kernel answers for its own list, not for this one.
@@ -275,18 +274,17 @@ impl PairDriven for PairCoulCut {
             // per-pair weight either. Both providers refuse one, so this is
             // the free-boundary path and `factor` is empty.
             debug_assert!(factor.is_empty());
-            let (e, f) = self.calc_energy_forces(coords);
-            for (acc, v) in out.iter_mut().zip(&f) {
-                *acc += v;
-            }
-            return (e, None);
+            self.evaluate(coords, acc);
+            return;
         };
         let (Some(disp), Some(d2)) = (pairs.disp(), pairs.dist_sq()) else {
-            return (0.0, None);
+            // No displacements, nothing priced — and no virial claimed for it.
+            acc.forces_without_virial();
+            return;
         };
         let i_col = pairs.query_point_indices();
         let j_col = pairs.point_indices();
-        let (e, w) = self.fold_into(out, factor, i_col.len(), |p| {
+        self.fold_into(acc, factor, i_col.len(), true, |p| {
             let i = i_col[p] as usize;
             let j = j_col[p] as usize;
             debug_assert!(
@@ -299,19 +297,9 @@ impl PairDriven for PairCoulCut {
             let qq = k_over_d * (q[i] * q[j]);
             (i, j, qq, [disp[[p, 0]], disp[[p, 1]], disp[[p, 2]]], d2[p])
         });
-        (e, Some(w))
     }
     fn binds_a_fixed_pair_list(&self) -> bool {
         matches!(self.charges, Charges::Compiled { .. })
-    }
-    fn calc_energy_forces_with_pairs_virial(
-        &self,
-        coords: &[F],
-        pairs: &Neighbors,
-    ) -> (F, Vec<F>, Option<Virial>) {
-        let mut forces = vec![0.0; coords.len()];
-        let (e, w) = self.accumulate_pairs(coords, pairs, &[], &mut forces);
-        (e, forces, w)
     }
     fn gather_onto_copies(&mut self, owner: &[u32]) {
         let Charges::PerAtom { q, n_owned, .. } = &mut self.charges else {
@@ -368,20 +356,20 @@ pub fn pair_coul_cut_constructor(
         .ok_or_else(|| "PairCoulCut: frame missing \"atoms\" block".to_string())?;
     let charges = atoms
         .get("charge")
-        .and_then(|c| c.as_float())
+        .and_then(|c| c.get::<f64>())
         .ok_or_else(|| "PairCoulCut: atoms block missing \"charge\" column".to_string())?;
     let block = frame
         .get(PAIRS)
         .ok_or_else(|| "PairCoulCut: frame missing \"pairs\" block".to_string())?;
     let i_col = block
         .get("atomi")
-        .and_then(|c| c.as_uint())
+        .and_then(|c| c.get::<u64>())
         .ok_or_else(|| "PairCoulCut: pairs block missing \"atomi\" column".to_string())?;
     let j_col = block
         .get("atomj")
-        .and_then(|c| c.as_uint())
+        .and_then(|c| c.get::<u64>())
         .ok_or_else(|| "PairCoulCut: pairs block missing \"atomj\" column".to_string())?;
-    let is_14 = block.get("is_14").and_then(|c| c.as_bool());
+    let is_14 = block.get("is_14").and_then(|c| c.get::<bool>());
 
     let n = i_col.len();
     let mut atom_i = Vec::with_capacity(n);
@@ -427,7 +415,7 @@ pub fn pair_coul_cut_typed_constructor(
         .ok_or_else(|| "PairCoulCut: frame missing \"atoms\" block".to_string())?;
     let charge = atoms
         .get("charge")
-        .and_then(|c| c.as_float())
+        .and_then(|c| c.get::<f64>())
         .ok_or_else(|| "PairCoulCut: atoms block missing \"charge\" column".to_string())?;
     let q: Vec<F> = charge.iter().map(|&c| c as F).collect();
     Ok(ForceTerm::pair(PairCoulCut::typed(
@@ -467,17 +455,19 @@ mod tests {
         let table = table_over(&coords, &links);
         assert_same(
             "coul/cut",
-            compiled.calc_energy_forces(&coords),
-            typed.calc_energy_forces_with_pairs(&coords, &table),
+            compiled.energy_forces_at(&coords),
+            typed.over_pairs(&coords, &table),
         );
         assert_virial_matches_forces(
             "coul/cut",
             &coords,
-            typed.calc_energy_forces_with_pairs_virial(&coords, &table),
+            typed.over_pairs_virial(&coords, &table),
         );
     }
 
     use super::*;
+
+    use crate::ff::potential::fixtures::OneShot;
     use molrs::core::constants::COULOMB_REAL;
 
     /// MMFF's parameterization: Halgren's constant, unit dielectric, 0.05 Å buffer.
@@ -492,7 +482,7 @@ mod tests {
         // Unit positive charges 2 Å apart: E = k_e / 2.
         let pot = unbuffered(1.0, F::INFINITY);
         let coords: Vec<F> = vec![0.0, 0.0, 0.0, 2.0, 0.0, 0.0];
-        let (e, forces) = pot.calc_energy_forces(&coords);
+        let (e, forces) = pot.energy_forces_at(&coords);
         assert!((e - COULOMB_REAL / 2.0).abs() < 1e-9, "E got {e}");
         // Like charges repel: force on j (+x atom) points +x (away from i).
         assert!(
@@ -502,7 +492,7 @@ mod tests {
         );
         // Unlike charges attract.
         let pot2 = unbuffered(-1.0, F::INFINITY);
-        let (_, f2) = pot2.calc_energy_forces(&coords);
+        let (_, f2) = pot2.energy_forces_at(&coords);
         assert!(f2[3] < 0.0, "unlike charges should attract, fxj={}", f2[3]);
     }
 
@@ -511,10 +501,10 @@ mod tests {
         let pot = unbuffered(1.0, 1.5);
         // 2 Å apart, cutoff 1.5 -> excluded, E=0.
         let far: Vec<F> = vec![0.0, 0.0, 0.0, 2.0, 0.0, 0.0];
-        assert_eq!(pot.calc_energy_forces(&far).0, 0.0);
+        assert_eq!(pot.energy_forces_at(&far).0, 0.0);
         // Coincident atoms, UNBUFFERED -> skipped, finite.
         let zero: Vec<F> = vec![0.0, 0.0, 0.0, 0.0, 0.0, 0.0];
-        let (e, f) = pot.calc_energy_forces(&zero);
+        let (e, f) = pot.energy_forces_at(&zero);
         assert_eq!(e, 0.0);
         assert!(f.iter().all(|x| x.is_finite()));
     }
@@ -525,7 +515,7 @@ mod tests {
         let (k, d, delta) = MMFF;
         let pot = PairCoulCut::new(vec![0], vec![1], vec![-0.25], k, d, delta, F::INFINITY);
         let zero: Vec<F> = vec![0.0, 0.0, 0.0, 0.0, 0.0, 0.0];
-        let (e, f) = pot.calc_energy_forces(&zero);
+        let (e, f) = pot.energy_forces_at(&zero);
         assert!((e - k * -0.25 / (d * delta)).abs() < 1e-9, "E got {e}");
         assert!(f.iter().all(|x| x.is_finite()), "forces {f:?}");
     }
@@ -535,7 +525,7 @@ mod tests {
     fn delta_zero_is_the_unbuffered_kernel() {
         let pot = unbuffered(-0.48, F::INFINITY);
         let coords: Vec<F> = vec![0.0, 0.0, 0.0, 2.0, 0.0, 0.0];
-        let (e, _) = pot.calc_energy_forces(&coords);
+        let (e, _) = pot.energy_forces_at(&coords);
         assert_eq!(e, COULOMB_REAL * -0.48 / 2.0);
     }
 
@@ -546,15 +536,14 @@ mod tests {
         for (k, d, delta) in [(COULOMB_REAL, 1.0, 0.0), MMFF] {
             let pot = PairCoulCut::new(vec![0], vec![1], vec![0.8], k, d, delta, F::INFINITY);
             let coords: Vec<F> = vec![0.0, 0.0, 0.0, 1.7, 0.3, -0.4];
-            let (_, forces) = pot.calc_energy_forces(&coords);
+            let (_, forces) = pot.energy_forces_at(&coords);
             let h = 1e-6;
             for dim in 0..coords.len() {
                 let mut cp = coords.clone();
                 let mut cm = coords.clone();
                 cp[dim] += h;
                 cm[dim] -= h;
-                let fd =
-                    -(pot.calc_energy_forces(&cp).0 - pot.calc_energy_forces(&cm).0) / (2.0 * h);
+                let fd = -(pot.energy_forces_at(&cp).0 - pot.energy_forces_at(&cm).0) / (2.0 * h);
                 assert!(
                     (forces[dim] - fd).abs() < 1e-5,
                     "delta {delta}, comp {dim}: analytic {} vs fd {fd}",
@@ -578,7 +567,7 @@ mod tests {
         use crate::ff::ir::IrError;
         let terms = |style: &[(&str, f64)]| {
             ExplicitTerms::new("pair", "coul/cut")
-                .style_params(Params::from_pairs(style))
+                .style_params(Params::from_iter(style.iter().copied()))
                 .atoms([vec![0, 1]])
                 .charges(vec![0.5, -0.4])
                 .compile()
@@ -602,7 +591,7 @@ mod tests {
         ])
         .unwrap();
         let want = COULOMB_REAL * 0.5 * -0.4 / 2.5;
-        assert!((bare.calc_energy(&coords) - want).abs() < 1e-12);
-        assert_eq!(bare.calc_energy(&coords), stated.calc_energy(&coords));
+        assert!((bare.energy_at(&coords) - want).abs() < 1e-12);
+        assert_eq!(bare.energy_at(&coords), stated.energy_at(&coords));
     }
 }

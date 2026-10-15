@@ -16,7 +16,7 @@
       pots = Potentials()
       pots.push(ExplicitTerms("bond", "harmonic", [[0, 1], [1, 2]], k=300.0, r0=1.4).compile())
       pots.push(ExplicitTerms("angle", "harmonic", [[0, 1, 2]], k=50.0, theta0=109.5).compile())
-      energy, forces = pots.calc_energy_forces(pos)
+      energy, forces = pots.evaluate(pos)
 """
 
 from .._native import ExplicitTerms, PotentialCompiler

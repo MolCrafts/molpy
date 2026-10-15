@@ -8,10 +8,9 @@ use crate::ff::ir::{Params, pair_key};
 use crate::ff::potential::flat_coords::validate_coords;
 use crate::ff::potential::gather_copies;
 use crate::ff::potential::pair::atom_type_index;
-use crate::ff::potential::pair::energy_forces;
-use crate::ff::potential::pair::fold_chunks;
 use crate::ff::potential::pair::type_pair;
-use crate::ff::potential::{ForceTerm, PairDriven, Potential};
+use crate::ff::potential::pair::{fold_pairs, fold_pairs_untallied};
+use crate::ff::potential::{Accumulator, ForceTerm, PairDriven, Potential};
 use molrs::core::Frame;
 use molrs::core::Neighbors;
 use molrs::core::Virial;
@@ -145,35 +144,31 @@ impl PairMorse {
         ))
     }
 
-    /// The accumulation, once. Only where the pairs and the parameters come
-    /// from differs between the two entry points.
-    fn fold(
-        &self,
-        n_components: usize,
-        n_pairs: usize,
-        pair: impl Fn(usize) -> (usize, usize, (F, F, F), [F; 3], F) + Sync,
-    ) -> (F, Vec<F>, Virial) {
-        let mut forces = vec![0.0; n_components];
-        let (energy, virial) = self.fold_into(&mut forces, &[], n_pairs, pair);
-        (energy, forces, virial)
-    }
-
-    /// The accumulation, adding into the caller's buffer and scaling each pair.
+    /// The accumulation, once, into `acc`, scaling each pair. Only where the
+    /// pairs and the parameters come from differs between the two entry
+    /// points; `tally` is whether this source can report a virial (a
+    /// compiled list cannot).
     fn fold_into(
         &self,
-        out: &mut [F],
+        acc: &mut Accumulator<'_>,
         factor: &[F],
         n_pairs: usize,
+        tally: bool,
         pair: impl Fn(usize) -> (usize, usize, (F, F, F), [F; 3], F) + Sync,
-    ) -> (F, Virial) {
-        fold_chunks(out, n_pairs, |acc, rows| {
-            self.fold_rows(acc, factor, rows, &pair)
-        })
+    ) {
+        let plain = |out: &mut [F], rows| self.fold_rows::<false>(out, factor, rows, &pair);
+        if tally {
+            fold_pairs(acc, n_pairs, plain, |out: &mut [F], rows| {
+                self.fold_rows::<true>(out, factor, rows, &pair)
+            });
+        } else {
+            fold_pairs_untallied(acc, n_pairs, plain);
+        }
     }
 
     /// One contiguous range of pairs, into `out`. The whole fold when it runs
     /// serially; one chunk of it when it does not.
-    fn fold_rows(
+    fn fold_rows<const VIRIAL: bool>(
         &self,
         out: &mut [F],
         factor: &[F],
@@ -200,7 +195,9 @@ impl PairMorse {
             };
             let f = [w * f[0], w * f[1], w * f[2]];
             energy += w * e;
-            virial.add_outer(f, disp);
+            if VIRIAL {
+                virial.add_outer(f, disp);
+            }
             out[j * 3] += f[0];
             out[j * 3 + 1] += f[1];
             out[j * 3 + 2] += f[2];
@@ -213,7 +210,7 @@ impl PairMorse {
 }
 
 impl Potential for PairMorse {
-    fn calc_energy_forces(&self, coords: &[F]) -> (F, Vec<F>) {
+    fn evaluate(&self, coords: &[F], acc: &mut Accumulator<'_>) {
         let n_atoms = validate_coords(coords);
         let Source::Compiled {
             atom_i,
@@ -224,9 +221,9 @@ impl Potential for PairMorse {
         } = &self.source
         else {
             // A type table needs a pair table, and nobody handed one over.
-            return (0.0, vec![0.0; coords.len()]);
+            return;
         };
-        energy_forces(self.fold(coords.len(), atom_i.len(), |idx| {
+        self.fold_into(acc, &[], atom_i.len(), false, |idx| {
             let i = atom_i[idx];
             let j = atom_j[idx];
             debug_assert!(i < n_atoms && j < n_atoms);
@@ -237,23 +234,18 @@ impl Potential for PairMorse {
             ];
             let r2 = d[0] * d[0] + d[1] * d[1] + d[2] * d[2];
             (i, j, (d0[idx], alpha[idx], r0[idx]), d, r2)
-        }))
-    }
-
-    fn calc_energy_forces_with_pairs(&self, coords: &[F], pairs: &Neighbors) -> (F, Vec<F>) {
-        let (e, f, _) = self.calc_energy_forces_with_pairs_virial(coords, pairs);
-        (e, f)
+        });
     }
 }
 
 impl PairDriven for PairMorse {
-    fn accumulate_pairs(
+    fn evaluate_pairs(
         &self,
         coords: &[F],
         pairs: &Neighbors,
         factor: &[F],
-        out: &mut [F],
-    ) -> (F, Option<Virial>) {
+        acc: &mut Accumulator<'_>,
+    ) {
         let Source::Typed {
             type_id,
             ntypes,
@@ -268,18 +260,17 @@ impl PairDriven for PairMorse {
             // per-pair weight either. Both providers refuse one, so this is
             // the free-boundary path and `factor` is empty.
             debug_assert!(factor.is_empty());
-            let (e, f) = self.calc_energy_forces(coords);
-            for (acc, v) in out.iter_mut().zip(&f) {
-                *acc += v;
-            }
-            return (e, None);
+            self.evaluate(coords, acc);
+            return;
         };
         let (Some(disp), Some(d2)) = (pairs.disp(), pairs.dist_sq()) else {
-            return (0.0, None);
+            // No displacements, nothing priced — and no virial claimed for it.
+            acc.forces_without_virial();
+            return;
         };
         let i_col = pairs.query_point_indices();
         let j_col = pairs.point_indices();
-        let (e, w) = self.fold_into(out, factor, i_col.len(), |p| {
+        self.fold_into(acc, factor, i_col.len(), true, |p| {
             let i = i_col[p] as usize;
             let j = j_col[p] as usize;
             debug_assert!(
@@ -295,19 +286,9 @@ impl PairDriven for PairMorse {
                 d2[p],
             )
         });
-        (e, Some(w))
     }
     fn binds_a_fixed_pair_list(&self) -> bool {
         matches!(self.source, Source::Compiled { .. })
-    }
-    fn calc_energy_forces_with_pairs_virial(
-        &self,
-        coords: &[F],
-        pairs: &Neighbors,
-    ) -> (F, Vec<F>, Option<Virial>) {
-        let mut forces = vec![0.0; coords.len()];
-        let (e, w) = self.accumulate_pairs(coords, pairs, &[], &mut forces);
-        (e, forces, w)
     }
     fn gather_onto_copies(&mut self, owner: &[u32]) {
         let Source::Typed {
@@ -337,24 +318,27 @@ pub fn pair_morse_constructor(
     // `PotentialCompiler::compile` projects the force field's `special_bonds` 1-4
     // weight here. The energy is linear in this parameter, so scaling it is
     // exactly scaling the pair.
-    let scale_14 = style_params.get("lj14scale").unwrap_or(1.0) as F;
+    let scale_14 = style_params
+        .get("lj14scale")
+        .and_then(|v| v.as_num())
+        .unwrap_or(1.0) as F;
 
     let block = frame
         .get(PAIRS)
         .ok_or_else(|| "PairMorse: frame missing \"pairs\" block".to_string())?;
     let i_col = block
         .get("atomi")
-        .and_then(|c| c.as_uint())
+        .and_then(|c| c.get::<u64>())
         .ok_or_else(|| "PairMorse: pairs block missing \"atomi\" column".to_string())?;
     let j_col = block
         .get("atomj")
-        .and_then(|c| c.as_uint())
+        .and_then(|c| c.get::<u64>())
         .ok_or_else(|| "PairMorse: pairs block missing \"atomj\" column".to_string())?;
-    let is_14 = block.get("is_14").and_then(|c| c.as_bool());
+    let is_14 = block.get("is_14").and_then(|c| c.get::<bool>());
     let atom_types = frame
         .get(ATOMS)
         .and_then(|b| b.get("type"))
-        .and_then(|c| c.as_string())
+        .and_then(|c| c.get::<String>())
         .ok_or_else(|| "PairMorse: atoms block missing \"type\" column".to_string())?;
 
     let (mut ai, mut aj) = (Vec::new(), Vec::new());
@@ -469,16 +453,13 @@ mod tests {
         let table = table_over(&coords, &links);
         assert_same(
             "morse",
-            compiled.calc_energy_forces(&coords),
-            typed.calc_energy_forces_with_pairs(&coords, &table),
+            compiled.energy_forces_at(&coords),
+            typed.over_pairs(&coords, &table),
         );
-        assert_virial_matches_forces(
-            "morse",
-            &coords,
-            typed.calc_energy_forces_with_pairs_virial(&coords, &table),
-        );
+        assert_virial_matches_forces("morse", &coords, typed.over_pairs_virial(&coords, &table));
     }
     use super::*;
+    use crate::ff::potential::fixtures::OneShot;
 
     fn numerical_forces(pot: &PairMorse, coords: &[F]) -> Vec<F> {
         let h = 1e-6;
@@ -488,7 +469,7 @@ mod tests {
             let mut cm = coords.to_vec();
             cp[k] += h;
             cm[k] -= h;
-            num[k] = -(pot.calc_energy(&cp) - pot.calc_energy(&cm)) / (2.0 * h);
+            num[k] = -(pot.energy_at(&cp) - pot.energy_at(&cm)) / (2.0 * h);
         }
         num
     }
@@ -498,7 +479,7 @@ mod tests {
         // At r = r0: E = D0 (0 - 1) = -D0, force zero.
         let pot = PairMorse::new(vec![0], vec![1], vec![5.0], vec![1.5], vec![3.0]);
         let coords: Vec<F> = vec![0.0, 0.0, 0.0, 3.0, 0.0, 0.0];
-        let (e, f) = pot.calc_energy_forces(&coords);
+        let (e, f) = pot.energy_forces_at(&coords);
         assert!((e - (-5.0)).abs() < 1e-12, "energy {e}");
         for fi in f {
             assert!(fi.abs() < 1e-9);
@@ -509,7 +490,7 @@ mod tests {
     fn forces_match_finite_difference() {
         let pot = PairMorse::new(vec![0], vec![1], vec![5.0], vec![1.5], vec![3.0]);
         let coords: Vec<F> = vec![0.1, -0.2, 0.05, 1.3, 0.6, -0.3];
-        let (_, analytical) = pot.calc_energy_forces(&coords);
+        let (_, analytical) = pot.energy_forces_at(&coords);
         let numerical = numerical_forces(&pot, &coords);
         for k in 0..coords.len() {
             assert!(

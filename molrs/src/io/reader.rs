@@ -40,7 +40,15 @@ pub trait FrameReader: Reader {
     /// `read_as::<Atomistic>()` hands it over instead of going
     /// `Atomistic -> Frame -> Atomistic`.
     ///
+    /// The conversion adds nothing: a file reader keeps the species field its
+    /// format spells, so `read_as::<Atomistic>()` on a symbol format (XYZ,
+    /// PDB, SDF, …) is refused — an [`Atomistic`] needs `atomic_number`. Read
+    /// the [`Frame`], convert explicitly with
+    /// [`Element::fill_atomic_numbers`], then
+    /// [`Atomistic::from_frame`](crate::core::Atomistic::from_frame).
+    ///
     /// [`Atomistic`]: crate::core::Atomistic
+    /// [`Element::fill_atomic_numbers`]: crate::core::Element::fill_atomic_numbers
     fn read_as<T: FromFrame>(&mut self) -> Result<Option<T>> {
         match self.read()? {
             Some(frame) => Ok(Some(T::from_frame(&frame)?)),
@@ -84,9 +92,19 @@ impl FromFrame for Frame {
 }
 
 impl FromFrame for crate::core::Atomistic {
+    /// [`Atomistic::from_frame`](crate::core::Atomistic::from_frame), with no
+    /// species conversion of its own: a frame without `atomic_number` is
+    /// refused, naming the explicit step.
     fn from_frame(frame: &Frame) -> Result<Self> {
-        crate::core::Atomistic::from_frame(frame)
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string()))
+        crate::core::Atomistic::from_frame(frame).map_err(|e| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!(
+                    "{e}; an Atomistic reads 'atomic_number' only — read the Frame, run \
+                     Element::fill_atomic_numbers(&mut frame), then Atomistic::from_frame"
+                ),
+            )
+        })
     }
 
     fn from_atomistic(mol: crate::core::Atomistic) -> Result<Self> {
@@ -367,37 +385,49 @@ pub fn check_read_frame<F: crate::core::FrameAccess>(frame: Option<F>) -> Result
     Ok(frame)
 }
 
-#[cfg(feature = "ff")]
 /// Parse a force-field file into a molrs
 /// [`ForceField`](crate::ff::forcefield::ForceField), normalized to the
 /// force-field IR (adopts the LAMMPS standard).
 ///
-/// Implemented by each force-field format's reader class
+/// The one door of every force-field format's reader class
 /// ([`LammpsForcefieldReader`](crate::io::lammps::LammpsForcefieldReader),
 /// [`GromacsTopForcefieldReader`](crate::io::gromacs::GromacsTopForcefieldReader),
 /// [`AmberPrmtopForcefieldReader`](crate::io::amber::AmberPrmtopForcefieldReader),
-/// [`OpenmmXmlReader`](crate::io::openmm_xml::OpenmmXmlReader)). A reader owns
-/// the translation from its format — element and attribute names, **and unit
-/// and factor normalization** — so the resulting `ForceField` needs no
-/// downstream fixup.
+/// [`OpenmmXmlReader`](crate::io::openmm_xml::OpenmmXmlReader),
+/// [`XmlForcefieldReader`](crate::io::XmlForcefieldReader)): the class carries
+/// the format's settings (a registry, include directories, …) and
+/// [`read`](Self::read) takes a [`Source`](crate::io::Source), as every frame
+/// door does. A reader owns the translation from its format — element and
+/// attribute names, **and unit and factor normalization** — so the resulting
+/// `ForceField` needs no downstream fixup.
 ///
-/// Implementors own format-specific element/attribute mapping and unit
-/// conversion. Reading is **total**: a malformed document or a missing required
+/// Reading is **total**: a malformed document or a missing required
 /// attribute is an `Err`, never a silently-skipped parameter that would later
 /// read as zero.
+///
+/// ```
+/// use molrs::io::lammps::LammpsForcefieldReader;
+/// use molrs::io::reader::ForceFieldReader;
+///
+/// let text = "special_bonds lj 0 0 0.5 coul 0 0 0.8333\n\
+///             bond_style harmonic\nbond_coeff CT-HC 340.0 1.09\n";
+/// let ff = LammpsForcefieldReader::new().read(text.as_bytes()).unwrap();
+/// assert_eq!(ff.get_bondtypes().len(), 1);
+/// ```
+#[cfg(feature = "ff")]
 pub trait ForceFieldReader {
-    /// Parse from an in-memory string.
-    fn read_str(
+    /// Read the force field `src` holds: a file ([`Source::Path`](crate::io::Source::Path))
+    /// or a whole file's bytes ([`Source::Bytes`](crate::io::Source::Bytes)).
+    ///
+    /// # Errors
+    ///
+    /// The frame doors' error: the OS error of a path that cannot be read,
+    /// [`InvalidData`](std::io::ErrorKind::InvalidData) for a file the format
+    /// refuses, its message naming why.
+    fn read<'a>(
         &self,
-        text: &str,
-    ) -> std::result::Result<crate::ff::forcefield::ForceField, String>;
-
-    /// Parse from a file on disk. Defaults to reading the file and delegating to
-    /// [`read_str`](ForceFieldReader::read_str).
-    fn read(&self, path: &str) -> std::result::Result<crate::ff::forcefield::ForceField, String> {
-        let text = std::fs::read_to_string(path).map_err(|e| format!("read {}: {}", path, e))?;
-        self.read_str(&text)
-    }
+        src: impl Into<crate::io::Source<'a>>,
+    ) -> std::io::Result<crate::ff::forcefield::ForceField>;
 }
 
 #[cfg(test)]
@@ -440,6 +470,28 @@ mod tests {
         fn len(&mut self) -> std::io::Result<usize> {
             Ok(self.frames)
         }
+    }
+
+    /// `read_as::<Atomistic>()` converts no species: a symbol file is refused
+    /// with the explicit step named, and that step makes it readable.
+    #[test]
+    fn read_as_atomistic_needs_the_explicit_species_conversion() {
+        use super::FrameReader;
+        use crate::core::{Atomistic, Element};
+        use crate::io::xyz::XyzReader;
+
+        let text = "2\n\nO 0 0 0\nH 0.96 0 0\n";
+        let err = XyzReader::new(std::io::Cursor::new(text.as_bytes()))
+            .read_as::<Atomistic>()
+            .unwrap_err();
+        assert!(err.to_string().contains("fill_atomic_numbers"), "{err}");
+
+        let mut frame = XyzReader::new(std::io::Cursor::new(text.as_bytes()))
+            .read()
+            .unwrap()
+            .unwrap();
+        Element::fill_atomic_numbers(&mut frame).unwrap();
+        assert_eq!(Atomistic::from_frame(&frame).unwrap().n_atoms(), 2);
     }
 
     #[test]

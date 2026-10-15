@@ -124,6 +124,7 @@ crate::compute::spec::compute_spec! {
 mod tests {
     use super::*;
     use crate::compute::fixtures::neighbors_of;
+    use crate::core::Cell;
     use molrs::core::SimBox;
     use ndarray::array;
 
@@ -131,8 +132,12 @@ mod tests {
 
     /// A self-query table over `positions` in an open cube of side `box_len`.
     fn table(positions: &[[F; 3]], box_len: F, cutoff: F) -> Neighbors {
-        let simbox =
-            SimBox::cube(box_len, array![0.0 as F, 0.0 as F, 0.0 as F], [false; 3]).unwrap();
+        let simbox = SimBox::new(
+            Cell::Lengths([box_len; 3]),
+            [0.0 as F, 0.0 as F, 0.0 as F],
+            [false; 3],
+        )
+        .unwrap();
         neighbors_of(positions, &simbox, cutoff)
     }
 

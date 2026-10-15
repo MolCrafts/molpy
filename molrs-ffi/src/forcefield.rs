@@ -40,11 +40,6 @@ impl ForceFieldRef {
         Self { ff: Rc::new(ff) }
     }
 
-    /// Wrap an already-shared force field, sharing its backing storage.
-    pub fn from_rc(ff: Rc<ForceField>) -> Self {
-        Self { ff }
-    }
-
     /// Run a closure with immutable access to the underlying [`ForceField`].
     ///
     /// This is the consumer entry point that mirrors
@@ -63,6 +58,13 @@ impl ForceFieldRef {
     /// Deep-clone the force field out of the handle.
     pub fn clone_forcefield(&self) -> ForceField {
         (*self.ff).clone()
+    }
+}
+
+impl From<Rc<ForceField>> for ForceFieldRef {
+    /// Wrap an already-shared force field, sharing its backing storage.
+    fn from(ff: Rc<ForceField>) -> Self {
+        Self { ff }
     }
 }
 

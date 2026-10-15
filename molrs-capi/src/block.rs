@@ -10,18 +10,23 @@
 //! | **Pointer (read)**  | `molrs_block_get` | Zero-copy bytes; `out_dtype` is the stored variant |
 //! | **Pointer (write)** | `molrs_block_get_mut` | Zero-copy mutable bytes; version bumped |
 //! | **Copy**  | `molrs_block_copy` | Copies the column's bytes into a caller buffer |
-//! | **Insert**| `molrs_block_set_f64/I/U` | Copies caller data into a new column |
+//! | **Insert**| `molrs_block_set` | Copies caller data of the stated `MolrsDType` into a new column |
 //!
-//! `get`, `get_mut`, and `copy` succeed for every fixed-width dtype the
-//! block holds. A string column has no flat scalar buffer and returns
-//! `TypeMismatch`, which is not `KeyNotFound`. Shape and dtype stay on
+//! `get`, `get_mut`, `copy` and `set` work for every fixed-width dtype. A
+//! string column has no flat scalar buffer: reading one returns
+//! `TypeMismatch`, which is not `KeyNotFound`, and `set` refuses
+//! `MOLRS_D_TYPE_STRING` with `TypeMismatch`. Shape and dtype stay on
 //! [`molrs_block_column_shape`] and [`molrs_block_column_dtype`].
 //!
 //! `F` is `f64`, `I` is `i32`, `Idx` is `u64`. `out_len` is an element
 //! count. `molrs_block_copy`'s `buf_bytes` is a byte capacity.
 
-use molrs::core::{Column, DType};
+use std::ffi::c_void;
+
+use molrs::core::{BlockDtype, Column};
+use molrs::op::{F, I, Idx};
 use ndarray::ArrayD;
+use num_complex::Complex;
 
 use crate::error::{self, MolrsDType, MolrsStatus, ffi_err_to_status};
 use crate::handle::{MolrsBlockHandle, c_to_block_handle};
@@ -314,62 +319,52 @@ fn fail_status(fail: ReadFail, key: &str) -> MolrsStatus {
     status
 }
 
+/// Run `$f::<T>($args)` with `T` the element type of the fixed-width
+/// [`MolrsDType`] `$dtype`; `string => $string` is the arm for
+/// [`MolrsDType::String`], which has no flat scalar buffer.
+macro_rules! dispatch_scalar {
+    ($dtype:expr, $f:ident($($arg:expr),*), string => $string:expr) => {
+        match $dtype {
+            MolrsDType::Float => $f::<F>($($arg),*),
+            MolrsDType::Int => $f::<I>($($arg),*),
+            MolrsDType::Bool => $f::<bool>($($arg),*),
+            MolrsDType::Uint => $f::<Idx>($($arg),*),
+            MolrsDType::I8 => $f::<i8>($($arg),*),
+            MolrsDType::I16 => $f::<i16>($($arg),*),
+            MolrsDType::I64 => $f::<i64>($($arg),*),
+            MolrsDType::U8 => $f::<u8>($($arg),*),
+            MolrsDType::U16 => $f::<u16>($($arg),*),
+            MolrsDType::U32 => $f::<u32>($($arg),*),
+            MolrsDType::C64 => $f::<Complex<f32>>($($arg),*),
+            MolrsDType::C128 => $f::<Complex<f64>>($($arg),*),
+            MolrsDType::String => $string,
+        }
+    };
+}
+
 fn scalar_view(col: &Column) -> Result<(*const u8, usize, MolrsDType), ReadFail> {
-    if col.dtype() == DType::String {
-        return Err(ReadFail::String);
+    fn view<T: BlockDtype>(col: &Column) -> Result<(*const u8, usize), ReadFail> {
+        // `col.dtype()` named `T`, so the column holds `T` elements.
+        let arr = col.get::<T>().ok_or(ReadFail::String)?;
+        let slice = arr.as_slice_memory_order().ok_or(ReadFail::NonContiguous)?;
+        Ok((slice.as_ptr().cast(), slice.len()))
     }
     let dtype = MolrsDType::from(col.dtype());
-    macro_rules! arm {
-        ($method:ident) => {
-            if let Some(arr) = col.$method() {
-                let slice = arr.as_slice_memory_order().ok_or(ReadFail::NonContiguous)?;
-                return Ok((slice.as_ptr() as *const u8, slice.len(), dtype));
-            }
-        };
-    }
-    arm!(as_float);
-    arm!(as_i8);
-    arm!(as_i16);
-    arm!(as_int);
-    arm!(as_i64);
-    arm!(as_bool);
-    arm!(as_u8);
-    arm!(as_u16);
-    arm!(as_u32);
-    arm!(as_uint);
-    arm!(as_c64);
-    arm!(as_c128);
-    Err(ReadFail::String)
+    let (ptr, len) = dispatch_scalar!(dtype, view(col), string => Err(ReadFail::String))?;
+    Ok((ptr, len, dtype))
 }
 
 fn scalar_view_mut(col: &mut Column) -> Result<(*mut u8, usize, MolrsDType), ReadFail> {
-    if col.dtype() == DType::String {
-        return Err(ReadFail::String);
+    fn view_mut<T: BlockDtype>(col: &mut Column) -> Result<(*mut u8, usize), ReadFail> {
+        let arr = col.get_mut::<T>().ok_or(ReadFail::String)?;
+        let slice = arr
+            .as_slice_memory_order_mut()
+            .ok_or(ReadFail::NonContiguous)?;
+        Ok((slice.as_mut_ptr().cast(), slice.len()))
     }
     let dtype = MolrsDType::from(col.dtype());
-    macro_rules! arm {
-        ($method:ident) => {
-            if let Some(arr) = col.$method() {
-                let slice = arr
-                    .as_slice_memory_order_mut()
-                    .ok_or(ReadFail::NonContiguous)?;
-                return Ok((slice.as_mut_ptr() as *mut u8, slice.len(), dtype));
-            }
-        };
-    }
-    arm!(as_float_mut);
-    arm!(as_i8_mut);
-    arm!(as_i16_mut);
-    arm!(as_int_mut);
-    arm!(as_i64_mut);
-    arm!(as_bool_mut);
-    arm!(as_u8_mut);
-    arm!(as_u16_mut);
-    arm!(as_u32_mut);
-    arm!(as_uint_mut);
-    arm!(as_c64_mut);
-    arm!(as_c128_mut);
-    Err(ReadFail::String)
+    let (ptr, len) = dispatch_scalar!(dtype, view_mut(col), string => Err(ReadFail::String))?;
+    Ok((ptr, len, dtype))
 }
 
 fn scalar_bytes(col: &Column) -> Result<Vec<u8>, ReadFail> {
@@ -529,17 +524,113 @@ pub unsafe extern "C" fn molrs_block_copy(
 // Insert columns
 // ---------------------------------------------------------------------------
 
-/// Insert (or replace) a column of `T`, copying the caller's data. The body
-/// of the three `molrs_block_set_*` doors.
+/// A fixed-width element a C caller hands over as a flat buffer.
+trait CScalar: BlockDtype + Copy {
+    /// Copy `n` elements out of `data`.
+    ///
+    /// # Safety
+    ///
+    /// `data` points to `n` readable, aligned elements of the C type of
+    /// `Self`.
+    unsafe fn read(data: *const c_void, n: usize) -> Result<Vec<Self>, String> {
+        Ok(unsafe { std::slice::from_raw_parts(data.cast::<Self>(), n) }.to_vec())
+    }
+}
+
+impl CScalar for F {}
+impl CScalar for I {}
+impl CScalar for Idx {}
+impl CScalar for i8 {}
+impl CScalar for i16 {}
+impl CScalar for i64 {}
+impl CScalar for u8 {}
+impl CScalar for u16 {}
+impl CScalar for u32 {}
+impl CScalar for Complex<f32> {}
+impl CScalar for Complex<f64> {}
+
+/// A C `bool` is one byte; any byte other than 0 or 1 is no `bool` and is
+/// refused rather than reinterpreted.
+impl CScalar for bool {
+    unsafe fn read(data: *const c_void, n: usize) -> Result<Vec<Self>, String> {
+        let bytes = unsafe { std::slice::from_raw_parts(data.cast::<u8>(), n) };
+        bytes
+            .iter()
+            .enumerate()
+            .map(|(i, &b)| match b {
+                0 => Ok(false),
+                1 => Ok(true),
+                other => Err(format!(
+                    "bool element {i} is byte {other}; a bool column holds 0 or 1"
+                )),
+            })
+            .collect()
+    }
+}
+
+/// The `shape`d array of `T` the caller's buffer holds.
 ///
 /// # Safety
 ///
-/// As the doors: `block` points to a live, writable `MolrsBlockHandle`,
-/// `shape` to `ndim` sizes and `data` to `product(shape)` elements.
-unsafe fn block_set<T: Clone + molrs::core::BlockDtype>(
+/// `data` points to `product(shape)` readable, aligned elements of `T`.
+unsafe fn column_from_c<T: CScalar>(
+    data: *const c_void,
+    shape: &[usize],
+) -> Result<Column, String> {
+    let total_len: usize = shape.iter().product();
+    let values = unsafe { T::read(data, total_len) }?;
+    ArrayD::<T>::from_shape_vec(shape.to_vec(), values)
+        .map(Column::from)
+        .map_err(|e| format!("invalid shape/data: {e}"))
+}
+
+/// Insert (or replace) a column, copying the caller's data. `dtype` states
+/// the element type `data` points to, and becomes the column's dtype.
+///
+/// # C signature
+///
+/// ```c
+/// MolrsStatus molrs_block_set(MolrsBlockHandle* block, uint32_t col_key_id,
+///                             MolrsDType dtype, const void* data,
+///                             const size_t* shape, size_t ndim);
+/// ```
+///
+/// # Arguments
+///
+/// * `block` -- Pointer to the block handle; its `block_version` is updated.
+/// * `col_key_id` -- Interned column name.
+/// * `dtype` -- Element type of `data`: `MOLRS_D_TYPE_FLOAT` (`F`),
+///   `MOLRS_D_TYPE_INT` (`int32_t`), `MOLRS_D_TYPE_UINT` (`uint64_t`),
+///   `MOLRS_D_TYPE_BOOL` (one byte, 0 or 1), `MOLRS_D_TYPE_I8` … `U32`,
+///   `MOLRS_D_TYPE_C64` / `C128` (a `float` / `double` pair per element).
+///   `MOLRS_D_TYPE_STRING` has no flat buffer and is refused.
+/// * `data` -- Pointer to the source data (row-major).
+/// * `shape` -- Pointer to `ndim` dimension sizes.
+/// * `ndim` -- Number of dimensions (must be >= 1).
+///
+/// # Returns
+///
+/// * `MolrsStatus::Ok` on success.
+/// * `MolrsStatus::NullPointer` if any pointer is null.
+/// * `MolrsStatus::TypeMismatch` if `dtype` is `MOLRS_D_TYPE_STRING`.
+/// * `MolrsStatus::InvalidArgument` if `ndim == 0`, the element count is 0,
+///   a `bool` element is neither 0 nor 1, or the column does not fit the
+///   block (a row count other than the block's).
+/// * `MolrsStatus::KeyNotFound` if `col_key_id` was not interned.
+/// * `MolrsStatus::InvalidBlockHandle` if the block handle is stale.
+///
+/// # Safety
+///
+/// * `block` must point to a live, writable `MolrsBlockHandle`.
+/// * `data` must point to at least `product(shape[0..ndim])` readable,
+///   aligned elements of the C type `dtype` names.
+/// * `shape` must point to `ndim` elements.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn molrs_block_set(
     block: *mut MolrsBlockHandle,
     col_key_id: u32,
-    data: *const T,
+    dtype: MolrsDType,
+    data: *const c_void,
     shape: *const usize,
     ndim: usize,
 ) -> MolrsStatus {
@@ -552,16 +643,29 @@ unsafe fn block_set<T: Clone + molrs::core::BlockDtype>(
             return MolrsStatus::InvalidArgument;
         }
         let shape_slice = unsafe { std::slice::from_raw_parts(shape, ndim) };
-        let total_len: usize = shape_slice.iter().product();
-        if total_len == 0 {
+        if shape_slice.iter().product::<usize>() == 0 {
             error::set_last_error("total element count is 0");
             return MolrsStatus::InvalidArgument;
         }
-        let data_slice = unsafe { std::slice::from_raw_parts(data, total_len) };
-        let arr = match ArrayD::<T>::from_shape_vec(shape_slice.to_vec(), data_slice.to_vec()) {
-            Ok(a) => a,
-            Err(e) => {
-                error::set_last_error(format!("invalid shape/data: {e}"));
+        // SAFETY: the caller guarantees `data` holds `product(shape)`
+        // aligned elements of the C type `dtype` names.
+        let column = unsafe {
+            dispatch_scalar!(
+                dtype,
+                column_from_c(data, shape_slice),
+                string => {
+                    error::set_last_error(
+                        "a string column has no flat scalar buffer; molrs_block_set takes a \
+                         fixed-width MolrsDType",
+                    );
+                    return MolrsStatus::TypeMismatch;
+                }
+            )
+        };
+        let column = match column {
+            Ok(c) => c,
+            Err(msg) => {
+                error::set_last_error(msg);
                 return MolrsStatus::InvalidArgument;
             }
         };
@@ -573,9 +677,9 @@ unsafe fn block_set<T: Clone + molrs::core::BlockDtype>(
 
         let result = registry
             .frames
-            .with_block_mut(&mut bh, |b| b.insert(col_key.clone(), arr));
+            .with_block_mut(&mut bh, |b| b.insert(col_key.clone(), column, None));
         match result {
-            Ok(Ok(_)) => {
+            Ok(Ok(())) => {
                 let c_block = unsafe { &mut *block };
                 c_block.block_version = bh.version();
                 MolrsStatus::Ok
@@ -589,97 +693,6 @@ unsafe fn block_set<T: Clone + molrs::core::BlockDtype>(
     })
 }
 
-/// Insert (or replace) a `float` (`f64`) column, copying the caller's data.
-///
-/// # C signature
-///
-/// ```c
-/// MolrsStatus molrs_block_set_f64(MolrsBlockHandle* block, uint32_t col_key_id,
-///                                 const double* data, const size_t* shape, size_t ndim);
-/// ```
-///
-/// # Arguments
-///
-/// * `block` -- Pointer to the block handle; its `block_version` is updated.
-/// * `col_key_id` -- Interned column name.
-/// * `data` -- Pointer to the source data (row-major).
-/// * `shape` -- Pointer to `ndim` dimension sizes.
-/// * `ndim` -- Number of dimensions (must be >= 1).
-///
-/// # Returns
-///
-/// * `MolrsStatus::Ok` on success.
-/// * `MolrsStatus::NullPointer` if any pointer is null.
-/// * `MolrsStatus::InvalidArgument` if `ndim == 0`, the element count is 0,
-///   or shape and data disagree.
-/// * `MolrsStatus::KeyNotFound` if `col_key_id` was not interned.
-/// * `MolrsStatus::InvalidBlockHandle` if the block handle is stale.
-///
-/// # Safety
-///
-/// * `block` must point to a live, writable `MolrsBlockHandle`.
-/// * `data` must point to at least `product(shape[0..ndim])` elements.
-/// * `shape` must point to `ndim` elements.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn molrs_block_set_f64(
-    block: *mut MolrsBlockHandle,
-    col_key_id: u32,
-    data: *const f64,
-    shape: *const usize,
-    ndim: usize,
-) -> MolrsStatus {
-    unsafe { block_set(block, col_key_id, data, shape, ndim) }
-}
-
-/// Insert (or replace) an `int` (`int32_t`) column, copying the caller's
-/// data. Arguments, returns and safety as [`molrs_block_set_f64`].
-///
-/// # C signature
-///
-/// ```c
-/// MolrsStatus molrs_block_set_i32(MolrsBlockHandle* block, uint32_t col_key_id,
-///                                 const int32_t* data, const size_t* shape, size_t ndim);
-/// ```
-///
-/// # Safety
-///
-/// As [`molrs_block_set_f64`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn molrs_block_set_i32(
-    block: *mut MolrsBlockHandle,
-    col_key_id: u32,
-    data: *const i32,
-    shape: *const usize,
-    ndim: usize,
-) -> MolrsStatus {
-    unsafe { block_set(block, col_key_id, data, shape, ndim) }
-}
-
-/// Insert (or replace) a `uint` (`uint64_t`) column -- an index or
-/// identifier column such as `atomi` -- copying the caller's data. Arguments,
-/// returns and safety as [`molrs_block_set_f64`].
-///
-/// # C signature
-///
-/// ```c
-/// MolrsStatus molrs_block_set_u64(MolrsBlockHandle* block, uint32_t col_key_id,
-///                                 const uint64_t* data, const size_t* shape, size_t ndim);
-/// ```
-///
-/// # Safety
-///
-/// As [`molrs_block_set_f64`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn molrs_block_set_u64(
-    block: *mut MolrsBlockHandle,
-    col_key_id: u32,
-    data: *const u64,
-    shape: *const usize,
-    ndim: usize,
-) -> MolrsStatus {
-    unsafe { block_set(block, col_key_id, data, shape, ndim) }
-}
-
 #[cfg(test)]
 mod scalar_view_tests {
     use super::*;
@@ -687,7 +700,7 @@ mod scalar_view_tests {
 
     #[test]
     fn i64_view_reports_int64_and_the_elements() {
-        let col = Column::from_i64(Array1::from_vec(vec![7_i64, 8]).into_dyn());
+        let col = Column::from(Array1::from_vec(vec![7_i64, 8]).into_dyn());
         let (ptr, len, dtype) = scalar_view(&col).unwrap();
         assert_eq!(len, 2);
         assert_eq!(dtype, MolrsDType::I64);
@@ -697,7 +710,7 @@ mod scalar_view_tests {
 
     #[test]
     fn string_is_not_a_missing_column() {
-        let col = Column::from_string(Array1::from_vec(vec!["a".to_string()]).into_dyn());
+        let col = Column::from(Array1::from_vec(vec!["a".to_string()]).into_dyn());
         assert!(matches!(scalar_view(&col), Err(ReadFail::String)));
         assert!(matches!(scalar_bytes(&col), Err(ReadFail::String)));
     }

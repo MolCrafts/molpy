@@ -6,7 +6,9 @@ tests pin what the binding itself owns:
 * **name parity** — the exported compute classes are exactly
   ``{spec.name for spec in ComputeSpec.all()}``;
 * **signature parity** — ``__init__`` takes exactly the spec's parameters and
-  ``compute`` exactly the spec's input fields, every optional one ``None``;
+  ``compute`` exactly the spec's input fields, every optional one ``None``; a
+  stream only (``Msd``, ``Vacf``, ``Rdf``) has no ``compute`` and its
+  accumulator's ``push`` takes every spec input;
 * **defaults parity** — a class built from its required arguments alone holds
   the spec's defaults (``tunables()``), so no default is typed in a binding;
 * the time-series classes construct, compute and hand their
@@ -121,13 +123,26 @@ SPECS = {spec.name: spec for spec in ComputeSpec.all()}
 
 
 def _compute_classes() -> set[str]:
+    """Every exported class that computes: a batch ``compute`` or a stream's
+    ``accumulator``."""
     return {
         name
         for name in molrs.compute.__all__
         if inspect.isclass(obj := getattr(molrs.compute, name))
-        and obj is not molrs.compute.Compute
-        and callable(getattr(obj, "compute", None))
+        and obj not in (molrs.compute.Compute, molrs.compute.Stream)
+        and (
+            callable(getattr(obj, "compute", None))
+            or callable(getattr(obj, "accumulator", None))
+        )
     }
+
+
+STREAMS = {"Msd", "Vacf", "Rdf"}
+
+
+def _is_stream(name: str) -> bool:
+    """A stream only: ``accumulator`` and no batch ``compute``."""
+    return name in STREAMS
 
 
 def _parameters(func) -> list[tuple[str, bool, bool]]:
@@ -178,7 +193,18 @@ def test_init_takes_the_spec_parameters(name):
 @pytest.mark.parametrize("name", sorted(SPECS))
 def test_compute_takes_the_spec_inputs_by_keyword(name):
     spec = SPECS[name]
-    params = _parameters(getattr(molrs.compute, name).compute)
+    cls = getattr(molrs.compute, name)
+    if _is_stream(name):
+        assert not hasattr(cls, "compute"), name
+        acc = cls(**REQUIRED[name]).accumulator()
+        params = dict((p[0], p) for p in _parameters(acc.push))
+        for described in spec.inputs:
+            assert described.name in params, described.name
+            assert params[described.name][2] == described.optional, described.name
+        extra = set(params) - {i.name for i in spec.inputs}
+        assert all(params[key][2] for key in extra), extra
+        return
+    params = _parameters(cls.compute)
     assert [p[0] for p in params] == [i.name for i in spec.inputs]
     for (key, keyword_only, none), described in zip(params, spec.inputs, strict=True):
         assert keyword_only, key
@@ -277,6 +303,15 @@ def _unit_quaternions() -> np.ndarray:
     return q / np.linalg.norm(q, axis=-1, keepdims=True)
 
 
+def _stream(stream, frames: np.ndarray, *, dt: float) -> molrs.compute.TimeCorrelation:
+    """Push every frame of ``frames`` into a fresh accumulator; finish."""
+    acc = stream.accumulator()
+    for frame in frames:
+        acc.push(frame, dt=dt)
+    assert acc.n_frames == len(frames)
+    return acc.finish()
+
+
 class TestTimeSeries:
     def test_correlator_every_kernel(self):
         walk = _walk()
@@ -310,28 +345,35 @@ class TestTimeSeries:
 
     def test_msd_equals_its_correlator(self):
         walk = _walk()
-        msd = molrs.compute.Msd(6).compute(positions=walk, dt=1.0)
+        msd = _stream(molrs.compute.Msd(6), walk, dt=1.0)
         same = molrs.compute.Correlator("squared_displacement", 6).compute(
             a=walk, dt=1.0
         )
-        np.testing.assert_array_equal(msd.values, same.values)
+        # The stream equals the batch correlator to FFT round-off (core
+        # `CorrelatorAccumulator` contract).
+        np.testing.assert_allclose(msd.values, same.values, rtol=1e-12, atol=1e-12)
+        np.testing.assert_array_equal(msd.lag_times, same.lag_times)
 
     def test_msd_with_boxes_refuses_a_wrapped_trajectory(self):
-        box = molrs.core.Box.cube(1.0)
+        box = molrs.core.Box(molrs.core.Cell.lengths([1.0] * 3))
         jump = np.zeros((3, 1, 3))
         jump[1, 0, 0] = 0.9
+        acc = molrs.compute.Msd(2).accumulator()
+        acc.push(jump[0], dt=1.0, simbox=box)
         with pytest.raises(ValueError, match="wrapped"):
-            molrs.compute.Msd(2).compute(positions=jump, dt=1.0, boxes=[box] * 3)
+            acc.push(jump[1], dt=1.0, simbox=box)
+        assert acc.n_frames == 1
 
     def test_series_surfaces(self):
         series = RNG.normal(size=(T, 3))
         for cls, key in (
-            (molrs.compute.Vacf, "velocities"),
             (molrs.compute.DipoleAcf, "dipoles"),
             (molrs.compute.CurrentAcf, "current"),
         ):
             tc = cls(4).compute(**{key: series, "dt": 1.0})
             assert tc.n_lags == 5
+        vacf = _stream(molrs.compute.Vacf(4), series[:, :, None], dt=1.0)
+        assert vacf.n_lags == 5
         onsager = molrs.compute.OnsagerCorrelation(4).compute(
             a=series, b=series, dt=1.0
         )
@@ -380,7 +422,7 @@ class TestTimeSeries:
         d = molrs.compute.Derivative("central").compute(series=series, dt=2.0)
         np.testing.assert_allclose(d[1:-1], 0.5)
 
-        box = molrs.core.Box.cube(1.0)
+        box = molrs.core.Box(molrs.core.Cell.lengths([1.0] * 3))
         wrapped = np.zeros((3, 1, 3))
         wrapped[:, 0, 0] = [0.8, 0.95, 0.1]
         unwrapped = molrs.compute.Unwrap().compute(positions=wrapped, boxes=[box] * 3)
@@ -403,6 +445,6 @@ class TestTimeSeries:
         t = np.arange(T, dtype=float)
         ballistic = np.zeros((T, 1, 3))
         ballistic[:, 0, 0] = t
-        msd = molrs.compute.Msd(8).compute(positions=ballistic, dt=1.0)
+        msd = _stream(molrs.compute.Msd(8), ballistic, dt=1.0)
         fit = molrs.compute.LinearFit(0.5, 1.0).compute(correlation=msd, channel=0)
         assert fit.r2 > 0.9

@@ -1,11 +1,13 @@
 """GRO, the GROMACS structure / trajectory format — ``molrs::io::gro``.
 
-The doors are functions of :mod:`molrs.io` (:func:`~molrs.io.read_gro`,
-:func:`~molrs.io.read_gro_trajectory`, :func:`~molrs.io.write_gro`,
-:func:`~molrs.io.write_gro_trajectory`); this module holds the format's lazy
-reader, :class:`GroReader`.
+The one-frame doors are :func:`molrs.io.read_gro` / :func:`molrs.io.write_gro`;
+this module holds the format's classes: :class:`GroReader`, every frame of a
+file, and :class:`GroWriter`, one frame per ``write``.
 """
 
-from .._native import GroReader
+from .._native import (
+    GroReader,
+    GroWriter,
+)
 
-__all__ = ["GroReader"]
+__all__ = ["GroReader", "GroWriter"]

@@ -211,7 +211,11 @@ pub(crate) fn fallback_spec(
     const INJECTED: [&str; 2] = ["lj14scale", "coulomb14scale"];
     let mut per_type: Vec<String> = Vec::new();
     for (_, row) in tp {
-        let mut keys: Vec<&str> = row.iter().map(|(k, _)| k).collect();
+        let mut keys: Vec<&str> = row
+            .iter()
+            .filter_map(|(k, v)| v.as_num().map(|x| (k, x)))
+            .map(|(k, _)| k)
+            .collect();
         keys.sort_unstable();
         for k in keys {
             if !per_type.iter().any(|p| p == k) {
@@ -245,6 +249,7 @@ pub(crate) fn fallback_spec(
         .collect();
     let mut style_names: Vec<&str> = style
         .iter()
+        .filter_map(|(k, v)| v.as_num().map(|x| (k, x)))
         .map(|(k, _)| k)
         .filter(|k| !INJECTED.contains(k) && !per_type.iter().any(|p| p == k))
         .collect();
@@ -259,7 +264,7 @@ pub(crate) fn fallback_spec(
         )
         .expression(expression);
     if pair {
-        spec = spec.special(match style.get_str("special") {
+        spec = spec.special(match style.get("special").and_then(|v| v.as_text()) {
             Some("coul") => SpecialClass::Coulomb,
             _ => SpecialClass::Vdw,
         });

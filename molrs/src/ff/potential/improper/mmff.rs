@@ -6,7 +6,7 @@ use ndarray::{Array2, ArrayView2};
 
 use crate::ff::ir::Params;
 use crate::ff::potential::flat_coords::{sub3, term_table, validate_coords};
-use crate::ff::potential::{ForceTerm, IndexedTerms, Potential};
+use crate::ff::potential::{Accumulator, ForceTerm, IndexedTerms, Potential};
 use crate::op::vec3::{cross, dot, norm};
 use molrs::core::Frame;
 use molrs::op::F;
@@ -97,21 +97,21 @@ impl ImproperMmff {
 }
 
 impl Potential for ImproperMmff {
-    fn calc_energy_forces(&self, coords: &[F]) -> (F, Vec<F>) {
-        let mut out = vec![0.0; coords.len()];
-        let energy = self.accumulate(coords, &mut out);
-        (energy, out)
-    }
-
-    fn accumulate(&self, coords: &[F], out: &mut [F]) -> F {
-        self.fold(coords, out, self.atom_i.len(), |t| {
-            (
-                self.atom_i[t],
-                self.atom_j[t],
-                self.atom_k[t],
-                self.atom_l[t],
-            )
-        })
+    fn evaluate(&self, coords: &[F], acc: &mut Accumulator<'_>) {
+        let energy = self.fold(
+            coords,
+            acc.forces_without_virial(),
+            self.atom_i.len(),
+            |t| {
+                (
+                    self.atom_i[t],
+                    self.atom_j[t],
+                    self.atom_k[t],
+                    self.atom_l[t],
+                )
+            },
+        );
+        acc.add_energy(energy);
     }
 }
 
@@ -119,30 +119,21 @@ impl IndexedTerms for ImproperMmff {
     fn terms(&self) -> Array2<u32> {
         term_table(&[&self.atom_i, &self.atom_j, &self.atom_k, &self.atom_l])
     }
-    fn calc_energy_forces_with_terms(
-        &self,
-        coords: &[F],
-        terms: ArrayView2<'_, u32>,
-    ) -> (F, Vec<F>) {
-        let mut out = vec![0.0; coords.len()];
-        let energy = self.accumulate_with_terms(coords, terms, &mut out);
-        (energy, out)
-    }
-
-    fn accumulate_with_terms(&self, coords: &[F], terms: ArrayView2<'_, u32>, out: &mut [F]) -> F {
+    fn evaluate_terms(&self, coords: &[F], terms: ArrayView2<'_, u32>, acc: &mut Accumulator<'_>) {
         debug_assert_eq!(
             terms.nrows(),
             self.atom_i.len(),
             "the row set is the force field's; only the atoms a row names may be rebound"
         );
-        self.fold(coords, out, terms.nrows(), |t| {
+        let energy = self.fold(coords, acc.forces_without_virial(), terms.nrows(), |t| {
             (
                 terms[[t, 0]] as usize,
                 terms[[t, 1]] as usize,
                 terms[[t, 2]] as usize,
                 terms[[t, 3]] as usize,
             )
-        })
+        });
+        acc.add_energy(energy);
     }
 }
 
@@ -158,19 +149,19 @@ pub fn improper_mmff_constructor(
         .ok_or("mmff_oop: missing \"impropers\"")?;
     let ic = block
         .get("atomi")
-        .and_then(|c| c.as_uint())
+        .and_then(|c| c.get::<u64>())
         .ok_or("missing atomi")?;
     let jc = block
         .get("atomj")
-        .and_then(|c| c.as_uint())
+        .and_then(|c| c.get::<u64>())
         .ok_or("missing atomj")?;
     let kc = block
         .get("atomk")
-        .and_then(|c| c.as_uint())
+        .and_then(|c| c.get::<u64>())
         .ok_or("missing atomk")?;
     let lc = block
         .get("atoml")
-        .and_then(|c| c.as_uint())
+        .and_then(|c| c.get::<u64>())
         .ok_or("missing atoml")?;
     let koopc = param_reads::instance_col("mmff_oop", block, "koop")?;
 

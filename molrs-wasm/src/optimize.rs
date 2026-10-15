@@ -21,9 +21,7 @@ use molrs::core::Frame as RsFrame;
 use molrs::core::Neighbors as RsNeighbors;
 use molrs::ff::compile::PotentialCompiler;
 use molrs::ff::forcefield::ForceField as RsForceField;
-use molrs::ff::potential::{
-    Potential, Potentials as RsPotentials, intramolecular_pairs_from_neighbors,
-};
+use molrs::ff::potential::{Potential, Potentials as RsPotentials, intramolecular_pairs};
 use molrs::optimize::{Lbfgs as RsLbfgs, LbfgsSettings, Optimizer, set_free_mask};
 
 use crate::core::Neighbors;
@@ -40,7 +38,7 @@ use crate::ff::Potentials;
 /// [`Neighbors`], built at the force field's non-bonded cutoff (or
 /// `NeighborList.bruteForce` for a small molecule). Its pairs are installed
 /// as the frame's `pairs` with the force field's `special_bonds` applied, by
-/// `molrs::ff::potential::intramolecular_pairs_from_neighbors`.
+/// `molrs::ff::potential::intramolecular_pairs`.
 #[wasm_bindgen(js_name = Lbfgs)]
 pub struct Lbfgs {
     ff: RsForceField,
@@ -56,8 +54,14 @@ impl Lbfgs {
     /// Bind `pots` and the [`Neighbors`] table from
     /// [`NeighborList::neighbors`](crate::core::NeighborList::neighbors).
     ///
-    /// Knobs default to molrs `LbfgsSettings::DEFAULT`: `fmax` (0.05),
-    /// `maxStep` (0.2), `memory` (8). The step budget is `minimize`'s.
+    /// Knobs default to molrs `LbfgsSettings::DEFAULT` when omitted:
+    /// `fmax` (0.05), `maxStep` (0.2), `memory` (8). The step budget is
+    /// `minimize`'s.
+    ///
+    /// # Errors
+    ///
+    /// Throws for a given `fmax` or `maxStep` that is not a positive finite
+    /// number, or a `memory` of 0 — a value is refused, never adjusted.
     #[wasm_bindgen(constructor)]
     pub fn new(
         pots: &Potentials,
@@ -65,19 +69,31 @@ impl Lbfgs {
         fmax: Option<f64>,
         max_step: Option<f64>,
         memory: Option<usize>,
-    ) -> Lbfgs {
+    ) -> Result<Lbfgs, JsValue> {
         let defaults = LbfgsSettings::DEFAULT;
-        Lbfgs {
+        let positive = |name: &str, value: Option<f64>, default: f64| match value {
+            None => Ok(default),
+            Some(v) if v.is_finite() && v > 0.0 => Ok(v),
+            Some(v) => Err(JsValue::from_str(&format!(
+                "new Lbfgs: {name} must be a positive finite number, got {v}"
+            ))),
+        };
+        let memory = match memory {
+            None => defaults.memory,
+            Some(0) => return Err(JsValue::from_str("new Lbfgs: memory must be at least 1")),
+            Some(m) => m,
+        };
+        Ok(Lbfgs {
             ff: pots.ff.clone(),
             pots: Arc::clone(&pots.inner),
             neighbors: RsNeighbors::clone(&neighbors.inner),
             settings: LbfgsSettings {
-                fmax: fmax.unwrap_or(defaults.fmax).max(1e-8),
-                max_step: max_step.unwrap_or(defaults.max_step).max(1e-6),
-                memory: memory.unwrap_or(defaults.memory).max(1),
+                fmax: positive("fmax", fmax, defaults.fmax)?,
+                max_step: positive("maxStep", max_step, defaults.max_step)?,
+                memory,
                 max_steps: defaults.max_steps,
             },
-        }
+        })
     }
 
     /// Minimize `frame` coordinates **in place** for up to `maxSteps`
@@ -86,14 +102,29 @@ impl Lbfgs {
     ///
     /// Installs the constructor's neighbour pairs, recompiles potentials,
     /// then runs L-BFGS. Optional `fixed`: dense atom indices held fixed.
+    ///
+    /// # Errors
+    ///
+    /// Throws for a `maxSteps` of 0, a `fixed` index outside the frame's
+    /// atoms, or what pair installation, compilation or the minimizer
+    /// refuses.
     pub fn minimize(
         &mut self,
         frame: &Frame,
         max_steps: Option<usize>,
         fixed: Option<Uint32Array>,
     ) -> Result<OptimizationReport, JsValue> {
+        let max_steps = match max_steps {
+            None => self.settings.max_steps,
+            Some(0) => {
+                return Err(JsValue::from_str(
+                    "Lbfgs.minimize: maxSteps must be at least 1",
+                ));
+            }
+            Some(n) => n,
+        };
         let settings = LbfgsSettings {
-            max_steps: max_steps.unwrap_or(self.settings.max_steps).max(1),
+            max_steps,
             ..self.settings
         };
 
@@ -102,11 +133,8 @@ impl Lbfgs {
             .inner
             .with_mut(
                 |rs| -> Result<molrs::optimize::OptimizationReport, String> {
-                    let pairs = intramolecular_pairs_from_neighbors(
-                        rs,
-                        self.ff.special_bonds(),
-                        &self.neighbors,
-                    )?;
+                    let pairs =
+                        intramolecular_pairs(rs, self.ff.special_bonds(), Some(&self.neighbors))?;
                     rs.insert("pairs", pairs);
                     let compiled = PotentialCompiler::new(&self.ff)
                         .compile(rs)
@@ -173,16 +201,16 @@ impl OptimizationReport {
 }
 
 fn apply_fixed_mask(frame: &mut RsFrame, fixed: &Uint32Array) -> Result<(), String> {
-    let n = frame.get("atoms").and_then(|b| b.n_rows()).unwrap_or(0);
-    if n == 0 || fixed.length() == 0 {
+    if fixed.length() == 0 {
         return Ok(());
     }
+    let n = frame.get("atoms").and_then(|b| b.n_rows()).unwrap_or(0);
     let mut free = vec![true; n];
-    for i in 0..fixed.length() {
-        let idx = fixed.get_index(i) as usize;
-        if idx < n {
-            free[idx] = false;
-        }
+    for idx in fixed.to_vec() {
+        let slot = free.get_mut(idx as usize).ok_or_else(|| {
+            format!("Lbfgs.minimize: fixed atom {idx} is outside the frame's 0..{n} atoms")
+        })?;
+        *slot = false;
     }
     set_free_mask(frame, &free)
 }

@@ -9,7 +9,8 @@
 //!
 //! | Block key  | Column   | C type      | Description                     |
 //! |------------|----------|-------------|---------------------------------|
-//! | `"atoms"`  | `"element"` | string   | Element symbol ("C", "N", ...)  |
+//! | `"atoms"`  | `"atomic_number"` | `uint64_t` | Atomic number Z (0..=118, 0 = wildcard `*`) — the one species field molrs reads |
+//! | `"atoms"`  | `"element"` | string   | Optional raw element symbol ("C", "N", ...) as a symbol format spells it; nothing reads it — convert with `Element::fill_atomic_numbers` / `Element::fill_symbols` |
 //! | `"atoms"`  | `"x"`    | `F` (double) | Cartesian x coordinate in Angstrom |
 //! | `"atoms"`  | `"y"`    | `F` (double) | Cartesian y coordinate in Angstrom |
 //! | `"atoms"`  | `"z"`    | `F` (double) | Cartesian z coordinate in Angstrom |
@@ -164,7 +165,7 @@ pub unsafe extern "C" fn molrs_frame_drop(handle: MolrsFrameHandle) -> MolrsStat
     ffi_try!({
         let mut registry = lock_registry();
         let id = handle_to_frame_id(handle);
-        match registry.frames.frame_drop(id) {
+        match registry.frames.drop_frame(id) {
             Ok(()) => MolrsStatus::Ok,
             Err(e) => ffi_err_to_status(&e),
         }
@@ -227,8 +228,7 @@ pub unsafe extern "C" fn molrs_frame_clone(
 ///
 /// ```c
 /// MolrsStatus molrs_frame_set_block(MolrsFrameHandle frame,
-///                                    uint32_t key_id,
-///                                    size_t   nrows);
+///                                    uint32_t key_id);
 /// ```
 ///
 /// # Arguments
@@ -236,7 +236,6 @@ pub unsafe extern "C" fn molrs_frame_clone(
 /// * `frame` -- Target frame.
 /// * `key_id` -- Interned key (see [`molrs_intern_key`](crate::molrs_intern_key)).
 ///   Conventional keys: `"atoms"`, `"bonds"`, `"angles"`, `"dihedrals"`.
-/// * `_nrows` -- Reserved for future use; currently ignored.
 ///
 /// # Returns
 ///
@@ -251,7 +250,6 @@ pub unsafe extern "C" fn molrs_frame_clone(
 pub unsafe extern "C" fn molrs_frame_set_block(
     frame: MolrsFrameHandle,
     key_id: u32,
-    _nrows: usize,
 ) -> MolrsStatus {
     ffi_try!({
         let mut registry = lock_registry();
@@ -271,21 +269,21 @@ pub unsafe extern "C" fn molrs_frame_set_block(
     })
 }
 
-/// Remove a block from a frame by its interned key.
+/// Delete a block from a frame by its interned key.
 ///
 /// All [`MolrsBlockHandle`]s that reference this block become invalid.
 ///
 /// # C signature
 ///
 /// ```c
-/// MolrsStatus molrs_frame_remove_block(MolrsFrameHandle frame,
-///                                       uint32_t key_id);
+/// MolrsStatus molrs_frame_del_block(MolrsFrameHandle frame,
+///                                    uint32_t key_id);
 /// ```
 ///
 /// # Arguments
 ///
 /// * `frame` -- Target frame.
-/// * `key_id` -- Interned key of the block to remove.
+/// * `key_id` -- Interned key of the block to delete.
 ///
 /// # Returns
 ///
@@ -298,7 +296,7 @@ pub unsafe extern "C" fn molrs_frame_set_block(
 ///
 /// `frame` must be a live frame handle.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn molrs_frame_remove_block(
+pub unsafe extern "C" fn molrs_frame_del_block(
     frame: MolrsFrameHandle,
     key_id: u32,
 ) -> MolrsStatus {
@@ -312,7 +310,7 @@ pub unsafe extern "C" fn molrs_frame_remove_block(
                 return MolrsStatus::KeyNotFound;
             }
         };
-        match registry.frames.remove_block(frame_id, &key_str) {
+        match registry.frames.del_block(frame_id, &key_str) {
             Ok(()) => MolrsStatus::Ok,
             Err(e) => ffi_err_to_status(&e),
         }
@@ -433,12 +431,12 @@ pub unsafe extern "C" fn molrs_frame_set_box(
     })
 }
 
-/// Remove the Box from a frame, leaving it with no periodic cell.
+/// Delete the Box from a frame, leaving it with no periodic cell.
 ///
 /// # C signature
 ///
 /// ```c
-/// MolrsStatus molrs_frame_clear_box(MolrsFrameHandle frame);
+/// MolrsStatus molrs_frame_del_box(MolrsFrameHandle frame);
 /// ```
 ///
 /// # Arguments
@@ -454,7 +452,7 @@ pub unsafe extern "C" fn molrs_frame_set_box(
 ///
 /// `frame` must be a live frame handle.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn molrs_frame_clear_box(frame: MolrsFrameHandle) -> MolrsStatus {
+pub unsafe extern "C" fn molrs_frame_del_box(frame: MolrsFrameHandle) -> MolrsStatus {
     ffi_try!({
         let mut registry = lock_registry();
         let frame_id = handle_to_frame_id(frame);
@@ -503,7 +501,7 @@ pub unsafe extern "C" fn molrs_frame_get_box(
         null_check!(out);
         let mut registry = lock_registry();
         let frame_id = handle_to_frame_id(frame);
-        let sb_clone = match registry.frames.with_frame_box(frame_id, |opt| opt.cloned()) {
+        let sb_clone = match registry.frames.with_frame(frame_id, |f| f.simbox.clone()) {
             Ok(Some(sb)) => sb,
             Ok(None) => {
                 error::set_last_error("frame has no simbox");

@@ -1,100 +1,57 @@
 //! Pair potential kernels.
 
 use molrs::core::schema::block_names::ATOMS;
-use ndarray::{Array2, ArrayView2};
 
+use crate::ff::potential::Accumulator;
 use molrs::core::Frame;
-use molrs::core::Neighbors;
+use molrs::core::Virial;
 use molrs::op::F;
 
-/// Pair kernel: already-reduced geometry in, energy / force on `j` out.
+/// Pair kernel: already-reduced geometry in, energy and the force on `j` out.
+///
+/// One primitive, [`pair_energy_force`](PairPotential::pair_energy_force):
+/// the energy and the force of a pair come out of one expression, so asking
+/// for either alone is asking for both and dropping one.
 pub trait PairPotential: Send + Sync {
-    fn pair_energy(&self, r2: F, disp: [F; 3]) -> Option<F>;
-    fn pair_force(&self, r2: F, disp: [F; 3]) -> Option<[F; 3]>;
-    fn pair_energy_force(&self, r2: F, disp: [F; 3]) -> Option<(F, [F; 3])> {
-        match (self.pair_energy(r2, disp), self.pair_force(r2, disp)) {
-            (Some(e), Some(f)) => Some((e, f)),
-            _ => None,
-        }
-    }
-
-    fn energy_forces_pairs(
-        &self,
-        n_atoms: usize,
-        i: &[u32],
-        j: &[u32],
-        disp: ArrayView2<'_, F>,
-        dist_sq: Option<&[F]>,
-    ) -> Result<(F, Array2<F>), String> {
-        let n_pairs = i.len();
-        if j.len() != n_pairs || disp.nrows() != n_pairs || disp.ncols() != 3 {
-            return Err(format!(
-                "pair columns must share n_pairs={n_pairs}: j={}, disp={:?}",
-                j.len(),
-                disp.shape()
-            ));
-        }
-        if let Some(d2) = dist_sq
-            && d2.len() != n_pairs
-        {
-            return Err(format!(
-                "dist_sq length {} disagrees with n_pairs={n_pairs}",
-                d2.len()
-            ));
-        }
-        let mut forces = Array2::<F>::zeros((n_atoms, 3));
-        let mut energy = 0.0;
-        for p in 0..n_pairs {
-            let ia = i[p] as usize;
-            let ja = j[p] as usize;
-            if ia >= n_atoms || ja >= n_atoms {
-                return Err(format!("pair ({ia}, {ja}) is outside n_atoms={n_atoms}"));
-            }
-            let d = [disp[[p, 0]], disp[[p, 1]], disp[[p, 2]]];
-            let r2 = match dist_sq {
-                Some(col) => col[p],
-                None => d[0] * d[0] + d[1] * d[1] + d[2] * d[2],
-            };
-            let Some((e, f)) = self.pair_energy_force(r2, d) else {
-                continue;
-            };
-            energy += e;
-            forces[[ja, 0]] += f[0];
-            forces[[ja, 1]] += f[1];
-            forces[[ja, 2]] += f[2];
-            forces[[ia, 0]] -= f[0];
-            forces[[ia, 1]] -= f[1];
-            forces[[ia, 2]] -= f[2];
-        }
-        Ok((energy, forces))
-    }
-
-    fn energy_forces_table(
-        &self,
-        n_atoms: usize,
-        neighbors: &Neighbors,
-    ) -> Result<(F, Array2<F>), String> {
-        let disp = neighbors
-            .disp()
-            .ok_or_else(|| "energy_forces_table needs the Neighbors disp column".to_owned())?;
-        self.energy_forces_pairs(
-            n_atoms,
-            neighbors.query_point_indices(),
-            neighbors.point_indices(),
-            disp,
-            neighbors.dist_sq(),
-        )
-    }
+    /// Energy and force on `j` of the pair at squared distance `r2` with
+    /// displacement `disp` (`x_j - x_i`), or `None` when it is outside the
+    /// cutoff or degenerate.
+    fn pair_energy_force(&self, r2: F, disp: [F; 3]) -> Option<(F, [F; 3])>;
 }
 
-/// Drop the virial from a fold's result.
+/// Run a per-pair fold into `acc`, tallying the virial only when `acc` asks
+/// for one.
 ///
-/// The accumulation loop always has both terms of a pair in hand, so tallying
-/// `Σ f ⊗ r` there is free; the entry points that do not report one say so by
-/// discarding it here rather than by keeping a second loop that does not.
-#[inline]
-pub(crate) fn energy_forces((e, f, _): (F, Vec<F>, molrs::core::Virial)) -> (F, Vec<F>) {
-    (e, f)
+/// A kernel hands its row fold twice, monomorphised on whether it tallies:
+/// `plain` with the tally compiled out, `tallied` with it in. Which one runs
+/// is decided here, once per call, so the per-pair loop never branches on a
+/// channel. The rows are grouped by [`fold_chunks`] either way.
+pub(crate) fn fold_pairs<P, T>(acc: &mut Accumulator<'_>, n_pairs: usize, plain: P, tallied: T)
+where
+    P: Fn(&mut [F], std::ops::Range<usize>) -> (F, Virial) + Sync,
+    T: Fn(&mut [F], std::ops::Range<usize>) -> (F, Virial) + Sync,
+{
+    let (out, virial) = acc.forces_with_virial();
+    let energy = match virial {
+        Some(total) => {
+            let (e, w) = fold_chunks(out, n_pairs, tallied);
+            *total += w;
+            e
+        }
+        None => fold_chunks(out, n_pairs, plain).0,
+    };
+    acc.add_energy(energy);
+}
+
+/// [`fold_pairs`] for a fold that cannot tally a virial: a compiled pair
+/// list, an intramolecular sum with no periodicity, whose virial from raw
+/// differences would be a number about nothing. A requested virial is lost.
+pub(crate) fn fold_pairs_untallied<P>(acc: &mut Accumulator<'_>, n_pairs: usize, plain: P)
+where
+    P: Fn(&mut [F], std::ops::Range<usize>) -> (F, Virial) + Sync,
+{
+    let (energy, _) = fold_chunks(acc.forces_without_virial(), n_pairs, plain);
+    acc.add_energy(energy);
 }
 
 /// Map each atom to a dense type index, and hand back the labels in that order.
@@ -109,7 +66,7 @@ pub(crate) fn atom_type_index(frame: &Frame) -> Result<(Vec<u32>, Vec<String>), 
         .ok_or_else(|| "typed pair kernel: frame missing \"atoms\" block".to_string())?;
     let types = atoms
         .get("type")
-        .and_then(|c| c.as_string())
+        .and_then(|c| c.get::<String>())
         .ok_or_else(|| "typed pair kernel: atoms block missing \"type\" column".to_string())?;
     let mut labels: Vec<String> = Vec::new();
     let mut index = std::collections::HashMap::new();

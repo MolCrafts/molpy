@@ -29,6 +29,9 @@ dev = [
     "pytest",
     "pytest-cov",
     "numpy>=2.0",
+    # The `types` gate: mypy.stubtest holds python/molrs/_native.pyi to the
+    # compiled extension, and mypy --strict holds the stub to itself.
+    "mypy>=1.13",
 ]
 # Everything `zensical build` needs for the docs site: zensical itself (pulls
 # its own deps) plus the mkdocstrings python handler used by zensical.toml's
@@ -69,3 +72,20 @@ testpaths = ["tests"]
 # read passes on Linux and fails only on Windows. Ruff's PLW1514 catches it
 # statically only where it can tell the receiver is a Path.
 filterwarnings = ["error::EncodingWarning"]
+
+# The `types` gate (scripts/check.sh types). The stub python/molrs/_native.pyi
+# is the Python type contract and is checked strictly, from the source tree
+# (`mypy_path`), against the installed extension (stubtest). The package's
+# pure-Python modules are followed for their names only: the gate judges the
+# stub, not them.
+[tool.mypy]
+strict = true
+mypy_path = "python"
+
+[[tool.mypy.overrides]]
+module = ["molrs", "molrs.*"]
+follow_imports = "silent"
+
+[[tool.mypy.overrides]]
+module = ["molrs._native"]
+follow_imports = "normal"

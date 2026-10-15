@@ -1,19 +1,19 @@
 //! SMILES, the Simplified Molecular Input Line Entry System: a molecule as one
 //! line of text (`CCO` is ethanol, `c1ccccc1` benzene).
 //!
-//! The doors are functions of [`crate::io`]:
-//! [`read_smiles_str`](crate::io::read_smiles_str) reads one molecule (connectivity
-//! only, a `.`-separated set refused), and
-//! [`write_smiles_str`](crate::io::write_smiles_str) writes one, as
-//! [`SmilesEmitOptions`] say. This module holds the notation's classes:
+//! This module holds the notation's classes:
 //!
 //! - [`SmilesIr`], the parsed text — the syntax tree ([`Chain`],
-//!   [`AtomNode`], [`AtomSpec`], …): [`SmilesIr::parse`],
-//!   [`SmilesIr::from_fragment`] (a fragment body with `CGsmiles` /
-//!   `BigSMILES` bonding descriptors `[$]`, `[<]`, `[>]`, `[!]`),
-//!   [`SmilesIr::validate`], [`SmilesIr::to_atomistic`],
-//!   [`SmilesIr::to_atomistic_with_descriptors`], [`SmilesIr::to_template`]
-//!   and [`SmilesIr::from_atomistic`];
+//!   [`AtomNode`], [`AtomSpec`], …): [`SmilesIr::parse`] reads SMILES text,
+//!   [`SmilesIr::to_atomistic`] builds the molecule (connectivity only:
+//!   implicit hydrogens are not added, no coordinates are generated),
+//!   [`SmilesIr::from_atomistic`] goes the other way as
+//!   [`SmilesEmitOptions`] say, and its `Display` writes the text;
+//!   [`SmilesIr::validate`] checks it;
+//! - [`FragmentIr`], a fragment body with `CGsmiles` / `BigSMILES` bonding
+//!   descriptors `[$]`, `[<]`, `[>]`, `[!]` ([`SmilesIr::from_fragment`]
+//!   parses one), whose [`to_atomistic`](FragmentIr::to_atomistic) returns
+//!   the descriptor map beside the graph;
 //! - [`SmilesError`], every refusal of the SMILES family of notations
 //!   (SMILES, SMARTS, CGsmiles: its [`Notation`] says which);
 //! - [`SmilesReader`], a `.smi` file read one molecule per line.
@@ -26,29 +26,23 @@
 //!
 //! ```text
 //! SMILES text → SmilesIr::parse() → SmilesIr → SmilesIr::to_atomistic() → Atomistic
-//! fragment body → SmilesIr::from_fragment() → SmilesIr
-//!     → SmilesIr::to_atomistic_with_descriptors() → (Atomistic, descriptor map)
-//!     → SmilesIr::to_template() → Atomistic (ported)
+//! Atomistic → SmilesIr::from_atomistic() → SmilesIr → to_string() → SMILES text
+//! fragment body → SmilesIr::from_fragment() → FragmentIr
+//!     → FragmentIr::to_atomistic() → (Atomistic, descriptor map)
 //! ```
 //!
 //! # Examples
 //!
 //! ```
-//! use molrs::io::smiles::SmilesIr;
+//! use molrs::io::smiles::{SmilesEmitOptions, SmilesIr};
 //!
 //! let ir = SmilesIr::parse("CCO").unwrap();
 //! let mol = ir.to_atomistic().unwrap();
 //! assert_eq!(mol.n_atoms(), 3);
-//! ```
-//!
-//! ```
-//! use molrs::io::smiles::{DescriptorKind, SmilesIr};
-//!
-//! let ir = SmilesIr::from_fragment("[$]COC[$]").unwrap();
-//! let (mol, ports) = ir.to_atomistic_with_descriptors().unwrap();
-//! assert_eq!(mol.n_atoms(), 3);
-//! assert_eq!(ports.len(), 2);
-//! assert!(ports.iter().all(|(_, d)| d.kind == DescriptorKind::Symmetric));
+//! let text = SmilesIr::from_atomistic(&mol, &SmilesEmitOptions::default())
+//!     .unwrap()
+//!     .to_string();
+//! assert_eq!(SmilesIr::parse(&text).unwrap().to_atomistic().unwrap().n_atoms(), 3);
 //! ```
 
 pub(crate) mod element_check;
@@ -63,7 +57,35 @@ pub use crate::line_notation::ast::{
 };
 pub use crate::line_notation::error::{Notation, SmilesError, SmilesErrorKind};
 pub use emit_options::{AromaticEmit, HydrogenEmit, MultiComponentEmit, SmilesEmitOptions};
+pub use ir_to_atomistic::FragmentIr;
 pub use line_reader::SmilesReader;
+
+/// The IR written as text: SMILES, or SMARTS where it holds query atoms or
+/// bond operators (a SMILES IR writes the same either way).
+///
+/// [`SmilesIr::from_atomistic`] then `to_string()` is how a molecule is
+/// written as SMILES.
+///
+/// # Errors
+///
+/// A formatting error — `to_string` panics — for an IR no parser or
+/// [`SmilesIr::from_atomistic`] produces: one with no components, or one
+/// carrying bonding descriptors (a fragment body, [`FragmentIr`]'s).
+///
+/// ```
+/// use molrs::io::smiles::{SmilesEmitOptions, SmilesIr};
+///
+/// let mol = SmilesIr::parse("OCC")?.to_atomistic()?;
+/// let text = SmilesIr::from_atomistic(&mol, &SmilesEmitOptions::default())?.to_string();
+/// assert_eq!(SmilesIr::parse(&text)?.to_atomistic()?.n_atoms(), 3);
+/// # Ok::<(), molrs::io::smiles::SmilesError>(())
+/// ```
+impl std::fmt::Display for SmilesIr {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let text = crate::line_notation::writer::smarts_text(self).map_err(|_| std::fmt::Error)?;
+        f.write_str(&text)
+    }
+}
 
 impl SmilesIr {
     /// Parse SMILES text into its IR.
@@ -83,7 +105,7 @@ impl SmilesIr {
     /// # Errors
     ///
     /// A [`SmilesError`] for text that is not fragment notation.
-    pub fn from_fragment(body: &str) -> Result<SmilesIr, SmilesError> {
-        crate::line_notation::parser::parse_fragment_smiles(body)
+    pub fn from_fragment(body: &str) -> Result<FragmentIr, SmilesError> {
+        crate::line_notation::parser::parse_fragment_smiles(body).map(FragmentIr::new)
     }
 }

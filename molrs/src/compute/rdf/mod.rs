@@ -6,16 +6,15 @@ mod result;
 pub use accumulator::RdfAccumulator;
 pub use result::RdfResult;
 
-use molrs::core::PairSource;
 use molrs::op::F;
 
-use crate::compute::{Accumulate, Axis, Compute, ComputeError, Stream};
+use crate::compute::{Axis, ComputeError, Stream};
 
 /// Radial distribution function g(r).
 ///
 /// Configuration: the radial bins (`[r_min, r_max)` in Å, half-open) and the
 /// dimensionality of the shell-volume normalization. Data: one
-/// [`PairSource`] per frame — a materialized
+/// [`PairSource`](molrs::core::PairSource) per frame — a materialized
 /// [`Neighbors`](molrs::core::Neighbors) table (self- or cross-query) or a
 /// built [`NeighborList`](molrs::core::NeighborList), which streams its pairs
 /// out of the cell list without materializing them (the bounded-memory path
@@ -28,8 +27,10 @@ use crate::compute::{Accumulate, Axis, Compute, ComputeError, Stream};
 /// [`QueryMode`](molrs::core::QueryMode); see [`RdfResult`]. Every frame must
 /// have the same pairing.
 ///
-/// `Rdf` is a [`Stream`]: `compute` is its [`RdfAccumulator`] folded over the
-/// frames.
+/// `Rdf` is a [`Stream`] only: [`accumulator`](Stream::accumulator) hands
+/// out an [`RdfAccumulator`]; push one pair source per frame and
+/// [`finish`](crate::compute::Accumulate::finish) normalizes the running histogram. State is
+/// `O(n_bins)` whatever the trajectory length.
 ///
 /// # References
 ///
@@ -117,16 +118,6 @@ impl Rdf {
     }
 }
 
-impl Compute for Rdf {
-    /// One pair source per frame.
-    type Input<'a> = &'a [&'a (dyn PairSource + Sync)];
-    type Output = RdfResult;
-
-    fn compute(&self, frames: Self::Input<'_>) -> Result<RdfResult, ComputeError> {
-        self.accumulator().fold(frames.iter().copied())
-    }
-}
-
 impl Stream for Rdf {
     type Accumulator = RdfAccumulator;
 
@@ -151,12 +142,21 @@ crate::compute::spec::compute_spec! {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::compute::Accumulate;
     use crate::compute::fixtures::{random_points, self_neighbors};
-    use molrs::core::{NeighborColumns, NeighborList, NeighborPair, Neighbors, QueryMode, SimBox};
-    use ndarray::{Array2, array};
+    use crate::core::Cell;
+    use molrs::core::{
+        NeighborColumns, NeighborList, NeighborPair, Neighbors, PairSource, QueryMode, SimBox,
+    };
+    use ndarray::Array2;
 
     fn cube(box_len: F) -> SimBox {
-        SimBox::cube(box_len, array![0.0 as F, 0.0, 0.0], [true, true, true]).unwrap()
+        SimBox::new(
+            Cell::Lengths([box_len; 3]),
+            [0.0 as F, 0.0, 0.0],
+            [true, true, true],
+        )
+        .unwrap()
     }
 
     /// One random frame's self-query table.
@@ -168,12 +168,17 @@ mod tests {
         )
     }
 
+    /// Push every source into a fresh accumulator, then finish.
+    fn fold(rdf: &Rdf, sources: &[&(dyn PairSource + Sync)]) -> Result<RdfResult, ComputeError> {
+        rdf.accumulator().fold(sources.iter().copied())
+    }
+
     fn rdf_of(rdf: &Rdf, tables: &[Neighbors]) -> Result<RdfResult, ComputeError> {
         let sources: Vec<&(dyn PairSource + Sync)> = tables
             .iter()
             .map(|t| t as &(dyn PairSource + Sync))
             .collect();
-        rdf.compute(&sources)
+        fold(rdf, &sources)
     }
 
     #[test]
@@ -200,7 +205,7 @@ mod tests {
 
     #[test]
     fn multi_frame_reduces_variance() {
-        // Batch compute over 10 frames; variance of g(r) - 1 should be smaller
+        // Fold 10 frames; variance of g(r) - 1 should be smaller
         // than any single-frame variance at the same density.
         let n = 200;
         let box_len: F = 10.0;
@@ -236,10 +241,11 @@ mod tests {
         );
     }
 
-    /// ac-007: frame-by-frame push + finish == one-shot compute, bit for bit,
-    /// in every bin, including under per-frame box changes (NPT-style).
+    /// ac-007: frame-by-frame push + finish == one fold over the frames, bit
+    /// for bit, in every bin, including under per-frame box changes
+    /// (NPT-style).
     #[test]
-    fn streaming_accumulator_matches_batch_bitwise() {
+    fn push_then_finish_matches_a_fold_bitwise() {
         let n = 200;
         let r_max: F = 4.0;
         let n_bins = 20;
@@ -273,8 +279,8 @@ mod tests {
         let table = nl.neighbors(NeighborColumns::DIST_SQ);
 
         let rdf = Rdf::new(16, r_max, 0.0).unwrap();
-        let streamed = rdf.compute(&[&nl]).unwrap();
-        let materialized = rdf.compute(&[&table]).unwrap();
+        let streamed = fold(&rdf, &[&nl]).unwrap();
+        let materialized = fold(&rdf, &[&table]).unwrap();
 
         assert_eq!(streamed.n_r, materialized.n_r);
         assert_eq!(streamed.rdf, materialized.rdf);
@@ -286,15 +292,6 @@ mod tests {
         let rdf = Rdf::new(10, 4.0, 0.0).unwrap();
         assert!(matches!(
             rdf.accumulator().finish().unwrap_err(),
-            ComputeError::EmptyInput
-        ));
-    }
-
-    #[test]
-    fn empty_frames_is_error() {
-        let rdf = Rdf::new(10, 4.0, 0.0).unwrap();
-        assert!(matches!(
-            rdf.compute(&[]).unwrap_err(),
             ComputeError::EmptyInput
         ));
     }
@@ -315,17 +312,17 @@ mod tests {
         );
         let rdf = Rdf::new(10, 4.0, 0.0).unwrap();
         assert!(matches!(
-            rdf.compute(&[&table]).unwrap_err(),
+            fold(&rdf, &[&table]).unwrap_err(),
             ComputeError::BadShape { .. }
         ));
-        assert!(rdf.compute(&[&table.with_simbox(cube(10.0))]).is_ok());
+        assert!(fold(&rdf, &[&table.with_simbox(cube(10.0))]).is_ok());
     }
 
     #[test]
     fn table_without_distances_is_error() {
         let table = random_table(50, 10.0, 3, 4.0).repack(NeighborColumns::INDICES_ONLY);
         let rdf = Rdf::new(10, 4.0, 0.0).unwrap();
-        let err = rdf.compute(&[&table]).unwrap_err();
+        let err = fold(&rdf, &[&table]).unwrap_err();
         let ComputeError::BadShape { expected, .. } = err else {
             panic!("expected BadShape, got {err:?}");
         };
@@ -385,7 +382,7 @@ mod tests {
         .with_simbox(cube(10.0));
         let rdf = Rdf::new(10, 4.0, 0.0).unwrap();
         assert!(matches!(
-            rdf.compute(&[&self_table, &cross]).unwrap_err(),
+            fold(&rdf, &[&self_table, &cross]).unwrap_err(),
             ComputeError::BadShape { .. }
         ));
     }
@@ -497,8 +494,8 @@ mod tests {
         .with_simbox(cube(10.0));
 
         let rdf = Rdf::new(4, 4.0, 0.0).unwrap();
-        let self_result = rdf.compute(&[&self_list]).unwrap();
-        let cross_result = rdf.compute(&[&cross_list]).unwrap();
+        let self_result = fold(&rdf, &[&self_list]).unwrap();
+        let cross_result = fold(&rdf, &[&cross_list]).unwrap();
 
         // Raw counts: the half list holds one pair, the directed list two.
         assert_eq!(self_result.n_r.to_vec(), vec![0.0, 1.0, 0.0, 0.0]);
@@ -588,9 +585,9 @@ mod tests {
         for i in 0..n {
             points[[i, 1]] = rng.random::<F>() * ly;
         }
-        let simbox = SimBox::ortho(
-            array![lx, ly, lz],
-            array![0.0 as F, 0.0, 0.0],
+        let simbox = SimBox::new(
+            Cell::Lengths([lx, ly, lz]),
+            [0.0 as F, 0.0, 0.0],
             [true, true, false],
         )
         .unwrap();

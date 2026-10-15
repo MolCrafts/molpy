@@ -291,7 +291,10 @@ impl BlockTypeLabels {
         }
 
         // String labels take precedence over `type_id`.
-        if let Some(col) = frame.column(block, keys::TYPE).and_then(|c| c.as_string()) {
+        if let Some(col) = frame
+            .column(block, keys::TYPE)
+            .and_then(|c| c.get::<String>())
+        {
             let types: Vec<String> = (0..n).map(|i| col[[i]].clone()).collect();
             if types.iter().any(|t| t.trim().is_empty()) {
                 return Err(format!(
@@ -346,19 +349,24 @@ impl BlockTypeLabels {
         }
 
         // Numeric ids (unsigned or signed; `type_id`, else a numeric `type`).
-        let type_ids: Option<Vec<Idx>> =
-            if let Some(col) = frame.column(block, keys::TYPE_ID).and_then(|c| c.as_uint()) {
-                Some((0..n).map(|i| col[[i]]).collect())
-            } else if let Some(col) = frame.column(block, keys::TYPE_ID).and_then(|c| c.as_int()) {
-                Some((0..n).map(|i| col[[i]] as Idx).collect())
-            } else if let Some(col) = frame.column(block, keys::TYPE).and_then(|c| c.as_uint()) {
-                Some((0..n).map(|i| col[[i]]).collect())
-            } else {
-                frame
-                    .column(block, keys::TYPE)
-                    .and_then(|c| c.as_int())
-                    .map(|col| (0..n).map(|i| col[[i]] as Idx).collect())
-            };
+        let type_ids: Option<Vec<Idx>> = if let Some(col) = frame
+            .column(block, keys::TYPE_ID)
+            .and_then(|c| c.get::<u64>())
+        {
+            Some((0..n).map(|i| col[[i]]).collect())
+        } else if let Some(col) = frame
+            .column(block, keys::TYPE_ID)
+            .and_then(|c| c.get::<i32>())
+        {
+            Some((0..n).map(|i| col[[i]] as Idx).collect())
+        } else if let Some(col) = frame.column(block, keys::TYPE).and_then(|c| c.get::<u64>()) {
+            Some((0..n).map(|i| col[[i]]).collect())
+        } else {
+            frame
+                .column(block, keys::TYPE)
+                .and_then(|c| c.get::<i32>())
+                .map(|col| (0..n).map(|i| col[[i]] as Idx).collect())
+        };
         let Some(type_ids) = type_ids else {
             return Err(format!(
                 "frame[{block:?}] has {n} rows but neither 'type' nor 'type_id'; \
@@ -599,6 +607,7 @@ mod tests {
                     types.iter().map(|t| t.to_string()).collect::<Vec<String>>(),
                 )
                 .unwrap(),
+                None,
             )
             .unwrap();
         block
@@ -611,6 +620,7 @@ mod tests {
             .insert(
                 keys::TYPE_ID,
                 ArrayD::from_shape_vec(IxDyn(&[ids.len()]), ids.to_vec()).unwrap(),
+                None,
             )
             .unwrap();
         block
@@ -981,6 +991,7 @@ mod tests {
             .insert(
                 keys::X,
                 ArrayD::from_shape_vec(IxDyn(&[2]), vec![0.0_f64, 1.0]).unwrap(),
+                None,
             )
             .unwrap();
         frame.insert("atoms", atoms);

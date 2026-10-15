@@ -123,4 +123,16 @@ impl PyBondNumber {
     fn from_code(code: u32) -> Self {
         BondNumber::from_code(code).into()
     }
+
+    /// The bond class this number implies — the inverse of
+    /// :meth:`BondOrder.implied_number`. ``Quadruple`` is classed ``Double``;
+    /// ``Unknown`` implies ``Unknown``.
+    fn implied_type(&self) -> PyBondOrder {
+        BondNumber::from_code(*self as u32).implied_type().into()
+    }
+
+    /// The number as a count, for valence sums; ``Unknown`` counts as 0.
+    fn count(&self) -> u32 {
+        BondNumber::from_code(*self as u32).count()
+    }
 }

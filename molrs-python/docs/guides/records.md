@@ -10,17 +10,23 @@ stored as Zarr V3, and a closed directory can be packed into one
 molrs writes and reads records by the [molrec](https://docs.molcrafts.org/molrec/)
 contract. The [layout chapter](https://docs.molcrafts.org/molrec/layout/)
 names every group, array and attribute; this page shows how molrs maps onto
-it. The examples are Python, but the Rust functions in `molrs::io::mrec` are
-the same doors with the same rules, and the WASM package reads the same files.
+it. The examples are Python, but the Rust `molrs::io::write_mrec` and
+`molrs::io::mrec` classes are the same doors with the same rules, and the WASM
+package reads the same files.
 
 | What you have | Write | Read |
 | --- | --- | --- |
-| A `Frame` (snapshot) | `molrs.io.write_mrec_frame` | `molrs.io.read_mrec_frame` |
-| A `Frame` (topology) | `molrs.io.write_mrec_system` | `molrs.io.read_mrec_system` |
-| A `Trajectory` in memory | `molrs.io.write_mrec_trajectory` | `molrs.io.read_mrec_trajectory` |
+| A `Frame` (snapshot) | `molrs.io.write_mrec(sink, frame=…)` | `molrs.io.mrec.MrecFile(source).frame()` |
+| A `Frame` (topology) | `molrs.io.write_mrec(sink, system=…)` | `MrecFile(source).system()` |
+| A `Trajectory` in memory | `molrs.io.write_mrec(sink, trajectory=…)` | `molrs.io.mrec.MrecReader(source).to_trajectory()` |
 | A run too large for memory | `molrs.io.mrec.MrecWriter` | `molrs.io.mrec.MrecReader` |
-| A `ForceField` | `molrs.io.write_mrec_forcefield`, or `forcefield=` on `molrs.io.write_mrec_frame` | `molrs.io.read_mrec_forcefield` |
-| Any record | — | `molrs.io.mrec.section_names`, `molrs.io.read_mrec_meta` |
+| A `ForceField` | `molrs.io.write_mrec(sink, forcefield=…)` | `MrecFile(source).forcefield()` |
+| Any record | `meta=` on `molrs.io.write_mrec` | `MrecFile(source).sections()`, `MrecFile(source).meta()` |
+
+`write_mrec` takes every section as a keyword, so one call writes a snapshot
+with its topology and force field. A sink is a path (`pathlib.Path`, written
+as a directory store) or a `bytearray` (which receives the packed record); a
+source is a path or the `bytes` of a packed record.
 
 ## Write and read a frame
 
@@ -29,6 +35,8 @@ adopt their schema dtype on insert, so `res_id` below is stored as `uint64`
 however the array was spelled.
 
 ```python
+from pathlib import Path
+
 import numpy as np
 import molrs
 
@@ -47,7 +55,7 @@ bonds = molrs.core.Block({
 })
 frame = molrs.core.Frame(
     {"atoms": atoms, "bonds": bonds},
-    box=molrs.core.Box.cube(20.0),
+    box=molrs.core.Box(molrs.core.Cell.lengths([20.0, 20.0, 20.0])),
 )
 frame.meta["title"] = "water"
 frame.meta["temperature"] = 300.0
@@ -55,17 +63,18 @@ frame.meta["temperature"] = 300.0
 print(frame["atoms"].dtype("res_id"))
 ```
 
-`molrs.io.write_mrec_frame` writes the `frame` section and a `meta` document. The
+`molrs.io.write_mrec(path, frame=frame)` writes the `frame` section and a `meta` document. The
 `meta` document is what you supplied; a record carries no version key, and a
 reader keeps any `meta` key it does not recognise.
 
 ```python
-molrs.io.write_mrec_frame("water.mrec", frame, meta={"producer": "quickstart"})
+molrs.io.write_mrec(Path("water.mrec"), frame=frame, meta={"producer": "quickstart"})
 
-print(sorted(molrs.io.mrec.section_names("water.mrec")))
-print(molrs.io.read_mrec_meta("water.mrec"))
+record = molrs.io.mrec.MrecFile(Path("water.mrec"))
+print(record.sections())
+print(record.meta())
 
-back = molrs.io.read_mrec_frame("water.mrec")
+back = record.frame()
 print(back["atoms"]["chain"], back["atoms"]["res_id"])
 print(back.box.lengths)
 ```
@@ -77,18 +86,19 @@ included. A JSON object comes back as a frozen `MetaDocument`.
 ```python
 frame.meta["n_steps"] = molrs.core.MetaValue("i32", 5000)
 frame.meta["run"] = {"ensemble": "NVT", "thermostat": "langevin"}
-molrs.io.write_mrec_frame("water.mrec", frame)
+molrs.io.write_mrec(Path("water.mrec"), frame=frame)
 
-back = molrs.io.read_mrec_frame("water.mrec")
+back = molrs.io.mrec.MrecFile(Path("water.mrec")).frame()
 print(back.meta.dtype("n_steps"), back.meta["n_steps"])
 print(back.meta["run"]["ensemble"])
 ```
 
 A topology goes in the `system` section, next to or instead of a snapshot:
-`molrs.io.write_mrec_frame(path, frame, system=topology)` writes both, and
-`molrs.io.write_mrec_system` / `molrs.io.read_mrec_system` handle a topology on its own. Each
-read decodes `meta` and its own section only, so a damaged trajectory in the
-same store cannot fail `molrs.io.read_mrec_frame`.
+`molrs.io.write_mrec(path, frame=frame, system=topology)` writes both, and
+`write_mrec(path, system=topology)` / `MrecFile(path).system()` handle a
+topology on its own. Each `MrecFile` read decodes its own section only, so a
+damaged trajectory in the same store cannot fail `MrecFile(path).frame()`; a
+section the record does not hold reads as `None`.
 
 ## Topology conventions
 
@@ -111,9 +121,9 @@ contacts = molrs.core.Block({
 })
 contacts.set_target("site", "atoms")
 frame["contacts"] = contacts
-molrs.io.write_mrec_frame("water.mrec", frame)
+molrs.io.write_mrec(Path("water.mrec"), frame=frame)
 
-print(molrs.io.read_mrec_frame("water.mrec")["contacts"].targets())
+print(molrs.io.mrec.MrecFile(Path("water.mrec")).frame()["contacts"].targets())
 ```
 
 ## Declared precision
@@ -127,9 +137,9 @@ plus zstd. The declaration is stored with the column and reads back.
 ```python
 for key in ("x", "y", "z"):
     frame["atoms"].set_precision(key, 1e-3)
-molrs.io.write_mrec_frame("water.mrec", frame)
+molrs.io.write_mrec(Path("water.mrec"), frame=frame)
 
-back = molrs.io.read_mrec_frame("water.mrec")
+back = molrs.io.mrec.MrecFile(Path("water.mrec")).frame()
 print(back["atoms"].precision("x"))
 print(np.abs(back["atoms"]["x"] - frame["atoms"]["x"]).max() <= 0.5e-3)
 ```
@@ -143,7 +153,8 @@ included).
 
 ## Trajectories
 
-A `Trajectory` that fits in memory goes through one call each way:
+A `Trajectory` that fits in memory is written by one call and read back
+through `MrecReader.to_trajectory()`:
 
 ```python
 frames = []
@@ -157,9 +168,9 @@ traj = molrs.core.Trajectory(
     step=np.arange(4, dtype=np.int64) * 100,
     time=np.arange(4, dtype=np.float64) * 0.2,
 )
-molrs.io.write_mrec_trajectory("run.mrec", traj, meta={"producer": "quickstart"})
+molrs.io.write_mrec(Path("run.mrec"), trajectory=traj, meta={"producer": "quickstart"})
 
-loaded = molrs.io.read_mrec_trajectory("run.mrec")
+loaded = molrs.io.mrec.MrecReader(Path("run.mrec")).to_trajectory()
 print(len(loaded), loaded.step)
 ```
 
@@ -170,7 +181,8 @@ frame's is not stored again.
 
 A long run is written frame by frame. Pin a `SequenceSchema` first — the
 blocks, columns and dtypes every frame will carry — then append. Derive the
-schema from a representative frame and add declarations:
+schema from representative frames (`SequenceSchema.from_frames`;
+`from_frames([])` is the empty schema) and add declarations:
 
 - `declare_precision(block, column, p)` — round that column on every frame,
   as above. A change smaller than half a grid step is not an update, so a
@@ -184,7 +196,7 @@ schema from a representative frame and add declarations:
 ```python
 from molrs.io.mrec import SequenceSchema, MrecReader, MrecWriter
 
-schema = SequenceSchema.from_frame(frames[0])
+schema = SequenceSchema.from_frames(frames[:1])
 for key in ("x", "y", "z"):
     schema.declare_precision("atoms", key, 1e-3)
 
@@ -192,7 +204,7 @@ with MrecWriter("stream.mrec", schema, meta={"producer": "quickstart"}) as write
     for i, f in enumerate(frames):
         writer.append(f, step=100 * i, time=0.2 * i)
 
-with MrecReader("stream.mrec") as reader:
+with MrecReader(Path("stream.mrec")) as reader:
     print(len(reader), reader.step)
     last = reader[len(reader) - 1]
     print(last["atoms"]["x"])
@@ -215,7 +227,7 @@ from molrs.io.mrec import pack_mrec_zip
 zipped = pack_mrec_zip("stream.mrec")
 print(zipped)
 
-with MrecReader(zipped) as reader:
+with MrecReader(Path(zipped)) as reader:
     print(len(reader))
 ```
 
@@ -237,13 +249,14 @@ ff.def_style("pair", "lj/cut", {"cutoff": 10.0}).def_type(
     "OW", o, epsilon=0.1553, sigma=3.166
 )
 
-molrs.io.write_mrec_frame("water.mrec", frame, forcefield=ff)
-print(sorted(molrs.io.mrec.section_names("water.mrec")))
+molrs.io.write_mrec(Path("water.mrec"), frame=frame, forcefield=ff)
+record = molrs.io.mrec.MrecFile(Path("water.mrec"))
+print(record.sections())
 
-section = molrs.io.read_mrec_forcefield("water.mrec")
+section = record.forcefield()
 print(section.name, sorted(section.tables))
 restored = section.to_forcefield()
-print([(s.category, s.name) for s in restored.styles])
+print([(s.category, s.name) for s in restored.get_styles(molrs.ff.forcefield.Style)])
 ```
 
 A pair style's table holds each atom type's own row (`itom == jtom`) and any
@@ -252,35 +265,42 @@ type pair in place of the style's mixing rule. Both kinds round-trip. A
 pair is found by its two types in either order, so a table holds one row per
 pair: a section restating a pair with other parameters is refused on read.
 
-`molrs.io.read_mrec_forcefield` returns `None` for a record without a force field.
-`molrs.io.write_mrec_forcefield(path, ff)` writes a force-field package with no
-structure at all.
+`MrecFile.forcefield()` returns `None` for a record without a force field.
+`molrs.io.write_mrec(path, forcefield=ff)` writes a force-field package with
+no structure at all.
 
 ## From Rust and the browser
 
 The Rust doors have the Python names (features `zarr` and `filesystem`):
-`molrs::io::{write_mrec_frame, read_mrec_frame}`, `write_mrec_system` /
-`read_mrec_system`, `write_mrec_trajectory` / `read_mrec_trajectory`,
-`write_mrec_forcefield` / `read_mrec_forcefield`, and `write_mrec` /
-`read_mrec` for a whole `MolRec`; `molrs::io::mrec` holds `section_names`,
-`pack_mrec_zip` / `open_mrec_zip`, and for streaming `SequenceSchema`,
-`MrecWriter` and `MrecReader` (`MrecReader::open(path)`). Their rustdoc on [docs.rs](https://docs.rs/molcrafts-molrs) carries
+`molrs::io::write_mrec(sink, &record)` writes a whole `MolRec` (a path, or a
+`Vec<u8>` that receives the packed record), and `molrs::io::mrec::MrecFile::open(src)`
+reads it per section (`sections()`, `meta()`, `frame()`, `system()`,
+`forcefield()`, `record()`); `molrs::io::mrec` also holds `pack_mrec_zip`,
+and for streaming `SequenceSchema`, `MrecWriter` and `MrecReader`
+(`MrecReader::open(src)`). Their rustdoc on [docs.rs](https://docs.rs/molcrafts-molrs) carries
 compiled examples.
 
 ```rust
-use molrs::io::mrec::section_names;
-use molrs::io::{read_mrec_frame, write_mrec_frame};
+use std::path::Path;
 
-fn main() -> Result<(), molrs::core::MolRsError> {
-    write_mrec_frame("water.mrec", &molrs::core::Frame::new(), None, None)?;
-    let frame = read_mrec_frame("water.mrec")?;
-    println!("{:?} {}", section_names("water.mrec")?, frame.len());
+use molrs::io::mrec::{MolRec, MrecFile};
+use molrs::io::write_mrec;
+
+fn main() -> std::io::Result<()> {
+    let mut record = MolRec::new();
+    record.frame = Some(molrs::core::Frame::new());
+    write_mrec(Path::new("water.mrec"), &record)?;
+
+    let file = MrecFile::open(Path::new("water.mrec"))?;
+    let frame = file.frame()?.expect("a frame section");
+    println!("{:?} {}", file.sections()?, frame.len());
     Ok(())
 }
 ```
 
 In the browser, `@molcrafts/molrs` reads records from bytes:
-`readMrecFrame` for a snapshot and `sectionNames` to list sections (each
-over a file map or a packed zip's bytes), and `MrecReader` (from a file map, a `*.mrec.zip`, or a
-lazy range-request store) for trajectories. See the
+`new MrecFile(source)` reads one section at a time (`sections()`, `frame()`,
+`system()`, `meta()`) and `new MrecReader(source)` decodes trajectory frames,
+each over a file map, a packed `*.mrec.zip`'s bytes, or a lazy
+range-request store. See the
 [package README](https://github.com/MolCrafts/molrs/tree/master/molrs-wasm#trajectory-stores-mrec).

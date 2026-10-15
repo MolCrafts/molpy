@@ -3,32 +3,32 @@
 #[cfg(test)]
 #[allow(clippy::module_inception)]
 mod tests {
-    use indexmap::IndexMap;
+    use crate::props;
     use std::collections::{BTreeMap, BTreeSet};
 
     use crate::ff::forcefield::ForceField;
     use crate::ff::typifier::mmff::Mmff94Typifier;
-    use molrs::core::{Atom, PropValue};
-    use molrs::core::{Atomistic, NodeId};
+    use molrs::core::{Atomistic, BondNumber, BondOrder, Element, NodeId, keys};
+    use molrs::core::{PropValue, Props};
 
-    fn atom(sym: &str) -> Atom {
-        let mut a = Atom::new();
-        a.set("element", sym);
-        a
+    fn atom(element: Element) -> Props {
+        props! { keys::ATOMIC_NUMBER => element }
     }
 
     fn bond_order(mol: &mut Atomistic, a: NodeId, b: NodeId, order: f64) {
-        if let Ok(bid) = mol.add_bond(a, b) {
+        if let Ok(bid) = mol.add_bond(a, b, props! {}) {
             // The fixture's float order, split into class (1.5 = aromatic) and count.
-            let _ = if (order - 1.5).abs() < 1e-6 {
-                mol.set_bond_class(
-                    bid,
-                    crate::core::BondOrder::Aromatic,
-                    crate::core::BondNumber::Unknown,
-                )
+            let (class, number) = if (order - 1.5).abs() < 1e-6 {
+                (BondOrder::Aromatic, BondNumber::Unknown)
             } else {
-                mol.set_bond_type(bid, crate::core::BondOrder::from_code(order as u32))
+                match order as u32 {
+                    1 => (BondOrder::Single, BondNumber::Single),
+                    2 => (BondOrder::Double, BondNumber::Double),
+                    3 => (BondOrder::Triple, BondNumber::Triple),
+                    other => panic!("fixture bond order {other}"),
+                }
             };
+            let _ = mol.set_bond_class(bid, class, number);
         }
     }
 
@@ -68,15 +68,15 @@ mod tests {
         // insertion order — c1, c2, then the six H — so rows 0..2 are carbons.
         let typifier = test_typifier();
         let mut mol = Atomistic::new();
-        let c1 = mol.add_atom(atom("C"));
-        let c2 = mol.add_atom(atom("C"));
+        let c1 = mol.add_atom(atom(Element::C)).unwrap();
+        let c2 = mol.add_atom(atom(Element::C)).unwrap();
         bond_order(&mut mol, c1, c2, 1.0);
         for _ in 0..3 {
-            let h = mol.add_atom(atom("H"));
+            let h = mol.add_atom(atom(Element::H)).unwrap();
             bond_order(&mut mol, c1, h, 1.0);
         }
         for _ in 0..3 {
-            let h = mol.add_atom(atom("H"));
+            let h = mol.add_atom(atom(Element::H)).unwrap();
             bond_order(&mut mol, c2, h, 1.0);
         }
 
@@ -89,7 +89,7 @@ mod tests {
             .get("atoms")
             .unwrap()
             .get("type")
-            .and_then(|c| c.as_string())
+            .and_then(|c| c.get::<String>())
             .expect("atoms.type column");
         assert_eq!(types[0], "1", "C1 should be MMFF type 1 (CR)");
         assert_eq!(types[1], "1", "C2 should be MMFF type 1 (CR)");
@@ -129,20 +129,20 @@ mod tests {
     /// one on C2, two on C3).
     fn butadiene() -> (Atomistic, [NodeId; 4]) {
         let mut mol = Atomistic::new();
-        let c: [NodeId; 4] = std::array::from_fn(|_| mol.add_atom(atom("C")));
+        let c: [NodeId; 4] = std::array::from_fn(|_| mol.add_atom(atom(Element::C)).unwrap());
         bond_order(&mut mol, c[0], c[1], 2.0);
         bond_order(&mut mol, c[1], c[2], 1.0);
         bond_order(&mut mol, c[2], c[3], 2.0);
         for (carbon, n_h) in [(c[0], 2), (c[1], 1), (c[2], 1), (c[3], 2)] {
             for _ in 0..n_h {
-                let h = mol.add_atom(atom("H"));
+                let h = mol.add_atom(atom(Element::H)).unwrap();
                 bond_order(&mut mol, carbon, h, 1.0);
             }
         }
         (mol, c)
     }
 
-    fn str_prop(props: &IndexMap<String, PropValue>, key: &str) -> Option<String> {
+    fn str_prop(props: &Props, key: &str) -> Option<String> {
         match props.get(key) {
             Some(PropValue::Str(s)) => Some(s.clone()),
             _ => None,
@@ -218,7 +218,7 @@ mod tests {
             .atoms()
             .map(|(_, a)| a.get_str("type").expect("every atom typed").to_owned())
             .collect();
-        let labels = |rows: Vec<IndexMap<String, PropValue>>, key: &str| -> BTreeSet<String> {
+        let labels = |rows: Vec<Props>, key: &str| -> BTreeSet<String> {
             rows.iter()
                 .map(|p| str_prop(p, key).unwrap_or_else(|| panic!("every row has {key}")))
                 .collect()
@@ -249,11 +249,11 @@ mod tests {
     /// the three hydrogens follow.
     fn azetone() -> (Atomistic, [NodeId; 4]) {
         let mut mol = Atomistic::new();
-        let c_co = mol.add_atom(atom("C"));
-        let c_im = mol.add_atom(atom("C"));
-        let c_h2 = mol.add_atom(atom("C"));
-        let n = mol.add_atom(atom("N"));
-        let o = mol.add_atom(atom("O"));
+        let c_co = mol.add_atom(atom(Element::C)).unwrap();
+        let c_im = mol.add_atom(atom(Element::C)).unwrap();
+        let c_h2 = mol.add_atom(atom(Element::C)).unwrap();
+        let n = mol.add_atom(atom(Element::N)).unwrap();
+        let o = mol.add_atom(atom(Element::O)).unwrap();
         bond_order(&mut mol, c_co, o, 2.0);
         bond_order(&mut mol, c_co, n, 1.0);
         bond_order(&mut mol, n, c_im, 2.0);
@@ -261,14 +261,14 @@ mod tests {
         bond_order(&mut mol, c_h2, c_co, 1.0);
         for (heavy, n_h) in [(c_im, 1), (c_h2, 2)] {
             for _ in 0..n_h {
-                let h = mol.add_atom(atom("H"));
+                let h = mol.add_atom(atom(Element::H)).unwrap();
                 bond_order(&mut mol, heavy, h, 1.0);
             }
         }
         (mol, [c_co, c_im, c_h2, n])
     }
 
-    fn f64_prop(props: &IndexMap<String, PropValue>, key: &str) -> f64 {
+    fn f64_prop(props: &Props, key: &str) -> f64 {
         match props.get(key) {
             Some(PropValue::F64(v)) => *v,
             other => panic!("{key} is not an f64: {other:?}"),
@@ -344,7 +344,12 @@ mod tests {
                 .into_iter()
                 .find(|(n, _)| n == name)
                 .unwrap_or_else(|| panic!("{name} defined in the output"));
-            let defined = ["v1", "v2", "v3"].map(|k| params.get(k).expect("v1..v3 defined"));
+            let defined = ["v1", "v2", "v3"].map(|k| {
+                params
+                    .get(k)
+                    .and_then(|v| v.as_num())
+                    .expect("v1..v3 defined")
+            });
             assert_eq!(defined, v, "{name} defines the params stamped under it");
         }
     }

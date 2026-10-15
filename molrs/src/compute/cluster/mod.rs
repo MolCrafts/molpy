@@ -191,12 +191,12 @@ mod tests {
     use super::*;
     use crate::compute::Batch;
     use crate::compute::fixtures::neighbors_of;
+    use crate::core::Cell;
     use molrs::core::{NeighborColumns, NeighborPair, QueryMode, SimBox};
     use molrs::op::F;
-    use ndarray::array;
 
     fn cube(len: F, pbc: [bool; 3]) -> SimBox {
-        SimBox::cube(len, array![0.0, 0.0, 0.0], pbc).unwrap()
+        SimBox::new(Cell::Lengths([len; 3]), [0.0, 0.0, 0.0], pbc).unwrap()
     }
 
     fn cluster(positions: &[[F; 3]], box_len: F, cutoff: F, min: usize) -> ClusterResult {

@@ -1,11 +1,12 @@
 //! The file set of a LAMMPS `fix bond/react` (REACTER) run: the system's data
 //! file, its force-field include and every template's molecule and map files.
 
+use crate::core::keys::LAMMPS_TYPE_MASSES;
 use crate::io::invalid_data;
+use crate::io::lammps::LammpsForcefieldWriter;
 use crate::io::lammps::bond_react::BondReactTemplate;
-use crate::io::lammps::data::write_lammps_data_with_masses;
+use crate::io::lammps::data::write_lammps_data;
 use crate::io::lammps::molecule::write_lammps_molecule;
-use crate::io::lammps::{LammpsForcefieldWriteOptions, LammpsForcefieldWriter};
 use crate::io::writer::ForceFieldWriter;
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::io::{Error, ErrorKind, Result};
@@ -13,6 +14,7 @@ use std::path::{Path, PathBuf};
 
 use molrs::core::Block;
 use molrs::core::Frame;
+use molrs::core::MetaValue;
 use molrs::core::TypeLabels;
 use molrs::core::keys;
 use molrs::ff::forcefield::ForceField;
@@ -65,7 +67,7 @@ fn unified_labels(frames: &[&Frame]) -> HashMap<&'static str, Vec<String>> {
                 if let Some(types) = frame
                     .get(block)
                     .and_then(|b| b.get(keys::TYPE))
-                    .and_then(|c| c.as_string())
+                    .and_then(|c| c.get::<String>())
                 {
                     all.extend(types.iter().filter(|t| is_label(t)).cloned());
                 }
@@ -76,31 +78,24 @@ fn unified_labels(frames: &[&Frame]) -> HashMap<&'static str, Vec<String>> {
 }
 
 /// The mass of each atom label the frames use: the first row's `mass`
-/// column, else its element's periodic-table mass. The data file needs one
-/// for every declared type, a type only a template uses included.
+/// column. The data file needs one for every declared type, a type only a
+/// template uses included; a label no frame states a mass for is left out,
+/// and the data writer refuses its type by name (no mass is derived from the
+/// species, none defaulted).
 fn label_masses(frames: &[&Frame]) -> HashMap<String, F> {
     let mut out = HashMap::new();
     for frame in frames {
         let Some(atoms) = frame.get("atoms") else {
             continue;
         };
-        let Some(types) = atoms.get(keys::TYPE).and_then(|c| c.as_string()) else {
+        let (Some(types), Some(mass)) = (
+            atoms.get(keys::TYPE).and_then(|c| c.get::<String>()),
+            atoms.get(keys::MASS).and_then(|c| c.get::<f64>()),
+        ) else {
             continue;
         };
-        let mass = atoms.get(keys::MASS).and_then(|c| c.as_float());
-        let element = atoms.get(keys::ELEMENT).and_then(|c| c.as_string());
-        for (i, label) in types.iter().enumerate() {
-            if out.contains_key(label) {
-                continue;
-            }
-            let m = mass.map(|m| m[[i]]).or_else(|| {
-                element
-                    .and_then(|e| molrs::core::Element::by_symbol(&e[[i]]))
-                    .map(|e| F::from(e.atomic_mass()))
-            });
-            if let Some(m) = m {
-                out.insert(label.clone(), m);
-            }
+        for (label, &m) in types.iter().zip(mass.iter()) {
+            out.entry(label.clone()).or_insert(m);
         }
     }
     out
@@ -124,7 +119,7 @@ fn numbered_template(
         if n == 0 {
             continue;
         }
-        let Some(types) = block.get(keys::TYPE).and_then(|c| c.as_string()) else {
+        let Some(types) = block.get(keys::TYPE).and_then(|c| c.get::<String>()) else {
             continue;
         };
         let map = &ids[block_name];
@@ -149,14 +144,14 @@ fn numbered_template(
         };
         let type_ids: Vec<Idx> = keep.iter().map(|&i| map[labels[i].as_str()]).collect();
         block
-            .insert(keys::TYPE_ID, Array1::from_vec(type_ids).into_dyn())
+            .insert(keys::TYPE_ID, Array1::from_vec(type_ids).into_dyn(), None)
             .map_err(|e| invalid_data(e.to_string()))?;
         out.insert(block_name, block);
     }
     if let Some(atoms) = out.get_mut("atoms") {
         let n = atoms.n_rows().unwrap_or(0) as Idx;
         atoms
-            .insert(keys::ID, Array1::from_iter(1..=n).into_dyn())
+            .insert(keys::ID, Array1::from_iter(1..=n).into_dyn(), None)
             .map_err(|e| invalid_data(e.to_string()))?;
     }
     Ok((out, dropped))
@@ -180,7 +175,7 @@ fn numbered_template(
 ///
 /// [`ErrorKind::InvalidInput`] for a `workdir` without a file name or two
 /// templates of one name. [`ErrorKind::InvalidData`] for a template whose
-/// map is malformed ([`BondReactTemplate::map_text`]) or that has an atom
+/// map is malformed ([`write_lammps_bond_react_map`](crate::io::write_lammps_bond_react_map)) or that has an atom
 /// without a type label; for a `frame` whose own labels are not the unified
 /// numbering (a purely numeric label beside named ones); and for a
 /// `forcefield` the include cannot be written from — its source is the
@@ -212,7 +207,7 @@ pub fn write_lammps_bond_react_system(
     // Every map is checked before any file is written.
     let maps = templates
         .iter()
-        .map(|(_, t)| t.map_text())
+        .map(|(_, t)| t.map_file_text())
         .collect::<Result<Vec<String>>>()?;
 
     let mut all: Vec<&Frame> = vec![frame];
@@ -251,13 +246,10 @@ pub fn write_lammps_bond_react_system(
 
     // The include is read after `read_data` (its coefficients need the box),
     // where LAMMPS refuses a `units` line: the input states the units.
-    let options = LammpsForcefieldWriteOptions {
-        skip_units: true,
-        ..LammpsForcefieldWriteOptions::default()
-    };
-    let include = LammpsForcefieldWriter::with_options(&labels, options)
-        .write_str(forcefield)
-        .map_err(|e| Error::new(ErrorKind::InvalidData, e))?;
+    let mut include = Vec::new();
+    LammpsForcefieldWriter::new(&labels)
+        .with_skip_units(true)
+        .write(&mut include, forcefield)?;
     let mut numbered = Vec::with_capacity(templates.len());
     for (_, template) in templates {
         numbered.push([
@@ -269,7 +261,21 @@ pub fn write_lammps_bond_react_system(
     std::fs::create_dir_all(workdir)?;
     let base = workdir.join(&stem);
     let data_path = base.with_extension("data");
-    write_lammps_data_with_masses(&data_path, &system, &label_masses(&all))?;
+    // A type only a template uses is declared in the data file, and LAMMPS
+    // reads its mass from there: the templates' masses go into the system's
+    // per-type masses, beside any it already states.
+    let mut masses = match system.meta.get(LAMMPS_TYPE_MASSES) {
+        Some(MetaValue::Json(serde_json::Value::Object(map))) => map.clone(),
+        _ => serde_json::Map::new(),
+    };
+    for (label, m) in label_masses(&all) {
+        masses.entry(label).or_insert(serde_json::Value::from(m));
+    }
+    system.meta.insert(
+        LAMMPS_TYPE_MASSES,
+        MetaValue::Json(serde_json::Value::Object(masses)),
+    );
+    write_lammps_data(&data_path, &system)?;
     let ff_path = base.with_extension("ff");
     std::fs::write(&ff_path, include)?;
 
@@ -280,7 +286,10 @@ pub fn write_lammps_bond_react_system(
             for (block, rows) in gone {
                 *lost.entry(block).or_default() += rows;
             }
-            write_lammps_molecule(workdir.join(format!("{name}_{which}.mol")), &frame)?;
+            write_lammps_molecule(
+                workdir.join(format!("{name}_{which}.mol")).as_path(),
+                &frame,
+            )?;
         }
         for block in TYPED_BLOCKS {
             if let Some(&rows) = lost.get(block) {
@@ -311,10 +320,10 @@ mod tests {
     /// Every label the system and `coupling` use; `hc-oh` left out when
     /// `complete` is false.
     fn forcefield(complete: bool) -> ForceField {
-        let lj = |eps: f64, sigma: f64| Params::from_pairs(&[("epsilon", eps), ("sigma", sigma)]);
-        let bond = |k: f64, r0: f64| Params::from_pairs(&[("k", k), ("r0", r0)]);
+        let lj = |eps: f64, sigma: f64| Params::from_iter([("epsilon", eps), ("sigma", sigma)]);
+        let bond = |k: f64, r0: f64| Params::from_iter([("k", k), ("r0", r0)]);
         let mut ff = ForceField::new("hand");
-        ff.def_style("pair", "lj/cut", Params::from_pairs(&[("cutoff", 9.0)]))
+        ff.def_style("pair", "lj/cut", Params::from_iter([("cutoff", 9.0)]))
             .unwrap()
             .def_type("c3", &["c3"], lj(0.1078, 3.39771))
             .unwrap()
@@ -369,24 +378,32 @@ mod tests {
         system
             .get_mut("atoms")
             .unwrap()
-            .insert("mol_id", Array1::from_vec(vec![1 as Idx, 1]).into_dyn())
+            .insert(
+                "mol_id",
+                Array1::from_vec(vec![1 as Idx, 1]).into_dyn(),
+                None,
+            )
             .unwrap();
         let mut t = coupling();
         for part in [&mut t.pre, &mut t.post] {
             let n = part["atoms"].n_rows().unwrap();
             part.get_mut("atoms")
                 .unwrap()
-                .insert("mol_id", Array1::from_vec(vec![1 as Idx; n]).into_dyn())
+                .insert(
+                    "mol_id",
+                    Array1::from_vec(vec![1 as Idx; n]).into_dyn(),
+                    None,
+                )
                 .unwrap();
         }
         // An untyped template angle is dropped and reported.
         let mut angles = Block::new();
         for (k, v) in [("atomi", 0), ("atomj", 1), ("atomk", 2)] {
             angles
-                .insert(k, Array1::from_vec(vec![v as Idx]).into_dyn())
+                .insert(k, Array1::from_vec(vec![v as Idx]).into_dyn(), None)
                 .unwrap();
         }
-        angles.insert("type", strings(&["None"])).unwrap();
+        angles.insert("type", strings(&["None"]), None).unwrap();
         t.post.insert("angles", angles);
 
         let out = write_lammps_bond_react_system(

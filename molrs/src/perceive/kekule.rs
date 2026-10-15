@@ -1,61 +1,40 @@
 //! Kekulé assignment: a legal localized bond number for every aromatic bond.
 
-use indexmap::IndexMap;
 use std::collections::HashMap;
 
 use super::bcc_bond_class::{
     AROMATIC_DOUBLE, AROMATIC_SINGLE, AROMATIC_UNRESOLVED, SINGLE, TRIPLE,
 };
 use crate::core::Atomistic;
-use crate::core::PropValue;
+use crate::core::MolRsError;
 use crate::core::keys;
 use crate::core::keys::BCC_BOND_TYPE;
 use crate::core::{BondNumber, BondOrder};
 use crate::core::{NodeId, RelationId};
+use crate::core::{PropValue, Props};
 use crate::perceive::perceive_rings;
-use molrs::core::Element;
+
+use super::valence::atomic_number;
 
 /// A valence-state penalty that is never worth paying: used for the valences an
 /// element's `APS.DAT` row leaves blank (`*`).
 const FORBIDDEN: u32 = 1000;
 
-/// Assign a legal localized [`BondNumber`] to every aromatic bond, graph in /
-/// graph out.
+/// Assign a legal localized [`BondNumber`] to every aromatic bond, in place.
 ///
 /// An aromatic ring states no single/double phase of its own; a Kekulé
 /// structure is the matching that gives each aromatic atom at most one double
-/// bond while every valence stays legal. This writes
-/// one, graph in / graph out; the search minimises AmberTools'
-/// `APS.DAT` valence-state penalty, so the BCC bond typing of
-/// [`assign_bcc_bond_types`](crate::perceive::assign_bcc_bond_types), which types an aromatic bond by
-/// its Kekulé phase, reads the same structure.
-///
-/// The non-mutating face of `assign_kekule_numbers`, which carries the full
-/// contract. It **only** kekulizes: it does not perceive aromaticity, so a
-/// molecule whose aromatic bonds are not yet marked comes back unchanged. That
-/// is the division of labour — perception decides *which* bonds are aromatic,
-/// this decides *what phase* they take, and neither calls the other.
-///
-/// # Arguments
-///
-/// * `mol` — the molecule to kekulize; left untouched.
-///
-/// # Returns
-///
-/// A clone of `mol` whose aromatic bonds carry a legal localized number, or an
-/// unchanged clone when no legal assignment exists.
-pub fn assign_kekule_bond_orders(mol: &Atomistic) -> Atomistic {
-    let mut out = mol.clone();
-    assign_kekule_numbers(&mut out);
-    out
-}
-
-/// Assign a legal localized [`BondNumber`] to every aromatic bond.
+/// bond while every valence stays legal. This writes one; the search minimises
+/// AmberTools' `APS.DAT` valence-state penalty, so the BCC bond typing of
+/// [`assign_bcc_bond_types`](crate::perceive::assign_bcc_bond_types), which
+/// types an aromatic bond by its Kekulé phase, reads the same structure.
 ///
 /// This is the Kekulé standardization the standard defines: **ensure every
-/// aromatic subgraph carries a legal localized integer**. It is *in place* and
-/// deliberately narrow — see [`assign_kekule_bond_orders`] for the
-/// graph-in/graph-out face.
+/// aromatic subgraph carries a legal localized integer**. It **only**
+/// kekulizes: it does not perceive aromaticity, so a molecule whose aromatic
+/// bonds are not yet marked is left unchanged. That is the division of labour
+/// — perception decides *which* bonds are aromatic, this decides *what phase*
+/// they take, and neither calls the other.
 ///
 /// The guarantees, and where each comes from:
 ///
@@ -72,32 +51,40 @@ pub fn assign_kekule_bond_orders(mol: &Atomistic) -> Atomistic {
 ///   changed, rather than a ring half-assigned. Returns `false` in that case.
 ///
 /// Returns whether every aromatic bond came out with a legal number.
-pub(crate) fn assign_kekule_numbers(mol: &mut Atomistic) -> bool {
+///
+/// # Errors
+///
+/// [`MolRsError`] when a chosen number cannot be written (a bond column
+/// holding the key under a foreign dtype).
+pub fn assign_kekule_bond_orders(mol: &mut Atomistic) -> Result<bool, MolRsError> {
     // Nothing to assign without an aromatic bond. Checked on the bonds
     // directly: `BondGraph::new` perceives rings and implicit hydrogens for
     // every atom, which is the whole cost of this call.
     if !has_aromatic_marking(mol) {
-        return true;
+        return Ok(true);
     }
     let graph = BondGraph::new(mol);
 
     // Conservative: a legal assignment already on the graph is *the* answer.
     // Re-deriving one would rewrite the phase an input stated for itself, so a
     // file that round-trips would come back with its bonds renumbered.
-    let stated: Vec<bool> = graph
+    let numbers: Vec<BondNumber> = graph
         .bond_ids
         .iter()
+        .map(|bid| mol.bond_number(*bid))
+        .collect::<Result<_, MolRsError>>()?;
+    let stated: Vec<bool> = numbers
+        .iter()
         .enumerate()
-        .map(|(k, bid)| graph.aromatic[k] && mol.bond_number(*bid) == BondNumber::Double)
+        .map(|(k, number)| graph.aromatic[k] && *number == BondNumber::Double)
         .collect();
-    let all_stated = graph
-        .bond_ids
+    let all_stated = numbers
         .iter()
         .enumerate()
         .filter(|(k, _)| graph.aromatic[*k])
-        .all(|(_, bid)| mol.bond_number(*bid) != BondNumber::Unknown);
+        .all(|(_, number)| *number != BondNumber::Unknown);
     if all_stated && valences_are_satisfiable(&graph, &stated) {
-        return true;
+        return Ok(true);
     }
 
     let doubles = kekulize(&graph);
@@ -121,13 +108,14 @@ pub(crate) fn assign_kekule_numbers(mol: &mut Atomistic) -> bool {
         ));
     }
     if !valences_are_satisfiable(&graph, &doubles) {
-        return false;
+        return Ok(false);
     }
 
     for (bid, number) in assignment {
-        let _ = mol.set_bond_prop(bid, keys::BOND_NUMBER, number);
+        let class = mol.bond_type(bid)?;
+        mol.set_bond_class(bid, class, number)?;
     }
-    true
+    Ok(true)
 }
 
 /// Does every aromatic atom end this assignment with a satisfiable valence?
@@ -178,7 +166,7 @@ pub(super) fn has_aromatic_marking(mol: &Atomistic) -> bool {
 /// caller-supplied type 10 into 7 or 8. It reads **our own** key: the bond's
 /// `keys::TYPE` is the caller's, and a LAMMPS bond-type id that happened to be 7
 /// must not make a bond aromatic.
-fn aromatic_marking(props: &IndexMap<String, PropValue>) -> bool {
+fn aromatic_marking(props: &Props) -> bool {
     BondOrder::from_prop(props.get(keys::BOND_TYPE)).is_aromatic()
         || props
             .get(BCC_BOND_TYPE)
@@ -207,7 +195,7 @@ pub(super) struct BondGraph {
     pub(super) order: Vec<f64>,
     /// Per bond: whether the input marks it aromatic.
     pub(super) aromatic: Vec<bool>,
-    /// Per atom: atomic number (0 when the element is unknown).
+    /// Per atom: atomic number (0 for a wildcard atom).
     pub(super) z: Vec<u8>,
     /// Per atom: hydrogens implied by valence but not drawn in the graph.
     pub(super) implicit_h: Vec<u32>,
@@ -224,8 +212,8 @@ pub(super) struct BondGraph {
 }
 
 impl BondGraph {
-    /// Flatten a molecule. Atoms whose element is unknown get `z = 0` and so match
-    /// no rule; they fall through to their plain bond order.
+    /// Flatten a molecule. A wildcard atom (`z = 0`) matches no rule; its bonds
+    /// fall through to their plain bond order.
     pub(super) fn new(mol: &Atomistic) -> Self {
         let atom_ids: Vec<NodeId> = mol.atoms().map(|(aid, _)| aid).collect();
         let index: HashMap<NodeId, usize> = atom_ids
@@ -235,15 +223,7 @@ impl BondGraph {
             .map(|(i, aid)| (aid, i))
             .collect();
 
-        let z: Vec<u8> = atom_ids
-            .iter()
-            .map(|aid| {
-                mol.get_atom(*aid)
-                    .ok()
-                    .and_then(|atom| atom.get_str(keys::ELEMENT).and_then(Element::by_symbol))
-                    .map_or(0, |el| el.z())
-            })
-            .collect();
+        let z: Vec<u8> = mol.atoms().map(|(_, atom)| atomic_number(&atom)).collect();
 
         // The element `APS.DAT` is *scored* as, for the π-demand search only.
         //
@@ -550,7 +530,7 @@ fn valence_penalty(z: u8, degree: usize, valence: i32) -> u32 {
         (16, 1 | 2) => &[(1, 2), (2, 0), (3, 64)],
         (16, 3) => &[(3, 1), (4, 0), (5, 2), (6, 2)],
         (16, _) => &[(4, 4), (5, 2), (6, 0)],
-        // Everything else (H, halogens, metals, unknown elements) has one valence
+        // Everything else (H, halogens, metals, the wildcard) has one valence
         // and nothing to choose; it never constrains a matching.
         _ => return 0,
     };
@@ -587,11 +567,12 @@ mod tests {
         let mut out: Vec<((usize, usize), bool)> = mol
             .bonds()
             .map(|(id, _)| {
-                let (a, b) = mol.bond_endpoints(id).expect("endpoints");
+                let ends = mol.get_bond(id).expect("endpoints").nodes;
+                let (a, b) = (ends[0], ends[1]);
                 let (a, b) = (index[&a], index[&b]);
                 (
                     (a.min(b), a.max(b)),
-                    mol.bond_number(id) == BondNumber::Double,
+                    mol.bond_number(id).unwrap() == BondNumber::Double,
                 )
             })
             .collect();
@@ -648,7 +629,8 @@ mod tests {
 
     #[test]
     fn imidazole_kekulizes_the_way_antechamber_does() {
-        let mol = assign_kekule_bond_orders(&imidazole());
+        let mut mol = imidazole();
+        assert!(assign_kekule_bond_orders(&mut mol).unwrap());
         // AmberTools25 oracle `bcc_bond_types`: (0,1) and (2,3) are type 8
         // (aromatic double); (1,2), (3,4), (4,0) are type 7 (aromatic single).
         assert_eq!(
@@ -665,7 +647,8 @@ mod tests {
 
     #[test]
     fn the_pyrrole_nitrogen_takes_no_double() {
-        let mol = assign_kekule_bond_orders(&imidazole());
+        let mut mol = imidazole();
+        assert!(assign_kekule_bond_orders(&mut mol).unwrap());
         // N4 already spends a valence on an undrawn hydrogen, so a double here
         // makes it five-valent. This is what `BondGraph::total_degree` exists
         // for: with the drawn-neighbour `degree`, N4 and N2 both look like
@@ -688,12 +671,14 @@ mod tests {
             .to_atomistic()
             .expect("to_atomistic");
         let numbers = |m: &Atomistic| -> Vec<BondNumber> {
-            m.bonds().map(|(id, _)| m.bond_number(id)).collect()
+            m.bonds()
+                .map(|(id, _)| m.bond_number(id).unwrap())
+                .collect()
         };
         let before = numbers(&mol);
         assert!(before.contains(&BondNumber::Double) && before.contains(&BondNumber::Triple));
 
-        assert!(assign_kekule_numbers(&mut mol));
+        assert!(assign_kekule_bond_orders(&mut mol).unwrap());
 
         assert_eq!(numbers(&mol), before);
     }

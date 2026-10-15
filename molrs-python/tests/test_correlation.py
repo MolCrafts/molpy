@@ -51,6 +51,20 @@ def _unit_vectors(n_frames=40, n_vectors=6, seed=5):
     return u / np.linalg.norm(u, axis=2, keepdims=True)
 
 
+def _stream(stream, frames, *, dt):
+    """Push every frame of ``frames`` into a fresh accumulator; finish."""
+    acc = stream.accumulator()
+    for frame in frames:
+        acc.push(frame, dt=dt)
+    return acc.finish()
+
+
+def _vacf(vacf, flat, *, dt):
+    """A ``Vacf`` over the ``(T, n_dof)`` velocities ``flat``: each frame an
+    ``(n_dof, 1)`` column, as the core stream takes it."""
+    return _stream(vacf, flat[:, :, None], dt=dt)
+
+
 def _origins(n_frames, lag, stride):
     return range(0, n_frames - lag, stride)
 
@@ -149,14 +163,17 @@ class TestSurfaces:
     def test_vacf_is_the_mean_subtracted_correlator_over_dof(self):
         s = _series()
         flat = s.reshape(s.shape[0], -1)
-        vacf = Vacf(10).compute(velocities=flat, dt=0.5)
+        vacf = _vacf(Vacf(10), flat, dt=0.5)
         acf = Correlator("product", 10, mean="subtract").compute(a=flat[:, :, None], dt=0.5)
-        np.testing.assert_array_equal(vacf.values, acf.values)
-        strided = Vacf(10, stride=3, normalization="biased").compute(velocities=flat, dt=0.5)
+        # The stream equals the batch correlator to FFT round-off (core
+        # `CorrelatorAccumulator` contract).
+        np.testing.assert_allclose(vacf.values, acf.values, rtol=1e-12, atol=1e-12)
+        np.testing.assert_array_equal(vacf.lag_times, acf.lag_times)
+        strided = _vacf(Vacf(10, stride=3, normalization="biased"), flat, dt=0.5)
         explicit = Correlator(
             "product", 10, mean="subtract", normalization="biased", stride=3
         ).compute(a=flat[:, :, None], dt=0.5)
-        np.testing.assert_array_equal(strided.values, explicit.values)
+        np.testing.assert_allclose(strided.values, explicit.values, rtol=1e-12, atol=1e-12)
 
     def test_the_mean_policy_is_configuration(self):
         """``mean=`` is a convention each product surface exposes; its default
@@ -164,10 +181,10 @@ class TestSurfaces:
         keeps), and ``"keep"`` on Vacf is the plain Green–Kubo integrand."""
         s = _series() + 0.3
         flat = s.reshape(s.shape[0], -1)
-        keep = Vacf(10, mean="keep").compute(velocities=flat, dt=0.5)
+        keep = _vacf(Vacf(10, mean="keep"), flat, dt=0.5)
         acf = Correlator("product", 10, mean="keep").compute(a=flat[:, :, None], dt=0.5)
-        np.testing.assert_array_equal(keep.values, acf.values)
-        assert not np.allclose(keep.values, Vacf(10).compute(velocities=flat, dt=0.5).values)
+        np.testing.assert_allclose(keep.values, acf.values, rtol=1e-12, atol=1e-12)
+        assert not np.allclose(keep.values, _vacf(Vacf(10), flat, dt=0.5).values)
         j = flat[:, :3]
         np.testing.assert_allclose(
             DipoleAcf(8, mean="keep").compute(dipoles=j, dt=1.0).channel(0),
@@ -187,33 +204,33 @@ class TestSurfaces:
     def test_an_array_of_the_wrong_rank_or_dtype_says_what_it_expected(self):
         with pytest.raises(
             TypeError,
-            match=r"velocities.*expected a 2-D float64 array, "
+            match=r"'a'.*expected a 2-D float64 array, "
             r"got a 3-D float64 array of shape \(10, 4, 3\)",
         ):
-            Vacf(5).compute(velocities=np.zeros((10, 4, 3)), dt=1.0)
+            Vacf(5).accumulator().push(np.zeros((10, 4, 3)), dt=1.0)
         with pytest.raises(
             TypeError,
-            match=r"velocities.*expected a 2-D float64 array, "
+            match=r"'a'.*expected a 2-D float64 array, "
             r"got a 2-D int64 array of shape \(100, 32\)",
         ):
-            Vacf(5).compute(velocities=np.zeros((100, 32), dtype=np.int64), dt=1.0)
+            Vacf(5).accumulator().push(np.zeros((100, 32), dtype=np.int64), dt=1.0)
         with pytest.raises(TypeError, match=r"'a': expected a 3-D float64 array, got list"):
             Correlator("product", 2).compute(a=[[[1.0]]], dt=1.0)
 
     def test_msd_all_origins_is_the_nested_loop(self):
         pos = np.cumsum(_series(n_frames=20, n_items=3), axis=0)
-        got = Msd(6).compute(positions=pos, dt=1.0)
+        got = _stream(Msd(6), pos, dt=1.0)
         for lag in range(7):
             d = pos[lag:] - pos[: len(pos) - lag]
             assert got.channel(0)[lag] == pytest.approx((d**2).sum(axis=2).mean(), abs=1e-9)
 
     def test_msd_first_origin_is_the_single_origin_curve(self):
         pos = np.cumsum(_series(n_frames=12, n_items=4), axis=0)
-        got = Msd(5, origins="first", reduction="per_item").compute(positions=pos, dt=1.0)
+        got = _stream(Msd(5, origins="first", reduction="per_item"), pos, dt=1.0)
         want = ((pos - pos[0]) ** 2).sum(axis=2)
         np.testing.assert_allclose(got.values, want[:6])
         with pytest.raises(ValueError, match="stride"):
-            Msd(5, origins="first", stride=2).compute(positions=pos, dt=1.0)
+            _stream(Msd(5, origins="first", stride=2), pos, dt=1.0)
 
     def test_onsager_of_straight_lines(self):
         t = np.arange(10.0)[:, None]
@@ -348,7 +365,7 @@ class TestFitsOfACurve:
         assert fit.amplitude == pytest.approx(3.0)
 
     def test_spectrum_window_is_a_choice(self):
-        tc = Vacf(30).compute(velocities=_series().reshape(48, -1), dt=0.5)
+        tc = _vacf(Vacf(30), _series().reshape(48, -1), dt=0.5)
         cos2 = Spectrum("cosine_sq", 4).compute(signal=tc.channel(0), dt=0.5)
         hann = Spectrum("hann", 4).compute(signal=tc.channel(0), dt=0.5)
         assert cos2.n_fft == hann.n_fft

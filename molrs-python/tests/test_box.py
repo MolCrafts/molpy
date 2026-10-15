@@ -1,94 +1,178 @@
+import pickle
+
 import molrs
 import numpy as np
 import pytest
+from molrs.core import Box, Cell
 
 
 class TestBoxConstruction:
     def test_cube(self):
-        b = molrs.core.Box.cube(10.0)
+        b = Box(Cell.lengths([10.0, 10.0, 10.0]))
         assert pytest.approx(b.volume(), abs=1e-3) == 1000.0
 
     def test_ortho(self):
-        b = molrs.core.Box.ortho(np.array([2.0, 3.0, 4.0], dtype=np.float64))
+        b = Box(Cell.lengths(np.array([2.0, 3.0, 4.0], dtype=np.float64)))
         assert pytest.approx(b.volume(), abs=1e-3) == 24.0
 
     def test_triclinic(self):
         h = np.array(
             [[2.0, 1.0, 0.0], [0.0, 3.0, 0.0], [0.0, 0.0, 4.0]], dtype=np.float64
         )
-        b = molrs.core.Box(h)
+        b = Box(Cell.matrix(h))
         assert b.volume() > 0
+        assert b.style == "triclinic"
 
     def test_singular_matrix_raises_value_error(self):
         h = np.array([[1.0, 0.0, 0.0], [2.0, 0.0, 0.0], [0.0, 0.0, 1.0]])
-        with pytest.raises(ValueError):
-            molrs.core.Box(h)
+        with pytest.raises(ValueError, match="singular"):
+            Box(Cell.matrix(h))
 
-    def test_a_defined_zero_cell_is_singular(self):
-        with pytest.raises(ValueError):
-            molrs.core.Box(np.zeros((3, 3)), cell_defined=True)
+    def test_a_zero_matrix_is_singular(self):
+        with pytest.raises(ValueError, match="singular"):
+            Box(Cell.matrix(np.zeros((3, 3))))
 
-    def test_no_matrix_is_a_free_box(self):
-        b = molrs.core.Box()
-        assert not b.cell_defined
+    def test_an_undefined_cell_is_a_free_box(self):
+        b = Box(Cell.undefined(), pbc=(False, False, False))
+        assert not b.is_cell_defined
         assert b.style == "free"
         assert b.is_free
         assert list(b.pbc) == [False, False, False]
-        np.testing.assert_array_equal(b.h, np.eye(3))
+        assert b.volume() == 0.0
+        np.testing.assert_array_equal(b.matrix, np.eye(3))
 
-    def test_an_all_zero_matrix_is_no_cell(self):
-        b = molrs.core.Box(np.zeros((3, 3)))
-        assert not b.cell_defined
-        assert list(b.pbc) == [False, False, False]
-
-    def test_a_free_box_may_still_say_which_axes_wrap(self):
-        b = molrs.core.Box(pbc=np.array([True, False, False]))
-        assert not b.cell_defined
+    def test_an_undefined_cell_may_still_say_which_axes_wrap(self):
+        b = Box(Cell.undefined(), pbc=np.array([True, False, False]))
+        assert not b.is_cell_defined
         assert list(b.pbc) == [True, False, False]
 
-    def test_a_diagonal_is_an_orthogonal_cell(self):
-        b = molrs.core.Box([10.0, 20.0, 30.0])
+    def test_the_defaults_are_the_origin_and_full_periodicity(self):
+        b = Box(Cell.lengths([10.0, 20.0, 30.0]))
         assert b.style == "orthogonal"
-        assert b.cell_defined
+        assert b.is_cell_defined
         assert list(b.pbc) == [True, True, True]
-        np.testing.assert_array_equal(b.h, np.diag([10.0, 20.0, 30.0]))
+        np.testing.assert_array_equal(b.origin, [0.0, 0.0, 0.0])
+        np.testing.assert_array_equal(b.matrix, np.diag([10.0, 20.0, 30.0]))
         assert pytest.approx(b.volume()) == 6000.0
 
     def test_a_nested_list_is_a_matrix(self):
-        b = molrs.core.Box([[10, 0, 0], [0, 10, 0], [0, 0, 10]])
+        b = Box(Cell.matrix([[10, 0, 0], [0, 10, 0], [0, 0, 10]]))
         assert pytest.approx(b.volume()) == 1000.0
 
-    def test_cell_defined_false_ignores_the_matrix(self):
-        b = molrs.core.Box(np.eye(3) * 5.0, cell_defined=False)
-        assert not b.cell_defined
-        np.testing.assert_array_equal(b.h, np.eye(3))
+    def test_lengths_angles_of_a_right_cell_is_orthogonal(self):
+        b = Box(Cell.lengths_angles([3.0, 4.0, 5.0], [90.0, 90.0, 90.0]))
+        np.testing.assert_allclose(b.matrix, np.diag([3.0, 4.0, 5.0]), atol=1e-12)
+        np.testing.assert_allclose(b.angles, [90.0, 90.0, 90.0])
+
+    def test_lengths_angles_reproduces_the_angles(self):
+        b = Box(Cell.lengths_angles([3.0, 4.0, 5.0], [80.0, 95.0, 110.0]))
+        np.testing.assert_allclose(b.lengths, [3.0, 4.0, 5.0])
+        np.testing.assert_allclose(b.angles, [80.0, 95.0, 110.0])
+        # Restricted triclinic: a along x, b in the xy plane.
+        assert b.matrix[1, 0] == 0.0 and b.matrix[2, 0] == 0.0
+        assert b.matrix[2, 1] == 0.0
+
+    def test_impossible_angles_raise(self):
+        with pytest.raises(ValueError, match="lengths/angles"):
+            Box(Cell.lengths_angles([1.0, 1.0, 1.0], [0.0, 90.0, 90.0]))
+
+    def test_lengths_tilts_is_the_lammps_form(self):
+        b = Box(Cell.lengths_tilts([10.0, 20.0, 30.0], [1.0, 2.0, 3.0]))
+        np.testing.assert_array_equal(
+            b.matrix, [[10.0, 1.0, 2.0], [0.0, 20.0, 3.0], [0.0, 0.0, 30.0]]
+        )
+        np.testing.assert_array_equal(b.tilts, [1.0, 2.0, 3.0])
 
     def test_cube_zero_raises_value_error(self):
-        with pytest.raises(ValueError):
-            molrs.core.Box.cube(0.0)
+        with pytest.raises(ValueError, match="positive"):
+            Box(Cell.lengths([0.0, 0.0, 0.0]))
 
     def test_cube_negative_raises_value_error(self):
-        with pytest.raises(ValueError):
-            molrs.core.Box.cube(-5.0)
+        with pytest.raises(ValueError, match="positive"):
+            Box(Cell.lengths([-5.0, -5.0, -5.0]))
 
     def test_custom_origin(self):
-        b = molrs.core.Box.cube(10.0, origin=np.array([1.0, 2.0, 3.0], dtype=np.float64))
+        b = Box(
+            Cell.lengths([10.0, 10.0, 10.0]),
+            origin=np.array([1.0, 2.0, 3.0], dtype=np.float64),
+        )
         np.testing.assert_allclose(b.origin, [1.0, 2.0, 3.0], atol=1e-6)
 
     def test_custom_pbc(self):
-        b = molrs.core.Box.cube(10.0, pbc=np.array([True, False, True]))
+        b = Box(Cell.lengths([10.0, 10.0, 10.0]), pbc=np.array([True, False, True]))
         assert b.pbc[0] == True
         assert b.pbc[1] == False
         assert b.pbc[2] == True
 
+    def test_the_cell_is_required(self):
+        with pytest.raises(TypeError):
+            Box()  # type: ignore[call-arg]
+        with pytest.raises(TypeError):
+            Box(np.eye(3) * 10.0)  # type: ignore[arg-type]
+
+
+class TestCell:
+    def test_cells_compare_by_value(self):
+        assert Cell.lengths([1.0, 2.0, 3.0]) == Cell.lengths([1.0, 2.0, 3.0])
+        assert Cell.lengths([1.0, 2.0, 3.0]) != Cell.lengths([1.0, 2.0, 4.0])
+        assert Cell.undefined() == Cell.undefined()
+        assert Cell.undefined() != Cell.lengths([1.0, 1.0, 1.0])
+
+    @pytest.mark.parametrize(
+        "cell",
+        [
+            Cell.matrix(np.eye(3) * 2.0),
+            Cell.lengths([1.0, 2.0, 3.0]),
+            Cell.lengths_angles([1.0, 2.0, 3.0], [90.0, 90.0, 100.0]),
+            Cell.lengths_tilts([1.0, 2.0, 3.0], [0.1, 0.2, 0.3]),
+            Cell.undefined(),
+        ],
+    )
+    def test_every_variant_pickles(self, cell):
+        assert pickle.loads(pickle.dumps(cell)) == cell
+
+    def test_a_cell_is_frozen(self):
+        with pytest.raises(AttributeError):
+            Cell.undefined().x = 1  # type: ignore[attr-defined]
+
+
+class TestBoxPickle:
+    def test_a_box_round_trips(self, cubic_box):
+        back = pickle.loads(pickle.dumps(cubic_box))
+        assert back.approx_eq(cubic_box, 0.0)
+
+    def test_a_triclinic_box_with_origin_and_pbc_round_trips(self):
+        box = Box(
+            Cell.lengths_tilts([10.0, 20.0, 30.0], [1.0, 2.0, 3.0]),
+            origin=(1.0, -2.0, 3.0),
+            pbc=(True, False, True),
+        )
+        back = pickle.loads(pickle.dumps(box))
+        assert back.approx_eq(box, 0.0)
+
+    def test_an_undefined_box_round_trips(self):
+        box = Box(Cell.undefined(), pbc=(False, False, False))
+        back = pickle.loads(pickle.dumps(box))
+        assert not back.is_cell_defined
+        assert back.approx_eq(box, 0.0)
+
 
 class TestBoxProperties:
-    def test_h(self, cubic_box):
-        h = cubic_box.h
+    def test_matrix(self, cubic_box):
+        h = cubic_box.matrix
         assert h.shape == (3, 3)
         assert pytest.approx(h[0, 0]) == 10.0
         assert pytest.approx(h[1, 1]) == 10.0
         assert pytest.approx(h[2, 2]) == 10.0
+
+    def test_matrix_rebuilds_the_box(self):
+        box = Box(
+            Cell.lengths_angles([3.0, 4.0, 5.0], [80.0, 95.0, 110.0]),
+            origin=(1.0, 2.0, 3.0),
+            pbc=(True, True, False),
+        )
+        again = Box(Cell.matrix(box.matrix), box.origin, box.pbc)
+        assert again.approx_eq(box, 0.0)
 
     def test_origin(self, cubic_box):
         o = cubic_box.origin
@@ -112,6 +196,16 @@ class TestBoxProperties:
             v = cubic_box.lattice(i)
             assert v.shape == (3,)
 
+    def test_inverse(self, ortho_box):
+        np.testing.assert_allclose(ortho_box.inverse @ ortho_box.matrix, np.eye(3))
+
+    def test_restricted_matrix_rotates_a_onto_x(self):
+        rot = np.array([[0.0, -1.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]])
+        h = rot @ np.diag([3.0, 4.0, 5.0])
+        np.testing.assert_allclose(
+            Box.restricted_matrix(h), np.diag([3.0, 4.0, 5.0]), atol=1e-12
+        )
+
 
 class TestBoxCoordinateTransforms:
     def test_roundtrip_frac_cart(self, cubic_box, sample_points):
@@ -126,15 +220,17 @@ class TestBoxCoordinateTransforms:
 
     def test_wrap(self, cubic_box):
         pts = np.array([[11.0, -1.0, 25.0]], dtype=np.float64)
-        wrapped = cubic_box.wrap(pts)
+        wrapped, shifts = cubic_box.wrap(pts)
         frac = cubic_box.to_frac(wrapped)
         assert np.all(frac >= 0.0)
         assert np.all(frac < 1.0)
+        np.testing.assert_array_equal(shifts, [[1, -1, 2]])
 
     def test_wrap_identity(self, cubic_box):
         pts = np.array([[5.0, 5.0, 5.0]], dtype=np.float64)
-        wrapped = cubic_box.wrap(pts)
+        wrapped, shifts = cubic_box.wrap(pts)
         np.testing.assert_allclose(wrapped, pts, atol=1e-4)
+        np.testing.assert_array_equal(shifts, [[0, 0, 0]])
 
 
 class TestBoxDisplacement:
@@ -197,22 +293,31 @@ class TestBoxContainment:
 
 
 class TestBoxErrors:
-    def test_bad_h_shape(self):
-        with pytest.raises(ValueError, match=r"\(3, 3\) or \(3,\)"):
-            molrs.core.Box(np.ones((2, 3), dtype=np.float64))
+    def test_bad_matrix_shape(self):
+        with pytest.raises((TypeError, ValueError)):
+            Cell.matrix(np.ones((2, 3), dtype=np.float64))
+
+    def test_bad_lengths_length(self):
+        with pytest.raises((TypeError, ValueError)):
+            Cell.lengths([1.0, 2.0])
 
     def test_bad_origin_length(self):
-        h = np.eye(3, dtype=np.float64) * 10.0
-        with pytest.raises(ValueError, match="length 3"):
-            molrs.core.Box(h, origin=np.array([1.0, 2.0], dtype=np.float64))
+        with pytest.raises((TypeError, ValueError), match="length 3"):
+            Box(
+                Cell.lengths([10.0, 10.0, 10.0]),
+                origin=np.array([1.0, 2.0], dtype=np.float64),
+            )
 
     def test_bad_pbc_length(self):
-        h = np.eye(3, dtype=np.float64) * 10.0
-        with pytest.raises(ValueError, match="3 elements"):
-            molrs.core.Box(h, pbc=np.array([True, False]))
+        with pytest.raises((TypeError, ValueError), match="length 3"):
+            Box(Cell.lengths([10.0, 10.0, 10.0]), pbc=np.array([True, False]))
+
+    def test_an_int_pbc_flag_is_refused(self):
+        with pytest.raises(TypeError):
+            Box(Cell.lengths([10.0, 10.0, 10.0]), pbc=(1, 1, 1))
 
     def test_bad_to_frac_shape(self, cubic_box):
-        with pytest.raises(ValueError, match="N,3"):
+        with pytest.raises(ValueError, match=r"\(N, 3\)"):
             cubic_box.to_frac(np.ones((3, 2), dtype=np.float64))
 
     def test_bad_lattice_index(self, cubic_box):

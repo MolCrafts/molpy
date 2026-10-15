@@ -4,7 +4,7 @@ use crate::op::vec3::{cross, dot, norm};
 use crate::op::{F, F3, F3View, Fnx3, Fnx3View, I, Pbc3};
 use crate::op::{Vec3, to_mat3, to_vec3};
 use crate::op::{det3, inv3};
-use ndarray::{Array1, Array2, Array3, ArrayView1, ArrayView2, Zip, array};
+use ndarray::{Array1, Array2, Array3, ArrayView1, ArrayView2, array};
 
 /// Box geometry kind, detected once at construction.
 #[derive(Debug, Clone, PartialEq)]
@@ -40,7 +40,7 @@ pub struct SimBox {
     /// describes periodicity. A defined non-periodic box (e.g. a free-boundary
     /// bounding box) keeps `cell_defined = true`; only a box with no meaningful
     /// cell at all sets it `false`, and such a box always carries the identity
-    /// matrix (see [`SimBox::new_cell`]).
+    /// matrix (see [`Cell::Undefined`]).
     cell_defined: bool,
 }
 
@@ -57,6 +57,238 @@ pub enum BoxError {
     NonContiguous(&'static str),
     /// Cell lengths/angles do not describe a physical triclinic cell.
     InvalidAngles,
+    /// A [`Cell::Lengths`] / [`Cell::LengthsTilts`] edge is not a positive
+    /// finite number.
+    NonPositiveLength { lengths: [F; 3] },
+    /// [`SimBox::bounding`] was given no points: an empty set has no bounds.
+    EmptyPoints,
+    /// [`SimBox::bounding`] was given a negative or non-finite padding.
+    InvalidPadding { padding: [F; 3] },
+    /// The bounding box of [`SimBox::bounding`] has zero extent along `axis`
+    /// (every point shares that coordinate and the padding is zero).
+    ZeroExtent { axis: usize },
+    /// The [`Points::Columns`] slices (or a [`Points::Rows`] view's column
+    /// count) do not describe `N` three-dimensional points.
+    PointsShape { lens: [usize; 3] },
+}
+
+impl std::fmt::Display for BoxError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            BoxError::SingularCell => write!(f, "the cell matrix is singular"),
+            BoxError::InvalidMatrixShape { rows, cols } => {
+                write!(f, "a cell matrix is 3x3, got {rows}x{cols}")
+            }
+            BoxError::InvalidVectorLength { len } => {
+                write!(f, "expected a length-3 vector, got length {len}")
+            }
+            BoxError::NonContiguous(what) => write!(f, "{what} is not contiguous in memory"),
+            BoxError::InvalidAngles => {
+                write!(
+                    f,
+                    "cell lengths/angles do not describe a physical triclinic cell"
+                )
+            }
+            BoxError::NonPositiveLength { lengths } => write!(
+                f,
+                "cell edge lengths must be positive and finite, got {lengths:?}; \
+                 a box without a cell is Cell::Undefined"
+            ),
+            BoxError::EmptyPoints => write!(
+                f,
+                "a bounding box needs at least one point; build an empty system's box \
+                 with SimBox::new"
+            ),
+            BoxError::InvalidPadding { padding } => write!(
+                f,
+                "bounding-box padding must be finite and >= 0, got {padding:?}"
+            ),
+            BoxError::ZeroExtent { axis } => write!(
+                f,
+                "the bounding box has zero extent along axis {axis}; pass a positive \
+                 padding for that axis"
+            ),
+            BoxError::PointsShape { lens } => write!(
+                f,
+                "points must be N x 3 (three equal-length x/y/z columns), got {lens:?}"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for BoxError {}
+
+/// The geometry a [`SimBox`] is built from — the one argument of
+/// [`SimBox::new`] that says what the cell is.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Cell {
+    /// The cell matrix `H`, `h[row][col]`, lattice vectors as **columns**:
+    /// the first lattice vector is `a = (h[0][0], h[1][0], h[2][0])`. The
+    /// layout [`SimBox::matrix`] returns.
+    Matrix([[F; 3]; 3]),
+    /// An orthorhombic cell with edge lengths `[a, b, c]` (Å), all positive.
+    Lengths([F; 3]),
+    /// A restricted-triclinic cell from edge lengths `[a, b, c]` (Å) and the
+    /// angles `[alpha, beta, gamma]` between them in degrees.
+    LengthsAngles { lengths: [F; 3], angles: [F; 3] },
+    /// A restricted-triclinic cell from the diagonal sizes `[lx, ly, lz]` (Å)
+    /// and the tilts `[xy, xz, yz]` (Å) — the LAMMPS form.
+    LengthsTilts { lengths: [F; 3], tilts: [F; 3] },
+    /// No geometric cell: a "no-cell" box of undefined, zero volume. The box
+    /// carries the identity matrix so it is never inverted, a writer emits the
+    /// identity, and [`SimBox::volume`] / [`SimBox::is_cell_defined`] report
+    /// the undefined cell. Distinct from periodicity: a defined non-periodic
+    /// box (a free-boundary bounding box) has a cell.
+    Undefined,
+}
+
+impl Cell {
+    /// The cell matrix, or `None` for [`Cell::Undefined`].
+    pub(crate) fn resolve(self) -> Result<Option<Fnx3>, BoxError> {
+        let positive = |lengths: [F; 3]| {
+            if lengths.iter().all(|l| l.is_finite() && *l > 0.0) {
+                Ok(())
+            } else {
+                Err(BoxError::NonPositiveLength { lengths })
+            }
+        };
+        Ok(match self {
+            Cell::Matrix(h) => Some(ndarray::arr2(&h)),
+            Cell::Lengths(lengths) => {
+                positive(lengths)?;
+                let [a, b, c] = lengths;
+                Some(array![[a, 0.0, 0.0], [0.0, b, 0.0], [0.0, 0.0, c]])
+            }
+            Cell::LengthsAngles { lengths, angles } => {
+                Some(matrix_from_lengths_angles(lengths, angles)?)
+            }
+            Cell::LengthsTilts { lengths, tilts } => {
+                positive(lengths)?;
+                Some(array![
+                    [lengths[0], tilts[0], tilts[1]],
+                    [0.0, lengths[1], tilts[2]],
+                    [0.0, 0.0, lengths[2]],
+                ])
+            }
+            Cell::Undefined => None,
+        })
+    }
+}
+
+/// Restricted-triclinic matrix from edge lengths and angles in degrees.
+fn matrix_from_lengths_angles(lengths: [F; 3], angles: [F; 3]) -> Result<Fnx3, BoxError> {
+    let [a, b, c] = lengths;
+    let [alpha, beta, gamma] = angles.map(F::to_radians);
+    if [a, b, c].iter().any(|value| *value <= 0.0)
+        || [alpha, beta, gamma]
+            .iter()
+            .any(|angle| !(*angle > 0.0 && *angle < std::f64::consts::PI))
+    {
+        return Err(BoxError::InvalidAngles);
+    }
+    let (cos_a, cos_b, cos_c) = (alpha.cos(), beta.cos(), gamma.cos());
+    let xy = b * cos_c;
+    let xz = c * cos_b;
+    let ly = (b * b - xy * xy).sqrt();
+    if !ly.is_finite() || ly <= 0.0 {
+        return Err(BoxError::InvalidAngles);
+    }
+    let yz = (b * c * cos_a - xy * xz) / ly;
+    let lz2 = c * c - xz * xz - yz * yz;
+    if !lz2.is_finite() || lz2 <= 0.0 {
+        return Err(BoxError::InvalidAngles);
+    }
+    Ok(array![[a, xy, xz], [0.0, ly, yz], [0.0, 0.0, lz2.sqrt()]])
+}
+
+/// A borrowed set of `N` Cartesian points (Å), in either memory layout.
+///
+/// The one point argument of [`SimBox::bounding`] and of the neighbor searches
+/// ([`NeighborList::build`](crate::core::NeighborList::build),
+/// [`NeighborQuery::new`](crate::core::NeighborQuery::new), …): a caller holding
+/// an `N × 3` array passes [`Points::Rows`] (or the view itself — it converts),
+/// a caller holding a column store (`atoms.x` / `atoms.y` / `atoms.z`) passes
+/// [`Points::Columns`] without interleaving them first.
+#[derive(Debug, Clone, Copy)]
+pub enum Points<'a> {
+    /// An `N × 3` array, one row per point.
+    Rows(Fnx3View<'a>),
+    /// Three length-`N` coordinate columns `[x, y, z]`; point `i` is
+    /// `(x[i], y[i], z[i])`.
+    Columns([&'a [F]; 3]),
+}
+
+impl<'a> From<Fnx3View<'a>> for Points<'a> {
+    fn from(rows: Fnx3View<'a>) -> Self {
+        Points::Rows(rows)
+    }
+}
+
+impl<'a> From<&'a Fnx3> for Points<'a> {
+    fn from(rows: &'a Fnx3) -> Self {
+        Points::Rows(rows.view())
+    }
+}
+
+impl Points<'_> {
+    /// The number of points.
+    pub fn len(&self) -> usize {
+        match self {
+            Points::Rows(rows) => rows.nrows(),
+            Points::Columns([x, _, _]) => x.len(),
+        }
+    }
+
+    /// Whether there are no points.
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    /// Point `i` as `[x, y, z]`.
+    ///
+    /// # Panics
+    /// If `i` is out of range.
+    #[inline]
+    pub fn point(&self, i: usize) -> [F; 3] {
+        match self {
+            Points::Rows(rows) => [rows[[i, 0]], rows[[i, 1]], rows[[i, 2]]],
+            Points::Columns([x, y, z]) => [x[i], y[i], z[i]],
+        }
+    }
+
+    /// Refuse a set that is not `N` three-dimensional points: a row view
+    /// without exactly 3 columns, or columns of unequal length.
+    pub(crate) fn check(&self) -> Result<(), BoxError> {
+        match self {
+            Points::Rows(rows) if rows.ncols() != 3 => Err(BoxError::PointsShape {
+                lens: [rows.nrows(), rows.ncols(), 0],
+            }),
+            Points::Columns([x, y, z]) if x.len() != y.len() || y.len() != z.len() => {
+                Err(BoxError::PointsShape {
+                    lens: [x.len(), y.len(), z.len()],
+                })
+            }
+            _ => Ok(()),
+        }
+    }
+
+    /// The points as an owned `N × 3` array.
+    pub(crate) fn to_rows(self) -> Fnx3 {
+        match self {
+            Points::Rows(rows) => rows.to_owned(),
+            Points::Columns(_) => {
+                let n = self.len();
+                let mut out = Fnx3::zeros((n, 3));
+                for i in 0..n {
+                    let p = self.point(i);
+                    out[[i, 0]] = p[0];
+                    out[[i, 1]] = p[1];
+                    out[[i, 2]] = p[2];
+                }
+                out
+            }
+        }
+    }
 }
 
 impl SimBox {
@@ -66,29 +298,36 @@ impl SimBox {
     /// triclinic cross-axis perturbation. More would only mask a real defect.
     const WRAP_REFINE_PASSES: usize = 2;
 
-    /// Construct from triclinic cell matrix `H`, origin `O`, and per-axis PBC flags
-    pub fn new(h: Fnx3, origin: F3, pbc: Pbc3) -> Result<Self, BoxError> {
-        Self::new_cell(h, origin, pbc, true)
-    }
-
-    /// Construct a box, explicitly marking whether the cell is geometrically
-    /// defined.
+    /// Construct a box from its `cell`, its `origin` (Å) and per-axis
+    /// periodicity `pbc`.
     ///
-    /// With `cell_defined = false` (a "no-cell" box) `h` is **ignored**: the
-    /// box carries the identity matrix, so it is never inverted and a writer
-    /// emits the identity. Any `h` is accepted there, a zero matrix included —
-    /// a reader hands over whatever `vectors` a store carries for an undefined
-    /// cell, and those numbers mean nothing. `volume` / `is_cell_defined`
-    /// reflect the undefined cell.
+    /// ```
+    /// use molrs::core::{Cell, SimBox};
+    ///
+    /// let cube = SimBox::new(Cell::Lengths([10.0; 3]), [0.0; 3], [true; 3]).unwrap();
+    /// assert_eq!(cube.volume(), 1000.0);
+    /// let none = SimBox::new(Cell::Undefined, [0.0; 3], [false; 3]).unwrap();
+    /// assert!(!none.is_cell_defined());
+    /// ```
     ///
     /// # Errors
-    /// [`BoxError::SingularCell`] when the cell is defined and `h` is singular.
-    pub fn new_cell(h: Fnx3, origin: F3, pbc: Pbc3, cell_defined: bool) -> Result<Self, BoxError> {
-        let (h, inv) = if cell_defined {
-            let inv = inv3(&to_mat3(h.view())).ok_or(BoxError::SingularCell)?;
-            (h, ndarray::arr2(&inv))
-        } else {
-            (Fnx3::eye(3), Fnx3::eye(3))
+    /// [`BoxError::SingularCell`] for a singular [`Cell::Matrix`],
+    /// [`BoxError::NonPositiveLength`] for a non-positive or non-finite edge,
+    /// [`BoxError::InvalidAngles`] for lengths/angles that describe no cell.
+    pub fn new(cell: Cell, origin: [F; 3], pbc: Pbc3) -> Result<Self, BoxError> {
+        let h = cell.resolve()?;
+        Self::from_parts(h, ndarray::arr1(&origin), pbc)
+    }
+
+    /// The box over cell matrix `h` (`None`: no cell), origin and pbc.
+    fn from_parts(h: Option<Fnx3>, origin: F3, pbc: Pbc3) -> Result<Self, BoxError> {
+        let cell_defined = h.is_some();
+        let (h, inv) = match h {
+            Some(h) => {
+                let inv = inv3(&to_mat3(h.view())).ok_or(BoxError::SingularCell)?;
+                (h, ndarray::arr2(&inv))
+            }
+            None => (Fnx3::eye(3), Fnx3::eye(3)),
         };
         let kind = detect_box_kind(&h);
         let mic = Mic::of_cell(&kind, &h, &inv, pbc);
@@ -104,32 +343,25 @@ impl SimBox {
     }
 
     /// Whether the cell is geometrically defined (`false` ⇒ a no-cell box of
-    /// undefined / zero volume). Distinct from periodicity ([`is_free`]).
+    /// undefined / zero volume, [`Cell::Undefined`]). Distinct from
+    /// periodicity ([`is_free`]).
     ///
     /// [`is_free`]: SimBox::is_free
     pub fn is_cell_defined(&self) -> bool {
         self.cell_defined
     }
 
-    /// Construct from a plain `[[F; 3]; 3]` cell matrix.
-    ///
-    /// Same convention as [`new`](Self::new) and as the `ndarray` form:
-    /// `h[row][col]`, lattice vectors are the **columns**, so the first
-    /// lattice vector is `a = (h[0][0], h[1][0], h[2][0])`. This is the inverse
-    /// of [`matrix`](Self::matrix): `SimBox::from_matrix(b.matrix(), ..)`
-    /// rebuilds the cell of `b` exactly.
-    ///
-    /// # Errors
-    /// [`BoxError::SingularCell`] when `h` is singular.
-    pub fn from_matrix(h: [[F; 3]; 3], origin: [F; 3], pbc: Pbc3) -> Result<Self, BoxError> {
-        Self::new(ndarray::arr2(&h), ndarray::arr1(&origin), pbc)
-    }
-
     /// The cell matrix `H` as a plain `[[F; 3]; 3]`, `h[row][col]`, lattice
-    /// vectors as **columns** — the same layout [`from_matrix`](Self::from_matrix)
-    /// takes and [`h_view`](Self::h_view) borrows.
+    /// vectors as **columns** — the layout [`Cell::Matrix`] takes, so
+    /// `SimBox::new(Cell::Matrix(b.matrix()), b.origin(), b.pbc())` rebuilds
+    /// the cell of `b` exactly.
     pub fn matrix(&self) -> [[F; 3]; 3] {
         std::array::from_fn(|r| std::array::from_fn(|c| self.h[[r, c]]))
+    }
+
+    /// The origin of the cell (Å).
+    pub fn origin(&self) -> [F; 3] {
+        [self.origin[0], self.origin[1], self.origin[2]]
     }
 
     /// Whether two boxes describe the same cell within an **absolute**
@@ -163,66 +395,6 @@ impl SimBox {
                 .iter()
                 .zip(other.origin.iter())
                 .all(|(a, b)| close(*a, *b))
-    }
-
-    /// Factory: cubic box with edge length `a` and origin `O`
-    pub fn cube(a: F, origin: F3, pbc: Pbc3) -> Result<Self, BoxError> {
-        if a <= 0.0 {
-            return Err(BoxError::InvalidVectorLength { len: 0 });
-        }
-        let h = array![[a, 0.0, 0.0], [0.0, a, 0.0], [0.0, 0.0, a]];
-        Self::new(h, origin, pbc)
-    }
-
-    /// Factory: ortho box with lengths (ax, ay, az) and origin `O`
-    pub fn ortho(lengths: F3, origin: F3, pbc: Pbc3) -> Result<Self, BoxError> {
-        if lengths.len() != 3 {
-            return Err(BoxError::InvalidVectorLength { len: lengths.len() });
-        }
-        if lengths.iter().any(|v| *v <= 0.0) {
-            return Err(BoxError::InvalidVectorLength { len: 0 });
-        }
-        let h = array![
-            [lengths[0], 0.0, 0.0],
-            [0.0, lengths[1], 0.0],
-            [0.0, 0.0, lengths[2]],
-        ];
-        Self::new(h, origin, pbc)
-    }
-
-    /// Restricted-triclinic matrix from edge lengths and angles in degrees.
-    pub fn matrix_from_lengths_angles(lengths: [F; 3], angles: [F; 3]) -> Result<Fnx3, BoxError> {
-        let [a, b, c] = lengths;
-        let [alpha, beta, gamma] = angles.map(F::to_radians);
-        if [a, b, c].iter().any(|value| *value <= 0.0)
-            || [alpha, beta, gamma]
-                .iter()
-                .any(|angle| !(*angle > 0.0 && *angle < std::f64::consts::PI))
-        {
-            return Err(BoxError::InvalidAngles);
-        }
-        let (cos_a, cos_b, cos_c) = (alpha.cos(), beta.cos(), gamma.cos());
-        let xy = b * cos_c;
-        let xz = c * cos_b;
-        let ly = (b * b - xy * xy).sqrt();
-        if !ly.is_finite() || ly <= 0.0 {
-            return Err(BoxError::InvalidAngles);
-        }
-        let yz = (b * c * cos_a - xy * xz) / ly;
-        let lz2 = c * c - xz * xz - yz * yz;
-        if !lz2.is_finite() || lz2 <= 0.0 {
-            return Err(BoxError::InvalidAngles);
-        }
-        Ok(array![[a, xy, xz], [0.0, ly, yz], [0.0, 0.0, lz2.sqrt()]])
-    }
-
-    /// Restricted-triclinic matrix from diagonal sizes and `(xy, xz, yz)` tilts.
-    pub fn matrix_from_lengths_tilts(lengths: [F; 3], tilts: [F; 3]) -> Fnx3 {
-        array![
-            [lengths[0], tilts[0], tilts[1]],
-            [0.0, lengths[1], tilts[2]],
-            [0.0, 0.0, lengths[2]],
-        ]
     }
 
     /// Convert a general cell matrix to LAMMPS restricted-triclinic form.
@@ -259,145 +431,66 @@ impl SimBox {
         Ok(array![[ax, bx, cx], [0.0, by, cy], [0.0, 0.0, cz]])
     }
 
-    /// Create a non-periodic (free-boundary) box enclosing all points.
+    /// The orthorhombic box enclosing `points`: their axis-aligned bounds
+    /// widened by `padding[d]` on each side of axis `d`, with periodicity
+    /// `pbc`.
     ///
-    /// Computes the axis-aligned bounding box of `points` and adds `padding`
-    /// on each side. The resulting box has `pbc = [false, false, false]`.
+    /// A free-boundary neighbor search pads by (at least) its cutoff so every
+    /// particle sits well inside the box; a tight box passes a zero padding.
     ///
-    /// `padding` should be >= the neighbor cutoff distance so that all
-    /// particles sit well inside the box for correct cell assignment.
+    /// ```
+    /// use molrs::core::{Points, SimBox};
     ///
-    /// # Errors
-    /// Returns `BoxError` if padding is non-positive or the resulting box is degenerate.
-    ///
-    /// # Panics
-    /// Panics if `padding <= 0`.
-    pub fn free(points: Fnx3View<'_>, padding: F) -> Result<Self, BoxError> {
-        assert!(padding > 0.0, "padding must be positive");
-        let n = points.nrows();
-        if n == 0 {
-            // Empty point set -- return a unit cube at origin
-            return Self::cube(padding, array![0.0 as F, 0.0, 0.0], [false, false, false]);
-        }
-        let mut min = [points[[0, 0]], points[[0, 1]], points[[0, 2]]];
-        let mut max = min;
-        for i in 1..n {
-            for d in 0..3 {
-                if points[[i, d]] < min[d] {
-                    min[d] = points[[i, d]];
-                }
-                if points[[i, d]] > max[d] {
-                    max[d] = points[[i, d]];
-                }
-            }
-        }
-        Self::free_around(min, max, padding)
-    }
-
-    /// The free-boundary box over the bounds `min`..`max`, padded by
-    /// `padding` on every side (each edge at least `padding` long).
-    fn free_around(min: [F; 3], max: [F; 3], padding: F) -> Result<Self, BoxError> {
-        let origin = array![min[0] - padding, min[1] - padding, min[2] - padding];
-        let lengths = array![
-            (max[0] - min[0] + 2.0 * padding).max(padding),
-            (max[1] - min[1] + 2.0 * padding).max(padding),
-            (max[2] - min[2] + 2.0 * padding).max(padding),
-        ];
-        Self::ortho(lengths, origin, [false, false, false])
-    }
-
-    /// Create a tight orthorhombic box around a point cloud.
-    ///
-    /// Unlike [`free`](Self::free), padding is specified per axis and may be
-    /// zero. Periodicity is supplied by the caller instead of being forced to
-    /// free-boundary semantics.
-    pub fn from_bounds(points: Fnx3View<'_>, padding: [F; 3], pbc: Pbc3) -> Result<Self, BoxError> {
-        if points.nrows() == 0 {
-            return Err(BoxError::InvalidVectorLength { len: 0 });
-        }
-        if padding.iter().any(|value| *value < 0.0) {
-            return Err(BoxError::InvalidVectorLength { len: 0 });
-        }
-        let mut min = [points[[0, 0]], points[[0, 1]], points[[0, 2]]];
-        let mut max = min;
-        for point in points.rows().into_iter().skip(1) {
-            for d in 0..3 {
-                min[d] = min[d].min(point[d]);
-                max[d] = max[d].max(point[d]);
-            }
-        }
-        let origin = array![
-            min[0] - padding[0],
-            min[1] - padding[1],
-            min[2] - padding[2]
-        ];
-        let lengths = array![
-            max[0] - min[0] + 2.0 * padding[0],
-            max[1] - min[1] + 2.0 * padding[1],
-            max[2] - min[2] + 2.0 * padding[2]
-        ];
-        Self::ortho(lengths, origin, pbc)
-    }
-
-    /// Create a non-periodic (free-boundary) box enclosing all points, reading
-    /// positions from three separate `x`/`y`/`z` coordinate slices (SoA layout).
-    ///
-    /// Arithmetically identical to [`free`](Self::free): computes the same
-    /// axis-aligned bounding box (min/max over all points) plus `padding` on
-    /// each side, and returns a box byte-identical to `free` on the same
-    /// points. Provided so callers holding column-major (SoA) coordinates need
-    /// not interleave them into an owned `Array2` first.
+    /// let xs = [0.0, 2.0];
+    /// let ys = [0.0, 1.0];
+    /// let zs = [0.0, 3.0];
+    /// let bx = SimBox::bounding(Points::Columns([&xs, &ys, &zs]), [1.0; 3], [false; 3]).unwrap();
+    /// assert_eq!(bx.origin(), [-1.0, -1.0, -1.0]);
+    /// assert_eq!(bx.matrix()[0][0], 4.0);
+    /// ```
     ///
     /// # Errors
-    /// Returns `BoxError` if the resulting box is degenerate.
-    ///
-    /// # Panics
-    /// Panics if `padding <= 0` or the three slices do not have equal length.
-    pub fn free_from_xyz(xs: &[F], ys: &[F], zs: &[F], padding: F) -> Result<Self, BoxError> {
-        assert!(padding > 0.0, "padding must be positive");
-        assert!(
-            xs.len() == ys.len() && ys.len() == zs.len(),
-            "x/y/z slices must have equal length"
-        );
-        let n = xs.len();
-        if n == 0 {
-            // Empty point set -- return a unit cube at origin
-            return Self::cube(padding, array![0.0 as F, 0.0, 0.0], [false, false, false]);
+    /// [`BoxError::EmptyPoints`] when there are no points,
+    /// [`BoxError::InvalidPadding`] for a negative or non-finite padding,
+    /// [`BoxError::ZeroExtent`] when an axis has zero extent (all points share
+    /// the coordinate and its padding is zero), [`BoxError::PointsShape`] when
+    /// `points` is not `N × 3`.
+    pub fn bounding<'a>(
+        points: impl Into<Points<'a>>,
+        padding: [F; 3],
+        pbc: Pbc3,
+    ) -> Result<Self, BoxError> {
+        let points = points.into();
+        points.check()?;
+        if points.is_empty() {
+            return Err(BoxError::EmptyPoints);
         }
-        let mut min = [xs[0], ys[0], zs[0]];
+        if padding.iter().any(|p| !p.is_finite() || *p < 0.0) {
+            return Err(BoxError::InvalidPadding { padding });
+        }
+        let mut min = points.point(0);
         let mut max = min;
-        for i in 1..n {
-            let p = [xs[i], ys[i], zs[i]];
+        for i in 1..points.len() {
+            let p = points.point(i);
             for d in 0..3 {
-                if p[d] < min[d] {
-                    min[d] = p[d];
-                }
-                if p[d] > max[d] {
-                    max[d] = p[d];
-                }
+                min[d] = min[d].min(p[d]);
+                max[d] = max[d].max(p[d]);
             }
         }
-        Self::free_around(min, max, padding)
-    }
-
-    /// View of the cell matrix
-    pub fn h_view(&self) -> Fnx3View<'_> {
-        self.h.view()
+        let mut lengths = [0.0; 3];
+        for d in 0..3 {
+            lengths[d] = max[d] - min[d] + 2.0 * padding[d];
+            if lengths[d] <= 0.0 {
+                return Err(BoxError::ZeroExtent { axis: d });
+            }
+        }
+        let origin = std::array::from_fn(|d| min[d] - padding[d]);
+        Self::new(Cell::Lengths(lengths), origin, pbc)
     }
 
     /// View of the inverse cell matrix
     pub fn inv_view(&self) -> Fnx3View<'_> {
         self.inv.view()
-    }
-
-    /// View of the origin
-    pub fn origin_view(&self) -> F3View<'_> {
-        self.origin.view()
-    }
-
-    /// View of the PBC flags
-    pub fn pbc_view(&self) -> ArrayView1<'_, bool> {
-        ArrayView1::from_shape(3, &self.pbc).expect("pbc_view shape")
     }
 
     /// Per-axis PBC flags
@@ -497,51 +590,20 @@ impl SimBox {
         self.h.column(index).to_owned()
     }
 
-    /// Convert Cartesian coordinates to fractional coordinates [0, 1)
-    pub fn make_fractional(&self, r: F3View<'_>) -> F3 {
-        let dr = &r - &self.origin.view();
-        let mut frac = self.inv.dot(&dr);
-        for f in frac.iter_mut() {
-            *f -= f.floor();
-        }
-        frac
-    }
-
-    /// Fractional coordinates with ortho fast-path
-    #[inline(always)]
-    pub fn make_fractional_fast(&self, r: F3View<'_>) -> F3 {
-        match &self.kind {
-            BoxKind::Ortho { inv_len, .. } => {
-                let mut frac = array![
-                    (r[0] - self.origin[0]) * inv_len[0],
-                    (r[1] - self.origin[1]) * inv_len[1],
-                    (r[2] - self.origin[2]) * inv_len[2],
-                ];
-                for f in frac.iter_mut() {
-                    *f -= f.floor();
-                }
-                frac
-            }
-            BoxKind::Triclinic => self.make_fractional(r),
-        }
-    }
-
     /// Fractional coordinates **without** the wrap into `[0, 1)`.
     ///
-    /// [`make_fractional_fast`](Self::make_fractional_fast) folds
-    /// every axis back into the primitive cell unconditionally, which is right
-    /// for a fully periodic box but destroys the information a caller needs on
+    /// Folding every axis back into the primitive cell unconditionally is
+    /// right for a fully periodic box but destroys the information a caller needs on
     /// a **non-periodic** axis: a point above the box must stay above it, so
     /// that a cell-list assignment can clamp it to the edge cell instead of
     /// wrapping it to the opposite face. Callers that dispatch on
     /// [`pbc`](Self::pbc) per axis — see `CellGrid` — start from this raw value
     /// and apply wrap or clamp themselves.
     ///
-    /// `make_fractional_fast_arr3(r)` is exactly this followed by
-    /// `f - f.floor()` per component, so the two agree bit-for-bit on any point
-    /// inside the cell.
+    /// Folding this per component with `f - f.floor()` gives the fractional
+    /// coordinates of a point inside the cell.
     #[inline(always)]
-    pub fn make_fractional_raw_arr3(&self, r: [F; 3]) -> [F; 3] {
+    pub(crate) fn make_fractional_raw_arr3(&self, r: [F; 3]) -> [F; 3] {
         match &self.kind {
             BoxKind::Ortho { inv_len, .. } => [
                 (r[0] - self.origin[0]) * inv_len[0],
@@ -557,55 +619,22 @@ impl SimBox {
         }
     }
 
-    /// Convert fractional coordinates to Cartesian coordinates
-    pub fn make_cartesian(&self, frac: F3View<'_>) -> F3 {
+    /// Convert one fractional point to Cartesian coordinates. The batch form
+    /// is [`to_cart`](Self::to_cart).
+    pub(crate) fn make_cartesian(&self, frac: F3View<'_>) -> F3 {
         &self.origin + &self.h.dot(&frac)
     }
 
-    /// A detached, `Copy` minimum-image kernel.
+    /// The box's minimum-image convention as a detached, `Copy` kernel.
     ///
-    /// [`shortest_vector_impl`](Self::shortest_vector_impl) needs a `&SimBox`,
-    /// which is awkward for a caller whose hot loop already holds the owning
-    /// structure mutably: it either clones the box — two `Array2` allocations,
-    /// per evaluation — or restructures its borrows. `Mic` lifts the convention
-    /// out as a plain value with everything it needs on the stack, so it can be
-    /// captured once and carried into the loop.
-    ///
-    /// This is the box's one minimum-image convention, captured at
-    /// construction: [`shortest_vector_impl`](Self::shortest_vector_impl) and
-    /// [`shortest_vector`](Self::shortest_vector) apply it.
+    /// The one minimum-image entry point: `bx.mic().apply(b - a)` is the
+    /// minimum-image displacement from `a` to `b`. `Mic` carries everything it
+    /// needs on the stack, so a hot loop captures it once — even while it
+    /// holds the owning structure mutably — and applies it per pair with no
+    /// allocation. The batch row-wise form is [`delta`](Self::delta).
+    #[inline]
     pub fn mic(&self) -> Mic {
         self.mic
-    }
-
-    /// Minimum image displacement vector from `r1` to `r2` (returns `r2 − r1`).
-    ///
-    /// Ergonomic ndarray-flavoured API: takes views and returns an owned
-    /// `Array1<F>`. Inside hot loops prefer
-    /// [`shortest_vector_impl`](Self::shortest_vector_impl) — it avoids the
-    /// heap allocation for the output (~70% faster per call).
-    #[inline]
-    pub fn shortest_vector(&self, r1: F3View<'_>, r2: F3View<'_>) -> F3 {
-        let dr = self.shortest_vector_impl([r1[0], r1[1], r1[2]], [r2[0], r2[1], r2[2]]);
-        array![dr[0], dr[1], dr[2]]
-    }
-
-    /// Zero-allocation MIC displacement from `a` to `b` (returns `b − a`).
-    ///
-    /// Stack-array in / out; the canonical hot-loop entry point. Used by
-    /// [`LinkCell`](crate::core::LinkCell),
-    /// [`BruteForce`](crate::core::BruteForce), and
-    /// [`AabbQuery`](crate::core::AabbQuery) inner loops.
-    #[inline(always)]
-    pub fn shortest_vector_impl(&self, a: [F; 3], b: [F; 3]) -> [F; 3] {
-        self.mic.apply([b[0] - a[0], b[1] - a[1], b[2] - a[2]])
-    }
-
-    /// Calculate squared distance using MIC.
-    #[inline]
-    pub fn calc_distance2(&self, a: F3View<'_>, b: F3View<'_>) -> F {
-        let dr = self.shortest_vector(a, b);
-        dr.dot(&dr)
     }
 
     /// Convert Cartesian points to fractional coordinates (N×3)
@@ -643,36 +672,22 @@ impl SimBox {
         Array1::from_vec(mask)
     }
 
-    /// Batched displacement vectors row-wise (N×3).
-    /// Writes result into `out` to avoid allocation.
-    pub fn delta_out(
-        &self,
-        xyzu1: Fnx3View<'_>,
-        xyzu2: Fnx3View<'_>,
-        out: &mut Fnx3,
-        minimum_image: bool,
-    ) {
-        assert_eq!(xyzu1.nrows(), xyzu2.nrows());
-        let n = xyzu1.nrows();
-        if minimum_image {
-            for i in 0..n {
-                let dr = self.shortest_vector(xyzu1.row(i), xyzu2.row(i));
-                out.row_mut(i).assign(&dr);
-            }
-        } else {
-            for i in 0..n {
-                let dr = &xyzu2.row(i) - &xyzu1.row(i);
-                out.row_mut(i).assign(&dr);
-            }
-        }
-    }
-
-    /// Batched displacement vectors row-wise (N×3)
+    /// Row-wise displacement vectors `xyzu2 - xyzu1` (N×3), minimum-imaged
+    /// when `minimum_image` is set.
+    ///
+    /// # Panics
+    /// If the two arrays have different row counts.
     pub fn delta(&self, xyzu1: Fnx3View<'_>, xyzu2: Fnx3View<'_>, minimum_image: bool) -> Fnx3 {
         assert_eq!(xyzu1.nrows(), xyzu2.nrows());
-        let n = xyzu1.nrows();
-        let mut out = Fnx3::zeros((n, 3));
-        self.delta_out(xyzu1, xyzu2, &mut out, minimum_image);
+        let mut out = &xyzu2 - &xyzu1;
+        if minimum_image {
+            for mut row in out.rows_mut() {
+                let dr = self.mic.apply([row[0], row[1], row[2]]);
+                row[0] = dr[0];
+                row[1] = dr[1];
+                row[2] = dr[2];
+            }
+        }
         out
     }
 
@@ -684,7 +699,7 @@ impl SimBox {
             .into_iter()
             .zip(points2.rows())
             .map(|(a, b)| {
-                let dr = self.shortest_vector_impl([a[0], a[1], a[2]], [b[0], b[1], b[2]]);
+                let dr = self.mic.apply([b[0] - a[0], b[1] - a[1], b[2] - a[2]]);
                 (dr[0] * dr[0] + dr[1] * dr[1] + dr[2] * dr[2]).sqrt()
             })
             .collect();
@@ -696,7 +711,7 @@ impl SimBox {
         let mut out = Array3::zeros((points1.nrows(), points2.nrows(), 3));
         for (i, a) in points1.rows().into_iter().enumerate() {
             for (j, b) in points2.rows().into_iter().enumerate() {
-                let dr = self.shortest_vector_impl([a[0], a[1], a[2]], [b[0], b[1], b[2]]);
+                let dr = self.mic.apply([b[0] - a[0], b[1] - a[1], b[2] - a[2]]);
                 for d in 0..3 {
                     out[[i, j, d]] = dr[d];
                 }
@@ -710,7 +725,7 @@ impl SimBox {
         let mut out = Array2::zeros((points1.nrows(), points2.nrows()));
         for (i, a) in points1.rows().into_iter().enumerate() {
             for (j, b) in points2.rows().into_iter().enumerate() {
-                let dr = self.shortest_vector_impl([a[0], a[1], a[2]], [b[0], b[1], b[2]]);
+                let dr = self.mic.apply([b[0] - a[0], b[1] - a[1], b[2] - a[2]]);
                 out[[i, j]] = (dr[0] * dr[0] + dr[1] * dr[1] + dr[2] * dr[2]).sqrt();
             }
         }
@@ -719,11 +734,10 @@ impl SimBox {
 
     /// Return a box with its cell matrix right-multiplied by a transform.
     pub fn transformed(&self, transformation: &Fnx3) -> Result<Self, BoxError> {
-        Self::new_cell(
-            self.h.dot(transformation),
+        Self::from_parts(
+            self.cell_defined.then(|| self.h.dot(transformation)),
             self.origin.clone(),
             self.pbc,
-            self.cell_defined,
         )
     }
 
@@ -752,19 +766,19 @@ impl SimBox {
     }
 
     /// Wrap one point and report the integer lattice shift applied — the
-    /// single-point form of [`wrap_shifts`](Self::wrap_shifts), no allocation.
+    /// single-point kernel of [`wrap`](Self::wrap), no allocation.
     ///
     /// Returns `(wrapped, m)` with `wrapped = r - H·m`. It is the *same*
-    /// kernel `wrap_shifts` (and [`wrap`](Self::wrap)) runs per row, so the
-    /// one-point and array forms agree bit for bit by construction. Use it on
-    /// hot single-point paths (region membership, per-probe wrapping) that
-    /// would otherwise pay a `(1, 3)` array round-trip.
+    /// kernel `wrap` runs per row, so the one-point and array forms agree bit
+    /// for bit by construction. Use it on hot single-point paths (region
+    /// membership, per-probe wrapping) that would otherwise pay a `(1, 3)`
+    /// array round-trip.
     ///
-    /// All the guarantees of `wrap_shifts` hold: a point already inside the
-    /// cell is returned untouched with `m = [0, 0, 0]`, and `m` is the shift
-    /// actually applied (including a snap off the far face).
+    /// All the guarantees of `wrap` hold: a point already inside the cell is
+    /// returned untouched with `m = [0, 0, 0]`, and `m` is the shift actually
+    /// applied (including a snap off the far face).
     #[inline]
-    pub fn wrap_row_shift(&self, r: [F; 3]) -> ([F; 3], [I; 3]) {
+    pub(crate) fn wrap_row_shift(&self, r: [F; 3]) -> ([F; 3], [I; 3]) {
         let f = self.make_fractional_raw_arr3(r);
         let mut n = [0.0; 3];
         let mut crossed = false;
@@ -830,13 +844,11 @@ impl SimBox {
         (snapped, Self::as_images(n))
     }
 
-    /// Wrap one point into the cell on the periodic axes — the single-point
-    /// form of [`wrap`](Self::wrap), no allocation.
-    ///
-    /// [`wrap_row_shift`](Self::wrap_row_shift) with the shift discarded; bit
-    /// for bit what `wrap` returns for the same row.
+    /// Wrap one point into the cell on the periodic axes, discarding the
+    /// shift — [`wrap_row_shift`](Self::wrap_row_shift)`.0`, bit for bit what
+    /// [`wrap`](Self::wrap) returns for the same row.
     #[inline]
-    pub fn wrap_row(&self, r: [F; 3]) -> [F; 3] {
+    pub(crate) fn wrap_row(&self, r: [F; 3]) -> [F; 3] {
         self.wrap_row_shift(r).0
     }
 
@@ -900,50 +912,36 @@ impl SimBox {
         }
     }
 
-    /// Wrap Cartesian points into the unit cell on the periodic axes.
+    /// Wrap Cartesian points into the unit cell on the periodic axes **and**
+    /// report the integer lattice shift applied to each.
+    ///
+    /// Returns `(wrapped, m)` with `wrapped = r - H·m` row by row. A
+    /// non-periodic axis is left alone (its shift is 0).
     ///
     /// Whole lattice vectors are subtracted from the Cartesian coordinate, so a
-    /// point **already inside the cell is returned bit for bit** and only the
-    /// atoms that actually crossed a face are touched. A non-periodic axis is
-    /// left alone.
+    /// point **already inside the cell is returned bit for bit** with
+    /// `m = [0, 0, 0]`, and only the atoms that actually crossed a face are
+    /// touched. This is deliberately *not* a `to_frac` → fold → `to_cart`
+    /// round-trip: that form rewrites every coordinate of every atom through
+    /// two matrix products, so it perturbs points that never left the cell by
+    /// a rounding error each call — and MD wraps after every integration step.
     ///
-    /// This is deliberately *not* a `to_frac` → fold → `to_cart` round-trip.
-    /// That form rewrites every coordinate of every atom through two matrix
-    /// products, so it perturbs points that never left the cell by a rounding
-    /// error each call. MD wraps after every integration step, which would turn
-    /// that into a per-step perturbation of the whole system.
-    pub fn wrap(&self, xyz: Fnx3View<'_>) -> Fnx3 {
-        let mut out = xyz.to_owned();
-        Zip::from(out.rows_mut()).for_each(|mut row| {
-            let w = self.wrap_row([row[0], row[1], row[2]]);
-            row[0] = w[0];
-            row[1] = w[1];
-            row[2] = w[2];
-        });
-        out
-    }
-
-    /// Wrap into the cell **and** report the integer lattice shift applied.
+    /// `m` serves both uses of image flags:
     ///
-    /// Returns `(wrapped, m)` with `wrapped = r - H·m`, so a caller maintaining
-    /// canonical MD state accumulates `n += m` each step and reconstructs the
-    /// continuous trajectory as `r^u = wrapped + H·n` ([`unwrap`](Self::unwrap)).
-    /// The position half is bit-identical to [`wrap`](Self::wrap) — both call
-    /// one kernel, so they cannot drift apart.
-    ///
-    /// `m` is the shift **actually applied**, not `floor(H⁻¹r)` recomputed. The
-    /// two differ: the kernel refines the shift and may finish by snapping a
-    /// point off an exactly-representable far face, and a caller that derived
-    /// `m` independently would accumulate flags that disagree with the
-    /// positions they belong to — silently, until an unwrapped trajectory is
-    /// read back.
-    ///
-    /// A point already inside the cell yields `m = [0, 0, 0]` and comes back
-    /// untouched to the bit; only atoms that actually crossed are arithmetic.
+    /// - **MD**: a caller maintaining canonical state accumulates `n += m`
+    ///   each step and reconstructs the continuous trajectory as
+    ///   `r^u = wrapped + H·n` ([`unwrap`](Self::unwrap)). `m` is the shift
+    ///   **actually applied**, not `floor(H⁻¹r)` recomputed: the kernel refines
+    ///   the shift and may finish by snapping a point off an
+    ///   exactly-representable far face, and flags derived independently would
+    ///   silently disagree with the positions they belong to.
+    /// - **Import**: for a configuration that arrived as continuous coordinates
+    ///   (a file, an analysis that never wrapped), `m` recovers its image
+    ///   flags. A wrapped configuration correctly yields all zeros.
     ///
     /// `m` is the schema's image integer type ([`I`], i32) — the same type as
     /// the `ix`/`iy`/`iz` columns it is banked into.
-    pub fn wrap_shifts(&self, xyz: Fnx3View<'_>) -> (Fnx3, Array2<I>) {
+    pub fn wrap(&self, xyz: Fnx3View<'_>) -> (Fnx3, Array2<I>) {
         let n = xyz.nrows();
         let mut out = xyz.to_owned();
         let mut shifts = Array2::<I>::zeros((n, 3));
@@ -955,35 +953,6 @@ impl SimBox {
             }
         }
         (out, shifts)
-    }
-
-    /// Integer periodic images for Cartesian points, read off in one shot.
-    ///
-    /// This is the **import-time** helper: it recovers the flags of a
-    /// configuration that arrived as continuous coordinates, from a file or
-    /// from an analysis that never wrapped. The MD path does not use it — there
-    /// the flags are accumulated a step at a time from
-    /// [`wrap_shifts`](Self::wrap_shifts), which reports the shift actually
-    /// applied and therefore cannot disagree with the position it belongs to.
-    ///
-    /// Reconstructing from a position alone is only possible because a
-    /// continuous coordinate carries its own history; a wrapped one does not,
-    /// and calling this on wrapped input correctly returns all zeros.
-    ///
-    /// The flags are the schema's image integer type ([`I`], i32), matching the
-    /// `ix`/`iy`/`iz` columns. A point would have to sit two billion cells away
-    /// before the count overflowed — far past any physical configuration.
-    pub fn images(&self, xyz: Fnx3View<'_>) -> Array2<I> {
-        let frac = self.to_frac(xyz);
-        let mut images = Array2::zeros((frac.nrows(), 3));
-        for i in 0..frac.nrows() {
-            for d in 0..3 {
-                if self.pbc[d] {
-                    images[[i, d]] = frac[[i, d]].floor() as I;
-                }
-            }
-        }
-        images
     }
 
     /// Reconstruct unwrapped coordinates from wrapped points and image flags.
@@ -1193,9 +1162,9 @@ mod tests {
     #[test]
     fn cell_defined_distinct_from_pbc() {
         // A defined box (any pbc) reports cell_defined = true (the default).
-        let defined = SimBox::ortho(
-            array![2.0, 2.0, 2.0],
-            array![0.0, 0.0, 0.0],
+        let defined = SimBox::new(
+            Cell::Lengths([2.0, 2.0, 2.0]),
+            [0.0, 0.0, 0.0],
             [false, false, false],
         )
         .unwrap();
@@ -1205,45 +1174,35 @@ mod tests {
 
         // A no-cell box carries the identity cell (so geometry is a no-op) but
         // is marked cell_defined = false.
-        let nocell = SimBox::new_cell(
-            ndarray::Array2::eye(3),
-            array![0.0, 0.0, 0.0],
-            [false, false, false],
-            false,
-        )
-        .unwrap();
+        let nocell = SimBox::new(Cell::Undefined, [0.0, 0.0, 0.0], [false, false, false]).unwrap();
         assert!(!nocell.is_cell_defined());
         // No cell, no volume: the placeholder identity's det(H) = 1 is not one.
         assert_eq!(nocell.volume(), 0.0);
         assert_eq!(nocell.style(), "free");
         // geometry no-ops on the identity cell:
         let pts = array![[1.0, 2.0, 3.0]];
-        assert_eq!(nocell.wrap(pts.view()), pts);
+        assert_eq!(nocell.wrap(pts.view()).0, pts);
     }
 
-    /// An undefined cell ignores its matrix: a zero (singular) or arbitrary
-    /// one is accepted, never inverted, and replaced by the identity.
+    /// An undefined cell carries the identity matrix in place of a cell: it is
+    /// never inverted, and the origin is kept.
     #[test]
-    fn an_undefined_cell_ignores_its_vectors() {
-        for h in [
-            ndarray::Array2::zeros((3, 3)),
-            array![[5.0, 1.0, 0.0], [0.0, 6.0, 0.0], [0.0, 0.0, 7.0]],
-        ] {
-            let nocell =
-                SimBox::new_cell(h, array![1.0, 2.0, 3.0], [true, true, true], false).unwrap();
-            assert!(!nocell.is_cell_defined());
-            assert_eq!(nocell.h_view(), ndarray::Array2::<F>::eye(3));
-            assert_eq!(nocell.inv_view(), ndarray::Array2::<F>::eye(3));
-            assert_eq!(nocell.origin_view(), array![1.0, 2.0, 3.0]);
-            assert_eq!(nocell.volume(), 0.0);
-        }
+    fn an_undefined_cell_carries_the_identity() {
+        let nocell = SimBox::new(Cell::Undefined, [1.0, 2.0, 3.0], [true, true, true]).unwrap();
+        assert!(!nocell.is_cell_defined());
+        assert_eq!(
+            nocell.matrix(),
+            [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]
+        );
+        assert_eq!(nocell.inv_view(), ndarray::Array2::<F>::eye(3));
+        assert_eq!(nocell.origin(), [1.0, 2.0, 3.0]);
+        assert_eq!(nocell.volume(), 0.0);
         // A *defined* singular cell is still refused.
         assert!(matches!(
-            SimBox::new_cell(
-                ndarray::Array2::zeros((3, 3)),
-                array![0.0, 0.0, 0.0],
-                [true, true, true],
-                true
+            SimBox::new(
+                Cell::Matrix([[0.0; 3]; 3]),
+                [0.0, 0.0, 0.0],
+                [true, true, true]
             ),
             Err(BoxError::SingularCell)
         ));
@@ -1251,9 +1210,9 @@ mod tests {
 
     #[test]
     fn roundtrip_frac_cart() {
-        let bx = SimBox::ortho(
-            array![2.0, 3.0, 4.0],
-            array![0.5, -1.0, 2.0],
+        let bx = SimBox::new(
+            Cell::Lengths([2.0, 3.0, 4.0]),
+            [0.5, -1.0, 2.0],
             [true, true, true],
         )
         .expect("invalid box lengths");
@@ -1265,7 +1224,7 @@ mod tests {
 
     #[test]
     fn wrap_row_matches_wrap_on_every_axis_kind() {
-        let bx = SimBox::from_bounds(
+        let bx = SimBox::bounding(
             array![[0.0, 0.0, 0.0], [4.0, 5.0, 6.0]].view(),
             [0.0; 3],
             [true, false, true],
@@ -1273,7 +1232,7 @@ mod tests {
         .unwrap();
         for r in [[4.5, 5.5, -0.5], [-1.0, 2.0, 13.0], [1.0, 1.0, 1.0]] {
             let one = bx.wrap_row(r);
-            let many = bx.wrap(array![[r[0], r[1], r[2]]].view());
+            let many = bx.wrap(array![[r[0], r[1], r[2]]].view()).0;
             // Same arithmetic, so the kernel and the array form agree exactly —
             // not merely to a tolerance.
             for d in 0..3 {
@@ -1291,16 +1250,24 @@ mod tests {
     #[test]
     fn wrap_is_bit_exact_for_points_already_inside() {
         for bx in [
-            SimBox::cube(10.0, array![0.0, 0.0, 0.0], [true, true, true]).unwrap(),
-            SimBox::ortho(
-                array![7.0, 11.0, 13.0],
-                array![-3.0, 0.5, 2.0],
+            SimBox::new(
+                Cell::Lengths([10.0; 3]),
+                [0.0, 0.0, 0.0],
                 [true, true, true],
             )
             .unwrap(),
             SimBox::new(
-                SimBox::matrix_from_lengths_angles([10.0, 11.0, 12.0], [70.0, 80.0, 65.0]).unwrap(),
-                array![0.0, 0.0, 0.0],
+                Cell::Lengths([7.0, 11.0, 13.0]),
+                [-3.0, 0.5, 2.0],
+                [true, true, true],
+            )
+            .unwrap(),
+            SimBox::new(
+                Cell::LengthsAngles {
+                    lengths: [10.0, 11.0, 12.0],
+                    angles: [70.0, 80.0, 65.0],
+                },
+                [0.0, 0.0, 0.0],
                 [true, true, true],
             )
             .unwrap(),
@@ -1313,7 +1280,7 @@ mod tests {
                 [0.123_456_789, 0.987_654_321, 0.314_159_265],
             ];
             let pts = bx.to_cart(frac.view());
-            assert_eq!(bx.wrap(pts.view()), pts);
+            assert_eq!(bx.wrap(pts.view()).0, pts);
         }
     }
 
@@ -1324,16 +1291,24 @@ mod tests {
     #[test]
     fn wrap_postcondition_holds_just_below_the_origin() {
         for bx in [
-            SimBox::cube(10.0, array![0.0, 0.0, 0.0], [true, true, true]).unwrap(),
-            SimBox::ortho(
-                array![7.0, 11.0, 13.0],
-                array![-3.0, 0.5, 2.0],
+            SimBox::new(
+                Cell::Lengths([10.0; 3]),
+                [0.0, 0.0, 0.0],
                 [true, true, true],
             )
             .unwrap(),
             SimBox::new(
-                SimBox::matrix_from_lengths_angles([10.0, 11.0, 12.0], [70.0, 80.0, 65.0]).unwrap(),
-                array![0.0, 0.0, 0.0],
+                Cell::Lengths([7.0, 11.0, 13.0]),
+                [-3.0, 0.5, 2.0],
+                [true, true, true],
+            )
+            .unwrap(),
+            SimBox::new(
+                Cell::LengthsAngles {
+                    lengths: [10.0, 11.0, 12.0],
+                    angles: [70.0, 80.0, 65.0],
+                },
+                [0.0, 0.0, 0.0],
                 [true, true, true],
             )
             .unwrap(),
@@ -1342,10 +1317,10 @@ mod tests {
         .enumerate()
         {
             let (bi, bx) = (bx.0, bx.1);
-            let origin = bx.origin_view().to_owned();
+            let origin = bx.origin().to_owned();
             for eps in [1e-18, 1e-16, 1e-13, F::MIN_POSITIVE] {
                 let below = array![[origin[0] - eps, origin[1] - eps, origin[2] - eps]];
-                let wrapped = bx.wrap(below.view());
+                let wrapped = bx.wrap(below.view()).0;
                 let frac = bx.to_frac(wrapped.view());
                 for d in 0..3 {
                     let f = frac[[0, d]];
@@ -1370,16 +1345,24 @@ mod tests {
     #[test]
     fn wrap_postcondition_holds_over_a_random_cloud() {
         let boxes = [
-            SimBox::cube(10.0, array![0.0, 0.0, 0.0], [true, true, true]).unwrap(),
-            SimBox::ortho(
-                array![7.0, 11.0, 13.0],
-                array![-3.0, 0.5, 2.0],
+            SimBox::new(
+                Cell::Lengths([10.0; 3]),
+                [0.0, 0.0, 0.0],
                 [true, true, true],
             )
             .unwrap(),
             SimBox::new(
-                SimBox::matrix_from_lengths_angles([10.0, 11.0, 12.0], [70.0, 80.0, 65.0]).unwrap(),
-                array![0.0, 0.0, 0.0],
+                Cell::Lengths([7.0, 11.0, 13.0]),
+                [-3.0, 0.5, 2.0],
+                [true, true, true],
+            )
+            .unwrap(),
+            SimBox::new(
+                Cell::LengthsAngles {
+                    lengths: [10.0, 11.0, 12.0],
+                    angles: [70.0, 80.0, 65.0],
+                },
+                [0.0, 0.0, 0.0],
                 [true, true, true],
             )
             .unwrap(),
@@ -1401,17 +1384,17 @@ mod tests {
                 let mut r = [0.0; 3];
                 for (d, rd) in r.iter_mut().enumerate() {
                     let cells = (next() - 0.5) * 100.0;
-                    *rd = bx.origin_view()[d] + cells * lengths[d];
+                    *rd = bx.origin()[d] + cells * lengths[d];
                     if k % 4 == 0 {
                         let face = (cells.round()) * lengths[d];
-                        *rd = bx.origin_view()[d] + face;
+                        *rd = bx.origin()[d] + face;
                         for _ in 0..(k % 3) {
                             *rd = rd.next_down();
                         }
                     }
                 }
                 let pts = array![[r[0], r[1], r[2]]];
-                let w = bx.wrap(pts.view());
+                let w = bx.wrap(pts.view()).0;
                 let frac = bx.to_frac(w.view());
                 for d in 0..3 {
                     let f = frac[[0, d]];
@@ -1434,27 +1417,35 @@ mod tests {
         }
     }
 
-    /// `wrap_shifts` agrees with `wrap` on the position, to the bit, and its
-    /// shift reconstructs the input — including through the refine-and-snap
-    /// path, which is the one place the two can silently diverge.
+    /// The shift `wrap` reports reconstructs the input — including through
+    /// the refine-and-snap path, the one place a shift derived independently
+    /// of the position would silently diverge.
     #[test]
-    fn wrap_shifts_reconstructs_the_input() {
+    fn wrap_shift_reconstructs_the_input() {
         for bx in [
-            SimBox::cube(10.0, array![0.0, 0.0, 0.0], [true, true, true]).unwrap(),
-            SimBox::ortho(
-                array![7.0, 11.0, 13.0],
-                array![-3.0, 0.5, 2.0],
+            SimBox::new(
+                Cell::Lengths([10.0; 3]),
+                [0.0, 0.0, 0.0],
                 [true, true, true],
             )
             .unwrap(),
             SimBox::new(
-                SimBox::matrix_from_lengths_angles([10.0, 11.0, 12.0], [70.0, 80.0, 65.0]).unwrap(),
-                array![0.0, 0.0, 0.0],
+                Cell::Lengths([7.0, 11.0, 13.0]),
+                [-3.0, 0.5, 2.0],
+                [true, true, true],
+            )
+            .unwrap(),
+            SimBox::new(
+                Cell::LengthsAngles {
+                    lengths: [10.0, 11.0, 12.0],
+                    angles: [70.0, 80.0, 65.0],
+                },
+                [0.0, 0.0, 0.0],
                 [true, true, true],
             )
             .unwrap(),
         ] {
-            let o = bx.origin_view().to_owned();
+            let o = bx.origin().to_owned();
             // Row 0 is built in *fractional* space so it is genuinely inside
             // every box kind: a Cartesian point near the origin can fall
             // outside a skewed cell.
@@ -1467,8 +1458,7 @@ mod tests {
                 [o[0] - F::MIN_POSITIVE, o[1], o[2]],
             ];
 
-            let (w, m) = bx.wrap_shifts(pts.view());
-            assert_eq!(w, bx.wrap(pts.view()), "position half must match wrap()");
+            let (w, m) = bx.wrap(pts.view());
 
             // The shift is the one that was applied: putting it back returns
             // the input. A shift derived independently as floor(H^-1 r) would
@@ -1501,20 +1491,20 @@ mod tests {
     #[test]
     fn images_has_no_boundary_fudge() {
         let l = 50.0_f64;
-        let bx = SimBox::cube(l, array![0.0, 0.0, 0.0], [true, true, true]).unwrap();
+        let bx = SimBox::new(Cell::Lengths([l; 3]), [0.0, 0.0, 0.0], [true, true, true]).unwrap();
 
         // Fractional coordinates inside the band a 1e-8 epsilon would swallow:
         // just below 1.0, i.e. just inside the far face of cell 0.
         for eps_frac in [1e-9_f64, 5e-9, 9e-9] {
             let pts = array![[(1.0 - eps_frac) * l, 0.5 * l, 0.5 * l]];
-            let im = bx.images(pts.view());
+            let im = bx.wrap(pts.view()).1;
             assert_eq!(
                 im[[0, 0]],
                 0,
                 "a point {eps_frac} of a cell below the face is still in cell 0"
             );
             // And the round trip puts it back where it was, not a cell away.
-            let back = bx.unwrap(bx.wrap(pts.view()).view(), im.view());
+            let back = bx.unwrap(bx.wrap(pts.view()).0.view(), im.view());
             assert!(
                 (back[[0, 0]] - pts[[0, 0]]).abs() < 1e-9,
                 "round trip moved it from {} to {}",
@@ -1525,7 +1515,7 @@ mod tests {
 
         // The ordinary cases are unaffected.
         let pts = array![[-0.5 * l, 1.5 * l, 2.5 * l]];
-        let im = bx.images(pts.view());
+        let im = bx.wrap(pts.view()).1;
         assert_eq!(im.row(0).to_vec(), vec![-1 as I, 1, 2]);
     }
 
@@ -1533,8 +1523,11 @@ mod tests {
     #[test]
     fn wrap_is_idempotent() {
         let bx = SimBox::new(
-            SimBox::matrix_from_lengths_angles([10.0, 11.0, 12.0], [70.0, 80.0, 65.0]).unwrap(),
-            array![0.0, 0.0, 0.0],
+            Cell::LengthsAngles {
+                lengths: [10.0, 11.0, 12.0],
+                angles: [70.0, 80.0, 65.0],
+            },
+            [0.0, 0.0, 0.0],
             [true, true, true],
         )
         .unwrap();
@@ -1543,17 +1536,17 @@ mod tests {
             [-0.000_1, 55.0, -77.7],
             [3.0, 4.0, 5.0],
         ];
-        let once = bx.wrap(pts.view());
-        let twice = bx.wrap(once.view());
+        let once = bx.wrap(pts.view()).0;
+        let twice = bx.wrap(once.view()).0;
         assert_eq!(once, twice);
     }
 
     #[test]
     fn wrap_into_cell() {
-        let bx = SimBox::cube(2.0, array![0.0, 0.0, 0.0], [true, true, true])
+        let bx = SimBox::new(Cell::Lengths([2.0; 3]), [0.0, 0.0, 0.0], [true, true, true])
             .expect("invalid box length");
         let pts = array![[2.1, -0.1, 3.9], [-1.9, 4.2, 0.0]];
-        let wrapped = bx.wrap(pts.view());
+        let wrapped = bx.wrap(pts.view()).0;
         let frac = bx.to_frac(wrapped.view());
         for i in 0..wrapped.nrows() {
             let fx = frac[[i, 0]];
@@ -1567,21 +1560,22 @@ mod tests {
 
     #[test]
     fn calc_distance_matches_components() {
-        let bx = SimBox::cube(3.0, array![0.0, 0.0, 0.0], [true, true, true])
+        let bx = SimBox::new(Cell::Lengths([3.0; 3]), [0.0, 0.0, 0.0], [true, true, true])
             .expect("invalid box length");
-        let a = array![0.1, 0.2, 0.3];
-        let b = array![2.9, 0.2, 0.3];
-        let d2 = bx.calc_distance2(a.view(), b.view());
-        let dr = bx.shortest_vector(a.view(), b.view());
-        let expected = dr.dot(&dr);
-        assert!((d2 - expected).abs() < 1e-6);
+        let a = array![[0.1, 0.2, 0.3]];
+        let b = array![[2.9, 0.2, 0.3]];
+        let dr = bx.mic().apply([2.9 - 0.1, 0.0, 0.0]);
+        let delta = bx.delta(a.view(), b.view(), true);
+        assert_eq!(delta.row(0).to_vec(), dr.to_vec());
+        let d2 = bx.distances(a.view(), b.view())[0].powi(2);
+        assert!((d2 - (dr[0] * dr[0] + dr[1] * dr[1] + dr[2] * dr[2])).abs() < 1e-6);
     }
 
     #[test]
     fn test_lengths_ortho() {
-        let bx = SimBox::ortho(
-            array![2.0, 4.0, 5.0],
-            array![0.0, 0.0, 0.0],
+        let bx = SimBox::new(
+            Cell::Lengths([2.0, 4.0, 5.0]),
+            [0.0, 0.0, 0.0],
             [true, true, true],
         )
         .expect("invalid box lengths");
@@ -1593,8 +1587,9 @@ mod tests {
 
     #[test]
     fn test_tilts_values() {
-        let h = array![[2.0, 1.0, 2.0], [0.0, 4.0, 3.0], [0.0, 0.0, 5.0]];
-        let bx = SimBox::new(h, array![0.0, 0.0, 0.0], [true, true, true]).expect("invalid box");
+        let h = [[2.0, 1.0, 2.0], [0.0, 4.0, 3.0], [0.0, 0.0, 5.0]];
+        let bx =
+            SimBox::new(Cell::Matrix(h), [0.0, 0.0, 0.0], [true, true, true]).expect("invalid box");
         let tilts = bx.tilts();
         assert_close(tilts[0], 1.0);
         assert_close(tilts[1], 2.0);
@@ -1603,9 +1598,9 @@ mod tests {
 
     #[test]
     fn test_volume() {
-        let bx = SimBox::ortho(
-            array![2.0, 3.0, 4.0],
-            array![0.0, 0.0, 0.0],
+        let bx = SimBox::new(
+            Cell::Lengths([2.0, 3.0, 4.0]),
+            [0.0, 0.0, 0.0],
             [true, true, true],
         )
         .expect("invalid box lengths");
@@ -1614,10 +1609,10 @@ mod tests {
 
     #[test]
     fn test_wrap_single_and_multi() {
-        let bx = SimBox::cube(2.0, array![0.0, 0.0, 0.0], [true, true, true])
+        let bx = SimBox::new(Cell::Lengths([2.0; 3]), [0.0, 0.0, 0.0], [true, true, true])
             .expect("invalid box length");
         let pts = array![[10.0, -5.0, -5.0], [0.0, 0.5, 0.0]];
-        let wrapped = bx.wrap(pts.view());
+        let wrapped = bx.wrap(pts.view()).0;
         assert_close(wrapped[[0, 0]], 0.0);
         assert_close(wrapped[[0, 1]], 1.0);
         assert_close(wrapped[[0, 2]], 1.0);
@@ -1628,24 +1623,27 @@ mod tests {
 
     #[test]
     fn test_fractional_and_cartesian() {
-        let bx = SimBox::cube(2.0, array![0.0, 0.0, 0.0], [true, true, true])
+        let bx = SimBox::new(Cell::Lengths([2.0; 3]), [0.0, 0.0, 0.0], [true, true, true])
             .expect("invalid box length");
-        let p = array![-1.0, -1.0, -1.0];
-        let frac = bx.make_fractional(p.view());
-        assert_close(frac[0], 0.5);
-        assert_close(frac[1], 0.5);
-        assert_close(frac[2], 0.5);
-        let cart = bx.make_cartesian(frac.view());
-        assert_close(cart[0], 1.0);
-        assert_close(cart[1], 1.0);
-        assert_close(cart[2], 1.0);
+        let p = array![[-1.0, -1.0, -1.0]];
+        let frac = bx.to_frac(p.view());
+        assert_close(frac[[0, 0]], -0.5);
+        assert_close(frac[[0, 1]], -0.5);
+        assert_close(frac[[0, 2]], -0.5);
+        let cart = bx.to_cart(frac.view());
+        assert_close(cart[[0, 0]], -1.0);
+        assert_close(cart[[0, 1]], -1.0);
+        assert_close(cart[[0, 2]], -1.0);
+        // Folded into the cell, the point sits at its centre.
+        let folded = bx.make_cartesian(array![0.5, 0.5, 0.5].view());
+        assert_eq!(bx.wrap(p.view()).0.row(0).to_vec(), folded.to_vec());
     }
 
     #[test]
     fn test_to_frac_to_cart_roundtrip() {
-        let bx = SimBox::ortho(
-            array![2.0, 3.0, 4.0],
-            array![1.0, 2.0, 3.0],
+        let bx = SimBox::new(
+            Cell::Lengths([2.0, 3.0, 4.0]),
+            [1.0, 2.0, 3.0],
             [true, true, true],
         )
         .expect("invalid box lengths");
@@ -1660,23 +1658,28 @@ mod tests {
     }
 
     #[test]
-    fn test_shortest_vector_and_distance() {
-        let bx = SimBox::cube(2.0, array![0.0, 0.0, 0.0], [true, true, true])
+    fn mic_and_distance_agree() {
+        let bx = SimBox::new(Cell::Lengths([2.0; 3]), [0.0, 0.0, 0.0], [true, true, true])
             .expect("invalid box length");
-        let a = array![0.1, 0.0, 0.0];
-        let b = array![1.9, 0.0, 0.0];
-        let dr = bx.shortest_vector(a.view(), b.view());
+        let dr = bx.mic().apply([1.9 - 0.1, 0.0, 0.0]);
         assert_close(dr[0], -0.2);
         assert_close(dr[1], 0.0);
         assert_close(dr[2], 0.0);
-        let d2 = bx.calc_distance2(a.view(), b.view());
-        assert_close(d2, 0.04);
+        let d = bx.distances(
+            array![[0.1, 0.0, 0.0]].view(),
+            array![[1.9, 0.0, 0.0]].view(),
+        );
+        assert_close(d[0] * d[0], 0.04);
     }
 
     #[test]
     fn test_isin_point_non_pbc() {
-        let bx = SimBox::cube(2.0, array![0.0, 0.0, 0.0], [false, false, false])
-            .expect("invalid box length");
+        let bx = SimBox::new(
+            Cell::Lengths([2.0; 3]),
+            [0.0, 0.0, 0.0],
+            [false, false, false],
+        )
+        .expect("invalid box length");
         let pts = array![[0.5, 0.5, 0.5], [-0.1, 0.5, 0.5], [2.1, 0.5, 0.5]];
         let mask = bx.contains(pts.view());
         assert!(mask[0]);
@@ -1686,7 +1689,7 @@ mod tests {
 
     #[test]
     fn test_isin_mask() {
-        let bx = SimBox::cube(2.0, array![0.0, 0.0, 0.0], [true, true, true])
+        let bx = SimBox::new(Cell::Lengths([2.0; 3]), [0.0, 0.0, 0.0], [true, true, true])
             .expect("invalid box length");
         let pts = array![[0.1, 0.1, 0.1], [2.1, 0.0, 0.0], [-0.1, 0.0, 0.0]];
         let mask = bx.contains(pts.view());
@@ -1696,12 +1699,12 @@ mod tests {
     }
 
     #[test]
-    fn test_simbox_free_basic() {
+    fn bounding_pads_the_extent() {
         let pts = array![[1.0 as F, 2.0, 3.0], [4.0, 5.0, 6.0]];
-        let bx = SimBox::free(pts.view(), 1.0).unwrap();
+        let bx = SimBox::bounding(pts.view(), [1.0; 3], [false; 3]).unwrap();
         assert_eq!(bx.pbc(), [false, false, false]);
         // origin should be min - padding = [0.0, 1.0, 2.0]
-        let o = bx.origin_view();
+        let o = bx.origin();
         assert!((o[0] - 0.0).abs() < 1e-5);
         assert!((o[1] - 1.0).abs() < 1e-5);
         assert!((o[2] - 2.0).abs() < 1e-5);
@@ -1713,9 +1716,9 @@ mod tests {
     }
 
     #[test]
-    fn test_simbox_free_single_point() {
+    fn bounding_a_single_point_spans_twice_the_padding() {
         let pts = array![[1.0 as F, 2.0, 3.0]];
-        let bx = SimBox::free(pts.view(), 2.0).unwrap();
+        let bx = SimBox::bounding(pts.view(), [2.0; 3], [false; 3]).unwrap();
         assert_eq!(bx.pbc(), [false, false, false]);
         // lengths = max(0 + 4, 2) = 4 on each axis
         let l = bx.lengths();
@@ -1725,54 +1728,77 @@ mod tests {
     }
 
     #[test]
-    fn test_simbox_free_empty() {
+    fn bounding_refuses_what_has_no_extent() {
         use ndarray::Array2;
-        let pts = Array2::<F>::zeros((0, 3));
-        let bx = SimBox::free(pts.view(), 1.0).unwrap();
-        assert_eq!(bx.pbc(), [false, false, false]);
+        // No points: no bounds.
+        let empty = Array2::<F>::zeros((0, 3));
+        assert!(matches!(
+            SimBox::bounding(empty.view(), [1.0; 3], [false; 3]),
+            Err(BoxError::EmptyPoints)
+        ));
+        // Padding may be zero, but a zero-extent axis is refused by name.
+        let flat = array![[0.0 as F, 0.0, 1.0], [2.0, 3.0, 1.0]];
+        assert!(matches!(
+            SimBox::bounding(flat.view(), [0.0; 3], [false; 3]),
+            Err(BoxError::ZeroExtent { axis: 2 })
+        ));
+        let tight = SimBox::bounding(flat.view(), [0.0, 0.0, 0.5], [false; 3]).unwrap();
+        assert_eq!(tight.origin(), [0.0, 0.0, 0.5]);
+        assert_eq!(tight.matrix()[2][2], 1.0);
+        // Negative padding is refused.
+        assert!(matches!(
+            SimBox::bounding(flat.view(), [-1.0, 0.0, 0.0], [false; 3]),
+            Err(BoxError::InvalidPadding { .. })
+        ));
+        // Ragged columns are refused.
+        let (x, y, z) = ([0.0 as F, 1.0], [0.0 as F], [0.0 as F, 1.0]);
+        assert!(matches!(
+            SimBox::bounding(Points::Columns([&x, &y, &z]), [1.0; 3], [false; 3]),
+            Err(BoxError::PointsShape { .. })
+        ));
     }
 
     #[test]
     fn test_simbox_pbc_accessor() {
-        let bx = SimBox::cube(1.0, array![0.0 as F, 0.0, 0.0], [true, false, true]).unwrap();
+        let bx = SimBox::new(
+            Cell::Lengths([1.0; 3]),
+            [0.0 as F, 0.0, 0.0],
+            [true, false, true],
+        )
+        .unwrap();
         assert_eq!(bx.pbc(), [true, false, true]);
     }
 
     #[test]
-    fn free_from_xyz_matches_free_bitwise() {
+    fn bounding_columns_matches_rows_bitwise() {
         let pts = array![[1.0 as F, 2.0, 3.0], [4.0, -5.0, 6.0], [-2.5, 5.5, 0.25]];
         let xs = vec![1.0 as F, 4.0, -2.5];
         let ys = vec![2.0 as F, -5.0, 5.5];
         let zs = vec![3.0 as F, 6.0, 0.25];
-        let a = SimBox::free(pts.view(), 1.5).unwrap();
-        let b = SimBox::free_from_xyz(&xs, &ys, &zs, 1.5).unwrap();
+        let a = SimBox::bounding(pts.view(), [1.5; 3], [false; 3]).unwrap();
+        let b = SimBox::bounding(Points::Columns([&xs, &ys, &zs]), [1.5; 3], [false; 3]).unwrap();
 
-        let (oa, ob) = (a.origin_view(), b.origin_view());
-        let (ha, hb) = (a.h_view(), b.h_view());
-        for d in 0..3 {
-            assert_eq!(oa[d], ob[d], "origin bitwise");
-        }
-        for i in 0..3 {
-            for j in 0..3 {
-                assert_eq!(ha[[i, j]], hb[[i, j]], "H bitwise");
-            }
-        }
+        assert_eq!(a.origin(), b.origin(), "origin bitwise");
+        assert_eq!(a.matrix(), b.matrix(), "H bitwise");
         assert_eq!(a.pbc(), b.pbc());
     }
 
     #[test]
-    fn mic_matches_the_borrowed_kernel_on_both_box_kinds() {
-        // `Mic` exists so a caller can avoid holding a `&SimBox`; it must not
-        // become a second, drifting definition of the convention.
-        let ortho = SimBox::ortho(
-            array![10.0, 11.0, 12.0],
-            array![0.5, -1.0, 2.0],
+    fn mic_matches_the_batch_delta_on_both_box_kinds() {
+        // `Mic` is the single-pair kernel and `delta` the batch form; they
+        // must not become two drifting definitions of the convention.
+        let ortho = SimBox::new(
+            Cell::Lengths([10.0, 11.0, 12.0]),
+            [0.5, -1.0, 2.0],
             [true, false, true],
         )
         .unwrap();
         let tri = SimBox::new(
-            SimBox::matrix_from_lengths_angles([10.0, 11.0, 12.0], [70.0, 80.0, 65.0]).unwrap(),
-            array![0.3, -0.2, 1.1],
+            Cell::LengthsAngles {
+                lengths: [10.0, 11.0, 12.0],
+                angles: [70.0, 80.0, 65.0],
+            },
+            [0.3, -0.2, 1.1],
             [true, true, false],
         )
         .unwrap();
@@ -1784,7 +1810,8 @@ mod tests {
                 ([1.5, -2.5, 3.5], [-7.25, 8.125, 0.0625]),
                 ([4.0, 4.0, 4.0], [4.0, 4.0, 4.0]),
             ] {
-                let want = bx.shortest_vector_impl(a, b);
+                let want = bx.delta(ndarray::arr2(&[a]).view(), ndarray::arr2(&[b]).view(), true);
+                let want = [want[[0, 0]], want[[0, 1]], want[[0, 2]]];
                 let got = mic.apply([b[0] - a[0], b[1] - a[1], b[2] - a[2]]);
                 for d in 0..3 {
                     assert_eq!(got[d], want[d], "component {d} for {a:?} -> {b:?}");
@@ -1795,12 +1822,17 @@ mod tests {
 
     #[test]
     fn a_box_with_no_periodic_axis_simplifies_to_free() {
-        let free = SimBox::cube(10.0, array![0.0, 0.0, 0.0], [false; 3]).unwrap();
+        let free = SimBox::new(Cell::Lengths([10.0; 3]), [0.0, 0.0, 0.0], [false; 3]).unwrap();
         assert_eq!(free.mic().simplified(), Mic::Free);
         let d = [123.0 as F, -456.0, 789.0];
         assert_eq!(Mic::Free.apply(d), d);
 
-        let periodic = SimBox::cube(10.0, array![0.0, 0.0, 0.0], [false, true, false]).unwrap();
+        let periodic = SimBox::new(
+            Cell::Lengths([10.0; 3]),
+            [0.0, 0.0, 0.0],
+            [false, true, false],
+        )
+        .unwrap();
         assert_ne!(periodic.mic().simplified(), Mic::Free);
     }
 
@@ -1810,8 +1842,11 @@ mod tests {
         // `inv.dot(dr)` / `h.dot(frac)` formulation it replaced; ndarray sums
         // a matrix-vector product with k ascending, and so does the kernel.
         let bx = SimBox::new(
-            SimBox::matrix_from_lengths_angles([10.0, 11.0, 12.0], [70.0, 80.0, 65.0]).unwrap(),
-            array![0.3, -0.2, 1.1],
+            Cell::LengthsAngles {
+                lengths: [10.0, 11.0, 12.0],
+                angles: [70.0, 80.0, 65.0],
+            },
+            [0.3, -0.2, 1.1],
             [true, true, false],
         )
         .unwrap();
@@ -1830,7 +1865,7 @@ mod tests {
                 }
             }
             let want = bx.h.dot(&dr_frac);
-            let got = bx.shortest_vector_impl(a, b);
+            let got = bx.mic().apply(crate::op::vec3::sub(b, a));
             for d in 0..3 {
                 assert_eq!(got[d], want[d], "component {d} for {a:?} -> {b:?}");
             }
@@ -1840,10 +1875,10 @@ mod tests {
     #[test]
     fn from_matrix_reads_lattice_vectors_as_columns() {
         let h = [[2.0, 0.5, 0.25], [0.0, 3.0, 0.75], [0.0, 0.0, 4.0]];
-        let bx = SimBox::from_matrix(h, [1.0, 2.0, 3.0], [true, false, true]).unwrap();
+        let bx = SimBox::new(Cell::Matrix(h), [1.0, 2.0, 3.0], [true, false, true]).unwrap();
         assert_eq!(bx.lattice(1).to_vec(), vec![0.5, 3.0, 0.0]);
         assert_eq!(bx.matrix(), h);
-        assert_eq!(bx.origin_view().to_vec(), vec![1.0, 2.0, 3.0]);
+        assert_eq!(bx.origin().to_vec(), vec![1.0, 2.0, 3.0]);
         assert_eq!(bx.pbc(), [true, false, true]);
     }
 
@@ -1851,22 +1886,25 @@ mod tests {
     fn from_matrix_rejects_a_singular_cell() {
         let h = [[1.0, 2.0, 0.0], [1.0, 2.0, 0.0], [0.0, 0.0, 1.0]];
         assert!(matches!(
-            SimBox::from_matrix(h, [0.0; 3], [true; 3]),
+            SimBox::new(Cell::Matrix(h), [0.0; 3], [true; 3]),
             Err(BoxError::SingularCell)
         ));
     }
 
     #[test]
-    fn matrix_matches_h_view_entry_for_entry() {
+    fn matrix_columns_are_the_lattice_vectors() {
         let bx = SimBox::new(
-            SimBox::matrix_from_lengths_angles([10.0, 11.0, 12.0], [70.0, 80.0, 65.0]).unwrap(),
-            array![0.0, 0.0, 0.0],
+            Cell::LengthsAngles {
+                lengths: [10.0, 11.0, 12.0],
+                angles: [70.0, 80.0, 65.0],
+            },
+            [0.0, 0.0, 0.0],
             [true; 3],
         )
         .unwrap();
         for (r, row) in bx.matrix().iter().enumerate() {
             for (c, v) in row.iter().enumerate() {
-                assert_eq!(*v, bx.h_view()[[r, c]]);
+                assert_eq!(*v, bx.lattice(c)[r]);
             }
         }
     }
@@ -1874,25 +1912,25 @@ mod tests {
     #[test]
     fn approx_eq_bounds_every_entry_by_an_absolute_tolerance() {
         let h = [[10.0, 1.0, 0.0], [0.0, 10.0, 0.0], [0.0, 0.0, 10.0]];
-        let a = SimBox::from_matrix(h, [0.0; 3], [true; 3]).unwrap();
+        let a = SimBox::new(Cell::Matrix(h), [0.0; 3], [true; 3]).unwrap();
         let mut hb = h;
         hb[0][1] += 1e-3;
-        let b = SimBox::from_matrix(hb, [0.0; 3], [true; 3]).unwrap();
+        let b = SimBox::new(Cell::Matrix(hb), [0.0; 3], [true; 3]).unwrap();
         assert!(a.approx_eq(&a.clone(), 0.0));
         assert!(a.approx_eq(&b, 2e-3));
         assert!(!a.approx_eq(&b, 5e-4));
-        let shifted = SimBox::from_matrix(h, [0.0, 0.0, 1e-3], [true; 3]).unwrap();
+        let shifted = SimBox::new(Cell::Matrix(h), [0.0, 0.0, 1e-3], [true; 3]).unwrap();
         assert!(a.approx_eq(&shifted, 2e-3));
         assert!(!a.approx_eq(&shifted, 5e-4));
     }
 
     #[test]
     fn approx_eq_compares_periodicity_and_cell_definition_exactly() {
-        let h = array![[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]];
-        let o = array![0.0, 0.0, 0.0];
-        let a = SimBox::new(h.clone(), o.clone(), [true; 3]).unwrap();
-        let other_pbc = SimBox::new(h.clone(), o.clone(), [true, true, false]).unwrap();
-        let no_cell = SimBox::new_cell(h, o, [true; 3], false).unwrap();
+        let h = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]];
+        let o = [0.0, 0.0, 0.0];
+        let a = SimBox::new(Cell::Matrix(h), o, [true; 3]).unwrap();
+        let other_pbc = SimBox::new(Cell::Matrix(h), o, [true, true, false]).unwrap();
+        let no_cell = SimBox::new(Cell::Undefined, o, [true; 3]).unwrap();
         assert_eq!(no_cell.volume(), 0.0);
         assert_eq!(no_cell.style(), "free");
         assert!(!a.approx_eq(&other_pbc, 1.0));
@@ -1902,21 +1940,24 @@ mod tests {
     #[test]
     #[should_panic(expected = "tolerance must be non-negative")]
     fn approx_eq_rejects_a_negative_tolerance() {
-        let bx = SimBox::cube(1.0, array![0.0, 0.0, 0.0], [true; 3]).unwrap();
+        let bx = SimBox::new(Cell::Lengths([1.0; 3]), [0.0, 0.0, 0.0], [true; 3]).unwrap();
         bx.approx_eq(&bx, -1.0);
     }
 
     #[test]
-    fn wrap_row_shift_matches_wrap_shifts_bit_for_bit() {
+    fn wrap_row_shift_matches_wrap_bit_for_bit() {
         let bx = SimBox::new(
-            SimBox::matrix_from_lengths_angles([10.0, 11.0, 12.0], [70.0, 80.0, 65.0]).unwrap(),
-            array![0.3, -0.2, 1.1],
+            Cell::LengthsAngles {
+                lengths: [10.0, 11.0, 12.0],
+                angles: [70.0, 80.0, 65.0],
+            },
+            [0.3, -0.2, 1.1],
             [true, true, false],
         )
         .unwrap();
         for r in [[25.0, -13.0, 40.0], [-1e-17, 0.5, 0.5], [1.0, 1.0, 1.0]] {
             let (w, m) = bx.wrap_row_shift(r);
-            let (ws, ms) = bx.wrap_shifts(array![[r[0], r[1], r[2]]].view());
+            let (ws, ms) = bx.wrap(array![[r[0], r[1], r[2]]].view());
             for d in 0..3 {
                 assert_eq!(w[d], ws[[0, d]], "{r:?} axis {d}");
                 assert_eq!(m[d], ms[[0, d]], "{r:?} axis {d}");

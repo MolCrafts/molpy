@@ -15,11 +15,17 @@
 //!
 //! # Aromaticity convention
 //!
-//! `Atomistic` carries no aromatic model. Aromatic atoms are perceived as those
-//! incident to a bond of order `1.5` (the project convention), unless an
-//! explicit `is_aromatic` atom/bond prop is present, which takes precedence.
-//! This lets callers transplant a reference perception (e.g. RDKit's) so that
-//! aromatic queries (`a`, `c`, `:` bonds) agree exactly.
+//! `Atomistic` carries no aromatic model. An atom is aromatic when it carries
+//! the `is_aromatic` marker (written by the SMILES reader and by aromaticity
+//! perception) and a bond when its `bond_type` is aromatic. A caller can
+//! transplant a reference perception (e.g. RDKit's) by writing those markers,
+//! so that aromatic queries (`a`, `c`, `:` bonds) agree exactly.
+//!
+//! # Species
+//!
+//! Element primitives (`C`, `c`, `#6`) compare the atom's
+//! [`atomic_number`](crate::core::keys::ATOMIC_NUMBER); an `element` symbol
+//! is never read.
 //!
 //! # Supported features
 //!
@@ -41,19 +47,23 @@
 //!
 //! ```
 //! use molrs::perceive::smarts::SmartsPattern;
-//! use molrs::core::BondOrder;
-//! use molrs::core::{Atom, Atomistic};
+//! use molrs::core::{Atomistic, BondNumber, BondOrder, Element, keys};
+//! use molrs::props;
 //!
 //! // Acetamide skeleton C-C(=O)-N (no Hs needed for this query).
 //! let mut g = Atomistic::new();
-//! let c0 = g.add_atom(Atom::xyz("C", 0.0, 0.0, 0.0));
-//! let c1 = g.add_atom(Atom::xyz("C", 1.0, 0.0, 0.0));
-//! let o = g.add_atom(Atom::xyz("O", 2.0, 0.0, 0.0));
-//! let n = g.add_atom(Atom::xyz("N", 1.0, 1.0, 0.0));
-//! g.add_bond(c0, c1).unwrap();
-//! let bo = g.add_bond(c1, o).unwrap();
-//! g.set_bond_type(bo, BondOrder::Double).unwrap();
-//! g.add_bond(c1, n).unwrap();
+//! let c0 = g.add_atom(props! { keys::ATOMIC_NUMBER => Element::C }).unwrap();
+//! let c1 = g.add_atom(props! { keys::ATOMIC_NUMBER => Element::C }).unwrap();
+//! let o = g.add_atom(props! { keys::ATOMIC_NUMBER => Element::O }).unwrap();
+//! let n = g.add_atom(props! { keys::ATOMIC_NUMBER => Element::N }).unwrap();
+//! g.add_bond(c0, c1, props! {}).unwrap();
+//! g.add_bond(
+//!     c1,
+//!     o,
+//!     props! { keys::BOND_TYPE => BondOrder::Double, keys::BOND_NUMBER => BondNumber::Double },
+//! )
+//! .unwrap();
+//! g.add_bond(c1, n, props! {}).unwrap();
 //!
 //! let pat = SmartsPattern::parse("[$([CX3]=[OX1]):1]~[*:2]").unwrap();
 //! assert!(pat.has_match(&g, molrs::perceive::smarts::MatchOptions::default()));
@@ -75,7 +85,7 @@ use crate::core::NodeId;
 use compile::QueryGraph;
 
 pub use environment::{EnvironmentOptions, NeighborStyle};
-pub use reaction::Reaction;
+pub use reaction::{Reaction, ReactionBatch};
 
 /// Ring-related SMARTS atom primitives found in a compiled pattern.
 ///
@@ -157,7 +167,9 @@ impl SmartsPattern {
     /// # Errors
     ///
     /// `options.reach` is 0, `center` is not an atom of `mol`, or an atom
-    /// carries no known `element`.
+    /// carries no valid `atomic_number` (the species is read from Z alone).
+    /// The wildcard atom (`Z = 0`) is written `*` — or `#0` under
+    /// [`EnvironmentOptions::atomic_number`].
     pub fn from_environment(
         mol: &Atomistic,
         center: NodeId,

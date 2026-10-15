@@ -2,8 +2,8 @@
 //!
 //! | JS | molrs |
 //! |----|-------|
-//! | `TrrStream` | `TrrIndexBuilder` + `read_trr_bytes` (the chunk-fed TRR reader) |
-//! | `readTrrBytes`, `writeTrrBytes` | `read_trr_bytes`, `write_trr_bytes` (nm ↔ Å) |
+//! | `TrrStream` | `TrrIndexBuilder` + `read_trr` (the chunk-fed TRR reader) |
+//! | `readTrr`, `writeTrr` | `read_trr`, `write_trr` (nm ↔ Å) |
 
 use molrs::io::trr::TrrIndexBuilder;
 use wasm_bindgen::prelude::*;
@@ -11,14 +11,14 @@ use wasm_bindgen::prelude::*;
 impl_wasm_traj_stream! {
     name    = TrrStream,
     indexer = TrrIndexBuilder::new(),
-    parse   = |bytes, _ctx| molrs::io::read_trr_bytes(bytes),
+    parse   = |bytes, _ctx| molrs::io::read_trr(bytes),
 }
 
-read_door!(
-    /// Read one GROMACS TRR frame from bytes (nm → Å).
-    readTrrBytes => read_trr_bytes(bytes: &[u8]), "TRR"
+read_bytes_door!(
+    /// Read the first GROMACS TRR frame of the file's bytes (nm → Å).
+    readTrr => read_trr, "TRR"
 );
-write_door!(
+write_bytes_door!(
     /// Write `frame` as a one-frame GROMACS TRR trajectory (Å → nm).
-    writeTrrBytes => write_trr_bytes -> Vec<u8>, "TRR"
+    writeTrr => write_trr, "TRR"
 );

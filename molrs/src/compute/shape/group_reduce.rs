@@ -226,10 +226,11 @@ impl GroupReduce {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ndarray::{Array1, arr1, arr2, array};
+    use crate::core::Cell;
+    use ndarray::{Array1, arr1, arr2};
 
     fn cube(len: F, pbc: [bool; 3]) -> SimBox {
-        SimBox::cube(len, array![0.0, 0.0, 0.0], pbc).unwrap()
+        SimBox::new(Cell::Lengths([len; 3]), [0.0, 0.0, 0.0], pbc).unwrap()
     }
 
     /// Spec testing strategy (ac-008): a group straddling the periodic

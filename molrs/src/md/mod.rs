@@ -13,10 +13,10 @@
 //!   table, `Plain` for an external field. The providers below hold a
 //!   `Vec<ForceTerm>` and match on it, so no step re-derives which is which.
 //!   [`crate::ff::potential::Potentials`] sums them as one potential.
-//! * Pair kernels implement [`crate::ff::potential::pair::PairPotential`];
-//!   the force provider supplies current neighbour pairs via
-//!   [`crate::ff::potential::Potential::calc_energy_forces_with_pairs`], so a
-//!   potential neither owns nor updates the skin.
+//! * Pair kernels implement [`crate::ff::potential::PairDriven`]; the force
+//!   provider supplies current neighbour pairs via
+//!   [`crate::ff::potential::PairDriven::evaluate_pairs`], so a potential
+//!   neither owns nor updates the skin.
 //! * [`crate::md::ForceProvider`] is the force-field seam: the potential, the
 //!   neighbour bookkeeping and the periodic régime all live behind it, and the
 //!   integrator sees only energy, forces and virial. [`crate::md::SelfPairedForces`],

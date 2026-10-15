@@ -5,10 +5,11 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use crate::io::smiles::{AromaticEmit, HydrogenEmit, MultiComponentEmit, SmilesEmitOptions};
 use crate::io::smiles::{Notation, SmilesError, SmilesErrorKind};
 use crate::line_notation::ast::*;
+use crate::line_notation::atom_keys::{self, H_COUNT, ISOTOPE, STEREO, WILDCARD_Z};
 use molrs::core::Atomistic;
 use molrs::core::Element;
 use molrs::core::NodeId;
-use molrs::core::PropValue;
+use molrs::core::Props;
 use molrs::core::{BondNumber, BondOrder};
 
 impl SmilesIr {
@@ -20,19 +21,6 @@ impl SmilesIr {
     ) -> Result<SmilesIr, SmilesError> {
         ir_from_atomistic(mol, opts)
     }
-}
-
-/// Write a molecular graph as SMILES text, as `opts` says — the inverse of
-/// [`read_smiles_str`](crate::io::read_smiles_str).
-///
-/// # Errors
-///
-/// An empty molecule, a multi-component one under
-/// [`MultiComponentEmit::ErrorIfMultiple`], or an atom the notation cannot
-/// write.
-pub fn write_smiles_str(mol: &Atomistic, opts: &SmilesEmitOptions) -> Result<String, SmilesError> {
-    let ir = ir_from_atomistic(mol, opts)?;
-    crate::line_notation::writer::smiles_text(&ir)
 }
 
 fn ir_from_atomistic(mol: &Atomistic, opts: &SmilesEmitOptions) -> Result<SmilesIr, SmilesError> {
@@ -52,21 +40,25 @@ fn ir_from_atomistic(mol: &Atomistic, opts: &SmilesEmitOptions) -> Result<Smiles
         return Err(emit_err("no atoms to emit"));
     }
 
-    // Sort components for stability when canonical.
+    // Sort components for stability when canonical: by size, then by the
+    // sorted symbols of their atoms.
     if opts.canonical {
-        components.sort_by_key(|comp| {
-            let mut labels: Vec<_> = comp
-                .iter()
-                .map(|&id| {
-                    mol.get_atom(id)
-                        .ok()
-                        .and_then(|a| a.get_str("element").map(str::to_owned))
-                        .unwrap_or_default()
-                })
-                .collect();
-            labels.sort();
-            (comp.len(), labels)
-        });
+        let mut keyed = components
+            .into_iter()
+            .map(|comp| {
+                let mut labels = comp
+                    .iter()
+                    .map(|&id| {
+                        let atom = mol.get_atom(id).map_err(|e| emit_err(e.to_string()))?;
+                        Ok(smiles_symbol(species(&atom, id)?))
+                    })
+                    .collect::<Result<Vec<_>, SmilesError>>()?;
+                labels.sort_unstable();
+                Ok(((comp.len(), labels), comp))
+            })
+            .collect::<Result<Vec<_>, SmilesError>>()?;
+        keyed.sort_by(|a, b| a.0.cmp(&b.0));
+        components = keyed.into_iter().map(|(_, comp)| comp).collect();
     }
 
     match opts.multi_component {
@@ -111,11 +103,39 @@ fn emit_err(msg: impl Into<String>) -> SmilesError {
     )
 }
 
+/// The atomic number of `atom` (`id` names it in the error).
+///
+/// # Errors
+///
+/// [`SmilesErrorKind::Emit`] when the atom carries no valid
+/// [`keys::ATOMIC_NUMBER`](molrs::core::keys::ATOMIC_NUMBER) — the writer reads
+/// the species from Z alone, never from an `element` symbol.
+fn species(atom: &Props, id: NodeId) -> Result<u8, SmilesError> {
+    atom.atomic_number().ok_or_else(|| {
+        emit_err(format!(
+            "atom {id:?} has no valid '{}'; a symbol-only graph is converted with \
+             Element::fill_atomic_numbers before writing SMILES",
+            molrs::core::keys::ATOMIC_NUMBER
+        ))
+    })
+}
+
+/// The element symbol SMILES writes for atomic number `z`: `*` for the
+/// wildcard, `Z = 0`.
+///
+/// `z` comes from [`Props::atomic_number`], which guarantees `0..=118`, so
+/// every non-wildcard value names an element.
+fn smiles_symbol(z: u8) -> &'static str {
+    match Element::by_number(z) {
+        Some(element) => element.symbol(),
+        None => "*",
+    }
+}
+
+/// Whether atom `id` is a hydrogen (`Z = 1`).
 fn is_hydrogen(mol: &Atomistic, id: NodeId) -> bool {
     mol.get_atom(id)
-        .ok()
-        .and_then(|a| a.get_str("element").map(|s| s.eq_ignore_ascii_case("H")))
-        .unwrap_or(false)
+        .is_ok_and(|a| a.atomic_number() == Some(Element::H.z()))
 }
 
 fn connected_components(mol: &Atomistic, include_h: bool) -> Vec<Vec<NodeId>> {
@@ -168,7 +188,7 @@ fn choose_root(
     }
     // Prefer non-H, lowest handle order in component.
     let mut ids = comp.to_vec();
-    ids.sort_by_key(|id| molrs::core::node_to_u64(*id));
+    ids.sort_by_key(|id| u64::from(*id));
     ids.into_iter()
         .find(|&id| !is_hydrogen(mol, id))
         .or_else(|| comp.first().copied())
@@ -228,7 +248,7 @@ fn build_tree(
                 order.iter().enumerate().map(|(i, id)| (*id, i)).collect();
             nbs.sort_by_key(|id| rank.get(id).copied().unwrap_or(usize::MAX));
         } else {
-            nbs.sort_by_key(|id| molrs::core::node_to_u64(*id));
+            nbs.sort_by_key(|id| u64::from(*id));
         }
 
         for nb in nbs {
@@ -256,7 +276,7 @@ fn build_tree(
             if !include_h && is_hydrogen(mol, b) {
                 continue;
             }
-            let edge = if molrs::core::node_to_u64(a) < molrs::core::node_to_u64(b) {
+            let edge = if u64::from(a) < u64::from(b) {
                 (a, b)
             } else {
                 (b, a)
@@ -288,12 +308,13 @@ fn bond_kind_for(
     bid: molrs::core::RelationId,
     opts: &SmilesEmitOptions,
 ) -> Result<Option<BondKind>, SmilesError> {
-    let bt = mol.bond_type(bid);
+    let bt = mol.bond_type(bid).map_err(|e| emit_err(e.to_string()))?;
+    let number = mol.bond_number(bid).map_err(|e| emit_err(e.to_string()))?;
     match opts.aromatic {
         AromaticEmit::AsMarked if bt.is_aromatic() => Ok(Some(BondKind::Aromatic)),
         AromaticEmit::KekuleOnly if bt.is_aromatic() => {
             // Prefer bond_number if set
-            match mol.bond_number(bid) {
+            match number {
                 BondNumber::Single => Ok(Some(BondKind::Single)),
                 BondNumber::Double => Ok(Some(BondKind::Double)),
                 BondNumber::Triple => Ok(Some(BondKind::Triple)),
@@ -308,7 +329,7 @@ fn bond_kind_for(
             BondOrder::Double => Ok(Some(BondKind::Double)),
             BondOrder::Triple => Ok(Some(BondKind::Triple)),
             BondOrder::Aromatic => Ok(Some(BondKind::Aromatic)),
-            BondOrder::Unknown => match mol.bond_number(bid) {
+            BondOrder::Unknown => match number {
                 BondNumber::Double => Ok(Some(BondKind::Double)),
                 BondNumber::Triple => Ok(Some(BondKind::Triple)),
                 BondNumber::Quadruple => Ok(Some(BondKind::Quadruple)),
@@ -380,28 +401,29 @@ fn build_chain_from(
     Ok(Chain { head, tail })
 }
 
-fn atom_is_aromatic(mol: &Atomistic, id: NodeId) -> bool {
-    mol.get_atom(id)
-        .ok()
-        .and_then(|a| match a.get("is_aromatic") {
-            Some(PropValue::Int(v)) if *v != 0 => Some(true),
-            Some(PropValue::F64(v)) if *v != 0.0 => Some(true),
-            Some(PropValue::Bool(true)) => Some(true),
-            _ => None,
+/// The integer prop `key` of `atom`, if it states one.
+///
+/// # Errors
+///
+/// [`SmilesErrorKind::Emit`] when the prop is present but is not an integer
+/// that fits `T` — a hydrogen count of `-1` or `2.5` is not written as
+/// something else.
+fn int_prop<T: TryFrom<i32>>(
+    atom: &Props,
+    id: NodeId,
+    key: &str,
+) -> Result<Option<T>, SmilesError> {
+    let Some(value) = atom.get(key) else {
+        return Ok(None);
+    };
+    atom.get_int(key)
+        .and_then(|v| T::try_from(v).ok())
+        .map(Some)
+        .ok_or_else(|| {
+            emit_err(format!(
+                "atom {id:?}: '{key}' = {value:?} is not a writable integer"
+            ))
         })
-        .unwrap_or(false)
-}
-
-fn h_count_prop(mol: &Atomistic, id: NodeId) -> Option<u8> {
-    mol.get_atom(id)
-        .ok()
-        .and_then(|a| a.get_f64("h_count").map(|v| v as u8))
-}
-
-fn isotope_prop(mol: &Atomistic, id: NodeId) -> Option<u16> {
-    mol.get_atom(id)
-        .ok()
-        .and_then(|a| a.get_f64("isotope").map(|v| v as u16))
 }
 
 fn organic_subset_ok(sym: &str) -> bool {
@@ -431,28 +453,27 @@ fn atom_node(
     opts: &SmilesEmitOptions,
 ) -> Result<AtomNode, SmilesError> {
     let atom = mol.get_atom(id).map_err(|e| emit_err(e.to_string()))?;
-    let sym_raw = atom
-        .get_str("element")
-        .ok_or_else(|| emit_err("atom missing element"))?
-        .to_owned();
-    let sym = Element::by_symbol(&sym_raw)
-        .map(|e| e.symbol().to_owned())
-        .unwrap_or(sym_raw);
+    let z = species(&atom, id)?;
+    let sym = smiles_symbol(z).to_owned();
 
-    let aromatic = matches!(opts.aromatic, AromaticEmit::AsMarked) && atom_is_aromatic(mol, id);
-    let charge = mol
-        .get_atom(id)
-        .ok()
-        .and_then(|a| i8::try_from(a.formal_charge()).ok())
-        .filter(|&c| c != 0);
-    let isotope = isotope_prop(mol, id);
+    let aromatic = matches!(opts.aromatic, AromaticEmit::AsMarked) && atom_keys::is_aromatic(&atom);
+    let charge = i8::try_from(atom.formal_charge()).map_err(|_| {
+        emit_err(format!(
+            "atom {id:?}: formal charge {} does not fit a SMILES charge",
+            atom.formal_charge()
+        ))
+    })?;
+    let charge = (charge != 0).then_some(charge);
+    let isotope = int_prop::<u16>(&atom, id, ISOTOPE)?;
     let hcount = match opts.hydrogens {
         HydrogenEmit::OrganicSubset => None,
-        HydrogenEmit::ExplicitAll => Some(h_count_prop(mol, id).unwrap_or(0)),
-        HydrogenEmit::AsStored => h_count_prop(mol, id),
+        // An atom that states no count has no hydrogen *atoms* to fold in
+        // either: `ExplicitAll` writes every H as its own atom.
+        HydrogenEmit::ExplicitAll => Some(int_prop::<u8>(&atom, id, H_COUNT)?.unwrap_or(0)),
+        HydrogenEmit::AsStored => int_prop::<u8>(&atom, id, H_COUNT)?,
     };
     let stereo = if opts.include_stereo {
-        atom.get_str("stereo").and_then(|s| match s {
+        atom.get_str(STEREO).and_then(|s| match s {
             "CW" | "@@" => Some(Chirality::Clockwise),
             "CCW" | "@" => Some(Chirality::CounterClockwise),
             _ => None,
@@ -467,7 +488,7 @@ fn atom_node(
         || isotope.is_some()
         || hcount.is_some()
         || stereo.is_some()
-        || sym == "*";
+        || z == WILDCARD_Z;
 
     let spec = if need_bracket {
         AtomSpec::Bracket {
@@ -500,13 +521,18 @@ mod tests {
     use super::*;
     use crate::line_notation::fixtures::atom_nodes;
 
+    /// The molecule as SMILES text: its IR, written.
+    fn smiles(mol: &Atomistic, opts: &SmilesEmitOptions) -> Result<String, SmilesError> {
+        SmilesIr::from_atomistic(mol, opts).map(|ir| ir.to_string())
+    }
+
     #[test]
     fn ethanol_round_trip_stable() {
         let mol = (SmilesIr::parse("CCO").unwrap()).to_atomistic().unwrap();
         let opts = SmilesEmitOptions::default();
-        let s1 = write_smiles_str(&mol, &opts).unwrap();
+        let s1 = smiles(&mol, &opts).unwrap();
         let mol2 = (SmilesIr::parse(&s1).unwrap()).to_atomistic().unwrap();
-        let s2 = write_smiles_str(&mol2, &opts).unwrap();
+        let s2 = smiles(&mol2, &opts).unwrap();
         assert_eq!(s1, s2);
     }
 
@@ -515,11 +541,12 @@ mod tests {
         // `charge` is the partial charge; only `formal_charge` is written.
         let mut mol = (SmilesIr::parse("[Na]").unwrap()).to_atomistic().unwrap();
         let id = mol.atoms().next().unwrap().0;
-        mol.set_atom(id, "charge", 1.0).unwrap();
+        mol.set_atom(id, molrs::core::keys::CHARGE, 1.0).unwrap();
         let opts = SmilesEmitOptions::default();
-        assert_eq!(write_smiles_str(&mol, &opts).unwrap(), "[Na]");
-        mol.set_atom(id, "formal_charge", 1).unwrap();
-        assert_eq!(write_smiles_str(&mol, &opts).unwrap(), "[Na+]");
+        assert_eq!(smiles(&mol, &opts).unwrap(), "[Na]");
+        mol.set_atom(id, molrs::core::keys::FORMAL_CHARGE, 1)
+            .unwrap();
+        assert_eq!(smiles(&mol, &opts).unwrap(), "[Na+]");
     }
 
     #[test]
@@ -527,10 +554,10 @@ mod tests {
         let opts = SmilesEmitOptions::default();
         for src in ["CC(=O)O", "c1ccccc1"] {
             let mol = (SmilesIr::parse(src).unwrap()).to_atomistic().unwrap();
-            let s = write_smiles_str(&mol, &opts).unwrap();
+            let s = smiles(&mol, &opts).unwrap();
             assert!(SmilesIr::parse(&s).is_ok(), "src={src} wrote={s}");
             let mol2 = (SmilesIr::parse(&s).unwrap()).to_atomistic().unwrap();
-            let s2 = write_smiles_str(&mol2, &opts).unwrap();
+            let s2 = smiles(&mol2, &opts).unwrap();
             assert_eq!(s, s2);
         }
     }
@@ -539,13 +566,13 @@ mod tests {
     fn multi_component_error_and_join() {
         let mol = (SmilesIr::parse("CCO.O").unwrap()).to_atomistic().unwrap();
         let err_opts = SmilesEmitOptions::default();
-        assert!(write_smiles_str(&mol, &err_opts).is_err());
+        assert!(smiles(&mol, &err_opts).is_err());
 
         let join = SmilesEmitOptions {
             multi_component: MultiComponentEmit::JoinDot,
             ..Default::default()
         };
-        let s = write_smiles_str(&mol, &join).unwrap();
+        let s = smiles(&mol, &join).unwrap();
         assert!(s.contains('.'), "got {s}");
     }
 
@@ -562,8 +589,8 @@ mod tests {
         };
         // ExplicitAll still has no H atoms in graph from to_atomistic, but
         // may force brackets with H0 — at least options path runs.
-        let sa = write_smiles_str(&mol, &a).unwrap();
-        let sb = write_smiles_str(&mol, &b).unwrap();
+        let sa = smiles(&mol, &a).unwrap();
+        let sb = smiles(&mol, &b).unwrap();
         assert!(!sa.is_empty());
         assert!(!sb.is_empty());
         // Bracket form under ExplicitAll for every atom
@@ -575,7 +602,7 @@ mod tests {
         // Bracket stereo marker if present on graph; default flag must not invent @.
         let mol = (SmilesIr::parse("CCO").unwrap()).to_atomistic().unwrap();
         let opts = SmilesEmitOptions::default(); // include_stereo = false
-        let s = write_smiles_str(&mol, &opts).unwrap();
+        let s = smiles(&mol, &opts).unwrap();
         assert!(!s.contains('@'), "got {s}");
     }
 
@@ -593,8 +620,15 @@ mod tests {
     #[test]
     fn ethanol_writes_the_unchanged_smiles_string() {
         // The descriptor field must not perturb what the plain writer emits.
+        // Written in input order (not canonical), so the expected string is
+        // the walk from the first atom and does not hang on the canonical
+        // ranking's hash values.
         let mol = (SmilesIr::parse("CCO").unwrap()).to_atomistic().unwrap();
-        let ir = SmilesIr::from_atomistic(&mol, &SmilesEmitOptions::default()).unwrap();
+        let opts = SmilesEmitOptions {
+            canonical: false,
+            ..SmilesEmitOptions::default()
+        };
+        let ir = SmilesIr::from_atomistic(&mol, &opts).unwrap();
         assert_eq!(
             crate::line_notation::writer::smiles_text(&ir).unwrap(),
             "CCO"

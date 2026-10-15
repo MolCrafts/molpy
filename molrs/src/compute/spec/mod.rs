@@ -40,8 +40,6 @@ mod registry;
 
 use molrs::op::F;
 
-use crate::compute::Compute;
-
 /// The descriptor of one compute type.
 #[derive(Debug, Clone, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
@@ -78,8 +76,9 @@ impl ComputeSpec {
 pub enum InputForm {
     /// One `Input` struct per call.
     Single,
-    /// A slice of per-frame records, each with the listed fields; the type is
-    /// also a [`Stream`](crate::compute::Stream) folding them one at a time.
+    /// One record per frame, with the listed fields: the type is a
+    /// [`Stream`](crate::compute::Stream) whose accumulator folds them one at
+    /// a time (and, for some types, `compute` also takes a slice of them).
     Frames,
 }
 
@@ -266,7 +265,7 @@ pub enum InputKind {
 ///
 /// Implemented by every public compute type through `compute_spec!`, next to
 /// the type, so the descriptor reads the type's own fields.
-pub trait Described: Compute {
+pub trait Described {
     /// The descriptor: name, parameters with their defaults, input fields.
     fn spec() -> ComputeSpec;
 

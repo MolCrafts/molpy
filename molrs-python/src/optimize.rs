@@ -1,22 +1,26 @@
 //! Python bindings for `molrs::optimize` (`molrs.optimize`): the L-BFGS
-//! minimizer ([`PyLbfgs`]) and the report it returns
-//! ([`PyOptimizationReport`]).
+//! minimizer ([`PyLbfgs`], the mirror of `molrs::optimize::Lbfgs`) and the
+//! report it returns ([`PyOptimizationReport`]).
 //!
 //! An optimizer minimizes a `molrs.ff.potential.Potentials` over a coordinate
-//! vector; it neither builds the potentials nor owns a force field.
+//! vector; it neither builds the potentials nor owns a force field. Like the
+//! core object, each door relaxes its input **in place** and returns the
+//! report(s): `minimize` a `Frame` (honouring its `atoms.free` mask),
+//! `minimize_coords` one `(N, 3)` array, `minimize_batch` a `(B, N, 3)`
+//! stack.
 
-use crate::array::ArrayArgDyn;
+use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 
 use molrs::ff::compile::PotentialCompiler;
-use molrs::optimize::{LbfgsSettings, OptimizationReport, minimize_lbfgs, minimize_lbfgs_batch};
+use molrs::ff::potential::Potentials;
+use molrs::optimize::{Lbfgs, LbfgsSettings, OptimizationReport, Optimizer};
 
 use crate::core::frame::PyFrame;
 use crate::ff::ir;
-use crate::ff::potential::{PotBacking, PyPotentials, potentials_moved_err};
+use crate::ff::potential::{PotBacking, PyPotentials, potentials_moved_err, take_err};
 
-use ndarray::{Array2, Array3};
-use numpy::{PyArray2, PyArray3, ToPyArray};
+use numpy::{PyArray2, PyArray3, PyArrayMethods, PyUntypedArrayMethods};
 
 /// Outcome of a minimization, exposed to Python as
 /// `molrs.optimize.OptimizationReport`.
@@ -80,22 +84,44 @@ impl From<OptimizationReport> for PyOptimizationReport {
     }
 }
 
-/// L-BFGS geometry optimizer, exposed as `molrs.optimize.Lbfgs`.
+/// L-BFGS geometry optimizer, exposed as `molrs.optimize.Lbfgs` — the mirror
+/// of ``molrs::optimize::Lbfgs``.
 ///
-/// Construct with potentials + knobs on ``new`` (defaults are Rust's
-/// ``LbfgsSettings::DEFAULT``), then ``minimize`` a :class:`Frame` (primary) or
-/// a coordinate array (single / batch by rank).
+/// Construct with potentials + knobs (defaults are Rust's
+/// ``LbfgsSettings::DEFAULT``). Every door relaxes its input **in place** and
+/// returns the report:
+///
+/// * :meth:`minimize` — a :class:`Frame`, honouring its ``atoms.free`` mask
+///   (fixed atoms still enter the energy but do not move);
+/// * :meth:`minimize_coords` — one ``(N, 3)`` float64 array, every atom free;
+/// * :meth:`minimize_batch` — a ``(B, N, 3)`` stack, each structure
+///   independently.
 ///
 /// Examples
 /// --------
-/// >>> pots = molrs.ff.compile.PotentialCompiler(molrs.ff.typifier.Mmff94Typifier().forcefield()).compile(frame)
+/// >>> pots = molrs.ff.compile.PotentialCompiler(ff).compile(frame)
 /// >>> opt = molrs.optimize.Lbfgs(pots, fmax=0.05, max_steps=500)
-/// >>> frame, report = opt.minimize(frame)
-/// >>> coords, report = opt.minimize(coords)         # (N, 3)
+/// >>> report = opt.minimize(frame)                  # frame relaxed in place
+/// >>> report = opt.minimize_coords(coords)          # (N, 3), in place
 #[pyclass(module = "molrs.optimize", name = "Lbfgs", subclass)]
 pub struct PyLbfgs {
     potentials: Py<PyPotentials>,
     settings: LbfgsSettings,
+}
+
+impl PyLbfgs {
+    /// Run `f` on an optimizer over the compiled potentials, then re-raise a
+    /// Python member's parked exception.
+    fn with_compiled<R>(
+        &self,
+        py: Python<'_>,
+        f: impl FnOnce(&Lbfgs<&Potentials>) -> Result<R, String>,
+    ) -> PyResult<R> {
+        let pots = self.potentials.borrow(py);
+        let out = f(&Lbfgs::new(pots.inner.compiled()?, self.settings));
+        take_err(&pots.err_slots)?;
+        out.map_err(PyValueError::new_err)
+    }
 }
 
 #[pymethods]
@@ -127,108 +153,106 @@ impl PyLbfgs {
         }
     }
 
-    /// Relax a :class:`Frame` or coordinates by L-BFGS.
+    /// Relax ``frame``'s ``atoms`` coordinates in place
+    /// (``Optimizer::minimize``).
     ///
-    /// * ``Frame`` → ``(Frame, OptimizationReport)`` (a new Python frame
-    ///   object is returned with the minimized coords).
-    /// * ``(N, 3)`` / ``(3N,)`` → ``((N, 3) array, OptimizationReport)``
-    /// * ``(B, N, 3)`` → ``((B, N, 3) array, list[OptimizationReport])``
-    fn minimize<'py>(
-        &self,
-        py: Python<'py>,
-        arg: &Bound<'_, PyAny>,
-    ) -> PyResult<Bound<'py, PyAny>> {
-        // Frame path (primary).
-        if let Ok(frame) = arg.extract::<PyRef<'_, PyFrame>>() {
-            let mut core = frame.clone_core_frame()?;
-            let pots = self.potentials.borrow(py);
-            // Compile against this frame if deferred, then minimize with free mask.
+    /// A bool ``atoms.free`` column marks the movable atoms: a fixed atom
+    /// stays where it is but still enters every energy and force evaluation.
+    /// Without the column every atom moves. A deferred :class:`Potentials`
+    /// is bound to the frame's topology first.
+    ///
+    /// Raises
+    /// ------
+    /// ValueError
+    ///     The frame has no coordinates, ``atoms.free`` is not one bool per
+    ///     atom, or the potentials were moved.
+    fn minimize(&self, py: Python<'_>, frame: &PyFrame) -> PyResult<PyOptimizationReport> {
+        let pots = self.potentials.borrow(py);
+        let report = frame.with_frame_mut(|core| -> PyResult<OptimizationReport> {
             let compiled;
-            let pot: &dyn molrs::ff::potential::Potential = match &pots.inner {
+            let pot: &Potentials = match &pots.inner {
                 PotBacking::Compiled(p) => p,
                 PotBacking::Deferred(ff) => {
                     compiled = PotentialCompiler::new(ff)
-                        .compile(&core)
+                        .compile(core)
                         .map_err(ir::compile_err)?;
                     &compiled
                 }
                 PotBacking::Moved => return Err(potentials_moved_err()),
             };
-            // Borrowed one-shot on flat coords extracted from frame, then write back.
-            let mut xyz = core
-                .coords()
-                .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
-            // `Frame::coords` is a fresh row-major N×3 array: its buffer is the
-            // flat `[x0, y0, z0, …]` the minimizer takes.
-            let flat = xyz
-                .as_slice_mut()
-                .expect("Frame::coords returns a standard-layout array");
-            let report = minimize_lbfgs(pot, flat, &self.settings)
-                .map_err(pyo3::exceptions::PyValueError::new_err)?;
-            crate::ff::potential::take_err(&pots.err_slots)?;
-            core.set_coords(xyz.view())
-                .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
-            let out_frame = PyFrame::from_core_frame(core)?;
-            return Ok((out_frame, PyOptimizationReport::from(report))
-                .into_pyobject(py)?
-                .into_any());
-        }
+            Lbfgs::new(pot, self.settings)
+                .minimize(core)
+                .map_err(PyValueError::new_err)
+        })??;
+        take_err(&pots.err_slots)?;
+        Ok(report.into())
+    }
 
-        let pots = self.potentials.borrow(py);
-        let pot = pots.inner.compiled()?;
-        let readonly = arg.extract::<ArrayArgDyn<'_, f64>>()?;
-        let arr = readonly.as_array();
-        let shape = arr.shape();
-        match shape.len() {
-            1 | 2 => {
-                let mut flat: Vec<f64> = arr.iter().copied().collect();
-                let n_elem = flat.len();
-                if !n_elem.is_multiple_of(3) {
-                    return Err(pyo3::exceptions::PyValueError::new_err(format!(
-                        "coords has {n_elem} elements, not a multiple of 3 (expected (N, 3) or (3N,))"
-                    )));
-                }
-                let report = minimize_lbfgs(pot, &mut flat, &self.settings)
-                    .map_err(pyo3::exceptions::PyValueError::new_err)?;
-                crate::ff::potential::take_err(&pots.err_slots)?;
-                let out: Bound<'py, PyArray2<f64>> = Array2::from_shape_vec((n_elem / 3, 3), flat)
-                    .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?
-                    .to_pyarray(py);
-                Ok((out, PyOptimizationReport::from(report))
-                    .into_pyobject(py)?
-                    .into_any())
-            }
-            3 => {
-                if shape[2] != 3 {
-                    return Err(pyo3::exceptions::PyValueError::new_err(format!(
-                        "batch coords must be (B, N, 3); trailing axis is {} not 3",
-                        shape[2]
-                    )));
-                }
-                let (b, n) = (shape[0], shape[1]);
-                let expected = pot.n_atoms();
-                if expected != 0 && n != expected {
-                    return Err(pyo3::exceptions::PyValueError::new_err(format!(
-                        "structure atom count N={n} does not match this Potentials' atom count {expected}"
-                    )));
-                }
-                let mut flat: Vec<f64> = arr.iter().copied().collect();
-                let reports = minimize_lbfgs_batch(pot, &mut flat, n, b, &self.settings)
-                    .map_err(pyo3::exceptions::PyValueError::new_err)?;
-                crate::ff::potential::take_err(&pots.err_slots)?;
-                let out: Bound<'py, PyArray3<f64>> = Array3::from_shape_vec((b, n, 3), flat)
-                    .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?
-                    .to_pyarray(py);
-                let reports: Vec<PyOptimizationReport> = reports
-                    .into_iter()
-                    .map(PyOptimizationReport::from)
-                    .collect();
-                Ok((out, reports).into_pyobject(py)?.into_any())
-            }
-            other => Err(pyo3::exceptions::PyValueError::new_err(format!(
-                "arg must be Frame, 1-D (3N,), 2-D (N, 3), or 3-D (B, N, 3); got {other}-D array"
-            ))),
+    /// Relax one structure's coordinates in place, every atom free
+    /// (``Lbfgs::minimize_coords``).
+    ///
+    /// ``coords`` is a writeable C-contiguous float64 ``(N, 3)`` array.
+    ///
+    /// Raises
+    /// ------
+    /// ValueError
+    ///     ``coords`` is not ``(N, 3)``, or is not writeable and C-contiguous
+    ///     (pass ``np.ascontiguousarray(coords, dtype=np.float64)``).
+    fn minimize_coords(
+        &self,
+        py: Python<'_>,
+        coords: &Bound<'_, PyArray2<f64>>,
+    ) -> PyResult<PyOptimizationReport> {
+        if coords.shape()[1] != 3 {
+            return Err(PyValueError::new_err(format!(
+                "coords must be (N, 3), got {:?}",
+                coords.shape()
+            )));
         }
+        let mut rw = coords
+            .try_readwrite()
+            .map_err(|e| PyValueError::new_err(format!("coords must be a writeable array: {e}")))?;
+        let flat = rw.as_slice_mut().map_err(|_| contiguous_err())?;
+        self.with_compiled(py, |opt| opt.minimize_coords(flat))
+            .map(Into::into)
+    }
+
+    /// Relax a homogeneous batch in place — ``B`` structures of ``N`` atoms,
+    /// each independently (``Lbfgs::minimize_batch``) — and return one report
+    /// per structure.
+    ///
+    /// ``coords`` is a writeable C-contiguous float64 ``(B, N, 3)`` array.
+    ///
+    /// Raises
+    /// ------
+    /// ValueError
+    ///     ``coords`` is not ``(B, N, 3)``, ``N`` differs from the
+    ///     potentials' atom count, or ``coords`` is not writeable and
+    ///     C-contiguous.
+    fn minimize_batch(
+        &self,
+        py: Python<'_>,
+        coords: &Bound<'_, PyArray3<f64>>,
+    ) -> PyResult<Vec<PyOptimizationReport>> {
+        let shape = coords.shape().to_vec();
+        if shape[2] != 3 {
+            return Err(PyValueError::new_err(format!(
+                "batch coords must be (B, N, 3), got {shape:?}"
+            )));
+        }
+        let (b, n) = (shape[0], shape[1]);
+        let expected = self.potentials.borrow(py).inner.compiled()?.n_atoms();
+        if expected != 0 && n != expected {
+            return Err(PyValueError::new_err(format!(
+                "structure atom count N={n} does not match this Potentials' atom count {expected}"
+            )));
+        }
+        let mut rw = coords
+            .try_readwrite()
+            .map_err(|e| PyValueError::new_err(format!("coords must be a writeable array: {e}")))?;
+        let flat = rw.as_slice_mut().map_err(|_| contiguous_err())?;
+        let reports = self.with_compiled(py, |opt| opt.minimize_batch(flat, n, b))?;
+        Ok(reports.into_iter().map(Into::into).collect())
     }
 
     fn __repr__(&self) -> String {
@@ -240,6 +264,12 @@ impl PyLbfgs {
             self.settings.memory
         )
     }
+}
+
+fn contiguous_err() -> PyErr {
+    PyValueError::new_err(
+        "coords must be C-contiguous float64: pass np.ascontiguousarray(coords, dtype=np.float64)",
+    )
 }
 
 /// Register `molrs.optimize`.

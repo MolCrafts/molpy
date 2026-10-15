@@ -1,18 +1,19 @@
-//! The L-BFGS geometry optimizer over a force-field [`Potential`]: [`Lbfgs`]
-//! (an owned potential, an [`Optimizer`] over a [`Frame`]) and the free
-//! functions [`minimize_lbfgs`] / [`minimize_lbfgs_batch`] (a borrowed one).
+//! The L-BFGS geometry optimizer over a force-field [`Potential`]: [`Lbfgs`],
+//! the one object for a [`Frame`] ([`Optimizer::minimize`]), a flat
+//! coordinate buffer ([`Lbfgs::minimize_coords`]) and a homogeneous batch of
+//! them ([`Lbfgs::minimize_batch`]).
 //!
 //! Gated on `ff` (the potential trait lives there); the [`Optimizer`] trait
-//! they implement is always compiled.
+//! it implements is always compiled.
 
-use std::sync::Arc;
+use std::ops::Deref;
 
 use super::lbfgs::{Converge, minimize_core};
 use super::{LbfgsSettings, OptimizationReport, Optimizer};
 use crate::core::Frame;
 use crate::core::keys::FREE;
 use crate::core::schema::block_names::ATOMS;
-use crate::ff::potential::Potential;
+use crate::ff::potential::{Accumulator, Potential};
 use crate::op::F;
 
 /// Check a flat coordinate buffer: `Ok(false)` when there is nothing to
@@ -30,94 +31,42 @@ fn has_atoms(coords: &[F]) -> Result<bool, String> {
     Ok(true)
 }
 
-/// Minimize flat `3·n_atoms` coordinates in place under a borrowed potential,
-/// to `settings.fmax`.
-///
-/// Use when the potential is not owned as an [`Arc`] (e.g. a temporary
-/// `Potentials` behind a binder borrow); a storeable optimizer is [`Lbfgs`].
-///
-/// # Errors
-///
-/// When `coords.len()` is not a multiple of three.
-pub fn minimize_lbfgs(
-    potential: &dyn Potential,
-    coords: &mut [F],
-    settings: &LbfgsSettings,
-) -> Result<OptimizationReport, String> {
-    if !has_atoms(coords)? {
-        return Ok(OptimizationReport::EMPTY);
-    }
-    let (energy, grad, n_steps, converged) = minimize_core(
-        coords,
-        settings.max_steps,
-        Converge::Fmax(settings.fmax),
-        settings.max_step,
-        settings.memory,
-        |c| potential.calc_energy_forces(c),
-    );
-    Ok(OptimizationReport::from_gradient(
-        converged, n_steps, energy, &grad,
-    ))
+/// One evaluation of `potential` at `coords` into fresh storage: the
+/// `(energy, forces)` the L-BFGS core consumes.
+fn energy_forces<P: Potential + ?Sized>(potential: &P, coords: &[F]) -> (F, Vec<F>) {
+    let mut acc = Accumulator::new(coords.len());
+    potential.evaluate(coords, &mut acc);
+    (acc.energy(), acc.into_forces())
 }
 
-/// Minimize a homogeneous batch — `n_structs` structures of `n_atoms` atoms,
-/// stacked in one flat buffer — under a borrowed potential, one report per
-/// structure.
-///
-/// # Errors
-///
-/// When `coords.len() != n_structs · n_atoms · 3`, or `n_atoms` is zero for a
-/// non-empty batch.
-pub fn minimize_lbfgs_batch(
-    potential: &dyn Potential,
-    coords: &mut [F],
-    n_atoms: usize,
-    n_structs: usize,
-    settings: &LbfgsSettings,
-) -> Result<Vec<OptimizationReport>, String> {
-    let stride = n_atoms * 3;
-    let expected = n_structs * stride;
-    if coords.len() != expected {
-        return Err(format!(
-            "coords length {} != n_structs ({}) · n_atoms ({}) · 3 = {}",
-            coords.len(),
-            n_structs,
-            n_atoms,
-            expected
-        ));
-    }
-    if n_structs == 0 {
-        return Ok(Vec::new());
-    }
-    if stride == 0 {
-        return Err(format!(
-            "n_atoms must be > 0 for a batch of {n_structs} structures"
-        ));
-    }
-    coords
-        .chunks_mut(stride)
-        .map(|block| minimize_lbfgs(potential, block, settings))
-        .collect()
-}
-
-/// Limited-memory BFGS over an owned, molecule-bound [`Potential`].
+/// Limited-memory BFGS over a force-field [`Potential`].
 ///
 /// One front door for every potential, including one that rebuilds its own
 /// pairs as the atoms move (`ff::potential::soft::SoftPotential`).
 ///
+/// `P` is whatever holds the potential: an owned handle
+/// (`Arc<dyn Potential>`, `Box<Potentials>`, …) for an optimizer that is
+/// stored, or a borrow (`&dyn Potential`) for a one-shot run under a
+/// potential someone else owns.
+///
 /// Construct with [`Lbfgs::new`] (potential + [`LbfgsSettings`]). Primary call
 /// is [`Optimizer::minimize`] on a [`Frame`], which honours the frame's
-/// `atoms.free` mask; [`minimize_coords`](Lbfgs::minimize_coords) relaxes a flat
-/// coordinate buffer when a Frame is not available.
-pub struct Lbfgs {
-    potential: Arc<dyn Potential>,
+/// `atoms.free` mask; [`minimize_coords`](Lbfgs::minimize_coords) relaxes one
+/// flat coordinate buffer and [`minimize_batch`](Lbfgs::minimize_batch) a
+/// stack of them when a Frame is not available.
+pub struct Lbfgs<P> {
+    potential: P,
     settings: LbfgsSettings,
 }
 
-impl Lbfgs {
+impl<P> Lbfgs<P>
+where
+    P: Deref,
+    P::Target: Potential,
+{
     /// Bind `potential` with `settings` ([`LbfgsSettings::DEFAULT`] for the
     /// defaults).
-    pub fn new(potential: Arc<dyn Potential>, settings: LbfgsSettings) -> Self {
+    pub fn new(potential: P, settings: LbfgsSettings) -> Self {
         Self {
             potential,
             settings,
@@ -129,12 +78,65 @@ impl Lbfgs {
         &self.settings
     }
 
-    /// Relax flat `3·n_atoms` coordinates in place.
+    /// Relax flat `3·n_atoms` coordinates in place, every atom free.
     ///
     /// # Errors
     /// Returns `Err` if `coords.len()` is not a multiple of three.
     pub fn minimize_coords(&self, coords: &mut [F]) -> Result<OptimizationReport, String> {
-        minimize_lbfgs(self.potential.as_ref(), coords, &self.settings)
+        if !has_atoms(coords)? {
+            return Ok(OptimizationReport::EMPTY);
+        }
+        let potential = &*self.potential;
+        let (energy, grad, n_steps, converged) = minimize_core(
+            coords,
+            self.settings.max_steps,
+            Converge::Fmax(self.settings.fmax),
+            self.settings.max_step,
+            self.settings.memory,
+            |c| energy_forces(potential, c),
+        );
+        Ok(OptimizationReport::from_gradient(
+            converged, n_steps, energy, &grad,
+        ))
+    }
+
+    /// Relax a homogeneous batch — `n_structs` structures of `n_atoms` atoms,
+    /// stacked in one flat buffer — each independently, one report per
+    /// structure.
+    ///
+    /// # Errors
+    ///
+    /// When `coords.len() != n_structs · n_atoms · 3`, or `n_atoms` is zero
+    /// for a non-empty batch.
+    pub fn minimize_batch(
+        &self,
+        coords: &mut [F],
+        n_atoms: usize,
+        n_structs: usize,
+    ) -> Result<Vec<OptimizationReport>, String> {
+        let stride = n_atoms * 3;
+        let expected = n_structs * stride;
+        if coords.len() != expected {
+            return Err(format!(
+                "coords length {} != n_structs ({}) · n_atoms ({}) · 3 = {}",
+                coords.len(),
+                n_structs,
+                n_atoms,
+                expected
+            ));
+        }
+        if n_structs == 0 {
+            return Ok(Vec::new());
+        }
+        if stride == 0 {
+            return Err(format!(
+                "n_atoms must be > 0 for a batch of {n_structs} structures"
+            ));
+        }
+        coords
+            .chunks_mut(stride)
+            .map(|block| self.minimize_coords(block))
+            .collect()
     }
 
     /// Minimize free DOFs only, evaluating the potential on the full system.
@@ -152,7 +154,7 @@ impl Lbfgs {
             .filter_map(|(i, &f)| if f { Some(i) } else { None })
             .collect();
         if free_idx.is_empty() {
-            let (e, forces) = self.potential.calc_energy_forces(full);
+            let (e, forces) = energy_forces(&*self.potential, full);
             let grad: Vec<F> = forces.iter().map(|f| -f).collect();
             return Ok(OptimizationReport::from_gradient(true, 0, e, &grad));
         }
@@ -165,7 +167,7 @@ impl Lbfgs {
             x_free.extend_from_slice(&full[3 * i..3 * i + 3]);
         }
 
-        let pot = Arc::clone(&self.potential);
+        let pot = &*self.potential;
         let free_idx_c = free_idx.clone();
         let mut full_buf = full.to_vec();
 
@@ -181,7 +183,7 @@ impl Lbfgs {
                     full_buf[3 * i + 1] = xf[3 * k + 1];
                     full_buf[3 * i + 2] = xf[3 * k + 2];
                 }
-                let (e, forces) = pot.calc_energy_forces(&full_buf);
+                let (e, forces) = energy_forces(pot, &full_buf);
                 let mut f_free = vec![0.0; xf.len()];
                 for (k, &i) in free_idx_c.iter().enumerate() {
                     f_free[3 * k] = forces[3 * i];
@@ -207,7 +209,11 @@ impl Lbfgs {
     }
 }
 
-impl Optimizer for Lbfgs {
+impl<P> Optimizer for Lbfgs<P>
+where
+    P: Deref + Send + Sync,
+    P::Target: Potential,
+{
     fn minimize(&mut self, frame: &mut Frame) -> Result<OptimizationReport, String> {
         let mut xyz = frame.coords().map_err(|e| e.to_string())?;
         let free = frame_free_mask(frame, xyz.nrows())?;
@@ -232,7 +238,7 @@ fn frame_free_mask(frame: &Frame, n_atoms: usize) -> Result<Option<Vec<bool>>, S
     let Some(atoms) = frame.get(ATOMS) else {
         return Ok(None);
     };
-    let Some(col) = atoms.get(FREE).and_then(|c| c.as_bool()) else {
+    let Some(col) = atoms.get(FREE).and_then(|c| c.get::<bool>()) else {
         return Ok(None);
     };
     if col.len() != n_atoms {
@@ -258,28 +264,27 @@ mod tests {
     }
 
     impl Potential for HarmonicBond {
-        fn calc_energy_forces(&self, coords: &[F]) -> (F, Vec<F>) {
+        fn evaluate(&self, coords: &[F], acc: &mut Accumulator<'_>) {
             let d = [
                 coords[3] - coords[0],
                 coords[4] - coords[1],
                 coords[5] - coords[2],
             ];
             let r = (d[0] * d[0] + d[1] * d[1] + d[2] * d[2]).sqrt();
-            let e = 0.5 * self.k * (r - self.r0) * (r - self.r0);
-            let mut f = vec![0.0; 6];
+            acc.add_energy(0.5 * self.k * (r - self.r0) * (r - self.r0));
             if r > 1e-12 {
                 let coeff = self.k * (r - self.r0) / r;
+                let f = acc.forces_without_virial();
                 for i in 0..3 {
                     let fi = coeff * d[i];
-                    f[i] = fi;
-                    f[3 + i] = -fi;
+                    f[i] += fi;
+                    f[3 + i] -= fi;
                 }
             }
-            (e, f)
         }
     }
 
-    fn opt(pot: impl Potential + 'static) -> Lbfgs {
+    fn opt<T: Potential>(pot: T) -> Lbfgs<Arc<T>> {
         Lbfgs::new(Arc::new(pot), LbfgsSettings::DEFAULT)
     }
 
@@ -294,9 +299,15 @@ mod tests {
             y.push(coords[3 * i + 1]);
             z.push(coords[3 * i + 2]);
         }
-        atoms.insert("x", Array1::from_vec(x).into_dyn()).unwrap();
-        atoms.insert("y", Array1::from_vec(y).into_dyn()).unwrap();
-        atoms.insert("z", Array1::from_vec(z).into_dyn()).unwrap();
+        atoms
+            .insert("x", Array1::from_vec(x).into_dyn(), None)
+            .unwrap();
+        atoms
+            .insert("y", Array1::from_vec(y).into_dyn(), None)
+            .unwrap();
+        atoms
+            .insert("z", Array1::from_vec(z).into_dyn(), None)
+            .unwrap();
         let mut frame = Frame::new();
         frame.insert("atoms", atoms);
         frame
@@ -324,7 +335,7 @@ mod tests {
             .get("atoms")
             .unwrap()
             .get("x")
-            .and_then(|c| c.as_float())
+            .and_then(|c| c.get::<f64>())
             .unwrap();
         assert!((x[[1]] - x[[0]] - 1.0).abs() < 1e-6);
     }
@@ -340,7 +351,7 @@ mod tests {
             .get("atoms")
             .unwrap()
             .get("x")
-            .and_then(|c| c.as_float())
+            .and_then(|c| c.get::<f64>())
             .unwrap();
         assert!(x[[0]].abs() < 1e-9, "fixed atom moved: {}", x[[0]]);
         assert!((x[[1]] - 1.0).abs() < 1e-5, "free atom should sit at r0");
@@ -378,9 +389,7 @@ mod tests {
     fn single_atom_converges_immediately() {
         struct Free;
         impl Potential for Free {
-            fn calc_energy_forces(&self, coords: &[F]) -> (F, Vec<F>) {
-                (0.0, vec![0.0; coords.len()])
-            }
+            fn evaluate(&self, _coords: &[F], _acc: &mut Accumulator<'_>) {}
         }
         let mut coords = vec![0.3, -0.2, 0.1];
         let r = opt(Free).minimize_coords(&mut coords).unwrap();
@@ -392,9 +401,7 @@ mod tests {
     fn rejects_non_multiple_of_three() {
         struct Free;
         impl Potential for Free {
-            fn calc_energy_forces(&self, coords: &[F]) -> (F, Vec<F>) {
-                (0.0, vec![0.0; coords.len()])
-            }
+            fn evaluate(&self, _coords: &[F], _acc: &mut Accumulator<'_>) {}
         }
         let mut coords = vec![0.0, 0.0, 0.0, 1.0];
         assert!(opt(Free).minimize_coords(&mut coords).is_err());
@@ -404,9 +411,7 @@ mod tests {
     fn empty_coords_is_converged_noop() {
         struct Free;
         impl Potential for Free {
-            fn calc_energy_forces(&self, coords: &[F]) -> (F, Vec<F>) {
-                (0.0, vec![0.0; coords.len()])
-            }
+            fn evaluate(&self, _coords: &[F], _acc: &mut Accumulator<'_>) {}
         }
         let mut coords: Vec<F> = vec![];
         let r = opt(Free).minimize_coords(&mut coords).unwrap();
@@ -449,8 +454,9 @@ mod tests {
         for _ in 0..b {
             batch.extend_from_slice(&single_start);
         }
-        let reports =
-            minimize_lbfgs_batch(&pot, &mut batch, 2, b, &LbfgsSettings::DEFAULT).unwrap();
+        let reports = Lbfgs::new(&pot, LbfgsSettings::DEFAULT)
+            .minimize_batch(&mut batch, 2, b)
+            .unwrap();
         assert_eq!(reports.len(), b);
         for (i, rep) in reports.iter().enumerate() {
             assert!((rep.final_energy - single_report.final_energy).abs() < 1e-10);
@@ -461,19 +467,38 @@ mod tests {
         }
     }
 
+    /// A borrowed trait object is a potential holder like an owned one: the
+    /// one-shot run under a potential the caller keeps.
+    #[test]
+    fn borrowed_dyn_potential_relaxes_like_an_owned_one() {
+        let pot = HarmonicBond { k: 100.0, r0: 1.0 };
+        let borrowed: &dyn Potential = &pot;
+        let mut coords = vec![0.0, 0.0, 0.0, 1.5, 0.0, 0.0];
+        let report = Lbfgs::new(borrowed, LbfgsSettings::DEFAULT)
+            .minimize_coords(&mut coords)
+            .unwrap();
+        assert!(report.converged);
+        assert!(((coords[3] - coords[0]).abs() - 1.0).abs() < 1e-6);
+    }
+
     #[test]
     fn batch_rejects_size_mismatch() {
         let pot = HarmonicBond { k: 100.0, r0: 1.0 };
         let mut coords = vec![0.0; 6 * 3 + 1];
-        assert!(minimize_lbfgs_batch(&pot, &mut coords, 2, 3, &LbfgsSettings::DEFAULT).is_err());
+        assert!(
+            Lbfgs::new(&pot, LbfgsSettings::DEFAULT)
+                .minimize_batch(&mut coords, 2, 3)
+                .is_err()
+        );
     }
 
     #[test]
     fn batch_zero_structs_is_empty() {
         let pot = HarmonicBond { k: 100.0, r0: 1.0 };
         let mut coords: Vec<F> = vec![];
-        let reports =
-            minimize_lbfgs_batch(&pot, &mut coords, 2, 0, &LbfgsSettings::DEFAULT).unwrap();
+        let reports = Lbfgs::new(&pot, LbfgsSettings::DEFAULT)
+            .minimize_batch(&mut coords, 2, 0)
+            .unwrap();
         assert!(reports.is_empty());
     }
 
@@ -481,7 +506,11 @@ mod tests {
     fn batch_zero_atoms_errors_not_panics() {
         let pot = HarmonicBond { k: 100.0, r0: 1.0 };
         let mut coords: Vec<F> = vec![];
-        assert!(minimize_lbfgs_batch(&pot, &mut coords, 0, 3, &LbfgsSettings::DEFAULT).is_err());
+        assert!(
+            Lbfgs::new(&pot, LbfgsSettings::DEFAULT)
+                .minimize_batch(&mut coords, 0, 3)
+                .is_err()
+        );
     }
 
     /// The soft packing potential minimizes through the one front door: two
@@ -509,7 +538,7 @@ mod tests {
             .get("atoms")
             .unwrap()
             .get("x")
-            .and_then(|c| c.as_float())
+            .and_then(|c| c.get::<f64>())
             .unwrap();
         assert!(x[[1]] - x[[0]] > 2.59, "pushed apart to sigma: {x:?}");
     }

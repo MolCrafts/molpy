@@ -262,11 +262,12 @@ impl PyConformer {
     /// TypeError
     ///     If `mol` is not an ``Atomistic``.
     /// ValueError
-    ///     If the molecular graph is invalid (e.g. missing element symbols).
+    ///     If the molecular graph is invalid (e.g. an atom without a valid
+    ///     ``atomic_number``).
     ///
     /// Examples
     /// --------
-    /// >>> mol = molrs.io.smiles.SmilesIr("CCO").to_atomistic()
+    /// >>> mol = molrs.io.smiles.SmilesIr.parse("CCO").to_atomistic()
     /// >>> mol_3d, report = Conformer(speed="fast", seed=42).generate(mol)
     /// >>> mol_3d.n_atoms   # includes added hydrogens
     /// 9

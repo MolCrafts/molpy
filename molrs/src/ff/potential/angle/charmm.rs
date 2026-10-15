@@ -8,7 +8,7 @@ use ndarray::{Array2, ArrayView2};
 
 use crate::ff::ir::Params;
 use crate::ff::potential::flat_coords::{compute_angle, sub3, term_table, validate_coords};
-use crate::ff::potential::{ForceTerm, IndexedTerms, Potential};
+use crate::ff::potential::{Accumulator, ForceTerm, IndexedTerms, Potential};
 use crate::op::vec3::norm;
 use molrs::core::Frame;
 use molrs::op::F;
@@ -108,16 +108,14 @@ impl AngleCharmm {
 }
 
 impl Potential for AngleCharmm {
-    fn calc_energy_forces(&self, coords: &[F]) -> (F, Vec<F>) {
-        let mut out = vec![0.0; coords.len()];
-        let energy = self.accumulate(coords, &mut out);
-        (energy, out)
-    }
-
-    fn accumulate(&self, coords: &[F], out: &mut [F]) -> F {
-        self.fold(coords, out, self.atom_i.len(), |t| {
-            (self.atom_i[t], self.atom_j[t], self.atom_k[t])
-        })
+    fn evaluate(&self, coords: &[F], acc: &mut Accumulator<'_>) {
+        let energy = self.fold(
+            coords,
+            acc.forces_without_virial(),
+            self.atom_i.len(),
+            |t| (self.atom_i[t], self.atom_j[t], self.atom_k[t]),
+        );
+        acc.add_energy(energy);
     }
 }
 
@@ -126,29 +124,20 @@ impl IndexedTerms for AngleCharmm {
         term_table(&[&self.atom_i, &self.atom_j, &self.atom_k])
     }
 
-    fn calc_energy_forces_with_terms(
-        &self,
-        coords: &[F],
-        terms: ArrayView2<'_, u32>,
-    ) -> (F, Vec<F>) {
-        let mut out = vec![0.0; coords.len()];
-        let energy = self.accumulate_with_terms(coords, terms, &mut out);
-        (energy, out)
-    }
-
-    fn accumulate_with_terms(&self, coords: &[F], terms: ArrayView2<'_, u32>, out: &mut [F]) -> F {
+    fn evaluate_terms(&self, coords: &[F], terms: ArrayView2<'_, u32>, acc: &mut Accumulator<'_>) {
         debug_assert_eq!(
             terms.nrows(),
             self.atom_i.len(),
             "the row set is the force field's; only the atoms a row names may be rebound"
         );
-        self.fold(coords, out, terms.nrows(), |t| {
+        let energy = self.fold(coords, acc.forces_without_virial(), terms.nrows(), |t| {
             (
                 terms[[t, 0]] as usize,
                 terms[[t, 1]] as usize,
                 terms[[t, 2]] as usize,
             )
-        })
+        });
+        acc.add_energy(energy);
     }
 }
 
@@ -167,13 +156,13 @@ pub fn angle_charmm_constructor(
     let column = |key: &str| {
         block
             .get(key)
-            .and_then(|c| c.as_uint())
+            .and_then(|c| c.get::<u64>())
             .ok_or_else(|| format!("AngleCharmm: angles block missing \"{key}\" column"))
     };
     let (i_col, j_col, k_col) = (column("atomi")?, column("atomj")?, column("atomk")?);
     let type_col = block
         .get("type")
-        .and_then(|c| c.as_string())
+        .and_then(|c| c.get::<String>())
         .ok_or_else(|| "AngleCharmm: angles block missing \"type\" column".to_string())?;
 
     let n = i_col.len();
@@ -210,6 +199,7 @@ mod tests {
     use crate::ff::compile::PotentialCompiler;
     use crate::ff::forcefield::ForceField;
     use crate::ff::ir::SpecialBonds;
+    use crate::ff::potential::fixtures::OneShot;
     use crate::ff::potential::intramolecular_pairs;
     use molrs::core::Block;
     use molrs::op::Idx;
@@ -258,7 +248,7 @@ mod tests {
             (1.0, 1.0, 60.0),
             (1.2, 0.9, 175.0),
         ] {
-            let got = p.calc_energy(&geometry(a, b, theta));
+            let got = p.energy_at(&geometry(a, b, theta));
             let want = hand_energy(a, b, theta);
             assert!(
                 (got - want).abs() <= 1e-12 * want.abs().max(1.0),
@@ -271,7 +261,7 @@ mod tests {
     fn at_both_equilibria_the_energy_and_force_vanish() {
         // θ = θ0 and r₁₃ = r_ub: a = b = r_ub / (2 sin(θ0/2)).
         let a = R_UB / (2.0 * (THETA0_DEG.to_radians() / 2.0).sin());
-        let (e, f) = pot(THETA0_DEG).calc_energy_forces(&geometry(a, a, THETA0_DEG));
+        let (e, f) = pot(THETA0_DEG).energy_forces_at(&geometry(a, a, THETA0_DEG));
         assert!(e.abs() < 1e-24, "{e}");
         assert!(f.iter().all(|x| x.abs() < 1e-10), "{f:?}");
     }
@@ -280,13 +270,13 @@ mod tests {
     fn forces_match_finite_difference_and_sum_to_zero() {
         let p = pot(THETA0_DEG);
         let coords: Vec<F> = vec![1.3, 0.2, -0.1, 0.05, 0.0, 0.1, -0.4, 1.1, 0.3];
-        let (_, analytic) = p.calc_energy_forces(&coords);
+        let (_, analytic) = p.energy_forces_at(&coords);
         let h = 1e-6;
         for d in 0..coords.len() {
             let (mut cp, mut cm) = (coords.clone(), coords.clone());
             cp[d] += h;
             cm[d] -= h;
-            let numeric = -(p.calc_energy(&cp) - p.calc_energy(&cm)) / (2.0 * h);
+            let numeric = -(p.energy_at(&cp) - p.energy_at(&cm)) / (2.0 * h);
             assert!(
                 (analytic[d] - numeric).abs() < 1e-6,
                 "dof {d}: {} vs {numeric}",
@@ -324,7 +314,7 @@ mod tests {
             }],
         );
         let coords = geometry(1.5, 1.2, 100.0);
-        let (_, f) = p.calc_energy_forces(&coords);
+        let (_, f) = p.energy_forces_at(&coords);
         let r13 = sub3(&coords, 0, &coords, 2);
         let cross = [
             f[1] * r13[2] - f[2] * r13[1],
@@ -339,16 +329,22 @@ mod tests {
         let mut atoms = Block::new();
         for (d, key) in ["x", "y", "z"].into_iter().enumerate() {
             let col: Vec<F> = (0..3).map(|a| coords[a * 3 + d]).collect();
-            atoms.insert(key, Array1::from_vec(col).into_dyn()).unwrap();
+            atoms
+                .insert(key, Array1::from_vec(col).into_dyn(), None)
+                .unwrap();
         }
         let mut angles = Block::new();
         for (key, a) in [("atomi", 0), ("atomj", 1), ("atomk", 2)] {
             angles
-                .insert(key, Array1::from_vec(vec![a as Idx]).into_dyn())
+                .insert(key, Array1::from_vec(vec![a as Idx]).into_dyn(), None)
                 .unwrap();
         }
         angles
-            .insert("type", Array1::from_vec(vec![label.to_owned()]).into_dyn())
+            .insert(
+                "type",
+                Array1::from_vec(vec![label.to_owned()]).into_dyn(),
+                None,
+            )
             .unwrap();
         let mut frame = Frame::new();
         frame.insert("atoms", atoms);
@@ -363,7 +359,7 @@ mod tests {
             .def_type(
                 "HA-CT-HA",
                 &["HA", "CT", "HA"],
-                Params::from_pairs(&[
+                Params::from_iter([
                     ("k", K),
                     ("theta0", THETA0_DEG),
                     ("k_ub", K_UB),
@@ -382,7 +378,7 @@ mod tests {
         let pots = PotentialCompiler::new(&charmm_ff())
             .compile(&frame("HA-CT-HA", &coords))
             .unwrap();
-        let got = pots.calc_energy(&coords);
+        let got = pots.energy_at(&coords);
         let want = hand_energy(1.53, 1.09, 104.0);
         assert!((got - want).abs() <= 1e-12 * want, "{got} vs {want}");
     }
@@ -393,7 +389,7 @@ mod tests {
         let ff = charmm_ff();
         let compiler = PotentialCompiler::new(&ff);
         let f = frame("HA-CT-HA", &coords);
-        let (e1, f1) = compiler.compile(&f).unwrap().calc_energy_forces(&coords);
+        let (e1, f1) = compiler.compile(&f).unwrap().energy_forces_at(&coords);
         let typed = compiler.compile_typed(&f).unwrap();
         assert_eq!(typed.len(), 1);
         let (member, weights) = &typed[0];
@@ -401,10 +397,10 @@ mod tests {
             weights.is_none(),
             "a bonded member takes no special weights"
         );
-        let (e2, f2) = member.calc_energy_forces(&coords);
+        let (e2, f2) = member.energy_forces_at(&coords);
         assert_eq!(e1, e2);
         assert_eq!(f1, f2);
-        assert_eq!(e1, pot(THETA0_DEG).calc_energy(&coords));
+        assert_eq!(e1, pot(THETA0_DEG).energy_at(&coords));
     }
 
     #[test]
@@ -415,7 +411,7 @@ mod tests {
             .def_type(
                 "A",
                 &["A", "A", "A"],
-                Params::from_pairs(&[("k", K), ("theta0", THETA0_DEG), ("k_ub", K_UB)]),
+                Params::from_iter([("k", K), ("theta0", THETA0_DEG), ("k_ub", K_UB)]),
             )
             .unwrap();
         let coords = geometry(1.0, 1.0, 100.0);
@@ -440,9 +436,9 @@ mod tests {
     fn urey_bradley_changes_no_pair_list() {
         let f = frame("HA-CT-HA", &geometry(1.0, 1.0, 100.0));
         let has_13 = |special: &SpecialBonds| {
-            let p = intramolecular_pairs(&f, special).unwrap();
-            let i = p.get("atomi").unwrap().as_uint().unwrap();
-            let j = p.get("atomj").unwrap().as_uint().unwrap();
+            let p = intramolecular_pairs(&f, special, None).unwrap();
+            let i = p.get("atomi").unwrap().get::<u64>().unwrap();
+            let j = p.get("atomj").unwrap().get::<u64>().unwrap();
             i.iter().zip(j.iter()).any(|(&a, &b)| (a, b) == (0, 2))
         };
         let keep_13 = SpecialBonds {
@@ -461,16 +457,20 @@ mod tests {
         let mut atoms = Block::new();
         for (d, key) in ["x", "y", "z"].into_iter().enumerate() {
             let col: Vec<F> = xyz.iter().map(|p| p[d]).collect();
-            atoms.insert(key, Array1::from_vec(col).into_dyn()).unwrap();
+            atoms
+                .insert(key, Array1::from_vec(col).into_dyn(), None)
+                .unwrap();
         }
         let mut block = Block::new();
         for (slot, key) in ["atomi", "atomj", "atomk"].into_iter().enumerate() {
             let col: Vec<Idx> = angles.iter().map(|a| [a.0, a.1, a.2][slot]).collect();
-            block.insert(key, Array1::from_vec(col).into_dyn()).unwrap();
+            block
+                .insert(key, Array1::from_vec(col).into_dyn(), None)
+                .unwrap();
         }
         let types: Vec<String> = angles.iter().map(|a| a.3.to_owned()).collect();
         block
-            .insert("type", Array1::from_vec(types).into_dyn())
+            .insert("type", Array1::from_vec(types).into_dyn(), None)
             .unwrap();
         let mut frame = Frame::new();
         frame.insert("atoms", atoms);
@@ -483,12 +483,14 @@ mod tests {
     /// forces to its `fx fy fz` at 1e-10 of the largest component.
     fn agrees_with_lammps(include: &str, frame: &Frame, pe: F, forces: &[[F; 3]]) {
         use crate::io::{lammps::LammpsForcefieldReader, reader::ForceFieldReader};
-        let ff = LammpsForcefieldReader::new().read_str(include).unwrap();
+        let ff = LammpsForcefieldReader::new()
+            .read(include.as_bytes())
+            .unwrap();
         let coords: Vec<F> = frame.coords().unwrap().into_iter().collect();
         let (e, f) = PotentialCompiler::new(&ff)
             .compile(frame)
             .unwrap()
-            .calc_energy_forces(&coords);
+            .energy_forces_at(&coords);
         assert!(
             (e - pe).abs() <= 1e-10 * pe.abs(),
             "molrs {e} vs LAMMPS {pe}"
@@ -600,7 +602,7 @@ angle_coeff HA-CT-HA charmm 35.500000 108.400000 5.400000 1.802000
             .def_type(
                 "CT-CT-CT",
                 &["CT", "CT", "CT"],
-                Params::from_pairs(&[("k", 58.35), ("theta0", 113.6)]),
+                Params::from_iter([("k", 58.35), ("theta0", 113.6)]),
             )
             .unwrap();
         let xyz = [
@@ -612,16 +614,16 @@ angle_coeff HA-CT-HA charmm 35.500000 108.400000 5.400000 1.802000
         let coords: Vec<F> = xyz.iter().flatten().copied().collect();
         let both = molecule(&xyz, &[(0, 1, 2, "CT-CT-CT"), (3, 0, 1, "HA-CT-HA")]);
         let compiler = PotentialCompiler::new(&ff);
-        let e = compiler.compile(&both).unwrap().calc_energy(&coords);
+        let e = compiler.compile(&both).unwrap().energy_at(&coords);
         let typed: F = compiler
             .compile_typed(&both)
             .unwrap()
             .iter()
-            .map(|(m, _)| m.calc_energy(&coords))
+            .map(|(m, _)| m.energy_at(&coords))
             .sum();
         assert_eq!(e, typed);
         let harmonic = 58.35 * (compute_angle(&coords, 0, 1, 2) - 113.6_f64.to_radians()).powi(2);
-        let ub = pot(THETA0_DEG).calc_energy(&[
+        let ub = pot(THETA0_DEG).energy_at(&[
             xyz[3][0], xyz[3][1], xyz[3][2], 0.0, 0.0, 0.0, 1.53, 0.0, 0.0,
         ]);
         assert!(

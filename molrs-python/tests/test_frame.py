@@ -68,11 +68,11 @@ class TestOneFrame:
     def test_readers_return_the_one_class(self, tmp_path):
         path = tmp_path / "one.xyz"
         path.write_text("1\n\nH 0.0 0.0 0.0\n", encoding="utf-8")
-        assert type(molrs.io.read_xyz(str(path))) is Frame
+        assert type(molrs.io.read_xyz(path)) is Frame
 
     def test_a_graph_serialises_to_the_one_class(self):
         mol = molrs.core.Atomistic()
-        mol.def_atom(element="C", x=0.0, y=0.0, z=0.0)
+        mol.add_atom(atomic_number=6, x=0.0, y=0.0, z=0.0)
         frame = mol.to_frame()
         assert type(frame) is Frame
         assert type(frame["atoms"]) is Block
@@ -81,7 +81,7 @@ class TestOneFrame:
         f = Frame(
             {"atoms": {"x": [1.0, 2.0]}, "bonds": Block({"atomi": [0], "atomj": [1]})},
             meta={"title": MetaValue("string", "t")},
-            box=molrs.core.Box.cube(5.0),
+            box=molrs.core.Box(molrs.core.Cell.lengths([5.0, 5.0, 5.0])),
         )
         assert sorted(f.keys()) == ["atoms", "bonds"]
         np.testing.assert_array_equal(f["atoms"]["x"], [1.0, 2.0])
@@ -128,12 +128,14 @@ class TestFrameBlockHandle:
     def test_shape_reads_the_stored_block(self):
         assert self._grid_frame()["atoms"].shape == [3]
 
-    def test_select_rows_reads_the_stored_block(self):
-        rows = self._grid_frame()["atoms"].select_rows([2, 0])
+    def test_a_row_selection_reads_the_stored_block(self):
+        rows = self._grid_frame()["atoms"][np.array([2, 0])]
         np.testing.assert_array_equal(rows["x"], [3.0, 1.0])
 
-    def test_write_csv_block_str_writes_the_stored_rows(self):
-        text = molrs.io.write_csv_block_str(self._grid_frame()["atoms"])
+    def test_write_csv_block_writes_the_stored_rows(self):
+        sink = bytearray()
+        molrs.io.write_csv_block(sink, self._grid_frame()["atoms"])
+        text = sink.decode()
         lines = text.splitlines()
         assert lines[0] == "x"
         assert [float(v) for v in lines[1:]] == [1.0, 2.0, 3.0]
@@ -153,7 +155,7 @@ class TestFrameBlockHandle:
 class TestFrameCopy:
     def test_copy_does_not_share_buffers(self):
         f = Frame({"atoms": {"x": np.array([1.0, 2.0])}})
-        f.box = molrs.core.Box.cube(5.0)
+        f.box = molrs.core.Box(molrs.core.Cell.lengths([5.0, 5.0, 5.0]))
         g = f.copy()
         assert not np.shares_memory(f["atoms"]["x"], g["atoms"]["x"])
         g["atoms"]["x"][0] = 9.0
@@ -174,11 +176,11 @@ class TestFramePickle:
         import pickle
 
         f = Frame({"atoms": {"x": [1.0, 2.0]}})
-        f["atoms"].insert_nullable(
+        f["atoms"].insert(
             "tag", np.array([4, 0], dtype=np.int32), [True, False]
         )
         f.meta["temperature"] = MetaValue("f64", 300.0)
-        f.box = molrs.core.Box.cube(2.0)
+        f.box = molrs.core.Box(molrs.core.Cell.lengths([2.0, 2.0, 2.0]))
         restored = pickle.loads(pickle.dumps(f))
         assert type(restored) is Frame
         np.testing.assert_array_equal(restored["atoms"]["x"], [1.0, 2.0])
@@ -278,20 +280,20 @@ class TestFrameBox:
 
     def test_set_box(self):
         f = Frame()
-        box_ = molrs.core.Box.cube(10.0)
+        box_ = molrs.core.Box(molrs.core.Cell.lengths([10.0, 10.0, 10.0]))
         f.box = box_
         assert f.box is not None
         assert pytest.approx(f.box.volume(), abs=1) == 1000.0
 
     def test_clear_box(self):
         f = Frame()
-        f.box = molrs.core.Box.cube(10.0)
+        f.box = molrs.core.Box(molrs.core.Cell.lengths([10.0, 10.0, 10.0]))
         f.box = None
         assert f.box is None
 
     def test_repr_with_box(self):
         f = Frame()
-        f.box = molrs.core.Box.cube(10.0)
+        f.box = molrs.core.Box(molrs.core.Cell.lengths([10.0, 10.0, 10.0]))
         assert "yes" in repr(f)
 
 
@@ -926,3 +928,81 @@ class TestFrameConcat:
 
     def test_no_parts_give_an_empty_frame(self):
         assert len(molrs.core.Frame.concat([])) == 0
+
+
+class TestTopology:
+    """``molrs.core.Topology``: the index-only bond graph of a frame."""
+
+    @staticmethod
+    def _chain_frame() -> Frame:
+        # 0-1-2-3 chain plus an isolated atom 4.
+        return Frame(
+            {
+                "atoms": {"x": [0.0, 1.0, 2.0, 3.0, 9.0]},
+                "bonds": {"atomi": [0, 1, 2], "atomj": [1, 2, 3]},
+            }
+        )
+
+    def test_from_frame_reads_atoms_bonds_and_derived_terms(self):
+        topo = molrs.core.Topology.from_frame(self._chain_frame())
+        assert (topo.n_atoms, topo.n_bonds) == (5, 3)
+        assert (topo.n_angles, topo.n_dihedrals) == (2, 1)
+        assert topo.n_components == 2
+        np.testing.assert_array_equal(topo.connected_components(), [0, 0, 0, 0, 1])
+        np.testing.assert_array_equal(topo.bonds(), [[0, 1], [1, 2], [2, 3]])
+        np.testing.assert_array_equal(topo.angles(), [[0, 1, 2], [1, 2, 3]])
+        np.testing.assert_array_equal(topo.dihedrals(), [[0, 1, 2, 3]])
+        np.testing.assert_array_equal(topo.distances(0), [0, 1, 2, 3, -1])
+        assert topo.neighbors(1) == [0, 2]
+        assert topo.degree(1) == 2
+        assert topo.are_bonded(2, 3) and not topo.are_bonded(0, 3)
+
+    def test_from_frame_refuses_a_frame_without_atoms(self):
+        with pytest.raises(ValueError, match="atoms"):
+            molrs.core.Topology.from_frame(Frame())
+
+    def test_build_with_add_atoms_and_add_bonds(self):
+        topo = molrs.core.Topology(3)
+        topo.add_atoms(1)
+        topo.add_bonds([(0, 1), (1, 0), (2, 3)])
+        assert (topo.n_atoms, topo.n_bonds) == (4, 2)
+        np.testing.assert_array_equal(topo.bonds(), [[0, 1], [2, 3]])
+        assert len(topo.impropers()) == 0
+        with pytest.raises(IndexError):
+            topo.add_bonds([(0, 9)])
+        assert topo.n_bonds == 2
+
+    def test_del_atom_swap_removes_and_drops_its_bonds(self):
+        topo = molrs.core.Topology.from_frame(self._chain_frame())
+        topo.del_atom(1)
+        # Atom 4 (isolated) moved into slot 1; bonds 0-1 and 1-2 are gone.
+        assert (topo.n_atoms, topo.n_bonds) == (4, 1)
+        np.testing.assert_array_equal(topo.bonds(), [[2, 3]])
+        assert topo.degree(1) == 0
+
+    def test_del_atoms_takes_indices_from_before_the_call(self):
+        topo = molrs.core.Topology.from_frame(self._chain_frame())
+        topo.del_atoms([0, 3, 3])
+        assert (topo.n_atoms, topo.n_bonds) == (3, 1)
+        np.testing.assert_array_equal(topo.bonds(), [[1, 2]])
+
+    def test_del_bond_and_del_bonds(self):
+        topo = molrs.core.Topology.from_frame(self._chain_frame())
+        topo.del_bond(0)
+        assert topo.n_bonds == 2
+        assert not topo.are_bonded(0, 1)
+        topo.del_bonds([0, 1])
+        assert topo.n_bonds == 0
+        assert topo.n_components == 5
+
+    def test_out_of_range_deletes_raise_and_change_nothing(self):
+        topo = molrs.core.Topology.from_frame(self._chain_frame())
+        with pytest.raises(IndexError):
+            topo.del_atom(5)
+        with pytest.raises(IndexError):
+            topo.del_atoms([0, 5])
+        with pytest.raises(IndexError):
+            topo.del_bond(3)
+        with pytest.raises(IndexError):
+            topo.del_bonds([0, 3])
+        assert (topo.n_atoms, topo.n_bonds) == (5, 3)

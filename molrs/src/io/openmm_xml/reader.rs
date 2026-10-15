@@ -14,6 +14,7 @@ use crate::ff::ir::{ONE_FOUR, ONE_FOUR_EPSILON14, has_own_one_four};
 use crate::ff::ir::{Params, SpecialBonds};
 use crate::ff::typifier::OplsAaTypifier;
 use crate::io::reader::ForceFieldReader;
+use crate::io::{Source, invalid_data};
 use molrs::core::TypeName;
 
 /// The energy expressions of a `<CustomTorsionForce>` read as `improper
@@ -23,18 +24,9 @@ pub(crate) const HARMONIC_IMPROPER_SIGNED: &str = "k*(theta-theta0)^2";
 /// See [`HARMONIC_IMPROPER_SIGNED`].
 pub(crate) const HARMONIC_IMPROPER_ABS: &str = "k*(abs(theta)-theta0)^2";
 
-/// Read a [`ForceField`] from an OpenMM force-field XML file.
-pub fn read_openmm_forcefield(path: &str) -> Result<ForceField, String> {
-    OpenmmXmlReader::new().read(path)
-}
-
-/// Read a [`ForceField`] from OpenMM force-field XML text — the inverse of
-/// [`write_openmm_forcefield_str`](crate::io::write_openmm_forcefield_str).
-pub fn read_openmm_forcefield_str(text: &str) -> Result<ForceField, String> {
-    OpenmmXmlReader::new().read_str(text)
-}
-
-/// Reader for OpenMM `<ForceField>` XML (nm, kJ/mol, radians).
+/// Reader for OpenMM `<ForceField>` XML (nm, kJ/mol, radians) — the inverse
+/// of [`OpenmmXmlWriter`](crate::io::openmm_xml::OpenmmXmlWriter); its door
+/// is [`ForceFieldReader::read`].
 ///
 /// Parses an OpenMM `<ForceField>` (nm, kJ/mol, radians, OpenMM's factors)
 /// into a molrs [`ForceField`] in the force-field IR, whose definitions follow
@@ -126,96 +118,108 @@ pub fn read_openmm_forcefield_str(text: &str) -> Result<ForceField, String> {
 pub struct OpenmmXmlReader;
 
 impl OpenmmXmlReader {
+    /// The reader; the format has no settings.
     pub fn new() -> Self {
         Self
     }
 
-    /// Read an OPLS-AA typifier from OpenMM force-field XML text: the typing
-    /// annotations Foyer adds to each `<AtomTypes><Type>` (`def` SMARTS,
-    /// `overrides`, `priority`, `layer`) and the force field of the same
-    /// document — a caller's OPLS-AA / CL&P file, where
-    /// [`OplsAaTypifier::oplsaa`] is the shipped set.
+    /// Read an OPLS-AA typifier from the OpenMM force-field XML `src` holds
+    /// (a path or a whole file's bytes): the typing annotations Foyer adds to
+    /// each `<AtomTypes><Type>` (`def` SMARTS, `overrides`, `priority`,
+    /// `layer`) and the force field of the same document — a caller's OPLS-AA
+    /// / CL&P file, where [`OplsAaTypifier::oplsaa`] is the shipped set.
     ///
     /// # Errors
     ///
-    /// Either half failing to read: a malformed document, a `<Type>` without
-    /// `name` / `class`, a non-integer `priority` / `layer`, an `overrides`
-    /// naming an undeclared type or forming a cycle, or what
-    /// [`read_str`](ForceFieldReader::read_str) refuses.
-    pub fn read_opls_typifier_str(&self, text: &str) -> Result<OplsAaTypifier, String> {
-        let meta = super::opls_typing::read_typing_metadata(text)?;
-        let ff = self.read_str(text)?;
+    /// The OS error of a path that cannot be read;
+    /// [`InvalidData`](std::io::ErrorKind::InvalidData) for either half
+    /// failing to read: a malformed document, a `<Type>` without `name` /
+    /// `class`, a non-integer `priority` / `layer`, an `overrides` naming an
+    /// undeclared type or forming a cycle, or what
+    /// [`read`](ForceFieldReader::read) refuses.
+    pub fn read_opls_typifier<'a>(
+        &self,
+        src: impl Into<Source<'a>>,
+    ) -> std::io::Result<OplsAaTypifier> {
+        let text = src.into().text()?;
+        let meta = super::opls_typing::read_typing_metadata(&text).map_err(invalid_data)?;
+        let ff = parse(&text).map_err(invalid_data)?;
         Ok(OplsAaTypifier::new(meta, ff))
     }
 }
 
 impl ForceFieldReader for OpenmmXmlReader {
-    fn read_str(&self, text: &str) -> Result<ForceField, String> {
-        let doc = roxmltree::Document::parse(text)
-            .map_err(|e| format!("OpenMM XML parse error: {}", e))?;
-        let root = doc.root_element();
-        if root.tag_name().name() != "ForceField" {
-            return Err(format!(
-                "root element must be <ForceField>, got <{}>",
-                root.tag_name().name()
-            ));
-        }
+    fn read<'a>(&self, src: impl Into<Source<'a>>) -> std::io::Result<ForceField> {
+        parse(&src.into().text()?).map_err(invalid_data)
+    }
+}
 
-        // molpy / foyer convention: missing ``name`` → ``"Unknown"``.
-        let mut ff = ForceField::new(root.attribute("name").unwrap_or("Unknown"));
-        let mut raw = Raw::default();
+/// The force field of OpenMM force-field XML text ([`OpenmmXmlReader`]).
+fn parse(text: &str) -> Result<ForceField, String> {
+    let doc =
+        roxmltree::Document::parse(text).map_err(|e| format!("OpenMM XML parse error: {}", e))?;
+    let root = doc.root_element();
+    if root.tag_name().name() != "ForceField" {
+        return Err(format!(
+            "root element must be <ForceField>, got <{}>",
+            root.tag_name().name()
+        ));
+    }
 
-        for sec in root.children().filter(Node::is_element) {
-            match sec.tag_name().name() {
-                "AtomTypes" => {
-                    for t in sec.children().filter(Node::is_element) {
-                        require_tag(&t, "Type")?;
-                        let name = require_str(&t, "name")?.to_owned();
-                        let mass = opt_f64(&t, "mass")?.unwrap_or(0.0);
-                        raw.atom_rows.push(AtomTypeRow {
-                            name,
-                            mass,
-                            class: t.attribute("class").map(str::to_owned),
-                            element: t.attribute("element").map(str::to_owned),
-                            def: t.attribute("def").map(str::to_owned),
-                            desc: t.attribute("desc").map(str::to_owned),
-                            doi: t.attribute("doi").map(str::to_owned),
-                            overrides: t.attribute("overrides").map(str::to_owned),
-                        });
-                    }
-                }
-                "HarmonicBondForce" => parse_bonds(&mut ff, &sec)?,
-                "HarmonicAngleForce" => parse_angles(&mut raw, &sec)?,
-                "AmoebaUreyBradleyForce" => parse_urey_bradley(&mut raw, &sec)?,
-                "RBTorsionForce" => parse_rb_torsions(&mut ff, &sec)?,
-                // OpenMM k{m}/periodicity{m}/phase{m}, or CL&P c0..c3 — per row.
-                "PeriodicTorsionForce" => parse_periodic_torsions(&mut ff, &sec)?,
-                "CustomTorsionForce" => parse_custom_torsions(&mut ff, &sec)?,
-                "CMAPTorsionForce" => parse_cmap(&mut ff, &sec)?,
-                "NonbondedForce" => parse_nonbonded(&mut raw, &sec)?,
-                "LennardJonesForce" => parse_lennard_jones(&mut raw, &sec)?,
-                // Residue templates and provenance carry no parameters.
-                "Residues" | "Patches" | "Info" => {}
-                other => {
-                    return Err(format!(
-                        "<{other}>: no force-field IR form (molrs reads OpenMM's \
-                         HarmonicBond, HarmonicAngle, AmoebaUreyBradley, PeriodicTorsion, \
-                         RBTorsion, CMAPTorsion, Nonbonded and LennardJones forces, and \
-                         the harmonic-improper CustomTorsionForce)"
-                    ));
+    // molpy / foyer convention: missing ``name`` → ``"Unknown"``.
+    let mut ff = ForceField::new(root.attribute("name").unwrap_or("Unknown"));
+    let mut raw = Raw::default();
+
+    for sec in root.children().filter(Node::is_element) {
+        match sec.tag_name().name() {
+            "AtomTypes" => {
+                for t in sec.children().filter(Node::is_element) {
+                    require_tag(&t, "Type")?;
+                    let name = require_str(&t, "name")?.to_owned();
+                    let mass = opt_f64(&t, "mass")?.unwrap_or(0.0);
+                    raw.atom_rows.push(AtomTypeRow {
+                        name,
+                        mass,
+                        class: t.attribute("class").map(str::to_owned),
+                        element: t.attribute("element").map(str::to_owned),
+                        def: t.attribute("def").map(str::to_owned),
+                        desc: t.attribute("desc").map(str::to_owned),
+                        doi: t.attribute("doi").map(str::to_owned),
+                        overrides: t.attribute("overrides").map(str::to_owned),
+                    });
                 }
             }
+            "HarmonicBondForce" => parse_bonds(&mut ff, &sec)?,
+            "HarmonicAngleForce" => parse_angles(&mut raw, &sec)?,
+            "AmoebaUreyBradleyForce" => parse_urey_bradley(&mut raw, &sec)?,
+            "RBTorsionForce" => parse_rb_torsions(&mut ff, &sec)?,
+            // OpenMM k{m}/periodicity{m}/phase{m}, or CL&P c0..c3 — per row.
+            "PeriodicTorsionForce" => parse_periodic_torsions(&mut ff, &sec)?,
+            "CustomTorsionForce" => parse_custom_torsions(&mut ff, &sec)?,
+            "CMAPTorsionForce" => parse_cmap(&mut ff, &sec)?,
+            "NonbondedForce" => parse_nonbonded(&mut raw, &sec)?,
+            "LennardJonesForce" => parse_lennard_jones(&mut raw, &sec)?,
+            // Residue templates and provenance carry no parameters.
+            "Residues" | "Patches" | "Info" => {}
+            other => {
+                return Err(format!(
+                    "<{other}>: no force-field IR form (molrs reads OpenMM's \
+                     HarmonicBond, HarmonicAngle, AmoebaUreyBradley, PeriodicTorsion, \
+                     RBTorsion, CMAPTorsion, Nonbonded and LennardJones forces, and \
+                     the harmonic-improper CustomTorsionForce)"
+                ));
+            }
         }
-
-        build_angles(&mut ff, &raw)?;
-        // `combining_rule` is a foyer attribute (OpenMM's NonbondedForce
-        // always mixes Lorentz-Berthelot; foyer patches the system for a
-        // geometric rule): OPLS-AA mixes σ geometrically.
-        let combining_rule = root.attribute("combining_rule");
-        build_nonbonded(&mut ff, &raw, combining_rule)?;
-        ensure_class_wildcards(&mut ff, &raw.atom_rows)?;
-        Ok(ff)
     }
+
+    build_angles(&mut ff, &raw)?;
+    // `combining_rule` is a foyer attribute (OpenMM's NonbondedForce
+    // always mixes Lorentz-Berthelot; foyer patches the system for a
+    // geometric rule): OPLS-AA mixes σ geometrically.
+    let combining_rule = root.attribute("combining_rule");
+    build_nonbonded(&mut ff, &raw, combining_rule)?;
+    ensure_class_wildcards(&mut ff, &raw.atom_rows)?;
+    Ok(ff)
 }
 
 /// What is collected over the whole document before it can be defined.
@@ -363,11 +367,11 @@ fn build_nonbonded(
             .def_style("atom", "full", Params::new())
             .map_err(|e| e.to_string())?;
         for row in atom_rows {
-            let mut params = Params::from_pairs(&[("mass", row.mass)]);
+            let mut params = Params::from_iter([("mass", row.mass)]);
             if let Some(&q) = charge_of.get(&row.name) {
                 params.set("charge", q);
             }
-            params.set_str("type_", &row.name);
+            params.set("type_", &row.name);
             let strings = [
                 ("class", &row.class),
                 ("element", &row.element),
@@ -378,7 +382,7 @@ fn build_nonbonded(
             ];
             for (key, value) in strings {
                 if let Some(value) = value {
-                    params.set_str(key, value);
+                    params.set(key, value);
                 }
             }
             atom.def_type(&row.name, &[], params)
@@ -390,7 +394,7 @@ fn build_nonbonded(
         ff.def_style(
             "pair",
             name,
-            Params::from_pairs(&[
+            Params::from_iter([
                 ("coulomb", crate::core::constants::openmm_coulomb_real()),
                 ("dielectric", VACUUM_DIELECTRIC),
             ]),
@@ -406,7 +410,7 @@ fn build_nonbonded(
         }
         let rule = combining_rule.map_or(Ok(CombiningRule::Arithmetic), foyer_rule)?;
         let mut lj_params = Params::new();
-        lj_params.set_str("mixing", rule.name());
+        lj_params.set("mixing", rule.name());
         let lj = ff
             .def_style("pair", "lj/cut", lj_params)
             .map_err(|e| e.to_string())?;
@@ -414,7 +418,7 @@ fn build_nonbonded(
             lj.def_type(
                 ty,
                 &[ty],
-                Params::from_pairs(&[("epsilon", *epsilon), ("sigma", *sigma)]),
+                Params::from_iter([("epsilon", *epsilon), ("sigma", *sigma)]),
             )
             .map_err(|e| e.to_string())?;
         }
@@ -445,12 +449,12 @@ fn build_nonbonded(
         ));
     }
     let mut lj_params = Params::new();
-    lj_params.set_str("mixing", "arithmetic");
+    lj_params.set("mixing", "arithmetic");
     let lj = ff
         .def_style("pair", "lj/charmm", lj_params)
         .map_err(|e| e.to_string())?;
     for r in &raw.lj_atoms {
-        let mut p = Params::from_pairs(&[("epsilon", r.epsilon), ("sigma", r.sigma)]);
+        let mut p = Params::from_iter([("epsilon", r.epsilon), ("sigma", r.sigma)]);
         // OpenMM takes each of sigma14 / epsilon14 alone; LAMMPS's
         // `pair_coeff` gives both or neither.
         match (r.epsilon14, r.sigma14) {
@@ -479,7 +483,7 @@ fn build_nonbonded(
                 lj.def_type(
                     TypeName::pair(ta, tb)?.as_str(),
                     &[ta, tb],
-                    Params::from_pairs(&[("epsilon", r.epsilon), ("sigma", r.sigma)]),
+                    Params::from_iter([("epsilon", r.epsilon), ("sigma", r.sigma)]),
                 )
                 .map_err(|e| e.to_string())?;
             }
@@ -487,7 +491,7 @@ fn build_nonbonded(
     }
     let own_one_four = lj.type_rows().iter().any(|(_, _, p)| has_own_one_four(p));
     if own_one_four && lj14 != 0.0 {
-        lj.set_str_param(ONE_FOUR, ONE_FOUR_EPSILON14);
+        lj.set_param(ONE_FOUR, ONE_FOUR_EPSILON14);
     }
     // The Coulomb comes from a <NonbondedForce>; without one OpenMM prices
     // no charges.
@@ -569,8 +573,8 @@ fn ensure_class_wildcards(ff: &mut ForceField, atom_rows: &[AtomTypeRow]) -> Res
         }
         atom.def_type(&class_name, &[], Params::new())
             .map_err(|e| e.to_string())?;
-        atom.set_type_str_param(&class_name, "type_", "*");
-        atom.set_type_str_param(&class_name, "class", &class_name);
+        atom.set_type_param(&class_name, "type_", "*");
+        atom.set_type_param(&class_name, "class", &class_name);
     }
     Ok(())
 }
@@ -617,7 +621,7 @@ fn parse_bonds(ff: &mut ForceField, sec: &Node) -> Result<(), String> {
             .def_type(
                 TypeName::join(&ends)?.as_str(),
                 &ends,
-                Params::from_pairs(&[("k", k), ("r0", r0)]),
+                Params::from_iter([("k", k), ("r0", r0)]),
             )
             .map_err(|e| e.to_string())?;
     }
@@ -701,7 +705,7 @@ fn build_angles(ff: &mut ForceField, raw: &Raw) -> Result<(), String> {
                 joined.insert(key(&a.ends));
                 (
                     "charmm",
-                    Params::from_pairs(&[
+                    Params::from_iter([
                         ("k", a.k),
                         ("theta0", a.theta0),
                         ("k_ub", k_ub),
@@ -711,7 +715,7 @@ fn build_angles(ff: &mut ForceField, raw: &Raw) -> Result<(), String> {
             }
             None => (
                 "harmonic",
-                Params::from_pairs(&[("k", a.k), ("theta0", a.theta0)]),
+                Params::from_iter([("k", a.k), ("theta0", a.theta0)]),
             ),
         };
         ff.def_style("angle", style, Params::new())
@@ -730,7 +734,7 @@ fn build_angles(ff: &mut ForceField, raw: &Raw) -> Result<(), String> {
             .def_type(
                 TypeName::join(&e)?.as_str(),
                 &e,
-                Params::from_pairs(&[("k", 0.0), ("theta0", 0.0), ("k_ub", k_ub), ("r_ub", r_ub)]),
+                Params::from_iter([("k", 0.0), ("theta0", 0.0), ("k_ub", k_ub), ("r_ub", r_ub)]),
             )
             .map_err(|e| e.to_string())?;
     }
@@ -822,7 +826,7 @@ fn parse_periodic_torsions(ff: &mut ForceField, sec: &Node) -> Result<(), String
                 (
                     "dihedral",
                     "opls",
-                    Params::from_pairs(&[("k1", f1), ("k2", f2), ("k3", f3), ("k4", f4)]),
+                    Params::from_iter([("k1", f1), ("k2", f2), ("k3", f3), ("k4", f4)]),
                 )
             }
             (false, false) if tag == "Improper" => {
@@ -837,7 +841,7 @@ fn parse_periodic_torsions(ff: &mut ForceField, sec: &Node) -> Result<(), String
                 (
                     "improper",
                     "periodic",
-                    Params::from_pairs(&[("k", k), ("periodicity", n), ("phase", phase)]),
+                    Params::from_iter([("k", k), ("periodicity", n), ("phase", phase)]),
                 )
             }
             (false, false) => {
@@ -849,7 +853,11 @@ fn parse_periodic_torsions(ff: &mut ForceField, sec: &Node) -> Result<(), String
                     pairs.push((format!("phase{m}"), *phase));
                 }
                 let refs: Vec<(&str, f64)> = pairs.iter().map(|(k, v)| (k.as_str(), *v)).collect();
-                ("dihedral", "periodic", Params::from_pairs(&refs))
+                (
+                    "dihedral",
+                    "periodic",
+                    Params::from_iter(refs.iter().copied()),
+                )
             }
         };
         let (category, style_name, params) = params;
@@ -946,7 +954,7 @@ fn parse_custom_torsions(ff: &mut ForceField, sec: &Node) -> Result<(), String> 
             .def_type(
                 TypeName::join(&classes)?.as_str(),
                 &classes,
-                Params::from_pairs(&[("k", k), ("chi0", theta0.to_degrees())]),
+                Params::from_iter([("k", k), ("chi0", theta0.to_degrees())]),
             )
             .map_err(|e| e.to_string())?;
     }
@@ -1015,7 +1023,7 @@ fn parse_cmap(ff: &mut ForceField, sec: &Node) -> Result<(), String> {
                 )
             })?;
         let mut params = Params::new();
-        params.set_array(crate::ff::ir::CMAP_GRID, grid.clone());
+        params.set(crate::ff::ir::CMAP_GRID, grid.clone());
         ff.def_style("cmap", "charmm", Params::new())
             .map_err(|e| e.to_string())?
             .def_type(TypeName::join(&ends)?.as_str(), &ends, params)
@@ -1249,7 +1257,7 @@ mod tests {
     }
 
     fn rb_params(xml: &str, style: &str) -> Params {
-        let ff = OpenmmXmlReader::new().read_str(xml).unwrap();
+        let ff = OpenmmXmlReader::new().read(xml.as_bytes()).unwrap();
         dihedral_types(ff.get_style("dihedral", style).unwrap())[0]
             .params
             .clone()
@@ -1268,10 +1276,10 @@ mod tests {
             ("a4", 0.72),
             ("a5", 0.0),
         ] {
-            let got = p.get(key).unwrap();
+            let got = p.get(key).and_then(|v| v.as_num()).unwrap();
             assert!((got - want).abs() < 1e-12, "{key}: got {got}, want {want}");
         }
-        assert!(p.get("a6").is_none());
+        assert!(p.get("a6").and_then(|v| v.as_num()).is_none());
     }
 
     /// A constant offset (ΣC ≠ 0) is part of the polynomial form: kept, not
@@ -1282,7 +1290,7 @@ mod tests {
             &rb_row(["4.184", "0", "0", "0", "0", "0"]),
             "multi/harmonic",
         );
-        assert!((p.get("a1").unwrap() - 1.0).abs() < 1e-12);
+        assert!((p.get("a1").and_then(|v| v.as_num()).unwrap() - 1.0).abs() < 1e-12);
     }
 
     /// C5 ≠ 0 is past `multi/harmonic`'s cos⁴φ: `nharmonic` with N = 6,
@@ -1290,8 +1298,8 @@ mod tests {
     #[test]
     fn rb_row_with_c5_reads_as_nharmonic() {
         let p = rb_params(&rb_row(["0", "0", "0", "0", "0", "4.184"]), "nharmonic");
-        assert!((p.get("a6").unwrap() + 1.0).abs() < 1e-12);
-        assert_eq!(p.get("a1"), Some(0.0));
+        assert!((p.get("a6").and_then(|v| v.as_num()).unwrap() + 1.0).abs() < 1e-12);
+        assert_eq!(p.get("a1").and_then(|v| v.as_num()), Some(0.0));
     }
 
     /// The RB series equals OpenMM's formula at any φ.
@@ -1319,45 +1327,60 @@ mod tests {
     #[test]
     fn rb_improper_is_refused() {
         let xml = r#"<ForceField><RBTorsionForce><Improper class1="A" class2="B" class3="C" class4="D" c0="1" c1="0" c2="0" c3="0" c4="0" c5="0"/></RBTorsionForce></ForceField>"#;
-        let err = OpenmmXmlReader::new().read_str(xml).unwrap_err();
-        assert!(err.contains("RBTorsionForce <Improper>"), "{err}");
+        let err = OpenmmXmlReader::new().read(xml.as_bytes()).unwrap_err();
+        assert!(
+            err.to_string().contains("RBTorsionForce <Improper>"),
+            "{err}"
+        );
     }
 
     #[test]
     fn reads_all_sections_with_molrs_units() {
-        let ff = OpenmmXmlReader::new().read_str(MINI).unwrap();
+        let ff = OpenmmXmlReader::new().read(MINI.as_bytes()).unwrap();
 
         // bond: length 0.09572 nm → 0.9572 Å; OpenMM ½k 502080 kJ/mol/nm² →
         // LAMMPS K = 502080 / 418.4 / 2 = 600 kcal/mol/Å².
         let bond = ff.get_style("bond", "harmonic").unwrap();
         let bt = bond.get_bondtype("OW", "HW").unwrap();
-        assert!((bt.params.get("r0").unwrap() - 0.9572).abs() < 1e-9);
-        assert!((bt.params.get("k").unwrap() - 600.0).abs() < 1e-9);
+        assert!((bt.params.get("r0").and_then(|v| v.as_num()).unwrap() - 0.9572).abs() < 1e-9);
+        assert!((bt.params.get("k").and_then(|v| v.as_num()).unwrap() - 600.0).abs() < 1e-9);
 
         // angle: theta0 rad → deg; OpenMM ½k 627.6 → K = 627.6 / 4.184 / 2 = 75.
         let angle = ff.get_style("angle", "harmonic").unwrap();
         let at = &angle_types(angle)[0];
-        assert!((at.params.get("theta0").unwrap() - 109.5).abs() < 1e-8);
-        assert!((at.params.get("k").unwrap() - 75.0).abs() < 1e-9);
+        assert!((at.params.get("theta0").and_then(|v| v.as_num()).unwrap() - 109.5).abs() < 1e-8);
+        assert!((at.params.get("k").and_then(|v| v.as_num()).unwrap() - 75.0).abs() < 1e-9);
 
         // RB → multi/harmonic a1..a5.
         let dih = ff.get_style("dihedral", "multi/harmonic").unwrap();
-        assert!(dihedral_types(dih)[0].params.get("a5").is_some());
+        assert!(
+            dihedral_types(dih)[0]
+                .params
+                .get("a5")
+                .and_then(|v| v.as_num())
+                .is_some()
+        );
 
         // pair lj/cut: sigma 0.375 nm → 3.75 Å; epsilon 0.43932 kJ → /4.184 kcal.
         let lj = ff.get_style("pair", "lj/cut").unwrap();
         let pt = lj.get_pairtype("opls_001", None).unwrap();
-        assert!((pt.params.get("sigma").unwrap() - 3.75).abs() < 1e-9);
-        assert!((pt.params.get("epsilon").unwrap() - 0.43932 / 4.184).abs() < 1e-9);
+        assert!((pt.params.get("sigma").and_then(|v| v.as_num()).unwrap() - 3.75).abs() < 1e-9);
+        assert!(
+            (pt.params.get("epsilon").and_then(|v| v.as_num()).unwrap() - 0.43932 / 4.184).abs()
+                < 1e-9
+        );
 
         // OpenMM's NonbondedForce mixes Lorentz-Berthelot unless the foyer
         // root says otherwise (MINI: geometric).
-        assert_eq!(lj.params().get_str("mixing"), Some("geometric"));
+        assert_eq!(
+            lj.params().get("mixing").and_then(|v| v.as_text()),
+            Some("geometric")
+        );
 
         // coul/cut with OpenMM's own Coulomb constant.
         let coul = ff.get_style("pair", "coul/cut").unwrap();
         assert_eq!(
-            coul.params().get("coulomb"),
+            coul.params().get("coulomb").and_then(|v| v.as_num()),
             Some(crate::core::constants::openmm_coulomb_real())
         );
         assert!((crate::core::constants::openmm_coulomb_real() - 332.06371329919216).abs() < 1e-12);
@@ -1371,10 +1394,10 @@ mod tests {
         // atom style carries mass + charge per opls type.
         let atom = ff.get_style("atom", "full").unwrap();
         let a1 = atom.get_atomtype("opls_001").unwrap();
-        assert!((a1.params.get("mass").unwrap() - 12.011).abs() < 1e-9);
-        assert!((a1.params.get("charge").unwrap() - 0.5).abs() < 1e-12);
+        assert!((a1.params.get("mass").and_then(|v| v.as_num()).unwrap() - 12.011).abs() < 1e-9);
+        assert!((a1.params.get("charge").and_then(|v| v.as_num()).unwrap() - 0.5).abs() < 1e-12);
         let a2 = atom.get_atomtype("opls_002").unwrap();
-        assert!((a2.params.get("charge").unwrap() + 0.5).abs() < 1e-12);
+        assert!((a2.params.get("charge").and_then(|v| v.as_num()).unwrap() + 0.5).abs() < 1e-12);
     }
 
     #[test]
@@ -1382,8 +1405,8 @@ mod tests {
         let xml = r#"<ForceField name="x"><HarmonicBondForce>
             <Bond class1="OW" class2="HW" length="0.1"/>
         </HarmonicBondForce></ForceField>"#;
-        let err = OpenmmXmlReader::new().read_str(xml).unwrap_err();
-        assert!(err.contains('k'), "err: {err}");
+        let err = OpenmmXmlReader::new().read(xml.as_bytes()).unwrap_err();
+        assert!(err.to_string().contains('k'), "err: {err}");
     }
 
     #[test]
@@ -1391,24 +1414,25 @@ mod tests {
         let xml = r#"<ForceField name="x"><HarmonicBondForce>
             <Bond class1="OW" class2="HW" length="oops" k="1.0"/>
         </HarmonicBondForce></ForceField>"#;
-        let err = OpenmmXmlReader::new().read_str(xml).unwrap_err();
-        assert!(err.contains("not a number"), "err: {err}");
+        let err = OpenmmXmlReader::new().read(xml.as_bytes()).unwrap_err();
+        assert!(err.to_string().contains("not a number"), "err: {err}");
     }
 
     #[test]
     fn wrong_root_errors() {
         let err = OpenmmXmlReader::new()
-            .read_str(r#"<System name="x"/>"#)
+            .read(r#"<System name="x"/>"#.as_bytes())
             .unwrap_err();
-        assert!(err.contains("ForceField"), "err: {err}");
+        assert!(err.to_string().contains("ForceField"), "err: {err}");
     }
 
     #[test]
     fn unknown_section_errors() {
         let xml = r#"<ForceField name="x"><MysteryForce/></ForceField>"#;
-        let err = OpenmmXmlReader::new().read_str(xml).unwrap_err();
+        let err = OpenmmXmlReader::new().read(xml.as_bytes()).unwrap_err();
         assert!(
-            err.contains("<MysteryForce>: no force-field IR form"),
+            err.to_string()
+                .contains("<MysteryForce>: no force-field IR form"),
             "err: {err}"
         );
     }
@@ -1428,12 +1452,15 @@ mod tests {
 "#,
             1,
         );
-        let err = OpenmmXmlReader::new().read_str(&xml).unwrap_err();
+        let err = OpenmmXmlReader::new().read(xml.as_bytes()).unwrap_err();
         assert!(
-            err.contains("opls_001"),
+            err.to_string().contains("opls_001"),
             "error should name the type: {err}"
         );
-        assert!(err.contains("charge"), "error should mention charge: {err}");
+        assert!(
+            err.to_string().contains("charge"),
+            "error should mention charge: {err}"
+        );
     }
 
     /// Class-only bond endpoints get one `type_="*"` placeholder AtomType per
@@ -1460,11 +1487,11 @@ mod tests {
         let expected: Vec<&str> = vec!["CT", "HC", "M", "Na", "OH", "Q9", "a1", "br", "cl", "zz"];
 
         let placeholder_names = |text: &str| -> Vec<String> {
-            let ff = OpenmmXmlReader::new().read_str(text).unwrap();
+            let ff = OpenmmXmlReader::new().read(text.as_bytes()).unwrap();
             let atom = ff.get_style("atom", "full").unwrap();
             atom_types(atom)
                 .iter()
-                .filter(|t| t.params.get_str("type_") == Some("*"))
+                .filter(|t| t.params.get("type_").and_then(|v| v.as_text()) == Some("*"))
                 .map(|t| t.name.clone())
                 .collect()
         };
@@ -1498,7 +1525,7 @@ mod tests {
         let xml = periodic_section(
             r#"<Proper class1="HC" class2="CT" class3="CT" class4="HC" periodicity1="3" k1="4.184" phase1="0.0" periodicity2="1" k2="2.092" phase2="3.141592653589793"/>"#,
         );
-        let ff = OpenmmXmlReader::new().read_str(&xml).unwrap();
+        let ff = OpenmmXmlReader::new().read(xml.as_bytes()).unwrap();
         let dih = ff
             .get_style("dihedral", "periodic")
             .expect("dihedral periodic");
@@ -1511,10 +1538,13 @@ mod tests {
             ("periodicity2", 1.0),
             ("phase2", 180.0),
         ] {
-            let got = p.get(key).unwrap_or_else(|| panic!("missing {key}"));
+            let got = p
+                .get(key)
+                .and_then(|v| v.as_num())
+                .unwrap_or_else(|| panic!("missing {key}"));
             assert!((got - want).abs() < 1e-12, "{key}: got {got}, want {want}");
         }
-        assert!(p.get("k3").is_none());
+        assert!(p.get("k3").and_then(|v| v.as_num()).is_none());
     }
 
     /// CL&P's `c0..c3` spelling under the same tag still reads as OPLS Fourier.
@@ -1523,17 +1553,20 @@ mod tests {
         let xml = periodic_section(
             r#"<Proper class1="CT" class2="CT" class3="CT" class4="CT" c0="5.4392" c1="-0.2092" c2="0.8368" c3="0.0"/>"#,
         );
-        let ff = OpenmmXmlReader::new().read_str(&xml).unwrap();
+        let ff = OpenmmXmlReader::new().read(xml.as_bytes()).unwrap();
         let p = &dihedral_types(ff.get_style("dihedral", "opls").unwrap())[0].params;
-        assert!((p.get("k1").unwrap() - 1.3).abs() < 1e-12);
-        assert!((p.get("k3").unwrap() - 0.2).abs() < 1e-12);
+        assert!((p.get("k1").and_then(|v| v.as_num()).unwrap() - 1.3).abs() < 1e-12);
+        assert!((p.get("k3").and_then(|v| v.as_num()).unwrap() - 0.2).abs() < 1e-12);
     }
 
     #[test]
     fn proper_with_neither_spelling_is_an_error() {
         let xml = periodic_section(r#"<Proper class1="A" class2="B" class3="C" class4="D"/>"#);
-        let err = OpenmmXmlReader::new().read_str(&xml).unwrap_err();
-        assert!(err.contains("periodicity1") && err.contains("c0"), "{err}");
+        let err = OpenmmXmlReader::new().read(xml.as_bytes()).unwrap_err();
+        assert!(
+            err.to_string().contains("periodicity1") && err.to_string().contains("c0"),
+            "{err}"
+        );
     }
 
     #[test]
@@ -1541,7 +1574,7 @@ mod tests {
         let xml = periodic_section(
             r#"<Proper class1="A" class2="B" class3="C" class4="D" c0="1.0" periodicity1="2" k1="1.0" phase1="0.0"/>"#,
         );
-        assert!(OpenmmXmlReader::new().read_str(&xml).is_err());
+        assert!(OpenmmXmlReader::new().read(xml.as_bytes()).is_err());
     }
 
     /// A term index needs all three of `k{m}`, `periodicity{m}`, `phase{m}`.
@@ -1550,8 +1583,8 @@ mod tests {
         let xml = periodic_section(
             r#"<Proper class1="A" class2="B" class3="C" class4="D" periodicity1="2" k1="1.0"/>"#,
         );
-        let err = OpenmmXmlReader::new().read_str(&xml).unwrap_err();
-        assert!(err.contains("phase1"), "{err}");
+        let err = OpenmmXmlReader::new().read(xml.as_bytes()).unwrap_err();
+        assert!(err.to_string().contains("phase1"), "{err}");
     }
 
     /// OpenMM impropers live under the same force and are read.
@@ -1562,7 +1595,7 @@ mod tests {
         let xml = periodic_section(
             r#"<Improper class1="N" class2="C" class3="O" class4="CT" periodicity1="2" k1="43.932" phase1="3.141592653589793"/>"#,
         );
-        let ff = OpenmmXmlReader::new().read_str(&xml).unwrap();
+        let ff = OpenmmXmlReader::new().read(xml.as_bytes()).unwrap();
         let imp = ff
             .get_style("improper", "periodic")
             .expect("improper periodic");
@@ -1577,9 +1610,17 @@ mod tests {
             ["C", "O", "N", "CT"]
         );
         assert_eq!(t.name, "C-O-N-CT");
-        assert!((t.params.get("k").unwrap() - 10.5).abs() < 1e-12);
-        assert!((t.params.get("periodicity").unwrap() - 2.0).abs() < 1e-12);
-        assert_eq!(t.params.get("phase"), Some(180.0));
+        assert!((t.params.get("k").and_then(|v| v.as_num()).unwrap() - 10.5).abs() < 1e-12);
+        assert!(
+            (t.params
+                .get("periodicity")
+                .and_then(|v| v.as_num())
+                .unwrap()
+                - 2.0)
+                .abs()
+                < 1e-12
+        );
+        assert_eq!(t.params.get("phase").and_then(|v| v.as_num()), Some(180.0));
     }
 
     /// Under `ordering="charmm"` OpenMM prices a wildcard-free row as written,
@@ -1591,7 +1632,7 @@ mod tests {
         let charmm = format!(
             r#"<ForceField name="x"><PeriodicTorsionForce ordering="charmm">{row}</PeriodicTorsionForce></ForceField>"#
         );
-        let ff = OpenmmXmlReader::new().read_str(&charmm).unwrap();
+        let ff = OpenmmXmlReader::new().read(charmm.as_bytes()).unwrap();
         let t = &improper_types(ff.get_style("improper", "periodic").unwrap())[0];
         assert_eq!(
             [
@@ -1603,8 +1644,10 @@ mod tests {
             ["N", "C", "O", "CT"]
         );
         let smirnoff = charmm.replace("charmm", "smirnoff");
-        let err = OpenmmXmlReader::new().read_str(&smirnoff).unwrap_err();
-        assert!(err.contains("smirnoff"), "{err}");
+        let err = OpenmmXmlReader::new()
+            .read(smirnoff.as_bytes())
+            .unwrap_err();
+        assert!(err.to_string().contains("smirnoff"), "{err}");
     }
 
     /// The periodic improper kernel holds one term; a second is refused, not dropped.
@@ -1613,7 +1656,7 @@ mod tests {
         let xml = periodic_section(
             r#"<Improper class1="C" class2="O" class3="N" class4="CT" periodicity1="2" k1="1.0" phase1="0.0" periodicity2="1" k2="1.0" phase2="0.0"/>"#,
         );
-        assert!(OpenmmXmlReader::new().read_str(&xml).is_err());
+        assert!(OpenmmXmlReader::new().read(xml.as_bytes()).is_err());
     }
 
     /// `<PeriodicImproperForce>` is no OpenMM force; it is refused as an
@@ -1623,14 +1666,14 @@ mod tests {
         let xml = r#"<ForceField name="x"><PeriodicImproperForce>
 <Improper class1="C" class2="O" class3="N" class4="CT" periodicity1="2" k1="43.932" phase1="3.141592653589793"/>
 </PeriodicImproperForce></ForceField>"#;
-        let err = OpenmmXmlReader::new().read_str(xml).unwrap_err();
-        assert!(err.contains("PeriodicImproperForce"), "{err}");
+        let err = OpenmmXmlReader::new().read(xml.as_bytes()).unwrap_err();
+        assert!(err.to_string().contains("PeriodicImproperForce"), "{err}");
     }
 
     #[test]
     fn unknown_periodic_torsion_child_is_an_error() {
         let xml = periodic_section(r#"<Torsion class1="A" class2="B" class3="C" class4="D"/>"#);
-        assert!(OpenmmXmlReader::new().read_str(&xml).is_err());
+        assert!(OpenmmXmlReader::new().read(xml.as_bytes()).is_err());
     }
 
     /// A CHARMM-style excerpt: charges from `<NonbondedForce>` (ε = 0), the
@@ -1679,7 +1722,7 @@ mod tests {
 </ForceField>"#;
 
     fn charmm() -> ForceField {
-        OpenmmXmlReader::new().read_str(CHARMM).unwrap()
+        OpenmmXmlReader::new().read(CHARMM.as_bytes()).unwrap()
     }
 
     /// `<LennardJonesForce>` is `lj/charmm`: per-type ε/σ (and ε₁₄/σ₁₄ when the
@@ -1692,8 +1735,14 @@ mod tests {
     fn lennard_jones_force_reads_as_lj_charmm() {
         let ff = charmm();
         let lj = ff.get_style("pair", "lj/charmm").expect("lj/charmm");
-        assert_eq!(lj.params().get_str("mixing"), Some("arithmetic"));
-        assert_eq!(lj.params().get_str("one_four"), Some("epsilon14"));
+        assert_eq!(
+            lj.params().get("mixing").and_then(|v| v.as_text()),
+            Some("arithmetic")
+        );
+        assert_eq!(
+            lj.params().get("one_four").and_then(|v| v.as_text()),
+            Some("epsilon14")
+        );
         assert!(ff.get_style("pair", "lj/cut").is_none());
         let rows = pair_types(lj);
         let row = |i: &str, j: &str| {
@@ -1702,29 +1751,63 @@ mod tests {
                 .unwrap_or_else(|| panic!("{i}-{j}"))
         };
         let ct1 = &row("CT1", "CT1").params;
-        assert!((ct1.get("epsilon").unwrap() - 0.032).abs() < 1e-15);
-        assert!((ct1.get("sigma").unwrap() - 3.5635948725613575).abs() < 1e-14);
-        assert!((ct1.get("epsilon14").unwrap() - 0.01).abs() < 1e-15);
-        assert!((ct1.get("sigma14").unwrap() - 3.385415128933289).abs() < 1e-14);
-        assert!(row("HB1", "HB1").params.get("epsilon14").is_none());
-        assert!((row("NH1", "NH1").params.get("epsilon").unwrap() - 0.2).abs() < 1e-15);
+        assert!((ct1.get("epsilon").and_then(|v| v.as_num()).unwrap() - 0.032).abs() < 1e-15);
+        assert!(
+            (ct1.get("sigma").and_then(|v| v.as_num()).unwrap() - 3.5635948725613575).abs() < 1e-14
+        );
+        assert!((ct1.get("epsilon14").and_then(|v| v.as_num()).unwrap() - 0.01).abs() < 1e-15);
+        assert!(
+            (ct1.get("sigma14").and_then(|v| v.as_num()).unwrap() - 3.385415128933289).abs()
+                < 1e-14
+        );
+        assert!(
+            row("HB1", "HB1")
+                .params
+                .get("epsilon14")
+                .and_then(|v| v.as_num())
+                .is_none()
+        );
+        assert!(
+            (row("NH1", "NH1")
+                .params
+                .get("epsilon")
+                .and_then(|v| v.as_num())
+                .unwrap()
+                - 0.2)
+                .abs()
+                < 1e-15
+        );
         let fix = &row("NH1", "HB1").params;
-        assert!((fix.get("sigma").unwrap() - 2.8).abs() < 1e-14);
-        assert!(fix.get("epsilon14").is_none() && fix.get("sigma14").is_none());
+        assert!((fix.get("sigma").and_then(|v| v.as_num()).unwrap() - 2.8).abs() < 1e-14);
+        assert!(
+            fix.get("epsilon14").and_then(|v| v.as_num()).is_none()
+                && fix.get("sigma14").and_then(|v| v.as_num()).is_none()
+        );
 
         let coul = ff.get_style("pair", "coul/charmm").expect("coul/charmm");
         assert_eq!(
-            coul.params().get("coulomb"),
+            coul.params().get("coulomb").and_then(|v| v.as_num()),
             Some(crate::core::constants::openmm_coulomb_real())
         );
         assert_eq!(ff.special_bonds().lj, [0.0, 0.0, 1.0]);
         assert_eq!(ff.special_bonds().coul, [0.0, 0.0, 1.0]);
         let atom = ff.get_style("atom", "full").unwrap();
         assert_eq!(
-            atom.get_atomtype("C").unwrap().params.get("charge"),
+            atom.get_atomtype("C")
+                .unwrap()
+                .params
+                .get("charge")
+                .and_then(|v| v.as_num()),
             Some(0.51)
         );
-        assert_eq!(atom.get_atomtype("CT1").unwrap().params.get("charge"), None);
+        assert_eq!(
+            atom.get_atomtype("CT1")
+                .unwrap()
+                .params
+                .get("charge")
+                .and_then(|v| v.as_num()),
+            None
+        );
     }
 
     /// No row with 1-4 parameters of its own: LAMMPS's `special_bonds`
@@ -1732,9 +1815,9 @@ mod tests {
     #[test]
     fn lennard_jones_force_without_own_one_four_declares_nothing() {
         let xml = CHARMM.replace(r#" sigma14="0.3385415128933289" epsilon14="0.04184""#, "");
-        let ff = OpenmmXmlReader::new().read_str(&xml).unwrap();
+        let ff = OpenmmXmlReader::new().read(xml.as_bytes()).unwrap();
         let lj = ff.get_style("pair", "lj/charmm").unwrap();
-        assert_eq!(lj.params().get_str("one_four"), None);
+        assert_eq!(lj.params().get("one_four").and_then(|v| v.as_text()), None);
     }
 
     /// Without a `<NonbondedForce>` OpenMM prices no Coulomb: no Coulomb style.
@@ -1743,7 +1826,7 @@ mod tests {
         let start = CHARMM.find("  <NonbondedForce").unwrap();
         let end = CHARMM.find("</NonbondedForce>").unwrap() + "</NonbondedForce>".len();
         let xml = format!("{}{}", &CHARMM[..start], &CHARMM[end..]);
-        let ff = OpenmmXmlReader::new().read_str(&xml).unwrap();
+        let ff = OpenmmXmlReader::new().read(xml.as_bytes()).unwrap();
         assert!(ff.get_style("pair", "lj/charmm").is_some());
         assert!(ff.get_style("pair", "coul/charmm").is_none());
     }
@@ -1756,9 +1839,9 @@ mod tests {
             r#"<Atom type="HB1" sigma="1.0" epsilon="0.0"/>"#,
             r#"<Atom type="HB1" sigma="1.0" epsilon="0.1"/>"#,
         );
-        let err = OpenmmXmlReader::new().read_str(&xml).unwrap_err();
+        let err = OpenmmXmlReader::new().read(xml.as_bytes()).unwrap_err();
         assert!(
-            err.contains("HB1") && err.contains("LennardJonesForce"),
+            err.to_string().contains("HB1") && err.to_string().contains("LennardJonesForce"),
             "{err}"
         );
     }
@@ -1766,8 +1849,8 @@ mod tests {
     #[test]
     fn nbfix_of_a_type_with_itself_is_refused() {
         let xml = CHARMM.replace(r#"type1="NH1" type2="HB1""#, r#"type1="HB1" type2="HB1""#);
-        let err = OpenmmXmlReader::new().read_str(&xml).unwrap_err();
-        assert!(err.contains("NBFixPair"), "{err}");
+        let err = OpenmmXmlReader::new().read(xml.as_bytes()).unwrap_err();
+        assert!(err.to_string().contains("NBFixPair"), "{err}");
     }
 
     /// OpenMM's UB builder adds a bond of force constant `2k` per angle, so
@@ -1787,12 +1870,12 @@ mod tests {
             ("k_ub", 50.0),
             ("r_ub", 2.14),
         ] {
-            let got = ub.params.get(key).unwrap();
+            let got = ub.params.get(key).and_then(|v| v.as_num()).unwrap();
             assert!((got - want).abs() < 1e-12, "{key}: {got} vs {want}");
         }
         let lone = rows.iter().find(|t| t.name == "C-CT1-C").unwrap();
-        assert_eq!(lone.params.get("k"), Some(0.0));
-        assert!((lone.params.get("k_ub").unwrap() - 20.0).abs() < 1e-12);
+        assert_eq!(lone.params.get("k").and_then(|v| v.as_num()), Some(0.0));
+        assert!((lone.params.get("k_ub").and_then(|v| v.as_num()).unwrap() - 20.0).abs() < 1e-12);
         let h = ff.get_style("angle", "harmonic").expect("angle harmonic");
         assert_eq!(angle_types(h).len(), 1);
         assert_eq!(angle_types(h)[0].name, "NH1-CT1-C");
@@ -1804,7 +1887,7 @@ mod tests {
             r#"<UreyBradley type1="HB1" type2="CT1" type3="NH1" k="20920.0" d="0.214"/>"#,
             r#"<UreyBradley type1="HB1" type2="CT1" type3="NH1" k="20000.0" d="0.214"/>"#,
         );
-        assert!(OpenmmXmlReader::new().read_str(&xml).is_err());
+        assert!(OpenmmXmlReader::new().read(xml.as_bytes()).is_err());
     }
 
     /// `k*(theta-theta0)^2` (spaces aside) is `improper harmonic`, k in
@@ -1818,8 +1901,8 @@ mod tests {
             .expect("improper harmonic");
         let t = &improper_types(imp)[0];
         assert_eq!(t.name, "NH1-C-CT1-HB1");
-        assert!((t.params.get("k").unwrap() - 20.0).abs() < 1e-12);
-        assert_eq!(t.params.get("chi0"), Some(0.0));
+        assert!((t.params.get("k").and_then(|v| v.as_num()).unwrap() - 20.0).abs() < 1e-12);
+        assert_eq!(t.params.get("chi0").and_then(|v| v.as_num()), Some(0.0));
     }
 
     fn custom(energy: &str, theta0: &str) -> String {
@@ -1834,22 +1917,22 @@ mod tests {
     #[test]
     fn signed_harmonic_improper_off_zero_is_refused_and_abs_form_reads() {
         let err = OpenmmXmlReader::new()
-            .read_str(&custom("k*(theta-theta0)^2", "3.141592653589793"))
+            .read(custom("k*(theta-theta0)^2", "3.141592653589793").as_bytes())
             .unwrap_err();
-        assert!(err.contains("signed"), "{err}");
+        assert!(err.to_string().contains("signed"), "{err}");
         let ff = OpenmmXmlReader::new()
-            .read_str(&custom("k*(abs(theta)-theta0)^2", "3.141592653589793"))
+            .read(custom("k*(abs(theta)-theta0)^2", "3.141592653589793").as_bytes())
             .unwrap();
         let t = &improper_types(ff.get_style("improper", "harmonic").unwrap())[0];
-        assert!((t.params.get("chi0").unwrap() - 180.0).abs() < 1e-12);
+        assert!((t.params.get("chi0").and_then(|v| v.as_num()).unwrap() - 180.0).abs() < 1e-12);
     }
 
     #[test]
     fn other_custom_forces_are_refused_by_name() {
         let err = OpenmmXmlReader::new()
-            .read_str(&custom("k*(1+cos(theta-theta0))", "0"))
+            .read(custom("k*(1+cos(theta-theta0))", "0").as_bytes())
             .unwrap_err();
-        assert!(err.contains("k*(1+cos(theta-theta0))"), "{err}");
+        assert!(err.to_string().contains("k*(1+cos(theta-theta0))"), "{err}");
         for tag in [
             "CustomBondForce",
             "CustomNonbondedForce",
@@ -1857,12 +1940,12 @@ mod tests {
             "GBSAOBCForce",
         ] {
             let xml = format!("<ForceField><{tag}/></ForceField>");
-            let err = OpenmmXmlReader::new().read_str(&xml).unwrap_err();
-            assert!(err.contains(tag), "{err}");
+            let err = OpenmmXmlReader::new().read(xml.as_bytes()).unwrap_err();
+            assert!(err.to_string().contains(tag), "{err}");
         }
         let proper = r#"<ForceField><CustomTorsionForce energy="k*(theta-theta0)^2"><PerTorsionParameter name="k"/><PerTorsionParameter name="theta0"/><Proper k="1" theta0="0" type1="A" type2="B" type3="C" type4="D"/></CustomTorsionForce></ForceField>"#;
-        let err = OpenmmXmlReader::new().read_str(proper).unwrap_err();
-        assert!(err.contains("<Proper>"), "{err}");
+        let err = OpenmmXmlReader::new().read(proper.as_bytes()).unwrap_err();
+        assert!(err.to_string().contains("<Proper>"), "{err}");
     }
 
     /// OpenMM's `energy[i + N·j]` is at φ = 2πi/N, ψ = 2πj/N; molrs `[p][q]` at
@@ -1876,7 +1959,11 @@ mod tests {
         let rows = ff.get_cmaptypes();
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].name, "C-NH1-CT1-C-NH1");
-        let grid = rows[0].params.get_array("grid").unwrap();
+        let grid = rows[0]
+            .params
+            .get("grid")
+            .and_then(|v| v.as_array())
+            .unwrap();
         assert_eq!(grid.shape(), &[4, 4]);
         for (p, q, omm) in [
             (0, 0, 10.0),
@@ -1895,11 +1982,11 @@ mod tests {
             "<Map>0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15</Map>",
             "<Map>0 1 2 3 4 5 6 7 8</Map>",
         );
-        let err = OpenmmXmlReader::new().read_str(&odd).unwrap_err();
-        assert!(err.contains("odd"), "{err}");
+        let err = OpenmmXmlReader::new().read(odd.as_bytes()).unwrap_err();
+        assert!(err.to_string().contains("odd"), "{err}");
         let missing = CHARMM.replace(r#"<Torsion map="0""#, r#"<Torsion map="3""#);
-        let err = OpenmmXmlReader::new().read_str(&missing).unwrap_err();
-        assert!(err.contains("map=\"3\""), "{err}");
+        let err = OpenmmXmlReader::new().read(missing.as_bytes()).unwrap_err();
+        assert!(err.to_string().contains("map=\"3\""), "{err}");
     }
 
     /// A bonded row naming neither `class{n}` nor `type{n}` is ignored by
@@ -1907,8 +1994,8 @@ mod tests {
     #[test]
     fn a_row_without_endpoints_is_refused() {
         let xml = r#"<ForceField><HarmonicBondForce><Bond class1="A" length="0.1" k="1"/></HarmonicBondForce></ForceField>"#;
-        let err = OpenmmXmlReader::new().read_str(xml).unwrap_err();
-        assert!(err.contains("class2"), "{err}");
+        let err = OpenmmXmlReader::new().read(xml.as_bytes()).unwrap_err();
+        assert!(err.to_string().contains("class2"), "{err}");
     }
 
     /// OpenMM's wildcard is an empty attribute, kept as `""`.
@@ -1917,7 +2004,7 @@ mod tests {
         let xml = periodic_section(
             r#"<Improper class1="C" class2="" class3="" class4="O" periodicity1="2" k1="43.932" phase1="3.141592653589793"/>"#,
         );
-        let ff = OpenmmXmlReader::new().read_str(&xml).unwrap();
+        let ff = OpenmmXmlReader::new().read(xml.as_bytes()).unwrap();
         let t = &improper_types(ff.get_style("improper", "periodic").unwrap())[0];
         assert_eq!(
             [

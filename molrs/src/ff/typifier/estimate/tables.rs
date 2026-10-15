@@ -77,10 +77,9 @@ impl ParmchkTable {
         self.get(atom_type).map(|t| t.atomic_number)
     }
 
-    /// The element symbol `PARMCHK.DAT` records for `atom_type`.
-    pub fn element(&self, atom_type: &str) -> Option<&'static str> {
-        let z = self.atomic_number(atom_type)?;
-        Element::by_number(z).map(Element::symbol)
+    /// The element `PARMCHK.DAT` records for `atom_type`.
+    pub fn element(&self, atom_type: &str) -> Option<Element> {
+        Element::by_number(self.atomic_number(atom_type)?)
     }
 
     /// Are `a` and `b` **equivalent** types (an `EQUA` row, either way round)?
@@ -133,40 +132,31 @@ impl ParmchkTable {
 /// The questions the empirical fallback asks its constants.
 ///
 /// The table is keyed by atomic number (that is what upstream writes); these
-/// resolve an element **symbol** to one, so the estimator can stay in the
-/// force field's own vocabulary.
+/// look a typed [`Element`] up by its [`Element::z`].
 impl EmpiricalTable {
     /// `ln(Kij)` for an unordered element pair, if tabulated.
-    pub fn bond_ln_k(&self, e1: &str, e2: &str) -> Option<f64> {
+    pub fn bond_ln_k(&self, e1: Element, e2: Element) -> Option<f64> {
         self.bond_pair(e1, e2).map(|row| row.ln_k)
     }
 
     /// The reference bond length of an element pair, in Å, if tabulated.
-    pub fn bond_length(&self, e1: &str, e2: &str) -> Option<f64> {
+    pub fn bond_length(&self, e1: Element, e2: Element) -> Option<f64> {
         self.bond_pair(e1, e2).map(|row| row.r_ref)
     }
 
     /// The angle `C` factor of an element (the angle's CENTRE), if tabulated.
-    pub fn angle_c(&self, element: &str) -> Option<f64> {
-        self.angle(atomic_number(element)?).map(|row| row.c)
+    pub fn angle_c(&self, element: Element) -> Option<f64> {
+        self.angle(element.z()).map(|row| row.c)
     }
 
     /// The angle `Z` factor of an element (an angle END atom), if tabulated.
-    pub fn angle_z(&self, element: &str) -> Option<f64> {
-        self.angle(atomic_number(element)?).map(|row| row.z_factor)
+    pub fn angle_z(&self, element: Element) -> Option<f64> {
+        self.angle(element.z()).map(|row| row.z_factor)
     }
 
-    fn bond_pair(&self, e1: &str, e2: &str) -> Option<&'static EmpiricalBondRow> {
-        self.bond(atomic_number(e1)?, atomic_number(e2)?)
+    fn bond_pair(&self, e1: Element, e2: Element) -> Option<&'static EmpiricalBondRow> {
+        self.bond(e1.z(), e2.z())
     }
-}
-
-/// The atomic number of an element symbol, or `None` if it is not an element.
-///
-/// [`Element`] is `#[repr(u8)]` with the atomic number as its discriminant, so
-/// the cast is the number rather than an ordinal that happens to agree with it.
-fn atomic_number(symbol: &str) -> Option<u8> {
-    Element::by_symbol(symbol).map(|e| e as u8)
 }
 
 #[cfg(test)]
@@ -225,9 +215,9 @@ mod tests {
     #[test]
     fn the_table_knows_each_types_element() {
         let t = substitution_table();
-        assert_eq!(t.element("c3"), Some("C"));
-        assert_eq!(t.element("os"), Some("O"));
-        assert_eq!(t.element("br"), Some("Br"));
+        assert_eq!(t.element("c3"), Some(Element::C));
+        assert_eq!(t.element("os"), Some(Element::O));
+        assert_eq!(t.element("br"), Some(Element::Br));
         assert_eq!(t.element("opls_135"), None, "not a GAFF type");
     }
 }

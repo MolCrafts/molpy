@@ -40,12 +40,13 @@ mod cluster_properties {
     use super::*;
     use crate::compute::fixtures::neighbors_of;
     use crate::compute::{Cluster, ClusterInput, ClusterResult, Compute, ComputeError, Partition};
+    use crate::core::Cell;
     use molrs::core::SimBox;
     use molrs::op::F;
-    use ndarray::{Array1, Array2, arr1, array};
+    use ndarray::{Array1, Array2, arr1};
 
     fn cube(len: F, pbc: [bool; 3]) -> SimBox {
-        SimBox::cube(len, array![0.0, 0.0, 0.0], pbc).unwrap()
+        SimBox::new(Cell::Lengths([len; 3]), [0.0, 0.0, 0.0], pbc).unwrap()
     }
 
     fn manual_clusters(idx: &[i64]) -> ClusterResult {

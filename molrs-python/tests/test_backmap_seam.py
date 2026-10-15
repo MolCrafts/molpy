@@ -7,7 +7,7 @@ script ``backmap_pe_pma/backmap.py`` does, steps 1 (the tuple-key coordinate
 write only) and 3-5,
 
     atoms["x", "y", "z"] = arr -> SubgraphMatcher.find -> Coarsener.coarsen
-    -> Assembler(lib, SitePlacer(), AxisOrienter()).assemble(sites, Atomistic)
+    -> Assembler(lib, SitePlacer(), AxisOrienter()).assemble(sites)
     -> ElementTypifier().typify(world).
 
 The library ships only the classes; the composition lives here. Every number
@@ -87,21 +87,21 @@ def _ported_monomer() -> molrs.core.Atomistic:
     regression example runs on its own.
     """
     fragment = molrs.core.Atomistic()
-    c0 = fragment.def_atom(element="C", x=0.0, y=0.0, z=0.0, mass=12.011)
-    c1 = fragment.def_atom(element="C", x=1.54, y=0.0, z=0.0, mass=12.011)
-    h0 = fragment.def_atom(element="H", x=-0.5, y=0.9, z=0.0, mass=1.008)
-    h1 = fragment.def_atom(element="H", x=2.04, y=0.9, z=0.0, mass=1.008)
-    fragment.def_bond(c0, c1)
-    fragment.def_bond(c0, h0)
-    fragment.def_bond(c1, h1)
-    fragment.def_port(c0, h0, ">")
-    fragment.def_port(c1, h1, "<")
+    c0 = fragment.add_atom(atomic_number=6, x=0.0, y=0.0, z=0.0, mass=12.011)
+    c1 = fragment.add_atom(atomic_number=6, x=1.54, y=0.0, z=0.0, mass=12.011)
+    h0 = fragment.add_atom(atomic_number=1, x=-0.5, y=0.9, z=0.0, mass=1.008)
+    h1 = fragment.add_atom(atomic_number=1, x=2.04, y=0.9, z=0.0, mass=1.008)
+    fragment.add_bond(c0, c1)
+    fragment.add_bond(c0, h0)
+    fragment.add_bond(c1, h1)
+    fragment.add_port(c0, h0, ">")
+    fragment.add_port(c1, h1, "<")
     return fragment
 
 
 def _lithium() -> molrs.core.Atomistic:
     mol = molrs.core.Atomistic()
-    mol.def_atom(element="Li", x=0.0, y=0.0, z=0.0, mass=6.94)
+    mol.add_atom(atomic_number=3, x=0.0, y=0.0, z=0.0, mass=6.94)
     return mol
 
 
@@ -117,10 +117,10 @@ def test_operator_backmap_script_crosses_every_seam() -> None:
 
     # 3. Rules: bead-group pattern -> molecule name; each group is one site.
     rules = {"{[#1][#1][#1][#4]}": "M", "{[#2]}": "Li"}
-    groups: list[list[int]] = []
+    groups: list[list[molrs.core.Bead]] = []
     names: list[str] = []
     for pattern, name in rules.items():
-        found = SubgraphMatcher(CgSmilesIr(pattern).to_coarsegrain()).find(cg)
+        found = SubgraphMatcher(CgSmilesIr.parse(pattern).to_coarsegrain()).find(cg)
         groups += found
         names += [name] * len(found)
     assert len(groups) == 3
@@ -130,9 +130,7 @@ def test_operator_backmap_script_crosses_every_seam() -> None:
 
     # 4. Assemble: each copy turned onto its site and placed on it; ports join
     #    the bonded sites.
-    world = Assembler(lib, SitePlacer(), AxisOrienter()).assemble(
-        sites, molrs.core.Atomistic
-    )
+    world = Assembler(lib, SitePlacer(), AxisOrienter()).assemble(sites)
     assert type(world) is molrs.core.Atomistic
     assert world.n_atoms == 7
     assert world.n_ports == 2

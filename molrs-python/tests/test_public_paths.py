@@ -155,9 +155,10 @@ def test_a_constant_is_a_value_not_a_second_door():
 # --- One shape per file-format factory --------------------------------------
 #
 # A factory that reads or writes a file format is either a function at the
-# top of molrs.io (``read_<fmt>[_<what>]`` / ``write_<fmt>[_<what>]``) or a
-# class of the format's own submodule (``molrs.io.<fmt>.<Fmt>Reader`` /
-# ``<Fmt>Writer``). Nothing else may carry those names.
+# top of molrs.io (``read_<fmt>[_<what>]`` / ``write_<fmt>[_<what>]``, one per
+# format and direction, over any source / sink) or a class of the format's own
+# submodule (``molrs.io.<fmt>.<Fmt>Reader`` / ``<Fmt>Writer``). Nothing else
+# may carry those names.
 
 
 def _factory_name(name: str) -> bool:
@@ -201,11 +202,12 @@ def test_readers_and_writers_are_classes_of_a_format_submodule():
 
 def test_the_top_of_io_is_functions_and_format_submodules():
     """A class belongs to one format, so it lives in that format's
-    submodule; the top of molrs.io holds the read / write functions."""
+    submodule; the top of molrs.io holds the read / write functions and
+    ``Text``, the one source spelling of a file's text."""
     classes = [
         name for name in molrs.io.__all__ if inspect.isclass(getattr(molrs.io, name))
     ]
-    assert not classes
+    assert classes == ["Text"]
     functions = [
         name for name in molrs.io.__all__ if inspect.isroutine(getattr(molrs.io, name))
     ]
@@ -214,14 +216,14 @@ def test_the_top_of_io_is_functions_and_format_submodules():
 
 def test_forcefield_is_the_data_model_and_stream_the_transport():
     assert not [n for n in molrs.ff.forcefield.__all__ if _factory_name(n)]
-    assert set(molrs.stream.__all__) <= {"ControlCommand", "Publisher"}
+    assert set(molrs.stream.__all__) <= {"ControlCommand", "Publisher", "PublisherConfig"}
     assert set(molrs.io.mrec.__all__) == {
         "ForceFieldSection",
+        "MrecFile",
         "MrecReader",
         "MrecWriter",
         "SequenceSchema",
         "pack_mrec_zip",
-        "section_names",
         "validation",
     }
 
@@ -229,41 +231,37 @@ def test_forcefield_is_the_data_model_and_stream_the_transport():
 @pytest.mark.parametrize(
     "path",
     [
-        "molrs.io.read_smiles_str",
-        "molrs.io.write_smiles_str",
-        "molrs.io.read_cgsmiles_str",
-        "molrs.io.read_mrec_frame",
-        "molrs.io.write_mrec_trajectory",
-        "molrs.io.read_msgpack_frame_bytes",
-        "molrs.io.write_msgpack_frame_bytes",
-        "molrs.io.read_json_frame_str",
-        "molrs.io.write_json_frame_str",
+        "molrs.io.Text",
+        "molrs.io.read_wire_frame",
+        "molrs.io.write_wire_frame",
         "molrs.io.read_csv_block",
-        "molrs.io.read_csv_block_str",
         "molrs.io.write_csv_block",
-        "molrs.io.write_csv_block_str",
-        "molrs.io.read_lammps_forcefield",
-        "molrs.io.read_openmm_forcefield",
-        "molrs.io.write_openmm_forcefield",
-        "molrs.io.read_xml_forcefield",
-        "molrs.io.write_xml_forcefield",
-        "molrs.io.read_lammps_log_str",
+        "molrs.io.read_lammps_log",
+        "molrs.io.write_mrec",
         "molrs.io.write_lammps_bond_react_map",
         "molrs.io.write_lammps_bond_react_system",
-        "molrs.io.read_lammps_data_coeffs",
-        "molrs.io.read_lammps_data_coeffs_str",
-        "molrs.io.write_lammps_data_coeffs_str",
         "molrs.io.pdb.PdbReader",
+        "molrs.io.pdb.PdbWriter",
         "molrs.io.xyz.XyzReader",
         "molrs.io.gro.GroReader",
         "molrs.io.dcd.DcdReader",
         "molrs.io.trr.TrrReader",
         "molrs.io.xtc.XtcReader",
+        "molrs.io.cube.CubeReader",
         "molrs.io.lammps.LammpsDumpReader",
+        "molrs.io.lammps.LammpsForcefieldReader",
+        "molrs.io.lammps.LammpsForcefieldWriter",
+        "molrs.io.gromacs.GromacsTopForcefieldReader",
+        "molrs.io.amber.AmberPrmtopForcefieldReader",
+        "molrs.io.openmm_xml.OpenmmXmlReader",
+        "molrs.io.xml.XmlForcefieldReader",
+        "molrs.io.xml.XmlForcefieldWriter",
         "molrs.io.mrec.pack_mrec_zip",
+        "molrs.io.mrec.MrecFile",
         "molrs.io.mrec.MrecReader",
         "molrs.io.mrec.MrecWriter",
         "molrs.io.smiles.SmilesIr",
+        "molrs.io.smiles.FragmentIr",
         "molrs.io.cgsmiles.CgSmilesIr",
         "molrs.io.lammps.LammpsLog",
         "molrs.io.lammps.BondReactTemplate",
@@ -271,6 +269,7 @@ def test_forcefield_is_the_data_model_and_stream_the_transport():
         "molrs.core.Frame",
         "molrs.core.Block",
         "molrs.core.Box",
+        "molrs.core.Cell",
         "molrs.core.MolGraph",
         "molrs.core.Atomistic",
         "molrs.core.Element",
@@ -329,33 +328,34 @@ def test_every_door_is_read_or_write_of_a_named_format():
     assert not generic & set(doors)
 
 
-def test_memory_doors_end_in_str_or_bytes():
-    """Text in memory is ``_str``, bytes ``_bytes``: always the last word, and
-    never spelled another way (``_text``, ``_string``, ``from_bytes``…)."""
+def test_there_are_no_in_memory_twins():
+    """A door reads any source (a path, ``bytes`` or ``Text``) and writes any
+    sink (a path or a ``bytearray``): there is no ``_str`` / ``_bytes`` twin,
+    and no other spelling of one (``_text``, ``_string``, ``from_bytes``…)."""
     names = list(_io_doors())
-    for word in ("str", "bytes"):
-        assert all(n.endswith(f"_{word}") for n in names if f"_{word}_" in n), word
-    for spelling in ("_text", "_string", "parse_", "format_", "_from_", "_to_"):
+    for spelling in ("_str", "_bytes", "_text", "_string", "parse_", "format_", "_from_", "_to_"):
         assert not [n for n in names if spelling in n], spelling
-    assert "read_smiles_str" in names and "read_msgpack_frame_bytes" in names
+    assert "read_xyz" in names and "write_xyz" in names
 
 
 @pytest.mark.parametrize(
-    ("door", "reader"),
+    ("fmt", "reader"),
     [
-        ("read_pdb_trajectory", "molrs.io.pdb.PdbReader"),
-        ("read_xyz_trajectory", "molrs.io.xyz.XyzReader"),
-        ("read_gro_trajectory", "molrs.io.gro.GroReader"),
-        ("read_lammps_dump_trajectory", "molrs.io.lammps.LammpsDumpReader"),
-        ("read_dcd_trajectory", "molrs.io.dcd.DcdReader"),
-        ("read_trr_trajectory", "molrs.io.trr.TrrReader"),
-        ("read_xtc_trajectory", "molrs.io.xtc.XtcReader"),
+        ("pdb", "molrs.io.pdb.PdbReader"),
+        ("xyz", "molrs.io.xyz.XyzReader"),
+        ("gro", "molrs.io.gro.GroReader"),
+        ("lammps_dump", "molrs.io.lammps.LammpsDumpReader"),
+        ("dcd", "molrs.io.dcd.DcdReader"),
+        ("trr", "molrs.io.trr.TrrReader"),
+        ("xtc", "molrs.io.xtc.XtcReader"),
     ],
 )
-def test_a_trajectory_door_is_its_formats_reader(door, reader):
-    """``read_<fmt>_trajectory`` returns ``molrs.io.<fmt>.<Fmt>Reader``."""
+def test_a_trajectory_is_read_by_its_formats_reader_only(fmt, reader):
+    """Many frames are ``molrs.io.<fmt>.<Fmt>Reader(source)``; there is no
+    ``read_<fmt>_trajectory`` / ``write_<fmt>_trajectory`` door beside it."""
     assert reader in _objects()
-    assert getattr(molrs.io, door).__doc__
+    assert not hasattr(molrs.io, f"read_{fmt}_trajectory")
+    assert not hasattr(molrs.io, f"write_{fmt}_trajectory")
     module, _, name = reader.rpartition(".")
     assert name in getattr(molrs.io, module.rpartition(".")[2]).__all__
 

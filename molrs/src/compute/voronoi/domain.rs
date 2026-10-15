@@ -52,12 +52,12 @@ impl Partition for VoronoiDomainResult {
 /// use molrs::compute::{
 ///     Compute, RadicalVoronoi, RadicalVoronoiInput, VoronoiDomainAnalysis, VoronoiDomainInput,
 /// };
-/// use molrs::core::SimBox;
+/// use molrs::core::{Cell, SimBox};
 /// use ndarray::array;
 ///
 /// // Four generators on a line: the two on the left are polar (0), the two
 /// // on the right apolar (1).
-/// let simbox = SimBox::cube(8.0, array![0.0, 0.0, 0.0], [true; 3]).unwrap();
+/// let simbox = SimBox::new(Cell::Lengths([8.0; 3]), [0.0, 0.0, 0.0], [true; 3]).unwrap();
 /// let positions = array![[1.0, 4.0, 4.0], [3.0, 4.0, 4.0], [5.0, 4.0, 4.0], [7.0, 4.0, 4.0]];
 /// let cells = RadicalVoronoi::new().compute(RadicalVoronoiInput {
 ///     positions: positions.view(),
@@ -116,16 +116,18 @@ impl Compute for VoronoiDomainAnalysis {
         // Build the same-group cell-adjacency graph and cluster it with the
         // native connected-components facility: each cell is a node, and a
         // face-adjacency between two cells of one group is an edge.
-        let mut topo = Topology::with_atoms(n);
+        let mut edges = Vec::new();
         for i in 0..n {
             let Some(gi) = group[i] else { continue };
             for j in cells.neighbors(i) {
                 let j = j as usize;
                 if j < n && j > i && group[j] == Some(gi) {
-                    topo.add_bond(i, j);
+                    edges.push([i, j]);
                 }
             }
         }
+        let mut topo = Topology::with_atoms(n);
+        topo.add_bonds(&edges);
         let component_of = topo.connected_components();
 
         // `connected_components` numbers components in order of their lowest

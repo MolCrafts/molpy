@@ -71,11 +71,13 @@ impl Conformer {
 
     /// Generate 3D coordinates for a molecular [`Frame`].
     ///
-    /// The input frame must have an `"atoms"` block with an `"element"`
-    /// string column (element symbols like `"C"`, `"N"`, `"O"`). A
-    /// `"bonds"` block with `atomi`, `atomj` and the bond order (`bond_type` /
-    /// `bond_number`, as `readSmilesStr` writes them) is required for correct
-    /// geometry.
+    /// The input frame must have an `"atoms"` block with an
+    /// `"atomic_number"` (`uint`) column on every atom — what `SmilesIr.toFrame`
+    /// writes. Species is never read from `"element"`: a frame that spells
+    /// symbols (e.g. from `readXyz`) needs `fillAtomicNumbers(frame)`
+    /// first, and without it this throws. A `"bonds"` block with `atomi`,
+    /// `atomj` and the bond order (`bond_type` / `bond_number`, as
+    /// `SmilesIr.toFrame` writes them) is required for correct geometry.
     ///
     /// Returns a **new** [`Frame`] with 3D coordinates as `x`, `y`, `z`
     /// (angstrom) in the `"atoms"` block; the input is not modified.
@@ -83,7 +85,9 @@ impl Conformer {
     /// # Errors
     ///
     /// Throws if:
-    /// - The frame has no `"atoms"` block or is missing required columns
+    /// - The frame has no `"atoms"` block, or an atom has no valid
+    ///   `atomic_number` (the message names it; convert with
+    ///   `fillAtomicNumbers`)
     /// - The molecular graph has invalid valences or topology
     /// - The 3D embedding fails to converge
     /// - A property of the result contradicts the Frame schema on the way out

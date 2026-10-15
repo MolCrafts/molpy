@@ -4,9 +4,12 @@ use std::collections::HashMap;
 
 use crate::core::Atomistic;
 use crate::core::BondOrder;
+use crate::core::MolRsError;
 use crate::core::keys;
 use crate::core::{NodeId, RelationId};
 use crate::op::vec3::{cross, dot, norm, scale, sub};
+
+use super::valence::atomic_number;
 
 // ---------------------------------------------------------------------------
 // Public enums
@@ -196,15 +199,14 @@ pub fn perceive_bond_stereo(mol: &Atomistic) -> HashMap<RelationId, BondStereo> 
         // by (Z, lowest index) makes the answer a property of the molecule
         // again; it is still approximate where CIP would look further out, but
         // it is at least the *same* approximation every time.
+        //
+        // A wildcard substituent (Z = 0) ranks below every element, as CIP
+        // ranks a phantom atom.
         let z_of = |s: NodeId| -> u8 {
-            mol.get_atom(s)
-                .ok()
-                .and_then(|a| {
-                    a.get_str("element")
-                        .and_then(molrs::core::Element::by_symbol)
-                        .map(|e| e.z())
-                })
-                .unwrap_or(0)
+            let atom = mol
+                .get_atom(s)
+                .expect("a substituent is a neighbour read off the molecule itself");
+            atomic_number(&atom)
         };
         // Ranked by (Z, then the atom's own position in the molecule). The
         // neighbour list's order is itself insertion-dependent, so breaking the
@@ -268,10 +270,10 @@ pub fn perceive_bond_stereo(mol: &Atomistic) -> HashMap<RelationId, BondStereo> 
 // ---------------------------------------------------------------------------
 
 /// Atom / bond prop written by [`assign_stereo`]: the perceived descriptor.
-const STEREO: &str = "stereo";
+use crate::core::keys::STEREO;
 
-/// Perceive stereochemistry from 3-D coordinates and write it onto a clone of
-/// `mol`.
+/// Perceive stereochemistry from 3-D coordinates and write it onto `mol`, in
+/// place.
 ///
 /// The [`perceive_tetrahedral_stereo`] and [`perceive_bond_stereo`] side
 /// tables, projected as props. Both are **maps**, and the bond map is
@@ -280,7 +282,7 @@ const STEREO: &str = "stereo";
 /// perceived fact, so it is **skipped** — as is
 /// [`TetrahedralStereo::Unspecified`]. A `stereo` prop appears only where a real
 /// descriptor was perceived: `"CW"` / `"CCW"` on atoms, `"E"` / `"Z"` /
-/// `"either"` on bonds. `mol` is left untouched.
+/// `"either"` on bonds.
 ///
 /// # Storage convention
 ///
@@ -299,17 +301,21 @@ const STEREO: &str = "stereo";
 /// written by other producers (a file reader, or a caller persisting the maps
 /// returned by [`perceive_tetrahedral_stereo`] / [`perceive_bond_stereo`], both of
 /// which are total and do carry the sentinel variants).
-pub fn assign_stereo(mol: &Atomistic) -> Atomistic {
+///
+/// # Errors
+///
+/// [`MolRsError`] when a descriptor cannot be written (a column of `mol`
+/// holding the key under a foreign dtype); `mol` may then be partly annotated.
+pub fn assign_stereo(mol: &mut Atomistic) -> Result<(), MolRsError> {
     let atom_stereo = perceive_tetrahedral_stereo(mol);
     let bond_stereo = perceive_bond_stereo(mol);
-    let mut out = mol.clone();
     for (id, s) in atom_stereo {
         let label = match s {
             TetrahedralStereo::Clockwise => "CW",
             TetrahedralStereo::CounterClockwise => "CCW",
             TetrahedralStereo::Unspecified => continue,
         };
-        let _ = out.set_atom(id, STEREO, label);
+        mol.set_atom(id, STEREO, label)?;
     }
     for (bid, s) in bond_stereo {
         let label = match s {
@@ -318,24 +324,28 @@ pub fn assign_stereo(mol: &Atomistic) -> Atomistic {
             BondStereo::Either => "either",
             BondStereo::None => continue,
         };
-        let _ = out.set_bond_prop(bid, STEREO, label);
+        mol.set_bond(bid, STEREO, label)?;
     }
-    out
+    Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::Atom;
+    use crate::core::{BondNumber, Element, Props};
+    use crate::props;
 
-    fn atom_xyz(sym: &str, x: f64, y: f64, z: f64) -> Atom {
-        Atom::xyz(sym, x, y, z)
+    /// An atom of element `el` at `(x, y, z)`.
+    fn atom_xyz(el: Element, x: f64, y: f64, z: f64) -> Props {
+        props! { keys::ATOMIC_NUMBER => el, keys::X => x, keys::Y => y, keys::Z => z }
+    }
+
+    fn double() -> Props {
+        props! { keys::BOND_TYPE => BondOrder::Double, keys::BOND_NUMBER => BondNumber::Double }
     }
 
     fn add_double_bond(mol: &mut Atomistic, a: NodeId, b: NodeId) {
-        if let Ok(bid) = mol.add_bond(a, b) {
-            let _ = mol.set_bond_type(bid, BondOrder::Double);
-        }
+        mol.add_bond(a, b, double()).expect("add double bond");
     }
 
     // --- Chiral volume tests ---
@@ -345,13 +355,13 @@ mod tests {
         // Four atoms at known positions forming a right-handed tetrahedron.
         // center at origin, neighbours along +x, +y, +z, and -x-y-z.
         let mut g = Atomistic::new();
-        let c = g.add_atom(atom_xyz("C", 0.0, 0.0, 0.0));
-        let n1 = g.add_atom(atom_xyz("H", 1.0, 0.0, 0.0));
-        let n2 = g.add_atom(atom_xyz("H", 0.0, 1.0, 0.0));
-        let n3 = g.add_atom(atom_xyz("H", 0.0, 0.0, 1.0));
-        let n4 = g.add_atom(atom_xyz("H", -1.0, -1.0, -1.0));
+        let c = g.add_atom(atom_xyz(Element::C, 0.0, 0.0, 0.0)).unwrap();
+        let n1 = g.add_atom(atom_xyz(Element::H, 1.0, 0.0, 0.0)).unwrap();
+        let n2 = g.add_atom(atom_xyz(Element::H, 0.0, 1.0, 0.0)).unwrap();
+        let n3 = g.add_atom(atom_xyz(Element::H, 0.0, 0.0, 1.0)).unwrap();
+        let n4 = g.add_atom(atom_xyz(Element::H, -1.0, -1.0, -1.0)).unwrap();
         for &n in &[n1, n2, n3, n4] {
-            g.add_bond(c, n).expect("add bond");
+            g.add_bond(c, n, props! {}).expect("add bond");
         }
         let vol = chiral_volume(&g, c, &[n1, n2, n3, n4]);
         assert!(vol > 0.0, "expected positive chiral volume, got {}", vol);
@@ -360,13 +370,13 @@ mod tests {
     #[test]
     fn test_chiral_volume_opposite_sign() {
         let mut g = Atomistic::new();
-        let c = g.add_atom(atom_xyz("C", 0.0, 0.0, 0.0));
-        let n1 = g.add_atom(atom_xyz("H", 1.0, 0.0, 0.0));
-        let n2 = g.add_atom(atom_xyz("H", 0.0, 1.0, 0.0));
-        let n3 = g.add_atom(atom_xyz("H", 0.0, 0.0, 1.0));
-        let n4 = g.add_atom(atom_xyz("H", -1.0, -1.0, -1.0));
+        let c = g.add_atom(atom_xyz(Element::C, 0.0, 0.0, 0.0)).unwrap();
+        let n1 = g.add_atom(atom_xyz(Element::H, 1.0, 0.0, 0.0)).unwrap();
+        let n2 = g.add_atom(atom_xyz(Element::H, 0.0, 1.0, 0.0)).unwrap();
+        let n3 = g.add_atom(atom_xyz(Element::H, 0.0, 0.0, 1.0)).unwrap();
+        let n4 = g.add_atom(atom_xyz(Element::H, -1.0, -1.0, -1.0)).unwrap();
         for &n in &[n1, n2, n3, n4] {
-            g.add_bond(c, n).expect("add bond");
+            g.add_bond(c, n, props! {}).expect("add bond");
         }
         // Swapping two neighbours flips the sign
         let vol_swapped = chiral_volume(&g, c, &[n2, n1, n3, n4]);
@@ -378,19 +388,21 @@ mod tests {
     #[test]
     fn test_no_chiral_centers_in_ethane() {
         let mut g = Atomistic::new();
-        let c1 = g.add_atom(atom_xyz("C", 0.0, 0.0, 0.0));
-        let c2 = g.add_atom(atom_xyz("C", 1.5, 0.0, 0.0));
-        g.add_bond(c1, c2).expect("add bond");
+        let c1 = g.add_atom(atom_xyz(Element::C, 0.0, 0.0, 0.0)).unwrap();
+        let c2 = g.add_atom(atom_xyz(Element::C, 1.5, 0.0, 0.0)).unwrap();
+        g.add_bond(c1, c2, props! {}).expect("add bond");
         assert!(perceive_chiral_centers(&g).is_empty());
     }
 
     #[test]
     fn test_4_neighbor_atom_detected_as_center() {
         let mut g = Atomistic::new();
-        let c = g.add_atom(atom_xyz("C", 0.0, 0.0, 0.0));
+        let c = g.add_atom(atom_xyz(Element::C, 0.0, 0.0, 0.0)).unwrap();
         for i in 0..4_usize {
-            let h = g.add_atom(atom_xyz("H", i as f64, 0.0, 0.0));
-            g.add_bond(c, h).expect("add bond");
+            let h = g
+                .add_atom(atom_xyz(Element::H, i as f64, 0.0, 0.0))
+                .unwrap();
+            g.add_bond(c, h, props! {}).expect("add bond");
         }
         // 4 neighbours, all with distinct IDs → detected
         let centers = perceive_chiral_centers(&g);
@@ -403,13 +415,13 @@ mod tests {
     #[test]
     fn test_assign_stereo_returns_entry_for_center() {
         let mut g = Atomistic::new();
-        let c = g.add_atom(atom_xyz("C", 0.0, 0.0, 0.0));
-        let n1 = g.add_atom(atom_xyz("F", 1.0, 0.0, 0.0));
-        let n2 = g.add_atom(atom_xyz("Cl", 0.0, 1.0, 0.0));
-        let n3 = g.add_atom(atom_xyz("Br", 0.0, 0.0, 1.0));
-        let n4 = g.add_atom(atom_xyz("H", -1.0, -1.0, -1.0));
+        let c = g.add_atom(atom_xyz(Element::C, 0.0, 0.0, 0.0)).unwrap();
+        let n1 = g.add_atom(atom_xyz(Element::F, 1.0, 0.0, 0.0)).unwrap();
+        let n2 = g.add_atom(atom_xyz(Element::Cl, 0.0, 1.0, 0.0)).unwrap();
+        let n3 = g.add_atom(atom_xyz(Element::Br, 0.0, 0.0, 1.0)).unwrap();
+        let n4 = g.add_atom(atom_xyz(Element::H, -1.0, -1.0, -1.0)).unwrap();
         for &n in &[n1, n2, n3, n4] {
-            g.add_bond(c, n).expect("add bond");
+            g.add_bond(c, n, props! {}).expect("add bond");
         }
         let stereo = perceive_tetrahedral_stereo(&g);
         assert!(stereo.contains_key(&c));
@@ -427,13 +439,13 @@ mod tests {
         // Place C1 at origin, C2 at (1.34, 0, 0).
         // Sub on C1 in +y direction, sub on C2 also in +y direction → Z.
         let mut g = Atomistic::new();
-        let c1 = g.add_atom(atom_xyz("C", 0.0, 0.0, 0.0));
-        let c2 = g.add_atom(atom_xyz("C", 1.34, 0.0, 0.0));
-        let sub1 = g.add_atom(atom_xyz("C", -0.5, 1.0, 0.0)); // +y side
-        let sub2 = g.add_atom(atom_xyz("C", 1.84, 1.0, 0.0)); // +y side
+        let c1 = g.add_atom(atom_xyz(Element::C, 0.0, 0.0, 0.0)).unwrap();
+        let c2 = g.add_atom(atom_xyz(Element::C, 1.34, 0.0, 0.0)).unwrap();
+        let sub1 = g.add_atom(atom_xyz(Element::C, -0.5, 1.0, 0.0)).unwrap(); // +y side
+        let sub2 = g.add_atom(atom_xyz(Element::C, 1.84, 1.0, 0.0)).unwrap(); // +y side
         add_double_bond(&mut g, c1, c2);
-        g.add_bond(c1, sub1).expect("add bond");
-        g.add_bond(c2, sub2).expect("add bond");
+        g.add_bond(c1, sub1, props! {}).expect("add bond");
+        g.add_bond(c2, sub2, props! {}).expect("add bond");
 
         let stereo = perceive_bond_stereo(&g);
         let double_bid = stereo
@@ -448,13 +460,13 @@ mod tests {
     fn test_trans_2_butene_is_e() {
         // trans: sub on C1 in +y, sub on C2 in -y direction.
         let mut g = Atomistic::new();
-        let c1 = g.add_atom(atom_xyz("C", 0.0, 0.0, 0.0));
-        let c2 = g.add_atom(atom_xyz("C", 1.34, 0.0, 0.0));
-        let sub1 = g.add_atom(atom_xyz("C", -0.5, 1.0, 0.0)); // +y side
-        let sub2 = g.add_atom(atom_xyz("C", 1.84, -1.0, 0.0)); // -y side
+        let c1 = g.add_atom(atom_xyz(Element::C, 0.0, 0.0, 0.0)).unwrap();
+        let c2 = g.add_atom(atom_xyz(Element::C, 1.34, 0.0, 0.0)).unwrap();
+        let sub1 = g.add_atom(atom_xyz(Element::C, -0.5, 1.0, 0.0)).unwrap(); // +y side
+        let sub2 = g.add_atom(atom_xyz(Element::C, 1.84, -1.0, 0.0)).unwrap(); // -y side
         add_double_bond(&mut g, c1, c2);
-        g.add_bond(c1, sub1).expect("add bond");
-        g.add_bond(c2, sub2).expect("add bond");
+        g.add_bond(c1, sub1, props! {}).expect("add bond");
+        g.add_bond(c2, sub2, props! {}).expect("add bond");
 
         let stereo = perceive_bond_stereo(&g);
         let double_bid = stereo
@@ -468,9 +480,9 @@ mod tests {
     #[test]
     fn test_single_bond_has_no_stereo() {
         let mut g = Atomistic::new();
-        let a = g.add_atom(atom_xyz("C", 0.0, 0.0, 0.0));
-        let b = g.add_atom(atom_xyz("C", 1.5, 0.0, 0.0));
-        g.add_bond(a, b).expect("add bond"); // default single bond
+        let a = g.add_atom(atom_xyz(Element::C, 0.0, 0.0, 0.0)).unwrap();
+        let b = g.add_atom(atom_xyz(Element::C, 1.5, 0.0, 0.0)).unwrap();
+        g.add_bond(a, b, props! {}).expect("add bond"); // default single bond
         let stereo = perceive_bond_stereo(&g);
         let bid = g.bonds().next().unwrap().0;
         assert_eq!(stereo[&bid], BondStereo::None);
@@ -485,21 +497,19 @@ mod tests {
     fn the_ez_label_does_not_depend_on_bond_insertion_order() {
         let build = |methyl_first: bool| {
             let mut mol = Atomistic::new();
-            let c1 = mol.add_atom(Atom::xyz("C", -2.5, 0.6, 0.0));
-            let c2 = mol.add_atom(Atom::xyz("C", -1.2, 0.0, 0.0));
-            let c3 = mol.add_atom(Atom::xyz("C", 0.0, 0.6, 0.0));
-            let me = mol.add_atom(Atom::xyz("C", 0.1, 2.1, 0.0));
-            let et = mol.add_atom(Atom::xyz("C", 1.3, -0.1, 0.0));
-            mol.add_bond(c1, c2).unwrap();
-            let d = mol.add_bond(c2, c3).unwrap();
-            mol.set_bond_type(d, crate::core::BondOrder::Double)
-                .unwrap();
+            let c1 = mol.add_atom(atom_xyz(Element::C, -2.5, 0.6, 0.0)).unwrap();
+            let c2 = mol.add_atom(atom_xyz(Element::C, -1.2, 0.0, 0.0)).unwrap();
+            let c3 = mol.add_atom(atom_xyz(Element::C, 0.0, 0.6, 0.0)).unwrap();
+            let me = mol.add_atom(atom_xyz(Element::C, 0.1, 2.1, 0.0)).unwrap();
+            let et = mol.add_atom(atom_xyz(Element::C, 1.3, -0.1, 0.0)).unwrap();
+            mol.add_bond(c1, c2, props! {}).unwrap();
+            let d = mol.add_bond(c2, c3, double()).unwrap();
             if methyl_first {
-                mol.add_bond(c3, me).unwrap();
-                mol.add_bond(c3, et).unwrap();
+                mol.add_bond(c3, me, props! {}).unwrap();
+                mol.add_bond(c3, et, props! {}).unwrap();
             } else {
-                mol.add_bond(c3, et).unwrap();
-                mol.add_bond(c3, me).unwrap();
+                mol.add_bond(c3, et, props! {}).unwrap();
+                mol.add_bond(c3, me, props! {}).unwrap();
             }
             let stereo = perceive_bond_stereo(&mol);
             stereo.get(&d).copied()

@@ -33,7 +33,7 @@ new_key_type! {
 /// Opaque handle to a Frame in the handle registry.
 ///
 /// Obtained from [`molrs_frame_new`](crate::molrs_frame_new) or
-/// [`molrs_read_smiles_str`](crate::molrs_read_smiles_str).
+/// [`molrs_read_smiles`](crate::molrs_read_smiles).
 /// Freed with [`molrs_frame_drop`](crate::molrs_frame_drop).
 ///
 /// # Layout (C)
@@ -89,9 +89,8 @@ pub struct MolrsBlockHandle {
 
 /// Opaque handle to a Box (simulation cell) in the handle registry.
 ///
-/// Obtained from [`molrs_box_new`](crate::molrs_box_new),
-/// [`molrs_box_cube`](crate::molrs_box_cube), or
-/// [`molrs_box_ortho`](crate::molrs_box_ortho).
+/// Obtained from [`molrs_box_new`](crate::molrs_box_new) or
+/// [`molrs_frame_get_box`](crate::molrs_frame_get_box).
 /// Freed with [`molrs_box_drop`](crate::molrs_box_drop).
 ///
 /// # Layout (C)

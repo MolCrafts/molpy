@@ -1,10 +1,13 @@
 """XTC, the GROMACS compressed trajectory format — ``molrs::io::xtc``.
 
-The doors are functions of :mod:`molrs.io`
-(:func:`~molrs.io.read_xtc_trajectory`, :func:`~molrs.io.write_xtc_trajectory`);
-this module holds the format's lazy reader, :class:`XtcReader`.
+The one-frame doors are :func:`molrs.io.read_xtc` / :func:`molrs.io.write_xtc`;
+this module holds the format's classes: :class:`XtcReader` and
+:class:`XtcWriter`, one frame per ``write``.
 """
 
-from .._native import XtcReader
+from .._native import (
+    XtcReader,
+    XtcWriter,
+)
 
-__all__ = ["XtcReader"]
+__all__ = ["XtcReader", "XtcWriter"]

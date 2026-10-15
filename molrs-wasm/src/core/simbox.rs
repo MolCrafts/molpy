@@ -23,27 +23,182 @@
 //!
 //! All lengths are in angstrom (A).
 
-use crate::core::block::Block;
-use crate::core::nd_array::{JsFloatArray, NDArray};
-use molrs::core::SimBox;
+use crate::core::nd_array::NDArray;
+use molrs::core::{Cell as RsCell, SimBox};
 use molrs::op::F;
+use wasm_bindgen::JsCast;
 use wasm_bindgen::prelude::*;
 
-/// Simulation box defining periodic boundary conditions and coordinate
-/// transformations.
+/// The geometry a [`Box`] (or a `Parallelepiped`) is built from — the WASM
+/// face of `molrs::core::Cell`, the one argument of `new Box(cell, …)` that
+/// says what the cell is.
 ///
-/// Represents a parallelepiped defined by a 3x3 matrix `h` and an
-/// origin point. Supports periodic boundary conditions (PBC)
-/// independently in x, y, z directions.
+/// One static constructor per variant of the core enum, each a different
+/// description of a cell: `Cell.matrix(h)`, `Cell.lengths(l)`,
+/// `Cell.lengthsAngles(l, angles)`, `Cell.lengthsTilts(l, tilts)` and
+/// `Cell.undefined()`. A `Cell` is a value: passing it to a constructor does
+/// not consume it.
+///
+/// # Example (JavaScript)
+///
+/// ```js
+/// const cube    = new Box(Cell.lengths([10, 10, 10]), [0, 0, 0], [true, true, true]);
+/// const tric    = new Box(Cell.lengthsTilts([10, 10, 10], [2, 0, 0]), [0, 0, 0], [true, true, true]);
+/// const crystal = new Box(Cell.lengthsAngles([5, 5, 7], [90, 90, 120]), [0, 0, 0], [true, true, true]);
+/// const none    = new Box(Cell.undefined(), [0, 0, 0], [false, false, false]);
+/// ```
+#[wasm_bindgen]
+#[derive(Clone, Copy)]
+pub struct Cell {
+    pub(crate) inner: RsCell,
+}
+
+#[wasm_bindgen]
+impl Cell {
+    /// The cell matrix `h`: 9 values, row-major `h[row][col]`, lattice
+    /// vectors as **columns** (Å) — `Cell::Matrix`.
+    ///
+    /// # Errors
+    ///
+    /// Throws if `h` does not hold 9 values. A singular matrix is refused
+    /// by the constructor that takes the cell.
+    pub fn matrix(h: &[F]) -> Result<Cell, JsValue> {
+        let h: [F; 9] = h.try_into().map_err(|_| {
+            JsValue::from_str(&format!(
+                "Cell.matrix: h must be 9 values (row-major 3x3), got {}",
+                h.len()
+            ))
+        })?;
+        Ok(Cell {
+            inner: RsCell::Matrix([[h[0], h[1], h[2]], [h[3], h[4], h[5]], [h[6], h[7], h[8]]]),
+        })
+    }
+
+    /// An orthorhombic cell with edge lengths `[a, b, c]` (Å) —
+    /// `Cell::Lengths`. A cube is `Cell.lengths([a, a, a])`.
+    ///
+    /// # Errors
+    ///
+    /// Throws if `lengths` does not hold 3 values. A non-positive edge is
+    /// refused by the constructor that takes the cell.
+    pub fn lengths(lengths: &[F]) -> Result<Cell, JsValue> {
+        Ok(Cell {
+            inner: RsCell::Lengths(triple("Cell.lengths", "lengths", lengths)?),
+        })
+    }
+
+    /// A restricted-triclinic cell from edge lengths `[a, b, c]` (Å) and the
+    /// angles `[alpha, beta, gamma]` between them, in degrees —
+    /// `Cell::LengthsAngles`.
+    ///
+    /// # Errors
+    ///
+    /// Throws if either array does not hold 3 values.
+    #[wasm_bindgen(js_name = lengthsAngles)]
+    pub fn lengths_angles(lengths: &[F], angles: &[F]) -> Result<Cell, JsValue> {
+        Ok(Cell {
+            inner: RsCell::LengthsAngles {
+                lengths: triple("Cell.lengthsAngles", "lengths", lengths)?,
+                angles: triple("Cell.lengthsAngles", "angles", angles)?,
+            },
+        })
+    }
+
+    /// A restricted-triclinic cell from the diagonal sizes `[lx, ly, lz]` (Å)
+    /// and the tilts `[xy, xz, yz]` (Å), the LAMMPS form —
+    /// `Cell::LengthsTilts`.
+    ///
+    /// # Errors
+    ///
+    /// Throws if either array does not hold 3 values.
+    #[wasm_bindgen(js_name = lengthsTilts)]
+    pub fn lengths_tilts(lengths: &[F], tilts: &[F]) -> Result<Cell, JsValue> {
+        Ok(Cell {
+            inner: RsCell::LengthsTilts {
+                lengths: triple("Cell.lengthsTilts", "lengths", lengths)?,
+                tilts: triple("Cell.lengthsTilts", "tilts", tilts)?,
+            },
+        })
+    }
+
+    /// No geometric cell: a box of undefined, zero volume — `Cell::Undefined`.
+    /// Distinct from periodicity: a defined non-periodic box has a cell.
+    #[wasm_bindgen(js_name = undefined)]
+    pub fn undefined_cell() -> Cell {
+        Cell {
+            inner: RsCell::Undefined,
+        }
+    }
+}
+
+#[wasm_bindgen(typescript_custom_section)]
+const PBC_TYPE: &'static str = r#"
+/** Per-axis periodicity `[x, y, z]`, as `new Box` and `Box.bounding` take it. */
+export type Pbc = [boolean, boolean, boolean];
+
+/** What `Box.wrap` returns: the wrapped points and the image shift applied to each. */
+export interface Wrapped {
+    /** Wrapped coordinates, shape `[N, 3]` (Å). */
+    xyz: NDArray;
+    /** Integer image shift `m` per point, flat `[N * 3]`: `xyz = input - H·m`. */
+    shifts: Int32Array;
+}
+"#;
+
+#[wasm_bindgen]
+extern "C" {
+    /// `[boolean, boolean, boolean]`: see the `Pbc` TypeScript type.
+    #[wasm_bindgen(typescript_type = "Pbc")]
+    pub type JsPbc;
+
+    /// `{ xyz, shifts }`: see the `Wrapped` TypeScript type.
+    #[wasm_bindgen(typescript_type = "Wrapped")]
+    pub type JsWrapped;
+}
+
+/// Exactly three values of `v`, named in the error.
+pub(crate) fn triple(op: &str, name: &str, v: &[F]) -> Result<[F; 3], JsValue> {
+    v.try_into()
+        .map_err(|_| JsValue::from_str(&format!("{op}: {name} must be 3 values, got {}", v.len())))
+}
+
+/// The `[x, y, z]` periodicity flags of a `Pbc` array: three booleans, no
+/// coercion.
+pub(crate) fn pbc3(op: &str, pbc: &JsPbc) -> Result<[bool; 3], JsValue> {
+    let refuse = || JsValue::from_str(&format!("{op}: pbc must be [boolean, boolean, boolean]"));
+    let array = pbc.dyn_ref::<js_sys::Array>().ok_or_else(refuse)?;
+    if array.length() != 3 {
+        return Err(refuse());
+    }
+    let flag = |i: u32| array.get(i).as_bool().ok_or_else(refuse);
+    Ok([flag(0)?, flag(1)?, flag(2)?])
+}
+
+/// The `[N, 3]` view of `coords`, `name` in the error.
+fn rows<'a>(name: &str, coords: &'a NDArray) -> Result<ndarray::ArrayView2<'a, F>, JsValue> {
+    let shape = coords.shape();
+    if shape.len() != 2 || shape[1] != 3 {
+        return Err(JsValue::from_str(&format!("{name} must have shape [N, 3]")));
+    }
+    coords
+        .as_array2(shape[0], 3)
+        .map_err(|e| JsValue::from_str(&e))
+}
+
+/// Simulation box defining periodic boundary conditions and coordinate
+/// transformations — the WASM face of `molrs::core::SimBox`.
+///
+/// A parallelepiped (its [`Cell`]) placed at an origin, periodic
+/// independently along x, y and z. One constructor, `new Box(cell, origin,
+/// pbc)`, as `SimBox::new`; `Box.bounding(points, padding, pbc)` is the box
+/// around a point cloud, as `SimBox::bounding`.
 ///
 /// Exported as `Box` in JavaScript.
 ///
 /// # Example (JavaScript)
 ///
 /// ```js
-/// const h = floatArrayH;
-/// const origin = floatArrayOrigin;
-/// const box = new Box(h, origin, true, true, true);
+/// const box = new Box(Cell.lengths([10, 10, 10]), [0, 0, 0], [true, true, true]);
 /// console.log(box.volume()); // 1000.0
 /// console.log(box.lengths().toCopy()); // [10, 10, 10]
 /// ```
@@ -52,164 +207,54 @@ pub struct Box {
     pub(crate) inner: SimBox,
 }
 
-#[inline]
-fn vec3_from_slice(v: &[F]) -> ndarray::Array1<F> {
-    ndarray::arr1(&[v[0], v[1], v[2]])
-}
-
-#[inline]
-fn mat3_from_slice(v: &[F]) -> ndarray::Array2<F> {
-    ndarray::arr2(&[[v[0], v[1], v[2]], [v[3], v[4], v[5]], [v[6], v[7], v[8]]])
-}
-
 #[wasm_bindgen]
 impl Box {
-    /// Create a new box from a 3x3 cell matrix and origin.
-    ///
-    /// # Arguments
-    ///
-    /// * `h` - 3x3 cell matrix as a float typed array with 9 elements in
-    ///   row-major order: `[h00, h01, h02, h10, h11, h12, h20, h21, h22]`.
-    ///   All values in angstrom (A).
-    /// * `origin` - 3D origin vector as a float typed array with 3 elements
-    ///   `[x, y, z]` in angstrom.
-    /// * `pbc_x` - Enable periodic boundary in x direction
-    /// * `pbc_y` - Enable periodic boundary in y direction
-    /// * `pbc_z` - Enable periodic boundary in z direction
-    ///
-    /// # Returns
-    ///
-    /// A new `Box` instance.
+    /// A box from its `cell`, its `origin` `[x, y, z]` (Å) and per-axis
+    /// periodicity `pbc` — `SimBox::new`.
     ///
     /// # Errors
     ///
-    /// Throws if `h` does not have 9 elements or `origin` does not have
-    /// 3 elements, or if the matrix is singular.
+    /// Throws if `origin` does not hold 3 values or `pbc` is not three
+    /// booleans; for a singular `Cell.matrix`, a non-positive or non-finite
+    /// edge, or lengths/angles that describe no cell.
     ///
     /// # Example (JavaScript)
     ///
     /// ```js
-    /// // Triclinic box
     /// const h = new Float64Array([10, 2, 0, 0, 10, 0, 0, 0, 10]);
-    /// const origin = new Float64Array([0, 0, 0]);
-    /// const box = new Box(h, origin, true, true, true);
+    /// const box = new Box(Cell.matrix(h), [0, 0, 0], [true, true, true]);
     /// ```
     #[wasm_bindgen(constructor)]
-    pub fn new(
-        h: &JsFloatArray,
-        origin: &JsFloatArray,
-        pbc_x: bool,
-        pbc_y: bool,
-        pbc_z: bool,
-    ) -> Result<Box, JsValue> {
-        if h.length() != 9 {
-            return Err(JsValue::from_str("h must have 9 elements (3x3 matrix)"));
-        }
-        if origin.length() != 3 {
-            return Err(JsValue::from_str("origin must have 3 elements"));
-        }
-
-        let h_vec = h.to_vec();
-        let origin_vec = origin.to_vec();
-
-        let h_mat = mat3_from_slice(&h_vec);
-        let origin_arr = vec3_from_slice(&origin_vec);
-        let inner = SimBox::new(h_mat, origin_arr, [pbc_x, pbc_y, pbc_z])
-            .map_err(|e| JsValue::from_str(&format!("box new error: {:?}", e)))?;
-        Ok(Box { inner })
+    pub fn new(cell: &Cell, origin: &[F], pbc: &JsPbc) -> Result<Box, JsValue> {
+        let origin = triple("new Box", "origin", origin)?;
+        let pbc = pbc3("new Box", pbc)?;
+        SimBox::new(cell.inner, origin, pbc)
+            .map(|inner| Box { inner })
+            .map_err(|e| JsValue::from_str(&format!("new Box: {e}")))
     }
 
-    /// Create a cubic box with equal side lengths.
-    ///
-    /// # Arguments
-    ///
-    /// * `a` - Side length of the cube in angstrom (A)
-    /// * `origin` - 3D origin vector as a float typed array with 3 elements
-    ///   `[x, y, z]` in angstrom
-    /// * `pbc_x` - Enable periodic boundary in x direction
-    /// * `pbc_y` - Enable periodic boundary in y direction
-    /// * `pbc_z` - Enable periodic boundary in z direction
-    ///
-    /// # Returns
-    ///
-    /// A new cubic `Box` with side length `a`.
+    /// The orthorhombic box around `points` (`NDArray` of shape `[N, 3]`, Å),
+    /// each side padded by `padding[d]` (Å, ≥ 0) — `SimBox::bounding`.
     ///
     /// # Errors
     ///
-    /// Throws if `origin` does not have 3 elements.
+    /// Throws if `points` is not `[N, 3]` or is empty, if `padding` is not 3
+    /// finite non-negative values, if an axis has zero extent (every point
+    /// shares that coordinate and its padding is 0), or if `pbc` is not three
+    /// booleans.
     ///
     /// # Example (JavaScript)
     ///
     /// ```js
-    /// const origin = originVec;
-    /// const box = Box.cube(10.0, origin, true, true, true);
-    /// console.log(box.volume()); // 1000.0
+    /// const box = Box.bounding(NDArray.from(xyz, [n, 3]), [2, 2, 2], [false, false, false]);
     /// ```
-    pub fn cube(
-        a: F,
-        origin: &JsFloatArray,
-        pbc_x: bool,
-        pbc_y: bool,
-        pbc_z: bool,
-    ) -> Result<Box, JsValue> {
-        if origin.length() != 3 {
-            return Err(JsValue::from_str("origin must have 3 elements"));
-        }
-        let origin_vec = origin.to_vec();
-        let inner = SimBox::cube(a, vec3_from_slice(&origin_vec), [pbc_x, pbc_y, pbc_z])
-            .map_err(|e| JsValue::from_str(&format!("box cube error: {:?}", e)))?;
-        Ok(Box { inner })
-    }
-
-    /// Create an orthorhombic (rectangular) box with axis-aligned edges.
-    ///
-    /// # Arguments
-    ///
-    /// * `lengths` - Box dimensions as a float typed array with 3 elements
-    ///   `[lx, ly, lz]` in angstrom (A)
-    /// * `origin` - 3D origin vector as a float typed array with 3 elements
-    ///   `[x, y, z]` in angstrom
-    /// * `pbc_x` - Enable periodic boundary in x direction
-    /// * `pbc_y` - Enable periodic boundary in y direction
-    /// * `pbc_z` - Enable periodic boundary in z direction
-    ///
-    /// # Returns
-    ///
-    /// A new orthorhombic `Box`.
-    ///
-    /// # Errors
-    ///
-    /// Throws if `lengths` or `origin` does not have 3 elements.
-    ///
-    /// # Example (JavaScript)
-    ///
-    /// ```js
-    /// const origin = originVec;
-    /// const box = Box.ortho(lengthsVec, origin, true, true, true);
-    /// console.log(box.volume()); // 6000.0
-    /// ```
-    pub fn ortho(
-        lengths: &JsFloatArray,
-        origin: &JsFloatArray,
-        pbc_x: bool,
-        pbc_y: bool,
-        pbc_z: bool,
-    ) -> Result<Box, JsValue> {
-        if lengths.length() != 3 {
-            return Err(JsValue::from_str("lengths must have 3 elements"));
-        }
-        if origin.length() != 3 {
-            return Err(JsValue::from_str("origin must have 3 elements"));
-        }
-        let lengths_vec = lengths.to_vec();
-        let origin_vec = origin.to_vec();
-        let inner = SimBox::ortho(
-            vec3_from_slice(&lengths_vec),
-            vec3_from_slice(&origin_vec),
-            [pbc_x, pbc_y, pbc_z],
-        )
-        .map_err(|e| JsValue::from_str(&format!("box ortho error: {:?}", e)))?;
-        Ok(Box { inner })
+    pub fn bounding(points: &NDArray, padding: &[F], pbc: &JsPbc) -> Result<Box, JsValue> {
+        let points = rows("points", points)?;
+        let padding = triple("Box.bounding", "padding", padding)?;
+        let pbc = pbc3("Box.bounding", pbc)?;
+        SimBox::bounding(points, padding, pbc)
+            .map(|inner| Box { inner })
+            .map_err(|e| JsValue::from_str(&format!("Box.bounding: {e}")))
     }
 
     /// Return the box volume in cubic angstrom (A^3).
@@ -245,8 +290,7 @@ impl Box {
     /// const o = box.origin().toCopy(); // Float64Array [0, 0, 0]
     /// ```
     pub fn origin(&self) -> NDArray {
-        let o = self.inner.origin_view();
-        NDArray::from_vec(o.to_vec(), std::boxed::Box::new([3]))
+        NDArray::from_vec(self.inner.origin().to_vec(), std::boxed::Box::new([3]))
     }
 
     /// Return the box's 3×3 cell matrix `h` as a `NDArray` with shape
@@ -267,14 +311,14 @@ impl Box {
     /// // col0 = a-vector = cell[0..3]
     /// ```
     pub fn h(&self) -> NDArray {
-        let h = self.inner.h_view();
-        // h_view is a 3×3 ndarray; emit it column-major to match the
-        // marching-cubes consumer's expectation. Iterate (col, row) so
-        // the flat output is [h[0,0], h[1,0], h[2,0], h[0,1], …].
+        let h = self.inner.matrix();
+        // Column-major, to match the marching-cubes consumer's expectation:
+        // iterate (col, row) so the flat output is [h[0][0], h[1][0], h[2][0],
+        // h[0][1], …].
         let mut flat = Vec::with_capacity(9);
         for j in 0..3 {
-            for i in 0..3 {
-                flat.push(h[[i, j]]);
+            for row in &h {
+                flat.push(row[j]);
             }
         }
         NDArray::from_vec(flat, std::boxed::Box::new([9]))
@@ -343,20 +387,11 @@ impl Box {
         NDArray::from_vec(t.to_vec(), std::boxed::Box::new([3]))
     }
 
-    /// Convert Cartesian coordinates to fractional coordinates.
+    /// Fractional coordinates of Cartesian `coords` (`NDArray` `[N, 3]`, Å):
+    /// `H⁻¹ (r − origin)`, in `[0, 1)` inside the primary image.
     ///
-    /// Fractional coordinates are in the range [0, 1) for atoms
-    /// inside the primary image of the box.
-    ///
-    /// # Arguments
-    ///
-    /// * `coords` - `NDArray` with shape `[N, 3]` containing
-    ///   Cartesian coordinates in angstrom (A)
-    ///
-    /// # Returns
-    ///
-    /// `NDArray` with shape `[N, 3]` containing fractional coordinates
-    /// (dimensionless).
+    /// One door per transform, returning the result: to keep it as a column,
+    /// `block.set(key, box.toFrac(xyz).toCopy(), [n, 3])`.
     ///
     /// # Errors
     ///
@@ -365,78 +400,36 @@ impl Box {
     /// # Example (JavaScript)
     ///
     /// ```js
-    /// const cart = NDArray.from(coords, [1, 3]);
-    /// const frac = box.toFrac(cart);
+    /// const frac = box.toFrac(NDArray.from(coords, [1, 3]));
     /// console.log(frac.toCopy()); // [0.5, 0.5, 0.5] for a 10x10x10 box
     /// ```
     #[wasm_bindgen(js_name = toFrac)]
     pub fn to_frac(&self, coords: &NDArray) -> Result<NDArray, JsValue> {
-        let shape = coords.shape();
-        if shape.len() != 2 || shape[1] != 3 {
-            return Err(JsValue::from_str("coords must have shape [N, 3]"));
-        }
-        let n_atoms = shape[0];
-        let coords_arr = coords
-            .as_array2(n_atoms, 3)
-            .map_err(|e| JsValue::from_str(&e))?;
-
-        let result = self.inner.to_frac(coords_arr);
-        Ok(NDArray::from_array2(result))
+        Ok(NDArray::from_array2(
+            self.inner.to_frac(rows("coords", coords)?),
+        ))
     }
 
-    /// Convert fractional coordinates to Cartesian coordinates.
-    ///
-    /// # Arguments
-    ///
-    /// * `coords` - `NDArray` with shape `[N, 3]` containing
-    ///   fractional coordinates (dimensionless)
-    ///
-    /// # Returns
-    ///
-    /// `NDArray` with shape `[N, 3]` containing Cartesian coordinates
-    /// in angstrom (A).
+    /// Cartesian coordinates (Å) of fractional `coords` (`NDArray` `[N, 3]`):
+    /// `origin + H f`.
     ///
     /// # Errors
     ///
     /// Throws if `coords` does not have shape `[N, 3]`.
-    ///
-    /// # Example (JavaScript)
-    ///
-    /// ```js
-    /// const frac = NDArray.from(fracCoords, [1, 3]);
-    /// const cart = box.toCart(frac);
-    /// console.log(cart.toCopy()); // [5, 5, 5] for a 10x10x10 box
-    /// ```
     #[wasm_bindgen(js_name = toCart)]
     pub fn to_cart(&self, coords: &NDArray) -> Result<NDArray, JsValue> {
-        let shape = coords.shape();
-        if shape.len() != 2 || shape[1] != 3 {
-            return Err(JsValue::from_str("coords must have shape [N, 3]"));
-        }
-        let n_atoms = shape[0];
-        let coords_arr = coords
-            .as_array2(n_atoms, 3)
-            .map_err(|e| JsValue::from_str(&e))?;
-
-        let result = self.inner.to_cart(coords_arr);
-        Ok(NDArray::from_array2(result))
+        Ok(NDArray::from_array2(
+            self.inner.to_cart(rows("coords", coords)?),
+        ))
     }
 
-    /// Wrap Cartesian coordinates into the primary image of the box.
+    /// Wrap Cartesian `coords` (`NDArray` `[N, 3]`, Å) into the primary image
+    /// along the periodic axes — `SimBox::wrap`.
     ///
-    /// Atoms outside the box are translated back into the primary image
-    /// using the periodic boundary conditions. Only axes with PBC
-    /// enabled are wrapped.
-    ///
-    /// # Arguments
-    ///
-    /// * `coords` - `NDArray` with shape `[N, 3]` containing
-    ///   Cartesian coordinates in angstrom (A)
-    ///
-    /// # Returns
-    ///
-    /// `NDArray` with shape `[N, 3]` containing wrapped coordinates
-    /// in angstrom (A).
+    /// Returns `{ xyz, shifts }`: the wrapped points, and the integer image
+    /// shift `m` actually applied to each (`xyz = coords − H·m`, flat
+    /// `Int32Array` of `3N`), which is what an `ix`/`iy`/`iz` image column
+    /// accumulates.
     ///
     /// # Errors
     ///
@@ -445,241 +438,48 @@ impl Box {
     /// # Example (JavaScript)
     ///
     /// ```js
-    /// const pos = NDArray.from(positions, [1, 3]);
-    /// const wrapped = box.wrap(pos); // wraps into [0, lx) x [0, ly) x [0, lz)
+    /// const { xyz, shifts } = box.wrap(NDArray.from(positions, [n, 3]));
     /// ```
-    pub fn wrap(&self, coords: &NDArray) -> Result<NDArray, JsValue> {
-        let shape = coords.shape();
-        if shape.len() != 2 || shape[1] != 3 {
-            return Err(JsValue::from_str("coords must have shape [N, 3]"));
-        }
-        let n_atoms = shape[0];
-        let coords_arr = coords
-            .as_array2(n_atoms, 3)
-            .map_err(|e| JsValue::from_str(&e))?;
-
-        let result = self.inner.wrap(coords_arr);
-        Ok(NDArray::from_array2(result))
+    pub fn wrap(&self, coords: &NDArray) -> Result<JsWrapped, JsValue> {
+        let (xyz, shifts) = self.inner.wrap(rows("coords", coords)?);
+        let (shifts, _offset) = shifts.into_raw_vec_and_offset();
+        let out = js_sys::Object::new();
+        js_sys::Reflect::set(
+            &out,
+            &JsValue::from_str("xyz"),
+            &JsValue::from(NDArray::from_array2(xyz)),
+        )?;
+        js_sys::Reflect::set(
+            &out,
+            &JsValue::from_str("shifts"),
+            &js_sys::Int32Array::from(shifts.as_slice()).into(),
+        )?;
+        Ok(out.unchecked_into())
     }
 
-    /// Wrap coordinates and write the result directly into a [`Block`] column.
-    ///
-    /// This is an allocation-efficient alternative to [`wrap`](Box::wrap)
-    /// that avoids creating an intermediate `NDArray`.
-    ///
-    /// # Arguments
-    ///
-    /// * `coords` - `NDArray` with shape `[N, 3]` containing
-    ///   Cartesian coordinates in angstrom (A)
-    /// * `out_block` - Target [`Block`] to write the result into
-    /// * `out_key` - Column name for the result (float, shape `[N, 3]`)
+    /// Displacements `b − a` row by row (`NDArray`s `[N, 3]`, Å), under the
+    /// minimum-image convention along the periodic axes when `minimumImage`
+    /// — `SimBox::delta`.
     ///
     /// # Errors
     ///
-    /// Throws if `coords` does not have shape `[N, 3]` or if the
-    /// block write fails.
+    /// Throws if `a` or `b` does not have shape `[N, 3]`, or if their row
+    /// counts differ.
     ///
     /// # Example (JavaScript)
     ///
     /// ```js
-    /// box.wrapToBlock(coords, outBlock, "wrapped_pos");
-    /// ```
-    #[wasm_bindgen(js_name = wrapToBlock)]
-    pub fn wrap_to_block(
-        &self,
-        coords: &NDArray,
-        out_block: &mut Block,
-        out_key: &str,
-    ) -> Result<(), JsValue> {
-        let shape = coords.shape();
-        if shape.len() != 2 || shape[1] != 3 {
-            return Err(JsValue::from_str("coords must have shape [N, 3]"));
-        }
-        let n_atoms = shape[0];
-        let coords_arr = coords
-            .as_array2(n_atoms, 3)
-            .map_err(|e| JsValue::from_str(&e))?;
-        let result = self.inner.wrap(coords_arr);
-        out_block.insert_array(out_key, result.into_dyn())
-    }
-
-    /// Calculate displacement vectors between two sets of coordinates.
-    ///
-    /// Computes `delta = b - a` for each pair of points. When
-    /// `minimum_image` is `true`, the minimum-image convention is
-    /// applied so that the displacement uses the shortest vector
-    /// under periodic boundary conditions.
-    ///
-    /// # Arguments
-    ///
-    /// * `a` - `NDArray` with shape `[N, 3]` (reference positions in A)
-    /// * `b` - `NDArray` with shape `[N, 3]` (target positions in A)
-    /// * `minimum_image` - If `true`, apply minimum image convention
-    ///   for PBC-enabled axes
-    ///
-    /// # Returns
-    ///
-    /// `NDArray` with shape `[N, 3]` containing displacement vectors
-    /// `(b - a)` in angstrom (A).
-    ///
-    /// # Errors
-    ///
-    /// Throws if `a` or `b` does not have shape `[N, 3]`, or if the
-    /// two arrays have different numbers of rows.
-    ///
-    /// # Example (JavaScript)
-    ///
-    /// ```js
-    /// const a = NDArray.from(aCoords, [1, 3]);
-    /// const b = NDArray.from(bCoords, [1, 3]);
     /// const d = box.delta(a, b, true); // minimum-image displacement
     /// ```
     pub fn delta(&self, a: &NDArray, b: &NDArray, minimum_image: bool) -> Result<NDArray, JsValue> {
-        let shape_a = a.shape();
-        let shape_b = b.shape();
-        if shape_a.len() != 2 || shape_a[1] != 3 {
-            return Err(JsValue::from_str("a must have shape [N, 3]"));
-        }
-        if shape_b.len() != 2 || shape_b[1] != 3 {
-            return Err(JsValue::from_str("b must have shape [N, 3]"));
-        }
-        if shape_a[0] != shape_b[0] {
+        let a = rows("a", a)?;
+        let b = rows("b", b)?;
+        if a.nrows() != b.nrows() {
             return Err(JsValue::from_str(
-                "a and b must have the same number of atoms",
+                "a and b must have the same number of rows",
             ));
         }
-
-        let n_atoms = shape_a[0];
-        let a_arr = a.as_array2(n_atoms, 3).map_err(|e| JsValue::from_str(&e))?;
-        let b_arr = b.as_array2(n_atoms, 3).map_err(|e| JsValue::from_str(&e))?;
-
-        let result = self.inner.delta(a_arr, b_arr, minimum_image);
-        Ok(NDArray::from_array2(result))
-    }
-
-    /// Calculate displacement vectors and write the result directly into
-    /// a [`Block`] column.
-    ///
-    /// This is an allocation-efficient alternative to [`delta`](Box::delta).
-    ///
-    /// # Arguments
-    ///
-    /// * `a` - `NDArray` with shape `[N, 3]` (reference positions in A)
-    /// * `b` - `NDArray` with shape `[N, 3]` (target positions in A)
-    /// * `minimum_image` - If `true`, apply minimum image convention
-    /// * `out_block` - Target [`Block`] to write the result into
-    /// * `out_key` - Column name for the result (float, shape `[N, 3]`)
-    ///
-    /// # Errors
-    ///
-    /// Throws if shapes are invalid or if the block write fails.
-    ///
-    /// # Example (JavaScript)
-    ///
-    /// ```js
-    /// box.deltaToBlock(a, b, true, outBlock, "displacements");
-    /// ```
-    #[wasm_bindgen(js_name = deltaToBlock)]
-    pub fn delta_to_block(
-        &self,
-        a: &NDArray,
-        b: &NDArray,
-        minimum_image: bool,
-        out_block: &mut Block,
-        out_key: &str,
-    ) -> Result<(), JsValue> {
-        let shape_a = a.shape();
-        let shape_b = b.shape();
-        if shape_a.len() != 2 || shape_a[1] != 3 {
-            return Err(JsValue::from_str("a must have shape [N, 3]"));
-        }
-        if shape_b.len() != 2 || shape_b[1] != 3 {
-            return Err(JsValue::from_str("b must have shape [N, 3]"));
-        }
-        if shape_a[0] != shape_b[0] {
-            return Err(JsValue::from_str(
-                "a and b must have the same number of atoms",
-            ));
-        }
-        let n_atoms = shape_a[0];
-        let a_arr = a.as_array2(n_atoms, 3).map_err(|e| JsValue::from_str(&e))?;
-        let b_arr = b.as_array2(n_atoms, 3).map_err(|e| JsValue::from_str(&e))?;
-        let result = self.inner.delta(a_arr, b_arr, minimum_image);
-        out_block.insert_array(out_key, result.into_dyn())
-    }
-
-    /// Convert Cartesian to fractional coordinates and write the result
-    /// directly into a [`Block`] column.
-    ///
-    /// # Arguments
-    ///
-    /// * `coords` - `NDArray` with shape `[N, 3]` (Cartesian, A)
-    /// * `out_block` - Target [`Block`]
-    /// * `out_key` - Column name for the result (float, shape `[N, 3]`)
-    ///
-    /// # Errors
-    ///
-    /// Throws if `coords` does not have shape `[N, 3]`.
-    ///
-    /// # Example (JavaScript)
-    ///
-    /// ```js
-    /// box.toFracToBlock(cartCoords, outBlock, "frac_coords");
-    /// ```
-    #[wasm_bindgen(js_name = toFracToBlock)]
-    pub fn to_frac_to_block(
-        &self,
-        coords: &NDArray,
-        out_block: &mut Block,
-        out_key: &str,
-    ) -> Result<(), JsValue> {
-        let shape = coords.shape();
-        if shape.len() != 2 || shape[1] != 3 {
-            return Err(JsValue::from_str("coords must have shape [N, 3]"));
-        }
-        let n_atoms = shape[0];
-        let coords_arr = coords
-            .as_array2(n_atoms, 3)
-            .map_err(|e| JsValue::from_str(&e))?;
-        let result = self.inner.to_frac(coords_arr);
-        out_block.insert_array(out_key, result.into_dyn())
-    }
-
-    /// Convert fractional to Cartesian coordinates and write the result
-    /// directly into a [`Block`] column.
-    ///
-    /// # Arguments
-    ///
-    /// * `coords` - `NDArray` with shape `[N, 3]` (fractional, dimensionless)
-    /// * `out_block` - Target [`Block`]
-    /// * `out_key` - Column name for the result (float, shape `[N, 3]`)
-    ///
-    /// # Errors
-    ///
-    /// Throws if `coords` does not have shape `[N, 3]`.
-    ///
-    /// # Example (JavaScript)
-    ///
-    /// ```js
-    /// box.toCartToBlock(fracCoords, outBlock, "cart_coords");
-    /// ```
-    #[wasm_bindgen(js_name = toCartToBlock)]
-    pub fn to_cart_to_block(
-        &self,
-        coords: &NDArray,
-        out_block: &mut Block,
-        out_key: &str,
-    ) -> Result<(), JsValue> {
-        let shape = coords.shape();
-        if shape.len() != 2 || shape[1] != 3 {
-            return Err(JsValue::from_str("coords must have shape [N, 3]"));
-        }
-        let n_atoms = shape[0];
-        let coords_arr = coords
-            .as_array2(n_atoms, 3)
-            .map_err(|e| JsValue::from_str(&e))?;
-        let result = self.inner.to_cart(coords_arr);
-        out_block.insert_array(out_key, result.into_dyn())
+        Ok(NDArray::from_array2(self.inner.delta(a, b, minimum_image)))
     }
 
     /// Return the 8 corner vertices of the parallelepiped.
@@ -702,94 +502,119 @@ impl Box {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::Box as WasmBox;
+pub(crate) mod tests {
+    use super::{Box as WasmBox, Cell, JsPbc};
+    use crate::NDArray;
     use crate::core::nd_array::JsFloatArray;
-    use crate::{Frame, NDArray};
     use molrs::op::F;
-    #[allow(unused_imports)]
-    use wasm_bindgen::JsCast;
+    use wasm_bindgen::{JsCast, JsValue};
     use wasm_bindgen_test::wasm_bindgen_test;
 
     fn float_array(values: &[F]) -> JsFloatArray {
         JsFloatArray::from(values)
     }
 
+    pub(crate) fn pbc(flags: [bool; 3]) -> JsPbc {
+        flags
+            .iter()
+            .map(|&f| JsValue::from_bool(f))
+            .collect::<js_sys::Array>()
+            .unchecked_into()
+    }
+
     fn assert_eq_array(actual: &JsFloatArray, expected: &[F]) {
         assert_eq!(actual.length() as usize, expected.len());
         for (i, value) in expected.iter().enumerate() {
             let got = actual.get_index(i as u32);
-            let expected = *value;
-            assert!(
-                (got - expected).abs() < 1.0e-5,
-                "index {}: {} != {}",
-                i,
-                got,
-                expected
-            );
+            assert!((got - value).abs() < 1.0e-5, "index {i}: {got} != {value}");
         }
+    }
+
+    fn rows(values: &[F]) -> NDArray {
+        NDArray::from_js(&float_array(values), Some(Box::new([values.len() / 3, 3]))).expect("rows")
     }
 
     #[wasm_bindgen_test]
     fn box_coordinate_ops() {
-        let mut view = NDArray::new(Box::new([2_usize, 3_usize]));
-        let view_data = float_array(&[0.0, 0.0, 0.0, 2.0, 3.0, 4.0]);
-        view.copy_from(&view_data).expect("copy_from failed");
-
-        let h = float_array(&[2.0, 0.0, 0.0, 0.0, 3.0, 0.0, 0.0, 0.0, 4.0]);
-        let origin = float_array(&[0.0, 0.0, 0.0]);
-        let sim_box = WasmBox::new(&h, &origin, true, true, true).expect("box new");
+        let view = rows(&[0.0, 0.0, 0.0, 2.0, 3.0, 4.0]);
+        let h = [2.0, 0.0, 0.0, 0.0, 3.0, 0.0, 0.0, 0.0, 4.0];
+        let sim_box =
+            WasmBox::new(&Cell::matrix(&h).unwrap(), &[0.0; 3], &pbc([true; 3])).expect("box new");
 
         let frac = sim_box.to_frac(&view).expect("to_frac failed");
-        let frac_js = frac.to_copy();
-        assert_eq_array(&frac_js, &[0.0, 0.0, 0.0, 1.0, 1.0, 1.0]);
-
+        assert_eq_array(&frac.to_copy(), &[0.0, 0.0, 0.0, 1.0, 1.0, 1.0]);
         let cart = sim_box.to_cart(&frac).expect("to_cart failed");
-        let cart_js = cart.to_copy();
-        assert_eq_array(&cart_js, &[0.0, 0.0, 0.0, 2.0, 3.0, 4.0]);
+        assert_eq_array(&cart.to_copy(), &[0.0, 0.0, 0.0, 2.0, 3.0, 4.0]);
 
-        let mut wrap_view = NDArray::new(Box::new([1_usize, 3_usize]));
-        wrap_view
-            .copy_from(&float_array(&[2.5, 3.5, 4.5]))
-            .expect("write wrap_view");
-        let wrapped = sim_box.wrap(&wrap_view).expect("wrap failed");
-        let wrapped_js = wrapped.to_copy();
-        assert_eq_array(&wrapped_js, &[0.5, 0.5, 0.5]);
+        let wrapped = sim_box.wrap(&rows(&[2.5, 3.5, 4.5])).expect("wrap failed");
+        let xyz: NDArray = wasm_bindgen::convert::TryFromJsValue::try_from_js_value(
+            js_sys::Reflect::get(&wrapped, &"xyz".into()).unwrap(),
+        )
+        .expect("xyz is an NDArray");
+        assert_eq_array(&xyz.to_copy(), &[0.5, 0.5, 0.5]);
+        let shifts: js_sys::Int32Array = js_sys::Reflect::get(&wrapped, &"shifts".into())
+            .unwrap()
+            .unchecked_into();
+        assert_eq!(shifts.to_vec(), vec![1, 1, 1]);
 
-        let corners = sim_box.corners();
-        assert_eq!(corners.len(), 24);
+        assert_eq!(sim_box.corners().len(), 24);
 
-        let cube = WasmBox::cube(10.0, &origin, true, true, true).expect("cube");
+        let cube = WasmBox::new(
+            &Cell::lengths(&[10.0; 3]).unwrap(),
+            &[0.0; 3],
+            &pbc([true; 3]),
+        )
+        .expect("cube");
         assert!((cube.volume() - 1000.0).abs() < 1.0e-5);
+        assert_eq_array(&cube.lengths().to_copy(), &[10.0, 10.0, 10.0]);
+        assert_eq_array(&cube.tilts().to_copy(), &[0.0, 0.0, 0.0]);
 
-        let lengths = cube.lengths().to_copy();
-        assert_eq_array(&lengths, &[10.0, 10.0, 10.0]);
-
-        let tilts = cube.tilts().to_copy();
-        assert_eq_array(&tilts, &[0.0, 0.0, 0.0]);
-
-        let ortho_lengths = float_array(&[3.0, 4.0, 5.0]);
-        let ortho = WasmBox::ortho(&ortho_lengths, &origin, true, true, true).expect("ortho");
-        let ortho_lengths_out = ortho.lengths().to_copy();
-        assert_eq_array(&ortho_lengths_out, &[3.0, 4.0, 5.0]);
-
-        let mut a = NDArray::new(Box::new([1_usize, 3_usize]));
-        let mut b = NDArray::new(Box::new([1_usize, 3_usize]));
-        a.copy_from(&float_array(&[1.0, 1.0, 1.0]))
-            .expect("write a");
-        b.copy_from(&float_array(&[9.0, 9.0, 9.0]))
-            .expect("write b");
-
+        let a = rows(&[1.0, 1.0, 1.0]);
+        let b = rows(&[9.0, 9.0, 9.0]);
         let delta_mi = cube.delta(&a, &b, true).expect("delta mi").to_copy();
         let delta_no = cube.delta(&a, &b, false).expect("delta no").to_copy();
         assert!(delta_mi.get_index(0).abs() < delta_no.get_index(0).abs());
+    }
 
-        let frame = Frame::new();
-        let mut out = frame.create_block("out").expect("create out");
-        cube.wrap_to_block(&wrap_view, &mut out, "wrapped")
-            .expect("wrapToBlock");
-        let wrapped_out: JsFloatArray =
-            wasm_bindgen::JsValue::from(out.copy("wrapped", None).expect("copy")).unchecked_into();
-        assert_eq_array(&wrapped_out, &[2.5, 3.5, 4.5]);
+    #[wasm_bindgen_test]
+    fn every_cell_variant_builds_and_bad_input_throws() {
+        let o = [0.0; 3];
+        let p = pbc([true; 3]);
+        let tilted = WasmBox::new(
+            &Cell::lengths_tilts(&[10.0; 3], &[2.0, 0.0, 0.0]).unwrap(),
+            &o,
+            &p,
+        )
+        .unwrap();
+        assert_eq_array(&tilted.tilts().to_copy(), &[2.0, 0.0, 0.0]);
+        let hex = WasmBox::new(
+            &Cell::lengths_angles(&[5.0, 5.0, 7.0], &[90.0, 90.0, 120.0]).unwrap(),
+            &o,
+            &p,
+        )
+        .unwrap();
+        assert!(hex.volume() > 0.0);
+        let none = WasmBox::new(&Cell::undefined_cell(), &o, &pbc([false; 3])).unwrap();
+        assert_eq!(none.volume(), 0.0);
+        assert!(Cell::lengths(&[1.0, 2.0]).is_err());
+        assert!(Cell::matrix(&[1.0; 8]).is_err());
+        assert!(WasmBox::new(&Cell::lengths(&[-1.0, 1.0, 1.0]).unwrap(), &o, &p).is_err());
+        let not_flags: JsPbc = JsValue::from(js_sys::Array::of3(
+            &JsValue::from_f64(1.0),
+            &JsValue::TRUE,
+            &JsValue::TRUE,
+        ))
+        .unchecked_into();
+        assert!(WasmBox::new(&Cell::lengths(&[1.0; 3]).unwrap(), &o, &not_flags).is_err());
+    }
+
+    #[wasm_bindgen_test]
+    fn bounding_pads_the_point_cloud_and_refuses_zero_extent() {
+        let points = rows(&[0.0, 0.0, 0.0, 2.0, 1.0, 3.0]);
+        let bx = WasmBox::bounding(&points, &[1.0; 3], &pbc([false; 3])).unwrap();
+        assert_eq_array(&bx.origin().to_copy(), &[-1.0, -1.0, -1.0]);
+        assert_eq_array(&bx.lengths().to_copy(), &[4.0, 3.0, 5.0]);
+        let flat = rows(&[0.0, 0.0, 0.0, 2.0, 0.0, 3.0]);
+        assert!(WasmBox::bounding(&flat, &[0.0; 3], &pbc([false; 3])).is_err());
     }
 }

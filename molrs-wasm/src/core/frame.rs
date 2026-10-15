@@ -8,7 +8,7 @@
 //!
 //! | Block key   | Expected columns | Column types |
 //! |-------------|------------------|--------------|
-//! | `"atoms"`   | `symbol` (string), `x`, `y`, `z` (F), optionally `mass`, `charge` (F) | string, F |
+//! | `"atoms"`   | `atomic_number` (u64, the species every molrs consumer reads), `x`, `y`, `z` (F), optionally `element` (string, raw symbols), `mass`, `charge` (F) | u64, F, string |
 //! | `"bonds"`   | `atomi`, `atomj` (u64), `bond_type` (u64), `bond_number` (u64) | u64 |
 //! | `"angles"`  | `atomi`, `atomj`, `atomk` (u64) | u64 |
 //!
@@ -17,7 +17,7 @@
 //! ```js
 //! const frame = new Frame();
 //! const atoms = frame.createBlock("atoms");
-//! atoms.set("element", ["C", "C", "O"]);
+//! atoms.set("atomic_number", new BigUint64Array([6n, 6n, 8n]));
 //! atoms.set("x", xCoords); // Float64Array
 //! atoms.set("y", yCoords);
 //! atoms.set("z", zCoords);
@@ -31,11 +31,16 @@
 //! frame.get("atoms").view("x"); // zero-copy Float64Array
 //! ```
 
+use serde::Serialize;
 use wasm_bindgen::prelude::*;
 
+use js_sys::{
+    Array as JsArray, BigInt, BigInt64Array, BigUint64Array, Float64Array, Int32Array, Uint32Array,
+};
 use molrs::core::Block as RsBlock;
 use molrs::core::MetaValue;
 use molrs_ffi::{BlockRef, FrameRef};
+use wasm_bindgen::JsCast;
 
 use super::block::Block;
 use super::js_err;
@@ -48,9 +53,12 @@ use super::js_err;
 ///
 /// # Conventions
 ///
-/// - The `"atoms"` block should contain per-atom properties: `symbol`
-///   (string), `x`/`y`/`z` (F, coordinates in angstrom), and optionally
-///   `mass` (F, atomic mass units) and `charge` (F, elementary charges).
+/// - The `"atoms"` block should contain per-atom properties:
+///   `atomic_number` (u64, 0..=118, 0 = wildcard — the one species field
+///   molrs reads), `x`/`y`/`z` (F, coordinates in angstrom), and optionally
+///   `element` (string, raw symbols nothing reads; convert with
+///   `fillAtomicNumbers` / `fillSymbols`), `mass` (F, atomic mass units) and
+///   `charge` (F, elementary charges).
 /// - The `"bonds"` block should contain bond topology: `atomi`/`atomj` (u64,
 ///   zero-based atom indices), `bond_type` (u64: 1 single, 2 double, 3 triple,
 ///   4 aromatic) and `bond_number` (u64: the localized Lewis/Kekulé integer).
@@ -82,7 +90,7 @@ impl Frame {
     #[wasm_bindgen(constructor)]
     pub fn new() -> Self {
         Frame {
-            inner: FrameRef::new_standalone(),
+            inner: FrameRef::default(),
         }
     }
 
@@ -193,7 +201,7 @@ impl Frame {
             .map_err(js_err)
     }
 
-    /// Remove the block named `key`.
+    /// Delete the block named `key`.
     ///
     /// # Errors
     ///
@@ -202,14 +210,14 @@ impl Frame {
     /// # Example (JavaScript)
     ///
     /// ```js
-    /// frame.remove("bonds");
+    /// frame.delBlock("bonds");
     /// ```
-    #[wasm_bindgen(js_name = remove)]
-    pub fn remove(&self, key: &str) -> Result<(), JsValue> {
+    #[wasm_bindgen(js_name = delBlock)]
+    pub fn del_block(&self, key: &str) -> Result<(), JsValue> {
         self.inner
             .arena
             .borrow_mut()
-            .remove_block(self.inner.id, key)
+            .del_block(self.inner.id, key)
             .map_err(js_err)
     }
 
@@ -229,7 +237,7 @@ impl Frame {
         self.inner
             .arena
             .borrow_mut()
-            .clear_frame(self.inner.id)
+            .clear(self.inner.id)
             .map_err(js_err)
     }
 
@@ -263,90 +271,47 @@ impl Frame {
             .map_err(js_err)
     }
 
-    /// Read a per-frame metadata value that is a string.
+    /// The metadata value `name`, as the typed value it is stored as, or
+    /// `undefined` when the frame has no such key.
     ///
-    /// The counterpart of [`setMeta`](Self::set_meta), and the accessor for
-    /// labels that are words rather than numbers — a LAMMPS `dump local`
-    /// section label (`dump_local_label`), say. Deliberately does not
-    /// stringify numeric meta: those have their own accessor
-    /// ([`getMetaScalar`](Self::get_meta_scalar)), and a getter that rendered
-    /// every dtype would make `"1"` and `1` indistinguishable to the caller.
+    /// Frame meta is typed (`MetaValue`); each dtype reaches JS as its own
+    /// type, never through a string:
     ///
-    /// Returns `undefined` when the key is missing, holds a non-string value,
-    /// or the frame has been dropped.
+    /// | dtype | JS |
+    /// |-------|----|
+    /// | `bool` | `boolean` |
+    /// | `i32` / `u32` / `f64` | `number` |
+    /// | `i64` / `u64` | `bigint` (exact) |
+    /// | `string` | `string` |
+    /// | `bool3` | `boolean[]` |
+    /// | `i32x3` / `u32x3` | `Int32Array` / `Uint32Array` |
+    /// | `i64x3` / `u64x3` | `BigInt64Array` / `BigUint64Array` |
+    /// | `f64x3` / `f64x6` / `f64x9` | `Float64Array` of 3 / 6 / 9 |
+    /// | `json` | the JSON value (object, array, `null`, …) |
     ///
-    /// # Arguments
+    /// # Errors
     ///
-    /// * `name` — Meta key to look up (e.g., `"dump_local_label"`, `"note"`).
+    /// Throws if the frame has been dropped.
     ///
     /// # Example (JavaScript)
     ///
     /// ```js
-    /// if (frame.getMeta("dump_local_label") === "BONDS") {
-    ///   // the local rows are bond topology
-    /// }
+    /// const energy = frame.getMeta("energy");        // number, or undefined
+    /// const isBondTable = frame.getMeta("dump_local_label") === "BONDS";
     /// ```
     #[wasm_bindgen(js_name = getMeta)]
-    pub fn get_meta(&self, name: &str) -> Option<String> {
-        self.inner
-            .arena
-            .borrow()
-            .with_frame(self.inner.id, |frame| {
-                frame
-                    .meta
-                    .get(name)
-                    .and_then(MetaValue::as_str)
-                    .map(str::to_owned)
-            })
-            .ok()?
-    }
-
-    /// Read a per-frame metadata value as a numeric scalar.
-    ///
-    /// Returns `Some(v)` if the meta key exists AND its string value parses
-    /// as an `f64`. Returns `None` if the key is missing or the value is
-    /// non-numeric (e.g., `config="trans"`).
-    ///
-    /// Frame meta is typed (`MetaValue`). This accessor accepts every numeric
-    /// scalar dtype, and numeric strings written through
-    /// [`setMeta`](Self::set_meta).
-    ///
-    /// # Arguments
-    ///
-    /// * `name` — Meta key to look up (e.g., `"energy"`, `"temp"`).
-    ///
-    /// # Example (JavaScript)
-    ///
-    /// ```js
-    /// const energy = frame.getMetaScalar("energy");
-    /// if (energy !== undefined) {
-    ///   console.log("Energy:", energy);
-    /// }
-    /// ```
-    #[wasm_bindgen(js_name = getMetaScalar)]
-    pub fn get_meta_scalar(&self, name: &str) -> Option<f64> {
-        self.inner
-            .arena
-            .borrow()
-            .with_frame(self.inner.id, |frame| {
-                frame.meta.get(name).and_then(|value| match value {
-                    MetaValue::I32(value) => Some(f64::from(*value)),
-                    MetaValue::I64(value) => Some(*value as f64),
-                    MetaValue::U32(value) => Some(f64::from(*value)),
-                    MetaValue::U64(value) => Some(*value as f64),
-                    MetaValue::F64(value) => Some(*value),
-                    MetaValue::String(value) => value.parse::<f64>().ok(),
-                    _ => None,
-                })
-            })
-            .ok()?
+    pub fn get_meta(&self, name: &str) -> Result<JsMetaValueOrUndefined, JsValue> {
+        self.with_frame(|frame| match frame.meta.get(name) {
+            Some(value) => meta_to_js(value),
+            None => Ok(JsValue::UNDEFINED),
+        })
+        .map(JsCast::unchecked_into)
     }
 
     /// The metadata keys on this frame, in insertion order.
     ///
-    /// Includes all keys regardless of whether their values are numeric
-    /// or categorical. To filter to numeric keys, iterate and call
-    /// [`getMetaScalar`](Self::get_meta_scalar) on each.
+    /// Includes every key whatever its dtype; read each value with
+    /// [`getMeta`](Self::get_meta).
     ///
     /// # Example (JavaScript)
     ///
@@ -383,49 +348,43 @@ impl Frame {
             .unwrap_or_default()
     }
 
-    /// Set a per-frame metadata string value.
+    /// Store `value` as metadata `name`, replacing any value there. The
+    /// dtype is the JS value's own — the inverse of
+    /// [`getMeta`](Self::get_meta):
     ///
-    /// Stores `value` as a typed `MetaValue::String` on `frame.meta`.
-    /// Use [`setMetaScalar`](Self::set_meta_scalar) for numeric labels that
-    /// [`getMetaScalar`](Self::get_meta_scalar) should return.
-    ///
-    /// # Arguments
-    ///
-    /// * `name` — Meta key (e.g., `"note"`, `"config"`).
-    /// * `value` — String value.
+    /// | JS | dtype |
+    /// |----|-------|
+    /// | `string` | `string` |
+    /// | `boolean` | `bool` |
+    /// | `number` | `f64` (a JS number is a double) |
+    /// | `bigint` | `i64`, or `u64` above `i64`'s range |
+    /// | `Float64Array` of 3 / 6 / 9 | `f64x3` / `f64x6` / `f64x9` |
+    /// | `Int32Array` / `Uint32Array` of 3 | `i32x3` / `u32x3` |
+    /// | `BigInt64Array` / `BigUint64Array` of 3 | `i64x3` / `u64x3` |
+    /// | `boolean[]` of 3 | `bool3` |
+    /// | any other array, a plain object, `null` | `json` |
     ///
     /// # Errors
     ///
-    /// Throws a `JsValue` string if the frame has been dropped.
+    /// Throws if the frame has been dropped, or `value` has no metadata
+    /// dtype (`undefined`, a function, a typed array of another length or
+    /// element type, a `bigint` beyond 64 bits, a value JSON cannot hold).
     ///
     /// # Example (JavaScript)
     ///
     /// ```js
     /// frame.setMeta("note", "run-42");
-    /// frame.setMetaScalar("energy", -3.14);
+    /// frame.setMeta("energy", -3.14);
+    /// frame.setMeta("step", 1000n);
     /// ```
     #[wasm_bindgen(js_name = setMeta)]
-    pub fn set_meta(&self, name: &str, value: &str) -> Result<(), JsValue> {
+    pub fn set_meta(&self, name: &str, value: JsMetaValue) -> Result<(), JsValue> {
+        let value = meta_from_js(name, &value)?;
         self.inner
             .arena
             .borrow_mut()
             .with_frame_meta_mut(self.inner.id, |meta| {
-                meta.insert(
-                    name.to_string(),
-                    molrs::core::MetaValue::String(value.to_string()),
-                );
-            })
-            .map_err(js_err)
-    }
-
-    /// Set a per-frame numeric metadata value (`MetaValue::F64`).
-    #[wasm_bindgen(js_name = setMetaScalar)]
-    pub fn set_meta_scalar(&self, name: &str, value: f64) -> Result<(), JsValue> {
-        self.inner
-            .arena
-            .borrow_mut()
-            .with_frame_meta_mut(self.inner.id, |meta| {
-                meta.insert(name.to_string(), molrs::core::MetaValue::F64(value));
+                meta.insert(name.to_string(), value);
             })
             .map_err(js_err)
     }
@@ -440,7 +399,7 @@ impl Frame {
     /// # Example (JavaScript)
     ///
     /// ```js
-    /// const box = frame.simbox;
+    /// const box = frame.box;
     /// if (box) {
     ///   console.log("Volume:", box.volume());
     /// }
@@ -450,8 +409,10 @@ impl Frame {
         self.inner
             .arena
             .borrow()
-            .with_frame_box(self.inner.id, |sb| {
-                sb.map(|s| super::simbox::Box { inner: s.clone() })
+            .with_frame(self.inner.id, |f| {
+                f.simbox
+                    .as_ref()
+                    .map(|s| super::simbox::Box { inner: s.clone() })
             })
             .ok()?
     }
@@ -472,8 +433,7 @@ impl Frame {
     /// # Example (JavaScript)
     ///
     /// ```js
-    /// const origin = originVec;
-    /// frame.simbox = Box.cube(10.0, origin, true, true, true);
+    /// frame.box = new Box(Cell.lengths([10, 10, 10]), [0, 0, 0], [true, true, true]);
     /// ```
     #[wasm_bindgen(setter, js_name = box)]
     pub fn set_box(&self, simbox: Option<super::simbox::Box>) -> Result<(), JsValue> {
@@ -484,22 +444,6 @@ impl Frame {
             .map_err(js_err)
     }
 
-    /// Explicitly release this frame and all its blocks from the store.
-    ///
-    /// After calling `drop()`, any subsequent operations on this frame
-    /// or its blocks will throw. This is optional -- the frame will also
-    /// be released when garbage-collected by the JS engine.
-    ///
-    /// # Errors
-    ///
-    /// Throws a `JsValue` string if the frame was already dropped.
-    ///
-    /// # Example (JavaScript)
-    ///
-    /// ```js
-    /// frame.drop();
-    /// // frame.clear() would now throw
-    /// ```
     /// Judge this frame against the canonical Frame schema.
     ///
     /// Throws a string describing every violation when the frame does not
@@ -521,12 +465,28 @@ impl Frame {
         self.with_frame(|f| f.validate().map_err(|e| JsValue::from_str(&e.to_string())))
     }
 
+    /// Explicitly release this frame and all its blocks from the store.
+    ///
+    /// After calling `drop()`, any subsequent operations on this frame
+    /// or its blocks will throw. This is optional -- the frame will also
+    /// be released when garbage-collected by the JS engine.
+    ///
+    /// # Errors
+    ///
+    /// Throws a `JsValue` string if the frame was already dropped.
+    ///
+    /// # Example (JavaScript)
+    ///
+    /// ```js
+    /// frame.drop();
+    /// // frame.clear() would now throw
+    /// ```
     #[wasm_bindgen(js_name = drop)]
     pub fn drop_frame(&self) -> Result<(), JsValue> {
         self.inner
             .arena
             .borrow_mut()
-            .frame_drop(self.inner.id)
+            .drop_frame(self.inner.id)
             .map_err(js_err)
     }
 }
@@ -535,6 +495,127 @@ impl Default for Frame {
     fn default() -> Self {
         Self::new()
     }
+}
+
+#[wasm_bindgen(typescript_custom_section)]
+const META_VALUE_TYPE: &'static str = r#"
+/**
+ * A frame metadata value, as `Frame.getMeta` returns it and `Frame.setMeta`
+ * takes it: each metadata dtype as its own JS type (see `Frame.getMeta`).
+ */
+export type MetaValue =
+    | boolean | number | bigint | string
+    | boolean[] | Int32Array | Uint32Array | BigInt64Array | BigUint64Array | Float64Array
+    | null | object;
+"#;
+
+#[wasm_bindgen]
+extern "C" {
+    /// A metadata value: see the `MetaValue` TypeScript type.
+    #[wasm_bindgen(typescript_type = "MetaValue")]
+    pub type JsMetaValue;
+
+    /// A metadata value, or `undefined` for a missing key.
+    #[wasm_bindgen(typescript_type = "MetaValue | undefined")]
+    pub type JsMetaValueOrUndefined;
+}
+
+/// `value` as the JS type of its dtype (the table on `Frame.getMeta`).
+fn meta_to_js(value: &MetaValue) -> Result<JsValue, JsValue> {
+    Ok(match value {
+        MetaValue::Bool(v) => JsValue::from_bool(*v),
+        MetaValue::I32(v) => JsValue::from(*v),
+        MetaValue::U32(v) => JsValue::from(*v),
+        MetaValue::F64(v) => JsValue::from_f64(*v),
+        MetaValue::I64(v) => BigInt::from(*v).into(),
+        MetaValue::U64(v) => BigInt::from(*v).into(),
+        MetaValue::String(v) => JsValue::from_str(v),
+        MetaValue::Bool3(v) => v
+            .iter()
+            .map(|&b| JsValue::from_bool(b))
+            .collect::<JsArray>()
+            .into(),
+        MetaValue::I32x3(v) => Int32Array::from(&v[..]).into(),
+        MetaValue::U32x3(v) => Uint32Array::from(&v[..]).into(),
+        MetaValue::I64x3(v) => BigInt64Array::from(&v[..]).into(),
+        MetaValue::U64x3(v) => BigUint64Array::from(&v[..]).into(),
+        MetaValue::F64x3(v) => Float64Array::from(&v[..]).into(),
+        MetaValue::F64x6(v) => Float64Array::from(&v[..]).into(),
+        MetaValue::F64x9(v) => Float64Array::from(&v[..]).into(),
+        MetaValue::Json(v) => v
+            .serialize(&serde_wasm_bindgen::Serializer::json_compatible())
+            .map_err(|e| JsValue::from_str(&format!("getMeta: {e}")))?,
+    })
+}
+
+/// The metadata value a JS value is (the table on `Frame.setMeta`).
+fn meta_from_js(name: &str, value: &JsValue) -> Result<MetaValue, JsValue> {
+    let refuse = |what: &str| {
+        JsValue::from_str(&format!(
+            "setMeta('{name}'): {what} has no metadata dtype; pass a string, boolean, \
+             number, bigint, a typed array of 3 (Float64Array also 6 or 9), \
+             boolean[3], or a JSON object/array"
+        ))
+    };
+    fn fixed<T: Copy, const N: usize>(values: Vec<T>) -> Option<[T; N]> {
+        values.try_into().ok()
+    }
+    if let Some(v) = value.as_string() {
+        return Ok(MetaValue::String(v));
+    }
+    if let Some(v) = value.as_bool() {
+        return Ok(MetaValue::Bool(v));
+    }
+    if let Some(v) = value.as_f64() {
+        return Ok(MetaValue::F64(v));
+    }
+    if value.is_bigint() {
+        let big: &BigInt = value.unchecked_ref();
+        if let Ok(v) = i64::try_from(big.clone()) {
+            return Ok(MetaValue::I64(v));
+        }
+        return u64::try_from(big.clone())
+            .map(MetaValue::U64)
+            .map_err(|_| refuse("a bigint beyond 64 bits"));
+    }
+    if let Some(a) = value.dyn_ref::<Float64Array>() {
+        let v = a.to_vec();
+        return match v.len() {
+            3 => Ok(MetaValue::F64x3(fixed(v).expect("len 3"))),
+            6 => Ok(MetaValue::F64x6(fixed(v).expect("len 6"))),
+            9 => Ok(MetaValue::F64x9(fixed(v).expect("len 9"))),
+            n => Err(refuse(&format!("a Float64Array of {n}"))),
+        };
+    }
+    macro_rules! triple {
+        ($js:ty, $variant:ident) => {
+            if let Some(a) = value.dyn_ref::<$js>() {
+                return fixed(a.to_vec())
+                    .map(MetaValue::$variant)
+                    .ok_or_else(|| refuse(&format!("a {} of {}", stringify!($js), a.length())));
+            }
+        };
+    }
+    triple!(Int32Array, I32x3);
+    triple!(Uint32Array, U32x3);
+    triple!(BigInt64Array, I64x3);
+    triple!(BigUint64Array, U64x3);
+    if value.is_undefined() || value.is_function() || value.is_symbol() {
+        return Err(refuse(&value.js_typeof().as_string().unwrap_or_default()));
+    }
+    if js_sys::ArrayBuffer::is_view(value) {
+        return Err(refuse("this typed array"));
+    }
+    if let Some(a) = value.dyn_ref::<JsArray>()
+        && a.length() == 3
+        && a.iter().all(|v| v.as_bool().is_some())
+    {
+        let flags: Vec<bool> = a.iter().filter_map(|v| v.as_bool()).collect();
+        return Ok(MetaValue::Bool3(fixed(flags).expect("len 3")));
+    }
+    serde_wasm_bindgen::from_value(value.clone())
+        .map(MetaValue::Json)
+        .map_err(|e| refuse(&format!("this value ({e})")))
 }
 
 /// Internal helpers (not exposed to JS).
@@ -591,22 +672,54 @@ mod tests {
     }
 
     #[wasm_bindgen_test]
-    fn get_meta_scalar_parses_numeric() {
+    fn get_meta_returns_the_stored_dtype() {
         let frame = frame_with_meta();
-        let energy = frame.get_meta_scalar("energy").unwrap();
-        assert!((energy - (-1.23)).abs() < 1e-10);
+        assert_eq!(frame.get_meta("energy").unwrap().as_f64(), Some(-1.23));
+        let config: JsValue = frame.get_meta("config").unwrap().into();
+        assert_eq!(config.as_string().as_deref(), Some("trans"));
+        assert!(JsValue::from(frame.get_meta("missing").unwrap()).is_undefined());
     }
 
     #[wasm_bindgen_test]
-    fn get_meta_scalar_none_for_non_numeric() {
-        let frame = frame_with_meta();
-        assert!(frame.get_meta_scalar("config").is_none());
-    }
-
-    #[wasm_bindgen_test]
-    fn get_meta_scalar_none_for_missing_key() {
-        let frame = frame_with_meta();
-        assert!(frame.get_meta_scalar("missing").is_none());
+    fn set_meta_round_trips_every_js_type() {
+        use wasm_bindgen::JsCast;
+        let frame = Frame::new();
+        let cases: Vec<(&str, JsValue, &str)> = vec![
+            ("s", JsValue::from_str("run-42"), "string"),
+            ("b", JsValue::TRUE, "bool"),
+            ("f", JsValue::from_f64(2.5), "f64"),
+            ("i", js_sys::BigInt::from(-7_i64).into(), "i64"),
+            ("u", js_sys::BigInt::from(u64::MAX).into(), "u64"),
+            (
+                "v3",
+                Float64Array::from(&[1.0, 2.0, 3.0][..]).into(),
+                "f64x3",
+            ),
+            ("v9", Float64Array::from(&[0.0; 9][..]).into(), "f64x9"),
+            ("i3", Int32Array::from(&[1, -2, 3][..]).into(), "i32x3"),
+            ("j", js_sys::Object::new().into(), "json"),
+        ];
+        for (key, value, dtype) in &cases {
+            frame.set_meta(key, value.clone().unchecked_into()).unwrap();
+            let stored = frame
+                .with_frame(|f| Ok(f.meta.get(key).unwrap().dtype()))
+                .unwrap();
+            assert_eq!(stored, *dtype, "{key}");
+        }
+        let i: JsValue = frame.get_meta("i").unwrap().into();
+        assert_eq!(
+            i64::try_from(i.unchecked_into::<js_sys::BigInt>()).unwrap(),
+            -7
+        );
+        let v3: Float64Array = JsValue::from(frame.get_meta("v3").unwrap()).unchecked_into();
+        assert_eq!(v3.to_vec(), vec![1.0, 2.0, 3.0]);
+        for bad in [
+            JsValue::UNDEFINED,
+            Float64Array::from(&[1.0, 2.0][..]).into(),
+            Int32Array::from(&[1, 2][..]).into(),
+        ] {
+            assert!(frame.set_meta("bad", bad.unchecked_into()).is_err());
+        }
     }
 
     #[wasm_bindgen_test]
@@ -647,9 +760,9 @@ mod tests {
         assert!(!dst.get("atoms").unwrap().has("y"));
         assert_eq!(dst.keys(), vec!["atoms".to_string()]);
 
-        dst.remove("atoms").unwrap();
+        dst.del_block("atoms").unwrap();
         assert!(!dst.has("atoms"));
-        assert!(dst.remove("atoms").is_err());
+        assert!(dst.del_block("atoms").is_err());
     }
 
     #[wasm_bindgen_test]

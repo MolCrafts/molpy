@@ -1,10 +1,9 @@
 //! LAMMPS `fix bond/react` (REACTER) templates and map files.
 
-use crate::io::invalid_data;
+use crate::io::{Sink, invalid_data};
 use std::collections::{BTreeSet, HashMap};
 use std::fmt::Write as _;
 use std::io::Result;
-use std::path::{Path, PathBuf};
 
 use molrs::core::Frame;
 
@@ -69,13 +68,13 @@ fn react_ids(frame: &Frame, which: &str) -> Result<Vec<i64>> {
             "the {which} template's atoms have no '{REACT_ID}' column pairing them"
         ))
     })?;
-    if let Some(v) = column.as_int() {
+    if let Some(v) = column.get::<i32>() {
         Ok(v.iter().map(|&x| x as i64).collect())
-    } else if let Some(v) = column.as_uint() {
+    } else if let Some(v) = column.get::<u64>() {
         Ok(v.iter().map(|&x| x as i64).collect())
-    } else if let Some(v) = column.as_i64() {
+    } else if let Some(v) = column.get::<i64>() {
         Ok(v.iter().copied().collect())
-    } else if let Some(v) = column.as_u32() {
+    } else if let Some(v) = column.get::<u32>() {
         Ok(v.iter().map(|&x| x as i64).collect())
     } else {
         Err(invalid_data(format!(
@@ -98,15 +97,8 @@ fn index(ids: &[i64], which: &str) -> Result<HashMap<i64, usize>> {
 }
 
 impl BondReactTemplate {
-    /// The map file's text.
-    ///
-    /// # Errors
-    ///
-    /// [`ErrorKind::InvalidData`](std::io::ErrorKind::InvalidData) when either template lacks an integer
-    /// `react_id` column or repeats a value, when the pre and post templates
-    /// do not hold the same `react_id`s, or when an initiator is not in the
-    /// pre template.
-    pub fn map_text(&self) -> Result<String> {
+    /// The map file's text ([`write_lammps_bond_react_map`]).
+    pub(crate) fn map_file_text(&self) -> Result<String> {
         let pre = react_ids(&self.pre, "pre")?;
         let post = react_ids(&self.post, "post")?;
         let pre_index = index(&pre, "pre")?;
@@ -170,19 +162,36 @@ impl BondReactTemplate {
     }
 }
 
-/// Write `{base_path}.map`, the map file of `template`.
+/// Write the map file of `template` into `sink`: a path (the file itself,
+/// conventionally `{name}.map`, created or truncated) or a buffer (cleared,
+/// then holding exactly the file's bytes). Nothing is written when the map is
+/// refused.
+///
+/// ```
+/// # use molrs::io::lammps::BondReactTemplate;
+/// # fn map_of(template: &BondReactTemplate) -> std::io::Result<String> {
+/// use molrs::io::write_lammps_bond_react_map;
+///
+/// let mut out = Vec::new();
+/// write_lammps_bond_react_map(&mut out, template)?;
+/// let text = String::from_utf8(out).expect("the map is ASCII");
+/// assert!(text.contains("Equivalences"));
+/// # Ok(text)
+/// # }
+/// ```
 ///
 /// # Errors
 ///
-/// [`BondReactTemplate::map_text`]'s, or the file's I/O error.
-pub fn write_lammps_bond_react_map(
+/// [`ErrorKind::InvalidData`](std::io::ErrorKind::InvalidData) when either
+/// template lacks an integer `react_id` column or repeats a value, when the
+/// pre and post templates do not hold the same `react_id`s, or when an
+/// initiator is not in the pre template; the sink's OS error.
+pub fn write_lammps_bond_react_map<'a>(
+    sink: impl Into<Sink<'a>>,
     template: &BondReactTemplate,
-    base_path: impl AsRef<Path>,
 ) -> Result<()> {
-    let text = template.map_text()?;
-    let mut path = base_path.as_ref().as_os_str().to_owned();
-    path.push(".map");
-    std::fs::write(PathBuf::from(path), text)
+    let text = template.map_file_text()?;
+    sink.into().put(text.as_bytes())
 }
 
 #[cfg(test)]
@@ -201,26 +210,34 @@ pub(crate) mod tests {
     pub(crate) fn template(types: &[&str], rids: &[i64], bonds: &[(Idx, Idx, &str)]) -> Frame {
         let n = types.len();
         let mut atoms = Block::new();
-        atoms.insert("type", strings(types)).unwrap();
+        atoms.insert("type", strings(types), None).unwrap();
         atoms
-            .insert(REACT_ID, Array1::from_vec(rids.to_vec()).into_dyn())
+            .insert(REACT_ID, Array1::from_vec(rids.to_vec()).into_dyn(), None)
             .unwrap();
-        let elements: Vec<&str> = types
+        // Each label's mass is stated, as a data file needs it; a species
+        // column would be no substitute (nothing derives mass from it).
+        let masses: Vec<F> = types
             .iter()
             .map(|t| match *t {
-                "oh" => "O",
-                "hc" => "H",
-                _ => "C",
+                "oh" => 15.999,
+                "hc" => 1.008,
+                _ => 12.011,
             })
             .collect();
-        atoms.insert("element", strings(&elements)).unwrap();
+        atoms
+            .insert("mass", Array1::from_vec(masses).into_dyn(), None)
+            .unwrap();
         for axis in ["x", "y", "z"] {
             atoms
-                .insert(axis, Array1::from_vec(vec![0.0 as F; n]).into_dyn())
+                .insert(axis, Array1::from_vec(vec![0.0 as F; n]).into_dyn(), None)
                 .unwrap();
         }
         atoms
-            .insert("charge", Array1::from_vec(vec![0.0 as F; n]).into_dyn())
+            .insert(
+                "charge",
+                Array1::from_vec(vec![0.0 as F; n]).into_dyn(),
+                None,
+            )
             .unwrap();
         let mut frame = Frame::new();
         frame.insert("atoms", atoms);
@@ -229,16 +246,19 @@ pub(crate) mod tests {
             b.insert(
                 "atomi",
                 Array1::from_iter(bonds.iter().map(|t| t.0)).into_dyn(),
+                None,
             )
             .unwrap();
             b.insert(
                 "atomj",
                 Array1::from_iter(bonds.iter().map(|t| t.1)).into_dyn(),
+                None,
             )
             .unwrap();
             b.insert(
                 "type",
                 strings(&bonds.iter().map(|t| t.2).collect::<Vec<_>>()),
+                None,
             )
             .unwrap();
             frame.insert("bonds", b);
@@ -257,9 +277,16 @@ pub(crate) mod tests {
         }
     }
 
+    /// The map file of `t`, written into a buffer.
+    fn map(t: &BondReactTemplate) -> Result<String> {
+        let mut out = Vec::new();
+        write_lammps_bond_react_map(&mut out, t)?;
+        Ok(String::from_utf8(out).expect("the map is ASCII"))
+    }
+
     #[test]
     fn the_map_pairs_atoms_and_names_initiators_edges_and_deletions() {
-        let text = coupling().map_text().unwrap();
+        let text = map(&coupling()).unwrap();
         let lines: Vec<&str> = text.lines().collect();
         assert!(lines.contains(&"3 equivalences"));
         // edge 1 is an initiator and is left out.
@@ -282,12 +309,28 @@ pub(crate) mod tests {
     fn mismatched_templates_and_lost_initiators_are_refused() {
         let mut t = coupling();
         t.post = template(&["oh", "c3"], &[2, 1], &[]);
-        assert_eq!(t.map_text().unwrap_err().kind(), ErrorKind::InvalidData);
+        assert_eq!(map(&t).unwrap_err().kind(), ErrorKind::InvalidData);
         let mut t = coupling();
         t.initiators = [1, 7];
-        assert!(t.map_text().unwrap_err().to_string().contains("react_id=7"));
+        assert!(map(&t).unwrap_err().to_string().contains("react_id=7"));
         let mut t = coupling();
         t.pre = template(&["c3", "oh", "hc"], &[1, 1, 3], &[]);
-        assert!(t.map_text().unwrap_err().to_string().contains("twice"));
+        assert!(map(&t).unwrap_err().to_string().contains("twice"));
+    }
+
+    #[test]
+    fn the_map_reaches_a_path_and_a_buffer_alike_and_a_refused_one_writes_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("rxn.map");
+        write_lammps_bond_react_map(path.as_path(), &coupling()).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            map(&coupling()).unwrap()
+        );
+        let mut t = coupling();
+        t.initiators = [1, 7];
+        let refused = dir.path().join("refused.map");
+        assert!(write_lammps_bond_react_map(refused.as_path(), &t).is_err());
+        assert!(!refused.exists());
     }
 }

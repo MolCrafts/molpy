@@ -115,10 +115,11 @@ mod tests {
     use super::*;
     use crate::compute::fixtures::neighbors_of;
     use crate::compute::{Cluster, ClusterInput, ClusterResult};
+    use crate::core::Cell;
     use ndarray::{Array1, arr1, arr2, array};
 
     fn cube(len: F, pbc: [bool; 3]) -> SimBox {
-        SimBox::cube(len, array![0.0, 0.0, 0.0], pbc).unwrap()
+        SimBox::new(Cell::Lengths([len; 3]), [0.0, 0.0, 0.0], pbc).unwrap()
     }
 
     fn manual_clusters(idx: &[i64]) -> ClusterResult {

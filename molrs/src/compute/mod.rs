@@ -7,7 +7,9 @@
 //! [`compute`](Compute::compute). A fit is a `Compute` whose input is an
 //! upstream result; a check is a `Compute` whose output implements
 //! [`Verdict`]. Because there is only one verb, any output can be the next
-//! analysis's input with no glue in between.
+//! analysis's input with no glue in between. The trajectory analyses [`Msd`],
+//! [`Vacf`] and [`Rdf`] are the exception: they are accumulators only
+//! ([`Stream`], below), fed one frame at a time.
 //!
 //! # `new` is configuration, `compute` is data
 //!
@@ -28,12 +30,21 @@
 //! result is final when it is returned.
 //!
 //! ```
-//! use molrs::compute::{Compute, CumulativeTrapezoid, CumulativeTrapezoidInput, Vacf, VacfInput};
-//! use ndarray::Array2;
+//! use molrs::compute::{
+//!     Accumulate, Compute, CorrelatorFrame, CumulativeTrapezoid, CumulativeTrapezoidInput,
+//!     Stream, Vacf,
+//! };
+//! use ndarray::{Array2, Axis};
 //!
-//! // Configuration: lags 0 … 16. Data: the velocities and their frame spacing.
+//! // Configuration: lags 0 … 16. Data: each frame's velocities and the frame
+//! // spacing, folded one frame at a time.
 //! let velocities = Array2::from_shape_fn((64, 3), |(t, d)| ((t * 3 + d) as f64 * 0.7).sin());
-//! let raw = Vacf::new(16).compute(VacfInput { velocities: velocities.view(), dt: 1.0 })?;
+//! let raw = Vacf::new(16).accumulator().fold(velocities.outer_iter().map(|v| CorrelatorFrame {
+//!     a: v.insert_axis(Axis(1)),
+//!     b: None,
+//!     dt: 1.0,
+//!     simbox: None,
+//! }))?;
 //!
 //! // A fit is a `Compute` whose input is the upstream curve: no glue.
 //! let running = CumulativeTrapezoid::new()
@@ -86,22 +97,21 @@
 //! [`Accumulate`] that receives one frame at a time through
 //! [`push`](Accumulate::push), and [`finish`](Accumulate::finish) reports the
 //! result so far without consuming it, so a long run can be inspected and
-//! continued. The algorithm lives once, in the accumulator: a `Stream`'s
-//! `compute` is `self.accumulator().fold(input)`. The one exception is
-//! [`Correlator`] (and so every correlation surface), whose `compute` is the
-//! faster FFT evaluation; its tests pin the FFT and the fold equal at every
-//! lag.
+//! continued. The algorithm lives once, in the accumulator: where a `Stream`
+//! also has a batch `compute`, it is `self.accumulator().fold(input)`. The
+//! one exception is [`Correlator`] (and the correlation surfaces built on it),
+//! whose `compute` is the faster FFT evaluation; its tests pin the FFT and
+//! the fold equal at every lag. [`Msd`], [`Vacf`] and [`Rdf`] have no batch
+//! form at all: the accumulator is their one entry.
 //!
 //! ```
-//! use molrs::compute::{Accumulate, Compute, CorrelatorFrame, Stream, Vacf, VacfInput};
+//! use molrs::compute::{Accumulate, CorrelatorFrame, Stream, Vacf};
 //! use ndarray::{Array2, Axis};
 //!
 //! let velocities = Array2::from_shape_fn((40, 6), |(t, d)| ((t * 6 + d) as f64 * 0.37).sin());
-//! let vacf = Vacf::new(8);
-//! let batch = vacf.compute(VacfInput { velocities: velocities.view(), dt: 0.5 })?;
 //!
-//! // The same curve, one frame of `n_dof × 1` velocities at a time.
-//! let mut running = vacf.accumulator();
+//! // One frame of `n_dof × 1` velocities at a time.
+//! let mut running = Vacf::new(8).accumulator();
 //! for frame in velocities.outer_iter() {
 //!     running.push(CorrelatorFrame {
 //!         a: frame.insert_axis(Axis(1)),
@@ -110,10 +120,9 @@
 //!         simbox: None,
 //!     })?;
 //! }
-//! let streamed = running.finish()?;
-//! for (s, b) in streamed.values.iter().zip(batch.values.iter()) {
-//!     assert!((s - b).abs() <= 1e-10 * b.abs().max(1.0));
-//! }
+//! let curve = running.finish()?; // a peek: more frames may follow
+//! assert_eq!(curve.n_lags(), 9);
+//! assert_eq!(running.n_frames(), 40);
 //! # Ok::<(), molrs::compute::ComputeError>(())
 //! ```
 //!
@@ -182,21 +191,23 @@
 //! because its pair set depends on the origin and the lag.
 //!
 //! ```
-//! use molrs::compute::{Compute, Rdf};
-//! use molrs::core::{NeighborColumns, NeighborList, SimBox};
+//! use molrs::compute::{Accumulate, Rdf, Stream};
+//! use molrs::core::{Cell, NeighborColumns, NeighborList, SimBox};
 //! use ndarray::{Array2, array};
 //!
-//! let simbox = SimBox::cube(10.0, array![0.0, 0.0, 0.0], [true; 3]).unwrap();
+//! let simbox = SimBox::new(Cell::Lengths([10.0; 3]), [0.0, 0.0, 0.0], [true; 3]).unwrap();
 //! let points = Array2::from_shape_fn((64, 3), |(i, d)| 2.5 * ((i >> (2 * d)) & 3) as f64 + 0.3);
 //! let mut nl = NeighborList::new(4.0);
 //! nl.build(points.view(), &simbox);
 //!
 //! let rdf = Rdf::new(20, 4.0, 0.0)?;
-//! let streamed = rdf.compute(&[&nl])?; // pairs straight from the cell list
+//! let mut streamed = rdf.accumulator();
+//! streamed.push(&nl)?; // pairs straight from the cell list
 //! let table = nl.neighbors(NeighborColumns::DIST_SQ);
 //! assert!(table.simbox().is_some()); // the table knows its box
-//! let materialized = rdf.compute(&[&table])?;
-//! assert_eq!(streamed.n_r, materialized.n_r);
+//! let mut materialized = rdf.accumulator();
+//! materialized.push(&table)?;
+//! assert_eq!(streamed.finish()?.n_r, materialized.finish()?.n_r);
 //! # Ok::<(), molrs::compute::ComputeError>(())
 //! ```
 //!
@@ -461,12 +472,11 @@ pub use spectroscopy::{
 pub use time_series::{
     Correlator, CorrelatorAccumulator, CorrelatorFrame, CorrelatorInput, CurrentAcf,
     CurrentAcfInput, Derivative, DerivativeInput, DipoleAcf, DipoleAcfInput, FrequencyGrid,
-    LagKernel, LagKernelKind, MeanPolicy, Msd, MsdInput, Normalization, OneSidedSpectrum,
-    OnsagerCorrelation, OnsagerInput, Origins, Reduction, ReorientationAcf, ReorientationAcfInput,
+    LagKernel, LagKernelKind, MeanPolicy, Msd, Normalization, OneSidedSpectrum, OnsagerCorrelation,
+    OnsagerInput, Origins, Reduction, ReorientationAcf, ReorientationAcfInput,
     RotationalAutocorrelation, RotationalAutocorrelationInput, Spectrum, SpectrumInput, Stencil,
     Survival, SurvivalAccumulator, SurvivalFrame, SurvivalInput, SurvivalKind,
-    SurvivalNormalization, SurvivalOrigin, TimeCorrelation, Unwrap, UnwrapInput, Vacf, VacfInput,
-    Window,
+    SurvivalNormalization, SurvivalOrigin, TimeCorrelation, Unwrap, UnwrapInput, Vacf, Window,
 };
 #[cfg(feature = "voronoi")]
 pub use voronoi::{

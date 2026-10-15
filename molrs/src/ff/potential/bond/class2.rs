@@ -9,7 +9,7 @@ use ndarray::{Array2, ArrayView2};
 use crate::ff::ir::Params;
 use crate::ff::potential::flat_coords::term_table;
 use crate::ff::potential::flat_coords::validate_coords;
-use crate::ff::potential::{ForceTerm, IndexedTerms, Potential};
+use crate::ff::potential::{Accumulator, ForceTerm, IndexedTerms, Potential};
 use molrs::core::Frame;
 use molrs::op::F;
 
@@ -107,16 +107,14 @@ impl BondClass2 {
 }
 
 impl Potential for BondClass2 {
-    fn calc_energy_forces(&self, coords: &[F]) -> (F, Vec<F>) {
-        let mut out = vec![0.0; coords.len()];
-        let energy = self.accumulate(coords, &mut out);
-        (energy, out)
-    }
-
-    fn accumulate(&self, coords: &[F], out: &mut [F]) -> F {
-        self.fold(coords, out, self.atom_i.len(), |t| {
-            (self.atom_i[t], self.atom_j[t])
-        })
+    fn evaluate(&self, coords: &[F], acc: &mut Accumulator<'_>) {
+        let energy = self.fold(
+            coords,
+            acc.forces_without_virial(),
+            self.atom_i.len(),
+            |t| (self.atom_i[t], self.atom_j[t]),
+        );
+        acc.add_energy(energy);
     }
 }
 
@@ -124,25 +122,16 @@ impl IndexedTerms for BondClass2 {
     fn terms(&self) -> Array2<u32> {
         term_table(&[&self.atom_i, &self.atom_j])
     }
-    fn calc_energy_forces_with_terms(
-        &self,
-        coords: &[F],
-        terms: ArrayView2<'_, u32>,
-    ) -> (F, Vec<F>) {
-        let mut out = vec![0.0; coords.len()];
-        let energy = self.accumulate_with_terms(coords, terms, &mut out);
-        (energy, out)
-    }
-
-    fn accumulate_with_terms(&self, coords: &[F], terms: ArrayView2<'_, u32>, out: &mut [F]) -> F {
+    fn evaluate_terms(&self, coords: &[F], terms: ArrayView2<'_, u32>, acc: &mut Accumulator<'_>) {
         debug_assert_eq!(
             terms.nrows(),
             self.atom_i.len(),
             "the row set is the force field's; only the atoms a row names may be rebound"
         );
-        self.fold(coords, out, terms.nrows(), |t| {
+        let energy = self.fold(coords, acc.forces_without_virial(), terms.nrows(), |t| {
             (terms[[t, 0]] as usize, terms[[t, 1]] as usize)
-        })
+        });
+        acc.add_energy(energy);
     }
 }
 
@@ -159,15 +148,15 @@ pub fn bond_class2_constructor(
         .ok_or_else(|| "BondClass2: frame missing \"bonds\" block".to_string())?;
     let i_col = block
         .get("atomi")
-        .and_then(|c| c.as_uint())
+        .and_then(|c| c.get::<u64>())
         .ok_or_else(|| "BondClass2: bonds block missing \"atomi\" column".to_string())?;
     let j_col = block
         .get("atomj")
-        .and_then(|c| c.as_uint())
+        .and_then(|c| c.get::<u64>())
         .ok_or_else(|| "BondClass2: bonds block missing \"atomj\" column".to_string())?;
     let type_col = block
         .get("type")
-        .and_then(|c| c.as_string())
+        .and_then(|c| c.get::<String>())
         .ok_or_else(|| "BondClass2: bonds block missing \"type\" column".to_string())?;
 
     let (mut ai, mut aj) = (Vec::new(), Vec::new());
@@ -192,6 +181,7 @@ pub fn bond_class2_constructor(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ff::potential::fixtures::OneShot;
 
     fn numerical_forces(pot: &BondClass2, coords: &[F]) -> Vec<F> {
         let h = 1e-6;
@@ -201,7 +191,7 @@ mod tests {
             let mut cm = coords.to_vec();
             cp[k] += h;
             cm[k] -= h;
-            num[k] = -(pot.calc_energy(&cp) - pot.calc_energy(&cm)) / (2.0 * h);
+            num[k] = -(pot.energy_at(&cp) - pot.energy_at(&cm)) / (2.0 * h);
         }
         num
     }
@@ -220,7 +210,7 @@ mod tests {
         let coords: Vec<F> = vec![0.0, 0.0, 0.0, 2.0, 0.0, 0.0];
         let dr: F = 0.5;
         let expected = 100.0 * dr * dr + 10.0 * dr.powi(3) + 5.0 * dr.powi(4);
-        assert!((pot.calc_energy(&coords) - expected).abs() < 1e-9);
+        assert!((pot.energy_at(&coords) - expected).abs() < 1e-9);
     }
 
     #[test]
@@ -234,7 +224,7 @@ mod tests {
             vec![5.0],
         );
         let coords: Vec<F> = vec![0.1, -0.2, 0.05, 1.3, 0.6, -0.3];
-        let (_, analytical) = pot.calc_energy_forces(&coords);
+        let (_, analytical) = pot.energy_forces_at(&coords);
         let numerical = numerical_forces(&pot, &coords);
         for k in 0..coords.len() {
             assert!(

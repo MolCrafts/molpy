@@ -24,7 +24,8 @@ use crate::line_notation::error::{SmilesError, SmilesErrorKind};
 /// ([`AtomSpec::Query`]) or a SMARTS bond query (`!`, `&`, `,`), and
 /// [`SmilesErrorKind::DescriptorInPlainSmiles`] for a node carrying a bonding
 /// descriptor — write that IR with [`fragment_smiles_text`] instead.
-pub fn smiles_text(ir: &SmilesIr) -> Result<String, SmilesError> {
+#[cfg(test)]
+pub(crate) fn smiles_text(ir: &SmilesIr) -> Result<String, SmilesError> {
     emit_ir(ir, Dialect::Smiles)
 }
 
@@ -75,7 +76,6 @@ pub fn smarts_text(ir: &SmilesIr) -> Result<String, SmilesError> {
 ///
 /// It never returns [`SmilesErrorKind::DescriptorInPlainSmiles`]: that is the
 /// plain writers' refusal of the input this one exists to accept.
-#[cfg(test)]
 pub(crate) fn fragment_smiles_text(ir: &SmilesIr) -> Result<String, SmilesError> {
     emit_ir(ir, Dialect::FragmentSmiles)
 }

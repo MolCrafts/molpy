@@ -14,7 +14,7 @@
 //! the IR is written as a LAMMPS data file and include ([`LammpsForcefieldWriter`]),
 //! an OpenMM `<ForceField>` XML ([`OpenmmXmlWriter`], with residue
 //! templates `scripts/ff_equivalence_check.py` builds from the frame) and a
-//! GROMACS topology ([`GromacsTopForcefieldWriter::write_system_str`]); every file,
+//! GROMACS topology ([`GromacsTopForcefieldWriter::write_system`]); every file,
 //! and the source itself in its native engine, is priced at [`CONFIGS`]
 //! configurations — the source's coordinates plus a seeded 0.05 Å Gaussian,
 //! on the 0.01 Å grid a `.gro` file holds exactly.
@@ -52,6 +52,9 @@
 // The engines' numbers are kept as they printed them.
 #![allow(clippy::excessive_precision)]
 
+use crate::core::Cell;
+use crate::ff::potential::fixtures::OneShot;
+use crate::io::writer::WrittenText;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fmt::Write as _;
 use std::io::Cursor;
@@ -73,11 +76,7 @@ use crate::io::mrec::ForceFieldSection;
 use crate::io::openmm_xml::reader::OpenmmXmlReader;
 use crate::io::openmm_xml::writer::OpenmmXmlWriter;
 use crate::io::reader::ForceFieldReader;
-use crate::io::writer::ForceFieldWriter;
-use crate::io::{
-    lammps::LammpsForcefieldReader, lammps::LammpsForcefieldWriteOptions,
-    lammps::LammpsForcefieldWriter,
-};
+use crate::io::{lammps::LammpsForcefieldReader, lammps::LammpsForcefieldWriter};
 use molrs::core::Block;
 use molrs::core::Frame;
 use molrs::core::SimBox;
@@ -86,7 +85,7 @@ use molrs::core::constants::COULOMB_REAL;
 use molrs::core::schema::PAIR_OVERRIDE_COLUMNS;
 use molrs::io::gro::GroReader;
 use molrs::io::lammps::data::{read_lammps_data, write_lammps_data};
-use molrs::io::read_inpcrd_str;
+use molrs::io::read_inpcrd;
 use molrs::io::reader::FrameReader as _;
 use molrs::op::{F, Idx};
 
@@ -218,14 +217,14 @@ fn no_cutoff(ff: &mut ForceField) {
 
 fn prmtop(parm: &str, rst: &str) -> System {
     let (mut ff, mut frame) = AmberPrmtopForcefieldReader::new()
-        .read_system_str(parm)
+        .read_system(parm.as_bytes())
         .unwrap();
     no_cutoff(&mut ff);
-    let pairs = intramolecular_pairs(&frame, ff.special_bonds()).unwrap();
+    let pairs = intramolecular_pairs(&frame, ff.special_bonds(), None).unwrap();
     frame.insert("pairs", pairs);
-    let xyz = read_inpcrd_str(rst).unwrap();
+    let xyz = read_inpcrd(rst.as_bytes()).unwrap();
     let atoms = xyz.get("atoms").unwrap();
-    let col = |k: &str| atoms.get(k).unwrap().as_float().unwrap().to_owned();
+    let col = |k: &str| atoms.get(k).unwrap().get::<f64>().unwrap().to_owned();
     let (x, y, z) = (col("x"), col("y"), col("z"));
     let coords = (0..x.len())
         .flat_map(|i| [x[[i]], y[[i]], z[[i]]])
@@ -243,7 +242,7 @@ fn openmm_charmm36() -> System {
 
 fn gromacs(top: &str, gro: &str) -> System {
     let (mut ff, mut frame) = GromacsTopForcefieldReader::new()
-        .read_system_str(top)
+        .read_system(top.as_bytes())
         .unwrap();
     no_cutoff(&mut ff);
     let gro = GroReader::new(Cursor::new(gro)).read().unwrap().unwrap();
@@ -251,7 +250,11 @@ fn gromacs(top: &str, gro: &str) -> System {
     let atoms = frame.get_mut("atoms").unwrap();
     for key in ["x", "y", "z"] {
         atoms
-            .insert(key, g.get(key).unwrap().as_float().unwrap().to_owned())
+            .insert(
+                key,
+                g.get(key).unwrap().get::<f64>().unwrap().to_owned(),
+                None,
+            )
             .unwrap();
     }
     let coords = frame.coords().unwrap().into_iter().collect();
@@ -312,14 +315,26 @@ pub(crate) fn probe(source: &str, n: usize, k: usize) -> Vec<F> {
 /// `p` without `key`, on every side.
 fn without(p: &Params, key: &str) -> Params {
     let mut out = Params::new();
-    for (k, v) in p.iter().filter(|(k, _)| *k != key) {
+    for (k, v) in p
+        .iter()
+        .filter_map(|(k, v)| v.as_num().map(|x| (k, x)))
+        .filter(|(k, _)| *k != key)
+    {
         out.set(k, v);
     }
-    for (k, v) in p.iter_strings().filter(|(k, _)| *k != key) {
-        out.set_str(k, v);
+    for (k, v) in p
+        .iter()
+        .filter_map(|(k, v)| v.as_text().map(|s| (k, s)))
+        .filter(|(k, _)| *k != key)
+    {
+        out.set(k, v);
     }
-    for (k, v) in p.iter_arrays().filter(|(k, _)| *k != key) {
-        out.set_array(k, v.clone());
+    for (k, v) in p
+        .iter()
+        .filter_map(|(k, v)| v.as_array().map(|a| (k, a)))
+        .filter(|(k, _)| *k != key)
+    {
+        out.set(k, v.clone());
     }
     out
 }
@@ -346,7 +361,7 @@ fn idx_col(frame: &Frame, block: &str, key: &str) -> Vec<usize> {
     frame
         .get(block)
         .and_then(|b| b.get(key))
-        .and_then(|c| c.as_uint())
+        .and_then(|c| c.get::<u64>())
         .map(|c| c.iter().map(|&v| v as usize).collect())
         .unwrap_or_default()
 }
@@ -374,7 +389,7 @@ fn relation_rows(frame: &Frame, block: &str, arity: usize) -> Vec<(Vec<usize>, S
         .iter()
         .map(|k| idx_col(frame, block, k))
         .collect();
-    let types = b.get("type").unwrap().as_string().unwrap();
+    let types = b.get("type").unwrap().get::<String>().unwrap();
     (0..types.len())
         .map(|r| (cols.iter().map(|c| c[r]).collect(), types[[r]].clone()))
         .collect()
@@ -388,12 +403,12 @@ fn relation(rows: &[(Vec<usize>, String)], arity: usize) -> Block {
     {
         let col: Vec<Idx> = rows.iter().map(|r| r.0[k] as Idx).collect();
         block
-            .insert(*key, Array1::from_vec(col).into_dyn())
+            .insert(*key, Array1::from_vec(col).into_dyn(), None)
             .unwrap();
     }
     let labels: Vec<String> = rows.iter().map(|r| r.1.clone()).collect();
     block
-        .insert("type", Array1::from_vec(labels).into_dyn())
+        .insert("type", Array1::from_vec(labels).into_dyn(), None)
         .unwrap();
     block
 }
@@ -422,7 +437,7 @@ pub(crate) const PAIR14: &str = "---@pairs";
 pub(crate) fn one_four_as_dihedral_weights(ff: &ForceField, frame: &Frame) -> (ForceField, Frame) {
     let epsilon14 = ff
         .get_style("pair", "lj/charmm")
-        .is_some_and(|s| s.params().get_str("one_four") == Some("epsilon14"));
+        .is_some_and(|s| s.params().get("one_four").and_then(|v| v.as_text()) == Some("epsilon14"));
     if !epsilon14 {
         return (ff.clone(), frame.clone());
     }
@@ -448,7 +463,7 @@ pub(crate) fn one_four_as_dihedral_weights(ff: &ForceField, frame: &Frame) -> (F
         .def_type(
             PAIR14,
             &["", "", "", ""],
-            Params::from_pairs(&[
+            Params::from_iter([
                 ("k", 0.0),
                 ("periodicity", 1.0),
                 ("phase", 0.0),
@@ -458,7 +473,7 @@ pub(crate) fn one_four_as_dihedral_weights(ff: &ForceField, frame: &Frame) -> (F
         .unwrap();
     let adjacent = adjacency(frame);
     let pairs = frame.get("pairs").unwrap();
-    let is_14 = pairs.get("is_14").unwrap().as_bool().unwrap();
+    let is_14 = pairs.get("is_14").unwrap().get::<bool>().unwrap();
     let (pi, pj) = (
         idx_col(frame, "pairs", "atomi"),
         idx_col(frame, "pairs", "atomj"),
@@ -474,7 +489,7 @@ pub(crate) fn one_four_as_dihedral_weights(ff: &ForceField, frame: &Frame) -> (F
     out_frame.insert("dihedrals", relation(&rows, 4));
     out_frame.insert(
         "pairs",
-        intramolecular_pairs(&out_frame, out.special_bonds()).unwrap(),
+        intramolecular_pairs(&out_frame, out.special_bonds(), None).unwrap(),
     );
     (out, out_frame)
 }
@@ -523,16 +538,29 @@ pub(crate) fn chainless_dihedrals_as_impropers(
                 .map(str::to_owned)
                 .collect::<Vec<_>>();
             let ends: Vec<&str> = ends.iter().map(String::as_str).collect();
-            let terms: Vec<Params> = if p.get("k1").is_none() {
+            let terms: Vec<Params> = if p.get("k1").and_then(|v| v.as_num()).is_none() {
                 vec![p.clone()]
             } else {
                 (1..)
-                    .take_while(|m| p.get(&format!("k{m}")).is_some())
+                    .take_while(|m| p.get(&format!("k{m}")).and_then(|v| v.as_num()).is_some())
                     .map(|m| {
-                        Params::from_pairs(&[
-                            ("k", p.get(&format!("k{m}")).unwrap()),
-                            ("periodicity", p.get(&format!("periodicity{m}")).unwrap()),
-                            ("phase", p.get(&format!("phase{m}")).unwrap_or(0.0)),
+                        Params::from_iter([
+                            (
+                                "k",
+                                p.get(&format!("k{m}")).and_then(|v| v.as_num()).unwrap(),
+                            ),
+                            (
+                                "periodicity",
+                                p.get(&format!("periodicity{m}"))
+                                    .and_then(|v| v.as_num())
+                                    .unwrap(),
+                            ),
+                            (
+                                "phase",
+                                p.get(&format!("phase{m}"))
+                                    .and_then(|v| v.as_num())
+                                    .unwrap_or(0.0),
+                            ),
                         ])
                     })
                     .collect()
@@ -559,7 +587,7 @@ pub(crate) fn chainless_dihedrals_as_impropers(
     let dihedral = out.get_style_mut("dihedral", "periodic").unwrap();
     for name in moved.keys() {
         if !still.contains(name.as_str()) {
-            dihedral.remove_type(name);
+            dihedral.del_type(name);
         }
     }
     // A style left without types is no style.
@@ -634,7 +662,7 @@ pub(crate) fn coulomb(ff: &ForceField) -> F {
     ["coul/cut", "coul/charmm"]
         .iter()
         .find_map(|s| ff.get_style("pair", s))
-        .and_then(|s| s.params().get("coulomb"))
+        .and_then(|s| s.params().get("coulomb").and_then(|v| v.as_num()))
         .unwrap_or(COULOMB_REAL)
 }
 
@@ -685,7 +713,7 @@ pub(crate) fn molrs_terms(
     let mut frame = frame.clone();
     let one_four = ff
         .get_style("pair", "lj/charmm")
-        .is_some_and(|s| s.params().get_str("one_four") == Some("epsilon14"));
+        .is_some_and(|s| s.params().get("one_four").and_then(|v| v.as_text()) == Some("epsilon14"));
     if one_four {
         ff.materialize_one_four(&mut frame).unwrap();
     }
@@ -708,7 +736,7 @@ pub(crate) fn molrs_terms(
         // are the exceptions kernel's, added below.
         let params = if style.name() == "lj/charmm" {
             let mut p = style.params().clone();
-            p.set_str("one_four", "regular");
+            p.set("one_four", "regular");
             p
         } else {
             style.params().clone()
@@ -718,7 +746,7 @@ pub(crate) fn molrs_terms(
             .def_style(style.category(), style.name(), params)
             .unwrap();
         for (name, ends, p) in style.type_rows() {
-            let p = if p.get("w").is_some() {
+            let p = if p.get("w").and_then(|v| v.as_num()).is_some() {
                 let mut p = p.clone();
                 p.set("w", 0.0);
                 p
@@ -739,7 +767,7 @@ pub(crate) fn molrs_terms(
         if let Some(block) = block {
             let Some(b) = plain.get(block) else { continue };
             let names: HashSet<&str> = style.type_rows().iter().map(|r| r.0).collect();
-            let labels = b.get("type").unwrap().as_string().unwrap();
+            let labels = b.get("type").unwrap().get::<String>().unwrap();
             let keep: Vec<usize> = (0..labels.len())
                 .filter(|&r| names.contains(labels[[r]].as_str()))
                 .collect();
@@ -751,7 +779,7 @@ pub(crate) fn molrs_terms(
         *out.get_mut(term).unwrap() += PotentialCompiler::new(&one)
             .compile(&own)
             .unwrap()
-            .calc_energy(x);
+            .energy_at(x);
     }
     let (lj14, coul14) = exceptions::plan(ff, &frame)
         .unwrap()
@@ -765,7 +793,7 @@ pub(crate) fn molrs_terms(
         PotentialCompiler::new(ff)
             .compile(&frame)
             .unwrap()
-            .calc_energy(x),
+            .energy_at(x),
     );
     out
 }
@@ -776,14 +804,15 @@ pub(crate) fn molrs_forces(ff: &ForceField, frame: &Frame, x: &[F], c: F) -> Vec
     let mut frame = frame.clone();
     if ff
         .get_style("pair", "lj/charmm")
-        .is_some_and(|s| s.params().get_str("one_four") == Some("epsilon14"))
+        .is_some_and(|s| s.params().get("one_four").and_then(|v| v.as_text()) == Some("epsilon14"))
     {
         ff.materialize_one_four(&mut frame).unwrap();
     }
     PotentialCompiler::new(&ff)
         .compile(&frame)
         .unwrap()
-        .calc_forces(x)
+        .energy_forces_at(x)
+        .1
 }
 
 /// The fingerprint of forces `f` on probe `v`: (ΣF·v, Σ|F|²).
@@ -823,12 +852,12 @@ fn placed(frame: &Frame, x: &[F]) -> Frame {
     for (d, key) in ["x", "y", "z"].iter().enumerate() {
         let col: Vec<F> = x.iter().skip(d).step_by(3).copied().collect();
         atoms
-            .insert(*key, Array1::from_vec(col).into_dyn())
+            .insert(*key, Array1::from_vec(col).into_dyn(), None)
             .unwrap();
     }
     let lo = x.iter().copied().fold(F::INFINITY, F::min) - 50.0;
     let hi = x.iter().copied().fold(F::NEG_INFINITY, F::max) + 50.0;
-    out.simbox = Some(SimBox::cube(hi - lo, ndarray::array![lo, lo, lo], [false; 3]).unwrap());
+    out.simbox = Some(SimBox::new(Cell::Lengths([hi - lo; 3]), [lo, lo, lo], [false; 3]).unwrap());
     out
 }
 
@@ -843,7 +872,11 @@ fn lammps_frame(frame: &Frame) -> Frame {
     if atoms.get("mol_id").is_none() {
         let n = atoms.n_rows().unwrap();
         atoms
-            .insert("mol_id", Array1::from_vec(vec![1 as Idx; n]).into_dyn())
+            .insert(
+                "mol_id",
+                Array1::from_vec(vec![1 as Idx; n]).into_dyn(),
+                None,
+            )
             .unwrap();
     }
     out
@@ -855,20 +888,20 @@ pub(crate) fn lammps_include(ff: &ForceField, frame: &Frame) -> (String, String,
     let data = lammps_frame(frame);
     let labels = TypeLabels::from_frame(&data).unwrap();
     let has_cmap = data.get("cmaps").is_some();
-    let options = LammpsForcefieldWriteOptions {
-        precision: 17,
-        cmap_file: has_cmap.then(|| "system.cmap".to_owned()),
-        ..LammpsForcefieldWriteOptions::default()
+    let writer = match has_cmap.then(|| "system.cmap".to_owned()) {
+        Some(file) => LammpsForcefieldWriter::new(&labels)
+            .with_precision(17)
+            .with_cmap_file(file),
+        None => LammpsForcefieldWriter::new(&labels).with_precision(17),
     };
-    let writer = LammpsForcefieldWriter::with_options(&labels, options);
-    let text = writer.write_str(ff).unwrap();
+    let text = writer.written(ff).unwrap();
     let (pre, post): (Vec<&str>, Vec<&str>) = text.lines().partition(|l| {
         l.starts_with("units") || l.starts_with("fix ") || l.starts_with("fix_modify")
     });
     (
         pre.join("\n") + "\n",
         post.join("\n") + "\n",
-        has_cmap.then(|| writer.write_cmap_str(ff).unwrap()),
+        has_cmap.then(|| crate::io::writer::written_with(|b| writer.write_cmap(b, ff)).unwrap()),
     )
 }
 
@@ -878,9 +911,9 @@ fn gro(frame: &Frame, x: &[F]) -> String {
     let angstrom_to_nm = crate::core::unit_factors::ANGSTROM_TO_NM.get();
     let atoms = frame.get("atoms").unwrap();
     let n = atoms.n_rows().unwrap();
-    let name = atoms.get("name").and_then(|c| c.as_string());
-    let res = atoms.get("res_name").and_then(|c| c.as_string());
-    let resid = atoms.get("res_id").and_then(|c| c.as_uint());
+    let name = atoms.get("name").and_then(|c| c.get::<String>());
+    let res = atoms.get("res_name").and_then(|c| c.get::<String>());
+    let resid = atoms.get("res_id").and_then(|c| c.get::<u64>());
     let mut out = format!("molrs equivalence check\n{n}\n");
     for i in 0..n {
         let cut = |s: &str| s.chars().take(5).collect::<String>();
@@ -906,16 +939,16 @@ fn gro(frame: &Frame, x: &[F]) -> String {
 fn openmm_json(frame: &Frame, ff: &ForceField) -> Value {
     let atoms = frame.get("atoms").unwrap();
     let n = atoms.n_rows().unwrap();
-    let types = atoms.get("type").unwrap().as_string().unwrap();
-    let charges = atoms.get("charge").unwrap().as_float().unwrap();
-    let masses: Vec<F> = match atoms.get("mass").and_then(|c| c.as_float()) {
+    let types = atoms.get("type").unwrap().get::<String>().unwrap();
+    let charges = atoms.get("charge").unwrap().get::<f64>().unwrap();
+    let masses: Vec<F> = match atoms.get("mass").and_then(|c| c.get::<f64>()) {
         Some(m) => m.iter().copied().collect(),
         None => (0..n)
             .map(|i| {
                 ff.get_atomtypes()
                     .into_iter()
                     .find(|t| t.name == types[[i]])
-                    .and_then(|t| t.params.get("mass"))
+                    .and_then(|t| t.params.get("mass").and_then(|v| v.as_num()))
                     .unwrap()
             })
             .collect(),
@@ -961,7 +994,7 @@ fn stage_inputs(dir: &Path, source: &Source, tsv: &mut String) {
     }
     for (k, x) in configs.iter().enumerate() {
         write_lammps_data(
-            root.join(format!("lammps/data_{k}.lmp")),
+            &root.join(format!("lammps/data_{k}.lmp")),
             &lammps_frame(&placed(&lframe, x)),
         )
         .unwrap();
@@ -970,17 +1003,19 @@ fn stage_inputs(dir: &Path, source: &Source, tsv: &mut String) {
     let (off, oframe) = engine_form(&sys, "openmm");
     std::fs::write(
         root.join("openmm/ff.xml"),
-        OpenmmXmlWriter::new().write_str(&off).unwrap(),
+        OpenmmXmlWriter::new().written(&off).unwrap(),
     )
     .unwrap();
     // GROMACS.
     let (gff, gframe) = engine_form(&sys, "gromacs");
     std::fs::write(
         root.join("gromacs/topol.top"),
-        GromacsTopForcefieldWriter::new()
-            .with_precision(17)
-            .write_system_str(&gff, &gframe)
-            .unwrap(),
+        crate::io::writer::written_with(|b| {
+            GromacsTopForcefieldWriter::new()
+                .with_precision(17)
+                .write_system(b, &gff, &gframe)
+        })
+        .unwrap(),
     )
     .unwrap();
     for (k, x) in configs.iter().enumerate() {
@@ -1197,15 +1232,15 @@ fn every_written_file_reads_back_as_written() {
         if let Some(cmap) = &cmap {
             std::fs::write(dir.join("system.cmap"), cmap).unwrap();
         }
-        write_lammps_data(dir.join("data.lmp"), &lammps_frame(&placed(&frame, &x))).unwrap();
+        write_lammps_data(&dir.join("data.lmp"), &lammps_frame(&placed(&frame, &x))).unwrap();
         let back = LammpsForcefieldReader::new()
-            .read(dir.join("system.ff").to_str().unwrap())
+            .read(dir.join("system.ff").as_path())
             .unwrap_or_else(|e| panic!("{} LAMMPS include: {e}", source.name));
-        let mut back_frame = read_lammps_data(dir.join("data.lmp")).unwrap();
+        let mut back_frame = read_lammps_data(&dir.join("data.lmp")).unwrap();
         named_types(&mut back_frame);
         back_frame.insert(
             "pairs",
-            intramolecular_pairs(&back_frame, back.special_bonds()).unwrap(),
+            intramolecular_pairs(&back_frame, back.special_bonds(), None).unwrap(),
         );
         let (pre2, include2, cmap2) = lammps_include(&back, &back_frame);
         same_text(
@@ -1237,21 +1272,22 @@ fn every_written_file_reads_back_as_written() {
 
         // OpenMM XML.
         let (ff, _) = engine_form(&sys, "openmm");
-        let xml = OpenmmXmlWriter::new().write_str(&ff).unwrap();
+        let xml = OpenmmXmlWriter::new().written(&ff).unwrap();
         let back = OpenmmXmlReader::new()
-            .read_str(&xml)
+            .read(xml.as_bytes())
             .unwrap_or_else(|e| panic!("{} OpenMM XML: {e}", source.name));
-        let xml2 = OpenmmXmlWriter::new().write_str(&back).unwrap();
+        let xml2 = OpenmmXmlWriter::new().written(&back).unwrap();
         same_text(&xml, &xml2, &format!("{}: OpenMM XML", source.name));
 
         // GROMACS topology.
         let (ff, frame) = engine_form(&sys, "gromacs");
         let writer = GromacsTopForcefieldWriter::new().with_precision(17);
-        let top = writer.write_system_str(&ff, &frame).unwrap();
+        let top = crate::io::writer::written_with(|b| writer.write_system(b, &ff, &frame)).unwrap();
         let (back, mut back_frame) = GromacsTopForcefieldReader::new()
-            .read_system_str(&top)
+            .read_system(top.as_bytes())
             .unwrap_or_else(|e| panic!("{} GROMACS: {e}\n{top}", source.name));
-        let top2 = writer.write_system_str(&back, &back_frame).unwrap();
+        let top2 = crate::io::writer::written_with(|b| writer.write_system(b, &back, &back_frame))
+            .unwrap();
         same_text(&top, &top2, &format!("{}: GROMACS topology", source.name));
         let mut back_ff = back;
         no_cutoff(&mut back_ff);
@@ -1259,7 +1295,7 @@ fn every_written_file_reads_back_as_written() {
         for (d, key) in ["x", "y", "z"].iter().enumerate() {
             let col: Vec<F> = x.iter().skip(d).step_by(3).copied().collect();
             atoms
-                .insert(*key, Array1::from_vec(col).into_dyn())
+                .insert(*key, Array1::from_vec(col).into_dyn(), None)
                 .unwrap();
         }
         same_terms(
@@ -1326,7 +1362,7 @@ fn named_types(frame: &mut Frame) {
         if let Some(b) = frame.get_mut(block)
             && !names.is_empty()
         {
-            b.insert("type", Array1::from_vec(names).into_dyn())
+            b.insert("type", Array1::from_vec(names).into_dyn(), None)
                 .unwrap();
         }
     }

@@ -41,7 +41,6 @@ use pyo3::prelude::*;
 
 mod array;
 mod error;
-mod path;
 mod pickle;
 
 mod builder;

@@ -14,6 +14,8 @@ use crate::io::cgsmiles::templates::cg_build;
 use crate::io::smiles::SmilesError;
 use molrs::core::CoarseGrain;
 use molrs::core::NodeId;
+use molrs::core::Props;
+use molrs::core::keys;
 
 impl CgSmilesIr {
     /// Read the coarsest level, `levels[0]`, as a [`CoarseGrain`].
@@ -31,8 +33,8 @@ impl CgSmilesIr {
     ///
     /// **No geometry.** A line notation states topology, so no bead carries
     /// `x` / `y` / `z`, `mass` or `charge`, and the result has no bead
-    /// membership. [`MolGraph::center`](crate::core::MolGraph::center) therefore refuses it; a pattern
-    /// graph exists to be matched, not centred.
+    /// membership. [`CoarseGrain::center`](crate::core::CoarseGrain::center) therefore refuses it; a
+    /// pattern graph exists to be matched, not centred.
     ///
     /// # What is dropped
     ///
@@ -86,8 +88,9 @@ impl CgSmilesIr {
         let beads: Vec<NodeId> = level
             .nodes
             .iter()
-            .map(|node| cg.add_bead_bare(&node.name))
-            .collect();
+            .map(|node| cg.add_bead(Props::new().with(keys::BEAD_TYPE, node.name.as_str())))
+            .collect::<Result<_, _>>()
+            .map_err(|e| cg_build(self.span, format!("level 0 bead: {e}")))?;
 
         for (k, edge) in level.edges.iter().enumerate() {
             let (Some(&a), Some(&b)) = (beads.get(edge.i), beads.get(edge.j)) else {
@@ -106,7 +109,7 @@ impl CgSmilesIr {
                     ),
                 ));
             };
-            cg.add_bond(a, b).map_err(|e| {
+            cg.add_bond(a, b, Props::new()).map_err(|e| {
                 cg_build(
                     self.span,
                     format!("level 0 edge {k}: adding the CG bond failed: {e}"),
@@ -148,7 +151,7 @@ mod tests {
 
     /// Bead handles in row order.
     fn rows(cg: &CoarseGrain) -> Vec<NodeId> {
-        cg.node_ids().collect()
+        cg.bead_ids().collect()
     }
 
     /// `bead_type` of every bead, in row order.

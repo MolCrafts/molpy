@@ -2,15 +2,17 @@
 //!
 //! | Function | Format |
 //! |----------|--------|
-//! | [`readStlBytes`](read_stl_bytes) | STL, ASCII or binary (auto-detected) |
+//! | [`readStl`](read_stl) | STL, ASCII or binary (auto-detected) |
 //!
 //! Unlike every other format's reader, this produces a [`TriMesh`] rather
 //! than a `Frame`: an STL carries triangles, not atoms.
 
 use crate::core::mesh::TriMesh;
+use crate::io::{JsSource, source_bytes};
 use wasm_bindgen::prelude::*;
 
-/// Read an STL file's bytes into a [`TriMesh`].
+/// Read an STL file — its bytes, or an ASCII STL's text — into a
+/// [`TriMesh`].
 ///
 /// Both shapes of the format are accepted and told apart by length, not by
 /// the leading keyword — a binary STL's 80-byte header is free text and
@@ -18,12 +20,14 @@ use wasm_bindgen::prelude::*;
 ///
 /// # Arguments
 ///
-/// * `bytes` - The full binary content of an STL file. An internal copy is
-///   taken, so the caller may discard the buffer as soon as this returns.
+/// * `source` - The whole file: a `Uint8Array` (either shape) or a `string`
+///   (the text of an ASCII STL). An internal copy is taken, so the caller may
+///   discard the buffer as soon as this returns.
 ///
 /// # Errors
 ///
-/// Throws a `JsValue` string when the bytes are neither a length-matched
+/// Throws a `JsValue` string when `source` is neither a string nor a
+/// `Uint8Array`, or when the bytes are neither a length-matched
 /// binary STL nor readable ASCII. A file with no facets is **not** an error:
 /// it reads as a mesh with zero faces, and whether that is acceptable is the
 /// caller's decision.
@@ -31,12 +35,13 @@ use wasm_bindgen::prelude::*;
 /// # Example (JavaScript)
 ///
 /// ```js
-/// const mesh = readStlBytes(new Uint8Array(await file.arrayBuffer()));
+/// const mesh = readStl(new Uint8Array(await file.arrayBuffer()));
 /// console.log(`${mesh.nFaces()} triangles, watertight: ${mesh.isWatertight()}`);
 /// ```
-#[wasm_bindgen(js_name = readStlBytes)]
-pub fn read_stl_bytes(bytes: &[u8]) -> Result<TriMesh, JsValue> {
-    molrs::io::read_stl_bytes(bytes)
+#[wasm_bindgen(js_name = readStl)]
+pub fn read_stl(source: &JsSource) -> Result<TriMesh, JsValue> {
+    let bytes = source_bytes("readStl", source)?;
+    molrs::io::read_stl(bytes.as_slice())
         .map(|inner| TriMesh { inner })
         .map_err(|e| JsValue::from_str(&format!("STL reading error: {e}")))
 }
@@ -44,6 +49,7 @@ pub fn read_stl_bytes(bytes: &[u8]) -> Result<TriMesh, JsValue> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::io::test_fixtures::{bytes, text};
     use wasm_bindgen_test::*;
 
     /// One ASCII facet, wound so the normal is +z and the recorded one is not
@@ -60,7 +66,8 @@ mod tests {
 
     #[wasm_bindgen_test]
     fn reads_a_mesh_for_javascript() {
-        let mesh = read_stl_bytes(TRIANGLE.as_bytes()).unwrap();
+        let mesh = read_stl(&bytes(TRIANGLE.as_bytes())).unwrap();
+        assert_eq!(read_stl(&text(TRIANGLE)).unwrap().n_faces(), 1);
         assert_eq!(mesh.n_faces(), 1);
         assert_eq!(mesh.n_vertices(), 3);
         assert_eq!(mesh.faces(), vec![0, 1, 2]);
@@ -71,6 +78,6 @@ mod tests {
 
     #[wasm_bindgen_test]
     fn surfaces_a_parse_failure_as_a_js_string() {
-        assert!(read_stl_bytes(b"ITEM: TIMESTEP\n0\n").is_err());
+        assert!(read_stl(&bytes(b"ITEM: TIMESTEP\n0\n")).is_err());
     }
 }

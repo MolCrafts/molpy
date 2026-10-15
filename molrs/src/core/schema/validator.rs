@@ -183,7 +183,7 @@ impl Validator {
         // `check_columns`. Reading it as uint here would return None and
         // silently skip the range check — which is exactly the failure this
         // module exists to remove, so the dtype report is what covers it.
-        let Some(values) = frame.column(name, col).and_then(|c| c.as_uint()) else {
+        let Some(values) = frame.column(name, col).and_then(|c| c.get::<u64>()) else {
             return;
         };
         // A null row references nothing (a `virtual_sites` row built from
@@ -238,7 +238,7 @@ mod tests {
     /// An `atoms` block of `n` rows carrying only `x`.
     fn atoms(n: usize) -> Block {
         let mut b = Block::new();
-        b.insert("x", Array1::from_vec(vec![0.0 as F; n]).into_dyn())
+        b.insert("x", Array1::from_vec(vec![0.0 as F; n]).into_dyn(), None)
             .unwrap();
         b
     }
@@ -246,7 +246,7 @@ mod tests {
     fn uint_block(cols: &[(&str, &[Idx])]) -> Block {
         let mut b = Block::new();
         for (key, values) in cols {
-            b.insert(*key, Array1::from_vec(values.to_vec()).into_dyn())
+            b.insert(*key, Array1::from_vec(values.to_vec()).into_dyn(), None)
                 .unwrap();
         }
         b
@@ -345,7 +345,7 @@ mod tests {
         frame
             .get_mut("cmaps")
             .unwrap()
-            .insert("atomm", Array1::from_vec(vec![3 as Idx]).into_dyn())
+            .insert("atomm", Array1::from_vec(vec![3 as Idx]).into_dyn(), None)
             .unwrap();
         let report = Validator::canonical().check(&frame);
         assert!(report.to_string().contains("atomm"), "{report}");
@@ -367,10 +367,10 @@ mod tests {
         ]);
         // atoml is null on the one row, its filler pointing past the atoms.
         sites
-            .insert_nullable(
+            .insert(
                 "atoml",
                 Array1::from_vec(vec![99 as Idx]).into_dyn(),
-                vec![false],
+                Some(vec![false]),
             )
             .unwrap();
         frame.insert("virtual_sites", sites);

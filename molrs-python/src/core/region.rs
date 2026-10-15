@@ -29,12 +29,11 @@
 
 use crate::array::{ArrayArg1, ArrayArg2};
 use crate::core::mesh::PyTriMesh;
-use crate::core::simbox::PyBox;
+use crate::core::simbox::{PyBox, PyCell};
 use molrs::core::{
-    AndRegion, Cuboid, Cylinder, Ellipsoid, HalfSpace, NotRegion, OrRegion, Parallelepiped,
+    AndRegion, Cell, Cuboid, Cylinder, Ellipsoid, HalfSpace, NotRegion, OrRegion, Parallelepiped,
     Polyhedron, Region, Sphere, SphereUnion,
 };
-use molrs::op::Fnx3;
 use ndarray::{Array1, Array2};
 use numpy::{IntoPyArray, PyArray1, PyArray2};
 use pyo3::exceptions::{PyTypeError, PyValueError};
@@ -469,13 +468,6 @@ impl PyCuboid {
         )
     }
 
-    /// The axis-aligned cube of edge ``edge`` with minimum corner ``origin``.
-    #[staticmethod]
-    #[pyo3(signature = (edge, origin = vec![0.0, 0.0, 0.0]))]
-    fn cube(edge: f64, origin: Vec<f64>) -> PyResult<Self> {
-        Self::new(origin, vec![edge; 3])
-    }
-
     /// Minimum corner, shape ``(3,)``.
     #[getter]
     fn origin<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<f64>> {
@@ -528,65 +520,38 @@ pub struct PyParallelepiped {
 
 #[pymethods]
 impl PyParallelepiped {
-    /// Create a parallelepiped from edge matrix ``h`` (3×3, columns = edges)
-    /// and ``origin`` (length-3).
+    /// Create a parallelepiped from a :class:`Cell` — the edge matrix
+    /// (columns = edges, Å), orthorhombic lengths, lengths and angles, or
+    /// lengths and tilts, as a :class:`Box` takes one — and ``origin``, the
+    /// corner the edges hang from (length 3, Å). A cube of edge ``a`` is
+    /// ``Parallelepiped(Cell.lengths([a, a, a]), origin)``.
     ///
     /// Raises
     /// ------
     /// ValueError
-    ///     If shapes are wrong or ``h`` is singular.
+    ///     ``Cell.undefined()`` (no edges), a cell the :class:`Cell` form
+    ///     refuses (a non-positive length, an impossible angle), a singular
+    ///     or non-finite edge matrix, or an ``origin`` not of length 3.
     #[new]
-    fn new(h: ArrayArg2<'_, f64>, origin: Vec<f64>) -> PyResult<Self> {
-        let h_arr = h.as_array();
-        if h_arr.shape() != [3, 3] {
-            return Err(PyValueError::new_err("h must have shape (3, 3)"));
-        }
+    fn new(cell: PyCell, origin: Vec<f64>) -> PyResult<Self> {
         let o = vec3(origin, "origin")?;
-        let mut mat: Fnx3 = Array2::zeros((3, 3));
-        for i in 0..3 {
-            for j in 0..3 {
-                mat[[i, j]] = h_arr[[i, j]];
-            }
-        }
-        let inner = Parallelepiped::new(mat, Array1::from_vec(o.to_vec()))
+        let inner = Parallelepiped::new(cell.inner, Array1::from_vec(o.to_vec()))
             .map_err(PyValueError::new_err)?;
         Ok(Self {
             inner: Arc::new(inner),
         })
     }
 
-    /// Axis-aligned orthorhombic (or cubic) parallelepiped from edge lengths.
-    ///
-    /// Raises
-    /// ------
-    /// ValueError
-    ///     If a length is not positive.
-    #[staticmethod]
-    fn ortho(lengths: Vec<f64>, origin: Vec<f64>) -> PyResult<Self> {
-        let l = vec3(lengths, "lengths")?;
-        let o = vec3(origin, "origin")?;
-        let inner =
-            Parallelepiped::ortho(Array1::from_vec(l.to_vec()), Array1::from_vec(o.to_vec()))
-                .map_err(PyValueError::new_err)?;
-        Ok(Self {
-            inner: Arc::new(inner),
-        })
+    /// Edge matrix ``h`` (3×3, Å), the edge vectors as columns.
+    #[getter]
+    fn h<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray2<f64>> {
+        self.inner.h().to_owned().into_pyarray(py)
     }
 
-    /// Cubic parallelepiped of edge ``a`` with the given ``origin``.
-    ///
-    /// Raises
-    /// ------
-    /// ValueError
-    ///     If ``a`` is not positive.
-    #[staticmethod]
-    fn cube(a: f64, origin: Vec<f64>) -> PyResult<Self> {
-        let o = vec3(origin, "origin")?;
-        let inner =
-            Parallelepiped::cube(a, Array1::from_vec(o.to_vec())).map_err(PyValueError::new_err)?;
-        Ok(Self {
-            inner: Arc::new(inner),
-        })
+    /// Origin corner, shape ``(3,)`` (Å).
+    #[getter]
+    fn origin<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<f64>> {
+        self.inner.origin().to_owned().into_pyarray(py)
     }
 
     /// Signed volume ``det(h)``.
@@ -595,13 +560,16 @@ impl PyParallelepiped {
     }
 
     fn __reduce__<'py>(slf: &Bound<'py, Self>) -> PyResult<Bound<'py, PyTuple>> {
-        let py = slf.py();
         let this = slf.borrow();
         crate::pickle::reduce_via_type(
             slf.as_any(),
             (
-                this.inner.h().to_owned().into_pyarray(py),
-                this.inner.origin().to_owned().into_pyarray(py),
+                PyCell {
+                    inner: Cell::Matrix(std::array::from_fn(|r| {
+                        std::array::from_fn(|c| this.inner.h()[[r, c]])
+                    })),
+                },
+                this.inner.origin().to_vec(),
             ),
         )
     }

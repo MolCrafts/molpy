@@ -21,7 +21,7 @@ use crate::core::keys::FRAG_ID;
 // PropValue
 // ---------------------------------------------------------------------------
 
-/// Heterogeneous property value stored in an [`Atom`].
+/// Heterogeneous property value stored in an [`Props`].
 #[derive(Debug, Clone, PartialEq)]
 pub enum PropValue {
     F64(f64),
@@ -71,6 +71,18 @@ impl From<String> for PropValue {
         PropValue::Str(v)
     }
 }
+impl From<u8> for PropValue {
+    fn from(v: u8) -> Self {
+        PropValue::Int(I::from(v))
+    }
+}
+/// An element is stored as its atomic number — the value
+/// [`keys::ATOMIC_NUMBER`] holds: `props!{ keys::ATOMIC_NUMBER => Element::C }`.
+impl From<crate::core::Element> for PropValue {
+    fn from(e: crate::core::Element) -> Self {
+        PropValue::Int(I::from(e.z()))
+    }
+}
 
 /// Admit a value into a node or relation column only if it can be stored at
 /// the dtype the Frame schema declares for `key`, widening where width is not
@@ -82,10 +94,10 @@ impl From<String> for PropValue {
 ///
 /// For a declared key the refusal belongs *here*, at the write, because the
 /// declared dtype is what every later stage already assumes: [`MolGraph::to_frame`]
-/// must hand [`Block::insert`] a column of exactly that dtype, the infallible
-/// leaf constructors ([`Atomistic::add_atom_xyz`](crate::core::Atomistic::add_atom_xyz)) write their components into
-/// a column whose element type a stray write has already fixed, and the Python
-/// `Block` boundary re-states the same rule. Every one of those stages is past
+/// must hand [`Block::insert`] a column of exactly that dtype, every later
+/// insert ([`Atomistic::add_atom`](crate::core::Atomistic::add_atom)) is
+/// checked against a column whose element type a stray write would already
+/// have fixed, and the Python `Block` boundary re-states the same rule. Every one of those stages is past
 /// the point where the caller still holds the value — a `set_node` that
 /// accepted a string `"x"` would hand back a graph whose only remaining moves
 /// are to lose the property or to fail on the way out. [`set_node`](MolGraph::set_node)
@@ -171,6 +183,90 @@ fn coerce_canonical(key: &str, pv: PropValue) -> Result<PropValue, MolRsError> {
     }
 }
 
+/// Admit a whole property bag into `table` without writing: every value is
+/// coerced to its storable form ([`coerce_canonical`]) and checked against
+/// the element type of the column `table` already holds for its key.
+///
+/// This is the validation half of an atomic insert: the caller spawns the
+/// entity and writes the returned pairs only once the whole bag passed, so a
+/// refused value leaves no entity and no column behind.
+///
+/// # Errors
+///
+/// [`MolRsError::Validation`] naming the first refused key: a value the Frame
+/// schema's dtype for that key cannot hold, or one whose element type
+/// contradicts the existing column (`component 'tag' is typed f64, not str`).
+fn admit_props<K: Key>(
+    table: &EntityTable<K>,
+    bag: &Props,
+) -> Result<Vec<(String, PropValue)>, MolRsError> {
+    use crate::core::EntityColumn;
+
+    bag.iter()
+        .map(|(key, val)| {
+            let pv = coerce_canonical(key, val.clone())?;
+            if let Some(col) = table.entity_column(key) {
+                let offered = match &pv {
+                    PropValue::F64(_) => "f64",
+                    PropValue::Int(_) => "i32",
+                    PropValue::Str(_) => "str",
+                    PropValue::Bool(_) => "bool",
+                };
+                let fits = matches!(
+                    (col, &pv),
+                    (EntityColumn::F64(..), PropValue::F64(_))
+                        | (EntityColumn::I32(..), PropValue::Int(_))
+                        | (EntityColumn::Str(..), PropValue::Str(_))
+                        | (EntityColumn::Bool(..), PropValue::Bool(_))
+                );
+                if !fits {
+                    return Err(MolRsError::validation(format!(
+                        "component '{key}' is typed {}, not {offered}",
+                        col.type_name()
+                    )));
+                }
+            }
+            Ok((key.to_owned(), pv))
+        })
+        .collect()
+}
+
+/// Write pairs [`admit_props`] returned into entity `id` of `table`.
+fn write_admitted<K: Key>(
+    table: &mut EntityTable<K>,
+    id: K,
+    admitted: Vec<(String, PropValue)>,
+) -> Result<(), MolRsError> {
+    for (key, pv) in admitted {
+        match pv {
+            PropValue::F64(v) => table.set::<f64>(id, &key, v),
+            PropValue::Int(v) => table.set::<i32>(id, &key, v),
+            PropValue::Str(s) => table.set::<String>(id, &key, &s),
+            PropValue::Bool(v) => table.set::<bool>(id, &key, v),
+        }?;
+    }
+    Ok(())
+}
+
+/// The node property a typed graph requires on every node — the species of
+/// an atom, the type of a bead — with the rule its value must satisfy.
+///
+/// A leaf ([`Atomistic`](crate::core::Atomistic),
+/// [`CoarseGrain`](crate::core::CoarseGrain)) installs its guard on the graph
+/// it wraps, so the invariant holds on **every** node write path —
+/// `add_node`, `set_node`, `clear_node`, `merge`, `replicate`, a frame read —
+/// including the generic ones the crate reaches through
+/// [`GraphAccess::graph_mut`](crate::core::GraphAccess::graph_mut). A bare
+/// `MolGraph` has none.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct NodeGuard {
+    /// The required key.
+    pub(crate) key: &'static str,
+    /// Whether `node` satisfies the rule; `what` names the node in the
+    /// refusal.
+    pub(crate) check: fn(node: &Props, what: &str) -> Result<(), MolRsError>,
+}
+
 /// Materialize `table`'s column `key` into `block` at the dtype the Frame
 /// schema declares for that key, carrying the column's validity mask.
 ///
@@ -184,7 +280,7 @@ fn coerce_canonical(key: &str, pv: PropValue) -> Result<PropValue, MolRsError> {
 /// no entity ever wrote hold the element type's default. Emitting them as
 /// values would state a `frag_id` of instance zero, a charge of zero, an empty
 /// name — so the mask travels with the column through
-/// [`Block::insert_nullable`], which normalises the fully-populated case back
+/// [`Block::insert`], which normalises the fully-populated case back
 /// to a plain column.
 ///
 /// Returns `false` when `key` names no column of `table`.
@@ -200,22 +296,26 @@ fn emit_column<K: Key>(
     if declared == Some(DType::I64) {
         // A wide signed key: the table holds it as `Int` or as an integral
         // `F64` (see `coerce_canonical`); the frame column is `i64`.
-        let (wide, valid): (Vec<i64>, Vec<bool>) = if let Ok((data, valid)) = table.column_f64(key)
-        {
-            (data.iter().map(|&v| v as i64).collect(), mask(valid))
-        } else if let Ok((data, valid)) = table.column_i32(key) {
-            (data.iter().map(|&v| i64::from(v)).collect(), mask(valid))
-        } else {
-            return Ok(false);
-        };
+        let (wide, valid): (Vec<i64>, Vec<bool>) =
+            if let Ok((data, valid)) = table.column::<f64>(key) {
+                (data.iter().map(|&v| v as i64).collect(), mask(valid))
+            } else if let Ok((data, valid)) = table.column::<i32>(key) {
+                (data.iter().map(|&v| i64::from(v)).collect(), mask(valid))
+            } else {
+                return Ok(false);
+            };
         block
-            .insert_nullable(key, Array1::from_vec(wide).into_dyn(), valid)
+            .insert(key, Array1::from_vec(wide).into_dyn(), Some(valid))
             .map_err(|e| MolRsError::validation(e.to_string()))?;
         return Ok(true);
     }
-    let inserted = if let Ok((data, valid)) = table.column_f64(key) {
-        block.insert_nullable(key, Array1::from_vec(data.to_vec()).into_dyn(), mask(valid))
-    } else if let Ok((data, valid)) = table.column_i32(key) {
+    let inserted = if let Ok((data, valid)) = table.column::<f64>(key) {
+        block.insert(
+            key,
+            Array1::from_vec(data.to_vec()).into_dyn(),
+            Some(mask(valid)),
+        )
+    } else if let Ok((data, valid)) = table.column::<i32>(key) {
         if crate::core::schema::column(key).is_some_and(|spec| spec.dtype == DType::Uint) {
             let unsigned: Vec<Idx> = data
                 .iter()
@@ -227,14 +327,30 @@ fn emit_column<K: Key>(
                     })
                 })
                 .collect::<Result<_, _>>()?;
-            block.insert_nullable(key, Array1::from_vec(unsigned).into_dyn(), mask(valid))
+            block.insert(
+                key,
+                Array1::from_vec(unsigned).into_dyn(),
+                Some(mask(valid)),
+            )
         } else {
-            block.insert_nullable(key, Array1::from_vec(data.to_vec()).into_dyn(), mask(valid))
+            block.insert(
+                key,
+                Array1::from_vec(data.to_vec()).into_dyn(),
+                Some(mask(valid)),
+            )
         }
-    } else if let Ok((data, valid)) = table.column_str(key) {
-        block.insert_nullable(key, Array1::from_vec(data.to_vec()).into_dyn(), mask(valid))
-    } else if let Ok((data, valid)) = table.column_bool(key) {
-        block.insert_nullable(key, Array1::from_vec(data.to_vec()).into_dyn(), mask(valid))
+    } else if let Ok((data, valid)) = table.column::<String>(key) {
+        block.insert(
+            key,
+            Array1::from_vec(data.to_vec()).into_dyn(),
+            Some(mask(valid)),
+        )
+    } else if let Ok((data, valid)) = table.column::<bool>(key) {
+        block.insert(
+            key,
+            Array1::from_vec(data.to_vec()).into_dyn(),
+            Some(mask(valid)),
+        )
     } else {
         return Ok(false);
     };
@@ -286,17 +402,17 @@ impl<'a> MaskedColumns<'a> {
             if skip.iter().any(|s| s == key) {
                 continue;
             }
-            let typed = if let Some(arr) = block.get(key).and_then(|c| c.as_float()) {
+            let typed = if let Some(arr) = block.get(key).and_then(|c| c.get::<f64>()) {
                 TypedColumn::Float(arr)
-            } else if let Some(arr) = block.get(key).and_then(|c| c.as_int()) {
+            } else if let Some(arr) = block.get(key).and_then(|c| c.get::<i32>()) {
                 TypedColumn::Int(arr)
-            } else if let Some(arr) = block.get(key).and_then(|c| c.as_i64()) {
+            } else if let Some(arr) = block.get(key).and_then(|c| c.get::<i64>()) {
                 TypedColumn::I64(arr)
-            } else if let Some(arr) = block.get(key).and_then(|c| c.as_uint()) {
+            } else if let Some(arr) = block.get(key).and_then(|c| c.get::<u64>()) {
                 TypedColumn::Uint(arr)
-            } else if let Some(arr) = block.get(key).and_then(|c| c.as_string()) {
+            } else if let Some(arr) = block.get(key).and_then(|c| c.get::<String>()) {
                 TypedColumn::Str(arr)
-            } else if let Some(arr) = block.get(key).and_then(|c| c.as_bool()) {
+            } else if let Some(arr) = block.get(key).and_then(|c| c.get::<bool>()) {
                 TypedColumn::Bool(arr)
             } else {
                 continue;
@@ -379,31 +495,75 @@ fn narrow_uint(key: &str, v: Idx) -> Result<I, MolRsError> {
 // Atom  (dynamic node prop bag — the payload of every node, atom or bead)
 // ---------------------------------------------------------------------------
 
-/// A dynamic property bag representing a graph node (an atom or a bead).
+/// Build a [`Props`](crate::core::Props) bag from `key => value` pairs.
 ///
-/// All data — including coordinates (`"x"`, `"y"`, `"z"`), element symbol,
-/// mass, charge, etc. — is stored as key-value pairs. `MolGraph` treats it
-/// purely as an opaque node payload.
+/// Keys are `&str` expressions (normally [`keys`](crate::core::keys)
+/// constants); values are anything `Into<PropValue>`. `props!{}` is the
+/// empty bag.
+///
+/// ```
+/// use molrs::core::{Atomistic, Element, keys};
+/// use molrs::props;
+///
+/// let mut mol = Atomistic::new();
+/// let c = mol.add_atom(props! { keys::ATOMIC_NUMBER => Element::C, keys::X => 0.0 }).unwrap();
+/// let o = mol.add_atom(props! { keys::ATOMIC_NUMBER => Element::O, keys::X => 1.2 }).unwrap();
+/// mol.add_bond(c, o, props! { keys::BOND_TYPE => 2 }).unwrap();
+/// ```
+#[macro_export]
+macro_rules! props {
+    () => { $crate::core::Props::new() };
+    ($($key:expr => $val:expr),+ $(,)?) => {
+        $crate::core::Props::new()$(.with($key, $val))+
+    };
+}
+
+/// A key:value property bag — the one payload type of a graph node (an atom,
+/// a bead) and of a relation (a bond, an angle, …), and what every `add_*`
+/// constructor takes.
+///
+/// Values are arbitrary [`PropValue`]s; a key the Frame schema declares is
+/// checked against its declared dtype when the bag is written into a graph.
+/// Build one with [`props!`](crate::props) or by chaining [`Props::with`]:
+///
+/// ```
+/// use molrs::core::{Element, Props, keys};
+///
+/// let p = Props::new().with(keys::ATOMIC_NUMBER, Element::C).with(keys::X, 0.0);
+/// assert_eq!(p.atomic_number(), Some(6));
+/// ```
 #[derive(Debug, Clone, Default, PartialEq)]
-pub struct Atom {
+pub struct Props {
     props: IndexMap<String, PropValue>,
 }
 
-impl Atom {
-    /// Create an empty atom.
+impl Props {
+    /// Create an empty bag.
     pub fn new() -> Self {
         Self::default()
     }
 
-    /// Convenience: create an atom with symbol + xyz (via the [`crate::core::keys`]
-    /// field convention — no literal field names).
-    pub fn xyz(symbol: &str, x: f64, y: f64, z: f64) -> Self {
-        let mut a = Self::new();
-        a.set(keys::ELEMENT, symbol);
-        a.set(keys::X, x);
-        a.set(keys::Y, y);
-        a.set(keys::Z, z);
-        a
+    /// The bag with `key` set to `val` (insert or replace).
+    pub fn with(mut self, key: &str, val: impl Into<PropValue>) -> Self {
+        self.set(key, val);
+        self
+    }
+
+    /// The node's atomic number Z, read from [`keys::ATOMIC_NUMBER`] — the
+    /// one species field every molrs consumer reads. `0` is the wildcard
+    /// (`*`) atom, which names no element; `1..=118` map to an
+    /// [`Element`](crate::core::Element) through
+    /// [`Element::by_number`](crate::core::Element::by_number).
+    ///
+    /// `None` when the property is absent, not an integer, or outside
+    /// 0..=118. There is no fallback to [`keys::ELEMENT`]: a symbol is
+    /// converted explicitly, with
+    /// [`Element::fill_atomic_numbers`](crate::core::Element::fill_atomic_numbers)
+    /// on a frame or [`Element::by_symbol`](crate::core::Element::by_symbol)
+    /// on a value.
+    pub fn atomic_number(&self) -> Option<u8> {
+        let z = u8::try_from(self.get_int(keys::ATOMIC_NUMBER)?).ok()?;
+        (z <= 118).then_some(z)
     }
 
     // ---- dict-like API ----
@@ -498,7 +658,7 @@ impl Atom {
     }
 }
 
-impl Index<&str> for Atom {
+impl Index<&str> for Props {
     type Output = PropValue;
     fn index(&self, key: &str) -> &Self::Output {
         self.props
@@ -507,7 +667,7 @@ impl Index<&str> for Atom {
     }
 }
 
-impl IndexMut<&str> for Atom {
+impl IndexMut<&str> for Props {
     fn index_mut(&mut self, key: &str) -> &mut Self::Output {
         self.props
             .get_mut(key)
@@ -532,23 +692,37 @@ new_key_type! {
     pub struct RelationId;
 }
 
-/// Convert a [`NodeId`] to/from a stable opaque `u64` handle (the generational
-/// slotmap key's FFI form). For exposing stable entity handles across an FFI /
-/// language boundary without leaking the `slotmap` types.
-pub fn node_to_u64(id: NodeId) -> u64 {
-    id.data().as_ffi()
+/// A [`NodeId`]'s stable opaque `u64` form (the generational slotmap key's
+/// FFI form), for exposing a handle across an FFI / language boundary without
+/// leaking the `slotmap` types. The conversion is lossless both ways; whether
+/// a handle is live is checked where it is used.
+impl From<NodeId> for u64 {
+    fn from(id: NodeId) -> u64 {
+        id.data().as_ffi()
+    }
 }
-/// See [`node_to_u64`].
-pub fn node_from_u64(h: u64) -> NodeId {
-    NodeId::from(KeyData::from_ffi(h))
+
+/// The [`NodeId`] a `u64` from [`From<NodeId> for u64`](NodeId) stands for.
+impl From<u64> for NodeId {
+    fn from(h: u64) -> NodeId {
+        NodeId::from(KeyData::from_ffi(h))
+    }
 }
-/// Convert a [`RelationId`] to a stable opaque `u64` handle. See [`node_to_u64`].
-pub fn relation_to_u64(id: RelationId) -> u64 {
-    id.data().as_ffi()
+
+/// A [`RelationId`]'s stable opaque `u64` form; see the [`NodeId`]
+/// conversion.
+impl From<RelationId> for u64 {
+    fn from(id: RelationId) -> u64 {
+        id.data().as_ffi()
+    }
 }
-/// See [`relation_to_u64`].
-pub fn relation_from_u64(h: u64) -> RelationId {
-    RelationId::from(KeyData::from_ffi(h))
+
+/// The [`RelationId`] a `u64` from [`From<RelationId> for u64`](RelationId)
+/// stands for.
+impl From<u64> for RelationId {
+    fn from(h: u64) -> RelationId {
+        RelationId::from(KeyData::from_ffi(h))
+    }
 }
 
 /// Dense index identifying a registered relation kind. Resolved once at
@@ -570,7 +744,7 @@ pub struct Relation {
     /// The participating node handles, in order (length == kind arity).
     pub nodes: SmallVec<[NodeId; 4]>,
     /// Per-relation property bag (domain meaning, e.g. a bond `"order"`).
-    pub props: IndexMap<String, PropValue>,
+    pub props: Props,
 }
 
 /// Storage for one relation kind: properties live in the aligned column table
@@ -615,7 +789,7 @@ impl RelationKind {
 /// remove / lookup with stable handles, and a [`SmallVec`] for each relation's
 /// endpoints so the common arities (≤4) stay inline / heap-allocation-free.
 ///
-/// Every node is a property bag ([`Atom`]): coordinates live as `"x"`, `"y"`,
+/// Every node is a property bag ([`Props`]): coordinates live as `"x"`, `"y"`,
 /// `"z"` keys, matching the Python `Entity(UserDict)` convention.
 ///
 /// # Relations vs. containment
@@ -631,14 +805,25 @@ impl RelationKind {
 /// # Examples
 ///
 /// ```
-/// use molrs::core::{Atom, MolGraph};
+/// use molrs::core::{Element, MolGraph, keys};
+/// use molrs::props;
 ///
 /// let mut g = MolGraph::new();
 /// let bond = g.register_kind("bond", 2);
 ///
-/// let o = g.add_node_with(Atom::xyz("O", 0.0, 0.0, 0.0)).expect("add O");
-/// let h1 = g.add_node_with(Atom::xyz("H", 0.96, 0.0, 0.0)).expect("add H");
-/// g.add_relation(bond, &[o, h1]).expect("add bond");
+/// let o = g.add_node(props! {
+///     keys::ATOMIC_NUMBER => Element::O,
+///     keys::X => 0.0,
+///     keys::Y => 0.0,
+///     keys::Z => 0.0,
+/// }).expect("add O");
+/// let h1 = g.add_node(props! {
+///     keys::ATOMIC_NUMBER => Element::H,
+///     keys::X => 0.96,
+///     keys::Y => 0.0,
+///     keys::Z => 0.0,
+/// }).expect("add H");
+/// g.add_relation(bond, &[o, h1], props! {}).expect("add bond");
 ///
 /// assert_eq!(g.n_nodes(), 2);
 /// assert_eq!(g.n_relations(bond), 1);
@@ -661,6 +846,8 @@ pub struct MolGraph {
     name_to_kind: HashMap<String, KindId>,
     /// Adjacency over arity-2 relations: node → list of `(kind, relation)`.
     adjacency: HashMap<NodeId, Vec<(KindId, RelationId)>>,
+    /// The node invariant of the typed graph wrapping this one, if any.
+    guard: Option<NodeGuard>,
 }
 
 impl Default for MolGraph {
@@ -679,6 +866,22 @@ impl MolGraph {
             kind_name: Vec::new(),
             name_to_kind: HashMap::new(),
             adjacency: HashMap::new(),
+            guard: None,
+        }
+    }
+
+    /// Install (or, with `None`, lift) the node invariant every later node
+    /// write is checked against. Crate-internal: only a typed leaf sets it,
+    /// after checking the nodes already present.
+    pub(crate) fn set_node_guard(&mut self, guard: Option<NodeGuard>) {
+        self.guard = guard;
+    }
+
+    /// Check `node` against the installed guard, if any.
+    fn check_guard(&self, node: &Props, what: &str) -> Result<(), MolRsError> {
+        match self.guard {
+            Some(guard) => (guard.check)(node, what),
+            None => Ok(()),
         }
     }
 
@@ -712,8 +915,7 @@ impl MolGraph {
     ///
     /// [`register_kind`](Self::register_kind) asserts on an arity conflict
     /// because a leaf constructor registers fixed kinds, which is a programming
-    /// error. A promotion such as
-    /// [`Atomistic::try_from_molgraph`](crate::core::Atomistic::try_from_molgraph)
+    /// error. A promotion such as `Atomistic::try_from(graph)`
     /// registers its standard kinds onto a **caller-supplied** graph, where a
     /// conflicting arity is a data condition and must come back as an `Err`.
     ///
@@ -762,19 +964,12 @@ impl MolGraph {
     // Node CRUD (generic)
     // =====================================================================
 
-    /// Insert a field-less node, returning its stable handle. The node has no
-    /// components set (no `element` / `bead_type` is forced).
-    pub fn add_node(&mut self) -> NodeId {
-        let id = self.nodes.spawn();
-        self.adjacency.insert(id, Vec::new());
-        id
-    }
-
-    /// Insert a node carrying a property bag, returning its stable handle.
+    /// Insert a node carrying the property bag `props`, returning its stable
+    /// handle. `props!{}` inserts a node with no components.
     ///
     /// # Errors
     ///
-    /// [`MolRsError::Validation`] when a value of `payload` contradicts the
+    /// [`MolRsError::Validation`] when a value of `props` contradicts the
     /// element type an existing node column holds for that key (a string
     /// `tag` into an `i32` `tag` column); the message names the conflicting
     /// key. Likewise when a value cannot be stored at the dtype the Frame
@@ -785,35 +980,54 @@ impl MolGraph {
     /// another graph or a file, where a disagreeing key is data and not a
     /// defect — so the conflict is returned rather than asserted.
     ///
-    /// The node is **not** rolled back: it keeps the prefix of `payload` that
-    /// was written before the conflict, as `self` does for any other partial
-    /// write (see [`merge`](Self::merge)).
-    pub fn add_node_with(&mut self, payload: Atom) -> Result<NodeId, MolRsError> {
-        let id = self.add_node();
-        self.set_node_props(id, &payload)?;
+    /// Also when the graph belongs to a typed leaf and `props` breaks its node
+    /// invariant (an atom without a valid atomic number, a bead without a
+    /// type).
+    ///
+    /// The insert is **atomic**: the whole bag is checked before the node is
+    /// spawned, so on any refusal no node, and no column, exists.
+    pub fn add_node(&mut self, props: impl Into<Props>) -> Result<NodeId, MolRsError> {
+        let props: Props = props.into();
+        self.check_guard(&props, "node")?;
+        let admitted = admit_props(&self.nodes, &props)?;
+        let id = self.nodes.spawn();
+        self.adjacency.insert(id, Vec::new());
+        write_admitted(&mut self.nodes, id, admitted)?;
         Ok(id)
     }
 
-    /// Remove a node and every relation that references it, across **all**
+    /// Delete one node and every relation that references it, across **all**
     /// registered kinds (registry-driven cascade). Returns the node's property
     /// bag (materialized).
-    pub fn remove_node(&mut self, id: NodeId) -> Result<Atom, MolRsError> {
+    ///
+    /// # Errors
+    ///
+    /// [`MolRsError::NotFound`] for a dead handle; the graph is unchanged.
+    pub fn del_node(&mut self, id: NodeId) -> Result<Props, MolRsError> {
         Ok(self
-            .remove_nodes(&[id])?
+            .del_nodes(&[id])?
             .pop()
             .expect("one validated node produces one payload"))
     }
 
-    /// Remove several nodes in one registry scan.
+    /// Delete several nodes, with their relations, in one registry scan;
+    /// returns their property bags in `ids` order.
     ///
     /// This is the batch primitive reaction compilation needs: deleting one
     /// leaving group at a time scans every relation table once per edit, while
     /// deleting the compiled set scans each table exactly once.
-    pub fn remove_nodes(&mut self, ids: &[NodeId]) -> Result<Vec<Atom>, MolRsError> {
+    ///
+    /// # Errors
+    ///
+    /// [`MolRsError::Validation`] when `ids` names a node twice and
+    /// [`MolRsError::NotFound`] when one is dead. The batch is **atomic**:
+    /// every handle is checked before the first deletion, so on a refusal no
+    /// node is deleted.
+    pub fn del_nodes(&mut self, ids: &[NodeId]) -> Result<Vec<Props>, MolRsError> {
         let doomed_nodes: HashSet<NodeId> = ids.iter().copied().collect();
         if doomed_nodes.len() != ids.len() {
             return Err(MolRsError::validation(
-                "remove_nodes received a duplicate node handle",
+                "del_nodes received a duplicate node handle",
             ));
         }
         for &id in ids {
@@ -845,7 +1059,7 @@ impl MolGraph {
     }
 
     /// Materialize a node's property bag (owned copy of its set components).
-    pub fn get_node(&self, id: NodeId) -> Result<Atom, MolRsError> {
+    pub fn get_node(&self, id: NodeId) -> Result<Props, MolRsError> {
         if !self.nodes.contains(id) {
             return Err(MolRsError::not_found(
                 "node",
@@ -856,27 +1070,56 @@ impl MolGraph {
     }
 
     /// Set a single component on a node.
+    ///
+    /// # Errors
+    ///
+    /// [`MolRsError::Validation`] when `val` cannot be stored in the column
+    /// (see [`add_node`](Self::add_node)) or, under a typed leaf, breaks its
+    /// node invariant; [`MolRsError::NotFound`] for a dead handle. The node
+    /// is unchanged on a refusal.
     pub fn set_node(
         &mut self,
         id: NodeId,
         key: &str,
         val: impl Into<PropValue>,
     ) -> Result<(), MolRsError> {
-        match coerce_canonical(key, val.into())? {
-            PropValue::F64(v) => self.nodes.set_f64(id, key, v),
-            PropValue::Int(v) => self.nodes.set_i32(id, key, v),
-            PropValue::Str(s) => self.nodes.set_str(id, key, &s),
-            PropValue::Bool(v) => self.nodes.set_bool(id, key, v),
+        let val = val.into();
+        if let Some(guard) = self.guard
+            && guard.key == key
+        {
+            (guard.check)(
+                &Props::new().with(key, val.clone()),
+                &format!("node {id:?}"),
+            )?;
+        }
+        match coerce_canonical(key, val)? {
+            PropValue::F64(v) => self.nodes.set::<f64>(id, key, v),
+            PropValue::Int(v) => self.nodes.set::<i32>(id, key, v),
+            PropValue::Str(s) => self.nodes.set::<String>(id, key, &s),
+            PropValue::Bool(v) => self.nodes.set::<bool>(id, key, v),
         }
     }
 
     /// Clear a single component on a node (no-op if absent).
+    ///
+    /// # Errors
+    ///
+    /// [`MolRsError::Validation`] when the graph belongs to a typed leaf and
+    /// `key` is the property its invariant requires;
+    /// [`MolRsError::NotFound`] for a dead handle.
     pub fn clear_node(&mut self, id: NodeId, key: &str) -> Result<(), MolRsError> {
+        if let Some(guard) = self.guard
+            && guard.key == key
+        {
+            return Err(MolRsError::validation(format!(
+                "node {id:?}: '{key}' is required on every node and cannot be cleared"
+            )));
+        }
         self.nodes.clear(id, key)
     }
 
-    /// Iterate over all `(NodeId, Atom)` pairs (each property bag materialized).
-    pub fn nodes(&self) -> impl Iterator<Item = (NodeId, Atom)> + '_ {
+    /// Iterate over all `(NodeId, Props)` pairs (each property bag materialized).
+    pub fn nodes(&self) -> impl Iterator<Item = (NodeId, Props)> + '_ {
         self.nodes
             .handles()
             .map(move |id| (id, self.materialize_atom(id)))
@@ -906,31 +1149,9 @@ impl MolGraph {
         self.nodes.len()
     }
 
-    /// Write an [`Atom`]'s properties into node `id`'s columns.
-    ///
-    /// # Errors
-    ///
-    /// [`MolRsError::Validation`] when a value's element type contradicts the
-    /// component the table already holds for that key, or when the value does
-    /// not fit the dtype the Frame schema declares for a canonical key. The
-    /// property is *not* written in that case, which is precisely why the
-    /// error is returned rather than swallowed: a dropped property is a
-    /// molecule that quietly lost a label.
-    fn set_node_props(&mut self, id: NodeId, atom: &Atom) -> Result<(), MolRsError> {
-        for (key, val) in atom.iter() {
-            coerce_canonical(key, val.clone()).and_then(|pv| match pv {
-                PropValue::F64(v) => self.nodes.set_f64(id, key, v),
-                PropValue::Int(v) => self.nodes.set_i32(id, key, v),
-                PropValue::Str(s) => self.nodes.set_str(id, key, &s),
-                PropValue::Bool(v) => self.nodes.set_bool(id, key, v),
-            })?;
-        }
-        Ok(())
-    }
-
-    /// Materialize node `id`'s set components into an [`Atom`].
-    pub(crate) fn materialize_atom(&self, id: NodeId) -> Atom {
-        let mut atom = Atom::new();
+    /// Materialize node `id`'s set components into an [`Props`].
+    pub(crate) fn materialize_atom(&self, id: NodeId) -> Props {
+        let mut atom = Props::new();
         for (key, cell) in self.nodes.row_cells(id) {
             match cell {
                 EntityCell::F64(v) => atom.set(key, v),
@@ -971,10 +1192,21 @@ impl MolGraph {
     /// Add a relation of the given kind over the given nodes. Validates the
     /// kind is registered, the node count matches its arity, and every node
     /// exists. Maintains the adjacency index for arity-2 relations.
+    ///
+    /// `props` is written onto the new relation (`props!{}` for none).
+    ///
+    /// # Errors
+    ///
+    /// Besides the kind / arity / node checks, [`MolRsError::Validation`] when
+    /// a value of `props` cannot be stored at its column's dtype. The insert
+    /// is **atomic**: every check, the whole bag included, runs before the
+    /// relation is spawned, so on any refusal no relation and no column
+    /// exists.
     pub fn add_relation(
         &mut self,
         kind: KindId,
         nodes: &[NodeId],
+        props: impl Into<Props>,
     ) -> Result<RelationId, MolRsError> {
         let kidx = kind.0 as usize;
         if kidx >= self.kinds.len() {
@@ -994,8 +1226,10 @@ impl MolGraph {
                 return Err(MolRsError::not_found("node", format!("NodeId {:?}", n)));
             }
         }
+        let admitted = admit_props(&self.kinds[kidx].props, &props.into())?;
         let k = &mut self.kinds[kidx];
         let rid = k.props.spawn();
+        write_admitted(&mut k.props, rid, admitted)?;
         k.endpoints.insert(rid, SmallVec::from_slice(nodes));
         if arity == 2 {
             self.adjacency
@@ -1008,6 +1242,44 @@ impl MolGraph {
                 .push((kind, rid));
         }
         Ok(rid)
+    }
+
+    /// Add a relation over `nodes` to the kind named `name`, registering it
+    /// at `arity` when it is not registered yet.
+    ///
+    /// Atomic like [`add_relation`](Self::add_relation), the registration
+    /// included: every check runs first, so on a refusal no kind is
+    /// registered either.
+    ///
+    /// # Errors
+    ///
+    /// The errors of [`add_relation`](Self::add_relation); a registered kind
+    /// is held to its own arity.
+    pub(crate) fn add_relation_named(
+        &mut self,
+        name: &str,
+        arity: usize,
+        nodes: &[NodeId],
+        props: impl Into<Props>,
+    ) -> Result<RelationId, MolRsError> {
+        if let Some(kind) = self.kind_id(name) {
+            return self.add_relation(kind, nodes, props);
+        }
+        if nodes.len() != arity {
+            return Err(MolRsError::validation(format!(
+                "kind '{name}' expects arity {arity}, got {} nodes",
+                nodes.len()
+            )));
+        }
+        for &n in nodes {
+            if !self.nodes.contains(n) {
+                return Err(MolRsError::not_found("node", format!("NodeId {:?}", n)));
+            }
+        }
+        let props: Props = props.into();
+        admit_props(&EntityTable::<RelationId>::new(), &props)?;
+        let kind = self.register_kind(name, arity);
+        self.add_relation(kind, nodes, props)
     }
 
     /// Materialize a relation (endpoints + properties) by kind + handle.
@@ -1056,10 +1328,10 @@ impl MolGraph {
             ));
         }
         match coerce_canonical(key, val.into())? {
-            PropValue::F64(v) => k.props.set_f64(id, key, v),
-            PropValue::Int(v) => k.props.set_i32(id, key, v),
-            PropValue::Str(s) => k.props.set_str(id, key, &s),
-            PropValue::Bool(v) => k.props.set_bool(id, key, v),
+            PropValue::F64(v) => k.props.set::<f64>(id, key, v),
+            PropValue::Int(v) => k.props.set::<i32>(id, key, v),
+            PropValue::Str(s) => k.props.set::<String>(id, key, &s),
+            PropValue::Bool(v) => k.props.set::<bool>(id, key, v),
         }
     }
 
@@ -1077,29 +1349,62 @@ impl MolGraph {
         k.props.clear(id, key)
     }
 
-    /// Remove a relation by kind + handle, updating adjacency. Returns the
+    /// Delete one relation by kind + handle, updating adjacency. Returns the
     /// materialized relation.
-    pub fn remove_relation(
+    ///
+    /// # Errors
+    ///
+    /// [`MolRsError::NotFound`] when `id` names no live relation of `kind`;
+    /// the graph is unchanged.
+    pub fn del_relation(&mut self, kind: KindId, id: RelationId) -> Result<Relation, MolRsError> {
+        Ok(self
+            .del_relations(kind, &[id])?
+            .pop()
+            .expect("one validated relation produces one payload"))
+    }
+
+    /// Delete several relations of one kind; returns them materialized, in
+    /// `ids` order.
+    ///
+    /// # Errors
+    ///
+    /// [`MolRsError::Validation`] when `ids` names a relation twice and
+    /// [`MolRsError::NotFound`] when one is not a live relation of `kind`.
+    /// The batch is **atomic**: every handle is checked before the first
+    /// deletion, so on a refusal no relation is deleted.
+    pub fn del_relations(
         &mut self,
         kind: KindId,
-        id: RelationId,
-    ) -> Result<Relation, MolRsError> {
-        let exists = self
-            .kinds
-            .get(kind.0 as usize)
-            .is_some_and(|k| k.props.contains(id));
-        if !exists {
-            return Err(MolRsError::not_found(
-                "relation",
-                format!("RelationId {:?}", id),
+        ids: &[RelationId],
+    ) -> Result<Vec<Relation>, MolRsError> {
+        let unique: HashSet<RelationId> = ids.iter().copied().collect();
+        if unique.len() != ids.len() {
+            return Err(MolRsError::validation(
+                "del_relations received a duplicate relation handle",
             ));
         }
-        let rel = self.materialize_relation(kind, id);
-        self.detach_relation_from_adjacency(kind, id, None);
-        let k = &mut self.kinds[kind.0 as usize];
-        k.props.despawn(id);
-        k.endpoints.remove(id);
-        Ok(rel)
+        let Some(k) = self.kinds.get(kind.0 as usize) else {
+            return Err(MolRsError::not_found("kind", format!("KindId {:?}", kind)));
+        };
+        for &id in ids {
+            if !k.props.contains(id) {
+                return Err(MolRsError::not_found(
+                    "relation",
+                    format!("RelationId {:?}", id),
+                ));
+            }
+        }
+        let payloads = ids
+            .iter()
+            .map(|&id| self.materialize_relation(kind, id))
+            .collect();
+        for &id in ids {
+            self.detach_relation_from_adjacency(kind, id, None);
+            let k = &mut self.kinds[kind.0 as usize];
+            k.props.despawn(id);
+            k.endpoints.remove(id);
+        }
+        Ok(payloads)
     }
 
     /// Iterate over `(RelationId, Relation)` for one kind (each materialized).
@@ -1130,7 +1435,7 @@ impl MolGraph {
     pub(crate) fn materialize_relation(&self, kind: KindId, id: RelationId) -> Relation {
         let k = &self.kinds[kind.0 as usize];
         let nodes = k.endpoints.get(id).cloned().unwrap_or_default();
-        let mut props = IndexMap::new();
+        let mut props = Props::new();
         for (key, cell) in k.props.row_cells(id) {
             let pv = match cell {
                 EntityCell::F64(v) => PropValue::F64(v),
@@ -1138,40 +1443,13 @@ impl MolGraph {
                 EntityCell::Str(s) => PropValue::Str(s.to_owned()),
                 EntityCell::Bool(v) => PropValue::Bool(v),
             };
-            props.insert(key.to_owned(), pv);
+            props.set(key, pv);
         }
         Relation { nodes, props }
     }
 
-    /// Write a property bag into a relation's columns.
-    ///
-    /// # Errors
-    ///
-    /// [`MolRsError::Validation`] when a value's element type contradicts the
-    /// component the kind already holds for that key, or when the value does
-    /// not fit the dtype the Frame schema declares for a canonical key. As on
-    /// the node side, the property is not written, so the error is the only
-    /// thing standing between the caller and a silently dropped bond label.
-    pub(crate) fn set_relation_props(
-        &mut self,
-        kind: KindId,
-        id: RelationId,
-        props: &IndexMap<String, PropValue>,
-    ) -> Result<(), MolRsError> {
-        let k = &mut self.kinds[kind.0 as usize];
-        for (key, val) in props {
-            coerce_canonical(key, val.clone()).and_then(|pv| match pv {
-                PropValue::F64(v) => k.props.set_f64(id, key, v),
-                PropValue::Int(v) => k.props.set_i32(id, key, v),
-                PropValue::Str(s) => k.props.set_str(id, key, &s),
-                PropValue::Bool(v) => k.props.set_bool(id, key, v),
-            })?;
-        }
-        Ok(())
-    }
-
     /// Remove an arity-2 relation from the adjacency lists of its endpoints.
-    /// `skip` lets `remove_node` avoid touching the node currently being dropped.
+    /// `skip` lets `del_nodes` avoid touching a node currently being dropped.
     fn detach_relation_from_adjacency(
         &mut self,
         kind: KindId,
@@ -1224,11 +1502,18 @@ impl MolGraph {
     /// vocabularies can genuinely disagree; the merged graph would otherwise
     /// come back missing exactly the properties the caller handed over. The
     /// merge is *not* rolled back: `self` keeps what was written before the
-    /// conflict, as it does for any other partial write.
+    /// conflict. Under a typed leaf, every node of `other` is first checked
+    /// against the leaf's node invariant, and a node that breaks it refuses
+    /// the merge before anything is written.
     pub fn merge(&mut self, other: MolGraph) -> Result<HashMap<NodeId, NodeId>, MolRsError> {
+        if self.guard.is_some() {
+            for (old_id, node) in other.nodes() {
+                self.check_guard(&node, &format!("merged node {old_id:?}"))?;
+            }
+        }
         let mut node_map: HashMap<NodeId, NodeId> = HashMap::new();
         for old_id in other.nodes.handles() {
-            let new_id = self.add_node_with(other.materialize_atom(old_id))?;
+            let new_id = self.add_node(other.materialize_atom(old_id))?;
             node_map.insert(old_id, new_id);
         }
 
@@ -1241,8 +1526,13 @@ impl MolGraph {
             for orid in orids {
                 let rel = other.materialize_relation(okid, orid);
                 let mapped: SmallVec<[NodeId; 4]> = rel.nodes.iter().map(|n| node_map[n]).collect();
-                if let Ok(rid) = self.add_relation(self_kind, &mapped) {
-                    self.set_relation_props(self_kind, rid, &rel.props)?;
+                match self.add_relation(self_kind, &mapped, rel.props) {
+                    Ok(_) => {}
+                    // A property the merged vocabulary refuses is data the
+                    // caller handed over: surface it. Endpoint refusals
+                    // cannot happen (every node was just minted).
+                    Err(e @ MolRsError::Validation { .. }) => return Err(e),
+                    Err(_) => {}
                 }
             }
         }
@@ -1258,9 +1548,9 @@ impl MolGraph {
     ///
     /// - **Column-wise.** Nodes and each relation kind's properties are
     ///   appended with `EntityTable::extend_repeated`, one pass per column;
-    ///   no per-node [`add_node_with`](Self::add_node_with) runs.
+    ///   no per-node [`add_node`](Self::add_node) runs.
     /// - **Coordinates.** `x`/`y`/`z` of a template row holding the full
-    ///   triple are rewritten per copy by [`crate::op::transform_points`]. A
+    ///   triple are rewritten per copy by [`crate::op::transform_point`]. A
     ///   row without the full triple is copied untransformed.
     /// - **Relations.** Every relation kind of `template` is registered on
     ///   `self` by name, its endpoints offset into each copy and its props
@@ -1283,6 +1573,8 @@ impl MolGraph {
     /// - a node column of `template` has an element type other than the one
     ///   `self` holds for that key;
     /// - `frag_id` is held, by `self` or `template`, as a non-`i32` column;
+    /// - `self` belongs to a typed leaf and a template node breaks its node
+    ///   invariant;
     /// - a relation kind of `template` is registered on `self` at another
     ///   arity;
     /// - a relation property column of `template` contradicts the element
@@ -1305,8 +1597,13 @@ impl MolGraph {
             return Ok(Vec::new());
         }
         self.nodes.check_extend(&template.nodes)?;
+        if self.guard.is_some() {
+            for (tid, node) in template.nodes() {
+                self.check_guard(&node, &format!("template node {tid:?}"))?;
+            }
+        }
         for (owner, table) in [("self", &self.nodes), ("template", &template.nodes)] {
-            if let Some(col) = table.column(FRAG_ID)
+            if let Some(col) = table.entity_column(FRAG_ID)
                 && !matches!(col, crate::core::EntityColumn::I32(..))
             {
                 return Err(MolRsError::validation(format!(
@@ -1346,12 +1643,17 @@ impl MolGraph {
         if !placed_rows.is_empty() {
             let images: Vec<Vec<[F; 3]>> = transforms
                 .iter()
-                .map(|rigid| crate::op::transform_points(rigid, &points))
+                .map(|rigid| {
+                    points
+                        .iter()
+                        .map(|&p| crate::op::transform_point(rigid, p))
+                        .collect::<Vec<_>>()
+                })
                 .collect();
             for (axis, key) in [keys::X, keys::Y, keys::Z].into_iter().enumerate() {
                 let (col, _) = self
                     .nodes
-                    .column_f64_mut(key)
+                    .column_mut::<f64>(key)
                     .expect("a template row holds the full triple, so x/y/z were appended as f64");
                 for (c, image) in images.iter().enumerate() {
                     let base = row0 + c * n;
@@ -1415,9 +1717,9 @@ impl MolGraph {
     /// order.
     fn full_triple_rows(&self) -> (Vec<usize>, Vec<[F; 3]>) {
         let (Ok((xs, xv)), Ok((ys, yv)), Ok((zs, zv))) = (
-            self.nodes.column_f64(keys::X),
-            self.nodes.column_f64(keys::Y),
-            self.nodes.column_f64(keys::Z),
+            self.nodes.column::<f64>(keys::X),
+            self.nodes.column::<f64>(keys::Y),
+            self.nodes.column::<f64>(keys::Z),
         ) else {
             return (Vec::new(), Vec::new());
         };
@@ -1517,7 +1819,7 @@ impl MolGraph {
                 .map(|rid| id_to_row[&k.endpoints[*rid][pos]] as Idx)
                 .collect();
             block
-                .insert(rel_col_name(pos), Array1::from_vec(col).into_dyn())
+                .insert(rel_col_name(pos), Array1::from_vec(col).into_dyn(), None)
                 .map_err(|e| MolRsError::validation(e.to_string()))?;
         }
 
@@ -1635,11 +1937,11 @@ impl MolGraph {
         let columns = MaskedColumns::of(atoms, &[]);
         let mut node_ids: Vec<NodeId> = Vec::with_capacity(nrows);
         for row in 0..nrows {
-            let mut node = Atom::new();
+            let mut node = Props::new();
             for (key, value) in columns.cells(row)? {
                 node.set(key, value);
             }
-            node_ids.push(self.add_node_with(node)?);
+            node_ids.push(self.add_node(node)?);
         }
         Ok(node_ids)
     }
@@ -1666,7 +1968,7 @@ impl MolGraph {
         let endpoint_names: Vec<String> = (0..arity).map(rel_col_name).collect();
         let mut endpoint_cols: Vec<&ndarray::ArrayD<Idx>> = Vec::with_capacity(arity);
         for name in &endpoint_names {
-            let col = block.get(name).and_then(|c| c.as_uint()).ok_or_else(|| {
+            let col = block.get(name).and_then(|c| c.get::<u64>()).ok_or_else(|| {
                 MolRsError::validation(format!(
                     "Frame block '{block_name}' names the relation kind '{block_name}' of arity \
                      {arity} but carries no '{name}' endpoint column, so its rows cannot be read"
@@ -1692,32 +1994,13 @@ impl MolGraph {
             // Every rejection `add_relation` knows is unreachable here (the kind is
             // registered, the arity matches by construction, the handles were just
             // minted), so a failure is surfaced rather than dropped with the row.
-            let rid = self.add_relation(kind, &nodes)?;
+            let mut bag = Props::new();
             for (key, value) in props.cells(row)? {
-                self.set_relation_prop(kind, rid, key, value)?;
+                bag.set(key, value);
             }
+            self.add_relation(kind, &nodes, bag)?;
         }
         Ok(())
-    }
-}
-
-/// A graph type built from a finished [`MolGraph`]: the output factory of a
-/// builder that assembles a bare graph and hands it back as whatever type the
-/// caller asks for (operator, 2026-09-28: graph types are peers and no graph
-/// type converts into another).
-pub trait FromMolGraph: Sized {
-    /// Wrap `graph` as `Self`, checking the type's invariant.
-    ///
-    /// # Errors
-    ///
-    /// The type's own refusal (an `Atomistic` needs an `element` on every
-    /// node, for instance).
-    fn from_molgraph(graph: MolGraph) -> Result<Self, MolRsError>;
-}
-
-impl FromMolGraph for MolGraph {
-    fn from_molgraph(graph: MolGraph) -> Result<Self, MolRsError> {
-        Ok(graph)
     }
 }
 
@@ -1736,12 +2019,14 @@ pub(crate) fn rel_col_name(pos: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::Element;
+    use crate::core::keys;
 
     // ----- PropValue & Atom dict-like API -----
 
     #[test]
     fn formal_charge_reads_int_and_integral_float_and_never_the_partial_charge() {
-        let mut a = Atom::new();
+        let mut a = Props::new();
         assert_eq!(a.formal_charge(), 0);
         a.set(keys::CHARGE, -0.8);
         assert_eq!(a.formal_charge(), 0);
@@ -1761,10 +2046,81 @@ mod tests {
         assert_eq!(v, PropValue::Str("H".to_owned()));
     }
 
+    /// An `Element` is stored as its atomic number — the value
+    /// `atomic_number` holds — never as its symbol.
+    #[test]
+    fn propvalue_from_element_is_its_atomic_number() {
+        assert_eq!(PropValue::from(Element::C), PropValue::Int(6));
+        assert_eq!(PropValue::from(Element::Og), PropValue::Int(118));
+        assert_eq!(PropValue::from(8u8), PropValue::from(Element::O));
+    }
+
+    /// `props!` is `Props::new()` plus one `with` per pair, in order, with
+    /// the last write of a repeated key winning; `props!{}` is empty.
+    #[test]
+    fn props_macro_matches_chained_with() {
+        assert!(props! {}.is_empty());
+        assert_eq!(props! {}, Props::new());
+
+        let bag = props! {
+            keys::ATOMIC_NUMBER => Element::N,
+            keys::X => 1.5,
+            keys::NAME => "N1",
+            "flag" => true,
+        };
+        let chained = Props::new()
+            .with(keys::ATOMIC_NUMBER, Element::N)
+            .with(keys::X, 1.5)
+            .with(keys::NAME, "N1")
+            .with("flag", true);
+        assert_eq!(bag, chained);
+        assert_eq!(
+            bag.keys().collect::<Vec<_>>(),
+            [keys::ATOMIC_NUMBER, keys::X, keys::NAME, "flag"],
+            "insertion order is kept"
+        );
+
+        let repeated = props! { keys::X => 1.0, keys::X => 2.0 };
+        assert_eq!(repeated.len(), 1);
+        assert_eq!(repeated.get_f64(keys::X), Some(2.0));
+    }
+
+    /// `atomic_number` reads only the `atomic_number` key and only a value
+    /// in 0..=118; the `element` symbol is never consulted.
+    #[test]
+    fn props_atomic_number_reads_only_a_valid_atomic_number() {
+        assert_eq!(
+            props! { keys::ATOMIC_NUMBER => Element::C }.atomic_number(),
+            Some(6)
+        );
+        assert_eq!(
+            props! { keys::ATOMIC_NUMBER => 0u8 }.atomic_number(),
+            Some(0)
+        );
+        assert_eq!(
+            props! { keys::ATOMIC_NUMBER => 118u8 }.atomic_number(),
+            Some(118)
+        );
+        assert_eq!(
+            props! { keys::ATOMIC_NUMBER => 119u8 }.atomic_number(),
+            None
+        );
+        assert_eq!(props! { keys::ATOMIC_NUMBER => -1 }.atomic_number(), None);
+        assert_eq!(props! { keys::ATOMIC_NUMBER => 6.0 }.atomic_number(), None);
+        assert_eq!(props! { keys::ATOMIC_NUMBER => "C" }.atomic_number(), None);
+        assert_eq!(props! { keys::ELEMENT => "C" }.atomic_number(), None);
+        assert_eq!(Props::new().atomic_number(), None);
+    }
+
     /// All three of x/y/z make a position; without z there is none.
     #[test]
     fn atom_position_reads_xyz_and_needs_all_three() {
-        let mut a = Atom::xyz("C", 1.0, -2.0, 3.5);
+        let mut a = props! {
+            keys::ATOMIC_NUMBER => Element::C,
+            keys::X => 1.0,
+            keys::Y => -2.0,
+            keys::Z => 3.5,
+        };
         assert_eq!(a.position(), Some([1.0, -2.0, 3.5]));
         a.remove(keys::Z);
         assert_eq!(a.position(), None);
@@ -1772,7 +2128,7 @@ mod tests {
 
     #[test]
     fn test_atom_dict_api() {
-        let mut a = Atom::new();
+        let mut a = Props::new();
         a.set("x", 1.5);
         a.set("element", "C");
         a.set("type_id", PropValue::Int(3 as I));
@@ -1788,7 +2144,12 @@ mod tests {
 
     #[test]
     fn test_atom_index() {
-        let mut a = Atom::xyz("O", 1.0, 2.0, 3.0);
+        let mut a = props! {
+            keys::ATOMIC_NUMBER => Element::O,
+            keys::X => 1.0,
+            keys::Y => 2.0,
+            keys::Z => 3.0,
+        };
         assert_eq!(a["x"], PropValue::F64(1.0));
         a["x"] = PropValue::F64(99.0);
         assert_eq!(a.get_f64("x"), Some(99.0));
@@ -1823,7 +2184,7 @@ mod tests {
     #[test]
     fn test_add_node_field_less() {
         let mut g = MolGraph::new();
-        let n = g.add_node();
+        let n = g.add_node(props! {}).unwrap();
         assert!(g.get_node(n).unwrap().is_empty());
         g.translate([1.0, 2.0, 3.0]);
         assert!(g.get_node(n).unwrap().get_f64("x").is_none());
@@ -1832,40 +2193,45 @@ mod tests {
     }
 
     #[test]
-    fn test_add_remove_node() {
+    fn test_add_del_node() {
         let mut g = MolGraph::new();
         assert_eq!(g.n_nodes(), 0);
         let id = g
-            .add_node_with(Atom::xyz("C", 0.0, 0.0, 0.0))
+            .add_node(props! {
+                keys::ATOMIC_NUMBER => Element::C,
+                keys::X => 0.0,
+                keys::Y => 0.0,
+                keys::Z => 0.0,
+            })
             .expect("fixture node");
         assert_eq!(g.n_nodes(), 1);
-        assert_eq!(g.get_node(id).unwrap().get_str("element"), Some("C"));
-        g.remove_node(id).unwrap();
+        assert_eq!(g.get_node(id).unwrap().atomic_number(), Some(6));
+        g.del_node(id).unwrap();
         assert_eq!(g.n_nodes(), 0);
         assert!(g.get_node(id).is_err());
     }
 
-    /// `add_node_with` builds a node out of a property bag the caller hands
-    /// it, and a bag whose value contradicts an existing node column is a
-    /// data condition the caller can act on — so it is returned, not
-    /// asserted by a panic.
+    /// `add_node` builds a node out of a property bag the caller hands it, and
+    /// a bag whose value contradicts an existing node column is a data
+    /// condition the caller can act on — so it is returned, not asserted by a
+    /// panic.
     ///
     /// The fixture key is deliberately one the Frame schema declares nothing
     /// about: under a canonical key the setter refuses the seed's element
     /// type before a column ever exists, which is a different rule. What is
     /// tested here is the *column* the graph already holds.
     #[test]
-    fn add_node_with_returns_the_conflict_when_the_payload_contradicts_a_node_column() {
+    fn add_node_returns_the_conflict_when_the_payload_contradicts_a_node_column() {
         let mut g = MolGraph::new();
-        let seeded = g.add_node();
+        let seeded = g.add_node(props! {}).unwrap();
         g.set_node(seeded, "tag", -0.5_f64)
             .expect("a fresh 'tag' column takes an f64");
 
-        let mut payload = Atom::new();
+        let mut payload = Props::new();
         payload.set("tag", "negative");
 
         let err = g
-            .add_node_with(payload)
+            .add_node(payload)
             .expect_err("a str 'tag' cannot enter an f64 'tag' column");
         assert!(matches!(err, MolRsError::Validation { .. }), "{err:?}");
         assert!(
@@ -1874,24 +2240,77 @@ mod tests {
         );
     }
 
+    /// A refused bag leaves nothing behind: not the node, and not the columns
+    /// of the keys written before the refused one.
+    #[test]
+    fn add_node_is_atomic() {
+        let mut g = MolGraph::new();
+        let seeded = g.add_node(props! { "tag" => -0.5 }).unwrap();
+
+        // `fresh` precedes the conflicting `tag`; a schema refusal (`x` as a
+        // string) likewise follows a fresh key.
+        for bag in [
+            props! { "fresh" => 1.0, "tag" => "negative" },
+            props! { "fresh" => 1.0, keys::X => "left" },
+        ] {
+            assert!(g.add_node(bag).is_err());
+            assert_eq!(g.n_nodes(), 1);
+            assert_eq!(g.node_ids().collect::<Vec<_>>(), [seeded]);
+            assert!(
+                g.node_table().entity_column("fresh").is_none(),
+                "no column was started"
+            );
+        }
+        // Width is still not semantics: an Int under a float key is admitted.
+        let widened = g.add_node(props! { keys::X => 1 }).unwrap();
+        assert_eq!(g.get_node(widened).unwrap().get_f64(keys::X), Some(1.0));
+    }
+
+    /// The same for a relation: a refused bag adds no relation, no adjacency
+    /// entry and no column.
+    #[test]
+    fn add_relation_is_atomic() {
+        let mut g = MolGraph::new();
+        let bond = g.register_kind("bonds", 2);
+        let a = g.add_node(props! {}).unwrap();
+        let b = g.add_node(props! {}).unwrap();
+        g.add_relation(bond, &[a, b], props! { "order" => 1.0 })
+            .unwrap();
+
+        let err = g
+            .add_relation(bond, &[a, b], props! { "fresh" => 1, "order" => "double" })
+            .unwrap_err();
+        assert!(matches!(err, MolRsError::Validation { .. }), "{err:?}");
+        assert_eq!(g.n_relations(bond), 1);
+        assert_eq!(g.neighbors(a).count(), 1, "no adjacency entry was added");
+        let rel = g.relations(bond).next().unwrap().1;
+        assert!(rel.props.get("fresh").is_none());
+        assert!(
+            g.add_relation(bond, &[a, b], props! { keys::BOND_TYPE => -1 })
+                .is_err(),
+            "a negative under an unsigned key is refused before the spawn"
+        );
+        assert_eq!(g.n_relations(bond), 1);
+    }
+
     // ----- Relation CRUD -----
 
     #[test]
     fn test_generic_relation_crud() {
         let mut g = MolGraph::new();
         let angle = g.register_kind("angle", 3);
-        let a = g.add_node();
-        let b = g.add_node();
-        let c = g.add_node();
-        let rid = g.add_relation(angle, &[a, b, c]).unwrap();
+        let a = g.add_node(props! {}).unwrap();
+        let b = g.add_node(props! {}).unwrap();
+        let c = g.add_node(props! {}).unwrap();
+        let rid = g.add_relation(angle, &[a, b, c], props! {}).unwrap();
         assert_eq!(g.n_relations(angle), 1);
         assert_eq!(
             g.get_relation(angle, rid).unwrap().nodes.as_slice(),
             &[a, b, c][..]
         );
-        assert!(g.add_relation(angle, &[a, b]).is_err()); // wrong arity
-        g.remove_node(c).unwrap();
-        assert!(g.add_relation(angle, &[a, b, c]).is_err()); // missing node
+        assert!(g.add_relation(angle, &[a, b], props! {}).is_err()); // wrong arity
+        g.del_node(c).unwrap();
+        assert!(g.add_relation(angle, &[a, b, c], props! {}).is_err()); // missing node
         assert_eq!(g.n_relations(angle), 0); // cascaded
     }
 
@@ -1900,12 +2319,12 @@ mod tests {
         let mut g = MolGraph::new();
         let dih = g.register_kind("dihedral", 4);
         let imp = g.register_kind("improper", 4);
-        let a = g.add_node();
-        let b = g.add_node();
-        let c = g.add_node();
-        let d = g.add_node();
-        g.add_relation(dih, &[a, b, c, d]).unwrap();
-        g.add_relation(imp, &[a, b, c, d]).unwrap();
+        let a = g.add_node(props! {}).unwrap();
+        let b = g.add_node(props! {}).unwrap();
+        let c = g.add_node(props! {}).unwrap();
+        let d = g.add_node(props! {}).unwrap();
+        g.add_relation(dih, &[a, b, c, d], props! {}).unwrap();
+        g.add_relation(imp, &[a, b, c, d], props! {}).unwrap();
         assert_eq!(g.n_relations(dih), 1);
         assert_eq!(g.n_relations(imp), 1);
     }
@@ -1917,15 +2336,15 @@ mod tests {
         let angle = g.register_kind("angle", 3);
         let dih = g.register_kind("dihedral", 4);
         let imp = g.register_kind("improper", 4);
-        let a = g.add_node();
-        let b = g.add_node();
-        let c = g.add_node();
-        let d = g.add_node();
-        g.add_relation(bond, &[a, b]).unwrap();
-        g.add_relation(angle, &[b, a, c]).unwrap();
-        g.add_relation(dih, &[b, a, c, d]).unwrap();
-        g.add_relation(imp, &[b, a, c, d]).unwrap();
-        g.remove_node(a).unwrap();
+        let a = g.add_node(props! {}).unwrap();
+        let b = g.add_node(props! {}).unwrap();
+        let c = g.add_node(props! {}).unwrap();
+        let d = g.add_node(props! {}).unwrap();
+        g.add_relation(bond, &[a, b], props! {}).unwrap();
+        g.add_relation(angle, &[b, a, c], props! {}).unwrap();
+        g.add_relation(dih, &[b, a, c, d], props! {}).unwrap();
+        g.add_relation(imp, &[b, a, c, d], props! {}).unwrap();
+        g.del_node(a).unwrap();
         assert_eq!(g.n_relations(bond), 0);
         assert_eq!(g.n_relations(angle), 0);
         assert_eq!(g.n_relations(dih), 0);
@@ -1938,11 +2357,11 @@ mod tests {
     fn test_neighbors() {
         let mut g = MolGraph::new();
         let bond = g.register_kind("bond", 2);
-        let a = g.add_node();
-        let b = g.add_node();
-        let c = g.add_node();
-        g.add_relation(bond, &[a, b]).unwrap();
-        g.add_relation(bond, &[a, c]).unwrap();
+        let a = g.add_node(props! {}).unwrap();
+        let b = g.add_node(props! {}).unwrap();
+        let c = g.add_node(props! {}).unwrap();
+        g.add_relation(bond, &[a, b], props! {}).unwrap();
+        g.add_relation(bond, &[a, c], props! {}).unwrap();
         let mut n: Vec<NodeId> = g.neighbors(a).collect();
         n.sort_by_key(|id| id.0);
         assert_eq!(n.len(), 2);
@@ -1950,7 +2369,7 @@ mod tests {
         assert_eq!(g.neighbors(b).collect::<Vec<_>>(), vec![a]);
         // removing the relation clears adjacency
         let bid = g.relations(bond).next().unwrap().0;
-        g.remove_relation(bond, bid).unwrap();
+        g.del_relation(bond, bid).unwrap();
         assert_eq!(g.neighbors(a).count(), 1);
     }
 
@@ -1960,13 +2379,23 @@ mod tests {
     fn test_translate_and_rotate() {
         let mut g = MolGraph::new();
         let id = g
-            .add_node_with(Atom::xyz("C", 1.0, 0.0, 0.0))
+            .add_node(props! {
+                keys::ATOMIC_NUMBER => Element::C,
+                keys::X => 1.0,
+                keys::Y => 0.0,
+                keys::Z => 0.0,
+            })
             .expect("fixture node");
         g.translate([10.0, 20.0, 30.0]);
         let a = g.get_node(id).unwrap();
         assert!((a.get_f64("x").unwrap() - 11.0).abs() < 1e-12);
         let id2 = g
-            .add_node_with(Atom::xyz("C", 1.0, 0.0, 0.0))
+            .add_node(props! {
+                keys::ATOMIC_NUMBER => Element::C,
+                keys::X => 1.0,
+                keys::Y => 0.0,
+                keys::Z => 0.0,
+            })
             .expect("fixture node");
         g.rotate([0.0, 0.0, 1.0], std::f64::consts::FRAC_PI_2, None)
             .expect("the z axis is a direction");
@@ -1982,16 +2411,31 @@ mod tests {
         let mut g = MolGraph::new();
         let bond = g.register_kind("bonds", 2);
         let o = g
-            .add_node_with(Atom::xyz("O", 0.0, 0.0, 0.0))
+            .add_node(props! {
+                keys::ATOMIC_NUMBER => Element::O,
+                keys::X => 0.0,
+                keys::Y => 0.0,
+                keys::Z => 0.0,
+            })
             .expect("fixture node");
         let h1 = g
-            .add_node_with(Atom::xyz("H", 0.96, 0.0, 0.0))
+            .add_node(props! {
+                keys::ATOMIC_NUMBER => Element::H,
+                keys::X => 0.96,
+                keys::Y => 0.0,
+                keys::Z => 0.0,
+            })
             .expect("fixture node");
         let h2 = g
-            .add_node_with(Atom::xyz("H", -0.24, 0.93, 0.0))
+            .add_node(props! {
+                keys::ATOMIC_NUMBER => Element::H,
+                keys::X => -0.24,
+                keys::Y => 0.93,
+                keys::Z => 0.0,
+            })
             .expect("fixture node");
-        g.add_relation(bond, &[o, h1]).unwrap();
-        g.add_relation(bond, &[o, h2]).unwrap();
+        g.add_relation(bond, &[o, h1], props! {}).unwrap();
+        g.add_relation(bond, &[o, h2], props! {}).unwrap();
         let frame = g.to_frame().expect("a schema-conforming graph converts");
         assert!(frame.contains_key("atoms"));
         assert!(frame.contains_key("bonds"));
@@ -2011,12 +2455,22 @@ mod tests {
         let mut g = MolGraph::new();
         let bond = g.register_kind("bonds", 2);
         let a = g
-            .add_node_with(Atom::xyz("C", 0.0, 0.0, 0.0))
+            .add_node(props! {
+                keys::ATOMIC_NUMBER => Element::C,
+                keys::X => 0.0,
+                keys::Y => 0.0,
+                keys::Z => 0.0,
+            })
             .expect("fixture node");
         let b = g
-            .add_node_with(Atom::xyz("C", 1.5, 0.0, 0.0))
+            .add_node(props! {
+                keys::ATOMIC_NUMBER => Element::C,
+                keys::X => 1.5,
+                keys::Y => 0.0,
+                keys::Z => 0.0,
+            })
             .expect("fixture node");
-        let rid = g.add_relation(bond, &[a, b]).unwrap();
+        let rid = g.add_relation(bond, &[a, b], props! {}).unwrap();
         // A genuinely float-valued relation prop. `bond_number` is not one —
         // it is a schema uint — and a *computed* fractional bond order is
         // exactly the kind of quantity that gets its own key.
@@ -2058,10 +2512,20 @@ mod tests {
         // identifiers vanished from the frame entirely.
         let mut g = MolGraph::new();
         let a = g
-            .add_node_with(Atom::xyz("C", 0.0, 0.0, 0.0))
+            .add_node(props! {
+                keys::ATOMIC_NUMBER => Element::C,
+                keys::X => 0.0,
+                keys::Y => 0.0,
+                keys::Z => 0.0,
+            })
             .expect("fixture node");
         let b = g
-            .add_node_with(Atom::xyz("H", 1.1, 0.0, 0.0))
+            .add_node(props! {
+                keys::ATOMIC_NUMBER => Element::H,
+                keys::X => 1.1,
+                keys::Y => 0.0,
+                keys::Z => 0.0,
+            })
             .expect("fixture node");
         g.set_node(a, "id", PropValue::Int(1)).unwrap();
         g.set_node(b, "id", PropValue::Int(2)).unwrap();
@@ -2072,7 +2536,7 @@ mod tests {
         assert_eq!(
             atoms
                 .get("id")
-                .and_then(|c| c.as_uint())
+                .and_then(|c| c.get::<u64>())
                 .expect("'id' reaches the frame")
                 .iter()
                 .copied()
@@ -2082,7 +2546,7 @@ mod tests {
         assert_eq!(
             atoms
                 .get("mol_id")
-                .and_then(|c| c.as_uint())
+                .and_then(|c| c.get::<u64>())
                 .expect("'mol_id' reaches the frame")
                 .iter()
                 .copied()
@@ -2095,10 +2559,20 @@ mod tests {
     fn test_to_frame_keeps_bool_node_columns() {
         let mut g = MolGraph::new();
         let a = g
-            .add_node_with(Atom::xyz("C", 0.0, 0.0, 0.0))
+            .add_node(props! {
+                keys::ATOMIC_NUMBER => Element::C,
+                keys::X => 0.0,
+                keys::Y => 0.0,
+                keys::Z => 0.0,
+            })
             .expect("fixture node");
         let b = g
-            .add_node_with(Atom::xyz("H", 1.1, 0.0, 0.0))
+            .add_node(props! {
+                keys::ATOMIC_NUMBER => Element::H,
+                keys::X => 1.1,
+                keys::Y => 0.0,
+                keys::Z => 0.0,
+            })
             .expect("fixture node");
         g.set_node(a, "frozen", true).unwrap();
         g.set_node(b, "frozen", false).unwrap();
@@ -2106,7 +2580,7 @@ mod tests {
         assert_eq!(
             g.to_frame().expect("a schema-conforming graph converts")["atoms"]
                 .get("frozen")
-                .and_then(|c| c.as_bool())
+                .and_then(|c| c.get::<bool>())
                 .expect("bool column reaches the frame")
                 .iter()
                 .copied()
@@ -2119,7 +2593,12 @@ mod tests {
     fn test_extend_from_frame_restores_unsigned_and_bool_node_props() {
         let mut g = MolGraph::new();
         let a = g
-            .add_node_with(Atom::xyz("C", 0.0, 0.0, 0.0))
+            .add_node(props! {
+                keys::ATOMIC_NUMBER => Element::C,
+                keys::X => 0.0,
+                keys::Y => 0.0,
+                keys::Z => 0.0,
+            })
             .expect("fixture node");
         g.set_node(a, "id", PropValue::Int(4)).unwrap();
         g.set_node(a, "mol_id", PropValue::Int(9)).unwrap();
@@ -2144,7 +2623,7 @@ mod tests {
     fn set_node_refuses_a_str_under_the_schema_float_key_x() {
         use crate::core::DType;
         let mut g = MolGraph::new();
-        let n = g.add_node();
+        let n = g.add_node(props! {}).unwrap();
 
         let err = g
             .set_node(n, "x", "left")
@@ -2168,7 +2647,7 @@ mod tests {
     fn set_node_refuses_a_str_under_the_schema_float_key_charge() {
         use crate::core::DType;
         let mut g = MolGraph::new();
-        let n = g.add_node();
+        let n = g.add_node(props! {}).unwrap();
 
         let err = g
             .set_node(n, "charge", "negative")
@@ -2191,7 +2670,7 @@ mod tests {
     fn set_node_refuses_a_bool_under_a_schema_float_key() {
         use crate::core::DType;
         let mut g = MolGraph::new();
-        let n = g.add_node();
+        let n = g.add_node(props! {}).unwrap();
 
         let err = g
             .set_node(n, "y", true)
@@ -2212,7 +2691,7 @@ mod tests {
     fn set_node_refuses_an_int_under_a_schema_string_key() {
         use crate::core::DType;
         let mut g = MolGraph::new();
-        let n = g.add_node();
+        let n = g.add_node(props! {}).unwrap();
 
         let err = g
             .set_node(n, "element", PropValue::Int(6 as I))
@@ -2235,7 +2714,7 @@ mod tests {
     #[test]
     fn set_node_widens_an_int_under_a_schema_float_key() {
         let mut g = MolGraph::new();
-        let n = g.add_node();
+        let n = g.add_node(props! {}).unwrap();
 
         g.set_node(n, "x", PropValue::Int(1 as I))
             .expect("an int is a number and widens into a float key");
@@ -2253,7 +2732,7 @@ mod tests {
     fn set_node_refuses_an_f64_under_a_schema_uint_key() {
         use crate::core::DType;
         let mut g = MolGraph::new();
-        let n = g.add_node();
+        let n = g.add_node(props! {}).unwrap();
 
         let err = g
             .set_node(n, "id", 1.0_f64)
@@ -2273,7 +2752,7 @@ mod tests {
     #[test]
     fn set_node_accepts_an_int_under_a_schema_uint_key() {
         let mut g = MolGraph::new();
-        let n = g.add_node();
+        let n = g.add_node(props! {}).unwrap();
 
         g.set_node(n, "id", 1 as I)
             .expect("a non-negative int is an identifier");
@@ -2289,7 +2768,7 @@ mod tests {
     #[test]
     fn set_node_keeps_the_unsigned_message_for_a_negative_under_a_uint_key() {
         let mut g = MolGraph::new();
-        let n = g.add_node();
+        let n = g.add_node(props! {}).unwrap();
 
         let err = g
             .set_node(n, "id", PropValue::Int(-1 as I))
@@ -2307,7 +2786,7 @@ mod tests {
     #[test]
     fn set_node_accepts_a_str_under_a_key_the_schema_does_not_declare() {
         let mut g = MolGraph::new();
-        let n = g.add_node();
+        let n = g.add_node(props! {}).unwrap();
 
         g.set_node(n, "tag", "left")
             .expect("'tag' is not in the canonical vocabulary");
@@ -2323,7 +2802,7 @@ mod tests {
         // unsigned, so this must fail where a Result exists rather than blow up
         // later in `to_frame`, which has none.
         let mut g = MolGraph::new();
-        let a = g.add_node();
+        let a = g.add_node(props! {}).unwrap();
         assert!(g.set_node(a, "id", PropValue::Int(-1)).is_err());
         assert!(g.set_node(a, "id", PropValue::Int(3)).is_ok());
     }
@@ -2335,19 +2814,19 @@ mod tests {
         let mut src = MolGraph::new();
         let bond = src.register_kind("bond", 2);
         let imp = src.register_kind("improper", 4);
-        let a = src.add_node();
-        let b = src.add_node();
-        let c = src.add_node();
-        let d = src.add_node();
-        src.add_relation(bond, &[a, b]).unwrap();
-        src.add_relation(imp, &[a, b, c, d]).unwrap();
+        let a = src.add_node(props! {}).unwrap();
+        let b = src.add_node(props! {}).unwrap();
+        let c = src.add_node(props! {}).unwrap();
+        let d = src.add_node(props! {}).unwrap();
+        src.add_relation(bond, &[a, b], props! {}).unwrap();
+        src.add_relation(imp, &[a, b, c, d], props! {}).unwrap();
 
         let mut dst = MolGraph::new();
         let dbond = dst.register_kind("bond", 2);
         let dimp = dst.register_kind("improper", 4);
-        let e = dst.add_node();
-        let f = dst.add_node();
-        dst.add_relation(dbond, &[e, f]).unwrap();
+        let e = dst.add_node(props! {}).unwrap();
+        let f = dst.add_node(props! {}).unwrap();
+        dst.add_relation(dbond, &[e, f], props! {}).unwrap();
 
         let map = dst.merge(src).expect("merge succeeds on compatible graphs");
         assert_eq!(dst.n_nodes(), 6);
@@ -2361,17 +2840,27 @@ mod tests {
         let mut g = MolGraph::new();
         let bond = g.register_kind("bonds", 2);
         let a = g
-            .add_node_with(Atom::xyz("C", 0.0, 0.0, 0.0))
+            .add_node(props! {
+                keys::ATOMIC_NUMBER => Element::C,
+                keys::X => 0.0,
+                keys::Y => 0.0,
+                keys::Z => 0.0,
+            })
             .expect("fixture node");
         let b = g
-            .add_node_with(Atom::xyz("H", 1.0, 0.0, 0.0))
+            .add_node(props! {
+                keys::ATOMIC_NUMBER => Element::H,
+                keys::X => 1.0,
+                keys::Y => 0.0,
+                keys::Z => 0.0,
+            })
             .expect("fixture node");
-        let rid = g.add_relation(bond, &[a, b]).unwrap();
+        let rid = g.add_relation(bond, &[a, b], props! {}).unwrap();
         let g2 = g.clone();
         assert!(g2.get_node(a).is_ok());
         assert!(g2.get_node(b).is_ok());
         assert!(g2.get_relation(bond, rid).is_ok());
-        assert_eq!(g2.get_node(a).unwrap().get_str("element"), Some("C"));
+        assert_eq!(g2.get_node(a).unwrap().atomic_number(), Some(6));
     }
 
     // ----- Clone independence -----
@@ -2380,10 +2869,20 @@ mod tests {
     fn test_clone_independence() {
         let mut g = MolGraph::new();
         let id = g
-            .add_node_with(Atom::xyz("C", 0.0, 0.0, 0.0))
+            .add_node(props! {
+                keys::ATOMIC_NUMBER => Element::C,
+                keys::X => 0.0,
+                keys::Y => 0.0,
+                keys::Z => 0.0,
+            })
             .expect("fixture node");
-        g.add_node_with(Atom::xyz("H", 1.0, 0.0, 0.0))
-            .expect("fixture node");
+        g.add_node(props! {
+            keys::ATOMIC_NUMBER => Element::H,
+            keys::X => 1.0,
+            keys::Y => 0.0,
+            keys::Z => 0.0,
+        })
+        .expect("fixture node");
         let g2 = g.clone();
         g.set_node(id, "x", 99.0).unwrap();
         assert_eq!(g2.get_node(id).unwrap().get_f64("x"), Some(0.0));
@@ -2402,29 +2901,34 @@ mod tests {
         graph.register_kind("bonds", 2);
         let mut atoms = Block::new();
         atoms
-            .insert("z", Array1::from_vec(vec![0.0 as F, 1.0]).into_dyn())
+            .insert("z", Array1::from_vec(vec![0.0 as F, 1.0]).into_dyn(), None)
             .unwrap();
         atoms
             .insert(
                 "element",
                 Array1::from_vec(vec!["C".to_owned(), "O".to_owned()]).into_dyn(),
+                None,
             )
             .unwrap();
         atoms
-            .insert("x", Array1::from_vec(vec![2.0 as F, 3.0]).into_dyn())
+            .insert("x", Array1::from_vec(vec![2.0 as F, 3.0]).into_dyn(), None)
             .unwrap();
         let mut bonds = Block::new();
         bonds
-            .insert("atomi", Array1::from_vec(vec![0 as Idx]).into_dyn())
+            .insert("atomi", Array1::from_vec(vec![0 as Idx]).into_dyn(), None)
             .unwrap();
         bonds
-            .insert("atomj", Array1::from_vec(vec![1 as Idx]).into_dyn())
+            .insert("atomj", Array1::from_vec(vec![1 as Idx]).into_dyn(), None)
             .unwrap();
         bonds
-            .insert("type", Array1::from_vec(vec!["b".to_owned()]).into_dyn())
+            .insert(
+                "type",
+                Array1::from_vec(vec!["b".to_owned()]).into_dyn(),
+                None,
+            )
             .unwrap();
         bonds
-            .insert("order", Array1::from_vec(vec![2.0 as F]).into_dyn())
+            .insert("order", Array1::from_vec(vec![2.0 as F]).into_dyn(), None)
             .unwrap();
         let mut frame = Frame::new();
         frame.insert("atoms", atoms);
@@ -2451,9 +2955,9 @@ mod tests {
 
         let mut graph = MolGraph::new();
         let bonds = graph.register_kind("bonds", 2);
-        let a = graph.add_node_with(Atom::new()).expect("fixture node");
-        let b = graph.add_node_with(Atom::new()).expect("fixture node");
-        let rid = graph.add_relation(bonds, &[a, b]).unwrap();
+        let a = graph.add_node(Props::new()).expect("fixture node");
+        let b = graph.add_node(Props::new()).expect("fixture node");
+        let rid = graph.add_relation(bonds, &[a, b], props! {}).unwrap();
         graph
             .set_relation_prop(bonds, rid, "tag", PropValue::Int(1 as I))
             .unwrap();
@@ -2463,19 +2967,21 @@ mod tests {
             .insert(
                 "element",
                 Array1::from_vec(vec!["C".to_owned(), "C".to_owned()]).into_dyn(),
+                None,
             )
             .unwrap();
         let mut bonds_block = Block::new();
         bonds_block
-            .insert("atomi", Array1::from_vec(vec![0 as Idx]).into_dyn())
+            .insert("atomi", Array1::from_vec(vec![0 as Idx]).into_dyn(), None)
             .unwrap();
         bonds_block
-            .insert("atomj", Array1::from_vec(vec![1 as Idx]).into_dyn())
+            .insert("atomj", Array1::from_vec(vec![1 as Idx]).into_dyn(), None)
             .unwrap();
         bonds_block
             .insert(
                 "tag",
                 Array1::from_vec(vec!["single".to_owned()]).into_dyn(),
+                None,
             )
             .unwrap();
         let mut frame = Frame::new();
@@ -2500,6 +3006,7 @@ mod tests {
             .insert(
                 "element",
                 Array1::from_vec(vec!["C".to_owned(), "O".to_owned()]).into_dyn(),
+                None,
             )
             .unwrap();
         atoms
@@ -2508,6 +3015,7 @@ mod tests {
                 Array2::from_shape_vec((2, 3), vec![0.0, 1.0, 2.0, 3.0, 4.0, 5.0])
                     .unwrap()
                     .into_dyn(),
+                None,
             )
             .unwrap();
         let mut frame = Frame::new();
@@ -2536,13 +3044,13 @@ mod tests {
     #[test]
     fn merge_rejects_a_node_prop_whose_dtype_conflicts_with_an_existing_column() {
         let mut dst = MolGraph::new();
-        let kept = dst.add_node_with(Atom::new()).expect("fixture node");
+        let kept = dst.add_node(Props::new()).expect("fixture node");
         dst.set_node(kept, "tag", PropValue::Int(1 as I)).unwrap();
 
         let mut src = MolGraph::new();
-        let mut incoming = Atom::new();
+        let mut incoming = Props::new();
         incoming.set("tag", "single");
-        src.add_node_with(incoming).expect("fixture node");
+        src.add_node(incoming).expect("fixture node");
 
         let err = dst
             .merge(src)
@@ -2556,17 +3064,17 @@ mod tests {
     fn merge_rejects_a_relation_prop_whose_dtype_conflicts_with_an_existing_component() {
         let mut dst = MolGraph::new();
         let bonds = dst.register_kind("bonds", 2);
-        let a = dst.add_node_with(Atom::new()).expect("fixture node");
-        let b = dst.add_node_with(Atom::new()).expect("fixture node");
-        let rid = dst.add_relation(bonds, &[a, b]).unwrap();
+        let a = dst.add_node(Props::new()).expect("fixture node");
+        let b = dst.add_node(Props::new()).expect("fixture node");
+        let rid = dst.add_relation(bonds, &[a, b], props! {}).unwrap();
         dst.set_relation_prop(bonds, rid, "tag", PropValue::Int(1 as I))
             .unwrap();
 
         let mut src = MolGraph::new();
         let src_bonds = src.register_kind("bonds", 2);
-        let c = src.add_node_with(Atom::new()).expect("fixture node");
-        let d = src.add_node_with(Atom::new()).expect("fixture node");
-        let src_rid = src.add_relation(src_bonds, &[c, d]).unwrap();
+        let c = src.add_node(Props::new()).expect("fixture node");
+        let d = src.add_node(Props::new()).expect("fixture node");
+        let src_rid = src.add_relation(src_bonds, &[c, d], props! {}).unwrap();
         src.set_relation_prop(src_bonds, src_rid, "tag", "single")
             .unwrap();
 
@@ -2580,6 +3088,7 @@ mod tests {
 
     use crate::core::Atomistic;
     use crate::core::BondNumber;
+    use crate::core::GraphAccess;
     use crate::core::PortKind;
     use crate::op::Rigid;
 
@@ -2587,11 +3096,32 @@ mod tests {
     /// (anchor C, handle H). Template node order is C, O, H.
     fn replicate_template() -> Atomistic {
         let mut frag = Atomistic::new();
-        let c = frag.add_atom_xyz("C", 0.0, 0.0, 0.0);
-        let o = frag.add_atom_xyz("O", 1.0, 0.0, 0.0);
-        let h = frag.add_atom_xyz("H", -1.0, 0.0, 0.0);
-        frag.add_bond(c, o).expect("fixture bond C-O");
-        frag.add_bond(c, h).expect("fixture bond C-H");
+        let c = frag
+            .add_atom(props! {
+                keys::ATOMIC_NUMBER => Element::C,
+                keys::X => 0.0,
+                keys::Y => 0.0,
+                keys::Z => 0.0,
+            })
+            .unwrap();
+        let o = frag
+            .add_atom(props! {
+                keys::ATOMIC_NUMBER => Element::O,
+                keys::X => 1.0,
+                keys::Y => 0.0,
+                keys::Z => 0.0,
+            })
+            .unwrap();
+        let h = frag
+            .add_atom(props! {
+                keys::ATOMIC_NUMBER => Element::H,
+                keys::X => -1.0,
+                keys::Y => 0.0,
+                keys::Z => 0.0,
+            })
+            .unwrap();
+        frag.add_bond(c, o, props! {}).expect("fixture bond C-O");
+        frag.add_bond(c, h, props! {}).expect("fixture bond C-H");
         frag.add_port(c, h, PortKind::Symmetric, "a", BondNumber::Single)
             .expect("a bonded H handle is a legal port");
         frag
@@ -2635,13 +3165,24 @@ mod tests {
     fn replicate_target(extra_key: &str) -> MolGraph {
         let mut g = MolGraph::new();
         let bonds = g.register_kind("bonds", 2);
-        let mut seed = Atom::xyz("N", 0.0, 0.0, 0.0);
+        let mut seed = props! {
+            keys::ATOMIC_NUMBER => Element::N,
+            keys::X => 0.0,
+            keys::Y => 0.0,
+            keys::Z => 0.0,
+        };
         seed.set(extra_key, "bar");
-        let a = g.add_node_with(seed).expect("fixture node");
+        let a = g.add_node(seed).expect("fixture node");
         let b = g
-            .add_node_with(Atom::xyz("N", 1.1, 0.0, 0.0))
+            .add_node(props! {
+                keys::ATOMIC_NUMBER => Element::N,
+                keys::X => 1.1,
+                keys::Y => 0.0,
+                keys::Z => 0.0,
+            })
             .expect("fixture node");
-        g.add_relation(bonds, &[a, b]).expect("fixture bond");
+        g.add_relation(bonds, &[a, b], props! {})
+            .expect("fixture bond");
         g
     }
 
@@ -2660,7 +3201,7 @@ mod tests {
         let template = replicate_template();
         let mut out = MolGraph::new();
         let handles = out
-            .replicate(template.as_molgraph(), &replicate_transforms(), &[7, 8])
+            .replicate(template.graph(), &replicate_transforms(), &[7, 8])
             .expect("two copies of a well-formed template replicate");
 
         assert_xyz(xyz_of(&out, handles[1]), [1.0, 0.0, 5.0]);
@@ -2683,22 +3224,16 @@ mod tests {
         let template = replicate_template();
         let mut out = MolGraph::new();
         let handles = out
-            .replicate(template.as_molgraph(), &replicate_transforms(), &[7, 8])
+            .replicate(template.graph(), &replicate_transforms(), &[7, 8])
             .unwrap();
 
         assert_eq!(handles.len(), 6);
         assert_eq!(out.n_nodes(), 6);
-        let elements: Vec<String> = handles
+        let species: Vec<u8> = handles
             .iter()
-            .map(|&h| {
-                out.get_node(h)
-                    .unwrap()
-                    .get_str("element")
-                    .unwrap()
-                    .to_owned()
-            })
+            .map(|&h| out.get_node(h).unwrap().atomic_number().unwrap())
             .collect();
-        assert_eq!(elements, ["C", "O", "H", "C", "O", "H"]);
+        assert_eq!(species, [6, 8, 1, 6, 8, 1]);
         // Template node t of copy c sits at c*n + t: each copy's C is its origin
         // image, i.e. that copy's translation.
         assert_xyz(xyz_of(&out, handles[0]), [0.0, 0.0, 5.0]);
@@ -2712,7 +3247,7 @@ mod tests {
         let template = replicate_template();
         let mut out = MolGraph::new();
         let handles = out
-            .replicate(template.as_molgraph(), &replicate_transforms(), &[7, 8])
+            .replicate(template.graph(), &replicate_transforms(), &[7, 8])
             .unwrap();
 
         let bonds = out.kind_id("bonds").expect("'bonds' registered by name");
@@ -2750,16 +3285,21 @@ mod tests {
     #[test]
     fn replicate_copies_a_row_without_a_full_triple_untransformed() {
         let mut template = MolGraph::new();
-        let mut planar = Atom::new();
-        planar.set("element", "C");
+        let mut planar = Props::new();
+        planar.set(keys::ATOMIC_NUMBER, Element::C);
         planar.set("x", 1.0);
         planar.set("y", 2.0);
-        template.add_node_with(planar).expect("x,y-only node");
-        let mut bare = Atom::new();
-        bare.set("element", "N");
-        template.add_node_with(bare).expect("coordinate-less node");
+        template.add_node(planar).expect("x,y-only node");
+        let mut bare = Props::new();
+        bare.set(keys::ATOMIC_NUMBER, Element::N);
+        template.add_node(bare).expect("coordinate-less node");
         template
-            .add_node_with(Atom::xyz("O", 1.0, 0.0, 0.0))
+            .add_node(props! {
+                keys::ATOMIC_NUMBER => Element::O,
+                keys::X => 1.0,
+                keys::Y => 0.0,
+                keys::Z => 0.0,
+            })
             .expect("full-triple node");
 
         let mut out = MolGraph::new();
@@ -2781,12 +3321,12 @@ mod tests {
     #[test]
     fn replicate_overwrites_a_template_frag_id() {
         let mut template = replicate_template();
-        let c = template.node_ids().next().unwrap();
-        template.set_frag_id(c, 99).unwrap();
+        let c = template.atom_ids().next().unwrap();
+        template.set_atom(c, FRAG_ID, PropValue::Int(99)).unwrap();
 
         let mut out = MolGraph::new();
         let handles = out
-            .replicate(template.as_molgraph(), &replicate_transforms(), &[7, 8])
+            .replicate(template.graph(), &replicate_transforms(), &[7, 8])
             .unwrap();
         assert_eq!(out.get_node(handles[0]).unwrap().get_int(FRAG_ID), Some(7));
         assert_eq!(out.get_node(handles[3]).unwrap().get_int(FRAG_ID), Some(8));
@@ -2797,7 +3337,7 @@ mod tests {
         let template = replicate_template();
         let mut out = replicate_target("tag");
         let err = out
-            .replicate(template.as_molgraph(), &replicate_transforms(), &[7])
+            .replicate(template.graph(), &replicate_transforms(), &[7])
             .expect_err("two transforms need two frag_ids");
         assert!(matches!(err, MolRsError::Validation { .. }), "{err:?}");
         assert_target_unchanged(&out);
@@ -2806,11 +3346,11 @@ mod tests {
     #[test]
     fn replicate_refuses_a_column_type_conflict_and_writes_nothing() {
         let mut template = replicate_template();
-        let c = template.node_ids().next().unwrap();
-        template.set_node(c, "foo", 1.5).unwrap();
+        let c = template.atom_ids().next().unwrap();
+        template.set_atom(c, "foo", 1.5).unwrap();
         let mut out = replicate_target("foo");
         let err = out
-            .replicate(template.as_molgraph(), &replicate_transforms(), &[7, 8])
+            .replicate(template.graph(), &replicate_transforms(), &[7, 8])
             .expect_err("a float 'foo' cannot enter a str 'foo' column");
         assert!(matches!(err, MolRsError::Validation { .. }), "{err:?}");
         assert_target_unchanged(&out);
@@ -2821,7 +3361,7 @@ mod tests {
         let template = replicate_template();
         let mut out = replicate_target(FRAG_ID);
         let err = out
-            .replicate(template.as_molgraph(), &replicate_transforms(), &[7, 8])
+            .replicate(template.graph(), &replicate_transforms(), &[7, 8])
             .expect_err("frag_id is an Int column; self holds a str one");
         assert!(matches!(err, MolRsError::Validation { .. }), "{err:?}");
         assert_target_unchanged(&out);
@@ -2837,10 +3377,10 @@ mod tests {
     fn replicate_into_a_non_empty_target_appends_only_new_copies() {
         let template = replicate_template();
         let mut out = replicate_target("tag");
-        let before: Vec<(NodeId, Atom)> = out.nodes().collect();
+        let before: Vec<(NodeId, Props)> = out.nodes().collect();
 
         let handles = out
-            .replicate(template.as_molgraph(), &replicate_transforms(), &[7, 8])
+            .replicate(template.graph(), &replicate_transforms(), &[7, 8])
             .expect("a compatible non-empty target accepts copies");
 
         assert_eq!(handles.len(), 6, "only the new copies are returned");
@@ -2870,7 +3410,7 @@ mod tests {
         let cols = sorted_node_columns(&out);
 
         let err = out
-            .replicate(template.as_molgraph(), &replicate_transforms(), &[7, 8])
+            .replicate(template.graph(), &replicate_transforms(), &[7, 8])
             .expect_err("template 'ports' is arity 2; self holds arity 3");
 
         assert!(matches!(err, MolRsError::Validation { .. }), "{err:?}");
@@ -2887,18 +3427,28 @@ mod tests {
         let mut template = MolGraph::new();
         let tlinks = template.register_kind("links", 2);
         let p = template
-            .add_node_with(Atom::xyz("C", 0.0, 0.0, 0.0))
+            .add_node(props! {
+                keys::ATOMIC_NUMBER => Element::C,
+                keys::X => 0.0,
+                keys::Y => 0.0,
+                keys::Z => 0.0,
+            })
             .unwrap();
         let q = template
-            .add_node_with(Atom::xyz("C", 1.5, 0.0, 0.0))
+            .add_node(props! {
+                keys::ATOMIC_NUMBER => Element::C,
+                keys::X => 1.5,
+                keys::Y => 0.0,
+                keys::Z => 0.0,
+            })
             .unwrap();
-        let trid = template.add_relation(tlinks, &[p, q]).unwrap();
+        let trid = template.add_relation(tlinks, &[p, q], props! {}).unwrap();
         template.set_relation_prop(tlinks, trid, "w", 1.5).unwrap();
 
         let mut out = replicate_target("tag");
         let links = out.register_kind("links", 2);
         let ends: Vec<NodeId> = out.node_ids().collect();
-        let rid = out.add_relation(links, &ends).unwrap();
+        let rid = out.add_relation(links, &ends, props! {}).unwrap();
         out.set_relation_prop(links, rid, "w", "heavy").unwrap();
         let n_kinds = out.kind_ids().count();
         let cols = sorted_node_columns(&out);
@@ -2927,14 +3477,14 @@ mod tests {
         let cols = sorted_node_columns(&out);
 
         let handles = out
-            .replicate(template.as_molgraph(), &[], &[])
+            .replicate(template.graph(), &[], &[])
             .expect("no transforms is a valid empty placement");
 
         assert!(handles.is_empty());
         assert_target_unchanged(&out);
         assert_eq!(out.kind_ids().count(), n_kinds, "no kind was registered");
         assert_eq!(sorted_node_columns(&out), cols, "no column was added");
-        assert!(out.node_table().column(FRAG_ID).is_none());
+        assert!(out.node_table().entity_column(FRAG_ID).is_none());
     }
 
     /// Relation handles are per-kind keys: the first relation of `widgets`
@@ -2944,13 +3494,13 @@ mod tests {
     fn relation_row_is_the_position_in_relation_ids() {
         let mut g = MolGraph::new();
         let bonds = g.register_kind("bonds", 2);
-        let a = g.add_node();
-        let b = g.add_node();
-        let c = g.add_node();
-        let ab = g.add_relation(bonds, &[a, b]).expect("ab");
-        let bc = g.add_relation(bonds, &[b, c]).expect("bc");
-        let ca = g.add_relation(bonds, &[c, a]).expect("ca");
-        g.remove_relation(bonds, ab).expect("ab removed");
+        let a = g.add_node(props! {}).unwrap();
+        let b = g.add_node(props! {}).unwrap();
+        let c = g.add_node(props! {}).unwrap();
+        let ab = g.add_relation(bonds, &[a, b], props! {}).expect("ab");
+        let bc = g.add_relation(bonds, &[b, c], props! {}).expect("bc");
+        let ca = g.add_relation(bonds, &[c, a], props! {}).expect("ca");
+        g.del_relation(bonds, ab).expect("ab removed");
 
         let ids: Vec<RelationId> = g.relation_ids(bonds).collect();
         for (row, id) in ids.iter().enumerate() {
@@ -2966,21 +3516,111 @@ mod tests {
         let mut g = MolGraph::new();
         let bonds = g.register_kind("bonds", 2);
         let widgets = g.register_kind("widgets", 2);
-        let a = g.add_node();
-        let b = g.add_node();
-        let bond = g.add_relation(bonds, &[a, b]).expect("bond");
-        let widget = g.add_relation(widgets, &[a, b]).expect("widget");
+        let a = g.add_node(props! {}).unwrap();
+        let b = g.add_node(props! {}).unwrap();
+        let bond = g.add_relation(bonds, &[a, b], props! {}).expect("bond");
+        let widget = g.add_relation(widgets, &[a, b], props! {}).expect("widget");
         assert_eq!(
             bond.data().as_ffi(),
             widget.data().as_ffi(),
             "fixture shares a handle"
         );
 
-        g.remove_relation(widgets, widget).expect("widget removed");
+        g.del_relation(widgets, widget).expect("widget removed");
 
         let kinds_at_a: Vec<KindId> = g.neighbor_relations(a).map(|(k, _, _)| k).collect();
         let kinds_at_b: Vec<KindId> = g.neighbor_relations(b).map(|(k, _, _)| k).collect();
         assert_eq!(kinds_at_a, vec![bonds]);
         assert_eq!(kinds_at_b, vec![bonds]);
+    }
+
+    // ----- handles as u64; single vs batch deletion -----
+
+    #[test]
+    fn handles_round_trip_through_u64() {
+        let mut g = MolGraph::new();
+        let kind = g.register_kind("bonds", 2);
+        let a = g.add_node(props! {}).unwrap();
+        let b = g.add_node(props! {}).unwrap();
+        let r = g.add_relation(kind, &[a, b], props! {}).unwrap();
+        let (ha, hr): (u64, u64) = (a.into(), r.into());
+        assert_eq!(NodeId::from(ha), a);
+        assert_eq!(RelationId::from(hr), r);
+        assert_ne!(u64::from(a), u64::from(b));
+    }
+
+    /// Three nodes on a path with a bond between each neighbour pair.
+    fn path3() -> (MolGraph, KindId, Vec<NodeId>, Vec<RelationId>) {
+        let mut g = MolGraph::new();
+        let kind = g.register_kind("bonds", 2);
+        let n: Vec<NodeId> = (0..3).map(|_| g.add_node(props! {}).unwrap()).collect();
+        let r = vec![
+            g.add_relation(kind, &[n[0], n[1]], props! {}).unwrap(),
+            g.add_relation(kind, &[n[1], n[2]], props! {}).unwrap(),
+        ];
+        (g, kind, n, r)
+    }
+
+    #[test]
+    fn del_nodes_is_atomic_and_cascades() {
+        let (mut g, kind, n, _) = path3();
+        let dead = g.add_node(props! {}).unwrap();
+        g.del_node(dead).unwrap();
+        assert!(matches!(
+            g.del_nodes(&[n[0], dead]),
+            Err(MolRsError::NotFound { .. })
+        ));
+        assert!(matches!(
+            g.del_nodes(&[n[0], n[0]]),
+            Err(MolRsError::Validation { .. })
+        ));
+        assert_eq!(
+            (g.n_nodes(), g.n_relations(kind)),
+            (3, 2),
+            "nothing deleted"
+        );
+
+        assert_eq!(g.del_nodes(&[n[2], n[0]]).unwrap().len(), 2);
+        assert_eq!((g.n_nodes(), g.n_relations(kind)), (1, 0));
+        assert_eq!(g.neighbors(n[1]).count(), 0);
+    }
+
+    #[test]
+    fn del_relations_is_atomic_and_updates_adjacency() {
+        let (mut g, kind, n, r) = path3();
+        let gone = g.del_relation(kind, r[0]).unwrap();
+        assert_eq!(gone.nodes.as_slice(), &[n[0], n[1]]);
+        assert!(g.del_relation(kind, r[0]).is_err());
+        assert!(g.del_relations(kind, &[r[1], r[0]]).is_err());
+        assert!(g.del_relations(kind, &[r[1], r[1]]).is_err());
+        assert!(g.del_relations(KindId(9), &[r[1]]).is_err());
+        assert_eq!(g.n_relations(kind), 1, "a refused batch deletes nothing");
+        assert_eq!(g.del_relations(kind, &[r[1]]).unwrap().len(), 1);
+        assert_eq!(g.n_relations(kind), 0);
+        assert_eq!(g.neighbors(n[1]).count(), 0);
+        assert_eq!(g.n_nodes(), 3);
+    }
+
+    #[test]
+    fn add_relation_named_registers_only_a_kind_that_receives_a_row() {
+        let (mut g, _, n, _) = path3();
+        let kinds = g.kind_ids().count();
+        assert!(
+            g.add_relation_named("triples", 3, &n[..2], props! {})
+                .is_err()
+        );
+        assert!(
+            g.add_relation_named("triples", 3, &n, props! { keys::X => "left" })
+                .is_err()
+        );
+        assert_eq!(g.kind_ids().count(), kinds, "no kind registered");
+        g.add_relation_named("triples", 3, &n, props! {}).unwrap();
+        let triples = g.kind_id("triples").unwrap();
+        assert_eq!((g.arity(triples), g.n_relations(triples)), (3, 1));
+        // A registered kind keeps its arity.
+        assert!(
+            g.add_relation_named("triples", 2, &n[..2], props! {})
+                .is_err()
+        );
     }
 }

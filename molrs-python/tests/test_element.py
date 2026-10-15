@@ -1,42 +1,87 @@
 import molrs
+import numpy as np
 import pytest
+
+Element = molrs.core.Element
 
 
 @pytest.mark.parametrize(
-    ("identifier", "number", "name", "symbol"),
+    ("symbol", "number", "name", "canonical"),
     [
         ("h", 1, "Hydrogen", "H"),
-        ("CARBON", 6, "Carbon", "C"),
-        (8, 8, "Oxygen", "O"),
-        ("oganesson", 118, "Oganesson", "Og"),
+        ("C", 6, "Carbon", "C"),
+        ("fe", 26, "Iron", "Fe"),
+        ("OG", 118, "Oganesson", "Og"),
     ],
 )
-def test_element_lookup(identifier, number, name, symbol):
-    element = molrs.core.Element(identifier)
-    assert element.number == number
+def test_element_by_symbol(symbol, number, name, canonical):
+    element = Element.by_symbol(symbol)
+    assert element.z == number
     assert element.name == name
-    assert element.symbol == symbol
-    assert repr(element) == f"<Element {symbol}>"
+    assert element.symbol == canonical
+    assert repr(element) == f"<Element {canonical}>"
 
 
 def test_all_real_elements_round_trip_through_rust_table():
     for number in range(1, 119):
-        element = molrs.core.Element(number)
-        assert molrs.core.Element(element.symbol) == element
-        assert molrs.core.Element(element.name.upper()) == element
+        element = Element.by_number(number)
+        assert element.z == number
+        assert Element.by_symbol(element.symbol) == element
         assert element.mass > 0.0
         assert element.vdw > 0.0
         assert element.covalent > 0.0
 
 
-def test_element_convenience_lookups():
-    assert molrs.core.Element.get_symbols([1, "carbon", "o", 7]) == ["H", "C", "O", "N"]
-    assert molrs.core.Element.get_atomic_number("fe") == 26
+def test_element_is_not_constructed_directly():
+    with pytest.raises(TypeError):
+        Element("C")  # type: ignore[call-arg]
 
 
-@pytest.mark.parametrize(
-    "identifier", [-1, 0, 119, 999, "X", "unknown", "not-an-element"]
-)
-def test_invalid_element_fails_fast(identifier):
-    with pytest.raises(KeyError, match="Element not found"):
-        molrs.core.Element(identifier)
+@pytest.mark.parametrize("symbol", ["X", "*", "", "carbon", "not-an-element"])
+def test_unknown_symbol_fails_fast(symbol):
+    with pytest.raises(ValueError, match="not an element symbol"):
+        Element.by_symbol(symbol)
+
+
+@pytest.mark.parametrize("number", [-1, 0, 119, 999])
+def test_unknown_number_fails_fast(number):
+    with pytest.raises(ValueError, match="not an atomic number"):
+        Element.by_number(number)
+
+
+def test_by_number_refuses_a_bool():
+    with pytest.raises(TypeError, match="not a bool"):
+        Element.by_number(True)
+
+
+def test_fill_atomic_numbers_is_the_explicit_symbol_to_number_step():
+    frame = molrs.core.Frame({"atoms": {"element": ["O", "h", "*"]}})
+    Element.fill_atomic_numbers(frame)
+    assert frame["atoms"]["atomic_number"].tolist() == [8, 1, 0]
+    assert frame["atoms"]["element"].tolist() == ["O", "h", "*"]
+
+
+def test_fill_atomic_numbers_names_the_bad_row():
+    frame = molrs.core.Frame({"atoms": {"element": ["C", "Xx"]}})
+    with pytest.raises(ValueError, match="row 1"):
+        Element.fill_atomic_numbers(frame)
+
+
+def test_fill_atomic_numbers_needs_an_element_column():
+    frame = molrs.core.Frame({"atoms": {"x": [0.0]}})
+    with pytest.raises(ValueError, match="element"):
+        Element.fill_atomic_numbers(frame)
+
+
+def test_fill_symbols_is_the_explicit_number_to_symbol_step():
+    frame = molrs.core.Frame(
+        {"atoms": {"atomic_number": np.array([6, 1, 0], dtype=np.uint64)}}
+    )
+    Element.fill_symbols(frame)
+    assert frame["atoms"]["element"].tolist() == ["C", "H", "*"]
+
+
+def test_fill_symbols_needs_an_atomic_number_column():
+    frame = molrs.core.Frame({"atoms": {"element": ["C"]}})
+    with pytest.raises(ValueError, match="atomic_number"):
+        Element.fill_symbols(frame)

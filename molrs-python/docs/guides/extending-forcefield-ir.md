@@ -17,9 +17,9 @@ The form — categories, styles, parameters, refusals — is `molrs::ff::ir`
 `molrs::ff::style_registry` and `molrs.ff.style_registry`; compiling a force
 field against it is `molrs::ff::compile` and `molrs.ff.compile`. molpy
 re-exports the Python modules. The engine files a registered
-style is read from and written to are `molrs.io`'s (`read_lammps_forcefield`,
-`write_openmm_forcefield`, `write_mrec_frame`, …; the same names in Rust's
-`molrs::io`), the one owner of every file reader and writer.
+style is read from and written to are `molrs.io`'s (`LammpsForcefieldReader`,
+`OpenmmXmlWriter`, `write_mrec`, …; the same names in Rust's `molrs::io`), the
+one owner of every file reader and writer.
 
 ## The form
 
@@ -374,6 +374,8 @@ the force field" snippet, run as written by its
 `tests/test_potential/test_user_style.py`:
 
 ```python
+from pathlib import Path
+
 import molpy as mp
 from molpy.potential import ParamSpec, StyleDeclaration
 from molpy.typifier import TypeAssignment, Typifier
@@ -391,15 +393,15 @@ class BeadSpring(Typifier):  # every bead B, every bond FENE; lj units
         bead = {"type": ("full", "B", (), {"mass": 1.0})}
         spring = {"type": ("fene", "B-B", ("B", "B"),
                            {"k": 30.0, "r0": 1.5, "epsilon": 1.0, "sigma": 1.0})}
-        bonds = graph.links.exact_bucket(mp.Bond)
+        bonds = graph.bonds
         return TypeAssignment([bead] * len(graph.atoms), links={mp.Bond: [spring] * len(bonds)},
                      styles=[("atom", "full", {}), ("bond", "fene", {})])
 
 typifier = BeadSpring()
 frame = typifier.typify(chain).to_frame()  # chain: an mp.Atomistic of bonded beads
 ff = typifier.forcefield()
-energy, forces = mp.PotentialCompiler(ff).compile(frame).calc_energy_forces(frame)
-mp.io.write_mrec_frame("chain.mrec", frame, forcefield=ff)  # the expression travels along
+energy, forces = mp.PotentialCompiler(ff).compile(frame).evaluate(frame)
+mp.io.write_mrec(Path("chain.mrec"), frame=frame, forcefield=ff)  # the expression travels along
 ```
 
 ## How this is checked
@@ -435,12 +437,12 @@ numbers pinned in `ff_ir_extension_lammps.tsv` by the same script:
 |---|---|---|
 | `fene` by expression = the analytic formula | rel ≤ 1e-12 | 2.1·10⁻¹⁶ |
 | a numpy kernel = the expression | E rel ≤ 1e-12, F rel ≤ 1e-10 | 1.1·10⁻¹⁶, 2.1·10⁻¹⁶ |
-| both = LAMMPS `bond_style fene` (deck by `write_lammps_forcefield`, `lj` units) | rel ≤ 1e-10 | 7.0·10⁻¹⁶ (expression), 5.2·10⁻¹⁶ (numpy) |
+| both = LAMMPS `bond_style fene` (deck by `LammpsForcefieldWriter`, `lj` units) | rel ≤ 1e-10 | 7.0·10⁻¹⁶ (expression), 5.2·10⁻¹⁶ (numpy) |
 | `urey_bradley` from Python = LAMMPS (`angle_style charmm`, K = 0) | rel ≤ 1e-10 | 1.6·10⁻¹⁶ |
 | `pair lj/smooth/linear` by expression and by a numpy kernel = LAMMPS, its 5 Å cutoff straddling the pairs; `compile_typed` (an integrator's first force call) = `compile` | rel ≤ 1e-10; doors rel ≤ 1e-12 | 2.5·10⁻¹⁵ (expression), 2.9·10⁻¹⁵ (numpy); doors bit for bit |
 | `.mrec` round trip; a subprocess that registered nothing | bit for bit, expression byte for byte | bit for bit |
 | a callable-only style in a fresh process | `NoKernel` naming the style and `molrs.ff.style_registry.register_style` | as stated |
-| refusals: unknown function, unbound variable, sealed `bond harmonic`, wrong `def_type` arity, kernel of the wrong shape, kernel raising, `write_top_forcefield`, missing parameter | each its `IrError` subclass naming the item | as stated |
+| refusals: unknown function, unbound variable, sealed `bond harmonic`, wrong `def_type` arity, kernel of the wrong shape, kernel raising, `GromacsTopForcefieldWriter.write`, missing parameter | each its `IrError` subclass naming the item | as stated |
 | `dihedral table/linear` (`table: f64[N]`) by a numpy kernel = hand linear interpolation; round trip | rel ≤ 1e-12; bits | 0 |
 | class2 bond-angle: expression = numpy = −π/60 (= the Rust form) | rel ≤ 1e-12 | 2.4·10⁻¹⁵ |
 

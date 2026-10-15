@@ -1,14 +1,11 @@
-//! `molrs.io.read_clpol_alpha[_str]` — `molrs::io`'s doors of the same names:
-//! a CL&Pol `alpha.ff` polarisation table read into rows.
-
-use std::path::PathBuf;
+//! `molrs.io.read_clpol_alpha` — `molrs::io`'s door of the same name: a
+//! CL&Pol `alpha.ff` polarisation table read into rows.
 
 use molrs::io::clpol::ClpolAlphaRow;
-use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 
-use crate::path::path_str;
+use super::{PySource, data_error};
 
 /// One row's fields under the names :func:`molrs.ff.params.clpol_polarizability`
 /// uses, and its ``type_name``.
@@ -23,16 +20,17 @@ fn row_dict(py: Python<'_>, row: ClpolAlphaRow) -> PyResult<Bound<'_, PyDict>> {
     Ok(dict)
 }
 
-fn row_dicts(py: Python<'_>, rows: Vec<ClpolAlphaRow>) -> PyResult<Vec<Bound<'_, PyDict>>> {
-    rows.into_iter().map(|row| row_dict(py, row)).collect()
-}
-
-/// Read ``alpha.ff`` text into its rows, in file order.
+/// Read a CL&Pol ``alpha.ff`` table into its rows, in file order.
 ///
 /// The text is whitespace-separated rows ``type m_D q_D k_D alpha a_thole``;
 /// ``#`` starts a comment and a line with fewer than six fields is not a
 /// row. A type given twice keeps both rows; the later one is the file's last
 /// word. The table molrs ships is :func:`molrs.ff.params.clpol_polarizability`.
+///
+/// Parameters
+/// ----------
+/// source : os.PathLike | bytes | molrs.io.Text
+///     The file, or its whole content.
 ///
 /// Returns
 /// -------
@@ -44,32 +42,20 @@ fn row_dicts(py: Python<'_>, rows: Vec<ClpolAlphaRow>) -> PyResult<Vec<Bound<'_,
 /// ------
 /// ValueError
 ///     A row's numeric fields do not parse.
+/// OSError
+///     The file cannot be read.
 #[pyfunction]
-pub fn read_clpol_alpha_str<'py>(py: Python<'py>, text: &str) -> PyResult<Vec<Bound<'py, PyDict>>> {
-    let rows = molrs::io::read_clpol_alpha_str(text).map_err(PyValueError::new_err)?;
-    row_dicts(py, rows)
+pub fn read_clpol_alpha<'py>(
+    py: Python<'py>,
+    source: PySource<'_>,
+) -> PyResult<Vec<Bound<'py, PyDict>>> {
+    let rows = source
+        .read(molrs::io::read_clpol_alpha)
+        .map_err(data_error)?;
+    rows.into_iter().map(|row| row_dict(py, row)).collect()
 }
 
-/// Read the ``alpha.ff`` file at ``path`` — :func:`read_clpol_alpha_str` over
-/// its text.
-///
-/// Raises
-/// ------
-/// ValueError
-///     The file cannot be read, or a row's numeric fields do not parse.
-#[pyfunction]
-pub fn read_clpol_alpha(py: Python<'_>, path: PathBuf) -> PyResult<Vec<Bound<'_, PyDict>>> {
-    let rows = molrs::io::read_clpol_alpha(path_str(&path)?).map_err(PyValueError::new_err)?;
-    row_dicts(py, rows)
-}
-
-/// Register this module's functions.
+/// Register this module's door.
 pub(crate) fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    for door in [
-        wrap_pyfunction!(read_clpol_alpha, m)?,
-        wrap_pyfunction!(read_clpol_alpha_str, m)?,
-    ] {
-        crate::add_function(m, "molrs.io", door)?;
-    }
-    Ok(())
+    crate::add_function(m, "molrs.io", wrap_pyfunction!(read_clpol_alpha, m)?)
 }

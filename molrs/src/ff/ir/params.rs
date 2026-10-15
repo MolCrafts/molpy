@@ -3,51 +3,43 @@
 
 use std::collections::HashMap;
 
-use ndarray::ArrayD;
+use crate::ff::ir::ParamValue;
 
-/// Key-value parameter bag for type definitions.
+/// Key-value parameter bag for type definitions: one [`ParamValue`] per key.
 ///
-/// Holds numeric params (`k`, `r0`, the numeric type `id`, …), string params
-/// (`element`, or any string metadata carried by convention as a keyword
-/// param) and array params (an N-dimensional `f64` array, e.g. a CMAP
-/// correction's `grid`), each on its own side. Energy kernels read the numeric
-/// and array sides; the string side preserves I/O metadata across the
-/// boundary.
+/// A number is what energy kernels read (`k`, `r0`, the numeric type `id`,
+/// …); a string carries I/O metadata across the boundary (`element`, or any
+/// string metadata carried by convention as a keyword param); an array is an
+/// N-D `f64` parameter (a CMAP correction's `grid`). Read one kind with
+/// [`ParamValue::as_num`], [`ParamValue::as_text`] or
+/// [`ParamValue::as_array`] — `None` when the value is another kind.
 ///
-/// Equality is exact on every side (the same keys, `f64` values equal under
-/// `==` with no tolerance, equal strings, arrays of one shape with every
-/// element equal under `==`): it decides whether a re-definition is the same
-/// definition, which is a question of identity, not closeness.
+/// Equality is exact (the same keys, `f64` values equal under `==` with no
+/// tolerance, equal strings, arrays of one shape with every element equal
+/// under `==`): it decides whether a re-definition is the same definition,
+/// which is a question of identity, not closeness.
+///
+/// ```
+/// use molrs::ff::ir::{ParamValue, Params};
+///
+/// let mut p: Params = [("k", 300.0), ("r0", 1.5)].into_iter().collect();
+/// p.set("element", "C");
+/// assert_eq!(p.get("k").and_then(ParamValue::as_num), Some(300.0));
+/// assert_eq!(p.get("element").and_then(ParamValue::as_text), Some("C"));
+/// assert_eq!(p.get("element").and_then(ParamValue::as_num), None);
+/// ```
 #[derive(Clone, Default, PartialEq)]
 pub struct Params {
-    inner: HashMap<String, f64>,
-    strings: HashMap<String, String>,
-    arrays: HashMap<String, ArrayD<f64>>,
+    values: HashMap<String, ParamValue>,
 }
 
 /// Keys in order: two equal `Params` print the same text, whatever order
-/// their maps iterate in (a reader keys its own types on the text).
+/// their map iterates in (a reader keys its own types on the text).
 impl std::fmt::Debug for Params {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Params")
-            .field(
-                "inner",
-                &self
-                    .inner
-                    .iter()
-                    .collect::<std::collections::BTreeMap<_, _>>(),
-            )
-            .field(
-                "strings",
-                &self
-                    .strings
-                    .iter()
-                    .collect::<std::collections::BTreeMap<_, _>>(),
-            )
-            .field(
-                "arrays",
-                &self
-                    .arrays
+        f.debug_map()
+            .entries(
+                self.values
                     .iter()
                     .collect::<std::collections::BTreeMap<_, _>>(),
             )
@@ -55,78 +47,53 @@ impl std::fmt::Debug for Params {
     }
 }
 
+impl<K: Into<String>, V: Into<ParamValue>> FromIterator<(K, V)> for Params {
+    fn from_iter<It: IntoIterator<Item = (K, V)>>(iter: It) -> Self {
+        Params {
+            values: iter
+                .into_iter()
+                .map(|(k, v)| (k.into(), v.into()))
+                .collect(),
+        }
+    }
+}
+
 impl Params {
+    /// An empty bag.
     pub fn new() -> Self {
         Self::default()
     }
 
-    pub fn from_pairs(pairs: &[(&str, f64)]) -> Self {
-        let mut out = Self::new();
-        for &(k, v) in pairs {
-            out.set(k, v);
-        }
-        out
+    /// The value of `key`, or `None`.
+    pub fn get(&self, key: &str) -> Option<&ParamValue> {
+        self.values.get(key)
     }
 
-    pub fn get(&self, key: &str) -> Option<f64> {
-        self.inner.get(key).copied()
+    /// Set (or replace) `key`.
+    pub fn set(&mut self, key: &str, value: impl Into<ParamValue>) {
+        self.values.insert(key.to_owned(), value.into());
     }
 
-    pub fn set(&mut self, key: &str, value: f64) {
-        self.inner.insert(key.to_owned(), value);
-    }
-
-    pub fn iter(&self) -> impl Iterator<Item = (&str, f64)> + '_ {
-        self.inner.iter().map(|(k, v)| (k.as_str(), *v))
-    }
-
-    // -- string params (element, and other string metadata by convention) --
-
-    pub fn set_str(&mut self, key: &str, value: &str) {
-        self.strings.insert(key.to_owned(), value.to_owned());
-    }
-
-    pub fn get_str(&self, key: &str) -> Option<&str> {
-        self.strings.get(key).map(String::as_str)
-    }
-
-    pub fn iter_strings(&self) -> impl Iterator<Item = (&str, &str)> + '_ {
-        self.strings.iter().map(|(k, v)| (k.as_str(), v.as_str()))
-    }
-
-    // -- array params (a CMAP `grid`, and any other N-D parameter) --
-
-    /// Set (or replace) the array param `key`.
-    pub fn set_array(&mut self, key: &str, value: ArrayD<f64>) {
-        self.arrays.insert(key.to_owned(), value);
-    }
-
-    /// The array param `key`, or `None`.
-    pub fn get_array(&self, key: &str) -> Option<&ArrayD<f64>> {
-        self.arrays.get(key)
-    }
-
-    pub fn iter_arrays(&self) -> impl Iterator<Item = (&str, &ArrayD<f64>)> + '_ {
-        self.arrays.iter().map(|(k, v)| (k.as_str(), v))
+    /// Every `(key, value)`, in no particular order.
+    pub fn iter(&self) -> impl Iterator<Item = (&str, &ParamValue)> + '_ {
+        self.values.iter().map(|(k, v)| (k.as_str(), v))
     }
 
     /// Whether `self` and `other` price alike: equal on every key that is a
-    /// parameter (not an annotation column of the force-field section),
-    /// numeric, string and array, a key one carries and the other lacks being
-    /// a difference. The annotation keys (`desc`, `doi`, `smarts`, …) take no
-    /// part. Exact, like `==`.
+    /// parameter (not an annotation column of the force-field section), a
+    /// key one carries and the other lacks being a difference. The
+    /// annotation keys (`desc`, `doi`, `smarts`, …) take no part. Exact, like
+    /// `==`.
     pub fn same_parameters(&self, other: &Params) -> bool {
         use crate::ff::ir::is_parameter_column;
         use std::collections::BTreeMap;
-        fn parameters<V>(map: &HashMap<String, V>) -> BTreeMap<&str, &V> {
-            map.iter()
+        fn parameters(params: &Params) -> BTreeMap<&str, &ParamValue> {
+            params
+                .iter()
                 .filter(|(key, _)| is_parameter_column(key))
-                .map(|(key, value)| (key.as_str(), value))
                 .collect()
         }
-        parameters(&self.inner) == parameters(&other.inner)
-            && parameters(&self.strings) == parameters(&other.strings)
-            && parameters(&self.arrays) == parameters(&other.arrays)
+        parameters(self) == parameters(other)
     }
 }
 

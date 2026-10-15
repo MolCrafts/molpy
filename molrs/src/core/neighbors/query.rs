@@ -1,8 +1,8 @@
 //! Cross-query neighbor search, one point set against another: [`NeighborQuery`].
 
-use super::Backend;
+use super::{Backend, checked};
 use crate::core::LinkCell;
-use crate::core::SimBox;
+use crate::core::{Cell, Points, SimBox};
 use crate::core::{NeighborColumns, Neighbors, QueryMode};
 use crate::op::{F, Fnx3, Fnx3View};
 
@@ -53,23 +53,26 @@ pub struct NeighborQuery {
 impl NeighborQuery {
     /// Build a spatial index from reference points.
     ///
-    /// `points` is an `N × 3` view of Cartesian coordinates (Å), `simbox`
-    /// supplies the periodicity used for minimum-image distances, and `cutoff`
-    /// (Å) is the interaction radius every later query uses — it is fixed here,
-    /// not per query, because it sets the cell size of the index.
+    /// `points` are the Cartesian reference coordinates (Å) — an `N × 3`
+    /// array (the view converts) or three `x`/`y`/`z` columns
+    /// ([`Points::Columns`]); `simbox` supplies the periodicity used for
+    /// minimum-image distances, and `cutoff` (Å) is the interaction radius
+    /// every later query uses — it is fixed here, not per query, because it
+    /// sets the cell size of the index.
     ///
     /// # Panics
-    /// Panics if `cutoff <= 0` or `points` does not have 3 columns.
-    pub fn new(simbox: &SimBox, points: Fnx3View<'_>, cutoff: F) -> Self {
+    /// Panics if `cutoff <= 0` or `points` is not `N × 3`.
+    pub fn new<'a>(simbox: &SimBox, points: impl Into<Points<'a>>, cutoff: F) -> Self {
         assert!(cutoff > 0.0, "cutoff must be positive");
-        assert_eq!(points.ncols(), 3, "points must have shape (N, 3)");
+        let points = checked(points.into());
 
         let mut lc = LinkCell::new().cutoff(cutoff);
         lc.build_index(points, simbox);
 
         Self {
             lc,
-            points: points.to_owned(),
+            // Owned interleaved copy for self-query and `points()`.
+            points: points.to_rows(),
             simbox: simbox.clone(),
         }
     }
@@ -78,22 +81,30 @@ impl NeighborQuery {
     ///
     /// "Free boundary" means the system is an isolated cluster rather than a
     /// periodically repeated cell, so no pair may wrap around an edge. The
-    /// constructor derives a non-periodic bounding box from the point cloud,
-    /// padded by `cutoff` (Å) so that every particle sits comfortably inside it
-    /// and no minimum-image folding can occur.
+    /// constructor derives a non-periodic bounding box from the point cloud
+    /// ([`SimBox::bounding`]), padded by `cutoff` (Å) on every side so that
+    /// every particle sits comfortably inside it and no minimum-image folding
+    /// can occur.
     ///
     /// # Panics
-    /// Panics if `cutoff <= 0` or `points` does not have 3 columns. An empty
-    /// point set is not an error: it yields an empty index whose queries return
-    /// no pairs.
-    pub fn unbounded(points: Fnx3View<'_>, cutoff: F) -> Self {
-        let bx =
-            SimBox::free(points, cutoff).expect("degenerate point cloud for free-boundary box");
+    /// Panics if `cutoff <= 0` or `points` is not `N × 3`. An empty point set
+    /// is not an error: it has no bounds, so it is indexed in a non-periodic
+    /// cube of edge `cutoff` at the origin, and its queries return no pairs.
+    pub fn unbounded<'a>(points: impl Into<Points<'a>>, cutoff: F) -> Self {
+        assert!(cutoff > 0.0, "cutoff must be positive");
+        let points = checked(points.into());
+        let bx = if points.is_empty() {
+            SimBox::new(Cell::Lengths([cutoff; 3]), [0.0; 3], [false; 3])
+        } else {
+            SimBox::bounding(points, [cutoff; 3], [false; 3])
+        }
+        .expect("a cutoff-padded bounding box of N x 3 points has positive extent");
         Self::new(&bx, points, cutoff)
     }
 
     /// Cross-query: find all pairs `(i, j)` where `i` indexes `query_points`
-    /// and `j` indexes the reference `points`.
+    /// (an `N × 3` array or [`Points::Columns`], Å) and `j` indexes the
+    /// reference `points`.
     ///
     /// Results are full-shell, not half-shell: every query point reports all of
     /// its reference neighbors, with no `i < j` constraint. If `query_points`
@@ -107,26 +118,10 @@ impl NeighborQuery {
     /// ([`NeighborColumns::FULL`]): `dist_sq` in Å², `disp` in Å.
     ///
     /// # Panics
-    /// Panics if `query_points` does not have 3 columns.
-    pub fn query(&self, query_points: Fnx3View<'_>) -> Neighbors {
-        assert_eq!(
-            query_points.ncols(),
-            3,
-            "query_points must have shape (N, 3)"
-        );
-        self.cross(query_points.nrows(), |qi| {
-            let r = query_points.row(qi);
-            [r[0], r[1], r[2]]
-        })
-    }
-
-    /// Shared cross-query kernel: one point source, one traversal.
-    ///
-    /// [`query`](Self::query) reads rows of an `N × 3` view,
-    /// [`query_columns`](Self::query_columns) reads three SoA slices; both
-    /// funnel here, so the CrossQuery tagging, the 27-cell walk, and the
-    /// cutoff test exist once.
-    fn cross(&self, n_query: usize, get_pt: impl Fn(usize) -> [F; 3]) -> Neighbors {
+    /// Panics if `query_points` is not `N × 3`.
+    pub fn query<'a>(&self, query_points: impl Into<Points<'a>>) -> Neighbors {
+        let query_points = checked(query_points.into());
+        let n_query = query_points.len();
         let cutoff_sq = self.lc.cutoff * self.lc.cutoff;
 
         let mut nlist = Neighbors::empty(
@@ -138,12 +133,15 @@ impl NeighborQuery {
         );
 
         for qi in 0..n_query {
-            self.lc
-                .visit_neighbors_of_pt(get_pt(qi), &self.simbox, |rj, dist_sq, diff| {
+            self.lc.visit_neighbors_of_pt(
+                query_points.point(qi),
+                &self.simbox,
+                |rj, dist_sq, diff| {
                     if dist_sq <= cutoff_sq {
                         nlist.push(qi as u32, rj, dist_sq, diff);
                     }
-                });
+                },
+            );
         }
 
         nlist.simbox = Some(self.simbox.clone());
@@ -194,74 +192,6 @@ impl NeighborQuery {
     pub fn cutoff(&self) -> F {
         self.lc.cutoff
     }
-
-    /// SoA sibling of [`new`](Self::new): build a spatial index from
-    /// column-major `x`/`y`/`z` reference-point slices.
-    ///
-    /// "SoA" is *structure of arrays*: instead of one `N × 3` array of points,
-    /// the coordinates arrive as three length-`N` slices (Å), one per axis.
-    ///
-    /// Byte-for-byte equivalent to `new` on the same coordinates — the index is
-    /// built via [`LinkCell::build_index_soa`] and an owned interleaved copy of
-    /// the points is retained for [`query_self`](Self::query_self), exactly as
-    /// `new` does. Lets callers holding SoA columns skip the interleave.
-    ///
-    /// # Panics
-    /// Panics if `cutoff <= 0` or the three slices differ in length.
-    pub fn from_columns(simbox: &SimBox, xs: &[F], ys: &[F], zs: &[F], cutoff: F) -> Self {
-        assert!(cutoff > 0.0, "cutoff must be positive");
-        assert!(
-            xs.len() == ys.len() && ys.len() == zs.len(),
-            "x/y/z slices must have equal length"
-        );
-
-        let mut lc = LinkCell::new().cutoff(cutoff);
-        lc.build_index_soa(xs, ys, zs, simbox);
-
-        // Owned interleaved copy for self-query, mirroring `new`.
-        let n = xs.len();
-        let mut points = Fnx3::zeros((n, 3));
-        for i in 0..n {
-            points[[i, 0]] = xs[i];
-            points[[i, 1]] = ys[i];
-            points[[i, 2]] = zs[i];
-        }
-
-        Self {
-            lc,
-            points,
-            simbox: simbox.clone(),
-        }
-    }
-
-    /// SoA sibling of [`unbounded`](Self::unbounded): build from free-boundary points
-    /// held as column-major `x`/`y`/`z` slices.
-    ///
-    /// Uses [`SimBox::free_from_xyz`] to derive the same bounding box `unbounded`
-    /// would produce from the interleaved points, so the result is
-    /// byte-identical.
-    pub fn unbounded_columns(xs: &[F], ys: &[F], zs: &[F], cutoff: F) -> Self {
-        let bx = SimBox::free_from_xyz(xs, ys, zs, cutoff)
-            .expect("degenerate point cloud for free-boundary box");
-        Self::from_columns(&bx, xs, ys, zs, cutoff)
-    }
-
-    /// SoA sibling of [`query`](Self::query): cross-query reading each query
-    /// point from column-major `qx`/`qy`/`qz` slices (Å, one slice per axis,
-    /// all of the same length).
-    ///
-    /// Same pair order and cutoff test as `query`, so the returned
-    /// [`Neighbors`] is byte-identical to `query` on the same coordinates.
-    ///
-    /// # Panics
-    /// Panics if the three query slices differ in length.
-    pub fn query_columns(&self, qx: &[F], qy: &[F], qz: &[F]) -> Neighbors {
-        assert!(
-            qx.len() == qy.len() && qy.len() == qz.len(),
-            "query x/y/z slices must have equal length"
-        );
-        self.cross(qx.len(), |qi| [qx[qi], qy[qi], qz[qi]])
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -276,7 +206,8 @@ mod tests {
 
     #[test]
     fn self_query_matches_linkcell() {
-        let bx = SimBox::cube(4.0, array![0.0, 0.0, 0.0], [true, true, true]).expect("invalid box");
+        let bx = SimBox::new(Cell::Lengths([4.0; 3]), [0.0, 0.0, 0.0], [true, true, true])
+            .expect("invalid box");
         let pts = array![[0.1, 0.2, 0.3], [0.3, 0.2, 0.1], [3.9, 3.8, 3.7]];
 
         let nq = NeighborQuery::new(&bx, pts.view(), 0.5);
@@ -292,7 +223,8 @@ mod tests {
 
     #[test]
     fn cross_query_finds_all_neighbors() {
-        let bx = SimBox::cube(4.0, array![0.0, 0.0, 0.0], [true, true, true]).expect("invalid box");
+        let bx = SimBox::new(Cell::Lengths([4.0; 3]), [0.0, 0.0, 0.0], [true, true, true])
+            .expect("invalid box");
         let ref_pts = array![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [2.0, 0.0, 0.0]];
         let query_pts = array![[0.5, 0.0, 0.0]];
 
@@ -317,7 +249,8 @@ mod tests {
     /// return an empty slice when the column is absent).
     #[test]
     fn dist_sq_square_roots_to_distance() {
-        let bx = SimBox::cube(4.0, array![0.0, 0.0, 0.0], [true, true, true]).expect("invalid box");
+        let bx = SimBox::new(Cell::Lengths([4.0; 3]), [0.0, 0.0, 0.0], [true, true, true])
+            .expect("invalid box");
         let pts = array![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]];
 
         let nq = NeighborQuery::new(&bx, pts.view(), 1.5);
@@ -333,7 +266,8 @@ mod tests {
     /// (unnormalized), or `None` when the column was never stored.
     #[test]
     fn disp_returns_stored_displacements() {
-        let bx = SimBox::cube(4.0, array![0.0, 0.0, 0.0], [true, true, true]).expect("invalid box");
+        let bx = SimBox::new(Cell::Lengths([4.0; 3]), [0.0, 0.0, 0.0], [true, true, true])
+            .expect("invalid box");
         let pts = array![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]];
 
         let nq = NeighborQuery::new(&bx, pts.view(), 1.5);
@@ -349,7 +283,8 @@ mod tests {
 
     #[test]
     fn self_query_pbc_boundary() {
-        let bx = SimBox::cube(2.0, array![0.0, 0.0, 0.0], [true, true, true]).expect("invalid box");
+        let bx = SimBox::new(Cell::Lengths([2.0; 3]), [0.0, 0.0, 0.0], [true, true, true])
+            .expect("invalid box");
         let pts = array![[0.1, 0.1, 0.1], [1.9, 1.9, 1.9]];
 
         let nq = NeighborQuery::new(&bx, pts.view(), 0.5);
@@ -360,7 +295,8 @@ mod tests {
 
     #[test]
     fn cross_query_self_overlap_produces_full_shell() {
-        let bx = SimBox::cube(4.0, array![0.0, 0.0, 0.0], [true, true, true]).expect("invalid box");
+        let bx = SimBox::new(Cell::Lengths([4.0; 3]), [0.0, 0.0, 0.0], [true, true, true])
+            .expect("invalid box");
         let pts = array![[0.0, 0.0, 0.0], [0.5, 0.0, 0.0]];
 
         // Cross-query with the same point set should produce pairs in both
@@ -451,7 +387,12 @@ mod tests {
     #[test]
     fn columns_query_matches_query_bitwise() {
         // Periodic cube fixture.
-        let bx = SimBox::cube(10.0, array![0.0, 0.0, 0.0], [true, true, true]).unwrap();
+        let bx = SimBox::new(
+            Cell::Lengths([10.0; 3]),
+            [0.0, 0.0, 0.0],
+            [true, true, true],
+        )
+        .unwrap();
         let refp = array![
             [1.0, 1.0, 1.0],
             [1.5, 1.0, 1.0],
@@ -467,8 +408,8 @@ mod tests {
         let nq_a = NeighborQuery::new(&bx, refp.view(), 2.0);
         let nl_a = nq_a.query(qp.view());
 
-        let nq_s = NeighborQuery::from_columns(&bx, &rx, &ry, &rz, 2.0);
-        let nl_s = nq_s.query_columns(&qx, &qy, &qz);
+        let nq_s = NeighborQuery::new(&bx, Points::Columns([&rx, &ry, &rz]), 2.0);
+        let nl_s = nq_s.query(Points::Columns([&qx, &qy, &qz]));
 
         assert!(nl_a.n_pairs() > 0, "fixture should produce pairs");
         assert_bitwise_equal(&nl_a, &nl_s);
@@ -477,8 +418,8 @@ mod tests {
         let nq_af = NeighborQuery::unbounded(refp.view(), 2.0);
         let nl_af = nq_af.query(qp.view());
 
-        let nq_sf = NeighborQuery::unbounded_columns(&rx, &ry, &rz, 2.0);
-        let nl_sf = nq_sf.query_columns(&qx, &qy, &qz);
+        let nq_sf = NeighborQuery::unbounded(Points::Columns([&rx, &ry, &rz]), 2.0);
+        let nl_sf = nq_sf.query(Points::Columns([&qx, &qy, &qz]));
 
         assert!(nl_af.n_pairs() > 0, "fixture should produce pairs");
         assert_bitwise_equal(&nl_af, &nl_sf);

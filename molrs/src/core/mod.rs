@@ -38,8 +38,11 @@
 //! Degrees ↔ radians is `to_radians` / `to_degrees` (the registry's `deg`
 //! is the same π/180).
 //!
-//! Whole-graph transforms are [`MolGraph`] methods ([`MolGraph::translate`],
-//! [`MolGraph::rotate`], [`MolGraph::scale`], [`MolGraph::center`]); ring
+//! Whole-graph transforms are methods of every graph type
+//! ([`Atomistic::translate`], [`Atomistic::rotate`], [`Atomistic::scale`],
+//! [`Atomistic::center`], and the same on [`CoarseGrain`] and [`MolGraph`]);
+//! an algorithm that serves every graph type takes the sealed [`Graph`]
+//! bound; ring
 //! perception is `crate::perceive::perceive_rings`; the `*.mrec` record and
 //! its force-field section are `crate::io::mrec`.
 //!
@@ -81,6 +84,7 @@ mod coarsegrain;
 mod element;
 mod entity_table;
 mod extract;
+mod graph;
 pub(crate) mod graph_hash;
 mod link;
 mod molgraph;
@@ -123,14 +127,12 @@ pub use bond_order::{BondNumber, BondOrder};
 pub use bond_weights::BondDistanceWeights;
 pub use coarsegrain::{CoarseGrain, ExtractedCoarseGrain};
 pub use element::Element;
-pub use entity_table::{EntityCell, EntityColumn, EntityTable, Validity};
+pub use entity_table::{EntityCell, EntityColumn, EntityDtype, EntityTable, Validity};
 pub use extract::{ExtractedBall, InducedSubgraph};
-pub use graph_hash::{canonical_order, is_isomorphic, structural_hash};
+pub use graph::Graph;
+pub(crate) use graph::GraphAccess;
 pub use link::{LinkError, LinkManyError};
-pub use molgraph::{
-    Atom, FromMolGraph, KindId, MolGraph, NodeId, PropValue, Relation, RelationId, node_from_u64,
-    node_to_u64, relation_from_u64, relation_to_u64,
-};
+pub use molgraph::{KindId, MolGraph, NodeId, PropValue, Props, Relation, RelationId};
 pub use molgraph_geometry::CenterError;
 pub use port::{Port, PortKind};
 pub use topology::{Topology, TopologyError};
@@ -146,7 +148,7 @@ pub use region::{
     AndRegion, Cuboid, Cylinder, Ellipsoid, HalfSpace, NotRegion, OrRegion, Parallelepiped,
     Polyhedron, PolyhedronError, Region, Sphere, SphereUnion, SphereUnionError,
 };
-pub use simbox::{BoxError, BoxKind, Mic, SimBox};
+pub use simbox::{BoxError, BoxKind, Cell, Mic, Points, SimBox};
 pub use trace::Trace;
 
 pub use error::MolRsError;

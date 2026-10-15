@@ -338,7 +338,9 @@ fn is_bare_element_symbol(def: &str) -> bool {
 mod tests {
     use super::*;
     use crate::ff::typifier::OplsTypeRow;
-    use molrs::core::Atom;
+    use crate::props;
+    use molrs::core::Element;
+    use molrs::core::keys;
 
     fn row(class: &str, def: Option<&str>, overrides: &[&str]) -> OplsTypeRow {
         OplsTypeRow {
@@ -361,18 +363,53 @@ mod tests {
     /// Ethanol skeleton C-C-O with explicit Hs; returns (graph, O id, H-on-O id).
     fn ethanol() -> (Atomistic, NodeId, NodeId) {
         let mut g = Atomistic::new();
-        let cm = g.add_atom(Atom::xyz("C", 0.0, 0.0, 0.0));
-        let ch = g.add_atom(Atom::xyz("C", 1.5, 0.0, 0.0));
-        let o = g.add_atom(Atom::xyz("O", 2.5, 0.0, 0.0));
-        let ho = g.add_atom(Atom::xyz("H", 3.3, 0.0, 0.0));
-        g.add_bond(cm, ch).unwrap();
-        g.add_bond(ch, o).unwrap();
-        g.add_bond(o, ho).unwrap();
+        let cm = g
+            .add_atom(props! {
+                keys::ATOMIC_NUMBER => Element::C,
+                keys::X => 0.0,
+                keys::Y => 0.0,
+                keys::Z => 0.0,
+            })
+            .unwrap();
+        let ch = g
+            .add_atom(props! {
+                keys::ATOMIC_NUMBER => Element::C,
+                keys::X => 1.5,
+                keys::Y => 0.0,
+                keys::Z => 0.0,
+            })
+            .unwrap();
+        let o = g
+            .add_atom(props! {
+                keys::ATOMIC_NUMBER => Element::O,
+                keys::X => 2.5,
+                keys::Y => 0.0,
+                keys::Z => 0.0,
+            })
+            .unwrap();
+        let ho = g
+            .add_atom(props! {
+                keys::ATOMIC_NUMBER => Element::H,
+                keys::X => 3.3,
+                keys::Y => 0.0,
+                keys::Z => 0.0,
+            })
+            .unwrap();
+        g.add_bond(cm, ch, props! {}).unwrap();
+        g.add_bond(ch, o, props! {}).unwrap();
+        g.add_bond(o, ho, props! {}).unwrap();
         for c in [cm, ch] {
             let n = if c == cm { 3 } else { 2 };
             for k in 0..n {
-                let h = g.add_atom(Atom::xyz("H", 0.3 * (k as f64 + 1.0), 0.9, 0.0));
-                g.add_bond(c, h).unwrap();
+                let h = g
+                    .add_atom(props! {
+                        keys::ATOMIC_NUMBER => Element::H,
+                        keys::X => 0.3 * (k as f64 + 1.0),
+                        keys::Y => 0.9,
+                        keys::Z => 0.0,
+                    })
+                    .unwrap();
+                g.add_bond(c, h, props! {}).unwrap();
             }
         }
         (g, o, ho)

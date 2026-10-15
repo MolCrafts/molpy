@@ -30,12 +30,12 @@ def _partially_labelled_fragment() -> molrs.core.Atomistic:
     prop, and only one node has it.
     """
     fragment = molrs.core.Atomistic()
-    first = fragment.def_atom(element="C", x=0.0, y=0.0, z=0.0)
-    second = fragment.def_atom(element="C", x=1.54, y=0.0, z=0.0)
-    hydrogen = fragment.def_atom(element="H", x=2.63, y=0.0, z=0.0)
-    fragment.def_bond(first, second)
-    fragment.def_bond(second, hydrogen)
-    fragment.set_frag_id(first.handle, 7)
+    first = fragment.add_atom(atomic_number=6, x=0.0, y=0.0, z=0.0)
+    second = fragment.add_atom(atomic_number=6, x=1.54, y=0.0, z=0.0)
+    hydrogen = fragment.add_atom(atomic_number=1, x=2.63, y=0.0, z=0.0)
+    fragment.add_bond(first, second)
+    fragment.add_bond(second, hydrogen)
+    first["frag_id"] = 7
     return fragment
 
 
@@ -65,7 +65,7 @@ def test_a_column_with_holes_crosses_as_a_boolean_mask() -> None:
 def test_a_fully_labelled_column_has_no_validity_mask() -> None:
     fragment = _partially_labelled_fragment()
     for atom in fragment.atoms:
-        fragment.set_frag_id(atom.handle, 7)
+        atom["frag_id"] = 7
 
     assert fragment.to_frame()["atoms"].validity("frag_id") is None
 
@@ -86,7 +86,7 @@ def test_partial_frag_id_survives_the_frame_round_trip() -> None:
 
     restored = molrs.core.Atomistic.from_frame(frame)
 
-    assert [restored.frag_id(atom.handle) for atom in restored.atoms] == [
+    assert [atom.get("frag_id") for atom in restored.atoms] == [
         7,
         None,
         None,
@@ -106,7 +106,7 @@ def test_hydrogen_repletion_survives_a_frame_round_trip() -> None:
     declared ``h_count = 0``, which an explicit count short-circuits
     (``n_implicit_hydrogens``) into "already saturated".
     """
-    molecule = molrs.io.smiles.SmilesIr("CC[OH]").to_atomistic()
+    molecule = molrs.io.smiles.SmilesIr.parse("CC[OH]").to_atomistic()
 
     direct = molrs.perceive.add_hydrogens(molecule).n_atoms
     round_tripped = molrs.perceive.add_hydrogens(
@@ -119,7 +119,7 @@ def test_hydrogen_repletion_survives_a_frame_round_trip() -> None:
 def test_hydrogen_repletion_survives_a_round_trip_without_declared_counts() -> None:
     """``CCO`` declares no ``h_count`` anywhere, so the column is absent rather
     than holed — the case the mask must leave alone."""
-    molecule = molrs.io.smiles.SmilesIr("CCO").to_atomistic()
+    molecule = molrs.io.smiles.SmilesIr.parse("CCO").to_atomistic()
 
     direct = molrs.perceive.add_hydrogens(molecule).n_atoms
     round_tripped = molrs.perceive.add_hydrogens(
@@ -204,12 +204,12 @@ def test_validity_of_an_absent_column_raises_key_error() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_insert_nullable_stores_the_mask_it_is_given() -> None:
+def test_insert_stores_the_mask_it_is_given() -> None:
     """The write side of :meth:`validity`: Python can state which cells are
     holes instead of having to route through a ported graph to get a mask."""
     block = molrs.core.Block()
 
-    block.insert_nullable(
+    block.insert(
         "tag", np.array([1, 2, 3], dtype=np.int32), np.array([True, False, True])
     )
 
@@ -218,12 +218,41 @@ def test_insert_nullable_stores_the_mask_it_is_given() -> None:
     assert np.asarray(mask).tolist() == [True, False, True]
 
 
-def test_insert_nullable_refuses_a_mask_shorter_than_the_column() -> None:
+def test_insert_refuses_a_mask_shorter_than_the_column() -> None:
     """A mask that does not cover every row cannot say which cells are holes,
-    and must be refused rather than padded."""
+    and must be refused rather than padded — and the block is left unchanged."""
     block = molrs.core.Block()
 
     with pytest.raises(ValueError):
-        block.insert_nullable(
+        block.insert(
             "x", np.array([1, 2, 3], dtype=np.int64), np.array([True, False])
         )
+    assert "x" not in block
+
+
+def test_an_all_true_mask_is_dropped() -> None:
+    """An all-``True`` mask states nothing, so ``validity`` keeps answering
+    ``None``."""
+    block = molrs.core.Block()
+
+    block.insert("x", np.array([1.0, 2.0]), [True, True])
+
+    assert block.validity("x") is None
+
+
+def test_insert_without_a_mask_replaces_a_masked_column_whole() -> None:
+    """An insert replaces the column outright, mask included: the rows the
+    old mask described are gone."""
+    block = molrs.core.Block()
+    block.insert("tag", np.array([1, 0], dtype=np.int32), [True, False])
+
+    block.insert("tag", np.array([3, 4], dtype=np.int32))
+
+    assert block.validity("tag") is None
+
+
+def test_insert_refuses_a_mask_that_is_not_bool() -> None:
+    block = molrs.core.Block()
+
+    with pytest.raises(TypeError):
+        block.insert("x", np.array([1.0, 2.0]), np.array([1, 0]))

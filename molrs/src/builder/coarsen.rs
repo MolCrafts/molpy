@@ -7,7 +7,7 @@ use std::fmt;
 use crate::core::CenterError;
 use crate::core::CoarseGrain;
 use crate::core::keys;
-use crate::core::{MolGraph, NodeId, node_to_u64};
+use crate::core::{Graph, GraphAccess, MolGraph, NodeId, Props};
 
 /// Why [`Coarsener::coarsen`] refuses its input. Nothing is built when it
 /// returns one.
@@ -39,7 +39,9 @@ pub enum CoarsenError {
     Center {
         /// Index of the group.
         group: usize,
-        /// Why [`MolGraph::center`](crate::core::MolGraph::center) refused it.
+        /// Why the centre-of-mass computation (the source type's `center`,
+        /// e.g. [`Atomistic::center`](crate::core::Atomistic::center))
+        /// refused it.
         source: CenterError,
     },
 }
@@ -59,7 +61,7 @@ impl fmt::Display for CoarsenError {
             } => write!(
                 f,
                 "node {} is in group {first} and again in group {second}",
-                node_to_u64(*node)
+                u64::from(*node)
             ),
             Self::Center { group, source } => write!(f, "group {group}: {source}"),
         }
@@ -83,9 +85,9 @@ impl std::error::Error for CoarsenError {
 /// typically come from [`SubgraphMatcher::find`](crate::perceive::SubgraphMatcher::find)
 /// after the caller has made them disjoint.
 ///
-/// The source is borrowed, not copied: any [`MolGraph`] works (a
-/// [`CoarseGrain`] or an `Atomistic` derefs to one). The one verb is
-/// [`coarsen`](Self::coarsen).
+/// The source is borrowed, not copied: any [`Graph`] works (a [`MolGraph`],
+/// an [`Atomistic`](crate::core::Atomistic) or a [`CoarseGrain`]). The one
+/// verb is [`coarsen`](Self::coarsen).
 ///
 /// # Examples
 ///
@@ -93,12 +95,23 @@ impl std::error::Error for CoarsenError {
 /// use molrs::builder::Coarsener;
 /// use molrs::core::keys;
 /// use molrs::core::CoarseGrain;
+/// use molrs::props;
 ///
 /// let mut src = CoarseGrain::new();
-/// let a = src.add_bead("S", 0.0, 0.0, 0.0);
-/// let b = src.add_bead("S", 4.0, 0.0, 0.0);
-/// src.set_node(a, keys::MASS, 1.0).unwrap();
-/// src.set_node(b, keys::MASS, 3.0).unwrap();
+/// let a = src.add_bead(props! {
+///     keys::BEAD_TYPE => "S",
+///     keys::X => 0.0,
+///     keys::Y => 0.0,
+///     keys::Z => 0.0,
+/// }).unwrap();
+/// let b = src.add_bead(props! {
+///     keys::BEAD_TYPE => "S",
+///     keys::X => 4.0,
+///     keys::Y => 0.0,
+///     keys::Z => 0.0,
+/// }).unwrap();
+/// src.set_bead(a, keys::MASS, 1.0).unwrap();
+/// src.set_bead(b, keys::MASS, 3.0).unwrap();
 ///
 /// let cg = Coarsener::new(&src).coarsen(&[vec![a, b]], &["A"]).unwrap();
 /// let (_, site) = cg.beads().next().unwrap();
@@ -112,9 +125,11 @@ pub struct Coarsener<'a> {
 }
 
 impl<'a> Coarsener<'a> {
-    /// A coarsener over `source`, borrowed.
-    pub fn new(source: &'a MolGraph) -> Self {
-        Self { source }
+    /// A coarsener over `source` (any graph type), borrowed.
+    pub fn new(source: &'a impl Graph) -> Self {
+        Self {
+            source: source.graph(),
+        }
     }
 
     /// A new [`CoarseGrain`] with one site per group.
@@ -129,7 +144,8 @@ impl<'a> Coarsener<'a> {
     /// - **Mass** M_I = Σ_{i∈G_I} m_i, written as the site's `mass`, in the
     ///   unit the source `mass` column is stored in (nothing is converted).
     /// - **Position** R_I = Σ_{i∈G_I} m_i r_i / M_I, in Å, computed by
-    ///   [`MolGraph::center`](crate::core::MolGraph::center). Only mass ratios enter R_I, so the mass unit does not
+    ///   the source's `center` (e.g.
+    ///   [`Atomistic::center`](crate::core::Atomistic::center)). Only mass ratios enter R_I, so the mass unit does not
     ///   affect it. No periodic imaging is applied: a group split across a
     ///   periodic box face averages its split coordinates, so unwrap the source
     ///   first when a group straddles the box.
@@ -190,22 +206,28 @@ impl<'a> Coarsener<'a> {
     /// use molrs::builder::Coarsener;
     /// use molrs::core::keys;
     /// use molrs::core::CoarseGrain;
+    /// use molrs::props;
     ///
     /// let mut src = CoarseGrain::new();
     /// let mut beads = Vec::new();
     /// for (x, mass) in [(0.0, 1.0), (4.0, 3.0), (8.0, 2.0), (10.0, 2.0)] {
-    ///     let bead = src.add_bead("S", x, 0.0, 0.0);
-    ///     src.set_node(bead, keys::MASS, mass)?;
+    ///     let bead = src.add_bead(props! {
+    ///         keys::BEAD_TYPE => "S",
+    ///         keys::X => x,
+    ///         keys::Y => 0.0,
+    ///         keys::Z => 0.0,
+    ///     }).unwrap();
+    ///     src.set_bead(bead, keys::MASS, mass)?;
     ///     beads.push(bead);
     /// }
     /// for pair in beads.windows(2) {
-    ///     src.add_bond(pair[0], pair[1])?;
+    ///     src.add_bond(pair[0], pair[1], props! {})?;
     /// }
     ///
     /// let groups = [vec![beads[0], beads[1]], vec![beads[2], beads[3]]];
     /// let cg = Coarsener::new(&src).coarsen(&groups, &["A", "B"])?;
     ///
-    /// let sites: Vec<_> = cg.node_ids().collect();
+    /// let sites: Vec<_> = cg.bead_ids().collect();
     /// // R_0 = (1·0 + 3·4) / 4 = 3 Å, R_1 = (2·8 + 2·10) / 4 = 9 Å
     /// assert_eq!(cg.positions(&sites)?, vec![[3.0, 0.0, 0.0], [9.0, 0.0, 0.0]]);
     /// assert_eq!(cg.bead_types(&sites)?, ["A", "B"]);
@@ -249,7 +271,7 @@ impl<'a> Coarsener<'a> {
             let mut m = 0.0;
             for &node in members {
                 m += table
-                    .get_f64(node, keys::MASS)
+                    .get::<f64>(node, keys::MASS)
                     .map_err(|_| refuse(CenterError::BadMass { node }))?;
             }
             let first = self
@@ -266,14 +288,20 @@ impl<'a> Coarsener<'a> {
         for ((&site_type, members), &([x, y, z], m, axis)) in
             site_types.iter().zip(groups).zip(&sites)
         {
-            let site = cg.add_bead(site_type, x, y, z);
-            cg.set_node(site, keys::MASS, m)
-                .expect("a CoarseGrain built here holds `mass` only as f64");
+            let mut props = Props::new()
+                .with(keys::BEAD_TYPE, site_type)
+                .with(keys::X, x)
+                .with(keys::Y, y)
+                .with(keys::Z, z)
+                .with(keys::MASS, m);
             for (key, value) in keys::AXIS.into_iter().zip(axis) {
-                cg.set_node(site, key, value)
-                    .expect("a CoarseGrain built here holds the axis only as f64");
+                props.set(key, value);
             }
-            cg.set_bead_members(site, members.iter().map(|&n| node_to_u64(n)).collect());
+            let site = cg
+                .add_bead(props)
+                .expect("a CoarseGrain built here gets a string bead_type and f64 fields");
+            cg.set_bead_members(site, members.iter().map(|&n| u64::from(n)).collect())
+                .expect("the bead was just added");
             ids.push(site);
         }
 
@@ -292,7 +320,7 @@ impl<'a> Coarsener<'a> {
                     continue;
                 };
                 if gi != gj && seen.insert((gi.min(gj), gi.max(gj))) {
-                    cg.add_bond(ids[gi], ids[gj])
+                    cg.add_bond(ids[gi], ids[gj], Props::new())
                         .expect("both sites were just added to this CoarseGrain");
                 }
             }
@@ -307,11 +335,16 @@ mod tests {
     use super::*;
     use crate::core::NodeId;
     use crate::core::keys;
+    use crate::props;
 
     /// A source bead of type "S" at `(x, 0, 0)` carrying `mass`.
     fn bead(src: &mut CoarseGrain, x: f64, mass: f64) -> NodeId {
-        let id = src.add_bead("S", x, 0.0, 0.0);
-        src.set_node(id, keys::MASS, mass).unwrap();
+        let id = src
+            .add_bead(
+                props! { keys::BEAD_TYPE => "S", keys::X => x, keys::Y => 0.0, keys::Z => 0.0 },
+            )
+            .unwrap();
+        src.set_bead(id, keys::MASS, mass).unwrap();
         id
     }
 
@@ -324,7 +357,7 @@ mod tests {
             .map(|(x, m)| bead(&mut src, x, m))
             .collect();
         for (i, j) in [(0, 1), (1, 2), (2, 3), (0, 3)] {
-            src.add_bond(b[i], b[j]).unwrap();
+            src.add_bond(b[i], b[j], props! {}).unwrap();
         }
         (src, b)
     }
@@ -339,7 +372,7 @@ mod tests {
         let cg = Coarsener::new(&src)
             .coarsen(&[vec![b[0], b[1]], vec![b[2], b[3]]], &["A", "B"])
             .unwrap();
-        let sites: Vec<NodeId> = cg.node_ids().collect();
+        let sites: Vec<NodeId> = cg.bead_ids().collect();
         assert_eq!(sites.len(), 2);
 
         // (1·0 + 3·4) / 4 = 3 ; (2·8 + 2·10) / 4 = 9
@@ -353,7 +386,7 @@ mod tests {
         }
         assert_eq!(
             cg.bead_members(sites[0]),
-            [node_to_u64(b[0]), node_to_u64(b[1])]
+            [u64::from(b[0]), u64::from(b[1])]
         );
     }
 
@@ -365,7 +398,7 @@ mod tests {
         let cg = Coarsener::new(&src)
             .coarsen(&[vec![b[1], b[0]], vec![b[2]]], &["A", "B"])
             .unwrap();
-        let sites: Vec<NodeId> = cg.node_ids().collect();
+        let sites: Vec<NodeId> = cg.bead_ids().collect();
 
         assert_eq!(
             cg.axes(&sites).unwrap(),
@@ -379,13 +412,13 @@ mod tests {
         let cg = Coarsener::new(&src)
             .coarsen(&[vec![b[0], b[1]], vec![b[2], b[3]]], &["A", "B"])
             .unwrap();
-        let sites: Vec<NodeId> = cg.node_ids().collect();
+        let sites: Vec<NodeId> = cg.bead_ids().collect();
         assert_eq!(cg.n_bonds(), 1);
         let (_, bond) = cg.bonds().next().unwrap();
         let mut ends = [bond.nodes[0], bond.nodes[1]];
-        ends.sort_by_key(|&n| node_to_u64(n));
+        ends.sort_by_key(|&n| u64::from(n));
         let mut want = [sites[0], sites[1]];
-        want.sort_by_key(|&n| node_to_u64(n));
+        want.sort_by_key(|&n| u64::from(n));
         assert_eq!(ends, want);
     }
 
@@ -397,15 +430,15 @@ mod tests {
             .into_iter()
             .map(|x| bead(&mut src, x, 1.0))
             .collect();
-        src.add_bond(b[0], b[1]).unwrap();
-        src.add_bond(b[1], b[2]).unwrap();
+        src.add_bond(b[0], b[1], props! {}).unwrap();
+        src.add_bond(b[1], b[2], props! {}).unwrap();
 
         let cg = Coarsener::new(&src)
             .coarsen(&[vec![b[0]], vec![b[2]]], &["A", "A"])
             .unwrap();
         assert_eq!(cg.n_beads(), 2);
         assert_eq!(cg.n_bonds(), 0);
-        assert!(cg.beads_of_atom(node_to_u64(b[1])).is_empty());
+        assert!(cg.beads_of_atom(u64::from(b[1])).is_empty());
     }
 
     #[test]
@@ -474,7 +507,11 @@ mod tests {
     #[test]
     fn a_massless_node_is_refused_through_center() {
         let (mut src, b) = square();
-        let bare = src.add_bead("S", 1.0, 0.0, 0.0);
+        let bare = src
+            .add_bead(
+                props! { keys::BEAD_TYPE => "S", keys::X => 1.0, keys::Y => 0.0, keys::Z => 0.0 },
+            )
+            .unwrap();
         assert_eq!(
             Coarsener::new(&src)
                 .coarsen(&[vec![b[0]], vec![bare]], &["A", "B"])

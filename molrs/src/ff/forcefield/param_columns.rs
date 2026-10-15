@@ -123,7 +123,7 @@ fn type_labels(block: &Block, block_name: &str) -> Result<Option<Vec<String>>, S
     }
     let labels = block
         .get("type")
-        .and_then(|c| c.as_string())
+        .and_then(|c| c.get::<String>())
         .ok_or_else(|| {
             format!("materialize_params: the {block_name} block has no string \"type\" column")
         })?;
@@ -132,7 +132,10 @@ fn type_labels(block: &Block, block_name: &str) -> Result<Option<Vec<String>>, S
 
 /// Copy every numeric parameter of `params` into row `row` of `columns`.
 fn fill(columns: &mut ParamColumnMap, rows: usize, row: usize, params: &Params) {
-    for (key, value) in params.iter() {
+    for (key, value) in params
+        .iter()
+        .filter_map(|(k, v)| v.as_num().map(|x| (k, x)))
+    {
         let column = columns
             .entry(key.to_owned())
             .or_insert_with(|| ParamColumn::new(rows));
@@ -261,10 +264,10 @@ fn write(
     for (key, column) in columns {
         let name = format!("{prefix}{key}");
         block
-            .insert_nullable(
+            .insert(
                 name.clone(),
                 Array1::from_vec(column.values).into_dyn(),
-                column.valid,
+                Some(column.valid),
             )
             .map_err(|e| format!("materialize_params: {block_name}.{name}: {e}"))?;
         written.push((block_name.to_owned(), name));
@@ -291,36 +294,32 @@ mod tests {
         let mut ff = ForceField::new("t");
         let atoms = ff.def_style("atom", "full", Params::new()).unwrap();
         atoms
-            .def_type("A", &[], Params::from_pairs(&[("mass", 12.0)]))
+            .def_type("A", &[], Params::from_iter([("mass", 12.0)]))
             .unwrap();
         atoms
-            .def_type("B", &[], Params::from_pairs(&[("mass", 1.0)]))
+            .def_type("B", &[], Params::from_iter([("mass", 1.0)]))
             .unwrap();
         let lj = ff.def_style("pair", "lj/cut", Params::new()).unwrap();
         lj.def_type(
             "A",
             &["A"],
-            Params::from_pairs(&[("epsilon", 0.1), ("sigma", 3.4)]),
+            Params::from_iter([("epsilon", 0.1), ("sigma", 3.4)]),
         )
         .unwrap();
         lj.def_type(
             "B",
             &["B"],
-            Params::from_pairs(&[("epsilon", 0.02), ("sigma", 2.5)]),
+            Params::from_iter([("epsilon", 0.02), ("sigma", 2.5)]),
         )
         .unwrap();
-        ff.def_style(
-            "pair",
-            "coul/cut",
-            Params::from_pairs(&[("coulomb", 332.0)]),
-        )
-        .unwrap();
+        ff.def_style("pair", "coul/cut", Params::from_iter([("coulomb", 332.0)]))
+            .unwrap();
         let bonds = ff.def_style("bond", "harmonic", Params::new()).unwrap();
         bonds
             .def_type(
                 "A-B",
                 &["A", "B"],
-                Params::from_pairs(&[("k", 300.0), ("r0", 1.1)]),
+                Params::from_iter([("k", 300.0), ("r0", 1.1)]),
             )
             .unwrap();
         let morse = ff.def_style("bond", "morse", Params::new()).unwrap();
@@ -328,18 +327,22 @@ mod tests {
             .def_type(
                 "A-A",
                 &["A", "A"],
-                Params::from_pairs(&[("d0", 80.0), ("alpha", 2.0), ("r0", 1.5)]),
+                Params::from_iter([("d0", 80.0), ("alpha", 2.0), ("r0", 1.5)]),
             )
             .unwrap();
 
         let mut frame = Frame::new();
         let mut atoms = Block::new();
-        atoms.insert("type", strings(&["A", "A", "B"])).unwrap();
+        atoms
+            .insert("type", strings(&["A", "A", "B"]), None)
+            .unwrap();
         frame.insert(ATOMS, atoms);
         let mut bonds = Block::new();
-        bonds.insert("atomi", uint(&[0, 1])).unwrap();
-        bonds.insert("atomj", uint(&[1, 2])).unwrap();
-        bonds.insert("type", strings(&["A-A", "A-B"])).unwrap();
+        bonds.insert("atomi", uint(&[0, 1]), None).unwrap();
+        bonds.insert("atomj", uint(&[1, 2]), None).unwrap();
+        bonds
+            .insert("type", strings(&["A-A", "A-B"]), None)
+            .unwrap();
         frame.insert(BONDS, bonds);
         (ff, frame)
     }
@@ -350,7 +353,7 @@ mod tests {
             .unwrap()
             .get(key)
             .unwrap()
-            .as_float()
+            .get::<f64>()
             .unwrap()
             .iter()
             .copied()
@@ -394,7 +397,9 @@ mod tests {
     fn a_row_no_style_defines_is_an_error() {
         let (ff, mut frame) = system();
         let bonds = frame.get_mut(BONDS).unwrap();
-        bonds.insert("type", strings(&["A-A", "B-B"])).unwrap();
+        bonds
+            .insert("type", strings(&["A-A", "B-B"]), None)
+            .unwrap();
         let err = ff.materialize_params(&mut frame, "ref_").unwrap_err();
         assert!(
             err.contains("bonds row 1") && err.contains("'B-B'"),
@@ -407,7 +412,9 @@ mod tests {
     fn an_atom_without_a_self_row_is_an_error() {
         let (ff, mut frame) = system();
         let atoms = frame.get_mut(ATOMS).unwrap();
-        atoms.insert("type", strings(&["A", "A", "C"])).unwrap();
+        atoms
+            .insert("type", strings(&["A", "A", "C"]), None)
+            .unwrap();
         let err = ff.materialize_params(&mut frame, "ref_").unwrap_err();
         assert!(err.contains("atom 2"), "{err}");
     }

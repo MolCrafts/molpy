@@ -17,6 +17,20 @@ from pathlib import Path
 import molrs
 import numpy as np
 
+
+def _lammps_include(ff: molrs.ff.forcefield.ForceField, frame: molrs.core.Frame, **options: object) -> str:
+    """The LAMMPS force-field include ``ff`` writes for ``frame``."""
+    buf = bytearray()
+    molrs.io.lammps.LammpsForcefieldWriter(frame, **options).write(buf, ff)  # type: ignore[arg-type]
+    return buf.decode()
+
+
+def _lammps_data_coeffs(ff: molrs.ff.forcefield.ForceField, frame: molrs.core.Frame) -> str:
+    """The data file's ``* Coeffs`` sections ``ff`` writes for ``frame``."""
+    buf = bytearray()
+    molrs.io.lammps.LammpsForcefieldWriter(frame).write_data_coeffs(buf, ff)
+    return buf.decode()
+
 K, THETA0, K_UB, R_UB = 33.43, 110.1, 22.53, 2.179
 XYZ = np.array([[1.53, 0.0, 0.0], [0.0, 0.0, 0.0], [-0.30, 1.05, 0.10]])
 
@@ -64,7 +78,7 @@ def test_an_angle_style_named_charmm_carries_the_four_params() -> None:
 def test_it_compiles_to_the_lammps_energy() -> None:
     frame = _frame()
     compiler = molrs.ff.compile.PotentialCompiler(_ub_ff())
-    e = compiler.compile(frame).calc_energy(frame)
+    e = compiler.compile(frame).evaluate(frame)[0]
     assert math.isclose(e, _hand_energy(), rel_tol=1e-12)
     assert len(compiler.compile_typed(frame)) == 1
 
@@ -74,24 +88,24 @@ def test_it_round_trips_through_the_section_and_a_store(tmp_path: Path) -> None:
     table = molrs.io.mrec.ForceFieldSection.from_forcefield(ff).table("angle", "charmm")
     assert list(table["r_ub"]) == [R_UB]
     path = tmp_path / "ff.mrec"
-    molrs.io.write_mrec_forcefield(path, ff)
-    back = molrs.io.read_mrec_forcefield(path).to_forcefield()
+    molrs.io.write_mrec(path, forcefield=ff)
+    back = molrs.io.mrec.MrecFile(path).forcefield().to_forcefield()
     (t,) = back.get_types("angle")
     assert (t["k"], t["theta0"], t["k_ub"], t["r_ub"]) == (K, THETA0, K_UB, R_UB)
     frame = _frame()
-    assert molrs.ff.compile.PotentialCompiler(back).compile(frame).calc_energy(
+    assert molrs.ff.compile.PotentialCompiler(back).compile(frame).evaluate(
         frame
-    ) == molrs.ff.compile.PotentialCompiler(ff).compile(frame).calc_energy(frame)
+    )[0] == molrs.ff.compile.PotentialCompiler(ff).compile(frame).evaluate(frame)[0]
 
 
 def test_the_lammps_writer_and_reader_keep_it_as_written(tmp_path: Path) -> None:
-    text = molrs.io.write_lammps_forcefield_str(_ub_ff(), _frame())
+    text = _lammps_include(_ub_ff(), _frame())
     assert "angle_style charmm\n" in text
     assert "angle_coeff HA-CT-CT 33.430000 110.100000 22.530000 2.179000\n" in text
     path = tmp_path / "ub.ff"
     path.write_text(text, encoding="utf-8")
-    back = molrs.io.read_lammps_forcefield(path)
+    back = molrs.io.lammps.LammpsForcefieldReader().read(path)
     (t,) = back.get_types("angle")
     assert (t["k"], t["theta0"], t["k_ub"], t["r_ub"]) == (K, THETA0, K_UB, R_UB)
-    data = molrs.io.write_lammps_data_coeffs_str(_ub_ff(), _frame())
+    data = _lammps_data_coeffs(_ub_ff(), _frame())
     assert "Angle Coeffs # charmm" in data

@@ -3,32 +3,44 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::core::Atomistic;
+use crate::core::Element;
 use crate::core::MolRsError;
 use crate::core::{BondNumber, BondOrder};
-use crate::core::{NodeId, RelationId};
-use molrs::core::Element;
+use crate::core::{NodeId, Props, keys};
+use crate::props;
 
 use super::SmartsPattern;
 use super::compile::QueryGraph;
 use super::predicate::SmartsTarget;
 use super::predicate::{AtomPredicate, AtomTest, BondPredicate, BondTest};
+use crate::perceive::aromaticity::rewrite_aromatic_flags;
 
-type ReactionAtomSets = Vec<Vec<NodeId>>;
-type DetailedReactionBatch = (ReactionAtomSets, ReactionAtomSets);
+/// What [`Reaction::apply_many`] did, one entry per binding, in `bindings`
+/// order.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReactionBatch {
+    /// Per binding: the surviving touched atoms, deduplicated and ordered as
+    /// [`Reaction::apply`] returns them.
+    pub touched: Vec<Vec<NodeId>>,
+    /// Per binding: the atoms the product added, in product creation order.
+    /// This is the stable correspondence a compile-first caller uses to replay
+    /// annotations onto RHS-added atoms; sorting opaque graph handles cannot
+    /// provide it once deleted slots have been reused.
+    pub created: Vec<Vec<NodeId>>,
+}
 
 // ---------------------------------------------------------------------------
 // Query-tree extraction helpers (read-only reads of the chain-01 AST)
 // ---------------------------------------------------------------------------
 
-/// The concrete element symbol pinned by an atom query (`C`, `[N:1]`, `[#8]`,
-/// aromatic `c`, ...), or `None` for a wildcard / purely-logical query.
-fn query_element(q: &AtomTest) -> Option<String> {
+/// The concrete element pinned by an atom query (`C`, `[N:1]`, `[#8]`,
+/// aromatic `c`, ...), or `None` for a wildcard / purely-logical query —
+/// `[#0]` included, since the wildcard atom names no element.
+fn query_element(q: &AtomTest) -> Option<Element> {
     match q {
         AtomTest::Prim(AtomPredicate::AliphaticElement(z))
         | AtomTest::Prim(AtomPredicate::AromaticElement(z))
-        | AtomTest::Prim(AtomPredicate::AtomicNum(z)) => {
-            Element::by_number(*z).map(|e| e.symbol().to_string())
-        }
+        | AtomTest::Prim(AtomPredicate::AtomicNum(z)) => Element::by_number(*z),
         AtomTest::And(items) | AtomTest::Or(items) => items.iter().find_map(query_element),
         _ => None,
     }
@@ -67,7 +79,7 @@ fn query_bond_class(q: &BondTest) -> (BondOrder, BondNumber) {
 /// Per-atom facts read out of a [`QueryGraph`] for the map diff.
 struct QueryAtomFacts {
     label: Option<u32>,
-    element: Option<String>,
+    element: Option<Element>,
     charge: Option<i32>,
     /// `(mapped-neighbour label, bond order)` for each bond to a mapped atom.
     attach: Vec<(u32, (BondOrder, BondNumber))>,
@@ -144,10 +156,13 @@ enum NodeRef {
 
 /// A product atom to create (unmapped, unpaired): its element/charge template
 /// and its product-graph index (identity used by [`NodeRef::Added`]).
+///
+/// The species is an [`Element`], not a bare atomic number: an added atom
+/// needs a definite element, and the wildcard (`Z = 0`) is not one.
 #[derive(Debug, Clone)]
 struct AddAtomSpec {
     product_idx: usize,
-    element: String,
+    element: Element,
     charge: i32,
 }
 
@@ -165,7 +180,7 @@ struct DeleteSpec {
 #[derive(Debug, Clone)]
 struct PropDelta {
     label: u32,
-    element: Option<String>,
+    element: Option<Element>,
     charge: Option<i32>,
 }
 
@@ -222,7 +237,7 @@ impl Transform {
         let mut add_atoms: Vec<AddAtomSpec> = Vec::new();
         for (pi, p_atom) in p_facts.iter().enumerate() {
             if p_atom.label.is_none() && !p_claimed[pi] {
-                let element = p_atom.element.clone().ok_or_else(|| {
+                let element = p_atom.element.ok_or_else(|| {
                     MolRsError::validation(format!(
                         "product atom {pi} is added but declares no concrete element"
                     ))
@@ -289,8 +304,8 @@ impl Transform {
             let (rc, ra) = r_labels[&l];
             let r_atom = &r_facts[rc][ra];
             let p_atom = &p_facts[pi];
-            let element = match (&r_atom.element, &p_atom.element) {
-                (Some(re), Some(pe)) if re != pe => Some(pe.clone()),
+            let element = match (r_atom.element, p_atom.element) {
+                (Some(re), Some(pe)) if re != pe => Some(pe),
                 _ => None,
             };
             let charge = match p_atom.charge {
@@ -458,10 +473,11 @@ impl Transform {
         // 2. Add unmapped product atoms (no coordinates).
         let mut added: HashMap<usize, NodeId> = HashMap::new();
         for spec in &self.add_atoms {
-            let id = mol.add_atom_bare(&spec.element);
+            let mut props = Props::new().with(keys::ATOMIC_NUMBER, spec.element);
             if spec.charge != 0 {
-                mol.set_atom(id, "formal_charge", spec.charge)?;
+                props.set(keys::FORMAL_CHARGE, spec.charge);
             }
+            let id = mol.add_atom(props)?;
             added.insert(spec.product_idx, id);
             touched.push(id);
             created.push(id);
@@ -488,8 +504,8 @@ impl Transform {
         // 3. Break mapped-mapped bonds.
         for &(a, b) in &self.break_bonds {
             let (ida, idb) = (mapped(&a)?, mapped(&b)?);
-            if let Some(bid) = bond_between(mol, ida, idb) {
-                mol.remove_bond(bid)?;
+            if let Some(bid) = mol.bond_between(ida, idb) {
+                mol.del_bond(bid)?;
                 touched.push(ida);
                 touched.push(idb);
             }
@@ -498,8 +514,11 @@ impl Transform {
         // 4. Form bonds (mapped-mapped and added-atom).
         for (na, nb, (bond_type, bond_number)) in &self.form_bonds {
             let (ida, idb) = (resolve(na)?, resolve(nb)?);
-            let bid = mol.add_bond(ida, idb)?;
-            mol.set_bond_class(bid, *bond_type, *bond_number)?;
+            mol.add_bond(
+                ida,
+                idb,
+                props! { keys::BOND_TYPE => *bond_type, keys::BOND_NUMBER => *bond_number },
+            )?;
             touched.push(ida);
             touched.push(idb);
         }
@@ -507,7 +526,7 @@ impl Transform {
         // 5. Change order of preserved bonds.
         for &(a, b, (bond_type, bond_number)) in &self.set_order {
             let (ida, idb) = (mapped(&a)?, mapped(&b)?);
-            let bid = bond_between(mol, ida, idb).ok_or_else(|| {
+            let bid = mol.bond_between(ida, idb).ok_or_else(|| {
                 MolRsError::validation(format!(
                     "reaction apply: expected an existing bond between :{a} and :{b} to set its order"
                 ))
@@ -520,11 +539,11 @@ impl Transform {
         // 6. Property changes on preserved atoms.
         for pd in &self.set_props {
             let id = mapped(&pd.label)?;
-            if let Some(el) = &pd.element {
-                mol.set_atom(id, "element", el.as_str())?;
+            if let Some(element) = pd.element {
+                mol.set_atom(id, keys::ATOMIC_NUMBER, element)?;
             }
             if let Some(c) = pd.charge {
-                mol.set_atom(id, "formal_charge", c)?;
+                mol.set_atom(id, keys::FORMAL_CHARGE, c)?;
             }
             touched.push(id);
         }
@@ -542,12 +561,12 @@ impl Transform {
         refresh: bool,
     ) -> Result<Vec<NodeId>, MolRsError> {
         let leaving = {
-            let target = SmartsTarget::with_labels(mol, labels);
+            let target = SmartsTarget::new(mol).with_labels(labels);
             self.resolve_leaving(&target, binding, reactants)?
         };
         let mut touched = Vec::new();
         for &aid in &leaving {
-            for (_, other) in mol.incident_bond_ids(aid) {
+            for (other, _) in mol.neighbor_bonds(aid) {
                 if !leaving.contains(&other) {
                     touched.push(other);
                 }
@@ -555,13 +574,13 @@ impl Transform {
         }
         let mut leaving_ordered: Vec<_> = leaving.into_iter().collect();
         leaving_ordered.sort_unstable();
-        mol.as_molgraph_mut().remove_nodes(&leaving_ordered)?;
+        mol.del_atoms(&leaving_ordered)?;
         let mut created = Vec::new();
         self.apply_after_delete(mol, binding, &mut touched, &mut created)?;
 
         if refresh {
             mol.generate_topology(true, true, false, false)?;
-            crate::perceive::mark_aromaticity(mol);
+            rewrite_aromatic_flags(mol)?;
         }
 
         // Dedup with a deterministic order (sort by the stable atom handle).
@@ -579,9 +598,9 @@ impl Transform {
         reactants: &[SmartsPattern],
         labels: &HashMap<NodeId, String>,
         refresh: bool,
-    ) -> Result<DetailedReactionBatch, MolRsError> {
+    ) -> Result<ReactionBatch, MolRsError> {
         let leaving_per_edit = {
-            let target = SmartsTarget::with_labels(mol, labels);
+            let target = SmartsTarget::new(mol).with_labels(labels);
             bindings
                 .iter()
                 .map(|binding| self.resolve_leaving(&target, binding, reactants))
@@ -602,7 +621,7 @@ impl Transform {
         for leaving in &leaving_per_edit {
             let mut touched = Vec::new();
             for &atom in leaving {
-                for (_, other) in mol.incident_bond_ids(atom) {
+                for (other, _) in mol.neighbor_bonds(atom) {
                     if !all_leaving.contains(&other) {
                         touched.push(other);
                     }
@@ -613,7 +632,7 @@ impl Transform {
 
         let mut leaving_ordered: Vec<_> = all_leaving.into_iter().collect();
         leaving_ordered.sort_unstable();
-        mol.as_molgraph_mut().remove_nodes(&leaving_ordered)?;
+        mol.del_atoms(&leaving_ordered)?;
         let mut created_per_edit = Vec::with_capacity(bindings.len());
         for (binding, touched) in bindings.iter().zip(&mut touched_per_edit) {
             let mut created = Vec::new();
@@ -624,17 +643,13 @@ impl Transform {
         }
         if refresh {
             mol.generate_topology(true, true, false, false)?;
-            crate::perceive::mark_aromaticity(mol);
+            rewrite_aromatic_flags(mol)?;
         }
-        Ok((touched_per_edit, created_per_edit))
+        Ok(ReactionBatch {
+            touched: touched_per_edit,
+            created: created_per_edit,
+        })
     }
-}
-
-/// The [`RelationId`] of the bond directly joining `a` and `b`, if any.
-fn bond_between(mol: &Atomistic, a: NodeId, b: NodeId) -> Option<RelationId> {
-    mol.incident_bond_ids(a)
-        .find(|&(_, other)| other == b)
-        .map(|(bid, _)| bid)
 }
 
 // ---------------------------------------------------------------------------
@@ -796,30 +811,22 @@ impl Reaction {
 
     /// Compile every occurrence against the intact reactant world, then apply
     /// all disjoint transforms with one batched leaving-group deletion.
+    ///
+    /// Returns, per binding, the touched atoms (as [`apply`](Self::apply)
+    /// returns them) and the atoms the product created — see
+    /// [`ReactionBatch`].
+    ///
+    /// # Errors
+    ///
+    /// [`MolRsError::Validation`] when two bindings resolve the same leaving
+    /// atom, a binding misses an atom map, or an edit is refused.
     pub fn apply_many(
         &self,
         mol: &mut Atomistic,
         bindings: &[HashMap<u32, NodeId>],
         labels: &HashMap<NodeId, String>,
         refresh: bool,
-    ) -> Result<Vec<Vec<NodeId>>, MolRsError> {
-        self.transform
-            .apply_many(mol, bindings, &self.reactants, labels, refresh)
-            .map(|(touched, _)| touched)
-    }
-
-    /// The batch result plus reaction-created atom ids in product creation
-    /// order, one list per binding. This is the stable correspondence a
-    /// compile-first caller uses to replay annotations onto RHS-added atoms;
-    /// sorting opaque graph handles cannot provide that correspondence after
-    /// deleted slots have been reused.
-    pub fn apply_many_detailed(
-        &self,
-        mol: &mut Atomistic,
-        bindings: &[HashMap<u32, NodeId>],
-        labels: &HashMap<NodeId, String>,
-        refresh: bool,
-    ) -> Result<DetailedReactionBatch, MolRsError> {
+    ) -> Result<ReactionBatch, MolRsError> {
         self.transform
             .apply_many(mol, bindings, &self.reactants, labels, refresh)
     }
@@ -861,6 +868,22 @@ fn split_top_level(s: &str, sep: char) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Add an atom of `element` at `xyz`.
+    fn atom(mol: &mut Atomistic, element: Element, [x, y, z]: [f64; 3]) -> NodeId {
+        mol.add_atom(props! {
+            keys::ATOMIC_NUMBER => element,
+            keys::X => x,
+            keys::Y => y,
+            keys::Z => z,
+        })
+        .unwrap()
+    }
+
+    /// A double bond `a`=`b`.
+    fn double() -> Props {
+        props! { keys::BOND_TYPE => BondOrder::Double, keys::BOND_NUMBER => BondNumber::Double }
+    }
 
     #[test]
     fn parse_splits_arrow_and_components() {
@@ -920,7 +943,7 @@ mod tests {
         let rxn = Reaction::parse("[C:1]Br >> [C:1]O").unwrap();
         let t = &rxn.transform;
         assert_eq!(t.add_atoms.len(), 1);
-        assert_eq!(t.add_atoms[0].element, "O");
+        assert_eq!(t.add_atoms[0].element, Element::O);
         assert_eq!(t.delete.len(), 1); // Br leaves
         // the new C-O bond is a form touching an added atom (not a mapped pair)
         assert!(rxn.forming_bonds().is_empty());
@@ -933,20 +956,19 @@ mod tests {
 
         let mut mol = Atomistic::new();
         // amine
-        let n0 = mol.add_atom_xyz("N", 0.0, 0.0, 0.0);
-        let h1 = mol.add_atom_xyz("H", 0.6, 0.8, 0.0);
-        let h2 = mol.add_atom_xyz("H", -0.6, 0.8, 0.0);
-        mol.add_bond(n0, h1).unwrap();
-        mol.add_bond(n0, h2).unwrap();
+        let n0 = atom(&mut mol, Element::N, [0.0, 0.0, 0.0]);
+        let h1 = atom(&mut mol, Element::H, [0.6, 0.8, 0.0]);
+        let h2 = atom(&mut mol, Element::H, [-0.6, 0.8, 0.0]);
+        mol.add_bond(n0, h1, props! {}).unwrap();
+        mol.add_bond(n0, h2, props! {}).unwrap();
         // ester
-        let c0 = mol.add_atom_xyz("C", 5.0, 0.0, 0.0);
-        let o1 = mol.add_atom_xyz("O", 6.0, 0.8, 0.0);
-        let o2 = mol.add_atom_xyz("O", 5.0, -1.3, 0.0);
-        let c3 = mol.add_atom_xyz("C", 5.0, -2.6, 0.0);
-        let bo = mol.add_bond(c0, o1).unwrap();
-        mol.set_bond_type(bo, BondOrder::Double).unwrap();
-        mol.add_bond(c0, o2).unwrap();
-        mol.add_bond(o2, c3).unwrap();
+        let c0 = atom(&mut mol, Element::C, [5.0, 0.0, 0.0]);
+        let o1 = atom(&mut mol, Element::O, [6.0, 0.8, 0.0]);
+        let o2 = atom(&mut mol, Element::O, [5.0, -1.3, 0.0]);
+        let c3 = atom(&mut mol, Element::C, [5.0, -2.6, 0.0]);
+        mol.add_bond(c0, o1, double()).unwrap();
+        mol.add_bond(c0, o2, props! {}).unwrap();
+        mol.add_bond(o2, c3, props! {}).unwrap();
 
         let n_before = mol.n_atoms();
         let binding = HashMap::from([(1u32, n0), (2u32, c0)]);
@@ -957,8 +979,8 @@ mod tests {
         // two leaving atoms removed
         assert_eq!(mol.n_atoms(), n_before - 2);
         // new N-C bond present, carbonyl O preserved
-        assert!(bond_between(&mol, n0, c0).is_some());
-        assert!(bond_between(&mol, c0, o1).is_some());
+        assert!(mol.bond_between(n0, c0).is_some());
+        assert!(mol.bond_between(c0, o1).is_some());
         // topology regenerated around the new bond
         assert!(mol.n_angles() > 0);
 
@@ -976,9 +998,9 @@ mod tests {
     fn apply_adds_atom_without_coordinates() {
         let rxn = Reaction::parse("[C:1]Br >> [C:1]O").unwrap();
         let mut mol = Atomistic::new();
-        let c0 = mol.add_atom_xyz("C", 0.0, 0.0, 0.0);
-        let br = mol.add_atom_xyz("Br", 1.9, 0.0, 0.0);
-        mol.add_bond(c0, br).unwrap();
+        let c0 = atom(&mut mol, Element::C, [0.0, 0.0, 0.0]);
+        let br = atom(&mut mol, Element::Br, [1.9, 0.0, 0.0]);
+        mol.add_bond(c0, br, props! {}).unwrap();
 
         let binding = HashMap::from([(1u32, c0)]);
         let touched = rxn
@@ -987,14 +1009,11 @@ mod tests {
 
         assert_eq!(mol.n_atoms(), 2);
         // the surviving neighbour of C is the new O
-        let o = bond_between(&mol, c0, br); // Br was removed; that bond is gone
+        let o = mol.bond_between(c0, br); // Br was removed; that bond is gone
         assert!(o.is_none());
-        let elements: Vec<String> = mol
-            .atoms()
-            .filter_map(|(_, a)| a.get_str("element").map(str::to_owned))
-            .collect();
-        assert!(elements.contains(&"O".to_string()));
-        assert!(!elements.contains(&"Br".to_string()));
+        let species: Vec<Option<u8>> = mol.atoms().map(|(_, a)| a.atomic_number()).collect();
+        assert!(species.contains(&Some(Element::O.z())));
+        assert!(!species.contains(&Some(Element::Br.z())));
 
         // touched = surviving carbon (leaving Br's neighbour) + the added O;
         // the deleted Br handle never appears.
@@ -1008,13 +1027,12 @@ mod tests {
     fn apply_thiol_ene_touched_is_two_carbons_and_sulfur() {
         let rxn = Reaction::parse("[C:1]=[C:2].[S;H1:3] >> [C:1][C:2][S:3]").unwrap();
         let mut mol = Atomistic::new();
-        let c1 = mol.add_atom_xyz("C", 0.0, 0.0, 0.0);
-        let c2 = mol.add_atom_xyz("C", 1.3, 0.0, 0.0);
-        let s3 = mol.add_atom_xyz("S", 3.0, 0.0, 0.0);
-        let hs = mol.add_atom_xyz("H", 3.0, 1.0, 0.0);
-        let b = mol.add_bond(c1, c2).unwrap();
-        mol.set_bond_type(b, BondOrder::Double).unwrap();
-        mol.add_bond(s3, hs).unwrap();
+        let c1 = atom(&mut mol, Element::C, [0.0, 0.0, 0.0]);
+        let c2 = atom(&mut mol, Element::C, [1.3, 0.0, 0.0]);
+        let s3 = atom(&mut mol, Element::S, [3.0, 0.0, 0.0]);
+        let hs = atom(&mut mol, Element::H, [3.0, 1.0, 0.0]);
+        mol.add_bond(c1, c2, double()).unwrap();
+        mol.add_bond(s3, hs, props! {}).unwrap();
 
         // No leaving group; the binding pins the three reacting atoms directly.
         let binding = HashMap::from([(1u32, c1), (2u32, c2), (3u32, s3)]);

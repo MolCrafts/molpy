@@ -1,14 +1,10 @@
-//! Scientific records (`*.mrec`): the whole-record doors, flat on `molrs.io`
-//! like every other format's ([`read_mrec_frame`] / [`write_mrec_frame`],
-//! [`read_mrec_system`] / [`write_mrec_system`], [`read_mrec_trajectory`] /
-//! [`write_mrec_trajectory`], [`read_mrec_forcefield`] /
-//! [`write_mrec_forcefield`], [`read_mrec_meta`]; [`register_doors`]), and
-//! the `_native.mrec` submodule, `molrs.io.mrec` ([`register`]): the store
-//! reader and writer ([`PyMrecReader`], [`PySequenceSchema`],
-//! [`PyMrecWriter`], named as `molrs::io::mrec`'s `MrecReader`,
-//! `SequenceSchema` and `MrecWriter`), [`section_names`], [`pack_mrec_zip`],
-//! the `ForceFieldSection` and the `validation` submodule
-//! (`molrs.io.mrec.validation`).
+//! Scientific records (`*.mrec`): [`write_mrec`], flat on `molrs.io` like
+//! every other format's writer ([`register_doors`]), and the `_native.mrec`
+//! submodule, `molrs.io.mrec` ([`register`]): [`PyMrecFile`] (a record's
+//! per-section reads), the store reader and writer ([`PyMrecReader`],
+//! [`PySequenceSchema`], [`PyMrecWriter`]), [`pack_mrec_zip`], the
+//! `ForceFieldSection` and the `validation` submodule
+//! (`molrs.io.mrec.validation`) — each named as `molrs::io::mrec`'s.
 
 pub mod section;
 
@@ -21,399 +17,234 @@ use crate::core::frame::{
 use crate::core::simbox::PyBox;
 use crate::core::trajectory::PyTrajectory;
 use crate::error::molrs_error_to_pyerr;
-use crate::path::path_str;
+use crate::io::{PySink, PySource, data_error};
 use molrs::io::mrec::{
-    Compression, MrecReader, MrecWriter, SequenceSchema, dtype_from_schema_tag, open_mrec_zip,
+    Compression, MolRec, MrecFile, MrecReader, MrecWriter, SequenceSchema, dtype_from_schema_tag,
 };
 use pyo3::exceptions::{PyIndexError, PyValueError};
 use pyo3::prelude::*;
-use pyo3::types::{PyAny, PyDict, PyFrozenSet};
+use pyo3::types::{PyAny, PyDict};
 use section::PyForceFieldSection;
 
-/// Write a snapshot as a record whose only state section is ``frame``.
+/// Write a record — its ``meta`` document and whichever state sections are
+/// given — as a ``*.mrec`` store (``molrs::io::write_mrec``).
+///
+/// A path is written as a directory store; a ``bytearray`` receives the
+/// packed record (the bytes of a ``*.mrec.zip``), which
+/// :class:`molrs.io.mrec.MrecFile` reads back.
 ///
 /// Parameters
 /// ----------
-/// path
-///     Destination filesystem path.
-/// frame
-///     In-memory :class:`~molrs.core.Frame` to persist.
-/// system
-///     Optional system-definition :class:`~molrs.core.Frame` written
-///     beside the snapshot as the ``system/`` section.
-/// meta
-///     The record's identity document, written to ``meta/`` as
-///     given: a ``dict``, a
-///     :class:`~molrs.core.MetaDocument`, or any mapping (``frame.meta``
-///     included). Nested tuples and documents are JSON arrays and objects.
-/// forcefield
-///     Optional force field written beside them as the
-///     ``forcefield/`` section: a :class:`~molrs.io.mrec.ForceFieldSection`
-///     as given, or a :class:`~molrs.ff.forcefield.ForceField` through its
+/// sink : os.PathLike | bytearray
+///     The store's path, or a buffer that then holds the packed record.
+/// meta : Mapping, optional
+///     The record's identity document, written to ``meta/`` as given: a
+///     ``dict``, a :class:`~molrs.core.MetaDocument`, or any mapping
+///     (``frame.meta`` included). Nested tuples and documents are JSON
+///     arrays and objects.
+/// frame : Frame, optional
+///     The snapshot (``frame/``).
+/// system : Frame, optional
+///     The system definition — topology and types (``system/``).
+/// trajectory : Trajectory, optional
+///     The ordered frame sequence (``trajectory/``).
+/// forcefield : ForceFieldSection | ForceField, optional
+///     The force field the record's types link into (``forcefield/``): a
+///     :class:`~molrs.io.mrec.ForceFieldSection` as given, or a
+///     :class:`~molrs.ff.forcefield.ForceField` through
 ///     :meth:`~molrs.io.mrec.ForceFieldSection.from_forcefield`.
 ///
 /// Raises
 /// ------
 /// ValueError
-///     If a section fails to encode, or the force field is invalid or has no section
-///     form.
+///     If the record has no state section, a section fails to encode, or
+///     the force field is invalid or has no section form.
 /// TypeError
-///     If ``meta`` is not a mapping or holds a value JSON cannot,
-///     or ``forcefield`` is neither a ``ForceField`` nor a
+///     If ``meta`` is not a mapping or holds a value JSON cannot, or
+///     ``forcefield`` is neither a ``ForceField`` nor a
 ///     ``ForceFieldSection``.
+/// OSError
+///     If the store cannot be written.
 #[pyfunction]
-#[pyo3(signature = (path, frame, system=None, meta=None, forcefield=None))]
-pub fn write_mrec_frame(
-    path: PathBuf,
-    frame: &Bound<'_, PyFrame>,
+#[pyo3(signature = (sink, *, meta=None, frame=None, system=None, trajectory=None, forcefield=None))]
+pub fn write_mrec(
+    sink: PySink<'_>,
+    meta: Option<&Bound<'_, PyAny>>,
+    frame: Option<&Bound<'_, PyFrame>>,
     system: Option<&Bound<'_, PyFrame>>,
-    meta: Option<&Bound<'_, PyAny>>,
+    trajectory: Option<PyRef<'_, PyTrajectory>>,
     forcefield: Option<&Bound<'_, PyAny>>,
 ) -> PyResult<()> {
-    let mut record = record_arg(meta, forcefield)?;
-    record.frame = Some(frame.borrow().clone_core_frame()?);
-    record.system = system.map(|s| s.borrow().clone_core_frame()).transpose()?;
-    write_record(&path, &record)
-}
-
-/// Write a topology as a record whose only state section is ``system``.
-///
-/// Parameters
-/// ----------
-/// path
-///     Destination filesystem path.
-/// system
-///     In-memory :class:`~molrs.core.Frame` to persist as ``system/``.
-/// meta
-///     The record's identity document, written to ``meta/`` as
-///     given: a ``dict``, a
-///     :class:`~molrs.core.MetaDocument`, or any mapping (``frame.meta``
-///     included). Nested tuples and documents are JSON arrays and objects.
-/// forcefield
-///     Optional force field the system's types link into,
-///     written as the ``forcefield/`` section: a
-///     :class:`~molrs.io.mrec.ForceFieldSection` or a
-///     :class:`~molrs.ff.forcefield.ForceField`.
-///
-/// Raises
-/// ------
-/// ValueError
-///     If a section fails to encode, or the force field is invalid or has no section
-///     form.
-/// TypeError
-///     If ``meta`` is not a mapping or holds a value JSON cannot,
-///     or ``forcefield`` is neither a ``ForceField`` nor a
-///     ``ForceFieldSection``.
-#[pyfunction]
-#[pyo3(signature = (path, system, meta=None, forcefield=None))]
-pub fn write_mrec_system(
-    path: PathBuf,
-    system: &Bound<'_, PyFrame>,
-    meta: Option<&Bound<'_, PyAny>>,
-    forcefield: Option<&Bound<'_, PyAny>>,
-) -> PyResult<()> {
-    let mut record = record_arg(meta, forcefield)?;
-    record.system = Some(system.borrow().clone_core_frame()?);
-    write_record(&path, &record)
-}
-
-/// Write a force field as a record whose only state section is
-/// ``forcefield``: a force-field package (``meta`` + ``forcefield/``).
-///
-/// Parameters
-/// ----------
-/// path
-///     Destination filesystem path.
-/// forcefield
-///     A :class:`~molrs.io.mrec.ForceFieldSection`, written as
-///     given, or a :class:`~molrs.ff.forcefield.ForceField`, written through its
-///     :meth:`~molrs.io.mrec.ForceFieldSection.from_forcefield`.
-/// meta
-///     The record's identity document (see :func:`~molrs.io.write_mrec_frame`).
-///
-/// Raises
-/// ------
-/// ValueError
-///     If the force field is invalid or has no section form.
-/// TypeError
-///     If ``meta`` is not a mapping, or ``forcefield`` is neither a
-///     ``ForceField`` nor a ``ForceFieldSection``.
-#[pyfunction]
-#[pyo3(signature = (path, forcefield, meta=None))]
-pub fn write_mrec_forcefield(
-    path: PathBuf,
-    forcefield: &Bound<'_, PyAny>,
-    meta: Option<&Bound<'_, PyAny>>,
-) -> PyResult<()> {
-    let record = record_arg(meta, Some(forcefield))?;
-    write_record(&path, &record)
-}
-
-/// A record holding only `meta` and the `forcefield` argument, for the
-/// writing doors to add their state sections to.
-fn record_arg(
-    meta: Option<&Bound<'_, PyAny>>,
-    forcefield: Option<&Bound<'_, PyAny>>,
-) -> PyResult<molrs::io::mrec::MolRec> {
-    let mut record = molrs::io::mrec::MolRec::new();
+    let mut record = MolRec::new();
     if let Some(meta) = meta {
         record.meta = meta_document_arg(meta)?;
     }
+    record.frame = frame.map(|f| f.borrow().clone_core_frame()).transpose()?;
+    record.system = system.map(|s| s.borrow().clone_core_frame()).transpose()?;
+    record.trajectory = trajectory.map(|t| t.inner.clone());
     record.forcefield = forcefield.map(PyForceFieldSection::from_arg).transpose()?;
-    Ok(record)
+    sink.put(|s| molrs::io::write_mrec(s, &record), data_error)
 }
 
-fn write_record(path: &std::path::Path, record: &molrs::io::mrec::MolRec) -> PyResult<()> {
-    molrs::io::write_mrec(path_str(path)?, record).map_err(molrs_error_to_pyerr)
-}
-
-/// Write a trajectory as a record whose only state section is ``trajectory``.
+/// A ``*.mrec`` record opened for its sections (``molrs::io::mrec::MrecFile``):
+/// each read decodes only the section it names, so another section — a
+/// trajectory, observables, one this build does not know — cannot fail it.
+/// A trajectory section is :class:`MrecReader`'s.
 ///
 /// Parameters
 /// ----------
-/// path
-///     Destination filesystem path.
-/// traj
-///     In-memory :class:`~molrs.core.Trajectory` to persist.
-/// meta
-///     The record's identity document, written to ``meta/`` as
-///     given: a ``dict``, a
-///     :class:`~molrs.core.MetaDocument`, or any mapping (``frame.meta``
-///     included). Nested tuples and documents are JSON arrays and objects.
+/// source : os.PathLike | bytes
+///     A ``*.mrec`` directory store, a packed ``*.mrec.zip`` (read in
+///     place), or the bytes of a packed one.
 ///
 /// Raises
 /// ------
 /// ValueError
-///     If a frame fails to encode.
-/// TypeError
-///     If ``meta`` is not a mapping or holds a value JSON cannot.
-#[pyfunction]
-#[pyo3(signature = (path, traj, meta=None))]
-pub fn write_mrec_trajectory(
-    path: PathBuf,
-    traj: PyRef<'_, PyTrajectory>,
-    meta: Option<&Bound<'_, PyAny>>,
-) -> PyResult<()> {
-    let path = path_str(&path)?;
-    let meta_map = meta.map(meta_document_arg).transpose()?;
-    molrs::io::write_mrec_trajectory(path, &traj.inner, meta_map.as_ref())
-        .map_err(molrs_error_to_pyerr)
+///     If the source is neither a directory store nor a packed record.
+///
+/// Examples
+/// --------
+/// >>> record = molrs.io.mrec.MrecFile(pathlib.Path("water.mrec"))  # doctest: +SKIP
+/// >>> frame = record.frame()  # doctest: +SKIP
+#[pyclass(module = "molrs.io.mrec", name = "MrecFile", frozen, unsendable)]
+pub struct PyMrecFile {
+    inner: MrecFile,
 }
 
-/// Read the ``frame`` section of a ``*.mrec`` store.
+#[pymethods]
+impl PyMrecFile {
+    #[new]
+    fn new(source: PySource<'_>) -> PyResult<Self> {
+        let inner = source.read(MrecFile::open).map_err(data_error)?;
+        Ok(Self { inner })
+    }
+
+    /// The record's top-level section names (``meta``, ``frame``,
+    /// ``system``, …), sorted, without decoding any of them.
+    ///
+    /// Returns
+    /// -------
+    /// list[str]
+    fn sections(&self) -> PyResult<Vec<String>> {
+        self.inner.sections().map_err(data_error)
+    }
+
+    /// The record's ``meta`` document, as the producer wrote it; empty when
+    /// the store has none.
+    ///
+    /// Returns
+    /// -------
+    /// dict
+    fn meta<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
+        let map = self.inner.meta().map_err(data_error)?;
+        json_map_to_plain_dict(py, &map)
+    }
+
+    /// The ``frame`` section — the snapshot — or ``None`` when the record
+    /// has none.
+    ///
+    /// Returns
+    /// -------
+    /// Frame | None
+    ///
+    /// Raises
+    /// ------
+    /// ValueError
+    ///     If the section fails to decode.
+    fn frame(&self) -> PyResult<Option<PyFrame>> {
+        self.inner
+            .frame()
+            .map_err(data_error)?
+            .map(PyFrame::from_core_frame)
+            .transpose()
+    }
+
+    /// The ``system`` section — the topology — or ``None`` when the record
+    /// has none.
+    ///
+    /// Returns
+    /// -------
+    /// Frame | None
+    ///
+    /// Raises
+    /// ------
+    /// ValueError
+    ///     If the section fails to decode.
+    fn system(&self) -> PyResult<Option<PyFrame>> {
+        self.inner
+            .system()
+            .map_err(data_error)?
+            .map(PyFrame::from_core_frame)
+            .transpose()
+    }
+
+    /// The ``forcefield`` section, validated, or ``None`` when the record
+    /// has none. It comes back whole — every document key, every table,
+    /// units as stored; :meth:`ForceFieldSection.to_forcefield` turns it
+    /// into a force field molrs can compile.
+    ///
+    /// Returns
+    /// -------
+    /// ForceFieldSection | None
+    ///
+    /// Raises
+    /// ------
+    /// ValueError
+    ///     If the section is malformed.
+    fn forcefield(&self) -> PyResult<Option<PyForceFieldSection>> {
+        Ok(self
+            .inner
+            .forcefield()
+            .map_err(data_error)?
+            .map(|inner| PyForceFieldSection { inner }))
+    }
+}
+
+/// Lazy one-frame cursor over the ``trajectory`` section of a ``*.mrec``
+/// record (``molrs::io::mrec::MrecReader``).
 ///
-/// Only the ``frame`` section is decoded, so
-/// another section — a trajectory, observables, one this build does not know —
-/// cannot fail the read.
+/// Construction opens the index only, and each read decodes exactly the
+/// asked-for frame, keeping the last decoded chunk of every column so
+/// playback through consecutive frames is a slice rather than a decode.
+/// Supports ``len(reader)``, ``reader[i]`` (negative indices included),
+/// iteration, and the ``with`` statement.
 ///
 /// Parameters
 /// ----------
-/// path
-///     Filesystem path of the record store.
-///
-/// Returns
-/// -------
-/// molrs.core.Frame
-///     The in-memory :class:`~molrs.core.Frame`.
+/// source : os.PathLike | bytes
+///     A ``*.mrec`` directory store, a packed ``*.mrec.zip``, or the bytes of
+///     a packed one.
 ///
 /// Raises
 /// ------
 /// ValueError
-///     If the store has no ``frame`` section, or that section fails to decode.
-#[pyfunction]
-pub fn read_mrec_frame(path: PathBuf) -> PyResult<PyFrame> {
-    let path = path_str(&path)?;
-    let frame = molrs::io::read_mrec_frame(path).map_err(molrs_error_to_pyerr)?;
-    PyFrame::from_core_frame(frame)
-}
-
-/// Read the ``system`` section of a ``*.mrec`` store.
-///
-/// Only the ``system`` section is decoded.
-///
-/// Parameters
-/// ----------
-/// path
-///     Filesystem path of the record store.
-///
-/// Returns
-/// -------
-/// molrs.core.Frame
-///     The in-memory :class:`~molrs.core.Frame`.
-///
-/// Raises
-/// ------
-/// ValueError
-///     If the store has no ``system`` section, or that section fails to decode.
-#[pyfunction]
-pub fn read_mrec_system(path: PathBuf) -> PyResult<PyFrame> {
-    let path = path_str(&path)?;
-    let frame = molrs::io::read_mrec_system(path).map_err(molrs_error_to_pyerr)?;
-    PyFrame::from_core_frame(frame)
-}
-
-/// Read the ``trajectory`` section of a ``*.mrec`` store.
-///
-/// Only the ``trajectory`` section is decoded. A store without one reads as an empty trajectory.
-///
-/// Parameters
-/// ----------
-/// path
-///     Filesystem path of the record store.
-///
-/// Returns
-/// -------
-/// molrs.core.Trajectory
-///     The in-memory :class:`~molrs.core.Trajectory`.
-///
-/// Raises
-/// ------
-/// ValueError
-///     If the ``trajectory`` section fails to decode.
-#[pyfunction]
-pub fn read_mrec_trajectory(path: PathBuf) -> PyResult<PyTrajectory> {
-    let path = path_str(&path)?;
-    let inner = molrs::io::read_mrec_trajectory(path).map_err(molrs_error_to_pyerr)?;
-    Ok(PyTrajectory { inner })
-}
-
-/// Read the ``meta`` document of a ``*.mrec`` store (empty when the producer
-/// wrote none).
-///
-/// Parameters
-/// ----------
-/// path
-///     Filesystem path of the record store.
-///
-/// Returns
-/// -------
-/// dict
-///     The record-level metadata mapping, as the producer wrote it.
-///
-/// Raises
-/// ------
-/// ValueError
-///     If the store is not a readable record.
-#[pyfunction]
-pub fn read_mrec_meta(py: Python<'_>, path: PathBuf) -> PyResult<Py<PyDict>> {
-    let path = path_str(&path)?;
-    let map = molrs::io::read_mrec_meta(path).map_err(molrs_error_to_pyerr)?;
-    Ok(json_map_to_plain_dict(py, &map)?.unbind())
-}
-
-/// Read the ``forcefield`` section of a ``*.mrec`` store.
-///
-/// Only the ``forcefield`` section is decoded. The section comes back whole — every document key, every table,
-/// units as stored; :meth:`molrs.io.mrec.ForceFieldSection.to_forcefield` turns it into a
-/// force field molrs can compile.
-///
-/// Parameters
-/// ----------
-/// path
-///     Filesystem path of the record store.
-///
-/// Returns
-/// -------
-/// molrs.io.mrec.ForceFieldSection or None
-///     The :class:`~molrs.io.mrec.ForceFieldSection`, or ``None`` when the
-///     record carries no force field.
-///
-/// Raises
-/// ------
-/// ValueError
-///     If the section is
-///     malformed (the ``forcefield`` chapter's refusals).
-#[pyfunction]
-pub fn read_mrec_forcefield(path: PathBuf) -> PyResult<Option<PyForceFieldSection>> {
-    let path = path_str(&path)?;
-    let section = molrs::io::read_mrec_forcefield(path).map_err(molrs_error_to_pyerr)?;
-    Ok(section.map(|inner| PyForceFieldSection { inner }))
-}
-
-/// Child group names at the record root (``meta``, ``frame``, ``system``, …).
-///
-/// Parameters
-/// ----------
-/// path
-///     Filesystem path of the record store.
-///
-/// Returns
-/// -------
-/// frozenset[str]
-///     The section names, as a ``frozenset``. Callers ask which sections are
-///     present instead of probing ``read_mrec_frame`` / ``read_mrec_system`` and
-///     catching a missing-section error.
-///
-/// Raises
-/// ------
-/// ValueError
-///     If the store is not a readable record.
-#[pyfunction]
-pub fn section_names(py: Python<'_>, path: PathBuf) -> PyResult<Bound<'_, PyFrozenSet>> {
-    let path = path_str(&path)?;
-    let names = molrs::io::mrec::section_names(path).map_err(molrs_error_to_pyerr)?;
-    PyFrozenSet::new(py, names)
-}
-
-/// Lazy one-frame cursor over a ``*.mrec`` trajectory (directory or ``.zip``).
-///
-/// Wraps the Rust ``MrecReader`` store cursor: construction opens the
-/// index only, and each read decodes exactly the asked-for frame, keeping the
-/// last decoded chunk of every column so playback through consecutive frames
-/// is a slice rather than a decode. Supports ``len(reader)``, ``reader[i]``
-/// (negative indices included), iteration, and the ``with`` statement.
-///
-/// Parameters
-/// ----------
-/// path
-///     Filesystem path of the record store, or of a packed
-///     ``*.mrec.zip``.
+///     If the record has no ``trajectory`` section (read the others with
+///     :class:`MrecFile`), or its index does not decode.
 #[pyclass(module = "molrs.io.mrec", name = "MrecReader", unsendable)]
 pub struct PyMrecReader {
     inner: MrecReader,
+    /// The iteration cursor: the next frame `__next__` decodes.
+    cursor: u64,
+}
+
+impl PyMrecReader {
+    /// Decode committed frame `index` (already resolved).
+    fn frame_at(&self, index: u64) -> PyResult<PyFrame> {
+        let frame = self
+            .inner
+            .frame(index)
+            .map_err(molrs_error_to_pyerr)?
+            .ok_or_else(|| PyIndexError::new_err("trajectory index out of range"))?;
+        PyFrame::from_core_frame(frame)
+    }
 }
 
 #[pymethods]
 impl PyMrecReader {
-    /// Open a ``*.mrec`` directory or a packed ``*.mrec.zip`` for reading.
     #[new]
-    fn py_new(path: PathBuf) -> PyResult<Self> {
-        let path = path_str(&path)?;
-        let inner = if path.ends_with(".zip") {
-            let store = open_mrec_zip(path).map_err(molrs_error_to_pyerr)?;
-            MrecReader::from_storage(store).map_err(molrs_error_to_pyerr)?
-        } else {
-            molrs::io::mrec::MrecReader::open(path).map_err(molrs_error_to_pyerr)?
-        };
-        Ok(Self { inner })
-    }
-
-    /// Decode one committed frame.
-    ///
-    /// Parameters
-    /// ----------
-    /// index
-    ///     Zero-based frame index; negative counts from the end.
-    ///
-    /// Returns
-    /// -------
-    /// molrs.core.Frame
-    ///     The frame at ``index``.
-    ///
-    /// Raises
-    /// ------
-    /// IndexError
-    ///     If ``index`` is past the commit marker.
-    /// ValueError
-    ///     If a section fails to decode.
-    fn read_frame(&self, index: isize) -> PyResult<PyFrame> {
-        let resolved = self.resolve_index(index)?;
-        let frame = self
-            .inner
-            .frame(resolved)
-            .map_err(molrs_error_to_pyerr)?
-            .ok_or_else(|| PyIndexError::new_err("trajectory index out of range"))?;
-        PyFrame::from_core_frame(frame)
+    fn py_new(source: PySource<'_>) -> PyResult<Self> {
+        let inner = source.read(MrecReader::open).map_err(data_error)?;
+        Ok(Self { inner, cursor: 0 })
     }
 
     /// Decode one frame carrying only the named ``(block, column)`` pairs.
@@ -422,7 +253,23 @@ impl PyMrecReader {
     /// ``("atoms", "y")``, ``("atoms", "z")`` and nothing else. Blocks none of
     /// whose columns are named are left out; the cell and per-step metadata
     /// always come along.
-    fn read_columns(&self, index: isize, columns: Vec<(String, String)>) -> PyResult<PyFrame> {
+    ///
+    /// Parameters
+    /// ----------
+    /// index : int
+    ///     Zero-based frame index; negative counts from the end.
+    /// columns : list[tuple[str, str]]
+    ///     The ``(block, column)`` pairs to decode.
+    ///
+    /// Returns
+    /// -------
+    /// Frame
+    ///
+    /// Raises
+    /// ------
+    /// IndexError
+    ///     If ``index`` is past the commit marker.
+    fn frame_columns(&self, index: isize, columns: Vec<(String, String)>) -> PyResult<PyFrame> {
         let resolved = self.resolve_index(index)?;
         let pairs: Vec<(&str, &str)> = columns
             .iter()
@@ -465,9 +312,50 @@ impl PyMrecReader {
         self.inner.steps().len()
     }
 
-    /// Frame at ``index``, with Python negative-from-the-end indexing.
+    /// Decode the committed frame at ``index`` (negative counts from the
+    /// end).
+    ///
+    /// Raises
+    /// ------
+    /// IndexError
+    ///     If ``index`` is past the commit marker.
+    /// ValueError
+    ///     If a section fails to decode.
     fn __getitem__(&self, index: isize) -> PyResult<PyFrame> {
-        self.read_frame(index)
+        let resolved = self.resolve_index(index)?;
+        self.frame_at(resolved)
+    }
+
+    /// Walk the committed frames in order, from the first.
+    fn __iter__(mut slf: PyRefMut<'_, Self>) -> PyRefMut<'_, Self> {
+        slf.cursor = 0;
+        slf
+    }
+
+    fn __next__(&mut self) -> PyResult<Option<PyFrame>> {
+        if self.cursor >= self.inner.steps().len() as u64 {
+            return Ok(None);
+        }
+        let frame = self.frame_at(self.cursor)?;
+        self.cursor += 1;
+        Ok(Some(frame))
+    }
+
+    /// Every committed frame, with the steps and the times when the run
+    /// wrote any, as an in-memory :class:`~molrs.core.Trajectory`. A run too
+    /// large for memory is what ``reader[i]`` is for.
+    ///
+    /// Returns
+    /// -------
+    /// Trajectory
+    ///
+    /// Raises
+    /// ------
+    /// ValueError
+    ///     On the first frame that fails to decode.
+    fn to_trajectory(&self) -> PyResult<PyTrajectory> {
+        let inner = self.inner.to_trajectory().map_err(molrs_error_to_pyerr)?;
+        Ok(PyTrajectory { inner })
     }
 
     /// Step numbers of the committed frames.
@@ -525,7 +413,8 @@ impl PyMrecReader {
 ///
 /// The schema fixes every block, column and dtype the run may carry;
 /// :class:`MrecWriter` refuses a frame that steps outside it.
-/// Declare it column by column, or derive it from representative frames.
+/// Derive it from representative frames (:meth:`from_frames`), then refine
+/// it column by column with ``declare_*``.
 #[pyclass(module = "molrs.io.mrec", name = "SequenceSchema")]
 pub struct PySequenceSchema {
     inner: SequenceSchema,
@@ -533,25 +422,24 @@ pub struct PySequenceSchema {
 
 #[pymethods]
 impl PySequenceSchema {
-    /// An empty declaration, to be filled with ``declare_*``.
-    #[new]
-    fn py_new() -> Self {
-        Self {
-            inner: SequenceSchema::new(),
-        }
-    }
-
-    /// Derive a schema from one representative frame.
-    #[staticmethod]
-    fn from_frame(frame: &Bound<'_, PyFrame>) -> PyResult<Self> {
-        let inner = frame
-            .borrow()
-            .with_frame(SequenceSchema::from_frame)?
-            .map_err(molrs_error_to_pyerr)?;
-        Ok(Self { inner })
-    }
-
-    /// Derive a schema from the union of several frames' blocks and columns.
+    /// Derive a schema from the union of several frames' blocks and columns
+    /// (``molrs::io::mrec::SequenceSchema::from_frames``). ``from_frames([])``
+    /// is the empty schema, to be filled with ``declare_*``.
+    ///
+    /// Parameters
+    /// ----------
+    /// frames : Sequence[Frame]
+    ///     Representative frames of the run.
+    ///
+    /// Returns
+    /// -------
+    /// SequenceSchema
+    ///
+    /// Raises
+    /// ------
+    /// ValueError
+    ///     A reserved block or column name, or two frames that declare one
+    ///     block's shape, or one column's dtype or precision, differently.
     #[staticmethod]
     fn from_frames(frames: Vec<PyRef<'_, PyFrame>>) -> PyResult<Self> {
         let cores = frames
@@ -678,38 +566,35 @@ impl PySequenceSchema {
     }
 
     /// Declare a per-step metadata key by dtype tag (``"f64"``, ``"i64"``,
-    /// ``"f64x3"``, ``"string"``, ``"json"``, …). A frame that omits it is an
-    /// error unless a fill is declared.
+    /// ``"f64x3"``, ``"string"``, ``"json"``, …). A frame that omits the key
+    /// is an error unless ``fill`` is given: the value written for the steps
+    /// that omit it, read at ``dtype`` (a :class:`~molrs.core.MetaValue` is
+    /// taken as it is).
+    ///
+    /// Raises
+    /// ------
+    /// ValueError
+    ///     An unknown dtype, a fill that does not read at it, or a key
+    ///     declared before.
+    #[pyo3(signature = (key, dtype, fill=None))]
     fn declare_meta<'py>(
         mut slf: PyRefMut<'py, Self>,
         key: &str,
         dtype: &str,
+        fill: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<PyRefMut<'py, Self>> {
+        let fill = fill
+            .map(|fill| {
+                if fill.extract::<PyRef<'_, PyMetaValue>>().is_ok() {
+                    infer_meta_value(fill)
+                } else {
+                    meta_value_from_dtype(dtype, fill)
+                        .map_err(|e| PyValueError::new_err(format!("meta key {key:?} fill: {e}")))
+                }
+            })
+            .transpose()?;
         slf.inner
-            .declare_meta(key, dtype)
-            .map_err(molrs_error_to_pyerr)?;
-        Ok(slf)
-    }
-
-    /// Declare a per-step metadata key with the value written for steps that
-    /// omit it. The dtype is ``dtype`` when given (``"f64x3"``, ``"f64"``, …;
-    /// the fill is read at that width), else the fill's own.
-    #[pyo3(signature = (key, fill, dtype=None))]
-    fn declare_meta_with_fill<'py>(
-        mut slf: PyRefMut<'py, Self>,
-        key: &str,
-        fill: &Bound<'_, PyAny>,
-        dtype: Option<&str>,
-    ) -> PyResult<PyRefMut<'py, Self>> {
-        let value = match dtype {
-            Some(dtype) if fill.extract::<PyRef<'_, PyMetaValue>>().is_err() => {
-                meta_value_from_dtype(dtype, fill)
-                    .map_err(|e| PyValueError::new_err(format!("meta key {key:?} fill: {e}")))?
-            }
-            _ => infer_meta_value(fill)?,
-        };
-        slf.inner
-            .declare_meta_with_fill(key, value)
+            .declare_meta(key, dtype, fill)
             .map_err(molrs_error_to_pyerr)?;
         Ok(slf)
     }
@@ -809,9 +694,8 @@ impl PyMrecWriter {
         durable: bool,
         meta: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Self> {
-        let path = path_str(&path)?;
         let schema = schema.borrow().inner.clone();
-        let mut writer = MrecWriter::create(path, schema)
+        let mut writer = MrecWriter::create(&path, schema)
             .map_err(molrs_error_to_pyerr)?
             .with_compression(parse_compression(compression)?)
             .map_err(molrs_error_to_pyerr)?
@@ -837,8 +721,7 @@ impl PyMrecWriter {
     #[staticmethod]
     #[pyo3(signature = (path, *, flush_every=None, durable=true))]
     fn open(path: PathBuf, flush_every: Option<u64>, durable: bool) -> PyResult<Self> {
-        let path = path_str(&path)?;
-        let mut writer = MrecWriter::open(path)
+        let mut writer = MrecWriter::open(&path)
             .map_err(molrs_error_to_pyerr)?
             .with_durable(durable);
         if let Some(frames) = flush_every {
@@ -943,8 +826,7 @@ impl PyMrecWriter {
 ///     The path of the archive.
 #[pyfunction]
 pub fn pack_mrec_zip(path: PathBuf) -> PyResult<String> {
-    let path = path_str(&path)?;
-    let archive = molrs::io::mrec::pack_mrec_zip(path).map_err(molrs_error_to_pyerr)?;
+    let archive = molrs::io::mrec::pack_mrec_zip(&path).map_err(molrs_error_to_pyerr)?;
     Ok(archive.to_string_lossy().into_owned())
 }
 
@@ -967,25 +849,16 @@ pub fn validate_frame(frame: &Bound<'_, PyFrame>) -> PyResult<()> {
         .map_err(molrs_error_to_pyerr)
 }
 
-/// Register the whole-record doors flat on the native module, as `molrs.io`'s.
+/// Register [`write_mrec`] flat on the native module, as `molrs.io`'s.
 pub(crate) fn register_doors(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    crate::add_function(m, "molrs.io", wrap_pyfunction!(read_mrec_frame, m)?)?;
-    crate::add_function(m, "molrs.io", wrap_pyfunction!(write_mrec_frame, m)?)?;
-    crate::add_function(m, "molrs.io", wrap_pyfunction!(read_mrec_system, m)?)?;
-    crate::add_function(m, "molrs.io", wrap_pyfunction!(write_mrec_system, m)?)?;
-    crate::add_function(m, "molrs.io", wrap_pyfunction!(read_mrec_trajectory, m)?)?;
-    crate::add_function(m, "molrs.io", wrap_pyfunction!(write_mrec_trajectory, m)?)?;
-    crate::add_function(m, "molrs.io", wrap_pyfunction!(read_mrec_forcefield, m)?)?;
-    crate::add_function(m, "molrs.io", wrap_pyfunction!(write_mrec_forcefield, m)?)?;
-    crate::add_function(m, "molrs.io", wrap_pyfunction!(read_mrec_meta, m)?)?;
-    Ok(())
+    crate::add_function(m, "molrs.io", wrap_pyfunction!(write_mrec, m)?)
 }
 
 /// Register `molrs.io.mrec` on its `_native.mrec` submodule, with
 /// `molrs.io.mrec.validation` as that submodule's `validation`.
 pub(crate) fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    m.add_function(wrap_pyfunction!(section_names, m)?)?;
     m.add_function(wrap_pyfunction!(pack_mrec_zip, m)?)?;
+    m.add_class::<PyMrecFile>()?;
     m.add_class::<PyMrecReader>()?;
     m.add_class::<PySequenceSchema>()?;
     m.add_class::<PyMrecWriter>()?;

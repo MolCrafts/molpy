@@ -105,30 +105,41 @@ impl LammpsCodec for FourierCodec {
     ) -> Result<LammpsCoeffs, String> {
         let need = |key: &str| {
             p.get(key)
+                .and_then(|v| v.as_num())
                 .ok_or_else(|| format!("{}: missing parameter `{key}`", what(spec)))
         };
         let mut terms = Vec::new();
         let mut known = vec!["k".to_owned(), "periodicity".to_owned(), "phase".to_owned()];
-        if p.get("k1").is_none()
-            && let Some(k) = p.get("k")
+        if p.get("k1").and_then(|v| v.as_num()).is_none()
+            && let Some(k) = p.get("k").and_then(|v| v.as_num())
         {
             terms.push(energy(units, k));
             terms.push(whole(spec, "periodicity", need("periodicity")?)?);
-            terms.push(Token::Real(p.get("phase").unwrap_or(0.0)));
+            terms.push(Token::Real(
+                p.get("phase").and_then(|v| v.as_num()).unwrap_or(0.0),
+            ));
         }
         let mut i = 1usize;
-        while let Some(k) = p.get(&format!("k{i}")) {
+        while let Some(k) = p.get(&format!("k{i}")).and_then(|v| v.as_num()) {
             let n = format!("periodicity{i}");
             terms.push(energy(units, k));
             terms.push(whole(spec, &n, need(&n)?)?);
-            terms.push(Token::Real(p.get(&format!("phase{i}")).unwrap_or(0.0)));
+            terms.push(Token::Real(
+                p.get(&format!("phase{i}"))
+                    .and_then(|v| v.as_num())
+                    .unwrap_or(0.0),
+            ));
             known.extend([format!("k{i}"), n, format!("phase{i}")]);
             i += 1;
         }
         if terms.is_empty() {
             return Err(format!("{}: missing parameter `k1`", what(spec)));
         }
-        if let Some((key, _)) = p.iter().find(|(k, _)| !known.iter().any(|n| n == k)) {
+        if let Some((key, _)) = p
+            .iter()
+            .filter_map(|(k, v)| v.as_num().map(|x| (k, x)))
+            .find(|(k, _)| !known.iter().any(|n| n == k))
+        {
             return Err(format!(
                 "{}: parameter `{key}` has no place on the fourier line",
                 what(spec)
@@ -191,11 +202,15 @@ impl LammpsCodec for NharmonicCodec {
         units: &UnitScale,
     ) -> Result<LammpsCoeffs, String> {
         let a = nharmonic_coefficients(p)?;
-        if let Some((key, _)) = p.iter().find(|(k, _)| {
-            k.strip_prefix('a')
-                .and_then(|i| i.parse::<usize>().ok())
-                .is_none()
-        }) {
+        if let Some((key, _)) = p
+            .iter()
+            .filter_map(|(k, v)| v.as_num().map(|x| (k, x)))
+            .find(|(k, _)| {
+                k.strip_prefix('a')
+                    .and_then(|i| i.parse::<usize>().ok())
+                    .is_none()
+            })
+        {
             return Err(format!(
                 "{}: parameter `{key}` has no place on the nharmonic line",
                 what(spec)
@@ -352,14 +367,17 @@ impl LammpsCodec for PeriodicAsCvffCodec {
 
     fn read(&self, spec: &StyleSpec, values: &[&str]) -> Result<Params, String> {
         let p = parse_named(spec, &["k", "d", "periodicity"], values)?;
-        let phase = match p.get("d") {
+        let phase = match p.get("d").and_then(|v| v.as_num()) {
             Some(1.0) => 0.0,
             Some(-1.0) => 180.0,
             d => return Err(format!("{}: d = {d:?} is not ±1", what(spec))),
         };
         let mut out = Params::new();
-        out.set("k", p.get("k").unwrap());
-        out.set("periodicity", p.get("periodicity").unwrap());
+        out.set("k", p.get("k").and_then(|v| v.as_num()).unwrap());
+        out.set(
+            "periodicity",
+            p.get("periodicity").and_then(|v| v.as_num()).unwrap(),
+        );
         out.set("phase", phase);
         Ok(out)
     }
@@ -573,8 +591,8 @@ impl LammpsCodec for LjCutCodec {
 
     fn check_style(&self, spec: &StyleSpec, style: &Params) -> Result<(), String> {
         let (n, m) = (
-            style.get("n").unwrap_or(12.0),
-            style.get("m").unwrap_or(6.0),
+            style.get("n").and_then(|v| v.as_num()).unwrap_or(12.0),
+            style.get("m").and_then(|v| v.as_num()).unwrap_or(6.0),
         );
         if (n, m) != (12.0, 6.0) {
             return Err(format!(
@@ -587,7 +605,11 @@ impl LammpsCodec for LjCutCodec {
 
     fn pair_modify(&self, spec: &StyleSpec, style: &Params) -> Result<Vec<String>, String> {
         let mut out = positional::pair_modify(None, spec, style)?;
-        if style.get("shift").is_some_and(|s| s != 0.0) {
+        if style
+            .get("shift")
+            .and_then(|v| v.as_num())
+            .is_some_and(|s| s != 0.0)
+        {
             out.push("shift yes".into());
         }
         Ok(out)
@@ -612,6 +634,7 @@ impl LammpsCodec for LjCharmmCodec {
         positional::refuse_undeclared_params(spec, p)?;
         let need = |key: &str| {
             p.get(key)
+                .and_then(|v| v.as_num())
                 .ok_or_else(|| format!("{}: missing parameter `{key}`", what(spec)))
         };
         let (eps, sigma) = (need("epsilon")?, need("sigma")?);
@@ -619,8 +642,14 @@ impl LammpsCodec for LjCharmmCodec {
             values: vec![
                 energy(units, eps),
                 Token::Real(units.apply(sigma, ParamDimension::LENGTH)),
-                energy(units, p.get("epsilon14").unwrap_or(eps)),
-                Token::Real(units.apply(p.get("sigma14").unwrap_or(sigma), ParamDimension::LENGTH)),
+                energy(
+                    units,
+                    p.get("epsilon14").and_then(|v| v.as_num()).unwrap_or(eps),
+                ),
+                Token::Real(units.apply(
+                    p.get("sigma14").and_then(|v| v.as_num()).unwrap_or(sigma),
+                    ParamDimension::LENGTH,
+                )),
             ],
             extra: Vec::new(),
         })
@@ -632,8 +661,11 @@ impl LammpsCodec for LjCharmmCodec {
         match values.len() {
             2 => {
                 let mut p = parse_named(spec, &["epsilon", "sigma"], values)?;
-                p.set("epsilon14", p.get("epsilon").unwrap());
-                p.set("sigma14", p.get("sigma").unwrap());
+                p.set(
+                    "epsilon14",
+                    p.get("epsilon").and_then(|v| v.as_num()).unwrap(),
+                );
+                p.set("sigma14", p.get("sigma").and_then(|v| v.as_num()).unwrap());
                 Ok(p)
             }
             4 => positional::read(spec, values),
@@ -677,6 +709,7 @@ fn switch_args(spec: &StyleSpec, style: &Params, units: &UnitScale) -> Result<Ve
         .map(|key| {
             style
                 .get(key)
+                .and_then(|v| v.as_num())
                 .map(|v| Token::Real(units.apply(v, ParamDimension::LENGTH)))
                 .ok_or_else(|| {
                     format!(
@@ -721,14 +754,22 @@ impl LammpsCodec for LjClass2Codec {
 
 /// The checks of a Coulomb style LAMMPS prices with its own constant.
 fn check_coulomb(spec: &StyleSpec, style: &Params, carried: &[&str]) -> Result<(), String> {
-    if let Some(delta) = style.get("delta").filter(|d| *d != 0.0) {
+    if let Some(delta) = style
+        .get("delta")
+        .and_then(|v| v.as_num())
+        .filter(|d| *d != 0.0)
+    {
         return Err(format!(
             "pair {}: the buffer delta = {delta} (E = k·qq/(D·(r + delta))) has no LAMMPS \
              Coulomb style",
             spec.name
         ));
     }
-    if let Some(d) = style.get("dielectric").filter(|d| *d != 1.0) {
+    if let Some(d) = style
+        .get("dielectric")
+        .and_then(|v| v.as_num())
+        .filter(|d| *d != 1.0)
+    {
         return Err(format!(
             "pair {}: dielectric = {d} is a LAMMPS input-script `dielectric` command, not a \
              coefficient this include can carry",
@@ -785,7 +826,7 @@ impl LammpsCodec for CoulLongCodec {
     fn check_style(&self, spec: &StyleSpec, style: &Params) -> Result<(), String> {
         if let Some(key) = ["alpha", "order", "grid_x", "grid_y", "grid_z"]
             .into_iter()
-            .find(|k| style.get(k).is_some())
+            .find(|k| style.get(k).and_then(|v| v.as_num()).is_some())
         {
             return Err(format!(
                 "pair coul/long/pme states its Ewald '{key}': molrs's smooth PME is not LAMMPS's \
@@ -836,7 +877,7 @@ impl LammpsCodec for CoulCharmmCodec {
 pub(crate) struct FixCmapCodec;
 codec!(
     /// `cmap charmm` is LAMMPS's `fix cmap`: a grid file the include names,
-    /// written by `LammpsForcefieldWriter::write_cmap_str`, not a coefficient line.
+    /// written by `LammpsForcefieldWriter::write_cmap`, not a coefficient line.
     FIX_CMAP = FixCmapCodec,
     Some("cmap")
 );
@@ -844,7 +885,7 @@ codec!(
 impl LammpsCodec for FixCmapCodec {
     fn write(&self, spec: &StyleSpec, _: &Params, _: &UnitScale) -> Result<LammpsCoeffs, String> {
         Err(format!(
-            "{}: LAMMPS's fix cmap reads a grid file (LammpsForcefieldWriter::write_cmap_str), not a \
+            "{}: LAMMPS's fix cmap reads a grid file (LammpsForcefieldWriter::write_cmap), not a \
              coefficient line",
             what(spec)
         ))
@@ -852,7 +893,7 @@ impl LammpsCodec for FixCmapCodec {
 
     fn read(&self, spec: &StyleSpec, _: &[&str]) -> Result<Params, String> {
         Err(format!(
-            "{}: LAMMPS's fix cmap reads a grid file (read_lammps_cmap_str)",
+            "{}: LAMMPS's fix cmap reads a grid file (LammpsForcefieldReader::read_cmap)",
             what(spec)
         ))
     }

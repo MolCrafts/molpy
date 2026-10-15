@@ -7,7 +7,7 @@ use ndarray::{Array2, ArrayView2};
 use crate::ff::ir::Params;
 use crate::ff::potential::flat_coords::term_table;
 use crate::ff::potential::flat_coords::validate_coords;
-use crate::ff::potential::{ForceTerm, IndexedTerms, Potential};
+use crate::ff::potential::{Accumulator, ForceTerm, IndexedTerms, Potential};
 use molrs::core::Frame;
 use molrs::op::F;
 
@@ -58,16 +58,14 @@ impl BondUff {
 }
 
 impl Potential for BondUff {
-    fn calc_energy_forces(&self, coords: &[F]) -> (F, Vec<F>) {
-        let mut out = vec![0.0; coords.len()];
-        let energy = self.accumulate(coords, &mut out);
-        (energy, out)
-    }
-
-    fn accumulate(&self, coords: &[F], out: &mut [F]) -> F {
-        self.fold(coords, out, self.atom_i.len(), |t| {
-            (self.atom_i[t], self.atom_j[t])
-        })
+    fn evaluate(&self, coords: &[F], acc: &mut Accumulator<'_>) {
+        let energy = self.fold(
+            coords,
+            acc.forces_without_virial(),
+            self.atom_i.len(),
+            |t| (self.atom_i[t], self.atom_j[t]),
+        );
+        acc.add_energy(energy);
     }
 }
 
@@ -75,25 +73,16 @@ impl IndexedTerms for BondUff {
     fn terms(&self) -> Array2<u32> {
         term_table(&[&self.atom_i, &self.atom_j])
     }
-    fn calc_energy_forces_with_terms(
-        &self,
-        coords: &[F],
-        terms: ArrayView2<'_, u32>,
-    ) -> (F, Vec<F>) {
-        let mut out = vec![0.0; coords.len()];
-        let energy = self.accumulate_with_terms(coords, terms, &mut out);
-        (energy, out)
-    }
-
-    fn accumulate_with_terms(&self, coords: &[F], terms: ArrayView2<'_, u32>, out: &mut [F]) -> F {
+    fn evaluate_terms(&self, coords: &[F], terms: ArrayView2<'_, u32>, acc: &mut Accumulator<'_>) {
         debug_assert_eq!(
             terms.nrows(),
             self.atom_i.len(),
             "the row set is the force field's; only the atoms a row names may be rebound"
         );
-        self.fold(coords, out, terms.nrows(), |t| {
+        let energy = self.fold(coords, acc.forces_without_virial(), terms.nrows(), |t| {
             (terms[[t, 0]] as usize, terms[[t, 1]] as usize)
-        })
+        });
+        acc.add_energy(energy);
     }
 }
 
@@ -107,11 +96,11 @@ pub fn bond_uff_constructor(
         .ok_or("uff_bond: missing \"bonds\" block")?;
     let i = block
         .get("atomi")
-        .and_then(|c| c.as_uint())
+        .and_then(|c| c.get::<u64>())
         .ok_or("uff_bond: missing atomi")?;
     let j = block
         .get("atomj")
-        .and_then(|c| c.as_uint())
+        .and_then(|c| c.get::<u64>())
         .ok_or("uff_bond: missing atomj")?;
     let kb = param_reads::instance_col("uff_bond", block, "kb")?;
     let r0 = param_reads::instance_col("uff_bond", block, "r0")?;
@@ -127,6 +116,7 @@ pub fn bond_uff_constructor(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ff::potential::fixtures::OneShot;
     use crate::ff::potential::fixtures::assert_forces_are_negative_gradient;
 
     fn stretched(kb: F, r0: F, r: F) -> (BondUff, Vec<F>) {
@@ -142,7 +132,7 @@ mod tests {
     #[test]
     fn energy_is_half_kb_times_the_squared_stretch() {
         let (pot, coords) = stretched(700.0, 1.5, 1.6);
-        let (e, f) = pot.calc_energy_forces(&coords);
+        let (e, f) = pot.energy_forces_at(&coords);
         assert!((e - 0.5 * 700.0 * 0.01).abs() < 1e-9);
         // The pull is along x, opposite on the two atoms.
         assert!((f[0] - 700.0 * 0.1).abs() < 1e-9);
@@ -152,7 +142,7 @@ mod tests {
     #[test]
     fn energy_and_force_vanish_at_the_rest_length() {
         let (pot, coords) = stretched(700.0, 1.5, 1.5);
-        let (e, f) = pot.calc_energy_forces(&coords);
+        let (e, f) = pot.energy_forces_at(&coords);
         assert_eq!(e, 0.0);
         assert!(f.iter().all(|x| x.abs() < 1e-12));
     }

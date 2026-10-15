@@ -17,6 +17,8 @@
 // LAMMPS's numbers are kept as LAMMPS printed them.
 #![allow(clippy::excessive_precision)]
 
+use crate::ff::potential::fixtures::OneShot;
+use crate::io::writer::WrittenText;
 use ndarray::Array1;
 
 use crate::ff::compile::PotentialCompiler;
@@ -94,7 +96,7 @@ dihedral_coeff CT2-CT2-OH1-H 0.14 3 0 {w}
 
 fn read(special: &str, w: &str) -> ForceField {
     LammpsForcefieldReader::new()
-        .read_str(&ff_text(special, w))
+        .read(ff_text(special, w).as_bytes())
         .unwrap()
 }
 
@@ -111,12 +113,12 @@ fn relation(rows: &[Vec<usize>]) -> Block {
     {
         let col: Vec<Idx> = rows.iter().map(|r| r[k] as Idx).collect();
         block
-            .insert(*key, Array1::from_vec(col).into_dyn())
+            .insert(*key, Array1::from_vec(col).into_dyn(), None)
             .unwrap();
     }
     let types: Vec<String> = rows.iter().map(|r| label(r)).collect();
     block
-        .insert("type", Array1::from_vec(types).into_dyn())
+        .insert("type", Array1::from_vec(types).into_dyn(), None)
         .unwrap();
     block
 }
@@ -128,15 +130,19 @@ fn frame(special: &SpecialBonds, dup: bool) -> Frame {
     for (d, key) in ["x", "y", "z"].iter().enumerate() {
         let col: Vec<F> = XYZ.iter().map(|p| p[d]).collect();
         atoms
-            .insert(*key, Array1::from_vec(col).into_dyn())
+            .insert(*key, Array1::from_vec(col).into_dyn(), None)
             .unwrap();
     }
     let types: Vec<String> = TYPES.iter().map(|t| (*t).to_owned()).collect();
     atoms
-        .insert("type", Array1::from_vec(types).into_dyn())
+        .insert("type", Array1::from_vec(types).into_dyn(), None)
         .unwrap();
     atoms
-        .insert("charge", Array1::from_vec(CHARGES.to_vec()).into_dyn())
+        .insert(
+            "charge",
+            Array1::from_vec(CHARGES.to_vec()).into_dyn(),
+            None,
+        )
         .unwrap();
     let mut frame = Frame::new();
     frame.insert("atoms", atoms);
@@ -153,7 +159,7 @@ fn frame(special: &SpecialBonds, dup: bool) -> Frame {
         dihedrals.push(DIHEDRALS[2].to_vec());
     }
     frame.insert("dihedrals", relation(&dihedrals));
-    let pairs = intramolecular_pairs(&frame, special).unwrap();
+    let pairs = intramolecular_pairs(&frame, special, None).unwrap();
     frame.insert("pairs", pairs);
     frame
 }
@@ -172,7 +178,7 @@ fn only(ff: &ForceField, category: &str, name: &str) -> ForceField {
         .unwrap();
     for (type_name, ends, params) in style.type_rows() {
         let mut params = params.clone();
-        if params.get("w").is_some() {
+        if params.get("w").and_then(|v| v.as_num()).is_some() {
             params.set("w", 0.0);
         }
         s.def_type(type_name, &ends, params).unwrap();
@@ -184,7 +190,7 @@ fn energy(ff: &ForceField, frame: &Frame) -> F {
     PotentialCompiler::new(ff)
         .compile(frame)
         .unwrap()
-        .calc_energy(&coords())
+        .energy_at(&coords())
 }
 
 /// LAMMPS's `evdwl ecoul ebond eangle edihed pe` as molrs prices them.
@@ -229,7 +235,7 @@ fn check_lammps(case: &str, ff: &ForceField, frame: &Frame, want: [F; 6], forces
     let (_, f) = PotentialCompiler::new(ff)
         .compile(frame)
         .unwrap()
-        .calc_energy_forces(&coords());
+        .energy_forces_at(&coords());
     let scale = forces.iter().flatten().fold(0.0_f64, |m, v| m.max(v.abs()));
     for (a, row) in forces.iter().enumerate() {
         for d in 0..3 {
@@ -342,7 +348,7 @@ fn global_weights_with_lj_charmm_match_lammps() {
 #[test]
 fn a_dihedral_weight_prices_its_pair_beyond_every_cutoff_as_lammps() {
     let text = ff_text(CHARMM, "1.0").replace("3.5 4.2 3.0 5.0", "2.0 2.4");
-    let ff = LammpsForcefieldReader::new().read_str(&text).unwrap();
+    let ff = LammpsForcefieldReader::new().read(text.as_bytes()).unwrap();
     let frame = frame(ff.special_bonds(), false);
     // The pair styles price nothing: every pair they see is past 2.4 Å.
     let lj = only(&ff, "pair", "lj/charmm");
@@ -401,12 +407,15 @@ pair_coeff CT3 OH1 0.12 3.3
 /// the Lennard-Jones by the scaled offset.
 #[test]
 fn special_1_4_pairs_are_truncated_at_the_pair_cutoff_as_in_lammps() {
-    let ff = LammpsForcefieldReader::new().read_str(&cut_text()).unwrap();
+    let ff = LammpsForcefieldReader::new()
+        .read(cut_text().as_bytes())
+        .unwrap();
     assert_eq!(
         ff.get_style("pair", "lj/cut")
             .unwrap()
             .params()
-            .get("shift"),
+            .get("shift")
+            .and_then(|v| v.as_num()),
         Some(1.0)
     );
     check_lammps(
@@ -494,7 +503,7 @@ fn with_overrides(frame: &Frame, cells: &[Cell<'_>]) -> Frame {
     let is_14: Vec<bool> = pairs
         .get("is_14")
         .unwrap()
-        .as_bool()
+        .get::<bool>()
         .unwrap()
         .iter()
         .copied()
@@ -502,7 +511,7 @@ fn with_overrides(frame: &Frame, cells: &[Cell<'_>]) -> Frame {
     let ai: Vec<usize> = pairs
         .get("atomi")
         .unwrap()
-        .as_uint()
+        .get::<u64>()
         .unwrap()
         .iter()
         .map(|&v| v as usize)
@@ -510,7 +519,7 @@ fn with_overrides(frame: &Frame, cells: &[Cell<'_>]) -> Frame {
     let aj: Vec<usize> = pairs
         .get("atomj")
         .unwrap()
-        .as_uint()
+        .get::<u64>()
         .unwrap()
         .iter()
         .map(|&v| v as usize)
@@ -520,7 +529,7 @@ fn with_overrides(frame: &Frame, cells: &[Cell<'_>]) -> Frame {
             .map(|r| if is_14[r] { value(ai[r], aj[r]) } else { 0.0 })
             .collect();
         pairs
-            .insert_nullable(*key, Array1::from_vec(col).into_dyn(), is_14.clone())
+            .insert(*key, Array1::from_vec(col).into_dyn(), Some(is_14.clone()))
             .unwrap();
     }
     out.insert("pairs", pairs);
@@ -537,7 +546,7 @@ fn plain(special: &str) -> ForceField {
         )
         .replace(" 0.01 3.385\n", "\n")
         .replace("OH1 0.12 3.3 0.08 3.2", "OH1 0.12 3.3");
-    LammpsForcefieldReader::new().read_str(&text).unwrap()
+    LammpsForcefieldReader::new().read(text.as_bytes()).unwrap()
 }
 
 /// The three ways to say "half": `special_bonds` ½, per-pair scales ½ on
@@ -552,7 +561,7 @@ fn global_half_equals_per_pair_scales_equals_per_pair_parameters() {
         PotentialCompiler::new(ff)
             .compile(frame)
             .unwrap()
-            .calc_energy_forces(&coords())
+            .energy_forces_at(&coords())
     };
     let want = pots(&half, &base);
 
@@ -721,18 +730,18 @@ fn an_override_cell_is_priced_only_by_its_own_style() {
 #[test]
 fn forces_are_the_gradient_inside_the_switches() {
     let text = ff_text(CHARMM, "1.0").replace("3.5 4.2 3.0 5.0", "12.0 14.0");
-    let ff = LammpsForcefieldReader::new().read_str(&text).unwrap();
+    let ff = LammpsForcefieldReader::new().read(text.as_bytes()).unwrap();
     let pots = PotentialCompiler::new(&ff)
         .compile(&frame(ff.special_bonds(), false))
         .unwrap();
     let x = coords();
-    let (_, f) = pots.calc_energy_forces(&x);
+    let (_, f) = pots.energy_forces_at(&x);
     let h = 1e-6;
     for k in 0..x.len() {
         let (mut p, mut m) = (x.clone(), x.clone());
         p[k] += h;
         m[k] -= h;
-        let fd = -(pots.calc_energy(&p) - pots.calc_energy(&m)) / (2.0 * h);
+        let fd = -(pots.energy_at(&p) - pots.energy_at(&m)) / (2.0 * h);
         assert!((f[k] - fd).abs() < 1e-6, "component {k}: {} vs {fd}", f[k]);
     }
 }
@@ -749,17 +758,18 @@ fn typed_energy(ff: &ForceField, frame: &Frame) -> (F, Vec<F>) {
         .collect();
     let table = table_over(&x, &links);
     let mut out = vec![0.0; x.len()];
-    let mut e = 0.0;
+    let mut acc = crate::ff::potential::Accumulator::adding_into(&mut out);
     for (member, weights) in PotentialCompiler::new(ff).compile_typed(frame).unwrap() {
         match (&member, weights) {
             (ForceTerm::Pair(p), Some(w)) => {
                 let special = w.special_weights(&topo);
                 let factor: Vec<F> = links.iter().map(|&(i, j)| special.weight(i, j)).collect();
-                e += p.accumulate_pairs(&x, &table, &factor, &mut out).0;
+                p.evaluate_pairs(&x, &table, &factor, &mut acc);
             }
-            (m, _) => e += m.as_potential().accumulate(&x, &mut out),
+            (m, _) => m.as_potential().evaluate(&x, &mut acc),
         }
     }
+    let e = acc.energy();
     (e, out)
 }
 
@@ -775,12 +785,12 @@ fn compile_equals_compile_typed() {
         (AMBER_LIKE, "0.0, lj/cut/coul/cut 3.0", cut_text()),
     ];
     for (special, w, text) in cases {
-        let ff = LammpsForcefieldReader::new().read_str(&text).unwrap();
+        let ff = LammpsForcefieldReader::new().read(text.as_bytes()).unwrap();
         let frame = frame(ff.special_bonds(), false);
         let (e, f) = PotentialCompiler::new(&ff)
             .compile(&frame)
             .unwrap()
-            .calc_energy_forces(&coords());
+            .energy_forces_at(&coords());
         let (et, ft) = typed_energy(&ff, &frame);
         close(&format!("{special} w={w}"), et, e, 1e-12);
         for (a, b) in f.iter().zip(&ft) {
@@ -794,7 +804,7 @@ fn compile_equals_compile_typed() {
 #[test]
 fn an_override_beside_a_non_lj_style_is_refused() {
     let ff = LammpsForcefieldReader::new()
-        .read_str(&ff_text(CHARMM, "0.0"))
+        .read(ff_text(CHARMM, "0.0").as_bytes())
         .unwrap();
     let mut buck = ff.empty_like();
     buck.def_style("pair", "buck", Default::default())
@@ -802,7 +812,7 @@ fn an_override_beside_a_non_lj_style_is_refused() {
         .def_type(
             "CT3",
             &["CT3"],
-            crate::ff::ir::Params::from_pairs(&[("a", 1.0), ("rho", 0.3), ("c", 1.0)]),
+            crate::ff::ir::Params::from_iter([("a", 1.0), ("rho", 0.3), ("c", 1.0)]),
         )
         .unwrap();
     let base = frame(buck.special_bonds(), false);
@@ -816,13 +826,12 @@ fn an_override_beside_a_non_lj_style_is_refused() {
 #[test]
 fn lammps_round_trip_and_override_refusal() {
     use crate::io::lammps::forcefield_writer::{LammpsForcefieldWriter, refuse_pair_overrides};
-    use crate::io::writer::ForceFieldWriter;
     use molrs::core::TypeLabels;
 
     let ff = read(CHARMM, "0.5");
     let frame = frame(ff.special_bonds(), false);
     let labels = TypeLabels::from_frame(&frame).unwrap();
-    let text = LammpsForcefieldWriter::new(&labels).write_str(&ff).unwrap();
+    let text = LammpsForcefieldWriter::new(&labels).written(&ff).unwrap();
     assert!(
         text.contains("pair_style lj/charmm/coul/charmm 3.500000 4.200000 3.000000 5.000000"),
         "{text}"
@@ -840,7 +849,7 @@ fn lammps_round_trip_and_override_refusal() {
         text.contains("dihedral_coeff CT3-CT2-CT2-OH1 0.300000 1 180 0.500000"),
         "{text}"
     );
-    let back = LammpsForcefieldReader::new().read_str(&text).unwrap();
+    let back = LammpsForcefieldReader::new().read(text.as_bytes()).unwrap();
     for (category, name) in [
         ("pair", "lj/charmm"),
         ("pair", "coul/charmm"),
@@ -872,7 +881,11 @@ fn lammps_round_trip_and_override_refusal() {
     let mut over = over;
     let mut atoms = over.get("atoms").unwrap().clone();
     atoms
-        .insert("mol_id", Array1::from_vec(vec![1 as Idx; 7]).into_dyn())
+        .insert(
+            "mol_id",
+            Array1::from_vec(vec![1 as Idx; 7]).into_dyn(),
+            None,
+        )
         .unwrap();
     over.insert("atoms", atoms);
     let err = molrs::io::writer::FrameWriter::write(

@@ -27,7 +27,7 @@ use std::sync::Mutex;
 use ndarray::ArrayView2;
 
 use crate::ff::potential::flat_coords::sub3;
-use crate::ff::potential::{Potential, end_pairs};
+use crate::ff::potential::{Accumulator, Potential, end_pairs};
 use molrs::core::Frame;
 use molrs::core::NeighborQuery;
 use molrs::core::keys::{ATOMI, ATOMJ, ATOMK};
@@ -191,18 +191,18 @@ impl SoftPotential {
 }
 
 impl Potential for SoftPotential {
-    fn calc_energy_forces(&self, coords: &[F]) -> (F, Vec<F>) {
+    fn evaluate(&self, coords: &[F], acc: &mut Accumulator<'_>) {
         let mut guard = self.pairs.lock().unwrap_or_else(|e| e.into_inner());
         self.refresh(coords, &mut guard);
         let r = guard.as_ref().expect("refreshed");
         let s = &self.spec;
-        let mut forces = vec![0.0; coords.len()];
+        let forces = acc.forces_without_virial();
         let mut e: F = 0.0;
         for &(i, j, t, shift) in &r.bonds {
-            e += spring(coords, &mut forces, i, j, t, s.k_bond, shift);
+            e += spring(coords, forces, i, j, t, s.k_bond, shift);
         }
         for &(i, j, t, shift) in &r.angles {
-            e += spring(coords, &mut forces, i, j, t, s.k_ang, shift);
+            e += spring(coords, forces, i, j, t, s.k_ang, shift);
         }
         for &(i, j, shift) in &r.nb {
             let d = disp(coords, i, j, shift);
@@ -220,9 +220,9 @@ impl Potential for SoftPotential {
             } else {
                 continue;
             };
-            push_pair(&mut forces, i, j, -dedr / dist, d);
+            push_pair(forces, i, j, -dedr / dist, d);
         }
-        (e, forces)
+        acc.add_energy(e);
     }
 }
 
@@ -256,9 +256,11 @@ fn spring(coords: &[F], forces: &mut [F], i: usize, j: usize, t: F, k: F, shift:
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::Cell;
+    use crate::ff::potential::fixtures::OneShot;
     use molrs::core::Block;
     use molrs::op::Idx;
-    use ndarray::{Array1, array};
+    use ndarray::Array1;
 
     /// A frame carrying the bonds/angles blocks of a linear n-atom chain
     /// (1-2 = (i, i+1); 1-3 angle ends = (i, i+2)).
@@ -267,19 +269,19 @@ mod tests {
         let (bi, bj): (Vec<Idx>, Vec<Idx>) = (0..n - 1).map(|i| (i as Idx, (i + 1) as Idx)).unzip();
         let mut bonds = Block::new();
         bonds
-            .insert(ATOMI, Array1::from_vec(bi).into_dyn())
+            .insert(ATOMI, Array1::from_vec(bi).into_dyn(), None)
             .unwrap();
         bonds
-            .insert(ATOMJ, Array1::from_vec(bj).into_dyn())
+            .insert(ATOMJ, Array1::from_vec(bj).into_dyn(), None)
             .unwrap();
         frame.insert(BONDS, bonds);
         let (ai, ak): (Vec<Idx>, Vec<Idx>) = (0..n - 2).map(|i| (i as Idx, (i + 2) as Idx)).unzip();
         let mut angles = Block::new();
         angles
-            .insert(ATOMI, Array1::from_vec(ai).into_dyn())
+            .insert(ATOMI, Array1::from_vec(ai).into_dyn(), None)
             .unwrap();
         angles
-            .insert(ATOMK, Array1::from_vec(ak).into_dyn())
+            .insert(ATOMK, Array1::from_vec(ak).into_dyn(), None)
             .unwrap();
         frame.insert(ANGLES, angles);
         frame
@@ -309,16 +311,16 @@ mod tests {
             .potential(simbox.as_ref());
         // The springs rest at a configuration other than the one evaluated.
         let rest: Vec<F> = CHAIN.iter().flatten().map(|x| 1.05 * x).collect();
-        pot.calc_energy_forces(&rest);
+        pot.energy_forces_at(&rest);
         let flat: Vec<F> = CHAIN.iter().flatten().copied().collect();
-        let (_e, f) = pot.calc_energy_forces(&flat);
+        let (_e, f) = pot.energy_forces_at(&flat);
         let h = 1e-6;
         for k in 0..flat.len() {
             let mut xp = flat.clone();
             let mut xm = flat.clone();
             xp[k] += h;
             xm[k] -= h;
-            let num = (pot.calc_energy(&xp) - pot.calc_energy(&xm)) / (2.0 * h);
+            let num = (pot.energy_at(&xp) - pot.energy_at(&xm)) / (2.0 * h);
             assert!(
                 (f[k] + num).abs() < 1e-3,
                 "force[{k}]={} -dE/dx={}",
@@ -336,7 +338,12 @@ mod tests {
     #[test]
     fn forces_match_finite_difference_periodic() {
         fd_check(Some(
-            SimBox::cube(50.0, array![0.0, 0.0, 0.0], [true, true, true]).unwrap(),
+            SimBox::new(
+                Cell::Lengths([50.0; 3]),
+                [0.0, 0.0, 0.0],
+                [true, true, true],
+            )
+            .unwrap(),
         ));
     }
 
@@ -346,19 +353,24 @@ mod tests {
     fn the_pair_list_follows_the_atoms() {
         let pot = SoftSpec::from_frame(&Frame::new()).potential(None);
         let far = [0.0, 0.0, 0.0, 20.0, 0.0, 0.0];
-        assert_eq!(pot.calc_energy(&far), 0.0);
+        assert_eq!(pot.energy_at(&far), 0.0);
         let near = [0.0, 0.0, 0.0, 2.0, 0.0, 0.0];
         let want = 8.0 * (2.6 - 2.0) * (2.6 - 2.0);
-        assert!((pot.calc_energy(&near) - want).abs() < 1e-12);
+        assert!((pot.energy_at(&near) - want).abs() < 1e-12);
     }
 
     /// Across a periodic face the nearest image is the pair.
     #[test]
     fn a_periodic_pair_is_the_nearest_image() {
-        let b = SimBox::cube(14.0, array![0.0, 0.0, 0.0], [true, true, true]).unwrap();
+        let b = SimBox::new(
+            Cell::Lengths([14.0; 3]),
+            [0.0, 0.0, 0.0],
+            [true, true, true],
+        )
+        .unwrap();
         let pot = SoftSpec::from_frame(&Frame::new()).potential(Some(&b));
         let x = [0.5, 0.0, 0.0, 13.5, 0.0, 0.0]; // 1 Å apart through the face
         let want = 8.0 * (2.6 - 1.0) * (2.6 - 1.0);
-        assert!((pot.calc_energy(&x) - want).abs() < 1e-12);
+        assert!((pot.energy_at(&x) - want).abs() < 1e-12);
     }
 }

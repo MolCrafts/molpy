@@ -4,8 +4,8 @@
 use std::fmt;
 
 use crate::core::CenterError;
-use crate::core::MolGraph;
 use crate::core::RelationId;
+use crate::core::{Graph, GraphAccess};
 use crate::op::Vec3;
 use crate::op::vec3::sub;
 use crate::op::{Rigid, alignment_axis_angle, axis_angle, compose_rigid, transform_point};
@@ -44,9 +44,18 @@ pub struct PlaceSite {
 /// it once per site, parents before children, so a placer can build on the
 /// copies already placed.
 ///
+/// The trait is generic over the template's graph type `G` (a
+/// [`MolGraph`](crate::core::MolGraph), an
+/// [`Atomistic`](crate::core::Atomistic) or a
+/// [`CoarseGrain`](crate::core::CoarseGrain)), so an implementor reads the
+/// template through that type's own vocabulary and an
+/// [`Assembler<G>`](crate::builder::Assembler) holds it as a
+/// `Box<dyn Placer<G>>`. [`SitePlacer`] and [`GrowthPlacer`] place every
+/// graph type.
+///
 /// Implementors are `Send + Sync` so an
 /// [`Assembler`](crate::builder::Assembler) holding one can cross threads.
-pub trait Placer: Send + Sync {
+pub trait Placer<G: Graph>: Send + Sync {
     /// The pose of a copy of `template` at `site`: the whole rigid motion
     /// taking template coordinates (Å) to world coordinates, `site.turn`
     /// included.
@@ -54,12 +63,13 @@ pub trait Placer: Send + Sync {
     /// # Errors
     ///
     /// A [`PlaceError`] naming why the copy cannot be placed.
-    fn place(&self, template: &MolGraph, site: &PlaceSite) -> Result<Rigid, PlaceError>;
+    fn place(&self, template: &G, site: &PlaceSite) -> Result<Rigid, PlaceError>;
 }
 
 /// Puts each copy's centre of mass on its site.
 ///
-/// With the template's centre of mass `R_c` ([`MolGraph::center`](crate::core::MolGraph::center), Å), the
+/// With the template's centre of mass `R_c` (the mass-weighted mean of its
+/// node positions, as [`Atomistic::center`](crate::core::Atomistic::center) computes it, Å), the
 /// orienter's turn `T` (which fixes `R_c`) and the site position `p` (Å),
 /// the pose is `x ↦ T x + (p − R_c)`: turned, then moved so its centre of
 /// mass lands on `p`. This is the translation step of geometric backmapping
@@ -73,16 +83,23 @@ pub trait Placer: Send + Sync {
 /// use molrs::op::Rigid;
 /// use molrs::core::keys;
 /// use molrs::core::Atomistic;
+/// use molrs::props;
+/// use molrs::core::Element;
 ///
 /// // Two carbons 1.5 Å apart: the centre of mass is (0.75, 0, 0).
 /// let mut template = Atomistic::new();
 /// for x in [0.0, 1.5] {
-///     let c = template.add_atom_xyz("C", x, 0.0, 0.0);
-///     template.set_node(c, keys::MASS, 12.0).unwrap();
+///     let c = template.add_atom(props! {
+///         keys::ATOMIC_NUMBER => Element::C,
+///         keys::X => x,
+///         keys::Y => 0.0,
+///         keys::Z => 0.0,
+///     }).unwrap();
+///     template.set_atom(c, keys::MASS, 12.0).unwrap();
 /// }
 ///
 /// let site = PlaceSite { position: Some([10.0, 0.0, 0.0]), turn: Rigid::IDENTITY, parent: None };
-/// let pose = SitePlacer::new().place(template.as_molgraph(), &site).unwrap();
+/// let pose = SitePlacer::new().place(&template, &site).unwrap();
 /// assert_eq!(pose.translation, [9.25, 0.0, 0.0]);
 /// ```
 #[derive(Debug, Clone, Copy, Default)]
@@ -95,7 +112,7 @@ impl SitePlacer {
     }
 }
 
-impl Placer for SitePlacer {
+impl<G: Graph> Placer<G> for SitePlacer {
     /// `x ↦ T x + (p − R_c)`.
     ///
     /// # Errors
@@ -103,7 +120,8 @@ impl Placer for SitePlacer {
     /// [`PlaceError::NoPosition`] without a site position;
     /// [`PlaceError::NonFinitePoint`] for a NaN or infinite position;
     /// [`PlaceError::Template`] when the template has no centre of mass.
-    fn place(&self, template: &MolGraph, site: &PlaceSite) -> Result<Rigid, PlaceError> {
+    fn place(&self, template: &G, site: &PlaceSite) -> Result<Rigid, PlaceError> {
+        let template = template.graph();
         let p = site.position.ok_or(PlaceError::NoPosition)?;
         if !p.iter().all(|c| c.is_finite()) {
             return Err(PlaceError::NonFinitePoint);
@@ -140,21 +158,33 @@ impl Placer for SitePlacer {
 /// use molrs::core::BondNumber;
 /// use molrs::core::Atomistic;
 /// use molrs::core::PortKind;
+/// use molrs::props;
+/// use molrs::core::Element;
 ///
 /// // C with its `<` hydrogen at +x.
 /// let mut unit = Atomistic::new();
-/// let c = unit.add_atom_xyz("C", 0.0, 0.0, 0.0);
-/// let h = unit.add_atom_xyz("H", 1.0, 0.0, 0.0);
+/// let c = unit.add_atom(props! {
+///     keys::ATOMIC_NUMBER => Element::C,
+///     keys::X => 0.0,
+///     keys::Y => 0.0,
+///     keys::Z => 0.0,
+/// }).unwrap();
+/// let h = unit.add_atom(props! {
+///     keys::ATOMIC_NUMBER => Element::H,
+///     keys::X => 1.0,
+///     keys::Y => 0.0,
+///     keys::Z => 0.0,
+/// }).unwrap();
 /// for atom in [c, h] {
-///     unit.set_node(atom, keys::MASS, 1.0).unwrap();
+///     unit.set_atom(atom, keys::MASS, 1.0).unwrap();
 /// }
-/// unit.add_bond(c, h).unwrap();
+/// unit.add_bond(c, h, props! {}).unwrap();
 /// let port = unit.add_port(c, h, PortKind::Left, "", BondNumber::Single).unwrap();
 ///
 /// // The parent's anchor sits at the origin, its handle at (0, 2, 0).
 /// let parent = ParentJoin { port, anchor: [0.0; 3], handle: [0.0, 2.0, 0.0] };
 /// let site = PlaceSite { position: None, turn: Rigid::IDENTITY, parent: Some(parent) };
-/// let pose = GrowthPlacer::new().place(unit.as_molgraph(), &site).unwrap();
+/// let pose = GrowthPlacer::new().place(&unit, &site).unwrap();
 ///
 /// // The copy's C lands on the parent's handle, its H points back down.
 /// let (c_at, h_at) = (transform_point(&pose, [0.0; 3]), transform_point(&pose, [1.0, 0.0, 0.0]));
@@ -170,7 +200,7 @@ impl GrowthPlacer {
     }
 }
 
-impl Placer for GrowthPlacer {
+impl<G: Graph> Placer<G> for GrowthPlacer {
     /// The joined pose for a site with a parent; the turned template, on the
     /// site position when there is one, for the first site of a molecule.
     ///
@@ -181,7 +211,7 @@ impl Placer for GrowthPlacer {
     /// template without a centre of mass; [`PlaceError::Port`] when the
     /// parent bond's port does not read back, has an atom without
     /// coordinates, or its anchor and handle coincide.
-    fn place(&self, template: &MolGraph, site: &PlaceSite) -> Result<Rigid, PlaceError> {
+    fn place(&self, template: &G, site: &PlaceSite) -> Result<Rigid, PlaceError> {
         let Some(join) = site.parent else {
             return match site.position {
                 Some(p) => SitePlacer.place(
@@ -194,11 +224,12 @@ impl Placer for GrowthPlacer {
                 None => Ok(site.turn),
             };
         };
-        let port = template
-            .port(join.port)
+        let graph = template.graph();
+        let port = graph
+            .get_port(join.port)
             .map_err(|e| PlaceError::Port(e.to_string()))?;
         let position = |atom| -> Result<Vec3, PlaceError> {
-            template
+            graph
                 .get_node(atom)
                 .map_err(|e| PlaceError::Port(e.to_string()))?
                 .position()
@@ -271,10 +302,12 @@ mod tests {
     use crate::core::Atomistic;
     use crate::core::BondNumber;
     use crate::core::CenterError;
+    use crate::core::Element;
     use crate::core::PortKind;
     use crate::core::RelationId;
     use crate::core::keys;
     use crate::op::{Rigid, rotation_about, transform_point};
+    use crate::props;
 
     const TOL: f64 = 1e-12;
 
@@ -284,20 +317,27 @@ mod tests {
     fn monomer(with_mass: bool) -> (Atomistic, RelationId, RelationId) {
         let mut m = Atomistic::new();
         let mut ids = Vec::new();
-        for (symbol, x, mass) in [
-            ("C", 0.0, 12.0),
-            ("C", 1.5, 12.0),
-            ("H", -1.0, 1.0),
-            ("H", 2.5, 1.0),
+        for (element, x, mass) in [
+            (Element::C, 0.0, 12.0),
+            (Element::C, 1.5, 12.0),
+            (Element::H, -1.0, 1.0),
+            (Element::H, 2.5, 1.0),
         ] {
-            let id = m.add_atom_xyz(symbol, x, 0.0, 0.0);
+            let id = m
+                .add_atom(props! {
+                    keys::ATOMIC_NUMBER => element,
+                    keys::X => x,
+                    keys::Y => 0.0,
+                    keys::Z => 0.0,
+                })
+                .unwrap();
             if with_mass {
-                m.set_node(id, keys::MASS, mass).expect("stamp mass");
+                m.set_atom(id, keys::MASS, mass).expect("stamp mass");
             }
             ids.push(id);
         }
         for (a, b) in [(0, 1), (0, 2), (1, 3)] {
-            m.add_bond(ids[a], ids[b]).expect("bond");
+            m.add_bond(ids[a], ids[b], props! {}).expect("bond");
         }
         let l = m
             .add_port(ids[0], ids[2], PortKind::Left, "", BondNumber::Single)
@@ -326,7 +366,7 @@ mod tests {
     fn site_placer_moves_the_centre_of_mass_onto_the_site() {
         let (m, _, _) = monomer(true);
         let pose = SitePlacer::new()
-            .place(m.as_molgraph(), &site(Some([10.0, 0.0, 0.0]), None))
+            .place(&m, &site(Some([10.0, 0.0, 0.0]), None))
             .expect("placeable");
         assert_eq!(pose.translation, [9.25, 0.0, 0.0]);
         assert_eq!(pose.rotation, Rigid::IDENTITY.rotation);
@@ -341,9 +381,7 @@ mod tests {
             turn: rotation_about(rz, [0.75, 0.0, 0.0]),
             parent: None,
         };
-        let pose = SitePlacer::new()
-            .place(m.as_molgraph(), &turned)
-            .expect("placeable");
+        let pose = SitePlacer::new().place(&m, &turned).expect("placeable");
         // C1 (1.5,0,0) is 0.75 along +x of the centre: after the quarter turn
         // it sits 0.75 along +y of the site.
         close(transform_point(&pose, [1.5, 0.0, 0.0]), [0.0, 0.75, 0.0]);
@@ -353,19 +391,19 @@ mod tests {
     fn site_placer_refuses_a_site_without_a_position_or_a_massless_template() {
         let (m, _, _) = monomer(true);
         assert_eq!(
-            SitePlacer::new().place(m.as_molgraph(), &site(None, None)),
+            SitePlacer::new().place(&m, &site(None, None)),
             Err(PlaceError::NoPosition)
         );
         let (bare, _, _) = monomer(false);
         let err = SitePlacer::new()
-            .place(bare.as_molgraph(), &site(Some([0.0; 3]), None))
+            .place(&bare, &site(Some([0.0; 3]), None))
             .expect_err("a massless template has no centre");
         assert!(
             matches!(err, PlaceError::Template(CenterError::BadMass { .. })),
             "{err:?}"
         );
         assert_eq!(
-            SitePlacer::new().place(m.as_molgraph(), &site(Some([f64::NAN, 0.0, 0.0]), None)),
+            SitePlacer::new().place(&m, &site(Some([f64::NAN, 0.0, 0.0]), None)),
             Err(PlaceError::NonFinitePoint)
         );
     }
@@ -374,7 +412,7 @@ mod tests {
     fn growth_placer_keeps_the_first_copy_where_the_template_is() {
         let (m, _, _) = monomer(false);
         let pose = GrowthPlacer::new()
-            .place(m.as_molgraph(), &site(None, None))
+            .place(&m, &site(None, None))
             .expect("first copy");
         assert_eq!(pose, Rigid::IDENTITY);
     }
@@ -391,7 +429,7 @@ mod tests {
             handle: [0.0, 0.0, 6.0],
         };
         let pose = GrowthPlacer::new()
-            .place(m.as_molgraph(), &site(None, Some(join)))
+            .place(&m, &site(None, Some(join)))
             .expect("joined");
         close(transform_point(&pose, [0.0; 3]), [0.0, 0.0, 6.0]);
         close(transform_point(&pose, [-1.0, 0.0, 0.0]), [0.0, 0.0, 5.0]);
@@ -406,7 +444,7 @@ mod tests {
             handle: [1.0; 3],
         };
         let err = GrowthPlacer::new()
-            .place(m.as_molgraph(), &site(None, Some(join)))
+            .place(&m, &site(None, Some(join)))
             .expect_err("no direction");
         assert!(matches!(err, PlaceError::Port(_)), "{err:?}");
     }

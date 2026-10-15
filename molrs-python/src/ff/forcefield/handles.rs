@@ -12,11 +12,11 @@ use std::sync::Arc;
 
 use pyo3::exceptions::{PyTypeError, PyValueError};
 use pyo3::prelude::*;
-use pyo3::types::{PyDict, PyString, PyTuple, PyType};
+use pyo3::types::{PyDict, PyTuple, PyType};
 
 use molrs::ff::forcefield::{ForceField, Style};
 
-use super::{PyForceField, array_param, params_from_dict, params_to_dict};
+use super::{PyForceField, param_from_py, params_from_dict, params_to_dict};
 
 /// A category and its handle classes: the seven with classes of their own,
 /// and every other category — a custom one of the force-field IR registry,
@@ -232,7 +232,7 @@ fn missing_style(category: &Category, name: &str) -> PyErr {
 
 /// Handle of one style of a :class:`ForceField`.
 ///
-/// Made by ``ForceField.def_style`` / ``get_style`` / ``styles``; its
+/// Made by ``ForceField.def_style`` / ``get_style`` / ``get_styles``; its
 /// category's subclass (``BondStyle``, …) carries the typed ``def_type``.
 /// Two handles are equal when they name the same category and style of the
 /// same force field.
@@ -378,30 +378,35 @@ impl PyStyle {
         self.params(py)?.get_item(key)
     }
 
-    /// Set one style-level param: a number (how a caller declares a cutoff)
-    /// or a string (``s["mixing"] = "geometric"``).
+    /// Set one style-level param (``Style::set_param``): a number (how a
+    /// caller declares a cutoff), a string (``s["mixing"] = "geometric"``) or
+    /// an array of numbers (stored as float64).
     ///
     /// Raises
     /// ------
     /// TypeError
-    ///     If ``value`` is neither a number nor a str.
+    ///     If ``value`` is neither a number, a str nor an array of numbers.
     fn __setitem__(&self, py: Python<'_>, key: &str, value: &Bound<'_, PyAny>) -> PyResult<()> {
+        let value = param_from_py(key, value)?;
         let mut ff = self.ff.bind(py).try_borrow_mut()?;
         let style = ff
             .inner
             .get_style_mut(self.category.name(), &self.name)
             .ok_or_else(|| missing_style(&self.category, &self.name))?;
-        if let Ok(text) = value.cast::<PyString>() {
-            style.set_str_param(key, text.to_str()?);
-        } else if let Ok(number) = value.extract::<f64>() {
-            style.set_param(key, number);
-        } else {
-            return Err(PyTypeError::new_err(format!(
-                "param '{key}' must be a number or a str, got {}",
-                value.get_type().name()?
-            )));
-        }
+        style.set_param(key, value);
         Ok(())
+    }
+
+    /// Remove the type named ``name`` from this style (``Style::del_type``)
+    /// and return how many were removed: ``1``, or ``0`` when the style
+    /// defines no such type. Handles onto the removed type go stale.
+    fn del_type(&self, py: Python<'_>, name: &str) -> PyResult<usize> {
+        let mut ff = self.ff.bind(py).try_borrow_mut()?;
+        let style = ff
+            .inner
+            .get_style_mut(self.category.name(), &self.name)
+            .ok_or_else(|| missing_style(&self.category, &self.name))?;
+        Ok(style.del_type(name))
     }
 
     fn __hash__(&self) -> u64 {
@@ -793,23 +798,13 @@ impl PyFfType {
                 self.name
             )));
         };
+        let value = param_from_py(key, value)?;
         let mut ff = self.ff.bind(py).try_borrow_mut()?;
         let style = ff
             .inner
             .get_style_mut(self.category.name(), style)
             .ok_or_else(|| missing_style(&self.category, style))?;
-        let set = if let Ok(text) = value.cast::<PyString>() {
-            style.set_type_str_param(&self.name, key, text.to_str()?)
-        } else if let Some(array) = array_param(value)? {
-            style.set_type_array_param(&self.name, key, array)
-        } else if let Ok(number) = value.extract::<f64>() {
-            style.set_type_param(&self.name, key, number)
-        } else {
-            return Err(PyTypeError::new_err(format!(
-                "param '{key}' must be a number, a str or an array of numbers, got {}",
-                value.get_type().name()?
-            )));
-        };
+        let set = style.set_type_param(&self.name, key, value);
         if !set {
             return Err(PyValueError::new_err(format!(
                 "no {} type named '{}'",
