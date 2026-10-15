@@ -74,8 +74,8 @@ encoding:
 
 </div>
 
-**Figure 1.** $S(k)$ of liquid argon at 85 K from the Debye equation, averaged
-over 50 configurations of a 500-atom box. The main peak sits at 1.98 Å⁻¹ and
+**Figure 1.** $S(k)$ of liquid argon from the Debye equation, averaged
+over 50 configurations of the 500-atom reference run (seed 0, 88.3 K). The main peak sits at 1.98 Å⁻¹ and
 the oscillations damp out by about 6 Å⁻¹.
 </figure>
 

@@ -57,8 +57,9 @@ encoding:
 
 </div>
 
-**Figure 1.** Normalized velocity autocorrelation of liquid argon at 85 K,
-averaged over eight independent runs. The correlation crosses zero at 310 fs,
+**Figure 1.** Normalized velocity autocorrelation of liquid argon, averaged
+over the eight independent runs (mean temperature 84.9 K) with the mean kept.
+The correlation crosses zero at 310 fs,
 reaches a minimum of $-0.105$ at 440 fs, and has essentially decayed by 2 ps.
 </figure>
 
@@ -138,8 +139,8 @@ encoding:
 
 </div>
 
-**Figure 2.** Running Green–Kubo integral for argon, from the VACF averaged
-over the eight runs. It overshoots while the
+**Figure 2.** Running Green–Kubo integral for argon, from the VACF of
+Figure 1, averaged over the eight runs. It overshoots while the
 VACF is still positive, is pulled back down by the negative lobe, and settles
 onto a plateau once the correlation has decayed.
 </figure>
@@ -211,10 +212,13 @@ print(round(float(normalized[1]), 4))                     # -> 0.0004
 White noise has no memory. Real velocities do, and that difference is the whole
 measurement.
 
-Two conventions are fixed in `Vacf` because they define the quantity: each
-column's time mean is subtracted before correlating, and every lag is divided
-by the number of origins that reach it (`normalization="unbiased"`). The
-latter is the one tunable; `"biased"` divides every lag by the number of
+Two conventions sit underneath that curve, and both are configuration. The
+first is what to do with each column's time mean: by default `Vacf` subtracts
+it before correlating (`mean="subtract"`), and `mean="keep"` correlates the
+velocities exactly as given. The next section is about why that choice decides
+the Green–Kubo answer. The second is how each lag is averaged: by default every
+lag is divided by the number of origins that reach it
+(`normalization="unbiased"`), `"biased"` divides every lag by the number of
 frames, and `"none"` returns the raw sums.
 
 The Green–Kubo $D$ is a composition of two more computes, each taking the
@@ -244,36 +248,38 @@ current correlation of the [JACF](jacf.md) page, `CurrentAcf`. For a
 per-particle VACF, hand `Vacf` every degree of freedom and let it average after
 correlating.
 
-### The mean `Vacf` subtracts costs a finite run part of $D$
+### Subtracting the mean costs a finite run part of $D$
 
-Subtracting each column's time mean is what makes `Vacf` immune to a constant
+Subtracting each column's time mean makes the correlation immune to a constant
 drift, but over a finite run it is not free. An atom that diffused a distance
 $\Delta r$ in a run of length $T$ has a time-mean velocity $\Delta r/T$ along
 each axis, and that is real motion, not drift. Removing it lowers every lag of
 the correlation by about $2D/T$, so the running integral out to $\tau_{\max}$
 comes out low by a fraction $2\tau_{\max}/T$. For the argon runs here,
-$\tau_{\max} = 2.5$ ps and $T = 30$ ps, that is about 17 %: the `Vacf`
-surface gives $D = 1.68\times10^{-5}$ cm² s⁻¹ against the
+$\tau_{\max} = 2.5$ ps and $T = 30$ ps, that is about 17 %: with the mean
+subtracted, the eight runs give $D = 1.68\times10^{-5}$ cm² s⁻¹ against the
 $2.01\times10^{-5}$ quoted above.
 
-The figures on this page therefore keep the mean, which is the plain product
-`Correlator` — the one estimator `Vacf` is a configuration of. Given the
-`(T, N, 3)` velocities it correlates the full vectors, so its curve is the
-dot-product $C_{vv}(\tau)$ and the Green–Kubo integral carries the $1/3$ again:
+In equilibrium the true mean velocity is zero, so the curve with the mean kept
+is the Green–Kubo integrand itself, and that is what every figure and number on
+this page uses. It is the same compute with one convention changed:
 
 ```python
-from molpy.compute import Correlator
-
-c_vv = Correlator("product", 50).compute(a=velocities, dt=10.0)
-print(round(float(c_vv.values[0, 0]), 6))                 # -> 0.001203
-
-running_vv = CumulativeTrapezoid().compute(correlation=c_vv, channel=0)
-D_kept = Plateau(0.8, 1.0).compute(correlation=running_vv, channel=0).value / 3.0
+vacf_kept = Vacf(max_lag=50, mean="keep").compute(
+    velocities=velocities.reshape(2000, -1), dt=10.0
+)
+running_kept = CumulativeTrapezoid().compute(correlation=vacf_kept, channel=0)
+D_kept = Plateau(0.8, 1.0).compute(correlation=running_kept, channel=0).value
+print(round(float(vacf_kept.values[0, 0]), 6))            # -> 0.000401
 ```
 
+Nothing else changes: the curve is still per degree of freedom, so its
+integral is $D$ with no $1/d$ to apply. On this white noise the two policies give the
+same zero-lag value, because its time mean is already close to zero; on a real
+liquid their Green–Kubo integrals part by the 17 % above.
+
 Keep the mean when the run is long next to the lag window and net momentum
-was removed before dumping; subtract it (`Vacf`, or
-`Correlator(..., mean="subtract")`) when a residual drift would otherwise
+was removed before dumping; subtract it when a residual drift would otherwise
 integrate without bound.
 
 ## Vibrations, from the same correlation function
@@ -335,9 +341,9 @@ looking at anything else on the page.
 
 **The correlation never decays to zero; the running integral grows without
 bound.**
-Centre-of-mass drift. `Vacf` subtracts each degree of freedom's time mean,
-which removes a constant drift, but a slowly wandering collective velocity
-still correlates with itself over long lags. Remove net momentum before
+Centre-of-mass drift. Subtracting each degree of freedom's time mean (the
+`Vacf` default) removes a constant drift, but a slowly wandering collective
+velocity still correlates with itself over long lags. Remove net momentum before
 dumping velocities.
 
 **There is no negative lobe in a dense liquid.**
@@ -367,7 +373,7 @@ energy (an NVE run, fixed particle number, volume, and energy).
 - Integrate the VACF to get $D$, then compute $D$ from the [MSD](msd.md) of the
   same run. Agreement within a few percent means both are working.
 - Take the argon running integral and read it at 400 fs, before the negative
-  lobe has done its work. You get $2.78\times10^{-5}$ cm² s⁻¹ — 40 % above the
+  lobe has done its work. You get $2.77\times10^{-5}$ cm² s⁻¹ — 38 % above the
   plateau, and a concrete demonstration of why the plateau, not an early value,
   is the answer.
 

@@ -46,7 +46,8 @@ encoding:
 </div>
 
 **Figure 1.** Cluster count and largest-cluster size against the neighbour
-cutoff, for liquid argon at 85 K. Nothing about the configuration changes across
+cutoff, for one configuration of the reference argon run (seed 0, 88.3 K).
+Nothing about the configuration changes across
 this plot — only the definition of "connected".
 </figure>
 

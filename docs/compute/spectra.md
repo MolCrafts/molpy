@@ -86,8 +86,9 @@ encoding:
 
 </div>
 
-**Figure 1.** Vibrational density of states of liquid argon at 85 K, from the
-velocity autocorrelation of the trajectory used on the [VACF](vacf.md) page. The
+**Figure 1.** Vibrational density of states of liquid argon, from the
+velocity autocorrelation of the reference run (seed 0, 88.3 K) — one of the
+eight runs averaged on the [VACF](vacf.md) page. The
 band peaks at 20 cm⁻¹ and has died away by 150 cm⁻¹.
 </figure>
 

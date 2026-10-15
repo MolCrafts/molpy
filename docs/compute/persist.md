@@ -80,7 +80,8 @@ encoding:
 
 </div>
 
-**Figure 1.** First-shell pair survival in liquid argon at 85 K, by the
+**Figure 1.** First-shell pair survival in liquid argon, from the reference
+run (seed 0, 88.3 K), by the
 continuous and intermittent definitions. They separate as soon as pairs begin
 breaking and re-forming.
 </figure>

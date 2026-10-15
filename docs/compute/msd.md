@@ -2,8 +2,8 @@
 
 How fast do the atoms in a liquid move?
 
-The instantaneous speed is not the answer. An argon atom at 85 K is travelling
-at about 230 m s⁻¹, but it is trapped in a cage of neighbours and spends most of
+The instantaneous speed is not the answer. An argon atom in the runs on this
+page, at their mean temperature of 84.9 K, is travelling at about 230 m s⁻¹, but it is trapped in a cage of neighbours and spends most of
 its time rattling back and forth without going anywhere. What you want is how
 far it gets in the end — its **net** wandering — and that is what the mean
 squared displacement measures.
@@ -110,8 +110,8 @@ layer:
 
 </div>
 
-**Figure 1.** MSD of liquid argon at 85 K on log–log axes, averaged over eight
-independent runs. Solid blue is the measurement. The two muted dashed lines are
+**Figure 1.** MSD of liquid argon on log–log axes, averaged over eight
+independent runs (mean temperature 84.9 K). Solid blue is the measurement. The two muted dashed lines are
 **not** fits to the shape: the steep one is $\langle v^2\rangle\tau^2$ from
 equipartition, the shallow one is $6D\tau$ with $D$ the mean of the eight runs'
 straight-line fits between 5 and 20 ps. Labels mark the

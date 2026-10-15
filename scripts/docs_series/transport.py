@@ -17,7 +17,6 @@ import numpy as np
 
 import molpy as mp
 from molpy.compute import (
-    Correlator,
     CumulativeTrapezoid,
     LinearFit,
     Msd,
@@ -46,32 +45,29 @@ FIT_END = 20000.0
 VACF_MAX_LAG = 250
 
 
-def _velocity_correlation(trajectory: Trajectory) -> TimeCorrelation:
-    """<v(0).v(t)> of one run, averaged over atoms and time origins.
+def _vacf(trajectory: Trajectory, mean: str) -> TimeCorrelation:
+    """Per-component VACF of one run: every Cartesian component of every atom
+    is one column, correlated with its own past and averaged after correlating,
+    so C(0) = k_B T / m and the Green-Kubo integral of C is D itself.
 
-    This is the product ``Correlator`` with the mean kept, not the ``Vacf``
-    surface: ``Vacf`` subtracts each velocity component's mean over the run,
-    and over a finite run that mean is the atom's net displacement divided by
-    the run length. Subtracting it removes about v_bar^2 * t from the running
-    integral, which on these 30 ps runs lowers the Green-Kubo D by ~13 %.
-    In equilibrium the true mean is zero, so the kept-mean curve is the
-    Green-Kubo integrand.
+    ``mean="keep"`` is the Green-Kubo integrand. ``mean="subtract"``, the
+    ``Vacf`` default, removes each column's time mean, and over a finite run
+    that mean is the atom's net displacement divided by the run length, so it
+    lowers the running integral; it is computed only to quote how much.
     """
-    correlator = Correlator("product", VACF_MAX_LAG)
-    return correlator.compute(a=trajectory.velocities, dt=trajectory.dt)
-
-
-def _vacf_surface(trajectory: Trajectory) -> TimeCorrelation:
-    """The ``Vacf`` surface: per-component, mean-subtracted (for comparison)."""
     n_frames = trajectory.velocities.shape[0]
     velocities = trajectory.velocities.reshape(n_frames, -1)
-    return Vacf(VACF_MAX_LAG).compute(velocities=velocities, dt=trajectory.dt)
+    vacf = Vacf(VACF_MAX_LAG, mean=mean)
+    return vacf.compute(velocities=velocities, dt=trajectory.dt)
 
 
-def _green_kubo(correlation: TimeCorrelation, dimension: int = 3) -> np.ndarray:
-    """Running Green-Kubo integral D(t) = (1/d) integral_0^t C(s) ds, A^2/fs."""
+def _green_kubo(correlation: TimeCorrelation) -> np.ndarray:
+    """Running Green-Kubo integral D(t) = integral_0^t C(s) ds, A^2/fs.
+
+    ``C`` is per degree of freedom, so no 1/d is left to apply.
+    """
     integral = CumulativeTrapezoid().compute(correlation=correlation, channel=0)
-    return integral.channel(0) / dimension
+    return integral.channel(0)
 
 
 def _spread(values: Sequence[float]) -> dict[str, float]:
@@ -170,7 +166,7 @@ def mean_squared_displacement(trajectories: Sequence[Trajectory]) -> dict[str, f
 
 def velocity_autocorrelation(trajectories: Sequence[Trajectory]) -> dict[str, float]:
     """Ensemble-mean normalized VACF and the Green-Kubo D per seed."""
-    results = [_velocity_correlation(t) for t in trajectories]
+    results = [_vacf(t, "keep") for t in trajectories]
     acfs = np.array([r.channel(0) for r in results])
     dt = trajectories[0].dt
     lag = results[0].lag_times
@@ -201,13 +197,13 @@ def velocity_autocorrelation(trajectories: Sequence[Trajectory]) -> dict[str, fl
     diffusion_cm2_per_s = [
         float(_green_kubo(r)[-1] * ANGSTROM2_PER_FS_TO_CM2_PER_S) for r in results
     ]
-    # The Vacf surface averages over the 3 components, so its integral is D.
-    surface_cm2_per_s = [
-        float(_green_kubo(_vacf_surface(t), 1)[-1] * ANGSTROM2_PER_FS_TO_CM2_PER_S)
+    # The same estimator with the run mean subtracted, for comparison.
+    subtracted_cm2_per_s = [
+        float(_green_kubo(_vacf(t, "subtract"))[-1] * ANGSTROM2_PER_FS_TO_CM2_PER_S)
         for t in trajectories
     ]
-    # C(0) = <v.v> = 3 k_B T / m by equipartition.
-    equipartition = 3.0 * KB * temperature / ArgonLj().mass * ACCEL
+    # C(0) = <v_x^2> = k_B T / m by equipartition, per degree of freedom.
+    equipartition = KB * temperature / ArgonLj().mass * ACCEL
     minimum = int(np.argmin(acf))
     crossing = int(np.argmax(acf < 0.0))
     peak = int(np.argmax(mean_running))
@@ -215,7 +211,7 @@ def velocity_autocorrelation(trajectories: Sequence[Trajectory]) -> dict[str, fl
         "n_seeds": float(len(trajectories)),
         "temperature_K": temperature,
         "C0": float(acf[0]),
-        "C0_expected_3kT_m": float(equipartition),
+        "C0_expected_kT_m": float(equipartition),
         "zero_crossing_fs": float(lag[crossing]),
         "min_lag_fs": float(lag[minimum]),
         "min_normalized": float(acf[minimum] / acf[0]),
@@ -230,7 +226,7 @@ def velocity_autocorrelation(trajectories: Sequence[Trajectory]) -> dict[str, fl
             mean_running[int(round(1500.0 / dt))] * ANGSTROM2_PER_FS_TO_CM2_PER_S
         ),
         **_summary("D_cm2_per_s", _spread(diffusion_cm2_per_s)),
-        "D_vacf_surface_cm2_per_s_mean": float(np.mean(surface_cm2_per_s)),
+        "D_mean_subtracted_cm2_per_s_mean": float(np.mean(subtracted_cm2_per_s)),
     }
 
 

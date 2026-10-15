@@ -73,7 +73,8 @@ encoding:
 
 </div>
 
-**Figure 1.** Self part of the Van Hove function for liquid argon at 85 K, at
+**Figure 1.** Self part of the Van Hove function for liquid argon, from the
+reference run (seed 0, 88.3 K), at
 four lags. The distribution starts narrow and spreads; its root-mean-square
 width grows from 0.22 Å at 0.1 ps to 2.62 Å at 6 ps.
 </figure>

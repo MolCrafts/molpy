@@ -53,8 +53,9 @@ definition. It is not physics; it is the price of using a spherical shell.
 
 ## Reading a real curve
 
-Here is $g(r)$ for 500 argon atoms at 85 K and 1.374 g cm⁻³, averaged over 600
-configurations from a 30 ps constant-energy trajectory.
+Here is $g(r)$ for 500 argon atoms at 1.374 g cm⁻³, averaged over 600
+configurations of the reference run: seed 0, 30 ps at constant energy, at a mean
+temperature of 88.3 K.
 
 <figure id="fig-rdf-argon" class="molcrafts-figure" markdown>
 <div class="molcrafts-figure__body molcrafts-figure__body--chart">
@@ -77,7 +78,8 @@ encoding:
 
 </div>
 
-**Figure 1.** $g(r)$ of liquid argon at 85 K. The excluded core, the first
+**Figure 1.** $g(r)$ of liquid argon, reference run (88.3 K). The excluded
+core, the first
 coordination shell at 3.68 Å, and the decay to $g = 1$ are all visible.
 </figure>
 

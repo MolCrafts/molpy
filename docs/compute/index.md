@@ -274,12 +274,17 @@ The pages are grouped the way the questions group, not the way the classes do.
 ## Where the figures come from
 
 Every curve on these pages is computed, not drawn. The reference system is 500
-argon atoms at 85 K and 1.374 g cm⁻³ — the Rahman state point — integrated for
-30 ps at constant energy, conserving total energy to a relative drift of
-$2.0\times10^{-5}$ (dimensionless, $|E(t)-E(0)|/|E(0)|$). The transport pages
-([MSD](msd.md), [VACF](vacf.md)) average over eight such runs that differ only
-in the seed of their initial velocities, because one run of a chaotic liquid
-is one noisy draw, and quote each coefficient with its spread over the runs.
+argon atoms at 1.374 g cm⁻³, the density of Rahman's study, equilibrated by
+velocity rescaling at 85 K and then integrated for 30 ps at constant energy,
+conserving total energy to a relative drift of $2.0\times10^{-5}$
+(dimensionless, $|E(t)-E(0)|/|E(0)|$). Once the thermostat is off, kinetic and
+potential energy keep trading, so a constant-energy run settles near the target
+temperature rather than on it: the reference run (seed 0), behind every
+structural figure, averages 88.3 K. The transport pages ([MSD](msd.md),
+[VACF](vacf.md)) average over eight such runs that differ only in the seed of
+their initial velocities, because one run of a chaotic liquid is one noisy draw,
+and quote each coefficient with its spread over the runs; their mean
+temperature is 84.9 K. A caption names the run its numbers come from.
 Every run is a pure function of its seed, with nothing cached between runs.
 The generator lives in `scripts/docs_series/` and writes to `docs/series/`, so any
 figure can be reproduced or challenged:

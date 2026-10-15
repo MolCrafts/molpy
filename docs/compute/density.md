@@ -73,8 +73,8 @@ encoding:
 
 </div>
 
-**Figure 1.** Distribution of local densities in bulk liquid argon at
-85 K, for probe radii of 4 Å and 8 Å. Both are centred on the same physical
+**Figure 1.** Distribution of local densities in bulk liquid argon, from
+the reference run (seed 0, 88.3 K), for probe radii of 4 Å and 8 Å. Both are centred on the same physical
 density; the narrow one is not "better data", it is more smoothing.
 </figure>
 

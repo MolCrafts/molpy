@@ -47,7 +47,8 @@ encoding:
 
 </div>
 
-**Figure 1.** Radical-Voronoi cell volumes in liquid argon at 85 K (equal
+**Figure 1.** Radical-Voronoi cell volumes in liquid argon, from the
+reference run (seed 0, 88.3 K; equal
 radii, so an ordinary Voronoi tessellation). Mean 48.28 Å³ = $V/N$ exactly,
 standard deviation 4.5 Å³ — about 9 %.
 </figure>

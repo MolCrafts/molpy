@@ -119,7 +119,8 @@ encoding:
 </div>
 
 **Figure 1.** Per-atom $q_6$ for a perfect FCC crystal (a single spike at
-0.5745) and for liquid argon at 85 K (broad, centred on 0.34). The gap between
+0.5745) and for liquid argon from the reference run (seed 0, 88.3 K; broad,
+centred on 0.34). The gap between
 them is what makes per-atom classification possible.
 </figure>
 
