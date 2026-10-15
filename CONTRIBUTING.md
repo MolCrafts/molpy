@@ -23,20 +23,22 @@ python scripts/check.py verify
 ## Hooks
 
 `prek install --hook-type pre-commit --hook-type pre-push` (or the same with
-`pre-commit`) installs both hook types from `.pre-commit-config.yaml`; every
-CI job has a hook running the same command. **Never `git commit --no-verify`
+`pre-commit`) installs both hook types from `.pre-commit-config.yaml`. Every
+check runs exactly once: static checks run only in the hooks (CI does not
+repeat them), and the test suite runs once locally and once per CI leg. **Never `git commit --no-verify`
 or `git push --no-verify`, and never merge a red pull request.**
 
-- **pre-commit** (staged files, cheap, in place): file hygiene (whitespace,
-  final newline, YAML/TOML/JSON, merge markers, large files) and the pinned lint tools
-  (ruff format + ruff check + ty), as lint.yml `lint / hooks`.
-- **pre-push**: `scripts/check.py verify` reruns hygiene/static checks on all
+- **pre-commit** (cheap, in place): the CI profile's commit stage, the
+  workflow scheme (check-workflows) and the pinned lint tools (ruff format +
+  ruff check + ty). Only here: no CI job runs them.
+- **pre-push**: `scripts/check.py verify` runs the commit stage once on all
   files, then checks dependencies, tests and strict docs in one cached sibling
   layout. Every dependency comes from the full SHA in `.github/partners.env`;
   the resolver is shared with CI at `CI_REF`. `uv lock --check`, locked sync and
   `uv pip check` catch stale metadata and incompatible installed dependencies.
-  It also tests the declared PyPI ranges independently of path sources and
-  builds/checks release distributions. No changed-file filters skip a gate.
+  On a push to `master` or `nightly` it also tests the declared PyPI ranges
+  independently of path sources; it always builds and checks the release
+  distributions (`package`, which no CI job repeats). No changed-file filters skip a gate.
   Native CI also tests Windows and macOS.
 - **Dispatch on the MolCrafts cluster:** the docs build and the unit suite
   compile molrs. Their entries go through `scripts/hook-run.sh`, which hands
@@ -51,18 +53,16 @@ or `git push --no-verify`, and never merge a red pull request.**
 
 ## CI
 
-One workflow per kind of work. Every push of any branch runs `lint`, `test`
-and `docs`, on a fork as on MolCrafts. A pull request into `dev`, `master` or
-`main` runs them again, except one inside a fork (its push already ran the
-full tier).
+CI runs only what a laptop cannot: the cross-OS tests (`test.yml`) and the
+release artifacts (`release.yml`). Every push of any branch runs `test`, on a
+fork as on MolCrafts. A pull request into `dev`, `master` or `main` runs it
+again, except one inside a fork (its push already ran the full tier).
 
 | workflow | feature-branch push to MolCrafts | everything else: any push to a fork, `dev`/`master`/`main`, pull requests, tags, dispatches | upstream only |
 | --- | --- | --- | --- |
-| `lint.yml` | `lint / hooks` (hygiene, static lint and workflow scheme on every file) | same | — |
-| `test.yml` | fast: `test / python (ubuntu-latest, 3.12)` | full: `test / python` on all three OSes with Python 3.12, plus Linux/Python 3.14 | — |
-| `docs.yml` | `docs / build` (zensical `--strict`) | same | Cloudflare Pages deploys the site from MolCrafts |
+| `test.yml` | fast: `test / python (ubuntu-latest, 3.12)`, which also builds the docs (zensical `--strict`) in its tested environment | full: `test / python` on all three OSes with Python 3.12, plus Linux/Python 3.14; the docs in the Linux 3.12 leg | Cloudflare Pages deploys the site from MolCrafts |
 | `nightly.yml` | — | — | nightly: test and coverage snapshots to molcrafts-ci; a `nightly` branch push: `molcrafts-molpy-nightly` |
-| `release.yml` | — | dispatch: dry run (tests, builds, uploads nothing) | `v*` tag: PyPI and the GitHub Release ([release process](docs/developer/release-process.md)) |
+| `release.yml` | — | dispatch: dry run (guard, published check, build, uploads nothing) | `v*` tag: a guard that the commit's `test.yml` is green (no lint or test matrix of its own), one `published` run (Linux, Python 3.12, partners from PyPI), then PyPI and the GitHub Release ([release process](docs/developer/release-process.md)) |
 
 So a fork branch gets the full tier on its push: push to your fork, wait for
 green, then open the pull request into MolCrafts `dev`. Branches pushed to
