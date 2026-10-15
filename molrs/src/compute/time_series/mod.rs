@@ -5,7 +5,8 @@
 //!
 //! Every lagged correlation in molrs is a configuration of [`Correlator`]:
 //! a [`LagKernel`] evaluated between samples `t` apart, averaged over
-//! [`Origins`], optionally on fluctuations ([`MeanPolicy`]), scaled by a
+//! [`Origins`] (all of them, or every `s`-th through
+//! [`Correlator::with_stride`]), optionally on fluctuations ([`MeanPolicy`]), scaled by a
 //! [`Normalization`] and combined into channels by a [`Reduction`]. Its
 //! output, [`TimeCorrelation`], is the input of every fit and spectrum.
 //!
@@ -21,7 +22,7 @@
 //! | [`OnsagerCorrelation`] | squared displacement, cross | `T × 3` collective coordinates |
 //! | [`DipoleAcf`] | product, auto | mean-subtracted, summed over Cartesian components |
 //! | [`CurrentAcf`] | product, auto | summed over Cartesian components |
-//! | [`ReorientationAcf`] | Legendre `P_l`, auto | averaged over vectors |
+//! | [`ReorientationAcf`] | Legendre `P_l`, auto | unit vectors; reduction and stride tunable |
 //! | [`RotationalAutocorrelation`] | Wigner-D `χ_l`, auto | first origin |
 //! | [`Survival`] | persistence or product | on 0/1 presence |
 //!

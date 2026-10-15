@@ -3,7 +3,9 @@
 use molrs::op::F;
 use ndarray::ArrayView3;
 
-use super::{Correlator, CorrelatorAccumulator, CorrelatorInput, LagKernel, TimeCorrelation};
+use super::{
+    Correlator, CorrelatorAccumulator, CorrelatorInput, LagKernel, Reduction, TimeCorrelation,
+};
 use crate::compute::{Compute, ComputeError, Stream};
 
 /// Reorientational time-correlation of molecular vectors,
@@ -19,7 +21,12 @@ use crate::compute::{Compute, ComputeError, Stream};
 /// Scattering*). The vectors (an O–H bond, a dipole axis, …) are the caller's
 /// series — minimum-image bond vectors, say — of any length; each is
 /// normalised, and a zero-length vector is an error. The Legendre polynomial
-/// is applied before the origin average, so the estimate is a direct sum.
+/// is applied before the origin average; for `l ≤ 2` it factorises into
+/// products of the unit vectors (`P_1`) and of their quadratic components
+/// (`P_2`), so the average runs on the correlator's FFT path, `O(T log T)`;
+/// higher orders are summed directly. This is also the orientational
+/// autocorrelation ("OACF") of unit vectors — the quantity is one, the name
+/// is this one.
 ///
 /// Ported from the reference implementation's reorientation-dynamics
 /// analyzer `CReorDyn` (`src/reordyn.cpp`).
@@ -43,6 +50,26 @@ impl ReorientationAcf {
         Self {
             correlator: Correlator::new(LagKernel::Legendre { l }, max_lag),
         }
+    }
+
+    /// Average over vectors (`Mean`, default) or keep one curve per vector
+    /// (`PerItem`); `PerComponent` is refused at `compute` (the Legendre
+    /// kernel is not a sum over components).
+    pub fn with_reduction(self, reduce: Reduction) -> Self {
+        Self {
+            correlator: self.correlator.with_reduction(reduce),
+        }
+    }
+
+    /// Take every `stride`-th frame as a time origin (default
+    /// [`Correlator::DEFAULT_STRIDE`]; see [`Correlator::with_stride`]).
+    ///
+    /// # Errors
+    /// [`ComputeError::OutOfRange`] for `stride == 0`.
+    pub fn with_stride(self, stride: usize) -> Result<Self, ComputeError> {
+        Ok(Self {
+            correlator: self.correlator.with_stride(stride)?,
+        })
     }
 
     /// The correlator this correlation is.
@@ -78,6 +105,8 @@ crate::compute::spec::compute_spec! {
     params |s| {
         l: Int;
         max_lag: Int;
+        reduction: Choice(Reduction::NAMES) = Reduction::default() => s.correlator.reduction();
+        stride: Int = Correlator::DEFAULT_STRIDE => s.correlator.stride();
     }
     inputs {
         vectors: Trajectory;
@@ -142,6 +171,35 @@ mod tests {
             assert!((c1.values[[lag, 0]] - want1).abs() < 1e-12, "C1({lag})");
             assert!((c2.values[[lag, 0]] - want2).abs() < 1e-12, "C2({lag})");
         }
+    }
+
+    /// The tunables reach the correlator: per-vector curves average to the
+    /// mean curve, and a strided surface is the strided correlator.
+    #[test]
+    fn stride_and_reduction_are_the_correlators() {
+        let v = Array3::from_shape_fn((12, 3, 3), |(t, i, d)| {
+            ((t * 5 + i * 11 + d * 3) as F * 0.41).sin() + 0.3
+        });
+        let input = ReorientationAcfInput {
+            vectors: v.view(),
+            dt: 1.0,
+        };
+        let strided = ReorientationAcf::new(2, 6).with_stride(4).unwrap();
+        let explicit = Correlator::new(LagKernel::Legendre { l: 2 }, 6)
+            .with_stride(4)
+            .unwrap();
+        assert_eq!(*strided.correlator(), explicit);
+        let mean = strided.compute(input).unwrap();
+        let rows = strided
+            .with_reduction(Reduction::PerItem)
+            .compute(input)
+            .unwrap();
+        assert_eq!(rows.n_channels(), 3);
+        for lag in 0..=6 {
+            let avg = rows.values.row(lag).sum() / 3.0;
+            assert!((avg - mean.values[[lag, 0]]).abs() < 1e-12, "lag {lag}");
+        }
+        assert!(ReorientationAcf::new(2, 6).with_stride(0).is_err());
     }
 
     #[test]

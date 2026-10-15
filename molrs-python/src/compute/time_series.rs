@@ -15,6 +15,7 @@ use molrs::compute::{
 use numpy::{
     IntoPyArray, PyArray2, PyArray3, PyReadonlyArray1, PyReadonlyArray2, PyReadonlyArray3,
 };
+use pyo3::IntoPyObjectExt;
 use pyo3::prelude::*;
 
 use super::args;
@@ -55,6 +56,13 @@ impl PyTimeCorrelation {
         self.inner.n_channels()
     }
 
+    /// Pickle as ``TimeCorrelation(lag_times, values)``.
+    fn __reduce__<'py>(slf: &Bound<'py, Self>, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+        let inner = &slf.get().inner;
+        let args = (inner.lag_times.to_py(py)?, inner.values.to_py(py)?);
+        (slf.get_type(), args).into_bound_py_any(py)
+    }
+
     /// The curve of one channel.
     fn channel<'py>(&self, py: Python<'py>, channel: usize) -> Result<Bound<'py, PyAny>> {
         Ok(self.inner.channel(channel)?.to_owned().to_py(py)?)
@@ -80,8 +88,11 @@ py_result! {
 /// l : int, optional
 ///     The order ``legendre`` / ``wigner_d`` require and the others refuse.
 /// origins, mean, normalization, reduction : str, optional
-///     The core choices (``Origins``, ``MeanPolicy``, ``Normalization``,
-///     ``Reduction``); ``None`` keeps the core default.
+///     The core choices (``Origins``, ``MeanPolicy``, ``Normalization`` —
+///     ``"unbiased"``, ``"biased"`` or ``"none"`` —, ``Reduction``); ``None``
+///     keeps the core default.
+/// stride : int, optional
+///     Take every ``stride``-th frame as a time origin (``origins="all"``).
 /// dimension : int, optional
 ///     Use only the first ``dimension`` components.
 ///
@@ -104,6 +115,7 @@ impl PyCorrelator {
         mean = None,
         normalization = None,
         reduction = None,
+        stride = None,
         dimension = None,
     ))]
     #[allow(clippy::too_many_arguments, reason = "Public Python keyword arguments")]
@@ -115,6 +127,7 @@ impl PyCorrelator {
         mean: Option<&str>,
         normalization: Option<&str>,
         reduction: Option<&str>,
+        stride: Option<usize>,
         dimension: Option<usize>,
     ) -> Result<Self> {
         let mut inner = Correlator::new(LagKernel::new(kernel.parse()?, l)?, max_lag);
@@ -129,6 +142,9 @@ impl PyCorrelator {
         }
         if let Some(reduction) = reduction {
             inner = inner.with_reduction(reduction.parse()?);
+        }
+        if let Some(stride) = stride {
+            inner = inner.with_stride(stride)?;
         }
         if let Some(dimension) = dimension {
             inner = inner.with_dimension(dimension);
@@ -164,6 +180,8 @@ described!(PyCorrelator, Correlator);
 /// ----------
 /// max_lag : int
 /// origins, reduction : str, optional
+/// stride : int, optional
+///     Every ``stride``-th frame is an origin (``origins="all"`` only).
 ///
 /// ``compute(positions=, dt=, boxes=None)`` over an unwrapped ``(T, N, 3)``
 /// trajectory; with ``boxes`` a wrapped one is refused.
@@ -175,14 +193,22 @@ pub(crate) struct PyMsd {
 #[pymethods]
 impl PyMsd {
     #[new]
-    #[pyo3(signature = (max_lag, *, origins = None, reduction = None))]
-    fn new(max_lag: usize, origins: Option<&str>, reduction: Option<&str>) -> Result<Self> {
+    #[pyo3(signature = (max_lag, *, origins = None, reduction = None, stride = None))]
+    fn new(
+        max_lag: usize,
+        origins: Option<&str>,
+        reduction: Option<&str>,
+        stride: Option<usize>,
+    ) -> Result<Self> {
         let mut inner = Msd::new(max_lag);
         if let Some(origins) = origins {
             inner = inner.with_origins(origins.parse()?);
         }
         if let Some(reduction) = reduction {
             inner = inner.with_reduction(reduction.parse()?);
+        }
+        if let Some(stride) = stride {
+            inner = inner.with_stride(stride)?;
         }
         Ok(Self { inner })
     }
@@ -208,6 +234,14 @@ described!(PyMsd, Msd);
 
 /// Velocity autocorrelation (``molrs::compute::Vacf``).
 ///
+/// Parameters
+/// ----------
+/// max_lag : int
+/// normalization : str, optional
+///     ``"unbiased"``, ``"biased"`` or ``"none"``.
+/// stride : int, optional
+///     Every ``stride``-th frame is an origin.
+///
 /// ``compute(velocities=, dt=)`` over a ``(T, C)`` velocity series.
 #[pyclass(module = "molrs.compute", name = "Vacf", frozen)]
 pub(crate) struct PyVacf {
@@ -217,10 +251,16 @@ pub(crate) struct PyVacf {
 #[pymethods]
 impl PyVacf {
     #[new]
-    fn new(max_lag: usize) -> Self {
-        Self {
-            inner: Vacf::new(max_lag),
+    #[pyo3(signature = (max_lag, *, normalization = None, stride = None))]
+    fn new(max_lag: usize, normalization: Option<&str>, stride: Option<usize>) -> Result<Self> {
+        let mut inner = Vacf::new(max_lag);
+        if let Some(normalization) = normalization {
+            inner = inner.with_normalization(normalization.parse()?);
         }
+        if let Some(stride) = stride {
+            inner = inner.with_stride(stride)?;
+        }
+        Ok(Self { inner })
     }
 
     #[pyo3(signature = (*, velocities, dt))]
@@ -238,6 +278,8 @@ described!(PyVacf, Vacf);
 /// Onsager cross-correlation of two ``(T, C)`` series
 /// (``molrs::compute::OnsagerCorrelation``).
 ///
+/// ``stride`` (optional): every ``stride``-th frame is an origin.
+///
 /// ``compute(a=, b=, dt=, boxes=None)``.
 #[pyclass(module = "molrs.compute", name = "OnsagerCorrelation", frozen)]
 pub(crate) struct PyOnsagerCorrelation {
@@ -247,10 +289,13 @@ pub(crate) struct PyOnsagerCorrelation {
 #[pymethods]
 impl PyOnsagerCorrelation {
     #[new]
-    fn new(max_lag: usize) -> Self {
-        Self {
-            inner: OnsagerCorrelation::new(max_lag),
+    #[pyo3(signature = (max_lag, *, stride = None))]
+    fn new(max_lag: usize, stride: Option<usize>) -> Result<Self> {
+        let mut inner = OnsagerCorrelation::new(max_lag);
+        if let Some(stride) = stride {
+            inner = inner.with_stride(stride)?;
         }
+        Ok(Self { inner })
     }
 
     #[pyo3(signature = (*, a, b, dt, boxes = None))]
@@ -281,7 +326,9 @@ described!(PyOnsagerCorrelation, OnsagerCorrelation);
 /// ----------
 /// max_lag : int
 /// normalization : str, optional
-///     ``"unbiased"`` or ``"none"`` (the raw lagged sum).
+///     ``"unbiased"``, ``"biased"`` or ``"none"`` (the raw lagged sum).
+/// stride : int, optional
+///     Every ``stride``-th frame is an origin.
 ///
 /// ``compute(dipoles=, dt=)``.
 #[pyclass(module = "molrs.compute", name = "DipoleAcf", frozen)]
@@ -292,11 +339,14 @@ pub(crate) struct PyDipoleAcf {
 #[pymethods]
 impl PyDipoleAcf {
     #[new]
-    #[pyo3(signature = (max_lag, *, normalization = None))]
-    fn new(max_lag: usize, normalization: Option<&str>) -> Result<Self> {
+    #[pyo3(signature = (max_lag, *, normalization = None, stride = None))]
+    fn new(max_lag: usize, normalization: Option<&str>, stride: Option<usize>) -> Result<Self> {
         let mut inner = DipoleAcf::new(max_lag);
         if let Some(normalization) = normalization {
             inner = inner.with_normalization(normalization.parse()?);
+        }
+        if let Some(stride) = stride {
+            inner = inner.with_stride(stride)?;
         }
         Ok(Self { inner })
     }
@@ -320,8 +370,10 @@ described!(PyDipoleAcf, DipoleAcf);
 /// ----------
 /// max_lag : int
 /// normalization : str, optional
-///     ``"unbiased"`` or ``"none"`` (the raw lagged sum, the former IR flux
-///     correlation).
+///     ``"unbiased"``, ``"biased"`` or ``"none"`` (the raw lagged sum, the
+///     former IR flux correlation).
+/// stride : int, optional
+///     Every ``stride``-th frame is an origin.
 ///
 /// ``compute(current=, dt=)``.
 #[pyclass(module = "molrs.compute", name = "CurrentAcf", frozen)]
@@ -332,11 +384,14 @@ pub(crate) struct PyCurrentAcf {
 #[pymethods]
 impl PyCurrentAcf {
     #[new]
-    #[pyo3(signature = (max_lag, *, normalization = None))]
-    fn new(max_lag: usize, normalization: Option<&str>) -> Result<Self> {
+    #[pyo3(signature = (max_lag, *, normalization = None, stride = None))]
+    fn new(max_lag: usize, normalization: Option<&str>, stride: Option<usize>) -> Result<Self> {
         let mut inner = CurrentAcf::new(max_lag);
         if let Some(normalization) = normalization {
             inner = inner.with_normalization(normalization.parse()?);
+        }
+        if let Some(stride) = stride {
+            inner = inner.with_stride(stride)?;
         }
         Ok(Self { inner })
     }
@@ -353,8 +408,18 @@ impl PyCurrentAcf {
 
 described!(PyCurrentAcf, CurrentAcf);
 
-/// Legendre reorientation correlation ``⟨P_l(u(0)·u(t))⟩`` of ``(T, N, 3)``
-/// unit vectors (``molrs::compute::ReorientationAcf``).
+/// Legendre reorientation correlation ``⟨P_l(u(0)·u(t))⟩`` of ``(T, N, D)``
+/// vectors, each normalised (``molrs::compute::ReorientationAcf``) — the
+/// orientational autocorrelation (OACF); ``l <= 2`` runs by FFT.
+///
+/// Parameters
+/// ----------
+/// l : int
+/// max_lag : int
+/// reduction : str, optional
+///     ``"mean"`` over vectors or ``"per_item"`` (one curve per vector).
+/// stride : int, optional
+///     Every ``stride``-th frame is an origin.
 ///
 /// ``compute(vectors=, dt=)``.
 #[pyclass(module = "molrs.compute", name = "ReorientationAcf", frozen)]
@@ -365,10 +430,16 @@ pub(crate) struct PyReorientationAcf {
 #[pymethods]
 impl PyReorientationAcf {
     #[new]
-    fn new(l: u32, max_lag: usize) -> Self {
-        Self {
-            inner: ReorientationAcf::new(l, max_lag),
+    #[pyo3(signature = (l, max_lag, *, reduction = None, stride = None))]
+    fn new(l: u32, max_lag: usize, reduction: Option<&str>, stride: Option<usize>) -> Result<Self> {
+        let mut inner = ReorientationAcf::new(l, max_lag);
+        if let Some(reduction) = reduction {
+            inner = inner.with_reduction(reduction.parse()?);
         }
+        if let Some(stride) = stride {
+            inner = inner.with_stride(stride)?;
+        }
+        Ok(Self { inner })
     }
 
     #[pyo3(signature = (*, vectors, dt))]

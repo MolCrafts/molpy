@@ -4,7 +4,8 @@ use molrs::op::F;
 use ndarray::{ArrayView2, Axis};
 
 use super::{
-    Correlator, CorrelatorAccumulator, CorrelatorInput, LagKernel, MeanPolicy, TimeCorrelation,
+    Correlator, CorrelatorAccumulator, CorrelatorInput, LagKernel, MeanPolicy, Normalization,
+    TimeCorrelation,
 };
 use crate::compute::{Compute, ComputeError, Stream};
 
@@ -43,6 +44,25 @@ impl Vacf {
         }
     }
 
+    /// Scale the lagged sums by `norm` (default [`Normalization::Unbiased`];
+    /// `Biased` for a VDOS that must stay non-negative).
+    pub fn with_normalization(self, norm: Normalization) -> Self {
+        Self {
+            correlator: self.correlator.with_normalization(norm),
+        }
+    }
+
+    /// Take every `stride`-th frame as a time origin (default
+    /// [`Correlator::DEFAULT_STRIDE`]; see [`Correlator::with_stride`]).
+    ///
+    /// # Errors
+    /// [`ComputeError::OutOfRange`] for `stride == 0`.
+    pub fn with_stride(self, stride: usize) -> Result<Self, ComputeError> {
+        Ok(Self {
+            correlator: self.correlator.with_stride(stride)?,
+        })
+    }
+
     /// The correlator this VACF is.
     pub fn correlator(&self) -> &Correlator {
         &self.correlator
@@ -77,6 +97,9 @@ crate::compute::spec::compute_spec! {
     Vacf as "Vacf";
     params |s| {
         max_lag: Int;
+        normalization: Choice(Normalization::NAMES)
+            = Normalization::default() => s.correlator.normalization();
+        stride: Int = Correlator::DEFAULT_STRIDE => s.correlator.stride();
     }
     inputs {
         velocities: Series;

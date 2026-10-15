@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "molcrafts-molrs"
-version = "0.17.0"
+version = "0.18.0"
 description = "Python bindings for molrs molecular simulation library"
 requires-python = ">=3.12"
 readme = "README.md"

@@ -284,16 +284,16 @@ fn every_class_built_from_required_arguments_holds_the_core_defaults() {
     use ParamValue::Float;
     holds_spec_defaults(
         ok(Correlator::new(
-            "product", 4, None, None, None, None, None, None,
+            "product", 4, None, None, None, None, None, None, None,
         )),
         &[],
     );
-    holds_spec_defaults(ok(Msd::new(4, None, None)), &[]);
-    holds_spec_defaults(Vacf::new(4), &[]);
-    holds_spec_defaults(OnsagerCorrelation::new(4), &[]);
-    holds_spec_defaults(ok(DipoleAcf::new(4, None)), &[]);
-    holds_spec_defaults(ok(CurrentAcf::new(4, None)), &[]);
-    holds_spec_defaults(ReorientationAcf::new(2, 4), &[]);
+    holds_spec_defaults(ok(Msd::new(4, None, None, None)), &[]);
+    holds_spec_defaults(ok(Vacf::new(4, None, None)), &[]);
+    holds_spec_defaults(ok(OnsagerCorrelation::new(4, None)), &[]);
+    holds_spec_defaults(ok(DipoleAcf::new(4, None, None)), &[]);
+    holds_spec_defaults(ok(CurrentAcf::new(4, None, None)), &[]);
+    holds_spec_defaults(ok(ReorientationAcf::new(2, 4, None, None)), &[]);
     holds_spec_defaults(ok(RotationalAutocorrelation::new(2, 4, None)), &[]);
     holds_spec_defaults(ok(Survival::new("continuous", 4, None, None)), &[]);
     holds_spec_defaults(ok(Derivative::new("central")), &[]);
@@ -424,7 +424,7 @@ fn every_class_built_from_required_arguments_holds_the_core_defaults() {
 /// A given optional reaches its setter; the rest keep the core's value.
 #[wasm_bindgen_test]
 fn a_given_option_is_applied_and_only_it() {
-    let msd = ok(Msd::new(4, None, Some("per_item".into())));
+    let msd = ok(Msd::new(4, None, Some("per_item".into()), None));
     let tunables = Bound::tunables(&msd);
     assert_eq!(tunables[1], ("reduction", ParamValue::Name("per_item")));
     assert_eq!(
@@ -456,7 +456,7 @@ fn time_series_curve_feeds_a_fit_through_its_handle() {
         ],
         &[3, 2, 3],
     );
-    let msd = ok(Msd::new(2, None, None));
+    let msd = ok(Msd::new(2, None, None, None));
     let curve = ok(msd.compute(&object(vec![
         ("positions", positions),
         ("dt", JsValue::from(0.5)),
@@ -675,7 +675,7 @@ fn voronoi_cells_feed_the_void_analysis() {
 #[wasm_bindgen_test]
 fn errors_are_the_core_compute_error() {
     // A missing field names the field.
-    let err = message(ok(Msd::new(2, None, None)).compute(&object(vec![(
+    let err = message(ok(Msd::new(2, None, None, None)).compute(&object(vec![(
         "positions",
         shaped(vec![0.0; 6], &[1, 2, 3]),
     )])));
@@ -685,7 +685,7 @@ fn errors_are_the_core_compute_error() {
     assert!(err.contains("continuous, intermittent"), "{err}");
     // A kernel's order is required where the core needs one and refused elsewhere.
     let err = message(Correlator::new(
-        "legendre", 2, None, None, None, None, None, None,
+        "legendre", 2, None, None, None, None, None, None, None,
     ));
     assert!(err.contains("required"), "{err}");
     let err = message(Correlator::new(
@@ -697,12 +697,16 @@ fn errors_are_the_core_compute_error() {
         None,
         None,
         None,
+        None,
     ));
     assert!(err.contains("only legendre"), "{err}");
     let err = message(Correlator::new(
-        "cosine", 2, None, None, None, None, None, None,
+        "cosine", 2, None, None, None, None, None, None, None,
     ));
     assert!(err.contains("unknown LagKernelKind"), "{err}");
+    // A zero origin stride is the core's refusal.
+    let err = message(Msd::new(2, None, None, Some(0)));
+    assert!(err.contains("stride"), "{err}");
     // The alternative constructor validates its constants.
     let err = message(KineticEnergy::with_constants(1.0, 0.0));
     assert!(err.contains("boltzmann"), "{err}");

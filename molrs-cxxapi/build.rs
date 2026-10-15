@@ -317,6 +317,8 @@ __MOLRS_ELEMENT_VARIANTS__    }
         type Msd;
         fn msd_new(max_lag: u64) -> Box<Msd>;
         fn set_origins(self: &mut Msd, origins: &str) -> Result<()>;
+        // Every `stride`-th frame is a time origin (origins "all"); 0 is an error.
+        fn set_stride(self: &mut Msd, stride: u64) -> Result<()>;
         fn compute(
             self: &Msd,
             positions: &[f64],
@@ -330,6 +332,9 @@ __MOLRS_ELEMENT_VARIANTS__    }
         // degrees of freedom. `compute` takes velocities [n_frames, n_dof] and dt.
         type Vacf;
         fn vacf_new(max_lag: u64) -> Box<Vacf>;
+        // "unbiased" (default), "biased" or "none"; every `stride`-th origin.
+        fn set_normalization(self: &mut Vacf, normalization: &str) -> Result<()>;
+        fn set_stride(self: &mut Vacf, stride: u64) -> Result<()>;
         fn compute(
             self: &Vacf,
             velocities: &[f64],

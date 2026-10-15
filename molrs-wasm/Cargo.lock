@@ -689,7 +689,7 @@ dependencies = [
 
 [[package]]
 name = "molcrafts-molrs"
-version = "0.17.0"
+version = "0.18.0"
 dependencies = [
  "flate2",
  "futures-util",
@@ -716,7 +716,7 @@ dependencies = [
 
 [[package]]
 name = "molcrafts-molrs-ffi"
-version = "0.17.0"
+version = "0.18.0"
 dependencies = [
  "molcrafts-molrs",
  "slotmap",
@@ -724,7 +724,7 @@ dependencies = [
 
 [[package]]
 name = "molrs"
-version = "0.17.0"
+version = "0.18.0"
 dependencies = [
  "console_error_panic_hook",
  "getrandom 0.4.3",

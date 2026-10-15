@@ -52,6 +52,7 @@ impl Correlator {
         mean: Option<String>,
         normalization: Option<String>,
         reduction: Option<String>,
+        stride: Option<usize>,
         dimension: Option<usize>,
     ) -> Result<Correlator, JsError> {
         let inner = mc::Correlator::new(mc::LagKernel::new(kernel.parse()?, l)?, max_lag)
@@ -59,6 +60,7 @@ impl Correlator {
             .given(mean, |c, v| Ok(c.with_mean(v.parse()?)))?
             .given(normalization, |c, v| Ok(c.with_normalization(v.parse()?)))?
             .given(reduction, |c, v| Ok(c.with_reduction(v.parse()?)))?
+            .given(stride, |c, v| c.with_stride(v))?
             .given(dimension, |c, v| Ok(c.with_dimension(v)))?;
         Ok(Self { inner })
     }
@@ -92,10 +94,12 @@ impl Msd {
         max_lag: usize,
         origins: Option<String>,
         reduction: Option<String>,
+        stride: Option<usize>,
     ) -> Result<Msd, JsError> {
         let inner = mc::Msd::new(max_lag)
             .given(origins, |c, v| Ok(c.with_origins(v.parse()?)))?
-            .given(reduction, |c, v| Ok(c.with_reduction(v.parse()?)))?;
+            .given(reduction, |c, v| Ok(c.with_reduction(v.parse()?)))?
+            .given(stride, |c, v| c.with_stride(v))?;
         Ok(Self { inner })
     }
 
@@ -121,11 +125,18 @@ pub struct Vacf {
 
 #[wasm_bindgen]
 impl Vacf {
+    /// `normalization` is a [`Normalization`](mc::Normalization) name;
+    /// `stride` takes every `stride`-th frame as an origin.
     #[wasm_bindgen(constructor)]
-    pub fn new(max_lag: usize) -> Vacf {
-        Self {
-            inner: mc::Vacf::new(max_lag),
-        }
+    pub fn new(
+        max_lag: usize,
+        normalization: Option<String>,
+        stride: Option<usize>,
+    ) -> Result<Vacf, JsError> {
+        let inner = mc::Vacf::new(max_lag)
+            .given(normalization, |c, v| Ok(c.with_normalization(v.parse()?)))?
+            .given(stride, |c, v| c.with_stride(v))?;
+        Ok(Self { inner })
     }
 
     /// `{ velocities, dt }`: `velocities` is `T × n_dof`.
@@ -148,11 +159,11 @@ pub struct OnsagerCorrelation {
 
 #[wasm_bindgen]
 impl OnsagerCorrelation {
+    /// `stride` takes every `stride`-th frame as an origin.
     #[wasm_bindgen(constructor)]
-    pub fn new(max_lag: usize) -> OnsagerCorrelation {
-        Self {
-            inner: mc::OnsagerCorrelation::new(max_lag),
-        }
+    pub fn new(max_lag: usize, stride: Option<usize>) -> Result<OnsagerCorrelation, JsError> {
+        let inner = mc::OnsagerCorrelation::new(max_lag).given(stride, |c, v| c.with_stride(v))?;
+        Ok(Self { inner })
     }
 
     /// `{ a, b, dt, boxes? }`: `a`, `b` are `T × 3`, unwrapped.
@@ -181,9 +192,14 @@ pub struct DipoleAcf {
 impl DipoleAcf {
     /// `normalization` is a [`Normalization`](mc::Normalization) name.
     #[wasm_bindgen(constructor)]
-    pub fn new(max_lag: usize, normalization: Option<String>) -> Result<DipoleAcf, JsError> {
+    pub fn new(
+        max_lag: usize,
+        normalization: Option<String>,
+        stride: Option<usize>,
+    ) -> Result<DipoleAcf, JsError> {
         let inner = mc::DipoleAcf::new(max_lag)
-            .given(normalization, |c, v| Ok(c.with_normalization(v.parse()?)))?;
+            .given(normalization, |c, v| Ok(c.with_normalization(v.parse()?)))?
+            .given(stride, |c, v| c.with_stride(v))?;
         Ok(Self { inner })
     }
 
@@ -210,9 +226,14 @@ impl CurrentAcf {
     /// `normalization` is a [`Normalization`](mc::Normalization) name
     /// (`"none"`: the raw lagged sum of the former IR flux correlation).
     #[wasm_bindgen(constructor)]
-    pub fn new(max_lag: usize, normalization: Option<String>) -> Result<CurrentAcf, JsError> {
+    pub fn new(
+        max_lag: usize,
+        normalization: Option<String>,
+        stride: Option<usize>,
+    ) -> Result<CurrentAcf, JsError> {
         let inner = mc::CurrentAcf::new(max_lag)
-            .given(normalization, |c, v| Ok(c.with_normalization(v.parse()?)))?;
+            .given(normalization, |c, v| Ok(c.with_normalization(v.parse()?)))?
+            .given(stride, |c, v| c.with_stride(v))?;
         Ok(Self { inner })
     }
 
@@ -236,14 +257,22 @@ pub struct ReorientationAcf {
 
 #[wasm_bindgen]
 impl ReorientationAcf {
+    /// `reduction` is `mean` or `per_item`; `stride` takes every
+    /// `stride`-th frame as an origin. Orders 1 and 2 run by FFT.
     #[wasm_bindgen(constructor)]
-    pub fn new(l: u32, max_lag: usize) -> ReorientationAcf {
-        Self {
-            inner: mc::ReorientationAcf::new(l, max_lag),
-        }
+    pub fn new(
+        l: u32,
+        max_lag: usize,
+        reduction: Option<String>,
+        stride: Option<usize>,
+    ) -> Result<ReorientationAcf, JsError> {
+        let inner = mc::ReorientationAcf::new(l, max_lag)
+            .given(reduction, |c, v| Ok(c.with_reduction(v.parse()?)))?
+            .given(stride, |c, v| c.with_stride(v))?;
+        Ok(Self { inner })
     }
 
-    /// `{ vectors, dt }`: `vectors` is `T × N × 3`.
+    /// `{ vectors, dt }`: `vectors` is `T × N × D`, each normalised.
     pub fn compute(&self, data: &JsValue) -> Result<TimeCorrelation, JsError> {
         let data = Fields::new(data, "ReorientationAcf")?;
         let vectors = data.cube("vectors")?;

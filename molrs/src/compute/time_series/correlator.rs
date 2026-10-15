@@ -1,20 +1,20 @@
 //! [`Correlator`] — the one time-correlation estimator of molrs.
 
 use std::ops::Range;
-use std::sync::Arc;
 
 use molrs::core::SimBox;
 use molrs::op::F;
 use ndarray::{Array1, Array2, Array3, ArrayView3, ArrayViewMut2, Axis};
-use rustfft::num_complex::Complex64;
-use rustfft::num_traits::Zero;
-use rustfft::{Fft, FftPlanner};
+use rustfft::FftPlanner;
 
 use super::guards::{first_wrapped_item, require_finite, require_presence};
 use super::{
     LagKernel, LagKernelKind, MeanPolicy, Normalization, Origins, Reduction, TimeCorrelation,
 };
 use crate::compute::{Compute, ComputeError};
+
+mod column_fft;
+use column_fft::ColumnFft;
 
 /// Items per parallel work unit of the FFT path. Fixed, so the summation
 /// order — and therefore every bit of the result — does not depend on the
@@ -37,10 +37,11 @@ const ITEMS_PER_CHUNK: usize = 32;
 /// ```
 ///
 /// with `y = x` (auto) unless a second series `b` is given (cross), `n(t)` the
-/// number of origins (`T − t` for `All`, `1` for `First`) under
-/// `Normalization::Unbiased` and `1` under `Normalization::None`, and `⊕` the
-/// mean over items (`Reduction::Mean`), one channel per item (`PerItem`) or
-/// one per component (`PerComponent`).
+/// number of origins under `Normalization::Unbiased` (`T − t` for `All`,
+/// `⌊(T − 1 − t)/s⌋ + 1` with an origin [stride](Self::with_stride) `s`, `1`
+/// for `First`), `n(0)` under `Normalization::Biased` and `1` under
+/// `Normalization::None`, and `⊕` the mean over items (`Reduction::Mean`), one
+/// channel per item (`PerItem`) or one per component (`PerComponent`).
 ///
 /// # Evaluation
 ///
@@ -50,8 +51,13 @@ const ITEMS_PER_CHUNK: usize = 32;
 /// which makes the correlation linear rather than circular, in `O(T log T)`
 /// per column; the lagged squared displacement adds the `S`-recurrence of
 /// Kneller et al., *Comput. Phys. Commun.* **91**, 191 (1995) (nMoldyn).
-/// Everything else — a single origin, or a kernel that is nonlinear in the
-/// item's vector — is summed directly. The streaming form,
+/// A strided origin set stays on the FFT path as a cross-correlation of the
+/// origin-masked series (the squared displacement expanded into masked
+/// cross-correlations plus a prefix sum). The Legendre kernel of order
+/// `l ≤ 2` factorises into products of the unit vectors and of their
+/// quadratic components and runs on the same FFT. Everything else — a
+/// single origin, or a kernel that is nonlinear in the item's vector — is
+/// summed directly. The streaming form,
 /// [`accumulator`](crate::compute::Stream::accumulator), folds one frame at a
 /// time over a ring of the last `max_lag` frames and equals this batch result
 /// to FFT round-off at every lag.
@@ -88,6 +94,7 @@ pub struct Correlator {
     mean: MeanPolicy,
     norm: Normalization,
     reduce: Reduction,
+    stride: usize,
     dimension: Option<usize>,
 }
 
@@ -118,8 +125,31 @@ impl Correlator {
             mean: MeanPolicy::default(),
             norm: Normalization::default(),
             reduce: Reduction::default(),
+            stride: Self::DEFAULT_STRIDE,
             dimension: None,
         }
+    }
+
+    /// The origin stride when not set: every frame is an origin.
+    pub const DEFAULT_STRIDE: usize = 1;
+
+    /// Take every `stride`-th frame, `τ = 0, s, 2s, …`, as a time origin
+    /// (default [`DEFAULT_STRIDE`](Self::DEFAULT_STRIDE)): fewer, less
+    /// correlated origins for a long trajectory. Applies to [`Origins::All`];
+    /// [`Origins::First`] with a stride other than 1 is refused at `compute`.
+    /// The linear kernels stay on the FFT path (a masked cross-correlation).
+    ///
+    /// # Errors
+    /// [`ComputeError::OutOfRange`] for `stride == 0`.
+    pub fn with_stride(mut self, stride: usize) -> Result<Self, ComputeError> {
+        if stride == 0 {
+            return Err(ComputeError::OutOfRange {
+                field: "stride",
+                value: stride.to_string(),
+            });
+        }
+        self.stride = stride;
+        Ok(self)
     }
 
     /// Average over these time origins.
@@ -185,6 +215,21 @@ impl Correlator {
         self.reduce
     }
 
+    /// The origin stride.
+    pub fn stride(&self) -> usize {
+        self.stride
+    }
+
+    /// The number of time origins `n(t)` lag `lag` is averaged over in a
+    /// trajectory of `n_frames`: `⌊(T − 1 − t)/s⌋ + 1` for [`Origins::All`]
+    /// (`T − t` at stride 1), `1` for [`Origins::First`].
+    pub(super) fn origin_count(&self, n_frames: usize, lag: usize) -> usize {
+        match self.origins {
+            Origins::All => (n_frames - 1 - lag) / self.stride + 1,
+            Origins::First => 1,
+        }
+    }
+
     /// The required number of components per item, if fixed.
     pub fn dimension(&self) -> Option<usize> {
         self.dimension
@@ -226,6 +271,12 @@ impl Correlator {
                     what: "components per item",
                 });
             }
+        }
+        if self.origins == Origins::First && self.stride != 1 {
+            return Err(ComputeError::OutOfRange {
+                field: "stride (a single first origin has no stride)",
+                value: self.stride.to_string(),
+            });
         }
         if !self.kernel.is_linear() {
             let refuse = |field: &'static str, what: &str| {
@@ -285,9 +336,10 @@ impl Correlator {
             Reduction::PerItem => 1.0,
         };
         for (lag, mut row) in sums.axis_iter_mut(Axis(0)).enumerate() {
-            let factor = match (self.norm, self.origins) {
-                (Normalization::Unbiased, Origins::All) => per_item / (n_frames - lag) as F,
-                (Normalization::Unbiased, Origins::First) | (Normalization::None, _) => per_item,
+            let factor = match self.norm {
+                Normalization::Unbiased => per_item / self.origin_count(n_frames, lag) as F,
+                Normalization::Biased => per_item / self.origin_count(n_frames, 0) as F,
+                Normalization::None => per_item,
             };
             row *= factor;
         }
@@ -426,6 +478,7 @@ impl Correlator {
         let mut fft = ColumnFft::new(planner, n_frames);
         let mut col_a = vec![0.0; n_frames];
         let mut col_b = vec![0.0; n_frames];
+        let mut scratch = vec![0.0; if self.stride > 1 { 3 * n_frames } else { 0 }];
         let center =
             self.mean == MeanPolicy::Subtract || self.kernel == LagKernel::SquaredDisplacement;
         for item in items {
@@ -439,18 +492,22 @@ impl Correlator {
                     .row_mut(row)
                     .into_slice()
                     .expect("a fresh Array2 row is contiguous");
-                match b {
-                    None => match self.kernel {
-                        LagKernel::Product => fft.auto_product(&col_a, target),
-                        _ => fft.auto_displacement(&col_a, target),
-                    },
+                let y = match b {
                     Some(b) => {
                         fill_column(b, item, component, center, &mut col_b);
-                        match self.kernel {
-                            LagKernel::Product => fft.cross_product(&col_a, &col_b, target),
-                            _ => fft.cross_displacement(&col_a, &col_b, target),
-                        }
+                        &col_b
                     }
+                    None => &col_a,
+                };
+                match (self.stride, b.is_some(), self.kernel) {
+                    (1, false, LagKernel::Product) => fft.auto_product(&col_a, target),
+                    (1, false, _) => fft.auto_displacement(&col_a, target),
+                    (1, true, LagKernel::Product) => fft.cross_product(&col_a, y, target),
+                    (1, true, _) => fft.cross_displacement(&col_a, y, target),
+                    (s, _, LagKernel::Product) => {
+                        fft.strided_product(&col_a, y, s, &mut scratch[..n_frames], target)
+                    }
+                    (s, _, _) => fft.strided_displacement(&col_a, y, s, &mut scratch, target),
                 }
             }
         }
@@ -482,8 +539,8 @@ impl Correlator {
         let lag_row = |lag: usize| -> Vec<F> {
             let mut row = vec![0.0; n_channels];
             let origins = match self.origins {
-                Origins::All => 0..n_frames - lag,
-                Origins::First => 0..1,
+                Origins::All => (0..n_frames - lag).step_by(self.stride),
+                Origins::First => (0..1).step_by(1),
             };
             for origin in origins {
                 let late = origin + lag;
@@ -536,6 +593,47 @@ impl Correlator {
     /// The samples an orientation kernel reads — unit vectors for Legendre,
     /// non-zero quaternions for Wigner-D — in standard layout; `None` for the
     /// other kernels.
+    /// Lagged sums of the Legendre kernel of order `l ≤ 2` over all origins,
+    /// by FFT. `P_l` is a polynomial in the dot product of the unit vectors,
+    /// so it factorises: `P_1(û·v̂) = Σ_d û_d v̂_d` is the product kernel of
+    /// the unit vectors, and `P_2(û·v̂) = (3 Q(û)·Q(v̂) − 1)/2` with
+    /// `Q = (x², y², z², √2 xy, √2 xz, √2 yz)` for 3-vectors (in general the
+    /// `D(D+1)/2` independent components of `û ⊗ û`, off-diagonals weighted
+    /// `√2`), whose dot product is `(û·v̂)²`. The lagged sums of `Q·Q` come
+    /// from the product kernel; the constant `−½` contributes once per origin
+    /// and item. Returns `(max_lag + 1) × channels`, raw.
+    fn legendre_fft_sums(&self, a: ArrayView3<'_, F>, l: u32) -> Result<Array2<F>, ComputeError> {
+        let samples = self
+            .kernel_samples(a)?
+            .expect("the Legendre kernel normalises its samples");
+        let (n_frames, n_items, _) = samples.dim();
+        let product = Self {
+            kernel: LagKernel::Product,
+            mean: MeanPolicy::Keep,
+            dimension: None,
+            ..*self
+        };
+        let mut sums = match l {
+            0 => Array2::zeros((self.max_lag + 1, self.n_channels(n_items, 1))),
+            1 => return Ok(product.fft_sums(samples.view(), None)),
+            _ => product.fft_sums(quadratic_components(&samples).view(), None),
+        };
+        let items_per_channel = match self.reduce {
+            Reduction::PerItem => 1.0,
+            Reduction::Mean | Reduction::PerComponent => n_items as F,
+        };
+        for (lag, mut row) in sums.axis_iter_mut(Axis(0)).enumerate() {
+            // P_0 = 1 and the -1/2 of P_2 count once per origin and item.
+            let ones = items_per_channel * self.origin_count(n_frames, lag) as F;
+            if l == 0 {
+                row.fill(ones);
+            } else {
+                row.mapv_inplace(|qq| 1.5 * qq - 0.5 * ones);
+            }
+        }
+        Ok(sums)
+    }
+
     fn kernel_samples(&self, a: ArrayView3<'_, F>) -> Result<Option<Array3<F>>, ComputeError> {
         match self.kernel {
             LagKernel::Legendre { .. } | LagKernel::WignerD { .. } => {
@@ -587,10 +685,11 @@ impl Compute for Correlator {
 
     fn compute(&self, input: CorrelatorInput<'_>) -> Result<TimeCorrelation, ComputeError> {
         let (n_frames, n_items, _) = self.validate(&input)?;
-        let sums = if self.kernel.is_linear() && self.origins == Origins::All {
-            self.fft_sums(input.a, input.b)
-        } else {
-            self.direct_sums(input.a, input.b)?
+        let sums = match self.kernel {
+            _ if self.origins == Origins::First => self.direct_sums(input.a, input.b)?,
+            LagKernel::Product | LagKernel::SquaredDisplacement => self.fft_sums(input.a, input.b),
+            LagKernel::Legendre { l } if l <= 2 => self.legendre_fft_sums(input.a, l)?,
+            _ => self.direct_sums(input.a, input.b)?,
         };
         Ok(self.normalize(sums, n_frames, n_items, input.dt))
     }
@@ -604,6 +703,31 @@ pub(super) fn linear_term(kernel: LagKernel, x: [F; 2], y: [F; 2]) -> F {
         LagKernel::Product => x[0] * y[1],
         _ => (x[1] - x[0]) * (y[1] - y[0]),
     }
+}
+
+/// The `D(D+1)/2` independent components of `û ⊗ û` per item, the
+/// off-diagonal ones weighted `√2`, so that `Q(û) · Q(v̂) = (û · v̂)²`.
+fn quadratic_components(samples: &Array3<F>) -> Array3<F> {
+    let (n_frames, n_items, n_components) = samples.dim();
+    let n_q = n_components * (n_components + 1) / 2;
+    let mut q = Array3::<F>::zeros((n_frames, n_items, n_q));
+    for frame in 0..n_frames {
+        for item in 0..n_items {
+            let u = sample(samples, frame, item);
+            let mut k = 0;
+            for i in 0..n_components {
+                for j in i..n_components {
+                    q[[frame, item, k]] = if i == j {
+                        u[i] * u[i]
+                    } else {
+                        std::f64::consts::SQRT_2 * u[i] * u[j]
+                    };
+                    k += 1;
+                }
+            }
+        }
+    }
+    q
 }
 
 /// One item's sample of a standard-layout `T × N × D` array.
@@ -674,107 +798,6 @@ fn presence_runs(presence: ArrayView3<'_, F>) -> Array2<usize> {
     runs
 }
 
-/// Zero-padded FFT of one column at a time, with buffers reused across
-/// columns. Padding to `(2T).next_power_of_two()` makes every correlation
-/// linear; each method *adds* lags `0 … out.len() − 1` into `out`.
-struct ColumnFft {
-    forward: Arc<dyn Fft<F>>,
-    inverse: Arc<dyn Fft<F>>,
-    scale: F,
-    buf_a: Vec<Complex64>,
-    buf_b: Vec<Complex64>,
-}
-
-impl ColumnFft {
-    fn new(planner: &mut FftPlanner<F>, n_frames: usize) -> Self {
-        let n_pad = (2 * n_frames).next_power_of_two();
-        Self {
-            forward: planner.plan_fft_forward(n_pad),
-            inverse: planner.plan_fft_inverse(n_pad),
-            scale: 1.0 / n_pad as F,
-            buf_a: vec![Complex64::zero(); n_pad],
-            buf_b: vec![Complex64::zero(); n_pad],
-        }
-    }
-
-    fn load(buf: &mut [Complex64], column: &[F]) {
-        for (slot, &v) in buf.iter_mut().zip(column) {
-            *slot = Complex64::new(v, 0.0);
-        }
-        for slot in buf[column.len()..].iter_mut() {
-            *slot = Complex64::zero();
-        }
-    }
-
-    /// `buf_a ← IFFT(|FFT x|²)`: the unscaled linear autocorrelation.
-    fn autocorrelate(&mut self, x: &[F]) {
-        Self::load(&mut self.buf_a, x);
-        self.forward.process(&mut self.buf_a);
-        for z in self.buf_a.iter_mut() {
-            *z = Complex64::new(z.norm_sqr(), 0.0);
-        }
-        self.inverse.process(&mut self.buf_a);
-    }
-
-    /// `buf_a ← IFFT(conj(FFT x) · FFT y)`: index `m` holds the unscaled
-    /// `Σ_τ x(τ) y(τ + m)`, index `n_pad − m` the reverse `Σ_τ y(τ) x(τ + m)`.
-    fn cross_correlate(&mut self, x: &[F], y: &[F]) {
-        Self::load(&mut self.buf_a, x);
-        Self::load(&mut self.buf_b, y);
-        self.forward.process(&mut self.buf_a);
-        self.forward.process(&mut self.buf_b);
-        for (za, zb) in self.buf_a.iter_mut().zip(self.buf_b.iter()) {
-            *za = za.conj() * zb;
-        }
-        self.inverse.process(&mut self.buf_a);
-    }
-
-    /// `Σ_τ x(τ) x(τ + t)`.
-    fn auto_product(&mut self, x: &[F], out: &mut [F]) {
-        self.autocorrelate(x);
-        for (slot, z) in out.iter_mut().zip(&self.buf_a) {
-            *slot += z.re * self.scale;
-        }
-    }
-
-    /// `Σ_τ x(τ) y(τ + t)`.
-    fn cross_product(&mut self, x: &[F], y: &[F], out: &mut [F]) {
-        self.cross_correlate(x, y);
-        for (slot, z) in out.iter_mut().zip(&self.buf_a) {
-            *slot += z.re * self.scale;
-        }
-    }
-
-    /// `Σ_τ (x(τ + t) − x(τ))²` as `S(t) − 2 Σ_τ x(τ) x(τ + t)`, with
-    /// `S(t) = Σ_{τ < T − t} x(τ)² + x(τ + t)²` peeled one lag at a time.
-    fn auto_displacement(&mut self, x: &[F], out: &mut [F]) {
-        self.autocorrelate(x);
-        let n = x.len();
-        let mut s: F = 2.0 * x.iter().map(|v| v * v).sum::<F>();
-        for (lag, slot) in out.iter_mut().enumerate() {
-            *slot += s - 2.0 * self.buf_a[lag].re * self.scale;
-            s -= x[lag] * x[lag] + x[n - 1 - lag] * x[n - 1 - lag];
-        }
-    }
-
-    /// `Σ_τ (x(τ + t) − x(τ)) · (y(τ + t) − y(τ))` as
-    /// `S(t) − Σ_τ x(τ) y(τ + t) − Σ_τ y(τ) x(τ + t)`, with `S` over
-    /// `x · y`.
-    fn cross_displacement(&mut self, x: &[F], y: &[F], out: &mut [F]) {
-        self.cross_correlate(x, y);
-        let n = x.len();
-        let n_pad = self.buf_a.len();
-        let xy = |t: usize| x[t] * y[t];
-        let mut s: F = 2.0 * (0..n).map(xy).sum::<F>();
-        for (lag, slot) in out.iter_mut().enumerate() {
-            let forward = self.buf_a[lag].re * self.scale;
-            let backward = self.buf_a[(n_pad - lag) % n_pad].re * self.scale;
-            *slot += s - forward - backward;
-            s -= xy(lag) + xy(n - 1 - lag);
-        }
-    }
-}
-
 crate::compute::spec::compute_spec! {
     Correlator as "Correlator";
     params |s| {
@@ -785,6 +808,7 @@ crate::compute::spec::compute_spec! {
         mean: Choice(MeanPolicy::NAMES) = MeanPolicy::default() => s.mean;
         normalization: Choice(Normalization::NAMES) = Normalization::default() => s.norm;
         reduction: Choice(Reduction::NAMES) = Reduction::default() => s.reduce;
+        stride: Int = Correlator::DEFAULT_STRIDE => s.stride;
         dimension: Int = crate::compute::ParamDefault::UNSET => s.dimension;
     }
     inputs {

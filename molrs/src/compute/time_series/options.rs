@@ -18,14 +18,18 @@ use crate::compute::named_enum::named_enum;
 /// |---|---|---|
 /// | `Product` | `Σ_d x_d(τ) · y_d(τ+t)` | FFT (Wiener–Khinchin) |
 /// | `SquaredDisplacement` | `Σ_d (x_d(τ+t) − x_d(τ)) · (y_d(τ+t) − y_d(τ))` | FFT + `S` recurrence |
-/// | `Legendre { l }` | `P_l(x̂(τ) · x̂(τ+t))` of the normalised vectors | direct |
+/// | `Legendre { l }` | `P_l(x̂(τ) · x̂(τ+t))` of the normalised vectors | FFT for `l ≤ 2` over all origins, else direct |
 /// | `WignerD { l }` | `χ_l(θ) / (2l + 1)`, `θ` the angle of `q(τ+t) · q(τ)*` | direct |
 /// | `Persistence` | `1` if `x(τ) = 1` and the 0/1 presence `y` stayed `1` over `[τ, τ+t]` | direct |
 ///
 /// `Product` and `SquaredDisplacement` are linear in each component, so they
 /// decompose over components and evaluate in `O(T log T)` per column; the
 /// other three are nonlinear in the item's vector and are summed directly
-/// (`O(T · L)` per item).
+/// (`O(T · L)` per item) — except `Legendre` of order 1 and 2, which are
+/// polynomials in the dot product and so factorise exactly: `P_1` is the
+/// product of the unit vectors and `P_2 = (3 Q(τ)·Q(τ+t) − 1)/2` with `Q` the
+/// six independent components of `û ⊗ û` (cross terms weighted `√2`), both
+/// evaluated by FFT.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum LagKernel {
     /// Lagged product, auto (`x = y`) or cross.
@@ -208,10 +212,15 @@ named_enum! {
     #[derive(Default)]
     pub enum Normalization {
         /// Divide by the number of origins that exist at that lag (`T − t` for
-        /// [`Origins::All`], `1` for [`Origins::First`]) — the unbiased
-        /// estimator.
+        /// [`Origins::All`], `⌊(T − 1 − t)/s⌋ + 1` with an origin stride `s`,
+        /// `1` for [`Origins::First`]) — the unbiased estimator.
         #[default]
         Unbiased => "unbiased",
+        /// Divide every lag by the origin count of lag 0, so the tail tapers
+        /// as `n(t)/n(0)` — the biased (Bartlett) estimator, whose transform
+        /// is a non-negative power spectrum. Identical to `Unbiased` for
+        /// [`Origins::First`].
+        Biased => "biased",
         /// Leave the raw sum over origins.
         None => "none",
     }

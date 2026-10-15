@@ -11,7 +11,7 @@ resolver = "3"
 [workspace.package]
 # Keep standalone binding manifests and Python metadata on this version.
 # Downstream consumers pin the major.minor ABI line; release history is in tags.
-version = "0.17.0"
+version = "0.18.0"
 edition = "2024"
 rust-version = "1.91"
 license = "BSD-3-Clause"

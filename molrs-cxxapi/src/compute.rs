@@ -96,6 +96,14 @@ fn optional_simboxes(h: &[f64], n_frames: usize) -> Result<Option<Vec<SimBox>>, 
 
 // ── Time correlations ───────────────────────────────────────────────────────
 
+/// A C++ `u64` count as a `usize`.
+fn to_usize(value: u64, field: &'static str) -> Result<usize, ComputeError> {
+    usize::try_from(value).map_err(|_| ComputeError::OutOfRange {
+        field,
+        value: value.to_string(),
+    })
+}
+
 /// A correlation curve — molrs `compute::TimeCorrelation`, the output of
 /// [`Msd`], [`Vacf`] and their [`CorrelatorAccumulator`].
 pub struct TimeCorrelation {
@@ -200,6 +208,17 @@ impl Msd {
         Ok(())
     }
 
+    /// Take every `stride`-th frame as a time origin — molrs
+    /// `Msd::with_stride`.
+    ///
+    /// # Errors
+    /// [`ComputeError::OutOfRange`] for `stride == 0` (a stride with the
+    /// `"first"` origin is refused at `compute`).
+    pub fn set_stride(&mut self, stride: u64) -> Result<(), ComputeError> {
+        self.inner = self.inner.with_stride(to_usize(stride, "stride")?)?;
+        Ok(())
+    }
+
     /// The MSD of a `[n_frames, 3 · n_atoms]` unwrapped position buffer at
     /// frame spacing `dt`; `boxes` holds one H per frame to reject a wrapped
     /// trajectory, or is empty to skip that check.
@@ -247,6 +266,26 @@ pub(crate) fn vacf_new(max_lag: u64) -> Box<Vacf> {
 }
 
 impl Vacf {
+    /// Scale the lagged sums — molrs `Vacf::with_normalization`, parsed by
+    /// the molrs `Normalization` names.
+    ///
+    /// # Errors
+    /// [`ComputeError::UnknownName`] for any other name.
+    pub fn set_normalization(&mut self, normalization: &str) -> Result<(), ComputeError> {
+        self.inner = self.inner.with_normalization(normalization.parse()?);
+        Ok(())
+    }
+
+    /// Take every `stride`-th frame as a time origin — molrs
+    /// `Vacf::with_stride`.
+    ///
+    /// # Errors
+    /// [`ComputeError::OutOfRange`] for `stride == 0`.
+    pub fn set_stride(&mut self, stride: u64) -> Result<(), ComputeError> {
+        self.inner = self.inner.with_stride(to_usize(stride, "stride")?)?;
+        Ok(())
+    }
+
     /// The VACF of a `[n_frames, n_dof]` velocity buffer at frame spacing `dt`.
     ///
     /// # Errors
@@ -524,6 +563,43 @@ mod tests {
             Err(ComputeError::UnknownName { .. })
         ));
         msd.set_origins("first").unwrap();
+        assert!(matches!(
+            msd.set_stride(0),
+            Err(ComputeError::OutOfRange { .. })
+        ));
+        // A stride with the single first origin is the compute's refusal.
+        msd.set_stride(2).unwrap();
+        assert!(matches!(
+            msd.compute(&[0.0; 9], 3, 1.0, &[]),
+            Err(ComputeError::OutOfRange { .. })
+        ));
+    }
+
+    #[test]
+    fn vacf_takes_a_normalization_and_a_stride() {
+        let (t, n_dof) = (9, 2);
+        let velocities: Vec<f64> = (0..t * n_dof).map(|k| (k as f64 * 0.7).sin()).collect();
+        let mut vacf = vacf_new(3);
+        assert!(matches!(
+            vacf.set_normalization("weird"),
+            Err(ComputeError::UnknownName { .. })
+        ));
+        vacf.set_normalization("biased").unwrap();
+        vacf.set_stride(2).unwrap();
+        let batch = vacf.compute(&velocities, t as u64, 1.0).unwrap();
+        let mut acc = vacf.accumulator();
+        for frame in velocities.chunks(n_dof) {
+            acc.push(frame, 1.0, &[]).unwrap();
+        }
+        let streamed = acc.finish().unwrap();
+        for (a, b) in batch
+            .channel(0)
+            .unwrap()
+            .iter()
+            .zip(streamed.channel(0).unwrap())
+        {
+            assert!((a - b).abs() < 1e-12, "{a} vs {b}");
+        }
     }
 
     #[test]

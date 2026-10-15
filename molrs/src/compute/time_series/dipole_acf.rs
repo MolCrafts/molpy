@@ -57,6 +57,17 @@ impl DipoleAcf {
         self
     }
 
+    /// Take every `stride`-th frame as a time origin (default
+    /// [`Correlator::DEFAULT_STRIDE`]; see [`Correlator::with_stride`]).
+    ///
+    /// # Errors
+    /// [`ComputeError::OutOfRange`] for `stride == 0`.
+    pub fn with_stride(self, stride: usize) -> Result<Self, ComputeError> {
+        Ok(Self {
+            correlator: self.correlator.with_stride(stride)?,
+        })
+    }
+
     /// The correlator this ACF is.
     pub fn correlator(&self) -> &Correlator {
         &self.correlator
@@ -91,6 +102,7 @@ crate::compute::spec::compute_spec! {
         max_lag: Int;
         normalization: Choice(Normalization::NAMES)
             = Normalization::default() => s.correlator.normalization();
+        stride: Int = Correlator::DEFAULT_STRIDE => s.correlator.stride();
     }
     inputs {
         dipoles: Series;

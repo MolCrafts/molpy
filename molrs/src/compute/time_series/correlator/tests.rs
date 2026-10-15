@@ -29,11 +29,15 @@ pub(super) fn definition(c: &Correlator, a: &Array3<F>, b: Option<&Array3<F>>) -
         Reduction::PerComponent => d,
     };
     let mut out = Array2::<F>::zeros((c.max_lag() + 1, n_channels));
+    let origins_at = |lag: usize| -> Vec<usize> {
+        match c.origins() {
+            Origins::All => (0..n_frames - lag).step_by(c.stride()).collect(),
+            Origins::First => vec![0],
+        }
+    };
+    let count_at_zero = origins_at(0).len() as F;
     for lag in 0..=c.max_lag() {
-        let origins = match c.origins() {
-            Origins::All => 0..n_frames - lag,
-            Origins::First => 0..1,
-        };
+        let origins = origins_at(lag);
         let count = origins.len() as F;
         for tau in origins {
             for i in 0..n_items {
@@ -56,6 +60,7 @@ pub(super) fn definition(c: &Correlator, a: &Array3<F>, b: Option<&Array3<F>>) -
                         let cosine = early.iter().zip(&late).map(|(p, q)| p * q).sum::<F>()
                             / (norm(&early) * norm(&late));
                         out[[lag, channel(i, 0)]] += match l {
+                            0 => 1.0,
                             1 => cosine,
                             2 => 0.5 * (3.0 * cosine * cosine - 1.0),
                             3 => 0.5 * (5.0 * cosine.powi(3) - 3.0 * cosine),
@@ -94,6 +99,7 @@ pub(super) fn definition(c: &Correlator, a: &Array3<F>, b: Option<&Array3<F>>) -
         };
         let per_origin = match c.normalization() {
             Normalization::Unbiased => 1.0 / count,
+            Normalization::Biased => 1.0 / count_at_zero,
             Normalization::None => 1.0,
         };
         out.row_mut(lag).mapv_inplace(|v| v * per_item * per_origin);
@@ -150,13 +156,21 @@ pub(super) fn input<'a>(a: &'a Array3<F>, b: Option<&'a Array3<F>>) -> Correlato
 fn configurations() -> Vec<(Correlator, Array3<F>, Option<Array3<F>>)> {
     let mut out = Vec::new();
     let max_lag = 9;
-    for origins in Origins::ALL.iter().copied() {
+    // Every origin set: all (stride 1 and a stride that does not divide
+    // the trajectory) and the first.
+    let origin_sets = [(Origins::All, 1), (Origins::All, 3), (Origins::First, 1)];
+    for (origins, stride) in origin_sets {
+        let base = |kernel| {
+            Correlator::new(kernel, max_lag)
+                .with_origins(origins)
+                .with_stride(stride)
+                .unwrap()
+        };
         for kernel in [LagKernel::Product, LagKernel::SquaredDisplacement] {
             for mean in MeanPolicy::ALL.iter().copied() {
                 for norm in Normalization::ALL.iter().copied() {
                     for reduce in Reduction::ALL.iter().copied() {
-                        let c = Correlator::new(kernel, max_lag)
-                            .with_origins(origins)
+                        let c = base(kernel)
                             .with_mean(mean)
                             .with_normalization(norm)
                             .with_reduction(reduce);
@@ -168,21 +182,21 @@ fn configurations() -> Vec<(Correlator, Array3<F>, Option<Array3<F>>)> {
         }
         for reduce in [Reduction::Mean, Reduction::PerItem] {
             for (kernel, a) in [
+                (LagKernel::Legendre { l: 0 }, series(16, 3, 3, 0.6)),
                 (LagKernel::Legendre { l: 1 }, series(16, 3, 3, 0.0)),
                 (LagKernel::Legendre { l: 2 }, series(16, 3, 3, 0.4)),
+                (LagKernel::Legendre { l: 2 }, series(16, 3, 2, 0.8)),
                 (LagKernel::Legendre { l: 3 }, series(16, 3, 3, 0.9)),
                 (LagKernel::WignerD { l: 2 }, series(16, 3, 4, 0.2)),
                 (LagKernel::WignerD { l: 4 }, series(16, 3, 4, 0.7)),
                 (LagKernel::Persistence, presence()),
             ] {
-                let c = Correlator::new(kernel, max_lag)
-                    .with_origins(origins)
-                    .with_reduction(reduce);
-                out.push((c, a, None));
+                for norm in Normalization::ALL.iter().copied() {
+                    let c = base(kernel).with_normalization(norm).with_reduction(reduce);
+                    out.push((c, a.clone(), None));
+                }
             }
-            let crossed = Correlator::new(LagKernel::Persistence, max_lag)
-                .with_origins(origins)
-                .with_reduction(reduce);
+            let crossed = base(LagKernel::Persistence).with_reduction(reduce);
             out.push((crossed, presence_starts(), Some(presence())));
         }
     }
@@ -331,10 +345,89 @@ fn reduction_by_hand() {
     );
 }
 
+#[test]
+fn stride_and_biased_normalization_by_hand() {
+    // x = [1, 2, 4, 3]; stride 2 keeps origins 0 and 2.
+    let x = Array3::from_shape_vec((4, 1, 1), vec![1.0, 2.0, 4.0, 3.0]).unwrap();
+    let c = Correlator::new(LagKernel::Product, 2)
+        .with_stride(2)
+        .unwrap();
+    // lag 0: (1 + 16)/2; lag 1: (1·2 + 4·3)/2; lag 2: 1·4 / 1.
+    close(curve(c, &x), &[8.5, 7.0, 4.0]);
+    // Biased: every lag over n(0) = 2 origins.
+    close(
+        curve(c.with_normalization(Normalization::Biased), &x),
+        &[8.5, 7.0, 2.0],
+    );
+    // Unstrided biased: (1+4+16+9)/4, (2+8+12)/4, (4+6)/4.
+    close(
+        curve(
+            Correlator::new(LagKernel::Product, 2).with_normalization(Normalization::Biased),
+            &x,
+        ),
+        &[7.5, 5.5, 2.5],
+    );
+    // Squared displacement over origins 0, 2: lag 1 (1 + 1)/2, lag 2 9/1.
+    let sd = Correlator::new(LagKernel::SquaredDisplacement, 2)
+        .with_stride(2)
+        .unwrap();
+    close(curve(sd, &x), &[0.0, 1.0, 9.0]);
+}
+
+/// `P_2` of quarter turns over every origin is `1, −½, 1, −½`, on the FFT
+/// path, and the per-item curves of two counter-rotating vectors agree.
+#[test]
+fn legendre_fft_route_by_hand() {
+    let turns = Array3::from_shape_fn((8, 2, 3), |(t, i, d)| {
+        let angle = t as F * std::f64::consts::FRAC_PI_2 * if i == 0 { 1.0 } else { -1.0 };
+        [angle.cos(), angle.sin(), 0.0][d]
+    });
+    for reduce in [Reduction::Mean, Reduction::PerItem] {
+        let c = Correlator::new(LagKernel::Legendre { l: 2 }, 3).with_reduction(reduce);
+        let got = c.compute(input(&turns, None)).unwrap();
+        for channel in 0..got.n_channels() {
+            close(
+                got.channel(channel).unwrap().to_vec(),
+                &[1.0, -0.5, 1.0, -0.5],
+            );
+        }
+    }
+}
+
 // ── Refusals ─────────────────────────────────────────────────────────────────
 
 fn refusal(c: Correlator, input: CorrelatorInput<'_>) -> ComputeError {
     c.compute(input).unwrap_err()
+}
+
+#[test]
+fn a_zero_stride_and_a_strided_first_origin_are_refused() {
+    assert!(matches!(
+        Correlator::new(LagKernel::Product, 2).with_stride(0),
+        Err(ComputeError::OutOfRange {
+            field: "stride",
+            ..
+        })
+    ));
+    let a = series(6, 1, 2, 0.0);
+    let first = Correlator::new(LagKernel::Product, 2)
+        .with_origins(Origins::First)
+        .with_stride(2)
+        .unwrap();
+    assert!(matches!(
+        refusal(first, input(&a, None)),
+        ComputeError::OutOfRange { field, .. } if field.starts_with("stride")
+    ));
+    let mut acc = first.accumulator();
+    assert!(matches!(
+        acc.push(CorrelatorFrame {
+            a: a.index_axis(Axis(0), 0),
+            b: None,
+            dt: 0.5,
+            simbox: None,
+        }),
+        Err(ComputeError::OutOfRange { field, .. }) if field.starts_with("stride")
+    ));
 }
 
 #[test]

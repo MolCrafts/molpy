@@ -51,7 +51,10 @@ struct Latched {
 /// ```
 ///
 /// with `S` the running totals and `head_t` / `tail_t` the sums of the first /
-/// last `t` samples, which the retained head and ring hold. The result equals
+/// last `t` samples, which the retained head and ring hold. With an origin
+/// stride `s`, a frame pairs only with the ring frames that are origins, and
+/// the two sums of the correction are kept per residue class of the frame
+/// index mod `s` (`O(s · N · D)` more memory). The result equals
 /// [`Correlator::compute`](crate::compute::Compute::compute) on the same
 /// frames to FFT round-off at every lag.
 #[derive(Debug, Clone)]
@@ -70,6 +73,11 @@ pub struct CorrelatorAccumulator {
     /// Running per-column totals of `a` and `b`.
     total_a: Array2<F>,
     total_b: Array2<F>,
+    /// With an origin stride `s > 1`: the total of `a` over the origin
+    /// frames `τ ≡ 0 (mod s)`, and of the lagged series (`b`, or `a` for an
+    /// autocorrelation) per residue class of the frame index mod `s`.
+    origin_total_a: Array2<F>,
+    residue_total_y: Vec<Array2<F>>,
     /// Persistence: consecutive present frames per item, ending now.
     runs: Vec<usize>,
 }
@@ -87,6 +95,8 @@ impl CorrelatorAccumulator {
             ring_b: VecDeque::new(),
             total_a: Array2::zeros((0, 0)),
             total_b: Array2::zeros((0, 0)),
+            origin_total_a: Array2::zeros((0, 0)),
+            residue_total_y: Vec::new(),
             runs: Vec::new(),
         }
     }
@@ -131,6 +141,11 @@ impl CorrelatorAccumulator {
                 self.sums = Array2::zeros((self.correlator.max_lag() + 1, n_channels));
                 self.total_a = Array2::zeros((n_items, n_components));
                 self.total_b = Array2::zeros((n_items, n_components));
+                let stride = self.correlator.stride();
+                if stride > 1 {
+                    self.origin_total_a = Array2::zeros((n_items, n_components));
+                    self.residue_total_y = vec![Array2::zeros((n_items, n_components)); stride];
+                }
                 self.runs = vec![0; n_items];
                 self.latched = Some(latched);
                 latched
@@ -223,7 +238,32 @@ impl CorrelatorAccumulator {
                 let channel = self.correlator.channel_of(item, component);
                 let (s_a, s_b) = (self.total_a[[item, component]], total_b[[item, component]]);
                 let (mu_a, mu_b) = (s_a * inv_n, s_b * inv_n);
+                let stride = self.correlator.stride();
                 match self.correlator.origins() {
+                    Origins::All if stride > 1 => {
+                        for lag in 0..=max_lag {
+                            // Σ_{τ ∈ O_t} a(τ): the origin total minus the
+                            // origins among the last `lag` frames.
+                            let mut origins_a = self.origin_total_a[[item, component]];
+                            for back in 1..=lag {
+                                if (n - back).is_multiple_of(stride) {
+                                    origins_a -=
+                                        self.ring_a[self.ring_a.len() - back][[item, component]];
+                                }
+                            }
+                            // Σ_{τ ∈ O_t} y(τ + t): frames u ≡ t (mod s), u ≥ t.
+                            let mut lagged_y =
+                                self.residue_total_y[lag % stride][[item, component]];
+                            let mut u = lag;
+                            while u >= stride {
+                                u -= stride;
+                                lagged_y -= head_b[u][[item, component]];
+                            }
+                            let origins = self.correlator.origin_count(n, lag) as F;
+                            sums[[lag, channel]] +=
+                                -mu_b * origins_a - mu_a * lagged_y + origins * mu_a * mu_b;
+                        }
+                    }
                     Origins::All => {
                         let (mut tail_a, mut head_y) = (0.0, 0.0);
                         for lag in 0..=max_lag {
@@ -315,9 +355,12 @@ impl Accumulate for CorrelatorAccumulator {
         } else {
             (&self.ring_a, &self.head_a)
         };
+        let stride = correlator.stride();
         match correlator.origins() {
             Origins::All => {
-                for lag in 0..=max_lag.min(t) {
+                // Lag `lag` pairs this frame with origin `t − lag`, which
+                // counts only on the stride.
+                for lag in (0..=max_lag.min(t)).filter(|lag| (t - lag).is_multiple_of(stride)) {
                     let early = if lag == 0 {
                         (&a, y_now)
                     } else {
@@ -356,6 +399,12 @@ impl Accumulate for CorrelatorAccumulator {
         self.total_a += &a;
         if let Some(b) = &b {
             self.total_b += b;
+        }
+        if stride > 1 {
+            if t.is_multiple_of(stride) {
+                self.origin_total_a += &a;
+            }
+            self.residue_total_y[t % stride] += b.as_ref().unwrap_or(&a);
         }
         if self.head_a.len() <= max_lag {
             self.head_a.push(a.clone());

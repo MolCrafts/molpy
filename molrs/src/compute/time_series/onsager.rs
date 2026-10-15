@@ -48,6 +48,17 @@ impl OnsagerCorrelation {
         }
     }
 
+    /// Take every `stride`-th frame as a time origin (default
+    /// [`Correlator::DEFAULT_STRIDE`]; see [`Correlator::with_stride`]).
+    ///
+    /// # Errors
+    /// [`ComputeError::OutOfRange`] for `stride == 0`.
+    pub fn with_stride(self, stride: usize) -> Result<Self, ComputeError> {
+        Ok(Self {
+            correlator: self.correlator.with_stride(stride)?,
+        })
+    }
+
     /// The correlator this correlation is.
     pub fn correlator(&self) -> &Correlator {
         &self.correlator
@@ -80,6 +91,7 @@ crate::compute::spec::compute_spec! {
     OnsagerCorrelation as "OnsagerCorrelation";
     params |s| {
         max_lag: Int;
+        stride: Int = Correlator::DEFAULT_STRIDE => s.correlator.stride();
     }
     inputs {
         a: Series;

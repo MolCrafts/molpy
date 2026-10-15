@@ -538,7 +538,14 @@ describes each one: its parameters (kind, default, required) and inputs.
 `Correlator` is the one estimator; `Msd`, `Vacf`, `OnsagerCorrelation`,
 `DipoleAcf`, `CurrentAcf`, `ReorientationAcf`, `RotationalAutocorrelation`
 and `Survival` are its fixed configurations. Each returns a
-`TimeCorrelation`, which the fits and spectra take as is.
+`TimeCorrelation`, which the fits and spectra take as is (and which pickles).
+The origin set is tunable (`origins`, and `stride` for every `stride`-th
+origin), as is the normalisation (`"unbiased"`, `"biased"`, `"none"`).
+`ReorientationAcf` is the orientational autocorrelation (OACF) of unit
+vectors; orders 1 and 2 run by FFT. A curve's derived quantities are the fits
+applied to it: `CumulativeTrapezoid` (integral, correlation time), `LinearFit`
+(Einstein slope), `Plateau` (Green–Kubo plateau), `DebyeFit` (exponential
+decay), and `Spectrum` (power spectrum).
 
 ::: molrs.compute.Correlator
 
