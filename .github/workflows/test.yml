@@ -56,7 +56,7 @@ jobs:
       publish: ${{ steps.context.outputs.publish }}
     steps:
       - id: context
-        uses: MolCrafts/molcrafts-ci/actions/ci-context@cc46e4eb85fdcfb950d9a4df02c2e04e94ba90f7
+        uses: MolCrafts/molcrafts-ci/actions/ci-context@03352583738d9424ce37996ef9e04df9290087ba
 
   python:
     name: test / python (${{ matrix.os }}, ${{ matrix.python }})
@@ -69,12 +69,12 @@ jobs:
         include: ${{ fromJSON(needs.context.outputs.tier == 'full' && '[{"os":"ubuntu-latest","python":"3.12"},{"os":"ubuntu-latest","python":"3.14"},{"os":"macos-latest","python":"3.12"},{"os":"windows-latest","python":"3.12"}]' || '[{"os":"ubuntu-latest","python":"3.12"}]') }}
     steps:
       - uses: actions/checkout@v7
-      - uses: MolCrafts/molcrafts-ci/actions/setup-python@cc46e4eb85fdcfb950d9a4df02c2e04e94ba90f7
+      - uses: MolCrafts/molcrafts-ci/actions/setup-python@03352583738d9424ce37996ef9e04df9290087ba
         with:
           python-version: ${{ matrix.python }}
-      - uses: MolCrafts/molcrafts-ci/actions/setup-partners@cc46e4eb85fdcfb950d9a4df02c2e04e94ba90f7
+      - uses: MolCrafts/molcrafts-ci/actions/setup-partners@03352583738d9424ce37996ef9e04df9290087ba
       # molrs/rust-toolchain.toml pins the compiler that builds the molrs wheel.
-      - uses: MolCrafts/molcrafts-ci/actions/setup-rust@cc46e4eb85fdcfb950d9a4df02c2e04e94ba90f7
+      - uses: MolCrafts/molcrafts-ci/actions/setup-rust@03352583738d9424ce37996ef9e04df9290087ba
         with:
           toolchain-dir: ../molrs
           cache: molrs-python
@@ -91,7 +91,7 @@ jobs:
       # Counts and coverage in the run and pull request summary; report only.
       - name: Report
         if: ${{ !cancelled() }}
-        uses: MolCrafts/molcrafts-ci/actions/report@cc46e4eb85fdcfb950d9a4df02c2e04e94ba90f7
+        uses: MolCrafts/molcrafts-ci/actions/report@03352583738d9424ce37996ef9e04df9290087ba
         with:
           title: test / python (${{ matrix.os }}, ${{ matrix.python }})
           junit: .ci-out/junit.xml
