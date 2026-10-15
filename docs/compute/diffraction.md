@@ -30,7 +30,8 @@ transform of $g(r)$.
 One property of that evaluation matters more than it first appears: the sum runs
 over **literal pair distances, not minimum-image distances**. The estimator
 treats your coordinates as an isolated cluster in open space, even when
-`frame.box` is periodic. This matches freud's Debye implementation, and it has
+the frame has a periodic box — which is why its `compute` takes positions and
+no box. This matches freud's Debye implementation, and it has
 two consequences. Pairs are counted out to the full diagonal of the box rather
 than being capped at $L/2$, and the configuration has a surface, so the
 outermost atoms have fewer neighbours than bulk ones. For the 500-atom argon box
@@ -81,7 +82,7 @@ the oscillations damp out by about 6 Å⁻¹.
 The **main peak at $k = 1.98$ Å⁻¹** is the dominant density wave of the liquid —
 the reciprocal-space fingerprint of the first coordination shell. Its position is
 the number a diffraction experiment reports; neutron diffraction on liquid argon
-at 85 K puts it close to 2.0 Å⁻¹. Its height here, 2.11, falls short of the
+at 85 K puts it close to 2.0 Å⁻¹. Its height here, 2.07, falls short of the
 experimental ≈ 2.7 for the finite-size reason given above; do not read that as
 the force field failing.
 
@@ -92,7 +93,7 @@ wavelengths the liquid looks structureless.
 Two cautions come with this figure, and both catch people.
 
 **Do not convert the peak with $2\pi/k$.** That gives $2\pi/1.98 = 3.18$ Å,
-while the actual first-neighbour distance from [$g(r)$](rdf.md) is 3.73 Å. The
+while the actual first-neighbour distance from [$g(r)$](rdf.md) is 3.68 Å. The
 $2\pi/k$ rule works for Bragg planes in a crystal, not for the main peak of a
 liquid, because that peak is a broad superposition of many pair distances rather
 than one repeat spacing. To go from $S(k)$ to distances, transform the whole
@@ -126,17 +127,20 @@ frame["atoms"] = {"x": xyz[:, 0], "y": xyz[:, 1], "z": xyz[:, 2]}
 frame.box = mp.Box.cube(4 * a)
 ```
 
-The compute takes the $k$ grid up front and returns, **per frame**, a tuple of
-`(k_values, S, n_particles)`:
+Where to evaluate $S(k)$ is configuration, so the $k$ grid goes to the
+constructor. The data is one snapshot's positions, read from the frame; the
+Debye sum runs over every pair as given and takes no box. The result carries
+`k_values`, `sk` and `n_particles`:
 
 ```python
 from molpy.compute import StaticStructureFactorDebye
 
 k = np.linspace(1.0, 4.5, 140)
-(k_out, s_k, n_particles), = StaticStructureFactorDebye(k).compute([frame])
+debye = StaticStructureFactorDebye(k)
+sf = debye.compute(positions=frame.coords)
 
-print(n_particles)                        # -> 256
-print(round(float(k_out[np.argmax(s_k)]), 2))   # -> 2.06
+print(sf.n_particles)                              # -> 256
+print(round(float(sf.k_values[np.argmax(sf.sk)]), 2))   # -> 2.06
 ```
 
 The strongest peak lands at 2.06 Å⁻¹; the (111) reflection is predicted at
@@ -148,12 +152,13 @@ across. Peak width in a diffraction pattern is set by the size of the ordered
 domain — the same physics behind the Scherrer equation used to size
 nanocrystals. Enlarge the lattice and the peaks narrow.
 
-Average over a trajectory by passing more frames; `S(k)` is an ensemble average
-like $g(r)$:
+`S(k)` is an ensemble average like $g(r)$, and a trajectory is a loop: the one
+configured instrument applied to each frame's positions, the curves averaged
+afterwards:
 
 ```python
-per_frame = StaticStructureFactorDebye(k).compute([frame, frame])
-s_mean = np.mean([s for _, s, _ in per_frame], axis=0)
+frames = [frame, frame]                   # in practice, your trajectory
+s_mean = np.mean([debye.compute(positions=f.coords).sk for f in frames], axis=0)
 print(s_mean.shape)                       # -> (140,)
 ```
 
@@ -162,15 +167,46 @@ frame. Doubling the atom count quadruples the work, and a 1000-point $k$ grid
 costs ten times a 100-point one. Choose the coarsest grid that resolves your
 peaks.
 
+### The periodic estimator samples the reciprocal lattice of the box
+
+The Debye sum treats the configuration as an isolated cluster. A periodic box
+admits a second estimator that respects the periodicity: evaluate the density's
+Fourier component $\rho_{\mathbf k} = \sum_j e^{-i\mathbf k\cdot\mathbf r_j}$ only at
+wavevectors compatible with the box, $\mathbf k = 2\pi\,\mathbf n / L$, and take
+$S(\mathbf k) = |\rho_{\mathbf k}|^2 / N$. `StaticStructureFactorDirect` does that,
+either at explicit `k_vecs` or binned isotropically up to `k_max` in `n_bins`
+shells. At a reciprocal-lattice vector of a perfect crystal every atom scatters
+in phase, so $S = N$ exactly:
+
+```python
+from molpy.compute import StaticStructureFactorDirect
+
+g111 = 2 * np.pi / a * np.array([1.0, 1.0, 1.0])
+bragg = StaticStructureFactorDirect(k_vecs=[g111]).compute(
+    positions=frame.coords, simbox=frame.box
+)
+print(bragg.sk, np.round(bragg.k_magnitudes, 2))   # -> [256.] [2.07]
+```
+
+The Debye peak at the same $k$ is much lower, because it averages
+$|\rho_{\mathbf k}|^2$ over every direction of $\mathbf k$ — most of which miss
+the lattice. Use the Debye form to compare with a powder or liquid experiment,
+and the direct form when the periodicity of the box is part of the question.
+
+For a picture rather than a curve, `DiffractionPattern(n_grid, sigma)` projects
+the snapshot along one axis (`axis=2` by default), smears it onto an
+`n_grid`×`n_grid` image and returns that `image` beside its centred 2-D power
+spectrum `diffraction` — the pattern a beam along that axis would record.
+
 ## When it goes wrong
 
 **$S(k)$ shoots up at small $k$.**
 Expected, not a bug — the self terms, as above. Start your grid near
 $2\pi/L$ at the very lowest, and do not interpret the rise.
 
-**Division-by-zero or `nan` at the first point.**
-Your grid includes $k = 0$, where $\sin(kr)/(kr)$ is evaluated directly.
-Start above zero.
+**The first point equals the number of atoms.**
+Your grid includes $k = 0$, where every $\sin(kr)/(kr)$ is 1 and the Debye sum
+returns $N$. That value is a count, not a measurement; start above zero.
 
 **$S(k)$ does not approach 1 at large $k$.**
 Either far too few frames, or the coordinates are not what you think — check for
@@ -190,7 +226,7 @@ then the system size.
   every $k$ except the small-$k$ self-term rise — the reciprocal-space statement
   of "no structure".
 - Compare the main peak position of argon (1.98 Å⁻¹) with $2\pi/r_1$ using the
-  first $g(r)$ peak (3.73 Å). They disagree, and now you know why.
+  first $g(r)$ peak (3.68 Å). They disagree, and now you know why.
 - Double the FCC lattice to $8^3$ cells and watch the Bragg peaks narrow while
   their positions stay put.
 

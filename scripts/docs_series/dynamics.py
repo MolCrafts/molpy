@@ -10,22 +10,29 @@ import numpy as np
 
 import molpy as mp
 from molpy.compute import (
-    Acf,
-    LegendreReorientation,
-    PowerSpectrum,
+    Axis,
     RadicalVoronoi,
+    ReorientationAcf,
+    Spectrum,
+    Vacf,
     VanHove,
 )
 
 from .lj import FS_TO_PS, FS_TO_S, SPEED_OF_LIGHT_CM_PER_S, Trajectory
-from .structure import _frames, write_json
+from .structure import write_json
+
+#: VACF lags transformed into the VDOS, in frames.
+VDOS_MAX_LAG = 400
 
 
 def van_hove(trajectory: Trajectory) -> dict[str, float]:
     """Self part of G(r, t) at a spread of lags."""
-    frames = _frames(trajectory, stride=1)[:1500]
+    positions = trajectory.unwrapped[:1500]
+    box = mp.Box.cube(trajectory.box_length)
     lags = [10, 50, 200, 600]
-    result = VanHove(n_rbins=120, r_max=12.0, lags=lags, stride=20).compute(frames)
+    result = VanHove(Axis(0.0, 12.0, 120), lags, stride=20).compute(
+        positions=positions, boxes=[box] * len(positions)
+    )
 
     r = np.asarray(result.r_centers)
     g_self = np.asarray(result.g_self)
@@ -51,8 +58,8 @@ def voronoi_volumes(trajectory: Trajectory) -> dict[str, float]:
     box = mp.Box.cube(trajectory.box_length)
     volumes: list[np.ndarray] = []
     for xyz in trajectory.wrapped[::100]:
-        cells = RadicalVoronoi().build(
-            np.ascontiguousarray(xyz), np.zeros(len(xyz)), box
+        cells = RadicalVoronoi().compute(
+            positions=xyz, simbox=box, radii=np.zeros(len(xyz))
         )
         volumes.append(np.asarray(cells.volumes))
     stacked = np.concatenate(volumes)
@@ -78,11 +85,21 @@ def voronoi_volumes(trajectory: Trajectory) -> dict[str, float]:
 
 
 def vibrational_dos(trajectory: Trajectory) -> dict[str, float]:
-    """VDOS of liquid argon from the velocity autocorrelation."""
-    acf = Acf().compute(np.ascontiguousarray(trajectory.velocities), max_lag=400)
-    spectrum = PowerSpectrum().fit(acf.values, dt_fs=trajectory.dt)
-    frequency = np.asarray(spectrum.frequencies_cm1)
-    intensity = np.asarray(spectrum.intensities)
+    """VDOS of liquid argon: the Fourier transform of the VACF.
+
+    The VACF is cosine-squared windowed and zero-padded to four times its
+    length; ``Spectrum`` reports angular frequencies in rad/fs, converted
+    here to wavenumbers.
+    """
+    n_frames = trajectory.velocities.shape[0]
+    vacf = Vacf(VDOS_MAX_LAG).compute(
+        velocities=trajectory.velocities.reshape(n_frames, -1), dt=trajectory.dt
+    )
+    spectrum = Spectrum("cosine_sq", 4).compute(
+        signal=vacf.channel(0), dt=vacf.lag_times[1]
+    )
+    frequency = spectrum.frequencies / (2.0 * np.pi * FS_TO_S * SPEED_OF_LIGHT_CM_PER_S)
+    intensity = spectrum.real
 
     keep = frequency <= 200.0
     normalized = intensity[keep] / intensity[keep].max()
@@ -94,7 +111,7 @@ def vibrational_dos(trajectory: Trajectory) -> dict[str, float]:
         ],
     )
     peak = int(np.argmax(intensity[keep]))
-    correlation_time = 400 * trajectory.dt * FS_TO_S
+    correlation_time = VDOS_MAX_LAG * trajectory.dt * FS_TO_S
     return {
         "peak_cm1": float(frequency[keep][peak]),
         "zero_frequency_weight": float(normalized[0]),
@@ -151,28 +168,21 @@ def rotational_relaxation(_trajectory: Trajectory) -> dict[str, float]:
     n_rods, n_frames, angular_step = 300, 400, 0.06
     axis = rng.normal(size=(n_rods, 3))
     axis /= np.linalg.norm(axis, axis=1, keepdims=True)
-    centres = rng.uniform(0.0, 100.0, size=(n_rods, 3))
-    bonds = {
-        "atomi": np.arange(n_rods, dtype=np.uint32),
-        "atomj": np.arange(n_rods, 2 * n_rods, dtype=np.uint32),
-    }
 
-    frames = []
+    axes = []
     for _ in range(n_frames):
         kick = rng.normal(0.0, angular_step, size=(n_rods, 3))
         kick -= (kick * axis).sum(axis=1, keepdims=True) * axis  # keep it a rotation
         axis = axis + kick
         axis /= np.linalg.norm(axis, axis=1, keepdims=True)
-        pos = np.concatenate([centres - 0.5 * axis, centres + 0.5 * axis])
-        frame = mp.Frame()
-        frame["atoms"] = {"x": pos[:, 0], "y": pos[:, 1], "z": pos[:, 2]}
-        frame.box = mp.Box.cube(200.0)
-        frame["bonds"] = bonds
-        frames.append(frame)
+        axes.append(axis)
+    vectors = np.array(axes)
 
-    result = LegendreReorientation(max_lag=200).compute(frames)
-    lag = np.asarray(result.lags, dtype=float)
-    c1, c2 = np.asarray(result.c1), np.asarray(result.c2)
+    # dt = 1: lag times in frames.
+    c1_curve = ReorientationAcf(1, 200).compute(vectors=vectors, dt=1.0)
+    c2_curve = ReorientationAcf(2, 200).compute(vectors=vectors, dt=1.0)
+    lag = c1_curve.lag_times
+    c1, c2 = c1_curve.channel(0), c2_curve.channel(0)
 
     rows: list[dict[str, float | str]] = []
     for label, curve in (("C₁(t)", c1), ("C₂(t)", c2)):

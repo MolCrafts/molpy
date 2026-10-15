@@ -109,7 +109,6 @@ _MIRRORS = (
     "op",
     "optimize",
     "perceive",
-    "signal",
     "stream",
 )
 
@@ -219,7 +218,12 @@ def test_every_molrs_subsystem_has_its_molpy_module(name: str) -> None:
 
 
 def test_the_molrs_root_has_no_subsystem_molpy_lacks() -> None:
-    assert set(molrs.__all__) == set(_MIRRORS)
+    subsystems = {
+        name for name in molrs.__all__ if isinstance(getattr(molrs, name), ModuleType)
+    }
+    assert subsystems == set(_MIRRORS)
+    # molrs promotes the same core data classes to its root as molpy does.
+    assert set(molrs.__all__) - subsystems == _PROMOTED
 
 
 def test_a_fresh_import_binds_molpys_io_format_modules() -> None:
@@ -328,12 +332,6 @@ def test_each_ff_submodule_is_a_molpy_module_mirroring_molrs(sub: str) -> None:
         ("stream.ControlCommand", "stream.ControlCommand"),
         ("md.MdDriver", "md.MdDriver"),
         ("md.MdState", "md.MdState"),
-        ("compute.Msd", "compute.Msd"),
-        ("compute.Rdf", "compute.Rdf"),
-        ("compute.Pca", "compute.Pca"),
-        ("compute.Kmeans", "compute.Kmeans"),
-        ("compute.DistributionFunction", "compute.DistributionFunction"),
-        ("compute.BondOrientationalOrder", "compute.BondOrientationalOrder"),
         ("ff.forcefield.ForceField", "ff.forcefield.ForceField"),
         ("ff.forcefield.ForceFieldType", "ff.forcefield.ForceFieldType"),
         ("ff.potential.PairLjCut", "ff.potential.PairLjCut"),

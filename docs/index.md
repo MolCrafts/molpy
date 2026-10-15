@@ -183,7 +183,7 @@ nl = mp.core.NeighborList(8.0)
 nl.build(frame.coords, frame.box)
 
 # g(r)
-rdf = Rdf(n_bins=50, r_max=8.0).compute([frame], [nl.neighbors()])
+rdf = Rdf(n_bins=50, r_max=8.0, r_min=0.0).compute(pairs=[nl.neighbors()])
 ```
 
 </section>

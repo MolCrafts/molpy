@@ -67,9 +67,14 @@ whole point of the section on electrolytes below. An Ornstein–Uhlenbeck proces
 is the simplest thing that both fluctuates around zero and has a known
 relaxation time, which makes every number here checkable:
 
+`StaticDielectric` is configured with the unit system the dipoles and volume
+are in — `"real"` here: dipoles in e·Å, volume in Å³ — and computed on the
+`(n_frames, 3)` dipole series together with the state it was sampled at:
+volume, temperature, and the Ewald boundary of the simulation.
+
 ```python
 import numpy as np
-from molpy.compute import static_dielectric_constant
+from molpy.compute import StaticDielectric
 
 rng = np.random.default_rng(0)
 n_frames, dt, tau_true = 20000, 10.0, 500.0        # frames, fs, fs
@@ -81,16 +86,18 @@ for i in range(1, n_frames):                        # bounded, not a random walk
 M = np.ascontiguousarray(M)
 
 volume, temperature = 2.69e4, 298.15                # Å³, K
-eps_static = static_dielectric_constant(
-    M, volume=volume, temperature=temperature, epsilon_inf=1.0
-)
-print(round(float(eps_static), 3))                  # -> 1.1
+state = {"volume": volume, "temperature": temperature, "boundary": "tin_foil"}
+
+static = StaticDielectric("real").compute(dipoles=M, **state)
+print(round(static.epsilon, 3), static.epsilon_inf)  # -> 1.1 1.0
 ```
 
-Note `epsilon_inf` is passed by name. It is the electronic polarizability a
-fixed-charge force field cannot represent; 1.0 is the right value for a
-non-polarizable model, and you should say in your methods section that you used
-it.
+`epsilon_inf` defaults to 1.0, the right value for a non-polarizable model; a
+polarizable one configures it, `StaticDielectric("real", epsilon_inf=1.8)`.
+Either way, say in your methods section which you used. The boundary is
+`"tin_foil"` because that is what the fluctuation formula above assumes;
+`"vacuum"` is refused with a `ValueError` rather than silently treated as
+tin-foil, because the vacuum-boundary formula is a different expression.
 
 The 1.1 is not water — the dipole amplitude here is arbitrary. Real SPC/E water
 gives about 71, and getting it needs nanoseconds, because $\varepsilon(0)$ is a
@@ -102,15 +109,10 @@ example passes it:
 
 ```python
 half = n_frames // 2
-first = static_dielectric_constant(
-    np.ascontiguousarray(M[:half]), volume=volume,
-    temperature=temperature, epsilon_inf=1.0
-)
-second = static_dielectric_constant(
-    np.ascontiguousarray(M[half:]), volume=volume,
-    temperature=temperature, epsilon_inf=1.0
-)
-print(round(float(first), 3), round(float(second), 3))   # -> 1.096 1.103
+static_eps = StaticDielectric("real")
+first = static_eps.compute(dipoles=M[:half], **state).epsilon
+second = static_eps.compute(dipoles=M[half:], **state).epsilon
+print(round(first, 3), round(second, 3))            # -> 1.096 1.103
 ```
 
 Under a percent apart. Run the identical test on a `np.cumsum` random walk and
@@ -120,9 +122,13 @@ attributes to un-decomposed ions.
 Two practical notes. Compute the variance in two passes (mean first, then
 deviations) rather than as $\langle M^2\rangle - \langle M\rangle^2$, which
 cancels catastrophically when the mean is large. And check the three Cartesian
-components separately: in an isotropic liquid they must agree, and a persistent
-difference means the box is not equilibrated or a field is leaking in from
-somewhere.
+components separately — `epsilon_axes` holds them: in an isotropic liquid they
+must agree, and a persistent difference means the box is not equilibrated or a
+field is leaking in from somewhere.
+
+```python
+print(static.epsilon_axes.round(2))                 # -> [1.11 1.09 1.1 ]
+```
 
 ## The spectrum, by two routes
 
@@ -130,9 +136,9 @@ The frequency-resolved response comes from the *time correlation* of
 $\mathbf{M}$ rather than its variance. There are two equivalent routes, and
 which you use depends on what your system contains.
 
-**Einstein–Helfand** works from the dipole autocorrelation
-$\Phi(t) = \langle\mathbf{M}(0)\cdot\mathbf{M}(t)\rangle$. It is the natural
-route for a neutral polar liquid.
+**Einstein–Helfand** works from the fluctuation dipole autocorrelation
+$\Phi(t) = \langle\delta\mathbf{M}(0)\cdot\delta\mathbf{M}(t)\rangle$. It is the
+natural route for a neutral polar liquid.
 
 **Green–Kubo** works from the current-density autocorrelation, with
 $\mathbf{J} = \dot{\mathbf{M}}/V$. It is the natural route when charges migrate,
@@ -141,43 +147,126 @@ because a current is what they produce.
 The subtlety worth internalizing: in a numerical implementation you transform
 the *derivative* of the correlation function rather than the function itself.
 $\Phi(t)$ does not decay to zero within any affordable window, and a truncated
-non-decaying signal produces the ringing described on the [Signal](signal.md)
+non-decaying signal produces the ringing described on the [Spectra](spectra.md)
 page. Its derivative does decay, so transforming that and anchoring the DC value
-separately is numerically far better behaved. The computes already do this; it
-explains why the API asks for an ACF and hands back a spectrum rather than
-exposing an intermediate you might be tempted to plot.
+separately at the exact static limit is numerically far better behaved.
+
+Each route is two computes: a correlation, and a transform that reads it.
+`DipoleAcf` is the dipole autocorrelation — mean-subtracted, summed over the
+three Cartesian components, unbiased. `EinsteinHelfandSpectrum` is configured
+with the unit system (and optionally the window, the zero padding and
+$\varepsilon_\infty$), and computes on the correlation plus the same state the
+static formula took:
 
 ```python
-from molpy.compute import DebyeRelaxation, EinsteinHelfandSpectrum
+from molpy.compute import DipoleAcf, EinsteinHelfandSpectrum
 
-relax = DebyeRelaxation(volume, temperature).compute(
-    M, dt=dt, max_lag=100                   # lags in FRAMES, so 1 ps here
-)
-print(relax.kind, sorted(relax.extras))
-# -> dipole_acf ['boundary', 'temperature', 'volume', 'zero_lag_variance']
+phi = DipoleAcf(100).compute(dipoles=M, dt=dt)      # lags in FRAMES: 1 ps here
+print(phi.n_lags, phi.lag_times[-1])                # -> 101 1000.0
 
-spectrum = EinsteinHelfandSpectrum(
-    dt,                                 # frame spacing, fs
-    volume,                             # Å³
-    temperature,                        # K
-    1.0,                                # epsilon_inf
-    relax.extras["zero_lag_variance"],  # from the DebyeRelaxation result
-).fit(relax.values)
-print(sorted(spectrum))                   # -> ['eps_imag', 'eps_real', 'frequencies']
+spectrum = EinsteinHelfandSpectrum("real").compute(correlation=phi, **state)
+print(spectrum.frequencies.shape, round(spectrum.eps_real[0], 3))   # -> (257,) 1.1
 ```
 
-`EinsteinHelfandSpectrum` takes five bare positional arguments and it is worth
-naming them in a comment as above, because transposing `volume` and
-`temperature` produces a plausible-looking spectrum that is wrong by orders of
-magnitude.
-
 `max_lag` is a count of **frames**, not a time — 100 frames at `dt = 10` fs is
-a 1 ps window.
+a 1 ps window. The transform reads the time step off the correlation's own lag
+grid, so there is no second `dt` to get wrong. The zero-frequency value is the
+static $\varepsilon(0)$ from the fluctuation formula, exactly: the two routes
+share one anchor. `DipoleAcf(..., normalization="none")` selects the raw lagged
+sum of the older convention instead of the unbiased estimator; the default is
+the one the spectrum routes are written for.
 
-`frequencies` are in **rad fs⁻¹** when `dt` is in fs. To get to the wavenumbers
-an experimentalist quotes, divide by $2\pi c$: multiply by
-$10^{15}/(2\pi \times 2.998\times10^{10})$ to reach cm⁻¹. `eps_real` is the
-in-phase response and `eps_imag` the loss — the part that dissipates energy.
+`frequencies` are angular, in radians per unit of `dt` — rad fs⁻¹ here. To get
+to the wavenumbers an experimentalist quotes, divide by $2\pi c$ (see
+[Spectra](spectra.md)). `eps_real` is the in-phase response and `eps_imag` the
+loss — the part that dissipates energy, stored positive.
+
+The same dipole correlation feeds a second dipole route,
+`DipoleAutocorrelationSpectrum`, which transforms $\Phi$ itself through
+$\chi(\omega) = A\,[\Phi(0) - i\omega\hat\Phi(\omega)]$ rather than its
+derivative. For an ionic conductor $\Phi$ does not decay at all — it plateaus,
+because the cell dipole drifts with the ions — and the bare formula then
+produces a huge false static response. Configured with a `plateau=(start, end)`
+window (fractions of the lag range), the route subtracts the plateau value
+$\Phi(\infty)$ first; `plateau_value="mean"` (the default) takes the window's
+mean, `"end"` its last sample. Whether to subtract is your decision, stated in
+your script; the route never guesses it from the data.
+
+The two current routes are the same composition with a different correlation.
+`Derivative` turns the dipole series into its rate $\dot{\mathbf M}$;
+`CurrentAcf` of $\dot{\mathbf M}/V$ feeds `GreenKuboSpectrum`, and the
+cross-correlation of $\dot{\mathbf M}$ against $\mathbf M$ — a `Correlator` with
+the product kernel, a second series `b`, and the mean subtracted — feeds
+`DipoleRateCrossSpectrum`:
+
+```python
+from molpy.compute import (
+    Correlator,
+    CurrentAcf,
+    Derivative,
+    DipoleAutocorrelationSpectrum,
+    DipoleRateCrossSpectrum,
+    GreenKuboSpectrum,
+)
+
+rate = Derivative("gradient").compute(series=M, dt=dt)            # dM/dt
+current_acf = CurrentAcf(100).compute(current=rate / volume, dt=dt)
+rate_cross = Correlator("product", 100, mean="subtract").compute(
+    a=rate[:, None, :], b=M[:, None, :], dt=dt
+)
+
+routes = {
+    "einstein-helfand": spectrum,
+    "dipole acf": DipoleAutocorrelationSpectrum("real").compute(
+        correlation=phi, **state
+    ),
+    "green-kubo": GreenKuboSpectrum("real").compute(correlation=current_acf, **state),
+    "rate cross": DipoleRateCrossSpectrum("real").compute(
+        correlation=rate_cross, **state
+    ),
+}
+print(len({r.frequencies.shape for r in routes.values()}))       # -> 1
+```
+
+## A spectrum is checked, not trusted
+
+Four routes to one quantity is the strongest check there is: on a converged
+trajectory they must agree. `RouteAgreement` compares one part of several
+spectra on the same frequency grid — the loss, by default — and passes when
+every pairwise relative RMS difference is under its `tolerance` (0.1):
+
+```python
+from molpy.compute import KramersKronig, RouteAgreement
+
+dipole_routes = [routes["einstein-helfand"], routes["dipole acf"]]
+check = RouteAgreement().compute(spectra=dipole_routes)
+print(check.passed, round(check.max_rms, 2))        # -> False 0.14
+```
+
+The two dipole routes disagree by 14 %, and the check is right to fail. The
+Ornstein–Uhlenbeck dipole is a Markov process: its correlation
+$e^{-|t|/\tau}$ has a cusp at $t = 0$, while the Einstein–Helfand route assumes
+$\Phi'(0) = 0$, which holds for every real dipole because a physical
+correlation function is even and smooth. A real liquid passes where this toy
+does not. The current routes need a longer window still: $\sigma(\omega)/\omega$
+is noisy at the lowest frequencies, and their agreement improves as `max_lag`
+grows.
+
+The other check needs only one spectrum. $\varepsilon'$ and $\varepsilon''$ are
+not independent — causality ties them through the Kramers–Kronig relations —
+so `KramersKronig` recovers $\varepsilon'$ from $\varepsilon''$ and compares:
+
+```python
+kk = KramersKronig().compute(spectrum=spectrum)
+print(kk.passed, kk.mae < kk.tolerance)             # -> True True
+```
+
+A spectrum that fails it was truncated, mis-anchored, or built from the wrong
+correlation. For a conductor the third check is the conductivity sum rule,
+$\int_0^\infty\sigma(\omega)\,\mathrm{d}\omega = \tfrac{\pi}{2}\langle J^2\rangle/(3Vk_BT)$,
+`ConductivitySumRule("real")`, computed on a frequency grid and the real
+conductivity $\sigma'(\omega)$ on it, with $\langle J^2\rangle$, the volume and
+the temperature.
 
 ## What the spectrum looks like
 
@@ -243,28 +332,26 @@ one or two stretching exponents added. Fitting those is deliberately *not* part
 of the compute layer — it is a `scipy.optimize` recipe in your analysis script,
 because the choice of model is a physical claim you should be making explicitly.
 
-For a quick time-domain estimate, fit the normalized ACF directly:
+For a quick time-domain estimate, fit a single exponential
+$\Phi(t) = A\,e^{-t/\tau}$ to the dipole correlation directly. `DebyeFit` reads
+one channel of a correlation and its lag times:
 
 ```python
 from molpy.compute import DebyeFit
 
-fit = relax.fit_exponential()             # DebyeFit on relax.normalized().values
-print(sorted(fit))                        # -> ['amplitude', 'n_samples', 'tau']
-print(round(float(fit["tau"])))           # -> 516
-print(fit == DebyeFit().fit(relax.values / relax.values[0], dt=dt))   # -> True
+fit = DebyeFit().compute(correlation=phi, channel=0)
+print(round(fit.tau), fit.n_samples)      # -> 516 101
 ```
 
 516 fs against the 500 fs built into the process — a 3 % recovery, and the
-check that the whole chain is wired correctly. `tau` comes back in the same
-units as `dt`.
+check that the whole chain is wired correctly. `tau` comes back in the units of
+the lag times, which are the units of `dt`.
 
 Now widen the correlation window and watch it break:
 
 ```python
-long_window = DebyeRelaxation(volume, temperature).compute(
-    M, dt=dt, max_lag=300                   # 3 ps, six relaxation times
-)
-print(round(float(long_window.fit_exponential()["tau"])))   # -> 909
+long_window = DipoleAcf(300).compute(dipoles=M, dt=dt)   # 3 ps, six relaxation times
+print(round(DebyeFit().compute(correlation=long_window, channel=0).tau))   # -> 909
 ```
 
 Nearly double the true value, from *more* data. Past about 2 ps the correlation
@@ -294,28 +381,29 @@ So **split the dipole first**: solvent series into the static formula and the
 dielectric spectrum, ion series into the conductivity routes on
 [PMSD](pmsd.md) and [JACF](jacf.md).
 
-The split is by atom, so you can do it directly from your charges and a mask
-naming which atoms belong to ions:
+The split is by atom. `DipoleMoment` sums $q_i\mathbf{r}_i$ for every frame;
+given a partition — one label per atom, here `0` for solvent and `1` for ions —
+it sums each group separately, so both series come out of one call. The
+charges and the labels are columns you read from your frame's atoms block:
 
 ```python
+from molpy.compute import DipoleMoment
+
 charges = np.array([-0.8476, 0.4238, 0.4238, 1.0, -1.0])   # water + Na+ + Cl-
-is_ion = np.array([False, False, False, True, True])
+species = np.array([0, 0, 0, 1, 1], dtype=np.uint32)       # 0 solvent, 1 ion
 positions = rng.normal(0.0, 5.0, size=(200, 5, 3))          # (frames, atoms, 3)
 
-def dipole(pos, q, mask):
-    """Sum q_i r_i over the selected atoms, per frame."""
-    return np.einsum("i,tij->tj", q[mask], pos[:, mask, :])
-
-M_solvent = dipole(positions, charges, ~is_ion)
-M_ions = dipole(positions, charges, is_ion)
-print(M_solvent.shape, M_ions.shape)          # -> (200, 3) (200, 3)
+parts = DipoleMoment().compute(positions=positions, charges=charges, partition=species)
+M_solvent, M_ions = parts.series(0), parts.series(1)
+print(parts.groups, M_solvent.shape, M_ions.shape)   # -> [0 1] (200, 3) (200, 3)
 ```
 
-`M_solvent` goes into `static_dielectric_constant` and the spectrum;
-`M_ions` goes into [`EinsteinConductivity`](pmsd.md).
-`dipole_moment(charges, positions)` does the same sum for one configuration, and
-`decompose_current` splits an already-assembled current series the
-same way.
+`M_solvent` goes into `StaticDielectric` and the spectrum routes; `M_ions` goes
+into the conductivity routes, the [MSD of the collective dipole](pmsd.md) or
+the [current correlation](jacf.md). Without a partition `DipoleMoment` sums the
+whole system into one series. Any label array works as the partition — a
+`mol_id` column, a species column, or the result of a [Cluster](cluster.md)
+analysis.
 
 The positions above must be **unwrapped per molecule**, as described earlier —
 that is the step this snippet assumes you have already done, and the one most
@@ -333,18 +421,18 @@ percent. Quote them.
 
 ## The pieces, and what feeds what
 
-| Step | Entry point |
+| Step | Compute |
 |---|---|
-| Dipole $\mathbf{M}=\sum q_i\mathbf{r}_i$ | `dipole_moment` |
-| Current density $\mathbf{J}=\dot{\mathbf{M}}/V$ | `current_density` |
-| Split solvent / ion series | `decompose_current` |
-| Static $\varepsilon(0)$ | `static_dielectric_constant` |
-| Raw dipole ACF | `DebyeRelaxation` |
-| $\varepsilon^*(\omega)$, dipole route | `EinsteinHelfandSpectrum` |
-| Raw current ACF | `GreenKuboConductivity` |
-| $\varepsilon^*(\omega)$, current route | `GreenKuboSpectrum` |
+| Dipole $\mathbf{M}=\sum q_i\mathbf{r}_i$, whole or per group | `DipoleMoment` |
+| Rate $\dot{\mathbf{M}}$ (divide by $V$ for $\mathbf{J}$) | `Derivative` |
+| Static $\varepsilon(0)$ | `StaticDielectric` |
+| Dipole ACF | `DipoleAcf` |
+| $\varepsilon^*(\omega)$, dipole routes | `EinsteinHelfandSpectrum`, `DipoleAutocorrelationSpectrum` |
+| Current ACF | `CurrentAcf` |
+| $\varepsilon^*(\omega)$, current routes | `GreenKuboSpectrum`; `DipoleRateCrossSpectrum` on a `Correlator` cross |
+| Checks | `KramersKronig`, `RouteAgreement`, `ConductivitySumRule` |
 | Time-domain $\tau$ | `DebyeFit` |
-| DC $\sigma$ | [`EinsteinConductivity`](pmsd.md) → `LinearFit` |
+| DC $\sigma$ | [`Msd`](pmsd.md) of the ion dipole → `LinearFit`, or [`CurrentAcf`](jacf.md) → `CumulativeTrapezoid` |
 
 One trap in that table. `GreenKuboSpectrum` needs the ACF of the **current
 density** $\mathbf{J} = \dot{\mathbf{M}}/V$, while the DC conductivity on
@@ -380,7 +468,7 @@ $\sigma/(\epsilon_{\text{vac}}\omega)$.
 
 **The spectrum is covered in ripples.**
 Spectral leakage from an ACF truncated before it decayed. See
-[Signal](signal.md).
+[Spectra](spectra.md) on windows.
 
 **$\varepsilon(0)$ from the fluctuation formula disagrees with the $\omega\to 0$
 limit of your spectrum.**
@@ -405,6 +493,8 @@ information: your relaxation is not Debye.
   $\varepsilon(0)$.
 - Confirm the $\varepsilon''$ peak sits at $\omega = 1/\tau$ for the fitted
   $\tau$.
+- Run `KramersKronig` on every spectrum, and `RouteAgreement` across the routes
+  you can compute.
 
 ## References
 
@@ -421,6 +511,5 @@ information: your relaxation is not Debye.
 
 - [PMSD](pmsd.md) · [JACF](jacf.md) — the conductivity half, in full
 - [Reorientation](reorientation.md) — $C_1$, the single-molecule counterpart
-- [Signal](signal.md) — windowing and the frequency grid
 - [Spectra](spectra.md) — the same machinery at vibrational frequencies
 - [API reference](../api/compute.md)

@@ -56,16 +56,16 @@ counted as clusters:
 | cutoff (Å) | clusters (size ≥ 2) | largest cluster |
 |---|---|---|
 | 3.3 | 12 | 0.5 % (2–3 atoms) |
-| 3.5 | 84 | 3.2 % |
-| 3.6 | 51 | 21 % |
-| 3.65 | 23 | 73 % |
-| 3.7 | 8 | 91 % |
-| 3.8 | 1 | 98.7 % |
+| 3.5 | 86 | 2.5 % |
+| 3.6 | 47 | 37 % |
+| 3.65 | 17 | 80 % |
+| 3.7 | 8 | 92 % |
+| 3.8 | 1 | 98.9 % |
 | 4.0 | 1 | 100 % |
 
 The cluster count rises and then falls, which is not a mistake: at 3.3 Å almost
 nothing is within range, so there are a handful of isolated pairs; by 3.5 Å most
-atoms have a partner and there are 84 small fragments; past that the fragments
+atoms have a partner and there are 86 small fragments; past that the fragments
 start merging into each other, so the count collapses while the largest cluster
 grows. Nearly all the atoms are in no cluster at all at the small cutoffs, which
 is why 12 clusters and "largest = 2 atoms" are consistent.
@@ -73,7 +73,7 @@ is why 12 clusters and "largest = 2 atoms" are consistent.
 Between 3.55 and 3.70 Å the system goes from dozens of small aggregates to one
 network containing essentially every atom. That is a **percolation transition**,
 and it happens inside a 0.15 Å window. For scale, the first peak of
-[$g(r)$](rdf.md) is centred at 3.73 Å and is roughly 1 Å wide at half height —
+[$g(r)$](rdf.md) is centred at 3.68 Å and is roughly 1 Å wide at half height —
 so the entire transition fits inside the leading edge of the first coordination
 shell.
 
@@ -89,6 +89,12 @@ distance. If you want droplets, you need a system that actually has droplets,
 not a smaller cutoff on a homogeneous one.
 
 ## Computing it
+
+Clustering needs only the graph, so the data `Cluster` consumes is the
+neighbour table — built from the frame's positions and box, at the cutoff that
+defines "connected". The cutoff therefore lives in the `NeighborList`, not in
+`Cluster`; the only thing `Cluster` itself is configured with is the smallest
+component worth reporting.
 
 ```python
 import numpy as np
@@ -107,9 +113,9 @@ frame.box = mp.Box.cube(40.0)
 nl = mp.core.NeighborList(2.0)
 nl.build(frame.coords, frame.box)
 nlist = nl.neighbors()
-result, = Cluster(min_cluster_size=5).compute([frame], [nlist])
+result = Cluster(min_cluster_size=5).compute(pairs=nlist)
 print(result.n_clusters)                      # -> 3
-print(sorted(np.asarray(result.cluster_sizes).tolist()))    # -> [40, 40, 40]
+print(sorted(result.cluster_sizes.tolist()))  # -> [40, 40, 40]
 ```
 
 Three blobs in, three clusters out. The result also carries `cluster_idx`, the
@@ -117,34 +123,56 @@ per-particle cluster label you need in order to colour a rendering or select one
 aggregate:
 
 ```python
-labels = np.asarray(result.cluster_idx)
+labels = result.cluster_idx
 print(labels.shape, len(set(labels.tolist())))  # -> (120,) 3
 ```
 
-`min_cluster_size` discards components smaller than the threshold. Use it to
-drop monomers, but be aware it changes `n_clusters` — it is a reporting
-filter, not part of the physics.
+`min_cluster_size` discards components smaller than the threshold; their
+particles are labelled `-1`, in no cluster. Use it to drop monomers, but be
+aware it changes `n_clusters` — it is a reporting filter, not part of the
+physics.
 
-### Per-cluster properties in one call
-
-`ClusterProperties` reduces every cluster at once rather than making you loop:
+Sometimes connectivity is only half the definition. Two molecules that touch
+are one aggregate, but the atoms of one molecule belong together whether or
+not they touch. `merge` takes a partition — your `mol_id` column, say — and
+fuses every group of it into whichever cluster its atoms join:
 
 ```python
-from molpy.compute import ClusterProperties
-
-props, = ClusterProperties().compute([frame], [result])
-print(sorted(props))
-# -> ['centers', 'centers_of_mass', 'cluster_masses', 'gyration_tensors',
-#     'radii_of_gyration', 'sizes']
-print(np.round(np.asarray(props["radii_of_gyration"]), 2).tolist())
-# -> [1.29, 1.45, 1.39]
+mol_id = np.repeat(np.array([0, 0, 1], dtype=np.uint32), 40)  # blobs 1 and 2 are one molecule
+merged = Cluster().compute(pairs=nlist, merge=mol_id)
+print(merged.sizes())                         # -> [(0, 80), (1, 40)]
 ```
 
-`ClusterProperties` takes no mass argument, so its `radii_of_gyration` and
-`gyration_tensors` are **geometric** — every particle counted with unit mass,
-and `cluster_masses` simply the particle count. When you need mass weighting,
-use the explicit `CenterOfMass` / `RadiusOfGyration` route on
-[Shape](shape.md), which makes the convention visible in the call.
+### Per-cluster properties are a second compute
+
+A cluster result is not just a report: it is a **partition**, one label per
+particle, and every compute that reduces over groups accepts it as its
+`partition`. So "the centre and the radius of gyration of every cluster" is the
+cluster result handed to `CenterOfMass` and `GyrationTensor`, with the
+positions and box read from the same frame:
+
+```python
+from molpy.compute import CenterOfMass, GyrationTensor
+
+positions, box = frame.coords, frame.box
+unit = np.ones(len(positions))
+centres_found = CenterOfMass().compute(
+    positions=positions, simbox=box, partition=result, masses=unit
+)
+gyration = GyrationTensor().compute(
+    positions=positions, simbox=box, partition=result, weights=unit
+)
+print(np.round(centres_found.centers, 1).tolist())
+# -> [[4.9, 5.0, 5.3], [24.9, 4.9, 4.8], [5.0, 25.0, 4.9]]
+print(np.round(gyration.radius_of_gyration(), 2).tolist())  # -> [1.29, 1.45, 1.39]
+```
+
+The weights are explicit: unit weights here, so these are **geometric**
+descriptors — every particle counted once. Pass the masses read from your
+frame and the same two calls become mass-weighted. Passing `simbox` makes each
+cluster be measured about one of its own atoms under minimum image, so an
+aggregate split by the periodic boundary is still measured whole (see
+[Shape](shape.md)).
 
 Each blob was drawn from a Gaussian of width 0.8 Å per direction, so its radius
 of gyration should be close to $\sqrt{3}\times 0.8 = 1.39$ Å. The three come out
@@ -165,11 +193,15 @@ You are sitting on the percolation transition. Move the cutoff away from it, or
 report the transition itself rather than a number from inside it.
 
 **A single molecule is reported as two clusters.**
-It straddles a periodic boundary and you unwrapped it wrongly — or not at all.
-Cluster *identification* is fine under minimum image, so `n_clusters` is
-right; it is the per-cluster *shape* that breaks. [Shape](shape.md) gives the
-`unwrap_cluster` recipe — fold each cluster about one of its own atoms before
-measuring anything geometric.
+Its atoms are not all within the cutoff of each other — a long chain whose
+bonded neighbours are further apart than the cutoff, for instance. Pass the
+molecule labels as `merge` so that bonded atoms always share a cluster.
+
+**Per-cluster shapes are enormous — comparable to the box.**
+A cluster straddles a periodic boundary and the shape compute was called
+without `simbox`. Cluster *identification* is fine under minimum image, so
+`n_clusters` is right; it is the per-cluster *shape* that breaks. Pass the box
+to `GyrationTensor` and `CenterOfMass`, as on [Shape](shape.md).
 
 **`n_clusters` disagrees with the number of components you expected.**
 `min_cluster_size` is filtering. Set it to 1 to see everything.

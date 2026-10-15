@@ -123,12 +123,10 @@ nav = [
     { "Dynamics" = [
       { "Van Hove" = "compute/van_hove.md" },
       { "Reorientation" = "compute/reorientation.md" },
-      { "OACF" = "compute/oacf.md" },
     ] },
     { "Spectroscopy" = [
       { "Dielectric" = "compute/dielectric.md" },
       { "Spectra" = "compute/spectra.md" },
-      { "Signal" = "compute/signal.md" },
     ] },
     { "Workflow" = [
     ] },

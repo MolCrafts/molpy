@@ -21,7 +21,7 @@ same objects) and the version metadata.
 | `ff` | Mirrors `molrs.ff`: `forcefield` (the `ForceField` data model), `potential` (compiler and kernels), `typifier` (+ molpy's `AntechamberTypifier` / `TleapTypifier`), `charge`, `ir`, `params`, `clpol_scaling` |
 | `io` | Mirrors `molrs.io`: every file reader and writer (structure, trajectory and force-field files, SMILES, `*.mrec` records, frame bytes, LAMMPS logs) as one door per format, `read_<fmt>[_<what>]` / `write_<fmt>[_<what>]`, and one submodule per format that owns classes (`smiles`, `cgsmiles`, `lammps`, `mrec`, `pdb`, `xyz`, `gro`, `dcd`, `trr`, `xtc`); molpy's metric readers, published in the `molcrafts.metric_readers` entry-point group, are `io.lammps.LammpsLogMetricReader`, `io.mrec.MrecMetricReader` and `io.mlp_jsonl.MlpJsonlMetricReader` |
 | `builder` | Mirrors `molrs.builder` (assembly, `Coarsener`, graphene and nanotubes); plus polymer planning, crystals, virtual sites, `PackingTemplate`, `AmberPolymerBuilder` |
-| `compute`, `signal`, `md`, `op` | Mirror `molrs.compute`, `molrs.signal`, `molrs.md`, `molrs.op` |
+| `compute`, `md`, `op` | Mirror `molrs.compute` (every analysis, one `Correlator` engine under the time correlations, the fits and spectra), `molrs.md`, `molrs.op` |
 | `engine` | External engines: one `generate_inputs` each for LAMMPS, GROMACS and OpenMM, `run`, `Script` |
 | `wrapper` | Subprocess boundaries to external CLI tools (antechamber, parmchk2, prepgen, tleap, sander) |
 | `adapter` | Optional in-memory bridge (RDKit worked example) |

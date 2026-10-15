@@ -26,7 +26,9 @@ def test_unregistered_name_raises_attribute_error() -> None:
 #: The molrs subsystems with a molpy module of the same name; molpy may add
 #: names there (``mp.builder`` its crystals and polymers, ``mp.core`` its
 #: selectors, …).
-MIRRORED = tuple(sorted(molrs.__all__))
+MIRRORED = tuple(
+    sorted(n for n in molrs.__all__ if isinstance(getattr(molrs, n), ModuleType))
+)
 
 
 @pytest.mark.parametrize("sub", MIRRORED)
@@ -44,7 +46,7 @@ def test_a_mirrored_subsystem_keeps_every_native_name(sub: str) -> None:
 
 def test_only_promoted_core_classes_are_on_the_root() -> None:
     for name in set(dir(molpy)) & {
-        n for sub in molrs.__all__ for n in getattr(molrs, sub).__all__
+        n for sub in MIRRORED for n in getattr(molrs, sub).__all__
     }:
         obj = getattr(molpy, name)
         if isinstance(obj, ModuleType):

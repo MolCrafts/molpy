@@ -52,42 +52,76 @@ both, compute both: agreement is the best evidence that either is right.
 
 ## Computing it
 
-Assemble $\mathbf{J}(t)$ yourself, shape `(n_frames, 3)`:
+The Green–Kubo conductivity is a chain of three computes, each taking the
+previous one's output: the current autocorrelation, its running integral, and
+the plateau of that integral.
 
-```python
-import numpy as np
-from molpy.compute import GreenKuboConductivity, CumulativeTrapezoid
-
-rng = np.random.default_rng(2)
-J = np.ascontiguousarray(rng.normal(0.0, 1.0, size=(400, 3)))
-
-raw = GreenKuboConductivity().compute(J, dt=10.0, max_lag=100)
-print(raw.kind, raw.values.shape)         # -> jacf (101,)
-```
-
-In real work:
+The current comes first, and only you can build it, because only you know
+which atoms carry which charge. Two routes give the same $\mathbf{J}(t)$,
+shape `(n_frames, 3)`. With velocities in the dump, it is a charge-weighted
+sum, one line of NumPy:
 
 ```python
 # docs: skip — needs your own trajectory with velocities
-J = np.array([(charges[:, None] * velocities[i]).sum(axis=0)
-              for i in range(len(velocities))])
+J = np.einsum("a,tad->td", charges, velocities)    # (T, N, 3) -> (T, 3)
 ```
 
-The compute gives you $\langle\mathbf{J}(0)\cdot\mathbf{J}(t)\rangle$ as a
-`TimeCorrelation` and stops. Integrating is a separate step, and
-`integrate(running=True)` deliberately returns the **running** integral rather
-than one number, so you can see whether it has converged (it is
-`CumulativeTrapezoid` on `raw.values`):
+With positions only, it is the time derivative of the collective dipole,
+$\mathbf{J} = \dot{\mathbf{M}}$: a `DipoleMoment` followed by a `Derivative`.
+The stencil is configuration — `"central"` drops one frame at each end,
+`"gradient"` keeps every frame with one-sided ends, `"backward"` drops the
+first:
 
 ```python
-running = np.asarray(raw.integrate(running=True))
-print(running.shape)                      # -> (101,)
-print(np.allclose(running, CumulativeTrapezoid().fit(raw.values, dt=10.0)["integral"]))  # -> True
+import numpy as np
+from molpy.compute import Derivative, DipoleMoment
+
+rng = np.random.default_rng(2)
+charges = np.array([1.0, -1.0, 1.0, -1.0])
+unwrapped = np.cumsum(rng.normal(0.0, 0.05, size=(400, 4, 3)), axis=0)
+
+M = DipoleMoment().compute(positions=unwrapped, charges=charges).series(0)
+J_from_M = Derivative("central").compute(series=M, dt=10.0)
+print(M.shape, J_from_M.shape)            # -> (400, 3) (398, 3)
 ```
 
-Quote the plateau of that curve, not its last point. The [VACF](vacf.md) page
-shows the same procedure with a real curve, where reading the integral 400 fs
-too early gives an answer 25 % too high; exactly the same trap applies here.
+`CurrentAcf` correlates the current with its own past, summed over the three
+Cartesian components — exactly $\langle\mathbf{J}(0)\cdot\mathbf{J}(t)\rangle$,
+with nothing averaged away. It returns a `TimeCorrelation` and stops. To keep
+the numbers predictable, the current here is white noise of unit width per
+component, so the zero-lag value is 3:
+
+```python
+from molpy.compute import CurrentAcf
+
+J = np.random.default_rng(2).normal(0.0, 1.0, size=(400, 3))
+raw = CurrentAcf(max_lag=100).compute(current=J, dt=10.0)
+print(raw.n_lags, round(float(raw.values[0, 0]), 2))   # -> 101 3.05
+```
+
+Integrating is a separate step. `CumulativeTrapezoid` deliberately returns the
+**running** integral as another `TimeCorrelation`, rather than one number, so
+you can see whether it has converged, and `Plateau` averages it over a window
+given as fractions of the lag axis:
+
+```python
+from molpy.compute import CumulativeTrapezoid, Plateau
+
+running = CumulativeTrapezoid().compute(correlation=raw, channel=0)
+plateau = Plateau(0.5, 1.0).compute(correlation=running, channel=0)
+print(running.n_lags)                     # -> 101
+integral = plateau.value                  # e² Å² / fs
+```
+
+Quote the plateau, not the last point, and look at `plateau.std` before you
+believe it. The [VACF](vacf.md) page shows the same procedure with a real
+curve, where reading the integral 400 fs too early gives an answer 40 % too
+high; exactly the same trap applies here.
+
+Each lag is divided by the number of time origins that reach it
+(`normalization="unbiased"`, the default). `"biased"` divides by the number of
+frames instead, which damps the noisy tail at the cost of a bias; `"none"`
+returns the raw sums, the convention some older codes integrate.
 
 ### Getting to S/m
 
@@ -106,7 +140,7 @@ def conductivity_si(integral, volume_a3, temperature_k):
     return 6.1975e9 * integral / (volume_a3 * temperature_k)
 ```
 
-Do not apply that to the `running` array above and believe the result. `J` there
+Do not apply that to the `plateau` above and believe the result. `J` there
 is white noise of arbitrary magnitude, not a physical current, so the number it
 produces is arbitrary too. The helper is correct; the input is a placeholder.
 

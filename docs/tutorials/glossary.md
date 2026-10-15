@@ -108,34 +108,37 @@ Acronyms used across the [Compute](../compute/index.md) analyses.
 : `⟨v(0)·v(t)⟩`; its integral (Green–Kubo) gives diffusion, its FFT gives the VDOS. See [VACF](../compute/vacf.md).
 
 **VDOS** — vibrational density of states
-: Spectral density of atomic motion, `∝ FFT[VACF]`. See [VACF](../compute/vacf.md).
+: Spectral density of atomic motion, `∝ FFT[VACF]` (`Vacf` then `Spectrum`). See [Spectra](../compute/spectra.md).
 
 **OACF** — orientational autocorrelation function
-: `C_ℓ(t) = ⟨P_ℓ(û(0)·û(t))⟩` of a molecular unit vector; `ℓ = 1` is what dielectric relaxation sees, `ℓ = 2` what NMR and Raman see. See [OACF](../compute/oacf.md).
+: `C_ℓ(t) = ⟨P_ℓ(û(0)·û(t))⟩` of a molecular unit vector, computed by `ReorientationAcf`; `ℓ = 1` is what dielectric relaxation sees, `ℓ = 2` what NMR and Raman see. See [Reorientation](../compute/reorientation.md).
+
+**Correlator**
+: The one time-correlation estimator. `Msd`, `Vacf`, `OnsagerCorrelation`, `DipoleAcf`, `CurrentAcf`, `ReorientationAcf`, `RotationalAutocorrelation` and `Survival` are configurations of it; a correlation with no named class is a `Correlator` built directly. See [Spectra](../compute/spectra.md).
 
 **TimeCorrelation**
-: The one object every correlator returns: the curve (`values`), its lag axis (`lags`, `lag_times`), the time-origin counts, and the derived quantities as methods. See [VACF](../compute/vacf.md).
+: The one object every correlation returns: the curve `values[lag, channel]` on its lag axis `lag_times`, and nothing derived. Fits (`LinearFit`, `Plateau`, `DebyeFit`, `CumulativeTrapezoid`) are computes that read it. See [VACF](../compute/vacf.md).
 
 **MCD** — mean-displacement correlation (distinct diffusion)
 : Cross-correlated displacements between different species — the *distinct* part of diffusion, beyond the single-particle MSD. See [MSD](../compute/msd.md).
 
 **PMSD** — polarization / charge-dipole mean-squared displacement
-: MSD of $\mathbf{M}(t)=\sum q_a\mathbf{r}_a$ (unwrapped); raw curve from
- `EinsteinConductivity`. Fit $\sigma$ with `LinearFit` + SI scale. See
- [MSD](../compute/msd.md).
+: MSD of $\mathbf{M}(t)=\sum q_a\mathbf{r}_a$ (unwrapped): `DipoleMoment`
+ builds the series, `Msd` gives the raw curve, `LinearFit` + SI scale give
+ $\sigma$. See [PMSD](../compute/pmsd.md).
 
 **Current ACF** — $\langle\mathbf{J}(0)\cdot\mathbf{J}(t)\rangle$
-: From `GreenKuboConductivity` with $\mathbf{J}=\sum q\mathbf{v}$. Integrate
- with `CumulativeTrapezoid` then SI-scale for $\sigma$.
+: `CurrentAcf` of $\mathbf{J}=\sum q\mathbf{v}$. Integrate with
+ `CumulativeTrapezoid` then SI-scale for $\sigma$. See [JACF](../compute/jacf.md).
 
 **SDF** — spatial distribution function
-: Three-dimensional density of neighbours around a reference frame (angular structure, not just radial). See [Distribution](../compute/distribution.md).
+: Three-dimensional density of neighbours around a reference frame (angular structure, not just radial). See [Spatial](../compute/spatial.md).
 
 **CDF** — combined distribution function
 : A joint histogram over two geometric observables (e.g. distance × angle). See [Distribution](../compute/distribution.md).
 
 **PMFT** — potential of mean force and torque
-: Free energy `−k_BT ln g` over relative position/orientation coordinates. See [Distribution](../compute/distribution.md).
+: Free energy `−k_BT ln g` over relative position/orientation coordinates. See [PMFT](../compute/pmft.md).
 
 **ROA / VCD** — Raman optical activity / vibrational circular dichroism
 : Chiroptical vibrational spectra derived from correlation functions of the polarizability / magnetic-dipole responses. See [Spectra](../compute/spectra.md).

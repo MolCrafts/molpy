@@ -12,37 +12,45 @@ per arity: `"distance"` (pairs), `"angle"` (triplets), `"dihedral"`
 (quadruplets); `CombinedDistribution` builds a joint histogram over several at
 once.
 
-## The selection comes from the topology, not from arguments
+## The selection is an index array you read from the topology
 
-None of these takes a list of atom indices. Each reads its tuples from the
-matching **topology block** on every frame:
+The compute does not know what a bond is. You tell it which atoms to measure by
+handing over one row of atom indices per sample — a pair for a distance, a
+triple for an angle, a quadruple for a dihedral. Those rows normally already
+exist on the frame, as the endpoint columns of its topology blocks, and reading
+them out is your step:
 
-| Observable | Block | Endpoint columns |
+| Observable | Block you read | Endpoint columns |
 |---|---|---|
 | `DistributionFunction("distance", ...)` | `bonds` | `atomi`, `atomj` |
 | `DistributionFunction("angle", ...)` | `angles` | `atomi`, `atomj`, `atomk` |
 | `DistributionFunction("dihedral", ...)` | `dihedrals` | `atomi`, `atomj`, `atomk`, `atoml` |
 
-The angle is measured at the **middle** atom `atomj`. Endpoint columns are read
-as unsigned integers, so build them from an integer array.
+The angle is measured at the **middle** atom of the triple. Because the
+selection is just an array, nothing ties it to the frame's own topology: a
+hand-picked list of O–H···O triples or every C–C pair of one residue type is
+measured the same way.
 
-This is a deliberate design: the selection lives with the structure, so the same
-compute runs unchanged over a trajectory whose topology you defined once.
+The constructor holds what defines the measurement — the observable and its
+binning — and `compute` takes the data as parallel per-frame lists:
+`positions`, optionally `simbox` (to measure across periodic faces by the
+minimum image), and `tuples`. One configured instrument therefore runs
+unchanged over a whole trajectory.
 
 !!! warning "Angular ranges are in radians"
-    The kernel bins angles in **radians**. Leave `min`/`max` out and an angle
-    is binned over its natural range $[0, \pi]$, a dihedral over
-    $(-\pi, \pi]$ (kept signed). A range given in degrees puts every
-    physically possible angle (0 to $\pi \approx 3.14$) into the first two or
-    three bins out of `n_bins`, and the rest of the histogram is empty:
+    The kernel bins angles in **radians**. Give only `n_bins` and an angle is
+    binned over its natural range $[0, \pi]$, a dihedral over $(-\pi, \pi]$
+    (kept signed). An explicit `axis=Axis(min, max, n_bins)` given in degrees
+    puts every physically possible angle (0 to $\pi \approx 3.14$) into the
+    first two or three bins, and the rest of the histogram is empty:
 
     ```text
     DistributionFunction("angle", n_bins=90)                       # [0, pi]
-    DistributionFunction("dihedral", n_bins=90, min=-np.pi, max=np.pi)
+    DistributionFunction("dihedral", axis=Axis(-np.pi, np.pi, 90))
     ```
 
-    `bin_centers` comes back in radians too. `"distance"` has no natural range:
-    `min` and `max` are required, in the coordinates' length unit.
+    The bin centres come back in radians too. `"distance"` has no natural
+    range: it needs an explicit `axis`, in the coordinates' length unit.
 
 ## The sin θ trap
 
@@ -104,7 +112,8 @@ real. Use the corrected one for interpretation, and quote which you plotted.
 
 ## Computing it
 
-Build the frame and its topology block together:
+Build a frame and its topology block together — here 5000 isolated C–C bonds
+with lengths drawn around 1.53 Å, so the answer is known:
 
 ```python
 import numpy as np
@@ -129,12 +138,22 @@ index = np.arange(2 * n_bonds, dtype=np.uint32).reshape(n_bonds, 2)
 frame["bonds"] = {"atomi": index[:, 0], "atomj": index[:, 1]}
 ```
 
-```python
-result = DistributionFunction("distance", n_bins=60, min=1.35, max=1.75).compute([frame])
+Read the pair rows out of the `bonds` block, then measure:
 
-centers = np.asarray(result.bin_centers)
-density = np.asarray(result.density)
-print(result.n_raw_samples, result.angular)        # -> 5000 False
+```python
+from molpy.compute import Axis
+
+bonds = frame["bonds"]
+pairs = np.column_stack([bonds["atomi"], bonds["atomj"]])
+
+lengths_of = DistributionFunction("distance", axis=Axis(1.35, 1.75, 60))
+result = lengths_of.compute(
+    positions=[frame.coords], simbox=[frame.box], tuples=[pairs]
+)
+
+centers = result.histogram.axes[0].centers
+density = result.density
+print(result.n_raw_samples, result.density_sin_corrected)   # -> 5000 None
 print(round(float((centers * density).sum() / density.sum()), 3))   # -> 1.53
 ```
 
@@ -142,9 +161,9 @@ Bonds drawn with a mean of 1.53 Å come back with a mean of 1.53 Å. Run that
 check on a distribution whose answer you know before trusting one whose answer
 you do not.
 
-`n_raw_samples` counts the tuples found; if it is zero, the block is missing or
-its columns are misnamed. `angular` tells you whether the sin correction
-applies — `False` here, `True` for angles and dihedrals.
+`n_raw_samples` counts the tuples you passed and `histogram.binned` how many of
+them fell inside the axis. `density_sin_corrected` is `None` for a distance,
+because the sin correction applies only to angles and dihedrals.
 
 For an angular distribution, the same pattern over the natural range in radians:
 
@@ -158,14 +177,32 @@ angles["angles"] = {
     "atomi": triples[:, 0], "atomj": triples[:, 1], "atomk": triples[:, 2]
 }
 
-adf = DistributionFunction("angle", n_bins=90).compute([angles])
-print(adf.angular, np.asarray(adf.bin_centers).max() <= np.pi)   # -> True True
+block = angles["angles"]
+triplets = np.column_stack([block["atomi"], block["atomj"], block["atomk"]])
+adf = DistributionFunction("angle", n_bins=90).compute(
+    positions=[angles.coords], tuples=[triplets]
+)
+axis = adf.histogram.axes[0]
+print(axis.min, round(axis.max, 4), adf.density_sin_corrected.shape)
+# -> 0.0 3.1416 (90,)
 ```
 
-`CombinedDistribution` takes one `(kind, n_bins, min, max, sin_weight)` tuple
-per axis, with `kind` one of `"distance"`, `"angle"`, `"dihedral"`, and builds
-the joint histogram — useful when a bond length and a torsion are correlated and
-the marginals hide it.
+When a bond length and an angle are correlated, their marginals hide it, and
+you want the joint histogram. `CombinedDistribution` takes one observable and
+one `Axis` per dimension; `compute` takes, per frame, one tuple array per
+observable, row $k$ of each describing the same sample. Angular axes are
+sin-corrected automatically, `sin_weight=[i]` asks for it on axis `i` as well,
+and `marginal(i)` integrates the others out:
+
+```python
+from molpy.compute import CombinedDistribution
+
+joint = CombinedDistribution(
+    ["distance", "angle"], [Axis(0.0, 30.0, 15), Axis(0.0, np.pi, 18)]
+).compute(positions=[angles.coords], tuples=[[triplets[:, :2], triplets]])
+print(joint.density.shape, joint.sin_corrected.tolist())   # -> (15, 18) [False, True]
+print(joint.marginal(0).density.shape)                     # -> (15,)
+```
 
 ## When it goes wrong
 
@@ -173,19 +210,21 @@ the marginals hide it.
 A range given in degrees. See the warning above.
 
 **`n_raw_samples` is 0.**
-No `bonds` / `angles` / `dihedrals` block on the frame, or the endpoint columns
-are not named `atomi`, `atomj`, … Check `list(frame.keys())`.
+The tuple array you passed is empty — usually the block you read it from was
+missing or had no rows. Check `list(frame.keys())` and the block's `n_rows`.
 
 **A peak at 90° that disappears when you think about it.**
 The $\sin\theta$ weight. Look at `density_sin_corrected`.
 
 **The distribution is cut off at one end.**
-Your `min`/`max` window clips real samples. Samples outside the range are simply
-not binned, and nothing warns you — compare `n_binned` with `n_raw_samples`.
+Your `Axis` window clips real samples. Samples outside the range are simply
+not binned, and nothing warns you — compare `histogram.binned` with
+`n_raw_samples`.
 
 **Bond lengths look right but angles are nonsense.**
-Check the endpoint order. The angle is taken at `atomj`; if your block lists the
-central atom first, every angle is wrong in a way that still looks plausible.
+Check the column order of your tuples. The angle is taken at the middle
+index; if your rows list the central atom first, every angle is wrong in a way
+that still looks plausible.
 
 **Distributions from two runs disagree slightly.**
 Compare bin widths before anything else. A histogram is not a function; its
@@ -195,8 +234,8 @@ apparent peak height depends on binning.
 
 - Generate bonds with a known mean and width, then confirm the measured mean
   and standard deviation match. This catches unit and indexing errors instantly.
-- Compare `n_binned` with `n_raw_samples`. If they differ, your range is
-  clipping data.
+- Compare `histogram.binned` with `n_raw_samples`. If they differ, your range
+  is clipping data.
 - Histogram random isotropic triplets and confirm the raw curve is
   $\tfrac12\sin\theta$ and the corrected one is flat. If the raw curve is
   already flat, you are looking at the corrected array.

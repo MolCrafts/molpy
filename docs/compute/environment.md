@@ -82,22 +82,24 @@ crystal["atoms"] = {"x": xyz[:, 0], "y": xyz[:, 1], "z": xyz[:, 2]}
 crystal.box = mp.Box.cube(4 * a)
 ```
 
-The result is, per frame, a 4-tuple of `(counts, density, theta_edges,
-phi_edges)`. The two grids are `(n_theta, n_phi)`; the two edge arrays are one
-longer than their axis, as histogram edges always are:
+The diagram is built from one thing, the neighbour table. Positions and box
+are read from the frame and indexed by a `NeighborList`; the grid resolution is
+configuration and goes into the constructor:
 
 ```python
 nl = mp.core.NeighborList(4.5)
 nl.build(crystal.coords, crystal.box)
 nlist = nl.neighbors()
-counts, density, theta_edges, phi_edges = BondOrientationalOrder(n_theta=36, n_phi=72).compute(
-    [crystal], [nlist]
-)[0]
+diagram = BondOrientationalOrder(n_theta=36, n_phi=72).compute(neighbors=nlist)
 
-counts = np.asarray(counts)
-print(counts.shape, np.asarray(theta_edges).shape)   # -> (36, 72) (37,)
+counts = diagram.raw_counts
+print(counts.shape, diagram.theta_edges.shape)       # -> (36, 72) (37,)
 print(int(counts.sum()), int((counts > 0).sum()))    # -> 3072 28
 ```
+
+`raw_counts` is the integer histogram and `bond_order` the same grid
+normalized as a density on the sphere; the two edge arrays are one longer
+than their axis, as histogram edges always are.
 
 3072 is 256 × 12: each bond is counted once **from each end**, so the total is
 twice the pair count from the [neighbour list](neighborlist.md). Do not confuse
@@ -106,11 +108,33 @@ it with `n_pairs`.
 Convert edges to centres the usual way when plotting:
 
 ```python
-theta = 0.5 * (np.asarray(theta_edges)[:-1] + np.asarray(theta_edges)[1:])
+theta = 0.5 * (diagram.theta_edges[:-1] + diagram.theta_edges[1:])
 print(round(float(np.degrees(theta[0])), 1))         # -> 2.5
 ```
 
 Angles are in radians, like the rest of the angular machinery.
+
+## Environments can be matched atom by atom
+
+The diagram pools every atom into one map. Sometimes the question is the
+opposite one: which atoms share the *same* environment? `EnvironmentMatch`
+compares each atom's set of neighbour vectors with every other atom's, and
+groups atoms whose sets agree to within an RMSD threshold. In a perfect
+crystal every site is equivalent, so there is exactly one group:
+
+```python
+from molpy.compute import EnvironmentMatch
+
+matched = EnvironmentMatch(rmsd_threshold=0.1).compute(neighbors=nlist)
+print(matched.n_clusters, len(matched.cluster_idx))  # -> 1 256
+```
+
+The result labels every atom with its environment class, and it is a
+partition: it can be passed wherever a compute takes a `partition`, for
+instance to `CenterOfMass` to locate each class (see [Shape](shape.md)).
+`LocalDescriptors(l_max)` is the continuous counterpart — the spherical
+harmonics of every bond up to `l_max` as a feature matrix, ready for
+[Decomposition](decomposition.md).
 
 ## When it goes wrong
 
