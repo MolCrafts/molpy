@@ -93,8 +93,20 @@ band peaks at 20 cm⁻¹ and has died away by 150 cm⁻¹.
 </figure>
 
 Two features carry the physics. The spectrum is **non-zero at zero frequency** —
-0.67 of the peak height — because $g(0) \propto D$ and a liquid diffuses; a
-solid, after removing drift, goes to zero there. And the whole band lies below
+0.76 of the peak height — because $g(0) \propto D$ and a liquid diffuses; a
+solid, after removing drift, goes to zero there. The proportionality is exact
+enough to check. At $\omega = 0$ the transform is the time integral of the
+correlation, which is the Green–Kubo integral of the [VACF](vacf.md) page: read
+in absolute units, this run's $g(0)$ gives $D = 2.18\times10^{-5}$ cm² s⁻¹,
+against $2.10\times10^{-5}$ from the same run's running integral and
+$(2.01 \pm 0.10)\times10^{-5}$ over the eight runs. The 4 % between the first
+two is the cosine² taper, which weighs the negative lobe and the tail slightly
+less than a plain integral does.
+
+That check only works because the correlation keeps the mean velocity. Over a
+finite run each atom's mean velocity is its net displacement divided by the run
+length, which is diffusion, not drift; subtracting it would pull $g(0)$ down to
+0.67 of the peak, for the reason worked through on the [VACF](vacf.md) page. And the whole band lies below
 about 150 cm⁻¹, because argon is monatomic and has no internal vibrations at
 all: everything visible is atoms rattling in their cages, the same motion the
 [VACF](vacf.md) shows as a negative lobe at 440 fs. A molecular liquid adds
@@ -262,7 +274,10 @@ the transform.
 Build the correlation function first. `Vacf` takes the velocities as a
 `(n_frames, n_dof)` array — every Cartesian component of every atom is one
 degree of freedom, so an `(n_frames, n_atoms, 3)` array is reshaped — and
-averages the mean-subtracted, unbiased autocorrelation over them:
+averages the unbiased autocorrelation over them. `mean="keep"` correlates the
+velocities as given, which keeps the zero-frequency end equal to the
+Green–Kubo $D$; the default, `"subtract"`, removes each column's run mean
+first:
 
 ```python
 from molpy.compute import Vacf
@@ -270,7 +285,8 @@ from molpy.compute import Vacf
 rng = np.random.default_rng(0)
 velocities = rng.normal(0.0, 0.02, size=(1024, 32, 3))
 
-vacf = Vacf(256).compute(velocities=velocities.reshape(1024, -1), dt=0.5)
+flat = velocities.reshape(1024, -1)
+vacf = Vacf(256, mean="keep").compute(velocities=flat, dt=0.5)
 vdos = Spectrum("cosine_sq", 4).compute(signal=vacf.channel(0), dt=0.5)
 
 nu = vdos.frequencies / (2 * np.pi * c_cm_per_fs)

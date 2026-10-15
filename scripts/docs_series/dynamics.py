@@ -11,6 +11,7 @@ import numpy as np
 import molpy as mp
 from molpy.compute import (
     Axis,
+    CumulativeTrapezoid,
     RadicalVoronoi,
     ReorientationAcf,
     Spectrum,
@@ -18,7 +19,13 @@ from molpy.compute import (
     VanHove,
 )
 
-from .lj import FS_TO_PS, FS_TO_S, SPEED_OF_LIGHT_CM_PER_S, Trajectory
+from .lj import (
+    ANGSTROM2_PER_FS_TO_CM2_PER_S,
+    FS_TO_PS,
+    FS_TO_S,
+    SPEED_OF_LIGHT_CM_PER_S,
+    Trajectory,
+)
 from .structure import write_json
 
 #: VACF lags transformed into the VDOS, in frames.
@@ -87,12 +94,14 @@ def voronoi_volumes(trajectory: Trajectory) -> dict[str, float]:
 def vibrational_dos(trajectory: Trajectory) -> dict[str, float]:
     """VDOS of liquid argon: the Fourier transform of the VACF.
 
-    The VACF is cosine-squared windowed and zero-padded to four times its
-    length; ``Spectrum`` reports angular frequencies in rad/fs, converted
-    here to wavenumbers.
+    The VACF keeps the mean, for the reason given in ``transport._vacf``:
+    subtracting each component's run mean removes real diffusive motion and
+    lowers g(0), which is the Green-Kubo integral. The VACF is cosine-squared
+    windowed and zero-padded to four times its length; ``Spectrum`` reports
+    angular frequencies in rad/fs, converted here to wavenumbers.
     """
     n_frames = trajectory.velocities.shape[0]
-    vacf = Vacf(VDOS_MAX_LAG).compute(
+    vacf = Vacf(VDOS_MAX_LAG, mean="keep").compute(
         velocities=trajectory.velocities.reshape(n_frames, -1), dt=trajectory.dt
     )
     spectrum = Spectrum("cosine_sq", 4).compute(
@@ -112,9 +121,20 @@ def vibrational_dos(trajectory: Trajectory) -> dict[str, float]:
     )
     peak = int(np.argmax(intensity[keep]))
     correlation_time = VDOS_MAX_LAG * trajectory.dt * FS_TO_S
+
+    # g(0) in absolute units. The unscaled one-sided transform at omega = 0 is
+    # the plain sum of the tapered correlation; times dt, less half the lag-0
+    # term (the trapezoid end correction), it is the tapered Green-Kubo
+    # integral. Compare with the same run's untapered running integral.
+    dt = float(vacf.lag_times[1])
+    c0 = float(vacf.values[0, 0])
+    zero_frequency_d = (float(intensity[0]) - 0.5 * c0) * dt
+    running = CumulativeTrapezoid().compute(correlation=vacf, channel=0).channel(0)
     return {
         "peak_cm1": float(frequency[keep][peak]),
         "zero_frequency_weight": float(normalized[0]),
+        "D_zero_frequency_cm2_per_s": zero_frequency_d * ANGSTROM2_PER_FS_TO_CM2_PER_S,
+        "D_green_kubo_cm2_per_s": float(running[-1]) * ANGSTROM2_PER_FS_TO_CM2_PER_S,
         "resolution_cm1": float(1.0 / (SPEED_OF_LIGHT_CM_PER_S * correlation_time)),
     }
 
