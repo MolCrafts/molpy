@@ -12,6 +12,7 @@ use crate::ff::ir::CombiningRule;
 use crate::ff::ir::torsion::rb_polynomial;
 use crate::ff::ir::{ONE_FOUR, ONE_FOUR_EPSILON14, has_own_one_four};
 use crate::ff::ir::{Params, SpecialBonds};
+use crate::ff::typifier::OplsAaTypifier;
 use crate::io::reader::ForceFieldReader;
 use molrs::core::TypeName;
 
@@ -23,13 +24,13 @@ pub(crate) const HARMONIC_IMPROPER_SIGNED: &str = "k*(theta-theta0)^2";
 pub(crate) const HARMONIC_IMPROPER_ABS: &str = "k*(abs(theta)-theta0)^2";
 
 /// Read a [`ForceField`] from an OpenMM force-field XML file.
-pub fn read_openmm_xml_forcefield(path: &str) -> Result<ForceField, String> {
+pub fn read_openmm_forcefield(path: &str) -> Result<ForceField, String> {
     OpenmmXmlReader::new().read(path)
 }
 
 /// Read a [`ForceField`] from OpenMM force-field XML text — the inverse of
-/// [`write_openmm_xml_forcefield_str`](crate::io::write_openmm_xml_forcefield_str).
-pub fn read_openmm_xml_forcefield_str(text: &str) -> Result<ForceField, String> {
+/// [`write_openmm_forcefield_str`](crate::io::write_openmm_forcefield_str).
+pub fn read_openmm_forcefield_str(text: &str) -> Result<ForceField, String> {
     OpenmmXmlReader::new().read_str(text)
 }
 
@@ -127,6 +128,24 @@ pub struct OpenmmXmlReader;
 impl OpenmmXmlReader {
     pub fn new() -> Self {
         Self
+    }
+
+    /// Read an OPLS-AA typifier from OpenMM force-field XML text: the typing
+    /// annotations Foyer adds to each `<AtomTypes><Type>` (`def` SMARTS,
+    /// `overrides`, `priority`, `layer`) and the force field of the same
+    /// document — a caller's OPLS-AA / CL&P file, where
+    /// [`OplsAaTypifier::oplsaa`] is the shipped set.
+    ///
+    /// # Errors
+    ///
+    /// Either half failing to read: a malformed document, a `<Type>` without
+    /// `name` / `class`, a non-integer `priority` / `layer`, an `overrides`
+    /// naming an undeclared type or forming a cycle, or what
+    /// [`read_str`](ForceFieldReader::read_str) refuses.
+    pub fn read_opls_typifier_str(&self, text: &str) -> Result<OplsAaTypifier, String> {
+        let meta = super::opls_typing::read_typing_metadata(text)?;
+        let ff = self.read_str(text)?;
+        Ok(OplsAaTypifier::new(meta, ff))
     }
 }
 

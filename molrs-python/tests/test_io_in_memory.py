@@ -46,10 +46,10 @@ TEXT_FORMATS = [
     ),
     (
         "poscar",
-        mio.write_vasp_poscar,
-        mio.write_vasp_poscar_str,
-        mio.read_vasp_poscar,
-        mio.read_vasp_poscar_str,
+        mio.write_poscar,
+        mio.write_poscar_str,
+        mio.read_poscar,
+        mio.read_poscar_str,
     ),
 ]
 
@@ -108,16 +108,31 @@ def test_binary_bytes_doors_are_one_frame_files(tmp_path, frame, fmt):
 
 def test_forcefield_text_doors_are_the_path_doors_in_memory(tmp_path):
     source = FIXTURES / "amber.xml"
-    ff = mio.read_openmm_xml_forcefield_str(source.read_text(encoding="utf-8"))
-    from_path = mio.read_openmm_xml_forcefield(source)
-    xml = mio.write_openmm_xml_forcefield_str(ff)
-    assert xml == mio.write_openmm_xml_forcefield_str(from_path)
+    ff = mio.read_openmm_forcefield_str(source.read_text(encoding="utf-8"))
+    from_path = mio.read_openmm_forcefield(source)
+    xml = mio.write_openmm_forcefield_str(ff)
+    assert xml == mio.write_openmm_forcefield_str(from_path)
     path = tmp_path / "ff.xml"
-    mio.write_openmm_xml_forcefield(path, ff)
+    mio.write_openmm_forcefield(path, ff)
     assert path.read_text(encoding="utf-8") == xml
     # Its long atom types do not fit frcmod: both frcmod doors refuse alike.
     with pytest.raises(ValueError, match="two-character") as by_path:
-        mio.write_amber_frcmod(tmp_path / "ff.frcmod", ff)
+        mio.write_frcmod(tmp_path / "ff.frcmod", ff)
     with pytest.raises(ValueError) as by_str:
-        mio.write_amber_frcmod_str(ff)
+        mio.write_frcmod_str(ff)
     assert str(by_str.value) == str(by_path.value)
+
+
+def test_the_force_field_xml_holds_what_openmm_xml_read(tmp_path):
+    source = FIXTURES / "amber.xml"
+    ff = mio.read_openmm_forcefield(source)
+    xml = mio.write_xml_forcefield_str(ff)
+    path = tmp_path / "ff.xml"
+    mio.write_xml_forcefield(path, ff)
+    assert path.read_text(encoding="utf-8") == xml
+    back = mio.read_xml_forcefield(path)
+    assert mio.write_xml_forcefield_str(back) == xml
+    assert mio.write_xml_forcefield_str(mio.read_xml_forcefield_str(xml)) == xml
+    # An OpenMM document is not this one: the reader names the door that reads it.
+    with pytest.raises(ValueError, match="read_openmm_forcefield"):
+        mio.read_xml_forcefield(source)

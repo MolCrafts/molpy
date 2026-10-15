@@ -29,10 +29,11 @@ mod frame_encoding;
 mod in_memory;
 mod json_to_py;
 pub mod lammps_bond_react;
-// The log parser reads a path, and the record store is a filesystem store in
-// the core crate: both are native-only, behind `fs`.
-#[cfg(feature = "fs")]
+// The log parser is `std::fs` plus an in-memory door. It does not use the
+// zarr `filesystem` feature, so it is part of every build, including Pyodide.
 mod lammps_log;
+// `*.mrec` is a zarr store. It needs `fs` (`molrs/filesystem`) and is absent
+// from a `--no-default-features` Pyodide build.
 #[cfg(feature = "fs")]
 pub mod mrec;
 pub(crate) mod smiles;
@@ -55,9 +56,9 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     smiles::register(m)?;
     cgsmiles::register(m)?;
     lammps_bond_react::register(m)?;
+    lammps_log::register(m)?;
     #[cfg(feature = "fs")]
     {
-        lammps_log::register(m)?;
         mrec::register_doors(m)?;
         crate::add_submodule(m, "mrec", "molrs.io.mrec", mrec::register)?;
     }

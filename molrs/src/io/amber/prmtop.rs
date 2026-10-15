@@ -1010,7 +1010,7 @@ pub(crate) fn frame_from_sections(sections: &HashMap<String, Vec<String>>) -> Re
 /// - Charges are Amber internal units (`E = q1*q2/r` with kcal/mol, Å);
 ///   we divide by the literal 18.2223 (a chamber file: √332.0716, ParmEd's
 ///   `CHARMM_ELECTROSTATIC`) to electron charge for the Frame.
-pub fn read_amber_prmtop<P: AsRef<Path>>(path: P) -> Result<Frame> {
+pub fn read_prmtop<P: AsRef<Path>>(path: P) -> Result<Frame> {
     let file = std::fs::File::open(path.as_ref())?;
     read_frame_from(std::io::BufReader::new(file))
 }
@@ -1026,7 +1026,7 @@ fn read_frame_from<R: BufRead>(reader: R) -> Result<Frame> {
 // ---------------------------------------------------------------------------
 
 /// Read an AMBER prmtop structure from its text.
-pub fn read_amber_prmtop_str(text: &str) -> Result<Frame> {
+pub fn read_prmtop_str(text: &str) -> Result<Frame> {
     read_frame_from(text.as_bytes())
 }
 

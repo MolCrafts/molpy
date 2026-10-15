@@ -30,7 +30,7 @@ type Lj = (f64, f64);
 /// Builds a molrs [`ForceField`] from the parameter tables of an AMBER
 /// topology (prmtop / parm7), and of a CHARMM topology ParmEd's `chamber`
 /// wrote in the same format. Structure/connectivity lives in
-/// [`read_amber_prmtop`](crate::io::read_amber_prmtop); this module owns styles + type params only.
+/// [`read_prmtop`](crate::io::read_prmtop); this module owns styles + type params only.
 /// AMBER is read, never written: there is no prmtop writer.
 ///
 /// # Amber FileFormats (I/O) vs the force-field IR
@@ -94,7 +94,7 @@ impl AmberPrmtopForcefieldReader {
     }
 
     /// A whole AMBER system: the force field, and the structure frame of
-    /// [`read_amber_prmtop`](crate::io::read_amber_prmtop) plus a `pairs` block holding the 1-4 pairs
+    /// [`read_prmtop`](crate::io::read_prmtop) plus a `pairs` block holding the 1-4 pairs
     /// sander weighs otherwise than the field's `special_bonds` — a torsion
     /// type whose `SCEE` / `SCNB` differ from the divisor most 1-4 rows carry
     /// (GLYCAM beside ff14SB), a pair two rows list, a 1-4 pair no row lists
@@ -134,7 +134,7 @@ impl ForceFieldReader for AmberPrmtopForcefieldReader {
 }
 
 /// Convenience: read prmtop path → ForceField.
-pub fn read_amber_prmtop_forcefield(path: impl AsRef<Path>) -> Result<ForceField, String> {
+pub fn read_prmtop_forcefield(path: impl AsRef<Path>) -> Result<ForceField, String> {
     let text = std::fs::read_to_string(path.as_ref())
         .map_err(|e| format!("read {}: {e}", path.as_ref().display()))?;
     AmberPrmtopForcefieldReader::new().read_str(&text)
@@ -148,7 +148,7 @@ pub fn read_amber_prmtop_forcefield(path: impl AsRef<Path>) -> Result<ForceField
 ///
 /// An unreadable file and every error of
 /// [`AmberPrmtopForcefieldReader::read_system_str`].
-pub fn read_amber_prmtop_system(path: impl AsRef<Path>) -> Result<(ForceField, Frame), String> {
+pub fn read_prmtop_system(path: impl AsRef<Path>) -> Result<(ForceField, Frame), String> {
     let text = std::fs::read_to_string(path.as_ref())
         .map_err(|e| format!("read {}: {e}", path.as_ref().display()))?;
     AmberPrmtopForcefieldReader::new().read_system_str(&text)

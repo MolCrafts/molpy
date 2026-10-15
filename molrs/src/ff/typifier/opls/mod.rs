@@ -24,12 +24,12 @@ use typing::typify_atoms;
 
 /// OPLS-AA typifier — owns typing metadata and force-field parameters.
 ///
-/// [`oplsaa`](Self::oplsaa) is the shipped set; [`new`](Self::new) takes a
-/// caller's typing metadata ([`OplsTypingMetadata`]) and potential parameters
-/// ([`ForceField`]) — read from one OPLS-AA XML file by
-/// [`read_openmm_xml_opls_typing_str`](crate::io::read_openmm_xml_opls_typing_str)
-/// and [`OpenmmXmlReader`](crate::io::openmm_xml::OpenmmXmlReader) —
-/// and precomputes the bonded candidate tables once.
+/// [`oplsaa`](Self::oplsaa) is the shipped set; [`new`](Self::new) takes typing
+/// metadata ([`OplsTypingMetadata`]) and potential parameters ([`ForceField`])
+/// — a caller's OPLS-AA / CL&P file (OpenMM's schema with Foyer's typing
+/// annotations) gives both to
+/// [`OpenmmXmlReader::read_opls_typifier_str`](crate::io::openmm_xml::OpenmmXmlReader::read_opls_typifier_str).
+/// Each precomputes the bonded candidate tables once.
 ///
 /// Mirrors [`mmff`](crate::ff::typifier::mmff): typing metadata
 /// ([`OplsTypingMetadata`]) is kept *separately* from the potential [`ForceField`].
@@ -162,8 +162,9 @@ impl OplsAaTypifier {
     /// Construct from already-parsed metadata and force field (strict bonded
     /// matching). The bonded candidate tables are built once from `ff`.
     ///
-    /// `meta` is taken as valid ([`OplsTypingMetadata::validate`]); the XML reader
-    /// [`read_openmm_xml_opls_typing_str`](crate::io::read_openmm_xml_opls_typing_str)
+    /// `meta` is taken as valid ([`OplsTypingMetadata::validate`]); the XML
+    /// reader
+    /// [`OpenmmXmlReader::read_opls_typifier_str`](crate::io::openmm_xml::OpenmmXmlReader::read_opls_typifier_str)
     /// refuses a table that is not.
     pub fn new(meta: OplsTypingMetadata, ff: ForceField) -> Self {
         let tables = CandidateTables::build(&ff, &meta);
@@ -362,14 +363,12 @@ mod tests {
     /// the attribute builds.
     #[test]
     fn a_dangling_override_refuses_the_typing_table() {
-        use crate::io::read_openmm_xml_opls_typing_str;
-        use crate::io::{openmm_xml::OpenmmXmlReader, reader::ForceFieldReader};
-        let xml = one_type_xml(None);
-        let meta =
-            read_openmm_xml_opls_typing_str(&xml).expect("the XML without the override reads");
-        let ff = OpenmmXmlReader::new().read_str(&xml).unwrap();
-        let _ = OplsAaTypifier::new(meta, ff);
-        let Err(e) = read_openmm_xml_opls_typing_str(&one_type_xml(Some("opls_missing"))) else {
+        use crate::io::openmm_xml::OpenmmXmlReader;
+        let reader = OpenmmXmlReader::new();
+        reader
+            .read_opls_typifier_str(&one_type_xml(None))
+            .expect("the XML without the override builds");
+        let Err(e) = reader.read_opls_typifier_str(&one_type_xml(Some("opls_missing"))) else {
             panic!("a dangling override must refuse the table");
         };
         assert!(e.contains("opls_a"), "err names the overriding type: {e}");

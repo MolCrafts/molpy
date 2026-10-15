@@ -1411,7 +1411,9 @@ fn infer_fixed_vector(value: &Bound<'_, PyAny>) -> PyResult<Option<MetaValue>> {
 /// Takes a `dict`, a [`MetaDocument`](PyMetaDocument), or any other
 /// `collections.abc.Mapping` (`frame.meta` among them). Nested values may be
 /// anything a `frame.meta` door hands out — tuples and documents included —
-/// so what the bindings give a caller round-trips back in.
+/// so what the bindings give a caller round-trips back in. Used by `*.mrec`,
+/// which needs `fs`.
+#[cfg(feature = "fs")]
 pub(crate) fn meta_document_arg(
     meta: &Bound<'_, PyAny>,
 ) -> PyResult<serde_json::Map<String, JsonValue>> {
@@ -1434,6 +1436,8 @@ pub(crate) fn meta_document_arg(
 }
 
 /// A JSON object as a plain `dict`: nested objects are dicts, arrays lists.
+/// Used by `*.mrec`, which needs `fs`.
+#[cfg(feature = "fs")]
 pub(crate) fn json_map_to_plain_dict<'py>(
     py: Python<'py>,
     map: &serde_json::Map<String, JsonValue>,

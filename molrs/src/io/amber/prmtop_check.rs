@@ -30,7 +30,7 @@ use molrs::core::Frame;
 use molrs::core::SimBox;
 use molrs::core::TypeLabels;
 use molrs::io::lammps::data::write_lammps_data;
-use molrs::io::read_amber_inpcrd_str;
+use molrs::io::read_inpcrd_str;
 use molrs::op::F;
 
 /// One energy decomposition, kcal/mol, in sander's terms.
@@ -282,7 +282,7 @@ fn system(case: &Case) -> (Frame, ForceField, Vec<F>) {
     frame.insert("pairs", pairs);
     ff.materialize_one_four(&mut frame)
         .unwrap_or_else(|e| panic!("{}: materialize_one_four: {e}", case.name));
-    let xyz = read_amber_inpcrd_str(case.rst).unwrap();
+    let xyz = read_inpcrd_str(case.rst).unwrap();
     let atoms = xyz.get("atoms").unwrap();
     let col = |k: &str| atoms.get(k).unwrap().as_float().unwrap().to_owned();
     let (x, y, z) = (col("x"), col("y"), col("z"));

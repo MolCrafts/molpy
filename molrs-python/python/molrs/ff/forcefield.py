@@ -6,8 +6,8 @@ them; :class:`Style` / :class:`ForceFieldType` and their per-category subclasses
 live handles onto it.
 
 No file format is here. Every force-field file reader and writer —
-``read_lammps_forcefield``, ``read_gromacs_top_forcefield``,
-``write_amber_frcmod``, ``write_openmm_xml_forcefield`` and the rest — is a function at the top of
+``read_lammps_forcefield``, ``read_top_forcefield``,
+``write_frcmod``, ``write_openmm_forcefield`` and the rest — is a function at the top of
 :mod:`molrs.io`, as every other file reader and writer is.
 """
 

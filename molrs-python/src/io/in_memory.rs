@@ -122,24 +122,24 @@ write_str_door!(
     write_cube_str => molrs::io::write_cube_str, molrs_error_to_pyerr
 );
 read_door!(
-    /// Read VASP POSCAR / CONTCAR text — :func:`read_vasp_poscar` on a string.
-    read_vasp_poscar_str(text: &str) => molrs::io::read_vasp_poscar_str, io_error_to_pyerr
+    /// Read VASP POSCAR / CONTCAR text — :func:`read_poscar` on a string.
+    read_poscar_str(text: &str) => molrs::io::read_poscar_str, io_error_to_pyerr
 );
 write_str_door!(
-    /// Write a Frame as VASP POSCAR text — :func:`write_vasp_poscar` into a string.
-    write_vasp_poscar_str => molrs::io::write_vasp_poscar_str, io_error_to_pyerr
+    /// Write a Frame as VASP POSCAR text — :func:`write_poscar` into a string.
+    write_poscar_str => molrs::io::write_poscar_str, io_error_to_pyerr
 );
 read_door!(
-    /// Read VASP CHGCAR / CHGDIF text — :func:`read_vasp_chgcar` on a string.
-    read_vasp_chgcar_str(text: &str) => molrs::io::read_vasp_chgcar_str, molrs_error_to_pyerr
+    /// Read VASP CHGCAR / CHGDIF text — :func:`read_chgcar` on a string.
+    read_chgcar_str(text: &str) => molrs::io::read_chgcar_str, molrs_error_to_pyerr
 );
 read_door!(
-    /// Read antechamber ``.ac`` text — :func:`read_amber_ac` on a string.
-    read_amber_ac_str(text: &str) => molrs::io::read_amber_ac_str, io_error_to_pyerr
+    /// Read antechamber ``.ac`` text — :func:`read_ac` on a string.
+    read_ac_str(text: &str) => molrs::io::read_ac_str, io_error_to_pyerr
 );
 read_door!(
-    /// Read AMBER prmtop structure text — :func:`read_amber_prmtop` on a string.
-    read_amber_prmtop_str(text: &str) => molrs::io::read_amber_prmtop_str, io_error_to_pyerr
+    /// Read AMBER prmtop structure text — :func:`read_prmtop` on a string.
+    read_prmtop_str(text: &str) => molrs::io::read_prmtop_str, io_error_to_pyerr
 );
 read_door!(
     /// Read one LAMMPS data frame from bytes.
@@ -187,16 +187,16 @@ pub fn read_dcd_bytes(data: &[u8], decoder_state: Option<&[u8]>) -> PyResult<PyF
     )
 }
 
-/// Read AMBER inpcrd / restrt text — :func:`read_amber_inpcrd` on a string,
+/// Read AMBER inpcrd / restrt text — :func:`read_inpcrd` on a string,
 /// ``frame`` as there.
 #[pyfunction]
 #[pyo3(signature = (text, frame = None))]
-pub fn read_amber_inpcrd_str<'py>(
+pub fn read_inpcrd_str<'py>(
     py: Python<'py>,
     text: &str,
     frame: Option<Bound<'py, PyFrame>>,
 ) -> PyResult<Bound<'py, PyAny>> {
-    let coordinates = molrs::io::read_amber_inpcrd_str(text).map_err(io_error_to_pyerr)?;
+    let coordinates = molrs::io::read_inpcrd_str(text).map_err(io_error_to_pyerr)?;
     match frame {
         None => Ok(Bound::new(py, PyFrame::from_core_frame(coordinates)?)?.into_any()),
         Some(target) => {
@@ -209,20 +209,18 @@ pub fn read_amber_inpcrd_str<'py>(
     }
 }
 
-/// Read Amber prep text into a nested dict — :func:`read_amber_prep` on a string.
+/// Read Amber prep text into a nested dict — :func:`read_prep` on a string.
 #[pyfunction]
-pub fn read_amber_prep_str<'py>(py: Python<'py>, text: &str) -> PyResult<Bound<'py, PyDict>> {
-    let res = molrs::io::read_amber_prep_str(text).map_err(io_error_to_pyerr)?;
+pub fn read_prep_str<'py>(py: Python<'py>, text: &str) -> PyResult<Bound<'py, PyDict>> {
+    let res = molrs::io::read_prep_str(text).map_err(io_error_to_pyerr)?;
     prep_residue_to_pydict(py, &res)
 }
 
 /// Write an Amber prep residue (a nested dict) as text —
-/// :func:`write_amber_prep` into a string.
+/// :func:`write_prep` into a string.
 #[pyfunction]
-pub fn write_amber_prep_str(residue: &Bound<'_, PyAny>) -> PyResult<String> {
-    Ok(molrs::io::write_amber_prep_str(&py_to_prep_residue(
-        residue,
-    )?))
+pub fn write_prep_str(residue: &Bound<'_, PyAny>) -> PyResult<String> {
+    Ok(molrs::io::write_prep_str(&py_to_prep_residue(residue)?))
 }
 
 /// Read LAMMPS data text — :func:`read_lammps_data` on a string,
@@ -301,14 +299,14 @@ pub(crate) fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
         wrap_pyfunction!(write_xsf_str, m)?,
         wrap_pyfunction!(read_cube_str, m)?,
         wrap_pyfunction!(write_cube_str, m)?,
-        wrap_pyfunction!(read_vasp_poscar_str, m)?,
-        wrap_pyfunction!(write_vasp_poscar_str, m)?,
-        wrap_pyfunction!(read_vasp_chgcar_str, m)?,
-        wrap_pyfunction!(read_amber_ac_str, m)?,
-        wrap_pyfunction!(read_amber_inpcrd_str, m)?,
-        wrap_pyfunction!(read_amber_prmtop_str, m)?,
-        wrap_pyfunction!(read_amber_prep_str, m)?,
-        wrap_pyfunction!(write_amber_prep_str, m)?,
+        wrap_pyfunction!(read_poscar_str, m)?,
+        wrap_pyfunction!(write_poscar_str, m)?,
+        wrap_pyfunction!(read_chgcar_str, m)?,
+        wrap_pyfunction!(read_ac_str, m)?,
+        wrap_pyfunction!(read_inpcrd_str, m)?,
+        wrap_pyfunction!(read_prmtop_str, m)?,
+        wrap_pyfunction!(read_prep_str, m)?,
+        wrap_pyfunction!(write_prep_str, m)?,
         wrap_pyfunction!(read_lammps_data_str, m)?,
         wrap_pyfunction!(read_lammps_data_bytes, m)?,
         wrap_pyfunction!(write_lammps_data_str, m)?,

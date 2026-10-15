@@ -1,15 +1,15 @@
 //! The OPLS-AA typing half of an OpenMM force-field XML: the SMARTS `def`,
 //! `overrides`, `priority` and `layer` of each `<AtomTypes><Type>`, the
-//! annotations Foyer adds to the OpenMM schema.
+//! annotations Foyer adds to the OpenMM schema. Not a file format of its own:
+//! [`OpenmmXmlReader::read_opls_typifier_str`](super::OpenmmXmlReader::read_opls_typifier_str)
+//! reads it beside the force field of the same document.
 
 use crate::ff::typifier::{OplsTypeRow, OplsTypingMetadata};
 use crate::io::xml_attribute::{attr_str, forcefield_root};
 
 /// Parse OPLS-AA typing metadata ([`OplsTypingMetadata`]) from an XML string —
-/// the typing half of a caller's OPLS-AA XML, which
-/// [`OplsAaTypifier::new`](crate::ff::typifier::OplsAaTypifier::new) takes
-/// beside the force field
-/// [`OpenmmXmlReader`](crate::io::openmm_xml::OpenmmXmlReader) reads.
+/// the typing half of a caller's OPLS-AA XML, beside the force field
+/// [`read_openmm_forcefield_str`](crate::io::read_openmm_forcefield_str) reads.
 ///
 /// Reads each `<Type>` of the `<AtomTypes>` section, transcribing the typing
 /// attributes the potential reader
@@ -28,7 +28,7 @@ use crate::io::xml_attribute::{attr_str, forcefield_root};
 /// required `name`/`class`, `priority`/`layer` is present but non-integer, or
 /// the table is not valid ([`OplsTypingMetadata::validate`]: an `overrides` naming
 /// a type the XML does not declare, or overrides forming a cycle).
-pub fn read_openmm_xml_opls_typing_str(xml: &str) -> Result<OplsTypingMetadata, String> {
+pub(crate) fn read_typing_metadata(xml: &str) -> Result<OplsTypingMetadata, String> {
     let doc = roxmltree::Document::parse(xml).map_err(|e| format!("XML parse error: {}", e))?;
 
     let root = forcefield_root(&doc)?;
@@ -117,7 +117,7 @@ mod tests {
             <Type name="opls_001" class="opls_001" element="C" mass="12.011"/>
           </AtomTypes>
         </ForceField>"#;
-        let meta = read_openmm_xml_opls_typing_str(xml).unwrap();
+        let meta = read_typing_metadata(xml).unwrap();
 
         let r135 = meta.get("opls_135").unwrap();
         assert_eq!(r135.class, "CT");
@@ -144,7 +144,7 @@ mod tests {
             <Type name="opls_x" class="CT" def="[C]" priority="7" layer="2"/>
           </AtomTypes>
         </ForceField>"#;
-        let meta = read_openmm_xml_opls_typing_str(xml).unwrap();
+        let meta = read_typing_metadata(xml).unwrap();
         let r = meta.get("opls_x").unwrap();
         assert_eq!(r.priority, Some(7));
         assert_eq!(r.layer, 2);
@@ -155,7 +155,7 @@ mod tests {
         let xml = r#"<ForceField name="OPLS-AA">
           <AtomTypes><Type name="opls_135" def="[C]"/></AtomTypes>
         </ForceField>"#;
-        let err = read_openmm_xml_opls_typing_str(xml).unwrap_err();
+        let err = read_typing_metadata(xml).unwrap_err();
         assert!(err.contains("class"), "err: {err}");
     }
 
@@ -164,13 +164,13 @@ mod tests {
         let xml = r#"<ForceField name="OPLS-AA">
           <AtomTypes><Type name="opls_135" class="CT" priority="high"/></AtomTypes>
         </ForceField>"#;
-        let err = read_openmm_xml_opls_typing_str(xml).unwrap_err();
+        let err = read_typing_metadata(xml).unwrap_err();
         assert!(err.contains("priority"), "err: {err}");
     }
 
     #[test]
     fn test_opls_typing_wrong_root_errors() {
-        let err = read_openmm_xml_opls_typing_str(r#"<System name="x"/>"#).unwrap_err();
+        let err = read_typing_metadata(r#"<System name="x"/>"#).unwrap_err();
         assert!(err.contains("ForceField"), "err: {err}");
     }
 }

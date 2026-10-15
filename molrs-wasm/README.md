@@ -116,8 +116,8 @@ that format's reader (or stream) and writer.
   `readPdbBytes` / `writePdbStr`, `readSdfStr` / `readSdfBytes`,
   `readGroStr` / `writeGroStr`, `readMol2Str` / `writeMol2Str`, `readCifStr` /
   `writeCifStr`, `readXsfStr` / `writeXsfStr`, `readCubeStr` / `writeCubeStr`,
-  `readVaspPoscarStr` / `writeVaspPoscarStr`, `readVaspChgcarStr`,
-  `readAmberInpcrdStr`, `readAmberAcStr`, `readAmberPrmtopStr`,
+  `readPoscarStr` / `writePoscarStr`, `readChgcarStr`,
+  `readInpcrdStr`, `readAcStr`, `readPrmtopStr`,
   `readLammpsDataStr` / `readLammpsDataBytes` / `writeLammpsDataStr`,
   `readLammpsDumpStr` / `readLammpsDumpBytes` / `writeLammpsDumpStr(frame,
   columns?)`; `readDcdBytes(bytes, decoderState?)` / `writeDcdBytes`,

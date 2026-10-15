@@ -14,11 +14,11 @@ writer or typifier, never in a kernel.
 The IR is data — `molrs.ff.forcefield.ForceField` (Rust
 `molrs::ff::forcefield::ForceField`) — and reads no file. Every engine's
 reader and writer is `molrs.io`'s, as every other file reader and writer is:
-`molrs.io.read_lammps_forcefield`, `read_gromacs_top_forcefield`,
-`read_amber_prmtop_forcefield`, `read_openmm_xml_forcefield`,
-`write_lammps_forcefield`, `write_gromacs_top_forcefield`,
-`write_amber_frcmod`, `write_openmm_xml_forcefield` and the rest — the same
-names in Rust (`molrs::io::read_openmm_xml_forcefield`, …), each format's
+`molrs.io.read_lammps_forcefield`, `read_top_forcefield`,
+`read_prmtop_forcefield`, `read_openmm_forcefield`,
+`write_lammps_forcefield`, `write_top_forcefield`,
+`write_frcmod`, `write_openmm_forcefield` and the rest — the same
+names in Rust (`molrs::io::read_openmm_forcefield`, …), each format's
 reader and writer classes in its own module (`molrs::io::lammps`,
 `molrs::io::gromacs`, `molrs::io::amber`, `molrs::io::openmm_xml`).
 
@@ -643,9 +643,9 @@ the style's mixing rule, which a per-row fit cannot hold).
 
 ## OpenMM XML
 
-`OpenmmXmlReader` (`read_openmm_xml_forcefield`) reads OpenMM's
+`OpenmmXmlReader` (`read_openmm_forcefield`) reads OpenMM's
 `<ForceField>` — its own CHARMM36, AMBER and OPLS-AA ports and the foyer /
-molpy packs — and `OpenmmXmlWriter` (`write_openmm_xml_forcefield`) writes
+molpy packs — and `OpenmmXmlWriter` (`write_openmm_forcefield`) writes
 the inverse, each
 number in the shortest form that reads back to the same `f64` unless a
 `precision` is given. The IR's definitions are LAMMPS's; OpenMM's are
@@ -718,7 +718,7 @@ templates from the frame and holds OpenMM's energies to molrs's.
 ## AMBER prmtop
 
 AMBER is read, never written (no prmtop writer). The prmtop force-field
-reader (`AmberPrmtopForcefieldReader`) and frame reader (`read_amber_prmtop`) name
+reader (`AmberPrmtopForcefieldReader`) and frame reader (`read_prmtop`) name
 every type and row alike; a chamber prmtop (ParmEd's `chamber`, `%FLAG
 CTITLE`) reads through the same pair.
 
@@ -733,7 +733,7 @@ CTITLE`) reads through the same pair.
 | `LENNARD_JONES_ACOEF/BCOEF` via ICO | `lj/cut` (`lj/charmm` in a chamber file) self rows; a cross row where the entry is not Lorentz–Berthelot (NBFIX) |
 | `LENNARD_JONES_14_ACOEF/BCOEF` (chamber) | `lj/charmm` `epsilon14` / `sigma14` (cross rows where not Lorentz–Berthelot) and `one_four = "epsilon14"` when the table differs from the regular one |
 | `CHARGE` | ÷ 18.2223, `coul/cut` at 332.0522173; ÷ √332.0716 and `coul/charmm` at 332.0716 in a chamber file |
-| `SCEE_SCALE_FACTOR` / `SCNB_SCALE_FACTOR` per torsion type | `special_bonds` 1-4 = 1/divisor most 1-4 rows carry; the frame `AmberPrmtopForcefieldReader::read_system` (Python `read_amber_prmtop_system`) returns has `pairs` giving every 1-4 pair weighted otherwise its `coul_scale` / `lj_scale` |
+| `SCEE_SCALE_FACTOR` / `SCNB_SCALE_FACTOR` per torsion type | `special_bonds` 1-4 = 1/divisor most 1-4 rows carry; the frame `AmberPrmtopForcefieldReader::read_system` (Python `read_prmtop_system`) returns has `pairs` giving every 1-4 pair weighted otherwise its `coul_scale` / `lj_scale` |
 | `AMBER_ATOM_TYPE` | the type name; `<name>~<class>` where one name stands for two LJ classes or masses (a chamber file cuts CHARMM's types to four characters) |
 
 sander prices a 1-4 pair once per proper row whose 3rd pointer is not
@@ -767,7 +767,7 @@ with one periodicity; a Urey–Bradley term on no angle or on several.
 
 `GromacsTopForcefieldReader` reads a topology's directives into a force field
 (`read`) or a whole `.top` into the force field and a typed frame
-(`read_system`; Python `molrs.io.read_gromacs_top_system`); the writer
+(`read_system`; Python `molrs.io.read_top_system`); the writer
 (`GromacsTopForcefieldWriter`) is the inverse of the directive map
 (`write_str`) and of `read_system` (`write_system_str`). Every row is
 exact; GROMACS's ½k forms are halved into LAMMPS's `K`, nm → Å, kJ → kcal,
