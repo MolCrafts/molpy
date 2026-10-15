@@ -1,18 +1,24 @@
 name: release
 
-# A `v*` tag on MolCrafts/molpy: guard -> the release test matrix -> the
+# A `v*` tag on MolCrafts/molpy: guard -> the published-ranges check -> the
 # pure-Python sdist + wheel to PyPI (trusted publishing) -> the GitHub
-# Release. Every partner range molpy declares -- molcrafts-molrs on molpy's
+# Release.
+#
+# No lint and no test matrix here: the tagged commit was already proven, by
+# the pre-push gate and by test.yml's full tier on master. `release / guard`
+# reads that commit's `test / *` check runs and refuses a commit whose CI is
+# not green. The one test this workflow runs is a different dependency set:
+# every partner range molpy declares -- molcrafts-molrs on molpy's
 # major.minor, molcrafts-mollog and molcrafts-molcfg -- must already have a
 # release on PyPI (docs/developer/release-process.md;
-# scripts/check_partners_on_pypi.py): the matrix -- 3 OS x every supported
-# Python -- runs against the partners from PyPI, exactly what the wheel
-# declares (`--no-sources` drops the ../molrs, ../mollog and ../molcfg path
-# sources dev builds from).
+# scripts/check_partners_on_pypi.py), and `release / published` runs the
+# suite once, on Linux and the lowest supported Python, against the partners
+# from PyPI, exactly what the wheel declares (`--no-sources` drops the
+# ../molrs, ../mollog and ../molcfg path sources dev builds from).
 #
-# A dispatch is the dry run, on any branch, fork or upstream: the same test
-# matrix and build, no upload and no Release. Only a tag push on MolCrafts
-# uploads.
+# A dispatch is the dry run, on any branch, fork or upstream: the same guard
+# (any green `test / *` runs of the commit), published check and build, no
+# upload and no Release. Only a tag push on MolCrafts uploads.
 on:
   push:
     tags: ["v*"]
@@ -43,13 +49,17 @@ jobs:
       publish: ${{ steps.context.outputs.publish }}
     steps:
       - id: context
-        uses: MolCrafts/molcrafts-ci/actions/ci-context@40f61db7c6783f246215158bff435ff1d384b2ae
+        uses: MolCrafts/molcrafts-ci/actions/ci-context@cc46e4eb85fdcfb950d9a4df02c2e04e94ba90f7
 
   guard:
     name: release / guard
     needs: context
     if: github.event_name == 'workflow_dispatch' || needs.context.outputs.upstream == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 100
+    permissions:
+      contents: read
+      checks: read
     steps:
       - uses: actions/checkout@v7
         with:
@@ -60,26 +70,66 @@ jobs:
           version=$(sed -n 's/^version = "\(.*\)"/\1/p' src/molpy/version.py | head -n1)
           [ "$GITHUB_REF_NAME" = "v$version" ] || { echo "::error::tag $GITHUB_REF_NAME is not v$version"; exit 1; }
           git merge-base --is-ancestor "$GITHUB_SHA" origin/master || { echo "::error::tag is not on master"; exit 1; }
+      # The commit's test.yml run, instead of running it again. A tag waits
+      # for every job of the full tier to have succeeded on this SHA (pushed
+      # to master first); a dispatch, for whatever `test / *` runs the commit
+      # has. Any failed run fails the release; a re-run's newer result wins.
+      - name: The commit's CI is green
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PUBLISH: ${{ needs.context.outputs.publish }}
+          REQUIRED: >-
+            test / context|test / python (ubuntu-latest, 3.12)|test / python (ubuntu-latest, 3.14)|test / python (macos-latest, 3.12)|test / python (windows-latest, 3.12)
+        run: |
+          python3 - <<'PY'
+          import json, os, subprocess, sys, time
 
-  test:
-    name: release / test (${{ matrix.os }}, ${{ matrix.python }})
+          repo, sha = os.environ["GITHUB_REPOSITORY"], os.environ["GITHUB_SHA"]
+          required = set(os.environ["REQUIRED"].split("|")) if os.environ["PUBLISH"] == "true" else set()
+          deadline = time.monotonic() + 90 * 60
+          query = '.check_runs[] | select(.name | startswith("test / ")) | {name, status, conclusion, started_at}'
+          while True:
+              out = subprocess.run(
+                  ["gh", "api", "--paginate", f"repos/{repo}/commits/{sha}/check-runs?filter=all&per_page=100", "--jq", query],
+                  check=True, capture_output=True, text=True,
+              ).stdout
+              latest = {}
+              for run in sorted((json.loads(line) for line in out.splitlines() if line.strip()),
+                                key=lambda r: r["started_at"] or ""):
+                  # A skipped run (an in-fork pull request) never hides a real one.
+                  if run["conclusion"] == "skipped" and run["name"] in latest:
+                      continue
+                  latest[run["name"]] = run
+              failed = sorted(n for n, r in latest.items()
+                              if r["status"] == "completed" and r["conclusion"] not in ("success", "skipped", "neutral"))
+              if failed:
+                  sys.exit(f"::error::{sha} has failed CI: {', '.join(failed)}")
+              pending = sorted(n for n, r in latest.items() if r["status"] != "completed")
+              missing = sorted(n for n in required if (latest.get(n) or {}).get("conclusion") != "success")
+              if latest and not pending and not missing:
+                  print(f"{sha}: {len(latest)} test runs green")
+                  break
+              if time.monotonic() > deadline:
+                  sys.exit(f"::error::{sha}: CI not green in time (pending: {pending or '-'}; missing: {missing or '-'})")
+              print(f"waiting: pending {pending or '-'}, missing {missing or '-'}", flush=True)
+              time.sleep(60)
+          PY
+
+  # The declared PyPI ranges, once: Linux, the requires-python floor.
+  published:
+    name: release / published (ubuntu-latest, 3.12)
     needs: guard
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
-        python: ["3.12", "3.13", "3.14"]
+    runs-on: ubuntu-latest
     env:
       PYTHONWARNDEFAULTENCODING: "1"
     steps:
       - uses: actions/checkout@v7
-      - uses: MolCrafts/molcrafts-ci/actions/setup-python@40f61db7c6783f246215158bff435ff1d384b2ae
+      - uses: MolCrafts/molcrafts-ci/actions/setup-python@cc46e4eb85fdcfb950d9a4df02c2e04e94ba90f7
         with:
-          python-version: ${{ matrix.python }}
+          python-version: "3.12"
       - run: python scripts/check_partners_on_pypi.py
       - env:
-          UV_PYTHON: ${{ matrix.python }}
+          UV_PYTHON: "3.12"
         run: python scripts/check.py published
 
   build:
@@ -88,7 +138,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: MolCrafts/molcrafts-ci/actions/setup-python@40f61db7c6783f246215158bff435ff1d384b2ae
+      - uses: MolCrafts/molcrafts-ci/actions/setup-python@cc46e4eb85fdcfb950d9a4df02c2e04e94ba90f7
         with:
           python-version: "3.14"
       - run: python scripts/check.py package
@@ -99,7 +149,7 @@ jobs:
 
   pypi:
     name: release / pypi
-    needs: [context, test, build]
+    needs: [context, guard, published, build]
     if: needs.context.outputs.publish == 'true'
     runs-on: ubuntu-latest
     environment: pypi

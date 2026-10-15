@@ -45,13 +45,15 @@ SEEDS = tuple(range(8))
 @functools.cache
 def argon_trajectory(seed: int = REFERENCE_SEED) -> Trajectory:
     """Melt, cool and sample one argon run; the seed draws its velocities."""
-    md = LennardJonesMd(n_atoms=N_ATOMS, mass_density=MASS_DENSITY, seed=seed)
+    md = LennardJonesMd(
+        n_atoms=N_ATOMS, mass_density=MASS_DENSITY, seed=seed, timestep=TIMESTEP
+    )
     # Melt the FCC starting lattice before cooling: at the triple point a
     # perfect crystal can stay metastable and the "liquid" would be a solid.
     md.thermalize(300.0)
-    md.equilibrate(300.0, steps=400, dt=TIMESTEP)
-    md.equilibrate(TEMPERATURE, steps=800, dt=TIMESTEP)
-    return md.sample(steps=PRODUCTION_STEPS, stride=1, dt=TIMESTEP)
+    md.equilibrate(300.0, steps=400)
+    md.equilibrate(TEMPERATURE, steps=800)
+    return md.sample(steps=PRODUCTION_STEPS, stride=1)
 
 
 @functools.cache

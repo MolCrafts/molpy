@@ -9,6 +9,10 @@ reader can check the numbers the docs quote:
     Rahman, A. (1964). Phys. Rev. 136, A405. DOI: 10.1103/PhysRev.136.A405
 
 Units are LAMMPS *real*: length A, energy kcal/mol, mass g/mol, time fs.
+
+The dynamics is MolPy's own: ``mp.md.VelocityVerlet`` integrates the cut,
+shifted Lennard-Jones pair kernel ``PairLjCut`` over a Verlet-skin neighbour
+list, and ``KineticEnergy`` reports the kinetic energy and temperature.
 """
 
 from __future__ import annotations
@@ -16,7 +20,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 import numpy as np
-from molrs.core import UnitRegistry, constants
+
+import molpy as mp
+from molpy.compute import KineticEnergy, Unwrap
+from molpy.core import NeighborList, UnitRegistry, VerletSkin, constants
+from molpy.ff.potential import PairLjCut
 
 _UNITS = UnitRegistry()
 
@@ -87,12 +95,22 @@ class Trajectory:
     energy_drift: float
 
 
-class LennardJonesMd:
-    """Velocity-Verlet MD of a cubic Lennard-Jones fluid.
+#: Verlet skin on top of the pair cutoff, A. A 10 fs argon step moves an atom
+#: about 0.05 A, so the list is rebuilt every few tens of steps.
+SKIN = 1.0
 
-    The pair loop is a dense minimum-image evaluation. That is O(N^2) and is
-    only honest at the few-hundred-atom sizes used for documentation figures;
-    production work belongs in a real engine.
+#: Steps between velocity rescalings while equilibrating.
+RESCALE_EVERY = 20
+
+
+class LennardJonesMd:
+    """Velocity-Verlet MD of a cubic Lennard-Jones fluid on ``mp.md``.
+
+    MD is unit-agnostic: it integrates ``a = F / m``. With forces in
+    kcal/(mol A) and positions in A, an acceleration in A/fs^2 needs the mass
+    in kcal fs^2/(mol A^2), which is the molar mass divided by :data:`ACCEL`.
+    The kinetic energy is read with ``KineticEnergy(units="real")`` on the
+    molar mass, so the two unit conventions never mix.
     """
 
     def __init__(
@@ -101,14 +119,32 @@ class LennardJonesMd:
         mass_density: float = 1.374,
         potential: ArgonLj | None = None,
         seed: int = 0,
+        timestep: float = 10.0,
     ) -> None:
         self.potential = potential or ArgonLj()
         self.n_atoms = n_atoms
         density = self.potential.number_density(mass_density)
         self.box_length = float((n_atoms / density) ** (1.0 / 3.0))
+        self.box = mp.Box.cube(self.box_length)
         self._rng = np.random.default_rng(seed)
-        self.xyz = self._fcc_lattice(n_atoms, self.box_length)
-        self.velocities = np.zeros_like(self.xyz)
+        self._masses = np.full(n_atoms, self.potential.mass)
+        self._kinetic = KineticEnergy(units="real")
+        self.dt = timestep
+
+        lj = self.potential
+        xyz = self._fcc_lattice(n_atoms, self.box_length)
+        skin = VerletSkin(
+            NeighborList(lj.cutoff + SKIN), lj.cutoff, xyz, self.box, skin=SKIN
+        )
+        self._integrator = mp.md.VelocityVerlet(
+            timestep,
+            potential=PairLjCut(lj.epsilon, lj.sigma, lj.cutoff),
+            neighbors=skin,
+            mass=self._masses / ACCEL,
+            box=self.box,
+        )
+        self._dof = 3 * n_atoms - self._integrator.removed_dof
+        self.state = self._integrator.initial(xyz, np.zeros_like(xyz))
 
     @staticmethod
     def _fcc_lattice(n_atoms: int, box_length: float) -> np.ndarray:
@@ -131,108 +167,71 @@ class LennardJonesMd:
         ]
         return np.ascontiguousarray(np.array(sites)[:n_atoms])
 
-    def _forces(self, xyz: np.ndarray) -> tuple[np.ndarray, float]:
-        """Return (forces kcal/(mol*A), potential energy kcal/mol)."""
-        lj = self.potential
-        length = self.box_length
-        delta = xyz[:, None, :] - xyz[None, :, :]
-        delta -= length * np.round(delta / length)
-        r2 = np.einsum("ijk,ijk->ij", delta, delta)
-        np.fill_diagonal(r2, np.inf)
-
-        inside = r2 < lj.cutoff**2
-        inv_r2 = np.where(inside, 1.0 / r2, 0.0)
-        s6 = lj.sigma**6
-        s6_r6 = s6 * inv_r2**3
-        s12_r12 = s6_r6**2
-
-        # U(r) = 4 eps (s12/r12 - s6/r6), shifted so U(rc) = 0.
-        shift = 4.0 * lj.epsilon * ((s6 / lj.cutoff**6) ** 2 - s6 / lj.cutoff**6)
-        pair_energy = np.where(
-            inside, 4.0 * lj.epsilon * (s12_r12 - s6_r6) - shift, 0.0
-        )
-        energy = 0.5 * float(pair_energy.sum())
-
-        # F(r) = 24 eps (2 s12/r12 - s6/r6) / r^2 * r_vec
-        scale = 24.0 * lj.epsilon * (2.0 * s12_r12 - s6_r6) * inv_r2
-        forces = np.einsum("ij,ijk->ik", scale, delta)
-        return forces, energy
-
-    def _kinetic(self) -> float:
-        """Kinetic energy, kcal/mol."""
-        v2 = float(np.einsum("ij,ij->", self.velocities, self.velocities))
-        return 0.5 * self.potential.mass * v2 / ACCEL
+    def _kinetic_energy(self, velocities: np.ndarray):
+        return self._kinetic.compute(masses=self._masses, velocities=velocities)
 
     def _instant_temperature(self) -> float:
-        dof = 3 * self.n_atoms - 3
-        return 2.0 * self._kinetic() / (dof * KB)
+        return self._kinetic_energy(self.state.vel).temperature(self._dof)
 
-    def thermalize(self, temperature: float) -> None:
-        """Draw Maxwell-Boltzmann velocities and remove net momentum."""
-        sigma_v = np.sqrt(KB * temperature / self.potential.mass * ACCEL)
-        self.velocities = self._rng.normal(0.0, sigma_v, size=self.xyz.shape)
-        self.velocities -= self.velocities.mean(axis=0)
-        self._rescale(temperature)
+    def _total_energy(self) -> float:
+        return self.state.energy + self._kinetic_energy(self.state.vel).energy
 
     def _rescale(self, temperature: float) -> None:
         current = self._instant_temperature()
         if current > 0.0:
-            self.velocities *= np.sqrt(temperature / current)
+            self.state.vel = self.state.vel * np.sqrt(temperature / current)
 
-    def equilibrate(self, temperature: float, steps: int, dt: float = 10.0) -> None:
+    def thermalize(self, temperature: float) -> None:
+        """Draw Maxwell-Boltzmann velocities and remove net momentum."""
+        sigma_v = np.sqrt(KB * temperature / self.potential.mass * ACCEL)
+        velocities = self._rng.normal(0.0, sigma_v, size=(self.n_atoms, 3))
+        self.state.vel = velocities - velocities.mean(axis=0)
+        self._rescale(temperature)
+
+    def equilibrate(self, temperature: float, steps: int) -> None:
         """Run with periodic velocity rescaling to reach ``temperature``.
 
         Rescaling is a crude thermostat: it fixes the mean kinetic energy but
         distorts the dynamics, which is exactly why sampling below is NVE.
         """
-        forces, _ = self._forces(self.xyz)
-        for step in range(steps):
-            forces = self._step(forces, dt)
-            if step % 20 == 0:
-                self._rescale(temperature)
-        self._rescale(temperature)
+        done = 0
+        while done < steps:
+            chunk = min(RESCALE_EVERY, steps - done)
+            self.state = self._integrator.advance_n(self.state, chunk)
+            self._rescale(temperature)
+            done += chunk
 
-    def _step(self, forces: np.ndarray, dt: float) -> np.ndarray:
-        accel = forces / self.potential.mass * ACCEL
-        self.velocities += 0.5 * accel * dt
-        self.xyz = self.xyz + self.velocities * dt
-        forces, _ = self._forces(self.xyz)
-        accel = forces / self.potential.mass * ACCEL
-        self.velocities += 0.5 * accel * dt
-        return forces
+    def sample(self, steps: int, stride: int = 5) -> Trajectory:
+        """Run constant-energy dynamics and store every ``stride``-th frame.
 
-    def sample(self, steps: int, stride: int = 5, dt: float = 10.0) -> Trajectory:
-        """Run constant-energy dynamics and store every ``stride``-th frame."""
-        forces, potential = self._forces(self.xyz)
-        reference_energy = potential + self._kinetic()
+        ``stride`` must keep a frame-to-frame step well under half the box:
+        the unwrapped path is rebuilt from the stored frames by continuity.
+        """
+        reference_energy = self._total_energy()
 
-        length = self.box_length
         wrapped: list[np.ndarray] = []
-        unwrapped: list[np.ndarray] = []
         velocities: list[np.ndarray] = []
         temperatures: list[float] = []
-        last_energy = reference_energy
 
         for step in range(steps):
-            forces = self._step(forces, dt)
+            self.state = self._integrator.advance(self.state)
             if step % stride == 0:
-                # Integration never folds coordinates, so self.xyz is already
-                # the continuous (unwrapped) path that displacement kernels need.
-                unwrapped.append(self.xyz.copy())
-                wrapped.append(self.xyz - length * np.floor(self.xyz / length))
-                velocities.append(self.velocities.copy())
+                wrapped.append(self.state.pos)
+                velocities.append(self.state.vel)
                 temperatures.append(self._instant_temperature())
-            if step == steps - 1:
-                _, potential = self._forces(self.xyz)
-                last_energy = potential + self._kinetic()
 
-        drift = abs(last_energy - reference_energy) / abs(reference_energy)
+        drift = abs(self._total_energy() - reference_energy) / abs(reference_energy)
+        # The integrator folds every step into the cell. Frames stored every
+        # few steps move far less than half a box between frames, so the
+        # continuous path is recovered by minimum image between frames.
+        folded = np.array(wrapped)
+        unwrapped = Unwrap().compute(positions=folded, boxes=[self.box] * len(folded))
         return Trajectory(
-            wrapped=np.array(wrapped),
-            unwrapped=np.array(unwrapped),
+            wrapped=folded,
+            unwrapped=unwrapped,
             velocities=np.array(velocities),
-            box_length=length,
-            dt=dt * stride,
+            box_length=self.box_length,
+            dt=self.dt * stride,
             temperature=float(np.mean(temperatures)),
             energy_drift=float(drift),
         )

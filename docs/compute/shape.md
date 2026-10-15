@@ -91,7 +91,7 @@ encoding:
 
 **Figure 1.** Radius of gyration of ideal random-walk chains, 200 chains per
 length. Three curves: $\sqrt{\langle R_g^2\rangle}$ and $\langle R_g\rangle$,
-both measured with `RadiusOfGyration`, against the exact $\sqrt{Nb^2/6}$. The
+both measured with `GyrationTensor` (its `radius_of_gyration()`), against the exact $\sqrt{Nb^2/6}$. The
 fitted slope of the first is $\nu = 0.492$.
 </figure>
 
@@ -118,18 +118,26 @@ globule. Measuring it is how you tell which regime your simulation is in.
 
 ## Computing it
 
-Every descriptor here is **per cluster**, so the pipeline always starts with
-[Cluster](cluster.md), and the reference point matters: gyration takes the
-geometric centre from `ClusterCenters`, while inertia and $R_g$ take the
-mass-weighted `CenterOfMass`. They are not interchangeable arguments.
+Every descriptor here is **per group**, and a group is whatever a *partition*
+says it is: one label per atom. The labels can come from your own data — a
+`mol_id` column read from the frame, as an unsigned-integer array — or from an
+upstream compute. The result of [`Cluster`](cluster.md) is itself a partition,
+so the pipeline "find the aggregates, then measure them" is two computes with
+the first result handed straight to the second. Nothing is converted in
+between.
+
+Each shape compute also finds its own centre, from the weights you hand it.
+`GyrationTensor` takes `weights`: unit weights give the geometric centre and
+the purely geometric tensor, masses give the mass-weighted one.
+`CenterOfMass` and `InertiaTensor` take `masses`, because a centre of mass or
+a moment of inertia without masses is not defined. The radius of gyration is
+not a separate compute — it is the trace of the gyration tensor, and the
+tensor's result returns it per group with `radius_of_gyration()`.
 
 ```python
 import numpy as np
 import molpy as mp
-from molpy.compute import (
-    CenterOfMass, Cluster, ClusterCenters, GyrationTensor,
-    InertiaTensor, RadiusOfGyration,
-)
+from molpy.compute import CenterOfMass, Cluster, GyrationTensor, InertiaTensor
 
 rng = np.random.default_rng(0)
 n_beads = 200
@@ -141,18 +149,22 @@ frame["atoms"] = {"x": chain[:, 0], "y": chain[:, 1], "z": chain[:, 2]}
 frame.box = mp.Box.cube(200.0)
 ```
 
-```python
-masses = np.full(n_beads, 12.011)
-nl = mp.core.NeighborList(2.5)
-nl.build(frame.coords, frame.box)
-nlist = nl.neighbors()
-clusters = Cluster(min_cluster_size=5).compute([frame], [nlist])
-centers = ClusterCenters().compute([frame], clusters)
-com = CenterOfMass(masses).compute([frame], clusters)
+The positions and the box are read from the frame once; the neighbour table,
+the cluster labels and the masses are the other data:
 
-rg = np.asarray(RadiusOfGyration(masses).compute([frame], clusters, com)[0])
-tensor = np.asarray(GyrationTensor().compute([frame], clusters, centers)[0])
-print(round(float(rg[0]), 2), tensor.shape)     # -> 4.84 (1, 3, 3)
+```python
+positions, box = frame.coords, frame.box
+masses = np.full(n_beads, 12.011)
+
+nl = mp.core.NeighborList(2.5)
+nl.build(positions, box)
+clusters = Cluster(min_cluster_size=5).compute(pairs=nl.neighbors())
+
+gyration = GyrationTensor().compute(
+    positions=positions, simbox=box, partition=clusters, weights=masses
+)
+rg = gyration.radius_of_gyration()
+print(round(float(rg[0]), 2), gyration.tensors.shape)  # -> 4.84 (1, 3, 3)
 ```
 
 Predicted $\sqrt{200/6} = 5.77$; a single chain fluctuates by tens of percent
@@ -161,7 +173,7 @@ about that, which is exactly why Figure 1 averages 200 of them.
 Now unpack the shape from the tensor rather than stopping at $R_g$:
 
 ```python
-eigenvalues = np.sort(np.linalg.eigvalsh(tensor[0]))
+eigenvalues = np.sort(np.linalg.eigvalsh(gyration.tensors[0]))
 b = eigenvalues[2] - 0.5 * (eigenvalues[0] + eigenvalues[1])
 c = eigenvalues[1] - eigenvalues[0]
 kappa2 = (b**2 + 0.75 * c**2) / eigenvalues.sum() ** 2
@@ -170,38 +182,59 @@ print(round(float(kappa2), 3))                  # -> 0.217
 
 $\kappa^2 = 0.22$ for this particular chain: not spherical, and a long
 way from a rod either. Single chains scatter widely around the
-ensemble value of about 0.4, so quote $\kappa^2$ as an average. Pass `masses=None`
-anywhere above for purely geometric (unit-mass) descriptors.
+ensemble value of about 0.4, so quote $\kappa^2$ as an average. Pass
+`weights=np.ones(n_beads)` for purely geometric descriptors.
 
-`InertiaTensor(masses).compute([frame], clusters, com)` returns the mass-weighted
-version with the same shape, for principal axes.
+The mass-weighted centre and the inertia tensor read the same three inputs,
+with masses in place of weights:
+
+```python
+com = CenterOfMass().compute(
+    positions=positions, simbox=box, partition=clusters, masses=masses
+)
+inertia = InertiaTensor().compute(
+    positions=positions, simbox=box, partition=clusters, masses=masses
+)
+print(com.centers.shape, round(float(com.total_masses[0]), 1))  # -> (1, 3) 2402.2
+print(inertia.tensors.shape)                                    # -> (1, 3, 3)
+```
+
+Every result carries `groups`, the partition key of each row, so row `k` of
+`centers`, `tensors` and `radius_of_gyration()` all describe the same group.
 
 ## When it goes wrong
 
 **$R_g$ is enormous — comparable to the box.**
-The cluster straddles a periodic boundary and was not unwrapped. Cluster
-*identification* works under minimum image, but the gyration tensor is computed
-from raw coordinates about a centre, so half the molecule appears a box-length
+The group straddles a periodic boundary and no box was given. Cluster
+*identification* works under minimum image, but without `simbox` the shape
+computes measure raw coordinates, so half the molecule appears a box-length
 away. This is the single most common failure on this page.
 
-Fix: pick one atom of the cluster as a seed and re-express every other atom as
-the nearest periodic image of that seed — `Box.delta` applies the minimum-image
-convention (including non-cubic cells):
+Pass the box. With `simbox`, each group is measured about one of its own atoms
+(an anchor), every other atom taken at its minimum-image offset from that
+anchor — the same unwrapping you would otherwise do by hand:
 
 ```python
-box = mp.Box.cube(20.0)
+cell = mp.Box.cube(20.0)
 split = np.array(
     [[0.5, 10.0, 10.0], [1.0, 10.0, 10.0], [19.5, 10.0, 10.0], [19.0, 10.0, 10.0]]
 )
-seed = split[0]
-joined = seed + box.delta(np.tile(seed, (len(split), 1)), split, minimum_image=True)
-print(round(float(np.ptp(split[:, 0])), 2))   # -> 19.0  (PBC-split)
-print(round(float(np.ptp(joined[:, 0])), 2))  # -> 2.0   (one molecule again)
+one_molecule = np.zeros(4, dtype=np.uint32)
+weights = np.ones(4)
+
+raw = GyrationTensor().compute(positions=split, partition=one_molecule, weights=weights)
+joined = GyrationTensor().compute(
+    positions=split, simbox=cell, partition=one_molecule, weights=weights
+)
+print(round(float(raw.radius_of_gyration()[0]), 2))     # -> 9.25  (PBC-split)
+print(round(float(joined.radius_of_gyration()[0]), 2))  # -> 0.79  (one molecule again)
 ```
 
-Four atoms spanning a 20 Å box look 19 Å across; after minimum-image relative to
-the seed they are the 2 Å cluster they actually are. Do this **per cluster**,
-using the labels from [`Cluster`](cluster.md), before any shape descriptor.
+Four atoms spanning a 20 Å box look 9 Å in radius; measured about an anchor
+under minimum image they are the 2 Å-wide molecule they actually are. The
+anchor rule holds as long as no group is wider than half the box; a group
+that large has no unique minimum-image shape, and you must unwrap its
+trajectory first.
 
 **$\kappa^2 > 1$ or negative.**
 An algebra slip: $\kappa^2$ is normalized by $R_g^4$, that is
@@ -212,8 +245,9 @@ Check how many particles you have. Shape descriptors of small clusters are
 dominated by noise; a handful of random points is never isotropic.
 
 **Mass-weighted and geometric results differ and you cannot say which you have.**
-`masses=None` means unit mass. Report which convention you used — this is
-routinely omitted and makes published $R_g$ values incomparable.
+The `weights` you passed decide it: unit weights are geometric, masses are
+mass-weighted. Report which convention you used — this is routinely omitted
+and makes published $R_g$ values incomparable.
 
 **$R_g$ is fine but the eigenvectors jump between frames.**
 Degenerate eigenvalues. For a near-spherical object the principal axes are

@@ -21,7 +21,7 @@ line when co-released. Patch may drift.
 |-----------|------|
 | `pyproject.toml` | `molcrafts-molrs>=X.Y.0,<X.(Y+1)` (not `==X.Y.Z`) |
 | Import-time check | `check_molrs_version()` accepts any installed molrs with the same major.minor |
-| Release gate | `release.yml` runs `scripts/check_partners_on_pypi.py` (a published release in every partner range: molrs on that minor line, mollog and molcfg in theirs), then the test matrix against the partners from PyPI (`uv run --no-sources`) |
+| Release gate | `release.yml` requires the tagged commit's `test / *` checks to be green, runs `scripts/check_partners_on_pypi.py` (a published release in every partner range: molrs on that minor line, mollog and molcfg in theirs), then one `published` run on Linux, Python 3.12, against the partners from PyPI (`uv run --no-sources`) |
 
 **Order:** ship molrs first (`master` + tag `vX.Y.Z` + publish), then land molpy
 APIs that need the new surface. Editable local molrs does not count as a release.
@@ -42,12 +42,14 @@ by major range (`molcrafts-mollog>=1.3.1,<2`). A molpy that needs a new
 mollog or molcfg API waits for that release: mollog and molcfg ship before
 molpy, and molpy's lower bound moves to it.
 
-A release keeps the table and is judged against PyPI instead: `release.yml`
-checks that every declared partner range has a published release
-(`scripts/check_partners_on_pypi.py`) and runs the test matrix with
-`uv run --no-sources`, i.e. against the partners from PyPI, exactly what
-users of the wheel get. `uv.lock` (which records the dev build's partners) is
-not used there.
+A release keeps the table and is judged against PyPI instead. The tagged
+commit has already been tested on every OS by `test.yml`, so `release.yml`
+does not repeat that matrix: its guard refuses a commit whose `test / *`
+checks are not green. It then checks that every declared partner range has a
+published release (`scripts/check_partners_on_pypi.py`) and runs the suite
+once, on Linux with Python 3.12, with `uv run --no-sources`, i.e. against the
+partners from PyPI, exactly what users of the wheel get. `uv.lock` (which
+records the dev build's partners) is not used there.
 
 
 
@@ -85,10 +87,12 @@ Do **not** `git push <remote> master --tags`: if the protected-master push is
 rejected, the tag still goes out as an orphan and publish refuses it.
 
 On tag push (`v*`), GitHub Actions runs `.github/workflows/release.yml`. It
-checks that the tag is `v` + `molpy.version.version` on `master`, runs the
-test matrix against molrs from PyPI, builds the sdist and wheel, publishes
-them to PyPI, and creates the GitHub Release. Dispatching **release** on a
-branch (a fork is fine) is the dry run: the same tests and build, no upload.
+checks that the tag is `v` + `molpy.version.version` on `master` and that the
+commit's `test / *` checks are green, runs the suite once (Linux, Python 3.12)
+against the partners from PyPI, builds the sdist and wheel, publishes them to
+PyPI, and creates the GitHub Release. Dispatching **release** on a branch (a
+fork is fine) is the dry run: the same guard, published run and build, no
+upload.
 PyPI's trusted publisher names `release.yml` and the `pypi` environment.
 
 

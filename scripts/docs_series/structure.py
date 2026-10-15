@@ -63,7 +63,7 @@ def radial_distribution(trajectory: Trajectory) -> dict[str, float]:
     # distorted by the corners of the periodic cell.
     r_max = np.floor(trajectory.box_length / 2.0)
     nlists = [neighbors(frame, r_max) for frame in frames]
-    result = Rdf(n_bins=int(r_max / 0.05), r_max=r_max).compute(frames, nlists)
+    result = Rdf(int(r_max / 0.05), r_max, 0.0).compute(pairs=nlists)
 
     r = np.asarray(result.bin_centers)
     g = np.asarray(result.rdf)
@@ -145,9 +145,10 @@ def local_density(trajectory: Trajectory) -> dict[str, float]:
     rows: list[dict[str, float | str]] = []
     summary: dict[str, float] = {"bulk": float(bulk)}
     for probe in (4.0, 8.0):
-        nlists = [neighbors(frame, probe) for frame in frames]
-        per_frame = LocalDensity(r_max=probe).compute(frames, nlists)
-        values = np.concatenate([np.asarray(density) for _, density in per_frame])
+        local = LocalDensity(probe)
+        values = np.concatenate(
+            [local.compute(pairs=neighbors(frame, probe)).density for frame in frames]
+        )
         counts, edges = np.histogram(values, bins=40, range=(0.0, 0.045), density=True)
         centers = 0.5 * (edges[:-1] + edges[1:])
         label = f"r={probe:.0f} Å"
@@ -171,8 +172,10 @@ def structure_factor(trajectory: Trajectory) -> dict[str, float]:
     # Start above the forward-scattering region: the Debye sum keeps its self
     # terms, so S(k -> 0) runs away to N and is not the compressibility limit.
     k = np.linspace(1.0, 8.0, 180)
-    per_frame = StaticStructureFactorDebye(k).compute(frames)
-    s_k = np.mean([np.asarray(s) for _, s, _ in per_frame], axis=0)
+    debye = StaticStructureFactorDebye(k)
+    s_k = np.mean(
+        [debye.compute(positions=frame.coords).sk for frame in frames], axis=0
+    )
     write_json(
         "diffraction/argon_sk.json",
         [{"k": round(float(a), 4), "S": round(float(b), 4)} for a, b in zip(k, s_k)],

@@ -27,8 +27,8 @@ $$
 That makes the zero-lag value a free thermometer, and the first thing you should
 check. Averaged over the eight independent argon runs used here (they differ
 only in the seed of their initial velocities), the measured $C_{vv}(0)$ is
-$5.333\times10^{-6}$ Å² fs⁻², and $3k_BT/m$ at the runs' mean temperature of
-85.6 K is $5.344\times10^{-6}$. Agreement to 0.2 % means the velocities are in
+$5.288\times10^{-6}$ Å² fs⁻², and $3k_BT/m$ at the runs' mean temperature of
+84.9 K is $5.299\times10^{-6}$. Agreement to 0.2 % means the velocities are in
 the units you think they are.
 
 As $\tau$ grows, collisions scramble the velocity and the correlation decays to
@@ -57,8 +57,9 @@ encoding:
 
 </div>
 
-**Figure 1.** Normalized velocity autocorrelation of liquid argon at 85 K,
-averaged over eight independent runs. The correlation crosses zero at 310 fs,
+**Figure 1.** Normalized velocity autocorrelation of liquid argon, averaged
+over the eight independent runs (mean temperature 84.9 K) with the mean kept.
+The correlation crosses zero at 310 fs,
 reaches a minimum of $-0.105$ at 440 fs, and has essentially decayed by 2 ps.
 </figure>
 
@@ -74,7 +75,7 @@ atom rattles in the cage formed by its neighbours.
 noise. At 440 fs the correlation is $-0.105$: the average atom is moving
 *backwards* relative to where it started. It has bounced off the wall of its
 cage of neighbours — the same first coordination shell that [$g(r)$](rdf.md)
-shows at 3.73 Å. A dilute gas has no cage and decays monotonically to zero; a
+shows at 3.68 Å. A dilute gas has no cage and decays monotonically to zero; a
 solid oscillates for far longer.
 
 **It relaxes to zero.** By 2 ps the atom has forgotten its initial velocity
@@ -138,14 +139,14 @@ encoding:
 
 </div>
 
-**Figure 2.** Running Green–Kubo integral for argon, from the VACF averaged
-over the eight runs. It overshoots while the
+**Figure 2.** Running Green–Kubo integral for argon, from the VACF of
+Figure 1, averaged over the eight runs. It overshoots while the
 VACF is still positive, is pulled back down by the negative lobe, and settles
 onto a plateau once the correlation has decayed.
 </figure>
 
 Follow the shape and the physics is visible. The integral climbs while the
-correlation is positive and peaks at $2.88\times10^{-5}$ cm² s⁻¹ at **310 fs** —
+correlation is positive and peaks at $2.86\times10^{-5}$ cm² s⁻¹ at **310 fs** —
 which is exactly where Figure 1 shows the VACF crossing zero, because that is
 the moment the integrand changes sign. Then the negative lobe, the cage pushing
 atoms back, *subtracts* from the integral and drags it down to
@@ -153,9 +154,9 @@ $2.06\times10^{-5}$ by 1.5 ps. Past 2 ps there is nothing left to add and the
 curve is flat.
 
 **Quote the plateau, never the peak and never the last point.** Here the plateau
-is $1.99\times10^{-5}$ cm² s⁻¹. Taking each run's own plateau gives
-$(1.99 \pm 0.06)\times10^{-5}$ cm² s⁻¹ (mean and sample standard deviation of
-the eight runs), against $(1.93 \pm 0.12)\times10^{-5}$ from the Einstein fits
+is $2.01\times10^{-5}$ cm² s⁻¹. Taking each run's own plateau gives
+$(2.01 \pm 0.10)\times10^{-5}$ cm² s⁻¹ (mean and sample standard deviation of
+the eight runs), against $(1.95 \pm 0.12)\times10^{-5}$ from the Einstein fits
 of the same runs: the two routes agree within their spreads.
 
 If there is no plateau, do not pick a number off the curve. It means the
@@ -164,71 +165,122 @@ adding a constant that integrates without bound.
 
 ## Computing it
 
-`Acf` takes a `(n_frames, n_entities, n_components)` array — do not flatten it
-— and returns a `TimeCorrelation`: the curve is `.values`, one entry per lag,
-and every time correlation in `molpy.compute` returns the same kind of object.
+`Vacf` is configured with the longest lag it reports, `max_lag`, which counts
+**frames, not femtoseconds**: fifty lags at a 10 fs frame spacing reach 500 fs,
+and the result has `max_lag + 1` lags because lag 0 is included. The data goes
+to `compute`: the velocities and the frame spacing `dt`, which sets the lag
+axis `lag_times`.
+
+The velocities are a `(n_frames, n_dof)` series — one column per Cartesian
+degree of freedom. A `(T, N, 3)` velocity trajectory is reshaped to
+`(T, 3N)`, which is free in NumPy. `Vacf` correlates every column with its own
+past and averages the columns *after* correlating, so the curve is the memory
+of a typical atom along a typical axis:
+
+$$
+C(\tau) = \big\langle v_{i\alpha}(t)\,v_{i\alpha}(t+\tau)\big\rangle_{i,\,\alpha,\,t}
+= \tfrac13\,C_{vv}(\tau).
+$$
+
+That factor of three is the whole difference from the dot-product form above:
+$C(0) = k_BT/m$, and the Green–Kubo integral of $C$ is $D$ itself, with no
+$1/d$ left to apply. Like every time correlation in `molpy.compute`, the
+result is a `TimeCorrelation` — `values[lag, channel]` with one channel here:
 
 ```python
 import numpy as np
-from molpy.compute import Acf, CumulativeTrapezoid
+from molpy.compute import Vacf
 
 rng = np.random.default_rng(0)
-velocities = np.ascontiguousarray(rng.normal(0.0, 0.02, size=(2000, 64, 3)))
+velocities = rng.normal(0.0, 0.02, size=(2000, 64, 3))   # Å/fs, (T, N, 3)
 
-result = Acf().compute(velocities, max_lag=50, dt=10.0)
-print(round(float(result.values[0]), 6))     # -> 0.001203
-print(result.values.shape)                   # -> (51,)
+vacf = Vacf(max_lag=50).compute(velocities=velocities.reshape(2000, -1), dt=10.0)
+print(vacf.n_lags, vacf.n_channels)                       # -> 51 1
+print(round(float(vacf.values[0, 0]), 6))                 # -> 0.000401
 ```
 
-`max_lag` counts **frames, not femtoseconds**, despite sitting next to arguments
-that are times. Fifty lags at a 10 fs frame spacing reaches 500 fs, and the
-result has `max_lag + 1` entries because lag 0 is included. The same is true of
-`max_lag` on the transport computes. The `dt` is optional and only sets
-`result.lag_times`; pass it and the derived quantities below know the time unit.
-
 These velocities are uncorrelated noise with a per-component width of
-0.02 Å fs⁻¹, so $C_{vv}(0)$ should be $3\sigma^2 = 0.0012$, and it is. The next
-lag is already down by a factor of a thousand:
+0.02 Å fs⁻¹, so $C(0)$ should be $\sigma^2 = 0.0004$, and it is. The next lag
+is already down by a factor of a thousand — normalising is arithmetic on
+`values`:
 
 ```python
-print(round(float(result.values[1] / result.values[0]), 4))   # -> 0.0009
+normalized = vacf.values[:, 0] / vacf.values[0, 0]
+print(round(float(normalized[1]), 4))                     # -> 0.0004
 ```
 
 White noise has no memory. Real velocities do, and that difference is the whole
 measurement.
 
-Integrate with `result.integrate(running=True)`, which returns the running
-integral rather than a single number, precisely so you can look for the
-plateau (it is `CumulativeTrapezoid` on the same arrays):
+Two conventions sit underneath that curve, and both are configuration. The
+first is what to do with each column's time mean: by default `Vacf` subtracts
+it before correlating (`mean="subtract"`), and `mean="keep"` correlates the
+velocities exactly as given. The next section is about why that choice decides
+the Green–Kubo answer. The second is how each lag is averaged: by default every
+lag is divided by the number of origins that reach it
+(`normalization="unbiased"`), `"biased"` divides every lag by the number of
+frames, and `"none"` returns the raw sums.
+
+The Green–Kubo $D$ is a composition of two more computes, each taking the
+previous curve as its input. `CumulativeTrapezoid` turns the correlation into
+its **running integral** — itself a `TimeCorrelation` on the same lag axis,
+precisely so you can look for the plateau — and `Plateau` averages a window of
+it, given as fractions of the lag axis:
 
 ```python
-running = result.integrate(running=True)
-diffusion = np.asarray(running) / 3.0
-print(diffusion.shape)                        # -> (51,)
-print(np.allclose(running, CumulativeTrapezoid().fit(result.values, dt=10.0)["integral"]))  # -> True
+from molpy.compute import CumulativeTrapezoid, Plateau
+
+running = CumulativeTrapezoid().compute(correlation=vacf, channel=0)
+plateau = Plateau(0.8, 1.0).compute(correlation=running, channel=0)
+print(running.n_lags, plateau.n_samples)                  # -> 51 11
+D = plateau.value                                         # Å²/fs: C is per degree of freedom
 ```
 
-`result.diffusion(3, window=(0.8, 1.0))` reads the plateau of that running
-integral over the last fifth of the curve and divides by the dimension — the
-Green–Kubo $D$ in one call, once you have checked that a plateau exists.
+`plateau.std` is the spread of the running integral inside the window; if it
+is not small next to `plateau.value`, there is no plateau to quote.
 
 Units follow your inputs. Velocities in Å fs⁻¹ give $D$ in Å² fs⁻¹, and
 1 Å² fs⁻¹ = 0.1 cm² s⁻¹.
 
-For a single one-dimensional series — one degree of freedom, or an
-already-collective flux — use `signal.acf_fft` instead:
+Be careful not to sum atoms *before* correlating. A summed velocity is the
+**collective** momentum, and its autocorrelation is a different quantity — the
+current correlation of the [JACF](jacf.md) page, `CurrentAcf`. For a
+per-particle VACF, hand `Vacf` every degree of freedom and let it average after
+correlating.
+
+### Subtracting the mean costs a finite run part of $D$
+
+Subtracting each column's time mean makes the correlation immune to a constant
+drift, but over a finite run it is not free. An atom that diffused a distance
+$\Delta r$ in a run of length $T$ has a time-mean velocity $\Delta r/T$ along
+each axis, and that is real motion, not drift. Removing it lowers every lag of
+the correlation by about $2D/T$, so the running integral out to $\tau_{\max}$
+comes out low by a fraction $2\tau_{\max}/T$. For the argon runs here,
+$\tau_{\max} = 2.5$ ps and $T = 30$ ps, that is about 17 %: with the mean
+subtracted, the eight runs give $D = 1.68\times10^{-5}$ cm² s⁻¹ against the
+$2.01\times10^{-5}$ quoted above.
+
+In equilibrium the true mean velocity is zero, so the curve with the mean kept
+is the Green–Kubo integrand itself, and that is what every figure and number on
+this page uses. It is the same compute with one convention changed:
 
 ```python
-from molpy import signal
-
-flux = np.ascontiguousarray(velocities.sum(axis=1)[:, 0])
-print(np.asarray(signal.acf_fft(flux, max_lag=50)).shape)   # -> (51,)
+vacf_kept = Vacf(max_lag=50, mean="keep").compute(
+    velocities=velocities.reshape(2000, -1), dt=10.0
+)
+running_kept = CumulativeTrapezoid().compute(correlation=vacf_kept, channel=0)
+D_kept = Plateau(0.8, 1.0).compute(correlation=running_kept, channel=0).value
+print(round(float(vacf_kept.values[0, 0]), 6))            # -> 0.000401
 ```
 
-Be careful about which of those you want. Summing atoms *first* and correlating
-afterwards measures the memory of the **collective** momentum, not the memory of
-a typical atom. For a per-particle VACF, pass the full `(T, N, 3)` array to
-`Acf` and let it average after correlating.
+Nothing else changes: the curve is still per degree of freedom, so its
+integral is $D$ with no $1/d$ to apply. On this white noise the two policies give the
+same zero-lag value, because its time mean is already close to zero; on a real
+liquid their Green–Kubo integrals part by the 17 % above.
+
+Keep the mean when the run is long next to the lag window and net momentum
+was removed before dumping; subtract it when a residual drift would otherwise
+integrate without bound.
 
 ## Vibrations, from the same correlation function
 
@@ -247,31 +299,30 @@ atoms actually perform contributes. The zero-frequency weight is proportional to
 $D$ — the same integral as above, seen as the $\omega \to 0$ limit — so a liquid
 has $g(0) > 0$ while a solid (after removing drift) has $g(0) = 0$.
 
-`result.spectrum()` windows the correlation function, pads it and transforms
-it, reading `dt` as femtoseconds, and returns a `Spectrum`: wavenumbers in
-cm⁻¹ paired with intensities. It is `PowerSpectrum().fit(result.values,
-dt_fs)`, which you call directly when the curve is a plain array:
+The transform is one more compute. `Spectrum(window, pad)` tapers a real
+signal with the window, zero-pads it to `pad` times its length and returns the
+one-sided transform: angular frequencies $\omega$ in radians per unit of `dt`,
+and the real and imaginary parts, unscaled. The VDOS is the real part of the
+transform of the VACF:
 
 ```python
-from molpy.compute import PowerSpectrum
+from molpy.compute import Spectrum
 
-vdos = result.spectrum()
-print(vdos.frequencies_cm1.shape == vdos.intensities.shape, vdos.window)
-# -> True cosine_sq
-same = PowerSpectrum().fit(result.values, dt_fs=10.0)
-print(np.array_equal(vdos.intensities, same.intensities))   # -> True
+vdos = Spectrum("cosine_sq", 2).compute(signal=vacf.channel(0), dt=10.0)
+print(vdos.n_fft, vdos.frequencies.shape == vdos.real.shape)   # -> 128 True
+wavenumber = vdos.frequencies / (2 * np.pi * 2.99792458e-5)    # rad/fs -> cm⁻¹
+print(round(float(wavenumber[-1])))                            # -> 1668
 ```
 
 The window is selectable (`"cosine_sq"`, `"hann"`, `"blackman"`, `"none"`);
-the default cosine² taper is one at lag zero, so the integral of the spectrum
-— $D$ again — is untouched.
+the cosine² taper is one at lag zero, so the integral of the spectrum — $D$
+again — is untouched.
 
-Read `resolution` as a **count**, not a frequency: it echoes the number of lags
-you supplied, and `n_frames` is that plus one. The actual spectral resolution
-has to be worked out from the length $T$ of the correlation function,
+The spectral resolution is set by the length $T$ of the correlation function,
 $\Delta\tilde\nu \approx 1/(cT)$ — here 51 lags at 10 fs is $T = 0.51$ ps and
-about 65 cm⁻¹, which is coarse. Resolving narrow features means correlating out
-to longer lags, not sampling more finely.
+about 65 cm⁻¹, which is coarse. Padding interpolates the grid; it does not
+resolve anything new. Resolving narrow features means correlating out to longer
+lags, not sampling more finely.
 
 See [Spectra](spectra.md), which generalizes the same machinery to dipole and
 polarizability fluxes.
@@ -290,8 +341,10 @@ looking at anything else on the page.
 
 **The correlation never decays to zero; the running integral grows without
 bound.**
-Centre-of-mass drift. A constant collective velocity correlates with itself
-forever. Remove net momentum before dumping velocities.
+Centre-of-mass drift. Subtracting each degree of freedom's time mean (the
+`Vacf` default) removes a constant drift, but a slowly wandering collective
+velocity still correlates with itself over long lags. Remove net momentum before
+dumping velocities.
 
 **There is no negative lobe in a dense liquid.**
 Frames are too far apart. The lobe here sits at 440 fs; sampling every 500 fs
@@ -320,7 +373,7 @@ energy (an NVE run, fixed particle number, volume, and energy).
 - Integrate the VACF to get $D$, then compute $D$ from the [MSD](msd.md) of the
   same run. Agreement within a few percent means both are working.
 - Take the argon running integral and read it at 400 fs, before the negative
-  lobe has done its work. You get $2.78\times10^{-5}$ cm² s⁻¹ — 40 % above the
+  lobe has done its work. You get $2.77\times10^{-5}$ cm² s⁻¹ — 38 % above the
   plateau, and a concrete demonstration of why the plateau, not an early value,
   is the answer.
 
@@ -339,5 +392,4 @@ energy (an NVE run, fixed particle number, volume, and energy).
 
 - [MSD](msd.md) — the Einstein route to the same $D$
 - [Spectra](spectra.md) — VDOS, IR, and Raman from the same transform
-- [Signal](signal.md) — the correlation and windowing primitives
 - [API reference](../api/compute.md)

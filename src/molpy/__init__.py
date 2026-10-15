@@ -9,8 +9,8 @@ the root holds three kinds of name and nothing else:
   plus molpy's selectors and trajectory splitters), :mod:`molpy.io` (every file reader and
   writer, with one submodule per format that owns classes), :mod:`molpy.ff`,
   :mod:`molpy.perceive`, :mod:`molpy.optimize`, :mod:`molpy.conformer`,
-  :mod:`molpy.builder`, :mod:`molpy.compute`, :mod:`molpy.signal`,
-  :mod:`molpy.md`, :mod:`molpy.op` and :mod:`molpy.stream`; and molpy's own
+  :mod:`molpy.builder`, :mod:`molpy.compute`, :mod:`molpy.md`,
+  :mod:`molpy.op` and :mod:`molpy.stream`; and molpy's own
   :mod:`molpy.engine`, :mod:`molpy.adapter`, :mod:`molpy.config`,
   :mod:`molpy.resources` and :mod:`molpy.wrapper` (imported explicitly);
 * **the core data classes a user handles directly**, promoted from
@@ -54,7 +54,6 @@ if _TYPE_CHECKING:
         optimize,
         perceive,
         resources,
-        signal,
         stream,
     )
 
@@ -78,7 +77,6 @@ _LAZY_SUBMODULES = frozenset(
         "op",
         "optimize",
         "perceive",
-        "signal",
         "stream",
     }
 )
@@ -134,7 +132,6 @@ __all__ = [
     "op",
     "optimize",
     "perceive",
-    "signal",
     "stream",
     # promoted core data classes
     "Angle",

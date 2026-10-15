@@ -11,14 +11,14 @@ import numpy as np
 
 import molpy as mp
 from molpy.compute import (
-    CenterOfMass,
     Cluster,
-    DescriptorRow,
+    GyrationTensor,
     Kmeans,
     Pca,
-    RadiusOfGyration,
     Steinhardt,
 )
+
+from molpy.core import NeighborList
 
 from .lj import Trajectory
 from .order import _fcc_frame
@@ -32,13 +32,12 @@ def percolation(trajectory: Trajectory) -> dict[str, float]:
 
     rows: list[dict[str, float | str]] = []
     transition: list[float] = []
+    cluster = Cluster(min_cluster_size=2)
     for cutoff in np.arange(3.2, 5.61, 0.05):
         counts, fractions = [], []
         for frame in frames:
-            result = Cluster(min_cluster_size=2).compute(
-                [frame], [neighbors(frame, float(cutoff))]
-            )[0]
-            sizes = np.asarray(result.cluster_sizes)
+            result = cluster.compute(pairs=neighbors(frame, float(cutoff)))
+            sizes = result.cluster_sizes
             counts.append(result.n_clusters)
             fractions.append((sizes.max() if len(sizes) else 0) / n_atoms)
         fraction = float(np.mean(fractions))
@@ -76,6 +75,9 @@ def chain_gyration(_trajectory: Trajectory) -> dict[str, float]:
     n_chains = 200
     lengths = [10, 20, 40, 80, 160, 320]
 
+    cluster = Cluster(min_cluster_size=5)
+    gyration = GyrationTensor()
+    box = mp.Box.cube(400.0)
     rows: list[dict[str, float | str]] = []
     ratios: list[float] = []
     for n_beads in lengths:
@@ -85,21 +87,17 @@ def chain_gyration(_trajectory: Trajectory) -> dict[str, float]:
             positions = np.cumsum(steps, axis=0)
             positions -= positions.mean(axis=0)
             positions += 200.0
-            frame = mp.Frame()
-            frame["atoms"] = {
-                "x": positions[:, 0],
-                "y": positions[:, 1],
-                "z": positions[:, 2],
-            }
-            frame.box = mp.Box.cube(400.0)
-            clusters = Cluster(min_cluster_size=5).compute(
-                [frame], [neighbors(frame, 2.5)]
-            )
-            masses = np.full(n_beads, 1.0)
-            com = CenterOfMass(masses).compute([frame], clusters)
-            radii = np.asarray(
-                RadiusOfGyration(masses).compute([frame], clusters, com)[0]
-            )
+            search = NeighborList(2.5)
+            search.build(positions, box)
+            # The bonded beads form the molecule: the cluster is the partition
+            # the gyration tensor reduces over.
+            clusters = cluster.compute(pairs=search.neighbors())
+            radii = gyration.compute(
+                positions=positions,
+                simbox=box,
+                partition=clusters,
+                weights=np.ones(n_beads),
+            ).radius_of_gyration()
             if radii.size:
                 measured.append(float(radii.max()))
         squared = np.asarray(measured) ** 2
@@ -132,9 +130,9 @@ def descriptor_map(trajectory: Trajectory) -> dict[str, float]:
 
     def descriptors(frame: mp.Frame, cutoff: float) -> np.ndarray:
         nlist = neighbors(frame, cutoff)
-        ql = np.asarray(Steinhardt(l=[4, 6]).compute([frame], [nlist])[0]["ql"])
-        coordination = np.full(ql.shape[1], 2.0 * nlist.n_pairs / ql.shape[1])
-        return np.column_stack([ql[0], ql[1], coordination])
+        ql = Steinhardt(l=[4, 6]).compute(neighbors=nlist).ql
+        coordination = np.full(len(ql), 2.0 * nlist.n_pairs / len(ql))
+        return np.column_stack([ql, coordination])
 
     crystal_rows = descriptors(crystal, 4.5)
     liquid_rows = np.vstack([descriptors(f, 5.4) for f in liquid_frames])
@@ -149,9 +147,9 @@ def descriptor_map(trajectory: Trajectory) -> dict[str, float]:
     # Standardize: PCA on raw columns would be dominated by coordination number.
     matrix = (matrix - matrix.mean(axis=0)) / matrix.std(axis=0)
 
-    projected = Pca().compute([DescriptorRow(row) for row in matrix])
-    coords = np.asarray(projected.coords)
-    labels = np.asarray(Kmeans(k=2, max_iter=100, seed=0).compute(projected).labels)
+    projected = Pca(2).compute(features=matrix)
+    coords = projected.coords
+    labels = Kmeans(2, max_iter=100, seed=0).compute(features=projected).labels
 
     rows: list[dict[str, float | str]] = [
         {
@@ -165,7 +163,7 @@ def descriptor_map(trajectory: Trajectory) -> dict[str, float]:
 
     agreement = max((labels == truth).mean(), (labels != truth).mean())
     return {
-        "variance_pc1": float(np.asarray(projected.variance)[0]),
-        "variance_pc2": float(np.asarray(projected.variance)[1]),
+        "variance_pc1": float(projected.variance[0]),
+        "variance_pc2": float(projected.variance[1]),
         "kmeans_agreement": float(agreement),
     }

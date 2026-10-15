@@ -44,19 +44,19 @@ the side of the other; averaging them together erases the distinction all over
 again.
 
 So each reference particle gets its own coordinate frame, aligned with its own
-orientation. Supply an `orientations` topology block — one `(head, tail)` atom
-pair per particle — and every neighbour is rotated into that particle's body
-frame before binning. The per-particle angle is `atan2` of the `head - tail`
-axis, recomputed from each frame's positions, so it follows the particle as it
-tumbles.
+orientation. Hand `compute` one orientation per particle — for `PmftXy` a
+planar angle in radians — and every neighbour is rotated into that particle's
+body frame before binning. The angle is data, read from the snapshot being
+analysed, so it follows the particle as it tumbles: typically `atan2` of the
+particle's own `head - tail` axis in that frame.
 
-With that block, a lobe at the "front" of the map means neighbours genuinely
-prefer the front. Without it, the compute still runs, but in the lab frame, and
+With orientations, a lobe at the "front" of the map means neighbours genuinely
+prefer the front. Without them, the compute still runs, but in the lab frame, and
 the result is a rotationally averaged smear that tells you nothing $g(r)$ did not
 already.
 
 That is the single most important thing to get right on this page: **`PmftXy`
-without an `orientations` block is not a PMFT.**
+without orientations is not a PMFT.**
 
 One further property to expect: `PmftXy` bins $x$ and $y$ but integrates over
 $z$. A three-dimensional coordination shell therefore appears as a fairly shallow
@@ -67,7 +67,7 @@ $w(r) = -\ln g(r)$, and that is geometry, not a bug.
 !!! note "No figure on this page yet — TODO"
     The figure worth showing is the lobed, orientation-resolved map, and that
     needs an anisotropic system — rods, discs, or a molecular liquid — carrying
-    an `orientations` block. The reference trajectory behind the other compute
+    per-particle orientations. The reference trajectory behind the other compute
     pages is monatomic argon, whose map is a featureless ring with a measured
     contrast of only about $0.3\,k_BT$. Showing that would suggest PMFT maps are
     uninformative, which is the opposite of the truth, so this page has no
@@ -86,6 +86,11 @@ frame["atoms"] = {"x": xyz[:, 0], "y": xyz[:, 1], "z": xyz[:, 2]}
 frame.box = mp.Box.cube(20.0)
 ```
 
+The constructor holds the window and its resolution — $\pm x_\max \times \pm
+y_\max$ in `n_x` × `n_y` bins. `compute` takes one snapshot's neighbour table
+(it needs the `disp` column, which a `NeighborList` table carries, and reads the
+box from the table) and, optionally, the orientations.
+
 Pick the neighbour cutoff from the *corner* of the map, not its edge. A
 $\pm 6$ Å window reaches $6\sqrt{2} = 8.49$ Å at its corners, so anything
 shorter leaves those corners permanently unvisited:
@@ -96,21 +101,24 @@ from molpy.compute import PmftXy
 analyzer = PmftXy(x_max=6.0, y_max=6.0, n_x=40, n_y=40)
 nl = mp.core.NeighborList(8.5)
 nl.build(frame.coords, frame.box)
-(counts, density, pmf), = analyzer.compute([frame], [nl.neighbors()])
+result = analyzer.compute(pairs=nl.neighbors())
 
-print(counts.shape, pmf.shape)          # -> (40, 40) (40, 40)
-print(int(counts.sum()))                # -> 39708
+print(result.raw_counts.shape, result.pmf.shape)   # -> (40, 40) (40, 40)
+print(int(result.raw_counts.sum()))                # -> 39708
 ```
 
-`PmftXy` returns, **per frame**, a tuple of three `(n_x, n_y)` arrays. Keep them
-apart in your head: `counts` is the raw histogram, `density` is that histogram
-normalized, and `pmf` is the free energy $-\ln(\text{density})$.
+The result holds three `(n_x, n_y)` arrays and the bin `edges` of each axis.
+Keep the arrays apart in your head: `raw_counts` is the raw histogram,
+`density` is that histogram over each bin's area, and `pmf` is the free energy
+$-\ln(\rho/\rho_\text{ref})$, with $\rho_\text{ref}$ the density of an
+uncorrelated system.
 
 Bins that no neighbour ever visited have no free energy, since $-\ln 0$ is
-infinite. With a correctly sized cutoff this frame has none:
+infinite, and `pmf` reports them as `+inf`. With a correctly sized cutoff this
+frame has none:
 
 ```python
-print(int((~np.isfinite(pmf)).sum()))   # -> 0
+print(int((~np.isfinite(result.pmf)).sum()))   # -> 0
 ```
 
 Shorten the cutoff below the corner distance and they appear, in exactly the
@@ -119,9 +127,8 @@ places geometry predicts:
 ```python
 nl = mp.core.NeighborList(8.0)
 nl.build(frame.coords, frame.box)
-short = nl.neighbors()
-(_, _, clipped), = analyzer.compute([frame], [short])
-print(int((~np.isfinite(clipped)).sum()))   # -> 8
+clipped = analyzer.compute(pairs=nl.neighbors())
+print(int((~np.isfinite(clipped.pmf)).sum()))   # -> 8
 ```
 
 Eight bins, all in the corners where $\sqrt{x^2+y^2} > 8$ Å. If you see empty
@@ -133,15 +140,17 @@ banded at the corners, and they retreat as you add frames or coarsen the grid. A
 2-D histogram is hungry — doubling the resolution in each direction quarters the
 counts per bin.
 
-**Averaging over frames.** Sum the raw counts and take the logarithm once, at
-the end:
+**Averaging over frames.** `PmftXy` analyses one snapshot; a trajectory is a
+loop over snapshots. Sum the raw counts and take the logarithm once, at the
+end:
 
 ```python
 nl = mp.core.NeighborList(8.5)
-nl.build(frame.coords, frame.box)
-nlist = nl.neighbors()
-per_frame = analyzer.compute([frame, frame], [nlist, nlist])
-total = np.sum([raw for raw, _, _ in per_frame], axis=0)
+frames = [frame, frame]                    # in practice, your trajectory
+total = np.zeros((40, 40))
+for f in frames:
+    nl.build(f.coords, f.box)
+    total += analyzer.compute(pairs=nl.neighbors()).raw_counts
 
 occupied = total > 0
 w = np.full(total.shape, np.nan)
@@ -155,25 +164,23 @@ subsequent mean, contour level, and colour scale you compute.
 
 Note that this hand-rolled `w` is normalized by the mean of the occupied bins,
 which is a choice — it sets the zero of free energy to "an average bin". The
-`pmf` array returned per frame uses the compute's own normalization, so the two
+`pmf` array of each result uses the compute's own reference density, so the two
 differ by an additive constant. That is harmless for reading barriers and well
 depths, which are differences, but do not mix the two on one colour scale.
 
-## Supplying orientations
+Averaging per-frame `pmf` arrays instead is wrong: the mean of logarithms is not
+the logarithm of the mean, and empty bins in individual frames contribute
+infinities that bias the result.
+
+## Orientations make it a PMFT
 
 Everything above ran in the lab frame, which — as the section before last
 insisted — is not yet a PMFT. Here is the part that makes it one.
 
-The body frame comes from an `orientations` block on the frame. It uses the same
-schema as `bonds`: two integer columns, `atomi` and `atomj`, naming the head and
-tail atoms of an axis. The director for that row is `pos[atomi] - pos[atomj]`,
-and its 2-D angle is `atan2(dy, dx)`.
-
-One rule catches everyone, and it is not what you would guess from "one pair per
-particle": the block is indexed by **atom index**, so it needs **one row per
-atom in the frame**, not one row per rigid body. Every atom that can appear in a
-neighbour pair must have its own row saying which way its body is pointing.
-Atoms belonging to the same body simply repeat the same `(head, tail)`.
+`orientations` is one planar angle per particle, and "particle" means **row of
+the neighbour table's point set**: the same array is indexed by both $i$ and
+$j$ of every pair, so it needs **one entry per atom in the frame**, not one per
+rigid body. Atoms belonging to the same body simply repeat its angle.
 
 Build a system of 200 two-atom rods, each with a random in-plane orientation:
 
@@ -190,37 +197,34 @@ rods["atoms"] = {"x": xyz[:, 0], "y": xyz[:, 1], "z": xyz[:, 2]}
 rods.box = mp.Box.cube(20.0)
 ```
 
-Atoms `0 … 199` are the heads and `200 … 399` the matching tails. Now give
-*every* atom an orientation row, pointing along its own rod:
+Atoms `0 … 199` are the heads and `200 … 399` the matching tails. Reading the
+orientations is your step: for every atom, take the axis of the rod it belongs
+to from this frame's positions and convert it to an angle.
 
 ```python
 head = np.concatenate([np.arange(n_rods), np.arange(n_rods)])
 tail = np.concatenate([np.arange(n_rods, 2 * n_rods), np.arange(n_rods, 2 * n_rods)])
-rods["orientations"] = {"atomi": head, "atomj": tail}
+positions = rods.coords
+director = positions[head] - positions[tail]
+theta = np.arctan2(director[:, 1], director[:, 0])
 
 nl = mp.core.NeighborList(8.5)
 nl.build(rods.coords, rods.box)
-(body_counts, _, _), = analyzer.compute([rods], [nl.neighbors()])
-print(rods["orientations"].n_rows, rods["atoms"].n_rows)   # -> 400 400
+table = nl.neighbors()
+body = analyzer.compute(pairs=table, orientations=theta)
+print(theta.shape, rods["atoms"].n_rows)   # -> (400,) 400
 ```
 
-Get that length wrong and the error is unhelpful — a
-`ValueError: PmftXy orientations length dimension mismatch: expected 207,
-got 200`, where 207 is simply the first atom index the kernel reached that had
-no row. If you see it, count rows against atoms.
+Give one angle per rod instead and the compute refuses with
+`ValueError: orientations vs query points dimension mismatch: expected 400,
+got 200`. If you see it, count angles against atoms.
 
 The map is now genuinely different from the lab-frame one, because each
 neighbour has been rotated into its reference rod's frame before binning:
 
 ```python
-plain = mp.Frame()
-plain["atoms"] = {"x": xyz[:, 0], "y": xyz[:, 1], "z": xyz[:, 2]}
-plain.box = mp.Box.cube(20.0)
-nl = mp.core.NeighborList(8.5)
-nl.build(plain.coords, plain.box)
-(lab_counts, _, _), = analyzer.compute([plain], [nl.neighbors()])
-
-print(np.allclose(body_counts, lab_counts))   # -> False
+lab = analyzer.compute(pairs=table)
+print(np.allclose(body.raw_counts, lab.raw_counts))   # -> False
 ```
 
 For randomly oriented rods the difference is modest, since there is no
@@ -228,19 +232,40 @@ correlation between orientation and position to reveal. In a system that *does*
 have one — a liquid crystal, a stack of discs, water around a solute — this is
 the difference between seeing lobes and seeing a ring.
 
-Averaging per-frame `pmf` arrays instead is wrong: the mean of logarithms is not
-the logarithm of the mean, and empty bins in individual frames contribute
-infinities that bias the result.
+## Three more coordinate systems share the engine
+
+`PmftXy` is one of four. All bin the same pair bonds; they differ only in which
+coordinates a bond has in the reference frame, and so in what orientations they
+need:
+
+| Compute | Bins a bond as | Orientations |
+|---|---|---|
+| `PmftXy(x_max, y_max, n_x, n_y)` | $(x, y)$ in the query particle's frame (2-D) | planar angles, or none (lab frame) |
+| `PmftXyt(x_max, y_max, n_x, n_y, n_t)` | $(x, y)$ plus the relative orientation $\theta$ | planar angles, required |
+| `PmftR12(r_max, n_r, n_t1, n_t2)` | distance and the bond angle in each particle's frame | planar angles, required |
+| `PmftXyz(x_max, y_max, z_max, n_x, n_y, n_z)` | $(x, y, z)$ in the query particle's frame (3-D) | `(w, x, y, z)` quaternions, or none |
+
+The rod system above already has everything `PmftXyt` needs:
+
+```python
+from molpy.compute import PmftXyt
+
+torque = PmftXyt(x_max=6.0, y_max=6.0, n_x=20, n_y=20, n_t=12).compute(
+    pairs=table, orientations=theta
+)
+print(torque.raw_counts.shape, len(torque.edges))   # -> (20, 20, 12) 3
+```
 
 ## When it goes wrong
 
 **The map is a smooth ring with no angular structure.**
-Either the particles really are isotropic, or — far more likely — there is no
-`orientations` block and you are looking at the lab frame.
+Either the particles really are isotropic, or — far more likely — no
+`orientations` were passed and you are looking at the lab frame.
 
 **The lobes point the wrong way, or rotate between frames.**
-The `(head, tail)` endpoints are swapped or inconsistent across particles. The
-body-frame angle comes from `head - tail`; reverse it and every map flips.
+The `(head, tail)` endpoints you built the angles from are swapped or
+inconsistent across particles. Reverse the axis and every map flips; mix the
+two conventions and the lobes blur into each other.
 
 **The corners of the map are empty.**
 Neighbour cutoff smaller than the diagonal of the window, $\sqrt{x_\max^2 +

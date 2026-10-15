@@ -41,15 +41,16 @@ def _fcc_frame(cells: int = 5, lattice: float = 5.26) -> mp.Frame:
 def steinhardt_contrast(trajectory: Trajectory) -> dict[str, float]:
     """q6 distributions for a perfect FCC crystal and for liquid argon."""
     crystal = _fcc_frame()
-    crystal_q = np.asarray(
-        Steinhardt(l=[4, 6]).compute([crystal], [neighbors(crystal, 4.5)])[0]["ql"]
-    )
+    steinhardt = Steinhardt(l=[4, 6])
+    # ql is (N, 2): one column per order l = 4, 6.
+    crystal_q = steinhardt.compute(neighbors=neighbors(crystal, 4.5)).ql.T
 
     frames = _frames(trajectory, stride=50)
     # 5.4 A is the first minimum of g(r): the defensible "first shell" cutoff.
-    liquid = Steinhardt(l=[4, 6]).compute(frames, [neighbors(f, 5.4) for f in frames])
-    liquid_q4 = np.concatenate([np.asarray(r["ql"])[0] for r in liquid])
-    liquid_q6 = np.concatenate([np.asarray(r["ql"])[1] for r in liquid])
+    liquid = np.vstack(
+        [steinhardt.compute(neighbors=neighbors(f, 5.4)).ql for f in frames]
+    )
+    liquid_q4, liquid_q6 = liquid[:, 0], liquid[:, 1]
 
     rows: list[dict[str, float | str]] = []
     for label, values in (
@@ -84,13 +85,13 @@ def bond_order_diagram(trajectory: Trajectory) -> dict[str, float]:
     """
     from molpy.compute import BondOrientationalOrder
 
+    diagram = BondOrientationalOrder(36, 72)
     crystal = _fcc_frame(cells=4)
-    counts, _, theta_edges, phi_edges = BondOrientationalOrder(
-        n_theta=36, n_phi=72
-    ).compute([crystal], [neighbors(crystal, 4.5)])[0]
-    counts = np.asarray(counts)
-    theta = 0.5 * (np.asarray(theta_edges)[:-1] + np.asarray(theta_edges)[1:])
-    phi = 0.5 * (np.asarray(phi_edges)[:-1] + np.asarray(phi_edges)[1:])
+    bond_order = diagram.compute(neighbors=neighbors(crystal, 4.5))
+    counts = bond_order.raw_counts
+    theta_edges, phi_edges = bond_order.theta_edges, bond_order.phi_edges
+    theta = 0.5 * (theta_edges[:-1] + theta_edges[1:])
+    phi = 0.5 * (phi_edges[:-1] + phi_edges[1:])
 
     rows: list[dict[str, float | str]] = []
     for i, j in np.argwhere(counts > 0):
@@ -105,12 +106,7 @@ def bond_order_diagram(trajectory: Trajectory) -> dict[str, float]:
 
     frames = _frames(trajectory, stride=1000)
     liquid = np.sum(
-        [
-            np.asarray(r[0])
-            for r in BondOrientationalOrder(n_theta=36, n_phi=72).compute(
-                frames, [neighbors(f, 5.4) for f in frames]
-            )
-        ],
+        [diagram.compute(neighbors=neighbors(f, 5.4)).raw_counts for f in frames],
         axis=0,
     )
     return {

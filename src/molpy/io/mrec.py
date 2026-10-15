@@ -20,7 +20,10 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+# A molrs build without the fs feature has no ``molrs.io.mrec``: importing it
+# raises ImportError, so this module is absent too (``molpy.io`` skips it).
 from molrs.io.mrec import *  # noqa: F403
+from molrs.io.mrec import MrecReader
 from molrs.io.mrec import __all__ as _native
 
 from . import _metric_reader
@@ -59,16 +62,14 @@ class MrecMetricReader:
         source: str = "",
         request: ReadRequest | None = None,
     ) -> Iterator[dict[str, Any]]:
-        from molrs.io import read_mrec_trajectory
-
         stride = _metric_reader.stride_of(request)
         limit = _metric_reader.limit_of(request)
         skip = _metric_reader.since_of(request)
-        trajectory = read_mrec_trajectory(path)
+        reader = MrecReader(path)
 
         series: dict[str, Any] = {}
         for name in ("step", "time"):
-            values = getattr(trajectory, name)
+            values = getattr(reader, name)
             if values is not None and len(values):
                 series[name] = values
 

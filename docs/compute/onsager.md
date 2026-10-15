@@ -58,36 +58,57 @@ about $\Omega_{+-}$.
 
 ## Computing it
 
-`OnsagerCorrelation().compute` takes two collective coordinate
-arrays, each `(n_frames, 3)`, built from **unwrapped** positions. Pass the same
-array twice for a diagonal element.
+`OnsagerCorrelation` is configured with the longest lag, in frames, and
+computes on two collective coordinate series `a` and `b`, each
+`(n_frames, 3)`, built from **unwrapped** positions. It returns
+$L_{\alpha\beta}(\tau)$ as a `TimeCorrelation` with one channel.
 
-To see that it measures what it claims, build a cation walk and an anion walk
-that deliberately shares 60 % of the cation's steps:
+The $\mathbf{P}_\alpha(t)$ themselves are a `DipoleMoment` in disguise: with
+every "charge" set to 1, $\sum_i q_i\mathbf{r}_i$ is the plain position sum,
+and a partition — one unsigned species label per atom — splits it by species.
+`series(k)` is the `(n_frames, 3)` series of the `k`-th label in `groups`:
 
 ```python
 import numpy as np
+from molpy.compute import DipoleMoment
+
+rng = np.random.default_rng(0)
+species = np.array([0, 0, 1, 1], dtype=np.uint32)          # two cations, two anions
+unwrapped = np.cumsum(rng.normal(0.0, 0.05, size=(400, 4, 3)), axis=0)
+
+sums = DipoleMoment().compute(
+    positions=unwrapped, charges=np.ones(4), partition=species
+)
+p_plus, p_minus = sums.series(0), sums.series(1)
+print(sums.groups, p_plus.shape)                           # -> [0 1] (400, 3)
+```
+
+To see that the correlation measures what it claims, build a cation walk and
+an anion walk that deliberately shares 60 % of the cation's steps:
+
+```python
 from molpy.compute import LinearFit, OnsagerCorrelation
 
 rng = np.random.default_rng(0)
 steps = rng.normal(0.0, 0.01, size=(400, 3))
-p_cation = np.ascontiguousarray(np.cumsum(steps, axis=0))
-p_anion = np.ascontiguousarray(
-    np.cumsum(0.6 * steps + 0.8 * rng.normal(0.0, 0.01, size=(400, 3)), axis=0)
-)
+p_cation = np.cumsum(steps, axis=0)
+p_anion = np.cumsum(0.6 * steps + 0.8 * rng.normal(0.0, 0.01, size=(400, 3)), axis=0)
 
-onsager = OnsagerCorrelation()
-l_same = onsager.compute(p_cation, p_cation, dt=10.0, max_lag=100)
-l_cross = onsager.compute(p_cation, p_anion, dt=10.0, max_lag=100)
-print(l_same.kind, l_same.values.shape)   # -> onsager (101,)
+onsager = OnsagerCorrelation(max_lag=100)
+l_same = onsager.compute(a=p_cation, b=p_cation, dt=10.0)
+l_cross = onsager.compute(a=p_cation, b=p_anion, dt=10.0)
+print(l_same.n_lags, l_same.n_channels)                    # -> 101 1
 ```
 
-The ratio of the two slopes should recover that 0.6 coupling:
+One configured instrument, two calls: the configuration is fixed, only the
+data changes. The ratio of the two slopes should recover that 0.6 coupling, and
+the slopes are a `LinearFit` of each curve:
 
 ```python
-same = LinearFit(0.1, 0.5).fit(l_same.lag_times, l_same.values)
-cross = l_cross.linear_fit((0.1, 0.5))    # the same fit, as a method
-print(round(cross["slope"] / same["slope"], 2))     # -> 0.72
+window = LinearFit(0.1, 0.5)
+same = window.compute(correlation=l_same, channel=0)
+cross = window.compute(correlation=l_cross, channel=0)
+print(round(cross.slope / same.slope, 2))                  # -> 0.72
 ```
 
 0.72 against a true value of 0.60 — the sign and magnitude are right, and the
@@ -99,8 +120,23 @@ comparably sized noisy numbers, and they converge slowly. Budget accordingly.
 The control confirms there is no artificial coupling in the estimator itself:
 replace `p_anion` with an independent walk and the ratio drops to 0.024.
 
+A diagonal element is not a separate quantity. With `a` and `b` the same,
+$L_{\alpha\alpha}$ is the mean squared displacement of $\mathbf{P}_\alpha$ —
+the [Msd](msd.md) of a one-item trajectory, number for number:
+
+```python
+from molpy.compute import Msd
+
+as_msd = Msd(max_lag=100).compute(positions=p_cation[:, None, :], dt=10.0)
+print(np.allclose(as_msd.values, l_same.values))           # -> True
+```
+
 As always the compute returns the raw $L_{\alpha\beta}(\tau)$ curve; the slope
-is yours to fit, over a window you choose and report.
+is yours to fit, over a window you choose and report. `stride` thins the time
+origins when the trajectory is long. `boxes` takes the per-frame boxes and
+refuses a wrapped input, but only for real positions — a sum of positions is
+not a point in the box, so leave it out for $\mathbf{P}_\alpha$ and unwrap
+the atoms (`Unwrap`) before summing.
 
 !!! note "No figure on this page yet — TODO"
     The figure worth having is the set of $L_{\alpha\beta}(\tau)$ curves for a

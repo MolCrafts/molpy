@@ -93,10 +93,10 @@ reading rather than skipping:
 | $r_c$ (Å) | measured | ideal gas | ratio |
 |---|---|---|---|
 | 3.0 | 0.00 | 2.34 | 0 |
-| 4.5 | 8.93 | 7.91 | 1.13 |
-| 6.0 | 16.24 | 18.74 | 0.87 |
-| 8.5 | 53.18 | 53.28 | 1.00 |
-| 14.0 | 238.14 | 238.08 | 1.00 |
+| 4.5 | 8.94 | 7.91 | 1.13 |
+| 6.0 | 16.33 | 18.74 | 0.87 |
+| 8.5 | 52.96 | 53.28 | 0.99 |
+| 14.0 | 237.70 | 238.08 | 1.00 |
 
 Below 3.2 Å the list finds **nothing at all**: no two argon atoms are ever that
 close, which is the excluded core of [$g(r)$](rdf.md) seen from a different
@@ -106,9 +106,9 @@ first minimum, it falls 13 % *below*. By 8.5 Å the shells have averaged out and
 the ideal-gas estimate is good to a percent.
 
 There is a useful cross-check hiding in that table. At $r_c = 5$ Å the list
-gives 11.24 neighbours per atom; integrating $g(r)$ on the [RDF](rdf.md) page
-gives a coordination number $n(5.0) = 11.09$. Two different calculations, over
-different frames, agreeing to 1.4 %.
+gives 11.05 neighbours per atom; integrating $g(r)$ on the [RDF](rdf.md) page
+gives a coordination number $n(5.0) = 11.05$. Two different calculations, over
+different frames, agreeing to better than 0.1 %.
 
 For planning work: 11 neighbours per atom at 5 Å, 53 at 8.5 Å, 238 at 14 Å.
 Building a 14 Å list to histogram $g(r)$ out to 6 Å does about twenty times the
@@ -169,6 +169,38 @@ per atom on average. For liquid argon with a 5.4 Å cutoff the same expression
 gives about 13 — the coordination number [RDF](rdf.md) obtains by integrating
 $g(r)$, reached without any histogram at all.
 
+## A table and a built search are both pair sources
+
+The computes that only stream over pairs — [`Rdf`](rdf.md),
+[`LocalDensity`](density.md), `CorrelationFunction` — do not care how the pairs
+were found. They take a **pair source**: either the materialised table
+`nl.neighbors()` returns, or the built `NeighborList` itself. A table is an
+array you can index, filter and keep; handing over the built search instead
+lets the compute stream the pairs straight out of the cell list without ever
+storing them, which is what you want when one frame of a large system would
+produce millions of rows that you only histogram. Computes that need a pair's
+displacement vector or random access to its neighbours —
+[`Steinhardt`](order.md), [`PmftXy`](pmft.md), [`Cluster`](cluster.md) — take
+the table.
+
+A table also remembers the box it was searched in, so a compute that needs the
+volume (the [RDF](rdf.md) normalisation, the [local density](density.md)) reads
+it from there rather than asking you again:
+
+```python
+from molpy.compute import LocalDensity
+
+table = LocalDensity(r_max=3.0).compute(pairs=nlist)
+streamed = LocalDensity(r_max=3.0).compute(pairs=nl)
+print(table.n_neighbors.tolist())                       # -> [2.0, 2.0, 2.0, 0.0]
+print(np.allclose(table.density, streamed.density))     # -> True
+```
+
+When you need pairs between two *different* point sets — solvent around a
+solute, say — build a `mp.core.NeighborQuery` over the reference points and call
+`query(other_points)`; the resulting table is directed (query point → reference
+point) rather than half-shell, and the computes read that mode from the table.
+
 ## When it goes wrong
 
 **`TypeError: argument 'box': 'None' is not an instance of 'Box'`.**
@@ -185,8 +217,8 @@ You are treating the list as containing both $(i,j)$ and $(j,i)$. It does not.
 **Results change after you move atoms.**
 The table is a snapshot. Coordinates that change invalidate it; call
 `nl.build(...)` (or `nl.update(new_coords)` in the same box) and take a new
-`nl.neighbors()` per frame. This is why the trajectory-averaging APIs take parallel lists of
-frames and neighbor lists.
+`nl.neighbors()` per frame. This is why the trajectory-averaging computes take
+one pair source per frame (`Rdf(...).compute(pairs=[...])`), never a frame.
 
 **Memory blows up on a big system.**
 Pairs scale as $N\rho r_c^3$. Shrink the cutoff before anything else.

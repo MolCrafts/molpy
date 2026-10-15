@@ -1,29 +1,30 @@
 """Trajectory and structure analyses — :mod:`molrs.compute`, mirrored by identity.
 
 Every analysis is the native class (``mp.compute.Rdf is molrs.compute.Rdf``);
-molpy adds no wrapper. Configure a compute, run ``.compute(...)`` on frames or
-pre-assembled arrays, read typed fields. Analysis time is femtoseconds (LAMMPS
-real units). FFT correlation, windows and frequency grids are
-:mod:`molpy.signal`.
+molpy adds no wrapper. A compute is a configured instrument: its constructor
+takes configuration only (bins, cutoffs, ``max_lag``, windows, tolerances), and
+``compute(...)`` takes the data as keyword arguments — arrays, ``dt``,
+neighbour tables, partitions, upstream results. A compute never reads a
+``Frame``: the caller reads the columns it needs through the Frame/Block API
+and hands the arrays over. Analysis time is femtoseconds (LAMMPS real units).
 
-Pair-based analyses (``Rdf``, ``LocalDensity``, ``Steinhardt``,
-``BondOrientationalOrder``, ``PmftXy``, ``Cluster``, …) take neighbour tables from
-``molpy.core.NeighborList``::
+Pair-based analyses take neighbour tables from ``molpy.core.NeighborList``::
 
     >>> nl = mp.core.NeighborList(cutoff)
     >>> nl.build(frame.coords, frame.box)
-    >>> g = mp.compute.Rdf(n_bins, cutoff).compute([frame], [nl.neighbors()])
+    >>> g = mp.compute.Rdf(n_bins, cutoff, 0.0).compute(pairs=[nl.neighbors()])
 
-Transport and dielectric quantities are composed explicitly::
+Every time correlation runs on one engine, ``Correlator``. The named surfaces
+``Msd``, ``Vacf``, ``OnsagerCorrelation``, ``DipoleAcf``, ``CurrentAcf``,
+``ReorientationAcf``, ``RotationalAutocorrelation`` and ``Survival`` are
+configurations of it, and each returns a ``TimeCorrelation``. A fit is a
+compute whose input is that curve::
 
-    raw curve  →  Fit  →  optional SI scale in your script
+    raw curve  →  fit (LinearFit, Plateau, DebyeFit, CumulativeTrapezoid)
 
-Example::
-
-    >>> from molpy.compute import OnsagerCorrelation, EinsteinConductivity, LinearFit
-    >>> L = OnsagerCorrelation().compute(P_i, P_j, 10.0, 500)
-    >>> raw = EinsteinConductivity().compute(M, dt=10.0, max_correlation_time=500)
-    >>> fit = LinearFit(0.1, 0.5).fit(raw["lag_times"], raw["msd"])
+    >>> from molpy.compute import Msd, LinearFit
+    >>> msd = Msd(max_lag=500).compute(positions=unwrapped, dt=10.0)
+    >>> fit = LinearFit(0.1, 0.5).compute(correlation=msd, channel=0)
 """
 
 from molrs.compute import *  # noqa: F403

@@ -33,21 +33,15 @@ def solid_angle_jacobian(_trajectory: Trajectory) -> dict[str, float]:
 
     xyz = np.empty((3 * n_triplets, 3))
     xyz[0::3], xyz[1::3], xyz[2::3] = first, middle, third
-    frame = mp.Frame()
-    frame["atoms"] = {"x": xyz[:, 0], "y": xyz[:, 1], "z": xyz[:, 2]}
-    frame.box = mp.Box.cube(1000.0)
     index = np.arange(3 * n_triplets, dtype=np.uint32).reshape(n_triplets, 3)
-    frame["angles"] = {
-        "atomi": index[:, 0],
-        "atomj": index[:, 1],
-        "atomk": index[:, 2],
-    }
 
     # Angles are binned in radians over their natural range 0..pi.
-    result = DistributionFunction("angle", n_bins=90).compute([frame])
-    centers = np.asarray(result.bin_centers)
-    density = np.asarray(result.density)
-    corrected = np.asarray(result.density_sin_corrected)
+    result = DistributionFunction("angle", n_bins=90).compute(
+        positions=[xyz], simbox=[mp.Box.cube(1000.0)], tuples=[index]
+    )
+    centers = result.histogram.axes[0].centers
+    density = result.density
+    corrected = result.density_sin_corrected
 
     degrees = np.degrees(centers)
     rows: list[dict[str, float | str]] = []
