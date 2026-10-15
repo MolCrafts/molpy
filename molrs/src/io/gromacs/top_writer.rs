@@ -1326,13 +1326,13 @@ impl GromacsTopForcefieldWriter {
 
 /// Write `ff` as GROMACS topology directives (`[ defaults ]`,
 /// `[ atomtypes ]`, `[ *types ]`) with `precision` decimals; the inverse of
-/// [`read_gromacs_top_forcefield`](crate::io::read_gromacs_top_forcefield).
+/// [`read_top_forcefield`](crate::io::read_top_forcefield).
 ///
 /// # Errors
 ///
 /// Every error of [`ForceFieldWriter::write_str`] on
 /// [`GromacsTopForcefieldWriter`], and an unwritable file.
-pub fn write_gromacs_top_forcefield(
+pub fn write_top_forcefield(
     path: impl AsRef<std::path::Path>,
     ff: &ForceField,
     precision: usize,
@@ -1345,13 +1345,13 @@ pub fn write_gromacs_top_forcefield(
 
 /// Write `ff` and the typed `frame` as one GROMACS topology
 /// ([`GromacsTopForcefieldWriter::write_system_str`]); the inverse of
-/// [`read_gromacs_top_system`](crate::io::read_gromacs_top_system).
+/// [`read_top_system`](crate::io::read_top_system).
 ///
 /// # Errors
 ///
 /// Every error of [`GromacsTopForcefieldWriter::write_system_str`], and an
 /// unwritable file.
-pub fn write_gromacs_top_system(
+pub fn write_top_system(
     path: impl AsRef<std::path::Path>,
     ff: &ForceField,
     frame: &Frame,

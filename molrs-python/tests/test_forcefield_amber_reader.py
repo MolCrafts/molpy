@@ -3,7 +3,7 @@
 The 1-4 weighting (which pairs differ, their summed weights, what is refused)
 is proved in Rust (``io::amber::prmtop_forcefield``, and term by term
 against sander in ``prmtop_check``). This test only asserts that
-``molrs.io.read_amber_prmtop_system`` returns the force field and
+``molrs.io.read_prmtop_system`` returns the force field and
 the structure frame with the per-pair ``pairs`` block a mixed-SCEE topology
 needs, and that the structure reader alone carries none.
 """
@@ -25,7 +25,7 @@ def test_glycam_mixed_scee_keeps_its_per_pair_weights():
     # Most of this file's 1-4 rows are GLYCAM's (SCEE = SCNB = 1.0), so that
     # is the field's special_bonds; the ff14SB rows beside them (1.2 / 2.0)
     # are the `pairs` that carry their own weights.
-    ff, frame = molrs.io.read_amber_prmtop_system(FIXTURES / "glycam.parm7")
+    ff, frame = molrs.io.read_prmtop_system(FIXTURES / "glycam.parm7")
     assert type(ff) is molrs.ff.forcefield.ForceField
     lj, coul = ff.special_bonds
     assert lj[2] == pytest.approx(1.0)
@@ -38,14 +38,14 @@ def test_glycam_mixed_scee_keeps_its_per_pair_weights():
     np.testing.assert_allclose(np.asarray(pairs["lj_scale"]), 1.0 / 2.0)
 
     # The structure is the structure reader's; it alone has no `pairs`.
-    structure = molrs.io.read_amber_prmtop(FIXTURES / "glycam.parm7")
+    structure = molrs.io.read_prmtop(FIXTURES / "glycam.parm7")
     assert "pairs" not in structure
     assert frame["atoms"].n_rows == structure["atoms"].n_rows
     assert list(frame["bonds"]["atomi"]) == list(structure["bonds"]["atomi"])
 
 
 def test_a_uniform_prmtop_has_no_pairs_block():
-    ff, frame = molrs.io.read_amber_prmtop_system(FIXTURES / "ff14sb.parm7")
+    ff, frame = molrs.io.read_prmtop_system(FIXTURES / "ff14sb.parm7")
     assert type(ff) is molrs.ff.forcefield.ForceField
     assert "pairs" not in frame
     assert frame["atoms"].n_rows > 0
@@ -53,4 +53,4 @@ def test_a_uniform_prmtop_has_no_pairs_block():
 
 def test_an_unreadable_prmtop_raises(tmp_path):
     with pytest.raises(ValueError):
-        molrs.io.read_amber_prmtop_system(tmp_path / "missing.parm7")
+        molrs.io.read_prmtop_system(tmp_path / "missing.parm7")

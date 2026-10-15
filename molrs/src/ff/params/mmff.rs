@@ -51688,10 +51688,11 @@ pub static MMFF_ELE_STYLE: MmffEleStyle = MmffEleStyle {
 // ---------------------------------------------------------------------------
 
 // MMFF's `DA` column (`"D"` / `"A"` / `"-"`) travels on a `mmff_vdw` parameter
-// row as a small integer, because `Params` is a numeric bag. One encoding, three
-// writers (a caller's XML, this table, the typifier) and one reader (the
-// `mmff_vdw` kernel, deciding whether a pair is a hydrogen bond); it is
-// parameter vocabulary, so it lives with the parameters every one of them reads.
+// row as a small integer, because `Params` is a numeric bag. One encoding, two
+// writers (this table, the typifier) and one reader (the `mmff_vdw` kernel,
+// deciding whether a pair is a hydrogen bond); a force-field XML states the
+// integer itself. It is parameter vocabulary, so it lives with the parameters
+// every one of them reads.
 
 /// Neither hydrogen-bond donor nor acceptor (`DA` = `"-"`).
 pub const DA_NEITHER: u8 = 0;
@@ -51700,18 +51701,10 @@ pub const DA_DONOR: u8 = 1;
 /// Hydrogen-bond **acceptor** (`DA` = `"A"`).
 pub const DA_ACCEPTOR: u8 = 2;
 
-/// Encode MMFF's `DA` letter (`"D"` / `"A"` / `"-"`) as the code a `mmff_vdw`
-/// row's `da` param holds. Anything unrecognised is [`DA_NEITHER`], which is
-/// also MMFF's own default for the 80-odd non-hydrogen-bonding types.
-pub(crate) fn encode_da(raw: &str) -> f64 {
-    match raw.as_bytes() {
-        [code] => encode_da_byte(*code),
-        _ => DA_NEITHER.into(),
-    }
-}
-
-/// [`encode_da`] for this table's `da` column, which holds the letter's ASCII
-/// byte ([`MmffVdw::da`], as RDKit stores it).
+/// Encode this table's `da` column — the ASCII byte of MMFF's `DA` letter
+/// ([`MmffVdw::da`], as RDKit stores it) — as the code a `mmff_vdw` row's `da`
+/// param holds. Anything unrecognised is [`DA_NEITHER`], which is also MMFF's
+/// own default for the 80-odd non-hydrogen-bonding types.
 pub(crate) fn encode_da_byte(code: u8) -> f64 {
     match code {
         b'D' => DA_DONOR,

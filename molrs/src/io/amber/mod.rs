@@ -3,19 +3,19 @@
 //! parameter modifications.
 //!
 //! The doors are functions of [`crate::io`]:
-//! [`read_amber_prmtop`](crate::io::read_amber_prmtop) /
-//! [`read_amber_prmtop_str`](crate::io::read_amber_prmtop_str) (structure),
-//! [`read_amber_prmtop_forcefield`](crate::io::read_amber_prmtop_forcefield),
-//! [`read_amber_inpcrd`](crate::io::read_amber_inpcrd) /
-//! [`read_amber_inpcrd_str`](crate::io::read_amber_inpcrd_str),
-//! [`read_amber_ac`](crate::io::read_amber_ac) /
-//! [`read_amber_ac_str`](crate::io::read_amber_ac_str),
-//! [`read_amber_prep`](crate::io::read_amber_prep) /
-//! [`read_amber_prep_str`](crate::io::read_amber_prep_str) /
-//! [`write_amber_prep`](crate::io::write_amber_prep) /
-//! [`write_amber_prep_str`](crate::io::write_amber_prep_str), and
-//! [`write_amber_frcmod`](crate::io::write_amber_frcmod) /
-//! [`write_amber_frcmod_str`](crate::io::write_amber_frcmod_str). This module
+//! [`read_prmtop`](crate::io::read_prmtop) /
+//! [`read_prmtop_str`](crate::io::read_prmtop_str) (structure),
+//! [`read_prmtop_forcefield`](crate::io::read_prmtop_forcefield),
+//! [`read_inpcrd`](crate::io::read_inpcrd) /
+//! [`read_inpcrd_str`](crate::io::read_inpcrd_str),
+//! [`read_ac`](crate::io::read_ac) /
+//! [`read_ac_str`](crate::io::read_ac_str),
+//! [`read_prep`](crate::io::read_prep) /
+//! [`read_prep_str`](crate::io::read_prep_str) /
+//! [`write_prep`](crate::io::write_prep) /
+//! [`write_prep_str`](crate::io::write_prep_str), and
+//! [`write_frcmod`](crate::io::write_frcmod) /
+//! [`write_frcmod_str`](crate::io::write_frcmod_str). This module
 //! holds the family's classes and records: [`AmberPrmtopForcefieldReader`],
 //! [`AmberFrcmodWriter`], the prep records ([`PrepResidue`], [`PrepAtom`]),
 //! and [`merge_inpcrd`], which lays an inpcrd's coordinates onto a prmtop's

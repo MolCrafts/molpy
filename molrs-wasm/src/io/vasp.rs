@@ -3,9 +3,9 @@
 //! | JS | molrs |
 //! |----|-------|
 //! | `VaspPoscarReader` | `VaspPoscarReader` (whole-content; POSCAR / CONTCAR) |
-//! | `readVaspPoscarStr` | `read_vasp_poscar_str` |
-//! | `writeVaspPoscarStr` | `write_vasp_poscar_str` (needs a `box`) |
-//! | `readVaspChgcarStr` | `read_vasp_chgcar_str` (CHGCAR / CHGDIF; functions only in molrs) |
+//! | `readPoscarStr` | `read_poscar_str` |
+//! | `writePoscarStr` | `write_poscar_str` (needs a `box`) |
+//! | `readChgcarStr` | `read_chgcar_str` (CHGCAR / CHGDIF; functions only in molrs) |
 //!
 //! molrs has no CHGCAR writer, so CHGCAR is read-only.
 
@@ -44,7 +44,7 @@ impl VaspPoscarReader {
         if index > 0 {
             return Ok(None);
         }
-        let rs_frame = molrs::io::read_vasp_poscar_str(&self.content)
+        let rs_frame = molrs::io::read_poscar_str(&self.content)
             .map_err(|e| JsValue::from_str(&format!("POSCAR read error: {}", e)))?;
         Ok(Some(Frame::from_rs(rs_frame)?))
     }
@@ -70,7 +70,7 @@ impl VaspPoscarReader {
 read_door!(
     /// Read VASP POSCAR / CONTCAR text (Cartesian Å; `Direct` files are
     /// converted on read).
-    readVaspPoscarStr => read_vasp_poscar_str(text: &str), "POSCAR"
+    readPoscarStr => read_poscar_str(text: &str), "POSCAR"
 );
 
 read_door!(
@@ -81,13 +81,13 @@ read_door!(
     /// - `box`: triclinic POSCAR lattice in Å, fully periodic.
     ///
     /// ```js
-    /// const frame = readVaspChgcarStr(await file.text());
+    /// const frame = readChgcarStr(await file.text());
     /// const total = frame.get("grid").copy("total");
     /// ```
-    readVaspChgcarStr => read_vasp_chgcar_str(text: &str), "CHGCAR"
+    readChgcarStr => read_chgcar_str(text: &str), "CHGCAR"
 );
 
 write_door!(
     /// Write `frame` as VASP POSCAR text (needs a box).
-    writeVaspPoscarStr => write_vasp_poscar_str -> String, "POSCAR"
+    writePoscarStr => write_poscar_str -> String, "POSCAR"
 );

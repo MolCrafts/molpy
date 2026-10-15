@@ -86,7 +86,7 @@ use molrs::core::constants::COULOMB_REAL;
 use molrs::core::schema::PAIR_OVERRIDE_COLUMNS;
 use molrs::io::gro::GroReader;
 use molrs::io::lammps::data::{read_lammps_data, write_lammps_data};
-use molrs::io::read_amber_inpcrd_str;
+use molrs::io::read_inpcrd_str;
 use molrs::io::reader::FrameReader as _;
 use molrs::op::{F, Idx};
 
@@ -223,7 +223,7 @@ fn prmtop(parm: &str, rst: &str) -> System {
     no_cutoff(&mut ff);
     let pairs = intramolecular_pairs(&frame, ff.special_bonds()).unwrap();
     frame.insert("pairs", pairs);
-    let xyz = read_amber_inpcrd_str(rst).unwrap();
+    let xyz = read_inpcrd_str(rst).unwrap();
     let atoms = xyz.get("atoms").unwrap();
     let col = |k: &str| atoms.get(k).unwrap().as_float().unwrap().to_owned();
     let (x, y, z) = (col("x"), col("y"), col("z"));

@@ -782,7 +782,7 @@ mod codecs {
     use super::*;
     use crate::ff::ir::expression::{Binding, Geometry, compile};
     use crate::ff::ir::{Engine, IrError, UnitScale, builtin_styles};
-    use crate::io::amber::frcmod::write_amber_frcmod_str;
+    use crate::io::amber::frcmod::write_frcmod_str;
     use crate::io::gromacs::top_writer::GromacsTopForcefieldWriter;
     use crate::io::lammps::forcefield_reader::LammpsForcefieldReader;
     use crate::io::reader::ForceFieldReader;
@@ -1235,7 +1235,7 @@ mod codecs {
                 && err.contains("not a built-in style"),
             "{err}"
         );
-        let err = write_amber_frcmod_str(&ff).unwrap_err();
+        let err = write_frcmod_str(&ff).unwrap_err();
         assert!(
             err.contains("AMBER frcmod has no form for bond `quartic_custom`"),
             "{err}"

@@ -23,8 +23,8 @@
 //! | [`lammps`] | LAMMPS data, molecule, dump, log, `fix bond/react`, force-field `*.ff`, `fix cmap` |
 //! | [`amber`] | AMBER prmtop, inpcrd, antechamber `.ac`, prep, frcmod |
 //! | [`gromacs`] | GROMACS `.top` / `.itp` |
-//! | [`openmm_xml`] | OpenMM force-field XML (with the OPLS-AA typing annotations) |
-//! | molrs force-field XML, MMFF parameter-set XML | functions only: `read_molrs_xml_forcefield` …, `read_mmff_xml_forcefield` … |
+//! | [`openmm_xml`] | OpenMM force-field XML: `read_openmm_forcefield` … |
+//! | force-field XML | functions only: `read_xml_forcefield` … — every style of a force field as one element, in its declared units |
 //! | [`clpol`] | CL&Pol `alpha.ff` |
 //! | [`smiles`], [`cgsmiles`] | the SMILES and CGsmiles line notations |
 //! | [`mrec`] | MolRec scientific records (`*.mrec`) |
@@ -63,11 +63,7 @@ pub mod gro;
 #[cfg(feature = "ff")]
 pub mod gromacs;
 pub mod lammps;
-#[cfg(feature = "ff")]
-mod mmff_xml;
 pub mod mol2;
-#[cfg(feature = "ff")]
-mod molrs_xml;
 #[cfg(feature = "ff")]
 pub mod openmm_xml;
 pub mod pdb;
@@ -75,6 +71,8 @@ pub mod sdf;
 mod stl;
 pub mod trr;
 pub mod vasp;
+#[cfg(feature = "ff")]
+mod xml;
 #[cfg(feature = "ff")]
 mod xml_attribute;
 mod xsf;
@@ -88,16 +86,14 @@ pub mod mrec;
 #[cfg(feature = "smiles")]
 pub mod smiles;
 
-pub use amber::ac::{read_amber_ac, read_amber_ac_str};
-pub use amber::inpcrd::{read_amber_inpcrd, read_amber_inpcrd_str};
-pub use amber::prep::{
-    read_amber_prep, read_amber_prep_str, write_amber_prep, write_amber_prep_str,
-};
-pub use amber::prmtop::{read_amber_prmtop, read_amber_prmtop_str};
+pub use amber::ac::{read_ac, read_ac_str};
+pub use amber::inpcrd::{read_inpcrd, read_inpcrd_str};
+pub use amber::prep::{read_prep, read_prep_str, write_prep, write_prep_str};
+pub use amber::prmtop::{read_prmtop, read_prmtop_str};
 #[cfg(feature = "ff")]
 pub use amber::{
-    frcmod::{write_amber_frcmod, write_amber_frcmod_str},
-    prmtop_forcefield::{read_amber_prmtop_forcefield, read_amber_prmtop_system},
+    frcmod::{write_frcmod, write_frcmod_str},
+    prmtop_forcefield::{read_prmtop_forcefield, read_prmtop_system},
 };
 pub use cif::codec::{read_cif, read_cif_str, read_cif_trajectory, write_cif, write_cif_str};
 #[cfg(feature = "ff")]
@@ -114,8 +110,8 @@ pub use gro::codec::{
 };
 #[cfg(feature = "ff")]
 pub use gromacs::{
-    top_reader::{read_gromacs_top_forcefield, read_gromacs_top_system},
-    top_writer::{write_gromacs_top_forcefield, write_gromacs_top_system},
+    top_reader::{read_top_forcefield, read_top_system},
+    top_writer::{write_top_forcefield, write_top_system},
 };
 pub use lammps::bond_react::write_lammps_bond_react_map;
 #[cfg(feature = "ff")]
@@ -144,21 +140,11 @@ pub use lammps::{
         write_lammps_forcefield, write_lammps_forcefield_str,
     },
 };
-#[cfg(feature = "ff")]
-pub use mmff_xml::{
-    read_mmff_xml_forcefield, read_mmff_xml_forcefield_str, read_mmff_xml_params_str,
-};
 pub use mol2::codec::{read_mol2, read_mol2_str, read_mol2_trajectory, write_mol2, write_mol2_str};
 #[cfg(feature = "ff")]
-pub use molrs_xml::{
-    read_molrs_xml_forcefield, read_molrs_xml_forcefield_str, write_molrs_xml_forcefield,
-    write_molrs_xml_forcefield_str,
-};
-#[cfg(feature = "ff")]
 pub use openmm_xml::{
-    opls_typing::read_openmm_xml_opls_typing_str,
-    reader::{read_openmm_xml_forcefield, read_openmm_xml_forcefield_str},
-    writer::{write_openmm_xml_forcefield, write_openmm_xml_forcefield_str},
+    reader::{read_openmm_forcefield, read_openmm_forcefield_str},
+    writer::{write_openmm_forcefield, write_openmm_forcefield_str},
 };
 pub use pdb::codec::{
     read_pdb, read_pdb_bytes, read_pdb_str, read_pdb_trajectory, write_pdb, write_pdb_str,
@@ -167,9 +153,11 @@ pub use pdb::codec::{
 pub use sdf::codec::{read_sdf, read_sdf_bytes, read_sdf_str, read_sdf_trajectory};
 pub use stl::{read_stl, read_stl_bytes};
 pub use trr::codec::{read_trr_bytes, read_trr_trajectory, write_trr_bytes, write_trr_trajectory};
-pub use vasp::chgcar::{read_vasp_chgcar, read_vasp_chgcar_str};
-pub use vasp::poscar::{
-    read_vasp_poscar, read_vasp_poscar_str, write_vasp_poscar, write_vasp_poscar_str,
+pub use vasp::chgcar::{read_chgcar, read_chgcar_str};
+pub use vasp::poscar::{read_poscar, read_poscar_str, write_poscar, write_poscar_str};
+#[cfg(feature = "ff")]
+pub use xml::{
+    read_xml_forcefield, read_xml_forcefield_str, write_xml_forcefield, write_xml_forcefield_str,
 };
 pub use xsf::{read_xsf, read_xsf_str, write_xsf, write_xsf_str};
 pub use xtc::codec::{read_xtc_bytes, read_xtc_trajectory, write_xtc_bytes, write_xtc_trajectory};

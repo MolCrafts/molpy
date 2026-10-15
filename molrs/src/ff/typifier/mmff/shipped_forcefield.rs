@@ -7,9 +7,9 @@
 //! [`MmffVariant`] their front door pins. Nothing
 //! here is a number: every value comes from the table.
 //!
-//! A caller's own parameter set still comes from XML — `molrs::io::read_mmff_xml_forcefield`
-//! reads it and [`Mmff94Typifier::from_parts`] takes it — but the *shipped*
-//! set is not text.
+//! A caller's own parameter set is its typing table and a force field (a
+//! force-field XML holds one: `molrs::io::read_xml_forcefield`), which
+//! [`Mmff94Typifier::from_parts`] takes — but the *shipped* set is not text.
 
 use std::sync::{Arc, OnceLock};
 

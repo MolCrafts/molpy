@@ -46,8 +46,10 @@ molrs = { path = "../molrs", package = "molcrafts-molrs", version = "0.17.0", de
 
 [features]
 default = ["fs", "rayon"]
-# Desktop/native: path-based zarr trajectory I/O (`molrs/filesystem` → zarr).
-# Off for Pyodide: `maturin … --no-default-features`.
+# Desktop/native: path-based zarr trajectory I/O (`molrs/filesystem` → zarr),
+# which is what `molrs.io.mrec` needs. Off for Pyodide:
+# `maturin … --no-default-features`. LAMMPS log parsing is not this feature:
+# it is `std::fs` plus an in-memory parser, and it is built for Pyodide.
 fs = ["molrs/filesystem"]
 # Desktop/native parallelism. Pyodide's `--no-default-features` drops it
 # together with `fs`.

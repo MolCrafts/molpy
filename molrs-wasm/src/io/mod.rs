@@ -12,12 +12,12 @@
 //! | [`sdf`] | `SdfStream`, `readSdfStr`, `readSdfBytes` | MDL SDF / MOL (read-only: molrs has no SDF writer) |
 //! | [`mol2`] | `Mol2Reader`, `readMol2Str`, `writeMol2Str` | Tripos MOL2 |
 //! | [`cif`] | `CifReader`, `readCifStr`, `writeCifStr` | Crystallographic Information File |
-//! | [`vasp`] | `VaspPoscarReader`, `readVaspPoscarStr`, `writeVaspPoscarStr`, `readVaspChgcarStr` | VASP POSCAR / CONTCAR, CHGCAR (read-only) |
+//! | [`vasp`] | `VaspPoscarReader`, `readPoscarStr`, `writePoscarStr`, `readChgcarStr` | VASP POSCAR / CONTCAR, CHGCAR (read-only) |
 //! | [`dcd`] | `DcdStream`, `readDcdBytes`, `writeDcdBytes` | DCD trajectory |
 //! | [`trr`] | `TrrStream`, `readTrrBytes`, `writeTrrBytes` | GROMACS TRR |
 //! | [`xtc`] | `XtcStream`, `readXtcBytes`, `writeXtcBytes` | GROMACS XTC |
 //! | [`lammps`] | `LammpsDataStream`, `LammpsDumpStream`, `readLammpsDataStr`, `readLammpsDataBytes`, `writeLammpsDataStr`, `readLammpsDumpStr`, `readLammpsDumpBytes`, `writeLammpsDumpStr`; `readLammpsLogStr`, `isLammpsLog` ([`lammps::log`]) | LAMMPS data, dump, run log |
-//! | [`amber`] | `readAmberInpcrdStr`, `readAmberAcStr`, `readAmberPrmtopStr` | AMBER inpcrd / restrt, Antechamber AC, prmtop structure |
+//! | [`amber`] | `readInpcrdStr`, `readAcStr`, `readPrmtopStr` | AMBER inpcrd / restrt, Antechamber AC, prmtop structure |
 //! | `smiles` | `readSmilesStr`, `writeSmilesStr`, `readCgsmilesStr`, `SmilesIr.parse` | SMILES and CGsmiles strings (`smiles` feature) |
 //! | [`csv`] | `readCsvBlockStr`, `writeCsvBlockStr` | CSV tables as a `Block` |
 //! | [`mrec`] | `MrecReader`, `readMrecFrameBytes` / `readMrecFrameFiles`, `sectionNamesBytes` / `sectionNamesFiles` | `*.mrec` scientific records (Zarr V3) |

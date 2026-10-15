@@ -745,7 +745,6 @@ impl PyLammpsLog {
 ///     If ``path`` does not exist.
 /// OSError
 ///     On other I/O failures.
-#[cfg(feature = "fs")]
 #[pyfunction]
 #[pyo3(signature = (path, style = "default"))]
 pub fn read_lammps_log(path: PathBuf, style: &str) -> PyResult<PyLammpsLog> {
@@ -770,7 +769,6 @@ pub fn read_lammps_log(path: PathBuf, style: &str) -> PyResult<PyLammpsLog> {
 /// -------
 /// LammpsLog
 ///     Same structure as :func:`read_lammps_log`.
-#[cfg(feature = "fs")]
 #[pyfunction]
 #[pyo3(signature = (text, source_name = "<string>", style = "default"))]
 pub fn read_lammps_log_str(text: &str, source_name: &str, style: &str) -> PyLammpsLog {
@@ -797,7 +795,6 @@ pub fn is_lammps_log(text: &str) -> bool {
     is_lammps_log_rs(text)
 }
 
-#[cfg(feature = "fs")]
 fn lammps_log_io_error(e: std::io::Error) -> PyErr {
     if e.kind() == std::io::ErrorKind::NotFound {
         PyFileNotFoundError::new_err(e.to_string())
