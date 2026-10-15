@@ -75,6 +75,13 @@ jobs read its outputs. Shared setup is molcrafts-ci's
 pinned `MolCrafts/molcrafts-ci/actions/<name>` (`setup-rust`, `setup-python`,
 `setup-partners`).
 
+Each `test / python` job runs the test gate as
+`scripts/check.py --report .ci-out test`, which also writes JUnit and coverage
+files (pytest-cov over `molpy`), and the pinned
+`MolCrafts/molcrafts-ci/actions/report` puts their passed, failed and skipped
+counts and line and branch coverage in the run and pull request summary. This
+is a report only: there are no thresholds, and it never fails the job.
+
 ## Code of Conduct
 
 This project adheres to a Code of Conduct that all contributors are expected to

@@ -76,7 +76,16 @@ jobs:
         env:
           UV_PYTHON: ${{ matrix.python }}
         run: python scripts/check.py dependencies
+      # The pre-push test gate, plus what the report reads: JUnit and coverage.
       - name: Unit tests
         env:
           UV_PYTHON: ${{ matrix.python }}
-        run: python scripts/check.py test
+        run: python scripts/check.py --report .ci-out test
+      # Counts and coverage in the run and pull request summary; report only.
+      - name: Report
+        if: ${{ !cancelled() }}
+        uses: MolCrafts/molcrafts-ci/actions/report@cc46e4eb85fdcfb950d9a4df02c2e04e94ba90f7
+        with:
+          title: test / python (${{ matrix.os }}, ${{ matrix.python }})
+          junit: .ci-out/junit.xml
+          coverage: .ci-out/coverage.json
