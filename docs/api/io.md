@@ -47,7 +47,8 @@ The files map onto `mp.ff.forcefield.ForceField`, the data model
 
 | Function | Format | Direction |
 |----------|--------|-----------|
-| `read_openmm_forcefield` / `write_openmm_forcefield` | OpenMM/OPLS XML | read/write |
+| `read_xml_forcefield` / `write_xml_forcefield` | Force-field XML: every style one element, in the declared units | read/write (lossless) |
+| `read_openmm_forcefield` / `write_openmm_forcefield` | OpenMM force-field XML (nm, kJ/mol) | read/write |
 | `read_lammps_forcefield` / `write_lammps_forcefield` | LAMMPS `*.ff` include | read/write (engine units ↔ LAMMPS `real`) |
 | `read_lammps_data_coeffs` / `read_lammps_data_coeffs_str` / `write_lammps_data_coeffs_str` | LAMMPS data `* Coeffs` | read (file or text) / write (text) |
 | `read_top_forcefield` / `write_top_forcefield` | GROMACS `.top` / `.itp` directives | read/write |

@@ -288,6 +288,7 @@ def test_each_ff_submodule_is_a_molpy_module_mirroring_molrs(sub: str) -> None:
         ("io.read_openmm_forcefield", "io.read_openmm_forcefield"),
         ("io.write_openmm_forcefield", "io.write_openmm_forcefield"),
         ("io.read_xml_forcefield", "io.read_xml_forcefield"),
+        ("io.write_xml_forcefield", "io.write_xml_forcefield"),
         ("io.read_lammps_cmap_forcefield", "io.read_lammps_cmap_forcefield"),
         ("io.write_lammps_bond_react_map", "io.write_lammps_bond_react_map"),
         ("io.read_csv_block", "io.read_csv_block"),
