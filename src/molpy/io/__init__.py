@@ -70,8 +70,13 @@ _FORMATS = (
 # The star import bound molrs's per-format modules under these names. Loading
 # molpy's mirror of each rebinds the attribute to it (``from . import`` would
 # not: it returns an existing attribute without importing the submodule).
-for _module in [f"{__name__}.{fmt}" for fmt in _FORMATS]:
-    _import_module(_module)
+# A format molrs did not export (mrec, without the fs feature) stays absent.
+for _fmt in _FORMATS:
+    try:
+        _import_module(f"{__name__}.{_fmt}")
+    except ImportError:
+        if _fmt in _native:
+            raise
 
 from . import mlp_jsonl  # molpy's own format module
 
