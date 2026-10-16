@@ -21,7 +21,7 @@ molrs.ff.forcefield.ForceField``):
 * :mod:`~molpy.ff.clpol_scaling` — CL&Pol fragment scaling of LJ parameters
 """
 
-from . import (
+from molpy.ff import (
     charge,
     clpol_scaling,
     compile,

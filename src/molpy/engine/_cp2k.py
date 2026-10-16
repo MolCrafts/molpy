@@ -26,7 +26,7 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
-from ._engine import Engine
+from molpy.engine._engine import Engine
 
 
 class Cp2kEngine(Engine):

@@ -22,8 +22,8 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from .distributions import DpDistribution, MassDistribution
-from .sequences import SequenceGenerator
+from molpy.builder._polymer.distributions import DpDistribution, MassDistribution
+from molpy.builder._polymer.sequences import SequenceGenerator
 
 
 @dataclass

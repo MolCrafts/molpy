@@ -35,8 +35,8 @@ from typing import TYPE_CHECKING, Any
 
 from molrs.io import read_lammps_data, write_lammps_data, write_lammps_forcefield_str
 
-from ._engine import Engine
-from ._script import Script
+from molpy.engine._engine import Engine
+from molpy.engine._script import Script
 
 if TYPE_CHECKING:
     from molrs.ff.forcefield import ForceField

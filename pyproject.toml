@@ -96,12 +96,20 @@ line-length = 88
 # rule off): text-mode file I/O names its encoding. Unnamed, Python decodes
 # with the locale -- cp1252 on Windows -- so a read that passes every Linux
 # hook fails only on CI's Windows leg.
-select = ["E4", "E7", "E9", "F", "RUF100", "PLW1514"]
+# TID252: imports within molpy are absolute (docs/developer/coding-style.md).
+select = ["E4", "E7", "E9", "F", "RUF100", "PLW1514", "TID252"]
 preview = true
 explicit-preview-rules = true
 # E402: readers/writers import lazily inside functions by design (layering);
 # E741: single-letter names in the maths-heavy kernels stay.
 ignore = ["E402", "E741"]
+
+[tool.ruff.lint.flake8-tidy-imports]
+ban-relative-imports = "all"
+
+[tool.ruff.lint.per-file-ignores]
+# The docs-series generator is a script package run with ``python -m``, not molpy.
+"scripts/**" = ["TID252"]
 
 [tool.ty.environment]
 python-version = "3.14"

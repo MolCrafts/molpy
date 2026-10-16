@@ -39,7 +39,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
 
-from ._engine import Engine
+from molpy.engine._engine import Engine
 
 if TYPE_CHECKING:
     from molrs.ff.forcefield import ForceField

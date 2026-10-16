@@ -26,7 +26,7 @@ from molrs.core import Frame
 from molrs.core import Atomistic
 from numpy.typing import ArrayLike
 
-from ._symmetry import SpaceGroup
+from molpy.builder._symmetry import SpaceGroup
 
 __all__ = ["Lattice", "Site"]
 

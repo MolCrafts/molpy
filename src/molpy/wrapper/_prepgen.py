@@ -10,7 +10,7 @@ import subprocess
 from pathlib import Path
 from typing import Literal
 
-from ._wrapper import Wrapper
+from molpy.wrapper._wrapper import Wrapper
 
 
 class Parmchk2Wrapper(Wrapper):

@@ -45,7 +45,7 @@ from types import ModuleType as _ModuleType
 from typing import TYPE_CHECKING as _TYPE_CHECKING
 
 if _TYPE_CHECKING:
-    from . import (
+    from molpy import (
         adapter,
         builder,
         compute,
@@ -100,7 +100,7 @@ def __dir__() -> list[str]:
 
 # The core data classes a user handles directly, promoted from molpy.core
 # (``mp.Frame is mp.core.Frame``). Nothing else from the core is on the root.
-from .core import (
+from molpy.core import (
     Angle,
     Atom,
     Atomistic,

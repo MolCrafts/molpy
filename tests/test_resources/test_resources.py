@@ -56,7 +56,7 @@ class TestResourceAccess:
         path = get_path("forcefield/tip3p.xml")
         gc.collect()
         assert path.is_file()
-        assert path.read_text() == "<ForceField/>"
+        assert path.read_text(encoding="utf-8") == "<ForceField/>"
         assert exists("forcefield/tip3p.xml")
         assert not exists("forcefield/missing.xml")
 

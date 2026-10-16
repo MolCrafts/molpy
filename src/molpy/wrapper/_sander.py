@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from ._wrapper import Wrapper
+from molpy.wrapper._wrapper import Wrapper
 
 
 class SanderWrapper(Wrapper):

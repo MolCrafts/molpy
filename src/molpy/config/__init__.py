@@ -24,7 +24,7 @@ Each value remembers the layer it came from (:meth:`molcfg.Config.meta`), and
     settings.sources["launcher"]  # ('run', 'engine.lammps.launcher')
 """
 
-from ._config import (
+from molpy.config._config import (
     DEFAULTS,
     LAYERS,
     PROJECT_CONFIG_NAME,

@@ -28,9 +28,9 @@ Every name has this one path; the modules behind it are private.
 from molrs.builder import *  # noqa: F403
 from molrs.builder import __all__ as _native
 
-from ._crystal import Lattice, Site
-from ._packing import PackingTemplate
-from ._polymer import (
+from molpy.builder._crystal import Lattice, Site
+from molpy.builder._packing import PackingTemplate
+from molpy.builder._polymer import (
     AlternatingSequenceGenerator,
     AmberBuildResult,
     AmberCut,
@@ -50,8 +50,8 @@ from ._polymer import (
     UniformPolydisperse,
     WeightedSequenceGenerator,
 )
-from ._symmetry import SpaceGroup
-from ._virtualsite import DrudeBuilder, Tip4pBuilder, VirtualSiteBuilder
+from molpy.builder._symmetry import SpaceGroup
+from molpy.builder._virtualsite import DrudeBuilder, Tip4pBuilder, VirtualSiteBuilder
 
 __all__ = [
     # Native builders (molrs.builder)

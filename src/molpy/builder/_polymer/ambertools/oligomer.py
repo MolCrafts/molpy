@@ -12,7 +12,7 @@ from molrs.conformer import Conformer
 from molrs.io.smiles import SmilesIr
 from molrs.core import Atomistic
 
-from ._cut import AmberCut
+from molpy.builder._polymer.ambertools._cut import AmberCut
 
 
 @dataclass(frozen=True)

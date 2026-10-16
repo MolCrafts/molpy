@@ -25,8 +25,8 @@ import mollog
 
 from molpy.config import load_config, tool_settings
 
-from ._environment import EnvironmentSpec
-from ._process import run_process
+from molpy.wrapper._environment import EnvironmentSpec
+from molpy.wrapper._process import run_process
 
 if TYPE_CHECKING:
     from molcfg import Config

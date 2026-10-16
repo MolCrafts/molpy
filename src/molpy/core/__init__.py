@@ -38,12 +38,8 @@ from importlib import import_module as _import_module
 for _vocabulary in ("constants", "keys", "schema"):
     _import_module(f"{__name__}.{_vocabulary}")
 
-from ._selector import (
-    AtomIndexSelector,
-    ColumnSelector,
-    MaskPredicate,
-)
-from ._splitter import (
+from molpy.core._selector import AtomIndexSelector, ColumnSelector, MaskPredicate
+from molpy.core._splitter import (
     CustomStrategy,
     FrameIntervalStrategy,
     SplitStrategy,

@@ -26,14 +26,14 @@ from molrs.io.lammps import *  # noqa: F403
 from molrs.io.lammps import __all__ as _native
 from molrs.io.lammps import LammpsLog, is_lammps_log
 
-from . import _metric_reader
+from molpy.io import _metric_reader
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
     from pathlib import Path
     from typing import Any
 
-    from ._metric_reader import ReadRequest
+    from molpy.io._metric_reader import ReadRequest
 
 # Whether a text is a LAMMPS run is molrs's call (``is_lammps_log``: the
 # ``Per MPI rank memory allocation`` line that opens every thermo section, so a

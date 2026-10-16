@@ -31,7 +31,7 @@ from typing import TYPE_CHECKING, Any
 
 from molrs.io import write_gro, write_top_system
 
-from ._engine import Engine
+from molpy.engine._engine import Engine
 
 if TYPE_CHECKING:
     from molcfg import Config

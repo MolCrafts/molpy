@@ -78,6 +78,6 @@ for _fmt in _FORMATS:
         if _fmt in _native:
             raise
 
-from . import mlp_jsonl  # molpy's own format module
+from molpy.io import mlp_jsonl  # molpy's own format module
 
 __all__ = [*_native, "mlp_jsonl"]

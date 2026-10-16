@@ -14,6 +14,6 @@ through the AmberTools executables (:mod:`molpy.wrapper`).
 from molrs.ff.typifier import *  # noqa: F403
 from molrs.ff.typifier import __all__ as _native
 
-from ._ambertools import AntechamberTypifier, TleapTypifier
+from molpy.ff._ambertools import AntechamberTypifier, TleapTypifier
 
 __all__ = [*_native, "AntechamberTypifier", "TleapTypifier"]

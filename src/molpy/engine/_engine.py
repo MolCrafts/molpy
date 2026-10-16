@@ -43,7 +43,7 @@ from molpy.config import load_config, tool_settings
 from molpy.wrapper import EnvironmentSpec
 from molpy.wrapper._process import run_process
 
-from ._script import Script
+from molpy.engine._script import Script
 
 if TYPE_CHECKING:
     from molcfg import Config

@@ -31,8 +31,8 @@ from molpy.wrapper import (
 from molpy.wrapper._amber_input import antechamber_input_mol2, net_formal_charge
 from molpy.wrapper._prepgen import prepgen_control_text
 
-from ._cut import AmberCut
-from ._result import AmberBuildResult
+from molpy.builder._polymer.ambertools._cut import AmberCut
+from molpy.builder._polymer.ambertools._result import AmberBuildResult
 
 if TYPE_CHECKING:
     from molcfg import Config
