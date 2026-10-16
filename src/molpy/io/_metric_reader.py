@@ -27,6 +27,11 @@ fixed order, before any filter or sampling — and hands that stream to
     striding the flat stream would keep one series and drop the rest.
 ``limit``
     Stop after this many records are yielded; ``0`` or less yields nothing.
+``progress`` (optional)
+    Where the reader stands in its raw stream, written back for the caller to
+    resume from: while the caller holds a yielded record, its raw index; once
+    the read ends, the raw index it stopped before — never below ``since``.
+    This is molab's ``ReadProgress``; a request without it reads the same.
 
 **Every record's ``s`` is the simulation step of its sample** where the
 source records one — the ``Step`` thermo column of a LAMMPS log, the ``step``
@@ -37,7 +42,6 @@ index). ``*.mlp.jsonl`` records carry the ``s`` their writer gave them.
 
 from __future__ import annotations
 
-from itertools import islice
 from typing import TYPE_CHECKING, Any, Protocol
 
 if TYPE_CHECKING:
@@ -47,8 +51,18 @@ if TYPE_CHECKING:
 PROBE_BYTES = 64 * 1024
 
 
+class ReadProgress(Protocol):
+    """The reader's position in its raw stream, written for the caller."""
+
+    position: int | None
+
+
 class ReadRequest(Protocol):
-    """What the viewer asked for. Supplied by the platform, matched by shape."""
+    """What the viewer asked for. Supplied by the platform, matched by shape.
+
+    A request may also carry ``progress: ReadProgress | None``; it is read with
+    ``getattr`` so older requests without it keep working.
+    """
 
     since: int
     stride: int
@@ -73,27 +87,39 @@ def apply_request(
     if request is None:
         yield from records
         return
+    progress: ReadProgress | None = getattr(request, "progress", None)
+    since = max(0, request.since)
+    if progress is not None:
+        progress.position = since
     limit = request.limit
     if limit is not None and limit <= 0:
         return
     stride = max(1, request.stride)
-    positions: dict[Any, int] = {}
+    samples: dict[Any, int] = {}
     kept = 0
-    for record in islice(records, max(0, request.since), None):
+    end = 0
+    for index, record in enumerate(records):
+        end = index + 1
+        if index < since:
+            continue
         if request.metric_type is not None and record.get("t") != request.metric_type:
             continue
         if request.keys and record.get("k") not in request.keys:
             continue
         if stride > 1:
             key = record.get("k")
-            position = positions.get(key, 0)
-            positions[key] = position + 1
-            if position % stride:
+            sample = samples.get(key, 0)
+            samples[key] = sample + 1
+            if sample % stride:
                 continue
+        if progress is not None:
+            progress.position = index
         yield record
         kept += 1
         if limit is not None and kept >= limit:
-            return
+            break
+    if progress is not None:
+        progress.position = max(since, end)
 
 
 def head(path: Path, size: int = PROBE_BYTES) -> bytes:
