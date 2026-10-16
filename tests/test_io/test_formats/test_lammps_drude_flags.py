@@ -1,11 +1,14 @@
 """The LAMMPS data writer emits the ``fix drude`` C/D/N flag string.
 
-For a Drude-polarizable frame (shells carry element ``D`` + a type, springs are
-``style="drude"`` bonds), molrs's data writer — which owns the atom-type → ID
-ordering — writes the ``fix drude`` flags as a header comment.
+For a Drude-polarizable frame (shells are ``vsite == "drude"`` atoms with a type,
+each tied to its core by a molrs ``drudes`` row), molrs's data writer — which
+owns the atom-type → ID ordering — writes the ``fix drude`` flags as a header
+comment.
 """
 
 from pathlib import Path
+
+import pytest
 
 import molpy as mp
 from molpy.builder import DrudeBuilder
@@ -41,6 +44,23 @@ def test_data_writer_emits_fix_drude_flags(tmp_path, TEST_DATA_DIR):
     assert mapping["NBT"] == "C"  # polarizable core
     assert mapping["DNBT"] == "D"  # its Drude shell
     assert set(flags) <= {"C", "D", "N"}
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="molrs's LAMMPS data writer reads `drudes` rows for the fix-drude "
+    "flags only; it does not yet write the core-shell spring into `Bonds`, "
+    "which the DRUDE package needs",
+)
+def test_data_writer_writes_drude_springs_as_bonds(tmp_path, TEST_DATA_DIR):
+    pol = _ntf2_polarized(TEST_DATA_DIR)
+    frame = pol.to_frame()
+    n_springs = len(frame["drudes"]["atomi"])
+    path = tmp_path / "ntf2.data"
+    mp.io.write_lammps_data(path, frame)
+    header = path.read_text(encoding="utf-8").splitlines()
+    n_bonds = int(next(line for line in header if line.endswith(" bonds")).split()[0])
+    assert n_bonds == len(list(pol.bonds)) + n_springs
 
 
 def test_data_writer_no_drude_comment_for_plain_system(tmp_path):
