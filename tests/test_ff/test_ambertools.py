@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import shutil
 import subprocess
+from contextlib import contextmanager
 from pathlib import Path
 from unittest.mock import patch
 
@@ -70,21 +71,28 @@ def _link(graph: mp.Atomistic, links, rows: tuple[int, ...]):
 class FakeAmberTools:
     """Stands in for ``subprocess.run``: a tool copies its fixture output into place."""
 
-    def __init__(self, data: Path, *, fail: str | None = None) -> None:
+    def __init__(
+        self, data: Path, *, fail: str | None = None, silent: str | None = None
+    ) -> None:
         self.outputs = {
             "antechamber": data / "mol2" / "litfsi_gaff2.mol2",
             "parmchk2": data / "frcmod" / "litfsi_gaff2.frcmod",
             "tleap": data / "prmtop" / "LiTFSI.prmtop",
         }
         self.fail = fail
+        self.silent = silent  # exits 0 and writes nothing (tleap on a bad script)
+        self.cwds: list[Path] = []
         self.calls: dict[str, list[str]] = {}
         self.scripts: list[str] = []
 
     def __call__(self, argv: list[str], *, cwd: str, **_: object):
         tool, args = argv[0], argv[1:]
         self.calls[tool] = args
+        self.cwds.append(Path(cwd))
         if tool == self.fail:
             return subprocess.CompletedProcess(argv, 1, "", f"{tool}: fatal error")
+        if tool == self.silent:
+            return subprocess.CompletedProcess(argv, 0, "", "")
         if tool == "tleap":
             script = (Path(cwd) / args[1]).read_text(encoding="utf-8")
             self.scripts.append(script)
@@ -96,13 +104,18 @@ class FakeAmberTools:
         return subprocess.CompletedProcess(argv, 0, "", "")
 
 
-@pytest.fixture
-def tools(TEST_DATA_DIR: Path):
-    fake = FakeAmberTools(TEST_DATA_DIR)
+@contextmanager
+def _faked(fake: FakeAmberTools):
     with (
         patch.object(Tool, "resolve_executable", return_value="/amber/bin/tool"),
         patch("molpy.wrapper._process.subprocess.run", side_effect=fake),
     ):
+        yield fake
+
+
+@pytest.fixture
+def tools(TEST_DATA_DIR: Path):
+    with _faked(FakeAmberTools(TEST_DATA_DIR)) as fake:
         yield fake
 
 
@@ -258,3 +271,70 @@ class TestTleapTypifier:
             mp.ff.typifier.TleapTypifier(work_dir=tmp_path).typify(_typed_litfsi())
         assert raised.value.tool == "wrapper.tleap"
         assert raised.value.returncode == 1
+
+
+class TestNoStaleOutputs:
+    """A rerun never reads what an earlier run left in ``work_dir``."""
+
+    def test_other_settings_do_not_read_the_old_prmtop(self, TEST_DATA_DIR, tmp_path):
+        with _faked(FakeAmberTools(TEST_DATA_DIR)):
+            mp.ff.typifier.AntechamberTypifier(
+                atom_type="gaff2", work_dir=tmp_path
+            ).typify(_litfsi())
+        with (
+            _faked(FakeAmberTools(TEST_DATA_DIR, silent="tleap")),
+            pytest.raises(ToolError, match="left MOL.prmtop unwritten"),
+        ):
+            mp.ff.typifier.AntechamberTypifier(
+                atom_type="gaff", work_dir=tmp_path
+            ).typify(_litfsi())
+
+    def test_the_same_settings_rerun_every_step(self, TEST_DATA_DIR, tmp_path):
+        with _faked(FakeAmberTools(TEST_DATA_DIR)):
+            mp.ff.typifier.AntechamberTypifier(work_dir=tmp_path).typify(_litfsi())
+        for silent, output in (
+            ("antechamber", "antechamber.mol2"),
+            ("parmchk2", "parmchk2.frcmod"),
+            ("tleap", "MOL.prmtop"),
+        ):
+            with (
+                _faked(FakeAmberTools(TEST_DATA_DIR, silent=silent)),
+                pytest.raises(ToolError, match=f"left {output} unwritten"),
+            ):
+                mp.ff.typifier.AntechamberTypifier(work_dir=tmp_path).typify(_litfsi())
+
+    @pytest.mark.parametrize("other", [{"atom_type": "gaff"}, {"charge_method": "gas"}])
+    def test_each_setting_keys_the_directory(self, TEST_DATA_DIR, tmp_path, other):
+        first = FakeAmberTools(TEST_DATA_DIR)
+        with _faked(first):
+            mp.ff.typifier.AntechamberTypifier(work_dir=tmp_path).typify(_litfsi())
+        second = FakeAmberTools(TEST_DATA_DIR)
+        with _faked(second):
+            mp.ff.typifier.AntechamberTypifier(work_dir=tmp_path, **other).typify(
+                _litfsi()
+            )
+        assert set(first.cwds).isdisjoint(second.cwds)
+
+    def test_tleap_typifier_reruns_tleap(self, TEST_DATA_DIR, tmp_path):
+        with _faked(FakeAmberTools(TEST_DATA_DIR)):
+            mp.ff.typifier.TleapTypifier(work_dir=tmp_path).typify(_typed_litfsi())
+        with (
+            _faked(FakeAmberTools(TEST_DATA_DIR, silent="tleap")),
+            pytest.raises(ToolError, match="left MOL.prmtop unwritten"),
+        ):
+            mp.ff.typifier.TleapTypifier(work_dir=tmp_path).typify(_typed_litfsi())
+
+    @pytest.mark.parametrize("other", ["leaprc", "forcefield"])
+    def test_leaprc_and_frcmod_key_the_directory(self, TEST_DATA_DIR, tmp_path, other):
+        ff = mp.ff.forcefield.ForceField("extra", units="real")
+        ff.def_style("atom", "full").def_type("c3", mass=12.01)
+        settings = {"leaprc": "gaff"} if other == "leaprc" else {"forcefield": ff}
+        first = FakeAmberTools(TEST_DATA_DIR)
+        with _faked(first):
+            mp.ff.typifier.TleapTypifier(work_dir=tmp_path).typify(_typed_litfsi())
+        second = FakeAmberTools(TEST_DATA_DIR)
+        with _faked(second):
+            mp.ff.typifier.TleapTypifier(work_dir=tmp_path, **settings).typify(
+                _typed_litfsi()
+            )
+        assert set(first.cwds).isdisjoint(second.cwds)

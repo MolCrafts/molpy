@@ -17,6 +17,7 @@ molrs base owns ``typify`` and the accumulated ``forcefield()``.
 
 from __future__ import annotations
 
+import hashlib
 from collections.abc import Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
@@ -25,7 +26,7 @@ from molrs.core import Angle, Atomistic, Bond, Dihedral, Improper
 from molrs.core.constants import AMBER_SCEE, AMBER_SCNB
 from molrs.ff.forcefield import ForceField
 from molrs.ff.typifier import TypeAssignment, Typifier
-from molrs.io import read_prmtop_system, write_frcmod
+from molrs.io import read_prmtop_system, write_frcmod_str
 
 from molpy.config import load_config
 from molpy.wrapper import (
@@ -46,6 +47,23 @@ _MOL2_CHARGE_TOLERANCE = 0.5e-4
 
 # The tleap unit name of the molecule being parameterised.
 _UNIT = "MOL"
+
+
+def _run_directory(work_dir: Path, *parts: str) -> Path:
+    """``work_dir/<digest>``: one directory per input and settings.
+
+    ``parts`` are everything a run's result depends on: the input mol2's
+    text and every setting handed to a program. A rerun with other settings
+    never lands in the directory of an earlier run.
+    """
+    sha = hashlib.sha1()
+    for part in parts:
+        data = part.encode()
+        sha.update(len(data).to_bytes(8, "little"))
+        sha.update(data)
+    directory = work_dir / sha.hexdigest()[:16]
+    directory.mkdir(parents=True, exist_ok=True)
+    return directory
 
 
 class _Prmtop:
@@ -223,9 +241,11 @@ class AntechamberTypifier(_AmberTypifier):
     """GAFF / GAFF2 atom types, charges and parameters for a complete molecule.
 
     ``assign`` runs antechamber (``-at atom_type -c charge_method``, net charge
-    from the atoms' formal charges), parmchk2 and tleap in a per-molecule
-    directory under ``work_dir``, and assigns the prmtop's types, charges and
-    bonded terms. Ports are allowed; their leaving groups are real atoms.
+    from the atoms' formal charges), parmchk2 and tleap in a directory under
+    ``work_dir`` keyed by the input mol2 and every setting, and assigns the
+    prmtop's types, charges and bonded terms. Every program reruns, and each
+    step's output is deleted before it runs, so nothing an earlier run left
+    behind is read. Ports are allowed; their leaving groups are real atoms.
 
     A polymer chain is not typed here: joining typed monomers folds each
     leaving group's charge onto its anchor. Build it with
@@ -236,7 +256,7 @@ class AntechamberTypifier(_AmberTypifier):
         atom_type: The antechamber atom-type set, also the parmchk2 ``-s`` set
             and the leaprc tleap sources.
         charge_method: The antechamber ``-c`` charge method.
-        work_dir: Where the per-molecule directories are created.
+        work_dir: Where the per-run directories are created.
         config: molpy's configuration (:func:`molpy.config.load_config`):
             the AmberTools executables and environment (``[wrapper]``,
             ``[wrapper.<tool>]``); ``None`` loads it.
@@ -264,15 +284,19 @@ class AntechamberTypifier(_AmberTypifier):
             molpy.wrapper.ToolError: An AmberTools step failed.
         """
         net = net_formal_charge(graph)
-        directory = self.work_dir / f"{graph.structural_hash():016x}"
-        directory.mkdir(parents=True, exist_ok=True)
+        text = antechamber_input_mol2(graph, rename=True)
+        directory = _run_directory(
+            self.work_dir, text, self.atom_type, self.charge_method, str(net)
+        )
 
         source = directory / "input.mol2"
         typed = directory / "antechamber.mol2"
         frcmod = directory / "parmchk2.frcmod"
         prmtop = directory / f"{_UNIT}.prmtop"
         inpcrd = directory / f"{_UNIT}.inpcrd"
-        antechamber_input_mol2(graph, source, rename=True)
+        for stale in (typed, frcmod, prmtop, inpcrd):
+            stale.unlink(missing_ok=True)
+        source.write_text(text, encoding="utf-8")
 
         ante = AntechamberWrapper(directory, config=self.config)
         run_step(
@@ -316,7 +340,8 @@ class TleapTypifier(_AmberTypifier):
     The graph's atoms must carry AMBER atom types and charges. ``assign``
     writes them as mol2, writes ``forcefield`` (the templates' parameters) as a
     frcmod, runs tleap and assigns the prmtop's bonded terms, so junction terms
-    come from the leaprc. It never runs antechamber or parmchk2. Types and
+    come from the leaprc. The run directory is keyed by the mol2, the leaprc
+    and the frcmod, and tleap's outputs are deleted before it runs. It never runs antechamber or parmchk2. Types and
     charges are left as they are; tleap changing one raises. A graph that
     still has ports is refused: joining those ports would fold the
     leaving-group charge onto the anchors. A polymer chain is built with
@@ -327,7 +352,7 @@ class TleapTypifier(_AmberTypifier):
         leaprc: The leaprc tleap sources (``source leaprc.<leaprc>``).
         forcefield: Parameters tleap loads on top of the leaprc, written as a
             frcmod; ``None`` loads none.
-        work_dir: Where the per-graph directories are created.
+        work_dir: Where the per-run directories are created.
         config: molpy's configuration (:func:`molpy.config.load_config`):
             the AmberTools executables and environment (``[wrapper]``,
             ``[wrapper.<tool>]``); ``None`` loads it.
@@ -370,17 +395,20 @@ class TleapTypifier(_AmberTypifier):
                     f"atom {index} carries type {name!r} and charge {charge!r}; "
                     "TleapTypifier needs AMBER types and charges on every atom"
                 )
-        directory = self.work_dir / f"{graph.structural_hash():016x}"
-        directory.mkdir(parents=True, exist_ok=True)
+        text = antechamber_input_mol2(graph, rename=True)
+        extra = write_frcmod_str(self.parameters) if self.parameters is not None else ""
+        directory = _run_directory(self.work_dir, text, self.leaprc, extra)
 
         source = directory / "input.mol2"
         prmtop = directory / f"{_UNIT}.prmtop"
         inpcrd = directory / f"{_UNIT}.inpcrd"
-        antechamber_input_mol2(graph, source, rename=True)
+        for stale in (prmtop, inpcrd):
+            stale.unlink(missing_ok=True)
+        source.write_text(text, encoding="utf-8")
         script = f"source leaprc.{self.leaprc}\n"
         if self.parameters is not None:
             frcmod = directory / "forcefield.frcmod"
-            write_frcmod(frcmod, self.parameters)
+            frcmod.write_text(extra, encoding="utf-8")
             script += f"loadamberparams {frcmod}\n"
         script += (
             f"{_UNIT} = loadmol2 {source}\n"

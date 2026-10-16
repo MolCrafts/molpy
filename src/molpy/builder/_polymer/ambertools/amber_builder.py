@@ -195,7 +195,9 @@ class AmberPolymerBuilder:
 
         oligomer = self.library[label]
         charge = _net_charge(oligomer, label, self.net_charges)
-        antechamber_input_mol2(oligomer, source, rename=False)
+        source.write_text(
+            antechamber_input_mol2(oligomer, rename=False), encoding="utf-8"
+        )
         digest = _digest(
             source.read_bytes(),
             f"{self.force_field}|{self.charge_method}|{charge}".encode(),
