@@ -39,7 +39,7 @@ its molrs subsystem.
 | Assemble units along a site graph (chains, rings, stars, combs, backmapping) | `mp.builder.Assembler`, `GrowthPlacer`, `SitePlacer`, `AxisOrienter`, `mp.io.cgsmiles.CgSmilesIr` | [Builder](builder.md) |
 | Pack molecules into a simulation box | `molpack.GencanPack`, `Target`, molrs regions as restraints | [Pack](pack.md) |
 | Generate 3D conformers from a molecular graph | `Conformer` | [Conformer](conformer.md) |
-| Assign force field types (OPLS-AA, MMFF94, GAFF / GAFF2; AM1-BCC via AmberTools) | `mp.ff.typifier.OplsAaTypifier`, `Mmff94Typifier`, `AtdTypifier`, `GaffTypifier`, `AntechamberTypifier`, `TleapTypifier` | [Typifier](typifier.md) |
+| Assign force field types (OPLS-AA, MMFF94, GAFF / GAFF2; AM1-BCC charges with `mp.ff.charge.Am1BccModel`, sqm via AmberTools) | `mp.ff.typifier.OplsAaTypifier`, `Mmff94Typifier`, `AtdTypifier`, `GaffTypifier`, `AntechamberTypifier`, `TleapTypifier` | [Typifier](typifier.md) |
 | Evaluate bond, angle, and pair potentials | `mp.ff.compile.PotentialCompiler`, `ExplicitTerms`, `mp.ff.potential.Potentials` | [Potential](potential.md) |
 | Register a force-field style or category from Python | `mp.ff.style_registry.StyleDeclaration`, `register_style`, `register_category` | [Potential](potential.md) |
 | Read and write molecular files (PDB, LAMMPS, GRO, …) | `mp.io.read_pdb`, `mp.io.write_lammps_data`, `mp.io.read_openmm_forcefield` | [I/O](io.md) |

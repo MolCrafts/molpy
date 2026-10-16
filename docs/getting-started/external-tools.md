@@ -26,10 +26,18 @@ Workflow guides and the [Quickstart](quickstart.md) assume only this path.
 
 GAFF / GAFF2 types and bonded terms need no AmberTools:
 `mp.ff.typifier.AtdTypifier` then `GaffTypifier`
-([Force Field Typification](../user-guide/06_typifier.md)). AmberTools is kept
-for what native typing cannot do: AM1-BCC charges (sqm's AM1 charges, which
-`mp.ff.charge.BccModel` only corrects) and AMBER polymer chains. A small
-molecule is typed as a complete molecule. A polymer is one oligomer (head,
+([Force Field Typification](../user-guide/06_typifier.md)); against
+AmberTools 26 they assign antechamber's types and the parameter values
+tleap's prmtop carries for the same set. AM1-BCC charges need one program,
+sqm: `mp.ff.charge.Am1BccModel` runs it (through antechamber `-c mul`) and
+corrects its AM1 charges with the native `BccModel`, which gives antechamber
+`-c bcc`'s charges for the same sqm run. That is the default route.
+
+The whole AmberTools pipeline (antechamber → parmchk2 → tleap, read back
+from the prmtop) is kept for AMBER polymer chains and for a molecule whose
+force field is merged with such a chain's: a native force field does not
+merge with a prmtop's (molrs declares the two `lj/cut` styles differently).
+A small molecule is typed as a complete molecule. A polymer is one oligomer (head,
 chain and tail monomers already bonded) typed once by antechamber, cut into
 residues by prepgen and joined by tleap `sequence`. Every entry point takes
 molrs's `parameter_set` (`"gaff"` or `"gaff2"`), which has no default, so a
@@ -37,7 +45,8 @@ chain and the molecules it is mixed with always name the same set:
 
 | Surface | Role |
 |---------|------|
-| `molpy.ff.typifier.AntechamberTypifier` | antechamber (types + AM1-BCC charges) → parmchk2 → tleap for one complete molecule; net charge from the atoms' formal charges |
+| `molpy.ff.charge.Am1BccModel` | AM1-BCC (or ABCG2) charges: sqm's AM1 charges through antechamber `-c mul`, corrected by molrs `BccModel`; net charge from the atoms' formal charges. Types and bonded terms stay native |
+| `molpy.ff.typifier.AntechamberTypifier` | antechamber (types + AM1-BCC charges) → parmchk2 → tleap for one complete molecule, for a force field merged with an `AmberPolymerBuilder` chain's; net charge from the atoms' formal charges |
 | `molpy.ff.typifier.TleapTypifier` | tleap only, for a finished graph whose atoms already carry AMBER types and charges; a graph with ports is refused |
 | `molpy.builder.AmberPolymerBuilder` | antechamber + parmchk2 on an oligomer, prepgen per residue (`AmberCut`), tleap `sequence` over a linear site graph; `AmberPieces` writes the oligomer and cuts from three SMILES |
 | `molpy.wrapper` (`AntechamberWrapper`, `Parmchk2Wrapper`, `PrepgenWrapper`, `TleapWrapper`, `SanderWrapper`) | Thin subprocess wrappers |
@@ -65,26 +74,36 @@ runs through `conda run -n AmberTools25`; see
 layers and the per-program tables.
 
 ```python
-# docs: skip — needs AmberTools; typifiers unit-tested with the executables faked
+# docs: skip — needs AmberTools (sqm); the model is unit-tested with antechamber faked
 import molpy as mp
+from molpy.ff.charge import Am1BccModel
+from molpy.ff.typifier import AtdTypifier, GaffTypifier
 
 mol, _ = mp.conformer.Conformer(add_hydrogens=True, seed=42).generate(
     mp.io.smiles.SmilesIr("CCO").to_atomistic()
-)  # antechamber needs 3D coordinates
-ante = mp.ff.typifier.AntechamberTypifier(
-    parameter_set="gaff2", charge_method="bcc", work_dir="amber_work"
-)  # reads [wrapper] from molpy.toml
-typed = ante.typify(mol)  # GAFF2 types, BCC charges, bonded terms
-ff = ante.forcefield()  # the parameters of the types just assigned
+)  # sqm needs 3D coordinates
+labelled = AtdTypifier(parameter_set="gaff2").typify(mol)  # GAFF2 types, native
+charges = Am1BccModel(parameter_set="bcc", work_dir="amber_work").assign(labelled)
+for atom, charge in zip(labelled.atoms, charges):
+    atom["charge"] = float(charge)  # AM1-BCC: sqm, then the native correction
+gaff = GaffTypifier(parameter_set="gaff2")
+typed = gaff.typify(labelled)  # bonded terms from gaff2.dat, native
+ff = gaff.forcefield()  # the parameters of the types just assigned
 ```
+
+`mp.ff.typifier.AntechamberTypifier(parameter_set="gaff2")` types the same
+molecule through antechamber, parmchk2 and tleap instead; use it for a
+molecule that joins an `AmberPolymerBuilder` chain in one force field.
 
 End-to-end recipes that use this path:
 
 - [AmberTools electrolyte workflow](../user-guide/13_ambertools_integration.md)
 
 Unit tests never shell out to antechamber/tleap — wrappers are mocked under
-`tests/test_wrapper`, the typifiers under `tests/test_ff`, and the shared
-pipeline under `tests/test_ambertools`. Offline recipes in the user guide mark those blocks with
+`tests/test_wrapper`, the typifiers and `Am1BccModel` under `tests/test_ff`,
+and the shared pipeline under `tests/test_ambertools`. With AmberTools
+installed, `tests/test_ambertools/test_real_programs.py` checks both routes
+against the real programs. Offline recipes in the user guide mark those blocks with
 `# docs: skip` so the doc gate does not re-run them.
 
 ## MD engines (input decks and optional run)

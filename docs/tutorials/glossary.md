@@ -75,7 +75,7 @@ Quick definitions for MolPy's core terminology. Each entry links to the page tha
 : The optional rule that turns each copy before it is placed. `AxisOrienter` aligns a unit with its site's axis and bonds; it needs site positions.
 
 **Typifier**
-: Assigns force field types to atoms, bonds, angles, and dihedrals: implements `assign` (returning a `TypeAssignment`), and the base's `typify` returns a typed copy while `forcefield()` accumulates the assigned types. Native: `OplsAaTypifier`, `Mmff94Typifier`, `Mmff94sTypifier`, `ElementTypifier`, and GAFF / GAFF2 as `AtdTypifier` then `GaffTypifier`. Through AmberTools, for AM1-BCC charges: `AntechamberTypifier`, `TleapTypifier` (see [AmberTools Integration](../user-guide/13_ambertools_integration.md)). See [Force Field Typification](../user-guide/06_typifier.md).
+: Assigns force field types to atoms, bonds, angles, and dihedrals: implements `assign` (returning a `TypeAssignment`), and the base's `typify` returns a typed copy while `forcefield()` accumulates the assigned types. Native: `OplsAaTypifier`, `Mmff94Typifier`, `Mmff94sTypifier`, `ElementTypifier`, and GAFF / GAFF2 as `AtdTypifier` then `GaffTypifier`. AM1-BCC charges for the native route: `mp.ff.charge.Am1BccModel` (sqm via AmberTools). The whole AmberTools pipeline, for a force field merged with an `AmberPolymerBuilder` chain's: `AntechamberTypifier`, `TleapTypifier` (see [AmberTools Integration](../user-guide/13_ambertools_integration.md)). See [Force Field Typification](../user-guide/06_typifier.md).
 
 **Selector**
 : A composable predicate that filters atoms in a `Block` by element, type, coordinate range, or distance. Combinable with `&`, `|`, `~`. See [Selector](06_selector.md).

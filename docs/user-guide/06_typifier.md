@@ -215,7 +215,19 @@ print(sorted({bond["type"] for bond in gaff_mol.bonds}))
 ```
 
 
-AM1-BCC charges are the one thing this route cannot make: `mp.ff.charge.BccModel` corrects AM1 charges, and those come from a quantum-chemistry run (sqm). For AM1-BCC charges, and for a molecule that is merged with an `AmberPolymerBuilder` chain (whose parameters are the installed AmberTools', read from tleap's prmtop), use the AmberTools route, `mp.ff.typifier.AntechamberTypifier` — see [AmberTools Integration](13_ambertools_integration.md). It takes the same required `parameter_set`.
+AM1-BCC charges need one external program, AmberTools' sqm, for the quantum-chemistry step. `mp.ff.charge.Am1BccModel` runs it (through antechamber `-c mul`, the sqm input antechamber's own `-c bcc` writes) and corrects its AM1 charges with the native `mp.ff.charge.BccModel`, which reproduces antechamber `-c bcc` for the same sqm run. It takes the place of Gasteiger above; types and bonded terms stay native:
+
+```python
+# docs: skip — needs AmberTools (sqm)
+from molpy.ff.charge import Am1BccModel
+
+charges = Am1BccModel(parameter_set="bcc").assign(labelled)  # sqm, then BccModel
+for atom, charge in zip(labelled.atoms, charges):
+    atom["charge"] = float(charge)
+gaff_mol = GaffTypifier(parameter_set="gaff2").typify(labelled)
+```
+
+The native route assigns the types and parameter values tleap does for the same `parameter_set`. A molecule whose force field is merged with an `AmberPolymerBuilder` chain's (read from tleap's prmtop) is typed by the AmberTools route instead, `mp.ff.typifier.AntechamberTypifier`, because a native force field and a prmtop's do not merge — see [AmberTools Integration](13_ambertools_integration.md). It takes the same required `parameter_set`.
 
 ## When standard force fields are not enough
 

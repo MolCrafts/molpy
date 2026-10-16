@@ -1,16 +1,23 @@
-"""AmberTools typifiers: GAFF / GAFF2 through the AmberTools executables.
+"""AmberTools-backed GAFF / GAFF2 typing and AM1-BCC charges.
 
-GAFF typing is native first: :class:`molrs.ff.typifier.AtdTypifier` stamps
+GAFF typing is native: :class:`molrs.ff.typifier.AtdTypifier` stamps
 antechamber's atom types and :class:`molrs.ff.typifier.GaffTypifier` the
 gaff / gaff2 bonded terms (with parmchk2-style estimates), with no
-executable. The AmberTools route is for what that cannot do: AM1-BCC
-charges, which need sqm's QM charges, and a molecule that is merged with
-an :class:`molpy.builder.AmberPolymerBuilder` chain, whose parameters are
-the installed AmberTools' (tleap's prmtop). Every entry point names the GAFF
-generation ``parameter_set``, as molrs does, and none has a default.
+executable. Against AmberTools 26 they assign the types antechamber assigns
+and the parameters tleap's prmtop carries for the same ``parameter_set``.
 
-Two :class:`molrs.ff.typifier.Typifier` subclasses run the shared AmberTools
-pipeline (:mod:`molpy._ambertools`) and read tleap's prmtop back:
+AM1-BCC charges need one program, sqm, for the QM step.
+:class:`Am1BccModel` runs it (through antechamber ``-c mul``, the sqm input
+``-c bcc`` writes) and corrects its AM1 charges with molrs's
+:class:`~molrs.ff.charge.BccModel`, which reproduces antechamber ``-c bcc``
+from the same sqm run. That is the default AM1-BCC route: native types and
+bonded terms, sqm for the charges alone.
+
+Two :class:`molrs.ff.typifier.Typifier` subclasses run the whole AmberTools
+pipeline (:mod:`molpy._ambertools`) and read tleap's prmtop back. They are
+for a molecule whose force field is merged with an
+:class:`molpy.builder.AmberPolymerBuilder` chain's (tleap's prmtop, read
+back), which a native force field does not merge with:
 
 * :class:`AntechamberTypifier` types a complete molecule from scratch:
   antechamber (atom types and charges) → parmchk2 (missing parameters) → tleap.
@@ -21,20 +28,23 @@ pipeline (:mod:`molpy._ambertools`) and read tleap's prmtop back:
   and prepgen on one oligomer, then tleap ``sequence``.
 
 Both return the prmtop's assignment as a :class:`~molrs.ff.typifier.TypeAssignment`; the
-molrs base owns ``typify`` and the accumulated ``forcefield()``. Both rerun
-every program on every call (no caching), in a directory keyed by the input
-and every setting.
+molrs base owns ``typify`` and the accumulated ``forcefield()``. Every
+GAFF entry point names the GAFF generation ``parameter_set``, as molrs does,
+and none has a default. Every class here reruns every program on every call
+(no caching), in a directory keyed by the input and every setting.
 """
 
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
+import numpy as np
 from molrs.core import Atomistic
+from molrs.ff.charge import BccModel
 from molrs.ff.forcefield import ForceField
 from molrs.ff.typifier import TypeAssignment
-from molrs.io import write_frcmod_str
+from molrs.io import read_ac, write_frcmod_str
 
 from molpy._ambertools import (
     UNIT,
@@ -58,6 +68,108 @@ if TYPE_CHECKING:
 # the last printed digit.
 _MOL2_CHARGE_TOLERANCE = 0.5e-4
 
+#: The ac file the QM step writes.
+_AM1_AC = "sqm.ac"
+
+
+class Am1BccModel:
+    """AM1-BCC (or ABCG2) charges: sqm's AM1 charges, corrected natively.
+
+    The QM step is the one AmberTools run: antechamber ``-c mul`` (sqm, with
+    the input antechamber ``-c bcc`` writes; net charge from the atoms'
+    formal charges) in a directory under ``work_dir`` keyed by the input
+    mol2 and the net charge. Its Mulliken charges go to molrs's
+    :class:`~molrs.ff.charge.BccModel`, which equivalences and corrects them
+    as antechamber does. Given the same sqm run, the result is antechamber
+    ``-c bcc`` / ``-c abcg2`` to the ac file's six printed decimals.
+
+    sqm picks its diagonaliser by timing it, and prints Mulliken charges to
+    three decimals, so two runs on one input can differ by 0.001 e on an
+    atom (antechamber ``-c bcc`` run twice does too).
+
+    Types and bonded terms come from the native typifiers, before or after::
+
+        labelled = AtdTypifier(parameter_set="gaff2").typify(mol)
+        charges = Am1BccModel(parameter_set="bcc").assign(labelled)
+        for atom, charge in zip(labelled.atoms, charges):
+            atom["charge"] = float(charge)
+        typed = GaffTypifier(parameter_set="gaff2").typify(labelled)
+
+    Args:
+        parameter_set: The correction family, molrs
+            :class:`~molrs.ff.charge.BccModel`'s ``parameter_set``:
+            ``"bcc"`` (AM1-BCC) or ``"abcg2"``. Required, as in molrs.
+        work_dir: Where the per-run directories are created.
+        config: molpy's configuration (:func:`molpy.config.load_config`):
+            the AmberTools executables and environment (``[wrapper]``,
+            ``[wrapper.<tool>]``); ``None`` loads it.
+
+    Raises:
+        ValueError: ``parameter_set`` names no correction family.
+    """
+
+    def __init__(
+        self,
+        *,
+        parameter_set: Literal["bcc", "abcg2"],
+        work_dir: str | Path = "amber_work",
+        config: Config | None = None,
+    ) -> None:
+        self.correction = BccModel(parameter_set=parameter_set)
+        self.config = config if config is not None else load_config()
+        self.work_dir = Path(work_dir).resolve()
+
+    @property
+    def parameter_set(self) -> str:
+        """The correction family: ``"bcc"`` or ``"abcg2"``."""
+        return self.correction.parameter_set
+
+    def am1(self, mol: Atomistic) -> np.ndarray:
+        """sqm's AM1 Mulliken charges, in graph atom order, unequivalenced.
+
+        ``mol`` needs 3D coordinates; it is left untouched.
+
+        Raises:
+            ValueError: antechamber's ac does not list ``mol``'s atoms in
+                ``mol``'s order.
+            molpy.wrapper.ToolError: antechamber or sqm failed.
+        """
+        net = net_formal_charge(mol)
+        text = input_mol2(mol, rename=True)
+        directory = run_directory(self.work_dir, text, "mul", str(net))
+        source = directory / "input.mol2"
+        ac = directory / _AM1_AC
+        source.write_text(text, encoding="utf-8")
+        AmberSteps(directory, self.config).am1(source, ac, net_charge=net)
+
+        atoms = read_ac(ac)["atoms"]
+        expected = [
+            f"{atom.get('element')}{row}" for row, atom in enumerate(mol.atoms, 1)
+        ]
+        found = [str(name) for name in atoms["name"]]
+        if found != expected:
+            raise ValueError(
+                f"{ac} lists atoms {found}, not the graph's {expected}: "
+                "antechamber reordered or dropped atoms"
+            )
+        return np.asarray(atoms["charge"], dtype=np.float64)
+
+    def assign(self, mol: Atomistic) -> np.ndarray:
+        """The AM1-BCC charges of ``mol``, in graph atom order.
+
+        ``mol`` is left untouched: set ``atoms.charge`` from the result.
+
+        Raises:
+            ValueError: The ac disagrees with ``mol`` (see :meth:`am1`), or
+                ``mol`` carries an atom or bond the correction family cannot
+                type.
+            molpy.wrapper.ToolError: antechamber or sqm failed.
+        """
+        return self.correction.assign(mol, qm=self.am1(mol))
+
+    def __repr__(self) -> str:
+        return f"Am1BccModel(parameter_set={self.parameter_set!r})"
+
 
 class AntechamberTypifier(AmberTypifier):
     """GAFF / GAFF2 atom types, charges and parameters for a complete molecule.
@@ -74,9 +186,14 @@ class AntechamberTypifier(AmberTypifier):
     :class:`molpy.builder.AmberPolymerBuilder`, which cuts one
     antechamber-typed oligomer with prepgen and sequences it with tleap.
 
-    For GAFF types and bonded terms without AM1-BCC charges, the native
-    :class:`~molrs.ff.typifier.AtdTypifier` and
-    :class:`~molrs.ff.typifier.GaffTypifier` need no executable.
+    The default GAFF route is native: :class:`~molrs.ff.typifier.AtdTypifier`
+    and :class:`~molrs.ff.typifier.GaffTypifier` assign the same types and
+    parameter values, and :class:`Am1BccModel` the same AM1-BCC charges, with
+    sqm the only program. This typifier is for a molecule whose force field
+    is merged with an :class:`~molpy.builder.AmberPolymerBuilder` chain's:
+    both are read from a tleap prmtop, so their shared types merge, while a
+    native force field states its styles and names its terms differently
+    (molrs ``ForceField.merge`` refuses the pair).
 
     Args:
         parameter_set: The GAFF generation, molrs's ``parameter_set``

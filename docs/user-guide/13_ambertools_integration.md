@@ -31,13 +31,17 @@ Type TFSI with antechamber, build GAFF PEO chains from one antechamber-typed oli
 
 ## Workflow overview
 
-GAFF / GAFF2 types and bonded terms alone need no AmberTools: the native
-`AtdTypifier` and `GaffTypifier` assign them (see
-[Force Field Typification](06_typifier.md)). This workflow uses AmberTools for
-what they cannot do. TFSI gets AM1-BCC charges, which need sqm's AM1 charges
-(`mp.ff.charge.BccModel` only corrects them). The PEO chain is cut by prepgen
-and joined by tleap. TFSI is parameterised by the same tleap, so the types
-the two share carry the same parameters when the force fields are merged.
+GAFF / GAFF2 types and bonded terms need no AmberTools: the native
+`AtdTypifier` and `GaffTypifier` assign them, and `mp.ff.charge.Am1BccModel`
+the AM1-BCC charges with sqm as the one program (see
+[Force Field Typification](06_typifier.md)). That is how a molecule on its
+own is typed. This workflow needs the whole AmberTools pipeline for the PEO
+chain: it is cut by prepgen and joined by tleap, and its force field is read
+back from tleap's prmtop. TFSI is merged with that force field, so it is
+parameterised by the same tleap (`AntechamberTypifier`): a native force
+field holds the same parameter values but does not merge with a prmtop's
+(the two declare their `lj/cut` and `coul/cut` styles differently, and
+name some terms differently).
 Every AmberTools entry point takes `parameter_set` (`"gaff"` or `"gaff2"`, as
 molrs names it); it has no default, so name the same set for every
 component.

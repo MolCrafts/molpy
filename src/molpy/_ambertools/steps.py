@@ -84,7 +84,7 @@ def _fresh(
 
 @dataclass(frozen=True)
 class AmberSteps:
-    """antechamber, parmchk2, prepgen and tleap, run in one directory.
+    """antechamber (types and charges, or AM1 charges alone), parmchk2, prepgen and tleap, run in one directory.
 
     Attributes:
         directory: Where every program runs.
@@ -117,6 +117,29 @@ class AmberSteps:
                 output_format=output_format,  # type: ignore[arg-type]
                 charge_method=charge_method,  # type: ignore[arg-type]
                 parameter_set=parameter_set,
+                net_charge=net_charge,
+            ),
+        )
+
+    def am1(self, source: Path, ac: Path, *, net_charge: int) -> None:
+        """sqm's AM1 Mulliken charges: ``source`` (mol2) → ``ac``.
+
+        antechamber ``-c mul`` writes the very sqm input ``-c bcc`` writes, and
+        hands its Mulliken charges back unequivalenced (``-eq 0``): the QM step
+        of AM1-BCC and ABCG2 and nothing after it. ``-at bcc`` only labels the
+        ac; its types are not read.
+        """
+        tool = AntechamberWrapper(self.directory, config=self.config)
+        _fresh(
+            tool,
+            (ac,),
+            lambda: tool.atomtype_assign(
+                source,
+                ac,
+                input_format="mol2",
+                output_format="ac",
+                charge_method="mul",
+                parameter_set="bcc",
                 net_charge=net_charge,
             ),
         )

@@ -34,16 +34,20 @@ creation — and it is the only writer of `forcefield()`.
 | `ElementTypifier` | `type` labels from element symbols; defines no force field | Writers that need labels on an untyped molecule |
 | `AtdTypifier` | `AtdTypifier(parameter_set="gaff2")`: antechamber's atom-type tables (`gaff`, `gaff2`, `amber`, `bcc`, …) evaluated natively — atom types only, no charges or parameters | GAFF / GAFF2 or BCC atom types without running antechamber |
 | `GaffTypifier` | `GaffTypifier(parameter_set="gaff2")`: GAFF / GAFF2 bonded terms and parameters, natively, for atoms `AtdTypifier` already typed (exact `gaff.dat` rows, wildcards, or `parmchk2`-style estimates marked `estimated`) | GAFF / GAFF2 parameters without AmberTools |
-| `AntechamberTypifier` | `AntechamberTypifier(parameter_set="gaff2")`: antechamber → parmchk2 → tleap for one complete molecule; needs AmberTools | AM1-BCC charges; a molecule merged with an `AmberPolymerBuilder` chain |
+| `AntechamberTypifier` | `AntechamberTypifier(parameter_set="gaff2")`: antechamber → parmchk2 → tleap for one complete molecule; needs AmberTools | A molecule whose force field is merged with an `AmberPolymerBuilder` chain's |
 | `TleapTypifier` | `TleapTypifier(parameter_set="gaff2")`: tleap alone over a finished graph that already carries AMBER types and charges (a graph with ports is refused); needs AmberTools | Extra frcmod parameters on top of the leaprc |
 
 Every name is on `mp.ff.typifier`, which mirrors `molrs.ff.typifier` (the
 native typifiers are the molrs objects) and adds the two AmberTools
 typifiers. GAFF / GAFF2 is typed natively by `AtdTypifier` then
-`GaffTypifier`; that is the default route. The AmberTools typifiers are for
-what it cannot do — AM1-BCC charges, which need sqm's AM1 charges
-(`mp.ff.charge.BccModel` only corrects them), and parameters that must match
-an `AmberPolymerBuilder` chain's, read from tleap's prmtop. Every GAFF entry
+`GaffTypifier`; that is the default route, and it assigns the types and
+parameter values tleap does for the same set. Its AM1-BCC charges come from
+`mp.ff.charge.Am1BccModel`: sqm's AM1 charges (through antechamber `-c mul`),
+corrected by the native `BccModel` exactly as antechamber `-c bcc` corrects
+them. The AmberTools typifiers read tleap's prmtop back; they are for a force
+field that is merged with an `AmberPolymerBuilder` chain's, which is a
+prmtop's too (molrs does not merge a native GAFF force field with a
+prmtop's: the two declare `lj/cut` and `coul/cut` differently). Every GAFF entry
 point takes the same required `parameter_set` (`"gaff"` or `"gaff2"`, no
 default). The AmberTools typifiers shell out through `molpy.wrapper`; see
 [Optional external tools](../getting-started/external-tools.md#ambertools-gaff-parameters).

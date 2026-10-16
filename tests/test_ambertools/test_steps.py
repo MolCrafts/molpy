@@ -131,6 +131,17 @@ class TestStalePolicy:
         assert parmchk2[parmchk2.index("-f") + 1] == "ac"
         assert parmchk2[parmchk2.index("-s") + 1] == "gaff"
 
+    def test_the_am1_step_asks_antechamber_for_mulliken_charges_only(self, tmp_path):
+        steps = AmberSteps(tmp_path, load_config())
+        fake = _Fake()
+        first, second = _run(fake)
+        with first, second:
+            steps.am1(tmp_path / "in.mol2", tmp_path / "sqm.ac", net_charge=-1)
+        args = fake.calls[0][1:]
+        assert args[args.index("-c") + 1] == "mul"
+        assert args[args.index("-fo") + 1] == "ac"
+        assert args[args.index("-nc") + 1] == "-1"
+
     def test_an_unknown_suffix_is_refused(self, tmp_path):
         steps = AmberSteps(tmp_path, load_config())
         with pytest.raises(ValueError, match=r"\.ac or \.mol2"):
