@@ -521,14 +521,16 @@ fn build_bonds_block(
 /// orthogonalization (`a` along x, `b` in the xy plane), whose lattice vectors
 /// are the columns of H ([`SimBox::matrix_from_lengths_angles`]), at the
 /// origin and periodic on every axis. A record with a non-positive length
-/// states no box.
+/// states no box, and neither does PDB's placeholder for a structure
+/// determined without a cell, `1 1 1 90 90 90 P 1` ([`is_cell_placeholder`]):
+/// the frame then has neither a box nor a space group.
 ///
 /// # Errors
 ///
 /// Angles no cell has (each in `(0°, 180°)` and together closing a cell),
 /// naming the record's six numbers.
 fn add_simbox_from_cryst1(frame: &mut Frame, cryst1: Option<&Cryst1Record>) -> std::io::Result<()> {
-    let Some(cryst) = cryst1 else {
+    let Some(cryst) = cryst1.filter(|c| !is_cell_placeholder(c)) else {
         return Ok(());
     };
     if !cryst.space_group.is_empty() {
@@ -551,6 +553,15 @@ fn add_simbox_from_cryst1(frame: &mut Frame, cryst1: Option<&Cryst1Record>) -> s
     let simbox = SimBox::new(h, array![0.0 as F, 0.0, 0.0], [true, true, true]).map_err(refuse)?;
     frame.simbox = Some(simbox);
     Ok(())
+}
+
+/// PDB's `CRYST1` for a structure not determined by crystallography: "the
+/// unitary values" `a = b = c = 1.0`, `α = β = γ = 90°`, space group `P 1`
+/// (wwPDB format 3.3, `CRYST1`). It states no cell.
+fn is_cell_placeholder(cryst: &Cryst1Record) -> bool {
+    [cryst.a, cryst.b, cryst.c] == [1.0; 3]
+        && [cryst.alpha, cryst.beta, cryst.gamma] == [90.0; 3]
+        && matches!(cryst.space_group.as_str(), "" | "P 1")
 }
 
 fn build_frame(
@@ -721,16 +732,15 @@ impl<W: Write> PdbWriter<W> {
 /// orientation every molrs reader and LAMMPS's restricted triclinic box use.
 /// A box rotated away from it is written with its own lengths and angles, and
 /// read back in that standard orientation.
+///
+/// A frame without a box gets no `CRYST1`, as OpenMM's `PDBFile` writes
+/// none: any cell line would read back as a box (OpenMM takes even PDB's
+/// `1 1 1` placeholder as a 1 Å cell).
 fn write_cryst1<W: Write>(writer: &mut W, frame: &impl FrameAccess) -> std::io::Result<()> {
-    // Always emit CRYST1: PDB readers and OpenMM decks expect a cell line even
-    // when the frame has no simbox, which is written as a unit cube.
-    let (lengths, angles) = match frame.simbox_ref() {
-        Some(simbox) => {
-            let (l, a) = (simbox.lengths(), simbox.angles());
-            ([l[0], l[1], l[2]], [a[0], a[1], a[2]])
-        }
-        None => ([1.0; 3], [90.0; 3]),
+    let Some(simbox) = frame.simbox_ref() else {
+        return Ok(());
     };
+    let (lengths, angles) = (simbox.lengths(), simbox.angles());
     writeln!(
         writer,
         "CRYST1{:9.3}{:9.3}{:9.3}{:7.2}{:7.2}{:7.2} {:<11}{:>4}",
@@ -1031,6 +1041,9 @@ pub fn read_pdb_trajectory<P: AsRef<Path>>(path: P) -> std::io::Result<Vec<Frame
 }
 
 /// Write one frame as a PDB file (`REMARK`, `CRYST1`, `ATOM`/`CONECT`, `END`).
+///
+/// `CRYST1` states the frame's box, and is not written for a frame without
+/// one, which then reads back without a box.
 ///
 /// The atoms' `name`, `res_name`, `res_id`, `chain` and `icode` columns are
 /// written as given. Without `res_id`, each bonded molecule (a connected
@@ -1380,6 +1393,33 @@ mod tests {
                 .unwrap()
                 .approx_eq(frame.simbox.as_ref().unwrap(), 1e-9)
         );
+    }
+
+    /// A frame without a box is written without `CRYST1` (as OpenMM's
+    /// `PDBFile` writes one) and reads back without a box, in one frame and
+    /// in a trajectory. PDB's own placeholder for a structure without a cell
+    /// — the unit cube `1 1 1 90 90 90 P 1 1`, which molrs wrote before —
+    /// states no box either.
+    #[test]
+    fn a_frame_without_a_box_has_no_cryst1_and_reads_back_without_one() {
+        let mut frame = read_pdb_str(TRICLINIC_PDB).unwrap();
+        frame.simbox = None;
+        let text = write_pdb_str(&frame).unwrap();
+        assert!(!text.contains("CRYST1"), "{text}");
+        assert!(read_pdb_str(&text).unwrap().simbox.is_none());
+
+        let mut out = Vec::new();
+        write_trajectory_to(&mut out, &[frame.clone(), frame.clone()]).unwrap();
+        let text = String::from_utf8(out).unwrap();
+        assert!(!text.contains("CRYST1"), "{text}");
+
+        let unit = TRICLINIC_PDB.replace(
+            "   10.000   11.000   12.000  70.00  80.00  65.00",
+            "    1.000    1.000    1.000  90.00  90.00  90.00",
+        );
+        let back = read_pdb_str(&unit).unwrap();
+        assert!(back.simbox.is_none());
+        assert!(back.meta.get(keys::SPACE_GROUP).is_none());
     }
 
     /// Angles no cell has (they sum past 360°) are a malformed record, not an

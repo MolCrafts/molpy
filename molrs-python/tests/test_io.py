@@ -547,3 +547,11 @@ def test_read_pdb_builds_the_triclinic_cell_cryst1_states():
     assert "70.00  80.00  65.00" in molrs.io.write_pdb_str(frame)
     back = molrs.io.read_pdb_str(molrs.io.write_pdb_str(frame))
     assert back.box.approx_eq(frame.box, 1e-9)
+
+
+def test_a_frame_without_a_box_writes_no_cryst1_and_reads_back_without_one():
+    frame = molrs.io.read_pdb_str(TRICLINIC_PDB)
+    frame.box = None
+    text = molrs.io.write_pdb_str(frame)
+    assert "CRYST1" not in text
+    assert molrs.io.read_pdb_str(text).box is None
