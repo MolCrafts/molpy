@@ -97,7 +97,7 @@ a binary is optional:
 | `LammpsEngine` | control script + data/ff you already wrote | `lmp` / `lmp_serial` / `lmp_mpi` on `PATH` |
 | `GromacsEngine` | `.gro`, `.top`, `.mdp` | `gmx` on `PATH` |
 | `Cp2kEngine` | CP2K input | `cp2k.psmp` on `PATH` |
-| `OpenmmEngine` | PDB + XML + `simulate.py` | Python with `openmm` importable for `run` / `serialize_system` |
+| `OpenmmEngine` | PDB + XML + `simulate.py` | Python with `openmm` importable, for `run` |
 
 Each binary, its environment and launcher are `[engine.<name>]` settings in
 molpy's configuration ([Configure and Log a Run](../user-guide/14_configure_and_log.md)).

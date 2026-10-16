@@ -3,8 +3,7 @@
 Generates OpenMM input files (PDB + XML force field + Python simulation
 script) from :class:`~molpy.Frame` and
 :class:`~molpy.ff.forcefield.ForceField` objects.  OpenMM itself is **not**
-required for input generation; it is only needed for
-:meth:`~OpenmmEngine.serialize_system`.
+required for input generation; it is only needed to run the script.
 
 Two usage modes are supported:
 
@@ -36,7 +35,7 @@ import dataclasses
 import json
 import subprocess
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, Literal, get_args
 
 from molpy.engine._engine import Engine
 
@@ -45,6 +44,12 @@ if TYPE_CHECKING:
     from molrs.ff.forcefield import ForceField
 
 PathLike = str | Path
+
+Ensemble = Literal["NVT", "NPT", "NVE", "minimize"]
+NonbondedMethod = Literal[
+    "NoCutoff", "CutoffNonPeriodic", "CutoffPeriodic", "PME", "Ewald"
+]
+Constraints = Literal["None", "HBonds", "AllBonds", "HAngles"]
 
 
 # ---------------------------------------------------------------------------
@@ -60,42 +65,50 @@ class OpenmmSimulationConfig:
     round-trips through JSON via :meth:`to_json` / :meth:`from_json`.
 
     Attributes:
-        ensemble: Simulation ensemble — ``"NVT"``, ``"NPT"``, ``"NVE"``, or
-            ``"minimize"``.
-        temperature: Temperature in Kelvin.
+        ensemble: Simulation ensemble (case-sensitive). ``"NVT"`` and
+            ``"NPT"`` use a ``LangevinMiddleIntegrator`` (NPT adds a
+            ``MonteCarloBarostat``); ``"NVE"`` uses a ``VerletIntegrator``
+            and starts from velocities drawn at *temperature*;
+            ``"minimize"`` only minimises the energy and writes the
+            minimised coordinates to *output_pdb*.
+        temperature: Temperature in Kelvin (the thermostat's, or NVE's
+            initial velocities').
         pressure: Pressure in bar (NPT only).
         timestep_fs: Integration timestep in femtoseconds.
         n_steps: Number of MD steps.
-        nonbonded_method: Nonbonded treatment.  Must be a valid
-            ``openmm.app`` attribute name (``"NoCutoff"``,
-            ``"CutoffNonPeriodic"``, ``"CutoffPeriodic"``, ``"PME"``,
-            ``"EWALD"``).
+        nonbonded_method: Nonbonded treatment, by its ``openmm.app`` name:
+            ``"NoCutoff"``, ``"CutoffNonPeriodic"``, ``"CutoffPeriodic"``,
+            ``"PME"`` or ``"Ewald"``.
         nonbonded_cutoff_nm: Nonbonded cutoff radius in nanometres.
-        constraints: Constraint scheme — a valid ``openmm.app`` attribute
-            name or ``"None"`` for no constraints.
-        friction_per_ps: Langevin friction coefficient in ps⁻¹.
+        constraints: Constraint scheme — ``"HBonds"``, ``"AllBonds"``,
+            ``"HAngles"``, or the string ``"None"`` for no constraints.
+        friction_per_ps: Langevin friction coefficient in ps⁻¹ (NVT, NPT).
         dcd_reporter_interval: Steps between DCD trajectory frames.
         state_reporter_interval: Steps between log lines.
         checkpoint_interval: Steps between checkpoint saves.
         output_dcd: Filename for the DCD trajectory.
         output_log: Filename for the state-data log.
         output_chk: Filename for checkpoint files.
+        output_pdb: Filename for the minimised coordinates (``"minimize"``).
         minimize_tolerance: Energy minimisation tolerance in kJ mol⁻¹ nm⁻¹.
         minimize_max_iterations: Maximum minimisation iterations.
         barostat_frequency: MC barostat move frequency in steps (NPT only).
         platform: OpenMM platform name (``"CUDA"``, ``"OpenCL"``, ``"CPU"``).
+
+    Raises:
+        ValueError: If *ensemble*, *nonbonded_method* or *constraints* is not
+            one of the values listed above (also from :meth:`from_dict` and
+            :meth:`from_json`).
     """
 
-    ensemble: Literal["NVT", "NPT", "NVE", "minimize"] = "NVT"
+    ensemble: Ensemble = "NVT"
     temperature: float = 300.0
     pressure: float = 1.0
     timestep_fs: float = 2.0
     n_steps: int = 500_000
-    nonbonded_method: Literal[
-        "NoCutoff", "CutoffNonPeriodic", "CutoffPeriodic", "PME", "EWALD"
-    ] = "PME"
+    nonbonded_method: NonbondedMethod = "PME"
     nonbonded_cutoff_nm: float = 1.0
-    constraints: Literal["None", "HBonds", "AllBonds", "HAngles"] = "HBonds"
+    constraints: Constraints = "HBonds"
     friction_per_ps: float = 1.0
     dcd_reporter_interval: int = 1000
     state_reporter_interval: int = 1000
@@ -103,10 +116,23 @@ class OpenmmSimulationConfig:
     output_dcd: str = "trajectory.dcd"
     output_log: str = "simulation.log"
     output_chk: str = "checkpoint.chk"
+    output_pdb: str = "minimized.pdb"
     minimize_tolerance: float = 10.0
     minimize_max_iterations: int = 1000
     barostat_frequency: int = 25
     platform: str = "CUDA"
+
+    def __post_init__(self) -> None:
+        for field, choices in (
+            ("ensemble", get_args(Ensemble)),
+            ("nonbonded_method", get_args(NonbondedMethod)),
+            ("constraints", get_args(Constraints)),
+        ):
+            value = getattr(self, field)
+            if value not in choices:
+                raise ValueError(
+                    f"{field} must be one of {list(choices)}, got {value!r}."
+                )
 
     # ------------------------------------------------------------------
     # Serialisation helpers
@@ -129,6 +155,9 @@ class OpenmmSimulationConfig:
 
         Returns:
             New :class:`OpenmmSimulationConfig` instance.
+
+        Raises:
+            ValueError: If a choice field holds an unknown value.
         """
         return cls(**data)
 
@@ -157,6 +186,7 @@ class OpenmmSimulationConfig:
 
         Raises:
             FileNotFoundError: If *path* does not exist.
+            ValueError: If a choice field holds an unknown value.
         """
         return cls(**json.loads(Path(path).read_text(encoding="utf-8")))
 
@@ -172,7 +202,7 @@ class OpenmmEngine(Engine):
     Generates a complete set of OpenMM input files from MolPy
     :class:`~molpy.Frame` and :class:`~molpy.ff.forcefield.ForceField`
     objects.  OpenMM itself is **not** required for input generation; it is
-    only needed for :meth:`serialize_system`.
+    only needed to run the generated script.
 
     The generated Python script can be executed directly::
 
@@ -296,97 +326,6 @@ class OpenmmEngine(Engine):
         )
         return paths
 
-    def serialize_system(
-        self,
-        frame: "Frame",
-        forcefield: "ForceField",
-        config: OpenmmSimulationConfig,
-        output_dir: PathLike,
-        *,
-        pdb_filename: str = "system.pdb",
-        ff_filename: str = "forcefield.xml",
-        script_filename: str = "simulate.py",
-        system_xml_filename: str = "system.xml",
-        integrator_xml_filename: str = "integrator.xml",
-    ) -> dict[str, Path]:
-        """Generate inputs and serialise the OpenMM System + Integrator to XML.
-
-        Calls :meth:`generate_inputs` first, then builds OpenMM objects from
-        those files and serialises them with ``openmm.XmlSerializer``.  The
-        resulting ``system.xml`` and ``integrator.xml`` files can be loaded
-        back without re-parsing the force field.
-
-        Args:
-            frame: :class:`~molpy.Frame` with atom positions.
-            forcefield: A :class:`~molpy.ff.forcefield.ForceField`.
-            config: Simulation parameters.
-            output_dir: Output directory.
-            pdb_filename: PDB coordinate file name.
-            ff_filename: XML force field file name.
-            script_filename: Python simulation script name.
-            system_xml_filename: Serialised ``System`` XML file name.
-            integrator_xml_filename: Serialised ``Integrator`` XML file name.
-
-        Returns:
-            Dictionary extending :meth:`generate_inputs` output with keys
-            ``"system_xml"`` and ``"integrator_xml"``.
-
-        Raises:
-            ImportError: If OpenMM is not installed.
-        """
-        try:
-            import openmm.app as app
-            import openmm.unit as unit
-            from openmm import LangevinMiddleIntegrator, XmlSerializer
-        except ImportError as exc:
-            raise ImportError(
-                "OpenMM is required for serialize_system(). "
-                "Install it with: conda install -c conda-forge openmm"
-            ) from exc
-
-        out = Path(output_dir)
-        paths = self.generate_inputs(
-            frame,
-            forcefield,
-            config,
-            output_dir,
-            pdb_filename=pdb_filename,
-            ff_filename=ff_filename,
-            script_filename=script_filename,
-        )
-
-        pdb = app.PDBFile(str(paths["pdb"]))
-        omm_ff = app.ForceField(str(paths["forcefield"]))
-        nonbonded_method = getattr(app, config.nonbonded_method)
-        constraints = (
-            None if config.constraints == "None" else getattr(app, config.constraints)
-        )
-
-        system = omm_ff.createSystem(
-            pdb.topology,
-            nonbondedMethod=nonbonded_method,
-            nonbondedCutoff=config.nonbonded_cutoff_nm * unit.nanometer,
-            constraints=constraints,
-        )
-        integrator = LangevinMiddleIntegrator(
-            config.temperature * unit.kelvin,
-            config.friction_per_ps / unit.picosecond,
-            config.timestep_fs * unit.femtoseconds,
-        )
-
-        system_xml_path = out / system_xml_filename
-        integrator_xml_path = out / integrator_xml_filename
-        system_xml_path.write_text(XmlSerializer.serialize(system), encoding="utf-8")
-        integrator_xml_path.write_text(
-            XmlSerializer.serialize(integrator), encoding="utf-8"
-        )
-
-        return {
-            **paths,
-            "system_xml": system_xml_path,
-            "integrator_xml": integrator_xml_path,
-        }
-
     # ------------------------------------------------------------------
     # Private script rendering
     # ------------------------------------------------------------------
@@ -400,9 +339,11 @@ class OpenmmEngine(Engine):
     ) -> str:
         """Render a self-contained Python simulation script.
 
-        Dispatches to the ensemble-specific renderer.  Uses f-strings for
-        value substitution so that OpenMM unit expressions such as
-        ``300*unit.kelvin`` are never misinterpreted as format tokens.
+        The setup (imports, ``system``, the NPT barostat, the integrator and
+        the ``Simulation``) is followed by the run: a minimisation that
+        writes its coordinates, or a minimisation then the MD steps. Uses
+        f-strings for value substitution so that OpenMM unit expressions such
+        as ``300*unit.kelvin`` are never misinterpreted as format tokens.
 
         Args:
             config: Simulation parameters.
@@ -412,11 +353,19 @@ class OpenmmEngine(Engine):
         Returns:
             Complete Python script as a string.
         """
-        if config.ensemble == "minimize":
-            return self._render_minimize_script(config, pdb_filename, ff_filename)
-        if config.ensemble == "NPT":
-            return self._render_npt_script(config, pdb_filename, ff_filename)
-        return self._render_nvt_script(config, pdb_filename, ff_filename)
+        run = (
+            self._minimize_run(config)
+            if config.ensemble == "minimize"
+            else self._md_run(config)
+        )
+        return (
+            self._import_block(config)
+            + self._system_setup(config, pdb_filename, ff_filename)
+            + self._barostat(config)
+            + self._integrator(config)
+            + self._simulation(config)
+            + run
+        )
 
     @staticmethod
     def _import_block(config: OpenmmSimulationConfig) -> str:
@@ -437,11 +386,9 @@ class OpenmmEngine(Engine):
             f"{constraints_import}"
             ")\n"
             "from openmm import (\n"
-            "    LangevinMiddleIntegrator,\n"
             "    Platform,\n"
             "    unit,\n"
             ")\n"
-            "import sys\n"
         )
 
     @staticmethod
@@ -449,28 +396,53 @@ class OpenmmEngine(Engine):
         config: OpenmmSimulationConfig, pdb_filename: str, ff_filename: str
     ) -> str:
         """Render PDB loading and system creation lines."""
-        constraints_arg = "None" if config.constraints == "None" else config.constraints
         return (
-            f'\npdb = PDBFile("{pdb_filename}")\n'
-            f'ff  = ForceField("{ff_filename}")\n'
+            f"\npdb = PDBFile({pdb_filename!r})\n"
+            f"ff  = ForceField({ff_filename!r})\n"
             "system = ff.createSystem(\n"
             "    pdb.topology,\n"
             f"    nonbondedMethod={config.nonbonded_method},\n"
             f"    nonbondedCutoff={config.nonbonded_cutoff_nm}*unit.nanometer,\n"
-            f"    constraints={constraints_arg},\n"
+            f"    constraints={config.constraints},\n"
             ")\n"
         )
 
     @staticmethod
-    def _integrator_and_simulation(config: OpenmmSimulationConfig) -> str:
-        """Render integrator construction and Simulation setup lines."""
+    def _barostat(config: OpenmmSimulationConfig) -> str:
+        """Render the NPT Monte Carlo barostat; other ensembles have none."""
+        if config.ensemble != "NPT":
+            return ""
         return (
-            f"integrator = LangevinMiddleIntegrator(\n"
+            "from openmm import MonteCarloBarostat\n"
+            "system.addForce(MonteCarloBarostat(\n"
+            f"    {config.pressure}*unit.bar,\n"
+            f"    {config.temperature}*unit.kelvin,\n"
+            f"    {config.barostat_frequency},\n"
+            "))\n"
+        )
+
+    @staticmethod
+    def _integrator(config: OpenmmSimulationConfig) -> str:
+        """Render the integrator: Verlet for NVE, Langevin otherwise."""
+        if config.ensemble == "NVE":
+            return (
+                "from openmm import VerletIntegrator\n"
+                f"integrator = VerletIntegrator({config.timestep_fs}*unit.femtoseconds)\n"
+            )
+        return (
+            "from openmm import LangevinMiddleIntegrator\n"
+            "integrator = LangevinMiddleIntegrator(\n"
             f"    {config.temperature}*unit.kelvin,\n"
             f"    {config.friction_per_ps}/unit.picosecond,\n"
             f"    {config.timestep_fs}*unit.femtoseconds,\n"
             ")\n"
-            f'platform = Platform.getPlatformByName("{config.platform}")\n'
+        )
+
+    @staticmethod
+    def _simulation(config: OpenmmSimulationConfig) -> str:
+        """Render the Simulation on the configured platform."""
+        return (
+            f"platform = Platform.getPlatformByName({config.platform!r})\n"
             "simulation = Simulation(pdb.topology, system, integrator, platform)\n"
             "simulation.context.setPositions(pdb.positions)\n"
         )
@@ -479,79 +451,50 @@ class OpenmmEngine(Engine):
     def _reporters(config: OpenmmSimulationConfig) -> str:
         """Render reporter registration lines."""
         return (
-            f'simulation.reporters.append(DCDReporter("{config.output_dcd}", {config.dcd_reporter_interval}))\n'
+            f"simulation.reporters.append(DCDReporter({config.output_dcd!r}, {config.dcd_reporter_interval}))\n"
             "simulation.reporters.append(StateDataReporter(\n"
-            f'    "{config.output_log}", {config.state_reporter_interval},\n'
+            f"    {config.output_log!r}, {config.state_reporter_interval},\n"
             "    step=True, potentialEnergy=True, temperature=True, speed=True,\n"
             "))\n"
-            f'simulation.reporters.append(CheckpointReporter("{config.output_chk}", {config.checkpoint_interval}))\n'
+            f"simulation.reporters.append(CheckpointReporter({config.output_chk!r}, {config.checkpoint_interval}))\n"
         )
 
-    def _render_nvt_script(
-        self,
-        config: OpenmmSimulationConfig,
-        pdb_filename: str,
-        ff_filename: str,
-    ) -> str:
-        """Render a Langevin NVT (or NVE) simulation script."""
-        parts = [
-            self._import_block(config),
-            self._system_setup(config, pdb_filename, ff_filename),
-            self._integrator_and_simulation(config),
-            "\nprint('Minimising energy...')\n",
-            "simulation.minimizeEnergy()\n\n",
-            self._reporters(config),
-            f"\nprint('Running NVT for {config.n_steps} steps...')\n",
-            f"simulation.step({config.n_steps})\n",
-            "print('Done.')\n",
-        ]
-        return "".join(parts)
-
-    def _render_npt_script(
-        self,
-        config: OpenmmSimulationConfig,
-        pdb_filename: str,
-        ff_filename: str,
-    ) -> str:
-        """Render an NPT simulation script with a Monte Carlo barostat."""
-        barostat_block = (
-            "from openmm import MonteCarloBarostat\n"
-            "system.addForce(MonteCarloBarostat(\n"
-            f"    {config.pressure}*unit.bar,\n"
-            f"    {config.temperature}*unit.kelvin,\n"
-            f"    {config.barostat_frequency},\n"
-            "))\n"
+    def _md_run(self, config: OpenmmSimulationConfig) -> str:
+        """Render minimisation, reporters and the MD steps (NVT, NPT, NVE)."""
+        # Verlet has no thermostat to heat the system, so NVE starts from
+        # velocities at the requested temperature rather than from rest.
+        velocities = (
+            "simulation.context.setVelocitiesToTemperature("
+            f"{config.temperature}*unit.kelvin)\n"
+            if config.ensemble == "NVE"
+            else ""
         )
-        parts = [
-            self._import_block(config),
-            self._system_setup(config, pdb_filename, ff_filename),
-            barostat_block,
-            self._integrator_and_simulation(config),
-            "\nprint('Minimising energy...')\n",
-            "simulation.minimizeEnergy()\n\n",
-            self._reporters(config),
-            f"\nprint('Running NPT for {config.n_steps} steps...')\n",
-            f"simulation.step({config.n_steps})\n",
-            "print('Done.')\n",
-        ]
-        return "".join(parts)
+        return "".join(
+            [
+                "\nprint('Minimising energy...')\n",
+                "simulation.minimizeEnergy()\n",
+                velocities,
+                "\n",
+                self._reporters(config),
+                f"\nprint('Running {config.ensemble} for {config.n_steps} steps...')\n",
+                f"simulation.step({config.n_steps})\n",
+                "print('Done.')\n",
+            ]
+        )
 
-    def _render_minimize_script(
-        self,
-        config: OpenmmSimulationConfig,
-        pdb_filename: str,
-        ff_filename: str,
-    ) -> str:
-        """Render an energy-minimisation-only script."""
-        parts = [
-            self._import_block(config),
-            self._system_setup(config, pdb_filename, ff_filename),
-            self._integrator_and_simulation(config),
-            "\nprint('Minimising energy...')\n",
-            "simulation.minimizeEnergy(\n",
-            f"    tolerance={config.minimize_tolerance}*unit.kilojoule/unit.mole/unit.nanometer,\n",
-            f"    maxIterations={config.minimize_max_iterations},\n",
-            ")\n",
-            "print('Done.')\n",
-        ]
-        return "".join(parts)
+    @staticmethod
+    def _minimize_run(config: OpenmmSimulationConfig) -> str:
+        """Render the minimisation and the write of its coordinates."""
+        return "".join(
+            [
+                "\nprint('Minimising energy...')\n",
+                "simulation.minimizeEnergy(\n",
+                f"    tolerance={config.minimize_tolerance}*unit.kilojoule/unit.mole/unit.nanometer,\n",
+                f"    maxIterations={config.minimize_max_iterations},\n",
+                ")\n",
+                "state = simulation.context.getState(getPositions=True)\n",
+                f"with open({config.output_pdb!r}, 'w') as handle:\n",
+                "    PDBFile.writeFile(simulation.topology, state.getPositions(), handle)\n",
+                "print('Done.')\n",
+            ]
+        )
