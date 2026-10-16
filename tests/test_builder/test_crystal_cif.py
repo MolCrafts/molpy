@@ -51,7 +51,7 @@ def _cell_matrix(a, b, c, alpha, beta, gamma) -> np.ndarray:
 
 def _write(tmp_path: Path, text: str) -> Path:
     path = tmp_path / "structure.cif"
-    path.write_text(text)
+    path.write_text(text, encoding="utf-8")
     return path
 
 

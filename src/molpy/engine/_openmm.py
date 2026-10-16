@@ -525,7 +525,7 @@ class OpenmmEngine(Engine):
                 f"    maxIterations={config.minimize_max_iterations},\n",
                 ")\n",
                 "state = simulation.context.getState(getPositions=True)\n",
-                f"with open({config.output_pdb!r}, 'w') as handle:\n",
+                f"with open({config.output_pdb!r}, 'w', encoding='utf-8') as handle:\n",
                 "    PDBFile.writeFile(simulation.topology, state.getPositions(), handle)\n",
                 "print('Done.')\n",
             ]
