@@ -194,7 +194,7 @@ oligomer, cuts = pieces.oligomer(seed=42)  # CH3O(CH2CH2O)3CH3 and its head/chai
 
 sites = mp.io.cgsmiles.CgSmilesIr("{[#PEO]|10}").to_coarsegrain()  # head, 8 x chain, tail
 built = mp.builder.AmberPolymerBuilder(
-    {"PEO": oligomer}, {"PEO": cuts}, force_field="gaff2"
+    {"PEO": oligomer}, {"PEO": cuts}, parameter_set="gaff2"
 ).assemble(sites)
 peo = built.chain  # CH3-(OCH2CH2)10-OCH3: typed graph, 79 atoms
 ff = built.forcefield  # units real, AMBER 1-4 scaling declared

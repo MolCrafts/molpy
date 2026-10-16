@@ -28,7 +28,7 @@ are private.
 | `Lattice` / `Site` / `SpaceGroup` | `Lattice(box, basis)`: a `mp.Box` unit cell (lattice vectors are the columns of `box.h`) plus basis sites in fractional coordinates; `Lattice.from_cif(frame)` expands a CIF's asymmetric unit by the operators `read_cif` keeps; `.build(region, repeats=...)` tiles it | Crystals |
 | `mp.core.Cuboid` / `mp.core.Sphere` / `mp.core.HalfSpace` / `mp.core.Region` | Native geometric regions with `mask(block)`, on the molpy root | Selecting a volume, clipping a crystal |
 | `DrudeBuilder` / `Tip4pBuilder` / `VirtualSiteBuilder` | Virtual-site augmentation (Drude parameters from `mp.ff.params.clpol_polarizability`) | Polarizable / 4-site models |
-| `AmberPolymerBuilder` | `AmberPolymerBuilder(library, cuts, force_field="gaff").assemble(sites)` → `AmberBuildResult` (`chain`, `forcefield`, prmtop / inpcrd paths): antechamber + parmchk2 on each oligomer, prepgen per residue, tleap `sequence` over a linear site graph; needs AmberTools | GAFF / GAFF2 polymer chains |
+| `AmberPolymerBuilder` | `AmberPolymerBuilder(library, cuts, parameter_set="gaff2").assemble(sites)` → `AmberBuildResult` (`chain`, `forcefield`, prmtop / inpcrd paths): antechamber (once, `-fo ac`) + parmchk2 on each oligomer, prepgen per residue, tleap `sequence` over a linear site graph; needs AmberTools | GAFF / GAFF2 polymer chains |
 | `AmberCut` | One prepgen residue: `omit`, `head` / `tail` connection atoms, `pre_head` / `post_tail` (or `*_type`), `charge` | Cutting an oligomer you built |
 | `AmberPieces` | `AmberPieces(head, repeat, tail).oligomer()` → the embedded oligomer and its head / chain / tail cuts, from three SMILES | Writing the oligomer and cuts from SMILES |
 

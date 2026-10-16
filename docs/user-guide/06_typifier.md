@@ -188,6 +188,35 @@ atom types: ['opls_180', 'opls_181', 'opls_182', 'opls_185']
 ```
 
 
+## GAFF and GAFF2 are typed natively
+
+GAFF needs no external program either. `AtdTypifier` stamps antechamber's atom types (its `ATOMTYPE_*.DEF` rules), then `GaffTypifier` assigns the bonds, angles, dihedrals and impropers from the gaff / gaff2 tables, estimating a missing term as parmchk2 would. Both take `parameter_set` (`"gaff"` or `"gaff2"`), and it has no default: name the same set for every molecule of one system, since the two generations share type names. GAFF defines no charges, so a charge model sets them between the two steps — Gasteiger here.
+
+
+```python
+from molpy.ff.charge import GasteigerModel
+from molpy.ff.typifier import AtdTypifier, GaffTypifier
+
+labelled = AtdTypifier(parameter_set="gaff2").typify(mol)  # GAFF2 atom types
+charges = GasteigerModel().assign(labelled)
+for atom, charge in zip(labelled.atoms, charges):
+    atom["charge"] = float(charge)
+
+gaff = GaffTypifier(parameter_set="gaff2")
+gaff_mol = gaff.typify(labelled)  # bonded terms from gaff2.dat
+gaff_ff = gaff.forcefield()  # the parameters of the assigned types
+print([atom["type"] for atom in gaff_mol.atoms])
+print(sorted({bond["type"] for bond in gaff_mol.bonds}))
+```
+
+```text
+['c3', 'c3', 'oh', 'hc', 'hc', 'hc', 'h1', 'h1', 'ho']
+['c3-c3', 'c3-h1', 'c3-hc', 'c3-oh', 'ho-oh']
+```
+
+
+AM1-BCC charges are the one thing this route cannot make: `mp.ff.charge.BccModel` corrects AM1 charges, and those come from a quantum-chemistry run (sqm). For AM1-BCC charges, and for a molecule that is merged with an `AmberPolymerBuilder` chain (whose parameters are the installed AmberTools', read from tleap's prmtop), use the AmberTools route, `mp.ff.typifier.AntechamberTypifier` — see [AmberTools Integration](13_ambertools_integration.md). It takes the same required `parameter_set`.
+
 ## When standard force fields are not enough
 
 Standard OPLS-AA covers common organic functional groups. Specialized molecules — ionic liquids (TFSI), metal complexes, reactive intermediates — often need custom force field parameters. In those cases:
@@ -195,6 +224,6 @@ Standard OPLS-AA covers common organic functional groups. Specialized molecules 
 1. Use a specialized OPLS-style force field XML that includes the required SMARTS patterns and types (`OplsAaTypifier(source="custom.xml")`)
 2. Or drop to the [Force Field](../tutorials/04_force_field.md) layer and define types manually
 
-The typifier itself is agnostic to the force field content. It only needs SMARTS patterns and type definitions in the XML. If those are present, it will match them. For GAFF / GAFF2 there is the native `mp.ff.typifier.AtdTypifier` (atom types only) and the AmberTools route.
+The typifier itself is agnostic to the force field content. It only needs SMARTS patterns and type definitions in the XML. If those are present, it will match them. GAFF / GAFF2 has its own native typifiers, shown above.
 
 See also: [Force Field](../tutorials/04_force_field.md), [Assembly](02_assembly.md).

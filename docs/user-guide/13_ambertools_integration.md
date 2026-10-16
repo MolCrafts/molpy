@@ -31,6 +31,17 @@ Type TFSI with antechamber, build GAFF PEO chains from one antechamber-typed oli
 
 ## Workflow overview
 
+GAFF / GAFF2 types and bonded terms alone need no AmberTools: the native
+`AtdTypifier` and `GaffTypifier` assign them (see
+[Force Field Typification](06_typifier.md)). This workflow uses AmberTools for
+what they cannot do. TFSI gets AM1-BCC charges, which need sqm's AM1 charges
+(`mp.ff.charge.BccModel` only corrects them). The PEO chain is cut by prepgen
+and joined by tleap. TFSI is parameterised by the same tleap, so the types
+the two share carry the same parameters when the force fields are merged.
+Every AmberTools entry point takes `parameter_set` (`"gaff"` or `"gaff2"`, as
+molrs names it); it has no default, so name the same set for every
+component.
+
 `AntechamberTypifier` types a complete molecule: antechamber (GAFF types, BCC charges) → parmchk2 → tleap. A polymer is not that molecule. You build one oligomer in which the head, chain and tail monomers are already bonded, and you say how prepgen cuts it (`AmberCut`: the atoms each residue omits, and the atom across each junction). `AmberPolymerBuilder` then runs antechamber and parmchk2 on that oligomer, prepgen for each cut, and tleap `sequence`. `TleapTypifier` is only for a finished molecule that already carries types and charges; a graph that still has ports is refused. Li⁺ gets a force field you define. The three force fields are merged, molpack places the molecules at the target density, and the system is exported to LAMMPS.
 
 ## Antechamber assigns GAFF2 types and BCC charges to TFSI
@@ -57,7 +68,7 @@ from molpy.config import load_config
 
 config = load_config()  # defaults, then ~/.molcrafts/molpy/config/config.toml, then ./molpy.toml
 tfsi_ante = mp.ff.typifier.AntechamberTypifier(
-    atom_type="gaff2",
+    parameter_set="gaff2",
     charge_method="bcc",
     work_dir=output_dir / "tfsi",
     config=config,
@@ -126,7 +137,7 @@ sites = mp.io.cgsmiles.CgSmilesIr("{[#PEO]|10}").to_coarsegrain()
 built = mp.builder.AmberPolymerBuilder(
     {"PEO": oligomer},
     {"PEO": peo_cuts},
-    force_field="gaff2",
+    parameter_set="gaff2",
     charge_method="bcc",
     work_dir=output_dir / "peo",
     config=config,
@@ -136,14 +147,17 @@ peo_ff = built.forcefield  # units real, AMBER 1-4 scaling declared
 print(f"PEO 10-mer: {peo.n_atoms} atoms")  # 79
 ```
 
-antechamber and parmchk2 run on the oligomer, once, under
+antechamber runs on the oligomer once (`-fo ac`: types and charges from one
+sqm run), and parmchk2 and prepgen read its ac file, under
 `work_dir/monomers/<label>/`. They are not run on the assembled chain.
 Junction terms come from `leaprc.gaff2`. PEO and TFSI use the same
 GAFF generation, so their shared types (`c3`, `os`, …) agree when the force
 fields are merged. A later `assemble` reuses what is
 in `work_dir`: antechamber reruns only when the oligomer or the charge
 settings change, prepgen when a cut changes, and tleap when the sequence or
-a file it loads changes.
+a file it loads changes. A step that runs deletes its old outputs first, and
+the typifiers rerun every step in a directory keyed by the molecule and every
+setting, so a rerun never reads an earlier run's files.
 
 ### Cutting an oligomer you built yourself
 
@@ -173,9 +187,9 @@ gropob_cuts = {
 }
 ```
 
-An ac, mol2 and frcmod you put in `work_dir/monomers/<label>/` yourself (as
-`<label>.ac`, `<label>.mol2` and `<label>.frcmod`) are used as they are:
-only prepgen and tleap run.
+An ac and frcmod you put in `work_dir/monomers/<label>/` yourself (as
+`<label>.ac` and `<label>.frcmod`) are used as they are: only prepgen and
+tleap run.
 
 ## Merging three force fields before packing prevents type conflicts
 

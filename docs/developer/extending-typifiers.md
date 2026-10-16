@@ -103,13 +103,19 @@ rule-based force field belongs there too.
 A MolPy-side typifier is one that drives an external tool, as
 `AntechamberTypifier` and `TleapTypifier` in `molpy/ff/_ambertools.py`
 do: `assign` writes the graph for the tool, runs it through a `molpy.wrapper`
-wrapper, reads the result back and returns it as a `TypeAssignment`. Keep the rules
-explicit:
+wrapper, reads the result back and returns it as a `TypeAssignment`. The
+AmberTools steps, leap script and prmtop reader they run are the private
+`molpy._ambertools` package, shared with `AmberPolymerBuilder`; another
+AmberTools caller uses it rather than a copy. Keep the rules explicit:
 
 - Keep atom order: the tool's row *i* is graph atom *i*, and bonded terms are
   matched by their endpoint rows — raise when the two disagree.
 - Raise when the tool is missing, fails, or leaves its output unwritten, with
   the tool's stderr in the message.
+- Never read an earlier run's output: delete each step's output before the
+  step runs, and key the work directory by the input and every setting that
+  reaches a tool.
+- Name the GAFF generation `parameter_set`, required, as molrs does.
 - Declare units and scaling in `source_forcefield()`, not by patching the output.
 
 ## Tests
