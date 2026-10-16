@@ -88,6 +88,8 @@ water4p = tip4p.apply(water)
 ```
 
 `d_om` is the oxygen-to-M-site distance in Å; the default, 0.1546 Å, is the TIP4P/2005 geometry.
+
+The M-site is recorded as a `virtual_sites` row (style `average3`), so its position stays defined by O and the two H. LAMMPS has no data-file form for such a site: `write_lammps_data` refuses a frame with `virtual_sites` rows. For LAMMPS, drop the M atoms, put the M charge back on O, and use a `*/tip4p/*` pair style, which places M implicitly.
 Pass `box=` (a `mp.Box`) for a periodic system: the O–H vectors are then
 minimum-image deltas, so a water split by the boundary still gets M on its
 bisector. Hydrogens are found through the bond adjacency of each oxygen.

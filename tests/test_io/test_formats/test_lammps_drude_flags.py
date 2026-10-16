@@ -8,7 +8,6 @@ comment.
 
 from pathlib import Path
 
-import pytest
 
 import molpy as mp
 from molpy.builder import DrudeBuilder
@@ -46,12 +45,6 @@ def test_data_writer_emits_fix_drude_flags(tmp_path, TEST_DATA_DIR):
     assert set(flags) <= {"C", "D", "N"}
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="molrs's LAMMPS data writer reads `drudes` rows for the fix-drude "
-    "flags only; it does not yet write the core-shell spring into `Bonds`, "
-    "which the DRUDE package needs",
-)
 def test_data_writer_writes_drude_springs_as_bonds(tmp_path, TEST_DATA_DIR):
     pol = _ntf2_polarized(TEST_DATA_DIR)
     frame = pol.to_frame()
