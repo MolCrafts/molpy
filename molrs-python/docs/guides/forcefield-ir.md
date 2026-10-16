@@ -937,13 +937,26 @@ estimate carries `estimated`, `estimate_penalty`, `estimate_method` and
   `cbaf`)·`WEIGHT_BA_CTR` at its vertex (caffeine's `c-cc-na` is
   `c2-cc-na` at 2.6).
 
+An estimate's numbers are the frcmod's, at the precision parmchk2 prints
+them (a bond's r₀ to three decimals: `ne-s6` copies `ne-sy`'s 1.6723 and
+prices 1.672), since that is what tleap reads.
+
+Every term is named by its types alone, as the prmtop reader names it: a
+bond, angle or torsion in the orientation that reads smaller, type by type
+(`c3-c3-oh-ho`, where `gaff.dat` writes `ho-oh-c3-c3`), its cosine terms
+numbered by periodicity, then phase; an improper in AMBER's order. An
+estimate is named the same way (`f-c3-sy`) and says what it is in its
+params. So the native force field of a molecule and the one
+`read_prmtop_forcefield` reads from tleap's prmtop of it merge
+(`ForceField.merge`) into one, type for type.
+
 parmchk2 searches the molecule in atom and bond order and reuses a name's
 first estimate (an improper estimate is itself a row later impropers can
 copy), so a name can be estimated differently in two molecules (aspirin's
 ester carbon takes `c3-o -c -oh`, ethyl acetate's the `X -X -c -o` amide
-term). An estimated term is therefore named with its analog and penalty,
-`<types>@<analog>_<penalty>` (`c3-o-c-os@c3.o.c.oh_8.5`; the improper
-default `@default_0.0`), so one output force field holds both.
+term). Typed into one output, the first keeps the name and each further
+estimate of it is `<types>@<n>` (`c3-o-c-os@2`), as the prmtop reader
+numbers a further term set on one quartet.
 
 **Which bond orders the types follow.** antechamber (its default `-j 4`)
 ignores the bond orders of its input: `bondtype -j full` judges new ones from

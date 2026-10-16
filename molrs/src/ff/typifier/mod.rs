@@ -199,6 +199,44 @@ fn endpoints_match(pattern: &[&str], atoms: &[&str], order: EndpointOrder) -> bo
     }
 }
 
+/// Whether `params` are an estimate's: they carry the provenance flag
+/// (`estimated`, [`Provenance::KEYS`]).
+fn is_estimate(params: &Params) -> bool {
+    params.get(Provenance::KEYS[0]).is_some()
+}
+
+/// The name an estimated type is defined under: `name` when neither the
+/// output style (`output`) nor this match (`batch`) defines `name` otherwise,
+/// else `<name>@<n>` for the first `n` from 2 that is free or holds this
+/// same definition.
+///
+/// An estimate depends on more than its types — parmchk2 searches a molecule
+/// in atom and bond order and reuses a name's first estimate — so two
+/// molecules can estimate one name differently, and one output holds both.
+/// The first keeps the name every other source gives the term; each further
+/// one is numbered, as the prmtop reader numbers a further distinct set of
+/// terms on one quartet. A name that already has a qualifier is kept (a
+/// differing definition is then the conflict it is).
+fn estimate_name(
+    output: Option<&Style>,
+    batch: &Style,
+    name: String,
+    endpoints: &[&str],
+    params: &Params,
+) -> String {
+    let free = |candidate: &str| {
+        output.is_none_or(|s| s.check_type(candidate, endpoints, params).is_ok())
+            && batch.check_type(candidate, endpoints, params).is_ok()
+    };
+    if free(&name) || name.contains('@') {
+        return name;
+    }
+    (2..)
+        .map(|n| format!("{name}@{n}"))
+        .find(|candidate| free(candidate))
+        .expect("some numbered name is free")
+}
+
 /// One graph element a [`TypeAssignment`] writes to.
 #[derive(Debug, Clone, Copy)]
 enum Element {
@@ -277,6 +315,11 @@ impl TypeAssignment {
     ///    relation kinds in the graph's registration order: bonds, angles,
     ///    dihedrals, impropers, then any kind registered later — then pair
     ///    rows). Phase 1 makes this infallible.
+    ///
+    /// An estimated type (its params carry the provenance flag `estimated`)
+    /// whose name the force field or the match already defines otherwise is
+    /// defined, and stamped, as `<name>@<n>` (`n` from 2): one name can be
+    /// estimated differently in two molecules.
     ///
     /// # Errors
     ///
@@ -394,6 +437,12 @@ impl TypeAssignment {
                             let target =
                                 Self::batch_style(&mut batch, forcefield, category, &style)?;
                             let e: Vec<&str> = endpoints.iter().map(String::as_str).collect();
+                            let name = if is_estimate(&params) {
+                                let output = forcefield.get_style(category, &style);
+                                estimate_name(output, target, name, &e, &params)
+                            } else {
+                                name
+                            };
                             target
                                 .def_type(&name, &e, params)
                                 .map_err(|e| format!("{}: {e}", stamp.label))?;
@@ -992,6 +1041,52 @@ mod tests {
         assert_eq!(b1.get("type"), Some(&PropValue::Str("C-O".into())));
         assert_eq!(b1.get("k"), Some(&PropValue::F64(320.0)));
         assert_eq!(b1.get("r0"), Some(&PropValue::F64(1.41)));
+    }
+
+    /// An estimate (params carrying `estimated`) of a name the output
+    /// already holds otherwise is defined and stamped as `<name>@2`, the
+    /// next as `@3`; the same estimate again is the name it was. A matched
+    /// type of a held name with other params is still a conflict.
+    #[test]
+    fn apply_to_numbers_a_name_estimated_otherwise() {
+        let estimate = |k: f64| {
+            let mut p = Params::from_pairs(&[("k", k), ("r0", 1.41)]);
+            Provenance::analogy(1.0, "C-N").apply_to(&mut p);
+            p
+        };
+        let bond = |params: Params| TypeAssignment {
+            links: links([(
+                "bonds",
+                vec![
+                    vec![],
+                    vec![ty("type", "harmonic", "C-O", &["C", "O"], params)],
+                ],
+            )]),
+            styles: vec![style("bond", "harmonic", Params::new())],
+            ..TypeAssignment::default()
+        };
+        let mut ff = ForceField::new("out");
+        for (k, name) in [
+            (320.0, "C-O"),
+            (330.0, "C-O@2"),
+            (320.0, "C-O"),
+            (340.0, "C-O@3"),
+            (330.0, "C-O@2"),
+        ] {
+            let mut g = chain3();
+            bond(estimate(k)).apply_to(&mut g, &mut ff).unwrap();
+            assert_eq!(
+                nth_bond_props(&g, 1).get("type"),
+                Some(&PropValue::Str(name.into())),
+                "k = {k}"
+            );
+        }
+        let names: Vec<_> = ff.get_bondtypes().iter().map(|t| t.name.clone()).collect();
+        assert_eq!(names, ["C-O", "C-O@2", "C-O@3"]);
+
+        let matched = bond(Params::from_pairs(&[("k", 350.0), ("r0", 1.41)]));
+        let err = matched.apply_to(&mut chain3(), &mut ff).unwrap_err();
+        assert!(err.contains("C-O"), "{err}");
     }
 
     /// Dihedral and improper vectors are positional against their own kind's
