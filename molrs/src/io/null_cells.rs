@@ -161,6 +161,12 @@ mod tests {
     /// with none of those columns, joined by `Frame::concat`: the
     /// methane's `id`, `name`, `res_name` and `res_id` cells are null.
     fn concat_of_unlike_parts() -> Frame {
+        concat_parts(false)
+    }
+
+    /// As [`concat_of_unlike_parts`]; with `type_ids`, the water also carries
+    /// numeric `type_id` columns (a prmtop's numbering) that the methane lacks.
+    fn concat_parts(type_ids: bool) -> Frame {
         let part = |elements: &[&str], types: &[&str], q: &[f64], bonds: &[[u64; 2]]| {
             let n = elements.len();
             let mut atoms = Block::new();
@@ -213,8 +219,39 @@ mod tests {
                 Array1::from_vec(vec![7 as molrs::op::Idx; 3]).into_dyn(),
             )
             .unwrap();
+        if type_ids {
+            let ids = |v: Vec<molrs::op::Idx>| Array1::from_vec(v).into_dyn();
+            water
+                .get_mut("atoms")
+                .unwrap()
+                .insert("type_id", ids(vec![1, 2, 2]))
+                .unwrap();
+            water
+                .get_mut("bonds")
+                .unwrap()
+                .insert("type_id", ids(vec![1, 1]))
+                .unwrap();
+        }
         let ch = part(&["C", "H"], &["CT", "HC"], &[-0.1, 0.1], &[[0, 1]]);
         Frame::concat([&water, &ch]).unwrap()
+    }
+
+    /// A `type_id` on one part only leaves null cells after the concat; the
+    /// string `type` wins over it, so the LAMMPS writer numbers the types from
+    /// the labels and does not refuse the stale numbering's gaps.
+    #[test]
+    fn a_partial_type_id_beside_string_types_is_not_refused() {
+        let mut frame = concat_parts(true);
+        assert_eq!(null_rows(&frame, "bonds", "type_id"), [2]);
+        let atoms = frame.get_mut("atoms").unwrap();
+        atoms.remove("id").unwrap();
+        let mol: Vec<molrs::op::Idx> = vec![1, 1, 1, 2, 2];
+        atoms
+            .insert("mol_id", Array1::from_vec(mol).into_dyn())
+            .unwrap();
+        let text = crate::io::write_lammps_data_str(&frame).unwrap();
+        assert!(text.contains("4 atom types"), "{text}");
+        assert!(text.contains("2 bond types"), "{text}");
     }
 
     /// LAMMPS: a null `id` is refused by column and rows, never written as

@@ -1548,27 +1548,19 @@ fn refuse_null_written_cells(
     frame: &impl FrameAccess,
     fields: &[DataField],
 ) -> std::io::Result<()> {
-    let mut atoms: Vec<&str> = fields.iter().map(|&f| field_column_key(f)).collect();
-    atoms.extend([
-        keys::TYPE,
-        keys::TYPE_ID,
-        keys::IX,
-        keys::IY,
-        keys::IZ,
-        keys::VX,
-        keys::VY,
-        keys::VZ,
-    ]);
+    // The type is checked by the column the writer actually reads.
+    let mut atoms: Vec<&str> = fields
+        .iter()
+        .filter(|&&f| f != DataField::Type)
+        .map(|&f| field_column_key(f))
+        .collect();
+    atoms.extend(written_type_keys(frame, "atoms").iter().copied());
+    atoms.extend([keys::IX, keys::IY, keys::IZ, keys::VX, keys::VY, keys::VZ]);
     // Without a `mass` column the masses are the elements'.
     if frame.column("atoms", keys::MASS).is_none() {
         atoms.push(keys::ELEMENT);
     }
     crate::io::null_cells::refuse_null_cells(frame, "atoms", &atoms)?;
-    let relation: Vec<&str> = keys::ENDPOINTS
-        .iter()
-        .copied()
-        .chain([keys::TYPE, keys::TYPE_ID])
-        .collect();
     for block in [
         "bonds",
         SPRINGS.0,
@@ -1577,9 +1569,30 @@ fn refuse_null_written_cells(
         "impropers",
         "cmaps",
     ] {
+        let relation: Vec<&str> = keys::ENDPOINTS
+            .iter()
+            .copied()
+            .chain(written_type_keys(frame, block).iter().copied())
+            .collect();
         crate::io::null_cells::refuse_null_cells(frame, block, &relation)?;
     }
     Ok(())
+}
+
+/// The type columns the writer reads for `block`. A string `type` wins over
+/// `type_id` (see `RowTypes`), so a numeric `type_id` beside it — a prmtop's
+/// own numbering on one part of a `Frame::concat` — is never written and its
+/// null cells are no reason to refuse.
+fn written_type_keys(frame: &impl FrameAccess, block: &str) -> &'static [&'static str] {
+    let labelled = frame
+        .column(block, keys::TYPE)
+        .and_then(|c| c.as_string())
+        .is_some();
+    if labelled {
+        &[keys::TYPE]
+    } else {
+        &[keys::TYPE, keys::TYPE_ID]
+    }
 }
 
 /// Per-row atom IDs: existing ``id`` column, else 1..N (file artifact).
