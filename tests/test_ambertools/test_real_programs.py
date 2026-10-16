@@ -15,12 +15,19 @@ They pin what the default routes rest on:
 * The AmberTools pipeline: tleap reads the double-quoted paths molpy writes,
   spaces and all, and the builder's one ``-fo ac`` antechamber run feeds
   parmchk2 (``-f ac``) and prepgen.
+* Native molecules in a builder system: a native GAFF force field (TFSI, a
+  glyme) merges with an :class:`molpy.builder.AmberPolymerBuilder` chain's
+  in either order, and the merged system's ``LammpsEngine`` deck minimises
+  in the real ``lmp`` and its GROMACS inputs pass ``grompp`` (each skipped
+  without its program). TFSI's deck is a strict xfail: molrs's LAMMPS and
+  GROMACS writers refuse the provenance of a ``GaffTypifier`` estimate.
 """
 
 from __future__ import annotations
 
 import os
 import shutil
+import subprocess
 from collections import Counter
 from pathlib import Path
 
@@ -31,6 +38,7 @@ import molpy as mp
 from molpy._ambertools import AmberSteps, input_mol2, net_formal_charge
 from molpy.config import load_config
 from molpy.core import Angle, Dihedral, Improper
+from molpy.engine import GromacsEngine, LammpsEngine
 from molpy.ff.charge import Am1BccModel, BccModel
 from molpy.ff.typifier import AntechamberTypifier, AtdTypifier, GaffTypifier
 
@@ -289,3 +297,213 @@ class TestPipeline:
         assert elements == Counter({"C": 10, "O": 5, "H": 22})
         assert Counter(frame["atoms"]["type"])["os"] == 5
         assert abs(float(sum(frame["atoms"]["charge"]))) <= 0.01
+
+
+# --- Native small molecules in an AmberPolymerBuilder system ---------------
+
+#: A glyme shares every PEO type and term (c3, os, h1, hc, c3-os, ...) and
+#: has no parmchk2-estimated term; TFSI has four.
+GLYME = "COCCOC"
+
+_LMP = shutil.which("lmp")
+_GMX = shutil.which("gmx") or shutil.which("gmx_d")
+
+
+def _peo(parameter_set: str, work_dir: Path, config) -> mp.builder.AmberBuildResult:
+    """A CH3-(OCH2CH2)4-OCH3 chain through antechamber, prepgen and tleap."""
+    oligomer, cuts = mp.builder.AmberPieces("COCC", "OCC", "OCCOC").oligomer(seed=42)
+    return mp.builder.AmberPolymerBuilder(
+        {"PEO": oligomer},
+        {"PEO": cuts},
+        parameter_set=parameter_set,
+        charge_method="bcc",
+        work_dir=work_dir,
+        config=config,
+    ).assemble(mp.io.cgsmiles.CgSmilesIr("{[#PEO]|4}").to_coarsegrain())
+
+
+def _charged(smiles: str, parameter_set: str, work_dir: Path, config):
+    """Native GAFF atom types and AM1-BCC charges (sqm, then BccModel)."""
+    labelled = AtdTypifier(parameter_set=parameter_set).typify(_embedded(smiles))
+    model = Am1BccModel(parameter_set="bcc", work_dir=work_dir, config=config)
+    for atom, charge in zip(labelled.atoms, model.assign(labelled), strict=True):
+        atom["charge"] = float(charge)
+    return labelled
+
+
+def _gaff(labelled: mp.Atomistic, parameter_set: str):
+    """Native GAFF bonded terms: the typed molecule and its force field."""
+    gaff = GaffTypifier(parameter_set=parameter_set)
+    return gaff.typify(labelled), gaff.forcefield()
+
+
+def _native(smiles: str, parameter_set: str, work_dir: Path, config):
+    """The default route: native types, AM1-BCC, native GAFF terms."""
+    return _gaff(_charged(smiles, parameter_set, work_dir, config), parameter_set)
+
+
+def _lithium():
+    """Li+ with Åqvist's Lennard-Jones parameters: GAFF has no Li type."""
+    li = mp.Atomistic()
+    li.def_atom(element="Li", type="Li+", charge=1.0, mass=6.94, x=0.0, y=0.0, z=0.0)
+    ff = mp.ff.forcefield.ForceField("li", units="real")
+    li_type = ff.def_style("atom", "full").def_type("Li+", mass=6.94, charge=1.0)
+    ff.def_style("pair", "lj/cut").def_type(
+        "Li+", li_type, epsilon=0.0183, sigma=2.0259
+    )
+    return li, ff
+
+
+def _type_names(*forcefields) -> dict[tuple[str, str], set[str]]:
+    """Style → the names of its types, over every force field given."""
+    names: dict[tuple[str, str], set[str]] = {}
+    for ff in forcefields:
+        for style in ff.styles:
+            key = (style.category, style.name)
+            names[key] = names.get(key, set()) | {t.name for t in style.get_types()}
+    return names
+
+
+def _box(parts, edge: float) -> mp.Frame:
+    """The molecules centred on their points of a periodic cube, one mol_id each.
+
+    Rows are numbered here, as molpack numbers a packed frame: the chain's
+    frame carries the prmtop's ``id`` column and the native molecules none.
+    A native molecule is given atom and residue names, which the GROMACS
+    topology prints and the chain's frame has.
+    """
+    frames = []
+    for mol_id, (mol, centre) in enumerate(parts, start=1):
+        placed = mol.copy()
+        atoms = placed.to_frame()["atoms"]
+        xyz = np.column_stack([atoms["x"], atoms["y"], atoms["z"]])
+        placed.translate([float(v) for v in np.asarray(centre) - xyz.mean(axis=0)])
+        frame = placed.to_frame()
+        n = placed.n_atoms
+        frame["atoms"]["mol_id"] = np.full(n, mol_id)
+        if "name" not in frame["atoms"].keys():
+            elements = frame["atoms"]["element"]
+            frame["atoms"]["name"] = np.array(
+                [f"{e}{i}" for i, e in enumerate(elements, start=1)]
+            )
+            frame["atoms"]["res_name"] = np.array(["MOL"] * n)
+            frame["atoms"]["res_id"] = np.ones(n, dtype=np.int64)
+        frames.append(frame)
+    system = mp.Frame.concat(frames)
+    system["atoms"]["id"] = np.arange(1, len(system["atoms"]["x"]) + 1)
+    system.box = mp.Box.cube(edge)
+    return system
+
+
+def _minimise(system: mp.Frame, ff, directory: Path) -> str:
+    """The deck ``generate_inputs`` writes, minimised by the real lmp; its log."""
+    engine = LammpsEngine(
+        config=load_config({"engine": {"lammps": {"executable": "lmp"}}})
+    )
+    deck = engine.generate_inputs(
+        system,
+        ff,
+        directory,
+        body="thermo 10\nminimize 1.0e-4 1.0e-6 500 5000\nwrite_data minimised.data\n",
+    )
+    engine.run(deck["input"], workdir=directory)
+    return (directory / "log.lammps").read_text(encoding="utf-8")
+
+
+def _energies(log: str) -> tuple[float, float]:
+    """The initial and final potential energy of a LAMMPS minimisation."""
+    lines = log.splitlines()
+    row = lines.index("  Energy initial, next-to-last, final = ") + 1
+    first, _, last = (float(v) for v in lines[row].split())
+    return first, last
+
+
+class TestNativeMoleculesJoinTheChain:
+    """A native GAFF force field merges with an AmberPolymerBuilder chain's.
+
+    The chain's force field is tleap's prmtop read back; the molecule's is
+    molrs's native GAFF. molrs ``ForceField.merge`` compares what a style
+    prices within 1e-6 and names GAFF terms as the prmtop does, so the two
+    merge in either order wherever their shared types and terms agree.
+    """
+
+    @pytest.mark.parametrize("parameter_set", ["gaff", "gaff2"])
+    @pytest.mark.parametrize("smiles", [MOLECULES["tfsi"], GLYME])
+    def test_merges_in_either_order(self, smiles, parameter_set, tmp_path, config):
+        labelled = _charged(smiles, parameter_set, tmp_path / "q", config)
+        chain_ff = _peo(parameter_set, tmp_path / "peo", config).forcefield
+        _, native = _gaff(labelled, parameter_set)
+        _, li = _lithium()
+        both = _type_names(chain_ff, native)
+        every = _type_names(chain_ff, native, li)
+        special_bonds = chain_ff.special_bonds
+
+        merged = chain_ff.merge(native).merge(li)
+        # A fresh pair, merged the other way (the builder reuses its run).
+        _, native_first = _gaff(labelled, parameter_set)
+        reversed_ = native_first.merge(
+            _peo(parameter_set, tmp_path / "peo", config).forcefield
+        )
+
+        assert _type_names(merged) == every
+        assert _type_names(reversed_) == both
+        assert merged.special_bonds == reversed_.special_bonds == special_bonds
+
+    @pytest.mark.skipif(_LMP is None, reason="needs the lmp executable")
+    def test_a_glyme_and_the_chain_minimise_in_lammps(self, tmp_path, config):
+        chain = _peo("gaff2", tmp_path / "peo", config)
+        glyme, glyme_ff = _native(GLYME, "gaff2", tmp_path / "q", config)
+        ff = chain.forcefield.merge(glyme_ff)
+        ff.get_style("pair", "lj/cut")["cutoff"] = 10.0
+        ff.get_style("pair", "coul/cut")["cutoff"] = 10.0
+        system = _box([(chain.chain, (15, 15, 15)), (glyme, (4, 4, 4))], 30.0)
+
+        log = _minimise(system, ff, tmp_path / "lammps")
+
+        first, last = _energies(log)
+        assert last < first
+        assert (tmp_path / "lammps" / "minimised.data").is_file()
+
+    @pytest.mark.skipif(_GMX is None, reason="needs the gmx executable")
+    def test_a_glyme_and_the_chain_pass_grompp(self, tmp_path, config):
+        chain = _peo("gaff2", tmp_path / "peo", config)
+        glyme, glyme_ff = _native(GLYME, "gaff2", tmp_path / "q", config)
+        ff = chain.forcefield.merge(glyme_ff)
+        system = _box([(chain.chain, (15, 15, 15)), (glyme, (4, 4, 4))], 30.0)
+        directory = tmp_path / "gromacs"
+        GromacsEngine(check_executable=False).generate_inputs(system, ff, directory)
+
+        done = subprocess.run(
+            [_GMX, "grompp", "-f", "em.mdp", "-c", "system.gro", "-p", "system.top"],
+            cwd=directory,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+        )
+        assert done.returncode == 0, done.stderr[-2000:]
+
+    @pytest.mark.skipif(_LMP is None, reason="needs the lmp executable")
+    @pytest.mark.xfail(
+        strict=True,
+        raises=ValueError,
+        reason=(
+            "molrs 0.18.0's LAMMPS and GROMACS writers refuse the estimate "
+            "provenance params (estimated, estimate_penalty, ...) GaffTypifier "
+            "puts on TFSI's four parmchk2-estimated terms; its frcmod writer "
+            "skips them"
+        ),
+    )
+    def test_tfsi_li_and_the_chain_minimise_in_lammps(self, tmp_path, config):
+        chain = _peo("gaff2", tmp_path / "peo", config)
+        tfsi, tfsi_ff = _native(MOLECULES["tfsi"], "gaff2", tmp_path / "q", config)
+        li, li_ff = _lithium()
+        ff = chain.forcefield.merge(tfsi_ff).merge(li_ff)
+        ff.get_style("pair", "lj/cut")["cutoff"] = 10.0
+        ff.get_style("pair", "coul/cut")["cutoff"] = 10.0
+        system = _box(
+            [(chain.chain, (15, 15, 15)), (tfsi, (4, 4, 4)), (li, (26, 26, 26))],
+            30.0,
+        )
+
+        first, last = _energies(_minimise(system, ff, tmp_path / "lammps"))
+        assert last < first
