@@ -2,6 +2,7 @@
 
 use crate::io::frame_columns::insert_column;
 use crate::io::invalid_data;
+use crate::io::lammps::drude::{SPRINGS, lammps_type_labels, refuse_virtual_sites};
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, BufWriter, Result, Write};
 use std::path::Path;
@@ -43,11 +44,18 @@ pub fn read_lammps_molecule_json<P: AsRef<Path>>(path: P) -> Result<Frame> {
 }
 
 /// Write a frame as a LAMMPS molecule template file (the native text format).
+///
+/// Each row's type is its `type_id`, else its label's place among the
+/// block's sorted labels. As in a data file, each `drudes` row (a Drude core–shell spring) is
+/// a `Bonds` row after the bonds, typed as a bond of its own label: LAMMPS's
+/// DRUDE package reads the springs as bonds. A `virtual_sites` row is
+/// refused: a template builds no virtual site.
 pub fn write_lammps_molecule<P: AsRef<Path>>(path: P, frame: &Frame) -> Result<()> {
     write_lammps_molecule_native(path, frame)
 }
 
-/// Write a frame as a LAMMPS molecule template in its JSON format.
+/// Write a frame as a LAMMPS molecule template in its JSON format, with the
+/// types, Drude springs and virtual sites of [`write_lammps_molecule`].
 pub fn write_lammps_molecule_json<P: AsRef<Path>>(path: P, frame: &Frame) -> Result<()> {
     write_json(path, frame)
 }
@@ -414,6 +422,7 @@ fn write_lammps_molecule_native<P: AsRef<Path>>(path: P, frame: &Frame) -> Resul
     if n == 0 {
         return Err(invalid_data("Frame must contain atoms data"));
     }
+    let sections = topology(frame)?;
     let f = std::fs::File::create(path)?;
     let mut w = BufWriter::new(f);
     let title = frame
@@ -424,13 +433,8 @@ fn write_lammps_molecule_native<P: AsRef<Path>>(path: P, frame: &Frame) -> Resul
     writeln!(w, "# {title}")?;
     writeln!(w)?;
     writeln!(w, "{n} atoms")?;
-    for name in ["bonds", "angles", "dihedrals", "impropers"] {
-        if let Some(b) = frame.get(name)
-            && let Some(nb) = b.n_rows()
-            && nb > 0
-        {
-            writeln!(w, "{nb} {name}")?;
-        }
+    for section in &sections {
+        writeln!(w, "{} {}", section.ids.len(), section.block)?;
     }
     if let Some(MetaValue::F64(m)) = frame.meta.get("total_mass") {
         writeln!(w, "{m:.6} mass")?;
@@ -512,59 +516,125 @@ fn write_lammps_molecule_native<P: AsRef<Path>>(path: P, frame: &Frame) -> Resul
         writeln!(w)?;
     }
 
-    for (name, arity) in [
-        ("bonds", 2usize),
-        ("angles", 3),
-        ("dihedrals", 4),
-        ("impropers", 4),
-    ] {
-        let Some(block) = frame.get(name) else {
-            continue;
-        };
-        let Some(nb) = block.n_rows() else {
-            continue;
-        };
-        if nb == 0 {
-            continue;
-        }
-        writeln!(w, "{}", capitalize(name))?;
+    for section in &sections {
+        writeln!(w, "{}", capitalize(section.block))?;
         writeln!(w)?;
-        let item_ids: Vec<Idx> = if block.contains_key("id") {
-            if let Some(col) = block.get("id").and_then(|c| c.as_uint()) {
-                (0..nb).map(|i| col[[i]]).collect()
-            } else if let Some(col) = block.get("id").and_then(|c| c.as_int()) {
-                (0..nb).map(|i| col[[i]] as Idx).collect()
-            } else {
-                return Err(invalid_data("id"));
-            }
-        } else {
-            (1..=nb as Idx).collect()
-        };
-        let t_ids = type_ids_for_block(block)?;
-        let member_keys = ["atomi", "atomj", "atomk", "atoml"];
-        let mut member_cols = Vec::new();
-        for key in member_keys.iter().take(arity) {
-            let col = block
-                .get(key)
-                .and_then(|c| c.as_uint())
-                .ok_or_else(|| invalid_data(*key))?;
-            member_cols.push(col);
-        }
-        for i in 0..nb {
-            write!(w, "{} {}", item_ids[i], t_ids[i])?;
-            for m in &member_cols {
-                let atom_idx = m[[i]] as usize;
-                let atom_id = ids
-                    .get(atom_idx)
-                    .copied()
-                    .ok_or_else(|| invalid_data("connectivity atom index out of range"))?;
-                write!(w, " {atom_id}")?;
+        for (row, members) in section.members.iter().enumerate() {
+            write!(w, "{} {}", section.ids[row], section.types[row])?;
+            for &atom in members {
+                write!(w, " {}", atom_id(&ids, atom)?)?;
             }
             writeln!(w)?;
         }
         writeln!(w)?;
     }
     Ok(())
+}
+
+/// The topology sections a template has, in file order: `(block, arity,
+/// JSON type field)`.
+const SECTIONS: [(&str, usize, &str); 4] = [
+    ("bonds", 2, "bond-type"),
+    ("angles", 3, "angle-type"),
+    ("dihedrals", 4, "dihedral-type"),
+    ("impropers", 4, "improper-type"),
+];
+
+/// One topology section's rows: each row's id, type id and member atoms
+/// (0-based indices).
+struct Section {
+    block: &'static str,
+    type_field: &'static str,
+    ids: Vec<Idx>,
+    types: Vec<I>,
+    members: Vec<Vec<usize>>,
+}
+
+/// The frame's non-empty topology sections: `bonds` holds the `drudes` rows
+/// after its own ([`SPRINGS`]), numbered on from the bonds' last id. A
+/// section's types are its rows' `type_id` (a caller's own numbering, as a
+/// bond/react system's), else its sorted labels; bonds and Drude springs
+/// share one bond-type id space by label, the data writer's
+/// ([`lammps_type_labels`]). A `virtual_sites` row is refused.
+fn topology(frame: &Frame) -> Result<Vec<Section>> {
+    refuse_virtual_sites(frame)?;
+    let springs = frame
+        .get(SPRINGS.0)
+        .and_then(Block::n_rows)
+        .is_some_and(|n| n > 0);
+    let mut sections = Vec::new();
+    for (name, arity, type_field) in SECTIONS {
+        let sources: &[&str] = if name == SPRINGS.1 {
+            &[SPRINGS.1, SPRINGS.0]
+        } else {
+            &[name]
+        };
+        let mut ids = Vec::new();
+        let mut members = Vec::new();
+        for &source in sources {
+            let Some(block) = frame.get(source) else {
+                continue;
+            };
+            let nb = block.n_rows().unwrap_or(0);
+            let next = ids.last().copied().unwrap_or(0);
+            match block.get("id") {
+                None => ids.extend((1..=nb as Idx).map(|k| next + k)),
+                Some(col) => {
+                    if let Some(col) = col.as_uint() {
+                        ids.extend(col.iter().copied());
+                    } else if let Some(col) = col.as_int() {
+                        ids.extend(col.iter().map(|&v| v as Idx));
+                    } else {
+                        return Err(invalid_data(format!("{source}.id")));
+                    }
+                }
+            }
+            let mut cols = Vec::new();
+            for key in keys::ENDPOINTS.iter().take(arity) {
+                cols.push(
+                    block
+                        .get(key)
+                        .and_then(|c| c.as_uint())
+                        .ok_or_else(|| invalid_data(format!("{source}.{key}")))?,
+                );
+            }
+            members.extend((0..nb).map(|i| cols.iter().map(|c| c[[i]] as usize).collect()));
+        }
+        if members.is_empty() {
+            continue;
+        }
+        let types: Vec<I> = if name == SPRINGS.1 && springs {
+            lammps_type_labels(frame)
+                .map_err(invalid_data)?
+                .block(name)
+                .map(|t| t.type_ids().iter().map(|&v| v as I).collect())
+                .unwrap_or_default()
+        } else {
+            type_ids_for_block(frame.get(name).expect("a section has rows of its own"))?
+        };
+        if types.len() != members.len() {
+            return Err(invalid_data(format!(
+                "internal: {sources:?} type ids {} != rows {}",
+                types.len(),
+                members.len()
+            )));
+        }
+        sections.push(Section {
+            block: name,
+            type_field,
+            ids,
+            types,
+            members,
+        });
+    }
+    Ok(sections)
+}
+
+/// The template id of the atom at 0-based index `atom`.
+fn atom_id(ids: &[Idx], atom: usize) -> Result<Idx> {
+    ids.get(atom)
+        .copied()
+        .ok_or_else(|| invalid_data("connectivity atom index out of range"))
 }
 
 fn capitalize(s: &str) -> String {
@@ -813,6 +883,7 @@ fn write_json<P: AsRef<Path>>(path: P, frame: &Frame) -> Result<()> {
     let n = atoms
         .n_rows()
         .ok_or_else(|| invalid_data("Frame must contain atoms data"))?;
+    let sections = topology(frame)?;
     let ids = atom_ids(atoms);
     let type_labels: Vec<String> = if let Some(col) = atoms.get("type").and_then(|c| c.as_string())
     {
@@ -893,45 +964,19 @@ fn write_json<P: AsRef<Path>>(path: P, frame: &Frame) -> Result<()> {
         data["molecule"] = json!({ "format": ["atom-id", "molecule-id"], "data": rows });
     }
 
-    for (name, arity, type_label) in [
-        ("bonds", 2usize, "bond-type"),
-        ("angles", 3, "angle-type"),
-        ("dihedrals", 4, "dihedral-type"),
-        ("impropers", 4, "improper-type"),
-    ] {
-        let Some(block) = frame.get(name) else {
-            continue;
-        };
-        let Some(nb) = block.n_rows() else {
-            continue;
-        };
-        if nb == 0 {
-            continue;
-        }
-        let t_ids = type_ids_for_block(block)?;
-        let keys = ["atomi", "atomj", "atomk", "atoml"];
-        let mut members = Vec::new();
-        for key in keys.iter().take(arity) {
-            members.push(
-                block
-                    .get(key)
-                    .and_then(|c| c.as_uint())
-                    .ok_or_else(|| invalid_data(*key))?,
-            );
-        }
+    for section in &sections {
+        let mut format = vec![section.type_field.to_string()];
+        let arity = section.members.first().map_or(0, Vec::len);
+        format.extend((1..=arity).map(|k| format!("atom{k}")));
         let mut rows = Vec::new();
-        let mut format = vec![type_label.to_string()];
-        for k in 0..arity {
-            format.push(format!("atom{}", k + 1));
-        }
-        for i in 0..nb {
-            let mut row = vec![json!(t_ids[i])];
-            for m in &members {
-                row.push(json!(ids[m[[i]] as usize]));
+        for (row, members) in section.members.iter().enumerate() {
+            let mut out = vec![json!(section.types[row])];
+            for &atom in members {
+                out.push(json!(atom_id(&ids, atom)?));
             }
-            rows.push(JsonValue::Array(row));
+            rows.push(JsonValue::Array(out));
         }
-        data[name] = json!({ "format": format, "data": rows });
+        data[section.block] = json!({ "format": format, "data": rows });
     }
 
     if let Some(MetaValue::F64x3(c)) = frame.meta.get("center_of_mass") {
@@ -1028,6 +1073,87 @@ Angles
             charge.iter().copied().collect::<Vec<_>>(),
             vec![-0.834, 0.417, 0.417]
         );
+    }
+
+    /// A relation block of `pairs` (0-based atom indices) typed `types`.
+    fn pair_block(pairs: &[(Idx, Idx)], types: &[&str]) -> Block {
+        let mut block = Block::new();
+        let (i, j): (Vec<Idx>, Vec<Idx>) = pairs.iter().copied().unzip();
+        insert_column(&mut block, keys::ATOMI, i).unwrap();
+        insert_column(&mut block, keys::ATOMJ, j).unwrap();
+        let types: Vec<String> = types.iter().map(|t| t.to_string()).collect();
+        insert_column(&mut block, keys::TYPE, types).unwrap();
+        block
+    }
+
+    /// A polarisable methane-like fragment: core `CT` (1) with its Drude
+    /// particle `DCT` (2) and two `HC` (3, 4), bonded `CT-HC`.
+    fn drude_fragment() -> Frame {
+        let mut atoms = Block::new();
+        let types: Vec<String> = ["CT", "DCT", "HC", "HC"].map(String::from).to_vec();
+        insert_column(&mut atoms, keys::TYPE, types).unwrap();
+        insert_column(&mut atoms, keys::CHARGE, vec![0.5 as F, -0.5, 0.0, 0.0]).unwrap();
+        for (key, x) in [
+            ("x", [0.0 as F, 0.1, 1.0, -1.0]),
+            ("y", [0.0; 4]),
+            ("z", [0.0; 4]),
+        ] {
+            insert_column(&mut atoms, key, x.to_vec()).unwrap();
+        }
+        let mut frame = Frame::new();
+        frame.insert("atoms", atoms);
+        frame.insert("bonds", pair_block(&[(0, 2), (0, 3)], &["CT-HC", "CT-HC"]));
+        frame.insert("drudes", pair_block(&[(0, 1)], &["CT-DCT"]));
+        frame
+    }
+
+    /// As the data writer does, the template writes each Drude spring
+    /// (`drudes` row) as a `Bonds` row after the bonds, its type a bond type
+    /// of its own label numbered with the bonds' (`lammps_type_labels`):
+    /// LAMMPS's DRUDE package reads the core-shell springs as bonds.
+    #[test]
+    fn drude_springs_are_template_bonds_of_their_own_type() {
+        let dir = tempfile::tempdir().unwrap();
+        let frame = drude_fragment();
+        let path = dir.path().join("drude.mol");
+        write_lammps_molecule(&path, &frame).unwrap();
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(text.contains("\n3 bonds\n"), "{text}");
+        assert!(
+            text.contains("Bonds\n\n1 2 1 3\n2 2 1 4\n3 1 1 2\n"),
+            "{text}"
+        );
+        let back = read_lammps_molecule(&path).unwrap();
+        assert_eq!(back.get("bonds").unwrap().n_rows(), Some(3));
+
+        let path = dir.path().join("drude.json");
+        write_lammps_molecule_json(&path, &frame).unwrap();
+        let back = read_lammps_molecule_json(&path).unwrap();
+        let bonds = back.get("bonds").unwrap();
+        assert_eq!(bonds.n_rows(), Some(3));
+        let j = bonds.get("atomj").and_then(|c| c.as_uint()).unwrap();
+        assert_eq!(j.iter().copied().collect::<Vec<_>>(), vec![2, 3, 1]);
+    }
+
+    /// A template builds no virtual site: a `virtual_sites` row is refused
+    /// by both formats, as the data writer refuses it.
+    #[test]
+    fn virtual_sites_are_refused_by_both_template_formats() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut frame = drude_fragment();
+        let mut sites = Block::new();
+        insert_column(&mut sites, "site", vec![1 as Idx]).unwrap();
+        frame.insert("virtual_sites", sites);
+        for path in ["site.mol", "site.json"] {
+            let path = dir.path().join(path);
+            let err = if path.extension().is_some_and(|e| e == "json") {
+                write_lammps_molecule_json(&path, &frame)
+            } else {
+                write_lammps_molecule(&path, &frame)
+            }
+            .expect_err("a virtual site has no template form");
+            assert!(err.to_string().contains("virtual_sites"), "{err}");
+        }
     }
 
     #[test]
