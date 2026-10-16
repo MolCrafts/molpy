@@ -252,15 +252,16 @@ def price(xml_path: Path, mol, x, atoms, foyer_geometric: bool) -> dict:
     return energies(system, groups, x / unit_factor("nm", "angstrom"))
 
 
-def written(name, out_dir, written_dir, mol, x, atoms, foyer_geometric=False):
+def written(name, out_dir, written_dir, mol, x, atoms):
     """Price molrs's own XML of a case (``<written_dir>/<case>.written.xml``,
     from ``MOLRS_OPENMM_CHECK_DIR``) with OpenMM, the residue template of the
-    fixture added, against the fixture's energies."""
+    fixture added, against the fixture's energies. No foyer patch: molrs's XML
+    carries its geometric mixing as the ``<Script>`` ``createSystem`` runs."""
     root = ET.parse(written_dir / f"{name}.written.xml").getroot()
     root.append(ET.parse(out_dir / f"{name}.xml").getroot().find("Residues"))
     path = written_dir / f"{name}.written+residues.xml"
     ET.ElementTree(root).write(path)
-    got = price(path, mol, x, atoms, foyer_geometric)
+    got = price(path, mol, x, atoms, False)
     want = json.loads((out_dir / f"{name}.json").read_text(encoding="utf-8"))["openmm_kcal"]
     print(f"== {name}: OpenMM on molrs's XML vs OpenMM on the source XML")
     for k, v in want.items():
@@ -355,7 +356,7 @@ def main() -> None:
     xml = subset([args.oplsaa], {t for _, t, _ in opls_atoms}, residue_template(mol, opls_atoms))
     case("opls", xml, mol, x, opls_atoms, args.out, foyer_geometric=True)
     if args.written:
-        written("opls", args.out, args.written, mol, x, opls_atoms, foyer_geometric=True)
+        written("opls", args.out, args.written, mol, x, opls_atoms)
 
 
 if __name__ == "__main__":

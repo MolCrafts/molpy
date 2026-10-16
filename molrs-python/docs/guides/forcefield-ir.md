@@ -677,7 +677,25 @@ pair untruncated, as `NoCutoff` does ([Cutoffs](#pair-styles)), and the
 caller states `inner` and `cutoff` of `lj/charmm` / `coul/charmm`, which
 have no default.
 
-**Refused**, by name: `<Script>` / `<InitializationScript>`, every
+OpenMM's `createSystem` mixes every `<NonbondedForce>` pair
+Lorentz-Berthelot, 1-4 exceptions included, and ignores foyer's
+`combining_rule`; no tag of its schema states a geometric σ for both the
+pairs and the 1-4 exceptions (a `<CustomNonbondedForce>` excludes whole
+bonded neighbours and scales none; a `<LennardJonesForce>` mixes arithmetic
+but for one `<NBFixPair>` per type pair). So a `geometric` `lj/cut` (OPLS-AA)
+is written with the root's `combining_rule="geometric"` and a `<Script>`,
+which `createSystem` runs last: it prices the Lennard-Jones in a
+`CustomNonbondedForce` named `GeometricLennardJones` (√(σᵢσⱼ), √(εᵢεⱼ), the
+`NonbondedForce`'s cutoff, switch and dispersion correction, periodic under
+`CutoffPeriodic`, `Ewald` and `PME`; `LJPME` is refused), keeps the charges
+in the `NonbondedForce` at ε = 0, and gives each 1-4 exception σ = √(σᵢσⱼ)
+at its `lj14scale`·√(εᵢεⱼ) — foyer's patch of the System. The reader reads
+that script, and only that one, as `mixing geometric`. Such an XML is for
+OpenMM's `app.ForceField`: a tool that applies `combining_rule` itself
+(foyer) is given the source file.
+
+**Refused**, by name: `<Script>` (but the writer's geometric-mixing one) /
+`<InitializationScript>`, every
 `Custom*Force` other than the harmonic improper, a `<Proper>` under it,
 an RB `<Improper>`, `ordering="smirnoff"`, a multi-term periodic improper,
 an odd CMAP size, a wildcard Urey–Bradley row, an `<NBFixPair>` of a type
@@ -1363,7 +1381,7 @@ ff::completeness::the_guide_holds_the_generated_table` rewrites it).
 35. LAMMPS has no per-pair 1-4 parameters
 36. refused as such; its exact LAMMPS form is special_bonds 0 and one zero-K dihedral charmm row of w = 1 per 1-4 pair
 37. foyer's combining_rule, which OpenMM's own app.ForceField ignores
-38. foyer's combining_rule (OpenMM's own app.ForceField ignores it); with cross rows refused
+38. foyer's combining_rule and the <Script> that applies it (OpenMM's own app.ForceField ignores the attribute); with cross rows refused
 39. OpenMM mixes arithmetically
 40. no GROMACS comb-rule
 41. a cross row with 1-4 parameters of its own refused (OpenMM prices an NBFIX 1-4 pair with the NBFIX row)

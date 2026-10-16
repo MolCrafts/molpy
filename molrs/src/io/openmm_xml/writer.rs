@@ -17,6 +17,7 @@ use crate::ff::ir::torsion::{
 use crate::ff::ir::{OneFour, has_own_one_four};
 use crate::ff::style_registry::torsion_series;
 use crate::ff::style_registry::{Registry, RegistryRef};
+use crate::io::openmm_xml::geometric_mixing;
 use crate::io::openmm_xml::reader::{HARMONIC_IMPROPER_ABS, HARMONIC_IMPROPER_SIGNED};
 use crate::io::writer::{ForceFieldWriteError, ForceFieldWriter};
 
@@ -45,7 +46,7 @@ use crate::io::writer::{ForceFieldWriteError, ForceFieldWriter};
 /// | `improper periodic` | `<PeriodicTorsionForce><Improper>`, stored `(i, j, k, l)` (centre `k`) written `class1 = k, class2 = i, class3 = j, class4 = l`: OpenMM prices `(c2, c3, c1, c4)` |
 /// | `improper harmonic` | `<CustomTorsionForce energy="k*(theta-theta0)^2">` (every `chi0 = 0`, CHARMM's form) or `"k*(abs(theta)-theta0)^2"`, `<Improper>` in the stored order (`charmm` ordering prices it as written), `k` × 4.184 |
 /// | `cmap charmm` | `<CMAPTorsionForce>`, OpenMM `(i, j)` = molrs `[(i + N/2) mod N][(j + N/2) mod N]` × 4.184; identical grids share one `<Map>` |
-/// | `pair lj/cut` (no cross rows) + a Coulomb style | `<NonbondedForce>` (`combining_rule` on the root when not `arithmetic`) |
+/// | `pair lj/cut` (no cross rows) + a Coulomb style | `<NonbondedForce>`; `geometric` mixing adds foyer's `combining_rule` on the root and the `<Script>` that makes OpenMM's `createSystem` mix geometrically ([`geometric_mixing`](super::geometric_mixing): OpenMM ignores the attribute) |
 /// | `pair lj/charmm`, or `lj/cut` (`arithmetic`) with cross rows | `<LennardJonesForce>` (`sigma14` / `epsilon14`, cross rows as `<NBFixPair>`) beside a `<NonbondedForce>` holding the charges at `epsilon = 0` |
 ///
 /// `special_bonds` `[0, 0, s]` is `coulomb14scale` / `lj14scale`; charges are
@@ -737,8 +738,8 @@ impl OpenmmXmlWriter {
                     return Err(refuse(
                         style,
                         &format!(
-                            "mixing {rule:?}{}: OpenMM mixes arithmetic (foyer's \
-                             combining_rule adds geometric, without cross rows)",
+                            "mixing {rule:?}{}: OpenMM mixes arithmetic (geometric is \
+                             written as a script over the per-type rows, without cross rows)",
                             if cross.is_empty() {
                                 ""
                             } else {
@@ -937,6 +938,10 @@ impl OpenmmXmlWriter {
             self.bonded(ff, reg, &ends, &mut sections)?;
             self.nonbonded(ff, reg, &mut sections)
         })?;
+        if combining_rule == Some("geometric") {
+            // OpenMM ignores the attribute: the script applies it.
+            sections.scripts.push(geometric_mixing::SCRIPT.to_owned());
+        }
 
         let mut out = String::from("<?xml version='1.0' encoding='utf-8'?>\n");
         out.push_str(&format!(
@@ -1218,6 +1223,58 @@ mod tests {
                 .get_str("mixing"),
             Some("geometric")
         );
+    }
+
+    /// OpenMM's `createSystem` ignores the root's `combining_rule`: geometric
+    /// mixing is also the `<Script>` it runs, once, after the
+    /// `<NonbondedForce>` holding σ, ε and the charges. Arithmetic mixing
+    /// writes neither.
+    #[test]
+    fn geometric_mixing_is_written_as_the_script_openmm_runs() {
+        let field = |mixing: &str| {
+            let mut ff = ForceField::new("opls");
+            let mut lj = Params::new();
+            lj.set_str("mixing", mixing);
+            ff.def_style("pair", "lj/cut", lj)
+                .unwrap()
+                .def_type(
+                    "opls_135",
+                    &["opls_135"],
+                    Params::from_pairs(&[("sigma", 3.5), ("epsilon", 0.066)]),
+                )
+                .unwrap();
+            ff.def_style("pair", "coul/cut", Params::new()).unwrap();
+            ff.set_special_bonds(crate::ff::ir::SpecialBonds {
+                lj: [0.0, 0.0, 0.5],
+                coul: [0.0, 0.0, 0.5],
+            });
+            ff
+        };
+        let xml = write(&field("geometric"));
+        let doc = roxmltree::Document::parse(&xml).unwrap();
+        let scripts: Vec<_> = doc
+            .descendants()
+            .filter(|n| n.has_tag_name("Script"))
+            .collect();
+        assert_eq!(scripts.len(), 1, "{xml}");
+        assert_eq!(
+            scripts[0].text().unwrap().trim(),
+            super::super::geometric_mixing::SCRIPT.trim()
+        );
+        let nonbonded = doc
+            .descendants()
+            .position(|n| n.has_tag_name("NonbondedForce"))
+            .unwrap();
+        let script = doc
+            .descendants()
+            .position(|n| n.has_tag_name("Script"))
+            .unwrap();
+        assert!(nonbonded < script, "{xml}");
+        assert!(xml.contains(r#"sigma="0.35" epsilon="0.276144""#), "{xml}");
+
+        let xml = write(&field("arithmetic"));
+        assert!(!xml.contains("<Script>"), "{xml}");
+        assert!(!xml.contains("combining_rule"), "{xml}");
     }
 
     /// The `c0..c5` attributes of the only `<Proper>` under `<RBTorsionForce>`.

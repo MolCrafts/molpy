@@ -48,6 +48,11 @@ pub fn write_frcmod_py(path: PathBuf, forcefield: &PyForceField) -> PyResult<()>
 /// radians, ½k harmonic terms), or refused naming the style when OpenMM's
 /// tags cannot hold it (see the force-field IR guide, "OpenMM").
 ///
+/// Geometric
+/// mixing (OPLS-AA) adds foyer's ``combining_rule="geometric"`` and the
+/// ``<Script>`` that makes ``createSystem`` apply it, which OpenMM's
+/// attribute alone does not.
+///
 /// Parameters
 /// ----------
 /// path : str or os.PathLike

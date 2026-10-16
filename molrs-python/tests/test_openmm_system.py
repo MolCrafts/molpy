@@ -97,14 +97,14 @@ def _openmm_system(tmp_path: Path, name: str, copies: int):
     return system, pdb.topology, frame, case
 
 
-@pytest.mark.parametrize("name", ["amber", "charmm"])
+@pytest.mark.parametrize("name", ["amber", "charmm", "opls"])
 def test_openmm_prices_the_written_system_as_the_fixture(
     name: str, tmp_path: Path
 ) -> None:
     """The fixture's energy is OpenMM's on its own force field and residue
-    template; the written deck reproduces it. (The OPLS fixture's is not
-    ``createSystem``'s: it applies foyer's geometric mixing, which OpenMM's
-    ``ForceField`` does not.)"""
+    template (OPLS's with foyer's geometric mixing applied to the System);
+    the written deck reproduces it, OPLS's through the geometric-mixing
+    ``<Script>`` ``createSystem`` runs (it ignores ``combining_rule``)."""
     pytest.importorskip("openmm")
     from openmm import Context, Platform, VerletIntegrator, unit
 
@@ -136,3 +136,39 @@ def test_openmm_matches_one_template_to_every_molecule(tmp_path: Path) -> None:
         for i in range(24)
     ]
     np.testing.assert_allclose(charges, case["charges"] * 2, atol=1e-12)
+
+
+def test_the_geometric_mixing_follows_the_run_time_method(tmp_path: Path) -> None:
+    """The long-range method is ``createSystem``'s: under PME the geometric
+    Lennard-Jones is periodic at the run's cutoff, the charges stay in the
+    PME ``NonbondedForce`` (at epsilon 0), and LJPME, which mixes its
+    dispersion otherwise, is refused."""
+    pytest.importorskip("openmm")
+    from openmm import CustomNonbondedForce, NonbondedForce, Vec3, unit
+    from openmm.app import LJPME, PME, ForceField, PDBFile
+
+    frame, case = _molecules("opls", 2)
+    frame.box = molrs.core.Box.cube(80.0)
+    molrs.io.write_pdb(tmp_path / "system.pdb", frame)
+    molrs.io.write_openmm_system(tmp_path / "system.xml", _forcefield(), frame)
+    pdb = PDBFile(str(tmp_path / "system.pdb"))
+    assert pdb.topology.getPeriodicBoxVectors()[0] == Vec3(8.0, 0, 0) * unit.nanometer
+    ff = ForceField(str(tmp_path / "system.xml"))
+    cutoff = 1.2 * unit.nanometer
+    system = ff.createSystem(pdb.topology, nonbondedMethod=PME, nonbondedCutoff=cutoff)
+    (nonbonded,) = [f for f in system.getForces() if isinstance(f, NonbondedForce)]
+    (lj,) = [f for f in system.getForces() if isinstance(f, CustomNonbondedForce)]
+    assert nonbonded.getNonbondedMethod() == NonbondedForce.PME
+    assert lj.getName() == "GeometricLennardJones"
+    assert lj.getNonbondedMethod() == CustomNonbondedForce.CutoffPeriodic
+    assert lj.getCutoffDistance() == cutoff
+    params = [nonbonded.getParticleParameters(i) for i in range(24)]
+    assert all(e.value_in_unit(unit.kilojoule_per_mole) == 0.0 for _, _, e in params)
+    np.testing.assert_allclose(
+        [q.value_in_unit(unit.elementary_charge) for q, _, _ in params],
+        case["charges"] * 2,
+        atol=1e-12,
+    )
+    assert lj.getNumExclusions() == nonbonded.getNumExceptions()
+    with pytest.raises(ValueError, match="LJPME"):
+        ff.createSystem(pdb.topology, nonbondedMethod=LJPME, nonbondedCutoff=cutoff)

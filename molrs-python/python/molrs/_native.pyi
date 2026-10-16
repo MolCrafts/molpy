@@ -6169,7 +6169,12 @@ def write_openmm_forcefield(
     path: PathInput, forcefield: ForceField, precision: int | None = None
 ) -> None:
     """Write a ForceField to OpenMM force-field XML — the inverse of
-    :func:`read_openmm_forcefield`."""
+    :func:`read_openmm_forcefield`.
+
+    Geometric mixing (OPLS-AA) adds foyer's ``combining_rule="geometric"``
+    and the ``<Script>`` that makes ``createSystem`` apply it (OpenMM ignores
+    the attribute): a geometric ``CustomNonbondedForce`` beside a
+    ``NonbondedForce`` holding the charges, with geometric 1-4 exceptions."""
 
 def write_openmm_system(
     path: PathInput,

@@ -17,6 +17,7 @@
 //! file are read with its force field into a typifier by
 //! [`OpenmmXmlReader::read_opls_typifier_str`].
 
+pub(crate) mod geometric_mixing;
 mod opls_typing;
 pub(crate) mod reader;
 pub(crate) mod writer;

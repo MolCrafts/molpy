@@ -13,6 +13,7 @@ use crate::ff::ir::torsion::rb_polynomial;
 use crate::ff::ir::{ONE_FOUR, ONE_FOUR_EPSILON14, has_own_one_four};
 use crate::ff::ir::{Params, SpecialBonds};
 use crate::ff::typifier::OplsAaTypifier;
+use crate::io::openmm_xml::geometric_mixing;
 use crate::io::reader::ForceFieldReader;
 use molrs::core::TypeName;
 
@@ -112,7 +113,9 @@ pub fn read_openmm_forcefield_str(text: &str) -> Result<ForceField, String> {
 ///
 /// # Refused
 ///
-/// `<Script>` / `<InitializationScript>` (code), every `Custom*Force` other
+/// `<Script>` / `<InitializationScript>` (code) — but the writer's own
+/// geometric-mixing script ([`geometric_mixing`](super::geometric_mixing)),
+/// which is read as `combining_rule="geometric"` —, every `Custom*Force` other
 /// than the harmonic improper above, `<Proper>` rows of a
 /// `<CustomTorsionForce>`, `<Improper>` rows of a `<RBTorsionForce>`,
 /// `ordering="smirnoff"`, a multi-term periodic improper, an odd CMAP size, a
@@ -196,6 +199,11 @@ impl ForceFieldReader for OpenmmXmlReader {
                 "LennardJonesForce" => parse_lennard_jones(&mut raw, &sec)?,
                 // Residue templates and provenance carry no parameters.
                 "Residues" | "Patches" | "Info" => {}
+                // Code: only the writer's own geometric-mixing script, read
+                // as the rule it applies.
+                "Script" if sec.text().map(str::trim) == Some(geometric_mixing::SCRIPT.trim()) => {
+                    raw.geometric_script = true;
+                }
                 other => {
                     return Err(format!(
                         "<{other}>: no force-field IR form (molrs reads OpenMM's \
@@ -211,7 +219,19 @@ impl ForceFieldReader for OpenmmXmlReader {
         // `combining_rule` is a foyer attribute (OpenMM's NonbondedForce
         // always mixes Lorentz-Berthelot; foyer patches the system for a
         // geometric rule): OPLS-AA mixes σ geometrically.
-        let combining_rule = root.attribute("combining_rule");
+        let combining_rule = match (root.attribute("combining_rule"), raw.geometric_script) {
+            (rule, false) => rule,
+            (None, true) => Some("geometric"),
+            (Some(rule), true) => {
+                if foyer_rule(rule)? != CombiningRule::Geometric {
+                    return Err(format!(
+                        "the geometric-mixing <Script> beside <ForceField \
+                         combining_rule=\"{rule}\">: two mixing rules"
+                    ));
+                }
+                Some(rule)
+            }
+        };
         build_nonbonded(&mut ff, &raw, combining_rule)?;
         ensure_class_wildcards(&mut ff, &raw.atom_rows)?;
         Ok(ff)
@@ -231,6 +251,8 @@ struct Raw {
     lj_scale: Option<f64>,
     lj_atoms: Vec<LjRow>,
     nbfix: Vec<NbfixRow>,
+    /// The writer's geometric-mixing `<Script>` is present.
+    geometric_script: bool,
 }
 
 /// One `<Type>` row of `<AtomTypes>` (mass + string metadata).
@@ -1863,6 +1885,42 @@ mod tests {
         let proper = r#"<ForceField><CustomTorsionForce energy="k*(theta-theta0)^2"><PerTorsionParameter name="k"/><PerTorsionParameter name="theta0"/><Proper k="1" theta0="0" type1="A" type2="B" type3="C" type4="D"/></CustomTorsionForce></ForceField>"#;
         let err = OpenmmXmlReader::new().read_str(proper).unwrap_err();
         assert!(err.contains("<Proper>"), "{err}");
+    }
+
+    /// The writer's geometric-mixing `<Script>` is the rule it applies:
+    /// read as `mixing geometric`, with or without the root's
+    /// `combining_rule`; beside another rule, or edited, it is refused.
+    #[test]
+    fn the_geometric_mixing_script_reads_as_geometric_mixing() {
+        // The script holds no `<` or `&`: as text content it needs no escape.
+        let script = format!(
+            "<Script>\n{}  </Script>",
+            super::super::geometric_mixing::SCRIPT
+        );
+        let doc = |root: &str, script: &str| {
+            MINI.replacen(
+                r#"<ForceField name="OPLS-AA" combining_rule="geometric">"#,
+                &format!(r#"<ForceField name="OPLS-AA"{root}>"#),
+                1,
+            )
+            .replacen("</ForceField>", &format!("{script}</ForceField>"), 1)
+        };
+        for root in ["", r#" combining_rule="geometric""#] {
+            let ff = OpenmmXmlReader::new()
+                .read_str(&doc(root, &script))
+                .unwrap();
+            let lj = ff.get_style("pair", "lj/cut").unwrap();
+            assert_eq!(lj.params().get_str("mixing"), Some("geometric"), "{root}");
+        }
+        let err = OpenmmXmlReader::new()
+            .read_str(&doc(r#" combining_rule="lorentz""#, &script))
+            .unwrap_err();
+        assert!(err.contains("Script") && err.contains("lorentz"), "{err}");
+        let edited = script.replace("sqrt(sigma1*sigma2)", "0.5*(sigma1+sigma2)");
+        let err = OpenmmXmlReader::new()
+            .read_str(&doc("", &edited))
+            .unwrap_err();
+        assert!(err.contains("Script"), "{err}");
     }
 
     /// OpenMM's `energy[i + N·j]` is at φ = 2πi/N, ψ = 2πj/N; molrs `[p][q]` at
