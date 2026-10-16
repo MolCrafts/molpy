@@ -128,9 +128,7 @@ Re-exported from the native core — `mp.Frame is molrs.core.Frame`:
 
 ::: molpy.core.MaskPredicate
 
-::: molpy.core.ElementSelector
-
-::: molpy.core.AtomTypeSelector
+::: molpy.core.ColumnSelector
 
 ::: molpy.core.AtomIndexSelector
 

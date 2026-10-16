@@ -79,7 +79,8 @@ def test_a_slab_replaces_the_coordinate_range_selector():
 
 
 def test_a_selector_composes_with_a_region():
-    picked = mp.core.AtomTypeSelector(1, field="type_id") & mp.core.Cuboid.cube(2.0)
+    by_type = mp.core.ColumnSelector(1, column=mp.core.keys.TYPE_ID)
+    picked = by_type & mp.core.Cuboid.cube(2.0)
     assert picked.mask(_block()).tolist() == [True, False, False, False]
 
 
