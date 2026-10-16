@@ -46,7 +46,7 @@ use crate::io::writer::{ForceFieldWriteError, ForceFieldWriter};
 /// | `improper periodic` | `<PeriodicTorsionForce><Improper>`, stored `(i, j, k, l)` (centre `k`) written `class1 = k, class2 = i, class3 = j, class4 = l`: OpenMM prices `(c2, c3, c1, c4)` |
 /// | `improper harmonic` | `<CustomTorsionForce energy="k*(theta-theta0)^2">` (every `chi0 = 0`, CHARMM's form) or `"k*(abs(theta)-theta0)^2"`, `<Improper>` in the stored order (`charmm` ordering prices it as written), `k` × 4.184 |
 /// | `cmap charmm` | `<CMAPTorsionForce>`, OpenMM `(i, j)` = molrs `[(i + N/2) mod N][(j + N/2) mod N]` × 4.184; identical grids share one `<Map>` |
-/// | `pair lj/cut` (no cross rows) + a Coulomb style | `<NonbondedForce>`; `geometric` mixing adds foyer's `combining_rule` on the root and the `<Script>` that makes OpenMM's `createSystem` mix geometrically ([`geometric_mixing`](super::geometric_mixing): OpenMM ignores the attribute) |
+/// | `pair lj/cut` (no cross rows) + a Coulomb style | `<NonbondedForce>`; `geometric` mixing adds foyer's `combining_rule` on the root and the `<Script>` that makes OpenMM's `createSystem` mix geometrically (`geometric_mixing`: OpenMM ignores the attribute) |
 /// | `pair lj/charmm`, or `lj/cut` (`arithmetic`) with cross rows | `<LennardJonesForce>` (`sigma14` / `epsilon14`, cross rows as `<NBFixPair>`) beside a `<NonbondedForce>` holding the charges at `epsilon = 0` |
 ///
 /// `special_bonds` `[0, 0, s]` is `coulomb14scale` / `lj14scale`; charges are

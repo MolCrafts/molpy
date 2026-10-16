@@ -114,7 +114,7 @@ pub fn read_openmm_forcefield_str(text: &str) -> Result<ForceField, String> {
 /// # Refused
 ///
 /// `<Script>` / `<InitializationScript>` (code) — but the writer's own
-/// geometric-mixing script ([`geometric_mixing`](super::geometric_mixing)),
+/// geometric-mixing script (`geometric_mixing`),
 /// which is read as `combining_rule="geometric"` —, every `Custom*Force` other
 /// than the harmonic improper above, `<Proper>` rows of a
 /// `<CustomTorsionForce>`, `<Improper>` rows of a `<RBTorsionForce>`,
