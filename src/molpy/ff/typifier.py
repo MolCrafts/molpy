@@ -3,7 +3,8 @@
 The native typifiers are identity re-exports
 (``mp.ff.typifier.OplsAaTypifier is molrs.ff.typifier.OplsAaTypifier``).
 ``Typifier`` is the base every typifier extends: a subclass implements
-``match`` and the base owns ``typify`` and the accumulated ``forcefield()``.
+``assign`` (and optionally ``source_forcefield``) and the base owns ``typify``
+and the accumulated ``forcefield()``.
 :func:`assign_cmaps` builds a typed frame's ``cmaps`` block.
 
 molpy adds :class:`AntechamberTypifier` and :class:`TleapTypifier`, which type
