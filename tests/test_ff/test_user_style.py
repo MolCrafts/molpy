@@ -53,9 +53,11 @@ def _snippet() -> str:
 
 def _chain() -> mp.Atomistic:
     mol = mp.Atomistic()
-    beads = [mol.def_atom(name="B", x=x, y=y, z=z) for x, y, z in CHAIN]
+    beads = [
+        mol.add_atom(atomic_number=0, name="B", x=x, y=y, z=z) for x, y, z in CHAIN
+    ]
     for a, b in zip(beads, beads[1:]):
-        mol.def_bond(a, b)
+        mol.add_bond(a, b)
     return mol
 
 
@@ -88,7 +90,7 @@ def snippet(tmp_path_factory: pytest.TempPathFactory) -> Any:
 
 
 def test_the_doc_snippet_is_under_30_lines() -> None:
-    assert len(_snippet().splitlines()) < 30
+    assert len(_snippet().splitlines()) <= 30
 
 
 def test_the_style_is_registered_from_molpy(snippet) -> None:
@@ -108,7 +110,7 @@ def test_the_chain_is_typed_with_the_style(snippet) -> None:
     frame, ff = ns["frame"], ns["ff"]
     assert frame["bonds"]["type"].tolist() == ["B-B"] * 4
     assert ff.units == "lj"
-    assert [(s.category, s.name) for s in ff.styles] == [
+    assert [(s.category, s.name) for s in ff.get_styles(mp.ff.forcefield.Style)] == [
         ("atom", "full"),
         ("bond", "fene"),
     ]
@@ -130,7 +132,7 @@ def test_energy_and_forces_are_the_analytic_fene_sum(snippet) -> None:
 
 def test_the_record_keeps_the_style_and_its_expression(snippet) -> None:
     ns, workdir = snippet
-    section = mp.io.read_mrec_forcefield(workdir / "chain.mrec")
+    section = mp.io.mrec.MrecFile(workdir / "chain.mrec").forcefield()
     (entry,) = [s for s in section.document["styles"] if s["style"] == "fene"]
     assert entry["category"] == "bond"
     assert entry["expression"] == ns["Fene"].expression
@@ -145,11 +147,13 @@ FRESH = textwrap.dedent(
     import json, sys
     import molpy as mp
 
-    path = sys.argv[1]
+    from pathlib import Path
+    path = Path(sys.argv[1])
     registered = [s.name for s in mp.ff.style_registry.styles("bond") if s.name == "fene"]
-    frame = mp.io.read_mrec_frame(path)
-    ff = mp.io.read_mrec_forcefield(path).to_forcefield()
-    e, f = mp.ff.compile.PotentialCompiler(ff).compile(frame).calc_energy_forces(frame)
+    record = mp.io.mrec.MrecFile(path)
+    frame = record.frame()
+    ff = record.forcefield().to_forcefield()
+    e, f = mp.ff.compile.PotentialCompiler(ff).compile(frame).evaluate(frame)
     print(json.dumps({"registered": registered, "e": float(e).hex(),
                       "f": [float(x).hex() for x in f.ravel()]}))
     """

@@ -15,6 +15,7 @@ sync. An RDKit atom with no tag at all is an error — build the Mol through
 from __future__ import annotations
 
 import warnings
+from copy import copy
 from typing import Any
 
 import numpy as np
@@ -134,28 +135,16 @@ class RdkitAdapter(Adapter[Atomistic, Chem.Mol]):
     @staticmethod
     def _tag_atoms(atomistic: Atomistic) -> None:
         """Give every atom a unique :data:`MP_ID`, keeping the tags it already has."""
-        handles = atomistic.entities()
-        if not handles:
+        atoms = list(atomistic.atoms)
+        if not atoms:
             return
-        if MP_ID not in atomistic.columns():
-            for tag, handle in enumerate(handles):
-                atomistic.set(handle, MP_ID, tag)
-            return
-        valid = atomistic.validity(MP_ID)
-        if valid.all():
-            tags = np.asarray(atomistic.column(MP_ID), dtype=np.int64)
-            untagged: list[int] = []
-        else:
-            tags = np.array(
-                [int(atomistic.get(h, MP_ID)) for h, ok in zip(handles, valid) if ok],
-                dtype=np.int64,
-            )
-            untagged = [h for h, ok in zip(handles, valid) if not ok]
+        tags = np.array([int(a[MP_ID]) for a in atoms if MP_ID in a], dtype=np.int64)
+        untagged = [a for a in atoms if MP_ID not in a]
         if np.unique(tags).size != tags.size:
             raise ValueError(f"duplicate {MP_ID} tags: every atom needs its own")
         next_tag = int(tags.max()) + 1 if tags.size else 0
-        for handle in untagged:
-            atomistic.set(handle, MP_ID, next_tag)
+        for atom in untagged:
+            atom[MP_ID] = next_tag
             next_tag += 1
 
     @staticmethod
@@ -183,21 +172,19 @@ class RdkitAdapter(Adapter[Atomistic, Chem.Mol]):
 
     def _build_mol_from_atomistic(self, atomistic: Atomistic) -> Chem.Mol:
         self._tag_atoms(atomistic)
-        handles = atomistic.entities()
-        elements = atomistic.column("element")  # a hole is a KeyError
-        tags = atomistic.column(MP_ID)
+        atoms = list(atomistic.atoms)
         charges = self._formal_charges(atomistic)
         positions = self._positions(atomistic)
 
         mol = Chem.RWMol()
-        for element, tag, charge in zip(elements, tags, charges, strict=True):
-            rd_atom = Chem.Atom(str(element))
+        for atom, charge in zip(atoms, charges, strict=True):
+            rd_atom = Chem.Atom(int(atom["atomic_number"]))
             if charge:
                 rd_atom.SetFormalCharge(int(charge))
-            rd_atom.SetIntProp(MP_ID, int(tag))
+            rd_atom.SetIntProp(MP_ID, int(atom[MP_ID]))
             mol.AddAtom(rd_atom)
 
-        rd_index = {handle: idx for idx, handle in enumerate(handles)}
+        rd_index = {atom.handle: idx for idx, atom in enumerate(atoms)}
         for bond in atomistic.bonds:
             mol.AddBond(
                 rd_index[bond.itom.handle],
@@ -224,13 +211,7 @@ class RdkitAdapter(Adapter[Atomistic, Chem.Mol]):
     @staticmethod
     def _formal_charges(atomistic: Atomistic) -> list[int]:
         """Per-atom formal charge, 0 where the component is absent (neutral)."""
-        if FORMAL_CHARGE.key not in atomistic.columns():
-            return [0] * len(atomistic.entities())
-        if atomistic.validity(FORMAL_CHARGE.key).all():
-            return [int(q) for q in atomistic.column(FORMAL_CHARGE.key)]
-        return [
-            int(atomistic.get(h, FORMAL_CHARGE.key) or 0) for h in atomistic.entities()
-        ]
+        return [int(atom.get(FORMAL_CHARGE.key) or 0) for atom in atomistic.atoms]
 
     @staticmethod
     def _positions(atomistic: Atomistic) -> np.ndarray | None:
@@ -239,14 +220,10 @@ class RdkitAdapter(Adapter[Atomistic, Chem.Mol]):
         A graph where only *some* atoms have coordinates raises (``KeyError``
         from the column read): a missing coordinate is not ``0.0``.
         """
-        cols = atomistic.columns()
-        if not any(k in cols for k in ("x", "y", "z")):
+        atoms = list(atomistic.atoms)
+        if not any(any(k in atom for k in ("x", "y", "z")) for atom in atoms):
             return None
-        # ``column`` raises on a hole; ``atoms["x", "y", "z"]`` would yield None.
-        return np.stack(
-            [np.asarray(atomistic.column(k)) for k in ("x", "y", "z")],
-            axis=1,
-        )
+        return np.asarray([[atom[k] for k in ("x", "y", "z")] for atom in atoms])
 
     # ------------------------------------------------------------------
     #  Mol -> Atomistic
@@ -256,7 +233,7 @@ class RdkitAdapter(Adapter[Atomistic, Chem.Mol]):
     def _atom_props(
         rd_atom: Chem.Atom, tag: int, position: Any | None
     ) -> dict[str, Any]:
-        props: dict[str, Any] = {"element": rd_atom.GetSymbol(), MP_ID: tag}
+        props: dict[str, Any] = {"atomic_number": rd_atom.GetAtomicNum(), MP_ID: tag}
         if rd_atom.GetFormalCharge() != 0:
             props[FORMAL_CHARGE.key] = rd_atom.GetFormalCharge()
         if position is not None:
@@ -281,16 +258,19 @@ class RdkitAdapter(Adapter[Atomistic, Chem.Mol]):
                 rd_atom.SetIntProp(MP_ID, tag)
             position = positions[idx] if positions is not None else None
             created.append(
-                atomistic.def_atom(**self._atom_props(rd_atom, tag, position))
+                atomistic.add_atom(**self._atom_props(rd_atom, tag, position))
             )
 
         for rd_bond in mol.GetBonds():
             bond_type = _bond_type_from_rdkit(rd_bond.GetBondType())
-            atomistic.def_bond(
+            bond = atomistic.add_bond(
                 created[rd_bond.GetBeginAtomIdx()],
                 created[rd_bond.GetEndAtomIdx()],
-                bond_type=bond_type,
-                bond_number=_implied_number(bond_type),
+            )
+            atomistic.set_bond_class(
+                bond,
+                BondOrder.from_code(bond_type),
+                BondNumber.from_code(_implied_number(bond_type)),
             )
         return atomistic
 
@@ -311,7 +291,7 @@ class RdkitAdapter(Adapter[Atomistic, Chem.Mol]):
         self._tag_atoms(atomistic)
         by_tag = dict(
             zip(
-                (int(t) for t in atomistic.column(MP_ID)),
+                (int(atom[MP_ID]) for atom in atomistic.atoms),
                 atomistic.atoms,
                 strict=True,
             )
@@ -331,12 +311,12 @@ class RdkitAdapter(Adapter[Atomistic, Chem.Mol]):
                     tag = next_tag
                     next_tag += 1
                     rd_atom.SetIntProp(MP_ID, tag)
-                atom = atomistic.def_atom(**self._atom_props(rd_atom, tag, position))
+                atom = atomistic.add_atom(**self._atom_props(rd_atom, tag, position))
                 by_tag[tag] = atom
                 atom_of_rd.append(atom)
                 continue
 
-            atom["element"] = rd_atom.GetSymbol()
+            atom["atomic_number"] = rd_atom.GetAtomicNum()
             charge = rd_atom.GetFormalCharge()
             if charge != 0 or FORMAL_CHARGE.key in atom:
                 atom[FORMAL_CHARGE.key] = charge
@@ -347,14 +327,17 @@ class RdkitAdapter(Adapter[Atomistic, Chem.Mol]):
         if update_topology:
             existing = list(atomistic.bonds)
             if existing:
-                atomistic.remove_link(*existing)
+                atomistic.del_bonds(existing)
             for rd_bond in mol.GetBonds():
                 bond_type = _bond_type_from_rdkit(rd_bond.GetBondType())
-                atomistic.def_bond(
+                bond = atomistic.add_bond(
                     atom_of_rd[rd_bond.GetBeginAtomIdx()],
                     atom_of_rd[rd_bond.GetEndAtomIdx()],
-                    bond_type=bond_type,
-                    bond_number=_implied_number(bond_type),
+                )
+                atomistic.set_bond_class(
+                    bond,
+                    BondOrder.from_code(bond_type),
+                    BondNumber.from_code(_implied_number(bond_type)),
                 )
 
     # ------------------------------------------------------------------
@@ -392,7 +375,7 @@ class RdkitAdapter(Adapter[Atomistic, Chem.Mol]):
 
     def copy(self) -> RdkitAdapter:
         """A new adapter over deep copies of both representations."""
-        new_internal = self._internal.copy() if self._internal is not None else None
+        new_internal = copy(self._internal) if self._internal is not None else None
         new_external = Chem.Mol(self._external) if self._external is not None else None
         return RdkitAdapter(internal=new_internal, external=new_external)
 

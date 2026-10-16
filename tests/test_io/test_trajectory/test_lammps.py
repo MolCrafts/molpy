@@ -2,11 +2,18 @@ import numpy as np
 
 import molpy as mp
 from molpy.core import MetaValue
-from molpy.io import (
-    read_lammps_dump_trajectory,
-    write_lammps_dump_local,
-    write_lammps_dump_trajectory,
-)
+from molpy.io import write_lammps_dump_local
+from molpy.io.lammps import LammpsDumpReader, LammpsDumpWriter
+
+
+def read_lammps_dump_trajectory(path):
+    return LammpsDumpReader(path)
+
+
+def write_lammps_dump_trajectory(path, frames):
+    with LammpsDumpWriter(path) as writer:
+        for frame in frames:
+            writer.write(frame)
 
 
 class TestWriteLammpsTrajectory:
@@ -27,7 +34,7 @@ class TestWriteLammpsTrajectory:
             }
             frame["atoms"] = atoms_data
             frame.meta = {"timestep": MetaValue("i64", i * 100)}
-            frame.box = mp.Box(h=np.eye(3) * 10.0)
+            frame.box = mp.Box(mp.core.Cell.matrix(np.eye(3) * 10.0))
             frames.append(frame)
 
         # Write trajectory
@@ -35,7 +42,7 @@ class TestWriteLammpsTrajectory:
         write_lammps_dump_trajectory(tmp_file, frames)
 
         # Read back via the native reader and verify
-        reader = read_lammps_dump_trajectory(str(tmp_file))
+        reader = read_lammps_dump_trajectory(tmp_file)
 
         # Check that we can read the frames back
         for i, frame_read in enumerate(reader):
@@ -67,14 +74,14 @@ class TestWriteLammpsTrajectory:
         }
         frame["atoms"] = atoms_data
         frame.meta = {"timestep": MetaValue("i64", 1000)}
-        frame.box = mp.Box(h=np.diag([5.0, 5.0, 5.0]))
+        frame.box = mp.Box(mp.core.Cell.matrix(np.diag([5.0, 5.0, 5.0])))
 
         tmp_file = tmp_path / "test.dump"
         # Write
         write_lammps_dump_trajectory(tmp_file, [frame])
 
         # Read back via the native reader
-        reader = read_lammps_dump_trajectory(str(tmp_file))
+        reader = read_lammps_dump_trajectory(tmp_file)
         frame_read = reader[0]
 
         # Verify timestep
@@ -87,7 +94,7 @@ class TestWriteLammpsTrajectory:
 
         # Verify box
         assert frame_read.box is not None
-        assert np.allclose(frame_read.box.h.diagonal(), [5.0, 5.0, 5.0])
+        assert np.allclose(frame_read.box.matrix.diagonal(), [5.0, 5.0, 5.0])
 
 
 class TestTrajectoryIntegration:
@@ -106,14 +113,14 @@ class TestTrajectoryIntegration:
         }
         frame["atoms"] = atoms_data
         frame.meta = {"timestep": MetaValue("i64", 0)}
-        frame.box = mp.Box(h=np.diag([10.0, 10.0, 10.0]))
+        frame.box = mp.Box(mp.core.Cell.matrix(np.diag([10.0, 10.0, 10.0])))
 
         # Write as trajectory
         tmp_file = tmp_path / "test.dump"
         write_lammps_dump_trajectory(tmp_file, [frame])
 
         # Read back as trajectory
-        reader = read_lammps_dump_trajectory(str(tmp_file))
+        reader = read_lammps_dump_trajectory(tmp_file)
         frame_read = reader[0]
 
         assert frame_read.meta["timestep"] == 0
@@ -135,13 +142,13 @@ class TestTrajectoryIntegration:
         }
         frame_original["atoms"] = atoms_data
         frame_original.meta = {"timestep": MetaValue("i64", 100)}
-        frame_original.box = mp.Box(h=np.eye(3) * 5.0)
+        frame_original.box = mp.Box(mp.core.Cell.matrix(np.eye(3) * 5.0))
 
         # Write as trajectory and read back
         tmp_file = tmp_path / "test.dump"
         write_lammps_dump_trajectory(tmp_file, [frame_original])
 
-        reader = read_lammps_dump_trajectory(str(tmp_file))
+        reader = read_lammps_dump_trajectory(tmp_file)
         frame_traj = reader[0]
 
         # Both should have same basic structure
@@ -163,7 +170,7 @@ class TestWriteLammpsDumpLocal:
         frame = mp.Frame()
         frame["atoms"] = atoms
         frame["bonds"] = bonds
-        frame.box = mp.Box.cube(10.0)
+        frame.box = mp.Box(mp.core.Cell.lengths([10.0] * 3))
         path = tmp_path / "bonds.dump.local"
         write_lammps_dump_local(path, [frame])
         text = path.read_text(encoding="utf-8")

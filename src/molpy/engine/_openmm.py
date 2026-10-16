@@ -301,10 +301,11 @@ class OpenmmEngine(Engine):
         ff_path = out / ff_filename
         script_path = out / script_filename
 
-        from molrs.io import write_openmm_forcefield, write_pdb
+        from molrs.io import write_pdb
+        from molrs.io.openmm_xml import OpenmmXmlWriter
 
         write_pdb(pdb_path, frame)
-        write_openmm_forcefield(ff_path, forcefield)
+        OpenmmXmlWriter().write(ff_path, forcefield)
 
         script_text = self._render_simulation_script(
             config, pdb_filename=pdb_filename, ff_filename=ff_filename

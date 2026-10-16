@@ -9,14 +9,16 @@ from molpy.builder import PackingTemplate
 
 
 def _with_hydrogens(smiles: str) -> mp.Atomistic:
-    return mp.perceive.add_hydrogens(mp.io.smiles.SmilesIr(smiles).to_atomistic())
+    return mp.perceive.add_hydrogens(mp.io.smiles.SmilesIr.parse(smiles).to_atomistic())
 
 
 def test_hydrogens_are_the_h_rows_of_the_frame() -> None:
     template = PackingTemplate(_with_hydrogens("CCOCC"))
 
-    elements = [str(e) for e in template.frame["atoms"]["element"]]
-    assert template.hydrogens == tuple(i for i, e in enumerate(elements) if e == "H")
+    atomic_numbers = template.frame["atoms"]["atomic_number"]
+    assert template.hydrogens == tuple(
+        i for i, number in enumerate(atomic_numbers) if number == 1
+    )
     assert len(template.hydrogens) == 10
 
 
@@ -30,16 +32,14 @@ def test_frame_is_the_molecule_frame() -> None:
 
 def test_molecule_without_hydrogens_has_none() -> None:
     mol = mp.Atomistic()
-    mol.def_atom(element="Ar", x=0.0, y=0.0, z=0.0)
+    mol.add_atom(atomic_number=18, x=0.0, y=0.0, z=0.0)
 
     template = PackingTemplate(mol)
 
     assert template.hydrogens == ()
 
 
-def test_missing_element_raises() -> None:
+def test_missing_atomic_number_is_rejected_by_the_graph() -> None:
     mol = mp.Atomistic()
-    mol.def_atom(x=0.0, y=0.0, z=0.0)
-
-    with pytest.raises(ValueError, match="element"):
-        PackingTemplate(mol)
+    with pytest.raises(ValueError, match="atomic_number"):
+        mol.add_atom(x=0.0, y=0.0, z=0.0)

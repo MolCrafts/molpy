@@ -3,7 +3,7 @@
 Wraps `GROMACS <https://www.gromacs.org>`_. :meth:`GromacsEngine.generate_inputs`
 writes a ready-to-run input set — coordinates (``.gro``), the whole topology
 (``.top``: directives, one ``[ moleculetype ]`` per molecule, ``[ system ]``
-and ``[ molecules ]``, from ``write_top_system``) and the energy-minimisation and
+and ``[ molecules ]``, from ``GromacsTopForcefieldWriter.write_system``) and the energy-minimisation and
 NVT ``.mdp`` templates. :meth:`GromacsEngine.run` takes one ``.mdp`` as its
 input script and runs::
 
@@ -29,7 +29,8 @@ import subprocess
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from molrs.io import write_gro, write_top_system
+from molrs.io import write_gro
+from molrs.io.gromacs import GromacsTopForcefieldWriter
 
 from ._engine import Engine
 
@@ -173,7 +174,7 @@ class GromacsEngine(Engine):
             "nvt": out / "nvt.mdp",
         }
         write_gro(paths["gro"], frame)
-        write_top_system(paths["top"], forcefield, frame)
+        GromacsTopForcefieldWriter().write_system(paths["top"], forcefield, frame)
         paths["em"].write_text(_EM_MDP, encoding="utf-8")
         paths["nvt"].write_text(
             _NVT_MDP.format(temperature=temperature), encoding="utf-8"

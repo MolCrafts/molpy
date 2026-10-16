@@ -41,9 +41,9 @@ class TestReadGro:
         np.testing.assert_allclose(xyz[0], [3.10, 8.62, 13.16])
         np.testing.assert_allclose(xyz[3], [10.0, 10.0, 10.0])
 
-    def test_element_is_inferred_from_the_atom_name(self, gro_dir):
+    def test_species_is_not_inferred_from_the_atom_name(self, gro_dir):
         atoms = _read(gro_dir / "two_waters.gro")["atoms"]
-        assert list(atoms["element"]) == ["O", "H", "H", "O", "H", "H"]
+        assert "atomic_number" not in atoms
 
     def test_velocity_columns_are_read_and_scaled(self, gro_dir):
         atoms = _read(gro_dir / "two_waters.gro")["atoms"]
@@ -55,14 +55,14 @@ class TestReadGro:
 
     def test_three_number_box_line_is_orthogonal(self, gro_dir):
         box = _read(gro_dir / "two_waters.gro").box
-        np.testing.assert_allclose(box.h, np.diag([20.0, 30.0, 40.0]))
+        np.testing.assert_allclose(box.matrix, np.diag([20.0, 30.0, 40.0]))
 
     def test_nine_number_box_line_fills_the_off_diagonals(self, gro_dir):
         # v1(x) v2(y) v3(z) v1(y) v1(z) v2(x) v2(z) v3(x) v3(y); lattice
         # vectors are the columns of the matrix, in Å.
         box = _read(gro_dir / "triclinic.gro").box
         expected = [[20.0, 5.0, 6.0], [0.0, 30.0, 7.0], [0.0, 0.0, 40.0]]
-        np.testing.assert_allclose(box.h, expected)
+        np.testing.assert_allclose(box.matrix, expected)
 
     def test_only_the_first_frame_of_a_multi_frame_file_is_returned(
         self, gro_dir, tmp_path
@@ -115,7 +115,7 @@ class TestWriteGro:
             "y": [0.0, 0.0, 0.94],
             "z": [0.0, 0.0, 0.0],
         }
-        frame.box = mp.Box(h=np.diag([20.0, 30.0, 40.0]))
+        frame.box = mp.Box(mp.core.Cell.matrix(np.diag([20.0, 30.0, 40.0])))
         return frame
 
     def test_record_layout(self, tmp_path):

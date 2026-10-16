@@ -1,13 +1,8 @@
-"""``*.mrec`` records — :mod:`molrs.io.mrec`, mirrored by identity — and molpy's metric reader.
+"""``*.mrec`` records — :mod:`molrs.io.mrec`, mirrored by identity.
 
-Every native name is the molrs object (``mp.io.mrec.MrecReader is
-molrs.io.mrec.MrecReader``): the lazy record cursor ``MrecReader`` and its
-``MrecWriter``, ``SequenceSchema``, ``ForceFieldSection`` (a force field's
-record section: ``ForceFieldSection.from_forcefield(ff)`` /
-``section.to_forcefield()``), ``section_names``, ``pack_mrec_zip`` and the
-``validation`` checks. A record is read and written whole by ``mp.io.read_mrec_frame`` /
-``write_mrec_frame`` and their ``_system`` / ``_trajectory`` / ``_forcefield``
-partners.
+``MrecFile`` reads named sections, ``MrecReader`` iterates trajectory frames,
+and ``MrecWriter`` writes them. ``mp.io.write_mrec`` writes a whole record.
+Molpy adds :class:`MrecMetricReader` for the trajectory's step/time series.
 
 molpy adds :class:`MrecMetricReader`, published in the
 ``molcrafts.metric_readers`` entry-point group for any molcrafts viewer::

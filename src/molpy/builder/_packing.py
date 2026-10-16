@@ -26,7 +26,7 @@ class PackingTemplate:
 
     Attributes:
         frame: The molecule as a frame, the one to hand to the packer.
-        hydrogens: Atom indices whose element is hydrogen, ascending.
+        hydrogens: Atom indices whose atomic number is hydrogen, ascending.
 
     Examples:
         >>> chain = mp.builder.Assembler(library, mp.builder.GrowthPlacer()).assemble(sites, mp.Atomistic)
@@ -38,22 +38,22 @@ class PackingTemplate:
         """Take the frame of ``mol`` and name its hydrogens.
 
         Args:
-            mol: A molecule with an ``element`` on every atom.
+            mol: A molecule with an ``atomic_number`` on every atom.
 
         Raises:
-            ValueError: If the frame has no ``element`` column.
+            ValueError: If the frame has no ``atomic_number`` column.
         """
         frame = mol.to_frame()
         atoms = frame["atoms"]
-        if "element" not in atoms:
+        if "atomic_number" not in atoms:
             raise ValueError(
-                "PackingTemplate needs an 'element' on every atom to name hydrogens"
+                "PackingTemplate needs an 'atomic_number' on every atom to name hydrogens"
             )
-        elements = np.asarray(atoms["element"]).astype(str)
+        atomic_numbers = np.asarray(atoms["atomic_number"])
 
         self.frame: Frame = frame
         self.hydrogens: tuple[int, ...] = tuple(
-            int(k) for k in np.flatnonzero(elements == "H")
+            int(k) for k in np.flatnonzero(atomic_numbers == 1)
         )
 
     def __repr__(self) -> str:

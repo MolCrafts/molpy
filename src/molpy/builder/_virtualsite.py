@@ -5,12 +5,13 @@ with auxiliary particles placed by a rule — Drude shells, TIP4P M-sites, lone
 pairs, etc. This is the general pattern (one base class); CL&Pol's polarizer is
 just the :class:`DrudeBuilder` instance.
 
-The transform never mutates its input: ``apply`` works on ``struct.copy()`` and
+The transform never mutates its input: ``apply`` works on ``copy.copy(struct)`` and
 returns the new structure.
 """
 
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
+from copy import copy
 from math import sqrt
 from typing import Any
 
@@ -22,7 +23,7 @@ from molrs.core import UnitPreset, UnitRegistry
 _KCAL_PER_KJ = UnitRegistry().quantity(1.0, "kJ/mol").to("kcal/mol").value
 # 4πε₀ in e² / (kJ/mol·Å), the paduagroup/clandpol polarizer's unit: the
 # inverse of the Coulomb constant (LAMMPS ``real``'s, kcal·Å/(mol·e²)) in kJ.
-_FOUR_PI_EPS0 = _KCAL_PER_KJ / UnitPreset.real().coulomb()
+_FOUR_PI_EPS0 = _KCAL_PER_KJ / UnitPreset("real").coulomb()
 # TIP4P/2005 O–M distance (Angstrom).
 TIP4P_OM = 0.1546
 
@@ -37,7 +38,7 @@ class VirtualSiteBuilder(ABC):
 
     def apply(self, struct: Atomistic) -> Atomistic:
         """Return a new structure with virtual sites added; input untouched."""
-        work = struct.copy()
+        work = copy(struct)
         for host in list(self.select(work)):
             sites = self.build_sites(work, host)
             self.redistribute(work, host, sites)
@@ -100,7 +101,7 @@ class DrudeBuilder(VirtualSiteBuilder):
         sign = 1.0 if params["q_D_sign"] >= 0 else -1.0
         q_d = sign * sqrt(_FOUR_PI_EPS0 * k_d * alpha)
         attrs: dict[str, Any] = {
-            "element": "D",
+            "atomic_number": 0,
             "charge": q_d,
             "mass": params["m_D"],
             "k_D": k_d,
@@ -115,7 +116,7 @@ class DrudeBuilder(VirtualSiteBuilder):
         for axis in ("x", "y", "z"):
             if host.get(axis) is not None:
                 attrs[axis] = host.get(axis)
-        return [struct.def_virtual_site(kind=DrudeParticle, **attrs)]
+        return [struct.add_atom(kind=DrudeParticle, **attrs)]
 
     def redistribute(
         self, struct: Atomistic, host: Atom, sites: Sequence[Atom]
@@ -128,7 +129,7 @@ class DrudeBuilder(VirtualSiteBuilder):
         # Spring constant is the host type's k_D (data-driven, from the table). The
         # spring carries its own bond type so the augmented structure is fully
         # typed (every core–shell spring shares the one ``DRUDE`` bond type).
-        struct.def_bond(
+        struct.add_bond(
             host,
             shell,
             # alpha.ff states k_D in kJ/mol/Å² ("units: kJ/mol, A"); molrs is
@@ -160,9 +161,9 @@ class Tip4pBuilder(VirtualSiteBuilder):
         hs: list[Atom] = []
         for bond in struct.bonds:
             a, b = bond.itom, bond.jtom
-            if a is o and b.get("element") == "H":
+            if a is o and b.get("atomic_number") == 1:
                 hs.append(b)
-            elif b is o and a.get("element") == "H":
+            elif b is o and a.get("atomic_number") == 1:
                 hs.append(a)
         return hs
 
@@ -170,7 +171,7 @@ class Tip4pBuilder(VirtualSiteBuilder):
         return [
             a
             for a in struct.atoms
-            if a.get("element") == "O" and len(self._hydrogens(struct, a)) == 2
+            if a.get("atomic_number") == 8 and len(self._hydrogens(struct, a)) == 2
         ]
 
     def build_sites(self, struct: Atomistic, host: Atom) -> list[Atom]:
@@ -182,9 +183,9 @@ class Tip4pBuilder(VirtualSiteBuilder):
         norm = sqrt(sum(c * c for c in bis)) or 1.0
         m = tuple(o + self.d_om * c / norm for o, c in zip((ox, oy, oz), bis))
         return [
-            struct.def_virtual_site(
+            struct.add_atom(
                 kind=MasslessSite,
-                element="M",
+                atomic_number=0,
                 charge=host["charge"],
                 x=m[0],
                 y=m[1],

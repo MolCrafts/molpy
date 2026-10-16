@@ -3,7 +3,7 @@
 import numpy as np
 import pytest
 
-from molpy.core import Box, NeighborList, VerletSkin
+from molpy.core import Box, Cell, NeighborList, VerletSkin
 from molpy.md import Langevin, MdDriver, VelocityVerlet
 from molpy.ff.potential import PairLjCut
 
@@ -11,7 +11,7 @@ from molpy.ff.potential import PairLjCut
 def _dimer(*, skin: float = 0.3, rc: float = 2.5):
     """Two atoms inside cutoff; returns pos, lj, skin_nl, mass."""
     pos = np.array([[0.0, 0.0, 0.0], [1.1, 0.0, 0.0]], dtype=np.float64)
-    box = Box.cube(20.0)
+    box = Box(Cell.lengths([20.0] * 3))
     nl = VerletSkin(NeighborList(rc + skin), rc, pos, box, skin=skin)
     lj = PairLjCut(1.0, 1.0, rc, shifted=True)
     mass = np.ones(2, dtype=np.float64)

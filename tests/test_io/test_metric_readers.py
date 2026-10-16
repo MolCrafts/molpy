@@ -242,9 +242,9 @@ class TestMrecReader:
         frame = mp.Frame()
         frame["atoms"] = {"x": [0.0], "y": [0.0], "z": [0.0]}
         path = tmp_path / "run.mrec"
-        mp.io.write_mrec_trajectory(
+        mp.io.write_mrec(
             path,
-            mp.Trajectory(
+            trajectory=mp.Trajectory(
                 [frame, frame, frame],
                 step=np.array([0, 10, 20]),
                 time=np.array([0.0, 0.5, 1.0]),

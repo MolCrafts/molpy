@@ -53,9 +53,11 @@ class TestGenerateInputs:
         assert "atom_style full" in init
         assert "_style " not in init.replace("atom_style ", "")
         settings = paths["settings"].read_text(encoding="utf-8")
-        assert settings == mp.io.write_lammps_forcefield_str(
-            water_ff, water.to_frame(), skip_units=True, units="real"
-        )
+        expected = bytearray()
+        mp.io.lammps.LammpsForcefieldWriter(
+            water.to_frame(), skip_units=True, units="real"
+        ).write(expected, water_ff)
+        assert settings == expected.decode("utf-8")
         assert "bond_style harmonic" in settings
         assert "pair_style lj/cut" in settings
         run = paths["input"].read_text(encoding="utf-8")
@@ -89,7 +91,7 @@ class TestGenerateInputs:
         water_ff.def_style("bond", "morse").def_type(
             "OW-HW2", ow, hw, d0=100.0, alpha=2.0, r0=1.0
         )
-        water.links.exact_bucket(mp.Bond)[1]["type"] = "OW-HW2"
+        water.bonds[1]["type"] = "OW-HW2"
         _deck(water, water_ff, tmp_path)
         settings = (tmp_path / "w.in.settings").read_text(encoding="utf-8").splitlines()
         assert "bond_style hybrid harmonic morse" in settings
@@ -137,7 +139,7 @@ def _with_urey_bradley(water: mp.Atomistic, ff: mp.ff.forcefield.ForceField) -> 
         "HW-OW-HW", hw, ow, hw, k=55.0, theta0=104.52, k_ub=20.0, r_ub=1.5139
     )
     o, h1, h2 = list(water.atoms)
-    water.def_angle(h1, o, h2, type="HW-OW-HW")
+    water.add_angle(h1, o, h2, type="HW-OW-HW")
 
 
 @pytest.mark.skipif(shutil.which("lmp") is None, reason="needs the lmp executable")
@@ -177,6 +179,6 @@ def test_lammps_prices_the_emitted_bonded_terms_as_molrs_does(
 
     # No `pairs` block: molrs prices the bonded terms alone.
     frame = water.to_frame()
-    energy = mp.ff.compile.PotentialCompiler(water_ff).compile(frame).calc_energy(frame)
+    energy, _ = mp.ff.compile.PotentialCompiler(water_ff).compile(frame).evaluate(frame)
     assert ebond + eangle == pytest.approx(energy, rel=1e-5)
     assert eangle > 0.0
