@@ -24,7 +24,6 @@ Reference:
 
 import subprocess
 from pathlib import Path
-from typing import Any
 
 from molpy.engine._engine import Engine
 
@@ -52,23 +51,14 @@ class Cp2kEngine(Engine):
         ...     "  METHOD Quickstep\\n"
         ...     "&END FORCE_EVAL\\n"
         ... )
-        >>> script = Script.from_text(name="input", text=inp, language="other")
+        >>> script = Script.from_text("input", inp)
         >>> engine = Cp2kEngine(check_executable=False)
-        >>> result = engine.run(script, workdir="./calc", check=False)
+        >>> result = engine.run(script, workdir="./calc")
         >>> print(result.returncode)
         0
     """
 
     tool = "cp2k"
-
-    @property
-    def name(self) -> str:
-        """Return ``"CP2K"``.
-
-        Returns:
-            Engine identifier string.
-        """
-        return "CP2K"
 
     def _get_default_extension(self) -> str:
         """Return ``".inp"`` — the conventional CP2K input extension.
@@ -81,11 +71,12 @@ class Cp2kEngine(Engine):
     def _execute(
         self,
         run_dir: Path,
-        capture_output: bool = False,
-        check: bool = True,
-        **kwargs: Any,
-    ) -> subprocess.CompletedProcess:
-        """Run CP2K in *run_dir*.
+        input_file: Path,
+        *,
+        capture_output: bool,
+        check: bool,
+    ) -> subprocess.CompletedProcess[str]:
+        """Run CP2K on *input_file* in *run_dir*.
 
         Builds the command::
 
@@ -95,25 +86,11 @@ class Cp2kEngine(Engine):
         keeping stdout empty and preventing pipe-buffer deadlocks; a failure
         carries the tail of ``cp2k.out``.
 
-        Args:
-            run_dir: Directory containing the input files; used as ``cwd``.
-            capture_output: Capture stdout/stderr.
-            check: Raise :class:`~molpy.wrapper.ToolError` on failure.
-            **kwargs: Ignored (reserved for future use).
-
-        Returns:
-            :class:`subprocess.CompletedProcess`.
-
         Raises:
-            RuntimeError: If no input script has been registered.
             ToolError: CP2K could not start, timed out, or (with *check*)
                 exited non-zero.
         """
-        if self.input_script is None or self.input_script.path is None:
-            raise RuntimeError("No input script found.  Pass a script to run() first.")
-
-        input_file = self.input_script.path.name
-        command = self.command(["-i", input_file, "-o", "cp2k.out"])
+        command = self.command(["-i", input_file.name, "-o", "cp2k.out"])
         return self.run_command(
             command,
             cwd=run_dir,

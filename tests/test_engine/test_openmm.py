@@ -123,8 +123,8 @@ class TestOpenmmSimulationConfig:
 
 
 class TestOpenmmEngineInit:
-    def test_name(self, engine):
-        assert engine.name == "OpenMM"
+    def test_key(self, engine):
+        assert engine.key == "engine.openmm"
 
     def test_extension(self, engine):
         assert engine._get_default_extension() == ".py"

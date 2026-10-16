@@ -27,7 +27,7 @@ from __future__ import annotations
 
 import subprocess
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from molrs.io import write_gro, write_top_system
 
@@ -79,11 +79,6 @@ class GromacsEngine(Engine):
         )
         self.prefix = prefix
 
-    @property
-    def name(self) -> str:
-        """Return ``"GROMACS"``."""
-        return "GROMACS"
-
     def _get_default_extension(self) -> str:
         """Return ``".mdp"`` — a GROMACS run-parameter file."""
         return ".mdp"
@@ -91,29 +86,26 @@ class GromacsEngine(Engine):
     def _execute(
         self,
         run_dir: Path,
-        capture_output: bool = False,
-        check: bool = True,
-        **kwargs: Any,
-    ) -> subprocess.CompletedProcess:
-        """Run ``grompp`` then ``mdrun`` for the input ``.mdp`` in *run_dir*.
+        input_file: Path,
+        *,
+        capture_output: bool,
+        check: bool,
+    ) -> subprocess.CompletedProcess[str]:
+        """Run ``grompp`` then ``mdrun`` for the ``.mdp`` *input_file*.
 
         ``grompp`` runs without the launcher; a failed ``mdrun`` carries the
         tail of ``<stem>.log``.
 
         Raises:
-            RuntimeError: If no input script has been registered.
             ToolError: A step could not start, timed out, or (with *check*)
                 exited non-zero.
         """
-        if self.input_script is None or self.input_script.path is None:
-            raise RuntimeError("No input script found.  Pass an .mdp to run() first.")
-        mdp = self.input_script.path.name
-        stem = Path(mdp).stem
+        stem = input_file.stem
         grompp = self.command(
             [
                 "grompp",
                 "-f",
-                mdp,
+                input_file.name,
                 "-c",
                 f"{self.prefix}.gro",
                 "-p",

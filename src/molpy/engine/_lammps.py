@@ -31,7 +31,7 @@ from __future__ import annotations
 import subprocess
 import tempfile
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from molrs.io import read_lammps_data, write_lammps_data, write_lammps_forcefield_str
 
@@ -62,13 +62,9 @@ class LammpsEngine(Engine):
         >>> from molpy.config import load_config
         >>> from molpy.engine import LammpsEngine, Script
         >>>
-        >>> script = Script.from_text(
-        ...     name="input",
-        ...     text="units real\\natom_style full\\nrun 0\\n",
-        ...     language="other",
-        ... )
+        >>> script = Script.from_text("input", "units real\\natom_style full\\nrun 0\\n")
         >>> engine = LammpsEngine(check_executable=False)
-        >>> result = engine.run(script, workdir="./calc", check=False)
+        >>> result = engine.run(script, workdir="./calc")
         >>> print(result.returncode)
         0
 
@@ -96,15 +92,6 @@ class LammpsEngine(Engine):
             _LAMMPS_CANDIDATES[0],
         )
 
-    @property
-    def name(self) -> str:
-        """Return ``"LAMMPS"``.
-
-        Returns:
-            Engine identifier string.
-        """
-        return "LAMMPS"
-
     def _get_default_extension(self) -> str:
         """Return ``".lmp"`` — the conventional LAMMPS input extension.
 
@@ -116,11 +103,12 @@ class LammpsEngine(Engine):
     def _execute(
         self,
         run_dir: Path,
-        capture_output: bool = False,
-        check: bool = True,
-        **kwargs: Any,
-    ) -> subprocess.CompletedProcess:
-        """Run LAMMPS in *run_dir*.
+        input_file: Path,
+        *,
+        capture_output: bool,
+        check: bool,
+    ) -> subprocess.CompletedProcess[str]:
+        """Run LAMMPS on *input_file* in *run_dir*.
 
         Builds the command::
 
@@ -130,26 +118,12 @@ class LammpsEngine(Engine):
         (it still goes to *log.lammps*), avoiding pipe-buffer deadlocks when
         the caller captures output; a failure carries the log's tail.
 
-        Args:
-            run_dir: Directory containing the input files; used as ``cwd``.
-            capture_output: Capture stdout/stderr.
-            check: Raise :class:`~molpy.wrapper.ToolError` on failure.
-            **kwargs: Ignored (reserved for future use).
-
-        Returns:
-            :class:`subprocess.CompletedProcess`.
-
         Raises:
-            RuntimeError: If no input script has been registered.
             ToolError: LAMMPS could not start, timed out, or (with *check*)
                 exited non-zero.
         """
-        if self.input_script is None or self.input_script.path is None:
-            raise RuntimeError("No input script found.  Pass a script to run() first.")
-
-        input_file = self.input_script.path.name
         command = self.command(
-            ["-in", input_file, "-log", "log.lammps", "-screen", "none"]
+            ["-in", input_file.name, "-log", "log.lammps", "-screen", "none"]
         )
         return self.run_command(
             command,

@@ -201,15 +201,6 @@ class OpenmmEngine(Engine):
     # Abstract method implementations
     # ------------------------------------------------------------------
 
-    @property
-    def name(self) -> str:
-        """Return ``"OpenMM"``.
-
-        Returns:
-            Engine identifier string.
-        """
-        return "OpenMM"
-
     def _get_default_extension(self) -> str:
         """Return ``".py"`` — the extension for generated simulation scripts.
 
@@ -221,11 +212,12 @@ class OpenmmEngine(Engine):
     def _execute(
         self,
         run_dir: Path,
-        capture_output: bool = False,
-        check: bool = True,
-        **kwargs: Any,
-    ) -> subprocess.CompletedProcess:
-        """Run the generated Python simulation script.
+        input_file: Path,
+        *,
+        capture_output: bool,
+        check: bool,
+    ) -> subprocess.CompletedProcess[str]:
+        """Run the Python simulation script *input_file* in *run_dir*.
 
         Builds the command::
 
@@ -233,28 +225,12 @@ class OpenmmEngine(Engine):
 
         OpenMM must be importable in the configured Python interpreter.
 
-        Args:
-            run_dir: Directory containing the simulation files; used as
-                ``cwd`` for the subprocess.
-            capture_output: Capture stdout/stderr.
-            check: Raise :class:`~molpy.wrapper.ToolError` on failure.
-            **kwargs: Ignored (reserved for future use).
-
-        Returns:
-            :class:`subprocess.CompletedProcess`.
-
         Raises:
-            RuntimeError: If no input script has been registered.
             ToolError: The script could not start, timed out, or (with
                 *check*) exited non-zero.
         """
-        if self.input_script is None or self.input_script.path is None:
-            raise RuntimeError(
-                "No input script found.  Call generate_inputs() or pass a "
-                "script to run() first."
-            )
         return self.run_command(
-            self.command([self.input_script.path.name]),
+            self.command([input_file.name]),
             cwd=run_dir,
             capture_output=capture_output,
             check=check,
