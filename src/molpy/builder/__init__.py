@@ -20,7 +20,7 @@ molpy adds:
   (CL&Pol, parameters from ``mp.ff.params.clpol_polarizability``) and
   :class:`Tip4pBuilder`;
 * :class:`PackingTemplate` — a built molecule's frame plus its hydrogen
-  indices, for a packer.
+  indices, for a packer's per-atom settings.
 
 Every name has this one path; the modules behind it are private.
 """

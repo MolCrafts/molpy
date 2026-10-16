@@ -326,7 +326,7 @@ typed 5 chains, 980 atoms
 
 ## Packing and exporting follow the same pattern as earlier guides
 
-The box size follows from total molecular weight and target density. Each chain is added to the packer as an individual target with count 1; `mp.builder.PackingTemplate` hands the packer the chain's frame together with its `hydrogens` indices, so the hydrogens are named once and given a small packing radius. The packed frame is written as a LAMMPS data file together with the force field. The growth placer leaves bond lengths and close contacts to a later relaxation, which is why the LAMMPS script below minimises before any dynamics.
+The box size follows from total molecular weight and target density. Each chain is added to the packer as an individual target with count 1; `mp.builder.PackingTemplate` hands the packer the chain's frame together with its `hydrogens` indices into that frame, which give the hydrogens a small packing radius. Which atoms are hydrogens is molpack's own default (element `H`), so the target is not told again. The packed frame is written as a LAMMPS data file together with the force field. The growth placer leaves bond lengths and close contacts to a later relaxation, which is why the LAMMPS script below minimises before any dynamics.
 
 
 ```python
@@ -345,11 +345,10 @@ box_length = volume ** (1 / 3)
 box = mp.core.Cuboid([0.0, 0.0, 0.0], [box_length] * 3)
 targets = []
 for chain in typed_chains:
-    template = mp.builder.PackingTemplate(chain)  # frame + perceived atom roles
+    template = mp.builder.PackingTemplate(chain)  # frame + hydrogen indices
     targets.append(
         Target(template.frame, count=1)
         .with_restraint(box)
-        .with_hydrogens(template.hydrogens)
         .with_atom_radius(template.hydrogens, 0.2)  # H relaxes away in early MD
     )
 packed = GencanPack().with_seed(42).run(targets, max_loops=200).frame  # carries mol_id
