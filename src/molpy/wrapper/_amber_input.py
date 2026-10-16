@@ -35,8 +35,12 @@ def antechamber_input_mol2(graph: Atomistic, path: Path, *, rename: bool) -> Non
 
     mol2 carries the bonds, so antechamber does not perceive them from
     coordinates (AmberTools 26's bondtype crashes on a PDB with CONECT
-    records). A ``type`` bond column is a force-field label, not the SYBYL
-    bond order mol2 reads there, so it is dropped. With ``rename``, atoms are
+    records). The bond orders are the canonical ``bond_type`` /
+    ``bond_number`` columns (every graph bond carries them), which
+    ``write_mol2`` writes as SYBYL codes (``1``, ``2``, ``ar``, ...).
+    ``write_mol2`` prefers a ``type`` bond column over them, and on a typed
+    graph that column is a force-field label (``c3-os``), so ``type`` alone
+    is dropped. With ``rename``, atoms are
     named element + row (``C1``, ``O2``, ...) so antechamber and tleap can
     tell elements apart; otherwise the graph's own names are kept.
     """
