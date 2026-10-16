@@ -12,6 +12,7 @@ use crate::ff::ir::{
     Engine, LammpsCodec, LammpsCoeffs, ParamCombination, StyleSpec, Token, UnitScale,
 };
 use crate::ff::style_registry::{Registry, RegistryRef};
+use crate::io::lammps::drude::{drude_note, drude_springs_as_bonds, lammps_type_labels};
 use crate::io::lammps::forcefield_reader::{CROSS_TERM_SECTIONS, LAMMPS_CMAP_DIM, LAMMPS_CMAP_MAX};
 use crate::io::lammps::units::{LammpsUnitConverter, parse_lammps_units_style};
 use crate::io::writer::{ForceFieldWriteError, ForceFieldWriter};
@@ -475,6 +476,20 @@ impl PairRow<'_> {
 /// Every data-file section names its style in the header comment, as LAMMPS's
 /// `write_data` does.
 ///
+/// # Drude oscillators (DRUDE package)
+///
+/// A `drude harmonic` type (molrs's `k·r²` core–shell spring) is written as a
+/// `bond harmonic` type of the same name with `K = k`, `r0 = 0` — LAMMPS's
+/// harmonic bond is the same unhalved `K (r − r0)²` — so its label, which
+/// [`lammps_type_labels`] numbers among the bonds as the data writer does,
+/// gets its `bond_coeff` / `Bond Coeffs` row. The springs' `alpha` and
+/// `thole` are not LAMMPS bond coefficients: the include lists them in a
+/// comment after the bond section, for the input script's `pair_style
+/// thole` and `fix drude`, which this writer does not write (no LAMMPS form is
+/// registered for `pair thole`). Build the writer's labels with
+/// [`lammps_type_labels`]; [`TypeLabels::from_frame`] leaves the Drude
+/// springs out of the bond types.
+///
 /// # CMAP crossterms (`fix cmap`)
 ///
 /// A `cmaps` block's labels select `cmap charmm` rows the same way, in id
@@ -544,6 +559,7 @@ impl<'a> LammpsForcefieldWriter<'a> {
     pub fn write_data_coeffs_str(&self, ff: &ForceField) -> Result<String, ForceFieldWriteError> {
         let units = units_of(ff, self.options.units)?;
         self.registry.with(|reg| {
+            let ff = &*drude_springs_as_bonds(ff, reg)?;
             refuse_other_categories(ff, reg)?;
             let mut lines: Vec<String> = Vec::new();
             self.write_data_pair_coeffs(&mut lines, ff, reg, &units)?;
@@ -1165,9 +1181,18 @@ impl ForceFieldWriter for LammpsForcefieldWriter<'_> {
         }
 
         self.registry.with(|reg| {
-            refuse_other_categories(ff, reg)?;
-            self.write_pair_section(&mut lines, ff, reg, &units)?;
-            self.write_section::<BondType>(&mut lines, ff, reg, &units)?;
+            let springs = drude_springs_as_bonds(ff, reg)?;
+            refuse_other_categories(&springs, reg)?;
+            self.write_pair_section(&mut lines, &springs, reg, &units)?;
+            self.write_section::<BondType>(&mut lines, &springs, reg, &units)?;
+            lines.extend(drude_note(
+                ff,
+                &self.block_labels(BondType::BLOCK),
+                reg,
+                &units,
+                self.options.precision,
+            )?);
+            let ff = &*springs;
             self.write_section::<AngleType>(&mut lines, ff, reg, &units)?;
             self.write_section::<DihedralType>(&mut lines, ff, reg, &units)?;
             self.write_section::<ImproperType>(&mut lines, ff, reg, &units)
@@ -1177,9 +1202,11 @@ impl ForceFieldWriter for LammpsForcefieldWriter<'_> {
 }
 
 /// Refuse a style with types in a category that prices energy and has no
-/// LAMMPS `*_style` command (a run-time category, `drude`): writing the
-/// include without it would drop its energy. A category that prices none
-/// (`constraint`, `virtual_site`) is the input script's (`fix shake`, …).
+/// LAMMPS `*_style` command (a run-time category): writing the include
+/// without it would drop its energy. A `drude harmonic` spring has been
+/// moved to the bonds by then ([`drude_springs_as_bonds`]). A category that
+/// prices none (`constraint`, `virtual_site`) is the input script's (`fix
+/// shake`, a `*/tip4p/*` pair style, …).
 fn refuse_other_categories(ff: &ForceField, reg: &Registry) -> Result<(), ForceFieldWriteError> {
     const WRITTEN: [&str; 7] = [
         "atom", "pair", "bond", "angle", "dihedral", "improper", "cmap",
@@ -1271,8 +1298,9 @@ pub fn refuse_pair_overrides(frame: &molrs::core::Frame) -> Result<(), String> {
     ))
 }
 
-/// The type labels of `frame`, its `pairs` block checked by
-/// [`refuse_pair_overrides`] when `check_pairs`.
+/// The type labels of `frame` as its data file numbers them
+/// ([`lammps_type_labels`]: a `drudes` row is a bond), its `pairs` block
+/// checked by [`refuse_pair_overrides`] when `check_pairs`.
 fn labels_of(
     frame: &molrs::core::Frame,
     check_pairs: bool,
@@ -1280,7 +1308,7 @@ fn labels_of(
     if check_pairs {
         refuse_pair_overrides(frame)?;
     }
-    Ok(TypeLabels::from_frame(frame)?)
+    Ok(lammps_type_labels(frame)?)
 }
 
 /// Write `ff` as the LAMMPS force-field include (`*.ff`) of the typed
@@ -2939,5 +2967,120 @@ angle_coeff HA-CT-HA charmm 35.500000 108.400000 5.400000 1.802000
         assert_eq!(lj.params().get_str("mixing"), Some("sixthpower"));
         let text = LammpsForcefieldWriter::new(&labels).write_str(&ff).unwrap();
         assert!(text.contains("pair_modify mix sixthpower"), "{text}");
+    }
+
+    // ── Drude oscillators ───────────────────────────────────────────────────
+
+    /// `CT` cores with `DCT` shells: two `CT-HC` bonds and one `CT-DCT`
+    /// Drude spring.
+    fn drude_frame() -> Frame {
+        let mut frame = Frame::new();
+        frame.insert("atoms", label_type_block(&["CT", "DCT", "HC", "HC"]));
+        frame.insert("bonds", label_type_block(&["CT-HC", "CT-HC"]));
+        frame.insert("drudes", label_type_block(&["CT-DCT"]));
+        frame
+    }
+
+    fn drude_ff() -> ForceField {
+        let mut ff = ForceField::new("clpol");
+        ff.def_style("bond", "harmonic", Params::new())
+            .unwrap()
+            .def_type("CT-HC", &["CT", "HC"], bond(340.0, 1.09))
+            .unwrap();
+        ff.def_style("drude", "harmonic", Params::new())
+            .unwrap()
+            .def_type(
+                "CT-DCT",
+                &["CT", "DCT"],
+                Params::from_pairs(&[("k", 500.0), ("alpha", 1.2), ("thole", 2.6)]),
+            )
+            .unwrap();
+        ff
+    }
+
+    /// A Drude spring (`drude harmonic`, `k*r^2`) is a LAMMPS harmonic bond
+    /// (`K (r - r0)^2`) with `K = k` and `r0 = 0`, numbered among the bonds
+    /// as the data writer numbers its `drudes` rows; `alpha` and `thole`
+    /// ride in a comment.
+    #[test]
+    fn a_drude_spring_is_written_as_a_harmonic_bond_coeff() {
+        let options = LammpsForcefieldWriteOptions {
+            skip_special_bonds: true,
+            ..Default::default()
+        };
+        let text = write_lammps_forcefield_str(&drude_ff(), &drude_frame(), options.clone())
+            .expect("the springs are bonds");
+        assert!(
+            text.contains(
+                "bond_style harmonic\n\
+                 bond_coeff CT-DCT 500.000000 0.000000\n\
+                 bond_coeff CT-HC 340.000000 1.090000\n"
+            ),
+            "{text}"
+        );
+        assert!(
+            text.contains("#   CT-DCT (CT DCT): alpha 1.200000 thole 2.600000\n"),
+            "{text}"
+        );
+        assert!(!text.contains("drude_style"), "{text}");
+
+        let coeffs = write_lammps_data_coeffs_str(&drude_ff(), &drude_frame(), options).unwrap();
+        assert_eq!(
+            data_section_rows(&coeffs, "Bond Coeffs # harmonic"),
+            ["1 500.000000 0.000000", "2 340.000000 1.090000"]
+        );
+    }
+
+    /// The bond ids of the coefficients are the data file's.
+    #[test]
+    fn drude_bond_ids_agree_with_the_data_file() {
+        let mut frame = drude_frame();
+        let atoms = frame.get_mut("atoms").unwrap();
+        for (key, values) in [
+            ("x", vec![0.0, 0.0, 1.0, -1.0]),
+            ("y", vec![0.0; 4]),
+            ("z", vec![0.0; 4]),
+        ] {
+            atoms
+                .insert(key, ndarray::Array1::from_vec(values).into_dyn())
+                .unwrap();
+        }
+        atoms
+            .insert(
+                "mol_id",
+                ndarray::Array1::from_vec(vec![1_u64; 4]).into_dyn(),
+            )
+            .unwrap();
+        for (block, pairs) in [
+            ("bonds", [(0_u64, 2_u64), (0, 3)].as_slice()),
+            ("drudes", &[(0, 1)]),
+        ] {
+            let b = frame.get_mut(block).unwrap();
+            let (i, j): (Vec<u64>, Vec<u64>) = pairs.iter().copied().unzip();
+            b.insert("atomi", ndarray::Array1::from_vec(i).into_dyn())
+                .unwrap();
+            b.insert("atomj", ndarray::Array1::from_vec(j).into_dyn())
+                .unwrap();
+        }
+        let data = crate::io::write_lammps_data_str(&frame).unwrap();
+        assert!(
+            data.contains("Bond Type Labels\n\n1 CT-DCT\n2 CT-HC\n"),
+            "{data}"
+        );
+        assert!(
+            data.contains("Bonds\n\n1 2 1 3\n2 2 1 4\n3 1 1 2\n"),
+            "{data}"
+        );
+    }
+
+    /// Without the Drude rows in the frame, the spring type is an unused
+    /// force-field type: not written, and no comment.
+    #[test]
+    fn an_unused_drude_type_writes_nothing() {
+        let mut frame = drude_frame();
+        frame.remove("drudes");
+        let text = write_lammps_forcefield_str(&drude_ff(), &frame, Default::default()).unwrap();
+        assert!(!text.contains("CT-DCT"), "{text}");
+        assert!(!text.contains("DRUDE"), "{text}");
     }
 }

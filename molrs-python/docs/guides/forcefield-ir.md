@@ -1079,7 +1079,8 @@ A `StyleSpec` carries `lammps: LammpsForm`:
 | `pair lj/class2` | `epsilon sigma`, mixing always `sixthpower` (LAMMPS's `init_one`) |
 | `pair coul/cut`, `coul/long/pme` | the Coulomb half of `lj/cut/coul/cut` / `lj/cut/coul/long` (or of a `hybrid/overlay` with another style, the Coulomb on `* *`); `delta ≠ 0`, `dielectric ≠ 1` and stated Ewald parameters refused |
 | `cmap charmm` | `fix cmap` and its grid file |
-| `dihedral rb`, MMFF, UFF, `thole`, `coul/tt`, `drude harmonic` | none |
+| `drude harmonic` | the DRUDE package's core-shell spring: `bond_style harmonic` `K 0` (`K = k`, both unhalved, `r0 = 0`); the data writer writes the `drudes` rows as `Bonds` rows of the same labels. `alpha` and `thole` go to a comment of the include, for the input's `pair_style thole` / `fix drude` |
+| `dihedral rb`, MMFF, UFF, `thole`, `coul/tt` | none |
 
 The reader resolves a LAMMPS style name through the registry
 (`Registry::lammps_style`): the style of that name when its form writes it,

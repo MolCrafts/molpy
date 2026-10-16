@@ -2972,7 +2972,10 @@ def write_lammps_data(
 ) -> None:
     """Write a LAMMPS data file. ``type_labels`` declares extra labels per
     block (``{"atoms": [...], ...}``) even when no row uses them; a Drude
-    system gets a ``fix drude`` flags header comment.
+    system gets a ``fix drude`` flags header comment, and each ``drudes`` row
+    is written as a ``Bonds`` row of its own bond type (LAMMPS's DRUDE
+    package reads the core-shell springs as bonds). A ``virtual_sites`` row
+    is an ``OSError``: a data file builds no virtual site.
 
     ``atom_style`` names the ``Atoms`` style, written exactly; a column it
     needs that ``frame["atoms"]`` lacks is an ``OSError`` (nothing is filled

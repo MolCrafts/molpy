@@ -92,6 +92,13 @@ pub fn write_openmm_forcefield_py(
 /// cross-term lines at zero, …) and a style registered with
 /// ``lammps="positional"``, each parameter converted by its dimension.
 ///
+/// A Drude spring (a ``drude harmonic`` type, ``k*r^2``, used by the frame's
+/// ``drudes`` rows) is a LAMMPS harmonic bond: it is written as a
+/// ``bond_coeff`` of its label with ``K = k`` and ``r0 = 0``, under the bond
+/// type id :func:`write_lammps_data` gives the ``drudes`` rows. Its ``alpha``
+/// and ``thole`` are listed in a comment for the input script's
+/// ``pair_style thole`` and ``fix drude``, which are not written.
+///
 /// Parameters
 /// ----------
 /// path : str

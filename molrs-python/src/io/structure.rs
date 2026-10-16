@@ -690,7 +690,12 @@ pub fn write_xyz_trajectory(path: PathBuf, frames: Vec<PyRef<'_, PyFrame>>) -> P
 /// written; ``* Coeffs`` are not (:func:`molrs.io.write_lammps_data_coeffs_str`
 /// returns them for the same labels). A system with Drude particles (a
 /// ``drudes`` block, or atoms whose ``vsite`` is ``"drude"``) gets a header
-/// comment with the ``fix drude`` C/D/N flags in atom-type order.
+/// comment with the ``fix drude`` C/D/N flags in atom-type order, and each
+/// ``drudes`` row (a core-shell spring, which LAMMPS's DRUDE package reads
+/// as a bond) is written as a ``Bonds`` row after the bonds, its ``type`` a
+/// bond type label of its own. A ``virtual_sites`` block is refused: a data
+/// file builds no virtual site (LAMMPS's TIP4P is a ``*/tip4p/*`` pair style
+/// over a three-site water).
 ///
 /// The file owns the two choices the input script must repeat: its
 /// ``atom_style`` and its ``units``. Name them here and write the same into
@@ -736,7 +741,8 @@ pub fn write_xyz_trajectory(path: PathBuf, frames: Vec<PyRef<'_, PyFrame>>) -> P
 /// IOError
 ///     If the frame cannot be written: among others, a named ``atom_style``
 ///     that is unknown, ``hybrid``, missing a column it needs, or unable to
-///     hold the frame's topology; or a ``units`` conversion from a frame whose
+///     hold the frame's topology; a ``virtual_sites`` row; a ``drudes`` row
+///     without a string ``type``; or a ``units`` conversion from a frame whose
 ///     own units are not ``lj`` / ``real`` / ``metal``, or of a column with
 ///     no known dimension (``density``, …).
 #[pyfunction]

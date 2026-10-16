@@ -142,11 +142,16 @@ fn topology_capacity(style: &str) -> &'static [&'static str] {
 /// `read_data` would reject the file (`atom_style charge` with `Bonds`).
 fn check_topology_fits(frame: &impl FrameAccess, style: &str) -> std::io::Result<()> {
     let allowed = topology_capacity(style);
-    for block in TOPOLOGY_BLOCKS {
+    // A Drude spring is written as a bond.
+    let sections = TOPOLOGY_BLOCKS
+        .iter()
+        .map(|&block| (block, block))
+        .chain([crate::io::lammps::drude::SPRINGS]);
+    for (block, section) in sections {
         let n = frame
             .visit_block(block, |b| b.n_rows().unwrap_or(0))
             .unwrap_or(0);
-        if n > 0 && !allowed.contains(&block) {
+        if n > 0 && !allowed.contains(&section) {
             return Err(invalid_data(format!(
                 "atom_style `{style}` cannot hold frame['{block}'] ({n} rows): LAMMPS \
                  read_data refuses that section under this style"

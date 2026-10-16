@@ -19,7 +19,8 @@
 //! [`LammpsDataWriteOptions`] and [`infer_lammps_atom_style`],
 //! [`LammpsDumpReader`] /
 //! [`LammpsDumpWriter`], [`LammpsForcefieldReader`] /
-//! [`LammpsForcefieldWriter`]), the chunked indexers, the bond/react records
+//! [`LammpsForcefieldWriter`]), the type numbering both writers share
+//! ([`lammps_type_labels`]: a `drudes` row is a LAMMPS bond), the chunked indexers, the bond/react records
 //! ([`BondReactTemplate`], [`BondReactSystem`], [`DroppedRows`]), the log
 //! records ([`LammpsLog`] and its parts) with the log sniffer
 //! [`is_lammps_log`], the CMAP file ([`LammpsCmapFile`]),
@@ -35,6 +36,7 @@ pub(crate) mod box_bounds;
 pub(crate) mod columns;
 pub(crate) mod data;
 pub(crate) mod data_options;
+pub(crate) mod drude;
 pub(crate) mod dump;
 pub(crate) mod fields;
 #[cfg(feature = "ff")]
@@ -50,6 +52,7 @@ pub use bond_react::BondReactTemplate;
 pub use bond_react_system::{BondReactSystem, DroppedRows};
 pub use data::{LammpsDataIndexBuilder, LammpsDataReader, LammpsDataWriter};
 pub use data_options::{LammpsDataWriteOptions, infer_lammps_atom_style};
+pub use drude::lammps_type_labels;
 pub use dump::{LammpsDumpIndexBuilder, LammpsDumpReader, LammpsDumpWriter};
 #[cfg(feature = "ff")]
 pub use forcefield_reader::{

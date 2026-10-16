@@ -12,6 +12,7 @@ use crate::io::lammps::columns::OptionalColumn;
 use crate::io::lammps::data_options::{
     DataUnits, LammpsDataWriteOptions, resolve_units, resolve_write_style,
 };
+use crate::io::lammps::drude::{SPRINGS, drude_flags, lammps_type_labels, refuse_virtual_sites};
 use crate::io::lammps::fields::{
     TypeRef, invert_type_labels, labels_to_meta, parse_f, parse_i, tokenize,
 };
@@ -21,7 +22,6 @@ use molrs::core::Block;
 use molrs::core::Frame;
 use molrs::core::FrameAccess;
 use molrs::core::SimBox;
-use molrs::core::TypeLabels;
 use molrs::core::keys;
 use molrs::op::{F, I, Idx, Pbc3};
 use ndarray::ArrayViewD;
@@ -1540,74 +1540,6 @@ fn write_type_label_section<W: Write>(
     Ok(())
 }
 
-/// The `fix drude` C/D/N flag list of the DRUDE package, one flag per atom
-/// type in type-id order, or `None` when the frame has no Drude particle.
-///
-/// A row is a Drude particle (`D`) when a `drudes` relation names it as its
-/// `atomj`, or its `vsite` column reads `"drude"` (a `DrudeParticle` node). A
-/// type is a polarisable core (`C`) when one of its rows is the `atomi` of a
-/// `drudes` relation or is bonded (`bonds`) to a Drude particle; every other
-/// type is `N`. <https://docs.lammps.org/fix_drude.html>
-fn drude_flags(frame: &impl FrameAccess, type_ids: &[Idx], n_types: usize) -> Option<String> {
-    let n = type_ids.len();
-    let mut shell = vec![false; n];
-    if let Some(vsite) = frame.column("atoms", "vsite").and_then(|c| c.as_string()) {
-        for (i, v) in vsite.iter().enumerate().take(n) {
-            shell[i] = v == "drude";
-        }
-    }
-    let pairs = |block: &str| -> Vec<(usize, usize)> {
-        match (
-            frame.column(block, keys::ATOMI).and_then(|c| c.as_uint()),
-            frame.column(block, keys::ATOMJ).and_then(|c| c.as_uint()),
-        ) {
-            (Some(i), Some(j)) => i
-                .iter()
-                .zip(j.iter())
-                .map(|(&a, &b)| (a as usize, b as usize))
-                .filter(|&(a, b)| a < n && b < n)
-                .collect(),
-            _ => Vec::new(),
-        }
-    };
-    let drudes = pairs("drudes");
-    for &(_, d) in &drudes {
-        shell[d] = true;
-    }
-    if !shell.iter().any(|&s| s) {
-        return None;
-    }
-    let mut core = vec![false; n];
-    for &(c, _) in &drudes {
-        core[c] = true;
-    }
-    for (a, b) in pairs("bonds") {
-        if shell[a] && !shell[b] {
-            core[b] = true;
-        } else if shell[b] && !shell[a] {
-            core[a] = true;
-        }
-    }
-    let mut flags = vec!['N'; n_types];
-    for (i, &t) in type_ids.iter().enumerate() {
-        let Some(slot) = (t as usize).checked_sub(1).and_then(|k| flags.get_mut(k)) else {
-            continue;
-        };
-        if shell[i] {
-            *slot = 'D';
-        } else if core[i] && *slot != 'D' {
-            *slot = 'C';
-        }
-    }
-    Some(
-        flags
-            .iter()
-            .map(char::to_string)
-            .collect::<Vec<_>>()
-            .join(" "),
-    )
-}
-
 /// Per-row atom IDs: existing ``id`` column, else 1..N (file artifact).
 fn resolve_atom_ids(frame: &impl FrameAccess, n: usize) -> Vec<Idx> {
     if let Some(col) = frame.column("atoms", keys::ID).and_then(|c| c.as_uint()) {
@@ -1812,53 +1744,68 @@ fn write_atoms_section<W: Write>(
     Ok(())
 }
 
+/// One topology section: the rows of `blocks`, in order, numbered on from 1
+/// across them (a `Bonds` section holds the `bonds` rows, then the `drudes`
+/// rows). `type_ids` lists every block's rows in that order.
 fn write_topology_section<W: Write>(
     writer: &mut W,
     frame: &impl FrameAccess,
     section: &str,
-    block: &str,
+    blocks: &[&str],
     n_members: usize,
     atom_ids: &[Idx],
     type_ids: &[Idx],
 ) -> std::io::Result<()> {
-    let n = frame
-        .visit_block(block, |b| b.n_rows().unwrap_or(0))
-        .unwrap_or(0);
+    let keys_ep = &keys::ENDPOINTS[..n_members];
+    let mut parts = Vec::with_capacity(blocks.len());
+    for &block in blocks {
+        let n = frame
+            .visit_block(block, |b| b.n_rows().unwrap_or(0))
+            .unwrap_or(0);
+        if n == 0 {
+            continue;
+        }
+        let mut cols = Vec::with_capacity(n_members);
+        for k in keys_ep {
+            cols.push(
+                frame
+                    .column(block, k)
+                    .and_then(|c| c.as_uint())
+                    .ok_or_else(|| invalid_data(format!("Missing '{block}.{k}'")))?,
+            );
+        }
+        parts.push((block, n, cols));
+    }
+    let n: usize = parts.iter().map(|(_, n, _)| n).sum();
     if n == 0 {
         return Ok(());
     }
     if type_ids.len() != n {
         return Err(invalid_data(format!(
-            "internal: {block} type_ids length {} != nrows {n}",
+            "internal: {blocks:?} type_ids length {} != nrows {n}",
             type_ids.len()
         )));
-    }
-    let keys_ep = &keys::ENDPOINTS[..n_members];
-    let mut cols = Vec::with_capacity(n_members);
-    for k in keys_ep {
-        cols.push(
-            frame
-                .column(block, k)
-                .and_then(|c| c.as_uint())
-                .ok_or_else(|| invalid_data(format!("Missing '{block}.{k}'")))?,
-        );
     }
 
     writeln!(writer, "{section}")?;
     writeln!(writer)?;
-    for i in 0..n {
-        write!(writer, "{} {}", i + 1, type_ids[i])?;
-        for col in &cols {
-            let idx = col[[i]] as usize;
-            let atom_id = atom_ids.get(idx).ok_or_else(|| {
-                invalid_data(format!(
-                    "{block} endpoint index {idx} out of range for {n} atoms",
-                    n = atom_ids.len()
-                ))
-            })?;
-            write!(writer, " {atom_id}")?;
+    let mut row = 0;
+    for (block, n_rows, cols) in &parts {
+        for i in 0..*n_rows {
+            write!(writer, "{} {}", row + 1, type_ids[row])?;
+            for col in cols {
+                let idx = col[[i]] as usize;
+                let atom_id = atom_ids.get(idx).ok_or_else(|| {
+                    invalid_data(format!(
+                        "{block} endpoint index {idx} out of range for {n} atoms",
+                        n = atom_ids.len()
+                    ))
+                })?;
+                write!(writer, " {atom_id}")?;
+            }
+            writeln!(writer)?;
+            row += 1;
         }
-        writeln!(writer)?;
     }
     writeln!(writer)?;
     Ok(())
@@ -1967,11 +1914,20 @@ fn write_lammps_data_frame_with<W: Write>(
         )));
     }
 
+    refuse_virtual_sites(frame)?;
+
     // Bonded sections need a molecular atom style, and every molecular style
     // carries a molecule ID. The writer never invents one: which atoms form a
     // molecule is the caller's call.
     if !frame_has_atom_field(frame, DataField::Mol) {
-        for block in ["bonds", "angles", "dihedrals", "impropers", "cmaps"] {
+        for block in [
+            "bonds",
+            SPRINGS.0,
+            "angles",
+            "dihedrals",
+            "impropers",
+            "cmaps",
+        ] {
             let n = frame
                 .visit_block(block, |b| b.n_rows().unwrap_or(0))
                 .unwrap_or(0);
@@ -1986,7 +1942,8 @@ fn write_lammps_data_frame_with<W: Write>(
         }
     }
 
-    let type_labels = TypeLabels::from_frame(frame).map_err(invalid_data)?;
+    // A Drude spring (`drudes` row) is a LAMMPS bond: one bond-type id space.
+    let type_labels = lammps_type_labels(frame).map_err(invalid_data)?;
     let atom_rt = type_labels.block("atoms").ok_or_else(|| {
         invalid_data(
             "frame['atoms'] has neither 'type' nor 'type_id'; \
@@ -2002,9 +1959,14 @@ fn write_lammps_data_frame_with<W: Write>(
     let atom_ids = resolve_atom_ids(frame, n_atoms);
     let row_masses = resolve_row_masses(frame, n_atoms);
 
-    let n_bonds = frame
-        .visit_block("bonds", |b| b.n_rows().unwrap_or(0))
-        .unwrap_or(0);
+    let n_bonds = [SPRINGS.1, SPRINGS.0]
+        .iter()
+        .map(|block| {
+            frame
+                .visit_block(block, |b| b.n_rows().unwrap_or(0))
+                .unwrap_or(0)
+        })
+        .sum::<usize>();
     let n_angles = frame
         .visit_block("angles", |b| b.n_rows().unwrap_or(0))
         .unwrap_or(0);
@@ -2179,11 +2141,13 @@ fn write_lammps_data_frame_with<W: Write>(
         writeln!(writer)?;
     }
 
+    // The bonds, then the Drude springs, in the order `lammps_type_labels`
+    // lists their type ids.
     write_topology_section(
         writer,
         frame,
         "Bonds",
-        "bonds",
+        &[SPRINGS.1, SPRINGS.0],
         2,
         &atom_ids,
         bond_rt.map(|r| r.type_ids()).unwrap_or(&[]),
@@ -2192,7 +2156,7 @@ fn write_lammps_data_frame_with<W: Write>(
         writer,
         frame,
         "Angles",
-        "angles",
+        &["angles"],
         3,
         &atom_ids,
         angle_rt.map(|r| r.type_ids()).unwrap_or(&[]),
@@ -2201,7 +2165,7 @@ fn write_lammps_data_frame_with<W: Write>(
         writer,
         frame,
         "Dihedrals",
-        "dihedrals",
+        &["dihedrals"],
         4,
         &atom_ids,
         dihedral_rt.map(|r| r.type_ids()).unwrap_or(&[]),
@@ -2210,7 +2174,7 @@ fn write_lammps_data_frame_with<W: Write>(
         writer,
         frame,
         "Impropers",
-        "impropers",
+        &["impropers"],
         4,
         &atom_ids,
         improper_rt.map(|r| r.type_ids()).unwrap_or(&[]),
@@ -2221,7 +2185,7 @@ fn write_lammps_data_frame_with<W: Write>(
         writer,
         frame,
         "CMAP",
-        "cmaps",
+        &["cmaps"],
         5,
         &atom_ids,
         cmap_rt.map(|r| r.type_ids()).unwrap_or(&[]),
@@ -2242,6 +2206,16 @@ pub fn read_lammps_data<P: AsRef<Path>>(path: P) -> std::io::Result<Frame> {
         .ok_or_else(|| invalid_data("No frame found in LAMMPS data file"))
 }
 
+/// Write `frame` as a LAMMPS data file, in the inferred `atom_style` with the
+/// frame's numbers unchanged.
+///
+/// Atoms, `Masses`, `Velocities`, the topology sections and the `* Type
+/// Labels` are written. A `drudes` row (a Drude core–shell spring) is a
+/// `Bonds` row after the bonds, typed as a bond of its own label
+/// ([`lammps_type_labels`](crate::io::lammps::lammps_type_labels)), and a
+/// Drude system's `fix drude` C/D/N flags head the file as a comment
+/// (the DRUDE package reads the springs as bonds). A `virtual_sites` row is
+/// refused: a data file builds no virtual site.
 pub fn write_lammps_data<P: AsRef<Path>>(path: P, frame: &impl FrameAccess) -> std::io::Result<()> {
     write_lammps_data_with(path, frame, &LammpsDataWriteOptions::default())
 }
@@ -3434,10 +3408,7 @@ Bonds
             )
             .unwrap();
         frame.meta.remove(keys::ATOM_TYPE_LABELS);
-        let mut drudes = Block::new();
-        insert_column_of_length(&mut drudes, keys::ATOMI, vec![0 as Idx], 1).unwrap();
-        insert_column_of_length(&mut drudes, keys::ATOMJ, vec![1 as Idx], 1).unwrap();
-        frame.insert("drudes", drudes);
+        frame.insert("drudes", drude_rows(&[(0, 1)], &["CT-DCT"]));
         let mut out = Vec::new();
         write_lammps_data_frame(&mut out, &frame).unwrap();
         let text = String::from_utf8(out).unwrap();
@@ -3447,6 +3418,143 @@ Bonds
         );
         // The comment sits in the header, where LAMMPS and this reader skip it.
         read_lammps_data_bytes(text.as_bytes()).unwrap();
+    }
+
+    /// `drudes` rows (`atomi` the core, `atomj` the shell) typed `types`.
+    fn drude_rows(pairs: &[(Idx, Idx)], types: &[&str]) -> Block {
+        let n = pairs.len();
+        let mut drudes = Block::new();
+        let (i, j): (Vec<Idx>, Vec<Idx>) = pairs.iter().copied().unzip();
+        insert_column_of_length(&mut drudes, keys::ATOMI, i, n).unwrap();
+        insert_column_of_length(&mut drudes, keys::ATOMJ, j, n).unwrap();
+        let types: Vec<String> = types.iter().map(|t| t.to_string()).collect();
+        insert_column_of_length(&mut drudes, keys::TYPE, types, n).unwrap();
+        drudes
+    }
+
+    /// A polarisable methane-like fragment: core `CT` (1) with shell `DCT`
+    /// (2) and two `HC` (3, 4), bonded `CT-HC`.
+    const DRUDE_HOST: &str = "\
+test
+
+4 atoms
+2 bonds
+3 atom types
+1 bond types
+
+0 10 xlo xhi
+0 10 ylo yhi
+0 10 zlo zhi
+
+Atom Type Labels
+
+1 CT
+2 DCT
+3 HC
+
+Bond Type Labels
+
+1 CT-HC
+
+Atoms # full
+
+1 1 1 0.5 0 0 0
+2 1 2 -0.5 0 0 0
+3 1 3 0 1 0 0
+4 1 3 0 -1 0 0
+
+Bonds
+
+1 1 1 3
+2 1 1 4
+";
+
+    fn drude_host() -> Frame {
+        let mut frame = read_lammps_data_bytes(DRUDE_HOST.as_bytes()).unwrap();
+        frame.insert("drudes", drude_rows(&[(0, 1)], &["CT-DCT"]));
+        frame
+    }
+
+    fn written(frame: &Frame) -> std::io::Result<String> {
+        let mut out = Vec::new();
+        write_lammps_data_frame(&mut out, frame)?;
+        Ok(String::from_utf8(out).unwrap())
+    }
+
+    /// LAMMPS's DRUDE package reads the core-shell springs as bonds: each
+    /// `drudes` row is a `Bonds` row after the bonds, its type a bond type
+    /// of its own label.
+    #[test]
+    fn drude_springs_are_written_as_bonds_of_their_own_type() {
+        let text = written(&drude_host()).unwrap();
+        assert!(text.contains("\n3 bonds\n"), "{text}");
+        assert!(text.contains("\n2 bond types\n"), "{text}");
+        assert!(
+            text.contains("Bond Type Labels\n\n1 CT-DCT\n2 CT-HC\n"),
+            "{text}"
+        );
+        assert!(
+            text.contains("Bonds\n\n1 2 1 3\n2 2 1 4\n3 1 1 2\n"),
+            "{text}"
+        );
+        assert!(text.contains("# fix drude flags (atom-type order): C D N\n"));
+        // Read back, a spring is a bond: the data file has no other form.
+        let back = read_lammps_data_bytes(text.as_bytes()).unwrap();
+        assert_eq!(strings(&back, "bonds"), ["CT-HC", "CT-HC", "CT-DCT"]);
+    }
+
+    #[test]
+    fn a_drude_row_without_a_type_is_refused_naming_the_block() {
+        let mut frame = drude_host();
+        let mut untyped = Block::new();
+        insert_column_of_length(&mut untyped, keys::ATOMI, vec![0 as Idx], 1).unwrap();
+        insert_column_of_length(&mut untyped, keys::ATOMJ, vec![1 as Idx], 1).unwrap();
+        frame.insert("drudes", untyped);
+        let err = written(&frame).unwrap_err().to_string();
+        assert!(err.contains("drudes") && err.contains("type"), "{err}");
+    }
+
+    /// A spring is bonded topology: it needs a molecule ID per atom and a
+    /// style that holds bonds.
+    #[test]
+    fn drude_springs_need_a_molecular_style() {
+        let mut frame = drude_host();
+        frame.remove("bonds");
+        frame.get_mut("atoms").unwrap().remove("mol_id");
+        let err = written(&frame).unwrap_err().to_string();
+        assert!(err.contains("drudes") && err.contains("mol_id"), "{err}");
+
+        let options = LammpsDataWriteOptions {
+            atom_style: Some("charge".into()),
+            units: None,
+        };
+        let mut out = Vec::new();
+        let err = write_lammps_data_frame_with(&mut out, &frame, &options, &HashMap::new())
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("drudes"), "{err}");
+    }
+
+    /// A data file builds no virtual site: a `virtual_sites` row is refused
+    /// by name, not written as a free atom.
+    #[test]
+    fn virtual_sites_are_refused_naming_the_tip4p_pair_style() {
+        let mut frame = read_lammps_data_bytes(LABELLED.as_bytes()).unwrap();
+        let mut sites = Block::new();
+        for (key, v) in [
+            ("atomi", 0 as Idx),
+            ("atomj", 1),
+            ("atomk", 2),
+            ("atoml", 1),
+        ] {
+            insert_column_of_length(&mut sites, key, vec![v], 1).unwrap();
+        }
+        frame.insert("virtual_sites", sites);
+        let err = written(&frame).unwrap_err().to_string();
+        assert!(
+            err.contains("virtual_sites") && err.contains("tip4p"),
+            "{err}"
+        );
     }
 
     #[test]
