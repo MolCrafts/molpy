@@ -375,6 +375,83 @@ pub fn write_openmm_forcefield_str_py(
         .map_err(crate::ff::ir::writer_err)
 }
 
+/// Write a ForceField and the residue templates of a typed Frame as OpenMM
+/// force-field XML: what ``openmm.app.ForceField(path).createSystem(
+/// PDBFile(pdb).topology)`` builds a System from, for the PDB
+/// :func:`write_pdb` writes of the same frame.
+///
+/// The force field is written as :func:`write_openmm_forcefield` writes it,
+/// plus ``<Residues>``: one ``<Residue>`` per distinct residue of the frame
+/// (same residue name, atom names, types, charges and bonds), with an
+/// ``<Atom name type charge>`` per atom, a ``<Bond>`` per bond inside it and
+/// an ``<ExternalBond>`` per bond leaving it.
+///
+/// - Residues are the ones OpenMM reads from that PDB: runs of consecutive
+///   atoms with the same ``chain``, ``res_id``, ``icode`` and ``res_name``.
+///   With no ``res_id`` column, each bonded molecule (a connected component
+///   of ``bonds``) is one residue, named ``MOL``.
+/// - Atom names are the PDB's: the frame's ``name``, else the element
+///   numbered within the residue (``C1``, ``C2``, ``H1``, …).
+/// - Charges are the frame's ``charge`` column, on the templates
+///   (``<UseAttributeFromResidue name="charge"/>``); without that column,
+///   the atom types' own charges.
+/// - Every atom type the frame uses gets an ``element`` (its own, else its
+///   atoms'), which OpenMM matches residues by.
+///
+/// Parameters
+/// ----------
+/// path : str or os.PathLike
+///     Output file.
+/// forcefield : ForceField
+///     Holds an atom type for every ``type`` the frame's atoms name.
+/// frame : Frame
+///     Typed system: string ``type`` and ``element`` atom columns, ``bonds``.
+/// precision : int, optional
+///     Decimals per number; ``None`` (default) writes each number in the
+///     shortest form that reads back to the same float.
+///
+/// Raises
+/// ------
+/// ValueError
+///     What :func:`write_openmm_forcefield` refuses, and: a missing
+///     ``type`` or ``element`` column, a type the force field lacks, one
+///     type on two elements, two atoms of one residue with the same name, no
+///     charges in the frame or on the types.
+/// OSError
+///     The file cannot be written.
+#[pyfunction]
+#[pyo3(
+    name = "write_openmm_system",
+    signature = (path, forcefield, frame, *, precision = None)
+)]
+pub fn write_openmm_system_py(
+    path: PathBuf,
+    forcefield: PyRef<'_, PyForceField>,
+    frame: &PyFrame,
+    precision: Option<usize>,
+) -> PyResult<()> {
+    let path = path_str(&path)?;
+    frame
+        .with_frame(|f| molrs::io::write_openmm_system(path, &forcefield.inner, f, precision))?
+        .map_err(crate::ff::ir::writer_err)
+}
+
+/// :func:`write_openmm_system` into a string, ``precision`` as there.
+#[pyfunction]
+#[pyo3(
+    name = "write_openmm_system_str",
+    signature = (forcefield, frame, *, precision = None)
+)]
+pub fn write_openmm_system_str_py(
+    forcefield: PyRef<'_, PyForceField>,
+    frame: &PyFrame,
+    precision: Option<usize>,
+) -> PyResult<String> {
+    frame
+        .with_frame(|f| molrs::io::write_openmm_system_str(&forcefield.inner, f, precision))?
+        .map_err(crate::ff::ir::writer_err)
+}
+
 /// Write a ForceField as force-field XML text — :func:`write_xml_forcefield`
 /// into a string.
 #[pyfunction]
@@ -409,6 +486,12 @@ pub(crate) fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
         wrap_pyfunction!(write_openmm_forcefield_py, m)?,
     )?;
     crate::add_function(m, "molrs.io", wrap_pyfunction!(write_xml_forcefield_py, m)?)?;
+    crate::add_function(m, "molrs.io", wrap_pyfunction!(write_openmm_system_py, m)?)?;
+    crate::add_function(
+        m,
+        "molrs.io",
+        wrap_pyfunction!(write_openmm_system_str_py, m)?,
+    )?;
     crate::add_function(
         m,
         "molrs.io",

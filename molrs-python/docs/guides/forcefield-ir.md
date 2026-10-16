@@ -715,6 +715,27 @@ OpenMM's AMBER rule puts them (by element, then index). The equivalence
 check ([Cross-engine equivalence](#cross-engine-equivalence)) builds the
 templates from the frame and holds OpenMM's energies to molrs's.
 
+`write_openmm_system(path, ff, frame)` (`write_openmm_system_str`; Rust
+`OpenmmXmlWriter::write_system_str`) writes those templates: the field as
+`write_openmm_forcefield` writes it, plus one `<Residue>` per distinct
+residue of the frame. The residues and atom names are the ones OpenMM's
+`PDBFile` reads from `write_pdb` of the same frame (one rule, shared by
+both writers): runs of consecutive atoms with the same `chain`, `res_id`,
+`icode` and `res_name`; without `res_id`, each bonded molecule is a residue
+named `MOL`; an atom without a `name` is its element numbered within the
+residue (`C1`, `C2`, `H1`, …). Each template lists `<Atom name type
+charge>`, a `<Bond>` per bond inside the residue and an `<ExternalBond>` per
+bond leaving it. Charges are the frame's `charge` column, under
+`<UseAttributeFromResidue name="charge"/>` (without the column, the types'
+own charges, which every type must then carry), and every atom type the
+frame uses gets an `element`, which OpenMM matches residues by. So
+`ForceField(xml).createSystem(PDBFile(pdb).topology)` builds the System
+directly. Refused, by name: a type the force field lacks, one type on two
+elements, two atoms of one residue with the same name, no charges anywhere.
+Two residues with the same bond graph and elements but other types or
+charges become two templates OpenMM's matcher cannot choose between
+(`createSystem` then needs `residueTemplates`).
+
 ## AMBER prmtop
 
 AMBER is read, never written (no prmtop writer). The prmtop force-field

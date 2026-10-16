@@ -4,6 +4,7 @@ use std::collections::{BTreeSet, HashMap};
 use std::sync::Arc;
 
 mod custom;
+mod residues;
 
 use crate::core::unit_factors::{KCAL_ANGSTROM2_TO_KJ_NM2, KCAL_TO_KJ, NM_TO_ANGSTROM};
 use crate::ff::forcefield::{ForceField, Style, StyleDefs};
@@ -204,9 +205,27 @@ fn need(p: &Params, key: &str, what: &str) -> Result<f64, String> {
     p.get(key).ok_or_else(|| format!("{what}: missing `{key}`"))
 }
 
+/// Where the per-atom charges of `<NonbondedForce>` (and of a charged
+/// `<CustomNonbondedForce>`) come from.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+enum Charges {
+    /// The atom types' `charge`; with none at all, the residue templates'
+    /// (`write_str`: a force field alone, its templates written elsewhere).
+    #[default]
+    Types,
+    /// The atom types' `charge`, which every type must then carry: the
+    /// residue templates hold none (a frame without a `charge` column).
+    TypesOnly,
+    /// The residue templates' (the frame's `charge` column); `nonzero` when
+    /// any is.
+    Residues { nonzero: bool },
+}
+
 /// Sections of the output, in OpenMM's usual order.
 #[derive(Default)]
 struct Out {
+    /// Where the charges come from (set before anything is written).
+    charges: Charges,
     bonds: String,
     angles: String,
     urey_bradley: String,
@@ -620,21 +639,34 @@ impl OpenmmXmlWriter {
             .into_iter()
             .filter(|t| t.params.get_str("type_") != Some("*"))
             .collect();
-        let charged = atoms
-            .iter()
-            .filter(|t| t.params.get("charge").is_some())
-            .count();
-        if charged != 0 && charged != atoms.len() {
-            return Err(
-                "some atom types carry a charge and some do not: OpenMM takes every charge \
-                 from <NonbondedForce> or every one from the residue templates"
-                    .into(),
-            );
-        }
-        let charge_of: HashMap<&str, f64> = atoms
-            .iter()
-            .filter_map(|t| t.params.get("charge").map(|q| (t.name.as_str(), q)))
-            .collect();
+        // From the residue templates, the types' charges are not written.
+        let charge_of: HashMap<&str, f64> = if let Charges::Residues { nonzero } = sections.charges
+        {
+            if coul_style.is_none() && nonzero {
+                return Err(
+                    "the frame's atoms carry charges and the force field has no Coulomb pair \
+                     style; OpenMM's NonbondedForce always prices charges"
+                        .into(),
+                );
+            }
+            HashMap::new()
+        } else {
+            let charged = atoms
+                .iter()
+                .filter(|t| t.params.get("charge").is_some())
+                .count();
+            if charged != 0 && charged != atoms.len() {
+                return Err(
+                    "some atom types carry a charge and some do not: OpenMM takes every charge \
+                     from <NonbondedForce> or every one from the residue templates"
+                        .into(),
+                );
+            }
+            atoms
+                .iter()
+                .filter_map(|t| t.params.get("charge").map(|q| (t.name.as_str(), q)))
+                .collect()
+        };
         if coul_style.is_none() && charge_of.values().any(|&q| q != 0.0) {
             return Err(
                 "atom types carry charges and the force field has no Coulomb pair style; \
@@ -737,6 +769,9 @@ impl OpenmmXmlWriter {
             self.fmt_f(lj14)
         );
         if charge_of.is_empty() {
+            if sections.charges == Charges::TypesOnly {
+                return Err(NO_CHARGES.into());
+            }
             out.push_str("    <UseAttributeFromResidue name=\"charge\"/>\n");
         }
         for ty in &nb_types {
@@ -812,8 +847,78 @@ impl OpenmmXmlWriter {
     }
 }
 
+/// The refusal of a system whose charges are nowhere.
+const NO_CHARGES: &str = "the frame has no charge column and the force field's atom types carry \
+                          no charges: OpenMM needs the charges from one or the other";
+
 impl ForceFieldWriter for OpenmmXmlWriter {
     fn write_str(&self, ff: &ForceField) -> Result<String, ForceFieldWriteError> {
+        self.render(ff, None)
+    }
+}
+
+impl OpenmmXmlWriter {
+    /// Write `ff` and the residue templates of the typed `frame`: a force
+    /// field OpenMM's `ForceField(xml).createSystem(pdb.topology)` builds a
+    /// `System` from, for the PDB [`write_pdb`](crate::io::write_pdb) writes
+    /// of the same frame.
+    ///
+    /// The force field is written as [`write_str`](ForceFieldWriter::write_str)
+    /// writes it, plus `<Residues>`:
+    ///
+    /// - **Residues** are the ones OpenMM reads from that PDB: runs of
+    ///   consecutive atoms with the same chain, residue number, insertion
+    ///   code and residue name, as the PDB writer labels them
+    ///   ([`write_pdb`](crate::io::write_pdb)). With no `res_id` column, each
+    ///   bonded molecule (a connected component of `bonds`) is one residue,
+    ///   named `MOL`.
+    /// - Each **distinct residue** (same name, atom names, types, charges
+    ///   and bonds) is one `<Residue>`: an `<Atom name type charge>` per
+    ///   atom, named as the PDB names it (the frame's `name`, else the
+    ///   element numbered within the residue: `C1`, `C2`, `H1`, …), a
+    ///   `<Bond>` per `bonds` row inside it and an `<ExternalBond>` per row
+    ///   leaving it. A later residue of the same name with other content is
+    ///   named `<name>_2`, `<name>_3`, … (OpenMM matches by element and bond
+    ///   graph, not by name).
+    /// - **Charges** are the frame's `charge` column, on the templates, with
+    ///   `<UseAttributeFromResidue name="charge"/>`, as GROMACS's
+    ///   `[ atoms ]` holds the frame's charges: the types' own charges are
+    ///   then not written. With no `charge` column, the types' charges are
+    ///   written, and every type must carry one.
+    /// - **Elements**: OpenMM matches a residue to a template by element, so
+    ///   every atom type the frame uses is written with an `element`: its
+    ///   own, else the frame's `element` of its atoms.
+    ///
+    /// # Errors
+    ///
+    /// Every error of [`write_str`](ForceFieldWriter::write_str), and: a
+    /// frame without an `atoms` block, a string `type` or `element` column;
+    /// an atom type the force field does not define; atoms of one type with
+    /// different elements, or an element other than the type's own; a
+    /// `bonds` row naming an atom past the frame; two atoms of one residue
+    /// with the same name (OpenMM refuses such a template); no charges in
+    /// the frame or on the types; frame charges with no Coulomb style.
+    ///
+    /// Two residues with the same elements and bonds but different types or
+    /// charges (one molecule typed or charged two ways) are written as two
+    /// templates, which OpenMM's matching cannot choose between:
+    /// `createSystem` raises "Multiple non-identical matching templates"
+    /// unless its `residueTemplates` argument names one per residue.
+    pub fn write_system_str(
+        &self,
+        ff: &ForceField,
+        frame: &molrs::core::Frame,
+    ) -> Result<String, ForceFieldWriteError> {
+        let templates = residues::Templates::of(self, ff, frame)?;
+        self.render(ff, Some(&templates))
+    }
+
+    /// The document: the force field, and the residue templates of a frame.
+    fn render(
+        &self,
+        ff: &ForceField,
+        system: Option<&residues::Templates>,
+    ) -> Result<String, ForceFieldWriteError> {
         if let Some(units) = ff.declared_units()
             && units != "real"
         {
@@ -824,7 +929,10 @@ impl ForceFieldWriter for OpenmmXmlWriter {
             .into());
         }
         let ends = Endpoints::new(ff);
-        let mut sections = Out::default();
+        let mut sections = Out {
+            charges: system.map_or(Charges::Types, |t| t.charges),
+            ..Out::default()
+        };
         let (nonbonded, combining_rule) = self.registry.with(|reg| {
             self.bonded(ff, reg, &ends, &mut sections)?;
             self.nonbonded(ff, reg, &mut sections)
@@ -870,6 +978,12 @@ impl ForceFieldWriter for OpenmmXmlWriter {
                     attrs.push(format!("{xml_key}=\"{}\"", esc(v)));
                 } else if let Some(v) = t.params.get(key) {
                     attrs.push(format!("{xml_key}=\"{}\"", self.fmt_f(v)));
+                } else if let Some(e) = system
+                    .filter(|_| key == "element")
+                    .and_then(|s| s.elements.get(&t.name))
+                {
+                    // OpenMM matches residues by element: the frame's.
+                    attrs.push(format!("{xml_key}=\"{}\"", esc(e)));
                 }
             }
             atoms_xml.push_str(&format!("    <Type {}/>\n", attrs.join(" ")));
@@ -880,6 +994,9 @@ impl ForceFieldWriter for OpenmmXmlWriter {
             }
         };
         section("AtomTypes", "", &atoms_xml);
+        if let Some(t) = system {
+            section("Residues", "", &t.xml);
+        }
         section("HarmonicBondForce", "", &sections.bonds);
         section("HarmonicAngleForce", "", &sections.angles);
         section("AmoebaUreyBradleyForce", "", &sections.urey_bradley);
@@ -941,6 +1058,40 @@ pub fn write_openmm_forcefield_str(
     OpenmmXmlWriter::new()
         .with_precision(precision)
         .write_str(ff)
+}
+
+/// Write `ff` and the residue templates of the typed `frame` to `path`
+/// ([`OpenmmXmlWriter::write_system_str`]): the force field OpenMM builds a
+/// `System` from for the PDB [`write_pdb`](crate::io::write_pdb) writes of
+/// the same frame.
+///
+/// # Errors
+///
+/// Every error of [`OpenmmXmlWriter::write_system_str`], and an unwritable
+/// file.
+pub fn write_openmm_system(
+    path: &str,
+    ff: &ForceField,
+    frame: &molrs::core::Frame,
+    precision: Option<usize>,
+) -> Result<(), ForceFieldWriteError> {
+    let text = write_openmm_system_str(ff, frame, precision)?;
+    crate::io::writer::write_forcefield_text(std::path::Path::new(path), &text)
+}
+
+/// [`write_openmm_system`] into a string.
+///
+/// # Errors
+///
+/// Every error of [`OpenmmXmlWriter::write_system_str`].
+pub fn write_openmm_system_str(
+    ff: &ForceField,
+    frame: &molrs::core::Frame,
+    precision: Option<usize>,
+) -> Result<String, ForceFieldWriteError> {
+    OpenmmXmlWriter::new()
+        .with_precision(precision)
+        .write_system_str(ff, frame)
 }
 
 #[cfg(test)]

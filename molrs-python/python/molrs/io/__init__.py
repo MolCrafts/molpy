@@ -68,9 +68,10 @@ model :mod:`molrs.ff.forcefield` owns:
   :func:`write_lammps_forcefield_str`, :func:`write_lammps_data_coeffs_str`,
   :func:`write_lammps_cmap_forcefield`, :func:`write_top_forcefield`,
   :func:`write_top_system`, :func:`write_frcmod`,
-  :func:`write_openmm_forcefield`, :func:`write_xml_forcefield`, and
-  the text doors :func:`write_frcmod_str`,
-  :func:`write_openmm_forcefield_str`, :func:`write_xml_forcefield_str`
+  :func:`write_openmm_forcefield`, :func:`write_openmm_system`,
+  :func:`write_xml_forcefield`, and the text doors :func:`write_frcmod_str`,
+  :func:`write_openmm_forcefield_str`, :func:`write_openmm_system_str`,
+  :func:`write_xml_forcefield_str`
 
 Each reader maps a format onto the force-field IR (adopts the LAMMPS standard),
 units and factors included; each writer is the inverse.
@@ -206,6 +207,8 @@ from .._native import (
     write_msgpack_frame_bytes,
     write_openmm_forcefield,
     write_openmm_forcefield_str,
+    write_openmm_system,
+    write_openmm_system_str,
     write_pdb,
     write_pdb_str,
     write_pdb_trajectory,
@@ -343,6 +346,8 @@ __all__ = [
     "write_msgpack_frame_bytes",
     "write_openmm_forcefield",
     "write_openmm_forcefield_str",
+    "write_openmm_system",
+    "write_openmm_system_str",
     "write_pdb",
     "write_pdb_str",
     "write_pdb_trajectory",

@@ -245,6 +245,8 @@ def test_forcefield_is_the_data_model_and_stream_the_transport():
         "molrs.io.read_lammps_forcefield",
         "molrs.io.read_openmm_forcefield",
         "molrs.io.write_openmm_forcefield",
+        "molrs.io.write_openmm_system",
+        "molrs.io.write_openmm_system_str",
         "molrs.io.read_xml_forcefield",
         "molrs.io.write_xml_forcefield",
         "molrs.io.read_lammps_log_str",

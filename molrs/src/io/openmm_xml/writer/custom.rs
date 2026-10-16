@@ -38,7 +38,8 @@
 use std::collections::BTreeMap;
 
 use super::{
-    Endpoints, KCAL_TO_KJ, NM_TO_ANGSTROM, OpenmmXmlWriter, Out, centre_first, either_way, esc,
+    Charges, Endpoints, KCAL_TO_KJ, NM_TO_ANGSTROM, NO_CHARGES, OpenmmXmlWriter, Out, centre_first,
+    either_way, esc,
 };
 use crate::ff::forcefield::{ForceField, Style, StyleDefs};
 use crate::ff::ir::CombiningRule;
@@ -671,10 +672,15 @@ pub(super) fn pair(
         .into_iter()
         .filter(|t| t.params.get_str("type_") != Some("*"))
         .collect();
-    let all_charged = atoms.iter().all(|t| t.params.get("charge").is_some());
+    // Charges from the residue templates (a frame's) are not the types'.
+    let all_charged = !matches!(out.charges, Charges::Residues { .. })
+        && atoms.iter().all(|t| t.params.get("charge").is_some());
     if charged {
         xml.push_str("    <PerParticleParameter name=\"charge\"/>\n");
         if !all_charged {
+            if out.charges == Charges::TypesOnly {
+                return Err(NO_CHARGES.into());
+            }
             xml.push_str("    <UseAttributeFromResidue name=\"charge\"/>\n");
         }
     }

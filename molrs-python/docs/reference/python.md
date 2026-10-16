@@ -368,6 +368,10 @@ The [Record files guide](../guides/records.md) shows these in use.
 
 ::: molrs.io.write_openmm_forcefield
 
+::: molrs.io.write_openmm_system
+
+::: molrs.io.write_openmm_system_str
+
 ::: molrs.io.read_xml_forcefield
 
 ::: molrs.io.write_xml_forcefield

@@ -144,7 +144,10 @@ pub use mol2::codec::{read_mol2, read_mol2_str, read_mol2_trajectory, write_mol2
 #[cfg(feature = "ff")]
 pub use openmm_xml::{
     reader::{read_openmm_forcefield, read_openmm_forcefield_str},
-    writer::{write_openmm_forcefield, write_openmm_forcefield_str},
+    writer::{
+        write_openmm_forcefield, write_openmm_forcefield_str, write_openmm_system,
+        write_openmm_system_str,
+    },
 };
 pub use pdb::codec::{
     read_pdb, read_pdb_bytes, read_pdb_str, read_pdb_trajectory, write_pdb, write_pdb_str,

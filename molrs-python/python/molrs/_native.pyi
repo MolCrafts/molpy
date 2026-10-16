@@ -2710,6 +2710,9 @@ def read_openmm_forcefield_str(text: str) -> ForceField: ...
 def read_lammps_forcefield_str(text: str) -> ForceField: ...
 def write_frcmod_str(forcefield: ForceField) -> str: ...
 def write_openmm_forcefield_str(forcefield: ForceField, precision: int | None = None) -> str: ...
+def write_openmm_system_str(
+    forcefield: ForceField, frame: Frame, *, precision: int | None = None
+) -> str: ...
 def write_xml_forcefield_str(forcefield: ForceField) -> str: ...
 
 class PdbReader:
@@ -6164,6 +6167,22 @@ def write_openmm_forcefield(
 ) -> None:
     """Write a ForceField to OpenMM force-field XML — the inverse of
     :func:`read_openmm_forcefield`."""
+
+def write_openmm_system(
+    path: PathInput,
+    forcefield: ForceField,
+    frame: Frame,
+    *,
+    precision: int | None = None,
+) -> None:
+    """Write ``forcefield`` plus the ``<Residues>`` templates of the typed
+    ``frame`` as OpenMM force-field XML: what
+    ``ForceField(path).createSystem(PDBFile(pdb).topology)`` builds a System
+    from, for the PDB :func:`write_pdb` writes of the same frame. One
+    template per distinct residue (each bonded molecule when the frame has
+    no ``res_id``), atoms named as the PDB names them, charges from the
+    frame's ``charge`` column. Raises ``ValueError`` for what OpenMM cannot
+    match or price."""
 
 
 def write_frcmod(path: PathInput, forcefield: ForceField) -> None:
