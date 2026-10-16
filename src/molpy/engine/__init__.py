@@ -14,9 +14,9 @@ concrete engine has **one** input writer, ``generate_inputs``, and ``run``:
   the PDB, the force-field XML and a Python simulation script.
 * :class:`Cp2kEngine` — runs a CP2K input.
 
-Scripts are :class:`Script` objects (editable text with a path)::
+Scripts are :class:`Script` values (a name, its text and an optional path)::
 
-    from molpy.engine import LammpsEngine
+    from molpy.engine import LammpsEngine, Script
     engine = LammpsEngine()
     paths = engine.generate_inputs(frame, ff, "./calc")
     result = engine.run(Script.from_path(paths["input"]), workdir="./calc")
@@ -24,7 +24,8 @@ Scripts are :class:`Script` objects (editable text with a path)::
 Each engine's executable, environment, launcher, environment variables and
 time limit are its ``engine.<name>`` settings in molpy's configuration
 (:mod:`molpy.config`), and each logs to ``molpy.engine.<name>``
-(:mod:`mollog`): ``lammps``, ``gromacs``, ``openmm``, ``cp2k``.
+(:mod:`mollog`): ``lammps``, ``gromacs``, ``openmm``, ``cp2k``. Every
+failure is a :class:`molpy.wrapper.ToolError`.
 """
 
 from molpy.engine._cp2k import Cp2kEngine
@@ -32,7 +33,7 @@ from molpy.engine._engine import Engine
 from molpy.engine._gromacs import GromacsEngine
 from molpy.engine._lammps import LammpsEngine
 from molpy.engine._openmm import OpenmmEngine, OpenmmSimulationConfig
-from molpy.engine._script import Script, ScriptLanguage
+from molpy.engine._script import Script
 
 __all__ = [
     "Cp2kEngine",
@@ -42,5 +43,4 @@ __all__ = [
     "OpenmmEngine",
     "OpenmmSimulationConfig",
     "Script",
-    "ScriptLanguage",
 ]

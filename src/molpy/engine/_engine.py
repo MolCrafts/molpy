@@ -76,11 +76,7 @@ class Engine(Tool, ABC):
         >>> from molpy.config import load_config
         >>> from molpy.engine import LammpsEngine, Script
         >>>
-        >>> script = Script.from_text(
-        ...     name="input",
-        ...     text="units real\\natom_style full\\n",
-        ...     language="other",
-        ... )
+        >>> script = Script.from_text("input", "units real\\natom_style full\\n")
         >>> config = load_config({"engine": {"lammps": {"executable": "lmp"}}})
         >>> engine = LammpsEngine(config=config, check_executable=False)
         >>> result = engine.run(script, workdir="./calc")
@@ -188,16 +184,16 @@ class Engine(Tool, ABC):
         run_dir.mkdir(parents=True, exist_ok=True)
 
         written = [
-            run_dir
-            / (
-                script.path.name
-                if script.path is not None
-                else f"{script.name}{self._get_default_extension()}"
+            script.save(
+                run_dir
+                / (
+                    script.path.name
+                    if script.path is not None
+                    else f"{script.name}{self._get_default_extension()}"
+                )
             )
             for script in normalised
         ]
-        for script, target in zip(normalised, written, strict=True):
-            target.write_text(script.text, encoding="utf-8")
         return self._execute(
             run_dir, written[0], capture_output=capture_output, check=check
         )

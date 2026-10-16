@@ -190,14 +190,15 @@ class TestEngineRun:
             .startswith("units real")
         )
 
-    def test_run_with_path(self, tmp_path):
+    def test_run_with_path_writes_it_verbatim(self, tmp_path):
         script_file = tmp_path / "src" / "my_script.lmp"
         script_file.parent.mkdir()
-        script_file.write_text("units real\natom_style full\n", encoding="utf-8")
+        text = "  units real\natom_style full"
+        script_file.write_text(text, encoding="utf-8")
         engine = _lammps(workdir=tmp_path / "run")
         with patch("subprocess.run", return_value=_completed()) as mock_run:
             engine.run(script_file, capture_output=True)
-        assert (tmp_path / "run" / "my_script.lmp").is_file()
+        assert (tmp_path / "run" / "my_script.lmp").read_text(encoding="utf-8") == text
         assert mock_run.call_args.args[0][:3] == ["lmp", "-in", "my_script.lmp"]
 
     def test_run_with_multiple_scripts_runs_the_first(self, tmp_path):
