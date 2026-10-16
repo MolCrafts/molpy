@@ -27,6 +27,18 @@ def _minor_tuple(ver: str) -> tuple[int, int]:
         raise ValueError(f"non-numeric version {ver!r}") from exc
 
 
+def _molrs_requirement() -> str:
+    """The ``molcrafts-molrs`` range this molpy needs: its own major.minor line.
+
+    ``pyproject.toml`` pins exactly this range (a test holds them together).
+
+    Returns:
+        A PEP 440 specifier such as ``>=0.18.0,<0.19``.
+    """
+    major, minor = _minor_tuple(version)
+    return f">={major}.{minor}.0,<{major}.{minor + 1}"
+
+
 def check_molrs_version() -> str:
     """Require installed ``molcrafts-molrs`` to match MolPy's **major.minor** only.
 
@@ -74,7 +86,7 @@ def check_molrs_version() -> str:
         f"but molcrafts-molrs {molrs_version}. "
         f"Patch versions are not part of the check — install any "
         f"molrs {major}.{minor}.* "
-        f"(`pip install 'molcrafts-molrs>={major}.{minor}.0,<{major}.{minor + 1}'`) "
+        f"(`pip install 'molcrafts-molrs{_molrs_requirement()}'`) "
         "or rebuild the editable molrs (`maturin develop` in molrs-python)."
     )
 

@@ -63,7 +63,7 @@ promoted to the root, as the same objects.
 | **`mp.*`, `core`, `perceive`, `conformer`, `optimize`** | Explicit data model — `Frame` / `Block` columnar arrays, `Trajectory`, editable `Atomistic` / `CoarseGrain` graphs and `Box` on the root; regions, neighbour search, units, molpy's selectors and trajectory splitters in `mp.core`; perception and SMARTS (`mp.perceive.SmartsPattern`), 3D conformers (`mp.conformer.Conformer`), the `mp.optimize.Lbfgs` minimizer |
 | **`ff`** | Force fields, mirroring `molrs.ff` — `forcefield` (the `ForceField` data model), `potential` (kernels), `compile` (`PotentialCompiler`), `typifier` (OPLS-AA, MMFF94, GAFF natively; GAFF / GAFF2 via AmberTools), `charge`, `ir` (the IR's vocabulary), `style_registry` (your own styles from Python), `params`, `clpol_scaling` |
 | **`builder`** | Site-graph assembly (`Assembler`), graphene and nanotubes, polymer planning and polydispersity, crystals, virtual sites, packing templates |
-| **`compute`** · **`signal`** | Analysis — `Rdf`, `Msd`, conductivity, order parameters, Voronoi, dielectric and vibrational spectra, … (native kernels); FFT correlation and windows |
+| **`compute`** | Analysis — `Rdf`, `Msd`, conductivity, order parameters, Voronoi, dielectric and vibrational spectra, time-correlation functions, … (native kernels) |
 | **`io`** | Read/write — PDB, GRO, LAMMPS data, XYZ, AMBER, SMILES / CGsmiles, trajectories, `*.mrec` records, … |
 | **`engine`** | MD input generation & run management — LAMMPS, GROMACS, OpenMM, CP2K |
 | **`wrapper` · `adapter`** | External CLIs (Antechamber, tleap, …) and optional RDKit in-memory bridge |
@@ -79,7 +79,8 @@ pip install molcrafts-molpy
 ```
 
 Core dependencies: NumPy and
-[molrs](https://github.com/MolCrafts/molrs) (`molcrafts-molrs>=0.17.0,<0.18`)
+[molrs](https://github.com/MolCrafts/molrs) on molpy's own major.minor line
+(molpy X.Y.* needs `molcrafts-molrs>=X.Y.0,<X.(Y+1)`; `import molpy` checks it)
 plus the MolCrafts logging/config packages. Optional: RDKit (adapter example),
 AmberTools (GAFF charges).
 
@@ -102,9 +103,12 @@ uv run --no-project --with 'tox>=4.23' --with ruff==0.16.1 --with ty==0.0.65 tox
 uv run --extra dev python -m pytest tests/ -n auto
 ```
 
-`uv sync` installs `molcrafts-molrs` from PyPI within the pinned minor line.
-To develop against a local molrs checkout instead, see
-[Building molrs from source](https://docs.molcrafts.org/molpy/developer/development-setup/#building-molrs-from-source).
+`uv sync` does not install the partners from PyPI: `[tool.uv.sources]` points
+`molcrafts-molrs`, `molcrafts-mollog` and `molcrafts-molcfg` at sibling
+checkouts (`../molrs/molrs-python`, `../mollog`, `../molcfg`) and builds molrs
+from source, so clone them beside molpy first, or run `python scripts/check.py
+verify`, which resolves the pinned partner commits into a cached layout. Only
+`pip install molcrafts-molpy` takes molrs from PyPI.
 
 See [docs/developer/development-setup](https://docs.molcrafts.org/molpy/developer/development-setup/)
 for the full workflow.
