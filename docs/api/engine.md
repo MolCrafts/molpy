@@ -12,14 +12,22 @@ Each engine has one input writer, `generate_inputs`, and `run`.
 | `OpenmmEngine` | `generate_inputs(frame, ff, config, out)` → PDB, force-field XML, Python script | Running OpenMM simulations |
 | `OpenmmSimulationConfig` | OpenMM run configuration | Configuring an OpenMM run |
 | `Cp2kEngine` | Runs a CP2K input | Running CP2K simulations |
-| `Script` / `ScriptLanguage` | An editable script with a path; what `run` takes | Writing or loading an input script |
+| `Script` | An immutable (name, text, path) value; what `run` takes | Writing or loading an input script |
 
 ## Key behavior
 
 - An engine's executable, environment (`env` + `env_manager`), `launcher`,
   `env_vars` and `timeout` are its `[engine.<name>]` settings in molpy's
   configuration, falling back to `[engine]` ([`molpy.config`](config.md));
-  the constructor takes `config`, `workdir` and `check_executable`
+  the constructor takes `config`, `workdir` and `check_executable`; they are
+  resolved by the shared `molpy.wrapper.Tool` core
+- `run(scripts, *, workdir, capture_output, check)` writes the scripts (the
+  first is the input) and runs the engine; it keeps no state and does not
+  change the scripts. `check=True` is the default
+- Every failure is a `molpy.wrapper.ToolError` carrying `tool`
+  (`"engine.lammps"`), `returncode` and `tail` — the program's stderr or, when
+  nothing was captured, its log (`log.lammps`, `cp2k.out`, GROMACS's
+  `<stem>.log`)
 - Every subprocess is logged to `molpy.engine.<name>` (`lammps`, `gromacs`,
   `openmm`, `cp2k`) as mollog records carrying the `command`, `cwd`,
   `returncode` and `elapsed_s` (GROMACS adds `step`: `grompp` / `mdrun`);
@@ -55,8 +63,6 @@ Each engine has one input writer, `generate_inputs`, and `run`.
 ### Script
 
 ::: molpy.engine.Script
-
-::: molpy.engine.ScriptLanguage
 
 ### OpenMM
 

@@ -25,7 +25,9 @@ These are settings in molpy's configuration (`molpy.config`, built on
 [molcfg](https://docs.molcrafts.org/molcfg/)), not constructor arguments. A
 tool reads its own table — `[engine.lammps]`, `[wrapper.tleap]` — and falls
 back to its group's, `[engine]` or `[wrapper]`, for any key its table leaves
-unset. `[conda] executable` names the `conda` that `conda run` invokes.
+unset. `[conda] executable` names the `conda` that `conda run` invokes. A
+third-party engine or wrapper reads its own table the same way: any table
+under `[engine]` or `[wrapper]` is a tool's.
 
 ## Four layers, later winning
 
@@ -40,7 +42,9 @@ Each key is taken from the last layer that sets it; tables such as
 `env_vars` merge across layers, lists such as `launcher` are replaced. A
 missing file is skipped. An unknown key or a value of the wrong type is
 refused when the configuration loads, with the key and the files read in the
-message — a typo never silently falls back to a default.
+message — a typo never silently falls back to a default. (A table under
+`[engine]` or `[wrapper]` names a tool, built-in or third-party, so it is
+the keys inside it that are checked.)
 
 ## One file drives the run
 
@@ -102,7 +106,7 @@ the script mentions a binary, an environment or a launcher:
 from molpy.engine import GromacsEngine, LammpsEngine
 
 lmp = LammpsEngine(config=config, check_executable=False)
-print(lmp._build_full_command(["-in", "system.in"]))
+print(lmp.command(["-in", "system.in"]))
 # ['srun', '--ntasks=16', 'lmp_mpi', '-in', 'system.in']
 
 gmx = GromacsEngine(config=config, check_executable=False)
@@ -140,7 +144,7 @@ one logger per subsystem:
 
 | Logger | Emits |
 |--------|-------|
-| `molpy.engine.lammps`, `.gromacs`, `.openmm`, `.cp2k` | every subprocess; `inputs written` from `generate_inputs`; `relaxation finished` from LAMMPS `minimize` / `md` |
+| `molpy.engine.lammps`, `.gromacs`, `.openmm`, `.cp2k` | every subprocess (and, at DEBUG, each `conda run … which` executable lookup); `inputs written` from `generate_inputs`; `relaxation finished` / `relaxation output missing` from LAMMPS `minimize` / `md` |
 | `molpy.wrapper.antechamber`, `.tleap`, `.parmchk2`, `.prepgen`, `.sander` | every subprocess; `step output missing` when a step exits 0 without its file |
 | `molpy.config` | `config loaded` (the layers read), `tool settings resolved` (each setting's source), at DEBUG |
 
@@ -149,6 +153,13 @@ A subprocess is `process started` (DEBUG), then `process finished` (INFO) or
 (ERROR). Each record carries fields, not just text: `command` (the argv
 list), `cwd`, `returncode`, `elapsed_s`, `timeout_s`, and for GROMACS `step`
 (`grompp` or `mdrun`).
+
+Whatever went wrong, the exception is one `molpy.wrapper.ToolError`: a
+missing executable, a program that cannot start, a timeout, a non-zero exit
+(engines and wrappers check it by default) or a step's missing output. It
+carries `tool` (`"engine.lammps"`), `returncode` (`None` when the program
+never exited on its own) and `tail`, the last lines of the program's stderr,
+stdout or log file.
 
 molpy never configures logging itself. The application does, once — here,
 INFO to the terminal and DEBUG as JSON lines to a file:

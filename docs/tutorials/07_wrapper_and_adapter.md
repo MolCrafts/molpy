@@ -28,7 +28,7 @@ mol = mp.io.smiles.SmilesIr("CCO").to_atomistic()
 from molpy.wrapper import AntechamberWrapper
 
 ante = AntechamberWrapper("ante_work")
-print(ante.exe)  # antechamber
+print(ante.executable)  # antechamber
 print(ante.environment)  # EnvironmentSpec(system)
 print(ante.is_available())  # True only where AmberTools is installed
 ```
@@ -45,9 +45,13 @@ from molpy.config import load_config
 
 config = load_config({"wrapper": {"env": "AmberTools25", "env_manager": "conda"}})
 ante = AntechamberWrapper("ante_work", config=config)
-ante.run(args=["-i", "input.pdb", "-fi", "pdb", "-o", "out.mol2", "-fo", "mol2"])
-# runs: conda run -n AmberTools25 antechamber -i input.pdb ...
+ante.run(["-i", "input.pdb", "-fi", "pdb", "-o", "out.mol2", "-fo", "mol2"])
+# runs: conda run --no-capture-output -n AmberTools25 antechamber -i input.pdb ...
 ```
+
+A run that fails raises `molpy.wrapper.ToolError`, carrying the tool
+(`"wrapper.antechamber"`), its exit code and the tail of its output; pass
+`check=False` to get the failed `CompletedProcess` back instead.
 
 Each run is logged to `molpy.wrapper.antechamber` as structured
 [mollog](https://docs.molcrafts.org/mollog/) records; see

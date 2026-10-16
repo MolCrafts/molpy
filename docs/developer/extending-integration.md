@@ -14,37 +14,63 @@ This page shows how to integrate external CLI tools (wrappers) and external Pyth
 
 ## Adding a Wrapper
 
-Subclass `molpy.wrapper.Wrapper`. The base class handles executable resolution, conda/virtualenv activation, working directory management, and stdout/stderr capture.
+Subclass `molpy.wrapper.Wrapper` and name its configuration table in `tool`.
+The shared tool core (`molpy.wrapper.Tool`) resolves, in order, the settings
+(`[wrapper.<tool>]`, falling back to `[wrapper]`), the conda / venv
+environment, the executable, the environment variables, the time limit and
+the logger (`molpy.wrapper.<tool>`). Any table under `[wrapper]` is a
+tool's, so a third-party wrapper is configured exactly like a built-in one;
+give it a default executable by overriding `_default_executable()`, or leave
+the executable to the configuration.
 
 ```python
-from dataclasses import dataclass, field
+import subprocess
 from pathlib import Path
+
 from molpy.wrapper import Wrapper
 
-@dataclass
-class GmxWrapper(Wrapper):
-    """Wrapper for GROMACS gmx command."""
 
-    name: str = "gmx"
-    exe: str = "gmx"
+class PackmolWrapper(Wrapper):
+    """Wrapper for the packmol CLI (reads [wrapper.packmol])."""
 
-    def energy_minimize(self, tpr_file: Path) -> Path:
-        """Run energy minimization."""
-        result = self.run(args=["mdrun", "-s", str(tpr_file), "-deffnm", "em"])
-        if result.returncode != 0:
-            raise RuntimeError(f"gmx mdrun failed: {result.stderr}")
-        return self.workdir / "em.gro"
+    tool = "packmol"
+
+    def _default_executable(self) -> str:
+        return "packmol"
+
+    def run_from_input(self, input_text: str) -> subprocess.CompletedProcess[str]:
+        """Run packmol on an input deck given on stdin."""
+        return self.run(input_text=input_text)
 ```
 
-Higher-level methods (like `energy_minimize`) are convenience wrappers around `self.run()`. They should remain thin — workflow logic belongs in the calling code, not in the wrapper.
+```toml
+# molpy.toml
+[wrapper.packmol]
+executable = "/opt/packmol/bin/packmol"
+timeout = 600
+```
+
+Higher-level methods (like `run_from_input`) are thin conveniences around
+`self.run()`. Workflow logic — which files to require, what to do with them —
+belongs in the calling code, not in the wrapper.
 
 ### Key points
 
-- `self.run(args=[...])` executes the command and returns `subprocess.CompletedProcess`
-- `self.resolve_executable()` finds the binary on PATH or in the configured conda env
-- `self.is_available()` checks if the tool can be found (safe for conditional imports)
-- `workdir` is created automatically; all execution happens there
+- `self.run(args, *, input_text=None, capture_output=True, check=True)` runs
+  `[env prefix] executable args` in `self.workdir` (created if needed) and
+  returns `subprocess.CompletedProcess`
+- Every failure is a `molpy.wrapper.ToolError` carrying `tool`
+  (`"wrapper.packmol"`), `returncode` and `tail` (the last lines of stderr,
+  else stdout): a non-zero exit (unless `check=False`), a program that cannot
+  start, a timeout, a missing executable
+- `self.check_executable()` returns the resolved path or raises `ToolError`
+  naming the settings to fix; `self.is_available()` is the boolean form. Both
+  look the executable up once per instance
+- `run_step(tool, output, call)` checks the executable, runs one step and
+  raises `ToolError` if the file it must write is missing
 - Wrappers are safe to instantiate even if the tool is not installed
+- An engine is the same recipe on `molpy.engine.Engine`
+  ([Simulation Engines](../user-guide/12_engine.md#adding-a-new-engine-takes-a-table-and-two-methods))
 
 
 ## Adding an Adapter
@@ -129,9 +155,9 @@ Never bind a missing name to `None`: the failure then surfaces far away, as
 
 ## Checklist
 
-- [ ] Wrapper: subclass `Wrapper`, keep `.run()` calls thin
-- [ ] Adapter: a `to_<lib>` / `from_<lib>` pair of pure functions; document what does not round-trip
-- [ ] Optional deps: guard imports on `exc.name`, fail at usage not import
-- [ ] Tests: round-trip fidelity for adapters, return-code checking for wrappers
+- [ ] Wrapper: subclass `Wrapper`, set `tool`, keep `.run()` calls thin
+- [ ] Adapter: subclass `Adapter[I, E]`, implement `_do_sync_to_internal/external`
+- [ ] Optional deps: guard imports, fail at usage not import
+- [ ] Tests: round-trip fidelity for adapters, `ToolError` on failure for wrappers
 - [ ] Add tests in `tests/test_wrapper/` or `tests/test_adapter/`
 - [ ] Unit-test wrappers/engines with mocks and script literals (never launch the binary)

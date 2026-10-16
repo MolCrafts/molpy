@@ -91,7 +91,7 @@ the `.mdp` against the `.gro` and `.top`, then mdrun's it (under the engine's
 
 ### LAMMPS: writing a control script by hand
 
-The `Script` class holds the text of an input file and knows how to write it to disk. `Script.from_text` creates one from a string. Before saving you can call `script.preview()` to inspect the content — useful when the script is assembled programmatically from many fragments.
+A `Script` is an immutable value: a name, the text of an input file and, optionally, the path it came from. `Script.from_text` creates one from a string literal (dedented, ending in one newline); `script.save(path)` writes it and `script.preview()` shows its first lines. Neither changes the script.
 
 The examples below share this setup:
 
@@ -123,7 +123,7 @@ thermo          1000
 run             500000
 """
 
-script = Script.from_text("input", lammps_input, language="other")
+script = Script.from_text("input", lammps_input)
 print(script.preview())  # inspect before saving
 
 script.save("./submit/input.lmp")
@@ -132,7 +132,7 @@ script.save("./submit/input.lmp")
 
 The include written by `mp.io.write_lammps_forcefield` already declares every style, so the script does not repeat them; a different `pair_style` issued after it would discard its pair coefficients (for long-range electrostatics, write the include with `skip_pair_style=True` and declare the pair style in the script before `include`). Because the script states `units` before `read_data`, write the include with `skip_units=True`: LAMMPS refuses a `units` line once the box exists. The saved control script, together with the `system.data` and `system.ff` pair produced by `mp.io.write_lammps_data` and `mp.io.write_lammps_forcefield` (there is no bundled `.in` — the control script above *is* the input deck, written separately by `Script.save`), is a complete LAMMPS job. Drop all three into a Slurm submission script and the cluster needs nothing from MolPy.
 
-`Script.from_path` is the mirror image — load an existing file, modify it programmatically, and save it back or pass it to `run()`.
+`Script.from_path` is the mirror image — it reads an existing file as is, to save elsewhere or pass to `run()`.
 
 ```python
 script = Script.from_path("./submit/input.lmp")
@@ -179,7 +179,7 @@ The returned `paths` dictionary maps string keys to `Path` objects. You can pass
 
 ### Local execution with LAMMPS
 
-When the MD binary is available locally, `engine.run()` writes the script to a working directory and launches the subprocess. The return value is a standard `subprocess.CompletedProcess`, so you can inspect the exit code, stdout, and stderr without any MolPy-specific handling.
+When the MD binary is available locally, `engine.run()` writes the script(s) to a working directory and launches the subprocess; the first script is the input. Every call names what it runs: the engine keeps no state between calls, and the script is not changed. The return value is a standard `subprocess.CompletedProcess`, so you can inspect the exit code, stdout, and stderr without any MolPy-specific handling.
 
 ```python
 # docs: skip — engine.run launches an MD binary; engines unit-tested with mocks / script literals
@@ -196,7 +196,7 @@ if result.stderr:
     print(result.stderr[:500])
 ```
 
-`check=True` causes `run()` to raise `subprocess.CalledProcessError` on a non-zero exit code — the same semantics as `subprocess.run`. Set `check=False` during automated parameter scans where you want to continue after a failed run and inspect the log file yourself.
+`check=True` (the default) makes `run()` raise `molpy.wrapper.ToolError` on a non-zero exit code. The error carries the tool (`error.tool == "engine.lammps"`), the exit code (`error.returncode`) and the tail of the program's stderr or, when nothing was captured, its log file (`error.tail` — `log.lammps` for LAMMPS, `cp2k.out` for CP2K). A missing executable, a program that cannot start and a timeout raise the same error. Set `check=False` during automated parameter scans where you want to continue after a failed run and inspect the log file yourself.
 
 ### Executables, launchers and environments are configuration
 
@@ -287,9 +287,9 @@ Use generate-only when you are submitting to a cluster scheduler, when you want 
 
 ---
 
-## Adding a new engine takes a table and three methods
+## Adding a new engine takes a table and two methods
 
-Every engine subclasses `Engine`, names its configuration table in `tool`, and implements three things: a `name` property that returns a human-readable identifier, `_get_default_extension()` that returns the file extension for the primary input file, and `_execute()` that builds the subprocess command and starts it with `_run_process`. The base class resolves the settings, and handles working-directory management, script normalization, launcher prefixing, Conda environment wrapping, the time limit and the log records. An engine that writes its own input set adds one `generate_inputs`, calling molrs's writers for every file it does not template itself. The table is part of molpy's configuration schema (`molpy.config`), so a new engine also adds `[engine.<tool>]` there, with its default executable.
+Every engine subclasses `Engine`, names its configuration table in `tool`, and implements two methods: `_get_default_extension()`, the file extension of an unpathed input script, and `_execute(run_dir, input_file, *, capture_output, check)`, which builds the command with `self.command(...)` and starts it with `self.run_command(...)`. The shared tool core (`molpy.wrapper.Tool`) resolves the settings, environment, executable, launcher, environment variables, time limit and logger; `Engine.run` writes the scripts. An engine that writes its own input set adds one `generate_inputs`, calling molrs's writers for every file it does not template itself. Its settings are the `[engine.<tool>]` table of any configuration layer — molpy accepts a table for any engine name — and its default executable is `_default_executable()` (the built-in engines state theirs in `molpy.config.DEFAULTS`).
 
 ```python
 from pathlib import Path
@@ -300,21 +300,23 @@ from molpy.engine import Engine
 class NamdEngine(Engine):
     tool = "namd"  # reads [engine.namd], logs to molpy.engine.namd
 
-    @property
-    def name(self) -> str:
-        return "NAMD"
+    def _default_executable(self) -> str:
+        return "namd3"  # unless [engine.namd] executable says otherwise
 
     def _get_default_extension(self) -> str:
         return ".namd"
 
-    def _execute(self, run_dir: Path, capture_output=False, check=True, **kwargs):
-        cmd = self._build_full_command([self.input_script.path.name])
-        return self._run_process(
-            cmd, run_dir, capture_output=capture_output, check=check
+    def _execute(self, run_dir: Path, input_file: Path, *, capture_output, check):
+        return self.run_command(
+            self.command([input_file.name]),
+            cwd=run_dir,
+            capture_output=capture_output,
+            check=check,
+            log=run_dir / "namd.log",  # a failure carries its tail
         )
 ```
 
-`_build_full_command` prepends the Conda wrapper and the launcher; `_run_process` applies the environment variables and the time limit and logs the run.
+`command` prepends the conda wrapper and the launcher; `run_command` applies the environment variables and the time limit, logs the run, and raises `ToolError` on failure.
 
 ---
 
