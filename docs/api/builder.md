@@ -140,6 +140,12 @@ chains = [
 assert len(chains) == 2
 ```
 
+`plan_system` returns a plan whose total mass is within `max_rel_error` of the
+target, or raises `RuntimeError` saying how far short it fell and why (trimming
+off, no shorter chain fits, or `max_chains` reached). A mass distribution's
+sampled mass becomes one whole `generate_sequence(dp)` call, so alternating and
+block generators keep their pattern.
+
 ## Related
 
 - [Guide: Assembly](../user-guide/02_assembly.md)
