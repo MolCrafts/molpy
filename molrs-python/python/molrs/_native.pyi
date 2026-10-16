@@ -2689,7 +2689,11 @@ def write_prep_str(residue: dict[str, Any]) -> str: ...
 def read_lammps_data_str(text: str, atom_style: str | None = None) -> Frame: ...
 def read_lammps_data_bytes(data: bytes) -> Frame: ...
 def write_lammps_data_str(
-    frame: Frame, *, type_labels: _AbcMapping[str, Sequence[str]] | None = None
+    frame: Frame,
+    *,
+    type_labels: _AbcMapping[str, Sequence[str]] | None = None,
+    atom_style: str | None = None,
+    units: str | None = None,
 ) -> str: ...
 def read_lammps_dump_str(text: str) -> Frame: ...
 def read_lammps_dump_bytes(data: bytes) -> Frame: ...
@@ -2960,10 +2964,21 @@ def write_lammps_data(
     frame: Frame,
     *,
     type_labels: _AbcMapping[str, Sequence[str]] | None = None,
+    atom_style: str | None = None,
+    units: str | None = None,
 ) -> None:
     """Write a LAMMPS data file. ``type_labels`` declares extra labels per
     block (``{"atoms": [...], ...}``) even when no row uses them; a Drude
-    system gets a ``fix drude`` flags header comment."""
+    system gets a ``fix drude`` flags header comment.
+
+    ``atom_style`` names the ``Atoms`` style, written exactly; a column it
+    needs that ``frame["atoms"]`` lacks is an ``OSError`` (nothing is filled
+    in). Default: inferred, see ``infer_lammps_atom_style``. ``units``
+    (``"lj"``, ``"real"``, ``"metal"``) converts positions, box, masses,
+    charges and velocities from the frame's units (its ``units`` meta, else
+    ``lammps_units``, else ``real``) through the force-field writer's unit
+    table and states ``units = <style>`` on the title line; another style is
+    a ``ValueError``. Default: numbers unchanged."""
 def write_lammps_dump_trajectory(
     path: PathInput, frames: Sequence[Frame], columns: Sequence[str] | None = None
 ) -> None: ...
@@ -6123,6 +6138,11 @@ def read_lammps_log(path: PathInput, style: str = "default") -> LammpsLog:
 
 def is_lammps_log(text: str) -> bool:
     """Whether ``text`` holds a LAMMPS run (a ``Per MPI rank memory allocation`` line)."""
+
+def infer_lammps_atom_style(frame: Frame) -> str:
+    """The ``atom_style`` ``write_lammps_data`` writes ``frame`` in when none
+    is named: the style with the most columns ``frame["atoms"]`` has
+    (``"full"``, ``"molecular"``, ``"charge"``, ``"atomic"``, …)."""
 
 def read_lammps_molecule(path: PathInput) -> Frame:
     """Read a LAMMPS molecule template (the native text format)."""

@@ -16,8 +16,10 @@ This module holds the family's classes: :class:`LammpsDumpReader`, the lazy
 dump reader; :class:`BondReactTemplate`, one reaction's pre/post template
 pair; and the log records :func:`~molrs.io.read_lammps_log` hands out —
 :class:`LammpsLog` and its runs, thermo tables, warnings, and performance and
-timing summaries; and :func:`is_lammps_log`, which tells a log by its first
-run before it is read.
+timing summaries; :func:`is_lammps_log`, which tells a log by its first
+run before it is read; and :func:`infer_lammps_atom_style`, the
+``atom_style`` :func:`~molrs.io.write_lammps_data` writes a frame in when
+none is named, for the input script's ``atom_style`` line.
 """
 
 from .._native import (
@@ -36,6 +38,7 @@ from .._native import (
     LammpsTimingBreakdown,
     LammpsTimingRow,
     LammpsWarning,
+    infer_lammps_atom_style,
     is_lammps_log,
 )
 
@@ -55,5 +58,6 @@ __all__ = [
     "LammpsTimingBreakdown",
     "LammpsTimingRow",
     "LammpsWarning",
+    "infer_lammps_atom_style",
     "is_lammps_log",
 ]

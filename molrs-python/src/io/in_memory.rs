@@ -243,24 +243,23 @@ pub fn read_lammps_data_str(text: &str, atom_style: Option<&str>) -> PyResult<Py
 }
 
 /// Write a Frame as LAMMPS data text — :func:`write_lammps_data` into a
-/// string, ``type_labels`` as there.
+/// string, ``type_labels``, ``atom_style`` and ``units`` as there.
 #[pyfunction]
-#[pyo3(signature = (frame, *, type_labels = None))]
+#[pyo3(signature = (frame, *, type_labels = None, atom_style = None, units = None))]
 pub fn write_lammps_data_str(
     frame: &PyFrame,
     type_labels: Option<BTreeMap<String, Vec<String>>>,
+    atom_style: Option<String>,
+    units: Option<String>,
 ) -> PyResult<String> {
+    let options = super::structure::lammps_data_options(atom_style, units)?;
     match type_labels {
-        None => {
-            frame.with_frame(|f| molrs::io::write_lammps_data_str(f).map_err(io_error_to_pyerr))?
-        }
+        None => frame.with_frame(|f| {
+            molrs::io::write_lammps_data_str_with(f, &options).map_err(io_error_to_pyerr)
+        })?,
         Some(extra) => {
-            let mut work = frame.clone_core_frame()?;
-            for (block, labels) in &extra {
-                molrs::core::TypeLabels::declare(&mut work, block, labels)
-                    .map_err(pyo3::exceptions::PyValueError::new_err)?;
-            }
-            molrs::io::write_lammps_data_str(&work).map_err(io_error_to_pyerr)
+            let work = super::structure::with_declared_labels(frame, &extra)?;
+            molrs::io::write_lammps_data_str_with(&work, &options).map_err(io_error_to_pyerr)
         }
     }
 }

@@ -691,6 +691,11 @@ pub fn write_xyz_trajectory(path: PathBuf, frames: Vec<PyRef<'_, PyFrame>>) -> P
 /// ``drudes`` block, or atoms whose ``vsite`` is ``"drude"``) gets a header
 /// comment with the ``fix drude`` C/D/N flags in atom-type order.
 ///
+/// The file owns the two choices the input script must repeat: its
+/// ``atom_style`` and its ``units``. Name them here and write the same into
+/// the script, or leave ``atom_style`` out and write
+/// :func:`molrs.io.lammps.infer_lammps_atom_style`'s answer.
+///
 /// Parameters
 /// ----------
 /// path : str
@@ -701,35 +706,105 @@ pub fn write_xyz_trajectory(path: PathBuf, frames: Vec<PyRef<'_, PyFrame>>) -> P
 ///     Extra type labels per block (``{"atoms": [...], "bonds": [...]}``),
 ///     declared in the file even when no row uses them; ids stay dense and
 ///     follow the sorted labels. ``frame`` itself is not modified.
+/// atom_style : str, optional
+///     The ``atom_style`` of the ``Atoms`` section, written exactly
+///     (accelerator suffixes such as ``/kk`` dropped). Every column the style
+///     needs must be in ``frame["atoms"]``: the writer fills none in, because
+///     a ``charge`` of 0 or a ``mol_id`` of 1 would be a silent physics choice
+///     (``fix rigid molecule``, ``neigh_modify exclude molecule/intra``, a
+///     charged system written neutral). Add the column, or write the inferred
+///     style. Default: inferred from the columns
+///     (:func:`molrs.io.lammps.infer_lammps_atom_style`).
+/// units : str, optional
+///     The LAMMPS ``units`` style of the file: ``"lj"``, ``"real"`` or
+///     ``"metal"``, the styles :func:`write_lammps_forcefield` converts to,
+///     through the same unit table. Positions, box, masses, charges,
+///     velocities and the dipole and radius columns are converted from the
+///     frame's units — its ``units`` meta preset, else its ``lammps_units``
+///     meta (what :func:`read_lammps_data` records from a ``write_data``
+///     title), else ``real`` (Å, g/mol, e, Å/fs) — and the title line states
+///     ``units = <style>``, which :func:`read_lammps_data` records back.
+///     Default: the frame's numbers unchanged, no units stated.
 ///
 /// Raises
 /// ------
 /// ValueError
-///     If a declared label is empty or contains ``,``, or a block is not
+///     If a declared label is empty or contains ``,``, a block is not
 ///     ``atoms`` / ``bonds`` / ``angles`` / ``dihedrals`` / ``impropers`` /
-///     ``cmaps``.
+///     ``cmaps``, or ``units`` is not ``lj`` / ``real`` / ``metal``.
 /// IOError
-///     If the frame cannot be written.
+///     If the frame cannot be written: among others, a named ``atom_style``
+///     that is unknown, ``hybrid``, missing a column it needs, or unable to
+///     hold the frame's topology; or a ``units`` conversion from a frame whose
+///     own units are not ``lj`` / ``real`` / ``metal``, or of a column with
+///     no known dimension (``density``, …).
 #[pyfunction]
-#[pyo3(signature = (path, frame, *, type_labels = None))]
+#[pyo3(signature = (path, frame, *, type_labels = None, atom_style = None, units = None))]
 pub fn write_lammps_data(
     path: PathBuf,
     frame: &PyFrame,
     type_labels: Option<std::collections::BTreeMap<String, Vec<String>>>,
+    atom_style: Option<String>,
+    units: Option<String>,
 ) -> PyResult<()> {
     let path = path_str(&path)?;
+    let options = lammps_data_options(atom_style, units)?;
     match type_labels {
-        None => frame
-            .with_frame(|f| molrs::io::write_lammps_data(path, f).map_err(io_error_to_pyerr))?,
+        None => frame.with_frame(|f| {
+            molrs::io::write_lammps_data_with(path, f, &options).map_err(io_error_to_pyerr)
+        })?,
         Some(extra) => {
-            let mut work = frame.clone_core_frame()?;
-            for (block, labels) in &extra {
-                molrs::core::TypeLabels::declare(&mut work, block, labels)
-                    .map_err(pyo3::exceptions::PyValueError::new_err)?;
-            }
-            molrs::io::write_lammps_data(path, &work).map_err(io_error_to_pyerr)
+            let work = with_declared_labels(frame, &extra)?;
+            molrs::io::write_lammps_data_with(path, &work, &options).map_err(io_error_to_pyerr)
         }
     }
+}
+
+/// The data writer's options from the Python keywords; an unknown ``units``
+/// is a ``ValueError``, as in :func:`write_lammps_forcefield`.
+pub(crate) fn lammps_data_options(
+    atom_style: Option<String>,
+    units: Option<String>,
+) -> PyResult<molrs::io::lammps::LammpsDataWriteOptions> {
+    if let Some(units) = &units {
+        molrs::io::lammps::parse_lammps_units_style(units).map_err(PyValueError::new_err)?;
+    }
+    Ok(molrs::io::lammps::LammpsDataWriteOptions { atom_style, units })
+}
+
+/// A copy of ``frame`` declaring the ``extra`` type labels per block.
+pub(crate) fn with_declared_labels(
+    frame: &PyFrame,
+    extra: &std::collections::BTreeMap<String, Vec<String>>,
+) -> PyResult<molrs::core::Frame> {
+    let mut work = frame.clone_core_frame()?;
+    for (block, labels) in extra {
+        molrs::core::TypeLabels::declare(&mut work, block, labels)
+            .map_err(PyValueError::new_err)?;
+    }
+    Ok(work)
+}
+
+/// The ``atom_style`` :func:`molrs.io.write_lammps_data` writes ``frame`` in
+/// when none is named (``molrs::io::lammps::infer_lammps_atom_style``).
+///
+/// Among the styles whose columns ``frame["atoms"]`` has, the one with the
+/// most columns: ``"full"`` for a frame with ``mol_id`` and ``charge``,
+/// ``"molecular"`` with ``mol_id`` alone, ``"charge"`` with ``charge``
+/// alone, ``"atomic"`` with neither. Write it into the input script's
+/// ``atom_style`` line, so script and data file agree.
+///
+/// Parameters
+/// ----------
+/// frame : Frame
+///     The frame to be written.
+///
+/// Returns
+/// -------
+/// str
+#[pyfunction]
+pub fn infer_lammps_atom_style(frame: &PyFrame) -> PyResult<&'static str> {
+    frame.with_frame(molrs::io::lammps::infer_lammps_atom_style)
 }
 
 /// Register this module's classes and functions.
@@ -829,6 +904,11 @@ pub(crate) fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     crate::add_function(m, "molrs.io", wrap_pyfunction!(write_gro, m)?)?;
     crate::add_function(m, "molrs.io", wrap_pyfunction!(write_gro_trajectory, m)?)?;
     crate::add_function(m, "molrs.io", wrap_pyfunction!(write_lammps_data, m)?)?;
+    crate::add_function(
+        m,
+        "molrs.io.lammps",
+        wrap_pyfunction!(infer_lammps_atom_style, m)?,
+    )?;
     crate::add_function(m, "molrs.io", wrap_pyfunction!(write_lammps_molecule, m)?)?;
     crate::add_function(
         m,

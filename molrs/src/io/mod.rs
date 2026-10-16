@@ -118,7 +118,7 @@ pub use lammps::bond_react::write_lammps_bond_react_map;
 pub use lammps::bond_react_system::write_lammps_bond_react_system;
 pub use lammps::data::{
     read_lammps_data, read_lammps_data_bytes, read_lammps_data_str, write_lammps_data,
-    write_lammps_data_str,
+    write_lammps_data_str, write_lammps_data_str_with, write_lammps_data_with,
 };
 pub use lammps::dump::{
     read_lammps_dump_bytes, read_lammps_dump_str, read_lammps_dump_trajectory,

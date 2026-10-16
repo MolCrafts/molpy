@@ -1,5 +1,7 @@
-//! LAMMPS unit-style conversion for force-field I/O.
+//! LAMMPS unit-style conversion: the force-field writer's coefficients and
+//! the data writer's geometry go through this one table.
 
+#[cfg(feature = "ff")]
 use crate::ff::ir::UnitScale;
 use molrs::core::{PresetDim, Quantity, UnitPreset, UnitRegistry, UnitsError};
 use molrs::op::F;
@@ -126,9 +128,22 @@ impl LammpsUnitConverter {
         self.convert_through_lj(value, from, to, PresetDim::Length)
     }
 
+    /// Any preset `dimension` (mass, charge, velocity, …): `from → lj → to`;
+    /// `value` unchanged when the two are the same style.
+    pub fn convert(
+        &self,
+        value: F,
+        from: &str,
+        to: &str,
+        dimension: PresetDim,
+    ) -> Result<F, String> {
+        self.convert_through_lj(value, from, to, dimension)
+    }
+
     /// The per-dimension conversion of every parameter from `from` to `to`
     /// (one unit of energy, length, charge and mass, each `from → lj →
     /// to`); exactly the identity when the two are the same style.
+    #[cfg(feature = "ff")]
     pub fn scale(&self, from: &str, to: &str) -> Result<UnitScale, String> {
         if from == to {
             return Ok(UnitScale::IDENTITY);
@@ -193,7 +208,23 @@ mod tests {
     fn same_style_is_the_identity() {
         let sys = LammpsUnitConverter::canonical().unwrap();
         assert_eq!(sys.energy(0.5, "lj", "lj").unwrap(), 0.5);
+        assert_eq!(
+            sys.convert(0.25, "metal", "metal", PresetDim::Velocity)
+                .unwrap(),
+            0.25
+        );
+        #[cfg(feature = "ff")]
         assert!(sys.scale("real", "real").unwrap().is_identity());
+    }
+
+    #[test]
+    fn real_to_metal_velocity_is_per_picosecond() {
+        let sys = LammpsUnitConverter::canonical().unwrap();
+        // 1 Å/fs = 1000 Å/ps.
+        let v = sys
+            .convert(1.0, "real", "metal", PresetDim::Velocity)
+            .unwrap();
+        assert!((v - 1000.0).abs() < 1e-9, "{v}");
     }
 
     #[test]
@@ -201,7 +232,7 @@ mod tests {
         let sys = LammpsUnitConverter::canonical().unwrap();
         let err = sys.energy(1.0, "real", "furlong").unwrap_err();
         assert!(err.contains("furlong"), "{err}");
-        assert!(sys.scale("nope", "real").is_err());
+        assert!(sys.length(1.0, "nope", "real").is_err());
     }
 
     #[test]
@@ -212,6 +243,7 @@ mod tests {
         assert!(parse_lammps_units_style("si").is_err());
     }
 
+    #[cfg(feature = "ff")]
     #[test]
     fn bond_k_metal_to_real_scales_with_energy() {
         let sys = LammpsUnitConverter::canonical().unwrap();

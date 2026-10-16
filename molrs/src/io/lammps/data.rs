@@ -4,12 +4,14 @@ use crate::io::frame_columns::insert_column_of_length;
 use crate::io::frame_index::{FrameIndexBuilder, FrameOffset};
 use crate::io::invalid_data;
 use crate::io::lammps::atom_style::{
-    AtomStyleLayout, DataField, field_column_key, infer_write_style, is_int_token,
-    is_noninteger_float_token, layout_for_atom_style, layout_from_column_count,
-    normalize_atom_style, parse_atoms_style_hint,
+    AtomStyleLayout, DataField, field_column_key, is_int_token, is_noninteger_float_token,
+    layout_for_atom_style, layout_from_column_count, normalize_atom_style, parse_atoms_style_hint,
 };
 use crate::io::lammps::box_bounds::{BoxBounds, simbox_from_bounds};
 use crate::io::lammps::columns::OptionalColumn;
+use crate::io::lammps::data_options::{
+    DataUnits, LammpsDataWriteOptions, resolve_units, resolve_write_style,
+};
 use crate::io::lammps::fields::{
     TypeRef, invert_type_labels, labels_to_meta, parse_f, parse_i, tokenize,
 };
@@ -1484,18 +1486,28 @@ impl<R: BufRead + Seek> FrameReader for LammpsDataReader<R> {
 
 pub struct LammpsDataWriter<W: Write> {
     writer: W,
+    options: LammpsDataWriteOptions,
 }
 
 impl<W: Write> crate::io::writer::Writer for LammpsDataWriter<W> {
     type W = W;
     fn new(writer: W) -> Self {
-        Self { writer }
+        Self::new(writer)
     }
 }
 
 impl<W: Write> LammpsDataWriter<W> {
     pub fn new(writer: W) -> Self {
-        Self { writer }
+        Self {
+            writer,
+            options: LammpsDataWriteOptions::default(),
+        }
+    }
+
+    /// Write in the `atom_style` and `units` `options` name.
+    pub fn with_options(mut self, options: LammpsDataWriteOptions) -> Self {
+        self.options = options;
+        self
     }
 }
 
@@ -1504,7 +1516,7 @@ impl<W: Write> FrameWriter for LammpsDataWriter<W> {
         // Refuse to emit a frame that violates the vocabulary: a bad file
         // looks fine and is found wrong later, by whatever reads it.
         crate::io::writer::check_write_frame(frame)?;
-        write_lammps_data_frame(&mut self.writer, frame)
+        write_lammps_data_frame_with(&mut self.writer, frame, &self.options, &HashMap::new())
     }
 }
 
@@ -1637,7 +1649,7 @@ fn resolve_row_masses(frame: &impl FrameAccess, n: usize) -> Vec<F> {
 }
 
 /// Does the atoms block have an int or float column for this data-file field?
-fn frame_has_atom_field(frame: &impl FrameAccess, field: DataField) -> bool {
+pub(crate) fn frame_has_atom_field(frame: &impl FrameAccess, field: DataField) -> bool {
     let key = field_column_key(field);
     if field == DataField::Mol {
         return frame
@@ -1701,11 +1713,13 @@ fn frame_has_atom_field(frame: &impl FrameAccess, field: DataField) -> bool {
 enum AtomColumn<'a> {
     Uint(ArrayViewD<'a, Idx>),
     Int(ArrayViewD<'a, I>),
-    Float(ArrayViewD<'a, F>),
+    /// A float column and the factor into the file's units.
+    Float(ArrayViewD<'a, F>, F),
     /// Already-resolved per-row values (type ids).
     IdxRows(&'a [Idx]),
-    /// Already-resolved per-row values (masses).
-    FloatRows(&'a [F]),
+    /// Already-resolved per-row values (masses), and the factor into the
+    /// file's units.
+    FloatRows(&'a [F], F),
 }
 
 impl<'a> AtomColumn<'a> {
@@ -1715,11 +1729,13 @@ impl<'a> AtomColumn<'a> {
         field: DataField,
         type_ids: &'a [Idx],
         row_masses: &'a [F],
+        units: &DataUnits,
     ) -> std::io::Result<Self> {
         let key = field_column_key(field);
+        let factor = units.field_factor(field)?;
         let col = match field {
             DataField::Type => Self::IdxRows(type_ids),
-            DataField::Mass => Self::FloatRows(row_masses),
+            DataField::Mass => Self::FloatRows(row_masses, factor),
             DataField::Bodyflag
             | DataField::ShapeFlag
             | DataField::Espin
@@ -1746,6 +1762,7 @@ impl<'a> AtomColumn<'a> {
                     .column("atoms", key)
                     .and_then(|c| c.as_float())
                     .ok_or_else(|| invalid_data(format!("Missing float column '{key}'")))?,
+                factor,
             ),
         };
         Ok(col)
@@ -1755,9 +1772,9 @@ impl<'a> AtomColumn<'a> {
         match self {
             Self::Uint(col) => write!(writer, " {}", col[[i]]),
             Self::Int(col) => write!(writer, " {}", col[[i]]),
-            Self::Float(col) => write!(writer, " {}", col[[i]]),
+            Self::Float(col, factor) => write!(writer, " {}", col[[i]] * factor),
             Self::IdxRows(rows) => write!(writer, " {}", rows[i]),
-            Self::FloatRows(rows) => write!(writer, " {}", rows[i]),
+            Self::FloatRows(rows, factor) => write!(writer, " {}", rows[i] * factor),
         }
     }
 }
@@ -1767,10 +1784,8 @@ fn write_atoms_section<W: Write>(
     writer: &mut W,
     frame: &impl FrameAccess,
     style_name: &str,
-    fields: &[DataField],
     atom_ids: &[Idx],
-    type_ids: &[Idx],
-    row_masses: &[F],
+    columns: &[AtomColumn<'_>],
 ) -> std::io::Result<()> {
     let images = match (
         frame.column("atoms", keys::IX).and_then(|c| c.as_int()),
@@ -1783,14 +1798,9 @@ fn write_atoms_section<W: Write>(
 
     writeln!(writer, "Atoms # {style_name}")?;
     writeln!(writer)?;
-    let columns = fields
-        .iter()
-        .filter(|&&f| f != DataField::Id)
-        .map(|&f| AtomColumn::resolve(frame, f, type_ids, row_masses))
-        .collect::<std::io::Result<Vec<_>>>()?;
     for (i, id) in atom_ids.iter().enumerate() {
         write!(writer, "{id}")?;
-        for col in &columns {
+        for col in columns {
             col.write_cell(writer, i)?;
         }
         if let Some([ix, iy, iz]) = &images {
@@ -1882,30 +1892,51 @@ fn enclosing_bounds(coords: &[Vec<F>]) -> std::io::Result<([F; 3], [F; 3])> {
     Ok(([o[0], o[1], o[2]], [l[0], l[1], l[2]]))
 }
 
+/// [`write_lammps_data_frame_with`] with the default options (the tests'
+/// door into the writer).
+#[cfg(test)]
 fn write_lammps_data_frame<W: Write>(
     writer: &mut W,
     frame: &impl FrameAccess,
 ) -> std::io::Result<()> {
-    write_lammps_data_frame_with(writer, frame, &HashMap::new())
+    write_lammps_data_frame_with(
+        writer,
+        frame,
+        &LammpsDataWriteOptions::default(),
+        &HashMap::new(),
+    )
 }
 
-/// [`write_lammps_data_frame`], with the mass of an atom type no row uses
-/// (a declared inventory label) taken from `label_masses` instead of the
-/// placeholder `1`.
+/// Write `frame` as a data file in the `atom_style` and `units` `options`
+/// name, with the mass of an atom type no row uses (a declared inventory
+/// label) taken from `label_masses` instead of the placeholder `1`.
 fn write_lammps_data_frame_with<W: Write>(
     writer: &mut W,
     frame: &impl FrameAccess,
+    options: &LammpsDataWriteOptions,
     label_masses: &HashMap<String, F>,
 ) -> std::io::Result<()> {
-    writeln!(writer, "# LAMMPS data file generated by molrs")?;
-    writeln!(writer)?;
-
     let n_atoms = frame
         .visit_block("atoms", |b| b.n_rows().unwrap_or(0))
         .unwrap_or(0);
     if n_atoms == 0 {
         return Err(invalid_data("Frame has no atoms to write"));
     }
+    // Both decisions the input script shares with the file, before a byte
+    // of it is written.
+    let units = resolve_units(frame, options.units.as_deref())?;
+    let (style_name, layout) = resolve_write_style(frame, options.atom_style.as_deref())?;
+
+    // `write_data` ends its title with the unit style; the reader takes it
+    // back into `lammps_units`.
+    match units.title {
+        Some(style) => writeln!(
+            writer,
+            "# LAMMPS data file generated by molrs, units = {style}"
+        )?,
+        None => writeln!(writer, "# LAMMPS data file generated by molrs")?,
+    }
+    writeln!(writer)?;
 
     // Core coords are required for every write style, and bound a box-less
     // frame's box.
@@ -2043,6 +2074,9 @@ fn write_lammps_data_frame_with<W: Write>(
         let (origin, lengths) = enclosing_bounds(&coords)?;
         (origin, lengths, [0.0; 3])
     };
+    let box_origin = box_origin.map(|v| v * units.length);
+    let box_lengths = box_lengths.map(|v| v * units.length);
+    let tilts = tilts.map(|v| v * units.length);
     writeln!(
         writer,
         "{} {} xlo xhi",
@@ -2086,7 +2120,6 @@ fn write_lammps_data_frame_with<W: Write>(
 
     // Masses: always emit for non-body styles. First-seen mass per type;
     // unused inventory slots get mass 1.0.
-    let (style_name, layout) = infer_write_style(|f| frame_has_atom_field(frame, f));
     let body_style = style_name == "body";
     if !body_style {
         writeln!(writer, "Masses")?;
@@ -2112,20 +2145,18 @@ fn write_lammps_data_frame_with<W: Write>(
             }
         }
         for (t, m) in type_mass.iter().enumerate().take(n_atom_types + 1).skip(1) {
-            writeln!(writer, "{t} {m}")?;
+            writeln!(writer, "{t} {}", m * units.mass)?;
         }
         writeln!(writer)?;
     }
 
-    write_atoms_section(
-        writer,
-        frame,
-        style_name,
-        layout.fields,
-        &atom_ids,
-        atom_rt.type_ids(),
-        &row_masses,
-    )?;
+    let columns = layout
+        .fields
+        .iter()
+        .filter(|&&f| f != DataField::Id)
+        .map(|&f| AtomColumn::resolve(frame, f, atom_rt.type_ids(), &row_masses, &units))
+        .collect::<std::io::Result<Vec<_>>>()?;
+    write_atoms_section(writer, frame, &style_name, &atom_ids, &columns)?;
 
     // Velocities section when all three components exist.
     if let (Some(vx), Some(vy), Some(vz)) = (
@@ -2140,9 +2171,9 @@ fn write_lammps_data_frame_with<W: Write>(
                 writer,
                 "{} {} {} {}",
                 atom_ids[i],
-                vx[[i]],
-                vy[[i]],
-                vz[[i]]
+                vx[[i]] * units.velocity,
+                vy[[i]] * units.velocity,
+                vz[[i]] * units.velocity
             )?;
         }
         writeln!(writer)?;
@@ -2212,9 +2243,22 @@ pub fn read_lammps_data<P: AsRef<Path>>(path: P) -> std::io::Result<Frame> {
 }
 
 pub fn write_lammps_data<P: AsRef<Path>>(path: P, frame: &impl FrameAccess) -> std::io::Result<()> {
+    write_lammps_data_with(path, frame, &LammpsDataWriteOptions::default())
+}
+
+/// [`write_lammps_data`] in the `atom_style` and `units` `options` name
+/// ([`LammpsDataWriteOptions`]): a named style is written exactly or refused
+/// when the frame lacks a column it needs; a named `units` converts the
+/// geometry, masses, charges and velocities from the frame's units.
+pub fn write_lammps_data_with<P: AsRef<Path>>(
+    path: P,
+    frame: &impl FrameAccess,
+    options: &LammpsDataWriteOptions,
+) -> std::io::Result<()> {
     let file = File::create(path)?;
     let mut writer = std::io::BufWriter::new(file);
-    write_lammps_data_frame(&mut writer, frame)
+    write_lammps_data_frame_with(&mut writer, frame, options, &HashMap::new())?;
+    writer.flush()
 }
 
 /// Read LAMMPS data `text` — [`read_lammps_data`] on text in memory.
@@ -2226,8 +2270,16 @@ pub fn read_lammps_data_str(text: &str) -> std::io::Result<Frame> {
 
 /// Write a frame as LAMMPS data text — [`write_lammps_data`] into memory.
 pub fn write_lammps_data_str(frame: &impl FrameAccess) -> std::io::Result<String> {
+    write_lammps_data_str_with(frame, &LammpsDataWriteOptions::default())
+}
+
+/// [`write_lammps_data_with`] into memory.
+pub fn write_lammps_data_str_with(
+    frame: &impl FrameAccess,
+    options: &LammpsDataWriteOptions,
+) -> std::io::Result<String> {
     let mut buf = Vec::new();
-    write_lammps_data_frame(&mut buf, frame)?;
+    write_lammps_data_frame_with(&mut buf, frame, options, &HashMap::new())?;
     String::from_utf8(buf).map_err(invalid_data)
 }
 
@@ -2243,7 +2295,12 @@ pub(crate) fn write_lammps_data_with_masses<P: AsRef<Path>>(
 ) -> std::io::Result<()> {
     let file = File::create(path)?;
     let mut writer = std::io::BufWriter::new(file);
-    write_lammps_data_frame_with(&mut writer, frame, label_masses)?;
+    write_lammps_data_frame_with(
+        &mut writer,
+        frame,
+        &LammpsDataWriteOptions::default(),
+        label_masses,
+    )?;
     writer.flush()
 }
 

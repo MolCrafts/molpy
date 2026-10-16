@@ -267,6 +267,7 @@ def test_forcefield_is_the_data_model_and_stream_the_transport():
         "molrs.io.cgsmiles.CgSmilesIr",
         "molrs.io.lammps.LammpsLog",
         "molrs.io.lammps.BondReactTemplate",
+        "molrs.io.lammps.infer_lammps_atom_style",
         "molrs.io.mrec.ForceFieldSection",
         "molrs.core.Frame",
         "molrs.core.Block",

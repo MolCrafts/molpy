@@ -468,7 +468,7 @@ pub(crate) fn field_column_key(field: DataField) -> &'static str {
 }
 
 /// Whether this field is always required for any write (core coordinates + ids).
-fn is_core_field(field: DataField) -> bool {
+pub(crate) fn is_core_field(field: DataField) -> bool {
     matches!(
         field,
         DataField::Id | DataField::Type | DataField::X | DataField::Y | DataField::Z
