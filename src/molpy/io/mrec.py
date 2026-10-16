@@ -36,24 +36,35 @@ if TYPE_CHECKING:
     from ._metric_reader import ReadRequest
 
 
+_PACKED_SUFFIX = ".mrec.zip"
+
+
 class MrecMetricReader:
     """``*.mrec`` records — the per-frame series a trajectory carries.
 
-    A record is not a metrics file: what it has that a chart can draw is
-    the frame index against simulation ``step`` and ``time``. Those are
-    emitted and nothing else is invented.
+    A record is not a metrics file: what it has that a chart can draw is its
+    simulation ``step`` and ``time`` per frame. Those are emitted and nothing
+    else is invented. Both forms of a record are read: the ``*.mrec`` store
+    directory a run writes, and the ``*.mrec.zip`` archive molrs packs it into
+    once closed (``pack_mrec_zip``).
     """
 
     format = "mrec"
-    patterns = ("**/*.mrec", "**/*.mrec/")
+    patterns = ("**/*.mrec", "**/*.mrec/", "**/*.mrec.zip")
     tailable = False
 
     def sniff(self, path: Path) -> bool:
-        if path.suffix != ".mrec":
-            return False
+        """True for a ``*.mrec`` directory or ``*.mrec.zip`` file molrs can open."""
         if path.is_dir():
-            return True
-        return path.is_file()
+            if path.suffix != ".mrec":
+                return False
+        elif not (path.is_file() and path.name.endswith(_PACKED_SUFFIX)):
+            return False
+        try:
+            with MrecReader(path):
+                return True
+        except (OSError, ValueError):
+            return False
 
     def read(
         self,
@@ -62,36 +73,32 @@ class MrecMetricReader:
         source: str = "",
         request: ReadRequest | None = None,
     ) -> Iterator[dict[str, Any]]:
-        stride = _metric_reader.stride_of(request)
-        limit = _metric_reader.limit_of(request)
-        skip = _metric_reader.since_of(request)
-        reader = MrecReader(path)
+        """Yield the ``step`` / ``time`` records *request* selects.
 
-        series: dict[str, Any] = {}
-        for name in ("step", "time"):
-            values = getattr(reader, name)
-            if values is not None and len(values):
-                series[name] = values
+        The raw stream is series-major — every frame's ``mrec/step``, then
+        every frame's ``mrec/time`` — so ``since`` counts those records. ``s``
+        is the frame's simulation step, or its index when the record has no
+        ``step`` column (see :mod:`._metric_reader`).
+        """
+        with MrecReader(path) as reader:
+            columns = {name: getattr(reader, name) for name in ("step", "time")}
+        yield from _metric_reader.apply_request(
+            request, _series_records(columns, source)
+        )
 
-        emitted = 0
-        seen = 0
-        for name, values in series.items():
-            sampled = values[::stride] if stride > 1 else values
-            for index, value in enumerate(sampled):
-                record = {
-                    "t": "scalar",
-                    "k": f"mrec/{name}",
-                    "s": float(index * stride),
-                    "v": float(value),
-                    "tags": {"source": source},
-                }
-                seen += 1
-                if seen <= skip or not _metric_reader.wanted(request, record):
-                    continue
-                yield record
-                emitted += 1
-                if limit is not None and emitted >= limit:
-                    return
+
+def _series_records(columns: dict[str, Any], source: str) -> Iterator[dict[str, Any]]:
+    present = {name: values for name, values in columns.items() if values is not None}
+    steps = present.get("step")
+    for name, values in present.items():
+        for index, value in enumerate(values):
+            yield {
+                "t": "scalar",
+                "k": f"mrec/{name}",
+                "s": float(steps[index] if steps is not None else index),
+                "v": float(value),
+                "tags": {"source": source},
+            }
 
 
 __all__ = [*_native, "MrecMetricReader"]

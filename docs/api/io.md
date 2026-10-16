@@ -100,7 +100,21 @@ into plottable series records; none parses a format itself.
 |-------|--------|-------------|
 | `lammps.LammpsLogMetricReader` | `log.lammps` thermo tables | `lammps_log` |
 | `mlp_jsonl.MlpJsonlMetricReader` | `*.mlp.jsonl` metric records (tailable) | `mlp_jsonl` |
-| `mrec.MrecMetricReader` | the `step` / `time` series of a `*.mrec` trajectory | `mrec` |
+| `mrec.MrecMetricReader` | the `step` / `time` series of a `*.mrec` trajectory (store directory or packed `*.mrec.zip`) | `mrec` |
+
+Every reader enforces a viewer's request the same way:
+
+- `since` is a raw index: the number of records of the reader's unfiltered,
+  unstrided stream to skip (LAMMPS: row-major over thermo rows and columns;
+  mrec: every `step` record, then every `time` record; mlp_jsonl: line order).
+- `stride` keeps every *n*-th sample of each series after `since` and the
+  `metric_type` / `keys` filters; `limit` caps the records yielded.
+- A record's `s` is the simulation step where the source records one (the
+  LAMMPS `Step` column, the mrec `step` column), else the sample's ordinal in
+  its source; mlp_jsonl records keep the `s` their writer gave them.
+- `MlpJsonlMetricReader` skips only a torn last line (no trailing newline, not
+  yet parseable); any other malformed line raises `ValueError` with its line
+  number.
 
 ## Canonical examples
 

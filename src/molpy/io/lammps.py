@@ -24,7 +24,7 @@ from typing import TYPE_CHECKING
 
 from molrs.io.lammps import *  # noqa: F403
 from molrs.io.lammps import __all__ as _native
-from molrs.io.lammps import is_lammps_log
+from molrs.io.lammps import LammpsLog, is_lammps_log
 
 from . import _metric_reader
 
@@ -49,8 +49,9 @@ class LammpsLogMetricReader:
 
     **Thermo rows carry no wall-clock.** LAMMPS records simulation steps, not
     timestamps, so each record is tagged ``wall_time_source: "ingest"`` and
-    carries its step in ``s``. Synthesizing per-row times from ``Loop time``
-    would be fabricated data.
+    carries its step in ``s`` (the ``Step`` column; a table without one gets
+    the row's ordinal across every run). Synthesizing per-row times from
+    ``Loop time`` would be fabricated data.
     """
 
     format = "lammps_log"
@@ -85,48 +86,45 @@ class LammpsLogMetricReader:
         source: str = "",
         request: ReadRequest | None = None,
     ) -> Iterator[dict[str, Any]]:
+        """Yield the thermo records *request* selects (see :mod:`._metric_reader`).
+
+        The raw stream is row-major: for each run, for each thermo row, one
+        record per non-``Step`` column, so ``since`` counts those records.
+        """
         from molrs.io import read_lammps_log
 
-        stride = _metric_reader.stride_of(request)
-        limit = _metric_reader.limit_of(request)
-        skip = _metric_reader.since_of(request)
         parsed = read_lammps_log(path)
-        emitted = 0
-        seen = 0
+        yield from _metric_reader.apply_request(
+            request, _thermo_records(parsed, source)
+        )
 
-        for run_index, run in enumerate(parsed.runs):
-            thermo = run.thermo
-            if thermo is None or not thermo.columns:
-                continue
-            columns = thermo.columns
-            step_at = columns.index("Step") if "Step" in columns else None
-            # Push the sampling into the array: the viewer asked for every
-            # Nth *sample*, and a row is one sample of every column at once.
-            rows = thermo.rows[::stride] if stride > 1 else thermo.rows
-            for row in rows:
-                step = float(row[step_at]) if step_at is not None else None
-                for position, column in enumerate(columns):
-                    if position == step_at:
-                        continue
-                    record = {
-                        "t": "scalar",
-                        "k": f"lammps/{column}",
-                        "v": float(row[position]),
-                        "tags": {
-                            "run_index": run_index,
-                            "wall_time_source": "ingest",
-                            "source": source,
-                        },
-                    }
-                    if step is not None:
-                        record["s"] = step
-                    seen += 1
-                    if seen <= skip or not _metric_reader.wanted(request, record):
-                        continue
-                    yield record
-                    emitted += 1
-                    if limit is not None and emitted >= limit:
-                        return
+
+def _thermo_records(parsed: LammpsLog, source: str) -> Iterator[dict[str, Any]]:
+    """Every thermo row of every run, one record per column, ``s`` the step."""
+    ordinal = 0
+    for run_index, run in enumerate(parsed.runs):
+        thermo = run.thermo
+        if thermo is None or not thermo.columns:
+            continue
+        columns = thermo.columns
+        step_at = columns.index("Step") if "Step" in columns else None
+        series = [
+            (position, f"lammps/{column}")
+            for position, column in enumerate(columns)
+            if position != step_at
+        ]
+        tags = {"run_index": run_index, "wall_time_source": "ingest", "source": source}
+        for row in thermo.rows.tolist():
+            step = float(row[step_at]) if step_at is not None else float(ordinal)
+            ordinal += 1
+            for position, key in series:
+                yield {
+                    "t": "scalar",
+                    "k": key,
+                    "s": step,
+                    "v": float(row[position]),
+                    "tags": dict(tags),
+                }
 
 
 __all__ = [*_native, "LammpsLogMetricReader"]
