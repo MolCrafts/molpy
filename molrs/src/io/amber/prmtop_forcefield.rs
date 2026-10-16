@@ -215,9 +215,18 @@ fn rel(got: f64, exp: f64) -> f64 {
     }
 }
 
-/// Whether `(σ, ε)` is the Lorentz–Berthelot mix of two self terms.
+/// Whether `(σ, ε)` prices as the Lorentz–Berthelot mix of two self terms.
+///
+/// An entry with ε = 0 between types whose mix has ε = 0 (a type with no van
+/// der Waals term, GAFF's `ho`, beside any other) is that mix whatever its σ:
+/// neither prices anything. tleap writes a zero `A`/`B` for it, which reads
+/// as σ = 1 ([`lj_ab_to_sigma_epsilon`]), not the mixed σ.
 fn is_lorentz_berthelot(p: Lj, a: Lj, b: Lj) -> bool {
-    rel(p.0, 0.5 * (a.0 + b.0)) <= 1e-6 && rel(p.1, (a.1 * b.1).sqrt()) <= 1e-6
+    let epsilon = (a.1 * b.1).sqrt();
+    if p.1 == 0.0 && epsilon == 0.0 {
+        return true;
+    }
+    rel(p.0, 0.5 * (a.0 + b.0)) <= 1e-6 && rel(p.1, epsilon) <= 1e-6
 }
 
 /// The LJ rows of a file: `(name, σ, ε, σ14, ε14)` self rows (one per type
