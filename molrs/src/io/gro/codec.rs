@@ -2,6 +2,7 @@
 
 use crate::io::frame_columns::insert_column;
 use crate::io::invalid_data;
+use crate::io::pdb::labels::{AtomLabels, LabelWidths};
 use std::io::{BufRead, BufWriter, Result, Seek, SeekFrom, Write};
 use std::path::Path;
 
@@ -542,6 +543,21 @@ impl<R: BufRead> FrameReader for GroReader<R> {
 // ---------------------------------------------------------------------------
 
 /// Write a frame as `.gro` at `path`.
+///
+/// The residue number, residue name and atom name are the PDB writer's
+/// labels at GROMACS's five columns
+/// ([`write_pdb`](crate::io::write_pdb)): the frame's own, else — no
+/// column, or an empty or null cell — the atom's molecule's number (bonded
+/// components of `bonds`), `MOL`, and the element numbered within its
+/// residue (`C1`, `C2`, `H1`, …), as
+/// [`write_top_system`](crate::io::write_top_system) names them too. Atom
+/// numbers are the `id` column, else 1..N.
+///
+/// # Errors
+///
+/// A frame without `atoms` or its `x`/`y`/`z`; a null cell in `id`,
+/// `x`/`y`/`z` or `vx`/`vy`/`vz` (named by column and rows: no placeholder
+/// is written for it); a `bonds` row naming an atom past the frame.
 pub fn write_gro<P: AsRef<Path>>(path: P, frame: &Frame) -> Result<()> {
     let file = std::fs::File::create(path.as_ref())?;
     let mut w = BufWriter::new(file);
@@ -600,33 +616,31 @@ fn write_frame_to<W: Write>(writer: &mut W, frame: &Frame) -> Result<()> {
     let vx = atoms.get("vx").and_then(|c| c.as_float());
     let vy = atoms.get("vy").and_then(|c| c.as_float());
     let vz = atoms.get("vz").and_then(|c| c.as_float());
-    let resid = atoms.get("res_id").and_then(|c| c.as_uint());
-    let resname = atoms.get("res_name").and_then(|c| c.as_string());
-    let atom_name = atoms.get("name").and_then(|c| c.as_string());
-    let element = atoms.get("element").and_then(|c| c.as_string());
     let atom_id = atoms.get("id").and_then(|c| c.as_uint());
+    // A stated number or coordinate has no stand-in; an unset name is
+    // generated (`null_cells`).
+    crate::io::null_cells::refuse_null_cells(
+        frame,
+        "atoms",
+        &["id", "x", "y", "z", "vx", "vy", "vz"],
+    )?;
+    // Names and residues as the `.top` writer labels them, so `grompp`
+    // finds the two alike: a frame without names (XYZ, say) gets its
+    // elements numbered within each residue.
+    let labels = AtomLabels::with_widths(frame, n, LabelWidths::GROMACS)?;
 
     for i in 0..n {
-        let r = resid.map(|c| c[[i]]).unwrap_or(1);
-        let rn = resname.map(|c| c[[i]].as_str()).unwrap_or("UNK");
-        // A frame from a format with no atom names (XYZ, say) still knows its
-        // elements; writing "X" there would throw away the identity the reader
-        // is expected to infer back out.
-        let an = atom_name
-            .map(|c| c[[i]].as_str())
-            .or_else(|| element.map(|c| c[[i]].as_str()))
-            .unwrap_or("X");
         let aid = atom_id.map(|c| c[[i]]).unwrap_or((i as molrs::op::Idx) + 1);
-        // GROMACS truncates the residue number and atom number at 5 digits via modulo.
-        let r_mod = r.rem_euclid(100_000);
+        // GROMACS truncates the atom number at 5 digits via modulo (the
+        // labels' residue number already is).
         let aid_mod = aid.rem_euclid(100_000);
         // Å → nm on the way out, mirroring the reader's normalisation.
         write!(
             writer,
             "{:>5}{:<5}{:>5}{:>5}{:>8.3}{:>8.3}{:>8.3}",
-            r_mod,
-            truncate_to_5(rn),
-            truncate_to_5(an),
+            labels.res_seqs[i],
+            labels.res_names[i],
+            labels.names[i],
             aid_mod,
             xs[[i]] / NM_TO_ANGSTROM.get(),
             ys[[i]] / NM_TO_ANGSTROM.get(),
@@ -652,14 +666,6 @@ fn write_frame_to<W: Write>(writer: &mut W, frame: &Frame) -> Result<()> {
     writeln!(writer, "{}", format_box_line(&h))?;
 
     Ok(())
-}
-
-fn truncate_to_5(s: &str) -> &str {
-    let mut end = 0;
-    for (i, _) in s.char_indices().take(5) {
-        end = i + s[i..].chars().next().map(char::len_utf8).unwrap_or(0);
-    }
-    &s[..end.min(s.len())]
 }
 
 /// `FrameWriter`-trait wrapper.
@@ -854,10 +860,12 @@ mod tests {
     }
 
     #[test]
-    fn writes_the_element_as_the_atom_name_when_there_is_none() {
+    fn names_an_unnamed_atom_by_its_element() {
         // The mirror of the read-side inference: a frame that came from a
         // format without atom names still knows its elements, and "X" would
         // throw away the identity the next reader is expected to recover.
+        // The element is numbered within the residue, as the `.top` and PDB
+        // writers name it.
         use molrs::core::Block;
         use ndarray::Array1;
 
@@ -882,9 +890,10 @@ mod tests {
         let atom_line = text.lines().nth(2).expect("atom line");
         assert_eq!(
             substr(atom_line, 10, 15).trim(),
-            "Na",
+            "Na1",
             "line: {atom_line:?}"
         );
+        assert_eq!(element_from_atom_name("Na1", true).as_deref(), Some("Na"));
     }
 
     #[test]

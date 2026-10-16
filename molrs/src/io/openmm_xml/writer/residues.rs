@@ -5,7 +5,7 @@
 //! `<Residue>` template by element and bond graph, then takes each atom's
 //! type (and, under `<UseAttributeFromResidue>`, its charge) from the
 //! template. The residues and atom names are the PDB writer's
-//! ([`PdbLabels`]), so the templates describe exactly the topology OpenMM
+//! ([`AtomLabels`]), so the templates describe exactly the topology OpenMM
 //! reads from [`write_pdb`](crate::io::write_pdb) of the same frame.
 
 use std::collections::{HashMap, HashSet};
@@ -15,7 +15,7 @@ use molrs::core::Frame;
 
 use super::{Charges, OpenmmXmlWriter, esc};
 use crate::ff::forcefield::{AtomType, ForceField};
-use crate::io::pdb::labels::PdbLabels;
+use crate::io::pdb::labels::AtomLabels;
 use crate::io::writer::ForceFieldWriteError;
 
 /// The residue templates of one frame and what the force field needs from
@@ -63,7 +63,7 @@ impl Templates {
 
         let element_of = type_elements(ff, &types, &elements)?;
         let bonds = bonds(frame, n)?;
-        let labels = PdbLabels::of(frame, n).map_err(|e| e.to_string())?;
+        let labels = AtomLabels::pdb(frame, n).map_err(|e| e.to_string())?;
         let residues = labels.residues();
         let mut residue_of = vec![0; n];
         for (r, run) in residues.iter().enumerate() {
@@ -218,7 +218,7 @@ fn sorted<T: Ord>(mut v: Vec<T>) -> Vec<T> {
 /// OpenMM refuses a template with two atoms of one name.
 fn unique_names(
     content: &Content,
-    labels: &PdbLabels,
+    labels: &AtomLabels,
     run: &Range<usize>,
 ) -> Result<(), ForceFieldWriteError> {
     let mut names: HashSet<&str> = HashSet::new();

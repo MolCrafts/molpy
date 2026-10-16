@@ -2977,6 +2977,13 @@ def write_lammps_data(
     package reads the core-shell springs as bonds). A ``virtual_sites`` row
     is an ``OSError``: a data file builds no virtual site.
 
+    Atom IDs are the ``id`` column, else 1..N. A null cell (what
+    ``Frame.concat`` leaves where a part lacks the column) in a column the
+    file is written from (``id``, ``type``, ``mol_id``, ``charge``, a
+    coordinate, a topology row's endpoints or type) is an ``OSError`` naming
+    the column and rows: no ID is generated beside stated ones, and no ``0``
+    is written for a missing value.
+
     ``atom_style`` names the ``Atoms`` style, written exactly; a column it
     needs that ``frame["atoms"]`` lacks is an ``OSError`` (nothing is filled
     in). Default: inferred, see ``infer_lammps_atom_style``. ``units``
@@ -2990,7 +2997,13 @@ def write_lammps_dump_trajectory(
 ) -> None: ...
 def write_lammps_dump_local(path: PathInput, frames: Sequence[Frame]) -> None: ...
 def write_dcd_trajectory(path: PathInput, frames: Sequence[Frame]) -> None: ...
-def write_gro(path: PathInput, frame: Frame) -> None: ...
+def write_gro(path: PathInput, frame: Frame) -> None:
+    """Write ``frame`` as a ``.gro`` file (Å → nm). Residue numbers, residue
+    and atom names are the frame's, else (no column, an empty or null cell)
+    the molecule's number, ``MOL`` and the element numbered within its
+    residue (``C1``, ``H1``, …), as :func:`write_pdb` and
+    :func:`write_top_system` name them. A null ``id``, coordinate or
+    velocity cell is an ``OSError`` naming the column and rows."""
 def write_gro_trajectory(path: PathInput, frames: Sequence[Frame]) -> None: ...
 def write_xsf(path: PathInput, frame: Frame) -> None: ...
 def read_cgsmiles_str(text: str) -> Atomistic:
@@ -3989,8 +4002,11 @@ def write_top_system(
 ) -> None:
     """Write ``forcefield`` and the typed ``frame`` as one GROMACS topology
     (directives, one ``[ moleculetype ]`` per molecule, ``[ system ]``,
-    ``[ molecules ]``): the inverse of :func:`read_top_system`. Raises
-    ``ValueError`` for what GROMACS cannot express."""
+    ``[ molecules ]``): the inverse of :func:`read_top_system`. The
+    ``[ atoms ]`` residue numbers and names are those :func:`write_gro`
+    writes for the same frame, so ``grompp`` finds the two alike. Raises
+    ``ValueError`` for what GROMACS cannot express, and for a null ``type``,
+    ``charge`` or ``mass`` cell (named by column and rows)."""
 
 def clpol_polarizability() -> dict[str, dict[str, float]]:
     """CL&Pol Drude parameters per atom type (``m_D``, ``q_D_sign``, ``k_D``,

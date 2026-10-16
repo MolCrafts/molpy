@@ -46,6 +46,7 @@
 
 pub(crate) mod frame_columns;
 pub mod frame_index;
+pub(crate) mod null_cells;
 pub mod reader;
 pub mod writer;
 pub(crate) mod xdr;

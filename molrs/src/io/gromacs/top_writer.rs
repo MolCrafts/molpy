@@ -2,6 +2,8 @@
 
 use crate::ff::ir::Engine;
 use crate::ff::style_registry::refuse_style;
+use crate::io::null_cells::refuse_null_cells;
+use crate::io::pdb::labels::{AtomLabels, LabelWidths};
 use std::collections::{BTreeMap, HashMap, HashSet};
 
 use crate::core::constants::VACUUM_DIELECTRIC;
@@ -139,6 +141,13 @@ const LJ_STYLES: [&str; 2] = ["lj/cut", "lj/charmm"];
 /// funct-9 line per periodic term, a single term included), so no lookup can
 /// pick another type; `cmaps` rows
 /// are found by GROMACS's lookup, which must give the row's own grid.
+/// The `[ atoms ]` residue number, residue name and atom name are the ones
+/// [`write_gro`](crate::io::write_gro) writes for the same frame (the PDB
+/// writer's labels at GROMACS's five columns): stated, else — no column, or
+/// an empty or null cell — the molecule's number, `MOL`, and the element
+/// numbered within its residue, so `grompp` finds the `.gro` and the `.top`
+/// alike. A null `type`, `charge` or `mass` cell is refused by column and
+/// rows.
 /// `[ pairs ]` lists the frame's 1-4 pairs (funct 1, or with parameters of
 /// their own from the override cells: funct 1 `σ ε` when only `epsilon` /
 /// `sigma` differ, else funct 2 `fudgeQQ qᵢqⱼ 1 σ lj_scale·ε`), and
@@ -975,8 +984,12 @@ impl GromacsTopForcefieldWriter {
             .and_then(|c| c.as_float())
             .ok_or("atoms has no charge column")?;
         let masses = atoms.get("mass").and_then(|c| c.as_float());
-        let (names, res_names) = (strings("name"), strings("res_name"));
-        let res_id = atoms.get("res_id").and_then(|c| c.as_uint());
+        // A stated type, charge or mass has no stand-in; an unset name is
+        // generated, as the `.gro` writer generates it (`null_cells`).
+        refuse_null_cells(frame, "atoms", &["type", "charge", "mass"])
+            .map_err(|e| e.to_string())?;
+        let labels =
+            AtomLabels::with_widths(frame, n, LabelWidths::GROMACS).map_err(|e| e.to_string())?;
         let atom_types: HashMap<&str, &AtomType> = ff
             .get_atomtypes()
             .into_iter()
@@ -1322,12 +1335,12 @@ impl GromacsTopForcefieldWriter {
                         format!("atom {}: no mass column and type '{t}' has no mass", i + 1)
                     })?,
                 };
-                let name = names.map_or_else(|| format!("A{}", i + 1), |c| c[[i]].clone());
-                let res_name = res_names.map_or_else(|| "MOL".to_owned(), |c| c[[i]].clone());
                 out.push_str(&format!(
-                    "  {}  {t}  {}  {res_name}  {name}  {}  {}  {}\n",
+                    "  {}  {t}  {}  {}  {}  {}  {}  {}\n",
                     i - lo + 1,
-                    res_id.map_or(1, |c| c[[i]]),
+                    labels.res_seqs[i],
+                    labels.res_names[i],
+                    labels.names[i],
                     i - lo + 1,
                     full(charges[[i]]),
                     full(mass)

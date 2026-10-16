@@ -1,76 +1,127 @@
-//! The labels the PDB writer gives each atom (name, residue name, chain,
-//! residue number, insertion code) and the residues a PDB reader such as
-//! OpenMM's `PDBFile` builds from them.
+//! The labels a coordinate writer gives each atom (name, residue name,
+//! chain, residue number, insertion code) and the residues a reader builds
+//! from them: the PDB writer's, and the GROMACS writers' (`.gro` and the
+//! `.top` `[ atoms ]`, which `grompp` checks against each other by name).
 //!
 //! The rules live here once. [`write_pdb`](crate::io::write_pdb) writes these
 //! labels, and the OpenMM system writer
 //! ([`write_openmm_system`](crate::io::write_openmm_system)) names its residue
 //! templates with them, so the topology OpenMM reads from the PDB matches the
-//! templates.
+//! templates. [`write_gro`](crate::io::write_gro) and
+//! [`write_top_system`](crate::io::write_top_system) write the same labels
+//! at GROMACS's field widths ([`LabelWidths::GROMACS`]), so a `.gro` and a
+//! `.top` of one frame name every atom alike.
 //!
 //! A frame's own `name`, `res_name`, `res_id`, `chain` and `icode` columns
-//! are written as given (trimmed, then cut to the PDB field width). When the
-//! frame lacks one of them:
+//! are written as given (trimmed, then cut to the field width). When the
+//! frame lacks one of them, or a row of it is empty or null (a cell
+//! [`Frame::concat`](crate::core::Frame::concat) leaves null where a part
+//! lacks the column):
 //!
 //! - **residue number**: with no `res_id` column, each bonded molecule (a
 //!   connected component of the `bonds` block, numbered from 1 by its first
-//!   atom) is one residue;
+//!   atom) is one residue; a null `res_id` cell takes its molecule's number
+//!   the same way (a residue is a run of consecutive atoms, so its own
+//!   residue name keeps it apart from a stated residue of that number);
 //! - **residue name**: [`DEFAULT_RES_NAME`] (`MOL`). It is not `UNK`, which
 //!   OpenMM treats as an unknown amino acid and bonds by backbone atom names;
 //! - **atom name**: the element (else `X`) followed by its 1-based count
 //!   among the residue's unnamed atoms of that element (`C1`, `C2`, `H1`, …).
-//!   This keeps names unique within a residue while they fit the 4 columns
-//!   of the field, then falls back to the bare element.
+//!   This keeps names unique within a residue while they fit the field, then
+//!   falls back to the bare element.
 //!
-//! Residue numbers wrap at 10 000 to fit the 4-column `resSeq` field.
-//! Consecutive residues still get different numbers.
+//! Residue numbers wrap to fit the format's field (10 000 for PDB's 4-column
+//! `resSeq`, 100 000 for GROMACS's 5 columns). Consecutive residues still
+//! get different numbers.
 
 use std::collections::HashMap;
 use std::ops::Range;
 
 use crate::io::invalid_data;
+use crate::io::null_cells::null_rows;
 use molrs::core::FrameAccess;
 use molrs::op::Idx;
 
-/// The PDB `resName` of an atom whose frame has no `res_name`.
+/// The residue name of an atom whose frame has no `res_name`.
 pub(crate) const DEFAULT_RES_NAME: &str = "MOL";
 
-/// `resSeq` is four columns wide.
-const RES_SEQ_MODULUS: usize = 10_000;
+/// The field widths a format gives its labels.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct LabelWidths {
+    /// Columns of the atom name.
+    pub name: usize,
+    /// Columns of the residue name.
+    pub res_name: usize,
+    /// Residue numbers are written modulo this.
+    pub res_seq_modulus: usize,
+}
 
-/// `name` is four columns wide; `resName` three.
-const NAME_WIDTH: usize = 4;
-const RES_NAME_WIDTH: usize = 3;
+impl LabelWidths {
+    /// PDB: `name` four columns, `resName` three, `resSeq` four.
+    pub(crate) const PDB: Self = Self {
+        name: 4,
+        res_name: 3,
+        res_seq_modulus: 10_000,
+    };
 
-/// The per-atom labels of one frame, as the PDB writer writes them.
+    /// GROMACS `.gro`: atom name, residue name and residue number five
+    /// columns each. The `.top` takes the same, so the two agree.
+    pub(crate) const GROMACS: Self = Self {
+        name: 5,
+        res_name: 5,
+        res_seq_modulus: 100_000,
+    };
+}
+
+/// The per-atom labels of one frame, as a writer writes them.
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) struct PdbLabels {
+pub(crate) struct AtomLabels {
     /// Atom names, trimmed (what a reader strips them back to).
     pub names: Vec<String>,
     /// Residue names, trimmed.
     pub res_names: Vec<String>,
     /// Chain identifiers (`' '` for none).
     pub chains: Vec<char>,
-    /// Residue numbers as written (`0..10_000`).
+    /// Residue numbers as written (below the widths' modulus).
     pub res_seqs: Vec<usize>,
     /// Insertion codes (`' '` for none).
     pub icodes: Vec<char>,
 }
 
-impl PdbLabels {
-    /// The labels of the frame's `n` atoms.
+impl AtomLabels {
+    /// The PDB labels of the frame's `n` atoms ([`LabelWidths::PDB`]).
     ///
     /// # Errors
     ///
-    /// A `bonds` row naming an atom past `n` (with no `res_id` column, the
-    /// bonds decide the residues).
-    pub(crate) fn of(frame: &impl FrameAccess, n: usize) -> std::io::Result<Self> {
+    /// As [`with_widths`](Self::with_widths).
+    pub(crate) fn pdb(frame: &impl FrameAccess, n: usize) -> std::io::Result<Self> {
+        Self::with_widths(frame, n, LabelWidths::PDB)
+    }
+
+    /// The labels of the frame's `n` atoms, cut to `widths`.
+    ///
+    /// # Errors
+    ///
+    /// A `bonds` row naming an atom past `n` (where no `res_id` is stated,
+    /// the bonds decide the residues).
+    pub(crate) fn with_widths(
+        frame: &impl FrameAccess,
+        n: usize,
+        widths: LabelWidths,
+    ) -> std::io::Result<Self> {
+        // A null cell is unset, as an empty one is: generated below.
         let strings = |key: &str| -> Vec<String> {
-            frame
+            let mut values: Vec<String> = frame
                 .column("atoms", key)
                 .and_then(|c| c.as_string())
                 .map(|a| a.iter().map(|s| s.trim().to_string()).collect())
-                .unwrap_or_default()
+                .unwrap_or_default();
+            for row in null_rows(frame, "atoms", key) {
+                if let Some(v) = values.get_mut(row) {
+                    v.clear();
+                }
+            }
+            values
         };
         let one_char = |values: &[String], i: usize| -> char {
             values.get(i).and_then(|s| s.chars().next()).unwrap_or(' ')
@@ -87,22 +138,41 @@ impl PdbLabels {
                 } else {
                     given
                 };
-                name.chars().take(RES_NAME_WIDTH).collect()
+                name.chars().take(widths.res_name).collect()
             })
             .collect();
-        let res_ids: Option<Vec<usize>> = frame
-            .column("atoms", "res_id")
-            .and_then(|c| c.as_uint())
-            .map(|a| a.iter().map(|&r| r as usize).collect());
-        let res_seqs: Vec<usize> = match res_ids {
-            Some(ids) => ids.iter().map(|r| r % RES_SEQ_MODULUS).collect(),
-            None => molecules(frame, n)?
-                .iter()
-                .map(|m| (m + 1) % RES_SEQ_MODULUS)
-                .collect(),
+        // The stated residue number, else (no column, a null cell) the
+        // atom's molecule's.
+        let res_ids: Vec<Option<usize>> =
+            match frame.column("atoms", "res_id").and_then(|c| c.as_uint()) {
+                Some(ids) => {
+                    let mut ids: Vec<Option<usize>> =
+                        ids.iter().map(|&r| Some(r as usize)).collect();
+                    for row in null_rows(frame, "atoms", "res_id") {
+                        ids[row] = None;
+                    }
+                    ids
+                }
+                None => vec![None; n],
+            };
+        let molecule = if res_ids.iter().any(Option::is_none) {
+            molecules(frame, n)?
+        } else {
+            Vec::new()
         };
+        let res_seqs: Vec<usize> = res_ids
+            .iter()
+            .enumerate()
+            .map(|(i, r)| r.unwrap_or_else(|| molecule[i] + 1) % widths.res_seq_modulus)
+            .collect();
         let residues = runs(&chains, &res_seqs, &icodes, &res_names);
-        let names = atom_names(&strings("name"), &strings("element"), &residues, n);
+        let names = atom_names(
+            &strings("name"),
+            &strings("element"),
+            &residues,
+            n,
+            widths.name,
+        );
         Ok(Self {
             names,
             res_names,
@@ -143,6 +213,7 @@ fn atom_names(
     elements: &[String],
     residues: &[Range<usize>],
     n: usize,
+    width: usize,
 ) -> Vec<String> {
     let mut names = vec![String::new(); n];
     for residue in residues {
@@ -157,13 +228,13 @@ fn atom_names(
                 let k = count.entry(element).or_insert(0);
                 *k += 1;
                 let numbered = format!("{element}{k}");
-                if numbered.chars().count() <= NAME_WIDTH {
+                if numbered.chars().count() <= width {
                     numbered
                 } else {
-                    element.chars().take(NAME_WIDTH).collect()
+                    element.chars().take(width).collect()
                 }
             } else {
-                own.chars().take(NAME_WIDTH).collect()
+                own.chars().take(width).collect()
             };
         }
     }
@@ -248,7 +319,7 @@ mod tests {
 
     #[test]
     fn without_residue_columns_each_molecule_is_a_residue_with_numbered_names() {
-        let labels = PdbLabels::of(&two_molecules(), 5).unwrap();
+        let labels = AtomLabels::pdb(&two_molecules(), 5).unwrap();
         assert_eq!(labels.res_seqs, [1, 1, 1, 2, 2]);
         assert_eq!(labels.res_names, ["MOL"; 5]);
         assert_eq!(labels.names, ["O1", "H1", "H2", "C1", "H1"]);
@@ -268,7 +339,7 @@ mod tests {
         atoms
             .insert("res_id", uints(&[7, 7, 7, 10_003, 10_003]))
             .unwrap();
-        let labels = PdbLabels::of(&frame, 5).unwrap();
+        let labels = AtomLabels::pdb(&frame, 5).unwrap();
         assert_eq!(labels.names, ["OW", "H1", "HW2", "CA", "HA"]);
         assert_eq!(labels.res_names, ["HOH", "HOH", "HOH", "MET", "MOL"]);
         assert_eq!(labels.res_seqs, [7, 7, 7, 3, 3]);
@@ -284,6 +355,6 @@ mod tests {
             .unwrap()
             .insert("atomj", uints(&[1, 2, 9]))
             .unwrap();
-        assert!(PdbLabels::of(&frame, 5).is_err());
+        assert!(AtomLabels::pdb(&frame, 5).is_err());
     }
 }

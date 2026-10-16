@@ -4,7 +4,7 @@
 //! <https://www.wwpdb.org/documentation/file-format-content/format33/sect9.html>
 
 use crate::io::invalid_data;
-use crate::io::pdb::labels::PdbLabels;
+use crate::io::pdb::labels::AtomLabels;
 use crate::io::reader::{FrameReader, ReadSeek, Reader, TrajectoryReader};
 use crate::io::writer::FrameWriter;
 use molrs::core::Block;
@@ -794,9 +794,11 @@ fn write_atom_conect_records<W: Write>(
             .and_then(|arr| arr.as_slice().map(|s| s.to_vec()))
             .unwrap_or_default()
     };
+    // A stated serial or coordinate has no stand-in (`null_cells`).
+    crate::io::null_cells::refuse_null_cells(frame, "atoms", &["id", "x", "y", "z"])?;
     // Names and residues: the one definition the OpenMM system writer's
     // residue templates also use.
-    let labels = PdbLabels::of(frame, n)?;
+    let labels = AtomLabels::pdb(frame, n)?;
     let altlocs = owned_str("altloc");
     let owned_f64 = |col: &str| -> Vec<F> {
         frame
@@ -806,6 +808,10 @@ fn write_atom_conect_records<W: Write>(
             .and_then(|arr| arr.as_slice().map(|s| s.to_vec()))
             .unwrap_or_default()
     };
+    // A null occupancy or B-factor is unset: the default an absent column
+    // takes (1.00, 0.00), not the cell's filler.
+    let unset = |col: &str| crate::io::null_cells::null_rows(frame, "atoms", col);
+    let (null_occupancy, null_b_factor) = (unset("occupancy"), unset("b_factor"));
     let occupancies = owned_f64("occupancy");
     let b_factors = owned_f64("b_factor");
     let elements = owned_str("element");
@@ -843,8 +849,14 @@ fn write_atom_conect_records<W: Write>(
             .and_then(|s| s.trim().chars().next())
             .unwrap_or(' ');
         let icode = labels.icodes[i];
-        let occupancy = occupancies.get(i).copied().unwrap_or(1.0);
-        let b_factor = b_factors.get(i).copied().unwrap_or(0.0);
+        let stated = |values: &[F], nulls: &[usize]| {
+            values
+                .get(i)
+                .copied()
+                .filter(|_| nulls.binary_search(&i).is_err())
+        };
+        let occupancy = stated(&occupancies, &null_occupancy).unwrap_or(1.0);
+        let b_factor = stated(&b_factors, &null_b_factor).unwrap_or(0.0);
         let res_seq = labels.res_seqs[i];
 
         let elem_field: String = elem_raw

@@ -1540,6 +1540,48 @@ fn write_type_label_section<W: Write>(
     Ok(())
 }
 
+/// Refuse a null cell in any column the file is written from: an atom ID
+/// is not generated beside stated ones, and no other field has a stand-in
+/// (`crate::io::null_cells`). A frame without an `id` column is numbered
+/// 1..N instead.
+fn refuse_null_written_cells(
+    frame: &impl FrameAccess,
+    fields: &[DataField],
+) -> std::io::Result<()> {
+    let mut atoms: Vec<&str> = fields.iter().map(|&f| field_column_key(f)).collect();
+    atoms.extend([
+        keys::TYPE,
+        keys::TYPE_ID,
+        keys::IX,
+        keys::IY,
+        keys::IZ,
+        keys::VX,
+        keys::VY,
+        keys::VZ,
+    ]);
+    // Without a `mass` column the masses are the elements'.
+    if frame.column("atoms", keys::MASS).is_none() {
+        atoms.push(keys::ELEMENT);
+    }
+    crate::io::null_cells::refuse_null_cells(frame, "atoms", &atoms)?;
+    let relation: Vec<&str> = keys::ENDPOINTS
+        .iter()
+        .copied()
+        .chain([keys::TYPE, keys::TYPE_ID])
+        .collect();
+    for block in [
+        "bonds",
+        SPRINGS.0,
+        "angles",
+        "dihedrals",
+        "impropers",
+        "cmaps",
+    ] {
+        crate::io::null_cells::refuse_null_cells(frame, block, &relation)?;
+    }
+    Ok(())
+}
+
 /// Per-row atom IDs: existing ``id`` column, else 1..N (file artifact).
 fn resolve_atom_ids(frame: &impl FrameAccess, n: usize) -> Vec<Idx> {
     if let Some(col) = frame.column("atoms", keys::ID).and_then(|c| c.as_uint()) {
@@ -1873,6 +1915,7 @@ fn write_lammps_data_frame_with<W: Write>(
     // of it is written.
     let units = resolve_units(frame, options.units.as_deref())?;
     let (style_name, layout) = resolve_write_style(frame, options.atom_style.as_deref())?;
+    refuse_null_written_cells(frame, layout.fields)?;
 
     // `write_data` ends its title with the unit style; the reader takes it
     // back into `lammps_units`.
@@ -2216,6 +2259,13 @@ pub fn read_lammps_data<P: AsRef<Path>>(path: P) -> std::io::Result<Frame> {
 /// Drude system's `fix drude` C/D/N flags head the file as a comment
 /// (the DRUDE package reads the springs as bonds). A `virtual_sites` row is
 /// refused: a data file builds no virtual site.
+///
+/// Atom IDs are the `id` column, else 1..N. A null cell (a row
+/// [`Frame::concat`](crate::core::Frame::concat) leaves null where a part
+/// lacks the column) in any column the file is written from — `id`, `type`,
+/// `mol_id`, `charge`, a coordinate, a topology row's endpoints or type — is
+/// refused, naming the column and rows: no ID is generated beside stated
+/// ones, and no `0` is written for a missing value.
 pub fn write_lammps_data<P: AsRef<Path>>(path: P, frame: &impl FrameAccess) -> std::io::Result<()> {
     write_lammps_data_with(path, frame, &LammpsDataWriteOptions::default())
 }
