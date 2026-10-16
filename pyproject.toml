@@ -43,7 +43,7 @@ dev = [
     "ruff==0.16.1",
     "ty==0.0.65",
 ]
-rdkit = ["rdkit"]  # optional: exercises the RdkitAdapter example only
+rdkit = ["rdkit"]  # optional: molpy.adapter.to_rdkit / from_rdkit only
 doc = [
     "zensical>=0.0.53",
     # 0.2.9: equal chart margins + plain VL fences (no annotation passthrough).

@@ -2,7 +2,7 @@
 
 Wrappers are minimal shells around external binaries and CLIs.
 They are peer-level to Adapters:
-- Adapter: Keeps MolPy ↔ external data structures in sync
+- Adapter: Converts MolPy ↔ external data structures in memory
 - Wrapper: Encapsulates external package invocation (binaries, CLIs, scripts)
 
 Wrappers MUST NOT contain high-level domain logic.

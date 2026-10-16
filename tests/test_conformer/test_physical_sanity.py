@@ -2,7 +2,7 @@
 
 ``molpy.conformer.Conformer`` subclasses :class:`molrs.conformer.Conformer` (distance
 geometry + minimization), operating on a :class:`molpy.Atomistic` graph and
-returning a fresh structure. The RDKit adapter (``molpy.adapter.RdkitAdapter``) remains
+returning a fresh structure. RDKit's embedder (``molpy.adapter.generate_3d``) remains
 available as a separate external backend, but is not the trunk.
 """
 
