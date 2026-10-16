@@ -4,6 +4,7 @@
 //! <https://www.wwpdb.org/documentation/file-format-content/format33/sect9.html>
 
 use crate::io::invalid_data;
+use crate::io::pdb::labels::PdbLabels;
 use crate::io::reader::{FrameReader, ReadSeek, Reader, TrajectoryReader};
 use crate::io::writer::FrameWriter;
 use molrs::core::Block;
@@ -759,11 +760,10 @@ fn write_atom_conect_records<W: Write>(
             .and_then(|arr| arr.as_slice().map(|s| s.to_vec()))
             .unwrap_or_default()
     };
-    let names = owned_str("name");
-    let res_names = owned_str("res_name");
-    let chains = owned_str("chain");
+    // Names and residues: the one definition the OpenMM system writer's
+    // residue templates also use.
+    let labels = PdbLabels::of(frame, n)?;
     let altlocs = owned_str("altloc");
-    let icodes = owned_str("icode");
     let owned_f64 = |col: &str| -> Vec<F> {
         frame
             .column("atoms", col)
@@ -775,13 +775,6 @@ fn write_atom_conect_records<W: Write>(
     let occupancies = owned_f64("occupancy");
     let b_factors = owned_f64("b_factor");
     let elements = owned_str("element");
-
-    let res_seqs: Vec<Idx> = frame
-        .column("atoms", "res_id")
-        .and_then(|c| c.as_uint())
-        .as_ref()
-        .and_then(|arr| arr.as_slice().map(|s| s.to_vec()))
-        .unwrap_or_default();
 
     let ids: Vec<Idx> = frame
         .column("atoms", "id")
@@ -803,40 +796,22 @@ fn write_atom_conect_records<W: Write>(
             .unwrap_or("X");
 
         // Atom name (cols 13-16): single-char names are offset one column.
-        let name_raw = names
-            .get(i)
-            .map(|s| s.trim())
-            .filter(|s| !s.is_empty())
-            .unwrap_or(elem_raw);
+        let name_raw = labels.names[i].as_str();
         let name_field = if name_raw.chars().count() == 1 {
             format!(" {:<3}", name_raw)
         } else {
-            let truncated: String = name_raw.chars().take(4).collect();
-            format!("{:<4}", truncated)
+            format!("{:<4}", name_raw)
         };
-
-        let res_name: String = res_names
+        let res_name = labels.res_names[i].as_str();
+        let chain = labels.chains[i];
+        let altloc = altlocs
             .get(i)
-            .map(|s| s.trim())
-            .filter(|s| !s.is_empty())
-            .unwrap_or("UNK")
-            .chars()
-            .take(3)
-            .collect();
-
-        let one_char = |values: &[String]| {
-            values
-                .get(i)
-                .and_then(|s| s.trim().chars().next())
-                .unwrap_or(' ')
-        };
-        let chain = one_char(&chains);
-        let altloc = one_char(&altlocs);
-        let icode = one_char(&icodes);
+            .and_then(|s| s.trim().chars().next())
+            .unwrap_or(' ');
+        let icode = labels.icodes[i];
         let occupancy = occupancies.get(i).copied().unwrap_or(1.0);
         let b_factor = b_factors.get(i).copied().unwrap_or(0.0);
-
-        let res_seq = res_seqs.get(i).copied().unwrap_or(1);
+        let res_seq = labels.res_seqs[i];
 
         let elem_field: String = elem_raw
             .chars()
@@ -1032,6 +1007,15 @@ pub fn read_pdb_trajectory<P: AsRef<Path>>(path: P) -> std::io::Result<Vec<Frame
 }
 
 /// Write one frame as a PDB file (`REMARK`, `CRYST1`, `ATOM`/`CONECT`, `END`).
+///
+/// The atoms' `name`, `res_name`, `res_id`, `chain` and `icode` columns are
+/// written as given. Without `res_id`, each bonded molecule (a connected
+/// component of `bonds`) is one residue; without `res_name`, residues are
+/// `MOL`; an atom without a `name` is its element numbered within its
+/// residue (`C1`, `C2`, `H1`, …). Residue numbers wrap at 10 000. These are
+/// the residues and names
+/// [`write_openmm_system`](crate::io::write_openmm_system) gives its
+/// templates.
 pub fn write_pdb<P: AsRef<Path>>(path: P, frame: &impl FrameAccess) -> std::io::Result<()> {
     let mut out = std::io::BufWriter::new(File::create(path)?);
     write_frame_to(&mut out, frame)?;
