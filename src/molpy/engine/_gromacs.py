@@ -32,11 +32,18 @@ from typing import TYPE_CHECKING
 from molrs.io import write_gro, write_top_system
 
 from molpy.engine._engine import Engine
+from molpy.engine._nonbonded import nonbonded_of
 
 if TYPE_CHECKING:
     from molcfg import Config
     from molrs.core import Frame
     from molrs.ff.forcefield import ForceField
+
+#: The .mdp's cutoff (nm) and electrostatics where the force field states none.
+_DEFAULT_CUTOFF_NM = 1.2
+_DEFAULT_COULOMBTYPE = "PME"
+#: GROMACS's ``coulombtype`` for the force field's kind of Coulomb style.
+_COULOMBTYPE = {"long": "PME", "cut": "Cut-off"}
 
 
 class GromacsEngine(Engine):
@@ -140,6 +147,9 @@ class GromacsEngine(Engine):
         output_dir: str | Path,
         *,
         temperature: float = 300.0,
+        coulombtype: str | None = None,
+        rcoulomb: float | None = None,
+        rvdw: float | None = None,
     ) -> dict[str, Path]:
         """Write a ready-to-run GROMACS input set.
 
@@ -151,6 +161,14 @@ class GromacsEngine(Engine):
         (steepest-descent minimisation) and ``nvt.mdp`` (V-rescale NVT at
         *temperature* K).
 
+        The ``.mdp`` nonbonded settings are the force field's own:
+        ``coulombtype`` is ``PME`` for a long-range Coulomb style
+        (``coul/long/pme``) and ``Cut-off`` for a truncated one, ``rcoulomb``
+        is its Coulomb style's ``cutoff`` and ``rvdw`` its other pair styles'
+        (each defaulting to the other when only one is stated), and
+        ``rlist`` the larger. Only what the force field leaves unstated falls
+        back to ``PME`` and 1.2 nm; the keyword arguments override.
+
         Args:
             frame: The typed structure (``Atomistic.to_frame()`` for a graph)
                 with its angles and dihedrals (``generate_topology``): GROMACS
@@ -160,6 +178,10 @@ class GromacsEngine(Engine):
             forcefield: The force field the frame's types name.
             output_dir: Directory for the files (created if absent).
             temperature: Reference and initial-velocity temperature (K).
+            coulombtype: The ``.mdp`` ``coulombtype``; ``None`` is the force
+                field's.
+            rcoulomb: Coulomb cutoff (nm); ``None`` is the force field's.
+            rvdw: Van der Waals cutoff (nm); ``None`` is the force field's.
 
         Returns:
             ``{"gro", "top", "em", "nvt"}`` mapped to the written paths.
@@ -172,19 +194,48 @@ class GromacsEngine(Engine):
             "em": out / "em.mdp",
             "nvt": out / "nvt.mdp",
         }
+        nonbonded = _nonbonded_mdp(forcefield, coulombtype, rcoulomb, rvdw)
         write_gro(paths["gro"], frame)
         write_top_system(paths["top"], forcefield, frame)
-        paths["em"].write_text(_EM_MDP, encoding="utf-8")
+        paths["em"].write_text(_EM_MDP.format(**nonbonded), encoding="utf-8")
         paths["nvt"].write_text(
-            _NVT_MDP.format(temperature=temperature), encoding="utf-8"
+            _NVT_MDP.format(temperature=temperature, **nonbonded), encoding="utf-8"
         )
         self.logger.info(
             "inputs written",
             output_dir=str(out),
             files={key: path.name for key, path in paths.items()},
             temperature=temperature,
+            **nonbonded,
         )
         return paths
+
+
+def _nonbonded_mdp(
+    forcefield: ForceField,
+    coulombtype: str | None,
+    rcoulomb: float | None,
+    rvdw: float | None,
+) -> dict[str, str | float]:
+    """The ``.mdp`` nonbonded settings: the overrides, else the force field's."""
+    stated = nonbonded_of(forcefield)
+    coulomb_nm, vdw_nm = stated.coulomb_cutoff_nm, stated.vdw_cutoff_nm
+    if rcoulomb is None:
+        rcoulomb = next(
+            (r for r in (coulomb_nm, vdw_nm) if r is not None), _DEFAULT_CUTOFF_NM
+        )
+    if rvdw is None:
+        rvdw = next(
+            (r for r in (vdw_nm, coulomb_nm) if r is not None), _DEFAULT_CUTOFF_NM
+        )
+    if coulombtype is None:
+        coulombtype = _COULOMBTYPE.get(stated.coulomb or "", _DEFAULT_COULOMBTYPE)
+    return {
+        "coulombtype": coulombtype,
+        "rcoulomb": rcoulomb,
+        "rvdw": rvdw,
+        "rlist": max(rcoulomb, rvdw),
+    }
 
 
 _EM_MDP = """\
@@ -196,10 +247,10 @@ nsteps          = 50000
 
 nstlist         = 10
 cutoff-scheme   = Verlet
-rlist           = 1.2
-coulombtype     = PME
-rcoulomb        = 1.2
-rvdw            = 1.2
+rlist           = {rlist:g}
+coulombtype     = {coulombtype}
+rcoulomb        = {rcoulomb:g}
+rvdw            = {rvdw:g}
 pbc             = xyz
 """
 
@@ -223,10 +274,10 @@ lincs_order     = 4
 
 cutoff-scheme   = Verlet
 nstlist         = 10
-rlist           = 1.2
-coulombtype     = PME
-rcoulomb        = 1.2
-rvdw            = 1.2
+rlist           = {rlist:g}
+coulombtype     = {coulombtype}
+rcoulomb        = {rcoulomb:g}
+rvdw            = {rvdw:g}
 
 tcoupl          = V-rescale
 tc-grps         = System

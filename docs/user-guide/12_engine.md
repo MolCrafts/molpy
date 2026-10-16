@@ -94,6 +94,25 @@ three bonds, so the frame carries its angles (and dihedrals:
 the `.mdp` against the `.gro` and `.top`, then mdrun's it (under the engine's
 `launcher`).
 
+### Nonbonded settings are the force field's
+
+No engine replaces the force field's nonbonded treatment with one of its own.
+The force field states it on its pair styles: each style's `cutoff`, and its
+Coulomb style — `coul/long/pme` is long-range (Ewald / PME), `coul/cut` and
+`coul/charmm` are cut off. Each deck writes exactly that, and an explicit
+argument overrides it:
+
+| Engine | From the force field | Override | Where it states nothing |
+|--------|----------------------|----------|-------------------------|
+| LAMMPS (`generate_inputs`, `minimize`, `md`) | its own `pair_style` line and cutoffs; `kspace_style pppm 1.0e-4` for a long-range Coulomb style | `pair_style=` | — |
+| GROMACS (`.mdp`) | `coulombtype` (`PME` / `Cut-off`), `rcoulomb`, `rvdw` (nm) | `coulombtype=`, `rcoulomb=`, `rvdw=` | `PME`, 1.2 nm |
+| OpenMM (`createSystem`) | `nonbondedMethod` (`PME` / `CutoffPeriodic`), `nonbondedCutoff` | `OpenmmSimulationConfig(nonbonded_method=, nonbonded_cutoff_nm=)` | `PME`, 1.0 nm |
+
+A 12 Å `lj/cut` + `coul/cut` force field therefore runs at 12 Å with cut-off
+Coulomb in all three. OpenMM's cutoff methods add a reaction field (its
+`NonbondedForce` has no plain truncated Coulomb), and molrs's GROMACS and
+OpenMM writers do not yet hold `coul/long/pme`.
+
 ### LAMMPS: writing a control script by hand
 
 A `Script` is an immutable value: a name, the text of an input file and, optionally, the path it came from. `Script.from_text` creates one from a string literal (dedented, ending in one newline); `script.save(path)` writes it and `script.preview()` shows its first lines. Neither changes the script.

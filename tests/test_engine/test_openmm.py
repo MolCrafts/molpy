@@ -7,6 +7,7 @@ import types
 import numpy as np
 import pytest
 
+import molpy as mp
 from molpy.config import load_config
 from molpy.core import Block, Frame
 from molpy.engine import OpenmmEngine, OpenmmSimulationConfig
@@ -64,7 +65,8 @@ class TestOpenmmSimulationConfig:
         assert cfg.temperature == 300.0
         assert cfg.timestep_fs == 2.0
         assert cfg.n_steps == 500_000
-        assert cfg.nonbonded_method == "PME"
+        assert cfg.nonbonded_method is None  # the force field's
+        assert cfg.nonbonded_cutoff_nm is None
         assert cfg.constraints == "HBonds"
         assert cfg.platform == "CUDA"
 
@@ -238,6 +240,69 @@ class TestGenerateInputs:
         assert system.getNumParticles() == 3
 
 
+class TestNonbondedFromTheForceField:
+    """Unset nonbonded fields are the force field's; set ones override it."""
+
+    @staticmethod
+    def _create_system(engine, frame, ff, tmp_path, **config_fields):
+        paths = engine.generate_inputs(
+            frame, ff, OpenmmSimulationConfig(**config_fields), tmp_path
+        )
+        script = paths["script"].read_text(encoding="utf-8")
+        start = script.index("system = ff.createSystem(")
+        return script[start : script.index(")\n", start)]
+
+    @pytest.fixture
+    def boxed_water(self, water, tip3p):
+        tip3p.get_style("pair", "lj/cut")["cutoff"] = 9.0
+        frame = water.to_frame()
+        frame.box = mp.Box.cube(30.0)
+        return frame, tip3p
+
+    def test_long_range_coulomb_is_pme_at_the_force_field_cutoff(self, boxed_water):
+        """molrs writes no OpenMM XML for ``coul/long/pme`` yet, so this is
+        the resolution alone."""
+        from molpy.engine._openmm import _with_nonbonded
+
+        _, ff = boxed_water
+        ff.def_style("pair", "coul/long/pme", {"cutoff": 12.0})
+        config = _with_nonbonded(OpenmmSimulationConfig(), ff)
+        assert config.nonbonded_method == "PME"
+        assert config.nonbonded_cutoff_nm == pytest.approx(1.2)
+
+    def test_no_stated_settings_fall_back_to_pme_at_1_nm(self, boxed_water):
+        from molpy.engine._openmm import _with_nonbonded
+
+        config = _with_nonbonded(
+            OpenmmSimulationConfig(), mp.ff.forcefield.ForceField("bare")
+        )
+        assert config.nonbonded_method == "PME"
+        assert config.nonbonded_cutoff_nm == 1.0
+
+    def test_cut_coulomb_is_a_periodic_cutoff(self, engine, boxed_water, tmp_path):
+        frame, ff = boxed_water
+        ff.def_style("pair", "coul/cut")
+        setup = self._create_system(engine, frame, ff, tmp_path)
+        assert "nonbondedMethod=CutoffPeriodic," in setup
+        assert "nonbondedCutoff=0.9*unit.nanometer," in setup
+
+    def test_explicit_settings_override_the_force_field(
+        self, engine, boxed_water, tmp_path
+    ):
+        frame, ff = boxed_water
+        ff.def_style("pair", "coul/cut")
+        setup = self._create_system(
+            engine,
+            frame,
+            ff,
+            tmp_path,
+            nonbonded_method="Ewald",
+            nonbonded_cutoff_nm=0.8,
+        )
+        assert "nonbondedMethod=Ewald," in setup
+        assert "nonbondedCutoff=0.8*unit.nanometer," in setup
+
+
 def test_no_serialize_system(engine):
     """Writing files is molrs io's job: the engine only renders the script."""
     assert not hasattr(engine, "serialize_system")
@@ -249,6 +314,9 @@ def test_no_serialize_system(engine):
 
 
 def _script(engine, **config_fields):
+    config_fields = {"nonbonded_method": "PME", "nonbonded_cutoff_nm": 1.0} | (
+        config_fields
+    )
     return engine._render_simulation_script(
         OpenmmSimulationConfig(**config_fields),
         pdb_filename="system.pdb",

@@ -34,6 +34,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from molpy.engine._engine import Engine
+from molpy.engine._nonbonded import nonbonded_of
 from molpy.engine._script import Script
 from molpy.io import read_lammps_data, write_lammps_data, write_lammps_forcefield_str
 from molpy.io.lammps import infer_lammps_atom_style
@@ -49,6 +50,11 @@ _LAMMPS_CANDIDATES = ("lmp", "lmp_serial", "lmp_mpi")
 
 # The LAMMPS `units` styles molrs writes a data file and its coefficients in.
 _LAMMPS_UNITS = ("real", "metal", "lj")
+
+# The long-range solver of a force field whose Coulomb style is long-range
+# (molrs writes its real-space half, `lj/cut/coul/long`): PPPM to a relative
+# force accuracy of 1e-4, LAMMPS's usual choice.
+_KSPACE_STYLE = "pppm 1.0e-4"
 
 
 class LammpsEngine(Engine):
@@ -169,7 +175,13 @@ class LammpsEngine(Engine):
           ``neighbor`` and, when *pair_style* is given, that ``pair_style``
           line (the include then leaves its own out).
         * ``system.in`` — the input script: init, ``read_data``, settings,
-          then *body* (a starter minimise + NVT run by default).
+          ``kspace_style pppm 1.0e-4`` when the force field's Coulomb style is
+          long-range (``coul/long/pme``) and its pair style is in force, then
+          *body* (a starter minimise + NVT run by default).
+
+        The nonbonded settings are the force field's own: its pair style,
+        cutoffs and mixing are written as it states them, and only an
+        explicit *pair_style* replaces them.
 
         A frame with a periodic box gets ``boundary p p p`` and binned
         neighbour lists. A frame without one (``Atomistic.to_frame()``
@@ -196,7 +208,9 @@ class LammpsEngine(Engine):
                 ``"lj"`` — of the init, the data file and the coefficients,
                 each converted to it by molrs.
             pair_style: A ``pair_style`` line (without the command) that
-                replaces the force field's own.
+                replaces the force field's own; ``None`` (the default) keeps
+                the force field's. A replacement needing a long-range solver
+                sets its ``kspace_style`` in *body*.
             body: Commands after the settings include; ``None`` writes the
                 starter minimise + NVT run.
 
@@ -247,12 +261,14 @@ class LammpsEngine(Engine):
             init.append(f"pair_style {pair_style}")
         paths["init"].write_text("\n".join(init) + "\n", encoding="utf-8")
 
+        long_range = pair_style is None and nonbonded_of(forcefield).coulomb == "long"
         paths["input"].write_text(
             _INPUT_TEMPLATE.format(
                 prefix=prefix,
                 init=paths["init"].name,
                 data=paths["data"].name,
                 settings=paths["settings"].name,
+                kspace=f"kspace_style {_KSPACE_STYLE}\n" if long_range else "",
                 body=(_STARTER_BODY if body is None else body).rstrip("\n"),
             ),
             encoding="utf-8",
@@ -280,7 +296,7 @@ class LammpsEngine(Engine):
         ftol: float = 1.0e-6,
         max_iter: int = 1000,
         max_eval: int = 10000,
-        pair_style: str = "lj/cut/coul/cut 10.0",
+        pair_style: str | None = None,
         atom_style: str | None = None,
         units: str = "real",
         workdir: str | Path | None = None,
@@ -304,9 +320,10 @@ class LammpsEngine(Engine):
             ftol: Force stopping tolerance (force units).
             max_iter: Maximum minimiser iterations.
             max_eval: Maximum force/energy evaluations.
-            pair_style: LAMMPS ``pair_style`` line for minimisation.  The default
-                ``lj/cut/coul/cut`` avoids a long-range solver; switch to
-                ``lj/cut/coul/long`` (with a ``kspace_style``) for production MD.
+            pair_style: A LAMMPS ``pair_style`` line replacing the force
+                field's own; ``None`` (the default) minimises under the force
+                field's pair style, cutoffs and long-range solver (see
+                :meth:`generate_inputs`).
             atom_style: LAMMPS ``atom_style``; ``None`` is the frame's (see
                 :meth:`generate_inputs`).
             units: LAMMPS ``units``: ``real`` (default), ``metal`` or ``lj``.
@@ -346,7 +363,7 @@ class LammpsEngine(Engine):
         timestep: float = 1.0,
         seed: int = 12345,
         limit: float = 0.1,
-        pair_style: str = "lj/cut/coul/cut 10.0",
+        pair_style: str | None = None,
         atom_style: str | None = None,
         units: str = "real",
         workdir: str | Path | None = None,
@@ -368,7 +385,8 @@ class LammpsEngine(Engine):
             timestep: Timestep in *units* time (fs for ``real``).
             seed: RNG seed for the initial velocity distribution.
             limit: Per-step displacement cap (Å) for ``ensemble="nve/limit"``.
-            pair_style: LAMMPS ``pair_style`` line.
+            pair_style: A ``pair_style`` line replacing the force field's
+                own; ``None`` keeps the force field's.
             atom_style: LAMMPS ``atom_style``; ``None`` is the frame's.
             units: LAMMPS ``units``: ``real``, ``metal`` or ``lj``.
             workdir: Working directory; temporary when ``None``.
@@ -420,7 +438,7 @@ class LammpsEngine(Engine):
         body: str,
         *,
         thermo: int,
-        pair_style: str,
+        pair_style: str | None,
         atom_style: str | None,
         units: str,
         workdir: str | Path | None,
@@ -428,9 +446,9 @@ class LammpsEngine(Engine):
     ) -> Frame:
         """Shared driver behind :meth:`minimize` / :meth:`md`.
 
-        Writes the deck with :meth:`generate_inputs` (the script's
-        *pair_style*, the force field's ``special_bonds`` and ``pair_modify``
-        mix), runs *body* followed by ``write_data``, then reads back and
+        Writes the deck with :meth:`generate_inputs` (the force field's pair
+        style unless *pair_style* replaces it, its ``special_bonds`` and
+        ``pair_modify`` mix), runs *body* followed by ``write_data``, then reads back and
         splices the relaxed coordinates onto a copy of *frame*.
         """
         if frame.box is None:
@@ -495,7 +513,7 @@ _INPUT_TEMPLATE = """\
 include {init}
 read_data {data}
 include {settings}
-neigh_modify every 1 delay 0 check yes
+{kspace}neigh_modify every 1 delay 0 check yes
 
 {body}
 """

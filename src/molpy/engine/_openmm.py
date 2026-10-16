@@ -38,6 +38,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, get_args
 
 from molpy.engine._engine import Engine
+from molpy.engine._nonbonded import nonbonded_of
 from molpy.io import write_openmm_system, write_pdb
 
 if TYPE_CHECKING:
@@ -79,8 +80,14 @@ class OpenmmSimulationConfig:
         n_steps: Number of MD steps.
         nonbonded_method: Nonbonded treatment, by its ``openmm.app`` name:
             ``"NoCutoff"``, ``"CutoffNonPeriodic"``, ``"CutoffPeriodic"``,
-            ``"PME"`` or ``"Ewald"``.
-        nonbonded_cutoff_nm: Nonbonded cutoff radius in nanometres.
+            ``"PME"`` or ``"Ewald"``. ``None`` (the default) is the force
+            field's: ``PME`` for a long-range Coulomb style
+            (``coul/long/pme``), ``CutoffPeriodic`` for a truncated one
+            (OpenMM's cutoff methods add a reaction field), ``PME`` when it
+            states none.
+        nonbonded_cutoff_nm: Nonbonded cutoff radius in nanometres. ``None``
+            (the default) is the force field's: its Coulomb style's
+            ``cutoff``, else its other pair styles', else 1.0 nm.
         constraints: Constraint scheme — ``"HBonds"``, ``"AllBonds"``,
             ``"HAngles"``, or the string ``"None"`` for no constraints.
         friction_per_ps: Langevin friction coefficient in ps⁻¹ (NVT, NPT).
@@ -107,8 +114,8 @@ class OpenmmSimulationConfig:
     pressure: float = 1.0
     timestep_fs: float = 2.0
     n_steps: int = 500_000
-    nonbonded_method: NonbondedMethod = "PME"
-    nonbonded_cutoff_nm: float = 1.0
+    nonbonded_method: NonbondedMethod | None = None
+    nonbonded_cutoff_nm: float | None = None
     constraints: Constraints = "HBonds"
     friction_per_ps: float = 1.0
     dcd_reporter_interval: int = 1000
@@ -126,7 +133,7 @@ class OpenmmSimulationConfig:
     def __post_init__(self) -> None:
         for field, choices in (
             ("ensemble", get_args(Ensemble)),
-            ("nonbonded_method", get_args(NonbondedMethod)),
+            ("nonbonded_method", (*get_args(NonbondedMethod), None)),
             ("constraints", get_args(Constraints)),
         ):
             value = getattr(self, field)
@@ -296,7 +303,8 @@ class OpenmmEngine(Engine):
                 ``element`` atom columns, ``bonds``) with atom positions.
             forcefield: A :class:`~molpy.ff.forcefield.ForceField` holding an
                 atom type for every ``type`` the frame names.
-            config: Simulation parameters.
+            config: Simulation parameters; an unset ``nonbonded_method`` or
+                ``nonbonded_cutoff_nm`` is the force field's.
             output_dir: Directory where files are written (created if absent).
             pdb_filename: Name for the PDB coordinate file.
             ff_filename: Name for the XML force field file.
@@ -319,7 +327,9 @@ class OpenmmEngine(Engine):
         write_openmm_system(ff_path, forcefield, frame)
 
         script_text = self._render_simulation_script(
-            config, pdb_filename=pdb_filename, ff_filename=ff_filename
+            _with_nonbonded(config, forcefield),
+            pdb_filename=pdb_filename,
+            ff_filename=ff_filename,
         )
         script_path.write_text(script_text, encoding="utf-8")
 
@@ -334,7 +344,7 @@ class OpenmmEngine(Engine):
         return paths
 
     # ------------------------------------------------------------------
-    # Private script rendering
+    # Private script rendering (of a config whose nonbonded fields are set)
     # ------------------------------------------------------------------
 
     def _render_simulation_script(
@@ -505,3 +515,34 @@ class OpenmmEngine(Engine):
                 "print('Done.')\n",
             ]
         )
+
+
+#: The OpenMM nonbonded method for the force field's kind of Coulomb style.
+_NONBONDED_METHOD: dict[str | None, NonbondedMethod] = {
+    "long": "PME",
+    "cut": "CutoffPeriodic",
+    None: "PME",
+}
+#: The cutoff (nm) where neither the config nor the force field states one.
+_DEFAULT_CUTOFF_NM = 1.0
+
+
+def _with_nonbonded(
+    config: OpenmmSimulationConfig, forcefield: ForceField
+) -> OpenmmSimulationConfig:
+    """*config* with its unset nonbonded fields taken from *forcefield*."""
+    stated = nonbonded_of(forcefield)
+    method = config.nonbonded_method or _NONBONDED_METHOD[stated.coulomb]
+    cutoff = config.nonbonded_cutoff_nm
+    if cutoff is None:
+        cutoff = next(
+            (
+                r
+                for r in (stated.coulomb_cutoff_nm, stated.vdw_cutoff_nm)
+                if r is not None
+            ),
+            _DEFAULT_CUTOFF_NM,
+        )
+    return dataclasses.replace(
+        config, nonbonded_method=method, nonbonded_cutoff_nm=cutoff
+    )

@@ -56,6 +56,72 @@ def test_writes_coordinates_topology_and_mdps(tmp_path, system):
     assert "ref_t           = 280.0" in paths["nvt"].read_text(encoding="utf-8")
 
 
+def _mdp(path) -> dict[str, str]:
+    """The ``key = value`` settings of an ``.mdp`` file."""
+    return {
+        key.strip(): value.strip()
+        for key, _, value in (
+            line.partition("=")
+            for line in path.read_text(encoding="utf-8").splitlines()
+            if "=" in line and not line.startswith(";")
+        )
+    }
+
+
+def _nonbonded(mdp: dict[str, str]) -> dict[str, str]:
+    return {k: mdp[k] for k in ("coulombtype", "rcoulomb", "rvdw", "rlist")}
+
+
+def test_mdp_nonbonded_settings_are_the_force_fields(tmp_path, system):
+    """A 10 Å lj/cut + 9 Å coul/cut force field runs cut-off Coulomb at
+    0.9 nm and van der Waals at 1.0 nm, in both stages."""
+    frame, ff = system
+    ff.get_style("pair", "lj/cut")["cutoff"] = 10.0
+    ff.def_style("pair", "coul/cut", {"cutoff": 9.0})
+    paths = GromacsEngine(check_executable=False).generate_inputs(frame, ff, tmp_path)
+    for stage in ("em", "nvt"):
+        assert _nonbonded(_mdp(paths[stage])) == {
+            "coulombtype": "Cut-off",
+            "rcoulomb": "0.9",
+            "rvdw": "1",
+            "rlist": "1",
+        }
+
+
+def test_a_single_stated_cutoff_is_both(tmp_path, system):
+    frame, ff = system
+    ff.get_style("pair", "lj/cut")["cutoff"] = 11.0
+    ff.def_style("pair", "coul/cut")
+    paths = GromacsEngine(check_executable=False).generate_inputs(frame, ff, tmp_path)
+    assert _nonbonded(_mdp(paths["em"])) == {
+        "coulombtype": "Cut-off",
+        "rcoulomb": "1.1",
+        "rvdw": "1.1",
+        "rlist": "1.1",
+    }
+
+
+def test_unstated_settings_fall_back_and_overrides_win(tmp_path, system):
+    frame, ff = system  # lj/cut with no cutoff, no Coulomb style
+    engine = GromacsEngine(check_executable=False)
+    paths = engine.generate_inputs(frame, ff, tmp_path / "default")
+    assert _nonbonded(_mdp(paths["em"])) == {
+        "coulombtype": "PME",
+        "rcoulomb": "1.2",
+        "rvdw": "1.2",
+        "rlist": "1.2",
+    }
+    paths = engine.generate_inputs(
+        frame, ff, tmp_path / "override", coulombtype="Reaction-Field", rvdw=1.0
+    )
+    assert _nonbonded(_mdp(paths["nvt"])) == {
+        "coulombtype": "Reaction-Field",
+        "rcoulomb": "1.2",
+        "rvdw": "1",
+        "rlist": "1.2",
+    }
+
+
 def test_run_grompps_then_mdruns_the_input_mdp(tmp_path, system, monkeypatch):
     import subprocess
 
