@@ -195,8 +195,12 @@ gate_wasm() {
     local have
     have=$(wasm-pack --version | awk '{print $NF}')
     [ "$have" = "$WASM_PACK_VERSION" ] || { echo "wasm-pack must be $WASM_PACK_VERSION (found $have)" >&2; return 1; }
+    # Node 24 (the LTS) is the floor; every newer release, up to the latest,
+    # must work too.
     have=$(node --version)
-    [[ "$have" == v24.* ]] || { echo "Node 24 is required (found $have)" >&2; return 1; }
+    local major=${have#v}
+    major=${major%%.*}
+    [ "$major" -ge 24 ] 2>/dev/null || { echo "Node >= 24 is required (found $have)" >&2; return 1; }
     (cd molrs-wasm && wasm-pack test --node -- --locked)
 }
 

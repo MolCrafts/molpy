@@ -82,7 +82,7 @@ node — it never passes a gate it did not run). So a commit never waits for
 Slurm, and every push runs the complete gate catalogue. Anywhere else
 the variable is unset and every gate runs locally, exactly as CI runs it.
 
-For the complete local gates, install CMake and a C++20 compiler, Node 24 and
+For the complete local gates, install CMake and a C++20 compiler, Node 24 or newer (the latest release works) and
 wasm-pack 0.15.0, in addition to uv and rustup. On Windows,
 use Git Bash for shell hooks and a C++ compiler matching the Rust target
 (Visual Studio Build Tools for MSVC). The C API test links the import library
