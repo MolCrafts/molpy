@@ -11,11 +11,12 @@ GAFF / GAFF2 is typed natively: ``AtdTypifier`` (antechamber's atom types)
 then ``GaffTypifier`` (the bonded terms), each taking molrs's required
 ``parameter_set``; AM1-BCC charges come from
 :class:`molpy.ff.charge.Am1BccModel` (sqm, then the native correction).
-molpy adds :class:`AntechamberTypifier` and :class:`TleapTypifier`, which
-run the whole AmberTools pipeline (:mod:`molpy.wrapper`) and read tleap's
-prmtop back, for a force field that must merge with an
-:class:`~molpy.builder.AmberPolymerBuilder` chain's. They take the same
-required ``parameter_set``.
+That force field merges with an :class:`~molpy.builder.AmberPolymerBuilder`
+chain's. molpy adds :class:`AntechamberTypifier` and :class:`TleapTypifier`,
+which run the whole AmberTools pipeline (:mod:`molpy.wrapper`) and read
+tleap's prmtop back, for antechamber's other charge methods and for
+parameters of your own on top of the leaprc. They take the same required
+``parameter_set``.
 """
 
 from molrs.ff.typifier import *  # noqa: F403

@@ -13,19 +13,21 @@ AM1-BCC charges need one program, sqm, for the QM step.
 from the same sqm run. That is the default AM1-BCC route: native types and
 bonded terms, sqm for the charges alone.
 
-Two :class:`molrs.ff.typifier.Typifier` subclasses run the whole AmberTools
-pipeline (:mod:`molpy._ambertools`) and read tleap's prmtop back. They are
-for a molecule whose force field is merged with an
-:class:`molpy.builder.AmberPolymerBuilder` chain's (tleap's prmtop, read
-back), which a native force field does not merge with:
+A native force field merges with one read from tleap's prmtop, so a small
+molecule mixed with an :class:`molpy.builder.AmberPolymerBuilder` chain is
+typed natively too. Two :class:`molrs.ff.typifier.Typifier` subclasses run
+the whole AmberTools pipeline (:mod:`molpy._ambertools`) and read tleap's
+prmtop back, for what only that pipeline does:
 
 * :class:`AntechamberTypifier` types a complete molecule from scratch:
-  antechamber (atom types and charges) → parmchk2 (missing parameters) → tleap.
+  antechamber (atom types and charges) → parmchk2 (missing parameters) →
+  tleap; for an antechamber charge method other than AM1-BCC / ABCG2.
 * :class:`TleapTypifier` parameterises a finished graph whose atoms already
-  carry AMBER types and charges, with tleap alone. A graph that still has
-  ports is refused. A polymer is built with
-  :class:`molpy.builder.AmberPolymerBuilder`: antechamber, parmchk2
-  and prepgen on one oligomer, then tleap ``sequence``.
+  carry AMBER types and charges, with tleap alone, loading parameters of
+  your own on top of the leaprc. A graph that still has ports is refused. A
+  polymer is built with :class:`molpy.builder.AmberPolymerBuilder`:
+  antechamber, parmchk2 and prepgen on one oligomer, then tleap
+  ``sequence``.
 
 Both return the prmtop's assignment as a :class:`~molrs.ff.typifier.TypeAssignment`; the
 molrs base owns ``typify`` and the accumulated ``forcefield()``. Every
@@ -189,11 +191,12 @@ class AntechamberTypifier(AmberTypifier):
     The default GAFF route is native: :class:`~molrs.ff.typifier.AtdTypifier`
     and :class:`~molrs.ff.typifier.GaffTypifier` assign the same types and
     parameter values, and :class:`Am1BccModel` the same AM1-BCC charges, with
-    sqm the only program. This typifier is for a molecule whose force field
-    is merged with an :class:`~molpy.builder.AmberPolymerBuilder` chain's:
-    both are read from a tleap prmtop, so their shared types merge, while a
-    native force field states its styles and names its terms differently
-    (molrs ``ForceField.merge`` refuses the pair).
+    sqm the only program; that force field merges with an
+    :class:`~molpy.builder.AmberPolymerBuilder` chain's as this one does.
+    This typifier is for an antechamber charge method other than AM1-BCC /
+    ABCG2. Its prmtop force field also carries no estimate provenance, which
+    molrs 0.18.0's LAMMPS and GROMACS writers refuse on a term
+    ``GaffTypifier`` estimated.
 
     Args:
         parameter_set: The GAFF generation, molrs's ``parameter_set``
@@ -280,9 +283,9 @@ class TleapTypifier(AmberTypifier):
     spreads that charge instead.
 
     :class:`~molrs.ff.typifier.GaffTypifier` assigns the same bonded terms
-    natively; this typifier is for parameters on top of the leaprc
-    (``forcefield``) and for a graph merged with an
-    :class:`~molpy.builder.AmberPolymerBuilder` chain.
+    natively, and its force field merges with an
+    :class:`~molpy.builder.AmberPolymerBuilder` chain's; this typifier is for
+    parameters of your own on top of the leaprc (``forcefield``).
 
     Args:
         parameter_set: The GAFF generation, molrs's ``parameter_set``

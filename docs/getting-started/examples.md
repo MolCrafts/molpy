@@ -200,5 +200,9 @@ peo = built.chain  # CH3-(OCH2CH2)10-OCH3: typed graph, 79 atoms
 ff = built.forcefield  # units real, AMBER 1-4 scaling declared
 ```
 
+`ff` merges with the force field of a small molecule typed natively
+(`AtdTypifier`, `Am1BccModel`, `GaffTypifier`), as the AmberTools guide does
+for TFSI.
+
 See also: [AmberTools Integration](../user-guide/13_ambertools_integration.md) ·
 [Assembly](../user-guide/02_assembly.md).
