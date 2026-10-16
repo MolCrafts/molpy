@@ -68,7 +68,10 @@ pub use spec::{
 pub(crate) use special_bonds::DEFAULT_SPECIAL_BONDS;
 pub use special_bonds::SpecialBonds;
 pub use special_class::SpecialClass;
-pub use style_table::{ANNOTATION_COLUMNS, CMAP_GRID, ENDPOINT_COLUMNS, is_parameter_column};
+pub use style_table::{
+    ANNOTATION_COLUMNS, CMAP_GRID, ENDPOINT_COLUMNS, PROVENANCE_COLUMNS, is_parameter_column,
+    is_unpriced_column,
+};
 
 #[cfg(test)]
 mod tests;

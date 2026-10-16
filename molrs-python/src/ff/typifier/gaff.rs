@@ -36,7 +36,9 @@ use super::PyTypifier;
 /// wildcard rows, then estimated as ``parmchk2`` estimates it; an estimated
 /// term's type carries the provenance
 /// params ``estimated``, ``estimate_penalty``, ``estimate_method`` and
-/// ``estimate_analog``.
+/// ``estimate_analog``. They price nothing: every engine writer passes them
+/// over (the frcmod writer as the row's comment) and ``ForceField.merge``
+/// ignores them.
 ///
 /// The output (:meth:`forcefield`) holds the styles ``atom full``,
 /// ``pair lj/cut``, ``pair coul/cut`` (AMBER's Coulomb constant),

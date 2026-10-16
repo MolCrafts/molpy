@@ -3898,7 +3898,9 @@ class GaffTypifier(Typifier[Atomistic]):
     estimate at a centre ``PARMCHK.DAT`` flags as planar; tleap's atom order,
     centre third); each term is an exact ``gaff.dat`` / ``gaff2.dat`` row, a wildcard row, or a
     ``parmchk2``-style estimate whose type carries ``estimated``,
-    ``estimate_penalty``, ``estimate_method`` and ``estimate_analog``.
+    ``estimate_penalty``, ``estimate_method`` and ``estimate_analog``. The
+    four price nothing: every engine writer (LAMMPS, GROMACS, OpenMM, frcmod)
+    passes them over, and ``ForceField.merge`` ignores them.
     ``parameter_set`` is required; there is no default.
 
     Raises

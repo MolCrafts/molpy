@@ -872,6 +872,30 @@ impl OpenmmXmlWriter {
 /// XML has no place for.
 const EWALD_PARAMS: [&str; 5] = ["alpha", "order", "grid_x", "grid_y", "grid_z"];
 
+/// Refuse a numeric parameter of a bonded or pair type row its style's spec
+/// does not declare: no attribute holds it, so writing would drop it. The
+/// keys that price nothing (an annotation, an estimate's provenance) pass
+/// ([`StyleSpec::undeclared_param`](crate::ff::ir::StyleSpec::undeclared_param)),
+/// as they do in every engine writer. Atom types carry the writer's own
+/// attributes and are not checked here.
+fn refuse_undeclared_params(ff: &ForceField, reg: &Registry) -> Result<(), String> {
+    for style in ff.styles().iter().filter(|s| s.category() != "atom") {
+        let Some((spec, _)) = reg.style(style.category(), style.name()) else {
+            continue;
+        };
+        for (name, _, params) in style.type_rows() {
+            if let Some(key) = spec.undeclared_param(params) {
+                return Err(format!(
+                    "{} {} type '{name}': parameter `{key}` has no OpenMM attribute",
+                    style.category(),
+                    style.name()
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
 /// The refusal of a system whose charges are nowhere.
 const NO_CHARGES: &str = "the frame has no charge column and the force field's atom types carry \
                           no charges: OpenMM needs the charges from one or the other";
@@ -959,6 +983,7 @@ impl OpenmmXmlWriter {
             ..Out::default()
         };
         let (nonbonded, combining_rule) = self.registry.with(|reg| {
+            refuse_undeclared_params(ff, reg)?;
             self.bonded(ff, reg, &ends, &mut sections)?;
             self.nonbonded(ff, reg, &mut sections)
         })?;

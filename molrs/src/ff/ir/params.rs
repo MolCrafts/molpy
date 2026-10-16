@@ -80,6 +80,16 @@ impl Params {
         self.inner.iter().map(|(k, v)| (k.as_str(), *v))
     }
 
+    /// The numeric params that are parameters: [`iter`](Self::iter) without
+    /// the keys that price nothing (an annotation, an estimate's provenance:
+    /// [`is_unpriced_column`](crate::ff::ir::is_unpriced_column)). What an
+    /// engine writer checks against the columns of its format, so that every
+    /// writer skips the same keys and refuses any other it cannot place.
+    pub fn iter_parameters(&self) -> impl Iterator<Item = (&str, f64)> + '_ {
+        use crate::ff::ir::is_parameter_column;
+        self.iter().filter(|(key, _)| is_parameter_column(key))
+    }
+
     // -- string params (element, and other string metadata by convention) --
 
     pub fn set_str(&mut self, key: &str, value: &str) {
@@ -111,7 +121,8 @@ impl Params {
     }
 
     /// Whether `self` and `other` price alike: equal on every key that is a
-    /// parameter (not an annotation column of the force-field section),
+    /// parameter (not an annotation or provenance column of the force-field
+    /// section),
     /// numeric, string and array, a key one carries and the other lacks being
     /// a difference. The annotation keys (`desc`, `doi`, `smarts`, …) take no
     /// part. Exact, like `==`.
@@ -130,7 +141,8 @@ impl Params {
     }
 
     /// The keys that are parameters: `self` without its annotation columns
-    /// (`desc`, `doi`, `smarts`, …).
+    /// (`desc`, `doi`, `smarts`, …) and an estimate's provenance
+    /// (`estimated`, `estimate_penalty`, …).
     pub fn parameters(&self) -> Params {
         use crate::ff::ir::is_parameter_column;
         fn kept<V: Clone>(map: &HashMap<String, V>) -> HashMap<String, V> {

@@ -52,6 +52,17 @@ fn cases() -> [Case; 4] {
 /// mol2's order, the order parmchk2 searched — typed by molrs: ATD, then
 /// GAFF. Returns the native force field and the atom types ATD gave.
 fn native(case: &Case) -> (ForceField, Vec<String>) {
+    let (ff, typed) = native_typed(case);
+    let types = typed
+        .atoms()
+        .map(|(_, atom)| atom.get_str(keys::TYPE).unwrap().to_owned())
+        .collect();
+    (ff, types)
+}
+
+/// [`native`]'s force field and the molecule GAFF typed, its charges the
+/// mol2's (antechamber's AM1-BCC).
+fn native_typed(case: &Case) -> (ForceField, Atomistic) {
     let structure = crate::io::read_prmtop_str(case.parm).unwrap();
     let elements = structure["atoms"]
         .get("element")
@@ -62,9 +73,14 @@ fn native(case: &Case) -> (ForceField, Vec<String>) {
     let frame = crate::io::read_mol2_str(case.mol2).unwrap();
     let atoms = &frame["atoms"];
     let xyz = ["x", "y", "z"].map(|c| atoms.get(c).unwrap().as_float().unwrap().to_owned());
+    let charges = atoms.get("charge").unwrap().as_float().unwrap();
     let mut mol = Atomistic::new();
     let ids: Vec<_> = (0..elements.len())
-        .map(|i| mol.add_atom_xyz(&elements[[i]], xyz[0][[i]], xyz[1][[i]], xyz[2][[i]]))
+        .map(|i| {
+            let id = mol.add_atom_xyz(&elements[[i]], xyz[0][[i]], xyz[1][[i]], xyz[2][[i]]);
+            mol.set_atom(id, keys::CHARGE, charges[[i]]).unwrap();
+            id
+        })
         .collect();
     let bonds = &frame["bonds"];
     let (bi, bj) = (
@@ -79,13 +95,9 @@ fn native(case: &Case) -> (ForceField, Vec<String>) {
         GaffParameterSet::Gaff2 => AtdParameterSet::Gff2,
     };
     let labelled = Typing::new(AtdTypifier::new(atd)).typify(&mol).unwrap();
-    let types = labelled
-        .atoms()
-        .map(|(_, atom)| atom.get_str(keys::TYPE).unwrap().to_owned())
-        .collect();
     let mut gaff = Typing::new(GaffTypifier::new(case.set));
-    gaff.typify(&labelled).unwrap();
-    (gaff.forcefield().clone(), types)
+    let typed = gaff.typify(&labelled).unwrap();
+    (gaff.forcefield().clone(), typed)
 }
 
 /// Every type of `ff` as `(category, style, name)`.
@@ -181,4 +193,49 @@ fn native_names_and_numbers_are_the_prmtops() {
         .unwrap();
     assert_eq!(bond.get("r0"), Some(1.672));
     assert_eq!(bond.get("k"), Some(317.1));
+}
+
+/// A native GAFF force field — estimated terms carrying their provenance
+/// (`estimated`, `estimate_penalty`, …), `coul/cut` stating its default
+/// `delta = 0` — is written by every engine writer: the provenance and a
+/// parameter at its spec default have no column and price nothing, so no
+/// writer refuses them.
+#[test]
+fn native_gaff_with_estimates_writes_to_every_engine() {
+    use crate::io::gromacs::GromacsTopForcefieldWriter;
+    use crate::io::lammps::LammpsForcefieldWriteOptions;
+
+    for case in cases() {
+        let name = case.name;
+        let (mut ff, typed) = native_typed(&case);
+        for style in ["lj/cut", "coul/cut"] {
+            ff.get_style_mut("pair", style)
+                .unwrap()
+                .set_param("cutoff", 10.0);
+        }
+        let frame = typed.to_frame().unwrap();
+        let estimated = ff
+            .styles()
+            .iter()
+            .flat_map(|s| s.type_rows())
+            .filter(|(_, _, p)| p.get("estimated").is_some())
+            .count();
+        assert_eq!(estimated > 0, name.starts_with("tfsi"), "{name}: estimates");
+
+        let lammps = crate::io::write_lammps_forcefield_str(
+            &ff,
+            &frame,
+            LammpsForcefieldWriteOptions::default(),
+        )
+        .unwrap_or_else(|e| panic!("{name}: LAMMPS: {e}"));
+        assert!(!lammps.contains("estimate"), "{name}: {lammps}");
+        let top = GromacsTopForcefieldWriter::new()
+            .write_system_str(&ff, &frame)
+            .unwrap_or_else(|e| panic!("{name}: GROMACS: {e}"));
+        assert!(!top.contains("estimate"), "{name}: {top}");
+        let xml = crate::io::write_openmm_forcefield_str(&ff, None)
+            .unwrap_or_else(|e| panic!("{name}: OpenMM: {e}"));
+        assert!(!xml.contains("estimate"), "{name}: {xml}");
+        crate::io::write_frcmod_str(&ff).unwrap_or_else(|e| panic!("{name}: frcmod: {e}"));
+    }
 }

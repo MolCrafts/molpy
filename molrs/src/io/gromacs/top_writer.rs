@@ -460,7 +460,7 @@ impl GromacsTopForcefieldWriter {
     ) -> Result<Vec<Line>, ForceFieldWriteError> {
         let what = format!("{}/{} type '{name}'", style.category(), style.name());
         let allowed = |keys: &[&str]| -> Result<(), String> {
-            match p.iter().find(|(key, _)| !keys.contains(key)) {
+            match p.iter_parameters().find(|(key, _)| !keys.contains(key)) {
                 Some((key, _)) => Err(format!("{what}: parameter '{key}' has no GROMACS column")),
                 None => Ok(()),
             }
@@ -567,7 +567,7 @@ impl GromacsTopForcefieldWriter {
                     m += 1;
                 }
                 let terms = m - 1;
-                if let Some((key, _)) = p.iter().find(|(key, _)| {
+                if let Some((key, _)) = p.iter_parameters().find(|(key, _)| {
                     ["k", "periodicity", "phase"].iter().all(|prefix| {
                         key.strip_prefix(prefix)
                             .and_then(|i| i.parse::<usize>().ok())
@@ -680,15 +680,24 @@ impl GromacsTopForcefieldWriter {
 }
 
 /// The styles this writer reads: `Ok` when `style` is one, `Err` naming it
-/// otherwise.
+/// otherwise. A style parameter stated at its spec default (`coul/cut`'s
+/// `delta = 0`) prices as its absence does and needs no directive
+/// ([`StyleSpec::style_params_off_default`]); any other value a directive
+/// cannot carry is refused.
+///
+/// [`StyleSpec::style_params_off_default`]: crate::ff::ir::StyleSpec::style_params_off_default
 fn check_style(style: &Style) -> Result<(), ForceFieldWriteError> {
     let declared = |key: &str, value: f64| style.params().get(key).is_none_or(|v| v == value);
+    let stated = crate::ff::style_registry::with_global_registry(|r| {
+        r.style(style.category(), style.name())
+            .map(|(spec, _)| spec.style_params_off_default(style.params()))
+    })
+    .unwrap_or_else(|| style.params().clone());
     let extra_params = |keys: &[&str]| {
-        style
-            .params()
+        stated
             .iter()
             .map(|(k, _)| k)
-            .chain(style.params().iter_strings().map(|(k, _)| k))
+            .chain(stated.iter_strings().map(|(k, _)| k))
             .find(|k| !keys.contains(k))
             .map(str::to_owned)
     };
@@ -908,7 +917,7 @@ impl GromacsTopForcefieldWriter {
             let mut rows = String::new();
             for (name, ends, params) in cmap.type_rows() {
                 let cols = resolve(cmap, name, &ends)?;
-                if let Some((key, _)) = params.iter().next() {
+                if let Some((key, _)) = params.iter_parameters().next() {
                     return Err(format!(
                         "cmap/charmm type '{name}': parameter '{key}' has no GROMACS column"
                     )

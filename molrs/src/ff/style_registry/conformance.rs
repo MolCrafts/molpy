@@ -34,11 +34,11 @@ use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex, OnceLock};
 
 use crate::ff::ir::Params;
-use crate::ff::ir::{ANNOTATION_COLUMNS, ENDPOINT_COLUMNS};
 use crate::ff::ir::{
     Arity, CategorySpec, ConformanceSample, Coordinate, IrError, ParamCombination, ParamDimension,
     ParamKind, StyleSpec,
 };
+use crate::ff::ir::{ENDPOINT_COLUMNS, is_unpriced_column};
 use crate::ff::potential::form_kernel::{CompoundForm, Probe, ScalarForm, TermParams, columns};
 use crate::ff::style_registry::Kernel;
 use crate::ff::style_registry::{ExpressionCompiler, ExpressionForm};
@@ -305,7 +305,7 @@ fn check_param_names(spec: &StyleSpec, pair: bool) -> Result<(), IrError> {
             "name" | "type" | "style" | "r" | "theta" | "phi" | "chi"
         ) || ENDPOINT_COLUMNS.contains(&name)
             || molrs::core::keys::ENDPOINTS.contains(&name)
-            || ANNOTATION_COLUMNS.contains(&name)
+            || is_unpriced_column(name)
             || point
             || pair_input
         {

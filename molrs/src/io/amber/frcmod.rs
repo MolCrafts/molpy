@@ -166,14 +166,12 @@ impl AmberFrcmodWriter {
         Ok(())
     }
 
-    /// Refuse a numeric type parameter outside `allowed`. The provenance keys
-    /// of an estimated term ([`Provenance::KEYS`]) are metadata, written as
-    /// the row's comment, never refused.
+    /// Refuse a numeric type parameter outside `allowed`. A key that prices
+    /// nothing ([`Params::iter_parameters`]) is never refused: the
+    /// provenance of an estimated term ([`Provenance::KEYS`]) is written as
+    /// the row's comment, an annotation not at all.
     fn check_type_params(p: &Params, allowed: &[&str], what: &str) -> Result<(), String> {
-        match p
-            .iter()
-            .find(|(key, _)| !allowed.contains(key) && !Provenance::KEYS.contains(key))
-        {
+        match p.iter_parameters().find(|(key, _)| !allowed.contains(key)) {
             Some((key, _)) => Err(format!("{what}: parameter '{key}' has no frcmod column")),
             None => Ok(()),
         }

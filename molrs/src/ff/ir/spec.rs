@@ -301,6 +301,46 @@ impl StyleSpec {
         self.priced("", &self.style_params, style)
     }
 
+    /// The style params of `style` that are not at their declared default:
+    /// what a writer must find a place for. A parameter stated at its
+    /// default (`coul/cut`'s `delta = 0`, `lj/cut`'s `mixing =
+    /// "arithmetic"`) prices as its absence does — [`gather`](Self::gather)
+    /// fills that same value — so a format with no place for it loses
+    /// nothing by leaving it out; [`priced_style_params`] gives the two the
+    /// same params for the same reason. A key the spec does not declare, and
+    /// any array, is kept: it is the writer's to place or refuse.
+    ///
+    /// [`priced_style_params`]: Self::priced_style_params
+    pub fn style_params_off_default(&self, style: &Params) -> Params {
+        let mut defaults = Params::new();
+        self.fill("", &self.style_params, &mut defaults)
+            .expect("an empty params holds no value of the wrong kind");
+        let mut out = Params::new();
+        for (key, value) in style.iter().filter(|&(k, v)| defaults.get(k) != Some(v)) {
+            out.set(key, value);
+        }
+        for (key, value) in style
+            .iter_strings()
+            .filter(|&(k, v)| defaults.get_str(k) != Some(v))
+        {
+            out.set_str(key, value);
+        }
+        for (key, value) in style.iter_arrays() {
+            out.set_array(key, value.clone());
+        }
+        out
+    }
+
+    /// The first numeric parameter of `row` this spec does not declare (a
+    /// member of an indexed family is declared), passing over the keys that
+    /// price nothing ([`Params::iter_parameters`]): what a writer of this
+    /// style's rows would drop, and so refuses.
+    pub fn undeclared_param<'a>(&self, row: &'a Params) -> Option<&'a str> {
+        row.iter_parameters()
+            .map(|(key, _)| key)
+            .find(|key| !declares(&self.params, key))
+    }
+
     /// The row params a kernel of this style reads off `row`: every declared
     /// per-type parameter (each member of an indexed family) with its
     /// default filled, and nothing else. What the spec does not declare —
@@ -319,15 +359,7 @@ impl StyleSpec {
     fn priced(&self, label: &str, decls: &[ParamSpec], params: &Params) -> Result<Params, IrError> {
         let mut filled = params.clone();
         self.fill(label, decls, &mut filled)?;
-        let declared = |key: &str| {
-            decls.iter().any(|d| {
-                if d.indexed {
-                    is_member(key, &d.name)
-                } else {
-                    key == d.name
-                }
-            })
-        };
+        let declared = |key: &str| declares(decls, key);
         let mut out = Params::new();
         for (key, value) in filled.iter().filter(|(k, _)| declared(k)) {
             out.set(key, value);
@@ -451,6 +483,18 @@ impl StyleSpec {
 
 /// Whether `key` is a member `<base><m>` of the indexed family `base`, or
 /// `base` itself.
+/// Whether `decls` declare `key`: a plain parameter by its name, an indexed
+/// family by any member `<name><m>` (or the bare name).
+fn declares(decls: &[ParamSpec], key: &str) -> bool {
+    decls.iter().any(|d| {
+        if d.indexed {
+            is_member(key, &d.name)
+        } else {
+            key == d.name
+        }
+    })
+}
+
 fn is_member(key: &str, base: &str) -> bool {
     key.strip_prefix(base)
         .is_some_and(|m| m.is_empty() || m.bytes().all(|b| b.is_ascii_digit()))
