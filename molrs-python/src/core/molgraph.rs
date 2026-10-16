@@ -1549,7 +1549,16 @@ impl PyAtomistic {
     }
 
     /// Build an `Atomistic` from a [`Frame`] (registers the chemistry kinds,
-    /// then reads the relation blocks). A leaf constructor, not a conversion.
+    /// and every other schema relation block over ``atoms`` the frame
+    /// carries — ``drudes``, ``virtual_sites``, ``constraints``, ``cmaps``,
+    /// ``pairs``, ``exclusions`` — then reads the relation blocks), so
+    /// ``Atomistic.from_frame(g.to_frame())`` keeps every relation. A leaf
+    /// constructor, not a conversion.
+    ///
+    /// Raises
+    /// ------
+    /// ValueError
+    ///     If a relation row has a null endpoint cell.
     #[staticmethod]
     fn from_frame(py: Python<'_>, frame: &PyFrame) -> PyResult<Py<PyAtomistic>> {
         let core = frame.clone_core_frame()?;

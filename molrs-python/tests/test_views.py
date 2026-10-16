@@ -327,6 +327,35 @@ class TestRefs:
         assert constraint.kind == "constraints"
         assert constraint.endpoints == (a, b)
 
+    def test_from_frame_reads_back_drudes_and_virtual_sites(self) -> None:
+        graph = molrs.core.Atomistic()
+        o = graph.def_atom(element="O", x=0.0, y=0.0, z=0.0)
+        h1 = graph.def_atom(element="H", x=0.96, y=0.0, z=0.0)
+        h2 = graph.def_atom(element="H", x=-0.24, y=0.93, z=0.0)
+        graph.def_bond(o, h1)
+        graph.def_bond(o, h2)
+        shell = graph.def_virtual_site(kind=molrs.core.DrudeParticle, charge=-1.0)
+        m = graph.def_virtual_site(kind=molrs.core.MasslessSite, charge=-1.0)
+        graph.register_kind("drudes", 2)
+        rh = graph.add_relation("drudes", [o.handle, shell.handle])
+        graph.set_relation_prop("drudes", rh, "type", "OW-DOW")
+        graph.set_relation_prop("drudes", rh, "k", 500.0)
+        graph.register_kind("virtual_sites", 4)
+        rh = graph.add_relation(
+            "virtual_sites", [m.handle, o.handle, h1.handle, h2.handle]
+        )
+        graph.set_relation_prop("virtual_sites", rh, "style", "average3")
+
+        frame = graph.to_frame()
+        back = molrs.core.Atomistic.from_frame(frame)
+        assert back.n_relations("drudes") == 1
+        assert back.n_relations("virtual_sites") == 1
+        again = back.to_frame()
+        for block in ("drudes", "virtual_sites"):
+            for key in frame[block].keys():
+                np.testing.assert_array_equal(again[block][key], frame[block][key])
+        assert isinstance(back.atoms[3], molrs.core.DrudeParticle)
+
 
 class TestRefMapping:
     def test_node_ref_is_a_mapping_over_its_fields(self) -> None:

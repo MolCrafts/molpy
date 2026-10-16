@@ -1672,6 +1672,17 @@ impl MolGraph {
                      {arity} but carries no '{name}' endpoint column, so its rows cannot be read"
                 ))
             })?;
+            // A relation names all `arity` nodes; the value a null cell stores
+            // is no atom, and reading it would tie the row to atom 0.
+            if let Some(row) = block
+                .validity(name)
+                .and_then(|mask| mask.iter().position(|valid| !valid))
+            {
+                return Err(MolRsError::validation(format!(
+                    "block '{block_name}' row {row} has a null '{name}' endpoint; a relation of \
+                     the graph kind '{block_name}' names all {arity} of its atoms"
+                )));
+            }
             endpoint_cols.push(col);
         }
 
