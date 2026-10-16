@@ -530,3 +530,20 @@ class TestCrystalSymmetryMeta:
             "END\n"
         )
         assert frame.meta["space_group"] == "P 21 21 21"
+
+
+TRICLINIC_PDB = (
+    "CRYST1   10.000   11.000   12.000  70.00  80.00  65.00 P 1           1\n"
+    "ATOM      1  O   HOH A   1       1.000   2.000   3.000  1.00  0.00           O  \n"
+    "END\n"
+)
+
+
+def test_read_pdb_builds_the_triclinic_cell_cryst1_states():
+    frame = molrs.io.read_pdb_str(TRICLINIC_PDB)
+    np.testing.assert_allclose(frame.box.lengths, [10.0, 11.0, 12.0])
+    np.testing.assert_allclose(frame.box.angles, [70.0, 80.0, 65.0])
+    assert frame.box.style == "triclinic"
+    assert "70.00  80.00  65.00" in molrs.io.write_pdb_str(frame)
+    back = molrs.io.read_pdb_str(molrs.io.write_pdb_str(frame))
+    assert back.box.approx_eq(frame.box, 1e-9)

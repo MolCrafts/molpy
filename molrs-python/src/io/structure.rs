@@ -23,7 +23,8 @@ use std::path::PathBuf;
 /// (str), ``x``/``y``/``z`` (float), ``id`` and ``res_id`` (uint), ``name``,
 /// ``res_name``, ``chain``, ``icode`` and ``altloc`` (str; ``""`` for none),
 /// ``occupancy`` and ``b_factor`` (float). If CRYST1 records are present a
-/// ``Box`` is also attached.
+/// ``Box`` is also attached: the (triclinic) cell of its lengths and angles,
+/// ``a`` along x and ``b`` in the xy plane.
 ///
 /// Parameters
 /// ----------

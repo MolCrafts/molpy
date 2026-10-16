@@ -516,26 +516,41 @@ fn build_bonds_block(
 
 /// The frame's box and space-group symbol from the `CRYST1` record: the
 /// symbol goes to [`keys::SPACE_GROUP`] when the record states one.
-fn add_simbox_from_cryst1(frame: &mut Frame, cryst1: Option<&Cryst1Record>) {
-    if let Some(cryst) = cryst1
-        && !cryst.space_group.is_empty()
-    {
+///
+/// The box is the cell of `a`, `b`, `c`, `α`, `β`, `γ` in PDB's standard
+/// orthogonalization (`a` along x, `b` in the xy plane), whose lattice vectors
+/// are the columns of H ([`SimBox::matrix_from_lengths_angles`]), at the
+/// origin and periodic on every axis. A record with a non-positive length
+/// states no box.
+///
+/// # Errors
+///
+/// Angles no cell has (each in `(0°, 180°)` and together closing a cell),
+/// naming the record's six numbers.
+fn add_simbox_from_cryst1(frame: &mut Frame, cryst1: Option<&Cryst1Record>) -> std::io::Result<()> {
+    let Some(cryst) = cryst1 else {
+        return Ok(());
+    };
+    if !cryst.space_group.is_empty() {
         frame
             .meta
             .insert(keys::SPACE_GROUP, cryst.space_group.clone());
     }
-    if let Some(cryst) = cryst1
-        && cryst.a > 0.0
-        && cryst.b > 0.0
-        && cryst.c > 0.0
-    {
-        let lengths = array![cryst.a as F, cryst.b as F, cryst.c as F];
-        let origin = array![0.0 as F, 0.0, 0.0];
-        let pbc = [true, true, true];
-        if let Ok(simbox) = SimBox::ortho(lengths, origin, pbc) {
-            frame.simbox = Some(simbox);
-        }
+    if cryst.a <= 0.0 || cryst.b <= 0.0 || cryst.c <= 0.0 {
+        return Ok(());
     }
+    let lengths = [cryst.a as F, cryst.b as F, cryst.c as F];
+    let angles = [cryst.alpha as F, cryst.beta as F, cryst.gamma as F];
+    let refuse = |e| {
+        invalid_data(format!(
+            "CRYST1 a b c = {lengths:?}, alpha beta gamma = {angles:?}: no cell has these \
+             parameters ({e:?})"
+        ))
+    };
+    let h = SimBox::matrix_from_lengths_angles(lengths, angles).map_err(refuse)?;
+    let simbox = SimBox::new(h, array![0.0 as F, 0.0, 0.0], [true, true, true]).map_err(refuse)?;
+    frame.simbox = Some(simbox);
+    Ok(())
 }
 
 fn build_frame(
@@ -557,7 +572,7 @@ fn build_frame(
         frame.insert("bonds", bonds_block);
     }
 
-    add_simbox_from_cryst1(&mut frame, cryst1);
+    add_simbox_from_cryst1(&mut frame, cryst1)?;
 
     Ok(frame)
 }
@@ -697,20 +712,29 @@ impl<W: Write> PdbWriter<W> {
     }
 }
 
-/// Write the `CRYST1` record from the frame's simulation box, if any.
+/// Write the `CRYST1` record from the frame's simulation box, if any: the
+/// lengths of its lattice vectors and the angles between them
+/// ([`SimBox::lengths`], [`SimBox::angles`]).
+///
+/// CRYST1 states a cell's shape, not its orientation: a reader rebuilds it in
+/// PDB's standard orthogonalization (`a` along x, `b` in the xy plane), the
+/// orientation every molrs reader and LAMMPS's restricted triclinic box use.
+/// A box rotated away from it is written with its own lengths and angles, and
+/// read back in that standard orientation.
 fn write_cryst1<W: Write>(writer: &mut W, frame: &impl FrameAccess) -> std::io::Result<()> {
     // Always emit CRYST1: PDB readers and OpenMM decks expect a cell line even
     // when the frame has no simbox, which is written as a unit cube.
-    let (a, b, c) = if let Some(simbox) = frame.simbox_ref() {
-        let lengths = simbox.lengths();
-        (lengths[0], lengths[1], lengths[2])
-    } else {
-        (1.0, 1.0, 1.0)
+    let (lengths, angles) = match frame.simbox_ref() {
+        Some(simbox) => {
+            let (l, a) = (simbox.lengths(), simbox.angles());
+            ([l[0], l[1], l[2]], [a[0], a[1], a[2]])
+        }
+        None => ([1.0; 3], [90.0; 3]),
     };
     writeln!(
         writer,
         "CRYST1{:9.3}{:9.3}{:9.3}{:7.2}{:7.2}{:7.2} {:<11}{:>4}",
-        a, b, c, 90.00, 90.00, 90.00, "P 1", 1
+        lengths[0], lengths[1], lengths[2], angles[0], angles[1], angles[2], "P 1", 1
     )?;
     Ok(())
 }
@@ -1305,6 +1329,66 @@ mod tests {
         assert!((cryst.alpha - 90.0).abs() < 0.001);
         assert_eq!(cryst.space_group, "P 1");
         assert_eq!(cryst.z, 1);
+    }
+
+    const TRICLINIC_PDB: &str = concat!(
+        "CRYST1   10.000   11.000   12.000  70.00  80.00  65.00 P 1           1\n",
+        "ATOM      1  O   HOH A   1       1.000   2.000   3.000  1.00  0.00           O  \n",
+        "END\n",
+    );
+
+    /// CRYST1's angles shape the box: its lattice vectors (the columns of H)
+    /// are PDB's standard orthogonalization — `a` along x, `b` in the xy
+    /// plane — with the stated lengths and angles.
+    #[test]
+    fn cryst1_angles_build_a_triclinic_box() {
+        let frame = read_pdb_str(TRICLINIC_PDB).unwrap();
+        let simbox = frame.simbox.as_ref().expect("CRYST1 states a box");
+        let lengths = simbox.lengths();
+        let angles = simbox.angles();
+        for (got, want) in lengths.iter().zip([10.0, 11.0, 12.0]) {
+            assert!((got - want).abs() < 1e-9, "lengths {lengths:?}");
+        }
+        for (got, want) in angles.iter().zip([70.0, 80.0, 65.0]) {
+            assert!((got - want).abs() < 1e-9, "angles {angles:?}");
+        }
+        let a = simbox.lattice(0);
+        let b = simbox.lattice(1);
+        assert!((a[0] - 10.0).abs() < 1e-12 && a[1] == 0.0 && a[2] == 0.0);
+        assert_eq!(b[2], 0.0, "b lies in the xy plane");
+        assert_eq!(simbox.style(), "triclinic");
+    }
+
+    /// The writer states the box's real angles, so a triclinic box survives
+    /// a write and a read.
+    #[test]
+    fn a_triclinic_box_round_trips_through_cryst1() {
+        let frame = read_pdb_str(TRICLINIC_PDB).unwrap();
+        let text = write_pdb_str(&frame).unwrap();
+        let cryst1 = text
+            .lines()
+            .find(|l| l.starts_with("CRYST1"))
+            .expect("a CRYST1 line");
+        assert_eq!(
+            cryst1,
+            "CRYST1   10.000   11.000   12.000  70.00  80.00  65.00 P 1           1"
+        );
+        let back = read_pdb_str(&text).unwrap();
+        assert!(
+            back.simbox
+                .as_ref()
+                .unwrap()
+                .approx_eq(frame.simbox.as_ref().unwrap(), 1e-9)
+        );
+    }
+
+    /// Angles no cell has (they sum past 360°) are a malformed record, not an
+    /// orthogonal box.
+    #[test]
+    fn cryst1_angles_no_cell_has_are_refused() {
+        let bad = TRICLINIC_PDB.replace("70.00  80.00  65.00", "170.00170.00170.00");
+        let err = read_pdb_str(&bad).expect_err("no cell has these angles");
+        assert!(err.to_string().contains("CRYST1"), "{err}");
     }
 
     #[test]
