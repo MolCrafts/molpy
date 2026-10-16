@@ -58,7 +58,7 @@ class WeightedSequenceGenerator:
     Each selection is independent (no memory of previous selections).
     """
 
-    def __init__(self, monomer_weights: dict[str, float]):
+    def __init__(self, monomer_weights: Mapping[str, float]):
         if not monomer_weights:
             raise ValueError("monomer_weights must be a non-empty dictionary")
         for monomer_id in monomer_weights:
@@ -66,9 +66,13 @@ class WeightedSequenceGenerator:
                 raise ValueError(
                     "monomer_weights keys must be non-empty string monomer identifiers"
                 )
+        if any(w < 0 for w in monomer_weights.values()):
+            raise ValueError("monomer_weights must be non-negative")
+        if float(sum(monomer_weights.values())) <= 0.0:
+            raise ValueError("monomer_weights must sum to a positive value")
 
-        self.monomer_weights = monomer_weights
-        self.monomer_ids = sorted(monomer_weights.keys())
+        self.monomer_weights = dict(monomer_weights)
+        self.monomer_ids = sorted(self.monomer_weights)
         self.n_monomers = len(self.monomer_ids)
 
     def generate_sequence(self, dp: int, rng: np.random.Generator) -> list[str]:
@@ -89,16 +93,10 @@ class WeightedSequenceGenerator:
     def expected_composition(self) -> dict[str, float]:
         """Return expected long-chain monomer fractions."""
         total_weight = float(sum(self.monomer_weights.values()))
-        if total_weight > 0:
-            return {
-                mid: float(self.monomer_weights[mid]) / total_weight
-                for mid in self.monomer_ids
-            }
-        n_monomers = len(self.monomer_ids)
-        if n_monomers == 0:
-            return {}
-        equal_prob = 1.0 / n_monomers
-        return {mid: equal_prob for mid in self.monomer_ids}
+        return {
+            mid: float(self.monomer_weights[mid]) / total_weight
+            for mid in self.monomer_ids
+        }
 
     def __repr__(self) -> str:
         return (
