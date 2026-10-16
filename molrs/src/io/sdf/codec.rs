@@ -1,12 +1,12 @@
 //! The SDF / MDL molfile codec (V2000 CTAB).
 
-use crate::io::invalid_data;
-use crate::io::reader::{FrameReader, Reader};
+use crate::io::reader::{FrameReader, ReadSeek, Reader, TrajectoryReader};
+use crate::io::{Source, invalid_data};
 use molrs::core::Block;
 use molrs::core::Frame;
 use molrs::op::{F, Idx};
 use ndarray::{Array1, IxDyn};
-use std::io::BufRead;
+use std::io::{BufRead, Seek};
 
 fn to_array_float(vec: Vec<F>, len: usize) -> std::io::Result<ndarray::ArrayD<F>> {
     Ok(Array1::from_vec(vec)
@@ -81,7 +81,14 @@ fn parse_atom_line(line: &str) -> std::io::Result<SdfAtom> {
         .trim()
         .parse::<F>()
         .map_err(invalid_data)?;
+    // The atom symbol (columns 32-34) is a mandatory V2000 field, kept as the
+    // file spells it. A blank one is a malformed record, not a placeholder.
     let element = substr(line, 31, 34).trim().to_string();
+    if element.is_empty() {
+        return Err(invalid_data(format!(
+            "atom line has a blank atom symbol (columns 32-34): {line:?}"
+        )));
+    }
     Ok(SdfAtom { element, x, y, z })
 }
 
@@ -124,32 +131,28 @@ fn build_frame(atoms: &[SdfAtom], bonds: &[SdfBond]) -> std::io::Result<Frame> {
         y_vec.push(a.y);
         z_vec.push(a.z);
         id_vec.push((i as Idx) + 1);
-        elements.push(if a.element.is_empty() {
-            "X".to_string()
-        } else {
-            a.element.clone()
-        });
+        elements.push(a.element.clone());
     }
 
     let mut atoms_block = Block::new();
     atoms_block
-        .insert("x", to_array_float(x_vec, n)?)
+        .insert("x", to_array_float(x_vec, n)?, None)
         .map_err(invalid_data)?;
     atoms_block
-        .insert("y", to_array_float(y_vec, n)?)
+        .insert("y", to_array_float(y_vec, n)?, None)
         .map_err(invalid_data)?;
     atoms_block
-        .insert("z", to_array_float(z_vec, n)?)
+        .insert("z", to_array_float(z_vec, n)?, None)
         .map_err(invalid_data)?;
     atoms_block
-        .insert("id", to_array_uint(id_vec, n)?)
+        .insert("id", to_array_uint(id_vec, n)?, None)
         .map_err(invalid_data)?;
     let elements_arr = Array1::from_vec(elements)
         .into_shape_with_order(IxDyn(&[n]))
         .map_err(invalid_data)?
         .into_dyn();
     atoms_block
-        .insert("element", elements_arr)
+        .insert("element", elements_arr, None)
         .map_err(invalid_data)?;
 
     let mut frame = Frame::new();
@@ -174,10 +177,10 @@ fn build_frame(atoms: &[SdfAtom], bonds: &[SdfBond]) -> std::io::Result<Frame> {
         }
         let mut bonds_block = Block::new();
         bonds_block
-            .insert("atomi", to_array_uint(i_vec, bn)?)
+            .insert("atomi", to_array_uint(i_vec, bn)?, None)
             .map_err(invalid_data)?;
         bonds_block
-            .insert("atomj", to_array_uint(j_vec, bn)?)
+            .insert("atomj", to_array_uint(j_vec, bn)?, None)
             .map_err(invalid_data)?;
         // §14: an MDL bond block states integer orders (4 = aromatic in the
         // SDF query alphabet), so it maps onto both facts. An aromatic entry
@@ -191,10 +194,10 @@ fn build_frame(atoms: &[SdfAtom], bonds: &[SdfBond]) -> std::io::Result<Frame> {
             .map(|&v| if v == 4 { 0 } else { v.min(4) })
             .collect();
         bonds_block
-            .insert("bond_type", to_array_uint(types, bn)?)
+            .insert("bond_type", to_array_uint(types, bn)?, None)
             .map_err(invalid_data)?;
         bonds_block
-            .insert("bond_number", to_array_uint(numbers, bn)?)
+            .insert("bond_number", to_array_uint(numbers, bn)?, None)
             .map_err(invalid_data)?;
         frame.insert("bonds", bonds_block);
     }
@@ -211,17 +214,27 @@ fn build_frame(atoms: &[SdfAtom], bonds: &[SdfBond]) -> std::io::Result<Frame> {
 /// blocks of `.sdf` files. V2000 only — V3000 records are rejected.
 ///
 /// Each record is a [`Frame`] with:
-/// - `"atoms"` block: `element` (string), `id` (u32, 1-based),
+/// - `"atoms"` block: `element` (string, the raw atom symbol; no
+///   `atomic_number` is synthesized — call `Element::fill_atomic_numbers`),
+///   `id` (u32, 1-based),
 ///   `x`, `y`, `z` (F, angstrom)
 /// - `"bonds"` block (if any): `atomi`, `atomj` (u32, 0-based indices
 ///   into the atoms block), `order` (u32)
+///
+/// Over a seekable stream it is also a [`TrajectoryReader`]: records by
+/// index, located by [`SdfIndexBuilder`] on first use.
 pub struct SdfReader<R: BufRead> {
     reader: R,
+    index: Option<Vec<FrameOffset>>,
 }
 
 impl<R: BufRead> SdfReader<R> {
+    /// A reader over any buffered byte stream.
     pub fn new(reader: R) -> Self {
-        Self { reader }
+        Self {
+            reader,
+            index: None,
+        }
     }
 
     fn read_single_record(&mut self) -> std::io::Result<Option<Frame>> {
@@ -285,7 +298,40 @@ impl<R: BufRead> Reader for SdfReader<R> {
     type R = R;
 
     fn new(reader: R) -> Self {
-        Self { reader }
+        SdfReader::new(reader)
+    }
+}
+
+impl SdfReader<Box<dyn ReadSeek>> {
+    /// Open an SDF file, or the bytes of one, for random access by record.
+    pub fn open<'a>(src: impl Into<Source<'a>>) -> std::io::Result<Self> {
+        Ok(Self::new(src.into().owned_reader()?))
+    }
+}
+
+impl<R: BufRead + Seek> TrajectoryReader for SdfReader<R> {
+    fn build_index(&mut self) -> std::io::Result<()> {
+        if self.index.is_none() {
+            self.index = Some(crate::io::frame_index::index_stream(
+                &mut self.reader,
+                Box::new(SdfIndexBuilder::new()),
+            )?);
+        }
+        Ok(())
+    }
+
+    fn read_frame(&mut self, index: usize) -> std::io::Result<Option<Frame>> {
+        self.build_index()?;
+        let Some(at) = self.index.as_ref().and_then(|o| o.get(index).copied()) else {
+            return Ok(None);
+        };
+        let bytes = crate::io::frame_index::frame_bytes(&mut self.reader, at)?;
+        read_sdf(bytes.as_slice()).map(Some)
+    }
+
+    fn len(&mut self) -> std::io::Result<usize> {
+        self.build_index()?;
+        Ok(self.index.as_ref().map_or(0, Vec::len))
     }
 }
 
@@ -297,27 +343,12 @@ impl<R: BufRead> FrameReader for SdfReader<R> {
     }
 }
 
-/// Read the first record of an SDF / MDL molfile at `path`.
-pub fn read_sdf<P: AsRef<std::path::Path>>(path: P) -> std::io::Result<Frame> {
-    let file = std::fs::File::open(path)?;
-    SdfReader::new(std::io::BufReader::new(file))
+/// Read the first record of an SDF / MDL molfile.
+pub fn read_sdf<'a>(src: impl Into<Source<'a>>) -> std::io::Result<Frame> {
+    let src = src.into();
+    SdfReader::new(src.reader()?)
         .read()?
-        .ok_or_else(|| invalid_data("SDF file holds no record"))
-}
-
-/// Read every record of a multi-record SDF file at `path`.
-pub fn read_sdf_trajectory<P: AsRef<std::path::Path>>(path: P) -> std::io::Result<Vec<Frame>> {
-    let file = std::fs::File::open(path)?;
-    let mut reader = SdfReader::new(std::io::BufReader::new(file));
-    crate::io::reader::collect_frames(&mut reader)
-}
-
-/// Read the first record of SDF / MDL molfile `text` — [`read_sdf`] on text
-/// in memory.
-pub fn read_sdf_str(text: &str) -> std::io::Result<Frame> {
-    SdfReader::new(text.as_bytes())
-        .read()?
-        .ok_or_else(|| invalid_data("SDF text holds no record"))
+        .ok_or_else(|| invalid_data(format!("{}: no SDF record", src.name())))
 }
 
 // ============================================================================
@@ -325,21 +356,6 @@ pub fn read_sdf_str(text: &str) -> std::io::Result<Frame> {
 // ============================================================================
 
 use crate::io::frame_index::{FrameIndexBuilder, FrameOffset, LineAccumulator};
-use std::io::Cursor;
-
-/// Parse exactly one SDF / MDL molfile record from a tightly-bounded byte
-/// slice. The slice must be a `[byte_offset, byte_offset + byte_len)` window
-/// produced by [`SdfIndexBuilder`].
-pub fn read_sdf_bytes(bytes: &[u8]) -> std::io::Result<Frame> {
-    let cursor = Cursor::new(bytes);
-    let mut reader = SdfReader::new(cursor);
-    reader.read()?.ok_or_else(|| {
-        std::io::Error::new(
-            std::io::ErrorKind::InvalidData,
-            "SDF record slice contained no atoms",
-        )
-    })
-}
 
 /// Streaming frame indexer for SDF / MDL multi-record files.
 ///
@@ -457,7 +473,7 @@ mod tests {
 
         let x = frame
             .column("atoms", "x")
-            .and_then(|c| c.as_float())
+            .and_then(|c| c.get::<f64>())
             .expect("x column");
         assert_eq!(x.shape(), &[3]);
         assert!((x[[0]] - 0.0).abs() < 1e-6);
@@ -465,17 +481,25 @@ mod tests {
 
         let atomi = frame
             .column("bonds", "atomi")
-            .and_then(|c| c.as_uint())
+            .and_then(|c| c.get::<u64>())
             .expect("atomi column");
         assert_eq!(atomi.shape(), &[2]);
         assert_eq!(atomi[[0]], 0); // 1-based -> 0-based
         assert_eq!(atomi[[1]], 0);
         let atomj = frame
             .column("bonds", "atomj")
-            .and_then(|c| c.as_uint())
+            .and_then(|c| c.get::<u64>())
             .expect("atomj column");
         assert_eq!(atomj[[0]], 1);
         assert_eq!(atomj[[1]], 2);
+    }
+
+    #[test]
+    fn rejects_a_blank_atom_symbol() {
+        let bad = WATER_SDF.replacen("0.1173 O ", "0.1173   ", 1);
+        let mut reader = SdfReader::new(Cursor::new(bad.as_bytes()));
+        let err = reader.read().unwrap_err();
+        assert!(err.to_string().contains("blank atom symbol"), "{err}");
     }
 
     #[test]
@@ -506,6 +530,17 @@ mod tests {
         format!("{WATER_SDF}{WATER_SDF}")
     }
 
+    /// `SdfReader::open` reads records by index, in any order.
+    #[test]
+    fn sdf_reader_open_reads_records_by_index() {
+        let s = make_two_record_sdf();
+        let mut reader = SdfReader::open(s.as_bytes()).unwrap();
+        assert_eq!(reader.len().unwrap(), 2);
+        assert!(reader.read_frame(1).unwrap().is_some());
+        assert!(reader.read_frame(0).unwrap().is_some());
+        assert!(reader.read_frame(2).unwrap().is_none());
+    }
+
     #[test]
     fn sdf_streaming_two_records_match_chunks() {
         let s = make_two_record_sdf();
@@ -519,7 +554,7 @@ mod tests {
         for entry in &one {
             let lo = entry.byte_offset as usize;
             let hi = lo + entry.byte_len as usize;
-            read_sdf_bytes(&bytes[lo..hi]).expect("parse SDF record");
+            read_sdf(&bytes[lo..hi]).expect("parse SDF record");
         }
     }
 
@@ -551,6 +586,6 @@ mod tests {
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].byte_offset, 0);
         assert_eq!(entries[0].byte_len as usize, bytes.len());
-        read_sdf_bytes(bytes).expect("parse no-terminator SDF");
+        read_sdf(bytes).expect("parse no-terminator SDF");
     }
 }

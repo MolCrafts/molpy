@@ -14,13 +14,24 @@ use super::model::{ChargeModel, check_count};
 /// # Examples
 ///
 /// ```
-/// use molrs::core::Atomistic;
+/// use molrs::core::{Atomistic, Element, keys};
+/// use molrs::props;
 /// use molrs::ff::charge::{ChargeModel, MullikenModel};
 ///
 /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
 /// let mut mol = Atomistic::new();
-/// mol.add_atom_xyz("O", 0.0, 0.0, 0.0);
-/// mol.add_atom_xyz("H", 0.96, 0.0, 0.0);
+/// mol.add_atom(props! {
+///     keys::ATOMIC_NUMBER => Element::O,
+///     keys::X => 0.0,
+///     keys::Y => 0.0,
+///     keys::Z => 0.0,
+/// })?;
+/// mol.add_atom(props! {
+///     keys::ATOMIC_NUMBER => Element::H,
+///     keys::X => 0.96,
+///     keys::Y => 0.0,
+///     keys::Z => 0.0,
+/// })?;
 ///
 /// let q = MullikenModel.assign(&mol, Some(&[-0.4, 0.4]))?;
 /// assert_eq!(q, vec![-0.4, 0.4]);
@@ -69,14 +80,38 @@ impl ChargeModel for MullikenModel {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::props;
+    use molrs::core::Element;
+    use molrs::core::keys;
 
     fn water() -> Atomistic {
         let mut mol = Atomistic::new();
-        let o = mol.add_atom_xyz("O", 0.0, 0.0, 0.0);
-        let h1 = mol.add_atom_xyz("H", 0.96, 0.0, 0.0);
-        let h2 = mol.add_atom_xyz("H", -0.24, 0.93, 0.0);
-        mol.add_bond(o, h1).expect("add O-H");
-        mol.add_bond(o, h2).expect("add O-H");
+        let o = mol
+            .add_atom(props! {
+                keys::ATOMIC_NUMBER => Element::O,
+                keys::X => 0.0,
+                keys::Y => 0.0,
+                keys::Z => 0.0,
+            })
+            .unwrap();
+        let h1 = mol
+            .add_atom(props! {
+                keys::ATOMIC_NUMBER => Element::H,
+                keys::X => 0.96,
+                keys::Y => 0.0,
+                keys::Z => 0.0,
+            })
+            .unwrap();
+        let h2 = mol
+            .add_atom(props! {
+                keys::ATOMIC_NUMBER => Element::H,
+                keys::X => -0.24,
+                keys::Y => 0.93,
+                keys::Z => 0.0,
+            })
+            .unwrap();
+        mol.add_bond(o, h1, props! {}).expect("add O-H");
+        mol.add_bond(o, h2, props! {}).expect("add O-H");
         mol
     }
 

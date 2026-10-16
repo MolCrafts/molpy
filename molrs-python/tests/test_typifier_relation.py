@@ -1,8 +1,9 @@
 """A typifier emits terms of any relation kind (``ff-ir-02-protocol`` §6, WP6).
 
 ``TypeAssignment(nodes, links=...)`` keys its link rows by a relation class (``Bond``,
-``Angle``, …) or by a relation kind name (``"bonds"``, or a custom
-``"urey_bradleys"`` the graph registered with ``register_kind``). A type
+``Angle``, …) or by a block name (``"bonds"``, or a custom term block
+``"urey_bradleys"`` the graph declares with ``declare_term`` and fills
+through ``add_term``). A type
 annotation under a kind defines a type of the category whose Frame block the
 kind is, so a custom ``urey_bradley`` category is typified exactly like
 ``angle``: its terms land in the block ``urey_bradleys`` (``atomi`` …,
@@ -30,11 +31,14 @@ molrs.ff.style_registry.register_category("urey_bradley", 3)
 def _chain(kind: str) -> molrs.core.Atomistic:
     """Four atoms with two three-atom relations of ``kind``."""
     mol = molrs.core.Atomistic()
-    atoms = [mol.def_atom(element="C", x=x, y=y, z=z) for x, y, z in XYZ]
+    atoms = [mol.add_atom(atomic_number=6, x=x, y=y, z=z) for x, y, z in XYZ]
     if kind != "angles":
-        mol.register_kind(kind, 3)
+        mol.declare_term(kind, 3)
     for i in range(2):
-        mol.add_relation(kind, [a.handle for a in atoms[i : i + 3]])
+        if kind == "angles":
+            mol.add_angle(*atoms[i : i + 3])
+        else:
+            mol.add_term(kind, atoms[i : i + 3])
     return mol
 
 
@@ -66,7 +70,7 @@ class _Chain(Typifier):
 def _energy_forces(typifier: Typifier, kind: str) -> tuple[float, np.ndarray, molrs.core.Frame]:
     frame = typifier.typify(_chain(kind)).to_frame()
     ff = typifier.forcefield()
-    e, f = molrs.ff.compile.PotentialCompiler(ff).compile(frame).calc_energy_forces(frame)
+    e, f = molrs.ff.compile.PotentialCompiler(ff).compile(frame).evaluate(frame)
     return e, f, frame
 
 
@@ -113,8 +117,8 @@ def test_a_key_that_names_no_kind_is_refused(key: object) -> None:
 def test_a_kind_the_graph_lacks_is_refused_by_name() -> None:
     typifier = _Chain("cross_terms", "urey_bradley", "spring")
     with pytest.raises(ValueError, match="graph has no 'cross_terms' relation kind"):
-        typifier.typify(_chain("urey_bradleys"))
-    assert typifier.forcefield().styles == []
+        typifier.typify(_chain("angles"))
+    assert typifier.forcefield().get_styles(molrs.ff.forcefield.Style) == []
 
 
 def test_repr_lists_the_kinds() -> None:

@@ -23,7 +23,7 @@ use crate::compute::{Compute, ComputeError};
 ///
 /// ```
 /// use molrs::compute::{Compute, Unwrap, UnwrapInput};
-/// use molrs::core::SimBox;
+/// use molrs::core::{Cell, SimBox};
 /// use ndarray::{Array3, array};
 ///
 /// // One atom stepping +1 Å per frame across the face of a 10 Å cube.
@@ -32,7 +32,7 @@ use crate::compute::{Compute, ComputeError};
 ///     0.0, 0.0, 0.0, // 10 Å, wrapped to 0
 ///     1.0, 0.0, 0.0,
 /// ]).unwrap();
-/// let cube = SimBox::cube(10.0, array![0.0, 0.0, 0.0], [true; 3]).unwrap();
+/// let cube = SimBox::new(Cell::Lengths([10.0; 3]), [0.0, 0.0, 0.0], [true; 3]).unwrap();
 /// let boxes = vec![cube; 3];
 /// let unwrapped = Unwrap::new()
 ///     .compute(UnwrapInput { positions: wrapped.view(), images: None, boxes: &boxes })
@@ -148,12 +148,12 @@ crate::compute::spec::compute_spec! {
 mod tests {
     use super::*;
     use crate::compute::time_series::test_support::trajectory;
-    use ndarray::array;
+    use crate::core::Cell;
 
     fn ortho(lengths: [F; 3]) -> SimBox {
-        SimBox::ortho(
-            array![lengths[0], lengths[1], lengths[2]],
-            array![0.0, 0.0, 0.0],
+        SimBox::new(
+            Cell::Lengths([lengths[0], lengths[1], lengths[2]]),
+            [0.0, 0.0, 0.0],
             [true; 3],
         )
         .unwrap()
@@ -226,8 +226,8 @@ mod tests {
     #[test]
     fn image_flags_follow_a_tilted_cell() {
         // One crossing of the b lattice vector (0, 4, 0) + (3, 0, 0) tilt.
-        let cell = SimBox::from_matrix(
-            [[5.0, 3.0, 0.0], [0.0, 4.0, 0.0], [0.0, 0.0, 6.0]],
+        let cell = SimBox::new(
+            Cell::Matrix([[5.0, 3.0, 0.0], [0.0, 4.0, 0.0], [0.0, 0.0, 6.0]]),
             [0.0; 3],
             [true; 3],
         )

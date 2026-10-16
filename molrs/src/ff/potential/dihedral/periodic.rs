@@ -11,7 +11,7 @@ use crate::ff::ir::Params;
 use crate::ff::potential::flat_coords::{
     accumulate_dihedral_forces, compute_dihedral, term_table, validate_coords,
 };
-use crate::ff::potential::{ForceTerm, IndexedTerms, Potential};
+use crate::ff::potential::{Accumulator, ForceTerm, IndexedTerms, Potential};
 use molrs::core::Frame;
 use molrs::op::F;
 
@@ -78,21 +78,21 @@ impl DihedralPeriodic {
 }
 
 impl Potential for DihedralPeriodic {
-    fn calc_energy_forces(&self, coords: &[F]) -> (F, Vec<F>) {
-        let mut out = vec![0.0; coords.len()];
-        let energy = self.accumulate(coords, &mut out);
-        (energy, out)
-    }
-
-    fn accumulate(&self, coords: &[F], out: &mut [F]) -> F {
-        self.fold(coords, out, self.atom_i.len(), |t| {
-            (
-                self.atom_i[t],
-                self.atom_j[t],
-                self.atom_k[t],
-                self.atom_l[t],
-            )
-        })
+    fn evaluate(&self, coords: &[F], acc: &mut Accumulator<'_>) {
+        let energy = self.fold(
+            coords,
+            acc.forces_without_virial(),
+            self.atom_i.len(),
+            |t| {
+                (
+                    self.atom_i[t],
+                    self.atom_j[t],
+                    self.atom_k[t],
+                    self.atom_l[t],
+                )
+            },
+        );
+        acc.add_energy(energy);
     }
 }
 
@@ -100,30 +100,21 @@ impl IndexedTerms for DihedralPeriodic {
     fn terms(&self) -> Array2<u32> {
         term_table(&[&self.atom_i, &self.atom_j, &self.atom_k, &self.atom_l])
     }
-    fn calc_energy_forces_with_terms(
-        &self,
-        coords: &[F],
-        terms: ArrayView2<'_, u32>,
-    ) -> (F, Vec<F>) {
-        let mut out = vec![0.0; coords.len()];
-        let energy = self.accumulate_with_terms(coords, terms, &mut out);
-        (energy, out)
-    }
-
-    fn accumulate_with_terms(&self, coords: &[F], terms: ArrayView2<'_, u32>, out: &mut [F]) -> F {
+    fn evaluate_terms(&self, coords: &[F], terms: ArrayView2<'_, u32>, acc: &mut Accumulator<'_>) {
         debug_assert_eq!(
             terms.nrows(),
             self.atom_i.len(),
             "the row set is the force field's; only the atoms a row names may be rebound"
         );
-        self.fold(coords, out, terms.nrows(), |t| {
+        let energy = self.fold(coords, acc.forces_without_virial(), terms.nrows(), |t| {
             (
                 terms[[t, 0]] as usize,
                 terms[[t, 1]] as usize,
                 terms[[t, 2]] as usize,
                 terms[[t, 3]] as usize,
             )
-        })
+        });
+        acc.add_energy(energy);
     }
 }
 
@@ -140,13 +131,16 @@ fn collect_terms(p: &Params, label: &str) -> Result<Vec<Term>, IrError> {
         })
     };
     let m = (1..)
-        .take_while(|m| p.get(&format!("k{m}")).is_some())
+        .take_while(|m| p.get(&format!("k{m}")).and_then(|v| v.as_num()).is_some())
         .count();
-    let beyond = p.iter().any(|(key, _)| {
-        key.strip_prefix('k')
-            .and_then(|i| i.parse::<usize>().ok())
-            .is_some_and(|i| i > m)
-    });
+    let beyond = p
+        .iter()
+        .filter_map(|(k, v)| v.as_num().map(|x| (k, x)))
+        .any(|(key, _)| {
+            key.strip_prefix('k')
+                .and_then(|i| i.parse::<usize>().ok())
+                .is_some_and(|i| i > m)
+        });
     if beyond {
         return Err(param_reads::missing(
             "periodic",
@@ -154,7 +148,7 @@ fn collect_terms(p: &Params, label: &str) -> Result<Vec<Term>, IrError> {
             &format!("k{}", m + 1),
         ));
     }
-    match (m, p.get("k").is_some()) {
+    match (m, p.get("k").and_then(|v| v.as_num()).is_some()) {
         (0, true) => Ok(vec![term("")?]),
         (0, false) => Err(param_reads::missing("periodic", label, "k1")),
         (_, true) => Err(param_reads::bad(
@@ -180,23 +174,23 @@ pub fn dihedral_periodic_constructor(
         .ok_or("dihedral_periodic: missing \"dihedrals\" block")?;
     let ic = block
         .get("atomi")
-        .and_then(|c| c.as_uint())
+        .and_then(|c| c.get::<u64>())
         .ok_or("missing atomi")?;
     let jc = block
         .get("atomj")
-        .and_then(|c| c.as_uint())
+        .and_then(|c| c.get::<u64>())
         .ok_or("missing atomj")?;
     let kc = block
         .get("atomk")
-        .and_then(|c| c.as_uint())
+        .and_then(|c| c.get::<u64>())
         .ok_or("missing atomk")?;
     let lc = block
         .get("atoml")
-        .and_then(|c| c.as_uint())
+        .and_then(|c| c.get::<u64>())
         .ok_or("missing atoml")?;
     let tc = block
         .get("type")
-        .and_then(|c| c.as_string())
+        .and_then(|c| c.get::<String>())
         .ok_or("missing type")?;
 
     let n = ic.len();
@@ -230,6 +224,7 @@ pub fn dihedral_periodic_constructor(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ff::potential::fixtures::OneShot;
 
     fn quad(phi: F) -> Vec<F> {
         let (s, c) = phi.sin_cos();
@@ -258,15 +253,15 @@ mod tests {
     fn single_term_energy() {
         // K[1+cos(nφ−d)], n=1,d=0: E(0)=2K, E(π)=0.
         let p = single(vec![term(1.5, 1.0, 0.0)]);
-        assert!((p.calc_energy_forces(&quad(0.0)).0 - 3.0).abs() < 1e-9);
-        assert!(p.calc_energy_forces(&quad(std::f64::consts::PI)).0.abs() < 1e-9);
+        assert!((p.energy_forces_at(&quad(0.0)).0 - 3.0).abs() < 1e-9);
+        assert!(p.energy_forces_at(&quad(std::f64::consts::PI)).0.abs() < 1e-9);
     }
 
     #[test]
     fn multi_term_energy_sums() {
         // Two terms add: at φ=0, E = K1[1+cos(−d1)] + K2[1+cos(−d2)].
         let t = vec![term(1.0, 1.0, 0.0), term(0.5, 2.0, 180.0)];
-        let e = single(t).calc_energy_forces(&quad(0.0)).0;
+        let e = single(t).energy_forces_at(&quad(0.0)).0;
         // K1[1+1] + K2[1+cos(180°)] = 2.0 + 0.5*0 = 2.0
         assert!((e - 2.0).abs() < 1e-9, "got {e}");
     }
@@ -300,15 +295,15 @@ mod tests {
             term(0.4, 3.0, 0.0),
         ]);
         let coords: Vec<F> = vec![0.1, 1.0, 0.2, 0.0, 0.0, 0.0, 1.0, 0.0, -0.1, 1.2, -0.8, 0.5];
-        let (_, forces) = pot.calc_energy_forces(&coords);
+        let (_, forces) = pot.energy_forces_at(&coords);
         let h = 1e-6;
         for d in 0..coords.len() {
             let mut cp = coords.clone();
             let mut cm = coords.clone();
             cp[d] += h;
             cm[d] -= h;
-            let ep = pot.calc_energy_forces(&cp).0;
-            let em = pot.calc_energy_forces(&cm).0;
+            let ep = pot.energy_forces_at(&cp).0;
+            let em = pot.energy_forces_at(&cm).0;
             let fd = -(ep - em) / (2.0 * h);
             assert!(
                 (forces[d] - fd).abs() < 1e-5,
@@ -322,7 +317,7 @@ mod tests {
     fn newtons_third_law() {
         let pot = single(vec![term(1.0, 1.0, 0.0), term(0.5, 2.0, 90.0)]);
         let coords: Vec<F> = vec![0.1, 1.0, 0.2, 0.0, 0.0, 0.0, 1.0, 0.0, -0.1, 1.2, -0.8, 0.5];
-        let (_, f) = pot.calc_energy_forces(&coords);
+        let (_, f) = pot.energy_forces_at(&coords);
         for dim in 0..3 {
             let s: F = (0..4).map(|a| f[a * 3 + dim]).sum();
             assert!(s.abs() < 1e-9, "dim {dim} force sum {s}");

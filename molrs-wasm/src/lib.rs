@@ -25,25 +25,26 @@
 //!
 //! | Module      | molrs owner | Exports |
 //! |-------------|-------------|---------|
-//! | `core`      | `core` | Frame, Block, Box, NDArray, schema, Topology, `covalentRadius`, regions, TriMesh, NeighborList / NeighborQuery / Neighbors |
-//! | `io`        | `io` | File readers/writers (XYZ, PDB, LAMMPS, `*.mrec` records, …), `readSmilesStr` |
-//! | `perceive`  | `perceive` | Chemical perception, Frame in / Frame out (`assignRings`, `assignAromaticity`, `addHydrogens`, …) |
+//! | `core`      | `core` | Frame, Block, Box, Cell, NDArray, schema, Topology, `covalentRadius`, `fillAtomicNumbers` / `fillSymbols`, regions, TriMesh, NeighborList / NeighborQuery / Neighbors |
+//! | `io`        | `io` | File readers/writers (XYZ, PDB, LAMMPS, `*.mrec` records, …), `SmilesIr` / `CgSmilesIr` |
+//! | `perceive`  | `perceive` | Chemical perception: `assign*` mutate the frame in place, `addHydrogens` / `removeHydrogens` return a new one |
 //! | `compute`   | `compute` | Analysis: one class per `ComputeSpec` entry (`Rdf`, `Msd`, `Cluster`, …), their result handles, and the `ComputeSpec` registry |
 //! | `conformer` | `conformer` | 3D conformer generation (`Conformer`) |
 //! | `ff`        | `ff` | Typifiers (UFF, MMFF94, MMFF94s), the `ForceField` they output, `PotentialCompiler` and the `Potentials` it compiles |
 //! | `optimize`  | `optimize` | `Lbfgs` / `OptimizationReport` |
-//! | `builder`   | `builder` | `CarbonTubeBuilder` |
+//! | `builder`   | `builder` | `CarbonTubeBuilder`, `TubeExtent` |
 //!
 //! # Quick start (JavaScript)
 //!
 //! The npm package is a `bundler` build: importing it loads the module.
 //!
 //! ```js
-//! import { readSmilesStr, Conformer, writeXyzStr } from "@molcrafts/molrs";
+//! import { SmilesIr, Conformer, fillSymbols, writeXyz } from "@molcrafts/molrs";
 //!
-//! const frame = readSmilesStr("CCO");
+//! const frame = SmilesIr.parse("CCO").toFrame();
 //! const mol3d = new Conformer("fast").generate(frame);
-//! const xyz   = writeXyzStr(mol3d);
+//! fillSymbols(mol3d);                 // XYZ spells symbols
+//! const xyz   = writeXyz(mol3d);
 //! console.log(xyz);
 //! ```
 
@@ -96,7 +97,7 @@ mod perceive;
 
 // The JS namespace is flat; so is the crate root.
 #[cfg(feature = "builder")]
-pub use builder::CarbonTubeBuilder;
+pub use builder::{CarbonTubeBuilder, TubeExtent};
 #[cfg(feature = "compute")]
 pub use compute::*;
 #[cfg(feature = "conformer")]

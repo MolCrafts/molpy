@@ -91,7 +91,8 @@ fn run() -> Result<String, String> {
     let ff = GromacsTopForcefieldReader::new()
         .with_include(true)
         .with_skipped_directive("constrainttypes")
-        .read(&dir.join("forcefield.itp").display().to_string())?;
+        .read(dir.join("forcefield.itp").as_path())
+        .map_err(|e| e.to_string())?;
     let table = Table::from_force_field(&ff)?;
     table.check_counts(&counts)?;
     let text = table.render(&digests, &counts);
@@ -319,6 +320,7 @@ struct Table {
 fn param(params: &Params, key: &str, what: &str) -> Result<f64, String> {
     params
         .get(key)
+        .and_then(|v| v.as_num())
         .map(|v| v + 0.0)
         .ok_or_else(|| format!("{what} has no `{key}` param"))
 }
@@ -330,7 +332,7 @@ impl Table {
         let lj = ff
             .get_style("pair", "lj/cut")
             .ok_or("the force field has no pair/lj/cut style")?;
-        match lj.params().get_str("mixing") {
+        match lj.params().get("mixing").and_then(|v| v.as_text()) {
             Some("geometric") => {}
             other => {
                 return Err(format!(
@@ -371,12 +373,17 @@ impl Table {
                             .ok_or_else(|| format!("{what} has no pair/lj/cut self row"))?;
                         let row = AtomRow {
                             name: t.name.clone(),
-                            class: t.params.get_str("class").unwrap_or(&t.name).to_owned(),
+                            class: t
+                                .params
+                                .get("class")
+                                .and_then(|v| v.as_text())
+                                .unwrap_or(&t.name)
+                                .to_owned(),
                             mass: param(&t.params, "mass", &what)?,
                             charge: param(&t.params, "charge", &what)?,
                             sigma: param(&pair.params, "sigma", &what)?,
                             epsilon: param(&pair.params, "epsilon", &what)?,
-                            dummy: t.params.get_str("ptype") != Some("A"),
+                            dummy: t.params.get("ptype").and_then(|v| v.as_text()) != Some("A"),
                         };
                         if row.dummy && (row.mass != 0.0 || row.epsilon != 0.0) {
                             return Err(format!(
@@ -398,8 +405,8 @@ impl Table {
                 StyleDefs::Pair(types) => {
                     let p = style.params();
                     if !types.is_empty()
-                        || p.get("coulomb") != Some(COULOMB_REAL)
-                        || p.get("dielectric") != Some(1.0)
+                        || p.get("coulomb").and_then(|v| v.as_num()) != Some(COULOMB_REAL)
+                        || p.get("dielectric").and_then(|v| v.as_num()) != Some(1.0)
                     {
                         return Err(
                             "pair/coul/cut is not the row-less vacuum Coulomb the embedded \

@@ -5,13 +5,13 @@ End to end (Ar-like LJ dimer)::
     import numpy as np
     from molrs import md
     from molrs.ff.potential import PairLjCut
-    from molrs.core import Box, NeighborList, VerletSkin
+    from molrs.core import Box, Cell, NeighborList, VerletSkin
 
     pos = np.array([[0.0, 0.0, 0.0], [3.8, 0.0, 0.0]])
     rc, skin = 7.5, 1.0
     # search cutoff = rc + skin (what the engine indexes);
     # force cutoff = rc (what the potential sees); skin is the rebuild buffer.
-    nl = VerletSkin(NeighborList(rc + skin), rc, pos, Box.cube(20.0), skin=skin)
+    nl = VerletSkin(NeighborList(rc + skin), rc, pos, Box(Cell.lengths([20.0, 20.0, 20.0])), skin=skin)
     eps = 0.238  # caller units; MD does not convert
     vv = md.VelocityVerlet(1.0, potential=PairLjCut(eps, 3.405, rc),
                            neighbors=nl, mass=np.full(2, 39.948))
@@ -31,11 +31,11 @@ Units contract — the engine is **unit-agnostic**. Take constants from
 
 MD defines no potential: it integrates a :class:`molrs.ff.potential.PairLjCut`,
 a ``Potentials`` collection (e.g. from :class:`molrs.ff.compile.ExplicitTerms`), or
-any object with ``calc_energy_forces``. External forces (the NN/Torch seam)
-subclass :class:`molrs.ff.potential.Potential`::
+any object with ``evaluate(pos) -> (energy, forces)``. External forces (the
+NN/Torch seam) subclass :class:`molrs.ff.potential.Potential`::
 
     class Spring(Potential):
-        def calc_energy_forces(self, pos):
+        def evaluate(self, pos):
             return 0.05 * float((pos * pos).sum()), -0.1 * pos
 
 ForceField + Frame runs go through the :class:`MdDriver` driver::

@@ -174,7 +174,7 @@ impl SphereUnion {
         })
     }
 
-    /// Spheres in open space: the box is [`SimBox::free`] around the centres
+    /// Spheres in open space: the box is [`SimBox::bounding`] around the centres
     /// with twice the largest radius of padding, so every sphere lies inside
     /// it and no axis is periodic.
     ///
@@ -183,7 +183,7 @@ impl SphereUnion {
     /// The gates of [`new`](Self::new), plus a box that could not be built.
     pub fn free(centers: Fnx3View<'_>, radii: &[F]) -> Result<Self, SphereUnionError> {
         let r_max = Self::check(centers, radii)?;
-        let bx = SimBox::free(centers, 2.0 * r_max)?;
+        let bx = SimBox::bounding(centers, [2.0 * r_max; 3], [false; 3])?;
         Self::new(centers, radii, &bx)
     }
 
@@ -294,6 +294,7 @@ impl Region for SphereUnion {
 mod tests {
     use super::super::primitives::tests::check_region_contract;
     use super::*;
+    use crate::core::Cell;
     use ndarray::array;
 
     /// Deterministic point cloud in `[0, L)³` — no rand dependency.
@@ -323,7 +324,7 @@ mod tests {
             .into_iter()
             .zip(radii)
             .map(|(c, &r)| {
-                let d = bx.shortest_vector_impl(p, [c[0], c[1], c[2]]);
+                let d = bx.mic().apply(crate::op::vec3::sub([c[0], c[1], c[2]], p));
                 norm(d) - r
             })
             .fold(F::INFINITY, F::min)
@@ -348,12 +349,17 @@ mod tests {
         let l = 12.0;
         let (c, r) = cloud(300, l);
         let boxes = [
-            SimBox::cube(l, array![0.0, 0.0, 0.0], [true, true, true]).unwrap(),
-            SimBox::cube(l, array![0.0, 0.0, 0.0], [true, true, false]).unwrap(),
-            SimBox::cube(l, array![0.0, 0.0, 0.0], [false, false, false]).unwrap(),
+            SimBox::new(Cell::Lengths([l; 3]), [0.0, 0.0, 0.0], [true, true, true]).unwrap(),
+            SimBox::new(Cell::Lengths([l; 3]), [0.0, 0.0, 0.0], [true, true, false]).unwrap(),
             SimBox::new(
-                array![[l, 0.25 * l, 0.0], [0.0, l, 0.1 * l], [0.0, 0.0, l]],
-                array![0.0, 0.0, 0.0],
+                Cell::Lengths([l; 3]),
+                [0.0, 0.0, 0.0],
+                [false, false, false],
+            )
+            .unwrap(),
+            SimBox::new(
+                Cell::Matrix([[l, 0.25 * l, 0.0], [0.0, l, 0.1 * l], [0.0, 0.0, l]]),
+                [0.0, 0.0, 0.0],
                 [true, true, true],
             )
             .unwrap(),
@@ -393,7 +399,7 @@ mod tests {
     #[test]
     fn wrap_neighbour_across_face_is_found() {
         let l = 10.0;
-        let bx = SimBox::cube(l, array![0.0, 0.0, 0.0], [true, true, true]).unwrap();
+        let bx = SimBox::new(Cell::Lengths([l; 3]), [0.0, 0.0, 0.0], [true, true, true]).unwrap();
         let c = array![[0.5, 5.0, 5.0]];
         let u = SphereUnion::new(c.view(), &[1.0], &bx).unwrap();
         // 9.8 is 0.7 from the centre through the x face.
@@ -417,7 +423,7 @@ mod tests {
     fn contract_holds_off_the_ties() {
         let l = 12.0;
         let (c, r) = cloud(60, l);
-        let bx = SimBox::cube(l, array![0.0, 0.0, 0.0], [true, true, true]).unwrap();
+        let bx = SimBox::new(Cell::Lengths([l; 3]), [0.0, 0.0, 0.0], [true, true, true]).unwrap();
         let u = SphereUnion::new(c.view(), &r, &bx).unwrap();
         // Keep probes away from centres and from ties between spheres, where
         // the max/min switches branch and the finite difference is one-sided.
@@ -462,7 +468,7 @@ mod tests {
     #[test]
     fn named_rejects() {
         let c = array![[0.0, 0.0, 0.0]];
-        let bx = SimBox::cube(5.0, array![0.0, 0.0, 0.0], [true; 3]).unwrap();
+        let bx = SimBox::new(Cell::Lengths([5.0; 3]), [0.0, 0.0, 0.0], [true; 3]).unwrap();
         let empty: Fnx3 = Array2::zeros((0, 3));
         assert_eq!(
             SphereUnion::new(empty.view(), &[], &bx).err(),

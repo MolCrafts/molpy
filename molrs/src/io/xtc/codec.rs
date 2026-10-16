@@ -1,20 +1,19 @@
 //! GROMACS XTC binary trajectory reader and writer.
+use crate::core::Cell;
 use crate::core::unit_factors::NM_TO_ANGSTROM;
 use crate::io::frame_columns::insert_column;
 use crate::io::frame_index::{BinaryFrameScanner, FrameIndexBuilder, FrameOffset};
-use crate::io::invalid_data;
 use crate::io::reader::{FrameReader, ReadSeek, Reader, TrajectoryReader};
 use crate::io::writer::{FrameWriter, Writer};
 use crate::io::xdr;
+use crate::io::{Sink, SinkWriter, Source, invalid_data};
 use molrs::core::Block;
 use molrs::core::Frame;
 use molrs::core::FrameAccess;
 use molrs::core::SimBox;
 use molrs::op::{F, Idx};
-use ndarray::{Array1, Array2, IxDyn, array};
-use std::fs::File;
-use std::io::{BufRead, BufWriter, Cursor, Read, Result, Seek, SeekFrom, Write};
-use std::path::Path;
+use ndarray::{Array1, IxDyn};
+use std::io::{BufRead, Read, Result, Seek, SeekFrom, Write};
 use std::sync::OnceLock;
 
 /// Classic XTC magic number.
@@ -712,9 +711,11 @@ fn build_simbox(boxv: &[f32; 9]) -> Option<Result<SimBox>> {
         return None;
     }
     // Row-stored vectors → column-stored H: H[r][c] = box[c*3 + r].
-    let h = Array2::from_shape_fn((DIM, DIM), |(r, c)| boxv[c * DIM + r] as F);
-    let origin = array![0.0 as F, 0.0, 0.0];
-    Some(SimBox::new(h, origin, [true; 3]).map_err(|e| invalid_data(format!("XTC box: {e:?}"))))
+    let h = std::array::from_fn(|r| std::array::from_fn(|c| boxv[c * DIM + r] as F));
+    Some(
+        SimBox::new(Cell::Matrix(h), [0.0; 3], [true; 3])
+            .map_err(|e| invalid_data(format!("XTC box: {e:?}"))),
+    )
 }
 
 /// Parse one XTC frame at the current position (no seek). `Ok(None)` on EOF.
@@ -731,7 +732,7 @@ fn parse_frame_here<R: Read>(r: &mut R) -> Result<Option<Frame>> {
     let id_arr = Array1::from_iter(1..=natoms as Idx)
         .into_shape_with_order(IxDyn(&[natoms]))
         .map_err(invalid_data)?;
-    atoms.insert("id", id_arr).map_err(invalid_data)?;
+    atoms.insert("id", id_arr, None).map_err(invalid_data)?;
     let mut x = Vec::with_capacity(natoms);
     let mut y = Vec::with_capacity(natoms);
     let mut z = Vec::with_capacity(natoms);
@@ -749,10 +750,11 @@ fn parse_frame_here<R: Read>(r: &mut R) -> Result<Option<Frame>> {
     frame.simbox = match build_simbox(&hdr.boxv) {
         Some(res) => {
             let sb = res?;
-            let h = sb.h_view().to_owned() * NM_TO_ANGSTROM.get();
-            let origin = sb.origin_view().to_owned() * NM_TO_ANGSTROM.get();
+            let scale = NM_TO_ANGSTROM.get();
+            let h = sb.matrix().map(|row| row.map(|v| v * scale));
+            let origin = sb.origin().map(|v| v * scale);
             Some(
-                SimBox::new(h, origin, sb.pbc())
+                SimBox::new(Cell::Matrix(h), origin, sb.pbc())
                     .map_err(|e| invalid_data(format!("XTC box: {e:?}")))?,
             )
         }
@@ -954,7 +956,7 @@ const DEFAULT_PRECISION: f32 = 1000.0;
 fn axis<FA: FrameAccess>(frame: &FA, key: &str) -> Option<Vec<f64>> {
     frame
         .column("atoms", key)
-        .and_then(|c| c.as_float())
+        .and_then(|c| c.get::<f64>())
         .map(|view| view.iter().copied().collect::<Vec<f64>>())
 }
 
@@ -996,7 +998,7 @@ fn write_xtc_frame<W: Write, FA: FrameAccess>(w: &mut W, frame: &FA) -> Result<(
     xdr::encode_f32(w, time)?;
     if let Some(sb) = frame.simbox_ref() {
         // Å → nm on the way out, mirroring the reader.
-        let h = sb.h_view().to_owned() / NM_TO_ANGSTROM.get();
+        let h = ndarray::arr2(&sb.matrix()) / NM_TO_ANGSTROM.get();
         for i in 0..DIM {
             for j in 0..DIM {
                 xdr::encode_f32(w, h[(j, i)] as f32)?;
@@ -1062,7 +1064,8 @@ impl<W: Write> FrameWriter for XtcWriter<W> {
         // Refuse to emit a frame that violates the vocabulary: a bad file
         // looks fine and is found wrong later, by whatever reads it.
         crate::io::writer::check_write_frame(frame)?;
-        write_xtc_frame(&mut self.writer, frame)
+        write_xtc_frame(&mut self.writer, frame)?;
+        self.writer.flush()
     }
 }
 
@@ -1070,36 +1073,30 @@ impl<W: Write> FrameWriter for XtcWriter<W> {
 // Convenience functions
 // ---------------------------------------------------------------------------
 
-/// Read every frame of an XTC file into memory.
-pub fn read_xtc_trajectory<P: AsRef<Path>>(path: P) -> Result<Vec<Frame>> {
-    let reader = crate::io::reader::open_seekable(path)?;
-    crate::io::reader::collect_frames(&mut XtcReader::new(reader))
+/// Read the first frame of an XTC file.
+pub fn read_xtc<'a>(src: impl Into<Source<'a>>) -> Result<Frame> {
+    parse_frame_at(&mut src.into().reader()?, 0)
 }
 
-impl XtcReader<Box<dyn ReadSeek>> {
-    /// Open an XTC file for trajectory-style random access.
-    pub fn open<P: AsRef<Path>>(path: P) -> Result<Self> {
-        Ok(Self::new(crate::io::reader::open_seekable(path)?))
-    }
-}
-
-/// Write a slice of frames to an XTC file.
-pub fn write_xtc_trajectory<P: AsRef<Path>, FA: FrameAccess>(path: P, frames: &[FA]) -> Result<()> {
-    let file = File::create(path)?;
-    let mut w = BufWriter::new(file);
-    for f in frames {
-        write_xtc_frame(&mut w, f)?;
-    }
+/// Write one frame as a one-frame XTC file (Å → nm).
+pub fn write_xtc<'a>(sink: impl Into<Sink<'a>>, frame: &impl FrameAccess) -> Result<()> {
+    let mut w = sink.into().writer()?;
+    write_xtc_frame(&mut w, frame)?;
     w.flush()
 }
 
-/// Write one frame as a one-frame XTC file in memory (Å → nm) —
-/// [`write_xtc_trajectory`] of `[frame]` into bytes; [`read_xtc_bytes`] reads
-/// it back.
-pub fn write_xtc_bytes(frame: &impl FrameAccess) -> Result<Vec<u8>> {
-    let mut buf = Vec::new();
-    write_xtc_frame(&mut buf, frame)?;
-    Ok(buf)
+impl XtcReader<Box<dyn ReadSeek>> {
+    /// Open an XTC file, or the bytes of one, for random access by frame.
+    pub fn open<'a>(src: impl Into<Source<'a>>) -> Result<Self> {
+        Ok(Self::new(src.into().owned_reader()?))
+    }
+}
+
+impl<'a> XtcWriter<SinkWriter<'a>> {
+    /// Create an XTC file, or fill a buffer, frame by frame.
+    pub fn create(sink: impl Into<Sink<'a>>) -> Result<Self> {
+        Ok(Self::new(sink.into().writer()?))
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1182,12 +1179,6 @@ fn try_xtc_frame_len(bytes: &[u8]) -> Result<Option<u32>> {
         .map_err(|_| invalid_data("XTC frame larger than 4 GiB"))
 }
 
-/// Parse exactly one XTC frame from a tightly-bounded byte slice.
-pub fn read_xtc_bytes(bytes: &[u8]) -> Result<Frame> {
-    let mut cursor = Cursor::new(bytes);
-    parse_frame_at(&mut cursor, 0)
-}
-
 /// Streaming frame indexer for XTC files. Frames are self-describing;
 /// the scanner measures each header + compressed block without decoding.
 pub struct XtcIndexBuilder {
@@ -1240,6 +1231,7 @@ impl FrameIndexBuilder for XtcIndexBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::Cell;
 
     #[test]
     fn sizeofint_known_values() {
@@ -1314,14 +1306,22 @@ mod tests {
         let ys = vec![0.0; natoms];
         let zs = vec![0.0; natoms];
         xs[0] = x0;
-        atoms.insert("id", Array1::from(ids).into_dyn()).unwrap();
-        atoms.insert("x", Array1::from(xs).into_dyn()).unwrap();
-        atoms.insert("y", Array1::from(ys).into_dyn()).unwrap();
-        atoms.insert("z", Array1::from(zs).into_dyn()).unwrap();
+        atoms
+            .insert("id", Array1::from(ids).into_dyn(), None)
+            .unwrap();
+        atoms
+            .insert("x", Array1::from(xs).into_dyn(), None)
+            .unwrap();
+        atoms
+            .insert("y", Array1::from(ys).into_dyn(), None)
+            .unwrap();
+        atoms
+            .insert("z", Array1::from(zs).into_dyn(), None)
+            .unwrap();
         let mut frame = Frame::new();
         frame.insert("atoms", atoms);
-        let h = array![[20.0, 0.0, 0.0], [0.0, 20.0, 0.0], [0.0, 0.0, 20.0]];
-        frame.simbox = Some(SimBox::new(h, array![0.0, 0.0, 0.0], [true; 3]).unwrap());
+        let h = [[20.0, 0.0, 0.0], [0.0, 20.0, 0.0], [0.0, 0.0, 20.0]];
+        frame.simbox = Some(SimBox::new(Cell::Matrix(h), [0.0, 0.0, 0.0], [true; 3]).unwrap());
         frame
     }
 
@@ -1366,13 +1366,13 @@ mod tests {
             for (i, entry) in one_shot.iter().enumerate() {
                 let lo = entry.byte_offset as usize;
                 let hi = lo + entry.byte_len as usize;
-                let parsed = read_xtc_bytes(&bytes[lo..hi]).expect("parse xtc");
+                let parsed = read_xtc(&bytes[lo..hi]).expect("parse xtc");
                 assert_eq!(parsed.get("atoms").unwrap().n_rows().unwrap(), natoms);
                 let x = parsed
                     .get("atoms")
                     .unwrap()
                     .get("x")
-                    .and_then(|c| c.as_float())
+                    .and_then(|c| c.get::<f64>())
                     .unwrap();
                 assert!(
                     (x[0]
@@ -1380,7 +1380,7 @@ mod tests {
                             .get("atoms")
                             .unwrap()
                             .get("x")
-                            .and_then(|c| c.as_float())
+                            .and_then(|c| c.get::<f64>())
                             .unwrap()[0])
                         .abs()
                         < 0.02,

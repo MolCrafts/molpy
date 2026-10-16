@@ -138,8 +138,8 @@ impl Provenance {
     pub fn apply_to(&self, params: &mut Params) {
         params.set(Self::KEYS[0], 1.0);
         params.set(Self::KEYS[1], self.penalty);
-        params.set_str(Self::KEYS[2], self.method.as_str());
-        params.set_str(Self::KEYS[3], &self.analog);
+        params.set(Self::KEYS[2], self.method.as_str());
+        params.set(Self::KEYS[3], self.analog.as_str());
     }
 
     /// The provenance `params` carry: the inverse of
@@ -147,12 +147,19 @@ impl Provenance {
     /// not estimated (no `estimated` key), or whose `estimate_method` is not
     /// one this module writes.
     pub fn from_params(params: &Params) -> Option<Self> {
-        params.get(Self::KEYS[0])?;
-        let method = EstimateMethod::parse(params.get_str(Self::KEYS[2])?)?;
+        params.get(Self::KEYS[0]).and_then(|v| v.as_num())?;
+        let method = EstimateMethod::parse(params.get(Self::KEYS[2]).and_then(|v| v.as_text())?)?;
         Some(Self {
-            penalty: params.get(Self::KEYS[1]).unwrap_or(0.0),
+            penalty: params
+                .get(Self::KEYS[1])
+                .and_then(|v| v.as_num())
+                .unwrap_or(0.0),
             method,
-            analog: params.get_str(Self::KEYS[3]).unwrap_or_default().to_owned(),
+            analog: params
+                .get(Self::KEYS[3])
+                .and_then(|v| v.as_text())
+                .unwrap_or_default()
+                .to_owned(),
         })
     }
 }
@@ -250,38 +257,47 @@ mod tests {
 
     #[test]
     fn a_covered_term_carries_no_provenance() {
-        let covered = Estimate::covered(Params::from_pairs(&[("k", 1.0)]), "X-c3-c3-X");
+        let covered = Estimate::covered(Params::from_iter([("k", 1.0)]), "X-c3-c3-X");
         assert!(
             covered.provenance().is_none(),
             "a wildcard row is a parameter, not an estimate"
         );
         // …but a consumer at the interpolation seam is still told where it came from.
         let params = covered.into_params();
-        assert_eq!(params.get("estimated"), Some(1.0));
-        assert_eq!(params.get("estimate_penalty"), Some(0.0));
+        assert_eq!(params.get("estimated").and_then(|v| v.as_num()), Some(1.0));
+        assert_eq!(
+            params.get("estimate_penalty").and_then(|v| v.as_num()),
+            Some(0.0)
+        );
     }
 
     #[test]
     fn from_params_inverts_apply_to() {
         let written = Provenance::analogy(2.5, "c3-oh");
-        let mut params = Params::from_pairs(&[("k", 300.9)]);
+        let mut params = Params::from_iter([("k", 300.9)]);
         written.apply_to(&mut params);
         assert_eq!(Provenance::from_params(&params), Some(written));
     }
 
     #[test]
     fn a_matched_term_reads_as_no_provenance() {
-        let params = Params::from_pairs(&[("k", 300.9)]);
+        let params = Params::from_iter([("k", 300.9)]);
         assert_eq!(Provenance::from_params(&params), None);
     }
 
     #[test]
     fn provenance_writes_the_four_keys() {
-        let mut params = Params::from_pairs(&[("k", 300.9)]);
+        let mut params = Params::from_iter([("k", 300.9)]);
         Provenance::analogy(2.5, "c3-oh").apply_to(&mut params);
-        assert_eq!(params.get("estimated"), Some(1.0));
-        assert_eq!(params.get("estimate_penalty"), Some(2.5));
-        let strings: Vec<(&str, &str)> = params.iter_strings().collect();
+        assert_eq!(params.get("estimated").and_then(|v| v.as_num()), Some(1.0));
+        assert_eq!(
+            params.get("estimate_penalty").and_then(|v| v.as_num()),
+            Some(2.5)
+        );
+        let strings: Vec<(&str, &str)> = params
+            .iter()
+            .filter_map(|(k, v)| v.as_text().map(|s| (k, s)))
+            .collect();
         assert!(strings.contains(&("estimate_method", "analogy")));
         assert!(strings.contains(&("estimate_analog", "c3-oh")));
     }

@@ -145,7 +145,7 @@ impl Compute for DiffractionPattern {
             _ => (0, 1),
         };
         let n = self.n_grid;
-        let origin = simbox.origin_view();
+        let origin = simbox.origin();
         let pbc = simbox.pbc();
         let grid = RegularGrid::new(
             [origin[a0], origin[a1]],
@@ -200,6 +200,7 @@ crate::compute::spec::compute_spec! {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::Cell;
     use ndarray::array;
 
     struct Frame {
@@ -219,7 +220,12 @@ mod tests {
     fn frame_with(positions: &[[F; 3]], box_len: F) -> Frame {
         Frame {
             positions: Array2::from_shape_fn((positions.len(), 3), |(i, c)| positions[i][c]),
-            simbox: SimBox::cube(box_len, array![0.0 as F, 0.0 as F, 0.0 as F], [true; 3]).unwrap(),
+            simbox: SimBox::new(
+                Cell::Lengths([box_len; 3]),
+                [0.0 as F, 0.0 as F, 0.0 as F],
+                [true; 3],
+            )
+            .unwrap(),
         }
     }
 
@@ -316,8 +322,8 @@ mod tests {
     #[test]
     fn smearing_wraps_only_periodic_faces() {
         let positions = array![[0.05, 5.0, 5.0]];
-        let open = SimBox::cube(10.0, array![0.0, 0.0, 0.0], [false; 3]).unwrap();
-        let periodic = SimBox::cube(10.0, array![0.0, 0.0, 0.0], [true; 3]).unwrap();
+        let open = SimBox::new(Cell::Lengths([10.0; 3]), [0.0, 0.0, 0.0], [false; 3]).unwrap();
+        let periodic = SimBox::new(Cell::Lengths([10.0; 3]), [0.0, 0.0, 0.0], [true; 3]).unwrap();
         let dp = DiffractionPattern::new(20, 0.3).unwrap();
         let image = |simbox: &SimBox| {
             dp.compute(DiffractionPatternInput {

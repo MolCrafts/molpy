@@ -320,7 +320,7 @@ impl Block {
     /// the producer wrote there, typically `0` or `""`), so a consumer that
     /// must tell "no value" from "zero" reads this mask beside the column.
     /// Masks travel with the block through
-    /// [`readMsgpackFrameBytes`](crate::io::frame_encoding::read_msgpack_frame_bytes).
+    /// [`readWireFrame`](crate::io::frame_encoding::read_wire_frame).
     ///
     /// # Returns
     ///
@@ -523,7 +523,7 @@ impl Block {
         let dims = shape.as_ref().map(shape_from_js).transpose()?;
         let col = column_from_js(key, &data, dims.as_deref())?;
         self.with_mut(|b| {
-            b.insert_column(key, col)
+            b.insert(key, col, None)
                 .map_err(|e| JsValue::from_str(&e.to_string()))
         })
     }
@@ -582,16 +582,16 @@ fn column_to_js(key: &str, col: &Column) -> Result<JsValue, JsValue> {
             }
         };
     }
-    typed_copy!(col.as_float(), Float64Array);
-    typed_copy!(col.as_i8(), Int8Array);
-    typed_copy!(col.as_i16(), Int16Array);
-    typed_copy!(col.as_int(), Int32Array);
-    typed_copy!(col.as_i64(), BigInt64Array);
-    typed_copy!(col.as_u8(), Uint8Array);
-    typed_copy!(col.as_u16(), Uint16Array);
-    typed_copy!(col.as_u32(), Uint32Array);
-    typed_copy!(col.as_uint(), BigUint64Array);
-    if let Some(arr) = col.as_bool() {
+    typed_copy!(col.get::<f64>(), Float64Array);
+    typed_copy!(col.get::<i8>(), Int8Array);
+    typed_copy!(col.get::<i16>(), Int16Array);
+    typed_copy!(col.get::<i32>(), Int32Array);
+    typed_copy!(col.get::<i64>(), BigInt64Array);
+    typed_copy!(col.get::<u8>(), Uint8Array);
+    typed_copy!(col.get::<u16>(), Uint16Array);
+    typed_copy!(col.get::<u32>(), Uint32Array);
+    typed_copy!(col.get::<u64>(), BigUint64Array);
+    if let Some(arr) = col.get::<bool>() {
         let value: JsValue = arr
             .iter()
             .map(|&v| JsValue::from_bool(v))
@@ -599,7 +599,7 @@ fn column_to_js(key: &str, col: &Column) -> Result<JsValue, JsValue> {
             .into();
         return Ok(stamp(value, &shape, dtype));
     }
-    if let Some(arr) = col.as_string() {
+    if let Some(arr) = col.get::<String>() {
         let value: JsValue = arr
             .iter()
             .map(|s| JsValue::from_str(s))
@@ -607,7 +607,7 @@ fn column_to_js(key: &str, col: &Column) -> Result<JsValue, JsValue> {
             .into();
         return Ok(stamp(value, &shape, dtype));
     }
-    if let Some(arr) = col.as_c64() {
+    if let Some(arr) = col.get::<num_complex::Complex<f32>>() {
         return Ok(complex_to_js(
             arr,
             dtype,
@@ -616,7 +616,7 @@ fn column_to_js(key: &str, col: &Column) -> Result<JsValue, JsValue> {
             |re| Float32Array::from(re).into(),
         ));
     }
-    if let Some(arr) = col.as_c128() {
+    if let Some(arr) = col.get::<num_complex::Complex<f64>>() {
         return Ok(complex_to_js(
             arr,
             dtype,
@@ -675,15 +675,15 @@ fn column_view(key: &str, col: &Column) -> Result<JsValue, JsValue> {
             }
         };
     }
-    typed_view!(col.as_float(), Float64Array);
-    typed_view!(col.as_i8(), Int8Array);
-    typed_view!(col.as_i16(), Int16Array);
-    typed_view!(col.as_int(), Int32Array);
-    typed_view!(col.as_i64(), BigInt64Array);
-    typed_view!(col.as_u8(), Uint8Array);
-    typed_view!(col.as_u16(), Uint16Array);
-    typed_view!(col.as_u32(), Uint32Array);
-    typed_view!(col.as_uint(), BigUint64Array);
+    typed_view!(col.get::<f64>(), Float64Array);
+    typed_view!(col.get::<i8>(), Int8Array);
+    typed_view!(col.get::<i16>(), Int16Array);
+    typed_view!(col.get::<i32>(), Int32Array);
+    typed_view!(col.get::<i64>(), BigInt64Array);
+    typed_view!(col.get::<u8>(), Uint8Array);
+    typed_view!(col.get::<u16>(), Uint16Array);
+    typed_view!(col.get::<u32>(), Uint32Array);
+    typed_view!(col.get::<u64>(), BigUint64Array);
     Err(JsValue::from_str(&format!(
         "column '{key}' is {dtype}: only numeric columns have a typed-array view; use copy()"
     )))
@@ -702,7 +702,7 @@ fn shaped<T: BlockDtype>(
             "column '{key}': shape {dims:?} does not hold {n} values"
         ))
     })?;
-    Ok(T::into_column(arr))
+    Ok(Column::from(arr))
 }
 
 /// Infer the dtype of `data` from its constructor and build the column.
@@ -846,7 +846,7 @@ impl Block {
     }
 
     /// A standalone block holding `block` (what a Rust-side reader such as
-    /// `readCsvBlockStr` returns).
+    /// `readCsvBlock` returns).
     pub(crate) fn from_rs(block: RsBlock) -> Result<Block, JsValue> {
         let arena = molrs_ffi::FrameArenaCell::default();
         let fid = arena.borrow_mut().frame_new();
@@ -861,22 +861,9 @@ impl Block {
     }
 
     /// Run `f` on the Rust block (what a Rust-side writer such as
-    /// `writeCsvBlockStr` reads).
+    /// `writeCsvBlock` reads).
     pub(crate) fn with_rs<R>(&self, f: impl FnOnce(&RsBlock) -> R) -> Result<R, JsValue> {
         self.with(f)
-    }
-
-    /// Insert a Rust-built array as column `key` (the path Rust-side
-    /// producers such as `Box.wrapToBlock` write through).
-    pub(crate) fn insert_array<T: BlockDtype>(
-        &mut self,
-        key: &str,
-        array: ArrayD<T>,
-    ) -> Result<(), JsValue> {
-        self.with_mut(|b| {
-            b.insert(key, array)
-                .map_err(|e| JsValue::from_str(&e.to_string()))
-        })
     }
 }
 
@@ -1156,7 +1143,7 @@ mod tests {
         let mut rs_atoms = RsBlock::new();
         let frag = ndarray::Array1::from_vec(vec![7_i32, 0, 0]).into_dyn();
         rs_atoms
-            .insert_nullable("frag_id", frag, vec![true, false, true])
+            .insert("frag_id", frag, Some(vec![true, false, true]))
             .unwrap();
         let mut rs_frame = molrs::core::Frame::new();
         rs_frame.insert("atoms", rs_atoms);

@@ -34,7 +34,7 @@ fn wrap_and_bank(simbox: Option<&SimBox>, state: &mut MdState) -> Array2<I> {
     let Some(bx) = simbox else {
         return Array2::zeros((state.pos.nrows(), 3));
     };
-    let (wrapped, m) = bx.wrap_shifts(state.pos.view());
+    let (wrapped, m) = bx.wrap(state.pos.view());
     state.pos = wrapped;
     state.images += &m;
     m
@@ -495,17 +495,18 @@ pub fn uniform_masses(mass: F, n: usize) -> Result<Array1<F>, MdError> {
 
 #[cfg(test)]
 mod tests {
+    use crate::core::Cell;
     use ndarray::{Array2, ArrayView2, array};
 
     use molrs::core::{NeighborList, NeighborPolicy, VerletSkin};
-    use molrs::ff::potential::{ForceTerm, Potential, Potentials};
+    use molrs::ff::potential::{Accumulator, ForceTerm, Potential, Potentials};
 
     use super::super::forces::{MicPairs, SelfPairedForces};
     use super::*;
     use molrs::ff::potential::pair::PairLjCut;
 
     fn cube(a: F) -> SimBox {
-        SimBox::cube(a, array![0.0, 0.0, 0.0], [true, true, true]).unwrap()
+        SimBox::new(Cell::Lengths([a; 3]), [0.0, 0.0, 0.0], [true, true, true]).unwrap()
     }
 
     fn soft_lj(n: usize, box_a: F) -> (PairLjCut, VerletSkin, Array2<F>) {
@@ -538,12 +539,11 @@ mod tests {
     }
 
     impl Potential for Uniform {
-        fn calc_energy_forces(&self, coords: &[F]) -> (F, Vec<F>) {
-            let mut forces = vec![0.0; coords.len()];
-            for row in forces.chunks_mut(3) {
-                row[0] = self.fx;
+        fn evaluate(&self, _coords: &[F], acc: &mut Accumulator<'_>) {
+            acc.add_energy(self.energy);
+            for row in acc.forces_without_virial().chunks_mut(3) {
+                row[0] += self.fx;
             }
-            (self.energy, forces)
         }
     }
 
@@ -845,6 +845,7 @@ mod tests {
 mod ghost_path_tests {
     use super::super::forces::{GhostPairs, MicPairs};
     use super::*;
+    use crate::core::Cell;
     use molrs::core::SimBox;
     use molrs::core::{NeighborList, NeighborPolicy, VerletSkin};
     use molrs::ff::potential::ForceTerm;
@@ -871,7 +872,7 @@ mod ghost_path_tests {
     fn crossing_a_face_does_not_disturb_the_energy() {
         let l = 12.0_f64;
         let cutoff = 5.0;
-        let bx = SimBox::cube(l, array![0.0_f64, 0.0, 0.0], [true; 3]).unwrap();
+        let bx = SimBox::new(Cell::Lengths([l; 3]), [0.0_f64, 0.0, 0.0], [true; 3]).unwrap();
 
         // Sitting a tenth of an Ångström inside the +x face, so the crossing
         // happens within the first few steps and the configuration has no time
@@ -985,7 +986,7 @@ mod ghost_path_tests {
     fn the_integrator_reports_a_virial_that_a_rigid_translation_cannot_move() {
         let l = 12.0_f64;
         let cutoff = 5.0;
-        let bx = SimBox::cube(l, array![0.0_f64, 0.0, 0.0], [true; 3]).unwrap();
+        let bx = SimBox::new(Cell::Lengths([l; 3]), [0.0_f64, 0.0, 0.0], [true; 3]).unwrap();
         let base = array![
             [11.0_f64, 11.0, 11.0],
             [3.0, 11.0, 11.0],
@@ -1002,7 +1003,7 @@ mod ghost_path_tests {
         let virial_after_one_step = |shift: F| {
             let mut pts = base.clone();
             pts.iter_mut().for_each(|x| *x += shift);
-            let (wrapped, _m) = bx.wrap_shifts(pts.view());
+            let (wrapped, _m) = bx.wrap(pts.view());
             let halo = GhostHalo::new(bx.clone(), wrapped.view(), cutoff, 0.0).unwrap();
             let mut ig = VelocityVerlet::new(
                 1.0,
@@ -1054,7 +1055,7 @@ mod ghost_path_tests {
 
         let l = 12.0_f64;
         let cutoff = 5.0;
-        let bx = SimBox::cube(l, array![0.0_f64, 0.0, 0.0], [true; 3]).unwrap();
+        let bx = SimBox::new(Cell::Lengths([l; 3]), [0.0_f64, 0.0, 0.0], [true; 3]).unwrap();
         // Every edge of this cube runs through a face, so every pair is found
         // through a periodic image and the two derivations have to work for it.
         let pos = array![

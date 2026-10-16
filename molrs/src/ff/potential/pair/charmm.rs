@@ -8,8 +8,10 @@ use crate::ff::ir::IrError;
 use crate::ff::ir::{Params, pair_key};
 use crate::ff::potential::flat_coords::validate_coords;
 use crate::ff::potential::gather_copies;
-use crate::ff::potential::pair::{atom_type_index, fold_chunks, type_pair};
-use crate::ff::potential::{CompileError, ForceTerm, PairDriven, Potential, param_reads};
+use crate::ff::potential::pair::{atom_type_index, fold_pairs, type_pair};
+use crate::ff::potential::{
+    Accumulator, CompileError, ForceTerm, PairDriven, Potential, param_reads,
+};
 use molrs::core::Frame;
 use molrs::core::Neighbors;
 use molrs::core::Virial;
@@ -89,7 +91,7 @@ pub(crate) fn lj_coeffs(epsilon: F, sigma: F) -> [F; 4] {
 /// The mixing rule of a CHARMM style: declared, or the IR's (and
 /// LAMMPS's) default [`CombiningRule::UNDECLARED`], `arithmetic`.
 pub(crate) fn charmm_mixing(style: &Params) -> Result<CombiningRule, IrError> {
-    match style.get_str("mixing") {
+    match style.get("mixing").and_then(|v| v.as_text()) {
         Some(name) => {
             CombiningRule::parse(name).map_err(|e| param_reads::bad("lj/charmm", "", "mixing", e))
         }
@@ -104,8 +106,16 @@ pub(crate) type CharmmParams = ((F, F), (F, F));
 fn charmm_row(p: &Params, key: &str) -> Result<CharmmParams, IrError> {
     let need = |k: &str| param_reads::type_num("lj/charmm", key, p, k);
     let (eps, sigma) = (need("epsilon")?, need("sigma")?);
-    let eps14 = p.get("epsilon14").map(|v| v as F).unwrap_or(eps);
-    let sigma14 = p.get("sigma14").map(|v| v as F).unwrap_or(sigma);
+    let eps14 = p
+        .get("epsilon14")
+        .and_then(|v| v.as_num())
+        .map(|v| v as F)
+        .unwrap_or(eps);
+    let sigma14 = p
+        .get("sigma14")
+        .and_then(|v| v.as_num())
+        .map(|v| v as F)
+        .unwrap_or(sigma);
     Ok(((eps, sigma), (eps14, sigma14)))
 }
 
@@ -303,7 +313,30 @@ impl PairLjCharmm {
         energy
     }
 
-    fn fold_typed(&self, out: &mut [F], factor: &[F], pairs: &Neighbors) -> (F, Virial) {
+    fn fold_typed(&self, acc: &mut Accumulator<'_>, factor: &[F], pairs: &Neighbors) {
+        if pairs.disp().is_none() || pairs.dist_sq().is_none() {
+            // No displacements, nothing priced — and no virial claimed for it.
+            acc.forces_without_virial();
+            return;
+        }
+        fold_pairs(
+            acc,
+            pairs.query_point_indices().len(),
+            |out: &mut [F], rows| self.fold_typed_rows::<false>(out, factor, pairs, rows),
+            |out: &mut [F], rows| self.fold_typed_rows::<true>(out, factor, pairs, rows),
+        );
+    }
+
+    /// One contiguous range of the table's pairs, into `out`.
+    fn fold_typed_rows<const VIRIAL: bool>(
+        &self,
+        out: &mut [F],
+        factor: &[F],
+        pairs: &Neighbors,
+        rows: std::ops::Range<usize>,
+    ) -> (F, Virial) {
+        let mut energy = 0.0;
+        let mut virial = Virial::ZERO;
         let LjSource::Typed {
             type_id,
             ntypes,
@@ -311,33 +344,31 @@ impl PairLjCharmm {
             ..
         } = &self.source
         else {
-            return (0.0, Virial::ZERO);
+            return (energy, virial);
         };
         let (Some(disp), Some(d2)) = (pairs.disp(), pairs.dist_sq()) else {
-            return (0.0, Virial::ZERO);
+            return (energy, virial);
         };
         let (ic, jc) = (pairs.query_point_indices(), pairs.point_indices());
-        fold_chunks(out, ic.len(), |acc, rows| {
-            let mut energy = 0.0;
-            let mut virial = Virial::ZERO;
-            for p in rows {
-                let w = if factor.is_empty() { 1.0 } else { factor[p] };
-                if w == 0.0 {
-                    continue;
-                }
-                let (i, j) = (ic[p] as usize, jc[p] as usize);
-                let t = type_pair(type_id[i], type_id[j], *ntypes);
-                let Some((e, fpair)) = self.eval(d2[p], &coeffs[t]) else {
-                    continue;
-                };
-                let d = [disp[[p, 0]], disp[[p, 1]], disp[[p, 2]]];
-                energy += w * e;
-                let f = w * fpair;
-                virial.add_outer([f * d[0], f * d[1], f * d[2]], d);
-                scatter(acc, i, j, f, d);
+        for p in rows {
+            let w = if factor.is_empty() { 1.0 } else { factor[p] };
+            if w == 0.0 {
+                continue;
             }
-            (energy, virial)
-        })
+            let (i, j) = (ic[p] as usize, jc[p] as usize);
+            let t = type_pair(type_id[i], type_id[j], *ntypes);
+            let Some((e, fpair)) = self.eval(d2[p], &coeffs[t]) else {
+                continue;
+            };
+            let d = [disp[[p, 0]], disp[[p, 1]], disp[[p, 2]]];
+            energy += w * e;
+            let f = w * fpair;
+            if VIRIAL {
+                virial.add_outer([f * d[0], f * d[1], f * d[2]], d);
+            }
+            scatter(out, i, j, f, d);
+        }
+        (energy, virial)
     }
 }
 
@@ -469,91 +500,88 @@ impl PairCoulCharmm {
         energy
     }
 
-    fn fold_typed(&self, out: &mut [F], factor: &[F], pairs: &Neighbors) -> (F, Virial) {
+    fn fold_typed(&self, acc: &mut Accumulator<'_>, factor: &[F], pairs: &Neighbors) {
+        if pairs.disp().is_none() || pairs.dist_sq().is_none() {
+            // No displacements, nothing priced — and no virial claimed for it.
+            acc.forces_without_virial();
+            return;
+        }
+        fold_pairs(
+            acc,
+            pairs.query_point_indices().len(),
+            |out: &mut [F], rows| self.fold_typed_rows::<false>(out, factor, pairs, rows),
+            |out: &mut [F], rows| self.fold_typed_rows::<true>(out, factor, pairs, rows),
+        );
+    }
+
+    /// One contiguous range of the table's pairs, into `out`.
+    fn fold_typed_rows<const VIRIAL: bool>(
+        &self,
+        out: &mut [F],
+        factor: &[F],
+        pairs: &Neighbors,
+        rows: std::ops::Range<usize>,
+    ) -> (F, Virial) {
+        let mut energy = 0.0;
+        let mut virial = Virial::ZERO;
         let CoulSource::PerAtom { q, .. } = &self.source else {
-            return (0.0, Virial::ZERO);
+            return (energy, virial);
         };
         let (Some(disp), Some(d2)) = (pairs.disp(), pairs.dist_sq()) else {
-            return (0.0, Virial::ZERO);
+            return (energy, virial);
         };
         let (ic, jc) = (pairs.query_point_indices(), pairs.point_indices());
-        fold_chunks(out, ic.len(), |acc, rows| {
-            let mut energy = 0.0;
-            let mut virial = Virial::ZERO;
-            for p in rows {
-                let w = if factor.is_empty() { 1.0 } else { factor[p] };
-                if w == 0.0 {
-                    continue;
-                }
-                let (i, j) = (ic[p] as usize, jc[p] as usize);
-                let Some((e, fpair)) = self.eval(d2[p], q[i] * q[j]) else {
-                    continue;
-                };
-                let d = [disp[[p, 0]], disp[[p, 1]], disp[[p, 2]]];
-                energy += w * e;
-                let f = w * fpair;
-                virial.add_outer([f * d[0], f * d[1], f * d[2]], d);
-                scatter(acc, i, j, f, d);
+        for p in rows {
+            let w = if factor.is_empty() { 1.0 } else { factor[p] };
+            if w == 0.0 {
+                continue;
             }
-            (energy, virial)
-        })
+            let (i, j) = (ic[p] as usize, jc[p] as usize);
+            let Some((e, fpair)) = self.eval(d2[p], q[i] * q[j]) else {
+                continue;
+            };
+            let d = [disp[[p, 0]], disp[[p, 1]], disp[[p, 2]]];
+            energy += w * e;
+            let f = w * fpair;
+            if VIRIAL {
+                virial.add_outer([f * d[0], f * d[1], f * d[2]], d);
+            }
+            scatter(out, i, j, f, d);
+        }
+        (energy, virial)
     }
 }
 
 macro_rules! pair_member_impls {
     ($ty:ty, $compiled:path) => {
         impl Potential for $ty {
-            fn calc_energy_forces(&self, coords: &[F]) -> (F, Vec<F>) {
-                let mut out = vec![0.0; coords.len()];
-                let energy = self.accumulate(coords, &mut out);
-                (energy, out)
-            }
-
-            fn accumulate(&self, coords: &[F], out: &mut [F]) -> F {
+            fn evaluate(&self, coords: &[F], acc: &mut Accumulator<'_>) {
                 // A typed kernel needs a pair table nobody handed over.
-                self.fold_compiled(coords, out)
-            }
-
-            fn calc_energy_forces_with_pairs(
-                &self,
-                coords: &[F],
-                pairs: &Neighbors,
-            ) -> (F, Vec<F>) {
-                let (e, f, _) = self.calc_energy_forces_with_pairs_virial(coords, pairs);
-                (e, f)
+                let energy = self.fold_compiled(coords, acc.forces_without_virial());
+                acc.add_energy(energy);
             }
         }
 
         impl PairDriven for $ty {
-            fn accumulate_pairs(
+            fn evaluate_pairs(
                 &self,
                 coords: &[F],
                 pairs: &Neighbors,
                 factor: &[F],
-                out: &mut [F],
-            ) -> (F, Option<Virial>) {
+                acc: &mut Accumulator<'_>,
+            ) {
                 if self.binds_a_fixed_pair_list() {
                     // A compiled list cannot read a per-pair weight, and a
                     // virial from its raw differences is about nothing.
                     debug_assert!(factor.is_empty());
-                    return (self.fold_compiled(coords, out), None);
+                    self.evaluate(coords, acc);
+                    return;
                 }
-                let (e, w) = self.fold_typed(out, factor, pairs);
-                (e, Some(w))
+                self.fold_typed(acc, factor, pairs);
             }
 
             fn binds_a_fixed_pair_list(&self) -> bool {
                 matches!(self.source, $compiled { .. })
-            }
-
-            fn calc_energy_forces_with_pairs_virial(
-                &self,
-                coords: &[F],
-                pairs: &Neighbors,
-            ) -> (F, Vec<F>, Option<Virial>) {
-                let mut forces = vec![0.0; coords.len()];
-                let (e, w) = self.accumulate_pairs(coords, pairs, &[], &mut forces);
-                (e, forces, w)
             }
 
             fn gather_onto_copies(&mut self, owner: &[u32]) {
@@ -596,13 +624,13 @@ fn pair_rows(frame: &Frame, who: &str) -> Result<PairRows, String> {
     let col = |k: &str| {
         block
             .get(k)
-            .and_then(|c| c.as_uint())
+            .and_then(|c| c.get::<u64>())
             .map(|c| c.iter().map(|&v| v as usize).collect::<Vec<_>>())
             .ok_or_else(|| format!("{who}: pairs block missing \"{k}\" column"))
     };
     let is_14 = block
         .get("is_14")
-        .and_then(|c| c.as_bool())
+        .and_then(|c| c.get::<bool>())
         .map(|c| c.iter().copied().collect());
     Ok((col("atomi")?, col("atomj")?, is_14))
 }
@@ -622,7 +650,7 @@ fn atom_types(frame: &Frame, who: &str) -> Result<Vec<String>, String> {
     frame
         .get(ATOMS)
         .and_then(|b| b.get("type"))
-        .and_then(|c| c.as_string())
+        .and_then(|c| c.get::<String>())
         .map(|c| c.iter().cloned().collect())
         .ok_or_else(|| format!("{who}: atoms block missing \"type\" column"))
 }
@@ -642,7 +670,14 @@ pub fn pair_lj_charmm_constructor(
     for (&i, &j) in ai.iter().zip(&aj) {
         eps_sigma.push(charmm_pair_params(&rows, mixing, &types[i], &types[j])?.0);
     }
-    let weight = row_weights(ai.len(), &is_14, style.get("lj14scale").unwrap_or(1.0));
+    let weight = row_weights(
+        ai.len(),
+        &is_14,
+        style
+            .get("lj14scale")
+            .and_then(|v| v.as_num())
+            .unwrap_or(1.0),
+    );
     let kernel = PairLjCharmm {
         switch,
         source: LjSource::Compiled {
@@ -697,7 +732,7 @@ fn charges(frame: &Frame) -> Result<Vec<F>, String> {
     frame
         .get(ATOMS)
         .and_then(|b| b.get("charge"))
-        .and_then(|c| c.as_float())
+        .and_then(|c| c.get::<f64>())
         .map(|c| c.iter().map(|&v| v as F).collect())
         .ok_or_else(|| "coul/charmm: atoms block missing \"charge\" column".to_string())
 }
@@ -713,7 +748,14 @@ pub fn pair_coul_charmm_constructor(
     let q = charges(frame)?;
     let (ai, aj, is_14) = pair_rows(frame, "coul/charmm")?;
     let qiqj = ai.iter().zip(&aj).map(|(&i, &j)| q[i] * q[j]).collect();
-    let weight = row_weights(ai.len(), &is_14, style.get("coulomb14scale").unwrap_or(1.0));
+    let weight = row_weights(
+        ai.len(),
+        &is_14,
+        style
+            .get("coulomb14scale")
+            .and_then(|v| v.as_num())
+            .unwrap_or(1.0),
+    );
     let kernel = PairCoulCharmm {
         switch,
         k,
@@ -748,6 +790,7 @@ pub fn pair_coul_charmm_typed_constructor(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ff::potential::fixtures::OneShot;
     use crate::ff::potential::pair::fixtures::{
         assert_same, assert_virial_matches_forces, table_over,
     };
@@ -780,7 +823,7 @@ mod tests {
             PairLjCharmm::compiled(ri, rc, vec![0], vec![1], &[(eps, sigma)], vec![1.0]).unwrap();
         for r in [3.0, 3.9, 4.5, 5.2, 5.99, 6.0, 7.0] {
             let want = lj(eps, sigma, r) * s(r, ri, rc);
-            let got = k.calc_energy(&two(r));
+            let got = k.energy_at(&two(r));
             assert!(
                 (got - want).abs() <= 1e-13 * want.abs().max(1e-12),
                 "r = {r}: {got} vs {want}"
@@ -793,9 +836,9 @@ mod tests {
         let k =
             PairLjCharmm::compiled(4.0, 6.0, vec![0], vec![1], &[(0.2, 3.1)], vec![0.7]).unwrap();
         for r in [3.3, 4.6, 5.5] {
-            let (_, f) = k.calc_energy_forces(&two(r));
+            let (_, f) = k.energy_forces_at(&two(r));
             let h = 1e-6;
-            let fd = -(k.calc_energy(&two(r + h)) - k.calc_energy(&two(r - h))) / (2.0 * h);
+            let fd = -(k.energy_at(&two(r + h)) - k.energy_at(&two(r - h))) / (2.0 * h);
             assert!((f[3] - fd).abs() < 1e-7, "r = {r}: {} vs {fd}", f[3]);
             assert!((f[0] + f[3]).abs() < 1e-12);
         }
@@ -807,7 +850,7 @@ mod tests {
         let pot =
             PairCoulCharmm::compiled(ri, rc, k, vec![0], vec![1], vec![qq], vec![1.0]).unwrap();
         for r in [2.5, 4.5, 5.5, 6.5] {
-            let (e, f) = pot.calc_energy_forces(&two(r));
+            let (e, f) = pot.energy_forces_at(&two(r));
             let sw = s(r, ri, rc);
             let want = k * qq / r * sw;
             assert!(
@@ -820,15 +863,15 @@ mod tests {
         }
         // Inside `inner` the force is the gradient.
         let h = 1e-6;
-        let fd = -(pot.calc_energy(&two(3.0 + h)) - pot.calc_energy(&two(3.0 - h))) / (2.0 * h);
-        assert!((pot.calc_energy_forces(&two(3.0)).1[3] - fd).abs() < 1e-7);
+        let fd = -(pot.energy_at(&two(3.0 + h)) - pot.energy_at(&two(3.0 - h))) / (2.0 * h);
+        assert!((pot.energy_forces_at(&two(3.0)).1[3] - fd).abs() < 1e-7);
     }
 
     #[test]
     fn inner_must_be_below_the_cutoff() {
         assert!(PairCoulCharmm::typed(6.0, 6.0, 1.0, vec![]).is_err());
         assert!(PairLjCharmm::typed(7.0, 6.0, vec![], &[(0.1, 3.0)]).is_err());
-        let style = Params::from_pairs(&[("cutoff", 10.0)]);
+        let style = Params::from_iter([("cutoff", 10.0)]);
         let err = switch_of(&style, "lj/charmm").unwrap_err();
         assert_eq!(
             err,
@@ -875,31 +918,27 @@ mod tests {
         let nb = table_over(&coords, &links);
         assert_same(
             "lj/charmm",
-            lj_c.calc_energy_forces(&coords),
-            lj_t.calc_energy_forces_with_pairs(&coords, &nb),
+            lj_c.energy_forces_at(&coords),
+            lj_t.over_pairs(&coords, &nb),
         );
         assert_same(
             "coul/charmm",
-            co_c.calc_energy_forces(&coords),
-            co_t.calc_energy_forces_with_pairs(&coords, &nb),
+            co_c.energy_forces_at(&coords),
+            co_t.over_pairs(&coords, &nb),
         );
-        assert_virial_matches_forces(
-            "lj/charmm",
-            &coords,
-            lj_t.calc_energy_forces_with_pairs_virial(&coords, &nb),
-        );
+        assert_virial_matches_forces("lj/charmm", &coords, lj_t.over_pairs_virial(&coords, &nb));
     }
 
     #[test]
     fn epsilon14_mixes_like_epsilon_and_a_cross_row_wins() {
-        let a = Params::from_pairs(&[
+        let a = Params::from_iter([
             ("epsilon", 0.1),
             ("sigma", 3.0),
             ("epsilon14", 0.05),
             ("sigma14", 2.8),
         ]);
-        let b = Params::from_pairs(&[("epsilon", 0.4), ("sigma", 3.6)]);
-        let ab = Params::from_pairs(&[("epsilon", 0.9), ("sigma", 2.0)]);
+        let b = Params::from_iter([("epsilon", 0.4), ("sigma", 3.6)]);
+        let ab = Params::from_iter([("epsilon", 0.9), ("sigma", 2.0)]);
         let key = pair_key("A", "B").unwrap();
         let mut rows: HashMap<&str, &Params> = HashMap::new();
         rows.insert("A", &a);

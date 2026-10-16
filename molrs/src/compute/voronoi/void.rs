@@ -87,7 +87,7 @@ impl Compute for VoronoiVoidAnalysis {
         // connected-components (BFS) facility instead of a local union-find:
         // only void cells are linked; non-void cells stay isolated and never
         // contribute.
-        let mut topo = Topology::with_atoms(n);
+        let mut edges = Vec::new();
         for (i, &vi) in is_void.iter().enumerate() {
             if !vi {
                 continue;
@@ -95,10 +95,12 @@ impl Compute for VoronoiVoidAnalysis {
             for j in cells.neighbors(i) {
                 let j = j as usize;
                 if j < n && j > i && is_void[j] {
-                    topo.add_bond(i, j);
+                    edges.push([i, j]);
                 }
             }
         }
+        let mut topo = Topology::with_atoms(n);
+        topo.add_bonds(&edges);
         let component_of = topo.connected_components();
 
         // Cavity ids are contiguous 0-based component labels, so flat `Vec`s

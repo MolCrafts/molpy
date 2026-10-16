@@ -218,7 +218,7 @@ fn explicit_terms(
         };
         if style_level {
             match v.cast::<PyString>() {
-                Ok(s) => style_params.set_str(&key, s.to_str()?),
+                Ok(s) => style_params.set(&key, s.to_str()?),
                 Err(_) => style_params.set(&key, v.extract::<F>()?),
             }
             continue;
@@ -235,8 +235,8 @@ fn explicit_terms(
             for (key, col) in &columns {
                 match col {
                     Column::Num(c) => row.set(key, c[t]),
-                    Column::Array(c) => row.set_array(key, c[t].clone()),
-                    Column::Text(c) => row.set_str(key, &c[t]),
+                    Column::Array(c) => row.set(key, c[t].clone()),
+                    Column::Text(c) => row.set(key, &c[t]),
                 }
             }
             terms = terms.term(atoms, row);

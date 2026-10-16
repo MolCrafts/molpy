@@ -78,7 +78,7 @@ impl MolGraph {
     pub fn translate(&mut self, delta: [f64; 3]) {
         let table = self.node_table_mut();
         for (i, key) in keys::COORDS.iter().enumerate() {
-            if let Ok((data, valid)) = table.column_f64_mut(key) {
+            if let Ok((data, valid)) = table.column_mut::<f64>(key) {
                 for (row, val) in data.iter_mut().enumerate() {
                     if valid.get(row) {
                         *val += delta[i];
@@ -99,7 +99,7 @@ impl MolGraph {
         let origin = about.unwrap_or([0.0, 0.0, 0.0]);
         let table = self.node_table_mut();
         for (i, key) in keys::COORDS.iter().enumerate() {
-            if let Ok((data, valid)) = table.column_f64_mut(key) {
+            if let Ok((data, valid)) = table.column_mut::<f64>(key) {
                 for (row, val) in data.iter_mut().enumerate() {
                     if valid.get(row) {
                         *val = (*val - origin[i]) * factor[i] + origin[i];
@@ -145,15 +145,15 @@ impl MolGraph {
         // Rows missing any coordinate keep their original value (identity write).
         let (nx, ny, nz) = {
             // A graph without a coordinate column has nothing to rotate.
-            let (x, vx) = match table.column_f64(keys::X) {
+            let (x, vx) = match table.column::<f64>(keys::X) {
                 Ok(t) => t,
                 Err(_) => return Ok(()),
             };
-            let (y, vy) = match table.column_f64(keys::Y) {
+            let (y, vy) = match table.column::<f64>(keys::Y) {
                 Ok(t) => t,
                 Err(_) => return Ok(()),
             };
-            let (z, vz) = match table.column_f64(keys::Z) {
+            let (z, vz) = match table.column::<f64>(keys::Z) {
                 Ok(t) => t,
                 Err(_) => return Ok(()),
             };
@@ -171,17 +171,17 @@ impl MolGraph {
 
         // Safe: columns exist (checked above) and lengths are unchanged.
         table
-            .column_f64_mut(keys::X)
+            .column_mut::<f64>(keys::X)
             .unwrap()
             .0
             .copy_from_slice(&nx);
         table
-            .column_f64_mut(keys::Y)
+            .column_mut::<f64>(keys::Y)
             .unwrap()
             .0
             .copy_from_slice(&ny);
         table
-            .column_f64_mut(keys::Z)
+            .column_mut::<f64>(keys::Z)
             .unwrap()
             .0
             .copy_from_slice(&nz);
@@ -237,11 +237,12 @@ impl MolGraph {
     /// ```
     /// use molrs::core::MolGraph;
     /// use molrs::core::keys;
+    /// use molrs::props;
     ///
     /// let mut mol = MolGraph::new();
     /// let mut ids = Vec::new();
     /// for (x, mass) in [(0.0, 1.0), (4.0, 3.0)] {
-    ///     let id = mol.add_node();
+    ///     let id = mol.add_node(props! {}).unwrap();
     ///     let props = [(keys::X, x), (keys::Y, 0.0), (keys::Z, 0.0), (keys::MASS, mass)];
     ///     for (key, value) in props {
     ///         mol.set_node(id, key, value).unwrap();
@@ -258,8 +259,8 @@ impl MolGraph {
         let table = self.node_table();
         // Each dense column is looked up once; an absent (or non-f64) column
         // reads as "missing" for every node.
-        let coords = keys::COORDS.map(|key| table.column_f64(key).ok());
-        let mass = table.column_f64(keys::MASS).ok();
+        let coords = keys::COORDS.map(|key| table.column::<f64>(key).ok());
+        let mass = table.column::<f64>(keys::MASS).ok();
 
         let mut points = Vec::with_capacity(nodes.len());
         let mut masses = Vec::with_capacity(nodes.len());
@@ -291,6 +292,9 @@ impl MolGraph {
 mod tests {
     use super::*;
     use crate::core::Atomistic;
+    use crate::core::Element;
+    use crate::core::keys;
+    use crate::props;
 
     #[test]
     fn rotating_about_an_axis_with_no_direction_is_an_error() {
@@ -300,10 +304,17 @@ mod tests {
             [f64::INFINITY, 0.0, 0.0],
         ] {
             let mut mol = Atomistic::new();
-            let atom = mol.add_atom_xyz("C", 1.0, 2.0, 3.0);
-            let result = mol.as_molgraph_mut().rotate(axis, 1.0, None);
+            let atom = mol
+                .add_atom(props! {
+                    keys::ATOMIC_NUMBER => Element::C,
+                    keys::X => 1.0,
+                    keys::Y => 2.0,
+                    keys::Z => 3.0,
+                })
+                .unwrap();
+            let result = mol.rotate(axis, 1.0, None);
             assert!(result.is_err(), "axis {axis:?} was accepted");
-            let node = mol.as_molgraph().get_node(atom).unwrap();
+            let node = mol.get_atom(atom).unwrap();
             let position = [keys::X, keys::Y, keys::Z].map(|key| node.get_f64(key).unwrap());
             assert_eq!(position, [1.0, 2.0, 3.0], "axis {axis:?} moved the atom");
         }
@@ -313,7 +324,7 @@ mod tests {
 
     /// A node carrying exactly the `f64` properties in `props`.
     fn node_with(mol: &mut MolGraph, props: &[(&str, f64)]) -> NodeId {
-        let id = mol.add_node();
+        let id = mol.add_node(props! {}).unwrap();
         for &(key, value) in props {
             mol.set_node(id, key, value).unwrap();
         }
@@ -378,7 +389,7 @@ mod tests {
         let mut mol = MolGraph::new();
         let kept = massive(&mut mol, [0.0, 0.0, 0.0], 1.0);
         let removed = massive(&mut mol, [4.0, 0.0, 0.0], 3.0);
-        mol.remove_nodes(&[removed]).unwrap();
+        mol.del_nodes(&[removed]).unwrap();
         assert_eq!(
             mol.center(&[kept, removed]),
             Err(CenterError::NotFound { node: removed })
@@ -407,7 +418,7 @@ mod tests {
         );
 
         // Lacking both position and mass: position is checked first.
-        let bare = mol.add_node();
+        let bare = mol.add_node(props! {}).unwrap();
         assert_eq!(
             mol.center(&[good, bare]),
             Err(CenterError::BadPosition { node: bare })

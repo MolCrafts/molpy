@@ -5,6 +5,7 @@
 //! Zarr V3 arrays/groups, always relative to a caller-supplied path prefix.
 
 #[cfg(feature = "zarr")]
+use crate::core::Cell;
 use zarrs::array::codec::bytes_to_bytes::crc32c::Crc32cCodec;
 use zarrs::array::data_type::{
     BoolDataType, Complex64DataType, Complex128DataType, Float16DataType, Float32DataType,
@@ -377,67 +378,67 @@ where
         )))
     } else if dt.is::<Float64DataType>() {
         let data: Vec<f64> = arr.retrieve_array_subset(subset)?;
-        Ok(Column::from_float(
+        Ok(Column::from(
             ArrayD::from_shape_vec(shape, data).map_err(shape_err)?,
         ))
     } else if dt.is::<Int8DataType>() {
         let data: Vec<i8> = arr.retrieve_array_subset(subset)?;
-        Ok(Column::from_i8(
+        Ok(Column::from(
             ArrayD::from_shape_vec(shape, data).map_err(shape_err)?,
         ))
     } else if dt.is::<Int16DataType>() {
         let data: Vec<i16> = arr.retrieve_array_subset(subset)?;
-        Ok(Column::from_i16(
+        Ok(Column::from(
             ArrayD::from_shape_vec(shape, data).map_err(shape_err)?,
         ))
     } else if dt.is::<Int32DataType>() {
         let data: Vec<i32> = arr.retrieve_array_subset(subset)?;
-        Ok(Column::from_int(
+        Ok(Column::from(
             ArrayD::from_shape_vec(shape, data).map_err(shape_err)?,
         ))
     } else if dt.is::<Int64DataType>() {
         let data: Vec<i64> = arr.retrieve_array_subset(subset)?;
-        Ok(Column::from_i64(
+        Ok(Column::from(
             ArrayD::from_shape_vec(shape, data).map_err(shape_err)?,
         ))
     } else if dt.is::<UInt16DataType>() {
         let data: Vec<u16> = arr.retrieve_array_subset(subset)?;
-        Ok(Column::from_u16(
+        Ok(Column::from(
             ArrayD::from_shape_vec(shape, data).map_err(shape_err)?,
         ))
     } else if dt.is::<UInt32DataType>() {
         let data: Vec<u32> = arr.retrieve_array_subset(subset)?;
-        Ok(Column::from_u32(
+        Ok(Column::from(
             ArrayD::from_shape_vec(shape, data).map_err(shape_err)?,
         ))
     } else if dt.is::<UInt64DataType>() {
         let data: Vec<u64> = arr.retrieve_array_subset(subset)?;
-        Ok(Column::from_uint(
+        Ok(Column::from(
             ArrayD::from_shape_vec(shape, data).map_err(shape_err)?,
         ))
     } else if dt.is::<BoolDataType>() {
         let data: Vec<bool> = arr.retrieve_array_subset(subset)?;
-        Ok(Column::from_bool(
+        Ok(Column::from(
             ArrayD::from_shape_vec(shape, data).map_err(shape_err)?,
         ))
     } else if dt.is::<UInt8DataType>() {
         let data: Vec<u8> = arr.retrieve_array_subset(subset)?;
-        Ok(Column::from_u8(
+        Ok(Column::from(
             ArrayD::from_shape_vec(shape, data).map_err(shape_err)?,
         ))
     } else if dt.is::<StringDataType>() {
         let data: Vec<String> = arr.retrieve_array_subset(subset)?;
-        Ok(Column::from_string(
+        Ok(Column::from(
             ArrayD::from_shape_vec(shape, data).map_err(shape_err)?,
         ))
     } else if dt.is::<Complex64DataType>() {
         let data: Vec<num_complex::Complex<f32>> = arr.retrieve_array_subset(subset)?;
-        Ok(Column::from_c64(
+        Ok(Column::from(
             ArrayD::from_shape_vec(shape, data).map_err(shape_err)?,
         ))
     } else if dt.is::<Complex128DataType>() {
         let data: Vec<num_complex::Complex<f64>> = arr.retrieve_array_subset(subset)?;
-        Ok(Column::from_c128(
+        Ok(Column::from(
             ArrayD::from_shape_vec(shape, data).map_err(shape_err)?,
         ))
     } else {
@@ -448,7 +449,7 @@ where
 /// Insert a column read from a store into `block`.
 ///
 /// The store read path is strict where the in-memory API is lenient:
-/// [`Block::insert_column`] admits a canonical key at another width of its
+/// [`Block::insert`] admits a canonical key at another width of its
 /// family (and widens a narrow unsigned identifier to `u64`), but a store
 /// that holds a canonical key at any dtype but its declared one is refused
 /// here (see [`check_canonical_dtype`]) rather than silently converted.
@@ -459,7 +460,7 @@ pub(crate) fn insert_column_into_block(
 ) -> Result<(), MolRsError> {
     check_canonical_dtype(name, col.dtype())?;
     // Zero-copy insert: hand the Arc-backed Column directly to the Block.
-    block.insert_column(name, col).map_err(MolRsError::Block)
+    block.insert(name, col, None).map_err(MolRsError::Block)
 }
 
 /// Refuse a canonical key (every key of the schema tables: `x` `f64`, `ix`
@@ -525,15 +526,15 @@ pub(crate) fn canonical_width(name: &str, col: &Column) -> Result<Option<Column>
         ArrayD::from_shape_vec(values.shape(), out).map_err(shape_err)
     }
     let converted = match (spec.dtype, col) {
-        (DType::Int, Column::I8(h)) => Column::from_int(h.array().mapv(i32::from)),
-        (DType::Int, Column::I16(h)) => Column::from_int(h.array().mapv(i32::from)),
-        (DType::Int, Column::I64(h)) => Column::from_int(narrow::<i64, i32>(name, h.array())?),
-        (DType::I64, Column::I8(h)) => Column::from_i64(h.array().mapv(i64::from)),
-        (DType::I64, Column::I16(h)) => Column::from_i64(h.array().mapv(i64::from)),
-        (DType::I64, Column::Int(h)) => Column::from_i64(h.array().mapv(i64::from)),
-        (DType::Uint, Column::U8(h)) => Column::from_uint(h.array().mapv(u64::from)),
-        (DType::Uint, Column::U16(h)) => Column::from_uint(h.array().mapv(u64::from)),
-        (DType::Uint, Column::U32(h)) => Column::from_uint(h.array().mapv(u64::from)),
+        (DType::Int, Column::I8(h)) => Column::from(h.array().mapv(i32::from)),
+        (DType::Int, Column::I16(h)) => Column::from(h.array().mapv(i32::from)),
+        (DType::Int, Column::I64(h)) => Column::from(narrow::<i64, i32>(name, h.array())?),
+        (DType::I64, Column::I8(h)) => Column::from(h.array().mapv(i64::from)),
+        (DType::I64, Column::I16(h)) => Column::from(h.array().mapv(i64::from)),
+        (DType::I64, Column::Int(h)) => Column::from(h.array().mapv(i64::from)),
+        (DType::Uint, Column::U8(h)) => Column::from(h.array().mapv(u64::from)),
+        (DType::Uint, Column::U16(h)) => Column::from(h.array().mapv(u64::from)),
+        (DType::Uint, Column::U32(h)) => Column::from(h.array().mapv(u64::from)),
         (expected, other) => {
             return Err(MolRsError::zarr(format!(
                 "column {name:?} is {}; the canonical key {name:?} is stored as {}",
@@ -607,15 +608,14 @@ pub(crate) fn write_simbox(
 
     // vectors: [3,3] Float64 — lattice vectors are the COLUMNS, per contract.
     // Geometry stays f64 to match the in-memory science contract.
-    let h_view = simbox.h_view();
-    let h_data: Vec<F> = h_view.iter().copied().collect();
+    let h_data: Vec<F> = simbox.matrix().as_flattened().to_vec();
     write_f64_array(store, &format!("{}/vectors", prefix), &[3, 3], &h_data)?;
 
     // origin: [3] Float64, written only when it carries information (the
     // normative default is the coordinate origin).
-    let origin_view = simbox.origin_view();
-    if origin_view.iter().any(|&v| v != 0.0) {
-        let origin_data: Vec<F> = origin_view.iter().copied().collect();
+    let origin = simbox.origin();
+    if origin.iter().any(|&v| v != 0.0) {
+        let origin_data: Vec<F> = origin.to_vec();
         write_f64_array(store, &format!("{}/origin", prefix), &[3], &origin_data)?;
     }
 
@@ -628,7 +628,7 @@ pub(crate) fn write_simbox(
         write_column(
             store,
             &format!("{}/boundary", prefix),
-            &Column::from_bool(flags),
+            &Column::from(flags),
             None,
         )?;
     }
@@ -636,12 +636,10 @@ pub(crate) fn write_simbox(
     Ok(())
 }
 
-pub(crate) fn read_simbox(
-    store: &ReadableWritableListableStorage,
-    prefix: &str,
-) -> Result<SimBox, MolRsError> {
-    use ndarray::{Array2, array};
-
+pub(crate) fn read_simbox<S>(store: &Arc<S>, prefix: &str) -> Result<SimBox, MolRsError>
+where
+    S: ?Sized + ReadableStorageTraits + ListableStorageTraits + 'static,
+{
     let group = zarrs::group::Group::open(store.clone(), prefix)?;
 
     // `cell_defined` is optional and only ever written when false, so absent
@@ -654,7 +652,7 @@ pub(crate) fn read_simbox(
 
     // An undefined cell's `vectors` mean nothing, so they are not read:
     // whatever a store holds there (zeros included) is accepted, never
-    // inverted, and `SimBox::new_cell` carries the identity instead.
+    // inverted, and `Cell::Undefined` carries the identity instead.
     let h = if cell_defined {
         // Narrow float arrays are refused; see `read_simbox_float_path`.
         let vectors_path = format!("{}/vectors", prefix);
@@ -667,9 +665,10 @@ pub(crate) fn read_simbox(
                 h_data.len()
             )));
         }
-        Array2::from_shape_vec((3, 3), h_data).map_err(shape_err)?
+        std::array::from_fn(|r| std::array::from_fn(|c| h_data[3 * r + c]))
     } else {
-        Array2::eye(3)
+        // Never read: an undefined cell is `Cell::Undefined`.
+        [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]
     };
 
     // An absent `origin` array is the zero origin: molrec's codec omits it for
@@ -683,7 +682,7 @@ pub(crate) fn read_simbox(
             o_data.len()
         )));
     }
-    let origin = array![o_data[0], o_data[1], o_data[2]];
+    let origin = [o_data[0], o_data[1], o_data[2]];
 
     // Boundary flags are a `bool[3]` array. An absent array is fully
     // periodic on a defined cell -- the normative default; reading it as
@@ -720,8 +719,16 @@ pub(crate) fn read_simbox(
     };
     let pbc = resolve_boundary(stored, cell_defined, prefix)?;
 
-    SimBox::new_cell(h, origin, pbc, cell_defined)
-        .map_err(|e| MolRsError::zarr(format!("invalid box: {:?}", e)))
+    SimBox::new(
+        if cell_defined {
+            Cell::Matrix(h)
+        } else {
+            Cell::Undefined
+        },
+        origin,
+        pbc,
+    )
+    .map_err(|e| MolRsError::zarr(format!("invalid box: {:?}", e)))
 }
 
 /// Read a simbox float array as `Vec<F>` (narrow float arrays are refused —
@@ -730,10 +737,10 @@ pub(crate) fn read_simbox(
 /// Absence is reported to the caller instead of being raised, because the
 /// optional parts of a cell are absent on purpose; every *other* way of failing
 /// to open the array is still an error.
-fn read_simbox_float_path(
-    store: &ReadableWritableListableStorage,
-    path: &str,
-) -> Result<Option<Vec<F>>, MolRsError> {
+fn read_simbox_float_path<S>(store: &Arc<S>, path: &str) -> Result<Option<Vec<F>>, MolRsError>
+where
+    S: ?Sized + ReadableStorageTraits + 'static,
+{
     let arr = match Array::open(store.clone(), path) {
         Ok(arr) => arr,
         Err(zarrs::array::ArrayCreateError::MissingMetadata) => return Ok(None),
@@ -941,7 +948,7 @@ fn write_validity_group(
         write_column(
             store,
             &format!("{}/{}", group_path, column),
-            &Column::from_bool(flags),
+            &Column::from(flags),
             None,
         )?;
     }
@@ -949,10 +956,10 @@ fn write_validity_group(
 }
 
 /// Read one [`Frame`] back from a Zarr group written by [`write_frame_group`].
-pub(crate) fn read_frame_group(
-    store: &ReadableWritableListableStorage,
-    prefix: &str,
-) -> Result<Frame, MolRsError> {
+pub(crate) fn read_frame_group<S>(store: &Arc<S>, prefix: &str) -> Result<Frame, MolRsError>
+where
+    S: ?Sized + ReadableStorageTraits + ListableStorageTraits + 'static,
+{
     let mut frame = Frame::new();
 
     // Meta lives in this group's own attributes.
@@ -1166,7 +1173,7 @@ pub(crate) fn check_declared_references(
                 }
                 continue;
             };
-            let Some(values) = block.get(column).and_then(|c| c.as_uint()) else {
+            let Some(values) = block.get(column).and_then(|c| c.get::<u64>()) else {
                 continue;
             };
             let mask = block.validity(column);
@@ -1307,8 +1314,9 @@ pub(crate) fn join_path(prefix: &str, child: &str) -> String {
 #[cfg(all(test, feature = "filesystem"))]
 mod tests {
     use super::*;
+    use crate::core::Cell;
     use molrs::core::DType;
-    use ndarray::array;
+
     use num_complex::Complex;
     use std::ffi::OsStr;
     use std::num::NonZeroU64;
@@ -1335,7 +1343,7 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let store = storage_in(&dir);
         let mut block = Block::new();
-        block.insert_column(COLUMN, col).unwrap();
+        block.insert(COLUMN, col, None).unwrap();
         let mut frame = Frame::new();
         frame.insert(BLOCK, block);
         write_frame_group(&store, FRAME, &frame).unwrap();
@@ -1353,12 +1361,12 @@ mod tests {
     #[test]
     fn f64_column_round_trips_at_arrival_width() {
         let values = vec![1.0f64, -2.5, 1.0e-300, f64::MAX];
-        let back = round_trip_column(Column::from_float(
+        let back = round_trip_column(Column::from(
             ArrayD::from_shape_vec(vec![4], values.clone()).unwrap(),
         ));
         assert_eq!(back.dtype(), DType::Float);
         assert_eq!(
-            *back.as_float().unwrap(),
+            *back.get::<f64>().unwrap(),
             ArrayD::from_shape_vec(vec![4], values).unwrap()
         );
     }
@@ -1366,12 +1374,12 @@ mod tests {
     #[test]
     fn i8_column_round_trips_at_arrival_width() {
         let values = vec![i8::MIN, -1, 0, i8::MAX];
-        let back = round_trip_column(Column::from_i8(
+        let back = round_trip_column(Column::from(
             ArrayD::from_shape_vec(vec![4], values.clone()).unwrap(),
         ));
         assert_eq!(back.dtype(), DType::I8);
         assert_eq!(
-            *back.as_i8().unwrap(),
+            *back.get::<i8>().unwrap(),
             ArrayD::from_shape_vec(vec![4], values).unwrap()
         );
     }
@@ -1383,15 +1391,15 @@ mod tests {
         for (key, column) in [
             (
                 "atomi",
-                Column::from_u32(ArrayD::from_shape_vec(vec![2], vec![0u32, 1]).unwrap()),
+                Column::from(ArrayD::from_shape_vec(vec![2], vec![0u32, 1]).unwrap()),
             ),
             (
                 "type_id",
-                Column::from_u8(ArrayD::from_shape_vec(vec![2], vec![0u8, 1]).unwrap()),
+                Column::from(ArrayD::from_shape_vec(vec![2], vec![0u8, 1]).unwrap()),
             ),
             (
                 "bond_type",
-                Column::from_u16(ArrayD::from_shape_vec(vec![2], vec![1u16, 4]).unwrap()),
+                Column::from(ArrayD::from_shape_vec(vec![2], vec![1u16, 4]).unwrap()),
             ),
         ] {
             let dir = TempDir::new().unwrap();
@@ -1429,9 +1437,10 @@ mod tests {
         // In memory the same insert widens to u64.
         let mut block = Block::new();
         block
-            .insert_column(
+            .insert(
                 "atomi",
-                Column::from_u32(ArrayD::from_shape_vec(vec![1], vec![7u32]).unwrap()),
+                Column::from(ArrayD::from_shape_vec(vec![1], vec![7u32]).unwrap()),
+                None,
             )
             .unwrap();
         assert_eq!(block.get("atomi").unwrap().dtype(), DType::Uint);
@@ -1440,12 +1449,12 @@ mod tests {
     #[test]
     fn i16_column_round_trips_at_arrival_width() {
         let values = vec![i16::MIN, -1, 0, i16::MAX];
-        let back = round_trip_column(Column::from_i16(
+        let back = round_trip_column(Column::from(
             ArrayD::from_shape_vec(vec![4], values.clone()).unwrap(),
         ));
         assert_eq!(back.dtype(), DType::I16);
         assert_eq!(
-            *back.as_i16().unwrap(),
+            *back.get::<i16>().unwrap(),
             ArrayD::from_shape_vec(vec![4], values).unwrap()
         );
     }
@@ -1453,12 +1462,12 @@ mod tests {
     #[test]
     fn i32_column_round_trips_at_arrival_width() {
         let values = vec![i32::MIN, -1, 0, i32::MAX];
-        let back = round_trip_column(Column::from_int(
+        let back = round_trip_column(Column::from(
             ArrayD::from_shape_vec(vec![4], values.clone()).unwrap(),
         ));
         assert_eq!(back.dtype(), DType::Int);
         assert_eq!(
-            *back.as_int().unwrap(),
+            *back.get::<i32>().unwrap(),
             ArrayD::from_shape_vec(vec![4], values).unwrap()
         );
     }
@@ -1466,12 +1475,12 @@ mod tests {
     #[test]
     fn i64_column_round_trips_at_arrival_width() {
         let values = vec![i64::MIN, -1, 0, i64::MAX];
-        let back = round_trip_column(Column::from_i64(
+        let back = round_trip_column(Column::from(
             ArrayD::from_shape_vec(vec![4], values.clone()).unwrap(),
         ));
         assert_eq!(back.dtype(), DType::I64);
         assert_eq!(
-            *back.as_i64().unwrap(),
+            *back.get::<i64>().unwrap(),
             ArrayD::from_shape_vec(vec![4], values).unwrap()
         );
     }
@@ -1479,12 +1488,12 @@ mod tests {
     #[test]
     fn u8_column_round_trips_at_arrival_width() {
         let values = vec![0u8, 1, 128, u8::MAX];
-        let back = round_trip_column(Column::from_u8(
+        let back = round_trip_column(Column::from(
             ArrayD::from_shape_vec(vec![4], values.clone()).unwrap(),
         ));
         assert_eq!(back.dtype(), DType::U8);
         assert_eq!(
-            *back.as_u8().unwrap(),
+            *back.get::<u8>().unwrap(),
             ArrayD::from_shape_vec(vec![4], values).unwrap()
         );
     }
@@ -1492,12 +1501,12 @@ mod tests {
     #[test]
     fn u16_column_round_trips_at_arrival_width() {
         let values = vec![0u16, 1, 40000, u16::MAX];
-        let back = round_trip_column(Column::from_u16(
+        let back = round_trip_column(Column::from(
             ArrayD::from_shape_vec(vec![4], values.clone()).unwrap(),
         ));
         assert_eq!(back.dtype(), DType::U16);
         assert_eq!(
-            *back.as_u16().unwrap(),
+            *back.get::<u16>().unwrap(),
             ArrayD::from_shape_vec(vec![4], values).unwrap()
         );
     }
@@ -1505,12 +1514,12 @@ mod tests {
     #[test]
     fn u32_column_round_trips_at_arrival_width() {
         let values = vec![0u32, 1, 3_000_000_000, u32::MAX];
-        let back = round_trip_column(Column::from_u32(
+        let back = round_trip_column(Column::from(
             ArrayD::from_shape_vec(vec![4], values.clone()).unwrap(),
         ));
         assert_eq!(back.dtype(), DType::U32);
         assert_eq!(
-            *back.as_u32().unwrap(),
+            *back.get::<u32>().unwrap(),
             ArrayD::from_shape_vec(vec![4], values).unwrap()
         );
     }
@@ -1518,12 +1527,12 @@ mod tests {
     #[test]
     fn u64_column_round_trips_at_arrival_width() {
         let values = vec![0u64, 1, 9_007_199_254_740_993, u64::MAX];
-        let back = round_trip_column(Column::from_uint(
+        let back = round_trip_column(Column::from(
             ArrayD::from_shape_vec(vec![4], values.clone()).unwrap(),
         ));
         assert_eq!(back.dtype(), DType::Uint);
         assert_eq!(
-            *back.as_uint().unwrap(),
+            *back.get::<u64>().unwrap(),
             ArrayD::from_shape_vec(vec![4], values).unwrap()
         );
     }
@@ -1531,12 +1540,12 @@ mod tests {
     #[test]
     fn bool_column_round_trips_at_arrival_width() {
         let values = vec![true, false, true, true];
-        let back = round_trip_column(Column::from_bool(
+        let back = round_trip_column(Column::from(
             ArrayD::from_shape_vec(vec![4], values.clone()).unwrap(),
         ));
         assert_eq!(back.dtype(), DType::Bool);
         assert_eq!(
-            *back.as_bool().unwrap(),
+            *back.get::<bool>().unwrap(),
             ArrayD::from_shape_vec(vec![4], values).unwrap()
         );
     }
@@ -1549,12 +1558,12 @@ mod tests {
             "Ω".to_string(),
             "x y".to_string(),
         ];
-        let back = round_trip_column(Column::from_string(
+        let back = round_trip_column(Column::from(
             ArrayD::from_shape_vec(vec![4], values.clone()).unwrap(),
         ));
         assert_eq!(back.dtype(), DType::String);
         assert_eq!(
-            *back.as_string().unwrap(),
+            *back.get::<String>().unwrap(),
             ArrayD::from_shape_vec(vec![4], values).unwrap()
         );
     }
@@ -1567,12 +1576,12 @@ mod tests {
             Complex::new(-0.125f32, 65536.0f32),
             Complex::new(3.4028235e38f32, 1.1754944e-38f32),
         ];
-        let back = round_trip_column(Column::from_c64(
+        let back = round_trip_column(Column::from(
             ArrayD::from_shape_vec(vec![4], values.clone()).unwrap(),
         ));
         assert_eq!(back.dtype(), DType::C64);
         assert_eq!(
-            *back.as_c64().unwrap(),
+            *back.get::<num_complex::Complex<f32>>().unwrap(),
             ArrayD::from_shape_vec(vec![4], values).unwrap()
         );
     }
@@ -1585,12 +1594,12 @@ mod tests {
             Complex::new(-0.125f64, 65536.0f64),
             Complex::new(f64::MAX, 1.0e-300f64),
         ];
-        let back = round_trip_column(Column::from_c128(
+        let back = round_trip_column(Column::from(
             ArrayD::from_shape_vec(vec![4], values.clone()).unwrap(),
         ));
         assert_eq!(back.dtype(), DType::C128);
         assert_eq!(
-            *back.as_c128().unwrap(),
+            *back.get::<num_complex::Complex<f64>>().unwrap(),
             ArrayD::from_shape_vec(vec![4], values).unwrap()
         );
     }
@@ -1603,11 +1612,12 @@ mod tests {
         let store = storage_in(&dir);
         let mut block = Block::new();
         block
-            .insert_column(
+            .insert(
                 COLUMN,
-                Column::from_float(
+                Column::from(
                     ArrayD::from_shape_vec(vec![6], vec![0.0, 1.0, 2.0, 3.0, 4.0, 5.0]).unwrap(),
                 ),
+                None,
             )
             .unwrap();
         block.set_shape(&[3, 2]).unwrap();
@@ -1628,11 +1638,12 @@ mod tests {
         let store = storage_in(&dir);
         let mut block = Block::new();
         block
-            .insert_column(
+            .insert(
                 COLUMN,
-                Column::from_float(
+                Column::from(
                     ArrayD::from_shape_vec(vec![6], vec![0.0, 1.0, 2.0, 3.0, 4.0, 5.0]).unwrap(),
                 ),
+                None,
             )
             .unwrap();
         block.set_shape(&[3, 2]).unwrap();
@@ -1669,11 +1680,10 @@ mod tests {
         let store = storage_in(&dir);
         let mut block = Block::new();
         block
-            .insert_column(
+            .insert(
                 COLUMN,
-                Column::from_bool(
-                    ArrayD::from_shape_vec(vec![3], vec![true, false, true]).unwrap(),
-                ),
+                Column::from(ArrayD::from_shape_vec(vec![3], vec![true, false, true]).unwrap()),
+                None,
             )
             .unwrap();
         let mut frame = Frame::new();
@@ -1690,11 +1700,10 @@ mod tests {
         let store = storage_in(&dir);
         let mut block = Block::new();
         block
-            .insert_column(
+            .insert(
                 COLUMN,
-                Column::from_bool(
-                    ArrayD::from_shape_vec(vec![3], vec![true, false, true]).unwrap(),
-                ),
+                Column::from(ArrayD::from_shape_vec(vec![3], vec![true, false, true]).unwrap()),
+                None,
             )
             .unwrap();
         let mut frame = Frame::new();
@@ -1728,7 +1737,7 @@ mod tests {
         write_f64_array(&store, "/box/origin", &[3], &[0.0, 0.0, 0.0]).unwrap();
 
         let simbox = read_simbox(&store, "/box").unwrap();
-        assert_eq!(simbox.pbc_view().to_vec(), vec![true, true, true]);
+        assert_eq!(simbox.pbc().to_vec(), vec![true, true, true]);
     }
 
     #[test]
@@ -1736,15 +1745,15 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let store = storage_in(&dir);
         let simbox = SimBox::new(
-            array![[10.0, 0.0, 0.0], [0.0, 11.0, 0.0], [0.0, 0.0, 12.0]],
-            array![0.0, 0.0, 0.0],
+            Cell::Matrix([[10.0, 0.0, 0.0], [0.0, 11.0, 0.0], [0.0, 0.0, 12.0]]),
+            [0.0, 0.0, 0.0],
             [true, false, true],
         )
         .unwrap();
         write_simbox(&store, "/box", &simbox).unwrap();
 
         let back = read_simbox(&store, "/box").unwrap();
-        assert_eq!(back.pbc_view().to_vec(), vec![true, false, true]);
+        assert_eq!(back.pbc().to_vec(), vec![true, false, true]);
     }
 
     #[test]
@@ -1752,8 +1761,8 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let store = storage_in(&dir);
         let simbox = SimBox::new(
-            array![[10.0, 0.0, 0.0], [0.0, 11.0, 0.0], [0.0, 0.0, 12.0]],
-            array![0.0, 0.0, 0.0],
+            Cell::Matrix([[10.0, 0.0, 0.0], [0.0, 11.0, 0.0], [0.0, 0.0, 12.0]]),
+            [0.0, 0.0, 0.0],
             [true, false, true],
         )
         .unwrap();
@@ -1766,15 +1775,9 @@ mod tests {
     fn undefined_cell_round_trips_as_false() {
         let dir = TempDir::new().unwrap();
         let store = storage_in(&dir);
-        // A no-cell box carries the identity matrix, per `SimBox::new_cell`:
+        // A no-cell box carries the identity matrix, per `Cell::Undefined`:
         // geometry ops degrade to no-ops and only the flag says "undefined".
-        let simbox = SimBox::new_cell(
-            array![[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
-            array![0.0, 0.0, 0.0],
-            [false, false, false],
-            false,
-        )
-        .unwrap();
+        let simbox = SimBox::new(Cell::Undefined, [0.0, 0.0, 0.0], [false, false, false]).unwrap();
         write_simbox(&store, "/box", &simbox).unwrap();
 
         // `cell_defined` is emitted in this direction only, so it has to be
@@ -1809,7 +1812,10 @@ mod tests {
 
         let back = read_simbox(&store, "/box").unwrap();
         assert!(!back.is_cell_defined());
-        assert_eq!(back.h_view(), ndarray::Array2::<F>::eye(3));
+        assert_eq!(
+            back.matrix(),
+            [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]
+        );
 
         write_simbox(&store, "/rewritten", &back).unwrap();
         let written = read_simbox_float_path(&store, "/rewritten/vectors")
@@ -1825,8 +1831,7 @@ mod tests {
     fn an_undefined_cell_is_periodic_on_no_axis() {
         let dir = TempDir::new().unwrap();
         let store = storage_in(&dir);
-        let cell =
-            |pbc| SimBox::new_cell(ndarray::Array2::eye(3), array![0.0, 0.0, 0.0], pbc, false);
+        let cell = |pbc| SimBox::new(Cell::Undefined, [0.0, 0.0, 0.0], pbc);
 
         let err = write_simbox(&store, "/p", &cell([true, false, false]).unwrap())
             .unwrap_err()
@@ -1845,7 +1850,7 @@ mod tests {
         write_column(
             &store,
             "/box/boundary",
-            &Column::from_bool(ArrayD::from_shape_vec(vec![3], vec![false, true, false]).unwrap()),
+            &Column::from(ArrayD::from_shape_vec(vec![3], vec![false, true, false]).unwrap()),
             None,
         )
         .unwrap();
@@ -1885,7 +1890,7 @@ mod tests {
         write_f64_array(&store, "/box/vectors", &[3, 3], &cell_vectors()).unwrap();
 
         let simbox = read_simbox(&store, "/box").unwrap();
-        assert_eq!(simbox.origin_view().to_vec(), vec![0.0, 0.0, 0.0]);
+        assert_eq!(simbox.origin().to_vec(), vec![0.0, 0.0, 0.0]);
     }
 
     // -- sharding: many inner chunks, one file (ac-010's on-disk half) -------
@@ -1932,9 +1937,10 @@ mod tests {
         let values: Vec<F> = (0..ROWS).map(|i| i as F * 0.5 - 1.0e-3).collect();
         let mut block = Block::new();
         block
-            .insert_column(
+            .insert(
                 COLUMN,
-                Column::from_float(ArrayD::from_shape_vec(vec![ROWS], values.clone()).unwrap()),
+                Column::from(ArrayD::from_shape_vec(vec![ROWS], values.clone()).unwrap()),
+                None,
             )
             .unwrap();
         let mut frame = Frame::new();
@@ -1978,7 +1984,7 @@ mod tests {
                 .unwrap()
                 .get(COLUMN)
                 .unwrap()
-                .as_float()
+                .get::<f64>()
                 .unwrap(),
             ArrayD::from_shape_vec(vec![ROWS], values).unwrap(),
             "every row must come back bit exact through the shard"
@@ -2044,10 +2050,10 @@ mod tests {
     fn masked_int_block() -> Block {
         let mut block = Block::new();
         block
-            .insert_nullable(
+            .insert(
                 COLUMN,
                 ArrayD::from_shape_vec(vec![3], vec![7i32, 0, 0]).unwrap(),
-                MASK.to_vec(),
+                Some(MASK.to_vec()),
             )
             .unwrap();
         block
@@ -2057,10 +2063,10 @@ mod tests {
     fn masked_f64_block() -> Block {
         let mut block = Block::new();
         block
-            .insert_nullable(
+            .insert(
                 COLUMN,
                 ArrayD::from_shape_vec(vec![3], vec![0.5f64, 0.0, 0.0]).unwrap(),
-                MASK.to_vec(),
+                Some(MASK.to_vec()),
             )
             .unwrap();
         block
@@ -2070,14 +2076,14 @@ mod tests {
     fn masked_string_block() -> Block {
         let mut block = Block::new();
         block
-            .insert_nullable(
+            .insert(
                 COLUMN,
                 ArrayD::from_shape_vec(
                     vec![3],
                     vec!["C".to_string(), String::new(), String::new()],
                 )
                 .unwrap(),
-                MASK.to_vec(),
+                Some(MASK.to_vec()),
             )
             .unwrap();
         block
@@ -2093,7 +2099,7 @@ mod tests {
     fn int_column_keeps_its_values_beside_its_mask() {
         let back = round_trip_block(masked_int_block());
         assert_eq!(
-            *back.get(COLUMN).unwrap().as_int().unwrap(),
+            *back.get(COLUMN).unwrap().get::<i32>().unwrap(),
             ArrayD::from_shape_vec(vec![3], vec![7i32, 0, 0]).unwrap()
         );
     }
@@ -2108,7 +2114,7 @@ mod tests {
     fn f64_column_keeps_its_values_beside_its_mask() {
         let back = round_trip_block(masked_f64_block());
         assert_eq!(
-            *back.get(COLUMN).unwrap().as_float().unwrap(),
+            *back.get(COLUMN).unwrap().get::<f64>().unwrap(),
             ArrayD::from_shape_vec(vec![3], vec![0.5f64, 0.0, 0.0]).unwrap()
         );
     }
@@ -2123,7 +2129,7 @@ mod tests {
     fn string_column_keeps_its_values_beside_its_mask() {
         let back = round_trip_block(masked_string_block());
         assert_eq!(
-            *back.get(COLUMN).unwrap().as_string().unwrap(),
+            *back.get(COLUMN).unwrap().get::<String>().unwrap(),
             ArrayD::from_shape_vec(vec![3], vec!["C".to_string(), String::new(), String::new()])
                 .unwrap()
         );
@@ -2136,9 +2142,10 @@ mod tests {
     fn a_fully_valid_column_reads_back_with_no_mask() {
         let mut block = Block::new();
         block
-            .insert_column(
+            .insert(
                 COLUMN,
-                Column::from_float(ArrayD::from_shape_vec(vec![3], vec![1.0, 2.0, 3.0]).unwrap()),
+                Column::from(ArrayD::from_shape_vec(vec![3], vec![1.0, 2.0, 3.0]).unwrap()),
+                None,
             )
             .unwrap();
         let back = round_trip_block(block);
@@ -2153,9 +2160,10 @@ mod tests {
         let store = storage_in(&dir);
         let mut block = Block::new();
         block
-            .insert_column(
+            .insert(
                 COLUMN,
-                Column::from_float(ArrayD::from_shape_vec(vec![3], vec![1.0, 2.0, 3.0]).unwrap()),
+                Column::from(ArrayD::from_shape_vec(vec![3], vec![1.0, 2.0, 3.0]).unwrap()),
+                None,
             )
             .unwrap();
         let mut frame = Frame::new();
@@ -2216,9 +2224,10 @@ mod tests {
         let store = storage_in(&dir);
         let mut block = Block::new();
         block
-            .insert_column(
+            .insert(
                 VALIDITY_GROUP,
-                Column::from_float(ArrayD::from_shape_vec(vec![3], vec![1.0, 2.0, 3.0]).unwrap()),
+                Column::from(ArrayD::from_shape_vec(vec![3], vec![1.0, 2.0, 3.0]).unwrap()),
+                None,
             )
             .unwrap();
         let mut frame = Frame::new();
@@ -2248,7 +2257,7 @@ mod tests {
         write_column(
             &store,
             &path,
-            &Column::from_bool(ArrayD::from_shape_vec(vec![2], vec![true, false]).unwrap()),
+            &Column::from(ArrayD::from_shape_vec(vec![2], vec![true, false]).unwrap()),
             None,
         )
         .unwrap();
@@ -2295,11 +2304,10 @@ mod tests {
         let store = storage_in(&dir);
         let mut block = Block::new();
         block
-            .insert_column(
+            .insert(
                 COLUMN,
-                Column::from_float(
-                    ArrayD::from_shape_vec(vec![values.len()], values.to_vec()).unwrap(),
-                ),
+                Column::from(ArrayD::from_shape_vec(vec![values.len()], values.to_vec()).unwrap()),
+                None,
             )
             .unwrap();
         block.set_precision(COLUMN, p).unwrap();
@@ -2334,7 +2342,7 @@ mod tests {
         block
             .get(COLUMN)
             .unwrap()
-            .as_float()
+            .get::<f64>()
             .unwrap()
             .iter()
             .copied()
@@ -2388,11 +2396,11 @@ mod tests {
 
     #[test]
     fn a_column_without_a_precision_stays_raw_and_declares_none() {
-        let back = round_trip_column(Column::from_float(
+        let back = round_trip_column(Column::from(
             ArrayD::from_shape_vec(vec![2], vec![0.123_456_7, 2.0]).unwrap(),
         ));
         assert_eq!(
-            back.as_float().unwrap().as_slice().unwrap(),
+            back.get::<f64>().unwrap().as_slice().unwrap(),
             &[0.123_456_7, 2.0]
         );
     }
@@ -2401,13 +2409,13 @@ mod tests {
     fn a_precision_on_a_non_f64_column_is_refused_at_write() {
         let dir = TempDir::new().unwrap();
         let store = storage_in(&dir);
-        let column = Column::from_i64(ArrayD::from_shape_vec(vec![1], vec![3_i64]).unwrap());
+        let column = Column::from(ArrayD::from_shape_vec(vec![1], vec![3_i64]).unwrap());
         let err = write_column(&store, "/f/b/n", &column, Some(1e-3))
             .unwrap_err()
             .to_string();
         assert!(err.contains("f64"), "{err}");
         for bad in [0.0, -1.0, f64::INFINITY] {
-            let float = Column::from_float(ArrayD::from_shape_vec(vec![1], vec![1.0]).unwrap());
+            let float = Column::from(ArrayD::from_shape_vec(vec![1], vec![1.0]).unwrap());
             assert!(write_column(&store, "/f/b/x", &float, Some(bad)).is_err());
         }
     }
@@ -2419,9 +2427,10 @@ mod tests {
         let mut frame = Frame::new();
         let mut block = Block::new();
         block
-            .insert_column(
+            .insert(
                 COLUMN,
-                Column::from_i64(ArrayD::from_shape_vec(vec![1], vec![3_i64]).unwrap()),
+                Column::from(ArrayD::from_shape_vec(vec![1], vec![3_i64]).unwrap()),
+                None,
             )
             .unwrap();
         frame.insert(BLOCK, block);
@@ -2599,9 +2608,10 @@ mod tests {
         let mut frame = Frame::new();
         let mut block = Block::new();
         block
-            .insert_column(
+            .insert(
                 COLUMN,
-                Column::from_float(ArrayD::from_shape_vec(vec![2], vec![1.0, 2.0]).unwrap()),
+                Column::from(ArrayD::from_shape_vec(vec![2], vec![1.0, 2.0]).unwrap()),
+                None,
             )
             .unwrap();
         frame.insert(BLOCK, block);
@@ -2628,9 +2638,10 @@ mod tests {
         let store = storage_in(&dir);
         let mut block = Block::new();
         block
-            .insert_column(
+            .insert(
                 "ix",
-                Column::from_i64(ArrayD::from_shape_vec(vec![2], vec![-1_i64, 3]).unwrap()),
+                Column::from(ArrayD::from_shape_vec(vec![2], vec![-1_i64, 3]).unwrap()),
+                None,
             )
             .unwrap();
         let mut frame = Frame::new();
@@ -2639,14 +2650,15 @@ mod tests {
         let back = read_frame_group(&store, FRAME).unwrap();
         let ix = back.get(BLOCK).unwrap().get("ix").unwrap();
         assert_eq!(ix.dtype(), DType::Int);
-        assert_eq!(ix.as_int().unwrap().as_slice().unwrap(), &[-1, 3]);
+        assert_eq!(ix.get::<i32>().unwrap().as_slice().unwrap(), &[-1, 3]);
 
         // An i64 `ix` that does not fit i32 is refused at write.
         let mut block = Block::new();
         block
-            .insert_column(
+            .insert(
                 "ix",
-                Column::from_i64(ArrayD::from_shape_vec(vec![1], vec![1_i64 << 40]).unwrap()),
+                Column::from(ArrayD::from_shape_vec(vec![1], vec![1_i64 << 40]).unwrap()),
+                None,
             )
             .unwrap();
         let mut frame = Frame::new();
@@ -2657,7 +2669,7 @@ mod tests {
         write_column(
             &store,
             &format!("{FRAME}/{BLOCK}/ix"),
-            &Column::from_i64(ArrayD::from_shape_vec(vec![2], vec![-1_i64, 3]).unwrap()),
+            &Column::from(ArrayD::from_shape_vec(vec![2], vec![-1_i64, 3]).unwrap()),
             None,
         )
         .unwrap();
@@ -2674,11 +2686,11 @@ mod tests {
     // -- row references and topology conventions (molrec F4) ---------------
 
     fn uints(values: &[u64]) -> Column {
-        Column::from_uint(ArrayD::from_shape_vec(vec![values.len()], values.to_vec()).unwrap())
+        Column::from(ArrayD::from_shape_vec(vec![values.len()], values.to_vec()).unwrap())
     }
 
     fn strings(values: &[&str]) -> Column {
-        Column::from_string(
+        Column::from(
             ArrayD::from_shape_vec(
                 vec![values.len()],
                 values.iter().map(|s| (*s).to_string()).collect(),
@@ -2690,7 +2702,7 @@ mod tests {
     fn atoms_of(n: usize) -> Block {
         let mut atoms = Block::new();
         atoms
-            .insert_column("x", Column::from_float(ArrayD::from_elem(vec![n], 0.5)))
+            .insert("x", Column::from(ArrayD::from_elem(vec![n], 0.5)), None)
             .unwrap();
         atoms
     }
@@ -2702,8 +2714,8 @@ mod tests {
         let mut frame = Frame::new();
         frame.insert("atoms", atoms_of(3));
         let mut members = Block::new();
-        members.insert_column("ibead", uints(&[0, 2])).unwrap();
-        members.insert_column("atom", uints(&[10, 11])).unwrap();
+        members.insert("ibead", uints(&[0, 2]), None).unwrap();
+        members.insert("atom", uints(&[10, 11]), None).unwrap();
         members.set_target("ibead", "atoms").unwrap();
         members.set_target("atom", "/frame/atoms").unwrap();
         frame.insert("members", members);
@@ -2730,7 +2742,7 @@ mod tests {
         let mut frame = Frame::new();
         frame.insert("atoms", atoms_of(3));
         let mut members = Block::new();
-        members.insert_column("ibead", uints(&[5])).unwrap();
+        members.insert("ibead", uints(&[5]), None).unwrap();
         members.set_target("ibead", "atoms").unwrap();
         frame.insert("members", members);
         assert!(write_frame_group(&store, FRAME, &frame).is_err());
@@ -2738,7 +2750,7 @@ mod tests {
         // Missing target block.
         let mut frame = Frame::new();
         let mut refs = Block::new();
-        refs.insert_column("site", uints(&[0])).unwrap();
+        refs.insert("site", uints(&[0]), None).unwrap();
         refs.set_target("site", "sites").unwrap();
         frame.insert("refs", refs);
         let err = write_frame_group(&store, FRAME, &frame)
@@ -2750,7 +2762,7 @@ mod tests {
         let mut frame = Frame::new();
         frame.insert("atoms", atoms_of(3));
         let mut refs = Block::new();
-        refs.insert_column("site", uints(&[2])).unwrap();
+        refs.insert("site", uints(&[2]), None).unwrap();
         frame.insert("refs", refs);
         write_frame_group(&store, FRAME, &frame).unwrap();
         let mut group = zarrs::group::Group::open(store.clone(), &format!("{FRAME}/refs")).unwrap();
@@ -2778,38 +2790,39 @@ mod tests {
         let mut atoms = atoms_of(3);
         for key in ["fx", "fy", "fz", "occupancy", "b_factor"] {
             atoms
-                .insert_column(key, Column::from_float(ArrayD::from_elem(vec![3], 0.25)))
+                .insert(key, Column::from(ArrayD::from_elem(vec![3], 0.25)), None)
                 .unwrap();
         }
         atoms
-            .insert_column(
+            .insert(
                 "formal_charge",
-                Column::from_i64(ArrayD::from_shape_vec(vec![3], vec![-1, 0, 1]).unwrap()),
+                Column::from(ArrayD::from_shape_vec(vec![3], vec![-1_i64, 0, 1]).unwrap()),
+                None,
             )
             .unwrap();
-        atoms.insert_column("atom_map", uints(&[1, 0, 2])).unwrap();
+        atoms.insert("atom_map", uints(&[1, 0, 2]), None).unwrap();
         for key in ["chain", "icode", "altloc"] {
-            atoms.insert_column(key, strings(&["A", "", "B"])).unwrap();
+            atoms.insert(key, strings(&["A", "", "B"]), None).unwrap();
         }
         let mut frame = Frame::new();
         frame.insert("atoms", atoms);
         let mut sites = Block::new();
         for (key, v) in [("atomi", 0), ("atomj", 1), ("atomk", 2)] {
-            sites.insert_column(key, uints(&[v])).unwrap();
+            sites.insert(key, uints(&[v]), None).unwrap();
         }
         sites
-            .insert_nullable(
+            .insert(
                 "atoml",
                 ndarray::Array1::from_vec(vec![0_u64]).into_dyn(),
-                vec![false],
+                Some(vec![false]),
             )
             .unwrap();
         frame.insert("virtual_sites", sites);
         for name in ["constraints", "drudes"] {
             let mut pair = Block::new();
-            pair.insert_column("atomi", uints(&[0])).unwrap();
-            pair.insert_column("atomj", uints(&[1])).unwrap();
-            pair.insert_column("style", strings(&["harmonic"])).unwrap();
+            pair.insert("atomi", uints(&[0]), None).unwrap();
+            pair.insert("atomj", uints(&[1]), None).unwrap();
+            pair.insert("style", strings(&["harmonic"]), None).unwrap();
             frame.insert(name, pair);
         }
         assert!(
@@ -2843,11 +2856,11 @@ mod tests {
             ("atoml", [3, 4]),
             ("atomm", [4, 5]),
         ] {
-            cmaps.insert_column(key, uints(&rows)).unwrap();
+            cmaps.insert(key, uints(&rows), None).unwrap();
         }
-        cmaps.insert_column("type", strings(&["c1", "c2"])).unwrap();
+        cmaps.insert("type", strings(&["c1", "c2"]), None).unwrap();
         cmaps
-            .insert_column("style", strings(&["charmm", "charmm"]))
+            .insert("style", strings(&["charmm", "charmm"]), None)
             .unwrap();
         frame.insert("cmaps", cmaps);
         assert!(
@@ -2862,7 +2875,7 @@ mod tests {
         assert_eq!(
             cmaps
                 .get("atomm")
-                .and_then(Column::as_uint)
+                .and_then(Column::get::<u64>)
                 .unwrap()
                 .iter()
                 .copied()
@@ -2870,7 +2883,7 @@ mod tests {
             [4, 5]
         );
         assert_eq!(
-            cmaps.get("type").and_then(Column::as_string).unwrap()[[1]],
+            cmaps.get("type").and_then(Column::get::<String>).unwrap()[[1]],
             "c2"
         );
     }

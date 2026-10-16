@@ -1,7 +1,7 @@
 //! Neighbor-list algorithms for pairwise distance queries; [`NeighborList`] is the entry point.
 
-use crate::core::SimBox;
-use crate::op::{F, Fnx3, Fnx3View};
+use crate::core::{Points, SimBox};
+use crate::op::{F, Fnx3View};
 use ndarray::ArrayView2;
 
 mod aabb;
@@ -120,17 +120,26 @@ impl<T: FnMut(u32, u32, F, [F; 3])> PairVisitor for T {
 /// that index and hands out pairs. Deciding what to do with those pairs —
 /// reduce them on the fly, or write them into a table — belongs to
 /// [`NeighborList`], not here.
+/// `points`, refused with a panic when it is not `N × 3` — the check every
+/// public build of a search runs at its boundary.
+pub(crate) fn checked(points: Points<'_>) -> Points<'_> {
+    if let Err(e) = points.check() {
+        panic!("{e}");
+    }
+    points
+}
+
 pub(crate) trait Backend: std::fmt::Debug {
     /// Build the spatial index only — NO pair enumeration.
     ///
-    /// `points` is an `N × 3` view of Cartesian coordinates (Å) and `bx` is the
+    /// `points` are the Cartesian coordinates (Å), already checked to be
+    /// `N × 3` by [`NeighborList::build`], the public boundary; `bx` is the
     /// simulation box supplying the periodicity used for minimum-image
     /// distances.
     ///
     /// # Panics
-    /// Panics if the cutoff is not positive or `points` does not have exactly
-    /// 3 columns.
-    fn build_index(&mut self, points: Fnx3View<'_>, bx: &SimBox);
+    /// Panics if the cutoff is not positive.
+    fn build_index(&mut self, points: Points<'_>, bx: &SimBox);
 
     /// The interaction cutoff (Å) this backend indexes at.
     ///
@@ -143,28 +152,7 @@ pub(crate) trait Backend: std::fmt::Debug {
     /// Implementations may reuse internal buffers. There is no skin/Verlet
     /// shortcut: this re-indexes, it does not decide for you whether a rebuild
     /// was necessary.
-    fn update_index(&mut self, points: Fnx3View<'_>, bx: &SimBox);
-
-    /// Build the spatial index from three coordinate columns (Å) — NO pair
-    /// enumeration. Column sibling of [`build_index`](Self::build_index).
-    ///
-    /// The three slices are already known to have equal length: the check
-    /// belongs to [`NeighborList::build_columns`], the public boundary.
-    ///
-    /// The default interleaves the columns into an owned `N × 3` array and
-    /// defers to `build_index`. That copy is the price of not having a column
-    /// path, and an implementor that indexes columns natively — [`LinkCell`]
-    /// does — overrides this to avoid it; for an O(N²) backend the copy is
-    /// dominated by the search itself, so correctness beats avoiding it.
-    fn build_index_columns(&mut self, xs: &[F], ys: &[F], zs: &[F], bx: &SimBox) {
-        let mut points = Fnx3::zeros((xs.len(), 3));
-        for i in 0..xs.len() {
-            points[[i, 0]] = xs[i];
-            points[[i, 1]] = ys[i];
-            points[[i, 2]] = zs[i];
-        }
-        self.build_index(points.view(), bx);
-    }
+    fn update_index(&mut self, points: Points<'_>, bx: &SimBox);
 
     /// Traverse pairs on demand, calling the visitor once per pair within the
     /// cutoff. Zero allocation — no [`Neighbors`] table is built.
@@ -218,9 +206,8 @@ pub(crate) trait Backend: std::fmt::Debug {
 /// backend that indexes space, and the box the index was built for, and it
 /// keeps the two halves of the job apart:
 ///
-/// - [`build`](Self::build), [`build_columns`](Self::build_columns) and
-///   [`update`](Self::update) own the spatial index. None of the three
-///   enumerates a pair or allocates a [`Neighbors`] table.
+/// - [`build`](Self::build) and [`update`](Self::update) own the spatial
+///   index (rows or [`Points::Columns`] alike). Neither enumerates a pair or allocates a [`Neighbors`] table.
 /// - [`for_each_pair`](Self::for_each_pair) streams the pairs;
 ///   [`neighbors`](Self::neighbors) materializes them into a table. These two
 ///   are the only way pairs ever leave the engine.
@@ -239,10 +226,10 @@ pub(crate) trait Backend: std::fmt::Debug {
 ///
 /// ```
 /// use molrs::core::NeighborList;
-/// use molrs::core::SimBox;
+/// use molrs::core::{Cell, Points, SimBox};
 /// use ndarray::array;
 ///
-/// let bx = SimBox::cube(10.0, array![0.0, 0.0, 0.0], [true, true, true]).unwrap();
+/// let bx = SimBox::new(Cell::Lengths([10.0; 3]), [0.0, 0.0, 0.0], [true, true, true]).unwrap();
 /// // Only the first two are within 3 Å of each other; the third is 4.5 Å away
 /// // (5.5 Å the other way round the box), so it contributes no pair.
 /// let points = array![[1.0, 1.0, 1.0], [1.4, 1.0, 1.0], [5.5, 1.0, 1.0]];
@@ -265,10 +252,10 @@ pub(crate) trait Backend: std::fmt::Debug {
 ///
 /// ```
 /// use molrs::core::{NeighborList, NeighborColumns};
-/// use molrs::core::SimBox;
+/// use molrs::core::{Cell, SimBox};
 /// use ndarray::array;
 ///
-/// let bx = SimBox::cube(10.0, array![0.0, 0.0, 0.0], [true, true, true]).unwrap();
+/// let bx = SimBox::new(Cell::Lengths([10.0; 3]), [0.0, 0.0, 0.0], [true, true, true]).unwrap();
 /// let points = array![[1.0, 1.0, 1.0], [1.4, 1.0, 1.0]];
 ///
 /// let mut nl = NeighborList::new(3.0);
@@ -320,7 +307,7 @@ pub(crate) trait Backend: std::fmt::Debug {
 /// ```ignore
 /// let mut nl = NeighborList::new(3.0);       // cell-list backend, cutoff 3 Å
 /// nl.build(points.view(), &simbox);          // index only — no pair table
-/// nl.build_columns(&xs, &ys, &zs, &simbox);  // ...same, from x/y/z columns
+/// nl.build(Points::Columns([&xs, &ys, &zs]), &simbox);  // ...same, from x/y/z columns
 /// nl.update(points.view());                  // re-index, reusing that box
 ///
 /// nl.for_each_pair(|pair| { /* ... */ });    // stream half-shell self pairs
@@ -357,8 +344,7 @@ pub struct NeighborList {
     /// The algorithm that indexes space and enumerates pairs. Also the single
     /// owner of the cutoff — read back via [`cutoff`](Self::cutoff).
     backend: Box<dyn Backend + Send + Sync>,
-    /// Box fixed by the last [`build`](Self::build) or
-    /// [`build_columns`](Self::build_columns). `None` until then, which is what
+    /// Box fixed by the last [`build`](Self::build). `None` until then, which is what
     /// makes an `update` before a `build` a loud error instead of a guess.
     bx: Option<SimBox>,
     /// Point count of the last build/update — the `n_points` a materialized
@@ -423,8 +409,7 @@ impl NeighborList {
         self.backend.cutoff()
     }
 
-    /// Whether a [`build`](Self::build) or [`build_columns`](Self::build_columns)
-    /// has happened — the precondition [`update`](Self::update) panics on.
+    /// Whether a [`build`](Self::build) has happened — the precondition [`update`](Self::update) panics on.
     ///
     /// Binders that must not let a panic cross an FFI seam check this and raise
     /// their own error instead of shadowing the state with a flag of their own.
@@ -441,9 +426,12 @@ impl NeighborList {
 
     /// Index `points` in `bx` — coordinates **and** box.
     ///
-    /// `points` is an `N × 3` array of Cartesian coordinates in Å, one row per
-    /// particle. `bx` is the simulation box, whose periodicity decides which
-    /// periodic image of a pair counts (the minimum-image convention).
+    /// `points` are the Cartesian coordinates in Å: an `N × 3` array (one row
+    /// per particle — the view converts) or three `x`/`y`/`z` columns
+    /// ([`Points::Columns`], the shape a column store hands out, indexed
+    /// without transposing). `bx` is the simulation box, whose periodicity
+    /// decides which periodic image of a pair counts (the minimum-image
+    /// convention).
     ///
     /// This builds the spatial index and nothing else: no pairs are enumerated
     /// and no [`Neighbors`] table is allocated, so the cost is the indexing
@@ -462,49 +450,17 @@ impl NeighborList {
     /// against a stale cell.
     ///
     /// # Panics
-    /// Panics if `points` does not have exactly 3 columns.
-    pub fn build(&mut self, points: Fnx3View<'_>, bx: &SimBox) {
-        assert_eq!(points.ncols(), 3, "points must have shape (N, 3)");
+    /// Panics if `points` is not `N × 3` (a row view without exactly 3
+    /// columns, or columns of unequal length).
+    pub fn build<'a>(&mut self, points: impl Into<Points<'a>>, bx: &SimBox) {
+        let points = checked(points.into());
         self.backend.build_index(points, bx);
         self.bx = Some(bx.clone());
-        self.n_points = points.nrows();
+        self.n_points = points.len();
     }
 
-    /// Index three coordinate columns in `bx` — the column sibling of
+    /// Re-index new coordinates (Å) in the box captured by the last
     /// [`build`](Self::build).
-    ///
-    /// `xs`, `ys` and `zs` are the Cartesian coordinates in Å, one slice per
-    /// axis, all of length `N`; point `i` is `(xs[i], ys[i], zs[i])`. This is
-    /// the shape a column store hands out (`atoms.x` / `atoms.y` / `atoms.z`),
-    /// so such a caller reaches the engine without transposing into an `N × 3`
-    /// array first.
-    ///
-    /// Semantics are `build`'s exactly: the spatial index is built and nothing
-    /// else — no pairs enumerated, no [`Neighbors`] table allocated — `bx` is
-    /// retained for a later [`update`](Self::update), and the pairs that
-    /// [`for_each_pair`](Self::for_each_pair) and [`neighbors`](Self::neighbors)
-    /// then produce are the same ones `build` would have produced from the same
-    /// coordinates. The box caveat carries over too: when the box changes from
-    /// step to step, re-index with this method (or `build`) each step rather
-    /// than with `update`, which would keep the box captured here.
-    ///
-    /// # Panics
-    /// Panics if the three columns do not have equal length.
-    pub fn build_columns(&mut self, xs: &[F], ys: &[F], zs: &[F], bx: &SimBox) {
-        assert!(
-            xs.len() == ys.len() && ys.len() == zs.len(),
-            "x/y/z columns must have equal length, got {} / {} / {}",
-            xs.len(),
-            ys.len(),
-            zs.len()
-        );
-        self.backend.build_index_columns(xs, ys, zs, bx);
-        self.bx = Some(bx.clone());
-        self.n_points = xs.len();
-    }
-
-    /// Re-index new coordinates (`N × 3`, Å) in the box captured by the last
-    /// [`build`](Self::build) or [`build_columns`](Self::build_columns).
     ///
     /// The natural per-step call in a fixed-volume simulation: the positions
     /// move, the box does not. Index-only like `build` — no pairs are
@@ -523,18 +479,17 @@ impl NeighborList {
     /// with the count from the most recent index.
     ///
     /// # Panics
-    /// Panics if neither [`build`](Self::build) nor
-    /// [`build_columns`](Self::build_columns) has run — the box is then unknown,
-    /// and the panic message says to call `build` first. Panics too if `points`
-    /// does not have exactly 3 columns.
-    pub fn update(&mut self, points: Fnx3View<'_>) {
-        assert_eq!(points.ncols(), 3, "points must have shape (N, 3)");
+    /// Panics if [`build`](Self::build) has not run — the box is then unknown,
+    /// and the panic message says to call `build` first. Panics too if
+    /// `points` is not `N × 3`.
+    pub fn update<'a>(&mut self, points: impl Into<Points<'a>>) {
+        let points = checked(points.into());
         let bx = self
             .bx
             .as_ref()
             .expect("NeighborList::update reuses the box of the previous build: call build(points, bx) first");
         self.backend.update_index(points, bx);
-        self.n_points = points.nrows();
+        self.n_points = points.len();
     }
 
     /// Stream every pair within the cutoff, in whatever order the backend
@@ -856,7 +811,7 @@ impl NeighborColumns {
 ///   evaluation, so `dist_sq == |disp|²` holds to floating-point rounding and
 ///   the two can never describe different periodic copies.
 ///
-/// Both quantities come from the single call [`SimBox::shortest_vector_impl`].
+/// Both quantities come from the single call [`Mic::apply`](crate::core::Mic::apply).
 /// Lengths carry the unit of the input coordinates, which is Å (ångström)
 /// everywhere in molrs; `disp` is therefore in Å and `dist_sq` in Å².
 ///
@@ -1293,14 +1248,15 @@ mod test_fixtures {
     //! `from_pairs_tests`, `engine_tests`, and `linkcell::tests` — so one
     //! hand-derived MIC golden set has one home.
     use super::{Neighbors, SimBox};
+    use crate::core::Cell;
     use crate::op::F;
     use ndarray::{Array2, array};
 
     /// Orthorhombic 10 × 8 × 6 Å box, fully periodic.
     pub(crate) fn small_box() -> SimBox {
-        SimBox::ortho(
-            array![10.0, 8.0, 6.0],
-            array![0.0, 0.0, 0.0],
+        SimBox::new(
+            Cell::Lengths([10.0, 8.0, 6.0]),
+            [0.0, 0.0, 0.0],
             [true, true, true],
         )
         .expect("valid orthorhombic box")
@@ -1602,6 +1558,7 @@ mod from_pairs_tests {
 mod engine_tests {
     use super::test_fixtures::{SMALL_GOLDEN, small_box, small_points, table_rows_sorted};
     use super::*;
+    use crate::core::Cell;
     use ndarray::{Array2, array};
 
     /// Collect the engine's pair stream, sorted by `(i, j)`.
@@ -1819,8 +1776,8 @@ mod engine_tests {
         }
     }
 
-    /// ac-006: `build_columns` is the SoA sibling of `build` — same engine, same
-    /// semantics, column input.
+    /// ac-006: `build` on [`Points::Columns`] is `build` on rows — same engine,
+    /// same semantics, column input.
     ///
     /// A column store (`atoms.x` / `atoms.y` / `atoms.z`) holds coordinates as
     /// three independent columns, never as an N × 3 matrix. Without this entry
@@ -1835,7 +1792,7 @@ mod engine_tests {
     /// than the 1e-12 the golden comparisons above use, and far too tight for
     /// any difference that could move a pair across the cutoff.
     #[test]
-    fn engine_build_columns_matches_build() {
+    fn engine_column_build_matches_row_build() {
         let bx = small_box();
         let pts = small_points();
 
@@ -1848,7 +1805,7 @@ mod engine_tests {
         aos.build(pts.view(), &bx);
 
         let mut soa = NeighborList::new(1.5);
-        soa.build_columns(&xs, &ys, &zs, &bx);
+        soa.build(Points::Columns([&xs, &ys, &zs]), &bx);
 
         let want = collect_sorted(&aos);
         let got = collect_sorted(&soa);
@@ -1861,7 +1818,7 @@ mod engine_tests {
         assert_eq!(
             got.len(),
             want.len(),
-            "build_columns emitted {} pairs, build emitted {}",
+            "column build emitted {} pairs, row build emitted {}",
             got.len(),
             want.len()
         );
@@ -2008,8 +1965,12 @@ mod engine_tests {
             pairs
         }
 
-        let bx = SimBox::cube(LATTICE_512_BOX, array![0.0, 0.0, 0.0], [true, true, true])
-            .expect("valid cubic box");
+        let bx = SimBox::new(
+            Cell::Lengths([LATTICE_512_BOX; 3]),
+            [0.0, 0.0, 0.0],
+            [true, true, true],
+        )
+        .expect("valid cubic box");
         let pts = lattice_512();
 
         // Premise: the fixture must actually reach the parallel branch.
@@ -2148,9 +2109,9 @@ mod engine_tests {
     /// stream follows them in both directions.
     #[test]
     fn engine_update_follows_new_coordinates() {
-        let bx = SimBox::ortho(
-            array![20.0, 20.0, 20.0],
-            array![0.0, 0.0, 0.0],
+        let bx = SimBox::new(
+            Cell::Lengths([20.0, 20.0, 20.0]),
+            [0.0, 0.0, 0.0],
             [true, true, true],
         )
         .expect("valid orthorhombic box");
@@ -2246,9 +2207,9 @@ mod engine_tests {
     /// three pairs survive the cutoff.
     #[test]
     fn engine_cross_query_reachable() {
-        let bx = SimBox::ortho(
-            array![20.0, 20.0, 20.0],
-            array![0.0, 0.0, 0.0],
+        let bx = SimBox::new(
+            Cell::Lengths([20.0, 20.0, 20.0]),
+            [0.0, 0.0, 0.0],
             [true, true, true],
         )
         .expect("valid orthorhombic box");

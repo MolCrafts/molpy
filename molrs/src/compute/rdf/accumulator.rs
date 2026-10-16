@@ -13,9 +13,8 @@ use crate::compute::{Accumulate, Axis, ComputeError, Histogram, require_dist_sq}
 /// Push one pair source per frame; [`finish`](Accumulate::finish) normalizes
 /// the running histogram into an [`RdfResult`] without consuming it, so a long
 /// run can be inspected and continued. State is O(`n_bins`) — never
-/// O(trajectory). [`Rdf::compute`](crate::compute::Compute::compute) is this
-/// accumulator folded over a slice of sources, so batch and stream give the
-/// same numbers bit for bit.
+/// O(trajectory). It is the one form of the g(r): [`Rdf`] has no batch
+/// `compute`.
 #[derive(Debug, Clone)]
 pub struct RdfAccumulator {
     rdf: Rdf,

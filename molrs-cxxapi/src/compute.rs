@@ -1,21 +1,22 @@
 //! Trajectory analysis for the C++ engine — the CXX face of `molrs::compute`.
 //!
 //! Each bridged analysis is the molrs type of the same name, wrapped only so
-//! cxx can own it: its constructor takes configuration, `compute` takes a whole
-//! trajectory and `accumulator()` hands out the molrs streaming accumulator,
-//! which takes one frame per `push`. Every fallible call returns the molrs
-//! [`ComputeError`], which cxx raises as a C++ `rust::Error`; nothing answers
-//! an error with an empty curve, a NaN or `false`.
+//! cxx can own it: its constructor takes configuration and `accumulator()`
+//! hands out the molrs streaming accumulator, which takes one frame per
+//! `push` and reads the result at `finish`. molrs' MSD / VACF / RDF are
+//! accumulator-only, and so is the bridge: a stored trajectory is pushed frame
+//! by frame. Every fallible call returns the molrs [`ComputeError`], which cxx
+//! raises as a C++ `rust::Error`; nothing answers an error with an empty
+//! curve, a NaN or `false`.
 //!
-//! The one thing done here is the buffer convention: a trajectory crosses the
-//! bridge as a flat row-major `[n_frames, D · n]` buffer whose frames are
-//! blocked by component (`x[0..n) y[0..n) z[0..n)`), and a box as a 9-value
-//! row-major cell matrix H. [`blocked_series`] and [`simboxes`] are the only
-//! conversions; no analysis math lives here.
+//! The one thing done here is the buffer convention: a frame crosses the
+//! bridge as a flat buffer blocked by component (`x[0..n) y[0..n) z[0..n)`),
+//! and a box as a 9-value row-major cell matrix H. [`blocked_frame`] and
+//! [`simbox_of`] are the only conversions; no analysis math lives here.
 
 use molrs::compute::{self as mc, Accumulate, Compute, ComputeError, Stream};
-use molrs::core::{NeighborList, PairSource, SimBox};
-use ndarray::{Array3, ArrayView2, Axis};
+use molrs::core::{NeighborList, Points, SimBox};
+use ndarray::Array2;
 
 use crate::bridge;
 use crate::frame::simbox_from_h;
@@ -28,70 +29,42 @@ const SCALAR: usize = 1;
 /// Values in a cell matrix H.
 const CELL: usize = 9;
 
-/// A `T × n × D` series from a flat row-major `[n_frames, D · n]` buffer whose
-/// frames are blocked by component — the one marshaling path for every
-/// trajectory and every single frame (`n_frames = 1`) that crosses the bridge.
+/// The `n × D` frame of a flat buffer blocked by component — the one
+/// marshaling path for every frame that crosses the bridge.
 ///
 /// # Errors
-/// [`ComputeError::EmptyInput`] for zero frames; [`ComputeError::BadShape`]
-/// when the buffer does not split into `n_frames` rows of `D · n` values.
-fn blocked_series(
-    buffer: &[f64],
-    n_frames: u64,
-    components: usize,
-) -> Result<Array3<f64>, ComputeError> {
-    let n_frames = n_frames as usize;
-    if n_frames == 0 {
-        return Err(ComputeError::EmptyInput);
-    }
-    let row = buffer.len() / n_frames;
-    if buffer.len() != n_frames * row || !row.is_multiple_of(components) {
+/// [`ComputeError::BadShape`] when the buffer does not split into `D` equal
+/// component blocks.
+fn blocked_frame(buffer: &[f64], components: usize) -> Result<Array2<f64>, ComputeError> {
+    if !buffer.len().is_multiple_of(components) {
         return Err(ComputeError::BadShape {
-            expected: format!("{n_frames} frames of {components} blocked components per item"),
+            expected: format!("{components} blocked components per item"),
             got: format!("{} values", buffer.len()),
         });
     }
-    let n = row / components;
-    Ok(Array3::from_shape_fn(
-        (n_frames, n, components),
-        |(t, i, d)| buffer[t * row + d * n + i],
-    ))
+    let n = buffer.len() / components;
+    Ok(Array2::from_shape_fn((n, components), |(i, d)| {
+        buffer[d * n + i]
+    }))
 }
 
-/// One periodic box per frame from `n_frames` consecutive 9-value row-major
-/// cell matrices H.
+/// A periodic box from one 9-value row-major cell matrix H.
 ///
 /// # Errors
-/// [`ComputeError::DimensionMismatch`] unless `h` holds exactly `9 · n_frames`
-/// values; [`ComputeError::BadShape`] for a singular H.
-fn simboxes(h: &[f64], n_frames: usize) -> Result<Vec<SimBox>, ComputeError> {
-    if h.len() != CELL * n_frames {
+/// [`ComputeError::DimensionMismatch`] unless `h` holds exactly 9 values;
+/// [`ComputeError::BadShape`] for a singular H.
+fn simbox_of(h: &[f64]) -> Result<SimBox, ComputeError> {
+    if h.len() != CELL {
         return Err(ComputeError::DimensionMismatch {
-            expected: CELL * n_frames,
+            expected: CELL,
             got: h.len(),
-            what: "cell matrices H (9 row-major values per frame)",
+            what: "cell matrix H (9 row-major values)",
         });
     }
-    h.as_chunks::<CELL>()
-        .0
-        .iter()
-        .map(|cell| {
-            simbox_from_h(cell).map_err(|got| ComputeError::BadShape {
-                expected: "a non-singular row-major 3×3 cell matrix H".into(),
-                got,
-            })
-        })
-        .collect()
-}
-
-/// The boxes of an optional box buffer: cxx has no `Option` of a slice, so
-/// the bridge spells "no boxes" as an empty buffer.
-fn optional_simboxes(h: &[f64], n_frames: usize) -> Result<Option<Vec<SimBox>>, ComputeError> {
-    if h.is_empty() {
-        Ok(None)
-    } else {
-        simboxes(h, n_frames).map(Some)
-    }
+    simbox_from_h(h).map_err(|got| ComputeError::BadShape {
+        expected: "a non-singular row-major 3×3 cell matrix H".into(),
+        got,
+    })
 }
 
 // ── Time correlations ───────────────────────────────────────────────────────
@@ -161,13 +134,18 @@ impl CorrelatorAccumulator {
     /// The molrs `CorrelatorAccumulator::push` error, or a buffer that does
     /// not fit the layout; a rejected frame leaves the state unchanged.
     pub fn push(&mut self, frame: &[f64], dt: f64, h: &[f64]) -> Result<(), ComputeError> {
-        let series = blocked_series(frame, 1, self.components)?;
-        let simbox = optional_simboxes(h, 1)?;
+        let a = blocked_frame(frame, self.components)?;
+        // cxx has no `Option` of a slice: an empty H is "no box".
+        let simbox = if h.is_empty() {
+            None
+        } else {
+            Some(simbox_of(h)?)
+        };
         self.inner.push(mc::CorrelatorFrame {
-            a: series.index_axis(Axis(0), 0),
+            a: a.view(),
             b: None,
             dt,
-            simbox: simbox.as_ref().map(|boxes| &boxes[0]),
+            simbox: simbox.as_ref(),
         })
     }
 
@@ -213,34 +191,10 @@ impl Msd {
     ///
     /// # Errors
     /// [`ComputeError::OutOfRange`] for `stride == 0` (a stride with the
-    /// `"first"` origin is refused at `compute`).
+    /// `"first"` origin is refused by the accumulator).
     pub fn set_stride(&mut self, stride: u64) -> Result<(), ComputeError> {
         self.inner = self.inner.with_stride(to_usize(stride, "stride")?)?;
         Ok(())
-    }
-
-    /// The MSD of a `[n_frames, 3 · n_atoms]` unwrapped position buffer at
-    /// frame spacing `dt`; `boxes` holds one H per frame to reject a wrapped
-    /// trajectory, or is empty to skip that check.
-    ///
-    /// # Errors
-    /// The molrs `Msd::compute` error, or a buffer that does not fit.
-    pub fn compute(
-        &self,
-        positions: &[f64],
-        n_frames: u64,
-        dt: f64,
-        boxes: &[f64],
-    ) -> Result<Box<TimeCorrelation>, ComputeError> {
-        let series = blocked_series(positions, n_frames, SPATIAL)?;
-        let boxes = optional_simboxes(boxes, n_frames as usize)?;
-        self.inner
-            .compute(mc::MsdInput {
-                positions: series.view(),
-                dt,
-                boxes: boxes.as_deref(),
-            })
-            .map(TimeCorrelation::boxed)
     }
 
     /// The streaming form; push one blocked `x|y|z` position frame at a time.
@@ -296,25 +250,6 @@ impl Vacf {
         Ok(())
     }
 
-    /// The VACF of a `[n_frames, n_dof]` velocity buffer at frame spacing `dt`.
-    ///
-    /// # Errors
-    /// The molrs `Vacf::compute` error, or a buffer that does not fit.
-    pub fn compute(
-        &self,
-        velocities: &[f64],
-        n_frames: u64,
-        dt: f64,
-    ) -> Result<Box<TimeCorrelation>, ComputeError> {
-        let series = blocked_series(velocities, n_frames, SCALAR)?;
-        self.inner
-            .compute(mc::VacfInput {
-                velocities: series.index_axis(Axis(2), 0),
-                dt,
-            })
-            .map(TimeCorrelation::boxed)
-    }
-
     /// The streaming form; push one velocity frame (`n_dof` values) at a time.
     pub fn accumulator(&self) -> Box<CorrelatorAccumulator> {
         Box::new(CorrelatorAccumulator {
@@ -368,14 +303,6 @@ impl LinearFit {
 
 // ── Radial distribution ─────────────────────────────────────────────────────
 
-/// The self-query pair source of one frame: a cell list over `points` in
-/// `simbox`, which streams its pairs to the RDF without materializing them.
-fn self_pairs(points: ArrayView2<'_, f64>, simbox: &SimBox, cutoff: f64) -> NeighborList {
-    let mut list = NeighborList::new(cutoff);
-    list.build(points, simbox);
-    list
-}
-
 fn rdf_result(result: mc::RdfResult) -> bridge::ffi::RdfResult {
     bridge::ffi::RdfResult {
         bin_edges: result.bin_edges.to_vec(),
@@ -410,31 +337,6 @@ pub(crate) fn rdf_new(n_bins: u64, r_max: f64, r_min: f64) -> Result<Box<Rdf>, C
 }
 
 impl Rdf {
-    /// g(r) over a `[n_frames, 3 · n_atoms]` position buffer with one cell
-    /// matrix H per frame in `boxes` (`[n_frames, 9]`, so NPT is supported).
-    ///
-    /// # Errors
-    /// The molrs `Rdf::compute` error, or a buffer that does not fit.
-    pub fn compute(
-        &self,
-        positions: &[f64],
-        boxes: &[f64],
-        n_frames: u64,
-    ) -> Result<bridge::ffi::RdfResult, ComputeError> {
-        let series = blocked_series(positions, n_frames, SPATIAL)?;
-        let boxes = simboxes(boxes, n_frames as usize)?;
-        let lists: Vec<NeighborList> = series
-            .outer_iter()
-            .zip(&boxes)
-            .map(|(frame, simbox)| self_pairs(frame, simbox, self.inner.r_max()))
-            .collect();
-        let sources: Vec<&(dyn PairSource + Sync)> = lists
-            .iter()
-            .map(|list| list as &(dyn PairSource + Sync))
-            .collect();
-        self.inner.compute(&sources).map(rdf_result)
-    }
-
     /// The streaming form; push one position frame and its H at a time.
     pub fn accumulator(&self) -> Box<RdfAccumulator> {
         Box::new(RdfAccumulator {
@@ -445,7 +347,7 @@ impl Rdf {
 }
 
 /// The streaming g(r) accumulator — molrs `compute::RdfAccumulator`, from
-/// [`Rdf::accumulator`] (O(n_bins) state).
+/// [`Rdf::accumulator`] (O(n_bins) state); the one form of the g(r).
 pub struct RdfAccumulator {
     inner: mc::RdfAccumulator,
     cutoff: f64,
@@ -459,9 +361,20 @@ impl RdfAccumulator {
     /// The molrs `RdfAccumulator::push` error, or a buffer that does not fit;
     /// a rejected frame leaves the state unchanged.
     pub fn push(&mut self, positions: &[f64], h: &[f64]) -> Result<(), ComputeError> {
-        let series = blocked_series(positions, 1, SPATIAL)?;
-        let simbox = simboxes(h, 1)?;
-        let list = self_pairs(series.index_axis(Axis(0), 0), &simbox[0], self.cutoff);
+        if !positions.len().is_multiple_of(SPATIAL) {
+            return Err(ComputeError::BadShape {
+                expected: "blocked x|y|z positions, 3 values per atom".into(),
+                got: format!("{} values", positions.len()),
+            });
+        }
+        let simbox = simbox_of(h)?;
+        let n = positions.len() / SPATIAL;
+        let (x, rest) = positions.split_at(n);
+        let (y, z) = rest.split_at(n);
+        // A periodic cell-list self-query, which streams its pairs to the RDF
+        // without materializing them.
+        let mut list = NeighborList::new(self.cutoff);
+        list.build(Points::Columns([x, y, z]), &simbox);
         self.inner.push(&list)
     }
 
@@ -488,85 +401,97 @@ mod tests {
         [l, 0.0, 0.0, 0.0, l, 0.0, 0.0, 0.0, l]
     }
 
-    /// `n_frames` frames of `n` atoms moving ballistically along x, blocked.
-    fn ballistic(n_frames: usize, n: usize) -> Vec<f64> {
-        let mut out = Vec::new();
-        for t in 0..n_frames {
-            let x = (0..n).map(|i| i as f64 + 0.1 * (i + 1) as f64 * t as f64);
-            out.extend(x);
-            out.extend((0..n).map(|i| 0.5 * i as f64));
-            out.extend(std::iter::repeat_n(1.0, n));
+    fn assert_close(actual: &[f64], expected: &[f64], tol: f64) {
+        assert_eq!(actual.len(), expected.len(), "{actual:?} vs {expected:?}");
+        for (a, e) in actual.iter().zip(expected) {
+            assert!((a - e).abs() <= tol, "{actual:?} vs {expected:?}");
         }
+    }
+
+    /// Frame `t` of `n` atoms moving ballistically along x (atom `i` at speed
+    /// `0.1 · (i + 1)` per frame), blocked `x|y|z`.
+    fn ballistic(t: usize, n: usize) -> Vec<f64> {
+        let mut out: Vec<f64> = (0..n)
+            .map(|i| i as f64 + 0.1 * (i + 1) as f64 * t as f64)
+            .collect();
+        out.extend((0..n).map(|i| 0.5 * i as f64));
+        out.extend(std::iter::repeat_n(1.0, n));
         out
     }
 
-    /// A deterministic 3-D lattice with jitter, blocked `x|y|z`.
-    fn lattice(seed: usize) -> Vec<f64> {
-        let mut xs = Vec::new();
-        let mut ys = Vec::new();
-        let mut zs = Vec::new();
+    /// A 4 × 4 × 4 simple cubic lattice of spacing 2.5 Å, blocked `x|y|z` —
+    /// it fills a 10 Å periodic cube exactly.
+    fn lattice() -> Vec<f64> {
+        let mut xyz = [Vec::new(), Vec::new(), Vec::new()];
         for i in 0..4 {
             for j in 0..4 {
                 for k in 0..4 {
-                    let jitter = 0.05 * (((i * 16 + j * 4 + k + seed) * 7919 % 13) as f64);
-                    xs.push(2.5 * i as f64 + jitter);
-                    ys.push(2.5 * j as f64 + 0.5 * jitter);
-                    zs.push(2.5 * k as f64);
+                    for (axis, index) in [i, j, k].into_iter().enumerate() {
+                        xyz[axis].push(2.5 * index as f64);
+                    }
                 }
             }
         }
-        [xs, ys, zs].concat()
+        xyz.concat()
     }
 
+    /// Ballistic atoms: MSD(lag) = 0.01 · lag² · mean((i + 1)²), which is
+    /// 0.075 · lag² for four atoms, at lag times `lag · dt`.
     #[test]
-    fn msd_stream_equals_batch() {
-        let (t, n) = (6, 4);
-        let positions = ballistic(t, n);
-        let msd = msd_new(3);
-        let batch = msd.compute(&positions, t as u64, 0.5, &[]).unwrap();
-        let mut acc = msd.accumulator();
-        for frame in positions.chunks(3 * n) {
-            acc.push(frame, 0.5, &cube(100.0)).unwrap();
+    fn msd_accumulator_measures_a_ballistic_curve() {
+        let mut acc = msd_new(3).accumulator();
+        for t in 0..6 {
+            acc.push(&ballistic(t, 4), 0.5, &cube(100.0)).unwrap();
         }
-        let streamed = acc.finish().unwrap();
-        assert_eq!(acc.n_frames(), t as u64);
-        assert_eq!(batch.lag_times(), streamed.lag_times());
-        for (a, b) in batch
-            .channel(0)
-            .unwrap()
-            .iter()
-            .zip(streamed.channel(0).unwrap())
-        {
-            assert!((a - b).abs() < 1e-9, "{a} vs {b}");
-        }
+        assert_eq!(acc.n_frames(), 6);
+        let curve = acc.finish().unwrap();
+        assert_eq!(curve.n_lags(), 4);
+        assert_eq!(curve.n_channels(), 1);
+        assert_close(&curve.lag_times(), &[0.0, 0.5, 1.0, 1.5], 1e-15);
+        assert_close(&curve.channel(0).unwrap(), &[0.0, 0.075, 0.3, 0.675], 1e-12);
+        assert!(matches!(
+            curve.channel(1),
+            Err(ComputeError::OutOfRange { .. })
+        ));
     }
 
+    /// One atom at unit speed: MSD(t) = t² on t = 0..=9, whose least-squares
+    /// line has slope 9 and intercept −12.
     #[test]
     fn msd_curve_feeds_linear_fit() {
-        // One atom moving at unit speed: MSD(t) = t², so a fit over the
-        // windowed curve is increasing; a single channel exists.
-        let positions: Vec<f64> = (0..10).flat_map(|t| [t as f64, 0.0, 0.0]).collect();
-        let curve = msd_new(9).compute(&positions, 10, 1.0, &[]).unwrap();
-        assert_eq!(curve.n_channels(), 1);
+        let mut acc = msd_new(9).accumulator();
+        for t in 0..10 {
+            acc.push(&[t as f64, 0.0, 0.0], 1.0, &[]).unwrap();
+        }
+        let curve = acc.finish().unwrap();
         let fit = linear_fit_new(0.0, 1.0)
             .unwrap()
             .compute(&curve, 0)
             .unwrap();
-        assert!(fit.slope > 0.0);
-        assert_eq!(fit.fit_end, 9);
+        assert!((fit.slope - 9.0).abs() < 1e-9, "{}", fit.slope);
+        assert!((fit.intercept + 12.0).abs() < 1e-9, "{}", fit.intercept);
+        assert_eq!((fit.fit_start, fit.fit_end), (0, 9));
     }
 
     #[test]
-    fn msd_rejects_a_ragged_buffer_and_an_unknown_origin() {
-        let msd = msd_new(2);
+    fn msd_refuses_a_ragged_frame_a_wrapped_step_and_a_bad_configuration() {
+        let mut acc = msd_new(2).accumulator();
+        assert!(acc.finish().is_err(), "no frames, no curve");
         assert!(matches!(
-            msd.compute(&[0.0; 10], 3, 1.0, &[]),
+            acc.push(&[0.0; 10], 1.0, &[]),
             Err(ComputeError::BadShape { .. })
         ));
         assert!(matches!(
-            msd.compute(&[], 0, 1.0, &[]),
-            Err(ComputeError::EmptyInput)
+            acc.push(&[0.0; 3], 1.0, &[1.0; 4]),
+            Err(ComputeError::DimensionMismatch { .. })
         ));
+        acc.push(&[0.0; 3], 1.0, &cube(4.0)).unwrap();
+        assert!(matches!(
+            acc.push(&[3.9, 0.0, 0.0], 1.0, &cube(4.0)),
+            Err(ComputeError::Wrapped { .. })
+        ));
+        assert_eq!(acc.n_frames(), 1, "a rejected frame leaves the state");
+
         let mut msd = msd_new(2);
         assert!(matches!(
             msd.set_origins("middle"),
@@ -577,98 +502,101 @@ mod tests {
             msd.set_stride(0),
             Err(ComputeError::OutOfRange { .. })
         ));
-        // A stride with the single first origin is the compute's refusal.
+        // A stride with the single first origin is the accumulator's refusal.
         msd.set_stride(2).unwrap();
         assert!(matches!(
-            msd.compute(&[0.0; 9], 3, 1.0, &[]),
+            msd.accumulator().push(&[0.0; 3], 1.0, &[]),
             Err(ComputeError::OutOfRange { .. })
         ));
     }
 
+    /// An alternating velocity `(−1)^t` has zero mean, so the unbiased VACF is
+    /// `(−1)^lag` exactly — with every origin or every other one.
     #[test]
-    fn vacf_takes_a_normalization_and_a_stride() {
-        let (t, n_dof) = (9, 2);
-        let velocities: Vec<f64> = (0..t * n_dof).map(|k| (k as f64 * 0.7).sin()).collect();
-        let mut vacf = vacf_new(3);
+    fn vacf_of_an_alternating_velocity() {
+        for stride in [1, 2] {
+            let mut vacf = vacf_new(3);
+            vacf.set_stride(stride).unwrap();
+            let mut acc = vacf.accumulator();
+            for t in 0..8 {
+                let v = if t % 2 == 0 { 1.0 } else { -1.0 };
+                acc.push(&[v], 2.0, &[]).unwrap();
+            }
+            let curve = acc.finish().unwrap();
+            assert_close(&curve.lag_times(), &[0.0, 2.0, 4.0, 6.0], 1e-15);
+            assert_close(&curve.channel(0).unwrap(), &[1.0, -1.0, 1.0, -1.0], 1e-12);
+        }
+    }
+
+    /// A constant velocity `c` correlates to `c²` at every lag when its mean
+    /// is kept, and to 0 when it is subtracted (the default).
+    #[test]
+    fn vacf_mean_policy_keeps_or_subtracts_the_mean() {
+        let curve_of = |mean: Option<&str>| {
+            let mut vacf = vacf_new(2);
+            if let Some(mean) = mean {
+                vacf.set_mean(mean).unwrap();
+            }
+            let mut acc = vacf.accumulator();
+            for _ in 0..5 {
+                acc.push(&[1.5, 1.5], 1.0, &[]).unwrap();
+            }
+            acc.finish().unwrap().channel(0).unwrap()
+        };
+        assert_close(&curve_of(Some("keep")), &[2.25; 3], 1e-12);
+        assert_close(&curve_of(Some("subtract")), &[0.0; 3], 1e-12);
+        assert_close(&curve_of(None), &[0.0; 3], 1e-12);
+    }
+
+    #[test]
+    fn vacf_refuses_unknown_names_and_a_width_change() {
+        let mut vacf = vacf_new(2);
         assert!(matches!(
             vacf.set_normalization("weird"),
             Err(ComputeError::UnknownName { .. })
         ));
         vacf.set_normalization("biased").unwrap();
-        vacf.set_stride(2).unwrap();
         assert!(matches!(
             vacf.set_mean("weird"),
             Err(ComputeError::UnknownName { .. })
         ));
-        vacf.set_mean("keep").unwrap();
-        assert_eq!(vacf.inner.correlator().mean(), mc::MeanPolicy::Keep);
-        let batch = vacf.compute(&velocities, t as u64, 1.0).unwrap();
+        assert!(matches!(
+            vacf.set_stride(0),
+            Err(ComputeError::OutOfRange { .. })
+        ));
         let mut acc = vacf.accumulator();
-        for frame in velocities.chunks(n_dof) {
-            acc.push(frame, 1.0, &[]).unwrap();
-        }
-        let streamed = acc.finish().unwrap();
-        for (a, b) in batch
-            .channel(0)
-            .unwrap()
-            .iter()
-            .zip(streamed.channel(0).unwrap())
-        {
-            assert!((a - b).abs() < 1e-12, "{a} vs {b}");
-        }
-    }
-
-    #[test]
-    fn correlator_accumulator_errors_instead_of_returning_empty() {
-        let mut acc = vacf_new(2).accumulator();
         assert!(acc.finish().is_err());
         acc.push(&[1.0, 2.0, 3.0], 1.0, &[]).unwrap();
         assert!(acc.push(&[1.0, 2.0], 1.0, &[]).is_err());
         assert_eq!(acc.n_frames(), 1);
     }
 
+    /// A simple cubic lattice: every pair within 4 Å is a first neighbour at
+    /// 2.5 Å (6 per atom) or a second at 2.5·√2 ≈ 3.54 Å (12 per atom), so the
+    /// counts fill exactly two bins, the second holding twice the first.
     #[test]
-    fn vacf_stream_equals_batch() {
-        let (t, n_dof) = (8, 6);
-        let velocities: Vec<f64> = (0..t * n_dof)
-            .map(|k| ((k * 37 % 11) as f64 - 5.0) * 0.1)
-            .collect();
-        let vacf = vacf_new(4);
-        let batch = vacf.compute(&velocities, t as u64, 2.0).unwrap();
-        let mut acc = vacf.accumulator();
-        for frame in velocities.chunks(n_dof) {
-            acc.push(frame, 2.0, &[]).unwrap();
-        }
-        let streamed = acc.finish().unwrap();
-        for (a, b) in batch
-            .channel(0)
-            .unwrap()
-            .iter()
-            .zip(streamed.channel(0).unwrap())
-        {
-            assert!((a - b).abs() < 1e-9, "{a} vs {b}");
-        }
-        assert!(matches!(
-            batch.channel(1),
-            Err(ComputeError::OutOfRange { .. })
-        ));
-    }
-
-    #[test]
-    fn rdf_stream_equals_batch() {
-        let frames = [lattice(0), lattice(3)];
-        let positions = frames.concat();
-        let boxes = [cube(10.0), cube(10.0)].concat();
+    fn rdf_of_a_simple_cubic_lattice() {
         let rdf = rdf_new(20, 4.0, 0.0).unwrap();
-        let batch = rdf.compute(&positions, &boxes, 2).unwrap();
         let mut acc = rdf.accumulator();
-        for frame in &frames {
-            acc.push(frame, &cube(10.0)).unwrap();
+        for _ in 0..2 {
+            acc.push(&lattice(), &cube(10.0)).unwrap();
         }
-        let streamed = acc.finish().unwrap();
-        assert_eq!(batch.rdf, streamed.rdf);
-        assert_eq!(batch.n_frames, 2);
-        assert_eq!(batch.rdf.len(), 20);
+        assert_eq!(acc.n_frames(), 2);
+        let result = acc.finish().unwrap();
+        assert_eq!(result.n_frames, 2);
+        assert_eq!(result.rdf.len(), 20);
+        assert_eq!(result.bin_edges.len(), 21);
+        // molrs sums the cell volume over frames (RdfResult::volume).
+        assert!((result.volume - 2000.0).abs() < 1e-9, "{}", result.volume);
+        let first = result.n_r[12];
+        assert!(first > 0.0);
+        assert_eq!(result.n_r[17], 2.0 * first);
+        for (bin, &count) in result.n_r.iter().enumerate() {
+            if bin != 12 && bin != 17 {
+                assert_eq!(count, 0.0, "bin {bin}");
+                assert_eq!(result.rdf[bin], 0.0, "bin {bin}");
+            }
+        }
     }
 
     #[test]
@@ -681,11 +609,15 @@ mod tests {
         let mut acc = rdf.accumulator();
         assert!(acc.finish().is_err());
         assert!(matches!(
-            acc.push(&lattice(0), &[1.0; 4]),
+            acc.push(&lattice(), &[1.0; 4]),
             Err(ComputeError::DimensionMismatch { .. })
         ));
         assert!(matches!(
-            acc.push(&lattice(0), &[0.0; 9]),
+            acc.push(&lattice(), &[0.0; 9]),
+            Err(ComputeError::BadShape { .. })
+        ));
+        assert!(matches!(
+            acc.push(&[0.0; 4], &cube(10.0)),
             Err(ComputeError::BadShape { .. })
         ));
         assert_eq!(acc.n_frames(), 0);

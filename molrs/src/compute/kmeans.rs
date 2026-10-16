@@ -263,6 +263,7 @@ mod tests {
     use super::*;
     use crate::compute::fixtures::{random_points, self_neighbors};
     use crate::compute::{Pca, PcaInput, Steinhardt, SteinhardtInput};
+    use crate::core::Cell;
     use crate::op::standard_normal;
     use molrs::core::SimBox;
     use ndarray::array;
@@ -389,7 +390,7 @@ mod tests {
     #[test]
     fn steinhardt_pca_kmeans_composes() {
         let box_len = 6.0;
-        let simbox = SimBox::cube(box_len, array![0.0, 0.0, 0.0], [true; 3]).unwrap();
+        let simbox = SimBox::new(Cell::Lengths([box_len; 3]), [0.0, 0.0, 0.0], [true; 3]).unwrap();
         let points = random_points(200, box_len, 11);
         let neighbors = self_neighbors(points.view(), &simbox, 1.6);
 

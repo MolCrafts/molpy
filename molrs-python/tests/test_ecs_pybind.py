@@ -1,14 +1,17 @@
-"""Contract tests for the ECS-shaped Python binding (molgraph-ecs-02-pybind).
+"""Contract tests for the graph bindings.
 
-The core is an ECS *world*: entities are stable opaque handles, components live
-in aligned columns, and topology is kind-tagged relations. Rigid-body moves
-(translate, rotate, scale) are methods of the leaves and return the leaf; chemical
-perception has owners (`molrs.perceive.assign_*` / `perceive_rings`,
-`molrs.ff.charge.*`, `molrs.io.smiles.SmilesIr`) and is reached through them, never
-through a method on the graph classes. Leaves (`Atomistic`/`CoarseGrain`) hold a
-core leaf from construction and subclass `MolGraph`; they are never *converted*
-from a `MolGraph`.
+`MolGraph` is the generic ECS *world*: nodes are stable opaque `int` handles,
+fields live in aligned columns, and topology is kind-tagged relations.
+`Atomistic` / `CoarseGrain` are peers, not `MolGraph` subclasses: each holds its
+own typed core graph and speaks only its typed vocabulary, with live views as
+the one door to an entity's fields. Rigid-body moves (translate, rotate,
+scale) are methods of the leaves; chemical perception has owners
+(`molrs.perceive.assign_*` / `perceive_rings`, `molrs.ff.charge.*`,
+`molrs.io.smiles.SmilesIr`) and is reached through them, never through a
+method on the graph classes.
 """
+
+import copy
 
 import molrs
 import numpy as np
@@ -21,131 +24,243 @@ import pytest
 
 def test_handles_are_stable_opaque_ints():
     g = molrs.core.MolGraph()
-    handles = [g.spawn() for _ in range(3)]
+    handles = [g.add_node() for _ in range(3)]
     assert all(isinstance(h, int) for h in handles)
     assert len(set(handles)) == 3  # distinct
 
 
-def test_despawn_middle_keeps_others_valid_no_reindex():
+def test_del_node_middle_keeps_others_valid_no_reindex():
     g = molrs.core.MolGraph()
-    e0, e1, e2 = g.spawn(), g.spawn(), g.spawn()
-    g.set(e0, "x", 0.0)
-    g.set(e2, "x", 2.0)
+    e0, e1, e2 = g.add_node(), g.add_node(), g.add_node()
+    g.set_node(e0, "x", 0.0)
+    g.set_node(e2, "x", 2.0)
 
-    g.despawn(e1)
+    g.del_node(e1)
 
     # The surviving handles still resolve to *their own* data — no positional
     # reindexing shifted e2 into e1's slot.
-    assert g.has_entity(e0) and g.has_entity(e2)
-    assert not g.has_entity(e1)
-    assert g.get(e0, "x") == 0.0
-    assert g.get(e2, "x") == 2.0
-    assert sorted(g.entities()) == sorted([e0, e2])
+    assert sorted(g.node_ids()) == sorted([e0, e2])
+    assert g.get_node(e0)["x"] == 0.0
+    assert g.get_node(e2)["x"] == 2.0
+
+
+def test_del_nodes_is_atomic_and_distinct_from_del_node():
+    g = molrs.core.MolGraph()
+    e0, e1, e2 = g.add_node(), g.add_node(), g.add_node()
+    g.del_node(e1)
+    with pytest.raises(ValueError):
+        g.del_nodes([e0, e1])  # e1 is stale: nothing is deleted
+    assert sorted(g.node_ids()) == sorted([e0, e2])
+    with pytest.raises(ValueError):
+        g.del_nodes([e0, e0])  # listed twice
+    g.del_nodes([e0, e2])
+    assert g.node_ids() == []
+
+
+def test_add_node_carries_its_props_and_refuses_a_non_prop_value():
+    g = molrs.core.MolGraph()
+    e = g.add_node(x=1.0, label="a", n=2, flag=True)
+    assert g.get_node(e) == {"x": 1.0, "label": "a", "n": 2, "flag": True}
+    with pytest.raises(TypeError):
+        g.add_node(x=None)
+    with pytest.raises(TypeError):
+        g.add_node(x=[1.0])
+    assert g.n_nodes == 1  # a refused add leaves the graph unchanged
+
+
+def test_clear_node_unsets_one_field():
+    g = molrs.core.MolGraph()
+    e = g.add_node(x=1.0, y=2.0)
+    g.clear_node(e, "x")
+    assert g.get_node(e) == {"y": 2.0}
+    g.clear_node(e, "x")  # no-op when absent
+    assert g.get_node(e) == {"y": 2.0}
+
+
+def test_leaf_node_writes_keep_the_leaf_invariant():
+    # A view is the one door onto a leaf's node fields, and every write goes
+    # through the leaf's own invariant: an atom has a valid `atomic_number`,
+    # a bead a string `bead_type`.
+    a = molrs.core.Atomistic()
+    with pytest.raises(ValueError, match="atomic_number"):
+        a.add_atom(x=0.0)
+    with pytest.raises(ValueError, match="atomic_number"):
+        a.add_atom(atomic_number=119)
+    assert a.n_atoms == 0
+    atom = a.add_atom(atomic_number=6)
+    with pytest.raises(ValueError):
+        atom["atomic_number"] = 200
+    with pytest.raises(ValueError):
+        del atom["atomic_number"]
+    assert atom["atomic_number"] == 6
+
+    cg = molrs.core.CoarseGrain()
+    with pytest.raises(ValueError, match="bead_type"):
+        cg.add_bead(x=0.0)
+    bead = cg.add_bead(bead_type="W")
+    with pytest.raises(ValueError):
+        bead["bead_type"] = 3
+    with pytest.raises(ValueError):
+        del bead["bead_type"]
+    assert bead["bead_type"] == "W"
+
+
+def test_leaves_are_not_molgraphs():
+    # The leaves are peers of MolGraph: nothing of its generic API reaches
+    # their graph.
+    assert not issubclass(molrs.core.Atomistic, molrs.core.MolGraph)
+    assert not issubclass(molrs.core.CoarseGrain, molrs.core.MolGraph)
+    for name in ("add_node", "set_node", "add_relation", "register_kind", "column"):
+        assert not hasattr(molrs.core.Atomistic, name)
+        assert not hasattr(molrs.core.CoarseGrain, name)
+
+
+def test_get_relation_returns_endpoints_and_fields():
+    g = molrs.core.MolGraph()
+    g.register_kind("link", 2)
+    a, b = g.add_node(), g.add_node()
+    r = g.add_relation("link", [a, b], order=2, label="ab")
+    assert g.get_relation("link", r) == ([a, b], {"order": 2, "label": "ab"})
+    g.set_relation_prop("link", r, "order", 3)
+    g.clear_relation_prop("link", r, "label")
+    assert g.get_relation("link", r) == ([a, b], {"order": 3})
+
+
+def test_del_relation_and_del_relations():
+    g = molrs.core.MolGraph()
+    g.register_kind("link", 2)
+    a, b, c = g.add_node(), g.add_node(), g.add_node()
+    r0 = g.add_relation("link", [a, b])
+    r1 = g.add_relation("link", [b, c])
+    r2 = g.add_relation("link", [a, c])
+    g.del_relation("link", r0)
+    assert set(g.relation_ids("link")) == {r1, r2}
+    with pytest.raises(ValueError):
+        g.del_relations("link", [r1, r0])  # r0 is stale: atomic refusal
+    assert g.n_relations("link") == 2
+    g.del_relations("link", [r1, r2])
+    assert g.n_relations("link") == 0
 
 
 def test_stale_handle_raises():
     g = molrs.core.MolGraph()
-    e = g.spawn()
-    g.despawn(e)
+    e = g.add_node()
+    g.del_node(e)
     with pytest.raises(ValueError):
-        g.set(e, "x", 1.0)
+        g.set_node(e, "x", 1.0)
+    with pytest.raises(ValueError):
+        g.get_node(e)
 
 
-def test_relation_endpoints_survive_despawn_no_reindex():
+def test_relation_endpoints_survive_del_node_no_reindex():
     g = molrs.core.MolGraph()
     g.register_kind("link", 2)
-    a, b, c = g.spawn(), g.spawn(), g.spawn()
+    a, b, c = g.add_node(), g.add_node(), g.add_node()
     r = g.add_relation("link", [a, c])
 
-    g.despawn(b)  # remove a non-endpoint entity
+    g.del_node(b)  # delete a non-endpoint node
 
     # The relation's endpoints still resolve to a and c — handles weren't
     # shifted by the swap-remove.
-    assert g.relation_nodes("link", r) == [a, c]
-    assert g.get(a, "x") is None  # a still a valid (unset) entity
-    assert g.has_entity(a) and g.has_entity(c)
+    assert g.get_relation("link", r)[0] == [a, c]
+    assert g.get_node(a) == {}  # a still a valid (unset) node
+    assert {a, c} == set(g.node_ids())
 
 
 # --------------------------------------------------------------------------- #
-# Zero-copy component columns                                                 #
+# Component columns                                                           #
 # --------------------------------------------------------------------------- #
 
 
 def test_column_is_zero_copy_view_write_through():
-    a = molrs.core.Atomistic()
-    h0 = a.add_atom("C", 1.0, 2.0, 3.0)
-    a.add_atom("O", 4.0, 5.0, 6.0)
+    g = molrs.core.MolGraph()
+    h0 = g.add_node(x=1.0)
+    g.add_node(x=4.0)
 
-    col = a.column(molrs.core.keys.X)
+    col = g.column(molrs.core.keys.X)
     assert isinstance(col, np.ndarray)
     assert col.tolist() == [1.0, 4.0]
 
     # Mutating the view writes through to the world.
     col[0] = 9.0
-    assert a.get(h0, molrs.core.keys.X) == 9.0
+    assert g.get_node(h0)["x"] == 9.0
 
 
 def test_validity_mask_reflects_set_components():
-    a = molrs.core.Atomistic()
-    h0 = a.add_atom("C", 0.0, 0.0, 0.0)
-    a.add_atom("O", 0.0, 0.0, 0.0)
-    a.set(h0, molrs.core.keys.CHARGE, -0.5)
+    g = molrs.core.MolGraph()
+    h0 = g.add_node(x=0.0)
+    g.add_node(x=0.0)
+    g.set_node(h0, molrs.core.keys.CHARGE, -0.5)
 
-    v = a.validity(molrs.core.keys.CHARGE)
+    v = g.validity(molrs.core.keys.CHARGE)
     assert v.dtype == np.bool_
     assert v.tolist() == [True, False]
 
 
 def test_column_with_a_hole_is_a_key_error_not_a_zero_fill():
-    a = molrs.core.Atomistic()
-    h0 = a.add_atom("C", 0.0, 0.0, 0.0)
-    a.add_atom("O", 0.0, 0.0, 0.0)
-    a.set(h0, molrs.core.keys.CHARGE, -0.5)
+    g = molrs.core.MolGraph()
+    h0 = g.add_node(x=0.0)
+    g.add_node(x=0.0)
+    g.set_node(h0, molrs.core.keys.CHARGE, -0.5)
 
     with pytest.raises(KeyError, match="1 of 2"):
-        a.column(molrs.core.keys.CHARGE)
+        g.column(molrs.core.keys.CHARGE)
     with pytest.raises(KeyError):
-        a.column("never_set")
+        g.column("never_set")
 
 
 def test_column_comes_back_in_the_component_type():
-    a = molrs.core.Atomistic()
-    h0 = a.add_atom("C", 0.0, 0.0, 0.0)
-    h1 = a.add_atom("O", 0.0, 0.0, 0.0)
-    for h, n, flag in ((h0, 3, True), (h1, -1, False)):
-        a.set(h, "n", n)
-        a.set(h, "flag", flag)
+    g = molrs.core.MolGraph()
+    h0 = g.add_node(n=3, flag=True, label="C1")
+    g.add_node(n=-1, flag=False, label="O1")
 
-    assert a.column(molrs.core.keys.ELEMENT).tolist() == ["C", "O"]
-    ints = a.column("n")
+    assert g.column("label").tolist() == ["C1", "O1"]
+    ints = g.column("n")
     assert ints.dtype == np.int32 and ints.tolist() == [3, -1]
-    flags = a.column("flag")
+    flags = g.column("flag")
     assert flags.dtype == np.bool_ and flags.tolist() == [True, False]
     # Non-f64 columns are copies: writing them does not reach the world.
     ints[0] = 99
-    assert a.get(h0, "n") == 3
+    assert g.get_node(h0)["n"] == 3
+
+
+def test_leaf_columns_come_back_in_the_component_type():
+    # A leaf's bulk read is its Refs column: a copy, in the field's type.
+    a = molrs.core.Atomistic()
+    a.add_atom(atomic_number=6, n=3, flag=True, label="C1", x=0.5)
+    a.add_atom(atomic_number=8, n=-1, flag=False, label="O1", x=1.5)
+    species = a.atoms["atomic_number"]
+    assert species.dtype == np.int32 and species.tolist() == [6, 8]
+    assert a.atoms["n"].dtype == np.int32
+    assert a.atoms["flag"].dtype == np.bool_
+    assert a.atoms["label"].tolist() == ["C1", "O1"]
+    x = a.atoms["x"]
+    x[0] = 9.0  # a copy: the graph is untouched
+    assert a.atoms[0]["x"] == 0.5
 
 
 def test_columns_lists_every_registered_component():
-    a = molrs.core.Atomistic()
-    h0 = a.add_atom("C", 0.0, 0.0, 0.0)
-    a.set(h0, molrs.core.keys.CHARGE, -0.5)  # partial columns are listed too
-
-    cols = a.columns()
-    assert isinstance(cols, list)
-    assert {molrs.core.keys.X.key, molrs.core.keys.ELEMENT.key, molrs.core.keys.CHARGE.key} <= set(
-        cols
-    )
-    assert molrs.core.Atomistic().columns() == []
-
-
-def test_get_missing_component_returns_none_and_type_conflict_raises():
     g = molrs.core.MolGraph()
-    e = g.spawn()
-    assert g.get(e, molrs.core.keys.X) is None  # absent
-    g.set(e, molrs.core.keys.CHARGE, 1.0)
+    h0 = g.add_node(x=0.0, atomic_number=6)
+    g.set_node(h0, molrs.core.keys.CHARGE, -0.5)
+
+    cols = g.columns()
+    assert isinstance(cols, list)
+    assert {
+        molrs.core.keys.X.key,
+        molrs.core.keys.ATOMIC_NUMBER.key,
+        molrs.core.keys.CHARGE.key,
+    } <= set(cols)
+    assert molrs.core.MolGraph().columns() == []
+
+
+def test_missing_component_is_absent_and_type_conflict_raises():
+    g = molrs.core.MolGraph()
+    e = g.add_node()
+    assert molrs.core.keys.X.key not in g.get_node(e)  # absent
+    g.set_node(e, molrs.core.keys.CHARGE, 1.0)
     with pytest.raises(ValueError):
-        g.set(e, molrs.core.keys.CHARGE, "not-a-number")  # type conflict
+        g.set_node(e, molrs.core.keys.CHARGE, "not-a-number")  # type conflict
 
 
 # --------------------------------------------------------------------------- #
@@ -158,50 +273,59 @@ def test_translate_rotate_and_scale_are_methods_of_the_two_leaves():
         assert callable(cls.translate)
         assert callable(cls.rotate)
         assert callable(cls.scale)
+        assert callable(cls.center)
 
 
 LEAVES = [molrs.core.Atomistic, molrs.core.CoarseGrain]
 
+# The field each leaf's invariant requires of every node.
+SPECIES = {
+    molrs.core.Atomistic: {"atomic_number": 6},
+    molrs.core.CoarseGrain: {"bead_type": "W"},
+}
+
+
+def _add(mol, **props):
+    """Add one node to either leaf through its own door."""
+    if isinstance(mol, molrs.core.CoarseGrain):
+        return mol.add_bead(**SPECIES[molrs.core.CoarseGrain], **props)
+    return mol.add_atom(**SPECIES[molrs.core.Atomistic], **props)
+
 
 def _one_node(cls):
     mol = cls()
-    h = mol.spawn()
-    for key, value in zip(("x", "y", "z"), (1.0, 0.0, 0.0)):
-        mol.set(h, key, value)
-    return mol, h
+    node = _add(mol, x=1.0, y=0.0, z=0.0)
+    return mol, node
 
 
 @pytest.mark.parametrize("cls", LEAVES, ids=lambda c: c.__name__)
-def test_translate_returns_the_leaf_itself(cls):
-    mol, h = _one_node(cls)
-    assert mol.translate([1.0, 0.0, 0.0]) is mol
-    assert mol.get(h, "x") == 2.0
+def test_translate_moves_the_leaf_in_place(cls):
+    mol, node = _one_node(cls)
+    assert mol.translate([1.0, 0.0, 0.0]) is None
+    assert node["x"] == 2.0
 
 
 @pytest.mark.parametrize("cls", LEAVES, ids=lambda c: c.__name__)
-def test_rotate_returns_the_leaf_itself(cls):
-    mol, h = _one_node(cls)
-    assert mol.rotate([0.0, 0.0, 1.0], np.pi / 2) is mol
-    assert mol.get(h, "y") == pytest.approx(1.0, abs=1e-12)
+def test_rotate_moves_the_leaf_in_place(cls):
+    mol, node = _one_node(cls)
+    assert mol.rotate([0.0, 0.0, 1.0], np.pi / 2) is None
+    assert node["y"] == pytest.approx(1.0, abs=1e-12)
 
 
 @pytest.mark.parametrize("cls", LEAVES, ids=lambda c: c.__name__)
-def test_scale_returns_the_leaf_itself(cls):
-    mol, h = _one_node(cls)
-    assert mol.scale([2.0, 2.0, 2.0]) is mol
-    assert mol.get(h, "x") == 2.0
+def test_scale_moves_the_leaf_in_place(cls):
+    mol, node = _one_node(cls)
+    assert mol.scale([2.0, 2.0, 2.0]) is None
+    assert node["x"] == 2.0
 
 
 @pytest.mark.parametrize("cls", LEAVES, ids=lambda c: c.__name__)
-def test_rigid_body_moves_chain(cls):
-    mol, h = _one_node(cls)
-    chained = (
-        mol.translate([1.0, 0.0, 0.0])
-        .rotate([0.0, 0.0, 1.0], np.pi)
-        .scale([0.5, 0.5, 0.5])
-    )
-    assert chained is mol
-    assert mol.get(h, "x") == pytest.approx(-1.0, abs=1e-12)
+def test_rigid_body_moves_compose(cls):
+    mol, node = _one_node(cls)
+    mol.translate([1.0, 0.0, 0.0])
+    mol.rotate([0.0, 0.0, 1.0], np.pi)
+    mol.scale([0.5, 0.5, 0.5])
+    assert node["x"] == pytest.approx(-1.0, abs=1e-12)
 
 
 @pytest.mark.parametrize(
@@ -211,15 +335,15 @@ def test_rigid_body_moves_chain(cls):
 )
 @pytest.mark.parametrize("cls", LEAVES, ids=lambda c: c.__name__)
 def test_rotate_about_a_degenerate_axis_is_a_value_error(cls, axis):
-    mol, h = _one_node(cls)
+    mol, node = _one_node(cls)
     with pytest.raises(ValueError):
         mol.rotate(axis, 1.0)
-    assert (mol.get(h, "x"), mol.get(h, "y"), mol.get(h, "z")) == (1.0, 0.0, 0.0)
+    assert node["x", "y", "z"] == [1.0, 0.0, 0.0]
 
 
 def test_find_rings_system():
     bz = molrs.perceive.add_hydrogens(
-        molrs.io.smiles.SmilesIr("C1=CC=CC=C1").to_atomistic()
+        molrs.io.smiles.SmilesIr.parse("C1=CC=CC=C1").to_atomistic()
     )
     rings = molrs.perceive.perceive_rings(bz).rings()
     assert len(rings) == 1
@@ -228,75 +352,67 @@ def test_find_rings_system():
 
 def test_gasteiger_charges_system():
     eth = molrs.perceive.add_hydrogens(
-        molrs.io.smiles.SmilesIr("CO").to_atomistic()
+        molrs.io.smiles.SmilesIr.parse("CO").to_atomistic()
     )
     charges = np.asarray(molrs.ff.charge.GasteigerModel().assign(eth))
     # One charge per atom, hydrogens included, and neutral methanol sums to ~0.
-    assert charges.shape == (len(eth.entities()),)
+    assert charges.shape == (eth.n_atoms,)
     assert charges.sum() == pytest.approx(0.0, abs=1e-6)
-
-
-def test_translate_operates_on_leaf_own_graph_not_empty_base():
-    a = molrs.core.Atomistic()
-    h = a.add_atom("C", 1.0, 0.0, 0.0)
-    a.translate([10.0, 0.0, 0.0])
-    assert a.get(h, molrs.core.keys.X) == 11.0
 
 
 def test_perceive_aromaticity_pipeline():
     # Aromaticity perception needs explicit hydrogens (pi-electron counting).
-    bz = molrs.perceive.add_hydrogens(molrs.io.smiles.SmilesIr("C1=CC=CC=C1").to_atomistic())
-    bz = molrs.perceive.assign_aromaticity(bz)
-    aromatic = [h for h in bz.entities() if bz.get(h, "is_aromatic")]
+    bz = molrs.perceive.add_hydrogens(molrs.io.smiles.SmilesIr.parse("C1=CC=CC=C1").to_atomistic())
+    molrs.perceive.assign_aromaticity(bz)
+    aromatic = [atom for atom in bz.atoms if atom.get("is_aromatic")]
     assert len(aromatic) == 6
 
 
 # --------------------------------------------------------------------------- #
-# Leaves subclass MolGraph; hold a core leaf; never converted                #
+# Leaves hold a core leaf; frames, copies                                     #
 # --------------------------------------------------------------------------- #
-
-
-def test_leaf_is_a_graph():
-    assert issubclass(molrs.core.Atomistic, molrs.core.MolGraph)
-    assert issubclass(molrs.core.CoarseGrain, molrs.core.MolGraph)
-
-
-def test_leaf_generic_api_uses_its_own_graph():
-    a = molrs.core.Atomistic()
-    a.add_atom("C", 0.0, 0.0, 0.0)
-    a.add_atom("O", 0.0, 0.0, 0.0)
-    # The generic ECS API reflects the leaf's own atoms, not an empty base.
-    assert len(a.entities()) == 2
-    assert a.n_nodes == 2
 
 
 def test_leaf_frame_round_trip():
     a = molrs.core.Atomistic()
-    h1 = a.add_atom("C", 0.0, 0.0, 0.0)
-    h2 = a.add_atom("O", 1.2, 0.0, 0.0)
+    h1 = a.add_atom(atomic_number=6, x=0.0, y=0.0, z=0.0)
+    h2 = a.add_atom(atomic_number=8, x=1.2, y=0.0, z=0.0)
     a.add_bond(h1, h2)
 
     frame = a.to_frame()
     a2 = molrs.core.Atomistic.from_frame(frame)
     assert a2.n_atoms == 2
-    assert a2.n_relations("bonds") == 1
     assert a2.n_bonds == 1
+    assert len(a2.bonds) == 1
+
+
+@pytest.mark.parametrize("cls", LEAVES, ids=lambda c: c.__name__)
+@pytest.mark.parametrize("clone", [copy.copy, copy.deepcopy], ids=["copy", "deepcopy"])
+def test_copy_is_independent_and_keeps_handles(cls, clone):
+    mol = cls(name="m")
+    node = _add(mol, x=1.0, y=0.0, z=0.0)
+    dup = clone(mol)
+    assert type(dup) is cls
+    assert dup.props == {"name": "m"} and dup.props is not mol.props
+    first = dup.beads[0] if cls is molrs.core.CoarseGrain else dup.atoms[0]
+    assert first.handle == node.handle
+    first["x"] = 5.0
+    assert node["x"] == 1.0
 
 
 def test_find_rotatable_unknown_bond_policy():
-    # Butane skeleton; the middle bond's class is cleared to "unknown" (0, 0).
+    # Butane skeleton; the middle bond's class is cleared to "unknown".
     mol = molrs.core.Atomistic()
-    c = [mol.add_atom("C", float(i), 0.0, 0.0) for i in range(4)]
+    c = [mol.add_atom(atomic_number=6, x=float(i), y=0.0, z=0.0) for i in range(4)]
     bonds = [mol.add_bond(c[i], c[i + 1]) for i in range(3)]
-    mol.set_bond_class(bonds[1], 0, 0)
+    mol.set_bond_class(bonds[1], molrs.core.BondOrder.Unknown, molrs.core.BondNumber.Unknown)
+    policy = molrs.perceive.UnknownBondPolicy
 
-    def middle_flag(out):
-        # A bond handle names a relation: `get` would read the node that
-        # happens to share its slot.
-        return out.get_relation_prop("bonds", bonds[1], "is_rotatable")
-    assert middle_flag(molrs.perceive.assign_rotatable_bonds(mol)) == 0
-    assert middle_flag(molrs.perceive.assign_rotatable_bonds(mol, unknown_bond="single")) == 1
-    with pytest.raises(ValueError):
+    molrs.perceive.assign_rotatable_bonds(mol)
+    assert bonds[1]["is_rotatable"] == 0
+    molrs.perceive.assign_rotatable_bonds(mol, unknown_bond=policy.AsSingle)
+    assert bonds[1]["is_rotatable"] == 1
+    with pytest.raises(TypeError):
         molrs.perceive.assign_rotatable_bonds(mol, unknown_bond="guess")
 
 
@@ -307,29 +423,14 @@ def test_find_rotatable_unknown_bond_policy():
 
 def test_adopt_moves_storage_and_empties_source():
     src = molrs.core.MolGraph()
-    s0 = src.spawn()
-    src.set(s0, "x", 7.0)
+    s0 = src.add_node(x=7.0)
 
     dst = molrs.core.MolGraph()
     dst.adopt(src)
 
-    assert dst.has_entity(s0)
-    assert dst.get(s0, "x") == 7.0
-    assert len(src.entities()) == 0  # source emptied
-
-
-def test_adopt_on_leaf_moves_its_own_store():
-    # adopt must move the *leaf's* backing store, not an empty base graph, so
-    # adopt on Atomistic/CoarseGrain carries the atoms over.
-    src = molrs.io.smiles.SmilesIr("CCO").to_atomistic()
-    n = src.n_atoms
-    assert n == 3
-
-    dst = molrs.core.Atomistic()
-    dst.adopt(src)
-
-    assert dst.n_atoms == n
-    assert src.n_atoms == 0  # source emptied
+    assert dst.node_ids() == [s0]
+    assert dst.get_node(s0)["x"] == 7.0
+    assert len(src.node_ids()) == 0  # source emptied
 
 
 # --------------------------------------------------------------------------- #
@@ -362,87 +463,70 @@ def test_column_spec_exposes_dimension_and_the_unit_derived_from_it():
 
 
 # --------------------------------------------------------------------------- #
-# relation enumeration + geometry systems (P0-C)                              #
+# relation enumeration + geometry                                             #
 # --------------------------------------------------------------------------- #
 
 
 def test_relation_ids_enumerates_handles():
     """Authoritative enumeration — replaces probing opaque handle ranges."""
-    mol = molrs.core.Atomistic()
-    a, b, c = mol.spawn(), mol.spawn(), mol.spawn()
-    mol.register_kind("bond", 2)
-    rh1 = mol.add_relation("bond", [a, b])
-    rh2 = mol.add_relation("bond", [b, c])
-    assert set(mol.relation_ids("bond")) == {rh1, rh2}
-    assert mol.n_relations("bond") == 2
+    g = molrs.core.MolGraph()
+    a, b, c = (g.add_node() for _ in range(3))
+    g.register_kind("bond", 2)
+    rh1 = g.add_relation("bond", [a, b])
+    rh2 = g.add_relation("bond", [b, c])
+    assert set(g.relation_ids("bond")) == {rh1, rh2}
+    assert g.n_relations("bond") == 2
 
 
 def test_relation_ids_empty_for_registered_kind():
-    mol = molrs.core.Atomistic()
-    mol.register_kind("angle", 3)
-    assert mol.relation_ids("angle") == []
+    g = molrs.core.MolGraph()
+    g.register_kind("angle", 3)
+    assert g.relation_ids("angle") == []
 
 
 def test_relation_ids_unregistered_kind_raises():
-    mol = molrs.core.Atomistic()
+    g = molrs.core.MolGraph()
     with pytest.raises(ValueError):
-        mol.relation_ids("nope")
+        g.relation_ids("nope")
 
 
 def test_scale_about_center():
     mol = molrs.core.Atomistic()
-    handles = [mol.spawn() for _ in range(3)]
-    for i, h in enumerate(handles):
-        mol.set(h, "x", float(i))
-        mol.set(h, "y", 0.0)
-        mol.set(h, "z", 0.0)
+    atoms = [mol.add_atom(atomic_number=6, x=float(i), y=0.0, z=0.0) for i in range(3)]
     mol.scale([2.0, 2.0, 2.0], [1.0, 0.0, 0.0])
-    assert [mol.get(h, "x") for h in handles] == [-1.0, 1.0, 3.0]
+    assert [atom["x"] for atom in atoms] == [-1.0, 1.0, 3.0]
 
 
 def test_scale_uniform_about_origin():
     mol = molrs.core.Atomistic()
-    h = mol.spawn()
-    mol.set(h, "x", 1.0)
-    mol.set(h, "y", 2.0)
-    mol.set(h, "z", 3.0)
+    atom = mol.add_atom(atomic_number=6, x=1.0, y=2.0, z=3.0)
     mol.scale([0.5, 0.5, 0.5])
-    assert (mol.get(h, "x"), mol.get(h, "y"), mol.get(h, "z")) == (0.5, 1.0, 1.5)
+    assert atom["x", "y", "z"] == [0.5, 1.0, 1.5]
 
 
 # --------------------------------------------------------------------------- #
-# center — a query on each leaf (backmap-primitives-07)                       #
+# center — a query on each leaf, same signature on both                       #
 # --------------------------------------------------------------------------- #
 #
 # Seam only: the mass-weighted centre R = sum(m_i r_i) / sum(m_i) and every
-# refusal are proven by molrs/src/op/geometry.rs. These tests check
-# the call shape per leaf, the ndarray that crosses back, and the error mapping
-# (every CenterError is a ValueError naming the int handle, amendment 1).
+# refusal are proven by molrs/src/op/geometry.rs. These tests check the call
+# shape per leaf, the ndarray that crosses back, and the error mapping (every
+# CenterError is a ValueError naming the int handle).
 
 
 def _one_weighted_node(cls, position, mass):
     """A leaf holding one node at ``position`` (Å) with ``mass`` (g/mol)."""
     mol = cls()
-    h = mol.spawn()
-    for key, value in zip(("x", "y", "z"), position):
-        mol.set(h, key, value)
-    mol.set(h, "mass", mass)
-    return mol, h
-
-
-def _center(mol, handles):
-    # Atomistic centres all its own nodes; CoarseGrain centres
-    # the bead group it is given.
-    if isinstance(mol, molrs.core.CoarseGrain):
-        return mol.center(handles)
-    return mol.center()
+    x, y, z = position
+    node = _add(mol, x=x, y=y, z=z, mass=mass)
+    return mol, node
 
 
 @pytest.mark.parametrize("cls", LEAVES, ids=lambda c: c.__name__)
-def test_center_returns_a_float64_triple_of_the_leafs_own_nodes(cls):
-    mol, h = _one_weighted_node(cls, (1.0, 2.0, 3.0), 1.0)
+def test_center_returns_a_float64_triple_of_the_given_nodes(cls):
+    mol, node = _one_weighted_node(cls, (1.0, 2.0, 3.0), 1.0)
 
-    center = _center(mol, [h])
+    center = mol.center([node])
 
     assert isinstance(center, np.ndarray)
     assert center.dtype == np.float64
@@ -450,48 +534,65 @@ def test_center_returns_a_float64_triple_of_the_leafs_own_nodes(cls):
     np.testing.assert_allclose(center, [1.0, 2.0, 3.0], rtol=0, atol=1e-12)
 
 
-def test_center_of_an_unknown_bead_is_a_value_error_naming_the_handle():
+@pytest.mark.parametrize("cls", LEAVES, ids=lambda c: c.__name__)
+def test_center_takes_a_refs_of_the_leaf(cls):
+    mol, _ = _one_weighted_node(cls, (1.0, 2.0, 3.0), 1.0)
+    _add(mol, x=3.0, y=2.0, z=3.0, mass=1.0)
+    nodes = mol.beads if cls is molrs.core.CoarseGrain else mol.atoms
+    np.testing.assert_allclose(mol.center(nodes), [2.0, 2.0, 3.0], rtol=0, atol=1e-12)
+
+
+@pytest.mark.parametrize("cls", LEAVES, ids=lambda c: c.__name__)
+def test_center_of_a_node_of_another_graph_is_a_value_error(cls):
+    mol, _ = _one_weighted_node(cls, (0.0, 0.0, 0.0), 1.0)
+    _, foreign = _one_weighted_node(cls, (0.0, 0.0, 0.0), 1.0)
+    with pytest.raises(ValueError, match="another graph"):
+        mol.center([foreign])
+
+
+def test_center_of_a_deleted_bead_is_a_value_error_naming_the_handle():
     cg, live = _one_weighted_node(molrs.core.CoarseGrain, (0.0, 0.0, 0.0), 1.0)
-    stale = cg.spawn()
-    cg.despawn(stale)
+    stale = cg.add_bead(bead_type="W")
+    cg.del_bead(stale)
 
     with pytest.raises(ValueError) as excinfo:
         cg.center([live, stale])
 
     message = str(excinfo.value)
-    assert str(stale) in message
+    assert str(stale.handle) in message
     assert "NodeId(" not in message
 
 
 @pytest.mark.parametrize("cls", LEAVES, ids=lambda c: c.__name__)
 def test_center_with_a_non_finite_mass_is_a_value_error_naming_the_handle(cls):
-    mol, h = _one_weighted_node(cls, (1.0, 2.0, 3.0), float("nan"))
+    mol, node = _one_weighted_node(cls, (1.0, 2.0, 3.0), float("nan"))
 
     with pytest.raises(ValueError) as excinfo:
-        _center(mol, [h])
+        mol.center([node])
 
     message = str(excinfo.value)
-    assert str(h) in message
+    assert str(node.handle) in message
     assert "NodeId(" not in message
 
 
-def test_to_frame_keeps_only_the_requested_atom_fields():
+def test_to_frame_columns_are_selected_on_the_block():
+    # `to_frame` exports everything; picking columns is the block's own job.
     mol = molrs.core.Atomistic()
-    mol.def_atom(element="O", x=0.0, y=0.0, z=0.0, charge=-0.8)
-    frame = mol.to_frame(atom_fields=["element", "x"])
-    assert set(frame["atoms"].keys()) == {"element", "x"}
-    with pytest.raises(ValueError, match="'mass'"):
-        mol.to_frame(atom_fields=["x", "mass"])
+    mol.add_atom(atomic_number=8, x=0.0, y=0.0, z=0.0, charge=-0.8)
+    atoms = mol.to_frame()["atoms"]
+    assert {"atomic_number", "x", "y", "z", "charge"} <= set(atoms.keys())
+    assert "mass" not in atoms
 
 
 def test_perception_is_free_functions():
-    # Two verbs: `perceive_*` reports a side table, `assign_*` writes a clone.
-    mol = molrs.io.smiles.SmilesIr("C1CC1C").to_atomistic()
+    # Two verbs: `perceive_*` reports a side table, `assign_*` writes onto the
+    # molecule it is given.
+    mol = molrs.io.smiles.SmilesIr.parse("C1CC1C").to_atomistic()
     info = molrs.perceive.perceive_rings(mol)
     assert info.ring_sizes() == [3]
     with pytest.raises(TypeError):
         molrs.perceive.RingSet(mol)
-    flagged = molrs.perceive.assign_rings(mol)
-    in_ring = sorted(flagged.get(h, "is_in_ring") for h in flagged.entities())
+    assert not any("is_in_ring" in atom for atom in mol.atoms)
+    assert molrs.perceive.assign_rings(mol) is None
+    in_ring = sorted(atom["is_in_ring"] for atom in mol.atoms)
     assert in_ring == [0, 1, 1, 1]
-    assert not any(mol.has(h, "is_in_ring") for h in mol.entities())

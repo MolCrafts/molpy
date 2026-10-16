@@ -5,13 +5,32 @@
 //! element's default valence ([`default_valence`]) and an atom's implicit
 //! hydrogen count ([`n_implicit_hydrogens`]) — following RDKit's
 //! `Atom::calcImplicitValence`. The formal charge both fold in is read by
-//! [`Atom::formal_charge`](crate::core::Atom::formal_charge), which `core`
+//! [`Props::formal_charge`](crate::core::Props::formal_charge), which `core`
 //! owns because the SMILES writer reads it too.
+//!
+//! The species every perception reads is the atom's atomic number
+//! ([`atomic_number`]); the element symbol is never consulted.
 
 use crate::core::Atomistic;
 use crate::core::BondOrder;
 use crate::core::Element;
 use crate::core::NodeId;
+use crate::core::Props;
+use crate::core::keys;
+
+/// The atomic number of `atom`, an atom of an [`Atomistic`] — `0` for the
+/// wildcard `*`, which names no element and which every caller handles
+/// explicitly.
+///
+/// # Panics
+///
+/// When `atom` carries no valid [`keys::ATOMIC_NUMBER`](crate::core::keys::ATOMIC_NUMBER).
+/// An `Atomistic` guarantees one (0..=118) on every atom, so this is a broken
+/// invariant, never a missing input to default.
+pub(super) fn atomic_number(atom: &Props) -> u8 {
+    atom.atomic_number()
+        .expect("Atomistic invariant: every atom carries a valid atomic_number (0..=118)")
+}
 
 /// RDKit `PeriodicTable::getDefaultValence`: the first entry of the element's
 /// valence list ([`Element::default_valences`]), or `-1` when the element has
@@ -29,8 +48,15 @@ pub(crate) fn default_valence(atno: u8) -> i32 {
 /// the count is the smallest allowed valence of the charge-adjusted element
 /// that is at least the atom's explicit valence, minus that explicit valence.
 ///
-/// Returns `None` if the atom has no recognisable element symbol or if its
-/// element has no defined default valences (e.g. noble gases).
+/// Returns `None` when `atom_id` names no atom, when the atom is the wildcard
+/// (`atomic_number` 0, which has no valence model), when its charge-adjusted
+/// element has no defined default valences (e.g. noble gases), or when its
+/// explicit valence already exceeds every allowed valence.
+///
+/// # Panics
+///
+/// When the atom carries no valid atomic number — a broken [`Atomistic`]
+/// invariant.
 ///
 /// # Bond-order convention
 ///
@@ -53,12 +79,12 @@ pub fn n_implicit_hydrogens(mol: &Atomistic, atom_id: NodeId) -> Option<u32> {
 
     // A declared hydrogen count (SMILES bracket atom) is exact: `[nH]` has one
     // hydrogen and `[C]` has none, whatever the valence model would prefer.
-    if let Some(h) = atom.get("h_count").and_then(|v| v.as_f64()) {
+    if let Some(h) = atom.get(keys::H_COUNT).and_then(|v| v.as_f64()) {
         return Some(h.max(0.0).round() as u32);
     }
 
-    let sym = atom.get_str("element")?;
-    let element = Element::by_symbol(sym)?;
+    // The wildcard (Z = 0) names no element, so it has no valence model.
+    let element = Element::by_number(atomic_number(&atom))?;
 
     // RDKit charged-atom valence rule (`getEffectiveAtomicNum` +
     // `calculateImplicitValence` in `Code/GraphMol/Atom.cpp`):
@@ -143,10 +169,11 @@ fn valence_demand(mol: &Atomistic, atom_id: NodeId, lowest_valence: u8) -> f64 {
     // The two facts are read from their own places: how many bonds this is
     // (the localized number) and whether it is delocalized (the class).
     let bonds: Vec<(BondOrder, f64)> = mol
-        .incident_bond_ids(atom_id)
-        .map(|(bid, _)| {
-            let number = mol.bond_number(bid).count().max(1) as f64;
-            (mol.bond_type(bid), number)
+        .neighbor_bonds(atom_id)
+        .map(|(_, bid)| {
+            const LIVE: &str = "neighbor_bonds yields live bonds";
+            let number = mol.bond_number(bid).expect(LIVE).count().max(1) as f64;
+            (mol.bond_type(bid).expect(LIVE), number)
         })
         .collect();
 

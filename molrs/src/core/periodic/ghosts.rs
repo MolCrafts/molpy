@@ -159,7 +159,7 @@ impl GhostSet {
     /// step.
     ///
     /// `wrap_shifts` is the per-owned-atom integer shift that the wrap just
-    /// applied (the second half of [`SimBox::wrap_shifts`]), in the schema's
+    /// applied (the second half of [`SimBox::wrap`]), in the schema's
     /// image integer type ([`I`], i32) — the same type as a ghost's shift, so
     /// it adds in without a cast. It is not optional
     /// bookkeeping: when owner `j` is folded by `m`, its stored coordinate
@@ -394,7 +394,8 @@ impl GhostSet {
 
         // A free box: the copies are the periodicity, so the search must not
         // add any of its own.
-        let free = SimBox::free(all, reach + 1.0).expect("free box over finite points");
+        let free = SimBox::bounding(all, [reach + 1.0; 3], [false; 3])
+            .expect("free box over finite points");
         let mut nl = NeighborList::new(reach);
         nl.build(all, &free);
 
@@ -573,10 +574,11 @@ impl GhostSet {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::Cell;
     use ndarray::array;
 
     fn cube(l: F) -> SimBox {
-        SimBox::cube(l, array![0.0_f64, 0.0, 0.0], [true; 3]).unwrap()
+        SimBox::new(Cell::Lengths([l; 3]), [0.0_f64, 0.0, 0.0], [true; 3]).unwrap()
     }
 
     /// An atom in the middle of the cell needs no copies; one in a corner needs
@@ -625,7 +627,12 @@ mod tests {
 
     #[test]
     fn a_non_periodic_axis_contributes_no_copies() {
-        let bx = SimBox::cube(10.0, array![0.0_f64, 0.0, 0.0], [true, false, true]).unwrap();
+        let bx = SimBox::new(
+            Cell::Lengths([10.0; 3]),
+            [0.0_f64, 0.0, 0.0],
+            [true, false, true],
+        )
+        .unwrap();
         let owned = array![[0.5_f64, 0.5, 0.5]];
         let set = GhostSet::borders(&bx, owned.view(), 2.0).unwrap();
         assert!(!set.is_empty());
@@ -659,7 +666,7 @@ mod tests {
         // One step of +0.7 Å carries the owner out through the face; the wrap
         // brings it back to 0.4 and reports the shift it applied.
         let stepped = array![[10.4_f64, 5.0, 5.0], [5.0, 5.0, 5.0]];
-        let (wrapped, m) = bx.wrap_shifts(stepped.view());
+        let (wrapped, m) = bx.wrap(stepped.view());
         assert!((wrapped[[0, 0]] - 0.4).abs() < 1e-12);
         assert_eq!(m[[0, 0]], 1);
 
@@ -805,7 +812,7 @@ mod tests {
             for j in (i + 1)..owned.nrows() {
                 let pi = [owned[[i, 0]], owned[[i, 1]], owned[[i, 2]]];
                 let pj = [owned[[j, 0]], owned[[j, 1]], owned[[j, 2]]];
-                let dr = bx.shortest_vector_impl(pi, pj);
+                let dr = bx.mic().apply(crate::op::vec3::sub(pj, pi));
                 let d2 = dr[0] * dr[0] + dr[1] * dr[1] + dr[2] * dr[2];
                 if d2 <= cutoff * cutoff {
                     want.push((i, j, d2));
@@ -926,8 +933,8 @@ mod tests {
     /// would enumerate 27 translations where 75 are needed.
     #[test]
     fn a_tilted_cell_sizes_from_plane_spacings() {
-        let h = array![[10.0_f64, 6.0, 0.0], [0.0, 8.0, 0.0], [0.0, 0.0, 10.0]];
-        let bx = SimBox::new(h, array![0.0_f64, 0.0, 0.0], [true; 3]).unwrap();
+        let h = [[10.0_f64, 6.0, 0.0], [0.0, 8.0, 0.0], [0.0, 0.0, 10.0]];
+        let bx = SimBox::new(Cell::Matrix(h), [0.0_f64, 0.0, 0.0], [true; 3]).unwrap();
         let d = bx.nearest_plane_distance();
         assert!((d[0] - 8.0).abs() < 1e-12 && (d[1] - 8.0).abs() < 1e-12);
         assert!((bx.lengths()[1] - 10.0).abs() < 1e-12);

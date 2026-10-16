@@ -7,17 +7,55 @@
 
 use std::collections::HashMap;
 
-use molrs::core::{NodeId, node_from_u64, node_to_u64};
+use molrs::core::NodeId;
 use molrs::perceive::smarts::{
     EnvironmentOptions, MatchOptions, NeighborStyle, Reaction, RingPrimitive, SmartsPattern,
 };
-use pyo3::exceptions::PyValueError;
+use pyo3::exceptions::{PyTypeError, PyValueError};
 use pyo3::prelude::*;
-use pyo3::types::PyTuple;
-use pyo3::types::PyType;
+use pyo3::types::{PyDict, PyTuple, PyType};
 
+use super::atom_views;
+use crate::core::graph_views::{Leaf, PyNodeRef};
 use crate::core::molgraph::PyAtomistic;
 use crate::error::molrs_error_to_pyerr;
+
+/// The atom `atom` names, checked to be an atom of `leaf`.
+fn own_atom(leaf: &Leaf<'_>, atom: &Bound<'_, PyAny>) -> PyResult<NodeId> {
+    let atom = atom.cast::<PyNodeRef>().map_err(|_| {
+        PyTypeError::new_err(format!(
+            "expected an Atom view of the molecule, got {}",
+            atom.get_type()
+                .name()
+                .map(|n| n.to_string())
+                .unwrap_or_default()
+        ))
+    })?;
+    leaf.own_node(atom)
+}
+
+/// A ``{Atom: label}`` dict as the core's `%LABEL` context.
+fn own_labels(
+    leaf: &Leaf<'_>,
+    labels: Option<&Bound<'_, PyDict>>,
+) -> PyResult<Option<HashMap<NodeId, String>>> {
+    labels
+        .map(|labels| {
+            labels
+                .iter()
+                .map(|(atom, label)| Ok((own_atom(leaf, &atom)?, label.extract::<String>()?)))
+                .collect()
+        })
+        .transpose()
+}
+
+/// A ``{map_number: Atom}`` binding as the core's.
+fn own_binding(leaf: &Leaf<'_>, binding: &Bound<'_, PyDict>) -> PyResult<HashMap<u32, NodeId>> {
+    binding
+        .iter()
+        .map(|(label, atom)| Ok((label.extract::<u32>()?, own_atom(leaf, &atom)?)))
+        .collect()
+}
 
 // ---------------------------------------------------------------------------
 // PySmartsMatch / PySmartsPattern — atom-map-aware SMARTS matcher over Atomistic
@@ -25,40 +63,39 @@ use crate::error::molrs_error_to_pyerr;
 
 /// One SMARTS match, exposed to Python as `molrs.perceive.SmartsMatch`.
 ///
-/// ``atoms`` stores molecule atom handles in query-atom order. ``mapping``
-/// stores the Daylight atom-map projection (``:1`` → atom handle), and is empty
-/// when the query carries no map labels.
-#[pyclass(
-    module = "molrs.perceive",
-    name = "SmartsMatch",
-    skip_from_py_object,
-    subclass
-)]
-#[derive(Clone)]
+/// ``atoms`` holds the molecule's atom views in query-atom order. ``mapping``
+/// is the Daylight atom-map projection (``:1`` → atom view), empty when the
+/// query carries no map labels.
+#[pyclass(module = "molrs.perceive", name = "SmartsMatch", frozen, subclass)]
 pub struct PySmartsMatch {
-    atoms: Vec<u64>,
-    mapping: HashMap<u32, u64>,
+    atoms: Vec<Py<PyAny>>,
+    mapping: Vec<(u32, Py<PyAny>)>,
 }
 
 #[pymethods]
 impl PySmartsMatch {
-    /// Molecule atom handles in query-atom order.
+    /// The molecule's atoms in query-atom order.
     #[getter]
-    fn atoms(&self) -> Vec<u64> {
-        self.atoms.clone()
+    fn atoms(&self, py: Python<'_>) -> Vec<Py<PyAny>> {
+        self.atoms.iter().map(|a| a.clone_ref(py)).collect()
     }
 
-    /// Daylight atom-map projection (``:n`` label -> molecule atom handle).
+    /// Daylight atom-map projection (``:n`` label -> molecule atom).
     #[getter]
-    fn mapping(&self) -> HashMap<u32, u64> {
-        self.mapping.clone()
+    fn mapping<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
+        let out = PyDict::new(py);
+        for (label, atom) in &self.mapping {
+            out.set_item(label, atom)?;
+        }
+        Ok(out)
     }
 
-    fn __repr__(&self) -> String {
-        format!(
-            "SmartsMatch(atoms={:?}, mapping={:?})",
-            self.atoms, self.mapping
-        )
+    fn __repr__(&self, py: Python<'_>) -> PyResult<String> {
+        Ok(format!(
+            "SmartsMatch(atoms={}, mapping={})",
+            pyo3::types::PyList::new(py, &self.atoms)?.repr()?,
+            self.mapping(py)?.repr()?
+        ))
     }
 }
 
@@ -72,7 +109,7 @@ impl PySmartsMatch {
 ///
 /// Daylight atom maps (``[C:1]``) are parsed and carried through but add **no**
 /// match constraint (they are "ignored in molecule SMARTS"); each match's
-/// :attr:`SmartsMatch.mapping` is its ``{map_number: atom_handle}`` dict.
+/// :attr:`SmartsMatch.mapping` is its ``{map_number: Atom}`` dict.
 ///
 /// Examples
 /// --------
@@ -93,65 +130,72 @@ impl PySmartsPattern {
         Ok(Self { inner })
     }
 
-    /// Whether at least one match exists in `mol`.
+    /// Whether at least one match exists in `mol`. ``labels`` and ``root``
+    /// are as for :meth:`find_matches`.
     #[pyo3(signature = (mol, *, labels=None, root=None))]
     fn has_match(
         &self,
-        mol: &PyAtomistic,
-        labels: Option<HashMap<u64, String>>,
-        root: Option<u64>,
-    ) -> bool {
-        let core_labels = labels.map(|labels| {
-            labels
-                .into_iter()
-                .map(|(h, l)| (node_from_u64(h), l))
-                .collect::<HashMap<NodeId, String>>()
-        });
-        self.inner.has_match(
-            mol.core(),
+        mol: &Bound<'_, PyAtomistic>,
+        labels: Option<&Bound<'_, PyDict>>,
+        root: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<bool> {
+        let leaf = Leaf::of(mol.as_any())?;
+        let labels = own_labels(&leaf, labels)?;
+        let root = root.map(|r| own_atom(&leaf, r)).transpose()?;
+        Ok(self.inner.has_match(
+            mol.try_borrow()?.core(),
             MatchOptions {
-                labels: core_labels.as_ref(),
-                root: root.map(node_from_u64),
+                labels: labels.as_ref(),
+                root,
                 limit: None,
             },
-        )
+        ))
     }
 
-    /// All matches, each a :class:`SmartsMatch`. ``labels`` supplies the
-    /// ``%LABEL`` context, ``root`` pins query atom 0 to one atom handle, and
-    /// ``limit`` stops after N embeddings.
+    /// All matches, each a :class:`SmartsMatch`. ``labels`` (``{Atom:
+    /// label}``) supplies the ``%LABEL`` context, ``root`` (an atom) pins
+    /// query atom 0, and ``limit`` stops after N embeddings.
+    ///
+    /// Raises
+    /// ------
+    /// ValueError
+    ///     A ``labels`` key or ``root`` is an atom of another molecule.
     #[pyo3(signature = (mol, *, labels=None, root=None, limit=None))]
     fn find_matches(
         &self,
-        mol: &PyAtomistic,
-        labels: Option<HashMap<u64, String>>,
-        root: Option<u64>,
+        mol: &Bound<'_, PyAtomistic>,
+        labels: Option<&Bound<'_, PyDict>>,
+        root: Option<&Bound<'_, PyAny>>,
         limit: Option<usize>,
-    ) -> Vec<PySmartsMatch> {
-        let core_labels = labels.map(|labels| {
-            labels
-                .into_iter()
-                .map(|(h, l)| (node_from_u64(h), l))
-                .collect::<HashMap<NodeId, String>>()
-        });
+    ) -> PyResult<Vec<PySmartsMatch>> {
+        let leaf = Leaf::of(mol.as_any())?;
+        let labels = own_labels(&leaf, labels)?;
+        let root = root.map(|r| own_atom(&leaf, r)).transpose()?;
         let matches = self.inner.find(
-            mol.core(),
+            mol.try_borrow()?.core(),
             MatchOptions {
-                labels: core_labels.as_ref(),
-                root: root.map(node_from_u64),
+                labels: labels.as_ref(),
+                root,
                 limit,
             },
         );
         matches
             .iter()
-            .map(|m| PySmartsMatch {
-                atoms: m.atoms().iter().map(|&atom| node_to_u64(atom)).collect(),
-                mapping: self
+            .map(|m| {
+                let mut mapping = self
                     .inner
                     .mapped(m)
                     .into_iter()
-                    .map(|(label, atom)| (label, node_to_u64(atom)))
-                    .collect(),
+                    .map(|(label, atom)| Ok((label, leaf.node(u64::from(atom))?.unbind())))
+                    .collect::<PyResult<Vec<_>>>()?;
+                mapping.sort_by_key(|(label, _)| *label);
+                Ok(PySmartsMatch {
+                    atoms: atom_views(&leaf, m.atoms())?
+                        .into_iter()
+                        .map(Bound::unbind)
+                        .collect(),
+                    mapping,
+                })
             })
             .collect()
     }
@@ -205,8 +249,8 @@ impl PySmartsPattern {
     /// ----------
     /// mol : Atomistic
     ///     The molecule.
-    /// center : int
-    ///     Atom handle of the centre atom.
+    /// center : Atom
+    ///     The centre atom, an atom of ``mol``.
     /// reach : int, default 1
     ///     Bond depth from the centre; at least 1.
     /// atomic_number : bool, default True
@@ -250,8 +294,8 @@ impl PySmartsPattern {
     #[allow(clippy::too_many_arguments, reason = "Public Python keyword arguments")]
     fn from_environment(
         _cls: &Bound<'_, PyType>,
-        mol: &PyAtomistic,
-        center: u64,
+        mol: &Bound<'_, PyAtomistic>,
+        center: &Bound<'_, PyAny>,
         reach: u32,
         atomic_number: bool,
         include_degree: bool,
@@ -288,7 +332,8 @@ impl PySmartsPattern {
             neighbor_style,
             canonical_neighbor_order,
         };
-        let inner = SmartsPattern::from_environment(mol.core(), node_from_u64(center), &options)
+        let center = own_atom(&Leaf::of(mol.as_any())?, center)?;
+        let inner = SmartsPattern::from_environment(mol.try_borrow()?.core(), center, &options)
             .map_err(molrs_error_to_pyerr)?;
         Ok(Self { inner })
     }
@@ -362,15 +407,16 @@ impl PyReaction {
     }
 
     /// Apply the transform to `mol` in place at the occurrence pinned by
-    /// `binding` (``{map_number: atom_handle}``). Deletes unmapped-LHS atoms,
+    /// `binding` (``{map_number: Atom}``). Deletes unmapped-LHS atoms,
     /// adds unmapped-RHS atoms (no coordinates), forms/breaks bonds, then
     /// regenerates angle/dihedral topology and re-perceives aromaticity.
     ///
     /// Returns the deduplicated, deterministically-ordered list of *surviving*
-    /// touched atom handles (formed/broken/order-changed bond endpoints, added
+    /// touched atoms (formed/broken/order-changed bond endpoints, added
     /// atoms, deleted atoms' surviving neighbours, and prop-set atoms). Deleted
-    /// atoms' own handles are never included. The caller expands this seed set
-    /// into a retype-safe region.
+    /// atoms are never included. The caller expands this seed set into a
+    /// retype-safe region. ``labels`` (``{Atom: label}``) is the ``%LABEL``
+    /// context the reactant patterns read.
     ///
     /// ``refresh=False`` skips the per-apply whole-graph angle/dihedral
     /// regeneration + aromaticity re-perception: a batch caller (crosslinking a
@@ -378,105 +424,75 @@ impl PyReaction {
     /// O(edits × N) cost into O(edits × local). Matching only needs bonds, which
     /// are updated in place regardless.
     #[pyo3(signature = (mol, binding, labels=None, refresh=true))]
-    fn apply(
+    fn apply<'py>(
         &self,
-        mol: &mut PyAtomistic,
-        binding: HashMap<u32, u64>,
-        labels: Option<HashMap<u64, String>>,
+        mol: &Bound<'py, PyAtomistic>,
+        binding: &Bound<'py, PyDict>,
+        labels: Option<&Bound<'py, PyDict>>,
         refresh: bool,
-    ) -> PyResult<Vec<u64>> {
-        let resolved: HashMap<u32, NodeId> = binding
-            .into_iter()
-            .map(|(k, v)| (k, node_from_u64(v)))
-            .collect();
-        let core_labels: HashMap<NodeId, String> = labels
-            .unwrap_or_default()
-            .into_iter()
-            .map(|(h, l)| (node_from_u64(h), l))
-            .collect();
-        self.inner
-            .apply(mol.core_mut(), &resolved, &core_labels, refresh)
-            .map(|touched| touched.into_iter().map(node_to_u64).collect())
-            .map_err(molrs_error_to_pyerr)
+    ) -> PyResult<Vec<Bound<'py, PyAny>>> {
+        let leaf = Leaf::of(mol.as_any())?;
+        let binding = own_binding(&leaf, binding)?;
+        let labels = own_labels(&leaf, labels)?.unwrap_or_default();
+        let touched = self
+            .inner
+            .apply(mol.try_borrow_mut()?.core_mut(), &binding, &labels, refresh)
+            .map_err(molrs_error_to_pyerr)?;
+        atom_views(&leaf, &touched)
     }
 
-    /// Compile every binding against the intact graph, then apply the disjoint
-    /// transforms as one batch. Leaving groups are deleted with one relation
-    /// scan, and one touched-handle list is returned per binding.
+    /// Compile every binding against the intact graph, then apply the
+    /// disjoint transforms as one batch (leaving groups deleted with one
+    /// relation scan). ``labels`` and ``refresh`` are as for :meth:`apply`.
+    ///
+    /// Returns
+    /// -------
+    /// ReactionBatch
+    ///     Per binding, the touched atoms (as :meth:`apply` returns them) and
+    ///     the atoms the product created, in product creation order.
+    ///
+    /// Raises
+    /// ------
+    /// ValueError
+    ///     Two bindings resolve the same leaving atom, a binding misses an
+    ///     atom map, or an edit is refused.
     #[pyo3(signature = (mol, bindings, labels=None, refresh=true))]
     fn apply_many(
         &self,
-        mol: &mut PyAtomistic,
-        bindings: Vec<HashMap<u32, u64>>,
-        labels: Option<HashMap<u64, String>>,
+        mol: &Bound<'_, PyAtomistic>,
+        bindings: Vec<Bound<'_, PyDict>>,
+        labels: Option<&Bound<'_, PyDict>>,
         refresh: bool,
-    ) -> PyResult<Vec<Vec<u64>>> {
-        let resolved: Vec<HashMap<u32, NodeId>> = bindings
-            .into_iter()
-            .map(|binding| {
-                binding
-                    .into_iter()
-                    .map(|(k, v)| (k, node_from_u64(v)))
-                    .collect()
-            })
-            .collect();
-        let core_labels: HashMap<NodeId, String> = labels
-            .unwrap_or_default()
-            .into_iter()
-            .map(|(h, l)| (node_from_u64(h), l))
-            .collect();
-        self.inner
-            .apply_many(mol.core_mut(), &resolved, &core_labels, refresh)
-            .map(|sets| {
-                sets.into_iter()
-                    .map(|touched| touched.into_iter().map(node_to_u64).collect())
-                    .collect()
-            })
-            .map_err(molrs_error_to_pyerr)
-    }
-
-    /// ``apply_many`` plus RHS-created handles in product creation order.
-    ///
-    /// The second list is intentionally not reconstructed by sorting handles:
-    /// batch deletion may reuse graph slots in an order unrelated to product
-    /// atom order.
-    #[pyo3(signature = (mol, bindings, labels=None, refresh=true))]
-    #[allow(
-        clippy::type_complexity,
-        reason = "Python returns products and created handles as a tuple"
-    )]
-    fn apply_many_detailed(
-        &self,
-        mol: &mut PyAtomistic,
-        bindings: Vec<HashMap<u32, u64>>,
-        labels: Option<HashMap<u64, String>>,
-        refresh: bool,
-    ) -> PyResult<(Vec<Vec<u64>>, Vec<Vec<u64>>)> {
-        let resolved: Vec<HashMap<u32, NodeId>> = bindings
-            .into_iter()
-            .map(|binding| {
-                binding
-                    .into_iter()
-                    .map(|(k, v)| (k, node_from_u64(v)))
-                    .collect()
-            })
-            .collect();
-        let core_labels: HashMap<NodeId, String> = labels
-            .unwrap_or_default()
-            .into_iter()
-            .map(|(h, l)| (node_from_u64(h), l))
-            .collect();
-        self.inner
-            .apply_many_detailed(mol.core_mut(), &resolved, &core_labels, refresh)
-            .map(|(touched_sets, created_sets)| {
-                let handles = |sets: Vec<Vec<NodeId>>| {
-                    sets.into_iter()
-                        .map(|set| set.into_iter().map(node_to_u64).collect())
-                        .collect()
-                };
-                (handles(touched_sets), handles(created_sets))
-            })
-            .map_err(molrs_error_to_pyerr)
+    ) -> PyResult<PyReactionBatch> {
+        let leaf = Leaf::of(mol.as_any())?;
+        let bindings = bindings
+            .iter()
+            .map(|binding| own_binding(&leaf, binding))
+            .collect::<PyResult<Vec<_>>>()?;
+        let labels = own_labels(&leaf, labels)?.unwrap_or_default();
+        let batch = self
+            .inner
+            .apply_many(
+                mol.try_borrow_mut()?.core_mut(),
+                &bindings,
+                &labels,
+                refresh,
+            )
+            .map_err(molrs_error_to_pyerr)?;
+        let views = |sets: &[Vec<NodeId>]| -> PyResult<Vec<Vec<Py<PyAny>>>> {
+            sets.iter()
+                .map(|set| {
+                    Ok(atom_views(&leaf, set)?
+                        .into_iter()
+                        .map(Bound::unbind)
+                        .collect())
+                })
+                .collect()
+        };
+        Ok(PyReactionBatch {
+            touched: views(&batch.touched)?,
+            created: views(&batch.created)?,
+        })
     }
 
     fn __repr__(&self) -> String {
@@ -485,5 +501,42 @@ impl PyReaction {
             self.inner.reactants().len(),
             self.inner.forming_bonds()
         )
+    }
+}
+
+/// The result of :meth:`Reaction.apply_many` —
+/// ``molrs::perceive::smarts::ReactionBatch``.
+#[pyclass(module = "molrs.perceive", name = "ReactionBatch", frozen)]
+pub struct PyReactionBatch {
+    touched: Vec<Vec<Py<PyAny>>>,
+    created: Vec<Vec<Py<PyAny>>>,
+}
+
+fn clone_groups(py: Python<'_>, groups: &[Vec<Py<PyAny>>]) -> Vec<Vec<Py<PyAny>>> {
+    groups
+        .iter()
+        .map(|g| g.iter().map(|a| a.clone_ref(py)).collect())
+        .collect()
+}
+
+#[pymethods]
+impl PyReactionBatch {
+    /// Per binding: the surviving touched atoms, deduplicated and ordered as
+    /// :meth:`Reaction.apply` returns them.
+    #[getter]
+    fn touched(&self, py: Python<'_>) -> Vec<Vec<Py<PyAny>>> {
+        clone_groups(py, &self.touched)
+    }
+
+    /// Per binding: the atoms the product added, in product creation order —
+    /// the stable correspondence for replaying annotations onto RHS-added
+    /// atoms (sorting handles cannot give it once deleted slots are reused).
+    #[getter]
+    fn created(&self, py: Python<'_>) -> Vec<Vec<Py<PyAny>>> {
+        clone_groups(py, &self.created)
+    }
+
+    fn __repr__(&self) -> String {
+        format!("ReactionBatch(n_bindings={})", self.touched.len())
     }
 }

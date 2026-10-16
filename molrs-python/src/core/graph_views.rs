@@ -1,19 +1,23 @@
 //! Live views over the leaf graphs (`molrs.core.Atomistic`, `molrs.core.CoarseGrain`).
 //!
 //! A view is a `(world, handle)` pair and nothing else: every read and write
-//! goes through the owning graph, which stays the only holder of data. The
-//! graph interns its views weakly ([`ViewCache`]), so while a view is alive the
-//! same handle always answers with the same object (`graph.atoms[0] is atom`).
+//! goes through the owning graph's typed core API ([`LeafGraph`]), which stays
+//! the only holder of data and the only judge of its invariants. The graph
+//! interns its views weakly ([`ViewCache`]), so while a view is alive the same
+//! handle always answers with the same object (`graph.atoms[0] is atom`).
 //!
 //! - [`PyNodeRef`] (`molrs.core.NodeRef`) and its classes `Atom`, `VirtualSite`,
 //!   `DrudeParticle`, `MasslessSite`, `Bead`: one node. The class follows the
 //!   graph type and, for an atom, its stored ``vsite``.
 //! - [`PyRelationRef`] (`molrs.core.RelationRef`) and `Bond`, `Angle`, `Dihedral`,
 //!   `Improper`, `Port`, `CgBond`: one relation, with its interned endpoints.
-//!   The class follows the graph type and the relation kind.
+//!   The class follows the graph type and the relation kind; a term block
+//!   (`cmaps`, `exclusions`, …) has plain `RelationRef` views.
 //! - [`PyRefs`] (`molrs.core.Refs`): an ordered handle list of one kind, read as a
 //!   sequence of views or, by field name, as a column.
-//! - [`PyRelationBuckets`] (`graph.links`): relations selected by view class.
+//!
+//! A view's mapping protocol is the one door to an entity's fields: read
+//! ``view[key]``, write ``view[key] = value``, clear ``del view[key]``.
 
 use std::collections::HashMap;
 
@@ -24,15 +28,253 @@ use pyo3::types::{
 };
 use pyo3::{PyTraverseError, PyVisit, intern};
 
-use molrs::core::EntityCell;
-use molrs::core::keys::{BEAD_ATOMS, VSITE};
+use molrs::core::keys::{ATOMIC_NUMBER, VSITE};
 use molrs::core::{
-    KindId, MolGraph, node_from_u64, node_to_u64, relation_from_u64, relation_to_u64,
+    Atomistic, CoarseGrain, Element, EntityCell, EntityColumn, EntityTable, MolRsError, NodeId,
+    Port, PropValue, Props, RelationId,
 };
 
 use super::molgraph::{PyAtomistic, PyCoarseGrain, cell_to_py, prop_to_py, py_to_prop};
 use crate::core::schema::extract_column_key;
 use crate::error::molrs_error_to_pyerr;
+
+// ---------------------------------------------------------------------------
+// The typed core API a view reads and writes through
+// ---------------------------------------------------------------------------
+
+/// A relation kind of a leaf graph: the four typed topology blocks, the ports,
+/// or (on an `Atomistic`) a term block by name.
+#[derive(Clone, Debug)]
+pub(crate) enum RelKind {
+    Bonds,
+    Angles,
+    Dihedrals,
+    Impropers,
+    Ports,
+    Term(String),
+}
+
+impl RelKind {
+    /// The kind `name` of an `Atomistic`: a typed block, or a term block whose
+    /// validity the core judges on use.
+    fn atomistic(name: &str) -> Self {
+        match name {
+            "bonds" => Self::Bonds,
+            "angles" => Self::Angles,
+            "dihedrals" => Self::Dihedrals,
+            "impropers" => Self::Impropers,
+            "ports" => Self::Ports,
+            block => Self::Term(block.to_owned()),
+        }
+    }
+
+    /// The kind `name` of a `CoarseGrain`: its bonds or its ports.
+    fn coarsegrain(name: &str) -> PyResult<Self> {
+        match name {
+            "bonds" => Ok(Self::Bonds),
+            "ports" => Ok(Self::Ports),
+            other => Err(PyValueError::new_err(format!(
+                "a CoarseGrain has no relation kind '{other}': its relations are 'bonds' and 'ports'"
+            ))),
+        }
+    }
+}
+
+/// The fields a port reads back as: its descriptor.
+fn port_fields(port: &Port) -> Props {
+    Props::new()
+        .with("port_kind", port.kind.as_str())
+        .with("port_label", port.label.as_str())
+        .with("port_order", PropValue::Int(port.order.code() as i32))
+}
+
+/// A port's descriptor is fixed when it is added.
+fn port_is_fixed() -> MolRsError {
+    MolRsError::validation(
+        "a port's descriptor (port_kind, port_label, port_order) is fixed when it is added: \
+         del_port it and add_port the descriptor you want",
+    )
+}
+
+/// The node- and relation-level operations a view needs, each through the
+/// leaf's own typed core API — so every invariant (an atom's valid
+/// ``atomic_number``, a bead's string ``bead_type``, a bond's class set only
+/// by ``set_bond_class``) is the core's, never re-implemented here.
+pub(crate) trait LeafGraph {
+    /// The read-only node table (atoms or beads), in row order.
+    fn table(&self) -> &EntityTable<NodeId>;
+    /// Add a node carrying `props`.
+    fn add_node(&mut self, props: Props) -> Result<NodeId, MolRsError>;
+    /// Set one field of a node.
+    fn set_node(&mut self, id: NodeId, key: &str, value: PropValue) -> Result<(), MolRsError>;
+    /// Clear one field of a node.
+    fn clear_node(&mut self, id: NodeId, key: &str) -> Result<(), MolRsError>;
+    /// The kind `name` names on this leaf.
+    fn kind(&self, name: &str) -> PyResult<RelKind>;
+    /// Endpoints and fields of one relation.
+    fn get_relation(
+        &self,
+        kind: &RelKind,
+        id: RelationId,
+    ) -> Result<(Vec<NodeId>, Props), MolRsError>;
+    /// Set one field of a relation.
+    fn set_relation(
+        &mut self,
+        kind: &RelKind,
+        id: RelationId,
+        key: &str,
+        value: PropValue,
+    ) -> Result<(), MolRsError>;
+    /// Clear one field of a relation.
+    fn clear_relation(
+        &mut self,
+        kind: &RelKind,
+        id: RelationId,
+        key: &str,
+    ) -> Result<(), MolRsError>;
+    /// Live relation handles of `kind`, in row order.
+    fn relation_ids(&self, kind: &RelKind) -> Result<Vec<RelationId>, MolRsError>;
+}
+
+impl LeafGraph for Atomistic {
+    fn table(&self) -> &EntityTable<NodeId> {
+        self.atom_table()
+    }
+    fn add_node(&mut self, props: Props) -> Result<NodeId, MolRsError> {
+        self.add_atom(props)
+    }
+    fn set_node(&mut self, id: NodeId, key: &str, value: PropValue) -> Result<(), MolRsError> {
+        self.set_atom(id, key, value)
+    }
+    fn clear_node(&mut self, id: NodeId, key: &str) -> Result<(), MolRsError> {
+        self.clear_atom(id, key)
+    }
+    fn kind(&self, name: &str) -> PyResult<RelKind> {
+        Ok(RelKind::atomistic(name))
+    }
+    fn get_relation(
+        &self,
+        kind: &RelKind,
+        id: RelationId,
+    ) -> Result<(Vec<NodeId>, Props), MolRsError> {
+        let relation = match kind {
+            RelKind::Bonds => self.get_bond(id)?,
+            RelKind::Angles => self.get_angle(id)?,
+            RelKind::Dihedrals => self.get_dihedral(id)?,
+            RelKind::Impropers => self.get_improper(id)?,
+            RelKind::Term(block) => self.get_term(block, id)?,
+            RelKind::Ports => {
+                let port = self.get_port(id)?;
+                return Ok((vec![port.anchor, port.handle], port_fields(&port)));
+            }
+        };
+        Ok((relation.nodes.to_vec(), relation.props))
+    }
+    fn set_relation(
+        &mut self,
+        kind: &RelKind,
+        id: RelationId,
+        key: &str,
+        value: PropValue,
+    ) -> Result<(), MolRsError> {
+        match kind {
+            RelKind::Bonds => self.set_bond(id, key, value),
+            RelKind::Angles => self.set_angle(id, key, value),
+            RelKind::Dihedrals => self.set_dihedral(id, key, value),
+            RelKind::Impropers => self.set_improper(id, key, value),
+            RelKind::Term(block) => self.set_term(block, id, key, value),
+            RelKind::Ports => Err(port_is_fixed()),
+        }
+    }
+    fn clear_relation(
+        &mut self,
+        kind: &RelKind,
+        id: RelationId,
+        key: &str,
+    ) -> Result<(), MolRsError> {
+        match kind {
+            RelKind::Bonds => self.clear_bond(id, key),
+            RelKind::Angles => self.clear_angle(id, key),
+            RelKind::Dihedrals => self.clear_dihedral(id, key),
+            RelKind::Impropers => self.clear_improper(id, key),
+            RelKind::Term(block) => self.clear_term(block, id, key),
+            RelKind::Ports => Err(port_is_fixed()),
+        }
+    }
+    fn relation_ids(&self, kind: &RelKind) -> Result<Vec<RelationId>, MolRsError> {
+        Ok(match kind {
+            RelKind::Bonds => self.bond_ids().collect(),
+            RelKind::Angles => self.angle_ids().collect(),
+            RelKind::Dihedrals => self.dihedral_ids().collect(),
+            RelKind::Impropers => self.improper_ids().collect(),
+            RelKind::Ports => self.port_ids().collect(),
+            RelKind::Term(block) => self.term_ids(block)?.collect(),
+        })
+    }
+}
+
+impl LeafGraph for CoarseGrain {
+    fn table(&self) -> &EntityTable<NodeId> {
+        self.bead_table()
+    }
+    fn add_node(&mut self, props: Props) -> Result<NodeId, MolRsError> {
+        self.add_bead(props)
+    }
+    fn set_node(&mut self, id: NodeId, key: &str, value: PropValue) -> Result<(), MolRsError> {
+        self.set_bead(id, key, value)
+    }
+    fn clear_node(&mut self, id: NodeId, key: &str) -> Result<(), MolRsError> {
+        self.clear_bead(id, key)
+    }
+    fn kind(&self, name: &str) -> PyResult<RelKind> {
+        RelKind::coarsegrain(name)
+    }
+    fn get_relation(
+        &self,
+        kind: &RelKind,
+        id: RelationId,
+    ) -> Result<(Vec<NodeId>, Props), MolRsError> {
+        match kind {
+            RelKind::Ports => {
+                let port = self.get_port(id)?;
+                Ok((vec![port.anchor, port.handle], port_fields(&port)))
+            }
+            _ => {
+                let bond = self.get_bond(id)?;
+                Ok((bond.nodes.to_vec(), bond.props))
+            }
+        }
+    }
+    fn set_relation(
+        &mut self,
+        kind: &RelKind,
+        id: RelationId,
+        key: &str,
+        value: PropValue,
+    ) -> Result<(), MolRsError> {
+        match kind {
+            RelKind::Ports => Err(port_is_fixed()),
+            _ => self.set_bond(id, key, value),
+        }
+    }
+    fn clear_relation(
+        &mut self,
+        kind: &RelKind,
+        id: RelationId,
+        key: &str,
+    ) -> Result<(), MolRsError> {
+        match kind {
+            RelKind::Ports => Err(port_is_fixed()),
+            _ => self.clear_bond(id, key),
+        }
+    }
+    fn relation_ids(&self, kind: &RelKind) -> Result<Vec<RelationId>, MolRsError> {
+        Ok(match kind {
+            RelKind::Ports => self.port_ids().collect(),
+            _ => self.bond_ids().collect(),
+        })
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Interning
@@ -117,11 +359,6 @@ pub(crate) enum Leaf<'py> {
     CoarseGrain(Bound<'py, PyCoarseGrain>),
 }
 
-fn kind_id(mol: &MolGraph, kind: &str) -> PyResult<KindId> {
-    mol.kind_id(kind)
-        .ok_or_else(|| PyValueError::new_err(format!("kind '{kind}' is not registered")))
-}
-
 impl<'py> Leaf<'py> {
     /// The leaf `world` is.
     ///
@@ -145,24 +382,26 @@ impl<'py> Leaf<'py> {
         self.object().py()
     }
 
-    fn object(&self) -> &Bound<'py, PyAny> {
+    pub(crate) fn object(&self) -> &Bound<'py, PyAny> {
         match self {
             Self::Atomistic(graph) => graph.as_any(),
             Self::CoarseGrain(graph) => graph.as_any(),
         }
     }
 
-    pub(crate) fn read<R>(&self, f: impl FnOnce(&MolGraph) -> R) -> PyResult<R> {
+    /// Read the leaf's core graph.
+    pub(crate) fn read<R>(&self, f: impl FnOnce(&dyn LeafGraph) -> R) -> PyResult<R> {
         Ok(match self {
-            Self::Atomistic(graph) => f(graph.try_borrow()?.mol()),
-            Self::CoarseGrain(graph) => f(graph.try_borrow()?.mol()),
+            Self::Atomistic(graph) => f(graph.try_borrow()?.core()),
+            Self::CoarseGrain(graph) => f(graph.try_borrow()?.core()),
         })
     }
 
-    pub(crate) fn write<R>(&self, f: impl FnOnce(&mut MolGraph) -> R) -> PyResult<R> {
+    /// Write the leaf's core graph, through its typed API.
+    pub(crate) fn write<R>(&self, f: impl FnOnce(&mut dyn LeafGraph) -> R) -> PyResult<R> {
         Ok(match self {
-            Self::Atomistic(graph) => f(graph.try_borrow_mut()?.mol_mut()),
-            Self::CoarseGrain(graph) => f(graph.try_borrow_mut()?.mol_mut()),
+            Self::Atomistic(graph) => f(graph.try_borrow_mut()?.core_mut()),
+            Self::CoarseGrain(graph) => f(graph.try_borrow_mut()?.core_mut()),
         })
     }
 
@@ -171,6 +410,24 @@ impl<'py> Leaf<'py> {
             Self::Atomistic(graph) => f(&mut graph.try_borrow_mut()?.views),
             Self::CoarseGrain(graph) => f(&mut graph.try_borrow_mut()?.views),
         })
+    }
+
+    /// The relation kind `name` names on this leaf.
+    pub(crate) fn kind(&self, name: &str) -> PyResult<RelKind> {
+        self.read(|graph| graph.kind(name))?
+    }
+
+    /// Every node handle, in row order.
+    pub(crate) fn node_ids(&self) -> PyResult<Vec<u64>> {
+        self.read(|graph| graph.table().handles().map(u64::from).collect())
+    }
+
+    /// Every handle of relation kind `name`, in row order.
+    pub(crate) fn relation_ids(&self, name: &str) -> PyResult<Vec<u64>> {
+        let kind = self.kind(name)?;
+        self.read(|graph| graph.relation_ids(&kind))?
+            .map(|ids| ids.into_iter().map(u64::from).collect())
+            .map_err(molrs_error_to_pyerr)
     }
 
     /// The interned view of node `handle`.
@@ -183,7 +440,7 @@ impl<'py> Leaf<'py> {
         if let Some(view) = self.cache(|cache| cache.node(py, handle))? {
             return Ok(view);
         }
-        let class = self.read(|mol| NodeClass::of(self, mol, handle))??;
+        let class = self.read(|graph| NodeClass::of(self, graph.table(), handle))??;
         let base = PyNodeRef {
             world: self.object().clone().unbind(),
             handle,
@@ -193,176 +450,152 @@ impl<'py> Leaf<'py> {
         Ok(view)
     }
 
-    /// The interned view of relation `handle` of `kind`.
+    /// The interned view of relation `handle` of kind `name`.
     ///
     /// # Errors
     ///
-    /// `ValueError` when `kind` is not registered or `handle` is not a live
-    /// relation of it.
-    pub(crate) fn relation(&self, kind: &str, handle: u64) -> PyResult<Bound<'py, PyAny>> {
+    /// `ValueError` when `name` is no kind of this leaf or `handle` is not a
+    /// live relation of it.
+    pub(crate) fn relation(&self, name: &str, handle: u64) -> PyResult<Bound<'py, PyAny>> {
         let py = self.py();
-        if let Some(view) = self.cache(|cache| cache.relation(py, kind, handle))? {
+        if let Some(view) = self.cache(|cache| cache.relation(py, name, handle))? {
             return Ok(view);
         }
-        let ends = self.read(|mol| -> PyResult<Vec<u64>> {
-            let nodes = mol
-                .relation_nodes(kind_id(mol, kind)?, relation_from_u64(handle))
-                .map_err(molrs_error_to_pyerr)?;
-            Ok(nodes.iter().map(|&n| node_to_u64(n)).collect())
-        })??;
+        let kind = self.kind(name)?;
+        let (ends, _) = self
+            .read(|graph| graph.get_relation(&kind, RelationId::from(handle)))?
+            .map_err(molrs_error_to_pyerr)?;
         let endpoints = ends
             .into_iter()
-            .map(|end| self.node(end))
+            .map(|end| self.node(u64::from(end)))
             .collect::<PyResult<Vec<_>>>()?;
         let base = PyRelationRef {
             world: self.object().clone().unbind(),
-            kind: kind.to_owned(),
+            kind: name.to_owned(),
             handle,
             endpoints: PyTuple::new(py, endpoints)?.unbind(),
         };
-        let view = RelationClass::of(self, kind)
+        let view = RelationClass::of(self, name)
             .instantiate(py, base)?
             .into_bound(py);
-        self.cache(|cache| cache.keep_relation(py, kind, handle, &view))??;
+        self.cache(|cache| cache.keep_relation(py, name, handle, &view))??;
         Ok(view)
     }
 
     /// Every node, in row order.
     pub(crate) fn nodes(&self) -> PyResult<PyRefs> {
-        let handles = self.read(|mol| mol.node_ids().map(node_to_u64).collect())?;
-        Ok(PyRefs {
+        Ok(self.node_refs(self.node_ids()?))
+    }
+
+    /// The nodes `handles`, in that order.
+    pub(crate) fn node_refs(&self, handles: Vec<u64>) -> PyRefs {
+        PyRefs {
             world: self.object().clone().unbind(),
             kind: None,
             handles,
-        })
+        }
     }
 
-    /// Every relation of `kind`, in row order; empty when `kind` is not
-    /// registered.
-    pub(crate) fn relations(&self, kind: &str) -> PyResult<PyRefs> {
-        let handles = self.read(|mol| match mol.kind_id(kind) {
-            Some(kid) => mol.relation_ids(kid).map(relation_to_u64).collect(),
-            None => Vec::new(),
-        })?;
+    /// Every relation of kind `name`, in row order.
+    pub(crate) fn relations(&self, name: &str) -> PyResult<PyRefs> {
+        let handles = self.relation_ids(name)?;
         Ok(PyRefs {
             world: self.object().clone().unbind(),
-            kind: Some(kind.to_owned()),
+            kind: Some(name.to_owned()),
             handles,
         })
     }
 
-    /// Spawn a node carrying `fields` (a ``None`` value is skipped) and
-    /// return its view. On a refused field the node is removed again.
-    pub(crate) fn create_node(&self, fields: &Bound<'py, PyDict>) -> PyResult<Bound<'py, PyAny>> {
-        let id = self.write(MolGraph::add_node)?;
-        let written = fields.iter().try_for_each(|(key, value)| {
-            if value.is_none() {
-                return Ok(());
-            }
-            let key = extract_column_key(&key)?;
-            let value = py_to_prop(&value)?;
-            self.write(|mol| mol.set_node(id, &key, value))?
-                .map_err(molrs_error_to_pyerr)
-        });
-        if let Err(err) = written {
-            self.write(|mol| mol.remove_node(id))?
-                .map_err(molrs_error_to_pyerr)?;
-            return Err(err);
-        }
-        self.node(node_to_u64(id))
+    /// Add a node carrying `props` through the leaf's checked add (an atom
+    /// needs a valid ``atomic_number``, a bead a string ``bead_type``) and
+    /// return its view. A refused add leaves the graph unchanged.
+    pub(crate) fn create_node(&self, props: Props) -> PyResult<Bound<'py, PyAny>> {
+        let id = self
+            .write(|graph| graph.add_node(props))?
+            .map_err(molrs_error_to_pyerr)?;
+        self.node(u64::from(id))
     }
 
-    /// Spawn a virtual site: a node carrying `fields` plus the ``vsite`` the
-    /// class `kind` (``VirtualSite`` when `None`) names, unless `fields`
-    /// already sets one.
-    pub(crate) fn create_virtual_site(
-        &self,
-        fields: &Bound<'py, PyDict>,
-        kind: Option<&Bound<'py, PyType>>,
-    ) -> PyResult<Bound<'py, PyAny>> {
-        if !fields.contains(VSITE)? {
-            let vsite = match kind {
-                Some(cls) => NodeClass::vsite_of(cls)?,
-                None => "virtual",
-            };
-            fields.set_item(VSITE, vsite)?;
-        }
-        self.create_node(fields)
-    }
-
-    /// Stamp `fields` on relation `handle` of `kind` (just created by a
-    /// native writer) and return its view. On a refused field the relation
-    /// is removed again.
-    pub(crate) fn adopt_relation(
-        &self,
-        kind: &str,
-        handle: u64,
-        fields: Option<&Bound<'py, PyDict>>,
-    ) -> PyResult<Bound<'py, PyAny>> {
-        if let Some(fields) = fields {
-            let written = fields.iter().try_for_each(|(key, value)| {
-                RelationFields {
-                    leaf: self,
-                    kind,
-                    handle,
-                }
-                .set(&extract_column_key(&key)?, &value)
-            });
-            if let Err(err) = written {
-                self.write(|mol| -> PyResult<()> {
-                    mol.remove_relation(kind_id(mol, kind)?, relation_from_u64(handle))
-                        .map(|_| ())
-                        .map_err(molrs_error_to_pyerr)
-                })??;
-                return Err(err);
-            }
-        }
-        self.relation(kind, handle)
-    }
-
-    /// The handle of `node`, checked to be a node of this graph.
+    /// The node of `node`, checked to be a node of this graph.
     ///
     /// A slotmap handle from a foreign graph can alias a live one rather than
     /// fail, so a native writer would happily join the wrong nodes: the
     /// world is compared, not the handle.
-    pub(crate) fn own_node(&self, node: &Bound<'py, PyNodeRef>) -> PyResult<u64> {
+    pub(crate) fn own_node(&self, node: &Bound<'py, PyNodeRef>) -> PyResult<NodeId> {
         let node = node.get();
         if !node.world.bind(self.py()).is(self.object()) {
+            return Err(PyValueError::new_err("the node belongs to another graph"));
+        }
+        Ok(NodeId::from(node.handle))
+    }
+
+    /// The nodes of `nodes` — a `Refs` of this graph's nodes or any iterable
+    /// of its node views — in order.
+    pub(crate) fn own_nodes(&self, nodes: &Bound<'py, PyAny>) -> PyResult<Vec<NodeId>> {
+        if let Ok(refs) = nodes.cast::<PyRefs>() {
+            let refs = refs.get();
+            if refs.kind.is_none() && refs.world.bind(self.py()).is(self.object()) {
+                return Ok(refs.handles.iter().copied().map(NodeId::from).collect());
+            }
+        }
+        nodes
+            .try_iter()?
+            .map(|node| {
+                let node = node?;
+                let node = node.cast::<PyNodeRef>().map_err(|_| {
+                    PyTypeError::new_err("expected node views (Atom / Bead) of this graph")
+                })?;
+                self.own_node(node)
+            })
+            .collect()
+    }
+
+    /// The relation of `relation`, checked to be a `name` relation of this
+    /// graph.
+    pub(crate) fn own_relation(
+        &self,
+        relation: &Bound<'py, PyRelationRef>,
+        name: &str,
+    ) -> PyResult<RelationId> {
+        let relation = relation.get();
+        if !relation.world.bind(self.py()).is(self.object()) {
             return Err(PyValueError::new_err(
-                "relation endpoints must belong to this graph",
+                "the relation belongs to another graph",
             ));
         }
-        Ok(node.handle)
+        if relation.kind != name {
+            return Err(PyValueError::new_err(format!(
+                "expected a '{name}' relation, got a '{}' one",
+                relation.kind
+            )));
+        }
+        Ok(RelationId::from(relation.handle))
     }
 
-    /// Remove each of `links` (relation views of this graph).
-    pub(crate) fn remove_links(&self, links: &Bound<'py, PyTuple>) -> PyResult<()> {
-        for link in links.iter() {
-            let link = link.cast::<PyRelationRef>()?.get();
-            if !link.world.bind(self.py()).is(self.object()) {
-                return Err(PyValueError::new_err("relation belongs to another graph"));
+    /// The relations of `relations` — a `Refs` of this graph's `name`
+    /// relations or any iterable of its relation views of that kind — in
+    /// order.
+    pub(crate) fn own_relations(
+        &self,
+        relations: &Bound<'py, PyAny>,
+        name: &str,
+    ) -> PyResult<Vec<RelationId>> {
+        if let Ok(refs) = relations.cast::<PyRefs>() {
+            let refs = refs.get();
+            if refs.kind.as_deref() == Some(name) && refs.world.bind(self.py()).is(self.object()) {
+                return Ok(refs.handles.iter().copied().map(RelationId::from).collect());
             }
-            self.write(|mol| -> PyResult<()> {
-                mol.remove_relation(kind_id(mol, &link.kind)?, relation_from_u64(link.handle))
-                    .map(|_| ())
-                    .map_err(molrs_error_to_pyerr)
-            })??;
         }
-        Ok(())
-    }
-
-    /// Remove each of `nodes` (node views of this graph) and every relation
-    /// touching it.
-    pub(crate) fn remove_nodes(&self, nodes: &Bound<'py, PyTuple>) -> PyResult<()> {
-        for node in nodes.iter() {
-            let node = node.cast::<PyNodeRef>()?.get();
-            if !node.world.bind(self.py()).is(self.object()) {
-                return Err(PyValueError::new_err("node belongs to another graph"));
-            }
-            self.write(|mol| mol.remove_node(node_from_u64(node.handle)))?
-                .map_err(molrs_error_to_pyerr)?;
-        }
-        Ok(())
+        relations
+            .try_iter()?
+            .map(|relation| {
+                let relation = relation?;
+                let relation = relation.cast::<PyRelationRef>().map_err(|_| {
+                    PyTypeError::new_err(format!("expected '{name}' relation views of this graph"))
+                })?;
+                self.own_relation(relation, name)
+            })
+            .collect()
     }
 }
 
@@ -381,39 +614,22 @@ enum NodeClass {
 
 impl NodeClass {
     /// An atom's class follows its stored ``vsite``; a bead is a `Bead`.
-    fn of(leaf: &Leaf<'_>, mol: &MolGraph, handle: u64) -> PyResult<Self> {
-        let id = node_from_u64(handle);
-        if !mol.node_table().contains(id) {
+    fn of(leaf: &Leaf<'_>, table: &EntityTable<NodeId>, handle: u64) -> PyResult<Self> {
+        let id = NodeId::from(handle);
+        if !table.contains(id) {
             return Err(PyValueError::new_err(format!(
                 "cannot bind a node view to stale handle {handle}"
             )));
         }
         Ok(match leaf {
             Leaf::CoarseGrain(_) => Self::Bead,
-            Leaf::Atomistic(_) => match mol.node_table().value(id, VSITE) {
+            Leaf::Atomistic(_) => match table.value(id, VSITE) {
                 None => Self::Atom,
                 Some(EntityCell::Str("drude")) => Self::DrudeParticle,
                 Some(EntityCell::Str("massless")) => Self::MasslessSite,
                 Some(_) => Self::VirtualSite,
             },
         })
-    }
-
-    /// The ``vsite`` a ``def_virtual_site(kind=cls)`` stamps.
-    fn vsite_of(cls: &Bound<'_, PyType>) -> PyResult<&'static str> {
-        let py = cls.py();
-        if cls.is(py.get_type::<PyDrudeParticle>()) {
-            Ok("drude")
-        } else if cls.is(py.get_type::<PyMasslessSite>()) {
-            Ok("massless")
-        } else if cls.is(py.get_type::<PyVirtualSite>()) {
-            Ok("virtual")
-        } else {
-            Err(PyTypeError::new_err(format!(
-                "kind must be VirtualSite, DrudeParticle or MasslessSite, not {}",
-                cls.name()?
-            )))
-        }
     }
 
     fn instantiate(self, py: Python<'_>, base: PyNodeRef) -> PyResult<Py<PyAny>> {
@@ -443,9 +659,31 @@ impl NodeClass {
     }
 }
 
+/// The ``vsite`` an ``add_atom(kind=cls)`` stamps.
+///
+/// # Errors
+///
+/// `TypeError` when `cls` is not `VirtualSite`, `DrudeParticle` or
+/// `MasslessSite`.
+pub(crate) fn vsite_of(cls: &Bound<'_, PyType>) -> PyResult<&'static str> {
+    let py = cls.py();
+    if cls.is(py.get_type::<PyDrudeParticle>()) {
+        Ok("drude")
+    } else if cls.is(py.get_type::<PyMasslessSite>()) {
+        Ok("massless")
+    } else if cls.is(py.get_type::<PyVirtualSite>()) {
+        Ok("virtual")
+    } else {
+        Err(PyTypeError::new_err(format!(
+            "kind must be VirtualSite, DrudeParticle or MasslessSite, not {}",
+            cls.name()?
+        )))
+    }
+}
+
 /// The class of a relation view.
 pub(crate) enum RelationClass {
-    /// A kind with no dedicated view class: a plain `RelationRef`.
+    /// A term block: a plain `RelationRef`.
     RelationRef,
     Bond,
     Angle,
@@ -458,11 +696,11 @@ pub(crate) enum RelationClass {
 impl RelationClass {
     fn of(leaf: &Leaf<'_>, kind: &str) -> Self {
         match (leaf, kind) {
+            (_, "ports") => Self::Port,
             (Leaf::Atomistic(_), "bonds") => Self::Bond,
             (Leaf::Atomistic(_), "angles") => Self::Angle,
             (Leaf::Atomistic(_), "dihedrals") => Self::Dihedral,
             (Leaf::Atomistic(_), "impropers") => Self::Improper,
-            (Leaf::Atomistic(_), "ports") => Self::Port,
             (Leaf::CoarseGrain(_), "bonds") => Self::CgBond,
             _ => Self::RelationRef,
         }
@@ -473,27 +711,15 @@ impl RelationClass {
     pub(crate) fn atomistic_kind(cls: &Bound<'_, PyAny>) -> Option<&'static str> {
         let py = cls.py();
         [
-            (Self::Bond, "bonds"),
-            (Self::Angle, "angles"),
-            (Self::Dihedral, "dihedrals"),
-            (Self::Improper, "impropers"),
-            (Self::Port, "ports"),
+            (py.get_type::<PyBond>(), "bonds"),
+            (py.get_type::<PyAngle>(), "angles"),
+            (py.get_type::<PyDihedral>(), "dihedrals"),
+            (py.get_type::<PyImproper>(), "impropers"),
+            (py.get_type::<PyPort>(), "ports"),
         ]
         .into_iter()
-        .find(|(class, _)| class.type_object(py).is(cls))
+        .find(|(class, _)| class.is(cls))
         .map(|(_, kind)| kind)
-    }
-
-    fn type_object<'py>(&self, py: Python<'py>) -> Bound<'py, PyType> {
-        match self {
-            Self::RelationRef => py.get_type::<PyRelationRef>(),
-            Self::Bond => py.get_type::<PyBond>(),
-            Self::Angle => py.get_type::<PyAngle>(),
-            Self::Dihedral => py.get_type::<PyDihedral>(),
-            Self::Improper => py.get_type::<PyImproper>(),
-            Self::Port => py.get_type::<PyPort>(),
-            Self::CgBond => py.get_type::<PyCgBond>(),
-        }
     }
 
     fn instantiate(self, py: Python<'_>, base: PyRelationRef) -> PyResult<Py<PyAny>> {
@@ -521,7 +747,7 @@ impl RelationClass {
 trait Fields {
     fn keys(&self) -> PyResult<Vec<String>>;
     fn get(&self, key: &str) -> PyResult<Option<Py<PyAny>>>;
-    fn set(&self, key: &str, value: &Bound<'_, PyAny>) -> PyResult<()>;
+    fn set(&self, key: &str, value: PropValue) -> PyResult<()>;
     fn clear(&self, key: &str) -> PyResult<()>;
 }
 
@@ -532,42 +758,46 @@ struct NodeFields<'a, 'py> {
 
 impl Fields for NodeFields<'_, '_> {
     fn keys(&self) -> PyResult<Vec<String>> {
-        self.leaf.read(|mol| {
-            mol.node_table()
-                .row_cells(node_from_u64(self.handle))
-                .map(|(key, _)| key.to_owned())
-                .collect()
-        })
+        let id = NodeId::from(self.handle);
+        self.leaf.read(|graph| -> PyResult<Vec<String>> {
+            let table = graph.table();
+            if !table.contains(id) {
+                return Err(stale_node(self.handle));
+            }
+            Ok(table.row_cells(id).map(|(key, _)| key.to_owned()).collect())
+        })?
     }
 
     fn get(&self, key: &str) -> PyResult<Option<Py<PyAny>>> {
-        if key == BEAD_ATOMS
-            && let Leaf::CoarseGrain(graph) = self.leaf
-        {
-            return Ok(PyCoarseGrain::bead_atoms(graph, self.handle)?
-                .map(|atoms| atoms.into_any().unbind()));
-        }
         let py = self.leaf.py();
-        self.leaf.read(|mol| {
-            mol.node_table()
-                .value(node_from_u64(self.handle), key)
+        let id = NodeId::from(self.handle);
+        self.leaf.read(|graph| -> PyResult<Option<Py<PyAny>>> {
+            let table = graph.table();
+            if !table.contains(id) {
+                return Err(stale_node(self.handle));
+            }
+            table
+                .value(id, key)
                 .map(|cell| cell_to_py(py, cell))
                 .transpose()
         })?
     }
 
-    fn set(&self, key: &str, value: &Bound<'_, PyAny>) -> PyResult<()> {
-        let value = py_to_prop(value)?;
+    fn set(&self, key: &str, value: PropValue) -> PyResult<()> {
         self.leaf
-            .write(|mol| mol.set_node(node_from_u64(self.handle), key, value))?
+            .write(|graph| graph.set_node(NodeId::from(self.handle), key, value))?
             .map_err(molrs_error_to_pyerr)
     }
 
     fn clear(&self, key: &str) -> PyResult<()> {
         self.leaf
-            .write(|mol| mol.clear_node(node_from_u64(self.handle), key))?
+            .write(|graph| graph.clear_node(NodeId::from(self.handle), key))?
             .map_err(molrs_error_to_pyerr)
     }
+}
+
+fn stale_node(handle: u64) -> PyErr {
+    PyValueError::new_err(format!("node {handle} was deleted: its view is stale"))
 }
 
 struct RelationFields<'a, 'py> {
@@ -576,62 +806,59 @@ struct RelationFields<'a, 'py> {
     handle: u64,
 }
 
+impl RelationFields<'_, '_> {
+    fn props(&self) -> PyResult<Props> {
+        let kind = self.leaf.kind(self.kind)?;
+        let (_, props) = self
+            .leaf
+            .read(|graph| graph.get_relation(&kind, RelationId::from(self.handle)))?
+            .map_err(molrs_error_to_pyerr)?;
+        Ok(props)
+    }
+}
+
 impl Fields for RelationFields<'_, '_> {
     fn keys(&self) -> PyResult<Vec<String>> {
-        self.leaf.read(|mol| -> PyResult<Vec<String>> {
-            let relation = mol
-                .get_relation(kind_id(mol, self.kind)?, relation_from_u64(self.handle))
-                .map_err(molrs_error_to_pyerr)?;
-            Ok(relation.props.keys().cloned().collect())
-        })?
+        Ok(self.props()?.keys().map(str::to_owned).collect())
     }
 
     fn get(&self, key: &str) -> PyResult<Option<Py<PyAny>>> {
         let py = self.leaf.py();
-        self.leaf.read(|mol| -> PyResult<Option<Py<PyAny>>> {
-            let relation = mol
-                .get_relation(kind_id(mol, self.kind)?, relation_from_u64(self.handle))
-                .map_err(molrs_error_to_pyerr)?;
-            relation
-                .props
-                .get(key)
-                .map(|value| prop_to_py(py, value))
-                .transpose()
-        })?
+        self.props()?
+            .get(key)
+            .map(|value| prop_to_py(py, value))
+            .transpose()
     }
 
-    fn set(&self, key: &str, value: &Bound<'_, PyAny>) -> PyResult<()> {
-        if value.is_none() {
-            return self.clear(key);
-        }
-        let value = py_to_prop(value)?;
-        self.leaf.write(|mol| -> PyResult<()> {
-            mol.set_relation_prop(
-                kind_id(mol, self.kind)?,
-                relation_from_u64(self.handle),
-                key,
-                value,
-            )
+    fn set(&self, key: &str, value: PropValue) -> PyResult<()> {
+        let kind = self.leaf.kind(self.kind)?;
+        self.leaf
+            .write(|graph| graph.set_relation(&kind, RelationId::from(self.handle), key, value))?
             .map_err(molrs_error_to_pyerr)
-        })?
     }
 
     fn clear(&self, key: &str) -> PyResult<()> {
-        self.leaf.write(|mol| -> PyResult<()> {
-            mol.clear_relation_prop(
-                kind_id(mol, self.kind)?,
-                relation_from_u64(self.handle),
-                key,
-            )
+        let kind = self.leaf.kind(self.kind)?;
+        self.leaf
+            .write(|graph| graph.clear_relation(&kind, RelationId::from(self.handle), key))?
             .map_err(molrs_error_to_pyerr)
-        })?
     }
+}
+
+/// A field value: ``bool`` / ``int`` / ``float`` / ``str``. ``None`` is not a
+/// value, and its refusal names the one door that clears a field.
+fn field_value(key: &str, value: &Bound<'_, PyAny>) -> PyResult<PropValue> {
+    if value.is_none() {
+        return Err(PyTypeError::new_err(format!(
+            "None is not a field value; clear '{key}' with `del view[\"{key}\"]`"
+        )));
+    }
+    py_to_prop(value)
 }
 
 /// The mapping protocol of a view, over its [`Fields`]: a field name (or a
 /// `molrs.core.keys.Key`) reads, writes and deletes one field; a tuple of names
-/// reads or writes several at once (``atom["x", "y", "z"]``); assigning
-/// ``None`` deletes.
+/// reads or writes several at once (``atom["x", "y", "z"]``).
 macro_rules! field_mapping_impl {
     ($ty:ty) => {
         #[pymethods]
@@ -668,12 +895,20 @@ macro_rules! field_mapping_impl {
                             values.len()
                         )));
                     }
+                    let mut pairs = Vec::with_capacity(values.len());
                     for (name, value) in names.iter().zip(&values) {
-                        set_or_clear_field(&fields, &extract_column_key(&name)?, value)?;
+                        let name = extract_column_key(&name)?;
+                        let value = field_value(&name, value)?;
+                        pairs.push((name, value));
+                    }
+                    for (name, value) in pairs {
+                        fields.set(&name, value)?;
                     }
                     return Ok(());
                 }
-                set_or_clear_field(&fields, &extract_column_key(key)?, value)
+                let name = extract_column_key(key)?;
+                let value = field_value(&name, value)?;
+                fields.set(&name, value)
             }
 
             fn __delitem__(slf: &Bound<'_, Self>, key: &Bound<'_, PyAny>) -> PyResult<()> {
@@ -741,7 +976,9 @@ macro_rules! field_mapping_impl {
                     .keys()?
                     .into_iter()
                     .map(|key| {
-                        let value = fields.get(&key)?.unwrap_or_else(|| py.None());
+                        let value = fields
+                            .get(&key)?
+                            .ok_or_else(|| PyKeyError::new_err(key.clone()))?;
                         Ok((key, value))
                     })
                     .collect()
@@ -764,6 +1001,8 @@ macro_rules! field_mapping_impl {
             }
 
             /// Write several fields, as ``dict.update`` takes them.
+            ///
+            /// Every value is checked before any is written.
             #[pyo3(signature = (*args, **kwargs))]
             fn update(
                 slf: &Bound<'_, Self>,
@@ -775,8 +1014,14 @@ macro_rules! field_mapping_impl {
                 let pairs = pairs.cast::<PyDict>()?;
                 let leaf = slf.get().leaf(py)?;
                 let fields = slf.get().fields(&leaf);
+                let mut checked = Vec::with_capacity(pairs.len());
                 for (key, value) in pairs.iter() {
-                    set_or_clear_field(&fields, &extract_column_key(&key)?, &value)?;
+                    let name = extract_column_key(&key)?;
+                    let value = field_value(&name, &value)?;
+                    checked.push((name, value));
+                }
+                for (name, value) in checked {
+                    fields.set(&name, value)?;
                 }
                 Ok(())
             }
@@ -789,28 +1034,17 @@ fn field_or_key_error(fields: &impl Fields, key: &Bound<'_, PyAny>) -> PyResult<
     fields.get(&name)?.ok_or_else(|| PyKeyError::new_err(name))
 }
 
-/// Write one field; ``None`` deletes it (a no-op when it is not set).
-fn set_or_clear_field(fields: &impl Fields, key: &str, value: &Bound<'_, PyAny>) -> PyResult<()> {
-    if value.is_none() {
-        if fields.get(key)?.is_some() {
-            fields.clear(key)?;
-        }
-        return Ok(());
-    }
-    fields.set(key, value)
-}
-
 // ---------------------------------------------------------------------------
 // Node views
 // ---------------------------------------------------------------------------
 
 /// A live view of one node of a graph.
 ///
-/// A view is made by the graph (``graph.def_atom(...)``, ``graph.atoms[i]``),
+/// A view is made by the graph (``graph.add_atom(...)``, ``graph.atoms[i]``),
 /// never constructed directly. It reads and writes the node's fields as a
 /// mapping: ``atom["x"]``, ``atom["x", "y", "z"] = (0.0, 0.0, 1.0)``,
-/// ``"charge" in atom``. Removing the node leaves the view stale: its reads
-/// raise.
+/// ``del atom["charge"]``, ``"charge" in atom``. Deleting the node leaves the
+/// view stale: its reads raise.
 #[pyclass(module = "molrs.core", name = "NodeRef", frozen, subclass, weakref)]
 pub struct PyNodeRef {
     world: Py<PyAny>,
@@ -857,17 +1091,30 @@ impl PyNodeRef {
         let class = slf.get_type().name()?;
         let this = slf.get();
         let leaf = this.leaf(py)?;
-        let fields = this.fields(&leaf);
+        let id = NodeId::from(this.handle);
         let label = match leaf {
-            Leaf::Atomistic(_) => ["element", "type"],
-            Leaf::CoarseGrain(_) => ["type", "name"],
-        }
-        .into_iter()
-        .find_map(|key| fields.get(key).ok().flatten());
-        let label = match label {
-            Some(value) => value.bind(py).str()?.to_string(),
-            None => "?".to_owned(),
+            // An atom is labelled by its species, the symbol its atomic
+            // number names (`*` for the wildcard 0).
+            Leaf::Atomistic(_) => {
+                leaf.read(|graph| match graph.table().value(id, ATOMIC_NUMBER) {
+                    Some(EntityCell::I32(0)) => Some("*".to_owned()),
+                    Some(EntityCell::I32(z)) => u8::try_from(z)
+                        .ok()
+                        .and_then(Element::by_number)
+                        .map(|element| element.symbol().to_owned()),
+                    _ => None,
+                })?
+            }
+            Leaf::CoarseGrain(_) => leaf.read(|graph| {
+                ["bead_type", "name"].into_iter().find_map(|key| {
+                    match graph.table().value(id, key) {
+                        Some(EntityCell::Str(s)) => Some(s.to_owned()),
+                        _ => None,
+                    }
+                })
+            })?,
         };
+        let label = label.unwrap_or_else(|| "?".to_owned());
         Ok(format!("<{class} {}: {label}>", this.handle))
     }
 
@@ -878,8 +1125,8 @@ impl PyNodeRef {
         let this = slf.get();
         let row = this
             .leaf(py)?
-            .read(|mol| mol.node_table().row(node_from_u64(this.handle)))?
-            .ok_or_else(|| PyValueError::new_err("cannot pickle a view of a removed node"))?;
+            .read(|graph| graph.table().row(NodeId::from(this.handle)))?
+            .ok_or_else(|| PyValueError::new_err("cannot pickle a view of a deleted node"))?;
         let restore = py.get_type::<Self>().getattr(intern!(py, "_restore"))?;
         Ok((
             restore,
@@ -902,7 +1149,9 @@ impl PyNodeRef {
     ) -> PyResult<Bound<'py, PyAny>> {
         let leaf = Leaf::of(world)?;
         let handle = leaf
-            .read(|mol| mol.node_ids().nth(row).map(node_to_u64))?
+            .node_ids()?
+            .get(row)
+            .copied()
             .ok_or_else(|| PyValueError::new_err(format!("no node at row {row}")))?;
         leaf.node(handle)
     }
@@ -929,8 +1178,7 @@ pub struct PyDrudeParticle {}
 #[pyclass(module = "molrs.core", name = "MasslessSite", extends = PyVirtualSite, frozen, subclass)]
 pub struct PyMasslessSite {}
 
-/// A node of a :class:`CoarseGrain`. ``bead["atoms"]`` is the tuple of atom
-/// views the bead groups, when it has members.
+/// A node of a :class:`CoarseGrain`.
 #[pyclass(module = "molrs.core", name = "Bead", extends = PyNodeRef, frozen, subclass)]
 pub struct PyBead {}
 
@@ -938,7 +1186,8 @@ pub struct PyBead {}
 // Relation views
 // ---------------------------------------------------------------------------
 
-/// A live view of one relation (a bond, an angle, a port, …) of a graph.
+/// A live view of one relation (a bond, an angle, a port, a term, …) of a
+/// graph.
 ///
 /// Made by the graph, never constructed directly. ``endpoints`` are the
 /// interned node views, in order; the relation's own fields read and write
@@ -967,6 +1216,11 @@ impl PyRelationRef {
     fn endpoint<'py>(&self, py: Python<'py>, index: usize) -> PyResult<Bound<'py, PyAny>> {
         self.endpoints.bind(py).get_item(index)
     }
+
+    /// The relation kind (``"bonds"``, a term block name, …).
+    pub(crate) fn kind_name(&self) -> &str {
+        &self.kind
+    }
 }
 
 #[pymethods]
@@ -977,7 +1231,7 @@ impl PyRelationRef {
         self.world.clone_ref(py)
     }
 
-    /// The relation kind (``"bonds"``, ``"angles"``, …).
+    /// The relation kind (``"bonds"``, ``"angles"``, a term block, …).
     #[getter]
     fn kind(&self) -> &str {
         &self.kind
@@ -1012,11 +1266,10 @@ impl PyRelationRef {
         let this = slf.get();
         let row = this
             .leaf(py)?
-            .read(|mol| {
-                mol.kind_id(&this.kind)
-                    .and_then(|kid| mol.relation_row(kid, relation_from_u64(this.handle)))
-            })?
-            .ok_or_else(|| PyValueError::new_err("cannot pickle a view of a removed relation"))?;
+            .relation_ids(&this.kind)?
+            .iter()
+            .position(|&h| h == this.handle)
+            .ok_or_else(|| PyValueError::new_err("cannot pickle a view of a deleted relation"))?;
         let restore = py.get_type::<Self>().getattr(intern!(py, "_restore"))?;
         let args = (this.world.bind(py).clone(), this.kind.clone(), row).into_pyobject(py)?;
         Ok((restore, args))
@@ -1031,13 +1284,10 @@ impl PyRelationRef {
         row: usize,
     ) -> PyResult<Bound<'py, PyAny>> {
         let leaf = Leaf::of(world)?;
-        let handle = leaf
-            .read(|mol| {
-                mol.kind_id(kind)
-                    .and_then(|kid| mol.relation_ids(kid).nth(row))
-                    .map(relation_to_u64)
-            })?
-            .ok_or_else(|| PyValueError::new_err(format!("no '{kind}' relation at row {row}")))?;
+        let handle =
+            leaf.relation_ids(kind)?.get(row).copied().ok_or_else(|| {
+                PyValueError::new_err(format!("no '{kind}' relation at row {row}"))
+            })?;
         leaf.relation(kind, handle)
     }
 
@@ -1083,13 +1333,15 @@ pub struct PyImproper {}
 #[pyclass(module = "molrs.core", name = "CgBond", extends = PyRelationRef, frozen, subclass)]
 pub struct PyCgBond {}
 
-/// One unsatisfied valence (a port) of an :class:`Atomistic`.
+/// One unsatisfied valence (a port) of an :class:`Atomistic` or a
+/// :class:`CoarseGrain`.
 ///
 /// A port is the ordered pair ``(anchor, handle_atom)``: the **anchor** keeps
 /// its place in the product molecule and the **handle atom** is the capping
-/// atom bonded to it that a paired descriptor's bond replaces. The descriptor
-/// rides the relation's fields ``port_kind`` (``$``, ``<``, ``>`` or ``!``),
-/// ``port_label`` (``""`` when unnamed) and ``port_order``.
+/// node bonded to it that a paired descriptor's bond replaces. The descriptor
+/// reads back as the fields ``port_kind`` (``$``, ``<``, ``>`` or ``!``),
+/// ``port_label`` (``""`` when unnamed) and ``port_order``; it is fixed when
+/// the port is added (writing a field raises).
 ///
 /// The second endpoint is ``handle_atom``, not ``handle``: ``handle`` is the
 /// port's own relation handle. The two answer different questions.
@@ -1098,13 +1350,13 @@ pub struct PyPort {}
 
 #[pymethods]
 impl PyPort {
-    /// The atom that keeps its place in the product molecule.
+    /// The node that keeps its place in the product molecule.
     #[getter]
     fn anchor<'py>(slf: &Bound<'py, Self>) -> PyResult<Bound<'py, PyAny>> {
         slf.as_super().get().endpoint(slf.py(), 0)
     }
 
-    /// The atom the descriptor sits on: the root of the leaving group.
+    /// The node the descriptor sits on: the root of the leaving group.
     #[getter]
     fn handle_atom<'py>(slf: &Bound<'py, Self>) -> PyResult<Bound<'py, PyAny>> {
         slf.as_super().get().endpoint(slf.py(), 1)
@@ -1120,7 +1372,9 @@ impl PyPort {
 /// ``refs[i]`` is a view, ``refs[a:b]`` a smaller collection; ``refs["x"]``
 /// reads a field of every item as a numpy array (``None`` where unset) and
 /// ``refs["x", "y", "z"]`` stacks several side by side. Views are made on
-/// demand, so ``len(graph.atoms)`` and ``graph.atoms["x"]`` make none.
+/// demand, so ``len(graph.atoms)`` and ``graph.atoms["x"]`` make none. Every
+/// door that takes several nodes or relations of a graph takes a ``Refs`` of
+/// it as well as any iterable of its views.
 #[pyclass(module = "molrs.core", name = "Refs", frozen, subclass)]
 pub struct PyRefs {
     world: Py<PyAny>,
@@ -1139,58 +1393,80 @@ impl PyRefs {
 
     fn column<'py>(&self, py: Python<'py>, key: &Bound<'py, PyAny>) -> PyResult<Bound<'py, PyAny>> {
         let key = extract_column_key(key)?;
-        let world = self.world.bind(py);
-        let leaf = Leaf::of(world)?;
+        let leaf = Leaf::of(self.world.bind(py))?;
+        let numpy = py.import(intern!(py, "numpy"))?;
         if self.handles.is_empty() {
-            // Nothing to read, whatever the kind: an empty `exact_bucket` is
-            // under a kind this graph may not even register.
-            let numpy = py.import(intern!(py, "numpy"))?;
             return numpy.call_method1(intern!(py, "array"), (PyList::empty(py),));
         }
-        if self.kind.is_none() {
-            // The whole node table, fully set: the graph's own zero-copy column.
-            let dense = leaf.read(|mol| {
-                let table = mol.node_table();
-                table
-                    .handles()
-                    .map(node_to_u64)
-                    .eq(self.handles.iter().copied())
-                    && table
-                        .col_validity(&key)
-                        .is_some_and(|valid| valid.as_slice().iter().all(|v| *v))
-            })?;
-            if dense {
-                return world.call_method1(intern!(py, "column"), (key,));
-            }
-        }
-        let values = leaf.read(|mol| -> PyResult<Vec<Py<PyAny>>> {
-            match &self.kind {
-                None => self
-                    .handles
-                    .iter()
-                    .map(|&h| match mol.node_table().value(node_from_u64(h), &key) {
-                        Some(cell) => cell_to_py(py, cell),
-                        None => Ok(py.None()),
-                    })
-                    .collect(),
-                Some(kind) => {
-                    let kid = kind_id(mol, kind)?;
+        let values: Vec<Py<PyAny>> = match &self.kind {
+            None => {
+                // The whole node table, fully set: one copy of the column.
+                let dense = leaf.read(|graph| -> PyResult<Option<Bound<'py, PyAny>>> {
+                    let table = graph.table();
+                    let whole = table
+                        .handles()
+                        .map(u64::from)
+                        .eq(self.handles.iter().copied());
+                    let Some(column) = table.entity_column(&key).filter(|_| whole) else {
+                        return Ok(None);
+                    };
+                    if !column.validity().as_slice().iter().all(|v| *v) {
+                        return Ok(None);
+                    }
+                    Ok(Some(match column {
+                        EntityColumn::F64(data, _) => {
+                            numpy::PyArray1::from_slice(py, data).into_any()
+                        }
+                        EntityColumn::I32(data, _) => {
+                            numpy::PyArray1::from_slice(py, data).into_any()
+                        }
+                        EntityColumn::Bool(data, _) => {
+                            numpy::PyArray1::from_slice(py, data).into_any()
+                        }
+                        EntityColumn::Str(data, _) => {
+                            let list = PyList::new(py, data.iter().map(String::as_str))?;
+                            numpy.call_method1(intern!(py, "array"), (list,))?
+                        }
+                    }))
+                })??;
+                if let Some(dense) = dense {
+                    return Ok(dense);
+                }
+                leaf.read(|graph| -> PyResult<Vec<Py<PyAny>>> {
+                    let table = graph.table();
                     self.handles
                         .iter()
                         .map(|&h| {
-                            let relation = mol
-                                .get_relation(kid, relation_from_u64(h))
+                            let id = NodeId::from(h);
+                            if !table.contains(id) {
+                                return Err(stale_node(h));
+                            }
+                            match table.value(id, &key) {
+                                Some(cell) => cell_to_py(py, cell),
+                                None => Ok(py.None()),
+                            }
+                        })
+                        .collect()
+                })??
+            }
+            Some(kind) => {
+                let kind = leaf.kind(kind)?;
+                leaf.read(|graph| -> PyResult<Vec<Py<PyAny>>> {
+                    self.handles
+                        .iter()
+                        .map(|&h| {
+                            let (_, props) = graph
+                                .get_relation(&kind, RelationId::from(h))
                                 .map_err(molrs_error_to_pyerr)?;
-                            match relation.props.get(&key) {
+                            match props.get(&key) {
                                 Some(value) => prop_to_py(py, value),
                                 None => Ok(py.None()),
                             }
                         })
                         .collect()
-                }
+                })??
             }
-        })??;
-        let numpy = py.import(intern!(py, "numpy"))?;
+        };
         let list = PyList::new(py, values)?;
         match numpy.call_method1(intern!(py, "array"), (&list,)) {
             Ok(array) => Ok(array),
@@ -1203,22 +1479,31 @@ impl PyRefs {
     }
 
     fn rows(&self, leaf: &Leaf<'_>) -> PyResult<Vec<usize>> {
-        leaf.read(|mol| -> PyResult<Vec<usize>> {
-            let row = |h: u64| match &self.kind {
-                None => mol.node_table().row(node_from_u64(h)),
-                Some(kind) => mol
-                    .kind_id(kind)
-                    .and_then(|kid| mol.relation_row(kid, relation_from_u64(h))),
-            };
-            self.handles
-                .iter()
-                .map(|&h| {
-                    row(h).ok_or_else(|| {
-                        PyValueError::new_err("cannot pickle a view of a removed node or relation")
-                    })
+        let all = match &self.kind {
+            None => leaf.node_ids()?,
+            Some(kind) => leaf.relation_ids(kind)?,
+        };
+        let row_of: HashMap<u64, usize> =
+            all.into_iter().enumerate().map(|(r, h)| (h, r)).collect();
+        self.handles
+            .iter()
+            .map(|h| {
+                row_of.get(h).copied().ok_or_else(|| {
+                    PyValueError::new_err("cannot pickle a view of a deleted node or relation")
                 })
-                .collect()
-        })?
+            })
+            .collect()
+    }
+}
+
+impl PyRefs {
+    /// The relations `handles` of kind `kind` of `world`, in that order.
+    pub(crate) fn of_relations(world: &Bound<'_, PyAny>, kind: &str, handles: Vec<u64>) -> Self {
+        Self {
+            world: world.clone().unbind(),
+            kind: Some(kind.to_owned()),
+            handles,
+        }
     }
 }
 
@@ -1332,108 +1617,23 @@ impl PyRefs {
         rows: Vec<usize>,
     ) -> PyResult<Self> {
         let leaf = Leaf::of(world)?;
-        let handles = leaf.read(|mol| -> PyResult<Vec<u64>> {
-            if rows.is_empty() {
-                return Ok(Vec::new());
-            }
-            let all: Vec<u64> = match &kind {
-                None => mol.node_ids().map(node_to_u64).collect(),
-                Some(kind) => mol
-                    .relation_ids(kind_id(mol, kind)?)
-                    .map(relation_to_u64)
-                    .collect(),
-            };
-            rows.iter()
-                .map(|&row| {
-                    all.get(row)
-                        .copied()
-                        .ok_or_else(|| PyValueError::new_err(format!("no item at row {row}")))
-                })
-                .collect()
-        })??;
+        let all = match &kind {
+            None => leaf.node_ids()?,
+            Some(kind) => leaf.relation_ids(kind)?,
+        };
+        let handles = rows
+            .iter()
+            .map(|&row| {
+                all.get(row)
+                    .copied()
+                    .ok_or_else(|| PyValueError::new_err(format!("no item at row {row}")))
+            })
+            .collect::<PyResult<Vec<u64>>>()?;
         Ok(Self {
             world: world.clone().unbind(),
             kind,
             handles,
         })
-    }
-
-    fn __traverse__(&self, visit: PyVisit<'_>) -> Result<(), PyTraverseError> {
-        visit.call(&self.world)
-    }
-}
-
-impl PyRefs {
-    pub(crate) fn nodes_of(world: &Bound<'_, PyAny>) -> PyResult<Self> {
-        Leaf::of(world)?.nodes()
-    }
-
-    pub(crate) fn relations_of(world: &Bound<'_, PyAny>, kind: &str) -> PyResult<Self> {
-        Leaf::of(world)?.relations(kind)
-    }
-}
-
-// ---------------------------------------------------------------------------
-// links
-// ---------------------------------------------------------------------------
-
-/// A graph's relations, selected by view class (``graph.links``).
-#[pyclass(module = "molrs.core", name = "RelationBuckets", frozen, subclass)]
-pub struct PyRelationBuckets {
-    world: Py<PyAny>,
-}
-
-impl PyRelationBuckets {
-    pub(crate) fn new(world: &Bound<'_, PyAny>) -> Self {
-        Self {
-            world: world.clone().unbind(),
-        }
-    }
-}
-
-#[pymethods]
-impl PyRelationBuckets {
-    /// The relations whose view class is exactly `cls`, in row order.
-    ///
-    /// Every class names one relation kind of the graph (``Bond`` its
-    /// ``bonds``, ``Improper`` its ``impropers``); ``RelationRef`` names the
-    /// one kind without a class of its own.
-    ///
-    /// Raises
-    /// ------
-    /// TypeError
-    ///     If ``cls`` names more than one kind of this graph (``RelationRef``
-    ///     on a graph with two unclassed kinds).
-    fn exact_bucket(&self, py: Python<'_>, cls: &Bound<'_, PyType>) -> PyResult<PyRefs> {
-        let world = self.world.bind(py);
-        let leaf = Leaf::of(world)?;
-        let kinds: Vec<String> = leaf.read(|mol| {
-            mol.kind_ids()
-                .map(|kid| mol.kind_name(kid).to_owned())
-                .collect()
-        })?;
-        let mut matching = kinds
-            .into_iter()
-            .filter(|kind| RelationClass::of(&leaf, kind).type_object(py).is(cls));
-        match (matching.next(), matching.next()) {
-            // No kind of this graph has that class: an empty collection under
-            // the kind the class stands for, which reads as empty columns.
-            (None, _) => {
-                let kind = RelationClass::atomistic_kind(cls.as_any())
-                    .or_else(|| cls.is(py.get_type::<PyCgBond>()).then_some("bonds"))
-                    .unwrap_or("relations");
-                Ok(PyRefs {
-                    world: world.clone().unbind(),
-                    kind: Some(kind.to_owned()),
-                    handles: Vec::new(),
-                })
-            }
-            (Some(kind), None) => leaf.relations(&kind),
-            (Some(first), Some(second)) => Err(PyTypeError::new_err(format!(
-                "{} names more than one relation kind of this graph ('{first}', '{second}')",
-                cls.name()?
-            ))),
-        }
     }
 
     fn __traverse__(&self, visit: PyVisit<'_>) -> Result<(), PyTraverseError> {

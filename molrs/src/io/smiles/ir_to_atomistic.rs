@@ -1,32 +1,35 @@
-//! Convert [`SmilesIr`] into [`Atomistic`] molecular graphs, and the
-//! [`read_smiles_str`] door.
+//! Convert [`SmilesIr`] and [`FragmentIr`] into [`Atomistic`] molecular
+//! graphs.
 
 use std::collections::{HashMap, HashSet};
 
 use crate::io::smiles::{Notation, SmilesError, SmilesErrorKind};
 use crate::line_notation::ast::*;
+use crate::line_notation::atom_keys::{H_COUNT, IS_AROMATIC, ISOTOPE, STEREO, WILDCARD_Z};
 use crate::line_notation::canonical_element_symbol;
 use molrs::core::Atomistic;
 use molrs::core::Element;
 use molrs::core::MolRsError;
 use molrs::core::NodeId;
-use molrs::core::PropValue;
+use molrs::core::Props;
 use molrs::core::keys;
+use molrs::op::I;
 
 impl SmilesIr {
     /// Convert a parsed SMILES IR into an [`Atomistic`] molecular graph.
     ///
     /// This resolves ring closures into bonds, sets atom properties (charge,
-    /// isotope, chirality), and records bond orders. Implicit hydrogens are
-    /// **not** added — call [`add_hydrogens`](crate::perceive::add_hydrogens)
-    /// separately if needed.
+    /// isotope, chirality), and records bond orders. Every atom carries its
+    /// species as `atomic_number` (`0` for the wildcard `*`); no `element`
+    /// symbol is written. Implicit hydrogens are **not** added — call
+    /// [`add_hydrogens`](crate::perceive::add_hydrogens) separately if needed.
     ///
     /// # Aromaticity
     ///
-    /// Lowercase symbols are *notation*, not element symbols: the `element`
-    /// component always holds the canonical symbol (`c` → `"C"`), and the
-    /// declared aromaticity is carried by the project-wide markers instead —
-    /// `is_aromatic = 1` on the atom, and `bond_type = Aromatic` on every bond the
+    /// Lowercase symbols are *notation*, not element symbols: `c` is carbon,
+    /// `atomic_number = 6`, and the declared aromaticity is carried by the
+    /// project-wide markers instead —
+    /// `is_aromatic = true` on the atom, and `bond_type = Aromatic` on every bond the
     /// notation declares aromatic. Its localized `bond_number` is left `Unknown`:
     /// the notation declares delocalization, not a Kekulé phase, and kekulization
     /// is what picks one. A bond written *without* a
@@ -47,9 +50,8 @@ impl SmilesIr {
     /// atoms and bond queries (which have no single atomistic interpretation), and
     /// [`SmilesErrorKind::DescriptorsUnconvertible`] for a node carrying a bonding
     /// descriptor — this is the plain conversion, and dropping the descriptor
-    /// silently is the one outcome it will not produce; use
-    /// [`to_atomistic_with_descriptors`](Self::to_atomistic_with_descriptors)
-    /// instead.
+    /// silently is the one outcome it will not produce; a fragment body is
+    /// [`FragmentIr::to_atomistic`]'s.
     ///
     /// # Examples
     ///
@@ -72,17 +74,60 @@ impl SmilesIr {
 
         Ok(builder.mol)
     }
+}
 
-    /// Convert a parsed SMILES **fragment** IR into an [`Atomistic`] graph plus the
-    /// descriptor map.
+/// A parsed SMILES **fragment** body: SMILES plus `CGsmiles` / `BigSMILES`
+/// bonding descriptors (`[<]OCC[>]`, `[$]COC[$]`), as
+/// [`SmilesIr::from_fragment`] parses it.
+///
+/// Its own type, because its conversion is not [`SmilesIr::to_atomistic`]:
+/// the descriptors are data the graph does not hold, so
+/// [`to_atomistic`](Self::to_atomistic) returns them beside it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct FragmentIr {
+    ir: SmilesIr,
+}
+
+/// The fragment body as text — what [`SmilesIr::from_fragment`] parses back
+/// to the same IR. Descriptors are written in the canonical trailing form
+/// (`C=[$]CC`); see the fragment writer for the conventions. Formatting fails
+/// for an IR no fragment parser produces (an empty one, a SMARTS query atom,
+/// a descriptor order outside single … quadruple).
+///
+/// ```
+/// use molrs::io::smiles::SmilesIr;
+///
+/// let body = SmilesIr::from_fragment("[<]OCC[>]")?;
+/// let again = SmilesIr::from_fragment(&body.to_string())?;
+/// assert_eq!(again.to_string(), body.to_string());
+/// assert_eq!(again.to_template()?.n_ports(), 2);
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
+impl std::fmt::Display for FragmentIr {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let text = crate::line_notation::writer::fragment_smiles_text(&self.ir)
+            .map_err(|_| std::fmt::Error)?;
+        f.write_str(&text)
+    }
+}
+
+impl FragmentIr {
+    /// Wrap a fragment-dialect IR (what the fragment parser produced).
+    pub(crate) fn new(ir: SmilesIr) -> Self {
+        Self { ir }
+    }
+
+    /// The syntax tree.
+    pub fn ir(&self) -> &SmilesIr {
+        &self.ir
+    }
+
+    /// Convert the fragment into an [`Atomistic`] graph plus the descriptor
+    /// map.
     ///
-    /// The input is a SMILES fragment body with `CGsmiles` / `BigSMILES` bonding
-    /// descriptors, as produced by
-    /// [`SmilesIr::from_fragment`]; this is the fragment-dialect sibling of
-    /// [`to_atomistic`](Self::to_atomistic), which refuses
-    /// descriptor-bearing input rather than drop it. The graph is built by the same
-    /// walk, so descriptor-free input gives the same atoms, bonds and properties
-    /// through either entry point.
+    /// The graph is built by the same walk as [`SmilesIr::to_atomistic`], so
+    /// descriptor-free input gives the same atoms, bonds and properties either
+    /// way.
     ///
     /// The second return value pairs each descriptor with the [`NodeId`] of the
     /// atom it binds to. Its order is a contract, not an accident: the later
@@ -109,60 +154,30 @@ impl SmilesIr {
     /// Returns [`SmilesErrorKind::UnmatchedRingClosure`] for a ring digit that is
     /// never closed and [`SmilesErrorKind::InvalidQueryPrimitive`] for SMARTS
     /// query atoms and bond queries (which have no single atomistic
-    /// interpretation). A bonding descriptor is *not* an error here — carrying it
-    /// out to the caller is what this entry point is for.
-    pub fn to_atomistic_with_descriptors(
+    /// interpretation).
+    pub fn to_atomistic(
         &self,
     ) -> Result<(Atomistic, Vec<(NodeId, BondingDescriptor)>), SmilesError> {
-        let mut builder = Builder::new(self, /*collect_descriptors*/ true);
-
-        for component in &self.components {
-            builder.build_chain(component, None)?;
-        }
-
-        builder.close_rings()?;
-
-        let Builder {
-            mol, descriptors, ..
-        } = builder;
-        Ok((mol, descriptors))
+        fragment_to_atomistic(&self.ir)
     }
 }
 
-/// Read one molecule from SMILES text: [`SmilesIr::parse`] then
-/// [`SmilesIr::to_atomistic`], refusing a string that names more than one.
-///
-/// Connectivity only: hydrogens implicit in the SMILES are **not** added and
-/// no coordinates are generated — filling open valences is a perception step
-/// and 3D embedding a conformer step, both separate.
-///
-/// # Errors
-///
-/// Every [`SmilesIr::parse`] and [`SmilesIr::to_atomistic`] error, and
-/// [`SmilesErrorKind::MultipleComponents`] when the string holds more than one
-/// `.`-separated component: such a string is a *set* of molecules, not a
-/// molecule — read each from the parsed IR's `components`.
-///
-/// # Examples
-///
-/// ```
-/// use molrs::io::read_smiles_str;
-///
-/// let mol = read_smiles_str("CCO").unwrap();
-/// assert_eq!(mol.n_atoms(), 3);
-/// assert!(read_smiles_str("CCO.O").is_err());
-/// ```
-pub fn read_smiles_str(smiles: &str) -> Result<Atomistic, SmilesError> {
-    let ir = SmilesIr::parse(smiles)?;
-    if ir.components.len() != 1 {
-        return Err(SmilesError::new(
-            SmilesErrorKind::MultipleComponents(ir.components.len()),
-            ir.span,
-            smiles,
-            Notation::Smiles,
-        ));
+/// The fragment walk: the graph plus each descriptor against its atom.
+fn fragment_to_atomistic(
+    ir: &SmilesIr,
+) -> Result<(Atomistic, Vec<(NodeId, BondingDescriptor)>), SmilesError> {
+    let mut builder = Builder::new(ir, /*collect_descriptors*/ true);
+
+    for component in &ir.components {
+        builder.build_chain(component, None)?;
     }
-    ir.to_atomistic()
+
+    builder.close_rings()?;
+
+    let Builder {
+        mol, descriptors, ..
+    } = builder;
+    Ok((mol, descriptors))
 }
 
 // ---------------------------------------------------------------------------
@@ -274,7 +289,16 @@ impl<'a> Builder<'a> {
     ///
     /// Every atom of every chain, branch and component flows through here, so
     /// this is also where bonding descriptors are either refused (plain path)
-    /// or recorded against their atom (fragment path).
+    /// or recorded against their atom (fragment path). The atom is written as
+    /// one property bag — species, mass, aromatic marker and the bracket
+    /// facts together — so a refused write leaves no half-built atom behind.
+    ///
+    /// # Species
+    ///
+    /// Every atom carries [`keys::ATOMIC_NUMBER`]: the element's Z, or `0` for
+    /// the wildcard (`*`, and the bracket `[*]`, `[A]`, `[a]`). No `element`
+    /// symbol is written; a caller that wants one converts explicitly with
+    /// [`Element::fill_symbols`].
     ///
     /// # Mass
     ///
@@ -283,9 +307,16 @@ impl<'a> Builder<'a> {
     /// hydrogen repletion reads. An atom written with an explicit isotope
     /// (`[13C]`) carries its **mass number** A instead — an approximation,
     /// since molrs has no isotope-mass table; the error is below 0.02 amu for
-    /// the light elements. The wildcard (`*`, and the bracket `[*]`, `[A]`,
-    /// `[a]`) names no element and carries no mass, isotope or not: an isotope
-    /// on a wildcard is an attachment label, not a nucleus.
+    /// the light elements. The wildcard names no element and carries no mass,
+    /// isotope or not: an isotope on a wildcard is an attachment label, not a
+    /// nucleus.
+    ///
+    /// # Bracket facts
+    ///
+    /// Integer facts are stored as integers: `isotope`, `h_count`,
+    /// [`keys::FORMAL_CHARGE`] and the atom class as [`keys::ATOM_MAP`]. The
+    /// chirality is the string `stereo` (`"CW"` / `"CCW"`), and a written
+    /// aromatic atom carries `is_aromatic = true`.
     fn add_atom_node(&mut self, node: &AtomNode) -> Result<NodeId, SmilesError> {
         if !self.collect_descriptors && !node.descriptors.is_empty() {
             return Err(SmilesError::new(
@@ -296,15 +327,11 @@ impl<'a> Builder<'a> {
             ));
         }
 
-        let id = match &node.spec {
+        let aromatic = node.spec.written_aromatic();
+        let props = match &node.spec {
             AtomSpec::Organic { symbol, .. } => {
-                let element = canonical_element_symbol(symbol);
-                let id = self.mol.add_atom_bare(&element);
-                self.set_mass(id, &element, None, node.span)?;
-                if node.spec.written_aromatic() {
-                    self.mark_aromatic(id, node.span)?;
-                }
-                Ok(id)
+                let element = self.element(symbol, node.span)?;
+                species_props(Some(element), None, aromatic)
             }
             AtomSpec::Bracket {
                 isotope,
@@ -314,54 +341,52 @@ impl<'a> Builder<'a> {
                 charge,
                 atom_class,
             } => {
-                let sym = match symbol {
-                    BracketSymbol::Element { symbol, .. } => symbol.clone(),
-                    BracketSymbol::Any => "*".to_owned(),
-                    BracketSymbol::Aliphatic | BracketSymbol::Aromatic => "*".to_owned(),
+                let element = match symbol {
+                    BracketSymbol::Element { symbol, .. } => Some(self.element(symbol, node.span)?),
+                    BracketSymbol::Any | BracketSymbol::Aliphatic | BracketSymbol::Aromatic => None,
                 };
-
-                let element = canonical_element_symbol(&sym);
-                let id = self.mol.add_atom_bare(&element);
-                self.set_mass(id, &element, *isotope, node.span)?;
-
-                if node.spec.written_aromatic() {
-                    self.mark_aromatic(id, node.span)?;
-                }
+                let mut props = species_props(element, *isotope, aromatic);
                 if let Some(iso) = isotope {
-                    self.set_prop(id, "isotope", *iso as f64, node.span)?;
+                    props.set(ISOTOPE, I::from(*iso));
                 }
                 if let Some(ch) = chirality {
                     let s = match ch {
                         Chirality::CounterClockwise => "CCW",
                         Chirality::Clockwise => "CW",
                     };
-                    self.set_prop_str(id, "stereo", s, node.span)?;
+                    props.set(STEREO, s);
                 }
                 // A bracket atom states its hydrogen count exactly; an omitted
                 // count means zero, not "fill the valence".
-                self.set_prop(id, "h_count", hcount.unwrap_or(0) as f64, node.span)?;
+                props.set(H_COUNT, I::from(hcount.unwrap_or(0)));
                 if let Some(c) = charge {
-                    self.set_prop(id, "formal_charge", *c as f64, node.span)?;
+                    props.set(keys::FORMAL_CHARGE, I::from(*c));
                 }
                 if let Some(cls) = atom_class {
-                    self.set_prop(id, "atom_class", *cls as f64, node.span)?;
+                    props.set(keys::ATOM_MAP, I::from(*cls));
                 }
+                props
+            }
+            AtomSpec::Wildcard => species_props(None, None, false),
+            AtomSpec::Query(_) => {
+                return Err(SmilesError::new(
+                    SmilesErrorKind::InvalidQueryPrimitive(
+                        "SMARTS query atoms cannot be converted to Atomistic".into(),
+                    ),
+                    node.span,
+                    "", // input not available here; span is enough
+                    Notation::Smarts,
+                ));
+            }
+        };
 
-                Ok(id)
-            }
-            AtomSpec::Wildcard => {
-                let id = self.mol.add_atom_bare("*");
-                Ok(id)
-            }
-            AtomSpec::Query(_) => Err(SmilesError::new(
-                SmilesErrorKind::InvalidQueryPrimitive(
-                    "SMARTS query atoms cannot be converted to Atomistic".into(),
-                ),
-                node.span,
-                "", // input not available here; span is enough
-                Notation::Smarts,
-            )),
-        }?;
+        let id = self
+            .mol
+            .add_atom(props)
+            .map_err(|e| self.build_error(&e, node.span))?;
+        if aromatic {
+            self.aromatic_atoms.insert(id);
+        }
 
         if self.collect_descriptors {
             self.descriptors
@@ -371,41 +396,56 @@ impl<'a> Builder<'a> {
         Ok(id)
     }
 
+    /// The element a SMILES atom symbol names — the aromatic lowercase form
+    /// (`c`, `se`) included.
+    ///
+    /// # Errors
+    ///
+    /// [`SmilesErrorKind::Build`] at `span` when `symbol` names no element: the
+    /// parser refuses such a symbol, so only a hand-built IR reaches this.
+    fn element(&self, symbol: &str, span: Span) -> Result<Element, SmilesError> {
+        Element::by_symbol(&canonical_element_symbol(symbol)).ok_or_else(|| {
+            self.build_error(
+                &MolRsError::validation(format!("'{symbol}' is not an element symbol")),
+                span,
+            )
+        })
+    }
+
+    /// Bond `a`–`b` as the notation wrote it, in one `add_bond` whose props
+    /// carry the class, the localized number and any directional `stereo`.
+    ///
+    /// A bond with no symbol between two aromatic atoms is aromatic (the
+    /// Daylight rule); an unwritten bond otherwise states no class, and
+    /// [`Atomistic::add_bond`] stamps it single.
     fn add_bond(
         &mut self,
         a: NodeId,
         b: NodeId,
         bond: Option<BondKind>,
     ) -> Result<(), SmilesError> {
-        let bid = self
-            .mol
-            .add_bond(a, b)
-            .map_err(|e| self.build_error(&e, self.ir.span))?;
-
         // A bond with no symbol between two aromatic atoms is aromatic — that
-        // is what makes `c1ccccc1` a ring of 1.5-order bonds rather than six
+        // is what makes `c1ccccc1` a ring of aromatic bonds rather than six
         // single bonds. An explicit symbol always wins (biphenyl's `-`).
         let kind = bond.or_else(|| {
             (self.aromatic_atoms.contains(&a) && self.aromatic_atoms.contains(&b))
                 .then_some(BondKind::Aromatic)
         });
 
+        let mut props = Props::new();
         if let Some(kind) = kind {
-            self.mol
-                .set_bond_class(bid, kind.bond_type(), kind.bond_number())
-                .map_err(|e| self.build_error(&e, self.ir.span))?;
-            let stereo = match kind {
-                BondKind::Up => Some("up"),
-                BondKind::Down => Some("down"),
-                _ => None,
-            };
-            if let Some(stereo) = stereo {
-                self.mol
-                    .set_bond_prop(bid, "stereo", PropValue::Str(stereo.to_owned()))
-                    .map_err(|e| self.build_error(&e, self.ir.span))?;
+            props.set(keys::BOND_TYPE, kind.bond_type());
+            props.set(keys::BOND_NUMBER, kind.bond_number());
+            match kind {
+                BondKind::Up => props.set(STEREO, "up"),
+                BondKind::Down => props.set(STEREO, "down"),
+                _ => {}
             }
         }
 
+        self.mol
+            .add_bond(a, b, props)
+            .map_err(|e| self.build_error(&e, self.ir.span))?;
         Ok(())
     }
 
@@ -426,19 +466,6 @@ impl<'a> Builder<'a> {
             "",
             Notation::Smiles,
         )
-    }
-
-    /// Record the notation's aromatic declaration on `id`, using the same
-    /// `is_aromatic` marker that [`crate::perceive::assign_aromaticity`] writes.
-    ///
-    /// # Errors
-    ///
-    /// [`SmilesErrorKind::Build`] at `span` when the marker cannot be written.
-    fn mark_aromatic(&mut self, id: NodeId, span: Span) -> Result<(), SmilesError> {
-        self.aromatic_atoms.insert(id);
-        self.mol
-            .set_atom(id, "is_aromatic", PropValue::Int(1))
-            .map_err(|e| self.build_error(&e, span))
     }
 
     fn handle_ring_closure(
@@ -491,59 +518,23 @@ impl<'a> Builder<'a> {
         }
         Ok(())
     }
+}
 
-    /// Write `mass` on `id` for the element symbol `element`, per the rule
-    /// [`Builder::add_atom_node`] states: the mass number when `isotope` is
-    /// written, the table's atomic weight otherwise, nothing when `element`
-    /// names no element.
-    ///
-    /// # Errors
-    ///
-    /// [`SmilesErrorKind::Build`] at `span` — see [`Builder::build_error`].
-    fn set_mass(
-        &mut self,
-        id: NodeId,
-        element: &str,
-        isotope: Option<u16>,
-        span: Span,
-    ) -> Result<(), SmilesError> {
-        let Some(table) = Element::by_symbol(element) else {
-            return Ok(());
-        };
-        let mass = match isotope {
-            Some(a) => f64::from(a),
-            None => f64::from(table.atomic_mass()),
-        };
-        self.set_prop(id, keys::MASS, mass, span)
+/// The species half of an atom's bag: the atomic number (`0` for the wildcard,
+/// `element == None`), the mass [`Builder::add_atom_node`] states for it, and
+/// the aromatic marker when the notation wrote the atom aromatic.
+fn species_props(element: Option<Element>, isotope: Option<u16>, aromatic: bool) -> Props {
+    let mut props = match element {
+        Some(element) => Props::new().with(keys::ATOMIC_NUMBER, element).with(
+            keys::MASS,
+            isotope.map_or(f64::from(element.atomic_mass()), f64::from),
+        ),
+        None => Props::new().with(keys::ATOMIC_NUMBER, WILDCARD_Z),
+    };
+    if aromatic {
+        props.set(IS_AROMATIC, true);
     }
-
-    /// Write one numeric component on `id`.
-    ///
-    /// # Errors
-    ///
-    /// [`SmilesErrorKind::Build`] at `span` — see [`Builder::build_error`].
-    fn set_prop(&mut self, id: NodeId, key: &str, val: f64, span: Span) -> Result<(), SmilesError> {
-        self.mol
-            .set_atom(id, key, val)
-            .map_err(|e| self.build_error(&e, span))
-    }
-
-    /// Write one string component on `id`.
-    ///
-    /// # Errors
-    ///
-    /// [`SmilesErrorKind::Build`] at `span` — see [`Builder::build_error`].
-    fn set_prop_str(
-        &mut self,
-        id: NodeId,
-        key: &str,
-        val: &str,
-        span: Span,
-    ) -> Result<(), SmilesError> {
-        self.mol
-            .set_atom(id, key, val)
-            .map_err(|e| self.build_error(&e, span))
-    }
+    props
 }
 
 // ==========================================================================
@@ -554,6 +545,7 @@ impl<'a> Builder<'a> {
 mod tests {
     use super::*;
     use crate::io::smiles::SmilesIr;
+    use molrs::core::PropValue;
 
     fn smiles_to_mol(input: &str) -> Atomistic {
         let ir = SmilesIr::parse(input).unwrap();
@@ -569,7 +561,11 @@ mod tests {
         assert_eq!(mol.n_atoms(), 1);
         assert_eq!(mol.n_bonds(), 0);
         let (_, atom) = mol.atoms().next().unwrap();
-        assert_eq!(atom.get_str("element"), Some("C"));
+        assert_eq!(atom.atomic_number(), Some(6));
+        assert!(
+            !atom.contains_key(keys::ELEMENT),
+            "the builder writes the species as Z, never as a symbol"
+        );
     }
 
     #[test]
@@ -594,16 +590,16 @@ mod tests {
         assert_eq!(mol.n_atoms(), 2);
         assert_eq!(mol.n_bonds(), 1);
         let (_, bond) = mol.bonds().next().unwrap();
-        assert_eq!(bond.props.get("bond_type"), Some(&PropValue::Int(2)));
-        assert_eq!(bond.props.get("bond_number"), Some(&PropValue::Int(2)));
+        assert_eq!(bond.props.get(keys::BOND_TYPE), Some(&PropValue::Int(2)));
+        assert_eq!(bond.props.get(keys::BOND_NUMBER), Some(&PropValue::Int(2)));
     }
 
     #[test]
     fn test_triple_bond() {
         let mol = smiles_to_mol("C#N");
         let (_, bond) = mol.bonds().next().unwrap();
-        assert_eq!(bond.props.get("bond_type"), Some(&PropValue::Int(3)));
-        assert_eq!(bond.props.get("bond_number"), Some(&PropValue::Int(3)));
+        assert_eq!(bond.props.get(keys::BOND_TYPE), Some(&PropValue::Int(3)));
+        assert_eq!(bond.props.get(keys::BOND_NUMBER), Some(&PropValue::Int(3)));
     }
 
     // -- branches -----------------------------------------------------------
@@ -640,30 +636,27 @@ mod tests {
         assert_eq!(mol.n_bonds(), 6);
         // Check aromatic flag
         let (_, atom) = mol.atoms().next().unwrap();
-        assert_eq!(atom.get("is_aromatic"), Some(&PropValue::Int(1)));
+        assert_eq!(atom.get(IS_AROMATIC), Some(&PropValue::Bool(true)));
     }
 
     #[test]
     fn test_aromatic_element_symbol_is_canonical() {
         // The lowercase `c` of the organic aromatic subset is *notation*, not an
-        // element symbol: every element-keyed lookup downstream expects "C".
+        // element symbol: it is carbon, Z = 6.
         let mol = smiles_to_mol("c1ccccc1");
         for (_, atom) in mol.atoms() {
-            assert_eq!(atom.get_str("element"), Some("C"));
+            assert_eq!(atom.atomic_number(), Some(6));
         }
     }
 
     #[test]
     fn test_aromatic_bracket_element_symbol_is_canonical() {
-        // Pyrrole — the bracket `[nH]` must land as element "N", flagged aromatic.
+        // Pyrrole — the bracket `[nH]` must land as nitrogen, flagged aromatic.
         let mol = smiles_to_mol("c1cc[nH]c1");
-        let elements: Vec<String> = mol
-            .atoms()
-            .filter_map(|(_, a)| a.get_str("element").map(str::to_owned))
-            .collect();
-        assert_eq!(elements, ["C", "C", "C", "N", "C"]);
+        let species: Vec<Option<u8>> = mol.atoms().map(|(_, a)| a.atomic_number()).collect();
+        assert_eq!(species, [Some(6), Some(6), Some(6), Some(7), Some(6)]);
         for (_, atom) in mol.atoms() {
-            assert_eq!(atom.get("is_aromatic"), Some(&PropValue::Int(1)));
+            assert_eq!(atom.get(IS_AROMATIC), Some(&PropValue::Bool(true)));
         }
     }
 
@@ -675,8 +668,8 @@ mod tests {
         for (_, bond) in mol.bonds() {
             // The notation declares the class; it declares no Kekulé phase, so
             // the localized number stays unknown until standardization.
-            assert_eq!(bond.props.get("bond_type"), Some(&PropValue::Int(4)));
-            assert_eq!(bond.props.get("bond_number"), Some(&PropValue::Int(0)));
+            assert_eq!(bond.props.get(keys::BOND_TYPE), Some(&PropValue::Int(4)));
+            assert_eq!(bond.props.get(keys::BOND_NUMBER), Some(&PropValue::Int(0)));
         }
     }
 
@@ -710,7 +703,7 @@ mod tests {
         let mol = smiles_to_mol("Cc1ccccc1");
         let n_aromatic = mol
             .bonds()
-            .filter(|(_, b)| b.props.get("bond_type") == Some(&PropValue::Int(4)))
+            .filter(|(_, b)| b.props.get(keys::BOND_TYPE) == Some(&PropValue::Int(4)))
             .count();
         assert_eq!(n_aromatic, 6, "only the 6 ring bonds are aromatic");
     }
@@ -719,7 +712,7 @@ mod tests {
     fn test_aliphatic_bond_does_not_get_the_aromatic_class() {
         let mol = smiles_to_mol("CC");
         let (_, bond) = mol.bonds().next().unwrap();
-        assert_ne!(bond.props.get("bond_type"), Some(&PropValue::Int(4)));
+        assert_ne!(bond.props.get(keys::BOND_TYPE), Some(&PropValue::Int(4)));
     }
 
     #[test]
@@ -728,7 +721,7 @@ mod tests {
         // it does not mean "fill the valence".
         let mol = smiles_to_mol("[C]");
         let (_, atom) = mol.atoms().next().unwrap();
-        assert_eq!(atom.get("h_count"), Some(&PropValue::F64(0.0)));
+        assert_eq!(atom.get(H_COUNT), Some(&PropValue::Int(0)));
     }
 
     #[test]
@@ -745,23 +738,23 @@ mod tests {
         let mol = smiles_to_mol("[13CH4]");
         assert_eq!(mol.n_atoms(), 1);
         let (_, atom) = mol.atoms().next().unwrap();
-        assert_eq!(atom.get_f64("isotope"), Some(13.0));
-        assert_eq!(atom.get_f64("h_count"), Some(4.0));
+        assert_eq!(atom.get(ISOTOPE), Some(&PropValue::Int(13)));
+        assert_eq!(atom.get(H_COUNT), Some(&PropValue::Int(4)));
     }
 
     #[test]
     fn test_charge() {
         let mol = smiles_to_mol("[Fe+2]");
         let (_, atom) = mol.atoms().next().unwrap();
-        assert_eq!(atom.get_str("element"), Some("Fe"));
-        assert_eq!(atom.get_f64("formal_charge"), Some(2.0));
+        assert_eq!(atom.atomic_number(), Some(26));
+        assert_eq!(atom.get(keys::FORMAL_CHARGE), Some(&PropValue::Int(2)));
     }
 
     #[test]
     fn test_negative_charge() {
         let mol = smiles_to_mol("[O-]");
         let (_, atom) = mol.atoms().next().unwrap();
-        assert_eq!(atom.get_f64("formal_charge"), Some(-1.0));
+        assert_eq!(atom.get(keys::FORMAL_CHARGE), Some(&PropValue::Int(-1)));
     }
 
     #[test]
@@ -771,17 +764,18 @@ mod tests {
         let atoms: Vec<_> = mol.atoms().collect();
         let c_atom = &atoms
             .iter()
-            .find(|(_, a)| a.get_str("element") == Some("C"))
+            .find(|(_, a)| a.atomic_number() == Some(6))
             .unwrap()
             .1;
-        assert_eq!(c_atom.get_str("stereo"), Some("CW"));
+        assert_eq!(c_atom.get_str(STEREO), Some("CW"));
     }
 
     #[test]
     fn test_atom_class() {
         let mol = smiles_to_mol("[CH3:1]");
         let (_, atom) = mol.atoms().next().unwrap();
-        assert_eq!(atom.get_f64("atom_class"), Some(1.0));
+        // The atom class is the schema's atom map, an unsigned integer.
+        assert_eq!(atom.get(keys::ATOM_MAP), Some(&PropValue::Int(1)));
     }
 
     // -- mass ---------------------------------------------------------------
@@ -804,24 +798,19 @@ mod tests {
     #[test]
     fn test_element_atoms_carry_their_table_mass() {
         let mol = smiles_to_mol("CCO");
-        let masses: Vec<(String, Option<f64>)> = mol
+        let masses: Vec<(Option<u8>, Option<f64>)> = mol
             .atoms()
-            .map(|(_, a)| {
-                (
-                    a.get_str("element").unwrap_or("").to_owned(),
-                    a.get_f64(molrs::core::keys::MASS),
-                )
-            })
+            .map(|(_, a)| (a.atomic_number(), a.get_f64(molrs::core::keys::MASS)))
             .collect();
-        let expected = ["C", "C", "O"];
+        let expected = [("C", 6), ("C", 6), ("O", 8)];
         assert_eq!(masses.len(), expected.len());
-        for ((element, mass), want) in masses.iter().zip(expected) {
-            assert_eq!(element, want);
+        for ((z, mass), (element, want_z)) in masses.iter().zip(expected) {
+            assert_eq!(*z, Some(want_z), "{element}");
             let mass = mass.unwrap_or_else(|| panic!("{element} atom carries no mass"));
             assert!(
-                (mass - table_mass(want)).abs() < 1e-12,
+                (mass - table_mass(element)).abs() < 1e-12,
                 "{element}: mass {mass} != table {}",
-                table_mass(want)
+                table_mass(element)
             );
         }
     }
@@ -841,12 +830,12 @@ mod tests {
         let mol = smiles_to_mol("*C");
         let atoms: Vec<_> = mol.atoms().map(|(_, a)| a).collect();
         assert_eq!(atoms.len(), 2);
-        assert_eq!(atoms[0].get_str("element"), Some("*"));
+        assert_eq!(atoms[0].atomic_number(), Some(WILDCARD_Z));
         assert!(
             !atoms[0].contains_key(molrs::core::keys::MASS),
             "the wildcard has no element, hence no mass"
         );
-        assert_eq!(atoms[1].get_str("element"), Some("C"));
+        assert_eq!(atoms[1].atomic_number(), Some(6));
         let mass = atoms[1]
             .get_f64(molrs::core::keys::MASS)
             .expect("the carbon carries a mass");
@@ -948,9 +937,10 @@ mod tests {
     // -- fragment dialect: bonding descriptors ------------------------------
 
     fn fragment_to_mol(input: &str) -> (Atomistic, Vec<(NodeId, BondingDescriptor)>) {
-        let ir = SmilesIr::from_fragment(input).unwrap();
-        ir.to_atomistic_with_descriptors()
-            .unwrap_or_else(|e| panic!("to_atomistic_with_descriptors({input:?}) failed: {e}"))
+        let ir =
+            FragmentIr::new(crate::line_notation::parser::parse_fragment_smiles(input).unwrap());
+        ir.to_atomistic()
+            .unwrap_or_else(|e| panic!("FragmentIr::to_atomistic({input:?}) failed: {e}"))
     }
 
     /// Atom ids in the order the walker created them.
@@ -958,11 +948,9 @@ mod tests {
         mol.atoms().map(|(id, _)| id).collect()
     }
 
-    /// Element symbols in creation order.
-    fn elements(mol: &Atomistic) -> Vec<String> {
-        mol.atoms()
-            .filter_map(|(_, a)| a.get_str("element").map(str::to_owned))
-            .collect()
+    /// Atomic numbers in creation order.
+    fn atomic_numbers(mol: &Atomistic) -> Vec<Option<u8>> {
+        mol.atoms().map(|(_, a)| a.atomic_number()).collect()
     }
 
     /// Declared bond class (`bond_type`, `bond_number`) in creation order.
@@ -970,8 +958,8 @@ mod tests {
         mol.bonds()
             .map(|(_, b)| {
                 (
-                    b.props.get("bond_type").cloned(),
-                    b.props.get("bond_number").cloned(),
+                    b.props.get(keys::BOND_TYPE).cloned(),
+                    b.props.get(keys::BOND_NUMBER).cloned(),
                 )
             })
             .collect()
@@ -981,8 +969,8 @@ mod tests {
     fn test_to_atomistic_rejects_a_descriptor_bearing_ir() {
         // The plain entry point routes the caller instead of silently dropping
         // the descriptors the fragment dialect parsed.
-        let ir = SmilesIr::from_fragment("[$]COC[$]").unwrap();
-        let err = ir.to_atomistic().unwrap_err();
+        let fragment = SmilesIr::from_fragment("[$]COC[$]").unwrap();
+        let err = fragment.ir().to_atomistic().unwrap_err();
         assert!(matches!(
             err.kind,
             SmilesErrorKind::DescriptorsUnconvertible
@@ -1084,7 +1072,7 @@ mod tests {
         assert!(ports.is_empty());
         assert_eq!(fragment.n_atoms(), plain.n_atoms());
         assert_eq!(fragment.n_bonds(), plain.n_bonds());
-        assert_eq!(elements(&fragment), elements(&plain));
+        assert_eq!(atomic_numbers(&fragment), atomic_numbers(&plain));
         assert_eq!(bond_classes(&fragment), bond_classes(&plain));
     }
 }

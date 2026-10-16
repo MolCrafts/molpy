@@ -32,6 +32,7 @@ mod tests {
     use super::*;
     use crate::ff::compile::PotentialCompiler;
     use crate::ff::forcefield::ForceField;
+    use crate::ff::potential::fixtures::OneShot;
     use molrs::core::Block;
     use molrs::op::{F, Idx};
     use ndarray::Array1;
@@ -46,19 +47,20 @@ mod tests {
             .def_type(
                 "a-b-c-d",
                 &["a", "b", "c", "d"],
-                Params::from_pairs(&[("k", 2.0), ("sign", -1.0), ("periodicity", 2.0)]),
+                Params::from_iter([("k", 2.0), ("sign", -1.0), ("periodicity", 2.0)]),
             )
             .unwrap();
         let mut dihedrals = Block::new();
         for (key, atom) in [("atomi", 0), ("atomj", 1), ("atomk", 2), ("atoml", 3)] {
             dihedrals
-                .insert(key, Array1::from_vec(vec![atom as Idx]).into_dyn())
+                .insert(key, Array1::from_vec(vec![atom as Idx]).into_dyn(), None)
                 .unwrap();
         }
         dihedrals
             .insert(
                 "type",
                 Array1::from_vec(vec!["a-b-c-d".to_owned()]).into_dyn(),
+                None,
             )
             .unwrap();
         let mut frame = Frame::new();
@@ -68,7 +70,7 @@ mod tests {
         let (s, c) = phi.sin_cos();
         let coords = [0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 1.0, c, s];
         let want = 2.0 * (1.0 - (2.0 * phi).cos());
-        let got = pots.calc_energy(&coords);
+        let got = pots.energy_at(&coords);
         assert!((got - want).abs() < 1e-12, "{got} vs {want}");
     }
 }

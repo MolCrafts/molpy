@@ -440,6 +440,7 @@ pub mod positional {
     pub fn value(spec: &StyleSpec, p: &ParamSpec, params: &Params) -> Result<F, String> {
         params
             .get(&p.name)
+            .and_then(|v| v.as_num())
             .or_else(|| p.default.as_ref().and_then(ParamValue::as_num))
             .ok_or_else(|| {
                 format!(
@@ -464,7 +465,11 @@ pub mod positional {
     /// Refuse a numeric parameter of `params` the spec does not declare:
     /// writing the line would drop it.
     pub fn refuse_undeclared_params(spec: &StyleSpec, params: &Params) -> Result<(), String> {
-        match params.iter().find(|(k, _)| spec.param(k).is_none()) {
+        match params
+            .iter()
+            .filter_map(|(k, v)| v.as_num().map(|x| (k, x)))
+            .find(|(k, _)| spec.param(k).is_none())
+        {
             Some((key, _)) => Err(format!(
                 "{} {}: parameter `{key}` has no place on the LAMMPS coefficient line",
                 spec.category, spec.name
@@ -543,7 +548,7 @@ pub mod positional {
         also: &[&str],
     ) -> Result<(), String> {
         let carried = |k: &str| matches!(k, "cutoff" | "mixing") || also.contains(&k);
-        for (key, v) in style.iter() {
+        for (key, v) in style.iter().filter_map(|(k, v)| v.as_num().map(|x| (k, x))) {
             if carried(key) || PASSED.contains(&key) {
                 continue;
             }
@@ -558,7 +563,10 @@ pub mod positional {
                 ));
             }
         }
-        for (key, v) in style.iter_strings() {
+        for (key, v) in style
+            .iter()
+            .filter_map(|(k, v)| v.as_text().map(|s| (k, s)))
+        {
             if carried(key) || PASSED.contains(&key) {
                 continue;
             }
@@ -586,13 +594,16 @@ pub mod positional {
         let Some(p) = spec.style_param("cutoff") else {
             return Ok(Vec::new());
         };
-        let cutoff = style.get("cutoff").ok_or_else(|| {
-            format!(
-                "{} style '{}' has no cutoff: declare one on the style or write with \
+        let cutoff = style
+            .get("cutoff")
+            .and_then(|v| v.as_num())
+            .ok_or_else(|| {
+                format!(
+                    "{} style '{}' has no cutoff: declare one on the style or write with \
                  skip_pair_style",
-                spec.category, spec.name
-            )
-        })?;
+                    spec.category, spec.name
+                )
+            })?;
         Ok(vec![Token::Real(units.apply(cutoff, p.dim))])
     }
 
@@ -631,7 +642,8 @@ pub mod positional {
             return Ok(Vec::new());
         };
         let rule = style
-            .get_str("mixing")
+            .get("mixing")
+            .and_then(|v| v.as_text())
             .or_else(|| p.default.as_ref().and_then(ParamValue::as_text))
             .unwrap_or("arithmetic");
         match fixed {

@@ -108,7 +108,7 @@ pub struct FormCodec {
     pub project: FormFn,
     /// Canonical parameters → the nearest member of this style's image by a
     /// rule of thumb (the dominant order of a one-term torsion): the start of
-    /// [`Registry::fit_form`](crate::ff::style_registry::Registry::fit_form). `None`: the fit starts from the source row's
+    /// [`ForceField::fit_form`](crate::ff::forcefield::ForceField::fit_form). `None`: the fit starts from the source row's
     /// same-named values.
     pub seed: Option<FormFn>,
 }

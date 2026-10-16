@@ -12,12 +12,13 @@ from pathlib import Path
 import molrs
 import numpy as np
 import pytest
+from molrs.io.openmm_xml import OpenmmXmlReader, OpenmmXmlWriter
 
 FIXTURES = Path(__file__).resolve().parents[2] / "molrs/src/ff/testdata/openmm"
 
 
 def test_a_charmm_port_reads_every_section() -> None:
-    ff = molrs.io.read_openmm_forcefield(FIXTURES / "charmm.xml")
+    ff = OpenmmXmlReader().read(FIXTURES / "charmm.xml")
     lj = ff.get_style("pair", "lj/charmm")
     assert lj.params["one_four"] == "epsilon14"
     assert lj.params["mixing"] == "arithmetic"
@@ -31,11 +32,24 @@ def test_a_charmm_port_reads_every_section() -> None:
 
 @pytest.mark.parametrize("case", ["charmm", "amber", "opls"])
 def test_written_xml_reads_back_with_the_same_types(case: str, tmp_path: Path) -> None:
-    ff = molrs.io.read_openmm_forcefield(FIXTURES / f"{case}.xml")
+    ff = OpenmmXmlReader().read(FIXTURES / f"{case}.xml")
     path = tmp_path / f"{case}.xml"
-    molrs.io.write_openmm_forcefield(path, ff)
-    back = molrs.io.read_openmm_forcefield(path)
+    OpenmmXmlWriter().write(path, ff)
+    back = OpenmmXmlReader().read(path)
     for category in ("bond", "angle", "dihedral", "improper", "pair", "cmap"):
+        names = sorted(t.name for t in ff.get_types(category))
+        assert sorted(t.name for t in back.get_types(category)) == names, category
+
+
+def test_xml_written_into_a_buffer_reads_back_as_text(tmp_path: Path) -> None:
+    ff = OpenmmXmlReader().read(FIXTURES / "amber.xml")
+    path = tmp_path / "amber.xml"
+    OpenmmXmlWriter().write(path, ff)
+    buf = bytearray()
+    OpenmmXmlWriter().write(buf, ff)
+    assert bytes(buf) == path.read_bytes()
+    back = OpenmmXmlReader().read(molrs.io.Text(buf.decode()))
+    for category in ("bond", "angle", "dihedral", "improper", "pair"):
         names = sorted(t.name for t in ff.get_types(category))
         assert sorted(t.name for t in back.get_types(category)) == names, category
 
@@ -65,7 +79,7 @@ def _chain() -> molrs.core.Frame:
 
 
 def test_materialize_one_four_writes_the_one_four_rows() -> None:
-    ff = molrs.io.read_openmm_forcefield(FIXTURES / "charmm.xml")
+    ff = OpenmmXmlReader().read(FIXTURES / "charmm.xml")
     for name in ("lj/charmm", "coul/charmm"):
         style = ff.get_style("pair", name)
         style["inner"] = 900.0
@@ -80,4 +94,5 @@ def test_materialize_one_four_writes_the_one_four_rows() -> None:
     eps = np.asarray(pairs["epsilon"])[is_14]
     # CT3's and CT1's epsilon14 (0.04184 kJ/mol each) mixed, in kcal/mol.
     np.testing.assert_allclose(eps, [0.01], rtol=1e-15)
-    assert np.isfinite(compiler.compile(frame).calc_energy(frame))
+    energy, _forces = compiler.compile(frame).evaluate(frame)
+    assert np.isfinite(energy)

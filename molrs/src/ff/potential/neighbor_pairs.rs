@@ -1,5 +1,5 @@
-//! [`intramolecular_pairs_from_neighbors`]: the intramolecular `pairs` block
-//! of [`intramolecular_pairs`](super::intramolecular_pairs), over the pairs of a
+//! The intramolecular `pairs` block of
+//! [`intramolecular_pairs`](super::intramolecular_pairs) over the pairs of a
 //! neighbour table instead of every pair of the molecule.
 
 use std::collections::HashSet;
@@ -33,7 +33,7 @@ use super::{carried_overrides, end_pairs};
 ///
 /// When `special`'s weights cannot be expressed by inclusion
 /// ([`SpecialBonds::compiled_inclusion`]), or an override would be dropped.
-pub fn intramolecular_pairs_from_neighbors(
+pub(super) fn over_neighbors(
     frame: &Frame,
     special: &SpecialBonds,
     neighbors: &Neighbors,
@@ -75,17 +75,17 @@ pub fn intramolecular_pairs_from_neighbors(
     }
     let overrides = carried_overrides(frame, &pi, &pj)?;
     pairs
-        .insert(ATOMI, Array1::from_vec(pi).into_dyn())
+        .insert(ATOMI, Array1::from_vec(pi).into_dyn(), None)
         .expect("fresh pairs block");
     pairs
-        .insert(ATOMJ, Array1::from_vec(pj).into_dyn())
+        .insert(ATOMJ, Array1::from_vec(pj).into_dyn(), None)
         .expect("fresh pairs block");
     pairs
-        .insert(IS_14, Array1::from_vec(p14).into_dyn())
+        .insert(IS_14, Array1::from_vec(p14).into_dyn(), None)
         .expect("fresh pairs block");
     for (key, values, valid) in overrides {
         pairs
-            .insert_nullable(key, Array1::from_vec(values).into_dyn(), valid)
+            .insert(key, Array1::from_vec(values).into_dyn(), Some(valid))
             .map_err(|e| e.to_string())?;
     }
     Ok(pairs)
@@ -101,7 +101,7 @@ mod tests {
         let block = |cols: &[(&str, Vec<Idx>)]| {
             let mut b = Block::new();
             for (k, v) in cols {
-                b.insert(*k, Array1::from_vec(v.clone()).into_dyn())
+                b.insert(*k, Array1::from_vec(v.clone()).into_dyn(), None)
                     .unwrap();
             }
             b
@@ -109,7 +109,7 @@ mod tests {
         let mut frame = Frame::new();
         let mut atoms = Block::new();
         atoms
-            .insert("x", Array1::from_vec(vec![0.0_f64; 4]).into_dyn())
+            .insert("x", Array1::from_vec(vec![0.0_f64; 4]).into_dyn(), None)
             .unwrap();
         frame.insert(molrs::core::schema::block_names::ATOMS, atoms);
         frame.insert(
@@ -162,13 +162,16 @@ mod tests {
         let all: Vec<(u32, u32)> = (0..4u32)
             .flat_map(|i| (0..4u32).filter(move |&j| j != i).map(move |j| (i, j)))
             .collect();
-        let pairs =
-            intramolecular_pairs_from_neighbors(&chain(), &SpecialBonds::default(), &table(&all))
-                .unwrap();
+        let pairs = crate::ff::potential::intramolecular_pairs(
+            &chain(),
+            &SpecialBonds::default(),
+            Some(&table(&all)),
+        )
+        .unwrap();
         let i = pairs
             .get(ATOMI)
             .unwrap()
-            .as_uint()
+            .get::<u64>()
             .unwrap()
             .iter()
             .copied()
@@ -176,7 +179,7 @@ mod tests {
         let j = pairs
             .get(ATOMJ)
             .unwrap()
-            .as_uint()
+            .get::<u64>()
             .unwrap()
             .iter()
             .copied()
@@ -184,7 +187,7 @@ mod tests {
         let f = pairs
             .get(IS_14)
             .unwrap()
-            .as_bool()
+            .get::<bool>()
             .unwrap()
             .iter()
             .copied()
@@ -199,12 +202,13 @@ mod tests {
             .collect();
         let special = SpecialBonds::default();
         let from_table =
-            intramolecular_pairs_from_neighbors(&chain(), &special, &table(&all)).unwrap();
-        let full = super::super::intramolecular_pairs(&chain(), &special).unwrap();
+            crate::ff::potential::intramolecular_pairs(&chain(), &special, Some(&table(&all)))
+                .unwrap();
+        let full = crate::ff::potential::intramolecular_pairs(&chain(), &special, None).unwrap();
         for key in [ATOMI, ATOMJ] {
             assert_eq!(
-                from_table.get(key).unwrap().as_uint().unwrap(),
-                full.get(key).unwrap().as_uint().unwrap()
+                from_table.get(key).unwrap().get::<u64>().unwrap(),
+                full.get(key).unwrap().get::<u64>().unwrap()
             );
         }
     }

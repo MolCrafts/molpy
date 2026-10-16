@@ -122,48 +122,21 @@ impl PyBlock {
     /// replaced. The array length must match the row count of existing
     /// columns, or the block must be empty.
     ///
+    /// ``validity`` optionally attaches a per-row mask — the write side of
+    /// :meth:`validity`. ``validity[i]`` is ``False`` where row ``i`` of
+    /// ``values`` is a hole: the array still carries something there
+    /// (typically a zero) and the mask is the only place that says it is not
+    /// a stated value. An all-``True`` mask states nothing and is dropped, so
+    /// :meth:`validity` keeps answering ``None``.
+    ///
     /// Parameters
     /// ----------
     /// key : str | Key
     ///     Column name (e.g. ``"x"``, ``"element"``).
-    /// array : numpy.ndarray | list[str]
+    /// values : numpy.ndarray | list[str]
     ///     Column data.
-    ///
-    /// Raises
-    /// ------
-    /// TypeError
-    ///     If the array dtype is not supported.
-    /// ValueError
-    ///     If the row count does not match existing columns.
-    ///
-    /// Examples
-    /// --------
-    /// >>> b = Block()
-    /// >>> b.insert("x", np.zeros(10, dtype=np.float32))
-    fn insert(&mut self, key: &Bound<'_, PyAny>, array: &Bound<'_, PyAny>) -> PyResult<()> {
-        self.insert_any(&extract_column_key(key)?, array, None)
-    }
-
-    /// Insert a named column together with a per-row validity mask.
-    ///
-    /// The write side of :meth:`validity`. ``validity[i]`` is ``False`` where
-    /// row ``i`` of ``array`` is a hole: the array still carries something
-    /// there — whatever the caller put in, typically a zero — and the mask is
-    /// the only place that says it is not a stated value.
-    ///
-    /// An all-``True`` mask states nothing :meth:`insert` does not, so it is
-    /// dropped rather than stored and :meth:`validity` keeps answering
-    /// ``None``. Apart from the mask this is :meth:`insert`, with the same
-    /// accepted dtypes and the same row-count rule.
-    ///
-    /// Parameters
-    /// ----------
-    /// key : str | Key
-    ///     Column name (e.g. ``"frag_id"``).
-    /// array : numpy.ndarray | list[str]
-    ///     Column data; see :meth:`insert` for the accepted dtypes.
-    /// validity : numpy.ndarray | Sequence[bool]
-    ///     1-D boolean mask in row order, one entry per row of ``array``.
+    /// validity : numpy.ndarray | Sequence[bool] | None
+    ///     1-D boolean mask in row order, one entry per row of ``values``.
     ///
     /// Raises
     /// ------
@@ -172,47 +145,25 @@ impl PyBlock {
     ///     bool array or a sequence of bools.
     /// ValueError
     ///     If the row count does not match existing columns, or ``validity``
-    ///     does not have exactly one entry per row of ``array``.
+    ///     does not have exactly one entry per row of ``values``.
     ///
     /// Examples
     /// --------
     /// >>> b = Block()
-    /// >>> b.insert_nullable("frag_id", np.array([7, 0, 0]), [True, False, False])
+    /// >>> b.insert("x", np.zeros(3, dtype=np.float32))
+    /// >>> b.insert("frag_id", np.array([7, 0, 0]), [True, False, False])
     /// >>> b.validity("frag_id")
     /// array([ True, False, False])
-    fn insert_nullable(
+    #[pyo3(signature = (key, values, validity = None))]
+    fn insert(
         &mut self,
         key: &Bound<'_, PyAny>,
-        array: &Bound<'_, PyAny>,
-        validity: &Bound<'_, PyAny>,
+        values: &Bound<'_, PyAny>,
+        validity: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<()> {
         let key = extract_column_key(key)?;
-        let mask = bool_mask(&key, validity)?;
-        self.insert_any(&key, array, Some(mask))
-    }
-
-    /// Owned numpy array of one column, shape included.
-    ///
-    /// Numeric, bool and complex columns are copies of the zero-copy view
-    /// ``block[key]`` returns. A string column is already a copy under
-    /// ``block[key]`` — a numpy ``str`` array of the column's shape — and
-    /// this returns another one.
-    ///
-    /// Parameters
-    /// ----------
-    /// key : str | Key
-    ///     Column name.
-    ///
-    /// Raises
-    /// ------
-    /// KeyError
-    ///     If ``key`` does not exist in this block.
-    ///
-    /// Examples
-    /// --------
-    /// >>> names = block.copy_column("element")
-    fn copy_column(&self, py: Python<'_>, key: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
-        self.copy_column_named(py, &extract_column_key(key)?)
+        let mask = validity.map(|v| bool_mask(&key, v)).transpose()?;
+        self.insert_any(&key, values, mask)
     }
 
     /// The validity mask of a column, or ``None`` when the column has no holes.
@@ -639,24 +590,13 @@ impl PyBlock {
         )))
     }
 
-    /// Remove a column by name — ``del block["x"]``; the same operation as
-    /// :meth:`remove`.
+    /// Remove a column by name — ``del block["x"]``.
     ///
     /// Raises
     /// ------
     /// KeyError
     ///     If no column of that name exists.
     fn __delitem__(&mut self, key: &Bound<'_, PyAny>) -> PyResult<()> {
-        self.remove(key)
-    }
-
-    /// Remove a column by name.
-    ///
-    /// Raises
-    /// ------
-    /// KeyError
-    ///     If ``key`` does not exist.
-    fn remove(&mut self, key: &Bound<'_, PyAny>) -> PyResult<()> {
         let key = extract_column_key(key)?;
         let removed = self
             .inner
@@ -737,17 +677,6 @@ impl PyBlock {
             })
     }
 
-    /// Return a new Block with rows gathered at ``indices`` (preserves the
-    /// column set, dtypes and validity masks).
-    ///
-    /// Raises
-    /// ------
-    /// ValueError
-    ///     If any index is out of range.
-    fn select_rows(&self, indices: Vec<usize>) -> PyResult<PyBlock> {
-        self.gather_rows(indices)
-    }
-
     /// Return a new Block sorted by the ``key`` column (original unchanged).
     ///
     /// Parameters
@@ -802,32 +731,6 @@ impl PyBlock {
                 .ok_or_else(|| PyKeyError::new_err(key.clone()))?;
             Ok::<String, PyErr>(format!("{}", col.dtype()))
         })?
-    }
-
-    /// True when ``key`` exists and is ``f64``.
-    fn has_f64(&self, key: &Bound<'_, PyAny>) -> PyResult<bool> {
-        let key = extract_column_key(key)?;
-        self.with_block(|b| b.has_f64(&key))
-    }
-
-    /// True when ``key`` exists and is a signed integer column
-    /// (``i8``, ``i16``, ``i32``, or ``i64``).
-    fn has_int(&self, key: &Bound<'_, PyAny>) -> PyResult<bool> {
-        let key = extract_column_key(key)?;
-        self.with_block(|b| b.has_int(&key))
-    }
-
-    /// True when ``key`` exists and is an unsigned integer column
-    /// (``u8``, ``u16``, ``u32``, or ``u64``).
-    fn has_uint(&self, key: &Bound<'_, PyAny>) -> PyResult<bool> {
-        let key = extract_column_key(key)?;
-        self.with_block(|b| b.has_uint(&key))
-    }
-
-    /// True when ``key`` exists and is a string column.
-    fn has_string(&self, key: &Bound<'_, PyAny>) -> PyResult<bool> {
-        let key = extract_column_key(key)?;
-        self.with_block(|b| b.has_string(&key))
     }
 
     /// Pickle by logical state: columns, validity masks, declared precisions,
@@ -962,19 +865,6 @@ impl PyBlock {
     /// Run a read-only closure on the underlying `CoreBlock`.
     pub(crate) fn with_block<R>(&self, f: impl FnOnce(&CoreBlock) -> R) -> PyResult<R> {
         self.inner.with(f).map_err(ffi_error_to_pyerr)
-    }
-
-    /// Owned numpy array of column `key`, with the column's shape.
-    ///
-    /// A string read is already that owned array (`column_view` copies it,
-    /// because a Rust ``String`` has no zero-copy numpy view). Every other
-    /// dtype is ``column_view(key).copy()``.
-    pub(crate) fn copy_column_named(&self, py: Python<'_>, key: &str) -> PyResult<Py<PyAny>> {
-        let array = self.column_view(py, key)?;
-        if self.with_block(|b| matches!(b.get(key), Some(Column::String(_))))? {
-            return Ok(array);
-        }
-        Ok(array.into_bound(py).call_method0("copy")?.unbind())
     }
 
     /// Normalise a row selector over `n_rows` rows to row indices.
@@ -1208,8 +1098,7 @@ impl PyBlock {
         Ok(())
     }
 
-    /// Shared body of [`insert`](Self::insert),
-    /// [`insert_nullable`](Self::insert_nullable) and the subscript write:
+    /// Shared body of [`insert`](Self::insert) and the subscript write:
     /// dispatch a Python value to its typed column, optionally carrying a
     /// validity mask.
     ///
@@ -1265,18 +1154,18 @@ impl PyBlock {
                 }
             };
         }
-        try_exact!(F, Column::from_float_array);
-        try_exact!(I, Column::from_int_array);
-        try_exact!(i64, Column::from_i64_array);
-        try_exact!(i16, Column::from_i16_array);
-        try_exact!(i8, Column::from_i8_array);
-        try_exact!(Idx, Column::from_uint_array);
-        try_exact!(u32, Column::from_u32_array);
-        try_exact!(u16, Column::from_u16_array);
-        try_exact!(u8, Column::from_u8_array);
-        try_exact!(bool, Column::from_bool_array);
-        try_exact!(Complex<f64>, Column::from_c128_array);
-        try_exact!(Complex<f32>, Column::from_c64_array);
+        try_exact!(F, Column::from);
+        try_exact!(I, Column::from);
+        try_exact!(i64, Column::from);
+        try_exact!(i16, Column::from);
+        try_exact!(i8, Column::from);
+        try_exact!(Idx, Column::from);
+        try_exact!(u32, Column::from);
+        try_exact!(u16, Column::from);
+        try_exact!(u8, Column::from);
+        try_exact!(bool, Column::from);
+        try_exact!(Complex<f64>, Column::from);
+        try_exact!(Complex<f32>, Column::from);
 
         if let Ok(strings) = array.extract::<Vec<String>>() {
             return self.insert_array::<String>(key, Array1::from(strings).into_dyn(), validity);
@@ -1294,11 +1183,8 @@ impl PyBlock {
     ) -> PyResult<()> {
         self.inner
             .with_mut(|b| {
-                match validity {
-                    Some(mask) => b.insert_nullable(key, array, mask),
-                    None => b.insert(key, array),
-                }
-                .map_err(|e| PyValueError::new_err(e.to_string()))
+                b.insert(key, array, validity)
+                    .map_err(|e| PyValueError::new_err(e.to_string()))
             })
             .map_err(ffi_error_to_pyerr)??;
         Ok(())
@@ -1331,11 +1217,7 @@ impl PyBlock {
                         got: mask.len(),
                     });
                 }
-                b.insert_column(key, col)?;
-                match validity {
-                    Some(mask) => b.set_validity(key, mask),
-                    None => Ok(()),
-                }
+                b.insert(key, col, validity)
             })
             .map_err(ffi_error_to_pyerr)?
             .map_err(|e| PyValueError::new_err(e.to_string()))

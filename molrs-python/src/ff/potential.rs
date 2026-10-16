@@ -2,23 +2,25 @@
 //! evaluable force terms.
 //!
 //! * [`PyPotentials`] — a collection of kernels evaluated together
-//!   (`calc_energy_forces`); `push` moves one more member in. A force field
-//!   compiles into one (or into [`PyWeightedTerms`], each kernel with its
+//!   (`evaluate`, the mirror of `Potential::evaluate` into a fresh
+//!   `Accumulator`); `push` moves one more member in. A force field compiles
+//!   into one (or into [`PyWeightedTerms`], each kernel with its
 //!   special-bonds weights) through `molrs.ff.compile`.
 //! * [`PyPairLjCut`] — the one-type `lj/cut` kernel a neighbour loop feeds (the
-//!   MD integrators' nonbond kernel: `energy_forces_skin`, `energy_forces_table`, `energy_forces_pairs`).
+//!   MD integrators' nonbond kernel): `pair_energy_force` for one pair,
+//!   `evaluate_pairs` (`PairDriven::evaluate_pairs`) over a pair table.
 //! * `intramolecular_pairs` — the special-bonds pair list of a typed frame.
 //!
 //! ```text
 //! pots = Potentials()
 //! pots.push(ExplicitTerms("bond", "harmonic", [[0, 1]], k=300.0, r0=1.4).compile())
 //! pots.push(ExplicitTerms("angle", "harmonic", [[0, 1, 2]], k=50.0, theta0=109.5).compile())
-//! energy, forces = pots.calc_energy_forces(pos)
+//! energy, forces = pots.evaluate(pos)
 //! ```
 //!
 //! # The Python seam
 //!
-//! A Python object with ``calc_energy_forces`` (a
+//! A Python object with ``evaluate(pos) -> (energy, forces)`` (a
 //! `molrs.ff.potential.Potential`) is a potential like any other:
 //! [`take_potential`] turns any exposed potential — `PairLjCut`, `Potentials`, or
 //! a duck-typed object wrapped as [`SubclassPotential`] — into one
@@ -32,15 +34,15 @@ use super::ir;
 use crate::array::{ArrayArg1, ArrayArg2};
 use crate::core::block::PyBlock;
 use crate::core::frame::PyFrame;
-use crate::core::neighborlist::{PyNeighbors, PyVerletSkin};
+use crate::core::neighborlist::PyNeighbors;
 use crate::ff::forcefield::PyForceField;
 use molrs::ff::compile::PotentialCompiler;
 use molrs::ff::forcefield::ForceField;
 use molrs::ff::potential::pair::{PairLjCut, PairPotential};
-use molrs::ff::potential::{ForceTerm, Potential, Potentials};
+use molrs::ff::potential::{Accumulator, ForceTerm, PairDriven, Potential, Potentials};
 use molrs::op::F;
 use ndarray::Array2;
-use numpy::{IntoPyArray, PyArray2, ToPyArray};
+use numpy::{IntoPyArray, PyArray2};
 use pyo3::exceptions::{PyTypeError, PyValueError};
 use pyo3::prelude::*;
 use std::sync::{Arc, Mutex};
@@ -114,89 +116,83 @@ impl PyPairLjCut {
         self.inner.smeared()
     }
 
-    fn pair_energy(&self, r2: F, disp: [F; 3]) -> Option<F> {
-        self.inner.pair_energy(r2, disp)
-    }
-    fn pair_force(&self, r2: F, disp: [F; 3]) -> Option<[F; 3]> {
-        self.inner.pair_force(r2, disp)
-    }
+    /// Energy and force of one pair at squared distance ``r2`` along the
+    /// separation ``disp`` (``PairPotential::pair_energy_force``), or
+    /// ``None`` beyond the cutoff.
     fn pair_energy_force(&self, r2: F, disp: [F; 3]) -> Option<(F, [F; 3])> {
         self.inner.pair_energy_force(r2, disp)
     }
 
-    fn calc_energy_forces<'py>(
+    /// Energy and forces of every pair in ``neighbors``
+    /// (``PairDriven::evaluate_pairs``): ``(energy, forces)``, forces of
+    /// shape ``(N, 3)`` for the ``N`` rows of ``pos``.
+    ///
+    /// ``neighbors`` must carry its separations (built with ``disp=True``);
+    /// ``factor`` is one weight per pair (``None``: all ones), a weight of
+    /// exactly zero skipping the pair.
+    ///
+    /// Raises
+    /// ------
+    /// ValueError
+    ///     ``pos`` is not ``(N, 3)``, ``neighbors`` has no ``disp`` or names a
+    ///     point past ``N``, or ``factor`` is not one weight per pair.
+    #[pyo3(signature = (pos, neighbors, factor = None))]
+    fn evaluate_pairs<'py>(
         &self,
         py: Python<'py>,
         pos: ArrayArg2<'_, f64>,
-    ) -> PyResult<(F, Bound<'py, PyArray2<f64>>)> {
-        check_nx3(&pos, "pos")?;
-        let view = pos.as_array();
-        let n = view.nrows();
-        // A standard-layout `(N, 3)` array *is* the flat `[x0, y0, z0, …]` a
-        // kernel wants; only a strided view is copied.
-        let owned: Vec<F>;
-        let flat: &[F] = match view.as_slice() {
-            Some(slice) => slice,
-            None => {
-                owned = view.iter().copied().collect();
-                &owned
-            }
-        };
-        let (energy, forces) = Potential::calc_energy_forces(&self.inner, flat);
-        let arr = Array2::from_shape_vec((n, 3), forces)
-            .map_err(|e| PyValueError::new_err(e.to_string()))?;
-        Ok((energy, arr.into_pyarray(py)))
-    }
-
-    fn energy_forces_skin<'py>(
-        &self,
-        py: Python<'py>,
-        neighbors: &mut PyVerletSkin,
-        pos: ArrayArg2<'_, f64>,
-    ) -> PyResult<(F, Bound<'py, PyArray2<f64>>)> {
-        check_nx3(&pos, "pos")?;
-        let nl = neighbors.get_mut()?;
-        let (e, f) = self
-            .inner
-            .energy_forces_skin(nl, pos.as_array())
-            .map_err(PyValueError::new_err)?;
-        Ok((e, f.into_pyarray(py)))
-    }
-
-    fn energy_forces_table<'py>(
-        &self,
-        py: Python<'py>,
-        n_atoms: usize,
         neighbors: &PyNeighbors,
+        factor: Option<ArrayArg1<'_, f64>>,
     ) -> PyResult<(F, Bound<'py, PyArray2<f64>>)> {
-        let (e, f) = self
-            .inner
-            .energy_forces_table(n_atoms, &neighbors.inner)
-            .map_err(PyValueError::new_err)?;
-        Ok((e, f.into_pyarray(py)))
-    }
-
-    #[pyo3(signature = (n_atoms, i, j, disp, dist_sq=None))]
-    fn energy_forces_pairs<'py>(
-        &self,
-        py: Python<'py>,
-        n_atoms: usize,
-        i: ArrayArg1<'_, u32>,
-        j: ArrayArg1<'_, u32>,
-        disp: ArrayArg2<'_, f64>,
-        dist_sq: Option<ArrayArg1<'_, f64>>,
-    ) -> PyResult<(F, Bound<'py, PyArray2<f64>>)> {
-        check_nx3(&disp, "disp")?;
-        let d2 = match dist_sq.as_ref() {
-            Some(a) => Some(a.as_slice()?),
-            None => None,
+        check_nx3(&pos, "pos")?;
+        let table = &neighbors.inner;
+        if table.disp().is_none() {
+            return Err(PyValueError::new_err(
+                "evaluate_pairs needs the pair separations: build the neighbour \
+                 table with disp=True",
+            ));
+        }
+        let n = pos.as_array().nrows();
+        let past = table
+            .query_point_indices()
+            .iter()
+            .chain(table.point_indices())
+            .any(|&i| i as usize >= n);
+        if past {
+            return Err(PyValueError::new_err(format!(
+                "neighbors names a point past the {n} rows of pos"
+            )));
+        }
+        let factor: &[F] = match factor.as_ref() {
+            Some(f) => f.as_slice()?,
+            None => &[],
         };
-        let (e, f) = self
-            .inner
-            .energy_forces_pairs(n_atoms, i.as_slice()?, j.as_slice()?, disp.as_array(), d2)
-            .map_err(PyValueError::new_err)?;
-        Ok((e, f.into_pyarray(py)))
+        if !factor.is_empty() && factor.len() != table.query_point_indices().len() {
+            return Err(PyValueError::new_err(format!(
+                "factor has {} weights for {} pairs",
+                factor.len(),
+                table.query_point_indices().len()
+            )));
+        }
+        let coords = flat_coords(&pos);
+        let mut acc = Accumulator::new(coords.len());
+        self.inner.evaluate_pairs(&coords, table, factor, &mut acc);
+        let energy = acc.energy();
+        Ok((energy, forces_nx3(py, acc.into_forces())?))
     }
+}
+
+/// `pos` (``(N, 3)``) as flat `[x0, y0, z0, …]` coordinates.
+fn flat_coords(pos: &ArrayArg2<'_, f64>) -> Vec<F> {
+    pos.as_array().iter().copied().collect()
+}
+
+/// Flat `3N` forces as an ``(N, 3)`` array.
+fn forces_nx3(py: Python<'_>, forces: Vec<F>) -> PyResult<Bound<'_, PyArray2<f64>>> {
+    let n = forces.len() / 3;
+    Ok(Array2::from_shape_vec((n, 3), forces)
+        .map_err(|e| PyValueError::new_err(e.to_string()))?
+        .into_pyarray(py))
 }
 
 /// The kernels of a neighbour-driven force evaluation, each with the
@@ -233,7 +229,7 @@ impl PyWeightedTerms {
 /// >>> frame = typifier.typify(mol).to_frame()
 /// >>> frame["pairs"] = molrs.ff.potential.intramolecular_pairs(frame)
 /// >>> potentials = molrs.ff.compile.PotentialCompiler(typifier.forcefield()).compile(frame)
-/// >>> energy, forces = potentials.calc_energy_forces(coords)
+/// >>> energy, forces = potentials.evaluate(coords)
 #[pyclass(module = "molrs.ff.potential", name = "Potentials", subclass)]
 pub struct PyPotentials {
     pub(crate) inner: PotBacking,
@@ -245,7 +241,7 @@ pub struct PyPotentials {
 /// A [`PyPotentials`] is either already compiled against a molecule's topology
 /// (the MMFF / pre-bound path), *deferred* (it holds the force field and binds
 /// the topology lazily from the `Frame` passed to
-/// ``calc_energy``/``calc_forces`` — what ``PotentialCompiler.defer()``
+/// ``evaluate`` — what ``PotentialCompiler.defer()``
 /// returns, matching the molpy evaluation model), or *moved*: the
 /// Rust `Potentials` has been moved into an MD integrator or another
 /// collection.
@@ -270,7 +266,7 @@ impl PotBacking {
             PotBacking::Compiled(p) => Ok(p),
             PotBacking::Deferred(_) => Err(PyValueError::new_err(
                 "this Potentials is not bound to a molecule; \
-                 call calc_energy(frame)/calc_forces(frame) with a Frame, \
+                 call evaluate(frame) with a Frame, \
                  or build it from a typifier",
             )),
             PotBacking::Moved => Err(potentials_moved_err()),
@@ -283,7 +279,7 @@ impl PotBacking {
             PotBacking::Compiled(p) => Ok(p),
             PotBacking::Deferred(_) => Err(PyValueError::new_err(
                 "this Potentials is not bound to a molecule; \
-                 call calc_energy(frame)/calc_forces(frame) with a Frame, \
+                 call evaluate(frame) with a Frame, \
                  or build it from a typifier",
             )),
             PotBacking::Moved => Err(potentials_moved_err()),
@@ -299,6 +295,11 @@ impl PyPotentials {
     /// A Python-callable member's exception is re-raised afterwards (see
     /// `ErrSlot`).
     fn eval_any(&self, arg: &Bound<'_, PyAny>) -> PyResult<(f64, Vec<f64>)> {
+        fn run(p: &Potentials, coords: &[F]) -> (F, Vec<F>) {
+            let mut acc = Accumulator::new(coords.len());
+            p.evaluate(coords, &mut acc);
+            (acc.energy(), acc.into_forces())
+        }
         let ef = if let Ok(frame) = arg.extract::<PyRef<'_, PyFrame>>() {
             let core = frame.clone_core_frame()?;
             let coords: Vec<f64> = core
@@ -307,17 +308,25 @@ impl PyPotentials {
                 .into_iter()
                 .collect();
             match &self.inner {
-                PotBacking::Compiled(p) => p.calc_energy_forces(&coords),
-                PotBacking::Deferred(ff) => PotentialCompiler::new(ff)
-                    .compile(&core)
-                    .map_err(ir::compile_err)?
-                    .calc_energy_forces(&coords),
+                PotBacking::Compiled(p) => run(p, &coords),
+                PotBacking::Deferred(ff) => run(
+                    &PotentialCompiler::new(ff)
+                        .compile(&core)
+                        .map_err(ir::compile_err)?,
+                    &coords,
+                ),
                 PotBacking::Moved => return Err(potentials_moved_err()),
             }
         } else {
             let arr = arg.extract::<crate::array::ArrayArg1<'_, f64>>()?;
             let slice = arr.as_slice()?;
-            self.inner.compiled()?.calc_energy_forces(slice)
+            if slice.len() % 3 != 0 {
+                return Err(PyValueError::new_err(format!(
+                    "coords must be flat [x0, y0, z0, x1, ...] of length 3N, got {}",
+                    slice.len()
+                )));
+            }
+            run(self.inner.compiled()?, slice)
         };
         take_err(&self.err_slots)?;
         Ok(ef)
@@ -373,38 +382,20 @@ impl PyPotentials {
         Ok(())
     }
 
-    /// Returns ``(energy, forces)``, forces shape ``(N, 3)``.
-    fn calc_energy_forces<'py>(
+    /// Energy and forces (``-∇E``) of every member (``Potential::evaluate``
+    /// into a fresh accumulator): ``(energy, forces)``, forces of shape
+    /// ``(N, 3)``.
+    ///
+    /// ``arg`` is a :class:`Frame` (its ``atoms`` coordinates; a deferred
+    /// collection binds the frame's topology first) or flat coordinates
+    /// ``[x0, y0, z0, x1, ...]`` of length ``3N``.
+    fn evaluate<'py>(
         &self,
         py: Python<'py>,
         arg: &Bound<'_, PyAny>,
     ) -> PyResult<(f64, Bound<'py, PyArray2<f64>>)> {
         let (energy, forces) = self.eval_any(arg)?;
-        let n = forces.len() / 3;
-        Ok((
-            energy,
-            Array2::from_shape_vec((n, 3), forces)
-                .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?
-                .to_pyarray(py),
-        ))
-    }
-
-    /// Evaluate total energy (kcal/mol) against a :class:`Frame` or coordinates.
-    fn calc_energy(&self, arg: &Bound<'_, PyAny>) -> PyResult<f64> {
-        Ok(self.eval_any(arg)?.0)
-    }
-
-    /// Compute forces (= -gradient) in kcal/(mol·Å), shape ``(N, 3)``.
-    fn calc_forces<'py>(
-        &self,
-        py: Python<'py>,
-        arg: &Bound<'_, PyAny>,
-    ) -> PyResult<Bound<'py, PyArray2<f64>>> {
-        let forces = self.eval_any(arg)?.1;
-        let n = forces.len() / 3;
-        Ok(Array2::from_shape_vec((n, 3), forces)
-            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?
-            .to_pyarray(py))
+        Ok((energy, forces_nx3(py, forces)?))
     }
 
     fn __repr__(&self) -> String {
@@ -444,6 +435,11 @@ impl PyPotentials {
 /// forcefield : ForceField, optional
 ///     The force field whose ``special_bonds`` decide the 1-2 / 1-3 rows.
 ///     Defaults to excluding both.
+/// neighbors : Neighbors, optional
+///     A cutoff-bounded neighbour table to take the candidate pairs from
+///     (each unordered pair once, as ``(lo, hi)``, in the order the table
+///     first reports it). ``None``: every ``i < j`` pair of the frame, refused
+///     past the full-pair-list size limit.
 ///
 /// Returns
 /// -------
@@ -457,10 +453,11 @@ impl PyPotentials {
 ///     say either; use :meth:`PotentialCompiler.compile_typed`, which carries a
 ///     per-pair weight.
 #[pyfunction]
-#[pyo3(name = "intramolecular_pairs", signature = (frame, forcefield = None))]
+#[pyo3(name = "intramolecular_pairs", signature = (frame, forcefield = None, neighbors = None))]
 pub fn intramolecular_pairs_py(
     frame: &PyFrame,
     forcefield: Option<&PyForceField>,
+    neighbors: Option<&PyNeighbors>,
 ) -> PyResult<PyBlock> {
     let owned;
     let special = match forcefield {
@@ -471,7 +468,9 @@ pub fn intramolecular_pairs_py(
         }
     };
     let block = frame
-        .with_frame(|core| molrs::ff::potential::intramolecular_pairs(core, special))?
+        .with_frame(|core| {
+            molrs::ff::potential::intramolecular_pairs(core, special, neighbors.map(|n| &n.inner))
+        })?
         .map_err(pyo3::exceptions::PyValueError::new_err)?;
     PyBlock::from_core_block(block)
 }
@@ -505,9 +504,9 @@ pub(crate) fn take_err(slots: &[ErrSlot]) -> PyResult<()> {
     Ok(())
 }
 
-/// A Python object with `calc_energy_forces` (a `molrs.ff.potential.Potential`)
+/// A Python object with `evaluate(pos)` (a `molrs.ff.potential.Potential`)
 /// as the one `Potential` concept — the seam for NN / external forces. Holds a reference to the instance and
-/// dispatches to its overridden ``calc_energy_forces`` under the GIL.
+/// dispatches to its ``evaluate`` under the GIL.
 pub struct SubclassPotential {
     obj: Py<PyAny>,
     error: ErrSlot,
@@ -519,20 +518,17 @@ impl SubclassPotential {
         let pos = Array2::from_shape_vec((n, 3), coords.to_vec())
             .expect("flat coords have 3N elements")
             .into_pyarray(py);
-        let result = self
-            .obj
-            .bind(py)
-            .call_method1("calc_energy_forces", (pos,))?;
+        let result = self.obj.bind(py).call_method1("evaluate", (pos,))?;
         let (energy, forces): (F, ArrayArg2<'_, f64>) = result.extract().map_err(|_| {
             PyValueError::new_err(
-                "Potential.calc_energy_forces must return \
+                "Potential.evaluate must return \
                  (energy: float, forces: float64 (N, 3) ndarray)",
             )
         })?;
         let forces = forces.as_array();
         if forces.shape() != [n, 3] {
             return Err(PyValueError::new_err(format!(
-                "Potential.calc_energy_forces returned forces shape {:?} for {n} atoms",
+                "Potential.evaluate returned forces shape {:?} for {n} atoms",
                 forces.shape()
             )));
         }
@@ -541,14 +537,20 @@ impl SubclassPotential {
 }
 
 impl Potential for SubclassPotential {
-    fn calc_energy_forces(&self, coords: &[F]) -> (F, Vec<F>) {
-        Python::attach(|py| match self.call(py, coords) {
+    fn evaluate(&self, coords: &[F], acc: &mut Accumulator<'_>) {
+        let (energy, forces) = Python::attach(|py| match self.call(py, coords) {
             Ok(out) => out,
             Err(err) => {
                 *self.error.lock().expect("error slot poisoned") = Some(err);
                 (F::NAN, vec![F::NAN; coords.len()])
             }
-        })
+        });
+        acc.add_energy(energy);
+        // A duck-typed object tallies no virial: adding through this door
+        // marks a requested one lost.
+        for (out, f) in acc.forces_without_virial().iter_mut().zip(forces) {
+            *out += f;
+        }
     }
 }
 
@@ -586,7 +588,7 @@ pub(crate) fn take_members(obj: &Bound<'_, PyAny>) -> PyResult<(Members, Vec<Err
 pub(crate) fn take_potential(obj: &Bound<'_, PyAny>) -> PyResult<(ForceTerm, Vec<ErrSlot>)> {
     // Each arm also settles which part the member plays. A pair kernel and an
     // aggregate of them read a neighbour table; a duck-typed Python object has
-    // only `calc_energy_forces`, so it reads coordinates and nothing else —
+    // only `evaluate`, so it reads coordinates and nothing else —
     // and, being unable to tally a virial over pairs, makes the step's virial
     // `None` rather than a number that moves with the box origin.
     if let Ok(lj) = obj.cast::<PyPairLjCut>() {
@@ -596,7 +598,7 @@ pub(crate) fn take_potential(obj: &Bound<'_, PyAny>) -> PyResult<(ForceTerm, Vec
         let (inner, slots) = pots.borrow_mut().take_compiled()?;
         return Ok((ForceTerm::pair(inner), slots));
     }
-    if obj.hasattr("calc_energy_forces")? && obj.getattr("calc_energy_forces")?.is_callable() {
+    if obj.hasattr("evaluate")? && obj.getattr("evaluate")?.is_callable() {
         let error: ErrSlot = Arc::default();
         return Ok((
             ForceTerm::plain(SubclassPotential {
@@ -607,6 +609,7 @@ pub(crate) fn take_potential(obj: &Bound<'_, PyAny>) -> PyResult<(ForceTerm, Vec
         ));
     }
     Err(PyTypeError::new_err(
-        "expected a potential with callable calc_energy_forces (PairLjCut, Potentials, or duck-typed)",
+        "expected a potential: PairLjCut, Potentials, or an object with a callable \
+         evaluate(pos) -> (energy, forces)",
     ))
 }

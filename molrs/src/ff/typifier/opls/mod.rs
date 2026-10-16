@@ -6,7 +6,7 @@ use molrs::core::{Atomistic, NodeId};
 
 use crate::ff::forcefield::ForceField;
 
-use crate::ff::typifier::{BondedTerm, ParameterInterpolator, Parmchk2Estimator};
+use crate::ff::typifier::{BondedTerm, ParameterInterpolator};
 use crate::ff::typifier::{TypeAssignment, Typifier};
 
 mod assign;
@@ -28,7 +28,7 @@ use typing::typify_atoms;
 /// metadata ([`OplsTypingMetadata`]) and potential parameters ([`ForceField`])
 /// — a caller's OPLS-AA / CL&P file (OpenMM's schema with Foyer's typing
 /// annotations) gives both to
-/// [`OpenmmXmlReader::read_opls_typifier_str`](crate::io::openmm_xml::OpenmmXmlReader::read_opls_typifier_str).
+/// [`OpenmmXmlReader::read_opls_typifier`](crate::io::openmm_xml::OpenmmXmlReader::read_opls_typifier).
 /// Each precomputes the bonded candidate tables once.
 ///
 /// Mirrors [`mmff`](crate::ff::typifier::mmff): typing metadata
@@ -73,9 +73,10 @@ use typing::typify_atoms;
 /// Only types carrying a SMARTS `def` participate; the united-atom types
 /// (`opls_001`–`opls_134`) carry none and are out of scope for auto-typing. Improper
 /// matching is out of scope. Uncovered bonded terms follow the `NoMatch`
-/// policy; a consumer that wants to fill them can attach its own [`ParameterInterpolator`]
-/// via [`OplsAaTypifier::with_estimator`], or the restored
-/// [`Parmchk2Estimator`] via [`OplsAaTypifier::with_default_estimator`].
+/// policy; a consumer that wants to fill them can attach a [`ParameterInterpolator`]
+/// via [`OplsAaTypifier::with_estimator`] — its own, or a
+/// [`Parmchk2Estimator`](crate::ff::typifier::Parmchk2Estimator) built over the
+/// same force field and typing metadata.
 pub struct OplsAaTypifier {
     meta: OplsTypingMetadata,
     ff: ForceField,
@@ -123,7 +124,7 @@ impl OplsAaTypifier {
     ///     .source_forcefield()
     ///     .get_style("pair", "lj/cut")
     ///     .expect("OPLS-AA declares lj/cut");
-    /// assert_eq!(lj.params().get_str("mixing"), Some("geometric"));
+    /// assert_eq!(lj.params().get("mixing").and_then(|v| v.as_text()), Some("geometric"));
     /// ```
     ///
     /// Typing ethanol, `CH3-CH2-OH` with explicit hydrogens: the hydroxyl
@@ -132,18 +133,39 @@ impl OplsAaTypifier {
     /// ```
     /// use molrs::ff::typifier::Typing;
     /// use molrs::ff::typifier::OplsAaTypifier;
-    /// use molrs::core::{Atom, Atomistic};
+    /// use molrs::core::{Atomistic, Element, keys};
+    /// use molrs::props;
     ///
     /// let mut ethanol = Atomistic::new();
-    /// let c1 = ethanol.add_atom(Atom::xyz("C", 0.0, 0.0, 0.0));
-    /// let c2 = ethanol.add_atom(Atom::xyz("C", 1.5, 0.0, 0.0));
-    /// let o = ethanol.add_atom(Atom::xyz("O", 2.0, 1.3, 0.0));
-    /// ethanol.add_bond(c1, c2).unwrap();
-    /// ethanol.add_bond(c2, o).unwrap();
+    /// let c1 = ethanol.add_atom(props! {
+    ///     keys::ATOMIC_NUMBER => Element::C,
+    ///     keys::X => 0.0,
+    ///     keys::Y => 0.0,
+    ///     keys::Z => 0.0,
+    /// }).unwrap();
+    /// let c2 = ethanol.add_atom(props! {
+    ///     keys::ATOMIC_NUMBER => Element::C,
+    ///     keys::X => 1.5,
+    ///     keys::Y => 0.0,
+    ///     keys::Z => 0.0,
+    /// }).unwrap();
+    /// let o = ethanol.add_atom(props! {
+    ///     keys::ATOMIC_NUMBER => Element::O,
+    ///     keys::X => 2.0,
+    ///     keys::Y => 1.3,
+    ///     keys::Z => 0.0,
+    /// }).unwrap();
+    /// ethanol.add_bond(c1, c2, props! {}).unwrap();
+    /// ethanol.add_bond(c2, o, props! {}).unwrap();
     /// for (heavy, n) in [(c1, 3), (c2, 2), (o, 1)] {
     ///     for _ in 0..n {
-    ///         let h = ethanol.add_atom(Atom::xyz("H", 0.0, 0.0, 1.0));
-    ///         ethanol.add_bond(heavy, h).unwrap();
+    ///         let h = ethanol.add_atom(props! {
+    ///             keys::ATOMIC_NUMBER => Element::H,
+    ///             keys::X => 0.0,
+    ///             keys::Y => 0.0,
+    ///             keys::Z => 1.0,
+    ///         }).unwrap();
+    ///         ethanol.add_bond(heavy, h, props! {}).unwrap();
     ///     }
     /// }
     ///
@@ -164,7 +186,7 @@ impl OplsAaTypifier {
     ///
     /// `meta` is taken as valid ([`OplsTypingMetadata::validate`]); the XML
     /// reader
-    /// [`OpenmmXmlReader::read_opls_typifier_str`](crate::io::openmm_xml::OpenmmXmlReader::read_opls_typifier_str)
+    /// [`OpenmmXmlReader::read_opls_typifier`](crate::io::openmm_xml::OpenmmXmlReader::read_opls_typifier)
     /// refuses a table that is not.
     pub fn new(meta: OplsTypingMetadata, ff: ForceField) -> Self {
         let tables = CandidateTables::build(&ff, &meta);
@@ -206,13 +228,6 @@ impl OplsAaTypifier {
     {
         self.estimator = Some(Box::new(estimator));
         self
-    }
-
-    /// Attach the default GAFF/parmchk2-style similarity estimator built from
-    /// this typifier's force field and typing metadata.
-    pub fn with_default_estimator(self) -> Self {
-        let estimator = Parmchk2Estimator::new(&self.ff, &self.meta);
-        self.with_estimator(estimator)
     }
 
     /// Access the typing metadata.
@@ -277,24 +292,47 @@ impl Typifier for OplsAaTypifier {
 mod tests {
     use super::*;
     use crate::ff::ir::Params;
-    use crate::ff::typifier::Typing;
-    use indexmap::IndexMap;
-    use molrs::core::Atom;
-    use molrs::core::BondOrder;
+    use crate::ff::typifier::{EstimationInputs, Parmchk2Estimator, Typing};
+    use crate::props;
+    use molrs::core::Element;
     use molrs::core::PropValue;
+    use molrs::core::Props;
+    use molrs::core::keys;
+    use molrs::core::{BondNumber, BondOrder};
     use std::collections::{BTreeMap, BTreeSet};
 
     /// Methylsilane `H3C-SiH3`, hand-built: C is atom 0, Si is atom 1, the
     /// hydrogens on C are 2..=4 and the hydrogens on Si are 5..=7.
     fn methylsilane() -> Atomistic {
         let mut g = Atomistic::new();
-        let c = g.add_atom(Atom::xyz("C", 0.0, 0.0, 0.0));
-        let si = g.add_atom(Atom::xyz("Si", 1.9, 0.0, 0.0));
-        g.add_bond(c, si).unwrap();
+        let c = g
+            .add_atom(props! {
+                keys::ATOMIC_NUMBER => Element::C,
+                keys::X => 0.0,
+                keys::Y => 0.0,
+                keys::Z => 0.0,
+            })
+            .unwrap();
+        let si = g
+            .add_atom(props! {
+                keys::ATOMIC_NUMBER => Element::Si,
+                keys::X => 1.9,
+                keys::Y => 0.0,
+                keys::Z => 0.0,
+            })
+            .unwrap();
+        g.add_bond(c, si, props! {}).unwrap();
         for heavy in [c, si] {
             for k in 0..3 {
-                let h = g.add_atom(Atom::xyz("H", 0.3 * k as f64, 1.0, 0.0));
-                g.add_bond(heavy, h).unwrap();
+                let h = g
+                    .add_atom(props! {
+                        keys::ATOMIC_NUMBER => Element::H,
+                        keys::X => 0.3 * k as f64,
+                        keys::Y => 1.0,
+                        keys::Z => 0.0,
+                    })
+                    .unwrap();
+                g.add_bond(heavy, h, props! {}).unwrap();
             }
         }
         g
@@ -366,11 +404,13 @@ mod tests {
         use crate::io::openmm_xml::OpenmmXmlReader;
         let reader = OpenmmXmlReader::new();
         reader
-            .read_opls_typifier_str(&one_type_xml(None))
+            .read_opls_typifier(one_type_xml(None).as_bytes())
             .expect("the XML without the override builds");
-        let Err(e) = reader.read_opls_typifier_str(&one_type_xml(Some("opls_missing"))) else {
+        let Err(e) = reader.read_opls_typifier(one_type_xml(Some("opls_missing")).as_bytes())
+        else {
             panic!("a dangling override must refuse the table");
         };
+        let e = e.to_string();
         assert!(e.contains("opls_a"), "err names the overriding type: {e}");
         assert!(e.contains("opls_missing"), "err names the absent type: {e}");
     }
@@ -396,7 +436,7 @@ mod tests {
             .def_type(
                 "X-X",
                 &["X", "X"],
-                Params::from_pairs(&[("k", 1.0), ("r0", 1.0)]),
+                Params::from_iter([("k", 1.0), ("r0", 1.0)]),
             )
             .unwrap();
         ff.def_style("angle", "harmonic", Params::new())
@@ -404,7 +444,7 @@ mod tests {
             .def_type(
                 "X-X-X",
                 &["X", "X", "X"],
-                Params::from_pairs(&[("k", 1.0), ("theta0", 108.9)]),
+                Params::from_iter([("k", 1.0), ("theta0", 108.9)]),
             )
             .unwrap();
         ff.def_style("dihedral", "opls", Params::new())
@@ -412,7 +452,7 @@ mod tests {
             .def_type(
                 "X-X-X-X",
                 &["X", "X", "X", "X"],
-                Params::from_pairs(&[("k1", 0.0), ("k2", 0.0), ("k3", 0.0), ("k4", 0.0)]),
+                Params::from_iter([("k1", 0.0), ("k2", 0.0), ("k3", 0.0), ("k4", 0.0)]),
             )
             .unwrap();
         OplsAaTypifier::new(meta, ff).with_strict(true)
@@ -422,15 +462,43 @@ mod tests {
     /// hydrogens are 2..=4, the hydroxyl hydrogen is 5.
     fn methanol() -> Atomistic {
         let mut g = Atomistic::new();
-        let c = g.add_atom(Atom::xyz("C", 0.0, 0.0, 0.0));
-        let o = g.add_atom(Atom::xyz("O", 1.4, 0.0, 0.0));
-        g.add_bond(c, o).unwrap();
+        let c = g
+            .add_atom(props! {
+                keys::ATOMIC_NUMBER => Element::C,
+                keys::X => 0.0,
+                keys::Y => 0.0,
+                keys::Z => 0.0,
+            })
+            .unwrap();
+        let o = g
+            .add_atom(props! {
+                keys::ATOMIC_NUMBER => Element::O,
+                keys::X => 1.4,
+                keys::Y => 0.0,
+                keys::Z => 0.0,
+            })
+            .unwrap();
+        g.add_bond(c, o, props! {}).unwrap();
         for k in 0..3 {
-            let h = g.add_atom(Atom::xyz("H", -0.3 * k as f64, 1.0, 0.0));
-            g.add_bond(c, h).unwrap();
+            let h = g
+                .add_atom(props! {
+                    keys::ATOMIC_NUMBER => Element::H,
+                    keys::X => -0.3 * k as f64,
+                    keys::Y => 1.0,
+                    keys::Z => 0.0,
+                })
+                .unwrap();
+            g.add_bond(c, h, props! {}).unwrap();
         }
-        let h = g.add_atom(Atom::xyz("H", 1.8, 0.9, 0.0));
-        g.add_bond(o, h).unwrap();
+        let h = g
+            .add_atom(props! {
+                keys::ATOMIC_NUMBER => Element::H,
+                keys::X => 1.8,
+                keys::Y => 0.9,
+                keys::Z => 0.0,
+            })
+            .unwrap();
+        g.add_bond(o, h, props! {}).unwrap();
         g
     }
 
@@ -440,13 +508,34 @@ mod tests {
     /// hydrogens on C0 are 2..=4, the three on C1 are 5..=7.
     fn ethane() -> Atomistic {
         let mut g = Atomistic::new();
-        let c0 = g.add_atom(Atom::xyz("C", 0.0, 0.0, 0.0));
-        let c1 = g.add_atom(Atom::xyz("C", 1.5, 0.0, 0.0));
-        g.add_bond(c0, c1).unwrap();
+        let c0 = g
+            .add_atom(props! {
+                keys::ATOMIC_NUMBER => Element::C,
+                keys::X => 0.0,
+                keys::Y => 0.0,
+                keys::Z => 0.0,
+            })
+            .unwrap();
+        let c1 = g
+            .add_atom(props! {
+                keys::ATOMIC_NUMBER => Element::C,
+                keys::X => 1.5,
+                keys::Y => 0.0,
+                keys::Z => 0.0,
+            })
+            .unwrap();
+        g.add_bond(c0, c1, props! {}).unwrap();
         for c in [c0, c1] {
             for k in 0..3 {
-                let h = g.add_atom(Atom::xyz("H", 0.3 * k as f64, 1.0, 0.0));
-                g.add_bond(c, h).unwrap();
+                let h = g
+                    .add_atom(props! {
+                        keys::ATOMIC_NUMBER => Element::H,
+                        keys::X => 0.3 * k as f64,
+                        keys::Y => 1.0,
+                        keys::Z => 0.0,
+                    })
+                    .unwrap();
+                g.add_bond(c, h, props! {}).unwrap();
             }
         }
         g
@@ -455,14 +544,14 @@ mod tests {
     /// The params the stub estimator fills every bond with: `k`, `r0` and the
     /// four provenance keys of `estimate/provenance.rs`.
     fn estimated_bond_params() -> Params {
-        let mut p = Params::from_pairs(&[
+        let mut p = Params::from_iter([
             ("k", 536.0),
             ("r0", 1.529),
             ("estimated", 1.0),
             ("estimate_penalty", 0.0),
         ]);
-        p.set_str("estimate_method", "analogy");
-        p.set_str("estimate_analog", "CT-CT");
+        p.set("estimate_method", "analogy");
+        p.set("estimate_analog", "CT-CT");
         p
     }
 
@@ -504,55 +593,55 @@ mod tests {
             .def_type(
                 "opls_135",
                 &[],
-                Params::from_pairs(&[("mass", 12.011), ("charge", -0.18)]),
+                Params::from_iter([("mass", 12.011), ("charge", -0.18)]),
             )
             .unwrap()
             .def_type(
                 "opls_140",
                 &[],
-                Params::from_pairs(&[("mass", 1.008), ("charge", 0.06)]),
+                Params::from_iter([("mass", 1.008), ("charge", 0.06)]),
             )
             .unwrap()
             .def_type(
                 "opls_154",
                 &[],
-                Params::from_pairs(&[("mass", 15.999), ("charge", -0.683)]),
+                Params::from_iter([("mass", 15.999), ("charge", -0.683)]),
             )
             .unwrap();
-        ff.def_style("pair", "lj/cut", Params::from_pairs(&[("cutoff", 10.0)]))
+        ff.def_style("pair", "lj/cut", Params::from_iter([("cutoff", 10.0)]))
             .unwrap()
             .def_type(
                 "opls_135",
                 &["opls_135"],
-                Params::from_pairs(&[("epsilon", 0.066), ("sigma", 3.5)]),
+                Params::from_iter([("epsilon", 0.066), ("sigma", 3.5)]),
             )
             .unwrap()
             .def_type(
                 "opls_140",
                 &["opls_140"],
-                Params::from_pairs(&[("epsilon", 0.03), ("sigma", 2.5)]),
+                Params::from_iter([("epsilon", 0.03), ("sigma", 2.5)]),
             )
             .unwrap()
             .def_type(
                 "opls_154",
                 &["opls_154"],
-                Params::from_pairs(&[("epsilon", 0.17), ("sigma", 3.12)]),
+                Params::from_iter([("epsilon", 0.17), ("sigma", 3.12)]),
             )
             .unwrap();
-        ff.def_style("pair", "coul/cut", Params::from_pairs(&[("cutoff", 10.0)]))
+        ff.def_style("pair", "coul/cut", Params::from_iter([("cutoff", 10.0)]))
             .unwrap();
         ff.def_style("bond", "harmonic", Params::new())
             .unwrap()
             .def_type(
                 "CT-HC",
                 &["CT", "HC"],
-                Params::from_pairs(&[("k", 680.0), ("r0", 1.09)]),
+                Params::from_iter([("k", 680.0), ("r0", 1.09)]),
             )
             .unwrap()
             .def_type(
                 "CT-OH",
                 &["CT", "OH"],
-                Params::from_pairs(&[("k", 640.0), ("r0", 1.41)]),
+                Params::from_iter([("k", 640.0), ("r0", 1.41)]),
             )
             .unwrap();
         ff.def_style("angle", "harmonic", Params::new())
@@ -560,13 +649,13 @@ mod tests {
             .def_type(
                 "HC-CT-HC",
                 &["HC", "CT", "HC"],
-                Params::from_pairs(&[("k", 66.0), ("theta0", 107.8)]),
+                Params::from_iter([("k", 66.0), ("theta0", 107.8)]),
             )
             .unwrap()
             .def_type(
                 "CT-CT-HC",
                 &["CT", "CT", "HC"],
-                Params::from_pairs(&[("k", 75.0), ("theta0", 110.7)]),
+                Params::from_iter([("k", 75.0), ("theta0", 110.7)]),
             )
             .unwrap();
         ff.def_style("dihedral", "opls", Params::new())
@@ -574,7 +663,7 @@ mod tests {
             .def_type(
                 "HC-CT-CT-HC",
                 &["HC", "CT", "CT", "HC"],
-                Params::from_pairs(&[("k1", 0.0), ("k2", 0.0), ("k3", 0.6276), ("k4", 0.0)]),
+                Params::from_iter([("k1", 0.0), ("k2", 0.0), ("k3", 0.6276), ("k4", 0.0)]),
             )
             .unwrap();
 
@@ -590,7 +679,7 @@ mod tests {
         (typed, typing)
     }
 
-    fn str_prop(props: &IndexMap<String, PropValue>, key: &str) -> Option<String> {
+    fn str_prop(props: &Props, key: &str) -> Option<String> {
         match props.get(key) {
             Some(PropValue::Str(s)) => Some(s.clone()),
             _ => None,
@@ -738,7 +827,7 @@ mod tests {
                 .def_type(
                     name,
                     &[],
-                    Params::from_pairs(&[("mass", 12.011), ("charge", 0.0)]),
+                    Params::from_iter([("mass", 12.011), ("charge", 0.0)]),
                 )
                 .unwrap();
         }
@@ -749,11 +838,7 @@ mod tests {
             ("CT-CY", ["CT", "CY"]),
         ] {
             bonds
-                .def_type(
-                    name,
-                    &ends,
-                    Params::from_pairs(&[("k", 600.0), ("r0", 1.5)]),
-                )
+                .def_type(name, &ends, Params::from_iter([("k", 600.0), ("r0", 1.5)]))
                 .unwrap();
         }
         let angles = ff.def_style("angle", "harmonic", Params::new()).unwrap();
@@ -765,7 +850,7 @@ mod tests {
                 .def_type(
                     name,
                     &ends,
-                    Params::from_pairs(&[("k", 70.0), ("theta0", 114.6)]),
+                    Params::from_iter([("k", 70.0), ("theta0", 114.6)]),
                 )
                 .unwrap();
         }
@@ -774,11 +859,16 @@ mod tests {
             .def_type(
                 "CZ-CT-CT-CW",
                 &["CZ", "CT", "CT", "CW"],
-                Params::from_pairs(&[("k1", 1.0), ("k2", 0.0), ("k3", 0.5), ("k4", 0.0)]),
+                Params::from_iter([("k1", 1.0), ("k2", 0.0), ("k3", 0.5), ("k4", 0.0)]),
             )
             .unwrap();
 
-        let estimator = Parmchk2Estimator::new(&ff, &meta);
+        let inputs = meta
+            .iter()
+            .map(|(name, row)| (name.clone(), row.class.clone()))
+            .collect::<EstimationInputs>()
+            .with_forcefield_elements(&ff);
+        let estimator = Parmchk2Estimator::new(&ff, inputs);
         OplsAaTypifier::new(meta, ff)
             .with_strict(false)
             .with_estimator(estimator)
@@ -796,13 +886,20 @@ mod tests {
         }
         let mut ids = [None; 4];
         for &k in &order {
-            ids[k] = Some(g.add_atom(Atom::xyz("C", 1.4 * k as f64, 0.0, 0.0)));
+            let atom = props! {
+                keys::ATOMIC_NUMBER => Element::C,
+                keys::X => 1.4 * k as f64,
+                keys::Y => 0.0,
+                keys::Z => 0.0,
+            };
+            ids[k] = Some(g.add_atom(atom).unwrap());
         }
         let c = ids.map(|id| id.expect("every chain atom added"));
-        let double = g.add_bond(c[0], c[1]).unwrap();
-        g.set_bond_type(double, BondOrder::Double).unwrap();
-        g.add_bond(c[1], c[2]).unwrap();
-        g.add_bond(c[2], c[3]).unwrap();
+        let double = g.add_bond(c[0], c[1], props! {}).unwrap();
+        g.set_bond_class(double, BondOrder::Double, BondNumber::Double)
+            .unwrap();
+        g.add_bond(c[1], c[2], props! {}).unwrap();
+        g.add_bond(c[2], c[3], props! {}).unwrap();
         g
     }
 

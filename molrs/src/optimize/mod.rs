@@ -9,10 +9,11 @@
 //! ETKDG conformer stages drive it on their own distance-geometry energies.
 //!
 //! The optimizer that minimizes a force-field potential
-//! (`ff::potential::Potential`), `Lbfgs` (and the borrowed-potential
-//! `minimize_lbfgs` / `minimize_lbfgs_batch`), is gated on `ff`. It is the one
-//! front door for every potential — a potential that rebuilds its pairs as
-//! the atoms move (`ff::potential::soft::SoftPotential`) does so itself.
+//! (`ff::potential::Potential`), `Lbfgs` — over an owned or a borrowed
+//! potential; a `Frame`, one flat coordinate buffer or a batch of them — is
+//! gated on `ff`. It is the one front door for every potential — a potential
+//! that rebuilds its pairs as the atoms move
+//! (`ff::potential::soft::SoftPotential`) does so itself.
 //! The dependency points one way: `optimize` consumes `ff`, never the
 //! reverse.
 
@@ -22,7 +23,7 @@ mod lbfgs;
 mod lbfgs_driver;
 
 #[cfg(feature = "ff")]
-pub use lbfgs_driver::{Lbfgs, minimize_lbfgs, minimize_lbfgs_batch};
+pub use lbfgs_driver::Lbfgs;
 
 use crate::core::Frame;
 use crate::core::keys::FREE;
@@ -128,7 +129,7 @@ pub fn set_free_mask(frame: &mut Frame, free: &[bool]) -> Result<(), String> {
         ));
     }
     atoms
-        .insert(FREE, Array1::from_vec(free.to_vec()).into_dyn())
+        .insert(FREE, Array1::from_vec(free.to_vec()).into_dyn(), None)
         .map_err(|e| e.to_string())?;
     Ok(())
 }
@@ -181,7 +182,7 @@ mod tests {
             .get(ATOMS)
             .unwrap()
             .get(FREE)
-            .and_then(|c| c.as_bool())
+            .and_then(|c| c.get::<bool>())
             .unwrap();
         assert_eq!(free.iter().copied().collect::<Vec<_>>(), vec![false, true]);
     }

@@ -58,7 +58,9 @@ fn check_graph(graph: &CgGraph, input: &str) -> Result<(), SmilesError> {
 fn check_body(def: &CgFragmentDef, input: &str) -> Result<(), SmilesError> {
     match &def.body {
         FragmentBody::Graph(graph) => check_graph(graph, input),
-        FragmentBody::Smiles(body) if smiles_squashes(body) => Err(squash_error(def.span, input)),
+        FragmentBody::Smiles(body) if smiles_squashes(body.ir()) => {
+            Err(squash_error(def.span, input))
+        }
         FragmentBody::Smiles(_) => Ok(()),
     }
 }
@@ -109,10 +111,9 @@ mod tests {
 
     use std::collections::BTreeMap;
 
+    use crate::io::cgsmiles::fixtures::fragment;
     use crate::io::cgsmiles::{CgFragmentDef, CgGraph, CgNode, CgSmilesIr, FragmentBody};
-    use crate::io::smiles::{
-        BondingDescriptor, DescriptorKind, Notation, SmilesErrorKind, SmilesIr, Span,
-    };
+    use crate::io::smiles::{BondingDescriptor, DescriptorKind, Notation, SmilesErrorKind, Span};
 
     // R5.2: `[!]` is the only syntax placing one atom in two beads, and R5.5
     // lists it among the features molrs refuses. The walk is structural — one
@@ -201,7 +202,7 @@ mod tests {
     #[test]
     fn test_validate_ir_refuses_a_shared_descriptor_in_a_smiles_body() {
         let text = "{[#A]}.{#A=[!]CC[!]}";
-        let body = SmilesIr::from_fragment("[!]CC[!]").expect("the fragment body must parse");
+        let body = fragment("[!]CC[!]");
         let ir = CgSmilesIr {
             levels: vec![one_node("A", &[], Span::new(1, 5))],
             fragments: vec![table("A", FragmentBody::Smiles(body), Span::new(8, 19))],

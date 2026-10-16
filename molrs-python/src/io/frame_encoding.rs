@@ -1,73 +1,73 @@
-//! A frame in the wire encodings of `molrs::stream`: MessagePack bytes
-//! (`molrs.io.read_msgpack_frame_bytes` / `write_msgpack_frame_bytes`) and
-//! JSON text (`read_json_frame_str` / `write_json_frame_str`). The encoding
-//! is the stream's — [`molrs::stream::Publisher`] puts it on the wire — and
-//! reading or writing a frame in it is `molrs.io`'s, as for every other
-//! format.
+//! A frame in the wire encodings of `molrs::stream` — MessagePack and JSON —
+//! as `molrs::io`'s `read_wire_frame` / `write_wire_frame`. The encoding is
+//! the stream's ([`molrs::stream::Publisher`] puts it on the wire); reading
+//! or writing a frame in it is `molrs.io`'s, as for every other format.
 
 use pyo3::prelude::*;
 use pyo3::types::PyBytes;
 
+use super::data_error;
 use crate::core::frame::PyFrame;
-use crate::error::py_value_err;
+use crate::stream::frame_encoding;
 
-/// Rebuild a :class:`Frame` from MessagePack bytes — what a
-/// :class:`molrs.stream.Publisher` streams by default.
+/// Rebuild a :class:`Frame` from a wire payload — what a
+/// :class:`molrs.stream.Publisher` streams.
 ///
 /// Parameters
 /// ----------
 /// data : bytes
-///     A payload written by :func:`write_msgpack_frame_bytes` or a publisher.
+///     A payload written by :func:`write_wire_frame` or a publisher.
+/// encoding : {"msgpack", "json"}
+///     The payload's encoding (a JSON payload is its UTF-8 text).
+///
+/// Returns
+/// -------
+/// Frame
+///
+/// Raises
+/// ------
+/// ValueError
+///     If ``encoding`` is not one of the two, or the payload does not
+///     decode.
 #[pyfunction]
-pub fn read_msgpack_frame_bytes(data: &[u8]) -> PyResult<PyFrame> {
-    let frame = molrs::io::read_msgpack_frame_bytes(data).map_err(py_value_err)?;
+pub fn read_wire_frame(data: &[u8], encoding: &str) -> PyResult<PyFrame> {
+    let frame = molrs::io::read_wire_frame(data, frame_encoding(encoding)?).map_err(data_error)?;
     PyFrame::from_core_frame(frame)
 }
 
-/// Encode a :class:`Frame` as MessagePack bytes — the inverse of
-/// :func:`read_msgpack_frame_bytes`.
-#[pyfunction]
-pub fn write_msgpack_frame_bytes<'py>(
-    py: Python<'py>,
-    frame: &PyFrame,
-) -> PyResult<Bound<'py, PyBytes>> {
-    let bytes = frame
-        .with_frame(molrs::io::write_msgpack_frame_bytes)?
-        .map_err(py_value_err)?;
-    Ok(PyBytes::new(py, &bytes))
-}
-
-/// Rebuild a :class:`Frame` from its JSON text — the debugging / interop
-/// wire encoding.
+/// Encode a :class:`Frame` as a wire payload — the inverse of
+/// :func:`read_wire_frame`.
 ///
 /// Parameters
 /// ----------
-/// text : str
-///     A document written by :func:`write_json_frame_str` or a JSON publisher.
+/// frame : Frame
+///     The frame to encode.
+/// encoding : {"msgpack", "json"}
+///     The encoding (JSON comes back as its UTF-8 bytes).
+///
+/// Returns
+/// -------
+/// bytes
+///
+/// Raises
+/// ------
+/// ValueError
+///     If ``encoding`` is not one of the two, or the frame does not encode.
 #[pyfunction]
-pub fn read_json_frame_str(text: &str) -> PyResult<PyFrame> {
-    let frame = molrs::io::read_json_frame_str(text).map_err(py_value_err)?;
-    PyFrame::from_core_frame(frame)
+pub fn write_wire_frame<'py>(
+    py: Python<'py>,
+    frame: &PyFrame,
+    encoding: &str,
+) -> PyResult<Bound<'py, PyBytes>> {
+    let encoding = frame_encoding(encoding)?;
+    let bytes = frame
+        .with_frame(|f| molrs::io::write_wire_frame(f, encoding))?
+        .map_err(data_error)?;
+    Ok(PyBytes::new(py, &bytes))
 }
 
-/// Encode a :class:`Frame` as JSON text — the inverse of
-/// :func:`read_json_frame_str`.
-#[pyfunction]
-pub fn write_json_frame_str(frame: &PyFrame) -> PyResult<String> {
-    frame
-        .with_frame(molrs::io::write_json_frame_str)?
-        .map_err(py_value_err)
-}
-
-/// Register the frame-encoding doors on the native module.
+/// Register the wire-encoding doors on the native module.
 pub(crate) fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    for door in [
-        wrap_pyfunction!(read_msgpack_frame_bytes, m)?,
-        wrap_pyfunction!(write_msgpack_frame_bytes, m)?,
-        wrap_pyfunction!(read_json_frame_str, m)?,
-        wrap_pyfunction!(write_json_frame_str, m)?,
-    ] {
-        crate::add_function(m, "molrs.io", door)?;
-    }
-    Ok(())
+    crate::add_function(m, "molrs.io", wrap_pyfunction!(read_wire_frame, m)?)?;
+    crate::add_function(m, "molrs.io", wrap_pyfunction!(write_wire_frame, m)?)
 }

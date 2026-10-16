@@ -14,6 +14,7 @@ use crate::ff::ir::Params;
 use crate::ff::ir::TypeParams;
 use crate::ff::ir::form::declared;
 use crate::ff::ir::{CategorySpec, Coordinate, IrError, ParamDimension, ParamKind, StyleSpec};
+use crate::ff::potential::{Accumulator, Potential};
 use crate::ff::style_registry::Registry;
 
 /// The metric a fit minimises under: sample points of the category's
@@ -209,30 +210,8 @@ const MAX_ITER: usize = 200;
 const CONVERGED: F = 1e-14;
 
 impl Registry {
-    /// Fit every other style of `category` that holds rows to `style`, row
-    /// by row, by least squares under `metric`; return the force field with
-    /// those styles replaced by `style` and the [`FitResidual`] of each row.
-    ///
-    /// Per row: the source's energies at the metric's points come from its
-    /// kernel. When source and target are of one form family and the row is
-    /// in the target's image, the exact conversion is taken
-    /// ([`TypeResidual::exact`]). Otherwise the fit starts from the target
-    /// codec's seed (else the source row's same-named values, else the
-    /// spec's default, else 1) and minimises the weighted squared residual by
-    /// Levenberg–Marquardt over the target's **dimensioned** scalar
-    /// parameters; a dimensionless parameter (a periodicity, a sign, a 1-4
-    /// weight) is a choice of form, held at its seed.
-    ///
-    /// # Errors
-    ///
-    /// [`IrError::NoKernel`] for a `style` not registered;
-    /// [`IrError::OutOfImage`] (no type) for a category with no scalar
-    /// coordinate or a pair category (whose unlike pairs follow a mixing
-    /// rule a per-row fit cannot hold), and for a row whose source cannot
-    /// be priced; [`IrError::Malformed`] for a malformed metric;
-    /// [`IrError::FormConflict`] as for
-    /// [`canonical`](crate::ff::forcefield::ForceField::canonical).
-    pub fn fit_form(
+    /// [`ForceField::fit_form`] against this registry.
+    pub(crate) fn fit_form(
         &self,
         ff: &ForceField,
         category: &str,
@@ -386,18 +365,22 @@ impl Registry {
     ) -> Result<Vec<F>, crate::ff::potential::CompileError> {
         let arity = cat.arity.endpoints();
         let ends = &["a", "b", "c", "d"][..arity];
-        let mut ff = ForceField::new("fit");
-        ff.def_style(&cat.name, style, tp.style.clone())
+        let mut ff = ForceField::new("fit").with_registry(std::sync::Arc::new(self.clone()));
+        ff.def_style(cat.name.as_ref(), style, tp.style.clone())
             .and_then(|s| s.def_type("t", ends, tp.row.clone()).map(|_| ()))
             .map_err(|e| e.to_string())?;
         let mut block = Block::new();
         for (i, key) in ENDS[..arity].iter().enumerate() {
             block
-                .insert(*key, Array1::from_vec(vec![i as Idx]).into_dyn())
+                .insert(*key, Array1::from_vec(vec![i as Idx]).into_dyn(), None)
                 .map_err(|e| e.to_string())?;
         }
         block
-            .insert("type", Array1::from_vec(vec!["t".to_owned()]).into_dyn())
+            .insert(
+                "type",
+                Array1::from_vec(vec!["t".to_owned()]).into_dyn(),
+                None,
+            )
             .map_err(|e| e.to_string())?;
         let mut frame = Frame::new();
         frame.insert(cat.block.as_ref(), block);
@@ -409,14 +392,19 @@ impl Registry {
             for (d, key) in ["x", "y", "z"].into_iter().enumerate() {
                 let col: Vec<F> = at.chunks(3).map(|p| p[d]).collect();
                 atoms
-                    .insert(key, Array1::from_vec(col).into_dyn())
+                    .insert(key, Array1::from_vec(col).into_dyn(), None)
                     .map_err(|e| e.to_string())?;
             }
             frame.insert(ATOMS, atoms);
         }
-        let pots = PotentialCompiler::with_registry(&ff, self).compile(&frame)?;
+        let pots = PotentialCompiler::new(&ff).compile(&frame)?;
         Ok(q.iter()
-            .map(|&q| pots.calc_energy(&geometry(cat.coordinate, q)))
+            .map(|&q| {
+                let x = geometry(cat.coordinate, q);
+                let mut acc = Accumulator::new(x.len());
+                pots.evaluate(&x, &mut acc);
+                acc.energy()
+            })
             .collect())
     }
 
@@ -438,6 +426,7 @@ impl Registry {
         let mut free: Vec<String> = start
             .row
             .iter()
+            .filter_map(|(k, v)| v.as_num().map(|x| (k, x)))
             .map(|(k, _)| k.to_owned())
             .filter(|k| fitted_param(spec, k))
             .collect();
@@ -467,7 +456,7 @@ impl Registry {
 
         let mut x: Vec<F> = free
             .iter()
-            .map(|k| start.row.get(k).expect("listed"))
+            .map(|k| start.row.get(k).and_then(|v| v.as_num()).expect("listed"))
             .collect();
         let e = model(&x)?;
         let mut c = if offset {
@@ -570,7 +559,11 @@ fn name_matched_seed(
             .unwrap_or(SEED_DEFAULT);
         if p.indexed {
             let mut m = 1;
-            while let Some(v) = source.row.get(&format!("{}{m}", p.name)) {
+            while let Some(v) = source
+                .row
+                .get(&format!("{}{m}", p.name))
+                .and_then(|v| v.as_num())
+            {
                 row.set(&format!("{}{m}", p.name), v);
                 m += 1;
             }
@@ -578,7 +571,14 @@ fn name_matched_seed(
                 row.set(&format!("{}1", p.name), default);
             }
         } else {
-            row.set(&p.name, source.row.get(&p.name).unwrap_or(default));
+            row.set(
+                &p.name,
+                source
+                    .row
+                    .get(&p.name)
+                    .and_then(|v| v.as_num())
+                    .unwrap_or(default),
+            );
         }
     }
     // An indexed family is one table: every member family as long as the
@@ -589,7 +589,11 @@ fn name_matched_seed(
         .filter(|p| p.indexed)
         .map(|p| {
             (1..)
-                .take_while(|m| row.get(&format!("{}{m}", p.name)).is_some())
+                .take_while(|m| {
+                    row.get(&format!("{}{m}", p.name))
+                        .and_then(|v| v.as_num())
+                        .is_some()
+                })
                 .count()
         })
         .max()
@@ -597,7 +601,7 @@ fn name_matched_seed(
     for p in spec.params.iter().filter(|p| p.indexed) {
         for m in 1..=terms {
             let key = format!("{}{m}", p.name);
-            if row.get(&key).is_none() {
+            if row.get(&key).and_then(|v| v.as_num()).is_none() {
                 row.set(&key, SEED_DEFAULT);
             }
         }
@@ -607,11 +611,11 @@ fn name_matched_seed(
         None => {
             let mut style = Params::new();
             for p in &spec.style_params {
-                if let Some(v) = source.style.get(&p.name) {
+                if let Some(v) = source.style.get(&p.name).and_then(|v| v.as_num()) {
                     style.set(&p.name, v);
                 }
-                if let Some(v) = source.style.get_str(&p.name) {
-                    style.set_str(&p.name, v);
+                if let Some(v) = source.style.get(&p.name).and_then(|v| v.as_text()) {
+                    style.set(&p.name, v);
                 }
             }
             style

@@ -195,10 +195,15 @@ pub fn scale_lj(
             edits.push(PairEdit {
                 style: style.name().to_owned(),
                 pair: pair.name.clone(),
-                epsilon: pair.params.get("epsilon").map(|eps| eps * factor),
+                epsilon: pair
+                    .params
+                    .get("epsilon")
+                    .and_then(|v| v.as_num())
+                    .map(|eps| eps * factor),
                 sigma: pair
                     .params
                     .get("sigma")
+                    .and_then(|v| v.as_num())
                     .filter(|_| scale_sigma)
                     .map(|sigma| sigma * SIGMA_SCALE),
             });
@@ -276,8 +281,8 @@ mod tests {
     /// One `lj/cut` style (`mixing = geometric`) with a cross-fragment pair
     /// `A1-B1` and a same-fragment pair `A1-A2`.
     fn input_ff() -> ForceField {
-        let mut style_params = Params::from_pairs(&[("cutoff", 10.0)]);
-        style_params.set_str("mixing", "geometric");
+        let mut style_params = Params::from_iter([("cutoff", 10.0)]);
+        style_params.set("mixing", "geometric");
         let mut ff = ForceField::new("clpol");
         ff.set_special_bonds(INPUT_SPECIAL_BONDS);
         ff.def_style("pair", "lj/cut", style_params)
@@ -285,13 +290,13 @@ mod tests {
             .def_type(
                 "A1-B1",
                 &["A1", "B1"],
-                Params::from_pairs(&[("epsilon", 0.2), ("sigma", 3.0)]),
+                Params::from_iter([("epsilon", 0.2), ("sigma", 3.0)]),
             )
             .unwrap()
             .def_type(
                 "A1-A2",
                 &["A1", "A2"],
-                Params::from_pairs(&[("epsilon", 0.3), ("sigma", 3.2)]),
+                Params::from_iter([("epsilon", 0.3), ("sigma", 3.2)]),
             )
             .unwrap();
         ff
@@ -302,6 +307,7 @@ mod tests {
             .get_pairtype(itom, Some(jtom))?
             .params
             .get(key)
+            .and_then(|v| v.as_num())
     }
 
     #[test]
@@ -352,7 +358,10 @@ mod tests {
     fn output_keeps_the_pair_style_mixing_param() {
         let out = scale_lj(&input_ff(), &fragments(), &scaling(), false).unwrap();
         let style = out.get_style("pair", "lj/cut").unwrap();
-        assert_eq!(style.params().get_str("mixing"), Some("geometric"));
+        assert_eq!(
+            style.params().get("mixing").and_then(|v| v.as_text()),
+            Some("geometric")
+        );
     }
 
     #[test]

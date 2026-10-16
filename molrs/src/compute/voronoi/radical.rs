@@ -1,9 +1,9 @@
 //! Native periodic radical (Laguerre) Voronoi tessellation.
 
 use molrs::core::neighbors::Backend;
-use molrs::core::{BoxKind, GhostSet, ImageRange, LinkCell, SimBox};
+use molrs::core::{BoxKind, GhostSet, ImageRange, LinkCell, Points, SimBox};
 use molrs::op::F;
-use ndarray::{Array2, ArrayView1, ArrayView2, array};
+use ndarray::{Array2, ArrayView1, ArrayView2};
 
 use super::cell::{Poly, VoronoiCells, VoronoiFace};
 use crate::compute::{Compute, ComputeError};
@@ -65,10 +65,10 @@ use crate::compute::{Compute, ComputeError};
 ///
 /// ```
 /// use molrs::compute::{Compute, RadicalVoronoi, RadicalVoronoiInput};
-/// use molrs::core::SimBox;
+/// use molrs::core::{Cell, SimBox};
 /// use ndarray::array;
 ///
-/// let simbox = SimBox::cube(4.0, array![0.0, 0.0, 0.0], [true; 3]).unwrap();
+/// let simbox = SimBox::new(Cell::Lengths([4.0; 3]), [0.0, 0.0, 0.0], [true; 3]).unwrap();
 /// let positions = array![[1.0, 2.0, 2.0], [3.0, 2.0, 2.0]];
 /// let cells = RadicalVoronoi::new().compute(RadicalVoronoiInput {
 ///     positions: positions.view(),
@@ -374,16 +374,21 @@ impl ImageSearch {
             field: "RadicalVoronoi search radius",
             value: format!("{r_cut}: {e:?}"),
         };
-        let cell = SimBox::ortho(array![l[0], l[1], l[2]], array![0.0, 0.0, 0.0], [true; 3])
-            .map_err(|e| out_of_range(&e))?;
+        let cell = SimBox::new(
+            crate::core::Cell::Lengths([l[0], l[1], l[2]]),
+            [0.0, 0.0, 0.0],
+            [true; 3],
+        )
+        .map_err(|e| out_of_range(&e))?;
         let ghosts =
             GhostSet::borders(&cell, wrapped.view(), r_cut).map_err(|e| out_of_range(&e))?;
         let points = ghosts
             .combined(wrapped.view())
             .map_err(|e| out_of_range(&e))?;
-        let open_box = SimBox::free(points.view(), r_cut).map_err(|e| out_of_range(&e))?;
+        let open_box = SimBox::bounding(points.view(), [r_cut; 3], [false; 3])
+            .map_err(|e| out_of_range(&e))?;
         let mut index = LinkCell::new().cutoff(r_cut);
-        index.build_index(points.view(), &open_box);
+        index.build_index(Points::Rows(points.view()), &open_box);
         Ok(Self {
             owner: ghosts.owner().to_vec(),
             points,
@@ -442,7 +447,12 @@ mod tests {
     use ndarray::{Array1, array};
 
     fn periodic(l: [F; 3]) -> SimBox {
-        SimBox::ortho(array![l[0], l[1], l[2]], array![0.0, 0.0, 0.0], [true; 3]).unwrap()
+        SimBox::new(
+            crate::core::Cell::Lengths([l[0], l[1], l[2]]),
+            [0.0, 0.0, 0.0],
+            [true; 3],
+        )
+        .unwrap()
     }
 
     fn tessellate(positions: &Array2<F>, radii: &[F], simbox: &SimBox) -> VoronoiCells {
@@ -629,14 +639,14 @@ mod tests {
     fn a_box_that_is_not_periodic_and_orthorhombic_is_an_error() {
         let p = array![[1.0, 1.0, 1.0]];
         let radii = array![0.0];
-        let open = SimBox::ortho(
-            array![4.0, 4.0, 4.0],
-            array![0.0, 0.0, 0.0],
+        let open = SimBox::new(
+            crate::core::Cell::Lengths([4.0, 4.0, 4.0]),
+            [0.0, 0.0, 0.0],
             [true, false, true],
         )
         .unwrap();
-        let h = array![[4.0, 1.0, 0.0], [0.0, 4.0, 0.0], [0.0, 0.0, 4.0]];
-        let tilted = SimBox::new(h, array![0.0, 0.0, 0.0], [true; 3]).unwrap();
+        let h = [[4.0, 1.0, 0.0], [0.0, 4.0, 0.0], [0.0, 0.0, 4.0]];
+        let tilted = SimBox::new(crate::core::Cell::Matrix(h), [0.0, 0.0, 0.0], [true; 3]).unwrap();
         for simbox in [&open, &tilted] {
             let err = RadicalVoronoi::new()
                 .compute(RadicalVoronoiInput {

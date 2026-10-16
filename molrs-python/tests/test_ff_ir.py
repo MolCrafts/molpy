@@ -124,7 +124,7 @@ def fene_ff(style: str) -> molrs.ff.forcefield.ForceField:
 
 def energy_forces(ff: molrs.ff.forcefield.ForceField, frame: molrs.core.Frame):
     pots = molrs.ff.compile.PotentialCompiler(ff).compile(frame)
-    return pots.calc_energy(frame), pots.calc_forces(frame)
+    return pots.evaluate(frame)[0], pots.evaluate(frame)[1]
 
 
 def analytic_chain() -> tuple[float, np.ndarray]:
@@ -171,7 +171,7 @@ def test_a_numpy_kernel_prices_as_the_expression(registered) -> None:
     calls.clear()
     pots = molrs.ff.compile.PotentialCompiler(fene_ff("fene/np")).compile(frame)
     calls.clear()
-    e_np, f_np = pots.calc_energy_forces(frame)
+    e_np, f_np = pots.evaluate(frame)
     # One Python call per style per evaluation, every term in it.
     assert calls == [4]
     assert math.isclose(e_np, e_x, rel_tol=1e-12)
@@ -296,14 +296,14 @@ def test_a_kernel_that_raises_is_reraised_from_compile_and_calc(registered) -> N
 
     boom["on"] = False
     pots = molrs.ff.compile.PotentialCompiler(ff).compile(frame)
-    e = pots.calc_energy(frame)
+    e = pots.evaluate(frame)[0]
     boom["on"] = True
     with pytest.raises(ir.KernelShapeError) as err:
-        pots.calc_energy(frame)
+        pots.evaluate(frame)[0]
     assert isinstance(err.value.__cause__, ZeroDivisionError)
     # Re-raised once: the next good evaluation is clean.
     boom["on"] = False
-    assert pots.calc_energy(frame) == e
+    assert pots.evaluate(frame)[0] == e
     boom["on"] = True
     with pytest.raises(ir.KernelShapeError):
         style_registry.evaluate("bond", "flaky", [1.0], k=1.0, r0=1.0)
@@ -703,7 +703,7 @@ def ub_reference(xyz: np.ndarray) -> tuple[float, np.ndarray]:
         "t", a, a, a, k=0.0, theta0=109.5, k_ub=UB[0], r_ub=UB[1]
     )
     frame = ub_frame(xyz, "angles")
-    return molrs.ff.compile.PotentialCompiler(ff).compile(frame).calc_energy_forces(frame)
+    return molrs.ff.compile.PotentialCompiler(ff).compile(frame).evaluate(frame)
 
 
 def test_a_new_category_registers_and_evaluates(registered) -> None:
@@ -773,7 +773,7 @@ def test_a_new_category_registers_and_evaluates(registered) -> None:
             "t", a, a, a, k_ub=UB[0], r_ub=UB[1]
         )
         frame = ub_frame(x[0], "urey_bradleys")
-        e, f = molrs.ff.compile.PotentialCompiler(ff).compile(frame).calc_energy_forces(frame)
+        e, f = molrs.ff.compile.PotentialCompiler(ff).compile(frame).evaluate(frame)
         assert math.isclose(e, reference[0], rel_tol=1e-12)
         np.testing.assert_allclose(
             f, reference[1], rtol=0, atol=1e-12 * np.abs(reference[1]).max()

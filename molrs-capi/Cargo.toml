@@ -36,6 +36,9 @@ molrs = { path = "../molrs", package = "molcrafts-molrs", version = "0.18.0", de
 molrs-ffi = { path = "../molrs-ffi", package = "molcrafts-molrs-ffi", version = "0.18.0" }
 slotmap = "1.0"
 ndarray = "0.17"
+# The element type of molrs's `c64` / `c128` columns (`Complex<f32>` /
+# `Complex<f64>`), which `molrs_block_set` / `molrs_block_get` name.
+num-complex = "0.4"
 serde_json = "1"
 
 [build-dependencies]

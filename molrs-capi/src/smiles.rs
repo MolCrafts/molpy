@@ -1,21 +1,27 @@
-//! `extern "C"` door for SMILES text: the C face of
-//! `molrs::io::read_smiles_str`.
+//! `extern "C"` door for SMILES text: the C face of molrs's
+//! `SmilesIr::parse(..)?.to_atomistic()`.
 
 use std::ffi::{CStr, c_char};
+
+use molrs::io::smiles::SmilesIr;
 
 use crate::error::{self, MolrsStatus, ffi_err_to_status};
 use crate::handle::{MolrsFrameHandle, frame_id_to_handle};
 use crate::handle_registry::lock_registry;
 use crate::{ffi_try, null_check};
 
-/// Read one molecule from SMILES text into a new frame
-/// (`molrs::io::read_smiles_str`, then `Atomistic::to_frame`).
+/// Read one molecule from SMILES text into a new frame (`SmilesIr::parse`,
+/// `SmilesIr::to_atomistic`, then `Atomistic::to_frame`).
 ///
 /// Connectivity only: hydrogens implicit in the SMILES are **not** added and
 /// **no coordinates** are generated, so the frame has no `x`/`y`/`z`
-/// columns. The `"atoms"` block carries `element` (string) and `mass`, plus
-/// `h_count`, `formal_charge`, `isotope`, `atom_class` and `stereo` where a
-/// bracket atom states them and `is_aromatic` for an aromatic atom;
+/// columns. The `"atoms"` block carries `atomic_number` (`uint64_t`, the Z
+/// every molrs consumer reads; 0 for the wildcard `*`) and `mass` (absent on
+/// a wildcard), plus `h_count`, `formal_charge`, `isotope`, `atom_map` (the
+/// atom class) and `stereo` where a bracket atom states them and
+/// `is_aromatic` for an aromatic atom. No `element` symbols are written:
+/// a caller that needs them (a symbol-spelling writer) converts explicitly
+/// with molrs `Element::fill_symbols`;
 /// the `"bonds"` block carries `atomi` / `atomj` (`uint64_t`, 0-based),
 /// `bond_type` (0 unknown, 1 single, 2 double, 3 triple, 4 aromatic) and
 /// `bond_number` (the localized Lewis order).
@@ -23,8 +29,8 @@ use crate::{ffi_try, null_check};
 /// # C signature
 ///
 /// ```c
-/// MolrsStatus molrs_read_smiles_str(const char* smiles,
-///                                   MolrsFrameHandle* out);
+/// MolrsStatus molrs_read_smiles(const char* smiles,
+///                               MolrsFrameHandle* out);
 /// ```
 ///
 /// # Arguments
@@ -48,7 +54,7 @@ use crate::{ffi_try, null_check};
 /// * `smiles` must be a valid, null-terminated UTF-8 C string.
 /// * `out` must point to a writable `MolrsFrameHandle`.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn molrs_read_smiles_str(
+pub unsafe extern "C" fn molrs_read_smiles(
     smiles: *const c_char,
     out: *mut MolrsFrameHandle,
 ) -> MolrsStatus {
@@ -59,7 +65,22 @@ pub unsafe extern "C" fn molrs_read_smiles_str(
             error::set_last_error("SMILES string is not valid UTF-8");
             return MolrsStatus::Utf8Error;
         };
-        let mol = match molrs::io::read_smiles_str(smiles_str) {
+        let ir = match SmilesIr::parse(smiles_str) {
+            Ok(ir) => ir,
+            Err(e) => {
+                error::set_last_error(format!("{e}"));
+                return MolrsStatus::ParseError;
+            }
+        };
+        if ir.components.len() != 1 {
+            error::set_last_error(format!(
+                "SMILES '{smiles_str}' names {} molecules ('.'-separated components); \
+                 molrs_read_smiles reads one -- read each component separately",
+                ir.components.len()
+            ));
+            return MolrsStatus::ParseError;
+        }
+        let mol = match ir.to_atomistic() {
             Ok(m) => m,
             Err(e) => {
                 error::set_last_error(format!("{e}"));
@@ -92,7 +113,7 @@ mod tests {
     #[test]
     fn ethanol_has_the_documented_columns() {
         let mut out = MolrsFrameHandle { idx: 0, version: 0 };
-        let status = unsafe { molrs_read_smiles_str(c"CCO".as_ptr(), &mut out) };
+        let status = unsafe { molrs_read_smiles(c"CCO".as_ptr(), &mut out) };
         assert_eq!(status, MolrsStatus::Ok);
         let frame = lock_registry()
             .frames
@@ -100,9 +121,21 @@ mod tests {
             .unwrap();
         let atoms = frame.get("atoms").unwrap();
         assert_eq!(atoms.n_rows(), Some(3));
-        for key in ["element", "mass"] {
+        for key in ["atomic_number", "mass"] {
             assert!(atoms.contains_key(key), "atoms.{key}");
         }
+        let z: Vec<u64> = atoms
+            .get("atomic_number")
+            .and_then(|c| c.get::<u64>())
+            .expect("atomic_number is a uint column")
+            .iter()
+            .copied()
+            .collect();
+        assert_eq!(z, [6, 6, 8]);
+        assert!(
+            !atoms.contains_key("element"),
+            "SMILES writes atomic_number, not element symbols"
+        );
         assert!(!atoms.contains_key("x"), "SMILES carries no coordinates");
         let bonds = frame.get("bonds").unwrap();
         for key in ["atomi", "atomj", "bond_type", "bond_number"] {
@@ -113,7 +146,7 @@ mod tests {
     #[test]
     fn two_molecules_are_a_parse_error() {
         let mut out = MolrsFrameHandle { idx: 0, version: 0 };
-        let status = unsafe { molrs_read_smiles_str(c"CCO.O".as_ptr(), &mut out) };
+        let status = unsafe { molrs_read_smiles(c"CCO.O".as_ptr(), &mut out) };
         assert_eq!(status, MolrsStatus::ParseError);
     }
 }

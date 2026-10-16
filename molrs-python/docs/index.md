@@ -21,7 +21,7 @@ doc comments.
     ```python
     import molrs
 
-    ir = molrs.io.smiles.SmilesIr("CCO")
+    ir = molrs.io.smiles.SmilesIr.parse("CCO")
     mol = ir.to_atomistic()
 
     mol3d, _report = molrs.conformer.Conformer(speed="fast", seed=42).generate(mol)
@@ -44,10 +44,10 @@ doc comments.
 
     ```rust
     use molrs::conformer::{Conformer, ConformerOptions};
-    use molrs::io::read_smiles_str;
+    use molrs::io::smiles::SmilesIr;
 
     fn main() -> Result<(), Box<dyn std::error::Error>> {
-        let mol = read_smiles_str("c1ccccc1")?;
+        let mol = SmilesIr::parse("c1ccccc1")?.to_atomistic()?;
         let (mol3d, report) = Conformer::new(ConformerOptions::default()).generate(&mol)?;
 
         println!("atoms: {}", mol3d.n_atoms());
@@ -62,13 +62,13 @@ doc comments.
     module, and the generated classes and functions are regular exports.
 
     ```ts
-    import { SmilesIr, Conformer, writeXyzStr } from "@molcrafts/molrs";
+    import { SmilesIr, Conformer, writeXyz } from "@molcrafts/molrs";
 
     const ir = SmilesIr.parse("CCO");
     const frame2d = ir.toFrame();
     const frame3d = new Conformer("fast", true, 42).generate(frame2d);
 
-    console.log(writeXyzStr(frame3d));
+    console.log(writeXyz(frame3d));
     ```
 
 ## Highlights

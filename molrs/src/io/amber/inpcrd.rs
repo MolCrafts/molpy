@@ -1,11 +1,11 @@
 //! AMBER ASCII inpcrd / restrt coordinate reader.
 
+use crate::core::Cell;
 use crate::io::frame_columns::insert_column;
-use crate::io::invalid_data;
+use crate::io::{Source, invalid_data};
 use std::io::{BufRead, Result};
-use std::path::Path;
 
-use ndarray::{Array2, array};
+use ndarray::Array2;
 
 use molrs::core::Block;
 use molrs::core::Frame;
@@ -84,10 +84,28 @@ fn eat_section(lines: &[String], n_atoms: usize) -> Result<Vec<F>> {
 // Public reader API
 // ---------------------------------------------------------------------------
 
-/// Read an AMBER ASCII inpcrd / restrt file at `path`.
-pub fn read_inpcrd<P: AsRef<Path>>(path: P) -> Result<Frame> {
-    let file = std::fs::File::open(path.as_ref())?;
-    read_frame_from(std::io::BufReader::new(file))
+/// Read an AMBER ASCII inpcrd / restrt file.
+///
+/// The layout is fixed-width Fortran ``6F12.7`` (old-style ``*.inpcrd`` /
+/// restart):
+///
+/// ```text
+/// line 1   : title
+/// line 2   : natom [time]
+/// next     : coordinates — 6 floats per line, 12 chars each
+/// optional : velocities (same layout; only when `time` is present on line 2)
+/// optional : box line — 3–6 floats (first three → orthorhombic diagonal)
+/// ```
+///
+/// # Output Frame
+///
+/// - `"atoms"` block: `id` (uint, 1-based), `name` (str, `"ATM{i}"`),
+///   `x`/`y`/`z` (F), optional `vel` (F, shape `[n, 3]`)
+/// - `frame.meta["title"]` (string); optional `frame.meta["timestep"]` (i64,
+///   truncates the header time)
+/// - `frame.simbox`: orthorhombic cell from the first three box floats when present
+pub fn read_inpcrd<'a>(src: impl Into<Source<'a>>) -> Result<Frame> {
+    read_frame_from(src.into().reader()?)
 }
 
 /// Merge the coordinates an AMBER inpcrd / restrt holds — `coordinates`, as
@@ -125,9 +143,7 @@ pub fn merge_inpcrd(frame: &mut Frame, coordinates: Frame) -> Result<()> {
             }
             for key in ["x", "y", "z", "vel"] {
                 if let Some(col) = source.get(key) {
-                    atoms
-                        .insert_column(key, col.clone())
-                        .map_err(invalid_data)?;
+                    atoms.insert(key, col.clone(), None).map_err(invalid_data)?;
                 }
             }
         }
@@ -241,7 +257,7 @@ fn read_frame_from<R: BufRead>(mut reader: R) -> Result<Frame> {
         let arr = Array2::from_shape_vec((n_atoms, 3), vel)
             .map_err(invalid_data)?
             .into_dyn();
-        block.insert("vel", arr).map_err(invalid_data)?;
+        block.insert("vel", arr, None).map_err(invalid_data)?;
     }
 
     let mut frame = Frame::new();
@@ -252,9 +268,13 @@ fn read_frame_from<R: BufRead>(mut reader: R) -> Result<Frame> {
     frame.insert("atoms", block);
 
     if let Some(lens) = box_lengths {
-        let origin = array![0.0 as F, 0.0, 0.0];
-        let simbox = SimBox::ortho(array![lens[0], lens[1], lens[2]], origin, [true; 3])
-            .map_err(|e| invalid_data(format!("{:?}", e)))?;
+        let origin = [0.0 as F, 0.0, 0.0];
+        let simbox = SimBox::new(
+            Cell::Lengths([lens[0], lens[1], lens[2]]),
+            origin,
+            [true; 3],
+        )
+        .map_err(|e| invalid_data(format!("{:?}", e)))?;
         frame.simbox = Some(simbox);
     }
 
@@ -264,30 +284,6 @@ fn read_frame_from<R: BufRead>(mut reader: R) -> Result<Frame> {
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
-
-/// Read an AMBER ASCII inpcrd / restrt from its text.
-///
-/// The layout is fixed-width Fortran ``6F12.7`` (old-style ``*.inpcrd`` /
-/// restart):
-///
-/// ```text
-/// line 1   : title
-/// line 2   : natom [time]
-/// next     : coordinates — 6 floats per line, 12 chars each
-/// optional : velocities (same layout; only when `time` is present on line 2)
-/// optional : box line — 3–6 floats (first three → orthorhombic diagonal)
-/// ```
-///
-/// # Output Frame
-///
-/// - `"atoms"` block: `id` (uint, 1-based), `name` (str, `"ATM{i}"`),
-///   `x`/`y`/`z` (F), optional `vel` (F, shape `[n, 3]`)
-/// - `frame.meta["title"]` (string); optional `frame.meta["timestep"]` (i64,
-///   truncates the header time)
-/// - `frame.simbox`: orthorhombic cell from the first three box floats when present
-pub fn read_inpcrd_str(text: &str) -> Result<Frame> {
-    read_frame_from(text.as_bytes())
-}
 
 #[cfg(test)]
 mod tests {
@@ -307,17 +303,21 @@ mod tests {
         let mut frame = Frame::new();
         let mut atoms = Block::new();
         atoms
-            .insert("x", Array1::from_vec(vec![0.0 as F, 0.0]).into_dyn())
+            .insert("x", Array1::from_vec(vec![0.0 as F, 0.0]).into_dyn(), None)
             .unwrap();
         atoms
-            .insert("charge", Array1::from_vec(vec![0.5 as F, -0.5]).into_dyn())
+            .insert(
+                "charge",
+                Array1::from_vec(vec![0.5 as F, -0.5]).into_dyn(),
+                None,
+            )
             .unwrap();
         frame.insert("atoms", atoms);
         frame.meta.insert("source", "prmtop");
         merge_inpcrd(&mut frame, read_inpcrd(&path).unwrap()).unwrap();
 
         let atoms = frame.get("atoms").unwrap();
-        let z = atoms.get("z").and_then(|c| c.as_float()).unwrap();
+        let z = atoms.get("z").and_then(|c| c.get::<f64>()).unwrap();
         assert_eq!(z.iter().copied().collect::<Vec<_>>(), [3.0, 6.0]);
         assert!(atoms.contains_key("charge"));
         assert!(frame.simbox.is_some());
@@ -333,7 +333,7 @@ mod tests {
         let mut three = Frame::new();
         let mut atoms = Block::new();
         atoms
-            .insert("x", Array1::from_vec(vec![0.0 as F; 3]).into_dyn())
+            .insert("x", Array1::from_vec(vec![0.0 as F; 3]).into_dyn(), None)
             .unwrap();
         three.insert("atoms", atoms);
         let err = merge_inpcrd(&mut three, read_inpcrd(&path).unwrap()).unwrap_err();
@@ -364,9 +364,9 @@ Simple 3-atom system
             frame.meta.get("title").and_then(|v| v.as_str()),
             Some("Simple 3-atom system")
         );
-        let x = atoms.get("x").and_then(|c| c.as_float()).unwrap();
-        let y = atoms.get("y").and_then(|c| c.as_float()).unwrap();
-        let z = atoms.get("z").and_then(|c| c.as_float()).unwrap();
+        let x = atoms.get("x").and_then(|c| c.get::<f64>()).unwrap();
+        let y = atoms.get("y").and_then(|c| c.get::<f64>()).unwrap();
+        let z = atoms.get("z").and_then(|c| c.get::<f64>()).unwrap();
         assert!((x[[0]] - 0.0).abs() < 1e-9);
         assert!((y[[1]] - 4.0).abs() < 1e-9);
         assert!((z[[2]] - 8.0).abs() < 1e-9);
@@ -399,7 +399,7 @@ Test with velocities
         let atoms = frame.get("atoms").unwrap();
         let vel = atoms
             .get("vel")
-            .and_then(|c| c.as_float())
+            .and_then(|c| c.get::<f64>())
             .expect("vel column");
         assert_eq!(vel.shape(), &[2, 3]);
         assert!((vel[[0, 0]] - 0.1).abs() < 1e-9);
@@ -429,9 +429,9 @@ Test with box
         let text = format!("Abutting negatives\n  2\n{abutting}\n");
         let frame = frame_from(&text);
         let atoms = frame.get("atoms").unwrap();
-        let x = atoms.get("x").and_then(|c| c.as_float()).unwrap();
-        let y = atoms.get("y").and_then(|c| c.as_float()).unwrap();
-        let z = atoms.get("z").and_then(|c| c.as_float()).unwrap();
+        let x = atoms.get("x").and_then(|c| c.get::<f64>()).unwrap();
+        let y = atoms.get("y").and_then(|c| c.get::<f64>()).unwrap();
+        let z = atoms.get("z").and_then(|c| c.get::<f64>()).unwrap();
         assert!((x[[0]] - 50.5413286).abs() < 1e-6);
         assert!((y[[0]] + 100.7101036).abs() < 1e-6);
         assert!((z[[0]] - 12.3456789).abs() < 1e-6);

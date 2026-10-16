@@ -7,12 +7,12 @@ use super::dtype::DType;
 
 /// Unified read-only access for [`Block`] and [`BlockView`].
 ///
-/// A column comes back whole; project a dtype with [`ColumnView::as_float`] and
-/// the other `as_*` methods.
+/// A column comes back whole; project a dtype with
+/// [`ColumnView::get::<T>`](ColumnView::get).
 pub trait BlockAccess {
     /// The column for `key`, or `None` when the key is absent.
     ///
-    /// `None` from a later `as_*` projection means the column has a different
+    /// `None` from a later `get::<T>` projection means the column has a different
     /// dtype, which is not the same as a missing key.
     fn column<'a>(&'a self, key: &str) -> Option<ColumnView<'a>>;
     /// Returns the common axis-0 length, or `None` if empty.
@@ -137,19 +137,27 @@ mod tests {
     fn make_block() -> Block {
         let mut block = Block::new();
         block
-            .insert("x", Array1::from_vec(vec![1.0 as F, 2.0, 3.0]).into_dyn())
+            .insert(
+                "x",
+                Array1::from_vec(vec![1.0 as F, 2.0, 3.0]).into_dyn(),
+                None,
+            )
             .unwrap();
         block
-            .insert("id", Array1::from_vec(vec![10 as Idx, 20, 30]).into_dyn())
+            .insert(
+                "id",
+                Array1::from_vec(vec![10 as Idx, 20, 30]).into_dyn(),
+                None,
+            )
             .unwrap();
         block
     }
 
     #[test]
     fn test_column_projection_on_column() {
-        let col = Column::from_float(Array1::from_vec(vec![1.0 as F, 2.0]).into_dyn());
-        assert!(col.as_float().is_some());
-        assert!(col.as_int().is_none());
+        let col = Column::from(Array1::from_vec(vec![1.0 as F, 2.0]).into_dyn());
+        assert!(col.get::<f64>().is_some());
+        assert!(col.get::<i32>().is_none());
         assert_eq!(col.n_rows(), Some(2));
         assert_eq!(col.dtype(), DType::Float);
         assert_eq!(col.shape(), &[2]);
@@ -157,10 +165,10 @@ mod tests {
 
     #[test]
     fn test_column_projection_on_column_view() {
-        let col = Column::from_int(Array1::from_vec(vec![1, 2, 3]).into_dyn());
+        let col = Column::from(Array1::from_vec(vec![1, 2, 3]).into_dyn());
         let view = ColumnView::from(&col);
-        assert!(view.as_int().is_some());
-        assert!(view.as_float().is_none());
+        assert!(view.get::<i32>().is_some());
+        assert!(view.get::<f64>().is_none());
         assert_eq!(view.n_rows(), Some(3));
         assert_eq!(view.dtype(), DType::Int);
     }
@@ -168,8 +176,8 @@ mod tests {
     #[test]
     fn test_block_access_on_block() {
         let block = make_block();
-        assert!(block.column("x").and_then(|c| c.as_float()).is_some());
-        assert!(block.column("id").and_then(|c| c.as_uint()).is_some());
+        assert!(block.column("x").and_then(|c| c.get::<f64>()).is_some());
+        assert!(block.column("id").and_then(|c| c.get::<u64>()).is_some());
         assert_eq!(BlockAccess::n_rows(&block), Some(3));
         assert_eq!(BlockAccess::len(&block), 2);
         assert!(!BlockAccess::is_empty(&block));
@@ -181,8 +189,8 @@ mod tests {
     fn test_block_access_on_block_view() {
         let block = make_block();
         let view = BlockView::from(&block);
-        assert!(view.column("x").and_then(|c| c.as_float()).is_some());
-        assert!(view.column("id").and_then(|c| c.as_uint()).is_some());
+        assert!(view.column("x").and_then(|c| c.get::<f64>()).is_some());
+        assert!(view.column("id").and_then(|c| c.get::<u64>()).is_some());
         assert_eq!(BlockAccess::n_rows(&view), Some(3));
         assert_eq!(BlockAccess::len(&view), 2);
         assert!(!BlockAccess::is_empty(&view));
@@ -194,7 +202,7 @@ mod tests {
         fn count_float_columns(b: &impl BlockAccess) -> usize {
             b.column_keys()
                 .iter()
-                .filter(|k| b.column(k).and_then(|c| c.as_float()).is_some())
+                .filter(|k| b.column(k).and_then(|c| c.get::<f64>()).is_some())
                 .count()
         }
 

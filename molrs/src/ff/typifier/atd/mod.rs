@@ -11,8 +11,8 @@ use std::sync::OnceLock;
 
 use molrs::core::PropValue;
 use molrs::core::keys;
-use molrs::core::{Atomistic, NodeId};
-use molrs::perceive::{assign_bcc_bond_types, assign_bcc_bond_types_from_connectivity};
+use molrs::core::{Atomistic, MolRsError, NodeId};
+use molrs::perceive::{BondOrderSource, assign_bcc_bond_types};
 
 use self::facts::MolFacts;
 use crate::ff::forcefield::ForceField;
@@ -24,7 +24,7 @@ use crate::ff::params::atomtype_gff::ATOMTYPE_GFF;
 use crate::ff::params::atomtype_gff2::ATOMTYPE_GFF2;
 use crate::ff::params::atomtype_sybyl::ATOMTYPE_SYBYL;
 use crate::ff::params::{AtdRule, AtdTable};
-use crate::ff::typifier::{Annotation, TypeAssignment, Typifier};
+use crate::ff::typifier::{Annotation, TypeAssignment, Typifier, species_label};
 
 /// Which `ATOMTYPE_*.DEF` table an [`AtdTypifier`] walks.
 ///
@@ -135,8 +135,8 @@ pub(crate) enum AtdError {
         table: &'static str,
         /// The atom's 0-based index in graph atom order.
         atom: usize,
-        /// The atom's element symbol.
-        element: String,
+        /// The atom's atomic number (`0` for a wildcard).
+        atomic_number: u8,
     },
     /// The molecule's facts could not be derived — a defect in the input graph.
     Malformed {
@@ -151,54 +151,14 @@ impl std::fmt::Display for AtdError {
             Self::MissingAtomType {
                 table,
                 atom,
-                element,
-            } => write!(f, "missing {table} atom type for atom {atom} ({element})"),
+                atomic_number,
+            } => write!(
+                f,
+                "missing {table} atom type for atom {atom} ({})",
+                species_label(*atomic_number)
+            ),
             Self::Malformed { detail } => write!(f, "{detail}"),
         }
-    }
-}
-
-/// Which bond orders the antechamber bond types — and so the atom types — are
-/// perceived from.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
-pub enum AtdBondOrders {
-    /// Judged from the connectivity alone, as antechamber does by default
-    /// (`-j 4`, i.e. `bondtype -j full`); the graph's own orders are ignored.
-    /// The judgement follows the graph's atom and bond order, as antechamber's
-    /// follows its input file's, and needs every hydrogen drawn. Where no
-    /// valence state closes, the graph's own orders are used (antechamber keeps
-    /// its file's).
-    #[default]
-    Perceive,
-    /// The graph's own bond orders; aromatic bonds without a Kekulé number are
-    /// kekulized ([`assign_bcc_bond_types`]).
-    Input,
-}
-
-impl AtdBondOrders {
-    /// Both sources.
-    pub const ALL: [AtdBondOrders; 2] = [Self::Perceive, Self::Input];
-
-    /// The source's name: `"perceive"` or `"input"`.
-    pub fn name(self) -> &'static str {
-        match self {
-            Self::Perceive => "perceive",
-            Self::Input => "input",
-        }
-    }
-
-    /// The source `name` names — the inverse of [`name`](Self::name).
-    ///
-    /// # Errors
-    ///
-    /// An unknown name.
-    pub fn from_name(name: &str) -> Result<Self, String> {
-        Self::ALL
-            .into_iter()
-            .find(|orders| orders.name() == name)
-            .ok_or_else(|| {
-                format!("unknown bond_orders {name:?}; expected \"perceive\" or \"input\"")
-            })
     }
 }
 
@@ -247,30 +207,32 @@ impl AtdBondOrders {
 /// judges new ones from the connectivity (`bondtype -j full`), and the atom
 /// types follow that structure: on a molecule with two Kekulé structures
 /// (azulene, cyclooctatetraene) the `cc` / `cd` colouring is the one its search
-/// settles on, not the one the input drew. [`AtdBondOrders::Perceive`], the
-/// default, does the same — `find_bond_types_from_connectivity` — so a
-/// molecule read from the file antechamber reads types as antechamber types it,
-/// whatever orders the molrs graph carries. [`AtdBondOrders::Input`] keeps the
-/// graph's own orders instead (aromatic bonds without one are kekulized), for a
-/// caller whose bond orders are the chemistry it wants typed.
+/// settles on, not the one the input drew. [`BondOrderSource::Connectivity`],
+/// the default, does the same, so a molecule read from the file antechamber
+/// reads types as antechamber types it, whatever orders the molrs graph
+/// carries. [`BondOrderSource::Stated`] keeps the graph's own orders instead
+/// (aromatic bonds without one are kekulized), for a caller whose bond orders
+/// are the chemistry it wants typed. Every hydrogen must be drawn for
+/// `Connectivity`; where no valence state closes, the graph's own orders are
+/// used (antechamber keeps its file's).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AtdTypifier {
     set: AtdParameterSet,
-    bond_orders: AtdBondOrders,
+    bond_orders: BondOrderSource,
 }
 
 impl AtdTypifier {
     /// Bind the engine to the table `set` names, perceiving bond orders as
-    /// antechamber does ([`AtdBondOrders::Perceive`]).
+    /// antechamber does ([`BondOrderSource::Connectivity`]).
     pub fn new(set: AtdParameterSet) -> Self {
         Self {
             set,
-            bond_orders: AtdBondOrders::Perceive,
+            bond_orders: BondOrderSource::Connectivity,
         }
     }
 
     /// The same engine, perceiving bond types from `bond_orders`.
-    pub fn with_bond_orders(self, bond_orders: AtdBondOrders) -> Self {
+    pub fn with_bond_orders(self, bond_orders: BondOrderSource) -> Self {
         Self {
             bond_orders,
             ..self
@@ -283,18 +245,19 @@ impl AtdTypifier {
     }
 
     /// Which bond orders the bond types are perceived from.
-    pub fn bond_orders(&self) -> AtdBondOrders {
+    pub fn bond_orders(&self) -> BondOrderSource {
         self.bond_orders
     }
 
-    /// `mol` with antechamber bond types perceived on every bond, from the bond
+    /// Perceive antechamber bond types onto every bond of `mol`, from the bond
     /// orders [`bond_orders`](Self::bond_orders) names — the input
     /// [`types_of`](Self::types_of) wants.
-    pub(crate) fn perceive_bond_types(&self, mol: &Atomistic) -> Atomistic {
-        match self.bond_orders {
-            AtdBondOrders::Perceive => assign_bcc_bond_types_from_connectivity(mol),
-            AtdBondOrders::Input => assign_bcc_bond_types(mol),
-        }
+    ///
+    /// # Errors
+    ///
+    /// [`assign_bcc_bond_types`]'s refusal; `mol` must then be discarded.
+    pub(crate) fn perceive_bond_types(&self, mol: &mut Atomistic) -> Result<(), MolRsError> {
+        assign_bcc_bond_types(mol, self.bond_orders)
     }
 
     /// The types this table assigns, in graph atom order — **computed, not written**.
@@ -331,11 +294,7 @@ impl AtdTypifier {
                 rules::assign_rule(&table, *aid, &facts).ok_or_else(|| AtdError::MissingAtomType {
                     table: table.name,
                     atom: i,
-                    element: perceived
-                        .get_atom(*aid)
-                        .ok()
-                        .and_then(|atom| atom.get_str(keys::ELEMENT).map(str::to_owned))
-                        .unwrap_or_default(),
+                    atomic_number: facts.atomic_number[i],
                 })
             })
             .collect::<Result<_, _>>()?;
@@ -357,7 +316,7 @@ impl Typifier for AtdTypifier {
     ///
     /// A message naming the atom no rule of the table matched.
     fn assign(&self, graph: &mut Atomistic) -> Result<TypeAssignment, String> {
-        *graph = self.perceive_bond_types(graph);
+        self.perceive_bond_types(graph).map_err(|e| e.to_string())?;
         let types = self.types_of(graph).map_err(|e| e.to_string())?;
         Ok(TypeAssignment {
             nodes: types
@@ -385,15 +344,22 @@ impl Typifier for AtdTypifier {
 mod tests {
     use super::*;
     use crate::ff::typifier::Typing;
+    use crate::props;
     use molrs::core::BondOrder;
+    use molrs::core::Element;
+    use molrs::core::keys;
 
     /// Methane, hand-built: C is atom 0, the four hydrogens follow.
     fn methane() -> Atomistic {
         let mut m = Atomistic::new();
-        let c = m.add_atom_bare("C");
+        let c = m
+            .add_atom(props! { keys::ATOMIC_NUMBER => Element::C })
+            .unwrap();
         for _ in 0..4 {
-            let h = m.add_atom_bare("H");
-            m.add_bond(c, h).unwrap();
+            let h = m
+                .add_atom(props! { keys::ATOMIC_NUMBER => Element::H })
+                .unwrap();
+            m.add_bond(c, h, props! {}).unwrap();
         }
         m
     }
@@ -432,11 +398,18 @@ mod tests {
     /// order — with `stated` bond types (single where it says nothing).
     fn mol2(elements: &[&str], bonds: &[(usize, usize)], stated: &[BondOrder]) -> Atomistic {
         let mut mol = Atomistic::new();
-        let ids: Vec<NodeId> = elements.iter().map(|e| mol.add_atom_bare(e)).collect();
+        let ids: Vec<NodeId> = elements
+            .iter()
+            .map(|e| {
+                mol.add_atom(props! { keys::ATOMIC_NUMBER => Element::by_symbol(e).unwrap() })
+                    .unwrap()
+            })
+            .collect();
         for (k, (i, j)) in bonds.iter().enumerate() {
-            let b = mol.add_bond(ids[*i], ids[*j]).unwrap();
-            mol.set_bond_type(b, stated.get(k).copied().unwrap_or(BondOrder::Single))
-                .unwrap();
+            let b = mol.add_bond(ids[*i], ids[*j], props! {}).unwrap();
+            let order = stated.get(k).copied().unwrap_or(BondOrder::Single);
+            let number = order.implied_number().expect("a Kekulé fixture bond");
+            mol.set_bond_class(b, order, number).unwrap();
         }
         mol
     }
@@ -448,7 +421,7 @@ mod tests {
         e
     }
 
-    fn types(set: AtdParameterSet, orders: AtdBondOrders, mol: &Atomistic) -> Vec<String> {
+    fn types(set: AtdParameterSet, orders: BondOrderSource, mol: &Atomistic) -> Vec<String> {
         let typed = Typing::new(AtdTypifier::new(set).with_bond_orders(orders))
             .typify(mol)
             .expect("types");
@@ -520,7 +493,7 @@ mod tests {
         let want = "cc cc cd cd cc cc cd cd cc cc ha ha ha ha ha ha ha ha";
         for set in [AtdParameterSet::Gff, AtdParameterSet::Gff2] {
             assert_eq!(
-                types(set, AtdBondOrders::Perceive, &azulene()).join(" "),
+                types(set, BondOrderSource::Connectivity, &azulene()).join(" "),
                 want
             );
         }
@@ -538,10 +511,13 @@ mod tests {
         ];
         for set in [AtdParameterSet::Gff, AtdParameterSet::Gff2] {
             for mol in [cyclooctatetraene(&[]), cyclooctatetraene(&drawn)] {
-                assert_eq!(types(set, AtdBondOrders::Perceive, &mol).join(" "), want);
+                assert_eq!(
+                    types(set, BondOrderSource::Connectivity, &mol).join(" "),
+                    want
+                );
             }
             assert_eq!(
-                types(set, AtdBondOrders::Input, &cyclooctatetraene(&drawn)).join(" "),
+                types(set, BondOrderSource::Stated, &cyclooctatetraene(&drawn)).join(" "),
                 "cc cd cd cc cc cd cd cc ha ha ha ha ha ha ha ha"
             );
         }
@@ -580,7 +556,7 @@ mod tests {
                 .map(|(h, c)| (*c, 18 + h)),
         );
         let mol = mol2(&elements(&["C"; 18], 14), &bonds, &[]);
-        let got = types(AtdParameterSet::Gff, AtdBondOrders::Perceive, &mol);
+        let got = types(AtdParameterSet::Gff, BondOrderSource::Connectivity, &mol);
         assert_eq!(
             got[..18].join(" "),
             "ca ca ca cp ca ca cp ca ca ca ca cq cq ca ca ca ca ca"
@@ -625,10 +601,10 @@ mod tests {
             &[],
         );
         for set in [AtdParameterSet::Bcc, AtdParameterSet::Abcg2] {
-            assert_eq!(types(set, AtdBondOrders::Perceive, &mol)[6], "23");
+            assert_eq!(types(set, BondOrderSource::Connectivity, &mol)[6], "23");
         }
         assert_eq!(
-            types(AtdParameterSet::Gff, AtdBondOrders::Perceive, &mol)[..13].join(" "),
+            types(AtdParameterSet::Gff, BondOrderSource::Connectivity, &mol)[..13].join(" "),
             "ca ca ca cp ca ca na ca ca ca ca ca cp"
         );
     }
@@ -643,7 +619,7 @@ mod tests {
             &[],
         );
         assert_eq!(
-            types(AtdParameterSet::Gff, AtdBondOrders::Perceive, &azide).join(" "),
+            types(AtdParameterSet::Gff, BondOrderSource::Connectivity, &azide).join(" "),
             "c3 n2 n1 n1 h1 h1 h1"
         );
         let mut bonds: Vec<(usize, usize)> = (0..6).map(|i| (i, i + 1)).collect();
@@ -651,7 +627,12 @@ mod tests {
         bonds.extend((0..7).map(|i| (i, i + 7)));
         let tropylium = mol2(&elements(&["C"; 7], 7), &bonds, &[]);
         assert_eq!(
-            types(AtdParameterSet::Gff, AtdBondOrders::Perceive, &tropylium)[..7].join(" "),
+            types(
+                AtdParameterSet::Gff,
+                BondOrderSource::Connectivity,
+                &tropylium
+            )[..7]
+                .join(" "),
             "c2 c2 c2 c2 c2 c2 c2"
         );
     }

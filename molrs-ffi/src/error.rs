@@ -19,7 +19,7 @@ pub enum FfiError {
     NonContiguous { key: String },
 
     /// Column exists but has the wrong dtype for the requested access.
-    /// Distinct from [`KeyNotFound`]: the caller asked the right key but
+    /// Distinct from [`KeyNotFound`](Self::KeyNotFound): the caller asked the right key but
     /// mismatched its type expectation — usually a schema-level bug.
     DTypeMismatch {
         key: String,

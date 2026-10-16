@@ -40,6 +40,7 @@ use crate::handle::{
     region_key_to_handle,
 };
 use crate::handle_registry::lock_registry;
+use crate::simbox::{MolrsCellKind, cell_from_c};
 use crate::{ffi_try, null_check};
 use molrs::op::F;
 
@@ -136,30 +137,36 @@ pub unsafe extern "C" fn molrs_region_cuboid(
     })
 }
 
-/// Cell spanned by three edge vectors, `h9` row-major.
+/// The parallelepiped a cell spans from the corner `origin3` — the C face
+/// of molrs's `Parallelepiped::new(cell, origin)`. The cell is stated as
+/// [`molrs_box_new`](crate::molrs_box_new) takes one: a [`MolrsCellKind`]
+/// and the values it reads (the edges are the columns of a `MATRIX` cell).
+///
+/// # Errors
+/// `InvalidArgument` for `MOLRS_CELL_KIND_UNDEFINED` (no geometric cell), a
+/// non-positive length, an impossible angle, or a singular or non-finite
+/// cell matrix; `NullPointer` when a kind that reads values gets a null
+/// `cell`.
 ///
 /// # Safety
-/// `h9` must point to 9 readable floats, `origin3` to 3.
+/// `cell` must point to the number of readable `F` values `kind` names,
+/// `origin3` to 3.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn molrs_region_parallelepiped(
-    h9: *const F,
+    kind: MolrsCellKind,
+    cell: *const F,
     origin3: *const F,
     out: *mut MolrsRegionHandle,
 ) -> MolrsStatus {
     ffi_try!({
-        null_check!(h9);
         null_check!(origin3);
         null_check!(out);
-        let h_slice = unsafe { std::slice::from_raw_parts(h9, 9) };
-        let h = match Array2::from_shape_vec((3, 3), h_slice.to_vec()) {
-            Ok(m) => m,
-            Err(e) => {
-                error::set_last_error(format!("invalid h matrix: {e}"));
-                return MolrsStatus::InvalidArgument;
-            }
+        let cell = match unsafe { cell_from_c(kind, cell) } {
+            Ok(c) => c,
+            Err(status) => return status,
         };
         let o = triple(origin3);
-        match Parallelepiped::new(h, F3::from_vec(o.to_vec())) {
+        match Parallelepiped::new(cell, F3::from_vec(o.to_vec())) {
             Ok(r) => publish(Arc::new(r), out),
             Err(e) => {
                 error::set_last_error(e);

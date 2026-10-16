@@ -1,9 +1,7 @@
 //! Amber prep (`.prepi` / `.prep`) residue template read/write.
 
-use crate::io::invalid_data;
-use std::fs;
+use crate::io::{Sink, Source, invalid_data};
 use std::io::Result;
-use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
@@ -41,14 +39,13 @@ pub struct PrepResidue {
     pub impropers: Vec<Vec<String>>,
 }
 
-/// Read a prep file from disk.
-pub fn read_prep(path: impl AsRef<Path>) -> Result<PrepResidue> {
-    let text = fs::read_to_string(path.as_ref())?;
-    read_prep_str(&text)
+/// Read an AMBER prep file.
+pub fn read_prep<'a>(src: impl Into<Source<'a>>) -> Result<PrepResidue> {
+    parse_prep(&src.into().text()?)
 }
 
 /// Parse prep text into a residue.
-pub fn read_prep_str(text: &str) -> Result<PrepResidue> {
+fn parse_prep(text: &str) -> Result<PrepResidue> {
     let lines: Vec<&str> = text.lines().collect();
     let mut name = String::new();
     let mut atoms = Vec::new();
@@ -125,7 +122,7 @@ pub fn read_prep_str(text: &str) -> Result<PrepResidue> {
 }
 
 /// Format a residue as prep text.
-pub fn write_prep_str(res: &PrepResidue) -> String {
+fn prep_text(res: &PrepResidue) -> String {
     let mut lines = vec![
         "    0    0    2".to_string(),
         res.name.clone(),
@@ -162,11 +159,7 @@ pub fn write_prep_str(res: &PrepResidue) -> String {
     lines.join("\n")
 }
 
-/// Write prep to disk.
-pub fn write_prep(path: impl AsRef<Path>, res: &PrepResidue) -> Result<()> {
-    let path = path.as_ref();
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)?;
-    }
-    fs::write(path, write_prep_str(res))
+/// Write a residue as an AMBER prep file.
+pub fn write_prep<'a>(sink: impl Into<Sink<'a>>, res: &PrepResidue) -> Result<()> {
+    sink.into().put(prep_text(res).as_bytes())
 }

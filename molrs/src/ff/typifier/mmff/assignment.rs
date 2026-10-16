@@ -43,7 +43,7 @@ use std::collections::{HashMap, HashSet};
 
 use molrs::core::PropValue;
 use molrs::core::schema::block_names::{ANGLES, BONDS, DIHEDRALS, IMPROPERS};
-use molrs::core::{Atomistic, NodeId};
+use molrs::core::{Atomistic, NodeId, Props};
 
 use super::properties::{MmffMolProperties, MmffVariant};
 use super::resolve as eparams;
@@ -246,7 +246,7 @@ fn annotate_bonds(graph: &Atomistic, typed_mol: &MmffTypedMolecule) -> Annotatio
                 "mmff_bond",
                 format!("{bt}_{lo}_{hi}"),
                 &[lo, hi],
-                Params::from_pairs(&[("kb", kb), ("r0", r0)]),
+                Params::from_iter([("kb", kb), ("r0", r0)]),
             )]
         })
         .collect()
@@ -288,7 +288,7 @@ fn annotate_angles(graph: &Atomistic, typed_mol: &MmffTypedMolecule) -> Annotati
             // the bend — `E = 143.9325·ka·(1 + cos θ)` instead of the cubic expansion
             // about theta0 — and suppresses the stretch-bend term at that centre; both
             // kernels (`mmff_angle`, `mmff_stbn`) read this one column. Baked as 0/1
-            // rather than a bool because `MolGraph::to_frame` carries only f64 / i32 /
+            // rather than a bool because `Atomistic::to_frame` carries only f64 / i32 /
             // string columns into the Frame; a bool would be silently dropped.
             let linear = typed_mol
                 .params
@@ -323,14 +323,14 @@ fn annotate_angles(graph: &Atomistic, typed_mol: &MmffTypedMolecule) -> Annotati
                     "mmff_angle",
                     format!("{at}_{ta}_{tb}_{tc}"),
                     &ends,
-                    Params::from_pairs(&[("ka", ka), ("theta0", theta0)]),
+                    Params::from_iter([("ka", ka), ("theta0", theta0)]),
                 ),
                 typed(
                     "stbn_type",
                     "mmff_stbn",
                     format!("{sbt}_{ta}_{tb}_{tc}"),
                     &ends,
-                    Params::from_pairs(&[
+                    Params::from_iter([
                         ("kba_ijk", kba_ijk),
                         ("kba_kji", kba_kji),
                         ("r0_ij", r0_ij),
@@ -430,7 +430,7 @@ fn annotate_dihedrals(graph: &Atomistic, typed_mol: &MmffTypedMolecule) -> Annot
                 "mmff_torsion",
                 format!("{code}_{}_{}_{}_{}", ends[0], ends[1], ends[2], ends[3]),
                 &ends,
-                Params::from_pairs(&[("v1", v1), ("v2", v2), ("v3", v3)]),
+                Params::from_iter([("v1", v1), ("v2", v2), ("v3", v3)]),
             )]
         })
         .collect()
@@ -505,6 +505,7 @@ fn annotate_impropers(
                     typed_mol.atom_ids[i],
                     typed_mol.atom_ids[k],
                     typed_mol.atom_ids[l],
+                    Props::new(),
                 )
                 .map_err(|e| e.to_string())?;
             added.insert(
@@ -514,7 +515,7 @@ fn annotate_impropers(
                     "mmff_oop",
                     label.clone(),
                     &ends,
-                    Params::from_pairs(&[("koop", koop)]),
+                    Params::from_iter([("koop", koop)]),
                 )],
             );
         }

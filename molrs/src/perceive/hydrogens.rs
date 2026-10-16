@@ -3,19 +3,13 @@
 use std::collections::HashSet;
 
 use super::valence::n_implicit_hydrogens;
-use crate::core::Atom;
 use crate::core::Atomistic;
 use crate::core::NodeId;
+use crate::core::{Props, keys};
 use crate::op::vec3::{cross, norm};
+use crate::props;
 use molrs::core::Element;
 use molrs::core::MolRsError;
-
-/// Name of the relation kind whose members mark a fragment attachment point.
-///
-/// The kind [`MolGraph::add_port`](crate::core::MolGraph::add_port)
-/// registers ([`crate::core::keys::PORTS`]); it is matched by name because
-/// any graph may carry ports.
-const PORTS_KIND: &str = "ports";
 
 // ---------------------------------------------------------------------------
 // Public API
@@ -27,95 +21,88 @@ const PORTS_KIND: &str = "ports";
 /// Each heavy atom gets [`n_implicit_hydrogens`] hydrogens: its element's default
 /// valences against the sum of its current bond orders, with the formal
 /// charge folded into the element. Hydrogen atoms already present
-/// (symbol == "H") are not modified.
+/// (atomic number 1) are not modified, and a wildcard atom (atomic number 0)
+/// has no valence model, so it gets none.
 ///
 /// When a heavy atom has `x`/`y`/`z` components, each new H is placed at a
 /// standard X–H length along a tetrahedral valence-completing direction
 /// (initial geometry only — force fields may refine). When the heavy lacks
-/// coordinates, H is added without `x`/`y`/`z` (topology-only path).
+/// coordinates, H is added without `x`/`y`/`z` (topology-only path). Every
+/// new H carries [`keys::ATOMIC_NUMBER`] 1 and its [`keys::MASS`].
 ///
 /// Starts from [`Clone`] of `mol` (handles preserved on the skeleton); only
 /// new H atoms and bonds are appended, so parent angles/dihedrals remain.
 ///
 /// # Errors
 ///
-/// [`MolRsError`] when bonding a fresh hydrogen to its heavy atom fails, which
-/// means the graph handed in holds a stale atom handle. No public constructor
-/// of [`Atomistic`] can produce such a graph, so the case is unreachable in
-/// practice; the `Result` is here so that the invariant is *returned* rather
-/// than asserted by a panic on a caller's thread.
+/// [`MolRsError::Validation`] when an atom carries no valid
+/// [`keys::ATOMIC_NUMBER`]; [`MolRsError`] when bonding a fresh hydrogen to
+/// its heavy atom fails, which means the graph handed in holds a stale atom
+/// handle. An [`Atomistic`] guarantees both away, so neither case is
+/// reachable through its public constructors; the `Result` is here so that
+/// the invariant is *returned* rather than asserted by a panic on a caller's
+/// thread.
 pub fn add_hydrogens(mol: &Atomistic) -> Result<Atomistic, MolRsError> {
     let mut new_mol = mol.clone();
 
     // Mass (amu) of the hydrogens this call appends, read once from the
     // periodic table: a literal is a second home for a number `Element` owns.
-    let hydrogen = Element::by_symbol("H")
-        .ok_or_else(|| MolRsError::validation("the periodic table has no entry for element H"))?;
-    let h_mass = f64::from(hydrogen.atomic_mass());
+    let h_mass = f64::from(Element::H.atomic_mass());
 
-    // Collect (atom_id, n_implicit_h) for all heavy atoms up front so that
-    // we don't hold a borrow while mutating.
-    let additions: Vec<(NodeId, u32)> = new_mol
-        .atoms()
-        .filter_map(|(id, atom)| {
-            let sym = atom.get_str("element")?;
-            if sym.eq_ignore_ascii_case("H") {
-                return None; // skip existing hydrogens
-            }
-            let n = n_implicit_hydrogens(&new_mol, id)?;
-            if n == 0 { None } else { Some((id, n)) }
-        })
-        .collect();
+    // Collect (atom_id, its atomic number, n_implicit_h) for all heavy atoms
+    // up front so that we don't hold a borrow while mutating.
+    let mut additions: Vec<(NodeId, u8, u32)> = Vec::new();
+    for (id, atom) in new_mol.atoms() {
+        let z = species(id, &atom)?;
+        if z == Element::H.z() {
+            continue; // existing hydrogens are left alone
+        }
+        // `None` covers the wildcard (Z = 0) and every atom the valence
+        // model does not fill: no hydrogens for them.
+        match n_implicit_hydrogens(&new_mol, id) {
+            Some(n) if n > 0 => additions.push((id, z, n)),
+            _ => {}
+        }
+    }
 
-    for (heavy_id, n) in additions {
-        let heavy = new_mol.get_atom(heavy_id).ok();
-        let place = heavy.as_ref().and_then(|a| {
-            Some((
-                a.get_f64("x")?,
-                a.get_f64("y")?,
-                a.get_f64("z")?,
-                a.get_str("element").unwrap_or("C"),
-            ))
-        });
-
-        let positions: Vec<[f64; 3]> = if let Some((hx, hy, hz, elem)) = place {
-            let p = [hx, hy, hz];
-            let mut existing: Vec<[f64; 3]> = Vec::new();
-            for (nb, _) in new_mol.neighbor_bonds(heavy_id) {
-                if let Ok(na) = new_mol.get_atom(nb)
-                    && let (Some(x), Some(y), Some(z)) =
-                        (na.get_f64("x"), na.get_f64("y"), na.get_f64("z"))
-                {
-                    existing.push(unit([x - p[0], y - p[1], z - p[2]]));
-                }
-            }
-            let dirs = cap_directions(&existing, n as usize);
-            let len = cap_length(elem);
-            dirs.into_iter()
+    for (heavy_id, heavy_z, n) in additions {
+        // Hydrogen positions, when the heavy atom has coordinates to place
+        // them from; `None` is the topology-only path.
+        let positions: Option<Vec<[f64; 3]>> = new_mol.get_atom(heavy_id)?.position().map(|p| {
+            let existing: Vec<[f64; 3]> = new_mol
+                .neighbor_bonds(heavy_id)
+                .filter_map(|(nb, _)| new_mol.get_atom(nb).ok()?.position())
+                .map(|q| unit([q[0] - p[0], q[1] - p[1], q[2] - p[2]]))
+                .collect();
+            let len = cap_length(heavy_z);
+            cap_directions(&existing, n as usize)
+                .into_iter()
                 .map(|d| [p[0] + len * d[0], p[1] + len * d[1], p[2] + len * d[2]])
                 .collect()
-        } else {
-            vec![[0.0, 0.0, 0.0]; n as usize] // placeholder; coords omitted below
-        };
+        });
 
-        let place_coords = place.is_some();
-        for pos in positions.iter().take(n as usize) {
-            let mut h = Atom::new();
-            h.set("element", "H");
-            h.set("mass", h_mass);
-            if place_coords {
-                h.set("x", pos[0]);
-                h.set("y", pos[1]);
-                h.set("z", pos[2]);
-            }
-            let h_id = new_mol.add_atom(h);
+        for k in 0..n as usize {
+            let h = match &positions {
+                Some(pos) => props! {
+                    keys::ATOMIC_NUMBER => Element::H,
+                    keys::MASS => h_mass,
+                    keys::X => pos[k][0],
+                    keys::Y => pos[k][1],
+                    keys::Z => pos[k][2],
+                },
+                None => props! {
+                    keys::ATOMIC_NUMBER => Element::H,
+                    keys::MASS => h_mass,
+                },
+            };
+            let h_id = new_mol.add_atom(h)?;
             // `Atomistic::add_bond` already stamps the bond Single/Single, so
             // there is nothing left to set. Both endpoints exist (one is the
             // atom just added), so the only error `add_bond` has — an unknown
             // endpoint — is a broken invariant; it travels out to the caller
             // rather than being swallowed, which would leave the new hydrogen
             // floating unbonded.
-            new_mol.add_bond(heavy_id, h_id)?;
+            new_mol.add_bond(heavy_id, h_id, props! {})?;
         }
     }
 
@@ -127,13 +114,27 @@ pub fn add_hydrogens(mol: &Atomistic) -> Result<Atomistic, MolRsError> {
 // guesses for downstream minimization, not equilibrium force-field lengths).
 // ---------------------------------------------------------------------------
 
-/// Cap X–H bond length (Å) keyed by heavy element; default 1.0 Å.
-fn cap_length(element: &str) -> f64 {
-    match element {
-        "C" | "c" => 1.09,
-        "N" | "n" => 1.01,
-        "O" | "o" => 0.96,
-        "S" | "s" => 1.34,
+/// The atomic number of atom `id`, or the error naming it when it carries
+/// none (a broken [`Atomistic`] invariant, returned rather than asserted).
+fn species(id: NodeId, atom: &Props) -> Result<u8, MolRsError> {
+    atom.atomic_number().ok_or_else(|| {
+        MolRsError::validation(format!(
+            "atom {id:?} has no valid '{}' (0..=118); convert an '{}' symbol \
+             explicitly with Element::fill_atomic_numbers",
+            keys::ATOMIC_NUMBER,
+            keys::ELEMENT
+        ))
+    })
+}
+
+/// Cap X–H bond length (Å) keyed by the heavy atom's atomic number; 1.0 Å
+/// for any element other than C, N, O and S.
+fn cap_length(heavy_z: u8) -> f64 {
+    match Element::by_number(heavy_z) {
+        Some(Element::C) => 1.09,
+        Some(Element::N) => 1.01,
+        Some(Element::O) => 0.96,
+        Some(Element::S) => 1.34,
         _ => 1.0,
     }
 }
@@ -236,7 +237,7 @@ fn cap_directions(existing: &[[f64; 3]], k: usize) -> Vec<[f64; 3]> {
 /// 1. its degree is exactly one, counted over the `bonds` kind alone
 ///    ([`Atomistic::neighbor_bonds`]) — the standard cheminformatics
 ///    convention for a "non-bridging" H;
-/// 2. it takes part in no relation of the kind named `ports`.
+/// 2. it is the anchor or the handle of no port ([`Atomistic::port_ids`]).
 ///
 /// # Why the degree is counted over `bonds` only
 ///
@@ -262,12 +263,15 @@ fn cap_directions(existing: &[[f64; 3]], k: usize) -> Vec<[f64; 3]> {
 /// every port to the arity of the kind that records it.
 ///
 /// Incident bonds, angles, and dihedrals of a removed hydrogen are
-/// cascade-deleted by [`Atomistic::remove_atom`].
+/// cascade-deleted by [`Atomistic::del_atoms`].
 ///
-/// The original `MolGraph` is never mutated; a clone is returned.
+/// `mol` is never mutated; a clone is returned.
 ///
 /// # Errors
 ///
+/// [`MolRsError::Validation`] when an atom carries no valid
+/// [`keys::ATOMIC_NUMBER`] (a broken [`Atomistic`] invariant), and the error of
+/// [`Atomistic::get_port`] when a port's stored descriptor is malformed.
 /// [`MolRsError`] when removing a hydrogen fails, which means the graph handed
 /// in holds a stale atom handle: the handles stripped here were read out of
 /// this same graph a moment ago, they are distinct, and removing one node
@@ -278,39 +282,29 @@ fn cap_directions(existing: &[[f64; 3]], k: usize) -> Vec<[f64; 3]> {
 pub fn remove_hydrogens(mol: &Atomistic) -> Result<Atomistic, MolRsError> {
     let mut new_mol = mol.clone();
 
-    // Every node named by a `ports` relation, gathered before the first
-    // removal. The relations are scanned rather than the adjacency index
-    // because that index holds arity-2 kinds only, and "participates in a
-    // port" must not depend on how wide a port row happens to be.
-    let port_nodes: HashSet<NodeId> = match new_mol.kind_id(PORTS_KIND) {
-        Some(kind) => new_mol
-            .relations(kind)
-            .flat_map(|(_, rel)| rel.nodes.into_iter())
-            .collect(),
-        None => HashSet::new(),
-    };
-
-    let h_ids: Vec<NodeId> = new_mol
-        .atoms()
-        .filter_map(|(id, atom)| {
-            let sym = atom.get_str("element")?;
-            if !sym.eq_ignore_ascii_case("H") || port_nodes.contains(&id) {
-                return None;
-            }
-            if new_mol.neighbor_bonds(id).count() == 1 {
-                Some(id)
-            } else {
-                None
-            }
-        })
-        .collect();
-
-    for h_id in h_ids {
-        // `remove_atom`'s only failure is an unknown handle, and every handle
-        // here is live (see `# Errors`). Returning it keeps a broken node
-        // table a value the caller can handle instead of a panic.
-        new_mol.remove_atom(h_id)?;
+    // Every atom a port names (anchor or handle), gathered before the first
+    // removal.
+    let mut port_nodes: HashSet<NodeId> = HashSet::new();
+    for pid in new_mol.port_ids().collect::<Vec<_>>() {
+        let port = new_mol.get_port(pid)?;
+        port_nodes.insert(port.anchor);
+        port_nodes.insert(port.handle);
     }
+
+    let mut h_ids: Vec<NodeId> = Vec::new();
+    for (id, atom) in new_mol.atoms() {
+        if species(id, &atom)? == Element::H.z()
+            && !port_nodes.contains(&id)
+            && new_mol.neighbor_bonds(id).count() == 1
+        {
+            h_ids.push(id);
+        }
+    }
+
+    // `del_atoms`' only failure is an unknown handle, and every handle here is
+    // live (see `# Errors`). Returning it keeps a broken node table a value
+    // the caller can handle instead of a panic.
+    new_mol.del_atoms(&h_ids)?;
     Ok(new_mol)
 }
 
@@ -321,42 +315,56 @@ pub fn remove_hydrogens(mol: &Atomistic) -> Result<Atomistic, MolRsError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::{BondNumber, BondOrder};
+    use crate::core::{BondNumber, BondOrder, PortKind};
 
-    fn atom(sym: &str) -> Atom {
-        let mut a = Atom::new();
-        a.set("element", sym);
-        a
+    /// An atom of element `el`, with no other props.
+    fn atom(el: Element) -> Props {
+        props! { keys::ATOMIC_NUMBER => el }
+    }
+
+    /// An atom of element `el` carrying formal charge `fc`.
+    fn charged(el: Element, fc: impl Into<crate::core::PropValue>) -> Props {
+        props! { keys::ATOMIC_NUMBER => el, keys::FORMAL_CHARGE => fc }
+    }
+
+    /// An atom of element `el` at `[x, y, z]`.
+    fn atom_at(el: Element, [x, y, z]: [f64; 3]) -> Props {
+        props! { keys::ATOMIC_NUMBER => el, keys::X => x, keys::Y => y, keys::Z => z }
+    }
+
+    fn is_h(a: &Props) -> bool {
+        a.atomic_number() == Some(Element::H.z())
     }
 
     fn bond_with_order(mol: &mut Atomistic, a: NodeId, b: NodeId, order: f64) {
-        let bid = mol.add_bond(a, b).expect("fixture bond");
         // The fixture's float order, split into the two facts it encodes:
         // 1.5 is "aromatic", every integer is a localized count.
-        if (order - 1.5).abs() < 1e-6 {
-            mol.set_bond_class(bid, BondOrder::Aromatic, BondNumber::Unknown)
-                .expect("fixture bond class");
+        let (class, number) = if (order - 1.5).abs() < 1e-6 {
+            (BondOrder::Aromatic, BondNumber::Unknown)
         } else {
-            mol.set_bond_type(bid, BondOrder::from_code(order.round() as u32))
-                .expect("fixture bond type");
-        }
+            let number = BondNumber::from_code(order.round() as u32);
+            (number.implied_type(), number)
+        };
+        mol.add_bond(
+            a,
+            b,
+            props! { keys::BOND_TYPE => class, keys::BOND_NUMBER => number },
+        )
+        .expect("fixture bond");
     }
 
     #[test]
     fn test_methane_skeleton() {
         // Isolated C — should get 4 H.
         let mut g = Atomistic::new();
-        g.add_atom(atom("C"));
+        g.add_atom(atom(Element::C)).unwrap();
         let result = add_hydrogens(&g).expect("repletion succeeds on a well-formed graph");
         // original unchanged
         assert_eq!(g.n_atoms(), 1);
         // result has C + 4H
         assert_eq!(result.n_atoms(), 5);
         assert_eq!(result.n_bonds(), 4);
-        let n_h = result
-            .atoms()
-            .filter(|(_, a)| a.get_str("element") == Some("H"))
-            .count();
+        let n_h = result.atoms().filter(|(_, a)| is_h(a)).count();
         assert_eq!(n_h, 4);
     }
 
@@ -364,8 +372,8 @@ mod tests {
     fn test_ethane_c_c() {
         // C-C single bond: each C needs 3 H.
         let mut g = Atomistic::new();
-        let c1 = g.add_atom(atom("C"));
-        let c2 = g.add_atom(atom("C"));
+        let c1 = g.add_atom(atom(Element::C)).unwrap();
+        let c2 = g.add_atom(atom(Element::C)).unwrap();
         bond_with_order(&mut g, c1, c2, 1.0);
         let result = add_hydrogens(&g).expect("repletion succeeds on a well-formed graph");
         assert_eq!(result.n_atoms(), 8); // 2C + 6H
@@ -375,8 +383,8 @@ mod tests {
     fn test_ethylene_c_double_c() {
         // C=C double bond: each C needs 2 H.
         let mut g = Atomistic::new();
-        let c1 = g.add_atom(atom("C"));
-        let c2 = g.add_atom(atom("C"));
+        let c1 = g.add_atom(atom(Element::C)).unwrap();
+        let c2 = g.add_atom(atom(Element::C)).unwrap();
         bond_with_order(&mut g, c1, c2, 2.0);
         let result = add_hydrogens(&g).expect("repletion succeeds on a well-formed graph");
         assert_eq!(result.n_atoms(), 6); // 2C + 4H
@@ -386,7 +394,9 @@ mod tests {
     fn test_benzene_aromatic() {
         // 6-membered ring with bond order 1.5: each C should get 1 H.
         let mut g = Atomistic::new();
-        let ids: Vec<NodeId> = (0..6).map(|_| g.add_atom(atom("C"))).collect();
+        let ids: Vec<NodeId> = (0..6)
+            .map(|_| g.add_atom(atom(Element::C)).unwrap())
+            .collect();
         for i in 0..6 {
             bond_with_order(&mut g, ids[i], ids[(i + 1) % 6], 1.5);
         }
@@ -399,16 +409,15 @@ mod tests {
         // Kekule benzene: alternating single/double bonds.
         // Each C has bond_order_sum = 1+2 = 3, needs 1 H. Total = 6 H.
         let mut g = Atomistic::new();
-        let ids: Vec<NodeId> = (0..6).map(|_| g.add_atom(atom("C"))).collect();
+        let ids: Vec<NodeId> = (0..6)
+            .map(|_| g.add_atom(atom(Element::C)).unwrap())
+            .collect();
         let orders = [2.0, 1.0, 2.0, 1.0, 2.0, 1.0];
         for i in 0..6 {
             bond_with_order(&mut g, ids[i], ids[(i + 1) % 6], orders[i]);
         }
         let result = add_hydrogens(&g).expect("repletion succeeds on a well-formed graph");
-        let n_h = result
-            .atoms()
-            .filter(|(_, a)| a.get_str("element") == Some("H"))
-            .count();
+        let n_h = result.atoms().filter(|(_, a)| is_h(a)).count();
         assert_eq!(n_h, 6, "Kekule benzene should get 6 H, got {}", n_h);
         assert_eq!(result.n_atoms(), 12); // 6C + 6H
     }
@@ -417,8 +426,8 @@ mod tests {
     fn test_ethylene_round_trip_frame() {
         // C=C → to_frame → from_frame → add_hydrogens should give 4H not 6H
         let mut g = Atomistic::new();
-        let c1 = g.add_atom(atom("C"));
-        let c2 = g.add_atom(atom("C"));
+        let c1 = g.add_atom(atom(Element::C)).unwrap();
+        let c2 = g.add_atom(atom(Element::C)).unwrap();
         bond_with_order(&mut g, c1, c2, 2.0);
         let frame = g.to_frame().expect("a schema-conforming graph converts");
         let g2 = Atomistic::from_frame(&frame).unwrap();
@@ -430,8 +439,8 @@ mod tests {
     fn test_acetylene_round_trip_frame() {
         // C#C → to_frame → from_frame → add_hydrogens should give 2H
         let mut g = Atomistic::new();
-        let c1 = g.add_atom(atom("C"));
-        let c2 = g.add_atom(atom("C"));
+        let c1 = g.add_atom(atom(Element::C)).unwrap();
+        let c2 = g.add_atom(atom(Element::C)).unwrap();
         bond_with_order(&mut g, c1, c2, 3.0);
         let frame = g.to_frame().expect("a schema-conforming graph converts");
         let g2 = Atomistic::from_frame(&frame).unwrap();
@@ -443,17 +452,45 @@ mod tests {
     fn test_water() {
         // Isolated O → 2 H
         let mut g = Atomistic::new();
-        g.add_atom(atom("O"));
+        g.add_atom(atom(Element::O)).unwrap();
         let result = add_hydrogens(&g).expect("repletion succeeds on a well-formed graph");
         assert_eq!(result.n_atoms(), 3);
+    }
+
+    /// A wildcard atom (`atomic_number` 0) names no element, so it has no
+    /// valence model and takes no hydrogens — it is never read as carbon.
+    #[test]
+    fn a_wildcard_atom_takes_no_hydrogens() {
+        let mut g = Atomistic::new();
+        let star = g.add_atom(props! { keys::ATOMIC_NUMBER => 0_u8 }).unwrap();
+        assert_eq!(n_implicit_hydrogens(&g, star), None);
+        let result = add_hydrogens(&g).expect("repletion succeeds on a well-formed graph");
+        assert_eq!(result.n_atoms(), 1);
+    }
+
+    /// `remove_hydrogens` finds hydrogens by atomic number, so it strips the
+    /// ones `add_hydrogens` wrote (which carry no element symbol).
+    #[test]
+    fn remove_hydrogens_strips_what_add_hydrogens_added() {
+        let mut g = Atomistic::new();
+        g.add_atom(atom(Element::O)).unwrap();
+        let with_h = add_hydrogens(&g).expect("repletion succeeds on a well-formed graph");
+        assert!(
+            with_h
+                .atoms()
+                .all(|(_, a)| a.get_str(keys::ELEMENT).is_none())
+        );
+        let stripped =
+            remove_hydrogens(&with_h).expect("stripping succeeds on a well-formed graph");
+        assert_eq!(stripped.n_atoms(), 1);
     }
 
     #[test]
     fn test_ammonia_like() {
         // N with 1 bond → 2 H  (valence 3)
         let mut g = Atomistic::new();
-        let n = g.add_atom(atom("N"));
-        let c = g.add_atom(atom("C"));
+        let n = g.add_atom(atom(Element::N)).unwrap();
+        let c = g.add_atom(atom(Element::C)).unwrap();
         bond_with_order(&mut g, n, c, 1.0);
         let result = add_hydrogens(&g).expect("repletion succeeds on a well-formed graph");
         // N gets 2H, C gets 3H, total = 2C + 2H(on N) + 3H(on C) = 2+5 = 7
@@ -464,22 +501,16 @@ mod tests {
     fn test_nh4_plus() {
         // NH4+: formal_charge=1 on N → needs 4 H
         let mut g = Atomistic::new();
-        let mut n_atom = Atom::new();
-        n_atom.set("element", "N");
-        n_atom.set("formal_charge", 1.0_f64);
-        let n = g.add_atom(n_atom);
+        let n = g.add_atom(charged(Element::N, 1.0_f64)).unwrap();
         let count = n_implicit_hydrogens(&g, n).unwrap();
         assert_eq!(count, 4);
     }
 
     /// Build a single charged heavy atom (no heavy neighbours) and return its
     /// implicit-H count.
-    fn charged_atom_h(sym: &str, fc: f64) -> u32 {
+    fn charged_atom_h(el: Element, fc: f64) -> u32 {
         let mut g = Atomistic::new();
-        let mut a = Atom::new();
-        a.set("element", sym);
-        a.set("formal_charge", fc);
-        let id = g.add_atom(a);
+        let id = g.add_atom(charged(el, fc)).unwrap();
         n_implicit_hydrogens(&g, id).unwrap_or(0)
     }
 
@@ -487,17 +518,17 @@ mod tests {
     fn charged_single_atoms_take_their_valence_hydrogens() {
         // Charged single-heavy-atom species (the cases a plain
         // bond_order_sum - formal_charge rule gets wrong for group-13/14):
-        assert_eq!(charged_atom_h("C", 1.0), 3, "[CH3+] -> 3 H");
-        assert_eq!(charged_atom_h("C", -1.0), 3, "[CH3-] -> 3 H");
-        assert_eq!(charged_atom_h("B", -1.0), 4, "[BH4-] -> 4 H");
-        assert_eq!(charged_atom_h("N", 1.0), 4, "[NH4+] -> 4 H");
-        assert_eq!(charged_atom_h("O", -1.0), 1, "[OH-] -> 1 H");
-        assert_eq!(charged_atom_h("N", -1.0), 2, "[NH2-] -> 2 H");
+        assert_eq!(charged_atom_h(Element::C, 1.0), 3, "[CH3+] -> 3 H");
+        assert_eq!(charged_atom_h(Element::C, -1.0), 3, "[CH3-] -> 3 H");
+        assert_eq!(charged_atom_h(Element::B, -1.0), 4, "[BH4-] -> 4 H");
+        assert_eq!(charged_atom_h(Element::N, 1.0), 4, "[NH4+] -> 4 H");
+        assert_eq!(charged_atom_h(Element::O, -1.0), 1, "[OH-] -> 1 H");
+        assert_eq!(charged_atom_h(Element::N, -1.0), 2, "[NH2-] -> 2 H");
 
         // Neutral references (unchanged by the fix):
-        assert_eq!(charged_atom_h("C", 0.0), 4, "methane C -> 4 H");
-        assert_eq!(charged_atom_h("O", 0.0), 2, "water O -> 2 H");
-        assert_eq!(charged_atom_h("N", 0.0), 3, "ammonia N -> 3 H");
+        assert_eq!(charged_atom_h(Element::C, 0.0), 4, "methane C -> 4 H");
+        assert_eq!(charged_atom_h(Element::O, 0.0), 2, "water O -> 2 H");
+        assert_eq!(charged_atom_h(Element::N, 0.0), 3, "ammonia N -> 3 H");
     }
 
     /// Like `charged_atom_h` but stores `formal_charge` as the canonical
@@ -506,12 +537,10 @@ mod tests {
     /// charge: reading it as F64 only would treat every charged atom as
     /// neutral — e.g. protonating the sulfonimide [N-] in TFSI/ANI and
     /// breaking antechamber's charge balance.
-    fn charged_atom_h_int(sym: &str, fc: i32) -> u32 {
+    fn charged_atom_h_int(el: Element, fc: i32) -> u32 {
         let mut g = Atomistic::new();
-        let mut a = Atom::new();
-        a.set("element", sym);
-        a.set("formal_charge", fc); // i32 == type alias `I` → PropValue::Int
-        let id = g.add_atom(a);
+        // i32 == type alias `I` → PropValue::Int
+        let id = g.add_atom(charged(el, fc)).unwrap();
         n_implicit_hydrogens(&g, id).unwrap_or(0)
     }
 
@@ -519,11 +548,27 @@ mod tests {
     fn test_int_formal_charge_parity() {
         // Same expectations as `charged_single_atoms_take_their_valence_hydrogens`, but the
         // charge is an Int prop (the real on-graph representation), not f64.
-        assert_eq!(charged_atom_h_int("N", -1), 2, "[NH2-] (int fc) -> 2 H");
-        assert_eq!(charged_atom_h_int("N", 1), 4, "[NH4+] (int fc) -> 4 H");
-        assert_eq!(charged_atom_h_int("O", -1), 1, "[OH-] (int fc) -> 1 H");
-        assert_eq!(charged_atom_h_int("C", 1), 3, "[CH3+] (int fc) -> 3 H");
-        assert_eq!(charged_atom_h_int("N", 0), 3, "neutral N -> 3 H");
+        assert_eq!(
+            charged_atom_h_int(Element::N, -1),
+            2,
+            "[NH2-] (int fc) -> 2 H"
+        );
+        assert_eq!(
+            charged_atom_h_int(Element::N, 1),
+            4,
+            "[NH4+] (int fc) -> 4 H"
+        );
+        assert_eq!(
+            charged_atom_h_int(Element::O, -1),
+            1,
+            "[OH-] (int fc) -> 1 H"
+        );
+        assert_eq!(
+            charged_atom_h_int(Element::C, 1),
+            3,
+            "[CH3+] (int fc) -> 3 H"
+        );
+        assert_eq!(charged_atom_h_int(Element::N, 0), 3, "neutral N -> 3 H");
     }
 
     #[test]
@@ -532,12 +577,9 @@ mod tests {
         // bonds, int formal_charge -1) must add NO hydrogen. Missing the Int
         // charge would read N as neutral (valence 3, demand 2) → 1 H.
         let mut g = Atomistic::new();
-        let mut n_atom = Atom::new();
-        n_atom.set("element", "N");
-        n_atom.set("formal_charge", -1_i32);
-        let n = g.add_atom(n_atom);
-        let s1 = g.add_atom(atom("S"));
-        let s2 = g.add_atom(atom("S"));
+        let n = g.add_atom(charged(Element::N, -1_i32)).unwrap();
+        let s1 = g.add_atom(atom(Element::S)).unwrap();
+        let s2 = g.add_atom(atom(Element::S)).unwrap();
         bond_with_order(&mut g, n, s1, 1.0);
         bond_with_order(&mut g, n, s2, 1.0);
         assert_eq!(h_at(&g, n), 0, "sulfonimide [N-] with two bonds -> 0 H");
@@ -552,22 +594,24 @@ mod tests {
     fn bonded_atoms_take_their_remaining_valence_hydrogens() {
         // ethane CC: each C has bos 1 -> 3 H
         let mut g = Atomistic::new();
-        let c1 = g.add_atom(atom("C"));
-        let c2 = g.add_atom(atom("C"));
+        let c1 = g.add_atom(atom(Element::C)).unwrap();
+        let c2 = g.add_atom(atom(Element::C)).unwrap();
         bond_with_order(&mut g, c1, c2, 1.0);
         assert_eq!(h_at(&g, c1), 3, "ethane C -> 3 H");
         assert_eq!(h_at(&g, c2), 3, "ethane C -> 3 H");
 
         // ethylene C=C: each C has bos 2 -> 2 H
         let mut g = Atomistic::new();
-        let c1 = g.add_atom(atom("C"));
-        let c2 = g.add_atom(atom("C"));
+        let c1 = g.add_atom(atom(Element::C)).unwrap();
+        let c2 = g.add_atom(atom(Element::C)).unwrap();
         bond_with_order(&mut g, c1, c2, 2.0);
         assert_eq!(h_at(&g, c1), 2, "ethylene C -> 2 H");
 
         // benzene (aromatic, bos 1.5+1.5=3): each C -> 1 H
         let mut g = Atomistic::new();
-        let ids: Vec<NodeId> = (0..6).map(|_| g.add_atom(atom("C"))).collect();
+        let ids: Vec<NodeId> = (0..6)
+            .map(|_| g.add_atom(atom(Element::C)).unwrap())
+            .collect();
         for i in 0..6 {
             bond_with_order(&mut g, ids[i], ids[(i + 1) % 6], 1.5);
         }
@@ -576,13 +620,10 @@ mod tests {
         // acetate CC(=O)[O-]: methyl C -> 3, carbonyl C -> 0,
         // carbonyl O (=O) -> 0, [O-] (single bond, fc -1) -> 0
         let mut g = Atomistic::new();
-        let c_me = g.add_atom(atom("C"));
-        let c_carb = g.add_atom(atom("C"));
-        let o_dbl = g.add_atom(atom("O"));
-        let mut o_minus = Atom::new();
-        o_minus.set("element", "O");
-        o_minus.set("formal_charge", -1.0_f64);
-        let o_minus = g.add_atom(o_minus);
+        let c_me = g.add_atom(atom(Element::C)).unwrap();
+        let c_carb = g.add_atom(atom(Element::C)).unwrap();
+        let o_dbl = g.add_atom(atom(Element::O)).unwrap();
+        let o_minus = g.add_atom(charged(Element::O, -1.0_f64)).unwrap();
         bond_with_order(&mut g, c_me, c_carb, 1.0);
         bond_with_order(&mut g, c_carb, o_dbl, 2.0);
         bond_with_order(&mut g, c_carb, o_minus, 1.0);
@@ -596,15 +637,12 @@ mod tests {
     fn test_no_double_h_on_existing_hydrogen() {
         // Existing H atoms should not get more H added.
         let mut g = Atomistic::new();
-        let c = g.add_atom(atom("C"));
-        let h = g.add_atom(atom("H"));
+        let c = g.add_atom(atom(Element::C)).unwrap();
+        let h = g.add_atom(atom(Element::H)).unwrap();
         bond_with_order(&mut g, c, h, 1.0);
         let result = add_hydrogens(&g).expect("repletion succeeds on a well-formed graph");
         // C had 1 bond, needs 3 more H; H should remain unchanged
-        let n_h = result
-            .atoms()
-            .filter(|(_, a)| a.get_str("element") == Some("H"))
-            .count();
+        let n_h = result.atoms().filter(|(_, a)| is_h(a)).count();
         assert_eq!(n_h, 4); // 1 original + 3 new
     }
 
@@ -614,7 +652,7 @@ mod tests {
     fn test_remove_hydrogens_methane() {
         // C + 4H → remove → 1 atom (C only), 0 bonds
         let mut g = Atomistic::new();
-        g.add_atom(atom("C"));
+        g.add_atom(atom(Element::C)).unwrap();
         let with_h = add_hydrogens(&g).expect("repletion succeeds on a well-formed graph");
         assert_eq!(with_h.n_atoms(), 5);
         let stripped =
@@ -627,8 +665,8 @@ mod tests {
     fn test_remove_hydrogens_ethane() {
         // 2C + 6H → remove → 2 atoms, 1 bond (C-C preserved)
         let mut g = Atomistic::new();
-        let c1 = g.add_atom(atom("C"));
-        let c2 = g.add_atom(atom("C"));
+        let c1 = g.add_atom(atom(Element::C)).unwrap();
+        let c2 = g.add_atom(atom(Element::C)).unwrap();
         bond_with_order(&mut g, c1, c2, 1.0);
         let with_h = add_hydrogens(&g).expect("repletion succeeds on a well-formed graph");
         assert_eq!(with_h.n_atoms(), 8);
@@ -642,7 +680,7 @@ mod tests {
     fn test_remove_hydrogens_immutable() {
         // Original graph must remain unchanged after remove_hydrogens
         let mut g = Atomistic::new();
-        g.add_atom(atom("C"));
+        g.add_atom(atom(Element::C)).unwrap();
         let with_h = add_hydrogens(&g).expect("repletion succeeds on a well-formed graph");
         let before = with_h.n_atoms();
         remove_hydrogens(&with_h).expect("stripping succeeds on a well-formed graph");
@@ -653,8 +691,8 @@ mod tests {
     fn test_remove_hydrogens_no_h_present() {
         // C=C without any H → unchanged
         let mut g = Atomistic::new();
-        let c1 = g.add_atom(atom("C"));
-        let c2 = g.add_atom(atom("C"));
+        let c1 = g.add_atom(atom(Element::C)).unwrap();
+        let c2 = g.add_atom(atom(Element::C)).unwrap();
         bond_with_order(&mut g, c1, c2, 2.0);
         let stripped = remove_hydrogens(&g).expect("stripping succeeds on a well-formed graph");
         assert_eq!(stripped.n_atoms(), 2);
@@ -665,12 +703,12 @@ mod tests {
     fn test_remove_hydrogens_cascades_angles() {
         // Build C with H and an angle involving H, then remove H → angle gone
         let mut g = Atomistic::new();
-        let c = g.add_atom(atom("C"));
-        let h1 = g.add_atom(atom("H"));
-        let h2 = g.add_atom(atom("H"));
+        let c = g.add_atom(atom(Element::C)).unwrap();
+        let h1 = g.add_atom(atom(Element::H)).unwrap();
+        let h2 = g.add_atom(atom(Element::H)).unwrap();
         bond_with_order(&mut g, c, h1, 1.0);
         bond_with_order(&mut g, c, h2, 1.0);
-        g.add_angle(h1, c, h2).expect("add angle");
+        g.add_angle(h1, c, h2, props! {}).expect("add angle");
         assert_eq!(g.n_angles(), 1);
         let stripped = remove_hydrogens(&g).expect("stripping succeeds on a well-formed graph");
         assert_eq!(stripped.n_atoms(), 1);
@@ -681,18 +719,16 @@ mod tests {
     #[test]
     fn test_add_hydrogens_places_coords_when_heavy_has_xyz() {
         let mut g = Atomistic::new();
-        g.add_atom_xyz("C", 0.0, 0.0, 0.0);
+        g.add_atom(atom_at(Element::C, [0.0, 0.0, 0.0])).unwrap();
         let result = add_hydrogens(&g).expect("repletion succeeds on a well-formed graph");
         assert_eq!(result.n_atoms(), 5);
         let mut n_h = 0;
         for (id, a) in result.atoms() {
-            if a.get_str("element") != Some("H") {
+            if !is_h(&a) {
                 continue;
             }
             n_h += 1;
-            let x = a.get_f64("x").expect("H must have x");
-            let y = a.get_f64("y").expect("H must have y");
-            let z = a.get_f64("z").expect("H must have z");
+            let [x, y, z] = a.position().expect("H must have x/y/z");
             let dist = (x * x + y * y + z * z).sqrt();
             assert!(
                 (dist - 1.09).abs() < 0.02,
@@ -705,11 +741,11 @@ mod tests {
     #[test]
     fn test_add_hydrogens_no_xyz_when_heavy_lacks_coords() {
         let mut g = Atomistic::new();
-        g.add_atom(atom("C"));
+        g.add_atom(atom(Element::C)).unwrap();
         let result = add_hydrogens(&g).expect("repletion succeeds on a well-formed graph");
         for (_, a) in result.atoms() {
-            if a.get_str("element") == Some("H") {
-                assert!(a.get_f64("x").is_none());
+            if is_h(&a) {
+                assert!(a.get_f64(keys::X).is_none());
             }
         }
     }
@@ -717,9 +753,9 @@ mod tests {
     #[test]
     fn test_add_hydrogens_preserves_parent_angles() {
         let mut g = Atomistic::new();
-        let c1 = g.add_atom_xyz("C", 0.0, 0.0, 0.0);
-        let c2 = g.add_atom_xyz("C", 1.5, 0.0, 0.0);
-        let c3 = g.add_atom_xyz("C", 3.0, 0.0, 0.0);
+        let c1 = g.add_atom(atom_at(Element::C, [0.0, 0.0, 0.0])).unwrap();
+        let c2 = g.add_atom(atom_at(Element::C, [1.5, 0.0, 0.0])).unwrap();
+        let c3 = g.add_atom(atom_at(Element::C, [3.0, 0.0, 0.0])).unwrap();
         bond_with_order(&mut g, c1, c2, 1.0);
         bond_with_order(&mut g, c2, c3, 1.0);
         g.generate_topology(true, false, false, false).unwrap();
@@ -734,10 +770,9 @@ mod tests {
         // A declared H count (SMILES bracket atom) is exact — do not top it up
         // to the element's default valence.
         let mut g = Atomistic::new();
-        let mut c = Atom::new();
-        c.set("element", "C");
-        c.set("h_count", 2.0_f64);
-        let id = g.add_atom(c);
+        let id = g
+            .add_atom(props! { keys::ATOMIC_NUMBER => Element::C, keys::H_COUNT => 2 })
+            .unwrap();
         assert_eq!(n_implicit_hydrogens(&g, id), Some(2));
     }
 
@@ -746,18 +781,14 @@ mod tests {
     #[test]
     fn added_hydrogen_carries_the_element_mass() {
         let mut g = Atomistic::new();
-        g.add_atom(atom("C"));
+        g.add_atom(atom(Element::C)).unwrap();
         let result = add_hydrogens(&g).expect("repletion succeeds on a well-formed graph");
 
-        let expected = f64::from(
-            Element::by_symbol("H")
-                .expect("H is an element")
-                .atomic_mass(),
-        );
+        let expected = f64::from(Element::H.atomic_mass());
         let mut checked = 0;
         for (_, a) in result.atoms() {
-            if a.get_str("element") == Some("H") {
-                assert_eq!(a.get_f64("mass"), Some(expected));
+            if is_h(&a) {
+                assert_eq!(a.get_f64(keys::MASS), Some(expected));
                 checked += 1;
             }
         }
@@ -781,37 +812,27 @@ mod tests {
         //   O2: C1 + H4 = 2 bonds, valence 2 -> 0 new H
         //   total = 3 heavy + 2 handles + 4 added = 9 atoms
         let mut g = Atomistic::new();
-        let c0 = g.add_atom(atom("C"));
-        let c1 = g.add_atom(atom("C"));
-        let o2 = g.add_atom(atom("O"));
-        let h3 = g.add_atom(atom("H"));
-        let h4 = g.add_atom(atom("H"));
+        let c0 = g.add_atom(atom(Element::C)).unwrap();
+        let c1 = g.add_atom(atom(Element::C)).unwrap();
+        let o2 = g.add_atom(atom(Element::O)).unwrap();
+        let h3 = g.add_atom(atom(Element::H)).unwrap();
+        let h4 = g.add_atom(atom(Element::H)).unwrap();
         bond_with_order(&mut g, c0, c1, 1.0);
         bond_with_order(&mut g, c1, o2, 1.0);
         bond_with_order(&mut g, c0, h3, 1.0);
         bond_with_order(&mut g, o2, h4, 1.0);
 
-        // The `ports` kind rides on the bare `MolGraph`; this test asserts on
-        // that graph and never promotes.
-        let ports = g.register_kind("ports", 2);
-        g.add_relation(ports, &[c0, h3])
-            .expect("(anchor, handle) is a 2-ary relation");
-        g.add_relation(ports, &[o2, h4])
-            .expect("(anchor, handle) is a 2-ary relation");
+        g.add_port(c0, h3, PortKind::Symmetric, "", BondNumber::Single)
+            .expect("H3 is bonded to C0");
+        g.add_port(o2, h4, PortKind::Symmetric, "", BondNumber::Single)
+            .expect("H4 is bonded to O2");
 
         let before: Vec<NodeId> = g.atoms().map(|(id, _)| id).collect();
         let result = add_hydrogens(&g).expect("repletion succeeds on a well-formed graph");
 
         assert_eq!(result.n_atoms(), 9, "3 heavy + 2 handles + 4 added");
 
-        let ports_after = result
-            .kind_id("ports")
-            .expect("the ports kind survives add_hydrogens");
-        assert_eq!(
-            result.n_relations(ports_after),
-            2,
-            "no added H bond was written into the ports kind"
-        );
+        assert_eq!(result.n_ports(), 2, "no added H bond was written as a port");
 
         let mut added = 0;
         for (id, a) in result.atoms() {
@@ -819,8 +840,8 @@ mod tests {
                 continue;
             }
             assert_eq!(
-                a.get_str("element"),
-                Some("H"),
+                a.atomic_number(),
+                Some(Element::H.z()),
                 "add_hydrogens only appends hydrogens"
             );
             assert_eq!(
@@ -847,13 +868,13 @@ mod tests {
     #[test]
     fn remove_hydrogens_keeps_port_handles_and_strips_a_plain_h_on_the_same_anchor() {
         let mut g = Atomistic::new();
-        let c0 = g.add_atom(atom("C"));
-        let c1 = g.add_atom(atom("C"));
-        let o2 = g.add_atom(atom("O"));
-        let h3 = g.add_atom(atom("H"));
-        let h4 = g.add_atom(atom("H"));
-        let h5 = g.add_atom(atom("H"));
-        let h6 = g.add_atom(atom("H"));
+        let c0 = g.add_atom(atom(Element::C)).unwrap();
+        let c1 = g.add_atom(atom(Element::C)).unwrap();
+        let o2 = g.add_atom(atom(Element::O)).unwrap();
+        let h3 = g.add_atom(atom(Element::H)).unwrap();
+        let h4 = g.add_atom(atom(Element::H)).unwrap();
+        let h5 = g.add_atom(atom(Element::H)).unwrap();
+        let h6 = g.add_atom(atom(Element::H)).unwrap();
         bond_with_order(&mut g, c0, c1, 1.0);
         bond_with_order(&mut g, c1, o2, 1.0);
         bond_with_order(&mut g, c0, h3, 1.0);
@@ -861,11 +882,10 @@ mod tests {
         bond_with_order(&mut g, c0, h5, 1.0);
         bond_with_order(&mut g, c1, h6, 1.0);
 
-        let ports = g.register_kind("ports", 2);
-        g.add_relation(ports, &[c0, h3])
-            .expect("(anchor, handle) is a 2-ary relation");
-        g.add_relation(ports, &[o2, h4])
-            .expect("(anchor, handle) is a 2-ary relation");
+        g.add_port(c0, h3, PortKind::Symmetric, "", BondNumber::Single)
+            .expect("H3 is bonded to C0");
+        g.add_port(o2, h4, PortKind::Symmetric, "", BondNumber::Single)
+            .expect("H4 is bonded to O2");
 
         let result = remove_hydrogens(&g).expect("stripping succeeds on a well-formed graph");
 
@@ -876,17 +896,11 @@ mod tests {
             4,
             "C0-C1, C1-O2 and the two handle bonds survive"
         );
-        let n_h = result
-            .atoms()
-            .filter(|(_, a)| a.get_str("element") == Some("H"))
-            .count();
+        let n_h = result.atoms().filter(|(_, a)| is_h(a)).count();
         assert_eq!(n_h, 2, "both handles kept, both plain hydrogens removed");
 
-        let ports_after = result
-            .kind_id("ports")
-            .expect("the ports kind survives remove_hydrogens");
         assert_eq!(
-            result.n_relations(ports_after),
+            result.n_ports(),
             2,
             "no port row was cascade-deleted with a removed handle"
         );
@@ -898,13 +912,12 @@ mod tests {
     #[test]
     fn remove_hydrogens_returns_ok_when_a_port_handle_is_bonded_to_a_heavy_atom() {
         let mut g = Atomistic::new();
-        let c0 = g.add_atom(atom("C"));
-        let h1 = g.add_atom(atom("H"));
+        let c0 = g.add_atom(atom(Element::C)).unwrap();
+        let h1 = g.add_atom(atom(Element::H)).unwrap();
         bond_with_order(&mut g, c0, h1, 1.0);
 
-        let ports = g.register_kind("ports", 2);
-        g.add_relation(ports, &[c0, h1])
-            .expect("(anchor, handle) is a 2-ary relation");
+        g.add_port(c0, h1, PortKind::Symmetric, "", BondNumber::Single)
+            .expect("H1 is bonded to C0");
 
         let result = remove_hydrogens(&g).expect("an exempt handle is not an error");
         assert_eq!(result.n_atoms(), 2, "the port handle is kept");
@@ -918,7 +931,9 @@ mod tests {
         // carbon sees one bond and takes 3.
         const N: usize = 2000;
         let mut g = Atomistic::new();
-        let ids: Vec<NodeId> = (0..N).map(|_| g.add_atom(atom("C"))).collect();
+        let ids: Vec<NodeId> = (0..N)
+            .map(|_| g.add_atom(atom(Element::C)).unwrap())
+            .collect();
         for pair in ids.windows(2) {
             bond_with_order(&mut g, pair[0], pair[1], 1.0);
         }
@@ -952,8 +967,9 @@ mod smiles_formula_tests {
         let with_h = add_hydrogens(&mol).expect("repletion succeeds on a well-formed graph");
         let mut counts: BTreeMap<String, usize> = BTreeMap::new();
         for (_, atom) in with_h.atoms() {
-            let sym = atom.get_str("element").expect("element").to_owned();
-            *counts.entry(sym).or_default() += 1;
+            let z = atom.atomic_number().expect("an atomistic atom has a Z");
+            let el = Element::by_number(z).expect("no wildcard in these fixtures");
+            *counts.entry(el.symbol().to_owned()).or_default() += 1;
         }
         counts
     }

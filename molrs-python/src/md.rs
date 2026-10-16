@@ -9,7 +9,7 @@
 //! [`take_potential`](crate::ff::potential::take_potential) accepts: `molrs.ff.potential.PairLjCut`, the force-field
 //! `Potentials` collection (e.g. from `molrs.ff.compile.ExplicitTerms`), or a
 //! duck-typed Python object with
-//! `calc_energy_forces`. MD has no unit knowledge. Integrators own the
+//! `evaluate(pos) -> (energy, forces)`. MD has no unit knowledge. Integrators own the
 //! optional `VerletSkin`.
 
 use crate::array::{ArrayArg1, ArrayArg2};

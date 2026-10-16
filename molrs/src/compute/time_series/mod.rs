@@ -13,7 +13,8 @@
 //! A quantity with a name of its own is a **surface**: a type that holds a
 //! `Correlator` with the configuration that defines the quantity fixed, and
 //! nothing else. Its `compute` is one delegating call; its stream is the
-//! correlator's accumulator.
+//! correlator's accumulator. [`Msd`] and [`Vacf`] are accumulator-only: their
+//! one entry is the stream.
 //!
 //! | Surface | Kernel | Fixed configuration |
 //! |---|---|---|
@@ -39,12 +40,17 @@
 //! padding, one-sided FFT — on the [`FrequencyGrid`].
 //!
 //! ```
-//! use molrs::compute::{Compute, Vacf, VacfInput};
-//! use ndarray::Array2;
+//! use molrs::compute::{Accumulate, CorrelatorFrame, Stream, Vacf};
+//! use ndarray::{Array2, Axis};
 //!
-//! // Two degrees of freedom over four frames.
+//! // Two degrees of freedom over four frames, pushed one frame at a time.
 //! let v = Array2::from_shape_vec((4, 2), vec![1.0, 0.0, 0.0, 1.0, -1.0, 0.0, 0.0, -1.0]).unwrap();
-//! let acf = Vacf::new(2).compute(VacfInput { velocities: v.view(), dt: 1.0 }).unwrap();
+//! let mut vacf = Vacf::new(2).accumulator();
+//! for row in v.outer_iter() {
+//!     vacf.push(CorrelatorFrame { a: row.insert_axis(Axis(1)), b: None, dt: 1.0, simbox: None })
+//!         .unwrap();
+//! }
+//! let acf = vacf.finish().unwrap();
 //! assert!((acf.values[[0, 0]] - 0.5).abs() < 1e-12);  // ⟨v_d²⟩
 //! assert!((acf.values[[2, 0]] + 0.5).abs() < 1e-12);  // half a period later
 //! ```
@@ -71,7 +77,7 @@ pub use correlator::{Correlator, CorrelatorInput};
 pub use current_acf::{CurrentAcf, CurrentAcfInput};
 pub use derivative::{Derivative, DerivativeInput, Stencil};
 pub use dipole_acf::{DipoleAcf, DipoleAcfInput};
-pub use msd::{Msd, MsdInput};
+pub use msd::Msd;
 pub use onsager::{OnsagerCorrelation, OnsagerInput};
 pub use options::{LagKernel, LagKernelKind, MeanPolicy, Normalization, Origins, Reduction};
 pub use reorientation_acf::{ReorientationAcf, ReorientationAcfInput};
@@ -83,7 +89,7 @@ pub use survival::{
 };
 pub use time_correlation::TimeCorrelation;
 pub use unwrap::{Unwrap, UnwrapInput};
-pub use vacf::{Vacf, VacfInput};
+pub use vacf::Vacf;
 
 /// Series the time-series tests share.
 #[cfg(test)]

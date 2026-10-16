@@ -10,7 +10,7 @@ use crate::ff::ir::Params;
 use crate::ff::potential::flat_coords::{
     accumulate_dihedral_forces, compute_dihedral, term_table, validate_coords,
 };
-use crate::ff::potential::{ForceTerm, IndexedTerms, Potential};
+use crate::ff::potential::{Accumulator, ForceTerm, IndexedTerms, Potential};
 use molrs::core::Frame;
 use molrs::op::F;
 
@@ -82,21 +82,21 @@ impl ImproperHarmonic {
 }
 
 impl Potential for ImproperHarmonic {
-    fn calc_energy_forces(&self, coords: &[F]) -> (F, Vec<F>) {
-        let mut out = vec![0.0; coords.len()];
-        let energy = self.accumulate(coords, &mut out);
-        (energy, out)
-    }
-
-    fn accumulate(&self, coords: &[F], out: &mut [F]) -> F {
-        self.fold(coords, out, self.atom_i.len(), |t| {
-            (
-                self.atom_i[t],
-                self.atom_j[t],
-                self.atom_k[t],
-                self.atom_l[t],
-            )
-        })
+    fn evaluate(&self, coords: &[F], acc: &mut Accumulator<'_>) {
+        let energy = self.fold(
+            coords,
+            acc.forces_without_virial(),
+            self.atom_i.len(),
+            |t| {
+                (
+                    self.atom_i[t],
+                    self.atom_j[t],
+                    self.atom_k[t],
+                    self.atom_l[t],
+                )
+            },
+        );
+        acc.add_energy(energy);
     }
 }
 
@@ -104,30 +104,21 @@ impl IndexedTerms for ImproperHarmonic {
     fn terms(&self) -> Array2<u32> {
         term_table(&[&self.atom_i, &self.atom_j, &self.atom_k, &self.atom_l])
     }
-    fn calc_energy_forces_with_terms(
-        &self,
-        coords: &[F],
-        terms: ArrayView2<'_, u32>,
-    ) -> (F, Vec<F>) {
-        let mut out = vec![0.0; coords.len()];
-        let energy = self.accumulate_with_terms(coords, terms, &mut out);
-        (energy, out)
-    }
-
-    fn accumulate_with_terms(&self, coords: &[F], terms: ArrayView2<'_, u32>, out: &mut [F]) -> F {
+    fn evaluate_terms(&self, coords: &[F], terms: ArrayView2<'_, u32>, acc: &mut Accumulator<'_>) {
         debug_assert_eq!(
             terms.nrows(),
             self.atom_i.len(),
             "the row set is the force field's; only the atoms a row names may be rebound"
         );
-        self.fold(coords, out, terms.nrows(), |t| {
+        let energy = self.fold(coords, acc.forces_without_virial(), terms.nrows(), |t| {
             (
                 terms[[t, 0]] as usize,
                 terms[[t, 1]] as usize,
                 terms[[t, 2]] as usize,
                 terms[[t, 3]] as usize,
             )
-        })
+        });
+        acc.add_energy(energy);
     }
 }
 
@@ -144,23 +135,23 @@ pub fn improper_harmonic_constructor(
         .ok_or("improper_harmonic: missing \"impropers\" block")?;
     let ic = block
         .get("atomi")
-        .and_then(|c| c.as_uint())
+        .and_then(|c| c.get::<u64>())
         .ok_or("missing atomi")?;
     let jc = block
         .get("atomj")
-        .and_then(|c| c.as_uint())
+        .and_then(|c| c.get::<u64>())
         .ok_or("missing atomj")?;
     let kc = block
         .get("atomk")
-        .and_then(|c| c.as_uint())
+        .and_then(|c| c.get::<u64>())
         .ok_or("missing atomk")?;
     let lc = block
         .get("atoml")
-        .and_then(|c| c.as_uint())
+        .and_then(|c| c.get::<u64>())
         .ok_or("missing atoml")?;
     let tc = block
         .get("type")
-        .and_then(|c| c.as_string())
+        .and_then(|c| c.get::<String>())
         .ok_or("missing type")?;
 
     let n = ic.len();
@@ -197,6 +188,7 @@ pub fn improper_harmonic_constructor(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ff::potential::fixtures::OneShot;
 
     fn quad(phi: F) -> Vec<F> {
         let (s, c) = phi.sin_cos();
@@ -218,10 +210,10 @@ mod tests {
     fn energy_minimum_at_chi0() {
         // χ₀ = 60°, geometry at φ = 60° → E = 0.
         let p = single(3.0, 60.0);
-        let e = p.calc_energy_forces(&quad(60.0_f64.to_radians())).0;
+        let e = p.energy_forces_at(&quad(60.0_f64.to_radians())).0;
         assert!(e.abs() < 1e-9, "E at χ₀ got {e}");
         // φ = 90° → E = K(30°)² in radians.
-        let e2 = p.calc_energy_forces(&quad(90.0_f64.to_radians())).0;
+        let e2 = p.energy_forces_at(&quad(90.0_f64.to_radians())).0;
         let want = 3.0 * (30.0_f64.to_radians()).powi(2);
         assert!((e2 - want).abs() < 1e-9, "E got {e2} want {want}");
     }
@@ -231,15 +223,15 @@ mod tests {
         // χ₀ chosen so φ stays well away from 0 and ±π under perturbation.
         let pot = single(5.0, 20.0);
         let coords: Vec<F> = vec![0.1, 1.0, 0.2, 0.0, 0.0, 0.0, 1.0, 0.0, -0.1, 1.2, -0.8, 0.5];
-        let (_, forces) = pot.calc_energy_forces(&coords);
+        let (_, forces) = pot.energy_forces_at(&coords);
         let h = 1e-6;
         for d in 0..coords.len() {
             let mut cp = coords.clone();
             let mut cm = coords.clone();
             cp[d] += h;
             cm[d] -= h;
-            let ep = pot.calc_energy_forces(&cp).0;
-            let em = pot.calc_energy_forces(&cm).0;
+            let ep = pot.energy_forces_at(&cp).0;
+            let em = pot.energy_forces_at(&cm).0;
             let fd = -(ep - em) / (2.0 * h);
             assert!(
                 (forces[d] - fd).abs() < 1e-5,
@@ -253,7 +245,7 @@ mod tests {
     fn newtons_third_law() {
         let pot = single(5.0, 20.0);
         let coords: Vec<F> = vec![0.1, 1.0, 0.2, 0.0, 0.0, 0.0, 1.0, 0.0, -0.1, 1.2, -0.8, 0.5];
-        let (_, f) = pot.calc_energy_forces(&coords);
+        let (_, f) = pot.energy_forces_at(&coords);
         for dim in 0..3 {
             let s: F = (0..4).map(|a| f[a * 3 + dim]).sum();
             assert!(s.abs() < 1e-9, "dim {dim} force sum {s}");

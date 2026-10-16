@@ -17,6 +17,9 @@
 // The engines' numbers are kept as they printed them.
 #![allow(clippy::excessive_precision)]
 
+use crate::core::Cell;
+use crate::ff::potential::fixtures::OneShot;
+use crate::io::writer::WrittenText;
 use std::path::Path;
 
 use crate::ff::compile::PotentialCompiler;
@@ -24,13 +27,12 @@ use crate::ff::forcefield::ForceField;
 use crate::ff::ir::Params;
 use crate::ff::potential::intramolecular_pairs;
 use crate::io::amber::prmtop_forcefield::AmberPrmtopForcefieldReader;
-use crate::io::writer::ForceFieldWriter;
-use crate::io::{lammps::LammpsForcefieldWriteOptions, lammps::LammpsForcefieldWriter};
+use crate::io::lammps::LammpsForcefieldWriter;
 use molrs::core::Frame;
 use molrs::core::SimBox;
 use molrs::core::TypeLabels;
 use molrs::io::lammps::data::write_lammps_data;
-use molrs::io::read_inpcrd_str;
+use molrs::io::read_inpcrd;
 use molrs::op::F;
 
 /// One energy decomposition, kcal/mol, in sander's terms.
@@ -265,7 +267,7 @@ const CUTOFF: F = 60.0;
 /// `case`'s frame (with its full pair list), force field and coordinates.
 fn system(case: &Case) -> (Frame, ForceField, Vec<F>) {
     let (mut ff, mut frame) = AmberPrmtopForcefieldReader::new()
-        .read_system_str(case.parm)
+        .read_system(case.parm.as_bytes())
         .unwrap_or_else(|e| panic!("{}: system: {e}", case.name));
     // A prmtop states no cutoff; the CHARMM styles need theirs declared.
     for name in ["lj/charmm", "coul/charmm"] {
@@ -277,14 +279,14 @@ fn system(case: &Case) -> (Frame, ForceField, Vec<F>) {
     // The full pair list (keeping the system reader's per-pair 1-4 scales),
     // then the field's 1-4 pricing on it: a chamber file's `one_four =
     // "epsilon14"` 1-4 pairs need their ε₁₄/σ₁₄ as override cells.
-    let pairs = intramolecular_pairs(&frame, ff.special_bonds())
+    let pairs = intramolecular_pairs(&frame, ff.special_bonds(), None)
         .unwrap_or_else(|e| panic!("{}: pairs: {e}", case.name));
     frame.insert("pairs", pairs);
     ff.materialize_one_four(&mut frame)
         .unwrap_or_else(|e| panic!("{}: materialize_one_four: {e}", case.name));
-    let xyz = read_inpcrd_str(case.rst).unwrap();
+    let xyz = read_inpcrd(case.rst.as_bytes()).unwrap();
     let atoms = xyz.get("atoms").unwrap();
-    let col = |k: &str| atoms.get(k).unwrap().as_float().unwrap().to_owned();
+    let col = |k: &str| atoms.get(k).unwrap().get::<f64>().unwrap().to_owned();
     let (x, y, z) = (col("x"), col("y"), col("z"));
     let coords = (0..x.len())
         .flat_map(|i| [x[[i]], y[[i]], z[[i]]])
@@ -311,7 +313,7 @@ fn only(ff: &ForceField, category: &str, name: &str, edit: impl Fn(&mut Params))
 /// `frame` with only the `pairs` rows whose `is_14` is `want`.
 fn pairs_where(frame: &Frame, want: bool) -> Frame {
     let pairs = frame.get("pairs").unwrap();
-    let flags = pairs.get("is_14").unwrap().as_bool().unwrap();
+    let flags = pairs.get("is_14").unwrap().get::<bool>().unwrap();
     let keep: Vec<usize> = (0..flags.len()).filter(|&r| flags[[r]] == want).collect();
     let mut out = frame.clone();
     out.insert("pairs", pairs.select_rows(&keep).unwrap());
@@ -322,7 +324,7 @@ fn energy(ff: &ForceField, frame: &Frame, coords: &[F]) -> F {
     PotentialCompiler::new(ff)
         .compile(frame)
         .unwrap()
-        .calc_energy(coords)
+        .energy_at(coords)
 }
 
 /// The energy of `(category, name)` alone, 0 when `ff` has no such style.
@@ -415,43 +417,59 @@ fn write_lammps(dir: &Path, frame: &Frame, ff: &ForceField, coords: &[F]) {
     for (axis, key) in ["x", "y", "z"].into_iter().enumerate() {
         let col: Vec<F> = coords.iter().skip(axis).step_by(3).copied().collect();
         atoms
-            .insert(key, ndarray::Array1::from_vec(col).into_dyn())
+            .insert(key, ndarray::Array1::from_vec(col).into_dyn(), None)
             .unwrap();
     }
     if atoms.get("mol_id").is_none() {
         let mol = molecules(frame);
         atoms
-            .insert("mol_id", ndarray::Array1::from_vec(mol).into_dyn())
+            .insert("mol_id", ndarray::Array1::from_vec(mol).into_dyn(), None)
             .unwrap();
     }
     lammps.insert("atoms", atoms);
-    lammps.simbox =
-        Some(SimBox::cube(400.0, ndarray::array![-200.0, -200.0, -200.0], [false; 3]).unwrap());
+    lammps.simbox = Some(
+        SimBox::new(
+            Cell::Lengths([400.0; 3]),
+            [-200.0, -200.0, -200.0],
+            [false; 3],
+        )
+        .unwrap(),
+    );
     let mut ff = without_style_param(ff, "one_four");
     for style in ["lj/cut", "coul/cut"] {
         if let Some(s) = ff.get_style_mut("pair", style) {
             s.set_param("cutoff", CUTOFF);
         }
     }
-    write_lammps_data(dir.join("data.lmp"), &lammps).unwrap();
+    write_lammps_data(dir.join("data.lmp").as_path(), &lammps).unwrap();
     let labels = TypeLabels::from_frame(&lammps).unwrap();
-    let options = LammpsForcefieldWriteOptions {
-        precision: 17,
-        cmap_file: lammps.get("cmaps").map(|_| "charmm.cmap".to_owned()),
-        ..LammpsForcefieldWriteOptions::default()
+    let writer = match lammps.get("cmaps").map(|_| "charmm.cmap".to_owned()) {
+        Some(file) => LammpsForcefieldWriter::new(&labels)
+            .with_precision(17)
+            .with_cmap_file(file),
+        None => LammpsForcefieldWriter::new(&labels).with_precision(17),
     };
-    let writer = LammpsForcefieldWriter::with_options(&labels, options);
     if lammps.get("cmaps").is_some() {
-        std::fs::write(dir.join("charmm.cmap"), writer.write_cmap_str(&ff).unwrap()).unwrap();
+        std::fs::write(
+            dir.join("charmm.cmap"),
+            crate::io::writer::written_with(|b| writer.write_cmap(b, &ff)).unwrap(),
+        )
+        .unwrap();
     }
-    std::fs::write(dir.join("system.ff"), writer.write_str(&ff).unwrap()).unwrap();
+    std::fs::write(dir.join("system.ff"), writer.written(&ff).unwrap()).unwrap();
     let coul = ["coul/cut", "coul/charmm"]
         .iter()
         .find_map(|s| ff.get_style("pair", s))
         .unwrap();
     std::fs::write(
         dir.join("coulomb.txt"),
-        format!("{:?}\n", coul.params().get("coulomb").unwrap()),
+        format!(
+            "{:?}\n",
+            coul.params()
+                .get("coulomb")
+                .and_then(|v| v.as_num())
+                .unwrap()
+        ),
     )
     .unwrap();
     // Per-molecule 1-4 weights, when some differ from `special_bonds` (a
@@ -468,11 +486,14 @@ fn write_lammps(dir: &Path, frame: &Frame, ff: &ForceField, coords: &[F]) {
 fn molecule_weights(frame: &Frame, ff: &ForceField) -> Option<String> {
     let mol = molecules(frame);
     let pairs = frame.get("pairs")?;
-    let col = |k: &str| pairs.get(k).unwrap().as_uint().unwrap().to_owned();
-    let (ai, flags) = (col("atomi"), pairs.get("is_14").unwrap().as_bool().unwrap());
+    let col = |k: &str| pairs.get(k).unwrap().get::<u64>().unwrap().to_owned();
+    let (ai, flags) = (
+        col("atomi"),
+        pairs.get("is_14").unwrap().get::<bool>().unwrap(),
+    );
     let cell = |k: &str, r: usize, default: F| -> F {
         match (pairs.get(k), pairs.validity(k)) {
-            (Some(c), valid) if valid.is_none_or(|m| m[r]) => c.as_float().unwrap()[[r]],
+            (Some(c), valid) if valid.is_none_or(|m| m[r]) => c.get::<f64>().unwrap()[[r]],
             _ => default,
         }
     };
@@ -505,14 +526,28 @@ fn without_style_param(ff: &ForceField, key: &str) -> ForceField {
     let mut out = ff.empty_like();
     for style in ff.styles() {
         let mut params = Params::new();
-        for (k, v) in style.params().iter().filter(|(k, _)| *k != key) {
+        for (k, v) in style
+            .params()
+            .iter()
+            .filter_map(|(k, v)| v.as_num().map(|x| (k, x)))
+            .filter(|(k, _)| *k != key)
+        {
             params.set(k, v);
         }
-        for (k, v) in style.params().iter_strings().filter(|(k, _)| *k != key) {
-            params.set_str(k, v);
+        for (k, v) in style
+            .params()
+            .iter()
+            .filter_map(|(k, v)| v.as_text().map(|s| (k, s)))
+            .filter(|(k, _)| *k != key)
+        {
+            params.set(k, v);
         }
-        for (k, v) in style.params().iter_arrays() {
-            params.set_array(k, v.clone());
+        for (k, v) in style
+            .params()
+            .iter()
+            .filter_map(|(k, v)| v.as_array().map(|a| (k, a)))
+        {
+            params.set(k, v.clone());
         }
         let s = out
             .def_style(style.category(), style.name(), params)
@@ -539,8 +574,8 @@ fn molecules(frame: &Frame) -> Vec<molrs::op::Idx> {
     }
     let bonds = frame.get("bonds").unwrap();
     let (i, j) = (
-        bonds.get("atomi").unwrap().as_uint().unwrap(),
-        bonds.get("atomj").unwrap().as_uint().unwrap(),
+        bonds.get("atomi").unwrap().get::<u64>().unwrap(),
+        bonds.get("atomj").unwrap().get::<u64>().unwrap(),
     );
     for (&a, &b) in i.iter().zip(j.iter()) {
         let (ra, rb) = (find(&mut root, a as usize), find(&mut root, b as usize));
@@ -572,28 +607,33 @@ fn gaff2_typing_prices_the_gaff2_case_as_sander() {
     let case = cases().into_iter().find(|c| c.name == "gaff2").unwrap();
     let (prmtop, _, coords) = system(&case);
     let atoms = prmtop.get("atoms").unwrap();
-    let element = atoms.get("element").unwrap().as_string().unwrap();
-    let types = atoms.get("type").unwrap().as_string().unwrap();
+    let z = atoms
+        .get(keys::ATOMIC_NUMBER)
+        .unwrap()
+        .get::<u64>()
+        .unwrap();
+    let types = atoms.get("type").unwrap().get::<String>().unwrap();
     let mut mol = molrs::core::Atomistic::new();
-    let ids: Vec<_> = (0..element.len())
+    let ids: Vec<_> = (0..z.len())
         .map(|i| {
-            let id = mol.add_atom_xyz(
-                &element[[i]],
-                coords[3 * i],
-                coords[3 * i + 1],
-                coords[3 * i + 2],
-            );
-            mol.set_atom(id, keys::TYPE, types[[i]].as_str()).unwrap();
-            id
+            mol.add_atom(crate::props! {
+                keys::ATOMIC_NUMBER => u8::try_from(z[[i]]).unwrap(),
+                keys::X => coords[3 * i],
+                keys::Y => coords[3 * i + 1],
+                keys::Z => coords[3 * i + 2],
+                keys::TYPE => types[[i]].as_str(),
+            })
+            .unwrap()
         })
         .collect();
     let bonds = prmtop.get("bonds").unwrap();
     let (bi, bj) = (
-        bonds.get("atomi").unwrap().as_uint().unwrap(),
-        bonds.get("atomj").unwrap().as_uint().unwrap(),
+        bonds.get("atomi").unwrap().get::<u64>().unwrap(),
+        bonds.get("atomj").unwrap().get::<u64>().unwrap(),
     );
     for (&i, &j) in bi.iter().zip(bj.iter()) {
-        mol.add_bond(ids[i as usize], ids[j as usize]).unwrap();
+        mol.add_bond(ids[i as usize], ids[j as usize], crate::props! {})
+            .unwrap();
     }
 
     let mut gaff = Typing::new(GaffTypifier::new(GaffParameterSet::Gaff2));
@@ -604,11 +644,17 @@ fn gaff2_typing_prices_the_gaff2_case_as_sander() {
     typed_atoms
         .insert(
             "charge",
-            atoms.get("charge").unwrap().as_float().unwrap().to_owned(),
+            atoms
+                .get("charge")
+                .unwrap()
+                .get::<f64>()
+                .unwrap()
+                .to_owned(),
+            None,
         )
         .unwrap();
     frame.insert("atoms", typed_atoms);
-    let pairs = intramolecular_pairs(&frame, ff.special_bonds()).unwrap();
+    let pairs = intramolecular_pairs(&frame, ff.special_bonds(), None).unwrap();
     frame.insert("pairs", pairs);
 
     // tleap converts θ₀ to radians with π = 3.141594 (as it writes a phase of

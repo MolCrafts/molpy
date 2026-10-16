@@ -4,9 +4,10 @@ use std::collections::{HashMap, HashSet, VecDeque};
 
 use crate::core::Atomistic;
 use crate::core::BondOrder;
-use crate::core::NodeId;
+use crate::core::MolRsError;
 use crate::core::Topology;
 use crate::core::keys;
+use crate::core::{NodeId, RelationId};
 
 /// How rotatable-bond detection reads a bond whose class is
 /// [`BondOrder::Unknown`] — no `bond_type` written, as from a connectivity-only
@@ -145,26 +146,6 @@ fn downstream_indices(topo: &Topology, j: usize, k: usize) -> Vec<usize> {
     result
 }
 
-/// Detect rotatable bonds in a molecular graph.
-///
-/// Returns a list of `(NodeId, NodeId)` pairs. A bond is rotatable when its
-/// class is single, both endpoints have degree > 1, and it lies on no ring;
-/// `unknown` decides a bond with no class written.
-///
-/// Connectivity, degree, ring membership and traversal all come from the
-/// canonical [`Topology`] snapshot built from the graph's bonds, so ring
-/// membership is `Topology`'s SSSR (correct for fused and bridged rings).
-pub fn perceive_rotatable_bonds(
-    graph: &Atomistic,
-    unknown: UnknownBondPolicy,
-) -> Vec<(NodeId, NodeId)> {
-    let (ids, _topo, rotatable) = scan_rotatable(graph, unknown);
-    rotatable
-        .into_iter()
-        .map(|(j, k)| (ids[j], ids[k]))
-        .collect()
-}
-
 /// BFS to find all atoms downstream of bond (j, k) on the k-side.
 ///
 /// Starting from `k`, traverses all connected atoms without crossing back
@@ -179,10 +160,18 @@ pub fn downstream_atoms(
     downstream_indices(&topo, id_to_idx[&j], id_to_idx[&k])
 }
 
-/// Detect rotatable bonds and return them as [`RotatableBond`] structs with
-/// positional indices and downstream atom sets. `unknown` as in
-/// [`perceive_rotatable_bonds`].
-pub fn perceive_rotatable_bonds_with_downstream(
+/// Detect the rotatable bonds of a molecular graph, each with the atoms that
+/// rotate about it.
+///
+/// A bond is rotatable when its class is single, both endpoints have
+/// degree > 1, and it lies on no ring; `unknown` decides a bond with no class
+/// written. Each [`RotatableBond`] names its axis and its downstream atoms by
+/// positional index (the order of [`Atomistic::atoms`]).
+///
+/// Connectivity, degree, ring membership and traversal all come from the
+/// canonical [`Topology`] snapshot built from the graph's bonds, so ring
+/// membership is `Topology`'s SSSR (correct for fused and bridged rings).
+pub fn perceive_rotatable_bonds(
     graph: &Atomistic,
     unknown: UnknownBondPolicy,
 ) -> Vec<RotatableBond> {
@@ -201,29 +190,35 @@ pub fn perceive_rotatable_bonds_with_downstream(
 /// rotatable single bond.
 const IS_ROTATABLE: &str = "is_rotatable";
 
-/// Perceive rotatable bonds and write them onto a clone of `mol`.
+/// Perceive rotatable bonds and write them onto `mol`, in place.
 ///
-/// The [`perceive_rotatable_bonds`] side table — atom **pairs** — resolved back
-/// to bond ids: every bond receives `is_rotatable` (`0` / `1`), the
-/// non-rotatable ones explicitly `0`. `unknown` decides a bond with no class
-/// written. `mol` is left untouched.
-pub fn assign_rotatable_bonds(mol: &Atomistic, unknown: UnknownBondPolicy) -> Atomistic {
+/// The [`perceive_rotatable_bonds`] answer — atom **pairs** — resolved back to
+/// bond ids: every bond receives `is_rotatable` (`0` / `1`), the non-rotatable
+/// ones explicitly `0`. `unknown` decides a bond with no class written.
+///
+/// # Errors
+///
+/// [`MolRsError`] when a flag cannot be written (a bond column holding the key
+/// under a foreign dtype); `mol` may then be partly annotated.
+pub fn assign_rotatable_bonds(
+    mol: &mut Atomistic,
+    unknown: UnknownBondPolicy,
+) -> Result<(), MolRsError> {
     let unordered = |a: NodeId, b: NodeId| if a <= b { (a, b) } else { (b, a) };
-    let rotatable: std::collections::HashSet<(NodeId, NodeId)> =
-        perceive_rotatable_bonds(mol, unknown)
-            .into_iter()
-            .map(|(a, b)| unordered(a, b))
-            .collect();
-    let mut out = mol.clone();
-    let bonds: Vec<(crate::core::RelationId, NodeId, NodeId)> = out
+    let (ids, _topo, pairs) = scan_rotatable(mol, unknown);
+    let rotatable: HashSet<(NodeId, NodeId)> = pairs
+        .into_iter()
+        .map(|(j, k)| unordered(ids[j], ids[k]))
+        .collect();
+    let bonds: Vec<(RelationId, NodeId, NodeId)> = mol
         .bonds()
         .map(|(bid, bond)| (bid, bond.nodes[0], bond.nodes[1]))
         .collect();
     for (bid, a, b) in bonds {
         let flag = i32::from(rotatable.contains(&unordered(a, b)));
-        let _ = out.set_bond_prop(bid, IS_ROTATABLE, flag);
+        mol.set_bond(bid, IS_ROTATABLE, flag)?;
     }
-    out
+    Ok(())
 }
 
 #[cfg(test)]
@@ -239,18 +234,26 @@ mod tests {
     }
 
     use super::*;
-    use crate::core::Atom;
     use crate::core::BondNumber;
+    use crate::core::{Element, Props, keys};
+    use crate::props;
+
+    /// A carbon atom: detection reads only topology, but every atom of an
+    /// `Atomistic` carries a species.
+    fn carbon() -> Props {
+        props! { keys::ATOMIC_NUMBER => Element::C }
+    }
 
     /// Build a chain graph (topology only, coords irrelevant for detection).
     fn chain(n: usize) -> Atomistic {
         let mut g = Atomistic::new();
         let mut ids = Vec::new();
         for _ in 0..n {
-            ids.push(g.add_atom(Atom::new()));
+            ids.push(g.add_atom(carbon()).unwrap());
         }
         for i in 0..n - 1 {
-            g.add_bond(ids[i], ids[i + 1]).expect("add chain bond");
+            g.add_bond(ids[i], ids[i + 1], props! {})
+                .expect("add chain bond");
         }
         g
     }
@@ -265,12 +268,12 @@ mod tests {
     #[test]
     fn test_ring_no_rotatable_bonds() {
         let mut g = Atomistic::new();
-        let a = g.add_atom(Atom::new());
-        let b = g.add_atom(Atom::new());
-        let c = g.add_atom(Atom::new());
-        g.add_bond(a, b).expect("add bond");
-        g.add_bond(b, c).expect("add bond");
-        g.add_bond(c, a).expect("add bond");
+        let a = g.add_atom(carbon()).unwrap();
+        let b = g.add_atom(carbon()).unwrap();
+        let c = g.add_atom(carbon()).unwrap();
+        g.add_bond(a, b, props! {}).expect("add bond");
+        g.add_bond(b, c, props! {}).expect("add bond");
+        g.add_bond(c, a, props! {}).expect("add bond");
 
         assert_eq!(
             perceive_rotatable_bonds(&g, UnknownBondPolicy::NotRotatable).len(),
@@ -284,14 +287,14 @@ mod tests {
         // 0-1 edge. Every bond is a ring bond -> none rotatable. The previous
         // union-find heuristic could mis-mark shared/bridge bonds; SSSR cannot.
         let mut g = Atomistic::new();
-        let v: Vec<_> = (0..10).map(|_| g.add_atom(Atom::new())).collect();
+        let v: Vec<_> = (0..10).map(|_| g.add_atom(carbon()).unwrap()).collect();
         // ring A: 0-1-2-3-4-5-0
         for (a, b) in [(0, 1), (1, 2), (2, 3), (3, 4), (4, 5), (5, 0)] {
-            g.add_bond(v[a], v[b]).expect("add bond");
+            g.add_bond(v[a], v[b], props! {}).expect("add bond");
         }
         // ring B: 0-1 shared, plus 1-6-7-8-9-0
         for (a, b) in [(1, 6), (6, 7), (7, 8), (8, 9), (9, 0)] {
-            g.add_bond(v[a], v[b]).expect("add bond");
+            g.add_bond(v[a], v[b], props! {}).expect("add bond");
         }
         assert_eq!(
             perceive_rotatable_bonds(&g, UnknownBondPolicy::NotRotatable).len(),
@@ -315,13 +318,25 @@ mod tests {
     #[test]
     fn test_detect_with_downstream() {
         let g = chain(5);
-        let bonds = perceive_rotatable_bonds_with_downstream(&g, UnknownBondPolicy::NotRotatable);
+        let bonds = perceive_rotatable_bonds(&g, UnknownBondPolicy::NotRotatable);
         assert_eq!(bonds.len(), 2);
 
         for rb in &bonds {
             assert!(!rb.downstream.is_empty());
             assert!(rb.downstream.contains(&rb.k));
         }
+    }
+
+    #[test]
+    fn assign_rotatable_bonds_flags_every_bond() {
+        // C0-C1-C2-C3: only the middle bond joins two non-terminal atoms.
+        let mut g = chain(4);
+        assign_rotatable_bonds(&mut g, UnknownBondPolicy::NotRotatable).unwrap();
+        let flags: Vec<Option<i32>> = g
+            .bonds()
+            .map(|(_, bond)| bond.props.get_int(IS_ROTATABLE))
+            .collect();
+        assert_eq!(flags, vec![Some(0), Some(1), Some(0)]);
     }
 
     /// A 4-chain whose bonds carry no class: the middle bond rotates only
@@ -363,7 +378,7 @@ mod tests {
             .map(|(id, _)| id)
             .nth(1)
             .expect("chain(4) has 3 bonds");
-        g.set_bond_type(middle, BondOrder::Double)
+        g.set_bond_class(middle, BondOrder::Double, BondNumber::Double)
             .expect("set bond class");
         assert!(perceive_rotatable_bonds(&g, UnknownBondPolicy::AsSingle).is_empty());
     }
@@ -382,20 +397,20 @@ mod tests {
         //              |
         //              B2 - B2'
         let mut g = Atomistic::new();
-        let center = g.add_atom(Atom::new());
-        let b0 = g.add_atom(Atom::new());
-        let b0p = g.add_atom(Atom::new());
-        let b1 = g.add_atom(Atom::new());
-        let b1p = g.add_atom(Atom::new());
-        let b2 = g.add_atom(Atom::new());
-        let b2p = g.add_atom(Atom::new());
+        let center = g.add_atom(carbon()).unwrap();
+        let b0 = g.add_atom(carbon()).unwrap();
+        let b0p = g.add_atom(carbon()).unwrap();
+        let b1 = g.add_atom(carbon()).unwrap();
+        let b1p = g.add_atom(carbon()).unwrap();
+        let b2 = g.add_atom(carbon()).unwrap();
+        let b2p = g.add_atom(carbon()).unwrap();
 
-        g.add_bond(center, b0).expect("add bond");
-        g.add_bond(b0, b0p).expect("add bond");
-        g.add_bond(center, b1).expect("add bond");
-        g.add_bond(b1, b1p).expect("add bond");
-        g.add_bond(center, b2).expect("add bond");
-        g.add_bond(b2, b2p).expect("add bond");
+        g.add_bond(center, b0, props! {}).expect("add bond");
+        g.add_bond(b0, b0p, props! {}).expect("add bond");
+        g.add_bond(center, b1, props! {}).expect("add bond");
+        g.add_bond(b1, b1p, props! {}).expect("add bond");
+        g.add_bond(center, b2, props! {}).expect("add bond");
+        g.add_bond(b2, b2p, props! {}).expect("add bond");
 
         assert_eq!(
             perceive_rotatable_bonds(&g, UnknownBondPolicy::NotRotatable).len(),

@@ -16,7 +16,7 @@ pub trait FrameAccess {
     /// The column `col_key` inside block `block_key`, or `None` when either key is absent.
     ///
     /// A missing block and a missing column are both `None`. A present column of
-    /// another dtype is still `Some`; `as_*` on that column is the dtype check.
+    /// another dtype is still `Some`; `get::<T>` on that column is the dtype check.
     fn column<'a>(&'a self, block_key: &str, col_key: &str) -> Option<crate::core::ColumnView<'a>>;
     /// Returns a reference to the simulation box, if present.
     fn simbox_ref(&self) -> Option<&SimBox>;
@@ -114,10 +114,18 @@ mod tests {
         let mut frame = Frame::new();
         let mut atoms = Block::new();
         atoms
-            .insert("x", Array1::from_vec(vec![1.0 as F, 2.0, 3.0]).into_dyn())
+            .insert(
+                "x",
+                Array1::from_vec(vec![1.0 as F, 2.0, 3.0]).into_dyn(),
+                None,
+            )
             .unwrap();
         atoms
-            .insert("id", Array1::from_vec(vec![10 as Idx, 20, 30]).into_dyn())
+            .insert(
+                "id",
+                Array1::from_vec(vec![10 as Idx, 20, 30]).into_dyn(),
+                None,
+            )
             .unwrap();
         frame.insert("atoms", atoms);
         frame.meta.insert("title", "Test");
@@ -159,14 +167,16 @@ mod tests {
 
     fn column_is_float(f: &impl FrameAccess, block: &str, col: &str) -> bool {
         f.visit_block(block, |b| {
-            b.column(col).and_then(|c| c.as_float()).is_some()
+            b.column(col).and_then(|c| c.get::<f64>()).is_some()
         })
         .unwrap_or(false)
     }
 
     fn column_is_uint(f: &impl FrameAccess, block: &str, col: &str) -> bool {
-        f.visit_block(block, |b| b.column(col).and_then(|c| c.as_uint()).is_some())
-            .unwrap_or(false)
+        f.visit_block(block, |b| {
+            b.column(col).and_then(|c| c.get::<u64>()).is_some()
+        })
+        .unwrap_or(false)
     }
 
     #[test]
@@ -174,7 +184,7 @@ mod tests {
         fn get_x_data(f: &impl FrameAccess) -> Option<Vec<F>> {
             f.visit_block("atoms", |b| {
                 b.column("x")
-                    .and_then(|c| c.as_float())
+                    .and_then(|c| c.get::<f64>())
                     .map(|a| a.iter().copied().collect())
             })
             .flatten()

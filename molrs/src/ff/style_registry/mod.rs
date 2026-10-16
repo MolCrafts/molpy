@@ -280,7 +280,7 @@ impl RegisteredStyle {
         tp: &[(&str, &Params)],
         expressions: Option<ExpressionCompiler>,
     ) -> Option<Result<RegisteredStyle, IrError>> {
-        let expression = style.get_str("expression")?;
+        let expression = style.get("expression").and_then(|v| v.as_text())?;
         let spec = fallback_spec(category, name, style, tp, expression);
         let Some(compile) = expressions else {
             return Some(Err(IrError::NoKernel {
@@ -511,7 +511,7 @@ fn frame_coords(frame: &Frame) -> Vec<F> {
     let Some(atoms) = frame.get("atoms") else {
         return Vec::new();
     };
-    let axis = |k: &str| atoms.get(k).and_then(|c| c.as_float());
+    let axis = |k: &str| atoms.get(k).and_then(|c| c.get::<f64>());
     let (Some(x), Some(y), Some(z)) = (axis("x"), axis("y"), axis("z")) else {
         return Vec::new();
     };
@@ -546,12 +546,13 @@ struct RegisteredForm {
 /// else under a taken name is [`IrError::Conflict`], mirroring the force
 /// field's own conflict rule.
 ///
-/// [`PotentialCompiler`](crate::ff::compile::PotentialCompiler) reads the
-/// process-wide registry ([`register_style`], [`with_global_registry`], …) unless it
-/// is handed one ([`PotentialCompiler::with_registry`]), which is how a test
-/// extends the IR without touching anything another test sees.
-///
-/// [`PotentialCompiler::with_registry`]: crate::ff::compile::PotentialCompiler::with_registry
+/// A force field is read against the process-wide registry
+/// ([`register_style`], [`with_global_registry`], …) unless it carries its
+/// own ([`ForceField::with_registry`](crate::ff::forcefield::ForceField::with_registry)),
+/// which is how a test extends the IR without touching anything another test
+/// sees: [`ForceField::def_style`](crate::ff::forcefield::ForceField::def_style),
+/// the [`PotentialCompiler`](crate::ff::compile::PotentialCompiler) and the
+/// force-field writers all read the force field's registry.
 #[derive(Clone, Default)]
 pub struct Registry {
     categories: BTreeMap<String, RegisteredCategory>,

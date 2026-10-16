@@ -1,5 +1,5 @@
 //! LAMMPS run logs for the WASM API — the face of `molrs::io::lammps::log`
-//! (`io::read_lammps_log_str`, `io::lammps::is_lammps_log`).
+//! (`io::read_lammps_log`, `io::lammps::is_lammps_log`).
 //!
 //! A thermo table is the one thing a running simulation emits that a chart
 //! wants, and it arrives as text — so the browser reads it directly rather
@@ -7,7 +7,7 @@
 //!
 //! | JS function | molrs |
 //! |-------------|-------|
-//! | `readLammpsLogStr(text, style?)` | `io::read_lammps_log_str` → `LammpsLog` |
+//! | `readLammpsLog(source, style?)` | `io::read_lammps_log` → `LammpsLog` |
 //! | `isLammpsLog(text)` | `io::lammps::is_lammps_log` |
 //!
 //! The tables come back whole. Downsampling belongs to whoever is drawing:
@@ -16,7 +16,7 @@
 
 use wasm_bindgen::prelude::*;
 
-/// Parse a LAMMPS log's text into molrs's `LammpsLog` record.
+/// Parse a LAMMPS log — its text or bytes — into molrs's `LammpsLog` record.
 ///
 /// The object has the Rust and Python record's fields, under the same
 /// (snake_case) names: `version`, `header`, `runs`, `total_wall_time`,
@@ -31,14 +31,24 @@ use wasm_bindgen::prelude::*;
 /// # Example (JavaScript)
 ///
 /// ```js
-/// const log = readLammpsLogStr(await file.text());
+/// const log = readLammpsLog(await file.text());
 /// const thermo = log.runs[0].thermo;
 /// const temp = thermo.columns.indexOf("Temp");
 /// const series = thermo.rows.map((row) => row[temp]);
 /// ```
-#[wasm_bindgen(js_name = readLammpsLogStr)]
-pub fn read_lammps_log_str(text: &str, style: Option<String>) -> Result<JsValue, JsValue> {
-    let log = molrs::io::read_lammps_log_str(text, "", style.as_deref().unwrap_or("default"));
+///
+/// # Errors
+///
+/// Throws if `source` is neither a string nor a `Uint8Array`, or is not
+/// UTF-8 text.
+#[wasm_bindgen(js_name = readLammpsLog)]
+pub fn read_lammps_log(
+    source: &crate::io::JsSource,
+    style: Option<String>,
+) -> Result<JsValue, JsValue> {
+    let bytes = crate::io::source_bytes("readLammpsLog", source)?;
+    let log = molrs::io::read_lammps_log(bytes.as_slice(), style.as_deref().unwrap_or("default"))
+        .map_err(|e| JsValue::from_str(&format!("LAMMPS log read error: {e}")))?;
     serde_wasm_bindgen::to_value(&log)
         .map_err(|e| JsValue::from_str(&format!("LAMMPS log serialization error: {e}")))
 }
@@ -46,7 +56,7 @@ pub fn read_lammps_log_str(text: &str, style: Option<String>) -> Result<JsValue,
 /// True when `text` holds a LAMMPS run — molrs `io::lammps::is_lammps_log`.
 ///
 /// Keys on the `Per MPI rank memory allocation` line each run opens with, as
-/// `readLammpsLogStr` does: a banner alone (a run that died in setup) has
+/// `readLammpsLog` does: a banner alone (a run that died in setup) has
 /// nothing to read. Cheap enough to run on a file's first bytes.
 #[wasm_bindgen(js_name = isLammpsLog)]
 pub fn is_lammps_log(text: &str) -> bool {
@@ -77,7 +87,7 @@ Loop time of 1.0 on 1 procs for 1000 steps with 10 atoms
 Total wall time: 0:00:02
 ";
         assert!(is_lammps_log(text));
-        let log = read_lammps_log_str(text, None).unwrap();
+        let log = read_lammps_log(&crate::io::test_fixtures::text(text), None).unwrap();
         let runs = Array::from(&get(&log, "runs"));
         assert_eq!(runs.length(), 2);
         assert!(get(&runs.get(0), "thermo").is_undefined());
@@ -90,7 +100,7 @@ Total wall time: 0:00:02
         assert_eq!(rows.length(), 2);
         assert_eq!(Array::from(&rows.get(1)).get(1).as_f64(), Some(301.25));
         assert!(!is_lammps_log("LAMMPS"));
-        let empty = read_lammps_log_str("LAMMPS", None).unwrap();
+        let empty = read_lammps_log(&crate::io::test_fixtures::text("LAMMPS"), None).unwrap();
         assert_eq!(Array::from(&get(&empty, "runs")).length(), 0);
     }
 }

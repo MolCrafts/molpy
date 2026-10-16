@@ -10,7 +10,7 @@ use crate::ff::ir::Params;
 use crate::ff::potential::flat_coords::{
     accumulate_dihedral_forces, compute_dihedral, term_table, validate_coords,
 };
-use crate::ff::potential::{ForceTerm, IndexedTerms, Potential};
+use crate::ff::potential::{Accumulator, ForceTerm, IndexedTerms, Potential};
 use molrs::core::Frame;
 use molrs::op::F;
 
@@ -73,21 +73,21 @@ impl DihedralOpls {
 }
 
 impl Potential for DihedralOpls {
-    fn calc_energy_forces(&self, coords: &[F]) -> (F, Vec<F>) {
-        let mut out = vec![0.0; coords.len()];
-        let energy = self.accumulate(coords, &mut out);
-        (energy, out)
-    }
-
-    fn accumulate(&self, coords: &[F], out: &mut [F]) -> F {
-        self.fold(coords, out, self.atom_i.len(), |t| {
-            (
-                self.atom_i[t],
-                self.atom_j[t],
-                self.atom_k[t],
-                self.atom_l[t],
-            )
-        })
+    fn evaluate(&self, coords: &[F], acc: &mut Accumulator<'_>) {
+        let energy = self.fold(
+            coords,
+            acc.forces_without_virial(),
+            self.atom_i.len(),
+            |t| {
+                (
+                    self.atom_i[t],
+                    self.atom_j[t],
+                    self.atom_k[t],
+                    self.atom_l[t],
+                )
+            },
+        );
+        acc.add_energy(energy);
     }
 }
 
@@ -95,30 +95,21 @@ impl IndexedTerms for DihedralOpls {
     fn terms(&self) -> Array2<u32> {
         term_table(&[&self.atom_i, &self.atom_j, &self.atom_k, &self.atom_l])
     }
-    fn calc_energy_forces_with_terms(
-        &self,
-        coords: &[F],
-        terms: ArrayView2<'_, u32>,
-    ) -> (F, Vec<F>) {
-        let mut out = vec![0.0; coords.len()];
-        let energy = self.accumulate_with_terms(coords, terms, &mut out);
-        (energy, out)
-    }
-
-    fn accumulate_with_terms(&self, coords: &[F], terms: ArrayView2<'_, u32>, out: &mut [F]) -> F {
+    fn evaluate_terms(&self, coords: &[F], terms: ArrayView2<'_, u32>, acc: &mut Accumulator<'_>) {
         debug_assert_eq!(
             terms.nrows(),
             self.atom_i.len(),
             "the row set is the force field's; only the atoms a row names may be rebound"
         );
-        self.fold(coords, out, terms.nrows(), |t| {
+        let energy = self.fold(coords, acc.forces_without_virial(), terms.nrows(), |t| {
             (
                 terms[[t, 0]] as usize,
                 terms[[t, 1]] as usize,
                 terms[[t, 2]] as usize,
                 terms[[t, 3]] as usize,
             )
-        })
+        });
+        acc.add_energy(energy);
     }
 }
 
@@ -135,23 +126,23 @@ pub fn dihedral_opls_constructor(
         .ok_or("dihedral_opls: missing \"dihedrals\" block")?;
     let ic = block
         .get("atomi")
-        .and_then(|c| c.as_uint())
+        .and_then(|c| c.get::<u64>())
         .ok_or("missing atomi")?;
     let jc = block
         .get("atomj")
-        .and_then(|c| c.as_uint())
+        .and_then(|c| c.get::<u64>())
         .ok_or("missing atomj")?;
     let kc = block
         .get("atomk")
-        .and_then(|c| c.as_uint())
+        .and_then(|c| c.get::<u64>())
         .ok_or("missing atomk")?;
     let lc = block
         .get("atoml")
-        .and_then(|c| c.as_uint())
+        .and_then(|c| c.get::<u64>())
         .ok_or("missing atoml")?;
     let tc = block
         .get("type")
-        .and_then(|c| c.as_string())
+        .and_then(|c| c.get::<String>())
         .ok_or("missing type")?;
 
     let n = ic.len();
@@ -188,7 +179,7 @@ pub fn dihedral_opls_constructor(
         let label = tc[idx].as_str();
         if let Some(key) = ["periodicity1", "phase1"]
             .into_iter()
-            .find(|key| p.get(key).is_some())
+            .find(|key| p.get(key).and_then(|v| v.as_num()).is_some())
         {
             return Err(param_reads::bad(
                 "opls",
@@ -220,6 +211,7 @@ pub fn dihedral_opls_constructor(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ff::potential::fixtures::OneShot;
 
     /// Build a 4-atom geometry at a target dihedral φ in the xy/z layout used
     /// by the MMFF torsion test, then read it back.
@@ -247,16 +239,16 @@ mod tests {
         // φ at the reference geometry: l=(1, cos φ, sin φ) gives dihedral = φ.
         let at = |c: &[F]| compute_dihedral(c, 0, 1, 2, 3);
         // F1 term: E(0)=F1, E(π)=0.
-        let e0 = single(2.0, 0.0, 0.0, 0.0).calc_energy_forces(&quad(0.0)).0;
+        let e0 = single(2.0, 0.0, 0.0, 0.0).energy_forces_at(&quad(0.0)).0;
         let epi = single(2.0, 0.0, 0.0, 0.0)
-            .calc_energy_forces(&quad(std::f64::consts::PI))
+            .energy_forces_at(&quad(std::f64::consts::PI))
             .0;
         assert!((e0 - 2.0).abs() < 1e-9, "F1 E(0) got {e0}");
         assert!(epi.abs() < 1e-9, "F1 E(pi) got {epi}");
         // F2 term: E(0)=0, E(π/2)=F2.
         let c = quad(std::f64::consts::FRAC_PI_2);
         assert!((at(&c) - std::f64::consts::FRAC_PI_2).abs() < 1e-9);
-        let e = single(0.0, 3.0, 0.0, 0.0).calc_energy_forces(&c).0;
+        let e = single(0.0, 3.0, 0.0, 0.0).energy_forces_at(&c).0;
         assert!((e - 3.0).abs() < 1e-9, "F2 E(pi/2) got {e}");
     }
 
@@ -265,15 +257,15 @@ mod tests {
         let pot = single(1.3, -0.7, 0.9, 0.4);
         // A generic, non-degenerate geometry.
         let coords: Vec<F> = vec![0.1, 1.0, 0.2, 0.0, 0.0, 0.0, 1.0, 0.0, -0.1, 1.2, -0.8, 0.5];
-        let (_, forces) = pot.calc_energy_forces(&coords);
+        let (_, forces) = pot.energy_forces_at(&coords);
         let h = 1e-6;
         for d in 0..coords.len() {
             let mut cp = coords.clone();
             let mut cm = coords.clone();
             cp[d] += h;
             cm[d] -= h;
-            let ep = pot.calc_energy_forces(&cp).0;
-            let em = pot.calc_energy_forces(&cm).0;
+            let ep = pot.energy_forces_at(&cp).0;
+            let em = pot.energy_forces_at(&cm).0;
             let fd = -(ep - em) / (2.0 * h); // force = -dE/dx
             assert!(
                 (forces[d] - fd).abs() < 1e-5,
@@ -287,7 +279,7 @@ mod tests {
     fn newtons_third_law() {
         let pot = single(1.0, 0.5, 0.3, 0.2);
         let coords: Vec<F> = vec![0.1, 1.0, 0.2, 0.0, 0.0, 0.0, 1.0, 0.0, -0.1, 1.2, -0.8, 0.5];
-        let (_, f) = pot.calc_energy_forces(&coords);
+        let (_, f) = pot.energy_forces_at(&coords);
         for dim in 0..3 {
             let s: F = (0..4).map(|a| f[a * 3 + dim]).sum();
             assert!(s.abs() < 1e-9, "dim {dim} force sum {s}");

@@ -1,13 +1,13 @@
-//! Element typing: type labels derived from element symbols alone.
+//! Element typing: type labels derived from atomic numbers alone.
 
 use std::collections::HashMap;
 
 use indexmap::IndexMap;
-use molrs::core::Atomistic;
 use molrs::core::TypeName;
 use molrs::core::keys;
 use molrs::core::schema::block_names::{ANGLES, BONDS, DIHEDRALS};
-use molrs::core::{MolGraph, NodeId, PropValue};
+use molrs::core::{Atomistic, Element};
+use molrs::core::{NodeId, PropValue, Relation};
 
 use crate::ff::forcefield::ForceField;
 use crate::ff::typifier::{Annotation, TypeAssignment, Typifier};
@@ -19,7 +19,8 @@ use crate::ff::typifier::{Annotation, TypeAssignment, Typifier};
 ///
 /// Every label is written under `type`:
 ///
-/// - an atom: its `element`, e.g. `"C"`;
+/// - an atom: the symbol of the element its [`keys::ATOMIC_NUMBER`] names,
+///   e.g. `"C"` for `Z = 6`;
 /// - a bond, angle or dihedral: the elements of its endpoints, oriented to
 ///   the smaller (slot by slot) of the tuple read forward and reversed, then
 ///   [`TypeName::join`]ed. Bond O–H is `"H-O"`, angle H–C–C is `"C-C-H"`,
@@ -36,20 +37,22 @@ use crate::ff::typifier::{Annotation, TypeAssignment, Typifier};
 ///
 /// # Errors
 ///
-/// - an atom without a string `element`: `Err` naming its row;
+/// - an atom without a valid atomic number, or a wildcard atom (`Z = 0`, which
+///   names no element and so has no element type): `Err` naming its row;
 /// - a graph with improper rows: `Err` naming their count. Improper labels
 ///   are not derived.
 ///
 /// # Example
 ///
 /// ```
-/// use molrs::core::Atomistic;
+/// use molrs::core::{Atomistic, Element, keys};
 /// use molrs::ff::typifier::{ElementTypifier, Typing};
+/// use molrs::props;
 ///
 /// let mut mol = Atomistic::new();
-/// let o = mol.add_atom_bare("O");
-/// let h = mol.add_atom_bare("H");
-/// mol.add_bond(o, h).unwrap();
+/// let o = mol.add_atom(props! { keys::ATOMIC_NUMBER => Element::O }).unwrap();
+/// let h = mol.add_atom(props! { keys::ATOMIC_NUMBER => Element::H }).unwrap();
+/// mol.add_bond(o, h, props! {}).unwrap();
 ///
 /// let mut typing = Typing::new(ElementTypifier::new());
 /// let typed = typing.typify(&mol).unwrap();
@@ -90,25 +93,19 @@ fn type_value(label: &str) -> Vec<(String, Annotation)> {
     )]
 }
 
-/// The label of every row of relation kind `kind`, in row order: the
+/// The label of every row `terms` of relation block `kind`, in row order: the
 /// [`TypeName`] of its endpoint elements in [`TypeName::orient`]'s spelling,
-/// cached per element tuple.
-/// Empty when the graph has no such kind or no rows of it.
+/// cached per element tuple. Empty when there are no rows.
 fn link_labels(
-    graph: &MolGraph,
     kind: &str,
-    elements: &HashMap<NodeId, &str>,
+    terms: Vec<Relation>,
+    elements: &HashMap<NodeId, &'static str>,
     cache: &mut HashMap<Vec<String>, String>,
 ) -> Result<Vec<Vec<(String, Annotation)>>, String> {
-    let Some(kind_id) = graph.kind_id(kind) else {
-        return Ok(Vec::new());
-    };
     let mut rows = Vec::new();
-    for (position, id) in graph.relation_ids(kind_id).enumerate() {
-        let nodes = graph
-            .relation_nodes(kind_id, id)
-            .map_err(|e| format!("{kind} {position}: {e}"))?;
-        let tuple: Vec<&str> = nodes
+    for (position, term) in terms.iter().enumerate() {
+        let tuple: Vec<&str> = term
+            .nodes
             .iter()
             .map(|n| {
                 elements
@@ -142,27 +139,36 @@ impl Typifier for ElementTypifier {
                 graph.n_impropers()
             ));
         }
-        let graph = graph.as_molgraph();
-        let table = graph.node_table();
-        let mut elements: HashMap<NodeId, &str> = HashMap::new();
+        let mut elements: HashMap<NodeId, &'static str> = HashMap::new();
         let mut nodes = Vec::new();
-        for (row, id) in graph.node_ids().enumerate() {
-            let element = table.get_str(id, keys::ELEMENT).map_err(|e| {
+        for (row, (id, atom)) in graph.atoms().enumerate() {
+            let z = atom.atomic_number().ok_or_else(|| {
                 format!(
-                    "ElementTypifier: atom {row} has no string '{}': {e}",
-                    keys::ELEMENT
+                    "ElementTypifier: atom {row} has no valid '{}'",
+                    keys::ATOMIC_NUMBER
                 )
             })?;
-            elements.insert(id, element);
-            nodes.push(type_value(element));
+            let element = Element::by_number(z).ok_or_else(|| {
+                format!(
+                    "ElementTypifier: atom {row} is a wildcard ('{}' = 0), which has no element type",
+                    keys::ATOMIC_NUMBER
+                )
+            })?;
+            elements.insert(id, element.symbol());
+            nodes.push(type_value(element.symbol()));
         }
+        let terms: [(&str, Vec<Relation>); 3] = [
+            (BONDS, graph.bonds().map(|(_, r)| r).collect()),
+            (ANGLES, graph.angles().map(|(_, r)| r).collect()),
+            (DIHEDRALS, graph.dihedrals().map(|(_, r)| r).collect()),
+        ];
 
         let mut cache: HashMap<Vec<String>, String> = HashMap::new();
         let mut links = IndexMap::new();
-        for kind in [BONDS, ANGLES, DIHEDRALS] {
+        for (kind, terms) in terms {
             links.insert(
                 kind.to_owned(),
-                link_labels(graph, kind, &elements, &mut cache)?,
+                link_labels(kind, terms, &elements, &mut cache)?,
             );
         }
         Ok(TypeAssignment {
@@ -182,8 +188,11 @@ mod tests {
     //! `ElementTypifier` through `Typing::typify` on hand-built graphs. Every
     //! expected label is written by hand.
 
-    use molrs::core::{Atom, PropValue};
+    use crate::props;
+    use molrs::core::Element;
+    use molrs::core::keys;
     use molrs::core::{Atomistic, NodeId};
+    use molrs::core::{PropValue, Props};
 
     use super::*;
     use crate::ff::typifier::Typing;
@@ -217,29 +226,41 @@ mod tests {
     /// O bonded to two H: bonds written O–H and H–O.
     fn water() -> Atomistic {
         let mut g = Atomistic::new();
-        let o = g.add_atom_bare("O");
-        let h1 = g.add_atom_bare("H");
-        let h2 = g.add_atom_bare("H");
-        g.add_bond(o, h1).unwrap();
-        g.add_bond(h2, o).unwrap();
+        let o = g
+            .add_atom(props! { keys::ATOMIC_NUMBER => Element::O })
+            .unwrap();
+        let h1 = g
+            .add_atom(props! { keys::ATOMIC_NUMBER => Element::H })
+            .unwrap();
+        let h2 = g
+            .add_atom(props! { keys::ATOMIC_NUMBER => Element::H })
+            .unwrap();
+        g.add_bond(o, h1, props! {}).unwrap();
+        g.add_bond(h2, o, props! {}).unwrap();
         g
     }
 
     /// C1–C2–H with bonds C1–C2, C2–H and one angle written H–C2–C1.
     fn cch() -> (Atomistic, [NodeId; 3]) {
         let mut g = Atomistic::new();
-        let c1 = g.add_atom_bare("C");
-        let c2 = g.add_atom_bare("C");
-        let h = g.add_atom_bare("H");
-        g.add_bond(c1, c2).unwrap();
-        g.add_bond(c2, h).unwrap();
+        let c1 = g
+            .add_atom(props! { keys::ATOMIC_NUMBER => Element::C })
+            .unwrap();
+        let c2 = g
+            .add_atom(props! { keys::ATOMIC_NUMBER => Element::C })
+            .unwrap();
+        let h = g
+            .add_atom(props! { keys::ATOMIC_NUMBER => Element::H })
+            .unwrap();
+        g.add_bond(c1, c2, props! {}).unwrap();
+        g.add_bond(c2, h, props! {}).unwrap();
         (g, [c1, c2, h])
     }
 
     #[test]
     fn water_atoms_get_elements_and_bonds_the_oriented_pair() {
         let mol = water();
-        let atoms_before: Vec<Atom> = mol.atoms().map(|(_, a)| a).collect();
+        let atoms_before: Vec<Props> = mol.atoms().map(|(_, a)| a).collect();
         let bonds_before: Vec<_> = mol.bonds().map(|(_, b)| (b.nodes, b.props)).collect();
         let mut typing = Typing::new(ElementTypifier::new());
 
@@ -255,7 +276,7 @@ mod tests {
             "{:?}",
             typing.forcefield().styles()
         );
-        let atoms_after: Vec<Atom> = mol.atoms().map(|(_, a)| a).collect();
+        let atoms_after: Vec<Props> = mol.atoms().map(|(_, a)| a).collect();
         let bonds_after: Vec<_> = mol.bonds().map(|(_, b)| (b.nodes, b.props)).collect();
         assert_eq!(atoms_after, atoms_before);
         assert_eq!(bonds_after, bonds_before);
@@ -264,7 +285,7 @@ mod tests {
     #[test]
     fn angle_label_is_the_oriented_element_sequence() {
         let (mut mol, [c1, c2, h]) = cch();
-        mol.add_angle(h, c2, c1).unwrap();
+        mol.add_angle(h, c2, c1, props! {}).unwrap();
         let mut typing = Typing::new(ElementTypifier::default());
 
         let typed = typing.typify(&mol).unwrap();
@@ -276,14 +297,22 @@ mod tests {
     #[test]
     fn dihedral_label_is_the_oriented_element_sequence() {
         let mut mol = Atomistic::new();
-        let o = mol.add_atom_bare("O");
-        let c1 = mol.add_atom_bare("C");
-        let c2 = mol.add_atom_bare("C");
-        let h = mol.add_atom_bare("H");
-        mol.add_bond(o, c1).unwrap();
-        mol.add_bond(c1, c2).unwrap();
-        mol.add_bond(c2, h).unwrap();
-        mol.add_dihedral(o, c1, c2, h).unwrap();
+        let o = mol
+            .add_atom(props! { keys::ATOMIC_NUMBER => Element::O })
+            .unwrap();
+        let c1 = mol
+            .add_atom(props! { keys::ATOMIC_NUMBER => Element::C })
+            .unwrap();
+        let c2 = mol
+            .add_atom(props! { keys::ATOMIC_NUMBER => Element::C })
+            .unwrap();
+        let h = mol
+            .add_atom(props! { keys::ATOMIC_NUMBER => Element::H })
+            .unwrap();
+        mol.add_bond(o, c1, props! {}).unwrap();
+        mol.add_bond(c1, c2, props! {}).unwrap();
+        mol.add_bond(c2, h, props! {}).unwrap();
+        mol.add_dihedral(o, c1, c2, h, props! {}).unwrap();
         let mut typing = Typing::new(ElementTypifier::new());
 
         let typed = typing.typify(&mol).unwrap();
@@ -306,12 +335,20 @@ mod tests {
     #[test]
     fn a_graph_with_an_improper_is_refused_naming_impropers() {
         let mut mol = Atomistic::new();
-        let c = mol.add_atom_bare("C");
-        let ids: Vec<NodeId> = (0..3).map(|_| mol.add_atom_bare("H")).collect();
+        let c = mol
+            .add_atom(props! { keys::ATOMIC_NUMBER => Element::C })
+            .unwrap();
+        let ids: Vec<NodeId> = (0..3)
+            .map(|_| {
+                mol.add_atom(props! { keys::ATOMIC_NUMBER => Element::H })
+                    .unwrap()
+            })
+            .collect();
         for &h in &ids {
-            mol.add_bond(c, h).unwrap();
+            mol.add_bond(c, h, props! {}).unwrap();
         }
-        mol.add_improper(c, ids[0], ids[1], ids[2]).unwrap();
+        mol.add_improper(c, ids[0], ids[1], ids[2], props! {})
+            .unwrap();
         let mut typing = Typing::new(ElementTypifier::new());
 
         let err = typing.typify(&mol).unwrap_err();
@@ -321,15 +358,34 @@ mod tests {
     }
 
     #[test]
-    fn an_atom_without_element_is_refused_naming_its_row() {
+    fn a_wildcard_atom_is_refused_naming_its_row() {
         let mut mol = Atomistic::new();
-        mol.add_atom_bare("C");
-        mol.add_atom(Atom::new());
+        mol.add_atom(props! { keys::ATOMIC_NUMBER => Element::C })
+            .unwrap();
+        mol.add_atom(props! { keys::ATOMIC_NUMBER => 0u8 }).unwrap();
         let mut typing = Typing::new(ElementTypifier::new());
 
         let err = typing.typify(&mol).unwrap_err();
 
-        assert!(err.contains("element"), "{err}");
+        assert!(err.contains("wildcard"), "{err}");
         assert!(err.contains("atom 1"), "{err}");
+    }
+
+    #[test]
+    fn the_atom_label_is_derived_from_the_atomic_number_alone() {
+        // No `element` column anywhere: the label is `Element::by_number(Z)`.
+        let mut mol = Atomistic::new();
+        mol.add_atom(props! { keys::ATOMIC_NUMBER => 17u8 })
+            .unwrap();
+        let mut typing = Typing::new(ElementTypifier::new());
+
+        let typed = typing.typify(&mol).unwrap();
+
+        assert!(
+            typed
+                .atoms()
+                .all(|(_, a)| a.get_str(keys::ELEMENT).is_none())
+        );
+        assert_eq!(atom_types(&typed), vec![str_value("Cl")]);
     }
 }

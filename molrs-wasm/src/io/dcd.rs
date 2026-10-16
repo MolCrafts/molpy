@@ -2,33 +2,32 @@
 //!
 //! | JS | molrs |
 //! |----|-------|
-//! | `DcdStream` | `DcdIndexBuilder` + `read_dcd_bytes` (the chunk-fed DCD reader; the only stream that uses `decoderState`) |
-//! | `readDcdBytes`, `writeDcdBytes` | `read_dcd_bytes`, `write_dcd_bytes` |
+//! | `DcdStream` | `DcdIndexBuilder` + `DcdFrameDecoder` (the chunk-fed DCD reader; the only stream that uses `decoderState`) |
+//! | `readDcd`, `writeDcd` | `read_dcd`, `write_dcd` |
 
-use molrs::io::dcd::DcdIndexBuilder;
+use molrs::io::dcd::{DcdFrameDecoder, DcdIndexBuilder};
 use wasm_bindgen::prelude::*;
-
-use crate::core::frame::Frame;
 
 impl_wasm_traj_stream! {
     name    = DcdStream,
     indexer = DcdIndexBuilder::new(),
-    parse   = molrs::io::read_dcd_bytes,
+    parse   = |bytes, state| match state {
+        // A frame body the indexer delimited, decoded with the header it
+        // captured (fixed-atom later frames need the frame-0 seed).
+        Some(state) => DcdFrameDecoder::new(state)?.decode(bytes),
+        None => molrs::io::read_dcd(bytes),
+    },
 }
 
-/// Read one DCD frame from bytes: a whole one-frame file (what
-/// `writeDcdBytes` returns), or a frame body with the decoder state (`decoderState`) it
-/// is decoded with.
-#[wasm_bindgen(js_name = readDcdBytes)]
-pub fn read_dcd_bytes(bytes: &[u8], decoder_state: Option<Vec<u8>>) -> Result<Frame, JsValue> {
-    let frame = molrs::io::read_dcd_bytes(bytes, decoder_state.as_deref())
-        .map_err(|e| JsValue::from_str(&format!("DCD read error: {e}")))?;
-    Frame::from_rs(frame)
-}
-
-write_door!(
+read_bytes_door!(
+    /// Read the first DCD frame of the file's bytes — a whole file (what
+    /// `writeDcd` returns), or one frame body as `DcdStream` delimits it
+    /// (self-describing when the file has no fixed atoms).
+    readDcd => read_dcd, "DCD"
+);
+write_bytes_door!(
     /// Write `frame` as a one-frame DCD trajectory.
-    writeDcdBytes => write_dcd_bytes -> Vec<u8>, "DCD"
+    writeDcd => write_dcd, "DCD"
 );
 
 #[cfg(test)]
@@ -37,11 +36,11 @@ mod tests {
     use crate::io::test_fixtures::{float_col, two_atom_frame};
     use wasm_bindgen_test::*;
 
-    /// `readDcdBytes` reads back the one-frame file `writeDcdBytes` wrote.
+    /// `readDcd` reads back the one-frame file `writeDcd` wrote.
     #[wasm_bindgen_test]
-    fn read_dcd_bytes_reads_back_write_dcd_bytes() {
-        let bytes = write_dcd_bytes(&two_atom_frame()).expect("dcd bytes");
-        let frame = read_dcd_bytes(&bytes, None).expect("read back");
+    fn read_dcd_reads_back_write_dcd() {
+        let bytes = write_dcd(&two_atom_frame()).expect("dcd bytes");
+        let frame = read_dcd(&bytes).expect("read back");
         let z = float_col(&frame.get("atoms").expect("atoms"), "z");
         assert_eq!(z.to_vec(), vec![0.0, 0.5]);
     }

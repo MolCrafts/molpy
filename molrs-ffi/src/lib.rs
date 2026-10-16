@@ -11,13 +11,14 @@
 //! full recipe and the data contract.
 //!
 //! ```no_run
+//! use molrs::op::Idx;
 //! use molrs_ffi::FrameRef;
 //!
-//! let frame = FrameRef::new_standalone();      // a frame inside a fresh FrameArenaCell
+//! let frame = FrameRef::default();      // a frame inside a fresh FrameArenaCell
 //! // ... populate it via frame.with_mut(|f| ...) ...
 //! if let Ok(atoms) = frame.block("atoms") {
 //!     // zero-copy borrow of the uint atom-id column (the uint-index contract)
-//!     let n_ids = atoms.borrow_u("id", |ids, _shape| ids.len()).ok().flatten();
+//!     let n_ids = atoms.borrow::<Idx, _>("id", |ids, _shape| ids.len()).ok().flatten();
 //!     let _ = n_ids;
 //! }
 //! ```

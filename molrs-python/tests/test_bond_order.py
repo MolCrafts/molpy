@@ -25,8 +25,17 @@ def test_aromatic_implies_no_number() -> None:
     assert BondOrder.Double.implied_number() == BondNumber.Double
 
 
-def test_set_bond_class_takes_the_codes() -> None:
-    mol = molrs.io.smiles.SmilesIr("CC").to_atomistic()
+def test_a_number_implies_its_class_and_counts_its_valence() -> None:
+    assert BondNumber.Single.implied_type() == BondOrder.Single
+    assert BondNumber.Quadruple.implied_type() == BondOrder.Double
+    assert BondNumber.Unknown.implied_type() == BondOrder.Unknown
+    assert BondNumber.Triple.count() == 3
+    assert BondNumber.Unknown.count() == 0
+
+
+def test_set_bond_class_takes_the_classes() -> None:
+    mol = molrs.io.smiles.SmilesIr.parse("CC").to_atomistic()
     bond = next(iter(mol.bonds))
-    mol.set_bond_class(bond.handle, int(BondOrder.Double), int(BondNumber.Double))
+    mol.set_bond_class(bond, BondOrder.Double, BondNumber.Double)
     assert BondOrder.from_code(int(bond["bond_type"])) == BondOrder.Double
+    assert BondNumber.from_code(int(bond["bond_number"])) == BondNumber.Double

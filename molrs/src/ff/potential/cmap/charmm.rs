@@ -8,7 +8,7 @@ use ndarray::{Array2, ArrayD, ArrayView2};
 use crate::ff::ir::CMAP_GRID;
 use crate::ff::ir::Params;
 use crate::ff::potential::flat_coords::{compute_dihedral, sub3, term_table, validate_coords};
-use crate::ff::potential::{ForceTerm, IndexedTerms, Potential};
+use crate::ff::potential::{Accumulator, ForceTerm, IndexedTerms, Potential};
 use crate::op::vec3::{cross, dot, scale};
 use molrs::core::Frame;
 use molrs::core::keys::{ATOMI, ATOMJ, ATOMK, ATOML, ATOMM, TYPE};
@@ -358,17 +358,12 @@ impl CmapCharmm {
 }
 
 impl Potential for CmapCharmm {
-    fn calc_energy_forces(&self, coords: &[F]) -> (F, Vec<F>) {
-        let mut out = vec![0.0; coords.len()];
-        let energy = self.accumulate(coords, &mut out);
-        (energy, out)
-    }
-
-    fn accumulate(&self, coords: &[F], out: &mut [F]) -> F {
+    fn evaluate(&self, coords: &[F], acc: &mut Accumulator<'_>) {
         let a = &self.atoms;
-        self.fold(coords, out, self.map.len(), |t| {
+        let energy = self.fold(coords, acc.forces_without_virial(), self.map.len(), |t| {
             [a[0][t], a[1][t], a[2][t], a[3][t], a[4][t]]
-        })
+        });
+        acc.add_energy(energy);
     }
 }
 
@@ -378,25 +373,16 @@ impl IndexedTerms for CmapCharmm {
         term_table(&[&a[0], &a[1], &a[2], &a[3], &a[4]])
     }
 
-    fn calc_energy_forces_with_terms(
-        &self,
-        coords: &[F],
-        terms: ArrayView2<'_, u32>,
-    ) -> (F, Vec<F>) {
-        let mut out = vec![0.0; coords.len()];
-        let energy = self.accumulate_with_terms(coords, terms, &mut out);
-        (energy, out)
-    }
-
-    fn accumulate_with_terms(&self, coords: &[F], terms: ArrayView2<'_, u32>, out: &mut [F]) -> F {
+    fn evaluate_terms(&self, coords: &[F], terms: ArrayView2<'_, u32>, acc: &mut Accumulator<'_>) {
         debug_assert_eq!(
             terms.nrows(),
             self.map.len(),
             "the row set is the force field's; only the atoms a row names may be rebound"
         );
-        self.fold(coords, out, terms.nrows(), |t| {
+        let energy = self.fold(coords, acc.forces_without_virial(), terms.nrows(), |t| {
             std::array::from_fn(|p| terms[[t, p]] as usize)
-        })
+        });
+        acc.add_energy(energy);
     }
 }
 
@@ -418,7 +404,7 @@ pub fn cmap_charmm_constructor(
     let endpoint = |key: &str| {
         block
             .get(key)
-            .and_then(|c| c.as_uint())
+            .and_then(|c| c.get::<u64>())
             .ok_or_else(|| format!("cmap_charmm: cmaps block missing u64 column {key:?}"))
     };
     let cols = [
@@ -430,7 +416,7 @@ pub fn cmap_charmm_constructor(
     ];
     let types = block
         .get(TYPE)
-        .and_then(|c| c.as_string())
+        .and_then(|c| c.get::<String>())
         .ok_or("cmap_charmm: cmaps block missing string column \"type\"")?;
 
     let mut index: HashMap<&str, usize> = HashMap::new();
@@ -446,7 +432,8 @@ pub fn cmap_charmm_constructor(
                     .get(label)
                     .ok_or_else(|| format!("cmap_charmm: unknown type '{label}'"))?;
                 let grid = params
-                    .get_array(CMAP_GRID)
+                    .get(CMAP_GRID)
+                    .and_then(|v| v.as_array())
                     .ok_or_else(|| param_reads::missing("charmm", label, CMAP_GRID))?;
                 maps.push(
                     CmapGrid::new(grid)
@@ -467,15 +454,16 @@ pub(crate) mod tests {
     use super::*;
     use crate::ff::compile::PotentialCompiler;
     use crate::ff::forcefield::ForceField;
+    use crate::ff::potential::fixtures::OneShot;
     use crate::ff::potential::flat_coords::compute_dihedral;
-    use crate::io::lammps::forcefield_reader::read_lammps_cmap_str;
+    use crate::io::lammps::forcefield_reader::parse_cmap_file;
     use molrs::core::Block;
     use molrs::op::Idx;
     use ndarray::Array1;
 
     /// The CHARMM36 alanine map (LAMMPS `potentials/charmm36.cmap`, type 1).
     pub(crate) fn alanine() -> ArrayD<f64> {
-        read_lammps_cmap_str(include_str!("testdata/charmm36_alanine.cmap"))
+        parse_cmap_file(include_str!("testdata/charmm36_alanine.cmap"))
             .unwrap()
             .maps
             .remove(0)
@@ -544,7 +532,7 @@ pub(crate) mod tests {
                 let want = grid[[i, j]];
                 let (e, _, _) = map.eval(phi, psi);
                 assert!((e - want).abs() <= 1e-12, "({phi}, {psi}): {e} vs {want}");
-                let e = pot.calc_energy(&chain(phi, psi));
+                let e = pot.energy_at(&chain(phi, psi));
                 assert!(
                     (e - want).abs() <= 1e-12,
                     "xyz ({phi}, {psi}): {e} vs {want}"
@@ -598,13 +586,13 @@ pub(crate) mod tests {
             (178.0, -177.0),
         ] {
             let x = bent(phi, psi);
-            let (_, f) = pot.calc_energy_forces(&x);
+            let (_, f) = pot.energy_forces_at(&x);
             let h = 1e-6;
             for d in 0..x.len() {
                 let (mut p, mut m) = (x.clone(), x.clone());
                 p[d] += h;
                 m[d] -= h;
-                let fd = -(pot.calc_energy(&p) - pot.calc_energy(&m)) / (2.0 * h);
+                let fd = -(pot.energy_at(&p) - pot.energy_at(&m)) / (2.0 * h);
                 assert!(
                     (f[d] - fd).abs() <= 1e-6 * (1.0 + fd.abs()),
                     "({phi}, {psi}) component {d}: analytic {} vs fd {fd}",
@@ -621,7 +609,7 @@ pub(crate) mod tests {
         let pot = one(&alanine());
         for (phi, psi) in [(-63.0, -41.0), (100.0, -100.0)] {
             let x = bent(phi, psi);
-            let (_, f) = pot.calc_energy_forces(&x);
+            let (_, f) = pot.energy_forces_at(&x);
             let scale: F = f.iter().map(|v| v.abs()).sum();
             assert!(scale > 1e-3, "nothing to balance");
             let mut net = [0.0; 3];
@@ -689,7 +677,7 @@ pub(crate) mod tests {
         let x = [
             0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 2.0, 0.0, 0.0, 3.0, 0.0, 0.0, 3.5, 1.0, 0.0,
         ];
-        assert_eq!(pot.calc_energy_forces(&x), (0.0, vec![0.0; 15]));
+        assert_eq!(pot.energy_forces_at(&x), (0.0, vec![0.0; 15]));
     }
 
     /// Two crossterms on a six-atom chain, typed `ala` and `flat`.
@@ -697,12 +685,12 @@ pub(crate) mod tests {
         let mut ff = ForceField::new("t");
         let style = ff.def_style("cmap", "charmm", Params::new()).unwrap();
         let mut ala = Params::new();
-        ala.set_array(CMAP_GRID, alanine());
+        ala.set(CMAP_GRID, alanine());
         style
             .def_type("ala", &["C", "NH1", "CT1", "C", "NH1"], ala)
             .unwrap();
         let mut flat = Params::new();
-        flat.set_array(CMAP_GRID, alanine().mapv(|v| 0.5 * v + 0.1));
+        flat.set(CMAP_GRID, alanine().mapv(|v| 0.5 * v + 0.1));
         style
             .def_type("flat", &["NH1", "CT1", "C", "NH1", "CT1"], flat)
             .unwrap();
@@ -721,17 +709,22 @@ pub(crate) mod tests {
         let mut atoms = Block::new();
         for (k, key) in ["x", "y", "z"].into_iter().enumerate() {
             let col: Vec<F> = x.iter().skip(k).step_by(3).copied().collect();
-            atoms.insert(key, Array1::from_vec(col).into_dyn()).unwrap();
+            atoms
+                .insert(key, Array1::from_vec(col).into_dyn(), None)
+                .unwrap();
         }
         let mut cmaps = Block::new();
         for (p, key) in [ATOMI, ATOMJ, ATOMK, ATOML, ATOMM].into_iter().enumerate() {
             let col: Vec<Idx> = vec![p as Idx, p as Idx + 1];
-            cmaps.insert(key, Array1::from_vec(col).into_dyn()).unwrap();
+            cmaps
+                .insert(key, Array1::from_vec(col).into_dyn(), None)
+                .unwrap();
         }
         cmaps
             .insert(
                 TYPE,
                 Array1::from_vec(vec!["ala".to_owned(), "flat".to_owned()]).into_dyn(),
+                None,
             )
             .unwrap();
         let mut frame = Frame::new();
@@ -749,8 +742,8 @@ pub(crate) mod tests {
         let pots = compiler.compile(&frame).unwrap();
         let typed = compiler.compile_typed(&frame).unwrap();
         assert_eq!((pots.members().len(), typed.len()), (1, 1));
-        let (e0, f0) = pots.calc_energy_forces(&x);
-        let (e1, f1) = typed[0].0.calc_energy_forces(&x);
+        let (e0, f0) = pots.energy_forces_at(&x);
+        let (e1, f1) = typed[0].0.energy_forces_at(&x);
         assert_eq!(e0.to_bits(), e1.to_bits());
         assert_eq!(f0, f1);
         assert!(e0 != 0.0);
@@ -760,7 +753,7 @@ pub(crate) mod tests {
         };
         let terms = k.terms();
         assert_eq!(terms.shape(), &[2, 5]);
-        let (e2, f2) = k.calc_energy_forces_with_terms(&x, terms.view());
+        let (e2, f2) = k.over_terms(&x, terms.view());
         assert_eq!(e0.to_bits(), e2.to_bits());
         assert_eq!(f0, f2);
     }
@@ -780,7 +773,7 @@ pub(crate) mod tests {
             "{err}"
         );
         let mut odd = Params::new();
-        odd.set_array(CMAP_GRID, ArrayD::zeros(vec![3, 4]));
-        assert!(CmapGrid::new(odd.get_array(CMAP_GRID).unwrap()).is_err());
+        odd.set(CMAP_GRID, ArrayD::zeros(vec![3, 4]));
+        assert!(CmapGrid::new(odd.get(CMAP_GRID).and_then(|v| v.as_array()).unwrap()).is_err());
     }
 }

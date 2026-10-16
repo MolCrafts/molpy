@@ -181,7 +181,8 @@ crate::compute::spec::compute_spec! {
 mod tests {
     use super::*;
     use crate::compute::{
-        Derivative, DerivativeInput, LinearFit, LinearFitInput, Msd, MsdInput, Origins, Stencil,
+        Accumulate, CorrelatorFrame, Derivative, DerivativeInput, LinearFit, LinearFitInput, Msd,
+        Origins, Stencil, Stream,
     };
     use ndarray::{Array2, Array3, arr1, array};
 
@@ -334,11 +335,13 @@ mod tests {
         let series = dipoles(&positions, &[2.0], None).unwrap();
         let curve = Msd::new(10)
             .with_origins(Origins::First)
-            .compute(MsdInput {
-                positions: series.moments.view(),
+            .accumulator()
+            .fold(series.moments.outer_iter().map(|a| CorrelatorFrame {
+                a,
+                b: None,
                 dt: 0.5,
-                boxes: None,
-            })
+                simbox: None,
+            }))
             .unwrap();
         let fit = LinearFit::new(0.0, 1.0)
             .unwrap()

@@ -5,7 +5,7 @@ Exercises the PyO3 surface of the native ``graph_hash`` primitive
 ``CoarseGrain``:
 
 - ``structural_hash()`` — isomorphism-invariant 64-bit dedup key,
-- ``canonical_order()`` — deterministic node ordering (a handle list),
+- ``canonical_order()`` — deterministic node ordering (a ``Refs`` of views),
 - ``is_isomorphic(other)`` — whole-graph labeled isomorphism.
 
 The refinement algorithm itself is unit-tested in Rust; these tests assert the
@@ -13,6 +13,8 @@ binding surface and the acceptance criteria (ac-001..ac-004).
 """
 
 import molrs
+
+Z = {"H": 1, "C": 6, "O": 8, "S": 16}
 
 # ---------------------------------------------------------------------------
 # Builders
@@ -28,21 +30,21 @@ def _ethanol(order=(0, 1, 2, 3, 4, 5, 6, 7, 8)):
     """
     elems = ["C", "C", "O", "H", "H", "H", "H", "H", "H"]
     mol = molrs.core.Atomistic()
-    handle = {}
+    atom = {}
     for orig in order:
-        handle[orig] = mol.add_atom(elems[orig])
+        atom[orig] = mol.add_atom(atomic_number=Z[elems[orig]])
     for i, j in [(0, 1), (1, 2), (2, 8), (0, 3), (0, 4), (0, 5), (1, 6), (1, 7)]:
-        mol.add_bond(handle[i], handle[j])
-    return mol, handle
+        mol.add_bond(atom[i], atom[j])
+    return mol, atom
 
 
 def _linear_chain(n=9, element="C"):
     """A linear ``n``-atom chain (same atom count as ethanol, different topo)."""
     mol = molrs.core.Atomistic()
-    ids = [mol.add_atom(element) for _ in range(n)]
+    atoms = [mol.add_atom(atomic_number=Z[element]) for _ in range(n)]
     for k in range(n - 1):
-        mol.add_bond(ids[k], ids[k + 1])
-    return mol, ids
+        mol.add_bond(atoms[k], atoms[k + 1])
+    return mol, atoms
 
 
 # ---------------------------------------------------------------------------
@@ -65,14 +67,14 @@ def test_permuted_copy_hashes_equal():
     assert b.is_isomorphic(a) is True
 
 
-def test_canonical_order_returns_handle_list():
+def test_canonical_order_returns_atom_refs():
     mol, _ = _ethanol()
     order = mol.canonical_order()
-    assert isinstance(order, list)
+    assert isinstance(order, molrs.core.Refs)
     assert len(order) == 9
-    # A bijection over the live handles (no repeats, all real).
-    assert len(set(order)) == 9
-    assert set(order) == set(mol.entities())
+    # A bijection over the live atoms (no repeats, all real).
+    assert len({atom.handle for atom in order}) == 9
+    assert set(order) == set(mol.atoms)
 
 
 # ---------------------------------------------------------------------------
@@ -92,9 +94,9 @@ def test_element_change_changes_hash():
     # Replace O(2) with S -> a different local environment.
     b = molrs.core.Atomistic()
     elems = ["C", "C", "S", "H", "H", "H", "H", "H", "H"]
-    ids = [b.add_atom(e) for e in elems]
+    atoms = [b.add_atom(atomic_number=Z[e]) for e in elems]
     for i, j in [(0, 1), (1, 2), (2, 8), (0, 3), (0, 4), (0, 5), (1, 6), (1, 7)]:
-        b.add_bond(ids[i], ids[j])
+        b.add_bond(atoms[i], atoms[j])
     assert a.structural_hash() != b.structural_hash()
     assert a.is_isomorphic(b) is False
 
@@ -103,7 +105,7 @@ def test_charge_change_changes_hash():
     a, _ha = _ethanol()
     b, hb = _ethanol()
     assert a.structural_hash() == b.structural_hash()
-    b.set(hb[2], "charge", -1.0)
+    hb[2]["charge"] = -1.0
     assert a.structural_hash() != b.structural_hash()
 
 
@@ -111,7 +113,7 @@ def test_aromatic_flag_change_changes_hash():
     a, _ha = _ethanol()
     b, hb = _ethanol()
     assert a.structural_hash() == b.structural_hash()
-    b.set(hb[0], "is_aromatic", 1)
+    hb[0]["is_aromatic"] = True
     assert a.structural_hash() != b.structural_hash()
 
 
@@ -120,8 +122,8 @@ def test_bond_class_change_changes_hash():
     b, hb = _ethanol()
     assert a.structural_hash() == b.structural_hash()
     # Make the C0-C1 bond a double bond via its relation handle.
-    (rid, _other) = b.incident_relations(hb[0], "bonds")[0]
-    b.set_bond_type(rid, 2)
+    bond = b.bond_between(hb[0], hb[1])
+    b.set_bond_class(bond, molrs.core.BondOrder.Double, molrs.core.BondNumber.Double)
     assert a.structural_hash() != b.structural_hash()
 
 
@@ -133,10 +135,11 @@ def test_kekule_phase_change_changes_hash():
     """
     a, ha = _ethanol()
     b, hb = _ethanol()
-    (rid, _other) = b.incident_relations(hb[0], "bonds")[0]
-    b.set_bond_class(rid, 4, 1)
-    (rid_a, _other) = a.incident_relations(ha[0], "bonds")[0]
-    a.set_bond_class(rid_a, 4, 2)
+    aromatic = molrs.core.BondOrder.Aromatic
+    (_other, bond) = b.neighbor_bonds(hb[0])[0]
+    b.set_bond_class(bond, aromatic, molrs.core.BondNumber.Single)
+    (_other, bond_a) = a.neighbor_bonds(ha[0])[0]
+    a.set_bond_class(bond_a, aromatic, molrs.core.BondNumber.Double)
     assert a.structural_hash() != b.structural_hash()
 
 
@@ -158,12 +161,10 @@ def test_canonical_order_consistent_bijection():
     oa = a.canonical_order()
     ob = b.canonical_order()
     assert len(oa) == len(ob) == 9
-    # Pairing position-by-position yields matching element + degree.
+    # Pairing position-by-position yields matching species + degree.
     for ia, ib in zip(oa, ob):
-        assert a.get(ia, "element") == b.get(ib, "element")
-        assert len(a.incident_relations(ia, "bonds")) == len(
-            b.incident_relations(ib, "bonds")
-        )
+        assert ia["atomic_number"] == ib["atomic_number"]
+        assert len(a.neighbor_bonds(ia)) == len(b.neighbor_bonds(ib))
 
 
 # ---------------------------------------------------------------------------
@@ -173,7 +174,7 @@ def test_canonical_order_consistent_bijection():
 
 def _cg_angular(types=("W", "P", "W"), bond_order=((0, 1), (1, 2))):
     cg = molrs.core.CoarseGrain()
-    beads = [cg.add_bead(t) for t in types]
+    beads = [cg.add_bead(bead_type=t) for t in types]
     for i, j in bond_order:
         cg.add_bond(beads[i], beads[j])
     return cg, beads
@@ -203,5 +204,5 @@ def test_cg_bead_type_change_changes_hash():
 def test_cg_canonical_order_returns_handles():
     cg, beads = _cg_angular()
     order = cg.canonical_order()
-    assert isinstance(order, list)
+    assert isinstance(order, molrs.core.Refs)
     assert set(order) == set(beads)

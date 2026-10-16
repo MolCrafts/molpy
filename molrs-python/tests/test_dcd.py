@@ -1,13 +1,12 @@
 """FFI smoke tests for DCD read/write bindings.
 
-Self-contained: fixtures are written with ``molrs.io.write_dcd_trajectory``. No chemfiles
-corpus and no third-party trajectory software.
+Self-contained: fixtures are written with ``molrs.io.dcd.DcdWriter``. No
+chemfiles corpus and no third-party trajectory software.
 """
 
 from __future__ import annotations
 
-import os
-import tempfile
+from pathlib import Path
 
 import molrs
 import pytest
@@ -15,83 +14,72 @@ import pytest
 
 class TestReadDcd:
     def test_parses_written_trajectory(self, water_dcd):
-        frames = molrs.io.read_dcd_trajectory(str(water_dcd)).read_all()
+        frames = list(molrs.io.dcd.DcdReader(water_dcd))
         assert len(frames) == 2
         for i, frame in enumerate(frames):
             assert "atoms" in frame, f"frame {i} missing atoms block"
             assert frame["atoms"].n_rows == 3
 
+    def test_the_one_frame_door_reads_the_first_frame(self, water_dcd):
+        first = molrs.io.read_dcd(water_dcd)
+        assert first["atoms"].n_rows == molrs.io.dcd.DcdReader(water_dcd)[0]["atoms"].n_rows
+
     def test_missing_file_raises_os_error(self):
         with pytest.raises(OSError):
-            molrs.io.read_dcd_trajectory("/nonexistent/path.dcd").read_all()
+            molrs.io.dcd.DcdReader(Path("/nonexistent/path.dcd"))
 
 
 class TestDcdReader:
     def test_random_access_matches_sequential(self, water_dcd):
-        path = str(water_dcd)
-        sequential = molrs.io.read_dcd_trajectory(path).read_all()
-        reader = molrs.io.read_dcd_trajectory(path)
+        sequential = list(molrs.io.dcd.DcdReader(water_dcd))
+        reader = molrs.io.dcd.DcdReader(water_dcd)
         assert len(reader) == len(sequential)
         for n in reversed(range(len(sequential))):
             frame = reader[n]
             assert frame["atoms"].n_rows == sequential[n]["atoms"].n_rows
 
     def test_iteration(self, water_dcd):
-        reader = molrs.io.read_dcd_trajectory(str(water_dcd))
+        reader = molrs.io.dcd.DcdReader(water_dcd)
         n = len(reader)
         assert sum(1 for _ in reader) == n
         assert sum(1 for _ in reader) == n
 
     def test_negative_index(self, water_dcd):
-        path = str(water_dcd)
-        reader = molrs.io.read_dcd_trajectory(path)
-        eager = molrs.io.read_dcd_trajectory(path).read_all()
+        reader = molrs.io.dcd.DcdReader(water_dcd)
+        eager = list(molrs.io.dcd.DcdReader(water_dcd))
         assert reader[-1]["atoms"].n_rows == eager[-1]["atoms"].n_rows
 
     def test_index_error(self, water_dcd):
-        reader = molrs.io.read_dcd_trajectory(str(water_dcd))
+        reader = molrs.io.dcd.DcdReader(water_dcd)
         with pytest.raises(IndexError):
             _ = reader[10_000_000]
 
 
-class TestDcdReaderReadMethods:
-    def test_n_frames_matches_len(self, water_dcd):
-        reader = molrs.io.read_dcd_trajectory(str(water_dcd))
-        assert reader.n_frames == len(reader)
+class TestDcdReaderIndexing:
+    def test_index_matches_eager(self, water_dcd):
+        eager = list(molrs.io.dcd.DcdReader(water_dcd))
+        reader = molrs.io.dcd.DcdReader(water_dcd)
+        assert reader[0]["atoms"].n_rows == eager[0]["atoms"].n_rows
+        assert reader[-1]["atoms"].n_rows == eager[-1]["atoms"].n_rows
 
-    def test_read_frame_matches_eager(self, water_dcd):
-        path = str(water_dcd)
-        eager = molrs.io.read_dcd_trajectory(path).read_all()
-        reader = molrs.io.read_dcd_trajectory(path)
-        assert reader.read_frame(0)["atoms"].n_rows == eager[0]["atoms"].n_rows
-        assert reader.read_frame(-1)["atoms"].n_rows == eager[-1]["atoms"].n_rows
-
-    def test_read_frame_out_of_range_raises(self, water_dcd):
-        reader = molrs.io.read_dcd_trajectory(str(water_dcd))
-        with pytest.raises(IndexError):
-            reader.read_frame(10_000_000)
-
-    def test_read_frames(self, water_dcd):
-        reader = molrs.io.read_dcd_trajectory(str(water_dcd))
+    def test_several_indices(self, water_dcd):
+        reader = molrs.io.dcd.DcdReader(water_dcd)
         n = len(reader)
-        frames = reader.read_frames([0, n - 1, -1])
+        frames = [reader[i] for i in [0, n - 1, -1]]
         assert len(frames) == 3
 
-    def test_read_all_matches_eager(self, water_dcd):
-        path = str(water_dcd)
-        eager = molrs.io.read_dcd_trajectory(path).read_all()
-        reader = molrs.io.read_dcd_trajectory(path)
-        assert len(reader.read_all()) == len(eager)
+    def test_full_slice_matches_eager(self, water_dcd):
+        eager = list(molrs.io.dcd.DcdReader(water_dcd))
+        reader = molrs.io.dcd.DcdReader(water_dcd)
+        assert len(reader[:]) == len(eager)
 
 
 class TestWriteDcd:
-    def test_round_trip_atom_count(self, water_frame):
-        with tempfile.NamedTemporaryFile(suffix=".dcd", delete=False) as tmp:
-            tmpname = tmp.name
-        try:
-            molrs.io.write_dcd_trajectory(tmpname, [water_frame, water_frame])
-            frames = molrs.io.read_dcd_trajectory(tmpname).read_all()
-            assert len(frames) == 2
-            assert frames[0]["atoms"].n_rows == 3
-        finally:
-            os.unlink(tmpname)
+    def test_round_trip_atom_count(self, water_frame, tmp_path):
+        path = tmp_path / "out.dcd"
+        with molrs.io.dcd.DcdWriter(path) as writer:
+            writer.write(water_frame)
+            writer.write(water_frame)
+        frames = list(molrs.io.dcd.DcdReader(path))
+        assert len(frames) == 2
+        assert frames[0]["atoms"].n_rows == 3

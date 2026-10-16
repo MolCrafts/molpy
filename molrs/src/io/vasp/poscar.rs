@@ -1,14 +1,14 @@
 //! VASP POSCAR / CONTCAR structure file reader and writer.
 
 use crate::io::frame_columns::insert_column;
-use crate::io::invalid_data;
-use std::io::{BufRead, BufWriter, Result, Write};
-use std::path::Path;
+use crate::io::{Sink, Source, invalid_data};
+use std::io::{BufRead, Result, Write};
 
 use ndarray::{Array1, IxDyn};
 
 use molrs::core::Block;
 use molrs::core::Frame;
+use molrs::core::keys;
 use molrs::op::F;
 
 use super::header::{AtomRow, CoordMode, expand_symbols, parse_atom_row, read_coords, read_header};
@@ -40,14 +40,15 @@ use crate::io::writer::{FrameWriter, Writer};
 ///
 /// - `"atoms"` block:
 ///   - `x`, `y`, `z` — Cartesian Å (`Direct` files are converted on read).
-///   - `symbol` — element symbol (omitted when the file did not declare them).
+///   - `element` — the species symbol as the file spells it (omitted when the
+///     file did not declare them, VASP4). No `atomic_number` is synthesized:
+///     call `Element::fill_atomic_numbers` for one.
 ///   - `sd_x`, `sd_y`, `sd_z` — selective-dynamics flags, if present.
 ///   - `vx`, `vy`, `vz` — atomic velocities, if present.
 /// - `frame.simbox` — periodic [`SimBox`](molrs::core::SimBox) from the lattice vectors.
 /// - `frame.meta` — `title`, plus `poscar_mode = "direct" | "cartesian"`.
-pub fn read_poscar<P: AsRef<Path>>(path: P) -> Result<Frame> {
-    let file = std::fs::File::open(path.as_ref())?;
-    read_frame_from(std::io::BufReader::new(file))
+pub fn read_poscar<'a>(src: impl Into<Source<'a>>) -> Result<Frame> {
+    read_frame_from(src.into().reader()?)
 }
 
 /// Read one POSCAR-format frame from `reader`.
@@ -83,7 +84,9 @@ fn read_frame_from<R: BufRead>(mut reader: R) -> Result<Frame> {
             .into_shape_with_order(IxDyn(&[n]))
             .map_err(invalid_data)?
             .into_dyn();
-        atoms.insert("symbol", arr).map_err(invalid_data)?;
+        atoms
+            .insert(keys::ELEMENT, arr, None)
+            .map_err(invalid_data)?;
     }
 
     if let Some(flags) = sd_flags {
@@ -217,10 +220,9 @@ impl<R: BufRead> FrameReader for VaspPoscarReader<R> {
 // Writer
 // ---------------------------------------------------------------------------
 
-/// Write a Frame as a POSCAR file at `path`.
-pub fn write_poscar<P: AsRef<Path>>(path: P, frame: &Frame) -> Result<()> {
-    let file = std::fs::File::create(path.as_ref())?;
-    let mut w = BufWriter::new(file);
+/// Write a frame as a POSCAR file.
+pub fn write_poscar<'a>(sink: impl Into<Sink<'a>>, frame: &Frame) -> Result<()> {
+    let mut w = sink.into().writer()?;
     write_frame_to(&mut w, frame)?;
     w.flush()
 }
@@ -251,7 +253,7 @@ fn write_frame_to<W: Write>(writer: &mut W, frame: &Frame) -> Result<()> {
     writeln!(writer, "1.0")?;
 
     // Lattice rows: h columns are lattice vectors → row i = (h[0,i], h[1,i], h[2,i]).
-    let h = simbox.h_view();
+    let h = ndarray::arr2(&simbox.matrix());
     for i in 0..3 {
         writeln!(
             writer,
@@ -262,9 +264,16 @@ fn write_frame_to<W: Write>(writer: &mut W, frame: &Frame) -> Result<()> {
         )?;
     }
 
-    // Group atoms by symbol so we can emit POSCAR's per-element runs.
-    let symbol_col = atoms.get("symbol").and_then(|c| c.as_string());
-    let (symbols_line, counts_line, order) = group_by_symbol(n, symbol_col);
+    // Group atoms by `element` so we can emit POSCAR's per-element runs. The
+    // species line is optional in POSCAR (VASP4 takes species from POTCAR),
+    // so a frame without `element` writes the VASP4 form — no species line,
+    // not a made-up one.
+    let symbol_col = atoms.get(keys::ELEMENT).and_then(|c| c.get::<String>());
+    let SpeciesRuns {
+        symbols: symbols_line,
+        counts: counts_line,
+        order,
+    } = group_by_symbol(n, symbol_col)?;
 
     if let Some(syms) = &symbols_line {
         writeln!(writer, "{}", syms.join(" "))?;
@@ -289,15 +298,15 @@ fn write_frame_to<W: Write>(writer: &mut W, frame: &Frame) -> Result<()> {
 
     let xs = atoms
         .get("x")
-        .and_then(|c| c.as_float())
+        .and_then(|c| c.get::<f64>())
         .ok_or_else(|| invalid_data("atoms.x missing"))?;
     let ys = atoms
         .get("y")
-        .and_then(|c| c.as_float())
+        .and_then(|c| c.get::<f64>())
         .ok_or_else(|| invalid_data("atoms.y missing"))?;
     let zs = atoms
         .get("z")
-        .and_then(|c| c.as_float())
+        .and_then(|c| c.get::<f64>())
         .ok_or_else(|| invalid_data("atoms.z missing"))?;
 
     if direct {
@@ -327,19 +336,36 @@ fn write_frame_to<W: Write>(writer: &mut W, frame: &Frame) -> Result<()> {
     Ok(())
 }
 
-/// Group atoms by their `symbol` column (if present).
+/// Atoms grouped into species runs, as a POSCAR writes them.
+struct SpeciesRuns {
+    /// One symbol per run; `None` when the frame has no `element` column.
+    symbols: Option<Vec<String>>,
+    /// Atom count of each run.
+    counts: Vec<usize>,
+    /// Permutation of the original atom indices that puts each run together.
+    order: Vec<usize>,
+}
+
+/// Group atoms by their `element` column (if present).
 ///
-/// Returns `(Some(symbols), counts, order)` when symbols are present, where
-/// `order` is the permutation of original indices that puts each element in a
-/// run. Returns `(None, [n], 0..n)` when no symbol column exists.
-fn group_by_symbol(
-    n: usize,
-    symbol_col: Option<&ndarray::ArrayD<String>>,
-) -> (Option<Vec<String>>, Vec<usize>, Vec<usize>) {
+/// With symbols present, one run per maximal block of equal symbols; with no
+/// element column, a single run of all `n` atoms in their original order.
+///
+/// # Errors
+///
+/// `InvalidData` naming the row when an `element` value is empty — a POSCAR
+/// species line has no spelling for "unknown".
+fn group_by_symbol(n: usize, symbol_col: Option<&ndarray::ArrayD<String>>) -> Result<SpeciesRuns> {
     if let Some(col) = symbol_col {
         let mut runs: Vec<(String, Vec<usize>)> = Vec::new();
         for i in 0..n {
-            let s = col[[i]].clone();
+            let s = col[[i]].trim().to_string();
+            if s.is_empty() {
+                return Err(invalid_data(format!(
+                    "POSCAR write: atoms row {i} has an empty 'element'; set every \
+                     species (e.g. `Element::fill_symbols(&mut frame)`) before writing"
+                )));
+            }
             if let Some((sym, idxs)) = runs.last_mut()
                 && *sym == s
             {
@@ -351,9 +377,17 @@ fn group_by_symbol(
         let symbols = runs.iter().map(|(s, _)| s.clone()).collect();
         let counts = runs.iter().map(|(_, v)| v.len()).collect();
         let order: Vec<usize> = runs.into_iter().flat_map(|(_, v)| v).collect();
-        (Some(symbols), counts, order)
+        Ok(SpeciesRuns {
+            symbols: Some(symbols),
+            counts,
+            order,
+        })
     } else {
-        (None, vec![n], (0..n).collect())
+        Ok(SpeciesRuns {
+            symbols: None,
+            counts: vec![n],
+            order: (0..n).collect(),
+        })
     }
 }
 
@@ -382,18 +416,6 @@ impl<W: Write> FrameWriter for VaspPoscarWriter<W> {
 // Tests
 // ---------------------------------------------------------------------------
 
-/// Read one POSCAR / CONTCAR structure from its text.
-pub fn read_poscar_str(text: &str) -> Result<Frame> {
-    read_frame_from(text.as_bytes())
-}
-
-/// Write one frame as POSCAR text — the inverse of [`read_poscar_str`].
-pub fn write_poscar_str(frame: &Frame) -> Result<String> {
-    let mut buf = Vec::new();
-    write_frame_to(&mut buf, frame)?;
-    String::from_utf8(buf).map_err(crate::io::invalid_data)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -417,7 +439,7 @@ Direct\n\
         assert_eq!(atoms.n_rows(), Some(2));
         assert!(frame.simbox.is_some());
 
-        let xs = atoms.get("x").and_then(|c| c.as_float()).unwrap();
+        let xs = atoms.get("x").and_then(|c| c.get::<f64>()).unwrap();
         // (0.5, 0.5, 0.5) fractional with 2.5Å cube → (1.25, 1.25, 1.25)
         assert!((xs[[1]] - 1.25).abs() < 1e-10);
     }
@@ -433,13 +455,13 @@ Direct\n\
             .get("atoms")
             .unwrap()
             .get("x")
-            .and_then(|c| c.as_float())
+            .and_then(|c| c.get::<f64>())
             .unwrap();
         let xs2 = frame2
             .get("atoms")
             .unwrap()
             .get("x")
-            .and_then(|c| c.as_float())
+            .and_then(|c| c.get::<f64>())
             .unwrap();
         for i in 0..xs1.len() {
             assert!(

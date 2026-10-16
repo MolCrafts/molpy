@@ -11,9 +11,9 @@ use crate::ff::potential::form_kernel::Probe;
 use crate::ff::potential::form_kernel::{
     ScalarForm, StyleParamColumn, TermParams, columns, retain_form_inputs, row_num,
 };
-use crate::ff::potential::pair::{atom_type_index, fold_chunks, type_pair};
+use crate::ff::potential::pair::{atom_type_index, fold_pairs, type_pair};
 use crate::ff::potential::param_reads::{neighbour_cutoff, pair_cutoff};
-use crate::ff::potential::{PairDriven, Potential, gather_copies};
+use crate::ff::potential::{Accumulator, PairDriven, Potential, gather_copies};
 use molrs::core::Frame;
 use molrs::core::Neighbors;
 use molrs::core::Virial;
@@ -116,7 +116,7 @@ impl<'a> PairRows<'a> {
                 ),
             });
         }
-        let mixing = match style.get_str("mixing") {
+        let mixing = match style.get("mixing").and_then(|v| v.as_text()) {
             Some(name) => CombiningRule::parse(name).map_err(|reason| IrError::BadValue {
                 style: spec.name.to_string(),
                 type_: String::new(),
@@ -249,7 +249,7 @@ fn charges(frame: &Frame) -> Vec<F> {
     frame
         .get(ATOMS)
         .and_then(|b| b.get("charge"))
-        .and_then(|c| c.as_float())
+        .and_then(|c| c.get::<f64>())
         .map(|c| c.iter().copied().collect())
         .unwrap_or_default()
 }
@@ -258,7 +258,7 @@ fn atom_types(frame: &Frame, spec: &StyleSpec) -> Result<Vec<String>, String> {
     let col = frame
         .get(ATOMS)
         .and_then(|b| b.get("type"))
-        .and_then(|c| c.as_string())
+        .and_then(|c| c.get::<String>())
         .ok_or_else(|| {
             format!(
                 "{} `{}`: atoms block missing \"type\" column",
@@ -295,8 +295,8 @@ impl ScalarPair {
         let charge = charges(frame);
         let types = atom_types(frame, spec)?;
         let scale_14 = match spec.special_class() {
-            SpecialClass::Vdw => style.get("lj14scale"),
-            SpecialClass::Coulomb => style.get("coulomb14scale"),
+            SpecialClass::Vdw => style.get("lj14scale").and_then(|v| v.as_num()),
+            SpecialClass::Coulomb => style.get("coulomb14scale").and_then(|v| v.as_num()),
         }
         .unwrap_or(1.0);
         let block = frame
@@ -305,11 +305,11 @@ impl ScalarPair {
         let column = |key: &str| {
             block
                 .get(key)
-                .and_then(|c| c.as_uint())
+                .and_then(|c| c.get::<u64>())
                 .ok_or_else(|| format!("{who}: pairs block missing \"{key}\" column"))
         };
         let (i_col, j_col) = (column("atomi")?, column("atomj")?);
-        let is_14 = block.get("is_14").and_then(|c| c.as_bool());
+        let is_14 = block.get("is_14").and_then(|c| c.get::<bool>());
         let n = i_col.len();
         let mut values = vec![Vec::with_capacity(n); table.cols.len()];
         let mut q = [Vec::new(), Vec::new()];
@@ -538,7 +538,7 @@ impl ScalarPair {
     }
 
     /// One contiguous range of a neighbour table, into `out`.
-    fn fold_rows(
+    fn fold_rows<const VIRIAL: bool>(
         &self,
         out: &mut [F],
         factor: &[F],
@@ -583,7 +583,9 @@ impl ScalarPair {
             let scale = -de[k] / r[k];
             let f = [w * scale * d[0], w * scale * d[1], w * scale * d[2]];
             energy += w * e[k];
-            virial.add_outer(f, d);
+            if VIRIAL {
+                virial.add_outer(f, d);
+            }
             for c in 0..3 {
                 out[j * 3 + c] += f[c];
                 out[i * 3 + c] -= f[c];
@@ -594,8 +596,7 @@ impl ScalarPair {
 }
 
 impl Potential for ScalarPair {
-    fn calc_energy_forces(&self, coords: &[F]) -> (F, Vec<F>) {
-        let mut out = vec![0.0; coords.len()];
+    fn evaluate(&self, coords: &[F], acc: &mut Accumulator<'_>) {
         let Source::Compiled {
             atom_i,
             atom_j,
@@ -605,7 +606,7 @@ impl Potential for ScalarPair {
         } = &self.source
         else {
             // A type table needs a pair table, and nobody handed one over.
-            return (0.0, out);
+            return;
         };
         let disp: Vec<[F; 3]> = atom_i
             .iter()
@@ -629,6 +630,7 @@ impl Potential for ScalarPair {
             .collect();
         let r: Vec<F> = active.iter().map(|&t| d2[t].sqrt()).collect();
         let (e, de) = self.eval(&r, &self.with_style(terms.select(&active), r.len()));
+        let out = acc.forces_without_virial();
         let mut energy: F = 0.0;
         for (k, &t) in active.iter().enumerate() {
             let w = weight[t];
@@ -640,53 +642,41 @@ impl Potential for ScalarPair {
                 out[atom_i[t] * 3 + c] -= f;
             }
         }
-        (energy, out)
-    }
-
-    fn calc_energy_forces_with_pairs(&self, coords: &[F], pairs: &Neighbors) -> (F, Vec<F>) {
-        let (e, f, _) = self.calc_energy_forces_with_pairs_virial(coords, pairs);
-        (e, f)
+        acc.add_energy(energy);
     }
 }
 
 impl PairDriven for ScalarPair {
-    fn accumulate_pairs(
+    fn evaluate_pairs(
         &self,
         coords: &[F],
         pairs: &Neighbors,
         factor: &[F],
-        out: &mut [F],
-    ) -> (F, Option<Virial>) {
+        acc: &mut Accumulator<'_>,
+    ) {
         if let Source::Compiled { .. } = self.source {
             // A compiled kernel answers for its own list, not for this one,
             // and cannot read a per-pair weight either; both providers refuse
             // one, so this is the free-boundary path and `factor` is empty.
             debug_assert!(factor.is_empty());
-            let (e, f) = self.calc_energy_forces(coords);
-            for (acc, v) in out.iter_mut().zip(&f) {
-                *acc += v;
-            }
-            return (e, None);
+            self.evaluate(coords, acc);
+            return;
         }
-        let n_pairs = pairs.query_point_indices().len();
-        let (e, w) = fold_chunks(out, n_pairs, |acc, rows| {
-            self.fold_rows(acc, factor, pairs, rows)
-        });
-        (e, Some(w))
+        if pairs.disp().is_none() || pairs.dist_sq().is_none() {
+            // No displacements, nothing priced — and no virial claimed for it.
+            acc.forces_without_virial();
+            return;
+        }
+        fold_pairs(
+            acc,
+            pairs.query_point_indices().len(),
+            |out: &mut [F], rows| self.fold_rows::<false>(out, factor, pairs, rows),
+            |out: &mut [F], rows| self.fold_rows::<true>(out, factor, pairs, rows),
+        );
     }
 
     fn binds_a_fixed_pair_list(&self) -> bool {
         matches!(self.source, Source::Compiled { .. })
-    }
-
-    fn calc_energy_forces_with_pairs_virial(
-        &self,
-        coords: &[F],
-        pairs: &Neighbors,
-    ) -> (F, Vec<F>, Option<Virial>) {
-        let mut forces = vec![0.0; coords.len()];
-        let (e, w) = self.accumulate_pairs(coords, pairs, &[], &mut forces);
-        (e, forces, w)
     }
 
     fn gather_onto_copies(&mut self, owner: &[u32]) {

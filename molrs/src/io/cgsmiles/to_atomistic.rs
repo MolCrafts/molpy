@@ -6,8 +6,8 @@
 //! single [`Atomistic::replicate`], every copy carrying its node's index as
 //! `frag_id`.
 //! Every [`ResolvedPair`](crate::io::cgsmiles::ResolvedPair) of the level then
-//! becomes one real bond, given the class the pairing resolved rather than the
-//! single bond [`Atomistic::add_bond`] defaults to.
+//! becomes one real bond, written with the class the pairing resolved rather
+//! than left to the single bond [`Atomistic::add_bond`] defaults to.
 //!
 //! What comes out is **topology only** — the heavy atoms the bodies wrote, the
 //! bonds they and the pairing imply, and the properties the notation declared.
@@ -28,6 +28,7 @@ use crate::io::cgsmiles::{
 use crate::io::smiles::{Notation, SmilesError, SmilesErrorKind};
 use molrs::core::Atomistic;
 use molrs::core::NodeId;
+use molrs::core::keys;
 use molrs::op::I;
 use molrs::op::Rigid;
 
@@ -177,15 +178,10 @@ impl CgSmilesIr {
                 .iter()
                 .enumerate()
                 .map(|(port, (atom, _))| {
-                    template
-                        .as_molgraph()
-                        .node_table()
-                        .row(*atom)
-                        .ok_or_else(|| {
-                            let reason =
-                                format!("port {port} of fragment '{name}' is no atom of it");
-                            cg_build(self.span, reason)
-                        })
+                    template.atom_table().row(*atom).ok_or_else(|| {
+                        let reason = format!("port {port} of fragment '{name}' is no atom of it");
+                        cg_build(self.span, reason)
+                    })
                 })
                 .collect::<Result<Vec<usize>, SmilesError>>()?;
             let frag_ids = (first..last)
@@ -240,15 +236,17 @@ impl CgSmilesIr {
         for pair in pairs {
             let src = self.port_atom(&pair.src, instances)?;
             let dst = self.port_atom(&pair.dst, instances)?;
-            let bond = mol
-                .add_bond(src, dst)
-                .map_err(|e| cg_build(self.span, format!("bond between two fragments: {e}")))?;
-            // `add_bond` takes no order and defaults to a single bond, so the
-            // class the pairing resolved has to be written explicitly.
-            mol.set_bond_class(bond, pair.kind.bond_type(), pair.kind.bond_number())
-                .map_err(|e| {
-                    cg_build(self.span, format!("class of an inter-fragment bond: {e}"))
-                })?;
+            // An unstated class would be stamped single, so the class the
+            // pairing resolved is written in the bond's own props.
+            mol.add_bond(
+                src,
+                dst,
+                crate::props! {
+                    keys::BOND_TYPE => pair.kind.bond_type(),
+                    keys::BOND_NUMBER => pair.kind.bond_number(),
+                },
+            )
+            .map_err(|e| cg_build(self.span, format!("bond between two fragments: {e}")))?;
         }
         Ok(())
     }
@@ -313,17 +311,6 @@ impl CgSmilesIr {
     }
 }
 
-/// Read the molecule a `CGsmiles` string states: [`CgSmilesIr::parse`] then
-/// [`CgSmilesIr::to_atomistic`] — topology only, every bead of the lowest
-/// level replaced by its fragment body, each resolved descriptor pair one bond.
-///
-/// # Errors
-///
-/// Every [`CgSmilesIr::parse`] and [`CgSmilesIr::to_atomistic`] error.
-pub fn read_cgsmiles_str(text: &str) -> Result<Atomistic, SmilesError> {
-    CgSmilesIr::parse(text)?.to_atomistic()
-}
-
 // ==========================================================================
 // Tests
 // ==========================================================================
@@ -332,12 +319,13 @@ pub fn read_cgsmiles_str(text: &str) -> Result<Atomistic, SmilesError> {
 mod tests {
     use std::collections::BTreeMap;
 
-    use crate::io::cgsmiles::fixtures::{body, pair};
+    use crate::io::cgsmiles::fixtures::{body, fragment, pair};
     use crate::io::cgsmiles::{
         CgBondOrder, CgEdge, CgFragmentDef, CgGraph, CgNode, CgSmilesIr, EdgeOrigin, FragmentBody,
     };
-    use crate::io::smiles::{BondKind, SmilesErrorKind, SmilesIr, Span};
+    use crate::io::smiles::{BondKind, SmilesErrorKind, Span};
     use molrs::core::Atomistic;
+    use molrs::core::Element;
     use molrs::core::NodeId;
     use molrs::core::PropValue;
     use molrs::core::keys;
@@ -390,7 +378,7 @@ mod tests {
         for (bid, bond) in mol.bonds() {
             let (i, j) = (bond.nodes[0], bond.nodes[1]);
             if frag_id(mol, i) != frag_id(mol, j) {
-                classes.push((mol.bond_type(bid), mol.bond_number(bid)));
+                classes.push((mol.bond_type(bid).unwrap(), mol.bond_number(bid).unwrap()));
             }
         }
         classes
@@ -436,8 +424,7 @@ mod tests {
         entries
             .iter()
             .map(|(name, text)| {
-                let body = SmilesIr::from_fragment(text)
-                    .unwrap_or_else(|e| panic!("body {text:?} must parse: {e}"));
+                let body = fragment(text);
                 (
                     (*name).to_owned(),
                     CgFragmentDef {
@@ -635,12 +622,13 @@ mod tests {
             .map(|(id, _)| id)
             .find(|&id| frag_id(&mol, id) == 0 && mol.neighbor_bonds(id).count() == 1)
             .expect("instance 0 holds a chain end");
-        let element = |id: NodeId| -> String {
-            mol.get_atom(id)
+        let element = |id: NodeId| -> Element {
+            let z = mol
+                .get_atom(id)
                 .unwrap_or_else(|e| panic!("atom {id:?} is missing: {e}"))
-                .get_str(keys::ELEMENT)
-                .unwrap_or_else(|| panic!("atom {id:?} carries no element"))
-                .to_owned()
+                .atomic_number()
+                .unwrap_or_else(|| panic!("atom {id:?} carries no atomic number"));
+            Element::by_number(z).unwrap_or_else(|| panic!("atom {id:?} is the wildcard"))
         };
         let mut elements = vec![element(start)];
         let mut numbers = Vec::new();
@@ -651,13 +639,16 @@ mod tests {
             .find(|&(other, _)| Some(other) != prev)
         {
             elements.push(element(next));
-            numbers.push(mol.bond_number(bid));
+            numbers.push(mol.bond_number(bid).unwrap());
             frags.push(frag_id(&mol, next));
             prev = Some(here);
             here = next;
         }
 
-        assert_eq!(elements, vec!["C", "C", "C", "O"]);
+        assert_eq!(
+            elements,
+            vec![Element::C, Element::C, Element::C, Element::O]
+        );
         assert_eq!(
             numbers,
             vec![BondNumber::Single, BondNumber::Double, BondNumber::Single]
@@ -690,8 +681,8 @@ mod tests {
         assert_eq!(mol.n_atoms(), 11);
         for (id, atom) in mol.atoms() {
             assert_ne!(
-                atom.get_str(keys::ELEMENT),
-                Some("H"),
+                atom.atomic_number(),
+                Some(Element::H.z()),
                 "atom {id:?} is a hydrogen"
             );
         }

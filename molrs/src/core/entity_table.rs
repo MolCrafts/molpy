@@ -357,9 +357,11 @@ impl<K: Key> EntityTable<K> {
         self.cols.get(key).map(EntityColumn::validity)
     }
 
-    /// The typed column `key` together with its validity, or `None` when no
-    /// entity has ever carried the component.
-    pub fn column(&self, key: &str) -> Option<&EntityColumn> {
+    /// The column `key` whatever its element type, or `None` when no entity
+    /// has ever carried the component — the dynamic counterpart of the typed
+    /// [`column`](Self::column), as [`value`](Self::value) is of
+    /// [`get`](Self::get).
+    pub fn entity_column(&self, key: &str) -> Option<&EntityColumn> {
         self.cols.get(key)
     }
 
@@ -380,7 +382,7 @@ impl<K: Key> EntityTable<K> {
     /// Every *other* handle stays valid — only the row previously at the end is
     /// moved into `k`'s slot, and that entity's handle is unchanged (just its
     /// internal row index). Handles are the stable identity; rows are internal.
-    pub fn despawn(&mut self, k: K) -> bool {
+    pub(crate) fn despawn(&mut self, k: K) -> bool {
         let row = match self.keys.get(k) {
             Some(&r) => r as usize,
             None => return false,
@@ -549,133 +551,170 @@ impl<K: Key> EntityTable<K> {
     }
 }
 
-/// Generates the typed `set_*` / `get_*` / `column_*` accessor trio for one
-/// element type, keeping the lazy-create + type-conflict + null logic in one
-/// place.
-macro_rules! typed_accessors {
-    ($set:ident, $get:ident, $col:ident, $variant:ident, $ty:ty, $name:literal) => {
-        impl<K: Key> EntityTable<K> {
-            #[doc = concat!("Set the `", $name, "` component `key` on entity `k`, creating the column on first use.")]
-            ///
-            /// Errors on a stale handle, or if `key` already exists with a
-            /// different element type (no silent coercion).
-            pub fn $set(&mut self, k: K, key: &str, val: $ty) -> Result<(), MolRsError> {
-                let row = self.require_row(k)?;
-                let n = self.rows.len();
-                match self.cols.get_mut(key) {
-                    None => {
-                        let mut data = vec![<$ty>::default(); n];
-                        let mut valid = Validity::with_len(n);
-                        data[row] = val;
-                        valid.set(row, true);
-                        self.cols
-                            .insert(key.to_owned(), EntityColumn::$variant(data, valid));
-                    }
-                    Some(EntityColumn::$variant(data, valid)) => {
-                        data[row] = val;
-                        valid.set(row, true);
-                    }
-                    Some(other) => {
-                        return Err(type_conflict(key, $name, other.type_name()));
-                    }
-                }
-                Ok(())
-            }
+/// Element types an [`EntityTable`] column can hold: [`F`], [`I`], `bool`
+/// and `String`, one per [`EntityColumn`] variant.
+///
+/// It makes the typed table surface generic — [`EntityTable::set`],
+/// [`EntityTable::get`], [`EntityTable::column`] and
+/// [`EntityTable::column_mut`] take the element type as their parameter. The
+/// trait is sealed: the set of element types is closed.
+pub trait EntityDtype: Clone + Default + 'static + sealed::Slot {
+    /// What [`EntityTable::get`] hands back: the value itself for the `Copy`
+    /// scalars, a `&str` borrow for `String`.
+    type Ref<'a>;
 
-            #[doc = concat!("Get the `", $name, "` component `key` of entity `k`.")]
-            ///
-            /// Errors if the handle is stale, the value is absent (column
-            /// missing or null for this entity), or the column has a different
-            /// element type. Strict by design — no fallback default.
-            pub fn $get(&self, k: K, key: &str) -> Result<$ty, MolRsError> {
-                let row = self.require_row(k)?;
-                match self.cols.get(key) {
-                    Some(EntityColumn::$variant(data, valid)) if valid.get(row) => {
-                        Ok(data[row].clone())
-                    }
-                    Some(EntityColumn::$variant(..)) => Err(missing(key)),
-                    Some(other) => Err(type_conflict(key, $name, other.type_name())),
-                    None => Err(missing(key)),
+    /// Read one stored value as [`Ref`](Self::Ref).
+    #[doc(hidden)]
+    fn read(value: &Self) -> Self::Ref<'_>;
+}
+
+mod sealed {
+    use super::{EntityColumn, Validity};
+
+    /// Which [`EntityColumn`] variant holds this element type.
+    pub trait Slot: Sized {
+        /// The element type's name in error messages.
+        const NAME: &'static str;
+        /// Wrap a data vector and its mask in this type's variant.
+        fn wrap(data: Vec<Self>, valid: Validity) -> EntityColumn;
+        /// The data and mask, when `col` is this type's variant.
+        fn slot(col: &EntityColumn) -> Option<(&Vec<Self>, &Validity)>;
+        /// The data and mask, mutably, when `col` is this type's variant.
+        fn slot_mut(col: &mut EntityColumn) -> Option<(&mut Vec<Self>, &mut Validity)>;
+    }
+}
+
+macro_rules! impl_entity_dtype {
+    ($ty:ty, $variant:ident, $name:literal, $ref:ty, |$v:ident| $read:expr) => {
+        impl EntityDtype for $ty {
+            type Ref<'a> = $ref;
+            fn read($v: &Self) -> Self::Ref<'_> {
+                $read
+            }
+        }
+        impl sealed::Slot for $ty {
+            const NAME: &'static str = $name;
+            fn wrap(data: Vec<Self>, valid: Validity) -> EntityColumn {
+                EntityColumn::$variant(data, valid)
+            }
+            fn slot(col: &EntityColumn) -> Option<(&Vec<Self>, &Validity)> {
+                match col {
+                    EntityColumn::$variant(data, valid) => Some((data, valid)),
+                    _ => None,
                 }
             }
-
-            #[doc = concat!("Borrow the whole `", $name, "` column `key` (zero-copy slice) plus its validity mask.")]
-            ///
-            /// The slice has length `len()` and is aligned to row order. Errors
-            /// if the column is absent or has a different element type.
-            pub fn $col(&self, key: &str) -> Result<(&[$ty], &Validity), MolRsError> {
-                match self.cols.get(key) {
-                    Some(EntityColumn::$variant(data, valid)) => Ok((data, valid)),
-                    Some(other) => Err(type_conflict(key, $name, other.type_name())),
-                    None => Err(missing(key)),
+            fn slot_mut(col: &mut EntityColumn) -> Option<(&mut Vec<Self>, &mut Validity)> {
+                match col {
+                    EntityColumn::$variant(data, valid) => Some((data, valid)),
+                    _ => None,
                 }
             }
         }
     };
 }
 
-typed_accessors!(set_f64, get_f64, column_f64, F64, F, "f64");
-typed_accessors!(set_i32, get_i32, column_i32, I32, I, "i32");
-typed_accessors!(set_bool, get_bool, column_bool, Bool, bool, "bool");
+impl_entity_dtype!(F, F64, "f64", F, |v| *v);
+impl_entity_dtype!(I, I32, "i32", I, |v| *v);
+impl_entity_dtype!(bool, Bool, "bool", bool, |v| *v);
+impl_entity_dtype!(String, Str, "str", &'a str, |v| v.as_str());
 
 impl<K: Key> EntityTable<K> {
-    /// Mutably borrow the whole `f64` column `key` (zero-copy slice) plus its
-    /// validity mask, for in-place vectorized updates over the dense, row-aligned
-    /// column (rows are compacted, so the slice spans exactly the live entities).
-    /// Errors if the column is absent or has a different element type.
-    pub fn column_f64_mut(&mut self, key: &str) -> Result<(&mut [F], &Validity), MolRsError> {
-        match self.cols.get_mut(key) {
-            Some(EntityColumn::F64(data, valid)) => Ok((data.as_mut_slice(), &*valid)),
-            Some(other) => Err(type_conflict(key, "f64", other.type_name())),
-            None => Err(missing(key)),
-        }
-    }
-}
-
-// `Str` accessors are written by hand: `get` borrows rather than clones, and
-// `set` takes `&str`.
-impl<K: Key> EntityTable<K> {
-    /// Set the string component `key` on entity `k` (creates the column on
-    /// first use). Errors on a stale handle or an element-type conflict.
-    pub fn set_str(&mut self, k: K, key: &str, val: &str) -> Result<(), MolRsError> {
+    /// Set the `T` component `key` on entity `k`, creating the column on first
+    /// use.
+    ///
+    /// ```
+    /// use molrs::core::{EntityTable, NodeId};
+    ///
+    /// let mut t = EntityTable::<NodeId>::new();
+    /// let a = t.spawn();
+    /// t.set::<f64>(a, "charge", -0.5).unwrap();
+    /// t.set::<String>(a, "name", "OW").unwrap();
+    /// assert_eq!(t.get::<f64>(a, "charge").unwrap(), -0.5);
+    /// assert_eq!(t.get::<String>(a, "name").unwrap(), "OW");
+    /// assert!(t.get::<i32>(a, "charge").is_err()); // typed f64, not i32
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// On a stale handle, or if `key` already exists with a different element
+    /// type (no silent coercion). Nothing is written on error.
+    pub fn set<T: EntityDtype>(
+        &mut self,
+        k: K,
+        key: &str,
+        val: impl Into<T>,
+    ) -> Result<(), MolRsError> {
         let row = self.require_row(k)?;
         let n = self.rows.len();
         match self.cols.get_mut(key) {
             None => {
-                let mut data = vec![String::new(); n];
+                let mut data = vec![T::default(); n];
                 let mut valid = Validity::with_len(n);
-                data[row] = val.to_owned();
+                data[row] = val.into();
                 valid.set(row, true);
-                self.cols
-                    .insert(key.to_owned(), EntityColumn::Str(data, valid));
+                self.cols.insert(key.to_owned(), T::wrap(data, valid));
             }
-            Some(EntityColumn::Str(data, valid)) => {
-                data[row] = val.to_owned();
-                valid.set(row, true);
-            }
-            Some(other) => return Err(type_conflict(key, "str", other.type_name())),
+            Some(col) => match T::slot_mut(col) {
+                Some((data, valid)) => {
+                    data[row] = val.into();
+                    valid.set(row, true);
+                }
+                None => return Err(type_conflict(key, T::NAME, col.type_name())),
+            },
         }
         Ok(())
     }
 
-    /// Borrow the string component `key` of entity `k`. Errors if stale, absent,
-    /// or a different element type.
-    pub fn get_str(&self, k: K, key: &str) -> Result<&str, MolRsError> {
+    /// Get the `T` component `key` of entity `k`.
+    ///
+    /// # Errors
+    ///
+    /// If the handle is stale, the value is absent (column missing or null for
+    /// this entity), or the column has a different element type. Strict by
+    /// design — no fallback default.
+    pub fn get<T: EntityDtype>(&self, k: K, key: &str) -> Result<T::Ref<'_>, MolRsError> {
         let row = self.require_row(k)?;
-        match self.cols.get(key) {
-            Some(EntityColumn::Str(data, valid)) if valid.get(row) => Ok(&data[row]),
-            Some(EntityColumn::Str(..)) => Err(missing(key)),
-            Some(other) => Err(type_conflict(key, "str", other.type_name())),
-            None => Err(missing(key)),
+        let col = self.cols.get(key).ok_or_else(|| missing(key))?;
+        match T::slot(col) {
+            Some((data, valid)) if valid.get(row) => Ok(T::read(&data[row])),
+            Some(_) => Err(missing(key)),
+            None => Err(type_conflict(key, T::NAME, col.type_name())),
         }
     }
 
-    /// Borrow the whole string column `key` (slice) plus its validity mask.
-    pub fn column_str(&self, key: &str) -> Result<(&[String], &Validity), MolRsError> {
-        match self.cols.get(key) {
-            Some(EntityColumn::Str(data, valid)) => Ok((data, valid)),
-            Some(other) => Err(type_conflict(key, "str", other.type_name())),
-            None => Err(missing(key)),
+    /// Borrow the whole `T` column `key` (zero-copy slice) plus its validity
+    /// mask.
+    ///
+    /// The slice has length `len()` and is aligned to row order.
+    ///
+    /// # Errors
+    ///
+    /// If the column is absent or has a different element type.
+    pub fn column<T: EntityDtype>(&self, key: &str) -> Result<(&[T], &Validity), MolRsError> {
+        let col = self.cols.get(key).ok_or_else(|| missing(key))?;
+        match T::slot(col) {
+            Some((data, valid)) => Ok((data.as_slice(), valid)),
+            None => Err(type_conflict(key, T::NAME, col.type_name())),
+        }
+    }
+
+    /// Mutably borrow the whole `T` column `key` (zero-copy slice) plus its
+    /// validity mask, for in-place vectorized updates over the dense,
+    /// row-aligned column (rows are compacted, so the slice spans exactly the
+    /// live entities).
+    ///
+    /// # Errors
+    ///
+    /// If the column is absent or has a different element type.
+    pub fn column_mut<T: EntityDtype>(
+        &mut self,
+        key: &str,
+    ) -> Result<(&mut [T], &Validity), MolRsError> {
+        let col = self.cols.get_mut(key).ok_or_else(|| missing(key))?;
+        let name = col.type_name();
+        match T::slot_mut(col) {
+            Some((data, valid)) => Ok((data.as_mut_slice(), &*valid)),
+            None => Err(type_conflict(key, T::NAME, name)),
         }
     }
 }
@@ -695,10 +734,10 @@ mod tests {
     fn columns_follow_first_write_order() {
         let mut t = T::new();
         let a = t.spawn();
-        t.set_f64(a, "c", 1.0).unwrap();
-        t.set_str(a, "a", "x").unwrap();
-        t.set_i32(a, "b", 2).unwrap();
-        t.set_f64(a, "c", 3.0).unwrap();
+        t.set::<f64>(a, "c", 1.0).unwrap();
+        t.set::<String>(a, "a", "x").unwrap();
+        t.set::<i32>(a, "b", 2).unwrap();
+        t.set::<f64>(a, "c", 3.0).unwrap();
         assert_eq!(t.columns().collect::<Vec<_>>(), ["c", "a", "b"]);
     }
 
@@ -722,11 +761,11 @@ mod tests {
         let a = t.spawn();
         let b = t.spawn();
         // No column yet → strict get errors.
-        assert!(t.get_f64(a, "charge").is_err());
-        t.set_f64(a, "charge", 0.5).unwrap();
-        assert_eq!(t.get_f64(a, "charge").unwrap(), 0.5);
+        assert!(t.get::<f64>(a, "charge").is_err());
+        t.set::<f64>(a, "charge", 0.5).unwrap();
+        assert_eq!(t.get::<f64>(a, "charge").unwrap(), 0.5);
         // `b` shares the column but has no value → null → error, not a default.
-        assert!(t.get_f64(b, "charge").is_err());
+        assert!(t.get::<f64>(b, "charge").is_err());
         assert!(!t.has(b, "charge"));
         assert!(t.has(a, "charge"));
     }
@@ -736,13 +775,13 @@ mod tests {
         let mut t = T::new();
         let a = t.spawn();
         let b = t.spawn();
-        t.set_f64(a, "charge", 1.0).unwrap();
-        t.set_str(b, "port", "head").unwrap();
+        t.set::<f64>(a, "charge", 1.0).unwrap();
+        t.set::<String>(b, "port", "head").unwrap();
         // a has charge not port; b has port not charge.
         assert!(t.has(a, "charge") && !t.has(a, "port"));
         assert!(t.has(b, "port") && !t.has(b, "charge"));
         // Columns are aligned to length n_rows regardless of sparsity.
-        let (data, valid) = t.column_f64("charge").unwrap();
+        let (data, valid) = t.column::<f64>("charge").unwrap();
         assert_eq!(data.len(), 2);
         assert_eq!(valid.as_slice(), &[true, false]);
     }
@@ -752,12 +791,12 @@ mod tests {
         let mut t = T::new();
         let a = t.spawn();
         let b = t.spawn();
-        t.set_f64(a, "x", 1.0).unwrap();
-        t.set_f64(b, "x", 2.0).unwrap();
-        t.set_str(a, "el", "C").unwrap();
-        t.set_str(b, "el", "O").unwrap();
-        let (xs, _) = t.column_f64("x").unwrap();
-        let (els, _) = t.column_str("el").unwrap();
+        t.set::<f64>(a, "x", 1.0).unwrap();
+        t.set::<f64>(b, "x", 2.0).unwrap();
+        t.set::<String>(a, "el", "C").unwrap();
+        t.set::<String>(b, "el", "O").unwrap();
+        let (xs, _) = t.column::<f64>("x").unwrap();
+        let (els, _) = t.column::<String>("el").unwrap();
         // Row i of every column is the same entity.
         assert_eq!(xs[t.row(a).unwrap()], 1.0);
         assert_eq!(els[t.row(a).unwrap()], "C");
@@ -769,13 +808,13 @@ mod tests {
     fn type_conflict_is_an_error() {
         let mut t = T::new();
         let a = t.spawn();
-        t.set_f64(a, "k", 1.0).unwrap();
+        t.set::<f64>(a, "k", 1.0).unwrap();
         // Re-typing the same column is rejected, not silently coerced.
-        assert!(t.set_str(a, "k", "x").is_err());
-        assert!(t.get_str(a, "k").is_err());
-        assert!(t.set_i32(a, "k", 3).is_err());
+        assert!(t.set::<String>(a, "k", "x").is_err());
+        assert!(t.get::<String>(a, "k").is_err());
+        assert!(t.set::<i32>(a, "k", 3).is_err());
         // Original value intact.
-        assert_eq!(t.get_f64(a, "k").unwrap(), 1.0);
+        assert_eq!(t.get::<f64>(a, "k").unwrap(), 1.0);
     }
 
     #[test]
@@ -784,21 +823,21 @@ mod tests {
         let a = t.spawn();
         let b = t.spawn();
         let c = t.spawn();
-        t.set_f64(a, "x", 10.0).unwrap();
-        t.set_f64(b, "x", 20.0).unwrap();
-        t.set_f64(c, "x", 30.0).unwrap();
+        t.set::<f64>(a, "x", 10.0).unwrap();
+        t.set::<f64>(b, "x", 20.0).unwrap();
+        t.set::<f64>(c, "x", 30.0).unwrap();
         // Remove the middle entity.
         assert!(t.despawn(b));
         assert_eq!(t.len(), 2);
         assert!(!t.contains(b));
         // a and c handles still resolve to their own data (c moved rows
         // internally, but its handle and value are unchanged).
-        assert_eq!(t.get_f64(a, "x").unwrap(), 10.0);
-        assert_eq!(t.get_f64(c, "x").unwrap(), 30.0);
+        assert_eq!(t.get::<f64>(a, "x").unwrap(), 10.0);
+        assert_eq!(t.get::<f64>(c, "x").unwrap(), 30.0);
         // b's row was filled by c; the column stays compact and aligned.
-        let (xs, _) = t.column_f64("x").unwrap();
+        let (xs, _) = t.column::<f64>("x").unwrap();
         assert_eq!(xs.len(), 2);
-        let mut got: Vec<f64> = t.handles().map(|h| t.get_f64(h, "x").unwrap()).collect();
+        let mut got: Vec<f64> = t.handles().map(|h| t.get::<f64>(h, "x").unwrap()).collect();
         got.sort_by(|p, q| p.partial_cmp(q).unwrap());
         assert_eq!(got, vec![10.0, 30.0]);
     }
@@ -811,7 +850,7 @@ mod tests {
         assert!(t.despawn(b)); // remove the last row
         assert_eq!(t.len(), 1);
         assert!(!t.despawn(b)); // already gone → false, no panic
-        assert!(t.get_f64(b, "x").is_err()); // stale handle errors
+        assert!(t.get::<f64>(b, "x").is_err()); // stale handle errors
         assert!(t.contains(a));
     }
 
@@ -819,9 +858,9 @@ mod tests {
     fn value_and_row_cells_read_dynamically() {
         let mut t = T::new();
         let a = t.spawn();
-        t.set_f64(a, "x", 1.5).unwrap();
-        t.set_i32(a, "n", 7).unwrap();
-        t.set_str(a, "el", "C").unwrap();
+        t.set::<f64>(a, "x", 1.5).unwrap();
+        t.set::<i32>(a, "n", 7).unwrap();
+        t.set::<String>(a, "el", "C").unwrap();
         assert_eq!(t.value(a, "x"), Some(EntityCell::F64(1.5)));
         assert_eq!(t.value(a, "n"), Some(EntityCell::I32(7)));
         assert_eq!(t.value(a, "el"), Some(EntityCell::Str("C")));
@@ -840,7 +879,7 @@ mod tests {
         );
         // A second, sparser entity only surfaces its own present cells.
         let b = t.spawn();
-        t.set_f64(b, "x", 9.0).unwrap();
+        t.set::<f64>(b, "x", 9.0).unwrap();
         assert_eq!(t.value(b, "el"), None);
         assert_eq!(t.row_cells(b).count(), 1);
     }
@@ -849,13 +888,13 @@ mod tests {
     fn clear_unsets_without_removing_column() {
         let mut t = T::new();
         let a = t.spawn();
-        t.set_f64(a, "charge", 2.0).unwrap();
+        t.set::<f64>(a, "charge", 2.0).unwrap();
         assert!(t.has(a, "charge"));
         t.clear(a, "charge").unwrap();
         assert!(!t.has(a, "charge"));
-        assert!(t.get_f64(a, "charge").is_err());
+        assert!(t.get::<f64>(a, "charge").is_err());
         // EntityColumn still exists (other entities may use it).
-        assert!(t.column_f64("charge").is_ok());
+        assert!(t.column::<f64>("charge").is_ok());
     }
 
     // ----- bulk append: check_extend / extend_repeated -----
@@ -874,8 +913,8 @@ mod tests {
         let mut src = T::new();
         let s0 = src.spawn();
         let s1 = src.spawn();
-        src.set_str(s0, "el", "C").unwrap();
-        src.set_str(s1, "el", "O").unwrap();
+        src.set::<String>(s0, "el", "C").unwrap();
+        src.set::<String>(s1, "el", "O").unwrap();
 
         let handles = t.extend_repeated(&src, 2).unwrap();
 
@@ -885,7 +924,7 @@ mod tests {
             assert_eq!(t.row(h), Some(2 + i), "new rows follow the old ones");
         }
         assert!(!t.has(a, "el") && !t.has(b, "el"), "old rows read null");
-        let (data, valid) = t.column_str("el").unwrap();
+        let (data, valid) = t.column::<String>("el").unwrap();
         assert_eq!(valid.as_slice(), &[false, false, true, true, true, true]);
         assert_eq!(&data[2..], &["C", "O", "C", "O"], "copy-major repetition");
     }
@@ -895,16 +934,16 @@ mod tests {
         let mut t = T::new();
         let a = t.spawn();
         let b = t.spawn();
-        t.set_f64(a, "x", 1.0).unwrap();
-        t.set_f64(b, "x", 2.0).unwrap();
+        t.set::<f64>(a, "x", 1.0).unwrap();
+        t.set::<f64>(b, "x", 2.0).unwrap();
         let mut src = T::new();
         let s = src.spawn();
-        src.set_str(s, "el", "N").unwrap();
+        src.set::<String>(s, "el", "N").unwrap();
 
         let handles = t.extend_repeated(&src, 3).unwrap();
 
         assert_eq!(handles.len(), 3);
-        let (data, valid) = t.column_f64("x").unwrap();
+        let (data, valid) = t.column::<f64>("x").unwrap();
         assert_eq!(data.len(), 5);
         assert_eq!(valid.as_slice(), &[true, true, false, false, false]);
         assert_eq!(&data[..2], &[1.0, 2.0], "old rows unchanged");
@@ -917,36 +956,36 @@ mod tests {
     fn check_extend_refuses_a_column_type_conflict_and_writes_nothing() {
         let mut t = T::new();
         let a = t.spawn();
-        t.set_f64(a, "k", 1.0).unwrap();
+        t.set::<f64>(a, "k", 1.0).unwrap();
         let mut src = T::new();
         let s = src.spawn();
-        src.set_str(s, "k", "x").unwrap();
-        src.set_i32(s, "extra", 4).unwrap();
+        src.set::<String>(s, "k", "x").unwrap();
+        src.set::<i32>(s, "extra", 4).unwrap();
 
         let err = t.check_extend(&src).expect_err("f64 'k' vs str 'k'");
 
         assert!(matches!(err, MolRsError::Validation { .. }), "{err:?}");
         assert_eq!(t.len(), 1);
         assert_eq!(sorted_columns(&t), vec!["k".to_owned()]);
-        assert_eq!(t.get_f64(a, "k").unwrap(), 1.0);
+        assert_eq!(t.get::<f64>(a, "k").unwrap(), 1.0);
     }
 
     #[test]
     fn extend_repeated_refuses_a_column_type_conflict_and_writes_nothing() {
         let mut t = T::new();
         let a = t.spawn();
-        t.set_f64(a, "k", 1.0).unwrap();
+        t.set::<f64>(a, "k", 1.0).unwrap();
         let mut src = T::new();
         let s = src.spawn();
-        src.set_str(s, "k", "x").unwrap();
-        src.set_i32(s, "extra", 4).unwrap();
+        src.set::<String>(s, "k", "x").unwrap();
+        src.set::<i32>(s, "extra", 4).unwrap();
 
         let err = t.extend_repeated(&src, 2).expect_err("f64 'k' vs str 'k'");
 
         assert!(matches!(err, MolRsError::Validation { .. }), "{err:?}");
         assert_eq!(t.len(), 1);
         assert_eq!(sorted_columns(&t), vec!["k".to_owned()]);
-        assert_eq!(t.column_f64("k").unwrap().0.len(), 1);
+        assert_eq!(t.column::<f64>("k").unwrap().0.len(), 1);
     }
 
     // ----- fill_i32 -----
@@ -958,11 +997,11 @@ mod tests {
         for _ in 0..3 {
             t.spawn();
         }
-        t.set_i32(a, "fid", 5).unwrap();
+        t.set::<i32>(a, "fid", 5).unwrap();
 
         t.fill_i32("fid", 1..3, 9).unwrap();
 
-        let (data, valid) = t.column_i32("fid").unwrap();
+        let (data, valid) = t.column::<i32>("fid").unwrap();
         assert_eq!(valid.as_slice(), &[true, true, true, false]);
         assert_eq!(&data[..3], &[5, 9, 9]);
     }
@@ -976,7 +1015,7 @@ mod tests {
 
         t.fill_i32("fid", 2..4, 7).unwrap();
 
-        let (data, valid) = t.column_i32("fid").unwrap();
+        let (data, valid) = t.column::<i32>("fid").unwrap();
         assert_eq!(valid.as_slice(), &[false, false, true, true]);
         assert_eq!(&data[2..], &[7, 7]);
     }
@@ -986,12 +1025,12 @@ mod tests {
         let mut t = T::new();
         let a = t.spawn();
         t.spawn();
-        t.set_f64(a, "fid", 0.5).unwrap();
+        t.set::<f64>(a, "fid", 0.5).unwrap();
 
         let err = t.fill_i32("fid", 0..2, 3).expect_err("'fid' is f64");
 
         assert!(matches!(err, MolRsError::Validation { .. }), "{err:?}");
-        let (data, valid) = t.column_f64("fid").unwrap();
+        let (data, valid) = t.column::<f64>("fid").unwrap();
         assert_eq!(valid.as_slice(), &[true, false]);
         assert_eq!(data[0], 0.5);
     }

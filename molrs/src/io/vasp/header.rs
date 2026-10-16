@@ -18,9 +18,10 @@
 //! [`VaspHeader::cartesian`] places the rows in Å through the cell's
 //! [`SimBox`]. Errors are `InvalidData` I/O errors with the line number.
 
+use crate::core::Cell;
 use std::io::{BufRead, Error, Result};
 
-use ndarray::{Array2, array};
+use ndarray::Array2;
 
 use crate::io::invalid_data;
 use molrs::core::SimBox;
@@ -63,8 +64,8 @@ impl VaspHeader {
     /// The periodic cell: `H`'s columns are the lattice vectors (the
     /// header's rows), at the origin.
     pub(crate) fn simbox(&self) -> Result<SimBox> {
-        let h = Array2::from_shape_fn((3, 3), |(i, j)| self.cell[j][i]);
-        SimBox::new(h, array![0.0 as F, 0.0, 0.0], [true; 3])
+        let h = std::array::from_fn(|i| std::array::from_fn(|j| self.cell[j][i]));
+        SimBox::new(Cell::Matrix(h), [0.0 as F, 0.0, 0.0], [true; 3])
             .map_err(|e| invalid_data(format!("invalid cell: {e:?}")))
     }
 

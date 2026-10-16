@@ -29,7 +29,10 @@ impl OneFour {
     ///
     /// A value other than `"regular"` and `"epsilon14"`, or a number.
     pub fn of(style: &Params) -> Result<Self, String> {
-        match (style.get_str(ONE_FOUR), style.get(ONE_FOUR)) {
+        match (
+            style.get(ONE_FOUR).and_then(|v| v.as_text()),
+            style.get(ONE_FOUR).and_then(|v| v.as_num()),
+        ) {
             (None, None) => Ok(Self::Regular),
             (Some(ONE_FOUR_REGULAR), _) => Ok(Self::Regular),
             (Some(ONE_FOUR_EPSILON14), _) => Ok(Self::Epsilon14),
@@ -47,6 +50,10 @@ impl OneFour {
 
 /// Whether a `lj/charmm` row has 1-4 parameters other than its regular ones.
 pub(crate) fn has_own_one_four(p: &Params) -> bool {
-    let differs = |k14: &str, k: &str| p.get(k14).is_some_and(|v| Some(v) != p.get(k));
+    let differs = |k14: &str, k: &str| {
+        p.get(k14)
+            .and_then(|v| v.as_num())
+            .is_some_and(|v| Some(v) != p.get(k).and_then(|v| v.as_num()))
+    };
     differs("epsilon14", "epsilon") || differs("sigma14", "sigma")
 }

@@ -249,6 +249,7 @@ crate::compute::spec::compute_spec! {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::Cell;
     use ndarray::{Array2, array};
     use std::f64::consts::PI;
 
@@ -282,7 +283,7 @@ mod tests {
     fn distance_uses_the_minimum_image() {
         let positions = array![[0.5, 0.0, 0.0], [9.5, 0.0, 0.0]];
         let pairs = array![[0usize, 1]];
-        let simbox = SimBox::cube(10.0, array![0.0, 0.0, 0.0], [true; 3]).unwrap();
+        let simbox = SimBox::new(Cell::Lengths([10.0; 3]), [0.0, 0.0, 0.0], [true; 3]).unwrap();
         let df = DistributionFunction::new(DistanceObservable, Axis::new(0.0, 4.0, 4).unwrap());
         let r = df
             .compute(&[DistributionFrame {

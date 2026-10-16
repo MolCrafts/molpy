@@ -136,7 +136,8 @@ impl Correlator {
     /// Take every `stride`-th frame, `τ = 0, s, 2s, …`, as a time origin
     /// (default [`DEFAULT_STRIDE`](Self::DEFAULT_STRIDE)): fewer, less
     /// correlated origins for a long trajectory. Applies to [`Origins::All`];
-    /// [`Origins::First`] with a stride other than 1 is refused at `compute`.
+    /// [`Origins::First`] with a stride other than 1 is refused when the data
+    /// arrives (`compute`, or an accumulator's first `push`).
     /// The linear kernels stay on the FFT path (a masked cross-correlation).
     ///
     /// # Errors

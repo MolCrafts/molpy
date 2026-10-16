@@ -9,18 +9,21 @@ Every name is flat on :mod:`molrs.core`, as in Rust:
   :exc:`BlockDtypeError` (a column value the store cannot hold; a
   ``TypeError``).
 * Space: :class:`Box` (the periodic / triclinic simulation cell; Rust's
-  ``SimBox``), neighbour search (:class:`NeighborList`, :class:`Neighbors`,
-  :class:`NeighborQuery`, :class:`VerletSkin`), the regions
+  ``SimBox``) built from a :class:`Cell`, neighbour search
+  (:class:`NeighborList`, :class:`Neighbors`, :class:`NeighborQuery`,
+  :class:`VerletSkin`), the regions
   (:class:`Sphere`, :class:`Cuboid`, :class:`Parallelepiped`,
   :class:`HalfSpace`, :class:`Cylinder`, :class:`Ellipsoid`,
   :class:`Polyhedron`, :class:`SphereUnion` and their Boolean composition
   :class:`Region`), :class:`TriMesh` and :class:`Trace`.
-* The molecular graph: :class:`MolGraph` and its leaves :class:`Atomistic` /
-  :class:`CoarseGrain`, their live views (:class:`NodeRef`, :class:`Atom`,
+* The molecular graphs: the generic int-handle world :class:`MolGraph` and
+  its peers :class:`Atomistic` / :class:`CoarseGrain` (typed graphs, not
+  ``MolGraph`` subclasses), their live views — the one door to an entity's
+  fields — (:class:`NodeRef`, :class:`Atom`,
   :class:`VirtualSite`, :class:`DrudeParticle`, :class:`MasslessSite`,
   :class:`Bead`, :class:`RelationRef`, :class:`Bond`, :class:`Angle`,
   :class:`Dihedral`, :class:`Improper`, :class:`CgBond`, :class:`Port`,
-  :class:`Refs`, :class:`RelationBuckets`), :class:`ExtractedSubgraph`,
+  :class:`Refs`), :class:`ExtractedSubgraph`,
   :class:`Element` and the index-only :class:`Topology`.
 * Units: :class:`Unit`, :class:`Quantity`, :class:`UnitRegistry`,
   :class:`UnitPreset`, and :exc:`UnitsError` (a ``ValueError``).
@@ -46,6 +49,7 @@ from .._native import (
     BondNumber,
     BondOrder,
     Box,
+    Cell,
     CgBond,
     CoarseGrain,
     Cuboid,
@@ -74,7 +78,6 @@ from .._native import (
     Quantity,
     Refs,
     Region,
-    RelationBuckets,
     RelationRef,
     Sphere,
     SphereUnion,
@@ -111,6 +114,7 @@ __all__ = [
     "BondNumber",
     "BondOrder",
     "Box",
+    "Cell",
     "CgBond",
     "CoarseGrain",
     "Cuboid",
@@ -139,7 +143,6 @@ __all__ = [
     "Quantity",
     "Refs",
     "Region",
-    "RelationBuckets",
     "RelationRef",
     "Sphere",
     "SphereUnion",

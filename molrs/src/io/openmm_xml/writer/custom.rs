@@ -89,7 +89,7 @@ fn custom_of(reg: &Registry, style: &Style) -> Result<Custom, ForceFieldWriteErr
         ),
         (None, _) => return Err(refuse(style, "its category is not registered")),
     };
-    let instance = style.params().get_str("expression");
+    let instance = style.params().get("expression").and_then(|v| v.as_text());
     let no_expression = || {
         refuse(
             style,
@@ -274,6 +274,7 @@ fn row_value(
     name: &str,
 ) -> Result<F, ForceFieldWriteError> {
     row.get(name)
+        .and_then(|v| v.as_num())
         .or_else(|| {
             spec.param(name)
                 .and_then(|p| p.default.as_ref())
@@ -304,6 +305,7 @@ fn globals(
         let v = style
             .params()
             .get(&p.name)
+            .and_then(|v| v.as_num())
             .or_else(|| p.default.as_ref().and_then(ParamValue::as_num))
             .ok_or_else(|| refuse(style, format!("style parameter `{}` has no value", p.name)))?;
         match out.globals.get(p.name.as_ref()) {
@@ -540,7 +542,7 @@ pub(super) fn pair(
         ));
     }
     // Bare names: the pair value, by its mixing rule of the two self rows.
-    let rule = match style.params().get_str("mixing") {
+    let rule = match style.params().get("mixing").and_then(|v| v.as_text()) {
         Some(m) => CombiningRule::parse(m)?,
         None => CombiningRule::UNDECLARED,
     };
@@ -669,9 +671,11 @@ pub(super) fn pair(
     let atoms: Vec<_> = ff
         .get_atomtypes()
         .into_iter()
-        .filter(|t| t.params.get_str("type_") != Some("*"))
+        .filter(|t| t.params.get("type_").and_then(|v| v.as_text()) != Some("*"))
         .collect();
-    let all_charged = atoms.iter().all(|t| t.params.get("charge").is_some());
+    let all_charged = atoms
+        .iter()
+        .all(|t| t.params.get("charge").and_then(|v| v.as_num()).is_some());
     if charged {
         xml.push_str("    <PerParticleParameter name=\"charge\"/>\n");
         if !all_charged {
@@ -699,7 +703,7 @@ pub(super) fn pair(
         if charged && all_charged {
             attrs.push_str(&format!(
                 " charge=\"{}\"",
-                w.fmt_f(t.params.get("charge").unwrap())
+                w.fmt_f(t.params.get("charge").and_then(|v| v.as_num()).unwrap())
             ));
         }
         attrs.push_str("/>\n");

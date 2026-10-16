@@ -3,7 +3,8 @@
 use std::collections::HashMap;
 
 use crate::core::keys;
-use crate::core::{MolGraph, NodeId, PropValue};
+use crate::core::{Graph, GraphAccess, MolGraph, NodeId, PropValue, Props};
+use crate::op::I;
 
 // ---------------------------------------------------------------------------
 // Deterministic hashing primitives (fixed-seed FNV-1a, 64-bit)
@@ -42,19 +43,51 @@ fn hash_u64_slice(mut h: u64, xs: &[u64]) -> u64 {
 // Node label helpers
 // ---------------------------------------------------------------------------
 
-/// The label string of a node: element symbol for an atom, else bead type for a
-/// bead, else the empty string (a bare graph node).
-fn node_label_str(g: &MolGraph, id: NodeId) -> String {
-    let atom = match g.get_node(id) {
-        Ok(a) => a,
-        Err(_) => return String::new(),
-    };
-    if let Some(sym) = atom.get_str(keys::ELEMENT) {
-        sym.to_owned()
-    } else if let Some(bt) = atom.get_str(keys::BEAD_TYPE) {
-        bt.to_owned()
-    } else {
-        String::new()
+/// The species label of a node — the first ingredient of its initial WL color.
+///
+/// The rule, applied in order:
+///
+/// 1. a node carrying [`keys::ATOMIC_NUMBER`] is an **atom**, labelled by that
+///    integer as stored (the wildcard `*` atom is `0`, an ordinary label);
+/// 2. otherwise a node carrying a string [`keys::BEAD_TYPE`] is a **bead**,
+///    labelled by that name;
+/// 3. a node with neither — a bare [`MolGraph`] node — is
+///    [`Unlabelled`](NodeLabel::Unlabelled): every such node shares that one
+///    label, and it equals no atom and no bead.
+///
+/// [`keys::ELEMENT`] is never read: a symbol is raw data and reaches the
+/// species field only through
+/// [`Element::fill_atomic_numbers`](crate::core::Element::fill_atomic_numbers).
+/// Each variant is hashed behind its own tag byte, so an atom, a bead and an
+/// unlabelled node can never share a color by payload coincidence.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum NodeLabel {
+    Atom(I),
+    Bead(String),
+    Unlabelled,
+}
+
+impl NodeLabel {
+    fn of(node: &Props) -> Self {
+        if let Some(z) = node.get_int(keys::ATOMIC_NUMBER) {
+            NodeLabel::Atom(z)
+        } else if let Some(bead) = node.get_str(keys::BEAD_TYPE) {
+            NodeLabel::Bead(bead.to_owned())
+        } else {
+            NodeLabel::Unlabelled
+        }
+    }
+
+    /// Fold the label, tag byte first, into an FNV-1a accumulator.
+    fn hash_into(&self, h: u64) -> u64 {
+        match self {
+            NodeLabel::Unlabelled => hash_bytes(h, &[0]),
+            NodeLabel::Atom(z) => hash_u64(hash_bytes(h, &[1]), *z as i64 as u64),
+            NodeLabel::Bead(name) => {
+                let h = hash_u64(hash_bytes(h, &[2]), name.len() as u64);
+                hash_bytes(h, name.as_bytes())
+            }
+        }
     }
 }
 
@@ -143,7 +176,7 @@ impl GraphView {
     /// Initial color of a node from its label, degree, charge and aromatic flag.
     fn initial_color(g: &MolGraph, id: NodeId, incident: &[(usize, u64)]) -> u64 {
         let atom = g.get_node(id).ok();
-        let label = node_label_str(g, id);
+        let label = atom.as_ref().map_or(NodeLabel::Unlabelled, NodeLabel::of);
         let degree = incident.len() as u64;
 
         let charge = atom
@@ -153,9 +186,7 @@ impl GraphView {
 
         // Aromatic: explicit `is_aromatic` prop wins; else infer from any
         // incident bond whose class is aromatic.
-        let explicit = match atom.as_ref().and_then(|a| a.get("is_aromatic")) {
-            Some(PropValue::Int(v)) => Some(*v != 0),
-            Some(PropValue::F64(v)) => Some(*v != 0.0),
+        let explicit = match atom.as_ref().and_then(|a| a.get(keys::IS_AROMATIC)) {
             Some(PropValue::Bool(v)) => Some(*v),
             _ => None,
         };
@@ -169,7 +200,7 @@ impl GraphView {
         });
 
         let mut h = FNV_OFFSET;
-        h = hash_bytes(h, label.as_bytes());
+        h = label.hash_into(h);
         h = hash_u64(h, degree);
         h = hash_u64(h, charge.to_bits());
         h = hash_u64(h, aromatic as u64);
@@ -228,43 +259,9 @@ fn distinct_count(colors: &[u64]) -> usize {
 // Public API
 // ---------------------------------------------------------------------------
 
-/// Isomorphism-invariant 64-bit structural hash of `g`.
-///
-/// Identical for a node-permuted copy; sensitive to element/bead-type, degree,
-/// charge, aromatic flag, bond order, and connectivity.
-///
-/// This, [`canonical_order`] and [`is_isomorphic`] are built on the generic
-/// [`MolGraph`] adjacency (arity-2 relations are the graph edges), so they serve
-/// both [`Atomistic`](crate::core::Atomistic) and
-/// [`CoarseGrain`](crate::core::CoarseGrain) unchanged — the leaf only supplies
-/// its node vocabulary (`element` / `bead_type`).
-///
-/// # Algorithm — Weisfeiler–Lehman color refinement
-///
-/// - **Initial node color** = a deterministic hash of the node's *label*: element
-///   symbol (atoms) or bead type (CG) + degree (incident edge count) + formal
-///   charge (the `charge` component, `0` when absent) + an aromatic flag (the
-///   `is_aromatic` component when set, else inferred from any incident bond of
-///   order `1.5`, matching the project aromaticity convention).
-/// - **Refinement round**: a node's new color = hash of its current color plus the
-///   *sorted multiset* of `(edge label = bond order, neighbor's current color)`.
-///   Rounds repeat until the color partition stops refining (the count of
-///   distinct colors — which is monotone non-decreasing under WL — stabilizes),
-///   bounded by the node count.
-/// - `structural_hash` = a hash of the *sorted multiset of final colors*, so it
-///   is invariant under any node permutation.
-/// - [`canonical_order`] = nodes sorted by `(final color, initial color, stable
-///   handle tiebreak)` — deterministic within a graph, and consistent across two
-///   isomorphic graphs (tied nodes share a color, hence share every label
-///   attribute).
-/// - [`is_isomorphic`] = a quick reject on `structural_hash` / edge-count
-///   mismatch, then a WL-color-pruned backtracking bijective match.
-///
-/// The hasher is a fixed-constant FNV-1a over little-endian bytes — **not** the
-/// std `DefaultHasher` (random-seeded) — so a hash is reproducible across runs
-/// and processes and can be trusted as a persistent cache key.
-pub fn structural_hash(g: &MolGraph) -> u64 {
-    let view = GraphView::build(g);
+/// `g.structural_hash()`; see [`MolGraph::structural_hash`].
+pub(crate) fn structural_hash(g: &impl Graph) -> u64 {
+    let view = GraphView::build(g.graph());
     let colors = wl_colors(&view);
     let mut sorted = colors;
     sorted.sort_unstable();
@@ -275,15 +272,9 @@ pub fn structural_hash(g: &MolGraph) -> u64 {
     hash_u64_slice(h, &sorted)
 }
 
-/// Deterministic canonical node ordering from the WL refinement.
-///
-/// Nodes are sorted by `(final color, initial color, stable handle)`. Two
-/// isomorphic graphs induce a consistent node bijection by pairing their
-/// `canonical_order` lists position-by-position.
-///
-/// The refinement is described at [`structural_hash`].
-pub fn canonical_order(g: &MolGraph) -> Vec<NodeId> {
-    let view = GraphView::build(g);
+/// `g.canonical_order()`; see [`MolGraph::canonical_order`].
+pub(crate) fn canonical_order(g: &impl Graph) -> Vec<NodeId> {
+    let view = GraphView::build(g.graph());
     let colors = wl_colors(&view);
 
     let mut order: Vec<usize> = (0..view.nodes.len()).collect();
@@ -296,15 +287,9 @@ pub fn canonical_order(g: &MolGraph) -> Vec<NodeId> {
     order.into_iter().map(|i| view.nodes[i]).collect()
 }
 
-/// Whether `a` and `b` are isomorphic as labeled graphs (element/bead-type +
-/// charge + aromatic node labels and bond-order edge labels all preserved).
-///
-/// Quick-rejects on node-count, edge-count, or `structural_hash` mismatch, then
-/// runs a WL-color-pruned backtracking bijective match to resolve the rare hash
-/// collision before equality is trusted.
-///
-/// The refinement is described at [`structural_hash`].
-pub fn is_isomorphic(a: &MolGraph, b: &MolGraph) -> bool {
+/// `a.is_isomorphic(b)`; see [`MolGraph::is_isomorphic`].
+pub(crate) fn is_isomorphic(a: &impl Graph, b: &impl Graph) -> bool {
+    let (a, b) = (a.graph(), b.graph());
     if a.n_nodes() != b.n_nodes() {
         return false;
     }
@@ -360,6 +345,73 @@ pub fn is_isomorphic(a: &MolGraph, b: &MolGraph) -> bool {
         &mut map_ab,
         &mut map_ba,
     )
+}
+
+impl MolGraph {
+    /// Isomorphism-invariant 64-bit structural hash of the graph.
+    ///
+    /// Identical for a node-permuted copy; sensitive to element/bead-type, degree,
+    /// charge, aromatic flag, bond order, and connectivity.
+    ///
+    /// This, [`canonical_order`](Self::canonical_order) and
+    /// [`is_isomorphic`](Self::is_isomorphic) are built on the generic
+    /// [`MolGraph`] adjacency (arity-2 relations are the graph edges), so they serve
+    /// both [`Atomistic`](crate::core::Atomistic) and
+    /// [`CoarseGrain`](crate::core::CoarseGrain) unchanged — the leaf only supplies
+    /// its node vocabulary (`atomic_number` / `bead_type`).
+    ///
+    /// # Algorithm — Weisfeiler–Lehman color refinement
+    ///
+    /// - **Initial node color** = a deterministic hash of the node's *label*: the
+    ///   atomic number (atoms), the bead type (CG), or the one shared
+    ///   "unlabelled" label of a node carrying neither + degree (incident edge count) + formal
+    ///   charge (the `charge` component, `0` when absent) + an aromatic flag (the
+    ///   `is_aromatic` component when set, else inferred from any incident bond of
+    ///   order `1.5`, matching the project aromaticity convention).
+    /// - **Refinement round**: a node's new color = hash of its current color plus the
+    ///   *sorted multiset* of `(edge label = bond order, neighbor's current color)`.
+    ///   Rounds repeat until the color partition stops refining (the count of
+    ///   distinct colors — which is monotone non-decreasing under WL — stabilizes),
+    ///   bounded by the node count.
+    /// - `structural_hash` = a hash of the *sorted multiset of final colors*, so it
+    ///   is invariant under any node permutation.
+    /// - [`canonical_order`](Self::canonical_order) = nodes sorted by `(final color, initial color, stable
+    ///   handle tiebreak)` — deterministic within a graph, and consistent across two
+    ///   isomorphic graphs (tied nodes share a color, hence share every label
+    ///   attribute).
+    /// - [`is_isomorphic`](Self::is_isomorphic) = a quick reject on `structural_hash` / edge-count
+    ///   mismatch, then a WL-color-pruned backtracking bijective match.
+    ///
+    /// The hasher is a fixed-constant FNV-1a over little-endian bytes — **not** the
+    /// std `DefaultHasher` (random-seeded) — so a hash is reproducible across runs
+    /// and processes and can be trusted as a persistent cache key.
+    pub fn structural_hash(&self) -> u64 {
+        structural_hash(self)
+    }
+
+    /// Deterministic canonical node ordering from the WL refinement.
+    ///
+    /// Nodes are sorted by `(final color, initial color, stable handle)`. Two
+    /// isomorphic graphs induce a consistent node bijection by pairing their
+    /// `canonical_order` lists position-by-position.
+    ///
+    /// The refinement is described at [`structural_hash`](Self::structural_hash).
+    pub fn canonical_order(&self) -> Vec<NodeId> {
+        canonical_order(self)
+    }
+
+    /// Whether `self` and `other` are isomorphic as labeled graphs
+    /// (atomic-number/bead-type + charge + aromatic node labels and
+    /// bond-order edge labels all preserved).
+    ///
+    /// Quick-rejects on node-count, edge-count, or `structural_hash` mismatch,
+    /// then runs a WL-color-pruned backtracking bijective match to resolve the
+    /// rare hash collision before equality is trusted.
+    ///
+    /// The refinement is described at [`structural_hash`](Self::structural_hash).
+    pub fn is_isomorphic(&self, other: &MolGraph) -> bool {
+        is_isomorphic(self, other)
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -460,7 +512,7 @@ pub(crate) fn feasible(
 /// Stable per-graph tiebreak key for a node handle.
 #[inline]
 fn node_ffi(id: NodeId) -> u64 {
-    crate::core::node_to_u64(id)
+    u64::from(id)
 }
 
 // =========================================================================
@@ -472,16 +524,29 @@ mod tests {
     use super::*;
     use crate::core::Atomistic;
     use crate::core::CoarseGrain;
+    use crate::core::Element;
     use crate::core::NodeId;
+    use crate::core::keys;
+    use crate::props;
 
     /// Ethanol skeleton C-C-O with explicit H (9 atoms), returned with its
     /// atom handles in build order.
     fn ethanol() -> (Atomistic, Vec<NodeId>) {
         let mut mol = Atomistic::new();
-        let ids: Vec<NodeId> = ["C", "C", "O", "H", "H", "H", "H", "H", "H"]
-            .iter()
-            .map(|e| mol.add_atom_bare(e))
-            .collect();
+        let ids: Vec<NodeId> = [
+            Element::C,
+            Element::C,
+            Element::O,
+            Element::H,
+            Element::H,
+            Element::H,
+            Element::H,
+            Element::H,
+            Element::H,
+        ]
+        .iter()
+        .map(|&e| mol.add_atom(props! { keys::ATOMIC_NUMBER => e }).unwrap())
+        .collect();
         // C0-C1, C1-O2, O2-H8; H3,H4,H5 on C0; H6,H7 on C1
         for (i, j) in [
             (0, 1),
@@ -493,7 +558,7 @@ mod tests {
             (1, 6),
             (1, 7),
         ] {
-            mol.add_bond(ids[i], ids[j]).unwrap();
+            mol.add_bond(ids[i], ids[j], props! {}).unwrap();
         }
         (mol, ids)
     }
@@ -503,10 +568,22 @@ mod tests {
         let mut mol = Atomistic::new();
         // Insert atoms in a shuffled order, remember by original index.
         let perm = [8usize, 2, 1, 0, 7, 6, 5, 4, 3];
-        let elems = ["C", "C", "O", "H", "H", "H", "H", "H", "H"];
+        let elems = [
+            Element::C,
+            Element::C,
+            Element::O,
+            Element::H,
+            Element::H,
+            Element::H,
+            Element::H,
+            Element::H,
+            Element::H,
+        ];
         let mut by_orig = std::collections::HashMap::new();
         for &orig in &perm {
-            let id = mol.add_atom_bare(elems[orig]);
+            let id = mol
+                .add_atom(props! { keys::ATOMIC_NUMBER => elems[orig] })
+                .unwrap();
             by_orig.insert(orig, id);
         }
         for (i, j) in [
@@ -519,7 +596,7 @@ mod tests {
             (1, 6),
             (1, 7),
         ] {
-            mol.add_bond(by_orig[&i], by_orig[&j]).unwrap();
+            mol.add_bond(by_orig[&i], by_orig[&j], props! {}).unwrap();
         }
         mol
     }
@@ -529,22 +606,19 @@ mod tests {
         let (a, _) = ethanol();
         let b = ethanol_permuted();
         assert_eq!(
-            structural_hash(a.as_molgraph()),
-            structural_hash(b.as_molgraph()),
+            a.structural_hash(),
+            b.structural_hash(),
             "hash must be invariant under node permutation"
         );
-        assert!(is_isomorphic(a.as_molgraph(), b.as_molgraph()));
+        assert!(a.is_isomorphic(&b));
     }
 
     #[test]
     fn identical_junctions_hash_equal() {
         let (a, _) = ethanol();
         let (b, _) = ethanol();
-        assert_eq!(
-            structural_hash(a.as_molgraph()),
-            structural_hash(b.as_molgraph())
-        );
-        assert!(is_isomorphic(a.as_molgraph(), b.as_molgraph()));
+        assert_eq!(a.structural_hash(), b.structural_hash());
+        assert!(a.is_isomorphic(&b));
     }
 
     #[test]
@@ -552,10 +626,20 @@ mod tests {
         let (a, _) = ethanol();
         // Swap the O for an S — a different local environment.
         let mut mol = Atomistic::new();
-        let ids: Vec<NodeId> = ["C", "C", "S", "H", "H", "H", "H", "H", "H"]
-            .iter()
-            .map(|e| mol.add_atom_bare(e))
-            .collect();
+        let ids: Vec<NodeId> = [
+            Element::C,
+            Element::C,
+            Element::S,
+            Element::H,
+            Element::H,
+            Element::H,
+            Element::H,
+            Element::H,
+            Element::H,
+        ]
+        .iter()
+        .map(|&e| mol.add_atom(props! { keys::ATOMIC_NUMBER => e }).unwrap())
+        .collect();
         for (i, j) in [
             (0, 1),
             (1, 2),
@@ -566,13 +650,10 @@ mod tests {
             (1, 6),
             (1, 7),
         ] {
-            mol.add_bond(ids[i], ids[j]).unwrap();
+            mol.add_bond(ids[i], ids[j], props! {}).unwrap();
         }
-        assert_ne!(
-            structural_hash(a.as_molgraph()),
-            structural_hash(mol.as_molgraph())
-        );
-        assert!(!is_isomorphic(a.as_molgraph(), mol.as_molgraph()));
+        assert_ne!(a.structural_hash(), mol.structural_hash());
+        assert!(!a.is_isomorphic(&mol));
     }
 
     #[test]
@@ -581,8 +662,8 @@ mod tests {
         let mut b = a.clone();
         b.set_atom(ids[2], keys::CHARGE, -1.0).unwrap();
         assert_ne!(
-            structural_hash(a.as_molgraph()),
-            structural_hash(b.as_molgraph()),
+            a.structural_hash(),
+            b.structural_hash(),
             "charge must affect the hash"
         );
     }
@@ -604,12 +685,12 @@ mod tests {
         .unwrap();
 
         assert!(
-            b.atoms().all(|(_, at)| at.get("is_aromatic").is_none()),
+            b.atoms().all(|(_, at)| at.get(keys::IS_AROMATIC).is_none()),
             "the fallback only runs when no atom states its own flag"
         );
         assert_ne!(
-            structural_hash(a.as_molgraph()),
-            structural_hash(b.as_molgraph()),
+            a.structural_hash(),
+            b.structural_hash(),
             "an aromatic bond class must reach the hash through the fallback"
         );
     }
@@ -618,11 +699,10 @@ mod tests {
     fn aromatic_flag_changes_hash() {
         let (a, ids) = ethanol();
         let mut b = a.clone();
-        b.set_atom(ids[0], "is_aromatic", PropValue::Int(1))
-            .unwrap();
+        b.set_atom(ids[0], keys::IS_AROMATIC, true).unwrap();
         assert_ne!(
-            structural_hash(a.as_molgraph()),
-            structural_hash(b.as_molgraph()),
+            a.structural_hash(),
+            b.structural_hash(),
             "aromatic flag must affect the hash"
         );
     }
@@ -632,11 +712,15 @@ mod tests {
         let (a, _) = ethanol();
         let mut b = a.clone();
         let (bid, _) = b.bonds().next().unwrap();
-        b.set_bond_type(bid, crate::core::BondOrder::Double)
-            .unwrap();
+        b.set_bond_class(
+            bid,
+            crate::core::BondOrder::Double,
+            crate::core::BondNumber::Double,
+        )
+        .unwrap();
         assert_ne!(
-            structural_hash(a.as_molgraph()),
-            structural_hash(b.as_molgraph()),
+            a.structural_hash(),
+            b.structural_hash(),
             "bond order must affect the hash"
         );
     }
@@ -646,26 +730,32 @@ mod tests {
         // Ethanol (9 atoms) vs a 9-atom linear chain — same size, different topo.
         let (a, _) = ethanol();
         let mut chain = Atomistic::new();
-        let ids: Vec<NodeId> = (0..9).map(|_| chain.add_atom_bare("C")).collect();
+        let ids: Vec<NodeId> = (0..9)
+            .map(|_| {
+                chain
+                    .add_atom(props! { keys::ATOMIC_NUMBER => Element::C })
+                    .unwrap()
+            })
+            .collect();
         for k in 0..ids.len() - 1 {
-            chain.add_bond(ids[k], ids[k + 1]).unwrap();
+            chain.add_bond(ids[k], ids[k + 1], props! {}).unwrap();
         }
-        assert!(!is_isomorphic(a.as_molgraph(), chain.as_molgraph()));
+        assert!(!a.is_isomorphic(&chain));
     }
 
     #[test]
     fn canonical_order_bijection_is_consistent() {
         let (a, _) = ethanol();
         let b = ethanol_permuted();
-        let oa = canonical_order(a.as_molgraph());
-        let ob = canonical_order(b.as_molgraph());
+        let oa = a.canonical_order();
+        let ob = b.canonical_order();
         assert_eq!(oa.len(), ob.len());
-        // Paired nodes must agree on element + degree.
+        // Paired nodes must agree on atomic number + degree.
         for (ia, ib) in oa.iter().zip(ob.iter()) {
             let ea = a.get_atom(*ia).unwrap();
             let eb = b.get_atom(*ib).unwrap();
-            assert_eq!(ea.get_str("element"), eb.get_str("element"));
-            assert_eq!(a.neighbors(*ia).count(), b.neighbors(*ib).count());
+            assert_eq!(ea.atomic_number(), eb.atomic_number());
+            assert_eq!(a.neighbor_bonds(*ia).count(), b.neighbor_bonds(*ib).count());
         }
     }
 
@@ -674,47 +764,116 @@ mod tests {
         // Two identical 3-bead angular CG molecules hash equal; changing a bead
         // type breaks both the hash and the isomorphism.
         let mut cg1 = CoarseGrain::new();
-        let a = cg1.add_bead_bare("W");
-        let b = cg1.add_bead_bare("P");
-        let c = cg1.add_bead_bare("W");
-        cg1.add_bond(a, b).unwrap();
-        cg1.add_bond(b, c).unwrap();
+        let a = cg1.add_bead(props! { keys::BEAD_TYPE => "W" }).unwrap();
+        let b = cg1.add_bead(props! { keys::BEAD_TYPE => "P" }).unwrap();
+        let c = cg1.add_bead(props! { keys::BEAD_TYPE => "W" }).unwrap();
+        cg1.add_bond(a, b, props! {}).unwrap();
+        cg1.add_bond(b, c, props! {}).unwrap();
 
         let mut cg2 = CoarseGrain::new();
-        let d = cg2.add_bead_bare("W");
-        let e = cg2.add_bead_bare("P");
-        let f = cg2.add_bead_bare("W");
-        cg2.add_bond(e, f).unwrap();
-        cg2.add_bond(d, e).unwrap();
+        let d = cg2.add_bead(props! { keys::BEAD_TYPE => "W" }).unwrap();
+        let e = cg2.add_bead(props! { keys::BEAD_TYPE => "P" }).unwrap();
+        let f = cg2.add_bead(props! { keys::BEAD_TYPE => "W" }).unwrap();
+        cg2.add_bond(e, f, props! {}).unwrap();
+        cg2.add_bond(d, e, props! {}).unwrap();
 
-        assert_eq!(
-            structural_hash(cg1.as_molgraph()),
-            structural_hash(cg2.as_molgraph())
-        );
-        assert!(is_isomorphic(cg1.as_molgraph(), cg2.as_molgraph()));
+        assert_eq!(cg1.structural_hash(), cg2.structural_hash());
+        assert!(cg1.is_isomorphic(&cg2));
 
         let mut cg3 = CoarseGrain::new();
-        let g = cg3.add_bead_bare("W");
-        let h = cg3.add_bead_bare("Q"); // different centre type
-        let i = cg3.add_bead_bare("W");
-        cg3.add_bond(g, h).unwrap();
-        cg3.add_bond(h, i).unwrap();
-        assert_ne!(
-            structural_hash(cg1.as_molgraph()),
-            structural_hash(cg3.as_molgraph())
-        );
-        assert!(!is_isomorphic(cg1.as_molgraph(), cg3.as_molgraph()));
+        let g = cg3.add_bead(props! { keys::BEAD_TYPE => "W" }).unwrap();
+        let h = cg3.add_bead(props! { keys::BEAD_TYPE => "Q" }).unwrap(); // different centre type
+        let i = cg3.add_bead(props! { keys::BEAD_TYPE => "W" }).unwrap();
+        cg3.add_bond(g, h, props! {}).unwrap();
+        cg3.add_bond(h, i, props! {}).unwrap();
+        assert_ne!(cg1.structural_hash(), cg3.structural_hash());
+        assert!(!cg1.is_isomorphic(&cg3));
     }
 
     #[test]
     fn empty_graph_is_stable() {
         let a = Atomistic::new();
         let b = Atomistic::new();
-        assert_eq!(
-            structural_hash(a.as_molgraph()),
-            structural_hash(b.as_molgraph())
-        );
-        assert!(is_isomorphic(a.as_molgraph(), b.as_molgraph()));
-        assert!(canonical_order(a.as_molgraph()).is_empty());
+        assert_eq!(a.structural_hash(), b.structural_hash());
+        assert!(a.is_isomorphic(&b));
+        assert!(a.canonical_order().is_empty());
+    }
+
+    // ---- the node-label rule ----
+
+    /// One node per graph: its structural hash is a function of its label.
+    fn one_node(props: crate::core::Props) -> MolGraph {
+        let mut g = MolGraph::new();
+        g.add_node(props).unwrap();
+        g
+    }
+
+    #[test]
+    fn an_atom_is_labelled_by_its_atomic_number_not_its_symbol() {
+        let carbon = one_node(props! { keys::ATOMIC_NUMBER => Element::C });
+        let carbon_spelled = one_node(props! {
+            keys::ATOMIC_NUMBER => Element::C,
+            keys::ELEMENT => "X",
+        });
+        let oxygen = one_node(props! { keys::ATOMIC_NUMBER => Element::O });
+        assert_eq!(carbon.structural_hash(), carbon_spelled.structural_hash());
+        assert!(carbon.is_isomorphic(&carbon_spelled));
+        assert_ne!(carbon.structural_hash(), oxygen.structural_hash());
+        assert!(!carbon.is_isomorphic(&oxygen));
+    }
+
+    #[test]
+    fn a_symbol_alone_is_not_a_species() {
+        let c = one_node(props! { keys::ELEMENT => "C" });
+        let o = one_node(props! { keys::ELEMENT => "O" });
+        let bare = one_node(props! {});
+        assert_eq!(c.structural_hash(), o.structural_hash());
+        assert_eq!(c.structural_hash(), bare.structural_hash());
+    }
+
+    /// Atoms, beads and unlabelled nodes never share a label: not the
+    /// wildcard atom (Z = 0) and an unlabelled node, nor an atom and a bead
+    /// whose name spells its number.
+    #[test]
+    fn atoms_beads_and_unlabelled_nodes_hash_apart() {
+        let graphs = [
+            one_node(props! {}),
+            one_node(props! { keys::ATOMIC_NUMBER => 0u8 }),
+            one_node(props! { keys::ATOMIC_NUMBER => Element::C }),
+            one_node(props! { keys::BEAD_TYPE => "6" }),
+            one_node(props! { keys::BEAD_TYPE => "" }),
+        ];
+        for (i, a) in graphs.iter().enumerate() {
+            for b in &graphs[i + 1..] {
+                assert_ne!(a.structural_hash(), b.structural_hash());
+                assert!(!a.is_isomorphic(b));
+            }
+        }
+    }
+
+    /// A node carrying both fields is an atom: the atomic number decides.
+    #[test]
+    fn atomic_number_takes_precedence_over_bead_type() {
+        let both = one_node(props! {
+            keys::ATOMIC_NUMBER => Element::C,
+            keys::BEAD_TYPE => "W",
+        });
+        let atom = one_node(props! { keys::ATOMIC_NUMBER => Element::C });
+        assert_eq!(both.structural_hash(), atom.structural_hash());
+    }
+
+    /// The crate-internal functions take any graph type through the sealed
+    /// `Graph` bound and agree with each type's own methods.
+    #[test]
+    fn the_generic_functions_take_every_graph_type() {
+        let (mol, _) = ethanol();
+        assert_eq!(structural_hash(&mol), mol.structural_hash());
+        assert_eq!(structural_hash(mol.graph()), mol.structural_hash());
+        assert_eq!(canonical_order(&mol), mol.canonical_order());
+        assert!(is_isomorphic(&mol, mol.graph()));
+
+        let mut cg = CoarseGrain::new();
+        cg.add_bead(props! { keys::BEAD_TYPE => "W" }).unwrap();
+        assert_eq!(structural_hash(&cg), cg.structural_hash());
     }
 }

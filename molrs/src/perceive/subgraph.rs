@@ -3,7 +3,7 @@ use std::collections::{HashMap, HashSet};
 use crate::core::CoarseGrain;
 use crate::core::graph_hash::{GraphView, adjacency_map, feasible};
 use crate::core::keys;
-use crate::core::{MolGraph, NodeId};
+use crate::core::{Graph, GraphAccess, NodeId};
 
 /// Empty slot in a partial map.
 const UNMAPPED: usize = usize::MAX;
@@ -23,7 +23,8 @@ struct MatchGraph {
 impl MatchGraph {
     /// Snapshot `g`'s nodes, `bead_type` labels and adjacency, with every
     /// edge label zeroed.
-    fn new(g: &MolGraph) -> Self {
+    fn new(g: &impl Graph) -> Self {
+        let g = g.graph();
         let view = GraphView::build(g);
         let mut adj = adjacency_map(&view);
         for label in adj.iter_mut().flat_map(HashMap::values_mut) {
@@ -59,14 +60,16 @@ impl MatchGraph {
 /// use molrs::perceive::SubgraphMatcher;
 /// use molrs::core::CoarseGrain;
 /// use molrs::core::NodeId;
+/// use molrs::core::keys;
+/// use molrs::props;
 ///
 /// let chain = || {
 ///     let mut g = CoarseGrain::new();
-///     let a = g.add_bead_bare("1");
-///     let b = g.add_bead_bare("4");
-///     let c = g.add_bead_bare("1");
-///     g.add_bond(a, b).unwrap();
-///     g.add_bond(b, c).unwrap();
+///     let a = g.add_bead(props! { keys::BEAD_TYPE => "1" }).unwrap();
+///     let b = g.add_bead(props! { keys::BEAD_TYPE => "4" }).unwrap();
+///     let c = g.add_bead(props! { keys::BEAD_TYPE => "1" }).unwrap();
+///     g.add_bond(a, b, props! {}).unwrap();
+///     g.add_bond(b, c, props! {}).unwrap();
 ///     g
 /// };
 /// let pattern = chain();
@@ -74,7 +77,7 @@ impl MatchGraph {
 ///
 /// let groups = SubgraphMatcher::new(&pattern).find(&target);
 /// // The mirror map `[c, b, a]` names the same bead set and is dropped.
-/// let beads: Vec<NodeId> = target.node_ids().collect();
+/// let beads: Vec<NodeId> = target.bead_ids().collect();
 /// assert_eq!(groups, vec![beads]);
 /// ```
 ///
@@ -95,8 +98,8 @@ impl MatchGraph {
 /// that
 ///
 /// - **Labels.** `bead_type(p) == bead_type(m(p))` for every pattern bead
-///   `p`, by string equality. A bead's label is its `bead_type` alone; a node
-///   whose `bead_type` was removed through raw `DerefMut` access reads as `""`.
+///   `p`, by string equality. A bead's label is its `bead_type` alone (every
+///   bead of a [`CoarseGrain`] carries one).
 /// - **Edges.** Every arity-2 relation is an unlabelled edge: `bond_type` /
 ///   `bond_number` on a bond never block a match (a CG bond has no order).
 /// - **Induced.** Two pattern beads are bonded iff their images are, so a
@@ -108,13 +111,13 @@ impl MatchGraph {
 /// The result:
 ///
 /// - **Group shape.** `group[i]` is the target bead matched to pattern row
-///   `i`, the `i`-th bead of `pattern.node_ids()`.
+///   `i`, the `i`-th bead of `pattern.bead_ids()`.
 /// - **One group per bead set.** All maps onto one bead set differ by an
 ///   automorphism of the pattern — a relabelling of its beads that maps the
 ///   pattern onto itself, such as reading the symmetric `1-4-1` from the
 ///   other end — and describe the same group; the kept map is
 ///   the lexicographically smallest by target row (position in
-///   `target.node_ids()`).
+///   `target.bead_ids()`).
 /// - **Order.** Groups are sorted lexicographically by the target rows of
 ///   their kept map.
 /// - **Degenerate inputs.** An empty pattern, an empty target, a pattern bead
@@ -141,7 +144,7 @@ impl MatchGraph {
 /// P. Foggia, C. Sansone and M. Vento, "A (sub)graph isomorphism algorithm for
 /// matching large graphs", *IEEE TPAMI* **26**, 1367–1372 (2004),
 /// doi:10.1109/TPAMI.2004.75). It is the same lineage as
-/// [`is_isomorphic`](crate::core::is_isomorphic), whose
+/// [`CoarseGrain::is_isomorphic`], whose
 /// structural feasibility check (`feasible`) this search shares. The worst
 /// case is exponential in the pattern size.
 ///
@@ -323,27 +326,34 @@ mod tests {
     use crate::core::CoarseGrain;
     use crate::core::NodeId;
     use crate::core::keys;
+    use crate::props;
 
     /// A coarse-grained graph with one bead per entry of `types` (row = index)
     /// and one CG bond per `(row, row)` pair.
     fn cg(types: &[&str], bonds: &[(usize, usize)]) -> CoarseGrain {
         let mut g = CoarseGrain::new();
-        let ids: Vec<NodeId> = types.iter().map(|t| g.add_bead_bare(t)).collect();
+        let ids: Vec<NodeId> = types
+            .iter()
+            .map(|t| {
+                g.add_bead(props! { keys::BEAD_TYPE => *t })
+                    .expect("fixture bead")
+            })
+            .collect();
         for &(a, b) in bonds {
-            g.add_bond(ids[a], ids[b]).expect("fixture bond");
+            g.add_bond(ids[a], ids[b], props! {}).expect("fixture bond");
         }
         g
     }
 
     /// Run the matcher and translate every group into target rows (position
-    /// in `target.node_ids()`).
+    /// in `target.bead_ids()`).
     ///
     /// Contract under test: `group[i]` is the target bead of pattern row `i`,
     /// one group per bead set (the lexicographically smallest map kept), and
     /// the groups sorted lexicographically by those target rows, so the
     /// expected vectors below are exact.
     fn rows(pattern: &CoarseGrain, target: &CoarseGrain) -> Vec<Vec<usize>> {
-        let order: Vec<NodeId> = target.node_ids().collect();
+        let order: Vec<NodeId> = target.bead_ids().collect();
         let row = |id: NodeId| {
             order
                 .iter()
@@ -438,10 +448,9 @@ mod tests {
     fn edge_labels_are_ignored() {
         let pattern = cg(&["1", "4"], &[(0, 1)]);
         let mut target = cg(&["1", "4"], &[(0, 1)]);
-        let kind = target.kind_id("bonds").expect("CG bond kind");
-        let bond = target.relation_ids(kind).next().expect("fixture bond");
+        let bond = target.bond_ids().next().expect("fixture bond");
         target
-            .set_relation_prop(kind, bond, keys::BOND_NUMBER, BondNumber::Double)
+            .set_bond(bond, keys::BOND_NUMBER, BondNumber::Double)
             .expect("bond_number on the target bond");
         assert_eq!(rows(&pattern, &target), vec![vec![0, 1]]);
     }

@@ -38,6 +38,8 @@
 // The pinned numbers are kept as their engines printed them.
 #![allow(clippy::excessive_precision)]
 
+use crate::core::Cell;
+use crate::io::writer::WrittenText;
 use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
 
@@ -48,11 +50,10 @@ use crate::ff::compile::PotentialCompiler;
 use crate::ff::forcefield::ForceField;
 use crate::ff::ir::Params;
 use crate::ff::potential::intramolecular_pairs;
+use crate::io::lammps::LammpsForcefieldWriter;
 use crate::io::openmm_xml::reader::OpenmmXmlReader;
 use crate::io::openmm_xml::writer::OpenmmXmlWriter;
 use crate::io::reader::ForceFieldReader;
-use crate::io::writer::ForceFieldWriter;
-use crate::io::{lammps::LammpsForcefieldWriteOptions, lammps::LammpsForcefieldWriter};
 use molrs::core::Block;
 use molrs::core::Frame;
 use molrs::core::SimBox;
@@ -126,7 +127,7 @@ fn strings(v: &Value, key: &str) -> Vec<String> {
 /// The XML read with OpenMM's `NoCutoff` stated as a cutoff beyond every
 /// pair.
 pub(crate) fn read(c: &Case) -> ForceField {
-    let mut ff = OpenmmXmlReader::new().read_str(c.xml).unwrap();
+    let mut ff = OpenmmXmlReader::new().read(c.xml.as_bytes()).unwrap();
     for name in ["lj/charmm", "coul/charmm", "lj/cut", "coul/cut"] {
         if let Some(style) = ff.get_style_mut("pair", name) {
             style.set_param("cutoff", 1000.0);
@@ -148,7 +149,8 @@ fn match_type(ff: &ForceField, category: &str, types: &[&str], reversible: bool)
         .into_iter()
         .filter_map(|t| {
             t.params
-                .get_str("class")
+                .get("class")
+                .and_then(|v| v.as_text())
                 .map(|c| (t.name.clone(), c.to_owned()))
         })
         .collect();
@@ -181,12 +183,12 @@ fn relation(rows: &[(Vec<usize>, String)]) -> Block {
     {
         let col: Vec<Idx> = rows.iter().map(|r| r.0[k] as Idx).collect();
         block
-            .insert(*key, Array1::from_vec(col).into_dyn())
+            .insert(*key, Array1::from_vec(col).into_dyn(), None)
             .unwrap();
     }
     let labels: Vec<String> = rows.iter().map(|r| r.1.clone()).collect();
     block
-        .insert("type", Array1::from_vec(labels).into_dyn())
+        .insert("type", Array1::from_vec(labels).into_dyn(), None)
         .unwrap();
     block
 }
@@ -201,22 +203,31 @@ pub(crate) fn frame(c: &Case, ff: &ForceField) -> Frame {
     for (d, key) in ["x", "y", "z"].iter().enumerate() {
         let col: Vec<F> = x.iter().map(|p| p[d]).collect();
         atoms
-            .insert(*key, Array1::from_vec(col).into_dyn())
+            .insert(*key, Array1::from_vec(col).into_dyn(), None)
             .unwrap();
     }
     atoms
-        .insert("type", Array1::from_vec(types.clone()).into_dyn())
+        .insert("type", Array1::from_vec(types.clone()).into_dyn(), None)
         .unwrap();
     atoms
-        .insert("charge", Array1::from_vec(floats(&v, "charges")).into_dyn())
+        .insert(
+            "charge",
+            Array1::from_vec(floats(&v, "charges")).into_dyn(),
+            None,
+        )
         .unwrap();
     atoms
-        .insert("mass", Array1::from_vec(floats(&v, "masses")).into_dyn())
+        .insert(
+            "mass",
+            Array1::from_vec(floats(&v, "masses")).into_dyn(),
+            None,
+        )
         .unwrap();
     atoms
         .insert(
             "mol_id",
             Array1::from_vec(vec![1 as Idx; types.len()]).into_dyn(),
+            None,
         )
         .unwrap();
     let mut out = Frame::new();
@@ -240,7 +251,7 @@ pub(crate) fn frame(c: &Case, ff: &ForceField) -> Frame {
         .map(|r| (r, String::new()))
         .collect();
     out.insert("dihedrals", relation(&all));
-    let pairs = intramolecular_pairs(&out, ff.special_bonds()).unwrap();
+    let pairs = intramolecular_pairs(&out, ff.special_bonds(), None).unwrap();
     out.insert("pairs", pairs);
     out.insert(
         "dihedrals",
@@ -255,7 +266,7 @@ pub(crate) fn frame(c: &Case, ff: &ForceField) -> Frame {
         out.insert("cmaps", relation(&cmaps));
     }
     out.simbox =
-        Some(SimBox::cube(150.0, ndarray::array![-60.0, -60.0, -60.0], [false; 3]).unwrap());
+        Some(SimBox::new(Cell::Lengths([150.0; 3]), [-60.0, -60.0, -60.0], [false; 3]).unwrap());
     out
 }
 
@@ -310,23 +321,23 @@ fn stage_lammps_inputs(dir: &Path, c: &Case) {
     let (ff, frame) = lammps_form(c);
     let mut data = frame.clone();
     data.remove("pairs");
-    write_lammps_data(dir.join(format!("{}.data", c.name)), &data).unwrap();
+    write_lammps_data(&dir.join(format!("{}.data", c.name)), &data).unwrap();
     let labels = TypeLabels::from_frame(&data).unwrap();
     let has_cmap = data.get("cmaps").is_some();
-    let options = LammpsForcefieldWriteOptions {
-        precision: 17,
-        cmap_file: has_cmap.then(|| format!("{}.cmap", c.name)),
-        ..LammpsForcefieldWriteOptions::default()
+    let writer = match has_cmap.then(|| format!("{}.cmap", c.name)) {
+        Some(file) => LammpsForcefieldWriter::new(&labels)
+            .with_precision(17)
+            .with_cmap_file(file),
+        None => LammpsForcefieldWriter::new(&labels).with_precision(17),
     };
-    let writer = LammpsForcefieldWriter::with_options(&labels, options);
     if has_cmap {
         std::fs::write(
             dir.join(format!("{}.cmap", c.name)),
-            writer.write_cmap_str(&ff).unwrap(),
+            crate::io::writer::written_with(|b| writer.write_cmap(b, &ff)).unwrap(),
         )
         .unwrap();
     }
-    let text = writer.write_str(&ff).unwrap();
+    let text = writer.written(&ff).unwrap();
     let (pre, post): (Vec<&str>, Vec<&str>) = text.lines().partition(|l| {
         l.starts_with("units") || l.starts_with("fix ") || l.starts_with("fix_modify")
     });
@@ -502,7 +513,7 @@ fn materialize_one_four_fills_each_one_four_pair_once() {
         let p = f.get("pairs").unwrap();
         p.get("is_14")
             .unwrap()
-            .as_bool()
+            .get::<bool>()
             .unwrap()
             .iter()
             .filter(|b| **b)
@@ -513,7 +524,7 @@ fn materialize_one_four_fills_each_one_four_pair_once() {
     let flags: Vec<bool> = p
         .get("is_14")
         .unwrap()
-        .as_bool()
+        .get::<bool>()
         .unwrap()
         .iter()
         .copied()
@@ -528,11 +539,14 @@ fn materialize_one_four_fills_each_one_four_pair_once() {
     let first = (0..flags.len()).find(|&r| flags[r]).unwrap();
     {
         let pairs = again.get_mut("pairs").unwrap();
-        let mut eps = pairs.get("epsilon").unwrap().as_float().unwrap().to_owned();
+        let mut eps = pairs
+            .get("epsilon")
+            .unwrap()
+            .get::<f64>()
+            .unwrap()
+            .to_owned();
         eps[[first]] = 0.5;
-        pairs
-            .insert_nullable("epsilon", eps, flags.clone())
-            .unwrap();
+        pairs.insert("epsilon", eps, Some(flags.clone())).unwrap();
     }
     assert_eq!(ff.materialize_one_four(&mut again).unwrap(), 0);
     let eps = again
@@ -540,7 +554,7 @@ fn materialize_one_four_fills_each_one_four_pair_once() {
         .unwrap()
         .get("epsilon")
         .unwrap()
-        .as_float()
+        .get::<f64>()
         .unwrap()[[first]];
     assert_eq!(eps, 0.5);
 }
@@ -559,9 +573,13 @@ fn assert_same_field(a: &ForceField, b: &ForceField, what: &str) {
     assert_eq!(key(a), key(b), "{what}: styles");
     for sa in a.styles() {
         let sb = b.get_style(sa.category(), sa.name()).unwrap();
-        for (k, v) in sa.params().iter() {
+        for (k, v) in sa
+            .params()
+            .iter()
+            .filter_map(|(k, v)| v.as_num().map(|x| (k, x)))
+        {
             assert!(
-                rel(sb.params().get(k).unwrap(), v) <= 1e-14,
+                rel(sb.params().get(k).and_then(|v| v.as_num()).unwrap(), v) <= 1e-14,
                 "{what} {}: {k}",
                 sa.name()
             );
@@ -575,18 +593,31 @@ fn assert_same_field(a: &ForceField, b: &ForceField, what: &str) {
         for (name, ends, p) in sa.type_rows() {
             let (eb, pb) = &rows_b[name];
             assert_eq!(&ends, eb, "{what} {name}");
-            for (k, v) in p.iter() {
+            for (k, v) in p.iter().filter_map(|(k, v)| v.as_num().map(|x| (k, x))) {
                 let got = pb
                     .get(k)
+                    .and_then(|v| v.as_num())
                     .unwrap_or_else(|| panic!("{what} {name}: lost {k}"));
                 assert!(rel(got, v) <= 1e-14, "{what} {name} {k}: {got} vs {v}");
             }
-            assert_eq!(p.iter().count(), pb.iter().count(), "{what} {name}");
-            for (k, v) in p.iter_strings() {
-                assert_eq!(pb.get_str(k), Some(v), "{what} {name} {k}");
+            assert_eq!(
+                p.iter()
+                    .filter_map(|(k, v)| v.as_num().map(|x| (k, x)))
+                    .count(),
+                pb.iter()
+                    .filter_map(|(k, v)| v.as_num().map(|x| (k, x)))
+                    .count(),
+                "{what} {name}"
+            );
+            for (k, v) in p.iter().filter_map(|(k, v)| v.as_text().map(|s| (k, s))) {
+                assert_eq!(
+                    pb.get(k).and_then(|v| v.as_text()),
+                    Some(v),
+                    "{what} {name} {k}"
+                );
             }
-            for (k, v) in p.iter_arrays() {
-                let w = pb.get_array(k).unwrap();
+            for (k, v) in p.iter().filter_map(|(k, v)| v.as_array().map(|a| (k, a))) {
+                let w = pb.get(k).and_then(|v| v.as_array()).unwrap();
                 assert!(
                     v.iter().zip(w.iter()).all(|(x, y)| rel(*y, *x) <= 1e-14),
                     "{what} {name} {k}"
@@ -606,12 +637,12 @@ fn assert_same_field(a: &ForceField, b: &ForceField, what: &str) {
 #[test]
 fn read_write_read_is_the_identity() {
     for c in &CASES {
-        let ff = OpenmmXmlReader::new().read_str(c.xml).unwrap();
-        let xml = OpenmmXmlWriter::new().write_str(&ff).unwrap();
-        let back = OpenmmXmlReader::new().read_str(&xml).unwrap();
+        let ff = OpenmmXmlReader::new().read(c.xml.as_bytes()).unwrap();
+        let xml = OpenmmXmlWriter::new().written(&ff).unwrap();
+        let back = OpenmmXmlReader::new().read(xml.as_bytes()).unwrap();
         assert_same_field(&ff, &back, c.name);
-        let again = OpenmmXmlWriter::new().write_str(&back).unwrap();
-        let third = OpenmmXmlReader::new().read_str(&again).unwrap();
+        let again = OpenmmXmlWriter::new().written(&back).unwrap();
+        let third = OpenmmXmlReader::new().read(again.as_bytes()).unwrap();
         assert_same_field(&back, &third, c.name);
     }
 }
@@ -637,7 +668,7 @@ fn report() {
         if let Some(dir) = &dir {
             stage_lammps_inputs(Path::new(dir), c);
             // The molrs-written XML, for scripts/openmm_xml_check.py --written.
-            let xml = OpenmmXmlWriter::new().write_str(&read(c)).unwrap();
+            let xml = OpenmmXmlWriter::new().written(&read(c)).unwrap();
             std::fs::write(Path::new(dir).join(format!("{}.written.xml", c.name)), xml).unwrap();
             let (lff, lframe) = lammps_form(c);
             let l = molrs_terms(&lff, &lframe);

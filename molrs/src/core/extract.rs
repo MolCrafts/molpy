@@ -280,7 +280,7 @@ impl MolGraph {
             // already has there: a conflict would mean the subgraph stopped
             // mirroring the parent mid-copy.
             let new_id = graph
-                .add_node_with(payload)
+                .add_node(payload)
                 .expect("induced subgraph mirrors the parent's component types");
             node_map.insert(old, new_id);
         }
@@ -297,14 +297,16 @@ impl MolGraph {
                 .expect("kind mirrored at start of materialize_induced");
             let mapped: smallvec::SmallVec<[NodeId; 4]> =
                 rel.nodes.iter().map(|n| node_map[n]).collect();
-            if let Ok(new_rid) = graph.add_relation(self_kind, &mapped) {
-                // The props were just read out of `self`'s own columns into a
-                // graph whose kinds mirror `self`'s, so every key arrives at
-                // the one element type it has there: a conflict would mean the
-                // subgraph stopped mirroring the parent mid-copy.
-                graph
-                    .set_relation_props(self_kind, new_rid, &rel.props)
-                    .expect("induced subgraph mirrors the parent's component types");
+            // The props were just read out of `self`'s own columns into a
+            // graph whose kinds mirror `self`'s, so every key arrives at the
+            // one element type it has there: a conflict would mean the
+            // subgraph stopped mirroring the parent mid-copy.
+            match graph.add_relation(self_kind, &mapped, rel.props) {
+                Ok(_) => {}
+                Err(e @ MolRsError::Validation { .. }) => {
+                    panic!("induced subgraph mirrors the parent's component types: {e}")
+                }
+                Err(_) => {}
             }
         };
 
@@ -353,18 +355,37 @@ fn n_as_sort_key(n: NodeId) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::Atom;
     use crate::core::Atomistic;
     use crate::core::CoarseGrain;
+    use crate::core::Element;
+    use crate::core::GraphAccess;
+    use crate::core::Props;
+    use crate::core::keys;
+    use crate::props;
+
+    /// The bond kind of `mol`'s graph, for the generic ball kernel.
+    fn bonds(mol: &Atomistic) -> KindId {
+        mol.graph()
+            .bonds_kind()
+            .expect("an Atomistic registers bonds")
+    }
 
     fn linear_chain(n: usize) -> (Atomistic, Vec<crate::core::NodeId>) {
         let mut mol = Atomistic::new();
         let mut ids = Vec::with_capacity(n);
         for i in 0..n {
-            ids.push(mol.add_atom_xyz("C", i as f64, 0.0, 0.0));
+            ids.push(
+                mol.add_atom(props! {
+                    keys::ATOMIC_NUMBER => Element::C,
+                    keys::X => i as f64,
+                    keys::Y => 0.0,
+                    keys::Z => 0.0,
+                })
+                .unwrap(),
+            );
         }
         for w in ids.windows(2) {
-            mol.add_bond(w[0], w[1]).unwrap();
+            mol.add_bond(w[0], w[1], props! {}).unwrap();
         }
         (mol, ids)
     }
@@ -375,10 +396,7 @@ mod tests {
         mol.generate_topology(true, false, false, false).unwrap();
         assert!(mol.n_angles() >= 2);
 
-        let sub = mol
-            .as_molgraph()
-            .induced_subgraph(&[ids[1], ids[2]])
-            .unwrap();
+        let sub = mol.graph().induced_subgraph(&[ids[1], ids[2]]).unwrap();
         assert_eq!(sub.graph.n_nodes(), 2);
         assert_eq!(sub.node_map.len(), 2);
         let bond = sub.graph.kind_id("bonds").unwrap();
@@ -394,9 +412,11 @@ mod tests {
     #[test]
     fn induced_subgraph_stale_fails() {
         let mut mol = Atomistic::new();
-        let a = mol.add_atom_bare("C");
-        mol.remove_atom(a).unwrap();
-        let err = mol.as_molgraph().induced_subgraph(&[a]);
+        let a = mol
+            .add_atom(props! { keys::ATOMIC_NUMBER => Element::C })
+            .unwrap();
+        mol.del_atom(a).unwrap();
+        let err = mol.graph().induced_subgraph(&[a]);
         assert!(err.is_err());
     }
 
@@ -407,8 +427,8 @@ mod tests {
         let (mol, ids) = linear_chain(10);
         let group = vec![ids[5], ids[6], ids[7], ids[8]];
         let ball = mol
-            .as_molgraph()
-            .extract_ball(&[ids[4]], 1, mol.bond_kind(), false, &[group])
+            .graph()
+            .extract_ball(&[ids[4]], 1, bonds(&mol), false, &[group])
             .unwrap();
         // radius alone: {3,4,5}. The group has 5 inside, so 6/7/8 come along.
         let selected: HashSet<_> = ball.node_map.keys().copied().collect();
@@ -427,8 +447,8 @@ mod tests {
         let (mol, ids) = linear_chain(10);
         let far = vec![ids[8], ids[9]];
         let ball = mol
-            .as_molgraph()
-            .extract_ball(&[ids[1]], 1, mol.bond_kind(), false, &[far])
+            .graph()
+            .extract_ball(&[ids[1]], 1, bonds(&mol), false, &[far])
             .unwrap();
         assert_eq!(ball.node_map.len(), 3);
     }
@@ -440,8 +460,8 @@ mod tests {
         let (mol, ids) = linear_chain(10);
         let groups = vec![vec![ids[2], ids[3]], vec![ids[3], ids[4], ids[5]]];
         let ball = mol
-            .as_molgraph()
-            .extract_ball(&[ids[1]], 1, mol.bond_kind(), false, &groups)
+            .graph()
+            .extract_ball(&[ids[1]], 1, bonds(&mol), false, &groups)
             .unwrap();
         let selected: HashSet<_> = ball.node_map.keys().copied().collect();
         for i in [0, 1, 2, 3, 4, 5] {
@@ -455,8 +475,8 @@ mod tests {
         let (mol, ids) = linear_chain(10);
         let group = vec![ids[2], ids[3], ids[4]];
         let ball = mol
-            .as_molgraph()
-            .extract_ball(&[ids[2]], 0, mol.bond_kind(), false, &[group])
+            .graph()
+            .extract_ball(&[ids[2]], 0, bonds(&mol), false, &[group])
             .unwrap();
         // Selected {2,3,4}: only 2 and 4 still have a neighbour outside.
         let bset: HashSet<_> = ball.boundary.iter().copied().collect();
@@ -469,8 +489,8 @@ mod tests {
         let (mol, ids) = linear_chain(10);
         // centers={2,7}, radius=1 → {1,2,3,6,7,8}
         let ball = mol
-            .as_molgraph()
-            .extract_ball(&[ids[2], ids[7]], 1, mol.bond_kind(), false, &[])
+            .graph()
+            .extract_ball(&[ids[2], ids[7]], 1, bonds(&mol), false, &[])
             .unwrap();
         assert_eq!(ball.hops.len(), 6);
         assert_eq!(ball.hops[&ids[2]], 0);
@@ -488,8 +508,8 @@ mod tests {
     fn extract_ball_radius_zero_singleton() {
         let (mol, ids) = linear_chain(5);
         let ball = mol
-            .as_molgraph()
-            .extract_ball(&[ids[2]], 0, mol.bond_kind(), false, &[])
+            .graph()
+            .extract_ball(&[ids[2]], 0, bonds(&mol), false, &[])
             .unwrap();
         assert_eq!(ball.graph.n_nodes(), 1);
         assert_eq!(ball.hops[&ids[2]], 0);
@@ -501,19 +521,19 @@ mod tests {
     fn extract_ball_negative_radius_errors() {
         let (mol, ids) = linear_chain(2);
         let err = mol
-            .as_molgraph()
-            .extract_ball(&[ids[0]], -1, mol.bond_kind(), false, &[]);
+            .graph()
+            .extract_ball(&[ids[0]], -1, bonds(&mol), false, &[]);
         assert!(err.is_err());
     }
 
     #[test]
     fn extract_ball_stale_center_errors() {
         let mut mol = Atomistic::new();
-        let a = mol.add_atom_bare("C");
-        mol.remove_atom(a).unwrap();
-        let err = mol
-            .as_molgraph()
-            .extract_ball(&[a], 1, mol.bond_kind(), false, &[]);
+        let a = mol
+            .add_atom(props! { keys::ATOMIC_NUMBER => Element::C })
+            .unwrap();
+        mol.del_atom(a).unwrap();
+        let err = mol.graph().extract_ball(&[a], 1, bonds(&mol), false, &[]);
         assert!(err.is_err());
     }
 
@@ -550,10 +570,18 @@ mod tests {
     #[test]
     fn coarsegrain_extract_preserves_membership() {
         let mut cg = CoarseGrain::new();
-        let b0 = cg.add_bead("A", 0.0, 0.0, 0.0);
-        let b1 = cg.add_bead("B", 1.0, 0.0, 0.0);
-        cg.add_bond(b0, b1).unwrap();
-        cg.set_bead_members(b0, vec![10, 20]);
+        let b0 = cg
+            .add_bead(
+                props! { keys::BEAD_TYPE => "A", keys::X => 0.0, keys::Y => 0.0, keys::Z => 0.0 },
+            )
+            .unwrap();
+        let b1 = cg
+            .add_bead(
+                props! { keys::BEAD_TYPE => "B", keys::X => 1.0, keys::Y => 0.0, keys::Z => 0.0 },
+            )
+            .unwrap();
+        cg.add_bond(b0, b1, props! {}).unwrap();
+        cg.set_bead_members(b0, vec![10, 20]).unwrap();
         let ext = cg.extract_subgraph(&[b0], 0).unwrap();
         assert_eq!(ext.graph.n_beads(), 1);
         let new_b = *ext.node_map.get(&b0).unwrap();
@@ -564,8 +592,8 @@ mod tests {
     fn empty_centers_empty_ball() {
         let (mol, _) = linear_chain(3);
         let ball = mol
-            .as_molgraph()
-            .extract_ball(&[], 1, mol.bond_kind(), false, &[])
+            .graph()
+            .extract_ball(&[], 1, bonds(&mol), false, &[])
             .unwrap();
         assert_eq!(ball.graph.n_nodes(), 0);
         assert!(ball.hops.is_empty());
@@ -582,7 +610,7 @@ mod tests {
     #[test]
     fn materialize_does_not_need_atom_payload_import() {
         let mut g = MolGraph::new();
-        let n = g.add_node_with(Atom::new()).expect("fixture node");
+        let n = g.add_node(Props::new()).expect("fixture node");
         let _ = g.induced_subgraph(&[n]).unwrap();
     }
 
@@ -594,16 +622,24 @@ mod tests {
         // an acyclic slice of a ring.
         let mut mol = Atomistic::new();
         let ids: Vec<_> = (0..6)
-            .map(|i| mol.add_atom_xyz("C", i as f64, 0.0, 0.0))
+            .map(|i| {
+                mol.add_atom(props! {
+                    keys::ATOMIC_NUMBER => Element::C,
+                    keys::X => i as f64,
+                    keys::Y => 0.0,
+                    keys::Z => 0.0,
+                })
+                .unwrap()
+            })
             .collect();
         for i in 0..6 {
-            mol.add_bond(ids[i], ids[(i + 1) % 6]).unwrap();
+            mol.add_bond(ids[i], ids[(i + 1) % 6], props! {}).unwrap();
         }
 
-        let bond = mol.bond_kind();
+        let bond = bonds(&mol);
         // Radius 3 from one atom of a 6-ring selects all six.
         let ball = mol
-            .as_molgraph()
+            .graph()
             .extract_ball(&[ids[0]], 3, bond, false, &[])
             .unwrap();
         assert_eq!(ball.graph.n_nodes(), 6);
@@ -621,14 +657,14 @@ mod tests {
         // they carry — never in the bonds.
         let (mut mol, ids) = linear_chain(8);
         mol.generate_topology(true, true, false, false).unwrap();
-        let bond = mol.bond_kind();
+        let bond = bonds(&mol);
 
         let indexed = mol
-            .as_molgraph()
+            .graph()
             .extract_ball(&[ids[3]], 2, bond, false, &[])
             .unwrap();
         let verbatim = mol
-            .as_molgraph()
+            .graph()
             .extract_ball(&[ids[3]], 2, bond, true, &[])
             .unwrap();
 

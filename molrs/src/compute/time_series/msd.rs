@@ -1,14 +1,7 @@
 //! [`Msd`] — the mean squared displacement.
 
-use molrs::core::SimBox;
-use molrs::op::F;
-use ndarray::ArrayView3;
-
-use super::{
-    Correlator, CorrelatorAccumulator, CorrelatorInput, LagKernel, Origins, Reduction,
-    TimeCorrelation,
-};
-use crate::compute::{Compute, ComputeError, Stream};
+use super::{Correlator, CorrelatorAccumulator, LagKernel, Origins, Reduction};
+use crate::compute::{ComputeError, Stream};
 
 /// Mean squared displacement `MSD(t) = ⟨|r_i(τ + t) − r_i(τ)|²⟩`.
 ///
@@ -16,14 +9,21 @@ use crate::compute::{Compute, ComputeError, Stream};
 /// autocorrelated and normalised by the number of origins. Two choices are
 /// left to the caller:
 ///
-/// - [`Origins`]: `All` (default) averages every origin `τ` — the windowed
-///   estimator, evaluated by FFT (Kneller et al. 1995); `First` measures from
-///   frame 0 only.
+/// - [`Origins`]: `All` (default) averages every origin `τ` up to `max_lag`
+///   back — the windowed estimator (Kneller et al. 1995); `First` measures
+///   from frame 0 only.
 /// - [`Reduction`]: `Mean` (default) over items, or `PerItem` for one curve
 ///   per particle.
 ///
-/// The positions must be continuous across periodic boundaries. Given the
-/// per-frame boxes, `compute` checks that and returns
+/// `Msd` is a [`Stream`] only: [`accumulator`](Stream::accumulator) hands
+/// out a [`CorrelatorAccumulator`]; push one
+/// [`CorrelatorFrame`](super::CorrelatorFrame) per frame (`a` = that frame's
+/// `N × D` positions, `b = None`) and [`finish`](crate::compute::Accumulate::finish)
+/// reads the curve. Memory is `O(max_lag · N · D)` whatever the trajectory
+/// length.
+///
+/// The positions must be continuous across periodic boundaries. Given each
+/// frame's box (`simbox`), the accumulator checks that and returns
 /// [`ComputeError::Wrapped`] for a trajectory wrapped into its box; unwrap
 /// with [`Unwrap`](super::Unwrap). The Einstein relation `D = slope / (2d)`
 /// is a [`LinearFit`](crate::compute::LinearFit) of the curve; applied to
@@ -32,17 +32,6 @@ use crate::compute::{Compute, ComputeError, Stream};
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Msd {
     correlator: Correlator,
-}
-
-/// The data [`Msd`] analyses.
-#[derive(Debug, Clone, Copy)]
-pub struct MsdInput<'a> {
-    /// Unwrapped positions, `T × N × D` (any dimension `D`).
-    pub positions: ArrayView3<'a, F>,
-    /// Frame spacing.
-    pub dt: F,
-    /// One box per frame to reject a wrapped trajectory; `None` to skip.
-    pub boxes: Option<&'a [SimBox]>,
 }
 
 impl Msd {
@@ -78,25 +67,6 @@ impl Msd {
             correlator: self.correlator.with_stride(stride)?,
         })
     }
-
-    /// The correlator this MSD is.
-    pub fn correlator(&self) -> &Correlator {
-        &self.correlator
-    }
-}
-
-impl Compute for Msd {
-    type Input<'a> = MsdInput<'a>;
-    type Output = TimeCorrelation;
-
-    fn compute(&self, input: MsdInput<'_>) -> Result<TimeCorrelation, ComputeError> {
-        self.correlator.compute(CorrelatorInput {
-            a: input.positions,
-            b: None,
-            dt: input.dt,
-            boxes: input.boxes,
-        })
-    }
 }
 
 impl Stream for Msd {
@@ -108,7 +78,7 @@ impl Stream for Msd {
 }
 
 crate::compute::spec::compute_spec! {
-    Msd as "Msd";
+    Msd as "Msd", Frames;
     params |s| {
         max_lag: Int;
         origins: Choice(Origins::NAMES) = Origins::default() => s.correlator.origins();
@@ -116,29 +86,41 @@ crate::compute::spec::compute_spec! {
         stride: Int = Correlator::DEFAULT_STRIDE => s.correlator.stride();
     }
     inputs {
-        positions: Trajectory;
+        a: Positions;
         dt: Scalar;
-        boxes: Boxes, optional;
+        simbox: SimBox, optional;
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use super::super::TimeCorrelation;
     use super::super::test_support::{rng_series, trajectory};
     use super::*;
-    use crate::compute::{Accumulate, CorrelatorFrame, LinearFit, LinearFitInput};
-    use ndarray::{Array2, Array3, Axis, array};
+    use crate::compute::{Accumulate, Compute, CorrelatorFrame, LinearFit, LinearFitInput};
+    use crate::core::Cell;
+    use molrs::core::SimBox;
+    use molrs::op::F;
+    use ndarray::{Array2, Array3, ArrayView3, Axis, array};
     use rand::{RngExt, SeedableRng};
 
+    /// Push every frame of `series` (`T × N × D`) into `acc`, then finish.
+    fn fold(
+        acc: CorrelatorAccumulator,
+        series: ArrayView3<'_, F>,
+        dt: F,
+    ) -> Result<TimeCorrelation, ComputeError> {
+        acc.fold(series.outer_iter().map(|a| CorrelatorFrame {
+            a,
+            b: None,
+            dt,
+            simbox: None,
+        }))
+    }
+
     fn msd(series: &Array3<F>, max_lag: usize, origins: Origins) -> TimeCorrelation {
-        Msd::new(max_lag)
-            .with_origins(origins)
-            .compute(MsdInput {
-                positions: series.view(),
-                dt: 1.0,
-                boxes: None,
-            })
-            .unwrap()
+        let msd = Msd::new(max_lag).with_origins(origins);
+        fold(msd.accumulator(), series.view(), 1.0).unwrap()
     }
 
     /// `n_frames × n_atoms` random walk, one frame per row of `(x, y, z)`.
@@ -183,21 +165,10 @@ mod tests {
                 let explicit = Correlator::new(LagKernel::SquaredDisplacement, 9)
                     .with_origins(origins)
                     .with_reduction(reduce);
-                assert_eq!(*surface.correlator(), explicit);
-                let input = CorrelatorInput {
-                    a: series.view(),
-                    b: None,
-                    dt: 0.5,
-                    boxes: None,
-                };
-                let got = surface
-                    .compute(MsdInput {
-                        positions: series.view(),
-                        dt: 0.5,
-                        boxes: None,
-                    })
-                    .unwrap();
-                assert_eq!(got, explicit.compute(input).unwrap());
+                assert_eq!(surface.correlator, explicit);
+                let got = fold(surface.accumulator(), series.view(), 0.5).unwrap();
+                let via = fold(explicit.accumulator(), series.view(), 0.5).unwrap();
+                assert_eq!(got, via);
             }
         }
     }
@@ -248,12 +219,17 @@ mod tests {
 
     #[test]
     fn empty_input_errors() {
-        let empty = Array3::<F>::zeros((0, 2, 3));
+        // No frame at all, and a frame of no particles.
+        let no_frames = Msd::new(0).accumulator().finish().unwrap_err();
+        assert!(matches!(no_frames, ComputeError::EmptyInput));
+        let empty = Array2::<F>::zeros((0, 3));
         let err = Msd::new(0)
-            .compute(MsdInput {
-                positions: empty.view(),
+            .accumulator()
+            .push(CorrelatorFrame {
+                a: empty.view(),
+                b: None,
                 dt: 1.0,
-                boxes: None,
+                simbox: None,
             })
             .unwrap_err();
         assert!(matches!(err, ComputeError::EmptyInput));
@@ -355,14 +331,12 @@ mod tests {
     fn per_item_curves_average_to_the_mean_curve() {
         let series = walk(16, 5, 9);
         let mean = msd(&series, 6, Origins::All);
-        let per_item = Msd::new(6)
-            .with_reduction(Reduction::PerItem)
-            .compute(MsdInput {
-                positions: series.view(),
-                dt: 1.0,
-                boxes: None,
-            })
-            .unwrap();
+        let per_item = fold(
+            Msd::new(6).with_reduction(Reduction::PerItem).accumulator(),
+            series.view(),
+            1.0,
+        )
+        .unwrap();
         assert_eq!(per_item.n_channels(), 5);
         for lag in 0..=6 {
             let avg = per_item.values.row(lag).mean().unwrap();
@@ -386,36 +360,46 @@ mod tests {
         acc
     }
 
+    /// The first-origin curve, written out: `|r_i(t) − r_i(0)|²` summed over
+    /// components, averaged over items.
     #[test]
-    fn direct_curve_matches_batch_direct_mode() {
+    fn first_origin_curve_matches_the_reference() {
         let (t, n) = (16, 5);
         let series = walk(t, n, 42);
-        let batch = msd(&series, t - 1, Origins::First);
         let streamed = stream(&series, Msd::new(t - 1).with_origins(Origins::First))
             .finish()
             .unwrap();
         assert_eq!(streamed.n_lags(), t);
         for k in 0..t {
+            let mut expected = 0.0;
+            for i in 0..n {
+                for c in 0..3 {
+                    let dx = series[[k, i, c]] - series[[0, i, c]];
+                    expected += dx * dx;
+                }
+            }
+            expected /= n as F;
             assert!(
-                (streamed.values[[k, 0]] - batch.values[[k, 0]]).abs() < 1e-12,
-                "direct lag {k}"
+                (streamed.values[[k, 0]] - expected).abs() < 1e-12,
+                "first-origin lag {k}"
             );
         }
     }
 
+    /// A window shorter than the trajectory still averages every origin of
+    /// each lag it keeps.
     #[test]
-    fn windowed_msd_matches_batch_window_mode_up_to_window() {
+    fn windowed_msd_matches_the_reference_up_to_the_window() {
         let (t, n, w) = (24, 4, 10);
         let series = walk(t, n, 7);
-        let batch = msd(&series, w, Origins::All);
+        let reference = windowed_reference(&series);
         let streamed = stream(&series, Msd::new(w)).finish().unwrap();
         assert_eq!(streamed.n_lags(), w + 1);
-        for k in 0..=w {
+        for (k, expected) in reference.iter().enumerate().take(w + 1) {
             let s = streamed.values[[k, 0]];
             assert!(
-                (s - batch.values[[k, 0]]).abs() < 1e-9,
-                "windowed lag {k}: streamed {s} vs batch {}",
-                batch.values[[k, 0]]
+                (s - expected).abs() < 1e-9,
+                "windowed lag {k}: streamed {s} vs reference {expected}"
             );
         }
     }
@@ -457,16 +441,8 @@ mod tests {
             vec![[9.5, 1.0, 1.0]],
             vec![[-0.5, 1.0, 1.0]],
         ]);
-        let cube = SimBox::cube(10.0, array![0.0, 0.0, 0.0], [true; 3]).unwrap();
+        let cube = SimBox::new(Cell::Lengths([10.0; 3]), [0.0, 0.0, 0.0], [true; 3]).unwrap();
         let boxes = vec![cube; 4];
-        let err = Msd::new(2)
-            .compute(MsdInput {
-                positions: series.view(),
-                dt: 1.0,
-                boxes: Some(&boxes),
-            })
-            .unwrap_err();
-        assert!(matches!(err, ComputeError::Wrapped { frame: 3, item: 0 }));
 
         // The same trajectory unwrapped passes and gives the ballistic MSD.
         let unwrapped = trajectory(&[
@@ -476,15 +452,22 @@ mod tests {
             vec![[10.5, 1.0, 1.0]],
         ]);
         let curve = Msd::new(2)
-            .compute(MsdInput {
-                positions: unwrapped.view(),
-                dt: 1.0,
-                boxes: Some(&boxes),
-            })
+            .accumulator()
+            .fold(
+                unwrapped
+                    .outer_iter()
+                    .zip(&boxes)
+                    .map(|(a, simbox)| CorrelatorFrame {
+                        a,
+                        b: None,
+                        dt: 1.0,
+                        simbox: Some(simbox),
+                    }),
+            )
             .unwrap();
         assert!((curve.values[[2, 0]] - 4.0).abs() < 1e-12);
 
-        // The streaming form rejects the same step.
+        // The wrapped one is rejected at the frame that jumps.
         let mut acc = Msd::new(2).accumulator();
         let mut outcome = Ok(());
         for (frame, simbox) in series.outer_iter().zip(&boxes) {
@@ -516,13 +499,8 @@ mod tests {
 
     /// The collective-dipole MSD of a `(T, 3)` dipole series.
     fn dipole_msd(dipole: &Array2<F>, dt: F, max_lag: usize) -> TimeCorrelation {
-        Msd::new(max_lag)
-            .compute(MsdInput {
-                positions: dipole.view().insert_axis(Axis(1)),
-                dt,
-                boxes: None,
-            })
-            .unwrap()
+        let series = dipole.view().insert_axis(Axis(1));
+        fold(Msd::new(max_lag).accumulator(), series, dt).unwrap()
     }
 
     #[test]

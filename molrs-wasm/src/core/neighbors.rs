@@ -17,8 +17,8 @@ use std::rc::Rc;
 
 use js_sys::Uint32Array;
 use molrs::core::{
-    NeighborColumns as RsNeighborColumns, NeighborList as RsNeighborList,
-    NeighborQuery as RsNeighborQuery, Neighbors as RsNeighbors, QueryMode,
+    Cell, NeighborColumns as RsNeighborColumns, NeighborList as RsNeighborList,
+    NeighborQuery as RsNeighborQuery, Neighbors as RsNeighbors, QueryMode, SimBox,
 };
 use molrs::op::F;
 use wasm_bindgen::prelude::*;
@@ -125,8 +125,16 @@ impl NeighborList {
             let bx_ref = match rs_frame.simbox.as_ref() {
                 Some(sb) => sb,
                 None => {
-                    simbox = molrs::core::SimBox::free(pos.view(), cutoff)
-                        .map_err(|e| JsValue::from_str(&format!("free-boundary box: {e:?}")))?;
+                    // As `NeighborQuery::unbounded`: the cutoff-padded
+                    // bounding box, or for no points a cutoff cube at the
+                    // origin (no bounds to pad; no pairs to find).
+                    let free = [false; 3];
+                    simbox = if pos.nrows() == 0 {
+                        SimBox::new(Cell::Lengths([cutoff; 3]), [0.0; 3], free)
+                    } else {
+                        SimBox::bounding(pos.view(), [cutoff; 3], free)
+                    }
+                    .map_err(|e| JsValue::from_str(&format!("free-boundary box: {e}")))?;
                     &simbox
                 }
             };
@@ -488,8 +496,7 @@ impl NeighborQuery {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use molrs::core::SimBox;
-    use ndarray::{Array2, array};
+    use ndarray::Array2;
     use wasm_bindgen_test::*;
 
     fn frame_at(positions: &[[F; 3]]) -> Frame {
@@ -497,7 +504,7 @@ mod tests {
         let mut rs_frame = molrs::core::Frame::new();
         rs_frame.set_coords(coords.view()).unwrap();
         rs_frame.simbox =
-            Some(SimBox::cube(20.0, array![0.0 as F, 0.0, 0.0], [false, false, false]).unwrap());
+            Some(SimBox::new(Cell::Lengths([20.0; 3]), [0.0; 3], [false; 3]).unwrap());
         Frame::from_rs(rs_frame).unwrap()
     }
 

@@ -119,7 +119,7 @@ impl MolRec {
     /// Append a frame to the trajectory section, creating it when absent.
     pub fn add_frame(&mut self, frame: Frame) {
         self.trajectory
-            .get_or_insert_with(Trajectory::new)
+            .get_or_insert_with(Trajectory::default)
             .frames
             .push(frame);
     }
@@ -184,10 +184,11 @@ impl MolRec {
 mod tests {
     use super::*;
     use crate::core::Column;
+    use molrs::core::ObservableKind;
     use ndarray::ArrayD;
 
     fn scalar_column(values: &[f64]) -> Column {
-        Column::from_float(ArrayD::from_shape_vec(vec![values.len()], values.to_vec()).unwrap())
+        Column::from(ArrayD::from_shape_vec(vec![values.len()], values.to_vec()).unwrap())
     }
 
     #[test]
@@ -214,8 +215,8 @@ mod tests {
     /// status — is a complete record, not a defective one.
     ///
     /// Contract: `../molrec/docs/spec/overview.md` lists `trajectory`
-    /// alongside `frame`, `system` and `status`, so `write_mrec_trajectory`
-    /// writes no duplicate of frame 0 into `frame`.
+    /// alongside `frame`, `system` and `status`, so a trajectory-only
+    /// record carries no duplicate of frame 0 in `frame`.
     #[test]
     fn a_trajectory_only_record_validates() {
         let mut rec = MolRec::new();
@@ -289,8 +290,9 @@ mod tests {
     #[test]
     fn observables_round_trip_by_name() {
         let mut obs = Observables::new();
-        obs.insert(ObservableRecord::scalar(
+        obs.insert(ObservableRecord::new(
             "total_energy",
+            ObservableKind::Scalar,
             scalar_column(&[1.0, 2.0]),
         ))
         .unwrap();
@@ -302,10 +304,18 @@ mod tests {
     #[test]
     fn inserting_same_observable_name_replaces() {
         let mut obs = Observables::new();
-        obs.insert(ObservableRecord::scalar("e", scalar_column(&[1.0])))
-            .unwrap();
-        obs.insert(ObservableRecord::vector("e", scalar_column(&[2.0])))
-            .unwrap();
+        obs.insert(ObservableRecord::new(
+            "e",
+            ObservableKind::Scalar,
+            scalar_column(&[1.0]),
+        ))
+        .unwrap();
+        obs.insert(ObservableRecord::new(
+            "e",
+            ObservableKind::Vector,
+            scalar_column(&[2.0]),
+        ))
+        .unwrap();
         assert_eq!(obs.len(), 1);
     }
 }

@@ -7,8 +7,10 @@
 //!   multi-dimensional numeric data across the WASM boundary.
 //! - `schema` -- the Frame schema vocabulary (`schemaDocument`, …).
 //! - [`Topology`] -- the bond graph of a frame (`molrs::core::Topology`).
-//! - `covalentRadius` -- per-element data (`molrs::core::Element`).
-//! - [`Box`] -- the periodic cell (Rust's `SimBox`).
+//! - `covalentRadius` -- per-element data, and `fillAtomicNumbers` /
+//!   `fillSymbols` -- the explicit species conversions
+//!   (`molrs::core::Element`).
+//! - [`Box`] -- the periodic cell (Rust's `SimBox`), built from a [`Cell`].
 //! - the regions -- the geometric solids and their composition.
 //! - [`TriMesh`] -- triangle surfaces.
 //! - [`NeighborList`] (self) / [`NeighborQuery`] (cross) -- neighbor search,
@@ -45,14 +47,14 @@ pub(crate) mod simbox;
 pub(crate) mod topology;
 
 pub use block::Block;
-pub use element::covalent_radius;
+pub use element::{covalent_radius, fill_atomic_numbers, fill_symbols};
 pub use frame::Frame;
 pub use mesh::TriMesh;
 pub use nd_array::NDArray;
 pub use neighbors::{NeighborList, NeighborQuery, Neighbors};
 pub use region::*;
 pub use schema::*;
-pub use simbox::Box;
+pub use simbox::{Box, Cell};
 pub use topology::Topology;
 
 /// Convert an [`FfiError`] into a [`JsValue`] string for propagation

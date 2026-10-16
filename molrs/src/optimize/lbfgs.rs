@@ -1,8 +1,7 @@
 //! Limited-memory BFGS (L-BFGS) core, force-field agnostic.
 //!
 //! This is the shared minimization engine consumed both by the public
-//! geometry optimizer ([`minimize_lbfgs`](super::minimize_lbfgs) /
-//! [`Lbfgs`](super::Lbfgs)) and by
+//! geometry optimizer ([`Lbfgs`](super::Lbfgs)) and by
 //! the ETKDG conformer pipeline (via the crate-internal [`minimize_lbfgs_rms`]). It operates on a
 //! flat `3·n_atoms` coordinate buffer and any `(energy, forces = -grad)`
 //! evaluator, exactly the contract that `crate::ff::potential::Potential`

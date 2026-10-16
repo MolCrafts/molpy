@@ -15,7 +15,7 @@
 //!   [`FormRefusal`] that names the condition otherwise (a Fourier series with
 //!   `bₙ ≠ 0` has no RB form);
 //! * optionally `seed` — canonical → the nearest member of this style's
-//!   image by a rule of thumb, where [`fit`](Registry::fit_form) starts.
+//!   image by a rule of thumb, where [`fit`](ForceField::fit_form) starts.
 //!
 //! Three operations on a [`ForceField`] use them, one job each:
 //!
@@ -41,7 +41,7 @@ pub use fit::{FitMetric, FitResidual, TypeResidual};
 use crate::ff::forcefield::{DefError, ForceField, Style};
 use crate::ff::ir::form::declared;
 use crate::ff::ir::{FormRefusal, IrError, Params, StyleSpec, TypeParams};
-use crate::ff::style_registry::{Registry, with_global_registry};
+use crate::ff::style_registry::Registry;
 
 // ── the operations ──────────────────────────────────────────────────────────
 
@@ -55,19 +55,28 @@ fn named(category: &str, style: &str) -> String {
 /// carried as it is.
 fn carry_annotations(source: &Params, spec: Option<&StyleSpec>, mut converted: Params) -> Params {
     let keep = |key: &str| spec.is_some_and(|s| !declared(s, key));
-    for (key, value) in source.iter() {
-        if keep(key) && converted.get(key).is_none() {
+    for (key, value) in source
+        .iter()
+        .filter_map(|(k, v)| v.as_num().map(|x| (k, x)))
+    {
+        if keep(key) && converted.get(key).and_then(|v| v.as_num()).is_none() {
             converted.set(key, value);
         }
     }
-    for (key, value) in source.iter_strings() {
-        if keep(key) && converted.get_str(key).is_none() {
-            converted.set_str(key, value);
+    for (key, value) in source
+        .iter()
+        .filter_map(|(k, v)| v.as_text().map(|s| (k, s)))
+    {
+        if keep(key) && converted.get(key).and_then(|v| v.as_text()).is_none() {
+            converted.set(key, value);
         }
     }
-    for (key, value) in source.iter_arrays() {
-        if keep(key) && converted.get_array(key).is_none() {
-            converted.set_array(key, value.clone());
+    for (key, value) in source
+        .iter()
+        .filter_map(|(k, v)| v.as_array().map(|a| (k, a)))
+    {
+        if keep(key) && converted.get(key).and_then(|v| v.as_array()).is_none() {
+            converted.set(key, value.clone());
         }
     }
     converted
@@ -210,7 +219,7 @@ fn members(registry: &Registry, ff: &ForceField, category: &str, family: &str) -
 
 impl Registry {
     /// [`ForceField::canonical`] against this registry.
-    pub fn canonical(&self, ff: &ForceField) -> Result<ForceField, IrError> {
+    pub(crate) fn canonical(&self, ff: &ForceField) -> Result<ForceField, IrError> {
         // A family a style of `ff` belongs to must have its canonical style.
         for style in ff.styles() {
             if let Some(codec) = self.form(style.category(), style.name()) {
@@ -247,7 +256,7 @@ impl Registry {
     }
 
     /// [`ForceField::to_form`] against this registry.
-    pub fn to_form(
+    pub(crate) fn to_form(
         &self,
         ff: &ForceField,
         category: &str,
@@ -303,7 +312,7 @@ impl ForceField {
     /// that become different rows, two styles that need different style
     /// parameters, or a family without a canonical style.
     pub fn canonical(&self) -> Result<ForceField, IrError> {
-        with_global_registry(Registry::clone).canonical(self)
+        self.registry().with(|r| r.canonical(self))
     }
 
     /// The force field with every style of `category` in the form family of
@@ -317,19 +326,39 @@ impl ForceField {
     /// and the condition (`sin(2φ) coefficient … ≠ 0`, `the constant term …`);
     /// [`IrError::FormConflict`] as for [`canonical`](Self::canonical).
     pub fn to_form(&self, category: &str, style: &str) -> Result<ForceField, IrError> {
-        with_global_registry(Registry::clone).to_form(self, category, style)
+        self.registry().with(|r| r.to_form(self, category, style))
     }
 
-    /// The force field with every other style of `category` that holds rows
-    /// fitted to `style` by least squares under `metric`, and the
-    /// [`FitResidual`] of each fitted row. Generic: it evaluates every style
-    /// through the registry's kernels alone. See [`Registry::fit_form`].
+    /// Fit every other style of `category` that holds rows to `style`, row
+    /// by row, by least squares under `metric`; return the force field with
+    /// those styles replaced by `style` and the [`FitResidual`] of each row.
+    ///
+    /// Per row: the source's energies at the metric's points come from its
+    /// kernel. When source and target are of one form family and the row is
+    /// in the target's image, the exact conversion is taken
+    /// ([`TypeResidual::exact`]). Otherwise the fit starts from the target
+    /// codec's seed (else the source row's same-named values, else the
+    /// spec's default, else 1) and minimises the weighted squared residual by
+    /// Levenberg–Marquardt over the target's **dimensioned** scalar
+    /// parameters; a dimensionless parameter (a periodicity, a sign, a 1-4
+    /// weight) is a choice of form, held at its seed.
+    ///
+    /// # Errors
+    ///
+    /// [`IrError::NoKernel`] for a `style` not registered;
+    /// [`IrError::OutOfImage`] (no type) for a category with no scalar
+    /// coordinate or a pair category (whose unlike pairs follow a mixing
+    /// rule a per-row fit cannot hold), and for a row whose source cannot
+    /// be priced; [`IrError::Malformed`] for a malformed metric;
+    /// [`IrError::FormConflict`] as for
+    /// [`canonical`](crate::ff::forcefield::ForceField::canonical).
     pub fn fit_form(
         &self,
         category: &str,
         style: &str,
         metric: &FitMetric,
     ) -> Result<(ForceField, FitResidual), IrError> {
-        with_global_registry(Registry::clone).fit_form(self, category, style, metric)
+        self.registry()
+            .with(|r| r.fit_form(self, category, style, metric))
     }
 }

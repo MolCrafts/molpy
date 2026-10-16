@@ -35,6 +35,8 @@ use crate::core::{Atomistic, BondNumber, BondOrder, NodeId};
 use crate::perceive::Hybridization;
 use crate::perceive::{RingSet, perceive_rings};
 
+use super::valence::atomic_number;
+
 /// The bond class MMFF perceives against, from a localized bond number.
 ///
 /// Aromaticity is *not* inferable from the number — it is the bond's class,
@@ -83,7 +85,8 @@ pub(crate) struct MmffTopology {
 impl MmffTopology {
     /// Build the snapshot from an [`Atomistic`] molecule.
     ///
-    /// Returns `Err(symbol)` for an atom whose element symbol is unknown.
+    /// Returns `Err("*")` — the symbol of the offending atom — for a wildcard
+    /// atom (`atomic_number` 0), which names no element MMFF could type.
     pub(crate) fn build(mol: &Atomistic) -> Result<Self, String> {
         let atom_ids: Vec<NodeId> = mol.atoms().map(|(id, _)| id).collect();
         let idx_of: HashMap<NodeId, usize> = atom_ids
@@ -101,8 +104,7 @@ impl MmffTopology {
 
         for (i, &id) in atom_ids.iter().enumerate() {
             let atom = mol.get_atom(id).map_err(|e| e.to_string())?;
-            let sym = atom.get_str("element").unwrap_or("");
-            let el = Element::by_symbol(sym).ok_or_else(|| sym.to_string())?;
+            let el = Element::by_number(atomic_number(&atom)).ok_or_else(|| "*".to_owned())?;
             atno[i] = el.z();
             formal_charge[i] = atom.formal_charge();
             for (nbr_id, bid) in mol.neighbor_bonds(id) {
@@ -110,8 +112,8 @@ impl MmffTopology {
                 // `nbr_order` is the chemical class MMFF perceives against;
                 // `nbr_kekule` is the localized structure. They differ exactly
                 // on aromatic bonds — which is the reason for two fields.
-                let kekule = class_of_number(mol.bond_number(bid));
-                let class = if mol.bond_type(bid).is_aromatic() {
+                let kekule = class_of_number(mol.bond_number(bid).map_err(|e| e.to_string())?);
+                let class = if mol.bond_type(bid).map_err(|e| e.to_string())?.is_aromatic() {
                     BondOrder::Aromatic
                 } else {
                     kekule

@@ -14,7 +14,8 @@ use crate::ff::forcefield::{DefError, ForceField};
 use crate::ff::ir::Params;
 use crate::ff::ir::{CategorySpec, IrError};
 use crate::ff::potential::{CompileError, Potentials};
-use crate::ff::style_registry::Registry;
+use crate::ff::style_registry::{Registry, RegistryRef};
+use std::sync::Arc;
 
 /// One style's terms, each its atoms and its own parameter row (as stored:
 /// the force-field IR's units, angle values in degrees).
@@ -36,14 +37,17 @@ use crate::ff::style_registry::Registry;
 /// ```
 /// use molrs::ff::ir::Params;
 /// use molrs::ff::compile::ExplicitTerms;
+/// use molrs::ff::potential::{Accumulator, Potential};
 ///
 /// // LAMMPS `bond_style harmonic`, one bond: k (r − r0)².
 /// let pots = ExplicitTerms::new("bond", "harmonic")
-///     .term(&[0, 1], Params::from_pairs(&[("k", 300.0), ("r0", 1.5)]))
+///     .term(&[0, 1], Params::from_iter([("k", 300.0), ("r0", 1.5)]))
 ///     .compile()
 ///     .unwrap();
-/// let e = pots.calc_energy(&[0.0, 0.0, 0.0, 1.6, 0.0, 0.0]);
-/// assert!((e - 3.0).abs() < 1e-12);
+/// let x = [0.0, 0.0, 0.0, 1.6, 0.0, 0.0];
+/// let mut acc = Accumulator::new(x.len());
+/// pots.evaluate(&x, &mut acc);
+/// assert!((acc.energy() - 3.0).abs() < 1e-12);
 /// ```
 #[derive(Debug, Clone)]
 pub struct ExplicitTerms {
@@ -53,6 +57,7 @@ pub struct ExplicitTerms {
     atoms: Vec<Vec<usize>>,
     rows: Vec<Params>,
     charges: Option<Vec<F>>,
+    registry: RegistryRef,
 }
 
 impl ExplicitTerms {
@@ -65,7 +70,15 @@ impl ExplicitTerms {
             atoms: Vec::new(),
             rows: Vec::new(),
             charges: None,
+            registry: RegistryRef::Global,
         }
+    }
+
+    /// Build against `registry` instead of the process-wide one — a test's
+    /// own styles, seen by nothing else.
+    pub fn with_registry(mut self, registry: Arc<Registry>) -> Self {
+        self.registry = RegistryRef::Own(registry);
+        self
     }
 
     /// The style-level parameters (`cutoff`, `mixing`, `coulomb`, an
@@ -95,23 +108,18 @@ impl ExplicitTerms {
         self
     }
 
-    /// The kernel, against the process-wide registry.
+    /// The kernel, against the registry of [`with_registry`](Self::with_registry)
+    /// (the process-wide one by default).
     pub fn compile(&self) -> Result<Potentials, CompileError> {
-        let category =
-            style_registry::with_global_registry(|r| r.category(&self.category).cloned());
-        self.build(category, None)
+        let lookup = |r: &Registry| r.category(&self.category).cloned();
+        let category = match &self.registry {
+            RegistryRef::Global => style_registry::with_global_registry(lookup),
+            RegistryRef::Own(r) => lookup(r),
+        };
+        self.build(category)
     }
 
-    /// The kernel, against `registry`.
-    pub fn compile_in(&self, registry: &Registry) -> Result<Potentials, CompileError> {
-        self.build(registry.category(&self.category).cloned(), Some(registry))
-    }
-
-    fn build(
-        &self,
-        category: Option<CategorySpec>,
-        registry: Option<&Registry>,
-    ) -> Result<Potentials, CompileError> {
+    fn build(&self, category: Option<CategorySpec>) -> Result<Potentials, CompileError> {
         let spec = category.ok_or_else(|| IrError::UnknownCategory {
             category: self.category.clone(),
         })?;
@@ -145,11 +153,10 @@ impl ExplicitTerms {
         let atom_type = |a: usize| format!("a{a}");
 
         let mut ff = ForceField::new("instances");
-        let style = match registry {
-            Some(r) => ff.def_style_in(r, &self.category, &self.style, self.style_params.clone()),
-            None => ff.def_style(&self.category, &self.style, self.style_params.clone()),
-        }
-        .map_err(def_err)?;
+        ff.registry = self.registry.clone();
+        let style = ff
+            .def_style(&self.category, &self.style, self.style_params.clone())
+            .map_err(def_err)?;
         for (t, row) in self.rows.iter().enumerate() {
             // A pair term is the cross row of its two atoms' own types; any
             // other term is its own type (the endpoints only name it).
@@ -169,13 +176,13 @@ impl ExplicitTerms {
         for (col, name) in ENDPOINTS.iter().take(arity).enumerate() {
             let column: Vec<Idx> = self.atoms.iter().map(|a| a[col] as Idx).collect();
             terms
-                .insert(*name, Array1::from_vec(column).into_dyn())
+                .insert(*name, Array1::from_vec(column).into_dyn(), None)
                 .map_err(|e| e.to_string())?;
         }
         if !pair && !self.rows.is_empty() {
             let labels: Vec<String> = (0..self.atoms.len()).map(|t| t.to_string()).collect();
             terms
-                .insert("type", Array1::from_vec(labels).into_dyn())
+                .insert("type", Array1::from_vec(labels).into_dyn(), None)
                 .map_err(|e| e.to_string())?;
         }
         frame.insert(if pair { PAIRS } else { spec.block.as_ref() }, terms);
@@ -183,22 +190,19 @@ impl ExplicitTerms {
             let mut atoms = Block::new();
             let types: Vec<String> = (0..n_atoms).map(atom_type).collect();
             atoms
-                .insert("type", Array1::from_vec(types).into_dyn())
+                .insert("type", Array1::from_vec(types).into_dyn(), None)
                 .map_err(|e| e.to_string())?;
             if let Some(q) = &self.charges {
                 let mut q = q.clone();
                 q.resize(n_atoms, 0.0);
                 atoms
-                    .insert("charge", Array1::from_vec(q).into_dyn())
+                    .insert("charge", Array1::from_vec(q).into_dyn(), None)
                     .map_err(|e| e.to_string())?;
             }
             frame.insert(ATOMS, atoms);
         }
 
-        match registry {
-            Some(r) => PotentialCompiler::with_registry(&ff, r).compile(&frame),
-            None => PotentialCompiler::new(&ff).compile(&frame),
-        }
+        PotentialCompiler::new(&ff).compile(&frame)
     }
 }
 
@@ -213,6 +217,7 @@ fn def_err(e: DefError) -> CompileError {
 mod tests {
     use super::*;
     use crate::ff::ir::{ParamSpec, StyleSpec};
+    use crate::ff::potential::fixtures::OneShot;
     use crate::ff::style_registry::Kernel;
 
     const XYZ: [F; 12] = [
@@ -245,12 +250,12 @@ mod tests {
     #[test]
     fn a_bonded_style_prices_one_row_per_term() {
         let pots = ExplicitTerms::new("bond", "harmonic")
-            .term(&[0, 1], Params::from_pairs(&[("k", 300.0), ("r0", 1.4)]))
-            .term(&[1, 2], Params::from_pairs(&[("k", 200.0), ("r0", 1.5)]))
+            .term(&[0, 1], Params::from_iter([("k", 300.0), ("r0", 1.4)]))
+            .term(&[1, 2], Params::from_iter([("k", 200.0), ("r0", 1.5)]))
             .compile()
             .unwrap();
         let want = 300.0 * (dist(0, 1) - 1.4).powi(2) + 200.0 * (dist(1, 2) - 1.5).powi(2);
-        close(pots.calc_energy(&XYZ), want);
+        close(pots.energy_at(&XYZ), want);
     }
 
     #[test]
@@ -258,12 +263,12 @@ mod tests {
         let pots = ExplicitTerms::new("angle", "harmonic")
             .term(
                 &[0, 1, 2],
-                Params::from_pairs(&[("k", 50.0), ("theta0", 109.5)]),
+                Params::from_iter([("k", 50.0), ("theta0", 109.5)]),
             )
             .compile()
             .unwrap();
         let want = 50.0 * (angle(0, 1, 2) - 109.5_f64.to_radians()).powi(2);
-        close(pots.calc_energy(&XYZ), want);
+        close(pots.energy_at(&XYZ), want);
     }
 
     #[test]
@@ -271,15 +276,15 @@ mod tests {
         let lj = ExplicitTerms::new("pair", "lj/cut")
             .term(
                 &[0, 3],
-                Params::from_pairs(&[("epsilon", 0.2), ("sigma", 3.1)]),
+                Params::from_iter([("epsilon", 0.2), ("sigma", 3.1)]),
             )
             .compile()
             .unwrap();
         let s = 3.1 / dist(0, 3);
-        close(lj.calc_energy(&XYZ), 4.0 * 0.2 * (s.powi(12) - s.powi(6)));
+        close(lj.energy_at(&XYZ), 4.0 * 0.2 * (s.powi(12) - s.powi(6)));
 
         let coul = ExplicitTerms::new("pair", "coul/cut")
-            .style_params(Params::from_pairs(&[
+            .style_params(Params::from_iter([
                 ("coulomb", 332.06371),
                 ("dielectric", 1.0),
             ]))
@@ -287,7 +292,7 @@ mod tests {
             .charges(vec![0.3, 0.0, 0.0, -0.4])
             .compile()
             .unwrap();
-        close(coul.calc_energy(&XYZ), 332.06371 * 0.3 * -0.4 / dist(0, 3));
+        close(coul.energy_at(&XYZ), 332.06371 * 0.3 * -0.4 / dist(0, 3));
     }
 
     #[test]
@@ -304,9 +309,14 @@ mod tests {
         )
         .unwrap();
         let terms = ExplicitTerms::new("bond", "quartic")
-            .term(&[0, 1], Params::from_pairs(&[("k", 2.0), ("r0", 1.0)]));
+            .term(&[0, 1], Params::from_iter([("k", 2.0), ("r0", 1.0)]));
         close(
-            terms.compile_in(&reg).unwrap().calc_energy(&XYZ),
+            terms
+                .clone()
+                .with_registry(Arc::new(reg))
+                .compile()
+                .unwrap()
+                .energy_at(&XYZ),
             2.0 * (dist(0, 1) - 1.0).powi(4),
         );
         // The process-wide registry has no such style.
@@ -319,7 +329,7 @@ mod tests {
         let err = ExplicitTerms::new("nope", "x").compile().unwrap_err();
         assert!(matches!(err.ir(), Some(IrError::UnknownCategory { .. })));
         let err = ExplicitTerms::new("bond", "harmonic")
-            .term(&[0, 1, 2], Params::from_pairs(&[("k", 1.0), ("r0", 1.0)]))
+            .term(&[0, 1, 2], Params::from_iter([("k", 1.0), ("r0", 1.0)]))
             .compile()
             .unwrap_err();
         assert!(matches!(err.ir(), Some(IrError::Arity { arity: 3, .. })));

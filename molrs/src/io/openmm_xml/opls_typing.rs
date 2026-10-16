@@ -1,7 +1,7 @@
 //! The OPLS-AA typing half of an OpenMM force-field XML: the SMARTS `def`,
 //! `overrides`, `priority` and `layer` of each `<AtomTypes><Type>`, the
 //! annotations Foyer adds to the OpenMM schema. Not a file format of its own:
-//! [`OpenmmXmlReader::read_opls_typifier_str`](super::OpenmmXmlReader::read_opls_typifier_str)
+//! [`OpenmmXmlReader::read_opls_typifier`](super::OpenmmXmlReader::read_opls_typifier)
 //! reads it beside the force field of the same document.
 
 use crate::ff::typifier::{OplsTypeRow, OplsTypingMetadata};
@@ -9,7 +9,7 @@ use crate::io::xml_attribute::{attr_str, forcefield_root};
 
 /// Parse OPLS-AA typing metadata ([`OplsTypingMetadata`]) from an XML string —
 /// the typing half of a caller's OPLS-AA XML, beside the force field
-/// [`read_openmm_forcefield_str`](crate::io::read_openmm_forcefield_str) reads.
+/// [`OpenmmXmlReader`](crate::io::openmm_xml::OpenmmXmlReader) reads.
 ///
 /// Reads each `<Type>` of the `<AtomTypes>` section, transcribing the typing
 /// attributes the potential reader

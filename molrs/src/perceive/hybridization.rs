@@ -2,10 +2,10 @@
 
 use molrs::core::Atomistic;
 use molrs::core::BondNumber;
-use molrs::core::Element;
 use molrs::core::NodeId;
+use molrs::core::Props;
 
-use super::valence::default_valence;
+use super::valence::{atomic_number, default_valence};
 
 /// An atom's hybridization — RDKit's `Atom::HybridizationType`, less its
 /// `UNSPECIFIED` / `SP2D` (which `setHybridization` never assigns).
@@ -70,31 +70,33 @@ struct Snapshot {
 
 impl Snapshot {
     fn new(mol: &Atomistic) -> Self {
-        let ids: Vec<NodeId> = mol.atoms().map(|(id, _)| id).collect();
-        let index: std::collections::HashMap<NodeId, usize> =
-            ids.iter().enumerate().map(|(i, &id)| (id, i)).collect();
-        let mut atno = Vec::with_capacity(ids.len());
-        let mut formal_charge = Vec::with_capacity(ids.len());
-        let mut nbrs = Vec::with_capacity(ids.len());
-        let mut implicit_h = Vec::with_capacity(ids.len());
-        for &id in &ids {
-            let atom = mol.get_atom(id).ok();
-            atno.push(
-                atom.as_ref()
-                    .and_then(|a| a.get_str("element"))
-                    .and_then(Element::by_symbol)
-                    .map_or(0, |e| e.z()),
-            );
-            formal_charge.push(atom.as_ref().map_or(0, |a| a.formal_charge()));
+        let atoms: Vec<(NodeId, Props)> = mol.atoms().collect();
+        let index: std::collections::HashMap<NodeId, usize> = atoms
+            .iter()
+            .enumerate()
+            .map(|(i, (id, _))| (*id, i))
+            .collect();
+        let mut atno = Vec::with_capacity(atoms.len());
+        let mut formal_charge = Vec::with_capacity(atoms.len());
+        let mut nbrs = Vec::with_capacity(atoms.len());
+        let mut implicit_h = Vec::with_capacity(atoms.len());
+        for (id, atom) in &atoms {
+            let id = *id;
+            // The wildcard (Z = 0) is RDKit's dummy atom: `hybridization`
+            // answers `Other` for it, and it has no valence model.
+            atno.push(atomic_number(atom));
+            formal_charge.push(atom.formal_charge());
             nbrs.push(
                 mol.neighbor_bonds(id)
                     .filter_map(|(other, bid)| {
-                        let order = match mol.bond_number(bid) {
+                        const LIVE: &str = "neighbor_bonds yields live bonds";
+                        let order = match mol.bond_number(bid).expect(LIVE) {
                             BondNumber::Triple | BondNumber::Quadruple => 3,
                             BondNumber::Double => 2,
                             BondNumber::Single | BondNumber::Unknown => 1,
                         };
-                        Some((*index.get(&other)?, order, mol.bond_type(bid).is_aromatic()))
+                        let aromatic = mol.bond_type(bid).expect(LIVE).is_aromatic();
+                        Some((*index.get(&other)?, order, aromatic))
                     })
                     .collect(),
             );
@@ -256,15 +258,21 @@ fn nouter_elecs(atno: u8) -> Option<i32> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use molrs::core::BondOrder;
+    use molrs::core::{BondOrder, Element, keys};
+    use molrs::props;
 
-    fn by_element(mol: &Atomistic, sym: &str) -> Vec<Hybridization> {
+    fn by_element(mol: &Atomistic, el: Element) -> Vec<Hybridization> {
         let hyb = perceive_hybridizations(mol);
         mol.atoms()
             .zip(hyb)
-            .filter(|((_, a), _)| a.get_str("element") == Some(sym))
+            .filter(|((_, a), _)| a.atomic_number() == Some(el.z()))
             .map(|(_, h)| h)
             .collect()
+    }
+
+    /// Add an atom of element `el`, with no other props.
+    fn add(mol: &mut Atomistic, el: Element) -> NodeId {
+        mol.add_atom(props! { keys::ATOMIC_NUMBER => el }).unwrap()
     }
 
     /// Ethane, ethene, ethyne: the textbook three, with hydrogens drawn.
@@ -276,11 +284,16 @@ mod tests {
             (BondOrder::Triple, Hybridization::Sp),
         ] {
             let mut mol = Atomistic::new();
-            let c1 = mol.add_atom_bare("C");
-            let c2 = mol.add_atom_bare("C");
-            let b = mol.add_bond(c1, c2).unwrap();
-            mol.set_bond_type(b, order).unwrap();
-            assert_eq!(by_element(&mol, "C"), vec![want, want], "{order:?}");
+            let c1 = add(&mut mol, Element::C);
+            let c2 = add(&mut mol, Element::C);
+            let number = order.implied_number().expect("a localized class");
+            mol.add_bond(
+                c1,
+                c2,
+                props! { keys::BOND_TYPE => order, keys::BOND_NUMBER => number },
+            )
+            .unwrap();
+            assert_eq!(by_element(&mol, Element::C), vec![want, want], "{order:?}");
         }
     }
 
@@ -289,14 +302,21 @@ mod tests {
     #[test]
     fn an_amide_nitrogen_is_sp2_and_conjugated() {
         let mut mol = Atomistic::new();
-        let c = mol.add_atom_bare("C");
-        let o = mol.add_atom_bare("O");
-        let n = mol.add_atom_bare("N");
-        let me = mol.add_atom_bare("C");
-        let co = mol.add_bond(c, o).unwrap();
-        mol.set_bond_type(co, BondOrder::Double).unwrap();
-        mol.add_bond(c, n).unwrap();
-        mol.add_bond(n, me).unwrap();
+        let c = add(&mut mol, Element::C);
+        let o = add(&mut mol, Element::O);
+        let n = add(&mut mol, Element::N);
+        let me = add(&mut mol, Element::C);
+        mol.add_bond(
+            c,
+            o,
+            props! {
+                keys::BOND_TYPE => BondOrder::Double,
+                keys::BOND_NUMBER => BondNumber::Double,
+            },
+        )
+        .unwrap();
+        mol.add_bond(c, n, props! {}).unwrap();
+        mol.add_bond(n, me, props! {}).unwrap();
         let hyb = perceive_hybridizations(&mol);
         let conj = perceive_conjugated_atoms(&mol);
         assert_eq!(hyb, vec![Sp2, Sp2, Sp2, Sp3]);
@@ -308,7 +328,7 @@ mod tests {
     /// heavy atom, in atom order.
     struct Fixture {
         name: &'static str,
-        atoms: &'static [(&'static str, i32)],
+        atoms: &'static [(Element, i32)],
         bonds: &'static [(usize, usize, u8, bool)],
         hybridization: &'static [Hybridization],
         conjugated: &'static [bool],
@@ -321,189 +341,189 @@ mod tests {
     const FIXTURES: &[Fixture] = &[
         Fixture {
             name: "acetanilide",
-            atoms: &[("C", 0), ("C", 0), ("O", 0), ("N", 0), ("C", 0), ("C", 0), ("C", 0), ("C", 0), ("C", 0), ("C", 0), ("H", 0), ("H", 0), ("H", 0), ("H", 0), ("H", 0), ("H", 0), ("H", 0), ("H", 0), ("H", 0)],
+            atoms: &[(Element::C, 0), (Element::C, 0), (Element::O, 0), (Element::N, 0), (Element::C, 0), (Element::C, 0), (Element::C, 0), (Element::C, 0), (Element::C, 0), (Element::C, 0), (Element::H, 0), (Element::H, 0), (Element::H, 0), (Element::H, 0), (Element::H, 0), (Element::H, 0), (Element::H, 0), (Element::H, 0), (Element::H, 0)],
             bonds: &[(0, 1, 1, false), (1, 2, 2, false), (1, 3, 1, false), (3, 4, 1, false), (4, 5, 2, true), (5, 6, 1, true), (6, 7, 2, true), (7, 8, 1, true), (8, 9, 2, true), (9, 4, 1, true), (0, 10, 1, false), (0, 11, 1, false), (0, 12, 1, false), (3, 13, 1, false), (5, 14, 1, false), (6, 15, 1, false), (7, 16, 1, false), (8, 17, 1, false), (9, 18, 1, false)],
             hybridization: &[Sp3, Sp2, Sp2, Sp2, Sp2, Sp2, Sp2, Sp2, Sp2, Sp2],
             conjugated: &[false, true, true, true, true, true, true, true, true, true],
         },
         Fixture {
             name: "methyl acetate",
-            atoms: &[("C", 0), ("C", 0), ("O", 0), ("O", 0), ("C", 0), ("H", 0), ("H", 0), ("H", 0), ("H", 0), ("H", 0), ("H", 0)],
+            atoms: &[(Element::C, 0), (Element::C, 0), (Element::O, 0), (Element::O, 0), (Element::C, 0), (Element::H, 0), (Element::H, 0), (Element::H, 0), (Element::H, 0), (Element::H, 0), (Element::H, 0)],
             bonds: &[(0, 1, 1, false), (1, 2, 2, false), (1, 3, 1, false), (3, 4, 1, false), (0, 5, 1, false), (0, 6, 1, false), (0, 7, 1, false), (4, 8, 1, false), (4, 9, 1, false), (4, 10, 1, false)],
             hybridization: &[Sp3, Sp2, Sp2, Sp2, Sp3],
             conjugated: &[false, true, true, true, false],
         },
         Fixture {
             name: "pyrrole",
-            atoms: &[("C", 0), ("C", 0), ("C", 0), ("N", 0), ("C", 0), ("H", 0), ("H", 0), ("H", 0), ("H", 0), ("H", 0)],
+            atoms: &[(Element::C, 0), (Element::C, 0), (Element::C, 0), (Element::N, 0), (Element::C, 0), (Element::H, 0), (Element::H, 0), (Element::H, 0), (Element::H, 0), (Element::H, 0)],
             bonds: &[(0, 1, 1, true), (1, 2, 2, true), (2, 3, 1, true), (3, 4, 1, true), (4, 0, 2, true), (0, 5, 1, false), (1, 6, 1, false), (2, 7, 1, false), (3, 8, 1, false), (4, 9, 1, false)],
             hybridization: &[Sp2, Sp2, Sp2, Sp2, Sp2],
             conjugated: &[true, true, true, true, true],
         },
         Fixture {
             name: "pyridine",
-            atoms: &[("C", 0), ("C", 0), ("C", 0), ("N", 0), ("C", 0), ("C", 0), ("H", 0), ("H", 0), ("H", 0), ("H", 0), ("H", 0)],
+            atoms: &[(Element::C, 0), (Element::C, 0), (Element::C, 0), (Element::N, 0), (Element::C, 0), (Element::C, 0), (Element::H, 0), (Element::H, 0), (Element::H, 0), (Element::H, 0), (Element::H, 0)],
             bonds: &[(0, 1, 2, true), (1, 2, 1, true), (2, 3, 2, true), (3, 4, 1, true), (4, 5, 2, true), (5, 0, 1, true), (0, 6, 1, false), (1, 7, 1, false), (2, 8, 1, false), (4, 9, 1, false), (5, 10, 1, false)],
             hybridization: &[Sp2, Sp2, Sp2, Sp2, Sp2, Sp2],
             conjugated: &[true, true, true, true, true, true],
         },
         Fixture {
             name: "furan",
-            atoms: &[("C", 0), ("C", 0), ("C", 0), ("O", 0), ("C", 0), ("H", 0), ("H", 0), ("H", 0), ("H", 0)],
+            atoms: &[(Element::C, 0), (Element::C, 0), (Element::C, 0), (Element::O, 0), (Element::C, 0), (Element::H, 0), (Element::H, 0), (Element::H, 0), (Element::H, 0)],
             bonds: &[(0, 1, 1, true), (1, 2, 2, true), (2, 3, 1, true), (3, 4, 1, true), (4, 0, 2, true), (0, 5, 1, false), (1, 6, 1, false), (2, 7, 1, false), (4, 8, 1, false)],
             hybridization: &[Sp2, Sp2, Sp2, Sp2, Sp2],
             conjugated: &[true, true, true, true, true],
         },
         Fixture {
             name: "thiophene",
-            atoms: &[("C", 0), ("C", 0), ("C", 0), ("S", 0), ("C", 0), ("H", 0), ("H", 0), ("H", 0), ("H", 0)],
+            atoms: &[(Element::C, 0), (Element::C, 0), (Element::C, 0), (Element::S, 0), (Element::C, 0), (Element::H, 0), (Element::H, 0), (Element::H, 0), (Element::H, 0)],
             bonds: &[(0, 1, 1, true), (1, 2, 2, true), (2, 3, 1, true), (3, 4, 1, true), (4, 0, 2, true), (0, 5, 1, false), (1, 6, 1, false), (2, 7, 1, false), (4, 8, 1, false)],
             hybridization: &[Sp2, Sp2, Sp2, Sp2, Sp2],
             conjugated: &[true, true, true, true, true],
         },
         Fixture {
             name: "dimethyl sulfoxide",
-            atoms: &[("C", 0), ("S", 0), ("O", 0), ("C", 0), ("H", 0), ("H", 0), ("H", 0), ("H", 0), ("H", 0), ("H", 0)],
+            atoms: &[(Element::C, 0), (Element::S, 0), (Element::O, 0), (Element::C, 0), (Element::H, 0), (Element::H, 0), (Element::H, 0), (Element::H, 0), (Element::H, 0), (Element::H, 0)],
             bonds: &[(0, 1, 1, false), (1, 2, 2, false), (1, 3, 1, false), (0, 4, 1, false), (0, 5, 1, false), (0, 6, 1, false), (3, 7, 1, false), (3, 8, 1, false), (3, 9, 1, false)],
             hybridization: &[Sp3, Sp3, Sp2, Sp3],
             conjugated: &[false, false, false, false],
         },
         Fixture {
             name: "acetonitrile",
-            atoms: &[("C", 0), ("C", 0), ("N", 0), ("H", 0), ("H", 0), ("H", 0)],
+            atoms: &[(Element::C, 0), (Element::C, 0), (Element::N, 0), (Element::H, 0), (Element::H, 0), (Element::H, 0)],
             bonds: &[(0, 1, 1, false), (1, 2, 3, false), (0, 3, 1, false), (0, 4, 1, false), (0, 5, 1, false)],
             hybridization: &[Sp3, Sp, Sp],
             conjugated: &[false, false, false],
         },
         Fixture {
             name: "allene",
-            atoms: &[("C", 0), ("C", 0), ("C", 0), ("H", 0), ("H", 0), ("H", 0), ("H", 0)],
+            atoms: &[(Element::C, 0), (Element::C, 0), (Element::C, 0), (Element::H, 0), (Element::H, 0), (Element::H, 0), (Element::H, 0)],
             bonds: &[(0, 1, 2, false), (1, 2, 2, false), (0, 3, 1, false), (0, 4, 1, false), (2, 5, 1, false), (2, 6, 1, false)],
             hybridization: &[Sp2, Sp, Sp2],
             conjugated: &[true, true, true],
         },
         Fixture {
             name: "nitrobenzene",
-            atoms: &[("C", 0), ("C", 0), ("C", 0), ("C", 0), ("C", 0), ("C", 0), ("N", 1), ("O", 0), ("O", -1), ("H", 0), ("H", 0), ("H", 0), ("H", 0), ("H", 0)],
+            atoms: &[(Element::C, 0), (Element::C, 0), (Element::C, 0), (Element::C, 0), (Element::C, 0), (Element::C, 0), (Element::N, 1), (Element::O, 0), (Element::O, -1), (Element::H, 0), (Element::H, 0), (Element::H, 0), (Element::H, 0), (Element::H, 0)],
             bonds: &[(0, 1, 1, true), (1, 2, 2, true), (2, 3, 1, true), (3, 4, 2, true), (4, 5, 1, true), (5, 6, 1, false), (6, 7, 2, false), (6, 8, 1, false), (5, 0, 2, true), (0, 9, 1, false), (1, 10, 1, false), (2, 11, 1, false), (3, 12, 1, false), (4, 13, 1, false)],
             hybridization: &[Sp2, Sp2, Sp2, Sp2, Sp2, Sp2, Sp2, Sp2, Sp2],
             conjugated: &[true, true, true, true, true, true, true, true, true],
         },
         Fixture {
             name: "methanesulfonamide",
-            atoms: &[("C", 0), ("S", 0), ("O", 0), ("O", 0), ("N", 0), ("H", 0), ("H", 0), ("H", 0), ("H", 0), ("H", 0)],
+            atoms: &[(Element::C, 0), (Element::S, 0), (Element::O, 0), (Element::O, 0), (Element::N, 0), (Element::H, 0), (Element::H, 0), (Element::H, 0), (Element::H, 0), (Element::H, 0)],
             bonds: &[(0, 1, 1, false), (1, 2, 2, false), (1, 3, 2, false), (1, 4, 1, false), (0, 5, 1, false), (0, 6, 1, false), (0, 7, 1, false), (4, 8, 1, false), (4, 9, 1, false)],
             hybridization: &[Sp3, Sp3, Sp2, Sp2, Sp3],
             conjugated: &[false, false, false, false, false],
         },
         Fixture {
             name: "trimethylphosphine",
-            atoms: &[("C", 0), ("P", 0), ("C", 0), ("C", 0), ("H", 0), ("H", 0), ("H", 0), ("H", 0), ("H", 0), ("H", 0), ("H", 0), ("H", 0), ("H", 0)],
+            atoms: &[(Element::C, 0), (Element::P, 0), (Element::C, 0), (Element::C, 0), (Element::H, 0), (Element::H, 0), (Element::H, 0), (Element::H, 0), (Element::H, 0), (Element::H, 0), (Element::H, 0), (Element::H, 0), (Element::H, 0)],
             bonds: &[(0, 1, 1, false), (1, 2, 1, false), (1, 3, 1, false), (0, 4, 1, false), (0, 5, 1, false), (0, 6, 1, false), (2, 7, 1, false), (2, 8, 1, false), (2, 9, 1, false), (3, 10, 1, false), (3, 11, 1, false), (3, 12, 1, false)],
             hybridization: &[Sp3, Sp3, Sp3, Sp3],
             conjugated: &[false, false, false, false],
         },
         Fixture {
             name: "phosphoric acid",
-            atoms: &[("O", 0), ("P", 0), ("O", 0), ("O", 0), ("O", 0), ("H", 0), ("H", 0), ("H", 0)],
+            atoms: &[(Element::O, 0), (Element::P, 0), (Element::O, 0), (Element::O, 0), (Element::O, 0), (Element::H, 0), (Element::H, 0), (Element::H, 0)],
             bonds: &[(0, 1, 1, false), (1, 2, 2, false), (1, 3, 1, false), (1, 4, 1, false), (0, 5, 1, false), (3, 6, 1, false), (4, 7, 1, false)],
             hybridization: &[Sp3, Sp3, Sp2, Sp3, Sp3],
             conjugated: &[false, false, false, false, false],
         },
         Fixture {
             name: "acetate",
-            atoms: &[("C", 0), ("C", 0), ("O", 0), ("O", -1), ("H", 0), ("H", 0), ("H", 0)],
+            atoms: &[(Element::C, 0), (Element::C, 0), (Element::O, 0), (Element::O, -1), (Element::H, 0), (Element::H, 0), (Element::H, 0)],
             bonds: &[(0, 1, 1, false), (1, 2, 2, false), (1, 3, 1, false), (0, 4, 1, false), (0, 5, 1, false), (0, 6, 1, false)],
             hybridization: &[Sp3, Sp2, Sp2, Sp2],
             conjugated: &[false, true, true, true],
         },
         Fixture {
             name: "methylammonium",
-            atoms: &[("C", 0), ("N", 1), ("H", 0), ("H", 0), ("H", 0), ("H", 0), ("H", 0), ("H", 0)],
+            atoms: &[(Element::C, 0), (Element::N, 1), (Element::H, 0), (Element::H, 0), (Element::H, 0), (Element::H, 0), (Element::H, 0), (Element::H, 0)],
             bonds: &[(0, 1, 1, false), (0, 2, 1, false), (0, 3, 1, false), (0, 4, 1, false), (1, 5, 1, false), (1, 6, 1, false), (1, 7, 1, false)],
             hybridization: &[Sp3, Sp3],
             conjugated: &[false, false],
         },
         Fixture {
             name: "sulfur hexafluoride",
-            atoms: &[("F", 0), ("S", 0), ("F", 0), ("F", 0), ("F", 0), ("F", 0), ("F", 0)],
+            atoms: &[(Element::F, 0), (Element::S, 0), (Element::F, 0), (Element::F, 0), (Element::F, 0), (Element::F, 0), (Element::F, 0)],
             bonds: &[(0, 1, 1, false), (1, 2, 1, false), (1, 3, 1, false), (1, 4, 1, false), (1, 5, 1, false), (1, 6, 1, false)],
             hybridization: &[Sp3, Sp3d2, Sp3, Sp3, Sp3, Sp3, Sp3],
             conjugated: &[false, false, false, false, false, false, false],
         },
         Fixture {
             name: "butadiene",
-            atoms: &[("C", 0), ("C", 0), ("C", 0), ("C", 0), ("H", 0), ("H", 0), ("H", 0), ("H", 0), ("H", 0), ("H", 0)],
+            atoms: &[(Element::C, 0), (Element::C, 0), (Element::C, 0), (Element::C, 0), (Element::H, 0), (Element::H, 0), (Element::H, 0), (Element::H, 0), (Element::H, 0), (Element::H, 0)],
             bonds: &[(0, 1, 2, false), (1, 2, 1, false), (2, 3, 2, false), (0, 4, 1, false), (0, 5, 1, false), (1, 6, 1, false), (2, 7, 1, false), (3, 8, 1, false), (3, 9, 1, false)],
             hybridization: &[Sp2, Sp2, Sp2, Sp2],
             conjugated: &[true, true, true, true],
         },
         Fixture {
             name: "ethanol",
-            atoms: &[("C", 0), ("C", 0), ("O", 0), ("H", 0), ("H", 0), ("H", 0), ("H", 0), ("H", 0), ("H", 0)],
+            atoms: &[(Element::C, 0), (Element::C, 0), (Element::O, 0), (Element::H, 0), (Element::H, 0), (Element::H, 0), (Element::H, 0), (Element::H, 0), (Element::H, 0)],
             bonds: &[(0, 1, 1, false), (1, 2, 1, false), (0, 3, 1, false), (0, 4, 1, false), (0, 5, 1, false), (1, 6, 1, false), (1, 7, 1, false), (2, 8, 1, false)],
             hybridization: &[Sp3, Sp3, Sp3],
             conjugated: &[false, false, false],
         },
         Fixture {
             name: "imidazole",
-            atoms: &[("C", 0), ("C", 0), ("N", 0), ("C", 0), ("N", 0), ("H", 0), ("H", 0), ("H", 0), ("H", 0)],
+            atoms: &[(Element::C, 0), (Element::C, 0), (Element::N, 0), (Element::C, 0), (Element::N, 0), (Element::H, 0), (Element::H, 0), (Element::H, 0), (Element::H, 0)],
             bonds: &[(0, 1, 2, true), (1, 2, 1, true), (2, 3, 2, true), (3, 4, 1, true), (4, 0, 1, true), (0, 5, 1, false), (1, 6, 1, false), (3, 7, 1, false), (4, 8, 1, false)],
             hybridization: &[Sp2, Sp2, Sp2, Sp2, Sp2],
             conjugated: &[true, true, true, true, true],
         },
         Fixture {
             name: "acrolein",
-            atoms: &[("C", 0), ("C", 0), ("C", 0), ("O", 0), ("H", 0), ("H", 0), ("H", 0), ("H", 0)],
+            atoms: &[(Element::C, 0), (Element::C, 0), (Element::C, 0), (Element::O, 0), (Element::H, 0), (Element::H, 0), (Element::H, 0), (Element::H, 0)],
             bonds: &[(0, 1, 2, false), (1, 2, 1, false), (2, 3, 2, false), (0, 4, 1, false), (0, 5, 1, false), (1, 6, 1, false), (2, 7, 1, false)],
             hybridization: &[Sp2, Sp2, Sp2, Sp2],
             conjugated: &[true, true, true, true],
         },
         Fixture {
             name: "aniline",
-            atoms: &[("N", 0), ("C", 0), ("C", 0), ("C", 0), ("C", 0), ("C", 0), ("C", 0), ("H", 0), ("H", 0), ("H", 0), ("H", 0), ("H", 0), ("H", 0), ("H", 0)],
+            atoms: &[(Element::N, 0), (Element::C, 0), (Element::C, 0), (Element::C, 0), (Element::C, 0), (Element::C, 0), (Element::C, 0), (Element::H, 0), (Element::H, 0), (Element::H, 0), (Element::H, 0), (Element::H, 0), (Element::H, 0), (Element::H, 0)],
             bonds: &[(0, 1, 1, false), (1, 2, 2, true), (2, 3, 1, true), (3, 4, 2, true), (4, 5, 1, true), (5, 6, 2, true), (6, 1, 1, true), (0, 7, 1, false), (0, 8, 1, false), (2, 9, 1, false), (3, 10, 1, false), (4, 11, 1, false), (5, 12, 1, false), (6, 13, 1, false)],
             hybridization: &[Sp2, Sp2, Sp2, Sp2, Sp2, Sp2, Sp2],
             conjugated: &[true, true, true, true, true, true, true],
         },
         Fixture {
             name: "vinyl ether",
-            atoms: &[("C", 0), ("C", 0), ("O", 0), ("C", 0), ("H", 0), ("H", 0), ("H", 0), ("H", 0), ("H", 0), ("H", 0)],
+            atoms: &[(Element::C, 0), (Element::C, 0), (Element::O, 0), (Element::C, 0), (Element::H, 0), (Element::H, 0), (Element::H, 0), (Element::H, 0), (Element::H, 0), (Element::H, 0)],
             bonds: &[(0, 1, 2, false), (1, 2, 1, false), (2, 3, 1, false), (0, 4, 1, false), (0, 5, 1, false), (1, 6, 1, false), (3, 7, 1, false), (3, 8, 1, false), (3, 9, 1, false)],
             hybridization: &[Sp2, Sp2, Sp2, Sp3],
             conjugated: &[true, true, true, false],
         },
         Fixture {
             name: "urea",
-            atoms: &[("N", 0), ("C", 0), ("N", 0), ("O", 0), ("H", 0), ("H", 0), ("H", 0), ("H", 0)],
+            atoms: &[(Element::N, 0), (Element::C, 0), (Element::N, 0), (Element::O, 0), (Element::H, 0), (Element::H, 0), (Element::H, 0), (Element::H, 0)],
             bonds: &[(0, 1, 1, false), (1, 2, 1, false), (1, 3, 2, false), (0, 4, 1, false), (0, 5, 1, false), (2, 6, 1, false), (2, 7, 1, false)],
             hybridization: &[Sp2, Sp2, Sp2, Sp2],
             conjugated: &[true, true, true, true],
         },
         Fixture {
             name: "guanidinium",
-            atoms: &[("N", 0), ("C", 0), ("N", 0), ("N", 1), ("H", 0), ("H", 0), ("H", 0), ("H", 0), ("H", 0), ("H", 0)],
+            atoms: &[(Element::N, 0), (Element::C, 0), (Element::N, 0), (Element::N, 1), (Element::H, 0), (Element::H, 0), (Element::H, 0), (Element::H, 0), (Element::H, 0), (Element::H, 0)],
             bonds: &[(0, 1, 1, false), (1, 2, 1, false), (1, 3, 2, false), (0, 4, 1, false), (0, 5, 1, false), (2, 6, 1, false), (2, 7, 1, false), (3, 8, 1, false), (3, 9, 1, false)],
             hybridization: &[Sp2, Sp2, Sp2, Sp2],
             conjugated: &[true, true, true, true],
         },
         Fixture {
             name: "phenol",
-            atoms: &[("O", 0), ("C", 0), ("C", 0), ("C", 0), ("C", 0), ("C", 0), ("C", 0), ("H", 0), ("H", 0), ("H", 0), ("H", 0), ("H", 0), ("H", 0)],
+            atoms: &[(Element::O, 0), (Element::C, 0), (Element::C, 0), (Element::C, 0), (Element::C, 0), (Element::C, 0), (Element::C, 0), (Element::H, 0), (Element::H, 0), (Element::H, 0), (Element::H, 0), (Element::H, 0), (Element::H, 0)],
             bonds: &[(0, 1, 1, false), (1, 2, 2, true), (2, 3, 1, true), (3, 4, 2, true), (4, 5, 1, true), (5, 6, 2, true), (6, 1, 1, true), (0, 7, 1, false), (2, 8, 1, false), (3, 9, 1, false), (4, 10, 1, false), (5, 11, 1, false), (6, 12, 1, false)],
             hybridization: &[Sp2, Sp2, Sp2, Sp2, Sp2, Sp2, Sp2],
             conjugated: &[true, true, true, true, true, true, true],
         },
         Fixture {
             name: "benzonitrile",
-            atoms: &[("N", 0), ("C", 0), ("C", 0), ("C", 0), ("C", 0), ("C", 0), ("C", 0), ("C", 0), ("H", 0), ("H", 0), ("H", 0), ("H", 0), ("H", 0)],
+            atoms: &[(Element::N, 0), (Element::C, 0), (Element::C, 0), (Element::C, 0), (Element::C, 0), (Element::C, 0), (Element::C, 0), (Element::C, 0), (Element::H, 0), (Element::H, 0), (Element::H, 0), (Element::H, 0), (Element::H, 0)],
             bonds: &[(0, 1, 3, false), (1, 2, 1, false), (2, 3, 2, true), (3, 4, 1, true), (4, 5, 2, true), (5, 6, 1, true), (6, 7, 2, true), (7, 2, 1, true), (3, 8, 1, false), (4, 9, 1, false), (5, 10, 1, false), (6, 11, 1, false), (7, 12, 1, false)],
             hybridization: &[Sp, Sp, Sp2, Sp2, Sp2, Sp2, Sp2, Sp2],
             conjugated: &[true, true, true, true, true, true, true, true],
         },
         Fixture {
             name: "thioacetamide",
-            atoms: &[("C", 0), ("C", 0), ("N", 0), ("S", 0), ("H", 0), ("H", 0), ("H", 0), ("H", 0), ("H", 0)],
+            atoms: &[(Element::C, 0), (Element::C, 0), (Element::N, 0), (Element::S, 0), (Element::H, 0), (Element::H, 0), (Element::H, 0), (Element::H, 0), (Element::H, 0)],
             bonds: &[(0, 1, 1, false), (1, 2, 1, false), (1, 3, 2, false), (0, 4, 1, false), (0, 5, 1, false), (0, 6, 1, false), (2, 7, 1, false), (2, 8, 1, false)],
             hybridization: &[Sp3, Sp2, Sp2, Sp2],
             conjugated: &[false, true, true, true],
@@ -514,22 +534,22 @@ mod tests {
     fn build(f: &Fixture, with_hydrogens: bool) -> Atomistic {
         let mut mol = Atomistic::new();
         let mut ids = Vec::new();
-        for &(sym, charge) in f.atoms {
-            if !with_hydrogens && sym == "H" {
+        for &(el, charge) in f.atoms {
+            if !with_hydrogens && el == Element::H {
                 ids.push(None);
                 continue;
             }
-            let id = mol.add_atom_bare(sym);
+            let mut atom = props! { keys::ATOMIC_NUMBER => el };
             if charge != 0 {
-                mol.set_atom(id, "formal_charge", charge).unwrap();
+                atom.set(keys::FORMAL_CHARGE, charge);
             }
-            ids.push(Some(id));
+            ids.push(Some(mol.add_atom(atom).unwrap()));
         }
         for &(i, j, order, aromatic) in f.bonds {
             let (Some(a), Some(b)) = (ids[i], ids[j]) else {
                 continue;
             };
-            let bid = mol.add_bond(a, b).unwrap();
+            let bid = mol.add_bond(a, b, props! {}).unwrap();
             let number = match order {
                 1 => BondNumber::Single,
                 2 => BondNumber::Double,
@@ -559,7 +579,7 @@ mod tests {
                 let heavy: Vec<usize> = mol
                     .atoms()
                     .enumerate()
-                    .filter(|(_, (_, a))| a.get_str("element") != Some("H"))
+                    .filter(|(_, (_, a))| a.atomic_number() != Some(Element::H.z()))
                     .map(|(i, _)| i)
                     .collect();
                 let hyb = perceive_hybridizations(&mol);
@@ -584,11 +604,11 @@ mod tests {
     #[test]
     fn a_bare_ion_and_dihydrogen_are_s() {
         let mut mol = Atomistic::new();
-        let na = mol.add_atom_bare("Na");
-        mol.set_atom(na, "formal_charge", 1).unwrap();
-        let h1 = mol.add_atom_bare("H");
-        let h2 = mol.add_atom_bare("H");
-        mol.add_bond(h1, h2).unwrap();
+        mol.add_atom(props! { keys::ATOMIC_NUMBER => Element::Na, keys::FORMAL_CHARGE => 1 })
+            .unwrap();
+        let h1 = add(&mut mol, Element::H);
+        let h2 = add(&mut mol, Element::H);
+        mol.add_bond(h1, h2, props! {}).unwrap();
         assert_eq!(perceive_hybridizations(&mol), vec![S, S, S]);
     }
 }

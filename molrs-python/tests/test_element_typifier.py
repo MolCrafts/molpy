@@ -12,11 +12,11 @@ import molrs.ff.typifier
 
 def _water() -> molrs.core.Atomistic:
     mol = molrs.core.Atomistic()
-    o = mol.def_atom(element="O", x=0.0, y=0.0, z=0.0)
-    h1 = mol.def_atom(element="H", x=0.96, y=0.0, z=0.0)
-    h2 = mol.def_atom(element="H", x=-0.24, y=0.93, z=0.0)
-    mol.def_bond(o, h1)
-    mol.def_bond(o, h2)
+    o = mol.add_atom(atomic_number=8, x=0.0, y=0.0, z=0.0)
+    h1 = mol.add_atom(atomic_number=1, x=0.96, y=0.0, z=0.0)
+    h2 = mol.add_atom(atomic_number=1, x=-0.24, y=0.93, z=0.0)
+    mol.add_bond(o, h1)
+    mol.add_bond(o, h2)
     return mol
 
 

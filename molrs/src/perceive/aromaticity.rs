@@ -3,15 +3,14 @@
 
 use std::collections::{HashMap, HashSet};
 
-use super::kekule::assign_kekule_numbers;
-use super::valence::{default_valence, n_implicit_hydrogens};
+use super::kekule::assign_kekule_bond_orders;
+use super::valence::{atomic_number, default_valence, n_implicit_hydrogens};
 use crate::core::Atomistic;
-use crate::core::PropValue;
+use crate::core::MolRsError;
 use crate::core::keys;
 use crate::core::{BondNumber, BondOrder};
 use crate::core::{NodeId, RelationId};
 use crate::perceive::perceive_rings;
-use molrs::core::Element;
 
 /// Maximum number of fused rings combined when checking the Hückel rule
 /// (RDKit `maxFused = 6`).
@@ -141,16 +140,19 @@ fn bond_order(mol: &Atomistic, bid: RelationId) -> f64 {
         .max(1) as f64
 }
 
-/// Atomic number of an atom (from its `"element"` symbol). `0` if unknown.
+/// Atomic number of an atom; `0` is the wildcard `*`, which
+/// [`atom_donor_type`] treats as a dummy atom.
+///
+/// # Panics
+///
+/// When `id` names no atom of `mol`. Every caller passes an atom it read off
+/// `mol` itself, so that is a broken invariant, as is a missing atomic number
+/// (see [`atomic_number`]).
 fn atomic_num(mol: &Atomistic, id: NodeId) -> u8 {
-    mol.get_atom(id)
-        .ok()
-        .and_then(|a| {
-            a.get_str("element")
-                .and_then(Element::by_symbol)
-                .map(|e| e.z())
-        })
-        .unwrap_or(0)
+    let atom = mol
+        .get_atom(id)
+        .expect("aromaticity perception only visits atoms of the molecule it was given");
+    atomic_number(&atom)
 }
 
 /// Heavy-atom + H degree (RDKit `getDegree() + getTotalNumHs()`): the drawn
@@ -186,8 +188,8 @@ fn incident_bonds<'a>(
     mol: &'a Atomistic,
     id: NodeId,
 ) -> impl Iterator<Item = (RelationId, NodeId, f64)> + 'a {
-    mol.incident_bond_ids(id)
-        .map(move |(bid, other)| (bid, other, bond_order(mol, bid)))
+    mol.neighbor_bonds(id)
+        .map(move |(other, bid)| (bid, other, bond_order(mol, bid)))
 }
 
 /// Explicit valence = sum of incident **Kekulé** bond orders (RDKit
@@ -238,7 +240,7 @@ fn count_atom_elec(mol: &Atomistic, id: NodeId) -> i32 {
     let z = atomic_num(mol, id);
     let dv = default_valence(z);
     if dv <= 1 {
-        // univalent / unknown elements can't be aromatic or conjugated
+        // univalent elements and the wildcard (no valence) can't be aromatic or conjugated
         return -1;
     }
 
@@ -415,21 +417,11 @@ fn ring_bonds(mol: &Atomistic, ring: &[NodeId]) -> Vec<RelationId> {
     for i in 0..n {
         let a = ring[i];
         let b = ring[(i + 1) % n];
-        if let Some(bid) = find_bond(mol, a, b) {
+        if let Some(bid) = mol.bond_between(a, b) {
             out.push(bid);
         }
     }
     out
-}
-
-/// Find the bond connecting `a` and `b`, if any.
-///
-/// Walks `a`'s adjacency (O(degree)) rather than scanning every bond; the latter
-/// made `ring_bonds` O(rings × n_bonds) ≈ O(N²) on ring-heavy molecules.
-fn find_bond(mol: &Atomistic, a: NodeId, b: NodeId) -> Option<RelationId> {
-    mol.incident_bond_ids(a)
-        .find(|&(_, other)| other == b)
-        .map(|(bid, _)| bid)
 }
 
 /// Build fused systems: groups of candidate-ring indices connected by sharing
@@ -607,8 +599,7 @@ fn is_connected_subset(subset: &[usize], ring_bond_sets: &[HashSet<RelationId>])
 // Public entry point
 // ---------------------------------------------------------------------------
 
-/// Bring a molecule to the standard aromatic representation, graph in / graph
-/// out (`mol` is left untouched).
+/// Bring a molecule to the standard aromatic representation, in place.
 ///
 /// On return every aromatic atom carries `is_aromatic`, every aromatic bond
 /// carries `bond_type = Aromatic`, and every bond carries an integer
@@ -666,17 +657,32 @@ fn is_connected_subset(subset: &[usize], ring_bond_sets: &[HashSet<RelationId>])
 /// `incidentNonCyclicMultipleBond`, `incidentCyclicMultipleBond`,
 /// `markAtomsBondsArom`). BSD 3-Clause, © 2001-2024 RDKit contributors.
 /// <https://github.com/rdkit/rdkit>
-pub fn assign_aromaticity(mol: &Atomistic) -> Atomistic {
-    let mut out = mol.clone();
-    if !out.bonds().any(|(bid, _)| out.bond_type(bid).is_aromatic()) {
-        let _ = mark_aromaticity(&mut out);
+///
+/// # Errors
+///
+/// [`MolRsError`] when a perceived flag or bond class cannot be written (a
+/// column of `mol` holding the key under a foreign dtype); `mol` may then be
+/// partly annotated.
+pub fn assign_aromaticity(mol: &mut Atomistic) -> Result<(), MolRsError> {
+    let mut any_aromatic = false;
+    for bid in mol.bond_ids() {
+        if mol.bond_type(bid)?.is_aromatic() {
+            any_aromatic = true;
+            break;
+        }
     }
-    assign_kekule_numbers(&mut out);
-    out
+    if !any_aromatic {
+        rewrite_aromatic_flags(mol)?;
+    }
+    assign_kekule_bond_orders(mol)?;
+    Ok(())
 }
 
-/// Perceive aromaticity using the RDKit default model and annotate the graph
-/// in place.
+/// Perceive aromaticity from scratch with the RDKit default model and rewrite
+/// the graph's aromatic flags in place — the perception step of
+/// [`assign_aromaticity`], which only takes it when the input declares no
+/// aromatic bond. A SMARTS reaction's refresh and the BCC bond typing take it
+/// directly: their input's aromatic flags are stale by construction.
 ///
 /// Aromatic atoms receive an `is_aromatic = 1` property; aromatic bonds receive
 /// `bond_type = Aromatic`. Atoms that are *not* perceived aromatic are reset
@@ -686,11 +692,16 @@ pub fn assign_aromaticity(mol: &Atomistic) -> Atomistic {
 ///
 /// Returns the number of atoms flagged aromatic.
 ///
+/// # Errors
+///
+/// [`MolRsError`] when a flag or bond class cannot be written (a column of
+/// `mol` holding the key under a foreign dtype).
+///
 /// # Reference
 /// Port of RDKit `setAromaticity(mol, AROMATICITY_RDKIT)` →
 /// `aromaticityHelper(mol, srings, 0, 0, /*includeFused=*/true)`.
 /// `Code/GraphMol/Aromaticity.cpp`, BSD 3-Clause, © RDKit contributors.
-pub(crate) fn mark_aromaticity(mol: &mut Atomistic) -> usize {
+pub(super) fn rewrite_aromatic_flags(mol: &mut Atomistic) -> Result<usize, MolRsError> {
     // No snapshot: `bond_number` is never overwritten by perception, so the
     // input's own localized structure *is* the memory. This is what makes the
     // pass idempotent, and it is why there is no second localized-order field.
@@ -749,7 +760,7 @@ pub(crate) fn mark_aromaticity(mol: &mut Atomistic) -> usize {
     let all_atom_ids: Vec<NodeId> = mol.atoms().map(|(id, _)| id).collect();
     for id in all_atom_ids {
         let arom = aromatic_atoms.contains(&id);
-        let _ = mol.set_atom(id, "is_aromatic", PropValue::Int(if arom { 1 } else { 0 }));
+        mol.set_atom(id, keys::IS_AROMATIC, arom)?;
     }
 
     // A bond's class is rewritten; its localized number is not. Perception
@@ -757,40 +768,47 @@ pub(crate) fn mark_aromaticity(mol: &mut Atomistic) -> usize {
     // kekulization's question, and a caller that already stated one keeps it.
     let all_bond_ids: Vec<RelationId> = mol.bonds().map(|(id, _)| id).collect();
     for bid in all_bond_ids {
+        let number = mol.bond_number(bid)?;
         if aromatic_bonds.contains(&bid) {
-            let _ = mol.set_bond_prop(bid, keys::BOND_TYPE, BondOrder::Aromatic);
-        } else if mol.bond_type(bid).is_aromatic() {
+            mol.set_bond_class(bid, BondOrder::Aromatic, number)?;
+        } else if mol.bond_type(bid)?.is_aromatic() {
             // A bond that was aromatic and is no longer falls back to the class
             // its own localized number states — never to a stale aromatic flag.
-            let demoted = mol.bond_number(bid).implied_type();
-            let _ = mol.set_bond_prop(bid, keys::BOND_TYPE, demoted);
+            mol.set_bond_class(bid, number.implied_type(), number)?;
         }
     }
 
-    aromatic_atoms.len()
+    Ok(aromatic_atoms.len())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::Atom;
+    use crate::core::{Element, PropValue, Props};
+    use crate::props;
+
+    /// An atom of element `el` at the origin.
+    fn atom(el: Element) -> Props {
+        props! { keys::ATOMIC_NUMBER => el, keys::X => 0.0, keys::Y => 0.0, keys::Z => 0.0 }
+    }
 
     /// Build a Kekulé benzene ring of 6 carbons (alternating single/double).
     fn benzene() -> Atomistic {
         let mut g = Atomistic::new();
         let c: Vec<NodeId> = (0..6)
-            .map(|_| g.add_atom(Atom::xyz("C", 0.0, 0.0, 0.0)))
+            .map(|_| g.add_atom(atom(Element::C)).unwrap())
             .collect();
         for i in 0..6 {
-            let bid = g.add_bond(c[i], c[(i + 1) % 6]).unwrap();
-            let order = if i % 2 == 0 { 2.0 } else { 1.0 };
-            g.set_bond_type(bid, BondOrder::from_code(order as u32))
-                .unwrap();
+            let bid = g.add_bond(c[i], c[(i + 1) % 6], props! {}).unwrap();
+            if i % 2 == 0 {
+                g.set_bond_class(bid, BondOrder::Double, BondNumber::Double)
+                    .unwrap();
+            }
         }
         // one explicit H per carbon
         for &ci in &c {
-            let h = g.add_atom(Atom::xyz("H", 0.0, 0.0, 0.0));
-            g.add_bond(ci, h).unwrap();
+            let h = g.add_atom(atom(Element::H)).unwrap();
+            g.add_bond(ci, h, props! {}).unwrap();
         }
         g
     }
@@ -798,7 +816,7 @@ mod tests {
     #[test]
     fn test_benzene_all_aromatic() {
         let mut g = benzene();
-        let n = mark_aromaticity(&mut g);
+        let n = rewrite_aromatic_flags(&mut g).unwrap();
         assert_eq!(n, 6);
     }
 
@@ -806,25 +824,25 @@ mod tests {
     fn test_cyclohexane_not_aromatic() {
         let mut g = Atomistic::new();
         let c: Vec<NodeId> = (0..6)
-            .map(|_| g.add_atom(Atom::xyz("C", 0.0, 0.0, 0.0)))
+            .map(|_| g.add_atom(atom(Element::C)).unwrap())
             .collect();
         for i in 0..6 {
-            g.add_bond(c[i], c[(i + 1) % 6]).unwrap();
+            g.add_bond(c[i], c[(i + 1) % 6], props! {}).unwrap();
         }
         for &ci in &c {
             for _ in 0..2 {
-                let h = g.add_atom(Atom::xyz("H", 0.0, 0.0, 0.0));
-                g.add_bond(ci, h).unwrap();
+                let h = g.add_atom(atom(Element::H)).unwrap();
+                g.add_bond(ci, h, props! {}).unwrap();
             }
         }
-        assert_eq!(mark_aromaticity(&mut g), 0);
+        assert_eq!(rewrite_aromatic_flags(&mut g).unwrap(), 0);
     }
 
     #[test]
     fn test_idempotent() {
         let mut g = benzene();
-        let n1 = mark_aromaticity(&mut g);
-        let n2 = mark_aromaticity(&mut g);
+        let n1 = rewrite_aromatic_flags(&mut g).unwrap();
+        let n2 = rewrite_aromatic_flags(&mut g).unwrap();
         assert_eq!(n1, n2);
     }
 
@@ -832,7 +850,7 @@ mod tests {
     #[cfg(feature = "smiles")]
     fn bond_classes(mol: &Atomistic) -> Vec<(BondOrder, BondNumber)> {
         mol.bonds()
-            .map(|(id, _)| (mol.bond_type(id), mol.bond_number(id)))
+            .map(|(id, _)| (mol.bond_type(id).unwrap(), mol.bond_number(id).unwrap()))
             .collect()
     }
 
@@ -847,19 +865,20 @@ mod tests {
             .expect("to_atomistic");
         let before = bond_classes(&mol);
 
-        let n = mark_aromaticity(&mut mol);
+        let n = rewrite_aromatic_flags(&mut mol).unwrap();
 
         assert_eq!(n, 0, "{smiles}: no atom of a chain is aromatic");
         for (id, _) in mol.atoms() {
             let atom = mol.get_atom(id).expect("live atom");
             assert_eq!(
-                atom.get_int("is_aromatic"),
-                Some(0),
+                atom.get(keys::IS_AROMATIC),
+                Some(&PropValue::Bool(false)),
                 "{smiles}: atom {id:?} must be written non-aromatic"
             );
         }
         assert!(
-            mol.bonds().all(|(id, _)| !mol.bond_type(id).is_aromatic()),
+            mol.bonds()
+                .all(|(id, _)| !mol.bond_type(id).unwrap().is_aromatic()),
             "{smiles}: no bond of a chain is aromatic"
         );
         assert_eq!(bond_classes(&mol), before, "{smiles}: bonds unchanged");

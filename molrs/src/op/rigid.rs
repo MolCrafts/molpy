@@ -39,11 +39,6 @@ pub fn transform_point(rigid: &Rigid, point: Vec3) -> Vec3 {
     add(mat_vec(&rigid.rotation, point), rigid.translation)
 }
 
-/// The images `R pᵢ + t` of every point, in order.
-pub fn transform_points(rigid: &Rigid, points: &[Vec3]) -> Vec<Vec3> {
-    points.iter().map(|&p| transform_point(rigid, p)).collect()
-}
-
 /// The rotation by `angle` radians (right-handed) about `axis`, by Rodrigues'
 /// formula `R = cos θ I + sin θ [k]ₓ + (1 − cos θ) k kᵀ` with `θ = angle`,
 /// `k` the unit axis and `[k]ₓ` the cross-product matrix of `k`
@@ -329,18 +324,6 @@ mod tests {
         };
         // R x̂ + t = ŷ + (1,2,3)
         assert_vec_close(transform_point(&rigid, [1.0, 0.0, 0.0]), [1.0, 3.0, 3.0]);
-    }
-
-    #[test]
-    fn apply_all_maps_every_point() {
-        let rigid = Rigid {
-            rotation: RZ90,
-            translation: [1.0, 2.0, 3.0],
-        };
-        let out = transform_points(&rigid, &[[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]]);
-        assert_eq!(out.len(), 2);
-        assert_vec_close(out[0], [1.0, 3.0, 3.0]);
-        assert_vec_close(out[1], [0.0, 2.0, 3.0]);
     }
 
     // ---------- axis_angle ----------

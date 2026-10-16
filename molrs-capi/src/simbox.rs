@@ -9,14 +9,22 @@
 //!
 //! # Coordinate conventions
 //!
-//! * Cell matrix **H**: `h[i][j]` -- component `j` of lattice vector `i`.
+//! * Cell matrix **H**: `h9[3 * i + j]` is `H[i][j]`, row `i`, column `j`;
+//!   lattice vector `j` is column `j`, so **a** is `(h9[0], h9[3], h9[6])`.
 //! * Origin: lower corner of the simulation box in Angstrom.
 //! * PBC flags: `[px, py, pz]` -- `true` if periodic along that axis.
 //! * Tilts: off-diagonal elements `[xy, xz, yz]` in Angstrom.
+//!
+//! # Constructing a cell
+//!
+//! [`molrs_box_new`] and
+//! [`molrs_region_parallelepiped`](crate::molrs_region_parallelepiped) take
+//! the cell the way molrs's `Cell` states it: a [`MolrsCellKind`] and the
+//! values that kind reads.
 
-use ndarray::{Array1, Array2, ArrayView2, array};
+use ndarray::ArrayView2;
 
-use molrs::core::SimBox;
+use molrs::core::{BoxError, Cell, SimBox};
 
 use crate::error::{self, MolrsStatus};
 use crate::handle::{MolrsBoxHandle, box_key_to_handle, handle_to_box_key};
@@ -28,21 +36,85 @@ use molrs::op::F;
 // Construction
 // ---------------------------------------------------------------------------
 
-/// Create a Box from a general 3x3 cell matrix.
+/// How a cell is stated — the C face of molrs's `Cell`. The kind fixes how
+/// many values the accompanying `cell` array holds and what they mean.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MolrsCellKind {
+    /// 9 values: the cell matrix `H` row-major, lattice vectors as columns
+    /// (`cell[3 * i + j]` is `H[i][j]`).
+    Matrix = 0,
+    /// 3 values: orthorhombic edge lengths `[a, b, c]` (Å), all positive.
+    Lengths = 1,
+    /// 6 values: edge lengths `[a, b, c]` (Å) then the angles
+    /// `[alpha, beta, gamma]` (degrees) of a restricted-triclinic cell.
+    LengthsAngles = 2,
+    /// 6 values: diagonal sizes `[lx, ly, lz]` (Å) then the tilts
+    /// `[xy, xz, yz]` (Å) of a restricted-triclinic cell — the LAMMPS form.
+    LengthsTilts = 3,
+    /// No values: no geometric cell (a no-cell box of undefined volume);
+    /// `cell` is not read and may be `NULL`.
+    Undefined = 4,
+}
+
+/// The `Cell` that `kind` and the `cell` values state.
+///
+/// # Safety
+///
+/// For every kind but `Undefined`, `cell` points to the number of readable
+/// `F` values [`MolrsCellKind`] names.
+pub(crate) unsafe fn cell_from_c(kind: MolrsCellKind, cell: *const F) -> Result<Cell, MolrsStatus> {
+    let read = |n: usize| -> Result<&[F], MolrsStatus> {
+        if cell.is_null() {
+            error::set_last_error(format!("null pointer: cell ({kind:?} reads {n} values)"));
+            return Err(MolrsStatus::NullPointer);
+        }
+        Ok(unsafe { std::slice::from_raw_parts(cell, n) })
+    };
+    let triple = |v: &[F]| [v[0], v[1], v[2]];
+    Ok(match kind {
+        MolrsCellKind::Matrix => {
+            let v = read(9)?;
+            Cell::Matrix([triple(&v[0..3]), triple(&v[3..6]), triple(&v[6..9])])
+        }
+        MolrsCellKind::Lengths => Cell::Lengths(triple(read(3)?)),
+        MolrsCellKind::LengthsAngles => {
+            let v = read(6)?;
+            Cell::LengthsAngles {
+                lengths: triple(&v[0..3]),
+                angles: triple(&v[3..6]),
+            }
+        }
+        MolrsCellKind::LengthsTilts => {
+            let v = read(6)?;
+            Cell::LengthsTilts {
+                lengths: triple(&v[0..3]),
+                tilts: triple(&v[3..6]),
+            }
+        }
+        MolrsCellKind::Undefined => Cell::Undefined,
+    })
+}
+
+/// Create a Box from its cell, origin and per-axis periodicity — the C face
+/// of molrs's `SimBox::new(cell, origin, pbc)`.
 ///
 /// # C signature
 ///
 /// ```c
-/// MolrsStatus molrs_box_new(const F h9[9],
-///                               const F origin3[3],
-///                               const bool pbc3[3],
-///                               MolrsBoxHandle* out);
+/// MolrsStatus molrs_box_new(MolrsCellKind kind,
+///                           const F* cell,
+///                           const F origin3[3],
+///                           const bool pbc3[3],
+///                           MolrsBoxHandle* out);
 /// ```
 ///
 /// # Arguments
 ///
-/// * `h9` -- 3x3 cell matrix in row-major order (9 floats) in Angstrom.
-///   `h9[0..3]` is lattice vector **a**, `h9[3..6]` is **b**, `h9[6..9]` is **c**.
+/// * `kind` -- How `cell` states the cell (see [`MolrsCellKind`]): a cube of
+///   edge `a` is `MOLRS_CELL_KIND_LENGTHS` with `{a, a, a}`, a general cell
+///   `MOLRS_CELL_KIND_MATRIX` with the 9 values of `H`.
+/// * `cell` -- The values `kind` reads (9, 3, 6, 6 or none).
 /// * `origin3` -- Box origin `[ox, oy, oz]` in Angstrom (3 floats).
 /// * `pbc3` -- Per-axis periodic boundary flags `[px, py, pz]` (3 bools).
 /// * `out` -- On success, receives the new Box handle.
@@ -50,176 +122,47 @@ use molrs::op::F;
 /// # Returns
 ///
 /// * `MolrsStatus::Ok` on success.
-/// * `MolrsStatus::NullPointer` if any pointer is null.
-/// * `MolrsStatus::SingularCell` if the cell matrix is singular
+/// * `MolrsStatus::NullPointer` if `origin3`, `pbc3`, `out`, or (for a kind
+///   that reads values) `cell` is null.
+/// * `MolrsStatus::SingularCell` if a `MATRIX` cell is singular
 ///   (determinant = 0).
+/// * `MolrsStatus::InvalidArgument` if a length is zero, negative or not
+///   finite, or lengths and angles describe no cell.
 ///
 /// # Safety
 ///
-/// * `h9` must point to at least 9 readable `F` values.
+/// * `cell` must point to the number of readable `F` values `kind` names
+///   (it is not read for `MOLRS_CELL_KIND_UNDEFINED`).
 /// * `origin3` must point to at least 3 readable `F` values.
 /// * `pbc3` must point to at least 3 readable `bool` values.
 /// * `out` must point to a writable `MolrsBoxHandle`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn molrs_box_new(
-    h9: *const F,
+    kind: MolrsCellKind,
+    cell: *const F,
     origin3: *const F,
     pbc3: *const bool,
     out: *mut MolrsBoxHandle,
 ) -> MolrsStatus {
     ffi_try!({
-        null_check!(h9);
         null_check!(origin3);
         null_check!(pbc3);
         null_check!(out);
-
-        let h_slice = unsafe { std::slice::from_raw_parts(h9, 9) };
-        let h = match Array2::from_shape_vec((3, 3), h_slice.to_vec()) {
-            Ok(m) => m,
+        let cell = match unsafe { cell_from_c(kind, cell) } {
+            Ok(c) => c,
+            Err(status) => return status,
+        };
+        let o = unsafe { std::slice::from_raw_parts(origin3, 3) };
+        let p = unsafe { std::slice::from_raw_parts(pbc3, 3) };
+        let sb = match SimBox::new(cell, [o[0], o[1], o[2]], [p[0], p[1], p[2]]) {
+            Ok(sb) => sb,
             Err(e) => {
-                error::set_last_error(format!("invalid h matrix: {e}"));
-                return MolrsStatus::InvalidArgument;
-            }
-        };
-        let o_slice = unsafe { std::slice::from_raw_parts(origin3, 3) };
-        let origin = Array1::from_vec(o_slice.to_vec());
-        let pbc_slice = unsafe { std::slice::from_raw_parts(pbc3, 3) };
-        let pbc = [pbc_slice[0], pbc_slice[1], pbc_slice[2]];
-
-        let sb = match SimBox::new(h, origin, pbc) {
-            Ok(sb) => sb,
-            Err(_) => {
-                error::set_last_error("singular cell matrix");
-                return MolrsStatus::SingularCell;
-            }
-        };
-        let mut registry = lock_registry();
-        let key = registry.simboxes.insert(sb);
-        unsafe { *out = box_key_to_handle(key) };
-        MolrsStatus::Ok
-    })
-}
-
-/// Create a cubic Box with edge length `a`.
-///
-/// Equivalent to calling [`molrs_box_new`] with a diagonal cell
-/// matrix `diag(a, a, a)`.
-///
-/// # C signature
-///
-/// ```c
-/// MolrsStatus molrs_box_cube(F a,
-///                                const F origin3[3],
-///                                const bool pbc3[3],
-///                                MolrsBoxHandle* out);
-/// ```
-///
-/// # Arguments
-///
-/// * `a` -- Cube edge length in Angstrom.
-/// * `origin3` -- Box origin `[ox, oy, oz]` in Angstrom.
-/// * `pbc3` -- Per-axis PBC flags.
-/// * `out` -- On success, receives the new Box handle.
-///
-/// # Returns
-///
-/// * `MolrsStatus::Ok` on success.
-/// * `MolrsStatus::NullPointer` if any pointer is null.
-/// * `MolrsStatus::InvalidArgument` if `a` is zero or negative.
-///
-/// # Safety
-///
-/// * `origin3` must point to 3 readable floats.
-/// * `pbc3` must point to 3 readable bools.
-/// * `out` must point to a writable `MolrsBoxHandle`.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn molrs_box_cube(
-    a: F,
-    origin3: *const F,
-    pbc3: *const bool,
-    out: *mut MolrsBoxHandle,
-) -> MolrsStatus {
-    ffi_try!({
-        null_check!(origin3);
-        null_check!(pbc3);
-        null_check!(out);
-
-        let o_slice = unsafe { std::slice::from_raw_parts(origin3, 3) };
-        let origin = Array1::from_vec(o_slice.to_vec());
-        let pbc_slice = unsafe { std::slice::from_raw_parts(pbc3, 3) };
-        let pbc = [pbc_slice[0], pbc_slice[1], pbc_slice[2]];
-
-        let sb = match SimBox::cube(a, origin, pbc) {
-            Ok(sb) => sb,
-            Err(_) => {
-                error::set_last_error("invalid cube parameters");
-                return MolrsStatus::InvalidArgument;
-            }
-        };
-        let mut registry = lock_registry();
-        let key = registry.simboxes.insert(sb);
-        unsafe { *out = box_key_to_handle(key) };
-        MolrsStatus::Ok
-    })
-}
-
-/// Create an orthorhombic (rectangular) Box from axis lengths.
-///
-/// Equivalent to calling [`molrs_box_new`] with a diagonal cell
-/// matrix `diag(lx, ly, lz)`.
-///
-/// # C signature
-///
-/// ```c
-/// MolrsStatus molrs_box_ortho(const F lengths3[3],
-///                                 const F origin3[3],
-///                                 const bool pbc3[3],
-///                                 MolrsBoxHandle* out);
-/// ```
-///
-/// # Arguments
-///
-/// * `lengths3` -- Box side lengths `[lx, ly, lz]` in Angstrom.
-/// * `origin3` -- Box origin `[ox, oy, oz]` in Angstrom.
-/// * `pbc3` -- Per-axis PBC flags.
-/// * `out` -- On success, receives the new Box handle.
-///
-/// # Returns
-///
-/// * `MolrsStatus::Ok` on success.
-/// * `MolrsStatus::NullPointer` if any pointer is null.
-/// * `MolrsStatus::InvalidArgument` if any length is zero or negative.
-///
-/// # Safety
-///
-/// * `lengths3`, `origin3` must each point to 3 readable floats.
-/// * `pbc3` must point to 3 readable bools.
-/// * `out` must point to a writable `MolrsBoxHandle`.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn molrs_box_ortho(
-    lengths3: *const F,
-    origin3: *const F,
-    pbc3: *const bool,
-    out: *mut MolrsBoxHandle,
-) -> MolrsStatus {
-    ffi_try!({
-        null_check!(lengths3);
-        null_check!(origin3);
-        null_check!(pbc3);
-        null_check!(out);
-
-        let l_slice = unsafe { std::slice::from_raw_parts(lengths3, 3) };
-        let lengths = Array1::from_vec(l_slice.to_vec());
-        let o_slice = unsafe { std::slice::from_raw_parts(origin3, 3) };
-        let origin = Array1::from_vec(o_slice.to_vec());
-        let pbc_slice = unsafe { std::slice::from_raw_parts(pbc3, 3) };
-        let pbc = [pbc_slice[0], pbc_slice[1], pbc_slice[2]];
-
-        let sb = match SimBox::ortho(lengths, origin, pbc) {
-            Ok(sb) => sb,
-            Err(_) => {
-                error::set_last_error("invalid ortho parameters");
-                return MolrsStatus::InvalidArgument;
+                let status = match e {
+                    BoxError::SingularCell => MolrsStatus::SingularCell,
+                    _ => MolrsStatus::InvalidArgument,
+                };
+                error::set_last_error(e.to_string());
+                return status;
             }
         };
         let mut registry = lock_registry();
@@ -281,7 +224,8 @@ macro_rules! get_simbox {
     };
 }
 
-/// Copy the 3x3 cell matrix into a caller buffer (row-major, 9 floats).
+/// Copy the 3x3 cell matrix into a caller buffer (row-major, 9 floats,
+/// lattice vectors as columns: `out9[3 * i + j]` is `H[i][j]`).
 ///
 /// The values are in Angstrom.
 ///
@@ -312,11 +256,8 @@ pub unsafe extern "C" fn molrs_box_h(box_handle: MolrsBoxHandle, out9: *mut F) -
         null_check!(out9);
         let registry = lock_registry();
         let sb = get_simbox!(registry, box_handle);
-        let hv = sb.h_view();
         let out_slice = unsafe { std::slice::from_raw_parts_mut(out9, 9) };
-        for (i, &val) in hv.iter().enumerate() {
-            out_slice[i] = val;
-        }
+        out_slice.copy_from_slice(sb.matrix().as_flattened());
         MolrsStatus::Ok
     })
 }
@@ -351,11 +292,8 @@ pub unsafe extern "C" fn molrs_box_origin(box_handle: MolrsBoxHandle, out3: *mut
         null_check!(out3);
         let registry = lock_registry();
         let sb = get_simbox!(registry, box_handle);
-        let ov = sb.origin_view();
         let out_slice = unsafe { std::slice::from_raw_parts_mut(out3, 3) };
-        for (i, &val) in ov.iter().enumerate() {
-            out_slice[i] = val;
-        }
+        out_slice.copy_from_slice(&sb.origin());
         MolrsStatus::Ok
     })
 }
@@ -389,11 +327,8 @@ pub unsafe extern "C" fn molrs_box_pbc(box_handle: MolrsBoxHandle, out3: *mut bo
         null_check!(out3);
         let registry = lock_registry();
         let sb = get_simbox!(registry, box_handle);
-        let pbc = sb.pbc_view();
         let out_slice = unsafe { std::slice::from_raw_parts_mut(out3, 3) };
-        for (i, &val) in pbc.iter().enumerate() {
-            out_slice[i] = val;
-        }
+        out_slice.copy_from_slice(&sb.pbc());
         MolrsStatus::Ok
     })
 }
@@ -582,7 +517,8 @@ pub unsafe extern "C" fn molrs_box_wrap(
                 return MolrsStatus::InvalidArgument;
             }
         };
-        let wrapped = sb.wrap(in_arr);
+        // The image shifts `wrap` also reports are not part of this door.
+        let (wrapped, _shifts) = sb.wrap(in_arr);
         let out_slice = unsafe { std::slice::from_raw_parts_mut(xyz_out, n_atoms * 3) };
         let wrapped_slice = wrapped
             .as_slice_memory_order()
@@ -592,18 +528,18 @@ pub unsafe extern "C" fn molrs_box_wrap(
     })
 }
 
-/// Compute minimum-image displacement vectors for `n_pairs` atom pairs.
-///
-/// For each pair `(r1[i], r2[i])`, computes the shortest displacement
-/// vector `dr = r2 - r1` under periodic boundary conditions.
+/// Row-wise displacement vectors `r2[i] - r1[i]` for `n_pairs` pairs,
+/// minimum-imaged when `minimum_image` is set — the C face of molrs's
+/// `SimBox::delta`.
 ///
 /// # C signature
 ///
 /// ```c
-/// MolrsStatus molrs_box_shortest_vector(
+/// MolrsStatus molrs_box_delta(
 ///     MolrsBoxHandle box_handle,
 ///     const F* r1,
 ///     const F* r2,
+///     bool minimum_image,
 ///     F* dr_out,
 ///     size_t n_pairs);
 /// ```
@@ -614,6 +550,8 @@ pub unsafe extern "C" fn molrs_box_wrap(
 /// * `r1` -- First set of positions, flat `[x0,y0,z0, ...]`
 ///   (`n_pairs * 3` floats, in Angstrom).
 /// * `r2` -- Second set of positions (`n_pairs * 3` floats, in Angstrom).
+/// * `minimum_image` -- Apply the minimum-image convention along the
+///   periodic axes; `false` returns the plain difference.
 /// * `dr_out` -- Output displacements (`n_pairs * 3` floats, in Angstrom).
 /// * `n_pairs` -- Number of pairs.  If 0, the function is a no-op.
 ///
@@ -629,10 +567,11 @@ pub unsafe extern "C" fn molrs_box_wrap(
 /// * `r1`, `r2` must each point to at least `n_pairs * 3` readable floats.
 /// * `dr_out` must point to at least `n_pairs * 3` writable floats.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn molrs_box_shortest_vector(
+pub unsafe extern "C" fn molrs_box_delta(
     box_handle: MolrsBoxHandle,
     r1: *const F,
     r2: *const F,
+    minimum_image: bool,
     dr_out: *mut F,
     n_pairs: usize,
 ) -> MolrsStatus {
@@ -648,16 +587,11 @@ pub unsafe extern "C" fn molrs_box_shortest_vector(
 
         let r1_slice = unsafe { std::slice::from_raw_parts(r1, n_pairs * 3) };
         let r2_slice = unsafe { std::slice::from_raw_parts(r2, n_pairs * 3) };
+        let a = ArrayView2::from_shape((n_pairs, 3), r1_slice).expect("n_pairs * 3 floats");
+        let b = ArrayView2::from_shape((n_pairs, 3), r2_slice).expect("n_pairs * 3 floats");
+        let dr = sb.delta(a, b, minimum_image);
         let out_slice = unsafe { std::slice::from_raw_parts_mut(dr_out, n_pairs * 3) };
-
-        for i in 0..n_pairs {
-            let a = array![r1_slice[i * 3], r1_slice[i * 3 + 1], r1_slice[i * 3 + 2]];
-            let b = array![r2_slice[i * 3], r2_slice[i * 3 + 1], r2_slice[i * 3 + 2]];
-            let dr = sb.shortest_vector(a.view(), b.view());
-            out_slice[i * 3] = dr[0];
-            out_slice[i * 3 + 1] = dr[1];
-            out_slice[i * 3 + 2] = dr[2];
-        }
+        out_slice.copy_from_slice(dr.as_slice().expect("delta result is standard layout"));
         MolrsStatus::Ok
     })
 }

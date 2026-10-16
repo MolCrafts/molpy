@@ -2,7 +2,7 @@ use ndarray::{Array2, ArrayView2};
 
 use molrs::core::VerletSkin;
 use molrs::core::Virial;
-use molrs::ff::potential::{ForceTerm, Potential};
+use molrs::ff::potential::{Accumulator, ForceTerm, Potential};
 use molrs::op::{F, Fnx3, Fnx3View, I};
 
 use super::error::MdError;
@@ -34,10 +34,11 @@ use molrs::ff::potential::SpecialWeights;
 /// trait has the shape it has.
 ///
 /// The per-pair fold that dominates a step happens *inside*
-/// [`Potential::calc_energy_forces_with_pairs`], and `Potential` is a stable
-/// interface with dozens of implementors that this module does not get to
-/// change. So a parallel fold has to be owned by something above `Potential`
-/// and below the integrator; this trait is that object.
+/// [`PairDriven::evaluate_pairs`](molrs::ff::potential::PairDriven::evaluate_pairs),
+/// and the potential traits are a stable interface with dozens of implementors
+/// that this module does not get to change. So a parallel fold has to be
+/// owned by something above the potentials and below the integrator; this
+/// trait is that object.
 ///
 /// Three consequences are load-bearing:
 ///
@@ -173,16 +174,32 @@ impl ForceProvider for SelfPairedForces {
         _wrap_shifts: ArrayView2<'_, I>,
         out: &mut ForceOutput,
     ) -> Result<(), MdError> {
-        let (energy, forces) = match pos.as_slice() {
-            Some(flat) => self.potential.calc_energy_forces(flat),
+        let owned_copy: Vec<F>;
+        let flat: &[F] = match pos.as_slice() {
+            Some(sl) => sl,
             None => {
-                let flat: Vec<F> = pos.iter().copied().collect();
-                self.potential.calc_energy_forces(&flat)
+                owned_copy = pos.iter().copied().collect();
+                &owned_copy
             }
         };
-        // The potential hands back a fresh Vec, so this route allocates per
-        // step by construction; the Vec becomes the array without a copy.
-        *out = owned_output(energy, forces, pos.nrows())?;
+        // The potential adds into the caller's array, reshaped only when it
+        // arrives in another shape: a step that is handed back last step's
+        // array allocates nothing.
+        if out.forces.dim() != (pos.nrows(), 3) || !out.forces.is_standard_layout() {
+            out.forces = Array2::zeros((pos.nrows(), 3));
+        } else {
+            out.forces.fill(0.0);
+        }
+        let mut acc = Accumulator::adding_into(
+            out.forces
+                .as_slice_mut()
+                .expect("a freshly shaped array is standard layout"),
+        );
+        self.potential.evaluate(flat, &mut acc);
+        out.energy = acc.energy();
+        // No pair table, so no kernel tallied one, and `Σ_a f_a ⊗ x_a` over
+        // stored coordinates is not a virial under periodic boundaries.
+        out.virial = None;
         Ok(())
     }
 }
@@ -250,7 +267,7 @@ pub struct MicPairs {
     /// Per-pair weights for the member being evaluated, reused across steps.
     factors: Vec<F>,
     /// One bonded member's forces, reused across steps: its virial is tallied
-    /// from them before they are folded into `acc`.
+    /// from them before they are added to `acc`.
     term: Vec<F>,
 }
 
@@ -315,19 +332,20 @@ impl ForceProvider for MicPairs {
             .as_slice_mut()
             .expect("a freshly shaped array is standard layout");
 
-        let mut energy = 0.0;
-        // `None` the moment any member declines to report one: a virial missing
-        // a term is not a small error, it is a different quantity.
-        let mut virial = Some(Virial::ZERO);
+        // The virial is `None` the moment any member declines to report one: a
+        // virial missing a term is not a small error, it is a different
+        // quantity. The accumulator keeps that rule — a member that adds
+        // forces without a virial loses it.
+        let mut total = Accumulator::adding_into(acc).with_virial();
         for m in 0..self.members.len() {
-            let member = &self.members[m];
-            let (e, part) = match member {
+            match &self.members[m] {
                 // A pair member reads the table, weighted by the force field's
-                // exclusions. No copies here, so an index *is* its own owner.
+                // exclusions, and tallies its own virial. No copies here, so an
+                // index *is* its own owner.
                 ForceTerm::Pair(pot) => {
                     let factors =
                         self.special[m].factors_for(pairs, n_atoms, &[], &mut self.factors);
-                    pot.accumulate_pairs(flat, pairs, factors, acc)
+                    pot.evaluate_pairs(flat, pairs, factors, &mut total);
                 }
                 // A bonded term reads its own indices, not the pair table —
                 // and needs no kernel-side tally. Its forces sum to zero term
@@ -336,40 +354,39 @@ impl ForceProvider for MicPairs {
                 // and is independent of where the cell's origin falls.
                 ForceTerm::Indexed(pot) => {
                     self.term.clear();
-                    self.term.resize(acc.len(), 0.0);
-                    let e = pot.accumulate(flat, &mut self.term);
+                    self.term.resize(n_atoms * 3, 0.0);
+                    let energy = {
+                        let mut part = Accumulator::adding_into(&mut self.term);
+                        pot.evaluate(flat, &mut part);
+                        part.energy()
+                    };
+                    total.add_energy(energy);
                     let f = &self.term;
-                    let mut w_term = Virial::ZERO;
-                    for a in 0..n_atoms {
-                        w_term.add_outer(
-                            [f[a * 3], f[a * 3 + 1], f[a * 3 + 2]],
-                            [flat[a * 3], flat[a * 3 + 1], flat[a * 3 + 2]],
-                        );
+                    let (forces, virial) = total.forces_with_virial();
+                    if let Some(w) = virial {
+                        let mut w_term = Virial::ZERO;
+                        for a in 0..n_atoms {
+                            w_term.add_outer(
+                                [f[a * 3], f[a * 3 + 1], f[a * 3 + 2]],
+                                [flat[a * 3], flat[a * 3 + 1], flat[a * 3 + 2]],
+                            );
+                        }
+                        *w += w_term;
                     }
-                    for (dst, v) in acc.iter_mut().zip(f) {
+                    for (dst, v) in forces.iter_mut().zip(f) {
                         *dst += v;
                     }
-                    (e, Some(w_term))
                 }
                 // An external field, a restraint, a constant force. Its forces
                 // do *not* sum to zero, so `Σ_a f_a ⊗ x_a` moves when the
-                // cell's origin does and is not a virial. Reporting `None`
-                // makes the whole step's virial `None`, which is the honest
-                // answer: the pressure of a system being pushed on from outside
-                // is not the sum of its pair terms.
-                ForceTerm::Plain(pot) => (pot.accumulate(flat, acc), None),
-            };
-            energy += e;
-            match (virial.as_mut(), part) {
-                (Some(total), Some(p)) => {
-                    for c in 0..6 {
-                        total.components[c] += p.components[c];
-                    }
-                }
-                (_, None) => virial = None,
-                (None, _) => {}
+                // cell's origin does and is not a virial. It adds its forces
+                // without one, which makes the whole step's virial `None` —
+                // the honest answer: the pressure of a system being pushed on
+                // from outside is not the sum of its pair terms.
+                ForceTerm::Plain(pot) => pot.evaluate(flat, &mut total),
             }
         }
+        let (energy, virial) = (total.energy(), total.virial());
 
         // Hand the accumulator over and keep the caller's array as next
         // step's accumulator: no clone, no allocation, in steady state.
@@ -520,10 +537,9 @@ impl ForceProvider for GhostPairs {
             .expect("a freshly shaped array is standard layout");
 
         let set = self.halo.ghosts();
-        let mut energy = 0.0;
+        let mut total = Accumulator::adding_into(acc);
         for m in 0..self.members.len() {
-            let member = &self.members[m];
-            let e = match member {
+            match &self.members[m] {
                 // A bonded term reads the indices resolved against the copies
                 // that exist now, not the pair table — so no weight applies to
                 // it. `lists` holds one entry per `ForceTerm::Indexed`, so this
@@ -532,7 +548,7 @@ impl ForceProvider for GhostPairs {
                     let terms = self.lists.current(m).ok_or_else(|| {
                         MdError::Invalid(format!("member {m} holds indices but has no list"))
                     })?;
-                    pot.accumulate_with_terms(flat, terms, acc)
+                    pot.evaluate_terms(flat, terms, &mut total);
                 }
                 ForceTerm::Pair(pot) => {
                     let factors = self.special[m].factors_for(
@@ -541,15 +557,15 @@ impl ForceProvider for GhostPairs {
                         set.owner(),
                         &mut self.factors,
                     );
-                    pot.accumulate_pairs(flat, pairs, factors, acc).0
+                    pot.evaluate_pairs(flat, pairs, factors, &mut total);
                 }
                 // Reads coordinates only — over `[owned | ghost]`, so its
                 // forces land on the copies and the reverse pass folds them
                 // back onto the owners like any other member's.
-                ForceTerm::Plain(pot) => pot.accumulate(flat, acc),
-            };
-            energy += e;
+                ForceTerm::Plain(pot) => pot.evaluate(flat, &mut total),
+            }
         }
+        let energy = total.energy();
 
         // Reverse accumulation: a copy's force belongs to the atom it copies.
         // The virial is tallied from the copy forces *before* they are reduced
@@ -582,24 +598,9 @@ impl ForceProvider for GhostPairs {
     }
 }
 
-/// Shape a flat force vector into the owned `(N, 3)` block, or say why it does
-/// not fit.
-fn owned_output(energy: F, forces: Vec<F>, n_atoms: usize) -> Result<ForceOutput, MdError> {
-    let n_components = forces.len();
-    let forces = Array2::from_shape_vec((n_atoms, 3), forces).map_err(|_| {
-        MdError::Invalid(format!(
-            "potential returned {n_components} force components for {n_atoms} atoms"
-        ))
-    })?;
-    Ok(ForceOutput {
-        energy,
-        forces,
-        virial: None,
-    })
-}
-
 #[cfg(test)]
 mod tests {
+    use crate::core::Cell;
     use ndarray::array;
 
     use molrs::core::SimBox;
@@ -620,7 +621,7 @@ mod tests {
     }
 
     fn cell() -> SimBox {
-        SimBox::cube(12.0, array![0.0_f64, 0.0, 0.0], [true; 3]).unwrap()
+        SimBox::new(Cell::Lengths([12.0; 3]), [0.0_f64, 0.0, 0.0], [true; 3]).unwrap()
     }
 
     fn four_atoms() -> ndarray::Array2<F> {
@@ -715,7 +716,7 @@ mod tests {
         use ndarray::Array1;
 
         let l = 20.0_f64;
-        let bx = SimBox::cube(l, array![0.0_f64, 0.0, 0.0], [true; 3]).unwrap();
+        let bx = SimBox::new(Cell::Lengths([l; 3]), [0.0_f64, 0.0, 0.0], [true; 3]).unwrap();
 
         // A bent three-atom chain: two bonds and one angle, so both arities are
         // exercised and the angle's anchoring matters.
@@ -725,32 +726,44 @@ mod tests {
             let mut f = Frame::new();
             let mut atoms = Block::new();
             atoms
-                .insert("type", Array1::from(vec!["a".to_string(); 3]).into_dyn())
+                .insert(
+                    "type",
+                    Array1::from(vec!["a".to_string(); 3]).into_dyn(),
+                    None,
+                )
                 .unwrap();
             f.insert("atoms", atoms);
             let mut bonds = Block::new();
             bonds
-                .insert("atomi", Array1::from(vec![0 as Idx, 1]).into_dyn())
+                .insert("atomi", Array1::from(vec![0 as Idx, 1]).into_dyn(), None)
                 .unwrap();
             bonds
-                .insert("atomj", Array1::from(vec![1 as Idx, 2]).into_dyn())
+                .insert("atomj", Array1::from(vec![1 as Idx, 2]).into_dyn(), None)
                 .unwrap();
             bonds
-                .insert("type", Array1::from(vec!["a-a".to_string(); 2]).into_dyn())
+                .insert(
+                    "type",
+                    Array1::from(vec!["a-a".to_string(); 2]).into_dyn(),
+                    None,
+                )
                 .unwrap();
             f.insert("bonds", bonds);
             let mut angles = Block::new();
             angles
-                .insert("atomi", Array1::from(vec![0 as Idx]).into_dyn())
+                .insert("atomi", Array1::from(vec![0 as Idx]).into_dyn(), None)
                 .unwrap();
             angles
-                .insert("atomj", Array1::from(vec![1 as Idx]).into_dyn())
+                .insert("atomj", Array1::from(vec![1 as Idx]).into_dyn(), None)
                 .unwrap();
             angles
-                .insert("atomk", Array1::from(vec![2 as Idx]).into_dyn())
+                .insert("atomk", Array1::from(vec![2 as Idx]).into_dyn(), None)
                 .unwrap();
             angles
-                .insert("type", Array1::from(vec!["a-a-a".to_string()]).into_dyn())
+                .insert(
+                    "type",
+                    Array1::from(vec!["a-a-a".to_string()]).into_dyn(),
+                    None,
+                )
                 .unwrap();
             f.insert("angles", angles);
             f
@@ -766,7 +779,7 @@ mod tests {
             .def_type(
                 "a-a",
                 &["a", "a"],
-                Params::from_pairs(&[("k", 100.0), ("r0", 1.2)]),
+                Params::from_iter([("k", 100.0), ("r0", 1.2)]),
             )
             .unwrap();
         field
@@ -775,7 +788,7 @@ mod tests {
             .def_type(
                 "a-a-a",
                 &["a", "a", "a"],
-                Params::from_pairs(&[("k", 40.0), ("theta0", 114.6)]),
+                Params::from_iter([("k", 40.0), ("theta0", 114.6)]),
             )
             .unwrap();
 
@@ -786,7 +799,7 @@ mod tests {
                     pts[[i, k]] += origin[k];
                 }
             }
-            let (wrapped, _) = bx.wrap_shifts(pts.view());
+            let (wrapped, _) = bx.wrap(pts.view());
             let halo = GhostHalo::new(bx.clone(), wrapped.view(), 4.0, 0.0).unwrap();
             let members = PotentialCompiler::new(&field)
                 .compile(&frame(()))
@@ -846,7 +859,7 @@ mod tests {
 
         let l = 12.0_f64;
         let cutoff = 5.0;
-        let bx = SimBox::cube(l, array![0.0_f64, 0.0, 0.0], [true; 3]).unwrap();
+        let bx = SimBox::new(Cell::Lengths([l; 3]), [0.0_f64, 0.0, 0.0], [true; 3]).unwrap();
         // Eight atoms on a 4 Å cube whose every edge runs *through* a face, so
         // every interaction is periodic and every one of them needs a copy.
         let pos = array![
@@ -939,7 +952,7 @@ mod tests {
         use molrs::core::BondDistanceWeights;
         use molrs::ff::ir::CombiningRule;
 
-        let bx = SimBox::cube(20.0, array![0.0_f64, 0.0, 0.0], [true; 3]).unwrap();
+        let bx = SimBox::new(Cell::Lengths([20.0; 3]), [0.0_f64, 0.0, 0.0], [true; 3]).unwrap();
         // A bent chain, every atom well inside the 6 Å cutoff of the others.
         let pos = array![
             [9.0_f64, 10.0, 10.0],
@@ -1018,7 +1031,7 @@ mod tests {
 
         let l = 20.0_f64;
         let cutoff = 6.0;
-        let bx = SimBox::cube(l, array![0.0_f64, 0.0, 0.0], [true; 3]).unwrap();
+        let bx = SimBox::new(Cell::Lengths([l; 3]), [0.0_f64, 0.0, 0.0], [true; 3]).unwrap();
 
         // Two bent chains: one straddles the low x face, the other does not.
         let shape = array![
@@ -1041,7 +1054,7 @@ mod tests {
                 pts[[i, 1]] += 10.0;
                 pts[[i, 2]] += 10.0;
             }
-            let (wrapped, _) = bx.wrap_shifts(pts.view());
+            let (wrapped, _) = bx.wrap(pts.view());
             let lj = PairLjCut::typed(
                 vec![0_u32; n],
                 &[(0.3_f64, 3.4_f64)],
@@ -1102,12 +1115,11 @@ mod tests {
 
         struct Push;
         impl Potential for Push {
-            fn calc_energy_forces(&self, coords: &[F]) -> (F, Vec<F>) {
-                let mut f = vec![0.0; coords.len()];
-                for a in 0..coords.len() / 3 {
-                    f[a * 3] = 0.5;
+            fn evaluate(&self, coords: &[F], acc: &mut Accumulator<'_>) {
+                acc.add_energy(-0.5 * coords.len() as F / 3.0);
+                for row in acc.forces_without_virial().chunks_mut(3) {
+                    row[0] += 0.5;
                 }
-                (-0.5 * coords.len() as F / 3.0, f)
             }
         }
 
@@ -1165,38 +1177,44 @@ mod tests {
         let mut frame = Frame::new();
         let mut atoms = Block::new();
         atoms
-            .insert("type", Array1::from(vec!["a".to_string(); n]).into_dyn())
+            .insert(
+                "type",
+                Array1::from(vec!["a".to_string(); n]).into_dyn(),
+                None,
+            )
             .unwrap();
         frame.insert("atoms", atoms);
         let mut blk = Block::new();
         blk.insert(
             "atomi",
             Array1::from(bonds.iter().map(|b| b[0] as Idx).collect::<Vec<_>>()).into_dyn(),
+            None,
         )
         .unwrap();
         blk.insert(
             "atomj",
             Array1::from(bonds.iter().map(|b| b[1] as Idx).collect::<Vec<_>>()).into_dyn(),
+            None,
         )
         .unwrap();
         frame.insert("bonds", blk);
         let mut ang = Block::new();
-        ang.insert("atomi", Array1::from(vec![0 as Idx]).into_dyn())
+        ang.insert("atomi", Array1::from(vec![0 as Idx]).into_dyn(), None)
             .unwrap();
-        ang.insert("atomj", Array1::from(vec![1 as Idx]).into_dyn())
+        ang.insert("atomj", Array1::from(vec![1 as Idx]).into_dyn(), None)
             .unwrap();
-        ang.insert("atomk", Array1::from(vec![2 as Idx]).into_dyn())
+        ang.insert("atomk", Array1::from(vec![2 as Idx]).into_dyn(), None)
             .unwrap();
         frame.insert("angles", ang);
 
         let mut field = ForceField::new("fene-probe");
         field
-            .def_style("pair", "lj/cut", Params::from_pairs(&[("cutoff", 6.0_f64)]))
+            .def_style("pair", "lj/cut", Params::from_iter([("cutoff", 6.0_f64)]))
             .unwrap()
             .def_type(
                 "a",
                 &["a"],
-                Params::from_pairs(&[("epsilon", 0.3), ("sigma", 3.4)]),
+                Params::from_iter([("epsilon", 0.3), ("sigma", 3.4)]),
             )
             .unwrap();
         field.set_special_bonds(SpecialBonds {
@@ -1206,7 +1224,7 @@ mod tests {
 
         // The compiled door.
         let pairs =
-            intramolecular_pairs(&frame, field.special_bonds()).expect("fene is expressible");
+            intramolecular_pairs(&frame, field.special_bonds(), None).expect("fene is expressible");
         assert_eq!(
             pairs.n_rows(),
             Some(1),
@@ -1266,7 +1284,7 @@ mod tests {
         use molrs::core::BondDistanceWeights;
         use molrs::ff::ir::CombiningRule;
 
-        let bx = SimBox::cube(20.0, array![0.0_f64, 0.0, 0.0], [true; 3]).unwrap();
+        let bx = SimBox::new(Cell::Lengths([20.0; 3]), [0.0_f64, 0.0, 0.0], [true; 3]).unwrap();
         let pos = array![
             [9.0_f64, 10.0, 10.0],
             [10.5, 10.0, 10.0],

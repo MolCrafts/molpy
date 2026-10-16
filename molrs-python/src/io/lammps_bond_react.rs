@@ -15,10 +15,10 @@ use pyo3::exceptions::{PyTypeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList};
 
+use super::{PySink, data_error};
 use crate::core::frame::PyFrame;
 use crate::error::io_error_to_pyerr;
 use crate::ff::forcefield::PyForceField;
-use crate::path::path_str;
 
 /// One ``fix bond/react`` reaction: the pre-reaction template, the same
 /// atoms after the reaction, and the atoms its map file names.
@@ -78,20 +78,6 @@ impl PyBondReactTemplate {
                 None => empty()?,
             },
         })
-    }
-
-    /// The map file's text (what :func:`molrs.io.write_lammps_bond_react_map` writes).
-    ///
-    /// Raises
-    /// ------
-    /// ValueError
-    ///     The templates lack an integer ``react_id`` or repeat one, ``pre``
-    ///     and ``post`` hold different ``react_id`` s, there are not exactly two
-    ///     initiators, or an initiator is not in ``pre``.
-    fn map_text(&self, py: Python<'_>) -> PyResult<String> {
-        self.to_rust(py)?
-            .map_text()
-            .map_err(|e| PyValueError::new_err(e.to_string()))
     }
 
     fn __repr__(&self, py: Python<'_>) -> String {
@@ -162,24 +148,32 @@ impl PyBondReactTemplate {
     }
 }
 
-/// Write ``{base_path}.map``, the ``fix bond/react`` map file of ``template``.
+/// Write the ``fix bond/react`` map file of ``template``.
+///
+/// Parameters
+/// ----------
+/// sink : os.PathLike | bytearray
+///     The file (conventionally ``{name}.map``), or a buffer that then holds
+///     exactly its bytes.
+/// template : BondReactTemplate
+///     The reaction.
 ///
 /// Raises
 /// ------
 /// ValueError
-///     As :meth:`BondReactTemplate.map_text`.
+///     The templates lack an integer ``react_id`` or repeat one, ``pre`` and
+///     ``post`` hold different ``react_id`` s, there are not exactly two
+///     initiators, or an initiator is not in ``pre``.
 /// OSError
 ///     The file cannot be written.
 #[pyfunction]
 pub fn write_lammps_bond_react_map(
     py: Python<'_>,
+    sink: PySink<'_>,
     template: PyRef<'_, PyBondReactTemplate>,
-    base_path: PathBuf,
 ) -> PyResult<()> {
     let rust = template.to_rust(py)?;
-    rust.map_text()
-        .map_err(|e| PyValueError::new_err(e.to_string()))?;
-    write_map_rs(&rust, path_str(&base_path)?).map_err(io_error_to_pyerr)
+    sink.put(|s| write_map_rs(s, &rust), data_error)
 }
 
 /// Write the whole file set of a ``fix bond/react`` run into ``workdir``.
@@ -236,21 +230,20 @@ pub fn write_lammps_bond_react_system(
         .map(|(name, t)| Ok((name.clone(), t.borrow(py).to_rust(py)?)))
         .collect::<PyResult<_>>()?;
     let system = frame.clone_core_frame()?;
-    let written =
-        write_system_rs(path_str(&workdir)?, &system, &forcefield.inner, &rust).map_err(|e| {
-            if let Some(refusal) = e
-                .get_ref()
-                .and_then(|inner| inner.downcast_ref::<ForceFieldWriteError>())
-            {
-                crate::ff::ir::writer_err(refusal.clone())
-            } else if e.kind() == std::io::ErrorKind::InvalidData
-                || e.kind() == std::io::ErrorKind::InvalidInput
-            {
-                PyValueError::new_err(e.to_string())
-            } else {
-                io_error_to_pyerr(e)
-            }
-        })?;
+    let written = write_system_rs(&workdir, &system, &forcefield.inner, &rust).map_err(|e| {
+        if let Some(refusal) = e
+            .get_ref()
+            .and_then(|inner| inner.downcast_ref::<ForceFieldWriteError>())
+        {
+            crate::ff::ir::writer_err(refusal.clone())
+        } else if e.kind() == std::io::ErrorKind::InvalidData
+            || e.kind() == std::io::ErrorKind::InvalidInput
+        {
+            PyValueError::new_err(e.to_string())
+        } else {
+            io_error_to_pyerr(e)
+        }
+    })?;
     let warnings = py.import("warnings")?;
     for d in &written.dropped {
         warnings.call_method1(

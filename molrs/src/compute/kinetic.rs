@@ -32,9 +32,9 @@ fn check_rows(mass: ArrayView1<'_, F>, vel: ArrayView2<'_, F>) -> Result<(), Com
 /// Boltzmann constant `k_B` in that energy unit, which gives the
 /// equipartition temperature through [`KineticEnergyResult::temperature`].
 /// [`new`](Self::new) reads both from a [`UnitPreset`];
-/// [`with_constants`](Self::with_constants) takes them as given, for a caller
-/// that works in its own consistent units (an MD driver passes `mvv2e = 1`
-/// and its own `k_B`).
+/// [`with_mvv2e`](Self::with_mvv2e) and [`with_boltzmann`](Self::with_boltzmann)
+/// override them, for a caller that works in its own consistent units (an MD
+/// driver passes `mvv2e = 1` and its own `k_B`).
 ///
 /// ```
 /// use molrs::compute::{Compute, KineticEnergy, KineticEnergyInput};
@@ -50,8 +50,14 @@ fn check_rows(mass: ArrayView1<'_, F>, vel: ArrayView2<'_, F>) -> Result<(), Com
 /// ```
 #[derive(Debug, Clone)]
 pub struct KineticEnergy {
-    mvv2e: F,
-    boltzmann: F,
+    /// The unit preset's `mass · velocity²` → `energy` factor.
+    units_mvv2e: F,
+    /// The unit preset's Boltzmann constant.
+    units_boltzmann: F,
+    /// The caller's `mvv2e`, replacing the preset's; `None` until set.
+    mvv2e: Option<F>,
+    /// The caller's `k_B`, replacing the preset's; `None` until set.
+    boltzmann: Option<F>,
 }
 
 /// The configuration a [`KineticEnergy`] reads.
@@ -113,26 +119,55 @@ impl KineticEnergy {
                 field: "units",
                 value: format!("{}: {from} -> {}: {e}", units.name(), units.energy()),
             })?;
-        Self::with_constants(mvv2e, units.boltzmann())
+        Ok(Self {
+            units_mvv2e: positive_finite("mvv2e", mvv2e)?,
+            units_boltzmann: positive_finite("boltzmann", units.boltzmann())?,
+            mvv2e: None,
+            boltzmann: None,
+        })
     }
 
-    /// The kinetic energy with an explicit `mvv2e` (the `mass · velocity²` →
-    /// `energy` factor; 1 when the units are already consistent) and
-    /// Boltzmann constant `boltzmann` in the same energy unit.
+    /// Replace the preset's `mass · velocity²` → `energy` factor (1 when the
+    /// units are already consistent).
     ///
     /// # Errors
-    /// [`ComputeError::OutOfRange`] when either constant is not positive and
+    /// [`ComputeError::OutOfRange`] when `mvv2e` is not positive and finite.
+    pub fn with_mvv2e(mut self, mvv2e: F) -> Result<Self, ComputeError> {
+        self.mvv2e = Some(positive_finite("mvv2e", mvv2e)?);
+        Ok(self)
+    }
+
+    /// Replace the preset's Boltzmann constant (in the energy unit `mvv2e`
+    /// converts to).
+    ///
+    /// # Errors
+    /// [`ComputeError::OutOfRange`] when `boltzmann` is not positive and
     /// finite.
-    pub fn with_constants(mvv2e: F, boltzmann: F) -> Result<Self, ComputeError> {
-        for (field, value) in [("mvv2e", mvv2e), ("boltzmann", boltzmann)] {
-            if !(value.is_finite() && value > 0.0) {
-                return Err(ComputeError::OutOfRange {
-                    field,
-                    value: value.to_string(),
-                });
-            }
-        }
-        Ok(Self { mvv2e, boltzmann })
+    pub fn with_boltzmann(mut self, boltzmann: F) -> Result<Self, ComputeError> {
+        self.boltzmann = Some(positive_finite("boltzmann", boltzmann)?);
+        Ok(self)
+    }
+
+    /// The `mvv2e` and `k_B` this instance applies: each override where set,
+    /// else the preset's.
+    fn constants(&self) -> (F, F) {
+        (
+            self.mvv2e.unwrap_or(self.units_mvv2e),
+            self.boltzmann.unwrap_or(self.units_boltzmann),
+        )
+    }
+}
+
+/// `value` when it is positive and finite, else [`ComputeError::OutOfRange`]
+/// naming `field`.
+fn positive_finite(field: &'static str, value: F) -> Result<F, ComputeError> {
+    if value.is_finite() && value > 0.0 {
+        Ok(value)
+    } else {
+        Err(ComputeError::OutOfRange {
+            field,
+            value: value.to_string(),
+        })
     }
 }
 
@@ -152,9 +187,10 @@ impl Compute for KineticEnergy {
             .for_each(|&m, v| {
                 twice += m * v.dot(&v);
             });
+        let (mvv2e, boltzmann) = self.constants();
         Ok(KineticEnergyResult {
-            energy: 0.5 * twice * self.mvv2e,
-            boltzmann: self.boltzmann,
+            energy: 0.5 * twice * mvv2e,
+            boltzmann,
         })
     }
 }
@@ -162,9 +198,9 @@ impl Compute for KineticEnergy {
 crate::compute::spec::compute_spec! {
     KineticEnergy as "KineticEnergy";
     params |s| {
-        units: Units = crate::compute::ParamDefault::RequiredIn("new");
-        mvv2e: Float = crate::compute::ParamDefault::RequiredIn("with_constants");
-        boltzmann: Float = crate::compute::ParamDefault::RequiredIn("with_constants");
+        units: Units;
+        mvv2e: Float = crate::compute::ParamDefault::UNSET => s.mvv2e;
+        boltzmann: Float = crate::compute::ParamDefault::UNSET => s.boltzmann;
     }
     inputs {
         masses: Scalars;
@@ -217,7 +253,8 @@ mod tests {
     }
 
     /// Explicit constants scale `½ Σ m v²` by `mvv2e` and carry `k_B` into
-    /// the result; `new(units)` is the same with the preset's constants.
+    /// the result, whatever preset they override; `new(units)` alone is the
+    /// same with the preset's constants.
     #[test]
     fn explicit_constants_match_the_preset() {
         let mass = array![2.0, 1.0];
@@ -226,7 +263,9 @@ mod tests {
             masses: mass.view(),
             velocities: vel.view(),
         };
-        let k = KineticEnergy::with_constants(2.0, 0.5)
+        let k = KineticEnergy::new(UnitPreset::si())
+            .and_then(|k| k.with_mvv2e(2.0))
+            .and_then(|k| k.with_boltzmann(0.5))
             .unwrap()
             .compute(input)
             .unwrap();
@@ -238,7 +277,9 @@ mod tests {
             .unwrap()
             .compute(input)
             .unwrap();
-        let explicit = KineticEnergy::with_constants(1.0, si.boltzmann())
+        let explicit = KineticEnergy::new(UnitPreset::real())
+            .and_then(|k| k.with_mvv2e(1.0))
+            .and_then(|k| k.with_boltzmann(si.boltzmann()))
             .unwrap()
             .compute(input)
             .unwrap();
@@ -253,7 +294,10 @@ mod tests {
             (1.0, -1.0, "boltzmann"),
             (1.0, F::INFINITY, "boltzmann"),
         ] {
-            let err = KineticEnergy::with_constants(mvv2e, kb).unwrap_err();
+            let err = KineticEnergy::new(UnitPreset::si())
+                .and_then(|k| k.with_mvv2e(mvv2e))
+                .and_then(|k| k.with_boltzmann(kb))
+                .unwrap_err();
             assert!(
                 matches!(err, ComputeError::OutOfRange { field: f, .. } if f == field),
                 "{err:?}"

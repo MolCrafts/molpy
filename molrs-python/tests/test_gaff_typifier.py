@@ -19,7 +19,7 @@ import pytest
 
 def _acetanilide() -> molrs.core.Atomistic:
     """Acetanilide with hydrogens and 3D coordinates."""
-    heavy = molrs.io.smiles.SmilesIr("CC(=O)Nc1ccccc1").to_atomistic()
+    heavy = molrs.io.smiles.SmilesIr.parse("CC(=O)Nc1ccccc1").to_atomistic()
     mol, _ = molrs.conformer.Conformer(seed=7).generate(heavy)
     return mol
 
@@ -34,11 +34,11 @@ def _typed(parameter_set: str, mol: molrs.core.Atomistic | None = None):
 
 def _ethylene() -> molrs.core.Atomistic:
     mol = molrs.core.Atomistic()
-    c1 = mol.def_atom(element="C", type="c2")
-    c2 = mol.def_atom(element="C", type="c2")
-    mol.def_bond(c1, c2)
+    c1 = mol.add_atom(atomic_number=6, type="c2")
+    c2 = mol.add_atom(atomic_number=6, type="c2")
+    mol.add_bond(c1, c2)
     for c in (c1, c1, c2, c2):
-        mol.def_bond(c, mol.def_atom(element="H", type="ha"))
+        mol.add_bond(c, mol.add_atom(atomic_number=1, type="ha"))
     return mol
 
 
@@ -74,14 +74,14 @@ def test_atd_then_gaff_types_and_prices_acetanilide(parameter_set: str) -> None:
     ff = gaff.forcefield()
     assert ff.name == parameter_set
     assert ff.special_bonds == ([0.0, 0.0, 0.5], [0.0, 0.0, pytest.approx(1 / 1.2)])
-    styles = {(s.category, s.name) for s in ff.styles}
+    styles = {(s.category, s.name) for s in ff.get_styles(molrs.ff.forcefield.Style)}
     assert ("improper", "periodic") in styles
     # Charges are not a GAFF parameter: a charge model supplies them.
     atoms = frame["atoms"]
     atoms.insert("charge", molrs.ff.charge.GasteigerModel().assign(typed))
     frame["atoms"] = atoms
     frame["pairs"] = molrs.ff.potential.intramolecular_pairs(frame, ff)
-    energy = molrs.ff.compile.PotentialCompiler(ff).compile(frame).calc_energy(frame)
+    energy = molrs.ff.compile.PotentialCompiler(ff).compile(frame).evaluate(frame)[0]
     assert math.isfinite(energy)
 
 
@@ -222,10 +222,12 @@ def _mol2(elements: list[str], bonds: list[tuple[int, int]], orders=None) -> mol
     """A molecule as a mol2 file lists it: atoms by element, bonds in file
     order, single unless ``orders`` says otherwise."""
     mol = molrs.core.Atomistic()
-    atoms = [mol.def_atom(element=e) for e in elements]
+    atoms = [
+        mol.add_atom(atomic_number=molrs.core.Element.by_symbol(e).z) for e in elements
+    ]
     for k, (i, j) in enumerate(bonds):
         order = 1 if orders is None else orders[k]
-        mol.def_bond(atoms[i], atoms[j], bond_type=order, bond_number=order)
+        mol.add_bond(atoms[i], atoms[j], bond_type=order, bond_number=order)
     return mol
 
 
@@ -256,20 +258,83 @@ def test_the_drawn_kekule_structure_is_kept_only_when_asked() -> None:
     cot = _mol2(["C"] * 8 + ["H"] * 8, _COT_BONDS, drawn)
     # antechamber ignores the input's orders; so does the default.
     assert " ".join(_types(cot, "gaff")[:8]) == "cc cc cd cd cc cc cd cd"
-    assert " ".join(_types(cot, "gaff", bond_orders="input")[:8]) == "cc cd cd cc cc cd cd cc"
+    stated = molrs.perceive.BondOrderSource.Stated
+    assert " ".join(_types(cot, "gaff", bond_orders=stated)[:8]) == "cc cd cd cc cc cd cd cc"
 
 
 def test_bond_orders_is_checked_and_reported() -> None:
+    source = molrs.perceive.BondOrderSource
     atd = molrs.ff.typifier.AtdTypifier(parameter_set="gaff")
-    assert atd.bond_orders == "perceive"
-    assert repr(atd) == "AtdTypifier(parameter_set='gaff', bond_orders='perceive')"
-    assert molrs.ff.typifier.AtdTypifier(parameter_set="bcc", bond_orders="input").bond_orders == "input"
-    with pytest.raises(ValueError, match="perceive"):
+    assert atd.bond_orders == source.Connectivity
+    assert repr(atd) == (
+        "AtdTypifier(parameter_set='gaff', bond_orders=BondOrderSource.Connectivity)"
+    )
+    stated = molrs.ff.typifier.AtdTypifier(parameter_set="bcc", bond_orders=source.Stated)
+    assert stated.bond_orders == source.Stated
+    with pytest.raises(TypeError, match="BondOrderSource"):
         molrs.ff.typifier.AtdTypifier(parameter_set="gaff", bond_orders="kekule")
 
 
 def test_find_bond_orders_judges_from_connectivity() -> None:
     cot = _mol2(["C"] * 8 + ["H"] * 8, _COT_BONDS)
-    out = molrs.perceive.assign_bond_orders(cot)
-    numbers = [int(n) for n in out.to_frame()["bonds"]["bond_number"]]
+    assert molrs.perceive.assign_bond_orders(cot) is None
+    numbers = [int(n) for n in cot.to_frame()["bonds"]["bond_number"]]
     assert numbers[:8] == [1, 2, 1, 2, 1, 2, 1, 2]
+
+
+# ---------------------------------------------------------------------------
+# The perception the antechamber route leans on: queries (`perceive_*`)
+# return data and leave the graph alone; `assign_*` mutate it in place.
+# ---------------------------------------------------------------------------
+
+
+def test_assign_bcc_bond_types_takes_its_bond_order_source() -> None:
+    source = molrs.perceive.BondOrderSource
+    drawn = [2, 1, 2, 1, 2, 1, 2, 1] + [1] * 8
+    stated = _mol2(["C"] * 8 + ["H"] * 8, _COT_BONDS, drawn)
+    judged = _mol2(["C"] * 8 + ["H"] * 8, _COT_BONDS, drawn)
+    assert molrs.perceive.assign_bcc_bond_types(stated, source.Stated) is None
+    assert molrs.perceive.assign_bcc_bond_types(judged, source.Connectivity) is None
+    by_stated = [int(b["bcc_bond_type"]) for b in stated.bonds]
+    by_judged = [int(b["bcc_bond_type"]) for b in judged.bonds]
+    assert set(by_stated) <= {1, 2, 3, 6, 7, 8, 9} and set(by_judged) <= {1, 2, 3, 6, 7, 8, 9}
+    # The drawn Kekulé phase is kept only when the stated orders are asked for.
+    assert by_stated[:8] == [2, 1, 2, 1, 2, 1, 2, 1]
+    assert by_judged[:8] == [1, 2, 1, 2, 1, 2, 1, 2]
+    with pytest.raises(TypeError):
+        molrs.perceive.assign_bcc_bond_types(stated)  # type: ignore[call-arg]
+
+
+def test_perceive_rotatable_bonds_is_a_query_of_atom_views() -> None:
+    # Butane: one rotatable bond, the middle one.
+    mol = molrs.core.Atomistic()
+    c = [mol.add_atom(atomic_number=6, x=float(i), y=0.0, z=0.0) for i in range(4)]
+    for i in range(3):
+        mol.add_bond(c[i], c[i + 1])
+    (bond,) = molrs.perceive.perceive_rotatable_bonds(mol)
+    assert {bond.j, bond.k} == {c[1], c[2]}
+    # The k side rotates: k itself and the methyl beyond it.
+    side = c[3] if bond.k is c[2] else c[0]
+    assert set(bond.downstream) == {bond.k, side}
+    assert all("is_rotatable" not in b for b in mol.bonds)
+
+
+def test_ring_set_speaks_in_atom_views() -> None:
+    mol = molrs.io.smiles.SmilesIr.parse("C1CC1C").to_atomistic()
+    rings = molrs.perceive.perceive_rings(mol)
+    (ring,) = rings.rings()
+    methyl = mol.atoms[3]
+    assert set(ring) == {mol.atoms[0], mol.atoms[1], mol.atoms[2]}
+    assert rings.is_atom_in_ring(mol.atoms[0]) and not rings.is_atom_in_ring(methyl)
+    assert rings.n_atom_rings(methyl) == 0
+    assert rings.smallest_ring_containing_atom(mol.atoms[1]) == 3
+    other = molrs.io.smiles.SmilesIr.parse("C").to_atomistic()
+    with pytest.raises(ValueError, match="another graph"):
+        rings.is_atom_in_ring(other.atoms[0])
+
+
+def test_assign_kekule_bond_orders_reports_success_in_place() -> None:
+    benzene = molrs.io.smiles.SmilesIr.parse("c1ccccc1").to_atomistic()
+    assert molrs.perceive.assign_kekule_bond_orders(benzene) is True
+    numbers = sorted(int(b["bond_number"]) for b in benzene.bonds)
+    assert numbers == [1, 1, 1, 2, 2, 2]

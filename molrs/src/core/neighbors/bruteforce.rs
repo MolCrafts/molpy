@@ -1,8 +1,8 @@
 //! O(N^2) brute-force neighbor search — reference implementation: [`BruteForce`].
 
 use super::{Backend, PairVisitor};
-use crate::core::SimBox;
-use crate::op::{F, Fnx3, Fnx3View};
+use crate::core::{Points, SimBox};
+use crate::op::{F, Fnx3};
 
 /// Brute-force O(N^2) neighbor search — the reference
 /// [`NeighborList`](crate::core::NeighborList) backend.
@@ -61,7 +61,7 @@ impl Backend for BruteForce {
         self.cutoff
     }
 
-    fn build_index(&mut self, points: Fnx3View<'_>, bx: &SimBox) {
+    fn build_index(&mut self, points: Points<'_>, bx: &SimBox) {
         assert!(self.cutoff > 0.0, "cutoff must be positive");
         self.update_index(points, bx);
     }
@@ -73,9 +73,9 @@ impl Backend for BruteForce {
     ///
     /// # Panics
     /// Panics if the cutoff is not positive.
-    fn update_index(&mut self, points: Fnx3View<'_>, bx: &SimBox) {
+    fn update_index(&mut self, points: Points<'_>, bx: &SimBox) {
         assert!(self.cutoff > 0.0, "cutoff must be positive");
-        self.stored_pos = points.to_owned();
+        self.stored_pos = points.to_rows();
         self.bx = Some(bx.clone());
     }
 
@@ -96,6 +96,7 @@ impl Backend for BruteForce {
         };
         let n = self.stored_pos.nrows();
         let cutoff2 = self.cutoff * self.cutoff;
+        let mic = bx.mic();
         for i in 0..n {
             let pi = [
                 self.stored_pos[[i, 0]],
@@ -108,7 +109,7 @@ impl Backend for BruteForce {
                     self.stored_pos[[j, 1]],
                     self.stored_pos[[j, 2]],
                 ];
-                let dr = bx.shortest_vector_impl(pi, pj);
+                let dr = mic.apply(crate::op::vec3::sub(pj, pi));
                 let d2 = dr[0] * dr[0] + dr[1] * dr[1] + dr[2] * dr[2];
                 if d2 <= cutoff2 {
                     visitor.visit_pair(i as u32, j as u32, d2, dr);
@@ -121,6 +122,7 @@ impl Backend for BruteForce {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::Cell;
     use ndarray::array;
 
     struct Collect(Vec<(u32, u32, F, [F; 3])>);
@@ -143,13 +145,13 @@ mod tests {
     }
 
     fn cube(pbc: bool) -> SimBox {
-        SimBox::cube(10.0, array![0.0, 0.0, 0.0], [pbc; 3]).unwrap()
+        SimBox::new(Cell::Lengths([10.0; 3]), [0.0, 0.0, 0.0], [pbc; 3]).unwrap()
     }
 
     #[test]
     fn visits_every_pair_within_the_cutoff_once_with_i_less_than_j() {
         let mut bf = BruteForce::new(1.5);
-        bf.build_index(line().view(), &cube(true));
+        bf.build_index(Points::Rows(line().view()), &cube(true));
         let got = pairs(&bf);
         // (0,1) directly and (0,2) through the periodic image; (1,2) is 2 Å apart.
         assert_eq!(got.len(), 2);
@@ -164,17 +166,17 @@ mod tests {
     #[test]
     fn the_cutoff_is_inclusive() {
         let mut bf = BruteForce::new(1.0);
-        bf.build_index(line().view(), &cube(true));
+        bf.build_index(Points::Rows(line().view()), &cube(true));
         assert_eq!(pairs(&bf).len(), 2, "d == cutoff is kept");
         let mut bf = BruteForce::new(0.999);
-        bf.build_index(line().view(), &cube(true));
+        bf.build_index(Points::Rows(line().view()), &cube(true));
         assert!(pairs(&bf).is_empty());
     }
 
     #[test]
     fn a_non_periodic_axis_does_not_wrap() {
         let mut bf = BruteForce::new(1.5);
-        bf.build_index(line().view(), &cube(false));
+        bf.build_index(Points::Rows(line().view()), &cube(false));
         let got = pairs(&bf);
         assert_eq!(got.len(), 1);
         assert_eq!((got[0].0, got[0].1), (0, 1));
@@ -190,6 +192,6 @@ mod tests {
     #[should_panic(expected = "cutoff must be positive")]
     fn a_non_positive_cutoff_is_refused_at_index_time() {
         let mut bf = BruteForce::new(0.0);
-        bf.build_index(line().view(), &cube(true));
+        bf.build_index(Points::Rows(line().view()), &cube(true));
     }
 }

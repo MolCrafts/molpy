@@ -179,14 +179,14 @@ macro_rules! get_forcefield_mut {
     };
 }
 
-/// Parse C string arrays into `Vec<(&str, f64)>` params.
-unsafe fn parse_params<'a>(
+/// Parse the C key / value arrays into numeric [`Params`].
+unsafe fn parse_params(
     param_keys: *const *const c_char,
     param_values: *const f64,
     n_params: usize,
-) -> Result<Vec<(&'a str, f64)>, MolrsStatus> {
+) -> Result<Params, MolrsStatus> {
     if n_params == 0 {
-        return Ok(Vec::new());
+        return Ok(Params::new());
     }
     if param_keys.is_null() || param_values.is_null() {
         error::set_last_error("null param_keys or param_values");
@@ -194,7 +194,7 @@ unsafe fn parse_params<'a>(
     }
     let keys_slice = unsafe { std::slice::from_raw_parts(param_keys, n_params) };
     let vals_slice = unsafe { std::slice::from_raw_parts(param_values, n_params) };
-    let mut params = Vec::with_capacity(n_params);
+    let mut params = Params::new();
     for i in 0..n_params {
         if keys_slice[i].is_null() {
             error::set_last_error(format!("param_keys[{i}] is null"));
@@ -207,7 +207,7 @@ unsafe fn parse_params<'a>(
                 return Err(MolrsStatus::Utf8Error);
             }
         };
-        params.push((key, vals_slice[i]));
+        params.set(key, vals_slice[i]);
     }
     Ok(params)
 }
@@ -330,7 +330,7 @@ pub unsafe extern "C" fn molrs_forcefield_def_style(
         let params = or_return!(unsafe { parse_params(param_keys, param_values, n_params) });
         let mut registry = lock_registry();
         let ff = get_forcefield_mut!(registry, ff);
-        match ff.def_style(category, name, Params::from_pairs(&params)) {
+        match ff.def_style(category, name, params) {
             Ok(_) => MolrsStatus::Ok,
             Err(e) => invalid_argument(e),
         }
@@ -416,7 +416,7 @@ pub unsafe extern "C" fn molrs_forcefield_def_type(
                 name: style_name.to_owned(),
             });
         };
-        match style.def_type(type_name, &endpoints, Params::from_pairs(&params)) {
+        match style.def_type(type_name, &endpoints, params) {
             Ok(_) => MolrsStatus::Ok,
             Err(e) => invalid_argument(e),
         }
@@ -688,8 +688,7 @@ fn ff_from_json_string(json: &str) -> Result<ForceField, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use molrs::ff::ir::Params;
-    use molrs::ff::ir::SpecialBonds;
+    use molrs::ff::ir::{ParamValue, Params, SpecialBonds};
 
     fn round_trip(ff: &ForceField) -> ForceField {
         ff_from_json_string(&ff_to_json_string(ff).unwrap()).unwrap()
@@ -697,25 +696,31 @@ mod tests {
 
     #[test]
     fn json_round_trip_keeps_a_string_style_param() {
-        let mut params = Params::from_pairs(&[("cutoff", 10.0)]);
-        params.set_str("mixing", "geometric");
+        let mut params: Params = [("cutoff", 10.0)].into_iter().collect();
+        params.set("mixing", "geometric");
         let mut ff = ForceField::new("rt");
         ff.def_style("pair", "lj/cut", params).unwrap();
 
         let back = round_trip(&ff);
         let style = back.get_style("pair", "lj/cut").unwrap();
-        assert_eq!(style.params().get_str("mixing"), Some("geometric"));
+        assert_eq!(
+            style.params().get("mixing").and_then(ParamValue::as_text),
+            Some("geometric")
+        );
     }
 
     #[test]
     fn json_round_trip_keeps_bond_style_params() {
         let mut ff = ForceField::new("rt");
-        ff.def_style("bond", "harmonic", Params::from_pairs(&[("scale", 0.5)]))
+        ff.def_style("bond", "harmonic", [("scale", 0.5)].into_iter().collect())
             .unwrap();
 
         let back = round_trip(&ff);
         let style = back.get_style("bond", "harmonic").unwrap();
-        assert_eq!(style.params().get("scale"), Some(0.5));
+        assert_eq!(
+            style.params().get("scale").and_then(ParamValue::as_num),
+            Some(0.5)
+        );
     }
 
     /// A type's endpoints are data, not its name: MMFF's `0_1_5` comes back
@@ -725,7 +730,7 @@ mod tests {
         let mut ff = ForceField::new("rt");
         ff.def_style("bond", "mmff", Params::new())
             .unwrap()
-            .def_type("0_1_5", &["1", "5"], Params::from_pairs(&[("kb", 4.258)]))
+            .def_type("0_1_5", &["1", "5"], [("kb", 4.258)].into_iter().collect())
             .unwrap();
 
         let back = round_trip(&ff);
@@ -743,7 +748,7 @@ mod tests {
         let grid =
             ndarray::ArrayD::from_shape_fn(vec![3, 3], |ix| (ix[0] * 3 + ix[1]) as f64 / 7.0);
         let mut params = Params::new();
-        params.set_array("grid", grid.clone());
+        params.set("grid", grid.clone());
         let mut ff = ForceField::new("rt");
         ff.def_style("cmap", "charmm", Params::new())
             .unwrap()
@@ -752,7 +757,10 @@ mod tests {
 
         let back = round_trip(&ff);
         let cmap = back.get_cmaptypes()[0];
-        assert_eq!(cmap.params.get_array("grid"), Some(&grid));
+        assert_eq!(
+            cmap.params.get("grid").and_then(ParamValue::as_array),
+            Some(&grid)
+        );
         assert_eq!(cmap.mtom, "N");
     }
 
@@ -854,7 +862,7 @@ mod tests {
             .def_type(
                 "A-B",
                 &["A", "B"],
-                Params::from_pairs(&[("k", 300.0), ("r0", 1.5)]),
+                [("k", 300.0), ("r0", 1.5)].into_iter().collect(),
             )
             .unwrap();
         let json = ff_to_json_string(&ff).unwrap();

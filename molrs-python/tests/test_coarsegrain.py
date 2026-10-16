@@ -20,14 +20,14 @@ def test_from_frame_refuses_a_2d_atoms_column_with_value_error() -> None:
         molrs.core.CoarseGrain.from_frame(frame)
 
 
-def _three_beads() -> tuple[molrs.core.CoarseGrain, list[int]]:
+def _three_beads() -> tuple[molrs.core.CoarseGrain, list[molrs.core.Bead]]:
     cg = molrs.core.CoarseGrain()
-    handles = [
-        cg.add_bead("W", 0.5, -1.25, 2.0),
-        cg.add_bead("P1", 3.0, 4.0, 5.0),
-        cg.add_bead("P2", -0.75, 8.5, 0.125),
+    beads = [
+        cg.add_bead(bead_type="W", x=0.5, y=-1.25, z=2.0),
+        cg.add_bead(bead_type="P1", x=3.0, y=4.0, z=5.0),
+        cg.add_bead(bead_type="P2", x=-0.75, y=8.5, z=0.125),
     ]
-    return cg, handles
+    return cg, beads
 
 
 def test_positions_cross_as_float64_rows_in_the_order_asked() -> None:
@@ -54,9 +54,22 @@ def test_bead_types_cross_as_a_list_of_str_in_the_order_asked() -> None:
 
 def test_a_stale_bead_is_a_value_error_for_both_accessors() -> None:
     cg, (h0, h1, _) = _three_beads()
-    cg.despawn(h1)
+    cg.del_bead(h1)
 
-    with pytest.raises(ValueError, match=str(h1)):
+    with pytest.raises(ValueError, match=str(h1.handle)):
         cg.positions([h0, h1])
-    with pytest.raises(ValueError, match=str(h1)):
+    with pytest.raises(ValueError, match=str(h1.handle)):
         cg.bead_types([h0, h1])
+
+
+def test_per_bead_reads_take_a_refs() -> None:
+    cg, _ = _three_beads()
+    assert cg.bead_types(cg.beads) == ["W", "P1", "P2"]
+    assert cg.positions(cg.beads[1:]).shape == (2, 3)
+
+
+def test_a_bead_of_another_graph_is_a_value_error() -> None:
+    cg, _ = _three_beads()
+    _, (foreign, _, _) = _three_beads()
+    with pytest.raises(ValueError, match="another graph"):
+        cg.positions([foreign])

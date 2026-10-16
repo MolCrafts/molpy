@@ -2,11 +2,11 @@
 //!
 //! | JS | molrs |
 //! |----|-------|
-//! | `LammpsDataStream` | `LammpsDataIndexBuilder` + `read_lammps_data_bytes` (the chunk-fed data-file reader) |
-//! | `LammpsDumpStream` | `LammpsDumpIndexBuilder` + `read_lammps_dump_bytes` (the chunk-fed dump reader) |
-//! | `readLammpsDataStr`, `readLammpsDataBytes`, `writeLammpsDataStr` | `read_lammps_data_str`, `read_lammps_data_bytes`, `write_lammps_data_str` |
-//! | `readLammpsDumpStr`, `readLammpsDumpBytes`, `writeLammpsDumpStr` | `read_lammps_dump_str`, `read_lammps_dump_bytes`, `write_lammps_dump_str` (one snapshot) |
-//! | `readLammpsLogStr`, `isLammpsLog` | [`log`] — `io::lammps::log` |
+//! | `LammpsDataStream` | `LammpsDataIndexBuilder` + `read_lammps_data` (the chunk-fed data-file reader) |
+//! | `LammpsDumpStream` | `LammpsDumpIndexBuilder` + `read_lammps_dump` (the chunk-fed dump reader) |
+//! | `readLammpsData`, `writeLammpsData` | `read_lammps_data`, `write_lammps_data` |
+//! | `readLammpsDump`, `writeLammpsDump` | `read_lammps_dump`, `write_lammps_dump` (one snapshot) |
+//! | `readLammpsLog`, `isLammpsLog` | [`log`] — `io::lammps::log` |
 
 pub mod log;
 
@@ -20,57 +20,49 @@ use crate::core::frame::Frame;
 impl_wasm_traj_stream! {
     name    = LammpsDataStream,
     indexer = LammpsDataIndexBuilder::new(),
-    parse   = |bytes, _ctx| molrs::io::read_lammps_data_bytes(bytes),
+    parse   = |bytes, _ctx| molrs::io::read_lammps_data(bytes),
 }
 
 impl_wasm_traj_stream! {
     name    = LammpsDumpStream,
     indexer = LammpsDumpIndexBuilder::new(),
-    parse   = |bytes, _ctx| molrs::io::read_lammps_dump_bytes(bytes),
+    parse   = |bytes, _ctx| molrs::io::read_lammps_dump(bytes),
 }
 
 read_door!(
-    /// Read LAMMPS data text.
-    readLammpsDataStr => read_lammps_data_str(text: &str), "LAMMPS data"
-);
-read_door!(
-    /// Read one LAMMPS data frame from bytes.
-    readLammpsDataBytes => read_lammps_data_bytes(bytes: &[u8]), "LAMMPS data"
+    /// Read a LAMMPS data file, its text or bytes.
+    readLammpsData => read_lammps_data, "LAMMPS data"
 );
 write_door!(
     /// Write `frame` as LAMMPS data text.
-    writeLammpsDataStr => write_lammps_data_str -> String, "LAMMPS data"
+    writeLammpsData => write_lammps_data, "LAMMPS data"
 );
 read_door!(
-    /// Read the first snapshot of LAMMPS dump text.
-    readLammpsDumpStr => read_lammps_dump_str(text: &str), "LAMMPS dump"
-);
-read_door!(
-    /// Read one LAMMPS dump snapshot from bytes.
-    readLammpsDumpBytes => read_lammps_dump_bytes(bytes: &[u8]), "LAMMPS dump"
+    /// Read the first snapshot of a LAMMPS dump, its text or bytes.
+    readLammpsDump => read_lammps_dump, "LAMMPS dump"
 );
 
 /// Write `frame` as one LAMMPS dump snapshot. `columns` is the `dump custom`
 /// column line, in order; omitted, every column the `atoms` block holds.
-#[wasm_bindgen(js_name = writeLammpsDumpStr)]
-pub fn write_lammps_dump_str(
-    frame: &Frame,
-    columns: Option<Vec<String>>,
-) -> Result<String, JsValue> {
+#[wasm_bindgen(js_name = writeLammpsDump)]
+pub fn write_lammps_dump(frame: &Frame, columns: Option<Vec<String>>) -> Result<String, JsValue> {
     let chosen: Option<Vec<&str>> = columns
         .as_ref()
         .map(|c| c.iter().map(String::as_str).collect());
-    frame.with_frame(|f| {
-        molrs::io::write_lammps_dump_str(f, chosen.as_deref())
-            .map_err(|e| JsValue::from_str(&format!("LAMMPS dump writing error: {e}")))
-    })
+    let what = "LAMMPS dump";
+    let bytes = frame.with_frame(|f| {
+        crate::io::written(what, |buf| {
+            molrs::io::write_lammps_dump(buf, f, chosen.as_deref())
+        })
+    })?;
+    crate::io::text_of(what, bytes)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::io::frame_index::FrameOffset;
-    use crate::io::test_fixtures::float_col;
+    use crate::io::test_fixtures::{float_col, text};
     use wasm_bindgen_test::*;
 
     /// Two-frame LAMMPS dump (matches the smallest fixture in `molrs::io` tests).
@@ -124,6 +116,24 @@ ITEM: ATOMS id type x y z\n\
             wasm_bindgen::JsCast::unchecked_into(JsValue::from(atoms.copy("x", None).expect("x")));
         assert_eq!(x.to_vec(), vec![0.5, 1.5]);
         assert!(frame.get_box().is_some(), "the dump's box bounds survive");
+    }
+
+    /// `writeLammpsDump` writes the chosen columns; `readLammpsDump` reads
+    /// the first snapshot back.
+    #[wasm_bindgen_test]
+    fn write_lammps_dump_reads_back() {
+        let first = read_lammps_dump(&text(LAMMPS_DUMP)).expect("read");
+        let out = write_lammps_dump(
+            &first,
+            Some(vec!["id".into(), "x".into(), "y".into(), "z".into()]),
+        )
+        .expect("write");
+        assert!(out.contains("ITEM: ATOMS id x y z"), "{out}");
+        let back = read_lammps_dump(&text(&out)).expect("read back");
+        assert_eq!(
+            float_col(&back.get("atoms").unwrap(), "x").to_vec(),
+            vec![0.0, 1.0]
+        );
     }
 
     /// Indexing the same fixture in many small chunks must produce the

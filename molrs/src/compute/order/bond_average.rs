@@ -402,11 +402,11 @@ impl QlmTable {
 mod tests {
     use super::*;
     use crate::compute::fixtures::neighbors_of;
+    use crate::core::Cell;
     use molrs::core::{NeighborColumns, NeighborPair, QueryMode, SimBox};
-    use ndarray::array;
 
     fn open_box(len: F) -> SimBox {
-        SimBox::cube(len, array![0.0, 0.0, 0.0], [false; 3]).unwrap()
+        SimBox::new(Cell::Lengths([len; 3]), [0.0, 0.0, 0.0], [false; 3]).unwrap()
     }
 
     fn q6(nl: &Neighbors) -> QlmTable {
@@ -517,8 +517,12 @@ mod tests {
             let t = std::f64::consts::TAU * k as F / 6.0;
             positions.push([10.0 + t.cos(), 10.0 + t.sin(), 0.0]);
         }
-        let simbox =
-            SimBox::ortho(array![20.0, 20.0, 1.0], array![0.0, 0.0, 0.0], [false; 3]).unwrap();
+        let simbox = SimBox::new(
+            Cell::Lengths([20.0, 20.0, 1.0]),
+            [0.0, 0.0, 0.0],
+            [false; 3],
+        )
+        .unwrap();
         let nl = neighbors_of(&positions, &simbox, 1.2);
         let table = BondAverage::new(PlanarHarmonic { k: 6 })
             .compute(&nl)

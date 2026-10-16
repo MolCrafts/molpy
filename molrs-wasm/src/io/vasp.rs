@@ -2,16 +2,17 @@
 //!
 //! | JS | molrs |
 //! |----|-------|
-//! | `VaspPoscarReader` | `VaspPoscarReader` (whole-content; POSCAR / CONTCAR) |
-//! | `readPoscarStr` | `read_poscar_str` |
-//! | `writePoscarStr` | `write_poscar_str` (needs a `box`) |
-//! | `readChgcarStr` | `read_chgcar_str` (CHGCAR / CHGDIF; functions only in molrs) |
+//! | `VaspPoscarReader` | `read_poscar` behind the reader-class protocol (`readFrame` / `len`; POSCAR / CONTCAR is one frame) |
+//! | `readPoscar` | `read_poscar` |
+//! | `writePoscar` | `write_poscar` (needs a `box`) |
+//! | `readChgcar` | `read_chgcar` (CHGCAR / CHGDIF; functions only in molrs) |
 //!
 //! molrs has no CHGCAR writer, so CHGCAR is read-only.
 
 use wasm_bindgen::prelude::*;
 
 use crate::core::frame::Frame;
+use crate::io::{JsSource, source_bytes};
 
 /// VASP POSCAR / CONTCAR structure reader.
 ///
@@ -22,19 +23,24 @@ use crate::core::frame::Frame;
 /// Single-frame: any `step != 0` returns `undefined`.
 #[wasm_bindgen(js_name = VaspPoscarReader)]
 pub struct VaspPoscarReader {
-    content: String,
+    content: Vec<u8>,
     cached_len: Option<usize>,
 }
 
 #[wasm_bindgen(js_class = VaspPoscarReader)]
 impl VaspPoscarReader {
-    /// Create a new POSCAR reader from a string containing the file content.
+    /// A POSCAR reader over the file's content: its text (a `string`) or
+    /// its bytes (a `Uint8Array`), copied once.
+    ///
+    /// # Errors
+    ///
+    /// Throws if `source` is neither a string nor a `Uint8Array`.
     #[wasm_bindgen(constructor)]
-    pub fn new(content: &str) -> VaspPoscarReader {
-        VaspPoscarReader {
-            content: content.to_string(),
+    pub fn new(source: &JsSource) -> Result<VaspPoscarReader, JsValue> {
+        Ok(VaspPoscarReader {
+            content: source_bytes("new VaspPoscarReader", source)?,
             cached_len: None,
-        }
+        })
     }
 
     /// Read the frame at `index`. POSCAR is single-frame, so any `index != 0`
@@ -44,7 +50,7 @@ impl VaspPoscarReader {
         if index > 0 {
             return Ok(None);
         }
-        let rs_frame = molrs::io::read_poscar_str(&self.content)
+        let rs_frame = molrs::io::read_poscar(self.content.as_slice())
             .map_err(|e| JsValue::from_str(&format!("POSCAR read error: {}", e)))?;
         Ok(Some(Frame::from_rs(rs_frame)?))
     }
@@ -68,26 +74,26 @@ impl VaspPoscarReader {
 }
 
 read_door!(
-    /// Read VASP POSCAR / CONTCAR text (Cartesian Å; `Direct` files are
-    /// converted on read).
-    readPoscarStr => read_poscar_str(text: &str), "POSCAR"
+    /// Read VASP POSCAR / CONTCAR, the file's text or bytes (Cartesian Å;
+    /// `Direct` files are converted on read).
+    readPoscar => read_poscar, "POSCAR"
 );
 
 read_door!(
-    /// Read VASP CHGCAR / CHGDIF text into a frame with:
+    /// Read VASP CHGCAR / CHGDIF (the file's text or bytes) into a frame with:
     /// - `"atoms"` block: `element` (string), `x`/`y`/`z` (F, Cartesian Å).
     /// - `"grid"` block: structural shape `[nx, ny, nz]`, columns
     ///   `total` (always) and `diff` (when ISPIN=2).
     /// - `box`: triclinic POSCAR lattice in Å, fully periodic.
     ///
     /// ```js
-    /// const frame = readChgcarStr(await file.text());
+    /// const frame = readChgcar(await file.text());
     /// const total = frame.get("grid").copy("total");
     /// ```
-    readChgcarStr => read_chgcar_str(text: &str), "CHGCAR"
+    readChgcar => read_chgcar, "CHGCAR"
 );
 
 write_door!(
     /// Write `frame` as VASP POSCAR text (needs a box).
-    writePoscarStr => write_poscar_str -> String, "POSCAR"
+    writePoscar => write_poscar, "POSCAR"
 );

@@ -60,6 +60,8 @@ molrs = { path = "../molrs", package = "molcrafts-molrs", version = "0.18.0", de
 molrs-ffi = { path = "../molrs-ffi", package = "molcrafts-molrs-ffi", version = "0.18.0", default-features = false }
 
 ndarray = "0.17"
+# Complex column element type (`Column::get::<Complex<f32|f64>>`).
+num-complex = "0.4"
 zarrs = { version = "0.23", default-features = false }
 # Packed `*.mrec.zip` stores hold stored (never deflated) entries, so the
 # reader needs only the zip container walk — no compression backends.

@@ -1,8 +1,7 @@
 //! STL — stereolithography triangle soup, ASCII and binary.
 
-use crate::io::invalid_data;
+use crate::io::{Source, invalid_data};
 use std::io::{Error, Result};
-use std::path::Path;
 
 use crate::core::TriMesh;
 use crate::op::F;
@@ -12,25 +11,8 @@ const BINARY_HEADER_BYTES: usize = 84;
 /// Per triangle: a normal and three vertices (12 `f32`), then a `u16` attribute.
 const BINARY_TRIANGLE_BYTES: usize = 50;
 
-/// Read an STL file into a triangle mesh.
-///
-/// # Errors
-///
-/// [`std::io::Error`] if the path cannot be read, or [`std::io::ErrorKind::InvalidData`]
-/// if the bytes are neither a length-matched binary STL nor readable ASCII —
-/// see [`read_stl_bytes`].
-pub fn read_stl<P: AsRef<Path>>(path: P) -> Result<TriMesh> {
-    let path = path.as_ref();
-    let bytes = std::fs::read(path)?;
-    read_stl_bytes(&bytes).map_err(|e| {
-        Error::new(
-            e.kind(),
-            format!("could not read STL {}: {e}", path.display()),
-        )
-    })
-}
-
-/// Parse STL bytes — binary if the length says so, ASCII otherwise.
+/// Read an STL file into a triangle mesh — binary if the length says so,
+/// ASCII otherwise.
 ///
 /// A file with no facets is not an error: it reads as an empty
 /// [`TriMesh`]. Whether that is acceptable is the consumer's call — the same
@@ -56,10 +38,23 @@ pub fn read_stl<P: AsRef<Path>>(path: P) -> Result<TriMesh> {
 ///
 /// # Errors
 ///
+/// [`std::io::Error`] if the path cannot be read, or
 /// [`std::io::ErrorKind::InvalidData`] when the bytes are not a length-matched binary
 /// STL and also not ASCII: not UTF-8, not starting with `solid`, or carrying a
 /// vertex count that is not a multiple of three.
-pub fn read_stl_bytes(bytes: &[u8]) -> Result<TriMesh> {
+pub fn read_stl<'a>(src: impl Into<Source<'a>>) -> Result<TriMesh> {
+    let src = src.into();
+    parse_stl(&src.bytes()?).map_err(|e| match src.path() {
+        Some(path) => Error::new(
+            e.kind(),
+            format!("could not read STL {}: {e}", path.display()),
+        ),
+        None => e,
+    })
+}
+
+/// Parse STL bytes — binary if the length says so, ASCII otherwise.
+fn parse_stl(bytes: &[u8]) -> Result<TriMesh> {
     let triangles = match binary_triangle_count(bytes) {
         Some(count) => parse_binary(bytes, count),
         None => parse_ascii(bytes)?,
@@ -174,7 +169,7 @@ mod tests {
 
     #[test]
     fn reads_an_ascii_facet() {
-        let mesh = read_stl_bytes(ASCII_TRIANGLE.as_bytes()).unwrap();
+        let mesh = read_stl(ASCII_TRIANGLE.as_bytes()).unwrap();
         assert_eq!(mesh.n_faces(), 1);
         assert_eq!(
             mesh.triangle(0),
@@ -184,7 +179,7 @@ mod tests {
 
     #[test]
     fn reads_the_same_triangle_from_binary() {
-        let mesh = read_stl_bytes(&binary_triangle("binary")).unwrap();
+        let mesh = read_stl(&binary_triangle("binary")).unwrap();
         assert_eq!(
             mesh.triangle(0),
             [[0.0, 0.0, 0.0], [2.0, 0.0, 0.0], [0.0, 2.0, 0.0]]
@@ -193,14 +188,14 @@ mod tests {
 
     #[test]
     fn the_length_tells_binary_from_ascii_even_when_the_header_says_solid() {
-        let mesh = read_stl_bytes(&binary_triangle("solid cube")).unwrap();
+        let mesh = read_stl(&binary_triangle("solid cube")).unwrap();
         assert_eq!(mesh.n_faces(), 1);
     }
 
     #[test]
     fn the_recorded_facet_normal_is_ignored() {
         // The fixture records (0, 0, -1); the winding says (0, 0, +1).
-        let mesh = read_stl_bytes(&binary_triangle("binary")).unwrap();
+        let mesh = read_stl(&binary_triangle("binary")).unwrap();
         assert_eq!(mesh.face_normal(0), [0.0, 0.0, 1.0]);
     }
 
@@ -208,38 +203,38 @@ mod tests {
     fn ascii_is_case_and_whitespace_insensitive() {
         let shouty = "SOLID s\nFACET NORMAL 0 0 0\nOUTER LOOP\nVERTEX 0 0 0\n\
              VERTEX 1 0 0\nVERTEX 0 1 0\nENDLOOP\nENDFACET\nENDSOLID s\n";
-        assert_eq!(read_stl_bytes(shouty.as_bytes()).unwrap().n_faces(), 1);
+        assert_eq!(read_stl(shouty.as_bytes()).unwrap().n_faces(), 1);
     }
 
     #[test]
     fn refuses_text_that_is_not_an_stl() {
-        let err = read_stl_bytes(b"ITEM: TIMESTEP\n0\n").unwrap_err();
+        let err = read_stl(b"ITEM: TIMESTEP\n0\n").unwrap_err();
         assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
     }
 
     #[test]
     fn refuses_a_vertex_count_that_is_not_a_multiple_of_three() {
         let truncated = "solid s\nvertex 0 0 0\nvertex 1 0 0\nendsolid s\n";
-        assert!(read_stl_bytes(truncated.as_bytes()).is_err());
+        assert!(read_stl(truncated.as_bytes()).is_err());
     }
 
     #[test]
     fn refuses_a_non_numeric_coordinate() {
         let bad = ASCII_TRIANGLE.replace("vertex 2 0 0", "vertex two 0 0");
-        assert!(read_stl_bytes(bad.as_bytes()).is_err());
+        assert!(read_stl(bad.as_bytes()).is_err());
     }
 
     #[test]
     fn a_solid_with_no_facets_reads_as_an_empty_mesh() {
         // Not an error here: molpack calls it `Empty` and refuses, a viewer
         // paints nothing. Both are decisions this reader does not make.
-        let mesh = read_stl_bytes(b"solid empty\nendsolid empty\n").unwrap();
+        let mesh = read_stl(b"solid empty\nendsolid empty\n").unwrap();
         assert!(mesh.is_empty());
     }
 
     #[test]
     fn refuses_bytes_that_are_neither_utf8_nor_length_matched() {
-        assert!(read_stl_bytes(&[0xff, 0xfe, 0x00, 0x80, 0x81]).is_err());
+        assert!(read_stl(&[0xff, 0xfe, 0x00, 0x80, 0x81]).is_err());
     }
 
     #[test]
@@ -257,7 +252,7 @@ mod tests {
                 bytes[at..at + 4].copy_from_slice(&value.to_le_bytes());
             }
         }
-        let mesh = read_stl_bytes(&bytes).unwrap();
+        let mesh = read_stl(&bytes).unwrap();
         assert_eq!(mesh.n_faces(), 2);
         assert_eq!(mesh.n_vertices(), 4);
     }

@@ -157,28 +157,119 @@ impl Topology {
         self.inner.are_bonded(i, j)
     }
 
-    /// Add a single atom.
-    #[wasm_bindgen(js_name = addAtom)]
-    pub fn add_atom(&mut self) {
-        self.inner.add_atom();
+    /// Append `n` unbonded atoms, indexed after the existing ones.
+    #[wasm_bindgen(js_name = addAtoms)]
+    pub fn add_atoms(&mut self, n: usize) {
+        self.inner.add_atoms(n);
     }
 
-    /// Add a bond between atoms `i` and `j`.
-    #[wasm_bindgen(js_name = addBond)]
-    pub fn add_bond(&mut self, i: usize, j: usize) {
-        self.inner.add_bond(i, j);
+    /// Add the bonds of a flat `Uint32Array` `[i0,j0, i1,j1, ...]` (the
+    /// layout [`bonds`](Self::bonds) returns), in order; a bond already
+    /// present, in either orientation, is skipped. One bond is
+    /// `addBonds(new Uint32Array([i, j]))`.
+    ///
+    /// # Errors
+    ///
+    /// Throws, adding nothing, when the array has an odd length or names an
+    /// atom outside `0..nAtoms`.
+    #[wasm_bindgen(js_name = addBonds)]
+    pub fn add_bonds(&mut self, pairs: &[u32]) -> Result<(), JsValue> {
+        if !pairs.len().is_multiple_of(2) {
+            return Err(JsValue::from_str(&format!(
+                "Topology.addBonds: {} indices is not a list of [i, j] pairs",
+                pairs.len()
+            )));
+        }
+        let n = self.inner.n_atoms();
+        let edges = pairs
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .enumerate()
+            .map(|(k, &[i, j])| {
+                let (i, j) = (i as usize, j as usize);
+                if i < n && j < n {
+                    Ok([i, j])
+                } else {
+                    Err(JsValue::from_str(&format!(
+                        "Topology.addBonds: pair {k} ({i}, {j}) names an atom outside 0..{n}"
+                    )))
+                }
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        self.inner.add_bonds(&edges);
+        Ok(())
     }
 
-    /// Delete an atom by index.
-    #[wasm_bindgen(js_name = deleteAtom)]
-    pub fn delete_atom(&mut self, idx: usize) {
-        self.inner.delete_atom(idx);
+    /// Delete atom `idx` and every bond incident to it.
+    ///
+    /// Swap-remove: the last atom moves into slot `idx`, so that one atom's
+    /// index changes. To delete several atoms, use
+    /// [`delAtoms`](Self::del_atoms) — deleting them one by one would make the
+    /// later indices name relabelled atoms.
+    ///
+    /// # Errors
+    ///
+    /// Throws, deleting nothing, when `idx` is not in `0..nAtoms`.
+    #[wasm_bindgen(js_name = delAtom)]
+    pub fn del_atom(&mut self, idx: usize) -> Result<(), JsValue> {
+        check_range("delAtom", "atom", &[idx], self.inner.n_atoms())?;
+        self.inner.del_atom(idx);
+        Ok(())
     }
 
-    /// Delete a bond by edge index.
-    #[wasm_bindgen(js_name = deleteBond)]
-    pub fn delete_bond(&mut self, idx: usize) {
-        self.inner.delete_bond(idx);
+    /// Delete every atom of `idxs` (indices *before* the call; duplicates
+    /// name one atom) and every bond incident to any of them.
+    ///
+    /// # Errors
+    ///
+    /// Throws, deleting nothing, when an index is not in `0..nAtoms`.
+    #[wasm_bindgen(js_name = delAtoms)]
+    pub fn del_atoms(&mut self, idxs: &[u32]) -> Result<(), JsValue> {
+        let idxs: Vec<usize> = idxs.iter().map(|&i| i as usize).collect();
+        check_range("delAtoms", "atom", &idxs, self.inner.n_atoms())?;
+        self.inner.del_atoms(&idxs);
+        Ok(())
+    }
+
+    /// Delete bond `idx` (an index into [`bonds`](Self::bonds)).
+    ///
+    /// Swap-remove: the last bond moves into slot `idx`. To delete several
+    /// bonds, use [`delBonds`](Self::del_bonds).
+    ///
+    /// # Errors
+    ///
+    /// Throws, deleting nothing, when `idx` is not in `0..nBonds`.
+    #[wasm_bindgen(js_name = delBond)]
+    pub fn del_bond(&mut self, idx: usize) -> Result<(), JsValue> {
+        check_range("delBond", "bond", &[idx], self.inner.n_bonds())?;
+        self.inner.del_bond(idx);
+        Ok(())
+    }
+
+    /// Delete every bond of `idxs` (indices into [`bonds`](Self::bonds)
+    /// *before* the call; duplicates name one bond).
+    ///
+    /// # Errors
+    ///
+    /// Throws, deleting nothing, when an index is not in `0..nBonds`.
+    #[wasm_bindgen(js_name = delBonds)]
+    pub fn del_bonds(&mut self, idxs: &[u32]) -> Result<(), JsValue> {
+        let idxs: Vec<usize> = idxs.iter().map(|&i| i as usize).collect();
+        check_range("delBonds", "bond", &idxs, self.inner.n_bonds())?;
+        self.inner.del_bonds(&idxs);
+        Ok(())
+    }
+}
+
+/// Refuse any index of `idxs` outside `0..n`, before the core method (which
+/// panics — a trap in wasm) sees it.
+fn check_range(op: &str, what: &str, idxs: &[usize], n: usize) -> Result<(), JsValue> {
+    match idxs.iter().find(|&&i| i >= n) {
+        Some(i) => Err(JsValue::from_str(&format!(
+            "Topology.{op}: {what} {i} is outside 0..{n}"
+        ))),
+        None => Ok(()),
     }
 }
 
@@ -194,14 +285,22 @@ mod tests {
     fn from_frame_reads_the_canonical_bond_columns() {
         let mut atoms = Block::new();
         atoms
-            .insert("x", Array1::<f64>::zeros(3).into_dyn())
+            .insert("x", Array1::<f64>::zeros(3).into_dyn(), None)
             .unwrap();
         let mut bonds = Block::new();
         bonds
-            .insert(keys::ATOMI, Array1::<Idx>::from_vec(vec![0, 1]).into_dyn())
+            .insert(
+                keys::ATOMI,
+                Array1::<Idx>::from_vec(vec![0, 1]).into_dyn(),
+                None,
+            )
             .unwrap();
         bonds
-            .insert(keys::ATOMJ, Array1::<Idx>::from_vec(vec![1, 2]).into_dyn())
+            .insert(
+                keys::ATOMJ,
+                Array1::<Idx>::from_vec(vec![1, 2]).into_dyn(),
+                None,
+            )
             .unwrap();
         let mut rs_frame = molrs::core::Frame::new();
         rs_frame.insert("atoms", atoms);
@@ -212,5 +311,24 @@ mod tests {
         assert_eq!(topo.n_atoms(), 3);
         assert_eq!(topo.n_bonds(), 2);
         assert_eq!(topo.n_angles(), 1);
+    }
+
+    #[wasm_bindgen_test]
+    fn del_single_and_batch_are_distinct_and_range_checked() {
+        let mut topo = Topology::new(4);
+        topo.add_bonds(&[0, 1, 1, 2, 2, 3]).unwrap();
+        assert!(topo.del_bond(3).is_err());
+        assert_eq!(topo.n_bonds(), 3);
+        topo.del_bond(0).unwrap();
+        assert_eq!(topo.n_bonds(), 2);
+        topo.del_bonds(&[0, 1]).unwrap();
+        assert_eq!(topo.n_bonds(), 0);
+        assert!(topo.del_atoms(&[0, 4]).is_err());
+        assert_eq!(topo.n_atoms(), 4);
+        topo.del_atoms(&[0, 3]).unwrap();
+        assert_eq!(topo.n_atoms(), 2);
+        topo.del_atom(1).unwrap();
+        assert_eq!(topo.n_atoms(), 1);
+        assert!(topo.del_atom(1).is_err());
     }
 }

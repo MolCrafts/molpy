@@ -40,6 +40,7 @@ use ndarray::{Array2, ArrayView1};
 use numpy::{IntoPyArray, PyArray1, PyArray2};
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
+use pyo3::types::PyTuple;
 
 /// Reject a coordinate array that is not `(N, 3)` before it reaches the core,
 /// whose own check is an `assert!` — and a panic must not cross this seam.
@@ -164,7 +165,7 @@ impl PyNeighbors {
         })
     }
 
-    fn __reduce__<'py>(slf: &Bound<'py, Self>) -> PyResult<Bound<'py, pyo3::types::PyTuple>> {
+    fn __reduce__<'py>(slf: &Bound<'py, Self>) -> PyResult<Bound<'py, PyTuple>> {
         let inner = &slf.borrow().inner;
         crate::pickle::reduce_via_type(
             slf.as_any(),
@@ -314,6 +315,10 @@ impl PyNeighbors {
 /// cutoff : float
 ///     Interaction radius in Å. Fixed at construction because it sets the cell
 ///     width of the index.
+/// brute_force : bool, optional
+///     Use the O(N²) all-pairs backend instead of the O(N) cell list: the same
+///     pairs — that is what makes it useful as an oracle — at a cost that
+///     grows with the square of the particle count. Default ``False``.
 ///
 /// Raises
 /// ------
@@ -327,6 +332,7 @@ impl PyNeighbors {
 /// Examples
 /// --------
 /// >>> nl = molrs.core.NeighborList(3.0)          # O(N) cell-list backend
+/// >>> oracle = molrs.core.NeighborList(3.0, brute_force=True)
 /// >>> nl.build(points, box)                 # index only — no pair table
 /// >>> neigh = nl.neighbors()                # both columns (the default)
 /// >>> lean = nl.neighbors(disp=False)       # indices + d² only
@@ -359,17 +365,13 @@ impl PyNeighborList {
 
 #[pymethods]
 impl PyNeighborList {
-    /// Build an engine with the O(N) cell-list backend — the production choice.
+    /// Build an engine: the O(N) cell-list backend (the production choice),
+    /// or the O(N²) all-pairs one with ``brute_force=True``.
     #[new]
-    #[pyo3(signature = (cutoff, points=None, r#box=None, brute_force=false))]
-    fn new(
-        cutoff: f64,
-        points: Option<ArrayArg2<'_, f64>>,
-        r#box: Option<&PyBox>,
-        brute_force: bool,
-    ) -> PyResult<Self> {
+    #[pyo3(signature = (cutoff, brute_force=false))]
+    fn new(cutoff: f64, brute_force: bool) -> PyResult<Self> {
         check_cutoff(cutoff)?;
-        let mut neighbors = Self {
+        Ok(Self {
             inner: Some(if brute_force {
                 RsNeighborList::brute_force(cutoff)
             } else {
@@ -378,29 +380,7 @@ impl PyNeighborList {
             brute_force,
             points: None,
             simbox: None,
-        };
-        if let (Some(points), Some(r#box)) = (points, r#box) {
-            neighbors.build(points, r#box)?;
-        }
-        Ok(neighbors)
-    }
-
-    /// Build an engine with the O(N²) all-pairs backend.
-    ///
-    /// Same pairs as the cell list — that is what makes it useful as an oracle
-    /// — at a cost that grows with the square of the particle count.
-    ///
-    /// Returns
-    /// -------
-    /// NeighborList
-    ///
-    /// Raises
-    /// ------
-    /// ValueError
-    ///     If ``cutoff`` is not positive.
-    #[staticmethod]
-    fn brute_force(cutoff: f64) -> PyResult<Self> {
-        Self::new(cutoff, None, None, true)
+        })
     }
 
     /// The cutoff distance (Å) fixed at construction.
@@ -509,20 +489,44 @@ impl PyNeighborList {
         }
     }
 
-    fn __reduce__<'py>(slf: &Bound<'py, Self>) -> PyResult<Bound<'py, pyo3::types::PyTuple>> {
+    /// Pickle as ``NeighborList(cutoff, brute_force)`` plus the last build's
+    /// ``(points, box)`` (``None`` before a build), replayed by
+    /// :meth:`__setstate__`.
+    fn __reduce__<'py>(slf: &Bound<'py, Self>) -> PyResult<Bound<'py, PyTuple>> {
         let py = slf.py();
         let this = slf.borrow();
-        crate::pickle::reduce_via_type(
-            slf.as_any(),
-            (
-                this.cutoff()?,
-                this.points
-                    .as_ref()
-                    .map(|points| points.clone().into_pyarray(py)),
-                this.simbox.as_ref().cloned().map(|inner| PyBox { inner }),
-                this.brute_force,
-            ),
-        )
+        let args = PyTuple::new(
+            py,
+            [
+                this.cutoff()?.into_pyobject(py)?.into_any(),
+                pyo3::types::PyBool::new(py, this.brute_force)
+                    .to_owned()
+                    .into_any(),
+            ],
+        )?;
+        let state = match (&this.points, &this.simbox) {
+            (Some(points), Some(simbox)) => (
+                points.clone().into_pyarray(py),
+                PyBox {
+                    inner: simbox.clone(),
+                },
+            )
+                .into_pyobject(py)?
+                .into_any(),
+            _ => py.None().into_bound(py),
+        };
+        crate::pickle::reduce_with_state(slf.as_any(), args, state)
+    }
+
+    /// Replay a pickled build: ``state`` is ``(points, box)`` or ``None``.
+    fn __setstate__(
+        &mut self,
+        state: Option<(ArrayArg2<'_, f64>, PyRef<'_, PyBox>)>,
+    ) -> PyResult<()> {
+        if let Some((points, r#box)) = state {
+            self.build(points, &r#box)?;
+        }
+        Ok(())
     }
 }
 
@@ -544,7 +548,10 @@ impl PyNeighborList {
 /// Parameters
 /// ----------
 /// box : Box
-///     Simulation box describing geometry and periodic boundaries.
+///     Simulation box describing geometry and periodic boundaries. A
+///     free-boundary search of an isolated cluster takes the non-periodic
+///     bounding box padded by the cutoff:
+///     ``Box.bounding(points, (cutoff,) * 3, (False,) * 3)``.
 /// points : numpy.ndarray, shape (N, 3), dtype float64
 ///     Reference point positions in Å.
 /// cutoff : float
@@ -576,27 +583,6 @@ impl PyNeighborQuery {
         check_cutoff(cutoff)?;
         Ok(Self {
             inner: RsNeighborQuery::new(&r#box.inner, points.as_array(), cutoff),
-        })
-    }
-
-    /// Build a free-boundary spatial index from reference points.
-    ///
-    /// The non-periodic bounding box is derived from the point cloud, so the
-    /// caller does not need to manufacture a simulation box for selections or
-    /// other isolated-coordinate queries.
-    ///
-    /// Raises
-    /// ------
-    /// ValueError
-    ///     If ``points`` does not have shape ``(N, 3)`` or ``cutoff`` is not
-    ///     positive.
-    #[staticmethod]
-    #[pyo3(signature = (points, cutoff))]
-    fn unbounded(points: ArrayArg2<'_, f64>, cutoff: f64) -> PyResult<Self> {
-        check_points(&points, "points")?;
-        check_cutoff(cutoff)?;
-        Ok(Self {
-            inner: RsNeighborQuery::unbounded(points.as_array(), cutoff),
         })
     }
 
@@ -642,7 +628,7 @@ impl PyNeighborQuery {
         )
     }
 
-    fn __reduce__<'py>(slf: &Bound<'py, Self>) -> PyResult<Bound<'py, pyo3::types::PyTuple>> {
+    fn __reduce__<'py>(slf: &Bound<'py, Self>) -> PyResult<Bound<'py, PyTuple>> {
         let py = slf.py();
         let this = slf.borrow();
         crate::pickle::reduce_via_type(
@@ -810,12 +796,11 @@ impl PyVerletSkin {
         }
     }
 
-    fn __reduce__<'py>(slf: &Bound<'py, Self>) -> PyResult<Bound<'py, pyo3::types::PyTuple>> {
+    fn __reduce__<'py>(slf: &Bound<'py, Self>) -> PyResult<Bound<'py, PyTuple>> {
         let py = slf.py();
         let this = slf.borrow();
         let inner = this.get()?;
-        let neighbors =
-            PyNeighborList::new(inner.cutoff() + inner.skin(), None, None, this.brute_force)?;
+        let neighbors = PyNeighborList::new(inner.cutoff() + inner.skin(), this.brute_force)?;
         crate::pickle::reduce_via_type(
             slf.as_any(),
             (

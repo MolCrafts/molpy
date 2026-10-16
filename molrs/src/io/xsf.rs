@@ -1,17 +1,15 @@
 //! XSF (XCrySDen Structure File) structure reader and writer.
 
+use crate::core::Cell;
 use crate::io::frame_columns::insert_column;
-use crate::io::invalid_data;
-use std::io::{BufRead, BufWriter, Result, Write};
-use std::path::Path;
-
-use ndarray::{Array2, array};
+use crate::io::{Sink, Source, invalid_data};
+use std::io::{BufRead, Result, Write};
 
 use molrs::core::Block;
-use molrs::core::Element;
 use molrs::core::Frame;
 use molrs::core::SimBox;
-use molrs::op::{F, I, Idx};
+use molrs::core::keys;
+use molrs::op::{F, Idx};
 
 // ---------------------------------------------------------------------------
 // Error helpers
@@ -31,12 +29,13 @@ use molrs::op::{F, I, Idx};
 ///
 /// The returned [`Frame`] has:
 ///
-/// - `"atoms"` block: `atomic_number` (U), `element` (str), `x`/`y`/`z` (F)
+/// - `"atoms"` block: `atomic_number` (U, the raw Z the file spells; no
+///   `element` column is synthesized — call `Element::fill_symbols` for one),
+///   `x`/`y`/`z` (F)
 /// - `frame.simbox` — periodic cell from PRIMVEC (else CONVVEC) for `CRYSTAL`,
 ///   or a free (no-cell) box for `MOLECULE` / unspecified
-pub fn read_xsf<P: AsRef<Path>>(path: P) -> Result<Frame> {
-    let file = std::fs::File::open(path.as_ref())?;
-    read_frame_from(std::io::BufReader::new(file))
+pub fn read_xsf<'a>(src: impl Into<Source<'a>>) -> Result<Frame> {
+    read_frame_from(src.into().reader()?)
 }
 
 /// Read one XSF structure from a buffered reader.
@@ -67,7 +66,6 @@ fn read_frame_from<R: BufRead>(mut reader: R) -> Result<Frame> {
     let mut xs: Vec<F> = Vec::new();
     let mut ys: Vec<F> = Vec::new();
     let mut zs: Vec<F> = Vec::new();
-    let mut elements: Vec<String> = Vec::new();
 
     let mut i = 0usize;
     while i < raw_lines.len() {
@@ -113,7 +111,6 @@ fn read_frame_from<R: BufRead>(mut reader: R) -> Result<Frame> {
                     &mut xs,
                     &mut ys,
                     &mut zs,
-                    &mut elements,
                 )?;
                 i = end;
             }
@@ -127,8 +124,7 @@ fn read_frame_from<R: BufRead>(mut reader: R) -> Result<Frame> {
 
     if !atomic_numbers.is_empty() {
         let mut atoms = Block::new();
-        insert_column(&mut atoms, "atomic_number", atomic_numbers)?;
-        insert_column(&mut atoms, "element", elements)?;
+        insert_column(&mut atoms, keys::ATOMIC_NUMBER, atomic_numbers)?;
         insert_column(&mut atoms, "x", xs)?;
         insert_column(&mut atoms, "y", ys)?;
         insert_column(&mut atoms, "z", zs)?;
@@ -142,9 +138,8 @@ fn read_frame_from<R: BufRead>(mut reader: R) -> Result<Frame> {
                     .or(convvec)
                     .unwrap_or([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]);
             // PRIMVEC lines are lattice vectors; H columns are lattice vectors.
-            let h = Array2::from_shape_fn((3, 3), |(r, c)| mat[c][r]);
-            let origin = array![0.0 as F, 0.0, 0.0];
-            SimBox::new(h, origin, [true, true, true])
+            let h = std::array::from_fn(|r| std::array::from_fn(|c| mat[c][r]));
+            SimBox::new(Cell::Matrix(h), [0.0; 3], [true, true, true])
                 .map_err(|e| invalid_data(format!("{:?}", e)))?
         }
         _ => free_simbox()?,
@@ -154,9 +149,7 @@ fn read_frame_from<R: BufRead>(mut reader: R) -> Result<Frame> {
 }
 
 fn free_simbox() -> Result<SimBox> {
-    let h = array![[1.0 as F, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]];
-    let origin = array![0.0 as F, 0.0, 0.0];
-    SimBox::new_cell(h, origin, [false, false, false], false)
+    SimBox::new(Cell::Undefined, [0.0; 3], [false, false, false])
         .map_err(|e| invalid_data(format!("{:?}", e)))
 }
 
@@ -186,7 +179,6 @@ fn parse_atoms(
     xs: &mut Vec<F>,
     ys: &mut Vec<F>,
     zs: &mut Vec<F>,
-    elements: &mut Vec<String>,
 ) -> Result<()> {
     for line in lines {
         if line.trim().is_empty() {
@@ -196,13 +188,19 @@ fn parse_atoms(
         if parts.len() < 4 {
             return Err(invalid_data(format!("Invalid atom line: {line}")));
         }
-        let z: I = parts[0]
-            .parse()
-            .map_err(|_| invalid_data(format!("Invalid atom data: {line}")))?;
-        if z < 0 {
-            return Err(invalid_data(format!("Invalid atom data: {line}")));
-        }
-        let z_u = z as Idx;
+        // The file spells species as Z: keep it raw (0 = wildcard) and refuse
+        // anything outside 0..=118 rather than invent a species.
+        let z_u: Idx = parts[0]
+            .parse::<u8>()
+            .ok()
+            .filter(|&z| z <= 118)
+            .map(Idx::from)
+            .ok_or_else(|| {
+                invalid_data(format!(
+                    "Invalid atom data: atomic number '{}' is not in 0..=118: {line}",
+                    parts[0]
+                ))
+            })?;
         let x: F = parts[1]
             .parse()
             .map_err(|_| invalid_data(format!("Invalid atom data: {line}")))?;
@@ -213,19 +211,10 @@ fn parse_atoms(
             .parse()
             .map_err(|_| invalid_data(format!("Invalid atom data: {line}")))?;
 
-        let symbol = if z_u > 0 && z_u <= 118 {
-            Element::by_number(z_u as u8)
-                .map(|e| e.symbol().to_string())
-                .unwrap_or_else(|| "X".to_string())
-        } else {
-            "X".to_string()
-        };
-
         atomic_numbers.push(z_u);
         xs.push(x);
         ys.push(y);
         zs.push(zc);
-        elements.push(symbol);
     }
     Ok(())
 }
@@ -234,10 +223,9 @@ fn parse_atoms(
 // Writer
 // ---------------------------------------------------------------------------
 
-/// Write a Frame to an XSF file at `path`.
-pub fn write_xsf<P: AsRef<Path>>(path: P, frame: &Frame) -> Result<()> {
-    let file = std::fs::File::create(path.as_ref())?;
-    let mut w = BufWriter::new(file);
+/// Write a frame as an XSF file.
+pub fn write_xsf<'a>(sink: impl Into<Sink<'a>>, frame: &Frame) -> Result<()> {
+    let mut w = sink.into().writer()?;
     write_frame_to(&mut w, frame)?;
     w.flush()
 }
@@ -253,7 +241,7 @@ fn write_frame_to<W: Write>(writer: &mut W, frame: &Frame) -> Result<()> {
 
     if has_crystal {
         let sb = frame.simbox.as_ref().unwrap();
-        let h = sb.h_view();
+        let h = ndarray::arr2(&sb.matrix());
         writeln!(writer, "CRYSTAL")?;
         writeln!(writer, "PRIMVEC")?;
         for i in 0..3 {
@@ -284,29 +272,39 @@ fn write_frame_to<W: Write>(writer: &mut W, frame: &Frame) -> Result<()> {
         let n = atoms.n_rows().unwrap_or(0);
         let xs = atoms
             .get("x")
-            .and_then(|c| c.as_float())
+            .and_then(|c| c.get::<f64>())
             .ok_or_else(|| invalid_data("XSF write: atoms.x missing"))?;
         let ys = atoms
             .get("y")
-            .and_then(|c| c.as_float())
+            .and_then(|c| c.get::<f64>())
             .ok_or_else(|| invalid_data("XSF write: atoms.y missing"))?;
         let zs = atoms
             .get("z")
-            .and_then(|c| c.as_float())
+            .and_then(|c| c.get::<f64>())
             .ok_or_else(|| invalid_data("XSF write: atoms.z missing"))?;
-        let z_u = atoms.get("atomic_number").and_then(|c| c.as_uint());
-        let z_i = atoms.get("atomic_number").and_then(|c| c.as_int());
+        // One Z dtype, the schema's: unsigned. A symbol-only frame converts
+        // first with `Element::fill_atomic_numbers`.
+        let z_u = atoms
+            .get(keys::ATOMIC_NUMBER)
+            .and_then(|c| c.get::<u64>())
+            .ok_or_else(|| {
+                invalid_data(format!(
+                    "XSF write: atoms block has no unsigned '{}' column; a frame that \
+                     spells species as symbols needs `Element::fill_atomic_numbers(&mut frame)` \
+                     first",
+                    keys::ATOMIC_NUMBER
+                ))
+            })?;
 
         writeln!(writer, "PRIMCOORD")?;
         writeln!(writer, "       {n} 1")?;
         for idx in 0..n {
-            let an = if let Some(col) = z_u {
-                col[[idx]] as i32
-            } else if let Some(col) = z_i {
-                col[[idx]]
-            } else {
-                return Err(invalid_data("XSF write: atoms.atomic_number missing"));
-            };
+            let an = z_u[[idx]];
+            if an > 118 {
+                return Err(invalid_data(format!(
+                    "XSF write: atoms row {idx}: {an} is not an atomic number (0..=118)"
+                )));
+            }
             writeln!(
                 writer,
                 "{:2}    {:12.8}    {:12.8}    {:12.8}",
@@ -327,18 +325,6 @@ fn write_frame_to<W: Write>(writer: &mut W, frame: &Frame) -> Result<()> {
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
-
-/// Read one XSF structure from its text.
-pub fn read_xsf_str(text: &str) -> Result<Frame> {
-    read_frame_from(text.as_bytes())
-}
-
-/// Write one frame as XSF text — the inverse of [`read_xsf_str`].
-pub fn write_xsf_str(frame: &Frame) -> Result<String> {
-    let mut buf = Vec::new();
-    write_frame_to(&mut buf, frame)?;
-    String::from_utf8(buf).map_err(crate::io::invalid_data)
-}
 
 #[cfg(test)]
 mod tests {
@@ -363,7 +349,7 @@ PRIMCOORD
         assert_eq!(atoms.n_rows(), Some(2));
         let z = atoms
             .get("atomic_number")
-            .and_then(|c| c.as_uint())
+            .and_then(|c| c.get::<u64>())
             .unwrap();
         assert_eq!(z[[0]], 1);
         assert_eq!(z[[1]], 8);
@@ -418,16 +404,53 @@ PRIMCOORD
             .get("atoms")
             .unwrap()
             .get("atomic_number")
-            .and_then(|c| c.as_uint())
+            .and_then(|c| c.get::<u64>())
             .unwrap();
         let z1 = back
             .get("atoms")
             .unwrap()
             .get("atomic_number")
-            .and_then(|c| c.as_uint())
+            .and_then(|c| c.get::<u64>())
             .unwrap();
         assert_eq!(z0[[0]], z1[[0]]);
         assert_eq!(z0[[1]], z1[[1]]);
+    }
+
+    #[test]
+    fn reader_keeps_raw_z_and_synthesizes_no_element() {
+        let text = "MOLECULE\nPRIMCOORD\n1 1\n0  0.0  0.0  0.0\n";
+        let frame = read_frame_from(Cursor::new(text)).unwrap();
+        let atoms = frame.get("atoms").unwrap();
+        assert_eq!(
+            atoms
+                .get(keys::ATOMIC_NUMBER)
+                .and_then(|c| c.get::<u64>())
+                .unwrap()[[0]],
+            0
+        );
+        assert!(atoms.get(keys::ELEMENT).is_none());
+    }
+
+    #[test]
+    fn reader_rejects_out_of_range_z() {
+        for bad in ["119", "-1", "Fe"] {
+            let text = format!("MOLECULE\nPRIMCOORD\n1 1\n{bad}  0.0  0.0  0.0\n");
+            let err = read_frame_from(Cursor::new(text)).unwrap_err();
+            assert_eq!(err.kind(), std::io::ErrorKind::InvalidData, "{bad}");
+        }
+    }
+
+    #[test]
+    fn writer_requires_atomic_number() {
+        let mut frame = Frame::new();
+        let mut atoms = Block::new();
+        insert_column(&mut atoms, keys::ELEMENT, vec!["O".to_string()]).unwrap();
+        for k in ["x", "y", "z"] {
+            insert_column(&mut atoms, k, vec![0.0 as F]).unwrap();
+        }
+        frame.insert("atoms", atoms);
+        let err = write_xsf(&mut Vec::new(), &frame).unwrap_err();
+        assert!(err.to_string().contains("fill_atomic_numbers"), "{err}");
     }
 
     #[test]

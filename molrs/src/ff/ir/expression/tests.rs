@@ -1,6 +1,7 @@
 //! The engine against hand formulas, finite differences, the native molrs
 //! kernels (the protocol's Appendix A expressions) and its own printer.
 
+use crate::ff::potential::fixtures::OneShot;
 use std::collections::HashMap;
 
 use super::*;
@@ -881,7 +882,11 @@ fn agrees_with_native(category: &str, style: &str, params: &[(&str, F)], express
     let ends = ["a", "b", "c", "d"];
     ff.def_style(category, style, Params::new())
         .unwrap()
-        .def_type("t", &ends[..arity], Params::from_pairs(params))
+        .def_type(
+            "t",
+            &ends[..arity],
+            Params::from_iter(params.iter().copied()),
+        )
         .unwrap();
     let mut block = Block::new();
     for (key, atom) in ["atomi", "atomj", "atomk", "atoml"]
@@ -889,11 +894,15 @@ fn agrees_with_native(category: &str, style: &str, params: &[(&str, F)], express
         .zip(0..arity)
     {
         block
-            .insert(key, Array1::from_vec(vec![atom as Idx]).into_dyn())
+            .insert(key, Array1::from_vec(vec![atom as Idx]).into_dyn(), None)
             .unwrap();
     }
     block
-        .insert("type", Array1::from_vec(vec!["t".to_owned()]).into_dyn())
+        .insert(
+            "type",
+            Array1::from_vec(vec!["t".to_owned()]).into_dyn(),
+            None,
+        )
         .unwrap();
     let mut frame = Frame::new();
     frame.insert(format!("{category}s"), block);
@@ -908,7 +917,7 @@ fn agrees_with_native(category: &str, style: &str, params: &[(&str, F)], express
 
     for g in GEOMETRIES {
         let coords = flat(&g);
-        let (e_nat, f_nat) = pots.calc_energy_forces(&coords);
+        let (e_nat, f_nat) = pots.energy_forces_at(&coords);
         let (mut e, mut grad) = ([0.0], vec![[0.0; 3]; arity]);
         c.eval_compound(&g[..arity], &cols, &mut e, &mut grad);
         assert!(

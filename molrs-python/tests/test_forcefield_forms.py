@@ -58,7 +58,7 @@ def _frame() -> molrs.core.Frame:
 
 def _energy(ff: molrs.ff.forcefield.ForceField) -> float:
     frame = _frame()
-    return molrs.ff.compile.PotentialCompiler(ff).compile(frame).calc_energy(frame)
+    return molrs.ff.compile.PotentialCompiler(ff).compile(frame).evaluate(frame)[0]
 
 
 def test_canonical_is_dihedral_periodic_with_the_same_energy() -> None:

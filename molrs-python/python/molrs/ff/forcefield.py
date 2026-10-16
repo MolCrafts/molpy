@@ -5,10 +5,13 @@ force-field IR, which adopts the LAMMPS standard) and the types defined under
 them; :class:`Style` / :class:`ForceFieldType` and their per-category subclasses are
 live handles onto it.
 
-No file format is here. Every force-field file reader and writer —
-``read_lammps_forcefield``, ``read_top_forcefield``,
-``write_frcmod``, ``write_openmm_forcefield`` and the rest — is a function at the top of
-:mod:`molrs.io`, as every other file reader and writer is.
+No file format is here. Every force-field file reader and writer is a class
+of its format's :mod:`molrs.io` submodule —
+:class:`molrs.io.lammps.LammpsForcefieldReader`,
+:class:`molrs.io.gromacs.GromacsTopForcefieldReader`,
+:class:`molrs.io.amber.AmberFrcmodWriter`,
+:class:`molrs.io.openmm_xml.OpenmmXmlWriter` and the rest — as every other
+file reader and writer is.
 """
 
 from .._native import (

@@ -1,10 +1,9 @@
 //! LAMMPS molecule template files (native text + JSON).
 
 use crate::io::frame_columns::insert_column;
-use crate::io::invalid_data;
+use crate::io::{Sink, Source, invalid_data};
 use std::collections::HashMap;
-use std::io::{BufRead, BufReader, BufWriter, Result, Write};
-use std::path::Path;
+use std::io::{BufRead, Result, Write};
 
 use serde_json::{Value as JsonValue, json};
 
@@ -33,30 +32,34 @@ const JSON_UNITS: &str = "units";
 ///   `atomi`… (0-based indices into atoms)
 /// - meta: `format=lammps_molecule`, `source_format`, counts, optional
 ///   `title` / `units` / `center_of_mass` / `total_mass` / `inertia`
-pub fn read_lammps_molecule<P: AsRef<Path>>(path: P) -> Result<Frame> {
-    read_lammps_molecule_native(path.as_ref())
+///
+/// Read from a file, the frame's meta carries its path as `source_file`.
+pub fn read_lammps_molecule<'a>(src: impl Into<Source<'a>>) -> Result<Frame> {
+    read_lammps_molecule_native(src.into())
 }
 
 /// Read a LAMMPS molecule template in its JSON format (`format: "molecule"`).
-pub fn read_lammps_molecule_json<P: AsRef<Path>>(path: P) -> Result<Frame> {
-    read_json(path.as_ref())
+///
+/// Read from a file, the frame's meta carries its path as `source_file`.
+pub fn read_lammps_molecule_json<'a>(src: impl Into<Source<'a>>) -> Result<Frame> {
+    read_json(src.into())
 }
 
 /// Write a frame as a LAMMPS molecule template file (the native text format).
-pub fn write_lammps_molecule<P: AsRef<Path>>(path: P, frame: &Frame) -> Result<()> {
-    write_lammps_molecule_native(path, frame)
+pub fn write_lammps_molecule<'a>(sink: impl Into<Sink<'a>>, frame: &Frame) -> Result<()> {
+    write_lammps_molecule_native(sink.into(), frame)
 }
 
 /// Write a frame as a LAMMPS molecule template in its JSON format.
-pub fn write_lammps_molecule_json<P: AsRef<Path>>(path: P, frame: &Frame) -> Result<()> {
-    write_json(path, frame)
+pub fn write_lammps_molecule_json<'a>(sink: impl Into<Sink<'a>>, frame: &Frame) -> Result<()> {
+    write_json(sink.into(), frame)
 }
 
 // ── native reader ───────────────────────────────────────────────────────────
 
-fn read_lammps_molecule_native(path: &Path) -> Result<Frame> {
-    let f = std::fs::File::open(path)?;
-    let mut lines: Vec<String> = BufReader::new(f)
+fn read_lammps_molecule_native(src: Source<'_>) -> Result<Frame> {
+    let mut lines: Vec<String> = src
+        .reader()?
         .lines()
         .collect::<std::result::Result<_, _>>()?;
     if lines.is_empty() {
@@ -70,7 +73,9 @@ fn read_lammps_molecule_native(path: &Path) -> Result<Frame> {
     let mut frame = Frame::new();
     frame.meta.insert("format", "lammps_molecule");
     frame.meta.insert("source_format", "native");
-    frame.meta.insert("source_file", path.display().to_string());
+    if let Some(path) = src.path() {
+        frame.meta.insert("source_file", path.display().to_string());
+    }
     frame.meta.insert("title", title);
     for (k, v) in [
         ("n_atoms", header.n_atoms),
@@ -404,7 +409,7 @@ fn parse_native_connectivity(
 
 // ── native writer ───────────────────────────────────────────────────────────
 
-fn write_lammps_molecule_native<P: AsRef<Path>>(path: P, frame: &Frame) -> Result<()> {
+fn write_lammps_molecule_native(sink: Sink<'_>, frame: &Frame) -> Result<()> {
     let atoms = frame
         .get("atoms")
         .ok_or_else(|| invalid_data("Frame must contain atoms data"))?;
@@ -414,8 +419,7 @@ fn write_lammps_molecule_native<P: AsRef<Path>>(path: P, frame: &Frame) -> Resul
     if n == 0 {
         return Err(invalid_data("Frame must contain atoms data"));
     }
-    let f = std::fs::File::create(path)?;
-    let mut w = BufWriter::new(f);
+    let mut w = sink.writer()?;
     let title = frame
         .meta
         .get("title")
@@ -453,15 +457,15 @@ fn write_lammps_molecule_native<P: AsRef<Path>>(path: P, frame: &Frame) -> Resul
         writeln!(w)?;
         let x = atoms
             .get("x")
-            .and_then(|c| c.as_float())
+            .and_then(|c| c.get::<f64>())
             .ok_or_else(|| invalid_data("x missing"))?;
         let y = atoms
             .get("y")
-            .and_then(|c| c.as_float())
+            .and_then(|c| c.get::<f64>())
             .ok_or_else(|| invalid_data("y missing"))?;
         let z = atoms
             .get("z")
-            .and_then(|c| c.as_float())
+            .and_then(|c| c.get::<f64>())
             .ok_or_else(|| invalid_data("z missing"))?;
         for i in 0..n {
             writeln!(w, "{} {:.6} {:.6} {:.6}", ids[i], x[[i]], y[[i]], z[[i]])?;
@@ -479,11 +483,11 @@ fn write_lammps_molecule_native<P: AsRef<Path>>(path: P, frame: &Frame) -> Resul
     if atoms.contains_key("mol_id") {
         writeln!(w, "Molecules")?;
         writeln!(w)?;
-        if let Some(vals) = atoms.get("mol_id").and_then(|c| c.as_uint()) {
+        if let Some(vals) = atoms.get("mol_id").and_then(|c| c.get::<u64>()) {
             for i in 0..n {
                 writeln!(w, "{} {}", ids[i], vals[[i]])?;
             }
-        } else if let Some(vals) = atoms.get("mol_id").and_then(|c| c.as_int()) {
+        } else if let Some(vals) = atoms.get("mol_id").and_then(|c| c.get::<i32>()) {
             for i in 0..n {
                 writeln!(w, "{} {}", ids[i], vals[[i]])?;
             }
@@ -504,7 +508,7 @@ fn write_lammps_molecule_native<P: AsRef<Path>>(path: P, frame: &Frame) -> Resul
         writeln!(w)?;
         let vals = atoms
             .get(col)
-            .and_then(|c| c.as_float())
+            .and_then(|c| c.get::<f64>())
             .ok_or_else(|| invalid_data(col))?;
         for i in 0..n {
             writeln!(w, "{} {:.6}", ids[i], vals[[i]])?;
@@ -530,9 +534,9 @@ fn write_lammps_molecule_native<P: AsRef<Path>>(path: P, frame: &Frame) -> Resul
         writeln!(w, "{}", capitalize(name))?;
         writeln!(w)?;
         let item_ids: Vec<Idx> = if block.contains_key("id") {
-            if let Some(col) = block.get("id").and_then(|c| c.as_uint()) {
+            if let Some(col) = block.get("id").and_then(|c| c.get::<u64>()) {
                 (0..nb).map(|i| col[[i]]).collect()
-            } else if let Some(col) = block.get("id").and_then(|c| c.as_int()) {
+            } else if let Some(col) = block.get("id").and_then(|c| c.get::<i32>()) {
                 (0..nb).map(|i| col[[i]] as Idx).collect()
             } else {
                 return Err(invalid_data("id"));
@@ -546,7 +550,7 @@ fn write_lammps_molecule_native<P: AsRef<Path>>(path: P, frame: &Frame) -> Resul
         for key in member_keys.iter().take(arity) {
             let col = block
                 .get(key)
-                .and_then(|c| c.as_uint())
+                .and_then(|c| c.get::<u64>())
                 .ok_or_else(|| invalid_data(*key))?;
             member_cols.push(col);
         }
@@ -564,7 +568,7 @@ fn write_lammps_molecule_native<P: AsRef<Path>>(path: P, frame: &Frame) -> Resul
         }
         writeln!(w)?;
     }
-    Ok(())
+    w.flush()
 }
 
 fn capitalize(s: &str) -> String {
@@ -577,10 +581,10 @@ fn capitalize(s: &str) -> String {
 
 fn atom_ids(atoms: &Block) -> Vec<Idx> {
     let n = atoms.n_rows().unwrap_or(0);
-    if let Some(col) = atoms.get("id").and_then(|c| c.as_uint()) {
+    if let Some(col) = atoms.get("id").and_then(|c| c.get::<u64>()) {
         return (0..n).map(|i| col[[i]]).collect();
     }
-    if let Some(col) = atoms.get("id").and_then(|c| c.as_int()) {
+    if let Some(col) = atoms.get("id").and_then(|c| c.get::<i32>()) {
         return (0..n).map(|i| col[[i]] as Idx).collect();
     }
     (1..=n as Idx).collect()
@@ -588,13 +592,13 @@ fn atom_ids(atoms: &Block) -> Vec<Idx> {
 
 fn type_ids_for_block(block: &Block) -> Result<Vec<I>> {
     let n = block.n_rows().ok_or_else(|| invalid_data("empty block"))?;
-    if let Some(col) = block.get("type_id").and_then(|c| c.as_int()) {
+    if let Some(col) = block.get("type_id").and_then(|c| c.get::<i32>()) {
         return Ok((0..n).map(|i| col[[i]]).collect());
     }
-    if let Some(col) = block.get("type_id").and_then(|c| c.as_uint()) {
+    if let Some(col) = block.get("type_id").and_then(|c| c.get::<u64>()) {
         return Ok((0..n).map(|i| col[[i]] as I).collect());
     }
-    if let Some(col) = block.get("type").and_then(|c| c.as_string()) {
+    if let Some(col) = block.get("type").and_then(|c| c.get::<String>()) {
         let labels: Vec<String> = (0..n).map(|i| col[[i]].clone()).collect();
         let mut uniq = labels.clone();
         uniq.sort();
@@ -612,7 +616,7 @@ fn type_ids_for_block(block: &Block) -> Result<Vec<I>> {
             .collect();
         return Ok(labels.iter().map(|s| map[s.as_str()]).collect());
     }
-    if let Some(col) = block.get("type").and_then(|c| c.as_int()) {
+    if let Some(col) = block.get("type").and_then(|c| c.get::<i32>()) {
         return Ok((0..n).map(|i| col[[i]]).collect());
     }
     Err(invalid_data("block has no type / type_id"))
@@ -620,8 +624,8 @@ fn type_ids_for_block(block: &Block) -> Result<Vec<I>> {
 
 // ── JSON ────────────────────────────────────────────────────────────────────
 
-fn read_json(path: &Path) -> Result<Frame> {
-    let text = std::fs::read_to_string(path)?;
+fn read_json(src: Source<'_>) -> Result<Frame> {
+    let text = src.text()?;
     let data: JsonValue = serde_json::from_str(&text).map_err(invalid_data)?;
     if data.get("format").and_then(|v| v.as_str()) != Some("molecule") {
         return Err(invalid_data("JSON file must have format='molecule'"));
@@ -629,7 +633,9 @@ fn read_json(path: &Path) -> Result<Frame> {
     let mut frame = Frame::new();
     frame.meta.insert("format", "lammps_molecule");
     frame.meta.insert("source_format", "json");
-    frame.meta.insert("source_file", path.display().to_string());
+    if let Some(path) = src.path() {
+        frame.meta.insert("source_file", path.display().to_string());
+    }
     frame.meta.insert(
         "title",
         data.get("title").and_then(|v| v.as_str()).unwrap_or(""),
@@ -806,7 +812,7 @@ fn read_json(path: &Path) -> Result<Frame> {
     Ok(frame)
 }
 
-fn write_json<P: AsRef<Path>>(path: P, frame: &Frame) -> Result<()> {
+fn write_json(sink: Sink<'_>, frame: &Frame) -> Result<()> {
     let atoms = frame
         .get("atoms")
         .ok_or_else(|| invalid_data("Frame must contain atoms data"))?;
@@ -814,15 +820,15 @@ fn write_json<P: AsRef<Path>>(path: P, frame: &Frame) -> Result<()> {
         .n_rows()
         .ok_or_else(|| invalid_data("Frame must contain atoms data"))?;
     let ids = atom_ids(atoms);
-    let type_labels: Vec<String> = if let Some(col) = atoms.get("type").and_then(|c| c.as_string())
-    {
-        (0..n).map(|i| col[[i]].clone()).collect()
-    } else {
-        type_ids_for_block(atoms)?
-            .into_iter()
-            .map(|v| v.to_string())
-            .collect()
-    };
+    let type_labels: Vec<String> =
+        if let Some(col) = atoms.get("type").and_then(|c| c.get::<String>()) {
+            (0..n).map(|i| col[[i]].clone()).collect()
+        } else {
+            type_ids_for_block(atoms)?
+                .into_iter()
+                .map(|v| v.to_string())
+                .collect()
+        };
     let types_data: Vec<JsonValue> = (0..n)
         .map(|i| {
             if let Ok(t) = type_labels[i].parse::<i64>() {
@@ -862,33 +868,33 @@ fn write_json<P: AsRef<Path>>(path: P, frame: &Frame) -> Result<()> {
     if atoms.contains_key("x") && atoms.contains_key("y") && atoms.contains_key("z") {
         let x = atoms
             .get("x")
-            .and_then(|c| c.as_float())
+            .and_then(|c| c.get::<f64>())
             .ok_or_else(|| invalid_data("x"))?;
         let y = atoms
             .get("y")
-            .and_then(|c| c.as_float())
+            .and_then(|c| c.get::<f64>())
             .ok_or_else(|| invalid_data("y"))?;
         let z = atoms
             .get("z")
-            .and_then(|c| c.as_float())
+            .and_then(|c| c.get::<f64>())
             .ok_or_else(|| invalid_data("z"))?;
         let coords: Vec<JsonValue> = (0..n)
             .map(|i| json!([ids[i], x[[i]], y[[i]], z[[i]]]))
             .collect();
         data["coords"] = json!({ "format": ["atom-id", "x", "y", "z"], "data": coords });
     }
-    if let Some(c) = atoms.get("charge").and_then(|c| c.as_float()) {
+    if let Some(c) = atoms.get("charge").and_then(|c| c.get::<f64>()) {
         let rows: Vec<JsonValue> = (0..n).map(|i| json!([ids[i], c[[i]]])).collect();
         data["charges"] = json!({ "format": ["atom-id", "charge"], "data": rows });
     }
-    if let Some(m) = atoms.get("mass").and_then(|c| c.as_float()) {
+    if let Some(m) = atoms.get("mass").and_then(|c| c.get::<f64>()) {
         let rows: Vec<JsonValue> = (0..n).map(|i| json!([ids[i], m[[i]]])).collect();
         data["masses"] = json!({ "format": ["atom-id", "mass"], "data": rows });
     }
-    if let Some(m) = atoms.get("mol_id").and_then(|c| c.as_uint()) {
+    if let Some(m) = atoms.get("mol_id").and_then(|c| c.get::<u64>()) {
         let rows: Vec<JsonValue> = (0..n).map(|i| json!([ids[i], m[[i]]])).collect();
         data["molecule"] = json!({ "format": ["atom-id", "molecule-id"], "data": rows });
-    } else if let Some(m) = atoms.get("mol_id").and_then(|c| c.as_int()) {
+    } else if let Some(m) = atoms.get("mol_id").and_then(|c| c.get::<i32>()) {
         let rows: Vec<JsonValue> = (0..n).map(|i| json!([ids[i], m[[i]]])).collect();
         data["molecule"] = json!({ "format": ["atom-id", "molecule-id"], "data": rows });
     }
@@ -915,7 +921,7 @@ fn write_json<P: AsRef<Path>>(path: P, frame: &Frame) -> Result<()> {
             members.push(
                 block
                     .get(key)
-                    .and_then(|c| c.as_uint())
+                    .and_then(|c| c.get::<u64>())
                     .ok_or_else(|| invalid_data(*key))?,
             );
         }
@@ -944,9 +950,9 @@ fn write_json<P: AsRef<Path>>(path: P, frame: &Frame) -> Result<()> {
         data["inertia"] = json!(inn.to_vec());
     }
 
-    let file = std::fs::File::create(path)?;
-    serde_json::to_writer_pretty(BufWriter::new(file), &data).map_err(invalid_data)?;
-    Ok(())
+    let mut w = sink.writer()?;
+    serde_json::to_writer_pretty(&mut w, &data).map_err(invalid_data)?;
+    w.flush()
 }
 
 #[cfg(test)]
@@ -998,7 +1004,7 @@ Angles
         assert_eq!(frame.get("angles").unwrap().n_rows(), Some(1));
         let charge = atoms
             .get("charge")
-            .and_then(|c| c.as_float())
+            .and_then(|c| c.get::<f64>())
             .expect("Charges section");
         assert_eq!(
             charge.iter().copied().collect::<Vec<_>>(),
@@ -1022,7 +1028,7 @@ Angles
             .get("atoms")
             .unwrap()
             .get("charge")
-            .and_then(|c| c.as_float())
+            .and_then(|c| c.get::<f64>())
             .unwrap();
         assert_eq!(
             charge.iter().copied().collect::<Vec<_>>(),
@@ -1052,7 +1058,7 @@ Angles
         std::fs::write(&path, WATER).unwrap();
         let mut frame = read_lammps_molecule(&path).unwrap();
         frame.meta.insert(keys::UNITS, MetaValue::I64(3));
-        let err = write_lammps_molecule_json(dir.path().join("water.json"), &frame)
+        let err = write_lammps_molecule_json(dir.path().join("water.json").as_path(), &frame)
             .expect_err("a non-string units meta must be refused");
         assert_eq!(err.kind(), std::io::ErrorKind::InvalidData, "{err}");
         assert!(err.to_string().contains("units"), "{err}");

@@ -104,16 +104,10 @@ pub struct Topology {
 }
 
 impl Topology {
-    /// Create an empty topology with no atoms or bonds.
-    pub fn new() -> Self {
-        Self {
-            n: 0,
-            adj: Vec::new(),
-            edges: Vec::new(),
-        }
-    }
-
-    /// Create a topology with `n` atoms and no bonds.
+    /// Create a topology with `n` atoms (indices `0..n`) and no bonds — the
+    /// one constructor; `with_atoms(0)` is the empty graph. Grow it with
+    /// [`add_atoms`](Self::add_atoms) and connect it with
+    /// [`add_bonds`](Self::add_bonds).
     pub fn with_atoms(n: usize) -> Self {
         Self {
             n,
@@ -168,7 +162,7 @@ impl Topology {
         let endpoint = |column: &'static str| {
             bonds
                 .get(column)
-                .and_then(|c| c.as_uint())
+                .and_then(|c| c.get::<u64>())
                 .ok_or(TopologyError::MissingEndpoint {
                     block: BONDS,
                     column,
@@ -533,27 +527,61 @@ impl Topology {
     // Atom operations
     // -----------------------------------------------------------------------
 
-    /// Add a single atom.
-    pub fn add_atom(&mut self) {
-        self.adj.push(Vec::new());
-        self.n += 1;
-    }
-
-    /// Add `n` atoms.
+    /// Append `n` unbonded atoms, indexed after the existing ones.
     pub fn add_atoms(&mut self, n: usize) {
-        for _ in 0..n {
-            self.add_atom();
+        self.adj.resize_with(self.adj.len() + n, Vec::new);
+        self.n += n;
+    }
+
+    /// Delete atom `idx` and every bond incident to it.
+    ///
+    /// Swap-remove semantics: the last atom moves into slot `idx`, so the
+    /// index of that one atom changes; every other index is kept. To delete
+    /// several atoms at once, use [`del_atoms`](Self::del_atoms) — deleting
+    /// them one by one would make the later indices refer to relabelled atoms.
+    ///
+    /// # Panics
+    ///
+    /// Panics when `idx` is not an atom index (`>= n_atoms()`).
+    pub fn del_atom(&mut self, idx: usize) {
+        assert!(
+            idx < self.n,
+            "Topology::del_atom: atom {idx} out of range (n_atoms = {})",
+            self.n
+        );
+        self.swap_remove_atom(idx);
+    }
+
+    /// Delete every atom of `idxs` (indices of the topology *before* the
+    /// call) and every bond incident to any of them. Duplicates name one atom.
+    ///
+    /// The atoms are swap-removed in descending index order, so each index
+    /// still names the atom it named on entry when its turn comes; the
+    /// surviving atoms that moved are the trailing ones, each into the slot of
+    /// a deleted atom. Nothing is changed when an index is out of range.
+    ///
+    /// # Panics
+    ///
+    /// Panics when any index is not an atom index (`>= n_atoms()`).
+    pub fn del_atoms(&mut self, idxs: &[usize]) {
+        let mut order = idxs.to_vec();
+        order.sort_unstable_by(|a, b| b.cmp(a));
+        order.dedup();
+        if let Some(&max) = order.first() {
+            assert!(
+                max < self.n,
+                "Topology::del_atoms: atom {max} out of range (n_atoms = {})",
+                self.n
+            );
+        }
+        for idx in order {
+            self.swap_remove_atom(idx);
         }
     }
 
-    /// Delete an atom by index.
-    ///
-    /// Note: uses swap-remove semantics — the last node is moved into the
-    /// removed node's slot, so indices of other nodes may change.
-    pub fn delete_atom(&mut self, idx: usize) {
-        if idx >= self.n {
-            return;
-        }
+    /// Remove in-range atom `idx`: drop its bonds, move the last atom into
+    /// its slot.
+    fn swap_remove_atom(&mut self, idx: usize) {
         let last = self.n - 1;
 
         // Remove edges incident to `idx` and drop `idx` from every adj list.
@@ -590,18 +618,14 @@ impl Topology {
     // Bond operations
     // -----------------------------------------------------------------------
 
-    /// Add a bond between atoms `i` and `j` if not already connected.
-    pub fn add_bond(&mut self, i: usize, j: usize) {
-        if !self.are_bonded(i, j) {
-            self.push_bond(i, j);
-        }
-    }
-
-    /// Add every bond of `pairs`, in order, skipping any already present
-    /// (either orientation) — the same rule as [`add_bond`](Self::add_bond),
-    /// in one `O(existing + pairs)` pass instead of a neighbour scan per pair.
-    /// Edge indices follow first occurrence, so a duplicate-free list keeps
-    /// its positions.
+    /// Add every bond `[i, j]` of `pairs`, in order, skipping any already
+    /// present (either orientation) — one `O(existing + pairs)` pass. Edge
+    /// indices follow first occurrence, so a duplicate-free list keeps its
+    /// positions. One bond is `add_bonds(&[[i, j]])`.
+    ///
+    /// # Panics
+    ///
+    /// Panics when an endpoint is not an atom index (`>= n_atoms()`).
     pub fn add_bonds(&mut self, pairs: &[[usize; 2]]) {
         let key = |a: usize, b: usize| (a.min(b), a.max(b));
         let mut present: HashSet<(usize, usize)> =
@@ -620,8 +644,51 @@ impl Topology {
         self.adj[j].push(i);
     }
 
-    /// Delete a bond by edge index.
-    pub fn delete_bond(&mut self, idx: usize) {
+    /// Delete bond `idx` (an index into [`bonds`](Self::bonds)).
+    ///
+    /// Swap-remove semantics: the last bond moves into slot `idx`. To delete
+    /// several bonds at once, use [`del_bonds`](Self::del_bonds).
+    ///
+    /// # Panics
+    ///
+    /// Panics when `idx` is not a bond index (`>= n_bonds()`).
+    pub fn del_bond(&mut self, idx: usize) {
+        assert!(
+            idx < self.edges.len(),
+            "Topology::del_bond: bond {idx} out of range (n_bonds = {})",
+            self.edges.len()
+        );
+        self.swap_remove_bond(idx);
+    }
+
+    /// Delete every bond of `idxs` (indices into [`bonds`](Self::bonds)
+    /// *before* the call). Duplicates name one bond.
+    ///
+    /// The bonds are swap-removed in descending index order, so each index
+    /// still names the bond it named on entry when its turn comes. Nothing is
+    /// changed when an index is out of range.
+    ///
+    /// # Panics
+    ///
+    /// Panics when any index is not a bond index (`>= n_bonds()`).
+    pub fn del_bonds(&mut self, idxs: &[usize]) {
+        let mut order = idxs.to_vec();
+        order.sort_unstable_by(|a, b| b.cmp(a));
+        order.dedup();
+        if let Some(&max) = order.first() {
+            assert!(
+                max < self.edges.len(),
+                "Topology::del_bonds: bond {max} out of range (n_bonds = {})",
+                self.edges.len()
+            );
+        }
+        for idx in order {
+            self.swap_remove_bond(idx);
+        }
+    }
+
+    /// Remove in-range bond `idx`, moving the last bond into its slot.
+    fn swap_remove_bond(&mut self, idx: usize) {
         let [a, b] = self.edges[idx];
         // Remove one instance of the bond from each endpoint's adjacency list.
         if let Some(pos) = self.adj[a].iter().position(|&x| x == b) {
@@ -630,24 +697,7 @@ impl Topology {
         if let Some(pos) = self.adj[b].iter().position(|&x| x == a) {
             self.adj[b].remove(pos);
         }
-        // Swap-remove the edge slot (matching the prior graph backend).
         self.edges.swap_remove(idx);
-    }
-
-    // -----------------------------------------------------------------------
-    // Angle helpers
-    // -----------------------------------------------------------------------
-
-    /// Add an angle by ensuring bonds i-j and j-k exist.
-    pub fn add_angle(&mut self, i: usize, j: usize, k: usize) {
-        self.add_bond(i, j);
-        self.add_bond(j, k);
-    }
-}
-
-impl Default for Topology {
-    fn default() -> Self {
-        Self::new()
     }
 }
 
@@ -715,7 +765,7 @@ mod tests {
 
     #[test]
     fn test_empty_topology() {
-        let topo = Topology::new();
+        let topo = Topology::with_atoms(0);
         assert_eq!(topo.n_atoms(), 0);
         assert_eq!(topo.n_bonds(), 0);
     }
@@ -740,29 +790,36 @@ mod tests {
     }
 
     #[test]
-    fn test_add_atom() {
-        let mut topo = Topology::new();
-        topo.add_atom();
-        assert_eq!(topo.n_atoms(), 1);
+    fn add_atoms_appends_unbonded_atoms_after_the_existing_ones() {
+        let mut topo = bonded(2, &[[0, 1]]);
+        topo.add_atoms(1);
+        assert_eq!(topo.n_atoms(), 3);
         topo.add_atoms(3);
-        assert_eq!(topo.n_atoms(), 4);
+        assert_eq!(topo.n_atoms(), 6);
+        topo.add_atoms(0);
+        assert_eq!(topo.n_atoms(), 6);
+        assert_eq!(topo.n_bonds(), 1);
+        // The new atoms are addressable and bond like the original ones.
+        topo.add_bonds(&[[1, 5]]);
+        assert_eq!(topo.neighbors(5), vec![1]);
+        assert_eq!(topo.degree(2), 0);
     }
 
     #[test]
-    fn test_delete_atom() {
+    fn test_del_atom() {
         let mut topo = Topology::with_atoms(3);
-        topo.delete_atom(1);
+        topo.del_atom(1);
         assert_eq!(topo.n_atoms(), 2);
     }
 
     #[test]
-    fn test_add_bond() {
+    fn add_bonds_adds_a_repeated_bond_once() {
         let mut topo = Topology::with_atoms(3);
-        topo.add_bond(0, 1);
+        topo.add_bonds(&[[0, 1]]);
         assert_eq!(topo.n_bonds(), 1);
 
         // Adding same bond again should not create duplicate
-        topo.add_bond(0, 1);
+        topo.add_bonds(&[[0, 1]]);
         assert_eq!(topo.n_bonds(), 1);
     }
 
@@ -774,12 +831,11 @@ mod tests {
     }
 
     /// A bond listed twice — in either orientation, in one batch or against
-    /// one already present — is one bond, exactly as `add_bond` decides;
-    /// first occurrences keep their order.
+    /// one already present — is one bond; first occurrences keep their order.
     #[test]
-    fn add_bonds_skips_duplicates_like_add_bond() {
+    fn add_bonds_skips_duplicates() {
         let mut topo = Topology::with_atoms(4);
-        topo.add_bond(2, 3);
+        topo.add_bonds(&[[2, 3]]);
         topo.add_bonds(&[[0, 1], [1, 0], [1, 2], [3, 2], [0, 1]]);
         assert_eq!(topo.bonds(), &[[2, 3], [0, 1], [1, 2]]);
         assert_eq!(topo.degree(1), 2);
@@ -787,20 +843,18 @@ mod tests {
     }
 
     #[test]
-    fn test_delete_bond() {
+    fn test_del_bond() {
         let mut topo = Topology::with_atoms(3);
-        topo.add_bond(0, 1);
-        topo.add_bond(1, 2);
+        topo.add_bonds(&[[0, 1], [1, 2]]);
         assert_eq!(topo.n_bonds(), 2);
-        topo.delete_bond(0);
+        topo.del_bond(0);
         assert_eq!(topo.n_bonds(), 1);
     }
 
     #[test]
     fn test_bonds_list() {
         let mut topo = Topology::with_atoms(3);
-        topo.add_bond(0, 1);
-        topo.add_bond(1, 2);
+        topo.add_bonds(&[[0, 1], [1, 2]]);
         let bonds = topo.bonds();
         assert_eq!(bonds.len(), 2);
     }
@@ -809,8 +863,7 @@ mod tests {
     fn test_angles_3atom_chain() {
         // 0 - 1 - 2
         let mut topo = Topology::with_atoms(3);
-        topo.add_bond(0, 1);
-        topo.add_bond(1, 2);
+        topo.add_bonds(&[[0, 1], [1, 2]]);
         assert_eq!(topo.n_angles(), 1);
         let angles = topo.angles();
         assert_eq!(angles.len(), 1);
@@ -832,9 +885,7 @@ mod tests {
     fn test_impropers_star() {
         // Central atom 0 bonded to 1, 2, 3
         let mut topo = Topology::with_atoms(4);
-        topo.add_bond(0, 1);
-        topo.add_bond(0, 2);
-        topo.add_bond(0, 3);
+        topo.add_bonds(&[[0, 1], [0, 2], [0, 3]]);
         let impropers = topo.impropers();
         // One unique improper with center 0
         assert_eq!(impropers.len(), 1);
@@ -842,20 +893,9 @@ mod tests {
     }
 
     #[test]
-    fn test_add_angle_creates_bonds() {
-        let mut topo = Topology::with_atoms(3);
-        topo.add_angle(0, 1, 2);
-        assert_eq!(topo.n_bonds(), 2);
-        assert_eq!(topo.n_angles(), 1);
-    }
-
-    #[test]
     fn test_methane_ch4() {
         let mut topo = Topology::with_atoms(5);
-        topo.add_bond(0, 1);
-        topo.add_bond(0, 2);
-        topo.add_bond(0, 3);
-        topo.add_bond(0, 4);
+        topo.add_bonds(&[[0, 1], [0, 2], [0, 3], [0, 4]]);
 
         assert_eq!(topo.n_atoms(), 5);
         assert_eq!(topo.n_bonds(), 4);
@@ -893,13 +933,7 @@ mod tests {
     #[test]
     fn test_ethane_c2h6() {
         let mut topo = Topology::with_atoms(8);
-        topo.add_bond(0, 1);
-        topo.add_bond(0, 2);
-        topo.add_bond(0, 3);
-        topo.add_bond(0, 4);
-        topo.add_bond(1, 5);
-        topo.add_bond(1, 6);
-        topo.add_bond(1, 7);
+        topo.add_bonds(&[[0, 1], [0, 2], [0, 3], [0, 4], [1, 5], [1, 6], [1, 7]]);
 
         assert_eq!(topo.n_atoms(), 8);
         assert_eq!(topo.n_bonds(), 7);
@@ -974,16 +1008,11 @@ mod tests {
     #[test]
     fn test_empty_graph_enumerations() {
         // Empty graph: no angles/dihedrals/impropers, no panic.
-        let topo = Topology::new();
+        let topo = Topology::with_atoms(0);
         assert!(topo.angles().is_empty());
         assert!(topo.dihedrals().is_empty());
         assert!(topo.impropers().is_empty());
         assert_eq!(topo.n_components(), 0);
-        // with_atoms(0) is equivalent to new() for enumeration.
-        let topo0 = Topology::with_atoms(0);
-        assert!(topo0.angles().is_empty());
-        assert!(topo0.dihedrals().is_empty());
-        assert!(topo0.impropers().is_empty());
     }
 
     #[test]
@@ -1015,10 +1044,10 @@ mod tests {
     }
 
     #[test]
-    fn test_delete_atom_swap_remove_relabels() {
+    fn test_del_atom_swap_remove_relabels() {
         // 0-1-2-3 chain; deleting atom 1 swaps node 3 into slot 1.
         let mut topo = bonded(4, &[[0, 1], [1, 2], [2, 3]]);
-        topo.delete_atom(1);
+        topo.del_atom(1);
         assert_eq!(topo.n_atoms(), 3);
         // Edge [0,1] and [1,2] are removed; edge [2,3] survives but relabeled
         // (old node 3 -> slot 1). So node 2 and new node 1 stay bonded.
@@ -1027,15 +1056,64 @@ mod tests {
     }
 
     #[test]
-    fn test_delete_bond_swap_remove() {
+    fn test_del_bond_swap_remove() {
         let mut topo = Topology::with_atoms(4);
         topo.add_bonds(&[[0, 1], [1, 2], [2, 3]]);
         assert_eq!(topo.n_bonds(), 3);
-        topo.delete_bond(0); // remove edge [0,1]; [2,3] swaps into slot 0
+        topo.del_bond(0); // remove edge [0,1]; [2,3] swaps into slot 0
         assert_eq!(topo.n_bonds(), 2);
         assert!(!topo.are_bonded(0, 1));
         assert!(topo.are_bonded(1, 2));
         assert!(topo.are_bonded(2, 3));
+    }
+
+    /// The batch deletes exactly the atoms named on entry, whatever order
+    /// they are listed in — one-by-one `del_atom` would not (its swap moves
+    /// a later-listed atom).
+    #[test]
+    fn del_atoms_removes_the_atoms_named_on_entry() {
+        let mut topo = bonded(5, &[[0, 1], [1, 2], [2, 3], [3, 4]]);
+        topo.del_atoms(&[1, 4, 1]);
+        // Survivors: old 0, 2, 3 → only bond 2-3 survives.
+        assert_eq!(topo.n_atoms(), 3);
+        assert_eq!(topo.n_bonds(), 1);
+        // Descending swap-remove: delete 4 (last, no move), then 1 (old 3
+        // moves into slot 1). So old 2 is slot 2, old 3 is slot 1.
+        assert!(topo.are_bonded(1, 2));
+        assert_eq!(topo.degree(0), 0);
+    }
+
+    #[test]
+    #[should_panic(expected = "out of range")]
+    fn del_atoms_refuses_an_out_of_range_index() {
+        let mut topo = Topology::with_atoms(3);
+        topo.del_atoms(&[0, 3]);
+    }
+
+    #[test]
+    #[should_panic(expected = "out of range")]
+    fn del_atom_refuses_an_out_of_range_index() {
+        let mut topo = Topology::with_atoms(3);
+        topo.del_atom(3);
+    }
+
+    #[test]
+    fn del_bonds_removes_the_bonds_named_on_entry() {
+        let mut topo = Topology::with_atoms(4);
+        topo.add_bonds(&[[0, 1], [1, 2], [2, 3]]);
+        topo.del_bonds(&[2, 0]);
+        assert_eq!(topo.bonds(), vec![[1, 2]]);
+        assert_eq!(topo.neighbors(1), vec![2]);
+        assert_eq!(topo.degree(0), 0);
+        assert_eq!(topo.degree(3), 0);
+    }
+
+    #[test]
+    #[should_panic(expected = "out of range")]
+    fn del_bonds_refuses_an_out_of_range_index() {
+        let mut topo = Topology::with_atoms(3);
+        topo.add_bonds(&[[0, 1]]);
+        topo.del_bonds(&[1]);
     }
 
     use crate::core::BondDistanceWeights;
@@ -1049,6 +1127,7 @@ mod tests {
             .insert(
                 "id",
                 Array1::from_vec((0u64..n as u64).collect::<Vec<_>>()).into_dyn(),
+                None,
             )
             .unwrap();
         atoms
@@ -1060,12 +1139,14 @@ mod tests {
             .insert(
                 "atomi",
                 Array1::from_vec(pairs.iter().map(|p| p[0]).collect()).into_dyn(),
+                None,
             )
             .unwrap();
         bonds
             .insert(
                 "atomj",
                 Array1::from_vec(pairs.iter().map(|p| p[1]).collect()).into_dyn(),
+                None,
             )
             .unwrap();
         bonds
@@ -1203,10 +1284,10 @@ mod tests {
     fn from_frame_bonds_with_i_j_columns_is_validation() {
         let mut bonds = Block::new();
         bonds
-            .insert("i", Array1::from_vec(vec![0u64]).into_dyn())
+            .insert("i", Array1::from_vec(vec![0u64]).into_dyn(), None)
             .unwrap();
         bonds
-            .insert("j", Array1::from_vec(vec![1u64]).into_dyn())
+            .insert("j", Array1::from_vec(vec![1u64]).into_dyn(), None)
             .unwrap();
         assert_eq!(
             Topology::from_frame(&frame_from_parts(atoms_id_only(2), Some(bonds))).unwrap_err(),

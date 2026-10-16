@@ -19,18 +19,21 @@
 use std::collections::HashMap;
 
 use crate::core::Atomistic;
+use crate::core::Element;
 use crate::core::NodeId;
-use crate::core::PropValue;
+use crate::line_notation::atom_keys;
 use crate::perceive::{RingSet, perceive_rings};
 
 /// The molecule a pattern is matched against, with the facts every
 /// primitive evaluation reads, precomputed once and read-only.
 ///
-/// Holds ring info and the per-atom / per-bond aromatic perception. The
-/// project convention (documented in `CLAUDE.md`) is that aromatic atoms are
-/// those in a ring whose bonds carry order `1.5`; loaders that already know
-/// the truth (e.g. transplanted from RDKit) may instead set an `is_aromatic`
-/// atom prop, which takes precedence when present.
+/// Holds ring info, each atom's atomic number and the per-atom aromatic
+/// marker. An atom is aromatic when it carries the `is_aromatic` marker —
+/// written by the SMILES reader, by aromaticity perception, or by a loader
+/// that already knows the truth (e.g. transplanted from RDKit). The species
+/// is read once, from [`keys::ATOMIC_NUMBER`](crate::core::keys::ATOMIC_NUMBER),
+/// so an element primitive compares atomic numbers and never re-reads a
+/// symbol.
 ///
 /// It optionally carries an **external label map** (`atom → label`) consumed by
 /// the [`AtomPredicate::HasContextLabel`] predicate. This is a general,
@@ -38,10 +41,12 @@ use crate::perceive::{RingSet, perceive_rings};
 /// "current assignment" map and a `%LABEL` token matches an atom iff that map
 /// assigns it the exact label. [`SmartsTarget::new`] leaves the map empty, so the
 /// default label-free [`SmartsPattern::find`](super::SmartsPattern::find) path
-/// behaves exactly as before.
+/// behaves exactly as before; [`SmartsTarget::with_labels`] supplies one.
 pub struct SmartsTarget<'m> {
     pub mol: &'m Atomistic,
     pub rings: RingSet,
+    /// atom → atomic number (read once, up front; `0` is the wildcard atom).
+    atomic_number: HashMap<NodeId, u8>,
     /// atom → is-aromatic (perceived once, up front).
     aromatic_atom: HashMap<NodeId, bool>,
     /// atom → total H count (explicit H neighbours; see module note).
@@ -62,42 +67,40 @@ static EMPTY_LABELS: std::sync::LazyLock<HashMap<NodeId, String>> =
 
 impl<'m> SmartsTarget<'m> {
     /// Build the match target for `mol` (runs ring perception once), with **no**
-    /// external label map — `%LABEL` predicates never match. This is the
-    /// default label-free path used by [`SmartsPattern::find`](super::SmartsPattern::find).
+    /// external label map — `%LABEL` predicates never match until
+    /// [`with_labels`](Self::with_labels) supplies one. This is the default
+    /// label-free path used by [`SmartsPattern::find`](super::SmartsPattern::find).
     pub fn new(mol: &'m Atomistic) -> Self {
-        Self::with_labels(mol, &EMPTY_LABELS)
-    }
-
-    /// Build the match target for `mol` with an external label map for `%LABEL`
-    /// context predicates. `labels[atom] == "L"` makes `[...;%L]` match `atom`.
-    pub fn with_labels(mol: &'m Atomistic, labels: &'m HashMap<NodeId, String>) -> Self {
         let rings = perceive_rings(mol);
+        let mut atomic_number = HashMap::new();
         let mut aromatic_atom = HashMap::new();
         let mut h_count = HashMap::new();
         let mut degree = HashMap::new();
 
         for (id, atom) in mol.atoms() {
+            // Every atom of an `Atomistic` carries a valid atomic number (its
+            // invariant), so the map is total.
+            if let Some(z) = atom.atomic_number() {
+                atomic_number.insert(id, z);
+            }
+
             // §11.1: an aromatic atom expression reads `is_aromatic` and
             // nothing else. There is no numeric fallback — inferring atom
             // aromaticity from a bond value is how `1.5` became a second,
             // silent source of truth.
-            let arom = matches!(atom.get("is_aromatic"), Some(PropValue::Int(v)) if *v != 0)
-                || matches!(atom.get("is_aromatic"), Some(PropValue::F64(v)) if *v != 0.0);
-            aromatic_atom.insert(id, arom);
-
-            // Total H count = number of bonded neighbour atoms whose element
-            // is "H" (bonds only: a port is not a bond).
-            let h = mol
-                .neighbor_bonds(id)
-                .map(|(nb, _)| nb)
-                .filter(|&nb| {
-                    mol.get_atom(nb)
-                        .is_ok_and(|a| a.get_str("element").is_some_and(element_is_hydrogen))
-                })
-                .count() as u32;
-            h_count.insert(id, h);
+            aromatic_atom.insert(id, atom_keys::is_aromatic(&atom));
 
             degree.insert(id, mol.neighbor_bonds(id).count() as u32);
+        }
+
+        // Total H count = number of bonded neighbour atoms that are hydrogen,
+        // Z = 1 (bonds only: a port is not a bond).
+        for (id, _) in mol.atoms() {
+            let h = mol
+                .neighbor_bonds(id)
+                .filter(|(nb, _)| atomic_number.get(nb) == Some(&Element::H.z()))
+                .count() as u32;
+            h_count.insert(id, h);
         }
 
         // Ring-bond connectivity (`x<n>`): for each ring bond, both endpoints
@@ -116,12 +119,25 @@ impl<'m> SmartsTarget<'m> {
         Self {
             mol,
             rings,
+            atomic_number,
             aromatic_atom,
             h_count,
             degree,
             ring_bond_count,
-            labels,
+            labels: &EMPTY_LABELS,
         }
+    }
+
+    /// Use `labels` as the external label map for `%LABEL` context
+    /// predicates: `labels[atom] == "L"` makes `[...;%L]` match `atom`.
+    pub fn with_labels(mut self, labels: &'m HashMap<NodeId, String>) -> Self {
+        self.labels = labels;
+        self
+    }
+
+    /// Whether atom `id` has atomic number `z`.
+    fn has_atomic_number(&self, id: NodeId, z: u8) -> bool {
+        self.atomic_number.get(&id) == Some(&z)
     }
 
     fn is_aromatic(&self, id: NodeId) -> bool {
@@ -144,18 +160,6 @@ impl<'m> SmartsTarget<'m> {
     fn ring_bond_count(&self, id: NodeId) -> u32 {
         self.ring_bond_count.get(&id).copied().unwrap_or(0)
     }
-}
-
-fn element_is_hydrogen(sym: &str) -> bool {
-    sym.eq_ignore_ascii_case("h")
-}
-
-/// Read an atom's element symbol, defaulting to `""` when absent.
-fn atom_symbol(mol: &Atomistic, id: NodeId) -> String {
-    mol.get_atom(id)
-        .ok()
-        .and_then(|a| a.get_str("element").map(str::to_owned))
-        .unwrap_or_default()
 }
 
 // ---------------------------------------------------------------------------
@@ -225,12 +229,12 @@ impl AtomPredicate {
             AtomPredicate::AnyAromatic => ctx.is_aromatic(id),
             AtomPredicate::AnyAliphatic => !ctx.is_aromatic(id),
             AtomPredicate::AliphaticElement(z) => {
-                !ctx.is_aromatic(id) && symbol_matches_z(&atom_symbol(mol, id), *z)
+                !ctx.is_aromatic(id) && ctx.has_atomic_number(id, *z)
             }
             AtomPredicate::AromaticElement(z) => {
-                ctx.is_aromatic(id) && symbol_matches_z(&atom_symbol(mol, id), *z)
+                ctx.is_aromatic(id) && ctx.has_atomic_number(id, *z)
             }
-            AtomPredicate::AtomicNum(z) => symbol_matches_z(&atom_symbol(mol, id), *z),
+            AtomPredicate::AtomicNum(z) => ctx.has_atomic_number(id, *z),
             AtomPredicate::TotalH(n) => ctx.h_count(id) == *n,
             AtomPredicate::TotalConnections(n) => ctx.degree(id) == *n,
             AtomPredicate::Degree(n) => ctx.degree(id) == *n,
@@ -259,11 +263,6 @@ impl AtomPredicate {
             AtomPredicate::HasContextLabel(label) => ctx.has_label(id, label),
         }
     }
-}
-
-/// Whether the element symbol corresponds to atomic number `z`.
-fn symbol_matches_z(sym: &str, z: u8) -> bool {
-    molrs::core::Element::by_symbol(sym).map(|e| e.z()) == Some(z)
 }
 
 // ---------------------------------------------------------------------------

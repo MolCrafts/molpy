@@ -3,9 +3,9 @@
 #![allow(clippy::needless_range_loop)]
 
 use super::{Backend, PairVisitor};
-use crate::core::SimBox;
 use crate::core::bvh::Bvh;
-use crate::op::{F, Fnx3, Fnx3View};
+use crate::core::{Points, SimBox};
+use crate::op::{F, Fnx3};
 
 /// AABB-tree k-nearest-neighbor query.
 ///
@@ -46,7 +46,7 @@ use crate::op::{F, Fnx3, Fnx3View};
 /// query point we enumerate the lattice-image shifts that could bring a tree
 /// point within reach of the query, run one (non-periodic) descent per shift,
 /// then pin every hit's displacement to the canonical minimum-image vector
-/// returned by [`SimBox::shortest_vector_impl`].
+/// returned by [`Mic::apply`](crate::core::Mic::apply).
 ///
 /// Both the indexed points and the query are folded into the primary cell
 /// first ([`SimBox::wrap`]), because the image-shift range below is derived
@@ -216,10 +216,7 @@ impl AabbQuery {
         // Fold the query into the cell for the same reason `build` folds the
         // points: the shift range is derived from the cell, so both endpoints
         // must live there. MIC distances are unaffected.
-        let query = {
-            let q = bx.wrap(ndarray::arr2(&[query]).view());
-            [q[[0, 0]], q[[0, 1]], q[[0, 2]]]
-        };
+        let query = bx.wrap_row(query);
         // A k-nearest question carries no cutoff, so the reach is the cell's
         // circumradius — an upper bound on any minimum-image separation.
         let shifts = Self::enumerate_shifts(bx, Self::circumradius(bx));
@@ -250,7 +247,7 @@ impl AabbQuery {
                     pts[[j as usize, 1]],
                     pts[[j as usize, 2]],
                 ];
-                let dr = bx.shortest_vector_impl(query, r_j);
+                let dr = bx.mic().apply(crate::op::vec3::sub(r_j, query));
                 let d2 = dr[0] * dr[0] + dr[1] * dr[1] + dr[2] * dr[2];
                 found.push((j, d2));
             }
@@ -276,7 +273,12 @@ impl AabbQuery {
     ///
     /// # Panics
     /// Panics if the cutoff is not positive.
-    pub fn build(&mut self, points: Fnx3View<'_>, bx: &SimBox) {
+    pub fn build<'a>(&mut self, points: impl Into<Points<'a>>, bx: &SimBox) {
+        self.index(super::checked(points.into()), bx);
+    }
+
+    /// [`build`](Self::build) on points already checked to be `N × 3`.
+    fn index(&mut self, points: Points<'_>, bx: &SimBox) {
         assert!(self.cutoff > 0.0, "cutoff must be positive");
         // Fold into the primary cell first. The image-shift range is bounded by
         // the cell's own geometry, so it can only reach the images of a point
@@ -285,7 +287,10 @@ impl AabbQuery {
         // answer depends on: the minimum-image separation is invariant under
         // shifting either endpoint by a lattice vector, so indices and MIC
         // distances are unchanged. Non-periodic axes are left alone by `wrap`.
-        let wrapped = bx.wrap(points);
+        let (wrapped, _) = match points {
+            Points::Rows(rows) => bx.wrap(rows),
+            Points::Columns(_) => bx.wrap(points.to_rows().view()),
+        };
         // One box per point: a BVH over degenerate boxes is the point tree,
         // and it is the same tree the mesh and sphere-union regions descend.
         let boxes: Vec<([F; 3], [F; 3])> = (0..wrapped.nrows())
@@ -305,12 +310,12 @@ impl Backend for AabbQuery {
         self.cutoff
     }
 
-    fn build_index(&mut self, points: Fnx3View<'_>, bx: &SimBox) {
-        self.build(points, bx);
+    fn build_index(&mut self, points: Points<'_>, bx: &SimBox) {
+        self.index(points, bx);
     }
 
-    fn update_index(&mut self, points: Fnx3View<'_>, bx: &SimBox) {
-        self.build(points, bx);
+    fn update_index(&mut self, points: Points<'_>, bx: &SimBox) {
+        self.index(points, bx);
     }
 
     /// Half-shell cutoff traversal over the tree.
@@ -372,7 +377,7 @@ impl Backend for AabbQuery {
                     pts[[j as usize, 1]],
                     pts[[j as usize, 2]],
                 ];
-                let dr = bx.shortest_vector_impl(pi, pj);
+                let dr = bx.mic().apply(crate::op::vec3::sub(pj, pi));
                 let d2 = dr[0] * dr[0] + dr[1] * dr[1] + dr[2] * dr[2];
                 if d2 <= cutoff2 {
                     visitor.visit_pair(i as u32, j, d2, dr);
@@ -385,10 +390,11 @@ impl Backend for AabbQuery {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::Cell;
     use ndarray::array;
 
     fn cube_bx(l: F, pbc: [bool; 3]) -> SimBox {
-        SimBox::cube(l, array![0.0_f64, 0.0, 0.0], pbc).unwrap()
+        SimBox::new(Cell::Lengths([l; 3]), [0.0_f64, 0.0, 0.0], pbc).unwrap()
     }
 
     /// A strongly tilted cell whose three lattice vectors are all exactly
@@ -400,8 +406,8 @@ mod tests {
     /// the lengths instead of the spacings therefore divides by 10 where it
     /// should divide by 8 — the under-count this cell exists to catch.
     fn tilted_bx() -> SimBox {
-        let h = array![[10.0_f64, 6.0, 0.0], [0.0, 8.0, 0.0], [0.0, 0.0, 10.0]];
-        SimBox::new(h, array![0.0_f64, 0.0, 0.0], [true; 3]).unwrap()
+        let h = [[10.0_f64, 6.0, 0.0], [0.0, 8.0, 0.0], [0.0, 0.0, 10.0]];
+        SimBox::new(Cell::Matrix(h), [0.0_f64, 0.0, 0.0], [true; 3]).unwrap()
     }
 
     /// The image range comes from the plane spacings, not the lattice-vector
@@ -510,7 +516,7 @@ mod tests {
             let mut want: Vec<(u32, F)> = (0..pts.nrows())
                 .map(|j| {
                     let r_j = [pts[[j, 0]], pts[[j, 1]], pts[[j, 2]]];
-                    let dr = bx.shortest_vector_impl(query, r_j);
+                    let dr = bx.mic().apply(crate::op::vec3::sub(r_j, query));
                     (j as u32, dr[0] * dr[0] + dr[1] * dr[1] + dr[2] * dr[2])
                 })
                 .collect();
@@ -613,7 +619,7 @@ mod tests {
                         pts[[*j as usize, 1]],
                         pts[[*j as usize, 2]],
                     ];
-                    let mic = bx.shortest_vector_impl(pi, pj);
+                    let mic = bx.mic().apply(crate::op::vec3::sub(pj, pi));
                     let mic2 = mic[0] * mic[0] + mic[1] * mic[1] + mic[2] * mic[2];
                     assert!((d2[row] - mic2).abs() < 1e-12, "{label}: dist2 row {row}");
                     for c in 0..3 {
@@ -753,7 +759,7 @@ mod tests {
         let mut bf: Vec<(u32, F)> = (0..n)
             .map(|j| {
                 let r_j = [pts[[j, 0]], pts[[j, 1]], pts[[j, 2]]];
-                let dr = bx.shortest_vector_impl(q, r_j);
+                let dr = bx.mic().apply(crate::op::vec3::sub(r_j, q));
                 let d2 = dr[0] * dr[0] + dr[1] * dr[1] + dr[2] * dr[2];
                 (j as u32, d2)
             })

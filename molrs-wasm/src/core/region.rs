@@ -37,7 +37,7 @@ use ndarray::Array2;
 use wasm_bindgen::prelude::*;
 
 use crate::core::mesh::TriMesh;
-use crate::core::simbox::Box as WasmBox;
+use crate::core::simbox::{Box as WasmBox, Cell};
 
 /// Reshape a flat `[x0, y0, z0, x1, …]` array into the `N × 3` the core takes.
 fn points_from_flat(points: &[F]) -> Result<Fnx3, JsValue> {
@@ -181,7 +181,9 @@ impl Cuboid {
 
 region_surface!(Cuboid);
 
-/// Cell spanned by three edge vectors, given as a flat row-major 3×3 `h`.
+/// The solid a [`Cell`] spans from `origin` — `Parallelepiped::new(cell,
+/// origin)`. One constructor: a cube is `Cell.lengths([a, a, a])`, an
+/// orthorhombic cell `Cell.lengths([a, b, c])`, any other `Cell.matrix(h)`.
 #[wasm_bindgen]
 pub struct Parallelepiped {
     inner: RegionRef,
@@ -189,35 +191,15 @@ pub struct Parallelepiped {
 
 #[wasm_bindgen]
 impl Parallelepiped {
-    pub fn create(h: &[F], origin: &[F]) -> Result<Parallelepiped, JsValue> {
-        if h.len() != 9 {
-            return Err(JsValue::from_str("h must be 9 values, row-major 3x3"));
-        }
+    /// `origin` is `[x, y, z]` (Å).
+    ///
+    /// # Errors
+    ///
+    /// Throws if `origin` is not 3 values, or the cell spans no volume
+    /// (`Cell.undefined()`, a singular matrix, a non-positive edge).
+    pub fn create(cell: &Cell, origin: &[F]) -> Result<Parallelepiped, JsValue> {
         let o = triple("origin", origin)?;
-        let matrix = Array2::from_shape_vec((3, 3), h.to_vec())
-            .map_err(|e| JsValue::from_str(&format!("h: {e}")))?;
-        RsParallelepiped::new(matrix, F3::from_vec(o.to_vec()))
-            .map(|r| Parallelepiped {
-                inner: RegionRef::new(Arc::new(r)),
-            })
-            .map_err(|e| JsValue::from_str(&e))
-    }
-
-    /// Orthorhombic cell with the given edge `lengths`.
-    pub fn ortho(lengths: &[F], origin: &[F]) -> Result<Parallelepiped, JsValue> {
-        let l = triple("lengths", lengths)?;
-        let o = triple("origin", origin)?;
-        RsParallelepiped::ortho(F3::from_vec(l.to_vec()), F3::from_vec(o.to_vec()))
-            .map(|r| Parallelepiped {
-                inner: RegionRef::new(Arc::new(r)),
-            })
-            .map_err(|e| JsValue::from_str(&e))
-    }
-
-    /// Cube of edge `a`.
-    pub fn cube(a: F, origin: &[F]) -> Result<Parallelepiped, JsValue> {
-        let o = triple("origin", origin)?;
-        RsParallelepiped::cube(a, F3::from_vec(o.to_vec()))
+        RsParallelepiped::new(cell.inner, F3::from_vec(o.to_vec()))
             .map(|r| Parallelepiped {
                 inner: RegionRef::new(Arc::new(r)),
             })
@@ -291,7 +273,7 @@ impl Ellipsoid {
 
 region_surface!(Ellipsoid);
 
-/// Solid bounded by a watertight triangle mesh — what `readStlBytes` reads.
+/// Solid bounded by a watertight triangle mesh — what `readStl` reads.
 #[wasm_bindgen]
 pub struct Polyhedron {
     inner: RegionRef,
@@ -420,7 +402,7 @@ mod tests {
             Cuboid::create(&[0.0, 0.0, 0.0], &[1.0, 1.0, 1.0])
                 .unwrap()
                 .as_region(),
-            Parallelepiped::cube(2.0, &[0.0, 0.0, 0.0])
+            Parallelepiped::create(&Cell::lengths(&[2.0; 3]).unwrap(), &[0.0, 0.0, 0.0])
                 .unwrap()
                 .as_region(),
             HalfSpace::create(&[0.0, 0.0, 1.0], &[0.0, 0.0, 0.0])
@@ -441,12 +423,10 @@ mod tests {
 
     #[wasm_bindgen_test]
     fn sphere_union_counts_its_spheres() {
-        let bx = WasmBox::cube(
-            10.0,
-            &js_sys::Float64Array::from(&[0.0, 0.0, 0.0][..]),
-            true,
-            true,
-            true,
+        let bx = WasmBox::new(
+            &Cell::lengths(&[10.0; 3]).unwrap(),
+            &[0.0; 3],
+            &crate::core::simbox::tests::pbc([true; 3]),
         )
         .unwrap();
         let union = SphereUnion::create(

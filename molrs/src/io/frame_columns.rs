@@ -16,7 +16,7 @@ pub(crate) fn insert_column<T: BlockDtype>(
     values: Vec<T>,
 ) -> std::io::Result<()> {
     block
-        .insert(key, Array1::from_vec(values).into_dyn())
+        .insert(key, Array1::from_vec(values).into_dyn(), None)
         .map_err(invalid_data)
 }
 
@@ -30,5 +30,5 @@ pub(crate) fn insert_column_of_length<T: BlockDtype>(
     n_rows: usize,
 ) -> std::io::Result<()> {
     let column = ArrayD::from_shape_vec(IxDyn(&[n_rows]), values).map_err(invalid_data)?;
-    block.insert(key, column).map_err(invalid_data)
+    block.insert(key, column, None).map_err(invalid_data)
 }

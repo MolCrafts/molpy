@@ -1,9 +1,12 @@
 //! Data type enumeration and trait for Block columns.
 
-use ndarray::ArrayD;
+use std::sync::Arc;
+
+use ndarray::ArrayViewD;
 use num_complex::Complex;
 
-use super::column::Column;
+use super::column::{Column, ColumnArray};
+use super::column_view::ColumnView;
 use crate::op::{F, I, Idx};
 
 /// Supported data types for Block columns.
@@ -126,56 +129,88 @@ impl std::fmt::Display for DType {
     }
 }
 
-/// Trait for types that can be stored in a Block column.
+/// Element types a Block column can hold.
 ///
-/// This trait provides the mechanism for generic dispatch when inserting
-/// arrays into a Block. Users don't need to interact with this trait directly.
-pub trait BlockDtype: Sized + 'static {
-    /// Returns the DType for this type.
+/// One implementation per [`DType`] variant: [`F`], `i8`, `i16`, [`I`],
+/// `i64`, `bool`, [`Idx`], `u8`, `u16`, `u32`, `String`, `Complex<f32>`,
+/// `Complex<f64>`. It is what makes the typed column surface generic —
+/// [`Column::from`] an `ArrayD<T>`, [`Column::get::<T>`](Column::get),
+/// [`Column::get_mut::<T>`](Column::get_mut),
+/// [`ColumnView::get::<T>`](super::ColumnView::get). The trait is sealed: the
+/// set of dtypes is closed.
+pub trait BlockDtype: Clone + Send + Sync + Sized + 'static + sealed::Storage {
+    /// The [`DType`] of a column of this element type.
     fn dtype() -> DType;
+}
 
-    /// Converts an ArrayD of this type into a Column.
-    fn into_column(arr: ArrayD<Self>) -> Column;
+pub(super) mod sealed {
+    use std::sync::Arc;
 
-    /// Tries to extract a reference to an ArrayD of this type from a Column.
-    fn from_column(col: &Column) -> Option<&ArrayD<Self>>;
+    use ndarray::ArrayViewD;
 
-    /// Tries to extract a mutable reference to an ArrayD of this type from a Column.
-    fn from_column_mut(col: &mut Column) -> Option<&mut ArrayD<Self>>;
+    use super::super::column::{Column, ColumnArray};
+    use super::super::column_view::ColumnView;
+
+    /// The variant plumbing behind [`BlockDtype`](super::BlockDtype): which
+    /// `Column` / `ColumnView` variant holds this element type.
+    pub trait Storage: Sized {
+        /// Wrap a column array in this type's `Column` variant.
+        fn wrap(holder: Arc<ColumnArray<Self>>) -> Column;
+        /// The column array, when `col` is this type's variant.
+        fn holder(col: &Column) -> Option<&Arc<ColumnArray<Self>>>;
+        /// The column array, mutably, when `col` is this type's variant.
+        fn holder_mut(col: &mut Column) -> Option<&mut Arc<ColumnArray<Self>>>;
+        /// The borrowed array, when `view` is this type's variant.
+        fn view_of<'a>(view: &ColumnView<'a>) -> Option<ArrayViewD<'a, Self>>;
+    }
 }
 
 macro_rules! impl_block_dtype {
-    ($ty:ty, $dtype:expr, $into:ident, $as_ref:ident, $as_mut:ident) => {
+    ($ty:ty, $variant:ident) => {
         impl BlockDtype for $ty {
             fn dtype() -> DType {
-                $dtype
+                DType::$variant
             }
-            fn into_column(arr: ArrayD<Self>) -> Column {
-                Column::$into(arr)
+        }
+        impl sealed::Storage for $ty {
+            fn wrap(holder: Arc<ColumnArray<Self>>) -> Column {
+                Column::$variant(holder)
             }
-            fn from_column(col: &Column) -> Option<&ArrayD<Self>> {
-                col.$as_ref()
+            fn holder(col: &Column) -> Option<&Arc<ColumnArray<Self>>> {
+                match col {
+                    Column::$variant(h) => Some(h),
+                    _ => None,
+                }
             }
-            fn from_column_mut(col: &mut Column) -> Option<&mut ArrayD<Self>> {
-                col.$as_mut()
+            fn holder_mut(col: &mut Column) -> Option<&mut Arc<ColumnArray<Self>>> {
+                match col {
+                    Column::$variant(h) => Some(h),
+                    _ => None,
+                }
+            }
+            fn view_of<'a>(view: &ColumnView<'a>) -> Option<ArrayViewD<'a, Self>> {
+                match view {
+                    ColumnView::$variant(a) => Some(a.clone()),
+                    _ => None,
+                }
             }
         }
     };
 }
 
-impl_block_dtype!(F, DType::Float, from_float, as_float, as_float_mut);
-impl_block_dtype!(i8, DType::I8, from_i8, as_i8, as_i8_mut);
-impl_block_dtype!(i16, DType::I16, from_i16, as_i16, as_i16_mut);
-impl_block_dtype!(I, DType::Int, from_int, as_int, as_int_mut);
-impl_block_dtype!(i64, DType::I64, from_i64, as_i64, as_i64_mut);
-impl_block_dtype!(bool, DType::Bool, from_bool, as_bool, as_bool_mut);
-impl_block_dtype!(Idx, DType::Uint, from_uint, as_uint, as_uint_mut);
-impl_block_dtype!(u8, DType::U8, from_u8, as_u8, as_u8_mut);
-impl_block_dtype!(u16, DType::U16, from_u16, as_u16, as_u16_mut);
-impl_block_dtype!(u32, DType::U32, from_u32, as_u32, as_u32_mut);
-impl_block_dtype!(String, DType::String, from_string, as_string, as_string_mut);
-impl_block_dtype!(Complex<f32>, DType::C64, from_c64, as_c64, as_c64_mut);
-impl_block_dtype!(Complex<f64>, DType::C128, from_c128, as_c128, as_c128_mut);
+impl_block_dtype!(F, Float);
+impl_block_dtype!(i8, I8);
+impl_block_dtype!(i16, I16);
+impl_block_dtype!(I, Int);
+impl_block_dtype!(i64, I64);
+impl_block_dtype!(bool, Bool);
+impl_block_dtype!(Idx, Uint);
+impl_block_dtype!(u8, U8);
+impl_block_dtype!(u16, U16);
+impl_block_dtype!(u32, U32);
+impl_block_dtype!(String, String);
+impl_block_dtype!(Complex<f32>, C64);
+impl_block_dtype!(Complex<f64>, C128);
 
 #[cfg(test)]
 mod tests {

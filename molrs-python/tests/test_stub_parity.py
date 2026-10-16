@@ -17,9 +17,10 @@ Two facts decide how the comparison is set up:
   to the imported package would check a *copy* rather than the file a
   contributor edits.
 
-The only exemption is structural, never a name allowlist: a ``_native``
+The only exemptions are structural, never a name allowlist: a ``_native``
 attribute that is a **module** (``_native.md``) may be declared in the stub as a
-class, because a stub has no other way to describe a submodule.
+class, because a stub has no other way to describe a submodule; and private
+(``_``-prefixed) names are compared on neither side.
 """
 
 from __future__ import annotations
@@ -35,7 +36,14 @@ STUB = Path(__file__).parents[1] / "python" / "molrs" / "_native.pyi"
 
 def test_stub_declares_exactly_the_classes_native_exports() -> None:
     tree = ast.parse(STUB.read_text(encoding="utf-8"), filename=str(STUB))
-    declared = {node.name for node in tree.body if isinstance(node, ast.ClassDef)}
+    # Private names are excluded on both sides: a stub-only typing helper
+    # (``_PotentialLike``) is no export, exactly as ``_native``'s private
+    # attributes are not.
+    declared = {
+        node.name
+        for node in tree.body
+        if isinstance(node, ast.ClassDef) and not node.name.startswith("_")
+    }
 
     exported: set[str] = set()
     submodules: set[str] = set()

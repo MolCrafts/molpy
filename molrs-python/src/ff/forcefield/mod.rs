@@ -64,11 +64,44 @@ pub(crate) fn array_param(value: &Bound<'_, PyAny>) -> PyResult<Option<ndarray::
     Ok(Some(array.as_array().to_owned()))
 }
 
+/// `value` as a [`ParamValue`](molrs::ff::ir::ParamValue): a ``str`` is
+/// text, an array (a numpy array or a nested list / tuple of numbers, stored
+/// as float64) is an array, a number is a number; anything else raises
+/// ``TypeError`` naming `key`.
+pub(crate) fn param_from_py(
+    key: &str,
+    value: &Bound<'_, PyAny>,
+) -> PyResult<molrs::ff::ir::ParamValue> {
+    if let Ok(text) = value.cast::<PyString>() {
+        Ok(text.to_str()?.into())
+    } else if let Some(array) = array_param(value)? {
+        Ok(array.into())
+    } else if let Ok(number) = value.extract::<f64>() {
+        Ok(number.into())
+    } else {
+        Err(PyTypeError::new_err(format!(
+            "param '{key}' must be a number, a str or an array of numbers, got {}",
+            value.get_type().name()?
+        )))
+    }
+}
+
+/// `value` as Python: a float, a str, or a new float64 numpy array.
+pub(crate) fn param_to_py<'py>(
+    py: Python<'py>,
+    value: &molrs::ff::ir::ParamValue,
+) -> PyResult<Bound<'py, PyAny>> {
+    use molrs::ff::ir::ParamValue;
+    Ok(match value {
+        ParamValue::Num(v) => v.into_pyobject(py)?.into_any(),
+        ParamValue::Text(s) => PyString::new(py, s).into_any(),
+        ParamValue::Array(a) => a.to_pyarray(py).into_any(),
+    })
+}
+
 /// Convert an optional Python ``dict[str, float | str | array]`` of parameters
-/// into [`Params`](molrs::ff::ir::Params). A ``str`` value goes to the
-/// string side, a number to the numeric side, an array (a numpy array or a
-/// nested list / tuple of numbers, stored as float64) to the array side;
-/// anything else raises ``TypeError``. A missing dict yields no params.
+/// into [`Params`](molrs::ff::ir::Params), one [`param_from_py`] per value.
+/// A missing dict yields no params.
 pub(crate) fn params_from_dict(
     params: Option<&Bound<'_, PyDict>>,
 ) -> PyResult<molrs::ff::ir::Params> {
@@ -78,18 +111,8 @@ pub(crate) fn params_from_dict(
     };
     for (k, v) in d.iter() {
         let key = k.extract::<String>()?;
-        if let Ok(text) = v.cast::<PyString>() {
-            out.set_str(&key, text.to_str()?);
-        } else if let Some(array) = array_param(&v)? {
-            out.set_array(&key, array);
-        } else if let Ok(number) = v.extract::<f64>() {
-            out.set(&key, number);
-        } else {
-            return Err(PyTypeError::new_err(format!(
-                "param '{key}' must be a number, a str or an array of numbers, got {}",
-                v.get_type().name()?
-            )));
-        }
+        let value = param_from_py(&key, &v)?;
+        out.set(&key, value);
     }
     Ok(out)
 }
@@ -201,9 +224,8 @@ impl PyForceField {
             // The arity travels with the style: a category no registry of
             // the unpickling process declares is still a relation of it.
             let style = inner
-                .def_style_with_arity(
-                    &category,
-                    arity,
+                .def_style(
+                    molrs::ff::forcefield::Category::new(category).arity(arity),
                     &style_name,
                     params_from_dict(Some(&params))?,
                 )
@@ -227,13 +249,7 @@ pub(crate) fn params_to_dict<'py>(
 ) -> PyResult<Bound<'py, PyDict>> {
     let out = PyDict::new(py);
     for (key, value) in params.iter() {
-        out.set_item(key, value)?;
-    }
-    for (key, value) in params.iter_strings() {
-        out.set_item(key, value)?;
-    }
-    for (key, value) in params.iter_arrays() {
-        out.set_item(key, value.to_pyarray(py))?;
+        out.set_item(key, param_to_py(py, value)?)?;
     }
     Ok(out)
 }
@@ -415,12 +431,6 @@ impl PyForceField {
         category.style_handle(slf.py(), &slf.clone().unbind(), name)
     }
 
-    /// Every style, in definition order.
-    #[getter(styles)]
-    fn every_style(slf: &Bound<'_, Self>) -> PyResult<Vec<Py<PyAny>>> {
-        Self::style_handles(slf, &handles::Selection::Every)
-    }
-
     /// The ``category`` style ``name``, or ``None``.
     fn get_style(slf: &Bound<'_, Self>, category: &str, name: &str) -> PyResult<Option<Py<PyAny>>> {
         let Some(category) = slf
@@ -436,9 +446,10 @@ impl PyForceField {
             .map(Some)
     }
 
-    /// The styles of a category — a name (``"bond"``) or a style class
-    /// (``BondStyle``; ``RelationStyle`` selects every category beyond the
-    /// seven, ``Style`` every category).
+    /// The styles of a category, in definition order — a name (``"bond"``)
+    /// or a style class (``BondStyle``; ``RelationStyle`` selects every
+    /// category beyond the seven, ``Style`` every category). The one listing
+    /// door: every style is ``get_styles(Style)``.
     fn get_styles(slf: &Bound<'_, Self>, category: &Bound<'_, PyAny>) -> PyResult<Vec<Py<PyAny>>> {
         let selection = handles::Category::selected(category, &slf.try_borrow()?.inner)?;
         Self::style_handles(slf, &selection)

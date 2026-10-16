@@ -116,7 +116,7 @@ impl ForceField {
     /// [`intramolecular_pairs`].
     pub fn materialize_one_four(&self, frame: &mut Frame) -> Result<usize, String> {
         if frame.get(PAIRS).is_none() {
-            let pairs = intramolecular_pairs(frame, self.special_bonds())?;
+            let pairs = intramolecular_pairs(frame, self.special_bonds(), None)?;
             frame.insert(PAIRS, pairs);
         }
         let vdw = vdw_style(self)?;
@@ -132,7 +132,7 @@ impl ForceField {
         let index = |key: &str| -> Result<Vec<usize>, String> {
             Ok(block
                 .get(key)
-                .and_then(|c| c.as_uint())
+                .and_then(|c| c.get::<u64>())
                 .ok_or_else(|| format!("materialize_one_four: pairs block missing \"{key}\""))?
                 .iter()
                 .map(|&v| v as usize)
@@ -141,7 +141,7 @@ impl ForceField {
         let (ai, aj) = (index("atomi")?, index("atomj")?);
         let is_14: Vec<bool> = block
             .get("is_14")
-            .and_then(|c| c.as_bool())
+            .and_then(|c| c.get::<bool>())
             .ok_or("materialize_one_four: pairs block missing a bool \"is_14\" column")?
             .iter()
             .copied()
@@ -151,7 +151,7 @@ impl ForceField {
             match block.get(key) {
                 None => Ok((vec![0.0; n], vec![false; n])),
                 Some(col) => {
-                    let values = col.as_float().ok_or_else(|| {
+                    let values = col.get::<f64>().ok_or_else(|| {
                         format!("pairs: the per-pair override column '{key}' must be float")
                     })?;
                     let mask = block
@@ -170,7 +170,7 @@ impl ForceField {
         let types = frame
             .get(ATOMS)
             .and_then(|b| b.get("type"))
-            .and_then(|c| c.as_string());
+            .and_then(|c| c.get::<String>());
 
         let mut filled = 0;
         for r in 0..n {
@@ -223,7 +223,7 @@ impl ForceField {
                 continue;
             }
             block
-                .insert_nullable(key, Array1::from_vec(values).into_dyn(), mask)
+                .insert(key, Array1::from_vec(values).into_dyn(), Some(mask))
                 .map_err(|e| e.to_string())?;
         }
         Ok(filled)
@@ -258,7 +258,7 @@ pub(crate) fn check_materialized(
     let Some(types) = frame
         .get(ATOMS)
         .and_then(|b| b.get("type"))
-        .and_then(|c| c.as_string())
+        .and_then(|c| c.get::<String>())
     else {
         return Ok(());
     };
@@ -285,21 +285,22 @@ pub(crate) fn check_materialized(
 mod tests {
     use super::*;
     use crate::ff::ir::{ONE_FOUR, ONE_FOUR_EPSILON14, ONE_FOUR_REGULAR, SpecialBonds};
+    use crate::ff::potential::fixtures::OneShot;
     use molrs::core::Block;
     use molrs::op::Idx;
 
     fn lj_charmm(one_four: Option<&str>) -> ForceField {
         let mut ff = ForceField::new("x");
-        let mut sp = Params::from_pairs(&[("inner", 8.0), ("cutoff", 10.0)]);
+        let mut sp = Params::from_iter([("inner", 8.0), ("cutoff", 10.0)]);
         if let Some(v) = one_four {
-            sp.set_str(ONE_FOUR, v);
+            sp.set(ONE_FOUR, v);
         }
         ff.def_style("pair", "lj/charmm", sp)
             .unwrap()
             .def_type(
                 "A",
                 &["A"],
-                Params::from_pairs(&[
+                Params::from_iter([
                     ("epsilon", 0.1),
                     ("sigma", 3.0),
                     ("epsilon14", 0.04),
@@ -310,7 +311,7 @@ mod tests {
             .def_type(
                 "B",
                 &["B"],
-                Params::from_pairs(&[("epsilon", 0.4), ("sigma", 4.0)]),
+                Params::from_iter([("epsilon", 0.4), ("sigma", 4.0)]),
             )
             .unwrap();
         ff.set_special_bonds(SpecialBonds {
@@ -333,16 +334,19 @@ mod tests {
                     }
                 })
                 .collect();
-            atoms.insert(*key, Array1::from_vec(v).into_dyn()).unwrap();
+            atoms
+                .insert(*key, Array1::from_vec(v).into_dyn(), None)
+                .unwrap();
         }
         let types: Vec<String> = ["A", "B", "B", "A"].map(String::from).to_vec();
         atoms
-            .insert("type", Array1::from_vec(types).into_dyn())
+            .insert("type", Array1::from_vec(types).into_dyn(), None)
             .unwrap();
         atoms
             .insert(
                 "charge",
                 Array1::from_vec(vec![0.3 as F, -0.3, 0.3, -0.3]).into_dyn(),
+                None,
             )
             .unwrap();
         let mut frame = Frame::new();
@@ -351,7 +355,7 @@ mod tests {
             let mut b = Block::new();
             for (k, c) in cols.iter().enumerate() {
                 let v: Vec<Idx> = rows.iter().map(|r| r[k]).collect();
-                b.insert(*c, Array1::from_vec(v).into_dyn()).unwrap();
+                b.insert(*c, Array1::from_vec(v).into_dyn(), None).unwrap();
             }
             b
         };
@@ -372,7 +376,7 @@ mod tests {
 
     fn cells(frame: &Frame, key: &str) -> Vec<Option<F>> {
         let p = frame.get(PAIRS).unwrap();
-        let v = p.get(key).unwrap().as_float().unwrap();
+        let v = p.get(key).unwrap().get::<f64>().unwrap();
         let mask = p.validity(key);
         (0..v.len())
             .map(|r| mask.is_none_or(|m| m[r]).then_some(v[[r]]))
@@ -383,13 +387,13 @@ mod tests {
     fn one_four_reads_its_two_values_and_refuses_others() {
         assert_eq!(OneFour::of(&Params::new()), Ok(OneFour::Regular));
         let mut p = Params::new();
-        p.set_str(ONE_FOUR, "regular");
+        p.set(ONE_FOUR, "regular");
         assert_eq!(OneFour::of(&p), Ok(OneFour::Regular));
-        p.set_str(ONE_FOUR, "epsilon14");
+        p.set(ONE_FOUR, "epsilon14");
         assert_eq!(OneFour::of(&p), Ok(OneFour::Epsilon14));
-        p.set_str(ONE_FOUR, "sigma14");
+        p.set(ONE_FOUR, "sigma14");
         assert!(OneFour::of(&p).unwrap_err().contains("sigma14"));
-        let p = Params::from_pairs(&[(ONE_FOUR, 1.0)]);
+        let p = Params::from_iter([(ONE_FOUR, 1.0)]);
         assert!(OneFour::of(&p).is_err());
     }
 
@@ -403,8 +407,8 @@ mod tests {
         assert_eq!(ff.materialize_one_four(&mut frame).unwrap(), 1);
         let p = frame.get(PAIRS).unwrap();
         let (ai, aj) = (
-            p.get("atomi").unwrap().as_uint().unwrap(),
-            p.get("atomj").unwrap().as_uint().unwrap(),
+            p.get("atomi").unwrap().get::<u64>().unwrap(),
+            p.get("atomj").unwrap().get::<u64>().unwrap(),
         );
         let r = (0..ai.len()).find(|&r| (ai[r], aj[r]) == (0, 3)).unwrap();
         for (key, want) in [
@@ -429,19 +433,19 @@ mod tests {
         let mut frame = chain();
         frame.insert(
             PAIRS,
-            intramolecular_pairs(&frame, ff.special_bonds()).unwrap(),
+            intramolecular_pairs(&frame, ff.special_bonds(), None).unwrap(),
         );
         let x: Vec<F> = frame.coords().unwrap().into_iter().collect();
         let before = PotentialCompiler::new(&ff)
             .compile(&frame)
             .unwrap()
-            .calc_energy(&x);
+            .energy_at(&x);
         assert_eq!(ff.materialize_one_four(&mut frame).unwrap(), 1);
         assert!(cells(&frame, "epsilon").contains(&Some(0.1)));
         let after = PotentialCompiler::new(&ff)
             .compile(&frame)
             .unwrap()
-            .calc_energy(&x);
+            .energy_at(&x);
         assert!(
             (after - before).abs() <= 1e-12 * before.abs(),
             "{after} vs {before}"
@@ -458,7 +462,7 @@ mod tests {
         let mut frame = chain();
         frame.insert(
             PAIRS,
-            intramolecular_pairs(&frame, ff.special_bonds()).unwrap(),
+            intramolecular_pairs(&frame, ff.special_bonds(), None).unwrap(),
         );
         let err = PotentialCompiler::new(&ff).compile(&frame).err().unwrap();
         assert!(err.to_string().contains("materialize_one_four"), "{err}");
@@ -467,21 +471,21 @@ mod tests {
         let with = PotentialCompiler::new(&ff)
             .compile(&frame)
             .unwrap()
-            .calc_energy(&x);
+            .energy_at(&x);
         let mut regular = ff.clone();
         regular
             .get_style_mut("pair", "lj/charmm")
             .unwrap()
-            .set_str_param(ONE_FOUR, ONE_FOUR_REGULAR);
+            .set_param(ONE_FOUR, ONE_FOUR_REGULAR);
         let mut plain = chain();
         plain.insert(
             PAIRS,
-            intramolecular_pairs(&plain, ff.special_bonds()).unwrap(),
+            intramolecular_pairs(&plain, ff.special_bonds(), None).unwrap(),
         );
         let without = PotentialCompiler::new(&regular)
             .compile(&plain)
             .unwrap()
-            .calc_energy(&x);
+            .energy_at(&x);
         // The difference is the 1-4 LJ at ε₁₄/σ₁₄ minus at ε/σ, times ½.
         let lj = |e: F, s: F, r: F| 4.0 * e * ((s / r).powi(12) - (s / r).powi(6));
         let d: Vec<F> = (0..3).map(|k| x[9 + k] - x[k]).collect();

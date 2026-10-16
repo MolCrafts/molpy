@@ -9,15 +9,15 @@ use crate::ff::ir::Engine;
 use crate::ff::ir::Params;
 use crate::ff::style_registry::refuse_style;
 use crate::ff::typifier::Provenance;
-use crate::io::writer::{ForceFieldWriteError, ForceFieldWriter};
+use crate::io::Sink;
+use crate::io::writer::{ForceFieldWriteError, ForceFieldWriter, put_text};
 
 /// Section headers, in file order.
 const SECTIONS: [&str; 6] = ["MASS", "BOND", "ANGLE", "DIHE", "IMPROPER", "NONBON"];
 
 /// Writer for AMBER frcmod parameter files.
 ///
-/// `AmberFrcmodWriter::new()`, then [`ForceFieldWriter::write`] /
-/// [`ForceFieldWriter::write_str`].
+/// `AmberFrcmodWriter::new()`, then [`ForceFieldWriter::write`].
 ///
 /// The inverse of the force-field half of
 /// [`AmberPrmtopForcefieldReader`](crate::io::amber::AmberPrmtopForcefieldReader):
@@ -87,6 +87,7 @@ const SECTIONS: [&str; 6] = ["MASS", "BOND", "ANGLE", "DIHE", "IMPROPER", "NONBO
 pub struct AmberFrcmodWriter;
 
 impl AmberFrcmodWriter {
+    /// The writer; the format has no settings.
     pub fn new() -> Self {
         Self
     }
@@ -124,6 +125,7 @@ impl AmberFrcmodWriter {
         // A cutoff is a run setting, not parameter data (see the module doc).
         let params = || {
             p.iter()
+                .filter_map(|(k, v)| v.as_num().map(|x| (k, x)))
                 .filter(|(key, _)| style.category() != "pair" || *key != "cutoff")
         };
         match (style.category(), style.name()) {
@@ -153,7 +155,7 @@ impl AmberFrcmodWriter {
                 }
             }
         }
-        for (key, value) in p.iter_strings() {
+        for (key, value) in p.iter().filter_map(|(k, v)| v.as_text().map(|s| (k, s))) {
             let arithmetic =
                 || CombiningRule::parse(value).is_ok_and(|m| m == CombiningRule::Arithmetic);
             if !(what == "pair/lj/cut" && key == "mixing" && arithmetic()) {
@@ -172,6 +174,7 @@ impl AmberFrcmodWriter {
     fn check_type_params(p: &Params, allowed: &[&str], what: &str) -> Result<(), String> {
         match p
             .iter()
+            .filter_map(|(k, v)| v.as_num().map(|x| (k, x)))
             .find(|(key, _)| !allowed.contains(key) && !Provenance::KEYS.contains(key))
         {
             Some((key, _)) => Err(format!("{what}: parameter '{key}' has no frcmod column")),
@@ -198,7 +201,9 @@ impl AmberFrcmodWriter {
 
     /// A parameter the row cannot be written without.
     fn need(p: &Params, key: &str, what: &str) -> Result<f64, String> {
-        p.get(key).ok_or_else(|| format!("{what} has no {key}"))
+        p.get(key)
+            .and_then(|v| v.as_num())
+            .ok_or_else(|| format!("{what} has no {key}"))
     }
 
     /// A periodicity as frcmod's `PN`: a positive integer.
@@ -244,9 +249,12 @@ impl AmberFrcmodWriter {
         let mut terms = Vec::new();
         let mut allowed: Vec<String> = Vec::new();
         let mut m = 1;
-        while let Some(k) = p.get(&format!("k{m}")) {
+        while let Some(k) = p.get(&format!("k{m}")).and_then(|v| v.as_num()) {
             let n = Self::need(p, &format!("periodicity{m}"), what)?;
-            let d = p.get(&format!("phase{m}")).unwrap_or(0.0);
+            let d = p
+                .get(&format!("phase{m}"))
+                .and_then(|v| v.as_num())
+                .unwrap_or(0.0);
             terms.push((k, Self::periodicity(n, what)?, d));
             allowed.extend([
                 format!("k{m}"),
@@ -258,7 +266,7 @@ impl AmberFrcmodWriter {
         if terms.is_empty() {
             let k = Self::need(p, "k", what)?;
             let n = Self::need(p, "periodicity", what)?;
-            let d = p.get("phase").unwrap_or(0.0);
+            let d = p.get("phase").and_then(|v| v.as_num()).unwrap_or(0.0);
             terms.push((k, Self::periodicity(n, what)?, d));
             allowed.extend(["k", "periodicity", "phase"].map(String::from));
         }
@@ -323,7 +331,7 @@ impl AmberFrcmodWriter {
                     Self::check_type_params(p, &["k", "periodicity", "phase"], &what)?;
                     let key = Self::type_field(&ends, &what)?;
                     let n = Self::periodicity(need("periodicity")?, &what)?;
-                    let d = p.get("phase").unwrap_or(0.0);
+                    let d = p.get("phase").and_then(|v| v.as_num()).unwrap_or(0.0);
                     // tleap reads an IMPROPER row's PK from fixed columns: it
                     // must start at 0-based column 15 or later, past the unused
                     // IDIVF slot that a DIHE row fills with `  1`. Two spaces
@@ -351,8 +359,9 @@ impl AmberFrcmodWriter {
     }
 }
 
-impl ForceFieldWriter for AmberFrcmodWriter {
-    fn write_str(&self, ff: &ForceField) -> Result<String, ForceFieldWriteError> {
+impl AmberFrcmodWriter {
+    /// The file's text: what [`write`](ForceFieldWriter::write) puts into its sink.
+    fn text(&self, ff: &ForceField) -> Result<String, ForceFieldWriteError> {
         Self::check_declarations(ff)?;
         let mut sections: [Vec<String>; 6] = Default::default();
         for style in ff.styles() {
@@ -374,14 +383,14 @@ impl ForceFieldWriter for AmberFrcmodWriter {
     }
 }
 
-/// Write `forcefield` to `path` as an AMBER frcmod file.
-pub fn write_frcmod(path: &str, forcefield: &ForceField) -> Result<(), ForceFieldWriteError> {
-    AmberFrcmodWriter::new().write(forcefield, path)
-}
-
-/// `forcefield` as the text of an AMBER frcmod file.
-pub fn write_frcmod_str(forcefield: &ForceField) -> Result<String, ForceFieldWriteError> {
-    AmberFrcmodWriter::new().write_str(forcefield)
+impl ForceFieldWriter for AmberFrcmodWriter {
+    fn write<'a>(
+        &self,
+        sink: impl Into<Sink<'a>>,
+        ff: &ForceField,
+    ) -> Result<(), ForceFieldWriteError> {
+        put_text(sink.into(), &self.text(ff)?)
+    }
 }
 
 #[cfg(test)]
@@ -389,6 +398,7 @@ mod tests {
     use super::*;
     use crate::ff::forcefield::ForceField;
     use crate::ff::ir::Params;
+    use crate::io::writer::WrittenText;
 
     /// The rows under `header`, up to the blank line that closes the section.
     fn section<'a>(text: &'a str, header: &str) -> Vec<&'a str> {
@@ -410,7 +420,9 @@ mod tests {
     }
 
     fn write(ff: &ForceField) -> String {
-        write_frcmod_str(ff).unwrap_or_else(|e| panic!("write: {e}"))
+        AmberFrcmodWriter::new()
+            .written(ff)
+            .unwrap_or_else(|e| panic!("write: {e}"))
     }
 
     /// One `category/style` with one type over `ends`.
@@ -430,7 +442,7 @@ mod tests {
             "bond",
             "harmonic",
             &["c3", "os"],
-            Params::from_pairs(&[("k", 640.0), ("r0", 1.43)]),
+            Params::from_iter([("k", 640.0), ("r0", 1.43)]),
         );
         let text = write(&ff);
         let rows = section(&text, "BOND");
@@ -444,7 +456,7 @@ mod tests {
     /// row is written from `k` / `r0`, and the provenance is its comment.
     #[test]
     fn estimated_term_writes_its_provenance_as_the_row_comment() {
-        let mut params = Params::from_pairs(&[("k", 640.0), ("r0", 1.43)]);
+        let mut params = Params::from_iter([("k", 640.0), ("r0", 1.43)]);
         Provenance::analogy(2.5, "c3-os").apply_to(&mut params);
         let ff = one_type("bond", "harmonic", &["c3", "oh"], params);
         let text = write(&ff);
@@ -460,7 +472,7 @@ mod tests {
     /// An empirical estimate copied no row: the comment names the method.
     #[test]
     fn empirical_estimate_comment_names_the_method() {
-        let mut params = Params::from_pairs(&[("k", 640.0), ("r0", 1.43)]);
+        let mut params = Params::from_iter([("k", 640.0), ("r0", 1.43)]);
         Provenance::empirical(12.0).apply_to(&mut params);
         let ff = one_type("bond", "harmonic", &["c3", "oh"], params);
         let text = write(&ff);
@@ -478,7 +490,7 @@ mod tests {
             "bond",
             "harmonic",
             &["c", "o"],
-            Params::from_pairs(&[("k", 2.0), ("r0", 1.2)]),
+            Params::from_iter([("k", 2.0), ("r0", 1.2)]),
         );
         let text = write(&ff);
         let (key, _) = fields(section(&text, "BOND")[0], 5);
@@ -491,7 +503,7 @@ mod tests {
             "angle",
             "harmonic",
             &["c3", "os", "c3"],
-            Params::from_pairs(&[("k", 100.0), ("theta0", 90.0)]),
+            Params::from_iter([("k", 100.0), ("theta0", 90.0)]),
         );
         let text = write(&ff);
         let rows = section(&text, "ANGLE");
@@ -507,7 +519,7 @@ mod tests {
             "dihedral",
             "periodic",
             &["c3", "os", "c3", "h1"],
-            Params::from_pairs(&[
+            Params::from_iter([
                 ("k1", 0.38),
                 ("periodicity1", 3.0),
                 ("phase1", 0.0),
@@ -536,7 +548,7 @@ mod tests {
             "improper",
             "periodic",
             &["X", "o", "c", "o"],
-            Params::from_pairs(&[("k", 1.1), ("periodicity", 2.0), ("phase", 180.0)]),
+            Params::from_iter([("k", 1.1), ("periodicity", 2.0), ("phase", 180.0)]),
         );
         let text = write(&ff);
         let (key, v) = fields(section(&text, "IMPROPER")[0], 11);
@@ -555,7 +567,7 @@ mod tests {
             "improper",
             "periodic",
             &["o", "os", "c", "os"],
-            Params::from_pairs(&[("k", 1.1), ("periodicity", 2.0), ("phase", 180.0)]),
+            Params::from_iter([("k", 1.1), ("periodicity", 2.0), ("phase", 180.0)]),
         );
         let text = write(&ff);
         let row = section(&text, "IMPROPER")[0];
@@ -573,7 +585,7 @@ mod tests {
             .def_type(
                 "c3",
                 &["c3"],
-                Params::from_pairs(&[("sigma", sigma), ("epsilon", 0.1094)]),
+                Params::from_iter([("sigma", sigma), ("epsilon", 0.1094)]),
             )
             .unwrap();
         let text = write(&ff);
@@ -594,9 +606,9 @@ mod tests {
             "bond",
             "morse",
             &["c3", "os"],
-            Params::from_pairs(&[("d0", 1.0), ("alpha", 2.0), ("r0", 1.4)]),
+            Params::from_iter([("d0", 1.0), ("alpha", 2.0), ("r0", 1.4)]),
         );
-        let err = write_frcmod_str(&ff).unwrap_err();
+        let err = AmberFrcmodWriter::new().written(&ff).unwrap_err();
         assert!(
             err.contains("AMBER frcmod has no form for bond `morse`"),
             "{err}"
@@ -609,27 +621,27 @@ mod tests {
             "pair",
             "lj/cut",
             &["c3", "os"],
-            Params::from_pairs(&[("sigma", 3.0), ("epsilon", 0.1)]),
+            Params::from_iter([("sigma", 3.0), ("epsilon", 0.1)]),
         );
-        let err = write_frcmod_str(&ff).unwrap_err();
+        let err = AmberFrcmodWriter::new().written(&ff).unwrap_err();
         assert!(err.contains("c3-os"), "{err}");
     }
 
     #[test]
     fn style_param_frcmod_would_drop_is_refused() {
         let mut ff = ForceField::new("t");
-        ff.def_style("pair", "lj/cut", Params::from_pairs(&[("shift", 1.0)]))
+        ff.def_style("pair", "lj/cut", Params::from_iter([("shift", 1.0)]))
             .unwrap();
-        let err = write_frcmod_str(&ff).unwrap_err();
+        let err = AmberFrcmodWriter::new().written(&ff).unwrap_err();
         assert!(err.contains("shift"), "{err}");
     }
 
     #[test]
     fn pair_cutoff_is_a_run_setting_and_not_written() {
         let mut ff = ForceField::new("t");
-        ff.def_style("pair", "lj/cut", Params::from_pairs(&[("cutoff", 9.0)]))
+        ff.def_style("pair", "lj/cut", Params::from_iter([("cutoff", 9.0)]))
             .unwrap();
-        let text = write_frcmod_str(&ff).unwrap();
+        let text = AmberFrcmodWriter::new().written(&ff).unwrap();
         assert!(!text.contains('9'), "{text}");
     }
 
@@ -638,17 +650,17 @@ mod tests {
         let mut ff = ForceField::new("t");
         ff.def_style("atom", "full", Params::new())
             .unwrap()
-            .def_type("Li+", &[], Params::from_pairs(&[("mass", 6.94)]))
+            .def_type("Li+", &[], Params::from_iter([("mass", 6.94)]))
             .unwrap();
         ff.def_style("pair", "lj/cut", Params::new())
             .unwrap()
             .def_type(
                 "Li+",
                 &["Li+"],
-                Params::from_pairs(&[("sigma", 2.0), ("epsilon", 0.01)]),
+                Params::from_iter([("sigma", 2.0), ("epsilon", 0.01)]),
             )
             .unwrap();
-        let text = write_frcmod_str(&ff).unwrap();
+        let text = AmberFrcmodWriter::new().written(&ff).unwrap();
         assert!(text.contains("Li+  6.940000"), "{text}");
         assert!(text.contains("  Li+  "), "{text}");
     }
@@ -659,9 +671,9 @@ mod tests {
             "bond",
             "harmonic",
             &["c3x", "os"],
-            Params::from_pairs(&[("k", 2.0), ("r0", 1.2)]),
+            Params::from_iter([("k", 2.0), ("r0", 1.2)]),
         );
-        let err = write_frcmod_str(&ff).unwrap_err();
+        let err = AmberFrcmodWriter::new().written(&ff).unwrap_err();
         assert!(err.contains("c3x"), "{err}");
     }
 
@@ -695,14 +707,14 @@ mod tests {
         let mut ff = ForceField::new("t");
         ff.def_style("atom", "full", Params::new())
             .unwrap()
-            .def_type("c3", &[], Params::from_pairs(&[("mass", 12.01)]))
+            .def_type("c3", &[], Params::from_iter([("mass", 12.01)]))
             .unwrap();
         ff.def_style("bond", "harmonic", Params::new())
             .unwrap()
             .def_type(
                 "c3-os",
                 &["c3", "os"],
-                Params::from_pairs(&[("k", 640.0), ("r0", 1.43)]),
+                Params::from_iter([("k", 640.0), ("r0", 1.43)]),
             )
             .unwrap();
         ff.def_style("angle", "harmonic", Params::new())
@@ -710,7 +722,7 @@ mod tests {
             .def_type(
                 "c3-os-c3",
                 &["c3", "os", "c3"],
-                Params::from_pairs(&[("k", 100.0), ("theta0", 109.0)]),
+                Params::from_iter([("k", 100.0), ("theta0", 109.0)]),
             )
             .unwrap();
         ff.def_style("dihedral", "periodic", Params::new())
@@ -718,7 +730,7 @@ mod tests {
             .def_type(
                 "c3-os-c3-h1",
                 &["c3", "os", "c3", "h1"],
-                Params::from_pairs(&[("k1", 0.38), ("periodicity1", 3.0), ("phase1", 0.0)]),
+                Params::from_iter([("k1", 0.38), ("periodicity1", 3.0), ("phase1", 0.0)]),
             )
             .unwrap();
         ff.def_style("improper", "periodic", Params::new())
@@ -726,7 +738,7 @@ mod tests {
             .def_type(
                 "c-o-c-o",
                 &["c", "o", "c", "o"],
-                Params::from_pairs(&[("k", 1.1), ("periodicity", 2.0), ("phase", 180.0)]),
+                Params::from_iter([("k", 1.1), ("periodicity", 2.0), ("phase", 180.0)]),
             )
             .unwrap();
         ff.def_style("pair", "lj/cut", Params::new())
@@ -734,7 +746,7 @@ mod tests {
             .def_type(
                 "c3",
                 &["c3"],
-                Params::from_pairs(&[("sigma", 3.4), ("epsilon", 0.1094)]),
+                Params::from_iter([("sigma", 3.4), ("epsilon", 0.1094)]),
             )
             .unwrap();
 

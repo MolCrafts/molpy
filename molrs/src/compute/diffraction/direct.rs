@@ -253,6 +253,7 @@ crate::compute::spec::compute_spec! {
 mod tests {
     use super::*;
     use crate::compute::Batch;
+    use crate::core::Cell;
     use ndarray::{Array2, array};
 
     struct Frame {
@@ -272,7 +273,12 @@ mod tests {
     fn frame_with(positions: &[[F; 3]], box_len: F, pbc: [bool; 3]) -> Frame {
         Frame {
             positions: Array2::from_shape_fn((positions.len(), 3), |(i, c)| positions[i][c]),
-            simbox: SimBox::cube(box_len, array![0.0 as F, 0.0 as F, 0.0 as F], pbc).unwrap(),
+            simbox: SimBox::new(
+                Cell::Lengths([box_len; 3]),
+                [0.0 as F, 0.0 as F, 0.0 as F],
+                pbc,
+            )
+            .unwrap(),
         }
     }
 

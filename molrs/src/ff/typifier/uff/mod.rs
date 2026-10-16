@@ -3,7 +3,7 @@ use std::collections::{HashMap, HashSet};
 use molrs::core::PropValue;
 use molrs::core::TypeName;
 use molrs::core::schema::block_names::{ANGLES, BONDS, DIHEDRALS, IMPROPERS};
-use molrs::core::{Atomistic, Element, NodeId};
+use molrs::core::{Atomistic, Element, NodeId, Props, keys};
 
 use crate::core::constants::UFF_COULOMB;
 use crate::ff::forcefield::{DefError, ForceField};
@@ -60,7 +60,7 @@ use crate::perceive::{Hybridization, perceive_conjugated_atoms, perceive_hybridi
 /// let mut typing = Typing::new(UffTypifier::new());
 /// let mut frame = typing.typify(&mol)?.to_frame()?;
 /// let ff = typing.forcefield();
-/// frame.insert("pairs", intramolecular_pairs(&frame, ff.special_bonds())?);
+/// frame.insert("pairs", intramolecular_pairs(&frame, ff.special_bonds(), None)?);
 /// let pots = PotentialCompiler::new(ff).compile(&frame)?;
 /// ```
 ///
@@ -179,10 +179,18 @@ impl Typifier for UffTypifier {
                     // UFF's bond-order term is the localized count; an
                     // aromatic bond is conventionally 1.5 *here*, as a UFF
                     // parameter, not as a molrs bond order.
-                    let ord = if graph.bond_type(bid).is_aromatic() {
+                    let ord = if graph
+                        .bond_type(bid)
+                        .map_err(|e| e.to_string())?
+                        .is_aromatic()
+                    {
                         1.5
                     } else {
-                        graph.bond_number(bid).count().max(1) as f64
+                        graph
+                            .bond_number(bid)
+                            .map_err(|e| e.to_string())?
+                            .count()
+                            .max(1) as f64
                     };
                     bond_order.insert(if i < j { (i, j) } else { (j, i) }, ord);
                 }
@@ -208,8 +216,11 @@ impl Typifier for UffTypifier {
                     .collect();
                 let mut aromatic_like = true;
                 for &i in &idxs {
-                    let el = element_of(graph, atom_ids[i]);
-                    if !matches!(el.symbol(), "C" | "N" | "O" | "S" | "B") {
+                    let el = element_of(graph, atom_ids[i])?;
+                    if !matches!(
+                        el,
+                        Element::C | Element::N | Element::O | Element::S | Element::B
+                    ) {
                         aromatic_like = false;
                         break;
                     }
@@ -230,7 +241,7 @@ impl Typifier for UffTypifier {
         // Also honor is_aromatic property if present
         for (i, &aid) in atom_ids.iter().enumerate() {
             if let Ok(atom) = graph.get_atom(aid)
-                && atom.get_f64("is_aromatic").unwrap_or(0.0) > 0.5
+                && atom.get(keys::IS_AROMATIC) == Some(&PropValue::Bool(true))
             {
                 aromatic_atom[i] = true;
             }
@@ -248,17 +259,10 @@ impl Typifier for UffTypifier {
         let mut lj_used: HashSet<String> = HashSet::new();
 
         for (i, &aid) in atom_ids.iter().enumerate() {
-            let el = element_of(graph, aid);
+            let el = element_of(graph, aid)?;
             z.push(el.z());
-            let degree = adj[i].len();
             let valence: f64 = adj[i].iter().map(|&j| order_of(i, j)).sum();
-            let label = atom_label(
-                el.symbol(),
-                hyb[i],
-                aromatic_atom[i] || conjugated[i],
-                valence,
-            )
-            .ok_or_else(|| format!("UFF: no atom type for {} (degree={degree})", el.symbol()))?;
+            let label = atom_label(el, hyb[i], aromatic_atom[i] || conjugated[i], valence);
             let p = params_for_label(&label)
                 .ok_or_else(|| format!("UFF: parameters missing for label '{label}'"))?;
             if lj_used.insert(label.clone()) {
@@ -266,7 +270,7 @@ impl Typifier for UffTypifier {
                     "uff_lj".to_owned(),
                     label.clone(),
                     vec![label.clone()],
-                    Params::from_pairs(&[("x1", p.x1), ("D1", p.d1)]),
+                    Params::from_iter([("x1", p.x1), ("D1", p.d1)]),
                 ));
             }
             m.nodes.push(vec![
@@ -304,7 +308,7 @@ impl Typifier for UffTypifier {
                 "uff_bond",
                 &name,
                 &ends,
-                Params::from_pairs(&[("kb", kb), ("r0", r0)]),
+                Params::from_iter([("kb", kb), ("r0", r0)]),
             ));
         }
 
@@ -374,7 +378,7 @@ impl Typifier for UffTypifier {
                 "uff_angle",
                 &name,
                 &ends,
-                Params::from_pairs(&[
+                Params::from_iter([
                     ("ka", ka),
                     ("order", f64::from(order_eff)),
                     ("c0", c0),
@@ -439,7 +443,7 @@ impl Typifier for UffTypifier {
                 "uff_torsion",
                 &name,
                 &ends,
-                Params::from_pairs(&[("V", v), ("order", f64::from(order)), ("cosTerm", cos_term)]),
+                Params::from_iter([("V", v), ("order", f64::from(order)), ("cosTerm", cos_term)]),
             ));
         }
 
@@ -471,7 +475,13 @@ impl Typifier for UffTypifier {
             ];
             for (a, b, c) in perms {
                 let iid = graph
-                    .add_improper(atom_ids[j], atom_ids[a], atom_ids[b], atom_ids[c])
+                    .add_improper(
+                        atom_ids[j],
+                        atom_ids[a],
+                        atom_ids[b],
+                        atom_ids[c],
+                        Props::new(),
+                    )
                     .map_err(|e| e.to_string())?;
                 let ends = [&*labels[j], &*labels[a], &*labels[b], &*labels[c]];
                 let name = TypeName::join(&ends)?;
@@ -481,7 +491,7 @@ impl Typifier for UffTypifier {
                         "uff_inversion",
                         &name,
                         &ends,
-                        Params::from_pairs(&[("K", k_inv), ("c0", c0), ("c1", c1), ("c2", c2)]),
+                        Params::from_iter([("K", k_inv), ("c0", c0), ("c1", c1), ("c2", c2)]),
                     ),
                 );
             }
@@ -504,11 +514,20 @@ impl Typifier for UffTypifier {
     }
 }
 
-fn element_of(mol: &Atomistic, id: NodeId) -> Element {
-    mol.get_atom(id)
-        .ok()
-        .and_then(|a| a.get_str("element").and_then(Element::by_symbol))
-        .unwrap_or(Element::C)
+/// The element of atom `id`, read from its [`keys::ATOMIC_NUMBER`]. UFF types
+/// real atoms only: a wildcard (`Z = 0`) has no UFF type and is refused.
+fn element_of(mol: &Atomistic, id: NodeId) -> Result<Element, String> {
+    let z = mol
+        .get_atom(id)
+        .map_err(|e| e.to_string())?
+        .atomic_number()
+        .ok_or_else(|| format!("UFF: atom {id:?} has no valid `{}`", keys::ATOMIC_NUMBER))?;
+    Element::by_number(z).ok_or_else(|| {
+        format!(
+            "UFF: atom {id:?} is a wildcard (`{}` = 0) and has no UFF type",
+            keys::ATOMIC_NUMBER
+        )
+    })
 }
 
 /// The UFF atom label of an atom: RDKit `Tools::getAtomLabel` +
@@ -519,13 +538,13 @@ fn element_of(mol: &Atomistic, id: NodeId) -> Element {
 /// C / N / O / S into its `_R` type. Shared with the ETKDG bounds builder,
 /// whose 1-2 bounds are UFF rest lengths.
 pub(crate) fn atom_label(
-    sym: &str,
+    element: Element,
     hyb: Hybridization,
     resonant: bool,
     valence: f64,
-) -> Option<String> {
-    let z = Element::by_symbol(sym)?.z();
-    let mut key = sym.to_string();
+) -> String {
+    let z = element.z();
+    let mut key = element.symbol().to_string();
     if key.len() == 1 {
         key.push('_');
     }
@@ -536,7 +555,7 @@ pub(crate) fn atom_label(
         9 | 17 | 35 | 53 | 85 => 7u8,          // halogen
         _ => 0u8,
     };
-    let skip_hyb = n_outer == 1 || n_outer == 7 || z == 0;
+    let skip_hyb = n_outer == 1 || n_outer == 7;
 
     if !skip_hyb {
         // Main-group force SP3 suffix (RDKit cases 12–15, 50–52, 81–84).
@@ -564,7 +583,7 @@ pub(crate) fn atom_label(
     }
 
     add_charge_flags(&mut key, z, valence, hyb);
-    Some(key)
+    key
 }
 
 /// RDKit `addAtomChargeFlags` (tolerateChargeMismatch = true for robustness).
@@ -756,33 +775,98 @@ fn torsion_params(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use indexmap::IndexMap;
-    use molrs::core::Atomistic;
+    use crate::props;
+    use molrs::core::Element;
     use molrs::core::TypeName;
+    use molrs::core::keys;
+    use molrs::core::{Atomistic, BondNumber, BondOrder};
     use std::collections::{BTreeMap, BTreeSet};
 
     fn ethanol() -> Atomistic {
         // Build C-C-O + hydrogens with rough coords
         let mut m = Atomistic::new();
-        let c0 = m.add_atom_xyz("C", 0.9, 0.0, 0.0);
-        let c1 = m.add_atom_xyz("C", -0.5, 0.0, 0.0);
-        let o = m.add_atom_xyz("O", -1.2, 0.9, 0.0);
-        let _ = m.add_bond(c0, c1);
-        let _ = m.add_bond(c1, o);
+        let c0 = m
+            .add_atom(props! {
+                keys::ATOMIC_NUMBER => Element::C,
+                keys::X => 0.9,
+                keys::Y => 0.0,
+                keys::Z => 0.0,
+            })
+            .unwrap();
+        let c1 = m
+            .add_atom(props! {
+                keys::ATOMIC_NUMBER => Element::C,
+                keys::X => -0.5,
+                keys::Y => 0.0,
+                keys::Z => 0.0,
+            })
+            .unwrap();
+        let o = m
+            .add_atom(props! {
+                keys::ATOMIC_NUMBER => Element::O,
+                keys::X => -1.2,
+                keys::Y => 0.9,
+                keys::Z => 0.0,
+            })
+            .unwrap();
+        let _ = m.add_bond(c0, c1, props! {});
+        let _ = m.add_bond(c1, o, props! {});
         // add H
-        let h1 = m.add_atom_xyz("H", 1.3, 0.9, 0.0);
-        let h2 = m.add_atom_xyz("H", 1.3, -0.5, 0.9);
-        let h3 = m.add_atom_xyz("H", 1.3, -0.5, -0.9);
-        let h4 = m.add_atom_xyz("H", -0.9, -0.9, 0.5);
-        let h5 = m.add_atom_xyz("H", -0.9, -0.5, -0.9);
-        let h6 = m.add_atom_xyz("H", -1.1, 1.5, -0.5);
+        let h1 = m
+            .add_atom(props! {
+                keys::ATOMIC_NUMBER => Element::H,
+                keys::X => 1.3,
+                keys::Y => 0.9,
+                keys::Z => 0.0,
+            })
+            .unwrap();
+        let h2 = m
+            .add_atom(props! {
+                keys::ATOMIC_NUMBER => Element::H,
+                keys::X => 1.3,
+                keys::Y => -0.5,
+                keys::Z => 0.9,
+            })
+            .unwrap();
+        let h3 = m
+            .add_atom(props! {
+                keys::ATOMIC_NUMBER => Element::H,
+                keys::X => 1.3,
+                keys::Y => -0.5,
+                keys::Z => -0.9,
+            })
+            .unwrap();
+        let h4 = m
+            .add_atom(props! {
+                keys::ATOMIC_NUMBER => Element::H,
+                keys::X => -0.9,
+                keys::Y => -0.9,
+                keys::Z => 0.5,
+            })
+            .unwrap();
+        let h5 = m
+            .add_atom(props! {
+                keys::ATOMIC_NUMBER => Element::H,
+                keys::X => -0.9,
+                keys::Y => -0.5,
+                keys::Z => -0.9,
+            })
+            .unwrap();
+        let h6 = m
+            .add_atom(props! {
+                keys::ATOMIC_NUMBER => Element::H,
+                keys::X => -1.1,
+                keys::Y => 1.5,
+                keys::Z => -0.5,
+            })
+            .unwrap();
         for h in [h1, h2, h3] {
-            let _ = m.add_bond(c0, h);
+            let _ = m.add_bond(c0, h, props! {});
         }
         for h in [h4, h5] {
-            let _ = m.add_bond(c1, h);
+            let _ = m.add_bond(c1, h, props! {});
         }
-        let _ = m.add_bond(o, h6);
+        let _ = m.add_bond(o, h6, props! {});
         m
     }
 
@@ -793,20 +877,33 @@ mod tests {
     /// atom 4; hydrogens follow. Returns the graph and the carbonyl C and N.
     fn n_methylacetamide() -> (Atomistic, NodeId, NodeId) {
         let mut m = Atomistic::new();
-        let c_me = m.add_atom_bare("C");
-        let c_co = m.add_atom_bare("C");
-        let o = m.add_atom_bare("O");
-        let n = m.add_atom_bare("N");
-        let c_nme = m.add_atom_bare("C");
-        m.add_bond(c_me, c_co).unwrap();
-        let co = m.add_bond(c_co, o).unwrap();
-        m.set_bond_type(co, molrs::core::BondOrder::Double).unwrap();
-        m.add_bond(c_co, n).unwrap();
-        m.add_bond(n, c_nme).unwrap();
+        let c_me = m
+            .add_atom(props! { keys::ATOMIC_NUMBER => Element::C })
+            .unwrap();
+        let c_co = m
+            .add_atom(props! { keys::ATOMIC_NUMBER => Element::C })
+            .unwrap();
+        let o = m
+            .add_atom(props! { keys::ATOMIC_NUMBER => Element::O })
+            .unwrap();
+        let n = m
+            .add_atom(props! { keys::ATOMIC_NUMBER => Element::N })
+            .unwrap();
+        let c_nme = m
+            .add_atom(props! { keys::ATOMIC_NUMBER => Element::C })
+            .unwrap();
+        m.add_bond(c_me, c_co, props! {}).unwrap();
+        let co = m.add_bond(c_co, o, props! {}).unwrap();
+        m.set_bond_class(co, BondOrder::Double, BondNumber::Double)
+            .unwrap();
+        m.add_bond(c_co, n, props! {}).unwrap();
+        m.add_bond(n, c_nme, props! {}).unwrap();
         for (heavy, n_h) in [(c_me, 3), (n, 1), (c_nme, 3)] {
             for _ in 0..n_h {
-                let h = m.add_atom_bare("H");
-                m.add_bond(heavy, h).unwrap();
+                let h = m
+                    .add_atom(props! { keys::ATOMIC_NUMBER => Element::H })
+                    .unwrap();
+                m.add_bond(heavy, h, props! {}).unwrap();
             }
         }
         (m, c_co, n)
@@ -822,21 +919,30 @@ mod tests {
         let mut m = Atomistic::new();
         let mut ipso = Vec::new();
         for _ in 0..3 {
-            let ring: Vec<NodeId> = (0..6).map(|_| m.add_atom_bare("C")).collect();
+            let ring: Vec<NodeId> = (0..6)
+                .map(|_| {
+                    m.add_atom(props! { keys::ATOMIC_NUMBER => Element::C })
+                        .unwrap()
+                })
+                .collect();
             for k in 0..6 {
-                let b = m.add_bond(ring[k], ring[(k + 1) % 6]).unwrap();
-                m.set_bond_type(b, molrs::core::BondOrder::Aromatic)
+                let b = m.add_bond(ring[k], ring[(k + 1) % 6], props! {}).unwrap();
+                m.set_bond_class(b, BondOrder::Aromatic, BondNumber::Unknown)
                     .unwrap();
             }
             for &c in &ring[1..] {
-                let h = m.add_atom_bare("H");
-                m.add_bond(c, h).unwrap();
+                let h = m
+                    .add_atom(props! { keys::ATOMIC_NUMBER => Element::H })
+                    .unwrap();
+                m.add_bond(c, h, props! {}).unwrap();
             }
             ipso.push(ring[0]);
         }
-        let p = m.add_atom_bare("P");
+        let p = m
+            .add_atom(props! { keys::ATOMIC_NUMBER => Element::P })
+            .unwrap();
         for c in ipso {
-            m.add_bond(p, c).unwrap();
+            m.add_bond(p, c, props! {}).unwrap();
         }
         m
     }
@@ -847,11 +953,8 @@ mod tests {
         (typed, typing)
     }
 
-    fn str_prop(props: &IndexMap<String, PropValue>, key: &str) -> Option<String> {
-        match props.get(key) {
-            Some(PropValue::Str(s)) => Some(s.clone()),
-            _ => None,
-        }
+    fn str_prop(props: &Props, key: &str) -> Option<String> {
+        props.get_str(key).map(str::to_owned)
     }
 
     /// The UFF atom label (`type`) of every atom, by id.
@@ -865,7 +968,7 @@ mod tests {
     /// `(nodes, type label)` of every link of `kind` (`bonds`, `angles`,
     /// `dihedrals`, `impropers`); a missing `type` is a failure.
     fn link_labels(typed: &Atomistic, kind: &str) -> Vec<(Vec<NodeId>, String)> {
-        let rows: Vec<(Vec<NodeId>, IndexMap<String, PropValue>)> = match kind {
+        let rows: Vec<(Vec<NodeId>, Props)> = match kind {
             "bonds" => typed
                 .bonds()
                 .map(|(_, r)| (r.nodes.to_vec(), r.props))
@@ -1168,30 +1271,30 @@ mod tests {
     #[test]
     fn labels_follow_element_and_hybridization() {
         use Hybridization::{Sp, Sp2, Sp3};
-        let label = |sym, h, resonant| atom_label(sym, h, resonant, 0.0).unwrap();
-        assert_eq!(label("H", Sp3, false), "H_");
-        assert_eq!(label("Cl", Sp3, false), "Cl");
-        assert_eq!(label("C", Sp3, false), "C_3");
-        assert_eq!(label("C", Sp2, false), "C_2");
-        assert_eq!(label("C", Sp2, true), "C_R");
-        assert_eq!(label("N", Sp, false), "N_1");
+        let label = |el, h, resonant| atom_label(el, h, resonant, 0.0);
+        assert_eq!(label(Element::H, Sp3, false), "H_");
+        assert_eq!(label(Element::Cl, Sp3, false), "Cl");
+        assert_eq!(label(Element::C, Sp3, false), "C_3");
+        assert_eq!(label(Element::C, Sp2, false), "C_2");
+        assert_eq!(label(Element::C, Sp2, true), "C_R");
+        assert_eq!(label(Element::N, Sp, false), "N_1");
         // Phosphorus is always `3`, with its valence as a charge flag.
-        assert_eq!(atom_label("P", Sp2, false, 3.0).unwrap(), "P_3+3");
+        assert_eq!(atom_label(Element::P, Sp2, false, 3.0), "P_3+3");
     }
 
     /// Sulfur carries its valence as a charge flag, unless it is sp².
     #[test]
     fn sulfur_carries_its_valence_as_a_charge_flag() {
         assert_eq!(
-            atom_label("S", Hybridization::Sp3, false, 2.0).unwrap(),
+            atom_label(Element::S, Hybridization::Sp3, false, 2.0),
             "S_3+2"
         );
         assert_eq!(
-            atom_label("S", Hybridization::Sp3, false, 6.0).unwrap(),
+            atom_label(Element::S, Hybridization::Sp3, false, 6.0),
             "S_3+6"
         );
         assert_eq!(
-            atom_label("S", Hybridization::Sp2, false, 2.0).unwrap(),
+            atom_label(Element::S, Hybridization::Sp2, false, 2.0),
             "S_2"
         );
     }

@@ -8,7 +8,7 @@ use crate::ff::ir::Params;
 use crate::ff::potential::flat_coords::{
     accumulate_angle_forces, compute_angle, sub3, term_table, validate_coords,
 };
-use crate::ff::potential::{ForceTerm, IndexedTerms, Potential};
+use crate::ff::potential::{Accumulator, ForceTerm, IndexedTerms, Potential};
 use crate::op::vec3::norm;
 use molrs::core::Frame;
 use molrs::op::F;
@@ -113,16 +113,14 @@ impl AngleMmff {
 }
 
 impl Potential for AngleMmff {
-    fn calc_energy_forces(&self, coords: &[F]) -> (F, Vec<F>) {
-        let mut out = vec![0.0; coords.len()];
-        let energy = self.accumulate(coords, &mut out);
-        (energy, out)
-    }
-
-    fn accumulate(&self, coords: &[F], out: &mut [F]) -> F {
-        self.fold(coords, out, self.atom_i.len(), |t| {
-            (self.atom_i[t], self.atom_j[t], self.atom_k[t])
-        })
+    fn evaluate(&self, coords: &[F], acc: &mut Accumulator<'_>) {
+        let energy = self.fold(
+            coords,
+            acc.forces_without_virial(),
+            self.atom_i.len(),
+            |t| (self.atom_i[t], self.atom_j[t], self.atom_k[t]),
+        );
+        acc.add_energy(energy);
     }
 }
 
@@ -130,29 +128,20 @@ impl IndexedTerms for AngleMmff {
     fn terms(&self) -> Array2<u32> {
         term_table(&[&self.atom_i, &self.atom_j, &self.atom_k])
     }
-    fn calc_energy_forces_with_terms(
-        &self,
-        coords: &[F],
-        terms: ArrayView2<'_, u32>,
-    ) -> (F, Vec<F>) {
-        let mut out = vec![0.0; coords.len()];
-        let energy = self.accumulate_with_terms(coords, terms, &mut out);
-        (energy, out)
-    }
-
-    fn accumulate_with_terms(&self, coords: &[F], terms: ArrayView2<'_, u32>, out: &mut [F]) -> F {
+    fn evaluate_terms(&self, coords: &[F], terms: ArrayView2<'_, u32>, acc: &mut Accumulator<'_>) {
         debug_assert_eq!(
             terms.nrows(),
             self.atom_i.len(),
             "the row set is the force field's; only the atoms a row names may be rebound"
         );
-        self.fold(coords, out, terms.nrows(), |t| {
+        let energy = self.fold(coords, acc.forces_without_virial(), terms.nrows(), |t| {
             (
                 terms[[t, 0]] as usize,
                 terms[[t, 1]] as usize,
                 terms[[t, 2]] as usize,
             )
-        })
+        });
+        acc.add_energy(energy);
     }
 }
 
@@ -175,15 +164,15 @@ pub fn angle_mmff_constructor(
         .ok_or("mmff_angle: missing \"angles\" block")?;
     let ic = block
         .get("atomi")
-        .and_then(|c| c.as_uint())
+        .and_then(|c| c.get::<u64>())
         .ok_or("missing atomi")?;
     let jc = block
         .get("atomj")
-        .and_then(|c| c.as_uint())
+        .and_then(|c| c.get::<u64>())
         .ok_or("missing atomj")?;
     let kc = block
         .get("atomk")
-        .and_then(|c| c.as_uint())
+        .and_then(|c| c.get::<u64>())
         .ok_or("missing atomk")?;
     let kac = param_reads::instance_col("mmff_angle", block, "ka")?;
     let th0c = param_reads::instance_col("mmff_angle", block, "theta0")?;
@@ -236,7 +225,7 @@ fn linear_column<'a>(
 ) -> Result<&'a ndarray::ArrayD<molrs::op::I>, crate::ff::ir::IrError> {
     block
         .get("linear")
-        .and_then(|c| c.as_int())
+        .and_then(|c| c.get::<i32>())
         .ok_or_else(|| param_reads::missing(style, "", "linear"))
 }
 
@@ -310,16 +299,14 @@ impl AngleMmffStretchBend {
 }
 
 impl Potential for AngleMmffStretchBend {
-    fn calc_energy_forces(&self, coords: &[F]) -> (F, Vec<F>) {
-        let mut out = vec![0.0; coords.len()];
-        let energy = self.accumulate(coords, &mut out);
-        (energy, out)
-    }
-
-    fn accumulate(&self, coords: &[F], out: &mut [F]) -> F {
-        self.fold(coords, out, self.atom_i.len(), |t| {
-            (self.atom_i[t], self.atom_j[t], self.atom_k[t])
-        })
+    fn evaluate(&self, coords: &[F], acc: &mut Accumulator<'_>) {
+        let energy = self.fold(
+            coords,
+            acc.forces_without_virial(),
+            self.atom_i.len(),
+            |t| (self.atom_i[t], self.atom_j[t], self.atom_k[t]),
+        );
+        acc.add_energy(energy);
     }
 }
 
@@ -327,29 +314,20 @@ impl IndexedTerms for AngleMmffStretchBend {
     fn terms(&self) -> Array2<u32> {
         term_table(&[&self.atom_i, &self.atom_j, &self.atom_k])
     }
-    fn calc_energy_forces_with_terms(
-        &self,
-        coords: &[F],
-        terms: ArrayView2<'_, u32>,
-    ) -> (F, Vec<F>) {
-        let mut out = vec![0.0; coords.len()];
-        let energy = self.accumulate_with_terms(coords, terms, &mut out);
-        (energy, out)
-    }
-
-    fn accumulate_with_terms(&self, coords: &[F], terms: ArrayView2<'_, u32>, out: &mut [F]) -> F {
+    fn evaluate_terms(&self, coords: &[F], terms: ArrayView2<'_, u32>, acc: &mut Accumulator<'_>) {
         debug_assert_eq!(
             terms.nrows(),
             self.atom_i.len(),
             "the row set is the force field's; only the atoms a row names may be rebound"
         );
-        self.fold(coords, out, terms.nrows(), |t| {
+        let energy = self.fold(coords, acc.forces_without_virial(), terms.nrows(), |t| {
             (
                 terms[[t, 0]] as usize,
                 terms[[t, 1]] as usize,
                 terms[[t, 2]] as usize,
             )
-        })
+        });
+        acc.add_energy(energy);
     }
 }
 
@@ -377,15 +355,15 @@ pub fn angle_mmff_stretch_bend_constructor(
     let block = frame.get(ANGLES).ok_or("mmff_stbn: missing \"angles\"")?;
     let ic = block
         .get("atomi")
-        .and_then(|c| c.as_uint())
+        .and_then(|c| c.get::<u64>())
         .ok_or("missing atomi")?;
     let jc = block
         .get("atomj")
-        .and_then(|c| c.as_uint())
+        .and_then(|c| c.get::<u64>())
         .ok_or("missing atomj")?;
     let kc = block
         .get("atomk")
-        .and_then(|c| c.as_uint())
+        .and_then(|c| c.get::<u64>())
         .ok_or("missing atomk")?;
     let kba_ijk_c = param_reads::instance_col("mmff_stbn", block, "kba_ijk")?;
     let kba_kji_c = param_reads::instance_col("mmff_stbn", block, "kba_kji")?;
@@ -425,6 +403,7 @@ pub fn angle_mmff_stretch_bend_constructor(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ff::potential::fixtures::OneShot;
 
     /// ac-008 — the cubic bend constant is **-0.4 rad^-1, exactly**.
     ///
@@ -499,7 +478,7 @@ mod tests {
             -r * half.sin(),
             0.0,
         ];
-        let (e, _) = pot.calc_energy_forces(&coords);
+        let (e, _) = pot.energy_forces_at(&coords);
         assert!(e.abs() < 1e-4, "angle energy at eq should be ~0, got {}", e);
     }
 }

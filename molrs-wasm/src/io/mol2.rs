@@ -2,78 +2,80 @@
 //!
 //! | JS | molrs |
 //! |----|-------|
-//! | `Mol2Reader` | `Mol2Reader` (whole-content; the one MOL2 reader) |
-//! | `readMol2Str`, `writeMol2Str` | `read_mol2_str`, `write_mol2_str` |
+//! | `Mol2Reader` | `Mol2Reader::open` (random access by molecule) |
+//! | `readMol2`, `writeMol2` | `read_mol2`, `write_mol2` |
 
-use molrs::io::mol2::Mol2Reader as RsMol2Reader;
-use molrs::io::reader::{FrameReader, Reader};
-use std::io::Cursor;
+use molrs::io::reader::{ReadSeek, TrajectoryReader};
 use wasm_bindgen::prelude::*;
 
 use crate::core::frame::Frame;
+use crate::io::{JsSource, source_bytes};
+use molrs::io::mol2::Mol2Reader as RsMol2Reader;
 
 /// Tripos MOL2 reader.
 ///
 /// MOL2 is a section-delimited (`@<TRIPOS>...`) text format. Multi-molecule
-/// files expose each `MOLECULE` record as a frame via `read(step)`.
+/// files expose each `MOLECULE` record as a frame via `readFrame(index)`.
 /// Coordinates are already in angstrom. Produces an `"atoms"` block (`id`,
 /// `name`, `x`/`y`/`z`, `atom_type`, optional `subst_id`/`subst_name`/
 /// `charge`) and, when present, a `"bonds"` block (`atomi`/`atomj` 0-based,
 /// `bond_type`).
 #[wasm_bindgen(js_name = Mol2Reader)]
 pub struct Mol2Reader {
-    content: Vec<u8>,
-    cached_len: Option<usize>,
+    inner: RsMol2Reader<Box<dyn ReadSeek>>,
 }
 
 #[wasm_bindgen(js_class = Mol2Reader)]
 impl Mol2Reader {
-    /// Create a new MOL2 reader from a string containing the file content.
+    /// Open the file's content — its text (a `string`) or its bytes (a
+    /// `Uint8Array`) — for random access by frame (molrs `Mol2Reader::open`). The
+    /// content is copied once.
+    ///
+    /// # Errors
+    ///
+    /// Throws if `source` is neither a string nor a `Uint8Array`.
     #[wasm_bindgen(constructor)]
-    pub fn new(content: &str) -> Mol2Reader {
-        Mol2Reader {
-            content: content.as_bytes().to_vec(),
-            cached_len: None,
-        }
+    pub fn new(source: &JsSource) -> Result<Mol2Reader, JsValue> {
+        let bytes = source_bytes("new Mol2Reader", source)?;
+        RsMol2Reader::open(bytes.as_slice())
+            .map(|inner| Mol2Reader { inner })
+            .map_err(|e| JsValue::from_str(&format!("MOL2 read error: {e}")))
     }
 
-    /// Read the molecule record at the given index (0-based).
+    /// The frame at `index` (0-based), or `undefined` past the end.
+    ///
+    /// # Errors
+    ///
+    /// Throws when the frame cannot be parsed.
     #[wasm_bindgen(js_name = readFrame)]
     pub fn read_frame(&mut self, index: usize) -> Result<Option<Frame>, JsValue> {
-        let mut reader = RsMol2Reader::new(Cursor::new(self.content.as_slice()));
-        for current in 0..=index {
-            let rs_frame = reader
-                .read()
-                .map_err(|e| JsValue::from_str(&format!("MOL2 read error: {}", e)))?;
-            match rs_frame {
-                Some(frame) if current == index => return Ok(Some(Frame::from_rs(frame)?)),
-                Some(_) => continue,
-                None => return Ok(None),
-            }
+        match self
+            .inner
+            .read_frame(index)
+            .map_err(|e| JsValue::from_str(&format!("MOL2 read error: {e}")))?
+        {
+            Some(frame) => Ok(Some(Frame::from_rs(frame)?)),
+            None => Ok(None),
         }
-        Ok(None)
     }
 
-    /// Return the number of molecule records in the MOL2 file.
+    /// The number of frames in the file.
+    ///
+    /// # Errors
+    ///
+    /// Throws when the file cannot be indexed.
     #[wasm_bindgen]
     pub fn len(&mut self) -> Result<usize, JsValue> {
-        if let Some(n) = self.cached_len {
-            return Ok(n);
-        }
-        let mut reader = RsMol2Reader::new(Cursor::new(self.content.as_slice()));
-        let mut count = 0usize;
-        while reader
-            .read()
-            .map_err(|e| JsValue::from_str(&format!("MOL2 len error: {}", e)))?
-            .is_some()
-        {
-            count += 1;
-        }
-        self.cached_len = Some(count);
-        Ok(count)
+        self.inner
+            .len()
+            .map_err(|e| JsValue::from_str(&format!("MOL2 read error: {e}")))
     }
 
-    /// Check whether the file contains no records.
+    /// Whether the file holds no frame.
+    ///
+    /// # Errors
+    ///
+    /// As [`len`](Self::len).
     #[wasm_bindgen(js_name = isEmpty)]
     pub fn is_empty(&mut self) -> Result<bool, JsValue> {
         Ok(self.len()? == 0)
@@ -81,10 +83,10 @@ impl Mol2Reader {
 }
 
 read_door!(
-    /// Read the first molecule of Tripos MOL2 text.
-    readMol2Str => read_mol2_str(text: &str), "MOL2"
+    /// Read the first molecule of Tripos MOL2, the file's text or bytes.
+    readMol2 => read_mol2, "MOL2"
 );
 write_door!(
     /// Write `frame` as Tripos MOL2 text.
-    writeMol2Str => write_mol2_str -> String, "MOL2"
+    writeMol2 => write_mol2, "MOL2"
 );

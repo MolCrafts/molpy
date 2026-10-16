@@ -19,12 +19,13 @@ use crate::ff::ir::IrError;
 /// use molrs::ff::style_registry::Registry;
 /// use molrs::ff::potential::CompileError;
 /// use molrs::ff::compile::PotentialCompiler;
+/// use std::sync::Arc;
 ///
 /// let mut ff = ForceField::new("t");
 /// ff.def_style("bond", "harmonic", Params::new()).unwrap();
-/// // A registry that declares no `bond` category.
-/// let empty = Registry::new();
-/// let err = PotentialCompiler::with_registry(&ff, &empty)
+/// // Compiled against a registry that declares no `bond` category.
+/// let ff = ff.with_registry(Arc::new(Registry::new()));
+/// let err = PotentialCompiler::new(&ff)
 ///     .compile(&Frame::new())
 ///     .unwrap_err();
 /// let refused = IrError::UnknownCategory { category: "bond".into() };

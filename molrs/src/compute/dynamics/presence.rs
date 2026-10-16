@@ -70,10 +70,10 @@ pub struct Presence {
 ///
 /// ```
 /// use molrs::compute::{Compute, PairPresence, PairPresenceInput, Survival, SurvivalInput, SurvivalKind};
-/// use molrs::core::{NeighborQuery, PairSource, SimBox};
+/// use molrs::core::{Cell, NeighborQuery, PairSource, SimBox};
 /// use ndarray::array;
 ///
-/// let simbox = SimBox::cube(10.0, array![0.0, 0.0, 0.0], [true, true, true]).unwrap();
+/// let simbox = SimBox::new(Cell::Lengths([10.0; 3]), [0.0, 0.0, 0.0], [true, true, true]).unwrap();
 /// let reference = array![[0.0, 0.0, 0.0]];
 /// let tables: Vec<_> = [0.5, 1.5, 0.5]
 ///     .iter()
@@ -296,11 +296,12 @@ mod tests {
         Survival, SurvivalInput, SurvivalKind, SurvivalNormalization, SurvivalOrigin,
         TimeCorrelation,
     };
+    use crate::core::Cell;
     use molrs::core::{NeighborColumns, NeighborPair, NeighborQuery, Neighbors, SimBox};
-    use ndarray::{Array2, array};
+    use ndarray::Array2;
 
     fn cube(l: F) -> SimBox {
-        SimBox::cube(l, array![0.0, 0.0, 0.0], [true, true, true]).unwrap()
+        SimBox::new(Cell::Lengths([l; 3]), [0.0, 0.0, 0.0], [true, true, true]).unwrap()
     }
 
     /// One cross-query table per frame: species `j` (query) against species
@@ -515,8 +516,8 @@ mod tests {
     #[test]
     fn triclinic_boxes_come_from_core_search() {
         // Lattice vectors are the columns: a = (10, 0, 0), b = (5, 10, 0).
-        let h = array![[10.0, 5.0, 0.0], [0.0, 10.0, 0.0], [0.0, 0.0, 10.0]];
-        let simbox = SimBox::new(h, array![0.0, 0.0, 0.0], [true, true, true]).unwrap();
+        let h = [[10.0, 5.0, 0.0], [0.0, 10.0, 0.0], [0.0, 0.0, 10.0]];
+        let simbox = SimBox::new(Cell::Matrix(h), [0.0, 0.0, 0.0], [true, true, true]).unwrap();
         let ci = vec![vec![[0.0, 0.0, 0.0]]; 2];
         // (5, 9.5, 0) − b = (0, −0.5, 0).
         let cj = vec![vec![[5.0, 9.5, 0.0]]; 2];

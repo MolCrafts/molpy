@@ -27,6 +27,7 @@ use std::collections::HashMap;
 use super::bounds_matrix::BoundsMatrix;
 use super::mol_features::{DgFeatures, PerceivedAtom};
 use crate::ff::typifier::uff::{atom_label, bond_rest_length as uff_rest_length};
+use molrs::core::Element;
 use molrs::perceive::Hybridization;
 
 const DIST12_DELTA: f64 = 0.01;
@@ -260,17 +261,16 @@ fn effective_bond_order(order: f64, aromatic: bool) -> f64 {
 fn bond_rest_length(a: &PerceivedAtom, b: &PerceivedAtom, order: f64) -> f64 {
     let label = |x: &PerceivedAtom| {
         atom_label(
-            x.element.symbol(),
+            x.element,
             x.hybridization,
             x.aromatic || x.conjugated,
             x.total_valence,
         )
     };
-    match (label(a), label(b)) {
-        (Some(la), Some(lb)) if order > 0.0 => uff_rest_length(&la, &lb, order),
-        _ => None,
-    }
-    .unwrap_or_else(|| 0.5 * (rvdw(a.element.z()) + rvdw(b.element.z())))
+    (order > 0.0)
+        .then(|| uff_rest_length(&label(a), &label(b), order))
+        .flatten()
+        .unwrap_or_else(|| 0.5 * (rvdw(a.element.z()) + rvdw(b.element.z())))
 }
 
 /// Van der Waals radius (Å) as RDKit's `PeriodicTable::getRvdw` gives it.
@@ -477,13 +477,12 @@ fn atom_in_ring_of_size(p: &DgFeatures, idx: usize, size: usize) -> bool {
 
 /// RDKit `_isCarbonyl`: a C with degree > 2 double-bonded to an O or N.
 fn is_carbonyl(p: &DgFeatures, at: usize) -> bool {
-    if p.atoms[at].element.symbol() != "C" || p.atoms[at].degree <= 2 {
+    if p.atoms[at].element != Element::C || p.atoms[at].degree <= 2 {
         return false;
     }
     p.adj[at].iter().any(|&nb| {
         let o = p.bond_order(at, nb);
-        let s = p.atoms[nb].element.symbol();
-        o >= 1.75 && (s == "O" || s == "N")
+        o >= 1.75 && matches!(p.atoms[nb].element, Element::O | Element::N)
     })
 }
 
@@ -639,7 +638,7 @@ fn set_one_14(
                     du += GEN_DIST_TOL;
                 }
             }
-        } else if p.atoms[atm2].element.symbol() == "S" && p.atoms[atm3].element.symbol() == "S" {
+        } else if p.atoms[atm2].element == Element::S && p.atoms[atm3].element == Element::S {
             // *S-S* torsion ≈ 90°
             let d3d = compute14_dist_3d(bl1, bl2, bl3, ba12, ba23, std::f64::consts::FRAC_PI_2);
             dl = d3d - GEN_DIST_TOL;

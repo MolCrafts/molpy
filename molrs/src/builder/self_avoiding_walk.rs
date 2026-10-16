@@ -2,9 +2,9 @@
 //! `generate` driver; the monomer-placement policy it is generic over is
 //! [`GrowthStrategy`](super::growth_strategy::GrowthStrategy).
 
+use crate::core::Cell;
 use std::fmt;
 
-use ndarray::Array1;
 use rand::SeedableRng;
 use rand::rngs::StdRng;
 
@@ -177,7 +177,7 @@ impl<S: GrowthStrategy> SelfAvoidingWalk<S> {
                 "box edge too small for bond length; lower the density".into(),
             ));
         }
-        let simbox = SimBox::cube(edge, Array1::zeros(3), self.pbc)?;
+        let simbox = SimBox::new(Cell::Lengths([edge; 3]), [0.0; 3], self.pbc)?;
         let a = [edge, edge, edge];
 
         let mode = self.strategy.occupancy_mode(self.bond_length);
@@ -340,7 +340,7 @@ mod tests {
     }
 
     fn min_image_dist(sb: &SimBox, x: &Vec3, y: &Vec3) -> F {
-        let d = sb.shortest_vector_impl(pt(x), pt(y));
+        let d = sb.mic().apply(crate::op::vec3::sub(pt(y), pt(x)));
         (d[0] * d[0] + d[1] * d[1] + d[2] * d[2]).sqrt()
     }
 

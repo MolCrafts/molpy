@@ -1,27 +1,24 @@
-//! The LAMMPS log doors (`molrs.io.read_lammps_log[_str]`) and the records
+//! The LAMMPS log door (`molrs.io.read_lammps_log`) and the records
 //! they hand out (`molrs.io.lammps.LammpsLog`, …).
 //!
 //! Each class is a read-only view over the corresponding
 //! `molrs::io::lammps` struct; nested values are handed out as the
 //! matching Python class, thermo tables as NumPy arrays.
 
-use crate::path::path_str;
+use super::{PySource, data_error};
 use molrs::io::lammps::{
     LammpsCpuUse, LammpsLoadBalance, LammpsLog, LammpsLogHeader, LammpsLoopTime, LammpsMemoryUsage,
     LammpsNeighborStatistics, LammpsPerformance, LammpsRun, LammpsThermo, LammpsTimingBreakdown,
     LammpsTimingRow, LammpsWarning, is_lammps_log as is_lammps_log_rs,
 };
-use molrs::io::{
-    read_lammps_log as read_lammps_log_rs, read_lammps_log_str as read_lammps_log_str_rs,
-};
+use molrs::io::read_lammps_log as read_lammps_log_rs;
 use numpy::{PyArray1, PyArray2};
-use pyo3::exceptions::{PyFileNotFoundError, PyIOError, PyKeyError, PyValueError};
+use pyo3::exceptions::{PyKeyError, PyValueError};
 use pyo3::prelude::*;
 
 use super::json_to_py::json_object_to_pydict;
 use pyo3::types::PyDict;
 use serde_json::Value as JsonValue;
-use std::path::PathBuf;
 
 /// Header lines that precede the first run.
 #[pyclass(
@@ -723,13 +720,14 @@ impl PyLammpsLog {
     }
 }
 
-/// Read a LAMMPS log file into a :class:`LammpsLog` record
+/// Read a LAMMPS log into a :class:`LammpsLog` record
 /// (``molrs::io::read_lammps_log``).
 ///
 /// Parameters
 /// ----------
-/// path : str
-///     Path to a LAMMPS log file (e.g. ``log.lammps``).
+/// source : os.PathLike | bytes | molrs.io.Text
+///     The log file (e.g. ``log.lammps``), or its whole content. The record's
+///     ``path`` is the file's path, ``""`` for content in memory.
 /// style : str, optional
 ///     Thermo style. Only ``"default"`` tables are parsed.
 ///
@@ -742,43 +740,24 @@ impl PyLammpsLog {
 /// Raises
 /// ------
 /// FileNotFoundError
-///     If ``path`` does not exist.
+///     If the file does not exist.
+/// ValueError
+///     If the content is not UTF-8 text.
 /// OSError
 ///     On other I/O failures.
 #[pyfunction]
-#[pyo3(signature = (path, style = "default"))]
-pub fn read_lammps_log(path: PathBuf, style: &str) -> PyResult<PyLammpsLog> {
-    let path = path_str(&path)?;
-    let log = read_lammps_log_rs(path, style).map_err(lammps_log_io_error)?;
+#[pyo3(signature = (source, style = "default"))]
+pub fn read_lammps_log(source: PySource<'_>, style: &str) -> PyResult<PyLammpsLog> {
+    let log = source
+        .read(|s| read_lammps_log_rs(s, style))
+        .map_err(data_error)?;
     Ok(PyLammpsLog::new(log))
-}
-
-/// Parse a LAMMPS log from an in-memory string (no filesystem access).
-///
-/// Parameters
-/// ----------
-/// text : str
-///     Full log file contents.
-/// source_name : str, optional
-///     Where the text came from, recorded on the result as ``path`` (default
-///     ``"<string>"``); never opened.
-/// style : str, optional
-///     Thermo style. Only ``"default"`` tables are parsed.
-///
-/// Returns
-/// -------
-/// LammpsLog
-///     Same structure as :func:`read_lammps_log`.
-#[pyfunction]
-#[pyo3(signature = (text, source_name = "<string>", style = "default"))]
-pub fn read_lammps_log_str(text: &str, source_name: &str, style: &str) -> PyLammpsLog {
-    PyLammpsLog::new(read_lammps_log_str_rs(text, source_name, style))
 }
 
 /// Whether ``text`` holds a LAMMPS run (``molrs::io::lammps::is_lammps_log``).
 ///
 /// True when a ``Per MPI rank memory allocation`` line is present — the line
-/// :func:`molrs.io.read_lammps_log_str` opens each run at. A banner alone (a
+/// :func:`molrs.io.read_lammps_log` opens each run at. A banner alone (a
 /// run that died in setup) is not a log with anything to read. Cheap enough
 /// to run on a file's first bytes.
 ///
@@ -793,14 +772,6 @@ pub fn read_lammps_log_str(text: &str, source_name: &str, style: &str) -> PyLamm
 #[pyfunction]
 pub fn is_lammps_log(text: &str) -> bool {
     is_lammps_log_rs(text)
-}
-
-fn lammps_log_io_error(e: std::io::Error) -> PyErr {
-    if e.kind() == std::io::ErrorKind::NotFound {
-        PyFileNotFoundError::new_err(e.to_string())
-    } else {
-        PyIOError::new_err(e.to_string())
-    }
 }
 
 pub(crate) fn lammps_log_to_pydict<'py>(
@@ -820,7 +791,6 @@ pub(crate) fn lammps_log_to_pydict<'py>(
 /// Register the LAMMPS log doors and the views they hand out.
 pub(crate) fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     crate::add_function(m, "molrs.io", wrap_pyfunction!(read_lammps_log, m)?)?;
-    crate::add_function(m, "molrs.io", wrap_pyfunction!(read_lammps_log_str, m)?)?;
     crate::add_function(m, "molrs.io.lammps", wrap_pyfunction!(is_lammps_log, m)?)?;
     m.add_class::<PyLammpsLog>()?;
     m.add_class::<PyLammpsRun>()?;

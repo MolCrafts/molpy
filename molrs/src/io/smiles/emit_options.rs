@@ -2,8 +2,7 @@
 
 use molrs::core::NodeId;
 
-/// Options for [`SmilesIr::from_atomistic`](crate::io::smiles::SmilesIr::from_atomistic)
-/// and [`write_smiles_str`](crate::io::write_smiles_str).
+/// Options for [`SmilesIr::from_atomistic`](crate::io::smiles::SmilesIr::from_atomistic).
 ///
 /// Every science or representation choice is an explicit field — no silent
 /// policy.

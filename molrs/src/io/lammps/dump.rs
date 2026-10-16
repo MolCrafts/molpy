@@ -1,19 +1,17 @@
 //! LAMMPS dump trajectory file reader and writer.
 
 use crate::io::frame_columns::insert_column_of_length;
-use crate::io::invalid_data;
 use crate::io::lammps::box_bounds::{BoxBounds, pbc_from_boundary_tokens, simbox_from_bounds};
 use crate::io::lammps::columns::{canonical_dump_column, native_dump_column};
 use crate::io::reader::{FrameIndex, FrameReader, ReadSeek, Reader, TrajectoryReader};
 use crate::io::writer::{FrameWriter, Writer};
+use crate::io::{Sink, SinkWriter, Source, invalid_data};
 use molrs::core::Frame;
 use molrs::core::FrameAccess;
 use molrs::core::keys;
 use molrs::core::{Block, BlockAccess, ColumnView, DType};
 use molrs::op::{F, I, Idx};
-use std::fs::File;
 use std::io::{BufRead, Seek, SeekFrom, Write};
-use std::path::Path;
 use std::sync::OnceLock;
 
 // ============================================================================
@@ -581,7 +579,7 @@ fn parse_single_frame<R: BufRead>(reader: &mut R) -> std::io::Result<Option<Fram
             ColumnType::String => {
                 // A dump's `type` field is LAMMPS's numeric ordinal, which the
                 // alias table renames to `type_id`. Written with type labels
-                // (`dump_modify ... types labels`, or by `write_lammps_dump_trajectory`
+                // (`dump_modify ... types labels`, or by `write_lammps_dump`
                 // from a frame without `type_id`) it holds the force-field
                 // label instead, and that is the canonical string `type`: a
                 // string is not a `type_id`.
@@ -679,25 +677,29 @@ fn parse_single_frame<R: BufRead>(reader: &mut R) -> std::io::Result<Option<Fram
 /// # Examples
 ///
 /// ```no_run
-/// use molrs::io::{read_lammps_dump_trajectory, write_lammps_dump_trajectory};
-/// use molrs::io::lammps::LammpsDumpReader;
+/// use std::path::Path;
+/// use molrs::io::lammps::{LammpsDumpReader, LammpsDumpWriter};
+/// use molrs::io::reader::TrajectoryReader;
+/// use molrs::io::writer::FrameWriter;
 ///
 /// # fn main() -> std::io::Result<()> {
-/// let frames = read_lammps_dump_trajectory("trajectory.lammpstrj")?;
-/// use molrs::io::reader::TrajectoryReader;
-/// let mut reader = LammpsDumpReader::open("trajectory.lammpstrj")?;
+/// let mut reader = LammpsDumpReader::open(Path::new("trajectory.lammpstrj"))?;
 /// let frame_5 = reader.read_frame(5)?;
-/// write_lammps_dump_trajectory("output.lammpstrj", &frames, None)?;
+/// let mut writer = LammpsDumpWriter::create(Path::new("output.lammpstrj"))?;
+/// for frame in reader.iter() {
+///     writer.write(&frame?)?;
+/// }
 /// # Ok(())
 /// # }
 /// ```
 ///
 /// ```no_run
+/// use std::path::Path;
 /// use molrs::io::lammps::LammpsDumpReader;
 /// use molrs::io::reader::TrajectoryReader;
 ///
 /// # fn main() -> std::io::Result<()> {
-/// let mut reader = LammpsDumpReader::open("traj.lammpstrj")?;
+/// let mut reader = LammpsDumpReader::open(Path::new("traj.lammpstrj"))?;
 /// let n = reader.len()?;
 /// println!("Trajectory has {} frames", n);
 /// let frame = reader.read_frame(0)?.expect("first frame");
@@ -877,28 +879,56 @@ impl<R: BufRead + Seek> TrajectoryReader for LammpsDumpReader<R> {
 
 /// LAMMPS dump trajectory writer.
 ///
-/// Writes frames in LAMMPS dump format. Call [`FrameWriter::write`](crate::io::writer::FrameWriter::write) for each timestep.
+/// Writes frames in LAMMPS dump format, one snapshot per
+/// [`FrameWriter::write`](crate::io::writer::FrameWriter::write); the columns
+/// are every column of the `atoms` block unless
+/// [`set_columns`](Self::set_columns) names them ([`write_lammps_dump`] says
+/// how either is written).
 ///
 /// # Examples
 ///
-/// ```no_run
-/// use molrs::io::write_lammps_dump_trajectory;
-/// use molrs::core::Frame;
+/// ```
+/// use molrs::io::lammps::LammpsDumpWriter;
+/// use molrs::io::read_xyz;
+/// use molrs::io::writer::FrameWriter;
 ///
 /// # fn main() -> std::io::Result<()> {
-/// let frames: Vec<Frame> = vec![];
-/// write_lammps_dump_trajectory("output.lammpstrj", &frames, None)?;
+/// let frame = read_xyz(b"1\nLattice=\"5 0 0 0 5 0 0 0 5\"\nO 0 0 0\n")?;
+/// let mut out = Vec::new();
+/// let mut writer = LammpsDumpWriter::create(&mut out)?;
+/// writer.set_columns(&["element", "x", "y", "z"]);
+/// writer.write(&frame)?;
+/// writer.write(&frame)?;
+/// drop(writer);
+/// assert_eq!(String::from_utf8(out).unwrap().matches("ITEM: TIMESTEP").count(), 2);
 /// # Ok(())
 /// # }
 /// ```
 pub struct LammpsDumpWriter<W: Write> {
     writer: W,
+    columns: Option<Vec<String>>,
 }
 
 impl<W: Write> LammpsDumpWriter<W> {
     /// Create a new LAMMPS dump writer.
     pub fn new(writer: W) -> Self {
-        Self { writer }
+        Self {
+            writer,
+            columns: None,
+        }
+    }
+
+    /// Write exactly `columns`, in that order, in every later snapshot (the
+    /// `dump custom` column line).
+    pub fn set_columns(&mut self, columns: &[&str]) {
+        self.columns = Some(columns.iter().map(|c| (*c).to_owned()).collect());
+    }
+}
+
+impl<'a> LammpsDumpWriter<SinkWriter<'a>> {
+    /// Create a LAMMPS dump file, or fill a buffer, snapshot by snapshot.
+    pub fn create(sink: impl Into<Sink<'a>>) -> std::io::Result<Self> {
+        Ok(Self::new(sink.into().writer()?))
     }
 }
 
@@ -915,7 +945,12 @@ impl<W: Write> FrameWriter for LammpsDumpWriter<W> {
         // Refuse to emit a frame that violates the vocabulary: a bad file
         // looks fine and is found wrong later, by whatever reads it.
         crate::io::writer::check_write_frame(frame)?;
-        write_lammps_dump_frame(&mut self.writer, frame, None)
+        let columns: Option<Vec<&str>> = self
+            .columns
+            .as_ref()
+            .map(|c| c.iter().map(String::as_str).collect());
+        write_lammps_dump_frame(&mut self.writer, frame, columns.as_deref())?;
+        self.writer.flush()
     }
 }
 
@@ -926,7 +961,7 @@ impl<W: Write> FrameWriter for LammpsDumpWriter<W> {
 ///
 /// `columns` is the caller's `dump custom` line: `Some` writes exactly those
 /// columns in that order, `None` writes every column the block holds. See
-/// [`write_lammps_dump_trajectory`] for how the `type` field is chosen.
+/// [`write_lammps_dump`] for how the `type` field is chosen.
 fn write_lammps_dump_frame<W: Write>(
     writer: &mut W,
     frame: &impl FrameAccess,
@@ -1199,11 +1234,11 @@ fn write_lammps_dump_local_frame<W: Write>(
 
     let atomi = frame
         .column("bonds", "atomi")
-        .and_then(|c| c.as_uint())
+        .and_then(|c| c.get::<u64>())
         .ok_or_else(|| invalid_data("bonds block missing atomi"))?;
     let atomj = frame
         .column("bonds", "atomj")
-        .and_then(|c| c.as_uint())
+        .and_then(|c| c.get::<u64>())
         .ok_or_else(|| invalid_data("bonds block missing atomj"))?;
     let atomi = atomi
         .as_slice()
@@ -1213,11 +1248,11 @@ fn write_lammps_dump_local_frame<W: Write>(
         .ok_or_else(|| invalid_data("bonds.atomj is not contiguous"))?;
     let btype = frame
         .column("bonds", "type_id")
-        .and_then(|c| c.as_uint())
+        .and_then(|c| c.get::<u64>())
         .and_then(|a| a.as_slice().map(|s| s.to_vec()));
     let atom_ids = frame
         .column("atoms", "id")
-        .and_then(|c| c.as_uint())
+        .and_then(|c| c.get::<u64>())
         .and_then(|a| a.as_slice().map(|s| s.to_vec()));
 
     let id_of = |idx: Idx| -> Idx {
@@ -1254,8 +1289,8 @@ fn write_dump_box_bounds<W: Write>(
         .simbox_ref()
         .ok_or_else(|| invalid_data("Frame must have a simbox"))?;
 
-    let h = simbox.h_view();
-    let o = simbox.origin_view();
+    let h = ndarray::arr2(&simbox.matrix());
+    let o = simbox.origin();
     let pbc_flags = simbox.pbc();
 
     let lx = h[[0, 0]];
@@ -1302,31 +1337,14 @@ fn write_dump_box_bounds<W: Write>(
 // Convenience Functions
 // ============================================================================
 
-/// Read all frames from a LAMMPS dump file.
-///
-/// For large trajectories, prefer `LammpsDumpReader::open` with `TrajectoryReader::read_frame`
-/// for random access without loading all frames into memory.
-pub fn read_lammps_dump_trajectory<P: AsRef<Path>>(path: P) -> std::io::Result<Vec<Frame>> {
-    let reader = crate::io::reader::open_seekable(path)?;
-    let mut dump_reader = LammpsDumpReader::new(reader);
-    crate::io::reader::collect_frames(&mut dump_reader)
+/// Read the first snapshot of a LAMMPS dump file.
+pub fn read_lammps_dump<'a>(src: impl Into<Source<'a>>) -> std::io::Result<Frame> {
+    let src = src.into();
+    parse_single_frame(&mut src.reader()?)?
+        .ok_or_else(|| invalid_data(format!("{}: no LAMMPS dump snapshot", src.name())))
 }
 
-impl LammpsDumpReader<Box<dyn ReadSeek>> {
-    /// Open a LAMMPS dump file for trajectory-style random access.
-    ///
-    /// Returns a reader implementing `TrajectoryReader`. The index is built lazily
-    /// on first call to `read_frame` or `len`.
-    pub fn open<P: AsRef<Path>>(path: P) -> std::io::Result<Self> {
-        let reader = crate::io::reader::open_seekable(path)?;
-        Ok(Self::new(reader))
-    }
-}
-
-/// Write frames to a LAMMPS dump file.
-///
-/// Accepts a slice of any type implementing [`FrameAccess`], including
-/// `&[Frame]`.
+/// Write one frame as a one-snapshot LAMMPS dump file.
 ///
 /// `columns` is the `dump custom` column line: `Some(&["id", "element", "x",
 /// "y", "z"])` writes exactly those, in that order, and errors on a name the
@@ -1342,52 +1360,39 @@ impl LammpsDumpReader<Box<dyn ReadSeek>> {
 /// Every value is formatted from its column's stored dtype; a column that a
 /// dump field cannot hold (complex, more than one value per row, a string that
 /// is empty or contains whitespace) is an error.
-pub fn write_lammps_dump_trajectory<P: AsRef<Path>, FA: FrameAccess>(
-    path: P,
-    frames: &[FA],
+pub fn write_lammps_dump<'a>(
+    sink: impl Into<Sink<'a>>,
+    frame: &impl FrameAccess,
     columns: Option<&[&str]>,
 ) -> std::io::Result<()> {
-    let file = File::create(path)?;
-    let mut writer = std::io::BufWriter::new(file);
-    for frame in frames {
-        write_lammps_dump_frame(&mut writer, frame, columns)?;
-    }
-    Ok(())
+    let mut writer = sink.into().writer()?;
+    write_lammps_dump_frame(&mut writer, frame, columns)?;
+    writer.flush()
 }
 
-/// Write frames as LAMMPS `dump local` (OVITO Load Trajectory bond overlay).
+impl LammpsDumpReader<Box<dyn ReadSeek>> {
+    /// Open a LAMMPS dump file, or the bytes of one, for random access by
+    /// snapshot. The index is built lazily on the first `read_frame` or
+    /// `len`.
+    pub fn open<'a>(src: impl Into<Source<'a>>) -> std::io::Result<Self> {
+        Ok(Self::new(src.into().owned_reader()?))
+    }
+}
+
+/// Write frames as LAMMPS `dump local` (OVITO Load Trajectory bond overlay),
+/// one snapshot per frame.
 ///
 /// Column names `batom1` / `batom2` / `btype` match OVITO's automatic mapping.
 /// See <https://www.ovito.org/manual/reference/pipelines/modifiers/load_trajectory.html>
-pub fn write_lammps_dump_local<P: AsRef<Path>, FA: FrameAccess>(
-    path: P,
+pub fn write_lammps_dump_local<'a, FA: FrameAccess>(
+    sink: impl Into<Sink<'a>>,
     frames: &[FA],
 ) -> std::io::Result<()> {
-    let file = File::create(path)?;
-    let mut writer = std::io::BufWriter::new(file);
+    let mut writer = sink.into().writer()?;
     for frame in frames {
         write_lammps_dump_local_frame(&mut writer, frame)?;
     }
-    Ok(())
-}
-
-/// Read the first snapshot of LAMMPS dump `text` — one frame of
-/// [`read_lammps_dump_trajectory`] on text in memory.
-pub fn read_lammps_dump_str(text: &str) -> std::io::Result<Frame> {
-    LammpsDumpReader::new(std::io::Cursor::new(text.as_bytes()))
-        .read()?
-        .ok_or_else(|| invalid_data("LAMMPS dump text holds no snapshot"))
-}
-
-/// Write one frame as a LAMMPS dump snapshot in memory — one frame of
-/// [`write_lammps_dump_trajectory`], `columns` as there.
-pub fn write_lammps_dump_str(
-    frame: &impl FrameAccess,
-    columns: Option<&[&str]>,
-) -> std::io::Result<String> {
-    let mut buf = Vec::new();
-    write_lammps_dump_frame(&mut buf, frame, columns)?;
-    String::from_utf8(buf).map_err(invalid_data)
+    writer.flush()
 }
 
 // ============================================================================
@@ -1395,23 +1400,6 @@ pub fn write_lammps_dump_str(
 // ============================================================================
 
 use crate::io::frame_index::{FrameIndexBuilder, FrameOffset, LineAccumulator};
-use std::io::Cursor;
-
-/// Parse exactly one LAMMPS dump frame from a tightly-bounded byte slice.
-///
-/// `bytes` must be the slice produced by [`LammpsDumpIndexBuilder`] for one
-/// frame: it begins with an `ITEM: TIMESTEP` (or an optional `ITEM: UNITS` /
-/// `ITEM: TIME` header preceding it) and ends just before the next frame's
-/// `ITEM: TIMESTEP` or at EOF. The frame must be self-contained.
-pub fn read_lammps_dump_bytes(bytes: &[u8]) -> std::io::Result<Frame> {
-    let mut cursor = Cursor::new(bytes);
-    parse_single_frame(&mut cursor)?.ok_or_else(|| {
-        std::io::Error::new(
-            std::io::ErrorKind::UnexpectedEof,
-            "LAMMPS dump frame slice is empty",
-        )
-    })
-}
 
 /// Streaming frame indexer for LAMMPS dump files.
 ///
@@ -1511,6 +1499,7 @@ impl FrameIndexBuilder for LammpsDumpIndexBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::Cell;
     use std::io::Cursor;
 
     /// Multi-frame dump (2 frames) — used only by index/random-access/iter tests.
@@ -1771,9 +1760,12 @@ ITEM: ATOMS id type x y z
         let atoms = frames[0].get("atoms").expect("atoms block");
         let ids = atoms
             .get("id")
-            .and_then(|c| c.as_uint())
+            .and_then(|c| c.get::<u64>())
             .expect("id column");
-        let xs = atoms.get("x").and_then(|c| c.as_float()).expect("x column");
+        let xs = atoms
+            .get("x")
+            .and_then(|c| c.get::<f64>())
+            .expect("x column");
         // File order preserved: 3, 1, 2 (matching x: 9.0, 1.0, 5.0).
         assert_eq!(ids.as_slice().unwrap(), &[3, 1, 2]);
         assert_eq!(xs.as_slice().unwrap(), &[9.0, 1.0, 5.0]);
@@ -1803,7 +1795,7 @@ ITEM: ENTRIES batom1 batom2 btype
         let entries = frames[0].get("entries").expect("entries block");
         let batom1 = entries
             .get("batom1")
-            .and_then(|c| c.as_int())
+            .and_then(|c| c.get::<i32>())
             .expect("batom1");
         // File order: 3, 1, 2 (no sort applied).
         assert_eq!(batom1.as_slice().unwrap(), &[3, 1, 2]);
@@ -1865,20 +1857,20 @@ ITEM: ATOMS id type x y z vx vy vz q c_pe
         // canonical `charge` on the way out of the reader.
         let q = atoms
             .get(keys::CHARGE)
-            .and_then(|c| c.as_float())
+            .and_then(|c| c.get::<f64>())
             .expect("charge column");
         assert!((q[0] - (-0.5)).abs() < 1e-6);
 
         let pe = atoms
             .get("c_pe")
-            .and_then(|c| c.as_float())
+            .and_then(|c| c.get::<f64>())
             .expect("c_pe column");
         assert!((pe[0] - (-10.5)).abs() < 1e-4);
 
         // Velocities should be float
         let vx = atoms
             .get("vx")
-            .and_then(|c| c.as_float())
+            .and_then(|c| c.get::<f64>())
             .expect("vx column");
         assert!((vx[0] - 0.1).abs() < 1e-6);
     }
@@ -1902,15 +1894,15 @@ ITEM: ATOMS id type xu yu zu
         let frame = reader.read().unwrap().expect("parse");
         let atoms = frame.get("atoms").expect("atoms");
 
-        let x = atoms.get("xu").and_then(|c| c.as_float()).expect("xu");
-        let y = atoms.get("yu").and_then(|c| c.as_float()).expect("yu");
-        let z = atoms.get("zu").and_then(|c| c.as_float()).expect("zu");
+        let x = atoms.get("xu").and_then(|c| c.get::<f64>()).expect("xu");
+        let y = atoms.get("yu").and_then(|c| c.get::<f64>()).expect("yu");
+        let z = atoms.get("zu").and_then(|c| c.get::<f64>()).expect("zu");
 
         assert_eq!(x.iter().copied().collect::<Vec<_>>(), vec![1.0, 4.0]);
         assert_eq!(y.iter().copied().collect::<Vec<_>>(), vec![2.0, 5.0]);
         assert_eq!(z.iter().copied().collect::<Vec<_>>(), vec![3.0, 6.0]);
         assert!(
-            atoms.get("x").and_then(|c| c.as_float()).is_none(),
+            atoms.get("x").and_then(|c| c.get::<f64>()).is_none(),
             "reader should not synthesize x/y/z from xu/yu/zu"
         );
     }
@@ -1934,15 +1926,15 @@ ITEM: ATOMS id type xs ys zs
         let frame = reader.read().unwrap().expect("parse");
         let atoms = frame.get("atoms").expect("atoms");
 
-        let x = atoms.get("xs").and_then(|c| c.as_float()).expect("xs");
-        let y = atoms.get("ys").and_then(|c| c.as_float()).expect("ys");
-        let z = atoms.get("zs").and_then(|c| c.as_float()).expect("zs");
+        let x = atoms.get("xs").and_then(|c| c.get::<f64>()).expect("xs");
+        let y = atoms.get("ys").and_then(|c| c.get::<f64>()).expect("ys");
+        let z = atoms.get("zs").and_then(|c| c.get::<f64>()).expect("zs");
 
         assert_eq!(x.iter().copied().collect::<Vec<_>>(), vec![0.0, 0.5]);
         assert_eq!(y.iter().copied().collect::<Vec<_>>(), vec![0.0, 0.5]);
         assert_eq!(z.iter().copied().collect::<Vec<_>>(), vec![0.0, 0.5]);
         assert!(
-            atoms.get("x").and_then(|c| c.as_float()).is_none(),
+            atoms.get("x").and_then(|c| c.get::<f64>()).is_none(),
             "reader should preserve source columns only"
         );
     }
@@ -1965,9 +1957,9 @@ ITEM: ATOMS id type xs ys zs
         let frame = reader.read().unwrap().expect("parse");
         let atoms = frame.get("atoms").expect("atoms");
 
-        let x = atoms.get("xs").and_then(|c| c.as_float()).expect("xs");
-        let y = atoms.get("ys").and_then(|c| c.as_float()).expect("ys");
-        let z = atoms.get("zs").and_then(|c| c.as_float()).expect("zs");
+        let x = atoms.get("xs").and_then(|c| c.get::<f64>()).expect("xs");
+        let y = atoms.get("ys").and_then(|c| c.get::<f64>()).expect("ys");
+        let z = atoms.get("zs").and_then(|c| c.get::<f64>()).expect("zs");
 
         assert!((x[0] - 0.25).abs() < 1e-6);
         assert!((y[0] - 0.5).abs() < 1e-6);
@@ -1992,15 +1984,15 @@ ITEM: ATOMS id type xs yu zu
         let frame = reader.read().unwrap().expect("mixed coords parse");
         let atoms = frame.get("atoms").expect("atoms");
         assert_eq!(
-            atoms.get("xs").and_then(|c| c.as_float()).expect("xs")[0],
+            atoms.get("xs").and_then(|c| c.get::<f64>()).expect("xs")[0],
             0.5
         );
         assert_eq!(
-            atoms.get("yu").and_then(|c| c.as_float()).expect("yu")[0],
+            atoms.get("yu").and_then(|c| c.get::<f64>()).expect("yu")[0],
             5.0
         );
         assert_eq!(
-            atoms.get("zu").and_then(|c| c.as_float()).expect("zu")[0],
+            atoms.get("zu").and_then(|c| c.get::<f64>()).expect("zu")[0],
             5.0
         );
     }
@@ -2025,7 +2017,7 @@ ITEM: ATOMS id type q
         assert_eq!(
             atoms
                 .get(keys::CHARGE)
-                .and_then(|c| c.as_float())
+                .and_then(|c| c.get::<f64>())
                 .expect("charge")[0],
             -0.5
         );
@@ -2053,14 +2045,14 @@ ITEM: ATOMS id type mol q x y z
         assert_eq!(
             atoms
                 .get(keys::CHARGE)
-                .and_then(|c| c.as_float())
+                .and_then(|c| c.get::<f64>())
                 .expect("charge")[0],
             -0.5
         );
         assert_eq!(
             atoms
                 .get(keys::MOL_ID)
-                .and_then(|c| c.as_uint())
+                .and_then(|c| c.get::<u64>())
                 .expect("mol_id")[0],
             7
         );
@@ -2157,7 +2149,7 @@ ITEM: ATOMS id type x y z
         for entry in &entries {
             let lo = entry.byte_offset as usize;
             let hi = lo + entry.byte_len as usize;
-            let frame = read_lammps_dump_bytes(&bytes[lo..hi]).expect("read_lammps_dump_bytes");
+            let frame = read_lammps_dump(&bytes[lo..hi]).expect("read_lammps_dump");
             assert!(frame.get("atoms").is_some());
         }
     }
@@ -2229,7 +2221,7 @@ ITEM: ATOMS id type x y z
         let lo = entries[0].byte_offset as usize;
         assert!(bytes[lo..].starts_with(b"ITEM: TIMESTEP"));
         // The slice rooted at byte_offset must be parseable.
-        read_lammps_dump_bytes(&bytes[lo..lo + entries[0].byte_len as usize])
+        read_lammps_dump(&bytes[lo..lo + entries[0].byte_len as usize])
             .expect("parse the units-prefixed frame");
     }
 
@@ -2243,7 +2235,7 @@ ITEM: ATOMS id type x y z
         for entry in &entries {
             let lo = entry.byte_offset as usize;
             let hi = lo + entry.byte_len as usize;
-            read_lammps_dump_bytes(&bytes[lo..hi]).expect("parse CRLF frame");
+            read_lammps_dump(&bytes[lo..hi]).expect("parse CRLF frame");
         }
     }
 
@@ -2257,7 +2249,7 @@ ITEM: ATOMS id type x y z
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].byte_offset, 0);
         assert_eq!(entries[0].byte_len as usize, bytes.len());
-        read_lammps_dump_bytes(bytes).expect("parse no-trailing-newline");
+        read_lammps_dump(bytes).expect("parse no-trailing-newline");
     }
 
     /// Edge case: chunk boundary at byte 0 of a TIMESTEP line.
@@ -2287,42 +2279,55 @@ ITEM: ATOMS id type x y z
     #[test]
     fn write_dump_local_from_bonds_roundtrip() {
         use molrs::core::SimBox;
-        use ndarray::{Array1, array};
+        use ndarray::Array1;
 
         let mut atoms = Block::new();
         atoms
             .insert(
                 "id",
                 Array1::from_vec(vec![1 as Idx, 2 as Idx, 3 as Idx]).into_dyn(),
+                None,
             )
             .unwrap();
         atoms
-            .insert("x", Array1::from_vec(vec![0.0 as F, 1.0, 2.0]).into_dyn())
+            .insert(
+                "x",
+                Array1::from_vec(vec![0.0 as F, 1.0, 2.0]).into_dyn(),
+                None,
+            )
             .unwrap();
         atoms
-            .insert("y", Array1::from_vec(vec![0.0 as F; 3]).into_dyn())
+            .insert("y", Array1::from_vec(vec![0.0 as F; 3]).into_dyn(), None)
             .unwrap();
         atoms
-            .insert("z", Array1::from_vec(vec![0.0 as F; 3]).into_dyn())
+            .insert("z", Array1::from_vec(vec![0.0 as F; 3]).into_dyn(), None)
             .unwrap();
         let mut bonds = Block::new();
         bonds
             .insert(
                 "atomi",
                 Array1::from_vec(vec![0 as Idx, 1 as Idx]).into_dyn(),
+                None,
             )
             .unwrap();
         bonds
             .insert(
                 "atomj",
                 Array1::from_vec(vec![1 as Idx, 2 as Idx]).into_dyn(),
+                None,
             )
             .unwrap();
         let mut frame = Frame::new();
         frame.insert("atoms", atoms);
         frame.insert("bonds", bonds);
-        frame.simbox =
-            Some(SimBox::cube(10.0, array![0.0 as F, 0.0, 0.0], [true, true, true]).unwrap());
+        frame.simbox = Some(
+            SimBox::new(
+                Cell::Lengths([10.0; 3]),
+                [0.0 as F, 0.0, 0.0],
+                [true, true, true],
+            )
+            .unwrap(),
+        );
 
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("bonds.dump");
@@ -2332,8 +2337,8 @@ ITEM: ATOMS id type x y z
         assert!(text.contains("ITEM: ENTRIES batom1 batom2"));
         assert!(text.contains("1 2"));
         assert!(text.contains("2 3"));
-        let loaded = read_lammps_dump_trajectory(&path).unwrap();
-        let entries = loaded[0].get("entries").expect("entries");
+        let loaded = read_lammps_dump(&path).unwrap();
+        let entries = loaded.get("entries").expect("entries");
         assert_eq!(entries.n_rows(), Some(2));
         assert!(entries.dtype("batom1").is_some());
         assert!(entries.dtype("batom2").is_some());
@@ -2342,17 +2347,25 @@ ITEM: ATOMS id type x y z
     /// A frame carrying more than a viewer needs, for the column-choice tests.
     fn wide_frame() -> Frame {
         use molrs::core::SimBox;
-        use ndarray::{Array1, array};
+        use ndarray::Array1;
 
         let mut atoms = Block::new();
         atoms
-            .insert("id", Array1::from_vec(vec![1 as Idx, 2]).into_dyn())
+            .insert("id", Array1::from_vec(vec![1 as Idx, 2]).into_dyn(), None)
             .unwrap();
         atoms
-            .insert("mol_id", Array1::from_vec(vec![1 as Idx, 1]).into_dyn())
+            .insert(
+                "mol_id",
+                Array1::from_vec(vec![1 as Idx, 1]).into_dyn(),
+                None,
+            )
             .unwrap();
         atoms
-            .insert("mass", Array1::from_vec(vec![16.0 as F, 1.008]).into_dyn())
+            .insert(
+                "mass",
+                Array1::from_vec(vec![16.0 as F, 1.008]).into_dyn(),
+                None,
+            )
             .unwrap();
         insert_column_of_length(
             &mut atoms,
@@ -2363,13 +2376,19 @@ ITEM: ATOMS id type x y z
         .unwrap();
         for (key, values) in [("x", [0.0 as F, 1.0]), ("y", [0.0, 2.0]), ("z", [0.0, 3.0])] {
             atoms
-                .insert(key, Array1::from_vec(values.to_vec()).into_dyn())
+                .insert(key, Array1::from_vec(values.to_vec()).into_dyn(), None)
                 .unwrap();
         }
         let mut frame = Frame::new();
         frame.insert("atoms", atoms);
-        frame.simbox =
-            Some(SimBox::cube(10.0, array![0.0 as F, 0.0, 0.0], [true, true, true]).unwrap());
+        frame.simbox = Some(
+            SimBox::new(
+                Cell::Lengths([10.0; 3]),
+                [0.0 as F, 0.0, 0.0],
+                [true, true, true],
+            )
+            .unwrap(),
+        );
         frame
     }
 
@@ -2377,9 +2396,9 @@ ITEM: ATOMS id type x y z
     fn write_dump_columns_writes_only_what_was_asked_in_order() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("chosen.lammpstrj");
-        write_lammps_dump_trajectory(
+        write_lammps_dump(
             &path,
-            &[wide_frame()],
+            &wide_frame(),
             Some(&["id", "element", "mol", "x", "y", "z"]),
         )
         .unwrap();
@@ -2394,8 +2413,7 @@ ITEM: ATOMS id type x y z
     fn write_dump_columns_rejects_a_column_the_frame_lacks() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("missing.lammpstrj");
-        let err =
-            write_lammps_dump_trajectory(&path, &[wide_frame()], Some(&["id", "q"])).unwrap_err();
+        let err = write_lammps_dump(&path, &wide_frame(), Some(&["id", "q"])).unwrap_err();
         let message = err.to_string();
         assert!(message.contains("'q'"), "{message}");
         assert!(message.contains("element"), "{message}");
@@ -2405,17 +2423,21 @@ ITEM: ATOMS id type x y z
     fn write_dump_columns_rejects_an_empty_list() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("empty.lammpstrj");
-        assert!(write_lammps_dump_trajectory(&path, &[wide_frame()], Some(&[])).is_err());
+        assert!(write_lammps_dump(&path, &wide_frame(), Some(&[])).is_err());
     }
 
     /// Three waters' worth of atoms in a 10 Å cube, with `extra` columns.
     fn typed_frame(extra: impl FnOnce(&mut Block)) -> Frame {
         use molrs::core::SimBox;
-        use ndarray::{Array1, array};
+        use ndarray::Array1;
 
         let mut atoms = Block::new();
         atoms
-            .insert(keys::ID, Array1::from_vec(vec![1 as Idx, 2, 3]).into_dyn())
+            .insert(
+                keys::ID,
+                Array1::from_vec(vec![1 as Idx, 2, 3]).into_dyn(),
+                None,
+            )
             .unwrap();
         for (key, values) in [
             (keys::X, [0.0 as F, 1.0, 2.0]),
@@ -2423,14 +2445,20 @@ ITEM: ATOMS id type x y z
             (keys::Z, [0.0, 0.0, 0.25]),
         ] {
             atoms
-                .insert(key, Array1::from_vec(values.to_vec()).into_dyn())
+                .insert(key, Array1::from_vec(values.to_vec()).into_dyn(), None)
                 .unwrap();
         }
         extra(&mut atoms);
         let mut frame = Frame::new();
         frame.insert("atoms", atoms);
-        frame.simbox =
-            Some(SimBox::cube(10.0, array![0.0 as F, 0.0, 0.0], [true, true, true]).unwrap());
+        frame.simbox = Some(
+            SimBox::new(
+                Cell::Lengths([10.0; 3]),
+                [0.0 as F, 0.0, 0.0],
+                [true, true, true],
+            )
+            .unwrap(),
+        );
         frame
     }
 
@@ -2449,6 +2477,7 @@ ITEM: ATOMS id type x y z
             .insert(
                 keys::TYPE_ID,
                 ndarray::Array1::from_vec(vec![1 as Idx, 2, 2]).into_dyn(),
+                None,
             )
             .unwrap();
     }
@@ -2457,18 +2486,18 @@ ITEM: ATOMS id type x y z
     fn dump_round_trip(frame: &Frame, columns: Option<&[&str]>) -> (String, Frame) {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("typed.lammpstrj");
-        write_lammps_dump_trajectory(&path, std::slice::from_ref(frame), columns).unwrap();
+        write_lammps_dump(&path, frame, columns).unwrap();
         let text = std::fs::read_to_string(&path).unwrap();
-        let mut frames = read_lammps_dump_trajectory(&path).unwrap();
-        assert_eq!(frames.len(), 1);
-        (text, frames.remove(0))
+        let mut reader = LammpsDumpReader::open(&path).unwrap();
+        assert_eq!(reader.len().unwrap(), 1);
+        (text, reader.read_frame(0).unwrap().unwrap())
     }
 
     fn string_column(frame: &Frame, key: &str) -> Vec<String> {
         frame
             .get("atoms")
             .and_then(|atoms| atoms.get(key))
-            .and_then(|c| c.as_string())
+            .and_then(|c| c.get::<String>())
             .unwrap_or_else(|| panic!("no string column '{key}'"))
             .iter()
             .cloned()
@@ -2479,7 +2508,7 @@ ITEM: ATOMS id type x y z
         frame
             .get("atoms")
             .and_then(|atoms| atoms.get(key))
-            .and_then(|c| c.as_uint())
+            .and_then(|c| c.get::<u64>())
             .unwrap_or_else(|| panic!("no uint column '{key}'"))
             .iter()
             .copied()
@@ -2545,9 +2574,9 @@ ITEM: ATOMS id type x y z
         let (text, _) = dump_round_trip(&frame, Some(&["id", "type"]));
         assert!(text.contains("ITEM: ATOMS id type\n1 1\n"), "{text}");
         let dir = tempfile::tempdir().unwrap();
-        let err = write_lammps_dump_trajectory(
-            dir.path().join("both.lammpstrj"),
-            &[frame],
+        let err = write_lammps_dump(
+            dir.path().join("both.lammpstrj").as_path(),
+            &frame,
             Some(&["id", "type_id", "type"]),
         )
         .unwrap_err()
@@ -2585,7 +2614,7 @@ ITEM: ATOMS id type x y z
 
         fn col<T: molrs::core::BlockDtype>(atoms: &mut Block, key: &str, values: Vec<T>) {
             atoms
-                .insert(key, Array1::from_vec(values).into_dyn())
+                .insert(key, Array1::from_vec(values).into_dyn(), None)
                 .unwrap();
         }
         let frame = typed_frame(|atoms| {
@@ -2627,9 +2656,9 @@ ITEM: ATOMS id type x y z
         // A column a dump field cannot hold is refused, not padded.
         let dir = tempfile::tempdir().unwrap();
         let refused = |extra: fn(&mut Block)| {
-            write_lammps_dump_trajectory(
-                dir.path().join("bad.lammpstrj"),
-                &[typed_frame(extra)],
+            write_lammps_dump(
+                dir.path().join("bad.lammpstrj").as_path(),
+                &typed_frame(extra),
                 None,
             )
             .unwrap_err()
@@ -2641,7 +2670,11 @@ ITEM: ATOMS id type x y z
         assert!(err.contains("complex"), "{err}");
         let err = refused(|atoms| {
             atoms
-                .insert("z_vec", ndarray::Array2::<F>::zeros((3, 2)).into_dyn())
+                .insert(
+                    "z_vec",
+                    ndarray::Array2::<F>::zeros((3, 2)).into_dyn(),
+                    None,
+                )
                 .unwrap();
         });
         assert!(err.contains("one value per row"), "{err}");
@@ -2663,12 +2696,14 @@ ITEM: ATOMS id type x y z
                 .insert(
                     keys::FREE,
                     Array1::from_vec(vec![true, false, true]).into_dyn(),
+                    None,
                 )
                 .unwrap();
             atoms
                 .insert(
                     keys::FORMAL_CHARGE,
                     Array1::from_vec(vec![0i64, -1, 1]).into_dyn(),
+                    None,
                 )
                 .unwrap();
         });
@@ -2682,7 +2717,7 @@ ITEM: ATOMS id type x y z
         assert_eq!(
             atoms
                 .get(keys::FREE)
-                .and_then(|c| c.as_bool())
+                .and_then(|c| c.get::<bool>())
                 .unwrap()
                 .iter()
                 .copied()
@@ -2692,7 +2727,7 @@ ITEM: ATOMS id type x y z
         assert_eq!(
             atoms
                 .get(keys::FORMAL_CHARGE)
-                .and_then(|c| c.as_i64())
+                .and_then(|c| c.get::<i64>())
                 .unwrap()
                 .iter()
                 .copied()

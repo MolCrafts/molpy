@@ -12,7 +12,7 @@ npm install @molcrafts/molrs
 ```
 
 ```ts
-import { SmilesIr, Conformer, writeXyzStr } from "@molcrafts/molrs";
+import { SmilesIr, Conformer, writeXyz } from "@molcrafts/molrs";
 ```
 
 Configure your bundler to load `.wasm` modules. A custom build with
@@ -26,28 +26,29 @@ const ir = SmilesIr.parse("CCO");
 const frame2d = ir.toFrame();
 const frame3d = new Conformer("fast", true, 42).generate(frame2d);
 
-console.log(writeXyzStr(frame3d));
+console.log(writeXyz(frame3d));
 ```
 
 The API shape mirrors Rust and Python, with JavaScript naming conventions:
 `SmilesIr::parse` becomes `SmilesIr.parse`, `to_frame` becomes `toFrame`,
 `Conformer(...).generate` stays `Conformer.generate`, and the Rust door
-`molrs::io::write_xyz_str` (Python `molrs.io.write_xyz_str`) becomes
-`writeXyzStr` — every class and function is named after its molrs owner, and
-every door names its format. A file arrives in the browser as text or bytes,
-so JavaScript has the in-memory doors only: `read<Fmt>Str` / `write<Fmt>Str`
-for text formats and `read<Fmt>Bytes` / `write<Fmt>Bytes` for binary ones,
-the same set as Rust's and Python's `read_<fmt>_str` / `_bytes` and
-`write_<fmt>_str` / `_bytes`; a format molrs reads with functions only (XSF,
-cube, CHGCAR, AMBER inpcrd / `.ac`) has no reader class here either. The
-TypeScript declarations in the package (`molrs.d.ts`) are the source of truth
-for exported names.
+`molrs::io::write_xyz` (Python `molrs.io.write_xyz`) becomes `writeXyz` —
+every class and function is named after its molrs owner, and every door names
+its format. There is one door per format and direction: `read<Fmt>(source)`
+takes a `string` (always the text of a file) or a `Uint8Array` (its bytes;
+the binary DCD, TRR and XTC take bytes only), and `write<Fmt>(frame)` returns
+the file (a `string` for a text format, a `Uint8Array` for a binary one).
+There are no `Str` / `Bytes` twins. A format molrs reads with
+functions only (XSF, cube, CHGCAR, AMBER inpcrd / `.ac`) has no reader class
+here either. The TypeScript declarations in the package (`molrs.d.ts`) are
+the source of truth for exported names.
 
 ```ts
-import { readXyzStr, writePdbStr } from "@molcrafts/molrs";
+import { readXyz, writePdb } from "@molcrafts/molrs";
 
-const frame = readXyzStr(await file.text());
-const pdb = writePdbStr(frame);
+const frame = readXyz(await file.text());                         // text
+const same = readXyz(new Uint8Array(await file.arrayBuffer()));   // bytes
+const pdb = writePdb(frame);
 ```
 
 ## 3. Inspect Columns
@@ -82,22 +83,25 @@ The browser reads the same `*.mrec` [record files](../guides/records.md) that
 Python and Rust write. A packed `*.mrec.zip` arrives as bytes:
 
 ```ts
-import { MrecReader, readMrecFrame } from "@molcrafts/molrs";
+import { MrecFile, MrecReader } from "@molcrafts/molrs";
 
 const bytes = new Uint8Array(await (await fetch("run.mrec.zip")).arrayBuffer());
-const reader = MrecReader.fromZip(bytes);
+const reader = new MrecReader(bytes);
 const first = reader.readFrame(0);
 console.log(reader.nFrames(), first?.get("atoms").nRows);
 
-const snapshot = readMrecFrame(
+const file = new MrecFile(
   new Uint8Array(await (await fetch("water.mrec.zip")).arrayBuffer()),
 );
+console.log(file.sections());
+const snapshot = file.frame();
 ```
 
-`readMrecFrame` (and `sectionNames`) take the packed bytes or a
-`Map<path, Uint8Array>` of the record's files. `MrecReader.fromStorage` reads
-chunks on demand through callbacks, so a
-large trajectory never has to be downloaded whole.
+`MrecFile` reads a record one section at a time (`sections()`, `frame()`,
+`system()`, `meta()`) and `MrecReader` decodes one trajectory frame per call.
+Both take the packed bytes, a `Map<path, Uint8Array>` of the record's files,
+or a storage host that serves chunks on demand through callbacks, so a large
+trajectory never has to be downloaded whole.
 
 ## 5. Build from Source
 

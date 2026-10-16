@@ -63,7 +63,6 @@ use molrs::core::{Atomistic, NodeId};
 use molrs::perceive::assign_aromaticity;
 
 use crate::ff::forcefield::ForceField;
-use crate::ff::ir::Params;
 use crate::ff::typifier::Annotation;
 
 use super::layered::LayeredTypingEngine;
@@ -103,7 +102,8 @@ pub(crate) fn typify_atoms(
     ff: &ForceField,
 ) -> Result<AtomTyping, String> {
     let engine = LayeredTypingEngine::build(meta)?;
-    let perceived = assign_aromaticity(mol);
+    let mut perceived = mol.clone();
+    assign_aromaticity(&mut perceived).map_err(|e| e.to_string())?;
     let types = engine.assign(&perceived);
     let atom_full = ff.get_style("atom", "full");
 
@@ -118,7 +118,11 @@ pub(crate) fn typify_atoms(
                     style: "full".to_owned(),
                     name: type_name.clone(),
                     endpoints: Vec::new(),
-                    params: Params::from_pairs(&row.params.iter().collect::<Vec<_>>()),
+                    params: row
+                        .params
+                        .iter()
+                        .filter_map(|(k, v)| v.as_num().map(|x| (k, x)))
+                        .collect(),
                 },
                 None => Annotation::Value(PropValue::Str(type_name.clone())),
             };
@@ -139,10 +143,13 @@ pub(crate) fn typify_atoms(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ff::ir::Params;
     use crate::ff::typifier::OplsTypeRow;
     use crate::ff::typifier::TypeAssignment;
-    use molrs::core::Atom;
+    use crate::props;
     use molrs::core::BondOrder;
+    use molrs::core::Element;
+    use molrs::core::keys;
 
     /// `mol` with the node annotations of [`typify_atoms`] written onto it
     /// through the typing base's one execution path.
@@ -168,13 +175,34 @@ mod tests {
     /// golden tests of `opls/shipped_forcefield.rs`.)
     fn ethane() -> Atomistic {
         let mut g = Atomistic::new();
-        let c0 = g.add_atom(Atom::xyz("C", 0.0, 0.0, 0.0));
-        let c1 = g.add_atom(Atom::xyz("C", 1.5, 0.0, 0.0));
-        g.add_bond(c0, c1).unwrap();
+        let c0 = g
+            .add_atom(props! {
+                keys::ATOMIC_NUMBER => Element::C,
+                keys::X => 0.0,
+                keys::Y => 0.0,
+                keys::Z => 0.0,
+            })
+            .unwrap();
+        let c1 = g
+            .add_atom(props! {
+                keys::ATOMIC_NUMBER => Element::C,
+                keys::X => 1.5,
+                keys::Y => 0.0,
+                keys::Z => 0.0,
+            })
+            .unwrap();
+        g.add_bond(c0, c1, props! {}).unwrap();
         for c in [c0, c1] {
             for k in 0..3 {
-                let h = g.add_atom(Atom::xyz("H", 0.3 * (k as f64 + 1.0), 0.8, 0.0));
-                g.add_bond(c, h).unwrap();
+                let h = g
+                    .add_atom(props! {
+                        keys::ATOMIC_NUMBER => Element::H,
+                        keys::X => 0.3 * (k as f64 + 1.0),
+                        keys::Y => 0.8,
+                        keys::Z => 0.0,
+                    })
+                    .unwrap();
+                g.add_bond(c, h, props! {}).unwrap();
             }
         }
         g
@@ -234,7 +262,7 @@ mod tests {
         let ff = ForceField::new("OPLS-AA");
         let typed = typed_graph(&ethane(), &m, &ff).unwrap();
         for (id, a) in typed.atoms() {
-            if matches!(a.get_str("element"), Some("C")) {
+            if a.atomic_number() == Some(Element::C.z()) {
                 assert_eq!(
                     a.get_str("type"),
                     Some("opls_special"),
@@ -253,7 +281,7 @@ mod tests {
             .def_type(
                 "opls_140",
                 &[],
-                Params::from_pairs(&[("mass", 1.008), ("charge", 0.06)]),
+                Params::from_iter([("mass", 1.008), ("charge", 0.06)]),
             )
             .unwrap();
         let typed = typed_graph(&ethane(), &m, &ff).unwrap();
@@ -307,20 +335,62 @@ mod tests {
         // is typed only after the O is typed opls_154 — exercising the full
         // typify_atoms layered path end to end on a constructed ethanol.
         let mut g = Atomistic::new();
-        let cm = g.add_atom(Atom::xyz("C", 0.0, 0.0, 0.0));
-        let ch = g.add_atom(Atom::xyz("C", 1.5, 0.0, 0.0));
-        let o = g.add_atom(Atom::xyz("O", 2.5, 0.0, 0.0));
-        let ho = g.add_atom(Atom::xyz("H", 3.3, 0.0, 0.0));
-        g.add_bond(cm, ch).unwrap();
-        g.add_bond(ch, o).unwrap();
-        g.add_bond(o, ho).unwrap();
+        let cm = g
+            .add_atom(props! {
+                keys::ATOMIC_NUMBER => Element::C,
+                keys::X => 0.0,
+                keys::Y => 0.0,
+                keys::Z => 0.0,
+            })
+            .unwrap();
+        let ch = g
+            .add_atom(props! {
+                keys::ATOMIC_NUMBER => Element::C,
+                keys::X => 1.5,
+                keys::Y => 0.0,
+                keys::Z => 0.0,
+            })
+            .unwrap();
+        let o = g
+            .add_atom(props! {
+                keys::ATOMIC_NUMBER => Element::O,
+                keys::X => 2.5,
+                keys::Y => 0.0,
+                keys::Z => 0.0,
+            })
+            .unwrap();
+        let ho = g
+            .add_atom(props! {
+                keys::ATOMIC_NUMBER => Element::H,
+                keys::X => 3.3,
+                keys::Y => 0.0,
+                keys::Z => 0.0,
+            })
+            .unwrap();
+        g.add_bond(cm, ch, props! {}).unwrap();
+        g.add_bond(ch, o, props! {}).unwrap();
+        g.add_bond(o, ho, props! {}).unwrap();
         for k in 0..3 {
-            let h = g.add_atom(Atom::xyz("H", 0.3 * (k as f64 + 1.0), 0.9, 0.0));
-            g.add_bond(cm, h).unwrap();
+            let h = g
+                .add_atom(props! {
+                    keys::ATOMIC_NUMBER => Element::H,
+                    keys::X => 0.3 * (k as f64 + 1.0),
+                    keys::Y => 0.9,
+                    keys::Z => 0.0,
+                })
+                .unwrap();
+            g.add_bond(cm, h, props! {}).unwrap();
         }
         for k in 0..2 {
-            let h = g.add_atom(Atom::xyz("H", 1.5 + 0.3 * (k as f64), 0.9, 0.0));
-            g.add_bond(ch, h).unwrap();
+            let h = g
+                .add_atom(props! {
+                    keys::ATOMIC_NUMBER => Element::H,
+                    keys::X => 1.5 + 0.3 * (k as f64),
+                    keys::Y => 0.9,
+                    keys::Z => 0.0,
+                })
+                .unwrap();
+            g.add_bond(ch, h, props! {}).unwrap();
         }
 
         let m = meta_with(&[
@@ -348,23 +418,39 @@ mod tests {
     fn kekule_benzene() -> (Atomistic, Vec<molrs::core::RelationId>) {
         let mut g = Atomistic::new();
         let c: Vec<NodeId> = (0..6)
-            .map(|k| g.add_atom(Atom::xyz("C", 1.4 * k as f64, 0.0, 0.0)))
+            .map(|k| {
+                g.add_atom(props! {
+                    keys::ATOMIC_NUMBER => Element::C,
+                    keys::X => 1.4 * k as f64,
+                    keys::Y => 0.0,
+                    keys::Z => 0.0,
+                })
+                .unwrap()
+            })
             .collect();
         let ring: Vec<molrs::core::RelationId> = (0..6)
             .map(|k| {
-                let bond = g.add_bond(c[k], c[(k + 1) % 6]).unwrap();
+                let bond = g.add_bond(c[k], c[(k + 1) % 6], props! {}).unwrap();
                 let order = if k % 2 == 0 {
                     BondOrder::Double
                 } else {
                     BondOrder::Single
                 };
-                g.set_bond_type(bond, order).unwrap();
+                let number = order.implied_number().expect("a Kekulé fixture bond");
+                g.set_bond_class(bond, order, number).unwrap();
                 bond
             })
             .collect();
         for (k, &carbon) in c.iter().enumerate() {
-            let h = g.add_atom(Atom::xyz("H", 1.4 * k as f64, 1.1, 0.0));
-            g.add_bond(carbon, h).unwrap();
+            let h = g
+                .add_atom(props! {
+                    keys::ATOMIC_NUMBER => Element::H,
+                    keys::X => 1.4 * k as f64,
+                    keys::Y => 1.1,
+                    keys::Z => 0.0,
+                })
+                .unwrap();
+            g.add_bond(carbon, h, props! {}).unwrap();
         }
         (g, ring)
     }
@@ -401,10 +487,10 @@ mod tests {
             } else {
                 BondOrder::Single
             };
-            assert_eq!(typed.bond_type(bond), want, "ring bond {k} type");
+            assert_eq!(typed.bond_type(bond).unwrap(), want, "ring bond {k} type");
             assert_eq!(
-                typed.bond_number(bond),
-                mol.bond_number(bond),
+                typed.bond_number(bond).unwrap(),
+                mol.bond_number(bond).unwrap(),
                 "ring bond {k} number"
             );
         }

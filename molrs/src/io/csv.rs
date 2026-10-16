@@ -4,9 +4,10 @@ use ndarray::Array1;
 
 use crate::core::Block;
 use crate::core::Column;
+use crate::io::{Sink, Source};
 use crate::op::{F, I};
 
-/// Parse CSV `text` into a [`Block`].
+/// Read a CSV file into a [`Block`].
 ///
 /// If `header` is `Some`, the text is treated as headerless and those names are
 /// used; otherwise the first non-empty line provides the column names. Blank
@@ -14,11 +15,26 @@ use crate::op::{F, I};
 ///
 /// Fields are split on a single-character delimiter and trimmed; quoting and
 /// escaping are intentionally not handled (simple numeric / label tables).
-pub fn read_csv_block_str(
-    text: &str,
+///
+/// # Errors
+///
+/// The frame doors' error: the OS error of a path that cannot be read,
+/// [`InvalidData`](std::io::ErrorKind::InvalidData) for text that is not
+/// UTF-8 or a table that does not parse (a ragged row, say), its message
+/// naming the source and why.
+pub fn read_csv_block<'a>(
+    src: impl Into<Source<'a>>,
     delimiter: char,
     header: Option<&[String]>,
-) -> Result<Block, String> {
+) -> std::io::Result<Block> {
+    let src = src.into();
+    let text = src.text()?;
+    parse_csv(&text, delimiter, header)
+        .map_err(|e| crate::io::invalid_data(format!("{}: {e}", src.name())))
+}
+
+/// Parse CSV `text` into a [`Block`], as [`read_csv_block`] says.
+fn parse_csv(text: &str, delimiter: char, header: Option<&[String]>) -> Result<Block, String> {
     let mut lines = text.lines().filter(|l| !l.trim().is_empty());
 
     let headers: Vec<String> = match header {
@@ -71,25 +87,40 @@ fn insert_inferred(block: &mut Block, name: String, raw: Vec<String>) -> Result<
     if nonempty && raw.iter().all(|s| s.parse::<I>().is_ok()) {
         let v: Vec<I> = raw.iter().map(|s| s.parse().unwrap()).collect();
         block
-            .insert(name, Array1::from(v).into_dyn())
+            .insert(name, Array1::from(v).into_dyn(), None)
             .map_err(|e| e.to_string())
     } else if nonempty && raw.iter().all(|s| s.parse::<F>().is_ok()) {
         let v: Vec<F> = raw.iter().map(|s| s.parse().unwrap()).collect();
         block
-            .insert(name, Array1::from(v).into_dyn())
+            .insert(name, Array1::from(v).into_dyn(), None)
             .map_err(|e| e.to_string())
     } else {
         block
-            .insert(name, Array1::from(raw).into_dyn())
+            .insert(name, Array1::from(raw).into_dyn(), None)
             .map_err(|e| e.to_string())
     }
 }
 
-/// Serialize `block` to CSV text (inverse of [`read_csv_block_str`]).
+/// Write `block` as a CSV file — what [`read_csv_block`] reads back.
 ///
 /// Fields are joined on a single-character delimiter; quoting and escaping
 /// are intentionally not handled.
-pub fn write_csv_block_str(block: &Block, delimiter: char, header: bool) -> String {
+///
+/// # Errors
+///
+/// The OS error of a sink that cannot be written.
+pub fn write_csv_block<'a>(
+    sink: impl Into<Sink<'a>>,
+    block: &Block,
+    delimiter: char,
+    header: bool,
+) -> std::io::Result<()> {
+    sink.into()
+        .put(csv_text(block, delimiter, header).as_bytes())
+}
+
+/// `block` as CSV text.
+fn csv_text(block: &Block, delimiter: char, header: bool) -> String {
     let names: Vec<&str> = block.keys().collect();
     let nrows = block.n_rows().unwrap_or(0);
     let delim = delimiter.to_string();
@@ -115,22 +146,22 @@ pub fn write_csv_block_str(block: &Block, delimiter: char, header: bool) -> Stri
 
 /// Format one cell of `col` at `row` as a string, dispatching on its dtype.
 fn cell_to_string(col: &Column, row: usize) -> String {
-    if let Some(a) = col.as_float() {
+    if let Some(a) = col.get::<f64>() {
         return a[[row]].to_string();
     }
-    if let Some(a) = col.as_int() {
+    if let Some(a) = col.get::<i32>() {
         return a[[row]].to_string();
     }
-    if let Some(a) = col.as_uint() {
+    if let Some(a) = col.get::<u64>() {
         return a[[row]].to_string();
     }
-    if let Some(a) = col.as_bool() {
+    if let Some(a) = col.get::<bool>() {
         return a[[row]].to_string();
     }
-    if let Some(a) = col.as_u8() {
+    if let Some(a) = col.get::<u8>() {
         return a[[row]].to_string();
     }
-    if let Some(a) = col.as_string() {
+    if let Some(a) = col.get::<String>() {
         return a[[row]].clone();
     }
     String::new()
@@ -152,7 +183,7 @@ fn insert_as(
                 .map(|s| s.parse::<F>().map_err(|e| format!("column '{name}': {e}")))
                 .collect::<Result<_, _>>()?;
             block
-                .insert(name, Array1::from(v).into_dyn())
+                .insert(name, Array1::from(v).into_dyn(), None)
                 .map_err(|e| e.to_string())
         }
         DType::Int => {
@@ -161,7 +192,7 @@ fn insert_as(
                 .map(|s| s.parse::<I>().map_err(parse_err))
                 .collect::<Result<_, _>>()?;
             block
-                .insert(name, Array1::from(v).into_dyn())
+                .insert(name, Array1::from(v).into_dyn(), None)
                 .map_err(|e| e.to_string())
         }
         DType::Uint => {
@@ -170,7 +201,7 @@ fn insert_as(
                 .map(|s| s.parse::<crate::op::Idx>().map_err(parse_err))
                 .collect::<Result<_, _>>()?;
             block
-                .insert(name, Array1::from(v).into_dyn())
+                .insert(name, Array1::from(v).into_dyn(), None)
                 .map_err(|e| e.to_string())
         }
         DType::Bool => {
@@ -182,7 +213,7 @@ fn insert_as(
                 })
                 .collect::<Result<_, _>>()?;
             block
-                .insert(name, Array1::from(v).into_dyn())
+                .insert(name, Array1::from(v).into_dyn(), None)
                 .map_err(|e| e.to_string())
         }
         DType::U8 => {
@@ -191,41 +222,16 @@ fn insert_as(
                 .map(|s| s.parse::<u8>().map_err(parse_err))
                 .collect::<Result<_, _>>()?;
             block
-                .insert(name, Array1::from(v).into_dyn())
+                .insert(name, Array1::from(v).into_dyn(), None)
                 .map_err(|e| e.to_string())
         }
         DType::String => block
-            .insert(name, Array1::from(raw).into_dyn())
+            .insert(name, Array1::from(raw).into_dyn(), None)
             .map_err(|e| e.to_string()),
         other => Err(format!(
             "CSV cannot encode {other} columns; only float/int/uint/u8/bool/string"
         )),
     }
-}
-
-/// Read the CSV file at `path` into a [`Block`] — [`read_csv_block_str`] over
-/// the file's text.
-pub fn read_csv_block<P: AsRef<std::path::Path>>(
-    path: P,
-    delimiter: char,
-    header: Option<&[String]>,
-) -> Result<Block, String> {
-    let path = path.as_ref();
-    let text =
-        std::fs::read_to_string(path).map_err(|e| format!("read {}: {e}", path.display()))?;
-    read_csv_block_str(&text, delimiter, header)
-}
-
-/// Write `block` as a CSV file at `path` — [`write_csv_block_str`] to disk.
-pub fn write_csv_block<P: AsRef<std::path::Path>>(
-    path: P,
-    block: &Block,
-    delimiter: char,
-    header: bool,
-) -> Result<(), String> {
-    let path = path.as_ref();
-    std::fs::write(path, write_csv_block_str(block, delimiter, header))
-        .map_err(|e| format!("write {}: {e}", path.display()))
 }
 
 #[cfg(test)]
@@ -235,24 +241,25 @@ mod tests {
     #[test]
     fn roundtrip_headered() {
         let text = "x,y,name\n0,1.5,a\n3,4.5,b\n";
-        let block = read_csv_block_str(text, ',', None).expect("parse");
+        let block = read_csv_block(text.as_bytes(), ',', None).expect("parse");
         assert_eq!(block.n_rows(), Some(2));
         // `x` parses as Float even though the file holds whole numbers: the
         // schema declares the dtype, so inference does not get to make a
         // coordinate column Int and reject the first fractional value later.
-        assert!(block.get("x").unwrap().as_float().is_some());
-        assert!(block.get("y").unwrap().as_float().is_some());
-        assert!(block.get("name").unwrap().as_string().is_some());
-        let out = write_csv_block_str(&block, ',', true);
-        let rt = read_csv_block_str(&out, ',', None).expect("reparse");
-        assert_eq!(rt.get("x").unwrap().as_float().unwrap()[[1]], 3.0);
-        assert_eq!(rt.get("name").unwrap().as_string().unwrap()[[0]], "a");
+        assert!(block.get("x").unwrap().get::<f64>().is_some());
+        assert!(block.get("y").unwrap().get::<f64>().is_some());
+        assert!(block.get("name").unwrap().get::<String>().is_some());
+        let mut out = Vec::new();
+        write_csv_block(&mut out, &block, ',', true).expect("write");
+        let rt = read_csv_block(&out, ',', None).expect("reparse");
+        assert_eq!(rt.get("x").unwrap().get::<f64>().unwrap()[[1]], 3.0);
+        assert_eq!(rt.get("name").unwrap().get::<String>().unwrap()[[0]], "a");
     }
 
     #[test]
     fn headerless_with_names() {
         let names = vec!["a".to_string(), "b".to_string()];
-        let block = read_csv_block_str("1,2\n3,4\n", ',', Some(&names)).expect("parse");
+        let block = read_csv_block(b"1,2\n3,4\n", ',', Some(&names)).expect("parse");
         assert_eq!(block.n_rows(), Some(2));
         // Block keys are unordered; assert membership, not order.
         let keys: std::collections::HashSet<&str> = block.keys().collect();
@@ -261,6 +268,6 @@ mod tests {
 
     #[test]
     fn empty_text_errors() {
-        assert!(read_csv_block_str("", ',', None).is_err());
+        assert!(read_csv_block(b"", ',', None).is_err());
     }
 }

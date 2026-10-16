@@ -8,9 +8,9 @@ use std::collections::BTreeSet;
 
 use js_sys::{Array, Float64Array, Object, Reflect, Uint32Array};
 use molrs::compute::{ParamDefault, ParamValue};
-use molrs::core::SimBox;
+use molrs::core::{Cell, SimBox};
 use molrs::op::F;
-use ndarray::{Array2, array};
+use ndarray::Array2;
 use wasm_bindgen::JsCast;
 use wasm_bindgen::convert::TryFromJsValue;
 use wasm_bindgen::prelude::*;
@@ -48,7 +48,7 @@ fn list(values: Vec<JsValue>) -> JsValue {
 }
 
 fn cube_box(len: F, periodic: bool) -> SimBox {
-    SimBox::cube(len, array![0.0 as F, 0.0, 0.0], [periodic; 3]).unwrap()
+    SimBox::new(Cell::Lengths([len; 3]), [0.0; 3], [periodic; 3]).unwrap()
 }
 
 fn js_box(len: F) -> JsValue {
@@ -237,7 +237,7 @@ fn compute_spec_all_serialises_the_registry() {
         .iter()
         .map(|input| get(&input, "name").as_string().unwrap())
         .collect();
-    assert_eq!(names, ["positions", "dt", "boxes"]);
+    assert_eq!(names, ["a", "dt", "simbox"]);
     assert!(ok(ComputeSpec::find("NoSuchCompute")).is_undefined());
     assert_eq!(
         get(&ok(Msd::spec()), "name").as_string().unwrap(),
@@ -305,8 +305,7 @@ fn every_class_built_from_required_arguments_holds_the_core_defaults() {
     holds_spec_defaults(ok(LinearFit::new(0.1, 0.9)), &[]);
     holds_spec_defaults(ok(Plateau::new(0.1, 0.9)), &[]);
 
-    holds_spec_defaults(ok(KineticEnergy::new("real")), &[]);
-    holds_spec_defaults(ok(KineticEnergy::with_constants(1.0, 0.5)), &[]);
+    holds_spec_defaults(ok(KineticEnergy::new("real", None, None)), &[]);
     holds_spec_defaults(DipoleMoment::new(), &[]);
     holds_spec_defaults(ok(StaticDielectric::new("real", None)), &[]);
 
@@ -441,6 +440,14 @@ fn a_given_option_is_applied_and_only_it() {
         ("relative_tolerance", ParamValue::Float(0.5))
     );
     assert_eq!(Bound::tunables(&kk)[1], fresh[1]);
+    let ke = ok(KineticEnergy::new("real", Some(1.0), Some(0.5)));
+    assert_eq!(
+        Bound::tunables(&ke),
+        [
+            ("mvv2e", ParamValue::Float(1.0)),
+            ("boltzmann", ParamValue::Float(0.5))
+        ]
+    );
 }
 
 // ------------------------------------------------------- per-family seams
@@ -448,19 +455,18 @@ fn a_given_option_is_applied_and_only_it() {
 #[wasm_bindgen_test]
 fn time_series_curve_feeds_a_fit_through_its_handle() {
     // Item 0 steps +1 along x every frame, item 1 stays put.
-    let positions = shaped(
-        vec![
-            0.0, 0.0, 0.0, 5.0, 5.0, 5.0, //
-            1.0, 0.0, 0.0, 5.0, 5.0, 5.0, //
-            2.0, 0.0, 0.0, 5.0, 5.0, 5.0,
-        ],
-        &[3, 2, 3],
+    let frames = list(
+        (0..3)
+            .map(|t| {
+                object(vec![
+                    ("a", shaped(vec![t as F, 0.0, 0.0, 5.0, 5.0, 5.0], &[2, 3])),
+                    ("dt", JsValue::from(0.5)),
+                ])
+            })
+            .collect(),
     );
     let msd = ok(Msd::new(2, None, None, None));
-    let curve = ok(msd.compute(&object(vec![
-        ("positions", positions),
-        ("dt", JsValue::from(0.5)),
-    ])));
+    let curve = ok(msd.compute(&frames));
     assert_eq!(curve.inner.lag_times.to_vec(), [0.0, 0.5, 1.0]);
     assert_eq!(curve.inner.values.column(0).to_vec(), [0.0, 0.5, 2.0]);
 
@@ -484,6 +490,33 @@ fn time_series_curve_feeds_a_fit_through_its_handle() {
     assert_eq!(derivative.shape()[1], 1);
 }
 
+/// `Vacf` folds one `{ a, dt }` record per frame through the core
+/// accumulator; `a` is that frame's flat velocities.
+#[wasm_bindgen_test]
+fn vacf_folds_one_velocity_record_per_frame() {
+    let frames = list(
+        (0..4)
+            .map(|t| {
+                let v = if t % 2 == 0 { 1.0 } else { -1.0 };
+                object(vec![("a", reals(&[v, 0.5])), ("dt", JsValue::from(1.0))])
+            })
+            .collect(),
+    );
+    let vacf = ok(Vacf::new(2, None, None, Some("keep".into())));
+    let curve = ok(vacf.compute(&frames));
+    assert_eq!(curve.inner.lag_times.to_vec(), [0.0, 1.0, 2.0]);
+    let c = curve.inner.values.column(0).to_vec();
+    for (got, want) in c.iter().zip([0.625, -0.375, 0.625]) {
+        assert!((got - want).abs() < 1e-12, "{c:?}");
+    }
+    // A frame that changes `dt` is the accumulator's refusal.
+    let ragged = list(vec![
+        object(vec![("a", reals(&[1.0])), ("dt", JsValue::from(1.0))]),
+        object(vec![("a", reals(&[1.0])), ("dt", JsValue::from(2.0))]),
+    ]);
+    assert!(message(vacf.compute(&ragged)).contains("dt"));
+}
+
 #[wasm_bindgen_test]
 fn dielectric_and_spectroscopy_take_partitions_and_flat_rows() {
     let moments = ok(DipoleMoment::new().compute(&object(vec![
@@ -497,10 +530,12 @@ fn dielectric_and_spectroscopy_take_partitions_and_flat_rows() {
     assert_eq!(moments.inner.moments.dim(), (1, 1, 3));
     assert_eq!(moments.inner.moments[[0, 0, 0]], -1.0);
 
-    let energy = ok(ok(KineticEnergy::new("real")).compute(&object(vec![
-        ("masses", reals(&[1.0, 1.0])),
-        ("velocities", reals(&[1.0, 0.0, 0.0, 0.0, 1.0, 0.0])),
-    ])));
+    let energy = ok(
+        ok(KineticEnergy::new("real", None, None)).compute(&object(vec![
+            ("masses", reals(&[1.0, 1.0])),
+            ("velocities", reals(&[1.0, 0.0, 0.0, 0.0, 1.0, 0.0])),
+        ])),
+    );
     assert!(energy.inner.energy > 0.0);
     assert!(ok(energy.temperature(6)) > 0.0);
 
@@ -675,10 +710,12 @@ fn voronoi_cells_feed_the_void_analysis() {
 #[wasm_bindgen_test]
 fn errors_are_the_core_compute_error() {
     // A missing field names the field.
-    let err = message(ok(Msd::new(2, None, None, None)).compute(&object(vec![(
-        "positions",
-        shaped(vec![0.0; 6], &[1, 2, 3]),
-    )])));
+    let err = message(
+        ok(Msd::new(2, None, None, None)).compute(&list(vec![object(vec![(
+            "a",
+            shaped(vec![0.0; 6], &[2, 3]),
+        )])])),
+    );
     assert!(err.contains("Msd input `dt`"), "{err}");
     // An unknown choice lists the canonical names, from the core parser.
     let err = message(Survival::new("forever", 2, None, None));
@@ -707,8 +744,8 @@ fn errors_are_the_core_compute_error() {
     // A zero origin stride is the core's refusal.
     let err = message(Msd::new(2, None, None, Some(0)));
     assert!(err.contains("stride"), "{err}");
-    // The alternative constructor validates its constants.
-    let err = message(KineticEnergy::with_constants(1.0, 0.0));
+    // A given constant reaches its core setter, which validates it.
+    let err = message(KineticEnergy::new("real", Some(1.0), Some(0.0)));
     assert!(err.contains("boltzmann"), "{err}");
     // A core refusal is passed through unchanged.
     let err = message(LinearFit::new(0.9, 0.1));

@@ -4,10 +4,12 @@ use std::collections::HashMap;
 
 use crate::core::Atomistic;
 use crate::core::BondNumber;
+use crate::core::MolRsError;
 use crate::core::NodeId;
 use crate::core::PropValue;
 use crate::core::keys;
-use molrs::core::Element;
+
+use super::valence::atomic_number;
 
 /// `define.h`'s `PSCUTOFF`: penalties above it are never tried as valence states.
 const PSCUTOFF: i32 = 10;
@@ -117,7 +119,7 @@ static APS: &[ApsRow] = &[
 const CAP_H: [i32; 8] = [64, 0, 64, NONE, NONE, NONE, NONE, NONE];
 
 /// Write the bond orders antechamber's `bondtype -j full` judges from the
-/// connectivity onto a clone of `mol`.
+/// connectivity onto `mol`, in place.
 ///
 /// Every judged bond gets `bond_number` (1 / 2 / 3) and the localized
 /// `bond_type` it implies, replacing whatever the input stated — aromatic
@@ -127,22 +129,23 @@ const CAP_H: [i32; 8] = [64, 0, 64, NONE, NONE, NONE, NONE, NONE];
 ///
 /// # Arguments
 ///
-/// * `mol` — the molecule, every hydrogen drawn; left untouched.
+/// * `mol` — the molecule, every hydrogen drawn; on return it carries the
+///   judged Kekulé structure.
 ///
-/// # Returns
+/// # Errors
 ///
-/// A clone of `mol` carrying the judged Kekulé structure.
-pub fn assign_bond_orders(mol: &Atomistic) -> Atomistic {
-    let mut out = mol.clone();
-    let bond_ids: Vec<_> = mol.bonds().map(|(bid, _)| bid).collect();
-    for (bid, order) in bond_ids.into_iter().zip(perceive_bond_orders(mol)) {
+/// [`MolRsError`] when a judged class cannot be written (a bond column holding
+/// the key under a foreign dtype); `mol` may then be partly rewritten.
+pub fn assign_bond_orders(mol: &mut Atomistic) -> Result<(), MolRsError> {
+    let bond_ids: Vec<_> = mol.bond_ids().collect();
+    let judged = perceive_bond_orders(mol);
+    for (bid, order) in bond_ids.into_iter().zip(judged) {
         if let Some(order) = order {
             let number = BondNumber::from_code(u32::from(order));
-            let _ = out.set_bond_prop(bid, keys::BOND_NUMBER, number);
-            let _ = out.set_bond_prop(bid, keys::BOND_TYPE, number.implied_type());
+            mol.set_bond_class(bid, number.implied_type(), number)?;
         }
     }
-    out
+    Ok(())
 }
 
 /// Judge the bond orders of `mol` from its connectivity, as antechamber's
@@ -268,24 +271,22 @@ struct Graph {
 
 impl Graph {
     fn new(mol: &Atomistic) -> Self {
-        let ids: Vec<NodeId> = mol.atoms().map(|(id, _)| id).collect();
-        let index: HashMap<NodeId, usize> =
-            ids.iter().enumerate().map(|(i, id)| (*id, i)).collect();
-        let mut z = Vec::with_capacity(ids.len());
-        let mut res = Vec::with_capacity(ids.len());
-        for id in &ids {
-            let atom = mol.get_atom(*id).ok();
-            z.push(
-                atom.as_ref()
-                    .and_then(|a| a.get_str(keys::ELEMENT).and_then(Element::by_symbol))
-                    .map_or(0, |e| e.z()),
-            );
+        let mut ids: Vec<NodeId> = Vec::with_capacity(mol.n_atoms());
+        let mut z = Vec::with_capacity(mol.n_atoms());
+        let mut res = Vec::with_capacity(mol.n_atoms());
+        for (id, atom) in mol.atoms() {
+            ids.push(id);
+            // A wildcard atom (Z = 0) has no `APS.DAT` row, so like B or a
+            // metal its bonds are frozen at their stated order.
+            z.push(atomic_number(&atom));
             res.push(
-                atom.as_ref()
-                    .and_then(|a| a.get(keys::RES_ID).and_then(PropValue::as_f64))
+                atom.get(keys::RES_ID)
+                    .and_then(PropValue::as_f64)
                     .map(|v| v.round() as u64),
             );
         }
+        let index: HashMap<NodeId, usize> =
+            ids.iter().enumerate().map(|(i, id)| (*id, i)).collect();
         let mut con = vec![Vec::new(); ids.len()];
         let mut bonds = Vec::new();
         let mut stated = Vec::new();
@@ -874,16 +875,20 @@ impl IntPartition {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::BondOrder;
+    use crate::core::{BondOrder, Element};
+    use crate::props;
 
     /// A molecule as a mol2 file lists it: atoms by element, bonds in file
     /// order, every bond stated single (what `antechamber` reads).
-    fn mol2(elements: &[&str], bonds: &[(usize, usize)]) -> Atomistic {
+    fn mol2(elements: &[Element], bonds: &[(usize, usize)]) -> Atomistic {
         let mut mol = Atomistic::new();
-        let ids: Vec<NodeId> = elements.iter().map(|e| mol.add_atom_bare(e)).collect();
+        let ids: Vec<NodeId> = elements
+            .iter()
+            .map(|e| mol.add_atom(props! { keys::ATOMIC_NUMBER => *e }).unwrap())
+            .collect();
         for (i, j) in bonds {
-            let b = mol.add_bond(ids[*i], ids[*j]).unwrap();
-            mol.set_bond_type(b, BondOrder::Single).unwrap();
+            // `add_bond` states a bond with no `bond_type` single.
+            mol.add_bond(ids[*i], ids[*j], props! {}).unwrap();
         }
         mol
     }
@@ -901,8 +906,8 @@ mod tests {
     /// (AmberTools 26.1) gives 1 2 1 8 7 8 7 7 2 1 2 — single / double once
     /// the five-ring's aromatic 7 / 8 are read back as 1 / 2.
     fn azulene() -> Atomistic {
-        let mut elements = vec!["C"; 10];
-        elements.extend(["H"; 8]);
+        let mut elements = vec![Element::C; 10];
+        elements.extend([Element::H; 8]);
         mol2(
             &elements,
             &[
@@ -933,8 +938,8 @@ mod tests {
     /// double bond on C2–C3, not on C1–C2 where the SMILES `C1=CC=CC=CC=C1`
     /// drew it.
     fn cyclooctatetraene() -> Atomistic {
-        let mut elements = vec!["C"; 8];
-        elements.extend(["H"; 8]);
+        let mut elements = vec![Element::C; 8];
+        elements.extend([Element::H; 8]);
         mol2(
             &elements,
             &[
@@ -980,12 +985,12 @@ mod tests {
         let mut mol = cyclooctatetraene();
         let bonds: Vec<_> = mol.bonds().map(|(b, _)| b).collect();
         for (k, b) in bonds.iter().take(8).enumerate() {
-            let t = if k % 2 == 0 {
-                BondOrder::Double
+            let (t, n) = if k % 2 == 0 {
+                (BondOrder::Double, BondNumber::Double)
             } else {
-                BondOrder::Single
+                (BondOrder::Single, BondNumber::Single)
             };
-            mol.set_bond_type(*b, t).unwrap();
+            mol.set_bond_class(*b, t, n).unwrap();
         }
         assert_eq!(judged(&mol, 8), all(&[1, 2, 1, 2, 1, 2, 1, 2]));
     }
@@ -995,7 +1000,15 @@ mod tests {
         // No structure closes at the best valences; `bondtype` reports
         // "valence state (4) with penalty (4)": C-N-N#N.
         let mol = mol2(
-            &["C", "N", "N", "N", "H", "H", "H"],
+            &[
+                Element::C,
+                Element::N,
+                Element::N,
+                Element::N,
+                Element::H,
+                Element::H,
+                Element::H,
+            ],
             &[(0, 1), (1, 2), (2, 3), (0, 4), (0, 5), (0, 6)],
         );
         assert_eq!(perceive_bond_orders(&mol), all(&[1, 1, 3, 1, 1, 1]));
@@ -1005,8 +1018,8 @@ mod tests {
     fn tropylium_closes_in_no_valence_state() {
         // Seven trivalent ring carbons cannot share out three double bonds;
         // `bondtype` warns "the assigned bond types may be wrong".
-        let mut elements = vec!["C"; 7];
-        elements.extend(["H"; 7]);
+        let mut elements = vec![Element::C; 7];
+        elements.extend([Element::H; 7]);
         let mut bonds: Vec<(usize, usize)> = (0..6).map(|i| (i, i + 1)).collect();
         bonds.push((0, 6));
         bonds.extend((0..7).map(|i| (i, i + 7)));
@@ -1019,7 +1032,18 @@ mod tests {
         // Butadiene cut between its two residues: each half judges as a vinyl
         // group capped by a hydrogen, so both C=C survive.
         let mut mol = mol2(
-            &["C", "C", "C", "C", "H", "H", "H", "H", "H", "H"],
+            &[
+                Element::C,
+                Element::C,
+                Element::C,
+                Element::C,
+                Element::H,
+                Element::H,
+                Element::H,
+                Element::H,
+                Element::H,
+                Element::H,
+            ],
             &[
                 (0, 1),
                 (1, 2),
@@ -1042,15 +1066,16 @@ mod tests {
 
     #[test]
     fn find_bond_orders_writes_the_judged_structure() {
-        let out = assign_bond_orders(&azulene());
+        let mut out = azulene();
+        assign_bond_orders(&mut out).unwrap();
         let numbers: Vec<u32> = out
             .bonds()
-            .map(|(b, _)| out.bond_number(b).code())
+            .map(|(b, _)| out.bond_number(b).unwrap().code())
             .take(3)
             .collect();
         assert_eq!(numbers, vec![1, 2, 1]);
         let (b, _) = out.bonds().nth(1).unwrap();
-        assert_eq!(out.bond_type(b), BondOrder::Double);
+        assert_eq!(out.bond_type(b).unwrap(), BondOrder::Double);
     }
 
     #[test]
