@@ -2,7 +2,7 @@
 
 import pytest
 
-from molpy.wrapper._prepgen import prepgen_control_text
+from molpy._ambertools import prepgen_control_text
 
 
 def test_chain_variant_lists_both_ends_types_and_omissions():

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import molpy as mp
-from molpy.wrapper._amber_input import antechamber_input_mol2
+from molpy._ambertools import input_mol2
 
 
 def _bond_orders(text: str) -> list[str]:
@@ -24,7 +24,7 @@ def _benzoic_acid() -> mp.Atomistic:
 
 
 def test_the_canonical_bond_orders_reach_the_mol2():
-    orders = _bond_orders(antechamber_input_mol2(_benzoic_acid(), rename=True))
+    orders = _bond_orders(input_mol2(_benzoic_acid(), rename=True))
     assert orders.count("ar") == 6
     assert orders.count("2") == 1  # C=O
     assert orders.count("1") == 8  # C-C, C-O and the six X-H
@@ -34,14 +34,14 @@ def test_a_force_field_bond_label_does_not_shadow_the_bond_order():
     graph = _benzoic_acid()
     for bond in graph.bonds:
         bond["type"] = "c3-f"
-    orders = _bond_orders(antechamber_input_mol2(graph, rename=True))
+    orders = _bond_orders(input_mol2(graph, rename=True))
     assert "c3-f" not in orders
     assert orders.count("ar") == 6
     assert orders.count("2") == 1
 
 
 def test_a_graph_read_from_mol2_keeps_its_bond_orders():
-    first = antechamber_input_mol2(_benzoic_acid(), rename=True)
+    first = input_mol2(_benzoic_acid(), rename=True)
     graph = mp.Atomistic.from_frame(mp.io.read_mol2_str(first))
-    second = antechamber_input_mol2(graph, rename=False)
+    second = input_mol2(graph, rename=False)
     assert _bond_orders(second) == _bond_orders(first)

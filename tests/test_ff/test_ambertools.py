@@ -10,6 +10,7 @@ frcmod TleapTypifier writes, and the errors.
 
 from __future__ import annotations
 
+import shlex
 import shutil
 import subprocess
 from contextlib import contextmanager
@@ -97,7 +98,8 @@ class FakeAmberTools:
             script = (Path(cwd) / args[1]).read_text(encoding="utf-8")
             self.scripts.append(script)
             save = next(s for s in script.splitlines() if s.startswith("saveamberparm"))
-            target = save.split()[2]
+            target, inpcrd = shlex.split(save)[2:]
+            Path(inpcrd).write_text("MOL\n", encoding="utf-8")
         else:
             target = args[args.index("-o") + 1]
         shutil.copy(self.outputs[tool], target)
@@ -140,9 +142,14 @@ class TestAntechamberTypifier:
         parmchk2 = tools.calls["parmchk2"]
         assert parmchk2[parmchk2.index("-s") + 1] == "gaff"
         lines = tools.scripts[0].splitlines()
-        assert lines[0] == "source leaprc.gaff"
-        assert lines[1].startswith("MOL = loadmol2 ")
-        assert lines[2].startswith("loadamberparams ")
+        directory = tools.cwds[-1]
+        assert lines == [
+            "source leaprc.gaff",
+            f'loadamberparams "{directory / "parmchk2.frcmod"}"',
+            f'MOL = loadmol2 "{directory / "antechamber.mol2"}"',
+            f'saveamberparm MOL "{directory / "MOL.prmtop"}" "{directory / "MOL.inpcrd"}"',
+            "quit",
+        ]
 
     def test_prmtop_rows_map_onto_graph_rows(self, tools, tmp_path):
         graph = _litfsi()
@@ -227,7 +234,7 @@ class TestTleapTypifier:
 
         lines = tools.scripts[0].splitlines()
         assert lines[0] == "source leaprc.gaff2"
-        frcmod = Path(lines[1].removeprefix("loadamberparams "))
+        frcmod = Path(shlex.split(lines[1])[1])
         rows = [
             line.split() for line in frcmod.read_text(encoding="utf-8").splitlines()
         ]

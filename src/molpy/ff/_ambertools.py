@@ -1,7 +1,7 @@
 """AmberTools typifiers: GAFF / GAFF2 through the AmberTools executables.
 
-Two :class:`molrs.ff.typifier.Typifier` subclasses drive the
-:mod:`molpy.wrapper` shells and read tleap's prmtop back:
+Two :class:`molrs.ff.typifier.Typifier` subclasses run the shared AmberTools
+pipeline (:mod:`molpy._ambertools`) and read tleap's prmtop back:
 
 * :class:`AntechamberTypifier` types a complete molecule from scratch:
   antechamber (atom types and charges) → parmchk2 (missing parameters) → tleap.
@@ -12,30 +12,33 @@ Two :class:`molrs.ff.typifier.Typifier` subclasses drive the
   and prepgen on one oligomer, then tleap ``sequence``.
 
 Both return the prmtop's assignment as a :class:`~molrs.ff.typifier.TypeAssignment`; the
-molrs base owns ``typify`` and the accumulated ``forcefield()``.
+molrs base owns ``typify`` and the accumulated ``forcefield()``. Both rerun
+every program on every call (no caching), in a directory keyed by the input
+and every setting.
 """
 
 from __future__ import annotations
 
-import hashlib
-from collections.abc import Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
-from molrs.core import Angle, Atomistic, Bond, Dihedral, Improper
-from molrs.core.constants import AMBER_SCEE, AMBER_SCNB
+from molrs.core import Atomistic
 from molrs.ff.forcefield import ForceField
-from molrs.ff.typifier import TypeAssignment, Typifier
-from molrs.io import read_prmtop_system, write_frcmod_str
+from molrs.ff.typifier import TypeAssignment
+from molrs.io import write_frcmod_str
 
-from molpy.config import load_config
-from molpy.wrapper import (
-    AntechamberWrapper,
-    Parmchk2Wrapper,
-    TleapWrapper,
-    run_step,
+from molpy._ambertools import (
+    UNIT,
+    AmberSteps,
+    AmberTypifier,
+    Prmtop,
+    input_mol2,
+    leap_mol2,
+    leap_script,
+    net_formal_charge,
+    run_directory,
 )
-from molpy.wrapper._amber_input import antechamber_input_mol2, net_formal_charge
+from molpy.config import load_config
 
 if TYPE_CHECKING:
     from molcfg import Config
@@ -45,199 +48,8 @@ if TYPE_CHECKING:
 # the last printed digit.
 _MOL2_CHARGE_TOLERANCE = 0.5e-4
 
-# The tleap unit name of the molecule being parameterised.
-_UNIT = "MOL"
 
-
-def _run_directory(work_dir: Path, *parts: str) -> Path:
-    """``work_dir/<digest>``: one directory per input and settings.
-
-    ``parts`` are everything a run's result depends on: the input mol2's
-    text and every setting handed to a program. A rerun with other settings
-    never lands in the directory of an earlier run.
-    """
-    sha = hashlib.sha1()
-    for part in parts:
-        data = part.encode()
-        sha.update(len(data).to_bytes(8, "little"))
-        sha.update(data)
-    directory = work_dir / sha.hexdigest()[:16]
-    directory.mkdir(parents=True, exist_ok=True)
-    return directory
-
-
-class _Prmtop:
-    """A tleap prmtop, read back as the TypeAssignment it assigns to its source graph.
-
-    antechamber and tleap keep atom order, so prmtop atom *i* is graph atom *i*;
-    bonded terms are matched by their endpoint rows.
-    """
-
-    def __init__(self, prmtop: Path) -> None:
-        self.forcefield, self.frame = read_prmtop_system(prmtop)
-
-    def assignment(self, graph: Atomistic, charges: Sequence[float]) -> TypeAssignment:
-        """Regenerate ``graph``'s terms to the prmtop's set and annotate them.
-
-        Args:
-            graph: The graph the prmtop was built from (the typifier's private
-                copy; its angles, dihedrals and impropers are rewritten).
-            charges: The charge to stamp on each atom, in row order.
-
-        Raises:
-            ValueError: A graph term the prmtop lacks, or the reverse; an atom
-                count or element that disagrees with the prmtop.
-        """
-        atoms = self.frame["atoms"]
-        types = [str(name) for name in atoms["type"]]
-        elements = [str(symbol) for symbol in atoms["element"]]
-        graph_atoms = list(graph.atoms)
-        if len(graph_atoms) != len(types):
-            raise ValueError(
-                f"the prmtop has {len(types)} atoms, the graph {len(graph_atoms)}"
-            )
-        for index, atom in enumerate(graph_atoms):
-            if atom.get("element") != elements[index]:
-                raise ValueError(
-                    f"atom {index} is {atom.get('element')} in the graph but "
-                    f"{elements[index]} in the prmtop"
-                )
-        row = {atom.handle: index for index, atom in enumerate(graph_atoms)}
-
-        prmtop_terms = self._terms()
-        graph.generate_topology(gen_angle=True, gen_dihedral=True, clear_existing=True)
-        graph.remove_link(*graph.impropers)
-        for term in prmtop_terms[Improper]:
-            graph.def_improper(*(graph_atoms[i] for i in term))
-
-        links: dict[type, list[dict]] = {}
-        for kind in (Bond, Angle, Dihedral, Improper):
-            relations = list(graph.links.exact_bucket(kind))
-            ends = [tuple(row[a.handle] for a in r.endpoints) for r in relations]
-            self._require_same(kind, ends, prmtop_terms[kind])
-            lookup = self._lookup(kind.__name__.lower())
-            links[kind] = [
-                {"type": lookup[tuple(types[i] for i in term)]} for term in ends
-            ]
-
-        (atom_style,) = self.forcefield.get_styles("atom")
-        mass = {t.name: t.params["mass"] for t in atom_style.get_types()}
-        nodes = [
-            {
-                "type": (atom_style.name, name, (), {"mass": mass[name]}),
-                "charge": float(charge),
-            }
-            for name, charge in zip(types, charges, strict=True)
-        ]
-        styles = [(s.category, s.name, s.params) for s in self.forcefield.styles]
-        pairs = [
-            (
-                style.name,
-                t.name,
-                [e.name for e in t.endpoints],
-                dict(t.params.items()),
-            )
-            for style in self.forcefield.get_styles("pair")
-            for t in style.get_types()
-        ]
-        return TypeAssignment(nodes, links, styles=styles, pairs=pairs)
-
-    def _terms(self) -> dict[type, list[tuple[int, ...]]]:
-        """The prmtop's terms per kind, as atom-row tuples in file order.
-
-        The structure reader already gives one proper dihedral per atom quartet
-        (a multi-term torsion is one term) and keeps impropers in their own
-        block.
-        """
-        four = ("atomi", "atomj", "atomk", "atoml")
-        columns = {
-            Bond: ("bonds", four[:2]),
-            Angle: ("angles", four[:3]),
-            Dihedral: ("dihedrals", four),
-            Improper: ("impropers", four),
-        }
-        rows: dict[type, list[tuple[int, ...]]] = {}
-        for kind, (block, keys) in columns.items():
-            rows[kind] = []
-            if block in self.frame:
-                cols = [self.frame[block][key] for key in keys]
-                rows[kind] = [tuple(int(v) for v in term) for term in zip(*cols)]
-        return rows
-
-    @staticmethod
-    def _require_same(
-        kind: type,
-        graph_terms: list[tuple[int, ...]],
-        prmtop_terms: list[tuple[int, ...]],
-    ) -> None:
-        """Raise unless the graph and the prmtop carry the same terms of ``kind``."""
-        graph_keys = {min(t, t[::-1]) for t in graph_terms}
-        prmtop_keys = {min(t, t[::-1]) for t in prmtop_terms}
-        for key in sorted(graph_keys - prmtop_keys):
-            raise ValueError(f"{kind.__name__.lower()} {key} is not in the prmtop")
-        for key in sorted(prmtop_keys - graph_keys):
-            raise ValueError(
-                f"prmtop {kind.__name__.lower()} {key} is not in the graph"
-            )
-
-    def _lookup(self, category: str) -> dict[tuple[str, ...], tuple]:
-        """Endpoint atom types (either orientation) → the term's annotation."""
-        lookup: dict[tuple[str, ...], tuple] = {}
-        for style in self.forcefield.get_styles(category):
-            for t in style.get_types():
-                ends = [e.name for e in t.endpoints]
-                annotation = (style.name, t.name, ends, dict(t.params.items()))
-                lookup[tuple(ends)] = annotation
-                lookup[tuple(reversed(ends))] = annotation
-        return lookup
-
-
-class _AmberTypifier(Typifier):
-    """The seed both AmberTools typifiers share: AMBER's declared settings.
-
-    A typifier's output force field starts as its ``source_forcefield()``'s empty
-    likeness, so declaring units ``real`` and the AMBER 1-4 scaling here is
-    what makes every typed output carry them (tleap's prmtop defaults:
-    ``coul_14 = 1 / SCEE``, ``lj_14 = 1 / SCNB``).
-    """
-
-    def source_forcefield(self) -> ForceField:
-        """An empty force field declaring AMBER units and 1-4 scaling."""
-        ff = ForceField("amber", units="real")
-        ff.set_special_bonds(
-            [0.0, 0.0, 1.0 / AMBER_SCNB],
-            [0.0, 0.0, 1.0 / AMBER_SCEE],
-        )
-        return ff
-
-
-class _PrmtopAssignment(_AmberTypifier):
-    """Assign a tleap prmtop to the graph it was written for.
-
-    No program runs: ``assign`` regenerates the graph's terms to the prmtop's
-    set and stamps the prmtop's types and charges on it, exactly as the
-    typifiers below do after tleap. The output force field is the typifiers'
-    likeness (AMBER units and 1-4 scaling, types without the prmtop's row
-    ids), so it merges with theirs.
-
-    Args:
-        prmtop: The prmtop; its atom *i* is graph atom *i*.
-    """
-
-    def __init__(self, prmtop: Path) -> None:
-        super().__init__()
-        self._prmtop = _Prmtop(prmtop)
-
-    def assign(self, graph: Atomistic) -> TypeAssignment:
-        """The prmtop's types, charges and terms for ``graph``.
-
-        Raises:
-            ValueError: The graph and the prmtop disagree on an atom or term.
-        """
-        return self._prmtop.assignment(graph, self._prmtop.frame["atoms"]["charge"])
-
-
-class AntechamberTypifier(_AmberTypifier):
+class AntechamberTypifier(AmberTypifier):
     """GAFF / GAFF2 atom types, charges and parameters for a complete molecule.
 
     ``assign`` runs antechamber (``-at atom_type -c charge_method``, net charge
@@ -284,65 +96,51 @@ class AntechamberTypifier(_AmberTypifier):
             molpy.wrapper.ToolError: An AmberTools step failed.
         """
         net = net_formal_charge(graph)
-        text = antechamber_input_mol2(graph, rename=True)
-        directory = _run_directory(
+        text = input_mol2(graph, rename=True)
+        directory = run_directory(
             self.work_dir, text, self.atom_type, self.charge_method, str(net)
         )
-
         source = directory / "input.mol2"
         typed = directory / "antechamber.mol2"
         frcmod = directory / "parmchk2.frcmod"
-        prmtop = directory / f"{_UNIT}.prmtop"
-        inpcrd = directory / f"{_UNIT}.inpcrd"
-        for stale in (typed, frcmod, prmtop, inpcrd):
-            stale.unlink(missing_ok=True)
+        prmtop = directory / f"{UNIT}.prmtop"
         source.write_text(text, encoding="utf-8")
 
-        ante = AntechamberWrapper(directory, config=self.config)
-        run_step(
-            ante,
+        steps = AmberSteps(directory, self.config)
+        steps.antechamber(
+            source,
             typed,
-            lambda: ante.atomtype_assign(
-                source,
-                typed,
-                input_format="mol2",
-                output_format="mol2",
-                charge_method=self.charge_method,
-                atom_type=self.atom_type,
-                net_charge=net,
+            parameter_set=self.atom_type,
+            charge_method=self.charge_method,
+            net_charge=net,
+        )
+        steps.parmchk2(typed, frcmod, parameter_set=self.atom_type)
+        steps.tleap(
+            leap_script(
+                self.atom_type,
+                leap_mol2(typed),
+                prmtop,
+                directory / f"{UNIT}.inpcrd",
+                frcmods=[frcmod],
             ),
+            prmtop,
+            directory / f"{UNIT}.inpcrd",
         )
-        parmchk2 = Parmchk2Wrapper(directory, config=self.config)
-        run_step(
-            parmchk2,
-            frcmod,
-            lambda: parmchk2.generate_parameters(
-                typed, frcmod, input_format="mol2", force_field=self.atom_type
-            ),
-        )
-        leap = TleapWrapper(directory, config=self.config)
-        script = (
-            f"source leaprc.{self.atom_type}\n"
-            f"{_UNIT} = loadmol2 {typed}\n"
-            f"loadamberparams {frcmod}\n"
-            f"saveamberparm {_UNIT} {prmtop} {inpcrd}\n"
-            "quit\n"
-        )
-        run_step(leap, prmtop, lambda: leap.run_from_script(script))
 
-        result = _Prmtop(prmtop)
+        result = Prmtop(prmtop)
         return result.assignment(graph, result.frame["atoms"]["charge"])
 
 
-class TleapTypifier(_AmberTypifier):
+class TleapTypifier(AmberTypifier):
     """Parameterise an already typed graph with tleap alone.
 
     The graph's atoms must carry AMBER atom types and charges. ``assign``
     writes them as mol2, writes ``forcefield`` (the templates' parameters) as a
     frcmod, runs tleap and assigns the prmtop's bonded terms, so junction terms
     come from the leaprc. The run directory is keyed by the mol2, the leaprc
-    and the frcmod, and tleap's outputs are deleted before it runs. It never runs antechamber or parmchk2. Types and
-    charges are left as they are; tleap changing one raises. A graph that
+    and the frcmod, and tleap's outputs are deleted before it runs. It never
+    runs antechamber or parmchk2. Types and charges are left as they are;
+    tleap changing one raises. A graph that
     still has ports is refused: joining those ports would fold the
     leaving-group charge onto the anchors. A polymer chain is built with
     :class:`molpy.builder.AmberPolymerBuilder`, whose prepgen step
@@ -395,30 +193,26 @@ class TleapTypifier(_AmberTypifier):
                     f"atom {index} carries type {name!r} and charge {charge!r}; "
                     "TleapTypifier needs AMBER types and charges on every atom"
                 )
-        text = antechamber_input_mol2(graph, rename=True)
+        text = input_mol2(graph, rename=True)
         extra = write_frcmod_str(self.parameters) if self.parameters is not None else ""
-        directory = _run_directory(self.work_dir, text, self.leaprc, extra)
-
+        directory = run_directory(self.work_dir, text, self.leaprc, extra)
         source = directory / "input.mol2"
-        prmtop = directory / f"{_UNIT}.prmtop"
-        inpcrd = directory / f"{_UNIT}.inpcrd"
-        for stale in (prmtop, inpcrd):
-            stale.unlink(missing_ok=True)
+        prmtop = directory / f"{UNIT}.prmtop"
+        inpcrd = directory / f"{UNIT}.inpcrd"
         source.write_text(text, encoding="utf-8")
-        script = f"source leaprc.{self.leaprc}\n"
+        frcmods = []
         if self.parameters is not None:
-            frcmod = directory / "forcefield.frcmod"
-            frcmod.write_text(extra, encoding="utf-8")
-            script += f"loadamberparams {frcmod}\n"
-        script += (
-            f"{_UNIT} = loadmol2 {source}\n"
-            f"saveamberparm {_UNIT} {prmtop} {inpcrd}\n"
-            "quit\n"
+            frcmods.append(directory / "forcefield.frcmod")
+            frcmods[0].write_text(extra, encoding="utf-8")
+        AmberSteps(directory, self.config).tleap(
+            leap_script(
+                self.leaprc, leap_mol2(source), prmtop, inpcrd, frcmods=frcmods
+            ),
+            prmtop,
+            inpcrd,
         )
-        leap = TleapWrapper(directory, config=self.config)
-        run_step(leap, prmtop, lambda: leap.run_from_script(script))
 
-        result = _Prmtop(prmtop)
+        result = Prmtop(prmtop)
         atoms = result.frame["atoms"]
         for index, (name, charge, leap_name, leap_charge) in enumerate(
             zip(types, charges, atoms["type"], atoms["charge"], strict=True)

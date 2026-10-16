@@ -9,6 +9,7 @@ programs when they are installed.
 
 from __future__ import annotations
 
+import shlex
 import shutil
 import subprocess
 from pathlib import Path
@@ -85,7 +86,7 @@ class _FakeTools:
             save = next(
                 line for line in script.splitlines() if line.startswith("saveamberparm")
             )
-            prmtop, inpcrd = save.split()[2:]
+            prmtop, inpcrd = shlex.split(save)[2:]
             shutil.copy(self.prmtop, prmtop)
             _inpcrd(Path(inpcrd))
         elif tool == "antechamber":
@@ -210,7 +211,7 @@ class TestAmberPieces:
             tmp_path, "{[#PEO]|4}", library={"PEO": oligomer}, cuts={"PEO": cuts}
         )
         assert result.monomer_count == 4
-        assert "mol = sequence { HPE PEO PEO TPE }" in _script(tmp_path)
+        assert "MOL = sequence { HPE PEO PEO TPE }" in _script(tmp_path)
         controls = _controls(tmp_path, "PEO")
         assert "TAIL_NAME C3" in controls["head"]
         assert "HEAD_NAME O2" in controls["chain"]
@@ -224,20 +225,17 @@ class TestAssemble:
 
         assert tools.names() == [
             "antechamber",
-            "antechamber",
             "parmchk2",
             "prepgen",
             "prepgen",
             "prepgen",
             "tleap",
         ]
-        formats = [
-            args[args.index("-fo") + 1]
-            for name, args in tools.calls
-            if name == "antechamber"
-        ]
-        assert formats == ["mol2", "ac"]
         first = tools.calls[0][1]
+        assert first[first.index("-fo") + 1] == "ac"  # one sqm run per oligomer
+        parmchk2 = tools.calls[1][1]
+        assert parmchk2[parmchk2.index("-f") + 1] == "ac"
+        assert Path(parmchk2[parmchk2.index("-i") + 1]).name == "EO.ac"
         assert first[first.index("-c") + 1] == "bcc"
         assert first[first.index("-at") + 1] == "gaff"
         assert first[first.index("-nc") + 1] == "0"
@@ -251,7 +249,7 @@ class TestAssemble:
         assert "loadamberparams" in script
         assert "loadamberprep" in script
         assert "loadmol2" not in script
-        assert "mol = sequence { HEO EO TEO }" in script
+        assert "MOL = sequence { HEO EO TEO }" in script
         assert result.monomer_count == 3
         assert result.chain.n_atoms == 16
         assert all(isinstance(atom["type"], str) for atom in result.chain.atoms)
@@ -284,7 +282,7 @@ class TestAssemble:
     def test_one_chain_residue_serves_every_middle_site(self, tools, tmp_path):
         result = _build(tmp_path, "{[#EO]|4}")
         assert result.monomer_count == 4
-        assert "mol = sequence { HEO EO EO TEO }" in _script(tmp_path)
+        assert "MOL = sequence { HEO EO EO TEO }" in _script(tmp_path)
         assert (tmp_path / "monomers" / "EO" / "EO.prepi").is_file()
         assert (tmp_path / "monomers" / "EO" / "HEO.prepi").is_file()
         assert tools.names().count("prepgen") == 3
@@ -294,7 +292,7 @@ class TestAssemble:
         del cuts["EO"]["chain"]
         _build(tmp_path, "{[#EO]|2}", cuts=cuts)
         assert tools.names().count("prepgen") == 2
-        assert "mol = sequence { HEO TEO }" in _script(tmp_path)
+        assert "MOL = sequence { HEO TEO }" in _script(tmp_path)
         assert not (tmp_path / "monomers" / "EO" / "EO.prepi").exists()
 
     def test_net_charge_is_the_sum_of_formal_charges(self, tools, tmp_path):
@@ -312,6 +310,18 @@ class TestAssemble:
     def test_net_charges_must_list_every_label(self, tools, tmp_path):
         with pytest.raises(KeyError, match="no entry for 'EO'"):
             _build(tmp_path, net_charges={"PEO": 0})
+
+
+class TestScript:
+    def test_a_work_dir_with_a_space_reaches_tleap_quoted(self, tools, tmp_path):
+        work = tmp_path / "my work"
+        result = _build(work)
+        script = _script(work)
+        monomer = (work / "monomers" / "EO").resolve()
+        assert f'loadamberparams "{monomer}/EO.frcmod"' in script
+        assert f'loadamberprep "{monomer}/HEO.prepi"' in script
+        assert result.prmtop_path.is_file()
+        assert " " in str(result.prmtop_path)
 
 
 class TestCache:
@@ -337,7 +347,6 @@ class TestCache:
         _build(tmp_path, charge_method="gas")
         assert tools.names()[before:] == [
             "antechamber",
-            "antechamber",
             "parmchk2",
             "prepgen",
             "prepgen",
@@ -354,7 +363,6 @@ class TestGropobOligomer:
         monomer = work / "monomers" / "PEO"
         monomer.mkdir(parents=True)
         shutil.copy(data / "PEO.ac", monomer / "PEO.ac")
-        shutil.copy(data / "PEO_initial.mol2", monomer / "PEO.mol2")
         shutil.copy(data / "PEO_initial.frcmod", monomer / "PEO.frcmod")
         frame = mp.io.read_ac(data / "PEO.ac")
         del frame["atoms"]["xyz"]
@@ -380,7 +388,7 @@ class TestGropobOligomer:
         _build(tmp_path, "{[#PEO]|5}", library={"PEO": oligomer}, cuts=cuts)
         assert "antechamber" not in tools.names()
         assert "parmchk2" not in tools.names()
-        assert "mol = sequence { HPE PEO PEO PEO TPE }" in _script(tmp_path)
+        assert "MOL = sequence { HPE PEO PEO PEO TPE }" in _script(tmp_path)
         controls = _controls(tmp_path, "PEO")
         assert controls["head"] == (
             "TAIL_NAME C6\nPOST_TAIL_TYPE c3\n"

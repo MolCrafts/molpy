@@ -2,8 +2,9 @@
 
 Wrappers encapsulate subprocess invocation, working directory, and environment.
 They MUST NOT contain high-level domain logic; orchestration belongs in their
-callers (the AmberTools typifiers of :mod:`molpy.ff.typifier` and
-:class:`molpy.builder.AmberPolymerBuilder`).
+callers. The AmberTools wrappers are orchestrated in one place, the private
+pipeline the AmberTools typifiers of :mod:`molpy.ff.typifier` and
+:class:`molpy.builder.AmberPolymerBuilder` share.
 
 :class:`Tool` is the core every wrapper and engine shares: it reads the
 executable, environment (``env`` / ``env_manager``), environment variables

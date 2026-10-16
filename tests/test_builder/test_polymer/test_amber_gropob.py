@@ -81,7 +81,6 @@ def _seed_monomer(data: Path, work: Path) -> None:
     monomer = work / "monomers" / "PEO"
     monomer.mkdir(parents=True)
     shutil.copy(data / "PEO.ac", monomer / "PEO.ac")
-    shutil.copy(data / "PEO_initial.mol2", monomer / "PEO.mol2")
     shutil.copy(data / "PEO_initial.frcmod", monomer / "PEO.frcmod")
 
 
@@ -118,7 +117,7 @@ def test_prepgen_from_their_ac_matches_the_25mer(gropob, tmp_path):
     _seed_monomer(gropob, tmp_path)
     result = _build({"PEO": _peo_template(gropob)}, _CUTS, tmp_path)
     (script,) = (tmp_path / "chains").glob("*/polymer.in")
-    assert "mol = sequence { HPE PEO PEO PEO TPE }" in script.read_text(
+    assert "MOL = sequence { HPE PEO PEO PEO TPE }" in script.read_text(
         encoding="utf-8"
     )
 

@@ -9,7 +9,6 @@ site graph only chooses the tleap ``sequence``. This does not call
 
 from __future__ import annotations
 
-import hashlib
 from collections import defaultdict
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -19,19 +18,19 @@ from typing import TYPE_CHECKING, Literal
 from molrs.core import Atomistic, Bead, CoarseGrain
 from molrs.io import read_ac, read_inpcrd, read_prmtop
 
+from molpy._ambertools import (
+    AmberSteps,
+    PrmtopTypifier,
+    digest,
+    input_mol2,
+    leap_script,
+    leap_sequence,
+    net_formal_charge,
+    prepgen_control_text,
+)
 from molpy.builder._polymer.ambertools._cut import AmberCut
 from molpy.builder._polymer.ambertools._result import AmberBuildResult
 from molpy.config import load_config
-from molpy.ff._ambertools import _PrmtopAssignment
-from molpy.wrapper import (
-    AntechamberWrapper,
-    Parmchk2Wrapper,
-    PrepgenWrapper,
-    TleapWrapper,
-    run_step,
-)
-from molpy.wrapper._amber_input import antechamber_input_mol2, net_formal_charge
-from molpy.wrapper._prepgen import prepgen_control_text
 
 if TYPE_CHECKING:
     from molcfg import Config
@@ -39,8 +38,8 @@ if TYPE_CHECKING:
 Variant = Literal["head", "chain", "tail"]
 _VARIANTS: tuple[Variant, ...] = ("head", "chain", "tail")
 
-# Written next to an oligomer's antechamber outputs: the digest of what
-# produced them. A directory without it holds files the user put there.
+# Written next to an oligomer's antechamber and parmchk2 outputs: the digest
+# of what produced them. A directory without it holds files the user put there.
 _STAMP = "antechamber.sha1"
 
 
@@ -62,12 +61,14 @@ class AmberPolymerBuilder:
     chain. The box is packed afterwards with molpack.
 
     Everything is written under ``work_dir``: ``monomers/<label>/`` holds the
-    oligomer's input mol2, ac, mol2, frcmod, control files and prepi files, and
-    ``chains/<digest>/`` one tleap build. A rerun reuses what is there:
-    antechamber reruns only when the oligomer, ``force_field``,
-    ``charge_method`` or net charge changed (an ac, mol2 and frcmod placed
-    there by hand are used as they are), prepgen reruns when its control
-    file changed, and tleap when the sequence or any file it loads changed.
+    oligomer's input mol2, ac, frcmod, control files and prepi files, and
+    ``chains/<digest>/`` one tleap build. antechamber runs once per oligomer
+    (``-fo ac``: types and charges, one sqm run); parmchk2 and prepgen read
+    that ac. A rerun reuses what is there: antechamber reruns only when the
+    oligomer, ``force_field``, ``charge_method`` or net charge changed (an ac
+    and frcmod placed there by hand are used as they are), prepgen reruns
+    when its control file changed, and tleap when the sequence or any file
+    it loads changed. A step that runs deletes its outputs first.
 
     Args:
         library: Bead type → the oligomer (head, chain and tail monomers
@@ -188,36 +189,17 @@ class AmberPolymerBuilder:
         """antechamber + parmchk2 on the oligomer, prepgen for each residue."""
         directory = self.work_dir / "monomers" / label
         directory.mkdir(parents=True, exist_ok=True)
+        steps = AmberSteps(directory, self.config)
         ac = directory / f"{label}.ac"
-        mol2 = directory / f"{label}.mol2"
         frcmod = directory / f"{label}.frcmod"
-        source = directory / f"{label}.input.mol2"
-
         oligomer = self.library[label]
         charge = _net_charge(oligomer, label, self.net_charges)
-        source.write_text(
-            antechamber_input_mol2(oligomer, rename=False), encoding="utf-8"
-        )
-        digest = _digest(
-            source.read_bytes(),
-            f"{self.force_field}|{self.charge_method}|{charge}".encode(),
-        )
-        stamp = directory / _STAMP
-        outputs = (ac, mol2, frcmod)
-        stale = not all(path.is_file() for path in outputs) or (
-            stamp.is_file() and stamp.read_text(encoding="utf-8") != digest
-        )
-        if stale:
-            stamp.unlink(missing_ok=True)
-            self._antechamber(directory, source, ac, mol2, frcmod, charge)
-            stamp.write_text(digest, encoding="utf-8")
+        stale = self._antechamber(steps, label, oligomer, charge)
 
         frame = read_ac(ac)
         ac_names = [str(name) for name in frame["atoms"]["name"]]
         ac_types = dict(zip(ac_names, map(str, frame["atoms"]["type"]), strict=True))
         renamed = _rename(_atom_names(oligomer), ac_names)
-
-        prepgen = PrepgenWrapper(directory, config=self.config)
         prepi: dict[Variant, Path] = {}
         for variant in _VARIANTS:
             if variant not in variants:
@@ -243,100 +225,85 @@ class AmberPolymerBuilder:
             control.write_text(text, encoding="utf-8")
             output = directory / _prepi_name(label, variant)
             prepi[variant] = output
-            if not stale and output.is_file() and text == previous:
-                continue
-            output.unlink(missing_ok=True)
-            run_step(
-                prepgen,
-                output,
-                lambda: prepgen.generate_residue(
-                    input_file=ac.name,
-                    output_file=output.name,
-                    control_file=control.name,
-                    residue_name=_resname(label, variant),
-                ),
-            )
+            if stale or not output.is_file() or text != previous:
+                steps.prepgen(ac, output, control, _resname(label, variant))
         return _Prepared(frcmod, prepi)
 
     def _antechamber(
-        self,
-        directory: Path,
-        source: Path,
-        ac: Path,
-        mol2: Path,
-        frcmod: Path,
-        charge: int,
-    ) -> None:
-        antechamber = AntechamberWrapper(directory, config=self.config)
-        for output, fmt in ((mol2, "mol2"), (ac, "ac")):
-            output.unlink(missing_ok=True)
-            run_step(
-                antechamber,
-                output,
-                lambda output=output, fmt=fmt: antechamber.atomtype_assign(
-                    input_file=source,
-                    output_file=output,
-                    input_format="mol2",
-                    output_format=fmt,
-                    charge_method=self.charge_method,  # type: ignore[arg-type]
-                    atom_type=self.force_field,
-                    net_charge=charge,
-                ),
-            )
-        parmchk2 = Parmchk2Wrapper(directory, config=self.config)
-        frcmod.unlink(missing_ok=True)
-        run_step(
-            parmchk2,
-            frcmod,
-            lambda: parmchk2.generate_parameters(
-                input_file=mol2, output_file=frcmod, force_field=self.force_field
-            ),
+        self, steps: AmberSteps, label: str, oligomer: Atomistic, charge: int
+    ) -> bool:
+        """Type and charge the oligomer once (``-fo ac``), then parmchk2 on the ac.
+
+        Skipped when the ac and frcmod were made from this input and these
+        settings (the stamp holds their digest), or were put there by hand
+        (no stamp). Returns whether it ran.
+        """
+        directory = steps.directory
+        ac = directory / f"{label}.ac"
+        frcmod = directory / f"{label}.frcmod"
+        source = directory / f"{label}.input.mol2"
+        text = input_mol2(oligomer, rename=False)
+        source.write_text(text, encoding="utf-8")
+        stamp = directory / _STAMP
+        current = digest(text, self.force_field, self.charge_method, str(charge))
+        if (
+            ac.is_file()
+            and frcmod.is_file()
+            and (not stamp.is_file() or stamp.read_text(encoding="utf-8") == current)
+        ):
+            return False
+        stamp.unlink(missing_ok=True)
+        steps.antechamber(
+            source,
+            ac,
+            parameter_set=self.force_field,
+            charge_method=self.charge_method,
+            net_charge=charge,
         )
+        steps.parmchk2(ac, frcmod, parameter_set=self.force_field)
+        stamp.write_text(current, encoding="utf-8")
+        return True
 
     def _tleap(
         self, labels: list[str], prepared: dict[str, _Prepared]
     ) -> AmberBuildResult:
-        sequence = " ".join(
+        residues = [
             _resname(label, _variant(index, len(labels)))
             for index, label in enumerate(labels)
+        ]
+        frcmods = [prepared[label].frcmod for label in sorted(prepared)]
+        preps = [
+            path
+            for label in sorted(prepared)
+            for path in prepared[label].prepi.values()
+        ]
+        key = digest(
+            self.force_field,
+            *residues,
+            *(
+                part
+                for path in (*frcmods, *preps)
+                for part in (str(path), path.read_bytes())
+            ),
         )
-        loads = [f"source leaprc.{self.force_field}"]
-        loaded: list[Path] = []
-        for label in sorted(prepared):
-            loads.append(f"loadamberparams {prepared[label].frcmod}")
-            loaded.append(prepared[label].frcmod)
-            for path in prepared[label].prepi.values():
-                loads.append(f"loadamberprep {path}")
-                loaded.append(path)
-        digest = _digest(
-            "\n".join(loads).encode(),
-            sequence.encode(),
-            *(path.read_bytes() for path in loaded),
-        )
-        directory = self.work_dir / "chains" / digest[:16]
+        directory = self.work_dir / "chains" / key[:16]
         prmtop = directory / "polymer.prmtop"
         inpcrd = directory / "polymer.inpcrd"
         if not (prmtop.is_file() and inpcrd.is_file()):
             directory.mkdir(parents=True, exist_ok=True)
-            script = "\n".join(
-                [
-                    *loads,
-                    "",
-                    f"mol = sequence {{ {sequence} }}",
-                    f"saveamberparm mol {prmtop} {inpcrd}",
-                    "quit",
-                    "",
-                ]
-            )
-            tleap = TleapWrapper(directory, config=self.config)
-            prmtop.unlink(missing_ok=True)
-            run_step(
-                tleap,
+            script = leap_script(
+                self.force_field,
+                leap_sequence(residues),
                 prmtop,
-                lambda: tleap.run_from_script(script, script_name="polymer.in"),
+                inpcrd,
+                frcmods=frcmods,
+                preps=preps,
+            )
+            AmberSteps(directory, self.config).tleap(
+                script, prmtop, inpcrd, script_name="polymer.in"
             )
         frame = read_inpcrd(inpcrd, read_prmtop(prmtop))
-        assignment = _PrmtopAssignment(prmtop)
+        assignment = PrmtopTypifier(prmtop)
         chain = assignment.typify(Atomistic.from_frame(frame))
         return AmberBuildResult(
             chain, assignment.forcefield(), prmtop, inpcrd, len(labels)
@@ -385,14 +352,6 @@ def _checked_cuts(
                 )
         checked[variant] = cut
     return checked
-
-
-def _digest(*parts: bytes) -> str:
-    sha = hashlib.sha1()
-    for part in parts:
-        sha.update(len(part).to_bytes(8, "little"))
-        sha.update(part)
-    return sha.hexdigest()
 
 
 def _named(template: Atomistic) -> Atomistic:
