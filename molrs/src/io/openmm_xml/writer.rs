@@ -59,6 +59,13 @@ use crate::io::writer::{ForceFieldWriteError, ForceFieldWriter};
 /// `class{n}` when it is an atom class (or no atom type names it), `type{n}` when it is the name of a type of another class,
 /// and `""` is OpenMM's wildcard.
 ///
+/// The Coulomb style (`coul/cut`, `coul/charmm` or the long-range
+/// `coul/long/pme`) is written as the charges alone: how OpenMM sums them —
+/// `NoCutoff`, a cutoff, `Ewald`, `PME` — and every cutoff and switch are
+/// `createSystem` arguments (`nonbondedMethod`, `nonbondedCutoff`,
+/// `ewaldErrorTolerance`, `switchDistance`), chosen when the `System` is
+/// built, as LAMMPS's `kspace_style` and GROMACS's `.mdp` `coulombtype` are.
+///
 /// # Refusals
 ///
 /// What OpenMM's tags cannot hold is an `Err` naming it, never a silent
@@ -83,8 +90,11 @@ use crate::io::writer::{ForceFieldWriteError, ForceFieldWriter};
 ///   prices an NBFIX 1-4 pair with the NBFIX row); a `lj/charmm` with
 ///   `one_four = "regular"` (LAMMPS's semantics) whose types have their own
 ///   1-4 parameters at a non-zero 1-4 weight (OpenMM would use them);
-/// - a Coulomb style with `dielectric ≠ 1` or `delta ≠ 0`; charges beside no
-///   Coulomb style; charges on some types and not others;
+/// - a Coulomb style with `dielectric ≠ 1` or `delta ≠ 0`; a `coul/long/pme`
+///   stating its Ewald parameters (`alpha`, `order`, `grid_*`: OpenMM's PME
+///   takes them from `createSystem`'s `ewaldErrorTolerance`, or the built
+///   `NonbondedForce`); charges beside no Coulomb style; charges on some
+///   types and not others;
 /// - two types OpenMM's generator would match on the same labels (bonds,
 ///   angles, propers and crossterms either way round, impropers by their
 ///   centre and the other three in any order) with other parameters — a
@@ -617,11 +627,21 @@ impl OpenmmXmlWriter {
                     }
                     lj_style = Some(style);
                 }
-                "coul/cut" | "coul/charmm" => {
+                "coul/cut" | "coul/charmm" | "coul/long/pme" => {
                     if coul_style.is_some() {
                         return Err("two Coulomb pair styles".into());
                     }
                     let p = style.params();
+                    if let Some(key) = EWALD_PARAMS.into_iter().find(|k| p.get(k).is_some()) {
+                        return Err(refuse(
+                            style,
+                            &format!(
+                                "it states its Ewald '{key}', which OpenMM's XML has no place \
+                                 for: the long-range method and its accuracy are createSystem \
+                                 arguments (nonbondedMethod=PME, ewaldErrorTolerance)"
+                            ),
+                        ));
+                    }
                     if p.get("dielectric").is_some_and(|d| d != 1.0) {
                         return Err(refuse(style, "OpenMM's Coulomb has no dielectric"));
                     }
@@ -847,6 +867,10 @@ impl OpenmmXmlWriter {
         Ok((out, combining_rule))
     }
 }
+
+/// The Ewald parameters a `coul/long/pme` may state: run settings OpenMM's
+/// XML has no place for.
+const EWALD_PARAMS: [&str; 5] = ["alpha", "order", "grid_x", "grid_y", "grid_z"];
 
 /// The refusal of a system whose charges are nowhere.
 const NO_CHARGES: &str = "the frame has no charge column and the force field's atom types carry \
@@ -1275,6 +1299,52 @@ mod tests {
         let xml = write(&field("arithmetic"));
         assert!(!xml.contains("<Script>"), "{xml}");
         assert!(!xml.contains("combining_rule"), "{xml}");
+    }
+
+    /// A long-range Coulomb is the charges, as a cut one is: `PME` / `Ewald`
+    /// is `createSystem`'s `nonbondedMethod`, so the XML is the `coul/cut`
+    /// one. Stated Ewald parameters have no place in it and are refused.
+    #[test]
+    fn a_long_range_coulomb_is_written_as_the_charges() {
+        let field = |coul: &str, params: Params| {
+            let mut ff = ForceField::new("tiny");
+            ff.def_style("atom", "full", Params::new())
+                .unwrap()
+                .def_type(
+                    "CT",
+                    &[],
+                    Params::from_pairs(&[("mass", 12.011), ("charge", -0.1)]),
+                )
+                .unwrap();
+            ff.def_style("pair", "lj/cut", Params::from_pairs(&[("cutoff", 10.0)]))
+                .unwrap()
+                .def_type(
+                    "CT",
+                    &["CT"],
+                    Params::from_pairs(&[("epsilon", 0.066), ("sigma", 3.5)]),
+                )
+                .unwrap();
+            ff.def_style("pair", coul, params).unwrap();
+            ff
+        };
+        let cut = write(&field("coul/cut", Params::from_pairs(&[("cutoff", 10.0)])));
+        let long = write(&field(
+            "coul/long/pme",
+            Params::from_pairs(&[("cutoff", 10.0)]),
+        ));
+        assert_eq!(long, cut);
+        assert!(long.contains(r#"charge="-0.1""#), "{long}");
+        for key in ["alpha", "grid_x", "order"] {
+            let ff = field(
+                "coul/long/pme",
+                Params::from_pairs(&[("cutoff", 10.0), (key, 0.3)]),
+            );
+            let err = write_openmm_forcefield_str(&ff, None).unwrap_err();
+            assert!(
+                err.contains("coul/long/pme") && err.contains(key) && err.contains("createSystem"),
+                "{err}"
+            );
+        }
     }
 
     /// The `c0..c5` attributes of the only `<Proper>` under `<RBTorsionForce>`.

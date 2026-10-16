@@ -88,12 +88,19 @@ const LJ_STYLES: [&str; 2] = ["lj/cut", "lj/charmm"];
 /// .mdp's `rvdw` / `rcoulomb` and switch), not force-field data, so they are
 /// not written.
 ///
-/// `pair/coul/cut` and `pair/coul/charmm` have no directive: GROMACS fixes
-/// its Coulomb constant (CODATA 2018, LAMMPS `real`'s × (1 + 9.9·10⁻⁹)) as
-/// LAMMPS and OpenMM fix theirs, so the field's stated `coulomb` is not
-/// written — an AMBER field's 332.0522173 is priced at GROMACS's constant,
-/// 3.5·10⁻⁵ above it, as every engine but AMBER's own prices it. Only
-/// dielectric 1 is accepted, and nothing is written.
+/// `pair/coul/cut`, `pair/coul/charmm` and the long-range
+/// `pair/coul/long/pme` have no directive: the `.top` holds the charges
+/// (`[ atomtypes ]`, `[ atoms ]`), and how GROMACS sums them — cut-off,
+/// reaction field, Ewald, PME — is the `.mdp`'s `coulombtype` (with
+/// `rcoulomb`, `fourier-spacing`, `pme-order`, `ewald-rtol`), chosen at run
+/// time, as LAMMPS's `kspace_style` and OpenMM's `createSystem` arguments are.
+/// GROMACS fixes its Coulomb constant (CODATA 2018, LAMMPS `real`'s × (1 +
+/// 9.9·10⁻⁹)) as LAMMPS and OpenMM fix theirs, so the field's stated
+/// `coulomb` is not written — an AMBER field's 332.0522173 is priced at
+/// GROMACS's constant, 3.5·10⁻⁵ above it, as every engine but AMBER's own
+/// prices it. Only dielectric 1 is accepted, and nothing is written; a
+/// `coul/long/pme` stating its Ewald parameters (`alpha`, `order`,
+/// `grid_*`, `.mdp` settings) is refused.
 ///
 /// The force field must be in `real` units (the conversions above are from
 /// Å and kcal/mol); another declared preset is refused.
@@ -723,6 +730,22 @@ fn check_style(style: &Style) -> Result<(), ForceFieldWriteError> {
                     style.params()
                 )
                 .into());
+            }
+            Ok(())
+        }
+        // A long-range Coulomb is the charges too: the method (PME, Ewald)
+        // and its accuracy are the .mdp's.
+        ("pair", "coul/long/pme") => {
+            if let Some(key) = extra_params(&["coulomb", "cutoff"]) {
+                return Err(format!(
+                    "pair/coul/long/pme states its Ewald '{key}', which a .top has no place for: \
+                     the long-range method and its accuracy are .mdp settings (coulombtype = PME, \
+                     fourier-spacing, pme-order, ewald-rtol)"
+                )
+                .into());
+            }
+            if !style.type_rows().is_empty() {
+                return Err("pair/coul/long/pme has types: the charges are the atom types'".into());
             }
             Ok(())
         }
@@ -2604,6 +2627,36 @@ SOL  1
             .unwrap()
             .set_param("coulomb", 332.0522173);
         assert_eq!(write(&a), write(&b));
+    }
+
+    /// A long-range Coulomb has no directive, as a cut one has none: the
+    /// `.top` holds the charges, and PME / Ewald is the `.mdp`'s
+    /// `coulombtype`. The `.top` is the `coul/cut` one; stated Ewald
+    /// parameters (`fourier-spacing`, `pme-order`, `ewald-rtol` in the
+    /// `.mdp`) are refused.
+    #[test]
+    fn a_long_range_coulomb_writes_the_coul_cut_top() {
+        let field = |coul: &str, params: Params| {
+            let mut ff = opls_ff(Some("geometric"));
+            ff.def_style("pair", coul, params).unwrap();
+            ff
+        };
+        let cut = write(&field("coul/cut", Params::from_pairs(&[("cutoff", 10.0)])));
+        let long = field(
+            "coul/long/pme",
+            Params::from_pairs(&[
+                ("cutoff", 10.0),
+                ("coulomb", crate::core::constants::gromacs_coulomb_real()),
+            ]),
+        );
+        assert_eq!(write(&long), cut);
+        for key in ["alpha", "order", "grid_z"] {
+            let ff = field(
+                "coul/long/pme",
+                Params::from_pairs(&[("cutoff", 10.0), (key, 4.0)]),
+            );
+            assert_names(&write_err(&ff), &["coul/long/pme", key, ".mdp"]);
+        }
     }
 
     /// The writer converts from real units; another declared preset is

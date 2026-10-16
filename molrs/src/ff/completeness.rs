@@ -783,9 +783,15 @@ const MATRIX: &[Row] = &[
                 &["io/lammps/forcefield_writer.rs::pair_settings_are_written_or_refused_by_name"],
             ),
             Na("the long-range method is a createSystem argument"),
-            Refused("the long-range method is a createSystem argument", &[]),
+            ExactWhere(
+                "the charges; PME / Ewald is a createSystem argument; stated Ewald parameters refused",
+                &["io/openmm_xml/writer.rs::a_long_range_coulomb_is_written_as_the_charges"],
+            ),
             Na("the long-range method is an .mdp setting"),
-            Refused("the long-range method is an .mdp setting", &[]),
+            ExactWhere(
+                "the charges; coulombtype = PME is an .mdp setting; stated Ewald parameters refused",
+                &["io/gromacs/top_writer.rs::a_long_range_coulomb_writes_the_coul_cut_top"],
+            ),
             Na("a prmtop states no long-range method"),
             Exact(&[RECORD]),
         ],

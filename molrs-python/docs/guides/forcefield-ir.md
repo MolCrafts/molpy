@@ -663,7 +663,7 @@ converted at the boundary:
 | `<CustomTorsionForce energy="k*(theta-theta0)^2">` `<Improper>` | `improper harmonic` | `k/4.184`; OpenMM's θ is signed and LAMMPS's χ = \|φ\|, which agree at `theta0 = 0` only — another `theta0` is refused (CHARMM36's two `theta0 = π` rows among them) |
 | `<CustomTorsionForce energy="k*(abs(theta)-theta0)^2">` | `improper harmonic` | `chi0` = theta0 in degrees (the writer's form when some `chi0 ≠ 0`) |
 | `<CMAPTorsionForce><Map>`, `<Torsion map>` | `cmap charmm` | [CMAP](#cmap) |
-| `<NonbondedForce coulomb14scale lj14scale><Atom charge sigma epsilon>` | `pair lj/cut` (`mixing` = the root's foyer `combining_rule`, else `arithmetic`) + `pair coul/cut`; `charge` on `atom full` | `sigma` × 10, `epsilon` ÷ 4.184; `special_bonds` `[0, 0, scale]` |
+| `<NonbondedForce coulomb14scale lj14scale><Atom charge sigma epsilon>` | `pair lj/cut` (`mixing` = the root's foyer `combining_rule`, else `arithmetic`) + `pair coul/cut`; `charge` on `atom full`; the writer writes `coul/long/pme` here too | `sigma` × 10, `epsilon` ÷ 4.184; `special_bonds` `[0, 0, scale]` |
 | `<LennardJonesForce lj14scale><Atom sigma epsilon [sigma14 epsilon14]>`, `<NBFixPair>` | `pair lj/charmm` (`arithmetic`, NBFIX as cross rows) + `pair coul/charmm`, the `<NonbondedForce>` beside it (its `epsilon` 0) giving the charges | 1-4: `special_bonds` `[0, 0, lj14scale]` / `[0, 0, coulomb14scale]`, and `one_four = "epsilon14"` when a type's 1-4 parameters differ ([1-4](#1-4-interactions)); an NBFIX row is OpenMM's 1-4 parameters for its pair too, LAMMPS's two-number cross row |
 
 Rows key on `class{n}` or `type{n}` as written; OpenMM's wildcard (an empty
@@ -676,6 +676,14 @@ file has a `cutoff` (or `inner`): `lj/cut` and `coul/cut` then price every
 pair untruncated, as `NoCutoff` does ([Cutoffs](#pair-styles)), and the
 caller states `inner` and `cutoff` of `lj/charmm` / `coul/charmm`, which
 have no default.
+
+The Coulomb style is written as the charges alone, the long-range
+`coul/long/pme` as `coul/cut` is: whether OpenMM sums them with `NoCutoff`, a
+cutoff, `Ewald` or `PME` is `createSystem`'s `nonbondedMethod` (with
+`nonbondedCutoff` and `ewaldErrorTolerance`), chosen when the System is
+built, as LAMMPS's `kspace_style` and GROMACS's `.mdp` `coulombtype` are. A
+`coul/long/pme` that states its Ewald parameters (`alpha`, `order`,
+`grid_*`) is refused: the XML has no place for them.
 
 OpenMM's `createSystem` mixes every `<NonbondedForce>` pair
 Lorentz-Berthelot, 1-4 exceptions included, and ignores foyer's
@@ -710,7 +718,8 @@ mmff_torsion`, …),
 `sixthpower` mixing or `geometric` with cross rows, a cross row with its own
 1-4 parameters, `lj/charmm` under `one_four = "regular"` with 1-4 parameters
 of its own at a non-zero weight (OpenMM would use them), a Coulomb style
-with `dielectric ≠ 1` or `delta ≠ 0`, charges on some atom types only, a
+with `dielectric ≠ 1` or `delta ≠ 0`, a `coul/long/pme` stating Ewald
+parameters, charges on some atom types only, a
 shifted or Mie `lj/cut`, a force field in units other than `real`, and two
 types OpenMM's generator would match on the same labels with other
 parameters (bonds, angles, propers and crossterms either way round,
@@ -847,7 +856,12 @@ one (same labels, same function-code table), and a force field in units
 other than `real`. `dihedral class2`'s torsion goes out as funct-9 rows at
 phase φₙ + 180° (k[1 − cos(nφ − φₙ)] = k[1 + cos(nφ − φₙ − 180°)]). No
 Coulomb constant is written: GROMACS prices at its own, as LAMMPS and OpenMM
-do at theirs.
+do at theirs. No Coulomb style has a directive either — `coul/cut`,
+`coul/charmm` and the long-range `coul/long/pme` alike: the `.top` holds the
+charges, and how GROMACS sums them (`coulombtype = PME`, Ewald, cut-off,
+with `rcoulomb`, `fourier-spacing`, `pme-order`, `ewald-rtol`) is the
+`.mdp`'s, chosen at run time. A `coul/long/pme` stating its Ewald
+parameters (`alpha`, `order`, `grid_*`) is refused.
 
 **Systems.** `read_system` types each molecule row as GROMACS's own lookup
 does — bonds, angles, Fourier dihedrals and cmaps by exact bond types
@@ -1320,7 +1334,7 @@ ff::completeness::the_guide_holds_the_generated_table` rewrites it).
 | `pair lj/charmm` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | `pair coul/cut` | ✓ | ✓ | ✓ [22] | ✓ | ✓ [23] | ✓ | ✓ [24] | ✓ | ✓ |
 | `pair coul/charmm` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| `pair coul/long/pme` | ✓ | ✓ [25] | ✓ [26] | — | refused [27] | — | refused [28] | — | ✓ |
+| `pair coul/long/pme` | ✓ | ✓ [25] | ✓ [26] | — | ✓ [27] | — | ✓ [28] | — | ✓ |
 | `pair lj/class2` | ✓ | ✓ [29] | ✓ [29] | — | refused [30] | — | refused [4] | — | ✓ |
 | `pair buck` | ✓ | ✓ | ✓ | — | refused [31] | — | refused [4] | — | ✓ |
 | `pair morse` | ✓ | ✓ | ✓ | — | refused [31] | — | refused [4] | — | ✓ |
@@ -1370,8 +1384,8 @@ ff::completeness::the_guide_holds_the_generated_table` rewrites it).
 24. the Coulomb constant is GROMACS's own
 25. lj/cut/coul/long: cutoff and constant; its kspace_style states an accuracy, not an alpha, so pricing is refused until the Ewald parameters are stated
 26. the real-space lj/cut/coul/long; stated Ewald parameters refused (molrs's smooth PME is not LAMMPS's PPPM)
-27. the long-range method is a createSystem argument
-28. the long-range method is an .mdp setting
+27. the charges; PME / Ewald is a createSystem argument; stated Ewald parameters refused
+28. the charges; coulombtype = PME is an .mdp setting; stated Ewald parameters refused
 29. through its codec, mixing sixthpower as LAMMPS's always does; not run by LAMMPS: the installed lmp has no CLASS2 package
 30. its kernel prices a row per pair (cross rows), which a CustomNonbondedForce has not
 31. its parameters do not mix, so a pair's are a cross row's, which a CustomNonbondedForce has not

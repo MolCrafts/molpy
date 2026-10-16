@@ -19,6 +19,12 @@ use crate::path::path_str;
 /// is written: a force field holds no molecule. A style or parameter GROMACS
 /// directives cannot express raises ``ValueError`` naming it. ``precision`` is
 /// the number of decimal places for floating coefficients.
+///
+/// Coulomb styles have no directive, the long-range ``coul/long/pme``
+/// included: the ``.top`` holds the charges, and ``coulombtype = PME`` (with
+/// ``fourier-spacing``, ``pme-order``, ``ewald-rtol``) is an ``.mdp``
+/// setting, chosen at run time. A ``coul/long/pme`` stating its Ewald
+/// parameters raises ``ValueError``.
 #[pyfunction]
 #[pyo3(name = "write_top_forcefield", signature = (path, forcefield, precision = 6))]
 pub fn write_top_forcefield_py(
@@ -48,7 +54,10 @@ pub fn write_frcmod_py(path: PathBuf, forcefield: &PyForceField) -> PyResult<()>
 /// radians, ½k harmonic terms), or refused naming the style when OpenMM's
 /// tags cannot hold it (see the force-field IR guide, "OpenMM").
 ///
-/// Geometric
+/// A Coulomb style is written as the charges, the long-range
+/// ``coul/long/pme`` included: PME / Ewald, cutoffs and switching are
+/// ``createSystem`` arguments (``nonbondedMethod``, ``nonbondedCutoff``,
+/// ``ewaldErrorTolerance``), chosen when the System is built. Geometric
 /// mixing (OPLS-AA) adds foyer's ``combining_rule="geometric"`` and the
 /// ``<Script>`` that makes ``createSystem`` apply it, which OpenMM's
 /// attribute alone does not.

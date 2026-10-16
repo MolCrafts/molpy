@@ -6171,6 +6171,11 @@ def write_openmm_forcefield(
     """Write a ForceField to OpenMM force-field XML — the inverse of
     :func:`read_openmm_forcefield`.
 
+    A Coulomb style is written as the charges, the long-range
+    ``coul/long/pme`` included: PME / Ewald, cutoffs and switching are
+    ``createSystem`` arguments (``nonbondedMethod``, ``nonbondedCutoff``,
+    ``ewaldErrorTolerance``), chosen when the System is built; a
+    ``coul/long/pme`` stating its Ewald parameters raises ``ValueError``.
     Geometric mixing (OPLS-AA) adds foyer's ``combining_rule="geometric"``
     and the ``<Script>`` that makes ``createSystem`` apply it (OpenMM ignores
     the attribute): a geometric ``CustomNonbondedForce`` beside a
@@ -6205,6 +6210,9 @@ def write_top_forcefield(
     """Write a ForceField as GROMACS force-field directives (no molecule sections).
 
     A style or parameter the directives cannot express raises ``ValueError``.
+    Coulomb styles have no directive, the long-range ``coul/long/pme``
+    included: the ``.top`` holds the charges, and ``coulombtype = PME`` (with
+    its accuracy) is an ``.mdp`` setting, chosen at run time.
     """
 
 def write_lammps_molecule(path: PathInput, frame: Frame) -> None:
