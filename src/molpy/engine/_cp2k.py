@@ -92,12 +92,13 @@ class Cp2kEngine(Engine):
             [launcher...] cp2k.psmp -i <input_file> -o cp2k.out
 
         The ``-o cp2k.out`` flag redirects CP2K's log output to a file,
-        keeping stdout empty and preventing pipe-buffer deadlocks.
+        keeping stdout empty and preventing pipe-buffer deadlocks; a failure
+        carries the tail of ``cp2k.out``.
 
         Args:
             run_dir: Directory containing the input files; used as ``cwd``.
             capture_output: Capture stdout/stderr.
-            check: Raise :exc:`subprocess.CalledProcessError` on failure.
+            check: Raise :class:`~molpy.wrapper.ToolError` on failure.
             **kwargs: Ignored (reserved for future use).
 
         Returns:
@@ -105,17 +106,18 @@ class Cp2kEngine(Engine):
 
         Raises:
             RuntimeError: If no input script has been registered.
-            subprocess.CalledProcessError: If *check* is ``True`` and CP2K
-                exits with a non-zero code.
-            subprocess.TimeoutExpired: If the configured ``timeout`` is
-                exceeded.
+            ToolError: CP2K could not start, timed out, or (with *check*)
+                exited non-zero.
         """
         if self.input_script is None or self.input_script.path is None:
             raise RuntimeError("No input script found.  Pass a script to run() first.")
 
         input_file = self.input_script.path.name
-        command = self._build_full_command(["-i", input_file, "-o", "cp2k.out"])
-
-        return self._run_process(
-            command, run_dir, capture_output=capture_output, check=check
+        command = self.command(["-i", input_file, "-o", "cp2k.out"])
+        return self.run_command(
+            command,
+            cwd=run_dir,
+            capture_output=capture_output,
+            check=check,
+            log=run_dir / "cp2k.out",
         )

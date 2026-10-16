@@ -97,39 +97,47 @@ class GromacsEngine(Engine):
     ) -> subprocess.CompletedProcess:
         """Run ``grompp`` then ``mdrun`` for the input ``.mdp`` in *run_dir*.
 
+        ``grompp`` runs without the launcher; a failed ``mdrun`` carries the
+        tail of ``<stem>.log``.
+
         Raises:
             RuntimeError: If no input script has been registered.
-            subprocess.CalledProcessError: If *check* is ``True`` and a step
-                exits non-zero.
-            subprocess.TimeoutExpired: If the configured ``timeout`` is
-                exceeded by a step.
+            ToolError: A step could not start, timed out, or (with *check*)
+                exited non-zero.
         """
         if self.input_script is None or self.input_script.path is None:
             raise RuntimeError("No input script found.  Pass an .mdp to run() first.")
         mdp = self.input_script.path.name
         stem = Path(mdp).stem
-        grompp = self.environment.command_prefix(no_capture_output=True) + [
-            self.executable,
-            "grompp",
-            "-f",
-            mdp,
-            "-c",
-            f"{self.prefix}.gro",
-            "-p",
-            f"{self.prefix}.top",
-            "-o",
-            f"{stem}.tpr",
-        ]
-        done = self._run_process(
-            grompp, run_dir, capture_output=capture_output, check=check, step="grompp"
+        grompp = self.command(
+            [
+                "grompp",
+                "-f",
+                mdp,
+                "-c",
+                f"{self.prefix}.gro",
+                "-p",
+                f"{self.prefix}.top",
+                "-o",
+                f"{stem}.tpr",
+            ],
+            launch=False,
+        )
+        done = self.run_command(
+            grompp,
+            cwd=run_dir,
+            capture_output=capture_output,
+            check=check,
+            step="grompp",
         )
         if done.returncode != 0:
             return done
-        return self._run_process(
-            self._build_full_command(["mdrun", "-deffnm", stem]),
-            run_dir,
+        return self.run_command(
+            self.command(["mdrun", "-deffnm", stem]),
+            cwd=run_dir,
             capture_output=capture_output,
             check=check,
+            log=run_dir / f"{stem}.log",
             step="mdrun",
         )
 

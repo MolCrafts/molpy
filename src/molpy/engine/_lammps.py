@@ -37,6 +37,8 @@ from molrs.io import read_lammps_data, write_lammps_data, write_lammps_forcefiel
 
 from molpy.engine._engine import Engine
 from molpy.engine._script import Script
+from molpy.wrapper import ToolError
+from molpy.wrapper._process import tail_of
 
 if TYPE_CHECKING:
     from molrs.core import Frame
@@ -86,7 +88,11 @@ class LammpsEngine(Engine):
         ``lmp`` when none is found (``check_executable`` then reports it).
         """
         return next(
-            (c for c in _LAMMPS_CANDIDATES if self.environment.resolve_executable(c)),
+            (
+                c
+                for c in _LAMMPS_CANDIDATES
+                if self.environment.resolve_executable(c, logger=self.logger)
+            ),
             _LAMMPS_CANDIDATES[0],
         )
 
@@ -122,12 +128,12 @@ class LammpsEngine(Engine):
 
         ``-screen none`` prevents LAMMPS from writing timestep data to stdout
         (it still goes to *log.lammps*), avoiding pipe-buffer deadlocks when
-        the caller captures output.
+        the caller captures output; a failure carries the log's tail.
 
         Args:
             run_dir: Directory containing the input files; used as ``cwd``.
             capture_output: Capture stdout/stderr.
-            check: Raise :exc:`subprocess.CalledProcessError` on failure.
+            check: Raise :class:`~molpy.wrapper.ToolError` on failure.
             **kwargs: Ignored (reserved for future use).
 
         Returns:
@@ -135,21 +141,22 @@ class LammpsEngine(Engine):
 
         Raises:
             RuntimeError: If no input script has been registered.
-            subprocess.CalledProcessError: If *check* is ``True`` and LAMMPS
-                exits with a non-zero code.
-            subprocess.TimeoutExpired: If the configured ``timeout`` is
-                exceeded.
+            ToolError: LAMMPS could not start, timed out, or (with *check*)
+                exited non-zero.
         """
         if self.input_script is None or self.input_script.path is None:
             raise RuntimeError("No input script found.  Pass a script to run() first.")
 
         input_file = self.input_script.path.name
-        command = self._build_full_command(
+        command = self.command(
             ["-in", input_file, "-log", "log.lammps", "-screen", "none"]
         )
-
-        return self._run_process(
-            command, run_dir, capture_output=capture_output, check=check
+        return self.run_command(
+            command,
+            cwd=run_dir,
+            capture_output=capture_output,
+            check=check,
+            log=run_dir / "log.lammps",
         )
 
     # ------------------------------------------------------------------
@@ -318,8 +325,8 @@ class LammpsEngine(Engine):
 
         Raises:
             ValueError: If *frame* has no box.
-            subprocess.CalledProcessError: If LAMMPS exits non-zero.
-            RuntimeError: If LAMMPS produces no output structure.
+            ToolError: If LAMMPS fails or writes no output structure; the
+                error carries the tail of ``log.lammps``.
         """
         body = f"minimize {etol:g} {ftol:g} {int(max_iter)} {int(max_eval)}"
         return self._relax(
@@ -442,7 +449,7 @@ class LammpsEngine(Engine):
         run_dir = (
             Path(workdir)
             if workdir is not None
-            else (self.work_dir or Path(tempfile.mkdtemp()))
+            else (self.workdir or Path(tempfile.mkdtemp()))
         )
         out_name = "relaxed.data"
         paths = self.generate_inputs(
@@ -470,9 +477,13 @@ class LammpsEngine(Engine):
 
         out_path = run_dir / out_name
         if not out_path.exists():
-            raise RuntimeError(
-                f"LAMMPS finished but did not write {out_path}; "
-                f"inspect {run_dir / 'log.lammps'}."
+            log = run_dir / "log.lammps"
+            self.logger.error("relaxation output missing", output=str(out_path))
+            raise ToolError(
+                self.key,
+                f"finished but did not write {out_name} (log: {log})",
+                returncode=0,
+                tail=tail_of(log),
             )
         relaxed = read_lammps_data(out_path, atom_style=atom_style)
         self.logger.info(

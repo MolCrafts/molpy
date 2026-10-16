@@ -237,7 +237,7 @@ class OpenmmEngine(Engine):
             run_dir: Directory containing the simulation files; used as
                 ``cwd`` for the subprocess.
             capture_output: Capture stdout/stderr.
-            check: Raise :exc:`subprocess.CalledProcessError` on failure.
+            check: Raise :class:`~molpy.wrapper.ToolError` on failure.
             **kwargs: Ignored (reserved for future use).
 
         Returns:
@@ -245,19 +245,19 @@ class OpenmmEngine(Engine):
 
         Raises:
             RuntimeError: If no input script has been registered.
-            subprocess.CalledProcessError: If *check* is ``True`` and the
-                script exits with a non-zero code.
-            subprocess.TimeoutExpired: If the configured ``timeout`` is
-                exceeded.
+            ToolError: The script could not start, timed out, or (with
+                *check*) exited non-zero.
         """
         if self.input_script is None or self.input_script.path is None:
             raise RuntimeError(
                 "No input script found.  Call generate_inputs() or pass a "
                 "script to run() first."
             )
-        command = self._build_full_command([self.input_script.path.name])
-        return self._run_process(
-            command, run_dir, capture_output=capture_output, check=check
+        return self.run_command(
+            self.command([self.input_script.path.name]),
+            cwd=run_dir,
+            capture_output=capture_output,
+            check=check,
         )
 
     # ------------------------------------------------------------------

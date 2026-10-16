@@ -18,7 +18,7 @@ import pytest
 
 import molpy as mp
 from molpy.builder import AmberCut, AmberPieces, AmberPolymerBuilder
-from molpy.wrapper import Wrapper
+from molpy.wrapper import Tool, ToolError
 
 
 def _inpcrd(path: Path, n_atoms: int = 16) -> None:
@@ -159,7 +159,7 @@ def _controls(work: Path, label: str = "EO") -> dict[str, str]:
 def tools(TEST_DATA_DIR: Path):
     fake = _FakeTools(TEST_DATA_DIR / "prmtop" / "LiTFSI.prmtop")
     with (
-        patch.object(Wrapper, "is_available", return_value=True),
+        patch.object(Tool, "resolve_executable", return_value="/amber/bin/tool"),
         patch("molpy.wrapper._process.subprocess.run", side_effect=fake),
         patch(
             "molrs.builder.Assembler.assemble", side_effect=AssertionError("no link")
@@ -491,34 +491,34 @@ class TestRefused:
 class TestToolFailures:
     def test_missing_tool(self, tmp_path):
         with (
-            patch.object(Wrapper, "is_available", return_value=False),
-            pytest.raises(RuntimeError, match="antechamber is not available"),
+            patch.object(Tool, "resolve_executable", return_value=None),
+            pytest.raises(ToolError, match="executable .antechamber. not found"),
         ):
             _build(tmp_path)
 
     def test_failing_prepgen_carries_its_stdout(self, TEST_DATA_DIR, tmp_path):
         fake = _FakeTools(TEST_DATA_DIR / "prmtop" / "LiTFSI.prmtop", fail="prepgen")
         with (
-            patch.object(Wrapper, "is_available", return_value=True),
+            patch.object(Tool, "resolve_executable", return_value="/amber/bin/tool"),
             patch("molpy.wrapper._process.subprocess.run", side_effect=fake),
-            pytest.raises(RuntimeError, match="prepgen: cannot do it"),
+            pytest.raises(ToolError, match="prepgen: cannot do it"),
         ):
             _build(tmp_path)
 
     def test_failing_tleap_leaves_no_chain_to_reuse(self, TEST_DATA_DIR, tmp_path):
         prmtop = TEST_DATA_DIR / "prmtop" / "LiTFSI.prmtop"
         with (
-            patch.object(Wrapper, "is_available", return_value=True),
+            patch.object(Tool, "resolve_executable", return_value="/amber/bin/tool"),
             patch(
                 "molpy.wrapper._process.subprocess.run",
                 side_effect=_FakeTools(prmtop, fail="tleap"),
             ),
-            pytest.raises(RuntimeError, match="tleap failed"),
+            pytest.raises(ToolError, match="tleap exited with status 1"),
         ):
             _build(tmp_path)
         fake = _FakeTools(prmtop)
         with (
-            patch.object(Wrapper, "is_available", return_value=True),
+            patch.object(Tool, "resolve_executable", return_value="/amber/bin/tool"),
             patch("molpy.wrapper._process.subprocess.run", side_effect=fake),
         ):
             _build(tmp_path)

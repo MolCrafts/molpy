@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import os
+import subprocess
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
 from molpy.wrapper import EnvironmentSpec
+from molpy.wrapper._environment import RESOLVE_TIMEOUT
 
 
 class TestEnvironmentSpecResolve:
@@ -145,3 +148,47 @@ class TestEnvironmentSpecResolveExecutable:
         # `echo` is on PATH in all reasonable environments used for tests.
         found = EnvironmentSpec.system().resolve_executable("echo")
         assert found is not None
+
+
+class TestCondaLookup:
+    """``conda run … which`` goes through run_process: logged, time-limited, cached."""
+
+    def test_it_runs_through_run_process_with_a_timeout(self, molpy_records):
+        spec = EnvironmentSpec.resolve("AmberTools25", "conda")
+        found = subprocess.CompletedProcess([], 0, "/envs/at/bin/tleap\n", "")
+        with patch("molpy.wrapper._process.subprocess.run", return_value=found) as run:
+            assert spec.resolve_executable("tleap") == "/envs/at/bin/tleap"
+        assert run.call_args.args[0] == [
+            "conda",
+            "run",
+            "-n",
+            "AmberTools25",
+            "which",
+            "tleap",
+        ]
+        assert run.call_args.kwargs["timeout"] == RESOLVE_TIMEOUT
+        records = [r for r in molpy_records if r.message.startswith("process")]
+        assert [r.message for r in records] == ["process started", "process finished"]
+        assert all(str(r.level) == "DEBUG" for r in records)
+        assert records[0].extra["lookup"] == "tleap"
+
+    def test_each_answer_is_looked_up_once_per_instance(self):
+        spec = EnvironmentSpec.resolve("AmberTools25", "conda")
+        missing = subprocess.CompletedProcess([], 1, "", "")
+        with patch(
+            "molpy.wrapper._process.subprocess.run", return_value=missing
+        ) as run:
+            assert spec.resolve_executable("tleap") is None
+            assert spec.resolve_executable("tleap") is None
+        assert run.call_count == 1
+        assert spec == EnvironmentSpec.resolve("AmberTools25", "conda")
+
+    def test_a_hung_conda_is_not_found_and_warned(self, molpy_records):
+        spec = EnvironmentSpec.resolve("AmberTools25", "conda")
+        hung = subprocess.TimeoutExpired("conda", RESOLVE_TIMEOUT)
+        with patch("molpy.wrapper._process.subprocess.run", side_effect=hung):
+            assert spec.resolve_executable("tleap") is None
+        (warning,) = (
+            r for r in molpy_records if r.message == "executable lookup failed"
+        )
+        assert "timed out" in warning.extra["error"]

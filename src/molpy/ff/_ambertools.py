@@ -261,7 +261,7 @@ class AntechamberTypifier(_AmberTypifier):
 
         Raises:
             ValueError: The prmtop disagrees with the graph.
-            RuntimeError: An AmberTools step failed.
+            molpy.wrapper.ToolError: An AmberTools step failed.
         """
         net = net_formal_charge(graph)
         directory = self.work_dir / f"{graph.structural_hash():016x}"
@@ -353,7 +353,7 @@ class TleapTypifier(_AmberTypifier):
         Raises:
             ValueError: An atom lacks a type or charge, tleap changed one, or
                 the prmtop disagrees with the graph.
-            RuntimeError: tleap failed.
+            molpy.wrapper.ToolError: tleap failed.
         """
         if graph.n_ports:
             raise ValueError(

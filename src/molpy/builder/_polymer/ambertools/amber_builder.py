@@ -153,7 +153,7 @@ class AmberPolymerBuilder:
             TypeError: ``sites`` is not a coarse-grain graph.
             ValueError: The graph is not one linear path, a bead type has
                 no oligomer, or a residue has no cut.
-            RuntimeError: An AmberTools step failed or is not installed.
+            molpy.wrapper.ToolError: An AmberTools step failed or is not installed.
         """
         if not isinstance(sites, CoarseGrain):
             raise TypeError(

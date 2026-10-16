@@ -7,12 +7,17 @@ are covered here and in ``test_engine.py`` (with mocked ``subprocess``).
 
 from __future__ import annotations
 
+import subprocess
+from unittest.mock import patch
+
 import numpy as np
 import pytest
 
 import molpy as mp
+from molpy.config import load_config
 from molpy.engine import LammpsEngine
 from molpy.ff.forcefield import ForceField
+from molpy.wrapper import ToolError
 
 _R0 = 1.5  # harmonic bond equilibrium length (Å)
 
@@ -65,3 +70,33 @@ def test_md_rejects_unknown_ensemble() -> None:
     frame, ff = _dimer_system()
     with pytest.raises(ValueError, match="ensemble must be one of"):
         LammpsEngine(check_executable=False).md(frame, ff, ensemble="npt")
+
+
+def test_a_run_that_writes_no_structure_raises_with_the_log_tail(tmp_path) -> None:
+    """LAMMPS exits 0 but writes no relaxed.data: the error carries the log."""
+    frame, _ = _dimer_system()
+    ff = ForceField("dimer", units="real")
+    c = ff.def_style("atom", "full").def_type("C", mass=12.011)
+    ff.def_style("bond", "harmonic").def_type("C-C", c, c, k=300.0, r0=_R0)
+    ff.def_style("pair", "lj/cut", {"cutoff": 10.0}).def_type(
+        "C", c, epsilon=0.05, sigma=3.4
+    )
+
+    def no_output(argv, *, cwd, **_):
+        (cwd / "log.lammps").write_text(
+            "minimize 1e-4 1e-6 10 100\nWARNING: Lost atoms\n", encoding="utf-8"
+        )
+        return subprocess.CompletedProcess(argv, 0, None, None)
+
+    engine = LammpsEngine(
+        config=load_config({"engine": {"lammps": {"executable": "lmp"}}}),
+        check_executable=False,
+    )
+    with (
+        patch("subprocess.run", side_effect=no_output),
+        pytest.raises(ToolError, match="WARNING: Lost atoms") as raised,
+    ):
+        engine.minimize(frame, ff, workdir=tmp_path)
+    assert raised.value.tool == "engine.lammps"
+    assert raised.value.returncode == 0
+    assert "relaxed.data" in raised.value.reason

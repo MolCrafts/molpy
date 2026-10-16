@@ -19,7 +19,7 @@ import pytest
 
 import molpy as mp
 from molpy.core import Angle, Dihedral
-from molpy.wrapper import Wrapper
+from molpy.wrapper import Tool, ToolError
 
 # LiTFSI in LiTFSI.prmtop row order: [F-C(F2)-S(O2)-N-S(O2)-C(F3)]- and Li+.
 ELEMENTS = ["F", "C", "F", "F", "S", "O", "O", "N", "S", "O", "O", "C", "F", "F", "F"]
@@ -100,7 +100,7 @@ class FakeAmberTools:
 def tools(TEST_DATA_DIR: Path):
     fake = FakeAmberTools(TEST_DATA_DIR)
     with (
-        patch.object(Wrapper, "is_available", return_value=True),
+        patch.object(Tool, "resolve_executable", return_value="/amber/bin/tool"),
         patch("molpy.wrapper._process.subprocess.run", side_effect=fake),
     ):
         yield fake
@@ -183,16 +183,19 @@ class TestAntechamberTypifier:
     def test_failing_tool_raises_with_its_stderr(self, TEST_DATA_DIR, tmp_path):
         fake = FakeAmberTools(TEST_DATA_DIR, fail="antechamber")
         with (
-            patch.object(Wrapper, "is_available", return_value=True),
+            patch.object(Tool, "resolve_executable", return_value="/amber/bin/tool"),
             patch("molpy.wrapper._process.subprocess.run", side_effect=fake),
-            pytest.raises(RuntimeError, match="antechamber: fatal error"),
+            pytest.raises(ToolError, match="antechamber: fatal error") as raised,
         ):
             mp.ff.typifier.AntechamberTypifier(work_dir=tmp_path).typify(_litfsi())
+        assert raised.value.tool == "wrapper.antechamber"
+        assert raised.value.returncode == 1
+        assert raised.value.tail == "antechamber: fatal error"
 
     def test_missing_tool_raises(self, tmp_path):
         with (
-            patch.object(Wrapper, "is_available", return_value=False),
-            pytest.raises(RuntimeError, match="antechamber is not available"),
+            patch.object(Tool, "resolve_executable", return_value=None),
+            pytest.raises(ToolError, match="executable .antechamber. not found"),
         ):
             mp.ff.typifier.AntechamberTypifier(work_dir=tmp_path).typify(_litfsi())
 
@@ -248,8 +251,10 @@ class TestTleapTypifier:
     def test_failing_tleap_raises_with_its_stderr(self, TEST_DATA_DIR, tmp_path):
         fake = FakeAmberTools(TEST_DATA_DIR, fail="tleap")
         with (
-            patch.object(Wrapper, "is_available", return_value=True),
+            patch.object(Tool, "resolve_executable", return_value="/amber/bin/tool"),
             patch("molpy.wrapper._process.subprocess.run", side_effect=fake),
-            pytest.raises(RuntimeError, match="tleap: fatal error"),
+            pytest.raises(ToolError, match="tleap: fatal error") as raised,
         ):
             mp.ff.typifier.TleapTypifier(work_dir=tmp_path).typify(_typed_litfsi())
+        assert raised.value.tool == "wrapper.tleap"
+        assert raised.value.returncode == 1

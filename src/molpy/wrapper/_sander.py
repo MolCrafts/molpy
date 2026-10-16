@@ -1,53 +1,60 @@
-"""Wrapper for the AMBER ``sander`` binary — energy minimization / MD.
+"""Wrapper for the AMBER ``sander`` binary.
 
-Runs ``sander`` on a generated ``mdin`` control file against a prmtop/inpcrd and
-returns the restart (``.rst``) coordinate file it writes.
+Runs ``sander`` on a caller's ``mdin`` control text against a prmtop/inpcrd.
+What the control text asks for (minimisation, MD, its cutoffs) is the
+caller's decision; this wrapper only writes it and runs the program.
 """
 
 from __future__ import annotations
 
+import subprocess
 from pathlib import Path
 
 from molpy.wrapper._wrapper import Wrapper
 
 
 class SanderWrapper(Wrapper):
+    """Wrapper for the 'sander' binary (``[wrapper.sander]``)."""
+
     tool = "sander"
 
-    def minimize(
+    def run_from_mdin(
         self,
-        prmtop: Path,
-        inpcrd: Path,
+        mdin_text: str,
+        prmtop: str | Path,
+        inpcrd: str | Path,
         *,
-        max_iter: int = 500,
-        name: str = "min",
-        check: bool = False,
-    ) -> Path:
-        """Run a non-periodic energy minimization; return the restart ``.rst``.
+        name: str = "sander",
+        check: bool = True,
+    ) -> subprocess.CompletedProcess[str]:
+        """Write ``<name>.in`` and run ``sander`` on it.
 
-        ``ncyc`` steepest-descent steps then conjugate gradient to ``maxcyc``
-        (``imin=1``); ``ntb=0``/``igb=0`` with no cutoff (a gas-phase fragment or
-        single molecule). The ``.rst`` shares the inpcrd coordinate format, so
-        :func:`molpy.io.read_inpcrd` reads the relaxed coordinates.
+        Runs ``sander -O -i <name>.in -p <prmtop> -c <inpcrd> -r <name>.rst
+        -o <name>.out`` in :attr:`workdir`; the restart ``<name>.rst`` and
+        the output ``<name>.out`` land there.
+
+        Args:
+            mdin_text: The ``mdin`` control text (a ``&cntrl`` namelist).
+            prmtop: The topology.
+            inpcrd: The starting coordinates.
+            name: Stem of the control, restart and output files.
+            check: Raise :class:`~molpy.wrapper.ToolError` on a non-zero exit.
+
+        Returns:
+            The completed process result.
+
+        Raises:
+            ValueError: If no workdir is set.
+            ToolError: sander failed (with *check*).
         """
         if self.workdir is None:
             raise ValueError("SanderWrapper requires a working directory. Set workdir.")
+
         self.workdir.mkdir(parents=True, exist_ok=True)
-
         mdin = self.workdir / f"{name}.in"
-        rst = self.workdir / f"{name}.rst"
-        mdout = self.workdir / f"{name}.out"
-        ncyc = max(1, max_iter // 2)
-        # ntxo=1 forces an ASCII restart (sander defaults to NetCDF), so the
-        # relaxed coordinates read back through the plain inpcrd reader.
-        mdin.write_text(
-            f"minimize\n&cntrl\n  imin=1, maxcyc={max_iter}, ncyc={ncyc},\n"
-            f"  ntb=0, igb=0, cut=999.0, ntpr={ncyc}, ntxo=1,\n/\n",
-            encoding="utf-8",
-        )
-
-        result = self.run(
-            args=[
+        mdin.write_text(mdin_text, encoding="utf-8")
+        return self.run(
+            [
                 "-O",
                 "-i",
                 mdin.name,
@@ -56,14 +63,9 @@ class SanderWrapper(Wrapper):
                 "-c",
                 str(Path(inpcrd).absolute()),
                 "-r",
-                rst.name,
+                f"{name}.rst",
                 "-o",
-                mdout.name,
+                f"{name}.out",
             ],
             check=check,
         )
-        if result.returncode != 0 or not rst.exists():
-            raise RuntimeError(
-                f"sander minimize failed:\n{result.stderr or result.stdout}"
-            )
-        return rst

@@ -1,11 +1,13 @@
 """Cp2kEngine: identity, input extension, and the command it builds."""
 
+import subprocess
 from unittest.mock import patch
 
 import pytest
 
 from molpy.config import load_config
 from molpy.engine import Cp2kEngine, Script
+from molpy.wrapper import ToolError
 
 
 def test_identity_and_extension():
@@ -18,6 +20,20 @@ def test_execute_without_a_script_raises(tmp_path):
     engine = Cp2kEngine(check_executable=False)
     with pytest.raises(RuntimeError, match="No input script"):
         engine._execute(tmp_path)
+
+
+def test_a_failure_carries_the_tail_of_cp2k_out(tmp_path):
+    engine = Cp2kEngine(check_executable=False)
+
+    def fails(argv, *, cwd, **_):
+        (cwd / "cp2k.out").write_text(" *** ABORT: bad &GLOBAL ***\n", encoding="utf-8")
+        return subprocess.CompletedProcess(argv, 1, None, None)
+
+    with (
+        patch("subprocess.run", side_effect=fails),
+        pytest.raises(ToolError, match="ABORT: bad &GLOBAL"),
+    ):
+        engine.run("&GLOBAL\n", workdir=tmp_path)
 
 
 def test_run_invokes_the_binary_with_input_and_log_flags(tmp_path):

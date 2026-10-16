@@ -1,6 +1,6 @@
 """Wrapper for the 'antechamber' CLI.
 
-Higher-level workflow decisions belong in compute nodes.
+Higher-level workflow decisions belong in the caller (a typifier or a builder).
 """
 
 from __future__ import annotations
@@ -17,25 +17,6 @@ class AntechamberWrapper(Wrapper):
 
     tool = "antechamber"
 
-    def run_raw(
-        self,
-        args: list[str],
-        *,
-        input_text: str | None = None,
-        check: bool = False,
-    ) -> subprocess.CompletedProcess[str]:
-        """Execute antechamber with raw arguments.
-
-        Args:
-            args: Command-line arguments (without 'antechamber').
-            input_text: Text to send to stdin.
-            check: If True, raise ``CalledProcessError`` on a non-zero exit.
-
-        Returns:
-            The completed process result.
-        """
-        return self.run(args=args, input_text=input_text, check=check)
-
     def atomtype_assign(
         self,
         input_file: str | Path,
@@ -47,7 +28,7 @@ class AntechamberWrapper(Wrapper):
         atom_type: Literal["gaff", "gaff2", "amber", "sybyl"] = "gaff2",
         net_charge: int = 0,
         formal_charges: bool = False,
-        check: bool = False,
+        check: bool = True,
     ) -> subprocess.CompletedProcess[str]:
         """Perform atom type assignment and charge calculation.
 
@@ -64,7 +45,7 @@ class AntechamberWrapper(Wrapper):
             atom_type: Atom type scheme (gaff, gaff2, amber, sybyl).
             net_charge: Net charge of the molecule.
             formal_charges: If True, use formal charges instead of computing them.
-            check: If True, raise ``CalledProcessError`` on a non-zero exit.
+            check: Raise :class:`~molpy.wrapper.ToolError` on a non-zero exit.
 
         Returns:
             The completed process result.
@@ -89,4 +70,4 @@ class AntechamberWrapper(Wrapper):
         if formal_charges:
             args.extend(["-cf", "y"])
 
-        return self.run_raw(args=args, check=check)
+        return self.run(args, check=check)

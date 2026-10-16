@@ -8,6 +8,7 @@ import pytest
 
 from molpy.config import load_config
 from molpy.engine import Cp2kEngine, GromacsEngine, LammpsEngine, OpenmmEngine, Script
+from molpy.wrapper import ToolError
 
 
 def _completed(returncode: int = 0) -> MagicMock:
@@ -30,7 +31,8 @@ class TestEngineSettings:
     def test_package_defaults(self):
         engine = _lammps()
         assert engine.executable == "lmp"
-        assert engine.work_dir is None
+        assert engine.key == "engine.lammps"
+        assert engine.workdir is None
         assert engine.launcher == []
         assert engine.env_vars == {}
         assert engine.timeout is None
@@ -102,7 +104,7 @@ class TestEngineSettings:
             }
         )
         engine = LammpsEngine(config=config, check_executable=False)
-        assert engine._build_full_command(["-in", "in.lmp"]) == [
+        assert engine.command(["-in", "in.lmp"]) == [
             "/opt/conda/bin/conda",
             "run",
             "--no-capture-output",
@@ -117,12 +119,13 @@ class TestEngineSettings:
         ]
 
     def test_check_executable_missing(self):
-        with pytest.raises(FileNotFoundError, match="engine.lammps.executable"):
+        with pytest.raises(ToolError, match="engine.lammps.executable") as raised:
             LammpsEngine(
                 config=load_config(
                     {"engine": {"lammps": {"executable": "no_such_lammps_xyz123"}}}
                 )
             )
+        assert raised.value.tool == "engine.lammps"
 
     def test_repr(self, tmp_path):
         engine = _lammps({"env": "myenv", "env_manager": "conda"}, workdir=tmp_path)
@@ -236,22 +239,32 @@ class TestEngineLogging:
         assert str(failed.level) == "ERROR"
         assert failed.extra["returncode"] == 3
 
-    def test_a_raising_run_logs_and_reraises(self, tmp_path, molpy_records):
+    def test_a_failed_run_raises_with_the_log_tail(self, tmp_path, molpy_records):
+        """-screen none: the failure's tail comes from log.lammps."""
         engine = _lammps(workdir=tmp_path)
-        error = subprocess.CalledProcessError(2, ["lmp"])
+
+        def fails(argv, *, cwd, **_):
+            (cwd / "log.lammps").write_text(
+                "LAMMPS (2 Aug 2023)\nERROR: Unknown command: bogus\n",
+                encoding="utf-8",
+            )
+            return _completed(1)
+
         with (
-            patch("subprocess.run", side_effect=error),
-            pytest.raises(subprocess.CalledProcessError),
+            patch("subprocess.run", side_effect=fails),
+            pytest.raises(ToolError, match="ERROR: Unknown command: bogus") as raised,
         ):
-            engine.run("units real\n")
+            engine.run("bogus\n")
+        assert raised.value.tool == "engine.lammps"
+        assert raised.value.returncode == 1
         (failed,) = (r for r in molpy_records if r.message == "process failed")
-        assert failed.extra["returncode"] == 2
+        assert failed.extra["returncode"] == 1
 
     def test_a_timeout_is_logged(self, tmp_path, molpy_records):
         engine = _lammps({"timeout": 5}, workdir=tmp_path)
         with (
             patch("subprocess.run", side_effect=subprocess.TimeoutExpired("lmp", 5)),
-            pytest.raises(subprocess.TimeoutExpired),
+            pytest.raises(ToolError, match="timed out after 5 s"),
         ):
             engine.run("units real\n")
         (record,) = (r for r in molpy_records if r.message == "process timed out")
@@ -261,7 +274,7 @@ class TestEngineLogging:
         engine = _lammps(workdir=tmp_path)
         with (
             patch("subprocess.run", side_effect=FileNotFoundError("lmp")),
-            pytest.raises(FileNotFoundError),
+            pytest.raises(ToolError, match="could not start"),
         ):
             engine.run("units real\n")
         (record,) = (r for r in molpy_records if r.message == "process not started")
