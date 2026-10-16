@@ -10,6 +10,7 @@ use molrs::core::Block;
 use molrs::core::Frame;
 use molrs::core::FrameAccess;
 use molrs::core::SimBox;
+use molrs::core::keys;
 use molrs::op::{F, I, Idx};
 use ndarray::{Array1, IxDyn, array};
 use std::collections::{HashMap, HashSet};
@@ -289,11 +290,9 @@ fn parse_cryst1_record(line: &str) -> Option<Cryst1Record> {
     let beta = substr(line, 40, 47).trim().parse::<f32>().unwrap_or(90.0);
     let gamma = substr(line, 47, 54).trim().parse::<f32>().unwrap_or(90.0);
 
-    let space_group = if line.len() >= 66 {
-        substr(line, 55, 66).trim().to_string()
-    } else {
-        String::new()
-    };
+    // `substr` clamps to the line, so a record whose trailing Z field (and
+    // blanks) were cut off still keeps its symbol.
+    let space_group = substr(line, 55, 66).trim().to_string();
 
     let z = if line.len() >= 70 {
         substr(line, 66, 70).trim().parse::<i32>().unwrap_or(1)
@@ -514,7 +513,16 @@ fn build_bonds_block(
     Ok(Some(block))
 }
 
+/// The frame's box and space-group symbol from the `CRYST1` record: the
+/// symbol goes to [`keys::SPACE_GROUP`] when the record states one.
 fn add_simbox_from_cryst1(frame: &mut Frame, cryst1: Option<&Cryst1Record>) {
+    if let Some(cryst) = cryst1
+        && !cryst.space_group.is_empty()
+    {
+        frame
+            .meta
+            .insert(keys::SPACE_GROUP, cryst.space_group.clone());
+    }
     if let Some(cryst) = cryst1
         && cryst.a > 0.0
         && cryst.b > 0.0
@@ -1313,6 +1321,45 @@ mod tests {
         assert!((cryst.alpha - 90.0).abs() < 0.001);
         assert_eq!(cryst.space_group, "P 1");
         assert_eq!(cryst.z, 1);
+    }
+
+    #[test]
+    fn cryst1_space_group_lands_in_frame_meta() {
+        let text = concat!(
+            "CRYST1   52.000   58.600   61.900  90.00  90.00  90.00 P 21 21 21    8\n",
+            "ATOM      1  N   ALA A   1       1.000   2.000   3.000  1.00 20.00           N  \n",
+            "END\n",
+        );
+        let frame = read_pdb_str(text).unwrap();
+        assert_eq!(
+            frame.meta.get(keys::SPACE_GROUP).and_then(|v| v.as_str()),
+            Some("P 21 21 21")
+        );
+
+        // A record cut short after the symbol keeps it; a blank symbol and
+        // a file with no CRYST1 state none.
+        let short = text.replace("P 21 21 21    8", "P 21 21 21");
+        let frame = read_pdb_str(&short).unwrap();
+        assert_eq!(
+            frame.meta.get(keys::SPACE_GROUP).and_then(|v| v.as_str()),
+            Some("P 21 21 21")
+        );
+        let blank = text.replace("P 21 21 21    8", "");
+        assert!(
+            read_pdb_str(&blank)
+                .unwrap()
+                .meta
+                .get(keys::SPACE_GROUP)
+                .is_none()
+        );
+        let bare = text.lines().skip(1).collect::<Vec<_>>().join("\n");
+        assert!(
+            read_pdb_str(&bare)
+                .unwrap()
+                .meta
+                .get(keys::SPACE_GROUP)
+                .is_none()
+        );
     }
 
     #[test]

@@ -66,6 +66,20 @@ meta_keys! {
     /// The LAMMPS molecule-JSON reader writes it and its writer emits it back
     /// (`io::lammps::molecule`); molrs converts no frame between presets.
     pub const UNITS: &str = "units";
+    /// Frame meta key: the crystal's symmetry operators, a JSON array of the
+    /// file's operator triplets (`["x,y,z", "-x,y+1/2,-z+1/2", …]`), verbatim
+    /// and in file order.
+    ///
+    /// The CIF reader writes it from the `_symmetry_equiv_pos_as_xyz` /
+    /// `_space_group_symop_operation_xyz` loop and its writer emits it back.
+    /// molrs stores the operators only: the atoms are the asymmetric unit the
+    /// file lists, and no reader expands them.
+    pub const SYMOPS: &str = "symops";
+    /// Frame meta key: the Hermann–Mauguin space-group symbol as the file
+    /// spells it (`"P 21/c"`), a string. Written by the CIF reader (the
+    /// `_space_group_name_H-M_alt` / `_symmetry_space_group_name_H-M` tags,
+    /// emitted back by its writer) and by the PDB reader (`CRYST1`).
+    pub const SPACE_GROUP: &str = "space_group";
 }
 
 macro_rules! named_keys {

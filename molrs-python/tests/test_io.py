@@ -383,3 +383,79 @@ class TestInpcrdIntoFrame:
             molrs.io.read_inpcrd(path, frame)
         assert "y" not in frame["atoms"]
 
+
+P21C_CIF = """\
+data_p21c
+_space_group_name_H-M_alt 'P 21/c'
+_cell_length_a 5.0
+_cell_length_b 6.0
+_cell_length_c 7.0
+_cell_angle_alpha 90.0
+_cell_angle_beta 100.0
+_cell_angle_gamma 90.0
+loop_
+_space_group_symop_id
+_space_group_symop_operation_xyz
+1 'x, y, z'
+2 '-x, y+1/2, -z+1/2'
+3 '-x, -y, -z'
+4 'x, -y+1/2, z+1/2'
+loop_
+_atom_site_label
+_atom_site_type_symbol
+_atom_site_fract_x
+_atom_site_fract_y
+_atom_site_fract_z
+C1 C 0.1 0.2 0.3
+"""
+P21C_OPS = ("x, y, z", "-x, y+1/2, -z+1/2", "-x, -y, -z", "x, -y+1/2, z+1/2")
+
+
+class TestCrystalSymmetryMeta:
+    """``read_cif`` keeps the symmetry operators and the space group; nothing
+    is expanded."""
+
+    def test_meta_keys_are_projected(self):
+        assert molrs.core.keys.SYMOPS == "symops"
+        assert molrs.core.keys.SPACE_GROUP == "space_group"
+
+    def test_read_cif_keeps_symops_as_a_sequence_of_str(self, tmp_path):
+        path = tmp_path / "p21c.cif"
+        path.write_text(P21C_CIF, encoding="utf-8")
+        frame = molrs.io.read_cif(path)
+        symops = frame.meta["symops"]
+        assert isinstance(symops, tuple)
+        assert all(isinstance(op, str) for op in symops)
+        assert symops == P21C_OPS
+        assert frame.meta["space_group"] == "P 21/c"
+        assert frame["atoms"].n_rows == 1
+
+    def test_symmetry_round_trips_through_write_cif(self, tmp_path):
+        frame = molrs.io.read_cif_str(P21C_CIF)
+        out = tmp_path / "back.cif"
+        molrs.io.write_cif(out, frame)
+        back = molrs.io.read_cif(out)
+        assert back.meta["symops"] == P21C_OPS
+        assert back.meta["space_group"] == "P 21/c"
+
+    def test_symops_set_from_python_are_written(self):
+        frame = molrs.io.read_cif_str(P21C_CIF)
+        frame.meta["symops"] = ["x,y,z", "-x,-y,-z"]
+        frame.meta["space_group"] = "P -1"
+        back = molrs.io.read_cif_str(molrs.io.write_cif_str(frame))
+        assert back.meta["symops"] == ("x,y,z", "-x,-y,-z")
+        assert back.meta["space_group"] == "P -1"
+
+    def test_malformed_symops_are_refused_on_write(self):
+        frame = molrs.io.read_cif_str(P21C_CIF)
+        frame.meta["symops"] = "x,y,z"
+        with pytest.raises(OSError, match="symops"):
+            molrs.io.write_cif_str(frame)
+
+    def test_read_pdb_keeps_the_cryst1_space_group(self):
+        frame = molrs.io.read_pdb_str(
+            "CRYST1   52.000   58.600   61.900  90.00  90.00  90.00 P 21 21 21    8\n"
+            "ATOM      1  N   ALA A   1       1.000   2.000   3.000  1.00 20.00           N  \n"
+            "END\n"
+        )
+        assert frame.meta["space_group"] == "P 21 21 21"

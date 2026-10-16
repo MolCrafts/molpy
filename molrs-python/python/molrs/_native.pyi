@@ -2186,7 +2186,9 @@ class keys:
     QUATW: Key
     RES_ID: Key
     RES_NAME: Key
+    SPACE_GROUP: Key
     STYLE: Key
+    SYMOPS: Key
     TYPE: Key
     TYPE_ID: Key
     UNITS: Key
