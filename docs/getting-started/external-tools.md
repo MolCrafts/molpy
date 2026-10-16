@@ -41,9 +41,8 @@ oligomer (head, chain and tail monomers already bonded) typed once by
 antechamber, cut into residues by prepgen and joined by tleap `sequence`.
 `TleapTypifier` loads parameters of your own on top of the leaprc, and
 `AntechamberTypifier` runs an antechamber charge method other than AM1-BCC /
-ABCG2. Until molrs's LAMMPS and GROMACS writers write a term `GaffTypifier`
-estimated (molrs 0.18.0 refuses its `estimated` parameter), a molecule with
-one is exported through `AntechamberTypifier`. Every entry point takes
+ABCG2. A term `GaffTypifier` estimated exports to every engine: the writers
+skip its provenance. Every entry point takes
 molrs's `parameter_set` (`"gaff"` or `"gaff2"`), which has no default, so a
 chain and the molecules it is mixed with always name the same set:
 

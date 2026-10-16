@@ -266,33 +266,10 @@ print(sorted(deck))  # ['data', 'init', 'input', 'settings']
 ```
 
 `LammpsEngine().run(deck["input"], workdir=output_dir / "lammps")` runs it;
-it is the starting point for the equilibration you add to `body`. With the
-natively typed TFSI, molrs 0.18.0 refuses to write this deck:
-
-!!! warning "molrs 0.18.0 does not write an estimated term to LAMMPS or GROMACS"
-    `GaffTypifier` marks each term it estimated with provenance parameters
-    (`estimated`, `estimate_penalty`, `estimate_method`, `estimate_analog`).
-    molrs's frcmod writer skips them, but its LAMMPS and GROMACS writers
-    refuse them, so with TFSI in the force field `generate_inputs` raises
-
-    ```text
-    ValueError: angles label `f-c3-sy`: angle harmonic: parameter `estimated` has no place on the LAMMPS coefficient line
-    ```
-
-    (GROMACS: `parameter 'estimated' has no GROMACS column`; the parameter
-    named can be any of the four). Until molrs skips them, type a molecule
-    with estimated terms through AmberTools for export. Its force field is
-    tleap's prmtop, which carries the same types and parameter values and no
-    provenance, and it merges with the chain's the same way:
-
-    ```python
-    # docs: skip — needs AmberTools
-    tfsi_ante = mp.ff.typifier.AntechamberTypifier(
-        parameter_set="gaff2", work_dir=output_dir / "tfsi_ante", config=config
-    )
-    tfsi = tfsi_ante.typify(tfsi)  # antechamber -c bcc, parmchk2, tleap
-    tfsi_ff = tfsi_ante.forcefield()
-    ```
+it is the starting point for the equilibration you add to `body`. The four
+terms `GaffTypifier` estimated for TFSI (it marks them `estimated`, with the
+penalty, method and analog) export like any other: every molrs writer skips
+the provenance and writes the parameters.
 
 ## When the AmberTools typifiers are still the route
 
@@ -309,8 +286,6 @@ read back from tleap's prmtop, is kept for what it alone does:
   would redefine.
 - **An antechamber charge method other than AM1-BCC / ABCG2**:
   `AntechamberTypifier(charge_method=...)` passes it to antechamber `-c`.
-- **Exporting an estimated term** to LAMMPS or GROMACS, until molrs's
-  writers skip the provenance parameters (the warning above).
 
 ## Troubleshooting
 
@@ -320,7 +295,6 @@ read back from tleap's prmtop, is kept for what it alone does:
 | `ValueError: … cut names [...]` | An atom name in a cut is not on the oligomer; `AmberPieces` names atoms element + count (`C1`, `O2`, …) |
 | Chain O near −0.20 e, or typed `oh` | The chain was joined with `Assembler` (the leaving-group charge was folded onto the anchor). Build the oligomer with the monomers already bonded and cut it with prepgen |
 | TFSI charge wrong | The formal charges sum to the net charge (`[N-]` gives −1). −0.998 e is sqm's three-decimal rounding; antechamber `-c bcc` gives the same |
-| `ValueError: … has no place on the LAMMPS coefficient line` (or `… has no GROMACS column`) | A `GaffTypifier` estimate in the force field; molrs 0.18.0's LAMMPS and GROMACS writers refuse it (see the warning in the export section) |
 | tleap fails on the chain | A junction term missing from the leaprc (`leaprc.gaff2` here); the error carries tleap's output. The connection atoms are the ones in the oligomer you cut |
 | `ValueError: … still has N ports` | `TleapTypifier` was given a template. A polymer goes through `AmberPolymerBuilder` |
 | Polymer assembly fails | The site graph is one path of at least two sites, and every bead type has an oligomer and a cut for the residue that site uses |

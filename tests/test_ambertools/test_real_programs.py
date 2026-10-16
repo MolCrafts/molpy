@@ -19,8 +19,8 @@ They pin what the default routes rest on:
   glyme) merges with an :class:`molpy.builder.AmberPolymerBuilder` chain's
   in either order, and the merged system's ``LammpsEngine`` deck minimises
   in the real ``lmp`` and its GROMACS inputs pass ``grompp`` (each skipped
-  without its program). TFSI's deck is a strict xfail: molrs's LAMMPS and
-  GROMACS writers refuse the provenance of a ``GaffTypifier`` estimate.
+  without its program). TFSI's deck, with its four
+  ``GaffTypifier`` estimates, minimises too: the writers skip their provenance.
 """
 
 from __future__ import annotations
@@ -483,16 +483,6 @@ class TestNativeMoleculesJoinTheChain:
         assert done.returncode == 0, done.stderr[-2000:]
 
     @pytest.mark.skipif(_LMP is None, reason="needs the lmp executable")
-    @pytest.mark.xfail(
-        strict=True,
-        raises=ValueError,
-        reason=(
-            "molrs 0.18.0's LAMMPS and GROMACS writers refuse the estimate "
-            "provenance params (estimated, estimate_penalty, ...) GaffTypifier "
-            "puts on TFSI's four parmchk2-estimated terms; its frcmod writer "
-            "skips them"
-        ),
-    )
     def test_tfsi_li_and_the_chain_minimise_in_lammps(self, tmp_path, config):
         chain = _peo("gaff2", tmp_path / "peo", config)
         tfsi, tfsi_ff = _native(MOLECULES["tfsi"], "gaff2", tmp_path / "q", config)
