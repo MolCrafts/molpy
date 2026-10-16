@@ -6,7 +6,7 @@ import numpy as np
 import pytest
 
 from molpy.builder import Lattice, Site
-from molpy.core import Atomistic, Box, Cuboid, Sphere
+from molpy.core import Atomistic, Box, Cuboid, HalfSpace, Sphere
 
 
 class TestSite:
@@ -291,6 +291,38 @@ class TestBuildCrystalRegion:
         in_box = np.all((positions >= 0) & (positions <= 3.0), axis=1)
         assert np.all(in_sphere & in_box)
 
+    def test_sphere_at_origin_is_fully_covered(self):
+        """Inferred tiling spans negative cells too, not just the +++ octant."""
+        lat = Lattice.sc(a=1.0, species="Cu")
+        structure = lat.build(Sphere([0.0, 0.0, 0.0], 2.5))
+
+        grid = np.stack(
+            np.meshgrid(*[np.arange(-3, 4)] * 3, indexing="ij"), axis=-1
+        ).reshape(-1, 3)
+        expected = grid[np.linalg.norm(grid, axis=1) <= 2.5]
+        positions = structure.atoms["x", "y", "z"]
+        assert len(positions) == len(expected)
+        assert positions[:, 0].min() == pytest.approx(-2.0)
+        assert positions[:, 0].max() == pytest.approx(2.0)
+
+    def test_offset_region_on_a_sheared_cell_is_fully_covered(self):
+        a1, a2, a3 = [2.0, 0.0, 0.0], [1.0, 2.0, 0.0], [0.5, 0.5, 2.0]
+        lat = Lattice.from_vectors(a1, a2, a3, basis=[Site("A", "C", (0.0, 0.0, 0.0))])
+        region = Sphere([-3.0, 4.0, -1.0], 5.0)
+        structure = lat.build(region)
+
+        ijk = np.stack(
+            np.meshgrid(*[np.arange(-10, 11)] * 3, indexing="ij"), axis=-1
+        ).reshape(-1, 3)
+        points = ijk @ np.array([a1, a2, a3])
+        expected = region.contains(points).sum()
+        assert len(list(structure.atoms)) == expected
+
+    def test_unbounded_region_needs_repeats(self):
+        lat = Lattice.sc(a=1.0, species="Cu")
+        with pytest.raises(ValueError, match="unbounded"):
+            lat.build(HalfSpace([0.0, 0.0, 1.0], [0.0, 0.0, 0.0]))
+
     def test_requires_region_or_repeats(self):
         lat = Lattice.sc(a=1.0, species="Cu")
         with pytest.raises(ValueError, match="region.*repeats"):
@@ -298,5 +330,5 @@ class TestBuildCrystalRegion:
 
     def test_rejects_non_positive_repeats(self):
         lat = Lattice.sc(a=1.0, species="Cu")
-        with pytest.raises(ValueError, match="repeats must be positive"):
+        with pytest.raises(ValueError, match="repeats must be three positive integers"):
             lat.build(repeats=(0, 1, 1))

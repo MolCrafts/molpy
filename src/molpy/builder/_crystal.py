@@ -16,6 +16,7 @@ Example:
 
 from __future__ import annotations
 
+import itertools
 from dataclasses import dataclass
 from typing import Any
 
@@ -39,6 +40,10 @@ from numpy.typing import ArrayLike
 from molpy.builder._symmetry import SpaceGroup
 
 __all__ = ["Lattice", "Site"]
+
+#: Fractional slack on the inferred tile, so an atom on the region's
+#: boundary is not lost to rounding in ``to_frac``.
+_FRAC_SLACK = 1e-6
 
 #: Any native region: a solid, or a composition of solids.
 RegionLike = (
@@ -138,10 +143,8 @@ class Lattice:
         matrix holds the lattice vectors as columns, so it is the transpose of
         the row-vector :attr:`cell`.
         """
-        nx, ny, nz = (int(r) for r in repeats)
-        if nx <= 0 or ny <= 0 or nz <= 0:
-            raise ValueError(f"repeats must be positive, got {repeats}")
-        return Box(h=(self.cell * np.array([nx, ny, nz], dtype=float)[:, None]).T)
+        counts = _positive_repeats(repeats)
+        return Box(h=(self.cell * counts.astype(float)[:, None]).T)
 
     @classmethod
     def sc(cls, a: float, species: str) -> Lattice:
@@ -247,31 +250,36 @@ class Lattice:
                 ``mp.core.Cuboid``, ``mp.core.Sphere``, or any combination via
                 ``& | ~``). Atoms outside the region are discarded.
             repeats: Number of unit cells along each lattice vector,
-                ``(nx, ny, nz)``. If omitted, the tile range is inferred from
-                ``region.bounds()``. At least one of ``region`` or ``repeats``
-                must be provided.
+                ``(nx, ny, nz)``, tiled from the origin cell. If omitted, the
+                tile is the range of cells, negative indices included, whose
+                atoms can fall inside ``region.bounds()``. At least one of
+                ``region`` or ``repeats`` must be provided.
 
         Returns:
             :class:`Atomistic` containing the kept atoms. The tiled super-cell is
             :meth:`Lattice.supercell`, which the caller sets on ``frame.box`` when
             the structure becomes a simulation.
-        """
-        if repeats is None:
-            if region is None:
-                raise ValueError("Provide `region`, `repeats`, or both.")
-            repeats = _infer_repeats(self, np.asarray(region.bounds()).T)
 
-        nx, ny, nz = (int(r) for r in repeats)
-        if nx <= 0 or ny <= 0 or nz <= 0:
-            raise ValueError(f"repeats must be positive, got {repeats}")
+        Raises:
+            ValueError: If neither ``region`` nor ``repeats`` is given, if a
+                repeat is not positive, or if ``repeats`` is omitted and
+                ``region`` is unbounded.
+        """
+        if repeats is None and region is None:
+            raise ValueError("Provide `region`, `repeats`, or both.")
+        counts = None if repeats is None else _positive_repeats(repeats)
 
         out = Atomistic()
 
         if not self.basis:
             return out
 
-        cells = _cell_grid(nx, ny, nz)  # (Nc, 3)
         basis_fracs = np.array([s.fractional for s in self.basis], dtype=float)
+        if counts is not None:
+            lo, hi = np.zeros(3, dtype=int), counts
+        else:
+            lo, hi = _covering_cells(self.box, basis_fracs, region)
+        cells = _cell_grid(lo, hi)  # (Nc, 3)
         fracs = (cells[:, None, :] + basis_fracs[None, :, :]).reshape(-1, 3)
         carts = self.box.to_cart(fracs)
 
@@ -316,22 +324,38 @@ class Lattice:
         return Atomistic.from_frame(frame)
 
 
-def _cell_grid(nx: int, ny: int, nz: int) -> np.ndarray:
-    i, j, k = np.meshgrid(np.arange(nx), np.arange(ny), np.arange(nz), indexing="ij")
-    return np.stack([i, j, k], axis=-1).reshape(-1, 3)
+def _positive_repeats(repeats: tuple[int, int, int]) -> np.ndarray:
+    """``repeats`` as a ``(3,)`` int array, every count positive."""
+    counts = np.array([int(r) for r in repeats], dtype=int)
+    if counts.shape != (3,) or np.any(counts <= 0):
+        raise ValueError(f"repeats must be three positive integers, got {repeats}")
+    return counts
 
 
-def _infer_repeats(lattice: Lattice, bounds: np.ndarray) -> tuple[int, int, int]:
-    """Smallest ``(nx, ny, nz)`` (starting at origin) covering ``bounds`` AABB."""
-    lo, hi = bounds[0], bounds[1]
-    corners = (
-        np.array(
-            np.meshgrid([lo[0], hi[0]], [lo[1], hi[1]], [lo[2], hi[2]], indexing="ij")
+def _cell_grid(lo: np.ndarray, hi: np.ndarray) -> np.ndarray:
+    """Integer cell indices ``lo <= (i, j, k) < hi``, shape ``(Nc, 3)``."""
+    axes = [np.arange(a, b) for a, b in zip(lo, hi, strict=True)]
+    return np.stack(np.meshgrid(*axes, indexing="ij"), axis=-1).reshape(-1, 3)
+
+
+def _covering_cells(
+    box: Box, basis_fracs: np.ndarray, region: RegionLike
+) -> tuple[np.ndarray, np.ndarray]:
+    """Cell range ``[lo, hi)`` whose atoms cover the region's bounding box.
+
+    An atom of cell ``n`` sits at fractional ``n + b`` for a basis offset
+    ``b``, so the cells that can reach the box's fractional extent
+    ``[f_min, f_max]`` are ``floor(f_min - max b) <= n <= floor(f_max - min b)``,
+    on every side of the origin.
+    """
+    bounds = np.asarray(region.bounds(), dtype=float)  # (3, 2): per-axis lo, hi
+    if not np.all(np.isfinite(bounds)):
+        raise ValueError(
+            f"region is unbounded (bounds {bounds.tolist()}); "
+            "pass `repeats` to choose the tile"
         )
-        .reshape(3, -1)
-        .T
-    )
-    frac_extent = lattice.box.to_frac(corners).max(axis=0)
-    repeats = np.ceil(np.maximum(frac_extent, 0)).astype(int)
-    repeats = np.maximum(repeats, 1)
-    return int(repeats[0]), int(repeats[1]), int(repeats[2])
+    corners = np.array(list(itertools.product(*bounds)), dtype=float)  # (8, 3)
+    frac = box.to_frac(corners)
+    lo = np.floor(frac.min(axis=0) - basis_fracs.max(axis=0) - _FRAC_SLACK)
+    hi = np.floor(frac.max(axis=0) - basis_fracs.min(axis=0) + _FRAC_SLACK) + 1
+    return lo.astype(int), hi.astype(int)
