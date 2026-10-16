@@ -393,7 +393,7 @@ def _linear_path(sites: CoarseGrain) -> list[Bead]:
     if len(beads) < 2:
         raise ValueError(
             "AmberPolymerBuilder needs at least a head site and a tail site; "
-            "parameterise one molecule with AntechamberTypifier"
+            "type one molecule natively (AtdTypifier, GaffTypifier)"
         )
     bonds = list(sites.cgbonds)
     adjacent: dict[int, list[Bead]] = defaultdict(list)
