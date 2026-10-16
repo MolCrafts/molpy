@@ -168,6 +168,76 @@ class TestOpenmmEngineInit:
         OpenmmEngine(config=config, check_executable=False)
 
 
+# ---------------------------------------------------------------------------
+# generate_inputs — no OpenMM required
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def water_system(water, tip3p):
+    """The water and a force field OpenMM can price: charges need Coulomb."""
+    tip3p.def_style("pair", "coul/cut")
+    return water.to_frame(), tip3p
+
+
+def _pdb_atom_names(path):
+    return [
+        line[12:16].strip()
+        for line in path.read_text(encoding="utf-8").splitlines()
+        if line.startswith(("ATOM", "HETATM"))
+    ]
+
+
+class TestGenerateInputs:
+    def test_writes_pdb_forcefield_and_script(self, engine, water_system, tmp_path):
+        paths = engine.generate_inputs(
+            *water_system, OpenmmSimulationConfig(), tmp_path
+        )
+        assert {key: p.name for key, p in paths.items()} == {
+            "pdb": "system.pdb",
+            "forcefield": "forcefield.xml",
+            "script": "simulate.py",
+        }
+        assert all(p.is_file() for p in paths.values())
+
+    def test_forcefield_carries_the_pdb_residue_templates(
+        self, engine, water_system, tmp_path
+    ):
+        """createSystem matches every PDB residue against a <Residue>
+        template by its atom names: the XML has one per residue, named as the
+        PDB names its atoms."""
+        import xml.etree.ElementTree as ET
+
+        paths = engine.generate_inputs(
+            *water_system, OpenmmSimulationConfig(), tmp_path
+        )
+        root = ET.parse(paths["forcefield"]).getroot()
+        residues = root.find("Residues")
+        assert residues is not None
+        (template,) = residues.findall("Residue")
+        assert [atom.get("name") for atom in template.findall("Atom")] == (
+            _pdb_atom_names(paths["pdb"])
+        )
+        assert [atom.get("type") for atom in template.findall("Atom")] == [
+            "OW",
+            "HW",
+            "HW",
+        ]
+
+    def test_openmm_builds_a_system_from_the_written_files(
+        self, engine, water_system, tmp_path
+    ):
+        app = pytest.importorskip("openmm.app")
+        paths = engine.generate_inputs(
+            *water_system, OpenmmSimulationConfig(), tmp_path
+        )
+        pdb = app.PDBFile(str(paths["pdb"]))
+        system = app.ForceField(str(paths["forcefield"])).createSystem(
+            pdb.topology, nonbondedMethod=app.NoCutoff
+        )
+        assert system.getNumParticles() == 3
+
+
 def test_no_serialize_system(engine):
     """Writing files is molrs io's job: the engine only renders the script."""
     assert not hasattr(engine, "serialize_system")

@@ -38,6 +38,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, get_args
 
 from molpy.engine._engine import Engine
+from molpy.io import write_openmm_system, write_pdb
 
 if TYPE_CHECKING:
     from molrs.core import Frame
@@ -283,12 +284,18 @@ class OpenmmEngine(Engine):
     ) -> dict[str, Path]:
         """Generate PDB, XML force field, and Python simulation script.
 
-        Does **not** require OpenMM to be installed.
+        Does **not** require OpenMM to be installed. The PDB is molrs's
+        :func:`~molpy.io.write_pdb`; the force-field XML is
+        :func:`~molpy.io.write_openmm_system`: the force field plus a
+        ``<Residue>`` template for every residue of that PDB (its atom names,
+        types, charges and bonds), what ``ForceField.createSystem`` matches
+        the PDB topology against.
 
         Args:
-            frame: :class:`~molpy.Frame` with atom positions.
-            forcefield: A :class:`~molpy.ff.forcefield.ForceField`
-                containing interaction parameters.
+            frame: Typed :class:`~molpy.Frame` (string ``type`` and
+                ``element`` atom columns, ``bonds``) with atom positions.
+            forcefield: A :class:`~molpy.ff.forcefield.ForceField` holding an
+                atom type for every ``type`` the frame names.
             config: Simulation parameters.
             output_dir: Directory where files are written (created if absent).
             pdb_filename: Name for the PDB coordinate file.
@@ -306,10 +313,10 @@ class OpenmmEngine(Engine):
         ff_path = out / ff_filename
         script_path = out / script_filename
 
-        from molrs.io import write_openmm_forcefield, write_pdb
-
+        # The XML carries a residue template for every residue of the PDB
+        # (same atom names), which createSystem matches the topology against.
         write_pdb(pdb_path, frame)
-        write_openmm_forcefield(ff_path, forcefield)
+        write_openmm_system(ff_path, forcefield, frame)
 
         script_text = self._render_simulation_script(
             config, pdb_filename=pdb_filename, ff_filename=ff_filename
