@@ -13,4 +13,6 @@ coarse-grained bead-pattern matching (``SubgraphMatcher``) are here too;
 """
 
 from molrs.perceive import *  # noqa: F403
-from molrs.perceive import __all__ as __all__
+from molrs.perceive import __all__ as _native
+
+__all__ = [*_native]

@@ -6,4 +6,6 @@ straight from a CGsmiles string is ``mp.io.read_cgsmiles_str``.
 """
 
 from molrs.io.cgsmiles import *  # noqa: F403
-from molrs.io.cgsmiles import __all__ as __all__
+from molrs.io.cgsmiles import __all__ as _native
+
+__all__ = [*_native]

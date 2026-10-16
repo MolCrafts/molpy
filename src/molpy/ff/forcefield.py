@@ -11,4 +11,6 @@ topologies, AMBER prmtop / frcmod, OpenMM XML, CMAP) are read and written by
 """
 
 from molrs.ff.forcefield import *  # noqa: F403
-from molrs.ff.forcefield import __all__ as __all__
+from molrs.ff.forcefield import __all__ as _native
+
+__all__ = [*_native]

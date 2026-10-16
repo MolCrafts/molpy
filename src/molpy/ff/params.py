@@ -7,4 +7,6 @@ facts: ``mp.core.constants.AMBER_SCEE`` / ``AMBER_SCNB``.
 """
 
 from molrs.ff.params import *  # noqa: F403
-from molrs.ff.params import __all__ as __all__
+from molrs.ff.params import __all__ as _native
+
+__all__ = [*_native]

@@ -15,7 +15,7 @@ same objects) and the version metadata.
 
 | Package | Purpose |
 |---------|---------|
-| `molpy` (root) | The subsystems below; the promoted core data classes (`Frame`, `Block`, `Trajectory`, `Box`, `MolGraph`, `Atomistic`, `CoarseGrain`, the entity classes, `Element`, `Topology`); `version` / `release_date` |
+| `molpy` (root) | The subsystems below; the promoted core data classes (`Frame`, `Block`, `Trajectory`, `Box`, `MolGraph`, `Atomistic`, `CoarseGrain`, the entity classes, `Element`, `Topology`); `__version__` / `release_date` and the `version` module (with `check_molrs_version`) |
 | `core` | Mirrors `molrs.core` — `Frame`, `Block`, `Trajectory`, the graph hierarchy (`MolGraph`, `Atomistic`, `CoarseGrain`), `Box`, regions, neighbour search and units, flat, with the vocabularies `keys`, `schema` and `constants` as submodules; plus molpy's selectors and `TrajectorySplitter` with its strategies |
 | `perceive`, `optimize`, `conformer`, `stream` | Mirror the molrs subsystems of the same names: perception, `Lbfgs`, conformers, frame streaming |
 | `ff` | Mirrors `molrs.ff`: `forcefield` (the `ForceField` data model), `potential` (compiler and kernels), `typifier` (+ molpy's `AntechamberTypifier` / `TleapTypifier`), `charge`, `ir`, `params`, `clpol_scaling` |

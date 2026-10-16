@@ -11,4 +11,6 @@ forces)``). A force field compiles into them through :mod:`molpy.ff.compile`.
 """
 
 from molrs.ff.potential import *  # noqa: F403
-from molrs.ff.potential import __all__ as __all__
+from molrs.ff.potential import __all__ as _native
+
+__all__ = [*_native]

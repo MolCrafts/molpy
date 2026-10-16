@@ -6,7 +6,7 @@ Auto-generated reference for every public symbol, with typed signatures througho
 
 Write `import molpy as mp`. **The root holds the subsystem modules, the core
 data classes a user handles directly (promoted from `mp.core`), and the
-version metadata (`version`, `release_date`), nothing else** — so there is
+version metadata (`__version__`, `release_date` and the `version` module), nothing else** — so there is
 `mp.Frame` and `mp.Atomistic`, but no `mp.read_pdb` or `mp.Lbfgs`: those are
 `mp.io.read_pdb` and `mp.optimize.Lbfgs`. Each name has one public module (a
 promoted class is also `mp.core`'s, as the same object), and the modules

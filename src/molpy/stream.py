@@ -7,4 +7,6 @@ The wire encoding of one frame is :mod:`molpy.io`'s
 """
 
 from molrs.stream import *  # noqa: F403
-from molrs.stream import __all__ as __all__
+from molrs.stream import __all__ as _native
+
+__all__ = [*_native]

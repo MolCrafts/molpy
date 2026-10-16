@@ -4,4 +4,6 @@
 """
 
 from molrs.io.gro import *  # noqa: F403
-from molrs.io.gro import __all__ as __all__
+from molrs.io.gro import __all__ as _native
+
+__all__ = [*_native]

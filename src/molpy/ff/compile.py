@@ -15,4 +15,6 @@ parameter row per term, as stored: angle values in degrees)::
 """
 
 from molrs.ff.compile import *  # noqa: F403
-from molrs.ff.compile import __all__ as __all__
+from molrs.ff.compile import __all__ as _native
+
+__all__ = [*_native]

@@ -5,4 +5,6 @@ behind one ``assign(mol)`` call.
 """
 
 from molrs.ff.charge import *  # noqa: F403
-from molrs.ff.charge import __all__ as __all__
+from molrs.ff.charge import __all__ as _native
+
+__all__ = [*_native]

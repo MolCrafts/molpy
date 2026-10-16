@@ -18,6 +18,7 @@ molpy adds :class:`MrecMetricReader`, published in the
 
 from __future__ import annotations
 
+from importlib import import_module as _import_module
 from typing import TYPE_CHECKING
 
 # A molrs build without the fs feature has no ``molrs.io.mrec``: importing it
@@ -26,14 +27,18 @@ from molrs.io.mrec import *  # noqa: F403
 from molrs.io.mrec import MrecReader
 from molrs.io.mrec import __all__ as _native
 
-from . import _metric_reader
+from molpy.io import _metric_reader
+
+# The star import bound molrs's ``validation`` module; loading molpy's mirror
+# rebinds the attribute, so ``molpy.io.mrec.validation`` also imports by name.
+_import_module(f"{__name__}.validation")
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
     from pathlib import Path
     from typing import Any
 
-    from ._metric_reader import ReadRequest
+    from molpy.io._metric_reader import ReadRequest
 
 
 _PACKED_SUFFIX = ".mrec.zip"

@@ -7,4 +7,6 @@ the ``Potential`` protocol are :mod:`molpy.ff.potential`.
 """
 
 from molrs.md import *  # noqa: F403
-from molrs.md import __all__ as __all__
+from molrs.md import __all__ as _native
+
+__all__ = [*_native]
