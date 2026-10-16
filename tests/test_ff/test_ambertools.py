@@ -10,6 +10,7 @@ frcmod TleapTypifier writes, and the errors.
 
 from __future__ import annotations
 
+import inspect
 import shlex
 import shutil
 import subprocess
@@ -123,7 +124,9 @@ def tools(TEST_DATA_DIR: Path):
 
 class TestAntechamberTypifier:
     def test_net_charge_is_the_sum_of_formal_charges(self, tools, tmp_path):
-        mp.ff.typifier.AntechamberTypifier(work_dir=tmp_path).typify(_litfsi())
+        mp.ff.typifier.AntechamberTypifier(
+            parameter_set="gaff2", work_dir=tmp_path
+        ).typify(_litfsi())
         args = tools.calls["antechamber"]
         assert args[args.index("-nc") + 1] == "0"
         assert args[args.index("-at") + 1] == "gaff2"
@@ -131,14 +134,16 @@ class TestAntechamberTypifier:
 
         anion = _litfsi()
         del list(anion.atoms)[LI_ROW]["formal_charge"]
-        mp.ff.typifier.AntechamberTypifier(work_dir=tmp_path).typify(anion)
+        mp.ff.typifier.AntechamberTypifier(
+            parameter_set="gaff2", work_dir=tmp_path
+        ).typify(anion)
         args = tools.calls["antechamber"]
         assert args[args.index("-nc") + 1] == "-1"
 
     def test_runs_antechamber_parmchk2_then_tleap(self, tools, tmp_path):
-        mp.ff.typifier.AntechamberTypifier(atom_type="gaff", work_dir=tmp_path).typify(
-            _litfsi()
-        )
+        mp.ff.typifier.AntechamberTypifier(
+            parameter_set="gaff", work_dir=tmp_path
+        ).typify(_litfsi())
         parmchk2 = tools.calls["parmchk2"]
         assert parmchk2[parmchk2.index("-s") + 1] == "gaff"
         lines = tools.scripts[0].splitlines()
@@ -153,7 +158,9 @@ class TestAntechamberTypifier:
 
     def test_prmtop_rows_map_onto_graph_rows(self, tools, tmp_path):
         graph = _litfsi()
-        typed = mp.ff.typifier.AntechamberTypifier(work_dir=tmp_path).typify(graph)
+        typed = mp.ff.typifier.AntechamberTypifier(
+            parameter_set="gaff2", work_dir=tmp_path
+        ).typify(graph)
 
         atoms = list(typed.atoms)
         assert [a["type"] for a in atoms] == TYPES
@@ -183,7 +190,9 @@ class TestAntechamberTypifier:
         assert all(a.get("type") is None for a in graph.atoms)
 
     def test_forcefield_holds_the_assigned_types(self, tools, tmp_path):
-        ante = mp.ff.typifier.AntechamberTypifier(work_dir=tmp_path)
+        ante = mp.ff.typifier.AntechamberTypifier(
+            parameter_set="gaff2", work_dir=tmp_path
+        )
         ante.typify(_litfsi())
         ff = ante.forcefield()
         (atom_style,) = ff.get_styles("atom")
@@ -198,7 +207,9 @@ class TestAntechamberTypifier:
         atoms = list(graph.atoms)
         graph.def_bond(atoms[N_ROW], atoms[LI_ROW])
         with pytest.raises(ValueError, match=r"bond \(7, 15\) is not in the prmtop"):
-            mp.ff.typifier.AntechamberTypifier(work_dir=tmp_path).typify(graph)
+            mp.ff.typifier.AntechamberTypifier(
+                parameter_set="gaff2", work_dir=tmp_path
+            ).typify(graph)
 
     def test_failing_tool_raises_with_its_stderr(self, TEST_DATA_DIR, tmp_path):
         fake = FakeAmberTools(TEST_DATA_DIR, fail="antechamber")
@@ -207,7 +218,9 @@ class TestAntechamberTypifier:
             patch("molpy.wrapper._process.subprocess.run", side_effect=fake),
             pytest.raises(ToolError, match="antechamber: fatal error") as raised,
         ):
-            mp.ff.typifier.AntechamberTypifier(work_dir=tmp_path).typify(_litfsi())
+            mp.ff.typifier.AntechamberTypifier(
+                parameter_set="gaff2", work_dir=tmp_path
+            ).typify(_litfsi())
         assert raised.value.tool == "wrapper.antechamber"
         assert raised.value.returncode == 1
         assert raised.value.tail == "antechamber: fatal error"
@@ -217,7 +230,9 @@ class TestAntechamberTypifier:
             patch.object(Tool, "resolve_executable", return_value=None),
             pytest.raises(ToolError, match="executable .antechamber. not found"),
         ):
-            mp.ff.typifier.AntechamberTypifier(work_dir=tmp_path).typify(_litfsi())
+            mp.ff.typifier.AntechamberTypifier(
+                parameter_set="gaff2", work_dir=tmp_path
+            ).typify(_litfsi())
 
 
 class TestTleapTypifier:
@@ -229,7 +244,9 @@ class TestTleapTypifier:
         f = atoms.def_type("f", mass=19.0)
         ff.def_style("bond", "harmonic").def_type("c3-f", c3, f, k=356.9, r0=1.3497)
 
-        leap = mp.ff.typifier.TleapTypifier(forcefield=ff, work_dir=tmp_path)
+        leap = mp.ff.typifier.TleapTypifier(
+            parameter_set="gaff2", forcefield=ff, work_dir=tmp_path
+        )
         leap.typify(_typed_litfsi())
 
         lines = tools.scripts[0].splitlines()
@@ -244,7 +261,9 @@ class TestTleapTypifier:
         assert set(tools.calls) == {"tleap"}
 
     def test_keeps_types_and_charges_and_assigns_terms(self, tools, tmp_path):
-        typed = mp.ff.typifier.TleapTypifier(work_dir=tmp_path).typify(_typed_litfsi())
+        typed = mp.ff.typifier.TleapTypifier(
+            parameter_set="gaff2", work_dir=tmp_path
+        ).typify(_typed_litfsi())
         atoms = list(typed.atoms)
         assert [a["type"] for a in atoms] == TYPES
         assert [a["charge"] for a in atoms] == CHARGES
@@ -256,17 +275,23 @@ class TestTleapTypifier:
         graph = _typed_litfsi()
         list(graph.atoms)[0]["type"] = "c3"
         with pytest.raises(ValueError, match="type c3 -> f"):
-            mp.ff.typifier.TleapTypifier(work_dir=tmp_path).typify(graph)
+            mp.ff.typifier.TleapTypifier(
+                parameter_set="gaff2", work_dir=tmp_path
+            ).typify(graph)
 
     def test_charge_change_raises(self, tools, tmp_path):
         graph = _typed_litfsi()
         list(graph.atoms)[0]["charge"] = -0.2
         with pytest.raises(ValueError, match="charge -0.2 -> "):
-            mp.ff.typifier.TleapTypifier(work_dir=tmp_path).typify(graph)
+            mp.ff.typifier.TleapTypifier(
+                parameter_set="gaff2", work_dir=tmp_path
+            ).typify(graph)
 
     def test_untyped_atom_raises(self, tmp_path):
         with pytest.raises(ValueError, match="needs AMBER types and charges"):
-            mp.ff.typifier.TleapTypifier(work_dir=tmp_path).typify(_litfsi())
+            mp.ff.typifier.TleapTypifier(
+                parameter_set="gaff2", work_dir=tmp_path
+            ).typify(_litfsi())
 
     def test_failing_tleap_raises_with_its_stderr(self, TEST_DATA_DIR, tmp_path):
         fake = FakeAmberTools(TEST_DATA_DIR, fail="tleap")
@@ -275,7 +300,9 @@ class TestTleapTypifier:
             patch("molpy.wrapper._process.subprocess.run", side_effect=fake),
             pytest.raises(ToolError, match="tleap: fatal error") as raised,
         ):
-            mp.ff.typifier.TleapTypifier(work_dir=tmp_path).typify(_typed_litfsi())
+            mp.ff.typifier.TleapTypifier(
+                parameter_set="gaff2", work_dir=tmp_path
+            ).typify(_typed_litfsi())
         assert raised.value.tool == "wrapper.tleap"
         assert raised.value.returncode == 1
 
@@ -286,19 +313,21 @@ class TestNoStaleOutputs:
     def test_other_settings_do_not_read_the_old_prmtop(self, TEST_DATA_DIR, tmp_path):
         with _faked(FakeAmberTools(TEST_DATA_DIR)):
             mp.ff.typifier.AntechamberTypifier(
-                atom_type="gaff2", work_dir=tmp_path
+                parameter_set="gaff2", work_dir=tmp_path
             ).typify(_litfsi())
         with (
             _faked(FakeAmberTools(TEST_DATA_DIR, silent="tleap")),
             pytest.raises(ToolError, match="left MOL.prmtop unwritten"),
         ):
             mp.ff.typifier.AntechamberTypifier(
-                atom_type="gaff", work_dir=tmp_path
+                parameter_set="gaff", work_dir=tmp_path
             ).typify(_litfsi())
 
     def test_the_same_settings_rerun_every_step(self, TEST_DATA_DIR, tmp_path):
         with _faked(FakeAmberTools(TEST_DATA_DIR)):
-            mp.ff.typifier.AntechamberTypifier(work_dir=tmp_path).typify(_litfsi())
+            mp.ff.typifier.AntechamberTypifier(
+                parameter_set="gaff2", work_dir=tmp_path
+            ).typify(_litfsi())
         for silent, output in (
             ("antechamber", "antechamber.mol2"),
             ("parmchk2", "parmchk2.frcmod"),
@@ -308,40 +337,73 @@ class TestNoStaleOutputs:
                 _faked(FakeAmberTools(TEST_DATA_DIR, silent=silent)),
                 pytest.raises(ToolError, match=f"left {output} unwritten"),
             ):
-                mp.ff.typifier.AntechamberTypifier(work_dir=tmp_path).typify(_litfsi())
+                mp.ff.typifier.AntechamberTypifier(
+                    parameter_set="gaff2", work_dir=tmp_path
+                ).typify(_litfsi())
 
-    @pytest.mark.parametrize("other", [{"atom_type": "gaff"}, {"charge_method": "gas"}])
+    @pytest.mark.parametrize(
+        "other", [{"parameter_set": "gaff"}, {"charge_method": "gas"}]
+    )
     def test_each_setting_keys_the_directory(self, TEST_DATA_DIR, tmp_path, other):
         first = FakeAmberTools(TEST_DATA_DIR)
         with _faked(first):
-            mp.ff.typifier.AntechamberTypifier(work_dir=tmp_path).typify(_litfsi())
+            mp.ff.typifier.AntechamberTypifier(
+                parameter_set="gaff2", work_dir=tmp_path
+            ).typify(_litfsi())
         second = FakeAmberTools(TEST_DATA_DIR)
         with _faked(second):
-            mp.ff.typifier.AntechamberTypifier(work_dir=tmp_path, **other).typify(
-                _litfsi()
-            )
+            mp.ff.typifier.AntechamberTypifier(
+                **({"parameter_set": "gaff2"} | other), work_dir=tmp_path
+            ).typify(_litfsi())
         assert set(first.cwds).isdisjoint(second.cwds)
 
     def test_tleap_typifier_reruns_tleap(self, TEST_DATA_DIR, tmp_path):
         with _faked(FakeAmberTools(TEST_DATA_DIR)):
-            mp.ff.typifier.TleapTypifier(work_dir=tmp_path).typify(_typed_litfsi())
+            mp.ff.typifier.TleapTypifier(
+                parameter_set="gaff2", work_dir=tmp_path
+            ).typify(_typed_litfsi())
         with (
             _faked(FakeAmberTools(TEST_DATA_DIR, silent="tleap")),
             pytest.raises(ToolError, match="left MOL.prmtop unwritten"),
         ):
-            mp.ff.typifier.TleapTypifier(work_dir=tmp_path).typify(_typed_litfsi())
+            mp.ff.typifier.TleapTypifier(
+                parameter_set="gaff2", work_dir=tmp_path
+            ).typify(_typed_litfsi())
 
-    @pytest.mark.parametrize("other", ["leaprc", "forcefield"])
+    @pytest.mark.parametrize("other", ["parameter_set", "forcefield"])
     def test_leaprc_and_frcmod_key_the_directory(self, TEST_DATA_DIR, tmp_path, other):
         ff = mp.ff.forcefield.ForceField("extra", units="real")
         ff.def_style("atom", "full").def_type("c3", mass=12.01)
-        settings = {"leaprc": "gaff"} if other == "leaprc" else {"forcefield": ff}
+        settings = (
+            {"parameter_set": "gaff"}
+            if other == "parameter_set"
+            else {"forcefield": ff}
+        )
         first = FakeAmberTools(TEST_DATA_DIR)
         with _faked(first):
-            mp.ff.typifier.TleapTypifier(work_dir=tmp_path).typify(_typed_litfsi())
+            mp.ff.typifier.TleapTypifier(
+                parameter_set="gaff2", work_dir=tmp_path
+            ).typify(_typed_litfsi())
         second = FakeAmberTools(TEST_DATA_DIR)
         with _faked(second):
-            mp.ff.typifier.TleapTypifier(work_dir=tmp_path, **settings).typify(
-                _typed_litfsi()
-            )
+            mp.ff.typifier.TleapTypifier(
+                **({"parameter_set": "gaff2"} | settings), work_dir=tmp_path
+            ).typify(_typed_litfsi())
         assert set(first.cwds).isdisjoint(second.cwds)
+
+
+@pytest.mark.parametrize(
+    "entry",
+    [
+        mp.ff.typifier.AntechamberTypifier,
+        mp.ff.typifier.TleapTypifier,
+        mp.builder.AmberPolymerBuilder,
+        mp.ff.typifier.AtdTypifier,
+        mp.ff.typifier.GaffTypifier,
+    ],
+)
+def test_every_gaff_entry_point_requires_parameter_set(entry):
+    """One name, molrs's, and no default anywhere: the set is always stated."""
+    parameter = inspect.signature(entry).parameters["parameter_set"]
+    assert parameter.default is inspect.Parameter.empty
+    assert parameter.kind is inspect.Parameter.KEYWORD_ONLY

@@ -20,6 +20,7 @@ from molrs.io import read_ac, read_inpcrd, read_prmtop
 
 from molpy._ambertools import (
     AmberSteps,
+    ParameterSet,
     PrmtopTypifier,
     digest,
     input_mol2,
@@ -65,7 +66,7 @@ class AmberPolymerBuilder:
     ``chains/<digest>/`` one tleap build. antechamber runs once per oligomer
     (``-fo ac``: types and charges, one sqm run); parmchk2 and prepgen read
     that ac. A rerun reuses what is there: antechamber reruns only when the
-    oligomer, ``force_field``, ``charge_method`` or net charge changed (an ac
+    oligomer, ``parameter_set``, ``charge_method`` or net charge changed (an ac
     and frcmod placed there by hand are used as they are), prepgen reruns
     when its control file changed, and tleap when the sequence or any file
     it loads changed. A step that runs deletes its outputs first.
@@ -76,8 +77,11 @@ class AmberPolymerBuilder:
             are named element + row.
         cuts: Bead type → ``{"head": ..., "chain": ..., "tail": ...}``; only
             the residues a sequence uses are required.
-        force_field: The antechamber atom-type set, the parmchk2 ``-s`` set
-            and the leaprc tleap sources.
+        parameter_set: The GAFF generation, molrs's ``parameter_set``
+            (``"gaff"`` or ``"gaff2"``): antechamber's ``-at``, parmchk2's
+            ``-s`` and the ``leaprc.<parameter_set>`` tleap sources.
+            Required, as in molrs: a chain and the molecules typed for the
+            same system name the same set.
         charge_method: The antechamber ``-c`` charge method.
         work_dir: Where the per-oligomer and per-chain directories are made.
         config: molpy's configuration (:func:`molpy.config.load_config`):
@@ -101,7 +105,7 @@ class AmberPolymerBuilder:
         ...     {"wrapper": {"env": "AmberTools25", "env_manager": "conda"}}
         ... )
         >>> built = AmberPolymerBuilder(
-        ...     {"PEO": oligomer}, {"PEO": cuts}, config=config
+        ...     {"PEO": oligomer}, {"PEO": cuts}, parameter_set="gaff2", config=config
         ... ).assemble(sites)
     """
 
@@ -110,7 +114,7 @@ class AmberPolymerBuilder:
         library: Mapping[str, Atomistic],
         cuts: Mapping[str, Mapping[str, AmberCut]],
         *,
-        force_field: Literal["gaff", "gaff2"] = "gaff",
+        parameter_set: ParameterSet,
         charge_method: str = "bcc",
         work_dir: Path | str = "amber_work",
         config: Config | None = None,
@@ -131,7 +135,7 @@ class AmberPolymerBuilder:
                         f"make tleap residue {residue!r}; residue names come "
                         "from the first characters of the bead type"
                     )
-        self.force_field = force_field
+        self.parameter_set = parameter_set
         self.charge_method = charge_method
         self.net_charges = dict(net_charges) if net_charges is not None else None
         self.work_dir = Path(work_dir).resolve()
@@ -245,7 +249,7 @@ class AmberPolymerBuilder:
         text = input_mol2(oligomer, rename=False)
         source.write_text(text, encoding="utf-8")
         stamp = directory / _STAMP
-        current = digest(text, self.force_field, self.charge_method, str(charge))
+        current = digest(text, self.parameter_set, self.charge_method, str(charge))
         if (
             ac.is_file()
             and frcmod.is_file()
@@ -256,11 +260,11 @@ class AmberPolymerBuilder:
         steps.antechamber(
             source,
             ac,
-            parameter_set=self.force_field,
+            parameter_set=self.parameter_set,
             charge_method=self.charge_method,
             net_charge=charge,
         )
-        steps.parmchk2(ac, frcmod, parameter_set=self.force_field)
+        steps.parmchk2(ac, frcmod, parameter_set=self.parameter_set)
         stamp.write_text(current, encoding="utf-8")
         return True
 
@@ -278,7 +282,7 @@ class AmberPolymerBuilder:
             for path in prepared[label].prepi.values()
         ]
         key = digest(
-            self.force_field,
+            self.parameter_set,
             *residues,
             *(
                 part
@@ -292,7 +296,7 @@ class AmberPolymerBuilder:
         if not (prmtop.is_file() and inpcrd.is_file()):
             directory.mkdir(parents=True, exist_ok=True)
             script = leap_script(
-                self.force_field,
+                self.parameter_set,
                 leap_sequence(residues),
                 prmtop,
                 inpcrd,

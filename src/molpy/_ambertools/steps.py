@@ -116,7 +116,7 @@ class AmberSteps:
                 input_format="mol2",
                 output_format=output_format,  # type: ignore[arg-type]
                 charge_method=charge_method,  # type: ignore[arg-type]
-                atom_type=parameter_set,
+                parameter_set=parameter_set,
                 net_charge=net_charge,
             ),
         )
@@ -134,7 +134,7 @@ class AmberSteps:
                 typed,
                 frcmod,
                 input_format=input_format,  # type: ignore[arg-type]
-                force_field=parameter_set,
+                parameter_set=parameter_set,
             ),
         )
 

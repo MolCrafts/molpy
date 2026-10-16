@@ -88,7 +88,7 @@ def _build(library, cuts, work: Path, sites: str = "{[#PEO]|5}"):
     return AmberPolymerBuilder(
         library,
         cuts,
-        force_field="gaff",
+        parameter_set="gaff",
         charge_method="bcc",
         work_dir=work,
         config=load_config(_ENV),

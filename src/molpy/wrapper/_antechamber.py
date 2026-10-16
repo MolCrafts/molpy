@@ -22,10 +22,10 @@ class AntechamberWrapper(Wrapper):
         input_file: str | Path,
         output_file: str | Path,
         *,
+        parameter_set: Literal["gaff", "gaff2", "amber", "sybyl"],
         input_format: Literal["pdb", "mol2", "ac"] = "pdb",
         output_format: Literal["mol2", "ac"] = "mol2",
         charge_method: Literal["gas", "bcc", "be3", "cm2", "esp"] = "bcc",
-        atom_type: Literal["gaff", "gaff2", "amber", "sybyl"] = "gaff2",
         net_charge: int = 0,
         formal_charges: bool = False,
         check: bool = True,
@@ -38,11 +38,14 @@ class AntechamberWrapper(Wrapper):
         Args:
             input_file: Input structure file.
             output_file: Output structure file (with assigned atom types and charges).
+            parameter_set: The atom-type table (``-at``), molrs's
+                ``parameter_set`` (:class:`molpy.ff.typifier.AtdTypifier`):
+                ``gaff``, ``gaff2``, ``amber`` or ``sybyl``. Required, as in
+                molrs.
             input_format: Input file format.
             output_format: Output file format.
             charge_method: Method for charge calculation
                 (gas: Gasteiger; bcc: Bond charge correction; etc.).
-            atom_type: Atom type scheme (gaff, gaff2, amber, sybyl).
             net_charge: Net charge of the molecule.
             formal_charges: If True, use formal charges instead of computing them.
             check: Raise :class:`~molpy.wrapper.ToolError` on a non-zero exit.
@@ -62,7 +65,7 @@ class AntechamberWrapper(Wrapper):
             "-c",
             charge_method,
             "-at",
-            atom_type,
+            parameter_set,
             "-nc",
             str(net_charge),
         ]

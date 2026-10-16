@@ -70,7 +70,7 @@ def test_antechamber_wrapper_atomtype_assign(tmp_path: Path):
             input_format="pdb",
             output_format="mol2",
             charge_method="bcc",
-            atom_type="gaff2",
+            parameter_set="gaff2",
             net_charge=-1,
         )
 
@@ -103,7 +103,7 @@ def test_a_failing_atomtype_assign_raises(tmp_path: Path):
         patch("subprocess.run", return_value=failed),
         pytest.raises(ToolError, match="cannot open tfsi.pdb") as raised,
     ):
-        wrapper.atomtype_assign("tfsi.pdb", "tfsi.mol2")
+        wrapper.atomtype_assign("tfsi.pdb", "tfsi.mol2", parameter_set="gaff2")
     assert raised.value.tool == "wrapper.antechamber"
     assert raised.value.returncode == 2
     assert raised.value.tail == "Error: cannot open tfsi.pdb"
@@ -113,4 +113,9 @@ def test_check_false_returns_the_failed_process(tmp_path: Path):
     wrapper = AntechamberWrapper(tmp_path)
     failed = subprocess.CompletedProcess([], 2, "", "")
     with patch("subprocess.run", return_value=failed):
-        assert wrapper.atomtype_assign("a.pdb", "a.mol2", check=False).returncode == 2
+        assert (
+            wrapper.atomtype_assign(
+                "a.pdb", "a.mol2", parameter_set="gaff2", check=False
+            ).returncode
+            == 2
+        )

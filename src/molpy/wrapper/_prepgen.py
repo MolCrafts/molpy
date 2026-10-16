@@ -23,8 +23,8 @@ class Parmchk2Wrapper(Wrapper):
         input_file: str | Path,
         output_file: str | Path,
         *,
+        parameter_set: Literal["gaff", "gaff2"],
         input_format: Literal["mol2", "ac", "mol", "pdb"] = "mol2",
-        force_field: Literal["gaff", "gaff2"] = "gaff2",
         check: bool = True,
     ) -> subprocess.CompletedProcess[str]:
         """Check and generate missing force field parameters.
@@ -36,8 +36,9 @@ class Parmchk2Wrapper(Wrapper):
             input_file: Input structure file (mol2 or ac format, typically from antechamber).
             output_file: Output AMBER parameter file (frcmod format).
             input_format: Input file format (mol2, ac, mol, pdb).
-            force_field: Force field parameter set to use (``-s`` flag):
-                ``"gaff"`` for GAFF, ``"gaff2"`` for GAFF2 (default).
+            parameter_set: The GAFF generation whose parameters are checked
+                (``-s``), molrs's ``parameter_set``: ``"gaff"`` or
+                ``"gaff2"``. Required, as in molrs.
             check: Raise :class:`~molpy.wrapper.ToolError` on a non-zero exit.
 
         Returns:
@@ -51,7 +52,7 @@ class Parmchk2Wrapper(Wrapper):
             "-o",
             str(output_file),
             "-s",
-            force_field,
+            parameter_set,
         ]
 
         return self.run(args, check=check)

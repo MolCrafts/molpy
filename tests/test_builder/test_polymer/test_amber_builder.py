@@ -170,7 +170,7 @@ def tools(TEST_DATA_DIR: Path):
 
 
 def _build(work: Path, sites: str = "{[#EO]|3}", **kwargs) -> mp.Frame:
-    options = {"force_field": "gaff", "work_dir": work} | kwargs
+    options = {"parameter_set": "gaff", "work_dir": work} | kwargs
     library = options.pop("library", {"EO": _ether()})
     cuts = options.pop("cuts", _cuts())
     builder = AmberPolymerBuilder(library, cuts, **options)
@@ -408,9 +408,9 @@ class TestRefused:
         for bead in beads[1:]:
             sites.def_cgbond(beads[0], bead)
         with pytest.raises(ValueError, match="linear"):
-            AmberPolymerBuilder({"EO": _ether()}, _cuts(), work_dir=tmp_path).assemble(
-                sites
-            )
+            AmberPolymerBuilder(
+                {"EO": _ether()}, _cuts(), parameter_set="gaff", work_dir=tmp_path
+            ).assemble(sites)
 
     def test_a_ring(self, tools, tmp_path):
         sites = mp.CoarseGrain()
@@ -418,16 +418,18 @@ class TestRefused:
         for left, right in zip(beads, beads[1:] + beads[:1], strict=True):
             sites.def_cgbond(left, right)
         with pytest.raises(ValueError, match="linear"):
-            AmberPolymerBuilder({"EO": _ether()}, _cuts(), work_dir=tmp_path).assemble(
-                sites
-            )
+            AmberPolymerBuilder(
+                {"EO": _ether()}, _cuts(), parameter_set="gaff", work_dir=tmp_path
+            ).assemble(sites)
 
     def test_one_site(self, tools, tmp_path):
         with pytest.raises(ValueError, match="head site and a tail site"):
             _build(tmp_path, "{[#EO]}")
 
     def test_not_a_site_graph(self, tmp_path):
-        builder = AmberPolymerBuilder({"EO": _ether()}, _cuts(), work_dir=tmp_path)
+        builder = AmberPolymerBuilder(
+            {"EO": _ether()}, _cuts(), parameter_set="gaff", work_dir=tmp_path
+        )
         with pytest.raises(TypeError, match="coarse-grain site graph"):
             builder.assemble(_ether())  # type: ignore[arg-type]
 
@@ -468,29 +470,33 @@ class TestRefused:
         self, tools, tmp_path, variant, cut, error, match
     ):
         with pytest.raises(error, match=match):
-            AmberPolymerBuilder({"EO": _ether()}, {"EO": {variant: cut}})
+            AmberPolymerBuilder(
+                {"EO": _ether()}, {"EO": {variant: cut}}, parameter_set="gaff"
+            )
         assert tools.calls == []
 
     def test_bead_types_that_share_a_residue_name(self):
         with pytest.raises(ValueError, match="tleap residue 'HPE'"):
-            AmberPolymerBuilder({"PEO": _ether(), "PEOX": _ether()}, {})
+            AmberPolymerBuilder(
+                {"PEO": _ether(), "PEOX": _ether()}, {}, parameter_set="gaff"
+            )
 
     def test_a_repeated_atom_name(self):
         ether = _ether()
         for atom in ether.atoms:
             atom["name"] = "C"
         with pytest.raises(ValueError, match="repeats Amber atom name 'C'"):
-            AmberPolymerBuilder({"EO": ether}, {})
+            AmberPolymerBuilder({"EO": ether}, {}, parameter_set="gaff")
 
     def test_a_template_that_is_not_atomistic(self):
         with pytest.raises(TypeError, match="must be Atomistic"):
-            AmberPolymerBuilder({"EO": mp.CoarseGrain()}, {})  # type: ignore[dict-item]
+            AmberPolymerBuilder({"EO": mp.CoarseGrain()}, {}, parameter_set="gaff")  # type: ignore[dict-item]
 
     def test_unnamed_atoms_get_element_and_row(self):
         graph = mp.conformer.Conformer(seed=1).generate(
             mp.io.smiles.SmilesIr("CO").to_atomistic()
         )[0]
-        builder = AmberPolymerBuilder({"MO": graph}, {})
+        builder = AmberPolymerBuilder({"MO": graph}, {}, parameter_set="gaff")
         names = [str(atom["name"]) for atom in builder.library["MO"].atoms]
         assert names[:2] == ["C1", "O2"]
         assert all(atom.get("name") is None for atom in graph.atoms)
@@ -543,4 +549,6 @@ def test_tleap_typifier_refuses_a_graph_that_still_has_ports(tmp_path):
         atom["charge"] = 0.0
     graph.def_port(atoms[0], atoms[1], ">")
     with pytest.raises(ValueError, match="ports"):
-        mp.ff.typifier.TleapTypifier(work_dir=tmp_path).typify(graph)
+        mp.ff.typifier.TleapTypifier(parameter_set="gaff2", work_dir=tmp_path).typify(
+            graph
+        )

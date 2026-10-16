@@ -7,8 +7,14 @@ The native typifiers are identity re-exports
 and the accumulated ``forcefield()``.
 :func:`assign_cmaps` builds a typed frame's ``cmaps`` block.
 
-molpy adds :class:`AntechamberTypifier` and :class:`TleapTypifier`, which type
-through the AmberTools executables (:mod:`molpy.wrapper`).
+GAFF / GAFF2 is typed natively: ``AtdTypifier`` (antechamber's atom types)
+then ``GaffTypifier`` (the bonded terms), each taking molrs's required
+``parameter_set``. molpy adds :class:`AntechamberTypifier` and
+:class:`TleapTypifier`, which run the AmberTools executables
+(:mod:`molpy.wrapper`) for what native typing cannot do: AM1-BCC charges
+(sqm), and parameters that must match an
+:class:`~molpy.builder.AmberPolymerBuilder` chain's. They take the same
+required ``parameter_set``.
 """
 
 from molrs.ff.typifier import *  # noqa: F403

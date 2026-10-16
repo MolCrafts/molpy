@@ -63,7 +63,7 @@ def test_parmchk2_wrapper_generate_parameters(tmp_path: Path):
             input_file="tfsi_gaff2.mol2",
             output_file="tfsi.frcmod",
             input_format="mol2",
-            force_field="gaff2",
+            parameter_set="gaff2",
         )
 
         mock_run.assert_called_once()
