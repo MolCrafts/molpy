@@ -206,6 +206,7 @@ ff.def_style("bond", "harmonic").def_type("OW-HW", ow, hw, k=450.0, r0=0.9572)
 pairs = ff.def_style("pair", "lj/cut", {"cutoff": 10.0})
 pairs.def_type("OW", ow, epsilon=0.1521, sigma=3.1507)
 pairs.def_type("HW", hw, epsilon=0.0, sigma=0.0)
+ff.def_style("pair", "coul/cut", {"cutoff": 10.0})  # the charges' pair term
 
 lmp.generate_inputs(water, ff, project / "lammps")
 
