@@ -192,13 +192,11 @@ def _pdb_atom_names(path):
 
 class TestGenerateInputs:
     def test_writes_pdb_forcefield_and_script(self, engine, water_system, tmp_path):
-        paths = engine.generate_inputs(
-            *water_system, OpenmmSimulationConfig(), tmp_path
-        )
+        paths = engine.generate_inputs(*water_system, tmp_path)
         assert {key: p.name for key, p in paths.items()} == {
+            "input": "simulate.py",
             "pdb": "system.pdb",
             "forcefield": "forcefield.xml",
-            "script": "simulate.py",
         }
         assert all(p.is_file() for p in paths.values())
 
@@ -210,9 +208,7 @@ class TestGenerateInputs:
         PDB names its atoms."""
         import xml.etree.ElementTree as ET
 
-        paths = engine.generate_inputs(
-            *water_system, OpenmmSimulationConfig(), tmp_path
-        )
+        paths = engine.generate_inputs(*water_system, tmp_path)
         root = ET.parse(paths["forcefield"]).getroot()
         residues = root.find("Residues")
         assert residues is not None
@@ -230,9 +226,7 @@ class TestGenerateInputs:
         self, engine, water_system, tmp_path
     ):
         app = pytest.importorskip("openmm.app")
-        paths = engine.generate_inputs(
-            *water_system, OpenmmSimulationConfig(), tmp_path
-        )
+        paths = engine.generate_inputs(*water_system, tmp_path)
         pdb = app.PDBFile(str(paths["pdb"]))
         system = app.ForceField(str(paths["forcefield"])).createSystem(
             pdb.topology, nonbondedMethod=app.NoCutoff
@@ -246,9 +240,9 @@ class TestNonbondedFromTheForceField:
     @staticmethod
     def _create_system(engine, frame, ff, tmp_path, **config_fields):
         paths = engine.generate_inputs(
-            frame, ff, OpenmmSimulationConfig(**config_fields), tmp_path
+            frame, ff, tmp_path, simulation=OpenmmSimulationConfig(**config_fields)
         )
-        script = paths["script"].read_text(encoding="utf-8")
+        script = paths["input"].read_text(encoding="utf-8")
         start = script.index("system = ff.createSystem(")
         return script[start : script.index(")\n", start)]
 
@@ -310,16 +304,14 @@ class TestBoxFreeFrame:
     and a method needing a periodic cell is refused before any file."""
 
     def test_defaults_to_no_cutoff(self, engine, water_system, tmp_path):
-        paths = engine.generate_inputs(
-            *water_system, OpenmmSimulationConfig(), tmp_path
-        )
-        script = paths["script"].read_text(encoding="utf-8")
+        paths = engine.generate_inputs(*water_system, tmp_path)
+        script = paths["input"].read_text(encoding="utf-8")
         assert "nonbondedMethod=NoCutoff," in script
 
     def test_a_non_periodic_cutoff_is_kept(self, engine, water_system, tmp_path):
         config = OpenmmSimulationConfig(nonbonded_method="CutoffNonPeriodic")
-        paths = engine.generate_inputs(*water_system, config, tmp_path)
-        assert "nonbondedMethod=CutoffNonPeriodic," in paths["script"].read_text(
+        paths = engine.generate_inputs(*water_system, tmp_path, simulation=config)
+        assert "nonbondedMethod=CutoffNonPeriodic," in paths["input"].read_text(
             encoding="utf-8"
         )
 
@@ -337,7 +329,9 @@ class TestBoxFreeFrame:
     ):
         with pytest.raises(ValueError, match=f"{match}.*needs a periodic box"):
             engine.generate_inputs(
-                *water_system, OpenmmSimulationConfig(**fields), tmp_path / "out"
+                *water_system,
+                tmp_path / "out",
+                simulation=OpenmmSimulationConfig(**fields),
             )
         assert not (tmp_path / "out").exists()
 

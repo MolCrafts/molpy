@@ -1,18 +1,23 @@
 """External simulation engines.
 
 :class:`Engine` is the abstract base for running an external program
-(command construction, working directory, launcher and environment). Each
-concrete engine has **one** input writer, ``generate_inputs``, and ``run``:
+(command construction, working directory, launcher and environment). Every
+engine has ``run``. The LAMMPS, GROMACS and OpenMM engines each have **one**
+input writer with one signature, ``generate_inputs(frame, forcefield,
+output_dir, *, ...)``, returning the written paths by name; ``"input"`` is
+always the runnable input ``run`` takes, and the other keys are the
+engine's own:
 
-* :class:`LammpsEngine` — ``generate_inputs(frame, ff, out)`` writes the data
-  file, force-field settings, init and input script; ``minimize`` / ``md``
-  relax a frame through the same deck.
-* :class:`GromacsEngine` — ``generate_inputs(frame, ff, out)`` writes the
-  ``.gro``, ``.top`` and ``.mdp`` templates; ``run`` grompp's and mdrun's an
-  ``.mdp``.
-* :class:`OpenmmEngine` — ``generate_inputs(frame, ff, config, out)`` writes
-  the PDB, the force-field XML and a Python simulation script.
-* :class:`Cp2kEngine` — runs a CP2K input.
+* :class:`LammpsEngine` — ``"input"`` (the input script), ``"data"``,
+  ``"settings"``, ``"init"``; ``minimize`` / ``md`` relax a frame through the
+  same deck.
+* :class:`GromacsEngine` — ``"input"`` (``em.mdp``), ``"gro"``, ``"top"``,
+  ``"nvt"``; ``run`` grompp's and mdrun's an ``.mdp``, each stage from the
+  structure the previous one wrote.
+* :class:`OpenmmEngine` — ``"input"`` (the Python simulation script),
+  ``"pdb"``, ``"forcefield"``; the simulation is the keyword-only
+  ``simulation=`` (:class:`OpenmmSimulationConfig`).
+* :class:`Cp2kEngine` — runs a CP2K input you write; it generates no inputs.
 
 One periodicity policy holds for every engine: a frame with a periodic box
 is a periodic system; a frame without one (``Atomistic.to_frame()`` carries

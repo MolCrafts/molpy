@@ -39,9 +39,9 @@ def test_writes_coordinates_topology_and_mdps(tmp_path, system):
     engine = GromacsEngine(prefix="w", check_executable=False)
     paths = engine.generate_inputs(frame, ff, tmp_path, temperature=280.0)
     assert {key: p.name for key, p in paths.items()} == {
+        "input": "em.mdp",
         "gro": "w.gro",
         "top": "w.top",
-        "em": "em.mdp",
         "nvt": "nvt.mdp",
     }
     assert all(p.exists() for p in paths.values())
@@ -52,7 +52,7 @@ def test_writes_coordinates_topology_and_mdps(tmp_path, system):
         assert directive in top
     assert "[ system ]" in top
     assert "[ molecules ]" in top
-    assert "integrator      = steep" in paths["em"].read_text(encoding="utf-8")
+    assert "integrator      = steep" in paths["input"].read_text(encoding="utf-8")
     assert "ref_t           = 280.0" in paths["nvt"].read_text(encoding="utf-8")
 
 
@@ -79,7 +79,7 @@ def test_mdp_nonbonded_settings_are_the_force_fields(tmp_path, system):
     ff.get_style("pair", "lj/cut")["cutoff"] = 10.0
     ff.def_style("pair", "coul/cut", {"cutoff": 9.0})
     paths = GromacsEngine(check_executable=False).generate_inputs(frame, ff, tmp_path)
-    for stage in ("em", "nvt"):
+    for stage in ("input", "nvt"):
         assert _nonbonded(_mdp(paths[stage])) == {
             "coulombtype": "Cut-off",
             "rcoulomb": "0.9",
@@ -93,7 +93,7 @@ def test_a_single_stated_cutoff_is_both(tmp_path, system):
     ff.get_style("pair", "lj/cut")["cutoff"] = 11.0
     ff.def_style("pair", "coul/cut")
     paths = GromacsEngine(check_executable=False).generate_inputs(frame, ff, tmp_path)
-    assert _nonbonded(_mdp(paths["em"])) == {
+    assert _nonbonded(_mdp(paths["input"])) == {
         "coulombtype": "Cut-off",
         "rcoulomb": "1.1",
         "rvdw": "1.1",
@@ -105,7 +105,7 @@ def test_unstated_settings_fall_back_and_overrides_win(tmp_path, system):
     frame, ff = system  # lj/cut with no cutoff, no Coulomb style
     engine = GromacsEngine(check_executable=False)
     paths = engine.generate_inputs(frame, ff, tmp_path / "default")
-    assert _nonbonded(_mdp(paths["em"])) == {
+    assert _nonbonded(_mdp(paths["input"])) == {
         "coulombtype": "PME",
         "rcoulomb": "1.2",
         "rvdw": "1.2",
@@ -148,7 +148,7 @@ def test_run_grompps_then_mdruns_the_input_mdp(tmp_path, system, monkeypatch):
     config = load_config({"engine": {"gromacs": {"launcher": ["mpirun", "-np", "4"]}}})
     engine = GromacsEngine(config=config, check_executable=False)
     paths = engine.generate_inputs(*system, tmp_path)
-    engine.run(Script.from_path(paths["em"]), workdir=tmp_path)
+    engine.run(Script.from_path(paths["input"]), workdir=tmp_path)
     assert calls == [
         [
             "gmx",

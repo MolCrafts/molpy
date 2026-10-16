@@ -1,7 +1,8 @@
 """CP2K quantum chemistry / molecular dynamics engine.
 
-Wraps the `CP2K <https://www.cp2k.org>`_ program.  The engine writes an
-input script to the working directory and runs::
+Wraps the `CP2K <https://www.cp2k.org>`_ program.  It generates no inputs:
+you write the CP2K input (a :class:`~molpy.engine.Script`), and the engine
+writes it to the working directory and runs::
 
     [launcher...] cp2k.psmp -i <input> -o cp2k.out
 

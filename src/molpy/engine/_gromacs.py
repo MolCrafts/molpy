@@ -58,7 +58,7 @@ class GromacsEngine(Engine):
 
         engine = GromacsEngine(check_executable=False)
         paths = engine.generate_inputs(frame, ff, "./md")
-        engine.run(Script.from_path(paths["em"]), workdir="./md")
+        engine.run(Script.from_path(paths["input"]), workdir="./md")
     """
 
     tool = "gromacs"
@@ -184,7 +184,9 @@ class GromacsEngine(Engine):
             rvdw: Van der Waals cutoff (nm); ``None`` is the force field's.
 
         Returns:
-            ``{"gro", "top", "em", "nvt"}`` mapped to the written paths.
+            ``{"input", "gro", "top", "nvt"}`` mapped to the written paths:
+            ``"input"`` is ``em.mdp``, the first stage :meth:`run` takes, and
+            ``"nvt"`` the stage after it.
 
         Raises:
             ValueError: If the frame has no periodic box, before any file is
@@ -197,15 +199,15 @@ class GromacsEngine(Engine):
         out = Path(output_dir)
         out.mkdir(parents=True, exist_ok=True)
         paths = {
+            "input": out / "em.mdp",
             "gro": out / f"{self.prefix}.gro",
             "top": out / f"{self.prefix}.top",
-            "em": out / "em.mdp",
             "nvt": out / "nvt.mdp",
         }
         nonbonded = _nonbonded_mdp(forcefield, coulombtype, rcoulomb, rvdw)
         write_gro(paths["gro"], frame)
         write_top_system(paths["top"], forcefield, frame)
-        paths["em"].write_text(_EM_MDP.format(**nonbonded), encoding="utf-8")
+        paths["input"].write_text(_EM_MDP.format(**nonbonded), encoding="utf-8")
         paths["nvt"].write_text(
             _NVT_MDP.format(temperature=temperature, **nonbonded), encoding="utf-8"
         )

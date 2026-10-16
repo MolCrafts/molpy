@@ -346,3 +346,48 @@ def test_lammps_identity():
     assert engine._get_default_extension() == ".lmp"
     assert Path(engine.executable).name == "lmp"
     assert not hasattr(engine, "name")
+
+
+# ---------------------------------------------------------------------------
+# One input-writer contract
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("engine_cls", [LammpsEngine, GromacsEngine, OpenmmEngine])
+def test_generate_inputs_has_one_signature(engine_cls):
+    """``generate_inputs(frame, forcefield, output_dir, *, ...)`` everywhere."""
+    import inspect
+
+    params = list(inspect.signature(engine_cls.generate_inputs).parameters.values())
+    assert [p.name for p in params[:4]] == [
+        "self",
+        "frame",
+        "forcefield",
+        "output_dir",
+    ]
+    assert all(p.kind is inspect.Parameter.KEYWORD_ONLY for p in params[4:])
+
+
+def test_cp2k_generates_no_inputs():
+    assert not hasattr(Cp2kEngine, "generate_inputs")
+
+
+def test_every_deck_names_its_runnable_input(tmp_path, water, tip3p):
+    import molpy as mp
+
+    tip3p.get_style("pair", "lj/cut")["cutoff"] = 10.0
+    tip3p.def_style("pair", "coul/cut", {"cutoff": 10.0})
+    o, h1, h2 = list(water.atoms)
+    ow = tip3p.get_style("atom", "full").get_type_by_name("OW")
+    hw = tip3p.get_style("atom", "full").get_type_by_name("HW")
+    tip3p.def_style("angle", "harmonic").def_type(
+        "HW-OW-HW", hw, ow, hw, k=55.0, theta0=104.52
+    )
+    water.def_angle(h1, o, h2, type="HW-OW-HW")
+    frame = water.to_frame()
+    frame.box = mp.Box.cube(30.0)
+    for engine_cls in (LammpsEngine, GromacsEngine, OpenmmEngine):
+        out = tmp_path / engine_cls.tool
+        paths = engine_cls(check_executable=False).generate_inputs(frame, tip3p, out)
+        assert paths["input"].is_file()
+        assert paths["input"].parent == out

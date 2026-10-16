@@ -20,7 +20,7 @@ Think of an Engine like a laboratory instrument controller that operates in two 
 
 This separation is intentional. It lets you inspect and hand-edit the generated files before committing to a run, or copy them to an HPC cluster and submit them to a job scheduler without ever touching the engine's `run()` method. Generate-only is not a degraded mode; it is the primary workflow on any system where the MD binary is not installed locally.
 
-`LammpsEngine.generate_inputs(frame, ff, out)` writes a complete LAMMPS deck, `GromacsEngine.generate_inputs(frame, ff, out)` a GROMACS input set, and `OpenmmEngine.generate_inputs(frame, ff, config, out)` the PDB, XML force field and Python driver; none of them needs the program installed. For a hand-written control script (and for CP2K), you build a `Script` object yourself and either save it to disk or pass it to `run()`.
+`LammpsEngine.generate_inputs(frame, ff, out)` writes a complete LAMMPS deck, `GromacsEngine.generate_inputs(frame, ff, out)` a GROMACS input set, and `OpenmmEngine.generate_inputs(frame, ff, out, simulation=config)` the PDB, XML force field and Python driver; none of them needs the program installed. All three share one signature and return the written paths by name, `"input"` always being the runnable input `run()` takes. For a hand-written control script (and for CP2K, which generates no inputs), you build a `Script` object yourself and either save it to disk or pass it to `run()`.
 
 ---
 
@@ -48,6 +48,7 @@ water = mp.Frame(
     blocks={
         "atoms": {
             "type": ["OW", "HW", "HW"],
+            "element": ["O", "H", "H"],
             "charge": [-0.834, 0.417, 0.417],
             "mol_id": [1, 1, 1],
             "x": [0.0, 0.9572, -0.24],
@@ -82,7 +83,7 @@ print(sorted(deck))  # ['data', 'init', 'input', 'settings']
 ```python
 gmx = mp.engine.GromacsEngine(check_executable=False)
 files = gmx.generate_inputs(water, ff, "./gromacs_run", temperature=300.0)
-print(sorted(files))  # ['em', 'gro', 'nvt', 'top']
+print(sorted(files))  # ['gro', 'input', 'nvt', 'top']
 ```
 
 The `.top` is the whole topology `mp.io.write_top_system`
@@ -90,7 +91,8 @@ writes: the force field's directives, one `[ moleculetype ]` per molecule
 (by the atoms' `mol_id`) with each row's parameters, `[ system ]` and
 `[ molecules ]` — what `grompp -p` reads. GROMACS excludes every pair within
 three bonds, so the frame carries its angles (and dihedrals:
-`Atomistic.generate_topology`). `run(Script.from_path(files["em"]))` grompp's
+`Atomistic.generate_topology`). `files["input"]` is `em.mdp`;
+`run(Script.from_path(files["input"]))` grompp's
 the `.mdp` against the `.gro` and `.top`, then mdrun's it (under the engine's
 `launcher`).
 
@@ -178,9 +180,9 @@ script = Script.from_path("./submit/input.lmp")
 
 ### OpenMM: letting the engine build the files
 
-OpenMM's workflow is more tightly integrated because the three required files are interdependent: the Python driver script embeds the filenames of the PDB and XML force field. Rather than assembling these by hand, `OpenmmEngine.generate_inputs()` accepts MolPy's own data objects and writes all three files consistently.
+OpenMM's workflow is more tightly integrated because the three required files are interdependent: the Python driver script embeds the filenames of the PDB and XML force field, and `createSystem` matches every residue of the PDB against a `<Residue>` template of the XML by its atom names. Rather than assembling these by hand, `OpenmmEngine.generate_inputs()` accepts MolPy's own data objects and writes all three files consistently: the PDB with `mp.io.write_pdb`, the XML with `mp.io.write_openmm_system` (the force field plus the PDB's residue templates).
 
-The configuration is a dataclass — `OpenmmSimulationConfig` — whose fields document their units explicitly. It round-trips through JSON, which makes it easy to store alongside the generated files for reproducibility.
+The simulation is a dataclass — `OpenmmSimulationConfig`, passed as the keyword-only `simulation=` — whose fields document their units explicitly. It is validated when it is built (an unknown `ensemble`, `nonbonded_method` or `constraints`, such as `"nvt"` or `"EWALD"`, raises `ValueError`, from `from_json` too) and round-trips through JSON, which makes it easy to store alongside the generated files for reproducibility. `NVE` runs a `VerletIntegrator` from velocities drawn at `temperature`; `minimize` writes the minimised coordinates to `output_pdb`.
 
 ```python
 from pathlib import Path
@@ -188,28 +190,26 @@ from pathlib import Path
 from molpy.engine import OpenmmEngine, OpenmmSimulationConfig
 
 Path("./omm_run").mkdir(parents=True, exist_ok=True)
-ff = mp.ff.forcefield.ForceField("water")
 
-config = OpenmmSimulationConfig(
-    ensemble="NPT",
+simulation = OpenmmSimulationConfig(
+    ensemble="NVT",  # one water: NPT (pressure=, in bar) is for a condensed box
     temperature=300.0,  # K
-    pressure=1.0,  # bar
     timestep_fs=2.0,  # fs
     n_steps=500_000,
     platform="CUDA",
 )
-config.to_json("./omm_run/config.json")
+simulation.to_json("./omm_run/config.json")
 
 engine = OpenmmEngine(check_executable=False)
-paths = engine.generate_inputs(frame, ff, config, "./omm_run")
-# paths -> {"pdb": Path("./omm_run/system.pdb"),
-#            "forcefield": Path("./omm_run/forcefield.xml"),
-#            "script": Path("./omm_run/simulate.py")}
+paths = engine.generate_inputs(water, ff, "./omm_run", simulation=simulation)
+# paths -> {"input": Path("./omm_run/simulate.py"),
+#           "pdb": Path("./omm_run/system.pdb"),
+#           "forcefield": Path("./omm_run/forcefield.xml")}
 ```
 
 `check_executable=False` tells the engine not to verify that its Python interpreter (`engine.openmm.executable`, `python` by default) is on PATH at construction time. This is the right choice whenever you are only generating files — the Python interpreter that will eventually run the simulation may be on a different machine entirely.
 
-The returned `paths` dictionary maps string keys to `Path` objects. You can pass `paths["script"]` directly to `engine.run()` later, or hand all three files to a cluster job that has OpenMM installed.
+The returned `paths` dictionary maps string keys to `Path` objects. You can pass `paths["input"]` directly to `engine.run()` later, or hand all three files to a cluster job that has OpenMM installed.
 
 ---
 
@@ -300,15 +300,17 @@ Once `generate_inputs()` has produced the files, calling `run()` with the script
 # docs: skip — needs conda env `openmm-env` with OpenMM; engines unit-tested with mocks
 from molpy.config import load_config
 
+# `config` is molpy's configuration (which interpreter runs the script);
+# `simulation` is what the script simulates.
 config = load_config({"engine": {"openmm": {"env": "openmm-env", "env_manager": "conda"}}})
 engine = OpenmmEngine(config=config)
-paths = engine.generate_inputs(frame, ff, config, "./omm_run")
-assert paths["script"].exists()
+paths = engine.generate_inputs(water, ff, "./omm_run", simulation=simulation)
+assert paths["input"].exists()
 
 # The launch itself is a real simulation, so it is the one step this page does
 # not perform for you:
 #
-#     result = engine.run(paths["script"], workdir="./omm_run", capture_output=True)
+#     result = engine.run(paths["input"], workdir="./omm_run", capture_output=True)
 #
 # which becomes: conda run --no-capture-output -n openmm-env python simulate.py
 ```

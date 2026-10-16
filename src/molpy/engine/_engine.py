@@ -8,7 +8,8 @@ specific program.
 
 The two supported usage modes are:
 
-1. **Generate-only** — write input files to disk without executing anything::
+1. **Generate-only** — write input files to disk without executing anything
+   (LAMMPS, GROMACS and OpenMM; ``paths["input"]`` is the runnable input)::
 
        paths = engine.generate_inputs(frame, ff, "./output")
 

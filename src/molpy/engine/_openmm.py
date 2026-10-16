@@ -9,14 +9,14 @@ Two usage modes are supported:
 
 1. **Generate only** (no OpenMM required)::
 
-       config = OpenmmSimulationConfig(ensemble="NVT", n_steps=50_000)
+       simulation = OpenmmSimulationConfig(ensemble="NVT", n_steps=50_000)
        engine = OpenmmEngine(check_executable=False)
-       paths = engine.generate_inputs(frame, ff, config, "./output")
+       paths = engine.generate_inputs(frame, ff, "./output", simulation=simulation)
        # Hand the files to any HPC scheduler.
 
 2. **Generate and run** (OpenMM must be importable)::
 
-       result = engine.run(paths["script"], workdir="./output")
+       result = engine.run(paths["input"], workdir="./output")
 
 The Python interpreter that runs the script, its environment, launcher and
 time limit are the ``[engine.openmm]`` settings of molpy's configuration
@@ -219,7 +219,7 @@ class OpenmmEngine(Engine):
 
     or via the engine::
 
-        result = engine.run(paths["script"], workdir="./output")
+        result = engine.run(paths["input"], workdir="./output")
 
     which runs ``engine.openmm.executable`` (the Python interpreter, ``python``
     by default) in the configured environment.  Settings:
@@ -228,10 +228,10 @@ class OpenmmEngine(Engine):
     Example:
         >>> from molpy.engine import OpenmmEngine, OpenmmSimulationConfig
         >>>
-        >>> config = OpenmmSimulationConfig(ensemble="NVT", n_steps=10_000)
+        >>> simulation = OpenmmSimulationConfig(ensemble="NVT", n_steps=10_000)
         >>> engine = OpenmmEngine(check_executable=False)
-        >>> paths = engine.generate_inputs(frame, ff, config, "./output")
-        >>> # paths["pdb"], paths["forcefield"], paths["script"]
+        >>> paths = engine.generate_inputs(frame, ff, "./output", simulation=simulation)
+        >>> # paths["input"] (simulate.py), paths["pdb"], paths["forcefield"]
     """
 
     tool = "openmm"
@@ -281,11 +281,11 @@ class OpenmmEngine(Engine):
 
     def generate_inputs(
         self,
-        frame: "Frame",
-        forcefield: "ForceField",
-        config: OpenmmSimulationConfig,
+        frame: Frame,
+        forcefield: ForceField,
         output_dir: PathLike,
         *,
+        simulation: OpenmmSimulationConfig | None = None,
         pdb_filename: str = "system.pdb",
         ff_filename: str = "forcefield.xml",
         script_filename: str = "simulate.py",
@@ -304,24 +304,29 @@ class OpenmmEngine(Engine):
                 ``element`` atom columns, ``bonds``) with atom positions.
             forcefield: A :class:`~molpy.ff.forcefield.ForceField` holding an
                 atom type for every ``type`` the frame names.
-            config: Simulation parameters; an unset ``nonbonded_method`` or
-                ``nonbonded_cutoff_nm`` is the force field's (``NoCutoff`` for
-                a frame without a periodic box).
             output_dir: Directory where files are written (created if absent).
+            simulation: Simulation parameters (``None``: the defaults); an
+                unset ``nonbonded_method`` or ``nonbonded_cutoff_nm`` is the
+                force field's (``NoCutoff`` for a frame without a periodic
+                box).
             pdb_filename: Name for the PDB coordinate file.
             ff_filename: Name for the XML force field file.
             script_filename: Name for the Python simulation script.
 
         Returns:
-            Dictionary with keys ``"pdb"``, ``"forcefield"``, and ``"script"``
-            mapping to :class:`~pathlib.Path` objects.
+            ``{"input", "pdb", "forcefield"}`` mapped to the written paths;
+            ``"input"`` is the simulation script :meth:`run` takes.
 
         Raises:
-            ValueError: If the frame has no periodic box and the config asks
+            ValueError: If the frame has no periodic box and *simulation* asks
                 for a periodic method (``CutoffPeriodic``, ``PME``,
                 ``Ewald``) or ``NPT``; before any file is written.
         """
-        config = _with_nonbonded(config, forcefield, periodic=is_periodic(frame))
+        resolved = _with_nonbonded(
+            simulation if simulation is not None else OpenmmSimulationConfig(),
+            forcefield,
+            periodic=is_periodic(frame),
+        )
         out = Path(output_dir)
         out.mkdir(parents=True, exist_ok=True)
 
@@ -331,23 +336,25 @@ class OpenmmEngine(Engine):
 
         # The XML carries a residue template for every residue of the PDB
         # (same atom names), which createSystem matches the topology against.
-        write_pdb(pdb_path, frame)
+        # It goes first: what OpenMM's XML cannot hold is refused before any
+        # other file is written.
         write_openmm_system(ff_path, forcefield, frame)
+        write_pdb(pdb_path, frame)
 
         script_text = self._render_simulation_script(
-            config,
+            resolved,
             pdb_filename=pdb_filename,
             ff_filename=ff_filename,
         )
         script_path.write_text(script_text, encoding="utf-8")
 
-        paths = {"pdb": pdb_path, "forcefield": ff_path, "script": script_path}
+        paths = {"input": script_path, "pdb": pdb_path, "forcefield": ff_path}
         self.logger.info(
             "inputs written",
             output_dir=str(out),
             files={key: path.name for key, path in paths.items()},
-            ensemble=config.ensemble,
-            n_steps=config.n_steps,
+            ensemble=resolved.ensemble,
+            n_steps=resolved.n_steps,
         )
         return paths
 
