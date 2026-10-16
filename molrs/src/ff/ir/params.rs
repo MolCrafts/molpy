@@ -128,6 +128,47 @@ impl Params {
             && parameters(&self.strings) == parameters(&other.strings)
             && parameters(&self.arrays) == parameters(&other.arrays)
     }
+
+    /// The keys that are parameters: `self` without its annotation columns
+    /// (`desc`, `doi`, `smarts`, …).
+    pub fn parameters(&self) -> Params {
+        use crate::ff::ir::is_parameter_column;
+        fn kept<V: Clone>(map: &HashMap<String, V>) -> HashMap<String, V> {
+            map.iter()
+                .filter(|(key, _)| is_parameter_column(key))
+                .map(|(key, value)| (key.clone(), value.clone()))
+                .collect()
+        }
+        Params {
+            inner: kept(&self.inner),
+            strings: kept(&self.strings),
+            arrays: kept(&self.arrays),
+        }
+    }
+
+    /// Whether `self` and `other` hold the same keys on every side and the
+    /// same values within `rel_tol`: equal strings, and numbers (array
+    /// elements, of arrays of one shape) that are equal or differ by at most
+    /// `rel_tol` of the larger magnitude.
+    ///
+    /// Not `==`: a re-definition is the same definition only when it is
+    /// identical ([`Params`]). This is for comparing two **sources** of one
+    /// parameter, which store it at their own precision — an AMBER prmtop
+    /// keeps eight significant digits of a value `gaff.dat` writes in four.
+    pub fn approx_eq(&self, other: &Params, rel_tol: f64) -> bool {
+        let close = |a: f64, b: f64| a == b || (a - b).abs() <= rel_tol * a.abs().max(b.abs());
+        fn same_keys<V>(a: &HashMap<String, V>, b: &HashMap<String, V>) -> bool {
+            a.len() == b.len() && a.keys().all(|k| b.contains_key(k))
+        }
+        same_keys(&self.inner, &other.inner)
+            && self.inner.iter().all(|(k, &v)| close(v, other.inner[k]))
+            && self.strings == other.strings
+            && same_keys(&self.arrays, &other.arrays)
+            && self.arrays.iter().all(|(k, a)| {
+                let b = &other.arrays[k];
+                a.shape() == b.shape() && a.iter().zip(b.iter()).all(|(&x, &y)| close(x, y))
+            })
+    }
 }
 
 /// The key a pair kernel finds the row of atom types `a` and `b` under in

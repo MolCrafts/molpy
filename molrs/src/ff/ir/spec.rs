@@ -286,6 +286,61 @@ impl StyleSpec {
         Ok((gathered, rows))
     }
 
+    /// The style params a kernel of this style reads: every declared style
+    /// parameter, its default filled where `style` lacks it, and nothing
+    /// else. A key the spec does not declare is dropped.
+    ///
+    /// Two force fields that state a style differently but alike — one
+    /// spells out a default (`coul/cut`'s `delta = 0`), the other leaves it
+    /// out — give the same params here.
+    ///
+    /// # Errors
+    ///
+    /// A value of the wrong kind, as [`gather`](Self::gather).
+    pub fn priced_style_params(&self, style: &Params) -> Result<Params, IrError> {
+        self.priced("", &self.style_params, style)
+    }
+
+    /// The row params a kernel of this style reads off `row`: every declared
+    /// per-type parameter (each member of an indexed family) with its
+    /// default filled, and nothing else. What the spec does not declare —
+    /// an annotation (`element`, `desc`), an estimate's provenance, a
+    /// reader's bookkeeping (`id`) — prices nothing and is dropped.
+    ///
+    /// # Errors
+    ///
+    /// A value of the wrong kind, as [`gather`](Self::gather).
+    pub fn priced_row(&self, label: &str, row: &Params) -> Result<Params, IrError> {
+        self.priced(label, &self.params, row)
+    }
+
+    /// `params` with the defaults of `decls` filled, restricted to the keys
+    /// `decls` declare.
+    fn priced(&self, label: &str, decls: &[ParamSpec], params: &Params) -> Result<Params, IrError> {
+        let mut filled = params.clone();
+        self.fill(label, decls, &mut filled)?;
+        let declared = |key: &str| {
+            decls.iter().any(|d| {
+                if d.indexed {
+                    is_member(key, &d.name)
+                } else {
+                    key == d.name
+                }
+            })
+        };
+        let mut out = Params::new();
+        for (key, value) in filled.iter().filter(|(k, _)| declared(k)) {
+            out.set(key, value);
+        }
+        for (key, value) in filled.iter_strings().filter(|(k, _)| declared(k)) {
+            out.set_str(key, value);
+        }
+        for (key, value) in filled.iter_arrays().filter(|(k, _)| declared(k)) {
+            out.set_array(key, value.clone());
+        }
+        Ok(out)
+    }
+
     /// A row that states nothing, with every per-type default: what a
     /// per-instance term without a type row reads.
     pub fn default_row(&self) -> Params {
@@ -394,18 +449,21 @@ impl StyleSpec {
     }
 }
 
+/// Whether `key` is a member `<base><m>` of the indexed family `base`, or
+/// `base` itself.
+fn is_member(key: &str, base: &str) -> bool {
+    key.strip_prefix(base)
+        .is_some_and(|m| m.is_empty() || m.bytes().all(|b| b.is_ascii_digit()))
+}
+
 /// Every key of `row` (numeric, text or array) that is a member
 /// `<base><m>` of the indexed family `base`, or `base` itself.
 fn family(row: &Params, base: &str) -> Vec<String> {
-    let member = |key: &str| {
-        key.strip_prefix(base)
-            .is_some_and(|m| m.is_empty() || m.bytes().all(|b| b.is_ascii_digit()))
-    };
     row.iter()
         .map(|(k, _)| k)
         .chain(row.iter_strings().map(|(k, _)| k))
         .chain(row.iter_arrays().map(|(k, _)| k))
-        .filter(|k| member(k))
+        .filter(|k| is_member(k, base))
         .map(str::to_owned)
         .collect()
 }
