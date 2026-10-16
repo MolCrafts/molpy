@@ -285,6 +285,20 @@ class TestCanonicalNativeColumns:
         back = molrs.io.read_mol2(out)
         assert list(back["atoms"]["res_name"]) == ["BEN", "AMD"]
 
+    def test_mol2_bond_orders_survive_without_the_type_column(self, tmp_path):
+        path = tmp_path / "x.mol2"
+        path.write_text(
+            "@<TRIPOS>MOLECULE\nX\n3 2 1 0 0\nSMALL\nNO_CHARGES\n@<TRIPOS>ATOM\n"
+            "1 C1 0.0 0.0 0.0 C.ar 1 X\n2 C2 1.4 0.0 0.0 C.2 1 X\n"
+            "3 O1 2.6 0.0 0.0 O.2 1 X\n@<TRIPOS>BOND\n1 1 2 ar\n2 2 3 2\n",
+            encoding="utf-8",
+        )
+        frame = molrs.io.read_mol2(path)
+        del frame["bonds"]["type"]
+        back = molrs.io.read_mol2_str(molrs.io.write_mol2_str(frame))
+        assert list(back["bonds"]["type"]) == ["ar", "2"]
+        assert list(back["bonds"]["bond_type"]) == [4, 2]
+
     def test_extxyz_species_is_element_and_wide_properties_stay_whole(self, tmp_path):
         path = tmp_path / "f.xyz"
         path.write_text(
@@ -368,3 +382,4 @@ class TestInpcrdIntoFrame:
         with pytest.raises(OSError, match="rows"):
             molrs.io.read_inpcrd(path, frame)
         assert "y" not in frame["atoms"]
+

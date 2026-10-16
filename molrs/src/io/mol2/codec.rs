@@ -439,6 +439,10 @@ impl<R: BufRead> FrameReader for Mol2Reader<R> {
 // ---------------------------------------------------------------------------
 
 /// Write a Frame as a single-molecule `.mol2` file.
+///
+/// A bond's SYBYL type is its `type` column when the frame has one, else the
+/// canonical `bond_type` / `bond_number` codes mapped back (`4` → `ar`), so a
+/// frame read from MOL2 keeps its aromatic and double bonds without `type`.
 pub fn write_mol2<P: AsRef<Path>>(path: P, frame: &Frame) -> Result<()> {
     let file = std::fs::File::create(path.as_ref())?;
     let mut w = BufWriter::new(file);
@@ -542,8 +546,13 @@ fn write_frame_to<W: Write>(writer: &mut W, frame: &Frame) -> Result<()> {
             .and_then(|c| c.as_uint())
             .ok_or_else(|| invalid_data("bonds.atomj missing"))?;
         let btype_col = b.get(keys::TYPE).and_then(|c| c.as_string());
+        let class_col = b.get(keys::BOND_TYPE).and_then(|c| c.as_uint());
+        let number_col = b.get(keys::BOND_NUMBER).and_then(|c| c.as_uint());
         for i in 0..n_bonds {
-            let bt = btype_col.map(|c| c[[i]].as_str()).unwrap_or("1");
+            let bt = match btype_col {
+                Some(c) => c[[i]].as_str(),
+                None => sybyl_bond_token(class_col.map(|c| c[[i]]), number_col.map(|c| c[[i]]))?,
+            };
             writeln!(
                 writer,
                 "{:>6} {:>6} {:>6} {}",
@@ -555,6 +564,50 @@ fn write_frame_to<W: Write>(writer: &mut W, frame: &Frame) -> Result<()> {
         }
     }
     Ok(())
+}
+
+/// The SYBYL bond token for a bond with no `type` column: the inverse of
+/// the reader's map, from the canonical [`keys::BOND_TYPE`] class (aromatic
+/// is `ar`), else the [`keys::BOND_NUMBER`] count when the class is unknown
+/// or absent. A bond that states neither column is written single, as SYBYL
+/// files without orders are; one whose columns say unknown (`0`) is `un`.
+///
+/// # Errors
+///
+/// `InvalidData` for a code outside the schema's range, or a quadruple bond,
+/// which SYBYL cannot spell.
+fn sybyl_bond_token(class: Option<Idx>, number: Option<Idx>) -> Result<&'static str> {
+    let token = |code: Idx, key: &str| -> Result<Option<&'static str>> {
+        match code {
+            0 => Ok(None),
+            1 => Ok(Some("1")),
+            2 => Ok(Some("2")),
+            3 => Ok(Some("3")),
+            4 if key == keys::BOND_TYPE => Ok(Some("ar")),
+            _ => Err(invalid_data(format!(
+                "MOL2 write: bonds.{key} = {code} has no SYBYL bond type"
+            ))),
+        }
+    };
+    if let Some(found) = class
+        .map(|c| token(c, keys::BOND_TYPE))
+        .transpose()?
+        .flatten()
+    {
+        return Ok(found);
+    }
+    if let Some(found) = number
+        .map(|n| token(n, keys::BOND_NUMBER))
+        .transpose()?
+        .flatten()
+    {
+        return Ok(found);
+    }
+    Ok(if class.is_none() && number.is_none() {
+        "1"
+    } else {
+        "un"
+    })
 }
 
 /// `FrameWriter`-trait wrapper.
@@ -654,6 +707,45 @@ mod tests {
             .and_then(|c| c.as_string())
             .unwrap();
         assert_eq!(btype[[0]], "am");
+    }
+
+    #[test]
+    fn bond_orders_round_trip_without_the_type_column() {
+        const BENZALDEHYDE_ISH: &str = "@<TRIPOS>MOLECULE\nX\n4 3 1 0 0\nSMALL\nNO_CHARGES\n@<TRIPOS>ATOM\n1 C1 0.0 0.0 0.0 C.ar 1 X\n2 C2 1.4 0.0 0.0 C.ar 1 X\n3 C3 2.8 0.0 0.0 C.2 1 X\n4 O1 4.0 0.0 0.0 O.2 1 X\n@<TRIPOS>BOND\n1 1 2 ar\n2 2 3 1\n3 3 4 2\n";
+        let mut frame = Mol2Reader::new(Cursor::new(BENZALDEHYDE_ISH.as_bytes()))
+            .read()
+            .unwrap()
+            .unwrap();
+        // What a caller does when its `type` column is a force-field label:
+        // drop it, leaving the canonical columns the reader wrote.
+        frame.get_mut("bonds").unwrap().remove(keys::TYPE);
+        let text = write_mol2_str(&frame).unwrap();
+        let back = Mol2Reader::new(Cursor::new(text.as_bytes()))
+            .read()
+            .unwrap()
+            .unwrap();
+        let types: Vec<String> = back
+            .get("bonds")
+            .unwrap()
+            .get(keys::TYPE)
+            .and_then(|c| c.as_string())
+            .unwrap()
+            .iter()
+            .cloned()
+            .collect();
+        assert_eq!(types, ["ar", "1", "2"]);
+    }
+
+    #[test]
+    fn sybyl_bond_token_maps_the_canonical_codes() {
+        assert_eq!(sybyl_bond_token(Some(4), Some(2)).unwrap(), "ar");
+        assert_eq!(sybyl_bond_token(Some(2), None).unwrap(), "2");
+        assert_eq!(sybyl_bond_token(None, Some(3)).unwrap(), "3");
+        assert_eq!(sybyl_bond_token(Some(0), Some(2)).unwrap(), "2");
+        assert_eq!(sybyl_bond_token(Some(0), Some(0)).unwrap(), "un");
+        assert_eq!(sybyl_bond_token(None, None).unwrap(), "1");
+        assert!(sybyl_bond_token(Some(5), None).is_err());
+        assert!(sybyl_bond_token(None, Some(4)).is_err());
     }
 
     #[test]
