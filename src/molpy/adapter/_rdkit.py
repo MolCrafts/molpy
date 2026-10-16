@@ -43,11 +43,10 @@ import warnings
 from typing import Any
 
 import numpy as np
-from rdkit import Chem
-from rdkit.Chem import rdDistGeom, rdForceFieldHelpers
-
 from molrs.core import Atomistic, BondNumber, BondOrder
 from molrs.core.keys import BOND_NUMBER, BOND_TYPE, ELEMENT, FORMAL_CHARGE
+from rdkit import Chem
+from rdkit.Chem import rdDistGeom, rdForceFieldHelpers
 
 #: Namespace of the RDKit properties that carry molpy components across.
 PROP_PREFIX = "molpy:"

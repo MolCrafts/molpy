@@ -7,7 +7,6 @@ import importlib.metadata
 
 import pytest
 
-
 version_module = importlib.import_module("molpy.version")
 
 

@@ -24,9 +24,9 @@ from pathlib import Path
 import pytest
 
 import molpy as mp
-from molpy.ff.forcefield import AngleType, BondType, DihedralType
 from molpy.builder import AmberCut, AmberPieces, AmberPolymerBuilder
 from molpy.config import load_config
+from molpy.ff.forcefield import AngleType, BondType, DihedralType
 
 _TOOLS = ("antechamber", "parmchk2", "prepgen", "tleap")
 

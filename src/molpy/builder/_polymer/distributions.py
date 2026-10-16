@@ -15,7 +15,6 @@ from typing import Protocol, runtime_checkable
 
 import numpy as np
 
-
 __all__ = [
     "DpDistribution",
     "MassDistribution",

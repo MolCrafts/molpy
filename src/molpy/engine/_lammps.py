@@ -39,8 +39,8 @@ from molpy.engine._engine import Engine
 from molpy.engine._script import Script
 
 if TYPE_CHECKING:
-    from molrs.ff.forcefield import ForceField
     from molrs.core import Frame
+    from molrs.ff.forcefield import ForceField
 
 # Common LAMMPS binary names, tried in order when none is configured.
 _LAMMPS_CANDIDATES = ("lmp", "lmp_serial", "lmp_mpi")

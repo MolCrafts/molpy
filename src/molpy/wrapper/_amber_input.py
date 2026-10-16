@@ -11,8 +11,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from molrs.io import write_mol2
 from molrs.core.keys import FORMAL_CHARGE
+from molrs.io import write_mol2
 
 if TYPE_CHECKING:
     from pathlib import Path

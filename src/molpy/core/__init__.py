@@ -27,10 +27,10 @@ entity classes, ``Element``, ``Topology``) are also promoted to the ``molpy``
 root, as the same objects (``mp.Frame is mp.core.Frame``).
 """
 
+from importlib import import_module as _import_module
+
 from molrs.core import *  # noqa: F403
 from molrs.core import __all__ as _native
-
-from importlib import import_module as _import_module
 
 # The star import bound molrs's vocabulary modules under these names. Loading
 # molpy's mirror of each rebinds the attribute to it (``from molpy.core import

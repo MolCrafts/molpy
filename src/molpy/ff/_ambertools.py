@@ -21,11 +21,11 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
-from molrs.ff.forcefield import ForceField
-from molrs.ff.typifier import Typifier, TypeAssignment
-from molrs.io import read_prmtop_system, write_frcmod
 from molrs.core import Angle, Atomistic, Bond, Dihedral, Improper
 from molrs.core.constants import AMBER_SCEE, AMBER_SCNB
+from molrs.ff.forcefield import ForceField
+from molrs.ff.typifier import TypeAssignment, Typifier
+from molrs.io import read_prmtop_system, write_frcmod
 
 from molpy.config import load_config
 from molpy.wrapper import (

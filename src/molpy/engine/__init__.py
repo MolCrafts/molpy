@@ -27,8 +27,8 @@ time limit are its ``engine.<name>`` settings in molpy's configuration
 (:mod:`mollog`): ``lammps``, ``gromacs``, ``openmm``, ``cp2k``.
 """
 
-from molpy.engine._engine import Engine
 from molpy.engine._cp2k import Cp2kEngine
+from molpy.engine._engine import Engine
 from molpy.engine._gromacs import GromacsEngine
 from molpy.engine._lammps import LammpsEngine
 from molpy.engine._openmm import OpenmmEngine, OpenmmSimulationConfig

@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import subprocess
 
-
 from molpy.wrapper._wrapper import Wrapper
 
 

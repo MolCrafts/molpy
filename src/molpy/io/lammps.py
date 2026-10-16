@@ -23,8 +23,8 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from molrs.io.lammps import *  # noqa: F403
-from molrs.io.lammps import __all__ as _native
 from molrs.io.lammps import LammpsLog, is_lammps_log
+from molrs.io.lammps import __all__ as _native
 
 from molpy.io import _metric_reader
 

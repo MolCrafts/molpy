@@ -14,9 +14,7 @@ molpack does not expose its hydrogen indices, which is why molpy names them.
 from __future__ import annotations
 
 import numpy as np
-from molrs.core import Frame
-from molrs.core import Atomistic
-
+from molrs.core import Atomistic, Frame
 
 __all__ = ["PackingTemplate"]
 

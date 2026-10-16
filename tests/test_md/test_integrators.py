@@ -4,8 +4,8 @@ import numpy as np
 import pytest
 
 from molpy.core import Box, NeighborList, VerletSkin
-from molpy.md import Langevin, MdDriver, VelocityVerlet
 from molpy.ff.potential import PairLjCut
+from molpy.md import Langevin, MdDriver, VelocityVerlet
 
 
 def _dimer(*, skin: float = 0.3, rc: float = 2.5):

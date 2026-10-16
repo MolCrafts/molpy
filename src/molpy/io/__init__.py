@@ -48,10 +48,10 @@ Basic usage::
     mol = mp.io.read_smiles_str("CCO")
 """
 
+from importlib import import_module as _import_module
+
 from molrs.io import *  # noqa: F403
 from molrs.io import __all__ as _native
-
-from importlib import import_module as _import_module
 
 #: molrs's per-format submodules, each mirrored by a molpy module of its name.
 _FORMATS = (

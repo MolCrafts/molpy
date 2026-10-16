@@ -5,8 +5,8 @@ import dataclasses
 import numpy as np
 import pytest
 
-from molpy.core import Atomistic, Box, Cuboid, Sphere
 from molpy.builder import Lattice, Site
+from molpy.core import Atomistic, Box, Cuboid, Sphere
 
 
 class TestSite:

@@ -9,8 +9,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from molrs.conformer import Conformer
-from molrs.io.smiles import SmilesIr
 from molrs.core import Atomistic
+from molrs.io.smiles import SmilesIr
 
 from molpy.builder._polymer.ambertools._cut import AmberCut
 

@@ -8,17 +8,19 @@ Tests cover:
 """
 
 import numpy as np
-
 import pytest
 
 from molpy.builder import (
     AlternatingSequenceGenerator,
     BlockSequenceGenerator,
+    Chain,
+    PolydisperseChainGenerator,
     SchulzZimmPolydisperse,
+    SystemPlan,
+    SystemPlanner,
     UniformPolydisperse,
     WeightedSequenceGenerator,
 )
-from molpy.builder import Chain, PolydisperseChainGenerator, SystemPlan, SystemPlanner
 
 
 class TestChain:

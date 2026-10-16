@@ -19,7 +19,6 @@ import molpy as mp
 from molpy.core import Atomistic, RelationRef
 from molpy.io.lammps import BondReactTemplate
 
-
 # ===================================================================
 # Deterministic reaction builder (helpers, not tests)
 # ===================================================================

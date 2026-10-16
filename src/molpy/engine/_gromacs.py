@@ -35,8 +35,8 @@ from molpy.engine._engine import Engine
 
 if TYPE_CHECKING:
     from molcfg import Config
-    from molrs.ff.forcefield import ForceField
     from molrs.core import Frame
+    from molrs.ff.forcefield import ForceField
 
 
 class GromacsEngine(Engine):

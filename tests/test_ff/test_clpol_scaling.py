@@ -2,13 +2,13 @@
 
 import pytest
 
-from molpy.ff.forcefield import ForceField, PairType
 from molpy.ff.clpol_scaling import (
     FragmentScaling,
     compute_k_ij,
     fragment_table,
     scale_lj,
 )
+from molpy.ff.forcefield import ForceField, PairType
 
 
 def _ff():

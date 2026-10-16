@@ -8,8 +8,8 @@ ordering — writes the ``fix drude`` flags as a header comment.
 from pathlib import Path
 
 import molpy as mp
-from molpy.core import Atomistic
 from molpy.builder import DrudeBuilder
+from molpy.core import Atomistic
 
 
 def _ntf2_polarized(test_data_dir: Path) -> Atomistic:

@@ -38,12 +38,11 @@ import subprocess
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
-
 from molpy.engine._engine import Engine
 
 if TYPE_CHECKING:
-    from molrs.ff.forcefield import ForceField
     from molrs.core import Frame
+    from molrs.ff.forcefield import ForceField
 
 PathLike = str | Path
 

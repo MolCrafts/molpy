@@ -3,8 +3,8 @@
 import numpy as np
 import pytest
 
-from molpy.core import Block, Frame, MetaValue
 import molpy as mp
+from molpy.core import Block, Frame, MetaValue
 
 
 class TestWritePdb:

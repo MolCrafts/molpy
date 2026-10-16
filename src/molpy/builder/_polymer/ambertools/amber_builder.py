@@ -16,9 +16,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
-from molrs.io import read_ac, read_inpcrd, read_prmtop
 from molrs.core import Atomistic, Bead, CoarseGrain
+from molrs.io import read_ac, read_inpcrd, read_prmtop
 
+from molpy.builder._polymer.ambertools._cut import AmberCut
+from molpy.builder._polymer.ambertools._result import AmberBuildResult
 from molpy.config import load_config
 from molpy.ff._ambertools import _PrmtopAssignment
 from molpy.wrapper import (
@@ -30,9 +32,6 @@ from molpy.wrapper import (
 )
 from molpy.wrapper._amber_input import antechamber_input_mol2, net_formal_charge
 from molpy.wrapper._prepgen import prepgen_control_text
-
-from molpy.builder._polymer.ambertools._cut import AmberCut
-from molpy.builder._polymer.ambertools._result import AmberBuildResult
 
 if TYPE_CHECKING:
     from molcfg import Config

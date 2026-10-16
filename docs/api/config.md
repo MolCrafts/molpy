@@ -8,7 +8,7 @@ Layered configuration for the engines and wrappers, built on
 | Symbol | Summary | Preferred for |
 |--------|---------|---------------|
 | `load_config` | Merge the four layers (`defaults` → `user` → `project` → `run`), validate, freeze | Getting the config an engine or wrapper runs with |
-| `tool_settings` | One tool's resolved settings, each with the layer and key it came from | Inspecting what a tool will run |
+| `tool_settings` | One tool's resolved settings (any `"engine.<name>"` / `"wrapper.<name>"`), each with the layer and key it came from | Inspecting what a tool will run |
 | `ToolSettings` | `executable`, `env`, `env_manager`, `conda_executable`, `launcher`, `env_vars`, `timeout`, `sources` | Reading resolved settings |
 | `user_config_path` | `~/.molcrafts/molpy/config/config.toml` (`MOLCRAFTS_HOME` moves it) | Finding the user layer's file |
 | `PROJECT_CONFIG_NAME` | `molpy.toml`, the project layer's file name | Finding the project layer's file |
@@ -29,9 +29,13 @@ print(settings.sources["env"])  # ('defaults', 'engine.env') unless a file sets 
 
 ## Key behavior
 
-- Tables: `[conda]` (`executable`), `[engine]` and `[engine.<name>]` for
-  `lammps`, `gromacs`, `openmm`, `cp2k`; `[wrapper]` and `[wrapper.<name>]`
-  for `antechamber`, `tleap`, `parmchk2`, `prepgen`, `sander`
+- Tables: `[conda]` (`executable`), `[engine]` and `[engine.<name>]`;
+  `[wrapper]` and `[wrapper.<name>]`. Any table under a group is a tool's —
+  the built-in tools are the tool tables of `DEFAULTS` (`lammps`, `gromacs`,
+  `openmm`, `cp2k`; `antechamber`, `tleap`, `parmchk2`, `prepgen`,
+  `sander`), and a third-party engine or wrapper reads its own the same way
+- `DEFAULTS` is the one place a default is stated, a built-in tool's
+  executable included
 - Keys: `executable`, `env`, `env_manager` (`"conda"` / `"venv"`),
   `env_vars`, `timeout` (seconds) and, for engines, `launcher`; a group table
   holds what its tools share, a tool's own key replaces the group's

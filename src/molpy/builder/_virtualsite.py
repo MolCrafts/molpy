@@ -14,9 +14,15 @@ from collections.abc import Sequence
 from math import sqrt
 from typing import Any
 
+from molrs.core import (
+    Atom,
+    Atomistic,
+    DrudeParticle,
+    MasslessSite,
+    UnitPreset,
+    UnitRegistry,
+)
 from molrs.ff.params import clpol_polarizability
-from molrs.core import Atom, Atomistic, DrudeParticle, MasslessSite
-from molrs.core import UnitPreset, UnitRegistry
 
 # kcal/mol per kJ/mol: alpha.ff states k_D in kJ/mol/Å², molrs is kcal/mol.
 _KCAL_PER_KJ = UnitRegistry().quantity(1.0, "kJ/mol").to("kcal/mol").value

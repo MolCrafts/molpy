@@ -5,11 +5,10 @@ import json
 import numpy as np
 import pytest
 
-from molpy.core import Block, Frame
-from molpy.ff.forcefield import ForceField
 from molpy.config import load_config
+from molpy.core import Block, Frame
 from molpy.engine import OpenmmEngine, OpenmmSimulationConfig
-
+from molpy.ff.forcefield import ForceField
 
 # ---------------------------------------------------------------------------
 # Shared fixtures
