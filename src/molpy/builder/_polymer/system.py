@@ -7,13 +7,16 @@ This module provides the top two layers of the three-layer architecture:
 
 The data flow is:
 - SystemPlanner keeps asking for chains from PolydisperseChainGenerator until total system mass is satisfied
-- PolydisperseChainGenerator keeps asking for monomer sequences from SequenceGenerator when building each chain
+- PolydisperseChainGenerator samples each chain's dp (directly, or from a sampled mass) and asks SequenceGenerator for that whole sequence in one call
 - Each time SystemPlanner receives a chain, it updates the running total mass and decides whether to accept, stop, or trim
 
 Distribution implementations live in :mod:`molpy.builder._polymer.distributions`.
 """
 
 from __future__ import annotations
+
+import math
+from collections.abc import Mapping
 from dataclasses import dataclass
 
 import numpy as np
@@ -61,8 +64,9 @@ class PolydisperseChainGenerator:
     Responsible for:
     - Sampling chain size:
         - Either in DP-space via a DpDistribution (sample_dp)
-        - Or in mass-space via a MassDistribution (sample_mass)
-    - Using a SequenceGenerator to build the chain sequence
+        - Or in mass-space via a MassDistribution (sample_mass), whose sampled
+          mass is turned into the nearest dp at the mean monomer mass
+    - Asking the SequenceGenerator for the whole sequence of that dp in one call
     - Computing the mass of a chain using monomer mass table and optional end-group mass
 
     Does NOT know anything about total system mass. Only returns one chain at a time.
@@ -71,7 +75,7 @@ class PolydisperseChainGenerator:
     def __init__(
         self,
         seq_generator: SequenceGenerator,
-        monomer_mass: dict[str, float],
+        monomer_mass: Mapping[str, float],
         end_group_mass: float = 0.0,
         distribution: DpDistribution | MassDistribution | None = None,
     ):
@@ -80,21 +84,61 @@ class PolydisperseChainGenerator:
 
         Args:
             seq_generator: Sequence generator for generating monomer sequences
-            monomer_mass: Dictionary mapping monomer identifiers to their masses (g/mol)
-            end_group_mass: Mass of end groups (g/mol), default 0.0
-            distribution: Distribution implementing DpDistribution or MassDistribution protocol
-        """
-        self.seq_generator = seq_generator
-        self.monomer_mass = monomer_mass
-        self.end_group_mass = end_group_mass
+            monomer_mass: Mapping of monomer identifiers to their masses (g/mol,
+                finite and > 0); it must cover every monomer of
+                ``seq_generator.expected_composition()``. The mapping is copied.
+            end_group_mass: Mass of end groups (g/mol, >= 0), default 0.0
+            distribution: Distribution implementing exactly one of the
+                DpDistribution or MassDistribution protocols
 
-        if distribution is None:
-            raise ValueError("distribution must be provided")
+        Raises:
+            TypeError: if ``distribution`` implements neither or both protocols.
+            ValueError: if a mass is not finite and positive (``end_group_mass``:
+                non-negative), or a monomer of the sequence generator has no mass.
+        """
+        # DpDistribution / MassDistribution are runtime_checkable Protocols:
+        # ask the type system, do not sniff for a method name.
+        samples_dp = isinstance(distribution, DpDistribution)
+        samples_mass = isinstance(distribution, MassDistribution)
+        if samples_dp == samples_mass:
+            raise TypeError(
+                f"distribution {type(distribution).__name__} must implement exactly "
+                "one of DpDistribution ('sample_dp') or MassDistribution ('sample_mass')"
+            )
+
+        masses = dict(monomer_mass)
+        if not masses:
+            raise ValueError("monomer_mass must be a non-empty mapping")
+        for monomer_id, mass in masses.items():
+            if not (math.isfinite(mass) and mass > 0):
+                raise ValueError(
+                    f"monomer_mass[{monomer_id!r}] must be finite and > 0, got {mass}"
+                )
+        if not (math.isfinite(end_group_mass) and end_group_mass >= 0):
+            raise ValueError(
+                f"end_group_mass must be finite and >= 0, got {end_group_mass}"
+            )
+
+        composition = seq_generator.expected_composition()
+        missing = sorted(set(composition) - set(masses))
+        if missing:
+            raise ValueError(f"monomer_mass has no entry for monomers {missing}")
+        mean_monomer_mass = sum(f * masses[m] for m, f in composition.items())
+        if not mean_monomer_mass > 0:
+            raise ValueError(
+                f"{type(seq_generator).__name__}.expected_composition() gives a "
+                f"non-positive mean monomer mass ({mean_monomer_mass})"
+            )
+
+        self.seq_generator = seq_generator
+        self.monomer_mass = masses
+        self.end_group_mass = float(end_group_mass)
         self.distribution = distribution
+        self._mean_monomer_mass = mean_monomer_mass
 
     def sample_dp(self, rng: np.random.Generator) -> int:
         """
-        Sample a degree of polymerization from the distribution.
+        Sample a degree of polymerization from a DP-based distribution.
 
         Args:
             rng: np.random.Generator number generator
@@ -102,23 +146,12 @@ class PolydisperseChainGenerator:
         Returns:
             Degree of polymerization (>= 1)
         """
-        if self.distribution is None:
-            raise ValueError("distribution must be set")
-
-        # Determine what capabilities the distribution actually provides
-        # DpDistribution / MassDistribution are runtime_checkable Protocols:
-        # ask the type system, do not sniff for a method name.
-        has_sample_dp = isinstance(self.distribution, DpDistribution)
-        has_sample_mass = isinstance(self.distribution, MassDistribution)
-
-        # DP-based distributions may only be used via sample_dp
-        if has_sample_dp and not has_sample_mass:
-            return self.distribution.sample_dp(rng)
-        # Mass-distributions are not valid for DP sampling; caller should use sample_mass path.
-        raise TypeError(
-            f"Distribution {type(self.distribution).__name__} does not support 'sample_dp'. "
-            "Use mass-based sampling via 'sample_mass' and the corresponding build_chain logic."
-        )
+        if not isinstance(self.distribution, DpDistribution):
+            raise TypeError(
+                f"Distribution {type(self.distribution).__name__} does not support "
+                "'sample_dp'. Use mass-based sampling via 'sample_mass'."
+            )
+        return self.distribution.sample_dp(rng)
 
     def sample_mass(self, rng: np.random.Generator) -> float:
         """
@@ -130,22 +163,23 @@ class PolydisperseChainGenerator:
         Returns:
             Target chain mass in g/mol (>= 0)
         """
-        if self.distribution is None:
-            raise ValueError("distribution must be set")
-
-        has_sample_mass = isinstance(self.distribution, MassDistribution)
-        if not has_sample_mass:
+        if not isinstance(self.distribution, MassDistribution):
             raise TypeError(
-                f"Distribution {type(self.distribution).__name__} does not support 'sample_mass'. "
-                "Use DP-based sampling via 'sample_dp' instead."
+                f"Distribution {type(self.distribution).__name__} does not support "
+                "'sample_mass'. Use DP-based sampling via 'sample_dp' instead."
             )
-
-        target_mass = float(self.distribution.sample_mass(rng))
-        return max(0.0, target_mass)
+        return max(0.0, float(self.distribution.sample_mass(rng)))
 
     def build_chain(self, rng: np.random.Generator) -> Chain:
         """
-        Sample DP, generate monomer sequence, and compute mass.
+        Sample a DP, generate the whole monomer sequence once, and compute mass.
+
+        A mass-space distribution's sampled mass M becomes the dp nearest to
+        ``(M - end_group_mass) / mean_monomer_mass`` (at least 1), where the mean
+        monomer mass is weighted by ``seq_generator.expected_composition()``.
+        The sequence is then generated in one call, so alternating and block
+        generators keep their pattern; the chain's mass is that of its actual
+        monomers.
 
         Args:
             rng: np.random.Generator number generator
@@ -153,64 +187,30 @@ class PolydisperseChainGenerator:
         Returns:
             Chain object with dp, monomers, and mass
         """
-        # DpDistribution / MassDistribution are runtime_checkable Protocols:
-        # ask the type system, do not sniff for a method name.
-        has_sample_dp = isinstance(self.distribution, DpDistribution)
-        has_sample_mass = isinstance(self.distribution, MassDistribution)
-
-        # Pure DpDistribution path: sample DP once and build fixed-length chain
-        if has_sample_dp and not has_sample_mass:
-            dp = self.sample_dp(rng)
-            monomers = self.seq_generator.generate_sequence(dp, rng)
-            mass = self._compute_mass(monomers)
-            return Chain(dp=dp, monomers=monomers, mass=mass)
-
-        # Pure MassDistribution path: sample a target mass and grow chain incrementally
-        if has_sample_mass and not has_sample_dp:
+        if isinstance(self.distribution, MassDistribution):
             target_mass = self.sample_mass(rng)
+            dp = max(
+                1,
+                round((target_mass - self.end_group_mass) / self._mean_monomer_mass),
+            )
+        else:
+            dp = self.sample_dp(rng)
+            if dp < 1:
+                raise ValueError(
+                    f"{type(self.distribution).__name__} sampled dp={dp}; "
+                    "dp must be >= 1"
+                )
+        return self._chain(dp, rng)
 
-            monomers: list[str] = []
-            current_mass = self.end_group_mass
-
-            # Conservative safety cap to prevent pathological infinite loops
-            max_steps = 10_000
-            steps = 0
-
-            while steps < max_steps:
-                steps += 1
-
-                # Propose adding a single monomer
-                next_label = self.seq_generator.generate_sequence(1, rng)[0]
-                proposed_mass = current_mass + self.monomer_mass[next_label]
-
-                # Always accept at least one monomer, even if it overshoots
-                if not monomers:
-                    monomers.append(next_label)
-                    current_mass = proposed_mass
-                    if current_mass >= target_mass:
-                        break
-                    continue
-
-                # For subsequent monomers, reject if this would overshoot the target
-                if proposed_mass > target_mass:
-                    break
-
-                monomers.append(next_label)
-                current_mass = proposed_mass
-
-                # If we have reached or are extremely close to the target, stop
-                if current_mass >= target_mass:
-                    break
-
-            dp = len(monomers)
-            mass = current_mass
-            return Chain(dp=dp, monomers=monomers, mass=mass)
-
-        # Either the distribution implements neither method or both, which is invalid
-        raise TypeError(
-            f"Distribution {type(self.distribution).__name__} must implement exactly one of "
-            "'sample_dp' or 'sample_mass'."
-        )
+    def _chain(self, dp: int, rng: np.random.Generator) -> Chain:
+        """Build the chain of one whole ``dp``-long sequence."""
+        monomers = list(self.seq_generator.generate_sequence(dp, rng))
+        if len(monomers) != dp:
+            raise ValueError(
+                f"{type(self.seq_generator).__name__} returned {len(monomers)} "
+                f"monomers for dp={dp}"
+            )
+        return Chain(dp=dp, monomers=monomers, mass=self._compute_mass(monomers))
 
     def _compute_mass(self, monomers: list[str]) -> float:
         """
