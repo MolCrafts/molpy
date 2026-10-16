@@ -25,8 +25,10 @@ into ``[0, 1)`` with a tolerance (:data:`_WRAP_TOL`), so it reads as the
 lattice translation ``0``, and operators are compared on keys rounded to
 :data:`_KEY_DECIMALS` places.
 
-:meth:`molpy.builder.Lattice.from_spacegroup` wires this into the crystal
-builder so a published structure becomes a tiling-ready :class:`~molpy.builder.Lattice`.
+:meth:`molpy.builder.Lattice.from_cif` wires this into the crystal builder, so
+a CIF read by :func:`molpy.io.read_cif` becomes a tiling-ready
+:class:`~molpy.builder.Lattice`; :meth:`~molpy.builder.Lattice.from_spacegroup`
+takes the cell, sites and group directly.
 """
 
 from __future__ import annotations
@@ -116,7 +118,8 @@ class SpaceGroup:
 
         Use this with a CIF's full operator loop, as :func:`molpy.io.read_cif`
         keeps it in ``frame.meta["symops"]``. Every operator is taken verbatim;
-        nothing is generated.
+        nothing is generated. :meth:`molpy.builder.Lattice.from_cif` does this
+        for a CIF frame.
         """
         return cls(tuple(parse_triplet(t) for t in triplets))
 

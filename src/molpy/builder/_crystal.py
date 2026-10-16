@@ -12,6 +12,8 @@ Example:
     >>> structure = lat.build(repeats=(4, 4, 4))
     >>> # or clip a 30 Å cube out of a larger tile:
     >>> structure = lat.build(mp.core.Cuboid.cube(30.0))
+    >>> # or expand a CIF's asymmetric unit by its own operators:
+    >>> salt = mp.builder.Lattice.from_cif(mp.io.read_cif("NaCl.cif"))  # doctest: +SKIP
 """
 
 from __future__ import annotations
@@ -23,6 +25,7 @@ from typing import Any
 import numpy as np
 from molrs.core import (
     Atomistic,
+    Block,
     Box,
     Cuboid,
     Cylinder,
@@ -34,6 +37,7 @@ from molrs.core import (
     Region,
     Sphere,
     SphereUnion,
+    keys,
 )
 from numpy.typing import ArrayLike
 
@@ -44,6 +48,8 @@ __all__ = ["Lattice", "Site"]
 #: Fractional slack on the inferred tile, so an atom on the region's
 #: boundary is not lost to rounding in ``to_frac``.
 _FRAC_SLACK = 1e-6
+#: An occupancy this close below 1 still counts as a fully occupied site.
+_OCC_TOL = 1e-6
 
 #: Any native region: a solid, or a composition of solids.
 RegionLike = (
@@ -79,36 +85,46 @@ class Site:
 
 
 class Lattice:
-    """Bravais lattice = ``cell`` matrix + list of basis :class:`Site` objects.
+    """Bravais lattice = a :class:`~molpy.Box` unit cell + basis :class:`Site` objects.
 
-    The cell matrix stores the three lattice vectors as rows::
+    The box is molrs's: its cell matrix ``box.h`` holds the lattice vectors as
+    columns, and it owns fractional ↔ Cartesian conversion
+    (``lattice.box.to_cart(frac)`` / ``lattice.box.to_frac(cart)``).
 
-        cell = [[a1x, a1y, a1z],
-                [a2x, a2y, a2z],
-                [a3x, a3y, a3z]]
+    Construct directly with a box, or use :meth:`from_vectors` /
+    :meth:`from_cif` / :meth:`from_spacegroup` / :meth:`sc` / :meth:`bcc` /
+    :meth:`fcc` / :meth:`rocksalt`.
 
-    Construct directly with a matrix, or use :meth:`from_vectors` /
-    :meth:`sc` / :meth:`bcc` / :meth:`fcc` / :meth:`rocksalt`.
+    Raises:
+        TypeError: If ``box`` is not a :class:`~molpy.Box`.
+        ValueError: If ``box`` has no cell (``box.cell_defined`` is false).
     """
 
-    def __init__(self, cell: ArrayLike, basis: list[Site] | None = None) -> None:
-        cell_arr = np.asarray(cell, dtype=float)
-        if cell_arr.shape != (3, 3):
-            raise ValueError(f"cell must have shape (3, 3), got {cell_arr.shape}")
-        self.cell = cell_arr
+    def __init__(self, box: Box, basis: list[Site] | None = None) -> None:
+        if not isinstance(box, Box):
+            raise TypeError(
+                f"Lattice takes a molpy.Box, got {type(box).__name__}; "
+                "build one from vectors with Lattice.from_vectors(a1, a2, a3)"
+            )
+        if not box.cell_defined:
+            raise ValueError("Lattice needs a box with a defined cell")
+        self.box = box
         self.basis: tuple[Site, ...] = tuple(basis or ())
 
     @property
     def a1(self) -> np.ndarray:
-        return self.cell[0]
+        """First lattice vector (column 0 of ``box.h``)."""
+        return self.box.h[:, 0]
 
     @property
     def a2(self) -> np.ndarray:
-        return self.cell[1]
+        """Second lattice vector (column 1 of ``box.h``)."""
+        return self.box.h[:, 1]
 
     @property
     def a3(self) -> np.ndarray:
-        return self.cell[2]
+        """Third lattice vector (column 2 of ``box.h``)."""
+        return self.box.h[:, 2]
 
     @classmethod
     def from_vectors(
@@ -118,44 +134,36 @@ class Lattice:
         a3: ArrayLike,
         basis: list[Site] | None = None,
     ) -> Lattice:
-        """Build a lattice from three lattice vectors."""
-        return cls(np.stack([a1, a2, a3], axis=0), basis)
+        """Build a lattice from three lattice vectors (the box's columns)."""
+        h = np.column_stack([np.asarray(a, dtype=float) for a in (a1, a2, a3)])
+        return cls(Box(h=h), basis)
 
     def with_site(self, site: Site) -> Lattice:
         """Return a new lattice with ``site`` appended to the basis."""
-        return Lattice(self.cell, [*self.basis, site])
-
-    @property
-    def box(self) -> Box:
-        """The unit cell as a :class:`~molpy.Box` (lattice vectors as columns).
-
-        Fractional ↔ Cartesian conversion is the box's:
-        ``lattice.box.to_cart(frac)`` / ``lattice.box.to_frac(cart)``.
-        """
-        return Box(h=self.cell.T)
+        return Lattice(self.box, [*self.basis, site])
 
     def supercell(self, repeats: tuple[int, int, int]) -> Box:
         """The :class:`~molpy.Box` spanned by ``repeats`` unit cells.
 
         This is the simulation cell for a structure tiled with the same
         ``repeats``; ask the lattice for it rather than the built structure,
-        which carries topology and chemistry but no cell of its own. The box
-        matrix holds the lattice vectors as columns, so it is the transpose of
-        the row-vector :attr:`cell`.
+        which carries topology and chemistry but no cell of its own. Each
+        lattice vector (column of ``box.h``) is scaled by its repeat; the
+        origin and periodicity are the unit cell's.
         """
         counts = _positive_repeats(repeats)
-        return Box(h=(self.cell * counts.astype(float)[:, None]).T)
+        return self.box.transformed(np.diag(counts.astype(float)))
 
     @classmethod
     def sc(cls, a: float, species: str) -> Lattice:
         """Simple cubic lattice (1 atom / cell)."""
-        return cls(a * np.eye(3), [Site("A", species, (0.0, 0.0, 0.0))])
+        return cls(Box.cube(a), [Site("A", species, (0.0, 0.0, 0.0))])
 
     @classmethod
     def bcc(cls, a: float, species: str) -> Lattice:
         """Body-centered cubic lattice (2 atoms / cell)."""
         return cls(
-            a * np.eye(3),
+            Box.cube(a),
             [
                 Site("A", species, (0.0, 0.0, 0.0)),
                 Site("B", species, (0.5, 0.5, 0.5)),
@@ -166,7 +174,7 @@ class Lattice:
     def fcc(cls, a: float, species: str) -> Lattice:
         """Face-centered cubic lattice (4 atoms / cell)."""
         return cls(
-            a * np.eye(3),
+            Box.cube(a),
             [
                 Site("A", species, (0.0, 0.0, 0.0)),
                 Site("B", species, (0.5, 0.5, 0.0)),
@@ -178,7 +186,7 @@ class Lattice:
     @classmethod
     def from_spacegroup(
         cls,
-        cell: ArrayLike,
+        box: Box,
         sites: list[Site],
         spacegroup: SpaceGroup,
         *,
@@ -188,16 +196,16 @@ class Lattice:
 
         A published crystal structure lists only the symmetry-inequivalent sites
         (the asymmetric unit); applying every operator of its space group fills
-        the conventional cell. This is the native, zero-dependency path to a
-        tiling-ready lattice from a CIF.
+        the conventional cell. For a CIF, :meth:`from_cif` does this from the
+        frame :func:`molpy.io.read_cif` returns.
 
         Args:
-            cell: ``(3, 3)`` cell matrix (lattice vectors as rows), e.g.
-                ``a * np.eye(3)`` for a cubic cell of edge ``a``.
+            box: The unit cell, e.g. ``mp.Box.cube(a)`` or a CIF frame's
+                ``frame.box``.
             sites: Asymmetric-unit basis sites (one :class:`Site` per
                 inequivalent atom; ``fractional`` are its reduced coordinates).
             spacegroup: The :class:`~molpy.builder.SpaceGroup`, e.g.
-                ``SpaceGroup.from_triplets(cif_symops)``.
+                ``SpaceGroup.from_generators([...])``.
             symprec: Fractional tolerance for collapsing images that land on a
                 special position (passed to
                 :meth:`~molpy.builder.SpaceGroup.equivalent_positions`).
@@ -220,7 +228,66 @@ class Lattice:
                         attrs=site.attrs,
                     )
                 )
-        return cls(cell, basis)
+        return cls(box, basis)
+
+    @classmethod
+    def from_cif(cls, frame: Frame, *, symprec: float = 1e-5) -> Lattice:
+        """The full-cell lattice of a CIF read by :func:`molpy.io.read_cif`.
+
+        The cell is ``frame.box``; the asymmetric unit is the ``atoms`` block
+        (label from ``name``, species from ``element``, fractional coordinates
+        from ``frame.box.to_frac``); the space group is the file's operator
+        loop, which ``read_cif`` keeps verbatim in ``frame.meta["symops"]``.
+        Every atom is expanded by :meth:`from_spacegroup`.
+
+        Args:
+            frame: A frame from :func:`molpy.io.read_cif`.
+            symprec: Fractional tolerance for collapsing images on a special
+                position.
+
+        Returns:
+            A :class:`Lattice` on ``frame.box`` with the whole conventional cell
+            as its basis; each image is labelled ``"<name>_<k>"``.
+
+        Raises:
+            ValueError: If the frame has no box or no ``symops`` meta (a CIF
+                with no operator loop is not taken to be P1: state ``x,y,z``
+                in the file), if the atoms block lacks ``name``, ``element`` or
+                coordinates, or if any site is partially occupied. The lattice
+                places one atom per site, so a disordered structure would be
+                built fully occupied; resolve the disorder before building.
+        """
+        box = frame.box
+        if box is None or not box.cell_defined:
+            raise ValueError(
+                "frame has no box (the CIF states no _cell_length_* / "
+                "_cell_angle_* cell); Lattice.from_cif needs the unit cell"
+            )
+        symops_key = str(keys.SYMOPS)
+        if symops_key not in frame.meta:
+            raise ValueError(
+                f"frame.meta has no {symops_key!r} (the CIF has no "
+                "_space_group_symop_operation_xyz or _symmetry_equiv_pos_as_xyz "
+                "loop); refusing to assume P1. For a P1 structure, list 'x,y,z' "
+                "in the file or use Lattice.from_spacegroup"
+            )
+        atoms = frame["atoms"]
+        required = [str(k) for k in (keys.NAME, keys.ELEMENT, *keys.COORDS)]
+        missing = [k for k in required if k not in atoms]
+        if missing:
+            raise ValueError(f"CIF atoms block lacks column(s) {missing}")
+        names = [str(n) for n in atoms[str(keys.NAME)]]
+        _reject_partial_occupancy(atoms, names)
+        xyz = np.column_stack([atoms[str(k)] for k in keys.COORDS])
+        fractional = box.to_frac(np.asarray(xyz, dtype=float))
+        sites = [
+            Site(label, str(species), (float(u), float(v), float(w)))
+            for label, species, (u, v, w) in zip(
+                names, atoms[str(keys.ELEMENT)], fractional, strict=True
+            )
+        ]
+        group = SpaceGroup.from_triplets(frame.meta[symops_key])
+        return cls.from_spacegroup(box, sites, group, symprec=symprec)
 
     @classmethod
     def rocksalt(cls, a: float, species_a: str, species_b: str) -> Lattice:
@@ -235,7 +302,7 @@ class Lattice:
             Site("B3", species_b, (0.0, 0.0, 0.5)),
             Site("B4", species_b, (0.5, 0.5, 0.5)),
         ]
-        return cls(a * np.eye(3), basis)
+        return cls(Box.cube(a), basis)
 
     def build(
         self,
@@ -322,6 +389,23 @@ class Lattice:
         frame = Frame()
         frame["atoms"] = columns
         return Atomistic.from_frame(frame)
+
+
+def _reject_partial_occupancy(atoms: Block, names: list[str]) -> None:
+    """Raise if any site of a CIF atoms block is less than fully occupied."""
+    column = str(keys.OCCUPANCY)
+    if column not in atoms:
+        return
+    occupancy = np.asarray(atoms[column], dtype=float)
+    partial = [
+        n for n, occ in zip(names, occupancy, strict=True) if occ < 1.0 - _OCC_TOL
+    ]
+    if partial:
+        raise ValueError(
+            f"site(s) {partial} have partial occupancy (< 1); Lattice places one "
+            "atom per site and cannot represent disorder. Resolve the disorder "
+            "in the CIF (keep one component at occupancy 1) before building"
+        )
 
 
 def _positive_repeats(repeats: tuple[int, int, int]) -> np.ndarray:

@@ -12,7 +12,9 @@ and the carbon nanostructures (:class:`GrapheneBuilder`,
 molpy adds:
 
 * crystals — :class:`Lattice` / :class:`Site` / :class:`SpaceGroup`
-  (``Lattice.build``; fractional ↔ Cartesian through :attr:`Lattice.box`);
+  (a :class:`~molpy.Box` unit cell plus a basis; ``Lattice.from_cif`` expands
+  a :func:`molpy.io.read_cif` frame by its symmetry operators;
+  ``Lattice.build`` tiles it);
 * polymers — sequence generators, chain-length distributions and
   :class:`SystemPlanner`; :class:`AmberPolymerBuilder` for GAFF chains
   through AmberTools;

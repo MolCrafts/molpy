@@ -25,7 +25,7 @@ are private.
 | `WeightedSequenceGenerator` / `BlockSequenceGenerator` / `AlternatingSequenceGenerator` | Monomer sequences (`SequenceGenerator` protocol) | Copolymer composition |
 | `CarbonTubeBuilder` | `CarbonTubeBuilder(n, m, ...)` → `.build()` `Frame` + `.cell()` box | Zigzag, armchair, and chiral nanotubes |
 | `GrapheneBuilder` | `GrapheneBuilder(nx, ny, ...)` → `.build()` `Frame` + `.cell()` box | Rectangular graphene honeycomb sheet |
-| `Lattice` / `Site` / `SpaceGroup` | Bravais lattice with basis sites (fractional coordinates; the cell is `lattice.box`) and symmetry operators | Crystals |
+| `Lattice` / `Site` / `SpaceGroup` | `Lattice(box, basis)`: a `mp.Box` unit cell (lattice vectors are the columns of `box.h`) plus basis sites in fractional coordinates; `Lattice.from_cif(frame)` expands a CIF's asymmetric unit by the operators `read_cif` keeps; `.build(region, repeats=...)` tiles it | Crystals |
 | `mp.core.Cuboid` / `mp.core.Sphere` / `mp.core.HalfSpace` / `mp.core.Region` | Native geometric regions with `mask(block)`, on the molpy root | Selecting a volume, clipping a crystal |
 | `DrudeBuilder` / `Tip4pBuilder` / `VirtualSiteBuilder` | Virtual-site augmentation (Drude parameters from `mp.ff.params.clpol_polarizability`) | Polarizable / 4-site models |
 | `AmberPolymerBuilder` | `AmberPolymerBuilder(library, cuts, force_field="gaff").assemble(sites)` → `AmberBuildResult` (`chain`, `forcefield`, prmtop / inpcrd paths): antechamber + parmchk2 on each oligomer, prepgen per residue, tleap `sequence` over a linear site graph; needs AmberTools | GAFF / GAFF2 polymer chains |
@@ -104,6 +104,69 @@ assert tube_builder.cell().pbc.tolist() == [False, False, True]
 The same builder accepts zigzag `(n, 0)`, armchair `(n, n)`, and general chiral
 `(n, m)` tubes. See [Nanostructures](../user-guide/04_nanostructures.md) for
 open ends, length selection, and deferred topology.
+
+## Crystals
+
+A `Lattice` is a `mp.Box` unit cell and a basis of `Site`s in fractional
+coordinates. The box's cell matrix `box.h` holds the lattice vectors as
+columns, so `lattice.a1` is `lattice.box.h[:, 0]`, and the box does every
+fractional ↔ Cartesian conversion. `build` tiles the basis over `repeats`
+cells from the origin, or over every cell, negative indices included, that
+reaches a region's bounding box, and keeps the atoms inside the region.
+
+```python
+from molpy.builder import Lattice
+
+nickel = Lattice.fcc(a=3.52, species="Ni")
+assert len(nickel.build(repeats=(2, 2, 2)).atoms) == 32
+cluster = nickel.build(mp.core.Sphere([0.0, 0.0, 0.0], 5.0))  # centred on an atom
+box = nickel.supercell((2, 2, 2))  # the tile's simulation cell
+```
+
+A CIF lists the asymmetric unit and the space group's operators.
+`mp.io.read_cif` keeps the operators verbatim in `frame.meta["symops"]`
+(`mp.core.keys.SYMOPS`) and the Hermann–Mauguin symbol in
+`frame.meta["space_group"]` (`mp.core.keys.SPACE_GROUP`), each only when the
+file states it. `Lattice.from_cif` builds the whole conventional cell from
+that frame: the cell is `frame.box`, each atom of the `atoms` block is a site
+(label from `name`, species from `element`), and every symmetry image is a
+basis site labelled `"<name>_<k>"`. Images on a special position collapse
+within `symprec`.
+
+```python
+# docs: skip — reads an offline CIF; Lattice.from_cif is unit-tested with fixtures
+frame = mp.io.read_cif("NaCl.cif")  # Fm-3m: Na1 at 4a, Cl1 at 4b
+salt = Lattice.from_cif(frame)
+assert len(salt.basis) == 8
+structure = salt.build(repeats=(4, 4, 4))
+frame = structure.to_frame()
+frame.box = salt.supercell((4, 4, 4))
+```
+
+`from_cif` refuses a frame it would have to guess about. With no box, or no
+`symops` because the file has no operator loop, it raises `ValueError` naming
+what is missing rather than assume P1; list `x,y,z` in the file for a P1
+structure. A partially occupied site (an `occupancy` below 1) is rejected
+too, because a lattice places one atom per site: resolve the disorder in the
+file first.
+
+Without a CIF, give the cell, the asymmetric unit and a `SpaceGroup`, from an
+explicit operator list or closed from generators:
+
+```python
+from molpy.builder import Site, SpaceGroup
+
+fm3m = SpaceGroup.from_generators(
+    ["x+1/2,y+1/2,z", "x+1/2,y,z+1/2", "-x,-y,z", "-x,y,-z", "z,x,y", "y,x,-z", "-x,-y,-z"]
+)
+assert fm3m.order == 192
+salt = Lattice.from_spacegroup(
+    mp.Box.cube(5.64),
+    [Site("Na1", "Na", (0.0, 0.0, 0.0)), Site("Cl1", "Cl", (0.5, 0.5, 0.5))],
+    fm3m,
+)
+assert len(salt.basis) == 8
+```
 
 ## Polydisperse systems
 
