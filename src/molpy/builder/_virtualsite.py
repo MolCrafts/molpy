@@ -53,6 +53,8 @@ def _relation_kind(struct: Atomistic, block: str) -> str:
     """Register molrs's relation ``block`` on ``struct`` (once); return it."""
     if block not in struct.kinds():
         spec = schema.block(block)
+        if spec is None:
+            raise KeyError(f"molrs schema has no relation block {block!r}")
         struct.register_kind(block, len(spec.endpoint_columns))
     return block
 
