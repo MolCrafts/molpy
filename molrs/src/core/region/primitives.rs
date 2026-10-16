@@ -33,7 +33,13 @@ const FD_STEP: F = 1e-6;
 /// with the direction of [`distance_grad`](Self::distance_grad) is what every
 /// consumer relies on; the magnitude is Euclidean where a shape can afford it
 /// and documented where it is not (a lower bound is always acceptable).
-/// Containment is `distance <= 0`, so the boundary belongs to the region.
+/// A shape contains `distance <= 0`, so its boundary belongs to it. The
+/// combinators are exact set algebra on containment, not on the distance:
+/// [`NotRegion`] contains what its operand does not (so a boundary point is in
+/// the region and never in its complement — the complement is open), and
+/// [`AndRegion`] / [`OrRegion`] contain what both / either operand does. Off
+/// the boundary that is the same as testing their distance; on it, it is what
+/// keeps `R` and `~R` disjoint.
 ///
 /// Trait objects are `Arc<dyn Region + Send + Sync>`: the combinators take
 /// them, and a region is shared across threads by evaluators such as a
@@ -88,9 +94,12 @@ pub trait Region: Send + Sync + std::fmt::Debug {
         false
     }
 
-    /// Whether `point` is inside the region: `distance(point) <= 0`.
+    /// Whether `point` is inside the region: `distance(point) <= 0` for a
+    /// shape.
     ///
-    /// Override only with a test that provably agrees with the distance.
+    /// Override only with a test that provably agrees with the distance off
+    /// the boundary (`distance != 0`); the combinators override it to keep
+    /// their set algebra exact on the boundary (see the trait docs).
     fn contains_point(&self, point: &[F; 3]) -> bool {
         self.distance(point) <= 0.0
     }
@@ -472,6 +481,11 @@ impl Region for AndRegion {
         self.a.distance(point).max(self.b.distance(point))
     }
 
+    /// In both operands, by their own containment.
+    fn contains_point(&self, point: &[F; 3]) -> bool {
+        self.a.contains_point(point) && self.b.contains_point(point)
+    }
+
     fn distance_grad(&self, point: &[F; 3]) -> [F; 3] {
         if self.a.distance(point) >= self.b.distance(point) {
             self.a.distance_grad(point)
@@ -483,7 +497,9 @@ impl Region for AndRegion {
 
 /// Complement of a region (NOT): inside iff not inside the original.
 ///
-/// `distance = −d_a`; the gradient is negated. `bounds` reports the inner
+/// Containment is the exact complement: a point on the original's boundary
+/// (`d_a == 0`) is the original's, so it is not in the complement, which is
+/// therefore open. `distance = −d_a`; the gradient is negated. `bounds` reports the inner
 /// region's box, since the complement is unbounded.
 #[derive(Debug, Clone)]
 pub struct NotRegion {
@@ -509,6 +525,12 @@ impl Region for NotRegion {
 
     fn distance(&self, point: &[F; 3]) -> F {
         -self.a.distance(point)
+    }
+
+    /// Not in the operand: `distance <= 0` here would also hold the
+    /// operand's boundary, putting it in both a region and its complement.
+    fn contains_point(&self, point: &[F; 3]) -> bool {
+        !self.a.contains_point(point)
     }
 
     fn distance_grad(&self, point: &[F; 3]) -> [F; 3] {
@@ -555,6 +577,11 @@ impl Region for OrRegion {
         self.a.distance(point).min(self.b.distance(point))
     }
 
+    /// In either operand, by its own containment.
+    fn contains_point(&self, point: &[F; 3]) -> bool {
+        self.a.contains_point(point) || self.b.contains_point(point)
+    }
+
     fn distance_grad(&self, point: &[F; 3]) -> [F; 3] {
         if self.a.distance(point) <= self.b.distance(point) {
             self.a.distance_grad(point)
@@ -569,18 +596,21 @@ pub(crate) mod tests {
     use super::*;
 
     /// Every shape and combinator must keep `contains_point` equal to
-    /// `distance <= 0`, its analytic gradient equal to the finite
+    /// `distance < 0` off the boundary (`distance == 0`, where a complement
+    /// is open and a shape closed), its analytic gradient equal to the finite
     /// difference (off the ties where the max/min switches branch), and
     /// every `repeats_along` claim true of the set it describes.
     pub(crate) fn check_region_contract(region: &dyn Region, probes: &[[F; 3]]) {
         check_repeat_claims(region, probes);
         for p in probes {
             let d = region.distance(p);
-            assert_eq!(
-                region.contains_point(p),
-                d <= 0.0,
-                "contains_point disagrees with distance at {p:?} (d = {d})"
-            );
+            if d != 0.0 {
+                assert_eq!(
+                    region.contains_point(p),
+                    d < 0.0,
+                    "contains_point disagrees with distance at {p:?} (d = {d})"
+                );
+            }
             let g = region.distance_grad(p);
             let mut fd = [0.0; 3];
             for k in 0..3 {
@@ -933,6 +963,62 @@ pub(crate) mod tests {
             assert_eq!(not_and.distance(&p), or_not.distance(&p), "at {p:?}");
             assert_eq!(not_and.contains_point(&p), or_not.contains_point(&p));
         }
+    }
+
+    /// A region and its complement partition space: no point is in both and
+    /// every point is in one. A point on the boundary (`distance == 0`)
+    /// belongs to the region, so `~cube` refuses the atoms a lattice puts on
+    /// the faces of a cube — the case that read as "`~cube` is everything".
+    #[test]
+    fn a_region_and_its_complement_partition_space_even_on_the_boundary() {
+        let cube: Arc<dyn Region + Send + Sync> = Arc::new(Cuboid::new(
+            Array1::zeros(3),
+            Array1::from_vec(vec![1.5; 3]),
+        ));
+        let ball: Arc<dyn Region + Send + Sync> = Arc::new(Sphere::with_radius(1.0));
+        // Corners, edge and face centres: every one on the cube's boundary.
+        let on_cube = [
+            [0.0, 0.0, 0.0],
+            [1.5, 1.5, 1.5],
+            [0.75, 0.75, 0.0],
+            [0.0, 0.75, 0.75],
+            [1.5, 0.75, 0.0],
+        ];
+        let probes: Vec<[F; 3]> = on_cube
+            .iter()
+            .copied()
+            .chain([[1.0, 0.0, 0.0], [0.5, 0.5, 0.5], [3.0, 3.0, 3.0]])
+            .chain(sweep())
+            .collect();
+        let composites: Vec<Arc<dyn Region + Send + Sync>> = vec![
+            cube.clone(),
+            ball.clone(),
+            Arc::new(AndRegion::new(cube.clone(), ball.clone())),
+            Arc::new(OrRegion::new(cube.clone(), ball.clone())),
+            Arc::new(AndRegion::new(
+                cube.clone(),
+                Arc::new(NotRegion::new(ball.clone())),
+            )),
+        ];
+        for region in composites {
+            let complement = NotRegion::new(region.clone());
+            for p in &probes {
+                assert_ne!(
+                    region.contains_point(p),
+                    complement.contains_point(p),
+                    "{region:?} and its complement disagree at {p:?}"
+                );
+            }
+        }
+        let outside = NotRegion::new(cube.clone());
+        for p in on_cube {
+            assert!(cube.contains_point(&p), "the boundary is the cube's: {p:?}");
+            assert!(!outside.contains_point(&p), "~cube holds {p:?}");
+        }
+        // `box & ~ball` drops the ball's surface, as `~ball` does.
+        let shell = AndRegion::new(cube.clone(), Arc::new(NotRegion::new(ball)));
+        assert!(!shell.contains_point(&[1.0, 0.0, 0.0]));
+        assert!(shell.contains_point(&[1.2, 0.5, 0.5]));
     }
 
     #[test]

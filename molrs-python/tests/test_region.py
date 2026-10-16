@@ -104,6 +104,23 @@ class TestRegionNot:
         result = ~c
         assert isinstance(result, molrs.core.Region)
 
+    def test_complement_of_a_cube_refuses_the_atoms_on_its_faces(self):
+        # A simple-cubic cell's atoms all sit on the cube's corners, edges
+        # and faces: the boundary is the cube's, so `~cube` holds none of them.
+        cube = molrs.core.Cuboid.cube(1.5)
+        edge = np.array([0.0, 0.75, 1.5])
+        grid = np.array([[x, y, z] for x in edge for y in edge for z in edge])
+        pts = np.vstack([grid, [[3.0, 3.0, 3.0]]])
+        block = molrs.core.Block({"x": pts[:, 0], "y": pts[:, 1], "z": pts[:, 2]})
+        inside = cube.mask(block)
+        outside = (~cube).mask(block)
+        assert inside.tolist() == [True] * len(grid) + [False]
+        assert outside.tolist() == [False] * len(grid) + [True]
+        sphere = molrs.core.Sphere([0.0, 0.0, 0.0], 1.0)
+        for region in (cube, sphere, cube & ~sphere, cube | sphere):
+            assert not np.any(region.mask(block) & (~region).mask(block))
+            assert np.all(region.mask(block) | (~region).mask(block))
+
 
 class TestRegionChaining:
     def test_shell_via_and_not(self):
