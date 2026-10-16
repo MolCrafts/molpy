@@ -27,7 +27,9 @@ no inputs.
   resolved by the shared `molpy.wrapper.Tool` core
 - `run(scripts, *, workdir, capture_output, check)` writes the scripts (the
   first is the input) and runs the engine; it keeps no state and does not
-  change the scripts. `check=True` is the default
+  change the scripts. `check=True` is the default. GROMACS's `run` also takes
+  `structure=`, the coordinates `grompp -c` reads: `<prefix>.gro` by default,
+  the previous stage's output (`"em.gro"`) for a later stage
 - Every failure is a `molpy.wrapper.ToolError` carrying `tool`
   (`"engine.lammps"`), `returncode` and `tail` — the program's stderr or, when
   nothing was captured, its log (`log.lammps`, `cp2k.out`, GROMACS's

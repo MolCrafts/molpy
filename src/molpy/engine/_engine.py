@@ -178,6 +178,24 @@ class Engine(Tool, ABC):
             ToolError: The engine could not start, timed out, or (with
                 *check*) exited non-zero.
         """
+        run_dir, input_file = self._write_scripts(scripts, workdir)
+        return self._execute(
+            run_dir, input_file, capture_output=capture_output, check=check
+        )
+
+    def _write_scripts(
+        self,
+        scripts: Script | str | Path | Sequence[Script | Path],
+        workdir: str | Path | None,
+    ) -> tuple[Path, Path]:
+        """Write *scripts* into the run directory, as :meth:`run` does.
+
+        Returns:
+            The run directory and the input (the first script) written in it.
+
+        Raises:
+            ValueError: If *scripts* is an empty list.
+        """
         normalised = _as_scripts(scripts)
         run_dir = Path(workdir) if workdir is not None else self.workdir
         if run_dir is None:
@@ -195,9 +213,7 @@ class Engine(Tool, ABC):
             )
             for script in normalised
         ]
-        return self._execute(
-            run_dir, written[0], capture_output=capture_output, check=check
-        )
+        return run_dir, written[0]
 
 
 def _as_scripts(scripts: Script | str | Path | Sequence[Script | Path]) -> list[Script]:

@@ -166,6 +166,29 @@ def test_run_grompps_then_mdruns_the_input_mdp(tmp_path, system, monkeypatch):
     ]
 
 
+def test_a_later_stage_starts_from_the_previous_stages_output(
+    tmp_path, system, monkeypatch
+):
+    """NVT after EM grompp's the minimised em.gro, not the initial gro."""
+    from molpy.engine import Script
+
+    calls = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        return subprocess.CompletedProcess(cmd, 0)
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    engine = GromacsEngine(check_executable=False)
+    paths = engine.generate_inputs(*system, tmp_path)
+    engine.run(Script.from_path(paths["input"]), workdir=tmp_path)
+    engine.run(Script.from_path(paths["nvt"]), workdir=tmp_path, structure="em.gro")
+    grompps = [cmd for cmd in calls if cmd[1] == "grompp"]
+    assert [cmd[cmd.index("-c") + 1] for cmd in grompps] == ["system.gro", "em.gro"]
+    assert [cmd[cmd.index("-o") + 1] for cmd in grompps] == ["em.tpr", "nvt.tpr"]
+    assert calls[-1] == ["gmx", "mdrun", "-deffnm", "nvt"]
+
+
 def test_grompp_accepts_the_generated_inputs(tmp_path, system):
     paths = GromacsEngine(check_executable=False).generate_inputs(*system, tmp_path)
     top = paths["top"].read_text(encoding="utf-8")

@@ -7,8 +7,15 @@ and ``[ molecules ]``, from ``write_top_system``) and the energy-minimisation an
 NVT ``.mdp`` templates. :meth:`GromacsEngine.run` takes one ``.mdp`` as its
 input script and runs::
 
-    gmx grompp -f <mdp> -c <prefix>.gro -p <prefix>.top -o <stem>.tpr
+    gmx grompp -f <mdp> -c <structure> -p <prefix>.top -o <stem>.tpr
     [launcher...] gmx mdrun -deffnm <stem>
+
+``<structure>`` is ``<prefix>.gro`` for the first stage; a later stage starts
+from the structure the stage before it wrote (``mdrun -deffnm em`` writes
+``em.gro``), named by ``run(..., structure="em.gro")``::
+
+    engine.run(Script.from_path(paths["input"]), workdir=d)  # em.mdp
+    engine.run(Script.from_path(paths["nvt"]), workdir=d, structure="em.gro")
 
 Only ``mdrun`` runs under the launcher; ``grompp`` is a serial preprocessor.
 The executable, launcher, environment and time limit (per step) are the
@@ -26,6 +33,7 @@ Reference:
 from __future__ import annotations
 
 import subprocess
+from collections.abc import Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -38,6 +46,8 @@ if TYPE_CHECKING:
     from molcfg import Config
     from molrs.core import Frame
     from molrs.ff.forcefield import ForceField
+
+    from molpy.engine._script import Script
 
 #: The .mdp's cutoff (nm) and electrostatics where the force field states none.
 _DEFAULT_CUTOFF_NM = 1.2
@@ -59,6 +69,8 @@ class GromacsEngine(Engine):
         engine = GromacsEngine(check_executable=False)
         paths = engine.generate_inputs(frame, ff, "./md")
         engine.run(Script.from_path(paths["input"]), workdir="./md")
+        # NVT from the minimised structure EM wrote:
+        engine.run(Script.from_path(paths["nvt"]), workdir="./md", structure="em.gro")
     """
 
     tool = "gromacs"
@@ -74,8 +86,9 @@ class GromacsEngine(Engine):
         """Initialise the GROMACS engine.
 
         Args:
-            prefix: Stem of the ``.gro`` / ``.top`` pair :meth:`run` passes to
-                ``grompp`` (what :meth:`generate_inputs` writes by default).
+            prefix: Stem of the ``.top`` :meth:`run` passes to ``grompp``,
+                and of the ``.gro`` it starts a first stage from (what
+                :meth:`generate_inputs` writes).
             config: molpy's configuration; ``None`` loads it (see
                 :class:`~molpy.engine.Engine`).
             workdir: Default working directory.
@@ -90,6 +103,45 @@ class GromacsEngine(Engine):
         """Return ``".mdp"`` — a GROMACS run-parameter file."""
         return ".mdp"
 
+    def run(
+        self,
+        scripts: Script | str | Path | Sequence[Script | Path],
+        *,
+        workdir: str | Path | None = None,
+        structure: str | Path | None = None,
+        capture_output: bool = False,
+        check: bool = True,
+    ) -> subprocess.CompletedProcess[str]:
+        """``grompp`` then ``mdrun`` the ``.mdp`` *scripts* starts with.
+
+        As :meth:`Engine.run <molpy.engine.Engine.run>`, plus the structure
+        the stage starts from.
+
+        Args:
+            scripts: The ``.mdp`` (first) and any files written beside it.
+            workdir: Working directory for this run (see
+                :meth:`Engine.run <molpy.engine.Engine.run>`).
+            structure: The coordinates ``grompp -c`` reads, relative to the
+                run directory: ``None`` is ``<prefix>.gro`` (a first stage);
+                a later stage names the previous stage's output, e.g.
+                ``"em.gro"`` after ``em.mdp``.
+            capture_output: Capture stdout/stderr.
+            check: Raise :class:`~molpy.wrapper.ToolError` on a non-zero exit.
+
+        Raises:
+            ValueError: If *scripts* is an empty list.
+            ToolError: A step could not start, timed out, or (with *check*)
+                exited non-zero.
+        """
+        run_dir, input_file = self._write_scripts(scripts, workdir)
+        return self._grompp_mdrun(
+            run_dir,
+            input_file,
+            structure=str(structure) if structure is not None else None,
+            capture_output=capture_output,
+            check=check,
+        )
+
     def _execute(
         self,
         run_dir: Path,
@@ -98,10 +150,29 @@ class GromacsEngine(Engine):
         capture_output: bool,
         check: bool,
     ) -> subprocess.CompletedProcess[str]:
+        """``grompp`` then ``mdrun`` *input_file* from ``<prefix>.gro``."""
+        return self._grompp_mdrun(
+            run_dir,
+            input_file,
+            structure=None,
+            capture_output=capture_output,
+            check=check,
+        )
+
+    def _grompp_mdrun(
+        self,
+        run_dir: Path,
+        input_file: Path,
+        *,
+        structure: str | None,
+        capture_output: bool,
+        check: bool,
+    ) -> subprocess.CompletedProcess[str]:
         """Run ``grompp`` then ``mdrun`` for the ``.mdp`` *input_file*.
 
-        ``grompp`` runs without the launcher; a failed ``mdrun`` carries the
-        tail of ``<stem>.log``.
+        ``grompp`` reads *structure* (``<prefix>.gro`` when ``None``) and
+        runs without the launcher; a failed ``mdrun`` carries the tail of
+        ``<stem>.log``.
 
         Raises:
             ToolError: A step could not start, timed out, or (with *check*)
@@ -114,7 +185,7 @@ class GromacsEngine(Engine):
                 "-f",
                 input_file.name,
                 "-c",
-                f"{self.prefix}.gro",
+                structure if structure is not None else f"{self.prefix}.gro",
                 "-p",
                 f"{self.prefix}.top",
                 "-o",

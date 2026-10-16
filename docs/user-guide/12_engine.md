@@ -94,7 +94,19 @@ three bonds, so the frame carries its angles (and dihedrals:
 `Atomistic.generate_topology`). `files["input"]` is `em.mdp`;
 `run(Script.from_path(files["input"]))` grompp's
 the `.mdp` against the `.gro` and `.top`, then mdrun's it (under the engine's
-`launcher`).
+`launcher`). Each later stage starts from the structure the stage before it
+wrote — `mdrun -deffnm em` writes `em.gro` — which `run` is told by
+`structure=`; without it, a stage starts from the initial `.gro`:
+
+```python
+# docs: skip — runs grompp and mdrun
+from molpy.engine import Script
+
+gmx.run(Script.from_path(files["input"]), workdir="./gromacs_run")  # EM
+gmx.run(
+    Script.from_path(files["nvt"]), workdir="./gromacs_run", structure="em.gro"
+)  # NVT from the minimised structure
+```
 
 ### A frame without a box is a non-periodic system
 
