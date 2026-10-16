@@ -80,10 +80,33 @@ class TestTimeIntervalStrategy:
         indices = TimeIntervalStrategy(1.0).get_split_indices(traj)
         assert indices == [0, 2, 4, 6, 8, 10]
 
-    def test_get_split_indices_no_time(self):
-        traj = Trajectory([_make_frame() for _ in range(10)])
+    def test_bins_are_fixed_width_from_the_first_time(self):
+        # 3.0, 3.2 and 3.4 share bin [3, 4); 0.5 shares bin [0, 1) with 0.0.
+        times = np.array([0.0, 0.5, 3.0, 3.2, 3.4])
+        traj = Trajectory([_make_frame() for _ in times], time=times)
+        assert TimeIntervalStrategy(1.0).get_split_indices(traj) == [0, 2, 5]
+
+    def test_bins_start_at_the_first_time(self):
+        times = np.array([10.0, 10.9, 11.0, 12.5])
+        traj = Trajectory([_make_frame() for _ in times], time=times)
+        assert TimeIntervalStrategy(1.0).get_split_indices(traj) == [0, 2, 3, 4]
+
+    def test_falls_back_to_each_frames_meta_time(self, frames):
+        traj = Trajectory(frames)  # no time array; frames carry meta["time"]
+        assert traj.time is None
         indices = TimeIntervalStrategy(1.0).get_split_indices(traj)
-        assert indices == [0, 10]
+        assert indices == [0, 2, 4, 6, 8, 10]
+
+    def test_no_time_anywhere_raises(self):
+        traj = Trajectory([_make_frame() for _ in range(10)])
+        with pytest.raises(ValueError, match="no time array"):
+            TimeIntervalStrategy(1.0).get_split_indices(traj)
+
+    def test_decreasing_times_raise(self):
+        times = np.array([0.0, 2.0, 1.0])
+        traj = Trajectory([_make_frame() for _ in times], time=times)
+        with pytest.raises(ValueError, match="must not decrease"):
+            TimeIntervalStrategy(1.0).get_split_indices(traj)
 
 
 class TestCustomStrategy:
@@ -115,3 +138,40 @@ class TestTrajectorySplitter:
         segments = TrajectorySplitter(traj).split(TimeIntervalStrategy(1.0))
         assert [len(seg) for seg in segments] == [2, 2, 2, 2, 2]
         np.testing.assert_allclose(segments[1].time, [1.0, 1.5])
+
+    def test_time_split_without_a_time_array_uses_meta(self, frames):
+        segments = TrajectorySplitter(Trajectory(frames)).split(
+            TimeIntervalStrategy(2.0)
+        )
+        assert [len(seg) for seg in segments] == [4, 4, 2]
+
+    @pytest.mark.parametrize(
+        "strategy",
+        [FrameIntervalStrategy(3), TimeIntervalStrategy(1.0)],
+        ids=["frames", "time"],
+    )
+    def test_an_empty_trajectory_has_no_segments(self, strategy):
+        assert TrajectorySplitter(Trajectory([])).split(strategy) == []
+
+    @pytest.mark.parametrize(
+        "indices",
+        [
+            [],
+            [1, 10],  # does not start at 0
+            [0, 5],  # does not end at the frame count
+            [0, 5, 5, 10],  # an empty segment
+            [0, 6, 4, 10],  # not rising
+            [0, 5.0, 10],  # not integers
+            [0, 11],  # past the end
+        ],
+    )
+    def test_custom_indices_are_validated(self, frames, indices):
+        splitter = TrajectorySplitter(Trajectory(frames))
+        with pytest.raises(ValueError, match="split indices"):
+            splitter.split(CustomStrategy(lambda traj: indices))
+
+    def test_custom_indices_accept_numpy_integers(self, frames):
+        segments = TrajectorySplitter(Trajectory(frames)).split(
+            CustomStrategy(lambda traj: np.array([0, 4, 10]))
+        )
+        assert [len(seg) for seg in segments] == [4, 6]
