@@ -9,6 +9,7 @@ The data flow is:
 - SystemPlanner keeps asking for chains from PolydisperseChainGenerator until total system mass is satisfied
 - PolydisperseChainGenerator samples each chain's dp (directly, or from a sampled mass) and asks SequenceGenerator for that whole sequence in one call
 - Each time SystemPlanner receives a chain, it updates the running total mass and decides whether to accept, stop, or trim
+- SystemPlanner raises instead of returning a plan outside max_rel_error of the target
 
 Distribution implementations live in :mod:`molpy.builder._polymer.distributions`.
 """
@@ -234,7 +235,9 @@ class SystemPlanner:
     - Enforcing a target total mass for the overall system
     - Iteratively requesting chains from PolydisperseChainGenerator
     - Maintaining a running sum of total mass
-    - Stopping when mass reaches target window, and optionally trimming the final chain
+    - Stopping when mass reaches target window, and optionally trimming the
+      chain that would overshoot it
+    - Raising when the plan cannot reach the target within ``max_rel_error``
 
     Does NOT micromanage sequence probabilities or DP distribution; only orchestrates at the ensemble level.
     """
@@ -252,11 +255,27 @@ class SystemPlanner:
 
         Args:
             chain_generator: Chain generator for building chains
-            target_total_mass: Target total system mass (g/mol)
-            max_rel_error: Maximum relative error allowed (default 0.02 = 2%)
-            max_chains: Maximum number of chains to generate (None = no limit)
+            target_total_mass: Target total system mass (g/mol, finite and > 0)
+            max_rel_error: Maximum relative error allowed (default 0.02 = 2%,
+                finite and >= 0)
+            max_chains: Maximum number of chains to generate (None = no limit,
+                otherwise >= 1). Reaching it short of the target is an error.
             enable_trimming: Whether to enable chain trimming to better hit target mass
+
+        Raises:
+            ValueError: if an argument is out of range.
         """
+        if not (math.isfinite(target_total_mass) and target_total_mass > 0):
+            raise ValueError(
+                f"target_total_mass must be finite and > 0, got {target_total_mass}"
+            )
+        if not (math.isfinite(max_rel_error) and max_rel_error >= 0):
+            raise ValueError(
+                f"max_rel_error must be finite and >= 0, got {max_rel_error}"
+            )
+        if max_chains is not None and max_chains < 1:
+            raise ValueError(f"max_chains must be None or >= 1, got {max_chains}")
+
         self.chain_generator = chain_generator
         self.target_total_mass = target_total_mass
         self.max_rel_error = max_rel_error
@@ -268,42 +287,65 @@ class SystemPlanner:
         Repeatedly ask chain_generator for new chains until accumulated mass
         reaches target_total_mass within max_rel_error.
 
+        A chain that would push the total past ``target * (1 + max_rel_error)``
+        is trimmed (when enabled) and sampling goes on; when it cannot be
+        trimmed, or ``max_chains`` is reached, sampling stops.
+
         Args:
             rng: np.random.Generator number generator
 
         Returns:
-            SystemPlan with all chains and total mass
+            SystemPlan with all chains and total mass; its ``total_mass`` is
+            always within ``max_rel_error`` of ``target_mass``.
+
+        Raises:
+            RuntimeError: if sampling stopped with the total mass outside
+                ``max_rel_error`` of the target. The message gives the
+                planned mass, the target and why sampling stopped.
         """
+        target = self.target_total_mass
+        max_allowed_mass = target * (1 + self.max_rel_error)
         total_mass = 0.0
         chains: list[Chain] = []
-        max_allowed_mass = self.target_total_mass * (1 + self.max_rel_error)
+        stopped_because = "sampling stopped"
 
-        while total_mass < self.target_total_mass:
-            # Check max_chains constraint
+        while total_mass < target:
             if self.max_chains is not None and len(chains) >= self.max_chains:
+                stopped_because = f"max_chains={self.max_chains} was reached"
                 break
 
-            # Generate next chain
             chain = self.chain_generator.build_chain(rng)
+            if total_mass + chain.mass > max_allowed_mass:
+                if not self.enable_trimming:
+                    stopped_because = (
+                        f"the next chain ({chain.mass:.6g} g/mol) overshoots and "
+                        "trimming is disabled"
+                    )
+                    break
+                trimmed = self._try_trim_chain(chain, target - total_mass, rng)
+                if trimmed is None:
+                    stopped_because = (
+                        f"the next chain ({chain.mass:.6g} g/mol) overshoots and "
+                        "cannot be trimmed to fit"
+                    )
+                    break
+                chain = trimmed
 
-            # Check if adding this chain would exceed the maximum allowed mass
-            if total_mass + chain.mass <= max_allowed_mass:
-                chains.append(chain)
-                total_mass += chain.mass
-            else:
-                # Try to trim this chain if enabled
-                if self.enable_trimming:
-                    remaining_mass = self.target_total_mass - total_mass
-                    trimmed = self._try_trim_chain(chain, remaining_mass, rng)
-                    if trimmed is not None:
-                        chains.append(trimmed)
-                        total_mass += trimmed.mass
-                break
+            chains.append(chain)
+            total_mass += chain.mass
+
+        rel_error = abs(total_mass - target) / target
+        if rel_error > self.max_rel_error:
+            raise RuntimeError(
+                f"planned {total_mass:.6g} g/mol in {len(chains)} chains against a "
+                f"target of {target:.6g} g/mol (relative error {rel_error:.3g} > "
+                f"max_rel_error={self.max_rel_error}): {stopped_because}"
+            )
 
         return SystemPlan(
             chains=chains,
             total_mass=total_mass,
-            target_mass=self.target_total_mass,
+            target_mass=target,
         )
 
     def _try_trim_chain(
@@ -316,65 +358,27 @@ class SystemPlanner:
         Optional trimming logic: reduce chain.dp, regenerate sequence,
         so that mass ~= remaining_mass.
 
-        May return None if trimming is not desired or not possible.
-
         Args:
             chain: Original chain that would exceed the target
-            remaining_mass: Remaining mass needed to reach target
+            remaining_mass: Remaining mass needed to reach target (> 0)
             rng: np.random.Generator number generator
 
         Returns:
-            Trimmed chain, or None if trimming is not possible
+            Trimmed chain, or None if no shorter chain fits
         """
-        if remaining_mass <= 0:
-            return None
-
-        # Estimate average monomer mass from the chain
-        if len(chain.monomers) == 0:
-            return None
-
-        # Use expected composition to estimate average monomer mass
-        expected_comp = self.chain_generator.seq_generator.expected_composition()
-        avg_monomer_mass = sum(
-            expected_comp[m] * self.chain_generator.monomer_mass[m]
-            for m in expected_comp.keys()
+        chain_generator = self.chain_generator
+        # mass = dp * mean_monomer_mass + end_group_mass, rounded down to fit
+        estimated_dp = max(
+            1,
+            int(
+                (remaining_mass - chain_generator.end_group_mass)
+                / chain_generator._mean_monomer_mass
+            ),
         )
-
-        if avg_monomer_mass <= 0:
-            # Fallback: use actual chain average
-            avg_monomer_mass = (
-                chain.mass / len(chain.monomers) if len(chain.monomers) > 0 else 0
-            )
-
-        if avg_monomer_mass <= 0:
-            return None
-
-        # Estimate DP needed for remaining mass
-        # mass = dp * avg_monomer_mass + end_group_mass
-        # dp = (mass - end_group_mass) / avg_monomer_mass
-        estimated_dp = int(
-            (remaining_mass - self.chain_generator.end_group_mass) / avg_monomer_mass
-        )
-
-        # Ensure at least 1 monomer
-        estimated_dp = max(1, estimated_dp)
-
-        # Don't trim if estimated DP is not significantly smaller
         if estimated_dp >= chain.dp:
             return None
 
-        # Generate a new shorter chain
-        trimmed_monomers = self.chain_generator.seq_generator.generate_sequence(
-            estimated_dp, rng
-        )
-        trimmed_mass = self.chain_generator._compute_mass(trimmed_monomers)
-
-        # Only accept if it's closer to target than without trimming
-        if trimmed_mass <= remaining_mass * (1 + self.max_rel_error):
-            return Chain(
-                dp=estimated_dp,
-                monomers=trimmed_monomers,
-                mass=trimmed_mass,
-            )
-
+        trimmed = chain_generator._chain(estimated_dp, rng)
+        if trimmed.mass <= remaining_mass * (1 + self.max_rel_error):
+            return trimmed
         return None
