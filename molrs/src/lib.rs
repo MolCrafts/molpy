@@ -113,8 +113,7 @@ pub mod optimize;
 /// through the one [`ff::potential::Potential`]/[`ff::potential::Potentials`]
 /// seam (the `md` feature therefore enables `ff`). Required pieces go in the
 /// constructor (`VelocityVerlet::new(dt, forces, mass, simbox)`); pair search
-/// is core [`core::VerletSkin`]. Frame/`ForceField` wiring lives
-/// in molpy / molrs-python.
+/// is core [`core::VerletSkin`]. Python binds the module as `molrs.md`.
 #[cfg(feature = "md")]
 pub mod md;
 

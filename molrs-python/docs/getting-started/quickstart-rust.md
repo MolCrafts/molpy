@@ -8,7 +8,7 @@ application compiles only what it names, or `full` while exploring.
 
 ```toml
 [dependencies]
-molrs = { package = "molcrafts-molrs", version = "0.17", features = ["full", "filesystem"] }
+molrs = { package = "molcrafts-molrs", version = "0.18", features = ["full", "filesystem"] }
 ```
 
 The crate's default features are `rayon` only — core, no I/O. `full` enables

@@ -411,7 +411,7 @@ pub struct EnvironmentOptions {
     pub include_h_count: bool,
     pub include_charge: bool,
     pub include_aromatic: bool,
-    /// `[R]` / `[Rn]` — makes molpy TypeScope unbounded when true.
+    /// Emit ring membership, `[R]` / `[Rn]`, on each atom.
     pub include_ring_membership: bool,
     pub include_ring_size: bool,
     pub include_explicit_h_atoms: bool,
