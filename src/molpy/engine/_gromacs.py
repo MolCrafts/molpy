@@ -32,7 +32,7 @@ from typing import TYPE_CHECKING
 from molrs.io import write_gro, write_top_system
 
 from molpy.engine._engine import Engine
-from molpy.engine._nonbonded import nonbonded_of
+from molpy.engine._nonbonded import is_periodic, nonbonded_of, refuse_box_free
 
 if TYPE_CHECKING:
     from molcfg import Config
@@ -174,7 +174,7 @@ class GromacsEngine(Engine):
                 with its angles and dihedrals (``generate_topology``): GROMACS
                 excludes every pair within three bonds, and those rows are
                 how the pair list knows them. Its atoms' ``mol_id`` splits it
-                into molecules, and its box is the ``.gro`` box.
+                into molecules, and its periodic box is the ``.gro`` box.
             forcefield: The force field the frame's types name.
             output_dir: Directory for the files (created if absent).
             temperature: Reference and initial-velocity temperature (K).
@@ -185,7 +185,15 @@ class GromacsEngine(Engine):
 
         Returns:
             ``{"gro", "top", "em", "nvt"}`` mapped to the written paths.
+
+        Raises:
+            ValueError: If the frame has no periodic box, before any file is
+                written: GROMACS's Verlet cutoff scheme (its only one since
+                2020) simulates periodic systems only, so a vacuum system
+                needs a box larger than the molecule plus twice the cutoff.
         """
+        if not is_periodic(frame):
+            raise refuse_box_free("GROMACS", "the Verlet cutoff scheme (pbc = xyz)")
         out = Path(output_dir)
         out.mkdir(parents=True, exist_ok=True)
         paths = {

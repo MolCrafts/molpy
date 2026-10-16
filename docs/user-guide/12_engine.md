@@ -94,6 +94,20 @@ three bonds, so the frame carries its angles (and dihedrals:
 the `.mdp` against the `.gro` and `.top`, then mdrun's it (under the engine's
 `launcher`).
 
+### A frame without a box is a non-periodic system
+
+Every engine follows one periodicity policy. A frame with a periodic box is a
+periodic system; a frame without one (an `Atomistic.to_frame()` carries
+none) is a non-periodic, vacuum system. LAMMPS shrink-wraps it
+(`boundary s s s`, and `minimize` / `md` relax it the same way), and OpenMM
+computes it without periodic images (`NoCutoff` by default,
+`CutoffNonPeriodic` on request). Whatever needs a periodic cell is refused for
+it, by name, before any file is written: a long-range Coulomb style
+(LAMMPS's PPPM), OpenMM's `PME`, `Ewald` and `CutoffPeriodic`, and NPT. GROMACS
+refuses a box-free frame altogether: its Verlet cutoff scheme simulates
+periodic systems only, so a molecule in vacuum is given a box larger than
+itself plus twice the cutoff.
+
 ### Nonbonded settings are the force field's
 
 No engine replaces the force field's nonbonded treatment with one of its own.

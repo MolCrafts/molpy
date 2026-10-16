@@ -34,7 +34,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from molpy.engine._engine import Engine
-from molpy.engine._nonbonded import nonbonded_of
+from molpy.engine._nonbonded import is_periodic, nonbonded_of, refuse_box_free
 from molpy.engine._script import Script
 from molpy.io import read_lammps_data, write_lammps_data, write_lammps_forcefield_str
 from molpy.io.lammps import infer_lammps_atom_style
@@ -185,11 +185,14 @@ class LammpsEngine(Engine):
 
         A frame with a periodic box gets ``boundary p p p`` and binned
         neighbour lists. A frame without one (``Atomistic.to_frame()``
-        carries no box) gets a non-periodic deck: molrs's data writer puts
-        the atoms inside the bounds of their coordinates widened by 1 length
-        unit on every side, ``boundary s s s`` shrink-wraps that box to the
-        atoms, and ``neighbor 2.0 nsq`` searches all pairs, since binning
-        needs a box wider than the pair cutoff.
+        carries no box) is a non-periodic system and gets a non-periodic
+        deck: molrs's data writer puts the atoms inside the bounds of their
+        coordinates widened by 1 length unit on every side, ``boundary s s
+        s`` shrink-wraps that box to the atoms, and ``neighbor 2.0 nsq``
+        searches all pairs, since binning needs a box wider than the pair
+        cutoff. A long-range Coulomb style, whose PPPM solver needs a
+        periodic cell, is refused for it (the policy every engine follows:
+        :mod:`molpy.engine`).
 
         molpy names no style itself: a style molrs can write is emitted and
         one it cannot is refused by molrs, by name, before any file is
@@ -219,13 +222,18 @@ class LammpsEngine(Engine):
             paths.
 
         Raises:
-            ValueError: If *units* is not one molrs writes, before any file
-                is written.
+            ValueError: If *units* is not one molrs writes, or the frame has
+                no periodic box and the force field's Coulomb style is
+                long-range; before any file is written.
         """
         if units not in _LAMMPS_UNITS:
             raise ValueError(
                 f"units must be one of {list(_LAMMPS_UNITS)}, got {units!r}."
             )
+        periodic = is_periodic(frame)
+        long_range = pair_style is None and nonbonded_of(forcefield).coulomb == "long"
+        if long_range and not periodic:
+            raise refuse_box_free("LAMMPS", "a long-range Coulomb style (PPPM)")
         style = atom_style or infer_lammps_atom_style(frame)
         out = Path(output_dir)
         out.mkdir(parents=True, exist_ok=True)
@@ -249,7 +257,6 @@ class LammpsEngine(Engine):
         write_lammps_data(paths["data"], frame, atom_style=style, units=units)
         paths["settings"].write_text(settings, encoding="utf-8")
 
-        periodic = frame.box is not None and not frame.box.is_free
         init = [
             f"# molpy-generated LAMMPS init for {prefix}",
             f"units {units}",
@@ -261,7 +268,6 @@ class LammpsEngine(Engine):
             init.append(f"pair_style {pair_style}")
         paths["init"].write_text("\n".join(init) + "\n", encoding="utf-8")
 
-        long_range = pair_style is None and nonbonded_of(forcefield).coulomb == "long"
         paths["input"].write_text(
             _INPUT_TEMPLATE.format(
                 prefix=prefix,
@@ -314,7 +320,8 @@ class LammpsEngine(Engine):
             relaxed = eng.minimize(pack_result.frame, ff)
 
         Args:
-            frame: Input structure; must carry a periodic box (``frame.box``).
+            frame: Input structure: periodic when it carries a periodic box
+                (``frame.box``), else a non-periodic, shrink-wrapped system.
             ff: Typified force field providing pair/bond/angle/... coefficients.
             etol: Energy stopping tolerance (unitless).
             ftol: Force stopping tolerance (force units).
@@ -335,7 +342,7 @@ class LammpsEngine(Engine):
             A new :class:`~molpy.Frame` with relaxed coordinates.
 
         Raises:
-            ValueError: If *frame* has no box.
+            ValueError: As :meth:`generate_inputs` does.
             ToolError: If LAMMPS fails or writes no output structure; the
                 error carries the tail of ``log.lammps``.
         """
@@ -377,7 +384,8 @@ class LammpsEngine(Engine):
         ``nve``.
 
         Args:
-            frame: Input structure; must carry a periodic box (``frame.box``).
+            frame: Input structure: periodic when it carries a periodic box
+                (``frame.box``), else a non-periodic, shrink-wrapped system.
             ff: Typified force field.
             ensemble: One of ``"nve"``, ``"nve/limit"``, ``"nvt"``.
             steps: Number of MD steps.
@@ -396,7 +404,7 @@ class LammpsEngine(Engine):
             A new :class:`~molpy.Frame` with the post-MD coordinates.
 
         Raises:
-            ValueError: If *ensemble* is unknown or *frame* has no box.
+            ValueError: If *ensemble* is unknown, or as :meth:`generate_inputs`.
         """
         fixes = {
             "nve": "fix integ all nve",
@@ -451,13 +459,6 @@ class LammpsEngine(Engine):
         ``pair_modify`` mix), runs *body* followed by ``write_data``, then reads back and
         splices the relaxed coordinates onto a copy of *frame*.
         """
-        if frame.box is None:
-            raise ValueError(
-                "LAMMPS relaxation needs a periodic box on the frame. Set it via "
-                "molpack's `with_periodic_box(...)` or assign `frame.box`. "
-                "Box-free / shrink-wrap relaxation is not supported yet."
-            )
-
         run_dir = (
             Path(workdir)
             if workdir is not None

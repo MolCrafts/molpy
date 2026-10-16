@@ -14,6 +14,16 @@ concrete engine has **one** input writer, ``generate_inputs``, and ``run``:
   the PDB, the force-field XML and a Python simulation script.
 * :class:`Cp2kEngine` — runs a CP2K input.
 
+One periodicity policy holds for every engine: a frame with a periodic box
+is a periodic system; a frame without one (``Atomistic.to_frame()`` carries
+none) is a non-periodic, vacuum system. LAMMPS shrink-wraps it
+(``boundary s s s``) and OpenMM computes it without images (``NoCutoff`` by
+default). A method that needs a periodic cell — Ewald / PME / PPPM, OpenMM's
+``CutoffPeriodic``, a barostat — is refused for it before any file is
+written, and so is GROMACS, whose cutoff scheme simulates periodic systems
+only. The nonbonded settings (cutoffs, electrostatics) are the force
+field's own, stated on its pair styles; an explicit argument overrides them.
+
 Scripts are :class:`Script` values (a name, its text and an optional path)::
 
     from molpy.engine import LammpsEngine, Script

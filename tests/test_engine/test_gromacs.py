@@ -122,6 +122,17 @@ def test_unstated_settings_fall_back_and_overrides_win(tmp_path, system):
     }
 
 
+def test_a_box_free_frame_is_refused_before_any_file(tmp_path, system):
+    """GROMACS's Verlet scheme is periodic only: no zero box with pbc = xyz."""
+    frame, ff = system
+    frame.box = None
+    with pytest.raises(ValueError, match="GROMACS.*needs a periodic box"):
+        GromacsEngine(check_executable=False).generate_inputs(
+            frame, ff, tmp_path / "out"
+        )
+    assert not (tmp_path / "out").exists()
+
+
 def test_run_grompps_then_mdruns_the_input_mdp(tmp_path, system, monkeypatch):
     import subprocess
 

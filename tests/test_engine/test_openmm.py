@@ -266,7 +266,7 @@ class TestNonbondedFromTheForceField:
 
         _, ff = boxed_water
         ff.def_style("pair", "coul/long/pme", {"cutoff": 12.0})
-        config = _with_nonbonded(OpenmmSimulationConfig(), ff)
+        config = _with_nonbonded(OpenmmSimulationConfig(), ff, periodic=True)
         assert config.nonbonded_method == "PME"
         assert config.nonbonded_cutoff_nm == pytest.approx(1.2)
 
@@ -274,7 +274,9 @@ class TestNonbondedFromTheForceField:
         from molpy.engine._openmm import _with_nonbonded
 
         config = _with_nonbonded(
-            OpenmmSimulationConfig(), mp.ff.forcefield.ForceField("bare")
+            OpenmmSimulationConfig(),
+            mp.ff.forcefield.ForceField("bare"),
+            periodic=True,
         )
         assert config.nonbonded_method == "PME"
         assert config.nonbonded_cutoff_nm == 1.0
@@ -301,6 +303,43 @@ class TestNonbondedFromTheForceField:
         )
         assert "nonbondedMethod=Ewald," in setup
         assert "nonbondedCutoff=0.8*unit.nanometer," in setup
+
+
+class TestBoxFreeFrame:
+    """A frame without a box is a non-periodic system: NoCutoff by default,
+    and a method needing a periodic cell is refused before any file."""
+
+    def test_defaults_to_no_cutoff(self, engine, water_system, tmp_path):
+        paths = engine.generate_inputs(
+            *water_system, OpenmmSimulationConfig(), tmp_path
+        )
+        script = paths["script"].read_text(encoding="utf-8")
+        assert "nonbondedMethod=NoCutoff," in script
+
+    def test_a_non_periodic_cutoff_is_kept(self, engine, water_system, tmp_path):
+        config = OpenmmSimulationConfig(nonbonded_method="CutoffNonPeriodic")
+        paths = engine.generate_inputs(*water_system, config, tmp_path)
+        assert "nonbondedMethod=CutoffNonPeriodic," in paths["script"].read_text(
+            encoding="utf-8"
+        )
+
+    @pytest.mark.parametrize(
+        ("fields", "match"),
+        [
+            ({"nonbonded_method": "PME"}, "nonbonded_method 'PME'"),
+            ({"nonbonded_method": "Ewald"}, "nonbonded_method 'Ewald'"),
+            ({"nonbonded_method": "CutoffPeriodic"}, "CutoffPeriodic"),
+            ({"ensemble": "NPT"}, "NPT"),
+        ],
+    )
+    def test_periodic_methods_are_refused(
+        self, engine, water_system, tmp_path, fields, match
+    ):
+        with pytest.raises(ValueError, match=f"{match}.*needs a periodic box"):
+            engine.generate_inputs(
+                *water_system, OpenmmSimulationConfig(**fields), tmp_path / "out"
+            )
+        assert not (tmp_path / "out").exists()
 
 
 def test_no_serialize_system(engine):

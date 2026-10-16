@@ -38,7 +38,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, get_args
 
 from molpy.engine._engine import Engine
-from molpy.engine._nonbonded import nonbonded_of
+from molpy.engine._nonbonded import is_periodic, nonbonded_of, refuse_box_free
 from molpy.io import write_openmm_system, write_pdb
 
 if TYPE_CHECKING:
@@ -75,16 +75,17 @@ class OpenmmSimulationConfig:
             minimised coordinates to *output_pdb*.
         temperature: Temperature in Kelvin (the thermostat's, or NVE's
             initial velocities').
-        pressure: Pressure in bar (NPT only).
+        pressure: Pressure in bar (NPT only; a periodic frame only).
         timestep_fs: Integration timestep in femtoseconds.
         n_steps: Number of MD steps.
         nonbonded_method: Nonbonded treatment, by its ``openmm.app`` name:
             ``"NoCutoff"``, ``"CutoffNonPeriodic"``, ``"CutoffPeriodic"``,
             ``"PME"`` or ``"Ewald"``. ``None`` (the default) is the force
-            field's: ``PME`` for a long-range Coulomb style
-            (``coul/long/pme``), ``CutoffPeriodic`` for a truncated one
-            (OpenMM's cutoff methods add a reaction field), ``PME`` when it
-            states none.
+            field's for a periodic frame: ``PME`` for a long-range Coulomb
+            style (``coul/long/pme``), ``CutoffPeriodic`` for a truncated
+            one (OpenMM's cutoff methods add a reaction field), ``PME`` when
+            it states none; and ``NoCutoff`` for a frame without a periodic
+            box, for which the periodic methods are refused.
         nonbonded_cutoff_nm: Nonbonded cutoff radius in nanometres. ``None``
             (the default) is the force field's: its Coulomb style's
             ``cutoff``, else its other pair styles', else 1.0 nm.
@@ -304,7 +305,8 @@ class OpenmmEngine(Engine):
             forcefield: A :class:`~molpy.ff.forcefield.ForceField` holding an
                 atom type for every ``type`` the frame names.
             config: Simulation parameters; an unset ``nonbonded_method`` or
-                ``nonbonded_cutoff_nm`` is the force field's.
+                ``nonbonded_cutoff_nm`` is the force field's (``NoCutoff`` for
+                a frame without a periodic box).
             output_dir: Directory where files are written (created if absent).
             pdb_filename: Name for the PDB coordinate file.
             ff_filename: Name for the XML force field file.
@@ -313,7 +315,13 @@ class OpenmmEngine(Engine):
         Returns:
             Dictionary with keys ``"pdb"``, ``"forcefield"``, and ``"script"``
             mapping to :class:`~pathlib.Path` objects.
+
+        Raises:
+            ValueError: If the frame has no periodic box and the config asks
+                for a periodic method (``CutoffPeriodic``, ``PME``,
+                ``Ewald``) or ``NPT``; before any file is written.
         """
+        config = _with_nonbonded(config, forcefield, periodic=is_periodic(frame))
         out = Path(output_dir)
         out.mkdir(parents=True, exist_ok=True)
 
@@ -327,7 +335,7 @@ class OpenmmEngine(Engine):
         write_openmm_system(ff_path, forcefield, frame)
 
         script_text = self._render_simulation_script(
-            _with_nonbonded(config, forcefield),
+            config,
             pdb_filename=pdb_filename,
             ff_filename=ff_filename,
         )
@@ -525,14 +533,26 @@ _NONBONDED_METHOD: dict[str | None, NonbondedMethod] = {
 }
 #: The cutoff (nm) where neither the config nor the force field states one.
 _DEFAULT_CUTOFF_NM = 1.0
+#: The methods that need a periodic cell.
+_PERIODIC_METHODS = frozenset({"CutoffPeriodic", "PME", "Ewald"})
 
 
 def _with_nonbonded(
-    config: OpenmmSimulationConfig, forcefield: ForceField
+    config: OpenmmSimulationConfig, forcefield: ForceField, *, periodic: bool
 ) -> OpenmmSimulationConfig:
-    """*config* with its unset nonbonded fields taken from *forcefield*."""
+    """*config* with its unset nonbonded fields taken from *forcefield*.
+
+    A non-periodic system defaults to ``NoCutoff`` and refuses a periodic
+    method and the NPT barostat.
+    """
+    if not periodic and config.ensemble == "NPT":
+        raise refuse_box_free("OpenMM", "NPT (a Monte Carlo barostat)")
+    if not periodic and config.nonbonded_method in _PERIODIC_METHODS:
+        raise refuse_box_free("OpenMM", f"nonbonded_method {config.nonbonded_method!r}")
     stated = nonbonded_of(forcefield)
-    method = config.nonbonded_method or _NONBONDED_METHOD[stated.coulomb]
+    method = config.nonbonded_method or (
+        _NONBONDED_METHOD[stated.coulomb] if periodic else "NoCutoff"
+    )
     cutoff = config.nonbonded_cutoff_nm
     if cutoff is None:
         cutoff = next(

@@ -1,12 +1,14 @@
-"""LAMMPS engine unit tests — no binary, no subprocess.
+"""LAMMPS engine relaxation tests — mocked ``subprocess``.
 
-Round-trip MD against a real ``lmp`` binary is out of scope for the unit
-suite. Script generation and argument validation are what we own; those
-are covered here and in ``test_engine.py`` (with mocked ``subprocess``).
+Script generation and argument validation are what we own; those are covered
+here and in ``test_engine.py``. The one real minimisation runs only where an
+``lmp`` binary is on ``PATH``.
 """
 
 from __future__ import annotations
 
+import os
+import shutil
 import subprocess
 from unittest.mock import patch
 
@@ -51,18 +53,72 @@ def _dimer_system(separation: float = 2.2) -> tuple[mp.Frame, ForceField]:
     return frame, ff
 
 
+def _cut_dimer_system() -> tuple[mp.Frame, ForceField]:
+    """The dimer under a 10 Å ``lj/cut`` force field molrs can write."""
+    frame, _ = _dimer_system()
+    ff = ForceField("dimer", units="real")
+    c = ff.def_style("atom", "full").def_type("C", mass=12.011)
+    ff.def_style("bond", "harmonic").def_type("C-C", c, c, k=300.0, r0=_R0)
+    ff.def_style("pair", "lj/cut", {"cutoff": 10.0}).def_type(
+        "C", c, epsilon=0.05, sigma=3.4
+    )
+    return frame, ff
+
+
+def _lmp():
+    """A config naming the ``lmp`` binary (not the auto-detected one)."""
+    return load_config({"engine": {"lammps": {"executable": "lmp"}}})
+
+
 def test_init_autodetects_executable() -> None:
     """``LammpsEngine()`` resolves a binary name without requiring it on PATH."""
     eng = LammpsEngine(check_executable=False)
     assert eng.executable in {"lmp", "lmp_serial", "lmp_mpi"}
 
 
-def test_minimize_requires_box() -> None:
-    """A box-free frame is rejected before any subprocess is launched."""
-    frame, ff = _dimer_system()
+def test_minimize_relaxes_a_box_free_frame_shrink_wrapped(tmp_path) -> None:
+    """A box-free frame is a non-periodic system: its deck is shrink-wrapped
+    (``boundary s s s``), and the relaxed coordinates come back."""
+    frame, ff = _cut_dimer_system()
     frame.box = None
-    with pytest.raises(ValueError, match="periodic box"):
-        LammpsEngine(check_executable=False).minimize(frame, ff)
+
+    def lammps(argv, *, cwd, **_):
+        shutil.copy(cwd / "system.data", cwd / "relaxed.data")
+        return subprocess.CompletedProcess(argv, 0, None, None)
+
+    engine = LammpsEngine(config=_lmp(), check_executable=False)
+    with patch("subprocess.run", side_effect=lammps):
+        relaxed = engine.minimize(frame, ff, workdir=tmp_path)
+    init = (tmp_path / "system.in.init").read_text(encoding="utf-8").splitlines()
+    assert "boundary s s s" in init
+    assert relaxed.box is None
+    np.testing.assert_allclose(relaxed["atoms"]["x"], frame["atoms"]["x"])
+
+
+def test_a_long_range_force_field_needs_a_box(tmp_path) -> None:
+    """PPPM needs a periodic cell: refused, by name, before any file."""
+    frame, ff = _cut_dimer_system()
+    frame.box = None
+    ff.def_style("pair", "coul/long/pme", {"cutoff": 10.0})
+    with pytest.raises(ValueError, match="LAMMPS.*long-range.*periodic box"):
+        LammpsEngine(check_executable=False).minimize(
+            frame, ff, workdir=tmp_path / "out"
+        )
+    assert not (tmp_path / "out").exists()
+
+
+@pytest.mark.skipif(shutil.which("lmp") is None, reason="needs the lmp executable")
+def test_lammps_minimizes_a_box_free_dimer(tmp_path, monkeypatch) -> None:
+    """A real shrink-wrapped minimisation pulls the stretched bond to r0."""
+    frame, ff = _cut_dimer_system()
+    frame.box = None
+    for key in [
+        k for k in os.environ if k.startswith(("PMI", "PMIX", "SLURM", "OMPI"))
+    ]:
+        monkeypatch.delenv(key)
+    relaxed = LammpsEngine(config=_lmp()).minimize(frame, ff, workdir=tmp_path)
+    bond = np.diff(np.asarray(relaxed["atoms"]["x"]))[0]
+    assert bond == pytest.approx(_R0, abs=1e-3)
 
 
 def test_md_rejects_unknown_ensemble() -> None:
@@ -74,13 +130,7 @@ def test_md_rejects_unknown_ensemble() -> None:
 
 def test_a_run_that_writes_no_structure_raises_with_the_log_tail(tmp_path) -> None:
     """LAMMPS exits 0 but writes no relaxed.data: the error carries the log."""
-    frame, _ = _dimer_system()
-    ff = ForceField("dimer", units="real")
-    c = ff.def_style("atom", "full").def_type("C", mass=12.011)
-    ff.def_style("bond", "harmonic").def_type("C-C", c, c, k=300.0, r0=_R0)
-    ff.def_style("pair", "lj/cut", {"cutoff": 10.0}).def_type(
-        "C", c, epsilon=0.05, sigma=3.4
-    )
+    frame, ff = _cut_dimer_system()
 
     def no_output(argv, *, cwd, **_):
         (cwd / "log.lammps").write_text(
@@ -88,10 +138,7 @@ def test_a_run_that_writes_no_structure_raises_with_the_log_tail(tmp_path) -> No
         )
         return subprocess.CompletedProcess(argv, 0, None, None)
 
-    engine = LammpsEngine(
-        config=load_config({"engine": {"lammps": {"executable": "lmp"}}}),
-        check_executable=False,
-    )
+    engine = LammpsEngine(config=_lmp(), check_executable=False)
     with (
         patch("subprocess.run", side_effect=no_output),
         pytest.raises(ToolError, match="WARNING: Lost atoms") as raised,
