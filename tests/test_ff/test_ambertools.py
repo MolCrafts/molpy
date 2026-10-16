@@ -6,6 +6,12 @@ antechamber, ``frcmod/litfsi_gaff2.frcmod`` for parmchk2 and
 ``prmtop/LiTFSI.prmtop`` for tleap. The tests assert what the typifiers own:
 the net charge they hand antechamber, how prmtop rows land on graph rows, the
 frcmod TleapTypifier writes, and the errors.
+
+``LiTFSI.prmtop`` was saved by tleap from ``leaprc.gaff``: its parameters are
+gaff.dat 1.81's (``c3-f`` k = 356.9), whatever ``parameter_set`` a test
+names, because the fake hands it back regardless. gaff2.dat 2.2.30's
+``c3-f`` is k = 334.28; ``test_ambertools/test_real_programs.py`` checks
+both generations against the real tleap.
 """
 
 from __future__ import annotations
@@ -170,7 +176,7 @@ class TestAntechamberTypifier:
 
         bond = _link(typed, typed.bonds, (0, 1))
         assert bond["type"] == "c3-f"
-        assert bond["k"] == pytest.approx(356.9)  # RK, E = k (r - r0)^2
+        assert bond["k"] == pytest.approx(356.9)  # gaff.dat RK, E = k (r - r0)^2
         assert bond["r0"] == pytest.approx(1.3497)
         assert _link(typed, typed.bonds, (7, 8))["type"] == "ne-sy"
 
