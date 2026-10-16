@@ -63,7 +63,7 @@ molpy follows molrs's naming rules (`tests/test_public_paths.py` checks the modu
   Classes and functions follow (`EnvironmentSpec`, `tool_settings`,
   `TypeAssignment`, `source_forcefield`).
 - **Acronyms are cased as words**: `LammpsEngine`, `OpenmmEngine`,
-  `RdkitAdapter`, `TleapWrapper`, `SmilesIr`, `CgBond`, `Rdf`, `Msd`,
+  `TleapWrapper`, `SmilesIr`, `CgBond`, `Rdf`, `Msd`,
   `Lbfgs`, `PairLjCut`. numpy's `DType` and `HBond` (H is the element) keep
   their spelling.
 - **Counts are `n_*`** (numpy / freud): `n_atoms`, `n_pairs`, `n_rings()`,

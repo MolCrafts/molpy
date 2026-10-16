@@ -7,9 +7,9 @@ This page shows how to integrate external CLI tools (wrappers) and external Pyth
 | | Wrapper | Adapter |
 |--|---------|---------|
 | **Crosses** | Execution boundary (subprocess) | Representation boundary (in-memory) |
-| **Concerns** | Executable, environment, return codes, files | Field mapping, synchronization fidelity |
-| **May** | Run subprocesses, produce files | Hold two object models in sync |
-| **Must not** | Own workflow logic or chemistry semantics | Execute subprocesses or produce side effects |
+| **Concerns** | Executable, environment, return codes, files | Field mapping, conversion fidelity |
+| **May** | Run subprocesses, produce files | Build one object model from the other |
+| **Must not** | Own workflow logic or chemistry semantics | Execute subprocesses, mutate its input, or cache a copy |
 
 
 ## Adding a Wrapper
@@ -49,71 +49,89 @@ Higher-level methods (like `energy_minimize`) are convenience wrappers around `s
 
 ## Adding an Adapter
 
-Subclass `molpy.adapter.Adapter[InternalT, ExternalT]`. Implement `_do_sync_to_internal()` and `_do_sync_to_external()`.
+An adapter is a pair of pure functions in `molpy.adapter`, named after the
+library: `to_<lib>(atomistic)` and `from_<lib>(obj)`. There is no base class to
+subclass — `to_rdkit` / `from_rdkit` (`src/molpy/adapter/_rdkit.py`) is the
+reference.
 
 ```python
-from molpy.adapter import Adapter
+# docs: skip — ASE is not a molpy dependency
+import ase
+
 from molpy.core import Atomistic
 
-class AseAdapter(Adapter[Atomistic, "ase.Atoms"]):
-    """Sync between MolPy Atomistic and ASE Atoms."""
+_XYZ = ("x", "y", "z")
 
-    def _do_sync_to_external(self):
-        """Atomistic → ASE Atoms."""
-        import ase
-        symbols = [a.get("element") for a in self._internal.atoms]
-        positions = [[a["x"], a["y"], a["z"]] for a in self._internal.atoms]
-        self._external = ase.Atoms(symbols=symbols, positions=positions)
 
-    def _do_sync_to_internal(self):
-        """ASE Atoms → Atomistic."""
-        mol = Atomistic()
-        for atom in self._external:
-            mol.def_atom(
-                element=atom.symbol,
-                x=atom.position[0],
-                y=atom.position[1],
-                z=atom.position[2],
-            )
-        self._internal = mol
+def to_ase(atomistic: Atomistic) -> ase.Atoms:
+    """New ``ase.Atoms`` from ``atomistic``; the input is not touched."""
+    atoms = list(atomistic.atoms)
+    return ase.Atoms(
+        symbols=[a["element"] for a in atoms],
+        positions=[[a[k] for k in _XYZ] for a in atoms],
+    )
+
+
+def from_ase(atoms: ase.Atoms) -> Atomistic:
+    """New ``Atomistic`` from ``atoms``; the input is not touched."""
+    out = Atomistic()
+    for atom in atoms:
+        out.def_atom(element=atom.symbol, **dict(zip(_XYZ, map(float, atom.position))))
+    return out
 ```
 
 ### Key points
 
-- `get_external()` auto-syncs if external is `None` and internal is set (and vice versa)
-- Optional imports: if ASE is not installed, the adapter module should fail gracefully at import time
-- **Never** run subprocesses inside an adapter — that is a wrapper's job
-- Test round-trip fidelity: `internal → external → internal` should preserve atom count, connectivity, and coordinates
+- **Build, never mutate.** Each function returns a new object. Do not write
+  bookkeeping (ids, tags) onto the caller's structure, and do not keep a cached
+  copy of either side — a cache goes stale the moment the user edits one.
+- **Carry what the other side can hold.** Map the fields the library owns
+  natively; carry the rest in whatever per-atom / per-bond metadata it offers
+  (RDKit properties, ASE `arrays` / `info`) so it comes back unchanged.
+- **Document what is lost.** List, in the module docstring, every field or
+  relation that does not survive `from_<lib>(to_<lib>(x))`.
+- **Never** run subprocesses inside an adapter — that is a wrapper's job.
+- Test round-trip fidelity: `from_<lib>(to_<lib>(x))` should preserve atom
+  count, connectivity, coordinates and every carried component, and neither
+  function may change its input.
 
 
 ## Handling optional dependencies
 
-Follow the existing pattern for optional imports:
+The library is an optional extra, so `molpy.adapter` must import without it.
+Import the module that needs it inside a guard that treats *only* the library's
+own absence as "not installed" — any other `ModuleNotFoundError` is a broken
+install and must surface — and make the names raise a clear `ImportError` on use
+(`src/molpy/adapter/__init__.py`):
 
 ```python
-# In adapter module
+# docs: skip — illustrative; molpy has no ASE adapter
+_ASE_MISSING: ModuleNotFoundError | None = None
 try:
-    import ase
-    _HAS_ASE = True
-except ImportError:
-    _HAS_ASE = False
-    ase = None
+    from molpy.adapter._ase import from_ase, to_ase
+except ModuleNotFoundError as exc:
+    if exc.name != "ase":
+        raise
+    _ASE_MISSING = exc
 
-class AseAdapter(Adapter[Atomistic, "ase.Atoms"]):
-    def __init__(self, **kwargs):
-        if not _HAS_ASE:
-            raise ImportError("ASE is required: pip install ase")
-        super().__init__(**kwargs)
+
+def __getattr__(name: str) -> object:
+    if name in {"to_ase", "from_ase"} and _ASE_MISSING is not None:
+        raise ImportError(
+            f"molpy.adapter.{name} needs ASE: pip install ase"
+        ) from _ASE_MISSING
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 ```
 
-This way the module can be imported without the dependency, and the error only triggers when someone actually tries to use it.
+Never bind a missing name to `None`: the failure then surfaces far away, as
+`'NoneType' object is not callable`.
 
 
 ## Checklist
 
 - [ ] Wrapper: subclass `Wrapper`, keep `.run()` calls thin
-- [ ] Adapter: subclass `Adapter[I, E]`, implement `_do_sync_to_internal/external`
-- [ ] Optional deps: guard imports, fail at usage not import
+- [ ] Adapter: a `to_<lib>` / `from_<lib>` pair of pure functions; document what does not round-trip
+- [ ] Optional deps: guard imports on `exc.name`, fail at usage not import
 - [ ] Tests: round-trip fidelity for adapters, return-code checking for wrappers
 - [ ] Add tests in `tests/test_wrapper/` or `tests/test_adapter/`
 - [ ] Unit-test wrappers/engines with mocks and script literals (never launch the binary)

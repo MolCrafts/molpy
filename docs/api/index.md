@@ -44,7 +44,7 @@ its molrs subsystem.
 | Register a force-field style or category from Python | `mp.ff.style_registry.StyleDeclaration`, `register_style`, `register_category` | [Potential](potential.md) |
 | Read and write molecular files (PDB, LAMMPS, GRO, …) | `mp.io.read_pdb`, `mp.io.write_lammps_data`, `mp.io.read_openmm_forcefield` | [I/O](io.md) |
 | Store a frame, trajectory or force field as a `*.mrec` record | `mp.io.write_mrec_frame`, `mp.io.read_mrec_trajectory`, `mp.io.read_mrec_forcefield` | [I/O](io.md) |
-| Bridge to a third-party library (in-memory) | `Adapter`, `RdkitAdapter` (optional example) | [Adapter](adapter.md) |
+| Bridge to a third-party library (in-memory) | `to_rdkit`, `from_rdkit` (optional example) | [Adapter](adapter.md) |
 | Invoke external CLI tools (antechamber, tleap) | `Wrapper`, `AntechamberWrapper` | [Wrapper](wrapper.md) |
 | Plan polydisperse polymer systems | `SystemPlanner`, `PolydisperseChainGenerator`, `SchulzZimmPolydisperse` | [Builder](builder.md) |
 | Compute mean-squared displacement, correlations, RDF, clustering | `Msd`, `OnsagerCorrelation`, `Rdf` | [Compute](compute.md) |
