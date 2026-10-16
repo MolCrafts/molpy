@@ -33,10 +33,10 @@ import tempfile
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from molrs.io import read_lammps_data, write_lammps_data, write_lammps_forcefield_str
-
 from molpy.engine._engine import Engine
 from molpy.engine._script import Script
+from molpy.io import read_lammps_data, write_lammps_data, write_lammps_forcefield_str
+from molpy.io.lammps import infer_lammps_atom_style
 from molpy.wrapper import ToolError
 from molpy.wrapper._process import tail_of
 
@@ -46,6 +46,9 @@ if TYPE_CHECKING:
 
 # Common LAMMPS binary names, tried in order when none is configured.
 _LAMMPS_CANDIDATES = ("lmp", "lmp_serial", "lmp_mpi")
+
+# The LAMMPS `units` styles molrs writes a data file and its coefficients in.
+_LAMMPS_UNITS = ("real", "metal", "lj")
 
 
 class LammpsEngine(Engine):
@@ -144,7 +147,7 @@ class LammpsEngine(Engine):
         output_dir: str | Path,
         *,
         prefix: str = "system",
-        atom_style: str = "full",
+        atom_style: str | None = None,
         units: str = "real",
         pair_style: str | None = None,
         body: str | None = None,
@@ -153,14 +156,16 @@ class LammpsEngine(Engine):
 
         Files written (given ``prefix="system"``):
 
-        * ``system.data`` — the structure (molrs's LAMMPS data writer).
+        * ``system.data`` — the structure (molrs's LAMMPS data writer), in
+          *atom_style* and *units*.
         * ``system.in.settings`` — molrs's LAMMPS force-field include: the
           ``*_style`` line of every category the frame uses (built-in or a
           registered force-field IR style; ``hybrid`` when a category spans
           several styles), its coefficients, ``special_bonds`` and
           ``pair_modify``. It is included after ``read_data``, where LAMMPS
           rejects ``units``, so ``units`` is the init's.
-        * ``system.in.init`` — ``units``, ``atom_style``, ``boundary``,
+        * ``system.in.init`` — ``units`` and ``atom_style`` (the data
+          file's own), ``boundary``,
           ``neighbor`` and, when *pair_style* is given, that ``pair_style``
           line (the include then leaves its own out).
         * ``system.in`` — the input script: init, ``read_data``, settings,
@@ -183,8 +188,13 @@ class LammpsEngine(Engine):
             forcefield: The force field the settings are written from.
             output_dir: Directory for the deck (created if absent).
             prefix: Stem of the four file names.
-            atom_style: LAMMPS ``atom_style``.
-            units: LAMMPS ``units`` style; the coefficients are written in it.
+            atom_style: LAMMPS ``atom_style`` of the data file and the init;
+                ``None`` is the style the frame's atom columns hold
+                (:func:`molpy.io.lammps.infer_lammps_atom_style`: ``full``
+                with ``mol_id`` and ``charge``, ``atomic`` with neither, …).
+            units: LAMMPS ``units`` style — ``"real"``, ``"metal"`` or
+                ``"lj"`` — of the init, the data file and the coefficients,
+                each converted to it by molrs.
             pair_style: A ``pair_style`` line (without the command) that
                 replaces the force field's own.
             body: Commands after the settings include; ``None`` writes the
@@ -193,7 +203,16 @@ class LammpsEngine(Engine):
         Returns:
             ``{"data", "settings", "init", "input"}`` mapped to the written
             paths.
+
+        Raises:
+            ValueError: If *units* is not one molrs writes, before any file
+                is written.
         """
+        if units not in _LAMMPS_UNITS:
+            raise ValueError(
+                f"units must be one of {list(_LAMMPS_UNITS)}, got {units!r}."
+            )
+        style = atom_style or infer_lammps_atom_style(frame)
         out = Path(output_dir)
         out.mkdir(parents=True, exist_ok=True)
         paths = {
@@ -213,14 +232,14 @@ class LammpsEngine(Engine):
             skip_units=True,
             units=units,
         )
-        write_lammps_data(paths["data"], frame)
+        write_lammps_data(paths["data"], frame, atom_style=style, units=units)
         paths["settings"].write_text(settings, encoding="utf-8")
 
         periodic = frame.box is not None and not frame.box.is_free
         init = [
             f"# molpy-generated LAMMPS init for {prefix}",
             f"units {units}",
-            f"atom_style {atom_style}",
+            f"atom_style {style}",
             "boundary p p p" if periodic else "boundary s s s",
             "neighbor 2.0 bin" if periodic else "neighbor 2.0 nsq",
         ]
@@ -244,7 +263,7 @@ class LammpsEngine(Engine):
             files={key: path.name for key, path in paths.items()},
             periodic=periodic,
             units=units,
-            atom_style=atom_style,
+            atom_style=style,
         )
         return paths
 
@@ -262,7 +281,7 @@ class LammpsEngine(Engine):
         max_iter: int = 1000,
         max_eval: int = 10000,
         pair_style: str = "lj/cut/coul/cut 10.0",
-        atom_style: str = "full",
+        atom_style: str | None = None,
         units: str = "real",
         workdir: str | Path | None = None,
         capture_output: bool = False,
@@ -288,8 +307,9 @@ class LammpsEngine(Engine):
             pair_style: LAMMPS ``pair_style`` line for minimisation.  The default
                 ``lj/cut/coul/cut`` avoids a long-range solver; switch to
                 ``lj/cut/coul/long`` (with a ``kspace_style``) for production MD.
-            atom_style: LAMMPS ``atom_style`` (``full`` by default).
-            units: LAMMPS ``units`` (``real`` by default).
+            atom_style: LAMMPS ``atom_style``; ``None`` is the frame's (see
+                :meth:`generate_inputs`).
+            units: LAMMPS ``units``: ``real`` (default), ``metal`` or ``lj``.
             workdir: Directory for input/output files; a temporary directory is
                 created when ``None``.
             capture_output: Capture LAMMPS stdout/stderr.
@@ -327,7 +347,7 @@ class LammpsEngine(Engine):
         seed: int = 12345,
         limit: float = 0.1,
         pair_style: str = "lj/cut/coul/cut 10.0",
-        atom_style: str = "full",
+        atom_style: str | None = None,
         units: str = "real",
         workdir: str | Path | None = None,
         capture_output: bool = False,
@@ -349,8 +369,8 @@ class LammpsEngine(Engine):
             seed: RNG seed for the initial velocity distribution.
             limit: Per-step displacement cap (Å) for ``ensemble="nve/limit"``.
             pair_style: LAMMPS ``pair_style`` line.
-            atom_style: LAMMPS ``atom_style``.
-            units: LAMMPS ``units``.
+            atom_style: LAMMPS ``atom_style``; ``None`` is the frame's.
+            units: LAMMPS ``units``: ``real``, ``metal`` or ``lj``.
             workdir: Working directory; temporary when ``None``.
             capture_output: Capture LAMMPS stdout/stderr.
 
@@ -401,7 +421,7 @@ class LammpsEngine(Engine):
         *,
         thermo: int,
         pair_style: str,
-        atom_style: str,
+        atom_style: str | None,
         units: str,
         workdir: str | Path | None,
         capture_output: bool,
@@ -459,7 +479,8 @@ class LammpsEngine(Engine):
                 returncode=0,
                 tail=tail_of(log),
             )
-        relaxed = read_lammps_data(out_path, atom_style=atom_style)
+        # write_data names its style (`Atoms # full`), which the reader reads.
+        relaxed = read_lammps_data(out_path)
         self.logger.info(
             "relaxation finished", run_dir=str(run_dir), output=out_path.name
         )

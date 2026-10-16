@@ -32,7 +32,12 @@ This separation is intentional. It lets you inspect and hand-edit the generated 
 (molrs's include: every `*_style` line the frame's types use, their
 coefficients, `special_bonds`, `pair_modify`), an init with `units`,
 `atom_style`, `boundary` and `neighbor`, and the input script that includes
-them and runs a starter minimise + NVT body (`body=` replaces it). A frame
+them and runs a starter minimise + NVT body (`body=` replaces it). The init
+states the data file's own `atom_style` and `units`: `atom_style=None` (the
+default) is the style the frame's atom columns hold (`full` with `mol_id` and
+`charge`, `atomic` with neither; `mp.io.lammps.infer_lammps_atom_style`), and
+`units=` (`real`, `metal` or `lj`; any other is refused) is what molrs
+converts both the data file and the coefficients to. A frame
 with a periodic box gets `boundary p p p`; one without (an
 `Atomistic.to_frame()`) gets a shrink-wrapped, non-periodic deck.
 
