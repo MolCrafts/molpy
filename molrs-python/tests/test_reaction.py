@@ -8,8 +8,19 @@ transform to one matched occurrence in place. The transform compilation itself
 these tests assert the PyO3 surface and Daylight atom-map semantics.
 """
 
+import copy
+
 import molrs
 import pytest
+from molrs.core import Atom, BondNumber, BondOrder
+
+Z = {"H": 1, "C": 6, "N": 7, "O": 8, "S": 16, "Br": 35}
+
+
+def _atom(mol, symbol, x, y, z):
+    """Add an atom of element ``symbol`` at ``(x, y, z)``; return its view."""
+    return mol.add_atom(atomic_number=Z[symbol], x=x, y=y, z=z)
+
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -25,25 +36,30 @@ def _amine_plus_ester():
     """
     mol = molrs.core.Atomistic()
     # amine
-    n0 = mol.add_atom("N", 0.0, 0.0, 0.0)
-    h1 = mol.add_atom("H", 0.6, 0.8, 0.0)
-    h2 = mol.add_atom("H", -0.6, 0.8, 0.0)
+    n0 = _atom(mol, "N", 0.0, 0.0, 0.0)
+    h1 = _atom(mol, "H", 0.6, 0.8, 0.0)
+    h2 = _atom(mol, "H", -0.6, 0.8, 0.0)
     mol.add_bond(n0, h1)
     mol.add_bond(n0, h2)
     # ester
-    c0 = mol.add_atom("C", 5.0, 0.0, 0.0)  # carbonyl C
-    o1 = mol.add_atom("O", 6.0, 0.8, 0.0)  # =O (preserved)
-    o2 = mol.add_atom("O", 5.0, -1.3, 0.0)  # ester O (leaves)
-    c3 = mol.add_atom("C", 5.0, -2.6, 0.0)  # alkyl C (leaves)
+    c0 = _atom(mol, "C", 5.0, 0.0, 0.0)  # carbonyl C
+    o1 = _atom(mol, "O", 6.0, 0.8, 0.0)  # =O (preserved)
+    o2 = _atom(mol, "O", 5.0, -1.3, 0.0)  # ester O (leaves)
+    c3 = _atom(mol, "C", 5.0, -2.6, 0.0)  # alkyl C (leaves)
     bo = mol.add_bond(c0, o1)
-    mol.set_bond_type(bo, 2)  # carbonyl double bond
+    mol.set_bond_class(bo, BondOrder.Double, BondNumber.Double)  # carbonyl double bond
     mol.add_bond(c0, o2)
     mol.add_bond(o2, c3)
     return mol, {"n0": n0, "c0": c0, "o1": o1, "o2": o2, "c3": c3}
 
 
+def _bonded(mol, atom):
+    """The atoms bonded to ``atom``."""
+    return {other for other, _ in mol.neighbor_bonds(atom)}
+
+
 def _bind(reaction, mol):
-    """Match each reactant component and merge the map->handle dicts."""
+    """Match each reactant component and merge the map->atom dicts."""
     binding = {}
     for pat in reaction.reactant_patterns:
         matches = pat.find_matches(mol)
@@ -115,15 +131,15 @@ def test_apply_amide_forms_bond_and_drops_leaving_group():
     assert set(binding) == {1, 2}
     touched = rxn.apply(mol, binding)
 
-    # apply reports the touched (surviving) atom handles as a list[int]
+    # apply reports the touched (surviving) atoms as a list of Atom views
     assert isinstance(touched, list)
-    assert all(isinstance(t, int) for t in touched)
+    assert all(isinstance(t, Atom) for t in touched)
     # leaving atoms (ester O + alkyl C) removed -> exactly 2 fewer atoms
     assert mol.n_atoms == n_before - 2
     # new N-C(=O) amide linkage present; carbonyl O preserved (not re-added)
     assert molrs.perceive.SmartsPattern("[N][C]=O").has_match(mol)
     # topology regenerated around the new bond
-    assert mol.n_relations("angles") > 0
+    assert mol.n_angles > 0
 
 
 def test_apply_reuses_core_and_leaves_binding_atoms_alive():
@@ -133,12 +149,11 @@ def test_apply_reuses_core_and_leaves_binding_atoms_alive():
     touched = rxn.apply(mol, binding)
     assert isinstance(touched, list)
     # the mapped atoms survive and are now bonded
-    n_nbrs = {other for (_, other) in mol.incident_relations(binding[1], "bonds")}
-    assert binding[2] in n_nbrs
+    assert binding[2] in _bonded(mol, binding[1])
 
 
 # ---------------------------------------------------------------------------
-# ac-004: unmapped RHS atom is added (element from template, no coordinates)
+# ac-004: unmapped RHS atom is added (species from template, no coordinates)
 # ---------------------------------------------------------------------------
 
 
@@ -146,8 +161,8 @@ def test_apply_adds_unmapped_product_atom():
     # substitution: C-Br -> C-O ; Br leaves, O is a brand-new atom.
     rxn = molrs.perceive.Reaction("[C:1]Br >> [C:1]O")
     mol = molrs.core.Atomistic()
-    c0 = mol.add_atom("C", 0.0, 0.0, 0.0)
-    br = mol.add_atom("Br", 1.9, 0.0, 0.0)
+    c0 = _atom(mol, "C", 0.0, 0.0, 0.0)
+    br = _atom(mol, "Br", 1.9, 0.0, 0.0)
     mol.add_bond(c0, br)
 
     binding = _bind(rxn, mol)
@@ -157,13 +172,12 @@ def test_apply_adds_unmapped_product_atom():
 
     # Br removed, O added -> still 2 atoms
     assert mol.n_atoms == 2
-    elements = {mol.get(e, "element") for e in mol.entities()}
-    assert elements == {"C", "O"}
+    species = {atom["atomic_number"] for atom in mol.atoms}
+    assert species == {6, 8}
     # the new O is bonded to C0 and carries no coordinates
-    o_handle = next(e for e in mol.entities() if mol.get(e, "element") == "O")
-    c_nbrs = {other for (_, other) in mol.incident_relations(c0, "bonds")}
-    assert o_handle in c_nbrs
-    assert not mol.has(o_handle, "x")
+    oxygen = next(atom for atom in mol.atoms if atom["atomic_number"] == 8)
+    assert oxygen in _bonded(mol, c0)
+    assert "x" not in oxygen
 
 
 # ---------------------------------------------------------------------------
@@ -173,8 +187,8 @@ def test_apply_adds_unmapped_product_atom():
 
 def test_smarts_matcher_still_works():
     mol = molrs.core.Atomistic()
-    c = mol.add_atom("C", 0.0, 0.0, 0.0)
-    o = mol.add_atom("O", 1.4, 0.0, 0.0)
+    c = _atom(mol, "C", 0.0, 0.0, 0.0)
+    o = _atom(mol, "O", 1.4, 0.0, 0.0)
     mol.add_bond(c, o)
     assert molrs.perceive.SmartsPattern("[C:1][O:2]").has_match(mol)
 
@@ -186,8 +200,8 @@ def test_smarts_matcher_still_works():
 
 def test_apply_touched_amide_endpoints_and_leaving_neighbor():
     """ac-001: touched has the formed-bond endpoints N/C plus the leaving
-    group's surviving neighbor; the deleted atoms' own handles are absent; the
-    result is deduped."""
+    group's surviving neighbor; the deleted atoms are absent; the result is
+    deduped."""
     rxn = molrs.perceive.Reaction("[N;H2:1].[C:2](=O)OC >> [N:1][C:2]=O")
     mol, h = _amine_plus_ester()
     binding = _bind(rxn, mol)
@@ -197,7 +211,7 @@ def test_apply_touched_amide_endpoints_and_leaving_neighbor():
     # formed N-C bond endpoints (C is also the ester O's surviving neighbor)
     assert binding[1] in touched_set  # amine N
     assert binding[2] in touched_set  # ester carbonyl C
-    # deleted atoms (ester O + alkyl C) own handles must NOT appear
+    # deleted atoms (ester O + alkyl C) must NOT appear
     assert h["o2"] not in touched_set
     assert h["c3"] not in touched_set
     # deduped
@@ -205,21 +219,22 @@ def test_apply_touched_amide_endpoints_and_leaving_neighbor():
 
 
 def test_apply_touched_includes_added_atom():
-    """ac-002: a reaction adding an RHS atom includes the new atom's handle;
-    the surviving carbon is touched, the deleted Br handle is not."""
+    """ac-002: a reaction adding an RHS atom includes the new atom; the
+    surviving carbon is touched, the deleted Br is not."""
     rxn = molrs.perceive.Reaction("[C:1]Br >> [C:1]O")
     mol = molrs.core.Atomistic()
-    c0 = mol.add_atom("C", 0.0, 0.0, 0.0)
-    br = mol.add_atom("Br", 1.9, 0.0, 0.0)
+    c0 = _atom(mol, "C", 0.0, 0.0, 0.0)
+    br = _atom(mol, "Br", 1.9, 0.0, 0.0)
     mol.add_bond(c0, br)
 
     binding = _bind(rxn, mol)
     touched = set(rxn.apply(mol, binding))
 
-    o_handle = next(e for e in mol.entities() if mol.get(e, "element") == "O")
-    assert o_handle in touched  # newly added atom
+    oxygen = next(atom for atom in mol.atoms if atom["atomic_number"] == 8)
+    assert oxygen in touched  # newly added atom
     assert c0 in touched  # surviving neighbor of the leaving Br
-    assert br not in touched  # deleted atom's own handle absent
+    assert br not in touched  # deleted atom absent
+    assert {atom.handle for atom in touched} == {oxygen.handle, c0.handle}
 
 
 def test_apply_touched_thiol_ene_two_carbons_and_sulfur():
@@ -227,12 +242,12 @@ def test_apply_touched_thiol_ene_two_carbons_and_sulfur():
     (formed bond); the sulfur's spectator H is not touched."""
     rxn = molrs.perceive.Reaction("[C:1]=[C:2].[S;H1:3] >> [C:1][C:2][S:3]")
     mol = molrs.core.Atomistic()
-    c1 = mol.add_atom("C", 0.0, 0.0, 0.0)
-    c2 = mol.add_atom("C", 1.3, 0.0, 0.0)
-    s3 = mol.add_atom("S", 3.0, 0.0, 0.0)
-    hs = mol.add_atom("H", 3.0, 1.0, 0.0)  # explicit H so [S;H1] matches
+    c1 = _atom(mol, "C", 0.0, 0.0, 0.0)
+    c2 = _atom(mol, "C", 1.3, 0.0, 0.0)
+    s3 = _atom(mol, "S", 3.0, 0.0, 0.0)
+    hs = _atom(mol, "H", 3.0, 1.0, 0.0)  # explicit H so [S;H1] matches
     b = mol.add_bond(c1, c2)
-    mol.set_bond_type(b, 2)
+    mol.set_bond_class(b, BondOrder.Double, BondNumber.Double)
     mol.add_bond(s3, hs)
 
     binding = _bind(rxn, mol)
@@ -247,34 +262,44 @@ def test_apply_many_compiles_all_leaving_groups_before_mutation():
     binding_first = _bind(rxn, first)
     binding_second = _bind(rxn, second)
 
-    world = first.copy()
-    second_to_world = world.merge(second)
+    world = first
+    row_of = {atom: row for row, atom in enumerate(second.atoms)}
+    merged = world.merge(second)  # second's atoms, now in world, in row order
     binding_second = {
-        label: second_to_world[handle] for label, handle in binding_second.items()
+        label: merged[row_of[atom]] for label, atom in binding_second.items()
     }
     before = world.n_atoms
 
-    touched = rxn.apply_many(world, [binding_first, binding_second], refresh=False)
+    batch = rxn.apply_many(world, [binding_first, binding_second], refresh=False)
 
+    assert isinstance(batch, molrs.perceive.ReactionBatch)
     assert world.n_atoms == before - 4
-    assert len(touched) == 2
+    assert len(batch.touched) == len(batch.created) == 2
+    assert batch.created == [[], []]
     assert all(
         set(binding.values()) <= set(seed)
-        for binding, seed in zip((binding_first, binding_second), touched, strict=True)
+        for binding, seed in zip(
+            (binding_first, binding_second), batch.touched, strict=True
+        )
     )
 
 
-def test_apply_many_detailed_preserves_rhs_creation_order():
+def test_apply_many_works_on_a_copy_and_leaves_the_original():
+    rxn = molrs.perceive.Reaction("[N;H2:1].[C:2](=O)OC >> [N:1][C:2]=O")
+    mol, _ = _amine_plus_ester()
+    work = copy.copy(mol)
+    rxn.apply_many(work, [_bind(rxn, work)], refresh=False)
+    assert (mol.n_atoms, work.n_atoms) == (7, 5)
+
+
+def test_apply_many_reports_rhs_creation_order():
     reaction = molrs.perceive.Reaction("[N:1].[C:2]>>[N:1][C:2]([O])[S]")
     mol = molrs.core.Atomistic()
-    n = mol.add_atom("N")
-    c = mol.add_atom("C")
+    n = mol.add_atom(atomic_number=7)
+    c = mol.add_atom(atomic_number=6)
 
-    touched, created = reaction.apply_many_detailed(mol, [{1: n, 2: c}], refresh=False)
+    batch = reaction.apply_many(mol, [{1: n, 2: c}], refresh=False)
 
-    assert len(touched) == len(created) == 1
-    assert len(created[0]) == 2
-    assert [mol.get(handle, "element") for handle in created[0]] == [
-        "O",
-        "S",
-    ]
+    assert len(batch.touched) == len(batch.created) == 1
+    assert len(batch.created[0]) == 2
+    assert [atom["atomic_number"] for atom in batch.created[0]] == [8, 16]

@@ -440,6 +440,7 @@ pub mod positional {
     pub fn value(spec: &StyleSpec, p: &ParamSpec, params: &Params) -> Result<F, String> {
         params
             .get(&p.name)
+            .and_then(|v| v.as_num())
             .or_else(|| p.default.as_ref().and_then(ParamValue::as_num))
             .ok_or_else(|| {
                 format!(
@@ -552,17 +553,11 @@ pub mod positional {
                 spec.category, spec.name
             ))
         };
-        if let Some((key, v)) = stated
+        if let Some((key, value)) = stated
             .iter()
-            .find(|(k, _)| !carried(k) && !PASSED.contains(k))
+            .find(|(key, _)| !carried(key) && !PASSED.contains(key))
         {
-            return refuse(key, v.to_string());
-        }
-        if let Some((key, v)) = stated
-            .iter_strings()
-            .find(|(k, _)| !carried(k) && !PASSED.contains(k))
-        {
-            return refuse(key, format!("{v:?}"));
+            return refuse(key, format!("{value:?}"));
         }
         Ok(())
     }
@@ -577,13 +572,16 @@ pub mod positional {
         let Some(p) = spec.style_param("cutoff") else {
             return Ok(Vec::new());
         };
-        let cutoff = style.get("cutoff").ok_or_else(|| {
-            format!(
-                "{} style '{}' has no cutoff: declare one on the style or write with \
+        let cutoff = style
+            .get("cutoff")
+            .and_then(|v| v.as_num())
+            .ok_or_else(|| {
+                format!(
+                    "{} style '{}' has no cutoff: declare one on the style or write with \
                  skip_pair_style",
-                spec.category, spec.name
-            )
-        })?;
+                    spec.category, spec.name
+                )
+            })?;
         Ok(vec![Token::Real(units.apply(cutoff, p.dim))])
     }
 
@@ -622,7 +620,8 @@ pub mod positional {
             return Ok(Vec::new());
         };
         let rule = style
-            .get_str("mixing")
+            .get("mixing")
+            .and_then(|v| v.as_text())
             .or_else(|| p.default.as_ref().and_then(ParamValue::as_text))
             .unwrap_or("arithmetic");
         match fixed {

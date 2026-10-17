@@ -401,8 +401,8 @@ crate::compute::spec::compute_spec! {
 mod tests {
     use super::*;
     use crate::compute::fixtures::neighbors_of;
+    use crate::core::Cell;
     use molrs::core::SimBox;
-    use ndarray::array;
 
     /// A snapshot: positions in an open cube of side `box_len` at the origin.
     struct Snapshot {
@@ -413,8 +413,12 @@ mod tests {
     fn frame_with(positions: &[[F; 3]], box_len: F) -> Snapshot {
         Snapshot {
             positions: positions.to_vec(),
-            simbox: SimBox::cube(box_len, array![0.0 as F, 0.0 as F, 0.0 as F], [false; 3])
-                .unwrap(),
+            simbox: SimBox::new(
+                Cell::Lengths([box_len; 3]),
+                [0.0 as F, 0.0 as F, 0.0 as F],
+                [false; 3],
+            )
+            .unwrap(),
         }
     }
 

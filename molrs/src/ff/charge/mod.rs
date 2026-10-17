@@ -41,16 +41,32 @@
 //! then corrects; [`MullikenModel`] hands the same bits back.
 //!
 //! ```
-//! use molrs::core::Atomistic;
+//! use molrs::core::{Atomistic, Element, keys};
+//! use molrs::props;
 //! use molrs::ff::charge::{BccModel, BccParameterSet, ChargeModel, MullikenModel};
 //!
 //! # fn main() -> Result<(), Box<dyn std::error::Error>> {
 //! let mut mol = Atomistic::new();
-//! let o = mol.add_atom_xyz("O", 0.0, 0.0, 0.0);
-//! let h1 = mol.add_atom_xyz("H", 0.96, 0.0, 0.0);
-//! let h2 = mol.add_atom_xyz("H", -0.24, 0.93, 0.0);
-//! mol.add_bond(o, h1)?;
-//! mol.add_bond(o, h2)?;
+//! let o = mol.add_atom(props! {
+//!     keys::ATOMIC_NUMBER => Element::O,
+//!     keys::X => 0.0,
+//!     keys::Y => 0.0,
+//!     keys::Z => 0.0,
+//! })?;
+//! let h1 = mol.add_atom(props! {
+//!     keys::ATOMIC_NUMBER => Element::H,
+//!     keys::X => 0.96,
+//!     keys::Y => 0.0,
+//!     keys::Z => 0.0,
+//! })?;
+//! let h2 = mol.add_atom(props! {
+//!     keys::ATOMIC_NUMBER => Element::H,
+//!     keys::X => -0.24,
+//!     keys::Y => 0.93,
+//!     keys::Z => 0.0,
+//! })?;
+//! mol.add_bond(o, h1, props! {})?;
+//! mol.add_bond(o, h2, props! {})?;
 //!
 //! // The model is chosen at runtime — the trait is object-safe, and no caller has
 //! // to know which one it is holding.

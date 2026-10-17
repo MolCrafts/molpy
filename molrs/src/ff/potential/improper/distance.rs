@@ -1,6 +1,6 @@
 //! Out-of-plane distance improper (LAMMPS `improper_style distance`).
 
-use crate::ff::potential::Potential;
+use crate::ff::potential::{Accumulator, Potential};
 use molrs::op::F;
 use molrs::op::vec3::{add, cross, dot, norm, scale, sub};
 
@@ -57,8 +57,8 @@ fn point(coords: &[F], a: usize) -> [F; 3] {
 }
 
 impl Potential for ImproperDistance {
-    fn calc_energy_forces(&self, coords: &[F]) -> (F, Vec<F>) {
-        let mut forces = vec![0.0; coords.len()];
+    fn evaluate(&self, coords: &[F], acc: &mut Accumulator<'_>) {
+        let forces = acc.forces_without_virial();
         let mut energy = 0.0;
         for (t, &[i, j, k, l]) in self.atoms.iter().enumerate() {
             let (c, a, b, d) = (
@@ -90,13 +90,14 @@ impl Potential for ImproperDistance {
                 }
             }
         }
-        (energy, forces)
+        acc.add_energy(energy);
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ff::potential::fixtures::OneShot;
 
     const COORDS: [F; 12] = [
         0.1, 0.2, 0.7, // centre, above the plane
@@ -110,21 +111,21 @@ mod tests {
         // Plane z = 0, centre at height 0.5.
         let coords = [0.0, 0.0, 0.5, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0];
         let pot = ImproperDistance::new().term([0, 1, 2, 3], 10.0, 2.0);
-        let e = pot.calc_energy(&coords);
+        let e = pot.energy_at(&coords);
         assert!((e - (10.0 * 0.25 + 2.0 * 0.0625)).abs() < 1e-12, "{e}");
     }
 
     #[test]
     fn forces_are_the_negative_gradient() {
         let pot = ImproperDistance::new().term([0, 1, 2, 3], 10.0, 3.0);
-        let (_, forces) = pot.calc_energy_forces(&COORDS);
+        let (_, forces) = pot.energy_forces_at(&COORDS);
         let h = 1e-6;
         for idx in 0..COORDS.len() {
             let mut p = COORDS;
             p[idx] += h;
-            let ep = pot.calc_energy(&p);
+            let ep = pot.energy_at(&p);
             p[idx] -= 2.0 * h;
-            let em = pot.calc_energy(&p);
+            let em = pot.energy_at(&p);
             let numeric = -(ep - em) / (2.0 * h);
             assert!(
                 (forces[idx] - numeric).abs() < 1e-6,
@@ -140,6 +141,6 @@ mod tests {
     fn a_collinear_plane_prices_nothing() {
         let coords = [0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 2.0, 0.0, 0.0];
         let pot = ImproperDistance::new().term([0, 1, 2, 3], 10.0, 0.0);
-        assert_eq!(pot.calc_energy_forces(&coords), (0.0, vec![0.0; 12]));
+        assert_eq!(pot.energy_forces_at(&coords), (0.0, vec![0.0; 12]));
     }
 }

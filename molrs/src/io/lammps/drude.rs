@@ -90,15 +90,22 @@ pub(crate) fn drude_flags(
 ) -> Option<String> {
     let n = type_ids.len();
     let mut shell = vec![false; n];
-    if let Some(vsite) = frame.column("atoms", "vsite").and_then(|c| c.as_string()) {
+    if let Some(vsite) = frame
+        .column("atoms", "vsite")
+        .and_then(|c| c.get::<String>())
+    {
         for (i, v) in vsite.iter().enumerate().take(n) {
             shell[i] = v == "drude";
         }
     }
     let pairs = |block: &str| -> Vec<(usize, usize)> {
         match (
-            frame.column(block, keys::ATOMI).and_then(|c| c.as_uint()),
-            frame.column(block, keys::ATOMJ).and_then(|c| c.as_uint()),
+            frame
+                .column(block, keys::ATOMI)
+                .and_then(|c| c.get::<u64>()),
+            frame
+                .column(block, keys::ATOMJ)
+                .and_then(|c| c.get::<u64>()),
         ) {
             (Some(i), Some(j)) => i
                 .iter()
@@ -178,7 +185,6 @@ mod springs {
     /// already holds with other parameters.
     pub(crate) fn drude_springs_as_bonds<'f>(
         ff: &'f ForceField,
-        reg: &Registry,
     ) -> Result<Cow<'f, ForceField>, ForceFieldWriteError> {
         let styles: Vec<_> = ff
             .get_styles(DRUDE.0)
@@ -201,7 +207,7 @@ mod springs {
                     .into());
             }
             for (name, ends, params) in style.type_rows() {
-                let k = params.get("k").ok_or_else(|| {
+                let k = params.get("k").and_then(|v| v.as_num()).ok_or_else(|| {
                     format!("drude type `{name}`: no `k`, the spring's stiffness")
                 })?;
                 springs.push((name.to_owned(), [ends[0].to_owned(), ends[1].to_owned()], k));
@@ -209,7 +215,7 @@ mod springs {
         }
         let mut view = ff.clone();
         if view.get_style(BOND.0, BOND.1).is_none() {
-            view.def_style_in(reg, BOND.0, BOND.1, Params::new())
+            view.def_style(BOND.0, BOND.1, Params::new())
                 .map_err(|e| format!("the bond style of the Drude springs: {e}"))?;
         }
         for (name, [core, shell], k) in &springs {
@@ -218,12 +224,12 @@ mod springs {
                 .def_type(
                     name,
                     &[core, shell],
-                    Params::from_pairs(&[("k", *k), ("r0", 0.0)]),
+                    Params::from_iter([("k", *k), ("r0", 0.0)]),
                 )
                 .map_err(|e| format!("drude type `{name}` as a LAMMPS bond type: {e}"))?;
             view.get_style_mut(DRUDE.0, DRUDE.1)
                 .expect("a drude harmonic style holds it")
-                .remove_type(name);
+                .del_type(name);
         }
         Ok(Cow::Owned(view))
     }
@@ -282,8 +288,8 @@ mod springs {
                 "#   {name} ({} {}): alpha {} thole {}\n",
                 ends[0],
                 ends[1],
-                fmt(params.get("alpha"), alpha_dim),
-                fmt(params.get("thole"), thole_dim),
+                fmt(params.get("alpha").and_then(|v| v.as_num()), alpha_dim),
+                fmt(params.get("thole").and_then(|v| v.as_num()), thole_dim),
             ));
         }
         lines.push("\n".to_owned());

@@ -484,15 +484,17 @@ fn cosines_up_to(s: &FourierSeries, max: usize) -> FourierSeries {
 
 /// A required numeric param of a row.
 fn need(p: &Params, style: &'static str, key: &str) -> Result<f64> {
-    p.get(key).ok_or_else(|| TorsionRefusal::MissingParam {
-        style,
-        key: key.to_owned(),
-    })
+    p.get(key)
+        .and_then(|v| v.as_num())
+        .ok_or_else(|| TorsionRefusal::MissingParam {
+            style,
+            key: key.to_owned(),
+        })
 }
 
 /// An optional numeric param of a row, 0 when absent (the kernels' default).
 fn or0(p: &Params, key: &str) -> f64 {
-    p.get(key).unwrap_or(0.0)
+    p.get(key).and_then(|v| v.as_num()).unwrap_or(0.0)
 }
 
 // ── single cosine terms ─────────────────────────────────────────────────────
@@ -597,7 +599,7 @@ impl CosineTermForm {
     }
 
     pub fn to_params(&self) -> Params {
-        Params::from_pairs(&[
+        Params::from_iter([
             ("k", self.k),
             ("periodicity", self.periodicity),
             ("phase", self.phase),
@@ -715,7 +717,7 @@ impl SignedCosineForm {
     }
 
     pub fn to_params(&self) -> Params {
-        Params::from_pairs(&[
+        Params::from_iter([
             ("k", self.k),
             ("sign", self.sign),
             ("periodicity", self.periodicity),
@@ -793,7 +795,7 @@ impl PeriodicForm {
         const WHAT: &str = "dihedral periodic";
         let mut terms = Vec::new();
         let mut m = 1;
-        while let Some(k) = p.get(&format!("k{m}")) {
+        while let Some(k) = p.get(&format!("k{m}")).and_then(|v| v.as_num()) {
             terms.push(CosineTermForm {
                 k,
                 periodicity: need(p, WHAT, &format!("periodicity{m}"))?,
@@ -1270,17 +1272,21 @@ pub(crate) fn rb_polynomial(c: [f64; 6]) -> (&'static str, Params) {
 /// algebra and the LAMMPS writer, so the three read one `N`.
 pub(crate) fn nharmonic_coefficients(p: &Params) -> std::result::Result<Vec<f64>, String> {
     let mut a = Vec::new();
-    while let Some(v) = p.get(&format!("a{}", a.len() + 1)) {
+    while let Some(v) = p.get(&format!("a{}", a.len() + 1)).and_then(|v| v.as_num()) {
         a.push(v);
     }
     if a.is_empty() {
         return Err("dihedral nharmonic: missing param `a1` (needs a1..aN, N ≥ 1)".into());
     }
-    if let Some((key, _)) = p.iter().find(|(key, _)| {
-        key.strip_prefix('a')
-            .and_then(|i| i.parse::<usize>().ok())
-            .is_some_and(|i| i > a.len())
-    }) {
+    if let Some((key, _)) = p
+        .iter()
+        .filter_map(|(k, v)| v.as_num().map(|x| (k, x)))
+        .find(|(key, _)| {
+            key.strip_prefix('a')
+                .and_then(|i| i.parse::<usize>().ok())
+                .is_some_and(|i| i > a.len())
+        })
+    {
         return Err(format!(
             "dihedral nharmonic: `{key}` follows a gap after `a{}`",
             a.len()
@@ -1455,6 +1461,7 @@ pub(crate) fn codecs() -> Vec<(&'static str, &'static str, FormCodec)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ff::potential::fixtures::OneShot;
     use rand::rngs::StdRng;
     use rand::{RngExt, SeedableRng};
     use std::f64::consts::PI;
@@ -2275,11 +2282,15 @@ mod tests {
                 let mut block = Block::new();
                 for (key, atom) in [("atomi", 0), ("atomj", 1), ("atomk", 2), ("atoml", 3)] {
                     block
-                        .insert(key, Array1::from_vec(vec![atom as Idx]).into_dyn())
+                        .insert(key, Array1::from_vec(vec![atom as Idx]).into_dyn(), None)
                         .unwrap();
                 }
                 block
-                    .insert("type", Array1::from_vec(vec!["t".to_owned()]).into_dyn())
+                    .insert(
+                        "type",
+                        Array1::from_vec(vec!["t".to_owned()]).into_dyn(),
+                        None,
+                    )
                     .unwrap();
                 let mut frame = Frame::new();
                 frame.insert(
@@ -2299,7 +2310,7 @@ mod tests {
                     let coords: Vec<f64> = (0..12).map(|_| rng.random_range(-1.5..1.5)).collect();
                     let phi = compute_dihedral(&coords, 0, 1, 2, 3);
                     assert_energy(
-                        pots.calc_energy(&coords),
+                        pots.energy_at(&coords),
                         s.energy(phi),
                         scale,
                         &format!("{r:?}"),

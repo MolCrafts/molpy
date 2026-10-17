@@ -262,11 +262,12 @@ impl BondedLists {
 #[cfg(test)]
 mod remap_tests {
     use super::*;
+    use crate::core::Cell;
+    use crate::ff::potential::fixtures::OneShot;
 
     use molrs::core::SimBox;
     use molrs::ff::potential::angle::AngleHarmonic;
     use molrs::ff::potential::bond::BondHarmonic;
-    use molrs::ff::potential::{IndexedTerms, Potential};
     use ndarray::array;
 
     /// Resolve one kernel's indices against a halo and hand back the table.
@@ -302,7 +303,7 @@ mod remap_tests {
     /// ignorant of periodicity — then measures the bond that is actually there.
     #[test]
     fn a_crossing_bond_is_rewritten_to_its_closest_copy() {
-        let bx = SimBox::cube(10.0, array![0.0_f64, 0.0, 0.0], [true; 3]).unwrap();
+        let bx = SimBox::new(Cell::Lengths([10.0; 3]), [0.0_f64, 0.0, 0.0], [true; 3]).unwrap();
         let owned = array![[9.5_f64, 5.0, 5.0], [0.5, 5.0, 5.0]];
         let halo = GhostHalo::new(bx, owned.view(), 2.0, 0.0).unwrap();
 
@@ -318,19 +319,19 @@ mod remap_tests {
         let all = halo.ghosts().combined(owned.view()).unwrap();
         let flat: Vec<F> = all.iter().copied().collect();
         let pot = BondHarmonic::new(vec![0], vec![1], vec![100.0], vec![1.0]);
-        let (e, _) = pot.calc_energy_forces_with_terms(&flat, terms.view());
+        let (e, _) = pot.over_terms(&flat, terms.view());
         assert!(e.abs() < 1e-9, "the bond is at rest length; got E = {e}");
 
         // The unrewritten indices are what the bug looks like: same kernel,
         // same coordinates, a bond read as eight times its rest length.
-        assert!((pot.calc_energy_forces(&flat).0 - 6400.0).abs() < 1e-9);
+        assert!((pot.energy_forces_at(&flat).0 - 6400.0).abs() < 1e-9);
     }
 
     /// Both arms of an angle are resolved against the vertex, so the three
     /// atoms end up in one cell rather than in three.
     #[test]
     fn an_angle_is_anchored_on_its_vertex() {
-        let bx = SimBox::cube(10.0, array![0.0_f64, 0.0, 0.0], [true; 3]).unwrap();
+        let bx = SimBox::new(Cell::Lengths([10.0; 3]), [0.0_f64, 0.0, 0.0], [true; 3]).unwrap();
         // Vertex just inside the low face; the arms straddle it.
         let owned = array![[9.3_f64, 5.0, 5.0], [0.2, 5.0, 5.0], [1.2, 5.0, 5.0]];
         let halo = GhostHalo::new(bx, owned.view(), 3.0, 0.0).unwrap();
@@ -362,7 +363,7 @@ mod remap_tests {
     /// copy happened to exist.
     #[test]
     fn a_term_the_halo_cannot_reach_is_refused() {
-        let bx = SimBox::cube(30.0, array![0.0_f64, 0.0, 0.0], [true; 3]).unwrap();
+        let bx = SimBox::new(Cell::Lengths([30.0; 3]), [0.0_f64, 0.0, 0.0], [true; 3]).unwrap();
         // Bonded, but 14 Å apart — beyond a halo built for a 2 Å pair cutoff.
         let owned = array![[1.0_f64, 5.0, 5.0], [15.0, 5.0, 5.0]];
         let halo = GhostHalo::new(bx, owned.view(), 2.0, 0.0).unwrap();
@@ -378,7 +379,7 @@ mod remap_tests {
     /// must not require a topology it was not given.
     #[test]
     fn a_member_without_indices_is_left_alone() {
-        let bx = SimBox::cube(10.0, array![0.0_f64, 0.0, 0.0], [true; 3]).unwrap();
+        let bx = SimBox::new(Cell::Lengths([10.0; 3]), [0.0_f64, 0.0, 0.0], [true; 3]).unwrap();
         let owned = array![[1.0_f64, 1.0, 1.0], [2.0, 2.0, 2.0]];
         let halo = GhostHalo::new(bx, owned.view(), 2.0, 0.0).unwrap();
 
@@ -395,6 +396,8 @@ mod remap_tests {
 #[cfg(test)]
 mod owned_potential_tests {
     use super::*;
+    use crate::core::Cell;
+    use crate::ff::potential::fixtures::OneShot;
     use molrs::core::Block;
     use molrs::core::Frame;
     use molrs::core::SimBox;
@@ -415,7 +418,7 @@ mod owned_potential_tests {
     #[test]
     fn the_halo_re_resolves_its_topology_when_it_rebuilds() {
         let l = 20.0_f64;
-        let bx = SimBox::cube(l, array![0.0_f64, 0.0, 0.0], [true; 3]).unwrap();
+        let bx = SimBox::new(Cell::Lengths([l; 3]), [0.0_f64, 0.0, 0.0], [true; 3]).unwrap();
         // Bonded, 1 Å apart the short way round the +x face — and parked in a
         // corner, with two spectator atoms beside them. Drifting on all three
         // axes churns which copies survive the cull, so the ghost list is
@@ -432,19 +435,27 @@ mod owned_potential_tests {
 
         let mut bonds = Block::new();
         bonds
-            .insert("atomi", Array1::from(vec![0 as Idx]).into_dyn())
+            .insert("atomi", Array1::from(vec![0 as Idx]).into_dyn(), None)
             .unwrap();
         bonds
-            .insert("atomj", Array1::from(vec![1 as Idx]).into_dyn())
+            .insert("atomj", Array1::from(vec![1 as Idx]).into_dyn(), None)
             .unwrap();
         bonds
-            .insert("type", Array1::from(vec!["a-a".to_string()]).into_dyn())
+            .insert(
+                "type",
+                Array1::from(vec!["a-a".to_string()]).into_dyn(),
+                None,
+            )
             .unwrap();
         let mut frame = Frame::new();
         frame.insert("bonds", bonds);
         let mut atoms = Block::new();
         atoms
-            .insert("type", Array1::from(vec!["a".to_string(); 4]).into_dyn())
+            .insert(
+                "type",
+                Array1::from(vec!["a".to_string(); 4]).into_dyn(),
+                None,
+            )
             .unwrap();
         frame.insert("atoms", atoms);
 
@@ -458,7 +469,7 @@ mod owned_potential_tests {
             .def_type(
                 "a-a",
                 &["a", "a"],
-                Params::from_pairs(&[("k", 100.0), ("r0", 1.0)]),
+                Params::from_iter([("k", 100.0), ("r0", 1.0)]),
             )
             .unwrap();
 
@@ -481,7 +492,7 @@ mod owned_potential_tests {
                 owned[[i, 1]] += 0.013;
                 owned[[i, 2]] += 0.017;
             }
-            let (wrapped, m) = bx.wrap_shifts(owned.view());
+            let (wrapped, m) = bx.wrap(owned.view());
             owned = wrapped;
 
             let before = halo.rebuilds();
@@ -495,7 +506,7 @@ mod owned_potential_tests {
                 let ForceTerm::Indexed(pot) = member else {
                     unreachable!("a bond style is an indexed member")
                 };
-                e += pot.calc_energy_forces_with_terms(&flat, terms).0;
+                e += pot.over_terms(&flat, terms).0;
             }
             let n_terms = lists.bound();
             let all_rows = all.nrows();
@@ -534,7 +545,7 @@ mod owned_potential_tests {
     #[test]
     fn the_topology_is_never_resolved_against_a_copy_list_that_is_gone() {
         let l = 20.0_f64;
-        let bx = SimBox::cube(l, array![0.0_f64, 0.0, 0.0], [true; 3]).unwrap();
+        let bx = SimBox::new(Cell::Lengths([l; 3]), [0.0_f64, 0.0, 0.0], [true; 3]).unwrap();
         let mut owned = array![
             [19.5_f64, 19.4, 19.6],
             [0.5, 19.4, 19.6],
@@ -544,19 +555,27 @@ mod owned_potential_tests {
 
         let mut bonds = Block::new();
         bonds
-            .insert("atomi", Array1::from(vec![0 as Idx]).into_dyn())
+            .insert("atomi", Array1::from(vec![0 as Idx]).into_dyn(), None)
             .unwrap();
         bonds
-            .insert("atomj", Array1::from(vec![1 as Idx]).into_dyn())
+            .insert("atomj", Array1::from(vec![1 as Idx]).into_dyn(), None)
             .unwrap();
         bonds
-            .insert("type", Array1::from(vec!["a-a".to_string()]).into_dyn())
+            .insert(
+                "type",
+                Array1::from(vec!["a-a".to_string()]).into_dyn(),
+                None,
+            )
             .unwrap();
         let mut frame = Frame::new();
         frame.insert("bonds", bonds);
         let mut atoms = Block::new();
         atoms
-            .insert("type", Array1::from(vec!["a".to_string(); 4]).into_dyn())
+            .insert(
+                "type",
+                Array1::from(vec!["a".to_string(); 4]).into_dyn(),
+                None,
+            )
             .unwrap();
         frame.insert("atoms", atoms);
 
@@ -567,7 +586,7 @@ mod owned_potential_tests {
             .def_type(
                 "a-a",
                 &["a", "a"],
-                Params::from_pairs(&[("k", 100.0), ("r0", 1.0)]),
+                Params::from_iter([("k", 100.0), ("r0", 1.0)]),
             )
             .unwrap();
 
@@ -585,7 +604,7 @@ mod owned_potential_tests {
                 owned[[i, 1]] += 0.013;
                 owned[[i, 2]] += 0.017;
             }
-            let (wrapped, m) = bx.wrap_shifts(owned.view());
+            let (wrapped, m) = bx.wrap(owned.view());
             owned = wrapped;
             halo.advance(owned.view(), m.view()).unwrap();
             lists.refresh(&halo, owned.view(), m.view()).unwrap();
@@ -608,9 +627,10 @@ mod owned_potential_tests {
 }
 #[cfg(test)]
 mod bonded_tests {
+    use crate::core::Cell;
+    use crate::ff::potential::fixtures::OneShot;
     use molrs::core::GhostSet;
     use molrs::core::SimBox;
-    use molrs::ff::potential::Potential;
     use molrs::ff::potential::bond::BondHarmonic;
     use molrs::op::F;
     use ndarray::Array2;
@@ -627,7 +647,7 @@ mod bonded_tests {
     #[test]
     fn a_bond_across_a_face_needs_the_closest_image() {
         let l = 10.0_f64;
-        let bx = SimBox::cube(l, array![0.0_f64, 0.0, 0.0], [true; 3]).unwrap();
+        let bx = SimBox::new(Cell::Lengths([l; 3]), [0.0_f64, 0.0, 0.0], [true; 3]).unwrap();
         let owned = array![[9.5_f64, 5.0, 5.0], [0.5, 5.0, 5.0]];
         let r0 = 1.0;
         let k = 100.0;
@@ -638,7 +658,7 @@ mod bonded_tests {
 
         // The naive reading: atoms 0 and 1 as stored.
         let naive = BondHarmonic::new(vec![0], vec![1], vec![k], vec![r0]);
-        let (e_naive, _) = naive.calc_energy_forces(&flat);
+        let (e_naive, _) = naive.energy_forces_at(&flat);
         // r = 9, so dr = 8 and E = k·dr² = 100·64.
         assert!(
             (e_naive - 6400.0).abs() < 1e-9,
@@ -652,7 +672,7 @@ mod bonded_tests {
             "the closest copy is a ghost, not atom 1"
         );
         let fixed = BondHarmonic::new(vec![0], vec![j], vec![k], vec![r0]);
-        let (e_fixed, f_fixed) = fixed.calc_energy_forces(&flat);
+        let (e_fixed, f_fixed) = fixed.energy_forces_at(&flat);
         assert!(
             e_fixed.abs() < 1e-9,
             "the bond is at its rest length: {e_fixed}"
@@ -674,7 +694,7 @@ mod bonded_tests {
     #[test]
     fn the_force_on_a_crossing_bond_points_the_short_way() {
         let l = 10.0_f64;
-        let bx = SimBox::cube(l, array![0.0_f64, 0.0, 0.0], [true; 3]).unwrap();
+        let bx = SimBox::new(Cell::Lengths([l; 3]), [0.0_f64, 0.0, 0.0], [true; 3]).unwrap();
         // 1.5 Å apart the short way; rest length 1.0, so it pulls together.
         let owned = array![[9.5_f64, 5.0, 5.0], [1.0, 5.0, 5.0]];
         let set = GhostSet::borders(&bx, owned.view(), 3.0).unwrap();
@@ -683,7 +703,7 @@ mod bonded_tests {
 
         let j = set.closest_image(owned.view(), 0, 1).unwrap();
         let pot = BondHarmonic::new(vec![0], vec![j], vec![100.0], vec![1.0]);
-        let (_e, f) = pot.calc_energy_forces(&flat);
+        let (_e, f) = pot.energy_forces_at(&flat);
         let mut f = Array2::from_shape_vec((all.nrows(), 3), f).unwrap();
         set.reverse_comm(&mut f).unwrap();
 
@@ -707,7 +727,7 @@ mod bonded_tests {
     #[test]
     fn an_angle_resolves_both_arms_against_its_vertex() {
         let l = 10.0_f64;
-        let bx = SimBox::cube(l, array![0.0_f64, 0.0, 0.0], [true; 3]).unwrap();
+        let bx = SimBox::new(Cell::Lengths([l; 3]), [0.0_f64, 0.0, 0.0], [true; 3]).unwrap();
         // Vertex just inside the low face, arms on either side of it.
         let owned = array![[9.3_f64, 5.0, 5.0], [0.2, 5.0, 5.0], [1.2, 5.0, 5.0]];
         let set = GhostSet::borders(&bx, owned.view(), 3.0).unwrap();
@@ -738,10 +758,11 @@ mod bonded_tests {
 
 #[cfg(test)]
 mod force_path_tests {
+    use crate::core::Cell;
     use crate::core::{NeighborList, NeighborPolicy, VerletSkin};
+    use crate::ff::potential::fixtures::OneShot;
     use molrs::core::GhostSet;
     use molrs::core::SimBox;
-    use molrs::ff::potential::Potential;
     use molrs::ff::potential::pair::PairLjCut;
     use molrs::op::F;
     use ndarray::Array2;
@@ -757,7 +778,7 @@ mod force_path_tests {
     #[test]
     fn a_potential_through_ghosts_matches_the_same_potential_through_mic() {
         let l = 10.0_f64;
-        let bx = SimBox::cube(l, array![0.0_f64, 0.0, 0.0], [true; 3]).unwrap();
+        let bx = SimBox::new(Cell::Lengths([l; 3]), [0.0_f64, 0.0, 0.0], [true; 3]).unwrap();
         let cutoff = 3.0;
 
         // Wrapped positions, deliberately crowded against the faces so most of
@@ -791,14 +812,14 @@ mod force_path_tests {
         )
         .expect("skin");
         let mic_pairs = skin.pairs_at(owned.view()).expect("mic pairs");
-        let (e_mic, f_mic) = lj().calc_energy_forces_with_pairs(&flat_owned, mic_pairs);
+        let (e_mic, f_mic) = lj().over_pairs(&flat_owned, mic_pairs);
 
         // --- route B: ghosts, an ordinary non-periodic cluster ---
         let set = GhostSet::borders(&bx, owned.view(), cutoff).unwrap();
         let all = set.combined(owned.view()).unwrap();
         let flat_all: Vec<F> = all.iter().copied().collect();
         let ghost_pairs = set.pairs(owned.view(), cutoff).unwrap();
-        let (e_ghost, f_ext) = lj().calc_energy_forces_with_pairs(&flat_all, &ghost_pairs);
+        let (e_ghost, f_ext) = lj().over_pairs(&flat_all, &ghost_pairs);
 
         // Ghost forces belong to the atoms they copy.
         let mut f_ext = Array2::from_shape_vec((all.nrows(), 3), f_ext).unwrap();
@@ -840,8 +861,9 @@ mod force_path_tests {
 #[cfg(test)]
 mod virial_tests {
     use super::*;
+    use crate::core::Cell;
+    use crate::ff::potential::fixtures::OneShot;
     use molrs::core::{SimBox, Virial};
-    use molrs::ff::potential::Potential;
     use molrs::ff::potential::pair::PairLjCut;
     use molrs::op::F;
     use ndarray::{Array2, array};
@@ -857,7 +879,7 @@ mod virial_tests {
     /// anywhere else.
     #[test]
     fn a_single_pair_gives_the_hand_computed_tensor() {
-        let bx = SimBox::cube(30.0, array![0.0_f64, 0.0, 0.0], [false; 3]).unwrap();
+        let bx = SimBox::new(Cell::Lengths([30.0; 3]), [0.0_f64, 0.0, 0.0], [false; 3]).unwrap();
         let owned = array![[10.0_f64, 10.0, 10.0], [14.0, 10.0, 10.0]];
         let halo = GhostHalo::new(bx, owned.view(), 5.0, 0.0).unwrap();
         let all = halo.combined().clone();
@@ -865,7 +887,7 @@ mod virial_tests {
 
         let pairs = halo.pairs().clone();
         let flat: Vec<F> = all.iter().copied().collect();
-        let (_e, f) = lj(5.0).calc_energy_forces_with_pairs(&flat, &pairs);
+        let (_e, f) = lj(5.0).over_pairs(&flat, &pairs);
         let mut f = Array2::from_shape_vec((2, 3), f).unwrap();
 
         let fx = f[[0, 0]];
@@ -895,7 +917,7 @@ mod virial_tests {
     fn the_virial_does_not_know_where_the_origin_is() {
         let l = 12.0_f64;
         let cutoff = 5.0;
-        let bx = SimBox::cube(l, array![0.0_f64, 0.0, 0.0], [true; 3]).unwrap();
+        let bx = SimBox::new(Cell::Lengths([l; 3]), [0.0_f64, 0.0, 0.0], [true; 3]).unwrap();
         let base = array![
             [11.0_f64, 11.0, 11.0],
             [3.0, 11.0, 11.0],
@@ -914,12 +936,12 @@ mod virial_tests {
                     pts[[i, k]] += shift;
                 }
             }
-            let (wrapped, _m) = bx.wrap_shifts(pts.view());
+            let (wrapped, _m) = bx.wrap(pts.view());
             let halo = GhostHalo::new(bx.clone(), wrapped.view(), cutoff, 0.0).unwrap();
             let all = halo.combined().clone();
             let pairs = halo.pairs().clone();
             let flat: Vec<F> = all.iter().copied().collect();
-            let (_e, f) = lj(cutoff).calc_energy_forces_with_pairs(&flat, &pairs);
+            let (_e, f) = lj(cutoff).over_pairs(&flat, &pairs);
             let mut f = Array2::from_shape_vec((all.nrows(), 3), f).unwrap();
             halo.reverse_comm_with_virial(&mut f, all.view()).unwrap()
         };
@@ -948,7 +970,7 @@ mod virial_tests {
     fn tallying_after_the_fold_loses_the_lattice_terms() {
         let l = 12.0_f64;
         let cutoff = 5.0;
-        let bx = SimBox::cube(l, array![0.0_f64, 0.0, 0.0], [true; 3]).unwrap();
+        let bx = SimBox::new(Cell::Lengths([l; 3]), [0.0_f64, 0.0, 0.0], [true; 3]).unwrap();
         let owned = array![
             [11.0_f64, 11.0, 11.0],
             [3.0, 11.0, 11.0],
@@ -959,7 +981,7 @@ mod virial_tests {
         let all = halo.combined().clone();
         let pairs = halo.pairs().clone();
         let flat: Vec<F> = all.iter().copied().collect();
-        let (_e, f0) = lj(cutoff).calc_energy_forces_with_pairs(&flat, &pairs);
+        let (_e, f0) = lj(cutoff).over_pairs(&flat, &pairs);
 
         // Right: tally over owned and copies, then fold.
         let mut f = Array2::from_shape_vec((all.nrows(), 3), f0.clone()).unwrap();

@@ -10,19 +10,19 @@
 use std::collections::HashMap;
 
 use molrs::builder::{
-    AssembleError, Assembler, AxisOrienter, GrowthPlacer, OrientError, PlaceError, Placer,
-    SitePlacer,
+    AssembleError, Assembler, AxisOrienter, GrowthPlacer, OrientError, Orienter, PlaceError,
+    Placer, SitePlacer,
 };
-use molrs::builder::{CarbonTubeBuilder, CoarsenError, Coarsener, GrapheneBuilder};
-use molrs::core::LinkManyError;
-use molrs::core::{MolGraph, NodeId, node_from_u64};
+use molrs::builder::{CarbonTubeBuilder, CoarsenError, Coarsener, GrapheneBuilder, TubeExtent};
+use molrs::core::{Atomistic, CoarseGrain, Graph, LinkManyError, MolGraph, NodeId};
 use pyo3::exceptions::{PyTypeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::PyMapping;
 
 use crate::core::frame::PyFrame;
+use crate::core::graph_views::Leaf;
 use crate::core::molgraph::{
-    AnyGraph, GraphClass, PyAtomistic, PyCoarseGrain, center_error_message, link_error_message,
+    PyAtomistic, PyCoarseGrain, PyMolGraph, center_error_message, link_error_message,
 };
 use crate::core::simbox::PyBox;
 
@@ -58,14 +58,14 @@ impl PyCarbonTubeBuilder {
             .with_periodic(periodic)
             .with_vacuum(vacuum)
             .map_err(|error| PyValueError::new_err(error.to_string()))?;
-        if let Some(cells) = cells {
+        let extent = match (cells, length) {
+            (Some(cells), _) => Some(TubeExtent::Cells(cells)),
+            (None, Some(length)) => Some(TubeExtent::Length(length)),
+            (None, None) => None,
+        };
+        if let Some(extent) = extent {
             inner = inner
-                .with_cells(cells)
-                .map_err(|error| PyValueError::new_err(error.to_string()))?;
-        }
-        if let Some(length) = length {
-            inner = inner
-                .with_length(length)
+                .with_extent(extent)
                 .map_err(|error| PyValueError::new_err(error.to_string()))?;
         }
         inner
@@ -300,10 +300,11 @@ impl PyAxisOrienter {
 ///
 /// Parameters
 /// ----------
-/// library : Mapping[str, MolGraph]
-///     Name → template, copied at construction: any graph (``MolGraph``,
-///     ``Atomistic``, ``CoarseGrain``), with ports where a site bonds. A
-///     template without ports can only fill an unbonded site.
+/// library : Mapping[str, MolGraph | Atomistic | CoarseGrain]
+///     Name → template, copied at construction, every template of ONE graph
+///     type — the type :meth:`assemble` builds the world as — with ports
+///     where a site bonds. A template without ports can only fill an
+///     unbonded site.
 /// placer : SitePlacer | GrowthPlacer
 ///     ``SitePlacer`` moves each copy's centre of mass onto its site;
 ///     ``GrowthPlacer`` grows each molecule onto its parents' ports and needs
@@ -315,9 +316,11 @@ impl PyAxisOrienter {
 /// Raises
 /// ------
 /// TypeError
-///     If ``library`` is not a mapping of ``str`` to graphs, ``placer`` is
-///     not a :class:`SitePlacer` or :class:`GrowthPlacer`, or ``orienter``
-///     is not an :class:`AxisOrienter`.
+///     If ``library`` is not a mapping of ``str`` to graphs of one type,
+///     ``placer`` is not a :class:`SitePlacer` or :class:`GrowthPlacer`, or
+///     ``orienter`` is not an :class:`AxisOrienter`.
+/// ValueError
+///     If ``library`` is empty (it names the world's graph type).
 ///
 /// Examples
 /// --------
@@ -326,10 +329,75 @@ impl PyAxisOrienter {
 /// ...     {"PMA": pma, "Li": li},
 /// ...     molrs.builder.SitePlacer(),
 /// ...     molrs.builder.AxisOrienter(),
-/// ... ).assemble(sites, molrs.core.Atomistic)
+/// ... ).assemble(sites)
 #[pyclass(module = "molrs.builder", name = "Assembler", frozen)]
 pub struct PyAssembler {
-    inner: Assembler,
+    inner: AnyAssembler,
+}
+
+/// An assembler over one graph type: the library's.
+enum AnyAssembler {
+    MolGraph(Assembler<MolGraph>),
+    Atomistic(Assembler<Atomistic>),
+    CoarseGrain(Assembler<CoarseGrain>),
+}
+
+/// Which placer an `Assembler` was given: the type is the whole choice.
+#[derive(Clone, Copy)]
+enum PlacerKind {
+    Site,
+    Growth,
+}
+
+impl PlacerKind {
+    fn of(placer: &Bound<'_, PyAny>) -> PyResult<Self> {
+        if placer.cast::<PySitePlacer>().is_ok() {
+            Ok(Self::Site)
+        } else if placer.cast::<PyGrowthPlacer>().is_ok() {
+            Ok(Self::Growth)
+        } else {
+            Err(PyTypeError::new_err(format!(
+                "placer must be a SitePlacer or a GrowthPlacer, not {}",
+                placer.get_type().name()?
+            )))
+        }
+    }
+
+    fn build<G: Graph>(self) -> Box<dyn Placer<G>> {
+        match self {
+            Self::Site => Box::new(SitePlacer::new()),
+            Self::Growth => Box::new(GrowthPlacer::new()),
+        }
+    }
+}
+
+/// The library's templates as one graph type, copied.
+fn templates<G>(
+    library: &[(String, Bound<'_, PyAny>)],
+    copy: impl Fn(&Bound<'_, PyAny>) -> Option<PyResult<G>>,
+    class: &str,
+) -> PyResult<HashMap<String, G>> {
+    library
+        .iter()
+        .map(|(name, value)| {
+            let template = copy(value).ok_or_else(|| {
+                PyTypeError::new_err(format!(
+                    "library['{name}'] must be a {class} like the rest of the library: \
+                     every template is of the world's one graph type"
+                ))
+            })??;
+            Ok((name.clone(), template))
+        })
+        .collect()
+}
+
+fn assembler<G: Graph>(
+    library: HashMap<String, G>,
+    placer: PlacerKind,
+    orienter: bool,
+) -> Assembler<G> {
+    let orienter = orienter.then(|| Box::new(AxisOrienter::new()) as Box<dyn Orienter<G>>);
+    Assembler::new(library, placer.build(), orienter)
 }
 
 #[pymethods]
@@ -341,34 +409,70 @@ impl PyAssembler {
         placer: &Bound<'_, PyAny>,
         orienter: Option<&Bound<'_, PyAxisOrienter>>,
     ) -> PyResult<Self> {
-        // Neither placer nor orienter carries state: the type is the whole
-        // choice.
-        let placer: Box<dyn Placer> = if placer.cast::<PySitePlacer>().is_ok() {
-            Box::new(SitePlacer::new())
-        } else if placer.cast::<PyGrowthPlacer>().is_ok() {
-            Box::new(GrowthPlacer::new())
+        let placer = PlacerKind::of(placer)?;
+        let orienter = orienter.is_some();
+        let library: Vec<(String, Bound<'_, PyAny>)> = library
+            .items()?
+            .iter()
+            .map(|item| item.extract())
+            .collect::<PyResult<_>>()?;
+        let Some((_, first)) = library.first() else {
+            return Err(PyValueError::new_err(
+                "an Assembler needs at least one template: the library's graph type is the world's",
+            ));
+        };
+        let inner = if first.cast::<PyAtomistic>().is_ok() {
+            let copy = |value: &Bound<'_, PyAny>| {
+                let graph = value.cast::<PyAtomistic>().ok()?;
+                Some(
+                    graph
+                        .try_borrow()
+                        .map(|g| g.core().clone())
+                        .map_err(PyErr::from),
+                )
+            };
+            AnyAssembler::Atomistic(assembler(
+                templates(&library, copy, "Atomistic")?,
+                placer,
+                orienter,
+            ))
+        } else if first.cast::<PyCoarseGrain>().is_ok() {
+            let copy = |value: &Bound<'_, PyAny>| {
+                let graph = value.cast::<PyCoarseGrain>().ok()?;
+                Some(
+                    graph
+                        .try_borrow()
+                        .map(|g| g.core().clone())
+                        .map_err(PyErr::from),
+                )
+            };
+            AnyAssembler::CoarseGrain(assembler(
+                templates(&library, copy, "CoarseGrain")?,
+                placer,
+                orienter,
+            ))
+        } else if first.cast::<PyMolGraph>().is_ok() {
+            let copy = |value: &Bound<'_, PyAny>| {
+                let graph = value.cast::<PyMolGraph>().ok()?;
+                Some(
+                    graph
+                        .try_borrow()
+                        .map(|g| g.core().clone())
+                        .map_err(PyErr::from),
+                )
+            };
+            AnyAssembler::MolGraph(assembler(
+                templates(&library, copy, "MolGraph")?,
+                placer,
+                orienter,
+            ))
         } else {
             return Err(PyTypeError::new_err(format!(
-                "placer must be a SitePlacer or a GrowthPlacer, not {}",
-                placer.get_type().name()?
+                "library values must be graphs (MolGraph, Atomistic, CoarseGrain), not {}",
+                first.get_type().name()?
             )));
         };
-        let orienter = orienter.map(|_| Box::new(AxisOrienter::new()) as _);
-        let mut templates: HashMap<String, MolGraph> = HashMap::new();
-        for item in library.items()?.iter() {
-            let (name, value): (String, Bound<'_, PyAny>) = item.extract()?;
-            let template = AnyGraph::of(&value)
-                .map_err(|_| {
-                    PyTypeError::new_err(format!(
-                        "library['{name}'] must be a graph (MolGraph, Atomistic, CoarseGrain)"
-                    ))
-                })?
-                .to_molgraph()?;
-            templates.insert(name, template);
-        }
-        Ok(Self {
-            inner: Assembler::new(templates, placer, orienter),
-        })
+        Ok(Self { inner })
     }
 
     /// Place and join one copy per site; return the world.
@@ -381,15 +485,12 @@ impl PyAssembler {
     ///     The site graph: each bead's ``bead_type`` names its template and
     ///     each bond joins two copies; its optional position (Å) and axis
     ///     are read by the placer and the orienter.
-    /// cls : type, optional
-    ///     The graph class to build the world as — ``MolGraph`` (the default),
-    ///     ``Atomistic`` or ``CoarseGrain``.
     ///
     /// Returns
     /// -------
-    /// MolGraph
-    ///     The world, an instance of ``cls``; ports without a site bond stay
-    ///     on it. Empty when ``sites`` is empty.
+    /// MolGraph | Atomistic | CoarseGrain
+    ///     The world, of the library's graph type; ports without a site bond
+    ///     stay on it. Empty when ``sites`` is empty.
     ///
     /// Raises
     /// ------
@@ -397,26 +498,33 @@ impl PyAssembler {
     ///     Naming the site at fault: a bead lacks its type or position, a name
     ///     is not in the library, no accepting port exists for every bond of
     ///     a site, a site cannot be oriented or placed, a join is refused, or
-    ///     the world breaks ``cls``'s invariant.
-    /// TypeError
-    ///     If ``cls`` is not a graph class.
-    #[pyo3(signature = (sites, cls=None))]
-    fn assemble(
-        &self,
-        py: Python<'_>,
-        sites: PyRef<'_, PyCoarseGrain>,
-        cls: Option<&Bound<'_, pyo3::types::PyType>>,
-    ) -> PyResult<Py<PyAny>> {
+    ///     the world breaks the graph type's invariant.
+    fn assemble(&self, py: Python<'_>, sites: PyRef<'_, PyCoarseGrain>) -> PyResult<Py<PyAny>> {
         let sites = sites.core().clone();
-        let assembler = &self.inner;
-        let world: MolGraph = py
-            .detach(|| assembler.assemble(&sites))
-            .map_err(|e| PyValueError::new_err(assemble_error_message(e)))?;
-        GraphClass::of(py, cls)?.build(py, world)
+        let refuse = |e| PyValueError::new_err(assemble_error_message(e));
+        Ok(match &self.inner {
+            AnyAssembler::MolGraph(a) => {
+                let world = py.detach(|| a.assemble(&sites)).map_err(refuse)?;
+                PyMolGraph::from_core(py, world)?.into_any()
+            }
+            AnyAssembler::Atomistic(a) => {
+                let world = py.detach(|| a.assemble(&sites)).map_err(refuse)?;
+                PyAtomistic::from_core(py, world)?.into_any()
+            }
+            AnyAssembler::CoarseGrain(a) => {
+                let world = py.detach(|| a.assemble(&sites)).map_err(refuse)?;
+                PyCoarseGrain::from_core(py, world)?.into_any()
+            }
+        })
     }
 
     fn __repr__(&self) -> String {
-        "Assembler(...)".to_owned()
+        let class = match self.inner {
+            AnyAssembler::MolGraph(_) => "MolGraph",
+            AnyAssembler::Atomistic(_) => "Atomistic",
+            AnyAssembler::CoarseGrain(_) => "CoarseGrain",
+        };
+        format!("Assembler(<{class} library>)")
     }
 }
 
@@ -481,6 +589,15 @@ enum CoarsenSource {
     Atomistic(Py<PyAtomistic>),
 }
 
+impl CoarsenSource {
+    fn object<'py>(&self, py: Python<'py>) -> &Bound<'py, PyAny> {
+        match self {
+            Self::CoarseGrain(cg) => cg.bind(py).as_any(),
+            Self::Atomistic(mol) => mol.bind(py).as_any(),
+        }
+    }
+}
+
 /// Coarse-graining of a held source graph — `molrs.builder.Coarsener`.
 ///
 /// Site ``I`` of the result stands for ``groups[I]``: it sits at the group's
@@ -534,41 +651,52 @@ impl PyCoarsener {
     ///
     /// Parameters
     /// ----------
-    /// groups : Sequence[Sequence[int]]
-    ///     Disjoint, non-empty node-handle groups of the source.
+    /// groups : Sequence[Iterable[Atom | Bead]]
+    ///     Disjoint, non-empty node groups of the source (views or ``Refs``).
     /// names : Sequence[str]
     ///     One site ``bead_type`` per group.
     ///
     /// Returns
     /// -------
     /// CoarseGrain
-    ///     The sites, in group order; empty when ``groups`` is empty.
+    ///     The sites, in group order; empty when ``groups`` is empty. Each
+    ///     site's members (:meth:`CoarseGrain.bead_members`) are its group's
+    ///     nodes of the source.
     ///
     /// Raises
     /// ------
     /// ValueError
     ///     If ``groups`` and ``names`` differ in length, a group is empty, a
-    ///     handle is listed twice, or a group has no centre (a stale handle, a
-    ///     missing coordinate or mass, a non-positive total mass); handles are
-    ///     named by their int value.
+    ///     node belongs to another graph or is listed twice, or a group has
+    ///     no centre (a missing coordinate or mass, a non-positive total
+    ///     mass); nodes are named by their handle.
     fn coarsen(
         &self,
         py: Python<'_>,
-        groups: Vec<Vec<u64>>,
+        groups: Vec<Bound<'_, PyAny>>,
         names: Vec<String>,
     ) -> PyResult<Py<PyCoarseGrain>> {
+        let source = self.source.object(py);
+        let leaf = Leaf::of(source)?;
         let groups: Vec<Vec<NodeId>> = groups
-            .into_iter()
-            .map(|group| group.into_iter().map(node_from_u64).collect())
-            .collect();
+            .iter()
+            .map(|group| leaf.own_nodes(group))
+            .collect::<PyResult<_>>()?;
         let names: Vec<&str> = names.iter().map(String::as_str).collect();
-        let run = |graph: &MolGraph| py.detach(|| Coarsener::new(graph).coarsen(&groups, &names));
         let sites = match &self.source {
-            CoarsenSource::CoarseGrain(cg) => run(cg.bind(py).borrow().core().as_molgraph()),
-            CoarsenSource::Atomistic(mol) => run(mol.bind(py).borrow().core().as_molgraph()),
+            CoarsenSource::CoarseGrain(cg) => {
+                let cg = cg.bind(py).try_borrow()?;
+                let graph = cg.core();
+                py.detach(|| Coarsener::new(graph).coarsen(&groups, &names))
+            }
+            CoarsenSource::Atomistic(mol) => {
+                let mol = mol.bind(py).try_borrow()?;
+                let graph = mol.core();
+                py.detach(|| Coarsener::new(graph).coarsen(&groups, &names))
+            }
         }
         .map_err(|e| PyValueError::new_err(coarsen_error_message(e)))?;
-        PyCoarseGrain::from_core(py, sites)
+        PyCoarseGrain::with_member_world(py, sites, Some(source.clone().unbind()))
     }
 
     fn __repr__(&self) -> String {

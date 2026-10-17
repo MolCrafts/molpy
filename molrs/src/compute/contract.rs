@@ -104,18 +104,23 @@ pub trait Accumulate {
     }
 }
 
-/// An analysis that also streams.
+/// An analysis that folds its data one item at a time.
 ///
-/// The algorithm lives once, in the accumulator: a `Stream` type's
-/// [`compute`](Compute::compute) body is exactly
+/// The algorithm lives once, in the accumulator. A `Stream` type that also
+/// has a batch [`Compute`] form makes its `compute` body exactly
 /// `self.accumulator().fold(items)`, so batch and streaming answers cannot
 /// drift apart. The one exception is an estimator with a faster batch
 /// algorithm than its fold — the [`Correlator`](crate::compute::Correlator)'s
 /// FFT — whose `compute` stays the batch algorithm; its unit tests pin the
 /// two equal at every output point.
-pub trait Stream: Compute {
+///
+/// A trajectory analysis — [`Msd`](crate::compute::Msd),
+/// [`Vacf`](crate::compute::Vacf), [`Rdf`](crate::compute::Rdf) — is a
+/// `Stream` and nothing else: the caller pushes its frames into the
+/// accumulator and reads the result with [`finish`](Accumulate::finish).
+pub trait Stream {
     /// The accumulator this configuration produces.
-    type Accumulator: Accumulate<Output = Self::Output>;
+    type Accumulator: Accumulate;
 
     /// A fresh accumulator configured like `self`.
     fn accumulator(&self) -> Self::Accumulator;

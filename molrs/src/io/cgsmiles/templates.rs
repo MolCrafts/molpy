@@ -21,7 +21,7 @@
 //! it).
 //!
 //! **One walker, once per definition.** Every body is converted by
-//! [`SmilesIr::to_atomistic_with_descriptors`](crate::io::smiles::SmilesIr::to_atomistic_with_descriptors), the
+//! [`FragmentIr::to_atomistic`](crate::io::smiles::FragmentIr::to_atomistic), the
 //! single walker over a fragment body, entered exactly once for each entry of
 //! the table. 01d's per-call `FragmentCache` amortizes cloning a body across
 //! *instances*; a template is definition-level and has no instances, so there
@@ -30,14 +30,14 @@
 //! **One piece without a table.** A unit written on its own — the body
 //! `[<]OCC[>]`, parsed by
 //! [`SmilesIr::from_fragment`](crate::io::smiles::SmilesIr::from_fragment) — is
-//! built by [`SmilesIr::to_template`], the same conversion a table entry goes
+//! built by [`FragmentIr::to_template`], the same conversion a table entry goes
 //! through; a caller does not wrap the body in a one-bead `CGsmiles` string
 //! only to index the one template back out.
 
 use std::collections::BTreeMap;
 
 use crate::io::cgsmiles::{CgSmilesIr, FragmentBody};
-use crate::io::smiles::{BondingDescriptor, DescriptorKind, SmilesIr, Span};
+use crate::io::smiles::{BondingDescriptor, DescriptorKind, FragmentIr, Span};
 use crate::io::smiles::{Notation, SmilesError, SmilesErrorKind};
 use molrs::core::Atomistic;
 use molrs::core::BondNumber;
@@ -71,7 +71,7 @@ impl CgSmilesIr {
     ///
     /// Capping adds an atom and a bond and writes **no valence-bearing
     /// property**: no `h_count`, no `formal_charge`, no `is_aromatic` on
-    /// either anchor or handle. The handle carries its element and the
+    /// either anchor or handle. The handle carries its `atomic_number` and the
     /// hydrogen `mass` of the [`Element`] table — mass is not
     /// valence-bearing, so it changes nothing here. That single rule keeps
     /// two opposite valence paths both correct, and any "adjust the anchor's
@@ -113,13 +113,13 @@ impl CgSmilesIr {
     /// # Port indices
     ///
     /// Ports are added in the descriptor order
-    /// [`SmilesIr::to_atomistic_with_descriptors`](crate::io::smiles::SmilesIr::to_atomistic_with_descriptors)
+    /// [`FragmentIr::to_atomistic`](crate::io::smiles::FragmentIr::to_atomistic)
     /// returns, which is its walk order — the same index
     /// [`PairEnd::Body::port`](crate::io::cgsmiles::PairEnd::Body::port) uses
     /// against the same body. The *n*-th descriptor of a definition is
     /// therefore the *n*-th port added for it.
-    /// [`ports`](molrs::core::MolGraph::ports) promises no iteration order, so read a port back by
-    /// its [`Port`](molrs::core::Port) rather than by position.
+    /// [`port_ids`](molrs::core::Atomistic::port_ids) promises no iteration order, so read a port
+    /// back by its [`Port`](molrs::core::Port) rather than by position.
     ///
     /// # Errors
     ///
@@ -171,14 +171,9 @@ impl CgSmilesIr {
     ///
     /// // The ports survive repletion, and every handle is still terminal.
     /// assert_eq!(rebuilt.n_ports(), 2);
-    /// let bonds = rebuilt.kind_id("bonds").expect("an Atomistic registers 'bonds'");
-    /// for id in rebuilt.ports() {
-    ///     let port = rebuilt.port(id)?;
-    ///     let degree = rebuilt
-    ///         .neighbor_relations(port.handle)
-    ///         .filter(|&(kind, _, _)| kind == bonds)
-    ///         .count();
-    ///     assert_eq!(degree, 1);
+    /// for id in rebuilt.port_ids() {
+    ///     let port = rebuilt.get_port(id)?;
+    ///     assert_eq!(rebuilt.neighbor_bonds(port.handle).count(), 1);
     /// }
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
@@ -212,7 +207,7 @@ impl CgSmilesIr {
     }
 }
 
-impl SmilesIr {
+impl FragmentIr {
     /// Build the ported [`Atomistic`] template of one fragment body.
     ///
     /// The single-unit form of [`CgSmilesIr::templates`]: `self` is a body as
@@ -223,9 +218,7 @@ impl SmilesIr {
     /// valence-bearing property written. See [`CgSmilesIr::templates`] for
     /// what a handle is and why nothing else is written.
     ///
-    /// An IR without descriptors (a plain [`SmilesIr::parse`] result) builds a
-    /// template with no ports.
-    ///
+    /// A body without descriptors (`CCO`) builds a template with no ports.
     ///
     /// # Errors
     ///
@@ -247,14 +240,14 @@ impl SmilesIr {
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     pub fn to_template(&self) -> Result<Atomistic, SmilesError> {
-        build_template(self, "fragment", self.span)
+        build_template(self, "fragment", self.ir().span)
     }
 }
 
 /// The one template conversion: walk the body once, then cap every
 /// descriptor it wrote. `context` and `span` locate a build failure.
-fn build_template(ir: &SmilesIr, context: &str, span: Span) -> Result<Atomistic, SmilesError> {
-    let (atomistic, descriptors) = ir.to_atomistic_with_descriptors()?;
+fn build_template(ir: &FragmentIr, context: &str, span: Span) -> Result<Atomistic, SmilesError> {
+    let (atomistic, descriptors) = ir.to_atomistic()?;
     let sites: Vec<OpenSite<'_>> = descriptors
         .iter()
         .map(|(anchor, descriptor)| OpenSite {
@@ -276,8 +269,8 @@ struct OpenSite<'a> {
 /// Cap every open site of `atomistic` with a hydrogen **handle** and record
 /// one port per site, in `sites` order.
 ///
-/// Each handle is a real hydrogen carrying its element and the [`Element`]
-/// table's H mass, bonded to the anchor by a single bond; handles are
+/// Each handle is a real hydrogen carrying its atomic number and the
+/// [`Element`] table's H mass, bonded to the anchor by a single bond; handles are
 /// appended in `sites` order, so they follow every atom already present. Each
 /// port records the descriptor's kind (R4.3), label (R4.4) and order (R4.5).
 /// Handles and their bonds are written first: `Atomistic::add_bond` stamps
@@ -304,20 +297,18 @@ fn cap_open_sites(
         .map(|site| port_order(site.descriptor, span))
         .collect::<Result<Vec<BondNumber>, SmilesError>>()?;
     let build = |e: MolRsError| cg_build(span, format!("{context}: {e}"));
-    let h_mass = Element::by_symbol("H")
-        .map(|h| f64::from(h.atomic_mass()))
-        .ok_or_else(|| {
-            build(MolRsError::validation(
-                "the periodic table has no element H",
-            ))
-        })?;
+    let h_mass = f64::from(Element::H.atomic_mass());
     let mut handles = Vec::with_capacity(sites.len());
     for site in sites {
-        let handle = atomistic.add_atom_bare("H");
-        atomistic
-            .set_atom(handle, keys::MASS, h_mass)
+        let handle = atomistic
+            .add_atom(crate::props! {
+                keys::ATOMIC_NUMBER => Element::H,
+                keys::MASS => h_mass,
+            })
             .map_err(build)?;
-        atomistic.add_bond(site.anchor, handle).map_err(build)?;
+        atomistic
+            .add_bond(site.anchor, handle, crate::props! {})
+            .map_err(build)?;
         handles.push(handle);
     }
     for ((site, handle), order) in sites.iter().zip(handles).zip(orders) {
@@ -411,11 +402,15 @@ mod tests {
     use std::collections::BTreeMap;
 
     use super::{port_kind, port_order};
+    use crate::io::cgsmiles::fixtures::fragment;
     use crate::io::cgsmiles::{CgFragmentDef, CgGraph, CgNode, CgSmilesIr, FragmentBody};
     use crate::io::smiles::{
-        BondKind, BondingDescriptor, DescriptorKind, Notation, SmilesErrorKind, SmilesIr, Span,
+        BondKind, BondingDescriptor, DescriptorKind, FragmentIr, Notation, SmilesErrorKind, Span,
     };
+    use crate::line_notation::atom_keys::{H_COUNT, IS_AROMATIC, ISOTOPE};
+    use crate::line_notation::parser::parse_fragment_smiles;
     use molrs::core::Atomistic;
+    use molrs::core::Element;
     use molrs::core::NodeId;
     use molrs::core::PropValue;
     use molrs::core::keys;
@@ -466,54 +461,41 @@ mod tests {
             .unwrap_or_else(|| panic!("{text:?} builds no template named {name:?}"))
     }
 
-    /// Every port of a template, read back through `MolGraph::port`.
+    /// Every port of a template, read back through `Atomistic::get_port`.
     ///
-    /// `MolGraph::ports()` promises no iteration order (02a), so every
+    /// `Atomistic::port_ids()` promises no iteration order (02a), so every
     /// assertion below is over the port *set*, never over an index.
     fn ports_of(frag: &Atomistic) -> Vec<Port> {
-        frag.ports()
+        frag.port_ids()
             .map(|id| {
-                frag.port(id)
+                frag.get_port(id)
                     .unwrap_or_else(|e| panic!("port {id:?} does not read back: {e}"))
             })
             .collect()
     }
 
-    /// The element symbol of one atom of a template.
-    fn element(frag: &Atomistic, atom: NodeId) -> String {
-        let props = frag
-            .get_node(atom)
-            .unwrap_or_else(|e| panic!("atom {atom:?} is missing: {e}"));
-        props
-            .get_str(keys::ELEMENT)
-            .unwrap_or_else(|| panic!("atom {atom:?} carries no element"))
-            .to_owned()
+    /// The element of one atom of a template, read from its atomic number.
+    fn element(frag: &Atomistic, atom: NodeId) -> Element {
+        let z = frag
+            .get_atom(atom)
+            .unwrap_or_else(|e| panic!("atom {atom:?} is missing: {e}"))
+            .atomic_number()
+            .unwrap_or_else(|| panic!("atom {atom:?} carries no atomic number"));
+        Element::by_number(z).unwrap_or_else(|| panic!("atom {atom:?} is the wildcard"))
     }
 
-    /// The atoms **bonded** to `atom`.
-    ///
-    /// Not `neighbors`: a port is an arity-2 relation too, so the generic
-    /// adjacency would report a handle twice and call a port a bond.
+    /// The atoms **bonded** to `atom`: its bonds alone, never a port (an
+    /// arity-2 relation too, which a generic adjacency would report as a
+    /// second neighbour).
     fn bonded(frag: &Atomistic, atom: NodeId) -> Vec<NodeId> {
-        let bonds = frag
-            .kind_id("bonds")
-            .expect("'bonds' is registered on every Atomistic");
-        frag.neighbor_relations(atom)
-            .filter(|&(kind, _, _)| kind == bonds)
-            .map(|(_, _, other)| other)
-            .collect()
+        frag.neighbor_bonds(atom).map(|(other, _)| other).collect()
     }
 
     /// The `(BondOrder, BondNumber)` of the bond joining a port's anchor to its
     /// handle.
     fn handle_bond_class(frag: &Atomistic, port: &Port) -> (BondOrder, BondNumber) {
-        let bonds = frag
-            .kind_id("bonds")
-            .expect("'bonds' is registered on every Atomistic");
         let rid = frag
-            .neighbor_relations(port.handle)
-            .find(|&(kind, _, other)| kind == bonds && other == port.anchor)
-            .map(|(_, rid, _)| rid)
+            .bond_between(port.handle, port.anchor)
             .unwrap_or_else(|| {
                 panic!(
                     "no bond joins handle {:?} to anchor {:?}",
@@ -521,7 +503,7 @@ mod tests {
                 )
             });
         let bond = frag
-            .get_relation(bonds, rid)
+            .get_bond(rid)
             .unwrap_or_else(|e| panic!("bond {rid:?} does not read back: {e}"));
         (
             BondOrder::from_prop(bond.props.get(keys::BOND_TYPE)),
@@ -660,14 +642,13 @@ mod tests {
         assert_eq!(built, defined);
     }
 
-    // -- SmilesIr::to_template: one body, no table -----------------------
+    // -- FragmentIr::to_template: one body, no table ---------------------
 
     /// `[<]OCC[>]` alone: three heavy atoms, two handles, one `<` and one `>`
     /// port — the same template the table entry `#EO=[<]OCC[>]` builds.
     #[test]
     fn to_template_builds_one_unit_from_a_body() {
-        let eo = SmilesIr::from_fragment("[<]OCC[>]")
-            .expect("a fragment body must parse")
+        let eo = fragment("[<]OCC[>]")
             .to_template()
             .expect("a fragment body must build its template");
         assert_eq!(eo.n_atoms(), 5);
@@ -684,10 +665,7 @@ mod tests {
     /// A body with no descriptor builds a template with no port.
     #[test]
     fn to_template_of_a_plain_body_has_no_ports() {
-        let mol = SmilesIr::from_fragment("CCO")
-            .expect("a plain body is a fragment body")
-            .to_template()
-            .expect("a plain body builds");
+        let mol = fragment("CCO").to_template().expect("a plain body builds");
         assert_eq!(mol.n_atoms(), 3);
         assert_eq!(mol.n_ports(), 0);
     }
@@ -706,16 +684,20 @@ mod tests {
 
         let ports = ports_of(&peo);
         let oxygens: Vec<NodeId> = peo
-            .node_ids()
-            .filter(|&atom| element(&peo, atom) == "O")
+            .atom_ids()
+            .filter(|&atom| element(&peo, atom) == Element::O)
             .collect();
         assert_eq!(oxygens.len(), 1, "the body writes one ether oxygen");
         for port in &ports {
             assert_eq!(port.kind, PortKind::Symmetric);
             assert_eq!(port.label, "", "a bare `[$]` is unnamed");
             assert_eq!(port.order, BondNumber::Single);
-            assert_eq!(element(&peo, port.handle), "H", "a handle is a hydrogen");
-            assert_eq!(element(&peo, port.anchor), "C");
+            assert_eq!(
+                element(&peo, port.handle),
+                Element::H,
+                "a handle is a hydrogen"
+            );
+            assert_eq!(element(&peo, port.anchor), Element::C);
             assert!(
                 bonded(&peo, port.anchor).contains(&oxygens[0]),
                 "an anchor of `[$]COC[$]` is a carbon bonded to the oxygen"
@@ -737,8 +719,8 @@ mod tests {
         assert_eq!(oh.n_ports(), 1);
 
         let ports = ports_of(&oh);
-        assert_eq!(element(&oh, ports[0].anchor), "O");
-        assert_eq!(element(&oh, ports[0].handle), "H");
+        assert_eq!(element(&oh, ports[0].anchor), Element::O);
+        assert_eq!(element(&oh, ports[0].handle), Element::H);
         assert_eq!(ports[0].kind, PortKind::Symmetric);
         assert_eq!(ports[0].order, BondNumber::Single);
     }
@@ -761,8 +743,8 @@ mod tests {
         assert_eq!(shared.len(), 2, "C1 carries both `<` and `$`");
 
         assert_eq!(lone[0].kind, PortKind::Right);
-        assert_eq!(element(&bb, lone[0].anchor), "C");
-        assert_eq!(element(&bb, shared[0].anchor), "C");
+        assert_eq!(element(&bb, lone[0].anchor), Element::C);
+        assert_eq!(element(&bb, shared[0].anchor), Element::C);
         assert!(
             bonded(&bb, lone[0].anchor).contains(&shared[0].anchor),
             "the two anchors are the body's two bonded carbons"
@@ -798,12 +780,12 @@ mod tests {
             .iter()
             .find(|p| p.kind == PortKind::Left)
             .expect("the `<` written after the carbonyl branch");
-        assert_eq!(element(&gly, right.anchor), "N");
-        assert_eq!(element(&gly, left.anchor), "C");
+        assert_eq!(element(&gly, right.anchor), Element::N);
+        assert_eq!(element(&gly, left.anchor), Element::C);
         assert!(
             bonded(&gly, left.anchor)
                 .iter()
-                .any(|&other| element(&gly, other) == "O"),
+                .any(|&other| element(&gly, other) == Element::O),
             "the `<` anchor is the carbonyl carbon, not the methylene"
         );
     }
@@ -833,7 +815,7 @@ mod tests {
 
     // -- templates: property discipline -----------------------------------
 
-    /// A handle is added with its element and the hydrogen mass, and nothing
+    /// A handle is added with its atomic number and the hydrogen mass, and nothing
     /// else: no coordinates, no bead stamps, and none of the
     /// valence-bearing properties whose presence would change what a later
     /// `add_hydrogens` computes. Mass is not valence-bearing
@@ -842,16 +824,12 @@ mod tests {
     #[test]
     fn writes_only_element_and_mass_on_a_handle() {
         let peo = template(F2, "PEO");
-        let h_mass = f64::from(
-            molrs::core::Element::by_symbol("H")
-                .expect("H is in the Element table")
-                .atomic_mass(),
-        );
+        let h_mass = f64::from(Element::H.atomic_mass());
         for port in ports_of(&peo) {
             let handle = peo
-                .get_node(port.handle)
+                .get_atom(port.handle)
                 .unwrap_or_else(|e| panic!("handle {:?} is missing: {e}", port.handle));
-            assert_eq!(handle.get_str(keys::ELEMENT), Some("H"));
+            assert_eq!(handle.atomic_number(), Some(Element::H.z()));
             let mass = handle
                 .get_f64(keys::MASS)
                 .unwrap_or_else(|| panic!("handle {:?} carries no mass", port.handle));
@@ -864,10 +842,10 @@ mod tests {
                 keys::X,
                 keys::Y,
                 keys::Z,
-                "h_count",
-                "is_aromatic",
-                "formal_charge",
-                "frag_id",
+                H_COUNT,
+                IS_AROMATIC,
+                keys::FORMAL_CHARGE,
+                keys::FRAG_ID,
             ] {
                 assert!(
                     !handle.contains_key(key),
@@ -877,11 +855,11 @@ mod tests {
             }
             let mut written: Vec<&str> = handle.keys().collect();
             written.sort_unstable();
-            let mut expected = vec![keys::ELEMENT, keys::MASS];
+            let mut expected = vec![keys::ATOMIC_NUMBER, keys::MASS];
             expected.sort_unstable();
             assert_eq!(
                 written, expected,
-                "a handle carries the element and mass and nothing else"
+                "a handle carries the atomic number and mass and nothing else"
             );
         }
     }
@@ -890,16 +868,12 @@ mod tests {
     /// H mass (the source of truth), so a mass-weighted bead centroid exists.
     #[test]
     fn writes_the_hydrogen_mass_on_every_handle() {
-        let h_mass = f64::from(
-            molrs::core::Element::by_symbol("H")
-                .expect("H is in the Element table")
-                .atomic_mass(),
-        );
+        let h_mass = f64::from(Element::H.atomic_mass());
         for text in [F2, F5_BB, F6_GLY] {
             for (name, frag) in templates(text) {
                 for port in ports_of(&frag) {
                     let handle = frag
-                        .get_node(port.handle)
+                        .get_atom(port.handle)
                         .unwrap_or_else(|e| panic!("{name}: handle is missing: {e}"));
                     let mass = handle
                         .get_f64(keys::MASS)
@@ -921,15 +895,15 @@ mod tests {
         let peo = template(F2, "PEO");
         for port in ports_of(&peo) {
             let anchor = peo
-                .get_node(port.anchor)
+                .get_atom(port.anchor)
                 .unwrap_or_else(|e| panic!("anchor {:?} is missing: {e}", port.anchor));
-            assert_eq!(anchor.get_str(keys::ELEMENT), Some("C"));
+            assert_eq!(anchor.atomic_number(), Some(Element::C.z()));
             assert!(
-                !anchor.contains_key("h_count"),
+                !anchor.contains_key(H_COUNT),
                 "an organic anchor declares no hydrogen count"
             );
             assert!(
-                !anchor.contains_key("formal_charge"),
+                !anchor.contains_key(keys::FORMAL_CHARGE),
                 "an organic anchor declares no formal charge"
             );
         }
@@ -945,21 +919,21 @@ mod tests {
         assert_eq!(methyl.n_ports(), 1);
         let ports = ports_of(&methyl);
         let anchor = methyl
-            .get_node(ports[0].anchor)
+            .get_atom(ports[0].anchor)
             .unwrap_or_else(|e| panic!("anchor is missing: {e}"));
-        assert_eq!(anchor.get_str(keys::ELEMENT), Some("C"));
-        assert_eq!(anchor.get_f64("isotope"), Some(13.0));
-        assert_eq!(anchor.get_f64("h_count"), Some(3.0));
-        assert_eq!(anchor.get_f64("formal_charge"), Some(-1.0));
+        assert_eq!(anchor.atomic_number(), Some(Element::C.z()));
+        assert_eq!(anchor.get(ISOTOPE), Some(&PropValue::Int(13)));
+        assert_eq!(anchor.get(H_COUNT), Some(&PropValue::Int(3)));
+        assert_eq!(anchor.get(keys::FORMAL_CHARGE), Some(&PropValue::Int(-1)));
 
         let sx3 = template(F7_SX3, "SX3");
         for port in ports_of(&sx3) {
             let anchor = sx3
-                .get_node(port.anchor)
+                .get_atom(port.anchor)
                 .unwrap_or_else(|e| panic!("anchor is missing: {e}"));
             assert_eq!(
-                anchor.get("is_aromatic"),
-                Some(&PropValue::Int(1)),
+                anchor.get(IS_AROMATIC),
+                Some(&PropValue::Bool(true)),
                 "an anchor written `c` stays aromatic through promotion"
             );
         }
@@ -986,9 +960,9 @@ mod tests {
     #[test]
     fn adds_no_coordinates_and_no_frag_id() {
         for (name, frag) in templates(F2) {
-            for atom in frag.node_ids() {
+            for atom in frag.atom_ids() {
                 let props = frag
-                    .get_node(atom)
+                    .get_atom(atom)
                     .unwrap_or_else(|e| panic!("{name}: atom {atom:?} is missing: {e}"));
                 for key in [keys::X, keys::Y, keys::Z] {
                     assert!(
@@ -996,9 +970,8 @@ mod tests {
                         "{name}: atom {atom:?} carries '{key}'"
                     );
                 }
-                assert_eq!(
-                    frag.frag_id(atom),
-                    None,
+                assert!(
+                    !props.contains_key(keys::FRAG_ID),
                     "{name}: atom {atom:?} is stamped with an instance"
                 );
             }
@@ -1059,9 +1032,9 @@ mod tests {
     /// named here rather than stored as an indefinite port order.
     #[test]
     fn rejects_an_invalid_descriptor_order() {
-        let mut body = SmilesIr::from_fragment("[$]O").expect("the body must parse");
+        let mut body = parse_fragment_smiles("[$]O").expect("the body must parse");
         body.components[0].head.descriptors[0] = descriptor(Some(BondKind::Aromatic));
-        let ir = ir_over(&[def("A", FragmentBody::Smiles(body))]);
+        let ir = ir_over(&[def("A", FragmentBody::Smiles(FragmentIr::new(body)))]);
         let err = ir
             .templates()
             .expect_err("an aromatic descriptor order is not a port order");

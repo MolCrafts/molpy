@@ -9,7 +9,7 @@ use ndarray::ArrayD;
 
 use num_complex::Complex;
 
-use super::dtype::DType;
+use super::dtype::{BlockDtype, DType};
 use crate::op::{F, I, Idx};
 
 /// Walk every column variant, binding the inner column array.
@@ -52,7 +52,7 @@ macro_rules! map_column {
 ///   responsible for releasing the memory via the foreign allocator.
 ///
 /// Readers don't need to know which storage is active: they access the inner
-/// array via `Deref<Target = ArrayD<T>>`, and `as_float()`, `shape()`, `view()`
+/// array via `Deref<Target = ArrayD<T>>`, and `get::<T>()`, `shape()`, `view()`
 /// etc work identically. Every mutable getter first detaches from foreign
 /// storage (copy-on-write) before returning a mutable reference, so mutation
 /// never reaches into foreign memory.
@@ -165,12 +165,13 @@ impl<T: std::fmt::Debug> std::fmt::Debug for ColumnArray<T> {
 ///
 /// Inner values are `Arc<ColumnArray<T>>` so `Column::clone()` and
 /// `Block::clone()` are cheap: they bump refcounts instead of copying
-/// scalar data. The [`Column::from_float`] / [`Column::from_int`] / …
-/// constructors wrap an owned `ArrayD<T>` in a Rust-owned column array.
+/// scalar data. [`Column::from`] an owned `ArrayD<T>` wraps it in a
+/// Rust-owned column array.
 ///
-/// Type-specific getters (`as_float`, `as_int`, …) return plain `&ArrayD<T>`
-/// references via deref; the Arc+column array layering is transparent to callers.
-/// Mutable getters go through [`ColumnArray::clone`] copy-on-write so the
+/// The typed getter [`get::<T>`](Self::get) returns a plain `&ArrayD<T>`
+/// reference via deref; the Arc+column array layering is transparent to callers.
+/// The mutable getter [`get_mut::<T>`](Self::get_mut) goes through
+/// [`ColumnArray::clone`] copy-on-write so the
 /// returned `&mut ArrayD<T>` always refers to Rust-owned memory.
 #[derive(Clone)]
 pub enum Column {
@@ -220,138 +221,6 @@ fn realize_owned_mut<T: Clone>(arc: &mut Arc<ColumnArray<T>>) -> &mut ArrayD<T> 
 }
 
 impl Column {
-    /// Wrap an owned float ndarray in a Rust-owned `Column`.
-    pub fn from_float(arr: ArrayD<F>) -> Self {
-        Column::Float(Arc::new(ColumnArray::from_owned(arr)))
-    }
-
-    /// Wrap an owned int ndarray in a Rust-owned `Column`.
-    pub fn from_int(arr: ArrayD<I>) -> Self {
-        Column::Int(Arc::new(ColumnArray::from_owned(arr)))
-    }
-
-    /// Wrap an owned `i8` ndarray in a Rust-owned `Column`.
-    pub fn from_i8(arr: ArrayD<i8>) -> Self {
-        Column::I8(Arc::new(ColumnArray::from_owned(arr)))
-    }
-
-    /// Wrap an owned `i16` ndarray in a Rust-owned `Column`.
-    pub fn from_i16(arr: ArrayD<i16>) -> Self {
-        Column::I16(Arc::new(ColumnArray::from_owned(arr)))
-    }
-
-    /// Wrap an owned `i64` ndarray in a Rust-owned `Column`.
-    pub fn from_i64(arr: ArrayD<i64>) -> Self {
-        Column::I64(Arc::new(ColumnArray::from_owned(arr)))
-    }
-
-    /// Wrap an owned bool ndarray in a Rust-owned `Column`.
-    pub fn from_bool(arr: ArrayD<bool>) -> Self {
-        Column::Bool(Arc::new(ColumnArray::from_owned(arr)))
-    }
-
-    /// Wrap an owned uint ndarray in a Rust-owned `Column`.
-    pub fn from_uint(arr: ArrayD<Idx>) -> Self {
-        Column::Uint(Arc::new(ColumnArray::from_owned(arr)))
-    }
-
-    /// Wrap an owned u8 ndarray in a Rust-owned `Column`.
-    pub fn from_u8(arr: ArrayD<u8>) -> Self {
-        Column::U8(Arc::new(ColumnArray::from_owned(arr)))
-    }
-
-    /// Wrap an owned `u16` ndarray in a Rust-owned `Column`.
-    pub fn from_u16(arr: ArrayD<u16>) -> Self {
-        Column::U16(Arc::new(ColumnArray::from_owned(arr)))
-    }
-
-    /// Wrap an owned `u32` ndarray in a Rust-owned `Column`.
-    pub fn from_u32(arr: ArrayD<u32>) -> Self {
-        Column::U32(Arc::new(ColumnArray::from_owned(arr)))
-    }
-
-    /// Wrap an owned string ndarray in a Rust-owned `Column`.
-    pub fn from_string(arr: ArrayD<String>) -> Self {
-        Column::String(Arc::new(ColumnArray::from_owned(arr)))
-    }
-
-    /// Wrap an owned `complex64` ndarray in a Rust-owned `Column`.
-    pub fn from_c64(arr: ArrayD<Complex<f32>>) -> Self {
-        Column::C64(Arc::new(ColumnArray::from_owned(arr)))
-    }
-
-    /// Wrap an owned `complex128` ndarray in a Rust-owned `Column`.
-    pub fn from_c128(arr: ArrayD<Complex<f64>>) -> Self {
-        Column::C128(Arc::new(ColumnArray::from_owned(arr)))
-    }
-
-    /// Wrap a foreign-backed `ColumnArray<F>` directly. Zero-copy path for
-    /// bindings that have the column array pre-built (see
-    /// [`ColumnArray::from_foreign`]).
-    pub fn from_float_array(holder: ColumnArray<F>) -> Self {
-        Column::Float(Arc::new(holder))
-    }
-
-    /// See [`Column::from_float_array`].
-    pub fn from_int_array(holder: ColumnArray<I>) -> Self {
-        Column::Int(Arc::new(holder))
-    }
-
-    /// See [`Column::from_float_array`].
-    pub fn from_i8_array(holder: ColumnArray<i8>) -> Self {
-        Column::I8(Arc::new(holder))
-    }
-
-    /// See [`Column::from_float_array`].
-    pub fn from_i16_array(holder: ColumnArray<i16>) -> Self {
-        Column::I16(Arc::new(holder))
-    }
-
-    /// See [`Column::from_float_array`].
-    pub fn from_i64_array(holder: ColumnArray<i64>) -> Self {
-        Column::I64(Arc::new(holder))
-    }
-
-    /// See [`Column::from_float_array`].
-    pub fn from_bool_array(holder: ColumnArray<bool>) -> Self {
-        Column::Bool(Arc::new(holder))
-    }
-
-    /// See [`Column::from_float_array`].
-    pub fn from_uint_array(holder: ColumnArray<Idx>) -> Self {
-        Column::Uint(Arc::new(holder))
-    }
-
-    /// See [`Column::from_float_array`].
-    pub fn from_u8_array(holder: ColumnArray<u8>) -> Self {
-        Column::U8(Arc::new(holder))
-    }
-
-    /// See [`Column::from_float_array`].
-    pub fn from_u16_array(holder: ColumnArray<u16>) -> Self {
-        Column::U16(Arc::new(holder))
-    }
-
-    /// See [`Column::from_float_array`].
-    pub fn from_u32_array(holder: ColumnArray<u32>) -> Self {
-        Column::U32(Arc::new(holder))
-    }
-
-    /// See [`Column::from_float_array`].
-    pub fn from_string_array(holder: ColumnArray<String>) -> Self {
-        Column::String(Arc::new(holder))
-    }
-
-    /// See [`Column::from_float_array`].
-    pub fn from_c64_array(holder: ColumnArray<Complex<f32>>) -> Self {
-        Column::C64(Arc::new(holder))
-    }
-
-    /// See [`Column::from_float_array`].
-    pub fn from_c128_array(holder: ColumnArray<Complex<f64>>) -> Self {
-        Column::C128(Arc::new(holder))
-    }
-
     /// Returns the number of rows (axis-0 length) of this column.
     ///
     /// Returns `None` if the array has rank 0 (which should never happen
@@ -443,21 +312,7 @@ impl Column {
     /// and the sort path. String rows are cloned.
     pub fn select_rows(&self, indices: &[usize]) -> Column {
         use ndarray::Axis;
-        match self {
-            Column::Float(h) => Column::from_float(h.array().select(Axis(0), indices)),
-            Column::I8(h) => Column::from_i8(h.array().select(Axis(0), indices)),
-            Column::I16(h) => Column::from_i16(h.array().select(Axis(0), indices)),
-            Column::Int(h) => Column::from_int(h.array().select(Axis(0), indices)),
-            Column::I64(h) => Column::from_i64(h.array().select(Axis(0), indices)),
-            Column::Bool(h) => Column::from_bool(h.array().select(Axis(0), indices)),
-            Column::Uint(h) => Column::from_uint(h.array().select(Axis(0), indices)),
-            Column::U8(h) => Column::from_u8(h.array().select(Axis(0), indices)),
-            Column::U16(h) => Column::from_u16(h.array().select(Axis(0), indices)),
-            Column::U32(h) => Column::from_u32(h.array().select(Axis(0), indices)),
-            Column::String(h) => Column::from_string(h.array().select(Axis(0), indices)),
-            Column::C64(h) => Column::from_c64(h.array().select(Axis(0), indices)),
-            Column::C128(h) => Column::from_c128(h.array().select(Axis(0), indices)),
-        }
+        map_column!(self, h => Column::from(h.array().select(Axis(0), indices)))
     }
 
     /// Whether rows `a` and `b` (along axis 0) hold equal values, element by
@@ -526,274 +381,28 @@ impl Column {
         }
     }
 
-    /// Returns a reference to the float data, or `None` if this column is not `Float`.
-    pub fn as_float(&self) -> Option<&ArrayD<F>> {
-        match self {
-            Column::Float(a) => Some(a.array()),
-            _ => None,
-        }
-    }
-
-    /// Returns a mutable reference to the float data, or `None` if not `Float`.
+    /// The array, when this column holds `T` elements; `None` for any other
+    /// dtype.
     ///
-    /// Copy-on-write: clones if shared or foreign-backed. The returned mut ref
-    /// always refers to Rust-owned memory.
-    pub fn as_float_mut(&mut self) -> Option<&mut ArrayD<F>> {
-        match self {
-            Column::Float(a) => Some(realize_owned_mut(a)),
-            _ => None,
-        }
-    }
-
-    /// Returns a reference to the integer data, or `None` if not `Int`.
-    pub fn as_int(&self) -> Option<&ArrayD<I>> {
-        match self {
-            Column::Int(a) => Some(a.array()),
-            _ => None,
-        }
-    }
-
-    /// Returns a mutable reference to the integer data, or `None` if not `Int`.
+    /// ```
+    /// use molrs::core::Column;
+    /// use ndarray::Array1;
     ///
-    /// Copy-on-write: clones if shared or foreign-backed.
-    pub fn as_int_mut(&mut self) -> Option<&mut ArrayD<I>> {
-        match self {
-            Column::Int(a) => Some(realize_owned_mut(a)),
-            _ => None,
-        }
+    /// let col = Column::from(Array1::from_vec(vec![1.0_f64, 2.0]).into_dyn());
+    /// assert_eq!(col.get::<f64>().unwrap()[[1]], 2.0);
+    /// assert!(col.get::<i32>().is_none());
+    /// ```
+    pub fn get<T: BlockDtype>(&self) -> Option<&ArrayD<T>> {
+        T::holder(self).map(|h| h.array())
     }
 
-    /// Returns a reference to the boolean data, or `None` if not `Bool`.
-    pub fn as_bool(&self) -> Option<&ArrayD<bool>> {
-        match self {
-            Column::Bool(a) => Some(a.array()),
-            _ => None,
-        }
-    }
-
-    /// Returns a mutable reference to the boolean data, or `None` if not `Bool`.
+    /// The array, mutably, when this column holds `T` elements; `None` for any
+    /// other dtype.
     ///
-    /// Copy-on-write: clones if shared or foreign-backed.
-    pub fn as_bool_mut(&mut self) -> Option<&mut ArrayD<bool>> {
-        match self {
-            Column::Bool(a) => Some(realize_owned_mut(a)),
-            _ => None,
-        }
-    }
-
-    /// Returns a reference to the unsigned integer data, or `None` if not `UInt`.
-    pub fn as_uint(&self) -> Option<&ArrayD<Idx>> {
-        match self {
-            Column::Uint(a) => Some(a.array()),
-            _ => None,
-        }
-    }
-
-    /// Returns a mutable reference to the unsigned integer data, or `None` if not `UInt`.
-    ///
-    /// Copy-on-write: clones if shared or foreign-backed.
-    pub fn as_uint_mut(&mut self) -> Option<&mut ArrayD<Idx>> {
-        match self {
-            Column::Uint(a) => Some(realize_owned_mut(a)),
-            _ => None,
-        }
-    }
-
-    /// Returns a reference to the u8 data, or `None` if not `U8`.
-    pub fn as_u8(&self) -> Option<&ArrayD<u8>> {
-        match self {
-            Column::U8(a) => Some(a.array()),
-            _ => None,
-        }
-    }
-
-    /// Returns a mutable reference to the u8 data, or `None` if not `U8`.
-    ///
-    /// Copy-on-write: clones if shared or foreign-backed.
-    pub fn as_u8_mut(&mut self) -> Option<&mut ArrayD<u8>> {
-        match self {
-            Column::U8(a) => Some(realize_owned_mut(a)),
-            _ => None,
-        }
-    }
-
-    /// Returns a reference to the string data, or `None` if not `String`.
-    pub fn as_string(&self) -> Option<&ArrayD<String>> {
-        match self {
-            Column::String(a) => Some(a.array()),
-            _ => None,
-        }
-    }
-
-    /// Returns a mutable reference to the string data, or `None` if not `String`.
-    ///
-    /// Copy-on-write: clones if shared or foreign-backed.
-    pub fn as_string_mut(&mut self) -> Option<&mut ArrayD<String>> {
-        match self {
-            Column::String(a) => Some(realize_owned_mut(a)),
-            _ => None,
-        }
-    }
-
-    /// Returns a reference to the `i8` data, or `None` if not `Int8`.
-    pub fn as_i8(&self) -> Option<&ArrayD<i8>> {
-        match self {
-            Column::I8(a) => Some(a.array()),
-            _ => None,
-        }
-    }
-
-    /// Returns a mutable reference to the `i8` data, or `None` if not `Int8`.
-    pub fn as_i8_mut(&mut self) -> Option<&mut ArrayD<i8>> {
-        match self {
-            Column::I8(a) => Some(realize_owned_mut(a)),
-            _ => None,
-        }
-    }
-
-    /// Returns a reference to the `i16` data, or `None` if not `Int16`.
-    pub fn as_i16(&self) -> Option<&ArrayD<i16>> {
-        match self {
-            Column::I16(a) => Some(a.array()),
-            _ => None,
-        }
-    }
-
-    /// Returns a mutable reference to the `i16` data, or `None` if not `Int16`.
-    pub fn as_i16_mut(&mut self) -> Option<&mut ArrayD<i16>> {
-        match self {
-            Column::I16(a) => Some(realize_owned_mut(a)),
-            _ => None,
-        }
-    }
-
-    /// Returns a reference to the `i64` data, or `None` if not `Int64`.
-    pub fn as_i64(&self) -> Option<&ArrayD<i64>> {
-        match self {
-            Column::I64(a) => Some(a.array()),
-            _ => None,
-        }
-    }
-
-    /// Returns a mutable reference to the `i64` data, or `None` if not `Int64`.
-    pub fn as_i64_mut(&mut self) -> Option<&mut ArrayD<i64>> {
-        match self {
-            Column::I64(a) => Some(realize_owned_mut(a)),
-            _ => None,
-        }
-    }
-
-    /// Returns a reference to the `u16` data, or `None` if not `U16`.
-    pub fn as_u16(&self) -> Option<&ArrayD<u16>> {
-        match self {
-            Column::U16(a) => Some(a.array()),
-            _ => None,
-        }
-    }
-
-    /// Returns a mutable reference to the `u16` data, or `None` if not `U16`.
-    pub fn as_u16_mut(&mut self) -> Option<&mut ArrayD<u16>> {
-        match self {
-            Column::U16(a) => Some(realize_owned_mut(a)),
-            _ => None,
-        }
-    }
-
-    /// Returns a reference to the `u32` data, or `None` if not `U32`.
-    pub fn as_u32(&self) -> Option<&ArrayD<u32>> {
-        match self {
-            Column::U32(a) => Some(a.array()),
-            _ => None,
-        }
-    }
-
-    /// Returns a mutable reference to the `u32` data, or `None` if not `U32`.
-    pub fn as_u32_mut(&mut self) -> Option<&mut ArrayD<u32>> {
-        match self {
-            Column::U32(a) => Some(realize_owned_mut(a)),
-            _ => None,
-        }
-    }
-
-    /// Returns a reference to the `complex64` data, or `None` if not `Complex64`.
-    pub fn as_c64(&self) -> Option<&ArrayD<Complex<f32>>> {
-        match self {
-            Column::C64(a) => Some(a.array()),
-            _ => None,
-        }
-    }
-
-    /// Returns a mutable reference to the `complex64` data, or `None` if not `Complex64`.
-    pub fn as_c64_mut(&mut self) -> Option<&mut ArrayD<Complex<f32>>> {
-        match self {
-            Column::C64(a) => Some(realize_owned_mut(a)),
-            _ => None,
-        }
-    }
-
-    /// Returns a reference to the `complex128` data, or `None` if not `Complex128`.
-    pub fn as_c128(&self) -> Option<&ArrayD<Complex<f64>>> {
-        match self {
-            Column::C128(a) => Some(a.array()),
-            _ => None,
-        }
-    }
-
-    /// Returns a mutable reference to the `complex128` data, or `None` if not `Complex128`.
-    pub fn as_c128_mut(&mut self) -> Option<&mut ArrayD<Complex<f64>>> {
-        match self {
-            Column::C128(a) => Some(realize_owned_mut(a)),
-            _ => None,
-        }
-    }
-
-    /// Returns a clone of the inner float column array Arc, or `None` if not `Float`.
-    /// O(1) refcount bump; shares storage.
-    pub fn float_arc(&self) -> Option<Arc<ColumnArray<F>>> {
-        match self {
-            Column::Float(a) => Some(Arc::clone(a)),
-            _ => None,
-        }
-    }
-
-    /// See [`float_arc`](Self::float_arc).
-    pub fn int_arc(&self) -> Option<Arc<ColumnArray<I>>> {
-        match self {
-            Column::Int(a) => Some(Arc::clone(a)),
-            _ => None,
-        }
-    }
-
-    /// See [`float_arc`](Self::float_arc).
-    pub fn bool_arc(&self) -> Option<Arc<ColumnArray<bool>>> {
-        match self {
-            Column::Bool(a) => Some(Arc::clone(a)),
-            _ => None,
-        }
-    }
-
-    /// See [`float_arc`](Self::float_arc).
-    pub fn uint_arc(&self) -> Option<Arc<ColumnArray<Idx>>> {
-        match self {
-            Column::Uint(a) => Some(Arc::clone(a)),
-            _ => None,
-        }
-    }
-
-    /// See [`float_arc`](Self::float_arc).
-    pub fn u8_arc(&self) -> Option<Arc<ColumnArray<u8>>> {
-        match self {
-            Column::U8(a) => Some(Arc::clone(a)),
-            _ => None,
-        }
-    }
-
-    /// See [`float_arc`](Self::float_arc).
-    pub fn string_arc(&self) -> Option<Arc<ColumnArray<String>>> {
-        match self {
-            Column::String(a) => Some(Arc::clone(a)),
-            _ => None,
-        }
+    /// Copy-on-write: a shared or foreign-backed buffer is cloned first, so the
+    /// returned reference always refers to uniquely held Rust-owned memory.
+    pub fn get_mut<T: BlockDtype>(&mut self) -> Option<&mut ArrayD<T>> {
+        T::holder_mut(self).map(realize_owned_mut)
     }
 
     /// Resize this column along axis 0 to `new_nrows`.
@@ -821,6 +430,21 @@ impl Column {
             Column::C64(a) => resize_array(a, current, new_nrows),
             Column::C128(a) => resize_array(a, current, new_nrows),
         }
+    }
+}
+
+/// Wrap an owned array in a Rust-owned column of `T`'s dtype.
+impl<T: BlockDtype> From<ArrayD<T>> for Column {
+    fn from(arr: ArrayD<T>) -> Self {
+        T::wrap(Arc::new(ColumnArray::from_owned(arr)))
+    }
+}
+
+/// Wrap a pre-built column array — the zero-copy path for a binding that
+/// forged a foreign-backed one (see [`ColumnArray::from_foreign`]).
+impl<T: BlockDtype> From<ColumnArray<T>> for Column {
+    fn from(holder: ColumnArray<T>) -> Self {
+        T::wrap(Arc::new(holder))
     }
 }
 
@@ -853,34 +477,34 @@ mod tests {
     // ---- helpers ----
 
     fn float_col(n: usize) -> Column {
-        Column::from_float(Array1::from_vec(vec![0.0 as F; n]).into_dyn())
+        Column::from(Array1::from_vec(vec![0.0 as F; n]).into_dyn())
     }
 
     fn int_col(n: usize) -> Column {
-        Column::from_int(Array1::from_vec(vec![0 as I; n]).into_dyn())
+        Column::from(Array1::from_vec(vec![0 as I; n]).into_dyn())
     }
 
     fn bool_col(n: usize) -> Column {
-        Column::from_bool(Array1::from_vec(vec![false; n]).into_dyn())
+        Column::from(Array1::from_vec(vec![false; n]).into_dyn())
     }
 
     fn uint_col(n: usize) -> Column {
-        Column::from_uint(Array1::from_vec(vec![0 as Idx; n]).into_dyn())
+        Column::from(Array1::from_vec(vec![0 as Idx; n]).into_dyn())
     }
 
     fn u8_col(n: usize) -> Column {
-        Column::from_u8(Array1::from_vec(vec![0u8; n]).into_dyn())
+        Column::from(Array1::from_vec(vec![0u8; n]).into_dyn())
     }
 
     fn string_col(n: usize) -> Column {
-        Column::from_string(Array1::from_vec(vec![String::new(); n]).into_dyn())
+        Column::from(Array1::from_vec(vec![String::new(); n]).into_dyn())
     }
 
     // ---- deep_copy ----
 
     #[test]
     fn deep_copy_shares_no_buffer_and_keeps_the_values() {
-        let col = Column::from_float(Array1::from_vec(vec![1.0 as F, 2.0]).into_dyn());
+        let col = Column::from(Array1::from_vec(vec![1.0 as F, 2.0]).into_dyn());
         let shallow = col.clone();
         let deep = col.deep_copy();
 
@@ -908,7 +532,7 @@ mod tests {
         assert_eq!(u8_col(4).n_rows(), Some(4));
         assert_eq!(string_col(1).n_rows(), Some(1));
 
-        let rank0 = Column::from_float(ArrayD::<F>::from_elem(vec![], 1.0));
+        let rank0 = Column::from(ArrayD::<F>::from_elem(vec![], 1.0));
         assert_eq!(rank0.n_rows(), None);
     }
 
@@ -925,85 +549,84 @@ mod tests {
     #[test]
     fn test_shape() {
         assert_eq!(float_col(4).shape(), &[4]);
-        let col2d = Column::from_int(ArrayD::<I>::from_elem(vec![3, 2], 0));
+        let col2d = Column::from(ArrayD::<I>::from_elem(vec![3, 2], 0));
         assert_eq!(col2d.shape(), &[3, 2]);
     }
 
     // ---- typed accessors ----
 
     #[test]
-    fn test_as_float_on_float() {
+    fn test_get_float_on_float() {
         let col = float_col(3);
-        assert!(col.as_float().is_some());
-        assert_eq!(col.as_float().unwrap().len(), 3);
+        assert!(col.get::<f64>().is_some());
+        assert_eq!(col.get::<f64>().unwrap().len(), 3);
     }
 
     #[test]
-    fn test_as_float_on_wrong_type() {
-        assert!(int_col(2).as_float().is_none());
-        assert!(bool_col(2).as_float().is_none());
-        assert!(uint_col(2).as_float().is_none());
-        assert!(u8_col(2).as_float().is_none());
-        assert!(string_col(2).as_float().is_none());
+    fn test_get_float_on_wrong_type() {
+        assert!(int_col(2).get::<f64>().is_none());
+        assert!(bool_col(2).get::<f64>().is_none());
+        assert!(uint_col(2).get::<f64>().is_none());
+        assert!(u8_col(2).get::<f64>().is_none());
+        assert!(string_col(2).get::<f64>().is_none());
     }
 
     #[test]
-    fn test_as_int() {
+    fn test_get_int() {
         let col = int_col(4);
-        assert!(col.as_int().is_some());
-        assert_eq!(col.as_int().unwrap().len(), 4);
-        assert!(float_col(1).as_int().is_none());
-        assert!(bool_col(1).as_int().is_none());
+        assert!(col.get::<i32>().is_some());
+        assert_eq!(col.get::<i32>().unwrap().len(), 4);
+        assert!(float_col(1).get::<i32>().is_none());
+        assert!(bool_col(1).get::<i32>().is_none());
     }
 
     #[test]
-    fn test_as_bool() {
+    fn test_get_bool() {
         let col = bool_col(2);
-        assert!(col.as_bool().is_some());
-        assert_eq!(col.as_bool().unwrap().len(), 2);
-        assert!(float_col(1).as_bool().is_none());
-        assert!(int_col(1).as_bool().is_none());
+        assert!(col.get::<bool>().is_some());
+        assert_eq!(col.get::<bool>().unwrap().len(), 2);
+        assert!(float_col(1).get::<bool>().is_none());
+        assert!(int_col(1).get::<bool>().is_none());
     }
 
     #[test]
-    fn test_as_uint() {
+    fn test_get_uint() {
         let col = uint_col(6);
-        assert!(col.as_uint().is_some());
-        assert_eq!(col.as_uint().unwrap().len(), 6);
-        assert!(float_col(1).as_uint().is_none());
-        assert!(int_col(1).as_uint().is_none());
+        assert!(col.get::<u64>().is_some());
+        assert_eq!(col.get::<u64>().unwrap().len(), 6);
+        assert!(float_col(1).get::<u64>().is_none());
+        assert!(int_col(1).get::<u64>().is_none());
     }
 
     #[test]
-    fn test_as_u8() {
+    fn test_get_u8() {
         let col = u8_col(3);
-        assert!(col.as_u8().is_some());
-        assert_eq!(col.as_u8().unwrap().len(), 3);
-        assert!(float_col(1).as_u8().is_none());
-        assert!(uint_col(1).as_u8().is_none());
+        assert!(col.get::<u8>().is_some());
+        assert_eq!(col.get::<u8>().unwrap().len(), 3);
+        assert!(float_col(1).get::<u8>().is_none());
+        assert!(uint_col(1).get::<u8>().is_none());
     }
 
     #[test]
-    fn test_as_string() {
+    fn test_get_string() {
         let col = string_col(2);
-        assert!(col.as_string().is_some());
-        assert_eq!(col.as_string().unwrap().len(), 2);
-        assert!(float_col(1).as_string().is_none());
-        assert!(int_col(1).as_string().is_none());
+        assert!(col.get::<String>().is_some());
+        assert_eq!(col.get::<String>().unwrap().len(), 2);
+        assert!(float_col(1).get::<String>().is_none());
+        assert!(int_col(1).get::<String>().is_none());
     }
 
     #[test]
-    fn test_as_float_mut() {
-        let mut col =
-            Column::from_float(Array1::from_vec(vec![1.0 as F, 2.0 as F, 3.0 as F]).into_dyn());
+    fn test_get_float_mut() {
+        let mut col = Column::from(Array1::from_vec(vec![1.0 as F, 2.0 as F, 3.0 as F]).into_dyn());
         {
-            let arr = col.as_float_mut().unwrap();
+            let arr = col.get_mut::<f64>().unwrap();
             arr[0] = 99.0;
         }
-        let arr = col.as_float().unwrap();
+        let arr = col.get::<f64>().unwrap();
         assert!((arr[0] - 99.0).abs() < F::EPSILON);
         let mut int = int_col(1);
-        assert!(int.as_float_mut().is_none());
+        assert!(int.get_mut::<f64>().is_none());
     }
 
     #[test]
@@ -1017,20 +640,20 @@ mod tests {
 
     #[test]
     fn test_clone_shares_buffer() {
-        let col = Column::from_float(Array1::from_vec(vec![1.0 as F, 2.0, 3.0]).into_dyn());
+        let col = Column::from(Array1::from_vec(vec![1.0 as F, 2.0, 3.0]).into_dyn());
         let cloned = col.clone();
-        let p1 = col.as_float().unwrap().as_ptr();
-        let p2 = cloned.as_float().unwrap().as_ptr();
+        let p1 = col.get::<f64>().unwrap().as_ptr();
+        let p2 = cloned.get::<f64>().unwrap().as_ptr();
         assert_eq!(p1, p2, "clone must share the buffer");
     }
 
     #[test]
-    fn test_as_float_mut_cow_when_shared() {
-        let col = Column::from_float(Array1::from_vec(vec![1.0 as F, 2.0, 3.0]).into_dyn());
+    fn test_get_float_mut_cow_when_shared() {
+        let col = Column::from(Array1::from_vec(vec![1.0 as F, 2.0, 3.0]).into_dyn());
         let mut cloned = col.clone();
-        cloned.as_float_mut().unwrap()[0] = 99.0;
-        assert_eq!(col.as_float().unwrap()[0], 1.0);
-        assert_eq!(cloned.as_float().unwrap()[0], 99.0);
+        cloned.get_mut::<f64>().unwrap()[0] = 99.0;
+        assert_eq!(col.get::<f64>().unwrap()[0], 1.0);
+        assert_eq!(cloned.get::<f64>().unwrap()[0], 99.0);
     }
 
     // ---- Foreign column array correctness ----
@@ -1054,9 +677,9 @@ mod tests {
             ArrayD::from_shape_vec(ndarray::IxDyn(&[len]), vec).unwrap()
         };
         let holder = unsafe { ColumnArray::from_foreign(forged, source) };
-        let col = Column::from_float_array(holder);
+        let col = Column::from(holder);
         assert!(col.is_foreign());
-        let arr = col.as_float().unwrap();
+        let arr = col.get::<f64>().unwrap();
         assert_eq!(arr.as_slice().unwrap(), &[1.0, 2.0, 3.0, 4.0]);
     }
 
@@ -1075,13 +698,13 @@ mod tests {
         // keeper, so the original Vec isn't consumed when we check it.
         let source_clone = source.clone();
         let holder = unsafe { ColumnArray::from_foreign(forged, source_clone) };
-        let mut col = Column::from_float_array(holder);
+        let mut col = Column::from(holder);
         assert!(col.is_foreign());
 
         // Mutate the column. This should CoW into a Rust-owned column array.
-        col.as_float_mut().unwrap()[0] = 999.0;
+        col.get_mut::<f64>().unwrap()[0] = 999.0;
         assert!(!col.is_foreign(), "after mut, holder must be Rust-owned");
-        assert_eq!(col.as_float().unwrap()[0], 999.0);
+        assert_eq!(col.get::<f64>().unwrap()[0], 999.0);
 
         // Source Vec is untouched.
         assert_eq!(source[0], 10.0);
@@ -1121,7 +744,7 @@ mod tests {
 
     #[test]
     fn test_raw_bytes_little_endian_values() {
-        let col = Column::from_float(Array1::from_vec(vec![1.0 as F, 2.0]).into_dyn());
+        let col = Column::from(Array1::from_vec(vec![1.0 as F, 2.0]).into_dyn());
         let b = col.raw_bytes().unwrap();
         assert_eq!(&b[0..8], &1.0f64.to_le_bytes());
         assert_eq!(&b[8..16], &2.0f64.to_le_bytes());
@@ -1130,7 +753,7 @@ mod tests {
     #[test]
     fn test_raw_bytes_multidim_length() {
         // A [2,3] int column flattens to 6 elements * 4 bytes.
-        let col = Column::from_int(
+        let col = Column::from(
             ArrayD::<I>::from_shape_vec(ndarray::IxDyn(&[2, 3]), vec![0 as I; 6]).unwrap(),
         );
         assert_eq!(col.raw_bytes().map(|b| b.len()), Some(24));
@@ -1141,7 +764,7 @@ mod tests {
         // A strided (sliced) numeric column still yields Some, in logical order.
         let base = Array1::from_vec(vec![1.0 as F, 2.0, 3.0, 4.0, 5.0, 6.0]);
         let strided = base.slice_move(ndarray::s![..;2]).into_dyn(); // [1, 3, 5]
-        let col = Column::from_float(strided);
+        let col = Column::from(strided);
         let b = col.raw_bytes().unwrap();
         assert_eq!(b.len(), 24);
         assert_eq!(&b[0..8], &1.0f64.to_le_bytes());

@@ -22,16 +22,17 @@
 //!
 //! Widths are fixed. The header declares `typedef double F;`.
 //!
-//! | Rust | C type     | Column dtype                 | Insert               |
-//! |------|------------|------------------------------|----------------------|
-//! | `F`  | `F` (`double`) | `MOLRS_D_TYPE_FLOAT` (f64) | `molrs_block_set_f64` |
-//! | `I`  | `int32_t`  | `MOLRS_D_TYPE_INT` (i32)     | `molrs_block_set_i32` |
-//! | `Idx`| `uint64_t` | `MOLRS_D_TYPE_UINT` (u64)    | `molrs_block_set_u64` |
+//! | Rust | C type     | Column dtype                 |
+//! |------|------------|------------------------------|
+//! | `F`  | `F` (`double`) | `MOLRS_D_TYPE_FLOAT` (f64) |
+//! | `I`  | `int32_t`  | `MOLRS_D_TYPE_INT` (i32)     |
+//! | `Idx`| `uint64_t` | `MOLRS_D_TYPE_UINT` (u64)    |
 //!
 //! Each `MolrsDType` constant is `MOLRS_D_TYPE_` + the upper-cased core
 //! dtype name (`DType::name()`: `float`, `int`, `uint`, `i64`, `u8`, …).
-//! Columns of every other stored dtype are read through `molrs_block_get`,
-//! which reports the dtype as a `MolrsDType`.
+//! Every fixed-width dtype is written with `molrs_block_set` (the dtype is
+//! an argument) and read with `molrs_block_get`, which reports the dtype as
+//! a `MolrsDType`.
 //!
 //! # Typical C usage
 //!

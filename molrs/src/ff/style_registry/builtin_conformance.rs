@@ -22,8 +22,12 @@
 //!   molecule and every P4 source's LAMMPS form; the golden files are
 //!   `ff/testdata/builtin_conformance/*.lmp`.
 
+use crate::core::Cell;
+use crate::ff::potential::fixtures::OneShot;
+use crate::io::writer::WrittenText;
 use std::collections::BTreeSet;
 use std::path::Path;
+use std::sync::Arc;
 
 use ndarray::Array1;
 
@@ -34,10 +38,9 @@ use crate::ff::ir::{LammpsForm, ParamKind, ParamSource, StyleSpec};
 use crate::ff::potential::ForceTerm;
 use crate::ff::style_registry::conformance::{Rng, SEED};
 use crate::ff::style_registry::{Kernel, Registry};
+use crate::io::lammps::LammpsForcefieldWriter;
 use crate::io::lammps::forcefield_reader::LammpsForcefieldReader;
 use crate::io::reader::ForceFieldReader;
-use crate::io::writer::ForceFieldWriter;
-use crate::io::{lammps::LammpsForcefieldWriteOptions, lammps::LammpsForcefieldWriter};
 use molrs::core::Block;
 use molrs::core::Frame;
 use molrs::core::SimBox;
@@ -61,16 +64,16 @@ fn chain(category: &str, arity: usize, rng: &mut Rng) -> (Frame, Vec<F>) {
     for (a, key) in ["x", "y", "z"].iter().enumerate() {
         let col: Vec<F> = x.iter().skip(a).step_by(3).copied().collect();
         atoms
-            .insert(*key, Array1::from_vec(col).into_dyn())
+            .insert(*key, Array1::from_vec(col).into_dyn(), None)
             .unwrap();
     }
     let strings = |v: Vec<&str>| {
         Array1::from_vec(v.into_iter().map(str::to_owned).collect::<Vec<_>>()).into_dyn()
     };
-    atoms.insert("type", strings(vec!["A"; 4])).unwrap();
+    atoms.insert("type", strings(vec!["A"; 4]), None).unwrap();
     let charges: Vec<F> = (0..4).map(|_| rng.uniform(-0.6, 0.6)).collect();
     atoms
-        .insert("charge", Array1::from_vec(charges).into_dyn())
+        .insert("charge", Array1::from_vec(charges).into_dyn(), None)
         .unwrap();
     let mut frame = Frame::new();
     frame.insert("atoms", atoms);
@@ -81,18 +84,26 @@ fn chain(category: &str, arity: usize, rng: &mut Rng) -> (Frame, Vec<F>) {
             .zip(0..arity)
         {
             block
-                .insert(key, Array1::from_vec(vec![atom as Idx]).into_dyn())
+                .insert(key, Array1::from_vec(vec![atom as Idx]).into_dyn(), None)
                 .unwrap();
         }
-        block.insert("type", strings(vec!["t"])).unwrap();
+        block.insert("type", strings(vec!["t"]), None).unwrap();
         frame.insert(format!("{category}s"), block);
     }
     let mut pairs = Block::new();
     pairs
-        .insert("atomi", Array1::from_vec(vec![0 as Idx, 0, 1]).into_dyn())
+        .insert(
+            "atomi",
+            Array1::from_vec(vec![0 as Idx, 0, 1]).into_dyn(),
+            None,
+        )
         .unwrap();
     pairs
-        .insert("atomj", Array1::from_vec(vec![2 as Idx, 3, 3]).into_dyn())
+        .insert(
+            "atomj",
+            Array1::from_vec(vec![2 as Idx, 3, 3]).into_dyn(),
+            None,
+        )
         .unwrap();
     frame.insert("pairs", pairs);
     (frame, x)
@@ -116,25 +127,26 @@ fn table(x: &[F]) -> Neighbors {
 }
 
 /// Energy and forces of `ff` over `frame` at `x`, through `door`.
-fn price(ff: &ForceField, r: &Registry, frame: &Frame, x: &[F], typed: bool) -> (F, Vec<F>) {
-    let compiler = PotentialCompiler::with_registry(ff, r);
+fn price(ff: &ForceField, frame: &Frame, x: &[F], typed: bool) -> (F, Vec<F>) {
+    let compiler = PotentialCompiler::new(ff);
     if !typed {
         return compiler
             .compile(frame)
             .unwrap_or_else(|e| panic!("{}: {e}", ff.name))
-            .calc_energy_forces(x);
+            .energy_forces_at(x);
     }
     let mut out = vec![0.0; x.len()];
-    let mut e = 0.0;
+    let mut acc = crate::ff::potential::Accumulator::adding_into(&mut out);
     for (member, _) in compiler
         .compile_typed(frame)
         .unwrap_or_else(|e| panic!("{} (typed): {e}", ff.name))
     {
-        e += match &member {
-            ForceTerm::Pair(p) => p.accumulate_pairs(x, &table(x), &[], &mut out).0,
-            other => other.as_potential().accumulate(x, &mut out),
-        };
+        match &member {
+            ForceTerm::Pair(p) => p.evaluate_pairs(x, &table(x), &[], &mut acc),
+            other => other.as_potential().evaluate(x, &mut acc),
+        }
     }
+    let e = acc.energy();
     (e, out)
 }
 
@@ -337,13 +349,13 @@ fn drawn(base: &[(&'static str, F)], rng: &mut Rng) -> Vec<(String, F)> {
 
 /// A force field of one style `name` of `category`, one type, in `r`.
 fn one_style(
-    r: &Registry,
+    r: &Arc<Registry>,
     category: &str,
     name: &str,
     row: &[(String, F)],
     style: &[(String, F)],
 ) -> ForceField {
-    let mut ff = ForceField::new(name);
+    let mut ff = ForceField::new(name).with_registry(r.clone());
     let pairs = |v: &[(String, F)]| {
         let mut p = Params::new();
         for (k, x) in v {
@@ -352,7 +364,7 @@ fn one_style(
         p
     };
     let s = ff
-        .def_style_in(r, category, name, pairs(style))
+        .def_style(category, name, pairs(style))
         .unwrap_or_else(|e| panic!("{category} {name}: {e}"));
     if !row.is_empty() {
         let arity = r.category(category).unwrap().arity.endpoints();
@@ -432,6 +444,8 @@ fn every_appendix_a_expression_agrees_with_its_kernel() {
             // LAMMPS), and the cutoff straddles the three pairs: the
             // `pairs`-list door prices the same pairs the neighbour-driven
             // one does.
+            let snapshot = Arc::new(r.clone());
+            let r = &snapshot;
             let fields = || {
                 if c.name == "rb" {
                     let multi: Vec<(String, F)> = row
@@ -446,13 +460,13 @@ fn every_appendix_a_expression_agrees_with_its_kernel() {
                         })
                         .collect();
                     (
-                        one_style(&r, "dihedral", "multi/harmonic", &multi, &style),
-                        one_style(&r, "dihedral", "rb", &row, &style),
+                        one_style(r, "dihedral", "multi/harmonic", &multi, &style),
+                        one_style(r, "dihedral", "rb", &row, &style),
                     )
                 } else {
                     (
-                        one_style(&r, c.category, reference, &row, &style),
-                        one_style(&r, c.category, &twin_name, &row, &style),
+                        one_style(r, c.category, reference, &row, &style),
+                        one_style(r, c.category, &twin_name, &row, &style),
                     )
                 }
             };
@@ -464,8 +478,8 @@ fn every_appendix_a_expression_agrees_with_its_kernel() {
             let (native_ff, twin_ff) = fields();
             let mut by_door = Vec::new();
             for &typed in doors {
-                let a = price(&native_ff, &r, &frame, &x, typed);
-                let b = price(&twin_ff, &r, &frame, &x, typed);
+                let a = price(&native_ff, &frame, &x, typed);
+                let b = price(&twin_ff, &frame, &x, typed);
                 let scale = a.1.iter().fold(a.0.abs(), |m, v| m.max(v.abs()));
                 assert!(
                     scale > 1e-8,
@@ -637,7 +651,7 @@ fn row(spec: &StyleSpec, scale: F) -> Params {
 /// registered `PerInstance`.
 #[test]
 fn every_param_source_is_what_its_constructor_reads() {
-    let builtin = Registry::builtin();
+    let builtin = Arc::new(Registry::builtin());
     let mut rng = Rng(SEED);
     let mut checked = Vec::new();
     for (spec, kernel) in builtin.styles(None) {
@@ -655,7 +669,8 @@ fn every_param_source_is_what_its_constructor_reads() {
         // The frame's own periodic box — frame data, which a kernel that
         // needs it (PME's Ewald sums) reads off the frame, never off the
         // style: every style builds from its declared parameters alone.
-        frame.simbox = Some(SimBox::cube(20.0, ndarray::array![0.0, 0.0, 0.0], [true; 3]).unwrap());
+        frame.simbox =
+            Some(SimBox::new(Cell::Lengths([20.0; 3]), [0.0, 0.0, 0.0], [true; 3]).unwrap());
         // Every declared parameter as a per-instance column too: the block's
         // (one row), or the atoms' for a pair.
         let block = if category.is_pair_driven() {
@@ -673,15 +688,19 @@ fn every_param_source_is_what_its_constructor_reads() {
             if decl.name == "linear" {
                 // MMFF's linear-centre flag is an integer column.
                 let flags: Vec<molrs::op::I> = vec![v as molrs::op::I; n];
-                b.insert("linear", Array1::from_vec(flags).into_dyn())
+                b.insert("linear", Array1::from_vec(flags).into_dyn(), None)
                     .unwrap();
             } else {
-                b.insert(decl.name.as_ref(), Array1::from_vec(vec![v; n]).into_dyn())
-                    .unwrap();
+                b.insert(
+                    decl.name.as_ref(),
+                    Array1::from_vec(vec![v; n]).into_dyn(),
+                    None,
+                )
+                .unwrap();
             }
         }
         let field = |rows: Option<Params>| {
-            let mut ff = ForceField::new("gate");
+            let mut ff = ForceField::new("gate").with_registry(builtin.clone());
             // 1-4 pairs priced by no pair style: a `dihedral charmm` `w`
             // may price them.
             ff.set_special_bonds(crate::ff::ir::SpecialBonds {
@@ -689,7 +708,7 @@ fn every_param_source_is_what_its_constructor_reads() {
                 coul: [0.0; 3],
             });
             let s = ff
-                .def_style_in(&builtin, &spec.category, &spec.name, style_params(spec))
+                .def_style(spec.category.as_ref(), &spec.name, style_params(spec))
                 .unwrap();
             if let Some(p) = rows {
                 let (label, ends) = if category.is_pair_driven() {
@@ -702,9 +721,9 @@ fn every_param_source_is_what_its_constructor_reads() {
             ff
         };
         let energy = |ff: &ForceField| {
-            PotentialCompiler::with_registry(ff, &builtin)
+            PotentialCompiler::new(ff)
                 .compile(&frame)
-                .map(|p| p.calc_energy(&x))
+                .map(|p| p.energy_at(&x))
         };
         let what = format!("{} {}", spec.category, spec.name);
         match spec.source {
@@ -825,11 +844,11 @@ fn style_cases() -> Vec<(String, String)> {
             let atoms = ff.def_style("atom", "full", Params::new()).unwrap();
             for (t, m) in [("A", 12.011), ("B", 14.007)] {
                 atoms
-                    .def_type(t, &[], Params::from_pairs(&[("mass", m), ("charge", 0.0)]))
+                    .def_type(t, &[], Params::from_iter([("mass", m), ("charge", 0.0)]))
                     .unwrap();
             }
             let s = ff
-                .def_style(category, name, Params::from_pairs(style))
+                .def_style(category, name, Params::from_iter(style.iter().copied()))
                 .unwrap();
             let arity = match category {
                 "bond" => 2,
@@ -838,34 +857,34 @@ fn style_cases() -> Vec<(String, String)> {
             };
             let mut frame = Frame::new();
             let mut a = Block::new();
-            a.insert("type", strings(&["A", "B", "A", "B"])).unwrap();
+            a.insert("type", strings(&["A", "B", "A", "B"]), None)
+                .unwrap();
             frame.insert("atoms", a);
             if category == "pair" {
                 for (t, ends) in [("A", vec!["A"]), ("B", vec!["B"]), ("A-B", vec!["A", "B"])] {
-                    s.def_type(t, &ends, Params::from_pairs(row)).unwrap();
+                    s.def_type(t, &ends, Params::from_iter(row.iter().copied()))
+                        .unwrap();
                 }
             } else {
                 let ends = &["A", "B", "A", "B"][..arity];
-                s.def_type("t", ends, Params::from_pairs(row)).unwrap();
+                s.def_type("t", ends, Params::from_iter(row.iter().copied()))
+                    .unwrap();
                 let mut b = Block::new();
                 for (k, key) in ["atomi", "atomj", "atomk", "atoml"][..arity]
                     .iter()
                     .enumerate()
                 {
-                    b.insert(*key, Array1::from_vec(vec![k as Idx]).into_dyn())
+                    b.insert(*key, Array1::from_vec(vec![k as Idx]).into_dyn(), None)
                         .unwrap();
                 }
-                b.insert("type", strings(&["t"])).unwrap();
+                b.insert("type", strings(&["t"]), None).unwrap();
                 frame.insert(format!("{category}s"), b);
             }
             let labels = TypeLabels::from_frame(&frame).unwrap();
-            let options = LammpsForcefieldWriteOptions {
-                precision: 17,
-                units,
-                ..LammpsForcefieldWriteOptions::default()
-            };
-            let text = LammpsForcefieldWriter::with_options(&labels, options)
-                .write_str(&ff)
+            let text = LammpsForcefieldWriter::new(&labels)
+                .with_precision(17)
+                .with_units(units)
+                .written(&ff)
                 .unwrap_or_else(|e| panic!("{category} {name} in {units}: {e}"));
             let case = format!("style_{category}_{}_{units}", name.replace('/', "_"));
             out.push((case, text.to_string()));
@@ -883,17 +902,16 @@ fn positional_cases() -> Vec<(String, String)> {
     let mut out = Vec::new();
     let hand = [(
         "hand_lammps",
-        LammpsForcefieldReader::new().read_str(LAMMPS_FF).unwrap(),
+        LammpsForcefieldReader::new()
+            .read(LAMMPS_FF.as_bytes())
+            .unwrap(),
     )];
     for (name, ff) in hand {
         let frame = hand_frame(&ff);
         let labels = TypeLabels::from_frame(&frame).unwrap();
-        let options = LammpsForcefieldWriteOptions {
-            precision: 17,
-            ..LammpsForcefieldWriteOptions::default()
-        };
-        let text = LammpsForcefieldWriter::with_options(&labels, options)
-            .write_str(&ff)
+        let text = LammpsForcefieldWriter::new(&labels)
+            .with_precision(17)
+            .written(&ff)
             .unwrap_or_else(|e| panic!("{name}: {e}"));
         out.push((name.to_owned(), text.to_string()));
     }

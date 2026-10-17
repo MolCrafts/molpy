@@ -732,6 +732,7 @@ dependencies = [
  "molcrafts-molrs",
  "molcrafts-molrs-ffi",
  "ndarray",
+ "num-complex",
  "serde",
  "serde-wasm-bindgen",
  "wasm-bindgen",

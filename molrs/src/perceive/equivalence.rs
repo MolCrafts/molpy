@@ -5,10 +5,12 @@ use std::collections::HashMap;
 
 use crate::core::Atomistic;
 use crate::core::BondOrder;
+use crate::core::MolRsError;
 use crate::core::NodeId;
 use crate::core::keys;
 use crate::op::vec3::dihedral;
-use molrs::core::Element;
+
+use super::valence::atomic_number;
 
 /// Weight of a path position, `0.11` (Antechamber Eq. (I)).
 const POSITION_WEIGHT: f64 = 0.11;
@@ -211,7 +213,7 @@ impl EquivalenceClasses {
 /// oxygens — one `C=O`, one `C–O⁻` — are *the same atom* to this score, so
 /// antechamber **merges** them and averages their charges. Any partition that
 /// respects bond order or formal charge (Morgan / Weisfeiler-Leman /
-/// [`crate::core::structural_hash`], which folds both into its colours) **splits**
+/// [`Atomistic::structural_hash`], which folds both into its colours) **splits**
 /// them. Orbits are therefore a **strictly finer** partition: the path score never
 /// splits an orbit — an automorphism maps a path to a path with the same ordered
 /// atomic numbers, hence the same score, bit for bit — but it does merge atoms that
@@ -321,8 +323,8 @@ struct Torsion {
 struct Flat {
     /// Per atom: its handle, in graph atom order.
     ids: Vec<NodeId>,
-    /// Per atom: atomic number (`0` when the element is unknown, as in
-    /// [`crate::perceive::assign_bcc_bond_types`]).
+    /// Per atom: atomic number (`0` for a wildcard atom, which then scores as
+    /// a path position that adds no Z).
     z: Vec<u8>,
     /// Per atom: neighbour indices, in bond order — antechamber's `con[]`.
     adj: Vec<Vec<usize>>,
@@ -335,36 +337,24 @@ struct Flat {
 impl Flat {
     /// Flatten a molecule.
     fn new(mol: &Atomistic) -> Self {
-        let ids: Vec<NodeId> = mol.atoms().map(|(id, _)| id).collect();
+        let mut ids = Vec::with_capacity(mol.n_atoms());
+        let mut z = Vec::with_capacity(mol.n_atoms());
+        let mut xyz = Vec::with_capacity(mol.n_atoms());
+        for (id, atom) in mol.atoms() {
+            ids.push(id);
+            z.push(atomic_number(&atom));
+            xyz.push([
+                atom.get_f64(keys::X).unwrap_or(0.0),
+                atom.get_f64(keys::Y).unwrap_or(0.0),
+                atom.get_f64(keys::Z).unwrap_or(0.0),
+            ]);
+        }
         let index: HashMap<NodeId, usize> = ids
             .iter()
             .copied()
             .enumerate()
             .map(|(i, id)| (id, i))
             .collect();
-
-        let mut z = Vec::with_capacity(ids.len());
-        let mut xyz = Vec::with_capacity(ids.len());
-        for id in &ids {
-            let atom = mol.get_atom(*id).ok();
-            z.push(
-                atom.as_ref()
-                    .and_then(|a| a.get_str(keys::ELEMENT))
-                    .and_then(Element::by_symbol)
-                    .map_or(0, Element::z),
-            );
-            xyz.push([
-                atom.as_ref()
-                    .and_then(|a| a.get_f64(keys::X))
-                    .unwrap_or(0.0),
-                atom.as_ref()
-                    .and_then(|a| a.get_f64(keys::Y))
-                    .unwrap_or(0.0),
-                atom.as_ref()
-                    .and_then(|a| a.get_f64(keys::Z))
-                    .unwrap_or(0.0),
-            ]);
-        }
 
         let mut adj = vec![Vec::new(); ids.len()];
         let mut bonds = Vec::new();
@@ -558,7 +548,7 @@ impl PathScorer<'_> {
     }
 }
 
-/// Perceive charge-equivalence classes and write them onto a clone of `mol`:
+/// Perceive charge-equivalence classes and write them onto `mol`, in place:
 /// every atom receives an [`EQUIV_CLASS`](crate::core::keys::EQUIV_CLASS) id
 /// (0-based), the [`perceive_equivalence_classes`] partition under `opts`
 /// (`EquivalenceOptions::default()` is antechamber's `-eq 1`, the path-score
@@ -566,36 +556,66 @@ impl PathScorer<'_> {
 ///
 /// Perception stops at the classes: the class-mean itself is a charge-model
 /// step (`ff::charge`), taken by a model that declares it, because whether to
-/// average is a property of the charge model and not of the graph. `mol` is
-/// left untouched.
-pub fn assign_equivalence_classes(mol: &Atomistic, opts: EquivalenceOptions) -> Atomistic {
+/// average is a property of the charge model and not of the graph.
+///
+/// # Errors
+///
+/// [`MolRsError`] when a class id cannot be written (an atom column holding
+/// the key under a foreign dtype); `mol` may then be partly annotated.
+pub fn assign_equivalence_classes(
+    mol: &mut Atomistic,
+    opts: EquivalenceOptions,
+) -> Result<(), MolRsError> {
     let classes = perceive_equivalence_classes(mol, opts);
-    let mut out = mol.clone();
     for (class, members) in classes.classes().enumerate() {
         for id in members {
-            let _ = out.set_atom(*id, keys::EQUIV_CLASS, super::rings::saturating_i32(class));
+            mol.set_atom(*id, keys::EQUIV_CLASS, super::rings::saturating_i32(class))?;
         }
     }
-    out
+    Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::{Element, Props};
+    use crate::props;
+
+    /// An atom of element `el` with no coordinates.
+    fn atom(el: Element) -> Props {
+        props! { keys::ATOMIC_NUMBER => el }
+    }
+
+    /// An atom of element `el` at `[x, y, z]`.
+    fn atom_at(el: Element, [x, y, z]: [f64; 3]) -> Props {
+        props! { keys::ATOMIC_NUMBER => el, keys::X => x, keys::Y => y, keys::Z => z }
+    }
 
     /// Methanol, with the raw `sqm` Mulliken charges antechamber's own run
     /// produced (the methyl hydrogens are split 0.053 / 0.098 / 0.053 by the
     /// conformer).
     fn methanol() -> Atomistic {
         let mut mol = Atomistic::new();
-        let c = mol.add_atom_xyz("C", -0.371, -0.017, -0.004);
-        let o = mol.add_atom_xyz("O", 0.893, 0.621, -0.023);
-        let h1 = mol.add_atom_xyz("H", -0.481, -0.582, 0.924);
-        let h2 = mol.add_atom_xyz("H", -1.153, 0.744, -0.061);
-        let h3 = mol.add_atom_xyz("H", -0.455, -0.687, -0.863);
-        let ho = mol.add_atom_xyz("H", 1.567, -0.079, 0.028);
+        let c = mol
+            .add_atom(atom_at(Element::C, [-0.371, -0.017, -0.004]))
+            .unwrap();
+        let o = mol
+            .add_atom(atom_at(Element::O, [0.893, 0.621, -0.023]))
+            .unwrap();
+        let h1 = mol
+            .add_atom(atom_at(Element::H, [-0.481, -0.582, 0.924]))
+            .unwrap();
+        let h2 = mol
+            .add_atom(atom_at(Element::H, [-1.153, 0.744, -0.061]))
+            .unwrap();
+        let h3 = mol
+            .add_atom(atom_at(Element::H, [-0.455, -0.687, -0.863]))
+            .unwrap();
+        let ho = mol
+            .add_atom(atom_at(Element::H, [1.567, -0.079, 0.028]))
+            .unwrap();
         for (a, b) in [(c, o), (c, h1), (c, h2), (c, h3), (o, ho)] {
-            mol.add_bond(a, b).expect("bond");
+            mol.add_bond(a, b, props! {}).expect("bond");
         }
         for (a, q) in [
             (c, -0.073),
@@ -641,11 +661,11 @@ mod tests {
         // The score depends on a path only through its length and its sum of
         // atomic numbers, which is why automorphism orbits are the wrong engine.
         let mut mol = Atomistic::new();
-        let c = mol.add_atom_bare("C");
-        let n = mol.add_atom_bare("N");
-        let o = mol.add_atom_bare("O");
-        mol.add_bond(c, n).expect("bond");
-        mol.add_bond(n, o).expect("bond");
+        let c = mol.add_atom(atom(Element::C)).unwrap();
+        let n = mol.add_atom(atom(Element::N)).unwrap();
+        let o = mol.add_atom(atom(Element::O)).unwrap();
+        mol.add_bond(c, n, props! {}).expect("bond");
+        mol.add_bond(n, o, props! {}).expect("bond");
         let flat = Flat::new(&mol);
         let mut scorer = PathScorer {
             flat: &flat,
@@ -688,17 +708,17 @@ mod tests {
     fn two_atoms_a_tolerance_would_merge_are_kept_apart() {
         let mut mol = Atomistic::new();
         // Fragment 1: Cl–O–N(–S).
-        let n1 = mol.add_atom_bare("N");
-        let o1 = mol.add_atom_bare("O");
-        let cl = mol.add_atom_bare("Cl");
-        let s1 = mol.add_atom_bare("S");
+        let n1 = mol.add_atom(atom(Element::N)).unwrap();
+        let o1 = mol.add_atom(atom(Element::O)).unwrap();
+        let cl = mol.add_atom(atom(Element::Cl)).unwrap();
+        let s1 = mol.add_atom(atom(Element::S)).unwrap();
         // Fragment 2: F–S–N(–O).
-        let n2 = mol.add_atom_bare("N");
-        let s2 = mol.add_atom_bare("S");
-        let f2 = mol.add_atom_bare("F");
-        let o2 = mol.add_atom_bare("O");
+        let n2 = mol.add_atom(atom(Element::N)).unwrap();
+        let s2 = mol.add_atom(atom(Element::S)).unwrap();
+        let f2 = mol.add_atom(atom(Element::F)).unwrap();
+        let o2 = mol.add_atom(atom(Element::O)).unwrap();
         for (a, b) in [(n1, o1), (o1, cl), (n1, s1), (n2, s2), (s2, f2), (n2, o2)] {
-            mol.add_bond(a, b).expect("bond");
+            mol.add_bond(a, b, props! {}).expect("bond");
         }
 
         // The two score arrays are the same length and agree to 4.4e-16 …

@@ -4,13 +4,14 @@
 use std::collections::{HashMap, VecDeque};
 
 use crate::line_notation::ast::*;
+use crate::line_notation::atom_keys::{self, H_COUNT};
 use crate::line_notation::error::{Notation, SmilesError, SmilesErrorKind};
 use crate::perceive::perceive_rings;
 use molrs::core::Atomistic;
 use molrs::core::BondOrder;
 use molrs::core::Element;
 use molrs::core::NodeId;
-use molrs::core::PropValue;
+use molrs::core::Props;
 
 /// Build a query [`SmilesIr`] for `center` with the given options.
 ///
@@ -73,11 +74,46 @@ fn emit_err(msg: impl Into<String>) -> SmilesError {
     )
 }
 
+/// Whether atom `id` is a hydrogen (`Z = 1`).
 fn is_h(mol: &Atomistic, id: NodeId) -> bool {
     mol.get_atom(id)
-        .ok()
-        .and_then(|a| a.get_str("element").map(|s| s.eq_ignore_ascii_case("H")))
-        .unwrap_or(false)
+        .is_ok_and(|a| a.atomic_number() == Some(Element::H.z()))
+}
+
+/// The element primitive of atom `id`: `[#Z]` when `as_atomic_number`,
+/// otherwise its element symbol (aromatic when `aromatic`), or `*` for the
+/// wildcard atom (`Z = 0`), which names no element.
+///
+/// # Errors
+///
+/// An emit error when the atom carries no valid
+/// [`keys::ATOMIC_NUMBER`](molrs::core::keys::ATOMIC_NUMBER): the species is
+/// read from Z alone, never from an `element` symbol.
+fn species_query(
+    atom: &Props,
+    id: NodeId,
+    as_atomic_number: bool,
+    aromatic: bool,
+) -> Result<AtomQuery, SmilesError> {
+    let z = atom.atomic_number().ok_or_else(|| {
+        emit_err(format!(
+            "atom {id:?} has no valid '{}'; a symbol-only graph is converted with \
+             Element::fill_atomic_numbers first",
+            molrs::core::keys::ATOMIC_NUMBER
+        ))
+    })?;
+    let primitive = if as_atomic_number {
+        AtomPrimitive::AtomicNumber(z)
+    } else {
+        match Element::by_number(z) {
+            Some(element) => AtomPrimitive::Element {
+                symbol: element.symbol().to_owned(),
+                aromatic,
+            },
+            None => AtomPrimitive::Wildcard,
+        }
+    };
+    Ok(AtomQuery::Primitive(primitive))
 }
 
 fn center_query(
@@ -89,31 +125,12 @@ fn center_query(
     let mut prims: Vec<AtomQuery> = Vec::new();
 
     let atom = mol.get_atom(id).map_err(|e| emit_err(e.to_string()))?;
-    let sym = atom
-        .get_str("element")
-        .ok_or_else(|| emit_err("missing element"))?;
-
-    if opts.atomic_number {
-        let z = Element::by_symbol(sym)
-            .map(|e| e.z())
-            .ok_or_else(|| emit_err(format!("unknown element {sym}")))?;
-        prims.push(AtomQuery::Primitive(AtomPrimitive::Element {
-            symbol: format!("#{z}"),
-            aromatic: false,
-        }));
-    } else {
-        let aromatic = opts.include_aromatic && is_aromatic_atom(&atom);
-        prims.push(AtomQuery::Primitive(AtomPrimitive::Element {
-            symbol: Element::by_symbol(sym)
-                .map(|e| e.symbol().to_owned())
-                .unwrap_or_else(|| sym.to_owned()),
-            aromatic,
-        }));
-    }
+    let aromatic = opts.include_aromatic && atom_keys::is_aromatic(&atom);
+    prims.push(species_query(&atom, id, opts.atomic_number, aromatic)?);
 
     if opts.include_aromatic && !opts.atomic_number {
         // already folded into element aromatic flag
-    } else if opts.include_aromatic && is_aromatic_atom(&atom) {
+    } else if aromatic {
         prims.push(AtomQuery::Primitive(AtomPrimitive::Aromatic));
     }
 
@@ -123,7 +140,7 @@ fn center_query(
     }
 
     if opts.include_h_count {
-        let h = count_h(mol, id);
+        let h = count_h(&atom, mol, id)?;
         prims.push(AtomQuery::Primitive(AtomPrimitive::HCount(h)));
     }
 
@@ -158,24 +175,27 @@ fn center_query(
     })
 }
 
-fn is_aromatic_atom(atom: &molrs::core::Atom) -> bool {
-    match atom.get("is_aromatic") {
-        Some(PropValue::Int(v)) if *v != 0 => true,
-        Some(PropValue::F64(v)) if *v != 0.0 => true,
-        Some(PropValue::Bool(true)) => true,
-        _ => false,
+/// The hydrogen count of atom `id`: the `h_count` a bracket atom declared,
+/// otherwise the number of bonded hydrogen atoms.
+///
+/// # Errors
+///
+/// An emit error when a declared `h_count` is not an integer in `0..=255`.
+fn count_h(atom: &Props, mol: &Atomistic, id: NodeId) -> Result<u8, SmilesError> {
+    if let Some(declared) = atom.get(H_COUNT) {
+        return atom
+            .get_int(H_COUNT)
+            .and_then(|h| u8::try_from(h).ok())
+            .ok_or_else(|| {
+                emit_err(format!(
+                    "atom {id:?}: '{H_COUNT}' = {declared:?} is not a hydrogen count"
+                ))
+            });
     }
-}
-
-fn count_h(mol: &Atomistic, id: NodeId) -> u8 {
-    if let Ok(a) = mol.get_atom(id)
-        && let Some(h) = a.get_f64("h_count")
-    {
-        return h as u8;
-    }
-    mol.neighbor_bonds(id)
+    Ok(mol
+        .neighbor_bonds(id)
         .filter(|(nb, _)| is_h(mol, *nb))
-        .count() as u8
+        .count() as u8)
 }
 
 fn bond_query(
@@ -188,7 +208,10 @@ fn bond_query(
         return None;
     }
     let bid = mol.neighbor_bonds(a).find(|(nb, _)| *nb == b)?.1;
-    match mol.bond_type(bid) {
+    match mol
+        .bond_type(bid)
+        .expect("neighbor_bonds yields live bonds")
+    {
         BondOrder::Double => Some(BondQuery::Kind(BondKind::Double)),
         BondOrder::Triple => Some(BondQuery::Kind(BondKind::Triple)),
         BondOrder::Aromatic => Some(BondQuery::Kind(BondKind::Aromatic)),
@@ -218,7 +241,7 @@ fn ordered_neighbors(
             order.iter().enumerate().map(|(i, id)| (*id, i)).collect();
         nbs.sort_by_key(|id| rank.get(id).copied().unwrap_or(usize::MAX));
     } else {
-        nbs.sort_by_key(|id| molrs::core::node_to_u64(*id));
+        nbs.sort_by_key(|id| u64::from(*id));
     }
     nbs
 }
@@ -229,25 +252,8 @@ fn leaf_atom_query(
     opts: &EnvironmentOptions,
 ) -> Result<AtomQuery, SmilesError> {
     let atom = mol.get_atom(id).map_err(|e| emit_err(e.to_string()))?;
-    let sym = atom
-        .get_str("element")
-        .ok_or_else(|| emit_err("missing element"))?;
-    if opts.atomic_number {
-        let z = Element::by_symbol(sym)
-            .map(|e| e.z())
-            .ok_or_else(|| emit_err(format!("unknown element {sym}")))?;
-        Ok(AtomQuery::Primitive(AtomPrimitive::Element {
-            symbol: format!("#{z}"),
-            aromatic: false,
-        }))
-    } else {
-        Ok(AtomQuery::Primitive(AtomPrimitive::Element {
-            symbol: Element::by_symbol(sym)
-                .map(|e| e.symbol().to_owned())
-                .unwrap_or_else(|| sym.to_owned()),
-            aromatic: opts.include_aromatic && is_aromatic_atom(&atom),
-        }))
-    }
+    let aromatic = opts.include_aromatic && atom_keys::is_aromatic(&atom);
+    species_query(&atom, id, opts.atomic_number, aromatic)
 }
 
 fn build_chain_env(

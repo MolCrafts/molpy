@@ -544,6 +544,7 @@ impl VerletSkin {
 
 #[cfg(test)]
 mod tests {
+    use crate::core::Cell;
 
     /// The table is the same, bit for bit, however many threads built it.
     ///
@@ -611,7 +612,7 @@ mod tests {
     use super::*;
 
     fn cube(a: F) -> SimBox {
-        SimBox::cube(a, ndarray::array![0.0, 0.0, 0.0], [true, true, true]).unwrap()
+        SimBox::new(Cell::Lengths([a; 3]), [0.0, 0.0, 0.0], [true, true, true]).unwrap()
     }
 
     fn two_atoms(dx: F) -> Array2<F> {

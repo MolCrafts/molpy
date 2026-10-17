@@ -49,16 +49,15 @@ pub struct PyTrajectory {
 ///
 /// ``kind`` is the contract spelling, ``"scalar"`` or ``"vector"``; another
 /// spelling is carried verbatim, as Rust's ``ObservableKind::Other``.
-/// :meth:`scalar` and :meth:`vector` build the two contract kinds.
 ///
 /// Parameters
 /// ----------
 /// name
 ///     The observable's name.
-/// values
-///     A numpy array, a scalar, or a ``list[str]``.
 /// kind
 ///     The contract spelling of the kind.
+/// values
+///     A numpy array, a scalar, or a ``list[str]``.
 #[pyclass(
     module = "molrs.core",
     name = "ObservableRecord",
@@ -201,12 +200,31 @@ impl PyTrajectory {
 
 #[pymethods]
 impl PyObservableRecord {
+    /// One named observable: ``ObservableRecord(name, kind, values)``, as
+    /// ``ObservableRecord::new(name, kind, values)`` in Rust, with the
+    /// descriptive metadata as optional arguments.
+    ///
+    /// Parameters
+    /// ----------
+    /// name : str
+    ///     The observable's name.
+    /// kind : str
+    ///     ``"scalar"`` (one value per sample), ``"vector"`` (an ordered tuple
+    ///     of components per sample) or any other contract spelling, carried
+    ///     verbatim.
+    /// values : numpy.ndarray | float | int | bool | str | list[str]
+    ///     The values.
+    ///
+    /// Raises
+    /// ------
+    /// TypeError
+    ///     ``values`` is not a supported numpy array, scalar, or ``list[str]``.
     #[new]
-    #[pyo3(signature = (name, values, kind="scalar", description="", unit=None, axes=None, time_dependent=false, sampling=None, domain=None, target=None))]
+    #[pyo3(signature = (name, kind, values, description="", unit=None, axes=None, time_dependent=false, sampling=None, domain=None, target=None))]
     fn new(
         name: &str,
-        values: &Bound<'_, PyAny>,
         kind: &str,
+        values: &Bound<'_, PyAny>,
         description: &str,
         unit: Option<String>,
         axes: Option<Vec<String>>,
@@ -215,8 +233,8 @@ impl PyObservableRecord {
         domain: Option<String>,
         target: Option<String>,
     ) -> PyResult<Self> {
-        let mut inner = ObservableRecord::scalar(name, py_any_to_column(values)?);
-        inner.kind = ObservableKind::from(kind);
+        let mut inner =
+            ObservableRecord::new(name, ObservableKind::from(kind), py_any_to_column(values)?);
         set_observable_metadata(
             &mut inner,
             description,
@@ -228,62 +246,6 @@ impl PyObservableRecord {
             target,
         );
         Ok(Self { inner })
-    }
-
-    /// A ``"scalar"`` observable: one value per sample.
-    #[staticmethod]
-    #[pyo3(signature = (name, values, description="", unit=None, axes=None, time_dependent=false, sampling=None, domain=None, target=None))]
-    fn scalar(
-        name: &str,
-        values: &Bound<'_, PyAny>,
-        description: &str,
-        unit: Option<String>,
-        axes: Option<Vec<String>>,
-        time_dependent: bool,
-        sampling: Option<String>,
-        domain: Option<String>,
-        target: Option<String>,
-    ) -> PyResult<Self> {
-        Self::new(
-            name,
-            values,
-            "scalar",
-            description,
-            unit,
-            axes,
-            time_dependent,
-            sampling,
-            domain,
-            target,
-        )
-    }
-
-    /// A ``"vector"`` observable: an ordered tuple of components per sample.
-    #[staticmethod]
-    #[pyo3(signature = (name, values, description="", unit=None, axes=None, time_dependent=false, sampling=None, domain=None, target=None))]
-    fn vector(
-        name: &str,
-        values: &Bound<'_, PyAny>,
-        description: &str,
-        unit: Option<String>,
-        axes: Option<Vec<String>>,
-        time_dependent: bool,
-        sampling: Option<String>,
-        domain: Option<String>,
-        target: Option<String>,
-    ) -> PyResult<Self> {
-        Self::new(
-            name,
-            values,
-            "vector",
-            description,
-            unit,
-            axes,
-            time_dependent,
-            sampling,
-            domain,
-            target,
-        )
     }
 
     #[getter]
@@ -351,8 +313,8 @@ impl PyObservableRecord {
             slf.as_any(),
             (
                 this.name(),
-                this.values(slf.py())?,
                 this.kind().to_string(),
+                this.values(slf.py())?,
                 this.description(),
                 this.unit(),
                 this.axes(),
@@ -386,53 +348,45 @@ fn set_observable_metadata(
 
 fn py_any_to_column(value: &Bound<'_, PyAny>) -> PyResult<Column> {
     if let Ok(arr) = value.extract::<ArrayArgDyn<'_, f32>>() {
-        return Ok(Column::from_float(
-            arr.as_array().mapv(|v| v as F).into_dyn(),
-        ));
+        return Ok(Column::from(arr.as_array().mapv(|v| v as F).into_dyn()));
     }
     if let Ok(arr) = value.extract::<ArrayArgDyn<'_, f64>>() {
-        return Ok(Column::from_float(
-            arr.as_array().mapv(|v| v as F).into_dyn(),
-        ));
+        return Ok(Column::from(arr.as_array().mapv(|v| v as F).into_dyn()));
     }
     if let Ok(arr) = value.extract::<ArrayArgDyn<'_, i32>>() {
-        return Ok(Column::from_int(arr.as_array().mapv(|v| v as I).into_dyn()));
+        return Ok(Column::from(arr.as_array().mapv(|v| v as I).into_dyn()));
     }
     if let Ok(arr) = value.extract::<ArrayArgDyn<'_, i64>>() {
-        return Ok(Column::from_int(arr.as_array().mapv(|v| v as I).into_dyn()));
+        return Ok(Column::from(arr.as_array().mapv(|v| v as I).into_dyn()));
     }
     if let Ok(arr) = value.extract::<ArrayArgDyn<'_, u32>>() {
-        return Ok(Column::from_uint(
-            arr.as_array().mapv(|v| v as Idx).into_dyn(),
-        ));
+        return Ok(Column::from(arr.as_array().mapv(|v| v as Idx).into_dyn()));
     }
     if let Ok(arr) = value.extract::<ArrayArgDyn<'_, u64>>() {
-        return Ok(Column::from_uint(
-            arr.as_array().mapv(|v| v as Idx).into_dyn(),
-        ));
+        return Ok(Column::from(arr.as_array().mapv(|v| v as Idx).into_dyn()));
     }
     if let Ok(arr) = value.extract::<ArrayArgDyn<'_, bool>>() {
-        return Ok(Column::from_bool(arr.as_array().to_owned().into_dyn()));
+        return Ok(Column::from(arr.as_array().to_owned().into_dyn()));
     }
     if let Ok(strings) = value.extract::<Vec<String>>() {
-        return Ok(Column::from_string(
+        return Ok(Column::from(
             ArrayD::from_shape_vec(IxDyn(&[strings.len()]), strings).unwrap(),
         ));
     }
     if let Ok(v) = value.extract::<f64>() {
-        return Ok(Column::from_float(ArrayD::from_elem(IxDyn(&[]), v as F)));
+        return Ok(Column::from(ArrayD::from_elem(IxDyn(&[]), v as F)));
     }
     if let Ok(v) = value.extract::<i64>() {
-        return Ok(Column::from_int(ArrayD::from_elem(IxDyn(&[]), v as I)));
+        return Ok(Column::from(ArrayD::from_elem(IxDyn(&[]), v as I)));
     }
     if let Ok(v) = value.extract::<u64>() {
-        return Ok(Column::from_uint(ArrayD::from_elem(IxDyn(&[]), v as Idx)));
+        return Ok(Column::from(ArrayD::from_elem(IxDyn(&[]), v as Idx)));
     }
     if let Ok(v) = value.extract::<bool>() {
-        return Ok(Column::from_bool(ArrayD::from_elem(IxDyn(&[]), v)));
+        return Ok(Column::from(ArrayD::from_elem(IxDyn(&[]), v)));
     }
     if let Ok(v) = value.extract::<String>() {
-        return Ok(Column::from_string(ArrayD::from_elem(IxDyn(&[]), v)));
+        return Ok(Column::from(ArrayD::from_elem(IxDyn(&[]), v)));
     }
     Err(PyTypeError::new_err(
         "observable values must be a supported numpy array, scalar, or list[str]",

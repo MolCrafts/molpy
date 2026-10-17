@@ -1,7 +1,8 @@
 //! VASP CHGCAR / CHGDIF volumetric data file reader.
 
-use std::io::{BufRead, BufReader};
-use std::path::Path;
+use std::io::BufRead;
+
+use crate::io::Source;
 
 use ndarray::Array1;
 
@@ -9,26 +10,77 @@ use super::header::{expand_symbols, parse_usize_vec, read_coords, read_header};
 use molrs::core::Block;
 use molrs::core::Frame;
 use molrs::core::MolRsError;
+use molrs::core::keys;
 use molrs::op::F;
 
 // ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
 
-/// Read a CHGCAR (or CHGDIF) file from disk.
+/// Read a CHGCAR (or CHGDIF) file.
 ///
 /// Returns a [`Frame`] with:
-/// - `"atoms"` block: `symbol` (str), `x`/`y`/`z` (float, Å Cartesian)
+/// - `"atoms"` block: `element` (str, the raw species symbols of the header;
+///   absent for a VASP4 header — no `atomic_number` is synthesized),
+///   `x`/`y`/`z` (float, Å Cartesian)
 /// - `simbox`: triclinic periodic box derived from the POSCAR header
 /// - `"grid"` block: a [`Block`] of shape `[nx, ny, nz]` carrying the `"total"`
-///   column and, for spin-polarized files, `"diff"` (see [`read_chgcar_str`])
+///   column and, for spin-polarized files, `"diff"`
+///
+/// # File layout
+///
+/// ```text
+/// <comment>                        ← system name → frame.meta["title"]
+/// <scale>                          ← uniform scaling factor
+/// <a1x> <a1y> <a1z>               ← lattice vector a1 (Å after scaling)
+/// <a2x> <a2y> <a2z>               ← lattice vector a2
+/// <a3x> <a3y> <a3z>               ← lattice vector a3
+/// <Elem1> <Elem2> …               ← element symbols
+/// <n1> <n2> …                     ← element counts
+/// Direct | Cartesian               ← coordinate mode
+/// <s1> <s2> <s3>                  ← one atom per line
+/// …
+///                                  ← blank line
+/// <nx> <ny> <nz>                  ← grid dimensions
+/// <val> <val> …                   ← nx*ny*nz values, 5 per line, VASP column-major (x fastest)
+///                                  ← optional: augmentation occupancies (skipped)
+///                                  ← optional: blank line + nx ny nz + spin data
+/// ```
+///
+/// # Grid stored in Frame
+///
+/// The returned [`Frame`] carries a `"grid"` [`Block`] with `set_shape([nx,
+/// ny, nz])` and one f64 column per scalar field:
+///
+/// | Column     | Content                                   | Always? |
+/// |------------|-------------------------------------------|---------|
+/// | `"total"`  | Total charge density (raw: ρ·V_cell, e)  | yes     |
+/// | `"diff"`   | Spin density α−β (raw: ρ·V_cell, e)      | ISPIN=2 |
+///
+/// The values are stored **as-is** from the file (ρ × V_cell).
+/// To convert to charge density in e/Å³: divide by `simbox.volume()`.
+///
+/// # Grid axis convention
+///
+/// The VASP/FORTRAN data is x-fastest (column-major).
+/// `read_chgcar` converts to C row-major `(ix, iy, iz)` order so that
+/// the column data at index `ix*ny*nz + iy*nz + iz` is `ρ(ix, iy, iz) × V`.
+///
+/// # Atom positions
+///
+/// Atom positions are returned in Cartesian Å.  If the file uses `Direct`
+/// coordinates they are multiplied by the lattice matrix on read.
 ///
 /// # Errors
 ///
-/// Returns [`MolRsError`] on any I/O or parse failure.
-pub fn read_chgcar<P: AsRef<Path>>(path: P) -> Result<Frame, MolRsError> {
-    let file = std::fs::File::open(path.as_ref()).map_err(MolRsError::Io)?;
-    read_frame_from(BufReader::new(file))
+/// The frame doors' error: the OS error of a path that cannot be opened,
+/// [`InvalidData`](std::io::ErrorKind::InvalidData) for a file that is not a
+/// CHGCAR, its message naming why.
+pub fn read_chgcar<'a>(src: impl Into<Source<'a>>) -> std::io::Result<Frame> {
+    read_frame_from(src.into().reader()?).map_err(|e| match e {
+        MolRsError::Io(e) => e,
+        other => crate::io::invalid_data(other),
+    })
 }
 
 /// Read a CHGCAR from any [`BufRead`] source.
@@ -69,17 +121,17 @@ fn read_frame_from<R: BufRead>(mut reader: R) -> Result<Frame, MolRsError> {
 
     let mut atoms = Block::new();
     atoms
-        .insert("x", Array1::from_vec(cart_x).into_dyn())
+        .insert("x", Array1::from_vec(cart_x).into_dyn(), None)
         .map_err(MolRsError::Block)?;
     atoms
-        .insert("y", Array1::from_vec(cart_y).into_dyn())
+        .insert("y", Array1::from_vec(cart_y).into_dyn(), None)
         .map_err(MolRsError::Block)?;
     atoms
-        .insert("z", Array1::from_vec(cart_z).into_dyn())
+        .insert("z", Array1::from_vec(cart_z).into_dyn(), None)
         .map_err(MolRsError::Block)?;
     if !atom_syms.is_empty() {
         atoms
-            .insert("element", Array1::from_vec(atom_syms).into_dyn())
+            .insert(keys::ELEMENT, Array1::from_vec(atom_syms).into_dyn(), None)
             .map_err(MolRsError::Block)?;
     }
 
@@ -110,13 +162,13 @@ fn read_frame_from<R: BufRead>(mut reader: R) -> Result<Frame, MolRsError> {
     let total_vasp = read_volumetric_data(&mut reader, n_voxels, &mut line_no)?;
     let total = vasp_to_row_major(total_vasp, nx, ny, nz);
     grid_block
-        .insert("total", Array1::from_vec(total).into_dyn())
+        .insert("total", Array1::from_vec(total).into_dyn(), None)
         .map_err(MolRsError::Block)?;
 
     // Optional: augmentation occupancies (skip) + spin density.
     if let Some(diff) = try_read_optional_grid(&mut reader, n_voxels, nx, ny, nz, &mut line_no)? {
         grid_block
-            .insert("diff", Array1::from_vec(diff).into_dyn())
+            .insert("diff", Array1::from_vec(diff).into_dyn(), None)
             .map_err(MolRsError::Block)?;
     }
 
@@ -307,55 +359,6 @@ fn is_dim_line(line: &str, nx: usize, ny: usize, nz: usize) -> bool {
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
-
-/// Read one CHGCAR / CHGDIF volumetric file from its text.
-///
-/// # File layout
-///
-/// ```text
-/// <comment>                        ← system name → frame.meta["title"]
-/// <scale>                          ← uniform scaling factor
-/// <a1x> <a1y> <a1z>               ← lattice vector a1 (Å after scaling)
-/// <a2x> <a2y> <a2z>               ← lattice vector a2
-/// <a3x> <a3y> <a3z>               ← lattice vector a3
-/// <Elem1> <Elem2> …               ← element symbols
-/// <n1> <n2> …                     ← element counts
-/// Direct | Cartesian               ← coordinate mode
-/// <s1> <s2> <s3>                  ← one atom per line
-/// …
-///                                  ← blank line
-/// <nx> <ny> <nz>                  ← grid dimensions
-/// <val> <val> …                   ← nx*ny*nz values, 5 per line, VASP column-major (x fastest)
-///                                  ← optional: augmentation occupancies (skipped)
-///                                  ← optional: blank line + nx ny nz + spin data
-/// ```
-///
-/// # Grid stored in Frame
-///
-/// The returned [`Frame`] carries a `"grid"` [`Block`] with `set_shape([nx,
-/// ny, nz])` and one f64 column per scalar field:
-///
-/// | Column     | Content                                   | Always? |
-/// |------------|-------------------------------------------|---------|
-/// | `"total"`  | Total charge density (raw: ρ·V_cell, e)  | yes     |
-/// | `"diff"`   | Spin density α−β (raw: ρ·V_cell, e)      | ISPIN=2 |
-///
-/// The values are stored **as-is** from the file (ρ × V_cell).
-/// To convert to charge density in e/Å³: divide by `simbox.volume()`.
-///
-/// # Grid axis convention
-///
-/// The VASP/FORTRAN data is x-fastest (column-major).
-/// `read_chgcar` converts to C row-major `(ix, iy, iz)` order so that
-/// the column data at index `ix*ny*nz + iy*nz + iz` is `ρ(ix, iy, iz) × V`.
-///
-/// # Atom positions
-///
-/// Atom positions are returned in Cartesian Å.  If the file uses `Direct`
-/// coordinates they are multiplied by the lattice matrix on read.
-pub fn read_chgcar_str(text: &str) -> Result<Frame, MolRsError> {
-    read_frame_from(text.as_bytes())
-}
 
 #[cfg(test)]
 mod tests {

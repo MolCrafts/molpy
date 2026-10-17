@@ -12,9 +12,16 @@ Every compute class has the same two steps:
 * ``x.compute(...)`` takes the **data** as keyword arguments named after the
   fields of the core input: numpy arrays, ``Neighbors`` / ``NeighborList``
   pair sources, ``Box`` objects, partitions, feature matrices and the results
-  of other computes. A compute over frames (``Rdf``, ``DistributionFunction``,
+  of other computes. A compute over frames (``DistributionFunction``,
   ``CombinedDistribution``, ``SpatialDistribution``) takes one list per field,
   an entry per frame. Nothing here reads a ``Frame``.
+
+Three are **streams only**, as in the core (``molrs::compute::Stream``):
+``Msd``, ``Vacf`` and ``Rdf`` have no ``compute``. ``x.accumulator()`` hands
+out an accumulator (:class:`CorrelatorAccumulator` / :class:`RdfAccumulator`);
+``push`` one frame at a time and ``finish()`` reads the result, which does not
+consume the accumulator — memory stays bounded whatever the trajectory
+length.
 
 A result is a read-only object, and a result one compute produces is what the
 next consumes: ``Msd`` gives a ``TimeCorrelation`` that ``LinearFit`` reads,
@@ -24,8 +31,10 @@ next consumes: ``Msd`` gives a ``TimeCorrelation`` that ``LinearFit`` reads,
 ``ComputeSpec.all()`` describes every compute type: its name, parameters
 (kind, default, required) and input fields.
 
-:class:`Compute` is the structural protocol every compute class satisfies — a
-:func:`typing.runtime_checkable` protocol with one method, ``compute``.
+:class:`Compute` is the structural protocol every batch compute class
+satisfies — a :func:`typing.runtime_checkable` protocol with one method,
+``compute`` — and :class:`Stream` the one every stream satisfies (one method,
+``accumulator``).
 """
 
 from .._native import (
@@ -49,6 +58,7 @@ from .._native import (
     CorrelationFunction,
     CorrelationFunctionResult,
     Correlator,
+    CorrelatorAccumulator,
     Cubatic,
     CubaticResult,
     CumulativeTrapezoid,
@@ -123,6 +133,7 @@ from .._native import (
     RamanSpectrum,
     RamanSpectrumResult,
     Rdf,
+    RdfAccumulator,
     RdfResult,
     RegularGrid,
     ReorientationAcf,
@@ -159,12 +170,14 @@ from .._native import (
     VoronoiVoidAnalysis,
     VoronoiVoidResult,
 )
-from ._protocol import Compute
+from ._protocol import Compute, Stream
 
 Compute.__module__ = __name__
+Stream.__module__ = __name__
 
 __all__ = [
     "Compute",
+    "Stream",
     "AngularSeparationGlobal",
     "AngularSeparationGlobalResult",
     "AngularSeparationNeighbor",
@@ -185,6 +198,7 @@ __all__ = [
     "CorrelationFunction",
     "CorrelationFunctionResult",
     "Correlator",
+    "CorrelatorAccumulator",
     "Cubatic",
     "CubaticResult",
     "CumulativeTrapezoid",
@@ -259,6 +273,7 @@ __all__ = [
     "RamanSpectrum",
     "RamanSpectrumResult",
     "Rdf",
+    "RdfAccumulator",
     "RdfResult",
     "RegularGrid",
     "ReorientationAcf",

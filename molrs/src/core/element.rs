@@ -1,5 +1,9 @@
 //! Element data and basic lookup utilities.
-use core::str::FromStr;
+
+use ndarray::Array1;
+
+use crate::core::{Frame, MolRsError, keys};
+use crate::op::Idx;
 
 /// Chemical element with complete periodic table (elements 1-118)
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -1283,10 +1287,105 @@ impl Element {
     }
 }
 
-impl FromStr for Element {
-    type Err = ();
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        Element::by_symbol(s).ok_or(())
+// ---------------------------------------------------------------------------
+// Explicit frame-level species conversion
+// ---------------------------------------------------------------------------
+
+/// The wildcard atom's symbol (SMILES `*`); its atomic number is 0.
+const WILDCARD: &str = "*";
+
+impl Element {
+    /// Write `atoms.atomic_number` from the `atoms.element` symbols.
+    ///
+    /// molrs reads species only from [`keys::ATOMIC_NUMBER`]; a frame read
+    /// from a symbol-spelling format (XYZ, PDB, SDF, CIF, …) carries the raw
+    /// [`keys::ELEMENT`] column, and this is the explicit step that turns it
+    /// into the field consumers read. Symbols match case-insensitively, as
+    /// [`by_symbol`](Self::by_symbol) does; `"*"` is the wildcard, Z = 0.
+    /// An existing `atomic_number` column is replaced; `element` is left as
+    /// it is.
+    ///
+    /// # Errors
+    ///
+    /// [`MolRsError::Validation`] when the frame has no `atoms` block, the
+    /// block has no string `element` column, or a row holds a symbol that is
+    /// not an element (the message names the row and the symbol — there is
+    /// no placeholder species).
+    pub fn fill_atomic_numbers(frame: &mut Frame) -> Result<(), MolRsError> {
+        let atoms = frame
+            .get_mut("atoms")
+            .ok_or_else(|| MolRsError::validation("frame has no 'atoms' block"))?;
+        let symbols = atoms
+            .get(keys::ELEMENT)
+            .and_then(|c| c.get::<String>())
+            .ok_or_else(|| {
+                MolRsError::validation(format!(
+                    "atoms block has no string '{}' column to convert",
+                    keys::ELEMENT
+                ))
+            })?;
+        let z = symbols
+            .iter()
+            .enumerate()
+            .map(|(row, sym)| {
+                (sym == WILDCARD)
+                    .then_some(0)
+                    .or_else(|| Element::by_symbol(sym).map(|e| Idx::from(e.z())))
+                    .ok_or_else(|| {
+                        MolRsError::validation(format!(
+                            "atoms row {row}: '{sym}' is not an element symbol"
+                        ))
+                    })
+            })
+            .collect::<Result<Vec<Idx>, _>>()?;
+        atoms
+            .insert(keys::ATOMIC_NUMBER, Array1::from_vec(z).into_dyn(), None)
+            .map_err(|e| MolRsError::validation(e.to_string()))
+    }
+
+    /// Write `atoms.element` symbols from `atoms.atomic_number`.
+    ///
+    /// The inverse explicit step, for a writer whose format spells species
+    /// as symbols; Z = 0 becomes the wildcard `"*"`. An existing `element`
+    /// column is replaced; `atomic_number` is left as it is.
+    ///
+    /// # Errors
+    ///
+    /// [`MolRsError::Validation`] when the frame has no `atoms` block, the
+    /// block has no unsigned `atomic_number` column, or a row holds a number
+    /// outside 0..=118 (the message names the row and the number).
+    pub fn fill_symbols(frame: &mut Frame) -> Result<(), MolRsError> {
+        let atoms = frame
+            .get_mut("atoms")
+            .ok_or_else(|| MolRsError::validation("frame has no 'atoms' block"))?;
+        let numbers = atoms
+            .get(keys::ATOMIC_NUMBER)
+            .and_then(|c| c.get::<u64>())
+            .ok_or_else(|| {
+                MolRsError::validation(format!(
+                    "atoms block has no unsigned '{}' column to convert",
+                    keys::ATOMIC_NUMBER
+                ))
+            })?;
+        let symbols = numbers
+            .iter()
+            .enumerate()
+            .map(|(row, &z)| {
+                let symbol = match u8::try_from(z) {
+                    Ok(0) => Some(WILDCARD),
+                    Ok(z) => Element::by_number(z).map(Element::symbol),
+                    Err(_) => None,
+                };
+                symbol.map(str::to_string).ok_or_else(|| {
+                    MolRsError::validation(format!(
+                        "atoms row {row}: {z} is not an atomic number (0..=118)"
+                    ))
+                })
+            })
+            .collect::<Result<Vec<String>, _>>()?;
+        atoms
+            .insert(keys::ELEMENT, Array1::from_vec(symbols).into_dyn(), None)
+            .map_err(|e| MolRsError::validation(e.to_string()))
     }
 }
 
@@ -1372,5 +1471,130 @@ mod test_element {
         assert_eq!(Element::by_symbol("fe"), Some(Element::Fe));
         assert_eq!(Element::by_symbol("FE"), Some(Element::Fe));
         assert_eq!(Element::by_symbol("Og"), Some(Element::Og));
+    }
+
+    // ---- explicit frame-level species conversion ----
+
+    /// A frame whose `atoms` block holds one column `key`.
+    fn frame_with<T: crate::core::block::BlockDtype>(key: &str, values: Vec<T>) -> Frame {
+        let mut atoms = crate::core::Block::new();
+        atoms
+            .insert(key, Array1::from_vec(values).into_dyn(), None)
+            .unwrap();
+        let mut frame = Frame::new();
+        frame.insert("atoms", atoms);
+        frame
+    }
+
+    fn uint_column(frame: &Frame, key: &str) -> Vec<Idx> {
+        let atoms = frame.get("atoms").unwrap();
+        atoms
+            .get(key)
+            .unwrap()
+            .get::<u64>()
+            .unwrap()
+            .iter()
+            .copied()
+            .collect()
+    }
+
+    fn string_column(frame: &Frame, key: &str) -> Vec<String> {
+        let atoms = frame.get("atoms").unwrap();
+        atoms
+            .get(key)
+            .unwrap()
+            .get::<String>()
+            .unwrap()
+            .iter()
+            .cloned()
+            .collect()
+    }
+
+    fn validation_message(err: MolRsError) -> String {
+        match err {
+            MolRsError::Validation { message } => message,
+            other => panic!("expected a validation error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn fill_atomic_numbers_converts_symbols_case_insensitively_and_keeps_them() {
+        let symbols = ["C", "o", "*", "Cl", "FE"].map(String::from).to_vec();
+        let mut frame = frame_with(keys::ELEMENT, symbols.clone());
+        Element::fill_atomic_numbers(&mut frame).unwrap();
+        assert_eq!(uint_column(&frame, keys::ATOMIC_NUMBER), [6, 8, 0, 17, 26]);
+        assert_eq!(
+            string_column(&frame, keys::ELEMENT),
+            symbols,
+            "the raw symbols are left as the file spelled them"
+        );
+    }
+
+    #[test]
+    fn fill_symbols_converts_numbers_and_the_wildcard() {
+        let mut frame = frame_with(keys::ATOMIC_NUMBER, vec![6 as Idx, 8, 0, 17, 118]);
+        Element::fill_symbols(&mut frame).unwrap();
+        assert_eq!(
+            string_column(&frame, keys::ELEMENT),
+            ["C", "O", "*", "Cl", "Og"]
+        );
+        assert_eq!(uint_column(&frame, keys::ATOMIC_NUMBER), [6, 8, 0, 17, 118]);
+    }
+
+    #[test]
+    fn fill_symbols_then_fill_atomic_numbers_round_trips() {
+        let numbers: Vec<Idx> = (0..=118).collect();
+        let mut frame = frame_with(keys::ATOMIC_NUMBER, numbers.clone());
+        Element::fill_symbols(&mut frame).unwrap();
+        // Replace the numbers with nonsense so the round trip must rebuild them.
+        frame
+            .get_mut("atoms")
+            .unwrap()
+            .insert(
+                keys::ATOMIC_NUMBER,
+                Array1::from_vec(vec![1 as Idx; 119]).into_dyn(),
+                None,
+            )
+            .unwrap();
+        Element::fill_atomic_numbers(&mut frame).unwrap();
+        assert_eq!(uint_column(&frame, keys::ATOMIC_NUMBER), numbers);
+    }
+
+    #[test]
+    fn fill_atomic_numbers_names_the_row_of_an_unknown_symbol_and_writes_nothing() {
+        let mut frame = frame_with(keys::ELEMENT, ["C", "Xx", "O"].map(String::from).to_vec());
+        let msg = validation_message(Element::fill_atomic_numbers(&mut frame).unwrap_err());
+        assert!(msg.contains("row 1") && msg.contains("'Xx'"), "{msg}");
+        assert!(
+            frame
+                .get("atoms")
+                .unwrap()
+                .get(keys::ATOMIC_NUMBER)
+                .is_none(),
+            "no partial atomic_number column"
+        );
+    }
+
+    #[test]
+    fn fill_symbols_names_the_row_of_an_out_of_range_number_and_writes_nothing() {
+        let mut frame = frame_with(keys::ATOMIC_NUMBER, vec![6 as Idx, 119, 300]);
+        let msg = validation_message(Element::fill_symbols(&mut frame).unwrap_err());
+        assert!(msg.contains("row 1") && msg.contains("119"), "{msg}");
+        assert!(frame.get("atoms").unwrap().get(keys::ELEMENT).is_none());
+    }
+
+    #[test]
+    fn fill_conversions_require_their_source_column() {
+        let mut no_symbols = frame_with(keys::ATOMIC_NUMBER, vec![6 as Idx]);
+        let msg = validation_message(Element::fill_atomic_numbers(&mut no_symbols).unwrap_err());
+        assert!(msg.contains(keys::ELEMENT), "{msg}");
+
+        let mut no_numbers = frame_with(keys::ELEMENT, vec!["C".to_string()]);
+        let msg = validation_message(Element::fill_symbols(&mut no_numbers).unwrap_err());
+        assert!(msg.contains(keys::ATOMIC_NUMBER), "{msg}");
+
+        let mut empty = Frame::new();
+        assert!(Element::fill_atomic_numbers(&mut empty).is_err());
+        assert!(Element::fill_symbols(&mut empty).is_err());
     }
 }

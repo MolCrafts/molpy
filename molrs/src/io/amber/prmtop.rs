@@ -1,15 +1,12 @@
 //! AMBER prmtop **structure** reader — AMBER files and the CHARMM files ParmEd's `chamber` writes in the same format (`%FLAG CTITLE`).
 
+use crate::core::Cell;
 use crate::io::frame_columns::insert_column;
-use crate::io::invalid_data;
+use crate::io::{Source, invalid_data};
 use std::collections::HashMap;
 use std::io::{BufRead, Error, Result};
-use std::path::Path;
-
-use ndarray::array;
 
 use molrs::core::Block;
-use molrs::core::Element;
 use molrs::core::Frame;
 use molrs::core::SimBox;
 use molrs::core::TypeName;
@@ -634,17 +631,18 @@ fn apply_box(frame: &mut Frame, sections: &HashMap<String, Vec<String>>, ifbox: 
         return Err(length_mismatch("BOX_DIMENSIONS", vals.len(), 4usize));
     }
     frame.meta.insert("oldbeta", vals[0]);
-    let lengths = array![vals[1], vals[2], vals[3]];
-    let origin = array![0.0 as F, 0.0, 0.0];
+    let lengths = [vals[1], vals[2], vals[3]];
+    let origin = [0.0 as F, 0.0, 0.0];
     let simbox = match ifbox {
-        1 => {
-            SimBox::ortho(lengths, origin, [true; 3]).map_err(|e| invalid_data(format!("{e:?}")))?
-        }
+        1 => SimBox::new(Cell::Lengths(lengths), origin, [true; 3])
+            .map_err(|e| invalid_data(format!("{e:?}")))?,
         2 => {
             let angle = (-1.0 as F / 3.0).acos().to_degrees();
-            let h = SimBox::matrix_from_lengths_angles([vals[1], vals[2], vals[3]], [angle; 3])
-                .map_err(|e| invalid_data(format!("{e:?}")))?;
-            SimBox::new(h, origin, [true; 3]).map_err(|e| invalid_data(format!("{e:?}")))?
+            let cell = Cell::LengthsAngles {
+                lengths,
+                angles: [angle; 3],
+            };
+            SimBox::new(cell, origin, [true; 3]).map_err(|e| invalid_data(format!("{e}")))?
         }
         _ => return Ok(()),
     };
@@ -777,13 +775,19 @@ pub(crate) fn frame_from_sections(sections: &HashMap<String, Vec<String>>) -> Re
         .get("ATOMIC_NUMBER")
         .map(|l| parse_tokens(l))
         .transpose()?;
-    // AMBER writes -1 for unknown element; omit the column rather than fake 0.
+    // AMBER writes -1 for an unknown element; omit the column rather than
+    // fake a species. A number above 118 is not a species at all: refuse it.
     let atomic_numbers: Option<Vec<Idx>> = match atomic_numbers_raw {
         Some(nums) if !nums.is_empty() && nums.iter().all(|&z| z >= 0) => {
             if nums.len() != n_atoms {
                 return Err(invalid_data(format!(
                     "ATOMIC_NUMBER has {} entries, expected {n_atoms}",
                     nums.len()
+                )));
+            }
+            if let Some((row, z)) = nums.iter().enumerate().find(|&(_, &z)| z > 118) {
+                return Err(invalid_data(format!(
+                    "ATOMIC_NUMBER entry {row}: {z} is not an atomic number (0..=118)"
                 )));
             }
             Some(nums.into_iter().map(|z| z as Idx).collect())
@@ -867,24 +871,8 @@ pub(crate) fn frame_from_sections(sections: &HashMap<String, Vec<String>>) -> Re
         insert_column(&mut atoms, "gb_screen", vals)?;
     }
     if let Some(zs) = atomic_numbers {
-        let elements: Vec<String> = zs
-            .iter()
-            .map(|&z| {
-                Element::by_number(z as u8)
-                    .map(|e| e.symbol().to_string())
-                    .unwrap_or_else(|| {
-                        // z==0 or out of range: leave empty (should not occur
-                        // when all z >= 0 and valid; fall back to "?").
-                        if z == 0 {
-                            String::new()
-                        } else {
-                            format!("Z{z}")
-                        }
-                    })
-            })
-            .collect();
-        insert_column(&mut atoms, "atomic_number", zs)?;
-        insert_column(&mut atoms, "element", elements)?;
+        // The file spells species as Z: keep it raw, synthesize no symbols.
+        insert_column(&mut atoms, keys::ATOMIC_NUMBER, zs)?;
     }
 
     let mut frame = Frame::new();
@@ -945,8 +933,10 @@ pub(crate) fn frame_from_sections(sections: &HashMap<String, Vec<String>>) -> Re
 ///   `<type>~<class>` when one type name stands for two LJ classes or masses —
 ///   a chamber file cuts CHARMM's types to four characters), `charge` (float,
 ///   electron units — prmtop value / 18.2223, or / √332.0716 in a chamber
-///   file), `mass` (float), optional `atomic_number` (uint) + `element`
-///   (str), `res_id` (uint, 0-based from `RESIDUE_POINTER`), optional
+///   file), `mass` (float), optional `atomic_number` (uint, the raw
+///   `ATOMIC_NUMBER` section; absent when the section is absent or holds a
+///   `-1` "unknown" entry — no `element` column is synthesized, call
+///   `Element::fill_symbols` for one), `res_id` (uint, 0-based from `RESIDUE_POINTER`), optional
 ///   `res_name` (from `RESIDUE_LABEL`), optional `mol_id` (1-based, from
 ///   `ATOMS_PER_MOLECULE`; never inferred from bonds). Format-local
 ///   unregistered columns — a debt, not a licence, with no cross-format
@@ -1010,9 +1000,8 @@ pub(crate) fn frame_from_sections(sections: &HashMap<String, Vec<String>>) -> Re
 /// - Charges are Amber internal units (`E = q1*q2/r` with kcal/mol, Å);
 ///   we divide by the literal 18.2223 (a chamber file: √332.0716, ParmEd's
 ///   `CHARMM_ELECTROSTATIC`) to electron charge for the Frame.
-pub fn read_prmtop<P: AsRef<Path>>(path: P) -> Result<Frame> {
-    let file = std::fs::File::open(path.as_ref())?;
-    read_frame_from(std::io::BufReader::new(file))
+pub fn read_prmtop<'a>(src: impl Into<Source<'a>>) -> Result<Frame> {
+    read_frame_from(src.into().reader()?)
 }
 
 /// Parse AMBER prmtop structure text from any [`BufRead`].
@@ -1024,11 +1013,6 @@ fn read_frame_from<R: BufRead>(reader: R) -> Result<Frame> {
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
-
-/// Read an AMBER prmtop structure from its text.
-pub fn read_prmtop_str(text: &str) -> Result<Frame> {
-    read_frame_from(text.as_bytes())
-}
 
 #[cfg(test)]
 pub(crate) mod tests {
@@ -1225,11 +1209,11 @@ modified Bondi radii (mbondi2)
     fn an_angle_label_names_its_end_types_in_sorted_order() {
         let frame = frame_from(LITFSI_HEAD);
         let angles = frame.get("angles").unwrap();
-        let labels = angles.get("type").and_then(|c| c.as_string()).unwrap();
+        let labels = angles.get("type").and_then(|c| c.get::<String>()).unwrap();
         let (i, j, k) = (
-            angles.get("atomi").and_then(|c| c.as_uint()).unwrap(),
-            angles.get("atomj").and_then(|c| c.as_uint()).unwrap(),
-            angles.get("atomk").and_then(|c| c.as_uint()).unwrap(),
+            angles.get("atomi").and_then(|c| c.get::<u64>()).unwrap(),
+            angles.get("atomj").and_then(|c| c.get::<u64>()).unwrap(),
+            angles.get("atomk").and_then(|c| c.get::<u64>()).unwrap(),
         );
         assert_eq!((i[[3]], j[[3]], k[[3]]), (10, 8, 11));
         assert_eq!(labels[[3]], "c3-sy-o");
@@ -1243,24 +1227,24 @@ modified Bondi radii (mbondi2)
     fn litfsi_charge_and_li() {
         let frame = frame_from(LITFSI_HEAD);
         let atoms = frame.get("atoms").unwrap();
-        let charge = atoms.get("charge").and_then(|c| c.as_float()).unwrap();
+        let charge = atoms.get("charge").and_then(|c| c.get::<f64>()).unwrap();
         assert!((charge[[15]] - 1.0).abs() < 1e-5);
         let total: F = (0..16).map(|i| charge[[i]]).sum();
         assert!(total.abs() < 0.01);
         let z = atoms
             .get("atomic_number")
-            .and_then(|c| c.as_uint())
+            .and_then(|c| c.get::<u64>())
             .unwrap();
         assert_eq!(z[[15]], 3);
         assert_eq!(z[[0]], 9);
-        let names = atoms.get("name").and_then(|c| c.as_string()).unwrap();
+        let names = atoms.get("name").and_then(|c| c.get::<String>()).unwrap();
         assert_eq!(names[[0]], "F");
         assert_eq!(names[[15]], "LI");
-        let types = atoms.get("type").and_then(|c| c.as_string()).unwrap();
+        let types = atoms.get("type").and_then(|c| c.get::<String>()).unwrap();
         assert_eq!(types[[0]], "f");
         assert_eq!(types[[1]], "c3");
         assert_eq!(types[[15]], "Li+");
-        let res = atoms.get("res_id").and_then(|c| c.as_uint()).unwrap();
+        let res = atoms.get("res_id").and_then(|c| c.get::<u64>()).unwrap();
         assert_eq!(res[[0]], 0);
         assert_eq!(res[[14]], 0);
         assert_eq!(res[[15]], 1);
@@ -1270,8 +1254,8 @@ modified Bondi radii (mbondi2)
     fn bond_first_pair_zero_based() {
         let frame = frame_from(LITFSI_HEAD);
         let bonds = frame.get("bonds").unwrap();
-        let ai = bonds.get("atomi").and_then(|c| c.as_uint()).unwrap();
-        let aj = bonds.get("atomj").and_then(|c| c.as_uint()).unwrap();
+        let ai = bonds.get("atomi").and_then(|c| c.get::<u64>()).unwrap();
+        let aj = bonds.get("atomj").and_then(|c| c.get::<u64>()).unwrap();
         let mut found = false;
         for i in 0..ai.len() {
             let a = ai[[i]];
@@ -1490,7 +1474,7 @@ c3  c3  c3  c3
         let atoms = frame.get("atoms").unwrap();
         let res_name = atoms
             .get("res_name")
-            .and_then(|c| c.as_string())
+            .and_then(|c| c.get::<String>())
             .expect("atoms block must carry res_name from RESIDUE_LABEL");
         assert_eq!(res_name.len(), 16);
         for i in 0..15 {
@@ -1505,7 +1489,10 @@ c3  c3  c3  c3
         let frame = frame_from(&text);
         let atoms = frame.get("atoms").unwrap();
         assert!(
-            atoms.get("res_name").and_then(|c| c.as_string()).is_none(),
+            atoms
+                .get("res_name")
+                .and_then(|c| c.get::<String>())
+                .is_none(),
             "res_name must be absent, never fabricated, when RESIDUE_LABEL is missing"
         );
     }
@@ -1516,7 +1503,7 @@ c3  c3  c3  c3
         let atoms = frame.get("atoms").unwrap();
         let mol_id = atoms
             .get("mol_id")
-            .and_then(|c| c.as_uint())
+            .and_then(|c| c.get::<u64>())
             .expect("atoms block must carry mol_id from ATOMS_PER_MOLECULE");
         assert_eq!(mol_id.len(), 16);
         for i in 0..15 {
@@ -1535,7 +1522,7 @@ c3  c3  c3  c3
         let frame = frame_from(&text);
         let atoms = frame.get("atoms").unwrap();
         assert!(
-            atoms.get("mol_id").and_then(|c| c.as_uint()).is_none(),
+            atoms.get("mol_id").and_then(|c| c.get::<u64>()).is_none(),
             "mol_id must be absent, never inferred from bonds"
         );
     }
@@ -1546,7 +1533,7 @@ c3  c3  c3  c3
         let atoms = frame.get("atoms").unwrap();
         let tree = atoms
             .get("tree")
-            .and_then(|c| c.as_string())
+            .and_then(|c| c.get::<String>())
             .expect("atoms block must carry tree from TREE_CHAIN_CLASSIFICATION");
         assert_eq!(tree.len(), 16);
         assert_eq!(tree[[0]], "E");
@@ -1560,7 +1547,7 @@ c3  c3  c3  c3
         let text = without_section(LITFSI_HEAD, "TREE_CHAIN_CLASSIFICATION");
         let frame = frame_from(&text);
         let atoms = frame.get("atoms").unwrap();
-        assert!(atoms.get("tree").and_then(|c| c.as_string()).is_none());
+        assert!(atoms.get("tree").and_then(|c| c.get::<String>()).is_none());
     }
 
     #[test]
@@ -1569,7 +1556,7 @@ c3  c3  c3  c3
         let atoms = frame.get("atoms").unwrap();
         let r = atoms
             .get("gb_radius")
-            .and_then(|c| c.as_float())
+            .and_then(|c| c.get::<f64>())
             .expect("atoms block must carry gb_radius from RADII");
         assert_eq!(r.len(), 16);
         assert!((r[[0]] - 1.50).abs() < 1e-12, "F radius");
@@ -1583,7 +1570,12 @@ c3  c3  c3  c3
         let text = without_section(LITFSI_HEAD, "RADII");
         let frame = frame_from(&text);
         let atoms = frame.get("atoms").unwrap();
-        assert!(atoms.get("gb_radius").and_then(|c| c.as_float()).is_none());
+        assert!(
+            atoms
+                .get("gb_radius")
+                .and_then(|c| c.get::<f64>())
+                .is_none()
+        );
     }
 
     #[test]
@@ -1592,7 +1584,7 @@ c3  c3  c3  c3
         let atoms = frame.get("atoms").unwrap();
         let s = atoms
             .get("gb_screen")
-            .and_then(|c| c.as_float())
+            .and_then(|c| c.get::<f64>())
             .expect("atoms block must carry gb_screen from SCREEN");
         assert_eq!(s.len(), 16);
         assert!((s[[0]] - 0.88).abs() < 1e-12, "F screen");
@@ -1606,7 +1598,12 @@ c3  c3  c3  c3
         let text = without_section(LITFSI_HEAD, "SCREEN");
         let frame = frame_from(&text);
         let atoms = frame.get("atoms").unwrap();
-        assert!(atoms.get("gb_screen").and_then(|c| c.as_float()).is_none());
+        assert!(
+            atoms
+                .get("gb_screen")
+                .and_then(|c| c.get::<f64>())
+                .is_none()
+        );
     }
 
     // -----------------------------------------------------------------
@@ -1624,11 +1621,11 @@ c3  c3  c3  c3
         assert_eq!(excl.n_rows(), Some(63));
         let atomi = excl
             .get("atomi")
-            .and_then(|c| c.as_uint())
+            .and_then(|c| c.get::<u64>())
             .expect("exclusions.atomi");
         let atomj = excl
             .get("atomj")
-            .and_then(|c| c.as_uint())
+            .and_then(|c| c.get::<u64>())
             .expect("exclusions.atomj");
         for row in 0..63 {
             assert!(
@@ -1662,11 +1659,11 @@ c3  c3  c3  c3
             .expect("an all-placeholder list still yields a schema-typed empty block");
         assert_eq!(excl.n_rows(), Some(0));
         assert!(
-            excl.get("atomi").and_then(|c| c.as_uint()).is_some(),
+            excl.get("atomi").and_then(|c| c.get::<u64>()).is_some(),
             "atomi column must exist"
         );
         assert!(
-            excl.get("atomj").and_then(|c| c.as_uint()).is_some(),
+            excl.get("atomj").and_then(|c| c.get::<u64>()).is_some(),
             "atomj column must exist"
         );
     }
@@ -1702,7 +1699,7 @@ c3  c3  c3  c3
             .get("dihedrals")
             .unwrap()
             .get("exclude_14")
-            .and_then(|c| c.as_bool())
+            .and_then(|c| c.get::<bool>())
             .expect("dihedrals must carry exclude_14");
         assert_eq!((flag[[0]], flag[[1]]), (true, false));
     }
@@ -1719,7 +1716,7 @@ c3  c3  c3  c3
         assert_eq!(quartets(impropers), vec![[0, 1, 2, 3], [1, 0, 2, 3]]);
         let flag = impropers
             .get("exclude_14")
-            .and_then(|c| c.as_bool())
+            .and_then(|c| c.get::<bool>())
             .expect("impropers must carry exclude_14");
         assert_eq!((flag[[0]], flag[[1]]), (true, false));
     }
@@ -1732,12 +1729,12 @@ c3  c3  c3  c3
         let rows = decode_dihedrals(&[3, 0, 0, 9, 1], &types, None).unwrap();
         let block = build_dihedral_block(&rows).unwrap();
         assert_eq!(
-            block.get("atomk").and_then(|c| c.as_uint()).unwrap()[[0]],
+            block.get("atomk").and_then(|c| c.get::<u64>()).unwrap()[[0]],
             0
         );
         let flag = block
             .get("exclude_14")
-            .and_then(|c| c.as_bool())
+            .and_then(|c| c.get::<bool>())
             .expect("build_dihedral_block must emit exclude_14");
         assert!(!flag[[0]], "a literal 0 pointer is not a negative pointer");
     }
@@ -1814,7 +1811,7 @@ MOL
         let col = |k: &str| {
             block
                 .get(k)
-                .and_then(|c| c.as_uint())
+                .and_then(|c| c.get::<u64>())
                 .unwrap_or_else(|| panic!("{k} column"))
         };
         let (i, j, k, l) = (col("atomi"), col("atomj"), col("atomk"), col("atoml"));
@@ -1835,14 +1832,17 @@ MOL
         // so the row is stored the other way round, atoms and label together.
         assert_eq!(quartets(dihedrals), vec![[3, 2, 1, 0]]);
         assert_eq!(
-            dihedrals.get("type").and_then(|c| c.as_string()).unwrap()[[0]],
+            dihedrals
+                .get("type")
+                .and_then(|c| c.get::<String>())
+                .unwrap()[[0]],
             "c3-os-c3-hc",
             "the label is the quartet's type name"
         );
         assert!(
             !dihedrals
                 .get("exclude_14")
-                .and_then(|c| c.as_bool())
+                .and_then(|c| c.get::<bool>())
                 .unwrap()[[0]],
             "one term keeps the 1-4 pair, so the torsion keeps it"
         );
@@ -1858,7 +1858,7 @@ MOL
         assert!(
             dihedrals
                 .get("exclude_14")
-                .and_then(|c| c.as_bool())
+                .and_then(|c| c.get::<bool>())
                 .unwrap()[[0]]
         );
     }
@@ -1872,7 +1872,10 @@ MOL
         // One spelling for both: the first quartet reads reversed, the second
         // (`c3-os-c3-hc` in atom order) already reads forward.
         assert_eq!(quartets(dihedrals), vec![[3, 2, 1, 0], [1, 2, 3, 4]]);
-        let types = dihedrals.get("type").and_then(|c| c.as_string()).unwrap();
+        let types = dihedrals
+            .get("type")
+            .and_then(|c| c.get::<String>())
+            .unwrap();
         assert_eq!(types[[0]], "c3-os-c3-hc");
         assert_eq!(types[[1]], "c3-os-c3-hc");
     }
@@ -1889,7 +1892,7 @@ MOL
                 .get("dihedrals")
                 .unwrap()
                 .get("type_id")
-                .and_then(|c| c.as_uint())
+                .and_then(|c| c.get::<u64>())
                 .is_none()
         );
     }
@@ -1905,7 +1908,10 @@ MOL
         let impropers = frame.get("impropers").expect("impropers block");
         assert_eq!(quartets(impropers), vec![[0, 3, 1, 2]]);
         assert_eq!(
-            impropers.get("type").and_then(|c| c.as_string()).unwrap()[[0]],
+            impropers
+                .get("type")
+                .and_then(|c| c.get::<String>())
+                .unwrap()[[0]],
             "hc-c3-c3-os"
         );
     }
@@ -1924,7 +1930,7 @@ MOL
     #[test]
     fn a_multi_term_torsion_writes_one_lammps_dihedral() {
         use crate::io::lammps::LammpsDataWriter;
-        use crate::io::read_lammps_data_bytes;
+        use crate::io::read_lammps_data;
         use crate::io::writer::FrameWriter;
 
         let mut frame = frame_from(&chain5_prmtop(
@@ -1944,7 +1950,7 @@ MOL
             .expect("write LAMMPS data");
         let text = String::from_utf8(buf).unwrap();
         assert!(text.contains("\n1 dihedrals\n"), "{text}");
-        let back = read_lammps_data_bytes(text.as_bytes()).expect("read back");
+        let back = read_lammps_data(text.as_bytes()).expect("read back");
         assert_eq!(back.get("dihedrals").unwrap().n_rows(), Some(1));
     }
 
@@ -1983,7 +1989,7 @@ MOL
             .simbox
             .as_ref()
             .expect("IFBOX=2 with BOX_DIMENSIONS must build a SimBox");
-        let h = simbox.h_view();
+        let h = ndarray::arr2(&simbox.matrix());
         // arccos(-1/3) = 109.4712206344907 deg, so 30*cos(alpha) = -10 exactly.
         assert!((h[[0, 0]] - 30.0).abs() < 1e-9, "h[0][0] = {}", h[[0, 0]]);
         assert!((h[[0, 1]] + 10.0).abs() < 1e-9, "h[0][1] = {}", h[[0, 1]]);
@@ -2020,7 +2026,7 @@ MOL
             .get("atoms")
             .unwrap()
             .get("charge")
-            .and_then(|c| c.as_float())
+            .and_then(|c| c.get::<f64>())
             .unwrap();
         assert!(
             (charge[[15]] - 1.0).abs() < 1e-12,
@@ -2105,8 +2111,8 @@ MOL
         let atoms = frame.get("atoms").unwrap();
         for dead in ["join_array", "join", "irotat", "rotat"] {
             assert!(
-                atoms.get(dead).and_then(|c| c.as_uint()).is_none()
-                    && atoms.get(dead).and_then(|c| c.as_int()).is_none(),
+                atoms.get(dead).and_then(|c| c.get::<u64>()).is_none()
+                    && atoms.get(dead).and_then(|c| c.get::<i32>()).is_none(),
                 "{dead} is a dead Amber field: length-checked, then discarded"
             );
         }
@@ -2221,23 +2227,29 @@ TF  LI  XX
     fn a_chamber_prmtop_reads() {
         let frame = frame_from(CHAMBER_MINI);
         let atoms = frame.get("atoms").unwrap();
-        let q = atoms.get("charge").unwrap().as_float().unwrap();
+        let q = atoms.get("charge").unwrap().get::<f64>().unwrap();
         for v in q.iter() {
             assert!((v - 0.1).abs() < 1e-15, "charge {v}");
         }
         let impropers = frame.get("impropers").expect("impropers");
         assert_eq!(quartets(impropers), vec![[1, 0, 2, 3]]);
-        let labels = impropers.get("type").unwrap().as_string().unwrap();
+        let labels = impropers.get("type").unwrap().get::<String>().unwrap();
         assert_eq!(labels[[0]], "N1-C1-C2-C3");
-        assert!(impropers.get(keys::EXCLUDE_14).unwrap().as_bool().unwrap()[[0]]);
+        assert!(
+            impropers
+                .get(keys::EXCLUDE_14)
+                .unwrap()
+                .get::<bool>()
+                .unwrap()[[0]]
+        );
         let cmaps = frame.get("cmaps").expect("cmaps");
-        let col = |k: &str| cmaps.get(k).unwrap().as_uint().unwrap()[[0]];
+        let col = |k: &str| cmaps.get(k).unwrap().get::<u64>().unwrap()[[0]];
         assert_eq!(
             ["atomi", "atomj", "atomk", "atoml", "atomm"].map(col),
             [0, 1, 2, 3, 4]
         );
         assert_eq!(
-            cmaps.get("type").unwrap().as_string().unwrap()[[0]],
+            cmaps.get("type").unwrap().get::<String>().unwrap()[[0]],
             "C1-N1-C2-C3-N2"
         );
     }

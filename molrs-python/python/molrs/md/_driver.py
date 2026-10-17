@@ -389,7 +389,9 @@ class MdDriver:
             n_dof = max(1, 3 * pos.shape[0] - int(integrator.removed_dof))
             # Unit-agnostic, like the integrators: the caller's units are
             # consistent (mvv2e = 1) and kb is Boltzmann's constant in them.
-            kinetic = KineticEnergy(mvv2e=1.0, boltzmann=float(kb))
+            # Both constants are overridden, so the preset (the core
+            # constructor's required argument) contributes nothing.
+            kinetic = KineticEnergy("real", mvv2e=1.0, boltzmann=float(kb))
 
             def record(step: int, state: _md.MdState) -> None:
                 k = kinetic.compute(masses=mass_arr, velocities=state.vel)

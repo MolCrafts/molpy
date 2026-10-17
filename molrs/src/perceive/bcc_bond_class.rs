@@ -1,8 +1,9 @@
 //! BCC bond-type perception — the bond typing AM1-BCC is keyed on.
 
-use super::aromaticity::mark_aromaticity;
+use super::aromaticity::rewrite_aromatic_flags;
 use super::kekule::{BondGraph, has_aromatic_marking, kekulize};
 use crate::core::Atomistic;
+use crate::core::MolRsError;
 use crate::core::keys::BCC_BOND_TYPE;
 use crate::perceive::perceive_bond_orders;
 use crate::perceive::{RingClasses, perceive_ring_classes};
@@ -26,15 +27,48 @@ pub(super) const DELOCALIZED: i32 = 9;
 /// input marking, never emitted.
 pub(super) const AROMATIC_UNRESOLVED: i32 = 10;
 
-/// Perceive the BCC bond type of every bond from the bond orders the input
-/// states (aromatic bonds kekulized). For the bond types antechamber itself
-/// perceives — orders judged from the connectivity, the input's ignored — use
-/// `assign_bcc_bond_types_from_connectivity`.
+/// Where [`assign_bcc_bond_types`] takes each bond's order from.
 ///
-/// Graph in / graph out and **non-mutating**: `mol` is cloned, the clone's bonds
-/// receive a [`BCC_BOND_TYPE`] prop holding the perceived type, and the clone is
-/// returned. Bond `order` is *not* rewritten — the perceived Kekulé structure is
-/// consumed internally and does not leak into the graph. Neither is the bond's
+/// There is no default: the two sources answer differently on a molecule with
+/// more than one Kekulé structure, and the caller who knows which program it
+/// must agree with says so.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum BondOrderSource {
+    /// The orders the input states, its aromatic bonds kekulized by molrs and
+    /// promoted on molrs's own aromaticity, with the type-6 rule repaired. The
+    /// answer does not depend on the order of the bonds.
+    Stated,
+    /// The orders antechamber judges from the connectivity alone
+    /// ([`perceive_bond_orders`], `bondtype -j full`), whatever orders the input
+    /// states, then `bondtype`'s `finalize` — what `antechamber` does by default
+    /// (`-j 4`, and always for `-c bcc`). On a molecule with more than one
+    /// Kekulé structure (azulene, cyclooctatetraene) the structure — and every
+    /// atom type that follows it — is the one antechamber's search settles on,
+    /// and the graph's own atom and bond order decides it, as antechamber's
+    /// input file's does. Every hydrogen must be drawn.
+    ///
+    /// Two things still read the input's bond types, because `bondtype` reads
+    /// them from its file — taken here as the stated number, `ar` (10) for an
+    /// aromatic bond that states none, and single otherwise:
+    ///
+    /// * which rings are aromatic for the 7 / 8 promotion (part 1), decided by
+    ///   antechamber's ring classes ([`perceive_ring_classes`], with the AM1-BCC
+    ///   indole rule) before any bond is judged — a ring whose input carries an
+    ///   exocyclic double bond (a quinone drawn with its C=O) is AR3, not
+    ///   aromatic;
+    /// * a residue no valence state closes, where antechamber warns that "the
+    ///   assigned bond types may be wrong" and keeps the file's types (an `ar`
+    ///   bond stays 10).
+    Connectivity,
+}
+
+/// Perceive the BCC bond type of every bond and write it onto `mol`, in place;
+/// `source` says whether the bond orders are the ones the input states or the
+/// ones antechamber judges from the connectivity (see [`BondOrderSource`]).
+///
+/// Every bond receives a [`BCC_BOND_TYPE`] prop holding the perceived type.
+/// Bond `order` is *not* rewritten — the perceived Kekulé structure is consumed
+/// internally and does not leak into the graph. Neither is the bond's
 /// [`keys::TYPE`](crate::core::keys::TYPE), which is the caller's (see *The
 /// perceived type is a perceived fact* below).
 ///
@@ -43,10 +77,11 @@ pub(super) const AROMATIC_UNRESOLVED: i32 = 10;
 /// bond), never trusted as an answer. That is what resolves the unresolved
 /// aromatic precursor, type 10, into 7 or 8.
 ///
-/// Aromaticity is taken from the graph when it carries any aromatic marking
-/// (a truthy `is_aromatic` bond prop, an `order` of 1.5, or a [`BCC_BOND_TYPE`] of
-/// 7/8/10); when it carries none, `mark_aromaticity` is run on the clone to
-/// supply it.
+/// With [`BondOrderSource::Stated`], aromaticity is taken from the graph when it
+/// carries any aromatic marking (a truthy `is_aromatic` bond prop, an `order` of
+/// 1.5, or a [`BCC_BOND_TYPE`] of 7/8/10); when it carries none, aromaticity is
+/// perceived first (as [`assign_aromaticity`](crate::perceive::assign_aromaticity)
+/// perceives it) and its flags are written onto `mol` with the types.
 ///
 /// AM1-BCC does not correct charges per *bond order*; it corrects them per **BCC
 /// bond type**, a richer alphabet that distinguishes an aromatic single bond from
@@ -71,9 +106,9 @@ pub(super) const AROMATIC_UNRESOLVED: i32 = 10;
 /// The part numbering is antechamber's own (`bondtype.c::finalize()`), kept so the
 /// rules here can be read against the source they came from.
 ///
-/// # Two entry points: the input's orders, or antechamber's
+/// # Two order sources: the input's, or antechamber's
 ///
-/// * [`assign_bcc_bond_types_from_connectivity`] is `bondtype -j full`, what
+/// * [`BondOrderSource::Connectivity`] is `bondtype -j full`, what
 ///   antechamber runs by default (`-j 4`, and always for `-c bcc`): the bond
 ///   orders are judged from the connectivity alone ([`perceive_bond_orders`]),
 ///   the input's ignored; aromatic rings for part 1 are antechamber's own
@@ -83,7 +118,7 @@ pub(super) const AROMATIC_UNRESOLVED: i32 = 10;
 ///   for bond — including the Kekulé structure of a molecule that has two
 ///   (azulene, cyclooctatetraene), which the order of the atoms and bonds
 ///   decides, as it does for antechamber.
-/// * `assign_bcc_bond_types` (this function) keeps the input's orders: a localized bond is typed
+/// * [`BondOrderSource::Stated`] keeps the input's orders: a localized bond is typed
 ///   by the number it states, an aromatic one by the Kekulé structure molrs
 ///   derives for it (below), promoted on molrs's own aromaticity, with part 3
 ///   repaired (below). Its answer does not depend on the order of the bonds.
@@ -92,8 +127,8 @@ pub(super) const AROMATIC_UNRESOLVED: i32 = 10;
 /// in the tables:
 ///
 /// * **10** is not a peer of 7/8 — it is the *unresolved* aromatic precursor (the
-///   SYBYL `ar` input token). `assign_bcc_bond_types` resolves it into 7 or 8;
-///   `assign_bcc_bond_types_from_connectivity` keeps it only where antechamber
+///   SYBYL `ar` input token). [`BondOrderSource::Stated`] resolves it into 7 or 8;
+///   [`BondOrderSource::Connectivity`] keeps it only where antechamber
 ///   does: an `ar` bond of a molecule no valence state closes.
 /// * **11** occupies 26 same-type diagonal rows of `BCCPARM.DAT`, all with a
 ///   correction of exactly `0.0000`, and no rule reaches it.
@@ -111,7 +146,7 @@ pub(super) const AROMATIC_UNRESOLVED: i32 = 10;
 /// # Kekulé structures, when the input's orders are kept
 ///
 /// An aromatic input carries no Kekulé structure (order 1.5), so
-/// `assign_bcc_bond_types` derives one by minimising the valence-state penalty
+/// [`BondOrderSource::Stated`] derives one by minimising the valence-state penalty
 /// (`APS.DAT`) over the aromatic subsystem. Which of 7/8 a given ring bond ends
 /// up with is *charge-invariant* — `BCCPARM` stores identical corrections for
 /// types 7, 8 and 10 — but the **atom types** are not: a heteroaromatic ring
@@ -119,7 +154,7 @@ pub(super) const AROMATIC_UNRESOLVED: i32 = 10;
 /// on a different nitrogen in each, and those two nitrogens type differently.
 /// The tie-break is calibrated to AmberTools on the simple heteroaromatics; for
 /// antechamber's own answer on any input, use
-/// `assign_bcc_bond_types_from_connectivity`.
+/// [`BondOrderSource::Connectivity`].
 ///
 /// # Provenance
 ///
@@ -128,7 +163,7 @@ pub(super) const AROMATIC_UNRESOLVED: i32 = 10;
 /// the AmberTools developers' permission; see `.claude/notes/notes.md`
 /// (2026-07-12) for the licensing posture.
 ///
-/// # Type 6 — the order-dependence fix of this function
+/// # Type 6 — the order-dependence fix of [`BondOrderSource::Stated`]
 ///
 /// `bondtype.c`'s type-6 rule (`/*part3*/`) has two defects that make its output
 /// depend on the order the bonds appear in the input file:
@@ -143,10 +178,10 @@ pub(super) const AROMATIC_UNRESOLVED: i32 = 10;
 /// final charges by 0.28 e; and **pyridine-N-oxide**'s N–O bond types as 6 or 9
 /// purely according to whether the file wrote that bond as `O-N` or `N-O`.
 ///
-/// `assign_bcc_bond_types` repairs both: the neighbour scan is **exhaustive**, and
+/// [`BondOrderSource::Stated`] repairs both: the neighbour scan is **exhaustive**, and
 /// the rule is **symmetric in the bond's endpoints** (nitrite stays 6/6,
 /// nitromethane 9/9, nitrobenzene 9/9, TMAO 9).
-/// `assign_bcc_bond_types_from_connectivity` keeps both defects: its answer already
+/// [`BondOrderSource::Connectivity`] keeps both defects: its answer already
 /// follows the input's order, as antechamber's does, and reproducing antechamber
 /// means reproducing them.
 ///
@@ -168,41 +203,50 @@ pub(super) const AROMATIC_UNRESOLVED: i32 = 10;
 ///
 /// # Arguments
 ///
-/// * `mol` — the molecule to perceive; left untouched.
+/// * `mol` — the molecule to perceive; on return every bond carries a
+///   [`BCC_BOND_TYPE`] prop in `{1, 2, 3, 6, 7, 8, 9}` (10 only as
+///   [`BondOrderSource::Connectivity`] says).
+/// * `source` — where the bond orders come from.
 ///
-/// # Returns
+/// # Errors
 ///
-/// A clone of `mol` whose every bond carries a [`BCC_BOND_TYPE`] prop in
-/// `{1, 2, 3, 6, 7, 8, 9}`.
+/// [`MolRsError`] when a type or an aromatic flag cannot be written (a column
+/// of `mol` holding the key under a foreign dtype); `mol` may then be partly
+/// annotated.
 ///
 /// # Determinism
 ///
-/// The result is invariant under any permutation of the input's bonds and under
-/// swapping any bond's endpoints. It is keyed on atom order alone.
+/// With [`BondOrderSource::Stated`] the result is invariant under any
+/// permutation of the input's bonds and under swapping any bond's endpoints. It
+/// is keyed on atom order alone.
 ///
 /// # Examples
 ///
 /// ```
 /// use molrs::core::Atomistic;
-/// use molrs::perceive::assign_bcc_bond_types;
+/// use molrs::perceive::{BondOrderSource, assign_bcc_bond_types};
 /// use molrs::core::keys::BCC_BOND_TYPE;
 /// use molrs::core::keys;
-/// use molrs::core::BondOrder;
+/// use molrs::core::{BondNumber, BondOrder, Element};
+/// use molrs::props;
 ///
 /// // Acetate: both C–O bonds are delocalized, so both oxygens must correct
 /// // identically.
 /// let mut mol = Atomistic::new();
-/// let c = mol.add_atom_xyz("C", 0.86, 0.12, 0.13);
-/// let o1 = mol.add_atom_xyz("O", 1.18, 1.25, 0.59);
-/// let o2 = mol.add_atom_xyz("O", 1.59, -0.86, -0.19);
-/// let me = mol.add_atom_xyz("C", -0.63, -0.09, -0.09);
-/// let b1 = mol.add_bond(c, o1).unwrap();
-/// mol.set_bond_type(b1, BondOrder::Double).unwrap();
-/// let b2 = mol.add_bond(c, o2).unwrap();
-/// mol.add_bond(c, me).unwrap();
+/// let atom = |el: Element, [x, y, z]: [f64; 3]| {
+///     props! { keys::ATOMIC_NUMBER => el, keys::X => x, keys::Y => y, keys::Z => z }
+/// };
+/// let c = mol.add_atom(atom(Element::C, [0.86, 0.12, 0.13])).unwrap();
+/// let o1 = mol.add_atom(atom(Element::O, [1.18, 1.25, 0.59])).unwrap();
+/// let o2 = mol.add_atom(atom(Element::O, [1.59, -0.86, -0.19])).unwrap();
+/// let me = mol.add_atom(atom(Element::C, [-0.63, -0.09, -0.09])).unwrap();
+/// let double = props! { keys::BOND_TYPE => BondOrder::Double, keys::BOND_NUMBER => BondNumber::Double };
+/// let b1 = mol.add_bond(c, o1, double).unwrap();
+/// let b2 = mol.add_bond(c, o2, props! {}).unwrap();
+/// mol.add_bond(c, me, props! {}).unwrap();
 ///
-/// let typed = assign_bcc_bond_types(&mol);
-/// let bond_type = |b| typed.get_bond(b).unwrap().props.get(BCC_BOND_TYPE).unwrap().as_f64();
+/// assign_bcc_bond_types(&mut mol, BondOrderSource::Stated).unwrap();
+/// let bond_type = |b| mol.get_bond(b).unwrap().props.get(BCC_BOND_TYPE).unwrap().as_f64();
 /// assert_eq!(bond_type(b1), Some(9.0)); // was a double
 /// assert_eq!(bond_type(b2), Some(9.0)); // was a single
 /// ```
@@ -214,27 +258,33 @@ pub(super) const AROMATIC_UNRESOLVED: i32 = 10;
 ///
 /// ```
 /// use molrs::core::Atomistic;
-/// use molrs::perceive::assign_bcc_bond_types;
+/// use molrs::perceive::{BondOrderSource, assign_bcc_bond_types};
 /// use molrs::core::keys::BCC_BOND_TYPE;
 /// use molrs::core::keys;
-/// use molrs::core::BondOrder;
+/// use molrs::core::{BondNumber, BondOrder, Element};
 /// use molrs::core::PropValue;
+/// use molrs::props;
 ///
 /// let mut mol = Atomistic::new();
-/// let c = mol.add_atom_xyz("C", 0.86, 0.12, 0.13);
-/// let o1 = mol.add_atom_xyz("O", 1.18, 1.25, 0.59);
-/// let o2 = mol.add_atom_xyz("O", 1.59, -0.86, -0.19);
-/// let me = mol.add_atom_xyz("C", -0.63, -0.09, -0.09);
-/// let b1 = mol.add_bond(c, o1).unwrap();
-/// mol.set_bond_type(b1, BondOrder::Double).unwrap();
-/// mol.set_bond_prop(b1, keys::TYPE, "c-o").unwrap(); // the caller's FF bond type NAME
-/// let b2 = mol.add_bond(c, o2).unwrap();
-/// mol.set_bond_prop(b2, keys::TYPE, "c-o").unwrap();
-/// let b3 = mol.add_bond(c, me).unwrap();
-/// mol.set_bond_prop(b3, keys::TYPE, "c-c3").unwrap();
+/// let atom = |el: Element, [x, y, z]: [f64; 3]| {
+///     props! { keys::ATOMIC_NUMBER => el, keys::X => x, keys::Y => y, keys::Z => z }
+/// };
+/// let c = mol.add_atom(atom(Element::C, [0.86, 0.12, 0.13])).unwrap();
+/// let o1 = mol.add_atom(atom(Element::O, [1.18, 1.25, 0.59])).unwrap();
+/// let o2 = mol.add_atom(atom(Element::O, [1.59, -0.86, -0.19])).unwrap();
+/// let me = mol.add_atom(atom(Element::C, [-0.63, -0.09, -0.09])).unwrap();
+/// let b1 = mol
+///     .add_bond(c, o1, props! {
+///         keys::BOND_TYPE => BondOrder::Double,
+///         keys::BOND_NUMBER => BondNumber::Double,
+///         keys::TYPE => "c-o", // the caller's FF bond type NAME
+///     })
+///     .unwrap();
+/// let b2 = mol.add_bond(c, o2, props! { keys::TYPE => "c-o" }).unwrap();
+/// mol.add_bond(c, me, props! { keys::TYPE => "c-c3" }).unwrap();
 ///
-/// let typed = assign_bcc_bond_types(&mol);
-/// let props = |b| typed.get_bond(b).unwrap().props;
+/// assign_bcc_bond_types(&mut mol, BondOrderSource::Stated).unwrap();
+/// let props = |b| mol.get_bond(b).unwrap().props;
 /// // The perceived fact went to its own key …
 /// assert_eq!(props(b1).get(BCC_BOND_TYPE).unwrap().as_f64(), Some(9.0));
 /// assert_eq!(props(b2).get(BCC_BOND_TYPE).unwrap().as_f64(), Some(9.0));
@@ -243,105 +293,67 @@ pub(super) const AROMATIC_UNRESOLVED: i32 = 10;
 /// assert_eq!(props(b1).get(keys::TYPE), Some(&name));
 /// assert_eq!(props(b2).get(keys::TYPE), Some(&name));
 /// ```
-pub fn assign_bcc_bond_types(mol: &Atomistic) -> Atomistic {
-    let mut out = mol.clone();
-    if out.n_bonds() == 0 {
-        return out;
-    }
-    if !has_aromatic_marking(&out) {
-        let _ = mark_aromaticity(&mut out);
-    }
-
-    let graph = BondGraph::new(&out);
-    let types = graph.perceive(Seed::Input);
-
-    for (bid, ty) in graph.bond_ids.iter().zip(types) {
-        let _ = out.set_bond_prop(*bid, BCC_BOND_TYPE, ty);
-    }
-    out
-}
-
-/// Perceive the BCC bond type of every bond as antechamber does: the bond
-/// orders judged from the connectivity alone ([`perceive_bond_orders`], `bondtype
-/// -j full`), whatever orders the input states, then `bondtype`'s `finalize`.
-///
-/// This is what `antechamber` does by default (`-j 4`, and always for `-c bcc`):
-/// it discards the file's bond orders and re-derives them, so on a molecule with
-/// more than one Kekulé structure (azulene, cyclooctatetraene) the structure —
-/// and every atom type that follows it — is the one its search settles on.
-/// [`assign_bcc_bond_types`] keeps the input's orders instead; the BCC bond-type
-/// alphabet, the aromatic-promotion rule and the provenance of both entry
-/// points are documented there.
-///
-/// Two things still read the input's bond types, because `bondtype` reads them
-/// from its file — taken here as the stated number, `ar` (10) for an aromatic
-/// bond that states none, and single otherwise:
-///
-/// * which rings are aromatic for the 7 / 8 promotion (part 1), decided by
-///   antechamber's ring classes ([`perceive_ring_classes`], with the AM1-BCC indole
-///   rule) before any bond is judged — a ring whose input carries an exocyclic
-///   double bond (a quinone drawn with its C=O) is AR3, not aromatic;
-/// * a residue no valence state closes, where antechamber warns that "the
-///   assigned bond types may be wrong" and keeps the file's types (an `ar` bond
-///   stays 10).
-///
-/// The judgement follows the graph's own atom and bond order, as antechamber's
-/// follows its input file's. Every hydrogen must be drawn.
-///
-/// # Arguments
-///
-/// * `mol` — the molecule to perceive; left untouched.
-///
-/// # Returns
-///
-/// A clone of `mol` whose every bond carries a [`BCC_BOND_TYPE`] prop in
-/// `{1, 2, 3, 6, 7, 8, 9}` (10 only as above). As with `assign_bcc_bond_types`,
-/// bond `order` and [`keys::TYPE`](crate::core::keys::TYPE) are not rewritten.
-pub fn assign_bcc_bond_types_from_connectivity(mol: &Atomistic) -> Atomistic {
+pub fn assign_bcc_bond_types(
+    mol: &mut Atomistic,
+    source: BondOrderSource,
+) -> Result<(), MolRsError> {
     if mol.n_bonds() == 0 {
-        return mol.clone();
+        return Ok(());
     }
-    let judged = perceive_bond_orders(mol);
-    let graph = BondGraph::new(mol);
+    let (bond_ids, types) = match source {
+        BondOrderSource::Stated => {
+            if !has_aromatic_marking(mol) {
+                rewrite_aromatic_flags(mol)?;
+            }
+            let graph = BondGraph::new(mol);
+            let types = graph.perceive(Seed::Input);
+            (graph.bond_ids, types)
+        }
+        BondOrderSource::Connectivity => {
+            let judged = perceive_bond_orders(mol);
+            let graph = BondGraph::new(mol);
 
-    // Which rings are aromatic is decided before any bond is judged, from the
-    // bond types of the file antechamber reads: the stated number, `ar` (10)
-    // for an aromatic bond that states none, single otherwise.
-    let stated: Vec<(usize, usize, i32)> = graph
-        .ends
-        .iter()
-        .zip(&graph.bond_ids)
-        .map(|((i, j), bid)| {
-            let stated = mol.bond_number(*bid).count();
-            let t = if (1..=3).contains(&stated) {
-                stated as i32
-            } else if graph.aromatic[graph.bond_index[bid]] {
-                AROMATIC_UNRESOLVED
-            } else {
-                SINGLE
-            };
-            (*i, *j, t)
-        })
-        .collect();
-    let rings = perceive_ring_classes(&graph.z, &graph.adj, &stated, true);
+            // Which rings are aromatic is decided before any bond is judged,
+            // from the bond types of the file antechamber reads: the stated
+            // number, `ar` (10) for an aromatic bond that states none, single
+            // otherwise.
+            let stated: Vec<(usize, usize, i32)> = graph
+                .ends
+                .iter()
+                .zip(&graph.bond_ids)
+                .map(|((i, j), bid)| {
+                    let stated = mol.bond_number(*bid)?.count();
+                    let t = if (1..=3).contains(&stated) {
+                        stated as i32
+                    } else if graph.aromatic[graph.bond_index[bid]] {
+                        AROMATIC_UNRESOLVED
+                    } else {
+                        SINGLE
+                    };
+                    Ok((*i, *j, t))
+                })
+                .collect::<Result<_, MolRsError>>()?;
+            let rings = perceive_ring_classes(&graph.z, &graph.adj, &stated, true);
 
-    // A residue no valence state closes keeps the file's types, as antechamber
-    // keeps them.
-    let kekule: Vec<i32> = judged
-        .iter()
-        .zip(&stated)
-        .map(|(order, (_, _, t))| order.map_or(*t, i32::from))
-        .collect();
-    let types = graph.perceive(Seed::Judged {
-        orders: &kekule,
-        rings: &rings,
-    });
+            // A residue no valence state closes keeps the file's types, as
+            // antechamber keeps them.
+            let kekule: Vec<i32> = judged
+                .iter()
+                .zip(&stated)
+                .map(|(order, (_, _, t))| order.map_or(*t, i32::from))
+                .collect();
+            let types = graph.perceive(Seed::Judged {
+                orders: &kekule,
+                rings: &rings,
+            });
+            (graph.bond_ids, types)
+        }
+    };
 
-    let mut out = mol.clone();
-    for (bid, ty) in graph.bond_ids.iter().zip(types) {
-        let _ = out.set_bond_prop(*bid, BCC_BOND_TYPE, ty);
+    for (bid, ty) in bond_ids.into_iter().zip(types) {
+        mol.set_bond(bid, BCC_BOND_TYPE, ty)?;
     }
-    out
+    Ok(())
 }
 
 /// What [`BondGraph::perceive`] seeds the bond types from.

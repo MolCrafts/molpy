@@ -1,7 +1,7 @@
 //! WASM binding for the triangle mesh, `molrs::core::TriMesh`.
 //!
 //! A surface, not a structure: shared vertices plus indexed faces, with no
-//! atoms and no simulation box. It is what [`readStlBytes`](crate::io::mesh) hands
+//! atoms and no simulation box. It is what `readStl` hands
 //! back — the container a packing run was confined to, the geometry a viewer
 //! paints around the trajectory.
 //!
@@ -19,7 +19,7 @@ use wasm_bindgen::prelude::*;
 /// # Example (JavaScript)
 ///
 /// ```js
-/// const mesh = readStlBytes(new Uint8Array(await file.arrayBuffer()));
+/// const mesh = readStl(new Uint8Array(await file.arrayBuffer()));
 /// console.log(mesh.nFaces(), mesh.isWatertight());
 /// const vertices = mesh.vertices();    // Float32Array, 3 per vertex
 /// const faces    = mesh.faces();       // Uint32Array, 3 indices per face

@@ -29,7 +29,7 @@
 //! ```no_run
 //! use molrs::core::Atomistic;
 //! use molrs::ff::compile::PotentialCompiler;
-//! use molrs::ff::potential::intramolecular_pairs;
+//! use molrs::ff::potential::{Accumulator, Potential, intramolecular_pairs};
 //! use molrs::ff::typifier::Typing;
 //! use molrs::ff::typifier::mmff::Mmff94Typifier;
 //! # fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -38,12 +38,13 @@
 //!
 //! let mut frame = typing.typify(&mol)?.to_frame().map_err(|e| e.to_string())?;
 //! let ff = typing.forcefield();                           // exactly the types assigned
-//! frame.insert("pairs", intramolecular_pairs(&frame, ff.special_bonds())?);
+//! frame.insert("pairs", intramolecular_pairs(&frame, ff.special_bonds(), None)?);
 //! let potentials = PotentialCompiler::new(ff).compile(&frame)?; // the standard compile path
 //!
 //! let coords: Vec<f64> = Vec::new();                      // flat [x,y,z, ...]
-//! let (energy, _forces) = potentials.calc_energy_forces(&coords);
-//! println!("MMFF94 energy = {energy} kcal/mol");
+//! let mut acc = Accumulator::new(coords.len());
+//! potentials.evaluate(&coords, &mut acc);                 // energy + forces
+//! println!("MMFF94 energy = {} kcal/mol", acc.energy());
 //! # Ok(())
 //! # }
 //! ```
@@ -104,7 +105,7 @@ macro_rules! mmff_front_door {
             /// `params` is the typing metadata ([`MmffAtomProperties::new`] over
             /// its rows) and `ff` the force field it prices with (a force-field
             /// XML holds one:
-            /// [`read_xml_forcefield_str`](crate::io::read_xml_forcefield_str)).
+            /// [`XmlForcefieldReader`](crate::io::XmlForcefieldReader)).
             /// The variant is pinned by *this type* — it is never an argument.
             pub fn from_parts(params: MmffAtomProperties, ff: ForceField) -> Self {
                 Self(MmffEngine::from_parts($variant, params, ff))

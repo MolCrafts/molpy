@@ -1,10 +1,13 @@
 """TRR, the GROMACS full-precision trajectory format — ``molrs::io::trr``.
 
-The doors are functions of :mod:`molrs.io`
-(:func:`~molrs.io.read_trr_trajectory`, :func:`~molrs.io.write_trr_trajectory`);
-this module holds the format's lazy reader, :class:`TrrReader`.
+The one-frame doors are :func:`molrs.io.read_trr` / :func:`molrs.io.write_trr`;
+this module holds the format's classes: :class:`TrrReader` and
+:class:`TrrWriter`, one frame per ``write``.
 """
 
-from .._native import TrrReader
+from .._native import (
+    TrrReader,
+    TrrWriter,
+)
 
-__all__ = ["TrrReader"]
+__all__ = ["TrrReader", "TrrWriter"]

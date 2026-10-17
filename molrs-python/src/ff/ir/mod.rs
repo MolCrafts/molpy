@@ -434,13 +434,6 @@ fn mix_to_py<'py>(py: Python<'py>, mix: &ParamCombination) -> PyResult<Bound<'py
     })
 }
 
-fn value_to_py<'py>(py: Python<'py>, v: &ParamValue) -> PyResult<Bound<'py, PyAny>> {
-    Ok(match v {
-        ParamValue::Num(x) => x.into_pyobject(py)?.into_any(),
-        ParamValue::Text(t) => PyString::new(py, t).into_any(),
-    })
-}
-
 /// A number or a string, as a [`ParamValue`].
 fn value_of(what: &str, obj: &Bound<'_, PyAny>) -> PyResult<ParamValue> {
     if let Ok(s) = obj.extract::<String>() {
@@ -606,7 +599,7 @@ impl PyParamSpec {
         self.inner
             .default
             .as_ref()
-            .map(|v| value_to_py(py, v))
+            .map(|v| crate::ff::forcefield::param_to_py(py, v))
             .transpose()
     }
 
@@ -633,7 +626,10 @@ impl PyParamSpec {
             }
         }
         if let Some(d) = &self.inner.default {
-            out.push_str(&format!(", default={}", value_to_py(py, d)?.repr()?));
+            out.push_str(&format!(
+                ", default={}",
+                crate::ff::forcefield::param_to_py(py, d)?.repr()?
+            ));
         }
         if self.inner.mix != ParamCombination::None {
             out.push_str(&format!(

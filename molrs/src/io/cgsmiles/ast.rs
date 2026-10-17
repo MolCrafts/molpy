@@ -2,7 +2,7 @@
 
 use std::collections::BTreeMap;
 
-use crate::io::smiles::{BondKind, BondingDescriptor, SmilesIr, Span};
+use crate::io::smiles::{BondKind, BondingDescriptor, FragmentIr, Span};
 use crate::op::F;
 
 /// A parsed `CGsmiles` string: the blocks that were written, and the levels
@@ -113,7 +113,7 @@ pub enum PairEnd {
     ///
     /// `instance` indexes `levels[k].nodes` and `port` indexes the descriptor
     /// map
-    /// [`SmilesIr::to_atomistic_with_descriptors`](crate::io::smiles::SmilesIr::to_atomistic_with_descriptors)
+    /// [`FragmentIr::to_atomistic`](crate::io::smiles::FragmentIr::to_atomistic)
     /// returns for that node's body, whose order is the walker's visit order.
     Body {
         /// Index into `levels[k].nodes` of the node whose body holds the port.
@@ -217,7 +217,7 @@ pub enum FragmentBody {
     /// An atomistic OpenSMILES body with bonding descriptors, as written in
     /// the last block: `#PEO=[>]COC[<]`. It is kept as the parser returned
     /// it — never expanded into atoms here.
-    Smiles(SmilesIr),
+    Smiles(FragmentIr),
 }
 
 /// One resolution level: coarse-grained nodes and the edges between them.
@@ -227,7 +227,7 @@ pub enum FragmentBody {
 /// one of them. Like every record of the notation, it is a value produced by
 /// [`CgSmilesIr::parse`]: the fields are public to read, there is no public
 /// constructor, and there is no supported mutation — the same shape as
-/// [`SmilesIr`].
+/// [`SmilesIr`](crate::io::smiles::SmilesIr).
 ///
 /// Both vectors are in **parse order** — nodes in the order their brackets
 /// were read, edges in the order the notation formed them, with a ring-closure

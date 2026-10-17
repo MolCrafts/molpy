@@ -7,7 +7,11 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use zarrs::filesystem::FilesystemStore;
-use zarrs::storage::{ReadableListableStorage, StoreKey};
+use zarrs::storage::store::MemoryStore;
+use zarrs::storage::{
+    ListableStorageTraits, ReadableListableStorage, ReadableStorageTraits,
+    ReadableWritableListableStorage, StoreKey, WritableStorageTraits,
+};
 
 use molrs::core::MolRsError;
 
@@ -57,24 +61,22 @@ const MREC_SUFFIX: &str = "mrec";
 /// # Examples
 ///
 /// ```
-/// # fn main() -> Result<(), molrs::core::MolRsError> {
+/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
 /// use molrs::core::Trajectory;
-/// use molrs::io::mrec::{MrecReader, open_mrec_zip, pack_mrec_zip};
-/// use molrs::io::write_mrec_trajectory;
+/// use molrs::io::mrec::{MolRec, MrecReader, pack_mrec_zip};
+/// use molrs::io::write_mrec;
 ///
 /// let dir = tempfile::tempdir().unwrap();
 /// let store = dir.path().join("traj.mrec");
-/// write_mrec_trajectory(
-///     &store,
-///     &Trajectory::from_frames(vec![molrs::core::Frame::new()]),
-///     None,
-/// )?;
+/// let mut record = MolRec::new();
+/// record.trajectory = Some(Trajectory::from_frames(vec![molrs::core::Frame::new()]));
+/// write_mrec(&store, &record)?;
 ///
 /// let zip = pack_mrec_zip(&store)?;
 /// assert!(zip.ends_with("traj.mrec.zip"));
 /// assert!(!store.exists(), "pack removes the directory it consumed");
 ///
-/// let mut seq = MrecReader::from_storage(open_mrec_zip(&zip)?)?;
+/// let seq = MrecReader::open(&zip)?;
 /// assert_eq!(seq.to_trajectory()?.len(), 1);
 /// # Ok(())
 /// # }
@@ -126,6 +128,10 @@ pub fn pack_mrec_zip(storage_path: impl AsRef<Path>) -> Result<PathBuf, MolRsErr
 /// Open a packed `.mrec.zip` read-only, through `zarrs_zip`'s
 /// `ZipStorageAdapter`.
 ///
+/// The doors are [`MrecFile::open`](crate::io::mrec::MrecFile::open) and
+/// [`MrecReader::open`](crate::io::mrec::MrecReader::open), which open a
+/// packed record in place through this.
+///
 /// The returned store is readable and listable and nothing more, which is exactly
 /// what a read function such as [`crate::io::mrec::MrecReader::open`] asks
 /// for. Stored entries are read through the adapter's byte-range fast path, so
@@ -135,7 +141,7 @@ pub fn pack_mrec_zip(storage_path: impl AsRef<Path>) -> Result<PathBuf, MolRsErr
 ///
 /// Returns a [`MolRsError::Zarr`] if `path` has no file name, if its directory cannot be opened, or if the file
 /// is not a readable zip archive.
-pub fn open_mrec_zip(path: impl AsRef<Path>) -> Result<ReadableListableStorage, MolRsError> {
+pub(crate) fn open_mrec_zip(path: impl AsRef<Path>) -> Result<ReadableListableStorage, MolRsError> {
     let path = path.as_ref();
     let name = path
         .file_name()
@@ -148,6 +154,65 @@ pub fn open_mrec_zip(path: impl AsRef<Path>) -> Result<ReadableListableStorage, 
     Ok(Arc::new(
         zarrs_zip::ZipStorageAdapter::new(directory, key).map_err(|e| at(path, "open", e))?,
     ))
+}
+
+/// The bytes of a packed `.mrec.zip` unpacked into an in-memory store.
+///
+/// # Errors
+///
+/// A [`MolRsError::Zarr`] when the bytes are not a zip archive of stored
+/// (uncompressed) entries whose names are store keys.
+pub(in crate::io::mrec::zarr_storage) fn unpack_zip_bytes(
+    bytes: &[u8],
+) -> Result<ReadableWritableListableStorage, MolRsError> {
+    let mut archive = zip::ZipArchive::new(std::io::Cursor::new(bytes))
+        .map_err(|e| MolRsError::zarr(format!("packed record bytes: {e}")))?;
+    let store = Arc::new(MemoryStore::new());
+    for index in 0..archive.len() {
+        let mut entry = archive.by_index(index).map_err(|e| {
+            MolRsError::zarr(format!(
+                "packed record entry {index}: {e} (a packed record stores its entries uncompressed)"
+            ))
+        })?;
+        if entry.is_dir() {
+            continue;
+        }
+        let name = entry.name().trim_start_matches('/').to_string();
+        let mut content = Vec::with_capacity(entry.size() as usize);
+        std::io::Read::read_to_end(&mut entry, &mut content)
+            .map_err(|e| MolRsError::zarr(format!("packed record entry {name}: {e}")))?;
+        let key = StoreKey::new(&name).map_err(zerr)?;
+        store.set(&key, content.into()).map_err(zerr)?;
+    }
+    Ok(store)
+}
+
+/// Every key of `store`, in sorted order, packed STORED into a zip archive
+/// written to `out` — the archive [`pack_mrec_zip`] makes of a directory.
+///
+/// # Errors
+///
+/// A [`MolRsError::Zarr`] when the store cannot be listed or read, or the
+/// archive cannot be written.
+pub(in crate::io::mrec::zarr_storage) fn pack_storage_zip(
+    store: &ReadableWritableListableStorage,
+    out: &mut Vec<u8>,
+) -> Result<(), MolRsError> {
+    let mut keys = store.list().map_err(zerr)?;
+    keys.sort();
+    let mut writer = zip::ZipWriter::new(std::io::Cursor::new(out));
+    for key in keys {
+        let Some(bytes) = store.get(&key).map_err(zerr)? else {
+            continue;
+        };
+        let options = zip::write::SimpleFileOptions::default()
+            .compression_method(zip::CompressionMethod::Stored)
+            .large_file(bytes.len() as u64 >= u64::from(u32::MAX));
+        writer.start_file(key.as_str(), options).map_err(zerr)?;
+        writer.write_all(&bytes).map_err(zerr)?;
+    }
+    writer.finish().map_err(zerr)?;
+    Ok(())
 }
 
 /// An error naming the path it happened on.
@@ -205,8 +270,9 @@ mod tests {
     use ndarray::ArrayD;
     use tempfile::tempdir;
 
-    use super::{open_mrec_zip, pack_mrec_zip};
-    use crate::io::mrec::zarr_storage::{MrecReader, read_mrec_trajectory, write_mrec_trajectory};
+    use super::pack_mrec_zip;
+    use crate::io::mrec::MolRec;
+    use crate::io::mrec::zarr_storage::{MrecReader, write_mrec};
 
     /// The one block every fixture frame carries.
     const ATOMS: &str = "atoms";
@@ -214,12 +280,12 @@ mod tests {
     const X: &str = "x";
 
     fn float_column(values: &[f64]) -> Column {
-        Column::from_float(ArrayD::from_shape_vec(vec![values.len()], values.to_vec()).unwrap())
+        Column::from(ArrayD::from_shape_vec(vec![values.len()], values.to_vec()).unwrap())
     }
 
     fn atoms_frame(values: &[f64]) -> Frame {
         let mut block = Block::new();
-        block.insert_column(X, float_column(values)).unwrap();
+        block.insert(X, float_column(values), None).unwrap();
         let mut frame = Frame::new();
         frame.insert(ATOMS, block);
         frame
@@ -251,7 +317,7 @@ mod tests {
             .expect("the frame carries an atoms block")
             .get(X)
             .expect("the atoms block carries column x")
-            .as_float()
+            .get::<f64>()
             .expect("column x arrived as f64")
             .iter()
             .map(|value| value.to_bits())
@@ -261,7 +327,9 @@ mod tests {
     /// Write [`trajectory`] into a fresh directory store `name` under `parent`.
     fn make_storage(parent: &Path, name: &str) -> PathBuf {
         let path = parent.join(name);
-        write_mrec_trajectory(&path, &trajectory(), None).expect("the fixture store writes");
+        let mut record = MolRec::new();
+        record.trajectory = Some(trajectory());
+        write_mrec(&path, &record).expect("the fixture store writes");
         path
     }
 
@@ -336,11 +404,13 @@ mod tests {
         let dir = tempdir().unwrap();
         let storage_path = make_storage(dir.path(), "traj.mrec");
         // The reference is taken from the directory form, before it is gone.
-        let before = read_mrec_trajectory(&storage_path).expect("the directory store reads");
+        let before = MrecReader::open(&storage_path)
+            .expect("the directory store opens")
+            .to_trajectory()
+            .expect("the directory store reads");
 
         let zip_path = pack_mrec_zip(&storage_path).expect("packing a closed store succeeds");
-        let sequence = MrecReader::from_storage(open_mrec_zip(&zip_path).expect("the zip opens"))
-            .expect("the packed sequence opens");
+        let sequence = MrecReader::open(&zip_path).expect("the packed sequence opens");
         let after = sequence.to_trajectory().expect("the packed sequence reads");
 
         assert_eq!(after.step, before.step, "step numbers survive the pack");

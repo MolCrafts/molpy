@@ -87,12 +87,12 @@ pub fn assign_cmaps(frame: &mut Frame, ff: &ForceField) -> Result<usize, String>
     for (p, key) in [ATOMI, ATOMJ, ATOMK, ATOML, ATOMM].into_iter().enumerate() {
         let col: Vec<Idx> = chains.iter().map(|(atoms, _)| atoms[p] as Idx).collect();
         block
-            .insert(key, Array1::from_vec(col).into_dyn())
+            .insert(key, Array1::from_vec(col).into_dyn(), None)
             .map_err(|e| e.to_string())?;
     }
     let labels: Vec<String> = chains.into_iter().map(|(_, name)| name).collect();
     block
-        .insert(TYPE, Array1::from_vec(labels).into_dyn())
+        .insert(TYPE, Array1::from_vec(labels).into_dyn(), None)
         .map_err(|e| e.to_string())?;
     frame.insert(CMAPS, block);
     Ok(n)
@@ -114,13 +114,13 @@ fn match_chains(
     let types = frame
         .get(ATOMS)
         .and_then(|b| b.get(TYPE))
-        .and_then(|c| c.as_string())
+        .and_then(|c| c.get::<String>())
         .ok_or("assign_cmaps: atoms block missing string column \"type\"")?;
     let n_atoms = types.len();
     let column = |key: &str| {
         dihedrals
             .get(key)
-            .and_then(|c| c.as_uint())
+            .and_then(|c| c.get::<u64>())
             .ok_or_else(|| format!("assign_cmaps: dihedrals block missing u64 column {key:?}"))
     };
     let cols = [
@@ -193,6 +193,7 @@ mod tests {
                 TYPE,
                 Array1::from_vec(types.iter().map(|t| t.to_string()).collect::<Vec<_>>())
                     .into_dyn(),
+                None,
             )
             .unwrap();
         let mut frame = Frame::new();
@@ -201,7 +202,7 @@ mod tests {
         for (p, key) in [ATOMI, ATOMJ, ATOMK, ATOML].into_iter().enumerate() {
             let col: Vec<Idx> = rows.iter().map(|r| r[p]).collect();
             dihedrals
-                .insert(key, Array1::from_vec(col).into_dyn())
+                .insert(key, Array1::from_vec(col).into_dyn(), None)
                 .unwrap();
         }
         frame.insert(DIHEDRALS, dihedrals);
@@ -213,7 +214,7 @@ mod tests {
         let style = ff.def_style("cmap", "charmm", Params::new()).unwrap();
         for (i, (name, ends)) in rows.iter().enumerate() {
             let mut params = Params::new();
-            params.set_array("grid", ArrayD::from_elem(vec![24, 24], i as f64));
+            params.set("grid", ArrayD::from_elem(vec![24, 24], i as f64));
             style.def_type(name, ends, params).unwrap();
         }
         ff
@@ -221,11 +222,11 @@ mod tests {
 
     fn rows(frame: &Frame) -> Vec<([u64; 5], String)> {
         let b = &frame[CMAPS];
-        let types = b.get(TYPE).unwrap().as_string().unwrap();
+        let types = b.get(TYPE).unwrap().get::<String>().unwrap();
         (0..b.n_rows().unwrap())
             .map(|r| {
                 let atoms = [ATOMI, ATOMJ, ATOMK, ATOML, ATOMM]
-                    .map(|k| b.get(k).unwrap().as_uint().unwrap()[[r]]);
+                    .map(|k| b.get(k).unwrap().get::<u64>().unwrap()[[r]]);
                 (atoms, types[[r]].clone())
             })
             .collect()
@@ -298,7 +299,7 @@ mod tests {
         // field itself; across two styles they are refused here.
         let mut two = ff(&[("a", ALA)]);
         let mut params = Params::new();
-        params.set_array("grid", ArrayD::zeros(vec![24, 24]));
+        params.set("grid", ArrayD::zeros(vec![24, 24]));
         two.def_style("cmap", "other", Params::new())
             .unwrap()
             .def_type("b", &ALA, params)

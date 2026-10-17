@@ -2,8 +2,8 @@
 //!
 //! | JS | molrs |
 //! |----|-------|
-//! | `PdbStream` | `PdbIndexBuilder` + `read_pdb_bytes` (the chunk-fed PDB reader) |
-//! | `readPdbStr`, `readPdbBytes`, `writePdbStr` | `read_pdb_str`, `read_pdb_bytes`, `write_pdb_str` |
+//! | `PdbStream` | `PdbIndexBuilder` + `read_pdb` (the chunk-fed PDB reader) |
+//! | `readPdb`, `writePdb` | `read_pdb`, `write_pdb` |
 
 use molrs::io::pdb::PdbIndexBuilder;
 use wasm_bindgen::prelude::*;
@@ -11,26 +11,23 @@ use wasm_bindgen::prelude::*;
 impl_wasm_traj_stream! {
     name    = PdbStream,
     indexer = PdbIndexBuilder::new(),
-    parse   = |bytes, _ctx| molrs::io::read_pdb_bytes(bytes),
+    parse   = |bytes, _ctx| molrs::io::read_pdb(bytes),
 }
 
 read_door!(
-    /// Read the first frame of PDB text.
-    readPdbStr => read_pdb_str(text: &str), "PDB"
-);
-read_door!(
-    /// Read one PDB frame (a `MODEL` block or a whole file) from bytes.
-    readPdbBytes => read_pdb_bytes(bytes: &[u8]), "PDB"
+    /// Read the first frame of PDB (a `MODEL` block or a whole file): the
+    /// file's text or bytes.
+    readPdb => read_pdb, "PDB"
 );
 write_door!(
     /// Write `frame` as PDB text.
-    writePdbStr => write_pdb_str -> String, "PDB"
+    writePdb => write_pdb, "PDB"
 );
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::io::test_fixtures::{float_col, two_atom_frame};
+    use crate::io::test_fixtures::{float_col, text, two_atom_frame};
     use wasm_bindgen_test::*;
 
     /// A PDB file is read through `PdbStream`, its one reader.
@@ -51,8 +48,10 @@ END\n";
     }
 
     #[wasm_bindgen_test]
-    fn write_pdb_str_emits_atom_records() {
-        let out = write_pdb_str(&two_atom_frame()).expect("pdb output");
+    fn write_pdb_emits_atom_records_read_pdb_reads_back() {
+        let out = write_pdb(&two_atom_frame()).expect("pdb output");
         assert!(out.contains("ATOM"));
+        let back = read_pdb(&text(&out)).expect("read back");
+        assert_eq!(back.get("atoms").expect("atoms").n_rows().unwrap(), 2);
     }
 }

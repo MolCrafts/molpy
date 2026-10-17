@@ -1,11 +1,10 @@
 //! `CGsmiles`, the coarse-grained line notation (Grünewald et al., JCTC 2025):
 //! parser and intermediate representation.
 //!
-//! The door is a function of [`crate::io`]:
-//! [`crate::io::read_cgsmiles_str`] reads the molecule a
-//! string states (its lowest level expanded into atoms). This module holds the
-//! notation's classes: [`CgSmilesIr`] ([`CgSmilesIr::parse`]) and the records
-//! it hands out.
+//! The door is [`CgSmilesIr::parse`]; the molecule a string states (its
+//! lowest level expanded into atoms) is
+//! `CgSmilesIr::parse(text)?.to_atomistic()`. This module holds the
+//! notation's classes: [`CgSmilesIr`] and the records it hands out.
 //!
 //! `CGsmiles` writes a molecule at a *coarse-grained* resolution: a block
 //! `{…}` of named **beads** — single nodes each standing for a whole fragment
@@ -251,7 +250,7 @@ mod instantiate;
 mod parser;
 mod resolve;
 mod templates;
-pub(crate) mod to_atomistic;
+mod to_atomistic;
 mod to_coarsegrain;
 mod validate;
 

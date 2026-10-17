@@ -9,7 +9,7 @@ use rustfft::num_complex::Complex;
 use rustfft::{Fft, FftPlanner};
 
 use crate::ff::ir::Params;
-use crate::ff::potential::{ForceTerm, Potential};
+use crate::ff::potential::{Accumulator, ForceTerm, Potential};
 use molrs::core::Frame;
 use molrs::core::Mic;
 use molrs::op::F;
@@ -203,27 +203,6 @@ impl PairCoulLongPme {
             scratch,
             mic,
         }
-    }
-
-    /// Compute total PME energy for a flat coordinate vector.
-    pub fn energy(&self, coords: &[F]) -> F {
-        self.self_energy
-            + self.direct_energy(coords)
-            + self.exclusion_energy(coords)
-            + self.reciprocal_energy(coords)
-    }
-
-    /// Compute PME forces (= -gradient) for a flat coordinate vector.
-    pub fn forces(&self, coords: &[F]) -> Vec<F> {
-        let mut grad = vec![0.0; coords.len()];
-        // Self energy has zero gradient (constant).
-        self.direct_gradient(coords, &mut grad);
-        self.exclusion_gradient(coords, &mut grad);
-        self.reciprocal_gradient(coords, &mut grad);
-        for g in &mut grad {
-            *g = -*g;
-        }
-        grad
     }
 
     // -----------------------------------------------------------------------
@@ -758,11 +737,24 @@ impl PairCoulLongPme {
 // Potential trait
 // ---------------------------------------------------------------------------
 
+/// Energy and forces (`-∇E`) over a flat coordinate vector. The Ewald sum
+/// is not a sum over a pair table's separations, so it tallies no virial.
 impl Potential for PairCoulLongPme {
-    fn calc_energy_forces(&self, coords: &[F]) -> (F, Vec<F>) {
-        let e = PairCoulLongPme::energy(self, coords);
-        let f = PairCoulLongPme::forces(self, coords);
-        (e, f)
+    fn evaluate(&self, coords: &[F], acc: &mut Accumulator<'_>) {
+        acc.add_energy(
+            self.self_energy
+                + self.direct_energy(coords)
+                + self.exclusion_energy(coords)
+                + self.reciprocal_energy(coords),
+        );
+        let mut grad = vec![0.0; coords.len()];
+        // Self energy has zero gradient (constant).
+        self.direct_gradient(coords, &mut grad);
+        self.exclusion_gradient(coords, &mut grad);
+        self.reciprocal_gradient(coords, &mut grad);
+        for (f, g) in acc.forces_without_virial().iter_mut().zip(&grad) {
+            *f -= g;
+        }
     }
 }
 
@@ -926,7 +918,8 @@ pub fn pair_coul_long_pme_constructor(
     let atoms = frame
         .get(ATOMS)
         .ok_or("PME: Frame missing \"atoms\" block")?;
-    let charges: Vec<F> = if let Some(charge_col) = atoms.get("charge").and_then(|c| c.as_float()) {
+    let charges: Vec<F> = if let Some(charge_col) = atoms.get("charge").and_then(|c| c.get::<f64>())
+    {
         charge_col.iter().copied().collect()
     } else {
         return Err("PME: atoms block missing \"charge\" float column".into());
@@ -938,8 +931,8 @@ pub fn pair_coul_long_pme_constructor(
     let mut exclusions = Vec::new();
     if let Some(block) = frame.get(EXCLUSIONS)
         && let (Some(i_col), Some(j_col)) = (
-            block.get("atomi").and_then(|c| c.as_uint()),
-            block.get("atomj").and_then(|c| c.as_uint()),
+            block.get("atomi").and_then(|c| c.get::<u64>()),
+            block.get("atomj").and_then(|c| c.get::<u64>()),
         )
     {
         for idx in 0..i_col.len() {
@@ -1016,6 +1009,8 @@ fn box_vectors(frame: &Frame) -> Result<[[F; 3]; 3], crate::ff::potential::Compi
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::Cell;
+    use crate::ff::potential::fixtures::OneShot;
 
     fn cubic_box(l: F) -> [[F; 3]; 3] {
         [[l, 0.0, 0.0], [0.0, l, 0.0], [0.0, 0.0, l]]
@@ -1154,7 +1149,7 @@ mod tests {
             box_l / 2.0,
             box_l / 2.0,
         ];
-        let e = pme.calc_energy(&coords);
+        let e = pme.energy_at(&coords);
 
         // Coulomb energy in vacuum: -1/r (with coulomb=1, q=+1,-1)
         let e_vacuum: F = -coulomb / r;
@@ -1186,7 +1181,7 @@ mod tests {
 
         let coords: Vec<F> = vec![2.0, 3.0, 4.0, 5.0, 3.5, 4.5, 7.0, 6.0, 5.0];
 
-        let forces = pme.calc_energy_forces(&coords).1;
+        let forces = pme.energy_forces_at(&coords).1;
 
         let eps: F = 1e-3;
         for idx in 0..9 {
@@ -1194,7 +1189,7 @@ mod tests {
             let mut cm = coords.clone();
             cp[idx] += eps;
             cm[idx] -= eps;
-            let numerical_force = -(pme.calc_energy(&cp) - pme.calc_energy(&cm)) / (2.0 * eps);
+            let numerical_force = -(pme.energy_at(&cp) - pme.energy_at(&cm)) / (2.0 * eps);
             assert!(
                 (forces[idx] - numerical_force).abs() < 1.0,
                 "idx={}: analytical={:.6}, numerical={:.6}, diff={:.2e}",
@@ -1223,7 +1218,7 @@ mod tests {
         let pme = PairCoulLongPme::new(params, charges, cubic_box(box_l), exclusions);
 
         let coords: Vec<F> = vec![1.0, 2.0, 3.0, 4.0, 2.5, 3.5, 6.0, 7.0, 2.0, 8.0, 7.5, 2.5];
-        let forces = pme.calc_energy_forces(&coords).1;
+        let forces = pme.energy_forces_at(&coords).1;
 
         for dim in 0..3 {
             let sum: F = (0..4).map(|a| forces[a * 3 + dim]).sum();
@@ -1264,11 +1259,11 @@ mod tests {
             box_l / 2.0,
         ];
 
-        let e = pots.calc_energy(&coords);
+        let e = pots.energy_at(&coords);
         assert!(e.is_finite(), "energy should be finite, got {}", e);
         assert!(e.abs() > 1e-10, "energy should be non-zero");
 
-        let forces = pots.calc_forces(&coords);
+        let (_, forces) = pots.energy_forces_at(&coords);
         for (i, &f) in forces.iter().enumerate() {
             assert!(F::is_finite(f), "forces[{}] should be finite", i);
         }
@@ -1287,7 +1282,7 @@ mod tests {
         use crate::ff::potential::CompileError;
         use molrs::core::Block;
         use molrs::core::SimBox;
-        use ndarray::{Array1, array};
+        use ndarray::Array1;
 
         let coords: Vec<F> = vec![4.0, 5.0, 5.0, 6.5, 5.3, 4.6, 5.1, 3.8, 6.2];
         let charges = vec![0.6, -0.4, -0.2];
@@ -1295,11 +1290,11 @@ mod tests {
         for (d, key) in ["x", "y", "z"].iter().enumerate() {
             let col: Vec<F> = coords.iter().skip(d).step_by(3).copied().collect();
             atoms
-                .insert(*key, Array1::from_vec(col).into_dyn())
+                .insert(*key, Array1::from_vec(col).into_dyn(), None)
                 .unwrap();
         }
         atoms
-            .insert("charge", Array1::from_vec(charges.clone()).into_dyn())
+            .insert("charge", Array1::from_vec(charges.clone()).into_dyn(), None)
             .unwrap();
         let mut frame = Frame::new();
         frame.insert(ATOMS, atoms);
@@ -1307,7 +1302,7 @@ mod tests {
         ff.def_style(
             "pair",
             "coul/long/pme",
-            Params::from_pairs(&[
+            Params::from_iter([
                 ("coulomb", 332.06371),
                 ("cutoff", 4.5),
                 ("alpha", 0.35),
@@ -1333,10 +1328,10 @@ mod tests {
         let rows = [[10.0, 0.0, 0.0], [1.5, 9.0, 0.0], [-0.5, 2.0, 11.0]];
         for (h, h_rows) in [(cubic_box(10.0), cubic_box(10.0)), (tilted, rows)] {
             let mut boxed = frame.clone();
-            boxed.simbox = Some(SimBox::from_matrix(h, [0.0; 3], [true; 3]).unwrap());
+            boxed.simbox = Some(SimBox::new(Cell::Matrix(h), [0.0; 3], [true; 3]).unwrap());
             let want = PairCoulLongPme::new(params.clone(), charges.clone(), h_rows, vec![])
-                .energy(&coords);
-            let got = compile(&boxed).unwrap().calc_energy(&coords);
+                .energy_at(&coords);
+            let got = compile(&boxed).unwrap().energy_at(&coords);
             assert_eq!(got.to_bits(), want.to_bits(), "{h:?}: {got} vs {want}");
         }
 
@@ -1351,12 +1346,19 @@ mod tests {
         };
         refused(&frame);
         let mut slab = frame.clone();
-        slab.simbox = Some(SimBox::cube(10.0, array![0.0, 0.0, 0.0], [true, true, false]).unwrap());
+        slab.simbox = Some(
+            SimBox::new(
+                Cell::Lengths([10.0; 3]),
+                [0.0, 0.0, 0.0],
+                [true, true, false],
+            )
+            .unwrap(),
+        );
         refused(&slab);
         let mut general = frame.clone();
         general.simbox = Some(
-            SimBox::from_matrix(
-                [[10.0, 0.0, 0.0], [1.0, 9.0, 0.0], [0.0, 0.0, 11.0]],
+            SimBox::new(
+                Cell::Matrix([[10.0, 0.0, 0.0], [1.0, 9.0, 0.0], [0.0, 0.0, 11.0]]),
                 [0.0; 3],
                 [true; 3],
             )

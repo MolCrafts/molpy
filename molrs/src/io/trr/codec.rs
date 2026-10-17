@@ -1,20 +1,19 @@
 //! GROMACS TRR binary trajectory reader and writer.
+use crate::core::Cell;
 use crate::core::unit_factors::NM_TO_ANGSTROM;
 use crate::io::frame_columns::insert_column;
 use crate::io::frame_index::{BinaryFrameScanner, FrameIndexBuilder, FrameOffset};
-use crate::io::invalid_data;
 use crate::io::reader::{FrameReader, ReadSeek, Reader, TrajectoryReader};
 use crate::io::writer::{FrameWriter, Writer};
 use crate::io::xdr;
+use crate::io::{Sink, SinkWriter, Source, invalid_data};
 use molrs::core::Block;
 use molrs::core::Frame;
 use molrs::core::FrameAccess;
 use molrs::core::SimBox;
 use molrs::op::{F, Idx};
-use ndarray::{Array1, Array2, IxDyn, array};
-use std::fs::File;
-use std::io::{BufRead, BufWriter, Cursor, Read, Result, Seek, SeekFrom, Write};
-use std::path::Path;
+use ndarray::{Array1, IxDyn};
+use std::io::{BufRead, Cursor, Read, Result, Seek, SeekFrom, Write};
 use std::sync::OnceLock;
 
 const TRR_MAGIC: i32 = 1993;
@@ -177,9 +176,10 @@ fn read_reals<R: Read>(r: &mut R, count: usize, is_double: bool) -> Result<Vec<f
 }
 
 fn build_simbox(vals: &[f64]) -> Result<SimBox> {
-    let h = Array2::from_shape_fn((DIM, DIM), |(r, c)| vals[c * DIM + r] as F);
-    let origin = array![0.0 as F, 0.0, 0.0];
-    SimBox::new(h, origin, [true; 3]).map_err(|e| invalid_data(format!("TRR box: {e:?}")))
+    let h = std::array::from_fn(|r| std::array::from_fn(|c| vals[c * DIM + r] as F));
+    let origin = [0.0 as F, 0.0, 0.0];
+    SimBox::new(Cell::Matrix(h), origin, [true; 3])
+        .map_err(|e| invalid_data(format!("TRR box: {e:?}")))
 }
 
 /// De-interleave an `rvec` block (`[x0,y0,z0, x1,y1,z1, …]`) into three axis
@@ -250,7 +250,7 @@ fn parse_frame_here<R: Read>(r: &mut R) -> Result<Option<Frame>> {
     let id_arr = Array1::from_iter(1..=natoms as Idx)
         .into_shape_with_order(IxDyn(&[natoms]))
         .map_err(invalid_data)?;
-    atoms.insert("id", id_arr).map_err(invalid_data)?;
+    atoms.insert("id", id_arr, None).map_err(invalid_data)?;
     if let Some(x) = &x {
         insert_rvec_cols(&mut atoms, x, natoms, "x", "y", "z", NM_TO_ANGSTROM.get())?;
     }
@@ -382,15 +382,19 @@ fn scan_offsets<R: BufRead + Seek>(r: &mut R) -> Result<Vec<u64>> {
 /// # Examples
 ///
 /// ```no_run
-/// use molrs::io::{read_trr_trajectory, write_trr_trajectory};
-/// use molrs::io::trr::TrrReader;
+/// use std::path::Path;
+/// use molrs::io::trr::{TrrReader, TrrWriter};
 /// use molrs::io::reader::TrajectoryReader;
+/// use molrs::io::writer::FrameWriter;
 ///
 /// # fn main() -> std::io::Result<()> {
-/// let frames = read_trr_trajectory("traj.trr")?;          // sequential, all frames
-/// let mut r = TrrReader::open("traj.trr")?;            // random access
-/// let frame_5 = r.read_frame(5)?;
-/// write_trr_trajectory("out.trr", &frames)?;
+/// let mut r = TrrReader::open(Path::new("traj.trr"))?;
+/// let frame_5 = r.read_frame(5)?;                      // random access
+/// let frames = r.iter().collect::<std::io::Result<Vec<_>>>()?; // every frame
+/// let mut w = TrrWriter::create(Path::new("out.trr"))?;
+/// for frame in &frames {
+///     w.write(frame)?;
+/// }
 /// # Ok(())
 /// # }
 /// ```
@@ -491,7 +495,7 @@ impl<R: BufRead + Seek> TrajectoryReader for TrrReader<R> {
 fn axis<FA: FrameAccess>(frame: &FA, key: &str) -> Option<Vec<f64>> {
     frame
         .column("atoms", key)
-        .and_then(|c| c.as_float())
+        .and_then(|c| c.get::<f64>())
         .map(|view| view.iter().copied().collect::<Vec<f64>>())
 }
 
@@ -506,9 +510,10 @@ fn write_rvecs<W: Write>(w: &mut W, x: &[f64], y: &[f64], z: &[f64], scale: F) -
 
 /// A copy of `sb` with every length multiplied by `scale`.
 fn scale_simbox(sb: SimBox, scale: F) -> Result<SimBox> {
-    let h = sb.h_view().to_owned() * scale;
-    let origin = sb.origin_view().to_owned() * scale;
-    SimBox::new(h, origin, sb.pbc()).map_err(|e| invalid_data(format!("TRR box scale: {e:?}")))
+    let h = sb.matrix().map(|row| row.map(|v| v * scale));
+    let origin = sb.origin().map(|v| v * scale);
+    SimBox::new(Cell::Matrix(h), origin, sb.pbc())
+        .map_err(|e| invalid_data(format!("TRR box scale: {e:?}")))
 }
 
 /// Write one frame in single-precision TRR format.
@@ -583,7 +588,7 @@ fn write_trr_frame<W: Write, FA: FrameAccess>(w: &mut W, frame: &FA) -> Result<(
 
     if has_box {
         let sb = frame.simbox_ref().expect("box present");
-        let h = sb.h_view().to_owned() / NM_TO_ANGSTROM.get();
+        let h = ndarray::arr2(&sb.matrix()) / NM_TO_ANGSTROM.get();
         // GROMACS row-stored: box[i][j] = component j of lattice vector i = H[j][i].
         for i in 0..DIM {
             for j in 0..DIM {
@@ -626,7 +631,8 @@ impl<W: Write> FrameWriter for TrrWriter<W> {
         // Refuse to emit a frame that violates the vocabulary: a bad file
         // looks fine and is found wrong later, by whatever reads it.
         crate::io::writer::check_write_frame(frame)?;
-        write_trr_frame(&mut self.writer, frame)
+        write_trr_frame(&mut self.writer, frame)?;
+        self.writer.flush()
     }
 }
 
@@ -634,36 +640,30 @@ impl<W: Write> FrameWriter for TrrWriter<W> {
 // Convenience functions
 // ---------------------------------------------------------------------------
 
-/// Read every frame of a TRR file into memory.
-pub fn read_trr_trajectory<P: AsRef<Path>>(path: P) -> Result<Vec<Frame>> {
-    let reader = crate::io::reader::open_seekable(path)?;
-    crate::io::reader::collect_frames(&mut TrrReader::new(reader))
+/// Read the first frame of a TRR file.
+pub fn read_trr<'a>(src: impl Into<Source<'a>>) -> Result<Frame> {
+    parse_frame_at(&mut src.into().reader()?, 0)
 }
 
-impl TrrReader<Box<dyn ReadSeek>> {
-    /// Open a TRR file for trajectory-style random access.
-    pub fn open<P: AsRef<Path>>(path: P) -> Result<Self> {
-        Ok(Self::new(crate::io::reader::open_seekable(path)?))
-    }
-}
-
-/// Write a slice of frames to a TRR file (single precision).
-pub fn write_trr_trajectory<P: AsRef<Path>, FA: FrameAccess>(path: P, frames: &[FA]) -> Result<()> {
-    let file = File::create(path)?;
-    let mut w = BufWriter::new(file);
-    for f in frames {
-        write_trr_frame(&mut w, f)?;
-    }
+/// Write one frame as a one-frame TRR file (single precision, Å → nm).
+pub fn write_trr<'a>(sink: impl Into<Sink<'a>>, frame: &impl FrameAccess) -> Result<()> {
+    let mut w = sink.into().writer()?;
+    write_trr_frame(&mut w, frame)?;
     w.flush()
 }
 
-/// Write one frame as a one-frame TRR file in memory (single precision,
-/// Å → nm) — [`write_trr_trajectory`] of `[frame]` into bytes;
-/// [`read_trr_bytes`] reads it back.
-pub fn write_trr_bytes(frame: &impl FrameAccess) -> Result<Vec<u8>> {
-    let mut buf = Vec::new();
-    write_trr_frame(&mut buf, frame)?;
-    Ok(buf)
+impl TrrReader<Box<dyn ReadSeek>> {
+    /// Open a TRR file, or the bytes of one, for random access by frame.
+    pub fn open<'a>(src: impl Into<Source<'a>>) -> Result<Self> {
+        Ok(Self::new(src.into().owned_reader()?))
+    }
+}
+
+impl<'a> TrrWriter<SinkWriter<'a>> {
+    /// Create a TRR file, or fill a buffer, frame by frame.
+    pub fn create(sink: impl Into<Sink<'a>>) -> Result<Self> {
+        Ok(Self::new(sink.into().writer()?))
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -699,12 +699,6 @@ fn try_trr_frame_len(bytes: &[u8]) -> Result<Option<u32>> {
     u32::try_from(total)
         .map(Some)
         .map_err(|_| invalid_data("TRR frame larger than 4 GiB"))
-}
-
-/// Parse exactly one TRR frame from a tightly-bounded byte slice.
-pub fn read_trr_bytes(bytes: &[u8]) -> Result<Frame> {
-    let mut cursor = Cursor::new(bytes);
-    parse_frame_at(&mut cursor, 0)
 }
 
 /// Streaming frame indexer for TRR files. Each frame header carries the
@@ -759,6 +753,7 @@ impl FrameIndexBuilder for TrrIndexBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::Cell;
 
     #[test]
     fn detect_double_from_box_size() {
@@ -790,7 +785,7 @@ mod tests {
         // Row-stored: vector i = (vals[3i], vals[3i+1], vals[3i+2]).
         let vals = vec![1.0, 0.0, 0.0, 0.5, 2.0, 0.0, 0.1, 0.2, 3.0];
         let sb = build_simbox(&vals).unwrap();
-        let h = sb.h_view().to_owned();
+        let h = ndarray::arr2(&sb.matrix());
         for c in 0..3 {
             for r in 0..3 {
                 assert!(
@@ -806,21 +801,21 @@ mod tests {
     fn trr_frame(x0: f64) -> Frame {
         let mut atoms = Block::new();
         atoms
-            .insert("id", Array1::from(vec![1u64, 2]).into_dyn())
+            .insert("id", Array1::from(vec![1u64, 2]).into_dyn(), None)
             .unwrap();
         atoms
-            .insert("x", Array1::from(vec![x0, x0 + 1.0]).into_dyn())
+            .insert("x", Array1::from(vec![x0, x0 + 1.0]).into_dyn(), None)
             .unwrap();
         atoms
-            .insert("y", Array1::from(vec![0.0, 0.0]).into_dyn())
+            .insert("y", Array1::from(vec![0.0, 0.0]).into_dyn(), None)
             .unwrap();
         atoms
-            .insert("z", Array1::from(vec![0.0, 0.0]).into_dyn())
+            .insert("z", Array1::from(vec![0.0, 0.0]).into_dyn(), None)
             .unwrap();
         let mut frame = Frame::new();
         frame.insert("atoms", atoms);
-        let h = array![[15.0, 0.0, 0.0], [0.0, 15.0, 0.0], [0.0, 0.0, 15.0]];
-        frame.simbox = Some(SimBox::new(h, array![0.0, 0.0, 0.0], [true; 3]).unwrap());
+        let h = [[15.0, 0.0, 0.0], [0.0, 15.0, 0.0], [0.0, 0.0, 15.0]];
+        frame.simbox = Some(SimBox::new(Cell::Matrix(h), [0.0, 0.0, 0.0], [true; 3]).unwrap());
         frame
     }
 
@@ -864,12 +859,12 @@ mod tests {
         for (i, entry) in one_shot.iter().enumerate() {
             let lo = entry.byte_offset as usize;
             let hi = lo + entry.byte_len as usize;
-            let parsed = read_trr_bytes(&bytes[lo..hi]).expect("parse trr");
+            let parsed = read_trr(&bytes[lo..hi]).expect("parse trr");
             let x = parsed
                 .get("atoms")
                 .unwrap()
                 .get("x")
-                .and_then(|c| c.as_float())
+                .and_then(|c| c.get::<f64>())
                 .unwrap();
             assert!(
                 (x[0]
@@ -877,7 +872,7 @@ mod tests {
                         .get("atoms")
                         .unwrap()
                         .get("x")
-                        .and_then(|c| c.as_float())
+                        .and_then(|c| c.get::<f64>())
                         .unwrap()[0])
                     .abs()
                     < 1e-5

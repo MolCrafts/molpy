@@ -4,6 +4,8 @@
 
 use std::borrow::Cow;
 
+use ndarray::ArrayD;
+
 use crate::ff::ir::CombiningRule;
 use crate::ff::ir::LammpsForm;
 use crate::ff::ir::Params;
@@ -11,26 +13,72 @@ use crate::ff::ir::{IrError, ParamDimension};
 use crate::ff::ir::{ParamSource, SpecialClass};
 use molrs::op::F;
 
-/// A parameter value: a number or a string.
+/// A parameter value: a number, a string, or an N-dimensional array.
+///
+/// The value of one key of a [`Params`] bag, and a [`ParamSpec`]'s default.
 #[derive(Clone, Debug, PartialEq)]
 pub enum ParamValue {
+    /// A number.
     Num(F),
+    /// A string.
     Text(Cow<'static, str>),
+    /// An N-dimensional `f64` array (a CMAP correction's `grid`).
+    Array(ArrayD<F>),
 }
 
 impl ParamValue {
+    /// The number, or `None` when the value is not [`ParamValue::Num`].
     pub fn as_num(&self) -> Option<F> {
         match self {
             ParamValue::Num(v) => Some(*v),
-            ParamValue::Text(_) => None,
+            _ => None,
         }
     }
 
+    /// The string, or `None` when the value is not [`ParamValue::Text`].
     pub fn as_text(&self) -> Option<&str> {
         match self {
             ParamValue::Text(s) => Some(s),
-            ParamValue::Num(_) => None,
+            _ => None,
         }
+    }
+
+    /// The array, or `None` when the value is not [`ParamValue::Array`].
+    pub fn as_array(&self) -> Option<&ArrayD<F>> {
+        match self {
+            ParamValue::Array(a) => Some(a),
+            _ => None,
+        }
+    }
+}
+
+impl From<F> for ParamValue {
+    fn from(v: F) -> Self {
+        ParamValue::Num(v)
+    }
+}
+
+impl From<&str> for ParamValue {
+    fn from(v: &str) -> Self {
+        ParamValue::Text(Cow::Owned(v.to_owned()))
+    }
+}
+
+impl From<&String> for ParamValue {
+    fn from(v: &String) -> Self {
+        ParamValue::Text(Cow::Owned(v.clone()))
+    }
+}
+
+impl From<String> for ParamValue {
+    fn from(v: String) -> Self {
+        ParamValue::Text(Cow::Owned(v))
+    }
+}
+
+impl From<ArrayD<F>> for ParamValue {
+    fn from(v: ArrayD<F>) -> Self {
+        ParamValue::Array(v)
     }
 }
 
@@ -315,25 +363,16 @@ impl StyleSpec {
         let mut defaults = Params::new();
         self.fill("", &self.style_params, &mut defaults)
             .expect("an empty params holds no value of the wrong kind");
-        let mut out = Params::new();
-        for (key, value) in style.iter().filter(|&(k, v)| defaults.get(k) != Some(v)) {
-            out.set(key, value);
-        }
-        for (key, value) in style
-            .iter_strings()
-            .filter(|&(k, v)| defaults.get_str(k) != Some(v))
-        {
-            out.set_str(key, value);
-        }
-        for (key, value) in style.iter_arrays() {
-            out.set_array(key, value.clone());
-        }
-        out
+        style
+            .iter()
+            .filter(|(key, value)| defaults.get(key) != Some(*value))
+            .map(|(key, value)| (key, value.clone()))
+            .collect()
     }
 
     /// The first numeric parameter of `row` this spec does not declare (a
     /// member of an indexed family is declared), passing over the keys that
-    /// price nothing ([`Params::iter_parameters`]): what a writer of this
+    /// price nothing (annotations and estimate provenance): what a writer of this
     /// style's rows would drop, and so refuses.
     pub fn undeclared_param<'a>(&self, row: &'a Params) -> Option<&'a str> {
         row.iter_parameters()
@@ -360,17 +399,11 @@ impl StyleSpec {
         let mut filled = params.clone();
         self.fill(label, decls, &mut filled)?;
         let declared = |key: &str| declares(decls, key);
-        let mut out = Params::new();
-        for (key, value) in filled.iter().filter(|(k, _)| declared(k)) {
-            out.set(key, value);
-        }
-        for (key, value) in filled.iter_strings().filter(|(k, _)| declared(k)) {
-            out.set_str(key, value);
-        }
-        for (key, value) in filled.iter_arrays().filter(|(k, _)| declared(k)) {
-            out.set_array(key, value.clone());
-        }
-        Ok(out)
+        Ok(filled
+            .iter()
+            .filter(|(key, _)| declared(key))
+            .map(|(key, value)| (key, value.clone()))
+            .collect())
     }
 
     /// A row that states nothing, with every per-type default: what a
@@ -392,12 +425,17 @@ impl StyleSpec {
         let terms = indexed()
             .map(|d| {
                 (1..)
-                    .take_while(|m| row.get(&format!("{}{m}", d.name)).is_some())
+                    .take_while(|m| {
+                        row.get(&format!("{}{m}", d.name))
+                            .and_then(|v| v.as_num())
+                            .is_some()
+                    })
                     .count()
             })
             .max()
             .unwrap_or(0);
-        let bare = self.unindexed_one_term && indexed().any(|d| row.get(&d.name).is_some());
+        let bare = self.unindexed_one_term
+            && indexed().any(|d| row.get(&d.name).and_then(|v| v.as_num()).is_some());
         for decl in decls {
             let keys: Vec<String> = if decl.indexed {
                 for key in family(row, &decl.name) {
@@ -412,10 +450,8 @@ impl StyleSpec {
             };
             for key in keys {
                 let present = self.check(label, decl, &key, row)?;
-                match (&decl.default, present) {
-                    (Some(ParamValue::Num(v)), false) => row.set(&key, *v),
-                    (Some(ParamValue::Text(t)), false) => row.set_str(&key, t),
-                    _ => {}
+                if let (Some(default), false) = (&decl.default, present) {
+                    row.set(&key, default.clone());
                 }
             }
         }
@@ -437,7 +473,11 @@ impl StyleSpec {
             param: key.to_owned(),
             reason,
         };
-        let (num, text, array) = (row.get(key), row.get_str(key), row.get_array(key));
+        let (num, text, array) = (
+            row.get(key).and_then(|v| v.as_num()),
+            row.get(key).and_then(|v| v.as_text()),
+            row.get(key).and_then(|v| v.as_array()),
+        );
         let found = || match (num, text, array) {
             (_, Some(t), _) => format!("is the text {t:?}"),
             (_, _, Some(a)) => format!("is an array of rank {}", a.ndim()),
@@ -504,10 +544,8 @@ fn is_member(key: &str, base: &str) -> bool {
 /// `<base><m>` of the indexed family `base`, or `base` itself.
 fn family(row: &Params, base: &str) -> Vec<String> {
     row.iter()
-        .map(|(k, _)| k)
-        .chain(row.iter_strings().map(|(k, _)| k))
-        .chain(row.iter_arrays().map(|(k, _)| k))
-        .filter(|k| is_member(k, base))
+        .map(|(key, _)| key)
+        .filter(|key| is_member(key, base))
         .map(str::to_owned)
         .collect()
 }

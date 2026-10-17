@@ -25,8 +25,8 @@ use crate::ff::potential::{
     CompileError, ForceTerm, PairWeights, Potentials, ScaledTerm, WeightedTerm,
 };
 use crate::ff::style_registry::RegisteredStyle;
-use crate::ff::style_registry::Registry;
 use crate::ff::style_registry::RowSource;
+use crate::ff::style_registry::{Registry, RegistryRef};
 use molrs::core::Frame;
 use molrs::core::schema::PAIR_OVERRIDE_COLUMNS;
 use molrs::core::schema::block_names::{ATOMS, PAIRS};
@@ -46,7 +46,7 @@ use molrs::core::schema::block_names::{ATOMS, PAIRS};
 /// let mut ff = ForceField::new("example");
 /// ff.def_style("bond", "harmonic", Params::new())
 ///     .unwrap()
-///     .def_type("A-B", &["A", "B"], Params::from_pairs(&[("k", 300.0), ("r0", 1.5)]))
+///     .def_type("A-B", &["A", "B"], Params::from_iter([("k", 300.0), ("r0", 1.5)]))
 ///     .unwrap();
 ///
 /// // A frame without a `bonds` block has nothing for the bond style to read.
@@ -55,8 +55,8 @@ use molrs::core::schema::block_names::{ATOMS, PAIRS};
 /// ```
 ///
 /// Each style's category and kernel come from the force-field IR registry
-/// ([`crate::ff::style_registry`]): the process-wide one, unless the compiler was made
-/// with [`with_registry`](Self::with_registry).
+/// ([`crate::ff::style_registry`]): the force field's own
+/// ([`ForceField::with_registry`]), else the process-wide one.
 ///
 /// [`PotentialCompiler`] reads one force field and has two doors; the
 /// difference between them is what carries the non-bonded pair list:
@@ -86,22 +86,13 @@ use molrs::core::schema::block_names::{ATOMS, PAIRS};
 #[derive(Debug, Clone, Copy)]
 pub struct PotentialCompiler<'a> {
     ff: &'a ForceField,
-    registry: Option<&'a Registry>,
 }
 
 impl<'a> PotentialCompiler<'a> {
-    /// A compiler that reads `ff`, against the process-wide registry.
+    /// A compiler that reads `ff`, against `ff`'s registry
+    /// ([`ForceField::registry`]).
     pub fn new(ff: &'a ForceField) -> Self {
-        Self { ff, registry: None }
-    }
-
-    /// A compiler that reads `ff` against `registry` instead of the
-    /// process-wide one — a test's own styles, seen by nothing else.
-    pub fn with_registry(ff: &'a ForceField, registry: &'a Registry) -> Self {
-        Self {
-            ff,
-            registry: Some(registry),
-        }
+        Self { ff }
     }
 
     /// The registry this compile reads.
@@ -111,9 +102,11 @@ impl<'a> PotentialCompiler<'a> {
     /// callable's), and one that registered a style while the compile held
     /// the lock would deadlock.
     fn registry(&self) -> Cow<'a, Registry> {
-        match self.registry {
-            Some(r) => Cow::Borrowed(r),
-            None => Cow::Owned(style_registry::with_global_registry(Registry::clone)),
+        match self.ff.registry() {
+            RegistryRef::Own(r) => Cow::Borrowed(r.as_ref()),
+            RegistryRef::Global => {
+                Cow::Owned(style_registry::with_global_registry(Registry::clone))
+            }
         }
     }
 
@@ -278,7 +271,12 @@ impl<'a> PotentialCompiler<'a> {
             || {
                 // An unregistered style priced by its expression reads
                 // per-instance numbers when it has no rows.
-                if style.params().get_str("expression").is_some() {
+                if style
+                    .params()
+                    .get("expression")
+                    .and_then(|v| v.as_text())
+                    .is_some()
+                {
                     ParamSource::PerInstance
                 } else {
                     ParamSource::TypeRows
@@ -386,7 +384,12 @@ impl<'a> PotentialCompiler<'a> {
             || {
                 // An unregistered style priced by its expression reads
                 // per-instance numbers when it has no rows.
-                if style.params().get_str("expression").is_some() {
+                if style
+                    .params()
+                    .get("expression")
+                    .and_then(|v| v.as_text())
+                    .is_some()
+                {
                     ParamSource::PerInstance
                 } else {
                     ParamSource::TypeRows
@@ -463,7 +466,7 @@ impl<'a> PotentialCompiler<'a> {
         };
         let types = block
             .get("type")
-            .and_then(|c| c.as_string())
+            .and_then(|c| c.get::<String>())
             .ok_or_else(|| format!("{block_name} block missing \"type\" column"))?;
         let names = |s: &Style| -> Result<Vec<String>, String> {
             Ok(s.defs()
@@ -531,7 +534,7 @@ fn with_fallback<'r>(
     if let Some(e) = entry {
         return Ok(e.with_instance_expression(
             category,
-            style.params().get_str("expression"),
+            style.params().get("expression").and_then(|v| v.as_text()),
             reg.expression_compiler(),
         )?);
     }
@@ -623,6 +626,7 @@ fn regular_pairs<'f>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ff::potential::fixtures::OneShot;
     use molrs::core::Block;
     use molrs::op::{F, Idx};
     use ndarray::Array1;
@@ -631,7 +635,7 @@ mod tests {
         let mut atoms = Block::new();
         for (key, v) in [("x", [0.0, 1.6]), ("y", [0.0, 0.0]), ("z", [0.0, 0.0])] {
             atoms
-                .insert(key, Array1::from_vec(v.to_vec()).into_dyn())
+                .insert(key, Array1::from_vec(v.to_vec()).into_dyn(), None)
                 .unwrap();
         }
         let mut frame = Frame::new();
@@ -642,13 +646,17 @@ mod tests {
     fn with_bond(mut frame: Frame, label: &str) -> Frame {
         let mut bonds = Block::new();
         bonds
-            .insert("atomi", Array1::from_vec(vec![0 as Idx]).into_dyn())
+            .insert("atomi", Array1::from_vec(vec![0 as Idx]).into_dyn(), None)
             .unwrap();
         bonds
-            .insert("atomj", Array1::from_vec(vec![1 as Idx]).into_dyn())
+            .insert("atomj", Array1::from_vec(vec![1 as Idx]).into_dyn(), None)
             .unwrap();
         bonds
-            .insert("type", Array1::from_vec(vec![label.to_string()]).into_dyn())
+            .insert(
+                "type",
+                Array1::from_vec(vec![label.to_string()]).into_dyn(),
+                None,
+            )
             .unwrap();
         frame.insert("bonds", bonds);
         frame
@@ -661,7 +669,7 @@ mod tests {
             .def_type(
                 "CT-CT",
                 &["CT", "CT"],
-                Params::from_pairs(&[("k", 300.0), ("r0", 1.5)]),
+                Params::from_iter([("k", 300.0), ("r0", 1.5)]),
             )
             .unwrap();
         ff
@@ -672,7 +680,7 @@ mod tests {
         let mut ff = ForceField::new("t");
         ff.def_style("atom", "full", Params::new())
             .unwrap()
-            .def_type("CT", &[], Params::from_pairs(&[("mass", 12.0)]))
+            .def_type("CT", &[], Params::from_iter([("mass", 12.0)]))
             .unwrap();
         let frame = two_atoms();
         let compiler = PotentialCompiler::new(&ff);
@@ -692,7 +700,7 @@ mod tests {
         let pots = compiler.compile(&bonded).unwrap();
         assert_eq!(pots.members().len(), 1);
         // k·(r − r0)² = 300·(1.6 − 1.5)² = 3 kcal/mol (LAMMPS bond harmonic)
-        let e = pots.calc_energy(&[0.0, 0.0, 0.0, 1.6, 0.0, 0.0]);
+        let e = pots.energy_at(&[0.0, 0.0, 0.0, 1.6, 0.0, 0.0]);
         assert!((e - 3.0).abs() < 1e-10, "{e}");
         assert_eq!(compiler.compile_typed(&bonded).unwrap().len(), 1);
     }
@@ -703,7 +711,7 @@ mod tests {
     #[test]
     fn a_cmap_style_is_gated_on_cmaps_and_built_by_both_doors() {
         let mut params = Params::new();
-        params.set_array("grid", ndarray::ArrayD::zeros(vec![24, 24]));
+        params.set("grid", ndarray::ArrayD::zeros(vec![24, 24]));
         let mut ff = ForceField::new("t");
         ff.def_style("cmap", "charmm", Params::new())
             .unwrap()
@@ -717,16 +725,20 @@ mod tests {
         let mut cmaps = Block::new();
         for key in ["atomi", "atomj", "atomk", "atoml", "atomm"] {
             cmaps
-                .insert(key, Array1::from_vec(vec![0 as Idx]).into_dyn())
+                .insert(key, Array1::from_vec(vec![0 as Idx]).into_dyn(), None)
                 .unwrap();
         }
         cmaps
-            .insert("type", Array1::from_vec(vec!["c".to_string()]).into_dyn())
+            .insert(
+                "type",
+                Array1::from_vec(vec!["c".to_string()]).into_dyn(),
+                None,
+            )
             .unwrap();
         frame.insert("cmaps", cmaps);
         let pots = compiler.compile(&frame).unwrap();
         assert_eq!(pots.members().len(), 1);
-        assert_eq!(pots.calc_energy(&[0.0, 0.0, 0.0, 1.6, 0.0, 0.0]), 0.0);
+        assert_eq!(pots.energy_at(&[0.0, 0.0, 0.0, 1.6, 0.0, 0.0]), 0.0);
         let typed = compiler.compile_typed(&frame).unwrap();
         assert_eq!(typed.len(), 1);
         assert!(
@@ -748,7 +760,7 @@ mod tests {
         ff.def_style(
             "pair",
             "coul/long/pme",
-            Params::from_pairs(&[("coulomb", 332.06371), ("cutoff", 9.0)]),
+            Params::from_iter([("coulomb", 332.06371), ("cutoff", 9.0)]),
         )
         .unwrap();
         let err = PotentialCompiler::new(&ff)
@@ -772,31 +784,33 @@ mod tests {
         for (d, key) in ["x", "y", "z"].iter().enumerate() {
             let col: Vec<F> = x.iter().skip(d).step_by(3).copied().collect();
             atoms
-                .insert(*key, Array1::from_vec(col).into_dyn())
+                .insert(*key, Array1::from_vec(col).into_dyn(), None)
                 .unwrap();
         }
         atoms
             .insert(
                 "type",
                 Array1::from_vec(vec!["A".to_string(); 4]).into_dyn(),
+                None,
             )
             .unwrap();
         atoms
             .insert(
                 "charge",
                 Array1::from_vec(vec![0.5, -0.4, 0.3, 0.2]).into_dyn(),
+                None,
             )
             .unwrap();
         let mut pairs = Block::new();
         let col = |k: usize| -> Vec<Idx> { links.iter().map(|l| [l.0, l.1][k] as Idx).collect() };
         pairs
-            .insert("atomi", Array1::from_vec(col(0)).into_dyn())
+            .insert("atomi", Array1::from_vec(col(0)).into_dyn(), None)
             .unwrap();
         pairs
-            .insert("atomj", Array1::from_vec(col(1)).into_dyn())
+            .insert("atomj", Array1::from_vec(col(1)).into_dyn(), None)
             .unwrap();
         pairs
-            .insert("is_14", Array1::from_vec(is_14.to_vec()).into_dyn())
+            .insert("is_14", Array1::from_vec(is_14.to_vec()).into_dyn(), None)
             .unwrap();
         let mut frame = Frame::new();
         frame.insert("atoms", atoms);
@@ -847,14 +861,15 @@ mod tests {
         for (name, row, style) in cases {
             let mut ff = ForceField::new("t");
             ff.set_special_bonds(special);
-            let mut sp = Params::from_pairs(&style);
+            let mut sp = Params::from_iter(style.iter().copied());
             sp.set("cutoff", rc);
             let s = ff.def_style("pair", name, sp).unwrap();
             if !row.is_empty() {
-                s.def_type("A", &["A"], Params::from_pairs(&row)).unwrap();
+                s.def_type("A", &["A"], Params::from_iter(row.iter().copied()))
+                    .unwrap();
             }
             let compiler = PotentialCompiler::new(&ff);
-            let (e, f) = compiler.compile(&frame).unwrap().calc_energy_forces(&x);
+            let (e, f) = compiler.compile(&frame).unwrap().energy_forces_at(&x);
             let shifted = style.iter().any(|(k, _)| *k == "shift");
             let by_hand: F = links
                 .iter()
@@ -880,13 +895,14 @@ mod tests {
             let table = table_over(&x, &links);
             let factor: Vec<F> = (0..links.len()).map(weight).collect();
             let mut ft = vec![0.0; x.len()];
-            let mut et = 0.0;
+            let mut acc = crate::ff::potential::Accumulator::adding_into(&mut ft);
             for (member, _) in compiler.compile_typed(&frame).unwrap() {
                 let ForceTerm::Pair(p) = &member else {
                     panic!("a pair member")
                 };
-                et += p.accumulate_pairs(&x, &table, &factor, &mut ft).0;
+                p.evaluate_pairs(&x, &table, &factor, &mut acc);
             }
+            let et = acc.energy();
             let scale = f.iter().fold(e.abs(), |m, v| m.max(v.abs()));
             assert!(scale > 1e-6, "{name}: the pairs inside must contribute");
             assert!(

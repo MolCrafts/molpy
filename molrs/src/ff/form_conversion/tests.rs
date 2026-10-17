@@ -4,6 +4,7 @@
 //! fit's residual is reported and monotone in its metric; a third party's
 //! expression style joins a family by registering a codec.
 
+use crate::ff::potential::fixtures::OneShot;
 use std::f64::consts::PI;
 
 use rand::rngs::StdRng;
@@ -33,10 +34,11 @@ fn frame(block: &str, rows: &[(&[usize], &str)]) -> Frame {
     let mut b = Block::new();
     for (e, key) in ENDS[..arity].iter().enumerate() {
         let col: Vec<Idx> = rows.iter().map(|(a, _)| a[e] as Idx).collect();
-        b.insert(*key, Array1::from_vec(col).into_dyn()).unwrap();
+        b.insert(*key, Array1::from_vec(col).into_dyn(), None)
+            .unwrap();
     }
     let types: Vec<String> = rows.iter().map(|(_, t)| (*t).to_owned()).collect();
-    b.insert("type", Array1::from_vec(types).into_dyn())
+    b.insert("type", Array1::from_vec(types).into_dyn(), None)
         .unwrap();
     let mut f = Frame::new();
     f.insert(block, b);
@@ -44,10 +46,13 @@ fn frame(block: &str, rows: &[(&[usize], &str)]) -> Frame {
 }
 
 fn energy(ff: &ForceField, registry: &Registry, frame: &Frame, coords: &[F]) -> F {
-    PotentialCompiler::with_registry(ff, registry)
-        .compile(frame)
-        .unwrap_or_else(|e| panic!("{e}\n{ff:#?}"))
-        .calc_energy(coords)
+    PotentialCompiler::new(
+        &ff.clone()
+            .with_registry(std::sync::Arc::new(registry.clone())),
+    )
+    .compile(frame)
+    .unwrap_or_else(|e| panic!("{e}\n{ff:#?}"))
+    .energy_at(coords)
 }
 
 fn coords(rng: &mut StdRng, atoms: usize) -> Vec<F> {
@@ -112,7 +117,7 @@ fn assert_same_energy(
 // ── random rows of every built-in member ────────────────────────────────────
 
 fn pairs(p: &[(&str, F)]) -> Params {
-    Params::from_pairs(p)
+    Params::from_iter(p.iter().copied())
 }
 
 fn c(rng: &mut StdRng) -> F {
@@ -472,7 +477,7 @@ fn canonical_merges_the_styles_of_a_category() {
     let mut rng = StdRng::seed_from_u64(SEED + 1);
     let mut ff = ForceField::new("mixed");
     let mut opls = pairs(&[("k1", 1.3), ("k2", -0.4), ("k3", 0.2), ("k4", 0.0)]);
-    opls.set_str("desc", "from OPLS");
+    opls.set("desc", "from OPLS");
     ff.def_style("dihedral", "opls", Params::new())
         .unwrap()
         .def_type("x", &["a", "b", "c", "d"], opls)
@@ -521,7 +526,10 @@ fn canonical_merges_the_styles_of_a_category() {
     );
     let periodic = out.get_style("dihedral", "periodic").unwrap();
     let x = &periodic.type_rows()[0];
-    assert_eq!((x.0, x.2.get_str("desc")), ("x", Some("from OPLS")));
+    assert_eq!(
+        (x.0, x.2.get("desc").and_then(|v| v.as_text())),
+        ("x", Some("from OPLS"))
+    );
     let f = frame("dihedrals", &[(&[0, 1, 2, 3], "x"), (&[1, 2, 3, 4], "y")]);
     for _ in 0..8 {
         let c = coords(&mut rng, 5);
@@ -574,7 +582,7 @@ fn lj_class2_is_the_nine_six_lj_cut() {
     for _ in 0..20 {
         let mut ff = ForceField::new("c2");
         let style = ff
-            .def_style("pair", "lj/class2", Params::from_pairs(&[("cutoff", 12.0)]))
+            .def_style("pair", "lj/class2", Params::from_iter([("cutoff", 12.0)]))
             .unwrap();
         for (name, i, j) in [("A", "A", "A"), ("B", "B", "B"), ("AB", "A", "B")] {
             let row = pairs(&[
@@ -592,6 +600,7 @@ fn lj_class2_is_the_nine_six_lj_cut() {
             .insert(
                 "type",
                 Array1::from_vec(vec!["A".to_owned(), "B".to_owned(), "A".to_owned()]).into_dyn(),
+                None,
             )
             .unwrap();
         let types = ["A", "B", "A"];
@@ -601,12 +610,14 @@ fn lj_class2_is_the_nine_six_lj_cut() {
             .insert(
                 "atomi",
                 Array1::from_vec(ij.iter().map(|p| p.0 as Idx).collect()).into_dyn(),
+                None,
             )
             .unwrap();
         pairs_block
             .insert(
                 "atomj",
                 Array1::from_vec(ij.iter().map(|p| p.1 as Idx).collect()).into_dyn(),
+                None,
             )
             .unwrap();
         pairs_block
@@ -618,6 +629,7 @@ fn lj_class2_is_the_nine_six_lj_cut() {
                         .collect(),
                 )
                 .into_dyn(),
+                None,
             )
             .unwrap();
         let mut f = Frame::new();
@@ -627,7 +639,10 @@ fn lj_class2_is_the_nine_six_lj_cut() {
         let lj = r.canonical(&ff).unwrap();
         let s = lj.get_style("pair", "lj/cut").expect("lj/cut");
         assert_eq!(
-            (s.params().get("n"), s.params().get("m")),
+            (
+                s.params().get("n").and_then(|v| v.as_num()),
+                s.params().get("m").and_then(|v| v.as_num())
+            ),
             (Some(9.0), Some(6.0))
         );
         let back = r.to_form(&lj, "pair", "lj/class2").unwrap();
@@ -651,7 +666,7 @@ fn lj_class2_is_the_nine_six_lj_cut() {
     }
     // The 12-6 has no lj/class2 form.
     let mut ff = ForceField::new("lj");
-    ff.def_style("pair", "lj/cut", Params::from_pairs(&[("cutoff", 10.0)]))
+    ff.def_style("pair", "lj/cut", Params::from_iter([("cutoff", 10.0)]))
         .unwrap()
         .def_type("A", &["A"], pairs(&[("epsilon", 0.1), ("sigma", 3.0)]))
         .unwrap();
@@ -756,7 +771,11 @@ fn out_of_image_conversions_raise_naming_the_condition() {
         .type_rows()[0]
         .2;
     assert_eq!(
-        (p.get("k"), p.get("periodicity"), p.get("phase")),
+        (
+            p.get("k").and_then(|v| v.as_num()),
+            p.get("periodicity").and_then(|v| v.as_num()),
+            p.get("phase").and_then(|v| v.as_num())
+        ),
         (Some(1.0), Some(2.0), Some(180.0))
     );
 }
@@ -860,7 +879,10 @@ fn the_residual_is_monotone_in_the_metric() {
             .unwrap();
             let want = OplsForm::nearest(&series);
             for (i, k) in want.k.iter().enumerate() {
-                let got = row.get(&format!("k{}", i + 1)).unwrap();
+                let got = row
+                    .get(&format!("k{}", i + 1))
+                    .and_then(|v| v.as_num())
+                    .unwrap();
                 assert!((got - k).abs() < 1e-7, "n = {n}: k{} = {got} vs {k}", i + 1);
             }
         }
@@ -912,7 +934,10 @@ fn a_free_offset_absorbs_the_constant() {
     assert!(free.rms() < 1e-10, "{free:?}");
     assert!((free.types[0].offset - 2.0).abs() < 1e-10, "{free:?}");
     let row = &out.get_style("dihedral", "opls").unwrap().type_rows()[0].2;
-    assert!((row.get("k2").unwrap() + 2.0).abs() < 1e-10, "{row:?}");
+    assert!(
+        (row.get("k2").and_then(|v| v.as_num()).unwrap() + 2.0).abs() < 1e-10,
+        "{row:?}"
+    );
 }
 
 /// No codec is needed: a harmonic improper fitted to a periodic one under a
@@ -931,7 +956,10 @@ fn a_style_without_a_codec_fits_through_its_energy() {
         .free_offset();
     let (out, res) = r.fit_form(&ff, "improper", "harmonic", &metric).unwrap();
     let row = &out.get_style("improper", "harmonic").unwrap().type_rows()[0].2;
-    let (k, chi0) = (row.get("k").unwrap(), row.get("chi0").unwrap());
+    let (k, chi0) = (
+        row.get("k").and_then(|v| v.as_num()).unwrap(),
+        row.get("chi0").and_then(|v| v.as_num()).unwrap(),
+    );
     let second_order = CosineTermForm {
         k: 2.0,
         periodicity: 2.0,
@@ -987,8 +1015,9 @@ fn cos3(r: &mut Registry) {
         let k = tp
             .row
             .get("k")
+            .and_then(|v| v.as_num())
             .ok_or_else(|| FormRefusal::new("missing `k`"))?;
-        Ok(TypeParams::row(Params::from_pairs(&[
+        Ok(TypeParams::row(Params::from_iter([
             ("k1", k),
             ("periodicity1", 3.0),
             ("phase1", 0.0),
@@ -1003,7 +1032,7 @@ fn cos3(r: &mut Registry) {
                 t.periodicity, t.phase
             )));
         }
-        Ok(TypeParams::row(Params::from_pairs(&[("k", t.k)])))
+        Ok(TypeParams::row(Params::from_iter([("k", t.k)])))
     };
     r.register_form(
         "dihedral",
@@ -1033,7 +1062,7 @@ fn a_registered_expression_style_takes_part_in_its_family() {
         );
         let out = r.to_form(&opls, "dihedral", "cos3").unwrap();
         let row = &out.get_style("dihedral", "cos3").unwrap().type_rows()[0].2;
-        assert_same(row.get("k").unwrap(), k, "k");
+        assert_same(row.get("k").and_then(|v| v.as_num()).unwrap(), k, "k");
         assert_same_energy(&mut rng, &r, "dihedral", &opls, &out, "opls → cos3");
         let back = r.to_form(&out, "dihedral", "multi/harmonic").unwrap();
         assert_same_energy(&mut rng, &r, "dihedral", &opls, &back, "cos3 → multi");
@@ -1067,6 +1096,7 @@ fn a_registered_expression_style_takes_part_in_its_family() {
     let k = out.get_style("dihedral", "cos3").unwrap().type_rows()[0]
         .2
         .get("k")
+        .and_then(|v| v.as_num())
         .unwrap();
     assert!((k - 1.0).abs() < 1e-8, "the cos 3φ coefficient: k = {k}");
     assert!(!res.types[0].exact && res.rms() > 0.05, "{res:?}");

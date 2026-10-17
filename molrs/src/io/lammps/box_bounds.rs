@@ -1,9 +1,9 @@
 //! Orthogonal / triclinic box bounds → [`SimBox`].
 
+use crate::core::Cell;
 use crate::io::invalid_data;
 use molrs::core::SimBox;
 use molrs::op::Pbc3;
-use ndarray::array;
 
 /// Simulation-box extents as written in LAMMPS data headers or dump
 /// `ITEM: BOX BOUNDS` blocks.
@@ -43,12 +43,12 @@ pub(crate) fn simbox_from_bounds(bounds: &BoxBounds, pbc: Pbc3) -> std::io::Resu
     if lx <= 0.0 || ly <= 0.0 || lz <= 0.0 {
         return Ok(None);
     }
-    let origin = array![bounds.xlo, bounds.ylo, bounds.zlo];
+    let origin = [bounds.xlo, bounds.ylo, bounds.zlo];
     let simbox = if let (Some(xy), Some(xz), Some(yz)) = (bounds.xy, bounds.xz, bounds.yz) {
-        let h = array![[lx, xy, xz], [0.0, ly, yz], [0.0, 0.0, lz]];
-        SimBox::new(h, origin, pbc).map_err(|e| invalid_data(format!("{:?}", e)))?
+        let h = [[lx, xy, xz], [0.0, ly, yz], [0.0, 0.0, lz]];
+        SimBox::new(Cell::Matrix(h), origin, pbc).map_err(|e| invalid_data(format!("{:?}", e)))?
     } else {
-        SimBox::ortho(array![lx, ly, lz], origin, pbc)
+        SimBox::new(Cell::Lengths([lx, ly, lz]), origin, pbc)
             .map_err(|e| invalid_data(format!("{:?}", e)))?
     };
     Ok(Some(simbox))

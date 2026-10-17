@@ -1,13 +1,14 @@
 //! Exact single-wall carbon nanotubes built from rolled graphene topology.
 
+use crate::core::Cell;
 use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
 use std::f64::consts::PI;
 use std::fmt;
 
-use ndarray::array;
-
 use crate::core::Atomistic;
+use crate::core::{Element, Props};
+
 use crate::core::Frame;
 use crate::core::SimBox;
 use crate::core::keys;
@@ -15,10 +16,16 @@ use crate::op::F;
 
 type SiteKey = (i64, i64, u8);
 
-#[derive(Debug, Clone, Copy)]
-enum TubeExtent {
-    Default,
+/// How far a [`CarbonTubeBuilder`] tube extends along its axis.
+///
+/// Unset, the tube is one translational cell long (two when periodic, the
+/// shortest periodic graph without parallel edges for most chiralities).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum TubeExtent {
+    /// A fixed number (≥ 1) of axial translational cells.
     Cells(usize),
+    /// An axial length in angstrom (> 0), rounded up to complete
+    /// translational cells.
     Length(f64),
 }
 
@@ -80,7 +87,7 @@ struct CompiledTube {
 pub struct CarbonTubeBuilder {
     n: u32,
     m: u32,
-    extent: TubeExtent,
+    extent: Option<TubeExtent>,
     bond_length: f64,
     periodic: bool,
     vacuum: f64,
@@ -106,7 +113,7 @@ impl CarbonTubeBuilder {
         Ok(Self {
             n,
             m,
-            extent: TubeExtent::Default,
+            extent: None,
             bond_length: 1.42,
             periodic: false,
             vacuum: 10.0,
@@ -115,19 +122,20 @@ impl CarbonTubeBuilder {
         })
     }
 
-    /// Use a fixed number of axial translational cells.
-    pub fn with_cells(mut self, cells: usize) -> Result<Self, CarbonTubeError> {
-        if cells == 0 {
-            return Err(CarbonTubeError::InvalidParameter("cells"));
+    /// Set the axial extent: a cell count or a length rounded up to complete
+    /// cells.
+    ///
+    /// # Errors
+    ///
+    /// [`CarbonTubeError::InvalidParameter`] for zero cells or a length that
+    /// is not finite and positive.
+    pub fn with_extent(mut self, extent: TubeExtent) -> Result<Self, CarbonTubeError> {
+        match extent {
+            TubeExtent::Cells(0) => return Err(CarbonTubeError::InvalidParameter("cells")),
+            TubeExtent::Cells(_) => {}
+            TubeExtent::Length(length) => positive("length", length)?,
         }
-        self.extent = TubeExtent::Cells(cells);
-        Ok(self)
-    }
-
-    /// Round an axial length up to complete translational cells.
-    pub fn with_length(mut self, length: f64) -> Result<Self, CarbonTubeError> {
-        positive("length", length)?;
-        self.extent = TubeExtent::Length(length);
+        self.extent = Some(extent);
         Ok(self)
     }
 
@@ -193,15 +201,15 @@ impl CarbonTubeBuilder {
     /// Resolved number of complete axial translational cells.
     pub fn cells(&self) -> usize {
         match self.extent {
-            TubeExtent::Default => {
+            None => {
                 if self.periodic {
                     2
                 } else {
                     1
                 }
             }
-            TubeExtent::Cells(cells) => cells,
-            TubeExtent::Length(length) => {
+            Some(TubeExtent::Cells(cells)) => cells,
+            Some(TubeExtent::Length(length)) => {
                 (length / self.axial_unit_length()).ceil().max(1.0) as usize
             }
         }
@@ -218,20 +226,24 @@ impl CarbonTubeBuilder {
         let mut graph = Atomistic::new();
         let mut atoms = Vec::with_capacity(compiled.coordinates.len());
         for [x, y, z] in compiled.coordinates {
-            let atom = graph.add_atom_xyz("C", x, y, z);
-            graph
-                .set_atom(atom, keys::CHARGE, self.charge)
-                .map_err(|error| CarbonTubeError::Graph(error.to_string()))?;
+            let mut props = Props::new()
+                .with(keys::ATOMIC_NUMBER, Element::C)
+                .with(keys::X, x)
+                .with(keys::Y, y)
+                .with(keys::Z, z)
+                .with(keys::CHARGE, self.charge);
             if let Some(atom_type) = &self.atom_type {
-                graph
-                    .set_atom(atom, keys::TYPE, atom_type.as_str())
-                    .map_err(|error| CarbonTubeError::Graph(error.to_string()))?;
+                props.set(keys::TYPE, atom_type.as_str());
             }
-            atoms.push(atom);
+            atoms.push(
+                graph
+                    .add_atom(props)
+                    .map_err(|error| CarbonTubeError::Graph(error.to_string()))?,
+            );
         }
         for (i, j) in compiled.bonds {
             graph
-                .add_bond(atoms[i], atoms[j])
+                .add_bond(atoms[i], atoms[j], Props::new())
                 .map_err(|error| CarbonTubeError::Graph(error.to_string()))?;
         }
 
@@ -254,12 +266,12 @@ impl CarbonTubeBuilder {
         axial_length: f64,
     ) -> Result<SimBox, CarbonTubeError> {
         let transverse = 2.0 * (radius + self.vacuum);
-        SimBox::ortho(
-            array![transverse as F, transverse as F, axial_length as F],
-            array![
+        SimBox::new(
+            Cell::Lengths([transverse as F, transverse as F, axial_length as F]),
+            [
                 (-radius - self.vacuum) as F,
                 (-radius - self.vacuum) as F,
-                0.0 as F
+                0.0 as F,
             ],
             [false, false, self.periodic],
         )
@@ -441,7 +453,7 @@ mod tests {
     fn periodic_tube_has_exact_graphene_degree() {
         let frame = CarbonTubeBuilder::new(4, 2)
             .unwrap()
-            .with_cells(2)
+            .with_extent(TubeExtent::Cells(2))
             .unwrap()
             .with_periodic(true)
             .build()
@@ -453,10 +465,10 @@ mod tests {
         assert_eq!(bonds.n_rows(), Some(3 * atom_count / 2));
 
         let mut degree = vec![0; atom_count];
-        for &index in bonds.get("atomi").and_then(|c| c.as_uint()).unwrap() {
+        for &index in bonds.get("atomi").and_then(|c| c.get::<u64>()).unwrap() {
             degree[index as usize] += 1;
         }
-        for &index in bonds.get("atomj").and_then(|c| c.as_uint()).unwrap() {
+        for &index in bonds.get("atomj").and_then(|c| c.get::<u64>()).unwrap() {
             degree[index as usize] += 1;
         }
         assert!(degree.into_iter().all(|value| value == 3));
@@ -466,7 +478,7 @@ mod tests {
     fn build_returns_independent_frames_with_axial_cell() {
         let builder = CarbonTubeBuilder::new(5, 5)
             .unwrap()
-            .with_cells(2)
+            .with_extent(TubeExtent::Cells(2))
             .unwrap()
             .with_periodic(true)
             .with_vacuum(4.0)
@@ -485,11 +497,34 @@ mod tests {
     fn one_cell_armchair_periodic_graph_is_rejected() {
         let result = CarbonTubeBuilder::new(5, 5)
             .unwrap()
-            .with_cells(1)
+            .with_extent(TubeExtent::Cells(1))
             .unwrap()
             .with_periodic(true)
             .build();
         assert_eq!(result.unwrap_err(), CarbonTubeError::PeriodicCellTooShort);
+    }
+
+    #[test]
+    fn with_extent_refuses_zero_cells_and_a_non_positive_length() {
+        let builder = CarbonTubeBuilder::new(6, 0).unwrap();
+        for extent in [
+            TubeExtent::Cells(0),
+            TubeExtent::Length(0.0),
+            TubeExtent::Length(-1.0),
+            TubeExtent::Length(f64::NAN),
+        ] {
+            assert!(
+                matches!(
+                    builder.clone().with_extent(extent),
+                    Err(CarbonTubeError::InvalidParameter(_))
+                ),
+                "{extent:?}"
+            );
+        }
+        assert_eq!(
+            builder.with_extent(TubeExtent::Cells(3)).unwrap().cells(),
+            3
+        );
     }
 
     #[test]
@@ -501,7 +536,7 @@ mod tests {
             .lengths()[2];
         let cell = CarbonTubeBuilder::new(6, 0)
             .unwrap()
-            .with_length(2.2 * unit)
+            .with_extent(TubeExtent::Length(2.2 * unit))
             .unwrap()
             .cell()
             .unwrap();

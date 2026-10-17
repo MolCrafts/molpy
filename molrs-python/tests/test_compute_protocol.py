@@ -1,4 +1,5 @@
-"""molrs.compute.Compute is a runtime_checkable Protocol every compute class
+"""molrs.compute.Compute is a runtime_checkable Protocol every batch compute
+class satisfies; molrs.compute.Stream the one every stream (Msd, Vacf, Rdf)
 satisfies."""
 
 from __future__ import annotations
@@ -6,7 +7,7 @@ from __future__ import annotations
 import inspect
 
 import molrs
-from molrs.compute import Compute, ComputeSpec
+from molrs.compute import Compute, ComputeSpec, Stream
 
 
 def _compute_classes() -> dict[str, type]:
@@ -20,6 +21,17 @@ def _compute_classes() -> dict[str, type]:
     }
 
 
+def _stream_classes() -> dict[str, type]:
+    """Every exported class of ``molrs.compute`` that has an ``accumulator``."""
+    return {
+        name: obj
+        for name in molrs.compute.__all__
+        if inspect.isclass(obj := getattr(molrs.compute, name))
+        and obj is not Stream
+        and callable(getattr(obj, "accumulator", None))
+    }
+
+
 class OnlyCompute:
     def compute(self, **inputs):
         return None
@@ -29,15 +41,22 @@ class TestComputeProtocol:
     def test_structural_class_satisfies_the_protocol(self) -> None:
         assert isinstance(OnlyCompute(), Compute)
 
-    def test_every_compute_class_satisfies_the_protocol(self) -> None:
-        classes = _compute_classes()
-        assert set(classes) == {spec.name for spec in ComputeSpec.all()}
+    def test_every_compute_class_satisfies_its_protocol(self) -> None:
+        computes, streams = _compute_classes(), _stream_classes()
+        assert set(streams) == {"Msd", "Vacf", "Rdf"}
+        assert set(computes) == {spec.name for spec in ComputeSpec.all()} - set(streams)
         assert not [
-            name for name, cls in classes.items() if not issubclass(cls, Compute)
+            name for name, cls in computes.items() if not issubclass(cls, Compute)
         ]
+        assert not [
+            name for name, cls in streams.items() if not issubclass(cls, Stream)
+        ]
+        assert not [name for name, cls in streams.items() if issubclass(cls, Compute)]
 
     def test_an_instance_satisfies_the_protocol(self) -> None:
-        assert isinstance(molrs.compute.Msd(4), Compute)
+        assert isinstance(molrs.compute.Correlator("product", 4), Compute)
+        assert isinstance(molrs.compute.Msd(4), Stream)
+        assert not isinstance(molrs.compute.Msd(4), Compute)
 
     def test_a_result_is_not_a_compute(self) -> None:
         assert not issubclass(molrs.compute.TimeCorrelation, Compute)

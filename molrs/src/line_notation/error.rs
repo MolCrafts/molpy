@@ -146,8 +146,9 @@ pub enum SmilesErrorKind {
     /// An IR carrying bonding descriptors was handed to
     /// `SmilesIr::to_atomistic`, the plain IR → graph conversion, which has
     /// nowhere to put them and would silently drop them. The rendered message
-    /// names `SmilesIr::to_atomistic_with_descriptors`, the conversion that
-    /// returns them alongside the graph, and `SmilesIr::to_template`.
+    /// names the fragment route: `SmilesIr::from_fragment`, then
+    /// `FragmentIr::to_atomistic` (which returns them alongside the graph) or
+    /// `FragmentIr::to_template`.
     DescriptorsUnconvertible,
     /// A bond symbol was written *inside* a descriptor bracket — the
     /// `BigSMILES` spelling `[<=1]`, or `[$-]`. `CGsmiles` writes the order
@@ -168,11 +169,6 @@ pub enum SmilesErrorKind {
     /// `C.[$]`, whose second `.`-separated component contains no atom for the
     /// descriptor to bind to.
     DanglingDescriptor,
-    /// [`read_smiles_str`](crate::io::read_smiles_str) reads one molecule, and
-    /// the string names more: `.` separates components, so `CCO.O` is a *set*
-    /// of two molecules. The payload is the component count. The message says
-    /// how to take them apart (`SmilesIr(s).components()`).
-    MultipleComponents(usize),
     /// A `CGsmiles` atom-level annotation — a weight `[C;0.5]`, a chirality
     /// `[C;1;S]`, or wildcard overloading `[*;s=C,0]` — was written. The
     /// fragment dialect does not support these, and this error names the
@@ -379,8 +375,8 @@ impl SmilesErrorKind {
                     .to_owned()
             }
             SmilesErrorKind::DescriptorsUnconvertible => "this atom carries bonding descriptors \
-                 — convert a fragment body with SmilesIr::to_atomistic_with_descriptors \
-                 or SmilesIr::to_template"
+                 — parse a fragment body with SmilesIr::from_fragment and convert it with \
+                 FragmentIr::to_atomistic or FragmentIr::to_template"
                 .to_owned(),
             SmilesErrorKind::BondInsideDescriptor => {
                 "bond symbol inside a bonding descriptor bracket \
@@ -393,11 +389,6 @@ impl SmilesErrorKind {
             SmilesErrorKind::InvalidDescriptorOrder(k) => {
                 format!("bond order {k:?} cannot annotate a bonding descriptor")
             }
-            SmilesErrorKind::MultipleComponents(n) => format!(
-                "read_smiles_str reads one molecule and this string names {n} \
-                 '.'-separated components; take them apart with \
-                 SmilesIr(s).components()"
-            ),
             SmilesErrorKind::DanglingDescriptor => {
                 "bonding descriptor has no atom to bind to".to_owned()
             }
@@ -640,7 +631,7 @@ mod tests {
     fn test_display_descriptors_unconvertible_names_fragment_converter() {
         let msg = message(SmilesErrorKind::DescriptorsUnconvertible);
         assert!(
-            msg.contains("SmilesIr::to_atomistic_with_descriptors"),
+            msg.contains("FragmentIr::to_atomistic"),
             "message was {msg:?}"
         );
     }

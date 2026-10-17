@@ -34,15 +34,22 @@
 //! An attribute that parses as a number is a numeric parameter; any other is a
 //! string parameter. OpenMM's own force-field XML (`<HarmonicBondForce>`, nm,
 //! kJ/mol) is a different document, read by
-//! [`read_openmm_forcefield`](crate::io::read_openmm_forcefield).
+//! [`OpenmmXmlReader`](crate::io::openmm_xml::OpenmmXmlReader).
+//!
+//! [`XmlForcefieldReader`] reads it and [`XmlForcefieldWriter`] writes it,
+//! through [`ForceFieldReader::read`] and [`ForceFieldWriter::write`].
 
+use crate::ff::forcefield::Category;
 use std::fmt::Write as _;
 
 use ndarray::{ArrayD, IxDyn};
 
 use crate::ff::forcefield::{DefError, ForceField, Style};
 use crate::ff::ir::{Params, SpecialBonds};
+use crate::io::reader::ForceFieldReader;
+use crate::io::writer::{ForceFieldWriteError, ForceFieldWriter, put_text};
 use crate::io::xml_attribute::{attr_str, forcefield_root};
+use crate::io::{Sink, Source, invalid_data};
 
 /// The endpoint attributes of a `<Type>`, in order.
 const ENDPOINT_ATTRS: [&str; 5] = ["class1", "class2", "class3", "class4", "class5"];
@@ -50,25 +57,80 @@ const ENDPOINT_ATTRS: [&str; 5] = ["class1", "class2", "class3", "class4", "clas
 /// Every style element's name ends with this.
 const STYLE_SUFFIX: &str = "Style";
 
-/// Read a [`ForceField`] from a force-field XML file.
-pub fn read_xml_forcefield(path: &str) -> Result<ForceField, String> {
-    let xml = std::fs::read_to_string(path).map_err(|e| format!("read {path}: {e}"))?;
-    read_xml_forcefield_str(&xml)
-}
-
-/// Read a [`ForceField`] from force-field XML text — the inverse of
-/// [`write_xml_forcefield_str`].
+/// Reader of the force-field XML: a [`ForceField`] from the document
+/// [`XmlForcefieldWriter`] writes, values as written.
 ///
 /// The root's `units` become the force field's declared units; without them
 /// the force field declares none (and reads the `real` default).
 ///
-/// # Errors
+/// [`read`](ForceFieldReader::read) refuses, as
+/// [`InvalidData`](std::io::ErrorKind::InvalidData) naming it: a root that is
+/// not `<ForceField>` or carries another attribute than `name` and `units`; an
+/// element none of the layout's (an OpenMM `<…Force>` names
+/// [`OpenmmXmlReader`](crate::io::openmm_xml::OpenmmXmlReader)); a missing or
+/// malformed attribute; a style or row that does not fit its category.
 ///
-/// The root is not `<ForceField>` or carries another attribute than `name` and
-/// `units`; an element is none of the layout's (an OpenMM `<…Force>` names
-/// [`read_openmm_forcefield`](crate::io::read_openmm_forcefield)); an attribute
-/// is missing or malformed; a style or row does not fit its category.
-pub fn read_xml_forcefield_str(xml: &str) -> Result<ForceField, String> {
+/// ```
+/// use molrs::io::XmlForcefieldReader;
+/// use molrs::io::reader::ForceFieldReader;
+///
+/// let xml = r#"<ForceField name="t" units="real">
+///   <BondStyle name="harmonic">
+///     <Type name="OW-HW" class1="OW" class2="HW" k="450.0" r0="0.9572" />
+///   </BondStyle>
+/// </ForceField>"#;
+/// let ff = XmlForcefieldReader::new().read(xml.as_bytes()).unwrap();
+/// assert_eq!(ff.get_bondtypes().len(), 1);
+/// ```
+#[derive(Debug, Clone, Copy, Default)]
+pub struct XmlForcefieldReader;
+
+impl XmlForcefieldReader {
+    /// The reader; the format has no settings.
+    pub fn new() -> Self {
+        Self
+    }
+}
+
+impl ForceFieldReader for XmlForcefieldReader {
+    fn read<'a>(&self, src: impl Into<Source<'a>>) -> std::io::Result<ForceField> {
+        parse(&src.into().text()?).map_err(invalid_data)
+    }
+}
+
+/// Writer of the force-field XML — the inverse of [`XmlForcefieldReader`].
+///
+/// The root states the force field's units (declared, or the `real`
+/// default); values are written as it holds them. Reading the file back gives
+/// the force field with its units declared.
+///
+/// [`write`](ForceFieldWriter::write) refuses what the layout cannot hold, by
+/// name: a parameter called `name` (or `class1` … on a row); a string
+/// parameter whose value reads back as a number; a category no element name
+/// reads back as; a style of a category nothing declares that has no type rows
+/// to state its arity.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct XmlForcefieldWriter;
+
+impl XmlForcefieldWriter {
+    /// The writer; the format has no settings.
+    pub fn new() -> Self {
+        Self
+    }
+}
+
+impl ForceFieldWriter for XmlForcefieldWriter {
+    fn write<'a>(
+        &self,
+        sink: impl Into<Sink<'a>>,
+        ff: &ForceField,
+    ) -> Result<(), ForceFieldWriteError> {
+        put_text(sink.into(), &render(ff)?)
+    }
+}
+
+/// The force field the force-field XML text `xml` states.
+fn parse(xml: &str) -> Result<ForceField, String> {
     let doc = roxmltree::Document::parse(xml).map_err(|e| format!("XML parse error: {e}"))?;
     let root = forcefield_root(&doc)?;
     if let Some(attr) = root
@@ -102,7 +164,7 @@ fn foreign_element(tag: &str) -> String {
     if tag.ends_with("Force") || matches!(tag, "AtomTypes" | "Residues" | "Script") {
         format!(
             "<{tag}> belongs to OpenMM's force-field XML, not to this one: read it with \
-             read_openmm_forcefield"
+             OpenmmXmlReader"
         )
     } else {
         format!(
@@ -208,7 +270,7 @@ fn read_style(ff: &mut ForceField, category: &str, node: &roxmltree::Node) -> Re
                 ));
             };
             let arity = endpoints(first).map_err(|e| format!("{what}: {e}"))?.len();
-            ff.def_style_with_arity(category, arity, name, params.clone())
+            ff.def_style(Category::new(category).arity(arity), name, params.clone())
                 .map_err(|e| format!("{what}: {e}"))?;
         }
         Err(e) => return Err(format!("{what}: {e}")),
@@ -273,7 +335,7 @@ fn attribute_params(node: &roxmltree::Node, reserved: &[&str]) -> Params {
         }
         match attr.value().parse::<f64>() {
             Ok(value) => params.set(attr.name(), value),
-            Err(_) => params.set_str(attr.name(), attr.value()),
+            Err(_) => params.set(attr.name(), attr.value()),
         }
     }
     params
@@ -283,7 +345,9 @@ fn attribute_params(node: &roxmltree::Node, reserved: &[&str]) -> Params {
 fn read_array(node: &roxmltree::Node, params: &mut Params, what: &str) -> Result<(), String> {
     let key = attr_str(node, "name")?;
     let what = format!("{what}: <Array name={key:?}>");
-    if params.get(key).is_some() || params.get_str(key).is_some() || params.get_array(key).is_some()
+    if params.get(key).and_then(|v| v.as_num()).is_some()
+        || params.get(key).and_then(|v| v.as_text()).is_some()
+        || params.get(key).and_then(|v| v.as_array()).is_some()
     {
         return Err(format!("{what}: parameter `{key}` is stated twice"));
     }
@@ -301,30 +365,12 @@ fn read_array(node: &roxmltree::Node, params: &mut Params, what: &str) -> Result
         .map_err(|e| format!("{what}: value: {e}"))?;
     let array =
         ArrayD::from_shape_vec(IxDyn(&shape), values).map_err(|e| format!("{what}: {e}"))?;
-    params.set_array(key, array);
+    params.set(key, array);
     Ok(())
 }
 
-/// Write `ff` as a force-field XML file.
-pub fn write_xml_forcefield(path: &str, ff: &ForceField) -> Result<(), String> {
-    let text = write_xml_forcefield_str(ff)?;
-    std::fs::write(path, text).map_err(|e| format!("write {path}: {e}"))
-}
-
-/// Write `ff` as force-field XML text — the inverse of
-/// [`read_xml_forcefield_str`].
-///
-/// The root states `ff`'s units (declared, or the `real` default); values are
-/// written as `ff` holds them. Reading the text back gives `ff` with its units
-/// declared.
-///
-/// # Errors
-///
-/// What the layout cannot hold, by name: a parameter called `name` (or
-/// `class1` … on a row); a string parameter whose value reads back as a
-/// number; a category no element name reads back as; a style of a category
-/// nothing declares that has no type rows to state its arity.
-pub fn write_xml_forcefield_str(ff: &ForceField) -> Result<String, String> {
+/// `ff` as force-field XML text ([`XmlForcefieldWriter`]).
+fn render(ff: &ForceField) -> Result<String, String> {
     let mut out = String::new();
     writeln!(
         out,
@@ -410,10 +456,16 @@ fn param_attributes<'p>(
     what: &str,
 ) -> Result<(String, ArrayParams<'p>), String> {
     let mut attrs: Vec<(&str, String)> = Vec::new();
-    for (key, value) in params.iter() {
+    for (key, value) in params
+        .iter()
+        .filter_map(|(k, v)| v.as_num().map(|x| (k, x)))
+    {
         attrs.push((key, format!("{value:?}")));
     }
-    for (key, value) in params.iter_strings() {
+    for (key, value) in params
+        .iter()
+        .filter_map(|(k, v)| v.as_text().map(|s| (k, s)))
+    {
         if value.parse::<f64>().is_ok() {
             return Err(format!(
                 "{what}: string parameter `{key}` = {value:?} would read back as a number"
@@ -421,7 +473,10 @@ fn param_attributes<'p>(
         }
         attrs.push((key, escape(value)));
     }
-    let mut arrays: ArrayParams<'p> = params.iter_arrays().collect();
+    let mut arrays: ArrayParams<'p> = params
+        .iter()
+        .filter_map(|(k, v)| v.as_array().map(|a| (k, a)))
+        .collect();
     if let Some(key) = attrs
         .iter()
         .map(|(key, _)| *key)
@@ -485,21 +540,43 @@ fn escape(text: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    use crate::ff::forcefield::Category;
     use std::collections::BTreeMap;
 
     use super::*;
+
+    /// The force field `xml` states.
+    fn read(xml: &str) -> std::io::Result<ForceField> {
+        XmlForcefieldReader::new().read(xml.as_bytes())
+    }
+
+    /// `ff` written into a buffer, as text.
+    fn write(ff: &ForceField) -> Result<String, ForceFieldWriteError> {
+        let mut out = Vec::new();
+        XmlForcefieldWriter::new().write(&mut out, ff)?;
+        Ok(String::from_utf8(out).expect("the writer writes UTF-8"))
+    }
 
     /// Every key of `params`, with its value spelled out: an exact comparison
     /// that, unlike `same_parameters`, also counts annotation keys.
     fn every_param(params: &Params) -> BTreeMap<String, String> {
         let mut out = BTreeMap::new();
-        for (key, value) in params.iter() {
+        for (key, value) in params
+            .iter()
+            .filter_map(|(k, v)| v.as_num().map(|x| (k, x)))
+        {
             out.insert(key.to_owned(), format!("f64 {value:?}"));
         }
-        for (key, value) in params.iter_strings() {
+        for (key, value) in params
+            .iter()
+            .filter_map(|(k, v)| v.as_text().map(|s| (k, s)))
+        {
             out.insert(key.to_owned(), format!("str {value}"));
         }
-        for (key, value) in params.iter_arrays() {
+        for (key, value) in params
+            .iter()
+            .filter_map(|(k, v)| v.as_array().map(|a| (k, a)))
+        {
             out.insert(key.to_owned(), format!("array {value:?}"));
         }
         out
@@ -539,19 +616,15 @@ mod tests {
 
     /// Write, read back, write again: the same force field, the same text.
     fn round_trips(ff: &ForceField, what: &str) {
-        let text = write_xml_forcefield_str(ff).unwrap_or_else(|e| panic!("{what}: {e}"));
-        let back = read_xml_forcefield_str(&text).unwrap_or_else(|e| panic!("{what}: {e}"));
+        let text = write(ff).unwrap_or_else(|e| panic!("{what}: {e}"));
+        let back = read(&text).unwrap_or_else(|e| panic!("{what}: {e}"));
         assert_same(ff, &back, what);
         assert_eq!(
             back.declared_units(),
             Some(ff.units()),
             "{what}: units declared"
         );
-        assert_eq!(
-            write_xml_forcefield_str(&back).unwrap(),
-            text,
-            "{what}: text"
-        );
+        assert_eq!(write(&back).unwrap(), text, "{what}: text");
     }
 
     /// Every library molrs ships survives the XML exactly — OPLS-AA's string
@@ -608,15 +681,25 @@ mod tests {
           </PairStyle>
         </ForceField>
         "#;
-        let ff = read_xml_forcefield_str(xml).unwrap();
+        let ff = read(xml).unwrap();
         assert_eq!(ff.declared_units(), Some("real"));
         assert_eq!(ff.declared_special_bonds().unwrap().coul_14(), 0.8333);
         let pair = ff.get_style("pair", "lj/cut").unwrap();
-        assert_eq!(pair.params().get("cutoff"), Some(10.0));
-        assert_eq!(pair.params().get_str("mixing"), Some("geometric"));
+        assert_eq!(
+            pair.params().get("cutoff").and_then(|v| v.as_num()),
+            Some(10.0)
+        );
+        assert_eq!(
+            pair.params().get("mixing").and_then(|v| v.as_text()),
+            Some("geometric")
+        );
         let bond = ff.get_style("bond", "harmonic").unwrap();
         assert_eq!(
-            bond.get_bondtype("HW", "OW").unwrap().params.get("k"),
+            bond.get_bondtype("HW", "OW")
+                .unwrap()
+                .params
+                .get("k")
+                .and_then(|v| v.as_num()),
             Some(450.0)
         );
         assert_eq!(
@@ -624,7 +707,8 @@ mod tests {
                 .unwrap()
                 .type_params("OW")
                 .unwrap()
-                .get("mass"),
+                .get("mass")
+                .and_then(|v| v.as_num()),
             Some(15.999)
         );
     }
@@ -636,12 +720,12 @@ mod tests {
         let grid =
             ArrayD::from_shape_vec(IxDyn(&[2, 3]), vec![0.5, -1.25, 2.0, 1e-9, 0.0, 3.5]).unwrap();
         let mut params = Params::new();
-        params.set_array("grid", grid);
+        params.set("grid", grid);
         ff.def_style("cmap", "charmm", Params::new())
             .unwrap()
             .def_type("C-N-C-C-N", &["C", "N", "C", "C", "N"], params)
             .unwrap();
-        let text = write_xml_forcefield_str(&ff).unwrap();
+        let text = write(&ff).unwrap();
         assert!(text.contains("<CmapStyle name=\"charmm\">"), "{text}");
         assert!(
             text.contains("<Array name=\"grid\" shape=\"2 3\">"),
@@ -654,19 +738,27 @@ mod tests {
     #[test]
     fn an_undeclared_category_round_trips_by_its_rows() {
         let mut ff = ForceField::new("relation");
-        ff.def_style_with_arity("hbond_pair", 2, "custom", Params::new())
-            .unwrap()
-            .def_type("O-H", &["O", "H"], Params::from_pairs(&[("k", 1.5)]))
-            .unwrap();
-        let text = write_xml_forcefield_str(&ff).unwrap();
+        ff.def_style(
+            Category::new("hbond_pair").arity(2),
+            "custom",
+            Params::new(),
+        )
+        .unwrap()
+        .def_type("O-H", &["O", "H"], Params::from_iter([("k", 1.5)]))
+        .unwrap();
+        let text = write(&ff).unwrap();
         assert!(text.contains("<HbondPairStyle name=\"custom\">"), "{text}");
         round_trips(&ff, "hbond_pair");
 
         let mut empty = ForceField::new("relation");
         empty
-            .def_style_with_arity("hbond_pair", 2, "custom", Params::new())
+            .def_style(
+                Category::new("hbond_pair").arity(2),
+                "custom",
+                Params::new(),
+            )
             .unwrap();
-        let err = write_xml_forcefield_str(&empty).unwrap_err();
+        let err = write(&empty).unwrap_err();
         assert!(err.contains("arity"), "{err}");
     }
 
@@ -674,9 +766,10 @@ mod tests {
     #[test]
     fn an_openmm_element_names_its_reader() {
         let xml = r#"<ForceField name="t"><HarmonicBondForce /></ForceField>"#;
-        let err = read_xml_forcefield_str(xml).unwrap_err();
+        let err = read(xml).unwrap_err();
         assert!(
-            err.contains("HarmonicBondForce") && err.contains("read_openmm_forcefield"),
+            err.to_string().contains("HarmonicBondForce")
+                && err.to_string().contains("OpenmmXmlReader"),
             "{err}"
         );
     }
@@ -686,17 +779,17 @@ mod tests {
     fn the_writer_refuses_what_would_not_read_back() {
         let mut ff = ForceField::new("t");
         let mut params = Params::new();
-        params.set_str("label", "1.5");
+        params.set("label", "1.5");
         ff.def_style("bond", "harmonic", params).unwrap();
-        let err = write_xml_forcefield_str(&ff).unwrap_err();
+        let err = write(&ff).unwrap_err();
         assert!(err.contains("label") && err.contains("number"), "{err}");
 
         let mut ff = ForceField::new("t");
         ff.def_style("bond", "harmonic", Params::new())
             .unwrap()
-            .def_type("A-B", &["A", "B"], Params::from_pairs(&[("class1", 1.0)]))
+            .def_type("A-B", &["A", "B"], Params::from_iter([("class1", 1.0)]))
             .unwrap();
-        let err = write_xml_forcefield_str(&ff).unwrap_err();
+        let err = write(&ff).unwrap_err();
         assert!(err.contains("class1"), "{err}");
     }
 
@@ -729,8 +822,9 @@ mod tests {
             (r#"<ForceField><VdWParams /></ForceField>"#, "VdWParams"),
         ];
         for (xml, needle) in cases {
-            let err = read_xml_forcefield_str(xml).unwrap_err();
-            assert!(err.contains(needle), "{xml}: {err}");
+            let err = read(xml).unwrap_err();
+            assert_eq!(err.kind(), std::io::ErrorKind::InvalidData, "{xml}");
+            assert!(err.to_string().contains(needle), "{xml}: {err}");
         }
     }
 }

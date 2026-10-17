@@ -129,7 +129,9 @@ class TestNeighborsColumns:
         assert neigh.dist_sq() is not None
         assert neigh.disp() is not None
 
-    def test_default_materialization_column_shapes(self, cubic_box: molrs.core.Box) -> None:
+    def test_default_materialization_column_shapes(
+        self, cubic_box: molrs.core.Box
+    ) -> None:
         nl = molrs.core.NeighborList(1.2)
         nl.build(_unit_square(), cubic_box)
         neigh = nl.neighbors()
@@ -179,13 +181,17 @@ class TestNeighborsColumns:
 
         assert np.all(neigh.query_point_indices() < neigh.point_indices())
 
-    def test_self_search_is_tagged_as_self_query(self, cubic_box: molrs.core.Box) -> None:
+    def test_self_search_is_tagged_as_self_query(
+        self, cubic_box: molrs.core.Box
+    ) -> None:
         nl = molrs.core.NeighborList(1.5)
         nl.build(_unit_square(), cubic_box)
 
         assert nl.neighbors().is_self_query is True
 
-    def test_self_search_reports_one_population(self, cubic_box: molrs.core.Box) -> None:
+    def test_self_search_reports_one_population(
+        self, cubic_box: molrs.core.Box
+    ) -> None:
         nl = molrs.core.NeighborList(1.5)
         nl.build(_unit_square(), cubic_box)
         neigh = nl.neighbors()
@@ -233,6 +239,52 @@ class TestNeighborListUpdate:
 # --------------------------------------------------------------------------
 
 
+class TestNeighborListBackends:
+    @pytest.mark.parametrize("cutoff", [1.2, 1.5])
+    def test_brute_force_agrees_with_the_cell_list(
+        self, cubic_box: molrs.core.Box, cutoff: float
+    ) -> None:
+        cell = molrs.core.NeighborList(cutoff)
+        oracle = molrs.core.NeighborList(cutoff, brute_force=True)
+        cell.build(_unit_square(), cubic_box)
+        oracle.build(_unit_square(), cubic_box)
+        assert _pair_set(cell.neighbors()) == _pair_set(oracle.neighbors())
+
+    def test_brute_force_wraps_across_a_periodic_face(
+        self, cubic_box: molrs.core.Box
+    ) -> None:
+        oracle = molrs.core.NeighborList(0.5, brute_force=True)
+        oracle.build(_pair_across_face(), cubic_box)
+        assert _pair_set(oracle.neighbors()) == {(0, 1)}
+
+    def test_brute_force_is_keyword_or_second_positional_only(self) -> None:
+        with pytest.raises(TypeError):
+            molrs.core.NeighborList(1.0, _two_close())  # type: ignore[arg-type]
+
+
+class TestNeighborListPickle:
+    def test_an_unbuilt_engine_round_trips(self) -> None:
+        import pickle
+
+        back = pickle.loads(pickle.dumps(molrs.core.NeighborList(2.5)))
+        assert back.cutoff == 2.5
+        with pytest.raises(Exception, match="build"):
+            back.update(_two_close())
+
+    def test_a_built_engine_round_trips_with_its_pairs(
+        self, cubic_box: molrs.core.Box
+    ) -> None:
+        import pickle
+
+        nl = molrs.core.NeighborList(1.2, brute_force=True)
+        nl.build(_unit_square(), cubic_box)
+        back = pickle.loads(pickle.dumps(nl))
+        assert _pair_set(back.neighbors()) == _pair_set(nl.neighbors())
+        # The box travelled: update re-indexes without a new build.
+        back.update(_unit_square())
+        assert back.neighbors().n_pairs == 4
+
+
 # --------------------------------------------------------------------------
 # NeighborQuery — the cross door survives (ac-006)
 # --------------------------------------------------------------------------
@@ -264,7 +316,9 @@ class TestNeighborQueryCross:
 
         assert (1, 0) in _pair_set(nq.query(query_points))
 
-    def test_cross_query_reports_two_populations(self, cubic_box: molrs.core.Box) -> None:
+    def test_cross_query_reports_two_populations(
+        self, cubic_box: molrs.core.Box
+    ) -> None:
         points = np.array(
             [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [2.0, 0.0, 0.0]],
             dtype=np.float64,
@@ -275,13 +329,17 @@ class TestNeighborQueryCross:
         assert cross.n_query_points == 2
         assert cross.n_points == 3
 
-    def test_query_self_returns_a_half_shell_table(self, cubic_box: molrs.core.Box) -> None:
+    def test_query_self_returns_a_half_shell_table(
+        self, cubic_box: molrs.core.Box
+    ) -> None:
         neigh = molrs.core.NeighborQuery(cubic_box, _unit_square(), 1.5).query_self()
 
         assert neigh.is_self_query is True
         assert np.all(neigh.query_point_indices() < neigh.point_indices())
 
-    def test_query_self_table_carries_both_columns(self, cubic_box: molrs.core.Box) -> None:
+    def test_query_self_table_carries_both_columns(
+        self, cubic_box: molrs.core.Box
+    ) -> None:
         neigh = molrs.core.NeighborQuery(cubic_box, _unit_square(), 1.5).query_self()
 
         assert neigh.dist_sq() is not None
@@ -293,9 +351,10 @@ class TestNeighborQueryCross:
 # --------------------------------------------------------------------------
 
 
-def test_neighbor_query_unbounded() -> None:
+def test_neighbor_query_in_a_free_bounding_box() -> None:
     points = np.array([[0.0, 0.0, 0.0], [0.5, 0.0, 0.0], [2.0, 0.0, 0.0]])
-    query = molrs.core.NeighborQuery.unbounded(points, 1.0)
+    box = molrs.core.Box.bounding(points, (1.0, 1.0, 1.0), (False, False, False))
+    query = molrs.core.NeighborQuery(box, points, 1.0)
     result = query.query(np.array([[0.0, 0.0, 0.0]]))
 
     assert np.array_equal(result.point_indices(), np.array([0, 1], dtype=np.uint32))
@@ -304,8 +363,8 @@ def test_neighbor_query_unbounded() -> None:
 
 def test_neighbor_query_rejects_non_positive_cutoff() -> None:
     points = np.zeros((1, 3))
-    box = molrs.core.Box.cube(1.0)
+    box = molrs.core.Box(molrs.core.Cell.lengths([1.0, 1.0, 1.0]))
     with pytest.raises(ValueError, match="positive"):
         molrs.core.NeighborQuery(box, points, 0.0)
     with pytest.raises(ValueError, match="positive"):
-        molrs.core.NeighborQuery.unbounded(points, 0.0)
+        molrs.core.NeighborQuery(box, points, -1.0)

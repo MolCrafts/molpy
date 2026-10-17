@@ -1,11 +1,13 @@
 """DCD, the CHARMM / NAMD binary trajectory format — ``molrs::io::dcd``.
 
-The doors are functions of :mod:`molrs.io`
-(:func:`~molrs.io.read_dcd_trajectory`, :func:`~molrs.io.write_dcd_trajectory`);
-this module holds the format's lazy reader, :class:`DcdReader` (O(1) random
-access).
+The one-frame doors are :func:`molrs.io.read_dcd` / :func:`molrs.io.write_dcd`;
+this module holds the format's classes: :class:`DcdReader` (O(1) random
+access) and :class:`DcdWriter`, one frame per ``write``.
 """
 
-from .._native import DcdReader
+from .._native import (
+    DcdReader,
+    DcdWriter,
+)
 
-__all__ = ["DcdReader"]
+__all__ = ["DcdReader", "DcdWriter"]

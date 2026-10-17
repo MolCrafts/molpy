@@ -6,7 +6,7 @@ use ndarray::{Array2, ArrayView2};
 
 use crate::ff::ir::Params;
 use crate::ff::potential::flat_coords::{sub3, term_table, validate_coords};
-use crate::ff::potential::{ForceTerm, IndexedTerms, Potential};
+use crate::ff::potential::{Accumulator, ForceTerm, IndexedTerms, Potential};
 use crate::op::vec3::norm;
 use molrs::core::Frame;
 use molrs::op::F;
@@ -70,16 +70,14 @@ impl BondMmff {
 }
 
 impl Potential for BondMmff {
-    fn calc_energy_forces(&self, coords: &[F]) -> (F, Vec<F>) {
-        let mut out = vec![0.0; coords.len()];
-        let energy = self.accumulate(coords, &mut out);
-        (energy, out)
-    }
-
-    fn accumulate(&self, coords: &[F], out: &mut [F]) -> F {
-        self.fold(coords, out, self.atom_i.len(), |t| {
-            (self.atom_i[t], self.atom_j[t])
-        })
+    fn evaluate(&self, coords: &[F], acc: &mut Accumulator<'_>) {
+        let energy = self.fold(
+            coords,
+            acc.forces_without_virial(),
+            self.atom_i.len(),
+            |t| (self.atom_i[t], self.atom_j[t]),
+        );
+        acc.add_energy(energy);
     }
 }
 
@@ -87,25 +85,16 @@ impl IndexedTerms for BondMmff {
     fn terms(&self) -> Array2<u32> {
         term_table(&[&self.atom_i, &self.atom_j])
     }
-    fn calc_energy_forces_with_terms(
-        &self,
-        coords: &[F],
-        terms: ArrayView2<'_, u32>,
-    ) -> (F, Vec<F>) {
-        let mut out = vec![0.0; coords.len()];
-        let energy = self.accumulate_with_terms(coords, terms, &mut out);
-        (energy, out)
-    }
-
-    fn accumulate_with_terms(&self, coords: &[F], terms: ArrayView2<'_, u32>, out: &mut [F]) -> F {
+    fn evaluate_terms(&self, coords: &[F], terms: ArrayView2<'_, u32>, acc: &mut Accumulator<'_>) {
         debug_assert_eq!(
             terms.nrows(),
             self.atom_i.len(),
             "the row set is the force field's; only the atoms a row names may be rebound"
         );
-        self.fold(coords, out, terms.nrows(), |t| {
+        let energy = self.fold(coords, acc.forces_without_virial(), terms.nrows(), |t| {
             (terms[[t, 0]] as usize, terms[[t, 1]] as usize)
-        })
+        });
+        acc.add_energy(energy);
     }
 }
 
@@ -122,11 +111,11 @@ pub fn bond_mmff_constructor(
         .ok_or("mmff_bond: missing \"bonds\" block")?;
     let i_col = block
         .get("atomi")
-        .and_then(|c| c.as_uint())
+        .and_then(|c| c.get::<u64>())
         .ok_or("mmff_bond: missing \"atomi\"")?;
     let j_col = block
         .get("atomj")
-        .and_then(|c| c.as_uint())
+        .and_then(|c| c.get::<u64>())
         .ok_or("mmff_bond: missing \"atomj\"")?;
     let kb_col = param_reads::instance_col("mmff_bond", block, "kb")?;
     let r0_col = param_reads::instance_col("mmff_bond", block, "r0")?;
@@ -155,6 +144,7 @@ pub fn bond_mmff_constructor(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ff::potential::fixtures::OneShot;
 
     #[test]
     fn test_mmff_bond_at_equilibrium() {
@@ -165,7 +155,7 @@ mod tests {
             r0: vec![1.508],
         };
         let coords: Vec<F> = vec![0.0, 0.0, 0.0, 1.508, 0.0, 0.0];
-        let (e, _) = pot.calc_energy_forces(&coords);
+        let (e, _) = pot.energy_forces_at(&coords);
         assert!(
             e.abs() < 1e-6,
             "energy at equilibrium should be ~0, got {}",
@@ -182,7 +172,7 @@ mod tests {
             r0: vec![1.508],
         };
         let coords: Vec<F> = vec![0.0, 0.0, 0.0, 1.608, 0.0, 0.0];
-        let (e, forces) = pot.calc_energy_forces(&coords);
+        let (e, forces) = pot.energy_forces_at(&coords);
         assert!(e > 0.0, "stretched bond should have positive energy");
         for dim in 0..3 {
             let sum = forces[dim] + forces[3 + dim];

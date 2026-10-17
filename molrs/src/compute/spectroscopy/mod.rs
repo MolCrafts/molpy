@@ -58,9 +58,9 @@ mod tests {
     use super::*;
     use crate::compute::time_series::test_support::{assert_close, direct_lagged_sum};
     use crate::compute::{
-        Compute, Correlator, CorrelatorInput, CurrentAcf, CurrentAcfInput, Derivative,
-        DerivativeInput, LagKernel, Normalization, Spectrum, SpectrumInput, Stencil,
-        TimeCorrelation, Vacf, VacfInput, Window,
+        Accumulate, Compute, Correlator, CorrelatorFrame, CorrelatorInput, CurrentAcf,
+        CurrentAcfInput, Derivative, DerivativeInput, LagKernel, Normalization, Spectrum,
+        SpectrumInput, Stencil, Stream, TimeCorrelation, Vacf, Window,
     };
     use molrs::op::F;
     use ndarray::{Array1, Array2, ArrayView2, Axis};
@@ -130,10 +130,13 @@ mod tests {
 
     fn vacf(v: &Array2<F>, dt: F, max_lag: usize) -> TimeCorrelation {
         Vacf::new(max_lag)
-            .compute(VacfInput {
-                velocities: v.view(),
+            .accumulator()
+            .fold(v.outer_iter().map(|row| CorrelatorFrame {
+                a: row.insert_axis(Axis(1)),
+                b: None,
                 dt,
-            })
+                simbox: None,
+            }))
             .unwrap()
     }
 

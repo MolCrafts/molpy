@@ -116,10 +116,14 @@ mod tests {
         let n = mask.len();
         let mut atoms = Block::new();
         atoms
-            .insert_nullable("charge", Array1::from_vec(vec![0.0; n]).into_dyn(), mask)
+            .insert(
+                "charge",
+                Array1::from_vec(vec![0.0; n]).into_dyn(),
+                Some(mask),
+            )
             .unwrap();
         atoms
-            .insert("x", Array1::from_vec(vec![0.0; n]).into_dyn())
+            .insert("x", Array1::from_vec(vec![0.0; n]).into_dyn(), None)
             .unwrap();
         let mut frame = Frame::new();
         frame.insert("atoms", atoms);
@@ -170,27 +174,40 @@ mod tests {
         let part = |elements: &[&str], types: &[&str], q: &[f64], bonds: &[[u64; 2]]| {
             let n = elements.len();
             let mut atoms = Block::new();
-            atoms.insert("element", strings(elements)).unwrap();
-            atoms.insert("type", strings(types)).unwrap();
+            atoms.insert("element", strings(elements), None).unwrap();
+            let masses = elements
+                .iter()
+                .map(|symbol| {
+                    crate::core::Element::by_symbol(symbol)
+                        .unwrap()
+                        .atomic_mass() as f64
+                })
+                .collect::<Vec<_>>();
             atoms
-                .insert("charge", Array1::from_vec(q.to_vec()).into_dyn())
+                .insert("mass", Array1::from_vec(masses).into_dyn(), None)
+                .unwrap();
+            atoms.insert("type", strings(types), None).unwrap();
+            atoms
+                .insert("charge", Array1::from_vec(q.to_vec()).into_dyn(), None)
                 .unwrap();
             for (d, key) in ["x", "y", "z"].iter().enumerate() {
                 let v: Vec<f64> = (0..n).map(|i| (i + d) as f64).collect();
-                atoms.insert(*key, Array1::from_vec(v).into_dyn()).unwrap();
+                atoms
+                    .insert(*key, Array1::from_vec(v).into_dyn(), None)
+                    .unwrap();
             }
             let mut b = Block::new();
             let col = |k: usize| {
                 Array1::from_vec(bonds.iter().map(|r| r[k] as molrs::op::Idx).collect()).into_dyn()
             };
-            b.insert("atomi", col(0)).unwrap();
-            b.insert("atomj", col(1)).unwrap();
+            b.insert("atomi", col(0), None).unwrap();
+            b.insert("atomj", col(1), None).unwrap();
             let bond_types: Vec<String> = bonds
                 .iter()
                 .map(|r| format!("{}-{}", types[r[0] as usize], types[r[1] as usize]))
                 .collect();
             let bond_types: Vec<&str> = bond_types.iter().map(String::as_str).collect();
-            b.insert("type", strings(&bond_types)).unwrap();
+            b.insert("type", strings(&bond_types), None).unwrap();
             let mut frame = Frame::new();
             frame.insert("atoms", atoms);
             frame.insert("bonds", b);
@@ -207,16 +224,20 @@ mod tests {
             .insert(
                 "id",
                 Array1::from_vec(vec![1 as molrs::op::Idx, 2, 3]).into_dyn(),
+                None,
             )
             .unwrap();
         atoms
-            .insert("name", strings(&["OW", "HW1", "HW2"]))
+            .insert("name", strings(&["OW", "HW1", "HW2"]), None)
             .unwrap();
-        atoms.insert("res_name", strings(&["SOL"; 3])).unwrap();
+        atoms
+            .insert("res_name", strings(&["SOL"; 3]), None)
+            .unwrap();
         atoms
             .insert(
                 "res_id",
                 Array1::from_vec(vec![7 as molrs::op::Idx; 3]).into_dyn(),
+                None,
             )
             .unwrap();
         if type_ids {
@@ -224,12 +245,12 @@ mod tests {
             water
                 .get_mut("atoms")
                 .unwrap()
-                .insert("type_id", ids(vec![1, 2, 2]))
+                .insert("type_id", ids(vec![1, 2, 2]), None)
                 .unwrap();
             water
                 .get_mut("bonds")
                 .unwrap()
-                .insert("type_id", ids(vec![1, 1]))
+                .insert("type_id", ids(vec![1, 1]), None)
                 .unwrap();
         }
         let ch = part(&["C", "H"], &["CT", "HC"], &[-0.1, 0.1], &[[0, 1]]);
@@ -247,9 +268,10 @@ mod tests {
         atoms.remove("id").unwrap();
         let mol: Vec<molrs::op::Idx> = vec![1, 1, 1, 2, 2];
         atoms
-            .insert("mol_id", Array1::from_vec(mol).into_dyn())
+            .insert("mol_id", Array1::from_vec(mol).into_dyn(), None)
             .unwrap();
-        let text = crate::io::write_lammps_data_str(&frame).unwrap();
+        let text =
+            crate::io::writer::capture(|sink| crate::io::write_lammps_data(sink, &frame)).unwrap();
         assert!(text.contains("4 atom types"), "{text}");
         assert!(text.contains("2 bond types"), "{text}");
     }
@@ -263,16 +285,18 @@ mod tests {
         frame
             .get_mut("atoms")
             .unwrap()
-            .insert("mol_id", Array1::from_vec(mol).into_dyn())
+            .insert("mol_id", Array1::from_vec(mol).into_dyn(), None)
             .unwrap();
-        let err = crate::io::write_lammps_data_str(&frame).unwrap_err();
+        let err = crate::io::writer::capture(|sink| crate::io::write_lammps_data(sink, &frame))
+            .unwrap_err();
         assert!(
             err.to_string()
                 .starts_with("atoms.id is null in 2 of 5 rows (rows 3-4, 0-based)"),
             "{err}"
         );
         frame.get_mut("atoms").unwrap().remove("id").unwrap();
-        let text = crate::io::write_lammps_data_str(&frame).unwrap();
+        let text =
+            crate::io::writer::capture(|sink| crate::io::write_lammps_data(sink, &frame)).unwrap();
         let ids: Vec<&str> = text
             .lines()
             .skip_while(|l| !l.starts_with("Atoms"))
@@ -296,9 +320,11 @@ mod tests {
             .insert(
                 "mol_id",
                 Array1::from_vec(vec![1 as molrs::op::Idx, 1, 1, 2, 2]).into_dyn(),
+                None,
             )
             .unwrap();
-        let err = crate::io::write_lammps_data_str(&frame).unwrap_err();
+        let err = crate::io::writer::capture(|sink| crate::io::write_lammps_data(sink, &frame))
+            .unwrap_err();
         assert!(
             err.to_string()
                 .starts_with("atoms.charge is null in 1 of 5 rows (row 3"),
@@ -313,11 +339,12 @@ mod tests {
     #[test]
     fn coordinate_writers_generate_unset_labels() {
         let frame = concat_of_unlike_parts();
-        let gro = crate::io::write_gro_str(&frame).unwrap_err();
+        let gro =
+            crate::io::writer::capture(|sink| crate::io::write_gro(sink, &frame)).unwrap_err();
         assert!(gro.to_string().starts_with("atoms.id is null"), "{gro}");
         let mut frame = frame;
         frame.get_mut("atoms").unwrap().remove("id").unwrap();
-        let gro = crate::io::write_gro_str(&frame).unwrap();
+        let gro = crate::io::writer::capture(|sink| crate::io::write_gro(sink, &frame)).unwrap();
         let fields: Vec<(String, String, String)> = gro
             .lines()
             .skip(2)
@@ -341,7 +368,7 @@ mod tests {
             fields,
             want.map(|(a, b, c)| (a.to_owned(), b.to_owned(), c.to_owned()))
         );
-        let pdb = crate::io::write_pdb_str(&frame).unwrap();
+        let pdb = crate::io::writer::capture(|sink| crate::io::write_pdb(sink, &frame)).unwrap();
         let atoms: Vec<&str> = pdb.lines().filter(|l| l.starts_with("ATOM")).collect();
         assert_eq!(atoms[3][12..16].trim(), "C1");
         assert_eq!(&atoms[3][17..20], "MOL");
@@ -365,10 +392,11 @@ mod tests {
                 .insert(
                     key,
                     Array1::from_vec(vec![atom as molrs::op::Idx]).into_dyn(),
+                    None,
                 )
                 .unwrap();
         }
-        angles.insert("type", strings(&["HW-OW-HW"])).unwrap();
+        angles.insert("type", strings(&["HW-OW-HW"]), None).unwrap();
         frame.insert("angles", angles);
         let mut ff = ForceField::new("t");
         ff.set_special_bonds(crate::ff::ir::SpecialBonds {
@@ -380,7 +408,7 @@ mod tests {
         let atoms = ff.def_style("atom", "full", Params::new()).unwrap();
         for (t, m) in TYPES {
             atoms
-                .def_type(t, &[], Params::from_pairs(&[("mass", m)]))
+                .def_type(t, &[], Params::from_iter([("mass", m)].iter().copied()))
                 .unwrap();
         }
         let lj = ff.def_style("pair", "lj/cut", Params::new()).unwrap();
@@ -388,7 +416,7 @@ mod tests {
             lj.def_type(
                 t,
                 &[t],
-                Params::from_pairs(&[("epsilon", 0.1), ("sigma", 3.0)]),
+                Params::from_iter([("epsilon", 0.1), ("sigma", 3.0)].iter().copied()),
             )
             .unwrap();
         }
@@ -397,7 +425,7 @@ mod tests {
             .def_type(
                 "HW-OW-HW",
                 &["HW", "OW", "HW"],
-                Params::from_pairs(&[("k", 55.0), ("theta0", 104.5)]),
+                Params::from_iter([("k", 55.0), ("theta0", 104.5)].iter().copied()),
             )
             .unwrap();
         let bond = ff.def_style("bond", "harmonic", Params::new()).unwrap();
@@ -405,13 +433,14 @@ mod tests {
             bond.def_type(
                 name,
                 &[i, j],
-                Params::from_pairs(&[("k", 450.0), ("r0", 1.0)]),
+                Params::from_iter([("k", 450.0), ("r0", 1.0)].iter().copied()),
             )
             .unwrap();
         }
-        let top = GromacsTopForcefieldWriter::new()
-            .write_system_str(&ff, &frame)
-            .unwrap();
+        let top = crate::io::writer::capture(|sink| {
+            GromacsTopForcefieldWriter::new().write_system(sink, &ff, &frame)
+        })
+        .unwrap();
         let rows: Vec<Vec<&str>> = top
             .lines()
             .filter(|l| l.split_whitespace().count() == 8 && !l.starts_with(';'))
@@ -433,9 +462,10 @@ mod tests {
         types
             .set_validity("type", vec![true, true, true, false, false])
             .unwrap();
-        let err = GromacsTopForcefieldWriter::new()
-            .write_system_str(&ff, &frame)
-            .unwrap_err();
+        let err = crate::io::writer::capture(|sink| {
+            GromacsTopForcefieldWriter::new().write_system(sink, &ff, &frame)
+        })
+        .unwrap_err();
         assert!(
             err.starts_with("atoms.type is null in 2 of 5 rows"),
             "{err}"

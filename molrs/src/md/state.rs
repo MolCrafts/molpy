@@ -157,7 +157,7 @@ impl MdState {
         for (axis, key) in keys::IMAGES.iter().enumerate() {
             let col: Array1<I> = self.images.column(axis).to_owned();
             atoms
-                .insert(*key, col.into_dyn())
+                .insert(*key, col.into_dyn(), None)
                 .map_err(|e| MdError::Invalid(format!("atoms.{key}: {e}")))?;
         }
         Ok(())
@@ -178,6 +178,7 @@ impl MdState {
 #[cfg(test)]
 mod persistence_tests {
     use super::*;
+    use crate::core::Cell;
     use molrs::core::Block;
     use ndarray::{Array2, array};
 
@@ -187,16 +188,17 @@ mod persistence_tests {
             .insert(
                 "id",
                 Array1::from((0..n as u64).collect::<Vec<_>>()).into_dyn(),
+                None,
             )
             .unwrap();
         atoms
-            .insert("x", Array1::from(vec![0.0_f64; n]).into_dyn())
+            .insert("x", Array1::from(vec![0.0_f64; n]).into_dyn(), None)
             .unwrap();
         atoms
-            .insert("y", Array1::from(vec![0.0_f64; n]).into_dyn())
+            .insert("y", Array1::from(vec![0.0_f64; n]).into_dyn(), None)
             .unwrap();
         atoms
-            .insert("z", Array1::from(vec![0.0_f64; n]).into_dyn())
+            .insert("z", Array1::from(vec![0.0_f64; n]).into_dyn(), None)
             .unwrap();
         let mut f = Frame::new();
         f.insert("atoms", atoms);
@@ -220,7 +222,7 @@ mod persistence_tests {
 
         let atoms = frame.get("atoms").unwrap();
         for (axis, key) in keys::COORDS.iter().enumerate() {
-            let col = atoms.get(key).and_then(|c| c.as_float()).unwrap();
+            let col = atoms.get(key).and_then(|c| c.get::<f64>()).unwrap();
             for i in 0..2 {
                 assert_eq!(col[[i]], state.pos[[i, axis]], "{key}[{i}]");
             }
@@ -228,7 +230,7 @@ mod persistence_tests {
         for (axis, key) in keys::IMAGES.iter().enumerate() {
             let col = atoms
                 .get(key)
-                .and_then(|c| c.as_int())
+                .and_then(|c| c.get::<i32>())
                 .unwrap_or_else(|| panic!("atoms block is missing {key}"));
             for i in 0..2 {
                 assert_eq!(col[[i]], state.images[[i, axis]], "{key}[{i}]");
@@ -242,7 +244,7 @@ mod persistence_tests {
     /// number.
     #[test]
     fn a_trajectory_written_with_flags_can_be_unwrapped_again() {
-        let bx = SimBox::cube(10.0, array![0.0_f64, 0.0, 0.0], [true; 3]).unwrap();
+        let bx = SimBox::new(Cell::Lengths([10.0; 3]), [0.0_f64, 0.0, 0.0], [true; 3]).unwrap();
         // An atom that has crossed +x three times: stored at 2.0, really at 32.
         let state = MdState {
             pos: array![[2.0, 5.0, 5.0]],
@@ -259,8 +261,8 @@ mod persistence_tests {
 
         // Read it back the way an analysis would, from the frame alone.
         let atoms = frame.get("atoms").unwrap();
-        let x = atoms.get("x").and_then(|c| c.as_float()).unwrap()[[0]];
-        let ix = atoms.get("ix").and_then(|c| c.as_int()).unwrap()[[0]] as F;
+        let x = atoms.get("x").and_then(|c| c.get::<f64>()).unwrap()[[0]];
+        let ix = atoms.get("ix").and_then(|c| c.get::<i32>()).unwrap()[[0]] as F;
         assert!(
             (x + ix * 10.0 - 32.0).abs() < 1e-12,
             "reconstructed {} from the frame, expected 32",

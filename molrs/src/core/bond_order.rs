@@ -213,6 +213,7 @@ mod tests {
     use super::*;
     use crate::core::MolGraph;
     use crate::core::keys;
+    use crate::props;
 
     /// The two-key write is one function because a class without a number
     /// leaves the bond un-standardized: both keys land, or neither does.
@@ -220,9 +221,9 @@ mod tests {
     fn stamp_bond_class_sets_both_keys() {
         let mut graph = MolGraph::new();
         let kind = graph.register_kind("bonds", 2);
-        let a = graph.add_node();
-        let b = graph.add_node();
-        let bid = graph.add_relation(kind, &[a, b]).unwrap();
+        let a = graph.add_node(props! {}).unwrap();
+        let b = graph.add_node(props! {}).unwrap();
+        let bid = graph.add_relation(kind, &[a, b], props! {}).unwrap();
 
         stamp_bond_class(
             &mut graph,

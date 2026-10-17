@@ -1,12 +1,13 @@
 //! Flat graphene (honeycomb) sheet builder.
 
+use crate::core::Cell;
 use std::collections::BTreeSet;
 use std::error::Error;
 use std::fmt;
 
-use ndarray::array;
-
 use crate::core::Atomistic;
+use crate::core::{Element, Props};
+
 use crate::core::Frame;
 use crate::core::SimBox;
 use crate::core::keys;
@@ -169,16 +170,20 @@ impl GrapheneBuilder {
                 let ox = i as f64 * a1x + j as f64 * a2x;
                 let oy = j as f64 * a2y;
                 for (dx, dy) in [(0.0, 0.0), (a1x / 3.0 + a2x / 3.0, a2y / 3.0)] {
-                    let atom = graph.add_atom_xyz("C", ox + dx, oy + dy, 0.0);
-                    graph
-                        .set_atom(atom, keys::CHARGE, self.charge)
-                        .map_err(|e| GrapheneError::Graph(e.to_string()))?;
+                    let mut props = Props::new()
+                        .with(keys::ATOMIC_NUMBER, Element::C)
+                        .with(keys::X, ox + dx)
+                        .with(keys::Y, oy + dy)
+                        .with(keys::Z, 0.0)
+                        .with(keys::CHARGE, self.charge);
                     if let Some(ref t) = self.atom_type {
-                        graph
-                            .set_atom(atom, keys::TYPE, t.as_str())
-                            .map_err(|e| GrapheneError::Graph(e.to_string()))?;
+                        props.set(keys::TYPE, t.as_str());
                     }
-                    atoms.push(atom);
+                    atoms.push(
+                        graph
+                            .add_atom(props)
+                            .map_err(|e| GrapheneError::Graph(e.to_string()))?,
+                    );
                 }
             }
         }
@@ -204,7 +209,7 @@ impl GrapheneBuilder {
         }
         for (u, v) in bonds {
             graph
-                .add_bond(atoms[u], atoms[v])
+                .add_bond(atoms[u], atoms[v], Props::new())
                 .map_err(|e| GrapheneError::Graph(e.to_string()))?;
         }
 
@@ -223,9 +228,9 @@ impl GrapheneBuilder {
         let lx = self.nx as f64 * a1x;
         let ly = self.ny as f64 * a2y;
         let lz = self.vacuum.max(a);
-        SimBox::ortho(
-            array![lx as F, ly as F, lz as F],
-            array![0.0 as F, 0.0 as F, -lz * 0.5 as F],
+        SimBox::new(
+            Cell::Lengths([lx as F, ly as F, lz as F]),
+            [0.0 as F, 0.0 as F, -lz * 0.5 as F],
             [self.periodic_xy, self.periodic_xy, false],
         )
         .map_err(|e| GrapheneError::Cell(format!("{e:?}")))
@@ -249,10 +254,10 @@ mod tests {
         assert_eq!(bonds.n_rows(), Some(3 * n / 2));
 
         let mut degree = vec![0; n];
-        for &i in bonds.get("atomi").and_then(|c| c.as_uint()).unwrap() {
+        for &i in bonds.get("atomi").and_then(|c| c.get::<u64>()).unwrap() {
             degree[i as usize] += 1;
         }
-        for &j in bonds.get("atomj").and_then(|c| c.as_uint()).unwrap() {
+        for &j in bonds.get("atomj").and_then(|c| c.get::<u64>()).unwrap() {
             degree[j as usize] += 1;
         }
         assert!(degree.into_iter().all(|d| d == 3));

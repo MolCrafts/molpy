@@ -56,14 +56,21 @@ pub(crate) struct StyleParamColumn {
 /// whether a higher one is present too (a gap).
 fn contiguous(row: &Params, base: &str) -> (usize, bool) {
     let mut m = 0;
-    while row.get(&format!("{base}{}", m + 1)).is_some() {
+    while row
+        .get(&format!("{base}{}", m + 1))
+        .and_then(|v| v.as_num())
+        .is_some()
+    {
         m += 1;
     }
-    let gap = row.iter().any(|(key, _)| {
-        key.strip_prefix(base)
-            .and_then(|n| n.parse::<usize>().ok())
-            .is_some_and(|n| n > m)
-    });
+    let gap = row
+        .iter()
+        .filter_map(|(k, v)| v.as_num().map(|x| (k, x)))
+        .any(|(key, _)| {
+            key.strip_prefix(base)
+                .and_then(|n| n.parse::<usize>().ok())
+                .is_some_and(|n| n > m)
+        });
     (m, gap)
 }
 
@@ -79,7 +86,8 @@ pub(crate) fn columns(
     for p in params.iter().filter(|p| p.indexed) {
         for (label, row) in rows {
             let (m, gap) = contiguous(row, &p.name);
-            let bare = spec.unindexed_one_term && row.get(&p.name).is_some();
+            let bare =
+                spec.unindexed_one_term && row.get(&p.name).and_then(|v| v.as_num()).is_some();
             if gap || (bare && m > 0) {
                 return Err(IrError::MissingParam {
                     style: spec.name.to_string(),
@@ -147,9 +155,12 @@ pub(crate) fn retain_form_inputs(
 /// `column`'s numeric value in `row`, by its own name or — term 1 of a style
 /// that accepts it — the bare name of its family.
 pub(crate) fn row_num(spec: &StyleSpec, col: &StyleParamColumn, row: &Params) -> Option<F> {
-    row.get(&col.name).or_else(|| {
+    row.get(&col.name).and_then(|v| v.as_num()).or_else(|| {
         (col.index == Some(1) && spec.unindexed_one_term)
-            .then(|| row.get(&spec.params[col.param].name))
+            .then(|| {
+                row.get(&spec.params[col.param].name)
+                    .and_then(|v| v.as_num())
+            })
             .flatten()
     })
 }
@@ -237,11 +248,17 @@ impl TermParams {
             };
             match &p.kind {
                 ParamKind::Scalar => {
-                    let v = style.get(&p.name).ok_or_else(missing)?;
+                    let v = style
+                        .get(&p.name)
+                        .and_then(|v| v.as_num())
+                        .ok_or_else(missing)?;
                     self.nums.push((p.name.to_string(), vec![v; n]));
                 }
                 ParamKind::Text { .. } => {
-                    let v = style.get_str(&p.name).ok_or_else(missing)?;
+                    let v = style
+                        .get(&p.name)
+                        .and_then(|v| v.as_text())
+                        .ok_or_else(missing)?;
                     self.style_texts.push((p.name.to_string(), v.to_owned()));
                 }
                 ParamKind::Array { .. } => {
@@ -287,12 +304,12 @@ pub(crate) fn resolve_terms(
     for key in &ENDPOINTS[..arity] {
         let col = block
             .get(key)
-            .and_then(|c| c.as_uint())
+            .and_then(|c| c.get::<u64>())
             .ok_or_else(|| format!("{who}: {block_name} block missing \"{key}\" column"))?;
         atoms.push(col.iter().map(|&a| a as usize).collect::<Vec<_>>());
     }
     let n = atoms.first().map_or(0, Vec::len);
-    let types = block.get("type").and_then(|c| c.as_string());
+    let types = block.get("type").and_then(|c| c.get::<String>());
     if types.is_none() && spec.source == ParamSource::TypeRows {
         return Err(format!("{who}: {block_name} block missing \"type\" column").into());
     }
@@ -321,7 +338,7 @@ pub(crate) fn resolve_terms(
         let decl = &spec.params[col.param];
         match &decl.kind {
             ParamKind::Scalar => {
-                let own = block.get(&col.name).and_then(|c| c.as_float());
+                let own = block.get(&col.name).and_then(|c| c.get::<f64>());
                 let valid = block.validity(&col.name);
                 let mut values = Vec::with_capacity(n);
                 for (t, &(label, row)) in rows.iter().enumerate() {
@@ -338,7 +355,8 @@ pub(crate) fn resolve_terms(
                 for &(label, row) in &rows {
                     let v = row
                         .unwrap_or(&defaults)
-                        .get_str(&col.name)
+                        .get(&col.name)
+                        .and_then(|v| v.as_text())
                         .ok_or_else(|| missing(label, &col.name))?;
                     values.push(v.to_owned());
                 }
@@ -348,7 +366,7 @@ pub(crate) fn resolve_terms(
                 let mut views = Vec::with_capacity(n);
                 for &(label, row) in &rows {
                     let a = row
-                        .and_then(|r| r.get_array(&col.name))
+                        .and_then(|r| r.get(&col.name).and_then(|v| v.as_array()))
                         .ok_or_else(|| missing(label, &col.name))?;
                     if a.ndim() != *rank as usize {
                         return Err(format!(

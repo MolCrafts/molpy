@@ -168,4 +168,6 @@ class TestPlaceFromInternalCoords:
 
     def test_a_point_not_of_three_coordinates_is_rejected(self):
         with pytest.raises((TypeError, ValueError)):
-            molrs.op.place_from_internal_coords([0.0, 1.0], self.B, self.C, 1.0, 1.0, 1.0)
+            molrs.op.place_from_internal_coords(
+                [0.0, 1.0], self.B, self.C, 1.0, 1.0, 1.0
+            )

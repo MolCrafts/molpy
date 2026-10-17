@@ -10,13 +10,14 @@
 #                                   # + each test gate's numbers, for
 #                                   # MolCrafts/molcrafts-ci/actions/report
 #
-# Gates: fmt ruff partners clippy doc test ffi cxx ext capi python wasm mrec
-# docs. Every check runs once, in one place:
+# Gates: fmt ruff partners clippy doc test ffi cxx ext capi python types wasm
+# mrec docs. Every check runs once, in one place:
 #   - static checks (fmt ruff partners clippy doc, and the hooks' workflows /
 #     os-cfg) run only locally: pre-commit, and `verify` at pre-push. CI does
 #     not repeat them.
 #   - the tests run once locally in `verify` and once per OS in test.yml;
-#     the wheel `python` built and tested is the one `mrec` and `docs` use.
+#     the wheel `python` built and tested is the one `types`, `mrec` and
+#     `docs` use.
 #   - every build is the dev profile; release/LTO artifacts are built only by
 #     release.yml, and `cargo publish` there verifies the crate tarball once.
 # Root-workspace cargo calls go through the `cargo mrs-*`
@@ -55,7 +56,7 @@ TARGET_DIR=${CARGO_TARGET_DIR:-$PWD/target}
 # lines are the totals), junit.xml and coverage.json (python). Nothing reads
 # them here; CI turns them into the run's summary.
 REPORT=
-# The wheel `mrec` and `docs` install instead of building their own. `python`
+# The wheel `types`, `mrec` and `docs` install instead of building their own. `python`
 # sets it to the wheel it just built and tested. CI's test.yml passes it in
 # the environment to the `mrec` and `docs` jobs: the Linux wheel the
 # `test / python (ubuntu-latest)` job of the SAME run built and tested,
@@ -179,6 +180,39 @@ gate_python() {
     MOLRS_TESTED_WHEEL=$wheel
 }
 
+# The stub is the Python type contract: python/molrs/_native.pyi is held to
+# itself and to the extension it describes, in the locked dev environment,
+# with molrs-python/pyproject.toml's [tool.mypy] (strict, the source-tree
+# stub first on the path). `mypy` type-checks the stub file; `mypy.stubtest`
+# imports molrs._native and checks every name, signature, parameter kind and
+# default the stub declares against the compiled module, and every public
+# runtime name the stub misses. stubtest-allowlist.txt holds the structural
+# exemptions only (stub-only type aliases, submodules spelled as classes);
+# PEP 800 @disjoint_base marking is not asked of the stub. Reuse the tested
+# wheel (pre-push, CI); run on its own, it builds one dev wheel, as `docs`
+# does.
+gate_types() {
+    uv --directory molrs-python sync --locked --no-install-project --extra dev
+    local interpreter
+    interpreter=$(uv --directory molrs-python run --no-sync python -c \
+        'import sys; print(sys.executable, end="")')
+    uv pip check --python "$interpreter"
+    local wheel=$MOLRS_TESTED_WHEEL
+    if [ -z "$wheel" ]; then
+        scratch
+        uv --directory molrs-python run --no-sync maturin build --locked \
+            --interpreter "$interpreter" --out "$WORK/wheels"
+        wheel=$(ls "$WORK"/wheels/molcrafts_molrs-*.whl)
+    fi
+    uv pip install -q --python "$interpreter" --no-deps --reinstall "$wheel"
+    uv pip check --python "$interpreter"
+    uv --directory molrs-python run --no-sync python -m mypy \
+        python/molrs/_native.pyi
+    uv --directory molrs-python run --no-sync python -m mypy.stubtest \
+        molrs._native --mypy-config-file pyproject.toml \
+        --allowlist stubtest-allowlist.txt --ignore-disjoint-bases
+}
+
 # Profile and target dir are explicit: CMake caches both, and a build-test/
 # configured once for release would otherwise keep rebuilding the release lib.
 gate_capi() {
@@ -255,7 +289,7 @@ gate_docs() {
 # The pre-push gate. The pre-commit stage (the CI profile's workflows, fmt,
 # ruff, os-cfg, partners) on every file, then every remaining gate once.
 # `partners` is not repeated here: the pre-commit stage ran it.
-VERIFY=(clippy doc test ffi cxx ext capi python wasm mrec docs)
+VERIFY=(clippy doc test ffi cxx ext capi python types wasm mrec docs)
 gate_verify() {
     uvx pre-commit run --all-files --hook-stage pre-commit --show-diff-on-failure
     for gate in "${VERIFY[@]}"; do

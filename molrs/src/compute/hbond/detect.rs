@@ -43,7 +43,7 @@ pub struct HBond {
 ///
 /// ```
 /// use molrs::compute::{Compute, HBondCriterion, HBonds, HBondsInput};
-/// use molrs::core::{NeighborQuery, SimBox};
+/// use molrs::core::{Cell, NeighborQuery, SimBox};
 /// use ndarray::{Array3, array};
 ///
 /// // One frame: O–H donor (atoms 0, 1) and an acceptor O (atom 2) in line.
@@ -53,7 +53,7 @@ pub struct HBond {
 /// ).unwrap();
 /// let donors = [(0, 1)];
 /// let acceptors = [2];
-/// let simbox = SimBox::cube(20.0, array![-10.0, -10.0, -10.0], [true, true, true]).unwrap();
+/// let simbox = SimBox::new(Cell::Lengths([20.0; 3]), [-10.0, -10.0, -10.0], [true, true, true]).unwrap();
 /// let table = NeighborQuery::new(&simbox, array![[2.8, 0.0, 0.0]].view(), 3.5)
 ///     .query(array![[0.0, 0.0, 0.0]].view());
 ///
@@ -382,11 +382,19 @@ impl HBondsResult {
                 value: format!("{frame} (the result has {})", self.per_frame.len()),
             });
         };
+        let edges: Vec<[usize; 2]> = bonds
+            .iter()
+            .flat_map(|bond| {
+                let (d, h, a) = (
+                    bond.donor as usize,
+                    bond.hydrogen as usize,
+                    bond.acceptor as usize,
+                );
+                [[d, h], [h, a]]
+            })
+            .collect();
         let mut topology = Topology::with_atoms(self.n_atoms);
-        for bond in bonds {
-            topology.add_bond(bond.donor as usize, bond.hydrogen as usize);
-            topology.add_bond(bond.hydrogen as usize, bond.acceptor as usize);
-        }
+        topology.add_bonds(&edges);
         Ok(topology
             .connected_components()
             .into_iter()
@@ -422,11 +430,17 @@ mod tests {
         CumulativeTrapezoid, CumulativeTrapezoidInput, Partition, Survival, SurvivalInput,
         SurvivalKind,
     };
+    use crate::core::Cell;
     use molrs::core::{NeighborQuery, SimBox};
-    use ndarray::{Array2, Array3, array};
+    use ndarray::{Array2, Array3};
 
     fn simbox() -> SimBox {
-        SimBox::cube(20.0, array![-10.0, -10.0, -10.0], [true, true, true]).unwrap()
+        SimBox::new(
+            Cell::Lengths([20.0; 3]),
+            [-10.0, -10.0, -10.0],
+            [true, true, true],
+        )
+        .unwrap()
     }
 
     /// Per frame: donor O (0), its H (1), acceptor O (2) at `x_a` on the

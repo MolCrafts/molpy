@@ -1,13 +1,7 @@
 //! [`Vacf`] — the velocity autocorrelation function.
 
-use molrs::op::F;
-use ndarray::{ArrayView2, Axis};
-
-use super::{
-    Correlator, CorrelatorAccumulator, CorrelatorInput, LagKernel, MeanPolicy, Normalization,
-    TimeCorrelation,
-};
-use crate::compute::{Compute, ComputeError, Stream};
+use super::{Correlator, CorrelatorAccumulator, LagKernel, MeanPolicy, Normalization};
+use crate::compute::{ComputeError, Stream};
 
 /// Velocity autocorrelation function, averaged over degrees of freedom:
 ///
@@ -28,18 +22,16 @@ use crate::compute::{Compute, ComputeError, Stream};
 /// unbiased Green–Kubo integrand for a run without centre-of-mass drift. The same curve feeds the vibrational density of states (a
 /// [`Spectrum`](super::Spectrum)) and Green–Kubo self-diffusion,
 /// `D = (1/d) ∫ C(t) dt` (a [`CumulativeTrapezoid`](crate::compute::CumulativeTrapezoid)).
+///
+/// `Vacf` is a [`Stream`] only: [`accumulator`](Stream::accumulator) hands
+/// out a [`CorrelatorAccumulator`]; push one
+/// [`CorrelatorFrame`](super::CorrelatorFrame) per frame whose `a` is that
+/// frame's velocities as `n_dof × 1` (one degree of freedom per row, `b =
+/// None`, no box) and [`finish`](crate::compute::Accumulate::finish) reads
+/// the curve.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Vacf {
     correlator: Correlator,
-}
-
-/// The data [`Vacf`] analyses.
-#[derive(Debug, Clone, Copy)]
-pub struct VacfInput<'a> {
-    /// Velocities, `T × n_dof` (e.g. `N × 3` per frame, flattened).
-    pub velocities: ArrayView2<'a, F>,
-    /// Frame spacing.
-    pub dt: F,
 }
 
 impl Vacf {
@@ -80,25 +72,6 @@ impl Vacf {
             correlator: self.correlator.with_stride(stride)?,
         })
     }
-
-    /// The correlator this VACF is.
-    pub fn correlator(&self) -> &Correlator {
-        &self.correlator
-    }
-}
-
-impl Compute for Vacf {
-    type Input<'a> = VacfInput<'a>;
-    type Output = TimeCorrelation;
-
-    fn compute(&self, input: VacfInput<'_>) -> Result<TimeCorrelation, ComputeError> {
-        self.correlator.compute(CorrelatorInput {
-            a: input.velocities.insert_axis(Axis(2)),
-            b: None,
-            dt: input.dt,
-            boxes: None,
-        })
-    }
 }
 
 /// Streams one frame of velocities at a time as an `n_dof × 1`
@@ -112,7 +85,7 @@ impl Stream for Vacf {
 }
 
 crate::compute::spec::compute_spec! {
-    Vacf as "Vacf";
+    Vacf as "Vacf", Frames;
     params |s| {
         max_lag: Int;
         normalization: Choice(Normalization::NAMES)
@@ -121,7 +94,7 @@ crate::compute::spec::compute_spec! {
         mean: Choice(MeanPolicy::NAMES) = Vacf::DEFAULT_MEAN => s.correlator.mean();
     }
     inputs {
-        velocities: Series;
+        a: Scalars;
         dt: Scalar;
     }
 }
@@ -129,17 +102,31 @@ crate::compute::spec::compute_spec! {
 #[cfg(test)]
 mod tests {
     use super::super::test_support::rng_series;
+    use super::super::{CorrelatorInput, TimeCorrelation};
     use super::*;
     use crate::compute::{
-        Accumulate, CorrelatorFrame, CumulativeTrapezoid, CumulativeTrapezoidInput,
+        Accumulate, Compute, CorrelatorFrame, CumulativeTrapezoid, CumulativeTrapezoidInput,
     };
-    use ndarray::{Array1, Array2};
+    use molrs::op::F;
+    use ndarray::{Array1, Array2, Axis};
+
+    /// Push every row of `v` (`T × n_dof`) into `acc` as an `n_dof × 1`
+    /// frame, then finish.
+    fn fold(
+        acc: CorrelatorAccumulator,
+        v: &Array2<F>,
+        dt: F,
+    ) -> Result<TimeCorrelation, ComputeError> {
+        acc.fold(v.outer_iter().map(|row| CorrelatorFrame {
+            a: row.insert_axis(Axis(1)),
+            b: None,
+            dt,
+            simbox: None,
+        }))
+    }
 
     fn vacf(v: &Array2<F>, dt: F, max_lag: usize) -> Result<TimeCorrelation, ComputeError> {
-        Vacf::new(max_lag).compute(VacfInput {
-            velocities: v.view(),
-            dt,
-        })
+        fold(Vacf::new(max_lag).accumulator(), v, dt)
     }
 
     /// Fold `v` frame by frame through the VACF accumulator.
@@ -161,15 +148,8 @@ mod tests {
     fn surface_is_its_correlator() {
         let v = rng_series(40, 6, 2);
         let explicit = Correlator::new(LagKernel::Product, 12).with_mean(MeanPolicy::Subtract);
-        assert_eq!(*Vacf::new(12).correlator(), explicit);
-        let via_correlator = explicit
-            .compute(CorrelatorInput {
-                a: v.view().insert_axis(Axis(2)),
-                b: None,
-                dt: 0.25,
-                boxes: None,
-            })
-            .unwrap();
+        assert_eq!(Vacf::new(12).correlator, explicit);
+        let via_correlator = fold(explicit.accumulator(), &v, 0.25).unwrap();
         assert_eq!(vacf(&v, 0.25, 12).unwrap(), via_correlator);
     }
 
@@ -180,14 +160,16 @@ mod tests {
         let v = rng_series(64, 6, 3) + 0.4;
         let keep = Vacf::new(12).with_mean(MeanPolicy::Keep);
         let explicit = Correlator::new(LagKernel::Product, 12).with_mean(MeanPolicy::Keep);
-        assert_eq!(*keep.correlator(), explicit);
-        let got = keep
-            .compute(VacfInput {
-                velocities: v.view(),
-                dt: 0.5,
-            })
-            .unwrap();
-        let via_correlator = explicit
+        assert_eq!(keep.correlator, explicit);
+        let got = fold(keep.accumulator(), &v, 0.5).unwrap();
+        let via_correlator = fold(explicit.accumulator(), &v, 0.5).unwrap();
+        assert_eq!(got, via_correlator);
+        assert_ne!(got, vacf(&v, 0.5, 12).unwrap());
+        assert_eq!(Vacf::new(12).correlator.mean(), Vacf::DEFAULT_MEAN);
+        assert_eq!(Vacf::DEFAULT_MEAN, MeanPolicy::Subtract);
+
+        // The kept-mean fold equals the correlator's FFT evaluation.
+        let fft = explicit
             .compute(CorrelatorInput {
                 a: v.view().insert_axis(Axis(2)),
                 b: None,
@@ -195,25 +177,8 @@ mod tests {
                 boxes: None,
             })
             .unwrap();
-        assert_eq!(got, via_correlator);
-        assert_ne!(got, vacf(&v, 0.5, 12).unwrap());
-        assert_eq!(Vacf::new(12).correlator().mean(), Vacf::DEFAULT_MEAN);
-        assert_eq!(Vacf::DEFAULT_MEAN, MeanPolicy::Subtract);
-
-        // The streaming form follows the configured policy.
-        let mut acc = keep.accumulator();
-        for row in v.outer_iter() {
-            acc.push(CorrelatorFrame {
-                a: row.insert_axis(Axis(1)),
-                b: None,
-                dt: 0.5,
-                simbox: None,
-            })
-            .unwrap();
-        }
-        let streamed = acc.finish().unwrap();
         for k in 0..=12 {
-            let (s, b) = (streamed.values[[k, 0]], got.values[[k, 0]]);
+            let (s, b) = (got.values[[k, 0]], fft.values[[k, 0]]);
             assert!(
                 (s - b).abs() < 1e-12 * b.abs().max(1.0),
                 "lag {k}: {s} vs {b}"
@@ -316,11 +281,21 @@ mod tests {
         rng_series(n, cols, seed) + 0.3
     }
 
+    /// The streamed, mean-subtracted VACF equals the correlator's FFT
+    /// evaluation of the same series.
     #[test]
-    fn streaming_matches_batch_fft_vacf() {
+    fn streaming_matches_the_correlator_fft() {
         let (n, dof, res) = (128, 9, 20);
         let v = shifted_series(n, dof, 11);
-        let batch = vacf(&v, 1.0, res).unwrap();
+        let batch = Vacf::new(res)
+            .correlator
+            .compute(CorrelatorInput {
+                a: v.view().insert_axis(Axis(2)),
+                b: None,
+                dt: 1.0,
+                boxes: None,
+            })
+            .unwrap();
         let streamed = stream(&v, res).finish().unwrap();
 
         assert_eq!(streamed.n_lags(), batch.n_lags());
@@ -336,15 +311,11 @@ mod tests {
         assert_eq!(streamed.lag_times, batch.lag_times);
     }
 
-    /// The streaming form refuses a lag with no origin just like the batch.
+    /// A lag with no origin is refused at `finish`.
     #[test]
     fn short_trajectory_is_out_of_range() {
         let (n, dof, res) = (6, 3, 20); // T − 1 < max_lag
         let v = shifted_series(n, dof, 5);
-        assert!(matches!(
-            vacf(&v, 1.0, res),
-            Err(ComputeError::OutOfRange { .. })
-        ));
         assert!(matches!(
             stream(&v, res).finish(),
             Err(ComputeError::OutOfRange { .. })

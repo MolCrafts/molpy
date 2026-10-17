@@ -15,9 +15,9 @@
 //! ```
 //! # #[cfg(feature = "smiles")]
 //! # {
-//! use molrs::io::read_smiles_str;
+//! use molrs::io::smiles::SmilesIr;
 //!
-//! let molecule = read_smiles_str("CCO")?;
+//! let molecule = SmilesIr::parse("CCO")?.to_atomistic()?;
 //! assert_eq!(molecule.n_atoms(), 3);
 //! # }
 //! # Ok::<(), Box<dyn std::error::Error>>(())

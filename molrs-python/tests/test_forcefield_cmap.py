@@ -16,6 +16,16 @@ import molrs
 import numpy as np
 import pytest
 
+
+def _lammps_include(
+    ff: molrs.ff.forcefield.ForceField, frame: molrs.core.Frame, **options: object
+) -> str:
+    """The LAMMPS force-field include ``ff`` writes for ``frame``."""
+    buf = bytearray()
+    molrs.io.lammps.LammpsForcefieldWriter(frame, **options).write(buf, ff)  # type: ignore[arg-type]
+    return buf.decode()
+
+
 ENDS = ("C", "NH1", "CT1", "C2", "NH2")
 
 
@@ -87,8 +97,8 @@ def test_a_cmap_grid_round_trips_through_the_section_and_a_store(
     assert table["grid"].shape == (1, 24, 24)
 
     path = tmp_path / "ff.mrec"
-    molrs.io.write_mrec_forcefield(path, ff)
-    back = molrs.io.read_mrec_forcefield(path).to_forcefield()
+    molrs.io.write_mrec(path, forcefield=ff)
+    back = molrs.io.mrec.MrecFile(path).forcefield().to_forcefield()
     (cmap,) = back.get_types("cmap")
     assert cmap["grid"].tobytes() == _grid().tobytes()
 
@@ -134,8 +144,8 @@ def test_a_cmaps_block_renumbers_atomi_through_atomm(tmp_path: Path) -> None:
     assert list(two["cmaps"]["atomm"]) == [4, 5, 10, 11]
 
     path = tmp_path / "cmaps.mrec"
-    molrs.io.write_mrec_frame(path, frame)
-    back = molrs.io.read_mrec_frame(path)
+    molrs.io.write_mrec(path, frame=frame)
+    back = molrs.io.mrec.MrecFile(path).frame()
     assert list(back["cmaps"]["atomm"]) == [4, 5]
 
 
@@ -168,7 +178,9 @@ def _number_lines(text: str) -> list[str]:
 
 
 def _alanine_ff() -> molrs.ff.forcefield.ForceField:
-    (row,) = molrs.io.read_lammps_cmap_forcefield(ALANINE).get_types("cmap")
+    (row,) = (
+        molrs.io.lammps.LammpsForcefieldReader().read_cmap(ALANINE).get_types("cmap")
+    )
     ff = molrs.ff.forcefield.ForceField("charmm", units="real")
     atoms = ff.def_style("atom", "full")
     by_name = {name: atoms.def_type(name, mass=12.0) for name in set(ALA)}
@@ -195,7 +207,7 @@ def _backbone() -> molrs.core.Frame:
 
 
 def test_read_lammps_cmap_names_rows_by_crossterm_type() -> None:
-    ff = molrs.io.read_lammps_cmap_forcefield(ALANINE)
+    ff = molrs.io.lammps.LammpsForcefieldReader().read_cmap(ALANINE)
     assert ff.units == "real"
     (row,) = ff.get_types("cmap")
     assert row.name == "1"
@@ -210,7 +222,7 @@ def test_assign_cmaps_builds_the_block_the_kernel_prices() -> None:
     assert [int(cmaps[k][0]) for k in ("atomi", "atomm")] == [0, 4]
     assert list(cmaps["type"]) == ["ala"]
     compiler = molrs.ff.compile.PotentialCompiler(ff)
-    energy, forces = compiler.compile(frame).calc_energy_forces(frame)
+    energy, forces = compiler.compile(frame).evaluate(frame)
     assert np.isfinite(energy) and energy != 0.0
     np.testing.assert_allclose(forces.reshape(-1, 3).sum(axis=0), 0.0, atol=1e-10)
 
@@ -221,16 +233,21 @@ def test_lammps_fix_cmap_files_round_trip(tmp_path: Path) -> None:
     del frame["dihedrals"]
 
     cmap = tmp_path / "charmm.cmap"
-    molrs.io.write_lammps_cmap_forcefield(cmap, ff, frame)
-    assert _number_lines(cmap.read_text(encoding="utf-8")) == _number_lines(ALANINE.read_text(encoding="utf-8"))
-
-    include = molrs.io.write_lammps_forcefield_str(
-        ff, frame, skip_pair_style=True, cmap_file="charmm.cmap"
+    molrs.io.lammps.LammpsForcefieldWriter(frame).write_cmap(cmap, ff)
+    assert _number_lines(cmap.read_text(encoding="utf-8")) == _number_lines(
+        ALANINE.read_text(encoding="utf-8")
     )
+
+    include = _lammps_include(ff, frame, skip_pair_style=True, cmap_file="charmm.cmap")
     assert "fix cmap all cmap charmm.cmap\nfix_modify cmap energy yes\n" in include
     with pytest.raises(ValueError, match="cmap_file"):
-        molrs.io.write_lammps_forcefield_str(ff, frame, skip_pair_style=True)
+        _lammps_include(ff, frame, skip_pair_style=True)
 
+    # A data file states a mass per atom type and the writer derives none:
+    # the CHARMM masses of C / NH1 / CT1, in atom order.
+    atoms = frame["atoms"]
+    atoms.insert("mass", np.array([12.011, 14.007, 12.011, 12.011, 14.007]))
+    frame["atoms"] = atoms
     data = tmp_path / "data.lmp"
     molrs.io.write_lammps_data(data, frame)
     assert "\n1 crossterms\n" in data.read_text(encoding="utf-8")

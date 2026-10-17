@@ -325,7 +325,7 @@ fn horn_matrix(s: &Mat3) -> [[F; 4]; 4] {
 mod tests {
     use super::*;
     use crate::op::{F, Mat3, Vec3};
-    use crate::op::{Rigid, transform_point, transform_points};
+    use crate::op::{Rigid, transform_point};
     use crate::op::{det3, eigh_sym_4x4};
 
     const TOL: F = 1e-12;
@@ -409,7 +409,10 @@ mod tests {
             Freedom::Spin { axis } => assert_close(axis[1].abs(), 1.0, TOL, "|axis·ŷ|"),
             other => panic!("expected Spin, got {other:?}"),
         }
-        let mapped = transform_points(&fit.rigid, &reference);
+        let mapped: Vec<Vec3> = reference
+            .iter()
+            .map(|&p| transform_point(&fit.rigid, p))
+            .collect();
         for (i, (m, y)) in mapped.iter().zip(target.iter()).enumerate() {
             assert_vec_close(*m, *y, TOL, &format!("mapped point {i}"));
         }
@@ -625,7 +628,10 @@ mod tests {
             Freedom::Spin { axis } => assert_close(axis[0].abs(), 1.0, TOL, "|axis·x̂|"),
             other => panic!("expected Spin, got {other:?}"),
         }
-        let mapped = transform_points(&fit.rigid, &line);
+        let mapped: Vec<Vec3> = line
+            .iter()
+            .map(|&p| transform_point(&fit.rigid, p))
+            .collect();
         for (i, (m, y)) in mapped.iter().zip(line.iter()).enumerate() {
             assert_vec_close(*m, *y, TOL, &format!("mapped point {i}"));
         }

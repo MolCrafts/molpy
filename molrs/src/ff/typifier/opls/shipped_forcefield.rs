@@ -51,7 +51,7 @@ fn try_force_field() -> Result<ForceField, DefError> {
         bonds.def_type(
             TypeName::join(&ends).map_err(DefError::Name)?.as_str(),
             &ends,
-            Params::from_pairs(&[("k", row.force_constant), ("r0", row.r0)]),
+            Params::from_iter([("k", row.force_constant), ("r0", row.r0)]),
         )?;
     }
 
@@ -61,7 +61,7 @@ fn try_force_field() -> Result<ForceField, DefError> {
         angles.def_type(
             TypeName::join(&ends).map_err(DefError::Name)?.as_str(),
             &ends,
-            Params::from_pairs(&[("k", row.force_constant), ("theta0", row.theta0)]),
+            Params::from_iter([("k", row.force_constant), ("theta0", row.theta0)]),
         )?;
     }
 
@@ -71,7 +71,7 @@ fn try_force_field() -> Result<ForceField, DefError> {
         dihedrals.def_type(
             TypeName::join(&ends).map_err(DefError::Name)?.as_str(),
             &ends,
-            Params::from_pairs(&[
+            Params::from_iter([
                 ("k1", row.f1),
                 ("k2", row.f2),
                 ("k3", row.f3),
@@ -93,24 +93,24 @@ fn try_force_field() -> Result<ForceField, DefError> {
         atoms.def_type(
             row.name,
             &[],
-            Params::from_pairs(&[("mass", row.mass), ("charge", row.charge)]),
+            Params::from_iter([("mass", row.mass), ("charge", row.charge)]),
         )?;
     }
 
     let mut lj_params = Params::new();
-    lj_params.set_str("mixing", OPLSAA_MIXING);
+    lj_params.set("mixing", OPLSAA_MIXING);
     let lj = ff.def_style("pair", "lj/cut", lj_params)?;
     for row in OPLSAA_ATOMS {
         lj.def_type(
             row.name,
             &[row.name],
-            Params::from_pairs(&[("epsilon", row.epsilon), ("sigma", row.sigma)]),
+            Params::from_iter([("epsilon", row.epsilon), ("sigma", row.sigma)]),
         )?;
     }
     ff.def_style(
         "pair",
         "coul/cut",
-        Params::from_pairs(&[("coulomb", COULOMB_REAL), ("dielectric", VACUUM_DIELECTRIC)]),
+        Params::from_iter([("coulomb", COULOMB_REAL), ("dielectric", VACUUM_DIELECTRIC)]),
     )?;
 
     // OPLS excludes 1-2 / 1-3 (molrs omits them from the neighbour list) and
@@ -183,6 +183,9 @@ fn try_typing_meta_from(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::props;
+    use molrs::core::Element;
+    use molrs::core::keys;
 
     /// The shipped OPLS-AA table defines every style and type without a
     /// conflict. `force_field` `expect`s this result and names this test.
@@ -196,9 +199,8 @@ mod tests {
     use crate::ff::params::{OplsAtomRow, OplsRuleRow};
     use crate::ff::typifier::OplsAaTypifier;
     use crate::ff::typifier::{Typifier, Typing};
-    use molrs::core::BondOrder;
-    use molrs::core::PropValue;
-    use molrs::core::{Atom, Atomistic, NodeId};
+    use molrs::core::{Atomistic, NodeId};
+    use molrs::core::{BondNumber, BondOrder};
 
     /// Relative tolerance of the source-equivalence pins. A zero expectation
     /// therefore demands an exact zero (`-0.0` compares equal).
@@ -219,6 +221,7 @@ mod tests {
     fn param(params: &Params, key: &str, what: &str) -> f64 {
         params
             .get(key)
+            .and_then(|v| v.as_num())
             .unwrap_or_else(|| panic!("{what} has no `{key}` param"))
     }
 
@@ -277,7 +280,10 @@ mod tests {
     fn library_lj_cut_declares_geometric_mixing() {
         let typifier = OplsAaTypifier::oplsaa();
         let lj = style(typifier.source_forcefield(), "pair", "lj/cut");
-        assert_eq!(lj.params().get_str("mixing"), Some("geometric"));
+        assert_eq!(
+            lj.params().get("mixing").and_then(|v| v.as_text()),
+            Some("geometric")
+        );
     }
 
     /// GROMACS v2026.3 (`42105e4672205b4aa951962b8e3cdb4c27890da1`),
@@ -510,7 +516,15 @@ mod tests {
         /// Add an atom the input writes aliphatic, expected to type `ty`.
         fn atom(&mut self, element: &'static str, ty: &'static str) -> NodeId {
             let x = 1.2 * self.expected.len() as f64;
-            let id = self.graph.add_atom(Atom::xyz(element, x, 0.0, 0.0));
+            let id = self
+                .graph
+                .add_atom(props! {
+                    keys::ATOMIC_NUMBER => Element::by_symbol(element).unwrap(),
+                    keys::X => x,
+                    keys::Y => 0.0,
+                    keys::Z => 0.0,
+                })
+                .unwrap();
             self.expected.push((id, element, ty));
             id
         }
@@ -519,15 +533,16 @@ mod tests {
         /// lowercase SMILES atom reads), expected to type `ty`.
         fn aromatic_atom(&mut self, element: &'static str, ty: &'static str) -> NodeId {
             let id = self.atom(element, ty);
-            self.graph
-                .set_atom(id, "is_aromatic", PropValue::Int(1))
-                .unwrap();
+            self.graph.set_atom(id, keys::IS_AROMATIC, true).unwrap();
             id
         }
 
         fn bond(&mut self, a: NodeId, b: NodeId, order: BondOrder) {
-            let bond = self.graph.add_bond(a, b).unwrap();
-            self.graph.set_bond_type(bond, order).unwrap();
+            let bond = self.graph.add_bond(a, b, props! {}).unwrap();
+            // An aromatic bond is written unkekulized (no bond number), as a
+            // lowercase SMILES bond reads.
+            let number = order.implied_number().unwrap_or(BondNumber::Unknown);
+            self.graph.set_bond_class(bond, order, number).unwrap();
         }
 
         /// Close `atoms` into a ring, bond `k` joining `atoms[k]` and

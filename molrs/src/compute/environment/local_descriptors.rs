@@ -155,14 +155,18 @@ crate::compute::spec::compute_spec! {
 mod tests {
     use super::*;
     use crate::compute::fixtures::neighbors_of;
+    use crate::core::Cell;
     use molrs::core::SimBox;
     use molrs::core::ylm_complex;
-    use ndarray::array;
 
     /// Descriptors of the self-query table over `positions` in an open cube.
     fn describe(l_max: u32, positions: &[[F; 3]], box_len: F, cutoff: F) -> LocalDescriptorsResult {
-        let simbox =
-            SimBox::cube(box_len, array![0.0 as F, 0.0 as F, 0.0 as F], [false; 3]).unwrap();
+        let simbox = SimBox::new(
+            Cell::Lengths([box_len; 3]),
+            [0.0 as F, 0.0 as F, 0.0 as F],
+            [false; 3],
+        )
+        .unwrap();
         let nl = neighbors_of(positions, &simbox, cutoff);
         LocalDescriptors::new(l_max)
             .compute(LocalDescriptorsInput { neighbors: &nl })
@@ -224,7 +228,7 @@ mod tests {
     #[test]
     fn table_without_disp_is_bad_shape() {
         use molrs::core::NeighborColumns;
-        let simbox = SimBox::cube(10.0, array![0.0, 0.0, 0.0], [false; 3]).unwrap();
+        let simbox = SimBox::new(Cell::Lengths([10.0; 3]), [0.0, 0.0, 0.0], [false; 3]).unwrap();
         let nl = neighbors_of(&[[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]], &simbox, 1.5)
             .repack(NeighborColumns::INDICES_ONLY);
         let err = LocalDescriptors::new(2)

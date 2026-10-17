@@ -50,13 +50,13 @@ impl Templates {
     ) -> Result<Self, ForceFieldWriteError> {
         let atoms = frame.get("atoms").ok_or("frame has no atoms block")?;
         let n = atoms.n_rows().unwrap_or(0);
-        let strings = |key: &str| atoms.get(key).and_then(|c| c.as_string());
+        let strings = |key: &str| atoms.get(key).and_then(|c| c.get::<String>());
         let types = strings("type").ok_or("atoms has no string type column")?;
         let elements = strings("element").ok_or(
             "atoms has no string element column: OpenMM matches residues to templates by \
              element",
         )?;
-        let charges = atoms.get("charge").and_then(|c| c.as_float());
+        let charges = atoms.get("charge").and_then(|c| c.get::<f64>());
         let types: Vec<&str> = types.iter().map(|t| t.as_str()).collect();
         let elements: Vec<&str> = elements.iter().map(|e| e.trim()).collect();
         let charges: Option<Vec<f64>> = charges.map(|q| q.iter().copied().collect());
@@ -141,7 +141,7 @@ fn type_elements(
     let defined: HashMap<&str, &AtomType> = ff
         .get_atomtypes()
         .into_iter()
-        .filter(|t| t.params.get_str("type_") != Some("*"))
+        .filter(|t| t.params.get("type_").and_then(|v| v.as_text()) != Some("*"))
         .map(|t| (t.name.as_str(), t))
         .collect();
     let mut element_of: HashMap<String, String> = HashMap::new();
@@ -155,7 +155,7 @@ fn type_elements(
             )
             .into());
         }
-        if let Some(own) = atom_type.params.get_str("element")
+        if let Some(own) = atom_type.params.get("element").and_then(|v| v.as_text())
             && !own.trim().eq_ignore_ascii_case(element)
         {
             return Err(format!(
@@ -188,7 +188,7 @@ fn bonds(frame: &Frame, n: usize) -> Result<Vec<(usize, usize)>, ForceFieldWrite
     let column = |key: &str| -> Result<Vec<usize>, String> {
         block
             .get(key)
-            .and_then(|c| c.as_uint())
+            .and_then(|c| c.get::<u64>())
             .map(|c| c.iter().map(|&v| v as usize).collect())
             .ok_or_else(|| format!("bonds has no index column {key}"))
     };
@@ -271,10 +271,6 @@ fn template_xml(w: &OpenmmXmlWriter, name: &str, content: &Content) -> String {
 mod tests {
     use crate::ff::forcefield::ForceField;
     use crate::ff::ir::Params;
-    use crate::io::{
-        read_openmm_forcefield_str, read_pdb_str, write_openmm_forcefield_str,
-        write_openmm_system_str, write_pdb_str,
-    };
     use molrs::core::{Block, Frame};
     use molrs::op::Idx;
     use ndarray::{ArrayD, IxDyn};
@@ -337,12 +333,15 @@ mod tests {
             (0..copies).flat_map(|_| v.iter().cloned()).collect()
         };
         let mut atoms = Block::new();
-        atoms.insert("type", column(repeat(&types))).unwrap();
-        atoms.insert("element", column(repeat(&elements))).unwrap();
+        atoms.insert("type", column(repeat(&types)), None).unwrap();
+        atoms
+            .insert("element", column(repeat(&elements)), None)
+            .unwrap();
         atoms
             .insert(
                 "charge",
                 column((0..copies).flat_map(|_| charges.iter().copied()).collect()),
+                None,
             )
             .unwrap();
         for (k, key) in ["x", "y", "z"].into_iter().enumerate() {
@@ -353,7 +352,7 @@ mod tests {
                         .map(move |p| p[k] + if k == 0 { 50.0 * c as f64 } else { 0.0 })
                 })
                 .collect();
-            atoms.insert(key, column::<f64>(values)).unwrap();
+            atoms.insert(key, column::<f64>(values), None).unwrap();
         }
         let mut block = Block::new();
         let shifted = |c: usize, i: Idx| i + (c * n) as Idx;
@@ -365,6 +364,7 @@ mod tests {
                         .flat_map(|c| bonds.iter().map(move |b| shifted(c, b.0)))
                         .collect(),
                 ),
+                None,
             )
             .unwrap();
         block
@@ -375,6 +375,7 @@ mod tests {
                         .flat_map(|c| bonds.iter().map(move |b| shifted(c, b.1)))
                         .collect(),
                 ),
+                None,
             )
             .unwrap();
         let mut frame = Frame::new();
@@ -384,17 +385,30 @@ mod tests {
     }
 
     fn opls() -> ForceField {
-        read_openmm_forcefield_str(OPLS_XML).unwrap()
+        {
+            use crate::io::reader::ForceFieldReader;
+            crate::io::openmm_xml::OpenmmXmlReader::new().read((OPLS_XML).as_bytes())
+        }
+        .unwrap()
     }
 
     fn system(ff: &ForceField, frame: &Frame) -> String {
-        write_openmm_system_str(ff, frame, None).unwrap_or_else(|e| panic!("{e}"))
+        crate::io::writer::capture(|sink| {
+            crate::io::openmm_xml::OpenmmXmlWriter::new()
+                .with_precision(None)
+                .write_system(sink, ff, frame)
+        })
+        .unwrap_or_else(|e| panic!("{e}"))
     }
 
     fn system_err(ff: &ForceField, frame: &Frame) -> String {
-        write_openmm_system_str(ff, frame, None)
-            .expect_err("expected the system to be refused")
-            .into()
+        crate::io::writer::capture(|sink| {
+            crate::io::openmm_xml::OpenmmXmlWriter::new()
+                .with_precision(None)
+                .write_system(sink, ff, frame)
+        })
+        .expect_err("expected the system to be refused")
+        .into()
     }
 
     /// `(name, [(atom name, type, charge)], [(bond names)], [external names])`
@@ -465,11 +479,16 @@ mod tests {
         assert!(external.is_empty());
 
         // The PDB of the same frame: one residue per molecule, the same names.
-        let pdb = read_pdb_str(&write_pdb_str(&frame).unwrap()).unwrap();
+        let pdb = crate::io::read_pdb(
+            crate::io::writer::capture(|sink| crate::io::write_pdb(sink, &frame))
+                .unwrap()
+                .as_bytes(),
+        )
+        .unwrap();
         let atoms = pdb.get("atoms").unwrap();
         let pdb_names: Vec<String> = atoms
             .get("name")
-            .and_then(|c| c.as_string())
+            .and_then(|c| c.get::<String>())
             .unwrap()
             .iter()
             .cloned()
@@ -478,13 +497,16 @@ mod tests {
         assert_eq!(&pdb_names[12..], names.as_slice());
         let res_ids: Vec<Idx> = atoms
             .get("res_id")
-            .and_then(|c| c.as_uint())
+            .and_then(|c| c.get::<u64>())
             .unwrap()
             .iter()
             .copied()
             .collect();
         assert_eq!(res_ids, [[1; 12], [2; 12]].concat());
-        let res_names = atoms.get("res_name").and_then(|c| c.as_string()).unwrap();
+        let res_names = atoms
+            .get("res_name")
+            .and_then(|c| c.get::<String>())
+            .unwrap();
         assert!(res_names.iter().all(|r| r == "MOL"));
 
         // Charges come from the templates; the types keep their elements.
@@ -515,7 +537,11 @@ mod tests {
     fn the_system_reads_back_as_the_force_field() {
         let ff = opls();
         let frame = propanols(1);
-        let back = read_openmm_forcefield_str(&system(&ff, &frame)).unwrap();
+        let back = {
+            use crate::io::reader::ForceFieldReader;
+            crate::io::openmm_xml::OpenmmXmlReader::new().read(system(&ff, &frame).as_bytes())
+        }
+        .unwrap();
         for category in ["bond", "angle", "dihedral", "pair"] {
             // (type, [(key, value)]) per row, sorted.
             let rows = |f: &ForceField| -> Vec<(String, Vec<(String, f64)>)> {
@@ -526,8 +552,10 @@ mod tests {
                         s.type_rows()
                             .into_iter()
                             .map(|(name, _, p)| {
-                                let mut values: Vec<_> =
-                                    p.iter().map(|(k, v)| (k.to_owned(), v)).collect();
+                                let mut values: Vec<_> = p
+                                    .iter()
+                                    .filter_map(|(k, v)| v.as_num().map(|v| (k.to_owned(), v)))
+                                    .collect();
                                 values.sort_by(|a, b| a.0.cmp(&b.0));
                                 (name.to_owned(), values)
                             })
@@ -563,7 +591,11 @@ mod tests {
         bare.get_mut("atoms").unwrap().remove("charge");
         let xml = system(&ff, &bare);
         assert!(templates(&xml)[0].1.iter().all(|a| a.2.is_none()));
-        let back = read_openmm_forcefield_str(&xml).unwrap();
+        let back = {
+            use crate::io::reader::ForceFieldReader;
+            crate::io::openmm_xml::OpenmmXmlReader::new().read(xml.as_bytes())
+        }
+        .unwrap();
         for t in ff.get_atomtypes() {
             let again = back.get_atomtypes().into_iter().find(|b| b.name == t.name);
             assert_eq!(
@@ -574,7 +606,13 @@ mod tests {
             );
         }
         // Everything but the templates is the force field's own document.
-        let alone = write_openmm_forcefield_str(&ff, None).unwrap();
+        let alone = crate::io::writer::capture(|sink| {
+            use crate::io::writer::ForceFieldWriter;
+            crate::io::openmm_xml::OpenmmXmlWriter::new()
+                .with_precision(None)
+                .write(sink, &ff)
+        })
+        .unwrap();
         let start = xml.find("  <Residues>").unwrap();
         let end = xml.find("  </Residues>\n").unwrap() + "  </Residues>\n".len();
         assert_eq!(format!("{}{}", &xml[..start], &xml[end..]), alone);
@@ -585,8 +623,8 @@ mod tests {
     fn ethylene_units() -> (ForceField, Frame) {
         let mut ff = ForceField::new("units");
         let atom = |mass: f64, q: f64, e: &str| {
-            let mut p = Params::from_pairs(&[("mass", mass), ("charge", q)]);
-            p.set_str("element", e);
+            let mut p = Params::from_iter([("mass", mass), ("charge", q)]);
+            p.set("element", e);
             p
         };
         ff.def_style("atom", "full", Params::new())
@@ -598,20 +636,20 @@ mod tests {
         ff.def_style("pair", "coul/cut", Params::new()).unwrap();
         let mut atoms = Block::new();
         atoms
-            .insert("type", strs(&["CT", "HC", "HC", "CT", "HC", "HC"]))
+            .insert("type", strs(&["CT", "HC", "HC", "CT", "HC", "HC"]), None)
             .unwrap();
         atoms
-            .insert("element", strs(&["C", "H", "H", "C", "H", "H"]))
+            .insert("element", strs(&["C", "H", "H", "C", "H", "H"]), None)
             .unwrap();
         atoms
-            .insert("res_id", column::<Idx>(vec![1, 1, 1, 2, 2, 2]))
+            .insert("res_id", column::<Idx>(vec![1, 1, 1, 2, 2, 2]), None)
             .unwrap();
         let mut bonds = Block::new();
         bonds
-            .insert("atomi", column::<Idx>(vec![0, 0, 0, 3, 3]))
+            .insert("atomi", column::<Idx>(vec![0, 0, 0, 3, 3]), None)
             .unwrap();
         bonds
-            .insert("atomj", column::<Idx>(vec![1, 2, 3, 4, 5]))
+            .insert("atomj", column::<Idx>(vec![1, 2, 3, 4, 5]), None)
             .unwrap();
         let mut frame = Frame::new();
         frame.insert("atoms", atoms);
@@ -636,14 +674,14 @@ mod tests {
         let atoms = frame.get_mut("atoms").unwrap();
         let mut q: Vec<f64> = atoms
             .get("charge")
-            .and_then(|c| c.as_float())
+            .and_then(|c| c.get::<f64>())
             .unwrap()
             .iter()
             .copied()
             .collect();
         q[12] += 0.01;
         q[13] -= 0.01;
-        atoms.insert("charge", column(q)).unwrap();
+        atoms.insert("charge", column(q), None).unwrap();
         let names: Vec<String> = templates(&system(&opls(), &frame))
             .into_iter()
             .map(|t| t.0)
@@ -657,33 +695,33 @@ mod tests {
 
         let mut frame = propanols(1);
         let atoms = frame.get_mut("atoms").unwrap();
-        atoms.insert("name", strs(&["C"; 12])).unwrap();
+        atoms.insert("name", strs(&["C"; 12]), None).unwrap();
         assert!(system_err(&ff, &frame).contains("two atoms named 'C'"));
 
         let mut frame = propanols(1);
         let atoms = frame.get_mut("atoms").unwrap();
         let mut types: Vec<String> = atoms
             .get("type")
-            .and_then(|c| c.as_string())
+            .and_then(|c| c.get::<String>())
             .unwrap()
             .iter()
             .cloned()
             .collect();
         types[0] = "opls_999".into();
-        atoms.insert("type", column(types)).unwrap();
+        atoms.insert("type", column(types), None).unwrap();
         assert!(system_err(&ff, &frame).contains("'opls_999'"));
 
         let mut frame = propanols(1);
         let atoms = frame.get_mut("atoms").unwrap();
         let mut elements: Vec<String> = atoms
             .get("element")
-            .and_then(|c| c.as_string())
+            .and_then(|c| c.get::<String>())
             .unwrap()
             .iter()
             .cloned()
             .collect();
         elements[0] = "N".into();
-        atoms.insert("element", column(elements)).unwrap();
+        atoms.insert("element", column(elements), None).unwrap();
         assert!(system_err(&ff, &frame).contains("the type's element is C"));
 
         let mut frame = propanols(1);
@@ -699,9 +737,9 @@ mod tests {
             let mut ff = ForceField::new("bare");
             ff.def_style("atom", "full", Params::new())
                 .unwrap()
-                .def_type("CT", &[], Params::from_pairs(&[("mass", 12.011)]))
+                .def_type("CT", &[], Params::from_iter([("mass", 12.011)]))
                 .unwrap()
-                .def_type("HC", &[], Params::from_pairs(&[("mass", 1.008)]))
+                .def_type("HC", &[], Params::from_iter([("mass", 1.008)]))
                 .unwrap();
             let style = ff.def_style("pair", pair, Params::new()).unwrap();
             if pair == "lj/cut" {
@@ -709,13 +747,13 @@ mod tests {
                     .def_type(
                         "CT",
                         &["CT"],
-                        Params::from_pairs(&[("sigma", 3.5), ("epsilon", 0.066)]),
+                        Params::from_iter([("sigma", 3.5), ("epsilon", 0.066)]),
                     )
                     .unwrap()
                     .def_type(
                         "HC",
                         &["HC"],
-                        Params::from_pairs(&[("sigma", 2.5), ("epsilon", 0.03)]),
+                        Params::from_iter([("sigma", 2.5), ("epsilon", 0.03)]),
                     )
                     .unwrap();
             }
@@ -725,7 +763,11 @@ mod tests {
         frame
             .get_mut("atoms")
             .unwrap()
-            .insert("charge", column(vec![-0.12, 0.06, 0.06, -0.12, 0.06, 0.06]))
+            .insert(
+                "charge",
+                column(vec![-0.12, 0.06, 0.06, -0.12, 0.06, 0.06]),
+                None,
+            )
             .unwrap();
         let xml = system(&bare("coul/cut"), &frame);
         assert!(xml.contains("<Type name=\"CT\" class=\"CT\" element=\"C\""));

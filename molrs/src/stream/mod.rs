@@ -95,9 +95,10 @@ pub(crate) fn encode_frame(frame: &Frame, format: FrameEncoding) -> Result<Vec<u
 mod tests {
     use super::*;
     use crate::core::Block;
+    use crate::core::Cell;
     use crate::core::SimBox;
     use crate::op::{F, I, Idx};
-    use ndarray::{Array1, array};
+    use ndarray::Array1;
 
     /// Build a full Frame used by the net-streaming lossless round-trip contract
     /// (ac-002): atoms x/y/z + serial + type, bonds i/j + order, SimBox, meta.
@@ -107,46 +108,68 @@ mod tests {
             .insert(
                 "x",
                 Array1::from_vec(vec![1.0 as F, 2.0 as F, 3.0 as F]).into_dyn(),
+                None,
             )
             .unwrap();
         atoms
             .insert(
                 "y",
                 Array1::from_vec(vec![0.0 as F, 1.0 as F, 2.0 as F]).into_dyn(),
+                None,
             )
             .unwrap();
         atoms
             .insert(
                 "z",
                 Array1::from_vec(vec![0.5 as F, 1.5 as F, 2.5 as F]).into_dyn(),
+                None,
             )
             .unwrap();
         atoms
             .insert(
                 "serial",
                 Array1::from_vec(vec![10 as I, 20 as I, 30 as I]).into_dyn(),
+                None,
             )
             .unwrap();
         atoms
-            .insert("atype", Array1::from_vec(vec![6u8, 1u8, 8u8]).into_dyn())
+            .insert(
+                "atype",
+                Array1::from_vec(vec![6u8, 1u8, 8u8]).into_dyn(),
+                None,
+            )
             .unwrap();
 
         let mut bonds = Block::new();
         bonds
-            .insert("i", Array1::from_vec(vec![0 as Idx, 1 as Idx]).into_dyn())
+            .insert(
+                "i",
+                Array1::from_vec(vec![0 as Idx, 1 as Idx]).into_dyn(),
+                None,
+            )
             .unwrap();
         bonds
-            .insert("j", Array1::from_vec(vec![1 as Idx, 2 as Idx]).into_dyn())
+            .insert(
+                "j",
+                Array1::from_vec(vec![1 as Idx, 2 as Idx]).into_dyn(),
+                None,
+            )
             .unwrap();
         bonds
-            .insert("order", Array1::from_vec(vec![1u8, 1u8]).into_dyn())
+            .insert("order", Array1::from_vec(vec![1u8, 1u8]).into_dyn(), None)
             .unwrap();
 
         let mut frame = Frame::new();
         frame.insert("atoms", atoms);
         frame.insert("bonds", bonds);
-        frame.simbox =
-            Some(SimBox::cube(10.0, array![0.0, 0.0, 0.0], [true, true, true]).expect("simbox"));
+        frame.simbox = Some(
+            SimBox::new(
+                Cell::Lengths([10.0; 3]),
+                [0.0, 0.0, 0.0],
+                [true, true, true],
+            )
+            .expect("simbox"),
+        );
         frame.meta.insert("title", "stream-roundtrip");
         frame.meta.insert("step", 42i64);
         frame
@@ -159,33 +182,39 @@ mod tests {
         assert!(a.contains_key("bonds"));
         assert!(b.contains_key("bonds"));
 
-        let ax = a["atoms"].get("x").and_then(|c| c.as_float()).unwrap();
-        let bx = b["atoms"].get("x").and_then(|c| c.as_float()).unwrap();
+        let ax = a["atoms"].get("x").and_then(|c| c.get::<f64>()).unwrap();
+        let bx = b["atoms"].get("x").and_then(|c| c.get::<f64>()).unwrap();
         assert_eq!(ax.len(), bx.len());
         for (u, v) in ax.iter().zip(bx.iter()) {
             assert!((u - v).abs() < f64::EPSILON);
         }
-        let ay = a["atoms"].get("y").and_then(|c| c.as_float()).unwrap();
-        let by = b["atoms"].get("y").and_then(|c| c.as_float()).unwrap();
+        let ay = a["atoms"].get("y").and_then(|c| c.get::<f64>()).unwrap();
+        let by = b["atoms"].get("y").and_then(|c| c.get::<f64>()).unwrap();
         for (u, v) in ay.iter().zip(by.iter()) {
             assert!((u - v).abs() < f64::EPSILON);
         }
-        let az = a["atoms"].get("z").and_then(|c| c.as_float()).unwrap();
-        let bz = b["atoms"].get("z").and_then(|c| c.as_float()).unwrap();
+        let az = a["atoms"].get("z").and_then(|c| c.get::<f64>()).unwrap();
+        let bz = b["atoms"].get("z").and_then(|c| c.get::<f64>()).unwrap();
         for (u, v) in az.iter().zip(bz.iter()) {
             assert!((u - v).abs() < f64::EPSILON);
         }
 
-        let aserial = a["atoms"].get("serial").and_then(|c| c.as_int()).unwrap();
-        let bserial = b["atoms"].get("serial").and_then(|c| c.as_int()).unwrap();
+        let aserial = a["atoms"]
+            .get("serial")
+            .and_then(|c| c.get::<i32>())
+            .unwrap();
+        let bserial = b["atoms"]
+            .get("serial")
+            .and_then(|c| c.get::<i32>())
+            .unwrap();
         assert_eq!(aserial.as_slice().unwrap(), bserial.as_slice().unwrap());
 
-        let atype = a["atoms"].get("atype").and_then(|c| c.as_u8()).unwrap();
-        let btype = b["atoms"].get("atype").and_then(|c| c.as_u8()).unwrap();
+        let atype = a["atoms"].get("atype").and_then(|c| c.get::<u8>()).unwrap();
+        let btype = b["atoms"].get("atype").and_then(|c| c.get::<u8>()).unwrap();
         assert_eq!(atype.as_slice().unwrap(), btype.as_slice().unwrap());
 
-        let bi = a["bonds"].get("i").and_then(|c| c.as_uint()).unwrap();
-        let bj = b["bonds"].get("i").and_then(|c| c.as_uint()).unwrap();
+        let bi = a["bonds"].get("i").and_then(|c| c.get::<u64>()).unwrap();
+        let bj = b["bonds"].get("i").and_then(|c| c.get::<u64>()).unwrap();
         assert_eq!(bi.as_slice().unwrap(), bj.as_slice().unwrap());
 
         assert!(a.simbox.is_some());

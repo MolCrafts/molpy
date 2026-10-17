@@ -99,15 +99,15 @@ pub(crate) fn plan(ff: &ForceField, frame: &Frame) -> Result<Exceptions, String>
     let types = frame
         .get(ATOMS)
         .and_then(|b| b.get("type"))
-        .and_then(|c| c.as_string());
+        .and_then(|c| c.get::<String>());
     let charges = frame
         .get(ATOMS)
         .and_then(|b| b.get("charge"))
-        .and_then(|c| c.as_float());
+        .and_then(|c| c.get::<f64>());
     let is_14 = frame
         .get(PAIRS)
         .and_then(|b| b.get("is_14"))
-        .and_then(|c| c.as_bool());
+        .and_then(|c| c.get::<bool>());
     let classes = BondClasses::new(frame);
     let sb = ff.special_bonds();
     let lj_rows = match &vdw {
@@ -244,7 +244,7 @@ pub(crate) fn dihedral_weights(
         let Some(block) = frame.get(DIHEDRALS) else {
             continue;
         };
-        let Some(labels) = block.get("type").and_then(|c| c.as_string()) else {
+        let Some(labels) = block.get("type").and_then(|c| c.get::<String>()) else {
             continue;
         };
         for (r, (i, l)) in end_pairs(frame, DIHEDRALS, ATOMI, ATOML)
@@ -282,7 +282,7 @@ fn check_one_four(
     let pairs_14: Vec<(usize, usize)> = match frame
         .get(PAIRS)
         .and_then(|b| b.get("is_14"))
-        .and_then(|c| c.as_bool())
+        .and_then(|c| c.get::<bool>())
     {
         Some(flags) => rows_ij
             .iter()
@@ -346,7 +346,7 @@ fn override_cells(frame: &Frame) -> Result<(Vec<Cells>, Vec<usize>), String> {
             continue;
         };
         let values = col
-            .as_float()
+            .get::<f64>()
             .ok_or_else(|| format!("pairs: the per-pair override column '{key}' must be float"))?;
         let valid = block.validity(key);
         for r in 0..n {
@@ -399,7 +399,10 @@ fn pair_styles(ff: &ForceField) -> Result<(Vdw<'_>, Option<F>), String> {
             }
             "coul/cut" | "coul/charmm" => {
                 let (p, _) = gathered(style).map_err(|e| e.to_string())?;
-                if p.get("delta").is_some_and(|d| d != 0.0) {
+                if p.get("delta")
+                    .and_then(|v| v.as_num())
+                    .is_some_and(|d| d != 0.0)
+                {
                     return Err(format!(
                         "pair style '{name}': a buffered Coulomb (delta ≠ 0) has no 1-4 \
                          exception form"

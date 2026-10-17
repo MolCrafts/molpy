@@ -1,27 +1,27 @@
-//! WASM bindings for frame-sequence Zarr v3 stores (`*.mrec`).
+//! WASM bindings for MolRec scientific records (`*.mrec`, Zarr V3) — the
+//! faces of `molrs::io::mrec::MrecReader` and `MrecFile`.
 //!
-//! Three ways to hand the reader its bytes, in increasing laziness:
+//! Both classes open one [`MrecSource`](JsMrecSource), the record however JS
+//! holds it, in increasing laziness:
 //!
-//! - **`new MrecReader(files)`** — a `Map<path, Uint8Array>` of every
-//!   file, copied once into an in-memory store. Simple; the whole store is
-//!   resident.
-//! - **`MrecReader.fromZip(bytes)`** — one packed `*.mrec.zip`, whose
-//!   stored entries are unpacked into the same in-memory store.
-//! - **`MrecReader.fromStorage(host)`** — a host object that serves keys
-//!   on demand: `get(key)`, `getRange(key, offset, length)`, `size(key)` and
-//!   `list(prefix)`. Only the chunks a frame touches ever cross into wasm, so
-//!   a multi-gigabyte run opens in a worker that reads its files (or an HTTP
-//!   range server) synchronously.
+//! - a **`Uint8Array`** — the bytes of a packed `*.mrec.zip`, whose stored
+//!   entries are unpacked into an in-memory store;
+//! - a **`Map<path, Uint8Array>`** of every file of a `*.mrec` directory,
+//!   copied once into an in-memory store;
+//! - a **host object** that serves keys on demand: `get(key)`,
+//!   `getRange(key, offset, length)`, `size(key)` and `list(prefix)`. Only the
+//!   chunks a frame touches ever cross into wasm, so a multi-gigabyte run
+//!   opens in a worker that reads its files (or an HTTP range server)
+//!   synchronously.
 //!
-//! A record that is not a frame sequence is read whole: `sectionNamesBytes`
-//! / `sectionNamesFiles` list its sections and `readMrecFrameBytes` /
-//! `readMrecFrameFiles` read its `frame` snapshot, from the packed zip's bytes
-//! or from the files `Map`.
+//! [`MrecReader`] is the `trajectory` section, one frame at a time;
+//! [`MrecFile`] reads any record one section at a time (`sections()`,
+//! `frame()`, `system()`, `meta()`) — a molpack configuration is `meta` +
+//! `frame`, which `new MrecFile(bytes).frame()` reads.
 
 use crate::core::frame::Frame;
 use crate::core::simbox::Box as JsBox;
-use molrs::io::mrec::{MrecReader as RsMrecReader, section_names_storage};
-use molrs::io::read_mrec_frame_storage;
+use molrs::io::mrec::{MrecFile as RsMrecFile, MrecReader as RsMrecReader};
 use molrs::io::reader::TrajectoryReader;
 use std::io::Read;
 use std::sync::Arc;
@@ -30,16 +30,69 @@ use wasm_bindgen::prelude::*;
 use zarrs::storage::byte_range::{ByteRange, ByteRangeIterator};
 use zarrs::storage::store::MemoryStore;
 use zarrs::storage::{
-    Bytes, ListableStorageTraits, MaybeBytes, MaybeBytesIterator, ReadableStorageTraits,
-    ReadableWritableListableStorage, StorageError, StoreKey, StoreKeys, StoreKeysPrefixes,
-    StorePrefix, WritableStorageTraits,
+    Bytes, ListableStorageTraits, MaybeBytes, MaybeBytesIterator, ReadableListableStorage,
+    ReadableStorageTraits, StorageError, StoreKey, StoreKeys, StoreKeysPrefixes, StorePrefix,
+    WritableStorageTraits,
 };
 
 fn js_string_err(e: impl std::fmt::Display) -> JsValue {
     JsValue::from_str(&e.to_string())
 }
 
-/// Reader for frame-sequence Zarr v3 stores.
+#[wasm_bindgen(typescript_custom_section)]
+const MREC_SOURCE_TYPE: &'static str = r#"
+/**
+ * A store host: serves a record's keys on demand, every method synchronous.
+ * Keys are store-relative paths without a leading slash
+ * (`trajectory/step/zarr.json`).
+ */
+export interface MrecStorageHost {
+    /** The whole value, or `null` when absent. */
+    get(key: string): Uint8Array | null;
+    /**
+     * Optional ranged read; `length` may be `-1` for "to the end". Without it
+     * the reader falls back to `get` and slices, which reads whole shards.
+     */
+    getRange?(key: string, offset: number, length: number): Uint8Array | null;
+    /** The value's byte length, or `null` when absent. */
+    size(key: string): number | null;
+    /** Every key under `prefix` (`""` for all). */
+    list(prefix: string): string[];
+}
+
+/**
+ * A record as `MrecReader` and `MrecFile` open it: a packed `*.mrec.zip`'s
+ * bytes, a `Map` of a `*.mrec` directory's files, or a host serving its keys.
+ */
+export type MrecSource = Uint8Array | Map<string, Uint8Array> | MrecStorageHost;
+"#;
+
+#[wasm_bindgen]
+extern "C" {
+    /// A record: see the `MrecSource` TypeScript type.
+    #[wasm_bindgen(typescript_type = "MrecSource")]
+    pub type JsMrecSource;
+}
+
+/// The store `source` names: a packed zip's bytes, a `Map` of files, or a
+/// host object. `op` names the door in the error.
+fn open_store(op: &str, source: &JsMrecSource) -> Result<ReadableListableStorage, JsValue> {
+    if let Some(bytes) = source.dyn_ref::<js_sys::Uint8Array>() {
+        return memory_storage_from_zip(&bytes.to_vec());
+    }
+    if let Some(files) = source.dyn_ref::<js_sys::Map>() {
+        return memory_storage_from_files(files);
+    }
+    if source.is_object() {
+        return Ok(Arc::new(HostStorage::new(JsValue::clone(source))?));
+    }
+    Err(JsValue::from_str(&format!(
+        "{op}: the record must be a packed *.mrec.zip's bytes (Uint8Array), a Map of its \
+         files, or a store host object"
+    )))
+}
+
+/// Reader for the `trajectory` section of a record, one frame at a time.
 ///
 /// The sequence is opened **once**, in the constructor. `MrecReader` is the
 /// lazy store cursor, so `readFrame` decodes exactly the frame it was asked
@@ -52,60 +105,26 @@ pub struct MrecReader {
     sequence: RsMrecReader,
 }
 
+#[wasm_bindgen(js_class = MrecReader)]
 impl MrecReader {
-    fn open<S>(store: Arc<S>) -> Result<MrecReader, JsValue>
-    where
-        S: ?Sized
-            + zarrs::storage::ReadableStorageTraits
-            + zarrs::storage::ListableStorageTraits
-            + 'static,
-    {
-        // Index-only: the schema plus each section's step_index and offset (or
-        // their hints). No frame is decoded here.
+    /// Open the `trajectory` section of `source` — a packed `*.mrec.zip`'s
+    /// bytes, a `Map` of the record's files, or a store host (see
+    /// `MrecSource`). Index-only: the schema plus each section's step index
+    /// and offset; no frame is decoded here.
+    ///
+    /// # Errors
+    ///
+    /// Throws if `source` is none of the three, a zip holds compressed
+    /// entries (packed stores are stored-only), a host lacks `get` / `size` /
+    /// `list`, or the store holds no readable frame sequence.
+    #[wasm_bindgen(constructor)]
+    pub fn new(source: &JsMrecSource) -> Result<MrecReader, JsValue> {
+        let store = open_store("new MrecReader", source)?;
         let sequence = RsMrecReader::from_storage(store).map_err(js_string_err)?;
         Ok(MrecReader { sequence })
     }
-}
 
-#[wasm_bindgen(js_class = MrecReader)]
-impl MrecReader {
-    /// Open a store handed over as a `Map<path, Uint8Array>` of every file.
-    #[wasm_bindgen(constructor)]
-    pub fn new(files: js_sys::Map) -> Result<MrecReader, JsValue> {
-        // The reader is a read door, so it gets the store's read-only view.
-        Self::open(memory_storage_from_files(&files)?.readable_listable())
-    }
-
-    /// Open a packed `*.mrec.zip` from its bytes.
-    ///
-    /// Every entry of a packed store is *stored* (never deflated), so this is
-    /// a central-directory walk plus one copy per entry into an in-memory
-    /// store. A zip with compressed entries is refused by name.
-    #[wasm_bindgen(js_name = fromZip)]
-    pub fn from_zip(bytes: &[u8]) -> Result<MrecReader, JsValue> {
-        Self::open(memory_storage_from_zip(bytes)?.readable_listable())
-    }
-
-    /// Open a store served on demand by `host`.
-    ///
-    /// `host` is any object with these methods, all **synchronous**:
-    ///
-    /// - `get(key: string): Uint8Array | null` — the whole value;
-    /// - `getRange(key: string, offset: number, length: number): Uint8Array | null`
-    ///   — optional; `length` may be `-1` for "to the end". Without it the
-    ///   reader falls back to `get` and slices, which reads whole shards;
-    /// - `size(key: string): number | null` — the value's byte length;
-    /// - `list(prefix: string): string[]` — every key under `prefix`
-    ///   (`""` for all).
-    ///
-    /// Keys are store-relative paths without a leading slash
-    /// (`trajectory/step/zarr.json`).
-    #[wasm_bindgen(js_name = fromStorage)]
-    pub fn from_storage(host: JsValue) -> Result<MrecReader, JsValue> {
-        let store = Arc::new(HostStorage::new(host)?);
-        Self::open(store)
-    }
-
+    /// Frame `t` (0-based), or `undefined` past the end.
     #[wasm_bindgen(js_name = readFrame)]
     pub fn read_frame(&self, t: usize) -> Result<Option<Frame>, JsValue> {
         let rs_frame = self.sequence.frame(t as u64).map_err(js_string_err)?;
@@ -429,11 +448,8 @@ impl ListableStorageTraits for HostStorage {
     }
 }
 
-/// Load a `Map<path, Uint8Array>` of a record's files into an in-memory store
-/// (the `MrecReader` constructor and the doors below).
-fn memory_storage_from_files(
-    files: &js_sys::Map,
-) -> Result<ReadableWritableListableStorage, JsValue> {
+/// Load a `Map<path, Uint8Array>` of a record's files into an in-memory store.
+fn memory_storage_from_files(files: &js_sys::Map) -> Result<ReadableListableStorage, JsValue> {
     let store = Arc::new(MemoryStore::new());
     for key_res in files.keys() {
         let key = key_res.map_err(|e| JsValue::from_str(&format!("{:?}", e)))?;
@@ -446,17 +462,16 @@ fn memory_storage_from_files(
         let skey = StoreKey::new(storage_path).map_err(js_string_err)?;
         store.set(&skey, content.into()).map_err(js_string_err)?;
     }
-    Ok(store as ReadableWritableListableStorage)
+    Ok(store as ReadableListableStorage)
 }
 
-/// Unpack a packed `*.mrec.zip` into an in-memory store (`MrecReader.fromZip`
-/// and the doors below).
+/// Unpack a packed `*.mrec.zip` into an in-memory store.
 ///
 /// Every entry of a packed store is *stored* (never deflated), so this is a
 /// central-directory walk plus one copy per entry. A zip with compressed
 /// entries is refused by name.
-fn memory_storage_from_zip(bytes: &[u8]) -> Result<ReadableWritableListableStorage, JsValue> {
-    let cursor = std::io::Cursor::new(bytes.to_vec());
+fn memory_storage_from_zip(bytes: &[u8]) -> Result<ReadableListableStorage, JsValue> {
+    let cursor = std::io::Cursor::new(bytes);
     let mut archive = zip::ZipArchive::new(cursor).map_err(js_string_err)?;
     let store = Arc::new(MemoryStore::new());
     for index in 0..archive.len() {
@@ -474,57 +489,96 @@ fn memory_storage_from_zip(bytes: &[u8]) -> Result<ReadableWritableListableStora
         let skey = StoreKey::new(name.trim_start_matches('/')).map_err(js_string_err)?;
         store.set(&skey, content.into()).map_err(js_string_err)?;
     }
-    Ok(store as ReadableWritableListableStorage)
+    Ok(store as ReadableListableStorage)
 }
 
-/// The record's top-level sections (`"meta"`, `"frame"`, `"trajectory"`, …)
-/// of a packed `*.mrec.zip` given as its bytes: molrs
-/// `io::mrec::section_names`.
+/// A record read one section at a time — the WASM face of
+/// `molrs::io::mrec::MrecFile`.
 ///
-/// Listed, never decoded — a record's sections are independent, and asking
-/// which ones exist must not cost a read of any of them.
-#[wasm_bindgen(js_name = sectionNamesBytes)]
-pub fn section_names_bytes(bytes: &[u8]) -> Result<Vec<String>, JsValue> {
-    section_names_storage(memory_storage_from_zip(bytes)?).map_err(js_string_err)
+/// Opening lists nothing and decodes nothing; each method reads the one
+/// section it names. A record's sections are independent, so asking which
+/// exist never costs a read of any of them.
+///
+/// # Example (JavaScript)
+///
+/// ```js
+/// const file = new MrecFile(new Uint8Array(await blob.arrayBuffer()));
+/// if (file.sections().includes("frame")) {
+///   const frame = file.frame();
+/// }
+/// ```
+#[wasm_bindgen(js_name = MrecFile)]
+pub struct MrecFile {
+    inner: RsMrecFile,
 }
 
-/// [`section_names_bytes`] for a record handed over as a
-/// `Map<path, Uint8Array>` of its files.
-#[wasm_bindgen(js_name = sectionNamesFiles)]
-pub fn section_names_files(files: js_sys::Map) -> Result<Vec<String>, JsValue> {
-    section_names_storage(memory_storage_from_files(&files)?).map_err(js_string_err)
-}
+#[wasm_bindgen(js_class = MrecFile)]
+impl MrecFile {
+    /// Open the record `source` — a packed `*.mrec.zip`'s bytes, a `Map` of
+    /// the record's files, or a store host (see `MrecSource`).
+    ///
+    /// # Errors
+    ///
+    /// Throws if `source` is none of the three, a zip holds compressed
+    /// entries, or a host lacks `get` / `size` / `list`.
+    #[wasm_bindgen(constructor)]
+    pub fn new(source: &JsMrecSource) -> Result<MrecFile, JsValue> {
+        Ok(MrecFile {
+            inner: RsMrecFile::from_storage(open_store("new MrecFile", source)?),
+        })
+    }
 
-/// The `frame` section — the snapshot — of a packed `*.mrec.zip` given as its
-/// bytes, or `undefined`: molrs `io::read_mrec_frame`.
-///
-/// molpack writes a packed configuration as `meta` + `frame/`, which
-/// `MrecReader` reads as a sequence of length zero; this reads the snapshot
-/// it actually carries.
-///
-/// # Errors
-///
-/// Throws when the bytes are not a readable packed record.
-#[wasm_bindgen(js_name = readMrecFrameBytes)]
-pub fn read_mrec_frame_bytes(bytes: &[u8]) -> Result<Option<Frame>, JsValue> {
-    frame_section(memory_storage_from_zip(bytes)?)
-}
+    /// The record's top-level section names (`"meta"`, `"frame"`,
+    /// `"trajectory"`, …), sorted, without decoding any of them.
+    ///
+    /// # Errors
+    ///
+    /// Throws when the store root cannot be listed.
+    pub fn sections(&self) -> Result<Vec<String>, JsValue> {
+        self.inner.sections().map_err(js_string_err)
+    }
 
-/// [`read_mrec_frame_bytes`] for a record handed over as a
-/// `Map<path, Uint8Array>` of its files.
-///
-/// # Errors
-///
-/// Throws when the files are not a readable record.
-#[wasm_bindgen(js_name = readMrecFrameFiles)]
-pub fn read_mrec_frame_files(files: js_sys::Map) -> Result<Option<Frame>, JsValue> {
-    frame_section(memory_storage_from_files(&files)?)
-}
+    /// The `frame` section — the snapshot — or `undefined` when the record
+    /// has none.
+    ///
+    /// # Errors
+    ///
+    /// Throws when the section fails to decode.
+    pub fn frame(&self) -> Result<Option<Frame>, JsValue> {
+        self.inner
+            .frame()
+            .map_err(js_string_err)?
+            .map(Frame::from_rs)
+            .transpose()
+    }
 
-fn frame_section(store: ReadableWritableListableStorage) -> Result<Option<Frame>, JsValue> {
-    match read_mrec_frame_storage(store, "frame").map_err(js_string_err)? {
-        Some(frame) => Ok(Some(Frame::from_rs(frame)?)),
-        None => Ok(None),
+    /// The `system` section — the topology — or `undefined` when the record
+    /// has none.
+    ///
+    /// # Errors
+    ///
+    /// Throws when the section fails to decode.
+    pub fn system(&self) -> Result<Option<Frame>, JsValue> {
+        self.inner
+            .system()
+            .map_err(js_string_err)?
+            .map(Frame::from_rs)
+            .transpose()
+    }
+
+    /// The record's `meta` document as a JSON object; `{}` when the store
+    /// has none.
+    ///
+    /// # Errors
+    ///
+    /// Throws when the `meta` group cannot be decoded.
+    pub fn meta(&self) -> Result<JsValue, JsValue> {
+        use serde::Serialize;
+        self.inner
+            .meta()
+            .map_err(js_string_err)?
+            .serialize(&serde_wasm_bindgen::Serializer::json_compatible())
+            .map_err(js_string_err)
     }
 }
 
@@ -552,17 +606,21 @@ mod tests {
         frame
             .get("atoms")
             .and_then(|atoms| atoms.get("x"))
-            .and_then(|x| x.as_float())
+            .and_then(|x| x.get::<f64>())
             .expect("atoms.x is f64")
             .iter()
             .copied()
             .collect()
     }
 
+    fn zip_source() -> JsMrecSource {
+        JsValue::from(js_sys::Uint8Array::from(FIXTURE)).unchecked_into()
+    }
+
     /// zstd decodes on wasm32 through the pure-Rust plugin, with no C.
     #[wasm_bindgen_test]
     fn a_precision_trajectory_written_with_zstd_reads_back() {
-        let reader = MrecReader::from_zip(FIXTURE).unwrap();
+        let reader = MrecReader::new(&zip_source()).unwrap();
         assert_eq!(reader.n_frames().unwrap(), X.len());
         for (index, values) in X.iter().enumerate() {
             let frame = reader.sequence.frame(index as u64).unwrap().unwrap();
@@ -577,12 +635,39 @@ mod tests {
 
     #[wasm_bindgen_test]
     fn a_precision_frame_written_with_zstd_reads_back() {
-        let store = memory_storage_from_zip(FIXTURE).unwrap();
-        let frame = read_mrec_frame_storage(store, "frame").unwrap().unwrap();
+        let file = MrecFile::new(&zip_source()).unwrap();
+        let frame = file.inner.frame().unwrap().unwrap();
         assert_eq!(x_of(&frame), rounded(&X[0]));
         assert_eq!(frame.get("atoms").unwrap().precision("x"), Some(1e-3));
-        assert!(read_mrec_frame_bytes(FIXTURE).unwrap().is_some());
-        let sections = section_names_bytes(FIXTURE).unwrap();
+        assert!(file.frame().unwrap().is_some());
+        let sections = file.sections().unwrap();
         assert!(sections.iter().any(|name| name == "frame"), "{sections:?}");
+    }
+
+    /// A `Map` of the record's files opens the same record as its zip.
+    #[wasm_bindgen_test]
+    fn a_map_of_files_opens_the_same_record() {
+        let mut archive = zip::ZipArchive::new(std::io::Cursor::new(FIXTURE)).unwrap();
+        let files = js_sys::Map::new();
+        for index in 0..archive.len() {
+            let mut entry = archive.by_index(index).unwrap();
+            if entry.is_dir() {
+                continue;
+            }
+            let mut content = Vec::new();
+            entry.read_to_end(&mut content).unwrap();
+            files.set(
+                &JsValue::from_str(entry.name()),
+                &js_sys::Uint8Array::from(content.as_slice()).into(),
+            );
+        }
+        let source: JsMrecSource = JsValue::from(files).unchecked_into();
+        assert_eq!(
+            MrecReader::new(&source).unwrap().n_frames().unwrap(),
+            X.len()
+        );
+        assert!(MrecFile::new(&source).unwrap().frame().unwrap().is_some());
+        let not_a_record: JsMrecSource = JsValue::from_f64(1.0).unchecked_into();
+        assert!(MrecFile::new(&not_a_record).is_err());
     }
 }

@@ -51,6 +51,20 @@ def _unit_vectors(n_frames=40, n_vectors=6, seed=5):
     return u / np.linalg.norm(u, axis=2, keepdims=True)
 
 
+def _stream(stream, frames, *, dt):
+    """Push every frame of ``frames`` into a fresh accumulator; finish."""
+    acc = stream.accumulator()
+    for frame in frames:
+        acc.push(frame, dt=dt)
+    return acc.finish()
+
+
+def _vacf(vacf, flat, *, dt):
+    """A ``Vacf`` over the ``(T, n_dof)`` velocities ``flat``: each frame an
+    ``(n_dof, 1)`` column, as the core stream takes it."""
+    return _stream(vacf, flat[:, :, None], dt=dt)
+
+
 def _origins(n_frames, lag, stride):
     return range(0, n_frames - lag, stride)
 
@@ -108,15 +122,27 @@ class TestCorrelator:
         s = _series()
         n_frames = s.shape[0]
         unb = Correlator("product", 8).compute(a=s, dt=1.0).channel(0)
-        bia = Correlator("product", 8, normalization="biased").compute(a=s, dt=1.0).channel(0)
-        raw = Correlator("product", 8, normalization="none").compute(a=s, dt=1.0).channel(0)
+        bia = (
+            Correlator("product", 8, normalization="biased")
+            .compute(a=s, dt=1.0)
+            .channel(0)
+        )
+        raw = (
+            Correlator("product", 8, normalization="none")
+            .compute(a=s, dt=1.0)
+            .channel(0)
+        )
         counts = n_frames - np.arange(9)
         np.testing.assert_allclose(bia, unb * counts / n_frames)
         # "none" leaves the sum over origins (still averaged over items).
         np.testing.assert_allclose(raw / counts, unb)
-        strided = Correlator("product", 8, stride=3, mean="subtract").compute(a=s, dt=1.0)
+        strided = Correlator("product", 8, stride=3, mean="subtract").compute(
+            a=s, dt=1.0
+        )
         np.testing.assert_allclose(
-            strided.channel(0), _acf_direct(s, 8, stride=3, mean_subtract=True), atol=1e-10
+            strided.channel(0),
+            _acf_direct(s, 8, stride=3, mean_subtract=True),
+            atol=1e-10,
         )
 
     def test_per_item_rows_average_to_the_curve(self):
@@ -136,27 +162,38 @@ class TestCorrelator:
         for lag in range(8):
             origins = list(_origins(n_frames, lag, 4))
             d = pos[[tau + lag for tau in origins]] - pos[origins]
-            assert got.channel(0)[lag] == pytest.approx((d**2).sum(axis=2).mean(), abs=1e-9)
+            assert got.channel(0)[lag] == pytest.approx(
+                (d**2).sum(axis=2).mean(), abs=1e-9
+            )
 
     def test_a_bad_stride_is_refused(self):
         with pytest.raises(ValueError, match="stride"):
             Correlator("product", 3, stride=0)
         with pytest.raises(ValueError, match="stride"):
-            Correlator("product", 3, origins="first", stride=2).compute(a=_series(), dt=1.0)
+            Correlator("product", 3, origins="first", stride=2).compute(
+                a=_series(), dt=1.0
+            )
 
 
 class TestSurfaces:
     def test_vacf_is_the_mean_subtracted_correlator_over_dof(self):
         s = _series()
         flat = s.reshape(s.shape[0], -1)
-        vacf = Vacf(10).compute(velocities=flat, dt=0.5)
-        acf = Correlator("product", 10, mean="subtract").compute(a=flat[:, :, None], dt=0.5)
-        np.testing.assert_array_equal(vacf.values, acf.values)
-        strided = Vacf(10, stride=3, normalization="biased").compute(velocities=flat, dt=0.5)
+        vacf = _vacf(Vacf(10), flat, dt=0.5)
+        acf = Correlator("product", 10, mean="subtract").compute(
+            a=flat[:, :, None], dt=0.5
+        )
+        # The stream equals the batch correlator to FFT round-off (core
+        # `CorrelatorAccumulator` contract).
+        np.testing.assert_allclose(vacf.values, acf.values, rtol=1e-12, atol=1e-12)
+        np.testing.assert_array_equal(vacf.lag_times, acf.lag_times)
+        strided = _vacf(Vacf(10, stride=3, normalization="biased"), flat, dt=0.5)
         explicit = Correlator(
             "product", 10, mean="subtract", normalization="biased", stride=3
         ).compute(a=flat[:, :, None], dt=0.5)
-        np.testing.assert_array_equal(strided.values, explicit.values)
+        np.testing.assert_allclose(
+            strided.values, explicit.values, rtol=1e-12, atol=1e-12
+        )
 
     def test_the_mean_policy_is_configuration(self):
         """``mean=`` is a convention each product surface exposes; its default
@@ -164,10 +201,10 @@ class TestSurfaces:
         keeps), and ``"keep"`` on Vacf is the plain Green–Kubo integrand."""
         s = _series() + 0.3
         flat = s.reshape(s.shape[0], -1)
-        keep = Vacf(10, mean="keep").compute(velocities=flat, dt=0.5)
+        keep = _vacf(Vacf(10, mean="keep"), flat, dt=0.5)
         acf = Correlator("product", 10, mean="keep").compute(a=flat[:, :, None], dt=0.5)
-        np.testing.assert_array_equal(keep.values, acf.values)
-        assert not np.allclose(keep.values, Vacf(10).compute(velocities=flat, dt=0.5).values)
+        np.testing.assert_allclose(keep.values, acf.values, rtol=1e-12, atol=1e-12)
+        assert not np.allclose(keep.values, _vacf(Vacf(10), flat, dt=0.5).values)
         j = flat[:, :3]
         np.testing.assert_allclose(
             DipoleAcf(8, mean="keep").compute(dipoles=j, dt=1.0).channel(0),
@@ -179,7 +216,11 @@ class TestSurfaces:
             _acf_direct(j[:, None, :], 8, mean_subtract=True),
             atol=1e-10,
         )
-        for cls, default in ((Vacf, "subtract"), (DipoleAcf, "subtract"), (CurrentAcf, "keep")):
+        for cls, default in (
+            (Vacf, "subtract"),
+            (DipoleAcf, "subtract"),
+            (CurrentAcf, "keep"),
+        ):
             assert dict(cls(4).tunables())["mean"] == default
         with pytest.raises(ValueError, match="MeanPolicy"):
             Vacf(4, mean="median")
@@ -187,33 +228,37 @@ class TestSurfaces:
     def test_an_array_of_the_wrong_rank_or_dtype_says_what_it_expected(self):
         with pytest.raises(
             TypeError,
-            match=r"velocities.*expected a 2-D float64 array, "
+            match=r"'a'.*expected a 2-D float64 array, "
             r"got a 3-D float64 array of shape \(10, 4, 3\)",
         ):
-            Vacf(5).compute(velocities=np.zeros((10, 4, 3)), dt=1.0)
+            Vacf(5).accumulator().push(np.zeros((10, 4, 3)), dt=1.0)
         with pytest.raises(
             TypeError,
-            match=r"velocities.*expected a 2-D float64 array, "
+            match=r"'a'.*expected a 2-D float64 array, "
             r"got a 2-D int64 array of shape \(100, 32\)",
         ):
-            Vacf(5).compute(velocities=np.zeros((100, 32), dtype=np.int64), dt=1.0)
-        with pytest.raises(TypeError, match=r"'a': expected a 3-D float64 array, got list"):
+            Vacf(5).accumulator().push(np.zeros((100, 32), dtype=np.int64), dt=1.0)
+        with pytest.raises(
+            TypeError, match=r"'a': expected a 3-D float64 array, got list"
+        ):
             Correlator("product", 2).compute(a=[[[1.0]]], dt=1.0)
 
     def test_msd_all_origins_is_the_nested_loop(self):
         pos = np.cumsum(_series(n_frames=20, n_items=3), axis=0)
-        got = Msd(6).compute(positions=pos, dt=1.0)
+        got = _stream(Msd(6), pos, dt=1.0)
         for lag in range(7):
             d = pos[lag:] - pos[: len(pos) - lag]
-            assert got.channel(0)[lag] == pytest.approx((d**2).sum(axis=2).mean(), abs=1e-9)
+            assert got.channel(0)[lag] == pytest.approx(
+                (d**2).sum(axis=2).mean(), abs=1e-9
+            )
 
     def test_msd_first_origin_is_the_single_origin_curve(self):
         pos = np.cumsum(_series(n_frames=12, n_items=4), axis=0)
-        got = Msd(5, origins="first", reduction="per_item").compute(positions=pos, dt=1.0)
+        got = _stream(Msd(5, origins="first", reduction="per_item"), pos, dt=1.0)
         want = ((pos - pos[0]) ** 2).sum(axis=2)
         np.testing.assert_allclose(got.values, want[:6])
         with pytest.raises(ValueError, match="stride"):
-            Msd(5, origins="first", stride=2).compute(positions=pos, dt=1.0)
+            _stream(Msd(5, origins="first", stride=2), pos, dt=1.0)
 
     def test_onsager_of_straight_lines(self):
         t = np.arange(10.0)[:, None]
@@ -225,7 +270,9 @@ class TestSurfaces:
     def test_current_acf_keeps_the_mean_and_dipole_acf_removes_it(self):
         j = _series(n_items=1)[:, 0, :] + 0.7
         gk = CurrentAcf(8).compute(current=j, dt=1.0)
-        np.testing.assert_allclose(gk.channel(0), _acf_direct(j[:, None, :], 8), atol=1e-10)
+        np.testing.assert_allclose(
+            gk.channel(0), _acf_direct(j[:, None, :], 8), atol=1e-10
+        )
         d = DipoleAcf(8).compute(dipoles=j, dt=1.0)
         np.testing.assert_allclose(
             d.channel(0), _acf_direct(j[:, None, :], 8, mean_subtract=True), atol=1e-10
@@ -245,7 +292,10 @@ class TestSurfaces:
         )
         a = mdot - mdot.mean(axis=0)
         b = m - m.mean(axis=0)
-        want = [float((a[: len(m) - lag] * b[lag:]).sum()) / (len(m) - lag) for lag in range(9)]
+        want = [
+            float((a[: len(m) - lag] * b[lag:]).sum()) / (len(m) - lag)
+            for lag in range(9)
+        ]
         np.testing.assert_allclose(c.channel(0), want, atol=1e-10)
 
 
@@ -257,7 +307,9 @@ class TestReorientationAcf:
     def test_matches_the_direct_definition(self, order, stride):
         u = _unit_vectors()
         got = ReorientationAcf(order, 12, stride=stride).compute(vectors=u, dt=0.5)
-        np.testing.assert_allclose(got.channel(0), _oacf_direct(u, order, 12, stride), atol=1e-12)
+        np.testing.assert_allclose(
+            got.channel(0), _oacf_direct(u, order, 12, stride), atol=1e-12
+        )
         assert got.channel(0)[0] == pytest.approx(1.0)
         assert got.lag_times[12] == 6.0
 
@@ -289,9 +341,13 @@ class TestReorientationAcf:
         mean = ReorientationAcf(2, 10).compute(vectors=u, dt=0.5)
         rows = ReorientationAcf(2, 10, reduction="per_item").compute(vectors=u, dt=0.5)
         assert rows.values.shape == (11, 6)
-        np.testing.assert_allclose(rows.values.mean(axis=1), mean.channel(0), atol=1e-12)
+        np.testing.assert_allclose(
+            rows.values.mean(axis=1), mean.channel(0), atol=1e-12
+        )
         running = CumulativeTrapezoid().compute(correlation=mean, channel=0)
-        assert running.channel(0)[-1] == pytest.approx(np.trapezoid(mean.channel(0), dx=0.5))
+        assert running.channel(0)[-1] == pytest.approx(
+            np.trapezoid(mean.channel(0), dx=0.5)
+        )
 
     def test_vectors_are_normalised_not_refused(self):
         """Unlike upstream ``Oacf`` (which refused ``|u| != 1``), the
@@ -323,7 +379,9 @@ class TestFitsOfACurve:
         tc = Correlator("product", 10).compute(a=_series(), dt=0.5)
         running = CumulativeTrapezoid().compute(correlation=tc, channel=0).channel(0)
         assert running[-1] == pytest.approx(np.trapezoid(tc.channel(0), dx=0.5))
-        partial = CumulativeTrapezoid(n_lags=4).compute(correlation=tc, channel=0).channel(0)
+        partial = (
+            CumulativeTrapezoid(n_lags=4).compute(correlation=tc, channel=0).channel(0)
+        )
         np.testing.assert_allclose(partial, running[:4])
 
     def test_linear_fit_and_the_einstein_coefficient(self):
@@ -334,7 +392,9 @@ class TestFitsOfACurve:
 
     def test_green_kubo_is_trapezoid_then_plateau(self):
         dt = 0.1
-        vacf = TimeCorrelation(np.arange(200) * dt, np.exp(-np.arange(200) * dt)[:, None])
+        vacf = TimeCorrelation(
+            np.arange(200) * dt, np.exp(-np.arange(200) * dt)[:, None]
+        )
         running = CumulativeTrapezoid().compute(correlation=vacf, channel=0)
         d = Plateau(0.8, 1.0).compute(correlation=running, channel=0).value / 3.0
         assert d == pytest.approx(1.0 / 3.0, rel=1e-3)
@@ -348,7 +408,7 @@ class TestFitsOfACurve:
         assert fit.amplitude == pytest.approx(3.0)
 
     def test_spectrum_window_is_a_choice(self):
-        tc = Vacf(30).compute(velocities=_series().reshape(48, -1), dt=0.5)
+        tc = _vacf(Vacf(30), _series().reshape(48, -1), dt=0.5)
         cos2 = Spectrum("cosine_sq", 4).compute(signal=tc.channel(0), dt=0.5)
         hann = Spectrum("hann", 4).compute(signal=tc.channel(0), dt=0.5)
         assert cos2.n_fft == hann.n_fft

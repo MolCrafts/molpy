@@ -14,7 +14,6 @@
 //! `PotentialCompiler::compile` is the graph's `to_frame` job; typifiers stay on
 //! the graph boundary.
 
-mod am1bcc;
 pub(crate) mod atd;
 pub mod cmap;
 mod element;
@@ -25,8 +24,7 @@ mod opls;
 pub(crate) mod topology;
 pub(crate) mod uff;
 
-pub use am1bcc::BccAtomChargeTypifier;
-pub use atd::{AtdBondOrders, AtdParameterSet, AtdTypifier};
+pub use atd::{AtdParameterSet, AtdTypifier};
 pub use element::ElementTypifier;
 pub use estimate::{
     BondedTerm, EmpiricalSet, Estimate, EstimateMethod, EstimationInputs, ParameterInterpolator,
@@ -36,16 +34,26 @@ pub use gaff::{GaffParameterSet, GaffTypifier};
 pub use opls::{OplsAaTypifier, OplsTypeRow, OplsTypingMetadata};
 pub use uff::UffTypifier;
 
+use crate::ff::forcefield::Category;
 use std::collections::{HashMap, HashSet};
+use std::rc::Rc;
 
 use indexmap::IndexMap;
 use molrs::core::Atomistic;
-use molrs::core::{KindId, MolGraph, NodeId, PropValue, RelationId};
+use molrs::core::{MolRsError, NodeId, PropValue, Relation, RelationId};
 
 use crate::ff::forcefield::{ForceField, Style};
 use crate::ff::ir::Params;
 use crate::ff::ir::{Arity, EndpointOrder};
 use estimate::candidate::is_wildcard;
+
+/// The symbol an error message spells for atomic number `z`: the element's
+/// symbol, or the wildcard `"*"` for `z = 0` (the spelling
+/// [`fill_symbols`](molrs::core::Element::fill_symbols) writes). Only for
+/// messages — never read back.
+pub(crate) fn species_label(z: u8) -> &'static str {
+    molrs::core::Element::by_number(z).map_or("*", molrs::core::Element::symbol)
+}
 
 /// A graph typifier: what matching a molecule against a force field produces.
 ///
@@ -106,15 +114,15 @@ pub type Annotations = Vec<(String, Annotation)>;
 /// What a [`Typifier`] assigns to one graph.
 ///
 /// `nodes` is positional against the graph's atoms in row order
-/// (`graph.atoms()`). `links` maps a relation kind of the graph — the name
-/// [`MolGraph::register_kind`] gave it, which is the Frame block of its
-/// category (`bonds`, `impropers`, a custom `urey_bradleys`) — to rows
-/// positional against **that kind's own** rows
-/// ([`MolGraph::relation_ids`]`(kind)`, the order `graph.bonds()` etc.
-/// yield): an improper never shifts a dihedral position. Every relation kind,
-/// built-in or registered at run time, takes this one path. An absent kind
-/// or an empty vector means "nothing for this kind"; an empty per-element
-/// list means "this element gets nothing".
+/// (`graph.atoms()`). `links` maps a relation block of the graph — the Frame
+/// block of its category: `bonds`, `angles`, `dihedrals`, `impropers`, or a
+/// term block (`cmaps`, a custom `urey_bradleys`; see
+/// [`Atomistic::term_blocks`]) — to rows positional against **that block's
+/// own** rows (the order `graph.bond_ids()`, `graph.term_ids(block)` etc.
+/// yield): an improper never shifts a dihedral position. Every relation
+/// block, built-in or a term block, takes this one path; `ports` carry no
+/// annotations. An absent block or an empty vector means "nothing for this
+/// block"; an empty per-element list means "this element gets nothing".
 ///
 /// `styles` are `(category, style, style params)` to declare, in output
 /// order; `pairs` are `(style, name, endpoints, params)` pair rows.
@@ -238,10 +246,72 @@ fn estimate_name(
 }
 
 /// One graph element a [`TypeAssignment`] writes to.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 enum Element {
     Node(NodeId),
-    Link(KindId, RelationId),
+    Link(Rc<str>, RelationId),
+}
+
+/// The relation blocks with typed `Atomistic` methods that take annotations,
+/// in the order an `Atomistic` registers them; term blocks follow.
+const TYPED_LINK_BLOCKS: [&str; 4] = ["bonds", "angles", "dihedrals", "impropers"];
+
+/// The relation blocks `graph` holds, in registration order: the four typed
+/// ones, then its term blocks.
+fn link_blocks(graph: &Atomistic) -> Vec<String> {
+    TYPED_LINK_BLOCKS
+        .iter()
+        .copied()
+        .chain(graph.term_blocks())
+        .map(str::to_owned)
+        .collect()
+}
+
+/// The rows of relation block `block` of `graph`, in row order; `None` when
+/// the graph holds no such block.
+///
+/// # Errors
+///
+/// `ports`, which take no annotations.
+fn link_rows(
+    graph: &Atomistic,
+    block: &str,
+) -> Result<Option<Vec<(RelationId, Relation)>>, String> {
+    Ok(Some(match block {
+        "bonds" => graph.bonds().collect(),
+        "angles" => graph.angles().collect(),
+        "dihedrals" => graph.dihedrals().collect(),
+        "impropers" => graph.impropers().collect(),
+        "ports" => {
+            return Err(
+                "relation block 'ports' takes no annotations: a port is a valence \
+                 descriptor, not a force-field term"
+                    .to_owned(),
+            );
+        }
+        term if graph.term_blocks().any(|b| b == term) => graph
+            .term_ids(term)
+            .and_then(|ids| ids.map(|id| Ok((id, graph.get_term(term, id)?))).collect())
+            .map_err(|e: MolRsError| e.to_string())?,
+        _ => return Ok(None),
+    }))
+}
+
+/// Set `key = value` on row `id` of relation block `block`.
+fn set_link(
+    graph: &mut Atomistic,
+    block: &str,
+    id: RelationId,
+    key: &str,
+    value: PropValue,
+) -> Result<(), MolRsError> {
+    match block {
+        "bonds" => graph.set_bond(id, key, value),
+        "angles" => graph.set_angle(id, key, value),
+        "dihedrals" => graph.set_dihedral(id, key, value),
+        "impropers" => graph.set_improper(id, key, value),
+        term => graph.set_term(term, id, key, value),
+    }
 }
 
 /// One positional vector of a [`TypeAssignment`], resolved against the graph.
@@ -282,9 +352,9 @@ impl Stamp {
 
     fn apply(self, graph: &mut Atomistic) -> Result<(), String> {
         for (key, value) in self.writes {
-            match self.element {
-                Element::Node(id) => graph.set_atom(id, &key, value),
-                Element::Link(kind, id) => graph.set_relation_prop(kind, id, &key, value),
+            match &self.element {
+                Element::Node(id) => graph.set_atom(*id, &key, value),
+                Element::Link(block, id) => set_link(graph, block, *id, &key, value),
             }
             .map_err(|e| format!("{}: {e}", self.label))?;
         }
@@ -354,7 +424,7 @@ impl TypeAssignment {
         // later), whatever order `links` lists them in.
         let mut vectors: Vec<Vector> = Vec::new();
         if !nodes.is_empty() {
-            let elements = graph.node_ids().map(Element::Node).collect();
+            let elements = graph.atom_ids().map(Element::Node).collect();
             vectors.push(Vector {
                 category: Some("atom".to_owned()),
                 kind: "atoms".to_owned(),
@@ -362,18 +432,18 @@ impl TypeAssignment {
                 rows: nodes,
             });
         }
-        let kinds: Vec<KindId> = graph.as_molgraph().kind_ids().collect();
-        for id in kinds {
-            let kind = graph.as_molgraph().kind_name(id).to_owned();
+        for kind in link_blocks(graph) {
             let Some(rows) = links.shift_remove(&kind) else {
                 continue;
             };
             if rows.is_empty() {
                 continue;
             }
-            let elements = graph
-                .relation_ids(id)
-                .map(|r| Element::Link(id, r))
+            let block: Rc<str> = Rc::from(kind.as_str());
+            let elements = link_rows(graph, &kind)?
+                .into_iter()
+                .flatten()
+                .map(|(r, _)| Element::Link(Rc::clone(&block), r))
                 .collect();
             let category = link_category(&kind).map(|(c, _)| c);
             vectors.push(Vector {
@@ -384,6 +454,7 @@ impl TypeAssignment {
             });
         }
         if let Some((kind, _)) = links.iter().find(|(_, rows)| !rows.is_empty()) {
+            link_rows(graph, kind)?;
             return Err(format!("graph has no '{kind}' relation kind"));
         }
 
@@ -420,10 +491,16 @@ impl TypeAssignment {
                             endpoints,
                             params,
                         } => {
-                            for (k, v) in params.iter() {
+                            for (k, v) in params
+                                .iter()
+                                .filter_map(|(k, v)| v.as_num().map(|x| (k, x)))
+                            {
                                 stamp.write(k.to_owned(), PropValue::F64(v))?;
                             }
-                            for (k, v) in params.iter_strings() {
+                            for (k, v) in params
+                                .iter()
+                                .filter_map(|(k, v)| v.as_text().map(|s| (k, s)))
+                            {
                                 stamp.write(k.to_owned(), PropValue::Str(v.to_owned()))?;
                             }
                             let category = category.as_deref().ok_or_else(|| {
@@ -481,9 +558,8 @@ impl TypeAssignment {
         // `forcefield`, so `def_style` returns it in place.
         for style in batch.styles() {
             let target = forcefield
-                .def_style_with_arity(
-                    style.category(),
-                    style.arity(),
+                .def_style(
+                    Category::new(style.category()).arity(style.arity()),
                     style.name(),
                     style.params().clone(),
                 )
@@ -521,7 +597,7 @@ impl TypeAssignment {
             }
         };
         batch
-            .def_style_with_arity(category, arity, style, params)
+            .def_style(Category::new(category).arity(arity), style, params)
             .map_err(|e| format!("match: {e}"))
     }
 
@@ -595,12 +671,12 @@ impl TypeAssignment {
     /// graph's count of it.
     pub fn assign_terms(
         &mut self,
-        graph: &MolGraph,
+        graph: &Atomistic,
         kind: &str,
         library: &ForceField,
         key: &str,
     ) -> Result<Vec<usize>, String> {
-        let Some(kind_id) = graph.kind_id(kind) else {
+        let Some(terms) = link_rows(graph, kind)? else {
             return Ok(Vec::new());
         };
         let (category, order) = link_category(kind)
@@ -618,7 +694,7 @@ impl TypeAssignment {
             .collect();
 
         let row_of: HashMap<NodeId, usize> = graph
-            .node_ids()
+            .atom_ids()
             .enumerate()
             .map(|(row, id)| (id, row))
             .collect();
@@ -636,8 +712,8 @@ impl TypeAssignment {
             });
             annotated.or_else(|| {
                 graph
-                    .node_table()
-                    .get_str(node, key)
+                    .atom_table()
+                    .get::<String>(node, key)
                     .ok()
                     .map(str::to_owned)
             })
@@ -645,11 +721,9 @@ impl TypeAssignment {
 
         let mut assigned: Vec<Option<usize>> = Vec::new();
         let mut cache: HashMap<Vec<String>, Option<usize>> = HashMap::new();
-        for (position, id) in graph.relation_ids(kind_id).enumerate() {
-            let nodes = graph
-                .relation_nodes(kind_id, id)
-                .map_err(|e| format!("{category} {position}: {e}"))?;
-            let types: Vec<String> = nodes
+        for (position, (_, term)) in terms.iter().enumerate() {
+            let types: Vec<String> = term
+                .nodes
                 .iter()
                 .map(|&n| {
                     atom_type(n).ok_or_else(|| {
@@ -762,12 +836,16 @@ mod tests {
     //! `TypeAssignment::apply_to` and `Typing<T>` against hand-written stub typifiers.
     //! Every expectation is written by hand; no native typifier runs here.
 
+    use crate::ff::potential::fixtures::OneShot;
+    use crate::props;
     use indexmap::IndexMap;
+    use molrs::core::Element;
+    use molrs::core::keys;
     use std::collections::VecDeque;
     use std::sync::Mutex;
 
     use molrs::core::Atomistic;
-    use molrs::core::{Atom, PropValue};
+    use molrs::core::{PropValue, Props};
 
     use super::*;
     use crate::ff::forcefield::ForceField;
@@ -836,20 +914,28 @@ mod tests {
     /// Three atoms in a chain: `c0-c1-c2`, two bonds, one angle.
     fn chain3() -> Atomistic {
         let mut g = Atomistic::new();
-        let a = g.add_atom_bare("C");
-        let b = g.add_atom_bare("C");
-        let c = g.add_atom_bare("O");
-        g.add_bond(a, b).unwrap();
-        g.add_bond(b, c).unwrap();
-        g.add_angle(a, b, c).unwrap();
+        let a = g
+            .add_atom(props! { keys::ATOMIC_NUMBER => Element::C })
+            .unwrap();
+        let b = g
+            .add_atom(props! { keys::ATOMIC_NUMBER => Element::C })
+            .unwrap();
+        let c = g
+            .add_atom(props! { keys::ATOMIC_NUMBER => Element::O })
+            .unwrap();
+        g.add_bond(a, b, props! {}).unwrap();
+        g.add_bond(b, c, props! {}).unwrap();
+        g.add_angle(a, b, c, props! {}).unwrap();
         g
     }
 
     /// Two atoms, no links.
     fn pair2() -> Atomistic {
         let mut g = Atomistic::new();
-        g.add_atom_bare("C");
-        g.add_atom_bare("H");
+        g.add_atom(props! { keys::ATOMIC_NUMBER => Element::C })
+            .unwrap();
+        g.add_atom(props! { keys::ATOMIC_NUMBER => Element::H })
+            .unwrap();
         g
     }
 
@@ -908,7 +994,7 @@ mod tests {
             "full",
             name,
             &[],
-            Params::from_pairs(&[("mass", mass)]),
+            Params::from_iter([("mass", mass)]),
         )
     }
 
@@ -916,11 +1002,11 @@ mod tests {
         style("atom", "full", Params::new())
     }
 
-    fn nth_atom(g: &Atomistic, i: usize) -> Atom {
+    fn nth_atom(g: &Atomistic, i: usize) -> Props {
         g.atoms().nth(i).expect("atom index").1
     }
 
-    fn nth_bond_props(g: &Atomistic, i: usize) -> IndexMap<String, PropValue> {
+    fn nth_bond_props(g: &Atomistic, i: usize) -> Props {
         g.bonds().nth(i).expect("bond index").1.props
     }
 
@@ -943,7 +1029,7 @@ mod tests {
     }
 
     /// Every atom's and every link's property bag, in row order.
-    type GraphProps = (Vec<Atom>, Vec<Vec<IndexMap<String, PropValue>>>);
+    type GraphProps = (Vec<Props>, Vec<Vec<Props>>);
 
     fn graph_props(g: &Atomistic) -> GraphProps {
         let atoms = g.atoms().map(|(_, a)| a).collect();
@@ -992,8 +1078,8 @@ mod tests {
     fn apply_to_stamps_a_type_name_and_every_param_on_its_atom() {
         let mut g = pair2();
         let mut ff = ForceField::new("out");
-        let mut params = Params::from_pairs(&[("mass", 12.011), ("charge", -0.18)]);
-        params.set_str("provenance", "hand");
+        let mut params = Params::from_iter([("mass", 12.011), ("charge", -0.18)]);
+        params.set("provenance", "hand");
         let m = TypeAssignment {
             nodes: vec![vec![ty("type", "full", "CT", &[], params)], vec![]],
             styles: vec![atom_full_style()],
@@ -1026,7 +1112,7 @@ mod tests {
                         "harmonic",
                         "C-O",
                         &["C", "O"],
-                        Params::from_pairs(&[("k", 320.0), ("r0", 1.41)]),
+                        Params::from_iter([("k", 320.0), ("r0", 1.41)]),
                     )],
                 ],
             )]),
@@ -1050,7 +1136,7 @@ mod tests {
     #[test]
     fn apply_to_numbers_a_name_estimated_otherwise() {
         let estimate = |k: f64| {
-            let mut p = Params::from_pairs(&[("k", k), ("r0", 1.41)]);
+            let mut p = Params::from_iter([("k", k), ("r0", 1.41)].iter().copied());
             Provenance::analogy(1.0, "C-N").apply_to(&mut p);
             p
         };
@@ -1084,7 +1170,9 @@ mod tests {
         let names: Vec<_> = ff.get_bondtypes().iter().map(|t| t.name.clone()).collect();
         assert_eq!(names, ["C-O", "C-O@2", "C-O@3"]);
 
-        let matched = bond(Params::from_pairs(&[("k", 350.0), ("r0", 1.41)]));
+        let matched = bond(Params::from_iter(
+            [("k", 350.0), ("r0", 1.41)].iter().copied(),
+        ));
         let err = matched.apply_to(&mut chain3(), &mut ff).unwrap_err();
         assert!(err.contains("C-O"), "{err}");
     }
@@ -1094,9 +1182,16 @@ mod tests {
     #[test]
     fn apply_to_stamps_each_link_kind_on_its_own_rows() {
         let mut g = Atomistic::new();
-        let ids: Vec<_> = (0..4).map(|_| g.add_atom_bare("C")).collect();
-        g.add_improper(ids[1], ids[0], ids[2], ids[3]).unwrap();
-        g.add_dihedral(ids[0], ids[1], ids[2], ids[3]).unwrap();
+        let ids: Vec<_> = (0..4)
+            .map(|_| {
+                g.add_atom(props! { keys::ATOMIC_NUMBER => Element::C })
+                    .unwrap()
+            })
+            .collect();
+        g.add_improper(ids[1], ids[0], ids[2], ids[3], props! {})
+            .unwrap();
+        g.add_dihedral(ids[0], ids[1], ids[2], ids[3], props! {})
+            .unwrap();
         let mut ff = ForceField::new("out");
         let m = TypeAssignment {
             links: links([
@@ -1142,7 +1237,7 @@ mod tests {
     fn apply_to_defines_exactly_the_match_types_and_pair_rows() {
         let mut g = chain3();
         let mut ff = ForceField::new("out");
-        let lj = |eps: f64, sigma: f64| Params::from_pairs(&[("epsilon", eps), ("sigma", sigma)]);
+        let lj = |eps: f64, sigma: f64| Params::from_iter([("epsilon", eps), ("sigma", sigma)]);
         let m = TypeAssignment {
             nodes: vec![
                 vec![atom_full("CT", 12.011)],
@@ -1157,21 +1252,21 @@ mod tests {
                         "harmonic",
                         "CT-CT",
                         &["CT", "CT"],
-                        Params::from_pairs(&[("k", 268.0), ("r0", 1.529)]),
+                        Params::from_iter([("k", 268.0), ("r0", 1.529)]),
                     )],
                     vec![ty(
                         "type",
                         "harmonic",
                         "CT-OH",
                         &["CT", "OH"],
-                        Params::from_pairs(&[("k", 320.0), ("r0", 1.41)]),
+                        Params::from_iter([("k", 320.0), ("r0", 1.41)]),
                     )],
                 ],
             )]),
             styles: vec![
                 atom_full_style(),
                 style("bond", "harmonic", Params::new()),
-                style("pair", "lj/cut", Params::from_pairs(&[("cutoff", 10.0)])),
+                style("pair", "lj/cut", Params::from_iter([("cutoff", 10.0)])),
             ],
             pairs: vec![
                 pair_row("lj/cut", "CT", &["CT"], lj(0.066, 3.5)),
@@ -1188,12 +1283,12 @@ mod tests {
         let full = ff.get_style("atom", "full").unwrap();
         assert_eq!(
             full.get_atomtype("OH").unwrap().params,
-            Params::from_pairs(&[("mass", 15.999)])
+            Params::from_iter([("mass", 15.999)])
         );
         let bond = ff.get_style("bond", "harmonic").unwrap();
         assert_eq!(
             bond.get_bondtype("CT", "OH").unwrap().params,
-            Params::from_pairs(&[("k", 320.0), ("r0", 1.41)])
+            Params::from_iter([("k", 320.0), ("r0", 1.41)])
         );
         let pair = ff.get_style("pair", "lj/cut").unwrap();
         assert_eq!(
@@ -1208,7 +1303,7 @@ mod tests {
     fn apply_to_defines_the_given_endpoints_and_never_reads_the_name() {
         let mut g = chain3();
         let mut ff = ForceField::new("out");
-        let k = || Params::from_pairs(&[("kb", 4.2)]);
+        let k = || Params::from_iter([("kb", 4.2)]);
         let m = TypeAssignment {
             links: links([(
                 "bonds",
@@ -1240,7 +1335,7 @@ mod tests {
         let mut ff = ForceField::new("out");
         let m = TypeAssignment {
             styles: vec![
-                style("pair", "lj/cut", Params::from_pairs(&[("cutoff", 9.0)])),
+                style("pair", "lj/cut", Params::from_iter([("cutoff", 9.0)])),
                 style("dihedral", "opls", Params::new()),
                 atom_full_style(),
                 style("bond", "harmonic", Params::new()),
@@ -1261,7 +1356,7 @@ mod tests {
         );
         assert_eq!(
             ff.get_style("pair", "lj/cut").unwrap().params(),
-            &Params::from_pairs(&[("cutoff", 9.0)])
+            &Params::from_iter([("cutoff", 9.0)])
         );
     }
 
@@ -1312,7 +1407,7 @@ mod tests {
         let mut ff = ForceField::new("out");
         ff.def_style("atom", "full", Params::new())
             .unwrap()
-            .def_type("CT", &[], Params::from_pairs(&[("mass", 12.011)]))
+            .def_type("CT", &[], Params::from_iter([("mass", 12.011)]))
             .unwrap();
         let before = ff.clone();
         let m = TypeAssignment {
@@ -1336,7 +1431,7 @@ mod tests {
         let mut ff = ForceField::new("out");
         ff.def_style("atom", "full", Params::new())
             .unwrap()
-            .def_type("CT", &[], Params::from_pairs(&[("mass", 12.011)]))
+            .def_type("CT", &[], Params::from_iter([("mass", 12.011)]))
             .unwrap();
         let before = ff.clone();
         let m = TypeAssignment {
@@ -1379,13 +1474,13 @@ mod tests {
     fn apply_to_style_conflicting_with_the_forcefield_errs_and_changes_nothing() {
         let mut g = pair2();
         let mut ff = ForceField::new("out");
-        ff.def_style("pair", "lj/cut", Params::from_pairs(&[("cutoff", 10.0)]))
+        ff.def_style("pair", "lj/cut", Params::from_iter([("cutoff", 10.0)]))
             .unwrap();
         let before = ff.clone();
         let m = TypeAssignment {
             styles: vec![
                 atom_full_style(),
-                style("pair", "lj/cut", Params::from_pairs(&[("cutoff", 12.0)])),
+                style("pair", "lj/cut", Params::from_iter([("cutoff", 12.0)])),
             ],
             ..TypeAssignment::default()
         };
@@ -1424,7 +1519,7 @@ mod tests {
                 "lj/cut",
                 "CT",
                 &["CT"],
-                Params::from_pairs(&[("epsilon", 0.066), ("sigma", 3.5)]),
+                Params::from_iter([("epsilon", 0.066), ("sigma", 3.5)]),
             )],
             ..TypeAssignment::default()
         };
@@ -1492,7 +1587,7 @@ mod tests {
                         "full",
                         "CT",
                         &[],
-                        Params::from_pairs(&[("charge", 0.5)]),
+                        Params::from_iter([("charge", 0.5)]),
                     ),
                     value("charge", -0.5),
                 ],
@@ -1522,7 +1617,7 @@ mod tests {
                         "full",
                         "CT",
                         &[],
-                        Params::from_pairs(&[("charge", 0.5)]),
+                        Params::from_iter([("charge", 0.5)]),
                     ),
                     value("charge", 0.5),
                 ],
@@ -1566,9 +1661,9 @@ mod tests {
         lib.set_special_bonds(SB);
         lib.def_style("atom", "full", Params::new())
             .unwrap()
-            .def_type("CT", &[], Params::from_pairs(&[("mass", 12.011)]))
+            .def_type("CT", &[], Params::from_iter([("mass", 12.011)]))
             .unwrap()
-            .def_type("UNUSED", &[], Params::from_pairs(&[("mass", 1.0)]))
+            .def_type("UNUSED", &[], Params::from_iter([("mass", 1.0)]))
             .unwrap();
         lib
     }
@@ -1748,21 +1843,42 @@ mod tests {
         [3.55, 1.6, 0.6],
     ];
 
-    /// Four atoms typed `A`, `B`, `C`, `D` in a chain with the three-atom
-    /// relation kind `kind` over `(0, 1, 2)` and `(1, 2, 3)`; `angles` uses
-    /// the Atomistic's own kind.
-    fn ub_chain(kind: &str) -> Atomistic {
-        let mut g = Atomistic::new();
+    /// Four carbon atoms in a chain with the three-atom relation kind `kind`
+    /// over `(0, 1, 2)` and `(1, 2, 3)`, plus every `(name, arity)` of
+    /// `extra` over the first `arity` atoms; `angles` is the Atomistic's own
+    /// kind.
+    ///
+    /// A custom block (`urey_bradleys`, `link`) is no canonical term block,
+    /// so `Atomistic::add_term` cannot introduce it: the graph is built as a
+    /// [`MolGraph`](molrs::core::MolGraph) and promoted.
+    fn ub_chain_with(kind: &str, extra: &[(&str, usize)]) -> Atomistic {
+        let mut g = molrs::core::MolGraph::new();
         let ids: Vec<_> = UB_XYZ
             .iter()
-            .map(|p| g.add_atom_xyz("C", p[0], p[1], p[2]))
+            .map(|&[x, y, z]| {
+                g.add_node(props! {
+                    keys::ATOMIC_NUMBER => Element::C,
+                    keys::X => x,
+                    keys::Y => y,
+                    keys::Z => z,
+                })
+                .unwrap()
+            })
             .collect();
-        let graph = g.as_molgraph_mut();
-        let kid = graph.register_kind(kind, 3);
+        let kid = g.register_kind(kind, 3);
         for w in ids.windows(3) {
-            graph.add_relation(kid, w).unwrap();
+            g.add_relation(kid, w, props! {}).unwrap();
         }
-        g
+        for &(name, arity) in extra {
+            let kid = g.register_kind(name, arity);
+            g.add_relation(kid, &ids[..arity], props! {}).unwrap();
+        }
+        Atomistic::try_from(g).unwrap()
+    }
+
+    /// [`ub_chain_with`] and no further kind.
+    fn ub_chain(kind: &str) -> Atomistic {
+        ub_chain_with(kind, &[])
     }
 
     /// One `category` style `style` with, in table order: a decoy of three
@@ -1777,7 +1893,7 @@ mod tests {
         let mut lib = ForceField::new("lib");
         let atom = lib.def_style("atom", "full", Params::new()).unwrap();
         for name in ["A", "B", "C", "D"] {
-            atom.def_type(name, &[], Params::from_pairs(&[("mass", 12.0)]))
+            atom.def_type(name, &[], Params::from_iter([("mass", 12.0)]))
                 .unwrap();
         }
         let s = lib.def_style(category, style, params).unwrap();
@@ -1786,7 +1902,7 @@ mod tests {
             ("t", ["C", "B", "A"], 20.0, 2.45),
             ("u", ["*", "C", "D"], 11.0, 2.2),
         ] {
-            let mut p = Params::from_pairs(&[("k_ub", k_ub), ("r_ub", r_ub)]);
+            let mut p = Params::from_iter([("k_ub", k_ub), ("r_ub", r_ub)]);
             for &(k, v) in extra {
                 p.set(k, v);
             }
@@ -1812,14 +1928,14 @@ mod tests {
                             "full",
                             t,
                             &[],
-                            Params::from_pairs(&[("mass", 12.0)]),
+                            Params::from_iter([("mass", 12.0)]),
                         )]
                     })
                     .collect(),
                 styles: vec![atom_full_style()],
                 ..TypeAssignment::default()
             };
-            let missing = m.assign_terms(graph.as_molgraph(), self.kind, &self.library, "type")?;
+            let missing = m.assign_terms(graph, self.kind, &self.library, "type")?;
             assert!(missing.is_empty(), "{missing:?}");
             Ok(m)
         }
@@ -1835,7 +1951,7 @@ mod tests {
         crate::ff::compile::PotentialCompiler::new(ff)
             .compile(&frame)
             .unwrap()
-            .calc_energy_forces(&coords)
+            .energy_forces_at(&coords)
     }
 
     /// A registered custom category is typified exactly like `angles`: the
@@ -1846,7 +1962,7 @@ mod tests {
     fn a_custom_relation_kind_is_typified_compiled_and_priced_like_angle_charmm() {
         register_urey_bradley();
         let mut expr = Params::new();
-        expr.set_str("expression", UB_EXPRESSION);
+        expr.set("expression", UB_EXPRESSION);
         let mut ub = Typing::new(ChainTypifier {
             library: ub_library("urey_bradley", "spring", expr, &[]),
             kind: "urey_bradleys",
@@ -1858,11 +1974,10 @@ mod tests {
         for key in ["atomi", "atomj", "atomk", "type"] {
             assert!(block.contains_key(key), "urey_bradleys has no '{key}'");
         }
-        let kid = typed.as_molgraph().kind_id("urey_bradleys").unwrap();
         let types: Vec<_> = typed
-            .as_molgraph()
-            .relations(kid)
-            .map(|(_, r)| r.props["type"].clone())
+            .term_ids("urey_bradleys")
+            .unwrap()
+            .map(|id| typed.get_term("urey_bradleys", id).unwrap().props["type"].clone())
             .collect();
         assert_eq!(types, vec![PropValue::from("t"), PropValue::from("u")]);
         // Only the types used are defined; the decoy never is.
@@ -1875,7 +1990,8 @@ mod tests {
                 .get_style("urey_bradley", "spring")
                 .unwrap()
                 .params()
-                .get_str("expression"),
+                .get("expression")
+                .and_then(|v| v.as_text()),
             Some(UB_EXPRESSION)
         );
 
@@ -1910,15 +2026,15 @@ mod tests {
     #[test]
     fn apply_to_takes_any_relation_kind_and_refuses_a_kind_the_graph_lacks() {
         register_urey_bradley();
-        let mut g = ub_chain("urey_bradleys");
+        let mut g = ub_chain_with("urey_bradleys", &[("link", 2)]);
         let mut ff = ForceField::new("out");
         let m = TypeAssignment {
             links: links([("urey_bradleys", vec![vec![value("tag", "first")], vec![]])]),
             ..TypeAssignment::default()
         };
         m.apply_to(&mut g, &mut ff).unwrap();
-        let kid = g.as_molgraph().kind_id("urey_bradleys").unwrap();
-        let first = g.as_molgraph().relations(kid).next().unwrap().1.props;
+        let first_id = g.term_ids("urey_bradleys").unwrap().next().unwrap();
+        let first = g.get_term("urey_bradleys", first_id).unwrap().props;
         assert_eq!(first.get("tag"), Some(&PropValue::Str("first".into())));
 
         let m = TypeAssignment {
@@ -1931,9 +2047,16 @@ mod tests {
             "{err}"
         );
 
-        let kid = g.as_molgraph_mut().register_kind("link", 2);
-        let ids: Vec<_> = g.node_ids().take(2).collect();
-        g.as_molgraph_mut().add_relation(kid, &ids).unwrap();
+        let m = TypeAssignment {
+            links: links([("ports", vec![vec![value("tag", "p")]])]),
+            ..TypeAssignment::default()
+        };
+        let err = m.apply_to(&mut g, &mut ff).unwrap_err();
+        assert!(
+            err.contains("relation block 'ports' takes no annotations"),
+            "{err}"
+        );
+
         let m = TypeAssignment {
             links: links([("link", vec![vec![value("tag", "x")]])]),
             ..TypeAssignment::default()
@@ -1966,7 +2089,7 @@ mod tests {
             ("b-a", ["B", "A"]),
             ("a-b", ["A", "B"]),
         ] {
-            bond.def_type(name, &ends, Params::from_pairs(&[("k", 1.0), ("r0", 1.0)]))
+            bond.def_type(name, &ends, Params::from_iter([("k", 1.0), ("r0", 1.0)]))
                 .unwrap();
         }
         let dihedral = lib.def_style("dihedral", "charmm", Params::new()).unwrap();
@@ -1974,7 +2097,7 @@ mod tests {
             .def_type(
                 "dcba",
                 &["D", "C", "B", "A"],
-                Params::from_pairs(&[("k", 1.0)]),
+                Params::from_iter([("k", 1.0)]),
             )
             .unwrap();
         let improper = lib.def_style("improper", "cvff", Params::new()).unwrap();
@@ -1982,14 +2105,14 @@ mod tests {
             .def_type(
                 "dcba",
                 &["D", "C", "B", "A"],
-                Params::from_pairs(&[("k", 1.0)]),
+                Params::from_iter([("k", 1.0)]),
             )
             .unwrap();
         improper
             .def_type(
                 "b-wild",
                 &["B", "*", "*", "*"],
-                Params::from_pairs(&[("k", 2.0)]),
+                Params::from_iter([("k", 2.0)]),
             )
             .unwrap();
 
@@ -1997,20 +2120,25 @@ mod tests {
         let ids: Vec<_> = ["A", "B", "C", "D"]
             .iter()
             .map(|t| {
-                let id = g.add_atom_bare("C");
+                let id = g
+                    .add_atom(props! { keys::ATOMIC_NUMBER => Element::C })
+                    .unwrap();
                 g.set_atom(id, "type", *t).unwrap();
                 id
             })
             .collect();
-        g.add_bond(ids[0], ids[1]).unwrap(); // A-B: `b-a` and `a-b` tie, `b-a` first
-        g.add_bond(ids[1], ids[2]).unwrap(); // B-C: only wildcards; `x-b` reversed
-        g.add_bond(ids[2], ids[3]).unwrap(); // C-D: only `any`
-        g.add_dihedral(ids[0], ids[1], ids[2], ids[3]).unwrap();
-        g.add_improper(ids[0], ids[1], ids[2], ids[3]).unwrap();
-        g.add_improper(ids[1], ids[0], ids[2], ids[3]).unwrap();
+        g.add_bond(ids[0], ids[1], props! {}).unwrap(); // A-B: `b-a` and `a-b` tie, `b-a` first
+        g.add_bond(ids[1], ids[2], props! {}).unwrap(); // B-C: only wildcards; `x-b` reversed
+        g.add_bond(ids[2], ids[3], props! {}).unwrap(); // C-D: only `any`
+        g.add_dihedral(ids[0], ids[1], ids[2], ids[3], props! {})
+            .unwrap();
+        g.add_improper(ids[0], ids[1], ids[2], ids[3], props! {})
+            .unwrap();
+        g.add_improper(ids[1], ids[0], ids[2], ids[3], props! {})
+            .unwrap();
 
         let mut m = TypeAssignment::default();
-        let graph = g.as_molgraph();
+        let graph = &g;
         assert_eq!(m.assign_terms(graph, "bonds", &lib, "type"), Ok(vec![]));
         assert_eq!(m.assign_terms(graph, "dihedrals", &lib, "type"), Ok(vec![]));
         // The first improper is A-B-C-D: `dcba` only reversed, refused.
@@ -2082,20 +2210,17 @@ mod tests {
         let ids: Vec<_> = ["A", "B", "C", "D", "E"]
             .iter()
             .map(|t| {
-                let id = g.add_atom_bare("C");
+                let id = g
+                    .add_atom(props! { keys::ATOMIC_NUMBER => Element::C })
+                    .unwrap();
                 g.set_atom(id, "type", *t).unwrap();
                 id
             })
             .collect();
-        let graph = g.as_molgraph_mut();
-        let cmaps = graph.register_kind("cmaps", 5);
-        graph.add_relation(cmaps, &ids).unwrap();
+        g.add_term("cmaps", &ids, props! {}).unwrap();
         let mut m = TypeAssignment::default();
         // The only row reads E-D-C-B-A; the term is A-B-C-D-E.
-        assert_eq!(
-            m.assign_terms(g.as_molgraph(), "cmaps", &lib, "type"),
-            Ok(vec![0])
-        );
+        assert_eq!(m.assign_terms(&g, "cmaps", &lib, "type"), Ok(vec![0]));
     }
 
     /// `Unordered` matches any permutation, wildcards included.

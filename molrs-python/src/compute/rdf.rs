@@ -1,10 +1,10 @@
 //! Radial distribution function (`molrs::compute::Rdf`) and its output
 //! `RdfResult`.
 
-use molrs::compute::{Compute, Rdf, RdfResult};
+use molrs::compute::{Accumulate, Rdf, RdfAccumulator, RdfResult, Stream};
 use pyo3::prelude::*;
 
-use super::args::{self, PairSourceArg};
+use super::args::PairSourceArg;
 use super::error::Result;
 use super::output::py_result;
 use super::spec::described;
@@ -28,7 +28,10 @@ py_result! {
     }
 }
 
-/// Radial distribution function g(r) (``molrs::compute::Rdf``).
+/// Radial distribution function g(r) (``molrs::compute::Rdf``) — a stream
+/// only: :meth:`accumulator` hands out an :class:`RdfAccumulator`; push one
+/// pair source per frame and :meth:`RdfAccumulator.finish` reads the
+/// ``RdfResult``.
 ///
 /// Parameters
 /// ----------
@@ -37,9 +40,6 @@ py_result! {
 ///     The binned range ``[r_min, r_max)``.
 /// dimensionality : int, optional
 ///     ``2`` or ``3``; ``None`` keeps the core default.
-///
-/// ``compute(pairs=)`` folds one pair source per frame — a ``Neighbors``
-/// table or a built ``NeighborList`` — into one ``RdfResult``.
 #[pyclass(module = "molrs.compute", name = "Rdf", frozen)]
 pub(crate) struct PyRdf {
     inner: Rdf,
@@ -57,11 +57,53 @@ impl PyRdf {
         Ok(Self { inner })
     }
 
-    #[pyo3(signature = (*, pairs))]
-    fn compute(&self, pairs: Vec<Bound<'_, PyAny>>) -> Result<PyRdfResult> {
-        let pairs = PairSourceArg::extract_all(&pairs)?;
-        let frames = args::sources(&pairs)?;
-        Ok(self.inner.compute(&frames)?.into())
+    /// A fresh accumulator configured like this ``Rdf``
+    /// (``Stream::accumulator``).
+    fn accumulator(&self) -> PyRdfAccumulator {
+        PyRdfAccumulator {
+            inner: self.inner.accumulator(),
+        }
+    }
+}
+
+/// The streaming g(r) accumulator (``molrs::compute::RdfAccumulator``), made
+/// by :meth:`Rdf.accumulator`.
+///
+/// :meth:`push` folds one frame's pair source; :meth:`finish` normalizes the
+/// running histogram into an ``RdfResult`` without consuming it, so a run can
+/// be inspected and continued. Memory is ``O(n_bins)``.
+#[pyclass(module = "molrs.compute", name = "RdfAccumulator")]
+pub(crate) struct PyRdfAccumulator {
+    inner: RdfAccumulator,
+}
+
+#[pymethods]
+impl PyRdfAccumulator {
+    /// Fold one frame's pairs — a ``Neighbors`` table or a built
+    /// ``NeighborList``, carrying its box and ``dist_sq`` — into the running
+    /// histogram. A rejected frame leaves the state unchanged.
+    ///
+    /// Raises
+    /// ------
+    /// ValueError
+    ///     The pairing (self vs cross query) differs from frame 0's, the
+    ///     source has no box or no ``dist_sq``, the box volume is not
+    ///     positive, or a distance is not finite.
+    fn push(&mut self, pairs: &Bound<'_, PyAny>) -> Result<()> {
+        let pairs = PairSourceArg::extract(pairs)?;
+        self.inner.push(pairs.source()?)?;
+        Ok(())
+    }
+
+    /// The g(r) over every frame pushed so far.
+    fn finish(&self) -> Result<PyRdfResult> {
+        Ok(self.inner.finish()?.into())
+    }
+
+    /// Number of frames pushed so far.
+    #[getter]
+    fn n_frames(&self) -> usize {
+        self.inner.n_frames()
     }
 }
 
@@ -70,5 +112,6 @@ described!(PyRdf, Rdf);
 pub(crate) fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyRdfResult>()?;
     m.add_class::<PyRdf>()?;
+    m.add_class::<PyRdfAccumulator>()?;
     Ok(())
 }

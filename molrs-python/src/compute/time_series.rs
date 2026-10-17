@@ -7,11 +7,11 @@
 
 use crate::array::{ArrayArg1, ArrayArg2, ArrayArg3};
 use molrs::compute::{
-    Compute, Correlator, CorrelatorInput, CurrentAcf, CurrentAcfInput, Derivative, DerivativeInput,
-    DipoleAcf, DipoleAcfInput, LagKernel, Msd, MsdInput, OneSidedSpectrum, OnsagerCorrelation,
-    OnsagerInput, ReorientationAcf, ReorientationAcfInput, RotationalAutocorrelation,
-    RotationalAutocorrelationInput, Spectrum, SpectrumInput, Survival, SurvivalInput,
-    TimeCorrelation, Unwrap, UnwrapInput, Vacf, VacfInput,
+    Accumulate, Compute, Correlator, CorrelatorAccumulator, CorrelatorFrame, CorrelatorInput,
+    CurrentAcf, CurrentAcfInput, Derivative, DerivativeInput, DipoleAcf, DipoleAcfInput, LagKernel,
+    Msd, OneSidedSpectrum, OnsagerCorrelation, OnsagerInput, ReorientationAcf,
+    ReorientationAcfInput, RotationalAutocorrelation, RotationalAutocorrelationInput, Spectrum,
+    SpectrumInput, Stream, Survival, SurvivalInput, TimeCorrelation, Unwrap, UnwrapInput, Vacf,
 };
 use numpy::{IntoPyArray, PyArray2, PyArray3};
 use pyo3::IntoPyObjectExt;
@@ -173,7 +173,7 @@ impl PyCorrelator {
 described!(PyCorrelator, Correlator);
 
 /// Mean-squared displacement (``molrs::compute::Msd``), the
-/// ``squared_displacement`` correlator.
+/// ``squared_displacement`` correlator — a stream only.
 ///
 /// Parameters
 /// ----------
@@ -182,8 +182,10 @@ described!(PyCorrelator, Correlator);
 /// stride : int, optional
 ///     Every ``stride``-th frame is an origin (``origins="all"`` only).
 ///
-/// ``compute(positions=, dt=, boxes=None)`` over an unwrapped ``(T, N, 3)``
-/// trajectory; with ``boxes`` a wrapped one is refused.
+/// :meth:`accumulator` hands out a :class:`CorrelatorAccumulator`; push each
+/// frame's unwrapped ``(N, 3)`` positions (``push(positions, dt=…,
+/// simbox=…)``; with a box a wrapped trajectory is refused) and
+/// :meth:`CorrelatorAccumulator.finish` reads the curve.
 #[pyclass(module = "molrs.compute", name = "Msd", frozen)]
 pub(crate) struct PyMsd {
     inner: Msd,
@@ -212,20 +214,12 @@ impl PyMsd {
         Ok(Self { inner })
     }
 
-    #[pyo3(signature = (*, positions, dt, boxes = None))]
-    fn compute(
-        &self,
-        positions: ArrayArg3<'_, f64>,
-        dt: f64,
-        boxes: Option<Vec<PyRef<'_, PyBox>>>,
-    ) -> Result<PyTimeCorrelation> {
-        let boxes = boxes.as_deref().map(args::boxes);
-        let out = self.inner.compute(MsdInput {
-            positions: positions.as_array(),
-            dt,
-            boxes: boxes.as_deref(),
-        })?;
-        Ok(out.into())
+    /// A fresh accumulator configured like this ``Msd``
+    /// (``Stream::accumulator``).
+    fn accumulator(&self) -> PyCorrelatorAccumulator {
+        PyCorrelatorAccumulator {
+            inner: self.inner.accumulator(),
+        }
     }
 }
 
@@ -244,7 +238,10 @@ described!(PyMsd, Msd);
 ///     ``"subtract"`` (default) correlates each component's fluctuation about
 ///     its time mean; ``"keep"`` correlates the velocities as given.
 ///
-/// ``compute(velocities=, dt=)`` over a ``(T, C)`` velocity series.
+/// A stream only: :meth:`accumulator` hands out a
+/// :class:`CorrelatorAccumulator`; push each frame's velocities as an
+/// ``(n_dof, 1)`` column (one degree of freedom per row: ``v.reshape(-1,
+/// 1)``) and :meth:`CorrelatorAccumulator.finish` reads the curve.
 #[pyclass(module = "molrs.compute", name = "Vacf", frozen)]
 pub(crate) struct PyVacf {
     inner: Vacf,
@@ -273,13 +270,66 @@ impl PyVacf {
         Ok(Self { inner })
     }
 
-    #[pyo3(signature = (*, velocities, dt))]
-    fn compute(&self, velocities: ArrayArg2<'_, f64>, dt: f64) -> Result<PyTimeCorrelation> {
-        let out = self.inner.compute(VacfInput {
-            velocities: velocities.as_array(),
+    /// A fresh accumulator configured like this ``Vacf``
+    /// (``Stream::accumulator``).
+    fn accumulator(&self) -> PyCorrelatorAccumulator {
+        PyCorrelatorAccumulator {
+            inner: self.inner.accumulator(),
+        }
+    }
+}
+
+/// The streaming correlator (``molrs::compute::CorrelatorAccumulator``),
+/// made by :meth:`Msd.accumulator` / :meth:`Vacf.accumulator`.
+///
+/// :meth:`push` folds one frame; :meth:`finish` reads the curve over every
+/// frame pushed so far without consuming the accumulator. Memory is
+/// ``O(max_lag · N · D)`` whatever the trajectory length.
+#[pyclass(module = "molrs.compute", name = "CorrelatorAccumulator")]
+pub(crate) struct PyCorrelatorAccumulator {
+    inner: CorrelatorAccumulator,
+}
+
+#[pymethods]
+impl PyCorrelatorAccumulator {
+    /// Fold one frame (``CorrelatorFrame``): ``a`` this frame of the series,
+    /// ``(N, D)``; ``b`` the second series of a cross-correlation (on every
+    /// frame or on none); ``dt`` the sample interval, identical on every
+    /// frame; ``simbox`` this frame's box, for the displacement kernel's
+    /// wrapped-trajectory check (``None`` skips it). A rejected frame leaves
+    /// the state unchanged.
+    ///
+    /// Raises
+    /// ------
+    /// ValueError
+    ///     The frame's shape, ``b`` presence or ``dt`` differs from frame
+    ///     0's, or the trajectory is wrapped under ``simbox``.
+    #[pyo3(signature = (a, *, b = None, dt, simbox = None))]
+    fn push(
+        &mut self,
+        a: ArrayArg2<'_, f64>,
+        b: Option<ArrayArg2<'_, f64>>,
+        dt: f64,
+        simbox: Option<PyRef<'_, PyBox>>,
+    ) -> Result<()> {
+        self.inner.push(CorrelatorFrame {
+            a: a.as_array(),
+            b: b.as_ref().map(|b| b.as_array()),
             dt,
+            simbox: simbox.as_ref().map(|b| &b.inner),
         })?;
-        Ok(out.into())
+        Ok(())
+    }
+
+    /// The correlation over every frame pushed so far.
+    fn finish(&self) -> Result<PyTimeCorrelation> {
+        Ok(self.inner.finish()?.into())
+    }
+
+    /// Number of frames pushed so far.
+    #[getter]
+    fn n_frames(&self) -> usize {
+        self.inner.n_frames()
     }
 }
 
@@ -701,6 +751,7 @@ pub(crate) fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyCorrelator>()?;
     m.add_class::<PyMsd>()?;
     m.add_class::<PyVacf>()?;
+    m.add_class::<PyCorrelatorAccumulator>()?;
     m.add_class::<PyOnsagerCorrelation>()?;
     m.add_class::<PyDipoleAcf>()?;
     m.add_class::<PyCurrentAcf>()?;

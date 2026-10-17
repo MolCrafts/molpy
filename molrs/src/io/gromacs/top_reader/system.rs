@@ -560,7 +560,7 @@ fn excluded(mt: &MolType) -> HashSet<(usize, usize)> {
 
 fn column<T: BlockDtype>(block: &mut Block, key: &str, values: Vec<T>) -> Result<(), String> {
     block
-        .insert(key, Array1::from_vec(values).into_dyn())
+        .insert(key, Array1::from_vec(values).into_dyn(), None)
         .map_err(|e| e.to_string())
 }
 
@@ -759,11 +759,11 @@ fn assemble(moltypes: &[MolType], molecules: &[(usize, usize)]) -> Result<Frame,
             let values: Vec<F> = cells.iter().map(|v| v.unwrap_or(0.0)).collect();
             let valid: Vec<bool> = cells.iter().map(Option::is_some).collect();
             block
-                .insert_nullable(
+                .insert(
                     *key,
                     ArrayD::from_shape_vec(vec![values.len()], values)
                         .map_err(|e| e.to_string())?,
-                    valid,
+                    Some(valid),
                 )
                 .map_err(|e| e.to_string())?;
         }
@@ -848,21 +848,22 @@ SOL  2
 
     fn read(text: &str) -> (crate::ff::forcefield::ForceField, Frame) {
         GromacsTopForcefieldReader::new()
-            .read_system_str(text)
-            .unwrap_or_else(|e| panic!("read_system_str: {e}"))
+            .read_system(text.as_bytes())
+            .unwrap_or_else(|e| panic!("read_system: {e}"))
     }
 
     fn read_err(text: &str) -> String {
         GromacsTopForcefieldReader::new()
-            .read_system_str(text)
+            .read_system(text.as_bytes())
             .expect_err("expected Err")
+            .to_string()
     }
 
     fn strings(frame: &Frame, block: &str, key: &str) -> Vec<String> {
         frame
             .get(block)
             .and_then(|b| b.get(key))
-            .and_then(|c| c.as_string())
+            .and_then(|c| c.get::<String>())
             .unwrap_or_else(|| panic!("{block}.{key}"))
             .iter()
             .cloned()
@@ -873,7 +874,7 @@ SOL  2
         frame
             .get(block)
             .and_then(|b| b.get(key))
-            .and_then(|c| c.as_uint())
+            .and_then(|c| c.get::<u64>())
             .unwrap_or_else(|| panic!("{block}.{key}"))
             .iter()
             .copied()
@@ -884,7 +885,7 @@ SOL  2
         frame
             .get(block)
             .and_then(|b| b.get(key))
-            .and_then(|c| c.as_float())
+            .and_then(|c| c.get::<f64>())
             .unwrap_or_else(|| panic!("{block}.{key}"))
             .iter()
             .copied()
@@ -934,8 +935,8 @@ SOL  2
             .unwrap()
             .type_params("HC-CT-CT@gmx_1")
             .unwrap();
-        assert_eq!(p.get("theta0"), Some(111.0));
-        assert!((p.get("k").unwrap() - 300.0 / 4.184 / 2.0).abs() < 1e-12);
+        assert_eq!(p.get("theta0").and_then(|v| v.as_num()), Some(111.0));
+        assert!((p.get("k").and_then(|v| v.as_num()).unwrap() - 300.0 / 4.184 / 2.0).abs() < 1e-12);
     }
 
     /// `5 1 2 3` (HC CT CT CT) takes the specific funct-9 block (four
@@ -953,7 +954,7 @@ SOL  2
             .unwrap()
             .type_params("HC-CT-CT-CT")
             .unwrap();
-        assert_eq!(p.get("phase2"), Some(180.0));
+        assert_eq!(p.get("phase2").and_then(|v| v.as_num()), Some(180.0));
         assert!(
             ff.get_style("dihedral", "multi/harmonic")
                 .unwrap()
@@ -976,7 +977,7 @@ SOL  2
             .unwrap()
             .get("is_14")
             .unwrap()
-            .as_bool()
+            .get::<bool>()
             .unwrap()
             .iter()
             .copied()
@@ -1090,8 +1091,8 @@ SOL  2
     fn only_read_system_reads_molecules() {
         use crate::io::reader::ForceFieldReader;
         let err = GromacsTopForcefieldReader::new()
-            .read_str(&format!("{DIRECTIVES}{MOLECULES}"))
+            .read(format!("{DIRECTIVES}{MOLECULES}").as_bytes())
             .expect_err("molecules");
-        assert!(err.contains("read_system"), "{err}");
+        assert!(err.to_string().contains("read_system"), "{err}");
     }
 }

@@ -114,7 +114,7 @@ pub(crate) fn lock_registry() -> MutexGuard<'static, HandleRegistry> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use molrs::core::Sphere;
+    use molrs::core::{Cell, Sphere};
     use ndarray::Array1;
     use std::sync::Arc;
 
@@ -127,7 +127,7 @@ mod tests {
         registry.frames.frame_new();
         registry
             .simboxes
-            .insert(SimBox::cube(1.0, Array1::zeros(3), [true; 3]).unwrap());
+            .insert(SimBox::new(Cell::Lengths([1.0; 3]), [0.0; 3], [true; 3]).unwrap());
         registry.forcefields.insert(ForceField::new("ff"));
         registry
             .regions

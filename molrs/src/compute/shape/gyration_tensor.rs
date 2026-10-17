@@ -107,10 +107,11 @@ crate::compute::spec::compute_spec! {
 mod tests {
     use super::*;
     use crate::compute::{InertiaTensor, InertiaTensorInput};
-    use ndarray::{Array2, arr1, arr2, array};
+    use crate::core::Cell;
+    use ndarray::{Array2, arr1, arr2};
 
     fn cube(len: F) -> SimBox {
-        SimBox::cube(len, array![0.0, 0.0, 0.0], [false; 3]).unwrap()
+        SimBox::new(Cell::Lengths([len; 3]), [0.0, 0.0, 0.0], [false; 3]).unwrap()
     }
 
     fn gyration(rows: &[[F; 3]], box_len: F, weights: &[F]) -> GyrationTensorResult {

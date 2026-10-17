@@ -913,6 +913,7 @@ dependencies = [
  "molcrafts-molrs",
  "molcrafts-molrs-ffi",
  "ndarray",
+ "num-complex",
  "serde_json",
  "slotmap",
 ]

@@ -99,13 +99,14 @@ every column access through the shared helpers. Numeric columns are borrowed as
 contiguous slices (zero-copy); strings are copied (they aren't contiguous scalars).
 
 ```rust,no_run
+use molrs::op::Idx;
 use molrs_ffi::FrameRef;
 
-let frame = FrameRef::new_standalone();          // a frame inside a fresh FrameArenaCell
+let frame = FrameRef::default();          // a frame inside a fresh FrameArenaCell
 // ... populate it via frame.with_mut(|f| ...) ...
 if let Ok(atoms) = frame.block("atoms") {
     // zero-copy borrow of the uint atom-id column (see the uint-index contract below)
-    let n_ids = atoms.borrow_u("id", |ids, _shape| ids.len()).ok().flatten();
+    let n_ids = atoms.borrow::<Idx, _>("id", |ids, _shape| ids.len()).ok().flatten();
     let _ = n_ids;
 }
 ```
@@ -269,8 +270,8 @@ Whichever path you take, molrs data follows these conventions:
 
 - **Atom indices are unsigned** (`u64`, the `UInt` dtype). Index columns —
   `atoms.id`, the `atomi`/`atomj`/`atomk`/`atoml` columns on bond/angle/dihedral
-  blocks — are read via `block.get(key).and_then(|c| c.as_uint())` (native) /
-  `borrow_u` (handle). Do **not** read them as signed. Record readers refuse
+  blocks — are read via `block.get(key).and_then(|c| c.get::<Idx>())` (native) /
+  `borrow::<Idx, _>` (handle). Do **not** read them as signed. Record readers refuse
   one stored at a narrower width.
 - **Pairs block schema.** A non-bonded pair list is a block with `atomi`, `atomj`
   (uint) and `is_14` (bool) columns. This is the single pairs convention across the

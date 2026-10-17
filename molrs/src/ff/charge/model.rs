@@ -66,7 +66,7 @@ pub trait ChargeModel {
 
 /// The atoms of `mol`, in graph atom order — the order every charge slice is in.
 pub(super) fn atom_ids(mol: &Atomistic) -> Vec<NodeId> {
-    mol.atoms().map(|(aid, _)| aid).collect()
+    mol.atom_ids().collect()
 }
 
 /// Reject a charge slice that does not belong to this molecule.
@@ -172,11 +172,9 @@ pub(super) fn without_type_columns(mol: &Atomistic) -> Result<Atomistic, ChargeE
     for aid in atom_ids(mol) {
         work.clear_atom(aid, keys::TYPE).map_err(malformed)?;
     }
-    let bond_kind = work.bond_kind();
-    let bond_ids: Vec<_> = work.bonds().map(|(bid, _)| bid).collect();
+    let bond_ids: Vec<_> = work.bond_ids().collect();
     for bid in bond_ids {
-        work.clear_relation_prop(bond_kind, bid, keys::TYPE)
-            .map_err(malformed)?;
+        work.clear_bond(bid, keys::TYPE).map_err(malformed)?;
     }
     Ok(work)
 }
@@ -214,21 +212,25 @@ pub(super) fn reject_dummy_types(
     Err(ChargeError::MissingAtomType {
         table,
         atom,
-        element: element_of(perceived, atom),
+        atomic_number: atomic_number_of(perceived, atom)?,
     })
 }
 
-/// The element symbol of the atom at index `atom` in graph atom order.
+/// The atomic number of the atom at index `atom` in graph atom order, read from
+/// [`keys::ATOMIC_NUMBER`] — for an error that names the atom.
 ///
-/// Empty when the graph cannot say — this is only ever used to build an error
-/// message, and a model that failed to report a failure because it could not read an
-/// element would be worse than one that reported it without.
-pub(super) fn element_of(mol: &Atomistic, atom: usize) -> String {
+/// # Errors
+///
+/// [`ChargeError::Malformed`] when no atom sits at that index or it carries no
+/// valid atomic number: the graph is then the defect to report.
+pub(super) fn atomic_number_of(mol: &Atomistic, atom: usize) -> Result<u8, ChargeError> {
     atom_ids(mol)
         .get(atom)
         .and_then(|aid| mol.get_atom(*aid).ok())
-        .and_then(|a| a.get_str(keys::ELEMENT).map(str::to_owned))
-        .unwrap_or_default()
+        .and_then(|a| a.atomic_number())
+        .ok_or_else(|| ChargeError::Malformed {
+            detail: format!("atom {atom} has no valid '{}'", keys::ATOMIC_NUMBER),
+        })
 }
 
 /// An atom-typing failure, as a charge failure.
@@ -237,11 +239,11 @@ pub(super) fn charge_error(err: AtdError) -> ChargeError {
         AtdError::MissingAtomType {
             table,
             atom,
-            element,
+            atomic_number,
         } => ChargeError::MissingAtomType {
             table,
             atom,
-            element,
+            atomic_number,
         },
         AtdError::Malformed { detail } => ChargeError::Malformed { detail },
     }
@@ -250,18 +252,63 @@ pub(super) fn charge_error(err: AtdError) -> ChargeError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::props;
+    use molrs::core::Element;
+    use molrs::core::keys;
 
     /// Methanol's three methyl hydrogens, which `sqm` splits and `-eq 1` merges.
     fn methanol() -> Atomistic {
         let mut mol = Atomistic::new();
-        let c = mol.add_atom_xyz("C", 0.0, 0.0, 0.0);
-        let o = mol.add_atom_xyz("O", 1.43, 0.0, 0.0);
-        let h1 = mol.add_atom_xyz("H", -0.63, 0.63, 0.63);
-        let h2 = mol.add_atom_xyz("H", -0.63, -0.63, 0.63);
-        let h3 = mol.add_atom_xyz("H", -0.63, 0.0, -0.89);
-        let ho = mol.add_atom_xyz("H", 1.76, 0.89, 0.0);
+        let c = mol
+            .add_atom(props! {
+                keys::ATOMIC_NUMBER => Element::C,
+                keys::X => 0.0,
+                keys::Y => 0.0,
+                keys::Z => 0.0,
+            })
+            .unwrap();
+        let o = mol
+            .add_atom(props! {
+                keys::ATOMIC_NUMBER => Element::O,
+                keys::X => 1.43,
+                keys::Y => 0.0,
+                keys::Z => 0.0,
+            })
+            .unwrap();
+        let h1 = mol
+            .add_atom(props! {
+                keys::ATOMIC_NUMBER => Element::H,
+                keys::X => -0.63,
+                keys::Y => 0.63,
+                keys::Z => 0.63,
+            })
+            .unwrap();
+        let h2 = mol
+            .add_atom(props! {
+                keys::ATOMIC_NUMBER => Element::H,
+                keys::X => -0.63,
+                keys::Y => -0.63,
+                keys::Z => 0.63,
+            })
+            .unwrap();
+        let h3 = mol
+            .add_atom(props! {
+                keys::ATOMIC_NUMBER => Element::H,
+                keys::X => -0.63,
+                keys::Y => 0.0,
+                keys::Z => -0.89,
+            })
+            .unwrap();
+        let ho = mol
+            .add_atom(props! {
+                keys::ATOMIC_NUMBER => Element::H,
+                keys::X => 1.76,
+                keys::Y => 0.89,
+                keys::Z => 0.0,
+            })
+            .unwrap();
         for (a, b) in [(c, o), (c, h1), (c, h2), (c, h3), (o, ho)] {
-            mol.add_bond(a, b).expect("add bond");
+            mol.add_bond(a, b, props! {}).expect("add bond");
         }
         mol
     }

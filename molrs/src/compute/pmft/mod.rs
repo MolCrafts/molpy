@@ -361,14 +361,14 @@ fn angle_axis(n: usize) -> Result<Axis, ComputeError> {
 pub(super) mod tests {
     use super::*;
     use crate::compute::fixtures::neighbors_of;
-    use ndarray::array;
+    use crate::core::Cell;
 
     /// A self-query table over `positions` in an open box of side `box_len`
     /// (`box_len × box_len × lz`).
     pub(crate) fn table(positions: &[[F; 3]], box_len: F, lz: F, cutoff: F) -> Neighbors {
-        let simbox = SimBox::ortho(
-            array![box_len, box_len, lz],
-            array![0.0, 0.0, 0.0],
+        let simbox = SimBox::new(
+            Cell::Lengths([box_len, box_len, lz]),
+            [0.0, 0.0, 0.0],
             [false; 3],
         )
         .unwrap();
@@ -412,8 +412,8 @@ pub(super) mod tests {
     #[test]
     fn a_triclinic_box_is_out_of_range() {
         let simbox = SimBox::new(
-            array![[10.0, 1.0, 0.0], [0.0, 10.0, 0.0], [0.0, 0.0, 10.0]],
-            array![0.0, 0.0, 0.0],
+            Cell::Matrix([[10.0, 1.0, 0.0], [0.0, 10.0, 0.0], [0.0, 0.0, 10.0]]),
+            [0.0, 0.0, 0.0],
             [false; 3],
         )
         .unwrap();

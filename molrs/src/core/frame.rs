@@ -37,9 +37,9 @@ use crate::core::schema::block_names::ATOMS;
 ///
 /// // Create an atoms block
 /// let mut atoms = Block::new();
-/// atoms.insert("x", Array1::from_vec(vec![1.0 as F, 2.0 as F, 3.0 as F]).into_dyn()).unwrap();
-/// atoms.insert("y", Array1::from_vec(vec![0.0 as F, 1.0 as F, 2.0 as F]).into_dyn()).unwrap();
-/// atoms.insert("id", Array1::from_vec(vec![1 as Idx, 2 as Idx, 3 as Idx]).into_dyn()).unwrap();
+/// atoms.insert("x", Array1::from_vec(vec![1.0 as F, 2.0 as F, 3.0 as F]).into_dyn(), None).unwrap();
+/// atoms.insert("y", Array1::from_vec(vec![0.0 as F, 1.0 as F, 2.0 as F]).into_dyn(), None).unwrap();
+/// atoms.insert("id", Array1::from_vec(vec![1 as Idx, 2 as Idx, 3 as Idx]).into_dyn(), None).unwrap();
 ///
 /// frame.insert("atoms", atoms);
 ///
@@ -101,24 +101,6 @@ impl Frame {
         }
     }
 
-    /// Creates an empty Frame with the specified capacity for blocks.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use molrs::core::Frame;
-    ///
-    /// let frame = Frame::with_capacity(10);
-    /// assert!(frame.is_empty());
-    /// ```
-    pub fn with_capacity(cap: usize) -> Self {
-        Self {
-            map: IndexMap::with_capacity(cap),
-            meta: MetaMap::new(),
-            simbox: None,
-        }
-    }
-
     /// A copy whose blocks share no column buffer with this frame.
     ///
     /// Every block goes through [`Block::deep_copy`]; `meta` and the box are
@@ -132,32 +114,6 @@ impl Frame {
                 .collect(),
             meta: self.meta.clone(),
             simbox: self.simbox.clone(),
-        }
-    }
-
-    /// Creates a Frame from `(name, block)` pairs, in their iteration order.
-    ///
-    /// Takes an [`IndexMap`], a `HashMap` (in that map's own order), a `Vec`
-    /// of pairs — anything that iterates named blocks.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use molrs::core::Frame;
-    /// use molrs::core::Block;
-    /// use indexmap::IndexMap;
-    ///
-    /// let mut map = IndexMap::new();
-    /// map.insert("atoms".to_string(), Block::new());
-    ///
-    /// let frame = Frame::from_map(map);
-    /// assert_eq!(frame.len(), 1);
-    /// ```
-    pub fn from_map(map: impl IntoIterator<Item = (String, Block)>) -> Self {
-        Self {
-            map: map.into_iter().collect(),
-            meta: MetaMap::new(),
-            simbox: None,
         }
     }
 
@@ -255,9 +211,11 @@ impl Frame {
         self.map.shift_remove(key)
     }
 
-    /// Clears the frame, removing all blocks.
-    ///
-    /// **Note**: This does NOT clear metadata. Use `clear_all()` to clear both.
+    /// Removes every block — like [`len`](Self::len),
+    /// [`is_empty`](Self::is_empty), [`insert`](Self::insert) and
+    /// [`remove`](Self::remove), it acts on the block map only. `meta` and
+    /// `simbox` are public fields and are cleared directly
+    /// (`frame.meta.clear()`, `frame.simbox = None`).
     ///
     /// # Examples
     ///
@@ -277,64 +235,6 @@ impl Frame {
         self.map.clear();
     }
 
-    /// Clears both blocks and metadata.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use molrs::core::Frame;
-    /// use molrs::core::Block;
-    ///
-    /// let mut frame = Frame::new();
-    /// frame.insert("atoms", Block::new());
-    /// frame.meta.insert("title", "Test");
-    ///
-    /// frame.clear_all();
-    /// assert!(frame.is_empty());
-    /// assert!(frame.meta.is_empty());
-    /// ```
-    pub fn clear_all(&mut self) {
-        self.map.clear();
-        self.meta.clear();
-        self.simbox = None;
-    }
-
-    /// Renames a column in the specified block.
-    ///
-    /// Returns `true` if the column was successfully renamed, `false` if the block doesn't exist,
-    /// the old column key doesn't exist, or the new column key already exists.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use molrs::core::Frame;
-    /// use molrs::core::Block;
-    /// use molrs::op::F;
-    /// use ndarray::Array1;
-    ///
-    /// let mut frame = Frame::new();
-    /// let mut atoms = Block::new();
-    /// atoms.insert("x", Array1::from_vec(vec![1.0 as F, 2.0 as F]).into_dyn()).unwrap();
-    /// frame.insert("atoms", atoms);
-    ///
-    /// frame.rename_column("atoms", "x", "position_x").unwrap();
-    /// assert!(!frame["atoms"].contains_key("x"));
-    /// assert!(frame["atoms"].contains_key("position_x"));
-    /// ```
-    pub fn rename_column(
-        &mut self,
-        block_key: &str,
-        old_col_key: &str,
-        new_col_key: &str,
-    ) -> Result<(), crate::core::BlockError> {
-        match self.map.get_mut(block_key) {
-            Some(block) => block.rename_column(old_col_key, new_col_key),
-            None => Err(crate::core::BlockError::Validation {
-                message: format!("cannot rename: no block '{block_key}'"),
-            }),
-        }
-    }
-
     /// Renames a block in the frame.
     ///
     /// Returns `true` if the block was successfully renamed, `false` if the old block
@@ -350,7 +250,7 @@ impl Frame {
     ///
     /// let mut frame = Frame::new();
     /// let mut atoms = Block::new();
-    /// atoms.insert("x", Array1::from_vec(vec![1.0 as F]).into_dyn()).unwrap();
+    /// atoms.insert("x", Array1::from_vec(vec![1.0 as F]).into_dyn(), None).unwrap();
     /// frame.insert("atoms", atoms);
     ///
     /// assert!(frame.rename_block("atoms", "molecules"));
@@ -389,12 +289,12 @@ impl Frame {
     ///
     /// let mut frame = Frame::new();
     /// let mut atoms = Block::new();
-    /// atoms.insert("x", Array1::from_vec(vec![1.0 as F]).into_dyn()).unwrap();
+    /// atoms.insert("x", Array1::from_vec(vec![1.0 as F]).into_dyn(), None).unwrap();
     /// frame.insert("atoms", atoms);
     ///
     /// for (_name, block) in frame.iter_mut() {
     ///     // Can mutate blocks
-    ///     if let Some(x) = block.get_mut("x").and_then(|c| c.as_float_mut()) {
+    ///     if let Some(x) = block.get_mut("x").and_then(|c| c.get_mut::<f64>()) {
     ///         x[[0]] = 99.0 as F;
     ///     }
     /// }
@@ -440,8 +340,8 @@ impl Frame {
     ///
     /// let mut frame = Frame::new();
     /// let mut atoms = Block::new();
-    /// atoms.insert("x", Array1::from_vec(vec![1.0 as F, 2.0 as F, 3.0 as F]).into_dyn()).unwrap();
-    /// atoms.insert("y", Array1::from_vec(vec![0.0 as F, 1.0 as F, 2.0 as F]).into_dyn()).unwrap();
+    /// atoms.insert("x", Array1::from_vec(vec![1.0 as F, 2.0 as F, 3.0 as F]).into_dyn(), None).unwrap();
+    /// atoms.insert("y", Array1::from_vec(vec![0.0 as F, 1.0 as F, 2.0 as F]).into_dyn(), None).unwrap();
     /// frame.insert("atoms", atoms);
     ///
     /// assert!(frame.validate().is_ok());
@@ -506,11 +406,11 @@ impl Frame {
     ///
     /// // 4 atoms at x = 0..3, bonded as a chain (0,1), (1,2), (2,3).
     /// let mut atoms = Block::new();
-    /// atoms.insert("x", Array1::from_vec(vec![0.0 as F, 1.0, 2.0, 3.0]).into_dyn()).unwrap();
+    /// atoms.insert("x", Array1::from_vec(vec![0.0 as F, 1.0, 2.0, 3.0]).into_dyn(), None).unwrap();
     /// let mut bonds = Block::new();
-    /// bonds.insert("atomi", Array1::from_vec(vec![0 as Idx, 1, 2]).into_dyn()).unwrap();
-    /// bonds.insert("atomj", Array1::from_vec(vec![1 as Idx, 2, 3]).into_dyn()).unwrap();
-    /// bonds.insert("type_id", Array1::from_vec(vec![10 as Idx, 11, 12]).into_dyn()).unwrap();
+    /// bonds.insert("atomi", Array1::from_vec(vec![0 as Idx, 1, 2]).into_dyn(), None).unwrap();
+    /// bonds.insert("atomj", Array1::from_vec(vec![1 as Idx, 2, 3]).into_dyn(), None).unwrap();
+    /// bonds.insert("type_id", Array1::from_vec(vec![10 as Idx, 11, 12]).into_dyn(), None).unwrap();
     /// let mut frame = Frame::new();
     /// frame.insert("atoms", atoms);
     /// frame.insert("bonds", bonds);
@@ -519,12 +419,12 @@ impl Frame {
     /// // inside the selection, and it becomes (1,0).
     /// let one = frame.subset("atoms", &[2, 1]).unwrap();
     ///
-    /// let x: Vec<F> = one["atoms"].get("x").and_then(|c| c.as_float()).unwrap().iter().copied().collect();
+    /// let x: Vec<F> = one["atoms"].get("x").and_then(|c| c.get::<f64>()).unwrap().iter().copied().collect();
     /// assert_eq!(x, vec![2.0, 1.0]);
     /// assert_eq!(one["bonds"].n_rows(), Some(1));
-    /// assert_eq!(one["bonds"].get("atomi").and_then(|c| c.as_uint()).unwrap()[[0]], 1);
-    /// assert_eq!(one["bonds"].get("atomj").and_then(|c| c.as_uint()).unwrap()[[0]], 0);
-    /// assert_eq!(one["bonds"].get("type_id").and_then(|c| c.as_uint()).unwrap()[[0]], 11);
+    /// assert_eq!(one["bonds"].get("atomi").and_then(|c| c.get::<u64>()).unwrap()[[0]], 1);
+    /// assert_eq!(one["bonds"].get("atomj").and_then(|c| c.get::<u64>()).unwrap()[[0]], 0);
+    /// assert_eq!(one["bonds"].get("type_id").and_then(|c| c.get::<u64>()).unwrap()[[0]], 11);
     /// ```
     pub fn subset(&self, block: &str, rows: &[usize]) -> Result<Frame, MolRsError> {
         let target = self.get(block).ok_or_else(|| {
@@ -547,7 +447,7 @@ impl Frame {
             new_row[r] = Some(k);
         }
 
-        let mut out = Frame::with_capacity(self.len());
+        let mut out = Frame::new();
         out.meta = self.meta.clone();
         out.simbox = self.simbox.clone();
 
@@ -569,7 +469,7 @@ impl Frame {
             for col in &columns {
                 let values = b
                     .get(col)
-                    .and_then(|c| c.as_uint())
+                    .and_then(|c| c.get::<u64>())
                     .filter(|v| v.ndim() == 1)
                     .ok_or_else(|| {
                         MolRsError::validation(format!(
@@ -603,7 +503,7 @@ impl Frame {
                 let mask = cut.validity(col).map(<[bool]>::to_vec);
                 let values = cut
                     .get_mut(col)
-                    .and_then(|c| c.as_uint_mut())
+                    .and_then(|c| c.get_mut::<u64>())
                     .expect("select_rows keeps every column and its dtype");
                 for (i, v) in values.iter_mut().enumerate() {
                     if !set(mask.as_deref(), i) {
@@ -664,22 +564,22 @@ impl Frame {
     ///
     /// // A diatomic: atoms 0-1 bonded.
     /// let mut atoms = Block::new();
-    /// atoms.insert("x", Array1::from_vec(vec![0.0 as F, 1.0]).into_dyn()).unwrap();
+    /// atoms.insert("x", Array1::from_vec(vec![0.0 as F, 1.0]).into_dyn(), None).unwrap();
     /// let mut bonds = Block::new();
-    /// bonds.insert("atomi", Array1::from_vec(vec![0 as Idx]).into_dyn()).unwrap();
-    /// bonds.insert("atomj", Array1::from_vec(vec![1 as Idx]).into_dyn()).unwrap();
+    /// bonds.insert("atomi", Array1::from_vec(vec![0 as Idx]).into_dyn(), None).unwrap();
+    /// bonds.insert("atomj", Array1::from_vec(vec![1 as Idx]).into_dyn(), None).unwrap();
     /// let mut frame = Frame::new();
     /// frame.insert("atoms", atoms);
     /// frame.insert("bonds", bonds);
     ///
     /// let three = frame.replicate(3).unwrap();
     /// assert_eq!(three["atoms"].n_rows(), Some(6));
-    /// let i: Vec<Idx> = three["bonds"].get("atomi").and_then(|c| c.as_uint()).unwrap().iter().copied().collect();
-    /// let j: Vec<Idx> = three["bonds"].get("atomj").and_then(|c| c.as_uint()).unwrap().iter().copied().collect();
+    /// let i: Vec<Idx> = three["bonds"].get("atomi").and_then(|c| c.get::<u64>()).unwrap().iter().copied().collect();
+    /// let j: Vec<Idx> = three["bonds"].get("atomj").and_then(|c| c.get::<u64>()).unwrap().iter().copied().collect();
     /// assert_eq!((i, j), (vec![0, 2, 4], vec![1, 3, 5]));
     /// ```
     pub fn replicate(&self, count: usize) -> Result<Frame, MolRsError> {
-        let mut out = Frame::with_capacity(self.len());
+        let mut out = Frame::new();
         out.meta = self.meta.clone();
         out.simbox = self.simbox.clone();
         for (name, b) in self.iter() {
@@ -711,7 +611,7 @@ impl Frame {
                     .unwrap_or(0);
                 let values = tiled
                     .get_mut(col)
-                    .and_then(|c| c.as_uint_mut())
+                    .and_then(|c| c.get_mut::<u64>())
                     .filter(|v| v.ndim() == 1)
                     .ok_or_else(|| {
                         MolRsError::validation(format!(
@@ -769,10 +669,10 @@ impl Frame {
     ///
     /// fn chain(n: usize) -> Frame {
     ///     let mut atoms = Block::new();
-    ///     atoms.insert("x", Array1::from_vec(vec![0.0 as F; n]).into_dyn()).unwrap();
+    ///     atoms.insert("x", Array1::from_vec(vec![0.0 as F; n]).into_dyn(), None).unwrap();
     ///     let mut bonds = Block::new();
-    ///     bonds.insert("atomi", Array1::from_iter(0..n as Idx - 1).into_dyn()).unwrap();
-    ///     bonds.insert("atomj", Array1::from_iter(1..n as Idx).into_dyn()).unwrap();
+    ///     bonds.insert("atomi", Array1::from_iter(0..n as Idx - 1).into_dyn(), None).unwrap();
+    ///     bonds.insert("atomj", Array1::from_iter(1..n as Idx).into_dyn(), None).unwrap();
     ///     let mut frame = Frame::new();
     ///     frame.insert("atoms", atoms);
     ///     frame.insert("bonds", bonds);
@@ -782,7 +682,7 @@ impl Frame {
     /// // A diatomic then a triatomic: the second part's bonds start at atom 2.
     /// let joined = Frame::concat([&chain(2), &chain(3)]).unwrap();
     /// assert_eq!(joined["atoms"].n_rows(), Some(5));
-    /// let i: Vec<Idx> = joined["bonds"].get("atomi").and_then(|c| c.as_uint()).unwrap().iter().copied().collect();
+    /// let i: Vec<Idx> = joined["bonds"].get("atomi").and_then(|c| c.get::<u64>()).unwrap().iter().copied().collect();
     /// assert_eq!(i, vec![0, 2, 3]);
     /// ```
     pub fn concat<'a>(frames: impl IntoIterator<Item = &'a Frame>) -> Result<Frame, MolRsError> {
@@ -815,7 +715,7 @@ impl Frame {
                     let base = seen_rows.get(target).copied().unwrap_or(0);
                     let values = part
                         .get_mut(col)
-                        .and_then(|c| c.as_uint_mut())
+                        .and_then(|c| c.get_mut::<u64>())
                         .filter(|v| v.ndim() == 1)
                         .ok_or_else(|| {
                             MolRsError::validation(format!(
@@ -833,7 +733,7 @@ impl Frame {
                 *seen_rows.entry(name.to_owned()).or_default() += b.n_rows().unwrap_or(0);
             }
         }
-        let mut out = Frame::with_capacity(parts.len());
+        let mut out = Frame::new();
         out.meta = first.meta.clone();
         out.simbox = first.simbox.clone();
         for (name, blocks) in &parts {
@@ -928,6 +828,29 @@ fn local_references(name: &str, block: &Block, target: &str) -> Vec<String> {
         .collect()
 }
 
+/// Builds a Frame from `(name, block)` pairs, in their iteration order, with
+/// no metadata and no box.
+///
+/// # Examples
+///
+/// ```
+/// use molrs::core::{Block, Frame};
+///
+/// let frame: Frame = [("atoms", Block::new()), ("bonds", Block::new())]
+///     .into_iter()
+///     .collect();
+/// assert_eq!(frame.keys().collect::<Vec<_>>(), ["atoms", "bonds"]);
+/// ```
+impl<K: Into<String>> FromIterator<(K, Block)> for Frame {
+    fn from_iter<I: IntoIterator<Item = (K, Block)>>(iter: I) -> Self {
+        Self {
+            map: iter.into_iter().map(|(k, b)| (k.into(), b)).collect(),
+            meta: MetaMap::new(),
+            simbox: None,
+        }
+    }
+}
+
 // Index trait for convenient access: frame["atoms"]
 impl Index<&str> for Frame {
     type Output = Block;
@@ -948,6 +871,7 @@ impl IndexMut<&str> for Frame {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::Cell;
     use crate::op::{F, I};
     use ndarray::Array1;
 
@@ -972,7 +896,7 @@ mod tests {
         frame.insert("cell", Block::new());
         let mut atoms = Block::new();
         atoms
-            .insert("x", Array1::from_vec(vec![0.0 as F, 1.0]).into_dyn())
+            .insert("x", Array1::from_vec(vec![0.0 as F, 1.0]).into_dyn(), None)
             .unwrap();
         frame.insert("atoms", atoms);
         frame.insert("tail", Block::new());
@@ -986,11 +910,11 @@ mod tests {
     #[test]
     fn subset_shares_no_buffer_with_the_source() {
         let mut cell = Block::new();
-        cell.insert("lx", Array1::from_vec(vec![10.0 as F]).into_dyn())
+        cell.insert("lx", Array1::from_vec(vec![10.0 as F]).into_dyn(), None)
             .unwrap();
         let mut atoms = Block::new();
         atoms
-            .insert("x", Array1::from_vec(vec![0.0 as F, 1.0]).into_dyn())
+            .insert("x", Array1::from_vec(vec![0.0 as F, 1.0]).into_dyn(), None)
             .unwrap();
         let mut frame = Frame::new();
         frame.insert("cell", cell);
@@ -998,8 +922,11 @@ mod tests {
 
         let sub = frame.subset("atoms", &[1]).unwrap();
 
-        let src = frame["cell"].get("lx").and_then(|c| c.as_float()).unwrap();
-        let dst = sub["cell"].get("lx").and_then(|c| c.as_float()).unwrap();
+        let src = frame["cell"]
+            .get("lx")
+            .and_then(|c| c.get::<f64>())
+            .unwrap();
+        let dst = sub["cell"].get("lx").and_then(|c| c.get::<f64>()).unwrap();
         assert_ne!(src.as_ptr(), dst.as_ptr());
         assert_eq!(dst[[0]], 10.0);
     }
@@ -1008,7 +935,7 @@ mod tests {
     fn deep_copy_gives_every_block_new_buffers() {
         let mut block = Block::new();
         block
-            .insert("x", Array1::from_vec(vec![1.0 as F, 2.0]).into_dyn())
+            .insert("x", Array1::from_vec(vec![1.0 as F, 2.0]).into_dyn(), None)
             .unwrap();
         let mut frame = Frame::new();
         frame.insert("atoms", block);
@@ -1020,13 +947,13 @@ mod tests {
             .get("atoms")
             .unwrap()
             .get("x")
-            .and_then(|c| c.as_float())
+            .and_then(|c| c.get::<f64>())
             .unwrap();
         let dst = copy
             .get("atoms")
             .unwrap()
             .get("x")
-            .and_then(|c| c.as_float())
+            .and_then(|c| c.get::<f64>())
             .unwrap();
         assert_ne!(src.as_ptr(), dst.as_ptr());
         assert_eq!(dst.as_slice_memory_order(), Some(&[1.0 as F, 2.0][..]));
@@ -1045,7 +972,11 @@ mod tests {
         let mut frame = Frame::new();
         let mut block = Block::new();
         block
-            .insert("x", Array1::from_vec(vec![1.0 as F, 2.0 as F]).into_dyn())
+            .insert(
+                "x",
+                Array1::from_vec(vec![1.0 as F, 2.0 as F]).into_dyn(),
+                None,
+            )
             .unwrap();
 
         frame.insert("atoms", block);
@@ -1061,7 +992,7 @@ mod tests {
         let mut frame = Frame::new();
         let mut block = Block::new();
         block
-            .insert("x", Array1::from_vec(vec![1.0 as F]).into_dyn())
+            .insert("x", Array1::from_vec(vec![1.0 as F]).into_dyn(), None)
             .unwrap();
         frame.insert("atoms", block);
 
@@ -1071,11 +1002,14 @@ mod tests {
 
         // Mutable index
         let atoms_mut = &mut frame["atoms"];
-        if let Some(x) = atoms_mut.get_mut("x").and_then(|c| c.as_float_mut()) {
+        if let Some(x) = atoms_mut.get_mut("x").and_then(|c| c.get_mut::<f64>()) {
             x[[0]] = 99.0;
         }
         assert_eq!(
-            frame["atoms"].get("x").and_then(|c| c.as_float()).unwrap()[[0]],
+            frame["atoms"]
+                .get("x")
+                .and_then(|c| c.get::<f64>())
+                .unwrap()[[0]],
             99.0
         );
     }
@@ -1110,18 +1044,21 @@ mod tests {
         let mut frame = Frame::new();
         let mut block = Block::new();
         block
-            .insert("x", Array1::from_vec(vec![1.0 as F]).into_dyn())
+            .insert("x", Array1::from_vec(vec![1.0 as F]).into_dyn(), None)
             .unwrap();
         frame.insert("atoms", block);
 
         for (_name, block) in frame.iter_mut() {
-            if let Some(x) = block.get_mut("x").and_then(|c| c.as_float_mut()) {
+            if let Some(x) = block.get_mut("x").and_then(|c| c.get_mut::<f64>()) {
                 x[[0]] = 42.0;
             }
         }
 
         assert_eq!(
-            frame["atoms"].get("x").and_then(|c| c.as_float()).unwrap()[[0]],
+            frame["atoms"]
+                .get("x")
+                .and_then(|c| c.get::<f64>())
+                .unwrap()[[0]],
             42.0
         );
     }
@@ -1131,44 +1068,48 @@ mod tests {
         let mut frame = Frame::new();
         let mut block = Block::new();
         block
-            .insert("x", Array1::from_vec(vec![1.0 as F]).into_dyn())
+            .insert("x", Array1::from_vec(vec![1.0 as F]).into_dyn(), None)
             .unwrap();
         frame.insert("atoms", block);
 
         for block in frame.values_mut() {
-            if let Some(x) = block.get_mut("x").and_then(|c| c.as_float_mut()) {
+            if let Some(x) = block.get_mut("x").and_then(|c| c.get_mut::<f64>()) {
                 x[[0]] = 77.0;
             }
         }
 
         assert_eq!(
-            frame["atoms"].get("x").and_then(|c| c.as_float()).unwrap()[[0]],
+            frame["atoms"]
+                .get("x")
+                .and_then(|c| c.get::<f64>())
+                .unwrap()[[0]],
             77.0
         );
     }
 
     #[test]
-    fn test_frame_from_map() {
+    fn frame_collects_from_an_index_map() {
         let mut map = IndexMap::new();
         map.insert("atoms".to_string(), Block::new());
         map.insert("bonds".to_string(), Block::new());
 
-        let frame = Frame::from_map(map);
+        let frame: Frame = map.into_iter().collect();
         assert_eq!(frame.len(), 2);
         assert!(frame.contains_key("atoms"));
         assert!(frame.contains_key("bonds"));
     }
 
     #[test]
-    fn from_map_takes_any_iterator_of_named_blocks() {
+    fn frame_collects_from_any_iterator_of_named_blocks() {
         let map = std::collections::HashMap::from([("atoms".to_string(), Block::new())]);
-        assert_eq!(Frame::from_map(map).len(), 1);
-        let pairs = vec![
-            ("b".to_string(), Block::new()),
-            ("a".to_string(), Block::new()),
-        ];
+        assert_eq!(map.into_iter().collect::<Frame>().len(), 1);
+        let pairs = vec![("b", Block::new()), ("a", Block::new())];
         assert_eq!(
-            Frame::from_map(pairs).keys().collect::<Vec<_>>(),
+            pairs
+                .into_iter()
+                .collect::<Frame>()
+                .keys()
+                .collect::<Vec<_>>(),
             ["b", "a"]
         );
     }
@@ -1199,17 +1140,6 @@ mod tests {
     }
 
     #[test]
-    fn test_frame_clear_all() {
-        let mut frame = Frame::new();
-        frame.insert("atoms", Block::new());
-        frame.meta.insert("title", "Test");
-
-        frame.clear_all();
-        assert!(frame.is_empty());
-        assert!(frame.meta.is_empty());
-    }
-
-    #[test]
     fn test_frame_debug() {
         let mut frame = Frame::new();
         let mut atoms = Block::new();
@@ -1217,12 +1147,14 @@ mod tests {
             .insert(
                 "x",
                 Array1::from_vec(vec![1.0 as F, 2.0 as F, 3.0 as F]).into_dyn(),
+                None,
             )
             .unwrap();
         atoms
             .insert(
                 "y",
                 Array1::from_vec(vec![0.0 as F, 1.0 as F, 2.0 as F]).into_dyn(),
+                None,
             )
             .unwrap();
         frame.insert("atoms", atoms);
@@ -1235,51 +1167,22 @@ mod tests {
     }
 
     #[test]
-    fn test_rename_column() {
-        let mut frame = Frame::new();
-        let mut atoms = Block::new();
-        atoms
-            .insert("x", Array1::from_vec(vec![1.0 as F, 2.0 as F]).into_dyn())
-            .unwrap();
-        atoms
-            .insert("y", Array1::from_vec(vec![3.0 as F, 4.0 as F]).into_dyn())
-            .unwrap();
-        frame.insert("atoms", atoms);
-
-        // Successful rename
-        frame.rename_column("atoms", "x", "position_x").unwrap();
-        assert!(!frame["atoms"].contains_key("x"));
-        assert!(frame["atoms"].contains_key("position_x"));
-        assert_eq!(
-            frame["atoms"]
-                .get("position_x")
-                .and_then(|c| c.as_float())
-                .unwrap()
-                .as_slice_memory_order()
-                .unwrap(),
-            &[1.0, 2.0]
-        );
-
-        // Try to rename in non-existent block
-        assert!(frame.rename_column("nonexistent", "x", "new_x").is_err());
-
-        // Try to rename non-existent column
-        assert!(
-            frame
-                .rename_column("atoms", "nonexistent", "new_name")
-                .is_err()
-        );
-    }
-
-    #[test]
     fn test_rename_block() {
         let mut frame = Frame::new();
         let mut atoms = Block::new();
         atoms
-            .insert("x", Array1::from_vec(vec![1.0 as F, 2.0 as F]).into_dyn())
+            .insert(
+                "x",
+                Array1::from_vec(vec![1.0 as F, 2.0 as F]).into_dyn(),
+                None,
+            )
             .unwrap();
         atoms
-            .insert("y", Array1::from_vec(vec![3.0 as F, 4.0 as F]).into_dyn())
+            .insert(
+                "y",
+                Array1::from_vec(vec![3.0 as F, 4.0 as F]).into_dyn(),
+                None,
+            )
             .unwrap();
         frame.insert("atoms", atoms);
 
@@ -1290,7 +1193,7 @@ mod tests {
         assert_eq!(
             frame["molecules"]
                 .get("x")
-                .and_then(|c| c.as_float())
+                .and_then(|c| c.get::<f64>())
                 .unwrap()
                 .as_slice_memory_order()
                 .unwrap(),
@@ -1303,7 +1206,7 @@ mod tests {
         // Try to rename to existing block name
         let mut bonds = Block::new();
         bonds
-            .insert("count", Array1::from_vec(vec![1 as I]).into_dyn())
+            .insert("count", Array1::from_vec(vec![1 as I]).into_dyn(), None)
             .unwrap();
         frame.insert("bonds", bonds);
         assert!(!frame.rename_block("molecules", "bonds"));
@@ -1313,7 +1216,6 @@ mod tests {
 
     use crate::core::SimBox;
     use crate::op::Idx;
-    use ndarray::array;
 
     fn float_col(values: &[F]) -> ndarray::ArrayD<F> {
         Array1::from_vec(values.to_vec()).into_dyn()
@@ -1326,7 +1228,7 @@ mod tests {
     fn uint_block(cols: &[(&str, &[Idx])]) -> Block {
         let mut b = Block::new();
         for (key, values) in cols {
-            b.insert(*key, uint_col(values)).unwrap();
+            b.insert(*key, uint_col(values), None).unwrap();
         }
         b
     }
@@ -1335,7 +1237,9 @@ mod tests {
     /// `type_id` 10, 11, 12.
     fn chain_of_four() -> Frame {
         let mut atoms = Block::new();
-        atoms.insert("x", float_col(&[0.0, 1.0, 2.0, 3.0])).unwrap();
+        atoms
+            .insert("x", float_col(&[0.0, 1.0, 2.0, 3.0]), None)
+            .unwrap();
         let mut frame = Frame::new();
         frame.insert("atoms", atoms);
         frame.insert(
@@ -1352,7 +1256,7 @@ mod tests {
     fn uint_values(frame: &Frame, block: &str, col: &str) -> Vec<Idx> {
         frame[block]
             .get(col)
-            .and_then(|c| c.as_uint())
+            .and_then(|c| c.get::<u64>())
             .unwrap_or_else(|| panic!("{block}.{col} is a UInt column"))
             .iter()
             .copied()
@@ -1362,7 +1266,7 @@ mod tests {
     fn float_values(frame: &Frame, block: &str, col: &str) -> Vec<F> {
         frame[block]
             .get(col)
-            .and_then(|c| c.as_float())
+            .and_then(|c| c.get::<f64>())
             .unwrap_or_else(|| panic!("{block}.{col} is a Float column"))
             .iter()
             .copied()
@@ -1423,13 +1327,13 @@ mod tests {
         let mut frame = chain_of_four();
         let mut labels = Block::new();
         labels
-            .insert("weight", float_col(&[0.5, 1.5, 2.5]))
+            .insert("weight", float_col(&[0.5, 1.5, 2.5]), None)
             .unwrap();
         frame.insert("labels", labels);
         frame.simbox = Some(
-            SimBox::ortho(
-                array![10.0 as F, 20.0, 30.0],
-                array![1.0 as F, 2.0, 3.0],
+            SimBox::new(
+                Cell::Lengths([10.0 as F, 20.0, 30.0]),
+                [1.0 as F, 2.0, 3.0],
                 [true, false, true],
             )
             .unwrap(),
@@ -1440,8 +1344,8 @@ mod tests {
 
         assert_eq!(out.meta, frame.meta);
         let (before, after) = (frame.simbox.as_ref().unwrap(), out.simbox.as_ref().unwrap());
-        assert_eq!(after.h_view(), before.h_view());
-        assert_eq!(after.origin_view(), before.origin_view());
+        assert_eq!(after.matrix(), before.matrix());
+        assert_eq!(after.origin(), before.origin());
         assert_eq!(after.pbc(), before.pbc());
         assert_eq!(out["labels"].n_rows(), Some(3));
         assert_eq!(float_values(&out, "labels", "weight"), vec![0.5, 1.5, 2.5]);
@@ -1549,7 +1453,7 @@ mod tests {
     fn two_cmaps() -> Frame {
         let mut atoms = Block::new();
         atoms
-            .insert("x", float_col(&[0.0, 1.0, 2.0, 3.0, 4.0, 5.0]))
+            .insert("x", float_col(&[0.0, 1.0, 2.0, 3.0, 4.0, 5.0]), None)
             .unwrap();
         let mut frame = Frame::new();
         frame.insert("atoms", atoms);
@@ -1678,12 +1582,12 @@ mod tests {
         assert_ne!(
             frame["atoms"]
                 .get("x")
-                .and_then(|c| c.as_float())
+                .and_then(|c| c.get::<f64>())
                 .unwrap()
                 .as_ptr(),
             one["atoms"]
                 .get("x")
-                .and_then(|c| c.as_float())
+                .and_then(|c| c.get::<f64>())
                 .unwrap()
                 .as_ptr()
         );
@@ -1714,8 +1618,10 @@ mod tests {
         // atoms only (2 rows), then a bonded chain: its bonds start at row 2.
         let mut lone = Frame::new();
         let mut atoms = Block::new();
-        atoms.insert("x", float_col(&[9.0, 9.0])).unwrap();
-        atoms.insert("charge", float_col(&[0.5, -0.5])).unwrap();
+        atoms.insert("x", float_col(&[9.0, 9.0]), None).unwrap();
+        atoms
+            .insert("charge", float_col(&[0.5, -0.5]), None)
+            .unwrap();
         lone.insert("atoms", atoms);
         let joined = Frame::concat([&lone, &chain_of_four()]).unwrap();
         assert_eq!(joined["atoms"].n_rows(), Some(6));

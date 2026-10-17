@@ -20,6 +20,7 @@ pub fn builtin_forms() -> Vec<(&'static str, &'static str, FormCodec)> {
 /// A required numeric param.
 fn need(p: &Params, what: &str, key: &str) -> Result<f64, FormRefusal> {
     p.get(key)
+        .and_then(|v| v.as_num())
         .ok_or_else(|| FormRefusal::new(format!("{what}: missing param `{key}`")))
 }
 
@@ -33,7 +34,7 @@ fn polynomial(
 ) -> Vec<(&'static str, &'static str, FormCodec)> {
     let harmonic = move |tp: &TypeParams| -> Result<TypeParams, FormRefusal> {
         let what = format!("{category} harmonic");
-        Ok(TypeParams::row(Params::from_pairs(&[
+        Ok(TypeParams::row(Params::from_iter([
             ("k", need(&tp.row, &what, "k")?),
             (q0, need(&tp.row, &what, q0)?),
         ])))
@@ -49,16 +50,16 @@ fn polynomial(
                 )));
             }
         }
-        Ok(TypeParams::row(Params::from_pairs(&[
+        Ok(TypeParams::row(Params::from_iter([
             ("k", need(&tp.row, &what, "k2")?),
             (q0, need(&tp.row, &what, q0)?),
         ])))
     };
     let project = move |tp: &TypeParams| -> Result<TypeParams, FormRefusal> {
         let h = harmonic(tp)?.row;
-        Ok(TypeParams::row(Params::from_pairs(&[
-            (q0, h.get(q0).expect("set")),
-            ("k2", h.get("k").expect("set")),
+        Ok(TypeParams::row(Params::from_iter([
+            (q0, h.get(q0).and_then(|v| v.as_num()).expect("set")),
+            ("k2", h.get("k").and_then(|v| v.as_num()).expect("set")),
             ("k3", 0.0),
             ("k4", 0.0),
         ])))
@@ -86,13 +87,13 @@ fn angle_charmm() -> FormCodec {
                     "k_ub = {k_ub} ≠ 0: the Urey–Bradley 1-3 term is no function of θ"
                 )));
             }
-            Ok(TypeParams::row(Params::from_pairs(&[
+            Ok(TypeParams::row(Params::from_iter([
                 ("k", need(&tp.row, WHAT, "k")?),
                 ("theta0", need(&tp.row, WHAT, "theta0")?),
             ])))
         },
         |tp: &TypeParams| {
-            Ok(TypeParams::row(Params::from_pairs(&[
+            Ok(TypeParams::row(Params::from_iter([
                 ("k", need(&tp.row, "angle harmonic", "k")?),
                 ("theta0", need(&tp.row, "angle harmonic", "theta0")?),
                 ("k_ub", 0.0),
@@ -116,23 +117,26 @@ fn lj() -> Vec<(&'static str, &'static str, FormCodec)> {
     // `lj/cut`'s own style params, its defaults stated (n 12, m 6, shift 0).
     let lj_cut_style = |style: &Params| -> Params {
         let mut out = Params::new();
-        if let Some(c) = style.get("cutoff") {
+        if let Some(c) = style.get("cutoff").and_then(|v| v.as_num()) {
             out.set("cutoff", c);
         }
-        if let Some(m) = style.get_str("mixing") {
-            out.set_str("mixing", m);
+        if let Some(m) = style.get("mixing").and_then(|v| v.as_text()) {
+            out.set("mixing", m);
         }
-        out.set("n", style.get("n").unwrap_or(12.0));
-        out.set("m", style.get("m").unwrap_or(6.0));
-        out.set("shift", style.get("shift").unwrap_or(0.0));
+        out.set("n", style.get("n").and_then(|v| v.as_num()).unwrap_or(12.0));
+        out.set("m", style.get("m").and_then(|v| v.as_num()).unwrap_or(6.0));
+        out.set(
+            "shift",
+            style.get("shift").and_then(|v| v.as_num()).unwrap_or(0.0),
+        );
         out
     };
     let scale_sigma = |row: &Params, by: f64| -> Params {
         let mut out = Params::new();
-        if let Some(e) = row.get("epsilon") {
+        if let Some(e) = row.get("epsilon").and_then(|v| v.as_num()) {
             out.set("epsilon", e);
         }
-        if let Some(s) = row.get("sigma") {
+        if let Some(s) = row.get("sigma").and_then(|v| v.as_num()) {
             out.set("sigma", s * by);
         }
         out
@@ -157,11 +161,11 @@ fn lj() -> Vec<(&'static str, &'static str, FormCodec)> {
         "lj",
         move |tp: &TypeParams| {
             let mut style = Params::new();
-            if let Some(c) = tp.style.get("cutoff") {
+            if let Some(c) = tp.style.get("cutoff").and_then(|v| v.as_num()) {
                 style.set("cutoff", c);
             }
-            if let Some(m) = tp.style.get_str("mixing") {
-                style.set_str("mixing", m);
+            if let Some(m) = tp.style.get("mixing").and_then(|v| v.as_text()) {
+                style.set("mixing", m);
             }
             style.set("n", 9.0);
             style.set("m", 6.0);
@@ -173,24 +177,27 @@ fn lj() -> Vec<(&'static str, &'static str, FormCodec)> {
         },
         move |tp: &TypeParams| {
             let style = lj_cut_style(&tp.style);
-            let (n, m) = (style.get("n").expect("set"), style.get("m").expect("set"));
+            let (n, m) = (
+                style.get("n").and_then(|v| v.as_num()).expect("set"),
+                style.get("m").and_then(|v| v.as_num()).expect("set"),
+            );
             if (n, m) != (9.0, 6.0) {
                 return Err(FormRefusal::new(format!(
                     "exponents n = {n}, m = {m}: lj/class2 is the 9-6 form"
                 )));
             }
-            let shift = style.get("shift").expect("set");
+            let shift = style.get("shift").and_then(|v| v.as_num()).expect("set");
             if shift != 0.0 {
                 return Err(FormRefusal::new(
                     "shift = 1: lj/class2 holds no energy shift at the cutoff",
                 ));
             }
             let mut out = Params::new();
-            if let Some(c) = style.get("cutoff") {
+            if let Some(c) = style.get("cutoff").and_then(|v| v.as_num()) {
                 out.set("cutoff", c);
             }
-            if let Some(m) = style.get_str("mixing") {
-                out.set_str("mixing", m);
+            if let Some(m) = style.get("mixing").and_then(|v| v.as_text()) {
+                out.set("mixing", m);
             }
             Ok(TypeParams::new(
                 out,

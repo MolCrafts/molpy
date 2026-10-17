@@ -25,9 +25,9 @@ _SPECIAL_COUL = (0.0, 0.0, 0.75)
 def _pair() -> molrs.core.Atomistic:
     """Two bonded carbon atoms, nothing typed."""
     mol = molrs.core.Atomistic()
-    a = mol.def_atom(element="C", x=0.0, y=0.0, z=0.0)
-    b = mol.def_atom(element="C", x=1.54, y=0.0, z=0.0)
-    mol.def_bond(a, b)
+    a = mol.add_atom(atomic_number=6, x=0.0, y=0.0, z=0.0)
+    b = mol.add_atom(atomic_number=6, x=1.54, y=0.0, z=0.0)
+    mol.add_bond(a, b)
     return mol
 
 
@@ -40,22 +40,22 @@ def _chain_with_improper() -> molrs.core.Atomistic:
     """
     mol = molrs.core.Atomistic()
     atoms = [
-        mol.def_atom(element="C", name=f"a{i}", x=1.5 * i, y=0.0, z=0.0)
+        mol.add_atom(atomic_number=6, name=f"a{i}", x=1.5 * i, y=0.0, z=0.0)
         for i in range(5)
     ]
     for left, right in itertools.pairwise(atoms):
-        mol.def_bond(left, right)
-    mol.def_dihedral(atoms[0], atoms[1], atoms[2], atoms[3])
-    mol.def_improper(atoms[1], atoms[0], atoms[2], atoms[4])
-    mol.def_dihedral(atoms[1], atoms[2], atoms[3], atoms[4])
+        mol.add_bond(left, right)
+    mol.add_dihedral(atoms[0], atoms[1], atoms[2], atoms[3])
+    mol.add_improper(atoms[1], atoms[0], atoms[2], atoms[4])
+    mol.add_dihedral(atoms[1], atoms[2], atoms[3], atoms[4])
     return mol
 
 
 def _ethane() -> molrs.core.Atomistic:
     """Ethane (C2H6) with explicit hydrogens, as the native typifiers expect."""
     mol = molrs.core.Atomistic()
-    c1 = mol.add_atom("C", 0.0, 0.0, 0.0)
-    c2 = mol.add_atom("C", 1.54, 0.0, 0.0)
+    c1 = mol.add_atom(atomic_number=6, x=0.0, y=0.0, z=0.0)
+    c2 = mol.add_atom(atomic_number=6, x=1.54, y=0.0, z=0.0)
     hpos = [
         (c1, (-0.36, 1.03, 0.0)),
         (c1, (-0.36, -0.51, 0.89)),
@@ -65,7 +65,7 @@ def _ethane() -> molrs.core.Atomistic:
         (c2, (1.90, -0.51, -0.89)),
     ]
     for c, (x, y, z) in hpos:
-        h = mol.add_atom("H", x, y, z)
+        h = mol.add_atom(atomic_number=1, x=x, y=y, z=z)
         mol.add_bond(c, h)
     mol.add_bond(c1, c2)
     return mol
@@ -110,10 +110,7 @@ class _DihedralTagger(Typifier):
 
     def assign(self, graph: molrs.core.Atomistic) -> TypeAssignment:
         nodes = [{"seen": str(atom["name"])} for atom in graph.atoms]
-        dihedrals = [
-            {"tag": _endpoint_label(link)}
-            for link in graph.links.exact_bucket(Dihedral)
-        ]
+        dihedrals = [{"tag": _endpoint_label(link)} for link in graph.dihedrals]
         return TypeAssignment(nodes, {Dihedral: dihedrals})
 
 
@@ -164,16 +161,16 @@ class TestTypifierSubclass:
 
         assert _atom_rows(typifier.forcefield()) == {"X": {"mass": 1.0}}
 
-    def test_match_positions_follow_nodes_and_exact_bucket(self) -> None:
+    def test_match_positions_follow_nodes_and_their_own_kind(self) -> None:
         typed = _DihedralTagger().typify(_chain_with_improper())
 
         for atom in typed.atoms:
             assert atom["seen"] == atom["name"]
-        dihedrals = typed.links.exact_bucket(Dihedral)
+        dihedrals = typed.dihedrals
         assert len(dihedrals) == 2
         for link in dihedrals:
             assert link["tag"] == _endpoint_label(link)
-        impropers = typed.links.exact_bucket(Improper)
+        impropers = typed.impropers
         assert len(impropers) == 1
         for link in impropers:
             assert "tag" not in link
@@ -190,7 +187,7 @@ class TestTypifierSubclass:
 
         assert output.name == "lib"
         _assert_declares_library_special_bonds(output)
-        assert output.styles == []
+        assert output.get_styles(molrs.ff.forcefield.Style) == []
 
     def test_subclass_defining_typify_is_rejected_at_class_creation(self) -> None:
         with pytest.raises(TypeError):

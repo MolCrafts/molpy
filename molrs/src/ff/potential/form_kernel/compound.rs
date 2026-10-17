@@ -9,7 +9,7 @@ use crate::ff::ir::{CategorySpec, StyleSpec};
 use crate::ff::potential::flat_coords::{term_table, validate_coords};
 use crate::ff::potential::form_kernel::Probe;
 use crate::ff::potential::form_kernel::{CompoundForm, TermParams, resolve_terms};
-use crate::ff::potential::{IndexedTerms, Potential};
+use crate::ff::potential::{Accumulator, IndexedTerms, Potential};
 use molrs::core::Frame;
 use molrs::op::F;
 
@@ -116,14 +116,9 @@ impl CompoundTerms {
 }
 
 impl Potential for CompoundTerms {
-    fn calc_energy_forces(&self, coords: &[F]) -> (F, Vec<F>) {
-        let mut out = vec![0.0; coords.len()];
-        let energy = self.accumulate(coords, &mut out);
-        (energy, out)
-    }
-
-    fn accumulate(&self, coords: &[F], out: &mut [F]) -> F {
-        self.fold(coords, out, |t, p| self.atoms[p][t])
+    fn evaluate(&self, coords: &[F], acc: &mut Accumulator<'_>) {
+        let energy = self.fold(coords, acc.forces_without_virial(), |t, p| self.atoms[p][t]);
+        acc.add_energy(energy);
     }
 }
 
@@ -133,22 +128,15 @@ impl IndexedTerms for CompoundTerms {
         term_table(&cols)
     }
 
-    fn calc_energy_forces_with_terms(
-        &self,
-        coords: &[F],
-        terms: ArrayView2<'_, u32>,
-    ) -> (F, Vec<F>) {
-        let mut out = vec![0.0; coords.len()];
-        let energy = self.accumulate_with_terms(coords, terms, &mut out);
-        (energy, out)
-    }
-
-    fn accumulate_with_terms(&self, coords: &[F], terms: ArrayView2<'_, u32>, out: &mut [F]) -> F {
+    fn evaluate_terms(&self, coords: &[F], terms: ArrayView2<'_, u32>, acc: &mut Accumulator<'_>) {
         debug_assert_eq!(
             terms.nrows(),
             self.n_terms(),
             "the row set is the force field's; only the atoms a row names may be rebound"
         );
-        self.fold(coords, out, |t, p| terms[[t, p]] as usize)
+        let energy = self.fold(coords, acc.forces_without_virial(), |t, p| {
+            terms[[t, p]] as usize
+        });
+        acc.add_energy(energy);
     }
 }

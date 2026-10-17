@@ -113,7 +113,7 @@ impl AtomLabels {
         let strings = |key: &str| -> Vec<String> {
             let mut values: Vec<String> = frame
                 .column("atoms", key)
-                .and_then(|c| c.as_string())
+                .and_then(|c| c.get::<String>())
                 .map(|a| a.iter().map(|s| s.trim().to_string()).collect())
                 .unwrap_or_default();
             for row in null_rows(frame, "atoms", key) {
@@ -144,7 +144,7 @@ impl AtomLabels {
         // The stated residue number, else (no column, a null cell) the
         // atom's molecule's.
         let res_ids: Vec<Option<usize>> =
-            match frame.column("atoms", "res_id").and_then(|c| c.as_uint()) {
+            match frame.column("atoms", "res_id").and_then(|c| c.get::<u64>()) {
                 Some(ids) => {
                     let mut ids: Vec<Option<usize>> =
                         ids.iter().map(|&r| Some(r as usize)).collect();
@@ -247,7 +247,7 @@ fn molecules(frame: &impl FrameAccess, n: usize) -> std::io::Result<Vec<usize>> 
     let column = |key: &str| -> Option<Vec<Idx>> {
         frame
             .column("bonds", key)
-            .and_then(|c| c.as_uint())
+            .and_then(|c| c.get::<u64>())
             .map(|a| a.iter().copied().collect())
     };
     let mut adjacent: Vec<Vec<usize>> = vec![Vec::new(); n];
@@ -307,12 +307,12 @@ mod tests {
         let mut frame = Frame::new();
         let mut atoms = Block::new();
         atoms
-            .insert("element", strings(&["O", "H", "H", "C", "H"]))
+            .insert("element", strings(&["O", "H", "H", "C", "H"]), None)
             .unwrap();
         frame.insert("atoms", atoms);
         let mut bonds = Block::new();
-        bonds.insert("atomi", uints(&[0, 0, 3])).unwrap();
-        bonds.insert("atomj", uints(&[1, 2, 4])).unwrap();
+        bonds.insert("atomi", uints(&[0, 0, 3]), None).unwrap();
+        bonds.insert("atomj", uints(&[1, 2, 4]), None).unwrap();
         frame.insert("bonds", bonds);
         frame
     }
@@ -331,13 +331,17 @@ mod tests {
         let mut frame = two_molecules();
         let atoms = frame.get_mut("atoms").unwrap();
         atoms
-            .insert("name", strings(&["OW", "", "HW2", "CA", "HA"]))
+            .insert("name", strings(&["OW", "", "HW2", "CA", "HA"]), None)
             .unwrap();
         atoms
-            .insert("res_name", strings(&["HOH", "HOH", "HOH", "METHANE", ""]))
+            .insert(
+                "res_name",
+                strings(&["HOH", "HOH", "HOH", "METHANE", ""]),
+                None,
+            )
             .unwrap();
         atoms
-            .insert("res_id", uints(&[7, 7, 7, 10_003, 10_003]))
+            .insert("res_id", uints(&[7, 7, 7, 10_003, 10_003]), None)
             .unwrap();
         let labels = AtomLabels::pdb(&frame, 5).unwrap();
         assert_eq!(labels.names, ["OW", "H1", "HW2", "CA", "HA"]);
@@ -353,7 +357,7 @@ mod tests {
         frame
             .get_mut("bonds")
             .unwrap()
-            .insert("atomj", uints(&[1, 2, 9]))
+            .insert("atomj", uints(&[1, 2, 9]), None)
             .unwrap();
         assert!(AtomLabels::pdb(&frame, 5).is_err());
     }

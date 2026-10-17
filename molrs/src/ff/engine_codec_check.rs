@@ -17,6 +17,9 @@
 //! `testdata/engine_codecs/engines.tsv`, which
 //! [`every_engine_prices_the_codec_cases_as_molrs`] holds molrs to.
 
+use crate::core::Cell;
+use crate::ff::potential::fixtures::OneShot;
+use crate::io::writer::WrittenText;
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
 use std::path::Path;
@@ -35,11 +38,7 @@ use crate::ff::ir::{Params, SpecialBonds};
 use crate::ff::potential::intramolecular_pairs;
 use crate::ff::style_registry::Registry;
 use crate::io::lammps::units::LammpsUnitConverter;
-use crate::io::writer::ForceFieldWriter;
-use crate::io::{
-    lammps::LammpsForcefieldWriteOptions, lammps::LammpsForcefieldWriter,
-    openmm_xml::OpenmmXmlWriter,
-};
+use crate::io::{lammps::LammpsForcefieldWriter, openmm_xml::OpenmmXmlWriter};
 use molrs::core::Block;
 use molrs::core::Frame;
 use molrs::core::SimBox;
@@ -146,24 +145,24 @@ type Relation<'a> = (&'a str, &'a [(&'a [Idx], &'a str)]);
 fn frame(types: &[&str], mass: &[(&str, F)], relations: &[Relation<'_>]) -> Frame {
     let n = types.len();
     let mut atoms = Block::new();
-    atoms.insert("type", strings(types)).unwrap();
+    atoms.insert("type", strings(types), None).unwrap();
     let m: Vec<F> = types
         .iter()
         .map(|t| mass.iter().find(|(k, _)| k == t).unwrap().1)
         .collect();
     atoms
-        .insert("mass", Array1::from_vec(m).into_dyn())
+        .insert("mass", Array1::from_vec(m).into_dyn(), None)
         .unwrap();
     atoms
-        .insert("charge", Array1::from_vec(vec![0.0; n]).into_dyn())
+        .insert("charge", Array1::from_vec(vec![0.0; n]).into_dyn(), None)
         .unwrap();
     let mol: Vec<Idx> = vec![1; n];
     atoms
-        .insert("mol_id", Array1::from_vec(mol).into_dyn())
+        .insert("mol_id", Array1::from_vec(mol).into_dyn(), None)
         .unwrap();
     for key in ["x", "y", "z"] {
         atoms
-            .insert(key, Array1::from_vec(vec![0.0; n]).into_dyn())
+            .insert(key, Array1::from_vec(vec![0.0; n]).into_dyn(), None)
             .unwrap();
     }
     let mut f = Frame::new();
@@ -178,12 +177,14 @@ fn frame(types: &[&str], mass: &[(&str, F)], relations: &[Relation<'_>]) -> Fram
             b.insert(
                 *key,
                 Array1::from_vec(rows.iter().map(|r| r.0[k]).collect()).into_dyn(),
+                None,
             )
             .unwrap();
         }
         b.insert(
             "type",
             strings(&rows.iter().map(|r| r.1).collect::<Vec<_>>()),
+            None,
         )
         .unwrap();
         f.insert(*block, b);
@@ -194,7 +195,7 @@ fn frame(types: &[&str], mass: &[(&str, F)], relations: &[Relation<'_>]) -> Fram
 fn atom_types(ff: &mut ForceField, types: &[(&str, F)]) {
     let s = ff.def_style("atom", "full", Params::new()).unwrap();
     for (t, m) in types {
-        s.def_type(t, &[], Params::from_pairs(&[("mass", *m), ("charge", 0.0)]))
+        s.def_type(t, &[], Params::from_iter([("mass", *m), ("charge", 0.0)]))
             .unwrap();
     }
 }
@@ -205,7 +206,7 @@ fn atom_types(ff: &mut ForceField, types: &[(&str, F)]) {
 /// `bondCutoff`), not only the rows the frame's `angles` and `dihedrals`
 /// blocks happen to hold.
 fn with_pairs(ff: &ForceField, mut frame: Frame) -> Frame {
-    let pairs = intramolecular_pairs(&graph_topology(&frame), ff.special_bonds()).unwrap();
+    let pairs = intramolecular_pairs(&graph_topology(&frame), ff.special_bonds(), None).unwrap();
     frame.insert("pairs", pairs);
     frame
 }
@@ -217,7 +218,7 @@ fn graph_topology(frame: &Frame) -> Frame {
     let n = frame.get("atoms").unwrap().n_rows().unwrap();
     let mut adj = vec![Vec::new(); n];
     if let Some(b) = frame.get("bonds") {
-        let col = |k: &str| b.get(k).unwrap().as_uint().unwrap().to_owned();
+        let col = |k: &str| b.get(k).unwrap().get::<u64>().unwrap().to_owned();
         let (i, j) = (col("atomi"), col("atomj"));
         for (&a, &b) in i.iter().zip(j.iter()) {
             adj[a as usize].push(b as usize);
@@ -246,7 +247,8 @@ fn graph_topology(frame: &Frame) -> Frame {
         let mut b = Block::new();
         for (c, key) in keys.iter().enumerate() {
             let v: Vec<Idx> = rows.iter().map(|r| r[c] as Idx).collect();
-            b.insert(*key, Array1::from_vec(v).into_dyn()).unwrap();
+            b.insert(*key, Array1::from_vec(v).into_dyn(), None)
+                .unwrap();
         }
         b
     };
@@ -279,12 +281,12 @@ fn shifted(x: &[F], d: F) -> Vec<F> {
         .collect()
 }
 
-pub(crate) fn cases(reg: &Registry) -> Vec<Case> {
+pub(crate) fn cases(reg: &Arc<Registry>) -> Vec<Case> {
     let mut out = Vec::new();
     let masses = [("A", 12.011), ("B", 14.007), ("C", 15.999), ("D", 32.06)];
 
     // fene: a 4-atom chain, three fene types, two inside the WCA range.
-    let mut ff = ForceField::new("fene");
+    let mut ff = ForceField::new("fene").with_registry(reg.clone());
     ff.set_units("real");
     ff.set_special_bonds(SpecialBonds {
         lj: [0.0, 1.0, 1.0],
@@ -300,7 +302,7 @@ pub(crate) fn cases(reg: &Registry) -> Vec<Case> {
         fene.def_type(
             name,
             &ends,
-            Params::from_pairs(&[("k", k), ("r0", r0), ("epsilon", eps), ("sigma", sigma)]),
+            Params::from_iter([("k", k), ("r0", r0), ("epsilon", eps), ("sigma", sigma)]),
         )
         .unwrap();
     }
@@ -327,26 +329,26 @@ pub(crate) fn cases(reg: &Registry) -> Vec<Case> {
     });
 
     // smooth: five unbonded atoms of two types, every pair inside the cutoff.
-    let mut ff = ForceField::new("smooth");
+    let mut ff = ForceField::new("smooth").with_registry(reg.clone());
     ff.set_units("real");
     ff.set_special_bonds(SpecialBonds {
         lj: [0.0, 0.0, 0.0],
         coul: [0.0, 0.0, 0.0],
     });
     atom_types(&mut ff, &masses[..2]);
-    let mut style = Params::from_pairs(&[("cutoff", 8.0)]);
-    style.set_str("mixing", "arithmetic");
+    let mut style = Params::from_iter([("cutoff", 8.0)]);
+    style.set("mixing", "arithmetic");
     let lj = ff.def_style("pair", "lj/smooth/linear", style).unwrap();
     lj.def_type(
         "A",
         &["A"],
-        Params::from_pairs(&[("epsilon", 0.2), ("sigma", 3.1)]),
+        Params::from_iter([("epsilon", 0.2), ("sigma", 3.1)]),
     )
     .unwrap();
     lj.def_type(
         "B",
         &["B"],
-        Params::from_pairs(&[("epsilon", 0.15), ("sigma", 3.6)]),
+        Params::from_iter([("epsilon", 0.15), ("sigma", 3.6)]),
     )
     .unwrap();
     let x = vec![
@@ -362,7 +364,7 @@ pub(crate) fn cases(reg: &Registry) -> Vec<Case> {
     });
 
     // metal: bond morse and pair buck of a real field, written in metal.
-    let mut ff = ForceField::new("metal");
+    let mut ff = ForceField::new("metal").with_registry(reg.clone());
     ff.set_units("real");
     ff.set_special_bonds(SpecialBonds {
         lj: [0.0, 1.0, 1.0],
@@ -374,11 +376,11 @@ pub(crate) fn cases(reg: &Registry) -> Vec<Case> {
         .def_type(
             "A-B",
             &["A", "B"],
-            Params::from_pairs(&[("d0", 95.6), ("alpha", 2.1), ("r0", 1.53)]),
+            Params::from_iter([("d0", 95.6), ("alpha", 2.1), ("r0", 1.53)]),
         )
         .unwrap();
     let buck = ff
-        .def_style("pair", "buck", Params::from_pairs(&[("cutoff", 9.0)]))
+        .def_style("pair", "buck", Params::from_iter([("cutoff", 9.0)]))
         .unwrap();
     for (name, ends, a, rho, c) in [
         ("A", vec!["A"], 32000.0, 0.27, 210.0),
@@ -388,7 +390,7 @@ pub(crate) fn cases(reg: &Registry) -> Vec<Case> {
         buck.def_type(
             name,
             &ends,
-            Params::from_pairs(&[("a", a), ("rho", rho), ("c", c)]),
+            Params::from_iter([("a", a), ("rho", rho), ("c", c)]),
         )
         .unwrap();
     }
@@ -410,7 +412,7 @@ pub(crate) fn cases(reg: &Registry) -> Vec<Case> {
     });
 
     // morse: pair morse, every pair its row (no mixing), four unbonded atoms.
-    let mut ff = ForceField::new("morse");
+    let mut ff = ForceField::new("morse").with_registry(reg.clone());
     ff.set_units("real");
     ff.set_special_bonds(SpecialBonds {
         lj: [0.0, 0.0, 0.0],
@@ -418,7 +420,7 @@ pub(crate) fn cases(reg: &Registry) -> Vec<Case> {
     });
     atom_types(&mut ff, &masses[..2]);
     let morse = ff
-        .def_style("pair", "morse", Params::from_pairs(&[("cutoff", 10.0)]))
+        .def_style("pair", "morse", Params::from_iter([("cutoff", 10.0)]))
         .unwrap();
     for (name, ends, d0, alpha, r0) in [
         ("A", vec!["A"], 0.25, 1.4, 3.6),
@@ -429,7 +431,7 @@ pub(crate) fn cases(reg: &Registry) -> Vec<Case> {
             .def_type(
                 name,
                 &ends,
-                Params::from_pairs(&[("d0", d0), ("alpha", alpha), ("r0", r0)]),
+                Params::from_iter([("d0", d0), ("alpha", alpha), ("r0", r0)]),
             )
             .unwrap();
     }
@@ -446,7 +448,7 @@ pub(crate) fn cases(reg: &Registry) -> Vec<Case> {
     // openmm: a chain A-B-B-A, a D on the first B (a centre of three: an
     // improper), and a lone C.
     // 1-2, 1-3 and 1-4 pairs excluded: `bondCutoff="3"`.
-    let mut ff = ForceField::new("openmm");
+    let mut ff = ForceField::new("openmm").with_registry(reg.clone());
     ff.set_units("real");
     ff.set_special_bonds(SpecialBonds {
         lj: [0.0, 0.0, 0.0],
@@ -458,7 +460,7 @@ pub(crate) fn cases(reg: &Registry) -> Vec<Case> {
         .def_type(
             "A-B",
             &["A", "B"],
-            Params::from_pairs(&[("k", 25.0), ("r0", 1.9), ("epsilon", 0.8), ("sigma", 1.4)]),
+            Params::from_iter([("k", 25.0), ("r0", 1.9), ("epsilon", 0.8), ("sigma", 1.4)]),
         )
         .unwrap();
     ff.def_style("bond", "morse", Params::new())
@@ -466,13 +468,13 @@ pub(crate) fn cases(reg: &Registry) -> Vec<Case> {
         .def_type(
             "B-B",
             &["B", "B"],
-            Params::from_pairs(&[("d0", 95.6), ("alpha", 2.1), ("r0", 1.53)]),
+            Params::from_iter([("d0", 95.6), ("alpha", 2.1), ("r0", 1.53)]),
         )
         .unwrap()
         .def_type(
             "B-D",
             &["B", "D"],
-            Params::from_pairs(&[("d0", 70.2), ("alpha", 1.9), ("r0", 1.41)]),
+            Params::from_iter([("d0", 70.2), ("alpha", 1.9), ("r0", 1.41)]),
         )
         .unwrap();
     // LAMMPS's cvff: the dihedral of the row, its centre first, which
@@ -482,7 +484,7 @@ pub(crate) fn cases(reg: &Registry) -> Vec<Case> {
         .def_type(
             "B-A-B-D",
             &["B", "A", "B", "D"],
-            Params::from_pairs(&[("k", 1.1), ("sign", -1.0), ("periodicity", 2.0)]),
+            Params::from_iter([("k", 1.1), ("sign", -1.0), ("periodicity", 2.0)]),
         )
         .unwrap();
     ff.def_style("angle", "class2", Params::new())
@@ -490,19 +492,19 @@ pub(crate) fn cases(reg: &Registry) -> Vec<Case> {
         .def_type(
             "A-B-B",
             &["A", "B", "B"],
-            Params::from_pairs(&[("theta0", 112.0), ("k2", 40.0), ("k3", -12.0), ("k4", 3.0)]),
+            Params::from_iter([("theta0", 112.0), ("k2", 40.0), ("k3", -12.0), ("k4", 3.0)]),
         )
         .unwrap();
-    ff.def_style_in(reg, "urey_bradley", "harmonic", Params::new())
+    ff.def_style("urey_bradley", "harmonic", Params::new())
         .unwrap()
         .def_type(
             "A-B-B",
             &["A", "B", "B"],
-            Params::from_pairs(&[("k", 22.5), ("r0", 2.45)]),
+            Params::from_iter([("k", 22.5), ("r0", 2.45)]),
         )
         .unwrap();
-    let mut style = Params::from_pairs(&[("cutoff", 12.0)]);
-    style.set_str("mixing", "arithmetic");
+    let mut style = Params::from_iter([("cutoff", 12.0)]);
+    style.set("mixing", "arithmetic");
     let lj = ff.def_style("pair", "lj/smooth/linear", style).unwrap();
     for (t, eps, sigma) in [
         ("A", 0.2, 3.1),
@@ -513,7 +515,7 @@ pub(crate) fn cases(reg: &Registry) -> Vec<Case> {
         lj.def_type(
             t,
             &[t],
-            Params::from_pairs(&[("epsilon", eps), ("sigma", sigma)]),
+            Params::from_iter([("epsilon", eps), ("sigma", sigma)]),
         )
         .unwrap();
     }
@@ -572,10 +574,10 @@ fn term(category: &str) -> &'static str {
 pub(crate) fn molrs_terms(case: &Case, reg: &Registry, k: usize) -> BTreeMap<&'static str, F> {
     let x = &case.configs[k];
     let energy_of = |ff: &ForceField, frame: &Frame| {
-        PotentialCompiler::with_registry(ff, reg)
+        PotentialCompiler::new(ff)
             .compile(frame)
             .unwrap()
-            .calc_energy(x)
+            .energy_at(x)
     };
     let energy = |ff: &ForceField| energy_of(ff, &case.frame);
     let to_file = if case.units == "real" {
@@ -593,7 +595,7 @@ pub(crate) fn molrs_terms(case: &Case, reg: &Registry, k: usize) -> BTreeMap<&'s
         }
         let mut one = case.ff.empty_like();
         let s = one
-            .def_style_in(reg, style.category(), style.name(), style.params().clone())
+            .def_style(style.category(), style.name(), style.params().clone())
             .unwrap();
         for (name, ends, p) in style.type_rows() {
             s.def_type(name, &ends, p.clone()).unwrap();
@@ -605,7 +607,7 @@ pub(crate) fn molrs_terms(case: &Case, reg: &Registry, k: usize) -> BTreeMap<&'s
             && style.category() != "pair"
         {
             let names: Vec<&str> = style.type_rows().iter().map(|r| r.0).collect();
-            let types = b.get("type").unwrap().as_string().unwrap();
+            let types = b.get("type").unwrap().get::<String>().unwrap();
             let keep: Vec<usize> = (0..types.len())
                 .filter(|&r| names.contains(&types[[r]].as_str()))
                 .collect();
@@ -632,11 +634,11 @@ fn at(frame: &Frame, x: &[F]) -> Frame {
     for (d, key) in ["x", "y", "z"].iter().enumerate() {
         let col: Vec<F> = x.iter().skip(d).step_by(3).copied().collect();
         atoms
-            .insert(*key, Array1::from_vec(col).into_dyn())
+            .insert(*key, Array1::from_vec(col).into_dyn(), None)
             .unwrap();
     }
     out.simbox =
-        Some(SimBox::cube(100.0, ndarray::array![-50.0, -50.0, -50.0], [false; 3]).unwrap());
+        Some(SimBox::new(Cell::Lengths([100.0; 3]), [-50.0, -50.0, -50.0], [false; 3]).unwrap());
     out
 }
 
@@ -647,14 +649,10 @@ fn stage_case_inputs(dir: &Path, case: &Case, reg: &Arc<Registry>, tsv: &mut Str
     match case.engine {
         "lammps" => {
             let labels = TypeLabels::from_frame(&case.frame).unwrap();
-            let options = LammpsForcefieldWriteOptions {
-                precision: 17,
-                units: case.units,
-                ..LammpsForcefieldWriteOptions::default()
-            };
-            let text = LammpsForcefieldWriter::with_options(&labels, options)
-                .with_registry(reg.clone())
-                .write_str(&case.ff)
+            let text = LammpsForcefieldWriter::new(&labels)
+                .with_precision(17)
+                .with_units(case.units)
+                .written(&case.ff)
                 .unwrap();
             let (pre, post): (Vec<&str>, Vec<&str>) =
                 text.lines().partition(|l| l.starts_with("units"));
@@ -663,24 +661,21 @@ fn stage_case_inputs(dir: &Path, case: &Case, reg: &Arc<Registry>, tsv: &mut Str
             for (k, x) in case.configs.iter().enumerate() {
                 // Masses (g/mol) and lengths (Å) are the same numbers in
                 // `real` and `metal`.
-                write_lammps_data(root.join(format!("data_{k}.lmp")), &placed(&case.frame, x))
+                write_lammps_data(&root.join(format!("data_{k}.lmp")), &placed(&case.frame, x))
                     .unwrap();
             }
         }
         "openmm" => {
-            let xml = OpenmmXmlWriter::new()
-                .with_registry(reg.clone())
-                .write_str(&case.ff)
-                .unwrap();
+            let xml = OpenmmXmlWriter::new().written(&case.ff).unwrap();
             std::fs::write(root.join("ff.xml"), xml).unwrap();
             let atoms = case.frame.get("atoms").unwrap();
-            let types = atoms.get("type").unwrap().as_string().unwrap();
+            let types = atoms.get("type").unwrap().get::<String>().unwrap();
             let bonds = case.frame.get("bonds").unwrap();
             let col = |k: &str| -> Vec<usize> {
                 bonds
                     .get(k)
                     .unwrap()
-                    .as_uint()
+                    .get::<u64>()
                     .map(|c| c.iter().map(|&v| v as usize).collect())
                     .unwrap()
             };
@@ -782,7 +777,7 @@ mod codecs {
     use super::*;
     use crate::ff::ir::expression::{Binding, Geometry, compile};
     use crate::ff::ir::{Engine, IrError, UnitScale, builtin_styles};
-    use crate::io::amber::frcmod::write_frcmod_str;
+    use crate::io::amber::frcmod::AmberFrcmodWriter;
     use crate::io::gromacs::top_writer::GromacsTopForcefieldWriter;
     use crate::io::lammps::forcefield_reader::LammpsForcefieldReader;
     use crate::io::reader::ForceFieldReader;
@@ -815,7 +810,7 @@ mod codecs {
             _ => &[],
         };
         if !pairs.is_empty() {
-            return Params::from_pairs(pairs);
+            return Params::from_iter(pairs.iter().copied());
         }
         let mut p = Params::new();
         for (i, ps) in spec.params.iter().enumerate() {
@@ -902,8 +897,8 @@ mod codecs {
         }
         match spec.name.as_ref() {
             "lj/charmm" => style.set("inner", 7.0),
-            "lj/class2" => style.set_str("mixing", "sixthpower"),
-            "lj/cut" => style.set_str("mixing", "geometric"),
+            "lj/class2" => style.set("mixing", "sixthpower"),
+            "lj/cut" => style.set("mixing", "geometric"),
             _ => {}
         }
         let s = ff.def_style(cat, &spec.name, style).unwrap();
@@ -914,7 +909,7 @@ mod codecs {
             "pair" => {
                 s.def_type("A", &["A"], row.clone()).unwrap();
                 let mut b = Params::new();
-                for (k, v) in row.iter() {
+                for (k, v) in row.iter().filter_map(|(k, v)| v.as_num().map(|x| (k, x))) {
                     b.set(k, v * 1.1);
                 }
                 s.def_type("B", &["B"], b).unwrap();
@@ -922,7 +917,7 @@ mod codecs {
                     || spec.name == "lj/class2"
                 {
                     let mut c = Params::new();
-                    for (k, v) in row.iter() {
+                    for (k, v) in row.iter().filter_map(|(k, v)| v.as_num().map(|x| (k, x))) {
                         c.set(k, v * 1.05);
                     }
                     s.def_type("A-B", &["A", "B"], c).unwrap();
@@ -961,12 +956,9 @@ mod codecs {
 
     fn include(ff: &ForceField, frame: &Frame) -> String {
         let labels = TypeLabels::from_frame(frame).unwrap();
-        let options = LammpsForcefieldWriteOptions {
-            precision: 17,
-            ..LammpsForcefieldWriteOptions::default()
-        };
-        LammpsForcefieldWriter::with_options(&labels, options)
-            .write_str(ff)
+        LammpsForcefieldWriter::new(&labels)
+            .with_precision(17)
+            .written(ff)
             .unwrap()
     }
 
@@ -985,7 +977,7 @@ mod codecs {
             let (ff, frame) = one_style(&spec);
             let text = include(&ff, &frame);
             let back = LammpsForcefieldReader::new()
-                .read_str(&text)
+                .read(text.as_bytes())
                 .unwrap_or_else(|e| panic!("{what}: {e}\n{text}"));
             assert_eq!(include(&back, &frame), text, "{what}");
             // `improper periodic` is LAMMPS's `cvff`, which reads as molrs's
@@ -1014,7 +1006,7 @@ mod codecs {
     fn continue_energy(what: &str, ff: &ForceField, back: &ForceField, frame: &Frame) {
         let x: Vec<F> = {
             let atoms = frame.get("atoms").unwrap();
-            let c = |k: &str| atoms.get(k).unwrap().as_float().unwrap().to_owned();
+            let c = |k: &str| atoms.get(k).unwrap().get::<f64>().unwrap().to_owned();
             let (x, y, z) = (c("x"), c("y"), c("z"));
             (0..x.len())
                 .flat_map(|i| [x[[i]], y[[i]], z[[i]]])
@@ -1024,7 +1016,7 @@ mod codecs {
             PotentialCompiler::new(ff)
                 .compile(frame)
                 .unwrap_or_else(|e| panic!("{what}: {e}"))
-                .calc_energy(&x)
+                .energy_at(&x)
         };
         let (a, b) = (e(ff), e(back));
         assert!(
@@ -1065,14 +1057,16 @@ mod codecs {
                 1,
             );
             let err = LammpsForcefieldReader::new()
-                .read_str(&nonzero)
-                .unwrap_err();
+                .read(nonzero.as_bytes())
+                .unwrap_err()
+                .to_string();
             assert!(err.contains("cross term"), "{err}");
             // The data file: the cross-term sections, read back.
             let labels = TypeLabels::from_frame(&frame).unwrap();
-            let data = LammpsForcefieldWriter::new(&labels)
-                .write_data_coeffs_str(&ff)
-                .unwrap();
+            let data = crate::io::writer::written_with(|b| {
+                LammpsForcefieldWriter::new(&labels).write_data_coeffs(b, &ff)
+            })
+            .unwrap();
             let heading = if name == "angle" {
                 "BondBond Coeffs"
             } else {
@@ -1119,8 +1113,7 @@ mod codecs {
         let case = cases(&reg).into_iter().find(|c| c.name == "fene").unwrap();
         let labels = TypeLabels::from_frame(&case.frame).unwrap();
         let text = LammpsForcefieldWriter::new(&labels)
-            .with_registry(reg.clone())
-            .write_str(&case.ff)
+            .written(&case.ff)
             .unwrap();
         assert!(text.contains("bond_style fene\n"), "{text}");
         assert!(
@@ -1129,7 +1122,7 @@ mod codecs {
         );
         let back = LammpsForcefieldReader::new()
             .with_registry(reg.clone())
-            .read_str(&text)
+            .read(text.as_bytes())
             .unwrap();
         let fene = back.get_style("bond", "fene").unwrap();
         assert!(
@@ -1141,10 +1134,16 @@ mod codecs {
                     .unwrap()
             )
         );
-        let err = LammpsForcefieldReader::new().read_str(&text).unwrap_err();
+        let err = LammpsForcefieldReader::new()
+            .read(text.as_bytes())
+            .unwrap_err()
+            .to_string();
         assert!(err.contains("unsupported bond_style `fene`"), "{err}");
+        // The same force field against the process-wide registry.
+        let mut global = case.ff.clone();
+        global.registry = crate::ff::style_registry::RegistryRef::Global;
         let err = LammpsForcefieldWriter::new(&labels)
-            .write_str(&case.ff)
+            .written(&global)
             .unwrap_err();
         assert!(err.contains("LAMMPS has no form for bond `fene`"), "{err}");
     }
@@ -1164,8 +1163,7 @@ mod codecs {
             .unwrap();
         let labels = TypeLabels::from_frame(&case.frame).unwrap();
         let err = LammpsForcefieldWriter::new(&labels)
-            .with_registry(reg.clone())
-            .write_str(&case.ff)
+            .written(&case.ff.clone().with_registry(reg))
             .unwrap_err();
         assert!(
             err.contains("LAMMPS has no form for bond `fene`") && err.contains("LEPTON"),
@@ -1218,24 +1216,25 @@ mod codecs {
         let mut ff = ForceField::new("x");
         ff.set_units("real");
         let mut p = Params::new();
-        p.set_str("expression", "k*(r-r0)^4");
+        p.set("expression", "k*(r-r0)^4");
         ff.def_style("bond", "quartic_custom", p)
             .unwrap()
             .def_type(
                 "A-B",
                 &["A", "B"],
-                Params::from_pairs(&[("k", 1.0), ("r0", 1.0)]),
+                Params::from_iter([("k", 1.0), ("r0", 1.0)]),
             )
             .unwrap();
-        let err = GromacsTopForcefieldWriter::new()
-            .write_str(&ff)
-            .unwrap_err();
+        let err = GromacsTopForcefieldWriter::new().written(&ff).unwrap_err();
         assert!(
             err.contains("GROMACS has no form for bond `quartic_custom`")
                 && err.contains("not a built-in style"),
             "{err}"
         );
-        let err = write_frcmod_str(&ff).unwrap_err();
+        let err = AmberFrcmodWriter::new()
+            .written(&ff)
+            .unwrap_err()
+            .to_string();
         assert!(
             err.contains("AMBER frcmod has no form for bond `quartic_custom`"),
             "{err}"
@@ -1249,8 +1248,7 @@ mod codecs {
             .unwrap();
         let labels = TypeLabels::from_frame(&case.frame).unwrap();
         let err = LammpsForcefieldWriter::new(&labels)
-            .with_registry(reg)
-            .write_str(&case.ff)
+            .written(&case.ff)
             .unwrap_err();
         assert!(
             err.contains("LAMMPS has no form for urey_bradley `harmonic`")
@@ -1258,7 +1256,7 @@ mod codecs {
             "{err}"
         );
         // OpenMM: an unregistered expression style is its Custom*Force.
-        let xml = OpenmmXmlWriter::new().write_str(&ff).unwrap();
+        let xml = OpenmmXmlWriter::new().written(&ff).unwrap();
         assert!(
             xml.contains("<CustomBondForce energy=\"4.184*(k*(10*r-r0)^4)\">"),
             "{xml}"
@@ -1274,10 +1272,7 @@ mod codecs {
             .into_iter()
             .find(|c| c.name == "openmm")
             .unwrap();
-        let xml = OpenmmXmlWriter::new()
-            .with_registry(reg.clone())
-            .write_str(&case.ff)
-            .unwrap();
+        let xml = OpenmmXmlWriter::new().written(&case.ff).unwrap();
         let energy = xml
             .lines()
             .find(|l| l.contains("<CustomBondForce") && l.contains("log("))
@@ -1321,10 +1316,7 @@ mod codecs {
             lj: [0.0, 0.0, 0.5],
             coul: [0.0, 0.0, 0.5],
         });
-        let err = OpenmmXmlWriter::new()
-            .with_registry(reg.clone())
-            .write_str(&case.ff)
-            .unwrap_err();
+        let err = OpenmmXmlWriter::new().written(&case.ff).unwrap_err();
         assert!(err.contains("bondCutoff"), "{err}");
         let mut r = (*reg).clone();
         r.register_category(CategorySpec::custom(
@@ -1341,20 +1333,17 @@ mod codecs {
             None,
         )
         .unwrap();
-        let mut ff = ForceField::new("q");
+        let mut ff = ForceField::new("q").with_registry(Arc::new(r));
         ff.set_units("real");
-        ff.def_style_in(&r, "quint", "x", Params::new())
+        ff.def_style("quint", "x", Params::new())
             .unwrap()
             .def_type(
                 "t",
                 &["A", "A", "A", "A", "A"],
-                Params::from_pairs(&[("k", 1.0)]),
+                Params::from_iter([("k", 1.0)]),
             )
             .unwrap();
-        let err = OpenmmXmlWriter::new()
-            .with_registry(Arc::new(r))
-            .write_str(&ff)
-            .unwrap_err();
+        let err = OpenmmXmlWriter::new().written(&ff).unwrap_err();
         assert!(
             err.contains("OpenMM XML has no form for quint `x`"),
             "{err}"
@@ -1370,16 +1359,13 @@ mod codecs {
         let atoms = ff.def_style("atom", "full", Params::new()).unwrap();
         for (t, m) in [("A", 16.0), ("B", 1.008)] {
             atoms
-                .def_type(t, &[], Params::from_pairs(&[("mass", m)]))
+                .def_type(t, &[], Params::from_iter([("mass", m)].iter().copied()))
                 .unwrap();
         }
         let row = |pairs: &[(&str, F)]| {
-            let mut p = Params::from_pairs(pairs);
+            let mut p = Params::from_iter((pairs).iter().copied());
             for (k, v) in extra.iter() {
-                p.set(k, v);
-            }
-            for (k, v) in extra.iter_strings() {
-                p.set_str(k, v);
+                p.set(k, v.clone());
             }
             p
         };
@@ -1395,21 +1381,21 @@ mod codecs {
                 row(&[("k", 55.0), ("theta0", 104.5)]),
             )
             .unwrap();
-        let mut lj_style = Params::from_pairs(&[("cutoff", 10.0)]);
-        lj_style.set_str("mixing", "arithmetic");
+        let mut lj_style = Params::from_iter([("cutoff", 10.0)].iter().copied());
+        lj_style.set("mixing", "arithmetic");
         let lj = ff.def_style("pair", "lj/cut", lj_style).unwrap();
         for (t, eps, sigma) in [("A", 0.15, 3.15), ("B", 0.0, 0.0)] {
             lj.def_type(
                 t,
                 &[t],
-                Params::from_pairs(&[("epsilon", eps), ("sigma", sigma)]),
+                Params::from_iter([("epsilon", eps), ("sigma", sigma)].iter().copied()),
             )
             .unwrap();
         }
         ff.def_style(
             "pair",
             "coul/cut",
-            Params::from_pairs(&[("cutoff", 10.0), ("delta", 0.0)]),
+            Params::from_iter([("cutoff", 10.0), ("delta", 0.0)].iter().copied()),
         )
         .unwrap();
         let frame = frame(
@@ -1431,17 +1417,25 @@ mod codecs {
             (
                 "LAMMPS",
                 LammpsForcefieldWriter::new(&labels)
-                    .write_str(ff)
+                    .written(ff)
                     .map_err(err),
             ),
             (
                 "GROMACS",
-                GromacsTopForcefieldWriter::new()
-                    .write_system_str(ff, frame)
-                    .map_err(err),
+                crate::io::writer::capture(|sink| {
+                    GromacsTopForcefieldWriter::new().write_system(sink, ff, frame)
+                })
+                .map_err(err),
             ),
-            ("OpenMM", OpenmmXmlWriter::new().write_str(ff).map_err(err)),
-            ("frcmod", write_frcmod_str(ff).map_err(err)),
+            ("OpenMM", OpenmmXmlWriter::new().written(ff).map_err(err)),
+            (
+                "frcmod",
+                crate::io::writer::capture(|sink| {
+                    use crate::io::writer::ForceFieldWriter;
+                    crate::io::amber::AmberFrcmodWriter::new().write(sink, ff)
+                })
+                .map_err(err),
+            ),
         ]
     }
 
@@ -1453,15 +1447,15 @@ mod codecs {
     fn writers_skip_what_prices_nothing_and_refuse_the_unknown() {
         let mut provenance = Params::new();
         crate::ff::typifier::Provenance::analogy(2.5, "c3-os").apply_to(&mut provenance);
-        provenance.set_str("desc", "a water");
-        provenance.set_str("doi", "10.0/x");
+        provenance.set("desc", "a water");
+        provenance.set("doi", "10.0/x");
         let (ff, frame) = with_row_extras(&provenance);
         for (writer, out) in every_writer(&ff, &frame) {
             let text = out.unwrap_or_else(|e| panic!("{writer}: {e}"));
             assert!(!text.contains("estimate_"), "{writer}: {text}");
         }
 
-        let (ff, frame) = with_row_extras(&Params::from_pairs(&[("bogus", 1.0)]));
+        let (ff, frame) = with_row_extras(&Params::from_iter([("bogus", 1.0)].iter().copied()));
         for (writer, out) in every_writer(&ff, &frame) {
             match out {
                 Err(e) => assert!(e.contains("bogus"), "{writer}: {e}"),

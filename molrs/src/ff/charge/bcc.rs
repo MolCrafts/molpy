@@ -130,20 +130,31 @@ impl BccParameterSet {
 /// # Examples
 ///
 /// ```
-/// use molrs::core::Atomistic;
+/// use molrs::core::{Atomistic, Element, keys};
+/// use molrs::props;
 /// use molrs::ff::charge::{BccModel, BccParameterSet};
 ///
 /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
 /// let mut mol = Atomistic::new();
-/// let c = mol.add_atom_xyz("C", 0.0, 0.0, 0.0);
+/// let c = mol.add_atom(props! {
+///     keys::ATOMIC_NUMBER => Element::C,
+///     keys::X => 0.0,
+///     keys::Y => 0.0,
+///     keys::Z => 0.0,
+/// })?;
 /// for [x, y, z] in [
 ///     [0.63, 0.63, 0.63],
 ///     [-0.63, -0.63, 0.63],
 ///     [-0.63, 0.63, -0.63],
 ///     [0.63, -0.63, -0.63],
 /// ] {
-///     let h = mol.add_atom_xyz("H", x, y, z);
-///     mol.add_bond(c, h)?;
+///     let h = mol.add_atom(props! {
+///         keys::ATOMIC_NUMBER => Element::H,
+///         keys::X => x,
+///         keys::Y => y,
+///         keys::Z => z,
+///     })?;
+///     mol.add_bond(c, h, props! {})?;
 /// }
 ///
 /// // The AM1 charges come from an AM1 solver; here, a zero base, so that what
@@ -219,10 +230,14 @@ impl BccModel {
     pub fn correct(&self, mol: &Atomistic, am1: &[f64]) -> Result<Vec<f64>, ChargeError> {
         check_count(mol, am1)?;
 
-        let work = without_type_columns(mol)?;
+        let mut perceived = without_type_columns(mol)?;
         let atd = self.set.atd_set();
         let typifier = AtdTypifier::new(atd);
-        let perceived = typifier.perceive_bond_types(&work);
+        typifier
+            .perceive_bond_types(&mut perceived)
+            .map_err(|e| ChargeError::Malformed {
+                detail: e.to_string(),
+            })?;
         let types = typifier.types_of(&perceived).map_err(charge_error)?;
         reject_dummy_types(&perceived, &types, atd.table().name)?;
 
@@ -433,6 +448,8 @@ fn bcc_increments(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::props;
+    use molrs::core::Element;
 
     use molrs::core::keys;
 
@@ -449,15 +466,29 @@ mod tests {
     /// Methane, untyped — the molecule a user has.
     fn methane() -> Atomistic {
         let mut mol = Atomistic::new();
-        let c = mol.add_atom_xyz("C", 0.0, 0.0, 0.0);
+        let c = mol
+            .add_atom(props! {
+                keys::ATOMIC_NUMBER => Element::C,
+                keys::X => 0.0,
+                keys::Y => 0.0,
+                keys::Z => 0.0,
+            })
+            .unwrap();
         for [x, y, z] in [
             [0.63, 0.63, 0.63],
             [-0.63, -0.63, 0.63],
             [-0.63, 0.63, -0.63],
             [0.63, -0.63, -0.63],
         ] {
-            let h = mol.add_atom_xyz("H", x, y, z);
-            mol.add_bond(c, h).expect("add C-H");
+            let h = mol
+                .add_atom(props! {
+                    keys::ATOMIC_NUMBER => Element::H,
+                    keys::X => x,
+                    keys::Y => y,
+                    keys::Z => z,
+                })
+                .unwrap();
+            mol.add_bond(c, h, props! {}).expect("add C-H");
         }
         mol
     }
@@ -494,6 +525,30 @@ mod tests {
         let before: f64 = am1.iter().sum();
         let after: f64 = q.iter().sum();
         assert!((after - before).abs() < 1e-14, "{before} -> {after}");
+    }
+
+    /// A molecule read from a frame that spells its species only as
+    /// `atomic_number` — no `element` column anywhere — is typed and corrected
+    /// exactly like the hand-built one: the typing path reads Z, never a symbol.
+    #[test]
+    fn a_frame_carrying_only_atomic_numbers_is_typed_and_corrected() {
+        let frame = methane().to_frame().expect("methane converts");
+        let atoms = frame.get("atoms").expect("an atoms block");
+        assert!(atoms.contains_key(keys::ATOMIC_NUMBER));
+        assert!(
+            !atoms.contains_key(keys::ELEMENT),
+            "the frame spells no symbols"
+        );
+        let mol = Atomistic::from_frame(&frame).expect("a Z-only frame promotes");
+
+        let model = BccModel::new(BccParameterSet::Bcc);
+        let am1 = [-0.266, 0.066, 0.066, 0.066, 0.066];
+        let q = model
+            .assign(&mol, Some(&am1))
+            .expect("AM1-BCC types the molecule");
+
+        assert_eq!(q, model.assign(&methane(), Some(&am1)).unwrap());
+        assert!((q[0] - (-0.266 + 4.0 * 0.0393)).abs() < 1e-12, "{}", q[0]);
     }
 
     /// `assign(None)` refuses; it does not invent a base to correct.

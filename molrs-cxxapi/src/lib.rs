@@ -1,6 +1,6 @@
 //! CXX bridge exposing molrs to Atomiverse (C++).
 //!
-//! Stateless & raw-array: every call takes flat C++ buffers or a [`FrameRef`]
+//! Stateless & raw-array: every call takes flat C++ buffers or a `FrameRef`
 //! handle, and molrs does the work. The engine measures; molrs analyzes and
 //! stores. One module per molrs owner:
 //!

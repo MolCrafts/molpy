@@ -1,10 +1,10 @@
 //! Cell-list neighbor search — O(N) with sorted-particle layout and half-shell iteration: [`LinkCell`].
 
 use super::{Backend, PairVisitor};
-use crate::core::SimBox;
+use crate::core::Cell;
 use crate::core::{CellGrid, Neighbors};
+use crate::core::{Points, SimBox};
 use crate::op::{F, Fnx3View};
-use ndarray::array;
 
 /// Occupied-cell count from which materializing the pair table in parallel pays
 /// for itself.
@@ -104,8 +104,12 @@ impl LinkCell {
             sorted_idx: Vec::new(),
             sorted_pos: Vec::new(),
             occupied_cells: Vec::new(),
-            bx: SimBox::cube(1.0, array![0.0 as F, 0.0, 0.0], [false, false, false])
-                .expect("dummy box"),
+            bx: SimBox::new(
+                Cell::Lengths([1.0; 3]),
+                [0.0 as F, 0.0, 0.0],
+                [false, false, false],
+            )
+            .expect("dummy box"),
             cursor: Vec::new(),
             cell_of: Vec::new(),
         }
@@ -144,6 +148,7 @@ impl LinkCell {
 
         let query_cell = self.grid.cell_of(bx, query_point);
         let qp = query_point;
+        let mic = bx.mic();
 
         // Check the query cell itself + all 26 neighbor cells
         let mut buf = [0usize; 27];
@@ -155,7 +160,7 @@ impl LinkCell {
             for si in start..end {
                 let oj = self.sorted_idx[si];
                 let pj = pos_at(&self.sorted_pos, si);
-                let dr = bx.shortest_vector_impl(qp, pj);
+                let dr = mic.apply(crate::op::vec3::sub(pj, qp));
                 let d2 = dr[0] * dr[0] + dr[1] * dr[1] + dr[2] * dr[2];
                 callback(oj, d2, dr);
             }
@@ -168,24 +173,20 @@ impl Backend for LinkCell {
         self.cutoff
     }
 
-    fn build_index(&mut self, points: Fnx3View<'_>, bx: &SimBox) {
+    fn build_index(&mut self, points: Points<'_>, bx: &SimBox) {
         assert!(self.cutoff > 0.0, "cutoff must be positive");
         self.update_index(points, bx);
     }
 
-    fn update_index(&mut self, points: Fnx3View<'_>, bx: &SimBox) {
+    /// Sort the points into cells. Columns are sorted directly — no
+    /// interleaved copy — through the same counting-sort core as rows, so the
+    /// index is identical to the one the `N × 3` path produces.
+    fn update_index(&mut self, points: Points<'_>, bx: &SimBox) {
         assert!(self.cutoff > 0.0, "cutoff must be positive");
-        assert!(points.ncols() == 3, "points must have shape (N, 3)");
-        self.counting_sort(points, bx);
-    }
-
-    /// Sort the columns into cells directly — no interleaved copy.
-    ///
-    /// Overrides the interleaving default with [`build_index_soa`](Self::build_index_soa),
-    /// which shares the counting-sort core with `build_index`, so the index is
-    /// identical to the one the `N × 3` path produces.
-    fn build_index_columns(&mut self, xs: &[F], ys: &[F], zs: &[F], bx: &SimBox) {
-        self.build_index_soa(xs, ys, zs, bx);
+        match points {
+            Points::Rows(rows) => self.counting_sort(rows, bx),
+            Points::Columns([xs, ys, zs]) => self.counting_sort_soa(xs, ys, zs, bx),
+        }
     }
 
     /// On-demand pair traversal — zero allocation.
@@ -252,6 +253,7 @@ impl LinkCell {
     ) {
         let start = self.cell_start[cell] as usize;
         let end = self.cell_start[cell + 1] as usize;
+        let mic = self.bx.mic();
 
         // Self-cell pairs: sorted order within a cell is ascending original
         // index (stable counting sort), so `oi < oj` holds structurally.
@@ -260,7 +262,7 @@ impl LinkCell {
             let oi = self.sorted_idx[si];
             for sj in (si + 1)..end {
                 let pj = pos_at(&self.sorted_pos, sj);
-                let dr = self.bx.shortest_vector_impl(pi, pj);
+                let dr = mic.apply(crate::op::vec3::sub(pj, pi));
                 let d2 = dr[0] * dr[0] + dr[1] * dr[1] + dr[2] * dr[2];
                 if d2 <= cutoff2 {
                     sink(oi, self.sorted_idx[sj], d2, dr);
@@ -281,7 +283,7 @@ impl LinkCell {
                 for sj in nc_start..nc_end {
                     let oj = self.sorted_idx[sj];
                     let pj = pos_at(&self.sorted_pos, sj);
-                    let dr = self.bx.shortest_vector_impl(pi, pj);
+                    let dr = mic.apply(crate::op::vec3::sub(pj, pi));
                     let d2 = dr[0] * dr[0] + dr[1] * dr[1] + dr[2] * dr[2];
                     if d2 <= cutoff2 {
                         // Half-shell output contract: the pair is emitted with
@@ -302,25 +304,6 @@ impl LinkCell {
 }
 
 impl LinkCell {
-    /// SoA sibling of `build_index`: build the spatial index only (no pair
-    /// pre-computation) from column-major slices.
-    ///
-    /// "SoA" is *structure of arrays*: instead of one `N × 3` array of points,
-    /// the coordinates arrive as three length-`N` slices (Å), one per axis.
-    /// The counting-sort core is shared with `build_index`, so the index is
-    /// identical to the one the `N × 3` path produces.
-    ///
-    /// # Panics
-    /// Panics if the cutoff is not positive or the three slices differ in length.
-    pub fn build_index_soa(&mut self, xs: &[F], ys: &[F], zs: &[F], bx: &SimBox) {
-        assert!(self.cutoff > 0.0, "cutoff must be positive");
-        assert!(
-            xs.len() == ys.len() && ys.len() == zs.len(),
-            "x/y/z slices must have equal length"
-        );
-        self.counting_sort_soa(xs, ys, zs, bx);
-    }
-
     /// Counting sort particles by cell index (interleaved `Array2` input).
     ///
     /// Thin adapter over [`counting_sort_impl`](Self::counting_sort_impl).
@@ -484,6 +467,7 @@ fn pos_at(sorted_pos: &[F], si: usize) -> [F; 3] {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::Cell;
     use crate::core::SimBox;
     use crate::core::neighbors::test_fixtures::table_rows_sorted;
     use crate::core::{NeighborColumns, NeighborList};
@@ -507,7 +491,7 @@ mod tests {
 
     #[test]
     fn linked_cell_basic_pairs() {
-        let bx = SimBox::cube(4.0, array![0.0, 0.0, 0.0], [true, true, true])
+        let bx = SimBox::new(Cell::Lengths([4.0; 3]), [0.0, 0.0, 0.0], [true, true, true])
             .expect("invalid box length");
         let pts = array![[0.1, 0.2, 0.3], [0.3, 0.2, 0.1], [3.9, 3.8, 3.7]];
         let res = cell_pairs(0.5, pts.view(), &bx);
@@ -518,7 +502,7 @@ mod tests {
 
     #[test]
     fn linked_cell_pbc_boundary() {
-        let bx = SimBox::cube(2.0, array![0.0, 0.0, 0.0], [true, true, true])
+        let bx = SimBox::new(Cell::Lengths([2.0; 3]), [0.0, 0.0, 0.0], [true, true, true])
             .expect("invalid box length");
         let pts = array![[0.1, 0.1, 0.1], [1.9, 1.9, 1.9]];
         let res = cell_pairs(0.5, pts.view(), &bx);
@@ -527,7 +511,7 @@ mod tests {
 
     #[test]
     fn linked_cell_no_duplicates() {
-        let bx = SimBox::cube(3.0, array![0.0, 0.0, 0.0], [true, true, true])
+        let bx = SimBox::new(Cell::Lengths([3.0; 3]), [0.0, 0.0, 0.0], [true, true, true])
             .expect("invalid box length");
         let pts = array![[0.1, 0.1, 0.1], [0.2, 0.2, 0.2], [0.3, 0.3, 0.3]];
         let res = cell_pairs(1.0, pts.view(), &bx);
@@ -542,7 +526,7 @@ mod tests {
 
     #[test]
     fn linked_cell_cutoff_edge_included() {
-        let bx = SimBox::cube(3.0, array![0.0, 0.0, 0.0], [true, true, true])
+        let bx = SimBox::new(Cell::Lengths([3.0; 3]), [0.0, 0.0, 0.0], [true, true, true])
             .expect("invalid box length");
         let pts = array![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]];
         let res = cell_pairs(1.0, pts.view(), &bx);
@@ -558,7 +542,7 @@ mod tests {
     /// state or on iteration order of a hash container would be caught here.
     #[test]
     fn repeated_search_gives_the_same_pairs() {
-        let bx = SimBox::cube(4.0, array![0.0, 0.0, 0.0], [true, true, true])
+        let bx = SimBox::new(Cell::Lengths([4.0; 3]), [0.0, 0.0, 0.0], [true, true, true])
             .expect("invalid box length");
         let pts = array![[0.1, 0.2, 0.3], [0.4, 0.2, 0.3], [1.1, 1.2, 1.3]];
 
@@ -573,7 +557,7 @@ mod tests {
     /// visitor path must not diverge.
     #[test]
     fn stream_matches_materialized_table() {
-        let bx = SimBox::cube(3.0, array![0.0, 0.0, 0.0], [true, true, true])
+        let bx = SimBox::new(Cell::Lengths([3.0; 3]), [0.0, 0.0, 0.0], [true, true, true])
             .expect("invalid box length");
         let pts = array![
             [0.1, 0.2, 0.3],
@@ -605,7 +589,7 @@ mod tests {
 
     #[test]
     fn neighborlist_algorithm_switch_consistency() {
-        let bx = SimBox::cube(3.0, array![0.0, 0.0, 0.0], [true, true, true])
+        let bx = SimBox::new(Cell::Lengths([3.0; 3]), [0.0, 0.0, 0.0], [true, true, true])
             .expect("invalid box length");
         let pts = array![
             [0.1, 0.2, 0.3],
@@ -630,8 +614,12 @@ mod tests {
 
     #[test]
     fn non_periodic_no_wrap() {
-        let bx =
-            SimBox::cube(10.0, array![0.0, 0.0, 0.0], [false, false, false]).expect("invalid box");
+        let bx = SimBox::new(
+            Cell::Lengths([10.0; 3]),
+            [0.0, 0.0, 0.0],
+            [false, false, false],
+        )
+        .expect("invalid box");
         let pts = array![[0.1, 0.1, 0.1], [9.9, 9.9, 9.9]];
 
         let result = cell_pairs(1.0, pts.view(), &bx);
@@ -641,8 +629,12 @@ mod tests {
 
     #[test]
     fn periodic_does_wrap() {
-        let bx =
-            SimBox::cube(10.0, array![0.0, 0.0, 0.0], [true, true, true]).expect("invalid box");
+        let bx = SimBox::new(
+            Cell::Lengths([10.0; 3]),
+            [0.0, 0.0, 0.0],
+            [true, true, true],
+        )
+        .expect("invalid box");
         let pts = array![[0.1, 0.1, 0.1], [9.9, 9.9, 9.9]];
 
         let result = cell_pairs(1.0, pts.view(), &bx);
@@ -652,8 +644,12 @@ mod tests {
 
     #[test]
     fn non_periodic_matches_brute_force() {
-        let bx =
-            SimBox::cube(20.0, array![0.0, 0.0, 0.0], [false, false, false]).expect("invalid box");
+        let bx = SimBox::new(
+            Cell::Lengths([20.0; 3]),
+            [0.0, 0.0, 0.0],
+            [false, false, false],
+        )
+        .expect("invalid box");
         let pts = array![
             [5.0, 5.0, 5.0],
             [5.5, 5.0, 5.0],
@@ -704,11 +700,15 @@ mod tests {
     /// engine itself drives, `Backend::build_index` and `Backend::visit_pairs`.
     #[test]
     fn sparse_system_fast() {
-        let bx =
-            SimBox::cube(20.0, array![0.0, 0.0, 0.0], [false, false, false]).expect("invalid box");
+        let bx = SimBox::new(
+            Cell::Lengths([20.0; 3]),
+            [0.0, 0.0, 0.0],
+            [false, false, false],
+        )
+        .expect("invalid box");
         let pts = array![[1.0, 1.0, 1.0], [5.0, 5.0, 5.0], [9.0, 9.0, 9.0]];
         let mut lc = LinkCell::new().cutoff(0.5);
-        lc.build_index(pts.view(), &bx);
+        lc.build_index(Points::Rows(pts.view()), &bx);
         assert_eq!(lc.occupied_cells.len(), 3);
 
         let mut n_pairs = 0usize;
@@ -720,7 +720,12 @@ mod tests {
 
     #[test]
     fn collinear_pair_counts() {
-        let bx = SimBox::cube(10.0, array![0.0, 0.0, 0.0], [false, false, false]).unwrap();
+        let bx = SimBox::new(
+            Cell::Lengths([10.0; 3]),
+            [0.0, 0.0, 0.0],
+            [false, false, false],
+        )
+        .unwrap();
         let pts = array![
             [1.0, 5.0, 5.0],
             [2.0, 5.0, 5.0],
@@ -734,7 +739,12 @@ mod tests {
 
     #[test]
     fn all_pairs_within_cutoff() {
-        let bx = SimBox::cube(10.0, array![0.0, 0.0, 0.0], [false, false, false]).unwrap();
+        let bx = SimBox::new(
+            Cell::Lengths([10.0; 3]),
+            [0.0, 0.0, 0.0],
+            [false, false, false],
+        )
+        .unwrap();
         let pts = array![
             [5.0, 5.0, 5.0],
             [5.5, 5.0, 5.0],
@@ -748,7 +758,12 @@ mod tests {
 
     #[test]
     fn exhaustive_pbc() {
-        let bx = SimBox::cube(10.0, array![0.0, 0.0, 0.0], [true, true, true]).unwrap();
+        let bx = SimBox::new(
+            Cell::Lengths([10.0; 3]),
+            [0.0, 0.0, 0.0],
+            [true, true, true],
+        )
+        .unwrap();
         let pts = array![
             [1.0, 1.0, 1.0],
             [1.5, 1.0, 1.0],
@@ -768,21 +783,36 @@ mod tests {
 
     #[test]
     fn no_pairs_large_separation() {
-        let bx = SimBox::cube(10.0, array![0.0, 0.0, 0.0], [false, false, false]).unwrap();
+        let bx = SimBox::new(
+            Cell::Lengths([10.0; 3]),
+            [0.0, 0.0, 0.0],
+            [false, false, false],
+        )
+        .unwrap();
         let pts = array![[1.0, 1.0, 1.0], [8.0, 8.0, 8.0],];
         assert_eq!(cell_pairs(1.0, pts.view(), &bx).n_pairs(), 0);
     }
 
     #[test]
     fn single_particle_no_pairs() {
-        let bx = SimBox::cube(10.0, array![0.0, 0.0, 0.0], [false, false, false]).unwrap();
+        let bx = SimBox::new(
+            Cell::Lengths([10.0; 3]),
+            [0.0, 0.0, 0.0],
+            [false, false, false],
+        )
+        .unwrap();
         let pts = array![[5.0, 5.0, 5.0],];
         assert_eq!(cell_pairs(3.0, pts.view(), &bx).n_pairs(), 0);
     }
 
     #[test]
     fn distances_correct() {
-        let bx = SimBox::cube(10.0, array![0.0, 0.0, 0.0], [false, false, false]).unwrap();
+        let bx = SimBox::new(
+            Cell::Lengths([10.0; 3]),
+            [0.0, 0.0, 0.0],
+            [false, false, false],
+        )
+        .unwrap();
         let pts = array![[3.0, 5.0, 5.0], [5.0, 5.0, 5.0],];
         let nlist = cell_pairs(3.0, pts.view(), &bx);
         assert_eq!(nlist.n_pairs(), 1);
@@ -792,7 +822,12 @@ mod tests {
 
     #[test]
     fn pbc_distance_correct() {
-        let bx = SimBox::cube(10.0, array![0.0, 0.0, 0.0], [true, true, true]).unwrap();
+        let bx = SimBox::new(
+            Cell::Lengths([10.0; 3]),
+            [0.0, 0.0, 0.0],
+            [true, true, true],
+        )
+        .unwrap();
         let pts = array![[0.5, 5.0, 5.0], [9.5, 5.0, 5.0],]; // MIC dist = 1.0
         let nlist = cell_pairs(2.0, pts.view(), &bx);
         assert_eq!(nlist.n_pairs(), 1);
@@ -833,13 +868,18 @@ mod tests {
         }
     }
 
-    /// The column entry point ([`NeighborList::build_columns`]) indexes into the
+    /// The column input ([`Points::Columns`]) indexes into the
     /// same cells as the `N × 3` one, so the two tables match *bitwise* — not
     /// merely within a tolerance.
     #[test]
-    fn build_columns_matches_build_bitwise() {
+    fn column_build_matches_row_build_bitwise() {
         // Periodic cube fixture: several pairs, including a PBC-wrap pair.
-        let bx = SimBox::cube(10.0, array![0.0, 0.0, 0.0], [true, true, true]).unwrap();
+        let bx = SimBox::new(
+            Cell::Lengths([10.0; 3]),
+            [0.0, 0.0, 0.0],
+            [true, true, true],
+        )
+        .unwrap();
         let pts = array![
             [1.0, 1.0, 1.0],
             [1.5, 1.0, 1.0],
@@ -852,13 +892,18 @@ mod tests {
         let (xs, ys, zs) = columns(&pts);
         let aos = cell_pairs(2.0, pts.view(), &bx);
         let mut soa_nl = NeighborList::new(2.0);
-        soa_nl.build_columns(&xs, &ys, &zs, &bx);
+        soa_nl.build(Points::Columns([&xs, &ys, &zs]), &bx);
         let soa = soa_nl.neighbors(NeighborColumns::FULL);
         assert!(aos.n_pairs() > 0, "fixture should produce pairs");
         assert_bitwise_equal(&aos, &soa);
 
         // Free / non-periodic fixture.
-        let bxf = SimBox::cube(20.0, array![0.0, 0.0, 0.0], [false, false, false]).unwrap();
+        let bxf = SimBox::new(
+            Cell::Lengths([20.0; 3]),
+            [0.0, 0.0, 0.0],
+            [false, false, false],
+        )
+        .unwrap();
         let ptsf = array![
             [5.0, 5.0, 5.0],
             [5.5, 5.0, 5.0],
@@ -870,7 +915,7 @@ mod tests {
         let (fxs, fys, fzs) = columns(&ptsf);
         let aos_free = cell_pairs(1.0, ptsf.view(), &bxf);
         let mut soa_free_nl = NeighborList::new(1.0);
-        soa_free_nl.build_columns(&fxs, &fys, &fzs, &bxf);
+        soa_free_nl.build(Points::Columns([&fxs, &fys, &fzs]), &bxf);
         let soa_free = soa_free_nl.neighbors(NeighborColumns::FULL);
         assert!(aos_free.n_pairs() > 0, "fixture should produce pairs");
         assert_bitwise_equal(&aos_free, &soa_free);
@@ -903,12 +948,13 @@ mod tests {
 #[cfg(test)]
 mod equivalence {
     use super::*;
+    use crate::core::Cell;
     use crate::core::CellGrid;
     use crate::core::NeighborColumns;
     use crate::core::NeighborList;
     use crate::core::NeighborQuery;
     use crate::core::SimBox;
-    use crate::op::Fnx3;
+
     use ndarray::{Array2, array};
     use std::collections::{BTreeMap, BTreeSet};
 
@@ -926,20 +972,28 @@ mod equivalence {
         }
     }
 
-    fn cells() -> Vec<(&'static str, Fnx3)> {
+    fn cells() -> Vec<(&'static str, Cell)> {
         vec![
             (
                 "ortho",
-                SimBox::matrix_from_lengths_angles([10.0, 11.0, 12.0], [90.0, 90.0, 90.0]).unwrap(),
+                Cell::LengthsAngles {
+                    lengths: [10.0, 11.0, 12.0],
+                    angles: [90.0, 90.0, 90.0],
+                },
             ),
             (
                 "hex",
-                SimBox::matrix_from_lengths_angles([10.0, 10.0, 12.0], [90.0, 90.0, 120.0])
-                    .unwrap(),
+                Cell::LengthsAngles {
+                    lengths: [10.0, 10.0, 12.0],
+                    angles: [90.0, 90.0, 120.0],
+                },
             ),
             (
                 "tilted",
-                SimBox::matrix_from_lengths_angles([10.0, 11.0, 12.0], [70.0, 80.0, 65.0]).unwrap(),
+                Cell::LengthsAngles {
+                    lengths: [10.0, 11.0, 12.0],
+                    angles: [70.0, 80.0, 65.0],
+                },
             ),
         ]
     }
@@ -998,7 +1052,7 @@ mod equivalence {
             let qi = [query[[i, 0]], query[[i, 1]], query[[i, 2]]];
             for j in 0..refs.nrows() {
                 let rj = [refs[[j, 0]], refs[[j, 1]], refs[[j, 2]]];
-                let dr = bx.shortest_vector_impl(qi, rj);
+                let dr = bx.mic().apply(crate::op::vec3::sub(rj, qi));
                 let d2 = dr[0] * dr[0] + dr[1] * dr[1] + dr[2] * dr[2];
                 if d2 <= c2 {
                     out.insert((i as u32, j as u32));
@@ -1055,7 +1109,7 @@ mod equivalence {
 
         for (name, h) in cells() {
             for pbc in PBCS {
-                let bx = SimBox::new(h.clone(), array![0.0, 0.0, 0.0], pbc).expect("box");
+                let bx = SimBox::new(h, [0.0, 0.0, 0.0], pbc).expect("box");
                 let pts = points(&bx, 0x5EED);
 
                 for cutoff in cutoffs(&bx) {
@@ -1101,7 +1155,7 @@ mod equivalence {
     fn cross_query_matches_the_oracle_over_the_matrix() {
         for (name, h) in cells() {
             for pbc in PBCS {
-                let bx = SimBox::new(h.clone(), array![0.0, 0.0, 0.0], pbc).expect("box");
+                let bx = SimBox::new(h, [0.0, 0.0, 0.0], pbc).expect("box");
                 let refs = points(&bx, 0x5EED);
                 let query = points(&bx, 0xC0FFEE);
 

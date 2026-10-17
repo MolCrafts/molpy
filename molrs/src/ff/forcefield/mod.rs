@@ -17,10 +17,8 @@ use std::sync::Arc;
 
 use smallvec::SmallVec;
 
-use ndarray::ArrayD;
-
 use crate::ff::ir::{Arity, DEFAULT_SPECIAL_BONDS, Params, SpecialBonds, pair_key};
-use crate::ff::style_registry::Registry;
+use crate::ff::style_registry::{Registry, RegistryRef};
 
 // ---------------------------------------------------------------------------
 // Type definitions
@@ -267,8 +265,8 @@ impl StyleDefs {
 /// any name, is a no-op when the two have
 /// [the same parameters](Params::same_parameters) and
 /// `Err(DefError::PairConflict)` otherwise, so a pair style holds at most one
-/// row per pair. The edits `set_type_param`, `set_type_str_param`,
-/// `set_type_array_param` and `remove_type` change an existing definition and are outside the rule;
+/// row per pair. The edits `set_type_param`, `set_param` and `del_type`
+/// change an existing definition and are outside the rule;
 /// `rename_type` can land on an existing name and therefore carries it.
 #[derive(Debug, Clone)]
 pub struct Style {
@@ -840,12 +838,20 @@ impl Style {
         }
     }
 
-    /// Set (or add) a single param on the type named `name`. Returns `false` if
-    /// no such type exists.
+    /// Set (or add) a single param on the type named `name` — a number, a
+    /// string, or an array (a CMAP type's `grid`), whatever
+    /// [`ParamValue`](crate::ff::ir::ParamValue) converts from. Returns
+    /// `false` if no such type exists.
     ///
     /// An edit of an existing definition, not a definition: it changes the
     /// stored value in place and is outside the conflict rule (see [`Style`]).
-    pub fn set_type_param(&mut self, name: &str, key: &str, value: f64) -> bool {
+    pub fn set_type_param(
+        &mut self,
+        name: &str,
+        key: &str,
+        value: impl Into<crate::ff::ir::ParamValue>,
+    ) -> bool {
+        let value = value.into();
         macro_rules! set_on {
             ($v:expr) => {{
                 if let Some(t) = $v.iter_mut().find(|t| t.name == name) {
@@ -867,74 +873,14 @@ impl Style {
         false
     }
 
-    /// Set (or add) one numeric style-level param, e.g. a pair style's
-    /// `cutoff`.
+    /// Set (or add) one style-level param, e.g. a pair style's `cutoff` (a
+    /// number) or `mixing` (a string).
     ///
     /// An edit of an existing definition, not a definition (see [`Style`]):
     /// the way a caller declares a run setting — the cutoff no reader or
     /// typifier invents — on a style it already has.
-    pub fn set_param(&mut self, key: &str, value: f64) {
+    pub fn set_param(&mut self, key: &str, value: impl Into<crate::ff::ir::ParamValue>) {
         self.params.set(key, value);
-    }
-
-    /// Set (or add) one string style-level param, e.g. a pair style's
-    /// `mixing`: the string counterpart of [`set_param`](Self::set_param).
-    pub fn set_str_param(&mut self, key: &str, value: &str) {
-        self.params.set_str(key, value);
-    }
-
-    /// Set (or add) a single string param on the type named `name`. Returns
-    /// `false` if no such type exists.
-    ///
-    /// An edit of an existing definition, not a definition: it changes the
-    /// stored value in place and is outside the conflict rule (see [`Style`]).
-    pub fn set_type_str_param(&mut self, name: &str, key: &str, value: &str) -> bool {
-        macro_rules! set_on {
-            ($v:expr) => {{
-                if let Some(t) = $v.iter_mut().find(|t| t.name == name) {
-                    t.params.set_str(key, value);
-                    return true;
-                }
-            }};
-        }
-        match &mut self.defs {
-            StyleDefs::Atom(v) => set_on!(v),
-            StyleDefs::Bond(v) => set_on!(v),
-            StyleDefs::Angle(v) => set_on!(v),
-            StyleDefs::Dihedral(v) => set_on!(v),
-            StyleDefs::Improper(v) => set_on!(v),
-            StyleDefs::Pair(v) => set_on!(v),
-            StyleDefs::Cmap(v) => set_on!(v),
-            StyleDefs::Relation { types, .. } => set_on!(types),
-        }
-        false
-    }
-
-    /// Set (or add) a single array param on the type named `name` (a CMAP
-    /// type's `grid`). Returns `false` if no such type exists.
-    ///
-    /// An edit of an existing definition, not a definition: it changes the
-    /// stored value in place and is outside the conflict rule (see [`Style`]).
-    pub fn set_type_array_param(&mut self, name: &str, key: &str, value: ArrayD<f64>) -> bool {
-        macro_rules! set_on {
-            ($v:expr) => {{
-                if let Some(t) = $v.iter_mut().find(|t| t.name == name) {
-                    t.params.set_array(key, value);
-                    return true;
-                }
-            }};
-        }
-        match &mut self.defs {
-            StyleDefs::Atom(v) => set_on!(v),
-            StyleDefs::Bond(v) => set_on!(v),
-            StyleDefs::Angle(v) => set_on!(v),
-            StyleDefs::Dihedral(v) => set_on!(v),
-            StyleDefs::Improper(v) => set_on!(v),
-            StyleDefs::Pair(v) => set_on!(v),
-            StyleDefs::Cmap(v) => set_on!(v),
-            StyleDefs::Relation { types, .. } => set_on!(types),
-        }
-        false
     }
 
     /// Rename the type named `old` to `new`. Returns `Ok(false)` if no type
@@ -991,7 +937,7 @@ impl Style {
     ///
     /// An edit of an existing definition, not a definition: it is outside the
     /// conflict rule (see [`Style`]).
-    pub fn remove_type(&mut self, name: &str) -> usize {
+    pub fn del_type(&mut self, name: &str) -> usize {
         macro_rules! remove_in {
             ($v:expr) => {{
                 let before = $v.len();
@@ -1031,11 +977,11 @@ impl Style {
 /// let mut ff = ForceField::new("example");
 /// ff.def_style("bond", "harmonic", Params::new())
 ///     .unwrap()
-///     .def_type("A-B", &["A", "B"], Params::from_pairs(&[("k", 300.0), ("r0", 1.5)]))
+///     .def_type("A-B", &["A", "B"], Params::from_iter([("k", 300.0), ("r0", 1.5)]))
 ///     .unwrap();
-/// ff.def_style("pair", "lj/cut", Params::from_pairs(&[("cutoff", 10.0)]))
+/// ff.def_style("pair", "lj/cut", Params::from_iter([("cutoff", 10.0)]))
 ///     .unwrap()
-///     .def_type("A", &["A"], Params::from_pairs(&[("epsilon", 0.5), ("sigma", 1.0)]))
+///     .def_type("A", &["A"], Params::from_iter([("epsilon", 0.5), ("sigma", 1.0)]))
 ///     .unwrap();
 ///
 /// // Compile into Potentials against a typed topology
@@ -1049,6 +995,79 @@ pub struct ForceField {
     units: Option<String>,
     /// `None` until declared; [`Self::special_bonds`] reads the default then.
     special_bonds: Option<SpecialBonds>,
+    /// The style registry this force field's categories, kernels and codecs
+    /// are looked up in: the process-wide one unless
+    /// [`with_registry`](Self::with_registry) gave it its own.
+    pub(crate) registry: RegistryRef,
+}
+
+/// The category a style is defined under — the first argument of
+/// [`ForceField::def_style`].
+///
+/// A name (`"bond"`, `"urey_bradley"`, …; a `&str` or `String` converts)
+/// names a **declared** category: a built-in one, one the force field's
+/// registry declares, or one the force field already holds a style of. Its
+/// arity comes from there. [`arity`](Self::arity) additionally states how
+/// many endpoints its types name — how a reader brings in a category that
+/// nothing declares, its arity taken from the endpoint columns of the record
+/// (molrec: an unknown category's arity is its endpoint prefix).
+///
+/// ```
+/// use molrs::ff::forcefield::{Category, ForceField};
+/// use molrs::ff::ir::Params;
+///
+/// let mut ff = ForceField::new("example");
+/// ff.def_style("bond", "harmonic", Params::new()).unwrap();
+/// ff.def_style(Category::new("bespoke").arity(4), "x", Params::new())
+///     .unwrap();
+/// assert_eq!(ff.get_style("bespoke", "x").unwrap().arity(), 4);
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Category {
+    name: String,
+    arity: Option<usize>,
+}
+
+impl Category {
+    /// The category `name`, with the arity its declaration gives it.
+    pub fn new(name: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            arity: None,
+        }
+    }
+
+    /// State that the category's types name `arity` endpoints.
+    ///
+    /// A declared category keeps its own arity, so `arity` must equal it; an
+    /// undeclared one becomes a [`StyleDefs::Relation`] of `arity` (0 ..= 5).
+    pub fn arity(mut self, arity: usize) -> Self {
+        self.arity = Some(arity);
+        self
+    }
+
+    /// The category name.
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+}
+
+impl From<&str> for Category {
+    fn from(name: &str) -> Self {
+        Category::new(name)
+    }
+}
+
+impl From<&String> for Category {
+    fn from(name: &String) -> Self {
+        Category::new(name.as_str())
+    }
+}
+
+impl From<String> for Category {
+    fn from(name: String) -> Self {
+        Category::new(name)
+    }
 }
 
 /// The most endpoints a type names (`itom` … `mtom`).
@@ -1134,6 +1153,31 @@ impl ForceField {
             styles: Vec::new(),
             units: None,
             special_bonds: None,
+            registry: RegistryRef::Global,
+        }
+    }
+
+    /// Look this force field's categories, kernels and codecs up in
+    /// `registry` instead of the process-wide one — a test's own styles,
+    /// seen by nothing else. [`def_style`](Self::def_style), the
+    /// [`PotentialCompiler`](crate::ff::compile::PotentialCompiler) and the
+    /// force-field writers all read it.
+    pub fn with_registry(mut self, registry: Arc<Registry>) -> Self {
+        self.registry = RegistryRef::Own(registry);
+        self
+    }
+
+    /// The registry this force field is read against.
+    pub fn registry(&self) -> &RegistryRef {
+        &self.registry
+    }
+
+    /// Run `f` on this force field's registry under no copy: the process-wide
+    /// one is read under its lock, so `f` must not register anything.
+    pub(crate) fn read_registry<R>(&self, f: impl FnOnce(&Registry) -> R) -> R {
+        match &self.registry {
+            RegistryRef::Global => crate::ff::style_registry::with_global_registry(f),
+            RegistryRef::Own(r) => f(r),
         }
     }
 
@@ -1266,80 +1310,54 @@ impl ForceField {
 
     /// Define the `category` style named `name`, or return the existing one.
     ///
-    /// `category` is one of `atom`/`bond`/`angle`/`dihedral`/`improper`/`pair`/
-    /// `cmap`, a category the process-wide force-field IR registry declares
-    /// ([`crate::ff::style_registry::register_category`]; its arity comes from there), or
-    /// a category this force field already holds a style of (one read from a
-    /// record that no registry declares); anything else is
-    /// `Err(DefError::UnknownCategory)`. A style is identified
-    /// by `(category, name)`: a repeated definition with exactly equal `params`
-    /// returns the style already defined; with different `params` it is
-    /// `Err(DefError::StyleConflict)` and the first definition is kept.
+    /// `category` names one of `atom`/`bond`/`angle`/`dihedral`/`improper`/
+    /// `pair`/`cmap`, a category this force field's registry declares
+    /// ([`crate::ff::style_registry::register_category`] for the process-wide
+    /// one; its arity comes from there), or a category this force field
+    /// already holds a style of (one read from a record that no registry
+    /// declares). A [`Category`] with a stated [`arity`](Category::arity)
+    /// must agree with a declared category's arity
+    /// (`Err(DefError::CategoryArity)`; a pair's is 2), and brings in an
+    /// undeclared one as a [`StyleDefs::Relation`] of that arity; any other
+    /// undeclared category is `Err(DefError::UnknownCategory)`.
+    ///
+    /// A style is identified by `(category, name)`: a repeated definition with
+    /// exactly equal `params` returns the style already defined; with
+    /// different `params` it is `Err(DefError::StyleConflict)` and the first
+    /// definition is kept.
     pub fn def_style(
         &mut self,
-        category: &str,
+        category: impl Into<Category>,
         name: &str,
         params: Params,
     ) -> Result<&mut Style, DefError> {
-        let defs = crate::ff::style_registry::with_global_registry(|r| {
-            self.empty_defs(Some(r), category)
-        })?;
-        self.define_style(defs, name, &params)
-    }
-
-    /// [`Self::def_style`] against `registry` instead of the process-wide
-    /// one — the registry a test extends the IR in.
-    pub fn def_style_in(
-        &mut self,
-        registry: &Registry,
-        category: &str,
-        name: &str,
-        params: Params,
-    ) -> Result<&mut Style, DefError> {
-        let defs = self.empty_defs(Some(registry), category)?;
-        self.define_style(defs, name, &params)
-    }
-
-    /// [`Self::def_style`] for a style whose types name `arity` endpoints —
-    /// how a reader brings in a category that nothing declares, its arity
-    /// taken from the endpoint columns of the record (molrec: an unknown
-    /// category's arity is its endpoint prefix).
-    ///
-    /// A category that is declared (built in, registered in the
-    /// process-wide registry, or already held here) keeps its own arity:
-    /// `arity` must equal it (`Err(DefError::CategoryArity)` otherwise; a
-    /// pair's is 2). A category that is not becomes a
-    /// [`StyleDefs::Relation`] of `arity` (0 ..= 5).
-    pub fn def_style_with_arity(
-        &mut self,
-        category: &str,
-        arity: usize,
-        name: &str,
-        params: Params,
-    ) -> Result<&mut Style, DefError> {
-        let declared =
-            crate::ff::style_registry::with_global_registry(|r| self.empty_defs(Some(r), category));
-        let defs = match declared {
-            Ok(defs) if defs.arity() == arity => defs,
-            Ok(defs) => {
+        let Category {
+            name: category,
+            arity,
+        } = category.into();
+        let declared = self.read_registry(|r| self.empty_defs(Some(r), &category));
+        let defs = match (declared, arity) {
+            (Ok(defs), None) => defs,
+            (Ok(defs), Some(arity)) if defs.arity() == arity => defs,
+            (Ok(defs), Some(arity)) => {
                 return Err(DefError::CategoryArity {
-                    category: category.to_owned(),
+                    category,
                     expected: defs.arity(),
                     got: arity,
                 });
             }
-            Err(DefError::UnknownCategory(_)) if is_category_name(category) => {
+            (Err(DefError::UnknownCategory(_)), Some(arity)) if is_category_name(&category) => {
                 let arity = u8::try_from(arity)
                     .ok()
                     .filter(|&n| usize::from(n) <= MAX_ARITY)
                     .ok_or_else(|| DefError::CategoryArity {
-                        category: category.to_owned(),
+                        category: category.clone(),
                         expected: MAX_ARITY,
                         got: arity,
                     })?;
-                StyleDefs::relation(category, arity)
+                StyleDefs::relation(&category, arity)
             }
-            Err(e) => return Err(e),
+            (Err(e), _) => return Err(e),
         };
         self.define_style(defs, name, &params)
     }
@@ -1416,7 +1434,7 @@ impl ForceField {
         name: &str,
         params: &Params,
     ) -> Result<(), DefError> {
-        crate::ff::style_registry::with_global_registry(|r| self.empty_defs(Some(r), category))?;
+        self.read_registry(|r| self.empty_defs(Some(r), category))?;
         match self.get_style(category, name) {
             Some(existing) if existing.params != *params => Err(DefError::StyleConflict {
                 category: category.to_owned(),
@@ -1438,6 +1456,7 @@ impl ForceField {
             styles: Vec::new(),
             units: self.units.clone(),
             special_bonds: self.special_bonds,
+            registry: self.registry.clone(),
         }
     }
 
@@ -1454,8 +1473,7 @@ impl ForceField {
     }
 
     /// Mutable style lookup, for the explicit edits (`set_type_param`,
-    /// `set_type_str_param`, `set_type_array_param`, `rename_type`,
-    /// `remove_type`) of an existing definition.
+    /// `set_param`, `rename_type`, `del_type`) of an existing definition.
     pub fn get_style_mut(&mut self, category: &str, name: &str) -> Option<&mut Style> {
         self.styles
             .iter_mut()
@@ -1570,12 +1588,13 @@ impl ForceField {
 pub(crate) mod tests {
     use super::*;
     use molrs::core::TypeName;
+    use ndarray::ArrayD;
 
     #[test]
     fn test_params() {
-        let p = Params::from_pairs(&[("k", 300.0), ("r0", 1.5)]);
-        assert_eq!(p.get("k"), Some(300.0));
-        assert_eq!(p.get("r0"), Some(1.5));
+        let p = Params::from_iter([("k", 300.0), ("r0", 1.5)]);
+        assert_eq!(p.get("k").and_then(|v| v.as_num()), Some(300.0));
+        assert_eq!(p.get("r0").and_then(|v| v.as_num()), Some(1.5));
         assert_eq!(p.get("missing"), None);
     }
 
@@ -1589,7 +1608,7 @@ pub(crate) mod tests {
             .def_type(
                 "A-B",
                 &["A", "B"],
-                Params::from_pairs(&[("k", 1.0), ("r0", 1.0)]),
+                Params::from_iter([("k", 1.0), ("r0", 1.0)]),
             )
             .unwrap();
         ff.def_style("bond", "harmonic", Params::new())
@@ -1597,7 +1616,7 @@ pub(crate) mod tests {
             .def_type(
                 "C-D",
                 &["C", "D"],
-                Params::from_pairs(&[("k", 2.0), ("r0", 2.0)]),
+                Params::from_iter([("k", 2.0), ("r0", 2.0)]),
             )
             .unwrap();
 
@@ -1640,10 +1659,10 @@ pub(crate) mod tests {
         let style = ff.def_style("drude", "harmonic", Params::new()).unwrap();
         assert_eq!((style.category(), style.arity()), ("drude", 2));
         style
-            .def_type("C-D", &["C", "D"], Params::from_pairs(&[("k", 500.0)]))
+            .def_type("C-D", &["C", "D"], Params::from_iter([("k", 500.0)]))
             .unwrap();
         assert!(matches!(
-            style.def_type("C-D", &["C", "E"], Params::from_pairs(&[("k", 500.0)])),
+            style.def_type("C-D", &["C", "E"], Params::from_iter([("k", 500.0)])),
             Err(DefError::TypeConflict { category, .. }) if category == "drude"
         ));
         assert!(matches!(
@@ -1655,9 +1674,16 @@ pub(crate) mod tests {
             Some(vec!["C".into(), "D".into()])
         );
         assert!(style.set_type_param("C-D", "k", 400.0));
-        assert!(style.set_type_str_param("C-D", "desc", "core"));
-        assert!(style.set_type_array_param("C-D", "table", ArrayD::zeros(vec![3])));
-        assert_eq!(style.type_params("C-D").unwrap().get("k"), Some(400.0));
+        assert!(style.set_type_param("C-D", "desc", "core"));
+        assert!(style.set_type_param("C-D", "table", ArrayD::zeros(vec![3])));
+        assert_eq!(
+            style
+                .type_params("C-D")
+                .unwrap()
+                .get("k")
+                .and_then(|v| v.as_num()),
+            Some(400.0)
+        );
         assert_eq!(style.rename_type("C-D", "core"), Ok(true));
         assert_eq!(
             style.type_rows(),
@@ -1669,7 +1695,7 @@ pub(crate) mod tests {
         other
             .def_style("drude", "harmonic", Params::new())
             .unwrap()
-            .def_type("O-D", &["O", "D"], Params::from_pairs(&[("k", 300.0)]))
+            .def_type("O-D", &["O", "D"], Params::from_iter([("k", 300.0)]))
             .unwrap();
         ff.merge(&other).unwrap();
         assert_eq!(
@@ -1679,7 +1705,7 @@ pub(crate) mod tests {
         assert_eq!(
             ff.get_style_mut("drude", "harmonic")
                 .unwrap()
-                .remove_type("core"),
+                .del_type("core"),
             1
         );
     }
@@ -1708,14 +1734,20 @@ pub(crate) mod tests {
 
     #[test]
     fn style_params_carry_numeric_and_string_values_of_the_definition() {
-        let mut params = Params::from_pairs(&[("cutoff", 10.0)]);
-        params.set_str("mixing", "geometric");
+        let mut params = Params::from_iter([("cutoff", 10.0)]);
+        params.set("mixing", "geometric");
         let mut ff = ForceField::new("test");
         ff.def_style("pair", "lj/cut", params).unwrap();
 
         let style = ff.get_style("pair", "lj/cut").unwrap();
-        assert_eq!(style.params().get("cutoff"), Some(10.0));
-        assert_eq!(style.params().get_str("mixing"), Some("geometric"));
+        assert_eq!(
+            style.params().get("cutoff").and_then(|v| v.as_num()),
+            Some(10.0)
+        );
+        assert_eq!(
+            style.params().get("mixing").and_then(|v| v.as_text()),
+            Some("geometric")
+        );
     }
 
     #[test]
@@ -1723,7 +1755,7 @@ pub(crate) mod tests {
         let mut ff = ForceField::new("test");
         ff.def_style("atom", "full", Params::new())
             .unwrap()
-            .def_type("CT", &[], Params::from_pairs(&[("mass", 12.011)]))
+            .def_type("CT", &[], Params::from_iter([("mass", 12.011)]))
             .unwrap();
 
         let style = ff.get_style("atom", "full").unwrap();
@@ -1732,7 +1764,10 @@ pub(crate) mod tests {
         };
         assert_eq!(types.len(), 1);
         assert_eq!(types[0].name, "CT");
-        assert_eq!(types[0].params.get("mass"), Some(12.011));
+        assert_eq!(
+            types[0].params.get("mass").and_then(|v| v.as_num()),
+            Some(12.011)
+        );
     }
 
     // -- Style::def_type -----------------------------------------------------
@@ -1748,7 +1783,8 @@ pub(crate) mod tests {
             ff.get_style("pair", "lj/cut")
                 .unwrap()
                 .params()
-                .get("cutoff"),
+                .get("cutoff")
+                .and_then(|v| v.as_num()),
             Some(12.0)
         );
     }
@@ -1761,13 +1797,13 @@ pub(crate) mod tests {
             .def_type(
                 "CT",
                 &[],
-                Params::from_pairs(&[("mass", 12.011), ("charge", -0.12)]),
+                Params::from_iter([("mass", 12.011), ("charge", -0.12)]),
             )
             .unwrap()
             .def_type(
                 "HC",
                 &[],
-                Params::from_pairs(&[("mass", 1.008), ("charge", 0.06)]),
+                Params::from_iter([("mass", 1.008), ("charge", 0.06)]),
             )
             .unwrap();
 
@@ -1778,8 +1814,11 @@ pub(crate) mod tests {
         assert_eq!(types.len(), 2);
 
         let ct = style.get_atomtype("CT").unwrap();
-        assert_eq!(ct.params.get("mass"), Some(12.011));
-        assert_eq!(ct.params.get("charge"), Some(-0.12));
+        assert_eq!(ct.params.get("mass").and_then(|v| v.as_num()), Some(12.011));
+        assert_eq!(
+            ct.params.get("charge").and_then(|v| v.as_num()),
+            Some(-0.12)
+        );
     }
 
     #[test]
@@ -1790,15 +1829,15 @@ pub(crate) mod tests {
             .def_type(
                 "CT-OH",
                 &["CT", "OH"],
-                Params::from_pairs(&[("k", 300.0), ("r0", 1.4)]),
+                Params::from_iter([("k", 300.0), ("r0", 1.4)]),
             )
             .unwrap();
 
         let bt = style.get_bondtype("CT", "OH").unwrap();
         assert_eq!(bt.itom, "CT");
         assert_eq!(bt.jtom, "OH");
-        assert_eq!(bt.params.get("k"), Some(300.0));
-        assert_eq!(bt.params.get("r0"), Some(1.4));
+        assert_eq!(bt.params.get("k").and_then(|v| v.as_num()), Some(300.0));
+        assert_eq!(bt.params.get("r0").and_then(|v| v.as_num()), Some(1.4));
     }
 
     #[test]
@@ -1809,12 +1848,12 @@ pub(crate) mod tests {
             .def_type(
                 "CT-HC",
                 &["CT", "HC"],
-                Params::from_pairs(&[("k", 340.0), ("r0", 1.09)]),
+                Params::from_iter([("k", 340.0), ("r0", 1.09)]),
             )
             .unwrap();
 
         let bt = style.get_bondtype("HC", "CT").unwrap();
-        assert_eq!(bt.params.get("r0"), Some(1.09));
+        assert_eq!(bt.params.get("r0").and_then(|v| v.as_num()), Some(1.09));
     }
 
     #[test]
@@ -1825,7 +1864,7 @@ pub(crate) mod tests {
             .def_type(
                 "HC-CT-HC",
                 &["HC", "CT", "HC"],
-                Params::from_pairs(&[("k", 33.0), ("theta0", 107.8)]),
+                Params::from_iter([("k", 33.0), ("theta0", 107.8)]),
             )
             .unwrap();
 
@@ -1836,7 +1875,10 @@ pub(crate) mod tests {
         assert_eq!(types[0].itom, "HC");
         assert_eq!(types[0].jtom, "CT");
         assert_eq!(types[0].ktom, "HC");
-        assert_eq!(types[0].params.get("theta0"), Some(107.8));
+        assert_eq!(
+            types[0].params.get("theta0").and_then(|v| v.as_num()),
+            Some(107.8)
+        );
     }
 
     #[test]
@@ -1847,7 +1889,7 @@ pub(crate) mod tests {
             .def_type(
                 "HC-CT-CT-HC",
                 &["HC", "CT", "CT", "HC"],
-                Params::from_pairs(&[("k1", 0.0), ("k2", 0.0), ("k3", 0.3)]),
+                Params::from_iter([("k1", 0.0), ("k2", 0.0), ("k3", 0.3)]),
             )
             .unwrap();
 
@@ -1863,52 +1905,55 @@ pub(crate) mod tests {
     fn def_type_pair_self() {
         let mut ff = ForceField::new("test");
         let style = ff
-            .def_style("pair", "lj/cut", Params::from_pairs(&[("cutoff", 10.0)]))
+            .def_style("pair", "lj/cut", Params::from_iter([("cutoff", 10.0)]))
             .unwrap();
         style
             .def_type(
                 "Ar",
                 &["Ar"],
-                Params::from_pairs(&[("epsilon", 1.0), ("sigma", 3.4)]),
+                Params::from_iter([("epsilon", 1.0), ("sigma", 3.4)]),
             )
             .unwrap();
 
         let pt = style.get_pairtype("Ar", None).unwrap();
         assert_eq!(pt.itom, "Ar");
         assert_eq!(pt.jtom, "Ar");
-        assert_eq!(pt.params.get("epsilon"), Some(1.0));
+        assert_eq!(pt.params.get("epsilon").and_then(|v| v.as_num()), Some(1.0));
     }
 
     #[test]
     fn def_type_pair_cross() {
         let mut ff = ForceField::new("test");
         let style = ff
-            .def_style("pair", "lj/cut", Params::from_pairs(&[("cutoff", 10.0)]))
+            .def_style("pair", "lj/cut", Params::from_iter([("cutoff", 10.0)]))
             .unwrap();
         style
             .def_type(
                 "CT-OH",
                 &["CT", "OH"],
-                Params::from_pairs(&[("epsilon", 0.1), ("sigma", 3.3)]),
+                Params::from_iter([("epsilon", 0.1), ("sigma", 3.3)]),
             )
             .unwrap();
 
         let pt = style.get_pairtype("OH", Some("CT")).unwrap();
         assert_eq!(pt.itom, "CT");
         assert_eq!(pt.jtom, "OH");
-        assert_eq!(pt.params.get("epsilon"), Some(0.1));
+        assert_eq!(pt.params.get("epsilon").and_then(|v| v.as_num()), Some(0.1));
     }
 
     #[test]
     fn def_type_carries_string_params_with_the_definition() {
-        let mut params = Params::from_pairs(&[("mass", 12.011)]);
-        params.set_str("element", "C");
+        let mut params = Params::from_iter([("mass", 12.011)]);
+        params.set("element", "C");
         let mut ff = ForceField::new("test");
         let style = ff.def_style("atom", "full", Params::new()).unwrap();
         style.def_type("CT", &[], params).unwrap();
 
         let ct = style.get_atomtype("CT").unwrap();
-        assert_eq!(ct.params.get_str("element"), Some("C"));
+        assert_eq!(
+            ct.params.get("element").and_then(|v| v.as_text()),
+            Some("C")
+        );
     }
 
     #[test]
@@ -1919,13 +1964,13 @@ pub(crate) mod tests {
             .def_type(
                 "A-B",
                 &["A", "B"],
-                Params::from_pairs(&[("k", 1.0), ("r0", 1.0)]),
+                Params::from_iter([("k", 1.0), ("r0", 1.0)]),
             )
             .unwrap()
             .def_type(
                 "C-D",
                 &["C", "D"],
-                Params::from_pairs(&[("k", 2.0), ("r0", 2.0)]),
+                Params::from_iter([("k", 2.0), ("r0", 2.0)]),
             )
             .unwrap();
 
@@ -1947,7 +1992,7 @@ pub(crate) mod tests {
             .def_type(
                 "anything",
                 &["CT", "OH"],
-                Params::from_pairs(&[("k", 300.0), ("r0", 1.4)]),
+                Params::from_iter([("k", 300.0), ("r0", 1.4)]),
             )
             .unwrap();
 
@@ -2053,18 +2098,26 @@ pub(crate) mod tests {
         let mut ff = ForceField::new("t");
         let style = ff.def_style("bond", "harmonic", Params::new()).unwrap();
         style
-            .def_type("A-B", &["A", "B"], Params::from_pairs(&[("k", 1.0)]))
+            .def_type("A-B", &["A", "B"], Params::from_iter([("k", 1.0)]))
             .unwrap();
-        assert_eq!(style.type_params("A-B").and_then(|p| p.get("k")), Some(1.0));
+        assert_eq!(
+            style
+                .type_params("A-B")
+                .and_then(|p| p.get("k").and_then(|v| v.as_num())),
+            Some(1.0)
+        );
         assert!(style.type_params("B-A").is_none());
     }
 
     #[test]
-    fn set_str_param_writes_a_string_style_param() {
+    fn set_param_writes_a_string_style_param() {
         let mut ff = ForceField::new("t");
         let style = ff.def_style("pair", "lj/cut", Params::new()).unwrap();
-        style.set_str_param("mixing", "geometric");
-        assert_eq!(style.params().get_str("mixing"), Some("geometric"));
+        style.set_param("mixing", "geometric");
+        assert_eq!(
+            style.params().get("mixing").and_then(|v| v.as_text()),
+            Some("geometric")
+        );
     }
 
     #[test]
@@ -2104,7 +2157,7 @@ pub(crate) mod tests {
         let mut ff = ForceField::new("test");
         let style = ff.def_style("atom", "full", Params::new()).unwrap();
         style
-            .def_type("CT", &[], Params::from_pairs(&[("mass", 12.011)]))
+            .def_type("CT", &[], Params::from_iter([("mass", 12.011)]))
             .unwrap();
 
         assert_eq!(style.type_endpoints("CT"), Some(Vec::new()));
@@ -2116,14 +2169,14 @@ pub(crate) mod tests {
     /// the string side counts as much as the numeric side.
     #[test]
     fn params_equality_is_exact_on_both_sides() {
-        let mut a = Params::from_pairs(&[("k", 300.0)]);
-        a.set_str("element", "C");
-        let mut same = Params::from_pairs(&[("k", 300.0)]);
-        same.set_str("element", "C");
-        let mut next_ulp = Params::from_pairs(&[("k", f64::from_bits(300.0_f64.to_bits() + 1))]);
-        next_ulp.set_str("element", "C");
-        let mut other_string = Params::from_pairs(&[("k", 300.0)]);
-        other_string.set_str("element", "N");
+        let mut a = Params::from_iter([("k", 300.0)]);
+        a.set("element", "C");
+        let mut same = Params::from_iter([("k", 300.0)]);
+        same.set("element", "C");
+        let mut next_ulp = Params::from_iter([("k", f64::from_bits(300.0_f64.to_bits() + 1))]);
+        next_ulp.set("element", "C");
+        let mut other_string = Params::from_iter([("k", 300.0)]);
+        other_string.set("element", "N");
 
         assert_eq!(a, same);
         assert_ne!(a, next_ulp);
@@ -2140,15 +2193,15 @@ pub(crate) mod tests {
     #[test]
     fn params_equality_is_exact_on_the_array_side() {
         let mut a = Params::new();
-        a.set_array("grid", grid(&[0.0, 1.0, 2.0, 3.0]));
+        a.set("grid", grid(&[0.0, 1.0, 2.0, 3.0]));
         let same = a.clone();
         let mut next_ulp = Params::new();
-        next_ulp.set_array(
+        next_ulp.set(
             "grid",
             grid(&[0.0, 1.0, 2.0, f64::from_bits(3.0_f64.to_bits() + 1)]),
         );
         let mut reshaped = Params::new();
-        reshaped.set_array(
+        reshaped.set(
             "grid",
             ArrayD::from_shape_vec(vec![4], vec![0.0, 1.0, 2.0, 3.0]).unwrap(),
         );
@@ -2157,8 +2210,16 @@ pub(crate) mod tests {
         assert_ne!(a, next_ulp);
         assert_ne!(a, reshaped);
         assert_ne!(a, Params::new());
-        assert_eq!(a.get_array("grid").map(|g| g.shape()), Some(&[2, 2][..]));
-        assert_eq!(a.iter_arrays().count(), 1);
+        assert_eq!(
+            a.get("grid").and_then(|v| v.as_array()).map(|g| g.shape()),
+            Some(&[2, 2][..])
+        );
+        assert_eq!(
+            a.iter()
+                .filter_map(|(k, v)| v.as_array().map(|a| (k, a)))
+                .count(),
+            1
+        );
         assert!(a.same_parameters(&same));
         assert!(!a.same_parameters(&next_ulp));
     }
@@ -2167,8 +2228,8 @@ pub(crate) mod tests {
     #[test]
     fn a_pair_restatement_compares_array_parameters() {
         let with = |g: &[f64]| {
-            let mut p = Params::from_pairs(&[("epsilon", 0.1)]);
-            p.set_array("table", grid(g));
+            let mut p = Params::from_iter([("epsilon", 0.1)]);
+            p.set("table", grid(g));
             p
         };
         let mut ff = ForceField::new("t");
@@ -2193,7 +2254,7 @@ pub(crate) mod tests {
     #[test]
     fn def_type_cmap_takes_five_endpoints_and_keeps_its_grid() {
         let mut params = Params::new();
-        params.set_array("grid", grid(&[0.0, 0.5, -0.5, 0.25]));
+        params.set("grid", grid(&[0.0, 0.5, -0.5, 0.25]));
         let mut ff = ForceField::new("test");
         let style = ff.def_style("cmap", "charmm", Params::new()).unwrap();
         style
@@ -2212,7 +2273,7 @@ pub(crate) mod tests {
             ("C", "NH1")
         );
         assert_eq!(
-            cmaps[0].params.get_array("grid"),
+            cmaps[0].params.get("grid").and_then(|v| v.as_array()),
             Some(&grid(&[0.0, 0.5, -0.5, 0.25]))
         );
         assert_eq!(
@@ -2224,14 +2285,14 @@ pub(crate) mod tests {
     }
 
     /// A different grid under a stored name is a type conflict, and the edits
-    /// carry arrays: `set_type_array_param` replaces one in place and
+    /// carry arrays: `set_type_param` replaces one in place and
     /// `rename_type` keeps it.
     #[test]
     fn a_cmap_grid_takes_part_in_the_conflict_rule_and_the_edits() {
         let ends = ["C", "N", "CA", "C", "N"];
         let with = |g: &[f64]| {
             let mut p = Params::new();
-            p.set_array("grid", grid(g));
+            p.set("grid", grid(g));
             p
         };
         let mut ff = ForceField::new("t");
@@ -2242,20 +2303,22 @@ pub(crate) mod tests {
             style.def_type("c1", &ends, with(&[2.0; 4])),
             Err(DefError::TypeConflict { .. })
         ));
-        assert!(style.set_type_array_param("c1", "grid", grid(&[3.0; 4])));
-        assert!(!style.set_type_array_param("nope", "grid", grid(&[3.0; 4])));
+        assert!(style.set_type_param("c1", "grid", grid(&[3.0; 4])));
+        assert!(!style.set_type_param("nope", "grid", grid(&[3.0; 4])));
         assert!(style.rename_type("c1", "c2").unwrap());
         assert_eq!(
-            style.type_params("c2").and_then(|p| p.get_array("grid")),
+            style
+                .type_params("c2")
+                .and_then(|p| p.get("grid").and_then(|v| v.as_array())),
             Some(&grid(&[3.0; 4]))
         );
-        assert_eq!(style.remove_type("c2"), 1);
+        assert_eq!(style.del_type("c2"), 1);
     }
 
     #[test]
     fn merge_carries_array_params() {
         let mut params = Params::new();
-        params.set_array("grid", grid(&[1.0, 2.0, 3.0, 4.0]));
+        params.set("grid", grid(&[1.0, 2.0, 3.0, 4.0]));
         let mut other = ForceField::new("other");
         other
             .def_style("cmap", "charmm", Params::new())
@@ -2279,14 +2342,14 @@ pub(crate) mod tests {
             .def_type(
                 "CT-CT",
                 &["CT", "CT"],
-                Params::from_pairs(&[("k", 268.0), ("r0", 1.529)]),
+                Params::from_iter([("k", 268.0), ("r0", 1.529)]),
             )
             .unwrap();
         style
             .def_type(
                 "CT-CT",
                 &["CT", "CT"],
-                Params::from_pairs(&[("k", 268.0), ("r0", 1.529)]),
+                Params::from_iter([("k", 268.0), ("r0", 1.529)]),
             )
             .unwrap();
 
@@ -2306,14 +2369,14 @@ pub(crate) mod tests {
             .def_type(
                 "CT-CT",
                 &["CT", "CT"],
-                Params::from_pairs(&[("k", 268.0), ("r0", 1.529)]),
+                Params::from_iter([("k", 268.0), ("r0", 1.529)]),
             )
             .unwrap();
 
         let second = style.def_type(
             "CT-CT",
             &["CT", "CT"],
-            Params::from_pairs(&[("k", 310.0), ("r0", 1.529)]),
+            Params::from_iter([("k", 310.0), ("r0", 1.529)]),
         );
 
         assert!(
@@ -2324,17 +2387,20 @@ pub(crate) mod tests {
             panic!("expected Bond defs");
         };
         assert_eq!(types.len(), 1);
-        assert_eq!(types[0].params.get("k"), Some(268.0));
+        assert_eq!(
+            types[0].params.get("k").and_then(|v| v.as_num()),
+            Some(268.0)
+        );
     }
 
     /// A different string param under one name is rejected, and the first
     /// definition is the one left standing.
     #[test]
     fn def_type_with_a_different_string_param_is_a_type_conflict() {
-        let mut carbon = Params::from_pairs(&[("mass", 12.011)]);
-        carbon.set_str("element", "C");
-        let mut nitrogen = Params::from_pairs(&[("mass", 12.011)]);
-        nitrogen.set_str("element", "N");
+        let mut carbon = Params::from_iter([("mass", 12.011)]);
+        carbon.set("element", "C");
+        let mut nitrogen = Params::from_iter([("mass", 12.011)]);
+        nitrogen.set("element", "N");
         let mut ff = ForceField::new("test");
         let style = ff.def_style("atom", "full", Params::new()).unwrap();
         style.def_type("CT", &[], carbon).unwrap();
@@ -2349,7 +2415,10 @@ pub(crate) mod tests {
             panic!("expected Atom defs");
         };
         assert_eq!(types.len(), 1);
-        assert_eq!(types[0].params.get_str("element"), Some("C"));
+        assert_eq!(
+            types[0].params.get("element").and_then(|v| v.as_text()),
+            Some("C")
+        );
     }
 
     /// One name, equal params, different endpoints: still a different
@@ -2359,10 +2428,10 @@ pub(crate) mod tests {
         let mut ff = ForceField::new("test");
         let style = ff.def_style("bond", "mmff", Params::new()).unwrap();
         style
-            .def_type("0_1_5", &["1", "5"], Params::from_pairs(&[("kb", 4.258)]))
+            .def_type("0_1_5", &["1", "5"], Params::from_iter([("kb", 4.258)]))
             .unwrap();
 
-        let second = style.def_type("0_1_5", &["1", "6"], Params::from_pairs(&[("kb", 4.258)]));
+        let second = style.def_type("0_1_5", &["1", "6"], Params::from_iter([("kb", 4.258)]));
 
         assert!(
             matches!(second, Err(DefError::TypeConflict { .. })),
@@ -2377,7 +2446,7 @@ pub(crate) mod tests {
     // -- the conflict rule: a pair is its unordered endpoints ----------------------
 
     fn lj_params(epsilon: f64) -> Params {
-        Params::from_pairs(&[("epsilon", epsilon), ("sigma", 2.0)])
+        Params::from_iter([("epsilon", epsilon), ("sigma", 2.0)])
     }
 
     /// `B-A` restating `A-B` with another epsilon: refused, whatever either
@@ -2398,7 +2467,10 @@ pub(crate) mod tests {
             panic!("expected Pair defs");
         };
         assert_eq!(types.len(), 1);
-        assert_eq!(types[0].params.get("epsilon"), Some(0.9));
+        assert_eq!(
+            types[0].params.get("epsilon").and_then(|v| v.as_num()),
+            Some(0.9)
+        );
     }
 
     /// Two names on one ordered pair, and a self pair restated under another
@@ -2432,11 +2504,11 @@ pub(crate) mod tests {
         let mut ff = ForceField::new("t");
         let style = ff.def_style("pair", "lj/cut", Params::new()).unwrap();
         let mut first = lj_params(0.9);
-        first.set_str("desc", "NBFIX");
+        first.set("desc", "NBFIX");
         style.def_type("A-B", &["A", "B"], first).unwrap();
         let mut restated = lj_params(0.9);
-        restated.set_str("desc", "restated");
-        restated.set_str("doi", "10.0/x");
+        restated.set("desc", "restated");
+        restated.set("doi", "10.0/x");
         style
             .def_type("B-A", &["B", "A"], restated)
             .unwrap()
@@ -2444,7 +2516,7 @@ pub(crate) mod tests {
             .unwrap()
             .def_type("A-B", &["B", "A"], {
                 let mut same = lj_params(0.9);
-                same.set_str("desc", "NBFIX");
+                same.set("desc", "NBFIX");
                 same
             })
             .unwrap();
@@ -2454,7 +2526,10 @@ pub(crate) mod tests {
         };
         assert_eq!(types.len(), 1);
         assert_eq!(types[0].name, "A-B");
-        assert_eq!(types[0].params.get_str("desc"), Some("NBFIX"));
+        assert_eq!(
+            types[0].params.get("desc").and_then(|v| v.as_text()),
+            Some("NBFIX")
+        );
     }
 
     /// A parameter one row carries and the other lacks is a difference, and a
@@ -2464,10 +2539,10 @@ pub(crate) mod tests {
         let mut ff = ForceField::new("t");
         let style = ff.def_style("pair", "lj/cut", Params::new()).unwrap();
         style.def_type("A-B", &["A", "B"], lj_params(0.9)).unwrap();
-        let lacking = Params::from_pairs(&[("epsilon", 0.9)]);
+        let lacking = Params::from_iter([("epsilon", 0.9)]);
         assert!(style.def_type("B-A", &["B", "A"], lacking).is_err());
         let mut flavoured = lj_params(0.9);
-        flavoured.set_str("flavour", "x");
+        flavoured.set("flavour", "x");
         assert!(style.def_type("B-A", &["B", "A"], flavoured).is_err());
     }
 
@@ -2478,9 +2553,9 @@ pub(crate) mod tests {
         let mut ff = ForceField::new("t");
         let style = ff.def_style("bond", "harmonic", Params::new()).unwrap();
         style
-            .def_type("CT-HC", &["CT", "HC"], Params::from_pairs(&[("k", 1.0)]))
+            .def_type("CT-HC", &["CT", "HC"], Params::from_iter([("k", 1.0)]))
             .unwrap()
-            .def_type("HC-CT", &["HC", "CT"], Params::from_pairs(&[("k", 2.0)]))
+            .def_type("HC-CT", &["HC", "CT"], Params::from_iter([("k", 2.0)]))
             .unwrap();
         assert_eq!(style.type_rows().len(), 2);
     }
@@ -2513,11 +2588,11 @@ pub(crate) mod tests {
     #[test]
     fn def_style_with_different_params_is_a_style_conflict() {
         let mut ff = ForceField::new("test");
-        ff.def_style("pair", "lj/cut", Params::from_pairs(&[("cutoff", 10.0)]))
+        ff.def_style("pair", "lj/cut", Params::from_iter([("cutoff", 10.0)]))
             .unwrap();
 
         let second = ff
-            .def_style("pair", "lj/cut", Params::from_pairs(&[("cutoff", 12.0)]))
+            .def_style("pair", "lj/cut", Params::from_iter([("cutoff", 12.0)]))
             .map(|_| ());
 
         assert!(
@@ -2525,23 +2600,26 @@ pub(crate) mod tests {
             "{second:?}"
         );
         let style = ff.get_style("pair", "lj/cut").unwrap();
-        assert_eq!(style.params().get("cutoff"), Some(10.0));
+        assert_eq!(
+            style.params().get("cutoff").and_then(|v| v.as_num()),
+            Some(10.0)
+        );
     }
 
     #[test]
     fn def_style_with_identical_params_returns_the_existing_style() {
         let mut ff = ForceField::new("test");
-        ff.def_style("pair", "lj/cut", Params::from_pairs(&[("cutoff", 10.0)]))
+        ff.def_style("pair", "lj/cut", Params::from_iter([("cutoff", 10.0)]))
             .unwrap()
             .def_type(
                 "Ar",
                 &["Ar"],
-                Params::from_pairs(&[("epsilon", 0.238), ("sigma", 3.4)]),
+                Params::from_iter([("epsilon", 0.238), ("sigma", 3.4)]),
             )
             .unwrap();
 
         let again = ff
-            .def_style("pair", "lj/cut", Params::from_pairs(&[("cutoff", 10.0)]))
+            .def_style("pair", "lj/cut", Params::from_iter([("cutoff", 10.0)]))
             .unwrap();
 
         assert!(again.get_pairtype("Ar", None).is_some());
@@ -2555,7 +2633,7 @@ pub(crate) mod tests {
         let mut ff = ForceField::new("test");
         ff.def_style("atom", "full", Params::new())
             .unwrap()
-            .def_type("CX", &[], Params::from_pairs(&[("mass", 13.0)]))
+            .def_type("CX", &[], Params::from_iter([("mass", 13.0)]))
             .unwrap();
         let style = ff.get_style_mut("atom", "full").unwrap();
 
@@ -2571,9 +2649,9 @@ pub(crate) mod tests {
         let mut ff = ForceField::new("test");
         ff.def_style("atom", "full", Params::new())
             .unwrap()
-            .def_type("CT", &[], Params::from_pairs(&[("mass", 12.011)]))
+            .def_type("CT", &[], Params::from_iter([("mass", 12.011)]))
             .unwrap()
-            .def_type("CX", &[], Params::from_pairs(&[("mass", 13.0)]))
+            .def_type("CX", &[], Params::from_iter([("mass", 13.0)]))
             .unwrap();
         let style = ff.get_style_mut("atom", "full").unwrap();
 
@@ -2584,7 +2662,12 @@ pub(crate) mod tests {
             "{renamed:?}"
         );
         assert_eq!(
-            style.get_atomtype("CT").unwrap().params.get("mass"),
+            style
+                .get_atomtype("CT")
+                .unwrap()
+                .params
+                .get("mass")
+                .and_then(|v| v.as_num()),
             Some(12.011)
         );
         assert!(style.get_atomtype("CX").is_some());
@@ -2600,7 +2683,7 @@ pub(crate) mod tests {
             .def_type(
                 "CT-CT",
                 &["CT", "CT"],
-                Params::from_pairs(&[("k", 268.0), ("r0", 1.529)]),
+                Params::from_iter([("k", 268.0), ("r0", 1.529)]),
             )
             .unwrap();
         let style = ff.get_style_mut("bond", "harmonic").unwrap();
@@ -2612,7 +2695,10 @@ pub(crate) mod tests {
             panic!("expected Bond defs");
         };
         assert_eq!(types.len(), 1);
-        assert_eq!(types[0].params.get("k"), Some(310.0));
+        assert_eq!(
+            types[0].params.get("k").and_then(|v| v.as_num()),
+            Some(310.0)
+        );
     }
 
     // -- ForceField queries ----------------------------------------------------
@@ -2622,16 +2708,16 @@ pub(crate) mod tests {
         let mut ff = ForceField::new("test");
         ff.def_style("atom", "full", Params::new())
             .unwrap()
-            .def_type("CT", &[], Params::from_pairs(&[("mass", 12.0)]))
+            .def_type("CT", &[], Params::from_iter([("mass", 12.0)]))
             .unwrap()
-            .def_type("OH", &[], Params::from_pairs(&[("mass", 16.0)]))
+            .def_type("OH", &[], Params::from_iter([("mass", 16.0)]))
             .unwrap();
         ff.def_style("bond", "harmonic", Params::new())
             .unwrap()
             .def_type(
                 "CT-OH",
                 &["CT", "OH"],
-                Params::from_pairs(&[("k", 300.0), ("r0", 1.4)]),
+                Params::from_iter([("k", 300.0), ("r0", 1.4)]),
             )
             .unwrap();
 
@@ -2648,13 +2734,16 @@ pub(crate) mod tests {
             .def_type(
                 "HC-CT-HC",
                 &["HC", "CT", "HC"],
-                Params::from_pairs(&[("k", 33.0), ("theta0", 107.8)]),
+                Params::from_iter([("k", 33.0), ("theta0", 107.8)]),
             )
             .unwrap();
 
         let types = ff.get_angletypes();
         assert_eq!(types.len(), 1);
-        assert_eq!(types[0].params.get("theta0"), Some(107.8));
+        assert_eq!(
+            types[0].params.get("theta0").and_then(|v| v.as_num()),
+            Some(107.8)
+        );
     }
 
     /// The two values a presence/absence list can say, and the two ways to
@@ -2757,11 +2846,11 @@ pub(crate) mod tests {
             .def_type(
                 "A-B",
                 &["A", "B"],
-                Params::from_pairs(&[("k", 1.0), ("r0", 1.0)]),
+                Params::from_iter([("k", 1.0), ("r0", 1.0)]),
             )
             .unwrap();
         library
-            .def_style("pair", "lj/cut", Params::from_pairs(&[("cutoff", 10.0)]))
+            .def_style("pair", "lj/cut", Params::from_iter([("cutoff", 10.0)]))
             .unwrap();
 
         let empty = library.empty_like();
@@ -2793,7 +2882,7 @@ pub(crate) mod tests {
         library
             .def_style("atom", "full", Params::new())
             .unwrap()
-            .def_type("X", &[], Params::from_pairs(&[("mass", 1.0)]))
+            .def_type("X", &[], Params::from_iter([("mass", 1.0)]))
             .unwrap();
         let before = library.clone();
 
@@ -2877,7 +2966,7 @@ pub(crate) mod tests {
             .def_type(
                 "A-B",
                 &["A", "B"],
-                Params::from_pairs(&[("k", 1.0), ("r0", 1.0)]),
+                Params::from_iter([("k", 1.0), ("r0", 1.0)]),
             )
             .unwrap();
         ff.def_style("pair", "lj/cut", Params::new())
@@ -2885,7 +2974,7 @@ pub(crate) mod tests {
             .def_type(
                 "A",
                 &["A"],
-                Params::from_pairs(&[("epsilon", 0.1), ("sigma", 3.0)]),
+                Params::from_iter([("epsilon", 0.1), ("sigma", 3.0)]),
             )
             .unwrap();
 
@@ -2896,7 +2985,7 @@ pub(crate) mod tests {
             .def_type(
                 "A-B-C",
                 &["A", "B", "C"],
-                Params::from_pairs(&[("k", 50.0), ("theta0", 108.9)]),
+                Params::from_iter([("k", 50.0), ("theta0", 108.9)]),
             )
             .unwrap();
         other
@@ -2905,19 +2994,19 @@ pub(crate) mod tests {
             .def_type(
                 "C-D",
                 &["C", "D"],
-                Params::from_pairs(&[("k", 2.0), ("r0", 2.0)]),
+                Params::from_iter([("k", 2.0), ("r0", 2.0)]),
             )
             .unwrap()
             .def_type(
                 "B-C",
                 &["B", "C"],
-                Params::from_pairs(&[("k", 3.0), ("r0", 3.0)]),
+                Params::from_iter([("k", 3.0), ("r0", 3.0)]),
             )
             .unwrap();
         other
             .def_style("atom", "full", Params::new())
             .unwrap()
-            .def_type("X", &[], Params::from_pairs(&[("mass", 1.0)]))
+            .def_type("X", &[], Params::from_iter([("mass", 1.0)]))
             .unwrap();
 
         ff.merge(&other).unwrap();
@@ -2957,7 +3046,7 @@ pub(crate) mod tests {
         other
             .def_style("bond", "mmff", Params::new())
             .unwrap()
-            .def_type("0_1_5", &["1", "5"], Params::from_pairs(&[("kb", 4.258)]))
+            .def_type("0_1_5", &["1", "5"], Params::from_iter([("kb", 4.258)]))
             .unwrap();
         let mut ff = ForceField::new("target");
 
@@ -2981,17 +3070,17 @@ pub(crate) mod tests {
             .def_type(
                 "CT-CT",
                 &["CT", "CT"],
-                Params::from_pairs(&[("k", 268.0), ("r0", 1.529)]),
+                Params::from_iter([("k", 268.0), ("r0", 1.529)]),
             )
             .unwrap();
-        let mut lj = Params::from_pairs(&[("cutoff", 10.0)]);
-        lj.set_str("mixing", "geometric");
+        let mut lj = Params::from_iter([("cutoff", 10.0)]);
+        lj.set("mixing", "geometric");
         ff.def_style("pair", "lj/cut", lj)
             .unwrap()
             .def_type(
                 "CT",
                 &["CT"],
-                Params::from_pairs(&[("epsilon", 0.066), ("sigma", 3.5)]),
+                Params::from_iter([("epsilon", 0.066), ("sigma", 3.5)]),
             )
             .unwrap();
         let before = ff.clone();
@@ -3012,7 +3101,7 @@ pub(crate) mod tests {
             .def_type(
                 "CT-CT",
                 &["CT", "CT"],
-                Params::from_pairs(&[("k", 268.0), ("r0", 1.529)]),
+                Params::from_iter([("k", 268.0), ("r0", 1.529)]),
             )
             .unwrap();
         let before = ff.clone();
@@ -3026,7 +3115,7 @@ pub(crate) mod tests {
             .def_type(
                 "CT-CT-CT",
                 &["CT", "CT", "CT"],
-                Params::from_pairs(&[("k", 58.35), ("theta0", 111.7)]),
+                Params::from_iter([("k", 58.35), ("theta0", 111.7)]),
             )
             .unwrap();
         other
@@ -3035,13 +3124,13 @@ pub(crate) mod tests {
             .def_type(
                 "CT-HC",
                 &["CT", "HC"],
-                Params::from_pairs(&[("k", 340.0), ("r0", 1.09)]),
+                Params::from_iter([("k", 340.0), ("r0", 1.09)]),
             )
             .unwrap()
             .def_type(
                 "CT-CT",
                 &["CT", "CT"],
-                Params::from_pairs(&[("k", 310.0), ("r0", 1.529)]),
+                Params::from_iter([("k", 310.0), ("r0", 1.529)]),
             )
             .unwrap();
 
@@ -3056,8 +3145,8 @@ pub(crate) mod tests {
 
     #[test]
     fn merge_keeps_lj_cut_cutoff_and_mixing() {
-        let mut lj = Params::from_pairs(&[("cutoff", 12.0)]);
-        lj.set_str("mixing", "geometric");
+        let mut lj = Params::from_iter([("cutoff", 12.0)]);
+        lj.set("mixing", "geometric");
         let mut other = ForceField::new("source");
         other
             .def_style("pair", "lj/cut", lj)
@@ -3065,7 +3154,7 @@ pub(crate) mod tests {
             .def_type(
                 "OW",
                 &["OW"],
-                Params::from_pairs(&[("epsilon", 0.1553), ("sigma", 3.166)]),
+                Params::from_iter([("epsilon", 0.1553), ("sigma", 3.166)]),
             )
             .unwrap();
         let mut ff = ForceField::new("target");
@@ -3073,8 +3162,14 @@ pub(crate) mod tests {
         ff.merge(&other).unwrap();
 
         let style = ff.get_style("pair", "lj/cut").unwrap();
-        assert_eq!(style.params().get("cutoff"), Some(12.0));
-        assert_eq!(style.params().get_str("mixing"), Some("geometric"));
+        assert_eq!(
+            style.params().get("cutoff").and_then(|v| v.as_num()),
+            Some(12.0)
+        );
+        assert_eq!(
+            style.params().get("mixing").and_then(|v| v.as_text()),
+            Some("geometric")
+        );
     }
 
     #[test]
@@ -3083,7 +3178,7 @@ pub(crate) mod tests {
         ff.def_style(
             "pair",
             "coul/cut",
-            Params::from_pairs(&[("coulomb", 332.06371), ("dielectric", 1.0)]),
+            Params::from_iter([("coulomb", 332.06371), ("dielectric", 1.0)]),
         )
         .unwrap();
         let before = ff.clone();
@@ -3092,7 +3187,7 @@ pub(crate) mod tests {
             .def_style(
                 "pair",
                 "coul/cut",
-                Params::from_pairs(&[("coulomb", 332.0716), ("dielectric", 1.0)]),
+                Params::from_iter([("coulomb", 332.0716), ("dielectric", 1.0)]),
             )
             .unwrap();
 
@@ -3108,12 +3203,12 @@ pub(crate) mod tests {
     #[test]
     fn merge_with_a_different_pair_cutoff_is_a_style_conflict() {
         let mut ff = ForceField::new("target");
-        ff.def_style("pair", "lj/cut", Params::from_pairs(&[("cutoff", 10.0)]))
+        ff.def_style("pair", "lj/cut", Params::from_iter([("cutoff", 10.0)]))
             .unwrap();
         let before = ff.clone();
         let mut other = ForceField::new("source");
         other
-            .def_style("pair", "lj/cut", Params::from_pairs(&[("cutoff", 12.0)]))
+            .def_style("pair", "lj/cut", Params::from_iter([("cutoff", 12.0)]))
             .unwrap();
 
         let merged = ff.merge(&other);
@@ -3130,11 +3225,15 @@ pub(crate) mod tests {
     /// `lj/cut`'s `mixing = arithmetic`. A non-default value is another.
     #[test]
     fn merge_fills_spec_defaults_before_comparing_style_params() {
-        let coulomb = Params::from_pairs(&[("coulomb", 332.0522173), ("dielectric", 1.0)]);
+        let coulomb = Params::from_iter(
+            [("coulomb", 332.0522173), ("dielectric", 1.0)]
+                .iter()
+                .copied(),
+        );
         let mut stated = coulomb.clone();
         stated.set("delta", 0.0);
         let mut arithmetic = Params::new();
-        arithmetic.set_str("mixing", "arithmetic");
+        arithmetic.set("mixing", "arithmetic");
         let mut ff = ForceField::new("target");
         ff.def_style("pair", "coul/cut", coulomb.clone()).unwrap();
         ff.def_style("pair", "lj/cut", Params::new()).unwrap();
@@ -3151,7 +3250,7 @@ pub(crate) mod tests {
         );
 
         let mut geometric = Params::new();
-        geometric.set_str("mixing", "geometric");
+        geometric.set("mixing", "geometric");
         let mut other = ForceField::new("source");
         other.def_style("pair", "lj/cut", geometric).unwrap();
         let merged = ff.merge(&other);
@@ -3168,9 +3267,15 @@ pub(crate) mod tests {
     /// are two.
     #[test]
     fn merge_takes_numbers_within_its_tolerance_for_one_value() {
-        let angle = |theta0: f64| Params::from_pairs(&[("k", 46.3), ("theta0", theta0)]);
-        let torsion =
-            |k: f64| Params::from_pairs(&[("k1", k), ("periodicity1", 2.0), ("phase1", 180.0)]);
+        let angle =
+            |theta0: f64| Params::from_iter([("k", 46.3), ("theta0", theta0)].iter().copied());
+        let torsion = |k: f64| {
+            Params::from_iter(
+                [("k1", k), ("periodicity1", 2.0), ("phase1", 180.0)]
+                    .iter()
+                    .copied(),
+            )
+        };
         let define = |theta0: f64, k: f64| {
             let mut ff = ForceField::new("ff");
             ff.def_style("angle", "harmonic", Params::new())
@@ -3203,20 +3308,24 @@ pub(crate) mod tests {
     #[test]
     fn merge_compares_only_what_the_spec_declares() {
         let mut ff = ForceField::new("native");
-        let mut estimated = Params::from_pairs(&[("k", 63.1), ("theta0", 109.68)]);
+        let mut estimated = Params::from_iter([("k", 63.1), ("theta0", 109.68)].iter().copied());
         estimated.set("estimated", 1.0);
-        estimated.set_str("estimate_method", "analogy");
+        estimated.set("estimate_method", "analogy");
         ff.def_style("atom", "full", Params::new())
             .unwrap()
-            .def_type("c3", &[], Params::from_pairs(&[("mass", 12.01)]))
+            .def_type(
+                "c3",
+                &[],
+                Params::from_iter([("mass", 12.01)].iter().copied()),
+            )
             .unwrap();
         ff.def_style("angle", "harmonic", Params::new())
             .unwrap()
             .def_type("f-c3-sy", &["f", "c3", "sy"], estimated.clone())
             .unwrap();
         let mut prmtop = ForceField::new("prmtop");
-        let mut with_id = Params::from_pairs(&[("id", 4.0), ("mass", 12.01)]);
-        with_id.set_str("desc", "sp3 carbon");
+        let mut with_id = Params::from_iter([("id", 4.0), ("mass", 12.01)].iter().copied());
+        with_id.set("desc", "sp3 carbon");
         prmtop
             .def_style("atom", "full", Params::new())
             .unwrap()
@@ -3228,7 +3337,11 @@ pub(crate) mod tests {
             .def_type(
                 "f-c3-sy",
                 &["f", "c3", "sy"],
-                Params::from_pairs(&[("k", 63.1), ("theta0", 109.68004677699743)]),
+                Params::from_iter(
+                    [("k", 63.1), ("theta0", 109.68004677699743)]
+                        .iter()
+                        .copied(),
+                ),
             )
             .unwrap();
 
@@ -3243,7 +3356,7 @@ pub(crate) mod tests {
             .def_type(
                 "f-c3-sy",
                 &["f", "c3", "sy"],
-                Params::from_pairs(&[("k", 63.1)]),
+                Params::from_iter([("k", 63.1)].iter().copied()),
             )
             .unwrap();
         let merged = ff.merge(&no_theta);

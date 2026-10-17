@@ -1,8 +1,8 @@
 //! LAMMPS log file parser.
 
 use serde::Serialize;
-use std::fs;
-use std::path::Path;
+
+use crate::io::Source;
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -176,30 +176,28 @@ pub struct LammpsLog {
 // Public entry points
 // ---------------------------------------------------------------------------
 
-/// Read a LAMMPS log file from disk.
+/// Read a LAMMPS log.
 ///
 /// `style` is the thermo style the run printed; only `"default"` thermo
-/// tables are currently parsed.
+/// tables are currently parsed. The result's [`path`](LammpsLog::path) is the
+/// file read, and empty for bytes.
 ///
 /// # Errors
 ///
-/// Returns [`std::io::Error`] if the file cannot be read.
-pub fn read_lammps_log<P: AsRef<Path>>(path: P, style: &str) -> std::io::Result<LammpsLog> {
-    let path = path.as_ref();
-    let text = fs::read_to_string(path)?;
-    Ok(read_lammps_log_str(
-        &text,
-        path.to_string_lossy().as_ref(),
-        style,
-    ))
+/// Returns [`std::io::Error`] if the file cannot be read, or `InvalidData`
+/// for a log that is not UTF-8 text.
+pub fn read_lammps_log<'a>(src: impl Into<Source<'a>>, style: &str) -> std::io::Result<LammpsLog> {
+    let src = src.into();
+    let name = src
+        .path()
+        .map(|p| p.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    Ok(parse_log(&src.text()?, &name, style))
 }
 
-/// Parse a LAMMPS log from an in-memory string.
-///
-/// `source_name` names where the text came from (a file path, or
-/// `"<string>"`); it is recorded as the result's [`path`](LammpsLog::path) and
-/// never opened.
-pub fn read_lammps_log_str(text: &str, source_name: &str, style: &str) -> LammpsLog {
+/// Parse a LAMMPS log's text; `source_name` is recorded as the result's
+/// [`path`](LammpsLog::path) and never opened.
+fn parse_log(text: &str, source_name: &str, style: &str) -> LammpsLog {
     let lines: Vec<&str> = text.lines().collect();
     let run_ranges = find_run_ranges(&lines);
     let mut header_end = run_ranges.first().map(|(s, _)| *s).unwrap_or(lines.len());
@@ -238,7 +236,7 @@ pub fn read_lammps_log_str(text: &str, source_name: &str, style: &str) -> Lammps
 }
 
 /// Whether `text` holds a LAMMPS run: a `Per MPI rank memory allocation
-/// (min/avg/max) = …` line, the line [`read_lammps_log_str`] opens each run
+/// (min/avg/max) = …` line, the line [`read_lammps_log`] opens each run
 /// at.
 ///
 /// The banner alone is not enough — a log whose run died during setup has
@@ -850,7 +848,8 @@ mod tests {
         let banner_only = "LAMMPS (1 Jan 2026)\nTotal wall time: 0:00:00\n";
         assert!(!is_lammps_log(banner_only));
         assert!(
-            read_lammps_log_str(banner_only, "", "default")
+            read_lammps_log(banner_only.as_bytes(), "default")
+                .unwrap()
                 .runs
                 .is_empty()
         );
@@ -896,7 +895,7 @@ Total wall time: 0:00:01
 
     #[test]
     fn parses_nested_run_structure() {
-        let log = read_lammps_log_str(sample_full_log(), "log.lammps", "default");
+        let log = read_lammps_log(sample_full_log().as_bytes(), "default").unwrap();
         assert_eq!(log.version.as_deref(), Some("LAMMPS (1 Jan 2026)"));
         assert_eq!(log.total_wall_time.as_deref(), Some("0:00:01"));
         assert_eq!(log.runs.len(), 1);
@@ -964,7 +963,7 @@ Step Temp PotEng
 30 315.0 -1030.0
 Loop time of 0.1 on 1 procs
 ";
-        let log = read_lammps_log_str(text, "two.log", "default");
+        let log = read_lammps_log(text.as_bytes(), "default").unwrap();
         assert_eq!(log.runs.len(), 2);
         assert_eq!(log.runs[0].thermo.as_ref().unwrap().rows[0][0], 0.0);
         assert_eq!(log.runs[1].thermo.as_ref().unwrap().rows[0][0], 20.0);
@@ -973,7 +972,7 @@ Loop time of 0.1 on 1 procs
     #[test]
     fn handles_no_thermo_block() {
         let text = "LAMMPS (1 Jan 2026)\n# nothing happened\n";
-        let log = read_lammps_log_str(text, "empty.log", "default");
+        let log = read_lammps_log(text.as_bytes(), "default").unwrap();
         assert!(log.runs.is_empty());
         assert!(log.version.as_ref().unwrap().starts_with("LAMMPS"));
     }
@@ -1020,7 +1019,7 @@ Per MPI rank memory allocation (min/avg/max) = 1 | 1 | 1 Mbytes
 Loop time of 1.0 on 1 procs for 1000 steps with 10 atoms
 Total wall time: 0:00:02
 ";
-        let log = read_lammps_log_str(text, "append.log", "default");
+        let log = read_lammps_log(text.as_bytes(), "default").unwrap();
         assert_eq!(log.runs.len(), 2, "both invocations' runs survive");
         for run in &log.runs {
             let thermo = run.thermo.as_ref().expect("thermo");

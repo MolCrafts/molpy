@@ -385,10 +385,11 @@ crate::compute::spec::compute_spec! {
 mod tests {
     use super::*;
     use crate::compute::time_series::test_support::trajectory;
-    use ndarray::{Array3, array};
+    use crate::core::Cell;
+    use ndarray::Array3;
 
     fn cube(l: F) -> SimBox {
-        SimBox::cube(l, array![0.0, 0.0, 0.0], [true, true, true]).unwrap()
+        SimBox::new(Cell::Lengths([l; 3]), [0.0, 0.0, 0.0], [true, true, true]).unwrap()
     }
 
     fn run(analysis: &VanHove, x: &Array3<F>, l: F) -> Result<VanHoveResult, ComputeError> {

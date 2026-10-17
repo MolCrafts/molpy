@@ -28,9 +28,9 @@ use std::collections::BTreeMap;
 use std::path::Path;
 use std::sync::Arc;
 
-use molrs::core::SimBox;
 use molrs::core::TypeLabels;
 use molrs::core::{Block, Frame};
+use molrs::core::{Cell, SimBox};
 use molrs::core::{NeighborColumns, NeighborPair, Neighbors, QueryMode};
 use molrs::ff::compile::PotentialCompiler;
 use molrs::ff::forcefield::{DefError, ForceField};
@@ -40,13 +40,13 @@ use molrs::ff::ir::{
 };
 use molrs::ff::ir::{Params, SpecialBonds};
 use molrs::ff::potential::form_kernel::{ParamColumns, ScalarForm};
-use molrs::ff::potential::{CompileError, ForceTerm, intramolecular_pairs};
+use molrs::ff::potential::{Accumulator, CompileError, ForceTerm, Potential, intramolecular_pairs};
 use molrs::ff::style_registry::{Kernel, Registry};
 use molrs::io::gromacs::GromacsTopForcefieldWriter;
-use molrs::io::lammps::{LammpsForcefieldWriteOptions, LammpsForcefieldWriter};
-use molrs::io::mrec::ForceFieldSection;
+use molrs::io::lammps::LammpsForcefieldWriter;
+use molrs::io::mrec::{ForceFieldSection, MolRec, MrecFile};
 use molrs::io::writer::ForceFieldWriter;
-use molrs::io::{read_mrec_forcefield, write_lammps_data, write_mrec_forcefield};
+use molrs::io::{write_lammps_data, write_mrec};
 use molrs_ext_example as ext;
 use ndarray::Array1;
 
@@ -82,23 +82,23 @@ type Relation<'a> = (&'a str, &'a [(&'a [u32], &'a str)]);
 fn frame(types: &[&str], relations: &[Relation<'_>]) -> Frame {
     let n = types.len();
     let mut atoms = Block::new();
-    atoms.insert("type", strings(types)).unwrap();
+    atoms.insert("type", strings(types), None).unwrap();
     let mass: Vec<f64> = types
         .iter()
         .map(|t| MASSES.iter().find(|(k, _)| k == t).unwrap().1)
         .collect();
     atoms
-        .insert("mass", Array1::from_vec(mass).into_dyn())
+        .insert("mass", Array1::from_vec(mass).into_dyn(), None)
         .unwrap();
     atoms
-        .insert("charge", Array1::from_vec(vec![0.0; n]).into_dyn())
+        .insert("charge", Array1::from_vec(vec![0.0; n]).into_dyn(), None)
         .unwrap();
     atoms
-        .insert("mol_id", Array1::from_vec(vec![1u32; n]).into_dyn())
+        .insert("mol_id", Array1::from_vec(vec![1u32; n]).into_dyn(), None)
         .unwrap();
     for key in ["x", "y", "z"] {
         atoms
-            .insert(key, Array1::from_vec(vec![0.0; n]).into_dyn())
+            .insert(key, Array1::from_vec(vec![0.0; n]).into_dyn(), None)
             .unwrap();
     }
     let mut f = Frame::new();
@@ -108,10 +108,11 @@ fn frame(types: &[&str], relations: &[Relation<'_>]) -> Frame {
         let arity = rows[0].0.len();
         for (k, key) in ["atomi", "atomj", "atomk"][..arity].iter().enumerate() {
             let col: Vec<u32> = rows.iter().map(|r| r.0[k]).collect();
-            b.insert(*key, Array1::from_vec(col).into_dyn()).unwrap();
+            b.insert(*key, Array1::from_vec(col).into_dyn(), None)
+                .unwrap();
         }
         let types: Vec<&str> = rows.iter().map(|r| r.1).collect();
-        b.insert("type", strings(&types)).unwrap();
+        b.insert("type", strings(&types), None).unwrap();
         f.insert(*block, b);
     }
     f
@@ -119,14 +120,14 @@ fn frame(types: &[&str], relations: &[Relation<'_>]) -> Frame {
 
 /// `frame` with its `pairs` list under `ff`'s special-bonds weights.
 fn with_pairs(ff: &ForceField, mut frame: Frame) -> Frame {
-    let pairs = intramolecular_pairs(&frame, ff.special_bonds()).unwrap();
+    let pairs = intramolecular_pairs(&frame, ff.special_bonds(), None).unwrap();
     frame.insert("pairs", pairs);
     frame
 }
 
-/// `ff` with an `atom full` style of the masses.
-fn field(name: &str, special: [f64; 3]) -> ForceField {
-    let mut ff = ForceField::new(name);
+/// `ff`, read against `reg`, with an `atom full` style of the masses.
+fn field(name: &str, special: [f64; 3], reg: &Registry) -> ForceField {
+    let mut ff = ForceField::new(name).with_registry(Arc::new(reg.clone()));
     ff.set_units("real");
     ff.set_special_bonds(SpecialBonds {
         lj: special,
@@ -135,7 +136,7 @@ fn field(name: &str, special: [f64; 3]) -> ForceField {
     let atoms = ff.def_style("atom", "full", Params::new()).unwrap();
     for (t, m) in MASSES {
         atoms
-            .def_type(t, &[], Params::from_pairs(&[("mass", m), ("charge", 0.0)]))
+            .def_type(t, &[], Params::from_iter([("mass", m), ("charge", 0.0)]))
             .unwrap();
     }
     ff
@@ -163,17 +164,15 @@ fn shifted(x: &[f64], d: f64) -> Vec<f64> {
 /// five beyond, in each configuration; the nearest 0.19 Å from it): both
 /// compile doors price a pair only at `r < cutoff`, as LAMMPS does.
 fn smooth(reg: &Registry) -> Case {
-    let mut ff = field("smooth", [0.0; 3]);
-    let mut style = Params::from_pairs(&[("cutoff", SMOOTH_CUTOFF)]);
-    style.set_str("mixing", "arithmetic");
-    let lj = ff
-        .def_style_in(reg, "pair", "lj/smooth/linear", style)
-        .unwrap();
+    let mut ff = field("smooth", [0.0; 3], reg);
+    let mut style = Params::from_iter([("cutoff", SMOOTH_CUTOFF)]);
+    style.set("mixing", "arithmetic");
+    let lj = ff.def_style("pair", "lj/smooth/linear", style).unwrap();
     for (t, eps, sigma) in [("A", 0.2, 3.1), ("B", 0.15, 3.6)] {
         lj.def_type(
             t,
             &[t],
-            Params::from_pairs(&[("epsilon", eps), ("sigma", sigma)]),
+            Params::from_iter([("epsilon", eps), ("sigma", sigma)]),
         )
         .unwrap();
     }
@@ -200,8 +199,8 @@ const SMOOTH_CUTOFF: f64 = 5.0;
 /// `bond fene` on a five-atom chain, three bond types, two bonds inside
 /// the WCA range `2^(1/6) σ`.
 fn fene(reg: &Registry) -> Case {
-    let mut ff = field("fene", [0.0, 1.0, 1.0]);
-    let style = ff.def_style_in(reg, "bond", "fene", Params::new()).unwrap();
+    let mut ff = field("fene", [0.0, 1.0, 1.0], reg);
+    let style = ff.def_style("bond", "fene", Params::new()).unwrap();
     for (name, ends, k, r0, eps, sigma) in [
         ("A-A", ["A", "A"], 30.0, 1.5, 1.0, 1.0),
         ("A-B", ["A", "B"], 25.0, 1.75, 0.8, 1.1),
@@ -211,7 +210,7 @@ fn fene(reg: &Registry) -> Case {
             .def_type(
                 name,
                 &ends,
-                Params::from_pairs(&[("k", k), ("r0", r0), ("epsilon", eps), ("sigma", sigma)]),
+                Params::from_iter([("k", k), ("r0", r0), ("epsilon", eps), ("sigma", sigma)]),
             )
             .unwrap();
     }
@@ -250,11 +249,11 @@ const CHAIN: [f64; 12] = [
 /// The `urey_bradley` category on a four-atom chain, and the deck LAMMPS
 /// prices it as: `angle_style charmm`, `K = 0`, on the same rows.
 fn urey_bradley(reg: &Registry) -> Case {
-    let mut ff = field("ub", [0.0, 1.0, 1.0]);
+    let mut ff = field("ub", [0.0, 1.0, 1.0], reg);
     let style = ff
-        .def_style_in(reg, "urey_bradley", "harmonic", Params::new())
+        .def_style("urey_bradley", "harmonic", Params::new())
         .unwrap();
-    let mut deck = field("ub", [0.0, 1.0, 1.0]);
+    let mut deck = field("ub", [0.0, 1.0, 1.0], reg);
     let angle = deck.def_style("angle", "charmm", Params::new()).unwrap();
     for (_, name, k_ub, r_ub) in UB_ROWS {
         let ends: Vec<&str> = name.split('-').collect();
@@ -262,7 +261,7 @@ fn urey_bradley(reg: &Registry) -> Case {
             .def_type(
                 name,
                 &ends,
-                Params::from_pairs(&[("k_ub", k_ub), ("r_ub", r_ub)]),
+                Params::from_iter([("k_ub", k_ub), ("r_ub", r_ub)]),
             )
             .unwrap();
         // θ0 is any angle: K = 0 prices none of it.
@@ -270,7 +269,7 @@ fn urey_bradley(reg: &Registry) -> Case {
             .def_type(
                 name,
                 &ends,
-                Params::from_pairs(&[
+                Params::from_iter([
                     ("k", 0.0),
                     ("theta0", 109.5),
                     ("k_ub", k_ub),
@@ -303,11 +302,9 @@ const BA_ROWS: [([u32; 3], &str, [f64; 5]); 2] = [
 /// `ba` zero — which needs a LAMMPS built with CLASS2
 /// (`MOLRS_LMP_CLASS2`).
 fn bond_angle(reg: &Registry) -> Case {
-    let mut ff = field("ba", [0.0, 1.0, 1.0]);
-    let style = ff
-        .def_style_in(reg, "bond_angle", "class2", Params::new())
-        .unwrap();
-    let mut deck = field("ba", [0.0, 1.0, 1.0]);
+    let mut ff = field("ba", [0.0, 1.0, 1.0], reg);
+    let style = ff.def_style("bond_angle", "class2", Params::new()).unwrap();
+    let mut deck = field("ba", [0.0, 1.0, 1.0], reg);
     let angle = deck.def_style("angle", "class2", Params::new()).unwrap();
     for (_, name, [n1, n2, r1, r2, theta0]) in BA_ROWS {
         let ends: Vec<&str> = name.split('-').collect();
@@ -315,7 +312,7 @@ fn bond_angle(reg: &Registry) -> Case {
             .def_type(
                 name,
                 &ends,
-                Params::from_pairs(&[
+                Params::from_iter([
                     ("n1", n1),
                     ("n2", n2),
                     ("r1", r1),
@@ -328,7 +325,7 @@ fn bond_angle(reg: &Registry) -> Case {
             .def_type(
                 name,
                 &ends,
-                Params::from_pairs(&[("theta0", theta0), ("k2", 0.0), ("k3", 0.0), ("k4", 0.0)]),
+                Params::from_iter([("theta0", theta0), ("k2", 0.0), ("k3", 0.0), ("k4", 0.0)]),
             )
             .unwrap();
     }
@@ -351,10 +348,17 @@ fn cases(reg: &Registry) -> Vec<Case> {
 
 /// Energy and forces of `ff` over `frame` at `x`, compiled in `reg`.
 fn price(ff: &ForceField, reg: &Registry, frame: &Frame, x: &[f64]) -> (f64, Vec<f64>) {
-    PotentialCompiler::with_registry(ff, reg)
+    let pots = PotentialCompiler::new(&against(ff, reg))
         .compile(frame)
-        .unwrap_or_else(|e| panic!("{}: {e}", ff.name))
-        .calc_energy_forces(x)
+        .unwrap_or_else(|e| panic!("{}: {e}", ff.name));
+    let mut acc = Accumulator::new(x.len());
+    pots.evaluate(x, &mut acc);
+    (acc.energy(), acc.into_forces())
+}
+
+/// `ff`, read against `reg` instead of the registry it was built in.
+fn against(ff: &ForceField, reg: &Registry) -> ForceField {
+    ff.clone().with_registry(Arc::new(reg.clone()))
 }
 
 // ---------------------------------------------------------------------------
@@ -368,12 +372,11 @@ fn placed(frame: &Frame, x: &[f64]) -> Frame {
     for (d, key) in ["x", "y", "z"].iter().enumerate() {
         let col: Vec<f64> = x.iter().skip(d).step_by(3).copied().collect();
         atoms
-            .insert(*key, Array1::from_vec(col).into_dyn())
+            .insert(*key, Array1::from_vec(col).into_dyn(), None)
             .unwrap();
     }
     out.remove("pairs");
-    out.simbox =
-        Some(SimBox::cube(100.0, ndarray::array![-50.0, -50.0, -50.0], [false; 3]).unwrap());
+    out.simbox = Some(SimBox::new(Cell::Lengths([100.0; 3]), [-50.0; 3], [false; 3]).unwrap());
     out
 }
 
@@ -381,14 +384,12 @@ fn placed(frame: &Frame, x: &[f64]) -> Frame {
 /// apart: it goes before `read_data`).
 fn deck(case: &Case, reg: &Arc<Registry>) -> (String, String) {
     let labels = TypeLabels::from_frame(&case.deck_frame).unwrap();
-    let options = LammpsForcefieldWriteOptions {
-        precision: 17,
-        ..LammpsForcefieldWriteOptions::default()
-    };
-    let text = LammpsForcefieldWriter::with_options(&labels, options)
-        .with_registry(reg.clone())
-        .write_str(&case.deck)
+    let mut buffer = Vec::new();
+    LammpsForcefieldWriter::new(&labels)
+        .with_precision(17)
+        .write(&mut buffer, &against(&case.deck, reg))
         .unwrap_or_else(|e| panic!("{}: {e}", case.name));
+    let text = String::from_utf8(buffer).unwrap();
     let (pre, post): (Vec<&str>, Vec<&str>) = text.lines().partition(|l| l.starts_with("units"));
     (pre.join("\n") + "\n", post.join("\n") + "\n" + case.extra)
 }
@@ -411,7 +412,7 @@ fn write_lammps_inputs() {
         let mut tsv = String::new();
         for (k, x) in case.configs.iter().enumerate() {
             write_lammps_data(
-                root.join(format!("data_{k}.lmp")),
+                &root.join(format!("data_{k}.lmp")),
                 &placed(&case.deck_frame, x),
             )
             .unwrap();
@@ -555,8 +556,8 @@ fn pair_style_matches_lammps() {
             QueryMode::SelfQuery { n_points: n },
         );
         let mut ft = vec![0.0; x.len()];
-        let mut et = 0.0;
-        let members = PotentialCompiler::with_registry(&case.ff, &reg)
+        let mut acc = Accumulator::adding_into(&mut ft);
+        let members = PotentialCompiler::new(&against(&case.ff, &reg))
             .compile_typed(&case.frame)
             .unwrap();
         assert_eq!(members.len(), 1, "one pair member");
@@ -566,8 +567,9 @@ fn pair_style_matches_lammps() {
             };
             let special = w.special_weights(&topo);
             let factor: Vec<f64> = links.iter().map(|&(i, j)| special.weight(i, j)).collect();
-            et += p.accumulate_pairs(x, &table, &factor, &mut ft).0;
+            p.evaluate_pairs(x, &table, &factor, &mut acc);
         }
+        let et = acc.energy();
         let scale = f.iter().fold(0.0_f64, |m, v| m.max(v.abs()));
         assert!(
             (et - e).abs() <= 1e-12 * e.abs(),
@@ -628,7 +630,7 @@ fn fene_matches_lammps() {
 #[test]
 fn mrec_round_trip() {
     let reg = ext::registry();
-    let mut ff = field("everything", [0.0, 1.0, 1.0]);
+    let mut ff = field("everything", [0.0, 1.0, 1.0], &reg);
     for case in [
         smooth(&reg),
         fene(&reg),
@@ -637,7 +639,7 @@ fn mrec_round_trip() {
     ] {
         for style in case.ff.styles().iter().filter(|s| s.category() != "atom") {
             let s = ff
-                .def_style_in(&reg, style.category(), style.name(), style.params().clone())
+                .def_style(style.category(), style.name(), style.params().clone())
                 .unwrap();
             for (name, ends, p) in style.type_rows() {
                 s.def_type(name, &ends, p.clone()).unwrap();
@@ -671,9 +673,14 @@ fn mrec_round_trip() {
     let dir = std::env::temp_dir().join(format!("molrs-ext-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join("everything.mrec");
-    let section = ForceFieldSection::from_forcefield_in(&ff, &reg).unwrap();
-    write_mrec_forcefield(&path, &section, None).unwrap();
-    let read = read_mrec_forcefield(&path).unwrap().unwrap();
+    let mut record = MolRec::new();
+    record.forcefield = Some(ForceFieldSection::from_forcefield(&ff).unwrap());
+    write_mrec(&path, &record).unwrap();
+    let read = MrecFile::open(&path)
+        .unwrap()
+        .forcefield()
+        .unwrap()
+        .unwrap();
     std::fs::remove_dir_all(&dir).unwrap();
 
     // The expressions, byte for byte: written from the registry, since the
@@ -734,7 +741,7 @@ fn mrec_round_trip() {
         (blocks(&["pairs"]), "pair", "lj/smooth/linear"),
     ] {
         assert!(back.get_style(category, style).is_some());
-        let err = PotentialCompiler::with_registry(&back, &builtin)
+        let err = PotentialCompiler::new(&against(&back, &builtin))
             .compile(&only)
             .unwrap_err();
         assert_eq!(
@@ -850,9 +857,9 @@ fn nonconforming_refused() {
         }
     );
     // A type with the wrong number of endpoints for its category.
-    let mut ff = ForceField::new("t");
+    let mut ff = ForceField::new("t").with_registry(Arc::new(r.clone()));
     let err: DefError = ff
-        .def_style_in(&r, "urey_bradley", "harmonic", Params::new())
+        .def_style("urey_bradley", "harmonic", Params::new())
         .unwrap()
         .def_type("A-B", &["A", "B"], Params::new())
         .unwrap_err();
@@ -1034,16 +1041,16 @@ fn nonconforming_refused() {
     )
     .unwrap();
     let compile = |ff: &ForceField, frame: &Frame| {
-        PotentialCompiler::with_registry(ff, &r)
+        PotentialCompiler::new(&against(ff, &r))
             .compile(frame)
             .map(|_| ())
             .unwrap_err()
     };
     let one_bond = frame(&["A", "B"], &[("bonds", &[(&[0, 1], "A-B")])]);
-    let mut ff = field("t", [0.0, 1.0, 1.0]);
+    let mut ff = field("t", [0.0, 1.0, 1.0], &r);
     ff.def_style("bond", "mystery", Params::new())
         .unwrap()
-        .def_type("A-B", &["A", "B"], Params::from_pairs(&[("k", 1.0)]))
+        .def_type("A-B", &["A", "B"], Params::from_iter([("k", 1.0)]))
         .unwrap();
     assert_eq!(
         compile(&ff, &one_bond),
@@ -1052,13 +1059,13 @@ fn nonconforming_refused() {
             style: "mystery".into()
         })
     );
-    let mut ff = field("t", [0.0, 1.0, 1.0]);
-    ff.def_style_in(&r, "bond", "fene", Params::new())
+    let mut ff = field("t", [0.0, 1.0, 1.0], &r);
+    ff.def_style("bond", "fene", Params::new())
         .unwrap()
         .def_type(
             "A-B",
             &["A", "B"],
-            Params::from_pairs(&[("k", 30.0), ("r0", 1.5), ("epsilon", 1.0)]),
+            Params::from_iter([("k", 30.0), ("r0", 1.5), ("epsilon", 1.0)]),
         )
         .unwrap();
     assert_eq!(
@@ -1070,12 +1077,12 @@ fn nonconforming_refused() {
         })
     );
     // A parameter that does not mix, an unlike pair, no cross row.
-    let mut ff = field("t", [0.0; 3]);
+    let mut ff = field("t", [0.0; 3], &r);
     let soft = ff
-        .def_style_in(&r, "pair", "soft", Params::from_pairs(&[("cutoff", 9.0)]))
+        .def_style("pair", "soft", Params::from_iter([("cutoff", 9.0)]))
         .unwrap();
     for t in ["A", "B"] {
-        soft.def_type(t, &[t], Params::from_pairs(&[("a", 1.0)]))
+        soft.def_type(t, &[t], Params::from_iter([("a", 1.0)]))
             .unwrap();
     }
     let unbonded = with_pairs(&ff, frame(&["A", "B"], &[]));
@@ -1084,17 +1091,15 @@ fn nonconforming_refused() {
         CompileError::Ir(IrError::NoMixing { style, param, .. }) if style == "soft" && param == "a"
     ));
     // A text value outside its declared choices.
-    let mut ff = field("t", [0.0; 3]);
-    let mut style = Params::from_pairs(&[("cutoff", 8.0)]);
-    style.set_str("mixing", "median");
-    let lj = ff
-        .def_style_in(&r, "pair", "lj/smooth/linear", style)
-        .unwrap();
+    let mut ff = field("t", [0.0; 3], &r);
+    let mut style = Params::from_iter([("cutoff", 8.0)]);
+    style.set("mixing", "median");
+    let lj = ff.def_style("pair", "lj/smooth/linear", style).unwrap();
     for t in ["A", "B"] {
         lj.def_type(
             t,
             &[t],
-            Params::from_pairs(&[("epsilon", 0.2), ("sigma", 3.1)]),
+            Params::from_iter([("epsilon", 0.2), ("sigma", 3.1)]),
         )
         .unwrap();
     }
@@ -1116,7 +1121,7 @@ fn nonconforming_refused() {
     );
     let fene = case("fene", &r);
     let err = GromacsTopForcefieldWriter::new()
-        .write_str(&fene.ff)
+        .write(&mut Vec::new(), &fene.ff)
         .unwrap_err();
     assert!(
         matches!(err.ir(), Some(IrError::NoEngineForm { engine, category, style, .. })
@@ -1126,8 +1131,7 @@ fn nonconforming_refused() {
     let ub = case("urey_bradley", &r);
     let labels = TypeLabels::from_frame(&ub.frame).unwrap();
     let err = LammpsForcefieldWriter::new(&labels)
-        .with_registry(Arc::new(r.clone()))
-        .write_str(&ub.ff)
+        .write(&mut Vec::new(), &ub.ff)
         .unwrap_err();
     assert!(
         matches!(err.ir(), Some(IrError::NoEngineForm { engine, category, .. })
@@ -1148,7 +1152,7 @@ fn nonconforming_refused() {
         matches!(&err, IrError::FormConflict { family, .. } if family == "torsion"),
         "{err:?}"
     );
-    let err = r.to_form(&fene.ff, "bond", "fene").unwrap_err();
+    let err = fene.ff.to_form("bond", "fene").unwrap_err();
     assert_eq!(
         err,
         IrError::NoForm {
@@ -1196,13 +1200,13 @@ fn bond_angle_cross_term() {
         0.0,
     ];
     let one = |x: &[f64], reg: &Registry| {
-        let mut ff = field("ba", [0.0, 1.0, 1.0]);
-        ff.def_style_in(reg, "bond_angle", "class2", Params::new())
+        let mut ff = field("ba", [0.0, 1.0, 1.0], reg);
+        ff.def_style("bond_angle", "class2", Params::new())
             .unwrap()
             .def_type(
                 "A-B-B",
                 &["A", "B", "B"],
-                Params::from_pairs(&[
+                Params::from_iter([
                     ("n1", 10.0),
                     ("n2", 8.0),
                     ("r1", 1.5),

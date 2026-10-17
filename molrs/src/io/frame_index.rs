@@ -10,9 +10,10 @@
 //! ([`PdbIndexBuilder`](crate::io::pdb::PdbIndexBuilder),
 //! [`XyzIndexBuilder`](crate::io::xyz::XyzIndexBuilder), the LAMMPS data and
 //! dump indexers, [`SdfIndexBuilder`](crate::io::sdf::SdfIndexBuilder), and
-//! the DCD, TRR and XTC ones); each format's `read_<fmt>_bytes` door
-//! ([`read_pdb_bytes`](crate::io::read_pdb_bytes), …) decodes exactly the byte
-//! slice its indexer produced.
+//! the DCD, TRR and XTC ones); each byte range an indexer produces is a whole
+//! one-frame file its format's `read_<fmt>` door
+//! ([`read_pdb`](crate::io::read_pdb), …) reads from bytes (a DCD frame body
+//! past frame 0 also through [`DcdFrameDecoder`](crate::io::dcd::DcdFrameDecoder)).
 //!
 //! See `docs/specs/streaming-trajectory.md` (in the molvis repo) for the
 //! full design.
@@ -22,7 +23,7 @@
 /// `byte_offset` is the absolute byte position of the frame's first byte
 /// inside the source file. `byte_len` is the number of bytes that make up
 /// the frame; the slice `source[byte_offset..byte_offset + byte_len as u64]`
-/// must be a self-contained input that the matching `read_<fmt>_bytes`
+/// must be a self-contained input that the matching `read_<fmt>`
 /// door can decode into a single [`Frame`](molrs::core::Frame).
 ///
 /// `byte_len` is intentionally `u32`. Per-frame size is bounded — even very
@@ -92,9 +93,10 @@ pub trait FrameIndexBuilder: Send {
     /// Default: ignore. Text indexers never need it.
     fn hint_total_bytes(&mut self, _total: u64) {}
 
-    /// Opaque decoder state the matching `read_<fmt>_bytes` door needs in
-    /// addition to one frame's byte range (DCD header + optional fixed-atom
-    /// seed). `None` for self-describing frames (dump, XYZ, XTC, TRR).
+    /// Opaque decoder state a frame's byte range needs to be decoded (DCD
+    /// header + optional fixed-atom seed), as
+    /// [`DcdFrameDecoder`](crate::io::dcd::DcdFrameDecoder) takes it. `None`
+    /// for self-describing frames (dump, XYZ, XTC, TRR).
     fn decoder_state(&self) -> Option<Vec<u8>> {
         None
     }
@@ -106,7 +108,7 @@ pub trait FrameIndexBuilder: Send {
 /// The bridge between a chunked indexer and a file-backed
 /// [`TrajectoryReader`](crate::io::reader::TrajectoryReader): a reader whose
 /// format has an indexer indexes its file through here and reads frame `i`
-/// from `offsets[i]` with the format's `read_<fmt>_bytes` door.
+/// from `offsets[i]` with the format's `read_<fmt>` door.
 pub(crate) fn index_stream<R: std::io::Read + std::io::Seek>(
     reader: &mut R,
     mut builder: Box<dyn FrameIndexBuilder>,
@@ -140,6 +142,53 @@ pub(crate) fn frame_bytes<R: std::io::Read + std::io::Seek>(
     let mut bytes = vec![0u8; at.byte_len as usize];
     reader.read_exact(&mut bytes)?;
     Ok(bytes)
+}
+
+/// Index a seekable text stream whose records each begin on a line `starts`
+/// accepts (`@<TRIPOS>MOLECULE`, `data_…`), fed every line in order: one
+/// [`FrameOffset`] per such line, spanning to the next one or to the end. Whatever precedes the first
+/// is no record. The stream is put back where it was.
+///
+/// For the formats with no chunked indexer of their own, whose
+/// [`TrajectoryReader`](crate::io::reader::TrajectoryReader) reads record `i`
+/// as the bytes of `offsets[i]`.
+pub(crate) fn index_line_records<R: std::io::BufRead + std::io::Seek>(
+    reader: &mut R,
+    mut starts: impl FnMut(&str) -> bool,
+) -> std::io::Result<Vec<FrameOffset>> {
+    use std::io::SeekFrom;
+    let start = reader.stream_position()?;
+    reader.seek(SeekFrom::Start(0))?;
+    let mut heads = Vec::new();
+    let mut offset = 0u64;
+    let mut line = Vec::new();
+    loop {
+        line.clear();
+        let n = reader.read_until(b'\n', &mut line)?;
+        if n == 0 {
+            break;
+        }
+        if starts(&String::from_utf8_lossy(&line)) {
+            heads.push(offset);
+        }
+        offset += n as u64;
+    }
+    reader.seek(SeekFrom::Start(start))?;
+    let mut offsets = Vec::with_capacity(heads.len());
+    for (i, &head) in heads.iter().enumerate() {
+        let end = heads.get(i + 1).copied().unwrap_or(offset);
+        let byte_len = u32::try_from(end - head).map_err(|_| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!("record at byte {head} is larger than 4 GiB"),
+            )
+        })?;
+        offsets.push(FrameOffset {
+            byte_offset: head,
+            byte_len,
+        });
+    }
+    Ok(offsets)
 }
 
 // ============================================================================

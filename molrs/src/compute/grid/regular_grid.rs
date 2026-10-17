@@ -354,7 +354,7 @@ impl RegularGrid<3> {
                 value: format!("{dims:?}"),
             });
         }
-        let o = simbox.origin_view();
+        let o = simbox.origin();
         let origin = [o[0], o[1], o[2]];
         let mut basis = [[0.0; 3]; 3];
         match simbox.kind() {
@@ -364,7 +364,7 @@ impl RegularGrid<3> {
                 }
             }
             BoxKind::Triclinic => {
-                let h = simbox.h_view();
+                let h = ndarray::arr2(&simbox.matrix());
                 for (d, edge) in basis.iter_mut().enumerate() {
                     for (k, v) in edge.iter_mut().enumerate() {
                         *v = h[[k, d]] / dims[d] as F;
@@ -451,7 +451,7 @@ fn determinant<const D: usize>(m: [[F; D]; D]) -> F {
 mod tests {
     use super::*;
     use crate::compute::{Gaussian, Indicator};
-    use ndarray::array;
+    use crate::core::Cell;
 
     fn cube(n: usize, pbc: bool) -> RegularGrid<3> {
         RegularGrid::new(
@@ -597,9 +597,9 @@ mod tests {
 
     #[test]
     fn over_box_divides_the_cell() {
-        let simbox = SimBox::ortho(
-            array![10.0, 20.0, 30.0],
-            array![1.0, 2.0, 3.0],
+        let simbox = SimBox::new(
+            Cell::Lengths([10.0, 20.0, 30.0]),
+            [1.0, 2.0, 3.0],
             [true, false, true],
         )
         .unwrap();

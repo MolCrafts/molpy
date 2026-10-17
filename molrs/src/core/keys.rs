@@ -103,8 +103,8 @@ named_keys! {
     /// The relation kind ports are stored under.
     pub const PORTS: &str = "ports";
     /// Node prop: the fragment instance a node belongs to, an `i32` that
-    /// `MolGraph::replicate` stamps on every copy and `MolGraph::set_frag_id`
-    /// writes per atom.
+    /// `MolGraph::replicate` stamps on every copy and `set_atom` / `set_node`
+    /// with this key writes per atom.
     pub const FRAG_ID: &str = "frag_id";
     /// Atom prop: the 0-based id of the atom's charge-equivalence class,
     /// written by `perceive::assign_equivalence_classes`. Class ids
@@ -139,6 +139,13 @@ named_keys! {
     /// Frame meta key: the unit style a LAMMPS `write_data` title line stated
     /// (`units = real`); absent when the file states none.
     pub const LAMMPS_UNITS: &str = "lammps_units";
+    /// Frame meta key: the mass of each atom type, as a JSON object from type
+    /// label to mass (`{"OW": 15.9994, "HW": 1.008}`; an unlabelled type's label
+    /// is its id, `"1"`). The LAMMPS data reader writes it from the Masses
+    /// section; the writer takes a type's mass from it when no atom of that type
+    /// carries a `mass` — a type the labels declare but no atom uses, or a frame
+    /// without a `mass` column.
+    pub const LAMMPS_TYPE_MASSES: &str = "lammps_type_masses";
 }
 
 /// The preset a frame's [`UNITS`] meta value names: the `preset` of a units

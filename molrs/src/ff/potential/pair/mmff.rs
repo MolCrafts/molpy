@@ -35,9 +35,8 @@ use crate::ff::params::mmff::{DA_ACCEPTOR, DA_DONOR};
 use crate::ff::potential::flat_coords::{sub3, validate_coords};
 use crate::ff::potential::gather_copies;
 use crate::ff::potential::pair::atom_type_index;
-use crate::ff::potential::pair::energy_forces;
-use crate::ff::potential::pair::fold_chunks;
-use crate::ff::potential::{ForceTerm, PairDriven, Potential};
+use crate::ff::potential::pair::{fold_pairs, fold_pairs_untallied};
+use crate::ff::potential::{Accumulator, ForceTerm, PairDriven, Potential};
 use crate::op::vec3::norm;
 use molrs::core::Frame;
 use molrs::core::Neighbors;
@@ -149,34 +148,31 @@ impl PairMmffVdw {
         Some((energy, [factor * d[0], factor * d[1], factor * d[2]]))
     }
 
-    /// The accumulation, once.
-    fn fold(
-        &self,
-        n_components: usize,
-        n_pairs: usize,
-        pair: impl Fn(usize) -> (usize, usize, F, F, [F; 3]) + Sync,
-    ) -> (F, Vec<F>, Virial) {
-        let mut forces = vec![0.0; n_components];
-        let (energy, virial) = self.fold_into(&mut forces, &[], n_pairs, pair);
-        (energy, forces, virial)
-    }
-
-    /// The accumulation, adding into the caller's buffer and scaling each pair.
+    /// The accumulation, once, into `acc`, scaling each pair. Only where the
+    /// pairs and the parameters come from differs between the two entry
+    /// points; `tally` is whether this source can report a virial (a
+    /// compiled list cannot).
     fn fold_into(
         &self,
-        out: &mut [F],
+        acc: &mut Accumulator<'_>,
         factor: &[F],
         n_pairs: usize,
+        tally: bool,
         pair: impl Fn(usize) -> (usize, usize, F, F, [F; 3]) + Sync,
-    ) -> (F, Virial) {
-        fold_chunks(out, n_pairs, |acc, rows| {
-            self.fold_rows(acc, factor, rows, &pair)
-        })
+    ) {
+        let plain = |out: &mut [F], rows| self.fold_rows::<false>(out, factor, rows, &pair);
+        if tally {
+            fold_pairs(acc, n_pairs, plain, |out: &mut [F], rows| {
+                self.fold_rows::<true>(out, factor, rows, &pair)
+            });
+        } else {
+            fold_pairs_untallied(acc, n_pairs, plain);
+        }
     }
 
     /// One contiguous range of pairs, into `out`. The whole fold when it runs
     /// serially; one chunk of it when it does not.
-    fn fold_rows(
+    fn fold_rows<const VIRIAL: bool>(
         &self,
         out: &mut [F],
         factor: &[F],
@@ -200,7 +196,9 @@ impl PairMmffVdw {
             };
             let f = [w * f[0], w * f[1], w * f[2]];
             energy += w * e;
-            virial.add_outer(f, d);
+            if VIRIAL {
+                virial.add_outer(f, d);
+            }
             for dim in 0..3 {
                 out[j * 3 + dim] += f[dim];
                 out[i * 3 + dim] -= f[dim];
@@ -211,7 +209,7 @@ impl PairMmffVdw {
 }
 
 impl Potential for PairMmffVdw {
-    fn calc_energy_forces(&self, coords: &[F]) -> (F, Vec<F>) {
+    fn evaluate(&self, coords: &[F], acc: &mut Accumulator<'_>) {
         let _n = validate_coords(coords);
         let Source::Compiled {
             atom_i,
@@ -221,46 +219,40 @@ impl Potential for PairMmffVdw {
         } = &self.source
         else {
             // Per-atom parameters need a pair table, and nobody handed one over.
-            return (0.0, vec![0.0 as F; coords.len()]);
+            return;
         };
-        energy_forces(self.fold(coords.len(), atom_i.len(), |idx| {
+        self.fold_into(acc, &[], atom_i.len(), false, |idx| {
             let (i, j) = (atom_i[idx], atom_j[idx]);
             (i, j, r_star[idx], epsilon[idx], sub3(coords, j, coords, i))
-        }))
-    }
-
-    fn calc_energy_forces_with_pairs(&self, coords: &[F], pairs: &Neighbors) -> (F, Vec<F>) {
-        let (e, f, _) = self.calc_energy_forces_with_pairs_virial(coords, pairs);
-        (e, f)
+        });
     }
 }
 
 impl PairDriven for PairMmffVdw {
-    fn accumulate_pairs(
+    fn evaluate_pairs(
         &self,
         coords: &[F],
         pairs: &Neighbors,
         factor: &[F],
-        out: &mut [F],
-    ) -> (F, Option<Virial>) {
+        acc: &mut Accumulator<'_>,
+    ) {
         let Source::PerAtom { atoms, style, .. } = &self.source else {
             // A compiled kernel answers for its own list, not for this one.
             // A compiled kernel cannot read the table, so it cannot read a
             // per-pair weight either. Both providers refuse one, so this is
             // the free-boundary path and `factor` is empty.
             debug_assert!(factor.is_empty());
-            let (e, f) = self.calc_energy_forces(coords);
-            for (acc, v) in out.iter_mut().zip(&f) {
-                *acc += v;
-            }
-            return (e, None);
+            self.evaluate(coords, acc);
+            return;
         };
         let Some(disp) = pairs.disp() else {
-            return (0.0, None);
+            // No displacements, nothing priced — and no virial claimed for it.
+            acc.forces_without_virial();
+            return;
         };
         let i_col = pairs.query_point_indices();
         let j_col = pairs.point_indices();
-        let (e, w) = self.fold_into(out, factor, i_col.len(), |p| {
+        self.fold_into(acc, factor, i_col.len(), true, |p| {
             let i = i_col[p] as usize;
             let j = j_col[p] as usize;
             debug_assert!(
@@ -270,19 +262,9 @@ impl PairDriven for PairMmffVdw {
             let (rs, eps) = vdw_combining(&atoms[i], &atoms[j], style);
             (i, j, rs, eps, [disp[[p, 0]], disp[[p, 1]], disp[[p, 2]]])
         });
-        (e, Some(w))
     }
     fn binds_a_fixed_pair_list(&self) -> bool {
         matches!(self.source, Source::Compiled { .. })
-    }
-    fn calc_energy_forces_with_pairs_virial(
-        &self,
-        coords: &[F],
-        pairs: &Neighbors,
-    ) -> (F, Vec<F>, Option<Virial>) {
-        let mut forces = vec![0.0; coords.len()];
-        let (e, w) = self.accumulate_pairs(coords, pairs, &[], &mut forces);
-        (e, forces, w)
     }
     fn gather_onto_copies(&mut self, owner: &[u32]) {
         let Source::PerAtom { atoms, n_owned, .. } = &mut self.source else {
@@ -425,23 +407,23 @@ pub fn pair_mmff_vdw_constructor(
     frame: &Frame,
 ) -> Result<ForceTerm, crate::ff::potential::CompileError> {
     let style = PairMmffVdwStyleParams::from_style(sp)?;
-    let lj_14 = sp.get("lj14scale").unwrap_or(1.0) as F;
+    let lj_14 = sp.get("lj14scale").and_then(|v| v.as_num()).unwrap_or(1.0) as F;
     let type_map: HashMap<&str, &Params> = tp.iter().copied().collect();
     let atoms = frame.get(ATOMS).ok_or("mmff_vdw: missing \"atoms\"")?;
     let atom_types = atoms
         .get("type")
-        .and_then(|c| c.as_string())
+        .and_then(|c| c.get::<String>())
         .ok_or("mmff_vdw: missing atom \"type\"")?;
     let pairs = frame.get(PAIRS).ok_or("mmff_vdw: missing \"pairs\"")?;
     let ic = pairs
         .get("atomi")
-        .and_then(|c| c.as_uint())
+        .and_then(|c| c.get::<u64>())
         .ok_or("missing atomi")?;
     let jc = pairs
         .get("atomj")
-        .and_then(|c| c.as_uint())
+        .and_then(|c| c.get::<u64>())
         .ok_or("missing atomj")?;
-    let is_14 = pairs.get("is_14").and_then(|c| c.as_bool());
+    let is_14 = pairs.get("is_14").and_then(|c| c.get::<bool>());
 
     let n = ic.len();
     let (mut ai, mut aj, mut rs_vec, mut eps_vec) = (
@@ -579,21 +561,22 @@ mod tests {
         let table = table_over(&coords, &links);
         assert_same(
             "mmff_vdw",
-            compiled.calc_energy_forces(&coords),
-            typed.calc_energy_forces_with_pairs(&coords, &table),
+            compiled.energy_forces_at(&coords),
+            typed.over_pairs(&coords, &table),
         );
         assert_virial_matches_forces(
             "mmff_vdw",
             &coords,
-            typed.calc_energy_forces_with_pairs_virial(&coords, &table),
+            typed.over_pairs_virial(&coords, &table),
         );
     }
     use super::*;
+    use crate::ff::potential::fixtures::OneShot;
 
     /// MMFF94's global vdW line (`<VdWParams B="0.2" Beta="12.0" DARAD="0.8"
     /// DAEPS="0.5">`), as the reader hands it to the kernel.
     fn mmff94_vdw_style() -> PairMmffVdwStyleParams {
-        PairMmffVdwStyleParams::from_style(&Params::from_pairs(&[
+        PairMmffVdwStyleParams::from_style(&Params::from_iter([
             ("B", 0.2),
             ("Beta", 12.0),
             ("DARAD", 0.8),
@@ -620,7 +603,7 @@ mod tests {
     fn test_mmff_vdw_energy() {
         let pot = PairMmffVdw::compiled(vec![0], vec![1], vec![1.94], vec![0.02]);
         let coords: Vec<F> = vec![0.0, 0.0, 0.0, 3.0, 0.0, 0.0];
-        let (e, forces) = pot.calc_energy_forces(&coords);
+        let (e, forces) = pot.energy_forces_at(&coords);
         assert!(e.is_finite());
         for dim in 0..3 {
             let sum = forces[dim] + forces[3 + dim];

@@ -16,7 +16,8 @@ use crate::ff::ir::same_lj;
 use crate::ff::ir::torsion::nharmonic_coefficients;
 use crate::ff::potential::pair::charmm::{charmm_mixing, charmm_pair_params};
 use crate::ff::potential::{MAX_ATOMS_FOR_A_FULL_PAIR_LIST, intramolecular_pairs};
-use crate::io::writer::{ForceFieldWriteError, ForceFieldWriter};
+use crate::io::Sink;
+use crate::io::writer::{ForceFieldWriteError, ForceFieldWriter, put_text};
 use molrs::core::Frame;
 use molrs::core::schema::PAIR_OVERRIDE_COLUMNS;
 
@@ -26,7 +27,9 @@ const LJ_STYLES: [&str; 2] = ["lj/cut", "lj/charmm"];
 /// Writer for GROMACS force-field directives.
 ///
 /// `GromacsTopForcefieldWriter::new().with_precision(p)`, then
-/// [`ForceFieldWriter::write`] / [`ForceFieldWriter::write_str`].
+/// [`ForceFieldWriter::write`] (directives) or
+/// [`write_system`](GromacsTopForcefieldWriter::write_system) (a whole
+/// topology).
 ///
 /// The inverse of
 /// [`GromacsTopForcefieldReader`](crate::io::gromacs::GromacsTopForcefieldReader):
@@ -130,9 +133,9 @@ const LJ_STYLES: [&str; 2] = ["lj/cut", "lj/charmm"];
 ///
 /// # Systems
 ///
-/// [`GromacsTopForcefieldWriter::write_system_str`] writes a force field **and** a
+/// [`GromacsTopForcefieldWriter::write_system`] writes a force field **and** a
 /// typed frame as one `.top`, the inverse of
-/// [`GromacsTopForcefieldReader::read_system_str`](crate::io::gromacs::GromacsTopForcefieldReader::read_system_str):
+/// [`GromacsTopForcefieldReader::read_system`](crate::io::gromacs::GromacsTopForcefieldReader::read_system):
 /// `[ defaults ]`, `[ atomtypes ]`, `[ nonbond_params ]`, `[ pairtypes ]`
 /// and `[ cmaptypes ]` as above, then one `[ moleculetype ]` (`nrexcl` 3) per
 /// molecule (bond-graph component, a run of consecutive atoms), with each
@@ -207,10 +210,12 @@ fn table_key(directive: &str, funct: u32) -> Table {
 }
 
 impl GromacsTopForcefieldWriter {
+    /// The writer, coefficients with 6 decimals.
     pub fn new() -> Self {
         Self::default()
     }
 
+    /// Write floating coefficients with `precision` decimals.
     pub fn with_precision(mut self, precision: usize) -> Self {
         self.precision = precision;
         self
@@ -241,7 +246,7 @@ impl GromacsTopForcefieldWriter {
             Some(style) if style.name() == "lj/charmm" => {
                 charmm_mixing(style.params()).map_err(|e| e.to_string())?
             }
-            Some(style) => match style.params().get_str("mixing") {
+            Some(style) => match style.params().get("mixing").and_then(|v| v.as_text()) {
                 Some(name) => {
                     CombiningRule::parse(name).map_err(|e| format!("pair/lj/cut: {e}"))?
                 }
@@ -288,7 +293,7 @@ impl GromacsTopForcefieldWriter {
     ) -> Result<String, String> {
         let p = &t.params;
         let name = &t.name;
-        let need = |key: &str| match p.get(key) {
+        let need = |key: &str| match p.get(key).and_then(|v| v.as_num()) {
             Some(v) => Ok(v),
             None if system => Ok(0.0),
             None => Err(format!("atom type '{name}' has no {key}")),
@@ -302,15 +307,16 @@ impl GromacsTopForcefieldWriter {
             lj_row
                 .params
                 .get(key)
+                .and_then(|v| v.as_num())
                 .ok_or_else(|| format!("pair/{lj_name} self row '{name}' has no {key}"))
         };
         let (sigma, epsilon) = (lj_need("sigma")?, lj_need("epsilon")?);
 
         let mut cols = vec![name.clone()];
-        if let Some(bond_type) = p.get_str("class") {
+        if let Some(bond_type) = p.get("class").and_then(|v| v.as_text()) {
             cols.push(bond_type.to_owned());
         }
-        if let Some(z) = p.get("atomic_number") {
+        if let Some(z) = p.get("atomic_number").and_then(|v| v.as_num()) {
             if z.fract() != 0.0 || !z.is_finite() {
                 return Err(format!(
                     "atom type '{name}': atomic_number {z} is not an integer"
@@ -321,7 +327,10 @@ impl GromacsTopForcefieldWriter {
         cols.extend([
             self.fmt_f(mass),
             self.fmt_f(charge),
-            p.get_str("ptype").unwrap_or("A").to_owned(),
+            p.get("ptype")
+                .and_then(|v| v.as_text())
+                .unwrap_or("A")
+                .to_owned(),
             self.fmt_f(sigma / NM_TO_ANGSTROM.get()),
             self.fmt_f(epsilon * KCAL_TO_KJ.get()),
         ]);
@@ -344,7 +353,7 @@ impl GromacsTopForcefieldWriter {
                 ));
             }
             for key in ["sigma", "epsilon"] {
-                if params.get(key).is_none() {
+                if params.get(key).and_then(|v| v.as_num()).is_none() {
                     return Err(format!("pair/{lj_name} row '{name}' has no {key}"));
                 }
             }
@@ -365,6 +374,7 @@ impl GromacsTopForcefieldWriter {
                 let need = |key: &str| {
                     params
                         .get(key)
+                        .and_then(|v| v.as_num())
                         .ok_or_else(|| format!("pair/lj/cut cross row '{name}' has no {key}"))
                 };
                 nonbond.push_str(&line(ends[0], ends[1], (need("epsilon")?, need("sigma")?)));
@@ -378,8 +388,11 @@ impl GromacsTopForcefieldWriter {
         let by_key: HashMap<&str, &Params> =
             kernel_rows.iter().map(|(k, p)| (k.as_str(), p)).collect();
         let mixing = charmm_mixing(lj.params()).map_err(|e| e.to_string())?;
-        let has_14 = |p: &Params| p.get("epsilon14").is_some() || p.get("sigma14").is_some();
-        let one_four = lj.params().get_str("one_four");
+        let has_14 = |p: &Params| {
+            p.get("epsilon14").and_then(|v| v.as_num()).is_some()
+                || p.get("sigma14").and_then(|v| v.as_num()).is_some()
+        };
+        let one_four = lj.params().get("one_four").and_then(|v| v.as_text());
         if one_four != Some("epsilon14") && rows.iter().any(|r| has_14(r.2)) {
             return Err(format!(
                 "pair/lj/charmm carries epsilon14/sigma14 without one_four = \"epsilon14\": \
@@ -395,13 +408,16 @@ impl GromacsTopForcefieldWriter {
             let own = |t: &str| {
                 let p = by_key[t];
                 (
-                    p.get("epsilon").unwrap_or(0.0),
-                    p.get("sigma").unwrap_or(0.0),
+                    p.get("epsilon").and_then(|v| v.as_num()).unwrap_or(0.0),
+                    p.get("sigma").and_then(|v| v.as_num()).unwrap_or(0.0),
                 )
             };
             let row = (
-                params.get("epsilon").unwrap_or(0.0),
-                params.get("sigma").unwrap_or(0.0),
+                params
+                    .get("epsilon")
+                    .and_then(|v| v.as_num())
+                    .unwrap_or(0.0),
+                params.get("sigma").and_then(|v| v.as_num()).unwrap_or(0.0),
             );
             if !same_lj(row, mixing.combine(own(ends[0]), own(ends[1]))) {
                 nonbond.push_str(&line(ends[0], ends[1], row));
@@ -474,7 +490,11 @@ impl GromacsTopForcefieldWriter {
                 None => Ok(()),
             }
         };
-        let need = |key: &str| p.get(key).ok_or_else(|| format!("{what} has no {key}"));
+        let need = |key: &str| {
+            p.get(key)
+                .and_then(|v| v.as_num())
+                .ok_or_else(|| format!("{what} has no {key}"))
+        };
         let whole = |key: &str| -> Result<f64, String> {
             let n = need(key)?;
             if n.fract() != 0.0 || !n.is_finite() {
@@ -542,13 +562,13 @@ impl GromacsTopForcefieldWriter {
                 )
             }
             ("dihedral" | "improper", "periodic") => {
-                if p.get("k1").is_none() {
+                if p.get("k1").and_then(|v| v.as_num()).is_none() {
                     allowed(&["k", "periodicity", "phase"])?;
                     let funct = if style.category() == "dihedral" { 1 } else { 4 };
                     return one(
                         funct,
                         vec![
-                            p.get("phase").unwrap_or(0.0),
+                            p.get("phase").and_then(|v| v.as_num()).unwrap_or(0.0),
                             need("k")? * KCAL_TO_KJ.get(),
                             whole("periodicity")?,
                         ],
@@ -563,11 +583,13 @@ impl GromacsTopForcefieldWriter {
                 }
                 let mut lines = Vec::new();
                 let mut m = 1;
-                while p.get(&format!("k{m}")).is_some() {
+                while p.get(&format!("k{m}")).and_then(|v| v.as_num()).is_some() {
                     lines.push(Line {
                         funct: 9,
                         values: vec![
-                            p.get(&format!("phase{m}")).unwrap_or(0.0),
+                            p.get(&format!("phase{m}"))
+                                .and_then(|v| v.as_num())
+                                .unwrap_or(0.0),
                             need(&format!("k{m}"))? * KCAL_TO_KJ.get(),
                             whole(&format!("periodicity{m}"))?,
                         ],
@@ -589,7 +611,7 @@ impl GromacsTopForcefieldWriter {
             }
             ("dihedral", "charmm") => {
                 allowed(&["k", "periodicity", "phase", "w"])?;
-                if p.get("w").unwrap_or(0.0) != 0.0 {
+                if p.get("w").and_then(|v| v.as_num()).unwrap_or(0.0) != 0.0 {
                     return Err(format!(
                         "{what}: w = {} prices the dihedral's 1-4 pair, which GROMACS prices \
                          by [ pairs ], never by a dihedral",
@@ -600,7 +622,7 @@ impl GromacsTopForcefieldWriter {
                 one(
                     9,
                     vec![
-                        p.get("phase").unwrap_or(0.0),
+                        p.get("phase").and_then(|v| v.as_num()).unwrap_or(0.0),
                         need("k")? * KCAL_TO_KJ.get(),
                         whole("periodicity")?,
                     ],
@@ -626,11 +648,17 @@ impl GromacsTopForcefieldWriter {
                 allowed(&["k1", "phi1", "k2", "phi2", "k3", "phi3"])?;
                 let lines: Vec<Line> = (1..=3)
                     .filter_map(|n| {
-                        let k = p.get(&format!("k{n}")).unwrap_or(0.0);
+                        let k = p
+                            .get(&format!("k{n}"))
+                            .and_then(|v| v.as_num())
+                            .unwrap_or(0.0);
                         (k != 0.0).then(|| Line {
                             funct: 9,
                             values: vec![
-                                p.get(&format!("phi{n}")).unwrap_or(0.0) + 180.0,
+                                p.get(&format!("phi{n}"))
+                                    .and_then(|v| v.as_num())
+                                    .unwrap_or(0.0)
+                                    + 180.0,
                                 k * KCAL_TO_KJ.get(),
                                 n as f64,
                             ],
@@ -649,7 +677,11 @@ impl GromacsTopForcefieldWriter {
                 } else {
                     allowed(&["a1", "a2", "a3", "a4", "a5"])?;
                     (1..=5)
-                        .map(|i| p.get(&format!("a{i}")).unwrap_or(0.0))
+                        .map(|i| {
+                            p.get(&format!("a{i}"))
+                                .and_then(|v| v.as_num())
+                                .unwrap_or(0.0)
+                        })
                         .collect()
                 };
                 if a.len() > 6 {
@@ -668,12 +700,14 @@ impl GromacsTopForcefieldWriter {
             ("dihedral", "opls") => {
                 allowed(&["k1", "k2", "k3", "k4"])?;
                 // An absent k_n is a zero term, as the kernel reads it.
-                let f = |key: &str| p.get(key).unwrap_or(0.0) * KCAL_TO_KJ.get();
+                let f = |key: &str| {
+                    p.get(key).and_then(|v| v.as_num()).unwrap_or(0.0) * KCAL_TO_KJ.get()
+                };
                 one(5, vec![f("k1"), f("k2"), f("k3"), f("k4")], None)
             }
             ("improper", "harmonic") => {
                 allowed(&["k", "chi0"])?;
-                let chi0 = p.get("chi0").unwrap_or(0.0);
+                let chi0 = p.get("chi0").and_then(|v| v.as_num()).unwrap_or(0.0);
                 if chi0 != 0.0 && chi0 != 180.0 {
                     return Err(format!(
                         "{what}: chi0 = {chi0} deg; dihedraltypes funct 2 is signed and agrees \
@@ -696,7 +730,13 @@ impl GromacsTopForcefieldWriter {
 ///
 /// [`StyleSpec::style_params_off_default`]: crate::ff::ir::StyleSpec::style_params_off_default
 fn check_style(style: &Style) -> Result<(), ForceFieldWriteError> {
-    let declared = |key: &str, value: f64| style.params().get(key).is_none_or(|v| v == value);
+    let declared = |key: &str, value: f64| {
+        style
+            .params()
+            .get(key)
+            .and_then(|v| v.as_num())
+            .is_none_or(|v| v == value)
+    };
     let stated = crate::ff::style_registry::with_global_registry(|r| {
         r.style(style.category(), style.name())
             .map(|(spec, _)| spec.style_params_off_default(style.params()))
@@ -705,8 +745,9 @@ fn check_style(style: &Style) -> Result<(), ForceFieldWriteError> {
     let extra_params = |keys: &[&str]| {
         stated
             .iter()
+            .filter_map(|(k, v)| v.as_num().map(|x| (k, x)))
             .map(|(k, _)| k)
-            .chain(stated.iter_strings().map(|(k, _)| k))
+            .chain(stated.iter().filter_map(|(k, v)| v.as_text().map(|_| k)))
             .find(|k| !keys.contains(k))
             .map(str::to_owned)
     };
@@ -771,15 +812,26 @@ fn check_style(style: &Style) -> Result<(), ForceFieldWriteError> {
     }
 }
 
-impl ForceFieldWriter for GromacsTopForcefieldWriter {
-    fn write_str(&self, ff: &ForceField) -> Result<String, ForceFieldWriteError> {
+impl GromacsTopForcefieldWriter {
+    /// The file's text: what [`write`](ForceFieldWriter::write) puts into its sink.
+    fn text(&self, ff: &ForceField) -> Result<String, ForceFieldWriteError> {
         self.directives(ff, false)
+    }
+}
+
+impl ForceFieldWriter for GromacsTopForcefieldWriter {
+    fn write<'a>(
+        &self,
+        sink: impl Into<Sink<'a>>,
+        ff: &ForceField,
+    ) -> Result<(), ForceFieldWriteError> {
+        put_text(sink.into(), &self.text(ff)?)
     }
 }
 
 impl GromacsTopForcefieldWriter {
     /// The force-field directives of `ff`. `system`: the directives of
-    /// [`Self::write_system_str`] — no bonded `[ *types ]` tables but
+    /// [`Self::write_system`] — no bonded `[ *types ]` tables but
     /// `[ cmaptypes ]` (its rows carry their parameters), and atom types
     /// without a mass or charge written 0.
     fn directives(&self, ff: &ForceField, system: bool) -> Result<String, ForceFieldWriteError> {
@@ -831,7 +883,11 @@ impl GromacsTopForcefieldWriter {
         // A bonded endpoint is the wildcard, an atom-type name or a class
         // (GROMACS `bond_type`).
         let mut labels = type_names;
-        labels.extend(atom_types.iter().filter_map(|t| t.params.get_str("class")));
+        labels.extend(
+            atom_types
+                .iter()
+                .filter_map(|t| t.params.get("class").and_then(|v| v.as_text())),
+        );
         let resolve = |style: &Style, name: &str, ends: &[&str]| -> Result<Vec<String>, String> {
             ends.iter()
                 .map(|end| {
@@ -933,7 +989,8 @@ impl GromacsTopForcefieldWriter {
                     .into());
                 }
                 let grid = params
-                    .get_array(CMAP_GRID)
+                    .get(CMAP_GRID)
+                    .and_then(|v| v.as_array())
                     .ok_or_else(|| format!("cmap/charmm type '{name}' has no grid"))?;
                 let n = match grid.shape() {
                     [a, b] if a == b => *a,
@@ -960,13 +1017,26 @@ impl GromacsTopForcefieldWriter {
         Ok(out)
     }
 
-    /// `ff` and the typed `frame` as one GROMACS topology: the force-field
-    /// directives and one molecule type per molecule (module docs, "Systems").
-    pub fn write_system_str(
+    /// Write `ff` and the typed `frame` into `sink` as one GROMACS topology:
+    /// the force-field directives and one molecule type per molecule (module
+    /// docs, "Systems"); the inverse of
+    /// [`GromacsTopForcefieldReader::read_system`](crate::io::gromacs::GromacsTopForcefieldReader::read_system).
+    /// Nothing is written when the topology is refused.
+    ///
+    /// # Errors
+    ///
+    /// Every refusal of the module documentation, and the sink's OS error.
+    pub fn write_system<'a>(
         &self,
+        sink: impl Into<Sink<'a>>,
         ff: &ForceField,
         frame: &Frame,
-    ) -> Result<String, ForceFieldWriteError> {
+    ) -> Result<(), ForceFieldWriteError> {
+        put_text(sink.into(), &self.system_text(ff, frame)?)
+    }
+
+    /// The topology [`write_system`](Self::write_system) writes.
+    fn system_text(&self, ff: &ForceField, frame: &Frame) -> Result<String, ForceFieldWriteError> {
         let mut out = self.directives(ff, true)?;
         let atoms = frame.get("atoms").ok_or("frame has no atoms block")?;
         let n = atoms.n_rows().unwrap_or(0);
@@ -977,13 +1047,13 @@ impl GromacsTopForcefieldWriter {
             )
             .into());
         }
-        let strings = |key: &str| atoms.get(key).and_then(|c| c.as_string());
+        let strings = |key: &str| atoms.get(key).and_then(|c| c.get::<String>());
         let types = strings("type").ok_or("atoms has no string type column")?;
         let charges = atoms
             .get("charge")
-            .and_then(|c| c.as_float())
+            .and_then(|c| c.get::<f64>())
             .ok_or("atoms has no charge column")?;
-        let masses = atoms.get("mass").and_then(|c| c.as_float());
+        let masses = atoms.get("mass").and_then(|c| c.get::<f64>());
         // A stated type, charge or mass has no stand-in; an unset name is
         // generated, as the `.gro` writer generates it (`null_cells`).
         refuse_null_cells(frame, "atoms", &["type", "charge", "mass"])
@@ -1000,7 +1070,7 @@ impl GromacsTopForcefieldWriter {
             frame
                 .get(block)
                 .and_then(|b| b.get(key))
-                .and_then(|c| c.as_uint())
+                .and_then(|c| c.get::<u64>())
                 .map(|c| c.iter().map(|&v| v as usize).collect())
                 .ok_or_else(|| format!("{block} has no index column {key}"))
         };
@@ -1011,7 +1081,7 @@ impl GromacsTopForcefieldWriter {
             };
             let names = b
                 .get("type")
-                .and_then(|c| c.as_string())
+                .and_then(|c| c.get::<String>())
                 .ok_or_else(|| format!("{block} has no string type column"))?;
             let cols = KEYS[..arity]
                 .iter()
@@ -1149,7 +1219,7 @@ impl GromacsTopForcefieldWriter {
             let label = |t: &str| -> String {
                 atom_types
                     .get(t)
-                    .and_then(|ty| ty.params.get_str("class"))
+                    .and_then(|ty| ty.params.get("class").and_then(|v| v.as_text()))
                     .unwrap_or(t)
                     .to_owned()
             };
@@ -1182,7 +1252,7 @@ impl GromacsTopForcefieldWriter {
         // removes the others of the molecule the frame does not price.
         let pairs = match frame.get("pairs") {
             Some(p) => p.clone(),
-            None => intramolecular_pairs(frame, ff.special_bonds())?,
+            None => intramolecular_pairs(frame, ff.special_bonds(), None)?,
         };
         // A frame whose every pair is excluded (a water) has a column-less
         // `pairs` block: no rows, not a missing column.
@@ -1192,14 +1262,14 @@ impl GromacsTopForcefieldWriter {
             }
             pairs
                 .get(key)
-                .and_then(|c| c.as_uint())
+                .and_then(|c| c.get::<u64>())
                 .map(|c| c.iter().map(|&v| v as usize).collect())
                 .ok_or_else(|| format!("pairs has no {key}"))
         };
         let (pi, pj) = (endpoints("atomi")?, endpoints("atomj")?);
-        let is_14 = pairs.get("is_14").and_then(|c| c.as_bool());
+        let is_14 = pairs.get("is_14").and_then(|c| c.get::<bool>());
         let cell = |key: &str, r: usize| -> Option<f64> {
-            let col = pairs.get(key)?.as_float()?;
+            let col = pairs.get(key)?.get::<f64>()?;
             pairs.validity(key).is_none_or(|m| m[r]).then(|| col[[r]])
         };
         let mut near = HashSet::new();
@@ -1299,7 +1369,7 @@ impl GromacsTopForcefieldWriter {
             let r0 = frame
                 .get("constraints")
                 .and_then(|b| b.get("r0"))
-                .and_then(|c| c.as_float())
+                .and_then(|c| c.get::<f64>())
                 .ok_or("constraints has no r0 column")?;
             for (k, (i, j)) in column("constraints", "atomi")?
                 .into_iter()
@@ -1331,9 +1401,13 @@ impl GromacsTopForcefieldWriter {
                     .ok_or_else(|| format!("atom {}: type '{t}' is no atom/full type", i + 1))?;
                 let mass = match masses {
                     Some(mass) => mass[[i]],
-                    None => ty.params.get("mass").ok_or_else(|| {
-                        format!("atom {}: no mass column and type '{t}' has no mass", i + 1)
-                    })?,
+                    None => ty
+                        .params
+                        .get("mass")
+                        .and_then(|v| v.as_num())
+                        .ok_or_else(|| {
+                            format!("atom {}: no mass column and type '{t}' has no mass", i + 1)
+                        })?,
                 };
                 out.push_str(&format!(
                     "  {}  {t}  {}  {}  {}  {}  {}  {}\n",
@@ -1369,60 +1443,33 @@ impl GromacsTopForcefieldWriter {
     }
 }
 
-/// Write `ff` as GROMACS topology directives (`[ defaults ]`,
-/// `[ atomtypes ]`, `[ *types ]`) with `precision` decimals; the inverse of
-/// [`read_top_forcefield`](crate::io::read_top_forcefield).
-///
-/// # Errors
-///
-/// Every error of [`ForceFieldWriter::write_str`] on
-/// [`GromacsTopForcefieldWriter`], and an unwritable file.
-pub fn write_top_forcefield(
-    path: impl AsRef<std::path::Path>,
-    ff: &ForceField,
-    precision: usize,
-) -> Result<(), ForceFieldWriteError> {
-    let text = GromacsTopForcefieldWriter::new()
-        .with_precision(precision)
-        .write_str(ff)?;
-    crate::io::writer::write_forcefield_text(path.as_ref(), &text)
-}
-
-/// Write `ff` and the typed `frame` as one GROMACS topology
-/// ([`GromacsTopForcefieldWriter::write_system_str`]); the inverse of
-/// [`read_top_system`](crate::io::read_top_system).
-///
-/// # Errors
-///
-/// Every error of [`GromacsTopForcefieldWriter::write_system_str`], and an
-/// unwritable file.
-pub fn write_top_system(
-    path: impl AsRef<std::path::Path>,
-    ff: &ForceField,
-    frame: &Frame,
-    precision: usize,
-) -> Result<(), ForceFieldWriteError> {
-    let text = GromacsTopForcefieldWriter::new()
-        .with_precision(precision)
-        .write_system_str(ff, frame)?;
-    crate::io::writer::write_forcefield_text(path.as_ref(), &text)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::core::constants::VACUUM_DIELECTRIC;
     use crate::ff::forcefield::{ForceField, Style};
     use crate::ff::ir::{Params, SpecialBonds};
-    use crate::io::writer::ForceFieldWriter;
+    use crate::ff::potential::fixtures::OneShot;
+    use crate::io::writer::WrittenText;
     use crate::io::{gromacs::GromacsTopForcefieldReader, reader::ForceFieldReader};
+
+    /// What `writer` writes as the topology of `ff` and `frame`.
+    fn system(
+        writer: &GromacsTopForcefieldWriter,
+        ff: &ForceField,
+        frame: &Frame,
+    ) -> Result<String, ForceFieldWriteError> {
+        let mut out = Vec::new();
+        writer.write_system(&mut out, ff, frame)?;
+        Ok(String::from_utf8(out).expect("the writer writes UTF-8"))
+    }
 
     // -- fixtures (molrs units: Å, kcal/mol, degrees) --------------------------------
 
     fn atom_params(mass: f64, charge: f64, z: f64, bond_type: &str) -> Params {
-        let mut p = Params::from_pairs(&[("mass", mass), ("charge", charge), ("atomic_number", z)]);
-        p.set_str("class", bond_type);
-        p.set_str("ptype", "A");
+        let mut p = Params::from_iter([("mass", mass), ("charge", charge), ("atomic_number", z)]);
+        p.set("class", bond_type);
+        p.set("ptype", "A");
         p
     }
 
@@ -1438,20 +1485,20 @@ mod tests {
             .unwrap();
         let mut lj_params = Params::new();
         if let Some(rule) = mixing {
-            lj_params.set_str("mixing", rule);
+            lj_params.set("mixing", rule);
         }
         ff.def_style("pair", "lj/cut", lj_params)
             .unwrap()
             .def_type(
                 "opls_135",
                 &["opls_135"],
-                Params::from_pairs(&[("sigma", 3.5), ("epsilon", 0.066)]),
+                Params::from_iter([("sigma", 3.5), ("epsilon", 0.066)]),
             )
             .unwrap()
             .def_type(
                 "opls_140",
                 &["opls_140"],
-                Params::from_pairs(&[("sigma", 2.5), ("epsilon", 0.03)]),
+                Params::from_iter([("sigma", 2.5), ("epsilon", 0.03)]),
             )
             .unwrap();
         ff.set_special_bonds(SpecialBonds {
@@ -1479,13 +1526,13 @@ mod tests {
 
     fn write(ff: &ForceField) -> String {
         GromacsTopForcefieldWriter::new()
-            .write_str(ff)
+            .written(ff)
             .unwrap_or_else(|e| panic!("write_str: {e}"))
     }
 
     fn write_err(ff: &ForceField) -> String {
         GromacsTopForcefieldWriter::new()
-            .write_str(ff)
+            .written(ff)
             .expect_err("expected Err from write_str")
             .into()
     }
@@ -1632,9 +1679,9 @@ mod tests {
     fn atomtypes_row_without_bond_type_or_atomic_number_has_six_columns() {
         let mut ff = opls_ff(Some("geometric"));
         let atoms = ff.get_style_mut("atom", "full").unwrap();
-        atoms.remove_type("opls_135");
-        let mut p = Params::from_pairs(&[("mass", 12.011), ("charge", -0.18)]);
-        p.set_str("ptype", "A");
+        atoms.del_type("opls_135");
+        let mut p = Params::from_iter([("mass", 12.011), ("charge", -0.18)]);
+        p.set("ptype", "A");
         atoms.def_type("opls_135", &[], p).unwrap();
         let text = write(&ff);
         let r = row(&text, "atomtypes", &["opls_135"]);
@@ -1649,10 +1696,10 @@ mod tests {
     fn missing_ptype_is_written_a() {
         let mut ff = opls_ff(Some("geometric"));
         let atoms = ff.get_style_mut("atom", "full").unwrap();
-        atoms.remove_type("opls_135");
+        atoms.del_type("opls_135");
         let mut p =
-            Params::from_pairs(&[("mass", 12.011), ("charge", -0.18), ("atomic_number", 6.0)]);
-        p.set_str("class", "CT");
+            Params::from_iter([("mass", 12.011), ("charge", -0.18), ("atomic_number", 6.0)]);
+        p.set("class", "CT");
         atoms.def_type("opls_135", &[], p).unwrap();
         let text = write(&ff);
         assert_eq!(row(&text, "atomtypes", &["opls_135"])[5], "A");
@@ -1664,7 +1711,7 @@ mod tests {
         assert!(
             ff.get_style_mut("atom", "full")
                 .unwrap()
-                .set_type_str_param("opls_135", "ptype", "S")
+                .set_type_param("opls_135", "ptype", "S")
         );
         let text = write(&ff);
         assert_eq!(row(&text, "atomtypes", &["opls_135"])[5], "S");
@@ -1673,15 +1720,15 @@ mod tests {
     fn opls_135_without(key: &str) -> ForceField {
         let mut ff = opls_ff(Some("geometric"));
         let atoms = ff.get_style_mut("atom", "full").unwrap();
-        atoms.remove_type("opls_135");
+        atoms.del_type("opls_135");
         let mut p = Params::new();
         for (k, v) in [("mass", 12.011), ("charge", -0.18), ("atomic_number", 6.0)] {
             if k != key {
                 p.set(k, v);
             }
         }
-        p.set_str("class", "CT");
-        p.set_str("ptype", "A");
+        p.set("class", "CT");
+        p.set("ptype", "A");
         atoms.def_type("opls_135", &[], p).unwrap();
         ff
     }
@@ -1703,7 +1750,7 @@ mod tests {
         let mut ff = opls_ff(Some("geometric"));
         ff.get_style_mut("pair", "lj/cut")
             .unwrap()
-            .remove_type("opls_135");
+            .del_type("opls_135");
         let err = write_err(&ff);
         assert_names(&err, &["opls_135", "lj/cut"]);
     }
@@ -1719,20 +1766,31 @@ mod tests {
             .def_type(
                 "opls_135-opls_140",
                 &["opls_135", "opls_140"],
-                Params::from_pairs(&[("sigma", 3.0), ("epsilon", 0.05)]),
+                Params::from_iter([("sigma", 3.0), ("epsilon", 0.05)]),
             )
             .unwrap();
         let text = write(&ff);
         let r = row(&text, "nonbond_params", &["opls_135", "opls_140"]);
         assert_row_values(&r[2..], "1", &[0.3, 0.2092]);
-        let back = GromacsTopForcefieldReader::new().read_str(&text).unwrap();
+        let back = GromacsTopForcefieldReader::new()
+            .read(text.as_bytes())
+            .unwrap();
         let cross = back
             .get_style("pair", "lj/cut")
             .unwrap()
             .get_pairtype("opls_135", Some("opls_140"))
             .expect("cross row read back");
-        assert!((cross.params.get("sigma").unwrap() - 3.0).abs() < 1e-9);
-        assert!((cross.params.get("epsilon").unwrap() - 0.05).abs() < 1e-9);
+        assert!((cross.params.get("sigma").and_then(|v| v.as_num()).unwrap() - 3.0).abs() < 1e-9);
+        assert!(
+            (cross
+                .params
+                .get("epsilon")
+                .and_then(|v| v.as_num())
+                .unwrap()
+                - 0.05)
+                .abs()
+                < 1e-9
+        );
     }
 
     /// No cross row, no `[ nonbond_params ]` section.
@@ -1749,7 +1807,7 @@ mod tests {
             .def_type(
                 "opls_135-ZZ",
                 &["opls_135", "ZZ"],
-                Params::from_pairs(&[("sigma", 3.0), ("epsilon", 0.05)]),
+                Params::from_iter([("sigma", 3.0), ("epsilon", 0.05)]),
             )
             .unwrap();
         assert_names(&write_err(&ff), &["opls_135-ZZ", "ZZ"]);
@@ -1766,7 +1824,7 @@ mod tests {
             "harmonic",
             "CT-HC",
             &["CT", "HC"],
-            Params::from_pairs(&[("r0", 1.09), ("k", 340.0)]),
+            Params::from_iter([("r0", 1.09), ("k", 340.0)]),
         );
         let text = write(&ff);
         let r = row(&text, "bondtypes", &["CT", "HC"]);
@@ -1782,7 +1840,7 @@ mod tests {
             "morse",
             "CT-CT",
             &["CT", "CT"],
-            Params::from_pairs(&[("d0", 95.602_294_455_066_9), ("alpha", 2.0), ("r0", 1.529)]),
+            Params::from_iter([("d0", 95.602_294_455_066_9), ("alpha", 2.0), ("r0", 1.529)]),
         );
         let text = write(&ff);
         let r = row(&text, "bondtypes", &["CT", "CT"]);
@@ -1798,7 +1856,7 @@ mod tests {
             "harmonic",
             "HC-CT-HC",
             &["HC", "CT", "HC"],
-            Params::from_pairs(&[("theta0", 107.8), ("k", 33.0)]),
+            Params::from_iter([("theta0", 107.8), ("k", 33.0)]),
         );
         let text = write(&ff);
         let r = row(&text, "angletypes", &["HC", "CT", "HC"]);
@@ -1813,7 +1871,7 @@ mod tests {
             "periodic",
             "CT-CT-CT-CT",
             &["CT", "CT", "CT", "CT"],
-            Params::from_pairs(&[("k", 1.0), ("periodicity", 3.0), ("phase", 0.0)]),
+            Params::from_iter([("k", 1.0), ("periodicity", 3.0), ("phase", 0.0)]),
         );
         let text = write(&ff);
         let r = row(&text, "dihedraltypes", &["CT", "CT", "CT", "CT"]);
@@ -1829,7 +1887,7 @@ mod tests {
             "opls",
             "HC-CT-CT-HC",
             &["HC", "CT", "CT", "HC"],
-            Params::from_pairs(&[("k1", 0.0), ("k2", 0.0), ("k3", 0.3), ("k4", 0.0)]),
+            Params::from_iter([("k1", 0.0), ("k2", 0.0), ("k3", 0.3), ("k4", 0.0)]),
         );
         let text = write(&ff);
         let r = row(&text, "dihedraltypes", &["HC", "CT", "CT", "HC"]);
@@ -1845,7 +1903,7 @@ mod tests {
             "multi/harmonic",
             "HC-CT-CT-HC",
             &["HC", "CT", "CT", "HC"],
-            Params::from_pairs(&[
+            Params::from_iter([
                 ("a1", 0.15),
                 ("a2", -0.45),
                 ("a3", 0.0),
@@ -1868,7 +1926,7 @@ mod tests {
             "nharmonic",
             "CT-CT-CT-CT",
             &["CT"; 4],
-            Params::from_pairs(&pairs),
+            Params::from_iter(pairs.iter().copied()),
         );
         let text = write(&ff);
         let r = row(&text, "dihedraltypes", &["CT", "CT", "CT", "CT"]);
@@ -1881,7 +1939,7 @@ mod tests {
             "nharmonic",
             "CT-CT-CT-CT",
             &["CT"; 4],
-            Params::from_pairs(&seven),
+            Params::from_iter(seven.iter().copied()),
         );
         assert_names(&write_err(&ff), &["N = 7"]);
     }
@@ -1895,7 +1953,7 @@ mod tests {
             "charmm",
             "HC-CT-HC",
             &["HC", "CT", "HC"],
-            Params::from_pairs(&[
+            Params::from_iter([
                 ("k", 35.5),
                 ("theta0", 109.5),
                 ("k_ub", 5.4),
@@ -1916,7 +1974,7 @@ mod tests {
             "harmonic",
             "CT-CT-CT-CT",
             &["CT"; 4],
-            Params::from_pairs(&[("k", 1.0), ("sign", -1.0), ("periodicity", 2.0)]),
+            Params::from_iter([("k", 1.0), ("sign", -1.0), ("periodicity", 2.0)]),
         );
         let text = write(&ff);
         let r = row(&text, "dihedraltypes", &["CT", "CT", "CT", "CT"]);
@@ -1926,7 +1984,7 @@ mod tests {
             "cvff",
             "HC-CT-CT-CT",
             &["HC", "CT", "CT", "CT"],
-            Params::from_pairs(&[("k", 1.0), ("sign", 1.0), ("periodicity", 2.0)]),
+            Params::from_iter([("k", 1.0), ("sign", 1.0), ("periodicity", 2.0)]),
         );
         let text = write(&ff);
         let r = row(&text, "dihedraltypes", &["HC", "CT", "CT", "CT"]);
@@ -1938,7 +1996,7 @@ mod tests {
     fn cmap_charmm_is_a_cmaptypes_row() {
         let mut ff = opls_ff(Some("geometric"));
         let mut p = Params::new();
-        p.set_array(
+        p.set(
             "grid",
             ndarray::ArrayD::from_shape_vec(vec![2, 2], vec![1.0, 2.0, -1.0, 0.0]).unwrap(),
         );
@@ -1952,10 +2010,13 @@ mod tests {
             text.contains("CT HC CT CT HC 1 2 2\\\n4.184000 8.368000 -4.184000 0.000000"),
             "{text}"
         );
-        let back = GromacsTopForcefieldReader::new().read_str(&text).unwrap();
+        let back = GromacsTopForcefieldReader::new()
+            .read(text.as_bytes())
+            .unwrap();
         let grid = back.get_cmaptypes()[0]
             .params
-            .get_array("grid")
+            .get("grid")
+            .and_then(|v| v.as_array())
             .unwrap()
             .clone();
         assert_eq!(
@@ -1972,14 +2033,14 @@ mod tests {
             "periodic",
             "CT-CT-CT-CT",
             &["CT"; 4],
-            Params::from_pairs(&[("k", 1.0), ("periodicity", 3.0), ("phase", 0.0)]),
+            Params::from_iter([("k", 1.0), ("periodicity", 3.0), ("phase", 0.0)]),
         );
         ff.get_style_mut("dihedral", "periodic")
             .unwrap()
             .def_type(
                 "CT-CT-CT-CT@gmx_1",
                 &["CT"; 4],
-                Params::from_pairs(&[("k", 2.0), ("periodicity", 3.0), ("phase", 0.0)]),
+                Params::from_iter([("k", 2.0), ("periodicity", 3.0), ("phase", 0.0)]),
             )
             .unwrap();
         assert_names(&write_err(&ff), &["CT-CT-CT-CT@gmx_1", "one"]);
@@ -1988,9 +2049,9 @@ mod tests {
     #[test]
     fn a_pair_cutoff_is_a_run_setting_and_not_written() {
         let mut ff = ForceField::new("t");
-        ff.def_style("pair", "lj/cut", Params::from_pairs(&[("cutoff", 10.0)]))
+        ff.def_style("pair", "lj/cut", Params::from_iter([("cutoff", 10.0)]))
             .unwrap();
-        ff.def_style("pair", "coul/cut", Params::from_pairs(&[("cutoff", 10.0)]))
+        ff.def_style("pair", "coul/cut", Params::from_iter([("cutoff", 10.0)]))
             .unwrap();
         let text = write(&ff);
         assert!(!text.contains("10"), "{text}");
@@ -2004,7 +2065,7 @@ mod tests {
             "opls",
             "-CT-CT-",
             &["", "CT", "CT", ""],
-            Params::from_pairs(&[("k1", 0.0), ("k2", 0.0), ("k3", 0.3), ("k4", 0.0)]),
+            Params::from_iter([("k1", 0.0), ("k2", 0.0), ("k3", 0.3), ("k4", 0.0)]),
         );
         let text = write(&ff);
         let r = row(&text, "dihedraltypes", &["X", "CT", "CT", "X"]);
@@ -2019,7 +2080,7 @@ mod tests {
             "periodic",
             "--CT-HC",
             &["", "", "CT", "HC"],
-            Params::from_pairs(&[("k", 2.5), ("periodicity", 2.0), ("phase", 180.0)]),
+            Params::from_iter([("k", 2.5), ("periodicity", 2.0), ("phase", 180.0)]),
         );
         let text = write(&ff);
         let r = row(&text, "dihedraltypes", &["X", "X", "CT", "HC"]);
@@ -2034,7 +2095,7 @@ mod tests {
             "harmonic",
             "--CT-HC",
             &["", "", "CT", "HC"],
-            Params::from_pairs(&[("k", 20.0), ("chi0", 0.0)]),
+            Params::from_iter([("k", 20.0), ("chi0", 0.0)]),
         );
         let text = write(&ff);
         let r = row(&text, "dihedraltypes", &["X", "X", "CT", "HC"]);
@@ -2049,14 +2110,14 @@ mod tests {
             "harmonic",
             "CT-HC",
             &["CT", "HC"],
-            Params::from_pairs(&[("r0", 1.09), ("k", 340.0)]),
+            Params::from_iter([("r0", 1.09), ("k", 340.0)]),
         );
         ff.def_style("angle", "harmonic", Params::new())
             .unwrap()
             .def_type(
                 "HC-CT-HC",
                 &["HC", "CT", "HC"],
-                Params::from_pairs(&[("theta0", 108.9), ("k", 33.0)]),
+                Params::from_iter([("theta0", 108.9), ("k", 33.0)]),
             )
             .unwrap();
         let text = write(&ff);
@@ -2084,7 +2145,7 @@ mod tests {
             "charmm",
             "CT-CT-CT-CT",
             &["CT", "CT", "CT", "CT"],
-            Params::from_pairs(&[("k", 1.0), ("periodicity", 3.0), ("phase", 0.0), ("w", 0.5)]),
+            Params::from_iter([("k", 1.0), ("periodicity", 3.0), ("phase", 0.0), ("w", 0.5)]),
         );
         let err = write_err(&ff);
         assert_names(&err, &["charmm"]);
@@ -2098,7 +2159,7 @@ mod tests {
             "charmm",
             "CT-CT-CT-CT",
             &["CT", "CT", "CT", "CT"],
-            Params::from_pairs(&[("k", 1.0), ("periodicity", 3.0), ("phase", 0.0), ("w", 0.0)]),
+            Params::from_iter([("k", 1.0), ("periodicity", 3.0), ("phase", 0.0), ("w", 0.0)]),
         );
         let text = write(&ff);
         let r = row(&text, "dihedraltypes", &["CT", "CT", "CT", "CT"]);
@@ -2113,7 +2174,7 @@ mod tests {
             "periodic",
             "CT-CT-CT-CT",
             &["CT", "CT", "CT", "CT"],
-            Params::from_pairs(&[
+            Params::from_iter([
                 ("k1", 1.0),
                 ("periodicity1", 1.0),
                 ("phase1", 0.0),
@@ -2137,7 +2198,7 @@ mod tests {
             "harmonic",
             "ZZ-CT",
             &["ZZ", "CT"],
-            Params::from_pairs(&[("r0", 1.09), ("k", 340.0)]),
+            Params::from_iter([("r0", 1.09), ("k", 340.0)]),
         );
         let err = write_err(&ff);
         assert_names(&err, &["ZZ"]);
@@ -2151,7 +2212,7 @@ mod tests {
             "harmonic",
             "opls_135-opls_140",
             &["opls_135", "opls_140"],
-            Params::from_pairs(&[("r0", 1.09), ("k", 340.0)]),
+            Params::from_iter([("r0", 1.09), ("k", 340.0)]),
         );
         let text = write(&ff);
         let r = row(&text, "bondtypes", &["opls_135", "opls_140"]);
@@ -2166,7 +2227,7 @@ mod tests {
         ff.def_style(
             "pair",
             "coul/cut",
-            Params::from_pairs(&[
+            Params::from_iter([
                 ("coulomb", crate::core::constants::gromacs_coulomb_real()),
                 ("dielectric", VACUUM_DIELECTRIC),
             ]),
@@ -2308,7 +2369,7 @@ mod tests {
         for &(category, style, name, endpoints, params) in defs {
             ff.def_style(category, style, Params::new())
                 .unwrap()
-                .def_type(name, endpoints, Params::from_pairs(params))
+                .def_type(name, endpoints, Params::from_iter(params.iter().copied()))
                 .unwrap();
         }
         ff
@@ -2344,17 +2405,31 @@ mod tests {
     }
 
     fn assert_params_close(what: &str, got: &Params, want: &Params) {
-        let mut got_keys: Vec<&str> = got.iter().map(|(k, _)| k).collect();
-        let mut want_keys: Vec<&str> = want.iter().map(|(k, _)| k).collect();
+        let mut got_keys: Vec<&str> = got
+            .iter()
+            .filter_map(|(k, v)| v.as_num().map(|x| (k, x)))
+            .map(|(k, _)| k)
+            .collect();
+        let mut want_keys: Vec<&str> = want
+            .iter()
+            .filter_map(|(k, v)| v.as_num().map(|x| (k, x)))
+            .map(|(k, _)| k)
+            .collect();
         got_keys.sort_unstable();
         want_keys.sort_unstable();
         assert_eq!(got_keys, want_keys, "{what}: numeric keys");
-        for (k, w) in want.iter() {
-            let g = got.get(k).expect("key present");
+        for (k, w) in want.iter().filter_map(|(k, v)| v.as_num().map(|x| (k, x))) {
+            let g = got.get(k).and_then(|v| v.as_num()).expect("key present");
             assert!((g - w).abs() < 1e-9, "{what}.{k}: got {g}, want {w}");
         }
-        let mut got_strs: Vec<(&str, &str)> = got.iter_strings().collect();
-        let mut want_strs: Vec<(&str, &str)> = want.iter_strings().collect();
+        let mut got_strs: Vec<(&str, &str)> = got
+            .iter()
+            .filter_map(|(k, v)| v.as_text().map(|s| (k, s)))
+            .collect();
+        let mut want_strs: Vec<(&str, &str)> = want
+            .iter()
+            .filter_map(|(k, v)| v.as_text().map(|s| (k, s)))
+            .collect();
         got_strs.sort_unstable();
         want_strs.sort_unstable();
         assert_eq!(got_strs, want_strs, "{what}: string params");
@@ -2365,10 +2440,10 @@ mod tests {
         let ff = every_supported_style();
         let text = GromacsTopForcefieldWriter::new()
             .with_precision(10)
-            .write_str(&ff)
+            .written(&ff)
             .unwrap_or_else(|e| panic!("write_str: {e}"));
         let back = GromacsTopForcefieldReader::new()
-            .read_str(&text)
+            .read(text.as_bytes())
             .unwrap_or_else(|e| panic!("read_str: {e}\n{text}"));
 
         assert_eq!(back.special_bonds(), ff.special_bonds());
@@ -2457,7 +2532,7 @@ SOL  2
 
     fn read_system(text: &str) -> (ForceField, molrs::core::Frame) {
         GromacsTopForcefieldReader::new()
-            .read_system_str(text)
+            .read_system(text.as_bytes())
             .unwrap_or_else(|e| panic!("{e}\n{text}"))
     }
 
@@ -2478,23 +2553,23 @@ SOL  2
         crate::ff::compile::PotentialCompiler::new(&ff)
             .compile(frame)
             .unwrap()
-            .calc_energy(x)
+            .energy_at(x)
     }
 
     /// The (i, j, is_14, override cells) of a frame's pairs.
     fn pairs_of(frame: &molrs::core::Frame) -> Vec<(u64, u64, bool, Vec<Option<f64>>)> {
         let p = frame.get("pairs").unwrap();
         let (i, j) = (
-            p.get("atomi").unwrap().as_uint().unwrap(),
-            p.get("atomj").unwrap().as_uint().unwrap(),
+            p.get("atomi").unwrap().get::<u64>().unwrap(),
+            p.get("atomj").unwrap().get::<u64>().unwrap(),
         );
-        let f = p.get("is_14").unwrap().as_bool().unwrap();
+        let f = p.get("is_14").unwrap().get::<bool>().unwrap();
         (0..i.len())
             .map(|r| {
                 let cells = molrs::core::schema::PAIR_OVERRIDE_COLUMNS
                     .iter()
                     .map(|k| {
-                        let col = p.get(k)?.as_float()?;
+                        let col = p.get(k)?.get::<f64>()?;
                         p.validity(k).is_none_or(|m| m[r]).then(|| col[[r]])
                     })
                     .collect();
@@ -2511,7 +2586,7 @@ SOL  2
     fn a_system_reads_back_as_written() {
         let (ff, frame) = read_system(SYSTEM);
         let writer = GromacsTopForcefieldWriter::new().with_precision(17);
-        let top = writer.write_system_str(&ff, &frame).unwrap();
+        let top = system(&writer, &ff, &frame).unwrap();
         for section in [
             "[ moleculetype ]",
             "[ pairs ]",
@@ -2538,7 +2613,7 @@ SOL  2
         let x = coords(n);
         let (e, e_back) = (energy(&ff, &frame, &x), energy(&back, &back_frame, &x));
         assert!((e - e_back).abs() <= 1e-12 * e.abs(), "{e} vs {e_back}");
-        let again = writer.write_system_str(&back, &back_frame).unwrap();
+        let again = system(&writer, &back, &back_frame).unwrap();
         let tokens = |t: &str| t.split_whitespace().map(str::to_owned).collect::<Vec<_>>();
         assert_eq!(tokens(&top).len(), tokens(&again).len());
         for (u, v) in tokens(&top).iter().zip(tokens(&again)) {
@@ -2586,7 +2661,7 @@ SOL  1
         bare.remove("pairs");
         let writer = GromacsTopForcefieldWriter::new();
         for f in [&frame, &bare] {
-            let top = writer.write_system_str(&ff, f).unwrap();
+            let top = system(&writer, &ff, f).unwrap();
             assert!(top.contains("[ molecules ]"), "{top}");
             assert!(!top.contains("[ pairs ]"), "{top}");
         }
@@ -2603,14 +2678,14 @@ SOL  1
         let with_pairs = |edit: &dyn Fn(&mut molrs::core::Block)| {
             let mut f = frame.clone();
             edit(f.get_mut("pairs").unwrap());
-            writer.write_system_str(&ff, &f)
+            system(&writer, &ff, &f)
         };
         // C1-C4, a 1-4 pair, flagged regular.
         let err = with_pairs(&|p| {
-            let mut flags = p.get("is_14").unwrap().as_bool().unwrap().to_owned();
+            let mut flags = p.get("is_14").unwrap().get::<bool>().unwrap().to_owned();
             let r = flags.iter().position(|&b| b).unwrap();
             flags[[r]] = false;
-            p.insert("is_14", flags).unwrap();
+            p.insert("is_14", flags, None).unwrap();
         })
         .unwrap_err();
         assert!(err.contains("within three bonds"), "{err}");
@@ -2623,8 +2698,8 @@ SOL  1
         // A regular pair the frame does not price: an [ exclusions ] row.
         let top = with_pairs(&|p| {
             let keep: Vec<usize> = {
-                let i = p.get("atomi").unwrap().as_uint().unwrap();
-                let j = p.get("atomj").unwrap().as_uint().unwrap();
+                let i = p.get("atomi").unwrap().get::<u64>().unwrap();
+                let j = p.get("atomj").unwrap().get::<u64>().unwrap();
                 (0..i.len())
                     .filter(|&r| (i[[r]], j[[r]]) != (3, 4))
                     .collect()
@@ -2663,19 +2738,26 @@ SOL  1
             ff.def_style("pair", coul, params).unwrap();
             ff
         };
-        let cut = write(&field("coul/cut", Params::from_pairs(&[("cutoff", 10.0)])));
+        let cut = write(&field(
+            "coul/cut",
+            Params::from_iter([("cutoff", 10.0)].iter().copied()),
+        ));
         let long = field(
             "coul/long/pme",
-            Params::from_pairs(&[
-                ("cutoff", 10.0),
-                ("coulomb", crate::core::constants::gromacs_coulomb_real()),
-            ]),
+            Params::from_iter(
+                [
+                    ("cutoff", 10.0),
+                    ("coulomb", crate::core::constants::gromacs_coulomb_real()),
+                ]
+                .iter()
+                .copied(),
+            ),
         );
         assert_eq!(write(&long), cut);
         for key in ["alpha", "order", "grid_z"] {
             let ff = field(
                 "coul/long/pme",
-                Params::from_pairs(&[("cutoff", 10.0), (key, 4.0)]),
+                Params::from_iter([("cutoff", 10.0), (key, 4.0)].iter().copied()),
             );
             assert_names(&write_err(&ff), &["coul/long/pme", key, ".mdp"]);
         }
@@ -2699,7 +2781,7 @@ SOL  1
             "class2",
             "CT-CT-CT-CT",
             &["CT", "CT", "CT", "CT"],
-            Params::from_pairs(&[
+            Params::from_iter([
                 ("k1", 1.5),
                 ("phi1", 10.0),
                 ("k2", 0.0),

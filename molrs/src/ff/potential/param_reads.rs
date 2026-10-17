@@ -37,12 +37,17 @@ pub(crate) fn bad(style: &str, type_: &str, param: &str, reason: impl Into<Strin
 
 /// The number `key` of the type row `label` of `style`.
 pub(crate) fn type_num(style: &str, label: &str, row: &Params, key: &str) -> Result<F, IrError> {
-    row.get(key).ok_or_else(|| missing(style, label, key))
+    row.get(key)
+        .and_then(|v| v.as_num())
+        .ok_or_else(|| missing(style, label, key))
 }
 
 /// The style param `key` of `style`.
 pub(crate) fn style_num(style: &str, params: &Params, key: &str) -> Result<F, IrError> {
-    params.get(key).ok_or_else(|| missing(style, "", key))
+    params
+        .get(key)
+        .and_then(|v| v.as_num())
+        .ok_or_else(|| missing(style, "", key))
 }
 
 /// The text style param `key` of `style`.
@@ -51,7 +56,10 @@ pub(crate) fn style_text<'p>(
     params: &'p Params,
     key: &str,
 ) -> Result<&'p str, IrError> {
-    params.get_str(key).ok_or_else(|| missing(style, "", key))
+    params
+        .get(key)
+        .and_then(|v| v.as_text())
+        .ok_or_else(|| missing(style, "", key))
 }
 
 /// The per-instance column `key` of `block`: the number a typifier baked
@@ -64,7 +72,7 @@ pub(crate) fn instance_col<'b>(
 ) -> Result<&'b ArrayD<F>, IrError> {
     block
         .get(key)
-        .and_then(|c| c.as_float())
+        .and_then(|c| c.get::<f64>())
         .ok_or_else(|| missing(style, "", key))
 }
 
@@ -99,7 +107,7 @@ pub(crate) fn unmixed_row<'p>(
 /// from an engine priced with no cutoff (OpenMM `NoCutoff`, a prmtop)
 /// prices every pair.
 pub(crate) fn pair_cutoff(style: &str, params: &Params) -> Result<F, IrError> {
-    let Some(cutoff) = params.get("cutoff") else {
+    let Some(cutoff) = params.get("cutoff").and_then(|v| v.as_num()) else {
         return Ok(F::INFINITY);
     };
     if cutoff.is_nan() || cutoff <= 0.0 {
@@ -134,6 +142,7 @@ mod tests {
     use crate::ff::compile::ExplicitTerms;
     use crate::ff::ir::IrError;
     use crate::ff::ir::Params;
+    use crate::ff::potential::fixtures::OneShot;
     use crate::ff::potential::{CompileError, Potentials};
     use molrs::op::F;
 
@@ -170,7 +179,7 @@ mod tests {
     /// `MissingParam` naming the style and the parameter, not a message.
     #[test]
     fn a_built_in_kernel_refuses_a_missing_parameter_typed() {
-        let p = Params::from_pairs;
+        let p = |pairs: &[(&str, f64)]| pairs.iter().copied().collect::<Params>();
         for (category, style, atoms, row, param) in [
             ("bond", "harmonic", &[0, 1][..], p(&[("k", 1.0)]), "r0"),
             (
@@ -261,7 +270,7 @@ mod tests {
         assert_eq!(missing(err).1, "kb");
         // A style parameter.
         let err = ExplicitTerms::new("pair", "lj/charmm")
-            .style_params(Params::from_pairs(&[("cutoff", 10.0)]))
+            .style_params(Params::from_iter([("cutoff", 10.0)]))
             .term(&[0, 1], p(&[("epsilon", 0.1), ("sigma", 3.0)]))
             .compile()
             .map(|_| ())
@@ -272,20 +281,20 @@ mod tests {
     /// A value of the wrong kind or outside its choices is `BadValue`.
     #[test]
     fn a_value_of_the_wrong_kind_is_bad_value() {
-        let mut row = Params::from_pairs(&[("k", 1.0)]);
-        row.set_str("r0", "1.5");
+        let mut row = Params::from_iter([("k", 1.0)]);
+        row.set("r0", "1.5");
         let err = one("bond", "harmonic", &[0, 1], row)
             .map(|_| ())
             .unwrap_err();
         assert_eq!(bad(err), ("harmonic".to_owned(), "r0".to_owned()));
 
-        let mut style = Params::from_pairs(&[("cutoff", 10.0)]);
-        style.set_str("mixing", "lorentz");
+        let mut style = Params::from_iter([("cutoff", 10.0)]);
+        style.set("mixing", "lorentz");
         let err = ExplicitTerms::new("pair", "lj/cut")
             .style_params(style)
             .term(
                 &[0, 1],
-                Params::from_pairs(&[("epsilon", 0.1), ("sigma", 3.0)]),
+                Params::from_iter([("epsilon", 0.1), ("sigma", 3.0)]),
             )
             .compile()
             .map(|_| ())
@@ -309,9 +318,9 @@ mod tests {
     #[test]
     fn a_declared_default_prices_as_the_stated_value() {
         let energy = |category: &str, style: &str, atoms: &[usize], row: Params| {
-            one(category, style, atoms, row).unwrap().calc_energy(&XYZ)
+            one(category, style, atoms, row).unwrap().energy_at(&XYZ)
         };
-        let p = Params::from_pairs;
+        let p = |pairs: &[(&str, f64)]| pairs.iter().copied().collect::<Params>();
         for (category, style, atoms, bare, stated) in [
             (
                 "dihedral",
@@ -368,19 +377,15 @@ mod tests {
                 .style_params(style)
                 .term(
                     &[0, 1],
-                    Params::from_pairs(&[("epsilon", 0.2), ("sigma", 1.1)]),
+                    Params::from_iter([("epsilon", 0.2), ("sigma", 1.1)]),
                 )
                 .compile()
                 .unwrap()
-                .calc_energy(&XYZ)
+                .energy_at(&XYZ)
         };
         assert_eq!(
             lj(Params::new()),
-            lj(Params::from_pairs(&[
-                ("n", 12.0),
-                ("m", 6.0),
-                ("shift", 0.0)
-            ]))
+            lj(Params::from_iter([("n", 12.0), ("m", 6.0), ("shift", 0.0)]))
         );
     }
 }

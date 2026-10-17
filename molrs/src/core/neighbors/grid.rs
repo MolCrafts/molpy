@@ -330,11 +330,12 @@ fn wrap(idx: i32, dim: u32) -> u32 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ndarray::array;
+    use crate::core::Cell;
+
     use std::collections::HashSet;
 
     fn ortho(len: F, pbc: [bool; 3]) -> SimBox {
-        SimBox::ortho(array![len, len, len], array![0.0, 0.0, 0.0], pbc).expect("box")
+        SimBox::new(Cell::Lengths([len, len, len]), [0.0, 0.0, 0.0], pbc).expect("box")
     }
 
     /// Independent adjacency oracle: two cell indices along one axis are
@@ -476,9 +477,11 @@ mod tests {
         // tilted direction is 10 * sin(120°) = 8.66. Sizing off the 10 Å edge
         // length would give cells thinner than the cutoff and silently drop
         // pairs, so the guarantee is stated against the plane distance.
-        let h = SimBox::matrix_from_lengths_angles([10.0, 10.0, 10.0], [90.0, 90.0, 120.0])
-            .expect("hex matrix");
-        let bx = SimBox::new(h, array![0.0, 0.0, 0.0], [true; 3]).expect("hex box");
+        let hex = Cell::LengthsAngles {
+            lengths: [10.0, 10.0, 10.0],
+            angles: [90.0, 90.0, 120.0],
+        };
+        let bx = SimBox::new(hex, [0.0, 0.0, 0.0], [true; 3]).expect("hex box");
         let npd = bx.nearest_plane_distance();
         assert!(
             npd.iter().any(|&d| d < 10.0 - 1e-9),
@@ -543,9 +546,9 @@ mod tests {
         // Fine grid [1000, 1000, 1]: a naive common factor cbrt(1e6/100) = 21.5
         // would give [46, 46, 1] = 2116 cells, far over a budget of 100. The
         // thin axis is pinned and the factor re-derived over the other two.
-        let bx = SimBox::ortho(
-            array![1000.0, 1000.0, 1.0],
-            array![0.0, 0.0, 0.0],
+        let bx = SimBox::new(
+            Cell::Lengths([1000.0, 1000.0, 1.0]),
+            [0.0, 0.0, 0.0],
             [false; 3],
         )
         .expect("slab");

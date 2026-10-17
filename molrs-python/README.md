@@ -21,7 +21,7 @@ Requires Python 3.12+.
 import molrs
 
 # SMILES → atomistic graph (class API under molrs.io)
-mol = molrs.io.smiles.SmilesIr("CCO").to_atomistic()
+mol = molrs.io.smiles.SmilesIr.parse("CCO").to_atomistic()
 
 # 3D coordinates
 from molrs.conformer import Conformer
@@ -39,7 +39,7 @@ frame = typed.to_frame()
 ff = typifier.forcefield()  # a copy of exactly the types typify assigned
 frame["pairs"] = intramolecular_pairs(frame, ff)
 pots = PotentialCompiler(ff).compile(frame)
-energy, forces = pots.calc_energy_forces(frame)
+energy, forces = pots.evaluate(frame)
 assert forces.shape == (frame["atoms"].n_rows, 3)
 ```
 
@@ -53,10 +53,10 @@ after its Rust owner.
 
 | Import | Owns |
 |--------|------|
-| `molrs.core` | `Frame`, `Block`, `Trajectory`, frame metadata; `Box`, neighbour search, regions, `TriMesh`, `Trace`; `MolGraph`, `Atomistic`, `CoarseGrain` and their live views, `Element`, `Topology`; `Unit`, `Quantity`, `UnitPreset`, `UnitRegistry` |
+| `molrs.core` | `Frame`, `Block`, `Trajectory`, frame metadata; `Box` and its `Cell`, neighbour search, regions, `TriMesh`, `Trace`; `MolGraph`, `Atomistic`, `CoarseGrain` and their live views, `Element`, `Topology`; `Unit`, `Quantity`, `UnitPreset`, `UnitRegistry` |
 | `molrs.core.keys` / `.schema` / `.constants` | the column vocabulary, its specifications, and every physical and engine constant |
-| `molrs.io` | Every file reader and writer (structure, trajectory, force-field files, `*.mrec`, SMILES) as `read_<fmt>[_<what>]` / `write_<fmt>[_<what>]` (`_str` / `_bytes` in memory); each format's classes in its own submodule: `io.pdb`, `io.xyz`, `io.gro`, `io.dcd`, `io.trr`, `io.xtc`, `io.lammps`, `io.smiles`, `io.cgsmiles`, `io.mrec` |
-| `molrs.io.mrec` | `*.mrec` store pieces: streaming `SequenceSchema`, `MrecWriter`, `MrecReader`, `ForceFieldSection`, `section_names`, `pack_mrec_zip`, `validation` (whole records: `molrs.io.read_mrec_frame` / `write_mrec_frame` and partners) |
+| `molrs.io` | Every file reader and writer: one door per format and direction, `read_<fmt>(source)` / `write_<fmt>(sink, frame)` (a source is a `pathlib.Path`, `bytes` or `molrs.io.Text`; a sink a `pathlib.Path` or a `bytearray`); each format's classes in its own submodule — the multi-frame `<Fmt>Reader` / `<Fmt>Writer` of `io.pdb`, `io.xyz`, `io.gro`, `io.mol2`, `io.cif`, `io.sdf`, `io.dcd`, `io.trr`, `io.xtc`, `io.lammps`, and the force-field reader / writer classes of `io.lammps`, `io.gromacs`, `io.amber`, `io.openmm_xml`; `io.smiles`, `io.cgsmiles`, `io.mrec` |
+| `molrs.io.mrec` | `*.mrec` store pieces: `MrecFile` (per-section reads), streaming `SequenceSchema`, `MrecWriter`, `MrecReader`, `ForceFieldSection`, `pack_mrec_zip`, `validation` (a whole record is written by `molrs.io.write_mrec`) |
 | `molrs.ff.*` | `forcefield`, `potential`, `typifier`, `charge`, `ir`, `params`, `clpol_scaling` |
 | `molrs.optimize` | `Lbfgs`, `OptimizationReport` |
 | `molrs.md` | Integrators and the `MD` driver |
@@ -66,11 +66,12 @@ after its Rust owner.
 | `molrs.builder` | Structure builders, site-graph assembly, `Coarsener` |
 
 An analysis is configured when it is built and given its data when it
-computes: `Msd(max_lag)` then `msd.compute(positions=..., dt=...)`. The
-constructor takes configuration only, every optional setting is `None` unless
-given (all defaults live in the core; `Msd.spec()` lists them), and
-`compute` takes the data as keyword arguments named after the core input's
-fields. A result is a read-only object that the next compute accepts as is —
+computes: `Steinhardt(l=[6])` then `.compute(...)`. The constructor takes
+configuration only, every optional setting is `None` unless given (all
+defaults live in the core; `Msd.spec()` lists them), and `compute` takes the
+data as keyword arguments named after the core input's fields. `Msd`, `Vacf`
+and `Rdf` are streams, as in the core: `acc = Msd(max_lag).accumulator()`,
+`acc.push(positions, dt=...)` per frame, then `acc.finish()`. A result is a read-only object that the next compute accepts as is —
 `LinearFit(0.2, 0.8).compute(correlation=msd_result, channel=0)`.
 
 Kernels take `dt` in the time unit of your trajectory, and time-valued

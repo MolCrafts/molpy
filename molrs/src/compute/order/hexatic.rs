@@ -134,9 +134,9 @@ mod tests {
     use super::*;
     use crate::compute::Batch;
     use crate::compute::fixtures::neighbors_of;
+    use crate::core::Cell;
     use molrs::core::SimBox;
     use molrs::op::F;
-    use ndarray::array;
 
     /// A planar snapshot: positions in a `box_len × box_len × 1` open box.
     struct Snapshot {
@@ -147,9 +147,9 @@ mod tests {
     fn frame_with(positions: &[[F; 3]], box_len: F) -> Snapshot {
         Snapshot {
             positions: positions.to_vec(),
-            simbox: SimBox::ortho(
-                array![box_len, box_len, 1.0_f64],
-                array![0.0 as F, 0.0 as F, 0.0 as F],
+            simbox: SimBox::new(
+                Cell::Lengths([box_len, box_len, 1.0_f64]),
+                [0.0 as F, 0.0 as F, 0.0 as F],
                 [false, false, false],
             )
             .unwrap(),

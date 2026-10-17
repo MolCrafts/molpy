@@ -17,7 +17,9 @@
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 
-use molrs::ff::typifier::{AtdBondOrders, AtdParameterSet, AtdTypifier};
+use molrs::ff::typifier::{AtdParameterSet, AtdTypifier};
+
+use crate::perceive::PyBondOrderSource;
 
 use super::PyTypifier;
 
@@ -44,20 +46,21 @@ use super::PyTypifier;
 ///     The antechamber ``-at`` flag naming the table: ``"bcc"``, ``"abcg2"``,
 ///     ``"gas"``, ``"gaff"``, ``"gaff2"``, ``"amber"`` or ``"sybyl"``. Required —
 ///     there is no default table.
-/// bond_orders : str, default ``"perceive"``
-///     Which bond orders the types follow. ``"perceive"`` judges them from the
-///     connectivity alone, as antechamber does by default (``bondtype -j
-///     full``): the molecule's own orders are ignored, and on a molecule with
-///     two Kekulé structures (azulene, cyclooctatetraene) the colouring
-///     (``cc`` / ``cd`` …) is the one antechamber's search settles on for the
-///     same atom and bond order. Every hydrogen must be drawn. ``"input"``
-///     keeps the molecule's own orders (aromatic bonds without one are
-///     kekulized).
+/// bond_orders : BondOrderSource, default ``BondOrderSource.Connectivity``
+///     Which bond orders the types follow (``AtdTypifier::with_bond_orders``;
+///     the core's default is ``Connectivity``). ``Connectivity`` judges them
+///     from the connectivity alone, as antechamber does by default
+///     (``bondtype -j full``): the molecule's own orders are ignored, and on a
+///     molecule with two Kekulé structures (azulene, cyclooctatetraene) the
+///     colouring (``cc`` / ``cd`` …) is the one antechamber's search settles
+///     on for the same atom and bond order. Every hydrogen must be drawn.
+///     ``Stated`` keeps the molecule's own orders (aromatic bonds without one
+///     are kekulized).
 ///
 /// Raises
 /// ------
 /// ValueError
-///     If ``parameter_set`` names no table, or ``bond_orders`` no source.
+///     If ``parameter_set`` names no table.
 ///
 /// Examples
 /// --------
@@ -68,24 +71,25 @@ use super::PyTypifier;
 #[derive(Debug)]
 pub struct PyAtdTypifier {
     parameter_set: AtdParameterSet,
-    bond_orders: AtdBondOrders,
+    bond_orders: PyBondOrderSource,
 }
 
 #[pymethods]
 impl PyAtdTypifier {
     /// Bind the engine to the table `parameter_set` names.
     #[new]
-    #[pyo3(signature = (*, parameter_set, bond_orders = "perceive"))]
-    fn new(parameter_set: &str, bond_orders: &str) -> PyResult<(Self, PyTypifier)> {
+    #[pyo3(signature = (*, parameter_set, bond_orders = PyBondOrderSource::Connectivity))]
+    fn new(parameter_set: &str, bond_orders: PyBondOrderSource) -> PyResult<(Self, PyTypifier)> {
         let parameter_set =
             AtdParameterSet::from_name(parameter_set).map_err(PyValueError::new_err)?;
-        let bond_orders = AtdBondOrders::from_name(bond_orders).map_err(PyValueError::new_err)?;
         Ok((
             Self {
                 parameter_set,
-                bond_orders,
+                bond_orders: bond_orders.clone(),
             },
-            PyTypifier::native(AtdTypifier::new(parameter_set).with_bond_orders(bond_orders)),
+            PyTypifier::native(
+                AtdTypifier::new(parameter_set).with_bond_orders(bond_orders.into()),
+            ),
         ))
     }
 
@@ -95,17 +99,20 @@ impl PyAtdTypifier {
         self.parameter_set.name()
     }
 
-    /// Which bond orders the types follow: ``"perceive"`` or ``"input"``.
+    /// Which bond orders the types follow.
     #[getter]
-    fn bond_orders(&self) -> &'static str {
-        AtdBondOrders::name(self.bond_orders)
+    fn bond_orders(&self) -> PyBondOrderSource {
+        self.bond_orders.clone()
     }
 
     fn __repr__(&self) -> String {
+        let source = match self.bond_orders {
+            PyBondOrderSource::Stated => "Stated",
+            PyBondOrderSource::Connectivity => "Connectivity",
+        };
         format!(
-            "AtdTypifier(parameter_set='{}', bond_orders='{}')",
+            "AtdTypifier(parameter_set='{}', bond_orders=BondOrderSource.{source})",
             self.parameter_set(),
-            self.bond_orders()
         )
     }
 }

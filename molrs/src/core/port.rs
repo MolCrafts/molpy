@@ -9,7 +9,7 @@ use crate::core::MolRsError;
 use crate::core::bond_order::stamp_bond_class;
 use crate::core::keys::{FRAG_ID, PORTS};
 use crate::core::{BondNumber, BondOrder};
-use crate::core::{KindId, MolGraph, NodeId, PropValue, RelationId};
+use crate::core::{KindId, MolGraph, NodeId, PropValue, Props, Relation, RelationId};
 
 /// The closed descriptor vocabulary: what *role* a port plays when two ports
 /// are paired.
@@ -91,7 +91,7 @@ impl FromStr for PortKind {
 
 /// A materialized port: the two atoms it spans and the descriptor it carries.
 ///
-/// Read out of a graph by [`MolGraph::port`]; the graph stores the three
+/// Read out of a graph by [`MolGraph::get_port`]; the graph stores the three
 /// descriptor facts as relation props, never as a side table.
 ///
 /// `label` is free-form text taken from the input, and `""` means **unnamed**
@@ -156,23 +156,36 @@ impl FromStr for PortKind {
 /// use molrs::core::Atomistic;
 /// use molrs::core::BondNumber;
 /// use molrs::core::PortKind;
+/// use molrs::props;
+/// use molrs::core::Element;
+/// use molrs::core::keys;
 ///
 /// // C–C with one capping hydrogen on the first carbon, and a symmetric
 /// // descriptor `[$A]` sitting on that C–H valence.
 /// let mut mol = Atomistic::new();
-/// let c0 = mol.add_atom_xyz("C", 0.0, 0.0, 0.0);
-/// let c1 = mol.add_atom_xyz("C", 1.54, 0.0, 0.0);
-/// let h = mol.add_atom_bare("H");
-/// mol.add_bond(c0, c1)?;
-/// mol.add_bond(c0, h)?;
+/// let c0 = mol.add_atom(props! {
+///     keys::ATOMIC_NUMBER => Element::C,
+///     keys::X => 0.0,
+///     keys::Y => 0.0,
+///     keys::Z => 0.0,
+/// }).unwrap();
+/// let c1 = mol.add_atom(props! {
+///     keys::ATOMIC_NUMBER => Element::C,
+///     keys::X => 1.54,
+///     keys::Y => 0.0,
+///     keys::Z => 0.0,
+/// }).unwrap();
+/// let h = mol.add_atom(props! { keys::ATOMIC_NUMBER => Element::H }).unwrap();
+/// mol.add_bond(c0, c1, props! {})?;
+/// mol.add_bond(c0, h, props! {})?;
 /// let port = mol.add_port(c0, h, PortKind::Symmetric, "A", BondNumber::Single)?;
-/// mol.set_frag_id(c0, 1)?;
+/// mol.set_atom(c0, keys::FRAG_ID, 1)?;
 ///
 /// assert_eq!(mol.n_ports(), 1);
-/// let port = mol.port(port)?;
+/// let port = mol.get_port(port)?;
 /// assert_eq!(port.kind, PortKind::Symmetric);
 /// assert_eq!(port.label, "A");
-/// assert_eq!(mol.frag_id(c0), Some(1));
+/// assert_eq!(mol.get_atom(c0)?.get_int(keys::FRAG_ID), Some(1));
 /// # Ok::<(), molrs::core::MolRsError>(())
 /// ```
 ///
@@ -222,7 +235,7 @@ impl MolGraph {
     }
 
     /// The `ports` kind, when registered at arity 2.
-    fn ports_kind(&self) -> Option<KindId> {
+    pub(crate) fn ports_kind(&self) -> Option<KindId> {
         self.kind_id(PORTS).filter(|&k| self.arity(k) == 2)
     }
 
@@ -249,7 +262,7 @@ impl MolGraph {
         bond_number: BondNumber,
     ) -> Result<RelationId, MolRsError> {
         let bonds = self.try_register_kind("bonds", 2)?;
-        let bid = self.add_relation(bonds, &[a, b])?;
+        let bid = self.add_relation(bonds, &[a, b], Props::new())?;
         stamp_bond_class(self, bonds, bid, bond_type, bond_number)?;
         Ok(bid)
     }
@@ -302,11 +315,19 @@ impl MolGraph {
             )));
         }
         let ports = self.try_register_kind(PORTS, 2)?;
-        let pid = self.add_relation(ports, &[anchor, handle])?;
-        self.set_relation_prop(ports, pid, "port_kind", kind.as_str())?;
-        self.set_relation_prop(ports, pid, "port_label", label)?;
-        self.set_relation_prop(ports, pid, "port_order", PropValue::from(order))?;
-        Ok(pid)
+        self.add_relation(
+            ports,
+            &[anchor, handle],
+            Props::new()
+                .with("port_kind", kind.as_str())
+                .with("port_label", label)
+                .with("port_order", PropValue::from(order)),
+        )
+    }
+
+    /// [`get_port`](Self::get_port) under its former name.
+    pub fn port(&self, id: RelationId) -> Result<Port, MolRsError> {
+        self.get_port(id)
     }
 
     /// Read a port back, validating its descriptor.
@@ -317,7 +338,7 @@ impl MolGraph {
     /// [`MolRsError::Validation`] when the relation is missing `port_kind`,
     /// `port_label` or `port_order`, when the stored glyph is outside the
     /// grammar, or when the stored order is not a definite [`BondNumber`].
-    pub fn port(&self, id: RelationId) -> Result<Port, MolRsError> {
+    pub fn get_port(&self, id: RelationId) -> Result<Port, MolRsError> {
         let ports = self
             .ports_kind()
             .ok_or_else(|| MolRsError::not_found("port", format!("port {}", id.data().as_ffi())))?;
@@ -395,11 +416,49 @@ impl MolGraph {
         Ok(seen)
     }
 
-    /// Iterate over the graph's port handles; empty without a `ports` kind.
+    /// [`port_ids`](Self::port_ids) under its former name.
     pub fn ports(&self) -> impl Iterator<Item = RelationId> + '_ {
+        self.port_ids()
+    }
+
+    /// Iterate over the graph's port handles; empty without a `ports` kind.
+    pub fn port_ids(&self) -> impl Iterator<Item = RelationId> + '_ {
         self.ports_kind()
             .into_iter()
             .flat_map(move |kind| self.relation_ids(kind))
+    }
+
+    /// Delete one port, leaving its anchor–handle bond in place; returns the
+    /// port relation as stored.
+    ///
+    /// # Errors
+    ///
+    /// [`MolRsError::NotFound`] when `id` names no live port; the graph is
+    /// unchanged.
+    pub fn del_port(&mut self, id: RelationId) -> Result<Relation, MolRsError> {
+        Ok(self
+            .del_ports(&[id])?
+            .pop()
+            .expect("one validated port produces one payload"))
+    }
+
+    /// Delete several ports, leaving their bonds in place; returns the port
+    /// relations as stored, in `ids` order.
+    ///
+    /// # Errors
+    ///
+    /// [`MolRsError::Validation`] when `ids` names a port twice and
+    /// [`MolRsError::NotFound`] when one names no live port. **Atomic**: on a
+    /// refusal no port is deleted.
+    pub fn del_ports(&mut self, ids: &[RelationId]) -> Result<Vec<Relation>, MolRsError> {
+        match self.ports_kind() {
+            Some(ports) => self.del_relations(ports, ids),
+            None if ids.is_empty() => Ok(Vec::new()),
+            None => Err(MolRsError::not_found(
+                "port",
+                format!("port {} (the graph has no ports)", u64::from(ids[0])),
+            )),
+        }
     }
 
     /// Number of ports.
@@ -427,31 +486,6 @@ impl MolGraph {
 
     // ---- per-node unit membership ----
 
-    /// Record the unit instance `node` came from, under the node prop
-    /// `frag_id`.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`MolRsError::Validation`] when `id` exceeds [`i32::MAX`] — node
-    /// columns are `i32` — and [`MolRsError::NotFound`] when `node` is stale or
-    /// unknown.
-    pub fn set_frag_id(&mut self, node: NodeId, id: u32) -> Result<(), MolRsError> {
-        let stored = i32::try_from(id).map_err(|_| {
-            MolRsError::validation(format!(
-                "frag_id {id} exceeds {}, the widest identifier a node column stores",
-                i32::MAX
-            ))
-        })?;
-        self.set_node(node, FRAG_ID, PropValue::Int(stored))
-    }
-
-    /// The unit instance `node` came from, or `None` when it carries no
-    /// `frag_id` (or the handle is stale).
-    pub fn frag_id(&self, node: NodeId) -> Option<u32> {
-        let stored = self.get_node(node).ok()?.get_int(FRAG_ID)?;
-        u32::try_from(stored).ok()
-    }
-
     /// Propagate each `frag_id` to the unlabelled degree-1 nodes hanging off a
     /// labelled one, returning how many nodes were labelled.
     ///
@@ -464,11 +498,12 @@ impl MolGraph {
         let Some(bonds) = self.bonds_kind() else {
             return 0;
         };
-        let labels: HashMap<NodeId, u32> = self
+        let table = self.node_table();
+        let labels: HashMap<NodeId, i32> = self
             .node_ids()
-            .filter_map(|node| self.frag_id(node).map(|id| (node, id)))
+            .filter_map(|node| table.get::<i32>(node, FRAG_ID).ok().map(|id| (node, id)))
             .collect();
-        let mut pending: Vec<(NodeId, u32)> = Vec::new();
+        let mut pending: Vec<(NodeId, i32)> = Vec::new();
         for node in self.node_ids() {
             if labels.contains_key(&node) {
                 continue;
@@ -486,7 +521,7 @@ impl MolGraph {
         }
         let mut labelled = 0;
         for (node, id) in pending {
-            if self.set_frag_id(node, id).is_ok() {
+            if self.set_node(node, FRAG_ID, PropValue::Int(id)).is_ok() {
                 labelled += 1;
             }
         }
@@ -496,12 +531,16 @@ impl MolGraph {
 
 #[cfg(test)]
 mod tests {
+    use crate::core::Element;
+    use crate::core::keys;
+    use crate::props;
     use std::str::FromStr;
 
     use super::{Port, PortKind, RelationId};
     use crate::core::Atomistic;
     use crate::core::BondNumber;
     use crate::core::CoarseGrain;
+    use crate::core::GraphAccess;
     use crate::core::MolRsError;
     use crate::core::NodeId;
     use crate::core::PropValue;
@@ -510,11 +549,27 @@ mod tests {
     /// graph that can carry a legal port. Returns `(mol, c0, c1, h)`.
     fn ch_template() -> (Atomistic, NodeId, NodeId, NodeId) {
         let mut frag = Atomistic::new();
-        let c0 = frag.add_atom_xyz("C", 0.0, 0.0, 0.0);
-        let c1 = frag.add_atom_xyz("C", 1.54, 0.0, 0.0);
-        let h = frag.add_atom_bare("H");
-        frag.add_bond(c0, c1).unwrap();
-        frag.add_bond(c0, h).unwrap();
+        let c0 = frag
+            .add_atom(props! {
+                keys::ATOMIC_NUMBER => Element::C,
+                keys::X => 0.0,
+                keys::Y => 0.0,
+                keys::Z => 0.0,
+            })
+            .unwrap();
+        let c1 = frag
+            .add_atom(props! {
+                keys::ATOMIC_NUMBER => Element::C,
+                keys::X => 1.54,
+                keys::Y => 0.0,
+                keys::Z => 0.0,
+            })
+            .unwrap();
+        let h = frag
+            .add_atom(props! { keys::ATOMIC_NUMBER => Element::H })
+            .unwrap();
+        frag.add_bond(c0, c1, props! {}).unwrap();
+        frag.add_bond(c0, h, props! {}).unwrap();
         (frag, c0, c1, h)
     }
 
@@ -563,8 +618,7 @@ mod tests {
     #[test]
     fn add_port_rejects_stale_atom() {
         let (mut frag, c0, _c1, h) = ch_template();
-        frag.remove_node(h)
-            .expect("the handle exists before removal");
+        frag.del_atom(h).expect("the handle exists before removal");
         let err = frag
             .add_port(c0, h, PortKind::Symmetric, "A", BondNumber::Single)
             .expect_err("a stale handle cannot be a port endpoint");
@@ -576,15 +630,19 @@ mod tests {
         // Rework (spec assembly-06 §1, decision 9 / golden C2): a leaving
         // group may root at a heavy atom — here the O of an OH on C0.
         let (mut frag, c0, _c1, _h) = ch_template();
-        let o = frag.add_atom_bare("O");
-        let oh = frag.add_atom_bare("H");
-        frag.add_bond(c0, o).unwrap();
-        frag.add_bond(o, oh).unwrap();
+        let o = frag
+            .add_atom(props! { keys::ATOMIC_NUMBER => Element::O })
+            .unwrap();
+        let oh = frag
+            .add_atom(props! { keys::ATOMIC_NUMBER => Element::H })
+            .unwrap();
+        frag.add_bond(c0, o, props! {}).unwrap();
+        frag.add_bond(o, oh, props! {}).unwrap();
         let pid = frag
             .add_port(c0, o, PortKind::Left, "A", BondNumber::Single)
             .expect("a bonded heavy handle is a legal port");
         assert_eq!(frag.n_ports(), 1);
-        let port = frag.port(pid).expect("the port reads back");
+        let port = frag.get_port(pid).expect("the port reads back");
         assert_eq!(port.anchor, c0);
         assert_eq!(port.handle, o);
     }
@@ -605,7 +663,9 @@ mod tests {
     #[test]
     fn add_port_rejects_unbonded_handle() {
         let (mut frag, c0, _c1, _h) = ch_template();
-        let lone = frag.add_atom_bare("H");
+        let lone = frag
+            .add_atom(props! { keys::ATOMIC_NUMBER => Element::H })
+            .unwrap();
         let err = frag
             .add_port(c0, lone, PortKind::Symmetric, "A", BondNumber::Single)
             .expect_err("the handle must be bonded to its anchor");
@@ -630,7 +690,7 @@ mod tests {
             .add_port(c0, h, PortKind::Left, "A", BondNumber::Double)
             .expect("a bonded H handle on its anchor is a legal port");
 
-        let port: Port = frag.port(pid).expect("the port reads back");
+        let port: Port = frag.get_port(pid).expect("the port reads back");
         assert_eq!(port.anchor, c0);
         assert_eq!(port.handle, h);
         assert_eq!(port.kind, PortKind::Left);
@@ -638,8 +698,8 @@ mod tests {
         assert_eq!(port.order, BondNumber::Double);
 
         // Storage form: the glyph as a Str, the order as an Int code.
-        let ports = frag.kind_id("ports").expect("'ports' registered");
-        let rel = frag.get_relation(ports, pid).unwrap();
+        let ports = frag.graph().kind_id("ports").expect("'ports' registered");
+        let rel = frag.graph().get_relation(ports, pid).unwrap();
         assert_eq!(
             rel.props.get("port_kind"),
             Some(&PropValue::Str("<".into()))
@@ -655,30 +715,34 @@ mod tests {
     fn port_rejects_missing_or_unmapped_props() {
         // A missing descriptor prop.
         let (mut frag, _c0, _c1, _h, pid) = ported_template();
-        let ports = frag.kind_id("ports").expect("'ports' registered");
-        frag.clear_relation_prop(ports, pid, "port_kind").unwrap();
+        let ports = frag.graph().kind_id("ports").expect("'ports' registered");
+        frag.graph_mut()
+            .clear_relation_prop(ports, pid, "port_kind")
+            .unwrap();
         let err = frag
-            .port(pid)
+            .get_port(pid)
             .expect_err("a port without its kind is unreadable");
         assert!(matches!(err, MolRsError::Validation { .. }), "{err:?}");
 
         // A glyph outside the grammar.
         let (mut frag, _c0, _c1, _h, pid) = ported_template();
-        let ports = frag.kind_id("ports").expect("'ports' registered");
-        frag.set_relation_prop(ports, pid, "port_kind", "Z")
+        let ports = frag.graph().kind_id("ports").expect("'ports' registered");
+        frag.graph_mut()
+            .set_relation_prop(ports, pid, "port_kind", "Z")
             .unwrap();
-        let err = frag.port(pid).expect_err("'Z' is not a descriptor");
+        let err = frag.get_port(pid).expect_err("'Z' is not a descriptor");
         assert!(matches!(err, MolRsError::Validation { .. }), "{err:?}");
 
         // An order code outside the vocabulary, and a negative one: both read
         // back as `BondNumber::Unknown`, which is not a legal port order.
         for bad in [PropValue::Int(99), PropValue::Int(-1)] {
             let (mut frag, _c0, _c1, _h, pid) = ported_template();
-            let ports = frag.kind_id("ports").expect("'ports' registered");
-            frag.set_relation_prop(ports, pid, "port_order", bad.clone())
+            let ports = frag.graph().kind_id("ports").expect("'ports' registered");
+            frag.graph_mut()
+                .set_relation_prop(ports, pid, "port_order", bad.clone())
                 .unwrap();
             let err = frag
-                .port(pid)
+                .get_port(pid)
                 .expect_err("an indefinite bond number is not a port order");
             assert!(
                 matches!(err, MolRsError::Validation { .. }),
@@ -690,8 +754,10 @@ mod tests {
     #[test]
     fn n_ports_counts_two_ports_on_one_anchor() {
         let (mut frag, c0, _c1, h) = ch_template();
-        let h2 = frag.add_atom_bare("H");
-        frag.add_bond(c0, h2).unwrap();
+        let h2 = frag
+            .add_atom(props! { keys::ATOMIC_NUMBER => Element::H })
+            .unwrap();
+        frag.add_bond(c0, h2, props! {}).unwrap();
 
         let p1 = frag
             .add_port(c0, h, PortKind::Left, "a", BondNumber::Single)
@@ -702,7 +768,7 @@ mod tests {
         assert_ne!(p1, p2);
         assert_eq!(frag.n_ports(), 2);
 
-        let ids: Vec<RelationId> = frag.ports().collect();
+        let ids: Vec<RelationId> = frag.port_ids().collect();
         assert_eq!(ids.len(), 2);
         assert!(ids.contains(&p1) && ids.contains(&p2));
         assert_eq!(frag.n_bonds(), 3, "a port is not a bond");
@@ -715,24 +781,32 @@ mod tests {
     #[test]
     fn add_port_registers_the_ports_kind_on_first_use() {
         let (mut mol, c0, _c1, h) = ch_template();
-        assert!(mol.kind_id("ports").is_none(), "no port, no kind");
+        assert!(mol.graph().kind_id("ports").is_none(), "no port, no kind");
         assert_eq!(mol.n_ports(), 0);
         mol.add_port(c0, h, PortKind::Symmetric, "", BondNumber::Single)
             .expect("a bonded handle is a legal port");
-        assert!(mol.kind_id("ports").is_some());
+        assert!(mol.graph().kind_id("ports").is_some());
         assert_eq!(mol.n_ports(), 1);
     }
 
     #[test]
     fn a_coarse_grain_carries_ports_like_any_graph() {
         let mut cg = CoarseGrain::new();
-        let a = cg.add_bead("A", 0.0, 0.0, 0.0);
-        let b = cg.add_bead("B", 1.0, 0.0, 0.0);
-        cg.add_bond(a, b).expect("bond");
+        let a = cg
+            .add_bead(
+                props! { keys::BEAD_TYPE => "A", keys::X => 0.0, keys::Y => 0.0, keys::Z => 0.0 },
+            )
+            .unwrap();
+        let b = cg
+            .add_bead(
+                props! { keys::BEAD_TYPE => "B", keys::X => 1.0, keys::Y => 0.0, keys::Z => 0.0 },
+            )
+            .unwrap();
+        cg.add_bond(a, b, props! {}).expect("bond");
         let pid = cg
             .add_port(a, b, PortKind::Left, "x", BondNumber::Single)
             .expect("a bonded bead is a legal handle");
-        assert_eq!(cg.port(pid).expect("reads back").label, "x");
+        assert_eq!(cg.get_port(pid).expect("reads back").label, "x");
     }
 
     // ---- merge ---------------------------------------------------------------
@@ -754,46 +828,46 @@ mod tests {
             .port_on(atom_map[&c0], atom_map[&h])
             .expect("the merged port sits on the mapped valence");
         assert_ne!(mapped, own);
-        let port = world.port(mapped).expect("the mapped port reads back");
+        let port = world.get_port(mapped).expect("the mapped port reads back");
         assert_eq!(port.kind, PortKind::Left);
         assert_eq!(port.label, "B");
-        assert_eq!(world.port(own).expect("own port").label, "A");
+        assert_eq!(world.get_port(own).expect("own port").label, "A");
     }
 
     // ---- per-node unit membership -------------------------------------------
 
+    /// The unit instance `atom` came from, if labelled.
+    fn frag_id(mol: &Atomistic, atom: NodeId) -> Option<i32> {
+        mol.get_atom(atom).unwrap().get_int(keys::FRAG_ID)
+    }
+
+    /// Label `atom` with unit instance `id`.
+    fn set_frag_id(mol: &mut Atomistic, atom: NodeId, id: i32) {
+        mol.set_atom(atom, keys::FRAG_ID, PropValue::Int(id))
+            .unwrap();
+    }
+
     #[test]
-    fn set_frag_id_per_atom_round_trips() {
+    fn frag_id_is_per_atom() {
         let (mut frag, c0, c1, h) = ch_template();
-        frag.set_frag_id(c0, 1).unwrap();
-        frag.set_frag_id(c1, 7).unwrap();
-        assert_eq!(frag.frag_id(c0), Some(1));
-        assert_eq!(frag.frag_id(c1), Some(7));
+        set_frag_id(&mut frag, c0, 1);
+        set_frag_id(&mut frag, c1, 7);
+        assert_eq!(frag_id(&frag, c0), Some(1));
+        assert_eq!(frag_id(&frag, c1), Some(7));
         assert_eq!(
-            frag.frag_id(h),
+            frag_id(&frag, h),
             None,
             "membership is per atom, not broadcast"
         );
     }
 
     #[test]
-    fn set_frag_id_rejects_above_i32_max() {
-        let (mut frag, c0, _c1, _h) = ch_template();
-        let too_big = i32::MAX as u32 + 1;
-        let err = frag
-            .set_frag_id(c0, too_big)
-            .expect_err("node columns are i32; a wider id is not storable");
-        assert!(matches!(err, MolRsError::Validation { .. }), "{err:?}");
-        assert_eq!(frag.frag_id(c0), None, "a rejected id is not written");
-    }
-
-    #[test]
     fn inherit_frag_ids_labels_degree_one_neighbours() {
         let (mut frag, c0, c1, h) = ch_template();
-        frag.set_frag_id(c0, 3).unwrap();
-        frag.set_frag_id(c1, 3).unwrap();
+        set_frag_id(&mut frag, c0, 3);
+        set_frag_id(&mut frag, c1, 3);
         frag.inherit_frag_ids();
-        assert_eq!(frag.frag_id(h), Some(3));
+        assert_eq!(frag_id(&frag, h), Some(3));
     }
 
     #[test]
@@ -801,34 +875,36 @@ mod tests {
         let (mut frag, c0, c1, h) = ch_template();
         assert_eq!(frag.inherit_frag_ids(), 0);
         for atom in [c0, c1, h] {
-            assert_eq!(frag.frag_id(atom), None, "no label exists to inherit");
+            assert_eq!(frag_id(&frag, atom), None, "no label exists to inherit");
         }
     }
 
     #[test]
     fn inherit_frag_ids_does_not_overwrite() {
         let (mut frag, c0, c1, h) = ch_template();
-        frag.set_frag_id(c0, 3).unwrap();
-        frag.set_frag_id(c1, 3).unwrap();
-        frag.set_frag_id(h, 9).unwrap();
+        set_frag_id(&mut frag, c0, 3);
+        set_frag_id(&mut frag, c1, 3);
+        set_frag_id(&mut frag, h, 9);
         assert_eq!(frag.inherit_frag_ids(), 0, "nothing is left to label");
-        assert_eq!(frag.frag_id(h), Some(9), "an assigned atom is left alone");
+        assert_eq!(frag_id(&frag, h), Some(9), "an assigned atom is left alone");
     }
 
     #[test]
     fn inherit_frag_ids_returns_count() {
         let (mut frag, c0, c1, h) = ch_template();
-        let h2 = frag.add_atom_bare("H");
-        frag.add_bond(c0, h2).unwrap();
-        frag.set_frag_id(c0, 4).unwrap();
-        frag.set_frag_id(c1, 4).unwrap();
+        let h2 = frag
+            .add_atom(props! { keys::ATOMIC_NUMBER => Element::H })
+            .unwrap();
+        frag.add_bond(c0, h2, props! {}).unwrap();
+        set_frag_id(&mut frag, c0, 4);
+        set_frag_id(&mut frag, c1, 4);
         assert_eq!(
             frag.inherit_frag_ids(),
             2,
             "both hydrogens on C0 are labelled"
         );
-        assert_eq!(frag.frag_id(h), Some(4));
-        assert_eq!(frag.frag_id(h2), Some(4));
+        assert_eq!(frag_id(&frag, h), Some(4));
+        assert_eq!(frag_id(&frag, h2), Some(4));
     }
 
     #[test]
@@ -837,14 +913,16 @@ mod tests {
         // on the labelled carbon; C1 is degree 2 and never inherits, so a
         // second pass has nothing left to do.
         let (mut frag, c0, c1, h) = ch_template();
-        let h2 = frag.add_atom_bare("H");
-        frag.add_bond(c1, h2).unwrap();
-        frag.set_frag_id(c0, 5).unwrap();
+        let h2 = frag
+            .add_atom(props! { keys::ATOMIC_NUMBER => Element::H })
+            .unwrap();
+        frag.add_bond(c1, h2, props! {}).unwrap();
+        set_frag_id(&mut frag, c0, 5);
 
         assert_eq!(frag.inherit_frag_ids(), 1);
-        assert_eq!(frag.frag_id(h), Some(5));
-        assert_eq!(frag.frag_id(c1), None, "a degree-2 atom never inherits");
-        assert_eq!(frag.frag_id(h2), None);
+        assert_eq!(frag_id(&frag, h), Some(5));
+        assert_eq!(frag_id(&frag, c1), None, "a degree-2 atom never inherits");
+        assert_eq!(frag_id(&frag, h2), None);
         assert_eq!(frag.inherit_frag_ids(), 0, "not a fixpoint");
     }
 
@@ -872,7 +950,7 @@ mod tests {
     #[test]
     fn to_frame_masks_unlabelled_frag_id() {
         let (mut frag, c0, _c1, _h) = ch_template();
-        frag.set_frag_id(c0, 1).unwrap();
+        set_frag_id(&mut frag, c0, 1);
         let frame = frag.to_frame().expect("a schema-conforming graph converts");
         let atoms = frame.get("atoms").expect("atoms block");
         assert!(
@@ -901,9 +979,9 @@ mod tests {
     #[test]
     fn from_frame_restores_ports_bonds_and_frag_id() {
         let (mut frag, c0, c1, h, _pid) = ported_template();
-        frag.set_frag_id(c0, 2).unwrap();
-        frag.set_frag_id(c1, 2).unwrap();
-        frag.set_frag_id(h, 2).unwrap();
+        set_frag_id(&mut frag, c0, 2);
+        set_frag_id(&mut frag, c1, 2);
+        set_frag_id(&mut frag, h, 2);
 
         let restored =
             Atomistic::from_frame(&frag.to_frame().expect("a schema-conforming graph converts"))
@@ -912,13 +990,13 @@ mod tests {
         assert_eq!(restored.n_bonds(), 2);
         assert_eq!(restored.n_ports(), 1);
 
-        let pid = restored.ports().next().expect("the port survives");
-        let port = restored.port(pid).expect("the descriptor reads back");
+        let pid = restored.port_ids().next().expect("the port survives");
+        let port = restored.get_port(pid).expect("the descriptor reads back");
         assert_eq!(port.kind, PortKind::Symmetric);
         assert_eq!(port.label, "A");
         assert_eq!(port.order, BondNumber::Single);
 
-        let ids: Vec<Option<u32>> = restored.node_ids().map(|n| restored.frag_id(n)).collect();
+        let ids: Vec<Option<i32>> = restored.atom_ids().map(|n| frag_id(&restored, n)).collect();
         assert_eq!(ids, vec![Some(2), Some(2), Some(2)]);
     }
 
@@ -928,12 +1006,12 @@ mod tests {
     #[test]
     fn from_frame_restores_a_partially_labelled_frag_id() {
         let (mut frag, c0, _c1, _h) = ch_template();
-        frag.set_frag_id(c0, 2).unwrap();
+        set_frag_id(&mut frag, c0, 2);
 
         let restored =
             Atomistic::from_frame(&frag.to_frame().expect("a schema-conforming graph converts"))
                 .expect("a ported frame reads back");
-        let ids: Vec<Option<u32>> = restored.node_ids().map(|n| restored.frag_id(n)).collect();
+        let ids: Vec<Option<i32>> = restored.atom_ids().map(|n| frag_id(&restored, n)).collect();
         assert_eq!(ids, vec![Some(2), None, None]);
     }
 

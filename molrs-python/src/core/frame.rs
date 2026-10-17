@@ -670,7 +670,7 @@ impl PyFrame {
         r#box: Option<PyRef<'_, PyBox>>,
     ) -> PyResult<Self> {
         let mut frame = Self {
-            inner: FrameRef::new_standalone(),
+            inner: FrameRef::default(),
         };
         if let Some(blocks) = blocks {
             if blocks.cast::<PyFrame>().is_ok() {
@@ -792,7 +792,7 @@ impl PyFrame {
         self.inner
             .arena
             .borrow_mut()
-            .remove_block(self.inner.id, key)
+            .del_block(self.inner.id, key)
             .map_err(ffi_error_to_pyerr)
     }
 

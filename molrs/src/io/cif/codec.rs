@@ -1,14 +1,16 @@
 //! The Crystallographic Information File (CIF) codec — MVP subset.
+use crate::io::frame_index::FrameOffset;
+use crate::io::{Sink, SinkWriter, Source};
 
+use crate::core::Cell;
 use crate::io::frame_columns::insert_column;
 use crate::io::invalid_data;
 use molrs::core::MetaValue;
 use molrs::core::keys;
 use std::collections::HashMap;
-use std::io::{BufRead, BufReader, BufWriter, Result, Write};
-use std::path::Path;
+use std::io::{BufRead, Result, Seek, Write};
 
-use ndarray::{Array1, Array2, IxDyn, array};
+use ndarray::{Array1, Array2, IxDyn};
 
 use molrs::core::Block;
 use molrs::core::Frame;
@@ -16,7 +18,7 @@ use molrs::core::MetaMap;
 use molrs::core::SimBox;
 use molrs::op::{F, Idx};
 
-use crate::io::reader::{FrameReader, Reader};
+use crate::io::reader::{FrameReader, ReadSeek, Reader, TrajectoryReader};
 use crate::io::writer::{FrameWriter, Writer};
 
 // ---------------------------------------------------------------------------
@@ -356,10 +358,8 @@ impl FrameInProgress {
                 self.cell_beta.unwrap(),
                 self.cell_gamma.unwrap(),
             ];
-            let h = SimBox::matrix_from_lengths_angles(lengths, angles)
-                .map_err(|e| invalid_data(format!("CIF cell → SimBox: {e:?}")))?;
             Some(
-                SimBox::new(h, array![0.0 as F, 0.0, 0.0], [true; 3])
+                SimBox::new(Cell::LengthsAngles { lengths, angles }, [0.0; 3], [true; 3])
                     .map_err(|e| invalid_data(format!("CIF cell → SimBox: {e:?}")))?,
             )
         } else {
@@ -421,11 +421,24 @@ impl FrameInProgress {
         if let Some(ids) = column_u32(&self.atom_cols, &["_atom_site.id", "_atom_site_id"]) {
             insert_column(&mut atoms, "id", ids)?;
         }
+        // The species field is kept raw (as the file spells it, e.g. `Fe2+`).
+        // A `.` / `?` placeholder is an absent species, not a made-up one: a
+        // null row (value `""`) that the explicit `Element::fill_atomic_numbers`
+        // step then reports by row.
         if let Some(syms) = string_column(
             &self.atom_cols,
             &["_atom_site.type_symbol", "_atom_site_type_symbol"],
         ) {
-            insert_column(&mut atoms, "element", syms)?;
+            let valid: Vec<bool> = syms.iter().map(|s| !is_placeholder(s)).collect();
+            let syms = placeholders_as_empty(syms);
+            let n = syms.len();
+            let arr = Array1::from_vec(syms)
+                .into_shape_with_order(IxDyn(&[n]))
+                .map_err(invalid_data)?
+                .into_dyn();
+            atoms
+                .insert("element", arr, Some(valid))
+                .map_err(invalid_data)?;
         }
         if let Some(names) = string_column(
             &self.atom_cols,
@@ -453,7 +466,7 @@ impl FrameInProgress {
                 .map_err(invalid_data)?
                 .into_dyn();
             atoms
-                .insert_nullable("res_id", arr, valid)
+                .insert("res_id", arr, Some(valid))
                 .map_err(invalid_data)?;
         }
         if let Some(chains) = string_column(
@@ -750,6 +763,7 @@ fn handle_loop<R: BufRead>(src: &mut LineSource<R>, frame: &mut FrameInProgress)
 /// operators ride along in the metadata for a caller that expands them.
 pub struct CifReader<R: BufRead> {
     src: LineSource<R>,
+    index: Option<Vec<FrameOffset>>,
 }
 
 impl<R: BufRead> Reader for CifReader<R> {
@@ -757,7 +771,51 @@ impl<R: BufRead> Reader for CifReader<R> {
     fn new(reader: R) -> Self {
         Self {
             src: LineSource::new(reader),
+            index: None,
         }
+    }
+}
+
+impl CifReader<Box<dyn ReadSeek>> {
+    /// Open a CIF file, or the bytes of one, for random access by `data_`
+    /// block.
+    pub fn open<'a>(src: impl Into<Source<'a>>) -> Result<Self> {
+        Ok(Self::new(src.into().owned_reader()?))
+    }
+}
+
+impl<R: BufRead + Seek> TrajectoryReader for CifReader<R> {
+    fn build_index(&mut self) -> Result<()> {
+        if self.index.is_none() {
+            // A `data_` line inside a `;`-delimited text field opens no
+            // block: the parser reads the field as one value.
+            let mut in_text = false;
+            self.index = Some(crate::io::frame_index::index_line_records(
+                &mut self.src.reader,
+                |line| {
+                    if line.starts_with(';') {
+                        in_text = !in_text;
+                        return false;
+                    }
+                    !in_text && line.trim_start().starts_with("data_")
+                },
+            )?);
+        }
+        Ok(())
+    }
+
+    fn read_frame(&mut self, index: usize) -> Result<Option<Frame>> {
+        self.build_index()?;
+        let Some(at) = self.index.as_ref().and_then(|o| o.get(index).copied()) else {
+            return Ok(None);
+        };
+        let bytes = crate::io::frame_index::frame_bytes(&mut self.src.reader, at)?;
+        read_cif(bytes.as_slice()).map(Some)
+    }
+
+    fn len(&mut self) -> Result<usize> {
+        self.build_index()?;
+        Ok(self.index.as_ref().map_or(0, Vec::len))
     }
 }
 
@@ -769,46 +827,23 @@ impl<R: BufRead> FrameReader for CifReader<R> {
     }
 }
 
-/// Read every `data_` block of the CIF file at `path`.
-pub fn read_cif_trajectory<P: AsRef<Path>>(path: P) -> Result<Vec<Frame>> {
-    let file = std::fs::File::open(path.as_ref())?;
-    let mut cr = CifReader::new(BufReader::new(file));
-    crate::io::reader::collect_frames(&mut cr)
-}
-
-/// Read the first block from `path`.
-pub fn read_cif<P: AsRef<Path>>(path: P) -> Result<Frame> {
-    let file = std::fs::File::open(path.as_ref())?;
-    let mut cr = CifReader::new(BufReader::new(file));
-    cr.read()?
-        .ok_or_else(|| invalid_data("CIF file has no data_ block"))
-}
-
-/// Read the first `data_` block of CIF `text` — [`read_cif`] on text in
-/// memory.
-pub fn read_cif_str(text: &str) -> Result<Frame> {
-    CifReader::new(text.as_bytes())
+/// Read the first `data_` block of a CIF file.
+pub fn read_cif<'a>(src: impl Into<Source<'a>>) -> Result<Frame> {
+    let src = src.into();
+    CifReader::new(src.reader()?)
         .read()?
-        .ok_or_else(|| invalid_data("CIF text has no data_ block"))
+        .ok_or_else(|| invalid_data(format!("{}: no CIF data_ block", src.name())))
 }
 
 // ---------------------------------------------------------------------------
 // Writer
 // ---------------------------------------------------------------------------
 
-/// Write a Frame as a single-block CIF file at `path`.
-pub fn write_cif<P: AsRef<Path>>(path: P, frame: &Frame) -> Result<()> {
-    let file = std::fs::File::create(path.as_ref())?;
-    let mut w = BufWriter::new(file);
+/// Write a frame as a single-block CIF file.
+pub fn write_cif<'a>(sink: impl Into<Sink<'a>>, frame: &Frame) -> Result<()> {
+    let mut w = sink.into().writer()?;
     write_frame_to(&mut w, frame)?;
     w.flush()
-}
-
-/// Write a frame as single-block CIF text — [`write_cif`] into memory.
-pub fn write_cif_str(frame: &Frame) -> Result<String> {
-    let mut buf = Vec::new();
-    write_frame_to(&mut buf, frame)?;
-    String::from_utf8(buf).map_err(invalid_data)
 }
 
 /// Write a Frame as a single CIF data block. Cell parameters come from
@@ -834,7 +869,7 @@ fn write_frame_to<W: Write>(writer: &mut W, frame: &Frame) -> Result<()> {
         writeln!(writer, "_cell_length_b    {:.6}", lengths[1])?;
         writeln!(writer, "_cell_length_c    {:.6}", lengths[2])?;
         // Compute angles from H columns.
-        let h = sb.h_view();
+        let h = ndarray::arr2(&sb.matrix());
         let v1 = [h[(0, 0)], h[(1, 0)], h[(2, 0)]];
         let v2 = [h[(0, 1)], h[(1, 1)], h[(2, 1)]];
         let v3 = [h[(0, 2)], h[(1, 2)], h[(2, 2)]];
@@ -856,24 +891,39 @@ fn write_frame_to<W: Write>(writer: &mut W, frame: &Frame) -> Result<()> {
 
     let xs = atoms
         .get("x")
-        .and_then(|c| c.as_float())
+        .and_then(|c| c.get::<f64>())
         .ok_or_else(|| invalid_data("atoms.x missing"))?;
     let ys = atoms
         .get("y")
-        .and_then(|c| c.as_float())
+        .and_then(|c| c.get::<f64>())
         .ok_or_else(|| invalid_data("atoms.y missing"))?;
     let zs = atoms
         .get("z")
-        .and_then(|c| c.as_float())
+        .and_then(|c| c.get::<f64>())
         .ok_or_else(|| invalid_data("atoms.z missing"))?;
-    let labels = atoms.get("name").and_then(|c| c.as_string());
-    let symbols = atoms.get("element").and_then(|c| c.as_string());
+    let labels = atoms.get("name").and_then(|c| c.get::<String>());
+    // CIF spells species as `_atom_site_type_symbol`; the writer reads the
+    // `element` column and nothing else. An empty value writes CIF's own
+    // "unknown" placeholder `?`.
+    let symbols = atoms
+        .get("element")
+        .and_then(|c| c.get::<String>())
+        .ok_or_else(|| {
+            invalid_data(
+                "CIF write: atoms block has no string 'element' column; a frame that \
+                 carries only atomic_number needs `Element::fill_symbols(&mut frame)` \
+                 first",
+            )
+        })?;
 
     for i in 0..n {
         let label = labels
             .map(|c| c[[i]].clone())
             .unwrap_or_else(|| format!("X{}", i + 1));
-        let sym = symbols.map(|c| c[[i]].clone()).unwrap_or("X".to_string());
+        let sym = match symbols[[i]].trim() {
+            "" => "?",
+            s => s,
+        };
         writeln!(
             writer,
             "{} {} {:.6} {:.6} {:.6}",
@@ -968,9 +1018,19 @@ fn angle_deg(u: &[F; 3], v: &[F; 3]) -> F {
     c.acos().to_degrees()
 }
 
-/// `FrameWriter`-trait wrapper.
+/// A CIF writer: one `data_` block per [`FrameWriter::write`], which
+/// [`CifReader`] reads back block by block.
 pub struct CifWriter<W: Write> {
     writer: W,
+}
+
+impl<'a> CifWriter<SinkWriter<'a>> {
+    /// Create a CIF file, or fill a buffer, block by block.
+    pub fn create(sink: impl Into<Sink<'a>>) -> Result<Self> {
+        Ok(Self {
+            writer: sink.into().writer()?,
+        })
+    }
 }
 
 impl<W: Write> Writer for CifWriter<W> {
@@ -985,7 +1045,8 @@ impl<W: Write> FrameWriter for CifWriter<W> {
         // Refuse to emit a frame that violates the vocabulary: a bad file
         // looks fine and is found wrong later, by whatever reads it.
         crate::io::writer::check_write_frame(frame)?;
-        write_frame_to(&mut self.writer, frame)
+        write_frame_to(&mut self.writer, frame)?;
+        self.writer.flush()
     }
 }
 
@@ -1022,7 +1083,7 @@ C2 C 0.5 0.5 0.5
         let frame = reader.read().unwrap().unwrap();
         let atoms = frame.get("atoms").unwrap();
         assert_eq!(atoms.n_rows(), Some(2));
-        let xs = atoms.get("x").and_then(|c| c.as_float()).unwrap();
+        let xs = atoms.get("x").and_then(|c| c.get::<f64>()).unwrap();
         assert!((xs[[1]] - 2.5).abs() < 1e-9, "got {}", xs[[1]]);
         assert!(frame.simbox.is_some());
     }
@@ -1041,17 +1102,66 @@ C2 C 0.5 0.5 0.5
             .get("atoms")
             .unwrap()
             .get("x")
-            .and_then(|c| c.as_float())
+            .and_then(|c| c.get::<f64>())
             .unwrap();
         let xs2 = frame2
             .get("atoms")
             .unwrap()
             .get("x")
-            .and_then(|c| c.as_float())
+            .and_then(|c| c.get::<f64>())
             .unwrap();
         for i in 0..xs1.len() {
             assert!((xs1[[i]] - xs2[[i]]).abs() < 1e-4);
         }
+    }
+
+    #[test]
+    fn a_placeholder_type_symbol_is_a_null_row_and_writes_back_as_unknown() {
+        let text = SMALL_CIF.replace("C2 C 0.5", "C2 ? 0.5");
+        let frame = CifReader::new(Cursor::new(text.as_bytes()))
+            .read()
+            .unwrap()
+            .unwrap();
+        let atoms = frame.get("atoms").unwrap();
+        let el = atoms
+            .get("element")
+            .and_then(|c| c.get::<String>())
+            .unwrap();
+        assert_eq!((el[[0]].as_str(), el[[1]].as_str()), ("C", ""));
+        assert_eq!(atoms.validity("element"), Some(&[true, false][..]));
+
+        let mut buf = Vec::new();
+        write_frame_to(&mut buf, &frame).unwrap();
+        let out = String::from_utf8(buf).unwrap();
+        assert!(out.lines().any(|l| l.starts_with("C2 ? ")), "{out}");
+    }
+
+    #[test]
+    fn writer_requires_an_element_column() {
+        let mut frame = CifReader::new(Cursor::new(SMALL_CIF.as_bytes()))
+            .read()
+            .unwrap()
+            .unwrap();
+        let mut atoms = frame.get("atoms").unwrap().clone();
+        atoms.remove("element");
+        frame.insert("atoms", atoms);
+        let err = write_frame_to(&mut Vec::new(), &frame).unwrap_err();
+        assert!(err.to_string().contains("fill_symbols"), "{err}");
+    }
+
+    /// `CifReader::open` reads `data_` blocks by index; a `data_` line inside a
+    /// `;` text field opens none.
+    #[test]
+    fn cif_reader_open_reads_blocks_by_index() {
+        use crate::io::reader::TrajectoryReader;
+        let text = format!(
+            "{SMALL_CIF}\n_note\n;\ndata_not_a_block\n;\n{}",
+            SMALL_CIF.replacen("data_", "data_second", 1)
+        );
+        let mut reader = CifReader::open(text.as_bytes()).unwrap();
+        assert_eq!(reader.len().unwrap(), 2);
+        assert!(reader.read_frame(1).unwrap().is_some());
+        assert!(reader.read_frame(2).unwrap().is_none());
     }
 
     #[test]
@@ -1103,7 +1213,7 @@ C1 C 0.1 0.2 0.3
 
     #[test]
     fn keeps_the_symmetry_operators_and_space_group_verbatim() {
-        let frame = read_cif_str(P21C_CIF).unwrap();
+        let frame = crate::io::read_cif((P21C_CIF).as_bytes()).unwrap();
         assert_eq!(symops(&frame), P21C_OPS);
         assert_eq!(
             frame.meta.get(keys::SPACE_GROUP).and_then(|v| v.as_str()),
@@ -1136,7 +1246,7 @@ C1 C 0.1 0.2 0.3
                 "_space_group_symop.operation_xyz",
             );
         for text in [modern, ddl2] {
-            let frame = read_cif_str(&text).unwrap();
+            let frame = crate::io::read_cif(text.as_bytes()).unwrap();
             assert_eq!(symops(&frame), P21C_OPS);
             assert_eq!(
                 frame.meta.get(keys::SPACE_GROUP).and_then(|v| v.as_str()),
@@ -1147,19 +1257,19 @@ C1 C 0.1 0.2 0.3
 
     #[test]
     fn a_block_without_symmetry_has_no_symmetry_meta() {
-        let frame = read_cif_str(SMALL_CIF).unwrap();
+        let frame = crate::io::read_cif((SMALL_CIF).as_bytes()).unwrap();
         assert!(frame.meta.get(keys::SYMOPS).is_none());
         assert!(frame.meta.get(keys::SPACE_GROUP).is_none());
         let unknown = SMALL_CIF.replace("data_test\n", "data_test\n_space_group_name_H-M_alt ?\n");
-        let frame = read_cif_str(&unknown).unwrap();
+        let frame = crate::io::read_cif(unknown.as_bytes()).unwrap();
         assert!(frame.meta.get(keys::SPACE_GROUP).is_none());
     }
 
     #[test]
     fn symmetry_round_trips_through_the_writer() {
-        let frame = read_cif_str(P21C_CIF).unwrap();
-        let text = write_cif_str(&frame).unwrap();
-        let back = read_cif_str(&text).unwrap();
+        let frame = crate::io::read_cif((P21C_CIF).as_bytes()).unwrap();
+        let text = crate::io::writer::capture(|sink| crate::io::write_cif(sink, &frame)).unwrap();
+        let back = crate::io::read_cif(text.as_bytes()).unwrap();
         assert_eq!(symops(&back), P21C_OPS);
         assert_eq!(
             back.meta.get(keys::SPACE_GROUP).and_then(|v| v.as_str()),
@@ -1170,12 +1280,12 @@ C1 C 0.1 0.2 0.3
 
     #[test]
     fn writer_refuses_malformed_symmetry_meta() {
-        let mut frame = read_cif_str(SMALL_CIF).unwrap();
+        let mut frame = crate::io::read_cif((SMALL_CIF).as_bytes()).unwrap();
         frame.meta.insert(keys::SYMOPS, "x,y,z");
-        assert!(write_cif_str(&frame).is_err());
-        let mut frame = read_cif_str(SMALL_CIF).unwrap();
+        assert!(crate::io::writer::capture(|sink| crate::io::write_cif(sink, &frame)).is_err());
+        let mut frame = crate::io::read_cif((SMALL_CIF).as_bytes()).unwrap();
         frame.meta.insert(keys::SPACE_GROUP, 14_i64);
-        assert!(write_cif_str(&frame).is_err());
+        assert!(crate::io::writer::capture(|sink| crate::io::write_cif(sink, &frame)).is_err());
     }
 
     #[test]
@@ -1218,7 +1328,7 @@ HETATM 2 O O . HOH C . ? 4.0 5.0 6.0 1.0 20.0
         let strings = |key: &str| -> Vec<String> {
             atoms
                 .get(key)
-                .and_then(|c| c.as_string())
+                .and_then(|c| c.get::<String>())
                 .unwrap()
                 .iter()
                 .cloned()
@@ -1227,10 +1337,10 @@ HETATM 2 O O . HOH C . ? 4.0 5.0 6.0 1.0 20.0
         assert_eq!(strings("chain"), ["A", "C"]);
         assert_eq!(strings("altloc"), ["A", ""]);
         assert_eq!(strings("icode"), ["B", ""]);
-        let res_id = atoms.get("res_id").and_then(|c| c.as_uint()).unwrap();
+        let res_id = atoms.get("res_id").and_then(|c| c.get::<u64>()).unwrap();
         assert_eq!(res_id[[0]], 1);
         assert_eq!(atoms.validity("res_id"), Some(&[true, false][..]));
-        let b = atoms.get("b_factor").and_then(|c| c.as_float()).unwrap();
+        let b = atoms.get("b_factor").and_then(|c| c.get::<f64>()).unwrap();
         assert_eq!(b.iter().copied().collect::<Vec<_>>(), [10.5, 20.0]);
         for old in ["chain_id", "res_seq", "b_iso"] {
             assert!(atoms.get(old).is_none(), "{old}");

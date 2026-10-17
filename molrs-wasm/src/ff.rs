@@ -21,7 +21,7 @@ use wasm_bindgen::prelude::*;
 use molrs::core::Atomistic;
 use molrs::ff::compile::PotentialCompiler as RsPotentialCompiler;
 use molrs::ff::forcefield::ForceField as RsForceField;
-use molrs::ff::potential::Potentials as RsPotentials;
+use molrs::ff::potential::{Accumulator, Potential, Potentials as RsPotentials};
 use molrs::ff::typifier::Typing;
 use molrs::ff::typifier::UffTypifier as RsUff;
 use molrs::ff::typifier::mmff::{Mmff94Typifier as RsMmff94, Mmff94sTypifier as RsMmff94s};
@@ -51,7 +51,11 @@ macro_rules! wasm_typifier {
             }
 
             /// Typify a molecular [`Frame`]. Returns a **new** labeled frame;
-            /// `frame` is untouched. Every call accumulates its definitions
+            /// `frame` is untouched. Species is read from
+            /// `atoms.atomic_number` only: a frame that spells symbols
+            /// (`atoms.element`) needs `fillAtomicNumbers(frame)` first, and
+            /// an atom without a valid atomic number throws. Every call
+            /// accumulates its definitions
             /// into this typifier's private output force field; a conflicting
             /// definition is an error and leaves the output unchanged.
             ///
@@ -172,12 +176,23 @@ pub struct Potentials {
 #[wasm_bindgen(js_class = Potentials)]
 impl Potentials {
     /// `{ energy: number, forces: Float64Array }` for flat 3N coordinates —
-    /// molrs `Potentials::calc_energy_forces`.
-    #[wasm_bindgen(js_name = calcEnergyForces)]
-    pub fn calc_energy_forces(&self, coords: &js_sys::Float64Array) -> Result<JsValue, JsValue> {
-        let mut buf = vec![0.0; coords.length() as usize];
-        coords.copy_to(&mut buf);
-        let (e, f) = self.inner.calc_energy_forces(&buf);
+    /// molrs `Potential::evaluate` into a fresh `Accumulator`.
+    ///
+    /// # Errors
+    ///
+    /// Throws if `coords` is not a flat `[x0, y0, z0, x1, …]` array (its
+    /// length a multiple of 3).
+    pub fn evaluate(&self, coords: &[f64]) -> Result<JsValue, JsValue> {
+        if !coords.len().is_multiple_of(3) {
+            return Err(JsValue::from_str(&format!(
+                "Potentials.evaluate: coords must be flat 3N; got {} values",
+                coords.len()
+            )));
+        }
+        let mut acc = Accumulator::new(coords.len());
+        self.inner.evaluate(coords, &mut acc);
+        let e = acc.energy();
+        let f = acc.into_forces();
         let obj = js_sys::Object::new();
         js_sys::Reflect::set(&obj, &"energy".into(), &JsValue::from_f64(e))?;
         let fa = js_sys::Float64Array::new_with_length(f.len() as u32);

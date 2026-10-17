@@ -15,7 +15,7 @@ class Harmonic:
     def __init__(self, k: float = 1.0) -> None:
         self.k = k
 
-    def calc_energy_forces(self, pos):
+    def evaluate(self, pos):
         pos = np.asarray(pos, dtype=np.float64)
         e = 0.5 * self.k * float(np.sum(pos * pos))
         return e, (-self.k * pos)
@@ -25,8 +25,30 @@ class TestPotentialProtocol:
     def test_structural_class_is_potential(self) -> None:
         assert isinstance(Harmonic(), Potential)
 
-    def test_ljcut_is_potential(self) -> None:
-        assert isinstance(PairLjCut(1.0, 1.0, 2.5), Potential)
+    def test_ljcut_is_pair_driven_not_coordinates_only(self) -> None:
+        """``PairLjCut`` is priced over a pair table (``evaluate_pairs``), so
+        it is not the coordinates-only ``Potential`` a duck-typed provider
+        is; an integrator still takes it, feeding it the pairs."""
+        lj = PairLjCut(1.0, 1.0, 2.5)
+        assert not isinstance(lj, Potential)
+        assert callable(lj.evaluate_pairs) and callable(lj.pair_energy_force)
+        vv = VelocityVerlet(
+            0.001,
+            potential=PairLjCut(1.0, 1.0, 2.5),
+            neighbors=molrs.core.VerletSkin(
+                molrs.core.NeighborList(3.0),
+                2.5,
+                np.array([[0.0, 0.0, 0.0], [1.2, 0.0, 0.0]]),
+                molrs.core.Box(molrs.core.Cell.lengths([10.0] * 3)),
+                skin=0.5,
+            ),
+            mass=np.ones(2),
+        )
+        state = vv.initial(
+            np.array([[0.0, 0.0, 0.0], [1.2, 0.0, 0.0]]), np.zeros((2, 3))
+        )
+        e, _ = lj.pair_energy_force(1.44, [1.2, 0.0, 0.0])
+        assert state.energy == pytest.approx(e)
 
     def test_md_defines_no_potential(self) -> None:
         """MD integrates potentials; it does not define or re-export one."""
@@ -52,7 +74,7 @@ class TestDispatch:
         calls: list[int] = []
 
         class Probe:
-            def calc_energy_forces(self, pos):
+            def evaluate(self, pos):
                 calls.append(pos.ndim if hasattr(pos, "ndim") else -1)
                 pos = np.asarray(pos, dtype=np.float64)
                 return 0.0, np.zeros_like(pos)
@@ -75,7 +97,7 @@ class TestDispatch:
 class _Free:
     """No force: the atom drifts at constant velocity."""
 
-    def calc_energy_forces(self, pos):
+    def evaluate(self, pos):
         pos = np.asarray(pos, dtype=np.float64)
         return 0.0, np.zeros_like(pos)
 
@@ -87,7 +109,10 @@ class TestImageFlags:
         and ``pos + L·images`` is the straight unwrapped path."""
         edge, dt, v = 10.0, 0.5, 1.0
         vv = VelocityVerlet(
-            dt, potential=_Free(), mass=np.ones(1), box=molrs.core.Box.cube(edge)
+            dt,
+            potential=_Free(),
+            mass=np.ones(1),
+            box=molrs.core.Box(molrs.core.Cell.lengths([edge] * 3)),
         )
         state = vv.initial(np.array([[9.2, 5.0, 5.0]]), np.array([[v, 0.0, 0.0]]))
         n_steps = 6  # crosses x = 10 on the second step
@@ -101,7 +126,10 @@ class TestImageFlags:
 
     def test_a_duck_typed_state_carries_its_images(self) -> None:
         vv = VelocityVerlet(
-            0.5, potential=_Free(), mass=np.ones(1), box=molrs.core.Box.cube(10.0)
+            0.5,
+            potential=_Free(),
+            mass=np.ones(1),
+            box=molrs.core.Box(molrs.core.Cell.lengths([10.0] * 3)),
         )
         seed = vv.initial(np.array([[5.0, 5.0, 5.0]]), np.array([[1.0, 0.0, 0.0]]))
 

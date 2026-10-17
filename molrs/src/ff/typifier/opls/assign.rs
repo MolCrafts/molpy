@@ -49,7 +49,7 @@ use crate::ff::forcefield::{ForceField, StyleDefs};
 use crate::ff::ir::Params;
 use crate::ff::typifier::ParameterInterpolator;
 use crate::ff::typifier::estimate::candidate::is_wildcard;
-use crate::ff::typifier::{Annotation, TypeAssignment};
+use crate::ff::typifier::{Annotation, TypeAssignment, species_label};
 
 use super::typing_metadata::OplsTypingMetadata;
 
@@ -471,16 +471,15 @@ fn untyped_endpoint(
 
 /// Name the atoms `ids` of `mol` as the ATD typifier names an atom it cannot
 /// type — `atom {i} ({element})`, `i` the 0-based position in `mol.atoms()`
-/// order — comma-separated, in that order.
+/// order and the element spelled from the atom's atomic number (`*` for a
+/// wildcard) — comma-separated, in that order.
 pub(super) fn name_atoms(mol: &Atomistic, ids: &[NodeId]) -> String {
     mol.atoms()
         .enumerate()
         .filter(|(_, (id, _))| ids.contains(id))
-        .map(|(i, (_, atom))| {
-            format!(
-                "atom {i} ({})",
-                atom.get_str(keys::ELEMENT).unwrap_or_default()
-            )
+        .map(|(i, (_, atom))| match atom.atomic_number() {
+            Some(z) => format!("atom {i} ({})", species_label(z)),
+            None => format!("atom {i} (no valid '{}')", keys::ATOMIC_NUMBER),
         })
         .collect::<Vec<_>>()
         .join(", ")
@@ -489,6 +488,9 @@ pub(super) fn name_atoms(mol: &Atomistic, ids: &[NodeId]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::props;
+    use molrs::core::Element;
+    use molrs::core::keys;
 
     // --- end_score: 3 / 1 / 0 / None ---------------------------------------
 
@@ -563,7 +565,7 @@ mod tests {
             name: pattern.join("-"),
             pattern: pattern.iter().map(|s| s.to_string()).collect(),
             layer,
-            params: Params::from_pairs(&[("k", k)]),
+            params: Params::from_iter([("k", k)]),
             style: BOND_STYLE.to_owned(),
         }
     }
@@ -576,7 +578,7 @@ mod tests {
         let atoms = [("opls_135", Some("CT")), ("opls_140", Some("HC"))];
         let best = CandidateTables::best(&table, &atoms).expect("a match");
         assert_eq!(
-            best.params.get("k"),
+            best.params.get("k").and_then(|v| v.as_num()),
             Some(2.0),
             "fully-resolved candidate wins"
         );
@@ -590,7 +592,7 @@ mod tests {
         let atoms = [("opls_135", Some("CT")), ("opls_140", Some("HC"))];
         let best = CandidateTables::best(&table, &atoms).expect("a match");
         assert_eq!(
-            best.params.get("k"),
+            best.params.get("k").and_then(|v| v.as_num()),
             Some(9.0),
             "higher-layer candidate wins"
         );
@@ -633,7 +635,7 @@ mod tests {
             .def_type(
                 "X-X",
                 &["X", "X"],
-                Params::from_pairs(&[("k", 1.0), ("r0", 1.5)]),
+                Params::from_iter([("k", 1.0), ("r0", 1.5)]),
             )
             .unwrap();
         ff
@@ -661,11 +663,24 @@ mod tests {
     /// A C-O bond where only the carbon (atom 0) is typed `opls_135`; the
     /// oxygen (atom 1) is untyped. Returns the graph and the atom types.
     fn half_typed_bond() -> (Atomistic, HashMap<NodeId, String>) {
-        use molrs::core::Atom;
         let mut g = Atomistic::new();
-        let c = g.add_atom(Atom::xyz("C", 0.0, 0.0, 0.0));
-        let o = g.add_atom(Atom::xyz("O", 1.4, 0.0, 0.0));
-        g.add_bond(c, o).unwrap();
+        let c = g
+            .add_atom(props! {
+                keys::ATOMIC_NUMBER => Element::C,
+                keys::X => 0.0,
+                keys::Y => 0.0,
+                keys::Z => 0.0,
+            })
+            .unwrap();
+        let o = g
+            .add_atom(props! {
+                keys::ATOMIC_NUMBER => Element::O,
+                keys::X => 1.4,
+                keys::Y => 0.0,
+                keys::Z => 0.0,
+            })
+            .unwrap();
+        g.add_bond(c, o, props! {}).unwrap();
         (g, HashMap::from([(c, "opls_135".to_string())]))
     }
 

@@ -1,23 +1,25 @@
-//! Python wrapper for the simulation box (periodic boundary conditions).
+//! Python wrappers for the simulation box: `molrs.core.Cell` and
+//! `molrs.core.Box`.
 //!
-//! [`PyBox`] wraps the Rust [`SimBox`] and exposes construction helpers for
-//! cubic, orthorhombic, and fully triclinic cells, plus coordinate
-//! transformations (Cartesian <-> fractional), wrapping, and displacement
-//! calculations with optional minimum-image convention.
+//! [`PyCell`] mirrors the core [`Cell`] enum — the one argument that says what
+//! the cell is — as a frozen class with one staticmethod per variant.
+//! [`PyBox`] wraps [`SimBox`]: one constructor `Box(cell, origin, pbc)`
+//! mirroring `SimBox::new(Cell, origin, pbc)`, `Box.bounding(points, padding,
+//! pbc)` mirroring `SimBox::bounding`, coordinate transformations (Cartesian
+//! <-> fractional), wrapping, and displacements with an optional
+//! minimum-image convention.
 //!
-//! All length quantities are in the same units as the stored coordinates
-//! (typically angstroms).
+//! All length quantities are in the unit of the stored coordinates (Å in
+//! molrs).
 
 use crate::array::{ArrayArg1, ArrayArg2};
-use crate::core::frame::PyFrame;
-use molrs::core::keys;
-use molrs::core::schema::block_names;
-use molrs::core::{BoxError, SimBox};
+use molrs::core::{BoxError, Cell, SimBox};
 use molrs::op::{F, I};
-use ndarray::{Array1, Array2, Axis, array};
-use numpy::{AllowTypeChange, IntoPyArray, PyArray1, PyArray2, PyArray3, PyArrayLikeDyn};
+use ndarray::{Array2, Axis};
+use numpy::{IntoPyArray, PyArray1, PyArray2, PyArray3};
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
+use pyo3::types::PyTuple;
 
 /// Coerce a Python array to N×3 points. The bool is true when the input was shape `(3,)`.
 fn delta_points_nx3(arg: &Bound<'_, PyAny>) -> PyResult<(Array2<F>, bool)> {
@@ -38,48 +40,130 @@ fn delta_points_nx3(arg: &Bound<'_, PyAny>) -> PyResult<(Array2<F>, bool)> {
     Err(PyValueError::new_err("expected shape (N, 3) or (3,)"))
 }
 
-/// Points for [`PyBox::from_bounds`]: an `(N, 3)` array, or a `Frame`'s atom
-/// coordinates.
-fn bounds_points(arg: &Bound<'_, PyAny>) -> PyResult<Array2<F>> {
-    if let Ok(frame) = arg.extract::<PyRef<'_, PyFrame>>() {
-        return frame.with_frame(|f| {
-            if let Some(atoms) = f.get(block_names::ATOMS)
-                && let Some(key) = keys::COORDS
-                    .into_iter()
-                    .find(|k| atoms.validity(k).is_some())
-            {
-                return Err(PyValueError::new_err(format!(
-                    "atoms column '{key}' has missing rows"
-                )));
-            }
-            f.coords().map_err(|e| PyValueError::new_err(e.to_string()))
-        })?;
-    }
-    let arr = arg
-        .extract::<ArrayArg2<'_, f64>>()
-        .map_err(|_| PyValueError::new_err("points must be an (N,3) float array or a Frame"))?;
-    let view = arr.as_array();
+/// `Box.wrap`'s `(wrapped, shifts)`.
+type WrapResult<'py> = (Bound<'py, PyArray2<f64>>, Bound<'py, PyArray2<I>>);
+
+/// Reject a coordinate array that is not `(N, 3)`.
+fn check_nx3(view: &ndarray::ArrayView2<'_, F>, label: &str) -> PyResult<()> {
     if view.ncols() != 3 {
-        return Err(PyValueError::new_err("points must have shape (N,3)"));
+        return Err(PyValueError::new_err(format!(
+            "{label} must have shape (N, 3)"
+        )));
     }
-    Ok(view.to_owned())
+    Ok(())
+}
+
+/// The geometry of a simulation cell, exposed to Python as `molrs.core.Cell`.
+///
+/// Mirrors the core `Cell` enum: one staticmethod per variant, each building
+/// a frozen value that :class:`Box` and :class:`Parallelepiped` take. The
+/// geometry is checked where it is used (``Box(...)`` raises for a singular
+/// matrix, a non-positive length or impossible angles).
+///
+/// Examples
+/// --------
+/// >>> Box(Cell.lengths([10.0, 10.0, 10.0])).volume()
+/// 1000.0
+/// >>> Box(Cell.undefined(), pbc=(False, False, False)).is_cell_defined
+/// False
+#[pyclass(module = "molrs.core", name = "Cell", frozen, from_py_object, eq)]
+#[derive(Clone, PartialEq)]
+pub struct PyCell {
+    pub(crate) inner: Cell,
+}
+
+#[pymethods]
+impl PyCell {
+    /// The cell matrix ``h`` (3×3, Å), lattice vectors as **columns** —
+    /// the layout :attr:`Box.matrix` returns.
+    #[staticmethod]
+    fn matrix(h: [[F; 3]; 3]) -> Self {
+        Self {
+            inner: Cell::Matrix(h),
+        }
+    }
+
+    /// An orthorhombic cell with edge lengths ``[a, b, c]`` (Å), all positive.
+    #[staticmethod]
+    fn lengths(lengths: [F; 3]) -> Self {
+        Self {
+            inner: Cell::Lengths(lengths),
+        }
+    }
+
+    /// A restricted-triclinic cell from edge lengths ``[a, b, c]`` (Å) and the
+    /// angles ``[alpha, beta, gamma]`` between them, in degrees.
+    #[staticmethod]
+    fn lengths_angles(lengths: [F; 3], angles: [F; 3]) -> Self {
+        Self {
+            inner: Cell::LengthsAngles { lengths, angles },
+        }
+    }
+
+    /// A restricted-triclinic cell from the diagonal sizes ``[lx, ly, lz]``
+    /// (Å) and the tilts ``[xy, xz, yz]`` (Å) — the LAMMPS form.
+    #[staticmethod]
+    fn lengths_tilts(lengths: [F; 3], tilts: [F; 3]) -> Self {
+        Self {
+            inner: Cell::LengthsTilts { lengths, tilts },
+        }
+    }
+
+    /// No geometric cell: a box of undefined, zero volume
+    /// (``Box.is_cell_defined`` is ``False``). Distinct from periodicity.
+    #[staticmethod]
+    fn undefined() -> Self {
+        Self {
+            inner: Cell::Undefined,
+        }
+    }
+
+    fn __reduce__<'py>(slf: &Bound<'py, Self>) -> PyResult<Bound<'py, PyTuple>> {
+        let py = slf.py();
+        let cls = py.get_type::<Self>();
+        let (name, args) = match slf.get().inner {
+            Cell::Matrix(h) => ("matrix", PyTuple::new(py, [h])?),
+            Cell::Lengths(lengths) => ("lengths", PyTuple::new(py, [lengths])?),
+            Cell::LengthsAngles { lengths, angles } => {
+                ("lengths_angles", PyTuple::new(py, [lengths, angles])?)
+            }
+            Cell::LengthsTilts { lengths, tilts } => {
+                ("lengths_tilts", PyTuple::new(py, [lengths, tilts])?)
+            }
+            Cell::Undefined => ("undefined", PyTuple::empty(py)),
+        };
+        PyTuple::new(py, [cls.getattr(name)?, args.into_any()])
+    }
+
+    fn __repr__(&self) -> String {
+        match self.inner {
+            Cell::Matrix(h) => format!("Cell.matrix({h:?})"),
+            Cell::Lengths(lengths) => format!("Cell.lengths({lengths:?})"),
+            Cell::LengthsAngles { lengths, angles } => {
+                format!("Cell.lengths_angles({lengths:?}, {angles:?})")
+            }
+            Cell::LengthsTilts { lengths, tilts } => {
+                format!("Cell.lengths_tilts({lengths:?}, {tilts:?})")
+            }
+            Cell::Undefined => "Cell.undefined()".to_string(),
+        }
+    }
 }
 
 /// Simulation box with periodic boundary conditions, exposed to Python as
 /// `molrs.core.Box`.
 ///
-/// The box is defined by a 3x3 cell matrix **H** whose columns are the
-/// lattice vectors, an origin point, and per-axis PBC flags.
+/// The box is a :class:`Cell` (a 3x3 matrix **H** whose columns are the
+/// lattice vectors), an origin point and per-axis PBC flags.
 ///
 /// # Python Examples
 ///
 /// ```python
-/// import numpy as np
-/// from molrs.core import Box
+/// from molrs.core import Box, Cell
 ///
-/// box = Box.cube(10.0)                       # 10 x 10 x 10 cubic
-/// box = Box.ortho(np.array([10, 20, 30]))    # orthorhombic
-/// print(box.volume())                        # 6000.0
+/// box = Box(Cell.lengths([10.0, 20.0, 30.0]))   # orthorhombic, periodic
+/// print(box.volume())                           # 6000.0
+/// free = Box(Cell.undefined(), pbc=(False, False, False))
 /// ```
 #[pyclass(module = "molrs.core", name = "Box", from_py_object, subclass)]
 #[derive(Clone)]
@@ -89,230 +173,86 @@ pub struct PyBox {
 
 #[pymethods]
 impl PyBox {
-    /// Create a simulation box from a cell matrix, a diagonal, or no cell.
+    /// Create a simulation box from its cell, origin and periodicity.
     ///
     /// Parameters
     /// ----------
-    /// h : array_like, shape (3, 3) or (3,), optional
-    ///     Cell matrix with lattice vectors as **columns**, or the diagonal of
-    ///     an orthorhombic one. ``None`` or an all-zero matrix is no cell: a
-    ///     free box carrying the identity as a placeholder
-    ///     (``cell_defined`` false).
-    /// origin : array_like, shape (3,), optional
-    ///     Origin of the box in Cartesian coordinates. Defaults to
-    ///     ``[0, 0, 0]``.
-    /// pbc : array_like of bool, shape (3,), optional
-    ///     Periodic boundary flags for x, y, z. Defaults to periodic on every
-    ///     axis when there is a cell and on none when there is not.
-    /// cell_defined : bool, optional
-    ///     Whether the cell is geometrically defined; inferred from ``h`` when
-    ///     omitted. ``False`` ignores ``h`` (a store's undefined cell).
-    ///
-    /// Returns
-    /// -------
-    /// Box
+    /// cell : Cell
+    ///     The cell geometry (``Cell.matrix`` / ``lengths`` /
+    ///     ``lengths_angles`` / ``lengths_tilts`` / ``undefined``).
+    /// origin : array_like, shape (3,)
+    ///     Origin of the box in Cartesian coordinates (Å).
+    /// pbc : array_like of bool, shape (3,)
+    ///     Periodic boundary flags for x, y, z.
     ///
     /// Raises
     /// ------
     /// ValueError
-    ///     If ``h`` is neither ``(3, 3)`` nor ``(3,)``, or a defined cell
-    ///     matrix is singular.
-    ///
-    /// Examples
-    /// --------
-    /// >>> box = Box(np.eye(3) * 10.0)
-    /// >>> Box([10.0, 20.0, 30.0]).style
-    /// 'orthogonal'
-    /// >>> Box().is_free
-    /// True
+    ///     A singular cell matrix, a non-positive or non-finite length, or
+    ///     lengths/angles that describe no cell.
     #[new]
-    #[pyo3(signature = (h=None, origin=None, pbc=None, cell_defined=None))]
-    fn new(
-        h: Option<PyArrayLikeDyn<'_, F, AllowTypeChange>>,
-        origin: Option<ArrayArg1<'_, f64>>,
-        pbc: Option<ArrayArg1<'_, bool>>,
-        cell_defined: Option<bool>,
-    ) -> PyResult<Self> {
-        let h_matrix = match h {
-            None => None,
-            Some(h) => {
-                let view = h.as_array();
-                Some(match view.shape() {
-                    [3, 3] => Array2::from_shape_fn((3, 3), |(i, j)| view[[i, j]]),
-                    [3] => Array2::from_diag(&Array1::from_shape_fn(3, |i| view[[i]])),
-                    shape => {
-                        return Err(PyValueError::new_err(format!(
-                            "h must be (3, 3) or (3,), got {shape:?}"
-                        )));
-                    }
-                })
-            }
-        };
-        // No matrix, or an all-zero one, is no cell.
-        let cell_defined = cell_defined.unwrap_or_else(|| {
-            h_matrix
-                .as_ref()
-                .is_some_and(|h| h.iter().any(|&x| x != 0.0))
-        });
-        let pbc_array = match pbc {
-            Some(_) => parse_pbc(pbc)?,
-            None => [cell_defined; 3],
-        };
-        let inner = SimBox::new_cell(
-            h_matrix.unwrap_or_else(|| Array2::eye(3)),
-            parse_origin(origin)?,
-            pbc_array,
-            cell_defined,
-        )
-        .map_err(box_error_to_pyerr)?;
+    #[pyo3(signature = (cell, origin = [0.0; 3], pbc = [true; 3]))]
+    fn new(cell: PyCell, origin: [F; 3], pbc: [bool; 3]) -> PyResult<Self> {
+        let inner = SimBox::new(cell.inner, origin, pbc).map_err(box_error_to_pyerr)?;
         Ok(PyBox { inner })
     }
 
-    /// Whether the cell is geometrically defined. ``False`` marks a "no-cell"
-    /// box (undefined / zero-volume), distinct from ``is_free`` (periodicity).
+    /// The orthorhombic box enclosing ``points``: their axis-aligned bounds
+    /// widened by ``padding[d]`` on each side of axis ``d``, with periodicity
+    /// ``pbc``.
+    ///
+    /// Parameters
+    /// ----------
+    /// points : numpy.ndarray, shape (N, 3), dtype float64
+    ///     The points to enclose (Å).
+    /// padding : array_like, shape (3,)
+    ///     Margin on each side of each axis (Å), finite and ``>= 0``.
+    /// pbc : array_like of bool, shape (3,)
+    ///     Periodic boundary flags.
+    ///
+    /// Raises
+    /// ------
+    /// ValueError
+    ///     No points, ``points`` not ``(N, 3)``, a negative or non-finite
+    ///     padding, or an axis of zero extent (pass a positive padding).
+    #[staticmethod]
+    fn bounding(points: ArrayArg2<'_, f64>, padding: [F; 3], pbc: [bool; 3]) -> PyResult<Self> {
+        let view = points.as_array();
+        check_nx3(&view, "points")?;
+        let inner = SimBox::bounding(view, padding, pbc).map_err(box_error_to_pyerr)?;
+        Ok(Self { inner })
+    }
+
+    /// Whether the cell is geometrically defined. ``False`` marks a box built
+    /// from ``Cell.undefined()`` (undefined / zero volume), distinct from
+    /// ``is_free`` (periodicity).
     #[getter]
-    fn cell_defined(&self) -> bool {
+    fn is_cell_defined(&self) -> bool {
         self.inner.is_cell_defined()
     }
 
-    fn __reduce__<'py>(slf: &Bound<'py, Self>) -> PyResult<Bound<'py, pyo3::types::PyTuple>> {
-        let py = slf.py();
+    fn __reduce__<'py>(slf: &Bound<'py, Self>) -> PyResult<Bound<'py, PyTuple>> {
         let this = slf.borrow();
+        let cell = if this.inner.is_cell_defined() {
+            Cell::Matrix(this.inner.matrix())
+        } else {
+            Cell::Undefined
+        };
         crate::pickle::reduce_via_type(
             slf.as_any(),
             (
-                this.h(py),
-                this.origin(py),
-                this.pbc(py),
-                this.cell_defined(),
+                PyCell { inner: cell },
+                this.inner.origin(),
+                this.inner.pbc(),
             ),
         )
-    }
-
-    /// Create a cubic simulation box.
-    ///
-    /// Parameters
-    /// ----------
-    /// a : float
-    ///     Side length of the cube in the same length unit as coordinates.
-    /// origin : numpy.ndarray, shape (3,), optional
-    ///     Box origin. Defaults to ``[0, 0, 0]``.
-    /// pbc : numpy.ndarray, shape (3,), dtype bool, optional
-    ///     Periodic boundary flags. Defaults to ``[True, True, True]``.
-    ///
-    /// Returns
-    /// -------
-    /// Box
-    ///
-    /// Examples
-    /// --------
-    /// >>> box = Box.cube(10.0)
-    /// >>> box.volume()
-    /// 1000.0
-    #[staticmethod]
-    #[pyo3(signature = (a, origin=None, pbc=None))]
-    fn cube(
-        a: f64,
-        origin: Option<ArrayArg1<'_, f64>>,
-        pbc: Option<ArrayArg1<'_, bool>>,
-    ) -> PyResult<Self> {
-        let origin_vec = parse_origin(origin)?;
-        let pbc_array = parse_pbc(pbc)?;
-        let inner = SimBox::cube(a, origin_vec, pbc_array).map_err(box_error_to_pyerr)?;
-        Ok(PyBox { inner })
-    }
-
-    /// Create an orthorhombic (rectangular) simulation box.
-    ///
-    /// Parameters
-    /// ----------
-    /// lengths : numpy.ndarray, shape (3,), dtype float
-    ///     Side lengths ``[Lx, Ly, Lz]``.
-    /// origin : numpy.ndarray, shape (3,), optional
-    ///     Box origin. Defaults to ``[0, 0, 0]``.
-    /// pbc : numpy.ndarray, shape (3,), dtype bool, optional
-    ///     Periodic boundary flags. Defaults to ``[True, True, True]``.
-    ///
-    /// Returns
-    /// -------
-    /// Box
-    ///
-    /// Raises
-    /// ------
-    /// ValueError
-    ///     If ``lengths`` does not have exactly 3 elements.
-    ///
-    /// Examples
-    /// --------
-    /// >>> box = Box.ortho(np.array([10.0, 20.0, 30.0]))
-    #[staticmethod]
-    #[pyo3(signature = (lengths, origin=None, pbc=None))]
-    fn ortho(
-        lengths: ArrayArg1<'_, f64>,
-        origin: Option<ArrayArg1<'_, f64>>,
-        pbc: Option<ArrayArg1<'_, bool>>,
-    ) -> PyResult<Self> {
-        let lv = lengths.as_slice()?;
-        if lv.len() != 3 {
-            return Err(PyValueError::new_err("lengths must have length 3"));
-        }
-        let lengths_arr = array![lv[0], lv[1], lv[2]];
-        let origin_vec = parse_origin(origin)?;
-        let pbc_array = parse_pbc(pbc)?;
-        let inner =
-            SimBox::ortho(lengths_arr, origin_vec, pbc_array).map_err(box_error_to_pyerr)?;
-        Ok(PyBox { inner })
-    }
-
-    /// Create a tight orthorhombic box around a point cloud.
-    ///
-    /// Parameters
-    /// ----------
-    /// points : numpy.ndarray, shape (N, 3), or Frame
-    ///     The points to enclose. A ``Frame`` contributes the ``x``/``y``/``z``
-    ///     columns of its ``atoms`` block.
-    /// padding : float or numpy.ndarray, shape (3,)
-    ///     Margin added on each side, one value for all axes or one per axis.
-    ///     Must be non-negative.
-    /// pbc : numpy.ndarray, shape (3,), dtype bool, optional
-    ///     Periodic boundary flags. Defaults to ``[True, True, True]``.
-    ///
-    /// Raises
-    /// ------
-    /// ValueError
-    ///     If there are no points, a coordinate column is missing or has
-    ///     holes, ``padding`` is negative or not of length 3, or the box is
-    ///     degenerate.
-    #[staticmethod]
-    #[pyo3(signature = (points, padding, pbc=None))]
-    fn from_bounds(
-        points: &Bound<'_, PyAny>,
-        padding: &Bound<'_, PyAny>,
-        pbc: Option<ArrayArg1<'_, bool>>,
-    ) -> PyResult<Self> {
-        let points = bounds_points(points)?;
-        let padding = if let Ok(scalar) = padding.extract::<F>() {
-            [scalar; 3]
-        } else {
-            // A sequence or a 1-D array alike; numpy arrays iterate as floats.
-            let v = padding.extract::<Vec<F>>().map_err(|_| {
-                PyValueError::new_err("padding must be a float or a sequence of length 3")
-            })?;
-            if v.len() != 3 {
-                return Err(PyValueError::new_err("padding must have length 3"));
-            }
-            [v[0], v[1], v[2]]
-        };
-        let pbc = parse_pbc(pbc)?;
-        let inner = SimBox::from_bounds(points.view(), padding, pbc).map_err(box_error_to_pyerr)?;
-        Ok(Self { inner })
     }
 
     /// Whether ``other`` describes the same cell within an absolute tolerance.
     ///
     /// True iff every cell-matrix entry and origin component differ by at most
     /// ``tol`` (length units), the PBC flags are identical and both boxes agree
-    /// on ``cell_defined``. ``tol=0.0`` is exact equality.
+    /// on ``is_cell_defined``. ``tol=0.0`` is exact equality.
     ///
     /// Raises
     /// ------
@@ -325,12 +265,7 @@ impl PyBox {
         Ok(self.inner.approx_eq(&other.inner, tol))
     }
 
-    /// Volume of the simulation box.
-    ///
-    /// Returns
-    /// -------
-    /// float
-    ///     Volume in length_unit^3 (e.g. angstrom^3).
+    /// Volume of the simulation box (Å³); ``0.0`` for an undefined cell.
     fn volume(&self) -> F {
         self.inner.volume()
     }
@@ -347,17 +282,7 @@ impl PyBox {
         self.inner.style()
     }
 
-    /// Return a lattice vector by index.
-    ///
-    /// Parameters
-    /// ----------
-    /// index : int
-    ///     Lattice vector index: 0, 1, or 2.
-    ///
-    /// Returns
-    /// -------
-    /// numpy.ndarray, shape (3,)
-    ///     The lattice vector as a Cartesian 3-vector.
+    /// Return a lattice vector (a column of :attr:`matrix`) by index.
     ///
     /// Raises
     /// ------
@@ -367,18 +292,14 @@ impl PyBox {
         if index >= 3 {
             return Err(PyValueError::new_err("index must be 0, 1, or 2"));
         }
-        let vec = self.inner.lattice(index);
-        Ok(vec.into_pyarray(py))
+        Ok(self.inner.lattice(index).into_pyarray(py))
     }
 
-    /// Cell matrix **H** (3x3), lattice vectors as columns.
-    ///
-    /// Returns
-    /// -------
-    /// numpy.ndarray, shape (3, 3), dtype float
+    /// Cell matrix **H** (3x3, Å), lattice vectors as columns — the layout
+    /// :meth:`Cell.matrix` takes.
     #[getter]
-    fn h<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray2<f64>> {
-        self.inner.h_view().to_owned().into_pyarray(py)
+    fn matrix<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray2<f64>> {
+        ndarray::arr2(&self.inner.matrix()).into_pyarray(py)
     }
 
     /// Inverse cell matrix.
@@ -387,27 +308,19 @@ impl PyBox {
         self.inner.inv_view().to_owned().into_pyarray(py)
     }
 
-    /// Box origin in Cartesian coordinates.
-    ///
-    /// Returns
-    /// -------
-    /// numpy.ndarray, shape (3,), dtype float
+    /// Box origin in Cartesian coordinates, shape ``(3,)``.
     #[getter]
     fn origin<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<f64>> {
-        self.inner.origin_view().to_owned().into_pyarray(py)
+        ndarray::arr1(&self.inner.origin()).into_pyarray(py)
     }
 
     /// Periodic boundary condition flags ``[pbc_x, pbc_y, pbc_z]``.
-    ///
-    /// Returns
-    /// -------
-    /// numpy.ndarray, shape (3,), dtype bool
     #[getter]
     fn pbc<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<bool>> {
-        self.inner.pbc_view().to_owned().into_pyarray(py)
+        ndarray::arr1(&self.inner.pbc()).into_pyarray(py)
     }
 
-    /// Lengths of the three lattice vectors (property; ``[|a|, |b|, |c|]``).
+    /// Lengths of the three lattice vectors ``[|a|, |b|, |c|]``.
     #[getter]
     fn lengths<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<f64>> {
         self.inner.lengths().into_pyarray(py)
@@ -419,26 +332,8 @@ impl PyBox {
         self.inner.angles().into_pyarray(py)
     }
 
-    #[staticmethod]
-    fn matrix_from_lengths_angles<'py>(
-        py: Python<'py>,
-        lengths: [f64; 3],
-        angles: [f64; 3],
-    ) -> PyResult<Bound<'py, PyArray2<f64>>> {
-        Ok(SimBox::matrix_from_lengths_angles(lengths, angles)
-            .map_err(box_error_to_pyerr)?
-            .into_pyarray(py))
-    }
-
-    #[staticmethod]
-    fn matrix_from_lengths_tilts<'py>(
-        py: Python<'py>,
-        lengths: [f64; 3],
-        tilts: [f64; 3],
-    ) -> Bound<'py, PyArray2<f64>> {
-        SimBox::matrix_from_lengths_tilts(lengths, tilts).into_pyarray(py)
-    }
-
+    /// A general cell matrix (columns = lattice vectors) in LAMMPS
+    /// restricted-triclinic form.
     #[staticmethod]
     fn restricted_matrix<'py>(
         py: Python<'py>,
@@ -453,9 +348,7 @@ impl PyBox {
     /// orthogonal boxes.
     #[getter]
     fn tilts<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<f64>> {
-        let h = self.inner.h_view();
-        let arr = ndarray::array![h[(0, 1)], h[(0, 2)], h[(1, 2)]];
-        arr.into_pyarray(py)
+        self.inner.tilts().into_pyarray(py)
     }
 
     /// Perpendicular distances between opposite cell faces.
@@ -475,47 +368,7 @@ impl PyBox {
         self.inner.bounds().into_pyarray(py)
     }
 
-    /// Minimum-image displacement from ``r1`` to ``r2``.
-    fn shortest_vector<'py>(
-        &self,
-        py: Python<'py>,
-        r1: ArrayArg1<'_, f64>,
-        r2: ArrayArg1<'_, f64>,
-    ) -> PyResult<Bound<'py, PyArray1<f64>>> {
-        let r1 = r1.as_array();
-        let r2 = r2.as_array();
-        if r1.len() != 3 || r2.len() != 3 {
-            return Err(PyValueError::new_err("r1 and r2 must have length 3"));
-        }
-        Ok(self.inner.shortest_vector(r1, r2).into_pyarray(py))
-    }
-
-    /// Squared minimum-image distance between two points.
-    fn distance_squared(&self, r1: ArrayArg1<'_, f64>, r2: ArrayArg1<'_, f64>) -> PyResult<f64> {
-        let r1 = r1.as_array();
-        let r2 = r2.as_array();
-        if r1.len() != 3 || r2.len() != 3 {
-            return Err(PyValueError::new_err("r1 and r2 must have length 3"));
-        }
-        Ok(self.inner.calc_distance2(r1, r2))
-    }
-
-    /// Minimum-image distance between two points.
-    fn distance(&self, r1: ArrayArg1<'_, f64>, r2: ArrayArg1<'_, f64>) -> PyResult<f64> {
-        Ok(self.distance_squared(r1, r2)?.sqrt())
-    }
-
-    /// Convert Cartesian coordinates to fractional coordinates.
-    ///
-    /// Parameters
-    /// ----------
-    /// xyz : numpy.ndarray, shape (N, 3), dtype float
-    ///     Cartesian coordinates.
-    ///
-    /// Returns
-    /// -------
-    /// numpy.ndarray, shape (N, 3), dtype float
-    ///     Fractional coordinates in the range ``[0, 1)`` for wrapped points.
+    /// Convert Cartesian coordinates ``(N, 3)`` to fractional coordinates.
     ///
     /// Raises
     /// ------
@@ -527,87 +380,46 @@ impl PyBox {
         xyz: ArrayArg2<'_, f64>,
     ) -> PyResult<Bound<'py, PyArray2<f64>>> {
         let view = xyz.as_array();
-        if view.ncols() != 3 {
-            return Err(PyValueError::new_err("expected shape (N,3)"));
-        }
-        let frac = self.inner.to_frac(view);
-        Ok(frac.into_pyarray(py))
+        check_nx3(&view, "xyz")?;
+        Ok(self.inner.to_frac(view).into_pyarray(py))
     }
 
-    /// Convert fractional coordinates to Cartesian coordinates.
-    ///
-    /// Parameters
-    /// ----------
-    /// xyzs : numpy.ndarray, shape (N, 3), dtype float
-    ///     Fractional coordinates.
-    ///
-    /// Returns
-    /// -------
-    /// numpy.ndarray, shape (N, 3), dtype float
-    ///     Cartesian coordinates.
+    /// Convert fractional coordinates ``(N, 3)`` to Cartesian coordinates.
     ///
     /// Raises
     /// ------
     /// ValueError
-    ///     If ``xyzs`` does not have 3 columns.
+    ///     If ``frac`` does not have 3 columns.
     fn to_cart<'py>(
         &self,
         py: Python<'py>,
-        xyzs: ArrayArg2<'_, f64>,
+        frac: ArrayArg2<'_, f64>,
     ) -> PyResult<Bound<'py, PyArray2<f64>>> {
-        let view = xyzs.as_array();
-        if view.ncols() != 3 {
-            return Err(PyValueError::new_err("expected shape (N,3)"));
-        }
-        let cart = self.inner.to_cart(view);
-        Ok(cart.into_pyarray(py))
+        let view = frac.as_array();
+        check_nx3(&view, "frac")?;
+        Ok(self.inner.to_cart(view).into_pyarray(py))
     }
 
-    /// Wrap coordinates into the primary simulation cell.
-    ///
-    /// Applies periodic wrapping along axes where PBC is enabled.
-    ///
-    /// Parameters
-    /// ----------
-    /// xyzu : numpy.ndarray, shape (N, 3), dtype float
-    ///     Unwrapped Cartesian coordinates.
+    /// Wrap coordinates into the cell on the periodic axes **and** report the
+    /// integer lattice shift applied to each point.
     ///
     /// Returns
     /// -------
-    /// numpy.ndarray, shape (N, 3), dtype float
-    ///     Wrapped Cartesian coordinates.
+    /// tuple[numpy.ndarray, numpy.ndarray]
+    ///     ``(wrapped, shifts)``: the wrapped ``(N, 3)`` float64 coordinates
+    ///     and the ``(N, 3)`` int32 shifts ``m`` with
+    ///     ``wrapped = xyz - (matrix @ m.T).T``. For continuous coordinates
+    ///     ``shifts`` are their image flags (the ``ix``/``iy``/``iz`` columns).
     ///
     /// Raises
     /// ------
     /// ValueError
-    ///     If ``xyzu`` does not have 3 columns.
-    fn wrap<'py>(
-        &self,
-        py: Python<'py>,
-        xyzu: ArrayArg2<'_, f64>,
-    ) -> PyResult<Bound<'py, PyArray2<f64>>> {
-        let view = xyzu.as_array();
-        if view.ncols() != 3 {
-            return Err(PyValueError::new_err("expected shape (N,3)"));
-        }
-        let wrapped = self.inner.wrap(view);
-        Ok(wrapped.into_pyarray(py))
-    }
-
-    /// Integer periodic image flags for Cartesian coordinates.
-    ///
-    /// The flags are ``int32``, the schema's integer type for the
-    /// ``ix``/``iy``/``iz`` columns.
-    fn images<'py>(
-        &self,
-        py: Python<'py>,
-        xyz: ArrayArg2<'_, f64>,
-    ) -> PyResult<Bound<'py, PyArray2<I>>> {
+    ///     If ``xyz`` does not have 3 columns.
+    fn wrap<'py>(&self, py: Python<'py>, xyz: ArrayArg2<'_, f64>) -> PyResult<WrapResult<'py>> {
         let view = xyz.as_array();
-        if view.ncols() != 3 {
-            return Err(PyValueError::new_err("expected shape (N,3)"));
-        }
-        Ok(self.inner.images(view).into_pyarray(py))
+        check_nx3(&view, "xyz")?;
+        let (wrapped, shifts) = self.inner.wrap(view);
+        Ok((wrapped.into_pyarray(py), shifts.into_pyarray(py)))
     }
 
     /// Reconstruct unwrapped coordinates from wrapped coordinates and images.
@@ -630,26 +442,22 @@ impl PyBox {
         Ok(self.inner.unwrap(xyz, images).into_pyarray(py))
     }
 
-    /// Compute displacement vectors between two point sets.
-    ///
-    /// Calculates ``xyzu2 - xyzu1`` with optional minimum-image convention
-    /// for periodic systems.
+    /// Displacement vectors ``xyzu2 - xyzu1``, minimum-imaged when
+    /// ``minimum_image`` is set.
     ///
     /// Parameters
     /// ----------
     /// xyzu1 : numpy.ndarray, shape (N, 3) or (3,), dtype float
     ///     First set of Cartesian coordinates.
     /// xyzu2 : numpy.ndarray, shape (N, 3) or (3,), dtype float
-    ///     Second set of Cartesian coordinates. Must have the same rank as
-    ///     ``xyzu1`` (both 1-D or both 2-D).
+    ///     Second set, of the same shape as ``xyzu1``.
     /// minimum_image : bool, optional
-    ///     If ``True``, apply the minimum-image convention to displacements.
-    ///     Default is ``False``.
+    ///     Apply the minimum-image convention. Default ``False``.
     ///
     /// Returns
     /// -------
     /// numpy.ndarray, shape (N, 3) or (3,), dtype float
-    ///     Displacement vectors ``xyzu2 - xyzu1``. Rank matches the inputs.
+    ///     Rank matches the inputs.
     ///
     /// Raises
     /// ------
@@ -709,9 +517,8 @@ impl PyBox {
     ) -> PyResult<Bound<'py, PyArray3<f64>>> {
         let points1 = points1.as_array();
         let points2 = points2.as_array();
-        if points1.ncols() != 3 || points2.ncols() != 3 {
-            return Err(PyValueError::new_err("points must have shape (N,3)"));
-        }
+        check_nx3(&points1, "points1")?;
+        check_nx3(&points2, "points2")?;
         Ok(self.inner.pairwise_delta(points1, points2).into_pyarray(py))
     }
 
@@ -724,9 +531,8 @@ impl PyBox {
     ) -> PyResult<Bound<'py, PyArray2<f64>>> {
         let points1 = points1.as_array();
         let points2 = points2.as_array();
-        if points1.ncols() != 3 || points2.ncols() != 3 {
-            return Err(PyValueError::new_err("points must have shape (N,3)"));
-        }
+        check_nx3(&points1, "points1")?;
+        check_nx3(&points2, "points2")?;
         Ok(self
             .inner
             .pairwise_distances(points1, points2)
@@ -748,17 +554,8 @@ impl PyBox {
         Ok(Self { inner })
     }
 
-    /// Test whether each point lies inside the primary simulation cell.
-    ///
-    /// Parameters
-    /// ----------
-    /// xyz : numpy.ndarray, shape (N, 3), dtype float
-    ///     Cartesian coordinates.
-    ///
-    /// Returns
-    /// -------
-    /// numpy.ndarray, shape (N,), dtype bool
-    ///     ``True`` for points inside the cell.
+    /// Whether each point ``(N, 3)`` lies inside the primary cell
+    /// (fractional coordinates in ``[0, 1)``).
     ///
     /// Raises
     /// ------
@@ -770,55 +567,20 @@ impl PyBox {
         xyz: ArrayArg2<'_, f64>,
     ) -> PyResult<Bound<'py, PyArray1<bool>>> {
         let view = xyz.as_array();
-        if view.ncols() != 3 {
-            return Err(PyValueError::new_err("expected shape (N,3)"));
-        }
-        let inside = self.inner.contains(view);
-        Ok(inside.into_pyarray(py))
+        check_nx3(&view, "xyz")?;
+        Ok(self.inner.contains(view).into_pyarray(py))
     }
 
     fn __repr__(&self) -> String {
-        format!("Box(volume={:.2})", self.inner.volume())
+        format!(
+            "Box(style={:?}, volume={:.2})",
+            self.inner.style(),
+            self.inner.volume()
+        )
     }
 }
 
-/// Parse an optional origin array, defaulting to `[0, 0, 0]`.
-///
-/// # Errors
-///
-/// Returns `PyValueError` if the array does not have exactly 3 elements.
-fn parse_origin(origin: Option<ArrayArg1<'_, f64>>) -> PyResult<Array1<F>> {
-    match origin {
-        Some(o) => {
-            let s = o.as_slice()?;
-            if s.len() != 3 {
-                return Err(PyValueError::new_err("origin must have length 3"));
-            }
-            Ok(array![s[0], s[1], s[2]])
-        }
-        None => Ok(array![0.0 as F, 0.0 as F, 0.0 as F]),
-    }
-}
-
-/// Parse an optional PBC flag array, defaulting to `[true, true, true]`.
-///
-/// # Errors
-///
-/// Returns `PyValueError` if the array does not have exactly 3 elements.
-fn parse_pbc(pbc: Option<ArrayArg1<'_, bool>>) -> PyResult<[bool; 3]> {
-    match pbc {
-        Some(p) => {
-            let s = p.as_slice()?;
-            if s.len() != 3 {
-                return Err(PyValueError::new_err("pbc must have 3 elements"));
-            }
-            Ok([s[0], s[1], s[2]])
-        }
-        None => Ok([true, true, true]),
-    }
-}
-
-/// Convert a [`BoxError`] to a Python `ValueError`.
-fn box_error_to_pyerr(e: BoxError) -> PyErr {
-    PyValueError::new_err(format!("{:?}", e))
+/// Convert a [`BoxError`] to a Python `ValueError` carrying its message.
+pub(crate) fn box_error_to_pyerr(e: BoxError) -> PyErr {
+    PyValueError::new_err(e.to_string())
 }

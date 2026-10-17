@@ -58,7 +58,7 @@ def _dihedral(a: int, b: int, c: int, d: int) -> float:
 
 
 def _energy(pots: Potentials) -> float:
-    return pots.calc_energy_forces(FLAT)[0]
+    return pots.evaluate(FLAT)[0]
 
 
 def _fd_forces(make, h: float = 1e-6) -> np.ndarray:
@@ -69,22 +69,26 @@ def _fd_forces(make, h: float = 1e-6) -> np.ndarray:
         plus, minus = FLAT.copy(), FLAT.copy()
         plus[i] += h
         minus[i] -= h
-        out[i] = -(pots.calc_energy(plus) - pots.calc_energy(minus)) / (2 * h)
+        out[i] = -(pots.evaluate(plus)[0] - pots.evaluate(minus)[0]) / (2 * h)
     return out.reshape(-1, 3)
 
 
 class TestBuiltins:
     def test_bond_harmonic_prices_one_row_per_term(self) -> None:
         def make() -> Potentials:
-            return ExplicitTerms("bond", "harmonic", [[0, 1], [1, 2]], k=[300.0, 200.0], r0=1.4).compile()
+            return ExplicitTerms(
+                "bond", "harmonic", [[0, 1], [1, 2]], k=[300.0, 200.0], r0=1.4
+            ).compile()
 
         want = 300.0 * (_dist(0, 1) - 1.4) ** 2 + 200.0 * (_dist(1, 2) - 1.4) ** 2
-        e, f = make().calc_energy_forces(FLAT)
+        e, f = make().evaluate(FLAT)
         assert math.isclose(e, want, rel_tol=1e-12)
         np.testing.assert_allclose(f, _fd_forces(make), atol=1e-5)
 
     def test_angle_harmonic_takes_theta0_in_degrees(self) -> None:
-        pots = ExplicitTerms("angle", "harmonic", [[0, 1, 2]], k=50.0, theta0=109.5).compile()
+        pots = ExplicitTerms(
+            "angle", "harmonic", [[0, 1, 2]], k=50.0, theta0=109.5
+        ).compile()
         want = 50.0 * (_angle(0, 1, 2) - math.radians(109.5)) ** 2
         assert math.isclose(_energy(pots), want, rel_tol=1e-12)
 
@@ -108,22 +112,30 @@ class TestBuiltins:
         want = sum(
             k[t] * (1 + math.cos(n[t] * phi - math.radians(phase[t]))) for t in range(2)
         )
-        e, f = make().calc_energy_forces(FLAT)
+        e, f = make().evaluate(FLAT)
         assert math.isclose(e, want, rel_tol=1e-12)
         np.testing.assert_allclose(f, _fd_forces(make), atol=1e-5)
 
     def test_improper_cvff_prices_the_dihedral_of_the_listed_order(self) -> None:
-        pots = ExplicitTerms("improper", "cvff", [[1, 0, 2, 3]], k=2.0, sign=-1.0, periodicity=2.0).compile()
+        pots = ExplicitTerms(
+            "improper", "cvff", [[1, 0, 2, 3]], k=2.0, sign=-1.0, periodicity=2.0
+        ).compile()
         phi = _dihedral(1, 0, 2, 3)
         assert math.isclose(_energy(pots), 2.0 * (1 - math.cos(2 * phi)), rel_tol=1e-12)
 
     def test_improper_periodic_takes_its_phase_in_degrees(self) -> None:
-        pots = ExplicitTerms("improper", "periodic", [[0, 2, 1, 3]], k=1.1, periodicity=2.0, phase=180.0).compile()
+        pots = ExplicitTerms(
+            "improper", "periodic", [[0, 2, 1, 3]], k=1.1, periodicity=2.0, phase=180.0
+        ).compile()
         phi = _dihedral(0, 2, 1, 3)
-        assert math.isclose(_energy(pots), 1.1 * (1 + math.cos(2 * phi - math.pi)), rel_tol=1e-12)
+        assert math.isclose(
+            _energy(pots), 1.1 * (1 + math.cos(2 * phi - math.pi)), rel_tol=1e-12
+        )
 
     def test_a_pair_term_is_priced_with_its_own_row(self) -> None:
-        pots = ExplicitTerms("pair", "lj/cut", [[0, 3], [1, 3]], epsilon=[0.2, 0.1], sigma=3.1).compile()
+        pots = ExplicitTerms(
+            "pair", "lj/cut", [[0, 3], [1, 3]], epsilon=[0.2, 0.1], sigma=3.1
+        ).compile()
         want = sum(
             4 * eps * ((3.1 / _dist(i, 3)) ** 12 - (3.1 / _dist(i, 3)) ** 6)
             for i, eps in ((0, 0.2), (1, 0.1))
@@ -132,7 +144,9 @@ class TestBuiltins:
 
     def test_coul_cut_reads_per_atom_charges(self) -> None:
         q = [0.3, 0.0, 0.0, -0.4]
-        pots = ExplicitTerms("pair", "coul/cut", [[0, 3]], charges=q, coulomb=332.06371, dielectric=1.0).compile()
+        pots = ExplicitTerms(
+            "pair", "coul/cut", [[0, 3]], charges=q, coulomb=332.06371, dielectric=1.0
+        ).compile()
         want = 332.06371 * 0.3 * -0.4 / _dist(0, 3)
         assert math.isclose(_energy(pots), want, rel_tol=1e-12)
 
@@ -147,7 +161,9 @@ class TestCustomStyles:
 
         registered.append(("bond", Quartic.name))
         pots = ExplicitTerms("bond", Quartic.name, [[0, 1]], k=2.0, r0=1.0).compile()
-        assert math.isclose(_energy(pots), 2.0 * (_dist(0, 1) - 1.0) ** 4, rel_tol=1e-12)
+        assert math.isclose(
+            _energy(pots), 2.0 * (_dist(0, 1) - 1.0) ** 4, rel_tol=1e-12
+        )
 
     def test_a_style_priced_by_a_numpy_kernel(self, registered) -> None:
         def cubic(r, k, r0):
@@ -158,8 +174,12 @@ class TestCustomStyles:
             "bond", "cubic/kernel-test", params={"k": "E/L^3", "r0": "L"}, kernel=cubic
         )
         registered.append(("bond", "cubic/kernel-test"))
-        pots = ExplicitTerms("bond", "cubic/kernel-test", [[0, 1]], k=3.0, r0=0.5).compile()
-        assert math.isclose(_energy(pots), 3.0 * (_dist(0, 1) - 0.5) ** 3, rel_tol=1e-12)
+        pots = ExplicitTerms(
+            "bond", "cubic/kernel-test", [[0, 1]], k=3.0, r0=0.5
+        ).compile()
+        assert math.isclose(
+            _energy(pots), 3.0 * (_dist(0, 1) - 0.5) ** 3, rel_tol=1e-12
+        )
 
     def test_a_style_of_a_custom_category(self, registered) -> None:
         style_registry.register_category("urey_bradley", 3)
@@ -170,11 +190,17 @@ class TestCustomStyles:
             expression="k_ub*(distance(p1,p3)-r_ub)^2",
         )
         registered.append(("urey_bradley", "kernel-test"))
-        pots = ExplicitTerms("urey_bradley", "kernel-test", [[0, 1, 2]], k_ub=20.0, r_ub=2.4).compile()
-        assert math.isclose(_energy(pots), 20.0 * (_dist(0, 2) - 2.4) ** 2, rel_tol=1e-12)
+        pots = ExplicitTerms(
+            "urey_bradley", "kernel-test", [[0, 1, 2]], k_ub=20.0, r_ub=2.4
+        ).compile()
+        assert math.isclose(
+            _energy(pots), 20.0 * (_dist(0, 2) - 2.4) ** 2, rel_tol=1e-12
+        )
 
     def test_an_unregistered_style_by_its_expression(self) -> None:
-        pots = ExplicitTerms("bond", "unregistered/kernel-test", [[0, 1]], expression="k*r^2", k=0.5).compile()
+        pots = ExplicitTerms(
+            "bond", "unregistered/kernel-test", [[0, 1]], expression="k*r^2", k=0.5
+        ).compile()
         assert math.isclose(_energy(pots), 0.5 * _dist(0, 1) ** 2, rel_tol=1e-12)
 
 
@@ -194,7 +220,11 @@ class TestRefusals:
     def test_a_missing_parameter(self) -> None:
         with pytest.raises(ir.MissingParamError) as err:
             ExplicitTerms("bond", "harmonic", [[0, 1]], k=1.0).compile()
-        assert (err.value.style, err.value.type, err.value.param) == ("harmonic", "0", "r0")
+        assert (err.value.style, err.value.type, err.value.param) == (
+            "harmonic",
+            "0",
+            "r0",
+        )
 
     @pytest.mark.parametrize(
         ("category", "style", "atoms", "params", "param"),
@@ -208,7 +238,12 @@ class TestRefusals:
         ],
     )
     def test_every_built_in_refuses_a_missing_parameter_typed(
-        self, category: str, style: str, atoms: list[list[int]], params: dict, param: str
+        self,
+        category: str,
+        style: str,
+        atoms: list[list[int]],
+        params: dict,
+        param: str,
     ) -> None:
         charges = [0.5, -0.5] if category == "pair" else None
         if style == "lj/charmm":
@@ -219,7 +254,9 @@ class TestRefusals:
 
     def test_a_value_outside_its_choices(self) -> None:
         with pytest.raises(ir.BadValueError) as err:
-            ExplicitTerms("pair", "lj/cut", [[0, 1]], mixing="lorentz", epsilon=0.1, sigma=3.0).compile()
+            ExplicitTerms(
+                "pair", "lj/cut", [[0, 1]], mixing="lorentz", epsilon=0.1, sigma=3.0
+            ).compile()
         assert (err.value.style, err.value.param) == ("lj/cut", "mixing")
 
     def test_an_unregistered_style_without_expression(self) -> None:
@@ -228,7 +265,9 @@ class TestRefusals:
 
     def test_mismatched_lengths(self) -> None:
         with pytest.raises(ValueError, match="2 terms"):
-            ExplicitTerms("bond", "harmonic", [[0, 1], [1, 2]], k=[1.0, 2.0, 3.0], r0=1.0).compile()
+            ExplicitTerms(
+                "bond", "harmonic", [[0, 1], [1, 2]], k=[1.0, 2.0, 3.0], r0=1.0
+            ).compile()
 
 
 class TestPotentialsAssembly:
@@ -240,13 +279,17 @@ class TestPotentialsAssembly:
         with pytest.raises(ValueError, match="moved"):
             pots.push(bond)
 
-    def test_a_hand_assembled_collection_prices_what_the_compiled_field_prices(self) -> None:
+    def test_a_hand_assembled_collection_prices_what_the_compiled_field_prices(
+        self,
+    ) -> None:
         ff = molrs.ff.forcefield.ForceField("chain", units="real")
         atoms = ff.def_style("atom", "full")
         c = atoms.def_type("C", mass=12.011)
         ff.def_style("bond", "harmonic").def_type("CC", c, c, k=300.0, r0=1.4)
         ff.def_style("angle", "harmonic").def_type("CCC", c, c, c, k=50.0, theta0=109.5)
-        torsion = dict(k1=1.3, periodicity1=1.0, phase1=0.0, k2=0.4, periodicity2=2.0, phase2=180.0)
+        torsion = dict(
+            k1=1.3, periodicity1=1.0, phase1=0.0, k2=0.4, periodicity2=2.0, phase2=180.0
+        )
         ff.def_style("dihedral", "periodic").def_type("CCCC", c, c, c, c, **torsion)
         frame = molrs.core.Frame()
         block = molrs.core.Block()
@@ -254,7 +297,11 @@ class TestPotentialsAssembly:
             block.insert(key, XYZ[:, d].copy())
         block.insert("type", ["C"] * 4)
         frame["atoms"] = block
-        bonds, angles, dihedrals = [[0, 1], [1, 2], [2, 3]], [[0, 1, 2], [1, 2, 3]], [[0, 1, 2, 3]]
+        bonds, angles, dihedrals = (
+            [[0, 1], [1, 2], [2, 3]],
+            [[0, 1, 2], [1, 2, 3]],
+            [[0, 1, 2, 3]],
+        )
         for name, rows, label in (
             ("bonds", bonds, "CC"),
             ("angles", angles, "CCC"),
@@ -265,13 +312,15 @@ class TestPotentialsAssembly:
                 topo.insert(column, np.array(atom, dtype=np.uint32))
             topo.insert("type", [label] * len(rows))
             frame[name] = topo
-        compiled = molrs.ff.compile.PotentialCompiler(ff).compile(frame).calc_energy_forces(FLAT)
+        compiled = molrs.ff.compile.PotentialCompiler(ff).compile(frame).evaluate(FLAT)
 
         pots = Potentials()
         pots.push(ExplicitTerms("bond", "harmonic", bonds, k=300.0, r0=1.4).compile())
-        pots.push(ExplicitTerms("angle", "harmonic", angles, k=50.0, theta0=109.5).compile())
+        pots.push(
+            ExplicitTerms("angle", "harmonic", angles, k=50.0, theta0=109.5).compile()
+        )
         pots.push(ExplicitTerms("dihedral", "periodic", dihedrals, **torsion).compile())
-        by_hand = pots.calc_energy_forces(FLAT)
+        by_hand = pots.evaluate(FLAT)
         assert math.isclose(by_hand[0], compiled[0], rel_tol=1e-12)
         np.testing.assert_allclose(by_hand[1], compiled[1], rtol=1e-12, atol=1e-12)
 
@@ -282,7 +331,9 @@ class TestDefaults:
 
     def test_coul_cut_dielectric_defaults_to_1(self) -> None:
         coords = np.array([0.0, 0.0, 0.0, 2.5, 0.0, 0.0])
-        bare = ExplicitTerms("pair", "coul/cut", [[0, 1]], charges=[0.5, -0.4], coulomb=332.06371).compile()
+        bare = ExplicitTerms(
+            "pair", "coul/cut", [[0, 1]], charges=[0.5, -0.4], coulomb=332.06371
+        ).compile()
         stated = ExplicitTerms(
             "pair",
             "coul/cut",
@@ -292,14 +343,22 @@ class TestDefaults:
             dielectric=1.0,
             delta=0.0,
         ).compile()
-        e = bare.calc_energy_forces(coords)[0]
+        e = bare.evaluate(coords)[0]
         assert math.isclose(e, 332.06371 * 0.5 * -0.4 / 2.5, rel_tol=1e-12)
-        assert e == stated.calc_energy_forces(coords)[0]
+        assert e == stated.evaluate(coords)[0]
 
     def test_a_phase_defaults_to_0(self) -> None:
-        bare = ExplicitTerms("dihedral", "charmm", [[0, 1, 2, 3]], k=1.3, periodicity=3.0).compile()
+        bare = ExplicitTerms(
+            "dihedral", "charmm", [[0, 1, 2, 3]], k=1.3, periodicity=3.0
+        ).compile()
         stated = ExplicitTerms(
-            "dihedral", "charmm", [[0, 1, 2, 3]], k=1.3, periodicity=3.0, phase=0.0, w=0.0
+            "dihedral",
+            "charmm",
+            [[0, 1, 2, 3]],
+            k=1.3,
+            periodicity=3.0,
+            phase=0.0,
+            w=0.0,
         ).compile()
         assert _energy(bare) == _energy(stated)
         assert _energy(bare) != 0.0
@@ -307,5 +366,101 @@ class TestDefaults:
     def test_lj_cut_exponents_and_shift_default_to_12_6_no(self) -> None:
         params = {"epsilon": 0.2, "sigma": 1.1}
         bare = ExplicitTerms("pair", "lj/cut", [[0, 1]], **params).compile()
-        stated = ExplicitTerms("pair", "lj/cut", [[0, 1]], n=12.0, m=6.0, shift=0.0, **params).compile()
+        stated = ExplicitTerms(
+            "pair", "lj/cut", [[0, 1]], n=12.0, m=6.0, shift=0.0, **params
+        ).compile()
         assert _energy(bare) == _energy(stated)
+
+
+class TestEvaluate:
+    """``evaluate`` is the one door of ``Potential::evaluate``: energy and
+    forces together, from a flat coordinate vector or a Frame."""
+
+    def test_energy_and_forces_come_together(self) -> None:
+        pots = ExplicitTerms("bond", "harmonic", [[0, 1]], k=300.0, r0=1.4).compile()
+        e, f = pots.evaluate(FLAT)
+        assert f.shape == (4, 3)
+        assert math.isclose(e, 300.0 * (_dist(0, 1) - 1.4) ** 2, rel_tol=1e-12)
+        np.testing.assert_allclose(f.sum(axis=0), 0.0, atol=1e-10)
+
+    def test_a_coordinate_vector_must_be_flat_3n(self) -> None:
+        pots = ExplicitTerms("bond", "harmonic", [[0, 1]], k=300.0, r0=1.4).compile()
+        with pytest.raises(ValueError, match="length 3N"):
+            pots.evaluate(FLAT[:-1])
+
+    def test_a_duck_typed_member_is_evaluated_through_its_evaluate(self) -> None:
+        class Spring:
+            def evaluate(self, pos):
+                return 0.5 * float((pos * pos).sum()), -pos
+
+        assert isinstance(Spring(), molrs.ff.potential.Potential)
+        pots = Potentials()
+        pots.push(Spring())
+        pots.push(
+            ExplicitTerms("bond", "harmonic", [[0, 1]], k=300.0, r0=1.4).compile()
+        )
+        e, f = pots.evaluate(FLAT)
+        bond_e, bond_f = (
+            ExplicitTerms("bond", "harmonic", [[0, 1]], k=300.0, r0=1.4)
+            .compile()
+            .evaluate(FLAT)
+        )
+        assert math.isclose(e, bond_e + 0.5 * float((XYZ * XYZ).sum()), rel_tol=1e-12)
+        np.testing.assert_allclose(f, bond_f - XYZ, rtol=1e-12, atol=1e-12)
+
+    def test_a_python_member_exception_is_re_raised(self) -> None:
+        class Broken:
+            def evaluate(self, pos):
+                raise RuntimeError("boom")
+
+        pots = Potentials()
+        pots.push(Broken())
+        with pytest.raises(RuntimeError, match="boom"):
+            pots.evaluate(FLAT)
+
+    def test_push_refuses_an_object_without_evaluate(self) -> None:
+        with pytest.raises(TypeError, match="evaluate"):
+            Potentials().push(object())
+
+
+class TestPairLjCut:
+    """``pair_energy_force`` for one pair, ``evaluate_pairs`` over a table."""
+
+    @staticmethod
+    def _lj(r: float) -> tuple[float, float]:
+        """Shifted 12-6 LJ (eps 1, sigma 1, cutoff 2.5): energy and dE/dr."""
+        e = lambda x: 4 * (x**-12 - x**-6)  # noqa: E731
+        de = -4 * (12 * r**-13 - 6 * r**-7)
+        return e(r) - e(2.5), de
+
+    def test_pair_energy_force_is_the_shifted_kernel(self) -> None:
+        lj = molrs.ff.potential.PairLjCut(1.0, 1.0, 2.5)
+        e, f = lj.pair_energy_force(1.21, [1.1, 0.0, 0.0])
+        want_e, de = self._lj(1.1)
+        assert math.isclose(e, want_e, rel_tol=1e-12)
+        assert math.isclose(abs(f[0]), abs(de), rel_tol=1e-12)
+        assert lj.pair_energy_force(9.0, [3.0, 0.0, 0.0]) is None
+
+    def test_evaluate_pairs_sums_the_table(self) -> None:
+        pos = np.array([[0.0, 0.0, 0.0], [1.1, 0.0, 0.0], [0.0, 1.3, 0.0]])
+        box = molrs.core.Box(molrs.core.Cell.lengths([20.0] * 3))
+        table = molrs.core.NeighborQuery(box, pos, 2.5).query_self()
+        lj = molrs.ff.potential.PairLjCut(1.0, 1.0, 2.5)
+        e, f = lj.evaluate_pairs(pos, table)
+        r12 = float(np.linalg.norm(pos[1] - pos[2]))
+        want = sum(self._lj(r)[0] for r in (1.1, 1.3, r12))
+        assert math.isclose(e, want, rel_tol=1e-12)
+        assert f.shape == (3, 3)
+        np.testing.assert_allclose(f.sum(axis=0), 0.0, atol=1e-10)
+        # A weight per pair; zero skips the pair.
+        zero, _ = lj.evaluate_pairs(pos, table, np.zeros(table.n_pairs))
+        assert zero == 0.0
+        with pytest.raises(ValueError, match="weights for"):
+            lj.evaluate_pairs(pos, table, np.ones(table.n_pairs + 1))
+
+    def test_evaluate_pairs_refuses_a_table_past_pos(self) -> None:
+        pos = np.array([[0.0, 0.0, 0.0], [1.1, 0.0, 0.0]])
+        box = molrs.core.Box(molrs.core.Cell.lengths([20.0] * 3))
+        table = molrs.core.NeighborQuery(box, pos, 2.5).query_self()
+        with pytest.raises(ValueError, match="past the 1 rows"):
+            molrs.ff.potential.PairLjCut(1.0, 1.0, 2.5).evaluate_pairs(pos[:1], table)

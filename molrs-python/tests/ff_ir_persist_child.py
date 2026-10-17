@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import sys
+from pathlib import Path
 
 import molrs
 import numpy as np
@@ -38,12 +39,15 @@ def frame(block: str, rows: list[list[int]], types: list[str]) -> molrs.core.Fra
 
 
 def price(
-    ff: molrs.ff.forcefield.ForceField, block: str, rows: list[list[int]], types: list[str]
+    ff: molrs.ff.forcefield.ForceField,
+    block: str,
+    rows: list[list[int]],
+    types: list[str],
 ) -> dict:
     """Energy and forces of ``ff`` over the frame, exactly, or the refusal."""
     f = frame(block, rows, types)
     try:
-        e, forces = molrs.ff.compile.PotentialCompiler(ff).compile(f).calc_energy_forces(f)
+        e, forces = molrs.ff.compile.PotentialCompiler(ff).compile(f).evaluate(f)
     except ValueError as err:
         return {"error": str(err)}
     return {"e": float(e).hex(), "f": [float(x).hex() for x in np.ravel(forces)]}
@@ -69,11 +73,15 @@ def exact(section: molrs.io.mrec.ForceFieldSection) -> dict:
 def main(cases: dict) -> dict:
     out = {}
     for name, (path, block, rows, types) in cases.items():
-        ff = molrs.io.read_mrec_forcefield(path).to_forcefield()
+        section = molrs.io.mrec.MrecFile(Path(path)).forcefield()
+        assert section is not None, path
+        ff = section.to_forcefield()
         out[name] = {
             "price": price(ff, block, rows, types),
             "section": exact(molrs.io.mrec.ForceFieldSection.from_forcefield(ff)),
-            "styles": [[s.category, s.name] for s in ff.styles],
+            "styles": [
+                [s.category, s.name] for s in ff.get_styles(molrs.ff.forcefield.Style)
+            ],
         }
     return out
 

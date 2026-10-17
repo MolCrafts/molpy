@@ -11,7 +11,7 @@ use crate::ff::ir::torsion::nharmonic_coefficients;
 use crate::ff::potential::flat_coords::{
     accumulate_dihedral_forces, compute_dihedral, term_table, validate_coords,
 };
-use crate::ff::potential::{ForceTerm, IndexedTerms, Potential};
+use crate::ff::potential::{Accumulator, ForceTerm, IndexedTerms, Potential};
 use molrs::core::Frame;
 use molrs::op::F;
 
@@ -75,21 +75,21 @@ impl DihedralMultiHarmonic {
 }
 
 impl Potential for DihedralMultiHarmonic {
-    fn calc_energy_forces(&self, coords: &[F]) -> (F, Vec<F>) {
-        let mut out = vec![0.0; coords.len()];
-        let energy = self.accumulate(coords, &mut out);
-        (energy, out)
-    }
-
-    fn accumulate(&self, coords: &[F], out: &mut [F]) -> F {
-        self.fold(coords, out, self.atom_i.len(), |t| {
-            (
-                self.atom_i[t],
-                self.atom_j[t],
-                self.atom_k[t],
-                self.atom_l[t],
-            )
-        })
+    fn evaluate(&self, coords: &[F], acc: &mut Accumulator<'_>) {
+        let energy = self.fold(
+            coords,
+            acc.forces_without_virial(),
+            self.atom_i.len(),
+            |t| {
+                (
+                    self.atom_i[t],
+                    self.atom_j[t],
+                    self.atom_k[t],
+                    self.atom_l[t],
+                )
+            },
+        );
+        acc.add_energy(energy);
     }
 }
 
@@ -97,30 +97,21 @@ impl IndexedTerms for DihedralMultiHarmonic {
     fn terms(&self) -> Array2<u32> {
         term_table(&[&self.atom_i, &self.atom_j, &self.atom_k, &self.atom_l])
     }
-    fn calc_energy_forces_with_terms(
-        &self,
-        coords: &[F],
-        terms: ArrayView2<'_, u32>,
-    ) -> (F, Vec<F>) {
-        let mut out = vec![0.0; coords.len()];
-        let energy = self.accumulate_with_terms(coords, terms, &mut out);
-        (energy, out)
-    }
-
-    fn accumulate_with_terms(&self, coords: &[F], terms: ArrayView2<'_, u32>, out: &mut [F]) -> F {
+    fn evaluate_terms(&self, coords: &[F], terms: ArrayView2<'_, u32>, acc: &mut Accumulator<'_>) {
         debug_assert_eq!(
             terms.nrows(),
             self.atom_i.len(),
             "the row set is the force field's; only the atoms a row names may be rebound"
         );
-        self.fold(coords, out, terms.nrows(), |t| {
+        let energy = self.fold(coords, acc.forces_without_virial(), terms.nrows(), |t| {
             (
                 terms[[t, 0]] as usize,
                 terms[[t, 1]] as usize,
                 terms[[t, 2]] as usize,
                 terms[[t, 3]] as usize,
             )
-        })
+        });
+        acc.add_energy(energy);
     }
 }
 
@@ -151,7 +142,7 @@ pub fn dihedral_nharmonic_constructor(
         // The first coefficient absent: `a1`, or the one a gap skips.
         nharmonic_coefficients(p).map_err(|_| {
             let m = (1..)
-                .take_while(|m| p.get(&format!("a{m}")).is_some())
+                .take_while(|m| p.get(&format!("a{m}")).and_then(|v| v.as_num()).is_some())
                 .count();
             param_reads::missing("nharmonic", label, &format!("a{}", m + 1))
         })
@@ -171,23 +162,23 @@ fn cos_polynomial_constructor(
         .ok_or_else(|| format!("{what}: missing \"dihedrals\" block"))?;
     let ic = block
         .get("atomi")
-        .and_then(|c| c.as_uint())
+        .and_then(|c| c.get::<u64>())
         .ok_or("missing atomi")?;
     let jc = block
         .get("atomj")
-        .and_then(|c| c.as_uint())
+        .and_then(|c| c.get::<u64>())
         .ok_or("missing atomj")?;
     let kc = block
         .get("atomk")
-        .and_then(|c| c.as_uint())
+        .and_then(|c| c.get::<u64>())
         .ok_or("missing atomk")?;
     let lc = block
         .get("atoml")
-        .and_then(|c| c.as_uint())
+        .and_then(|c| c.get::<u64>())
         .ok_or("missing atoml")?;
     let tc = block
         .get("type")
-        .and_then(|c| c.as_string())
+        .and_then(|c| c.get::<String>())
         .ok_or("missing type")?;
 
     let n = ic.len();
@@ -221,6 +212,7 @@ fn cos_polynomial_constructor(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ff::potential::fixtures::OneShot;
 
     fn quad(phi: F) -> Vec<F> {
         let (s, c) = phi.sin_cos();
@@ -241,10 +233,10 @@ mod tests {
     fn energy_matches_series() {
         // At φ=0, cos=1 → E = ΣA_n. At φ=π/2, cos=0 → E = A₁.
         let a = [0.5, 1.0, -0.3, 0.2, 0.1];
-        let e0 = single(a).calc_energy_forces(&quad(0.0)).0;
+        let e0 = single(a).energy_forces_at(&quad(0.0)).0;
         assert!((e0 - a.iter().sum::<F>()).abs() < 1e-9, "E(0) got {e0}");
         let e90 = single(a)
-            .calc_energy_forces(&quad(std::f64::consts::FRAC_PI_2))
+            .energy_forces_at(&quad(std::f64::consts::FRAC_PI_2))
             .0;
         assert!((e90 - a[0]).abs() < 1e-9, "E(pi/2) got {e90}");
     }
@@ -253,15 +245,15 @@ mod tests {
     fn numerical_gradient() {
         let pot = single([0.5, 1.3, -0.7, 0.9, 0.4]);
         let coords: Vec<F> = vec![0.1, 1.0, 0.2, 0.0, 0.0, 0.0, 1.0, 0.0, -0.1, 1.2, -0.8, 0.5];
-        let (_, forces) = pot.calc_energy_forces(&coords);
+        let (_, forces) = pot.energy_forces_at(&coords);
         let h = 1e-6;
         for d in 0..coords.len() {
             let mut cp = coords.clone();
             let mut cm = coords.clone();
             cp[d] += h;
             cm[d] -= h;
-            let ep = pot.calc_energy_forces(&cp).0;
-            let em = pot.calc_energy_forces(&cm).0;
+            let ep = pot.energy_forces_at(&cp).0;
+            let em = pot.energy_forces_at(&cm).0;
             let fd = -(ep - em) / (2.0 * h);
             assert!(
                 (forces[d] - fd).abs() < 1e-5,
@@ -275,7 +267,7 @@ mod tests {
     fn newtons_third_law() {
         let pot = single([0.5, 1.0, 0.5, 0.3, 0.2]);
         let coords: Vec<F> = vec![0.1, 1.0, 0.2, 0.0, 0.0, 0.0, 1.0, 0.0, -0.1, 1.2, -0.8, 0.5];
-        let (_, f) = pot.calc_energy_forces(&coords);
+        let (_, f) = pot.energy_forces_at(&coords);
         for dim in 0..3 {
             let s: F = (0..4).map(|a| f[a * 3 + dim]).sum();
             assert!(s.abs() < 1e-9, "dim {dim} force sum {s}");
@@ -288,6 +280,7 @@ mod nharmonic_tests {
     use crate::ff::compile::PotentialCompiler;
     use crate::ff::forcefield::ForceField;
     use crate::ff::ir::Params;
+    use crate::ff::potential::fixtures::OneShot;
     use molrs::core::Block;
     use molrs::core::Frame;
     use molrs::op::{F, Idx};
@@ -305,11 +298,15 @@ mod nharmonic_tests {
         let mut block = Block::new();
         for (key, atom) in [("atomi", 0), ("atomj", 1), ("atomk", 2), ("atoml", 3)] {
             block
-                .insert(key, Array1::from_vec(vec![atom as Idx]).into_dyn())
+                .insert(key, Array1::from_vec(vec![atom as Idx]).into_dyn(), None)
                 .unwrap();
         }
         block
-            .insert("type", Array1::from_vec(vec!["t".to_owned()]).into_dyn())
+            .insert(
+                "type",
+                Array1::from_vec(vec!["t".to_owned()]).into_dyn(),
+                None,
+            )
             .unwrap();
         let mut frame = Frame::new();
         frame.insert("dihedrals", block);
@@ -327,7 +324,7 @@ mod nharmonic_tests {
             .map(|(i, &v)| (format!("a{}", i + 1), v))
             .collect();
         let refs: Vec<(&str, F)> = pairs.iter().map(|(k, v)| (k.as_str(), *v)).collect();
-        let pots = one_dihedral("nharmonic", Params::from_pairs(&refs)).unwrap();
+        let pots = one_dihedral("nharmonic", Params::from_iter(refs.iter().copied())).unwrap();
         let phi: F = 40.0_f64.to_radians();
         let (s, c) = phi.sin_cos();
         let coords = [0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 1.0, c, s];
@@ -336,7 +333,7 @@ mod nharmonic_tests {
             .enumerate()
             .map(|(i, v)| v * c.powi(i as i32))
             .sum();
-        let got = pots.calc_energy(&coords);
+        let got = pots.energy_at(&coords);
         assert!((got - want).abs() < 1e-12, "{got} vs {want}");
         let coords: Vec<F> = vec![0.1, 1.0, 0.2, 0.0, 0.0, 0.0, 1.0, 0.0, -0.1, 1.2, -0.8, 0.5];
         crate::ff::potential::fixtures::assert_forces_are_negative_gradient(&pots, &coords, 1e-5);
@@ -349,10 +346,10 @@ mod nharmonic_tests {
             Some(crate::ff::ir::IrError::MissingParam { param, .. }) => param.clone(),
             _ => panic!("{err}"),
         };
-        let err = one_dihedral("nharmonic", Params::from_pairs(&[("a2", 1.0)])).unwrap_err();
+        let err = one_dihedral("nharmonic", Params::from_iter([("a2", 1.0)])).unwrap_err();
         assert_eq!(missing(err), "a1");
         let err =
-            one_dihedral("nharmonic", Params::from_pairs(&[("a1", 1.0), ("a3", 1.0)])).unwrap_err();
+            one_dihedral("nharmonic", Params::from_iter([("a1", 1.0), ("a3", 1.0)])).unwrap_err();
         assert_eq!(missing(err), "a2");
     }
 }

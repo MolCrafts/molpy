@@ -11,16 +11,14 @@
 //! its reference binding, so the layouts these doors write are the on-disk
 //! shapes other MolCrafts tools read.
 //!
-//! Crate-private: the record's doors are functions of [`crate::io`]
-//! (`read_mrec*` / `write_mrec*`) and its classes live in [`crate::io::mrec`].
+//! Crate-private: the record's doors are [`crate::io::write_mrec`] and the
+//! classes of [`crate::io::mrec`].
 //!
 //! # The doors
 //!
-//! Whole records go through `write_mrec` / `read_mrec` (a
-//! directory store on disk) or `write_mrec_storage` / `read_mrec_storage`
-//! (any store the caller already holds); `write_mrec_trajectory` /
-//! `read_mrec_trajectory` are the same thing for a store whose only section is
-//! a trajectory.
+//! Whole records go through `write_mrec` (a directory store on disk, or a
+//! packed archive in memory) and `MrecFile` (any of those, or any store the
+//! caller already holds), section by section.
 //!
 //! A long run that cannot be held in memory goes through the streaming trio:
 //! [`SequenceSchema`] pins what the run will write, [`MrecWriter`]
@@ -30,9 +28,9 @@
 //! documented on [`MrecReader`] and [`MrecWriter`] themselves.
 //!
 //! A store nobody is appending to any more can be collapsed into one file with
-//! `pack_mrec_zip`, and read back through `open_mrec_zip`. Every path-taking
-//! door — the two zip doors, the path record doors and `MrecReader::open` —
-//! needs the `filesystem` feature; the storage-taking doors do not.
+//! `pack_mrec_zip`; `MrecFile::open` and `MrecReader::open` read the archive
+//! in place. Every path- and byte-taking door needs the `filesystem` feature;
+//! the storage-taking doors do not.
 //!
 //! Closed **metrics** densify to Zarr series arrays; live append uses a
 //! write-ahead log (WAL) in JSON Lines form — one JSON document per line, so a
@@ -105,18 +103,13 @@ mod sequence;
 mod zstd_decode;
 
 #[cfg(feature = "filesystem")]
-pub use pack::{open_mrec_zip, pack_mrec_zip};
+pub use pack::pack_mrec_zip;
 #[cfg(feature = "filesystem")]
-pub use record_io::{
-    read_mrec, read_mrec_forcefield, read_mrec_frame, read_mrec_meta, read_mrec_system,
-    read_mrec_trajectory, section_names, write_mrec, write_mrec_forcefield, write_mrec_frame,
-    write_mrec_system, write_mrec_trajectory,
-};
+pub use record_io::write_mrec;
 // The store-taking record doors need no filesystem: an in-memory or host
-// store (wasm) writes and reads a whole record through them.
-pub use record_io::{
-    read_mrec_frame_storage, read_mrec_storage, section_names_storage, write_mrec_storage,
-};
+// store (wasm) writes a whole record through `write_mrec_storage` and reads it
+// back through `MrecFile::from_storage`.
+pub use record_io::{MrecFile, write_mrec_storage};
 pub use sequence::{Compression, MrecReader, MrecWriter, SequenceSchema, dtype_from_schema_tag};
 
 /// Mechanics pins for `zarrs` 0.23.13 — the append fast path the
@@ -156,7 +149,7 @@ mod zarrs_pins {
         ReadableWritableListableStorage, ReadableWritableListableStorageTraits, StoreKey,
     };
 
-    use super::{read_mrec, write_mrec};
+    use super::{MrecFile, write_mrec};
 
     /// Trailing extent of the pinned array: an `[nrows, 3]` f64 table.
     const NCOLS: u64 = 3;
@@ -547,6 +540,7 @@ mod zarrs_pins {
         block.insert(
             "x",
             ArrayD::from_shape_vec(vec![values.len()], values.to_vec()).unwrap(),
+            None,
         )?;
         let mut frame = Frame::new();
         frame.insert("atoms", block);
@@ -566,7 +560,13 @@ mod zarrs_pins {
         let storage_dir = dir.path().join("rec.mrec");
         write_mrec(&storage_dir, &record_with_x(&VALUES).unwrap()).unwrap();
         // The directory store is the reference the zip must reproduce.
-        assert!(read_mrec(&storage_dir).unwrap().frame.is_some());
+        assert!(
+            MrecFile::open(&storage_dir)
+                .unwrap()
+                .frame()
+                .unwrap()
+                .is_some()
+        );
 
         let zip_path = dir.path().join("rec.mrec.zip");
         zip_stored(&storage_dir, &zip_path);

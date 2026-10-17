@@ -1,33 +1,51 @@
-//! A [`Frame`] as bytes or text in memory, in the encodings
-//! [`crate::stream`] puts on the wire: MessagePack (the default) and JSON.
+//! A [`Frame`] as bytes in memory, in the encodings [`crate::stream`] puts
+//! on the wire: MessagePack (the default) and JSON.
 //!
 //! The codecs live in `stream` (it builds without `io`); these are their one
 //! public path.
 
 use crate::core::Frame;
 use crate::io::invalid_data;
+use crate::stream::FrameEncoding;
 
-/// Encode a [`Frame`] as MessagePack bytes — the wire encoding a
-/// [`Publisher`](crate::stream::Publisher) sends by default.
-pub fn write_msgpack_frame_bytes(frame: &Frame) -> std::io::Result<Vec<u8>> {
-    crate::stream::encode_msgpack_frame(frame).map_err(invalid_data)
+/// Encode a [`Frame`] as `encoding` says — the bytes a
+/// [`Publisher`](crate::stream::Publisher) sends (MessagePack by default; JSON
+/// for debugging and interop, UTF-8 text).
+///
+/// ```
+/// use molrs::io::{read_wire_frame, read_xyz, write_wire_frame};
+/// use molrs::stream::FrameEncoding;
+///
+/// let frame = read_xyz(b"1\n\nH 0 0 0\n")?;
+/// for encoding in [FrameEncoding::MessagePack, FrameEncoding::Json] {
+///     let bytes = write_wire_frame(&frame, encoding)?;
+///     assert_eq!(read_wire_frame(&bytes, encoding)?.keys().count(), frame.keys().count());
+/// }
+/// # Ok::<(), std::io::Error>(())
+/// ```
+pub fn write_wire_frame(frame: &Frame, encoding: FrameEncoding) -> std::io::Result<Vec<u8>> {
+    match encoding {
+        FrameEncoding::MessagePack => crate::stream::encode_msgpack_frame(frame),
+        FrameEncoding::Json => crate::stream::encode_json_frame(frame).map(String::into_bytes),
+    }
+    .map_err(invalid_data)
 }
 
-/// Decode a [`Frame`] from MessagePack bytes — the inverse of
-/// [`write_msgpack_frame_bytes`].
-pub fn read_msgpack_frame_bytes(bytes: &[u8]) -> std::io::Result<Frame> {
-    crate::stream::decode_msgpack_frame(bytes).map_err(invalid_data)
-}
-
-/// Encode a [`Frame`] as JSON text — the debugging / interop wire encoding.
-pub fn write_json_frame_str(frame: &Frame) -> std::io::Result<String> {
-    crate::stream::encode_json_frame(frame).map_err(invalid_data)
-}
-
-/// Decode a [`Frame`] from JSON text — the inverse of
-/// [`write_json_frame_str`].
-pub fn read_json_frame_str(text: &str) -> std::io::Result<Frame> {
-    crate::stream::decode_json_frame(text).map_err(invalid_data)
+/// Decode a [`Frame`] from `bytes` in `encoding` — the inverse of
+/// [`write_wire_frame`].
+///
+/// # Errors
+///
+/// `InvalidData` for bytes that are not a frame in `encoding` (JSON that is
+/// not UTF-8 included).
+pub fn read_wire_frame(bytes: &[u8], encoding: FrameEncoding) -> std::io::Result<Frame> {
+    match encoding {
+        FrameEncoding::MessagePack => crate::stream::decode_msgpack_frame(bytes),
+        FrameEncoding::Json => {
+            crate::stream::decode_json_frame(std::str::from_utf8(bytes).map_err(invalid_data)?)
+        }
+    }
+    .map_err(invalid_data)
 }
 
 #[cfg(test)]
@@ -36,18 +54,21 @@ mod tests {
 
     #[test]
     fn a_frame_round_trips_through_both_encodings() {
-        let frame = crate::io::read_xyz_bytes(b"1\nH\nH 0 0 0\n").unwrap();
-        let back = read_msgpack_frame_bytes(&write_msgpack_frame_bytes(&frame).unwrap()).unwrap();
-        assert_eq!(back.keys().count(), frame.keys().count());
-        let back = read_json_frame_str(&write_json_frame_str(&frame).unwrap()).unwrap();
-        assert_eq!(back.keys().count(), frame.keys().count());
+        let frame = crate::io::read_xyz(b"1\nH\nH 0 0 0\n").unwrap();
+        for encoding in [FrameEncoding::MessagePack, FrameEncoding::Json] {
+            let bytes = write_wire_frame(&frame, encoding).unwrap();
+            let back = read_wire_frame(&bytes, encoding).unwrap();
+            assert_eq!(back.keys().count(), frame.keys().count());
+        }
     }
 
     #[test]
     fn malformed_input_is_invalid_data() {
-        let err = read_msgpack_frame_bytes(b"\xc1").unwrap_err();
+        let err = read_wire_frame(b"\xc1", FrameEncoding::MessagePack).unwrap_err();
         assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
-        let err = read_json_frame_str("{").unwrap_err();
+        let err = read_wire_frame(b"{", FrameEncoding::Json).unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
+        let err = read_wire_frame(b"\xff", FrameEncoding::Json).unwrap_err();
         assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
     }
 }

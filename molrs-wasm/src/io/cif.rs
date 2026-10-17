@@ -2,15 +2,15 @@
 //!
 //! | JS | molrs |
 //! |----|-------|
-//! | `CifReader` | `CifReader` (whole-content; the one CIF reader) |
-//! | `readCifStr`, `writeCifStr` | `read_cif_str`, `write_cif_str` |
+//! | `CifReader` | `CifReader::open` (random access by `data_` block) |
+//! | `readCif`, `writeCif` | `read_cif`, `write_cif` |
 
-use molrs::io::cif::CifReader as RsCifReader;
-use molrs::io::reader::Reader;
-use std::io::Cursor;
+use molrs::io::reader::{ReadSeek, TrajectoryReader};
 use wasm_bindgen::prelude::*;
 
 use crate::core::frame::Frame;
+use crate::io::{JsSource, source_bytes};
+use molrs::io::cif::CifReader as RsCifReader;
 
 /// Crystallographic Information File (CIF / mmCIF) reader.
 ///
@@ -20,17 +20,12 @@ use crate::core::frame::Frame;
 /// as a multi-frame sequence. The unit cell parameters
 /// (`_cell_length_a`, `_b`, `_c`, `_cell_angle_alpha`, `_beta`,
 /// `_gamma`) are converted to a 3x3 h-matrix on the Rust side and
-/// surface on the JS side as `frame.simbox`.
+/// surface on the JS side as `frame.box`.
 ///
 /// Produces a [`Frame`] with an `"atoms"` block containing
 /// `element` (string), `x`, `y`, `z` (F, angstrom in Cartesian
 /// coordinates) and (when present in the file) `label`, `occupancy`,
 /// `bfactor` columns.
-///
-/// CIF parsing reads the entire file on each `read(step)` call --
-/// random access is therefore O(file_size), but typical CIF files are
-/// small (< 1 MB) and the molvis lazy trajectory caches frames at the
-/// JS level, so this is rarely a bottleneck.
 ///
 /// # Example (JavaScript)
 ///
@@ -39,84 +34,64 @@ use crate::core::frame::Frame;
 /// const reader = new CifReader(content);
 /// const frame  = reader.readFrame(0);
 /// const atoms  = frame.get("atoms");
-/// const box    = frame.simbox;        // populated from the unit cell
+/// const box    = frame.box;           // populated from the unit cell
 /// ```
 #[wasm_bindgen(js_name = CifReader)]
 pub struct CifReader {
-    content: Vec<u8>,
-    cached_len: Option<usize>,
+    inner: RsCifReader<Box<dyn ReadSeek>>,
 }
 
 #[wasm_bindgen(js_class = CifReader)]
 impl CifReader {
-    /// Create a new CIF reader from a string containing the file content.
-    ///
-    /// # Arguments
-    ///
-    /// * `content` - The full text content of a CIF file
-    ///
-    /// # Example (JavaScript)
-    ///
-    /// ```js
-    /// const reader = new CifReader(cifString);
-    /// ```
-    #[wasm_bindgen(constructor)]
-    pub fn new(content: &str) -> CifReader {
-        CifReader {
-            content: content.as_bytes().to_vec(),
-            cached_len: None,
-        }
-    }
-
-    /// Read the frame at the given block index.
-    ///
-    /// # Arguments
-    ///
-    /// * `index` - 0-based index of the `data_*` block to return
-    ///
-    /// # Returns
-    ///
-    /// A [`Frame`] for the requested block, or `undefined` when
-    /// `index >= len()`.
+    /// Open the file's content — its text (a `string`) or its bytes (a
+    /// `Uint8Array`) — for random access by frame (molrs `CifReader::open`). The
+    /// content is copied once.
     ///
     /// # Errors
     ///
-    /// Throws a `JsValue` string on parse errors.
+    /// Throws if `source` is neither a string nor a `Uint8Array`.
+    #[wasm_bindgen(constructor)]
+    pub fn new(source: &JsSource) -> Result<CifReader, JsValue> {
+        let bytes = source_bytes("new CifReader", source)?;
+        RsCifReader::open(bytes.as_slice())
+            .map(|inner| CifReader { inner })
+            .map_err(|e| JsValue::from_str(&format!("CIF read error: {e}")))
+    }
+
+    /// The frame at `index` (0-based), or `undefined` past the end.
+    ///
+    /// # Errors
+    ///
+    /// Throws when the frame cannot be parsed.
     #[wasm_bindgen(js_name = readFrame)]
     pub fn read_frame(&mut self, index: usize) -> Result<Option<Frame>, JsValue> {
-        let mut reader = RsCifReader::new(Cursor::new(self.content.as_slice()));
-        let frames = molrs::io::reader::collect_frames(&mut reader)
-            .map_err(|e| JsValue::from_str(&format!("CIF read error: {}", e)))?;
-        if index >= frames.len() {
-            return Ok(None);
+        match self
+            .inner
+            .read_frame(index)
+            .map_err(|e| JsValue::from_str(&format!("CIF read error: {e}")))?
+        {
+            Some(frame) => Ok(Some(Frame::from_rs(frame)?)),
+            None => Ok(None),
         }
-        let rs_frame = frames.into_iter().nth(index).expect("bounds checked");
-        Ok(Some(Frame::from_rs(rs_frame)?))
     }
 
-    /// Return the number of `data_*` blocks in the file.
+    /// The number of frames in the file.
     ///
     /// # Errors
     ///
-    /// Throws a `JsValue` string on parse errors.
+    /// Throws when the file cannot be indexed.
     #[wasm_bindgen]
     pub fn len(&mut self) -> Result<usize, JsValue> {
-        if let Some(n) = self.cached_len {
-            return Ok(n);
-        }
-        let mut reader = RsCifReader::new(Cursor::new(self.content.as_slice()));
-        let n = molrs::io::reader::collect_frames(&mut reader)
-            .map_err(|e| JsValue::from_str(&format!("CIF len error: {}", e)))?
-            .len();
-        self.cached_len = Some(n);
-        Ok(n)
+        self.inner
+            .len()
+            .map_err(|e| JsValue::from_str(&format!("CIF read error: {e}")))
     }
 
-    /// Check whether the file contains no valid blocks.
+    /// Whether the file holds no frame.
     ///
     /// # Errors
     ///
-    /// Throws a `JsValue` string on parse errors.
+    /// As [`len`](Self::len).
     #[wasm_bindgen(js_name = isEmpty)]
     pub fn is_empty(&mut self) -> Result<bool, JsValue> {
         Ok(self.len()? == 0)
@@ -124,10 +99,10 @@ impl CifReader {
 }
 
 read_door!(
-    /// Read the first `data_` block of CIF text.
-    readCifStr => read_cif_str(text: &str), "CIF"
+    /// Read the first `data_` block of CIF, the file's text or bytes.
+    readCif => read_cif, "CIF"
 );
 write_door!(
     /// Write `frame` as single-block CIF text.
-    writeCifStr => write_cif_str -> String, "CIF"
+    writeCif => write_cif, "CIF"
 );

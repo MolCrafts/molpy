@@ -1,16 +1,16 @@
 //! The Tripos MOL2 codec.
 
 use crate::io::frame_columns::insert_column;
-use crate::io::invalid_data;
-use std::io::{BufRead, BufWriter, Result, Write};
-use std::path::Path;
+use crate::io::frame_index::FrameOffset;
+use crate::io::{Sink, SinkWriter, Source, invalid_data};
+use std::io::{BufRead, Result, Seek, Write};
 
 use molrs::core::Block;
 use molrs::core::Frame;
 use molrs::core::schema::consts as keys;
 use molrs::op::{F, I, Idx};
 
-use crate::io::reader::{FrameReader, Reader};
+use crate::io::reader::{FrameReader, ReadSeek, Reader, TrajectoryReader};
 use crate::io::writer::{FrameWriter, Writer};
 
 // ---------------------------------------------------------------------------
@@ -358,30 +358,13 @@ fn build_frame(name: String, atoms: Vec<Mol2Atom>, bonds: Vec<Mol2Bond>) -> Resu
     Ok(frame)
 }
 
-/// Read the first molecule of the `.mol2` file at `path`, checked as
-/// [`Mol2Reader`] checks every frame it reads.
-pub fn read_mol2<P: AsRef<Path>>(path: P) -> Result<Frame> {
-    let file = std::fs::File::open(path.as_ref())?;
-    let mut reader = std::io::BufReader::new(file);
-    let mut pending = None;
-    crate::io::reader::check_read_frame(read_one_record(&mut reader, &mut pending)?)?
-        .ok_or_else(|| invalid_data("MOL2 file has no MOLECULE block"))
-}
-
-/// Read every molecule of a multi-molecule `.mol2` file at `path`.
-pub fn read_mol2_trajectory<P: AsRef<Path>>(path: P) -> Result<Vec<Frame>> {
-    let file = std::fs::File::open(path.as_ref())?;
-    let reader = std::io::BufReader::new(file);
-    let mut mr = Mol2Reader::new(reader);
-    crate::io::reader::collect_frames(&mut mr)
-}
-
-/// Read the first molecule of MOL2 `text` — [`read_mol2`] on text in memory.
-pub fn read_mol2_str(text: &str) -> Result<Frame> {
-    let mut reader = text.as_bytes();
-    let mut pending = None;
-    crate::io::reader::check_read_frame(read_one_record(&mut reader, &mut pending)?)?
-        .ok_or_else(|| invalid_data("MOL2 text has no MOLECULE block"))
+/// Read the first molecule of a `.mol2` file, checked as [`Mol2Reader`]
+/// checks every frame it reads.
+pub fn read_mol2<'a>(src: impl Into<Source<'a>>) -> Result<Frame> {
+    let src = src.into();
+    Mol2Reader::new(src.reader()?)
+        .read()?
+        .ok_or_else(|| invalid_data(format!("{}: no MOL2 MOLECULE block", src.name())))
 }
 
 /// `FrameReader`-trait wrapper. Each call returns the next molecule or `None`
@@ -411,9 +394,13 @@ pub fn read_mol2_str(text: &str) -> Result<Frame> {
 /// - `frame.meta["title"]` = molecule name.
 ///
 /// [`Mol2Writer`] reads the same names back.
+///
+/// Over a seekable stream it is also a [`TrajectoryReader`]: molecules by
+/// index, each starting at its `@<TRIPOS>MOLECULE` line.
 pub struct Mol2Reader<R: BufRead> {
     reader: R,
     pending: Option<String>,
+    index: Option<Vec<FrameOffset>>,
 }
 
 impl<R: BufRead> Reader for Mol2Reader<R> {
@@ -422,7 +409,42 @@ impl<R: BufRead> Reader for Mol2Reader<R> {
         Self {
             reader,
             pending: None,
+            index: None,
         }
+    }
+}
+
+impl Mol2Reader<Box<dyn ReadSeek>> {
+    /// Open a `.mol2` file, or the bytes of one, for random access by
+    /// molecule.
+    pub fn open<'a>(src: impl Into<Source<'a>>) -> Result<Self> {
+        Ok(Self::new(src.into().owned_reader()?))
+    }
+}
+
+impl<R: BufRead + Seek> TrajectoryReader for Mol2Reader<R> {
+    fn build_index(&mut self) -> Result<()> {
+        if self.index.is_none() {
+            self.index = Some(crate::io::frame_index::index_line_records(
+                &mut self.reader,
+                |line| line.trim_start().starts_with("@<TRIPOS>MOLECULE"),
+            )?);
+        }
+        Ok(())
+    }
+
+    fn read_frame(&mut self, index: usize) -> Result<Option<Frame>> {
+        self.build_index()?;
+        let Some(at) = self.index.as_ref().and_then(|o| o.get(index).copied()) else {
+            return Ok(None);
+        };
+        let bytes = crate::io::frame_index::frame_bytes(&mut self.reader, at)?;
+        read_mol2(bytes.as_slice()).map(Some)
+    }
+
+    fn len(&mut self) -> Result<usize> {
+        self.build_index()?;
+        Ok(self.index.as_ref().map_or(0, Vec::len))
     }
 }
 
@@ -443,18 +465,10 @@ impl<R: BufRead> FrameReader for Mol2Reader<R> {
 /// A bond's SYBYL type is its `type` column when the frame has one, else the
 /// canonical `bond_type` / `bond_number` codes mapped back (`4` → `ar`), so a
 /// frame read from MOL2 keeps its aromatic and double bonds without `type`.
-pub fn write_mol2<P: AsRef<Path>>(path: P, frame: &Frame) -> Result<()> {
-    let file = std::fs::File::create(path.as_ref())?;
-    let mut w = BufWriter::new(file);
+pub fn write_mol2<'a>(sink: impl Into<Sink<'a>>, frame: &Frame) -> Result<()> {
+    let mut w = sink.into().writer()?;
     write_frame_to(&mut w, frame)?;
     w.flush()
-}
-
-/// Write a frame as single-molecule MOL2 text — [`write_mol2`] into memory.
-pub fn write_mol2_str(frame: &Frame) -> Result<String> {
-    let mut buf = Vec::new();
-    write_frame_to(&mut buf, frame)?;
-    String::from_utf8(buf).map_err(invalid_data)
 }
 
 /// Emit one frame in MOL2 format.
@@ -478,7 +492,7 @@ fn write_frame_to<W: Write>(writer: &mut W, frame: &Frame) -> Result<()> {
     writeln!(writer, "{}", title)?;
     writeln!(writer, "{} {} 0 0 0", n, n_bonds)?;
     writeln!(writer, "SMALL")?;
-    let charge_col = atoms.get("charge").and_then(|c| c.as_float());
+    let charge_col = atoms.get("charge").and_then(|c| c.get::<f64>());
     writeln!(
         writer,
         "{}",
@@ -492,27 +506,37 @@ fn write_frame_to<W: Write>(writer: &mut W, frame: &Frame) -> Result<()> {
     writeln!(writer)?;
 
     writeln!(writer, "@<TRIPOS>ATOM")?;
-    let id_col = atoms.get("id").and_then(|c| c.as_uint());
-    let name_col = atoms.get("name").and_then(|c| c.as_string());
+    let id_col = atoms.get("id").and_then(|c| c.get::<u64>());
+    // The atom name and the Tripos atom type (which is where mol2 spells the
+    // species, `C.3`, `O.2`) are both required: neither is made up.
+    let required_str =
+        |key: &str| {
+            atoms.get(key).and_then(|c| c.get::<String>()).ok_or_else(|| {
+            invalid_data(format!(
+                "MOL2 write: atoms block has no string '{key}' column; set it before writing"
+            ))
+        })
+        };
+    let name_col = required_str("name")?;
     let xs = atoms
         .get("x")
-        .and_then(|c| c.as_float())
+        .and_then(|c| c.get::<f64>())
         .ok_or_else(|| invalid_data("atoms.x missing"))?;
     let ys = atoms
         .get("y")
-        .and_then(|c| c.as_float())
+        .and_then(|c| c.get::<f64>())
         .ok_or_else(|| invalid_data("atoms.y missing"))?;
     let zs = atoms
         .get("z")
-        .and_then(|c| c.as_float())
+        .and_then(|c| c.get::<f64>())
         .ok_or_else(|| invalid_data("atoms.z missing"))?;
-    let type_col = atoms.get(keys::TYPE).and_then(|c| c.as_string());
-    let subst_id_col = atoms.get(keys::RES_ID).and_then(|c| c.as_uint());
-    let subst_name_col = atoms.get(keys::RES_NAME).and_then(|c| c.as_string());
+    let type_col = required_str(keys::TYPE)?;
+    let subst_id_col = atoms.get(keys::RES_ID).and_then(|c| c.get::<u64>());
+    let subst_name_col = atoms.get(keys::RES_NAME).and_then(|c| c.get::<String>());
     for i in 0..n {
         let id = id_col.map(|c| c[[i]]).unwrap_or((i as Idx) + 1);
-        let name = name_col.map(|c| c[[i]].as_str()).unwrap_or("X");
-        let atype = type_col.map(|c| c[[i]].as_str()).unwrap_or("X");
+        let name = name_col[[i]].as_str();
+        let atype = type_col[[i]].as_str();
         let sid = subst_id_col.map(|c| c[[i]]).unwrap_or(1);
         let sname = subst_name_col.map(|c| c[[i]].as_str()).unwrap_or("MOL");
         write!(
@@ -539,15 +563,15 @@ fn write_frame_to<W: Write>(writer: &mut W, frame: &Frame) -> Result<()> {
         writeln!(writer, "@<TRIPOS>BOND")?;
         let atomi = b
             .get("atomi")
-            .and_then(|c| c.as_uint())
+            .and_then(|c| c.get::<u64>())
             .ok_or_else(|| invalid_data("bonds.atomi missing"))?;
         let atomj = b
             .get("atomj")
-            .and_then(|c| c.as_uint())
+            .and_then(|c| c.get::<u64>())
             .ok_or_else(|| invalid_data("bonds.atomj missing"))?;
-        let btype_col = b.get(keys::TYPE).and_then(|c| c.as_string());
-        let class_col = b.get(keys::BOND_TYPE).and_then(|c| c.as_uint());
-        let number_col = b.get(keys::BOND_NUMBER).and_then(|c| c.as_uint());
+        let btype_col = b.get(keys::TYPE).and_then(|c| c.get::<String>());
+        let class_col = b.get(keys::BOND_TYPE).and_then(|c| c.get::<u64>());
+        let number_col = b.get(keys::BOND_NUMBER).and_then(|c| c.get::<u64>());
         for i in 0..n_bonds {
             let bt = match btype_col {
                 Some(c) => c[[i]].as_str(),
@@ -615,6 +639,15 @@ pub struct Mol2Writer<W: Write> {
     writer: W,
 }
 
+impl<'a> Mol2Writer<SinkWriter<'a>> {
+    /// Create a `.mol2` file, or fill a buffer, molecule by molecule.
+    pub fn create(sink: impl Into<Sink<'a>>) -> Result<Self> {
+        Ok(Self {
+            writer: sink.into().writer()?,
+        })
+    }
+}
+
 impl<W: Write> Writer for Mol2Writer<W> {
     type W = W;
     fn new(writer: W) -> Self {
@@ -627,7 +660,8 @@ impl<W: Write> FrameWriter for Mol2Writer<W> {
         // Refuse to emit a frame that violates the vocabulary: a bad file
         // looks fine and is found wrong later, by whatever reads it.
         crate::io::writer::check_write_frame(frame)?;
-        write_frame_to(&mut self.writer, frame)
+        write_frame_to(&mut self.writer, frame)?;
+        self.writer.flush()
     }
 }
 
@@ -642,18 +676,37 @@ mod tests {
 
     const ETHANE_MIN: &str = "@<TRIPOS>MOLECULE\nETH\n2 1 1 0 0\nSMALL\nNO_CHARGES\n@<TRIPOS>ATOM\n1 C1 0.0 0.0 0.0 c3 1 ETH 0.0\n2 C2 1.5 0.0 0.0 c3 1 ETH 0.0\n@<TRIPOS>BOND\n1 1 2 1\n";
 
+    /// `Mol2Writer::create` writes one molecule per frame; `Mol2Reader::open`
+    /// reads them back by index.
+    #[test]
+    fn mol2_writer_create_and_reader_open_round_trip() {
+        let frame = read_mol2(ETHANE_MIN.as_bytes()).unwrap();
+        let mut out = Vec::new();
+        let mut writer = Mol2Writer::create(&mut out).unwrap();
+        writer.write(&frame).unwrap();
+        writer.write(&frame).unwrap();
+        drop(writer);
+        let mut reader = Mol2Reader::open(&out).unwrap();
+        assert_eq!(reader.len().unwrap(), 2);
+        assert_eq!(
+            reader.read_frame(1).unwrap().unwrap()["atoms"].n_rows(),
+            Some(2)
+        );
+        assert!(reader.read_frame(2).unwrap().is_none());
+    }
+
     #[test]
     fn reads_minimal_mol2() {
         let mut reader = Mol2Reader::new(Cursor::new(ETHANE_MIN.as_bytes()));
         let frame = reader.read().unwrap().unwrap();
         let atoms = frame.get("atoms").unwrap();
         assert_eq!(atoms.n_rows(), Some(2));
-        let xs = atoms.get("x").and_then(|c| c.as_float()).unwrap();
+        let xs = atoms.get("x").and_then(|c| c.get::<f64>()).unwrap();
         assert!((xs[[1]] - 1.5).abs() < 1e-9);
         let bonds = frame.get("bonds").unwrap();
         assert_eq!(bonds.n_rows(), Some(1));
-        let atomi = bonds.get("atomi").and_then(|c| c.as_uint()).unwrap();
-        let atomj = bonds.get("atomj").and_then(|c| c.as_uint()).unwrap();
+        let atomi = bonds.get("atomi").and_then(|c| c.get::<u64>()).unwrap();
+        let atomj = bonds.get("atomj").and_then(|c| c.get::<u64>()).unwrap();
         assert_eq!(atomi[[0]], 0);
         assert_eq!(atomj[[0]], 1);
     }
@@ -671,7 +724,7 @@ mod tests {
         }
         let bonds = frame.get("bonds").unwrap();
         assert_eq!(
-            bonds.get("type").and_then(|c| c.as_string()).unwrap()[[0]],
+            bonds.get("type").and_then(|c| c.get::<String>()).unwrap()[[0]],
             "1"
         );
         assert!(!bonds.contains_key("sybyl_bond_type"));
@@ -690,21 +743,24 @@ mod tests {
         let atoms = back.get("atoms").unwrap();
         let res_id: Vec<Idx> = atoms
             .get("res_id")
-            .and_then(|c| c.as_uint())
+            .and_then(|c| c.get::<u64>())
             .unwrap()
             .iter()
             .copied()
             .collect();
         assert_eq!(res_id, [7, 9]);
-        let types = atoms.get("type").and_then(|c| c.as_string()).unwrap();
+        let types = atoms.get("type").and_then(|c| c.get::<String>()).unwrap();
         assert_eq!((types[[0]].as_str(), types[[1]].as_str()), ("C.ar", "N.am"));
-        let res_name = atoms.get("res_name").and_then(|c| c.as_string()).unwrap();
+        let res_name = atoms
+            .get("res_name")
+            .and_then(|c| c.get::<String>())
+            .unwrap();
         assert_eq!(res_name[[1]], "AMD");
         let btype = back
             .get("bonds")
             .unwrap()
             .get("type")
-            .and_then(|c| c.as_string())
+            .and_then(|c| c.get::<String>())
             .unwrap();
         assert_eq!(btype[[0]], "am");
     }
@@ -719,7 +775,7 @@ mod tests {
         // What a caller does when its `type` column is a force-field label:
         // drop it, leaving the canonical columns the reader wrote.
         frame.get_mut("bonds").unwrap().remove(keys::TYPE);
-        let text = write_mol2_str(&frame).unwrap();
+        let text = crate::io::writer::capture(|sink| crate::io::write_mol2(sink, &frame)).unwrap();
         let back = Mol2Reader::new(Cursor::new(text.as_bytes()))
             .read()
             .unwrap()
@@ -728,7 +784,7 @@ mod tests {
             .get("bonds")
             .unwrap()
             .get(keys::TYPE)
-            .and_then(|c| c.as_string())
+            .and_then(|c| c.get::<String>())
             .unwrap()
             .iter()
             .cloned()
@@ -762,13 +818,13 @@ mod tests {
             .get("atoms")
             .unwrap()
             .get("x")
-            .and_then(|c| c.as_float())
+            .and_then(|c| c.get::<f64>())
             .unwrap();
         let xs2 = frame2
             .get("atoms")
             .unwrap()
             .get("x")
-            .and_then(|c| c.as_float())
+            .and_then(|c| c.get::<f64>())
             .unwrap();
         for i in 0..xs1.len() {
             assert!((xs1[[i]] - xs2[[i]]).abs() < 1e-3);

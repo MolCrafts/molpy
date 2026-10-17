@@ -19,11 +19,19 @@ use crate::compute::{Compute, ComputeError, TimeCorrelation};
 /// rule and the hydrogen-bond lifetimes integrate through it.
 ///
 /// ```
-/// use molrs::compute::{Compute, CumulativeTrapezoid, CumulativeTrapezoidInput, Vacf, VacfInput};
-/// use ndarray::Array2;
+/// use molrs::compute::{
+///     Accumulate, Compute, CorrelatorFrame, CumulativeTrapezoid, CumulativeTrapezoidInput,
+///     Stream, Vacf,
+/// };
+/// use ndarray::{Array2, Axis};
 ///
 /// let v = Array2::from_shape_fn((64, 3), |(t, d)| ((t * 3 + d) as f64 * 0.7).sin());
-/// let vacf = Vacf::new(16).compute(VacfInput { velocities: v.view(), dt: 1.0 })?;
+/// let vacf = Vacf::new(16).accumulator().fold(v.outer_iter().map(|row| CorrelatorFrame {
+///     a: row.insert_axis(Axis(1)),
+///     b: None,
+///     dt: 1.0,
+///     simbox: None,
+/// }))?;
 /// let running = CumulativeTrapezoid::new()
 ///     .compute(CumulativeTrapezoidInput { correlation: &vacf, channel: 0 })?;
 /// assert_eq!(running.n_lags(), 17);

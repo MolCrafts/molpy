@@ -11,6 +11,8 @@ energies the fixtures pin.
 
 from __future__ import annotations
 
+from conftest import capture
+
 import json
 import xml.etree.ElementTree as ET
 from pathlib import Path
@@ -49,14 +51,16 @@ def _molecules(name: str, copies: int) -> tuple[molrs.core.Frame, dict]:
 
 
 def _forcefield() -> molrs.ff.forcefield.ForceField:
-    return molrs.io.read_openmm_forcefield(FIXTURES / "opls.xml")
+    return molrs.io.openmm_xml.OpenmmXmlReader().read(FIXTURES / "opls.xml")
 
 
 def test_one_template_per_molecule_named_as_the_pdb_names_it(tmp_path: Path) -> None:
     frame, case = _molecules("opls", 2)
-    text = molrs.io.write_openmm_system_str(_forcefield(), frame)
+    text = capture(
+        molrs.io.openmm_xml.OpenmmXmlWriter().write_system, _forcefield(), frame
+    )
     path = tmp_path / "system.xml"
-    molrs.io.write_openmm_system(path, _forcefield(), frame)
+    molrs.io.openmm_xml.OpenmmXmlWriter().write_system(path, _forcefield(), frame)
     assert path.read_text(encoding="utf-8") == text
 
     (residue,) = ET.fromstring(text).iter("Residue")
@@ -67,7 +71,7 @@ def test_one_template_per_molecule_named_as_the_pdb_names_it(tmp_path: Path) -> 
     assert len(residue.findall("Bond")) == len(case["bonds"])
     assert residue.findall("ExternalBond") == []
 
-    pdb = molrs.io.read_pdb_str(molrs.io.write_pdb_str(frame))
+    pdb = molrs.io.read_pdb(molrs.io.Text(capture(molrs.io.write_pdb, frame)))
     names = [a.get("name") for a in atoms]
     assert list(pdb["atoms"]["name"]) == names * 2
     assert list(pdb["atoms"]["res_id"]) == [1] * 12 + [2] * 12
@@ -77,7 +81,9 @@ def test_an_atom_type_the_force_field_lacks_is_a_value_error() -> None:
     frame, case = _molecules("opls", 1)
     frame["atoms"]["type"] = ["opls_999"] + case["types"][1:]
     with pytest.raises(ValueError, match="opls_999"):
-        molrs.io.write_openmm_system_str(_forcefield(), frame)
+        capture(
+            molrs.io.openmm_xml.OpenmmXmlWriter().write_system, _forcefield(), frame
+        )
 
 
 def _openmm_system(tmp_path: Path, name: str, copies: int):
@@ -88,8 +94,10 @@ def _openmm_system(tmp_path: Path, name: str, copies: int):
 
     frame, case = _molecules(name, copies)
     molrs.io.write_pdb(tmp_path / "system.pdb", frame)
-    ff = molrs.io.read_openmm_forcefield(FIXTURES / f"{name}.xml")
-    molrs.io.write_openmm_system(tmp_path / "system.xml", ff, frame)
+    ff = molrs.io.openmm_xml.OpenmmXmlReader().read(FIXTURES / f"{name}.xml")
+    molrs.io.openmm_xml.OpenmmXmlWriter().write_system(
+        tmp_path / "system.xml", ff, frame
+    )
     pdb = PDBFile(str(tmp_path / "system.pdb"))
     system = ForceField(str(tmp_path / "system.xml")).createSystem(
         pdb.topology, nonbondedMethod=NoCutoff
@@ -150,7 +158,9 @@ def test_the_geometric_mixing_follows_the_run_time_method(tmp_path: Path) -> Non
     frame, case = _molecules("opls", 2)
     frame.box = molrs.core.Box.cube(80.0)
     molrs.io.write_pdb(tmp_path / "system.pdb", frame)
-    molrs.io.write_openmm_system(tmp_path / "system.xml", _forcefield(), frame)
+    molrs.io.openmm_xml.OpenmmXmlWriter().write_system(
+        tmp_path / "system.xml", _forcefield(), frame
+    )
     pdb = PDBFile(str(tmp_path / "system.pdb"))
     assert pdb.topology.getPeriodicBoxVectors()[0] == Vec3(8.0, 0, 0) * unit.nanometer
     ff = ForceField(str(tmp_path / "system.xml"))

@@ -23,18 +23,19 @@ and the docs build.
 
 | Module | Rust owner | Holds |
 |---|---|---|
-| `molrs.core` | `molrs::core` | `Block`, `Frame`, `FrameMeta`, `MetaValue`, `MetaDocument`, `Trajectory`, `ObservableRecord`, `BlockDtypeError`; `Box` (Rust `SimBox`), `NeighborList`, `Neighbors`, `NeighborQuery`, `VerletSkin`, the regions, `TriMesh`, `Trace`; `MolGraph`, `Atomistic`, `CoarseGrain`, the node / relation views, `ExtractedSubgraph`, `Element`, `BondOrder`, `BondNumber`, `Topology`; `Unit`, `Quantity`, `UnitRegistry`, `UnitPreset`, `UnitsError` |
+| `molrs.core` | `molrs::core` | `Block`, `Frame`, `FrameMeta`, `MetaValue`, `MetaDocument`, `Trajectory`, `ObservableRecord`, `BlockDtypeError`; `Box` (Rust `SimBox`) and its `Cell`, `NeighborList`, `Neighbors`, `NeighborQuery`, `VerletSkin`, the regions, `TriMesh`, `Trace`; `MolGraph`, `Atomistic`, `CoarseGrain`, the node / relation views, `ExtractedSubgraph`, `Element`, `BondOrder`, `BondNumber`, `Topology`; `Unit`, `Quantity`, `UnitRegistry`, `UnitPreset`, `UnitsError` |
 | `molrs.core.keys` | `molrs::core::keys` | the canonical column, frame-meta and graph keys |
 | `molrs.core.schema` | `molrs::core::schema` | `ColumnSpec`, `BlockSpec`, the block names, `relation_endpoints` |
 | `molrs.core.constants` | `molrs::core::constants` | every physical and engine constant (`AVOGADRO`, `COULOMB_REAL`, `AMBER_COULOMB`, `AMBER_SCEE`, …) |
 | `molrs.op` | `molrs::op` | `superpose`, `centroid`, `place_from_internal_coords`, `Superposition`, `DEFAULT_GAP_TOL` |
 | `molrs.perceive` | `molrs::perceive` | `perceive_rings` → `RingSet`, the `perceive_*` / `assign_*` functions, `add_hydrogens`, `SmartsPattern`, `SmartsMatch`, `Reaction`, `SubgraphMatcher` |
-| `molrs.io` | `molrs::io` | every file reader and writer, as a function `read_<fmt>[_<what>]` / `write_<fmt>[_<what>]` (`_str` / `_bytes` in memory): structure, trajectory and force-field files, `*.mrec` records (`read_mrec_frame` / `write_mrec_frame` and partners), wire-encoded frames, SMILES and CGsmiles text, the LAMMPS log, CSV blocks |
-| `molrs.io.pdb`, `.xyz`, `.gro`, `.dcd`, `.trr`, `.xtc` | `molrs::io::{pdb, xyz, gro, dcd, trr, xtc}` | each format's lazy reader: `PdbReader`, `XyzReader`, `GroReader`, `DcdReader`, `TrrReader`, `XtcReader` |
-| `molrs.io.lammps` | `molrs::io::lammps` | `LammpsDumpReader`, `BondReactTemplate`, the `Lammps*` log records, `infer_lammps_atom_style` |
-| `molrs.io.smiles` | `molrs::io::smiles` | `SmilesIr`, `SmilesError`, `BondingDescriptor` |
+| `molrs.io` | `molrs::io` | every file reader and writer, one door per format and direction: `read_<fmt>(source)` / `write_<fmt>(sink, frame)` (a source is an `os.PathLike`, `bytes` or `Text`; a sink an `os.PathLike` or a `bytearray`) — structure and trajectory files, `write_mrec`, wire-encoded frames (`read_wire_frame` / `write_wire_frame`), the LAMMPS log, CSV blocks; `Text`, `CubeReader`, `XmlForcefieldReader` / `XmlForcefieldWriter` |
+| `molrs.io.pdb`, `.xyz`, `.gro`, `.mol2`, `.cif`, `.sdf`, `.dcd`, `.trr`, `.xtc` | `molrs::io::{pdb, xyz, gro, mol2, cif, sdf, dcd, trr, xtc}` | each format's multi-frame classes: `<Fmt>Reader(source)` and (all but SDF) `<Fmt>Writer(sink)` |
+| `molrs.io.lammps` | `molrs::io::lammps` | `LammpsDumpReader` / `LammpsDumpWriter`, `LammpsForcefieldReader` / `LammpsForcefieldWriter`, `BondReactTemplate`, the `Lammps*` log records, `is_lammps_log` |
+| `molrs.io.gromacs`, `.amber`, `.openmm_xml` | `molrs::io::{gromacs, amber, openmm_xml}` | the force-field classes: `GromacsTopForcefieldReader` / `Writer`, `AmberPrmtopForcefieldReader`, `AmberFrcmodWriter`, `OpenmmXmlReader` / `Writer` |
+| `molrs.io.smiles` | `molrs::io::smiles` | `SmilesIr`, `FragmentIr`, `SmilesError`, `BondingDescriptor` |
 | `molrs.io.cgsmiles` | `molrs::io::cgsmiles` | `CgSmilesIr` and the CGsmiles records |
-| `molrs.io.mrec` | `molrs::io::mrec` | `MrecReader`, `MrecWriter`, `SequenceSchema`, `ForceFieldSection`, `section_names`, `pack_mrec_zip`, `validation` |
+| `molrs.io.mrec` | `molrs::io::mrec` | `MrecFile`, `MrecReader`, `MrecWriter`, `SequenceSchema`, `ForceFieldSection`, `pack_mrec_zip`, `validation` |
 | `molrs.ff.forcefield` | `molrs::ff::forcefield` | `ForceField`, the `Style` / `ForceFieldType` handles (the data model; its files are `molrs.io`'s) |
 | `molrs.ff.potential` | `molrs::ff::potential` | `Potentials`, `WeightedTerms`, `PairLjCut`, `intramolecular_pairs`, `Potential` |
 | `molrs.ff.compile` | `molrs::ff::compile` | `PotentialCompiler`, `ExplicitTerms` |
@@ -49,7 +50,7 @@ and the docs build.
 | `molrs.conformer` | `molrs::conformer` | `Conformer`, `ConformerReport`, `ConformerStageReport` |
 | `molrs.builder` | `molrs::builder` | `GrapheneBuilder`, `CarbonTubeBuilder`, `Assembler` and its placers / orienter, `Coarsener` |
 | `molrs.compute` | `molrs::compute` | one class per compute type, flat; their results; `ComputeSpec`; the `Compute` protocol |
-| `molrs.stream` | `molrs::stream` | `Publisher`, `ControlCommand` |
+| `molrs.stream` | `molrs::stream` | `Publisher`, `PublisherConfig`, `ControlCommand` |
 
 ### Where Python's shape differs from Rust's
 
@@ -96,12 +97,29 @@ unspecified.
 
 ::: molrs.core.BondNumber
 
-Rigid-body moves are methods of `Atomistic` and `CoarseGrain`, not module
-functions: `translate(delta)`, `rotate(axis, angle, about=None)` and
-`scale(factor, about=None)`. Each moves every node that has coordinates in
-place and returns the graph itself, so moves chain:
-`mol.translate([1, 0, 0]).rotate([0, 0, 1], 0.5).scale([2, 2, 2])`.
-In Rust the moves are `molrs::op`'s functions (`translate`, `scale`, `rotate`, `center`) over a `MolGraph`.
+`Atomistic` and `CoarseGrain` are not `MolGraph` subclasses: each holds its
+own typed graph (Rust `molrs::core::Atomistic` / `CoarseGrain`) and speaks
+only its vocabulary. Every entity they hand out or take is a live view
+(`Atom`, `Bond`, `Bead`, …), and a view's mapping is the one door to its
+fields: `atom["x"]`, `atom["x"] = 1.0`, `del atom["charge"]`. Removal is
+`del_atom(atom)` for one atom and `del_atoms(atoms)` for several (atomic),
+and likewise for bonds, angles, dihedrals, impropers, ports, beads and terms
+(`add_term(block, atoms, **props)` for any other relation block). A bond's
+class is written only by `set_bond_class(bond, BondOrder, BondNumber)`.
+Copies are `copy.copy(mol)` / `copy.deepcopy(mol)`.
+
+Rigid-body moves are methods of `Atomistic` and `CoarseGrain`, with the same
+signatures on both: `translate(delta)`, `rotate(axis, angle, about=None)`
+and `scale(factor, about=None)` move every node that has coordinates in
+place, and `center(nodes)` is the mass-weighted centre of the given nodes.
+
+::: molrs.core.NodeRef
+
+::: molrs.core.RelationRef
+
+::: molrs.core.Refs
+
+::: molrs.core.Cell
 
 ::: molrs.core.Box
 
@@ -109,8 +127,7 @@ A region is a solid with a signed distance to its boundary: every class
 answers `contains`, `distance` (negative inside) and `bounds`, and composes
 with `&`, `|` and `~`. Outside a shape is `~shape`; a shell is
 `outer & ~inner`. `TriMesh` is the surface a `Polyhedron` is bounded by and
-what `molrs.io.read_stl` reads (`molrs.io.read_stl_bytes` from bytes, as the
-WASM binding's `readStlBytes` does).
+what `molrs.io.read_stl` reads (from a path or from the file's `bytes`).
 
 ::: molrs.core.Sphere
 
@@ -140,10 +157,18 @@ WASM binding's `readStlBytes` does).
 
 ## `molrs.perceive`
 
-Two verbs: `perceive_<fact>` reports a side table and leaves the graph
-alone; `assign_<fact>` writes the fact onto a clone and returns it.
+Two verbs: `perceive_<fact>` is a query — it reports a side table and leaves
+the graph alone; `assign_<fact>` is a mutation — it writes the fact onto the
+molecule it is given, in place, and returns `None` (`assign_kekule_bond_orders`
+returns whether every aromatic bond got a legal number). Copy first
+(`copy.copy(mol)`) to keep the input. `add_hydrogens` is a graph edit and
+returns a new graph. Atoms in results are the molecule's own views.
 
 ::: molrs.perceive.perceive_rings
+
+::: molrs.perceive.perceive_rotatable_bonds
+
+::: molrs.perceive.RotatableBond
 
 ::: molrs.perceive.assign_rings
 
@@ -161,7 +186,9 @@ alone; `assign_<fact>` writes the fact onto a clone and returns it.
 
 ::: molrs.perceive.assign_bcc_bond_types
 
-::: molrs.perceive.assign_bcc_bond_types_from_connectivity
+::: molrs.perceive.BondOrderSource
+
+::: molrs.perceive.UnknownBondPolicy
 
 ::: molrs.perceive.assign_equivalence_classes
 
@@ -169,16 +196,24 @@ alone; `assign_<fact>` writes the fact onto a clone and returns it.
 
 ::: molrs.perceive.Reaction
 
+::: molrs.perceive.ReactionBatch
+
 ## `molrs.io`
 
-One module per file format. Every door is a function named after its format:
-`read_X` / `write_X` for one frame, `read_X_trajectory` /
-`write_X_trajectory` for a sequence, `_str` / `_bytes` for text and bytes in
-memory; family formats carry the family name (`read_lammps_data`,
-`read_prmtop`, `read_poscar`). No door picks the format for the
-caller. Every reader emits the canonical column names (`molrs.core.keys`).
-Each `read_X_trajectory` returns its format's lazy reader,
-`molrs.io.X.<X>Reader`, over one path or a list of paths.
+One module per file format. Every format has one door per direction:
+`read_X(source)` reads a file's first (or only) frame and `write_X(sink,
+frame)` writes one frame as a whole file. A source is an `os.PathLike`, the
+`bytes` of a whole file, or a `molrs.io.Text`; a plain `str` is refused
+(ambiguous between a path and text). A sink is an `os.PathLike` or a
+`bytearray` (cleared, then holding exactly the file's bytes). A multi-frame
+format's classes live in its submodule: `molrs.io.X.<X>Reader(source)`
+(`len`, `reader[i]` / `reader[a:b]`, iteration) and
+`molrs.io.X.<X>Writer(sink)` (`write(frame)`, `close()`, context manager).
+Family formats carry the family name (`read_lammps_data`, `read_prmtop`,
+`read_poscar`). No door picks the format for the caller. Every reader emits
+the canonical column names (`molrs.core.keys`).
+
+::: molrs.io.Text
 
 ### Structure files
 
@@ -220,43 +255,55 @@ Each `read_X_trajectory` returns its format's lazy reader,
 
 ::: molrs.io.read_stl
 
-### Trajectories
-
-::: molrs.io.read_pdb_trajectory
-
-::: molrs.io.write_pdb_trajectory
+### Multi-frame readers and writers
 
 ::: molrs.io.pdb.PdbReader
 
-::: molrs.io.read_xyz_trajectory
-
-::: molrs.io.write_xyz_trajectory
+::: molrs.io.pdb.PdbWriter
 
 ::: molrs.io.xyz.XyzReader
 
-::: molrs.io.read_gro_trajectory
-
-::: molrs.io.write_gro_trajectory
+::: molrs.io.xyz.XyzWriter
 
 ::: molrs.io.gro.GroReader
 
-::: molrs.io.read_dcd_trajectory
+::: molrs.io.gro.GroWriter
 
-::: molrs.io.write_dcd_trajectory
+::: molrs.io.mol2.Mol2Reader
+
+::: molrs.io.mol2.Mol2Writer
+
+::: molrs.io.cif.CifReader
+
+::: molrs.io.cif.CifWriter
+
+::: molrs.io.sdf.SdfReader
+
+::: molrs.io.cube.CubeReader
+
+::: molrs.io.read_dcd
+
+::: molrs.io.write_dcd
 
 ::: molrs.io.dcd.DcdReader
 
-::: molrs.io.read_trr_trajectory
+::: molrs.io.dcd.DcdWriter
 
-::: molrs.io.write_trr_trajectory
+::: molrs.io.read_trr
+
+::: molrs.io.write_trr
 
 ::: molrs.io.trr.TrrReader
 
-::: molrs.io.read_xtc_trajectory
+::: molrs.io.trr.TrrWriter
 
-::: molrs.io.write_xtc_trajectory
+::: molrs.io.read_xtc
+
+::: molrs.io.write_xtc
 
 ::: molrs.io.xtc.XtcReader
+
+::: molrs.io.xtc.XtcWriter
 
 ### LAMMPS (`molrs.io.lammps`)
 
@@ -274,13 +321,15 @@ Each `read_X_trajectory` returns its format's lazy reader,
 
 ::: molrs.io.write_lammps_molecule_json
 
-::: molrs.io.read_lammps_dump_trajectory
+::: molrs.io.read_lammps_dump
 
-::: molrs.io.write_lammps_dump_trajectory
-
-::: molrs.io.write_lammps_dump_local
+::: molrs.io.write_lammps_dump
 
 ::: molrs.io.lammps.LammpsDumpReader
+
+::: molrs.io.lammps.LammpsDumpWriter
+
+::: molrs.io.write_lammps_dump_local
 
 ::: molrs.io.lammps.BondReactTemplate
 
@@ -290,7 +339,7 @@ Each `read_X_trajectory` returns its format's lazy reader,
 
 ::: molrs.io.read_lammps_log
 
-::: molrs.io.read_lammps_log_str
+::: molrs.io.lammps.is_lammps_log
 
 ### AMBER
 
@@ -308,25 +357,9 @@ Each `read_X_trajectory` returns its format's lazy reader,
 
 The [Record files guide](../guides/records.md) shows these in use.
 
-::: molrs.io.read_mrec_frame
+::: molrs.io.write_mrec
 
-::: molrs.io.write_mrec_frame
-
-::: molrs.io.read_mrec_system
-
-::: molrs.io.write_mrec_system
-
-::: molrs.io.read_mrec_trajectory
-
-::: molrs.io.write_mrec_trajectory
-
-::: molrs.io.read_mrec_forcefield
-
-::: molrs.io.write_mrec_forcefield
-
-::: molrs.io.mrec.section_names
-
-::: molrs.io.read_mrec_meta
+::: molrs.io.mrec.MrecFile
 
 ::: molrs.io.mrec.SequenceSchema
 
@@ -340,77 +373,51 @@ The [Record files guide](../guides/records.md) shows these in use.
 
 ### Force-field files
 
-::: molrs.io.read_lammps_forcefield
+Each format is a reader and / or writer class: `read(source) -> ForceField`,
+`write(sink, forcefield)`, and the format's other files as methods of the
+same class.
 
-::: molrs.io.write_lammps_forcefield
+::: molrs.io.lammps.LammpsForcefieldReader
 
-::: molrs.io.read_lammps_data_coeffs
+::: molrs.io.lammps.LammpsForcefieldWriter
 
-::: molrs.io.read_lammps_data_coeffs_str
+::: molrs.io.gromacs.GromacsTopForcefieldReader
 
-::: molrs.io.write_lammps_data_coeffs_str
+::: molrs.io.gromacs.GromacsTopForcefieldWriter
 
-::: molrs.io.read_top_forcefield
+::: molrs.io.amber.AmberPrmtopForcefieldReader
 
-::: molrs.io.write_top_forcefield
+::: molrs.io.amber.AmberFrcmodWriter
 
-::: molrs.io.read_top_system
+::: molrs.io.openmm_xml.OpenmmXmlReader
 
-::: molrs.io.write_top_system
+::: molrs.io.openmm_xml.OpenmmXmlWriter
 
-::: molrs.io.read_prmtop_forcefield
+::: molrs.io.xml.XmlForcefieldReader
 
-::: molrs.io.read_prmtop_system
-
-::: molrs.io.write_frcmod
-
-::: molrs.io.read_openmm_forcefield
-
-::: molrs.io.write_openmm_forcefield
-
-::: molrs.io.write_openmm_system
-
-::: molrs.io.write_openmm_system_str
-
-::: molrs.io.read_xml_forcefield
-
-::: molrs.io.write_xml_forcefield
+::: molrs.io.xml.XmlForcefieldWriter
 
 ### SMILES and CGsmiles
 
-::: molrs.io.read_smiles_str
-
-::: molrs.io.write_smiles_str
-
 ::: molrs.io.smiles.SmilesIr
 
-::: molrs.io.smiles.SmilesError
+::: molrs.io.smiles.FragmentIr
 
-::: molrs.io.read_cgsmiles_str
+::: molrs.io.smiles.SmilesError
 
 ::: molrs.io.cgsmiles.CgSmilesIr
 
 ### Wire-encoded frames and CSV blocks
 
-::: molrs.io.read_msgpack_frame_bytes
+::: molrs.io.read_wire_frame
 
-::: molrs.io.write_msgpack_frame_bytes
-
-::: molrs.io.read_json_frame_str
-
-::: molrs.io.write_json_frame_str
+::: molrs.io.write_wire_frame
 
 ::: molrs.io.read_clpol_alpha
 
-::: molrs.io.read_clpol_alpha_str
-
 ::: molrs.io.read_csv_block
 
-::: molrs.io.read_csv_block_str
-
 ::: molrs.io.write_csv_block
-
-::: molrs.io.write_csv_block_str
 
 ## `molrs.ff`
 
@@ -463,7 +470,15 @@ arrays (a CMAP `grid`).
 
 ### `molrs.ff.potential`
 
+Every potential evaluates energy and forces together, the one door of the core
+`Potential::evaluate` into an `Accumulator`: `Potentials.evaluate(coords)`, a
+Python provider's `evaluate(pos)`, and for the pair kernel
+`PairLjCut.evaluate_pairs(pos, neighbors)` (`PairDriven::evaluate_pairs`) and
+`PairLjCut.pair_energy_force(r2, disp)`.
+
 ::: molrs.ff.potential.Potentials
+
+::: molrs.ff.potential.PairLjCut
 
 ### `molrs.ff.typifier`
 
@@ -491,6 +506,11 @@ arrays (a CMAP `grid`).
 
 ## `molrs.optimize`
 
+`Lbfgs` mirrors `molrs::optimize::Lbfgs`: `minimize(frame)` honours the
+frame's `atoms.free` mask, `minimize_coords(coords)` relaxes one `(N, 3)`
+array, `minimize_batch(coords)` a `(B, N, 3)` stack; each relaxes its input in
+place and returns the report(s).
+
 ::: molrs.optimize.Lbfgs
 
 ::: molrs.optimize.OptimizationReport
@@ -517,13 +537,20 @@ the data by keyword. A result is a read-only object that the next compute
 takes as is (`Msd` → `TimeCorrelation` → `LinearFit`, `Steinhardt` →
 `SteinhardtResult` → `Pca`, `Cluster` → `ClusterResult` → `CenterOfMass`).
 
+`Msd`, `Vacf` and `Rdf` are streams only, as in the core: `x.accumulator()`
+hands out a `CorrelatorAccumulator` / `RdfAccumulator`; `push` one frame at a
+time and `finish()` reads the result (without consuming the accumulator).
+
 ### Contract and descriptors
 
 Every class is configured at construction and answers one call, `compute`,
-whose keyword arguments are the fields of the core input. `ComputeSpec`
-describes each one: its parameters (kind, default, required) and inputs.
+whose keyword arguments are the fields of the core input — or, for a stream,
+`accumulator`. `ComputeSpec` describes each one: its parameters (kind,
+default, required) and inputs (for a stream, the fields `push` takes).
 
 ::: molrs.compute.Compute
+
+::: molrs.compute.Stream
 
 ::: molrs.compute.ComputeSpec
 
@@ -543,8 +570,9 @@ describes each one: its parameters (kind, default, required) and inputs.
 
 `Correlator` is the one estimator; `Msd`, `Vacf`, `OnsagerCorrelation`,
 `DipoleAcf`, `CurrentAcf`, `ReorientationAcf`, `RotationalAutocorrelation`
-and `Survival` are its fixed configurations. Each returns a
-`TimeCorrelation`, which the fits and spectra take as is (and which pickles).
+and `Survival` are its fixed configurations (`Msd` and `Vacf` streamed through
+a `CorrelatorAccumulator`; `Vacf` takes each frame's velocities as an
+`(n_dof, 1)` column). Each returns a `TimeCorrelation`, which the fits and spectra take as is (and which pickles).
 The origin set is tunable (`origins`, and `stride` for every `stride`-th
 origin), as is the normalisation (`"unbiased"`, `"biased"`, `"none"`).
 `ReorientationAcf` is the orientational autocorrelation (OACF) of unit
@@ -558,6 +586,8 @@ decay), and `Spectrum` (power spectrum).
 ::: molrs.compute.TimeCorrelation
 
 ::: molrs.compute.Msd
+
+::: molrs.compute.CorrelatorAccumulator
 
 ::: molrs.compute.Vacf
 
@@ -648,6 +678,8 @@ decay), and `Spectrum` (power spectrum).
 field, an entry per frame.
 
 ::: molrs.compute.Rdf
+
+::: molrs.compute.RdfAccumulator
 
 ::: molrs.compute.RdfResult
 

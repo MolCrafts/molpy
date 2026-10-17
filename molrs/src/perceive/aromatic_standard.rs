@@ -26,11 +26,11 @@
 
 #![cfg(all(test, feature = "smiles"))]
 
-use indexmap::IndexMap;
 use std::collections::{HashMap, HashSet};
 
 use crate::core::Atomistic;
 use crate::core::PropValue;
+use crate::core::Props;
 use crate::core::{NodeId, RelationId};
 use crate::perceive::{add_hydrogens, assign_aromaticity, assign_kekule_bond_orders};
 
@@ -39,7 +39,14 @@ const BOND_TYPE: &str = "bond_type";
 /// Bond prop: the localized Lewis/Kekulé integer (§2.2).
 const BOND_NUMBER: &str = "bond_number";
 /// Atom prop: aromatic system membership (§2.3).
-const IS_AROMATIC: &str = "is_aromatic";
+use crate::core::keys::IS_AROMATIC;
+/// Atom prop: the species, as an atomic number.
+const ATOMIC_NUMBER: &str = "atomic_number";
+
+/// Atomic numbers of the elements the clauses below single out.
+const Z_C: u32 = 6;
+const Z_N: u32 = 7;
+const Z_O: u32 = 8;
 
 /// `bond_type` code for an aromatic bond (§2.1). Not a quadruple bond.
 const TYPE_AROMATIC: u32 = 4;
@@ -105,10 +112,12 @@ fn parse(smiles: &str) -> Atomistic {
 /// atom's valence, so `add_hydrogens` stays a separate, optional operation and
 /// standardization never changes the structure behind the caller's back.
 fn standardize(smiles: &str) -> Atomistic {
-    assign_aromaticity(&parse(smiles))
+    let mut mol = parse(smiles);
+    assign_aromaticity(&mut mol).expect("standardization writes its flags");
+    mol
 }
 
-fn uint_prop(props: &IndexMap<String, PropValue>, key: &str) -> Option<u32> {
+fn uint_prop(props: &Props, key: &str) -> Option<u32> {
     props.get(key).and_then(PropValue::as_f64).map(|v| {
         assert!(
             v.fract() == 0.0 && v >= 0.0,
@@ -128,11 +137,15 @@ fn bond_number(mol: &Atomistic, bid: RelationId) -> u32 {
     uint_prop(&b.props, BOND_NUMBER).unwrap_or_else(|| panic!("bond has no {BOND_NUMBER}"))
 }
 
+fn atomic_number(mol: &Atomistic, id: NodeId) -> u32 {
+    let a = mol.get_atom(id).expect("atom");
+    uint_prop(&a, ATOMIC_NUMBER).unwrap_or_else(|| panic!("atom has no {ATOMIC_NUMBER}"))
+}
+
 fn atom_is_aromatic(mol: &Atomistic, id: NodeId) -> bool {
     mol.get_atom(id)
         .ok()
-        .and_then(|a| a.get(IS_AROMATIC).and_then(PropValue::as_f64))
-        .is_some_and(|v| v != 0.0)
+        .is_some_and(|a| a.get(IS_AROMATIC) == Some(&PropValue::Bool(true)))
 }
 
 fn aromatic_bonds(mol: &Atomistic) -> Vec<RelationId> {
@@ -152,7 +165,8 @@ fn signature(mol: &Atomistic) -> HashMap<(usize, usize), (u32, u32)> {
         .collect();
     mol.bonds()
         .map(|(bid, _)| {
-            let (a, b) = mol.bond_endpoints(bid).expect("endpoints");
+            let ends = mol.get_bond(bid).expect("endpoints").nodes;
+            let (a, b) = (ends[0], ends[1]);
             let (i, j) = (index[&a], index[&b]);
             (
                 (i.min(j), i.max(j)),
@@ -171,7 +185,7 @@ fn no_bond_carries_a_fractional_order() {
     for (name, smiles) in MATRIX {
         let mol = standardize(smiles);
         for (bid, bond) in mol.bonds() {
-            for (key, value) in &bond.props {
+            for (key, value) in bond.props.iter() {
                 if let Some(v) = value.as_f64() {
                     assert!(
                         v.fract() == 0.0,
@@ -219,7 +233,8 @@ fn aromatic_atoms_and_bonds_are_marked_in_their_own_places() {
         // A bond typed aromatic must join two aromatic atoms (§2.3: the two
         // facts are recorded separately, and must agree).
         for bid in aromatic {
-            let (a, b) = mol.bond_endpoints(bid).expect("endpoints");
+            let ends = mol.get_bond(bid).expect("endpoints").nodes;
+            let (a, b) = (ends[0], ends[1]);
             assert!(
                 atom_is_aromatic(&mol, a) && atom_is_aromatic(&mol, b),
                 "{name}: aromatic bond between atoms not marked aromatic"
@@ -333,7 +348,7 @@ fn pyrrole_type_nitrogen_is_not_forced_into_a_double() {
     let pyrrole = standardize("c1cc[nH]c1");
     let n = pyrrole
         .atoms()
-        .find(|(_, a)| a.get_str("element") == Some("N"))
+        .find(|(_, a)| uint_prop(a, ATOMIC_NUMBER) == Some(Z_N))
         .map(|(id, _)| id)
         .expect("pyrrole N");
 
@@ -341,7 +356,8 @@ fn pyrrole_type_nitrogen_is_not_forced_into_a_double() {
         .bonds()
         .filter(|(bid, _)| bond_number(&pyrrole, *bid) == NUMBER_DOUBLE)
         .filter(|(bid, _)| {
-            let (a, b) = pyrrole.bond_endpoints(*bid).expect("endpoints");
+            let ends = pyrrole.get_bond(*bid).expect("endpoints").nodes;
+            let (a, b) = (ends[0], ends[1]);
             a == n || b == n
         })
         .count();
@@ -354,14 +370,15 @@ fn pyrrole_type_nitrogen_is_not_forced_into_a_double() {
     let pyridine = standardize("c1ccncc1");
     let pn = pyridine
         .atoms()
-        .find(|(_, a)| a.get_str("element") == Some("N"))
+        .find(|(_, a)| uint_prop(a, ATOMIC_NUMBER) == Some(Z_N))
         .map(|(id, _)| id)
         .expect("pyridine N");
     let doubles_at_pn = pyridine
         .bonds()
         .filter(|(bid, _)| bond_number(&pyridine, *bid) == NUMBER_DOUBLE)
         .filter(|(bid, _)| {
-            let (a, b) = pyridine.bond_endpoints(*bid).expect("endpoints");
+            let ends = pyridine.get_bond(*bid).expect("endpoints").nodes;
+            let (a, b) = (ends[0], ends[1]);
             a == pn || b == pn
         })
         .count();
@@ -377,16 +394,11 @@ fn a_bond_from_a_ring_atom_to_a_substituent_is_not_aromatic() {
     // Aspirin's ester oxygen and its carboxyl carbon both hang off the ring.
     let aspirin = standardize("O=C(C)Oc1ccccc1C(=O)O");
     for bid in aromatic_bonds(&aspirin) {
-        let (a, b) = aspirin.bond_endpoints(bid).expect("endpoints");
-        let element = |id| {
-            aspirin
-                .get_atom(id)
-                .ok()
-                .and_then(|at| at.get_str("element").map(str::to_owned))
-        };
+        let ends = aspirin.get_bond(bid).expect("endpoints").nodes;
+        let (a, b) = (ends[0], ends[1]);
         assert_eq!(
-            (element(a), element(b)),
-            (Some("C".into()), Some("C".into())),
+            (atomic_number(&aspirin, a), atomic_number(&aspirin, b)),
+            (Z_C, Z_C),
             "aspirin: only the six ring C–C bonds are aromatic"
         );
     }
@@ -442,7 +454,8 @@ fn a_benzene_ring_is_never_six_localized_doubles() {
             .iter()
             .filter(|bid| bond_number(&mol, **bid) == NUMBER_DOUBLE)
         {
-            let (a, b) = mol.bond_endpoints(*bid).expect("endpoints");
+            let ends = mol.get_bond(*bid).expect("endpoints").nodes;
+            let (a, b) = (ends[0], ends[1]);
             *touched.entry(a).or_default() += 1;
             *touched.entry(b).or_default() += 1;
         }
@@ -461,7 +474,8 @@ fn a_benzene_ring_is_never_six_localized_doubles() {
 fn standardizing_twice_changes_nothing() {
     for (name, smiles) in MATRIX {
         let once = standardize(smiles);
-        let twice = assign_aromaticity(&once);
+        let mut twice = once.clone();
+        assign_aromaticity(&mut twice).expect("standardization writes its flags");
         assert_eq!(
             signature(&once),
             signature(&twice),
@@ -491,14 +505,12 @@ fn standardization_does_not_touch_the_non_aromatic_region() {
     let carbonyls = |m: &Atomistic| {
         m.bonds()
             .filter(|(bid, _)| {
-                let (a, b) = m.bond_endpoints(*bid).expect("endpoints");
-                let el = |id| {
-                    m.get_atom(id)
-                        .ok()
-                        .and_then(|at| at.get_str("element").map(str::to_owned))
-                };
-                let pair: HashSet<Option<String>> = [el(a), el(b)].into_iter().collect();
-                pair == HashSet::from([Some("C".to_owned()), Some("O".to_owned())])
+                let ends = m.get_bond(*bid).expect("endpoints").nodes;
+                let (a, b) = (ends[0], ends[1]);
+                let pair: HashSet<u32> = [atomic_number(m, a), atomic_number(m, b)]
+                    .into_iter()
+                    .collect();
+                pair == HashSet::from([Z_C, Z_O])
             })
             .count()
     };
@@ -595,7 +607,11 @@ fn kekulization_alone_never_invents_aromaticity() {
     // back untouched — that is the boundary that keeps the two from calling
     // each other.
     let kekule = parse("C1=CC=CC=C1");
-    let out = assign_kekule_bond_orders(&kekule);
+    let mut out = kekule.clone();
+    assert!(
+        assign_kekule_bond_orders(&mut out).expect("kekulization writes its numbers"),
+        "nothing to phase is a success"
+    );
 
     assert_eq!(
         out.bonds()
@@ -620,7 +636,8 @@ fn perception_alone_never_needs_hydrogens_added() {
         let heavy = standardize(smiles);
         let repleted =
             add_hydrogens(&parse(smiles)).expect("repletion succeeds on a well-formed graph");
-        let with_h = assign_aromaticity(&repleted);
+        let mut with_h = repleted;
+        assign_aromaticity(&mut with_h).expect("standardization writes its flags");
         assert_eq!(
             aromatic_bonds(&heavy).len(),
             aromatic_bonds(&with_h).len(),
@@ -650,14 +667,15 @@ fn a_protonated_ring_nitrogen_never_ends_up_four_valent() {
 
         let mut valence = vec![0u32; mol.n_atoms()];
         for (bid, _) in mol.bonds() {
-            let (a, b) = mol.bond_endpoints(bid).expect("endpoints");
+            let ends = mol.get_bond(bid).expect("endpoints").nodes;
+            let (a, b) = (ends[0], ends[1]);
             let n = bond_number(&mol, bid);
             valence[index[&a]] += n;
             valence[index[&b]] += n;
         }
 
         for (id, atom) in mol.atoms() {
-            if atom.get_str("element") != Some("N") {
+            if uint_prop(&atom, ATOMIC_NUMBER) != Some(Z_N) {
                 continue;
             }
             let total =

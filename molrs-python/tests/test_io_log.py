@@ -27,7 +27,7 @@ Total wall time: 0:00:01
 
 
 def test_parse_returns_the_structured_classes():
-    log = molrs.io.read_lammps_log_str(_LOG)
+    log = molrs.io.read_lammps_log(molrs.io.Text(_LOG))
     assert isinstance(log, molrs.io.lammps.LammpsLog)
     assert log.version == "LAMMPS (1 Jan 2026)"
     assert len(log) == len(log.runs) == 1
@@ -41,7 +41,7 @@ def test_parse_returns_the_structured_classes():
 
 
 def test_thermo_columns_cross_as_float64_arrays():
-    thermo = molrs.io.read_lammps_log_str(_LOG).runs[0].thermo
+    thermo = molrs.io.read_lammps_log(molrs.io.Text(_LOG)).runs[0].thermo
     assert thermo.columns == ["Step", "Temp", "PotEng"]
     assert thermo.rows.dtype == np.float64
     assert thermo.rows.shape == (2, 3)
@@ -52,7 +52,7 @@ def test_thermo_columns_cross_as_float64_arrays():
 
 
 def test_scalars_and_optionals_cross_as_python_types():
-    log = molrs.io.read_lammps_log_str(_LOG)
+    log = molrs.io.read_lammps_log(molrs.io.Text(_LOG))
     run = log.runs[0]
     assert run.loop_time.procs == 2 and run.loop_time.steps == 10
     assert run.loop_time.atoms == 100
@@ -67,7 +67,7 @@ def test_scalars_and_optionals_cross_as_python_types():
 
 
 def test_to_dict_is_json_friendly():
-    payload = molrs.io.read_lammps_log_str(_LOG).to_dict()
+    payload = molrs.io.read_lammps_log(molrs.io.Text(_LOG)).to_dict()
     json.dumps(payload)
     assert payload["runs"][0]["thermo"]["columns"] == ["Step", "Temp", "PotEng"]
     assert payload["runs"][0]["thermo"]["rows"][0] == [0.0, 300.0, -1.5]
@@ -77,11 +77,25 @@ def test_missing_file_is_file_not_found(tmp_path):
     import pytest
 
     with pytest.raises(FileNotFoundError):
-        molrs.io.read_lammps_log(str(tmp_path / "nope.log"))
+        molrs.io.read_lammps_log(tmp_path / "nope.log")
+
+
+def test_a_path_and_its_content_read_alike(tmp_path):
+    path = tmp_path / "log.lammps"
+    path.write_text(_LOG, encoding="utf-8")
+    from_path = molrs.io.read_lammps_log(path)
+    from_text = molrs.io.read_lammps_log(molrs.io.Text(_LOG))
+    from_bytes = molrs.io.read_lammps_log(_LOG.encode())
+    assert from_path.path == str(path)
+    assert from_text.path == from_bytes.path == ""
+    assert (
+        from_path.runs[0].thermo.rows.tolist() == from_text.runs[0].thermo.rows.tolist()
+    )
+    assert from_bytes.to_dict()["runs"] == from_text.to_dict()["runs"]
 
 
 def test_is_lammps_log_keys_on_the_run_the_reader_parses():
     assert molrs.io.lammps.is_lammps_log(_LOG)
     banner_only = "LAMMPS (1 Jan 2026)\nERROR: Unknown command\n"
     assert not molrs.io.lammps.is_lammps_log(banner_only)
-    assert len(molrs.io.read_lammps_log_str(banner_only).runs) == 0
+    assert len(molrs.io.read_lammps_log(molrs.io.Text(banner_only)).runs) == 0

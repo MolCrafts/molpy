@@ -159,7 +159,7 @@ TEST_F(MolrsTest, BlockInsertAndRead) {
     uint32_t atoms_id = intern("gt_atoms");
     uint32_t pos_id   = intern("gt_positions");
 
-    ASSERT_MOLRS_OK(molrs_frame_set_block(frame, atoms_id, 0));
+    ASSERT_MOLRS_OK(molrs_frame_set_block(frame, atoms_id));
 
     MolrsBlockHandle block{};
     ASSERT_MOLRS_OK(molrs_frame_get_block(frame, atoms_id, &block));
@@ -167,7 +167,7 @@ TEST_F(MolrsTest, BlockInsertAndRead) {
     // Insert 3x3 F column (F is f64).
     F data[9] = {1, 2, 3, 4, 5, 6, 7, 8, 9};
     size_t shape[2] = {3, 3};
-    ASSERT_MOLRS_OK(molrs_block_set_f64(&block, pos_id, data, shape, 2));
+    ASSERT_MOLRS_OK(molrs_block_set(&block, pos_id, MOLRS_D_TYPE_FLOAT, data, shape, 2));
 
     // nrows
     size_t nrows = 0;
@@ -224,7 +224,7 @@ TEST_F(MolrsTest, BlockInsertMultipleTypes) {
     uint32_t i_id    = intern("gt_int");
     uint32_t u_id    = intern("gt_uint");
 
-    ASSERT_MOLRS_OK(molrs_frame_set_block(frame, blk_id, 0));
+    ASSERT_MOLRS_OK(molrs_frame_set_block(frame, blk_id));
 
     MolrsBlockHandle block{};
     ASSERT_MOLRS_OK(molrs_frame_get_block(frame, blk_id, &block));
@@ -232,15 +232,15 @@ TEST_F(MolrsTest, BlockInsertMultipleTypes) {
     // F column (f64)
     F f_data[3] = {-1.5f, 2.7f, 3.14f};
     size_t shape1[1] = {3};
-    ASSERT_MOLRS_OK(molrs_block_set_f64(&block, f_id, f_data, shape1, 1));
+    ASSERT_MOLRS_OK(molrs_block_set(&block, f_id, MOLRS_D_TYPE_FLOAT, f_data, shape1, 1));
 
     // I column (int32_t by default)
     int32_t i_data[3] = {100, 200, 300};
-    ASSERT_MOLRS_OK(molrs_block_set_i32(&block, i_id, i_data, shape1, 1));
+    ASSERT_MOLRS_OK(molrs_block_set(&block, i_id, MOLRS_D_TYPE_INT, i_data, shape1, 1));
 
     // U column (uint64_t / Idx)
     uint64_t u_data[3] = {1, 2, 3};
-    ASSERT_MOLRS_OK(molrs_block_set_u64(&block, u_id, u_data, shape1, 1));
+    ASSERT_MOLRS_OK(molrs_block_set(&block, u_id, MOLRS_D_TYPE_UINT, u_data, shape1, 1));
 
     // verify ncols = 3
     size_t ncols = 0;
@@ -280,6 +280,48 @@ TEST_F(MolrsTest, BlockInsertMultipleTypes) {
     ASSERT_MOLRS_OK(molrs_frame_drop(frame));
 }
 
+// molrs_block_set takes every fixed-width dtype through its dtype argument,
+// refuses a string, and refuses a bool byte other than 0 or 1.
+TEST_F(MolrsTest, BlockSetDtypeArgument) {
+    MolrsFrameHandle frame{};
+    ASSERT_MOLRS_OK(molrs_frame_new(&frame));
+
+    uint32_t blk_id = intern("gt_set_dtype");
+    uint32_t l_id   = intern("gt_i64");
+    uint32_t b_id   = intern("gt_flag");
+    uint32_t s_id   = intern("gt_str");
+
+    ASSERT_MOLRS_OK(molrs_frame_set_block(frame, blk_id));
+    MolrsBlockHandle block{};
+    ASSERT_MOLRS_OK(molrs_frame_get_block(frame, blk_id, &block));
+
+    size_t shape[1] = {2};
+    int64_t l_data[2] = {-7, 1LL << 40};
+    ASSERT_MOLRS_OK(molrs_block_set(&block, l_id, MOLRS_D_TYPE_I64, l_data, shape, 1));
+    const uint8_t* raw = nullptr;
+    size_t n = 0;
+    MolrsDType got = MOLRS_D_TYPE_STRING;
+    ASSERT_MOLRS_OK(molrs_block_get(block, l_id, &raw, &n, &got));
+    EXPECT_EQ(got, MOLRS_D_TYPE_I64);
+    ASSERT_EQ(n, 2u);
+    EXPECT_EQ(reinterpret_cast<const int64_t*>(raw)[1], 1LL << 40);
+
+    bool flags[2] = {true, false};
+    ASSERT_MOLRS_OK(molrs_block_set(&block, b_id, MOLRS_D_TYPE_BOOL, flags, shape, 1));
+    ASSERT_MOLRS_OK(molrs_block_column_dtype(block, b_id, &got));
+    EXPECT_EQ(got, MOLRS_D_TYPE_BOOL);
+
+    uint8_t bad_flags[2] = {1, 2};
+    EXPECT_EQ(molrs_block_set(&block, b_id, MOLRS_D_TYPE_BOOL, bad_flags, shape, 1),
+              MOLRS_STATUS_INVALID_ARGUMENT);
+
+    const char* words[2] = {"a", "b"};
+    EXPECT_EQ(molrs_block_set(&block, s_id, MOLRS_D_TYPE_STRING, words, shape, 1),
+              MOLRS_STATUS_TYPE_MISMATCH);
+
+    ASSERT_MOLRS_OK(molrs_frame_drop(frame));
+}
+
 // ===== Block Mutable Pointer ==============================================
 
 TEST_F(MolrsTest, BlockMutablePointer) {
@@ -289,14 +331,14 @@ TEST_F(MolrsTest, BlockMutablePointer) {
     uint32_t blk_id = intern("gt_mut_blk");
     uint32_t x_id   = intern("gt_x");
 
-    ASSERT_MOLRS_OK(molrs_frame_set_block(frame, blk_id, 0));
+    ASSERT_MOLRS_OK(molrs_frame_set_block(frame, blk_id));
 
     MolrsBlockHandle block{};
     ASSERT_MOLRS_OK(molrs_frame_get_block(frame, blk_id, &block));
 
     F data[4] = {1.0f, 2.0f, 3.0f, 4.0f};
     size_t shape[1] = {4};
-    ASSERT_MOLRS_OK(molrs_block_set_f64(&block, x_id, data, shape, 1));
+    ASSERT_MOLRS_OK(molrs_block_set(&block, x_id, MOLRS_D_TYPE_FLOAT, data, shape, 1));
 
     // get mutable pointer
     uint8_t* raw = nullptr;
@@ -330,7 +372,8 @@ TEST_F(MolrsTest, BoxCube) {
     F origin[3] = {0, 0, 0};
     bool pbc[3] = {true, true, true};
     MolrsBoxHandle sb{};
-    ASSERT_MOLRS_OK(molrs_box_cube(static_cast<F>(10.0), origin, pbc, &sb));
+    F edge[3] = {10, 10, 10};
+    ASSERT_MOLRS_OK(molrs_box_new(MOLRS_CELL_KIND_LENGTHS, edge, origin, pbc, &sb));
 
     F vol = 0;
     ASSERT_MOLRS_OK(molrs_box_volume(sb, &vol));
@@ -370,7 +413,7 @@ TEST_F(MolrsTest, BoxOrtho) {
     F origin[3] = {0, 0, 0};
     bool pbc[3] = {true, true, true};
     MolrsBoxHandle sb{};
-    ASSERT_MOLRS_OK(molrs_box_ortho(lens, origin, pbc, &sb));
+    ASSERT_MOLRS_OK(molrs_box_new(MOLRS_CELL_KIND_LENGTHS, lens, origin, pbc, &sb));
 
     F vol = 0;
     ASSERT_MOLRS_OK(molrs_box_volume(sb, &vol));
@@ -383,7 +426,8 @@ TEST_F(MolrsTest, BoxWrap) {
     F origin[3] = {0, 0, 0};
     bool pbc[3] = {true, true, true};
     MolrsBoxHandle sb{};
-    ASSERT_MOLRS_OK(molrs_box_cube(static_cast<F>(10.0), origin, pbc, &sb));
+    F edge[3] = {10, 10, 10};
+    ASSERT_MOLRS_OK(molrs_box_new(MOLRS_CELL_KIND_LENGTHS, edge, origin, pbc, &sb));
 
     // (11, -1, 21) -> should wrap to (1, 9, 1)
     F xyz_in[6]  = {11, -1, 21, 0.5, 0.5, 0.5};
@@ -397,21 +441,26 @@ TEST_F(MolrsTest, BoxWrap) {
     ASSERT_MOLRS_OK(molrs_box_drop(sb));
 }
 
-TEST_F(MolrsTest, BoxShortestVector) {
+TEST_F(MolrsTest, BoxDelta) {
     F origin[3] = {0, 0, 0};
     bool pbc[3] = {true, true, true};
     MolrsBoxHandle sb{};
-    ASSERT_MOLRS_OK(molrs_box_cube(static_cast<F>(10.0), origin, pbc, &sb));
+    F edge[3] = {10, 10, 10};
+    ASSERT_MOLRS_OK(molrs_box_new(MOLRS_CELL_KIND_LENGTHS, edge, origin, pbc, &sb));
 
     F r1[3] = {0.5, 0, 0};
     F r2[3] = {9.5, 0, 0};
     F dr[3] = {};
-    ASSERT_MOLRS_OK(molrs_box_shortest_vector(sb, r1, r2, dr, 1));
+    ASSERT_MOLRS_OK(molrs_box_delta(sb, r1, r2, true, dr, 1));
 
     // shortest path across periodic boundary: -1.0 in x
     EXPECT_NEAR(dr[0], -1.0, 1e-4);
     EXPECT_NEAR(dr[1],  0.0, 1e-4);
     EXPECT_NEAR(dr[2],  0.0, 1e-4);
+
+    // without the minimum image: the plain difference
+    ASSERT_MOLRS_OK(molrs_box_delta(sb, r1, r2, false, dr, 1));
+    EXPECT_NEAR(dr[0], 9.0, 1e-4);
 
     ASSERT_MOLRS_OK(molrs_box_drop(sb));
 }
@@ -426,7 +475,7 @@ TEST_F(MolrsTest, BoxTriclinic) {
     F origin[3] = {0, 0, 0};
     bool pbc[3] = {true, true, true};
     MolrsBoxHandle sb{};
-    ASSERT_MOLRS_OK(molrs_box_new(h9, origin, pbc, &sb));
+    ASSERT_MOLRS_OK(molrs_box_new(MOLRS_CELL_KIND_MATRIX, h9, origin, pbc, &sb));
 
     F tilts[3] = {};
     ASSERT_MOLRS_OK(molrs_box_tilts(sb, tilts));
@@ -435,6 +484,48 @@ TEST_F(MolrsTest, BoxTriclinic) {
     EXPECT_NEAR(tilts[2], 3.0, 1e-6);  // yz
 
     ASSERT_MOLRS_OK(molrs_box_drop(sb));
+}
+
+// The cell kinds a Box is built from, beyond lengths and a matrix.
+TEST_F(MolrsTest, BoxCellKinds) {
+    F origin[3] = {0, 0, 0};
+    bool pbc[3] = {true, true, true};
+
+    // LAMMPS form: diagonal sizes then tilts xy, xz, yz.
+    F lt[6] = {2, 4, 5, 1, 2, 3};
+    MolrsBoxHandle tilted{};
+    ASSERT_MOLRS_OK(molrs_box_new(MOLRS_CELL_KIND_LENGTHS_TILTS, lt, origin, pbc, &tilted));
+    F tilts[3] = {};
+    ASSERT_MOLRS_OK(molrs_box_tilts(tilted, tilts));
+    EXPECT_NEAR(tilts[0], 1.0, 1e-12);
+    EXPECT_NEAR(tilts[2], 3.0, 1e-12);
+    ASSERT_MOLRS_OK(molrs_box_drop(tilted));
+
+    // lengths and right angles: an orthorhombic cell.
+    F la[6] = {2, 3, 4, 90, 90, 90};
+    MolrsBoxHandle ortho{};
+    ASSERT_MOLRS_OK(molrs_box_new(MOLRS_CELL_KIND_LENGTHS_ANGLES, la, origin, pbc, &ortho));
+    F vol = 0;
+    ASSERT_MOLRS_OK(molrs_box_volume(ortho, &vol));
+    EXPECT_NEAR(vol, 24.0, 1e-9);
+    ASSERT_MOLRS_OK(molrs_box_drop(ortho));
+
+    // no cell: no values are read.
+    bool open[3] = {false, false, false};
+    MolrsBoxHandle none{};
+    ASSERT_MOLRS_OK(molrs_box_new(MOLRS_CELL_KIND_UNDEFINED, nullptr, origin, open, &none));
+    ASSERT_MOLRS_OK(molrs_box_drop(none));
+
+    // a kind that reads values refuses a null cell; a bad length is refused.
+    MolrsBoxHandle sb{};
+    EXPECT_EQ(molrs_box_new(MOLRS_CELL_KIND_LENGTHS, nullptr, origin, pbc, &sb),
+              MOLRS_STATUS_NULL_POINTER);
+    F negative[3] = {1, -1, 1};
+    EXPECT_EQ(molrs_box_new(MOLRS_CELL_KIND_LENGTHS, negative, origin, pbc, &sb),
+              MOLRS_STATUS_INVALID_ARGUMENT);
+    F singular[9] = {1, 0, 0, 0, 0, 0, 0, 0, 1};
+    EXPECT_EQ(molrs_box_new(MOLRS_CELL_KIND_MATRIX, singular, origin, pbc, &sb),
+              MOLRS_STATUS_SINGULAR_CELL);
 }
 
 // ===== Frame <-> Box =====================================================
@@ -446,7 +537,8 @@ TEST_F(MolrsTest, FrameBoxAssociation) {
     F origin[3] = {0, 0, 0};
     bool pbc[3] = {true, true, true};
     MolrsBoxHandle sb{};
-    ASSERT_MOLRS_OK(molrs_box_cube(static_cast<F>(5.0), origin, pbc, &sb));
+    F edge[3] = {5, 5, 5};
+    ASSERT_MOLRS_OK(molrs_box_new(MOLRS_CELL_KIND_LENGTHS, edge, origin, pbc, &sb));
 
     ASSERT_MOLRS_OK(molrs_frame_set_box(frame, sb));
 
@@ -457,8 +549,8 @@ TEST_F(MolrsTest, FrameBoxAssociation) {
     ASSERT_MOLRS_OK(molrs_box_volume(sb2, &vol));
     EXPECT_NEAR(vol, 125.0, 1e-3);
 
-    // clear and verify absence
-    ASSERT_MOLRS_OK(molrs_frame_clear_box(frame));
+    // delete and verify absence
+    ASSERT_MOLRS_OK(molrs_frame_del_box(frame));
     MolrsBoxHandle sb3{};
     EXPECT_NE(molrs_frame_get_box(frame, &sb3), MOLRS_STATUS_OK);
 
@@ -615,7 +707,8 @@ TEST_F(MolrsTest, ForceFieldJsonRoundtrip) {
 TEST_F(MolrsTest, NullPointerErrors) {
     EXPECT_EQ(molrs_frame_new(nullptr), MOLRS_STATUS_NULL_POINTER);
     EXPECT_EQ(molrs_intern_key(nullptr, nullptr), MOLRS_STATUS_NULL_POINTER);
-    EXPECT_EQ(molrs_box_cube(1.0, nullptr, nullptr, nullptr), MOLRS_STATUS_NULL_POINTER);
+    EXPECT_EQ(molrs_box_new(MOLRS_CELL_KIND_LENGTHS, nullptr, nullptr, nullptr, nullptr),
+              MOLRS_STATUS_NULL_POINTER);
 }
 
 TEST_F(MolrsTest, InvalidHandleErrors) {
@@ -636,13 +729,13 @@ TEST_F(MolrsTest, BlockCopyBufferTooSmall) {
     uint32_t blk_id = intern("gt_small_buf_blk");
     uint32_t col_id = intern("gt_small_buf_col");
 
-    ASSERT_MOLRS_OK(molrs_frame_set_block(frame, blk_id, 0));
+    ASSERT_MOLRS_OK(molrs_frame_set_block(frame, blk_id));
     MolrsBlockHandle block{};
     ASSERT_MOLRS_OK(molrs_frame_get_block(frame, blk_id, &block));
 
     F data[5] = {1, 2, 3, 4, 5};
     size_t shape[1] = {5};
-    ASSERT_MOLRS_OK(molrs_block_set_f64(&block, col_id, data, shape, 1));
+    ASSERT_MOLRS_OK(molrs_block_set(&block, col_id, MOLRS_D_TYPE_FLOAT, data, shape, 1));
 
     // buffer too small: two elements, counted in bytes
     F small_buf[2] = {};
@@ -729,6 +822,24 @@ TEST_F(MolrsTest, RegionCompositionIsDeclaredAndComposes) {
     for (MolrsRegionHandle h : {both, shell, hole, inner, outer}) {
         EXPECT_MOLRS_OK(molrs_region_drop(h));
     }
+}
+
+// A parallelepiped region takes its cell the way a Box does.
+TEST_F(MolrsTest, RegionParallelepipedTakesACell) {
+    F edge[3] = {2, 2, 2};
+    F origin[3] = {0, 0, 0};
+    MolrsRegionHandle cube{};
+    ASSERT_MOLRS_OK(molrs_region_parallelepiped(MOLRS_CELL_KIND_LENGTHS, edge, origin, &cube));
+    F points[6] = {1, 1, 1, 3, 1, 1};
+    bool inside[2] = {};
+    ASSERT_MOLRS_OK(molrs_region_contains(cube, points, 2, inside));
+    EXPECT_TRUE(inside[0]);
+    EXPECT_FALSE(inside[1]);
+    ASSERT_MOLRS_OK(molrs_region_drop(cube));
+
+    MolrsRegionHandle none{};
+    EXPECT_EQ(molrs_region_parallelepiped(MOLRS_CELL_KIND_UNDEFINED, nullptr, origin, &none),
+              MOLRS_STATUS_INVALID_ARGUMENT);
 }
 
 TEST_F(MolrsTest, ShutdownDropsRegions) {

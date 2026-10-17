@@ -16,7 +16,7 @@ use crate::conformer::distgeom::{
 use crate::ff::compile::ExplicitTerms;
 use crate::ff::ir::Params;
 use crate::ff::potential::improper::ImproperDistance;
-use crate::ff::potential::{Potential, Potentials};
+use crate::ff::potential::{Accumulator, Potential, Potentials};
 
 /// Second-stage (3D) objective: distance constraints from the bounds matrix,
 /// the experimental (CrystalFF M6) and flat-ring basic-knowledge torsions and
@@ -97,13 +97,15 @@ impl TorsionRefinement {
             *g = 0.0;
         }
         let mut energy = self.distances.energy_grad(p, grad);
-        // Experimental torsions and planarity: forces are −gradient.
+        // Experimental torsions and planarity: forces are −gradient, so they
+        // are tallied into one buffer and subtracted once.
+        let mut acc = Accumulator::new(p.len());
         for kernel in [&self.torsions as &dyn Potential, &self.planarity] {
-            let (e, forces) = kernel.calc_energy_forces(p);
-            energy += e;
-            for (g, f) in grad.iter_mut().zip(forces) {
-                *g -= f;
-            }
+            kernel.evaluate(p, &mut acc);
+        }
+        energy += acc.energy();
+        for (g, f) in grad.iter_mut().zip(acc.forces()) {
+            *g -= f;
         }
         energy
     }

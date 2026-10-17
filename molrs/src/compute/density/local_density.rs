@@ -191,13 +191,18 @@ crate::compute::spec::compute_spec! {
 mod tests {
     use super::*;
     use crate::compute::fixtures::self_neighbors;
+    use crate::core::Cell;
     use molrs::core::{Neighbors, SimBox};
-    use ndarray::{Array2, array};
+    use ndarray::Array2;
 
     fn table(positions: &[[F; 3]], box_len: F, cutoff: F) -> Neighbors {
         let points = Array2::from_shape_fn((positions.len(), 3), |(i, c)| positions[i][c]);
-        let simbox =
-            SimBox::cube(box_len, array![0.0 as F, 0.0 as F, 0.0 as F], [false; 3]).unwrap();
+        let simbox = SimBox::new(
+            Cell::Lengths([box_len; 3]),
+            [0.0 as F, 0.0 as F, 0.0 as F],
+            [false; 3],
+        )
+        .unwrap();
         self_neighbors(points.view(), &simbox, cutoff)
     }
 

@@ -1,18 +1,17 @@
 //! DCD binary trajectory file reader and writer.
 
+use crate::core::Cell;
 use crate::io::frame_index::{FrameIndexBuilder, FrameOffset};
-use crate::io::invalid_data;
 use crate::io::reader::{FrameReader, ReadSeek, Reader, TrajectoryReader};
 use crate::io::writer::{FrameWriter, Writer};
+use crate::io::{Sink, SinkWriter, Source, invalid_data};
 use molrs::core::Block;
 use molrs::core::Frame;
 use molrs::core::FrameAccess;
 use molrs::core::SimBox;
 use molrs::op::{F, Idx, Pbc3};
-use ndarray::{Array1, IxDyn, array};
-use std::fs::File;
+use ndarray::{Array1, IxDyn};
 use std::io::{BufRead, Cursor, Read, Seek, SeekFrom, Write};
-use std::path::Path;
 use std::sync::OnceLock;
 
 // ============================================================================
@@ -740,16 +739,18 @@ fn parse_box_payload(payload: &[u8], byte_order: ByteOrder) -> std::io::Result<S
     }
 
     let pbc: Pbc3 = [true; 3];
-    let origin = array![0.0 as F, 0.0, 0.0];
+    let origin = [0.0; 3];
 
     if (alpha - 90.0).abs() < 1e-6 && (beta - 90.0).abs() < 1e-6 && (gamma - 90.0).abs() < 1e-6 {
-        return SimBox::ortho(array![a as F, b as F, c as F], origin, pbc)
+        return SimBox::new(Cell::Lengths([a as F, b as F, c as F]), origin, pbc)
             .map_err(|e| invalid_data(format!("ortho box: {:?}", e)));
     }
 
-    SimBox::matrix_from_lengths_angles([a, b, c], [alpha, beta, gamma])
-        .and_then(|h| SimBox::new(h, origin, pbc))
-        .map_err(|e| invalid_data(format!("triclinic box: {:?}", e)))
+    let cell = Cell::LengthsAngles {
+        lengths: [a, b, c],
+        angles: [alpha, beta, gamma],
+    };
+    SimBox::new(cell, origin, pbc).map_err(|e| invalid_data(format!("triclinic box: {:?}", e)))
 }
 
 /// Decode one frame whose first byte is at the current reader position.
@@ -781,7 +782,7 @@ fn parse_one_frame<R: Read>(
     let id_arr = Array1::from_iter(1..=natoms as Idx)
         .into_shape_with_order(IxDyn(&[natoms]))
         .map_err(invalid_data)?;
-    atoms.insert("id", id_arr).map_err(invalid_data)?;
+    atoms.insert("id", id_arr, None).map_err(invalid_data)?;
 
     let to_f64 = |v: &[f32]| -> Array1<F> { v.iter().map(|&x| x as F).collect() };
 
@@ -791,6 +792,7 @@ fn parse_one_frame<R: Read>(
             to_f64(&xs)
                 .into_shape_with_order(IxDyn(&[natoms]))
                 .map_err(invalid_data)?,
+            None,
         )
         .map_err(invalid_data)?;
     atoms
@@ -799,6 +801,7 @@ fn parse_one_frame<R: Read>(
             to_f64(&ys)
                 .into_shape_with_order(IxDyn(&[natoms]))
                 .map_err(invalid_data)?,
+            None,
         )
         .map_err(invalid_data)?;
     atoms
@@ -807,6 +810,7 @@ fn parse_one_frame<R: Read>(
             to_f64(&zs)
                 .into_shape_with_order(IxDyn(&[natoms]))
                 .map_err(invalid_data)?,
+            None,
         )
         .map_err(invalid_data)?;
     if let Some(w) = w {
@@ -816,6 +820,7 @@ fn parse_one_frame<R: Read>(
                 to_f64(&w)
                     .into_shape_with_order(IxDyn(&[natoms]))
                     .map_err(invalid_data)?,
+                None,
             )
             .map_err(invalid_data)?;
     }
@@ -885,20 +890,21 @@ fn parse_frame_at<R: BufRead + Seek>(
 /// # Examples
 ///
 /// ```no_run
-/// use molrs::io::{read_dcd_trajectory, write_dcd_trajectory};
-/// use molrs::io::dcd::DcdReader;
+/// use std::path::Path;
+/// use molrs::io::dcd::{DcdReader, DcdWriter};
 /// use molrs::io::reader::TrajectoryReader;
+/// use molrs::io::writer::FrameWriter;
 ///
 /// # fn main() -> std::io::Result<()> {
-/// // Read all frames
-/// let frames = read_dcd_trajectory("trajectory.dcd")?;
-///
 /// // Random access via TrajectoryReader
-/// let mut reader = DcdReader::open("trajectory.dcd")?;
+/// let mut reader = DcdReader::open(Path::new("trajectory.dcd"))?;
 /// let frame_5 = reader.read_frame(5)?;
 ///
-/// // Write frames
-/// write_dcd_trajectory("output.dcd", &frames)?;
+/// // Copy every frame into a new file
+/// let mut writer = DcdWriter::create(Path::new("output.dcd"))?;
+/// for frame in reader.iter() {
+///     writer.write(&frame?)?;
+/// }
 /// # Ok(())
 /// # }
 /// ```
@@ -1027,7 +1033,8 @@ impl<W: Write + Seek> FrameWriter for DcdWriter<W> {
         // Refuse to emit a frame that violates the vocabulary: a bad file
         // looks fine and is found wrong later, by whatever reads it.
         crate::io::writer::check_write_frame(frame)?;
-        write_dcd_frame(self, frame)
+        write_dcd_frame(self, frame)?;
+        self.writer.flush()
     }
 }
 
@@ -1038,7 +1045,7 @@ fn write_dcd_frame<W: Write + Seek>(
     // Reject 4D / fixed-atom frames eagerly.
     let has_w = frame
         .visit_block("atoms", |a| {
-            a.column("w").and_then(|c| c.as_float()).is_some()
+            a.column("w").and_then(|c| c.get::<f64>()).is_some()
         })
         .unwrap_or(false);
     if has_w {
@@ -1209,7 +1216,7 @@ fn write_frame_payload<W: Write>(
     let extract_axis = |key: &str| -> std::io::Result<Vec<f64>> {
         frame
             .column("atoms", key)
-            .and_then(|c| c.as_float())
+            .and_then(|c| c.get::<f64>())
             .map(|view| view.iter().copied().collect::<Vec<f64>>())
             .ok_or_else(|| invalid_data(format!("atoms.{} missing or not float", key)))
     };
@@ -1240,25 +1247,13 @@ fn write_frame_payload<W: Write>(
 /// (`setDecoderState`). Not a file format — never appears on disk.
 const DCD_STATE_MAGIC: &[u8; 13] = b"MOLRS\x00DCDCTX\x00";
 
-/// Parse exactly one DCD frame from a tightly-bounded byte slice.
-///
-/// `bytes` is one of:
+/// The first frame of DCD `bytes`, which are one of:
+/// - a complete file starting at the CORD header;
 /// - a frame body produced by [`DcdIndexBuilder`] (self-describing when
 ///   `NAMNF == 0`);
 /// - that body prefixed with a decoder-state blob (needed for fixed-atom
-///   later frames);
-/// - a complete mini-file starting at the CORD header (frame 0 including
-///   the header).
-///
-/// `decoder_state` is the state captured by
-/// [`FrameIndexBuilder::decoder_state`]; given, `bytes` is a frame body decoded
-/// with it, so a caller holding the state separately never copies the frame
-/// to prepend it.
-pub fn read_dcd_bytes(bytes: &[u8], decoder_state: Option<&[u8]>) -> std::io::Result<Frame> {
-    if let Some(state) = decoder_state {
-        let header = decode_decoder_state(state)?;
-        return parse_frame_with_header(&header, bytes);
-    }
+///   later frames).
+fn read_window(bytes: &[u8]) -> std::io::Result<Frame> {
     if let Some((header, rest)) = split_decoder_state(bytes)? {
         return parse_one_frame(
             &mut Cursor::new(rest),
@@ -1270,6 +1265,34 @@ pub fn read_dcd_bytes(bytes: &[u8], decoder_state: Option<&[u8]>) -> std::io::Re
         return parse_header_and_first_frame(bytes);
     }
     parse_standalone_frame(bytes)
+}
+
+/// Decodes the frame bodies [`DcdIndexBuilder`] indexes, with the decoder
+/// state it captured ([`FrameIndexBuilder::decoder_state`]: the header, and
+/// for a fixed-atom file the frame-0 seed later frames need).
+///
+/// Holding the state apart from the frame bytes means no frame is copied to
+/// prepend it.
+pub struct DcdFrameDecoder {
+    header: DcdHeader,
+}
+
+impl DcdFrameDecoder {
+    /// A decoder for the file whose indexer captured `state`.
+    ///
+    /// # Errors
+    ///
+    /// `InvalidData` when `state` is not a decoder state.
+    pub fn new(state: &[u8]) -> std::io::Result<Self> {
+        Ok(Self {
+            header: decode_decoder_state(state)?,
+        })
+    }
+
+    /// Decode one frame body, as the indexer delimited it.
+    pub fn decode(&self, frame: &[u8]) -> std::io::Result<Frame> {
+        parse_frame_with_header(&self.header, frame)
+    }
 }
 
 /// Decode `bytes` with an already-parsed header (fixed-atom later frames).
@@ -1922,51 +1945,40 @@ impl FrameIndexBuilder for DcdIndexBuilder {
 // Convenience functions
 // ============================================================================
 
-/// Read every frame of a DCD file into memory.
-///
-/// For large trajectories prefer [`DcdReader::open`] with [`TrajectoryReader::read_frame`]
-/// for random access without loading all frames at once.
-pub fn read_dcd_trajectory<P: AsRef<Path>>(path: P) -> std::io::Result<Vec<Frame>> {
-    let reader = crate::io::reader::open_seekable(path)?;
-    let mut dcd_reader = DcdReader::new(reader);
-    crate::io::reader::collect_frames(&mut dcd_reader)
+/// Read the first frame of a DCD file. Bytes may also be one frame body
+/// as [`DcdIndexBuilder`] delimits it (self-describing when `NAMNF == 0`), or
+/// that body prefixed with the indexer's decoder state.
+pub fn read_dcd<'a>(src: impl Into<Source<'a>>) -> std::io::Result<Frame> {
+    let src = src.into();
+    if let Source::Bytes(bytes) = src {
+        return read_window(bytes);
+    }
+    DcdReader::new(src.reader()?)
+        .read_frame(0)?
+        .ok_or_else(|| invalid_data(format!("{}: DCD file holds no frame", src.name())))
+}
+
+/// Write one frame as a complete one-frame DCD file. 4D-dynamics frames (a
+/// `w` column on `atoms`) are refused with `ErrorKind::Unsupported`.
+pub fn write_dcd<'a>(sink: impl Into<Sink<'a>>, frame: &impl FrameAccess) -> std::io::Result<()> {
+    let mut dcd = DcdWriter::new(sink.into().writer()?);
+    write_dcd_frame(&mut dcd, frame)?;
+    dcd.writer.flush()
 }
 
 impl DcdReader<Box<dyn ReadSeek>> {
-    /// Open a DCD file for trajectory-style random access.
-    pub fn open<P: AsRef<Path>>(path: P) -> std::io::Result<Self> {
-        let reader = crate::io::reader::open_seekable(path)?;
-        Ok(Self::new(reader))
+    /// Open a DCD file, or the bytes of one, for random access by frame.
+    pub fn open<'a>(src: impl Into<Source<'a>>) -> std::io::Result<Self> {
+        Ok(Self::new(src.into().owned_reader()?))
     }
 }
 
-/// Write a slice of frames to a DCD file.
-///
-/// All frames must have the same atom count and the same box presence as the
-/// first frame. 4D-dynamics frames (a `w` column on `atoms`) are rejected
-/// with `ErrorKind::Unsupported`.
-pub fn write_dcd_trajectory<P: AsRef<Path>, FA: FrameAccess>(
-    path: P,
-    frames: &[FA],
-) -> std::io::Result<()> {
-    let file = File::create(path)?;
-    let writer = std::io::BufWriter::new(file);
-    // BufWriter is Write + Seek when the inner is Seek — File is Seek.
-    let mut dcd = DcdWriter::new(writer);
-    for f in frames {
-        write_dcd_frame(&mut dcd, f)?;
+impl<'a> DcdWriter<SinkWriter<'a>> {
+    /// Create a DCD file, or fill a buffer, frame by frame. All frames must
+    /// have the first frame's atom count and box presence.
+    pub fn create(sink: impl Into<Sink<'a>>) -> std::io::Result<Self> {
+        Ok(Self::new(sink.into().writer()?))
     }
-    Ok(())
-}
-
-/// Write one frame as a complete one-frame DCD file in memory —
-/// [`write_dcd_trajectory`] of `[frame]` into bytes; [`read_dcd_bytes`]
-/// reads it back.
-pub fn write_dcd_bytes(frame: &impl FrameAccess) -> std::io::Result<Vec<u8>> {
-    // DcdWriter patches NSET after each frame, so it needs Write + Seek.
-    let mut dcd = DcdWriter::new(Cursor::new(Vec::new()));
-    write_dcd_frame(&mut dcd, frame)?;
-    Ok(dcd.writer.into_inner())
 }
 
 // ============================================================================
@@ -1976,6 +1988,7 @@ pub fn write_dcd_bytes(frame: &impl FrameAccess) -> std::io::Result<Vec<u8>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::Cell;
     use std::io::Cursor;
 
     #[test]
@@ -2092,23 +2105,23 @@ mod tests {
     fn two_atom_frame(x0: f64, with_box: bool) -> Frame {
         let mut atoms = Block::new();
         atoms
-            .insert("id", Array1::from(vec![1u64, 2]).into_dyn())
+            .insert("id", Array1::from(vec![1u64, 2]).into_dyn(), None)
             .unwrap();
         atoms
-            .insert("x", Array1::from(vec![x0, x0 + 1.0]).into_dyn())
+            .insert("x", Array1::from(vec![x0, x0 + 1.0]).into_dyn(), None)
             .unwrap();
         atoms
-            .insert("y", Array1::from(vec![0.0, 0.0]).into_dyn())
+            .insert("y", Array1::from(vec![0.0, 0.0]).into_dyn(), None)
             .unwrap();
         atoms
-            .insert("z", Array1::from(vec![0.0, 0.0]).into_dyn())
+            .insert("z", Array1::from(vec![0.0, 0.0]).into_dyn(), None)
             .unwrap();
         let mut frame = Frame::new();
         frame.insert("atoms", atoms);
         if with_box {
-            let h = array![[10.0, 0.0, 0.0], [0.0, 10.0, 0.0], [0.0, 0.0, 10.0]];
-            let origin = array![0.0, 0.0, 0.0];
-            frame.simbox = Some(SimBox::new(h, origin, [true; 3]).unwrap());
+            let h = [[10.0, 0.0, 0.0], [0.0, 10.0, 0.0], [0.0, 0.0, 10.0]];
+            let origin = [0.0, 0.0, 0.0];
+            frame.simbox = Some(SimBox::new(Cell::Matrix(h), origin, [true; 3]).unwrap());
         }
         frame
     }
@@ -2154,12 +2167,12 @@ mod tests {
         for (i, entry) in one_shot.iter().enumerate() {
             let lo = entry.byte_offset as usize;
             let hi = lo + entry.byte_len as usize;
-            let parsed = read_dcd_bytes(&bytes[lo..hi], None).expect("parse dcd frame");
+            let parsed = read_dcd(&bytes[lo..hi]).expect("parse dcd frame");
             let x = parsed
                 .get("atoms")
                 .unwrap()
                 .get("x")
-                .and_then(|c| c.as_float())
+                .and_then(|c| c.get::<f64>())
                 .unwrap();
             assert!(
                 (x[0]
@@ -2167,7 +2180,7 @@ mod tests {
                         .get("atoms")
                         .unwrap()
                         .get("x")
-                        .and_then(|c| c.as_float())
+                        .and_then(|c| c.get::<f64>())
                         .unwrap()[0])
                     .abs()
                     < 1e-5
@@ -2181,10 +2194,9 @@ mod tests {
         let bytes = write_dcd_mem(&frames);
         let entries = dcd_index_chunked(&bytes, 13);
         assert_eq!(entries.len(), 2);
-        let f0 = read_dcd_bytes(
+        let f0 = read_dcd(
             &bytes[entries[0].byte_offset as usize
                 ..entries[0].byte_offset as usize + entries[0].byte_len as usize],
-            None,
         )
         .expect("parse nopbc frame 0");
         assert!(f0.simbox.is_none());
@@ -2253,10 +2265,11 @@ mod tests {
         let lo = entries[0].byte_offset as usize;
         let hi = lo + entries[0].byte_len as usize;
         wrapped.extend_from_slice(&bytes[lo..hi]);
-        let parsed = read_dcd_bytes(&wrapped, None).expect("parse with decoder state");
+        let parsed = read_dcd(&wrapped).expect("parse with decoder state");
         assert_eq!(parsed.get("atoms").unwrap().n_rows().unwrap(), 2);
 
-        let no_copy = read_dcd_bytes(&bytes[lo..hi], Some(&state))
+        let no_copy = DcdFrameDecoder::new(&state)
+            .and_then(|d| d.decode(&bytes[lo..hi]))
             .expect("parse with decoder state, no wrap");
         assert_eq!(no_copy.get("atoms").unwrap().n_rows().unwrap(), 2);
     }

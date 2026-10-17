@@ -12,7 +12,8 @@ use crate::op::F;
 ///
 /// A plain frame-sequence carrier (frames plus optional step/time index
 /// arrays), not a record aggregate — the canonical entity is
-/// [`Frame`](crate::core::Frame).
+/// [`Frame`](crate::core::Frame). [`Trajectory::default`] is the empty
+/// trajectory.
 #[derive(Debug, Clone, Default)]
 pub struct Trajectory {
     /// Ordered frame-like states.
@@ -24,11 +25,6 @@ pub struct Trajectory {
 }
 
 impl Trajectory {
-    /// Create an empty trajectory.
-    pub fn new() -> Self {
-        Self::default()
-    }
-
     /// Build a trajectory from frame states.
     pub fn from_frames(frames: Vec<Frame>) -> Self {
         Self {
@@ -184,28 +180,13 @@ pub struct ObservableRecord {
 }
 
 impl ObservableRecord {
-    /// Build a scalar observable.
-    pub fn scalar(name: impl Into<String>, values: Column) -> Self {
+    /// Build an observable of `kind` named `name` carrying `values`, with no
+    /// unit, axes, sampling, domain, target or description (set those fields
+    /// directly).
+    pub fn new(name: impl Into<String>, kind: ObservableKind, values: Column) -> Self {
         Self {
             name: name.into(),
-            kind: ObservableKind::Scalar,
-            description: String::new(),
-            time_dependent: false,
-            unit: None,
-            axes: Vec::new(),
-            sampling: None,
-            domain: None,
-            target: None,
-            extra: JsonMap::new(),
-            values: ObservableValues::Column(values),
-        }
-    }
-
-    /// Build a vector observable.
-    pub fn vector(name: impl Into<String>, values: Column) -> Self {
-        Self {
-            name: name.into(),
-            kind: ObservableKind::Vector,
+            kind,
             description: String::new(),
             time_dependent: false,
             unit: None,
@@ -235,7 +216,7 @@ mod tests {
 
     #[test]
     fn empty_trajectory_has_no_frames() {
-        let traj = Trajectory::new();
+        let traj = Trajectory::default();
         assert_eq!(traj.len(), 0);
         assert!(traj.is_empty());
     }
@@ -298,6 +279,16 @@ mod tests {
             (unlabeled.len(), unlabeled.step, unlabeled.time),
             (1, None, None)
         );
+    }
+
+    #[test]
+    fn observable_record_new_carries_the_stated_kind() {
+        let values = Column::from(ndarray::arr1(&[1.0 as F, 2.0]).into_dyn());
+        let rec = ObservableRecord::new("spectrum", ObservableKind::from("spectrum"), values);
+        assert_eq!(rec.name, "spectrum");
+        assert_eq!(rec.kind, ObservableKind::Other("spectrum".into()));
+        assert!(rec.unit.is_none() && rec.axes.is_empty() && !rec.time_dependent);
+        rec.validate().unwrap();
     }
 
     #[test]

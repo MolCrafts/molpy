@@ -1,9 +1,10 @@
 //! Geometric regions: the [`Region`] trait, the primitive shapes and their Boolean composition.
 
+use crate::core::Cell;
 use crate::op::to_mat3;
 use crate::op::{F, F3, Fnx3};
 use crate::op::{det3, inv3};
-use ndarray::{Array1, Array2, array};
+use ndarray::{Array1, Array2};
 use std::sync::Arc;
 
 /// Step of the central finite difference behind the default
@@ -142,17 +143,10 @@ pub struct Sphere {
 }
 
 impl Sphere {
-    /// Creates a sphere with a given center and radius (Å).
+    /// Creates a sphere with a given center and radius (Å). `center` and
+    /// `radius` are public fields: set them directly to move or resize it.
     pub fn new(center: F3, radius: F) -> Self {
         Self { center, radius }
-    }
-
-    /// Creates a sphere centered at the origin with the given radius (Å).
-    pub fn with_radius(radius: F) -> Self {
-        Self {
-            center: Array1::zeros(3),
-            radius,
-        }
     }
 
     fn offset(&self, point: &[F; 3]) -> ([F; 3], F) {
@@ -282,12 +276,26 @@ pub struct Parallelepiped {
 }
 
 impl Parallelepiped {
-    /// Construct from edge matrix `H` (columns = edges, Å) and `origin` (Å).
+    /// Construct from a [`Cell`] — the edge matrix `H` (columns = edges, Å),
+    /// orthorhombic lengths, lengths and angles, or lengths and tilts, as a
+    /// [`SimBox`](crate::core::SimBox) takes one — and `origin`, the corner
+    /// `H` hangs from (Å). A cube of edge `a` is `Cell::Lengths([a, a, a])`;
+    /// three edge vectors `a`, `b`, `c` are the columns of `Cell::Matrix`.
     ///
     /// # Errors
     ///
-    /// Returns `Err` if `H` is singular (zero volume) or not finite.
-    pub fn new(h: Fnx3, origin: F3) -> Result<Self, String> {
+    /// Returns `Err` for [`Cell::Undefined`] (no geometric cell), a cell the
+    /// [`Cell`] form refuses (a non-positive length, an impossible angle),
+    /// and an `H` that is singular (zero volume) or not finite.
+    pub fn new(cell: Cell, origin: F3) -> Result<Self, String> {
+        let h = cell
+            .resolve()
+            .map_err(|e| format!("Parallelepiped: {e}"))?
+            .ok_or_else(|| {
+                "Parallelepiped: Cell::Undefined has no edges; give the cell matrix or \
+                 its lengths"
+                    .to_string()
+            })?;
         let inv: Fnx3 =
             ndarray::arr2(&inv3(&to_mat3(h.view())).ok_or_else(|| {
                 "Parallelepiped: singular edge matrix H (zero volume)".to_string()
@@ -310,58 +318,6 @@ impl Parallelepiped {
             spacing,
             normal,
         })
-    }
-
-    /// Cubic region of edge length `a` (Å) with the given origin (min corner).
-    ///
-    /// # Errors
-    ///
-    /// Returns `Err` if `a <= 0`.
-    pub fn cube(a: F, origin: F3) -> Result<Self, String> {
-        if a <= 0.0 {
-            return Err(format!(
-                "Parallelepiped::cube: edge length must be > 0, got {a}"
-            ));
-        }
-        let h = array![[a, 0.0, 0.0], [0.0, a, 0.0], [0.0, 0.0, a]];
-        Self::new(h, origin)
-    }
-
-    /// Axis-aligned orthorhombic region with the given edge lengths (Å).
-    ///
-    /// Prefer [`Cuboid`] when you only need axis-aligned containment — this
-    /// constructor exists so a single `Parallelepiped` API covers cube → ortho
-    /// → triclinic.
-    ///
-    /// # Errors
-    ///
-    /// Returns `Err` if `lengths` is not three positive numbers.
-    pub fn ortho(lengths: F3, origin: F3) -> Result<Self, String> {
-        if lengths.len() != 3 {
-            return Err(format!(
-                "Parallelepiped::ortho: lengths must have length 3, got {}",
-                lengths.len()
-            ));
-        }
-        if (0..3).any(|d| lengths[d] <= 0.0) {
-            return Err("Parallelepiped::ortho: all edge lengths must be > 0".into());
-        }
-        let h = array![
-            [lengths[0], 0.0, 0.0],
-            [0.0, lengths[1], 0.0],
-            [0.0, 0.0, lengths[2]]
-        ];
-        Self::new(h, origin)
-    }
-
-    /// Construct from three explicit edge vectors `a`, `b`, `c` and `origin` (Å).
-    ///
-    /// # Errors
-    ///
-    /// Returns `Err` if the edges are coplanar.
-    pub fn from_edges(a: [F; 3], b: [F; 3], c: [F; 3], origin: F3) -> Result<Self, String> {
-        let h = array![[a[0], b[0], c[0]], [a[1], b[1], c[1]], [a[2], b[2], c[2]]];
-        Self::new(h, origin)
     }
 
     /// Origin corner, Å.
@@ -594,6 +550,7 @@ impl Region for OrRegion {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
+    use ndarray::array;
 
     /// Every shape and combinator must keep `contains_point` equal to
     /// `distance < 0` off the boundary (`distance == 0`, where a complement
@@ -775,7 +732,7 @@ pub(crate) mod tests {
 
     #[test]
     fn parallelepiped_cube_matches_cuboid_closed() {
-        let p = Parallelepiped::cube(2.0, Array1::zeros(3)).unwrap();
+        let p = Parallelepiped::new(Cell::Lengths([2.0; 3]), Array1::zeros(3)).unwrap();
         assert!(p.contains_point(&[1.0, 1.0, 1.0]));
         assert!(p.contains_point(&[0.0, 0.0, 0.0]));
         // The boundary belongs to the region: `distance <= 0`.
@@ -795,10 +752,8 @@ pub(crate) mod tests {
     #[test]
     fn parallelepiped_skewed_contains_and_aabb() {
         // Edges: a=(2,0,0), b=(1,2,0), c=(0,0,3) — a skewed prism in xy.
-        let p = Parallelepiped::from_edges(
-            [2.0, 0.0, 0.0],
-            [1.0, 2.0, 0.0],
-            [0.0, 0.0, 3.0],
+        let p = Parallelepiped::new(
+            Cell::Matrix([[2.0, 1.0, 0.0], [0.0, 2.0, 0.0], [0.0, 0.0, 3.0]]),
             Array1::zeros(3),
         )
         .unwrap();
@@ -821,10 +776,12 @@ pub(crate) mod tests {
         // Hexagonal cell a = b = c = 26 Å, γ = 120°: the `a` face pair is
         // 26·sin(120°) apart, so fractional 1.1 along `a` is 0.1 of that.
         let gamma = 120.0_f64.to_radians();
-        let p = Parallelepiped::from_edges(
-            [26.0, 0.0, 0.0],
-            [26.0 * gamma.cos(), 26.0 * gamma.sin(), 0.0],
-            [0.0, 0.0, 26.0],
+        let p = Parallelepiped::new(
+            Cell::Matrix([
+                [26.0, 26.0 * gamma.cos(), 0.0],
+                [0.0, 26.0 * gamma.sin(), 0.0],
+                [0.0, 0.0, 26.0],
+            ]),
             Array1::zeros(3),
         )
         .unwrap();
@@ -845,8 +802,10 @@ pub(crate) mod tests {
 
     #[test]
     fn parallelepiped_singular_is_err() {
-        let h = array![[1.0, 2.0, 3.0], [2.0, 4.0, 6.0], [0.0, 0.0, 1.0]];
-        assert!(Parallelepiped::new(h, Array1::zeros(3)).is_err());
+        let h = [[1.0, 2.0, 3.0], [2.0, 4.0, 6.0], [0.0, 0.0, 1.0]];
+        assert!(Parallelepiped::new(Cell::Matrix(h), Array1::zeros(3)).is_err());
+        assert!(Parallelepiped::new(Cell::Undefined, Array1::zeros(3)).is_err());
+        assert!(Parallelepiped::new(Cell::Lengths([1.0, 0.0, 1.0]), Array1::zeros(3)).is_err());
     }
 
     #[test]
@@ -864,7 +823,7 @@ pub(crate) mod tests {
 
     #[test]
     fn sphere_contains_points() {
-        let s = Sphere::with_radius(2.0);
+        let s = Sphere::new(Array1::zeros(3), 2.0);
         let pts: Fnx3 = Array2::from_shape_vec(
             (3, 3),
             vec![
@@ -883,7 +842,7 @@ pub(crate) mod tests {
 
     #[test]
     fn sphere_distance_goldens() {
-        let s = Sphere::with_radius(2.0);
+        let s = Sphere::new(Array1::zeros(3), 2.0);
         assert_eq!(s.distance(&[0.0; 3]), -2.0);
         assert_eq!(s.distance(&[2.0, 0.0, 0.0]), 0.0);
         assert!((s.distance(&[0.0, 5.0, 0.0]) - 3.0).abs() < 1e-12);
@@ -900,10 +859,8 @@ pub(crate) mod tests {
             Array1::from_vec(vec![2.3, 1.7, 1.9]),
         ));
         let cell: Arc<dyn Region + Send + Sync> = Arc::new(
-            Parallelepiped::from_edges(
-                [2.0, 0.0, 0.0],
-                [1.0, 2.0, 0.0],
-                [0.3, 0.2, 3.0],
+            Parallelepiped::new(
+                Cell::Matrix([[2.0, 1.0, 0.3], [0.0, 2.0, 0.2], [0.0, 0.0, 3.0]]),
                 Array1::from_vec(vec![0.1, 0.2, 0.3]),
             )
             .unwrap(),
@@ -932,7 +889,7 @@ pub(crate) mod tests {
 
     #[test]
     fn combinators_are_max_min_and_negation() {
-        let a: Arc<dyn Region + Send + Sync> = Arc::new(Sphere::with_radius(2.0));
+        let a: Arc<dyn Region + Send + Sync> = Arc::new(Sphere::new(Array1::zeros(3), 2.0));
         let b: Arc<dyn Region + Send + Sync> = Arc::new(Cuboid::new(
             Array1::zeros(3),
             Array1::from_vec(vec![3.0; 3]),
@@ -949,7 +906,7 @@ pub(crate) mod tests {
 
     #[test]
     fn de_morgan_holds_for_distances() {
-        let a: Arc<dyn Region + Send + Sync> = Arc::new(Sphere::with_radius(2.0));
+        let a: Arc<dyn Region + Send + Sync> = Arc::new(Sphere::new(Array1::zeros(3), 2.0));
         let b: Arc<dyn Region + Send + Sync> = Arc::new(Cuboid::new(
             Array1::zeros(3),
             Array1::from_vec(vec![3.0; 3]),
@@ -975,7 +932,7 @@ pub(crate) mod tests {
             Array1::zeros(3),
             Array1::from_vec(vec![1.5; 3]),
         ));
-        let ball: Arc<dyn Region + Send + Sync> = Arc::new(Sphere::with_radius(1.0));
+        let ball: Arc<dyn Region + Send + Sync> = Arc::new(Sphere::new(Array1::zeros(3), 1.0));
         // Corners, edge and face centres: every one on the cube's boundary.
         let on_cube = [
             [0.0, 0.0, 0.0],
@@ -1023,7 +980,7 @@ pub(crate) mod tests {
 
     #[test]
     fn composed_bounds_intersect_and_unite() {
-        let a: Arc<dyn Region + Send + Sync> = Arc::new(Sphere::with_radius(2.0));
+        let a: Arc<dyn Region + Send + Sync> = Arc::new(Sphere::new(Array1::zeros(3), 2.0));
         let b: Arc<dyn Region + Send + Sync> = Arc::new(Cuboid::new(
             Array1::from_vec(vec![1.0, 1.0, 1.0]),
             Array1::from_vec(vec![3.0; 3]),

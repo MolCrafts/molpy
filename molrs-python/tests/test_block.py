@@ -118,7 +118,7 @@ class TestBlockInsert:
         b = Block()
         b.insert("x", np.array([1.0, 2.0], dtype=np.float32))
         assert b.dtype("x") == "float"
-        assert b.has_f64("x")
+        assert b["x"].dtype == np.float64
 
     def test_overwrite_key(self):
         b = Block()
@@ -196,15 +196,16 @@ class TestBlockKeys:
         del b[z]
         assert z not in b
 
-    def test_remove(self):
+    def test_del(self):
         b = Block({"x": [1.0]})
-        b.remove("x")
+        del b["x"]
         assert "x" not in b
         assert len(b) == 0
 
-    def test_remove_missing_raises_key_error(self):
+    def test_del_missing_raises_key_error(self):
+        b = Block()
         with pytest.raises(KeyError):
-            Block().remove("nonexistent")
+            del b["nonexistent"]
 
     def test_dtype(self):
         b = Block()
@@ -217,13 +218,13 @@ class TestBlockKeys:
         with pytest.raises(KeyError):
             Block().dtype("missing")
 
-    def test_has_f64_not_uint(self):
+    def test_dtype_tells_float_from_uint(self):
         b = Block()
         b.insert("x", np.array([1.0], dtype=np.float64))
         b.insert("id", np.array([1], dtype=np.uint32))
-        assert b.has_f64("x")
-        assert not b.has_f64("id")
-        assert not b.has_f64("missing")
+        assert b.dtype("x") == "float"
+        assert b.dtype("id") != "float"
+        assert "missing" not in b
 
     def test_repr(self):
         b = Block()
@@ -280,7 +281,7 @@ class TestBlockSubscriptAssignment:
         b["name"] = np.array([], dtype=str)
         assert b.dtype("name") == "string"
         assert b["name"].dtype.kind == "U"
-        assert b.copy_column("name").dtype.kind == "U"
+        assert b["name"].shape == (0,)
 
     def test_a_string_column_indexes_like_a_numeric_one(self):
         b = Block({"name": ["C", "H", "O"]})
@@ -291,10 +292,6 @@ class TestBlockSubscriptAssignment:
         # Numpy strings are fixed-width, so this is a copy: writing it does
         # not change the column.
         out[0] = "N"
-        assert b["name"].tolist() == ["C", "H", "O"]
-        copied = b.copy_column("name")
-        assert copied.tolist() == ["C", "H", "O"]
-        copied[0] = "X"
         assert b["name"].tolist() == ["C", "H", "O"]
 
     def test_setitem_replaces_an_existing_column(self):
@@ -488,9 +485,7 @@ class TestBlockRowSelection:
 
     def test_a_selection_carries_the_validity_mask(self):
         b = Block()
-        b.insert_nullable(
-            "tag", np.array([1, 2, 3], dtype=np.int32), [True, False, True]
-        )
+        b.insert("tag", np.array([1, 2, 3], dtype=np.int32), [True, False, True])
         np.testing.assert_array_equal(
             b[np.array([1, 2])].validity("tag"), [False, True]
         )
@@ -511,10 +506,8 @@ class TestBlockRowSelection:
         with pytest.raises(ValueError):
             self._three()[np.array([3])]
 
-    def test_select_rows_gathers_rows(self):
-        np.testing.assert_array_equal(
-            self._three().select_rows([2, 0])["x"], [2.0, 0.0]
-        )
+    def test_an_index_array_gathers_rows_in_its_order(self):
+        np.testing.assert_array_equal(self._three()[np.array([2, 0])]["x"], [2.0, 0.0])
 
 
 class TestBlockRename:
@@ -552,7 +545,7 @@ class TestBlockRename:
 
     def test_rename_keeps_the_validity_mask_across_adoption(self):
         b = Block()
-        b.insert_nullable("serial", np.array([1, 0], dtype=np.int64), [True, False])
+        b.insert("serial", np.array([1, 0], dtype=np.int64), [True, False])
         b.rename("serial", "id")
         np.testing.assert_array_equal(b.validity("id"), [True, False])
 
@@ -582,7 +575,7 @@ class TestBlockCopy:
 
     def test_copy_keeps_masks_and_shape(self):
         b = Block()
-        b.insert_nullable(
+        b.insert(
             "tag", np.array([1, 0, 3, 0], dtype=np.int32), [True, False, True, False]
         )
         b.set_shape([2, 2])

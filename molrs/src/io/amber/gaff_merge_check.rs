@@ -63,32 +63,33 @@ fn native(case: &Case) -> (ForceField, Vec<String>) {
 /// [`native`]'s force field and the molecule GAFF typed, its charges the
 /// mol2's (antechamber's AM1-BCC).
 fn native_typed(case: &Case) -> (ForceField, Atomistic) {
-    let structure = crate::io::read_prmtop_str(case.parm).unwrap();
+    let structure = crate::io::read_prmtop((case.parm).as_bytes()).unwrap();
     let elements = structure["atoms"]
-        .get("element")
+        .get("atomic_number")
         .unwrap()
-        .as_string()
+        .get::<u64>()
         .unwrap()
         .to_owned();
-    let frame = crate::io::read_mol2_str(case.mol2).unwrap();
+    let frame = crate::io::read_mol2((case.mol2).as_bytes()).unwrap();
     let atoms = &frame["atoms"];
-    let xyz = ["x", "y", "z"].map(|c| atoms.get(c).unwrap().as_float().unwrap().to_owned());
-    let charges = atoms.get("charge").unwrap().as_float().unwrap();
+    let xyz = ["x", "y", "z"].map(|c| atoms.get(c).unwrap().get::<f64>().unwrap().to_owned());
+    let charges = atoms.get("charge").unwrap().get::<f64>().unwrap();
     let mut mol = Atomistic::new();
     let ids: Vec<_> = (0..elements.len())
         .map(|i| {
-            let id = mol.add_atom_xyz(&elements[[i]], xyz[0][[i]], xyz[1][[i]], xyz[2][[i]]);
+            let id = mol.add_atom(crate::props! { "atomic_number" => elements[[i]] as u8, "x" => xyz[0][[i]], "y" => xyz[1][[i]], "z" => xyz[2][[i]] }).unwrap();
             mol.set_atom(id, keys::CHARGE, charges[[i]]).unwrap();
             id
         })
         .collect();
     let bonds = &frame["bonds"];
     let (bi, bj) = (
-        bonds.get("atomi").unwrap().as_uint().unwrap(),
-        bonds.get("atomj").unwrap().as_uint().unwrap(),
+        bonds.get("atomi").unwrap().get::<u64>().unwrap(),
+        bonds.get("atomj").unwrap().get::<u64>().unwrap(),
     );
     for (&i, &j) in bi.iter().zip(bj.iter()) {
-        mol.add_bond(ids[i as usize], ids[j as usize]).unwrap();
+        mol.add_bond(ids[i as usize], ids[j as usize], crate::core::Props::new())
+            .unwrap();
     }
     let atd = match case.set {
         GaffParameterSet::Gaff => AtdParameterSet::Gff,
@@ -121,17 +122,18 @@ fn native_gaff_merges_with_tleaps_prmtop_of_the_same_molecule() {
     for case in cases() {
         let name = case.name;
         let (native, atom_types) = native(&case);
-        let mol2_types: Vec<String> = crate::io::read_mol2_str(case.mol2).unwrap()["atoms"]
-            .get(keys::TYPE)
-            .unwrap()
-            .as_string()
-            .unwrap()
-            .iter()
-            .cloned()
-            .collect();
+        let mol2_types: Vec<String> =
+            crate::io::read_mol2((case.mol2).as_bytes()).unwrap()["atoms"]
+                .get(keys::TYPE)
+                .unwrap()
+                .get::<String>()
+                .unwrap()
+                .iter()
+                .cloned()
+                .collect();
         assert_eq!(atom_types, mol2_types, "{name}: ATD types as antechamber");
         let prmtop = AmberPrmtopForcefieldReader::new()
-            .read_str(case.parm)
+            .read((case.parm).as_bytes())
             .unwrap();
 
         // Both name every term alike: each prmtop type is a native one.
@@ -171,12 +173,21 @@ fn native_names_and_numbers_are_the_prmtops() {
         .unwrap()
         .type_params("c3-c3-oh-ho")
         .expect("oriented name");
-    assert_eq!(torsion.get("periodicity1"), Some(1.0));
-    assert_eq!(torsion.get("k1"), Some(0.25));
-    assert_eq!(torsion.get("periodicity2"), Some(3.0));
-    assert_eq!(torsion.get("k2"), Some(0.16));
+    assert_eq!(
+        torsion.get("periodicity1").and_then(|v| v.as_num()),
+        Some(1.0)
+    );
+    assert_eq!(torsion.get("k1").and_then(|v| v.as_num()), Some(0.25));
+    assert_eq!(
+        torsion.get("periodicity2").and_then(|v| v.as_num()),
+        Some(3.0)
+    );
+    assert_eq!(torsion.get("k2").and_then(|v| v.as_num()), Some(0.16));
     let lj = ff.get_style("pair", "lj/cut").unwrap();
-    assert_eq!(lj.params().get_str("mixing"), Some("arithmetic"));
+    assert_eq!(
+        lj.params().get("mixing").and_then(|v| v.as_text()),
+        Some("arithmetic")
+    );
 
     let (ff, _) = native(&tfsi);
     let angle = ff
@@ -184,15 +195,18 @@ fn native_names_and_numbers_are_the_prmtops() {
         .unwrap()
         .type_params("f-c3-sy")
         .expect("an estimate is named by its types");
-    assert_eq!(angle.get("estimated"), Some(1.0));
-    assert_eq!(angle.get_str("estimate_analog"), Some("f-c3-s6"));
+    assert_eq!(angle.get("estimated").and_then(|v| v.as_num()), Some(1.0));
+    assert_eq!(
+        angle.get("estimate_analog").and_then(|v| v.as_text()),
+        Some("f-c3-s6")
+    );
     let bond = ff
         .get_style("bond", "harmonic")
         .unwrap()
         .type_params("ne-s6")
         .unwrap();
-    assert_eq!(bond.get("r0"), Some(1.672));
-    assert_eq!(bond.get("k"), Some(317.1));
+    assert_eq!(bond.get("r0").and_then(|v| v.as_num()), Some(1.672));
+    assert_eq!(bond.get("k").and_then(|v| v.as_num()), Some(317.1));
 }
 
 /// A native GAFF force field — estimated terms carrying their provenance
@@ -203,7 +217,7 @@ fn native_names_and_numbers_are_the_prmtops() {
 #[test]
 fn native_gaff_with_estimates_writes_to_every_engine() {
     use crate::io::gromacs::GromacsTopForcefieldWriter;
-    use crate::io::lammps::LammpsForcefieldWriteOptions;
+    use crate::io::writer::WrittenText;
 
     for case in cases() {
         let name = case.name;
@@ -222,20 +236,29 @@ fn native_gaff_with_estimates_writes_to_every_engine() {
             .count();
         assert_eq!(estimated > 0, name.starts_with("tfsi"), "{name}: estimates");
 
-        let lammps = crate::io::write_lammps_forcefield_str(
-            &ff,
-            &frame,
-            LammpsForcefieldWriteOptions::default(),
+        let lammps = crate::io::lammps::LammpsForcefieldWriter::new(
+            &crate::io::lammps::lammps_type_labels(&frame).unwrap(),
         )
+        .written(&ff)
         .unwrap_or_else(|e| panic!("{name}: LAMMPS: {e}"));
         assert!(!lammps.contains("estimate"), "{name}: {lammps}");
-        let top = GromacsTopForcefieldWriter::new()
-            .write_system_str(&ff, &frame)
-            .unwrap_or_else(|e| panic!("{name}: GROMACS: {e}"));
+        let top = crate::io::writer::capture(|sink| {
+            GromacsTopForcefieldWriter::new().write_system(sink, &ff, &frame)
+        })
+        .unwrap_or_else(|e| panic!("{name}: GROMACS: {e}"));
         assert!(!top.contains("estimate"), "{name}: {top}");
-        let xml = crate::io::write_openmm_forcefield_str(&ff, None)
-            .unwrap_or_else(|e| panic!("{name}: OpenMM: {e}"));
+        let xml = crate::io::writer::capture(|sink| {
+            use crate::io::writer::ForceFieldWriter;
+            crate::io::openmm_xml::OpenmmXmlWriter::new()
+                .with_precision(None)
+                .write(sink, &ff)
+        })
+        .unwrap_or_else(|e| panic!("{name}: OpenMM: {e}"));
         assert!(!xml.contains("estimate"), "{name}: {xml}");
-        crate::io::write_frcmod_str(&ff).unwrap_or_else(|e| panic!("{name}: frcmod: {e}"));
+        crate::io::writer::capture(|sink| {
+            use crate::io::writer::ForceFieldWriter;
+            crate::io::amber::AmberFrcmodWriter::new().write(sink, &ff)
+        })
+        .unwrap_or_else(|e| panic!("{name}: frcmod: {e}"));
     }
 }

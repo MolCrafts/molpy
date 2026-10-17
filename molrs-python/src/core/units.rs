@@ -46,11 +46,6 @@ impl PyUnit {
         self.inner.dimension().exponents()
     }
 
-    #[getter]
-    fn dimensionality(&self) -> [i32; 7] {
-        self.dimension()
-    }
-
     fn is_affine(&self) -> bool {
         self.inner.is_affine()
     }
@@ -126,18 +121,13 @@ impl PyQuantity {
 #[pymethods]
 impl PyQuantity {
     #[new]
-    fn py_new(magnitude: f64, unit: &PyUnit) -> Self {
-        Self::new(Quantity::new(magnitude, unit.inner.clone()))
+    fn py_new(value: f64, unit: &PyUnit) -> Self {
+        Self::new(Quantity::new(value, unit.inner.clone()))
     }
 
     fn __reduce__<'py>(slf: &Bound<'py, Self>) -> PyResult<Bound<'py, PyTuple>> {
         let this = slf.borrow();
-        crate::pickle::reduce_via_type(slf.as_any(), (this.magnitude(), this.unit()))
-    }
-
-    #[getter]
-    fn magnitude(&self) -> f64 {
-        self.inner.value()
+        crate::pickle::reduce_via_type(slf.as_any(), (this.value(), this.unit()))
     }
 
     #[getter]
@@ -146,13 +136,8 @@ impl PyQuantity {
     }
 
     #[getter]
-    fn units(&self) -> PyUnit {
-        PyUnit::new(self.inner.unit().clone())
-    }
-
-    #[getter]
     fn unit(&self) -> PyUnit {
-        self.units()
+        PyUnit::new(self.inner.unit().clone())
     }
 
     fn to(&self, target: &Bound<'_, PyAny>) -> PyResult<Self> {
@@ -421,13 +406,6 @@ impl PyUnitPreset {
         lookup_unit_preset(name)
             .map(|inner| Self { inner })
             .ok_or_else(|| PyValueError::new_err(format!("unknown unit preset {name:?}")))
-    }
-
-    #[staticmethod]
-    fn real() -> Self {
-        Self {
-            inner: UnitPreset::real(),
-        }
     }
 
     /// Every registered preset name, sorted: the LAMMPS styles (``real``,

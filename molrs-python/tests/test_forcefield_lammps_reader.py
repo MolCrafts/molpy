@@ -1,15 +1,19 @@
 """Python-binding coverage for the native LAMMPS force-field reader.
 
 The parsing/unit logic is exercised in Rust (``io::lammps::forcefield_reader``);
-these tests only assert the PyO3 surface — that ``read_lammps_forcefield``
-yields the one :class:`ForceField` (with the FFI capsule a consumer like molpack
-resolves) and that errors map to ``ValueError``.
+these tests only assert the PyO3 surface — that
+``LammpsForcefieldReader().read`` yields the one :class:`ForceField` (with the
+FFI capsule a consumer like molpack resolves), that errors map to
+``ValueError``, and that ``LammpsForcefieldWriter`` takes a frame and writes
+into a path or a ``bytearray``.
 """
 
+from conftest import capture
 
 import molrs
 import numpy as np
 import pytest
+from molrs.io.lammps import LammpsForcefieldReader, LammpsForcefieldWriter
 
 # Values copied from a real GAFF2 PEO ``*.ff`` (the molpack-paper figure-5 melt).
 _FF = """\
@@ -40,9 +44,25 @@ def read_ff(tmp_path):
     def read(text: str) -> molrs.ff.forcefield.ForceField:
         path = tmp_path / "in.ff"
         path.write_text(text, encoding="utf-8")
-        return molrs.io.read_lammps_forcefield(path)
+        return LammpsForcefieldReader().read(path)
 
     return read
+
+
+def _include(
+    ff: molrs.ff.forcefield.ForceField, frame: molrs.core.Frame, **opts
+) -> str:
+    """The force-field include ``LammpsForcefieldWriter`` writes, as text."""
+    buf = bytearray()
+    LammpsForcefieldWriter(frame, **opts).write(buf, ff)
+    return buf.decode()
+
+
+def _data_coeffs(ff: molrs.ff.forcefield.ForceField, frame: molrs.core.Frame) -> str:
+    """The data file's ``* Coeffs`` sections, as text."""
+    buf = bytearray()
+    LammpsForcefieldWriter(frame).write_data_coeffs(buf, ff)
+    return buf.decode()
 
 
 def _frame(atom_types: list[str], **blocks: list[str]) -> molrs.core.Frame:
@@ -97,9 +117,23 @@ def test_lammps_units_pass_through_binding(read_ff):
 def test_read_lammps_forcefield_from_path(tmp_path):
     p = tmp_path / "melt.ff"
     p.write_text(_FF, encoding="utf-8")
-    ff = molrs.io.read_lammps_forcefield(str(p))
+    ff = LammpsForcefieldReader().read(p)
     # LAMMPS `dihedral_style fourier` is molrs's `dihedral periodic`.
     assert len(ff.get_style("dihedral", "periodic").get_types()) == 1
+
+
+def test_read_lammps_forcefield_from_text_and_bytes_is_the_path_read(tmp_path):
+    p = tmp_path / "melt.ff"
+    p.write_text(_FF, encoding="utf-8")
+    frame = _ff_frame()
+    by_path = _include(LammpsForcefieldReader().read(p), frame)
+    assert _include(LammpsForcefieldReader().read(molrs.io.Text(_FF)), frame) == by_path
+    assert _include(LammpsForcefieldReader().read(_FF.encode()), frame) == by_path
+
+
+def test_a_str_source_is_refused():
+    with pytest.raises(TypeError, match="Text"):
+        LammpsForcefieldReader().read(_FF)
 
 
 def test_unknown_keyword_maps_to_value_error(read_ff):
@@ -107,7 +141,7 @@ def test_unknown_keyword_maps_to_value_error(read_ff):
         read_ff("mystery_style foo\n")
 
 
-def test_write_lammps_data_coeffs_str_keeps_reverse_dihedral_names_apart(read_ff):
+def test_write_data_coeffs_keeps_reverse_dihedral_names_apart(read_ff):
     """A label is a type name: reverse spellings are two types, two ids, one
     coeff row per id."""
     src = """\
@@ -121,7 +155,7 @@ dihedral_coeff os-c3-c3-h1 2 0.250000 1 0.000000 0.000000 3 0.000000
 """
     ff = read_ff(src)
     frame = _frame(["c3"], dihedrals=["h1-c3-c3-os", "os-c3-c3-h1"])
-    text = molrs.io.write_lammps_data_coeffs_str(ff, frame)
+    text = _data_coeffs(ff, frame)
     body = text.split("Dihedral Coeffs", 1)[1]
     ids = [
         int(line.split()[0])
@@ -133,9 +167,7 @@ dihedral_coeff os-c3-c3-h1 2 0.250000 1 0.000000 0.000000 3 0.000000
 
 def test_write_lammps_forcefield_skip_units(read_ff):
     ff = read_ff(_FF)
-    text = molrs.io.write_lammps_forcefield_str(
-        ff, _ff_frame(), skip_pair_style=True, skip_units=True
-    )
+    text = _include(ff, _ff_frame(), skip_pair_style=True, skip_units=True)
     assert "units " not in text
     assert "bond_style harmonic" in text
     assert "bond_coeff c3-c3" in text
@@ -146,9 +178,7 @@ def test_skip_pair_style_keeps_special_bonds_and_mixing(read_ff):
     the mixing rule are the force field's (LAMMPS's defaults are 0 0 0 and
     geometric), so a relaxation that sets its own pair_style keeps them."""
     ff = read_ff(_FF)
-    text = molrs.io.write_lammps_forcefield_str(
-        ff, _ff_frame(), skip_pair_style=True, skip_units=True
-    )
+    text = _include(ff, _ff_frame(), skip_pair_style=True, skip_units=True)
     assert "pair_style" not in text
     assert "special_bonds lj" in text and "0.833333" in text
     # The reader declared LAMMPS's default rule for an include without one.
@@ -160,21 +190,19 @@ def test_skip_special_bonds_leaves_the_weights_to_the_input(read_ff):
     """A caller stating its own 1-4 weights must not have Amber's coul
     1-4 = 1/1.2 injected over them."""
     ff = read_ff(_FF)
-    text = molrs.io.write_lammps_forcefield_str(
-        ff, _ff_frame(), skip_pair_style=True, skip_special_bonds=True
-    )
+    text = _include(ff, _ff_frame(), skip_pair_style=True, skip_special_bonds=True)
     assert "special_bonds" not in text
     assert "pair_coeff" in text
-    full = molrs.io.write_lammps_forcefield_str(ff, _ff_frame(), skip_special_bonds=True)
+    full = _include(ff, _ff_frame(), skip_special_bonds=True)
     assert "special_bonds" not in full and "pair_style lj/cut/coul/long" in full
 
 
-def test_write_lammps_forcefield_str_round_trip(read_ff):
-    """write_lammps_forcefield_str is the inverse of the reader (units + layout):
+def test_write_round_trip(read_ff):
+    """LammpsForcefieldWriter.write is the inverse of the reader (units + layout):
     lj/cut/coul/long reads as lj/cut + coul/long/pme and is written back."""
     ff = read_ff(_FF)
     assert ff.get_style("pair", "coul/long/pme") is not None
-    text = molrs.io.write_lammps_forcefield_str(ff, _ff_frame())
+    text = _include(ff, _ff_frame())
     assert "pair_style lj/cut/coul/long" in text
     assert "hybrid" not in text
     assert "bond_coeff c3-c3 228.890000 1.535400" in text
@@ -190,8 +218,9 @@ def test_write_lammps_forcefield_str_round_trip(read_ff):
 def test_write_lammps_forcefield_to_path(tmp_path, read_ff):
     ff = read_ff(_FF)
     out = tmp_path / "out.ff"
-    molrs.io.write_lammps_forcefield(str(out), ff, _ff_frame())
+    LammpsForcefieldWriter(_ff_frame()).write(out, ff)
     assert "bond_coeff c3-c3" in out.read_text(encoding="utf-8")
+    assert out.read_text(encoding="utf-8") == _include(ff, _ff_frame())
 
 
 # --- label-driven writing (system-forcefield-06): the frame argument seam ---
@@ -223,44 +252,51 @@ def _labelled_frame(bond_label: str = "c3-c3") -> molrs.core.Frame:
     return frame
 
 
-def test_label_write_lammps_forcefield_str_takes_frame():
-    text = molrs.io.write_lammps_forcefield_str(_hand_ff(), _labelled_frame())
+def test_label_writer_takes_frame():
+    text = _include(_hand_ff(), _labelled_frame())
     assert isinstance(text, str)
     assert "bond_coeff c3-c3" in text
 
 
-def test_label_write_lammps_forcefield_to_path_takes_frame(tmp_path):
+def test_label_writer_to_path_takes_frame(tmp_path):
     out = tmp_path / "out.ff"
-    molrs.io.write_lammps_forcefield(str(out), _hand_ff(), _labelled_frame())
+    LammpsForcefieldWriter(_labelled_frame()).write(out, _hand_ff())
     assert "bond_coeff c3-c3" in out.read_text(encoding="utf-8")
 
 
-def test_label_write_lammps_data_coeffs_str_takes_frame():
-    text = molrs.io.write_lammps_data_coeffs_str(_hand_ff(), _labelled_frame())
+def test_label_write_data_coeffs_takes_frame():
+    text = _data_coeffs(_hand_ff(), _labelled_frame())
     assert isinstance(text, str)
     assert "Bond Coeffs" in text
 
 
-def test_label_write_lammps_forcefield_str_missing_label_raises_value_error():
+def test_label_writer_missing_label_raises_value_error():
     with pytest.raises(ValueError, match="c3-n"):
-        molrs.io.write_lammps_forcefield_str(_hand_ff(), _labelled_frame("c3-n"))
+        _include(_hand_ff(), _labelled_frame("c3-n"))
 
 
-def test_label_write_lammps_data_coeffs_str_missing_label_raises_value_error():
+def test_label_write_data_coeffs_missing_label_raises_value_error():
     with pytest.raises(ValueError, match="c3-n"):
-        molrs.io.write_lammps_data_coeffs_str(_hand_ff(), _labelled_frame("c3-n"))
+        _data_coeffs(_hand_ff(), _labelled_frame("c3-n"))
 
 
 def test_ff_file_io_accepts_pathlike(tmp_path):
-    """``molrs.ff`` path functions take ``os.PathLike`` like ``molrs.io`` does."""
+    """The force-field classes take ``os.PathLike`` like ``molrs.io`` does."""
+    from molrs.io.openmm_xml import OpenmmXmlReader, OpenmmXmlWriter
+
     xml = tmp_path / "hand.xml"
-    molrs.io.write_openmm_forcefield(xml, _hand_ff())
-    back = molrs.io.read_openmm_forcefield(xml)
+    OpenmmXmlWriter().write(xml, _hand_ff())
+    back = OpenmmXmlReader().read(xml)
     assert back.get_style("bond", "harmonic").get_type_by_name("c3-c3") is not None
 
     out = tmp_path / "hand.ff"
-    molrs.io.write_lammps_forcefield(out, _hand_ff(), _labelled_frame())
+    LammpsForcefieldWriter(_labelled_frame()).write(out, _hand_ff())
     assert "bond_coeff c3-c3" in out.read_text(encoding="utf-8")
+
+
+def test_a_str_sink_is_refused():
+    with pytest.raises(TypeError, match="pathlib.Path"):
+        LammpsForcefieldWriter(_labelled_frame()).write("hand.ff", _hand_ff())
 
 
 # ---------------------------------------------------------------------------
@@ -343,56 +379,55 @@ def data_frame(data_path):
     return molrs.io.read_lammps_data(data_path)
 
 
-def test_read_lammps_data_coeffs_reads_the_data_file(data_path, data_frame):
-    ff = molrs.io.read_lammps_data_coeffs(data_path)
-    text = molrs.io.write_lammps_forcefield_str(ff, data_frame)
+def test_read_data_coeffs_reads_the_data_file(data_frame):
+    ff = LammpsForcefieldReader().read_data_coeffs(data_frame)
+    text = _include(ff, data_frame)
     assert "pair_coeff hc hc 0.015700 2.649500" in text
     assert "pair_coeff c3 c3 0.109400 3.399700" in text
     assert "bond_coeff c3-hc 340.000000 1.090000" in text
     assert "angle_coeff hc-c3-hc 35.000000 109.500000" in text
 
 
-def test_read_lammps_data_coeffs_str_is_the_path_door_on_text(data_path, data_frame):
-    by_path = molrs.io.read_lammps_data_coeffs(data_path)
-    by_text = molrs.io.read_lammps_data_coeffs_str(_DATA)
-    assert molrs.io.write_lammps_forcefield_str(
-        by_text, data_frame
-    ) == molrs.io.write_lammps_forcefield_str(by_path, data_frame)
+def test_read_data_coeffs_of_the_text_read_is_the_path_read(data_frame):
+    by_path = LammpsForcefieldReader().read_data_coeffs(data_frame)
+    by_text = LammpsForcefieldReader().read_data_coeffs(
+        molrs.io.read_lammps_data(molrs.io.Text(_DATA))
+    )
+    assert _include(by_text, data_frame) == _include(by_path, data_frame)
 
 
-def test_lammps_data_forcefield_lammps_round_trip(data_path, data_frame, tmp_path):
+def test_lammps_data_forcefield_lammps_round_trip(data_frame, tmp_path):
     """data file -> ForceField -> data file (frame + ``* Coeffs``) -> the
     same ForceField."""
-    ff = molrs.io.read_lammps_data_coeffs(data_path)
+    ff = LammpsForcefieldReader().read_data_coeffs(data_frame)
     out = tmp_path / "out.data"
     molrs.io.write_lammps_data(out, data_frame)
     out.write_text(
-        out.read_text(encoding="utf-8")
-        + "\n"
-        + molrs.io.write_lammps_data_coeffs_str(ff, data_frame), encoding="utf-8"
+        out.read_text(encoding="utf-8") + "\n" + _data_coeffs(ff, data_frame),
+        encoding="utf-8",
     )
     again_frame = molrs.io.read_lammps_data(out)
-    again = molrs.io.read_lammps_data_coeffs(out, units="real")
-    assert molrs.io.write_lammps_forcefield_str(
-        again, again_frame
-    ) == molrs.io.write_lammps_forcefield_str(ff, data_frame)
+    again = LammpsForcefieldReader().read_data_coeffs(again_frame, units="real")
+    assert _include(again, again_frame) == _include(ff, data_frame)
 
 
-def test_read_lammps_data_coeffs_refuses_other_units(data_path):
+def test_read_data_coeffs_refuses_other_units(data_frame):
     with pytest.raises(ValueError, match="metal"):
-        molrs.io.read_lammps_data_coeffs(data_path, units="metal")
+        LammpsForcefieldReader().read_data_coeffs(data_frame, units="metal")
 
 
-def test_read_lammps_data_coeffs_needs_coeffs(data_frame, tmp_path):
+def test_read_data_coeffs_needs_coeffs(data_frame, tmp_path):
     path = tmp_path / "bare.data"
     molrs.io.write_lammps_data(path, data_frame)
     with pytest.raises(ValueError, match="lammps_coeffs_text"):
-        molrs.io.read_lammps_data_coeffs(path)
+        LammpsForcefieldReader().read_data_coeffs(molrs.io.read_lammps_data(path))
 
 
 def test_read_lammps_data_coeffs_names_a_missing_file(tmp_path):
-    with pytest.raises(ValueError, match="absent.data"):
-        molrs.io.read_lammps_data_coeffs(tmp_path / "absent.data")
+    with pytest.raises(OSError, match="absent.data"):
+        molrs.io.lammps.LammpsForcefieldReader().read_data_coeffs(
+            molrs.io.read_lammps_data(tmp_path / "absent.data")
+        )
 
 
 # --- Drude oscillators: the DRUDE package reads the springs as bonds ---
@@ -434,19 +469,24 @@ def _drude_system() -> tuple[molrs.ff.forcefield.ForceField, molrs.core.Frame]:
             "type": np.array(["CT-DCT"]),
         }
     )
+    frame["atoms"]["mass"] = [11.6, 0.4, 1.008, 1.008]
     return ff, frame
 
 
 def test_drude_springs_are_written_as_lammps_bonds():
     ff, frame = _drude_system()
-    data = molrs.io.write_lammps_data_str(frame)
+    data = capture(molrs.io.write_lammps_data, frame)
     assert "\n3 bonds\n" in data
     assert "Bond Type Labels\n\n1 CT-DCT\n2 CT-HC\n" in data
     assert "Bonds\n\n1 2 1 3\n2 2 1 4\n3 1 1 2\n" in data
-    text = molrs.io.write_lammps_forcefield_str(ff, frame, skip_special_bonds=True)
+    text = capture(
+        molrs.io.lammps.LammpsForcefieldWriter(frame, skip_special_bonds=True).write, ff
+    )
     assert "bond_coeff CT-DCT 500.000000 0.000000" in text
     assert "CT-DCT (CT DCT): alpha 1.200000 thole 2.600000" in text
-    coeffs = molrs.io.write_lammps_data_coeffs_str(ff, frame)
+    coeffs = capture(
+        molrs.io.lammps.LammpsForcefieldWriter(frame).write_data_coeffs, ff
+    )
     assert "1 500.000000 0.000000\n2 340.000000 1.090000\n" in coeffs
 
 
@@ -457,4 +497,4 @@ def test_a_virtual_site_is_refused_by_the_data_writer():
         {name: np.array([i], dtype=np.uint64) for i, name in enumerate(endpoints)}
     )
     with pytest.raises(OSError, match="virtual_sites"):
-        molrs.io.write_lammps_data_str(frame)
+        capture(molrs.io.write_lammps_data, frame)

@@ -1,12 +1,13 @@
 //! The GRO codec: the GROMACS fixed-column structure / trajectory format.
+use crate::io::{Sink, SinkWriter, Source};
 
+use crate::core::Cell;
 use crate::io::frame_columns::insert_column;
 use crate::io::invalid_data;
 use crate::io::pdb::labels::{AtomLabels, LabelWidths};
-use std::io::{BufRead, BufWriter, Result, Seek, SeekFrom, Write};
-use std::path::Path;
+use std::io::{BufRead, Result, Seek, SeekFrom, Write};
 
-use ndarray::{Array2, array};
+use ndarray::Array2;
 
 use crate::core::unit_factors::NM_TO_ANGSTROM;
 use crate::io::reader::{FrameIndex, FrameReader, ReadSeek, Reader, TrajectoryReader};
@@ -19,61 +20,6 @@ use molrs::op::{F, I, Idx};
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
-/// The element a GROMACS atom name denotes, or `None` when nothing plausible
-/// resolves.
-///
-/// A GRO file carries no element column, so this reads a *naming convention*
-/// rather than parsing a field. GROMACS names are ambiguous in isolation —
-/// `CA` is a protein C-alpha in one residue and calcium in another — and the
-/// disambiguator is in the file:
-///
-/// * `monatomic_residue`: the atom is alone in its residue and its name is a
-///   real element symbol, so it is that ion — `NA` → Na, `CL` → Cl, `CA` → Ca.
-/// * otherwise the atom belongs to a polyatomic residue and follows the
-///   biomolecular convention, where the leading letter is the element and the
-///   rest says where it sits: `OW` → O, `HW1` → H, `CA` / `CB` → C.
-///
-/// The PDB reader's inference is deliberately **not** reused: it leans on the
-/// column-13 rule (a leading blank means a one-letter element), and a GRO name
-/// is already trimmed, so that signal does not survive the parse.
-///
-/// Known limit: a two-letter element written inside a polyatomic residue —
-/// heme's `FE`, say — reads as its leading letter (F). Only a residue-name
-/// table could fix that, and molrs has no business shipping one.
-fn element_from_atom_name(name: &str, monatomic_residue: bool) -> Option<String> {
-    let letters: String = name
-        .chars()
-        .take_while(|c| c.is_ascii_alphabetic())
-        .collect();
-    if letters.is_empty() {
-        return None;
-    }
-    let title = |s: &str| -> String {
-        let mut c = s.chars();
-        let first = c.next().unwrap_or_default().to_ascii_uppercase();
-        let rest: String = c.flat_map(|ch| ch.to_lowercase()).collect();
-        format!("{first}{rest}")
-    };
-
-    if monatomic_residue {
-        let whole = title(&letters);
-        if molrs::core::Element::by_symbol(&whole).is_some() {
-            return Some(whole);
-        }
-    }
-    let one = title(&letters[..1]);
-    if molrs::core::Element::by_symbol(&one).is_some() {
-        return Some(one);
-    }
-    if letters.len() >= 2 {
-        let two = title(&letters[..2]);
-        if molrs::core::Element::by_symbol(&two).is_some() {
-            return Some(two);
-        }
-    }
-    None
-}
 
 fn substr(s: &str, start: usize, end: usize) -> &str {
     let len = s.len();
@@ -242,27 +188,12 @@ fn format_box_line(h: &Array2<F>) -> String {
 // Public reader API
 // ---------------------------------------------------------------------------
 
-/// Read the first frame of a `.gro` file at `path`.
-pub fn read_gro<P: AsRef<Path>>(path: P) -> Result<Frame> {
-    let file = std::fs::File::open(path.as_ref())?;
-    let mut gr = GroReader::new(std::io::BufReader::new(file));
-    gr.read()?
-        .ok_or_else(|| invalid_data("GRO file holds no frame"))
-}
-
-/// Read every frame of a `.gro` file at `path`.
-pub fn read_gro_trajectory<P: AsRef<Path>>(path: P) -> Result<Vec<Frame>> {
-    let file = std::fs::File::open(path.as_ref())?;
-    let reader = std::io::BufReader::new(file);
-    let mut gr = GroReader::new(reader);
-    crate::io::reader::collect_frames(&mut gr)
-}
-
-/// Read the first frame of GRO `text` — [`read_gro`] on text in memory.
-pub fn read_gro_str(text: &str) -> Result<Frame> {
-    GroReader::new(text.as_bytes())
+/// Read the first frame of a `.gro` file.
+pub fn read_gro<'a>(src: impl Into<Source<'a>>) -> Result<Frame> {
+    let src = src.into();
+    GroReader::new(src.reader()?)
         .read()?
-        .ok_or_else(|| invalid_data("GRO text holds no frame"))
+        .ok_or_else(|| invalid_data(format!("{}: no GRO frame", src.name())))
 }
 
 /// Read a single GRO frame from any [`BufRead`]. Returns `Ok(None)` at EOF.
@@ -325,18 +256,10 @@ fn read_frame_from<R: BufRead>(reader: &mut R) -> Result<Option<Frame>> {
     // -----------------------------------------------------------------------
     // Build the Frame
     // -----------------------------------------------------------------------
-    // How many atoms share each residue number — the signal that tells a
-    // monatomic ion from a C-alpha (see `element_from_atom_name`).
-    let mut residue_size: std::collections::HashMap<I, usize> = std::collections::HashMap::new();
-    for a in &atoms {
-        *residue_size.entry(a.resid).or_insert(0) += 1;
-    }
-
     let mut block = Block::new();
     let mut resid = Vec::with_capacity(n_atoms);
     let mut resname = Vec::with_capacity(n_atoms);
     let mut atom_name = Vec::with_capacity(n_atoms);
-    let mut element = Vec::with_capacity(n_atoms);
     let mut atom_id = Vec::with_capacity(n_atoms);
     let mut x = Vec::with_capacity(n_atoms);
     let mut y = Vec::with_capacity(n_atoms);
@@ -348,9 +271,6 @@ fn read_frame_from<R: BufRead>(reader: &mut R) -> Result<Option<Frame>> {
         resid.push(a.resid);
         resname.push(a.resname.clone());
         atom_name.push(a.atom_name.clone());
-        let alone = residue_size.get(&a.resid).copied().unwrap_or(0) == 1;
-        element
-            .push(element_from_atom_name(&a.atom_name, alone).unwrap_or_else(|| "X".to_string()));
         atom_id.push(a.atom_id);
         x.push(a.x * NM_TO_ANGSTROM.get());
         y.push(a.y * NM_TO_ANGSTROM.get());
@@ -366,7 +286,6 @@ fn read_frame_from<R: BufRead>(reader: &mut R) -> Result<Option<Frame>> {
     insert_uint_column_from_signed(&mut block, "res_id", resid)?;
     insert_column(&mut block, "res_name", resname)?;
     insert_column(&mut block, "name", atom_name)?;
-    insert_column(&mut block, "element", element)?;
     insert_uint_column_from_signed(&mut block, "id", atom_id)?;
     insert_column(&mut block, "x", x)?;
     insert_column(&mut block, "y", y)?;
@@ -384,10 +303,16 @@ fn read_frame_from<R: BufRead>(reader: &mut R) -> Result<Option<Frame>> {
     frame.insert("atoms", block);
 
     // SimBox: H columns = lattice vectors. cell_rows[i] = lattice vector i.
-    let h = Array2::from_shape_fn((3, 3), |(i, j)| cell_rows[j][i] * NM_TO_ANGSTROM.get());
-    let origin = array![0.0 as F, 0.0, 0.0];
-    let simbox = SimBox::new(h, origin, [true; 3]).map_err(|e| invalid_data(format!("{:?}", e)))?;
-    frame.simbox = Some(simbox);
+    let h =
+        std::array::from_fn(|i| std::array::from_fn(|j| cell_rows[j][i] * NM_TO_ANGSTROM.get()));
+    let origin = [0.0 as F, 0.0, 0.0];
+    // A zero box line states that the structure has no geometric cell.
+    if h.iter().flatten().any(|&value| value != 0.0) {
+        frame.simbox = Some(
+            SimBox::new(Cell::Matrix(h), origin, [true; 3])
+                .map_err(|e| invalid_data(format!("{e:?}")))?,
+        );
+    }
 
     Ok(Some(frame))
 }
@@ -432,8 +357,11 @@ fn read_frame_from<R: BufRead>(reader: &mut R) -> Result<Option<Frame>> {
 /// # Output Frame
 ///
 /// - `"atoms"` block: `res_id` (uint), `res_name` (str), `name` (str),
-///   `element` (str, inferred from the atom name), `id` (uint),
+///   `id` (uint),
 ///   `x`/`y`/`z` (F, **Å**), and optional `vx`/`vy`/`vz` (F, **Å/ps**).
+///   GRO has no species field, so there is no `element` / `atomic_number`
+///   column: species is not guessed from the atom name. A consumer that
+///   needs one sets `element` itself and runs `Element::fill_atomic_numbers`.
 /// - `frame.simbox`: triclinic [`SimBox`] from the box-vector line, in Å.
 /// - `frame.meta["title"]`.
 ///
@@ -459,9 +387,9 @@ impl<R: BufRead> GroReader<R> {
 }
 
 impl GroReader<Box<dyn ReadSeek>> {
-    /// Open a `.gro` file for random access by frame.
-    pub fn open<P: AsRef<Path>>(path: P) -> Result<Self> {
-        Ok(Self::new(crate::io::reader::open_seekable(path)?))
+    /// Open a `.gro` file, or the bytes of one, for random access by frame.
+    pub fn open<'a>(src: impl Into<Source<'a>>) -> Result<Self> {
+        Ok(Self::new(src.into().owned_reader()?))
     }
 }
 
@@ -550,7 +478,7 @@ impl<R: BufRead> FrameReader for GroReader<R> {
 /// column, or an empty or null cell — the atom's molecule's number (bonded
 /// components of `bonds`), `MOL`, and the element numbered within its
 /// residue (`C1`, `C2`, `H1`, …), as
-/// [`write_top_system`](crate::io::write_top_system) names them too. Atom
+/// [`GromacsTopForcefieldWriter::write_system`](crate::io::gromacs::GromacsTopForcefieldWriter::write_system) names them too. Atom
 /// numbers are the `id` column, else 1..N.
 ///
 /// # Errors
@@ -558,30 +486,10 @@ impl<R: BufRead> FrameReader for GroReader<R> {
 /// A frame without `atoms` or its `x`/`y`/`z`; a null cell in `id`,
 /// `x`/`y`/`z` or `vx`/`vy`/`vz` (named by column and rows: no placeholder
 /// is written for it); a `bonds` row naming an atom past the frame.
-pub fn write_gro<P: AsRef<Path>>(path: P, frame: &Frame) -> Result<()> {
-    let file = std::fs::File::create(path.as_ref())?;
-    let mut w = BufWriter::new(file);
+pub fn write_gro<'a>(sink: impl Into<Sink<'a>>, frame: &Frame) -> Result<()> {
+    let mut w = sink.into().writer()?;
     write_frame_to(&mut w, frame)?;
     w.flush()
-}
-
-/// Write `frames` as one multi-frame `.gro` trajectory at `path`, one
-/// GRO block per frame — the inverse of [`read_gro_trajectory`]. An empty
-/// slice creates an empty file.
-pub fn write_gro_trajectory<P: AsRef<Path>>(path: P, frames: &[Frame]) -> Result<()> {
-    let file = std::fs::File::create(path.as_ref())?;
-    let mut w = BufWriter::new(file);
-    for frame in frames {
-        write_frame_to(&mut w, frame)?;
-    }
-    w.flush()
-}
-
-/// Write a frame as GRO text — [`write_gro`] into memory (Å → nm).
-pub fn write_gro_str(frame: &Frame) -> Result<String> {
-    let mut buf = Vec::new();
-    write_frame_to(&mut buf, frame)?;
-    String::from_utf8(buf).map_err(invalid_data)
 }
 
 /// Write a single frame in GRO format.
@@ -603,20 +511,20 @@ fn write_frame_to<W: Write>(writer: &mut W, frame: &Frame) -> Result<()> {
 
     let xs = atoms
         .get("x")
-        .and_then(|c| c.as_float())
+        .and_then(|c| c.get::<f64>())
         .ok_or_else(|| invalid_data("atoms.x missing"))?;
     let ys = atoms
         .get("y")
-        .and_then(|c| c.as_float())
+        .and_then(|c| c.get::<f64>())
         .ok_or_else(|| invalid_data("atoms.y missing"))?;
     let zs = atoms
         .get("z")
-        .and_then(|c| c.as_float())
+        .and_then(|c| c.get::<f64>())
         .ok_or_else(|| invalid_data("atoms.z missing"))?;
-    let vx = atoms.get("vx").and_then(|c| c.as_float());
-    let vy = atoms.get("vy").and_then(|c| c.as_float());
-    let vz = atoms.get("vz").and_then(|c| c.as_float());
-    let atom_id = atoms.get("id").and_then(|c| c.as_uint());
+    let vx = atoms.get("vx").and_then(|c| c.get::<f64>());
+    let vy = atoms.get("vy").and_then(|c| c.get::<f64>());
+    let vz = atoms.get("vz").and_then(|c| c.get::<f64>());
+    let atom_id = atoms.get("id").and_then(|c| c.get::<u64>());
     // A stated number or coordinate has no stand-in; an unset name is
     // generated (`null_cells`).
     crate::io::null_cells::refuse_null_cells(
@@ -661,7 +569,7 @@ fn write_frame_to<W: Write>(writer: &mut W, frame: &Frame) -> Result<()> {
     let h = frame
         .simbox
         .as_ref()
-        .map(|sb| sb.h_view().to_owned() / NM_TO_ANGSTROM.get())
+        .map(|sb| ndarray::arr2(&sb.matrix()) / NM_TO_ANGSTROM.get())
         .unwrap_or_else(|| Array2::<F>::zeros((3, 3)));
     writeln!(writer, "{}", format_box_line(&h))?;
 
@@ -671,6 +579,15 @@ fn write_frame_to<W: Write>(writer: &mut W, frame: &Frame) -> Result<()> {
 /// `FrameWriter`-trait wrapper.
 pub struct GroWriter<W: Write> {
     writer: W,
+}
+
+impl<'a> GroWriter<SinkWriter<'a>> {
+    /// Create a `.gro` file, or fill a buffer, frame by frame.
+    pub fn create(sink: impl Into<Sink<'a>>) -> Result<Self> {
+        Ok(Self {
+            writer: sink.into().writer()?,
+        })
+    }
 }
 
 impl<W: Write> Writer for GroWriter<W> {
@@ -685,7 +602,8 @@ impl<W: Write> FrameWriter for GroWriter<W> {
         // Refuse to emit a frame that violates the vocabulary: a bad file
         // looks fine and is found wrong later, by whatever reads it.
         crate::io::writer::check_write_frame(frame)?;
-        write_frame_to(&mut self.writer, frame)
+        write_frame_to(&mut self.writer, frame)?;
+        self.writer.flush()
     }
 }
 
@@ -730,7 +648,7 @@ mod tests {
                 .unwrap()
                 .get("x")
                 .unwrap()
-                .as_float()
+                .get::<f64>()
                 .unwrap()[[1]]
         };
         let second = reader.read_frame(1).unwrap().expect("frame 2");
@@ -747,8 +665,15 @@ mod tests {
             .unwrap();
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("traj.gro");
-        write_gro_trajectory(&path, &[frame.clone(), frame]).expect("write GRO trajectory");
-        let back = read_gro_trajectory(&path).expect("read GRO trajectory");
+        let mut writer = GroWriter::create(&path).expect("create GRO trajectory");
+        writer.write(&frame).expect("frame 1");
+        writer.write(&frame).expect("frame 2");
+        drop(writer);
+        let back = GroReader::open(&path)
+            .expect("open GRO trajectory")
+            .iter()
+            .collect::<Result<Vec<_>>>()
+            .expect("read GRO trajectory");
         assert_eq!(back.len(), 2);
         assert_eq!(back[1].get("atoms").unwrap().n_rows(), Some(3));
     }
@@ -760,9 +685,9 @@ mod tests {
             .unwrap();
         let atoms = frame.get("atoms").unwrap();
         assert_eq!(atoms.n_rows(), Some(3));
-        let xs = atoms.get("x").and_then(|c| c.as_float()).unwrap();
+        let xs = atoms.get("x").and_then(|c| c.get::<f64>()).unwrap();
         assert!((xs[[1]] - 1.0).abs() < 1e-9); // 0.100 nm → 1.0 Å
-        let names = atoms.get("name").and_then(|c| c.as_string()).unwrap();
+        let names = atoms.get("name").and_then(|c| c.get::<String>()).unwrap();
         assert_eq!(names[[0]], "OW");
         assert_eq!(names[[1]], "HW1");
         assert!(frame.simbox.is_some());
@@ -780,10 +705,10 @@ mod tests {
             .get("atoms")
             .unwrap()
             .get("x")
-            .and_then(|c| c.as_float())
+            .and_then(|c| c.get::<f64>())
             .unwrap();
         assert!((xs[[1]] - 1.0).abs() < 1e-9, "x[1] = {}", xs[[1]]);
-        let h = frame.simbox.as_ref().unwrap().h_view().to_owned();
+        let h = ndarray::arr2(&frame.simbox.as_ref().unwrap().matrix());
         assert!((h[[0, 0]] - 20.0).abs() < 1e-9, "box = {}", h[[0, 0]]);
         assert!(
             !frame.meta.contains_key("gro_units"),
@@ -803,34 +728,29 @@ mod tests {
             .get("atoms")
             .unwrap()
             .get("vx")
-            .and_then(|c| c.as_float())
+            .and_then(|c| c.get::<f64>())
             .unwrap();
         assert!((vx[[0]] - 1.0).abs() < 1e-9, "vx = {}", vx[[0]]);
     }
 
     #[test]
-    fn infers_element_from_the_atom_name() {
-        // A GRO file has no element column. The names are there, though, and a
-        // reader that drops them leaves every downstream consumer with "X".
+    fn reads_no_species_column_from_atom_names() {
+        // A GRO file has no species field. `CA` is a C-alpha in one residue
+        // and calcium in another; the reader keeps the name and invents no
+        // element for it.
         let frame = read_frame_from(&mut Cursor::new(water_gro().into_bytes()))
             .unwrap()
             .unwrap();
-        let elements = frame
-            .get("atoms")
-            .unwrap()
-            .get("element")
-            .and_then(|c| c.as_string())
-            .unwrap();
-        assert_eq!(elements[[0]], "O", "OW is water oxygen");
-        assert_eq!(elements[[1]], "H", "HW1 is a water hydrogen");
-        assert_eq!(elements[[2]], "H");
+        let atoms = frame.get("atoms").unwrap();
+        assert!(atoms.get("element").is_none());
+        assert!(atoms.get("atomic_number").is_none());
+        let names = atoms.get("name").and_then(|c| c.get::<String>()).unwrap();
+        assert_eq!(names[[0]], "OW");
     }
 
     #[test]
-    fn a_monatomic_residue_reads_its_name_as_the_element() {
-        // `CA` is a protein C-alpha in one residue and calcium in another. The
-        // residue decides, and it is in the file: a one-atom residue whose name
-        // is an element symbol is that ion.
+    fn gro_preserves_names_without_guessing_species() {
+        // GRO spells names, not elements: keep protein C-alpha and calcium labels verbatim.
         let ions = concat!(
             "ions\n",
             "    6\n",
@@ -845,18 +765,14 @@ mod tests {
         let frame = read_frame_from(&mut Cursor::new(ions.as_bytes().to_vec()))
             .unwrap()
             .unwrap();
-        let elements = frame
-            .get("atoms")
-            .unwrap()
-            .get("element")
-            .and_then(|c| c.as_string())
-            .unwrap();
-        assert_eq!(elements[[0]], "N");
-        assert_eq!(elements[[1]], "C", "CA inside a residue is the C-alpha");
-        assert_eq!(elements[[2]], "C");
-        assert_eq!(elements[[3]], "Ca", "CA alone in its residue is calcium");
-        assert_eq!(elements[[4]], "Cl");
-        assert_eq!(elements[[5]], "O");
+        let atoms = frame.get("atoms").unwrap();
+        let names = atoms.get("name").and_then(|c| c.get::<String>()).unwrap();
+        assert_eq!(
+            names.as_slice().unwrap(),
+            ["N", "CA", "CB", "CA", "CL", "OW"]
+        );
+        assert!(atoms.get("element").is_none());
+        assert!(atoms.get("atomic_number").is_none());
     }
 
     #[test]
@@ -870,15 +786,16 @@ mod tests {
         use ndarray::Array1;
 
         let mut atoms = Block::new();
-        for (key, v) in [("x", 1.0_f64), ("y", 0.0), ("z", 0.0)] {
+        for (key, v) in [("x", 1.0 as F), ("y", 0.0), ("z", 0.0)] {
             atoms
-                .insert(key, Array1::from_vec(vec![v]).into_dyn())
+                .insert(key, Array1::from_vec(vec![v]).into_dyn(), None)
                 .unwrap();
         }
         atoms
             .insert(
                 "element",
                 Array1::from_vec(vec!["Na".to_string()]).into_dyn(),
+                None,
             )
             .unwrap();
         let mut frame = Frame::new();
@@ -886,14 +803,18 @@ mod tests {
 
         let mut buf = Vec::new();
         write_frame_to(&mut buf, &frame).unwrap();
-        let text = String::from_utf8(buf).unwrap();
+        let text = String::from_utf8(buf.clone()).unwrap();
         let atom_line = text.lines().nth(2).expect("atom line");
         assert_eq!(
             substr(atom_line, 10, 15).trim(),
             "Na1",
             "line: {atom_line:?}"
         );
-        assert_eq!(element_from_atom_name("Na1", true).as_deref(), Some("Na"));
+        let back = read_frame_from(&mut Cursor::new(buf)).unwrap().unwrap();
+        assert_eq!(
+            back["atoms"].get("name").unwrap().get::<String>().unwrap()[[0]],
+            "Na1"
+        );
     }
 
     #[test]
@@ -908,13 +829,13 @@ mod tests {
             .get("atoms")
             .unwrap()
             .get("x")
-            .and_then(|c| c.as_float())
+            .and_then(|c| c.get::<f64>())
             .unwrap();
         let xs2 = frame2
             .get("atoms")
             .unwrap()
             .get("x")
-            .and_then(|c| c.as_float())
+            .and_then(|c| c.get::<f64>())
             .unwrap();
         assert_eq!(xs1.len(), xs2.len());
         for i in 0..xs1.len() {

@@ -22,7 +22,7 @@ use std::collections::HashMap;
 use molrs::core::PropValue;
 use molrs::core::keys;
 use molrs::core::keys::BCC_BOND_TYPE;
-use molrs::core::{Atomistic, Element, NodeId, Relation, RelationId};
+use molrs::core::{Atomistic, NodeId, Relation, RelationId};
 use molrs::perceive::perceive_ring_classes;
 
 use crate::ff::params::AtomProp;
@@ -35,7 +35,8 @@ use crate::ff::params::AtomProp;
 pub(super) struct MolFacts {
     /// Atom id -> row index into every vector below.
     pub(super) index: HashMap<NodeId, usize>,
-    /// Atomic number.
+    /// Atomic number, read from [`keys::ATOMIC_NUMBER`] (`0` for a wildcard
+    /// atom, which only an element-free rule can match).
     pub(super) atomic_number: Vec<u8>,
     /// Number of bonded neighbours.
     pub(super) degree: Vec<usize>,
@@ -74,12 +75,13 @@ impl MolFacts {
         let mut residue = Vec::with_capacity(atom_ids.len());
         for aid in &atom_ids {
             let atom = mol.get_atom(*aid).map_err(|e| e.to_string())?;
-            let symbol = atom.get_str(keys::ELEMENT).ok_or_else(|| {
-                format!("ATD atom typing requires `{}` for {aid:?}", keys::ELEMENT)
+            let z = atom.atomic_number().ok_or_else(|| {
+                format!(
+                    "ATD atom typing requires a valid `{}` for {aid:?}",
+                    keys::ATOMIC_NUMBER
+                )
             })?;
-            let element = Element::by_symbol(symbol)
-                .ok_or_else(|| format!("unsupported element symbol `{symbol}` for {aid:?}"))?;
-            atomic_number.push(element.z());
+            atomic_number.push(z);
             residue.push(atom.get_str(keys::RES_NAME).unwrap_or("*").to_owned());
         }
 

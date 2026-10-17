@@ -135,7 +135,8 @@ crate::compute::spec::compute_spec! {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ndarray::{Array2, array};
+    use crate::core::Cell;
+    use ndarray::Array2;
 
     fn run(
         positions: &[[F; 3]],
@@ -144,7 +145,12 @@ mod tests {
         sv: &SphereVoxelization,
     ) -> SphereVoxelizationResult {
         let points = Array2::from_shape_fn((positions.len(), 3), |(i, c)| positions[i][c]);
-        let simbox = SimBox::cube(box_len, array![0.0 as F, 0.0 as F, 0.0 as F], pbc).unwrap();
+        let simbox = SimBox::new(
+            Cell::Lengths([box_len; 3]),
+            [0.0 as F, 0.0 as F, 0.0 as F],
+            pbc,
+        )
+        .unwrap();
         sv.compute(SphereVoxelizationInput {
             positions: points.view(),
             simbox: &simbox,

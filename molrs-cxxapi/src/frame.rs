@@ -2,9 +2,10 @@
 //! (through `molrs_ffi::FrameRef`): introspection, typed column readers and
 //! create-or-update writers, exact-dtype metadata and the simulation box.
 
-use molrs::core::SimBox;
-use molrs::core::{Block, Frame, MetaValue};
-use ndarray::{Array1, Array2, ArrayD, ArrayView1};
+use molrs::core::{Block, BlockDtype, Frame, MetaValue};
+use molrs::core::{Cell, Element, SimBox};
+use molrs_ffi::FfiError;
+use ndarray::{Array1, ArrayD};
 
 use crate::bridge;
 
@@ -40,7 +41,7 @@ pub struct FrameRef(pub molrs_ffi::FrameRef);
 ///
 /// @return boxed opaque handle owning a fresh frame arena
 pub(crate) fn frame_new() -> Box<FrameRef> {
-    Box::new(FrameRef(molrs_ffi::FrameRef::new_standalone()))
+    Box::new(FrameRef(molrs_ffi::FrameRef::default()))
 }
 
 /// Clone a `molrs_ffi::FrameRef` reachable through a `molrs.FrameRef`
@@ -306,20 +307,42 @@ pub(crate) fn frame_set_precision(
         .map_err(|e| format!("frame_set_precision: {e}"))?
 }
 
+/// Copy a column of dtype `T` out of a block — the one reader behind the four
+/// per-dtype bridge doors (cxx has no generics).
+///
+/// An absent block or column reads as empty (molrs schemas are flexible); a
+/// column of another dtype is an error naming both dtypes, never an empty read.
+fn frame_column<T: BlockDtype>(
+    fref: &FrameRef,
+    block: &str,
+    col: &str,
+    what: &str,
+) -> Result<Vec<T>, String> {
+    let blk = match fref.0.block(block) {
+        Ok(blk) => blk,
+        Err(FfiError::KeyNotFound { .. }) => return Ok(Vec::new()),
+        Err(e) => return Err(format!("{what} {block}.{col}: {e}")),
+    };
+    match blk.copy::<T>(col) {
+        Ok(Some((data, _shape))) => Ok(data),
+        Ok(None) => Ok(Vec::new()),
+        Err(e) => Err(format!("{what} {block}.{col}: {e}")),
+    }
+}
+
 /// Copy an `f64` column out of a block.
 ///
 /// @param fref  frame handle
 /// @param block block key
 /// @param col   column key
-/// @return owned column data; empty if the block or column is absent
-pub(crate) fn frame_column_f64(fref: &FrameRef, block: &str, col: &str) -> Vec<f64> {
-    match fref.0.block(block) {
-        Ok(blk) => match blk.copy_f(col) {
-            Ok(Some((data, _shape))) => data,
-            _ => Vec::new(),
-        },
-        Err(_) => Vec::new(),
-    }
+/// @return owned column data; empty if the block or column is absent, an
+///         error if the column is not `f64`
+pub(crate) fn frame_column_f64(
+    fref: &FrameRef,
+    block: &str,
+    col: &str,
+) -> Result<Vec<f64>, String> {
+    frame_column(fref, block, col, "frame_column_f64")
 }
 
 /// Copy an `i32` column out of a block.
@@ -327,15 +350,14 @@ pub(crate) fn frame_column_f64(fref: &FrameRef, block: &str, col: &str) -> Vec<f
 /// @param fref  frame handle
 /// @param block block key
 /// @param col   column key
-/// @return owned column data; empty if the block or column is absent
-pub(crate) fn frame_column_i32(fref: &FrameRef, block: &str, col: &str) -> Vec<i32> {
-    match fref.0.block(block) {
-        Ok(blk) => match blk.copy_i(col) {
-            Ok(Some((data, _shape))) => data,
-            _ => Vec::new(),
-        },
-        Err(_) => Vec::new(),
-    }
+/// @return owned column data; empty if the block or column is absent, an
+///         error if the column is not `i32`
+pub(crate) fn frame_column_i32(
+    fref: &FrameRef,
+    block: &str,
+    col: &str,
+) -> Result<Vec<i32>, String> {
+    frame_column(fref, block, col, "frame_column_i32")
 }
 
 /// Copy a domain-uint (`u64` / `Idx`) column out of a block.
@@ -343,15 +365,14 @@ pub(crate) fn frame_column_i32(fref: &FrameRef, block: &str, col: &str) -> Vec<i
 /// @param fref  frame handle
 /// @param block block key
 /// @param col   column key
-/// @return owned column data; empty if the block or column is absent
-pub(crate) fn frame_column_u64(fref: &FrameRef, block: &str, col: &str) -> Vec<u64> {
-    match fref.0.block(block) {
-        Ok(blk) => match blk.copy_u(col) {
-            Ok(Some((data, _shape))) => data,
-            _ => Vec::new(),
-        },
-        Err(_) => Vec::new(),
-    }
+/// @return owned column data; empty if the block or column is absent, an
+///         error if the column is not the domain uint
+pub(crate) fn frame_column_u64(
+    fref: &FrameRef,
+    block: &str,
+    col: &str,
+) -> Result<Vec<u64>, String> {
+    frame_column(fref, block, col, "frame_column_u64")
 }
 
 /// Copy a string column out of a block.
@@ -359,25 +380,26 @@ pub(crate) fn frame_column_u64(fref: &FrameRef, block: &str, col: &str) -> Vec<u
 /// @param fref  frame handle
 /// @param block block key
 /// @param col   column key
-/// @return owned column data; empty if the block or column is absent
-pub(crate) fn frame_column_str(fref: &FrameRef, block: &str, col: &str) -> Vec<String> {
-    match fref.0.block(block) {
-        Ok(blk) => match blk.col_str(col) {
-            Ok(Some(data)) => data,
-            _ => Vec::new(),
-        },
-        Err(_) => Vec::new(),
-    }
+/// @return owned column data; empty if the block or column is absent, an
+///         error if the column is not a string column
+pub(crate) fn frame_column_str(
+    fref: &FrameRef,
+    block: &str,
+    col: &str,
+) -> Result<Vec<String>, String> {
+    frame_column(fref, block, col, "frame_column_str")
 }
 
 /// Read the cell matrix H of the frame's box as 9 row-major `f64` (columns
-/// are the lattice vectors, as molrs `SimBox::h_view` and LAMMPS write H).
+/// are the lattice vectors, as molrs `SimBox::matrix` and LAMMPS write H).
 ///
 /// @param fref frame handle
-/// @return 9-element row-major H; empty if the frame has no box
+/// @return 9-element row-major H; empty if the frame has no box, or a box
+///         whose cell is undefined (molrs `Cell::Undefined` stores an
+///         identity placeholder that is not a cell)
 pub(crate) fn frame_box_h(fref: &FrameRef) -> Vec<f64> {
     match fref.0.box_clone() {
-        Ok(Some(sb)) => sb.h_view().iter().copied().collect(),
+        Ok(Some(sb)) if sb.is_cell_defined() => sb.matrix().into_iter().flatten().collect(),
         _ => Vec::new(),
     }
 }
@@ -413,7 +435,7 @@ pub(crate) fn frame_set_column_f64(
     fref.0
         .with_mut(|frame| {
             with_block_inserted_res(frame, block, |blk| {
-                blk.insert(col, Array1::from_vec(data.to_vec()).into_dyn())
+                blk.insert(col, Array1::from_vec(data.to_vec()).into_dyn(), None)
                     .map_err(|e| format!("frame_set_column_f64 insert {col}: {e}"))
             })
         })
@@ -435,7 +457,7 @@ pub(crate) fn frame_set_column_i32(
     fref.0
         .with_mut(|frame| {
             with_block_inserted_res(frame, block, |blk| {
-                blk.insert(col, Array1::from_vec(data.to_vec()).into_dyn())
+                blk.insert(col, Array1::from_vec(data.to_vec()).into_dyn(), None)
                     .map_err(|e| format!("frame_set_column_i32 insert {col}: {e}"))
             })
         })
@@ -457,7 +479,7 @@ pub(crate) fn frame_set_column_u64(
     fref.0
         .with_mut(|frame| {
             with_block_inserted_res(frame, block, |blk| {
-                blk.insert(col, Array1::from_vec(data.to_vec()).into_dyn())
+                blk.insert(col, Array1::from_vec(data.to_vec()).into_dyn(), None)
                     .map_err(|e| format!("frame_set_column_u64 insert {col}: {e}"))
             })
         })
@@ -482,6 +504,7 @@ pub(crate) fn frame_set_column_str(
                 blk.insert(
                     col,
                     Array1::from_vec(data.to_vec()).into_dyn() as ArrayD<String>,
+                    None,
                 )
                 .map_err(|e| format!("frame_set_column_str insert {col}: {e}"))
             })
@@ -489,47 +512,45 @@ pub(crate) fn frame_set_column_str(
         .map_err(|e| format!("frame_set_column_str: {e}"))?
 }
 
+/// Write `atoms.atomic_number` from the `atoms.element` symbols — molrs
+/// [`Element::fill_atomic_numbers`], the explicit element → Z conversion
+/// (`*` is Z = 0). `element` is left in place.
+///
+/// @param fref frame handle
+/// @return an error when there is no `atoms.element` string column or a row
+///         holds a symbol that is not an element (the row is named)
+pub(crate) fn frame_fill_atomic_numbers(fref: &mut FrameRef) -> Result<(), String> {
+    fref.0
+        .with_mut(Element::fill_atomic_numbers)
+        .map_err(|e| format!("frame_fill_atomic_numbers: {e}"))?
+        .map_err(|e| format!("frame_fill_atomic_numbers: {e}"))
+}
+
+/// Write `atoms.element` symbols from `atoms.atomic_number` — molrs
+/// [`Element::fill_symbols`], the explicit Z → element conversion (Z = 0
+/// becomes `*`). `atomic_number` is left in place.
+///
+/// @param fref frame handle
+/// @return an error when there is no `atoms.atomic_number` Uint column or a
+///         row holds a number outside 0..=118 (the row is named)
+pub(crate) fn frame_fill_symbols(fref: &mut FrameRef) -> Result<(), String> {
+    fref.0
+        .with_mut(Element::fill_symbols)
+        .map_err(|e| format!("frame_fill_symbols: {e}"))?
+        .map_err(|e| format!("frame_fill_symbols: {e}"))
+}
+
 /// A periodic [`SimBox`] at the origin from a row-major 3×3 cell matrix H.
 ///
 /// @param h 9-element row-major H
 /// @return the box; an error on a length other than 9 or a singular H
 pub(crate) fn simbox_from_h(h: &[f64]) -> Result<SimBox, String> {
-    if h.len() != 9 {
-        return Err(format!("H must have 9 elements, got {}", h.len()));
-    }
-    let mat = Array2::from_shape_vec((3, 3), h.to_vec()).map_err(|e| format!("H reshape: {e}"))?;
-    SimBox::new(mat, Array1::zeros(3), [true, true, true])
-        .map_err(|e| format!("singular cell matrix H: {e:?}"))
-}
-
-/// A transient frame whose `atoms` block holds `x` / `y` / `z` (through
-/// [`Frame::set_coords`]), with a periodic box from `h` when `h` is not empty.
-///
-/// This is the one marshaling path from the engine's blocked `x|y|z` buffers
-/// to a molrs frame; the I/O writers and the analyses both start from it.
-///
-/// @param x, y, z per-atom coordinates, one value per atom each
-/// @param h       empty (no box) or a 9-element row-major H
-/// @return the frame; an error on unequal lengths, a malformed or singular H
-pub(crate) fn coords_frame(x: &[f64], y: &[f64], z: &[f64], h: &[f64]) -> Result<Frame, String> {
-    let n = x.len();
-    if y.len() != n || z.len() != n {
-        return Err(format!(
-            "x, y and z must have one value per atom, got {n}, {} and {}",
-            y.len(),
-            z.len()
-        ));
-    }
-    let mut coords = Array2::<f64>::zeros((n, 3));
-    for (axis, values) in [x, y, z].into_iter().enumerate() {
-        coords.column_mut(axis).assign(&ArrayView1::from(values));
-    }
-    let mut frame = Frame::new();
-    frame.set_coords(coords.view()).map_err(|e| e.to_string())?;
-    if !h.is_empty() {
-        frame.simbox = Some(simbox_from_h(h)?);
-    }
-    Ok(frame)
+    let rows: [[f64; 3]; 3] = match h.as_chunks::<3>() {
+        (&[a, b, c], []) => [a, b, c],
+        _ => return Err(format!("H must have 9 elements, got {}", h.len())),
+    };
+    SimBox::new(Cell::Matrix(rows), [0.0; 3], [true; 3])
+        .map_err(|e| format!("singular cell matrix H: {e}"))
 }
 
 /// Set the frame's box from its cell matrix H (9 row-major `f64`).
@@ -588,26 +609,41 @@ mod tests {
         assert_eq!(frame_block_n_rows(&fref, "missing"), 0);
 
         // ── Readers ──
-        assert_eq!(frame_column_f64(&fref, "atoms", "x"), xs);
-        assert_eq!(frame_column_i32(&fref, "atoms", "spin"), spins);
-        assert_eq!(frame_column_u64(&fref, "atoms", "id"), ids);
-        assert_eq!(frame_column_str(&fref, "atoms", "element"), elems);
+        assert_eq!(frame_column_f64(&fref, "atoms", "x").unwrap(), xs);
+        assert_eq!(frame_column_i32(&fref, "atoms", "spin").unwrap(), spins);
+        assert_eq!(frame_column_u64(&fref, "atoms", "id").unwrap(), ids);
+        assert_eq!(frame_column_str(&fref, "atoms", "element").unwrap(), elems);
         assert_eq!(frame_box_h(&fref), h);
 
         // ── Absent block / column → empty Vec, never a panic ──
-        assert!(frame_column_f64(&fref, "atoms", "nope").is_empty());
-        assert!(frame_column_f64(&fref, "missing", "x").is_empty());
-        assert!(frame_column_i32(&fref, "missing", "spin").is_empty());
-        assert!(frame_column_u64(&fref, "missing", "id").is_empty());
-        assert!(frame_column_str(&fref, "missing", "element").is_empty());
+        assert!(frame_column_f64(&fref, "atoms", "nope").unwrap().is_empty());
+        assert!(frame_column_f64(&fref, "missing", "x").unwrap().is_empty());
+        assert!(
+            frame_column_i32(&fref, "missing", "spin")
+                .unwrap()
+                .is_empty()
+        );
+        assert!(frame_column_u64(&fref, "missing", "id").unwrap().is_empty());
+        assert!(
+            frame_column_str(&fref, "missing", "element")
+                .unwrap()
+                .is_empty()
+        );
         assert!(frame_block_columns(&fref, "missing").is_empty());
+
+        // ── A column of another dtype is an error, never an empty read ──
+        let err = frame_column_i32(&fref, "atoms", "x").unwrap_err();
+        assert!(err.contains("atoms.x"), "{err}");
+        assert!(frame_column_u64(&fref, "atoms", "spin").is_err());
+        assert!(frame_column_str(&fref, "atoms", "id").is_err());
+        assert!(frame_column_f64(&fref, "atoms", "element").is_err());
 
         // ── Update path: overwrite an existing column ──
         let xs2: Vec<f64> = vec![9.0, 8.0, 7.0];
         frame_set_column_f64(&mut fref, "atoms", "x", &xs2).unwrap();
-        assert_eq!(frame_column_f64(&fref, "atoms", "x"), xs2);
+        assert_eq!(frame_column_f64(&fref, "atoms", "x").unwrap(), xs2);
         // other columns survive the update
-        assert_eq!(frame_column_u64(&fref, "atoms", "id"), ids);
+        assert_eq!(frame_column_u64(&fref, "atoms", "id").unwrap(), ids);
     }
 
     #[test]
@@ -683,29 +719,69 @@ mod tests {
         // Mutate through the recovered handle, observe through the original.
         frame_set_column_f64(&mut recovered, "atoms", "x", &[7.0, 8.0, 9.0]).unwrap();
         assert_eq!(
-            frame_column_f64(&original, "atoms", "x"),
+            frame_column_f64(&original, "atoms", "x").unwrap(),
             vec![7.0, 8.0, 9.0]
         );
 
         // ...and vice versa.
         frame_set_column_u64(&mut original, "atoms", "id", &[1, 2, 3]).unwrap();
-        assert_eq!(frame_column_u64(&recovered, "atoms", "id"), vec![1, 2, 3]);
+        assert_eq!(
+            frame_column_u64(&recovered, "atoms", "id").unwrap(),
+            vec![1, 2, 3]
+        );
+    }
+
+    /// A box without a defined cell carries an identity placeholder, which
+    /// is not a cell: it reads as no H, like a frame without a box.
+    #[test]
+    fn a_box_without_a_defined_cell_reads_as_no_h() {
+        let fref = frame_new();
+        assert!(frame_box_h(&fref).is_empty());
+        let undefined = SimBox::new(Cell::Undefined, [0.0; 3], [false; 3]).unwrap();
+        fref.0.set_box(Some(undefined)).unwrap();
+        assert!(frame_box_h(&fref).is_empty());
+        let mut fref = fref;
+        let h = [2.0, 0.5, 0.0, 0.0, 3.0, 0.0, 0.0, 0.0, 4.0];
+        frame_set_box_h(&mut fref, &h).unwrap();
+        assert_eq!(frame_box_h(&fref), h);
+        assert!(frame_set_box_h(&mut fref, &[0.0; 9]).is_err());
+        assert!(frame_set_box_h(&mut fref, &[1.0; 8]).is_err());
     }
 
     #[test]
-    fn coords_frame_refuses_ragged_coordinates_and_a_bad_cell() {
-        let frame = coords_frame(&[0.0, 1.0], &[0.0, 2.0], &[0.0, 3.0], &[]).unwrap();
-        assert_eq!(frame.coords().unwrap()[[1, 2]], 3.0);
-        assert!(frame.simbox.is_none());
-        assert!(coords_frame(&[0.0, 1.0], &[0.0], &[0.0, 3.0], &[]).is_err());
-        assert!(coords_frame(&[0.0], &[0.0], &[0.0], &[1.0; 8]).is_err());
-        assert!(coords_frame(&[0.0], &[0.0], &[0.0], &[0.0; 9]).is_err());
-        let boxed = coords_frame(
-            &[0.0],
-            &[0.0],
-            &[0.0],
-            &[2.0, 0.0, 0.0, 0.0, 2.0, 0.0, 0.0, 0.0, 2.0],
+    fn species_conversions_are_explicit_and_name_the_bad_row() {
+        let mut fref = frame_new();
+        frame_set_column_str(
+            &mut fref,
+            "atoms",
+            "element",
+            &["O".into(), "h".into(), "*".into()],
+        )
+        .unwrap();
+        frame_fill_atomic_numbers(&mut fref).unwrap();
+        assert_eq!(
+            frame_column_u64(&fref, "atoms", "atomic_number").unwrap(),
+            [8u64, 1, 0]
         );
-        assert!(boxed.unwrap().simbox.is_some());
+
+        let mut zs = frame_new();
+        frame_set_column_u64(&mut zs, "atoms", "atomic_number", &[6, 0, 1]).unwrap();
+        frame_fill_symbols(&mut zs).unwrap();
+        assert_eq!(
+            frame_column_str(&zs, "atoms", "element").unwrap(),
+            ["C", "*", "H"]
+        );
+
+        let mut bad = frame_new();
+        frame_set_column_str(&mut bad, "atoms", "element", &["C".into(), "Xx".into()]).unwrap();
+        let err = frame_fill_atomic_numbers(&mut bad).unwrap_err();
+        assert!(err.contains("row 1") && err.contains("Xx"), "{err}");
+        assert!(
+            frame_fill_symbols(&mut bad).is_err(),
+            "no atomic_number column"
+        );
+        frame_set_column_u64(&mut bad, "atoms", "atomic_number", &[6, 119]).unwrap();
+        let err = frame_fill_symbols(&mut bad).unwrap_err();
+        assert!(err.contains("119"), "{err}");
     }
 }

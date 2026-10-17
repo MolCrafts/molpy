@@ -320,12 +320,13 @@ impl GhostHalo {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::Cell;
     use ndarray::array;
 
     #[test]
     fn a_cutoff_past_half_the_cell_is_refused() {
         let l = 10.0_f64;
-        let bx = SimBox::cube(l, array![0.0_f64, 0.0, 0.0], [true; 3]).unwrap();
+        let bx = SimBox::new(Cell::Lengths([l; 3]), [0.0_f64, 0.0, 0.0], [true; 3]).unwrap();
         let owned = array![[1.0_f64, 1.0, 1.0], [2.0, 2.0, 2.0]];
 
         assert!(GhostHalo::new(bx.clone(), owned.view(), 4.9, 0.0).is_ok());

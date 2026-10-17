@@ -1,7 +1,6 @@
 //! AMBER prmtop force-field reader.
 
 use std::collections::{BTreeSet, HashMap};
-use std::path::Path;
 
 use crate::core::constants::VACUUM_DIELECTRIC;
 use crate::core::constants::{AMBER_COULOMB, CHARMM_COULOMB};
@@ -17,6 +16,7 @@ use crate::io::amber::prmtop_tables::{
     section, table_value, torsion_rows,
 };
 use crate::io::reader::ForceFieldReader;
+use crate::io::{Source, invalid_data};
 use molrs::core::TypeName;
 use molrs::core::keys;
 use molrs::core::{Block, Frame};
@@ -81,19 +81,13 @@ type Lj = (f64, f64);
 pub struct AmberPrmtopForcefieldReader;
 
 impl AmberPrmtopForcefieldReader {
+    /// The reader; the format has no settings.
     pub fn new() -> Self {
         Self
     }
 
-    /// A whole AMBER system at `path`: the force field, and the structure
-    /// frame (`io::amber::prmtop`'s) with its 1-4 pairs priced
-    /// ([`read_system_str`](Self::read_system_str)).
-    pub fn read_system(&self, path: &str) -> Result<(ForceField, Frame), String> {
-        let text = std::fs::read_to_string(path).map_err(|e| format!("read {path}: {e}"))?;
-        self.read_system_str(&text)
-    }
-
-    /// A whole AMBER system: the force field, and the structure frame of
+    /// The whole AMBER system `src` holds (a path or a whole file's bytes):
+    /// the force field, and the structure frame of
     /// [`read_prmtop`](crate::io::read_prmtop) plus a `pairs` block holding the 1-4 pairs
     /// sander weighs otherwise than the field's `special_bonds` — a torsion
     /// type whose `SCEE` / `SCNB` differ from the divisor most 1-4 rows carry
@@ -107,51 +101,37 @@ impl AmberPrmtopForcefieldReader {
     ///
     /// # Errors
     ///
-    /// What [`read_str`](ForceFieldReader::read_str) and the structure reader
-    /// refuse, and a 1-4 row on a bonded pair or an angle's ends (sander
-    /// prices that pair as 1-4, molrs excludes it).
-    pub fn read_system_str(&self, text: &str) -> Result<(ForceField, Frame), String> {
-        let sections = parse_flag_sections(text.as_bytes()).map_err(|e| e.to_string())?;
-        let ff = build_forcefield(&sections)?;
-        let mut frame = frame_from_sections(&sections).map_err(|e| e.to_string())?;
-        if let Some(pairs) = one_four_pairs(&sections, &frame)? {
-            frame.insert(molrs::core::schema::block_names::PAIRS, pairs);
-        }
-        Ok((ff, frame))
+    /// The OS error of a path that cannot be read;
+    /// [`InvalidData`](std::io::ErrorKind::InvalidData) for what
+    /// [`read`](ForceFieldReader::read) and the structure reader refuse, and a
+    /// 1-4 row on a bonded pair or an angle's ends (sander prices that pair as
+    /// 1-4, molrs excludes it).
+    pub fn read_system<'a>(
+        &self,
+        src: impl Into<Source<'a>>,
+    ) -> std::io::Result<(ForceField, Frame)> {
+        system(&src.into().bytes()?).map_err(invalid_data)
     }
+}
+
+/// The force field and frame of prmtop bytes
+/// ([`AmberPrmtopForcefieldReader::read_system`]).
+fn system(bytes: &[u8]) -> Result<(ForceField, Frame), String> {
+    let sections = parse_flag_sections(bytes).map_err(|e| e.to_string())?;
+    let ff = build_forcefield(&sections)?;
+    let mut frame = frame_from_sections(&sections).map_err(|e| e.to_string())?;
+    if let Some(pairs) = one_four_pairs(&sections, &frame)? {
+        frame.insert(molrs::core::schema::block_names::PAIRS, pairs);
+    }
+    Ok((ff, frame))
 }
 
 impl ForceFieldReader for AmberPrmtopForcefieldReader {
-    fn read_str(&self, text: &str) -> Result<ForceField, String> {
-        let sections = parse_flag_sections(text.as_bytes()).map_err(|e| e.to_string())?;
-        build_forcefield(&sections)
+    fn read<'a>(&self, src: impl Into<Source<'a>>) -> std::io::Result<ForceField> {
+        let bytes = src.into().bytes()?;
+        let sections = parse_flag_sections(&*bytes)?;
+        build_forcefield(&sections).map_err(invalid_data)
     }
-
-    fn read(&self, path: &str) -> Result<ForceField, String> {
-        let text = std::fs::read_to_string(path).map_err(|e| format!("read {path}: {e}"))?;
-        self.read_str(&text)
-    }
-}
-
-/// Convenience: read prmtop path → ForceField.
-pub fn read_prmtop_forcefield(path: impl AsRef<Path>) -> Result<ForceField, String> {
-    let text = std::fs::read_to_string(path.as_ref())
-        .map_err(|e| format!("read {}: {e}", path.as_ref().display()))?;
-    AmberPrmtopForcefieldReader::new().read_str(&text)
-}
-
-/// Read a whole AMBER prmtop (or ParmEd chamber) topology at `path`: the
-/// force field and the structure frame with its 1-4 pairs priced
-/// ([`AmberPrmtopForcefieldReader::read_system_str`]).
-///
-/// # Errors
-///
-/// An unreadable file and every error of
-/// [`AmberPrmtopForcefieldReader::read_system_str`].
-pub fn read_prmtop_system(path: impl AsRef<Path>) -> Result<(ForceField, Frame), String> {
-    let text = std::fs::read_to_string(path.as_ref())
-        .map_err(|e| format!("read {}: {e}", path.as_ref().display()))?;
-    AmberPrmtopForcefieldReader::new().read_system_str(&text)
 }
 
 fn ico_lookup(n_types: usize, iac_i: usize, iac_j: usize, nb_index: &[i64]) -> Result<i64, String> {
@@ -307,7 +287,7 @@ fn periodic_params(terms: &[TorsionTerm]) -> Params {
         owned.push((format!("phase{i}"), t.phase.to_degrees()));
     }
     let refs: Vec<(&str, f64)> = owned.iter().map(|(k, v)| (k.as_str(), *v)).collect();
-    Params::from_pairs(&refs)
+    Params::from_iter(refs.iter().copied())
 }
 
 fn first_i64(sections: &HashMap<String, Vec<String>>, key: &str) -> Result<Option<i64>, String> {
@@ -391,7 +371,7 @@ fn build_forcefield(sections: &HashMap<String, Vec<String>>) -> Result<ForceFiel
                 as f64;
             let mass = masses.get(i).copied().unwrap_or(0.0);
             style
-                .def_type(name, &[], Params::from_pairs(&[("id", id), ("mass", mass)]))
+                .def_type(name, &[], Params::from_iter([("id", id), ("mass", mass)]))
                 .map_err(|e| e.to_string())?;
         }
     }
@@ -421,7 +401,7 @@ fn build_forcefield(sections: &HashMap<String, Vec<String>>) -> Result<ForceFiel
                 .def_type(
                     TypeName::join(&ends)?.as_str(),
                     &ends,
-                    Params::from_pairs(&[("k", k), ("r0", r0)]),
+                    Params::from_iter([("k", k), ("r0", r0)]),
                 )
                 .map_err(|e| e.to_string())?;
         }
@@ -462,7 +442,7 @@ fn build_forcefield(sections: &HashMap<String, Vec<String>>) -> Result<ForceFiel
             let ends = TypeName::orient(&atoms.map(type_name));
             let k = angle_k.get(tid).copied().unwrap_or(0.0);
             let theta0 = angle_eq.get(tid).copied().unwrap_or(0.0).to_degrees();
-            let mut params = Params::from_pairs(&[("k", k), ("theta0", theta0)]);
+            let mut params = Params::from_iter([("k", k), ("theta0", theta0)]);
             if chamber {
                 let (k_ub, r_ub) = ub.unwrap_or((0.0, 0.0));
                 params.set("k_ub", k_ub);
@@ -533,7 +513,7 @@ fn build_forcefield(sections: &HashMap<String, Vec<String>>) -> Result<ForceFiel
                     .def_type(
                         &name,
                         &ends,
-                        Params::from_pairs(&[
+                        Params::from_iter([
                             ("k", term.k),
                             ("periodicity", term.periodicity),
                             ("phase", term.phase.to_degrees()),
@@ -555,7 +535,7 @@ fn build_forcefield(sections: &HashMap<String, Vec<String>>) -> Result<ForceFiel
                 .map_err(|e| e.to_string())?
                 .into_dyn();
             let mut params = Params::new();
-            params.set_array("grid", grid);
+            params.set("grid", grid);
             let ends: Vec<&str> = ends.iter().map(String::as_str).collect();
             style
                 .def_type(&name, &ends, params)
@@ -593,7 +573,7 @@ fn build_forcefield(sections: &HashMap<String, Vec<String>>) -> Result<ForceFiel
             &mut ff,
             "pair",
             "coul/charmm",
-            Params::from_pairs(&[
+            Params::from_iter([
                 ("coulomb", CHARMM_COULOMB),
                 ("dielectric", VACUUM_DIELECTRIC),
             ]),
@@ -603,14 +583,14 @@ fn build_forcefield(sections: &HashMap<String, Vec<String>>) -> Result<ForceFiel
         // The off-diagonal entries that are no row are Lorentz–Berthelot
         // mixes, so the style states that rule rather than lean on a default.
         let mut lj = Params::new();
-        lj.set_str("mixing", CombiningRule::Arithmetic.name());
+        lj.set("mixing", CombiningRule::Arithmetic.name());
         let style = def(&mut ff, "pair", "lj/cut", lj)?;
         for (tname, (sigma, epsilon), _) in &selves {
             style
                 .def_type(
                     tname,
                     &[tname],
-                    Params::from_pairs(&[("epsilon", *epsilon), ("sigma", *sigma)]),
+                    Params::from_iter([("epsilon", *epsilon), ("sigma", *sigma)]),
                 )
                 .map_err(|e| e.to_string())?;
         }
@@ -619,7 +599,7 @@ fn build_forcefield(sections: &HashMap<String, Vec<String>>) -> Result<ForceFiel
                 .def_type(
                     TypeName::pair(a, b)?.as_str(),
                     &[a, b],
-                    Params::from_pairs(&[("epsilon", *epsilon), ("sigma", *sigma)]),
+                    Params::from_iter([("epsilon", *epsilon), ("sigma", *sigma)]),
                 )
                 .map_err(|e| e.to_string())?;
         }
@@ -627,7 +607,7 @@ fn build_forcefield(sections: &HashMap<String, Vec<String>>) -> Result<ForceFiel
             &mut ff,
             "pair",
             "coul/cut",
-            Params::from_pairs(&[
+            Params::from_iter([
                 ("coulomb", AMBER_COULOMB),
                 ("dielectric", VACUUM_DIELECTRIC),
             ]),
@@ -801,7 +781,7 @@ fn tally(counts: &mut Vec<Tally>, v: f64) {
     }
 }
 
-/// The `pairs` rows of [`AmberPrmtopForcefieldReader::read_system_str`]: the 1-4
+/// The `pairs` rows of [`AmberPrmtopForcefieldReader::read_system`]: the 1-4
 /// pairs of `frame` (the structure reader's) whose summed sander weight
 /// differs from the field's (`one_four_weights`); `None` when none does.
 ///
@@ -838,8 +818,8 @@ fn one_four_pairs(
             return Vec::new();
         };
         match (
-            b.get(keys::ATOMI).and_then(|c| c.as_uint()),
-            b.get(last).and_then(|c| c.as_uint()),
+            b.get(keys::ATOMI).and_then(|c| c.get::<u64>()),
+            b.get(last).and_then(|c| c.get::<u64>()),
         ) {
             (Some(i), Some(j)) => i.iter().zip(j.iter()).map(|(&a, &b)| key(a, b)).collect(),
             _ => Vec::new(),
@@ -890,13 +870,14 @@ fn one_four_pairs(
             .map(|r| if pick == 0 { r.0.0 } else { r.0.1 } as Idx)
             .collect();
         block
-            .insert(column, ndarray::Array1::from_vec(ids).into_dyn())
+            .insert(column, ndarray::Array1::from_vec(ids).into_dyn(), None)
             .map_err(column_err)?;
     }
     block
         .insert(
             keys::IS_14,
             ndarray::Array1::from_vec(vec![true; rows.len()]).into_dyn(),
+            None,
         )
         .map_err(column_err)?;
     for (column, pick, field) in [
@@ -910,7 +891,11 @@ fn one_four_pairs(
         let valid: Vec<bool> = values.iter().map(|&v| differs(v, field)).collect();
         if valid.iter().any(|&v| v) {
             block
-                .insert_nullable(column, ndarray::Array1::from_vec(values).into_dyn(), valid)
+                .insert(
+                    column,
+                    ndarray::Array1::from_vec(values).into_dyn(),
+                    Some(valid),
+                )
                 .map_err(column_err)?;
         }
     }
@@ -1003,7 +988,7 @@ fn def_charmm_impropers(
             .def_type(
                 &name,
                 &ends,
-                Params::from_pairs(&[("k", imp.k), ("chi0", chi0)]),
+                Params::from_iter([("k", imp.k), ("chi0", chi0)]),
             )
             .map_err(|e| e.to_string())?;
     }
@@ -1024,12 +1009,12 @@ fn def_lj_charmm(
 ) -> Result<(), String> {
     let (selves, cross) = lj_rows(atom_types, type_index, regular, one_four);
     let mut style_params = Params::new();
-    style_params.set_str("mixing", CombiningRule::Arithmetic.name());
+    style_params.set("mixing", CombiningRule::Arithmetic.name());
     if one_four.is_some() {
-        style_params.set_str("one_four", "epsilon14");
+        style_params.set("one_four", "epsilon14");
     }
     let params = |p: Lj, p14: Lj| {
-        let mut out = Params::from_pairs(&[("epsilon", p.1), ("sigma", p.0)]);
+        let mut out = Params::from_iter([("epsilon", p.1), ("sigma", p.0)]);
         if one_four.is_some() {
             out.set("epsilon14", p14.1);
             out.set("sigma14", p14.0);
@@ -1055,7 +1040,7 @@ mod tests {
     use super::*;
 
     /// The structure frame of `text` with the `pairs` rows
-    /// [`AmberPrmtopForcefieldReader::read_system_str`] adds (the test prmtops hold
+    /// [`AmberPrmtopForcefieldReader::read_system`] adds (the test prmtops hold
     /// no LJ tables, so the force field itself is not read).
     fn read_system(text: &str) -> Frame {
         let sections = parse_flag_sections(text.as_bytes()).unwrap();
@@ -1072,7 +1057,7 @@ mod tests {
     #[test]
     fn a_uniform_chamber_file_has_no_pairs() {
         let (_, frame) = AmberPrmtopForcefieldReader::new()
-            .read_system_str(CHAMBER_MINI)
+            .read_system(CHAMBER_MINI.as_bytes())
             .unwrap();
         assert!(frame.get("pairs").is_none());
     }
@@ -1106,14 +1091,14 @@ mod tests {
     /// cell as `None`.
     fn pair_scales(frame: &Frame) -> Vec<(Idx, Idx, Option<F>, Option<F>)> {
         let pairs = frame.get("pairs").expect("pairs");
-        let ai = pairs.get("atomi").unwrap().as_uint().unwrap();
-        let aj = pairs.get("atomj").unwrap().as_uint().unwrap();
+        let ai = pairs.get("atomi").unwrap().get::<u64>().unwrap();
+        let aj = pairs.get("atomj").unwrap().get::<u64>().unwrap();
         let cell = |k: &str, r: usize| -> Option<F> {
             let col = pairs.get(k)?;
             if pairs.validity(k).is_some_and(|m| !m[r]) {
                 return None;
             }
-            Some(col.as_float().unwrap()[[r]])
+            Some(col.get::<f64>().unwrap()[[r]])
         };
         (0..ai.len())
             .map(|r| (ai[[r]], aj[[r]], cell("coul_scale", r), cell("lj_scale", r)))
@@ -1133,7 +1118,7 @@ mod tests {
         let frame = read_system(&text);
         assert_eq!(pair_scales(&frame), vec![(1, 4, Some(1.0), Some(1.0))]);
         let flags = frame.get("pairs").unwrap().get("is_14").unwrap();
-        assert!(flags.as_bool().unwrap().iter().all(|&f| f));
+        assert!(flags.get::<bool>().unwrap().iter().all(|&f| f));
     }
 
     /// Only the weight that differs gets a cell: SCNB 2.0 on both types.
@@ -1213,7 +1198,7 @@ mod tests {
 
     #[test]
     fn empty_prmtop_errors() {
-        let r = AmberPrmtopForcefieldReader::new().read_str("%VERSION 1\n");
+        let r = AmberPrmtopForcefieldReader::new().read("%VERSION 1\n".as_bytes());
         assert!(r.is_err());
     }
 
@@ -1349,14 +1334,15 @@ c3  c3  c3  hc
 
     fn read_ff(text: &str) -> ForceField {
         AmberPrmtopForcefieldReader::new()
-            .read_str(text)
-            .unwrap_or_else(|e| panic!("read_str: {e}"))
+            .read(text.as_bytes())
+            .unwrap_or_else(|e| panic!("read: {e}"))
     }
 
     fn read_err(text: &str) -> String {
         AmberPrmtopForcefieldReader::new()
-            .read_str(text)
-            .expect_err("expected Err from read_str")
+            .read(text.as_bytes())
+            .expect_err("expected Err from read")
+            .to_string()
     }
 
     fn without_flag(text: &str, flag: &str) -> String {
@@ -1393,8 +1379,16 @@ c3  c3  c3  hc
             "combined lj/cut/coul/long must not be registered"
         );
 
-        let coulomb = coul.params().get("coulomb").expect("coulomb");
-        let dielectric = coul.params().get("dielectric").expect("dielectric");
+        let coulomb = coul
+            .params()
+            .get("coulomb")
+            .and_then(|v| v.as_num())
+            .expect("coulomb");
+        let dielectric = coul
+            .params()
+            .get("dielectric")
+            .and_then(|v| v.as_num())
+            .expect("dielectric");
         assert!(
             (coulomb - 332.052_217_29).abs() < 1e-10,
             "coulomb={coulomb}"
@@ -1405,17 +1399,29 @@ c3  c3  c3  hc
             // A prmtop carries no cutoff (it lives in the mdin); the caller
             // declares one.
             assert!(
-                style.params().get("cutoff").is_none(),
+                style
+                    .params()
+                    .get("cutoff")
+                    .and_then(|v| v.as_num())
+                    .is_none(),
                 "{} carries an invented cutoff",
                 style.name()
             );
             assert!(
-                style.params().get("cutoff_lj").is_none(),
+                style
+                    .params()
+                    .get("cutoff_lj")
+                    .and_then(|v| v.as_num())
+                    .is_none(),
                 "{} still has cutoff_lj",
                 style.name()
             );
             assert!(
-                style.params().get("cutoff_coul").is_none(),
+                style
+                    .params()
+                    .get("cutoff_coul")
+                    .and_then(|v| v.as_num())
+                    .is_none(),
                 "{} still has cutoff_coul",
                 style.name()
             );
@@ -1558,7 +1564,8 @@ c3  c3  c3  hc
             .type_rows()
             .into_iter()
             .map(|(n, _, p)| {
-                let v = ["k", "periodicity", "phase"].map(|k| p.get(k).unwrap());
+                let v = ["k", "periodicity", "phase"]
+                    .map(|k| p.get(k).and_then(|v| v.as_num()).unwrap());
                 (n.to_owned(), v.to_vec())
             })
             .collect();
@@ -1613,8 +1620,16 @@ c3  c3  c3  hc
         let ff = read_ff(GAFF_MINI);
         let lj = ff.get_style("pair", "lj/cut").expect("lj/cut pair style");
         let pt = lj.get_pairtype("c3", None).expect("c3 self pair type");
-        let eps = pt.params.get("epsilon").expect("epsilon");
-        let sigma = pt.params.get("sigma").expect("sigma");
+        let eps = pt
+            .params
+            .get("epsilon")
+            .and_then(|v| v.as_num())
+            .expect("epsilon");
+        let sigma = pt
+            .params
+            .get("sigma")
+            .and_then(|v| v.as_num())
+            .expect("sigma");
         assert!(rel_close(eps, 0.109400, 1e-6), "epsilon={eps} vs 0.109400");
         assert!(
             rel_close(sigma, 3.3996695, 1e-6),
@@ -1643,11 +1658,27 @@ c3  c3  c3  hc
         // σ = (A/B)^{1/6}, ε = B²/(4A) of the off-diagonal entry.
         let (a, b) = (9.814251977796524e4_f64, 1.281883414413926e2_f64);
         let (sigma, eps) = ((a / b).powf(1.0 / 6.0), b * b / (4.0 * a));
-        assert!(rel_close(cross.params.get("sigma").unwrap(), sigma, 1e-12));
-        assert!(rel_close(cross.params.get("epsilon").unwrap(), eps, 1e-12));
+        assert!(rel_close(
+            cross.params.get("sigma").and_then(|v| v.as_num()).unwrap(),
+            sigma,
+            1e-12
+        ));
+        assert!(rel_close(
+            cross
+                .params
+                .get("epsilon")
+                .and_then(|v| v.as_num())
+                .unwrap(),
+            eps,
+            1e-12
+        ));
         // The self rows are untouched.
         let c3 = lj.get_pairtype("c3", None).unwrap();
-        assert!(rel_close(c3.params.get("epsilon").unwrap(), 0.1094, 1e-6));
+        assert!(rel_close(
+            c3.params.get("epsilon").and_then(|v| v.as_num()).unwrap(),
+            0.1094,
+            1e-6
+        ));
     }
 
     /// The `lj/cut` style states the rule its missing off-diagonal rows are
@@ -1656,7 +1687,10 @@ c3  c3  c3  hc
     fn the_lj_style_states_arithmetic_mixing() {
         let ff = read_ff(GAFF_MINI);
         let lj = ff.get_style("pair", "lj/cut").expect("lj/cut pair style");
-        assert_eq!(lj.params().get_str("mixing"), Some("arithmetic"));
+        assert_eq!(
+            lj.params().get("mixing").and_then(|v| v.as_text()),
+            Some("arithmetic")
+        );
     }
 
     /// A Lorentz–Berthelot off-diagonal entry is what mixing gives: no row.
@@ -1715,8 +1749,14 @@ c3  c3  c3  hc
             .collect();
         assert_eq!(c3c3.len(), 1);
         // k = RK: AMBER's K is LAMMPS's.
-        assert_eq!(c3c3[0].params.get("k"), Some(300.0));
-        assert_eq!(c3c3[0].params.get("r0"), Some(1.535));
+        assert_eq!(
+            c3c3[0].params.get("k").and_then(|v| v.as_num()),
+            Some(300.0)
+        );
+        assert_eq!(
+            c3c3[0].params.get("r0").and_then(|v| v.as_num()),
+            Some(1.535)
+        );
     }
 
     /// The second c3–c3 bond points at row 2 (`RK = 340`, `r₀ = 1.09`): two
@@ -1772,7 +1812,12 @@ c3  c3  c3  hc
         let bonds = ff.get_bondtypes();
         assert!(!bonds.is_empty());
         for bt in bonds {
-            assert_eq!(bt.params.get("id"), None, "{} carries an id", bt.name);
+            assert_eq!(
+                bt.params.get("id").and_then(|v| v.as_num()),
+                None,
+                "{} carries an id",
+                bt.name
+            );
         }
     }
 
@@ -1783,7 +1828,12 @@ c3  c3  c3  hc
         let angles = ff.get_angletypes();
         assert!(!angles.is_empty());
         for at in angles {
-            assert_eq!(at.params.get("id"), None, "{} carries an id", at.name);
+            assert_eq!(
+                at.params.get("id").and_then(|v| v.as_num()),
+                None,
+                "{} carries an id",
+                at.name
+            );
         }
     }
 
@@ -1815,12 +1865,21 @@ c3  c3  c3  hc
         let names: Vec<&str> = rows.iter().map(|(n, _)| n.as_str()).collect();
         assert_eq!(names, vec!["C1-N1-C2", "C2-C3-N2", "C3-C2-N1"]);
         let p = &rows[0].1;
-        assert_eq!(p.get("k"), Some(50.0));
-        assert!((p.get("theta0").unwrap() - 109.5).abs() < 1e-12);
-        assert_eq!((p.get("k_ub"), p.get("r_ub")), (Some(5.4), Some(2.4)));
+        assert_eq!(p.get("k").and_then(|v| v.as_num()), Some(50.0));
+        assert!((p.get("theta0").and_then(|v| v.as_num()).unwrap() - 109.5).abs() < 1e-12);
+        assert_eq!(
+            (
+                p.get("k_ub").and_then(|v| v.as_num()),
+                p.get("r_ub").and_then(|v| v.as_num())
+            ),
+            (Some(5.4), Some(2.4))
+        );
         for (name, p) in &rows[1..] {
             assert_eq!(
-                (p.get("k_ub"), p.get("r_ub")),
+                (
+                    p.get("k_ub").and_then(|v| v.as_num()),
+                    p.get("r_ub").and_then(|v| v.as_num())
+                ),
                 (Some(0.0), Some(0.0)),
                 "{name}"
             );
@@ -1836,7 +1895,10 @@ c3  c3  c3  hc
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].0, "N1-C1-C2-C3");
         assert_eq!(
-            (rows[0].1.get("k"), rows[0].1.get("chi0")),
+            (
+                rows[0].1.get("k").and_then(|v| v.as_num()),
+                rows[0].1.get("chi0").and_then(|v| v.as_num())
+            ),
             (Some(20.0), Some(0.0))
         );
         let ends = ff.get_style("improper", "harmonic").unwrap().type_rows()[0]
@@ -1869,7 +1931,7 @@ c3  c3  c3  hc
         let (name, ends, params) = &rows[0];
         assert_eq!(*name, "C1-N1-C2-C3-N2");
         assert_eq!(ends, &vec!["C1", "N1", "C2", "C3", "N2"]);
-        let grid = params.get_array("grid").unwrap();
+        let grid = params.get("grid").and_then(|v| v.as_array()).unwrap();
         assert_eq!(grid.shape(), &[2, 2]);
         assert_eq!(
             grid.iter().copied().collect::<Vec<_>>(),
@@ -1887,8 +1949,14 @@ c3  c3  c3  hc
     fn chamber_lennard_jones_is_lj_charmm_with_its_1_4_table() {
         let ff = read_ff(CHAMBER_MINI);
         let lj = ff.get_style("pair", "lj/charmm").expect("lj/charmm");
-        assert_eq!(lj.params().get_str("one_four"), Some("epsilon14"));
-        assert_eq!(lj.params().get_str("mixing"), Some("arithmetic"));
+        assert_eq!(
+            lj.params().get("one_four").and_then(|v| v.as_text()),
+            Some("epsilon14")
+        );
+        assert_eq!(
+            lj.params().get("mixing").and_then(|v| v.as_text()),
+            Some("arithmetic")
+        );
         let s = |rmin: f64| rmin * 2f64.powf(-1.0 / 6.0);
         let c1 = lj.get_pairtype("C1", None).unwrap();
         for (key, want) in [
@@ -1898,7 +1966,11 @@ c3  c3  c3  hc
             ("sigma14", s(1.8)),
         ] {
             assert!(
-                rel_close(c1.params.get(key).unwrap(), want, 1e-12),
+                rel_close(
+                    c1.params.get(key).and_then(|v| v.as_num()).unwrap(),
+                    want,
+                    1e-12
+                ),
                 "C1 {key}"
             );
         }
@@ -1910,14 +1982,21 @@ c3  c3  c3  hc
             ("sigma14", s(2.4)),
         ] {
             assert!(
-                rel_close(cross.params.get(key).unwrap(), want, 1e-12),
+                rel_close(
+                    cross.params.get(key).and_then(|v| v.as_num()).unwrap(),
+                    want,
+                    1e-12
+                ),
                 "C1-N1 {key}"
             );
         }
         // N1 and N2 share class 2; C2, C3 share class 1 with C1.
         assert!(lj.get_pairtype("C2", Some("N2")).is_some());
         let coul = ff.get_style("pair", "coul/charmm").expect("coul/charmm");
-        assert_eq!(coul.params().get("coulomb"), Some(332.0716));
+        assert_eq!(
+            coul.params().get("coulomb").and_then(|v| v.as_num()),
+            Some(332.0716)
+        );
         assert!(ff.get_style("pair", "lj/cut").is_none());
         let sb = ff.special_bonds();
         assert_eq!((sb.lj, sb.coul), ([0.0, 0.0, 1.0], [0.0, 0.0, 1.0]));
@@ -1940,9 +2019,16 @@ c3  c3  c3  hc
         );
         let ff = read_ff(&text);
         let lj = ff.get_style("pair", "lj/charmm").unwrap();
-        assert_eq!(lj.params().get_str("one_four"), None);
+        assert_eq!(lj.params().get("one_four").and_then(|v| v.as_text()), None);
         for pt in ff.get_pairtypes() {
-            assert!(pt.params.get("epsilon14").is_none(), "{}", pt.name);
+            assert!(
+                pt.params
+                    .get("epsilon14")
+                    .and_then(|v| v.as_num())
+                    .is_none(),
+                "{}",
+                pt.name
+            );
         }
         assert!(
             lj.get_pairtype("C1", Some("N1")).is_none(),
@@ -1972,7 +2058,10 @@ c3  c3  c3  hc
         );
         let ff = read_ff(&text);
         let rows = type_params(&ff, "dihedral", "periodic");
-        assert_eq!(rows[0].1.get("phase1"), Some(180.0));
+        assert_eq!(
+            rows[0].1.get("phase1").and_then(|v| v.as_num()),
+            Some(180.0)
+        );
     }
 
     /// Two atoms of one AMBER_ATOM_TYPE in two LJ classes (a chamber file cuts

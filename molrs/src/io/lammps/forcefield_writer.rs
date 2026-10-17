@@ -1,7 +1,7 @@
 //! LAMMPS force-field coefficient writer: the `*.ff` include next to a data file, and the data file's `* Coeffs` sections.
+use crate::io::Sink;
 
 use std::collections::{BTreeMap, HashMap, HashSet};
-use std::sync::Arc;
 
 use crate::ff::forcefield::{
     AngleType, BondType, CmapType, DihedralType, ForceField, ImproperType, PairType, Style,
@@ -11,58 +11,13 @@ use crate::ff::ir::Params;
 use crate::ff::ir::{
     Engine, LammpsCodec, LammpsCoeffs, ParamCombination, StyleSpec, Token, UnitScale,
 };
-use crate::ff::style_registry::{Registry, RegistryRef};
-use crate::io::lammps::drude::{drude_note, drude_springs_as_bonds, lammps_type_labels};
+use crate::ff::style_registry::Registry;
+use crate::io::lammps::drude::{drude_note, drude_springs_as_bonds};
 use crate::io::lammps::forcefield_reader::{CROSS_TERM_SECTIONS, LAMMPS_CMAP_DIM, LAMMPS_CMAP_MAX};
 use crate::io::lammps::units::{LammpsUnitConverter, parse_lammps_units_style};
-use crate::io::writer::{ForceFieldWriteError, ForceFieldWriter};
+use crate::io::writer::{ForceFieldWriteError, ForceFieldWriter, put_text};
 use molrs::core::{TypeLabels, TypeName};
 use ndarray::ArrayD;
-
-/// Formatting options for [`LammpsForcefieldWriter`].
-#[derive(Debug, Clone)]
-pub struct LammpsForcefieldWriteOptions {
-    /// Decimal places for floating-point coefficients (default 6).
-    pub precision: usize,
-    /// When true, omit the `pair_style` line: the input script sets its own
-    /// (a relaxation's `lj/cut/coul/cut 10.0`), before the include. Only the
-    /// line is the caller's; what the force field says about its pairs stays
-    /// in the include — the `pair_coeff`s, `special_bonds` (unless
-    /// [`skip_special_bonds`](Self::skip_special_bonds)) and `pair_modify mix`
-    /// / `shift`, without which LAMMPS would mix unlike pairs by its own
-    /// default (`geometric` for `lj/cut`) and weight 1-4 pairs by its own
-    /// (`0 0 0`). `pair_modify` needs a pair style, so such an include is
-    /// read after the caller's `pair_style`.
-    pub skip_pair_style: bool,
-    /// When true, omit `special_bonds`: the input script states its own 1-4
-    /// weights. An include that still wrote them would override a
-    /// `special_bonds` read before it (Amber's coul 1-4 = 1/1.2 over the
-    /// input's 0.5) — so a caller that writes its own says so here.
-    pub skip_special_bonds: bool,
-    /// When true, omit the `units` line so the include can follow `units` /
-    /// `atom_style` / `pair_style` in the input (LAMMPS rejects `units` after
-    /// the box exists, and a second `units` is redundant).
-    pub skip_units: bool,
-    /// LAMMPS `units` style for the written include (default `"real"`).
-    pub units: &'static str,
-    /// The `fix cmap` file the include names, as the input script will find
-    /// it — where [`LammpsForcefieldWriter::write_cmap_str`]'s text is saved. Needed
-    /// exactly when the system has CMAP crossterms (default `None`).
-    pub cmap_file: Option<String>,
-}
-
-impl Default for LammpsForcefieldWriteOptions {
-    fn default() -> Self {
-        Self {
-            precision: 6,
-            skip_pair_style: false,
-            skip_special_bonds: false,
-            skip_units: false,
-            units: "real",
-            cmap_file: None,
-        }
-    }
-}
 
 /// The fix id the include gives `fix cmap`.
 const CMAP_FIX_ID: &str = "cmap";
@@ -133,7 +88,7 @@ fn lammps_name(spec: &StyleSpec) -> String {
 /// use molrs::ff::ir::Params;
 /// use molrs::io::lammps::forcefield_writer::lammps_coeff_values;
 ///
-/// let p = Params::from_pairs(&[("k", 450.0), ("r0", 0.9572)]);
+/// let p = Params::from_iter([("k", 450.0), ("r0", 0.9572)]);
 /// assert_eq!(lammps_coeff_values("bond", "harmonic", &p, "real").unwrap(), [450.0, 0.9572]);
 /// assert!(lammps_coeff_values("bond", "fene", &p, "real").is_err());
 /// ```
@@ -393,11 +348,11 @@ impl PairRow<'_> {
 
 /// Label-driven LAMMPS coefficient writer (AMBER/GAFF flavour).
 ///
-/// Holds the system's [`TypeLabels`]. [`ForceFieldWriter::write_str`] emits the `*.ff` include,
-/// [`LammpsForcefieldWriter::write_data_coeffs_str`] the data-file `* Coeffs`
+/// Holds the system's [`TypeLabels`]. [`ForceFieldWriter::write`] writes the `*.ff` include,
+/// [`LammpsForcefieldWriter::write_data_coeffs`] the data-file `* Coeffs`
 /// sections; both write the same labels with the same numbers, each style
-/// through its LAMMPS codec in the process-wide registry, or in the one
-/// [`with_registry`](Self::with_registry) gives.
+/// through its LAMMPS codec in the force field's registry
+/// ([`ForceField::registry`](crate::ff::forcefield::ForceField::registry)).
 ///
 /// # Coefficient writing, not whole-FF serialization
 ///
@@ -455,7 +410,8 @@ impl PairRow<'_> {
 /// dihedral_coeff c3-c3-oh-ho 1 0.060000 3 0.0 # m  k1 periodicity1 phase1 ...
 /// ```
 ///
-/// The file is written in [`LammpsForcefieldWriteOptions::units`] (default `real`).
+/// The file is written in the writer's units
+/// ([`with_units`](LammpsForcefieldWriter::with_units), default `real`).
 /// A force field declared in those units ([`ForceField::units`]) is written
 /// number for number; one declared in another LAMMPS unit style (`real`,
 /// `metal`, `lj`) has every parameter converted by its dimension
@@ -481,22 +437,22 @@ impl PairRow<'_> {
 /// A `drude harmonic` type (molrs's `k·r²` core–shell spring) is written as a
 /// `bond harmonic` type of the same name with `K = k`, `r0 = 0` — LAMMPS's
 /// harmonic bond is the same unhalved `K (r − r0)²` — so its label, which
-/// [`lammps_type_labels`] numbers among the bonds as the data writer does,
+/// [`lammps_type_labels`](crate::io::lammps::lammps_type_labels) numbers among the bonds as the data writer does,
 /// gets its `bond_coeff` / `Bond Coeffs` row. The springs' `alpha` and
 /// `thole` are not LAMMPS bond coefficients: the include lists them in a
 /// comment after the bond section, for the input script's `pair_style
 /// thole` and `fix drude`, which this writer does not write (no LAMMPS form is
 /// registered for `pair thole`). Build the writer's labels with
-/// [`lammps_type_labels`]; [`TypeLabels::from_frame`] leaves the Drude
+/// [`lammps_type_labels`](crate::io::lammps::lammps_type_labels); [`TypeLabels::from_frame`] leaves the Drude
 /// springs out of the bond types.
 ///
 /// # CMAP crossterms (`fix cmap`)
 ///
 /// A `cmaps` block's labels select `cmap charmm` rows the same way, in id
-/// order: [`LammpsForcefieldWriter::write_cmap_str`] writes their grids as the
+/// order: [`LammpsForcefieldWriter::write_cmap`] writes their grids as the
 /// `fix cmap` file (map `t` is crossterm type `t`, the id the data writer
 /// gives the `CMAP` section), and the include names that file
-/// ([`LammpsForcefieldWriteOptions::cmap_file`]) on a
+/// ([`with_cmap_file`](LammpsForcefieldWriter::with_cmap_file)) on a
 /// `fix cmap all cmap <file>` line, with `fix_modify cmap energy yes` so the crossterms count in `pe`. LAMMPS
 /// reads the crossterms with the data file, so the fix must precede
 /// `read_data <data> fix cmap crossterm CMAP` (LAMMPS takes it before the box
@@ -522,44 +478,117 @@ impl PairRow<'_> {
 #[derive(Debug, Clone)]
 pub struct LammpsForcefieldWriter<'a> {
     labels: &'a TypeLabels,
-    options: LammpsForcefieldWriteOptions,
-    registry: RegistryRef,
+    options: Settings,
+}
+
+/// What [`LammpsForcefieldWriter`]'s setters set.
+#[derive(Debug, Clone)]
+struct Settings {
+    precision: usize,
+    skip_pair_style: bool,
+    skip_special_bonds: bool,
+    skip_units: bool,
+    units: &'static str,
+    cmap_file: Option<String>,
 }
 
 impl<'a> LammpsForcefieldWriter<'a> {
-    /// Writer for `labels` with default options (6 decimal places, `real`).
+    /// Writer for `labels`: 6 decimal places, `real` units, every line of
+    /// the include written, no `fix cmap` file.
     pub fn new(labels: &'a TypeLabels) -> Self {
-        Self::with_options(labels, LammpsForcefieldWriteOptions::default())
-    }
-
-    /// Writer for `labels` with explicit options.
-    pub fn with_options(labels: &'a TypeLabels, options: LammpsForcefieldWriteOptions) -> Self {
         Self {
             labels,
-            options,
-            registry: RegistryRef::Global,
+            options: Settings {
+                precision: 6,
+                skip_pair_style: false,
+                skip_special_bonds: false,
+                skip_units: false,
+                units: "real",
+                cmap_file: None,
+            },
         }
     }
 
-    /// Write each style through its codec in `registry` instead of the
-    /// process-wide one.
-    pub fn with_registry(mut self, registry: Arc<Registry>) -> Self {
-        self.registry = RegistryRef::Own(registry);
+    /// Decimal places for floating-point coefficients (default 6).
+    pub fn with_precision(mut self, precision: usize) -> Self {
+        self.options.precision = precision;
         self
     }
 
-    /// Emit data-file `* Coeffs` sections only (no `units` / `*_style` lines).
+    /// The LAMMPS `units` style the file is written in (default `"real"`),
+    /// as [`parse_lammps_units_style`] names it.
+    pub fn with_units(mut self, units: &'static str) -> Self {
+        self.options.units = units;
+        self
+    }
+
+    /// Omit the `pair_style` line (default `false`): the input script sets
+    /// its own (a relaxation's `lj/cut/coul/cut 10.0`), before the include.
+    /// Only the line is the caller's; what the force field says about its
+    /// pairs stays in the include — the `pair_coeff`s, `special_bonds`
+    /// (unless [`with_skip_special_bonds`](Self::with_skip_special_bonds))
+    /// and `pair_modify mix` / `shift`, without which LAMMPS would mix unlike
+    /// pairs by its own default (`geometric` for `lj/cut`) and weight 1-4
+    /// pairs by its own (`0 0 0`). `pair_modify` needs a pair style, so such
+    /// an include is read after the caller's `pair_style`.
+    pub fn with_skip_pair_style(mut self, skip: bool) -> Self {
+        self.options.skip_pair_style = skip;
+        self
+    }
+
+    /// Omit `special_bonds` (default `false`): the input script states its
+    /// own 1-4 weights. An include that still wrote them would override a
+    /// `special_bonds` read before it (Amber's coul 1-4 = 1/1.2 over the
+    /// input's 0.5) — so a caller that writes its own says so here.
+    pub fn with_skip_special_bonds(mut self, skip: bool) -> Self {
+        self.options.skip_special_bonds = skip;
+        self
+    }
+
+    /// Omit the `units` line (default `false`), so the include can follow
+    /// `units` / `atom_style` / `pair_style` in the input (LAMMPS rejects
+    /// `units` after the box exists, and a second `units` is redundant).
+    pub fn with_skip_units(mut self, skip: bool) -> Self {
+        self.options.skip_units = skip;
+        self
+    }
+
+    /// The `fix cmap` file the include names, as the input script will find
+    /// it — where [`write_cmap`](Self::write_cmap) writes. Needed exactly
+    /// when the system has CMAP crossterms (default: none).
+    pub fn with_cmap_file(mut self, file: impl Into<String>) -> Self {
+        self.options.cmap_file = Some(file.into());
+        self
+    }
+
+    /// Write data-file `* Coeffs` sections only (no `units` / `*_style`
+    /// lines) into `sink` — a fragment of a data file, for the caller to
+    /// splice in; nothing is written when it is refused.
     ///
     /// Rows are the labels' 1-based ids in [`TypeLabels`] order, with the same
-    /// numbers, codecs and [`LammpsForcefieldWriteOptions::units`] as
-    /// [`ForceFieldWriter::write_str`]. `Pair Coeffs` holds self pairs only, so
+    /// numbers, codecs and units ([`with_units`](Self::with_units)) as
+    /// [`ForceFieldWriter::write`]. `Pair Coeffs` holds self pairs only, so
     /// a used explicit cross pair is an error here (write it through the
     /// include). A style's cross-term lines (`class2`'s `bb`, `mbt`, …) are
     /// their sections (`BondBond Coeffs`, `MiddleBondTorsion Coeffs`, …).
-    pub fn write_data_coeffs_str(&self, ff: &ForceField) -> Result<String, ForceFieldWriteError> {
+    ///
+    /// # Errors
+    ///
+    /// What the include refuses, a used explicit cross pair, and the sink's
+    /// OS error.
+    pub fn write_data_coeffs<'s>(
+        &self,
+        sink: impl Into<Sink<'s>>,
+        ff: &ForceField,
+    ) -> Result<(), ForceFieldWriteError> {
+        put_text(sink.into(), &self.data_coeffs_text(ff)?)
+    }
+
+    /// The sections [`write_data_coeffs`](Self::write_data_coeffs) writes.
+    fn data_coeffs_text(&self, ff: &ForceField) -> Result<String, ForceFieldWriteError> {
         let units = units_of(ff, self.options.units)?;
-        self.registry.with(|reg| {
-            let ff = &*drude_springs_as_bonds(ff, reg)?;
+        ff.registry().with(|reg| {
+            let ff = &*drude_springs_as_bonds(ff)?;
             refuse_other_categories(ff, reg)?;
             let mut lines: Vec<String> = Vec::new();
             self.write_data_pair_coeffs(&mut lines, ff, reg, &units)?;
@@ -571,19 +600,34 @@ impl<'a> LammpsForcefieldWriter<'a> {
         })
     }
 
-    /// The LAMMPS `fix cmap` file of the `cmaps` labels: the grid of the
-    /// `cmap` row each label names, in label id order, so map `t` is the
-    /// crossterm type `t` the data writer gives the `CMAP` section
-    /// ([`write_lammps_cmap_str`] is the layout). The grid is converted to
-    /// [`LammpsForcefieldWriteOptions::units`] by its dimension, as every coefficient
-    /// is.
+    /// Write the LAMMPS `fix cmap` file of the `cmaps` labels into `sink`:
+    /// the grid of the `cmap` row each label names, in label id order, so map
+    /// `t` is the crossterm type `t` the data writer gives the `CMAP` section;
+    /// the inverse of [`LammpsForcefieldReader::read_cmap`](crate::io::lammps::LammpsForcefieldReader::read_cmap).
+    /// The layout is CHARMM's: a first line with the `UNITS:` tag LAMMPS
+    /// checks, then per map a `# <label>, type <t>` comment and, per φ row, a
+    /// `# <φ>` comment over its values, five a line, each with
+    /// [`with_precision`](Self::with_precision) decimals as CHARMM's `%13.6f`
+    /// is. The grid is converted to the writer's units
+    /// ([`with_units`](Self::with_units)) by its dimension, as every
+    /// coefficient is.
     ///
     /// # Errors
     ///
     /// No `cmaps` label, a label with no cmap type, a style whose LAMMPS form
     /// is not `fix cmap`, a row without a `grid`, a grid that is not 24×24,
-    /// or more than six maps (LAMMPS's `CMAPDIM`, `CMAPMAX`).
-    pub fn write_cmap_str(&self, ff: &ForceField) -> Result<String, ForceFieldWriteError> {
+    /// or more than six maps (LAMMPS's `CMAPDIM`, `CMAPMAX`); the sink's OS
+    /// error.
+    pub fn write_cmap<'s>(
+        &self,
+        sink: impl Into<Sink<'s>>,
+        ff: &ForceField,
+    ) -> Result<(), ForceFieldWriteError> {
+        put_text(sink.into(), &self.cmap_text(ff)?)
+    }
+
+    /// The file [`write_cmap`](Self::write_cmap) writes.
+    fn cmap_text(&self, ff: &ForceField) -> Result<String, ForceFieldWriteError> {
         let units = units_of(ff, self.options.units)?;
         let rows = self.resolve::<CmapType>(ff)?;
         if rows.is_empty() {
@@ -599,7 +643,7 @@ impl<'a> LammpsForcefieldWriter<'a> {
         let mut maps = Vec::with_capacity(rows.len());
         for r in &rows {
             let what = || format!("cmaps label `{}`", r.label);
-            let dim = self.registry.with(|reg| {
+            let dim = ff.registry().with(|reg| {
                 let (spec, _) =
                     codec_of(reg, "cmap", r.style.name()).map_err(|e| e.context(what()))?;
                 if lammps_name(spec) != "cmap" {
@@ -615,7 +659,8 @@ impl<'a> LammpsForcefieldWriter<'a> {
             })?;
             let grid =
                 r.ty.params
-                    .get_array("grid")
+                    .get("grid")
+                    .and_then(|v| v.as_array())
                     .ok_or_else(|| format!("{}: no `grid`", what()))?;
             if grid.shape() != [LAMMPS_CMAP_DIM, LAMMPS_CMAP_DIM] {
                 return Err(format!(
@@ -630,7 +675,7 @@ impl<'a> LammpsForcefieldWriter<'a> {
         }
         let titled: Vec<(&str, &ArrayD<f64>)> =
             maps.iter().map(|(label, g)| (label.as_str(), g)).collect();
-        write_lammps_cmap_str(&titled, self.options.units, self.options.precision)
+        cmap_file_text(&titled, self.options.units, self.options.precision)
     }
 
     /// The include's `fix cmap` lines when the system has CMAP crossterms,
@@ -644,8 +689,8 @@ impl<'a> LammpsForcefieldWriter<'a> {
             return Ok(());
         }
         let file = self.options.cmap_file.as_deref().ok_or(
-            "the system has CMAP crossterms: set LammpsForcefieldWriteOptions::cmap_file to the file \
-             write_cmap_str's text is saved as",
+            "the system has CMAP crossterms: name the file LammpsForcefieldWriter::write_cmap \
+             writes with LammpsForcefieldWriter::with_cmap_file",
         )?;
         if file.is_empty() || file.chars().any(char::is_whitespace) {
             return Err(
@@ -1151,8 +1196,9 @@ fn push_pair_header(lines: &mut Vec<String>, style_line: Option<String>, modify:
     }
 }
 
-impl ForceFieldWriter for LammpsForcefieldWriter<'_> {
-    fn write_str(&self, ff: &ForceField) -> Result<String, ForceFieldWriteError> {
+impl LammpsForcefieldWriter<'_> {
+    /// The file's text: what [`write`](ForceFieldWriter::write) puts into its sink.
+    fn text(&self, ff: &ForceField) -> Result<String, ForceFieldWriteError> {
         let units = units_of(ff, self.options.units)?;
         let mut lines: Vec<String> = Vec::new();
         lines.push("# LAMMPS force field generated by molrs\n".to_owned());
@@ -1180,8 +1226,8 @@ impl ForceFieldWriter for LammpsForcefieldWriter<'_> {
             lines.push("\n".to_owned());
         }
 
-        self.registry.with(|reg| {
-            let springs = drude_springs_as_bonds(ff, reg)?;
+        ff.registry().with(|reg| {
+            let springs = drude_springs_as_bonds(ff)?;
             refuse_other_categories(&springs, reg)?;
             self.write_pair_section(&mut lines, &springs, reg, &units)?;
             self.write_section::<BondType>(&mut lines, &springs, reg, &units)?;
@@ -1198,6 +1244,16 @@ impl ForceFieldWriter for LammpsForcefieldWriter<'_> {
             self.write_section::<ImproperType>(&mut lines, ff, reg, &units)
         })?;
         Ok(lines.concat())
+    }
+}
+
+impl ForceFieldWriter for LammpsForcefieldWriter<'_> {
+    fn write<'a>(
+        &self,
+        sink: impl Into<Sink<'a>>,
+        ff: &ForceField,
+    ) -> Result<(), ForceFieldWriteError> {
+        put_text(sink.into(), &self.text(ff)?)
     }
 }
 
@@ -1298,109 +1354,7 @@ pub fn refuse_pair_overrides(frame: &molrs::core::Frame) -> Result<(), String> {
     ))
 }
 
-/// The type labels of `frame` as its data file numbers them
-/// ([`lammps_type_labels`]: a `drudes` row is a bond), its `pairs` block
-/// checked by [`refuse_pair_overrides`] when `check_pairs`.
-fn labels_of(
-    frame: &molrs::core::Frame,
-    check_pairs: bool,
-) -> Result<TypeLabels, ForceFieldWriteError> {
-    if check_pairs {
-        refuse_pair_overrides(frame)?;
-    }
-    Ok(lammps_type_labels(frame)?)
-}
-
-/// Write `ff` as the LAMMPS force-field include (`*.ff`) of the typed
-/// `frame`: its type labels number the rows. The inverse of
-/// [`read_lammps_forcefield`](crate::io::read_lammps_forcefield).
-///
-/// # Errors
-///
-/// A per-pair override column on `frame` ([`refuse_pair_overrides`]), a
-/// malformed type-label inventory, every error of
-/// [`ForceFieldWriter::write_str`] on [`LammpsForcefieldWriter`], and an
-/// unwritable file.
-pub fn write_lammps_forcefield(
-    path: impl AsRef<std::path::Path>,
-    ff: &ForceField,
-    frame: &molrs::core::Frame,
-    options: LammpsForcefieldWriteOptions,
-) -> Result<(), ForceFieldWriteError> {
-    let text = write_lammps_forcefield_str(ff, frame, options)?;
-    crate::io::writer::write_forcefield_text(path.as_ref(), &text)
-}
-
-/// [`write_lammps_forcefield`] to a string.
-///
-/// # Errors
-///
-/// As [`write_lammps_forcefield`], less the file.
-pub fn write_lammps_forcefield_str(
-    ff: &ForceField,
-    frame: &molrs::core::Frame,
-    options: LammpsForcefieldWriteOptions,
-) -> Result<String, ForceFieldWriteError> {
-    let labels = labels_of(frame, true)?;
-    LammpsForcefieldWriter::with_options(&labels, options).write_str(ff)
-}
-
-/// The `* Coeffs` sections of a LAMMPS data file for `ff` and the typed
-/// `frame` ([`LammpsForcefieldWriter::write_data_coeffs_str`]); the inverse
-/// of [`read_lammps_data_coeffs_str`](crate::io::read_lammps_data_coeffs_str)
-/// once spliced into a data file. A fragment of a data file, it has no path
-/// door.
-///
-/// # Errors
-///
-/// As [`write_lammps_forcefield_str`], and a used explicit cross pair.
-pub fn write_lammps_data_coeffs_str(
-    ff: &ForceField,
-    frame: &molrs::core::Frame,
-    options: LammpsForcefieldWriteOptions,
-) -> Result<String, ForceFieldWriteError> {
-    let labels = labels_of(frame, true)?;
-    LammpsForcefieldWriter::with_options(&labels, options).write_data_coeffs_str(ff)
-}
-
-/// Write the LAMMPS `fix cmap` file of `ff` and the typed `frame`'s `cmaps`
-/// labels ([`LammpsForcefieldWriter::write_cmap_str`]), the file
-/// [`LammpsForcefieldWriteOptions::cmap_file`] names; the inverse of
-/// [`read_lammps_cmap_forcefield`](crate::io::read_lammps_cmap_forcefield).
-///
-/// # Errors
-///
-/// A malformed type-label inventory, every error of
-/// [`LammpsForcefieldWriter::write_cmap_str`], and an unwritable file.
-pub fn write_lammps_cmap_forcefield(
-    path: impl AsRef<std::path::Path>,
-    ff: &ForceField,
-    frame: &molrs::core::Frame,
-    options: LammpsForcefieldWriteOptions,
-) -> Result<(), ForceFieldWriteError> {
-    let labels = labels_of(frame, false)?;
-    let text = LammpsForcefieldWriter::with_options(&labels, options).write_cmap_str(ff)?;
-    crate::io::writer::write_forcefield_text(path.as_ref(), &text)
-}
-
-// ── helpers ──────────────────────────────────────────────────────────────────
-
-/// A LAMMPS `fix cmap` file of `maps` (`(title, grid)`, each grid N×N,
-/// φ-major), in CHARMM's layout: a first line with the `UNITS:` tag LAMMPS
-/// checks, then per map a `# <title>, type <t>` comment and, per φ row, a
-/// `# <φ>` comment over its N values, five a line, each `precision` decimals
-/// wide as CHARMM's `%13.6f` is — so a map of six-decimal values (CHARMM's
-/// own files) is written back as the very lines it was read from (less the
-/// blank CHARMM ends a short line with).
-///
-/// [`read_lammps_cmap_str`](crate::io::lammps::forcefield_reader::read_lammps_cmap_str)
-/// reads it back; a value survives bit for bit once `precision` decimals
-/// reach past its 17th significant digit.
-///
-/// # Errors
-///
-/// A grid that is not square, or a title holding a line break.
-pub fn write_lammps_cmap_str(
+pub(crate) fn cmap_file_text(
     maps: &[(&str, &ArrayD<f64>)],
     units: &str,
     precision: usize,
@@ -1441,6 +1395,27 @@ fn fmt_num(v: f64, precision: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::io::writer::WrittenText;
+
+    /// What `writer` writes as a data file's `* Coeffs` sections.
+    fn data_coeffs(
+        writer: &LammpsForcefieldWriter<'_>,
+        ff: &ForceField,
+    ) -> Result<String, ForceFieldWriteError> {
+        let mut out = Vec::new();
+        writer.write_data_coeffs(&mut out, ff)?;
+        Ok(String::from_utf8(out).expect("the writer writes UTF-8"))
+    }
+
+    /// What `writer` writes as the `fix cmap` file.
+    fn cmap_file(
+        writer: &LammpsForcefieldWriter<'_>,
+        ff: &ForceField,
+    ) -> Result<String, ForceFieldWriteError> {
+        let mut out = Vec::new();
+        writer.write_cmap(&mut out, ff)?;
+        Ok(String::from_utf8(out).expect("the writer writes UTF-8"))
+    }
     use crate::io::{lammps::LammpsForcefieldReader, reader::ForceFieldReader};
 
     /// Same GAFF2-shaped mini include the reader tests pin.
@@ -1482,20 +1457,20 @@ dihedral_coeff c3-c3-oh-ho 1 0.060000 3 0.000000
             .def_type(
                 "c3-c3",
                 &["c3", "c3"],
-                Params::from_pairs(&[("k", 457.78), ("r0", 1.5354)]),
+                Params::from_iter([("k", 457.78), ("r0", 1.5354)]),
             )
             .unwrap();
         let labels = labels_of(&[("atoms", &["c3", "c3"]), ("bonds", &["c3-c3"])]);
-        let text = LammpsForcefieldWriter::new(&labels).write_str(&ff).unwrap();
+        let text = LammpsForcefieldWriter::new(&labels).written(&ff).unwrap();
         assert!(text.contains("bond_coeff c3-c3"), "{text}");
         assert!(!text.contains("pair_coeff"), "{text}");
     }
 
     #[test]
     fn writes_lammps_units_inverse_of_reader() {
-        let ff = LammpsForcefieldReader::new().read_str(MINI).unwrap();
+        let ff = LammpsForcefieldReader::new().read(MINI.as_bytes()).unwrap();
         let labels = mini_labels();
-        let text = LammpsForcefieldWriter::new(&labels).write_str(&ff).unwrap();
+        let text = LammpsForcefieldWriter::new(&labels).written(&ff).unwrap();
 
         // Combined pair style (not hybrid) so mixing stays intact.
         assert!(
@@ -1530,55 +1505,80 @@ dihedral_coeff c3-c3-oh-ho 1 0.060000 3 0.000000
 
     #[test]
     fn round_trip_preserves_molrs_params() {
-        let ff = LammpsForcefieldReader::new().read_str(MINI).unwrap();
+        let ff = LammpsForcefieldReader::new().read(MINI.as_bytes()).unwrap();
         let labels = mini_labels();
-        let text = LammpsForcefieldWriter::new(&labels).write_str(&ff).unwrap();
-        let ff2 = LammpsForcefieldReader::new().read_str(&text).unwrap();
+        let text = LammpsForcefieldWriter::new(&labels).written(&ff).unwrap();
+        let ff2 = LammpsForcefieldReader::new().read(text.as_bytes()).unwrap();
 
         let bt = ff2
             .get_style("bond", "harmonic")
             .unwrap()
             .get_bondtype("c3", "c3")
             .unwrap();
-        assert_eq!(bt.params.get("k"), Some(228.89));
-        assert!((bt.params.get("r0").unwrap() - 1.5354).abs() < 1e-9);
+        assert_eq!(bt.params.get("k").and_then(|v| v.as_num()), Some(228.89));
+        assert!((bt.params.get("r0").and_then(|v| v.as_num()).unwrap() - 1.5354).abs() < 1e-9);
 
         let angle = ff2.get_style("angle", "harmonic").unwrap();
         let StyleDefs::Angle(atypes) = angle.defs() else {
             panic!("not angle");
         };
         let at = &atypes[0];
-        assert_eq!(at.params.get("k"), Some(76.79));
-        assert_eq!(at.params.get("theta0"), Some(109.66));
+        assert_eq!(at.params.get("k").and_then(|v| v.as_num()), Some(76.79));
+        assert_eq!(
+            at.params.get("theta0").and_then(|v| v.as_num()),
+            Some(109.66)
+        );
 
         let dih = ff2.get_style("dihedral", "periodic").unwrap();
         let StyleDefs::Dihedral(dtypes) = dih.defs() else {
             panic!("not dihedral");
         };
         let dt = &dtypes[0];
-        assert!((dt.params.get("k1").unwrap() - 0.06).abs() < 1e-12);
-        assert!((dt.params.get("periodicity1").unwrap() - 3.0).abs() < 1e-12);
-        assert!((dt.params.get("phase1").unwrap() - 0.0).abs() < 1e-12);
+        assert!((dt.params.get("k1").and_then(|v| v.as_num()).unwrap() - 0.06).abs() < 1e-12);
+        assert!(
+            (dt.params
+                .get("periodicity1")
+                .and_then(|v| v.as_num())
+                .unwrap()
+                - 3.0)
+                .abs()
+                < 1e-12
+        );
+        assert!((dt.params.get("phase1").and_then(|v| v.as_num()).unwrap() - 0.0).abs() < 1e-12);
 
         let lj = ff2.get_style("pair", "lj/cut").unwrap();
         let pt = lj.get_pairtype("c3", None).unwrap();
-        assert!((pt.params.get("epsilon").unwrap() - 0.1078).abs() < 1e-9);
-        assert!((pt.params.get("sigma").unwrap() - 3.39771).abs() < 1e-9);
-        assert!((lj.params().get("cutoff").unwrap_or(0.0) - 10.0).abs() < 1e-12);
+        assert!((pt.params.get("epsilon").and_then(|v| v.as_num()).unwrap() - 0.1078).abs() < 1e-9);
+        assert!((pt.params.get("sigma").and_then(|v| v.as_num()).unwrap() - 3.39771).abs() < 1e-9);
+        assert!(
+            (lj.params()
+                .get("cutoff")
+                .and_then(|v| v.as_num())
+                .unwrap_or(0.0)
+                - 10.0)
+                .abs()
+                < 1e-12
+        );
         let coul = ff2.get_style("pair", "coul/cut").unwrap();
-        assert!((coul.params().get("cutoff").unwrap_or(0.0) - 10.0).abs() < 1e-12);
+        assert!(
+            (coul
+                .params()
+                .get("cutoff")
+                .and_then(|v| v.as_num())
+                .unwrap_or(0.0)
+                - 10.0)
+                .abs()
+                < 1e-12
+        );
     }
 
     #[test]
     fn skip_pair_style_omits_header() {
-        let ff = LammpsForcefieldReader::new().read_str(MINI).unwrap();
-        let opts = LammpsForcefieldWriteOptions {
-            skip_pair_style: true,
-            ..Default::default()
-        };
+        let ff = LammpsForcefieldReader::new().read(MINI.as_bytes()).unwrap();
         let labels = mini_labels();
-        let text = LammpsForcefieldWriter::with_options(&labels, opts)
-            .write_str(&ff)
+        let text = LammpsForcefieldWriter::new(&labels)
+            .with_skip_pair_style(true)
+            .written(&ff)
             .unwrap();
         assert!(!text.contains("pair_style"), "no pair_style:\n{text}");
         // The caller owns the `pair_style` line only: the force field's 1-4
@@ -1598,16 +1598,13 @@ dihedral_coeff c3-c3-oh-ho 1 0.060000 3 0.000000
     /// include must not override them (Amber 1/1.2 over an input's 0.5).
     #[test]
     fn skip_special_bonds_omits_only_special_bonds() {
-        let ff = LammpsForcefieldReader::new().read_str(MINI).unwrap();
+        let ff = LammpsForcefieldReader::new().read(MINI.as_bytes()).unwrap();
         let labels = mini_labels();
         for skip_pair_style in [false, true] {
-            let opts = LammpsForcefieldWriteOptions {
-                skip_pair_style,
-                skip_special_bonds: true,
-                ..Default::default()
-            };
-            let text = LammpsForcefieldWriter::with_options(&labels, opts)
-                .write_str(&ff)
+            let text = LammpsForcefieldWriter::new(&labels)
+                .with_skip_pair_style(skip_pair_style)
+                .with_skip_special_bonds(true)
+                .written(&ff)
                 .unwrap();
             assert!(!text.contains("special_bonds"), "{text}");
             assert_eq!(text.contains("pair_style"), !skip_pair_style, "{text}");
@@ -1617,9 +1614,9 @@ dihedral_coeff c3-c3-oh-ho 1 0.060000 3 0.000000
 
     #[test]
     fn default_write_keeps_special_bonds() {
-        let ff = LammpsForcefieldReader::new().read_str(MINI).unwrap();
+        let ff = LammpsForcefieldReader::new().read(MINI.as_bytes()).unwrap();
         let labels = mini_labels();
-        let text = LammpsForcefieldWriter::new(&labels).write_str(&ff).unwrap();
+        let text = LammpsForcefieldWriter::new(&labels).written(&ff).unwrap();
         assert!(
             text.contains("special_bonds lj"),
             "full include declares 1-4:\n{text}"
@@ -1628,15 +1625,12 @@ dihedral_coeff c3-c3-oh-ho 1 0.060000 3 0.000000
 
     #[test]
     fn skip_units_omits_units_line() {
-        let ff = LammpsForcefieldReader::new().read_str(MINI).unwrap();
-        let opts = LammpsForcefieldWriteOptions {
-            skip_units: true,
-            skip_pair_style: true,
-            ..Default::default()
-        };
+        let ff = LammpsForcefieldReader::new().read(MINI.as_bytes()).unwrap();
         let labels = mini_labels();
-        let text = LammpsForcefieldWriter::with_options(&labels, opts)
-            .write_str(&ff)
+        let text = LammpsForcefieldWriter::new(&labels)
+            .with_skip_units(true)
+            .with_skip_pair_style(true)
+            .written(&ff)
             .unwrap();
         assert!(
             !text.contains("units "),
@@ -1659,12 +1653,12 @@ dihedral_style fourier
 dihedral_coeff h1-c3-os-c3 1 0.337000 3 0.000000
 dihedral_coeff c3-os-c3-h1 1 0.337000 3 0.000000
 "#;
-        let ff = LammpsForcefieldReader::new().read_str(SRC).unwrap();
+        let ff = LammpsForcefieldReader::new().read(SRC.as_bytes()).unwrap();
         let labels = labels_of(&[
             ("atoms", &["c3"]),
             ("dihedrals", &["h1-c3-os-c3", "c3-os-c3-h1"]),
         ]);
-        let text = LammpsForcefieldWriter::new(&labels).write_str(&ff).unwrap();
+        let text = LammpsForcefieldWriter::new(&labels).written(&ff).unwrap();
         assert_eq!(
             lines_starting_with(&text, "dihedral_coeff"),
             vec![
@@ -1677,18 +1671,18 @@ dihedral_coeff c3-os-c3-h1 1 0.337000 3 0.000000
 
     #[test]
     fn writes_units_real_line_by_default() {
-        let ff = LammpsForcefieldReader::new().read_str(MINI).unwrap();
+        let ff = LammpsForcefieldReader::new().read(MINI.as_bytes()).unwrap();
         let labels = mini_labels();
-        let text = LammpsForcefieldWriter::new(&labels).write_str(&ff).unwrap();
+        let text = LammpsForcefieldWriter::new(&labels).written(&ff).unwrap();
         assert!(text.contains("units real\n"), "default units real:\n{text}");
     }
 
     #[test]
     fn write_data_coeffs_matches_command_form_numbers() {
-        let ff = LammpsForcefieldReader::new().read_str(MINI).unwrap();
+        let ff = LammpsForcefieldReader::new().read(MINI.as_bytes()).unwrap();
         let labels = mini_labels();
         let writer = LammpsForcefieldWriter::new(&labels);
-        let data = writer.write_data_coeffs_str(&ff).unwrap();
+        let data = data_coeffs(&writer, &ff).unwrap();
         assert!(
             !data.contains("pair_style") && !data.contains("units "),
             "sections only:\n{data}"
@@ -1704,7 +1698,7 @@ dihedral_coeff c3-os-c3-h1 1 0.337000 3 0.000000
             "bond K=k/2:\n{data}"
         );
 
-        let cmd = writer.write_str(&ff).unwrap();
+        let cmd = writer.written(&ff).unwrap();
         // Same bond K appears in both layouts.
         assert!(cmd.contains("bond_coeff c3-c3 228.890000 1.535400"));
         assert!(data.contains("228.890000 1.535400"));
@@ -1746,16 +1740,14 @@ dihedral_style fourier
 dihedral_coeff h1-c3-c3-os 2 0.250000 1 0.000000 0.000000 3 0.000000
 dihedral_coeff os-c3-c3-h1 2 0.250000 1 0.000000 0.000000 3 0.000000
 "#;
-        let ff = LammpsForcefieldReader::new().read_str(SRC).unwrap();
+        let ff = LammpsForcefieldReader::new().read(SRC.as_bytes()).unwrap();
         let labels = labels_of(&[
             ("atoms", &["c3"]),
             ("bonds", &["c3-h1", "h1-c3"]),
             ("angles", &["c3-c3-h1", "h1-c3-c3"]),
             ("dihedrals", &["h1-c3-c3-os", "os-c3-c3-h1"]),
         ]);
-        let data = LammpsForcefieldWriter::new(&labels)
-            .write_data_coeffs_str(&ff)
-            .unwrap();
+        let data = data_coeffs(&LammpsForcefieldWriter::new(&labels), &ff).unwrap();
         assert_eq!(coeff_ids(&data, "Bond Coeffs"), vec![1, 2], "{data}");
         assert_eq!(coeff_ids(&data, "Angle Coeffs"), vec![1, 2], "{data}");
         assert_eq!(coeff_ids(&data, "Dihedral Coeffs"), vec![1, 2], "{data}");
@@ -1770,11 +1762,9 @@ pair_coeff c3 c3 0.107800 3.397710
 "#;
         // The dihedral label's head `c3` is an atom label with a pair type;
         // the dihedral must still resolve against dihedral types only.
-        let ff = LammpsForcefieldReader::new().read_str(SRC).unwrap();
+        let ff = LammpsForcefieldReader::new().read(SRC.as_bytes()).unwrap();
         let labels = labels_of(&[("atoms", &["c3"]), ("dihedrals", &["c3-os-c3-h1"])]);
-        let err = LammpsForcefieldWriter::new(&labels)
-            .write_data_coeffs_str(&ff)
-            .unwrap_err();
+        let err = data_coeffs(&LammpsForcefieldWriter::new(&labels), &ff).unwrap_err();
         assert!(
             err.contains("c3-os-c3-h1"),
             "unmapped dihedral must not resolve as atom type c3: {err}"
@@ -1786,15 +1776,12 @@ pair_coeff c3 c3 0.107800 3.397710
     /// force field, and writing that back as `metal` is the identity.
     #[test]
     fn metal_write_converts_energy_via_lj_hub() {
-        let ff = LammpsForcefieldReader::new().read_str(MINI).unwrap();
+        let ff = LammpsForcefieldReader::new().read(MINI.as_bytes()).unwrap();
         assert_eq!(ff.units(), "real");
-        let opts = || LammpsForcefieldWriteOptions {
-            units: "metal",
-            ..Default::default()
-        };
         let labels = mini_labels();
-        let text = LammpsForcefieldWriter::with_options(&labels, opts())
-            .write_str(&ff)
+        let text = LammpsForcefieldWriter::new(&labels)
+            .with_units("metal")
+            .written(&ff)
             .unwrap();
         assert!(text.contains("units metal\n"), "metal header:\n{text}");
 
@@ -1812,20 +1799,21 @@ pair_coeff c3 c3 0.107800 3.397710
 
         // The metal file reads as a metal force field, number for number, and
         // writes back unchanged.
-        let ff2 = LammpsForcefieldReader::new().read_str(&text).unwrap();
+        let ff2 = LammpsForcefieldReader::new().read(text.as_bytes()).unwrap();
         assert_eq!(ff2.units(), "metal");
-        let again = LammpsForcefieldWriter::with_options(&labels, opts())
-            .write_str(&ff2)
+        let again = LammpsForcefieldWriter::new(&labels)
+            .with_units("metal")
+            .written(&ff2)
             .unwrap();
         assert_eq!(again, text);
     }
 
     #[test]
     fn atom_type_filter_restricts_pair_coeffs() {
-        let ff = LammpsForcefieldReader::new().read_str(MINI).unwrap();
+        let ff = LammpsForcefieldReader::new().read(MINI.as_bytes()).unwrap();
         // Only `c3` is used; `oh` is a ForceField type nobody labels.
         let labels = labels_of(&[("atoms", &["c3"])]);
-        let text = LammpsForcefieldWriter::new(&labels).write_str(&ff).unwrap();
+        let text = LammpsForcefieldWriter::new(&labels).written(&ff).unwrap();
         assert!(text.contains("pair_coeff c3 c3"));
         assert!(
             !text.contains("pair_coeff oh oh"),
@@ -1855,6 +1843,7 @@ pair_coeff c3 c3 0.107800 3.397710
                     types.iter().map(|t| t.to_string()).collect::<Vec<String>>(),
                 )
                 .unwrap(),
+                None,
             )
             .unwrap();
         block
@@ -1870,19 +1859,19 @@ pair_coeff c3 c3 0.107800 3.397710
     }
 
     fn lj(eps: f64, sigma: f64) -> Params {
-        Params::from_pairs(&[("epsilon", eps), ("sigma", sigma)])
+        Params::from_iter([("epsilon", eps), ("sigma", sigma)])
     }
 
     /// Harmonic bond: molrs's `k` is LAMMPS's `K`.
     fn bond(k: f64, r0: f64) -> Params {
-        Params::from_pairs(&[("k", k), ("r0", r0)])
+        Params::from_iter([("k", k), ("r0", r0)])
     }
 
     /// Split `lj/cut` (cutoff 9) + `coul/cut` (cutoff 10) with hand-written
     /// ε/σ for `c3`, `hc` and `oh`, and harmonic bonds `c3-hc`, `c3-oh`.
     fn split_pair_ff() -> ForceField {
         let mut ff = ForceField::new("hand");
-        ff.def_style("pair", "lj/cut", Params::from_pairs(&[("cutoff", 9.0)]))
+        ff.def_style("pair", "lj/cut", Params::from_iter([("cutoff", 9.0)]))
             .unwrap()
             .def_type("c3", &["c3"], lj(0.1078, 3.39771))
             .unwrap()
@@ -1890,7 +1879,7 @@ pair_coeff c3 c3 0.107800 3.397710
             .unwrap()
             .def_type("oh", &["oh"], lj(0.093, 3.242871))
             .unwrap();
-        ff.def_style("pair", "coul/cut", Params::from_pairs(&[("cutoff", 10.0)]))
+        ff.def_style("pair", "coul/cut", Params::from_iter([("cutoff", 10.0)]))
             .unwrap();
         ff.def_style("bond", "harmonic", Params::new())
             .unwrap()
@@ -1925,9 +1914,9 @@ pair_coeff c3 c3 0.107800 3.397710
     /// `lj/cut` (cutoff 9) with `c3` / `hc` self rows and, when given, the
     /// style-level string param `mixing`.
     fn lj_only_ff(mixing: Option<&str>) -> ForceField {
-        let mut params = Params::from_pairs(&[("cutoff", 9.0)]);
+        let mut params = Params::from_iter([("cutoff", 9.0)]);
         if let Some(rule) = mixing {
-            params.set_str("mixing", rule);
+            params.set("mixing", rule);
         }
         let mut ff = ForceField::new("hand");
         ff.def_style("pair", "lj/cut", params)
@@ -1943,7 +1932,7 @@ pair_coeff c3 c3 0.107800 3.397710
     /// the writer recombines into `lj/cut/coul/cut`.
     fn split_pair_ff_mixing(rule: &str) -> ForceField {
         let mut ff = lj_only_ff(Some(rule));
-        ff.def_style("pair", "coul/cut", Params::from_pairs(&[("cutoff", 10.0)]))
+        ff.def_style("pair", "coul/cut", Params::from_iter([("cutoff", 10.0)]))
             .unwrap();
         ff
     }
@@ -1955,7 +1944,7 @@ pair_coeff c3 c3 0.107800 3.397710
     fn combined_undeclared_lj_cut_writes_pair_modify_mix_arithmetic() {
         let ff = split_pair_ff();
         let labels = labels_of(&[("atoms", &["c3", "hc"])]);
-        let text = LammpsForcefieldWriter::new(&labels).write_str(&ff).unwrap();
+        let text = LammpsForcefieldWriter::new(&labels).written(&ff).unwrap();
         assert_eq!(
             lines_starting_with(&text, "pair_modify"),
             vec!["pair_modify mix arithmetic".to_owned()],
@@ -1968,7 +1957,7 @@ pair_coeff c3 c3 0.107800 3.397710
     fn single_undeclared_lj_cut_writes_pair_modify_mix_arithmetic() {
         let ff = lj_only_ff(None);
         let labels = labels_of(&[("atoms", &["c3", "hc"])]);
-        let text = LammpsForcefieldWriter::new(&labels).write_str(&ff).unwrap();
+        let text = LammpsForcefieldWriter::new(&labels).written(&ff).unwrap();
         assert_eq!(
             lines_starting_with(&text, "pair_modify"),
             vec!["pair_modify mix arithmetic".to_owned()],
@@ -1982,16 +1971,16 @@ pair_coeff c3 c3 0.107800 3.397710
     #[test]
     fn a_pair_hybrid_writes_each_sub_style_mixing_rule() {
         let mut ff = lj_only_ff(None);
-        ff.def_style("pair", "buck", Params::from_pairs(&[("cutoff", 9.0)]))
+        ff.def_style("pair", "buck", Params::from_iter([("cutoff", 9.0)]))
             .unwrap()
             .def_type(
                 "oh",
                 &["oh"],
-                Params::from_pairs(&[("a", 1000.0), ("rho", 0.3), ("c", 10.0)]),
+                Params::from_iter([("a", 1000.0), ("rho", 0.3), ("c", 10.0)]),
             )
             .unwrap();
         let labels = labels_of(&[("atoms", &["c3", "oh"])]);
-        let text = LammpsForcefieldWriter::new(&labels).write_str(&ff).unwrap();
+        let text = LammpsForcefieldWriter::new(&labels).written(&ff).unwrap();
         assert!(text.contains("pair_style hybrid lj/cut"), "{text}");
         assert_eq!(
             lines_starting_with(&text, "pair_modify"),
@@ -2008,7 +1997,7 @@ pair_coeff c3 c3 0.107800 3.397710
             split_pair_ff_mixing("geometric"),
             lj_only_ff(Some("geometric")),
         ] {
-            let text = LammpsForcefieldWriter::new(&labels).write_str(&ff).unwrap();
+            let text = LammpsForcefieldWriter::new(&labels).written(&ff).unwrap();
             assert_eq!(
                 lines_starting_with(&text, "pair_modify"),
                 vec!["pair_modify mix geometric".to_owned()],
@@ -2021,7 +2010,7 @@ pair_coeff c3 c3 0.107800 3.397710
     fn label_writer_skips_unused_forcefield_types_in_include() {
         let ff = split_pair_ff();
         let labels = labels_of(&[("atoms", &["c3", "hc", "hc"]), ("bonds", &["c3-hc"])]);
-        let text = LammpsForcefieldWriter::new(&labels).write_str(&ff).unwrap();
+        let text = LammpsForcefieldWriter::new(&labels).written(&ff).unwrap();
         assert!(!text.contains("pair_coeff oh"), "unused oh:\n{text}");
         assert!(!text.contains("c3-oh"), "unused c3-oh:\n{text}");
         assert!(text.contains("pair_coeff c3 c3"), "{text}");
@@ -2032,9 +2021,7 @@ pair_coeff c3 c3 0.107800 3.397710
     fn label_writer_skips_unused_forcefield_types_in_data_coeffs() {
         let ff = split_pair_ff();
         let labels = labels_of(&[("atoms", &["c3", "hc", "hc"]), ("bonds", &["c3-hc"])]);
-        let data = LammpsForcefieldWriter::new(&labels)
-            .write_data_coeffs_str(&ff)
-            .unwrap();
+        let data = data_coeffs(&LammpsForcefieldWriter::new(&labels), &ff).unwrap();
         assert_eq!(
             data_section_rows(&data, "Pair Coeffs"),
             vec!["1 0.107800 3.397710", "2 0.015700 2.649530"],
@@ -2052,7 +2039,7 @@ pair_coeff c3 c3 0.107800 3.397710
         let ff = split_pair_ff();
         let labels = labels_of(&[("atoms", &["c3", "hc"]), ("bonds", &["c3-n"])]);
         let err = LammpsForcefieldWriter::new(&labels)
-            .write_str(&ff)
+            .written(&ff)
             .unwrap_err();
         assert!(err.contains("bonds"), "names the block: {err}");
         assert!(err.contains("c3-n"), "names the label: {err}");
@@ -2062,9 +2049,7 @@ pair_coeff c3 c3 0.107800 3.397710
     fn label_writer_missing_atom_label_in_data_coeffs_is_err_naming_block_and_label() {
         let ff = split_pair_ff();
         let labels = labels_of(&[("atoms", &["c3", "os"])]);
-        let err = LammpsForcefieldWriter::new(&labels)
-            .write_data_coeffs_str(&ff)
-            .unwrap_err();
+        let err = data_coeffs(&LammpsForcefieldWriter::new(&labels), &ff).unwrap_err();
         assert!(err.contains("atoms"), "names the block: {err}");
         assert!(err.contains("os"), "names the label: {err}");
     }
@@ -2078,7 +2063,7 @@ pair_coeff c3 c3 0.107800 3.397710
             .def_type(
                 "c3-n-c-o",
                 &["c3", "n", "c", "o"],
-                Params::from_pairs(&[("k", 2.2), ("chi0", 180.0)]),
+                Params::from_iter([("k", 2.2), ("chi0", 180.0)]),
             )
             .unwrap();
         ff
@@ -2088,7 +2073,7 @@ pair_coeff c3 c3 0.107800 3.397710
     fn label_writer_matches_improper_label_exactly() {
         let ff = improper_ff();
         let labels = labels_of(&[("impropers", &["c3-n-c-o"])]);
-        let text = LammpsForcefieldWriter::new(&labels).write_str(&ff).unwrap();
+        let text = LammpsForcefieldWriter::new(&labels).written(&ff).unwrap();
         assert_eq!(
             lines_starting_with(&text, "improper_coeff"),
             vec!["improper_coeff c3-n-c-o 2.200000 180.000000"],
@@ -2101,7 +2086,7 @@ pair_coeff c3 c3 0.107800 3.397710
         let ff = improper_ff();
         let labels = labels_of(&[("impropers", &["o-c-n-c3"])]);
         let err = LammpsForcefieldWriter::new(&labels)
-            .write_str(&ff)
+            .written(&ff)
             .unwrap_err();
         assert!(err.contains("impropers"), "names the block: {err}");
         assert!(err.contains("o-c-n-c3"), "names the label: {err}");
@@ -2115,7 +2100,7 @@ pair_coeff c3 c3 0.107800 3.397710
             .def_type(
                 "c3-o-c-os",
                 &["c3", "o", "c", "os"],
-                Params::from_pairs(&[("k", 1.1), ("periodicity", 2.0), ("phase", phase)]),
+                Params::from_iter([("k", 1.1), ("periodicity", 2.0), ("phase", phase)]),
             )
             .unwrap();
         ff
@@ -2127,7 +2112,7 @@ pair_coeff c3 c3 0.107800 3.397710
         // true value, which a prmtop reader stores as 180.0004°.
         let ff = periodic_improper_ff((std::f64::consts::PI + 7.3e-6).to_degrees());
         let labels = labels_of(&[("impropers", &["c3-o-c-os"])]);
-        let text = LammpsForcefieldWriter::new(&labels).write_str(&ff).unwrap();
+        let text = LammpsForcefieldWriter::new(&labels).written(&ff).unwrap();
         assert_eq!(
             lines_starting_with(&text, "improper_style"),
             vec!["improper_style cvff"],
@@ -2142,12 +2127,12 @@ pair_coeff c3 c3 0.107800 3.397710
 
     #[test]
     fn periodic_improper_phase_sets_the_cvff_sign() {
-        let zero = Params::from_pairs(&[("k", 1.1), ("periodicity", 2.0), ("phase", 0.0)]);
+        let zero = Params::from_iter([("k", 1.1), ("periodicity", 2.0), ("phase", 0.0)]);
         assert_eq!(
             lammps_coeff_values("improper", "periodic", &zero, "real").unwrap(),
             [1.1, 1.0, 2.0]
         );
-        let pi = Params::from_pairs(&[("k", 1.1), ("periodicity", 2.0), ("phase", 180.0)]);
+        let pi = Params::from_iter([("k", 1.1), ("periodicity", 2.0), ("phase", 180.0)]);
         assert_eq!(
             lammps_coeff_values("improper", "periodic", &pi, "real").unwrap(),
             [1.1, -1.0, 2.0]
@@ -2156,7 +2141,7 @@ pair_coeff c3 c3 0.107800 3.397710
 
     #[test]
     fn periodic_improper_with_other_phase_is_refused() {
-        let p = Params::from_pairs(&[("k", 1.1), ("periodicity", 2.0), ("phase", 57.3)]);
+        let p = Params::from_iter([("k", 1.1), ("periodicity", 2.0), ("phase", 57.3)]);
         let err = lammps_coeff_values("improper", "periodic", &p, "real").unwrap_err();
         assert!(err.contains("cvff"), "{err}");
     }
@@ -2166,7 +2151,7 @@ pair_coeff c3 c3 0.107800 3.397710
         // ForceField order: oh, hc, c3 / c3-oh, c3-hc. Label order (sorted):
         // c3=1, hc=2, oh=3 / c3-hc=1, c3-oh=2.
         let mut ff = ForceField::new("hand");
-        ff.def_style("pair", "lj/cut", Params::from_pairs(&[("cutoff", 9.0)]))
+        ff.def_style("pair", "lj/cut", Params::from_iter([("cutoff", 9.0)]))
             .unwrap()
             .def_type("oh", &["oh"], lj(0.093, 3.242871))
             .unwrap()
@@ -2184,9 +2169,7 @@ pair_coeff c3 c3 0.107800 3.397710
             ("atoms", &["hc", "oh", "c3", "hc"]),
             ("bonds", &["c3-oh", "c3-hc"]),
         ]);
-        let data = LammpsForcefieldWriter::new(&labels)
-            .write_data_coeffs_str(&ff)
-            .unwrap();
+        let data = data_coeffs(&LammpsForcefieldWriter::new(&labels), &ff).unwrap();
         assert_eq!(
             data_section_rows(&data, "Pair Coeffs"),
             vec![
@@ -2207,7 +2190,7 @@ pair_coeff c3 c3 0.107800 3.397710
     fn label_writer_combines_split_lj_coul_into_one_pair_style_line() {
         let ff = split_pair_ff();
         let labels = labels_of(&[("atoms", &["c3", "hc"])]);
-        let text = LammpsForcefieldWriter::new(&labels).write_str(&ff).unwrap();
+        let text = LammpsForcefieldWriter::new(&labels).written(&ff).unwrap();
         assert_eq!(
             lines_starting_with(&text, "pair_style"),
             vec!["pair_style lj/cut/coul/cut 9.000000 10.000000"],
@@ -2222,11 +2205,11 @@ pair_coeff c3 c3 0.107800 3.397710
             .unwrap()
             .def_type("c3", &["c3"], lj(0.1078, 3.39771))
             .unwrap();
-        ff.def_style("pair", "coul/cut", Params::from_pairs(&[("cutoff", 10.0)]))
+        ff.def_style("pair", "coul/cut", Params::from_iter([("cutoff", 10.0)]))
             .unwrap();
         let labels = labels_of(&[("atoms", &["c3"])]);
         let err = LammpsForcefieldWriter::new(&labels)
-            .write_str(&ff)
+            .written(&ff)
             .unwrap_err();
         assert!(err.contains("'lj/cut' has no cutoff"), "{err}");
     }
@@ -2235,7 +2218,7 @@ pair_coeff c3 c3 0.107800 3.397710
     fn label_writer_pair_coeff_lines_follow_hand_written_eps_sigma() {
         let ff = split_pair_ff();
         let labels = labels_of(&[("atoms", &["hc", "c3"])]);
-        let text = LammpsForcefieldWriter::new(&labels).write_str(&ff).unwrap();
+        let text = LammpsForcefieldWriter::new(&labels).written(&ff).unwrap();
         assert_eq!(
             lines_starting_with(&text, "pair_coeff"),
             vec![
@@ -2256,7 +2239,7 @@ pair_coeff c3 c3 0.107800 3.397710
             .def_type("c3-oh", &["c3", "oh"], lj(0.07, 3.3))
             .unwrap();
         let labels = labels_of(&[("atoms", &["c3", "hc"])]);
-        let text = LammpsForcefieldWriter::new(&labels).write_str(&ff).unwrap();
+        let text = LammpsForcefieldWriter::new(&labels).written(&ff).unwrap();
         assert!(
             text.contains("pair_coeff c3 hc 0.050000 3.000000\n"),
             "{text}"
@@ -2268,12 +2251,9 @@ pair_coeff c3 c3 0.107800 3.397710
     fn label_writer_skip_pair_style_omits_the_pair_style_line_only() {
         let ff = split_pair_ff();
         let labels = labels_of(&[("atoms", &["c3", "hc"])]);
-        let opts = LammpsForcefieldWriteOptions {
-            skip_pair_style: true,
-            ..Default::default()
-        };
-        let text = LammpsForcefieldWriter::with_options(&labels, opts)
-            .write_str(&ff)
+        let text = LammpsForcefieldWriter::new(&labels)
+            .with_skip_pair_style(true)
+            .written(&ff)
             .unwrap();
         assert!(!text.contains("pair_style"), "{text}");
         assert!(
@@ -2302,7 +2282,7 @@ pair_coeff c3 c3 0.107800 3.397710
             .def_type(
                 "c3-oh",
                 &["c3", "oh"],
-                Params::from_pairs(&[("k", 30.0), ("r0", 1.5), ("epsilon", 1.0), ("sigma", 1.0)]),
+                Params::from_iter([("k", 30.0), ("r0", 1.5), ("epsilon", 1.0), ("sigma", 1.0)]),
             )
             .unwrap();
         ff
@@ -2313,10 +2293,10 @@ pair_coeff c3 c3 0.107800 3.397710
         let ff = ff_with_fene();
         let labels = labels_of(&[("bonds", &["c3-hc"])]);
         let writer = LammpsForcefieldWriter::new(&labels);
-        let text = writer.write_str(&ff).unwrap();
+        let text = writer.written(&ff).unwrap();
         assert!(!text.contains("fene"), "{text}");
         assert!(text.contains("bond_coeff c3-hc"), "{text}");
-        let data = writer.write_data_coeffs_str(&ff).unwrap();
+        let data = data_coeffs(&writer, &ff).unwrap();
         assert_eq!(
             data_section_rows(&data, "Bond Coeffs"),
             vec!["1 340.000000 1.090000"],
@@ -2331,7 +2311,7 @@ pair_coeff c3 c3 0.107800 3.397710
         let ff = ff_with_fene();
         let labels = labels_of(&[("bonds", &["hc-c3"])]);
         let err = LammpsForcefieldWriter::new(&labels)
-            .write_str(&ff)
+            .written(&ff)
             .unwrap_err();
         assert!(err.contains("`hc-c3` has no bond type"), "{err}");
         assert!(err.contains("`c3-hc` is defined"), "{err}");
@@ -2342,9 +2322,9 @@ pair_coeff c3 c3 0.107800 3.397710
         let ff = ff_with_fene();
         let labels = labels_of(&[("bonds", &["c3-hc", "c3-oh"])]);
         let writer = LammpsForcefieldWriter::new(&labels);
-        let err = writer.write_str(&ff).unwrap_err();
+        let err = writer.written(&ff).unwrap_err();
         assert!(err.contains("fene"), "names the style: {err}");
-        let err = writer.write_data_coeffs_str(&ff).unwrap_err();
+        let err = data_coeffs(&writer, &ff).unwrap_err();
         assert!(err.contains("fene"), "names the style: {err}");
     }
 
@@ -2366,13 +2346,13 @@ pair_coeff c3 c3 0.107800 3.397710
             .def_type(
                 "C_3-C_R-O_2@1_1.5_2",
                 &["C_3", "C_R", "O_2"],
-                Params::from_pairs(&[("k", 60.0), ("theta0", 120.0)]),
+                Params::from_iter([("k", 60.0), ("theta0", 120.0)]),
             )
             .unwrap();
 
         let exact = labels_of(&[("bonds", &["c3-h1"]), ("angles", &["C_3-C_R-O_2@1_1.5_2"])]);
         let text = LammpsForcefieldWriter::new(&exact)
-            .write_str(&ff)
+            .written(&ff)
             .expect("exact labels resolve");
         assert_eq!(
             lines_starting_with(&text, "bond_coeff"),
@@ -2387,13 +2367,13 @@ pair_coeff c3 c3 0.107800 3.397710
 
         let reversed_bond = labels_of(&[("bonds", &["h1-c3"])]);
         let err = LammpsForcefieldWriter::new(&reversed_bond)
-            .write_str(&ff)
+            .written(&ff)
             .unwrap_err();
         assert!(err.contains("bonds") && err.contains("h1-c3"), "{err}");
 
         let reversed_angle = labels_of(&[("angles", &["O_2-C_R-C_3@1.5_1_2"])]);
         let err = LammpsForcefieldWriter::new(&reversed_angle)
-            .write_str(&ff)
+            .written(&ff)
             .unwrap_err();
         assert!(
             err.contains("angles") && err.contains("O_2-C_R-C_3@1.5_1_2"),
@@ -2410,7 +2390,7 @@ pair_coeff c3 c3 0.107800 3.397710
             .set_param("delta", 0.05);
         let labels = labels_of(&[("atoms", &["c3", "hc"])]);
         let err = LammpsForcefieldWriter::new(&labels)
-            .write_str(&ff)
+            .written(&ff)
             .unwrap_err();
         assert!(err.contains("delta"), "{err}");
     }
@@ -2422,12 +2402,12 @@ pair_coeff c3 c3 0.107800 3.397710
     #[test]
     fn pair_style_without_writable_coeffs_is_err_naming_style() {
         let mut ff = ForceField::new("hand");
-        ff.def_style("pair", "thole", Params::from_pairs(&[("cutoff", 12.0)]))
+        ff.def_style("pair", "thole", Params::from_iter([("cutoff", 12.0)]))
             .unwrap()
             .def_type(
                 "c3",
                 &["c3"],
-                Params::from_pairs(&[("charge", -0.2), ("alpha", 1.1), ("damp", 2.6)]),
+                Params::from_iter([("charge", -0.2), ("alpha", 1.1), ("damp", 2.6)]),
             )
             .unwrap();
         let labels = labels_of(&[("atoms", &["c3"])]);
@@ -2435,11 +2415,9 @@ pair_coeff c3 c3 0.107800 3.397710
 
         for err in [
             writer
-                .write_str(&ff)
+                .written(&ff)
                 .expect_err("thole has no pair_coeff form"),
-            writer
-                .write_data_coeffs_str(&ff)
-                .expect_err("thole has no Pair Coeffs form"),
+            data_coeffs(&writer, &ff).expect_err("thole has no Pair Coeffs form"),
         ] {
             assert!(err.contains("pair") && err.contains("thole"), "{err}");
         }
@@ -2547,28 +2525,33 @@ pair_coeff c3 c3 0.107800 3.397710
             ),
         ];
         for (category, style, params, want) in cases {
-            let got = lammps_coeff_values(category, style, &Params::from_pairs(params), "real")
-                .unwrap_or_else(|e| panic!("{category} {style}: {e}"));
+            let got = lammps_coeff_values(
+                category,
+                style,
+                &Params::from_iter(params.iter().copied()),
+                "real",
+            )
+            .unwrap_or_else(|e| panic!("{category} {style}: {e}"));
             assert_values(&got, want);
         }
     }
 
     #[test]
     fn lammps_coeff_values_rejects_unsupported_kernel_and_missing_param() {
-        let err = lammps_coeff_values("bond", "fene", &Params::from_pairs(&[("k", 1.0)]), "real")
+        let err = lammps_coeff_values("bond", "fene", &Params::from_iter([("k", 1.0)]), "real")
             .unwrap_err();
         assert!(err.contains("bond") && err.contains("fene"), "{err}");
 
         let err = lammps_coeff_values(
             "bond",
             "harmonic",
-            &Params::from_pairs(&[("k", 450.0)]),
+            &Params::from_iter([("k", 450.0)]),
             "real",
         )
         .unwrap_err();
         assert!(err.contains("r0"), "{err}");
 
-        let bond = Params::from_pairs(&[("k", 450.0), ("r0", 0.9572)]);
+        let bond = Params::from_iter([("k", 450.0), ("r0", 0.9572)]);
         let err = lammps_coeff_values("bond", "harmonic", &bond, "si").unwrap_err();
         assert!(err.contains("si"), "{err}");
     }
@@ -2578,7 +2561,7 @@ pair_coeff c3 c3 0.107800 3.397710
     /// accepts is written as one fourier term.
     #[test]
     fn periodic_dihedral_is_written_as_fourier() {
-        let single = Params::from_pairs(&[("k", 0.3), ("periodicity", 2.0), ("phase", 180.0)]);
+        let single = Params::from_iter([("k", 0.3), ("periodicity", 2.0), ("phase", 180.0)]);
         assert_eq!(
             lammps_coeff_values("dihedral", "periodic", &single, "real").unwrap(),
             vec![1.0, 0.3, 2.0, 180.0]
@@ -2659,7 +2642,9 @@ angle_coeff HA-CT-HA charmm 35.500000 108.400000 5.400000 1.802000
     /// writer orders rows by label id, and `TypeLabels` sorts labels.)
     #[test]
     fn angle_charmm_hybrid_reads_and_writes_back_identically() {
-        let ff = LammpsForcefieldReader::new().read_str(UB_HYBRID).unwrap();
+        let ff = LammpsForcefieldReader::new()
+            .read(UB_HYBRID.as_bytes())
+            .unwrap();
         let ub = ff.get_style("angle", "charmm").unwrap();
         let StyleDefs::Angle(types) = ub.defs() else {
             panic!("an angle style");
@@ -2671,17 +2656,21 @@ angle_coeff HA-CT-HA charmm 35.500000 108.400000 5.400000 1.802000
             ("k_ub", 22.53),
             ("r_ub", 2.179),
         ] {
-            assert_eq!(t.params.get(key), Some(want), "{key}");
+            assert_eq!(
+                t.params.get(key).and_then(|v| v.as_num()),
+                Some(want),
+                "{key}"
+            );
         }
         assert!(ff.get_style("angle", "harmonic").is_some());
 
         let labels = labels_of(&[("angles", &["CT-CT-CT", "HA-CT-CT", "HA-CT-HA"])]);
-        let text = LammpsForcefieldWriter::new(&labels).write_str(&ff).unwrap();
+        let text = LammpsForcefieldWriter::new(&labels).written(&ff).unwrap();
         assert_eq!(text, UB_HYBRID);
-        let again = LammpsForcefieldReader::new().read_str(&text).unwrap();
+        let again = LammpsForcefieldReader::new().read(text.as_bytes()).unwrap();
         assert_eq!(
             LammpsForcefieldWriter::new(&labels)
-                .write_str(&again)
+                .written(&again)
                 .unwrap(),
             text
         );
@@ -2690,10 +2679,12 @@ angle_coeff HA-CT-HA charmm 35.500000 108.400000 5.400000 1.802000
     /// One style needs no `hybrid`; the data-file section names it.
     #[test]
     fn angle_charmm_alone_is_a_plain_style_and_its_data_section_says_so() {
-        let ff = LammpsForcefieldReader::new().read_str(UB_HYBRID).unwrap();
+        let ff = LammpsForcefieldReader::new()
+            .read(UB_HYBRID.as_bytes())
+            .unwrap();
         let labels = labels_of(&[("angles", &["HA-CT-CT"])]);
         let writer = LammpsForcefieldWriter::new(&labels);
-        let text = writer.write_str(&ff).unwrap();
+        let text = writer.written(&ff).unwrap();
         assert_eq!(
             lines_starting_with(&text, "angle_"),
             vec![
@@ -2702,7 +2693,7 @@ angle_coeff HA-CT-HA charmm 35.500000 108.400000 5.400000 1.802000
             ],
             "{text}"
         );
-        let data = writer.write_data_coeffs_str(&ff).unwrap();
+        let data = data_coeffs(&writer, &ff).unwrap();
         assert!(data.contains("Angle Coeffs # charmm\n"), "{data}");
         assert_eq!(
             data_section_rows(&data, "Angle Coeffs"),
@@ -2715,12 +2706,12 @@ angle_coeff HA-CT-HA charmm 35.500000 108.400000 5.400000 1.802000
     #[test]
     fn angle_charmm_hybrid_data_coeffs_round_trip() {
         use crate::io::lammps::forcefield_reader::LammpsTypeLabelMaps;
-        let ff = LammpsForcefieldReader::new().read_str(UB_HYBRID).unwrap();
+        let ff = LammpsForcefieldReader::new()
+            .read(UB_HYBRID.as_bytes())
+            .unwrap();
         let names = ["CT-CT-CT", "HA-CT-CT", "HA-CT-HA"];
         let labels = labels_of(&[("angles", &names)]);
-        let data = LammpsForcefieldWriter::new(&labels)
-            .write_data_coeffs_str(&ff)
-            .unwrap();
+        let data = data_coeffs(&LammpsForcefieldWriter::new(&labels), &ff).unwrap();
         assert!(data.contains("Angle Coeffs # hybrid\n"), "{data}");
         assert_eq!(
             data_section_rows(&data, "Angle Coeffs"),
@@ -2754,22 +2745,25 @@ angle_coeff HA-CT-HA charmm 35.500000 108.400000 5.400000 1.802000
     #[test]
     fn a_urey_bradley_line_under_the_wrong_style_is_refused() {
         let err = LammpsForcefieldReader::new()
-            .read_str(
+            .read(
                 "special_bonds charmm\nangle_style harmonic\n\
-                 angle_coeff A-B-A 33.43 110.1 22.53 2.179\n",
+                 angle_coeff A-B-A 33.43 110.1 22.53 2.179\n"
+                    .as_bytes(),
             )
             .unwrap_err();
         assert!(
-            err.contains("takes 2 coefficients (k theta0), got 4"),
+            err.to_string()
+                .contains("takes 2 coefficients (k theta0), got 4"),
             "{err}"
         );
         let err = LammpsForcefieldReader::new()
-            .read_str(
+            .read(
                 "special_bonds charmm\nangle_style hybrid harmonic\n\
-                 angle_coeff A-B-A charmm 33.43 110.1 22.53 2.179\n",
+                 angle_coeff A-B-A charmm 33.43 110.1 22.53 2.179\n"
+                    .as_bytes(),
             )
             .unwrap_err();
-        assert!(err.contains("not one of"), "{err}");
+        assert!(err.to_string().contains("not one of"), "{err}");
     }
 
     // ── fix cmap ────────────────────────────────────────────────────────────
@@ -2789,7 +2783,7 @@ angle_coeff HA-CT-HA charmm 35.500000 108.400000 5.400000 1.802000
         let style = ff.def_style("cmap", "charmm", Params::new()).unwrap();
         for (name, grid) in grids {
             let mut params = Params::new();
-            params.set_array("grid", grid.clone());
+            params.set("grid", grid.clone());
             style.def_type(name, &[*name; 5], params).unwrap();
         }
         ff
@@ -2799,24 +2793,22 @@ angle_coeff HA-CT-HA charmm 35.500000 108.400000 5.400000 1.802000
     /// line it was read from, and the text reads back to the same bits.
     #[test]
     fn a_charmm_cmap_file_is_written_back_line_for_line() {
-        use crate::io::lammps::forcefield_reader::read_lammps_cmap_str;
-        let map = read_lammps_cmap_str(ALANINE).unwrap().maps.remove(0);
+        use crate::io::lammps::forcefield_reader::parse_cmap_file;
+        let map = parse_cmap_file(ALANINE).unwrap().maps.remove(0);
         let ff = cmap_ff(&[("ala", map.clone())]);
         let labels = labels_of(&[("cmaps", &["ala", "ala"])]);
-        let text = LammpsForcefieldWriter::new(&labels)
-            .write_cmap_str(&ff)
-            .unwrap();
+        let text = cmap_file(&LammpsForcefieldWriter::new(&labels), &ff).unwrap();
         assert_eq!(number_lines(&text), number_lines(ALANINE));
         assert!(text.starts_with("# UNITS: real "), "{text}");
         assert!(text.contains("\n# ala, type 1\n"), "{text}");
-        let back = read_lammps_cmap_str(&text).unwrap();
+        let back = parse_cmap_file(&text).unwrap();
         assert_eq!(back.units.as_deref(), Some("real"));
         assert_eq!(back.maps, vec![map.clone()]);
 
         // Any value survives once the decimals reach its 17th digit.
         let odd = map.mapv(|v| v / 3.0);
-        let text = write_lammps_cmap_str(&[("odd", &odd)], "real", 25).unwrap();
-        assert_eq!(read_lammps_cmap_str(&text).unwrap().maps, vec![odd]);
+        let text = cmap_file_text(&[("odd", &odd)], "real", 25).unwrap();
+        assert_eq!(parse_cmap_file(&text).unwrap().maps, vec![odd]);
     }
 
     /// Maps go out in the `cmaps` labels' id order (the data file's crossterm
@@ -2828,19 +2820,16 @@ angle_coeff HA-CT-HA charmm 35.500000 108.400000 5.400000 1.802000
         let b = a.mapv(|v| -v);
         let ff = cmap_ff(&[("b", b.clone()), ("a", a.clone())]);
         let labels = labels_of(&[("cmaps", &["b", "a", "b"])]);
-        let options = LammpsForcefieldWriteOptions {
-            cmap_file: Some("sys.cmap".into()),
-            skip_pair_style: true,
-            ..LammpsForcefieldWriteOptions::default()
-        };
-        let writer = LammpsForcefieldWriter::with_options(&labels, options);
-        let text = writer.write_cmap_str(&ff).unwrap();
-        let maps = crate::io::lammps::forcefield_reader::read_lammps_cmap_str(&text)
+        let writer = LammpsForcefieldWriter::new(&labels)
+            .with_cmap_file("sys.cmap")
+            .with_skip_pair_style(true);
+        let text = cmap_file(&writer, &ff).unwrap();
+        let maps = crate::io::lammps::forcefield_reader::parse_cmap_file(&text)
             .unwrap()
             .maps;
         assert_eq!(maps, vec![a.clone(), b]);
 
-        let include = writer.write_str(&ff).unwrap();
+        let include = writer.written(&ff).unwrap();
         let fix = include.find("fix cmap all cmap sys.cmap\nfix_modify cmap energy yes\n");
         let units = include.find("units real");
         assert!(fix.is_some() && units < fix, "{include}");
@@ -2849,23 +2838,20 @@ angle_coeff HA-CT-HA charmm 35.500000 108.400000 5.400000 1.802000
         std::fs::write(dir.path().join("sys.cmap"), &text).unwrap();
         let path = dir.path().join("sys.ff");
         std::fs::write(&path, include.replace("\n\n", "\nspecial_bonds charmm\n\n")).unwrap();
-        let back = LammpsForcefieldReader::new()
-            .read(path.to_str().unwrap())
-            .unwrap();
+        let back = LammpsForcefieldReader::new().read(path.as_path()).unwrap();
         let rows = back.get_cmaptypes();
         assert_eq!(rows.len(), 2);
-        assert_eq!(rows[0].params.get_array("grid"), Some(&a));
+        assert_eq!(
+            rows[0].params.get("grid").and_then(|v| v.as_array()),
+            Some(&a)
+        );
 
         // In metal units the energies are converted.
-        let metal = LammpsForcefieldWriteOptions {
-            units: "metal",
-            precision: 12,
-            ..LammpsForcefieldWriteOptions::default()
-        };
-        let text = LammpsForcefieldWriter::with_options(&labels, metal)
-            .write_cmap_str(&ff)
-            .unwrap();
-        let file = crate::io::lammps::forcefield_reader::read_lammps_cmap_str(&text).unwrap();
+        let metal = LammpsForcefieldWriter::new(&labels)
+            .with_units("metal")
+            .with_precision(12);
+        let text = cmap_file(&metal, &ff).unwrap();
+        let file = crate::io::lammps::forcefield_reader::parse_cmap_file(&text).unwrap();
         assert_eq!(file.units.as_deref(), Some("metal"));
         let ev = file.maps[0][[0, 1]];
         assert!((ev - 0.01 * 0.0433641).abs() < 1e-8, "{ev}");
@@ -2877,24 +2863,28 @@ angle_coeff HA-CT-HA charmm 35.500000 108.400000 5.400000 1.802000
         let labels = labels_of(&[("cmaps", &["a"])]);
         // The include of a system with crossterms needs the file name.
         let err = LammpsForcefieldWriter::new(&labels)
-            .write_str(&cmap_ff(&[("a", grid.clone())]))
+            .written(&cmap_ff(&[("a", grid.clone())]))
             .unwrap_err();
         assert!(err.contains("cmap_file"), "{err}");
         // fix cmap reads 24×24 maps, at most six.
-        let err = LammpsForcefieldWriter::new(&labels)
-            .write_cmap_str(&cmap_ff(&[("a", ArrayD::zeros(vec![12, 12]))]))
-            .unwrap_err();
+        let err = cmap_file(
+            &LammpsForcefieldWriter::new(&labels),
+            &cmap_ff(&[("a", ArrayD::zeros(vec![12, 12]))]),
+        )
+        .unwrap_err();
         assert!(err.contains("24×24"), "{err}");
         let names = ["a", "b", "c", "d", "e", "f", "g"];
         let many: Vec<(&str, ArrayD<f64>)> = names.iter().map(|n| (*n, grid.clone())).collect();
-        let err = LammpsForcefieldWriter::new(&labels_of(&[("cmaps", &names)]))
-            .write_cmap_str(&cmap_ff(&many))
-            .unwrap_err();
+        let err = cmap_file(
+            &LammpsForcefieldWriter::new(&labels_of(&[("cmaps", &names)])),
+            &cmap_ff(&many),
+        )
+        .unwrap_err();
         assert!(err.contains("at most 6"), "{err}");
         // A label without a row.
-        let err = LammpsForcefieldWriter::new(&labels_of(&[("cmaps", &["zz"])]))
-            .write_cmap_str(&cmap_ff(&[("a", grid)]))
-            .unwrap_err();
+        let zz = labels_of(&[("cmaps", &["zz"])]);
+        let err =
+            cmap_file(&LammpsForcefieldWriter::new(&zz), &cmap_ff(&[("a", grid)])).unwrap_err();
         assert!(err.contains("`zz`"), "{err}");
     }
 
@@ -2906,8 +2896,8 @@ angle_coeff HA-CT-HA charmm 35.500000 108.400000 5.400000 1.802000
     #[test]
     fn pair_settings_are_written_or_refused_by_name() {
         let labels = labels_of(&[("atoms", &["c3"])]);
-        let read = |text: &str| LammpsForcefieldReader::new().read_str(text).unwrap();
-        let write = |ff: &ForceField| LammpsForcefieldWriter::new(&labels).write_str(ff);
+        let read = |text: &str| LammpsForcefieldReader::new().read(text.as_bytes()).unwrap();
+        let write = |ff: &ForceField| LammpsForcefieldWriter::new(&labels).written(ff);
 
         let shifted = read(
             "special_bonds amber\npair_style lj/cut 10.0\npair_modify mix arithmetic shift yes\npair_coeff c3 c3 0.1 3.4\n",
@@ -2922,7 +2912,8 @@ angle_coeff HA-CT-HA charmm 35.500000 108.400000 5.400000 1.802000
                 .get_style("pair", "lj/cut")
                 .unwrap()
                 .params()
-                .get("shift"),
+                .get("shift")
+                .and_then(|v| v.as_num()),
             Some(1.0)
         );
 
@@ -2947,7 +2938,7 @@ angle_coeff HA-CT-HA charmm 35.500000 108.400000 5.400000 1.802000
 
         let mut tt =
             read("special_bonds amber\npair_style lj/cut 10.0\npair_coeff c3 c3 0.1 3.4\n");
-        tt.def_style("pair", "coul/tt", Params::from_pairs(&[("cutoff", 10.0)]))
+        tt.def_style("pair", "coul/tt", Params::from_iter([("cutoff", 10.0)]))
             .unwrap();
         assert!(write(&tt).unwrap_err().contains("coul/tt"));
     }
@@ -2958,14 +2949,18 @@ angle_coeff HA-CT-HA charmm 35.500000 108.400000 5.400000 1.802000
     fn sixthpower_mixing_is_read_and_written_back() {
         let labels = labels_of(&[("atoms", &["c3"])]);
         let ff = LammpsForcefieldReader::new()
-            .read_str(
+            .read(
                 "special_bonds amber\npair_style lj/cut 10.0\npair_modify mix sixthpower\n\
-                 pair_coeff c3 c3 0.1 3.4\n",
+                 pair_coeff c3 c3 0.1 3.4\n"
+                    .as_bytes(),
             )
             .unwrap();
         let lj = ff.get_style("pair", "lj/cut").unwrap();
-        assert_eq!(lj.params().get_str("mixing"), Some("sixthpower"));
-        let text = LammpsForcefieldWriter::new(&labels).write_str(&ff).unwrap();
+        assert_eq!(
+            lj.params().get("mixing").and_then(|v| v.as_text()),
+            Some("sixthpower")
+        );
+        let text = LammpsForcefieldWriter::new(&labels).written(&ff).unwrap();
         assert!(text.contains("pair_modify mix sixthpower"), "{text}");
     }
 
@@ -2976,6 +2971,15 @@ angle_coeff HA-CT-HA charmm 35.500000 108.400000 5.400000 1.802000
     fn drude_frame() -> Frame {
         let mut frame = Frame::new();
         frame.insert("atoms", label_type_block(&["CT", "DCT", "HC", "HC"]));
+        frame
+            .get_mut("atoms")
+            .unwrap()
+            .insert(
+                "mass",
+                ndarray::array![11.6, 0.4, 1.008, 1.008].into_dyn(),
+                None,
+            )
+            .unwrap();
         frame.insert("bonds", label_type_block(&["CT-HC", "CT-HC"]));
         frame.insert("drudes", label_type_block(&["CT-DCT"]));
         frame
@@ -2992,7 +2996,11 @@ angle_coeff HA-CT-HA charmm 35.500000 108.400000 5.400000 1.802000
             .def_type(
                 "CT-DCT",
                 &["CT", "DCT"],
-                Params::from_pairs(&[("k", 500.0), ("alpha", 1.2), ("thole", 2.6)]),
+                Params::from_iter(
+                    [("k", 500.0), ("alpha", 1.2), ("thole", 2.6)]
+                        .iter()
+                        .copied(),
+                ),
             )
             .unwrap();
         ff
@@ -3004,12 +3012,14 @@ angle_coeff HA-CT-HA charmm 35.500000 108.400000 5.400000 1.802000
     /// ride in a comment.
     #[test]
     fn a_drude_spring_is_written_as_a_harmonic_bond_coeff() {
-        let options = LammpsForcefieldWriteOptions {
-            skip_special_bonds: true,
-            ..Default::default()
-        };
-        let text = write_lammps_forcefield_str(&drude_ff(), &drude_frame(), options.clone())
-            .expect("the springs are bonds");
+        let text = crate::io::writer::capture(|sink| {
+            LammpsForcefieldWriter::new(
+                &crate::io::lammps::lammps_type_labels(&drude_frame()).unwrap(),
+            )
+            .with_skip_special_bonds(true)
+            .write(sink, &drude_ff())
+        })
+        .expect("the springs are bonds");
         assert!(
             text.contains(
                 "bond_style harmonic\n\
@@ -3024,7 +3034,14 @@ angle_coeff HA-CT-HA charmm 35.500000 108.400000 5.400000 1.802000
         );
         assert!(!text.contains("drude_style"), "{text}");
 
-        let coeffs = write_lammps_data_coeffs_str(&drude_ff(), &drude_frame(), options).unwrap();
+        let coeffs = crate::io::writer::capture(|sink| {
+            LammpsForcefieldWriter::new(
+                &crate::io::lammps::lammps_type_labels(&drude_frame()).unwrap(),
+            )
+            .with_skip_special_bonds(true)
+            .write_data_coeffs(sink, &drude_ff())
+        })
+        .unwrap();
         assert_eq!(
             data_section_rows(&coeffs, "Bond Coeffs # harmonic"),
             ["1 500.000000 0.000000", "2 340.000000 1.090000"]
@@ -3042,13 +3059,14 @@ angle_coeff HA-CT-HA charmm 35.500000 108.400000 5.400000 1.802000
             ("z", vec![0.0; 4]),
         ] {
             atoms
-                .insert(key, ndarray::Array1::from_vec(values).into_dyn())
+                .insert(key, ndarray::Array1::from_vec(values).into_dyn(), None)
                 .unwrap();
         }
         atoms
             .insert(
                 "mol_id",
                 ndarray::Array1::from_vec(vec![1_u64; 4]).into_dyn(),
+                None,
             )
             .unwrap();
         for (block, pairs) in [
@@ -3057,12 +3075,13 @@ angle_coeff HA-CT-HA charmm 35.500000 108.400000 5.400000 1.802000
         ] {
             let b = frame.get_mut(block).unwrap();
             let (i, j): (Vec<u64>, Vec<u64>) = pairs.iter().copied().unzip();
-            b.insert("atomi", ndarray::Array1::from_vec(i).into_dyn())
+            b.insert("atomi", ndarray::Array1::from_vec(i).into_dyn(), None)
                 .unwrap();
-            b.insert("atomj", ndarray::Array1::from_vec(j).into_dyn())
+            b.insert("atomj", ndarray::Array1::from_vec(j).into_dyn(), None)
                 .unwrap();
         }
-        let data = crate::io::write_lammps_data_str(&frame).unwrap();
+        let data =
+            crate::io::writer::capture(|sink| crate::io::write_lammps_data(sink, &frame)).unwrap();
         assert!(
             data.contains("Bond Type Labels\n\n1 CT-DCT\n2 CT-HC\n"),
             "{data}"
@@ -3079,7 +3098,12 @@ angle_coeff HA-CT-HA charmm 35.500000 108.400000 5.400000 1.802000
     fn an_unused_drude_type_writes_nothing() {
         let mut frame = drude_frame();
         frame.remove("drudes");
-        let text = write_lammps_forcefield_str(&drude_ff(), &frame, Default::default()).unwrap();
+        let text = crate::io::writer::capture(|sink| {
+            LammpsForcefieldWriter::new(&crate::io::lammps::lammps_type_labels(&frame).unwrap())
+                .with_skip_special_bonds(true)
+                .write(sink, &drude_ff())
+        })
+        .unwrap();
         assert!(!text.contains("CT-DCT"), "{text}");
         assert!(!text.contains("DRUDE"), "{text}");
     }

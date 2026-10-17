@@ -18,7 +18,7 @@ L = 6.0
 
 @pytest.fixture
 def box():
-    return molrs.core.Box.cube(L)
+    return molrs.core.Box(molrs.core.Cell.lengths([L] * 3))
 
 
 @pytest.fixture
@@ -36,16 +36,34 @@ def table(box, points):
 
 class TestRdf:
     def test_folds_one_pair_source_per_frame_of_either_kind(self, box, points, table):
-        engine = molrs.core.NeighborList(2.5, points, box)
-        out = mc.Rdf(10, 2.5, 0.0).compute(pairs=[table, engine])
+        engine = molrs.core.NeighborList(2.5)
+        engine.build(points, box)
+        acc = mc.Rdf(10, 2.5, 0.0).accumulator()
+        assert isinstance(acc, mc.RdfAccumulator)
+        acc.push(table)
+        acc.push(engine)
+        assert acc.n_frames == 2
+        out = acc.finish()
         assert isinstance(out, mc.RdfResult)
         assert out.rdf.shape == (10,)
         assert out.bin_edges.shape == (11,)
         assert out.n_frames == 2
 
+    def test_finish_does_not_consume_the_accumulator(self, table):
+        acc = mc.Rdf(10, 2.5, 0.0).accumulator()
+        acc.push(table)
+        first = acc.finish()
+        acc.push(table)
+        assert (first.n_frames, acc.finish().n_frames) == (1, 2)
+        np.testing.assert_allclose(acc.finish().rdf, first.rdf)
+
     def test_rejects_a_non_pair_source(self):
         with pytest.raises(TypeError, match="pair source"):
-            mc.Rdf(10, 2.5, 0.0).compute(pairs=[np.zeros((2, 3))])
+            mc.Rdf(10, 2.5, 0.0).accumulator().push(np.zeros((2, 3)))
+
+    def test_is_a_stream_without_a_batch_compute(self):
+        assert isinstance(mc.Rdf(10, 2.5, 0.0), mc.Stream)
+        assert not hasattr(mc.Rdf, "compute")
 
 
 class TestDensity:

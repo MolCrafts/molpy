@@ -8,6 +8,7 @@ use crate::core::CenterError;
 use crate::core::MolGraph;
 use crate::core::PortKind;
 use crate::core::RelationId;
+use crate::core::{Graph, GraphAccess};
 use crate::op::vec3::{add, normalize, scale, sub};
 use crate::op::{DEFAULT_GAP_TOL, superpose};
 use crate::op::{F, Mat3, Vec3};
@@ -43,9 +44,16 @@ pub struct SiteView<'a> {
 /// [`Assembler`](crate::builder::Assembler) holds one of each and applies the
 /// orienter's motion first, then the placer's.
 ///
+/// The trait is generic over the template's graph type `G` (a
+/// [`MolGraph`], an [`Atomistic`](crate::core::Atomistic) or a
+/// [`CoarseGrain`](crate::core::CoarseGrain)), so an implementor reads the
+/// template through that type's own vocabulary and an
+/// [`Assembler<G>`](crate::builder::Assembler) holds it as a
+/// `Box<dyn Orienter<G>>`. [`AxisOrienter`] orients every graph type.
+///
 /// Implementors are `Send + Sync` so an
 /// [`Assembler`](crate::builder::Assembler) holding one can cross threads.
-pub trait Orienter: Send + Sync {
+pub trait Orienter<G: Graph>: Send + Sync {
     /// One [`Rigid`] per site of `sites`, in order: a rotation about the
     /// template's centre of mass (the centre maps to itself), applied to a
     /// copy of `template` before the placer moves it.
@@ -54,11 +62,7 @@ pub trait Orienter: Send + Sync {
     ///
     /// An [`OrientError`] naming why the template or a site cannot be
     /// oriented.
-    fn orient_many(
-        &self,
-        template: &MolGraph,
-        sites: &[SiteView<'_>],
-    ) -> Result<Vec<Rigid>, OrientError>;
+    fn orient_many(&self, template: &G, sites: &[SiteView<'_>]) -> Result<Vec<Rigid>, OrientError>;
 }
 
 /// Turns each copy so its own frame matches its site's frame.
@@ -96,20 +100,48 @@ pub trait Orienter: Send + Sync {
 /// use molrs::core::BondNumber;
 /// use molrs::core::Atomistic;
 /// use molrs::core::PortKind;
+/// use molrs::props;
+/// use molrs::core::Element;
 ///
 /// // Anchors C0 (−1,0,0) `<` and C1 (1,0,0) `>`, a heavy side atom at
 /// // (0,2,0): backbone-to-centre points +y, the joining atoms lie along +x.
 /// let mut unit = Atomistic::new();
-/// let c0 = unit.add_atom_xyz("C", -1.0, 0.0, 0.0);
-/// let c1 = unit.add_atom_xyz("C", 1.0, 0.0, 0.0);
-/// let h0 = unit.add_atom_xyz("H", -2.0, 0.0, 0.0);
-/// let h1 = unit.add_atom_xyz("H", 2.0, 0.0, 0.0);
-/// let x = unit.add_atom_xyz("X", 0.0, 2.0, 0.0);
+/// let c0 = unit.add_atom(props! {
+///     keys::ATOMIC_NUMBER => Element::C,
+///     keys::X => -1.0,
+///     keys::Y => 0.0,
+///     keys::Z => 0.0,
+/// }).unwrap();
+/// let c1 = unit.add_atom(props! {
+///     keys::ATOMIC_NUMBER => Element::C,
+///     keys::X => 1.0,
+///     keys::Y => 0.0,
+///     keys::Z => 0.0,
+/// }).unwrap();
+/// let h0 = unit.add_atom(props! {
+///     keys::ATOMIC_NUMBER => Element::H,
+///     keys::X => -2.0,
+///     keys::Y => 0.0,
+///     keys::Z => 0.0,
+/// }).unwrap();
+/// let h1 = unit.add_atom(props! {
+///     keys::ATOMIC_NUMBER => Element::H,
+///     keys::X => 2.0,
+///     keys::Y => 0.0,
+///     keys::Z => 0.0,
+/// }).unwrap();
+/// // The side atom is a wildcard dummy (Z = 0): only its mass matters here.
+/// let x = unit.add_atom(props! {
+///     keys::ATOMIC_NUMBER => 0u8,
+///     keys::X => 0.0,
+///     keys::Y => 2.0,
+///     keys::Z => 0.0,
+/// }).unwrap();
 /// for (atom, mass) in [(c0, 1.0), (c1, 1.0), (h0, 1.0), (h1, 1.0), (x, 4.0)] {
-///     unit.set_node(atom, keys::MASS, mass).unwrap();
+///     unit.set_atom(atom, keys::MASS, mass).unwrap();
 /// }
 /// for (a, b) in [(c0, c1), (c0, h0), (c1, h1), (c0, x)] {
-///     unit.add_bond(a, b).unwrap();
+///     unit.add_bond(a, b, props! {}).unwrap();
 /// }
 /// unit.add_port(c0, h0, PortKind::Left, "", BondNumber::Single).unwrap();
 /// let right = unit.add_port(c1, h1, PortKind::Right, "", BondNumber::Single).unwrap();
@@ -117,7 +149,7 @@ pub trait Orienter: Send + Sync {
 /// // A chain end: axis +z, its one partner on the `>` port sits along +y.
 /// let links = [SiteLink { port: right, toward: [0.0, 5.0, 0.0] }];
 /// let site = SiteView { position: [0.0; 3], axis: Some([0.0, 0.0, 1.0]), links: &links };
-/// let r = AxisOrienter::new().orient_many(unit.as_molgraph(), &[site]).unwrap();
+/// let r = AxisOrienter::new().orient_many(&unit, &[site]).unwrap();
 /// // The joining atoms C0 → C1 now run along +y.
 /// let (a, b) = (transform_point(&r[0], [-1.0, 0.0, 0.0]), transform_point(&r[0], [1.0, 0.0, 0.0]));
 /// assert!((b[1] - a[1] - 2.0).abs() < 1e-12);
@@ -148,9 +180,9 @@ impl TemplateGeometry {
             .map_err(OrientError::Center)?;
         let mut ports = HashMap::new();
         let (mut left, mut right) = (Vec::new(), Vec::new());
-        for id in template.ports() {
+        for id in template.port_ids() {
             let port = template
-                .port(id)
+                .get_port(id)
                 .map_err(|e| OrientError::Template(e.to_string()))?;
             let anchor = position(port.anchor)?;
             match port.kind {
@@ -180,7 +212,7 @@ impl AxisOrienter {
     }
 }
 
-impl Orienter for AxisOrienter {
+impl<G: Graph> Orienter<G> for AxisOrienter {
     /// The chain or branch rotation per site (see the type docs);
     /// `Rigid::IDENTITY` for a site with no bond.
     ///
@@ -191,11 +223,7 @@ impl Orienter for AxisOrienter {
     /// template lacks; [`OrientError::NoAxis`] for the first chain site
     /// without an axis; [`OrientError::Frame`] for the first site whose
     /// directions fix no rotation.
-    fn orient_many(
-        &self,
-        template: &MolGraph,
-        sites: &[SiteView<'_>],
-    ) -> Result<Vec<Rigid>, OrientError> {
+    fn orient_many(&self, template: &G, sites: &[SiteView<'_>]) -> Result<Vec<Rigid>, OrientError> {
         let mut geometry: Option<TemplateGeometry> = None;
         let mut rigids = Vec::with_capacity(sites.len());
         for (index, site) in sites.iter().enumerate() {
@@ -205,7 +233,7 @@ impl Orienter for AxisOrienter {
             }
             let g = match geometry {
                 Some(ref g) => g,
-                None => geometry.insert(TemplateGeometry::of(template)?),
+                None => geometry.insert(TemplateGeometry::of(template.graph())?),
             };
             let mut used = Vec::with_capacity(site.links.len());
             for link in site.links {
@@ -331,12 +359,14 @@ mod tests {
     use super::{AxisOrienter, OrientError, Orienter, SiteLink, SiteView, direction_fit};
     use crate::core::Atomistic;
     use crate::core::BondNumber;
+    use crate::core::Element;
     use crate::core::PortKind;
     use crate::core::RelationId;
     use crate::core::keys;
     use crate::op::Vec3;
     use crate::op::vec3::sub;
     use crate::op::{Rigid, transform_point};
+    use crate::props;
 
     const TOL: f64 = 1e-9;
 
@@ -346,16 +376,52 @@ mod tests {
     /// (`<`, `>`) ports.
     fn chain_unit() -> (Atomistic, RelationId, RelationId) {
         let mut f = Atomistic::new();
-        let c0 = f.add_atom_xyz("C", -1.0, 0.0, 0.0);
-        let c1 = f.add_atom_xyz("C", 1.0, 0.0, 0.0);
-        let h0 = f.add_atom_xyz("H", -2.0, 0.0, 0.0);
-        let h1 = f.add_atom_xyz("H", 2.0, 0.0, 0.0);
-        let x = f.add_atom_xyz("X", 0.0, 2.0, 0.0);
+        let c0 = f
+            .add_atom(props! {
+                keys::ATOMIC_NUMBER => Element::C,
+                keys::X => -1.0,
+                keys::Y => 0.0,
+                keys::Z => 0.0,
+            })
+            .unwrap();
+        let c1 = f
+            .add_atom(props! {
+                keys::ATOMIC_NUMBER => Element::C,
+                keys::X => 1.0,
+                keys::Y => 0.0,
+                keys::Z => 0.0,
+            })
+            .unwrap();
+        let h0 = f
+            .add_atom(props! {
+                keys::ATOMIC_NUMBER => Element::H,
+                keys::X => -2.0,
+                keys::Y => 0.0,
+                keys::Z => 0.0,
+            })
+            .unwrap();
+        let h1 = f
+            .add_atom(props! {
+                keys::ATOMIC_NUMBER => Element::H,
+                keys::X => 2.0,
+                keys::Y => 0.0,
+                keys::Z => 0.0,
+            })
+            .unwrap();
+        // The side atom is a wildcard dummy (Z = 0): only its mass matters.
+        let x = f
+            .add_atom(props! {
+                keys::ATOMIC_NUMBER => 0u8,
+                keys::X => 0.0,
+                keys::Y => 2.0,
+                keys::Z => 0.0,
+            })
+            .unwrap();
         for (atom, mass) in [(c0, 1.0), (c1, 1.0), (h0, 1.0), (h1, 1.0), (x, 4.0)] {
-            f.set_node(atom, keys::MASS, mass).expect("mass");
+            f.set_atom(atom, keys::MASS, mass).expect("mass");
         }
         for (a, b) in [(c0, c1), (c0, h0), (c1, h1), (c0, x)] {
-            f.add_bond(a, b).expect("bond");
+            f.add_bond(a, b, props! {}).expect("bond");
         }
         let l = f
             .add_port(c0, h0, PortKind::Left, "", BondNumber::Single)
@@ -370,13 +436,27 @@ mod tests {
     /// +x, +y and +z (masses 12, 1, 1, 1). Returns it and its ports.
     fn branch_unit() -> (Atomistic, Vec<RelationId>) {
         let mut f = Atomistic::new();
-        let c = f.add_atom_xyz("C", 0.0, 0.0, 0.0);
-        f.set_node(c, keys::MASS, 12.0).expect("mass");
+        let c = f
+            .add_atom(props! {
+                keys::ATOMIC_NUMBER => Element::C,
+                keys::X => 0.0,
+                keys::Y => 0.0,
+                keys::Z => 0.0,
+            })
+            .unwrap();
+        f.set_atom(c, keys::MASS, 12.0).expect("mass");
         let mut ports = Vec::new();
         for d in [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]] {
-            let h = f.add_atom_xyz("H", d[0], d[1], d[2]);
-            f.set_node(h, keys::MASS, 1.0).expect("mass");
-            f.add_bond(c, h).expect("bond");
+            let h = f
+                .add_atom(props! {
+                    keys::ATOMIC_NUMBER => Element::H,
+                    keys::X => d[0],
+                    keys::Y => d[1],
+                    keys::Z => d[2],
+                })
+                .unwrap();
+            f.set_atom(h, keys::MASS, 1.0).expect("mass");
+            f.add_bond(c, h, props! {}).expect("bond");
             ports.push(
                 f.add_port(c, h, PortKind::Symmetric, "", BondNumber::Single)
                     .expect("port"),
@@ -416,7 +496,7 @@ mod tests {
             links: &links,
         };
         let rot = AxisOrienter::new()
-            .orient_many(unit.as_molgraph(), &[site])
+            .orient_many(&unit, &[site])
             .expect("orientable")[0];
 
         let com = [0.0, 1.0, 0.0];
@@ -442,7 +522,7 @@ mod tests {
             links: &links,
         };
         let rot = AxisOrienter::new()
-            .orient_many(unit.as_molgraph(), &[site])
+            .orient_many(&unit, &[site])
             .expect("orientable")[0];
 
         close(
@@ -477,7 +557,7 @@ mod tests {
             links: &links,
         };
         let err = AxisOrienter::new()
-            .orient_many(unit.as_molgraph(), &[site])
+            .orient_many(&unit, &[site])
             .expect_err("no axis");
         assert_eq!(err, OrientError::NoAxis { index: 0 });
     }
@@ -495,7 +575,7 @@ mod tests {
             links: &links,
         };
         let err = AxisOrienter::new()
-            .orient_many(unit.as_molgraph(), &[site])
+            .orient_many(&unit, &[site])
             .expect_err("degenerate");
         assert_eq!(err, OrientError::Frame { index: 0 });
     }
@@ -525,7 +605,7 @@ mod tests {
             links: &links,
         };
         let rot = AxisOrienter::new()
-            .orient_many(unit.as_molgraph(), &[site])
+            .orient_many(&unit, &[site])
             .expect("orientable")[0];
 
         close(turned(&rot, [0.0; 3], [1.0, 0.0, 0.0]), [0.0, 1.0, 0.0]);

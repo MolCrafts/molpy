@@ -14,13 +14,21 @@ writer or typifier, never in a kernel.
 The IR is data — `molrs.ff.forcefield.ForceField` (Rust
 `molrs::ff::forcefield::ForceField`) — and reads no file. Every engine's
 reader and writer is `molrs.io`'s, as every other file reader and writer is:
-`molrs.io.read_lammps_forcefield`, `read_top_forcefield`,
-`read_prmtop_forcefield`, `read_openmm_forcefield`,
-`write_lammps_forcefield`, `write_top_forcefield`,
-`write_frcmod`, `write_openmm_forcefield` and the rest — the same
-names in Rust (`molrs::io::read_openmm_forcefield`, …), each format's
-reader and writer classes in its own module (`molrs::io::lammps`,
-`molrs::io::gromacs`, `molrs::io::amber`, `molrs::io::openmm_xml`).
+one class per format and direction, its settings the constructor's keywords
+(Rust: one constructor and `with_*` setters), `reader.read(source) ->
+ForceField` and `writer.write(sink, forcefield)`, plus what else the format
+reads or writes as methods of the same class —
+`molrs.io.lammps.LammpsForcefieldReader` / `LammpsForcefieldWriter`
+(`read_data_coeffs`, `read_cmap`; `write_data_coeffs`, `write_cmap`),
+`molrs.io.gromacs.GromacsTopForcefieldReader` / `GromacsTopForcefieldWriter`
+(`read_system`, `write_system`), `molrs.io.amber.AmberPrmtopForcefieldReader`
+(`read_system`) / `AmberFrcmodWriter`,
+`molrs.io.openmm_xml.OpenmmXmlReader` / `OpenmmXmlWriter`, and
+`molrs.io.xml.XmlForcefieldReader` / `XmlForcefieldWriter`. The same classes in
+Rust (`molrs::io::lammps`, `molrs::io::gromacs`, `molrs::io::amber`,
+`molrs::io::openmm_xml`, `molrs::io::XmlForcefieldReader`) read through
+`ForceFieldReader::read(src)` and write through `ForceFieldWriter::write(sink, &ff)`,
+a source a path or a whole file's bytes and a sink a path or a `Vec<u8>`.
 
 This page is the reference for the IR: what each style computes, what its
 parameters mean, which engine form maps onto it and how, and how Urey–Bradley,
@@ -430,10 +438,10 @@ value cell — the same numbers but for float ties on a cell edge).
   are both rows of `dihedrals` (either stored direction) and whose atom types
   equal a cmap row's `itom … mtom` **forward** — never reversed, since
   reading the five atoms backwards swaps φ and ψ.
-- A LAMMPS `fix cmap` file reads (`read_lammps_cmap_forcefield`,
-  `LammpsForcefieldReader::read_cmap_str`) into rows named `"1"` … `"K"` — map `t`
-  is crossterm type `t` — and writes (`write_lammps_cmap_forcefield`,
-  `LammpsForcefieldWriter::write_cmap_str`) the `cmaps` labels' grids in label id
+- A LAMMPS `fix cmap` file reads (`LammpsForcefieldReader.read_cmap`,
+  Rust `LammpsForcefieldReader::read_cmap`) into rows named `"1"` … `"K"` — map `t`
+  is crossterm type `t` — and writes (`LammpsForcefieldWriter.write_cmap`,
+  Rust `LammpsForcefieldWriter::write_cmap`) the `cmaps` labels' grids in label id
   order, in CHARMM's layout: CHARMM's own file comes back line for line.
 - The data file's `N crossterms` header line and `CMAP` section
   (`index type a1 … a5`) are the frame's `cmaps` block (`type_id` = map
@@ -643,9 +651,9 @@ the style's mixing rule, which a per-row fit cannot hold).
 
 ## OpenMM XML
 
-`OpenmmXmlReader` (`read_openmm_forcefield`) reads OpenMM's
+`OpenmmXmlReader` (`OpenmmXmlReader().read(source)`) reads OpenMM's
 `<ForceField>` — its own CHARMM36, AMBER and OPLS-AA ports and the foyer /
-molpy packs — and `OpenmmXmlWriter` (`write_openmm_forcefield`) writes
+molpy packs — and `OpenmmXmlWriter` (`OpenmmXmlWriter().write(sink, ff)`) writes
 the inverse, each
 number in the shortest form that reads back to the same `f64` unless a
 `precision` is given. The IR's definitions are LAMMPS's; OpenMM's are
@@ -781,7 +789,7 @@ CTITLE`) reads through the same pair.
 | `LENNARD_JONES_ACOEF/BCOEF` via ICO | `lj/cut` (`lj/charmm` in a chamber file) self rows; a cross row where the entry is not Lorentz–Berthelot (NBFIX) |
 | `LENNARD_JONES_14_ACOEF/BCOEF` (chamber) | `lj/charmm` `epsilon14` / `sigma14` (cross rows where not Lorentz–Berthelot) and `one_four = "epsilon14"` when the table differs from the regular one |
 | `CHARGE` | ÷ 18.2223, `coul/cut` at 332.0522173; ÷ √332.0716 and `coul/charmm` at 332.0716 in a chamber file |
-| `SCEE_SCALE_FACTOR` / `SCNB_SCALE_FACTOR` per torsion type | `special_bonds` 1-4 = 1/divisor most 1-4 rows carry; the frame `AmberPrmtopForcefieldReader::read_system` (Python `read_prmtop_system`) returns has `pairs` giving every 1-4 pair weighted otherwise its `coul_scale` / `lj_scale` |
+| `SCEE_SCALE_FACTOR` / `SCNB_SCALE_FACTOR` per torsion type | `special_bonds` 1-4 = 1/divisor most 1-4 rows carry; the frame `AmberPrmtopForcefieldReader::read_system` (Python `AmberPrmtopForcefieldReader().read_system(source)`) returns has `pairs` giving every 1-4 pair weighted otherwise its `coul_scale` / `lj_scale` |
 | `AMBER_ATOM_TYPE` | the type name; `<name>~<class>` where one name stands for two LJ classes or masses (a chamber file cuts CHARMM's types to four characters) |
 
 sander prices a 1-4 pair once per proper row whose 3rd pointer is not
@@ -815,9 +823,9 @@ with one periodicity; a Urey–Bradley term on no angle or on several.
 
 `GromacsTopForcefieldReader` reads a topology's directives into a force field
 (`read`) or a whole `.top` into the force field and a typed frame
-(`read_system`; Python `molrs.io.read_top_system`); the writer
-(`GromacsTopForcefieldWriter`) is the inverse of the directive map
-(`write_str`) and of `read_system` (`write_system_str`). Every row is
+(`read_system`; Python `molrs.io.gromacs.GromacsTopForcefieldReader(include=True).read_system(source)`);
+the writer (`GromacsTopForcefieldWriter`) is the inverse of the directive map
+(`write`) and of `read_system` (`write_system`). Every row is
 exact; GROMACS's ½k forms are halved into LAMMPS's `K`, nm → Å, kJ → kcal,
 degrees stay degrees. Every Coulomb style states GROMACS's own constant
 (`molrs.core.constants.GROMACS_ONE_4PI_EPS0`, its `ONE_4PI_EPS0` from
@@ -882,7 +890,7 @@ form and are refused by name. A system whose field reads with
 `one_four = "epsilon14"` (CHARMM's pairtypes) compiles once its 1-4 pairs
 are written out as per-pair rows, `ForceField.materialize_one_four(frame)`.
 
-`write_system_str(ff, frame)` writes the directives (no bonded
+`write_system(sink, ff, frame)` writes the directives (no bonded
 `[ *types ]` tables: each row carries its type's parameters on its line,
 one funct-9 line per periodic term, so no lookup can pick another type;
 `[ cmaptypes ]` stays, and a crossterm must be one GROMACS's lookup finds)
@@ -964,7 +972,8 @@ the connectivity — each atom's penalty per valence (`APS.DAT`), valence states
 tried in order of total penalty, and for each a search that settles forced
 bonds and tries the first undecided bond in file order single, double, then
 triple — and the atom types follow that structure. `AtdTypifier` does the
-same by default (`bond_orders="perceive"`; Rust `AtdBondOrders::Perceive`):
+same by default (`bond_orders=BondOrderSource.Connectivity`; Rust
+`BondOrderSource::Connectivity`):
 it types a molecule as antechamber types the mol2 file holding the same atoms
 and bonds in the same order, whatever orders the molrs graph carries. Where a
 molecule has more than one Kekulé structure (azulene, cyclooctatetraene,
@@ -975,11 +984,12 @@ types, because `bondtype` reads them from its file: which rings count as
 aromatic for the 7 / 8 bond types (a quinone drawn with its C=O is not; read
 from a connectivity-only file, it is), and a molecule no valence state closes
 (tropylium), where antechamber keeps the file's bonds. Every hydrogen must be
-drawn. `bond_orders="input"` keeps the graph's own orders instead (aromatic
+drawn. `bond_orders=BondOrderSource.Stated` keeps the graph's own orders instead (aromatic
 bonds kekulized): a cyclooctatetraene drawn `C1=CC=CC=CC=C1` then types `cc
 cd cd cc …`, the structure it was drawn with, where antechamber answers `cc cc
 cd cd …`. `assign_bond_orders` writes the judged structure onto a
-molecule.
+molecule, in place. (`BondOrderSource` is `molrs.perceive.BondOrderSource`;
+`assign_bcc_bond_types(mol, source)` takes the same choice.)
 
 The rest follows `antechamber` as well: rings and ring classes (`AR1` …
 `AR5`, `RG*`, `NR`) are its own (`ring.c`: every chordless ring of up to ten
@@ -1242,7 +1252,7 @@ every engine — the source's own included — at three configurations
 
 Each source's IR is written as a LAMMPS data file and include, an OpenMM
 `<ForceField>` XML (with residue templates built from the frame) and a
-GROMACS topology (`write_system_str`); each engine prices each file and the
+GROMACS topology (`write_system`); each engine prices each file and the
 source itself — LAMMPS `run 0`; OpenMM 8.6.1 `Reference`, `NoCutoff`, one
 force group per term; GROMACS 2025.3 double precision, `mdrun -rerun`,
 plain cut-off past every pair; pysander (AmberTools 26.1, `cut = 999`) —

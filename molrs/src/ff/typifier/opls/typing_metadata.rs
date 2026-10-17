@@ -11,7 +11,7 @@ use std::collections::HashMap;
 /// typifier builds one `OplsTypeRow` from each `OplsRuleRow`, taking `class`
 /// from the matching [`OplsAtomRow`](crate::ff::params::OplsAtomRow) and
 /// `layer` 0, while
-/// [`OpenmmXmlReader::read_opls_typifier_str`](crate::io::openmm_xml::OpenmmXmlReader::read_opls_typifier_str)
+/// [`OpenmmXmlReader::read_opls_typifier`](crate::io::openmm_xml::OpenmmXmlReader::read_opls_typifier)
 /// builds them from XML attributes.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OplsTypeRow {
@@ -47,7 +47,7 @@ pub struct OplsTypeRow {
 /// potential reader
 /// ([`OpenmmXmlReader`](crate::io::openmm_xml::OpenmmXmlReader))
 /// drops the `def` / `overrides` / `priority` / `layer` attributes and
-/// [`OpenmmXmlReader::read_opls_typifier_str`](crate::io::openmm_xml::OpenmmXmlReader::read_opls_typifier_str)
+/// [`OpenmmXmlReader::read_opls_typifier`](crate::io::openmm_xml::OpenmmXmlReader::read_opls_typifier)
 /// reads them into the [`OplsTypingMetadata`] table here.
 ///
 /// # How the fields rank candidates

@@ -7,7 +7,7 @@ use ndarray::{Array2, ArrayView2};
 use crate::ff::ir::Params;
 use crate::ff::potential::angle::accumulate_angle_forces;
 use crate::ff::potential::flat_coords::{sub3, term_table, validate_coords};
-use crate::ff::potential::{ForceTerm, IndexedTerms, Potential};
+use crate::ff::potential::{Accumulator, ForceTerm, IndexedTerms, Potential};
 use crate::op::vec3::{dot, norm};
 use molrs::core::Frame;
 use molrs::op::F;
@@ -92,16 +92,14 @@ impl AngleUff {
 }
 
 impl Potential for AngleUff {
-    fn calc_energy_forces(&self, coords: &[F]) -> (F, Vec<F>) {
-        let mut out = vec![0.0; coords.len()];
-        let energy = self.accumulate(coords, &mut out);
-        (energy, out)
-    }
-
-    fn accumulate(&self, coords: &[F], out: &mut [F]) -> F {
-        self.fold(coords, out, self.atom_i.len(), |t| {
-            (self.atom_i[t], self.atom_j[t], self.atom_k[t])
-        })
+    fn evaluate(&self, coords: &[F], acc: &mut Accumulator<'_>) {
+        let energy = self.fold(
+            coords,
+            acc.forces_without_virial(),
+            self.atom_i.len(),
+            |t| (self.atom_i[t], self.atom_j[t], self.atom_k[t]),
+        );
+        acc.add_energy(energy);
     }
 }
 
@@ -109,29 +107,20 @@ impl IndexedTerms for AngleUff {
     fn terms(&self) -> Array2<u32> {
         term_table(&[&self.atom_i, &self.atom_j, &self.atom_k])
     }
-    fn calc_energy_forces_with_terms(
-        &self,
-        coords: &[F],
-        terms: ArrayView2<'_, u32>,
-    ) -> (F, Vec<F>) {
-        let mut out = vec![0.0; coords.len()];
-        let energy = self.accumulate_with_terms(coords, terms, &mut out);
-        (energy, out)
-    }
-
-    fn accumulate_with_terms(&self, coords: &[F], terms: ArrayView2<'_, u32>, out: &mut [F]) -> F {
+    fn evaluate_terms(&self, coords: &[F], terms: ArrayView2<'_, u32>, acc: &mut Accumulator<'_>) {
         debug_assert_eq!(
             terms.nrows(),
             self.atom_i.len(),
             "the row set is the force field's; only the atoms a row names may be rebound"
         );
-        self.fold(coords, out, terms.nrows(), |t| {
+        let energy = self.fold(coords, acc.forces_without_virial(), terms.nrows(), |t| {
             (
                 terms[[t, 0]] as usize,
                 terms[[t, 1]] as usize,
                 terms[[t, 2]] as usize,
             )
-        })
+        });
+        acc.add_energy(energy);
     }
 }
 
@@ -145,15 +134,15 @@ pub fn angle_uff_constructor(
         .ok_or("uff_angle: missing \"angles\" block")?;
     let i = block
         .get("atomi")
-        .and_then(|c| c.as_uint())
+        .and_then(|c| c.get::<u64>())
         .ok_or("uff_angle: missing atomi")?;
     let j = block
         .get("atomj")
-        .and_then(|c| c.as_uint())
+        .and_then(|c| c.get::<u64>())
         .ok_or("uff_angle: missing atomj")?;
     let k = block
         .get("atomk")
-        .and_then(|c| c.as_uint())
+        .and_then(|c| c.get::<u64>())
         .ok_or("uff_angle: missing atomk")?;
     let ka = param_reads::instance_col("uff_angle", block, "ka")?;
     let order = param_reads::instance_col("uff_angle", block, "order")?;
@@ -176,6 +165,7 @@ pub fn angle_uff_constructor(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ff::potential::fixtures::OneShot;
     use crate::ff::potential::fixtures::assert_forces_are_negative_gradient;
 
     fn bent(order: u8, c: [F; 3]) -> AngleUff {
@@ -200,7 +190,7 @@ mod tests {
     fn fourier_order_zero_is_ka_times_the_cosine_series() {
         // c0 + c1·cosθ + c2·cos2θ at θ = 90° is c0 − c2.
         let pot = bent(0, [0.75, 0.3, 0.25]);
-        let (e, _) = pot.calc_energy_forces(&right_angle());
+        let (e, _) = pot.energy_forces_at(&right_angle());
         assert!((e - 100.0 * (0.75 - 0.25)).abs() < 1e-9);
     }
 

@@ -1,19 +1,17 @@
-//! `molrs.io.read_csv_block[_str]` / `write_csv_block[_str]` — `molrs::io`'s
-//! CSV doors of the same names: a `Block` to and from CSV text.
+//! `molrs.io.read_csv_block` / `write_csv_block` — `molrs::io`'s CSV doors
+//! of the same names: a `Block` to and from CSV.
 
-use std::path::PathBuf;
-
-use crate::core::block::PyBlock;
-use crate::path::path_str;
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
+
+use super::{PySink, PySource, data_error};
+use crate::core::block::PyBlock;
 
 // These read and write a store container rather than a molecular file
 // format, but they are IO and they live here for the same reason `read_pdb`
 // does: turning text into a container is a reader's job. `Block` carries no
 // `from_csv` constructor — a container that parses its own formats grows one
-// entry point per format and duplicates this module. (The streaming wire
-// encoding of a `Frame` is `molrs.stream`'s.)
+// entry point per format and duplicates this module.
 
 /// `delimiter` as the one character the Rust doors take.
 fn delimiter_char(delimiter: &str) -> PyResult<char> {
@@ -26,103 +24,87 @@ fn delimiter_char(delimiter: &str) -> PyResult<char> {
     }
 }
 
-/// Read CSV ``text`` into a :class:`~molrs.core.Block`.
+/// Read CSV into a :class:`~molrs.core.Block`.
 ///
 /// Each column's dtype is inferred int → float → str. When ``header`` is
 /// given the text is treated as headerless and those names are used;
 /// otherwise the first non-empty line names the columns. Blank lines are
 /// skipped; fields are split on ``delimiter`` and trimmed, with no quoting.
 ///
+/// Parameters
+/// ----------
+/// source : os.PathLike | bytes | molrs.io.Text
+///     The file, or its whole content (UTF-8).
+/// delimiter : str
+///     The one-character field separator.
+/// header : list[str], optional
+///     Column names of a headerless file.
+///
+/// Returns
+/// -------
+/// molrs.core.Block
+///
 /// Raises
 /// ------
 /// ValueError
 ///     The text is empty, a row is ragged, or ``delimiter`` is not one
 ///     character.
+/// OSError
+///     The file cannot be read.
 #[pyfunction]
-#[pyo3(signature = (text, delimiter = ",", header = None))]
-pub fn read_csv_block_str(
-    text: &str,
-    delimiter: &str,
-    header: Option<Vec<String>>,
-) -> PyResult<PyBlock> {
-    let block = molrs::io::read_csv_block_str(text, delimiter_char(delimiter)?, header.as_deref())
-        .map_err(PyValueError::new_err)?;
-    PyBlock::from_core_block(block)
-}
-
-/// Read the CSV file at ``path`` into a :class:`~molrs.core.Block` —
-/// :func:`read_csv_block_str` over the file's UTF-8 text.
-///
-/// Raises
-/// ------
-/// ValueError
-///     The file cannot be read, or :func:`read_csv_block_str` refuses it.
-#[pyfunction]
-#[pyo3(signature = (path, delimiter = ",", header = None))]
+#[pyo3(signature = (source, delimiter = ",", header = None))]
 pub fn read_csv_block(
-    path: PathBuf,
+    source: PySource<'_>,
     delimiter: &str,
     header: Option<Vec<String>>,
 ) -> PyResult<PyBlock> {
-    let block = molrs::io::read_csv_block(
-        path_str(&path)?,
-        delimiter_char(delimiter)?,
-        header.as_deref(),
-    )
-    .map_err(PyValueError::new_err)?;
+    let delimiter = delimiter_char(delimiter)?;
+    let block = source
+        .read(|s| molrs::io::read_csv_block(s, delimiter, header.as_deref()))
+        .map_err(data_error)?;
     PyBlock::from_core_block(block)
 }
 
-/// Write a :class:`~molrs.core.Block` as CSV text — the inverse of
-/// :func:`read_csv_block_str`.
+/// Write a :class:`~molrs.core.Block` as CSV — the inverse of
+/// :func:`read_csv_block`.
+///
+/// Parameters
+/// ----------
+/// sink : os.PathLike | bytearray
+///     The file, or a buffer that then holds exactly its bytes.
+/// block : molrs.core.Block
+///     The block to write.
+/// delimiter : str
+///     The one-character field separator.
+/// header : bool
+///     Whether the first line names the columns.
 ///
 /// Raises
 /// ------
 /// ValueError
 ///     ``delimiter`` is not one character, or a column has a dtype CSV
 ///     cannot encode.
+/// OSError
+///     The file cannot be written.
 #[pyfunction]
-#[pyo3(signature = (block, delimiter = ",", header = true))]
-pub fn write_csv_block_str(block: &PyBlock, delimiter: &str, header: bool) -> PyResult<String> {
-    let delimiter = delimiter_char(delimiter)?;
-    PyBlock::with_block(block, |b| {
-        molrs::io::write_csv_block_str(b, delimiter, header)
-    })
-}
-
-/// Write a :class:`~molrs.core.Block` as a CSV file at ``path`` — the
-/// inverse of :func:`read_csv_block`.
-///
-/// Raises
-/// ------
-/// ValueError
-///     The file cannot be written, or :func:`write_csv_block_str` refuses
-///     the block.
-#[pyfunction]
-#[pyo3(signature = (path, block, delimiter = ",", header = true))]
+#[pyo3(signature = (sink, block, delimiter = ",", header = true))]
 pub fn write_csv_block(
-    path: PathBuf,
+    sink: PySink<'_>,
     block: &PyBlock,
     delimiter: &str,
     header: bool,
 ) -> PyResult<()> {
     let delimiter = delimiter_char(delimiter)?;
-    let path = path_str(&path)?;
-    PyBlock::with_block(block, |b| {
-        molrs::io::write_csv_block(path, b, delimiter, header)
+    block.with_block(|b| {
+        sink.put(
+            |s| molrs::io::write_csv_block(s, b, delimiter, header),
+            data_error,
+        )
     })?
-    .map_err(PyValueError::new_err)
 }
 
-/// Register this module's functions.
+/// Register this module's doors.
 pub(crate) fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    for door in [
-        wrap_pyfunction!(read_csv_block, m)?,
-        wrap_pyfunction!(read_csv_block_str, m)?,
-        wrap_pyfunction!(write_csv_block, m)?,
-        wrap_pyfunction!(write_csv_block_str, m)?,
-    ] {
-        crate::add_function(m, "molrs.io", door)?;
-    }
-    Ok(())
+    crate::add_function(m, "molrs.io", wrap_pyfunction!(read_csv_block, m)?)?;
+    crate::add_function(m, "molrs.io", wrap_pyfunction!(write_csv_block, m)?)
 }

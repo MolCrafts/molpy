@@ -17,8 +17,6 @@
 pub mod atd;
 pub mod gaff;
 
-use std::fs;
-
 use pyo3::exceptions::{PyNotImplementedError, PyRuntimeError, PyTypeError, PyValueError};
 use pyo3::intern;
 use pyo3::prelude::*;
@@ -34,6 +32,7 @@ use crate::core::frame::PyFrame;
 use crate::core::graph_views::RelationClass;
 use crate::core::molgraph::{PyAtomistic, py_to_prop};
 use crate::ff::forcefield::{PyForceField, params_from_dict};
+use crate::io::PySource;
 
 /// Where a [`PyTypifier`]'s typing state lives.
 enum TypifierState {
@@ -212,7 +211,7 @@ impl PyTypifier {
 
     /// Type ``mol``: do not override; the only writer of :meth:`forcefield`.
     ///
-    /// Copies ``mol`` (``mol.copy()``), calls :meth:`assign` on the copy and
+    /// Copies ``mol`` (as ``copy.copy(mol)``), calls :meth:`assign` on the copy and
     /// writes the returned :class:`TypeAssignment` onto the copy and the output force
     /// field — stamping every annotation and defining every type. ``mol`` is
     /// never touched.
@@ -246,9 +245,10 @@ impl PyTypifier {
         }
 
         Self::seed(slf)?;
-        let typed = mol
-            .call_method0(intern!(py, "copy"))?
-            .cast_into::<PyAtomistic>()?;
+        let typed = {
+            let mol = mol.try_borrow()?;
+            mol.derive(py, mol.core().clone())?.into_bound(py)
+        };
         let returned = slf.call_method1(intern!(py, "assign"), (&typed,))?;
         let matched = returned
             .cast::<PyTypeAssignment>()
@@ -318,10 +318,10 @@ impl PyTypifier {
 /// links : mapping, optional
 ///     Relation kind to a sequence of mappings, positional against that
 ///     kind's own rows (an improper never shifts a dihedral position). A key
-///     is a relation class (``Bond``, ``Angle``, ``Dihedral``, ``Improper``,
-///     ``Port``), rows as ``graph.links.exact_bucket(cls)``, or a kind name
-///     (``"bonds"``, or ``"urey_bradleys"`` registered with
-///     ``graph.register_kind``), rows as ``graph.relation_ids(kind)``. A type
+///     is a relation view class (``Bond``, ``Angle``, ``Dihedral``,
+///     ``Improper``, ``Port``), rows as ``graph.bonds`` / ``graph.angles`` /
+///     … / ``graph.ports``, or a block name (``"bonds"``, or a term block such
+///     as ``"urey_bradleys"``), rows as ``graph.terms(block)``. A type
 ///     annotation under a kind defines a type of the category whose block
 ///     the kind is (``urey_bradleys`` → ``urey_bradley``). Any other key
 ///     raises ``TypeError``; a kind named twice raises ``ValueError``.
@@ -556,22 +556,6 @@ py_mmff_front_door! {
     PyMmff94sTypifier, Mmff94sTypifier, "Mmff94sTypifier"
 }
 
-fn oplsaa_source_xml(source: Option<&Bound<'_, PyAny>>) -> PyResult<Option<String>> {
-    let Some(source) = source else {
-        return Ok(None);
-    };
-    let raw = match source.extract::<String>() {
-        Ok(value) => value,
-        Err(_) => source.call_method0("__fspath__")?.extract::<String>()?,
-    };
-    if raw.trim_start().starts_with('<') {
-        return Ok(Some(raw));
-    }
-    fs::read_to_string(&raw).map(Some).map_err(|err| {
-        PyValueError::new_err(format!("failed to read OPLS-AA XML source {raw:?}: {err}"))
-    })
-}
-
 /// OPLS-AA atom-type assigner and potential builder.
 ///
 /// Exposed to Python as `molrs.ff.typifier.OplsAaTypifier`. It loads the embedded canonical
@@ -581,9 +565,10 @@ fn oplsaa_source_xml(source: Option<&Bound<'_, PyAny>>) -> PyResult<Option<Strin
 ///
 /// Parameters
 /// ----------
-/// source : str or path-like, optional
-///     OPLS-AA XML text or a path to an XML file. ``None`` uses the embedded
-///     canonical OPLS-AA table.
+/// source : os.PathLike, bytes or molrs.io.Text, optional
+///     An OPLS-AA XML file (a path), or its whole content (``bytes`` /
+///     :class:`molrs.io.Text`); a plain ``str`` is refused as ambiguous.
+///     ``None`` uses the embedded canonical OPLS-AA table.
 /// strict : bool, default True
 ///     When True, a bonded term with no force-field match is an error. When
 ///     False, such terms are skipped (left unparametrized).
@@ -601,11 +586,11 @@ impl PyOplsAaTypifier {
     /// Create an OPLS-AA typifier from embedded data, XML text, or an XML path.
     #[new]
     #[pyo3(signature = (source = None, *, strict = true))]
-    fn new(source: Option<&Bound<'_, PyAny>>, strict: bool) -> PyResult<(Self, PyTypifier)> {
-        let typifier = match oplsaa_source_xml(source)? {
-            Some(xml) => molrs::io::openmm_xml::OpenmmXmlReader::new()
-                .read_opls_typifier_str(&xml)
-                .map_err(PyValueError::new_err)?,
+    fn new(source: Option<PySource<'_>>, strict: bool) -> PyResult<(Self, PyTypifier)> {
+        let typifier = match source {
+            Some(source) => molrs::io::openmm_xml::OpenmmXmlReader::new()
+                .read_opls_typifier(source.source())
+                .map_err(|e| PyValueError::new_err(format!("OPLS-AA XML source: {e}")))?,
             None => OplsAaTypifier::oplsaa(),
         }
         .with_strict(strict);
@@ -620,12 +605,13 @@ impl PyOplsAaTypifier {
     }
 }
 
-/// Element typing: ``type`` labels from element symbols alone, with no force
+/// Element typing: ``type`` labels from atomic numbers alone, with no force
 /// field — ``molrs.ff.typifier.ElementTypifier``.
 ///
 /// :meth:`typify` returns a typed :class:`Atomistic` whose atoms carry
-/// ``type = element`` (e.g. ``"C"``) and whose bonds, angles and dihedrals
-/// carry their endpoint elements joined with ``-`` in the byte-wise smaller
+/// ``type`` = the symbol their ``atomic_number`` names (e.g. ``"C"``) and
+/// whose bonds, angles and dihedrals carry their endpoint symbols joined
+/// with ``-`` in the byte-wise smaller
 /// orientation (bond O–H is ``"H-O"``). It is for writers that need type
 /// labels (LAMMPS data) on a molecule no force field has typed;
 /// :meth:`forcefield` stays empty. Takes no arguments.
@@ -633,8 +619,8 @@ impl PyOplsAaTypifier {
 /// Raises
 /// ------
 /// ValueError
-///     From :meth:`typify`, when an atom has no string ``element`` or the
-///     molecule has impropers.
+///     From :meth:`typify`, when an atom has no valid ``atomic_number`` or
+///     is the wildcard (``0``), or the molecule has impropers.
 ///
 /// Examples
 /// --------

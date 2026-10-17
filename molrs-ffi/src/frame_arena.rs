@@ -41,7 +41,7 @@ impl FrameArena {
     }
 
     /// Drops a frame from the arena, invalidating all handles to it.
-    pub fn frame_drop(&mut self, id: FrameId) -> Result<(), FfiError> {
+    pub fn drop_frame(&mut self, id: FrameId) -> Result<(), FfiError> {
         self.frames
             .remove(id)
             .ok_or(FfiError::InvalidFrameId)
@@ -63,7 +63,7 @@ impl FrameArena {
     }
 
     /// Removes a block from a frame, incrementing version to invalidate handles.
-    pub fn remove_block(&mut self, id: FrameId, key: &str) -> Result<(), FfiError> {
+    pub fn del_block(&mut self, id: FrameId, key: &str) -> Result<(), FfiError> {
         let entry = self.frames.get_mut(id).ok_or(FfiError::InvalidFrameId)?;
 
         if entry.frame.remove(key).is_some() {
@@ -92,7 +92,7 @@ impl FrameArena {
     }
 
     /// Clears all blocks from a frame, invalidating all block handles.
-    pub fn clear_frame(&mut self, id: FrameId) -> Result<(), FfiError> {
+    pub fn clear(&mut self, id: FrameId) -> Result<(), FfiError> {
         let entry = self.frames.get_mut(id).ok_or(FfiError::InvalidFrameId)?;
 
         for key in entry.frame.keys() {
@@ -159,16 +159,6 @@ impl FrameArena {
     ) -> Result<R, FfiError> {
         let entry = self.frames.get_mut(id).ok_or(FfiError::InvalidFrameId)?;
         Ok(f(&mut entry.frame.meta))
-    }
-
-    /// Borrows a frame's simbox immutably and runs a closure on it.
-    pub fn with_frame_box<R>(
-        &self,
-        id: FrameId,
-        f: impl FnOnce(Option<&SimBox>) -> R,
-    ) -> Result<R, FfiError> {
-        let entry = self.frames.get(id).ok_or(FfiError::InvalidFrameId)?;
-        Ok(f(entry.frame.simbox.as_ref()))
     }
 
     /// Sets an entire frame, replacing the existing one.
@@ -303,7 +293,7 @@ mod tests {
         let id = arena.frame_new();
         assert!(arena.clone_frame(id).is_ok());
 
-        arena.frame_drop(id).unwrap();
+        arena.drop_frame(id).unwrap();
         assert!(arena.clone_frame(id).is_err());
     }
 
@@ -314,7 +304,11 @@ mod tests {
 
         let mut block = Block::new();
         block
-            .insert("x", Array1::from_vec(vec![1.0 as F, 2.0, 3.0]).into_dyn())
+            .insert(
+                "x",
+                Array1::from_vec(vec![1.0 as F, 2.0, 3.0]).into_dyn(),
+                None,
+            )
             .unwrap();
 
         arena.set_block(id, "atoms", block).unwrap();
@@ -330,13 +324,13 @@ mod tests {
 
         let mut block = Block::new();
         block
-            .insert("x", Array1::from_vec(vec![1.0 as F, 2.0]).into_dyn())
+            .insert("x", Array1::from_vec(vec![1.0 as F, 2.0]).into_dyn(), None)
             .unwrap();
 
         arena.set_block(id, "atoms", block).unwrap();
         let handle = arena.get_block(id, "atoms").unwrap();
 
-        arena.remove_block(id, "atoms").unwrap();
+        arena.del_block(id, "atoms").unwrap();
 
         assert!(matches!(
             arena.clone_block(&handle),
@@ -351,7 +345,7 @@ mod tests {
 
         let mut block1 = Block::new();
         block1
-            .insert("x", Array1::from_vec(vec![1.0 as F, 2.0]).into_dyn())
+            .insert("x", Array1::from_vec(vec![1.0 as F, 2.0]).into_dyn(), None)
             .unwrap();
 
         arena.set_block(id, "atoms", block1).unwrap();
@@ -359,7 +353,7 @@ mod tests {
 
         let mut block2 = Block::new();
         block2
-            .insert("x", Array1::from_vec(vec![3.0 as F, 4.0]).into_dyn())
+            .insert("x", Array1::from_vec(vec![3.0 as F, 4.0]).into_dyn(), None)
             .unwrap();
         arena.set_block(id, "atoms", block2).unwrap();
 
@@ -376,17 +370,17 @@ mod tests {
 
         let mut block1 = Block::new();
         block1
-            .insert("x", Array1::from_vec(vec![1.0 as F, 2.0]).into_dyn())
+            .insert("x", Array1::from_vec(vec![1.0 as F, 2.0]).into_dyn(), None)
             .unwrap();
 
         arena.set_block(id, "atoms", block1).unwrap();
         let old_handle = arena.get_block(id, "atoms").unwrap();
 
-        arena.remove_block(id, "atoms").unwrap();
+        arena.del_block(id, "atoms").unwrap();
 
         let mut block2 = Block::new();
         block2
-            .insert("x", Array1::from_vec(vec![3.0 as F, 4.0]).into_dyn())
+            .insert("x", Array1::from_vec(vec![3.0 as F, 4.0]).into_dyn(), None)
             .unwrap();
         arena.set_block(id, "atoms", block2).unwrap();
 
@@ -406,11 +400,11 @@ mod tests {
 
         let mut block1 = Block::new();
         block1
-            .insert("x", Array1::from_vec(vec![1.0 as F]).into_dyn())
+            .insert("x", Array1::from_vec(vec![1.0 as F]).into_dyn(), None)
             .unwrap();
         let mut block2 = Block::new();
         block2
-            .insert("y", Array1::from_vec(vec![2.0 as F]).into_dyn())
+            .insert("y", Array1::from_vec(vec![2.0 as F]).into_dyn(), None)
             .unwrap();
 
         arena.set_block(id, "atoms", block1).unwrap();
@@ -419,7 +413,7 @@ mod tests {
         let handle1 = arena.get_block(id, "atoms").unwrap();
         let handle2 = arena.get_block(id, "bonds").unwrap();
 
-        arena.clear_frame(id).unwrap();
+        arena.clear(id).unwrap();
 
         assert!(matches!(
             arena.clone_block(&handle1),
@@ -438,7 +432,11 @@ mod tests {
 
         let mut block = Block::new();
         block
-            .insert("x", Array1::from_vec(vec![1.0 as F, 2.0, 3.0]).into_dyn())
+            .insert(
+                "x",
+                Array1::from_vec(vec![1.0 as F, 2.0, 3.0]).into_dyn(),
+                None,
+            )
             .unwrap();
         arena.set_block(id, "atoms", block).unwrap();
 
@@ -462,7 +460,7 @@ mod tests {
 
         arena
             .with_block_mut(&mut handle, |b| {
-                b.insert("y", Array1::from_vec(vec![4.0 as F, 5.0]).into_dyn())
+                b.insert("y", Array1::from_vec(vec![4.0 as F, 5.0]).into_dyn(), None)
                     .unwrap();
             })
             .unwrap();
@@ -485,7 +483,7 @@ mod tests {
 
         arena
             .with_block_mut(&mut handle, |b| {
-                b.insert("x", Array1::from_vec(vec![1.0 as F]).into_dyn())
+                b.insert("x", Array1::from_vec(vec![1.0 as F]).into_dyn(), None)
                     .unwrap();
             })
             .unwrap();
@@ -503,7 +501,7 @@ mod tests {
 
         let mut block = Block::new();
         block
-            .insert("x", Array1::from_vec(vec![1.0 as F]).into_dyn())
+            .insert("x", Array1::from_vec(vec![1.0 as F]).into_dyn(), None)
             .unwrap();
         arena.set_block(id, "atoms", block).unwrap();
 
@@ -523,7 +521,7 @@ mod tests {
 
         let mut block = Block::new();
         block
-            .insert("x", Array1::from_vec(vec![1.0 as F, 2.0]).into_dyn())
+            .insert("x", Array1::from_vec(vec![1.0 as F, 2.0]).into_dyn(), None)
             .unwrap();
         arena.set_block(id, "atoms", block).unwrap();
         let handle = arena.get_block(id, "atoms").unwrap();

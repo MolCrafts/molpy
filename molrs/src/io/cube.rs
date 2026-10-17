@@ -1,27 +1,82 @@
 //! Gaussian Cube file reader and writer.
 
-use std::io::{BufRead, BufReader, Write};
-use std::path::Path;
+use crate::core::Cell;
+use std::io::{BufRead, Seek, SeekFrom, Write};
 
-use ndarray::{Array1, ArrayD, IxDyn};
+use crate::io::reader::{ReadSeek, TrajectoryReader};
+use crate::io::{Sink, Source};
+
+use ndarray::Array1;
 
 use crate::core::unit_factors::BOHR_TO_ANGSTROM;
 
 use molrs::core::Block;
-use molrs::core::Element;
 use molrs::core::Frame;
 use molrs::core::MolRsError;
 use molrs::core::SimBox;
+use molrs::core::keys;
 use molrs::op::{F, Idx};
 
 // ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
 
-/// Read a Gaussian Cube file from disk.
-pub fn read_cube<P: AsRef<Path>>(path: P) -> Result<Frame, MolRsError> {
-    let file = std::fs::File::open(path.as_ref()).map_err(MolRsError::Io)?;
-    read_frame_from(BufReader::new(file))
+/// Read one Gaussian cube file. A file of several cubes back to back is
+/// [`CubeReader`]'s.
+///
+/// # File layout
+///
+/// ```text
+/// <comment line 1>                    ← free text → frame.meta["comment1"]
+/// <comment line 2>                    ← free text → frame.meta["comment2"]
+/// NATOMS  origin_x  origin_y  origin_z
+///   N1    vx1_x  vx1_y  vx1_z         ← voxel step vector for axis 1
+///   N2    vx2_x  vx2_y  vx2_z         ← voxel step vector for axis 2
+///   N3    vx3_x  vx3_y  vx3_z         ← voxel step vector for axis 3
+///   Z  charge  x  y  z                ← one atom per line
+///   …
+/// [MO only: NVALS  idx1  idx2  …]     ← present if NATOMS < 0
+/// <val> <val> …                        ← volumetric data, 6 per line
+/// ```
+///
+/// # Sign conventions
+///
+/// - **NATOMS**: negative → MO mode (extra header line after atoms listing
+///   orbital count and indices).
+/// - **N1** (first voxel count): positive → file units are Bohr; negative →
+///   Angstrom. The absolute value is the actual grid count.
+///
+/// # Data layout
+///
+/// Volumetric data is stored with x as the outermost loop and z as the
+/// innermost (row-major). This matches the molvis marching-cubes consumer's
+/// `data[ix*ny*nz + iy*nz + iz]` layout, so **no reordering** is needed
+/// (unlike CHGCAR).
+///
+/// # Unit handling
+///
+/// Atom coordinates and the simulation box are normalised to **Å** on read
+/// (bohr → Å through the unit registry — the Bohr radius, CODATA 2018
+/// 0.529 177 210 903 Å — when the file uses Bohr units).
+/// The original unit system is recorded in `frame.meta["cube_units"]` so
+/// [`write_cube`] can round-trip the file without surprising the
+/// producing toolchain.
+///
+/// # Frame contents
+///
+/// | Block        | Key(s)            | Content                        |
+/// |--------------|-------------------|--------------------------------|
+/// | `"atoms"`    | x, y, z, atomic_number, charge | Atom data (Å); species is the raw Z (no `element` column — call `Element::fill_symbols` for one) |
+/// | `"grid"`     | `"density"` or `"mo_<idx>"`             | Volumetric scalar fields, shape `[nx, ny, nz]` |
+/// | `simbox`     | (h-matrix, origin)                      | Voxel cell × dims, in Å |
+///
+/// # Errors
+///
+/// The frame doors' error: the OS error of a path that cannot be opened,
+/// [`InvalidData`](std::io::ErrorKind::InvalidData) for a file that is not a
+/// cube, its message naming why.
+pub fn read_cube<'a>(src: impl Into<Source<'a>>) -> std::io::Result<Frame> {
+    read_frame_from(src.into().reader()?).map_err(into_io)
 }
 
 /// Read a Gaussian Cube file from any [`BufRead`] source.
@@ -102,7 +157,6 @@ fn read_frame_from<R: BufRead>(mut reader: R) -> Result<Frame, MolRsError> {
     let mut xs = Vec::with_capacity(n_atoms);
     let mut ys = Vec::with_capacity(n_atoms);
     let mut zs = Vec::with_capacity(n_atoms);
-    let mut symbols = Vec::with_capacity(n_atoms);
 
     for _ in 0..n_atoms {
         let line = next_line!();
@@ -110,23 +164,18 @@ fn read_frame_from<R: BufRead>(mut reader: R) -> Result<Frame, MolRsError> {
         if toks.len() < 5 {
             return Err(parse_err!("expected Z charge x y z for atom"));
         }
-        let z: i32 = toks[0]
+        // The file spells species as Z; keep it raw (0 = wildcard/ghost) and
+        // refuse anything outside 0..=118 instead of inventing a species.
+        let z: u8 = toks[0]
             .parse()
-            .map_err(|_| parse_err!("bad atomic number"))?;
+            .ok()
+            .filter(|&z: &u8| z <= 118)
+            .ok_or_else(|| parse_err!(format!("atomic number '{}' is not in 0..=118", toks[0])))?;
         atomic_numbers.push(z);
         charges.push(parse_f64(toks[1], line_no)?);
         xs.push(parse_f64(toks[2], line_no)?);
         ys.push(parse_f64(toks[3], line_no)?);
         zs.push(parse_f64(toks[4], line_no)?);
-
-        let sym = if z > 0 && z <= 118 {
-            Element::by_number(z as u8)
-                .map(|e| e.symbol().to_string())
-                .unwrap_or_else(|| "X".to_string())
-        } else {
-            "X".to_string()
-        };
-        symbols.push(sym);
     }
 
     // -----------------------------------------------------------------------
@@ -233,12 +282,16 @@ fn read_frame_from<R: BufRead>(mut reader: R) -> Result<Frame, MolRsError> {
                 .map(|i| flat_data[i * n_vals_per_point + k])
                 .collect();
             grid_block
-                .insert(format!("mo_{}", idx), Array1::from_vec(col_data).into_dyn())
+                .insert(
+                    format!("mo_{}", idx),
+                    Array1::from_vec(col_data).into_dyn(),
+                    None,
+                )
                 .map_err(MolRsError::Block)?;
         }
     } else {
         grid_block
-            .insert("density", Array1::from_vec(flat_data).into_dyn())
+            .insert("density", Array1::from_vec(flat_data).into_dyn(), None)
             .map_err(MolRsError::Block)?;
     }
     grid_block
@@ -259,6 +312,7 @@ fn read_frame_from<R: BufRead>(mut reader: R) -> Result<Frame, MolRsError> {
                     .collect::<Vec<_>>(),
             )
             .into_dyn(),
+            None,
         )
         .map_err(MolRsError::Block)?;
     atoms
@@ -270,6 +324,7 @@ fn read_frame_from<R: BufRead>(mut reader: R) -> Result<Frame, MolRsError> {
                     .collect::<Vec<_>>(),
             )
             .into_dyn(),
+            None,
         )
         .map_err(MolRsError::Block)?;
     atoms
@@ -281,29 +336,22 @@ fn read_frame_from<R: BufRead>(mut reader: R) -> Result<Frame, MolRsError> {
                     .collect::<Vec<_>>(),
             )
             .into_dyn(),
+            None,
         )
         .map_err(MolRsError::Block)?;
     atoms
         .insert(
-            "atomic_number",
-            // UInt, not Int: the Frame schema declares this column unsigned, and
-            // an insert that disagrees is rejected outright.
+            keys::ATOMIC_NUMBER,
             Array1::from_vec(atomic_numbers.iter().map(|&v| v as Idx).collect::<Vec<_>>())
                 .into_dyn(),
+            None,
         )
         .map_err(MolRsError::Block)?;
     atoms
         .insert(
             "charge",
             Array1::from_vec(charges.iter().map(|&v| v as F).collect::<Vec<_>>()).into_dyn(),
-        )
-        .map_err(MolRsError::Block)?;
-    atoms
-        .insert(
-            "element",
-            ArrayD::from_shape_vec(IxDyn(&[n_atoms]), symbols)
-                .expect("shape matches")
-                .into_dyn(),
+            None,
         )
         .map_err(MolRsError::Block)?;
 
@@ -312,9 +360,9 @@ fn read_frame_from<R: BufRead>(mut reader: R) -> Result<Frame, MolRsError> {
     // PBC defaults off — cube files describe a finite voxel grid, not a
     // periodic cell. Hosts that know better can flip pbc on later.
     // -----------------------------------------------------------------------
-    let h = ndarray::Array2::from_shape_fn((3, 3), |(i, j)| cell_cols[j][i]);
-    let origin_arr = ndarray::array![origin_ang[0] as F, origin_ang[1] as F, origin_ang[2] as F];
-    let simbox = SimBox::new(h, origin_arr, [false; 3])
+    let h = std::array::from_fn(|i| std::array::from_fn(|j| cell_cols[j][i]));
+    let origin_arr = [origin_ang[0] as F, origin_ang[1] as F, origin_ang[2] as F];
+    let simbox = SimBox::new(Cell::Matrix(h), origin_arr, [false; 3])
         .map_err(|e| MolRsError::parse(format!("invalid cube cell: {:?}", e)))?;
 
     // -----------------------------------------------------------------------
@@ -346,92 +394,92 @@ fn read_frame_from<R: BufRead>(mut reader: R) -> Result<Frame, MolRsError> {
     Ok(frame)
 }
 
-/// Write a Gaussian Cube file to disk.
-pub fn write_cube<P: AsRef<Path>>(path: P, frame: &Frame) -> Result<(), MolRsError> {
-    let file = std::fs::File::create(path.as_ref()).map_err(MolRsError::Io)?;
-    let mut writer = std::io::BufWriter::new(file);
-    write_frame_to(&mut writer, frame)
+/// Write one frame as a Gaussian cube file.
+///
+/// # Errors
+///
+/// The OS error of a sink that cannot be written, and
+/// [`InvalidData`](std::io::ErrorKind::InvalidData) for a frame a cube cannot
+/// hold (no `grid` block, no `atoms` block, no box), its message naming why.
+pub fn write_cube<'a>(sink: impl Into<Sink<'a>>, frame: &Frame) -> std::io::Result<()> {
+    let mut writer = sink.into().writer()?;
+    write_frame_to(&mut writer, frame).map_err(into_io)?;
+    writer.flush()
 }
 
-/// Read one Gaussian cube from its text.
-///
-/// # File layout
-///
-/// ```text
-/// <comment line 1>                    ← free text → frame.meta["comment1"]
-/// <comment line 2>                    ← free text → frame.meta["comment2"]
-/// NATOMS  origin_x  origin_y  origin_z
-///   N1    vx1_x  vx1_y  vx1_z         ← voxel step vector for axis 1
-///   N2    vx2_x  vx2_y  vx2_z         ← voxel step vector for axis 2
-///   N3    vx3_x  vx3_y  vx3_z         ← voxel step vector for axis 3
-///   Z  charge  x  y  z                ← one atom per line
-///   …
-/// [MO only: NVALS  idx1  idx2  …]     ← present if NATOMS < 0
-/// <val> <val> …                        ← volumetric data, 6 per line
-/// ```
-///
-/// # Sign conventions
-///
-/// - **NATOMS**: negative → MO mode (extra header line after atoms listing
-///   orbital count and indices).
-/// - **N1** (first voxel count): positive → file units are Bohr; negative →
-///   Angstrom. The absolute value is the actual grid count.
-///
-/// # Data layout
-///
-/// Volumetric data is stored with x as the outermost loop and z as the
-/// innermost (row-major). This matches the molvis marching-cubes consumer's
-/// `data[ix*ny*nz + iy*nz + iz]` layout, so **no reordering** is needed
-/// (unlike CHGCAR).
-///
-/// # Unit handling
-///
-/// Atom coordinates and the simulation box are normalised to **Å** on read
-/// (bohr → Å through the unit registry — the Bohr radius, CODATA 2018
-/// 0.529 177 210 903 Å — when the file uses Bohr units).
-/// The original unit system is recorded in `frame.meta["cube_units"]` so
-/// [`write_cube`] can round-trip the file without surprising the
-/// producing toolchain.
-///
-/// # Frame contents
-///
-/// | Block        | Key(s)            | Content                        |
-/// |--------------|-------------------|--------------------------------|
-/// | `"atoms"`    | element, x, y, z, atomic_number, charge | Atom data (Å) |
-/// | `"grid"`     | `"density"` or `"mo_<idx>"`             | Volumetric scalar fields, shape `[nx, ny, nz]` |
-/// | `simbox`     | (h-matrix, origin)                      | Voxel cell × dims, in Å |
-pub fn read_cube_str(text: &str) -> Result<Frame, MolRsError> {
-    read_frame_from(text.as_bytes())
-}
-
-/// Write one frame as Gaussian cube text — the inverse of [`read_cube_str`].
-pub fn write_cube_str(frame: &Frame) -> Result<String, MolRsError> {
-    let mut buf = Vec::new();
-    write_frame_to(&mut buf, frame)?;
-    String::from_utf8(buf).map_err(|e| MolRsError::parse(e.to_string()))
-}
-
-/// Read a concatenated multi-cube trajectory file into one [`Frame`] per cube.
+/// Random access over a file of Gaussian cubes back to back.
 ///
 /// AIMD spectroscopy workflows emit one volumetric electron-density cube per
-/// step, concatenated back-to-back with no blank separator lines (as the
-/// reference `bqb_cubeframe.cpp` consumes them); each is parsed by the
-/// single-cube reader. Reading stops cleanly at EOF. Every frame is normalised
-/// to Å; the volumetric block stays in its native `e/Bohr³` (give the Voronoi
-/// integrator `LengthUnit::Bohr` and it converts to `e/Å³`).
-pub fn read_cube_trajectory<P: AsRef<Path>>(path: P) -> Result<Vec<Frame>, MolRsError> {
-    let file = std::fs::File::open(path).map_err(MolRsError::Io)?;
-    let mut reader = BufReader::new(file);
-    let mut frames = Vec::new();
-    loop {
-        // EOF when the buffered reader has nothing more to hand out.
-        let at_eof = reader.fill_buf().map_err(MolRsError::Io)?.is_empty();
-        if at_eof {
-            break;
-        }
-        frames.push(read_frame_from(&mut reader)?);
+/// step, concatenated with no separator lines (as the reference
+/// `bqb_cubeframe.cpp` consumes them); each is one frame, parsed by
+/// [`read_cube`]'s parser. Every frame is normalised to Å; the volumetric
+/// block stays in its native `e/Bohr³` (give the Voronoi integrator
+/// `LengthUnit::Bohr` and it converts to `e/Å³`).
+///
+/// A cube states no length up front, so the index is built by parsing every
+/// cube once.
+pub struct CubeReader<R: BufRead + Seek> {
+    reader: R,
+    index: Option<Vec<u64>>,
+}
+
+impl CubeReader<Box<dyn ReadSeek>> {
+    /// Open a cube file, or the bytes of one, for random access by cube.
+    pub fn open<'a>(src: impl Into<Source<'a>>) -> std::io::Result<Self> {
+        Ok(Self::new(src.into().owned_reader()?))
     }
-    Ok(frames)
+}
+
+impl<R: BufRead + Seek> CubeReader<R> {
+    /// A reader over any seekable buffered byte stream.
+    pub fn new(reader: R) -> Self {
+        Self {
+            reader,
+            index: None,
+        }
+    }
+}
+
+/// A cube parse or shape error as frame IO's `io::Error`: an OS error stays
+/// itself, anything else is `InvalidData` with its message.
+fn into_io(e: MolRsError) -> std::io::Error {
+    match e {
+        MolRsError::Io(e) => e,
+        other => crate::io::invalid_data(other),
+    }
+}
+
+impl<R: BufRead + Seek> TrajectoryReader for CubeReader<R> {
+    fn build_index(&mut self) -> std::io::Result<()> {
+        if self.index.is_some() {
+            return Ok(());
+        }
+        let start = self.reader.stream_position()?;
+        self.reader.seek(SeekFrom::Start(0))?;
+        let mut offsets = Vec::new();
+        // EOF when the buffered reader has nothing more to hand out.
+        while !self.reader.fill_buf()?.is_empty() {
+            offsets.push(self.reader.stream_position()?);
+            read_frame_from(&mut self.reader).map_err(into_io)?;
+        }
+        self.reader.seek(SeekFrom::Start(start))?;
+        self.index = Some(offsets);
+        Ok(())
+    }
+
+    fn read_frame(&mut self, index: usize) -> std::io::Result<Option<Frame>> {
+        self.build_index()?;
+        let Some(&at) = self.index.as_ref().and_then(|o| o.get(index)) else {
+            return Ok(None);
+        };
+        self.reader.seek(SeekFrom::Start(at))?;
+        read_frame_from(&mut self.reader).map(Some).map_err(into_io)
+    }
+
+    fn len(&mut self) -> std::io::Result<usize> {
+        self.build_index()?;
+        Ok(self.index.as_ref().map_or(0, Vec::len))
+    }
 }
 
 /// Write a Gaussian Cube file to any [`Write`] destination.
@@ -489,13 +537,13 @@ fn write_frame_to<W: Write>(writer: &mut W, frame: &Frame) -> Result<(), MolRsEr
     };
 
     // Recover origin and cell columns from simbox, in the writer's unit.
-    let origin_arr = simbox.origin_view().to_owned();
+    let origin_arr = simbox.origin().to_owned();
     let origin = [
         origin_arr[0] * unit_scale,
         origin_arr[1] * unit_scale,
         origin_arr[2] * unit_scale,
     ];
-    let h = simbox.h_view();
+    let h = ndarray::arr2(&simbox.matrix());
 
     // Comment lines
     let c1 = frame
@@ -540,23 +588,43 @@ fn write_frame_to<W: Write>(writer: &mut W, frame: &Frame) -> Result<(), MolRsEr
             .map_err(MolRsError::Io)?;
     }
 
-    // Atom lines (positions in writer's unit).
-    let atom_x = atoms.get("x").and_then(|c| c.as_float());
-    let atom_y = atoms.get("y").and_then(|c| c.as_float());
-    let atom_z = atoms.get("z").and_then(|c| c.as_float());
-    let atom_z_num = atoms.get("atomic_number").and_then(|c| c.as_uint());
-    let atom_charge = atoms.get("charge").and_then(|c| c.as_float());
-    let atom_symbol = atoms.get("element").and_then(|c| c.as_string());
+    // Atom lines (positions in writer's unit). The file spells species as Z,
+    // so the writer reads `atomic_number` and nothing else; a frame read from
+    // a symbol format converts first with `Element::fill_atomic_numbers`.
+    let coord = |key: &str| {
+        atoms.get(key).and_then(|c| c.get::<f64>()).ok_or_else(|| {
+            MolRsError::validation(format!(
+                "cube writer: atoms block has no float '{key}' column"
+            ))
+        })
+    };
+    let (atom_x, atom_y, atom_z) = (coord("x")?, coord("y")?, coord("z")?);
+    let atom_z_num = atoms
+        .get(keys::ATOMIC_NUMBER)
+        .and_then(|c| c.get::<u64>())
+        .ok_or_else(|| {
+            MolRsError::validation(format!(
+                "cube writer: atoms block has no unsigned '{}' column; a frame that \
+                 spells species as symbols needs `Element::fill_atomic_numbers(&mut frame)` \
+                 first",
+                keys::ATOMIC_NUMBER
+            ))
+        })?;
+    let atom_charge = atoms.get("charge").and_then(|c| c.get::<f64>());
 
     for i in 0..n_atoms {
-        let z_num = atom_z_num
-            .map(|a| a[[i]])
-            .or_else(|| atom_symbol.and_then(|s| Element::by_symbol(&s[[i]]).map(|e| e.z() as Idx)))
-            .unwrap_or(0);
+        let z_num = atom_z_num[[i]];
+        if z_num > 118 {
+            return Err(MolRsError::validation(format!(
+                "cube writer: atoms row {i}: {z_num} is not an atomic number (0..=118)"
+            )));
+        }
+        // The cube "charge" field is the nuclear charge; without a charge
+        // column the format's own convention (charge = Z) applies.
         let charge = atom_charge.map(|a| a[[i]]).unwrap_or(z_num as F);
-        let x = atom_x.map(|a| a[[i]]).unwrap_or(0.0) * unit_scale as F;
-        let y = atom_y.map(|a| a[[i]]).unwrap_or(0.0) * unit_scale as F;
-        let z = atom_z.map(|a| a[[i]]).unwrap_or(0.0) * unit_scale as F;
+        let x = atom_x[[i]] * unit_scale as F;
+        let y = atom_y[[i]] * unit_scale as F;
+        let z = atom_z[[i]] * unit_scale as F;
         writeln!(
             writer,
             "{:5}{:12.6}{:12.6}{:12.6}{:12.6}",
@@ -583,7 +651,7 @@ fn write_frame_to<W: Write>(writer: &mut W, frame: &Frame) -> Result<(), MolRsEr
             .map(|idx| {
                 grid_block
                     .get(&format!("mo_{}", idx))
-                    .and_then(|c| c.as_float())
+                    .and_then(|c| c.get::<f64>())
                     .map(|a| a.iter().copied().collect::<Vec<_>>())
                     .unwrap_or_default()
             })
@@ -607,7 +675,7 @@ fn write_frame_to<W: Write>(writer: &mut W, frame: &Frame) -> Result<(), MolRsEr
         // Single density field
         let data = grid_block
             .get("density")
-            .and_then(|c| c.as_float())
+            .and_then(|c| c.get::<f64>())
             .ok_or_else(|| MolRsError::validation("cube grid has no 'density' column"))?;
         let mut col = 0;
         for v in data.iter() {

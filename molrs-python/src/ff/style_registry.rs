@@ -799,6 +799,13 @@ fn inputs(
                 out.style_texts.push((p.name.to_string(), t.to_string()))
             }
             ParamValue::Text(t) => out.texts.push((p.name.to_string(), vec![t.to_string(); n])),
+            ParamValue::Array(a) => {
+                let views = vec![a.view(); n];
+                let stacked = ndarray::stack(Axis(0), &views).map_err(|e| {
+                    PyValueError::new_err(format!("{who}: default of `{}`: {e}", p.name))
+                })?;
+                out.arrays.push((p.name.to_string(), stacked));
+            }
         }
     }
     Ok(out)

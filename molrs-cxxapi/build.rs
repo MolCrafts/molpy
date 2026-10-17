@@ -141,15 +141,22 @@ __MOLRS_ELEMENT_VARIANTS__    }
         fn frame_set_meta(fref: &mut FrameRef, value: KeyedMetaValue) -> Result<()>;
 
         // readers — owned copies (RefCell precludes returning borrowed slices);
-        // an absent block or column reads as empty. The box is its cell
-        // matrix H, 9 row-major values (empty when the frame has no box).
-        fn frame_column_f64(fref: &FrameRef, block: &str, col: &str) -> Vec<f64>;
-        fn frame_column_i32(fref: &FrameRef, block: &str, col: &str) -> Vec<i32>;
-        fn frame_column_u64(fref: &FrameRef, block: &str, col: &str) -> Vec<u64>;
-        fn frame_column_str(fref: &FrameRef, block: &str, col: &str) -> Vec<String>;
+        // an absent block or column reads as empty, a column of another dtype
+        // is an error naming both dtypes. The box is its cell matrix H, 9
+        // row-major values (empty when the frame has no box or the box has no
+        // defined cell).
+        //
+        // One reader and one writer per column dtype is deliberate: cxx has no
+        // generics, so `frame_column::<T>` cannot cross the bridge — the
+        // `_{f64,i32,u64,str}` suffix is the type parameter spelled out, not a
+        // variant family.
+        fn frame_column_f64(fref: &FrameRef, block: &str, col: &str) -> Result<Vec<f64>>;
+        fn frame_column_i32(fref: &FrameRef, block: &str, col: &str) -> Result<Vec<i32>>;
+        fn frame_column_u64(fref: &FrameRef, block: &str, col: &str) -> Result<Vec<u64>>;
+        fn frame_column_str(fref: &FrameRef, block: &str, col: &str) -> Result<Vec<String>>;
         fn frame_box_h(fref: &FrameRef) -> Vec<f64>;
 
-        // create-or-update writers
+        // create-or-update writers (one per dtype, as the readers)
         fn frame_set_column_f64(
             fref: &mut FrameRef,
             block: &str,
@@ -176,6 +183,12 @@ __MOLRS_ELEMENT_VARIANTS__    }
         ) -> Result<()>;
         // a periodic box at the origin from its 9-value row-major H
         fn frame_set_box_h(fref: &mut FrameRef, h: &[f64]) -> Result<()>;
+        // explicit species conversion (molrs Element::fill_atomic_numbers /
+        // Element::fill_symbols): atoms.element symbols -> atoms.atomic_number
+        // (Uint; "*" is 0), and back (0 is "*"). Nothing else converts; an
+        // unknown symbol or a number outside 0..=118 is an error naming the row.
+        fn frame_fill_atomic_numbers(fref: &mut FrameRef) -> Result<()>;
+        fn frame_fill_symbols(fref: &mut FrameRef) -> Result<()>;
         // declared precision of an f64 column: a `*.mrec` writer stores it
         // rounded to the largest power of two <= precision (molrec)
         fn frame_set_precision(
@@ -186,7 +199,9 @@ __MOLRS_ELEMENT_VARIANTS__    }
         ) -> Result<()>;
 
         // ── AM1-BCC bridge (molrs::ff::charge::BccModel) ─────────
-        // Atomiverse supplies AM1 base charges; molrs owns BCC typing.
+        // Atomiverse supplies AM1 base charges; molrs owns BCC typing. The
+        // frame carries atoms.{atomic_number, x, y, z} + bonds.{atomi, atomj};
+        // species is read from atomic_number only (no `element` needed).
         //
         // `bcc_model_new` selects the correction family by name — "bcc"
         // (BCCPARM.DAT, model id `"bcc"`) or `"abcg2"` (BCCPARM_ABCG2.DAT,
@@ -207,42 +222,33 @@ __MOLRS_ELEMENT_VARIANTS__    }
         fn correct(self: &BccModel, fref: &mut FrameRef, am1_charges: &[f64]) -> Result<Vec<f64>>;
 
         // ── I/O ──────────────────────────────────────────────────
-        // The writers take atomic numbers + blocked coordinates; `h` is empty
-        // (no box) or a 9-value row-major H. A length mismatch, an unknown
-        // atomic number or a malformed / singular H is an error.
+        // One frame currency: every writer takes a `FrameRef` (built with
+        // `frame_new` + `frame_set_column_*` + `frame_set_box_h` +
+        // `frame_set_meta`) and every reader returns one. Species is the
+        // schema's Uint `atomic_number` (0..=118, 0 = wildcard): every writer,
+        // the streaming one included, refuses a number outside that range,
+        // naming the row. The caller's frame is never modified by a writer.
 
-        // Write one frame (element + coords + typed metadata) to an XYZ file
-        // (molrs XyzWriter). append=false truncates; append=true appends.
-        fn write_xyz(
-            path: &str,
-            atomic_number: &[i32],
-            x: &[f64],
-            y: &[f64],
-            z: &[f64],
-            h: &[f64],
-            meta: Vec<KeyedMetaValue>,
-            append: bool,
-        ) -> Result<()>;
+        // Write one frame to an XYZ / ExtXYZ file (molrs XyzWriter): its atoms
+        // columns, box and typed metadata. XYZ spells symbols, so `element` is
+        // filled from `atoms.atomic_number` explicitly (Element::fill_symbols)
+        // on a copy; a missing atomic_number or a number outside 0..=118 is an
+        // error naming the row. append=false truncates; append=true appends.
+        fn write_xyz(path: &str, fref: &FrameRef, append: bool) -> Result<()>;
         // Read the first frame of an (ext)XYZ file into a materialize-ready
         // FrameRef (atoms.{x,y,z,atomic_number} + box). `atomic_number` is
-        // derived from the required ExtXYZ species column. All XYZ parsing
-        // lives in molrs (io::read_xyz).
+        // converted explicitly (Element::fill_atomic_numbers) from the
+        // required ExtXYZ species column, which is then dropped: the engine's
+        // boundary schema carries Z only. All XYZ parsing lives in molrs
+        // (io::read_xyz).
         fn read_xyz(path: &str) -> Result<Box<FrameRef>>;
 
-        // Write one frame + named per-atom fields (field_data is
-        // [n_fields, n_atoms]) as a `*.mrec` record whose `frame` section is
-        // that frame (molrs io::write_mrec_frame); read it back with
-        // read_mrec_frame (molrs io::read_mrec_frame).
-        fn write_mrec_frame(
-            path: &str,
-            atomic_number: &[i32],
-            x: &[f64],
-            y: &[f64],
-            z: &[f64],
-            h: &[f64],
-            field_names: Vec<String>,
-            field_data: &[f64],
-        ) -> Result<()>;
+        // Write one frame as a `*.mrec` record whose `frame` section is that
+        // frame — every block, column, declared precision, box and metadata
+        // value (molrs io::write_mrec); read it back with read_mrec_frame
+        // (molrs MrecFile::frame). mrec is molrs' native format: it stores
+        // `atomic_number` itself, no `element` symbols.
+        fn write_mrec_frame(path: &str, fref: &FrameRef) -> Result<()>;
         fn read_mrec_frame(path: &str) -> Result<Box<FrameRef>>;
         // Frame `index` of the trajectory in a `*.mrec` record (molrs
         // MrecReader::frame); reads what an MrecWriterRef wrote.
@@ -280,16 +286,16 @@ __MOLRS_ELEMENT_VARIANTS__    }
         // ── Trajectory analysis (mirrors molrs::compute) ─────────
         // Each type is the molrs analysis of the same name. Its constructor
         // (`*_new`, plus `set_*` for an optional choice) takes configuration
-        // only; data goes to `compute` (a whole trajectory) or to `push` on
-        // the streaming accumulator that `accumulator()` hands out (one frame
-        // per call, bounded memory, numerically equal to `compute`). Every
+        // only; data goes to `push` on the streaming accumulator that
+        // `accumulator()` hands out — one frame per call, bounded memory —
+        // and `finish` reads the result. There is no whole-trajectory
+        // `compute`: a stored trajectory is pushed frame by frame. Every
         // fallible call returns `Result`: a bad argument, a ragged buffer or a
         // molrs compute error throws `rust::Error` — never an empty curve, a
         // NaN or `false`.
         //
-        // Buffers: a trajectory is a row-major [n_frames, D * n] buffer, each
-        // frame blocked by component (positions x[0..n) y[..) z[..), D = 3;
-        // velocities any n_dof values, D = 1); a box is a 9-value row-major
+        // Buffers: a frame is blocked by component (positions x[0..n) y[..)
+        // z[..); velocities any n_dof values); a box is a 9-value row-major
         // cell matrix H. An optional box argument is empty for "no box".
 
         // A correlation curve (molrs TimeCorrelation): `lag_times` in the unit
@@ -309,27 +315,19 @@ __MOLRS_ELEMENT_VARIANTS__    }
         fn n_frames(self: &CorrelatorAccumulator) -> u64;
         fn finish(self: &CorrelatorAccumulator) -> Result<Box<TimeCorrelation>>;
 
-        // Mean squared displacement over lags 0..=max_lag frames. Origins
-        // default to "all" (windowed estimator); "first" measures from frame 0.
-        // `compute` takes unwrapped positions [n_frames, 3 * n_atoms], dt and
-        // one H per frame (or empty). The Einstein D is a LinearFit of the
-        // curve: D = slope / (2 * dims).
+        // Mean squared displacement over lags 0..=max_lag frames of unwrapped
+        // positions. Origins default to "all" (windowed estimator); "first"
+        // measures from frame 0. The Einstein D is a LinearFit of the curve:
+        // D = slope / (2 * dims).
         type Msd;
         fn msd_new(max_lag: u64) -> Box<Msd>;
         fn set_origins(self: &mut Msd, origins: &str) -> Result<()>;
         // Every `stride`-th frame is a time origin (origins "all"); 0 is an error.
         fn set_stride(self: &mut Msd, stride: u64) -> Result<()>;
-        fn compute(
-            self: &Msd,
-            positions: &[f64],
-            n_frames: u64,
-            dt: f64,
-            boxes: &[f64],
-        ) -> Result<Box<TimeCorrelation>>;
         fn accumulator(self: &Msd) -> Box<CorrelatorAccumulator>;
 
         // Velocity autocorrelation over lags 0..=max_lag frames, averaged over
-        // degrees of freedom. `compute` takes velocities [n_frames, n_dof] and dt.
+        // degrees of freedom.
         type Vacf;
         fn vacf_new(max_lag: u64) -> Box<Vacf>;
         // "unbiased" (default), "biased" or "none"; every `stride`-th origin;
@@ -337,12 +335,6 @@ __MOLRS_ELEMENT_VARIANTS__    }
         fn set_normalization(self: &mut Vacf, normalization: &str) -> Result<()>;
         fn set_stride(self: &mut Vacf, stride: u64) -> Result<()>;
         fn set_mean(self: &mut Vacf, mean: &str) -> Result<()>;
-        fn compute(
-            self: &Vacf,
-            velocities: &[f64],
-            n_frames: u64,
-            dt: f64,
-        ) -> Result<Box<TimeCorrelation>>;
         fn accumulator(self: &Vacf) -> Box<CorrelatorAccumulator>;
 
         // Ordinary-least-squares line through one channel of a curve, over
@@ -357,17 +349,10 @@ __MOLRS_ELEMENT_VARIANTS__    }
 
         // Radial distribution function g(r) over [r_min, r_max) Å in n_bins
         // bins (note r_max before r_min). Each frame's pairs come from a
-        // periodic cell-list self-query with cutoff r_max. `compute` takes
-        // positions [n_frames, 3 * n_atoms] and boxes [n_frames, 9] (NPT
-        // supported); the accumulator takes one frame and its H per `push`.
+        // periodic cell-list self-query with cutoff r_max; the accumulator
+        // takes one frame and its own H per `push` (NPT supported).
         type Rdf;
         fn rdf_new(n_bins: u64, r_max: f64, r_min: f64) -> Result<Box<Rdf>>;
-        fn compute(
-            self: &Rdf,
-            positions: &[f64],
-            boxes: &[f64],
-            n_frames: u64,
-        ) -> Result<RdfResult>;
         fn accumulator(self: &Rdf) -> Box<RdfAccumulator>;
 
         type RdfAccumulator;

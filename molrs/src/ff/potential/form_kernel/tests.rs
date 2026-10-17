@@ -17,10 +17,11 @@ use crate::ff::ir::{
     ParamCombination, ParamDimension, ParamSource, ParamSpec, SpecialClass, StyleSpec,
 };
 use crate::ff::ir::{Params, SpecialBonds};
+use crate::ff::potential::fixtures::OneShot;
 use crate::ff::potential::flat_coords::{accumulate_angle_forces, compute_angle};
 use crate::ff::potential::form_kernel::{CompoundForm, ParamColumns, ScalarForm};
 use crate::ff::potential::pair::fixtures::{assert_virial_matches_forces, table_over};
-use crate::ff::potential::{ForceTerm, Potential, Potentials};
+use crate::ff::potential::{Accumulator, ForceTerm, PairDriven, Potentials};
 use crate::ff::style_registry::{Kernel, Registry};
 use molrs::core::Block;
 use molrs::core::Frame;
@@ -157,9 +158,9 @@ fn strings(v: &[&str]) -> ndarray::ArrayD<String> {
 fn relation(cols: &[&[usize]], types: &[&str]) -> Block {
     let mut b = Block::new();
     for (key, col) in ["atomi", "atomj", "atomk", "atoml"].iter().zip(cols) {
-        b.insert(*key, idx(col)).unwrap();
+        b.insert(*key, idx(col), None).unwrap();
     }
-    b.insert("type", strings(types)).unwrap();
+    b.insert("type", strings(types), None).unwrap();
     b
 }
 
@@ -177,15 +178,18 @@ fn molecule() -> Frame {
     let mut atoms = Block::new();
     for (a, key) in ["x", "y", "z"].iter().enumerate() {
         let v: Vec<F> = (0..5).map(|i| COORDS[i * 3 + a]).collect();
-        atoms.insert(*key, Array1::from_vec(v).into_dyn()).unwrap();
+        atoms
+            .insert(*key, Array1::from_vec(v).into_dyn(), None)
+            .unwrap();
     }
     atoms
-        .insert("type", strings(&["C", "C", "O", "C", "H"]))
+        .insert("type", strings(&["C", "C", "O", "C", "H"]), None)
         .unwrap();
     atoms
         .insert(
             "charge",
             Array1::from_vec(vec![0.3, -0.2, -0.5, 0.25, 0.15]).into_dyn(),
+            None,
         )
         .unwrap();
     let mut frame = Frame::new();
@@ -206,12 +210,13 @@ fn molecule() -> Frame {
         relation(&[&[0, 1], &[1, 2], &[2, 3], &[3, 4]], &["d1", "d2"]),
     );
     let mut pairs = Block::new();
-    pairs.insert("atomi", idx(&[0, 0, 1])).unwrap();
-    pairs.insert("atomj", idx(&[3, 4, 4])).unwrap();
+    pairs.insert("atomi", idx(&[0, 0, 1]), None).unwrap();
+    pairs.insert("atomj", idx(&[3, 4, 4]), None).unwrap();
     pairs
         .insert(
             "is_14",
             Array1::from_vec(vec![true, false, true]).into_dyn(),
+            None,
         )
         .unwrap();
     frame.insert("pairs", pairs);
@@ -249,7 +254,8 @@ fn twin(
         });
         let s = ff.def_style(category, name, style.clone()).unwrap();
         for (label, ends, params) in rows {
-            s.def_type(label, ends, Params::from_pairs(params)).unwrap();
+            s.def_type(label, ends, Params::from_iter(params.iter().copied()))
+                .unwrap();
         }
         ff
     };
@@ -289,14 +295,18 @@ fn compare_bonded(label: &str, builtin: &ForceField, generic: &ForceField, reg: 
     let frame = molecule();
     let a = one_member(PotentialCompiler::new(builtin).compile(&frame).unwrap());
     let b = one_member(
-        PotentialCompiler::with_registry(generic, reg)
-            .compile(&frame)
-            .unwrap(),
+        PotentialCompiler::new(
+            &generic
+                .clone()
+                .with_registry(std::sync::Arc::new(reg.clone())),
+        )
+        .compile(&frame)
+        .unwrap(),
     );
     assert_close(
         label,
-        a.calc_energy_forces(&COORDS),
-        b.calc_energy_forces(&COORDS),
+        a.energy_forces_at(&COORDS),
+        b.energy_forces_at(&COORDS),
         1e-12,
     );
     let (ForceTerm::Indexed(ia), ForceTerm::Indexed(ib)) = (&a, &b) else {
@@ -306,13 +316,17 @@ fn compare_bonded(label: &str, builtin: &ForceField, generic: &ForceField, reg: 
     let table = ia.terms();
     assert_close(
         &format!("{label} (rebound)"),
-        ia.calc_energy_forces_with_terms(&COORDS, table.view()),
-        ib.calc_energy_forces_with_terms(&COORDS, table.view()),
+        ia.over_terms(&COORDS, table.view()),
+        ib.over_terms(&COORDS, table.view()),
         1e-12,
     );
-    let typed = PotentialCompiler::with_registry(generic, reg)
-        .compile_typed(&frame)
-        .unwrap();
+    let typed = PotentialCompiler::new(
+        &generic
+            .clone()
+            .with_registry(std::sync::Arc::new(reg.clone())),
+    )
+    .compile_typed(&frame)
+    .unwrap();
     assert_eq!(typed.len(), 1);
     assert!(
         typed[0].1.is_none(),
@@ -320,8 +334,8 @@ fn compare_bonded(label: &str, builtin: &ForceField, generic: &ForceField, reg: 
     );
     assert_close(
         &format!("{label} (typed door)"),
-        a.calc_energy_forces(&COORDS),
-        typed[0].0.calc_energy_forces(&COORDS),
+        a.energy_forces_at(&COORDS),
+        typed[0].0.energy_forces_at(&COORDS),
         1e-12,
     );
 }
@@ -459,8 +473,8 @@ fn scalar_pair_equals_lj_cut_at_both_doors() {
         .style_params(vec![p("cutoff", "L")])
         .special(SpecialClass::Vdw);
     let reg = registry_with(spec, Kernel::Scalar(Arc::new(Lj)));
-    let mut style = Params::from_pairs(&[("cutoff", 4.0)]);
-    style.set_str("mixing", "geometric");
+    let mut style = Params::from_iter([("cutoff", 4.0)]);
+    style.set("mixing", "geometric");
     let (builtin, generic) = twin(
         "pair",
         "lj/cut",
@@ -477,13 +491,17 @@ fn scalar_pair_equals_lj_cut_at_both_doors() {
 
     // Compiled: the `pairs` list, `is_14` rows at the field's 1-4 weight.
     let a = PotentialCompiler::new(&builtin).compile(&frame).unwrap();
-    let b = PotentialCompiler::with_registry(&generic, &reg)
-        .compile(&frame)
-        .unwrap();
+    let b = PotentialCompiler::new(
+        &generic
+            .clone()
+            .with_registry(std::sync::Arc::new(reg.clone())),
+    )
+    .compile(&frame)
+    .unwrap();
     assert_close(
         "lj compiled",
-        a.calc_energy_forces(&COORDS),
-        b.calc_energy_forces(&COORDS),
+        a.energy_forces_at(&COORDS),
+        b.energy_forces_at(&COORDS),
         1e-12,
     );
     assert!(b.members()[0].binds_a_fixed_pair_list());
@@ -492,9 +510,13 @@ fn scalar_pair_equals_lj_cut_at_both_doors() {
     let ta = PotentialCompiler::new(&builtin)
         .compile_typed(&frame)
         .unwrap();
-    let tb = PotentialCompiler::with_registry(&generic, &reg)
-        .compile_typed(&frame)
-        .unwrap();
+    let tb = PotentialCompiler::new(
+        &generic
+            .clone()
+            .with_registry(std::sync::Arc::new(reg.clone())),
+    )
+    .compile_typed(&frame)
+    .unwrap();
     assert_eq!(ta[0].1, tb[0].1, "the same special-bonds weights");
     let (ForceTerm::Pair(pa), ForceTerm::Pair(pb)) = (&ta[0].0, &tb[0].0) else {
         panic!("a pair member");
@@ -514,10 +536,14 @@ fn scalar_pair_equals_lj_cut_at_both_doors() {
             _ => 1.0,
         })
         .collect();
-    let mut fa = vec![0.0; 15];
-    let mut fb = vec![0.0; 15];
-    let (ea, wa) = pa.accumulate_pairs(&COORDS, &table, &factor, &mut fa);
-    let (eb, wb) = pb.accumulate_pairs(&COORDS, &table, &factor, &mut fb);
+    let weighted = |p: &dyn PairDriven| {
+        let mut acc = Accumulator::new(15).with_virial();
+        p.evaluate_pairs(&COORDS, &table, &factor, &mut acc);
+        let (e, w) = (acc.energy(), acc.virial());
+        (e, acc.into_forces(), w)
+    };
+    let (ea, fa, wa) = weighted(&**pa);
+    let (eb, fb, wb) = weighted(&**pb);
     assert_close("lj typed", (ea, fa), (eb, fb), 1e-12);
     let (wa, wb) = (wa.unwrap(), wb.unwrap());
     for c in 0..6 {
@@ -529,11 +555,7 @@ fn scalar_pair_equals_lj_cut_at_both_doors() {
             wb.components[c]
         );
     }
-    assert_virial_matches_forces(
-        "lj typed",
-        &COORDS,
-        pb.calc_energy_forces_with_pairs_virial(&COORDS, &table),
-    );
+    assert_virial_matches_forces("lj typed", &COORDS, pb.over_pairs_virial(&COORDS, &table));
 }
 
 /// A pair form reads the atoms' charges as `q1`, `q2`, and prices exactly
@@ -546,15 +568,19 @@ fn scalar_pair_binds_charges_and_follows_copies() {
         .source(ParamSource::PerInstance)
         .special(SpecialClass::Coulomb);
     let reg = registry_with(spec, Kernel::Scalar(Arc::new(Coulomb)));
-    let style = Params::from_pairs(&[("cutoff", 10.0), ("coulomb", 332.0716), ("dielectric", 1.0)]);
+    let style = Params::from_iter([("cutoff", 10.0), ("coulomb", 332.0716), ("dielectric", 1.0)]);
     let (builtin, generic) = twin("pair", "coul/cut", "coul/form", style, &[]);
     let frame = molecule();
     let mut ta = PotentialCompiler::new(&builtin)
         .compile_typed(&frame)
         .unwrap();
-    let mut tb = PotentialCompiler::with_registry(&generic, &reg)
-        .compile_typed(&frame)
-        .unwrap();
+    let mut tb = PotentialCompiler::new(
+        &generic
+            .clone()
+            .with_registry(std::sync::Arc::new(reg.clone())),
+    )
+    .compile_typed(&frame)
+    .unwrap();
     assert_eq!(ta[0].1, tb[0].1);
     // Atom 5 is a periodic copy of atom 0, shifted.
     let mut coords = COORDS.to_vec();
@@ -565,9 +591,10 @@ fn scalar_pair_binds_charges_and_follows_copies() {
         panic!("a pair member");
     };
     let table = table_over(&coords, &[(0, 3), (1, 4), (2, 5), (4, 5)]);
-    let mut fa = vec![0.0; 18];
-    let mut fb = vec![0.0; 18];
-    let (ea, _) = pa.accumulate_pairs(&coords, &table, &[], &mut fa);
-    let (eb, _) = pb.accumulate_pairs(&coords, &table, &[], &mut fb);
-    assert_close("coulomb typed", (ea, fa), (eb, fb), 1e-12);
+    assert_close(
+        "coulomb typed",
+        pa.over_pairs(&coords, &table),
+        pb.over_pairs(&coords, &table),
+        1e-12,
+    );
 }

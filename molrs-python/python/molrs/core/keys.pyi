@@ -86,3 +86,9 @@ VZ: Key
 X: Key
 Y: Key
 Z: Key
+
+H_COUNT: Key
+ISOTOPE: Key
+IS_AROMATIC: Key
+LAMMPS_TYPE_MASSES: Key
+STEREO: Key

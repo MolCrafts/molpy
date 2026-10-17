@@ -4,7 +4,8 @@
 use super::*;
 use crate::compute::time_series::test_support::assert_close;
 use crate::compute::{Accumulate, CorrelatorFrame, Stream};
-use ndarray::{Array2, Array3, array};
+use crate::core::Cell;
+use ndarray::{Array2, Array3};
 
 // ── The definition, written out ──────────────────────────────────────────────
 
@@ -543,7 +544,7 @@ fn orientation_and_presence_kernels_refuse_what_they_cannot_mean() {
         )),
         "mean"
     );
-    let boxes = vec![SimBox::cube(10.0, array![0.0, 0.0, 0.0], [true; 3]).unwrap(); 6];
+    let boxes = vec![SimBox::new(Cell::Lengths([10.0; 3]), [0.0, 0.0, 0.0], [true; 3]).unwrap(); 6];
     assert_eq!(
         field(refusal(
             Correlator::new(LagKernel::Product, 2),
@@ -576,7 +577,7 @@ fn orientation_and_presence_kernels_refuse_what_they_cannot_mean() {
 
 #[test]
 fn a_wrapped_step_is_refused_and_an_unwrapped_one_is_not() {
-    let cube = SimBox::cube(10.0, array![0.0, 0.0, 0.0], [true; 3]).unwrap();
+    let cube = SimBox::new(Cell::Lengths([10.0; 3]), [0.0, 0.0, 0.0], [true; 3]).unwrap();
     let boxes = vec![cube; 4];
     // Item 1 steps 4.9 Å (allowed, < 5 Å), then 5.1 Å (refused) at frame 3.
     let mut a = Array3::<F>::zeros((4, 2, 3));
@@ -612,7 +613,7 @@ fn a_wrapped_step_is_refused_and_an_unwrapped_one_is_not() {
     ));
 
     // A box with no periodic axis bounds nothing.
-    let free = vec![SimBox::cube(10.0, array![0.0, 0.0, 0.0], [false; 3]).unwrap(); 4];
+    let free = vec![SimBox::new(Cell::Lengths([10.0; 3]), [0.0, 0.0, 0.0], [false; 3]).unwrap(); 4];
     a[[3, 1, 0]] = 100.0;
     assert!(
         sd.compute(CorrelatorInput {

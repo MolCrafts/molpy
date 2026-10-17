@@ -10,8 +10,6 @@
 //! writer and reader drive them rather than restating them. Nothing here
 //! encodes or decodes a row pointer, a step index, or a frame group.
 
-#[cfg(feature = "filesystem")]
-use std::path::Path;
 use std::sync::Arc;
 
 use serde_json::{Map as JsonMap, Value as JsonValue};
@@ -23,7 +21,9 @@ use zarrs::group::GroupBuilder;
 use zarrs::node::{Node, NodeMetadata};
 #[cfg(feature = "zarr")]
 use zarrs::storage::WritableStorageTraits;
-use zarrs::storage::{ReadableStorageTraits, ReadableWritableListableStorage};
+use zarrs::storage::{
+    ReadableListableStorage, ReadableStorageTraits, ReadableWritableListableStorage,
+};
 
 use crate::io::mrec::MrecReader;
 #[cfg(feature = "zarr")]
@@ -35,18 +35,20 @@ use crate::io::mrec::zarr_storage::frame_io::{
 #[cfg(feature = "zarr")]
 use crate::io::mrec::zarr_storage::frame_io::{node_prefix, write_column, write_frame_group};
 #[cfg(feature = "filesystem")]
+use crate::io::mrec::zarr_storage::pack::{open_mrec_zip, pack_storage_zip, unpack_zip_bytes};
+#[cfg(feature = "filesystem")]
 use crate::io::mrec::zarr_storage::positional_write::PositionalWriteStorage;
 #[cfg(feature = "zarr")]
 use crate::io::mrec::{MrecWriter, SequenceSchema};
+#[cfg(feature = "filesystem")]
+use crate::io::{Sink, Source};
 use molrs::core::Column;
 use molrs::core::MolRsError;
 #[cfg(feature = "filesystem")]
-use molrs::io::mrec::ForceFieldSection;
+use zarrs::storage::store::MemoryStore;
 // Not `filesystem`-gated: the store-taking section door below names it in
 // every configuration, wasm included.
 use molrs::core::Frame;
-#[cfg(feature = "filesystem")]
-use molrs::core::Trajectory;
 use molrs::core::{ObservableKind, ObservableRecord, ObservableValues};
 use molrs::io::mrec::MolRec;
 
@@ -54,15 +56,16 @@ use molrs::io::mrec::MolRec;
 // Write
 // ---------------------------------------------------------------------------
 
-/// Write a [`crate::io::mrec::MolRec`] to a filesystem path as a `*.mrec` directory.
+/// Write a [`crate::io::mrec::MolRec`]: to a path as a `*.mrec` directory
+/// store, or into a buffer as the bytes of a packed `*.mrec.zip` (what
+/// [`pack_mrec_zip`](crate::io::mrec::pack_mrec_zip) makes of the directory).
 ///
 /// The conventional suffix is `.mrec` (for example `water.mrec/`); other
 /// names are accepted. A second write to the same path replaces the previous record
 /// entirely — leftover sections from a wider record do not survive.
 ///
 /// `meta` is written as the producer supplied it. A trajectory section is encoded by
-/// [`crate::io::mrec::MrecWriter`]. [`write_mrec_trajectory`] is the
-/// same write, with the record shaped to carry only a trajectory.
+/// [`crate::io::mrec::MrecWriter`]. [`MrecFile`] reads the sections back.
 ///
 /// # Layout
 ///
@@ -93,41 +96,212 @@ use molrs::io::mrec::MolRec;
 /// open dense series arrays when present, else fall back to the JSONL WAL.
 ///
 /// Root sections the reader does not interpret are ignored: they are never
-/// reinterpreted as frame groups, and they never fail a read. The typed doors
-/// ([`read_mrec_frame`], [`read_mrec_system`], [`read_mrec_trajectory`]) decode
-/// only the section they name, so a section they were not asked for cannot
-/// break them either.
+/// reinterpreted as frame groups, and they never fail a read. The section
+/// reads of [`MrecFile`] decode only the section they name, so a section they
+/// were not asked for cannot break them either.
 ///
 /// # Errors
 ///
-/// A [`MolRsError::Zarr`] when `path` cannot be created as a directory store, or when a section fails to
-/// encode. A [`MolRsError::Validation`] when [`crate::io::mrec::MolRec::validate`]
+/// The frame-IO error: the OS error of a path that cannot be written, and
+/// [`InvalidData`](std::io::ErrorKind::InvalidData) carrying the
+/// [`MolRsError`] otherwise — a [`MolRsError::Zarr`] when a section fails to
+/// encode, a [`MolRsError::Validation`] when [`crate::io::mrec::MolRec::validate`]
 /// rejects the record (no state section, or a `step`/`time` length that does
 /// not match the frame count).
 ///
 /// # Examples
 ///
 /// ```
-/// # fn main() -> Result<(), molrs::core::MolRsError> {
-/// use molrs::io::{read_mrec, write_mrec};
+/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+/// use molrs::io::mrec::{MolRec, MrecFile};
+/// use molrs::io::write_mrec;
 ///
 /// let dir = tempfile::tempdir().unwrap();
 /// let path = dir.path().join("water.mrec");
 ///
-/// let mut record = molrs::io::mrec::MolRec::new();
+/// let mut record = MolRec::new();
 /// record.frame = Some(molrs::core::Frame::new());
 /// write_mrec(&path, &record)?;
+/// assert!(MrecFile::open(&path)?.frame()?.is_some());
 ///
-/// let loaded = read_mrec(&path)?;
-/// assert!(loaded.frame.is_some());
+/// let mut packed = Vec::new();
+/// write_mrec(&mut packed, &record)?;
+/// assert!(MrecFile::open(&packed)?.record()?.frame.is_some());
 /// # Ok(())
 /// # }
 /// ```
 #[cfg(feature = "filesystem")]
-pub fn write_mrec(path: impl AsRef<Path>, record: &MolRec) -> Result<(), MolRsError> {
-    let store: ReadableWritableListableStorage =
-        Arc::new(PositionalWriteStorage::new(path.as_ref())?);
-    write_mrec_storage(store, record)
+pub fn write_mrec<'a>(sink: impl Into<Sink<'a>>, record: &MolRec) -> std::io::Result<()> {
+    let written = match sink.into() {
+        Sink::Path(path) => PositionalWriteStorage::new(path)
+            .and_then(|store| write_mrec_storage(Arc::new(store), record)),
+        Sink::Buffer(out) => {
+            let store: ReadableWritableListableStorage = Arc::new(MemoryStore::new());
+            write_mrec_storage(store.clone(), record).and_then(|()| {
+                out.clear();
+                pack_storage_zip(&store, out)
+            })
+        }
+    };
+    written.map_err(io_error)
+}
+
+/// The frame-IO error a record door reports: an OS error stays itself, and
+/// every store, schema or validation refusal is
+/// [`InvalidData`](std::io::ErrorKind::InvalidData) carrying the
+/// [`MolRsError`] — its message is the error's, and the typed error is
+/// [`get_ref`](std::io::Error::get_ref)`()` downcast to `MolRsError`.
+pub(crate) fn io_error(e: MolRsError) -> std::io::Error {
+    match e {
+        MolRsError::Io(e) => e,
+        other => std::io::Error::new(std::io::ErrorKind::InvalidData, other),
+    }
+}
+
+/// A MolRec record opened for reading, one section at a time.
+///
+/// Sections are independent: a record may carry a `frame`, a `system`, a
+/// `trajectory`, a `forcefield`, or several at once, and a caller that wants
+/// one of them does not pay for the rest — each read decodes only the section
+/// it names, and asking which sections exist ([`sections`](Self::sections))
+/// decodes none. [`record`](Self::record) reads them all. The `trajectory`
+/// section is [`MrecReader`]'s, which reads it one frame at a time.
+///
+/// ```
+/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+/// use molrs::io::mrec::{MolRec, MrecFile};
+/// use molrs::io::write_mrec;
+///
+/// let dir = tempfile::tempdir().unwrap();
+/// let path = dir.path().join("water.mrec");
+/// let mut record = MolRec::new();
+/// record.frame = Some(molrs::core::Frame::new());
+/// write_mrec(&path, &record)?;
+///
+/// let file = MrecFile::open(&path)?;
+/// assert!(file.sections()?.iter().any(|s| s == "frame"));
+/// assert!(file.frame()?.is_some());
+/// assert!(file.system()?.is_none());
+/// # Ok(())
+/// # }
+/// ```
+pub struct MrecFile {
+    store: ReadableListableStorage,
+}
+
+impl MrecFile {
+    /// Open a record: a `*.mrec` directory store, a packed `*.mrec.zip`
+    /// (read in place, a section costing the bytes of that section), or the
+    /// bytes of a packed one.
+    ///
+    /// # Errors
+    ///
+    /// [`InvalidData`](std::io::ErrorKind::InvalidData) carrying a
+    /// [`MolRsError::Zarr`] when the path holds neither a directory store
+    /// nor a packed record, or the bytes are not a packed record.
+    #[cfg(feature = "filesystem")]
+    pub fn open<'a>(src: impl Into<Source<'a>>) -> std::io::Result<Self> {
+        Ok(Self {
+            store: open_record(&src.into()).map_err(io_error)?,
+        })
+    }
+
+    /// A record in a store the caller already holds (in-memory, a host's).
+    pub fn from_storage(store: ReadableListableStorage) -> Self {
+        Self { store }
+    }
+
+    /// The record's top-level section names (`meta`, `frame`, `system`, …),
+    /// sorted, without decoding any of them.
+    ///
+    /// # Errors
+    ///
+    /// [`InvalidData`](std::io::ErrorKind::InvalidData) carrying a
+    /// [`MolRsError::Zarr`] when the store root cannot be listed.
+    pub fn sections(&self) -> std::io::Result<Vec<String>> {
+        section_names_of(&self.store).map_err(io_error)
+    }
+
+    /// The record's `meta` document; empty when the store has none.
+    ///
+    /// # Errors
+    ///
+    /// [`InvalidData`](std::io::ErrorKind::InvalidData) carrying a
+    /// [`MolRsError::Zarr`] when the `meta` group cannot be decoded.
+    pub fn meta(&self) -> std::io::Result<JsonMap<String, JsonValue>> {
+        read_meta(&self.store).map_err(io_error)
+    }
+
+    /// The `frame` section — the snapshot — or `None` when the record has
+    /// none.
+    ///
+    /// # Errors
+    ///
+    /// [`InvalidData`](std::io::ErrorKind::InvalidData) carrying a
+    /// [`MolRsError::Zarr`] when the section fails to decode, or a
+    /// reference into another section is out of its range.
+    pub fn frame(&self) -> std::io::Result<Option<Frame>> {
+        read_frame_section(&self.store, "frame").map_err(io_error)
+    }
+
+    /// The `system` section — the topology — or `None` when the record has
+    /// none.
+    ///
+    /// # Errors
+    ///
+    /// As [`frame`](Self::frame).
+    pub fn system(&self) -> std::io::Result<Option<Frame>> {
+        read_frame_section(&self.store, "system").map_err(io_error)
+    }
+
+    /// The `forcefield` section, validated
+    /// ([`ForceFieldSection::validate`](crate::io::mrec::ForceFieldSection::validate)),
+    /// or `None` when the record has none. A table no style names, and a
+    /// document key this build does not know, are kept.
+    ///
+    /// # Errors
+    ///
+    /// [`InvalidData`](std::io::ErrorKind::InvalidData) carrying a
+    /// [`MolRsError::Zarr`] when a table fails to decode, or what the
+    /// validation refuses.
+    pub fn forcefield(&self) -> std::io::Result<Option<crate::io::mrec::ForceFieldSection>> {
+        if !self.sections()?.iter().any(|name| name == FORCEFIELD_GROUP) {
+            return Ok(None);
+        }
+        read_forcefield_group(&self.store, &join_path("/", FORCEFIELD_GROUP))
+            .map(Some)
+            .map_err(io_error)
+    }
+
+    /// Every section of the record. Root sections this build does not
+    /// interpret are ignored, never misread, and `meta` keys it does not
+    /// recognise are kept.
+    ///
+    /// # Errors
+    ///
+    /// [`InvalidData`](std::io::ErrorKind::InvalidData) carrying a
+    /// [`MolRsError::Zarr`] when a section fails to decode.
+    pub fn record(&self) -> std::io::Result<MolRec> {
+        read_record(&self.store).map_err(io_error)
+    }
+}
+
+/// The store a [`Source`] names: a directory store, a packed record read in
+/// place, or packed bytes unpacked into memory.
+#[cfg(feature = "filesystem")]
+fn open_record(src: &Source<'_>) -> Result<ReadableListableStorage, MolRsError> {
+    match src.path() {
+        Some(path) if path.is_dir() => Ok(Arc::new(FilesystemStore::new(path).map_err(zerr)?)),
+        Some(path) if path.is_file() => open_mrec_zip(path),
+        Some(path) => Err(MolRsError::zarr(format!(
+            "cannot open {}: neither a record directory nor a packed record is there",
+            path.display()
+        ))),
+        None => {
+            let bytes = src.bytes().map_err(MolRsError::Io)?;
+            Ok(unpack_zip_bytes(&bytes)?.readable_listable())
+        }
+    }
 }
 
 /// Write a record into an open store, rooted at `/`.
@@ -299,7 +473,7 @@ fn write_metrics(
         .build(store.clone(), &series_path)?
         .store_metadata()?;
     for (name, values) in &record.metrics_series {
-        let column = Column::from_float(
+        let column = Column::from(
             ndarray::ArrayD::from_shape_vec(vec![values.len()], values.clone())
                 .map_err(|e| MolRsError::zarr(format!("metrics series '{name}': {e}")))?,
         );
@@ -318,7 +492,7 @@ fn write_metrics(
 /// is a document-only section; a non-float64 series is an error rather than
 /// a silent narrowing.
 fn read_metrics_series(
-    store: &ReadableWritableListableStorage,
+    store: &ReadableListableStorage,
     metrics_path: &str,
     record: &mut MolRec,
 ) -> Result<(), MolRsError> {
@@ -346,7 +520,7 @@ fn read_metrics_series(
             path,
             &ArraySubset::new_with_shape(Array::open(store.clone(), path)?.shape().to_vec()),
         )?;
-        let values = column.as_float().ok_or_else(|| {
+        let values = column.get::<f64>().ok_or_else(|| {
             MolRsError::zarr(format!(
                 "metrics series '{name}' must be a float64 array, got {}",
                 column.dtype().name()
@@ -406,45 +580,17 @@ fn write_observables(
 // Read
 // ---------------------------------------------------------------------------
 
-/// Read a [`crate::io::mrec::MolRec`] from a `*.mrec` directory.
-///
-/// Root sections this build does not interpret are ignored, never misread,
-/// and `meta` keys it does not recognise are kept.
-///
-/// # Errors
-///
-/// A [`MolRsError::Zarr`] when `path` is not a readable record store, or when
-/// a section fails to decode.
-#[cfg(feature = "filesystem")]
-pub fn read_mrec(path: impl AsRef<Path>) -> Result<MolRec, MolRsError> {
-    read_mrec_storage(open_record_storage(path.as_ref())?)
-}
-
-/// Read **one** `Frame`-shaped section of a record from an open store.
-///
-/// Sections are independent: a record may carry a `frame`, a `system`, a
-/// `trajectory`, or several at once, and a caller that wants one of them has
-/// no business paying for the rest. [`read_mrec_storage`] decodes everything
-/// it finds — including a `trajectory` of any size — so it is the wrong door
-/// for "give me the topology out of this run".
-///
-/// `section` is a top-level group name (`"frame"`, `"system"`, or a producer's
-/// own frame-shaped group). `Ok(None)` when the record has no such section; the
-/// store is listed, not decoded, to find that out. No other section is
-/// touched.
-///
-/// # Errors
-///
-/// A [`MolRsError::Zarr`] when the section fails to decode.
-pub fn read_mrec_frame_storage(
-    store: ReadableWritableListableStorage,
+/// One frame-shaped section of the record in `store`, or `None` when it has
+/// none; see [`MrecFile::frame`].
+fn read_frame_section(
+    store: &ReadableListableStorage,
     section: &str,
 ) -> Result<Option<Frame>, MolRsError> {
-    let sections = section_names_storage(store.clone())?;
+    let sections = section_names_of(store)?;
     if !sections.iter().any(|name| name == section) {
         return Ok(None);
     }
-    let frame = read_frame_group(&store, &join_path("/", section))?;
+    let frame = read_frame_group(store, &join_path("/", section))?;
     // An absolute reference into another section is checked against that
     // block's `count` attribute, without decoding the section.
     let rows_of = |target: &str| -> Option<Option<usize>> {
@@ -470,17 +616,9 @@ pub fn read_mrec_frame_storage(
     Ok(Some(frame))
 }
 
-/// The record's top-level section names, without decoding any of them.
-///
-/// The store-taking twin of [`section_names`], which needs a filesystem path.
-///
-/// # Errors
-///
-/// The same store errors as [`read_mrec_storage`].
-pub fn section_names_storage(
-    store: ReadableWritableListableStorage,
-) -> Result<Vec<String>, MolRsError> {
-    let root = Node::open(&store, "/")?;
+/// The record's top-level section names; see [`MrecFile::sections`].
+fn section_names_of(store: &ReadableListableStorage) -> Result<Vec<String>, MolRsError> {
+    let root = Node::open(store, "/")?;
     let mut names = Vec::new();
     for child in root.children() {
         if !matches!(child.metadata(), NodeMetadata::Group(_)) {
@@ -501,14 +639,14 @@ pub fn section_names_storage(
     Ok(names)
 }
 
-/// Read a record from an open store, rooted at `/`.
-pub fn read_mrec_storage(store: ReadableWritableListableStorage) -> Result<MolRec, MolRsError> {
+/// Every section of the record in `store`, rooted at `/`.
+fn read_record(store: &ReadableListableStorage) -> Result<MolRec, MolRsError> {
     let prefix = "/";
     let mut record = MolRec::new();
 
-    record.meta = read_meta(&store)?;
+    record.meta = read_meta(store)?;
 
-    let root = Node::open(&store, prefix)?;
+    let root = Node::open(store, prefix)?;
     for child in root.children() {
         if !matches!(child.metadata(), NodeMetadata::Group(_)) {
             continue;
@@ -520,25 +658,25 @@ pub fn read_mrec_storage(store: ReadableWritableListableStorage) -> Result<MolRe
         }
         match name.as_str() {
             "meta" => {}
-            "system" => record.system = Some(read_frame_group(&store, &path)?),
-            "frame" => record.frame = Some(read_frame_group(&store, &path)?),
+            "system" => record.system = Some(read_frame_group(store, &path)?),
+            "frame" => record.frame = Some(read_frame_group(store, &path)?),
             "trajectory" => {
                 // One decoder, and it is not here. `MrecReader::open`
                 // resolves the same `/trajectory` node this child is.
                 // Demoted on the way in: the decoder is a read door, so it is
                 // handed the store's read-only view rather than this one.
-                let sequence = MrecReader::from_storage(store.clone().readable_listable())?;
+                let sequence = MrecReader::from_storage(store.clone())?;
                 record.trajectory = Some(sequence.to_trajectory()?);
             }
             FORCEFIELD_GROUP => {
-                record.forcefield = Some(read_forcefield_group(&store, &path)?);
+                record.forcefield = Some(read_forcefield_group(store, &path)?);
             }
-            "observables" => read_observables(&store, &path, &mut record)?,
-            "method" => record.method = read_json_group(&store, &path)?,
-            "status" => record.status = read_json_group(&store, &path)?,
+            "observables" => read_observables(store, &path, &mut record)?,
+            "method" => record.method = read_json_group(store, &path)?,
+            "status" => record.status = read_json_group(store, &path)?,
             "metrics" => {
-                record.metrics = read_json_group(&store, &path)?;
-                read_metrics_series(&store, &path, &mut record)?;
+                record.metrics = read_json_group(store, &path)?;
+                read_metrics_series(store, &path, &mut record)?;
             }
             // A root section this build does not interpret is ignored. Its
             // layout is unknown — it may hold arrays directly, or be shaped
@@ -600,7 +738,7 @@ where
 }
 
 fn read_json_group(
-    store: &ReadableWritableListableStorage,
+    store: &ReadableListableStorage,
     path: &str,
 ) -> Result<JsonMap<String, JsonValue>, MolRsError> {
     Ok(zarrs::group::Group::open(store.clone(), path)?
@@ -609,7 +747,7 @@ fn read_json_group(
 }
 
 fn read_observables(
-    store: &ReadableWritableListableStorage,
+    store: &ReadableListableStorage,
     prefix: &str,
     record: &mut MolRec,
 ) -> Result<(), MolRsError> {
@@ -708,301 +846,55 @@ fn read_observables(
     Ok(())
 }
 
-// ---------------------------------------------------------------------------
-// Trajectory-only doors (narrow entry points onto the same record layout)
-// ---------------------------------------------------------------------------
-
-/// Write a [`crate::core::Trajectory`] as a record whose only state section is
-/// `trajectory`.
-///
-/// Same path rules as [`write_mrec`]: conventional suffix `.mrec`, a second
-/// write replaces the first.
-/// The frames are encoded by [`crate::io::mrec::MrecWriter`]; no
-/// duplicate `frame/` snapshot is written beside them. `meta` is the record's
-/// identity document.
-///
-/// # Errors
-///
-/// The same errors as [`write_mrec`], including validation of `step`
-/// and `time` lengths against the frame count.
-///
-/// # Examples
-///
-/// ```
-/// # fn main() -> Result<(), molrs::core::MolRsError> {
-/// use molrs::core::Trajectory;
-/// use molrs::io::{read_mrec_trajectory, write_mrec_trajectory};
-///
-/// let dir = tempfile::tempdir().unwrap();
-/// let path = dir.path().join("run.mrec");
-///
-/// let traj = Trajectory::from_frames(vec![molrs::core::Frame::new()]);
-/// write_mrec_trajectory(&path, &traj, None)?;
-///
-/// let loaded = read_mrec_trajectory(&path)?;
-/// assert_eq!(loaded.len(), 1);
-/// # Ok(())
-/// # }
-/// ```
-#[cfg(feature = "filesystem")]
-pub fn write_mrec_trajectory(
-    path: impl AsRef<Path>,
-    trajectory: &Trajectory,
-    meta: Option<&JsonMap<String, JsonValue>>,
-) -> Result<(), MolRsError> {
-    let mut record = MolRec::new();
-    record.trajectory = Some(trajectory.clone());
-    if let Some(meta) = meta {
-        record.meta = meta.clone();
-    }
-    write_mrec(path, &record)
-}
-
-/// Write a [`Frame`] as a record whose only state section is `frame`.
-///
-/// Same path rules as [`write_mrec`]. This is the Structure shape
-/// (`meta` + `frame/`). Pass `system` to also persist a `system/` section
-/// beside the snapshot; the two remain separate groups.
-///
-/// # Errors
-///
-/// The same errors as [`write_mrec`].
-#[cfg(feature = "filesystem")]
-pub fn write_mrec_frame(
-    path: impl AsRef<Path>,
-    frame: &Frame,
-    system: Option<&Frame>,
-    meta: Option<&JsonMap<String, JsonValue>>,
-) -> Result<(), MolRsError> {
-    let mut record = MolRec::new();
-    record.frame = Some(frame.clone());
-    record.system = system.cloned();
-    if let Some(meta) = meta {
-        record.meta = meta.clone();
-    }
-    write_mrec(path, &record)
-}
-
-/// Write a [`Frame`] as a record whose only state section is `system`.
-///
-/// Same path rules as [`write_mrec`]. This is the System-def shape
-/// (`meta` + `system/`).
-///
-/// # Errors
-///
-/// The same errors as [`write_mrec`].
-#[cfg(feature = "filesystem")]
-pub fn write_mrec_system(
-    path: impl AsRef<Path>,
-    system: &Frame,
-    meta: Option<&JsonMap<String, JsonValue>>,
-) -> Result<(), MolRsError> {
-    let mut record = MolRec::new();
-    record.system = Some(system.clone());
-    if let Some(meta) = meta {
-        record.meta = meta.clone();
-    }
-    write_mrec(path, &record)
-}
-
-/// Write a force field as a record whose only state section is
-/// `forcefield`: a force-field package (`meta` + `forcefield/`).
-///
-/// Same path rules as [`write_mrec`]. The section is written as given —
-/// document verbatim, units unconverted — after
-/// [`ForceFieldSection::validate`] accepts it.
-///
-/// # Errors
-///
-/// The same errors as [`write_mrec`], and whatever
-/// [`ForceFieldSection::validate`] refuses.
-#[cfg(feature = "filesystem")]
-pub fn write_mrec_forcefield(
-    path: impl AsRef<Path>,
-    forcefield: &ForceFieldSection,
-    meta: Option<&JsonMap<String, JsonValue>>,
-) -> Result<(), MolRsError> {
-    let mut record = MolRec::new();
-    record.forcefield = Some(forcefield.clone());
-    if let Some(meta) = meta {
-        record.meta = meta.clone();
-    }
-    write_mrec(path, &record)
-}
-
-/// Read the `forcefield` section of a record at `path`, or `None` when the
-/// record carries none.
-///
-/// Decodes the `forcefield` section only. The section is validated ([`ForceFieldSection::validate`]); a table no style names, and
-/// a document key this build does not know, are kept.
-///
-/// # Errors
-///
-/// The path errors of [`read_mrec`], a table that fails to decode, or a
-/// section the validation refuses.
-///
-/// # Examples
-///
-/// ```
-/// # fn main() -> Result<(), molrs::core::MolRsError> {
-/// use molrs::io::{read_mrec_forcefield, write_mrec_forcefield};
-///
-/// let dir = tempfile::tempdir().unwrap();
-/// let path = dir.path().join("ff.mrec");
-///
-/// let mut ff = molrs::io::mrec::ForceFieldSection::default();
-/// ff.document.insert("name".into(), "empty".into());
-/// ff.document.insert("units".into(), serde_json::json!({"preset": "real"}));
-/// ff.document.insert("styles".into(), serde_json::json!([]));
-/// write_mrec_forcefield(&path, &ff, None)?;
-///
-/// let loaded = read_mrec_forcefield(&path)?.expect("a forcefield section");
-/// assert_eq!(loaded.name(), Some("empty"));
-/// # Ok(())
-/// # }
-/// ```
-#[cfg(feature = "filesystem")]
-pub fn read_mrec_forcefield(
-    path: impl AsRef<Path>,
-) -> Result<Option<ForceFieldSection>, MolRsError> {
-    let store = open_record_storage(path.as_ref())?;
-    if !section_names_storage(store.clone())?
-        .iter()
-        .any(|name| name == FORCEFIELD_GROUP)
-    {
-        return Ok(None);
-    }
-    read_forcefield_group(&store, &join_path("/", FORCEFIELD_GROUP)).map(Some)
-}
-
-/// Read the `frame` section of a record at `path`.
-///
-/// Decodes the `frame` section only: a
-/// trajectory, observables, or a section this build does not know cannot
-/// fail this read.
-///
-/// # Errors
-///
-/// The path errors of [`read_mrec`], a `frame` section that
-/// fails to decode, or a missing `frame` section.
-#[cfg(feature = "filesystem")]
-pub fn read_mrec_frame(path: impl AsRef<Path>) -> Result<Frame, MolRsError> {
-    read_section_file(path.as_ref(), "frame")
-}
-
-/// Read the `system` section of a record at `path`.
-///
-/// Decodes the `system` section only, like
-/// [`read_mrec_frame`].
-///
-/// # Errors
-///
-/// The path errors of [`read_mrec`], a `system` section that
-/// fails to decode, or a missing `system` section.
-#[cfg(feature = "filesystem")]
-pub fn read_mrec_system(path: impl AsRef<Path>) -> Result<Frame, MolRsError> {
-    read_section_file(path.as_ref(), "system")
-}
-
-/// One frame-shaped section of the record at `path`, through
-/// [`read_mrec_frame_storage`].
-#[cfg(feature = "filesystem")]
-fn read_section_file(path: &Path, section: &str) -> Result<Frame, MolRsError> {
-    read_mrec_frame_storage(open_record_storage(path)?, section)?
-        .ok_or_else(|| MolRsError::zarr(format!("record has no '{section}' section")))
-}
-
-/// Open the directory store at `path` for reading.
-#[cfg(feature = "filesystem")]
-fn open_record_storage(path: &Path) -> Result<ReadableWritableListableStorage, MolRsError> {
-    Ok(Arc::new(FilesystemStore::new(path).map_err(zerr)?))
-}
-
-/// Read the mandatory `meta` document of a record at `path`.
-///
-/// # Errors
-///
-/// The same path errors as [`read_mrec`].
-#[cfg(feature = "filesystem")]
-pub fn read_mrec_meta(path: impl AsRef<Path>) -> Result<JsonMap<String, JsonValue>, MolRsError> {
-    read_meta(&open_record_storage(path.as_ref())?)
-}
-
-/// Child group names at the record root (`meta`, `frame`, `system`, …).
-///
-/// This is the inspect door: callers ask which sections are present instead
-/// of probing `read_frame` / `read_system` and catching a missing-section
-/// error.
-///
-/// # Errors
-///
-/// The same path errors as [`read_mrec`].
-#[cfg(feature = "filesystem")]
-pub fn section_names(path: impl AsRef<Path>) -> Result<Vec<String>, MolRsError> {
-    section_names_storage(open_record_storage(path.as_ref())?)
-}
-
-/// Read the `trajectory` section of a record at `path`.
-///
-/// Same path rules as [`read_mrec`]. A store with no `trajectory`
-/// section returns an empty [`crate::core::Trajectory`], not an error. Only
-/// the `trajectory` section is decoded.
-///
-/// # Errors
-///
-/// The path errors of [`read_mrec`], or a `trajectory`
-/// section that fails to decode.
-#[cfg(feature = "filesystem")]
-pub fn read_mrec_trajectory(path: impl AsRef<Path>) -> Result<Trajectory, MolRsError> {
-    let store = open_record_storage(path.as_ref())?;
-    if !section_names_storage(store.clone())?
-        .iter()
-        .any(|name| name == "trajectory")
-    {
-        return Ok(Trajectory::default());
-    }
-    MrecReader::from_storage(store.readable_listable())?.to_trajectory()
-}
-
 #[cfg(feature = "filesystem")]
 impl MrecReader {
-    /// Open a lazy [`MrecReader`] cursor on a filesystem path.
-    ///
-    /// Same path rules as [`read_mrec`]: conventional suffix `.mrec`. The cursor is index-only at open;
-    /// each [`MrecReader::frame`] call decodes one committed frame.
-    ///
-    /// This is the filesystem door for a caller that does not already hold a
-    /// store — Python in particular, so the binder does not take a `zarrs`
-    /// dependency of its own. [`MrecReader::open`] remains the store-taking
-    /// door (in-memory stores, packed zip adapters).
+    /// Open the `trajectory` section of a record for reading one frame at a
+    /// time: a `*.mrec` directory store, a packed `*.mrec.zip`, or the bytes
+    /// of a packed one — the sources [`MrecFile::open`] takes. The cursor is
+    /// index-only at open; each [`MrecReader::frame`] call decodes one
+    /// committed frame. A store the caller already holds goes through
+    /// [`MrecReader::from_storage`].
     ///
     /// # Errors
     ///
-    /// The same path errors as [`read_mrec`], plus
-    /// [`MrecReader::open`]'s store errors (schema mismatch, missing index).
+    /// [`MrecFile::open`]'s; [`InvalidData`](std::io::ErrorKind::InvalidData)
+    /// carrying a [`MolRsError::Zarr`] for a record with no `trajectory`
+    /// section, or carrying [`MrecReader::from_storage`]'s store errors
+    /// (schema mismatch, missing index).
     ///
     /// # Examples
     ///
     /// ```
-    /// # fn main() -> Result<(), molrs::core::MolRsError> {
-    /// use molrs::core::Trajectory;
-    /// use molrs::io::mrec::MrecReader;
-    /// use molrs::io::write_mrec_trajectory;
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// use molrs::core::{Frame, Trajectory};
+    /// use molrs::io::mrec::{MolRec, MrecReader};
+    /// use molrs::io::write_mrec;
     ///
     /// let dir = tempfile::tempdir().unwrap();
     /// let path = dir.path().join("run.mrec");
     ///
-    /// let traj = Trajectory::from_frames(vec![molrs::core::Frame::new()]);
-    /// write_mrec_trajectory(&path, &traj, None)?;
+    /// let mut record = MolRec::new();
+    /// record.trajectory = Some(Trajectory::from_frames(vec![Frame::new()]));
+    /// write_mrec(&path, &record)?;
     ///
     /// let mut seq = MrecReader::open(&path)?;
     /// assert!(seq.frame(0)?.is_some());
     /// # Ok(())
     /// # }
     /// ```
-    pub fn open(path: impl AsRef<Path>) -> Result<MrecReader, MolRsError> {
-        let store = Arc::new(FilesystemStore::new(path.as_ref()).map_err(zerr)?);
-        MrecReader::from_storage(store)
+    pub fn open<'a>(src: impl Into<Source<'a>>) -> std::io::Result<MrecReader> {
+        let src = src.into();
+        let store = open_record(&src).map_err(io_error)?;
+        let sections = section_names_of(&store).map_err(io_error)?;
+        if !sections.iter().any(|name| name == "trajectory") {
+            return Err(io_error(MolRsError::zarr(format!(
+                "{}: the record has no 'trajectory' section (its sections: {}); \
+                 read the others with MrecFile",
+                src.name(),
+                sections.join(", ")
+            ))));
+        }
+        MrecReader::from_storage(store).map_err(io_error)
     }
 }
 
@@ -1013,20 +905,70 @@ pub(in crate::io::mrec::zarr_storage) fn zerr(e: impl std::fmt::Display) -> MolR
 #[cfg(all(test, feature = "filesystem"))]
 mod tests {
     use super::*;
+    use crate::core::Cell;
     use molrs::core::Frame;
+    use molrs::core::Trajectory;
     use molrs::core::{Block, Column};
+    use molrs::io::mrec::ForceFieldSection;
     use molrs::op::F;
     use ndarray::ArrayD;
+    use std::path::Path;
     use tempfile::tempdir;
 
+    /// The record at `path`, opened.
+    fn opened(path: &Path) -> MrecFile {
+        MrecFile::open(path).unwrap()
+    }
+
+    /// The `frame` section of the record at `path`, which must carry one.
+    fn frame_section(path: &Path) -> Frame {
+        opened(path).frame().unwrap().expect("a frame section")
+    }
+
+    /// The `system` section of the record at `path`, which must carry one.
+    fn system_section(path: &Path) -> Frame {
+        opened(path).system().unwrap().expect("a system section")
+    }
+
+    /// Every frame of the record's `trajectory` section.
+    fn trajectory_of(path: &Path) -> Result<Trajectory, MolRsError> {
+        MrecReader::open(path)?.to_trajectory()
+    }
+
+    /// A record whose one state section is `trajectory`.
+    fn trajectory_record(trajectory: &Trajectory) -> MolRec {
+        let mut record = MolRec::new();
+        record.trajectory = Some(trajectory.clone());
+        record
+    }
+
+    /// A record whose state sections are `frame`, and `system` when given.
+    fn frame_record(frame: &Frame, system: Option<&Frame>) -> MolRec {
+        let mut record = MolRec::new();
+        record.frame = Some(frame.clone());
+        record.system = system.cloned();
+        record
+    }
+
+    /// A record whose one state section is `forcefield`.
+    fn forcefield_record(forcefield: &ForceFieldSection) -> MolRec {
+        let mut record = MolRec::new();
+        record.forcefield = Some(forcefield.clone());
+        record
+    }
+
     fn float_column(values: &[F]) -> Column {
-        Column::from_float(ArrayD::from_shape_vec(vec![values.len()], values.to_vec()).unwrap())
+        Column::from(ArrayD::from_shape_vec(vec![values.len()], values.to_vec()).unwrap())
     }
 
     fn frame_with_atoms(n: usize) -> Frame {
         let mut block = Block::new();
         block
-            .insert("x", ArrayD::from_shape_vec(vec![n], vec![1.0; n]).unwrap())
+            .insert(
+                "x",
+                ArrayD::from_shape_vec(vec![n], vec![1.0; n]).unwrap(),
+                None,
+            )
             .unwrap();
         let mut frame = Frame::new();
         frame.insert("atoms", block);
@@ -1039,7 +981,7 @@ mod tests {
     /// store from a stale one; these values can.
     fn frame_with_x(values: &[F]) -> Frame {
         let mut block = Block::new();
-        block.insert_column("x", float_column(values)).unwrap();
+        block.insert("x", float_column(values), None).unwrap();
         let mut frame = Frame::new();
         frame.insert("atoms", block);
         frame
@@ -1051,7 +993,7 @@ mod tests {
             .get("atoms")
             .expect("the frame carries an atoms block")
             .get("x")
-            .and_then(|c| c.as_float())
+            .and_then(|c| c.get::<f64>())
             .expect("column x arrived as f64")
             .iter()
             .copied()
@@ -1062,7 +1004,7 @@ mod tests {
         let dir = tempdir().unwrap();
         let path = dir.path().join("record.mrec");
         write_mrec(&path, record).unwrap();
-        read_mrec(&path).unwrap()
+        opened(&path).record().unwrap()
     }
 
     /// A producer that supplied no metadata gets an empty `meta` back.
@@ -1136,7 +1078,11 @@ mod tests {
     fn observables_round_trip_with_semantics() {
         let mut rec = MolRec::new();
         rec.frame = Some(Frame::new());
-        let mut obs = ObservableRecord::scalar("total_energy", float_column(&[1.0, 1.5, 2.0]));
+        let mut obs = ObservableRecord::new(
+            "total_energy",
+            ObservableKind::Scalar,
+            float_column(&[1.0, 1.5, 2.0]),
+        );
         obs.description = "Total energy by step".into();
         obs.unit = Some("eV".into());
         obs.axes = vec!["timestep".into()];
@@ -1159,7 +1105,11 @@ mod tests {
     fn an_unknown_observable_kind_round_trips() {
         let mut rec = MolRec::new();
         rec.frame = Some(Frame::new());
-        let mut obs = ObservableRecord::scalar("spectrum", float_column(&[0.5, 0.25]));
+        let mut obs = ObservableRecord::new(
+            "spectrum",
+            ObservableKind::Scalar,
+            float_column(&[0.5, 0.25]),
+        );
         obs.kind = ObservableKind::from("spectrum_density");
         obs.description = "From a producer module".into();
         rec.observables.insert(obs).unwrap();
@@ -1185,11 +1135,15 @@ mod tests {
         let mut rec = MolRec::new();
         rec.frame = Some(Frame::new());
         rec.observables
-            .insert(ObservableRecord::scalar("energy", float_column(&[1.0])))
+            .insert(ObservableRecord::new(
+                "energy",
+                ObservableKind::Scalar,
+                float_column(&[1.0]),
+            ))
             .unwrap();
         write_mrec(&path, &rec).unwrap();
         std::fs::remove_dir_all(path.join("observables/meta/energy")).unwrap();
-        let err = read_mrec(&path).unwrap_err().to_string();
+        let err = opened(&path).record().unwrap_err().to_string();
         assert!(err.contains("energy") && err.contains("meta"), "{err}");
     }
 
@@ -1211,13 +1165,13 @@ mod tests {
                 .store_metadata()
                 .unwrap();
         }
-        let steps = Column::from_i64(ArrayD::from_shape_vec(vec![2], vec![0_i64, 1]).unwrap());
+        let steps = Column::from(ArrayD::from_shape_vec(vec![2], vec![0_i64, 1]).unwrap());
         write_column(&store, "/future/step", &steps, None).unwrap();
         write_column(&store, "/future/atoms/x", &float_column(&[1.0, 2.0]), None).unwrap();
         write_column(
             &store,
             "/future/atoms/offset",
-            &Column::from_uint(ArrayD::from_shape_vec(vec![3], vec![0_u64, 1, 5]).unwrap()),
+            &Column::from(ArrayD::from_shape_vec(vec![3], vec![0_u64, 1, 5]).unwrap()),
             None,
         )
         .unwrap();
@@ -1230,25 +1184,20 @@ mod tests {
     fn unknown_root_sections_are_ignored() {
         let (_dir, path) = record_with_foreign_section();
         assert!(
-            section_names(&path)
+            opened(&path)
+                .sections()
                 .unwrap()
                 .contains(&"future".to_string())
         );
 
-        let record = read_mrec(&path).unwrap();
+        let record = opened(&path).record().unwrap();
         assert_eq!(
             record.frame.unwrap().get("atoms").unwrap().n_rows(),
             Some(3)
         );
-        assert_eq!(
-            read_mrec_frame(&path)
-                .unwrap()
-                .get("atoms")
-                .unwrap()
-                .n_rows(),
-            Some(3)
-        );
-        assert!(read_mrec_trajectory(&path).unwrap().is_empty());
+        assert_eq!(frame_section(&path).get("atoms").unwrap().n_rows(), Some(3));
+        let err = trajectory_of(&path).unwrap_err().to_string();
+        assert!(err.contains("no 'trajectory' section"), "{err}");
     }
 
     /// The frame and system doors decode only their own section, so a broken
@@ -1263,7 +1212,11 @@ mod tests {
         rec.system = Some(frame_with_atoms(2));
         rec.add_frame(frame_with_atoms(3));
         rec.observables
-            .insert(ObservableRecord::scalar("energy", float_column(&[1.0])))
+            .insert(ObservableRecord::new(
+                "energy",
+                ObservableKind::Scalar,
+                float_column(&[1.0]),
+            ))
             .unwrap();
         write_mrec(&path, &rec).unwrap();
         // Break both: observable data without its meta, and a trajectory
@@ -1275,22 +1228,11 @@ mod tests {
         trajectory["attributes"]["sequence_schema"] = "not a schema".into();
         std::fs::write(&trajectory_path, serde_json::to_vec(&trajectory).unwrap()).unwrap();
 
-        assert!(read_mrec(&path).is_err());
-        assert!(read_mrec_trajectory(&path).is_err());
+        assert!(opened(&path).record().is_err());
+        assert!(trajectory_of(&path).is_err());
+        assert_eq!(frame_section(&path).get("atoms").unwrap().n_rows(), Some(3));
         assert_eq!(
-            read_mrec_frame(&path)
-                .unwrap()
-                .get("atoms")
-                .unwrap()
-                .n_rows(),
-            Some(3)
-        );
-        assert_eq!(
-            read_mrec_system(&path)
-                .unwrap()
-                .get("atoms")
-                .unwrap()
-                .n_rows(),
+            system_section(&path).get("atoms").unwrap().n_rows(),
             Some(2)
         );
     }
@@ -1313,12 +1255,15 @@ mod tests {
             rec.meta.insert("molrec_version".into(), value.clone());
             write_mrec(&path, &rec).unwrap();
 
-            read_mrec_frame(&path).unwrap();
-            read_mrec_system(&path).unwrap();
-            read_mrec_trajectory(&path).unwrap();
+            frame_section(&path);
+            system_section(&path);
+            trajectory_of(&path).unwrap();
             MrecReader::open(&path).unwrap();
-            assert_eq!(read_mrec_meta(&path).unwrap()["molrec_version"], value);
-            assert_eq!(read_mrec(&path).unwrap().meta["molrec_version"], value);
+            assert_eq!(opened(&path).meta().unwrap()["molrec_version"], value);
+            assert_eq!(
+                opened(&path).record().unwrap().meta["molrec_version"],
+                value
+            );
         }
     }
 
@@ -1332,7 +1277,7 @@ mod tests {
         rec.frame = Some(Frame::new());
         write_mrec(&path, &rec).unwrap();
         std::fs::remove_dir_all(path.join("meta")).unwrap();
-        let loaded = read_mrec(&path).unwrap();
+        let loaded = opened(&path).record().unwrap();
         assert!(loaded.meta.is_empty());
     }
 
@@ -1349,13 +1294,10 @@ mod tests {
         let path = dir.path().join("record.mrec");
         let mut meta = JsonMap::new();
         meta.insert("creator".into(), serde_json::json!({"name": "unit-test"}));
-        write_mrec_trajectory(
-            &path,
-            &Trajectory::from_frames(vec![frame_with_atoms(2)]),
-            Some(&meta),
-        )
-        .unwrap();
-        let back = read_mrec_meta(&path).unwrap();
+        let mut record = trajectory_record(&Trajectory::from_frames(vec![frame_with_atoms(2)]));
+        record.meta = meta.clone();
+        write_mrec(&path, &record).unwrap();
+        let back = opened(&path).meta().unwrap();
         assert_eq!(back, meta);
     }
 
@@ -1367,8 +1309,8 @@ mod tests {
         frame.meta.insert("key", "value");
         let traj = Trajectory::from_frames(vec![frame]);
 
-        write_mrec_trajectory(&path, &traj, None).unwrap();
-        let loaded = read_mrec_trajectory(&path).unwrap();
+        write_mrec(&path, &trajectory_record(&traj)).unwrap();
+        let loaded = trajectory_of(&path).unwrap();
         assert_eq!(loaded.frames.len(), 1);
         assert_eq!(
             loaded.frames[0].meta.get("key").unwrap().as_str(),
@@ -1377,8 +1319,13 @@ mod tests {
 
         // The narrow door writes a conforming record, not a private layout:
         // a root, a `meta/` group, and the trajectory section.
-        assert!(section_names(&path).unwrap().contains(&"meta".to_string()));
-        let record = read_mrec(&path).unwrap();
+        assert!(
+            opened(&path)
+                .sections()
+                .unwrap()
+                .contains(&"meta".to_string())
+        );
+        let record = opened(&path).record().unwrap();
         assert!(record.trajectory.is_some());
     }
 
@@ -1387,13 +1334,18 @@ mod tests {
         let dir = tempdir().unwrap();
         let path = dir.path().join("snapshot.mrec");
         let frame = frame_with_atoms(3);
-        write_mrec_frame(&path, &frame, None, None).unwrap();
+        write_mrec(&path, &frame_record(&frame, None)).unwrap();
 
-        let loaded = read_mrec_frame(&path).unwrap();
+        let loaded = frame_section(&path);
         assert_eq!(loaded.get("atoms").unwrap().n_rows(), Some(3));
-        assert!(read_mrec_system(&path).is_err());
-        assert!(section_names(&path).unwrap().contains(&"meta".to_string()));
-        let record = read_mrec(&path).unwrap();
+        assert!(opened(&path).system().unwrap().is_none());
+        assert!(
+            opened(&path)
+                .sections()
+                .unwrap()
+                .contains(&"meta".to_string())
+        );
+        let record = opened(&path).record().unwrap();
         assert!(record.trajectory.is_none());
     }
 
@@ -1401,11 +1353,18 @@ mod tests {
     fn system_door_writes_the_system_section() {
         let dir = tempdir().unwrap();
         let path = dir.path().join("system.mrec");
-        write_mrec_system(&path, &frame_with_atoms(2), None).unwrap();
+        write_mrec(
+            &path,
+            &MolRec {
+                system: Some(frame_with_atoms(2)),
+                ..MolRec::new()
+            },
+        )
+        .unwrap();
 
-        let loaded = read_mrec_system(&path).unwrap();
+        let loaded = system_section(&path);
         assert_eq!(loaded.get("atoms").unwrap().n_rows(), Some(2));
-        assert!(read_mrec_frame(&path).is_err());
+        assert!(opened(&path).frame().unwrap().is_none());
     }
 
     #[test]
@@ -1414,29 +1373,18 @@ mod tests {
         let path = dir.path().join("both.mrec");
         let frame = frame_with_atoms(3);
         let system = frame_with_atoms(3);
-        write_mrec_frame(&path, &frame, Some(&system), None).unwrap();
+        write_mrec(&path, &frame_record(&frame, Some(&system))).unwrap();
 
         assert_eq!(
-            section_names(&path).unwrap(),
+            opened(&path).sections().unwrap(),
             vec!["frame", "meta", "system"]
         );
         // The identity document is present and, with nothing handed in, empty.
-        assert!(read_mrec_meta(&path).unwrap().is_empty());
+        assert!(opened(&path).meta().unwrap().is_empty());
 
+        assert_eq!(frame_section(&path).get("atoms").unwrap().n_rows(), Some(3));
         assert_eq!(
-            read_mrec_frame(&path)
-                .unwrap()
-                .get("atoms")
-                .unwrap()
-                .n_rows(),
-            Some(3)
-        );
-        assert_eq!(
-            read_mrec_system(&path)
-                .unwrap()
-                .get("atoms")
-                .unwrap()
-                .n_rows(),
+            system_section(&path).get("atoms").unwrap().n_rows(),
             Some(3)
         );
     }
@@ -1489,7 +1437,7 @@ mod tests {
 
         rec.metrics_series.insert(String::new(), vec![1.0]);
         let dir = tempdir().unwrap();
-        assert!(write_mrec(dir.path().join("r.mrec"), &rec).is_err());
+        assert!(write_mrec(dir.path().join("r.mrec").as_path(), &rec).is_err());
     }
 
     /// A live host WAL (`metrics/metrics.jsonl`) is a stray text file inside
@@ -1509,7 +1457,7 @@ mod tests {
         )
         .unwrap();
 
-        let loaded = read_mrec(&path).unwrap();
+        let loaded = opened(&path).record().unwrap();
         assert_eq!(loaded.metrics["live"], true);
         assert!(loaded.metrics_series.is_empty());
     }
@@ -1534,12 +1482,12 @@ mod tests {
         write_column(
             &store,
             "/metrics/series/steps",
-            &Column::from_uint(ndarray::ArrayD::from_shape_vec(vec![2], vec![1u64, 2]).unwrap()),
+            &Column::from(ndarray::ArrayD::from_shape_vec(vec![2], vec![1u64, 2]).unwrap()),
             None,
         )
         .unwrap();
 
-        let err = read_mrec(&path).unwrap_err().to_string();
+        let err = opened(&path).record().unwrap_err().to_string();
         assert!(err.contains("steps"), "{err}");
         assert!(err.contains("float64"), "{err}");
     }
@@ -1571,16 +1519,25 @@ mod tests {
         // trajectory/frames/ subtree.
         let mut atoms = Block::new();
         atoms
-            .insert("x", ArrayD::from_shape_vec(vec![5], vec![1.0; 5]).unwrap())
+            .insert(
+                "x",
+                ArrayD::from_shape_vec(vec![5], vec![1.0; 5]).unwrap(),
+                None,
+            )
             .unwrap();
         atoms
-            .insert("y", ArrayD::from_shape_vec(vec![5], vec![2.0; 5]).unwrap())
+            .insert(
+                "y",
+                ArrayD::from_shape_vec(vec![5], vec![2.0; 5]).unwrap(),
+                None,
+            )
             .unwrap();
         let mut bonds = Block::new();
         bonds
             .insert(
                 "atomi",
                 ArrayD::from_shape_vec(vec![2], vec![0u64, 1u64]).unwrap(),
+                None,
             )
             .unwrap();
         let mut frame = Frame::new();
@@ -1623,7 +1580,7 @@ mod tests {
             step: Some(vec![0, 1]),
             time: None,
         };
-        write_mrec_trajectory(&path, &traj, None).unwrap();
+        write_mrec(&path, &trajectory_record(&traj)).unwrap();
 
         let nodes = node_paths(&path);
         let frame_nodes: Vec<&String> = nodes
@@ -1644,30 +1601,25 @@ mod tests {
     #[test]
     fn simbox_geometry_roundtrips_as_f64() {
         use molrs::core::SimBox;
-        use ndarray::{Array2, array};
 
         let dir = tempdir().unwrap();
         let path = dir.path().join("simbox_f64.mrec");
         let h_val = 123.456789012345;
-        let h = Array2::from_shape_vec(
-            (3, 3),
-            vec![h_val, 0.0, 0.0, 0.0, 50.0, 0.0, 0.0, 0.0, 40.0],
-        )
-        .unwrap();
-        let origin = array![0.1, 0.2, 0.3];
+        let h = [[h_val, 0.0, 0.0], [0.0, 50.0, 0.0], [0.0, 0.0, 40.0]];
+        let origin = [0.1, 0.2, 0.3];
         let mut frame = Frame::new();
-        frame.simbox = Some(SimBox::new(h, origin, [true, true, true]).unwrap());
+        frame.simbox = Some(SimBox::new(Cell::Matrix(h), origin, [true, true, true]).unwrap());
         let mut rec = MolRec::new();
         rec.frame = Some(frame);
         write_mrec(&path, &rec).unwrap();
-        let back = read_mrec(&path).unwrap();
+        let back = opened(&path).record().unwrap();
         let sb = back.frame.as_ref().unwrap().simbox.as_ref().unwrap();
-        let h_back = sb.h_view()[[0, 0]];
+        let h_back = sb.matrix()[0][0];
         assert!(
             (h_back - h_val).abs() < 1e-15,
             "f64 simbox lost precision: {h_back} vs {h_val}"
         );
-        assert!((sb.origin_view()[0] - 0.1).abs() < 1e-15);
+        assert!((sb.origin()[0] - 0.1).abs() < 1e-15);
     }
 
     /// A second trajectory record written over the same path replaces the
@@ -1693,7 +1645,7 @@ mod tests {
             step: Some(vec![0, 1]),
             time: None,
         };
-        write_mrec_trajectory(&path, &first, None).unwrap();
+        write_mrec(&path, &trajectory_record(&first)).unwrap();
 
         // Different in every axis the layout carries: fewer rows per frame,
         // more frames, other step numbers, and times where there were none.
@@ -1706,9 +1658,9 @@ mod tests {
             step: Some(vec![7, 8, 9]),
             time: Some(vec![0.25, 0.5, 0.75]),
         };
-        write_mrec_trajectory(&path, &second, None).unwrap();
+        write_mrec(&path, &trajectory_record(&second)).unwrap();
 
-        let loaded = read_mrec_trajectory(&path).unwrap();
+        let loaded = trajectory_of(&path).unwrap();
         assert_eq!(
             loaded.frames.iter().map(atoms_x).collect::<Vec<Vec<F>>>(),
             second.frames.iter().map(atoms_x).collect::<Vec<Vec<F>>>(),
@@ -1764,7 +1716,8 @@ mod tests {
 
     #[test]
     fn the_wasm_precision_fixture_is_a_shuffled_zstd_precision_record() {
-        let store = crate::io::mrec::zarr_storage::open_mrec_zip(WASM_PRECISION_FIXTURE).unwrap();
+        let store =
+            crate::io::mrec::zarr_storage::pack::open_mrec_zip(WASM_PRECISION_FIXTURE).unwrap();
         let q = molrs::core::quantum(1e-3).unwrap();
         let rounded = |values: &[F]| -> Vec<F> {
             values
@@ -1788,15 +1741,17 @@ mod tests {
     fn members_into_frame(atom: u64) -> Frame {
         let mut members = Block::new();
         members
-            .insert_column(
+            .insert(
                 "ibead",
-                Column::from_uint(ArrayD::from_shape_vec(vec![1], vec![0_u64]).unwrap()),
+                Column::from(ArrayD::from_shape_vec(vec![1], vec![0_u64]).unwrap()),
+                None,
             )
             .unwrap();
         members
-            .insert_column(
+            .insert(
                 "atom",
-                Column::from_uint(ArrayD::from_shape_vec(vec![1], vec![atom]).unwrap()),
+                Column::from(ArrayD::from_shape_vec(vec![1], vec![atom]).unwrap()),
+                None,
             )
             .unwrap();
         members.set_target("atom", "/frame/atoms").unwrap();
@@ -1818,7 +1773,7 @@ mod tests {
 
         record.system = Some(members_into_frame(3));
         let dir = tempdir().unwrap();
-        let err = write_mrec(dir.path().join("r.mrec"), &record)
+        let err = write_mrec(dir.path().join("r.mrec").as_path(), &record)
             .unwrap_err()
             .to_string();
         assert!(err.contains("/frame/atoms"), "{err}");
@@ -1839,7 +1794,7 @@ mod tests {
         let dir = tempdir().unwrap();
         let path = dir.path().join("r.mrec");
         write_mrec(&path, &record).unwrap();
-        assert!(read_mrec_system(&path).is_ok());
+        assert!(opened(&path).system().is_ok());
 
         let store: ReadableWritableListableStorage = Arc::new(FilesystemStore::new(&path).unwrap());
         let mut atoms = zarrs::group::Group::open(store, "/frame/atoms").unwrap();
@@ -1847,12 +1802,12 @@ mod tests {
             .attributes_mut()
             .insert("count".into(), serde_json::json!(2));
         atoms.store_metadata().unwrap();
-        let err = read_mrec_system(&path).unwrap_err().to_string();
+        let err = opened(&path).system().unwrap_err().to_string();
         assert!(err.contains("/frame/atoms"), "{err}");
     }
 
     fn string_column(values: &[&str]) -> Column {
-        Column::from_string(
+        Column::from(
             ArrayD::from_shape_vec(
                 vec![values.len()],
                 values.iter().map(|v| v.to_string()).collect(),
@@ -1882,22 +1837,23 @@ mod tests {
         });
         let mut atoms = Block::new();
         atoms
-            .insert_column("name", string_column(&["CT", "HC"]))
+            .insert("name", string_column(&["CT", "HC"]), None)
             .unwrap();
         atoms
-            .insert_column("class", string_column(&["CT", "HC"]))
+            .insert("class", string_column(&["CT", "HC"]), None)
             .unwrap();
         atoms
-            .insert_column("smarts", string_column(&["[C;X4]", ""]))
+            .insert("smarts", string_column(&["[C;X4]", ""]), None)
             .unwrap();
         atoms.set_validity("smarts", vec![true, false]).unwrap();
         atoms
-            .insert_column("mass", float_column(&[12.011, 1.008]))
+            .insert("mass", float_column(&[12.011, 1.008]), None)
             .unwrap();
         atoms
-            .insert_column(
+            .insert(
                 "atomic_number",
-                Column::from_uint(ArrayD::from_shape_vec(vec![2], vec![6u64, 1]).unwrap()),
+                Column::from(ArrayD::from_shape_vec(vec![2], vec![6u64, 1]).unwrap()),
+                None,
             )
             .unwrap();
         let mut dihedrals = Block::new();
@@ -1909,33 +1865,33 @@ mod tests {
             ("ltom", ["", "HC"]),
         ] {
             dihedrals
-                .insert_column(column, string_column(&values))
+                .insert(column, string_column(&values), None)
                 .unwrap();
         }
         dihedrals
-            .insert_column("k1", float_column(&[0.6276, 0.8]))
+            .insert("k1", float_column(&[0.6276, 0.8]), None)
             .unwrap();
         dihedrals
-            .insert_column("k2", float_column(&[0.25, 0.0]))
+            .insert("k2", float_column(&[0.25, 0.0]), None)
             .unwrap();
         dihedrals.set_validity("k2", vec![true, false]).unwrap();
         let mut pairs = Block::new();
         for (column, values) in [("name", ["CT"]), ("itom", ["CT"]), ("jtom", ["CT"])] {
-            pairs.insert_column(column, string_column(&values)).unwrap();
+            pairs.insert(column, string_column(&values), None).unwrap();
         }
-        pairs.insert_column("sigma", float_column(&[0.35])).unwrap();
+        pairs.insert("sigma", float_column(&[0.35]), None).unwrap();
         pairs
-            .insert_column("epsilon", float_column(&[0.276144]))
+            .insert("epsilon", float_column(&[0.276144]), None)
             .unwrap();
         let mut per_instance = Block::new();
         for column in ["name", "itom", "jtom"] {
             per_instance
-                .insert_column(column, string_column(&[]))
+                .insert(column, string_column(&[]), None)
                 .unwrap();
         }
         let mut notes = Block::new();
         notes
-            .insert_column("text", string_column(&["kept as unknown content"]))
+            .insert("text", string_column(&["kept as unknown content"]), None)
             .unwrap();
 
         let mut tables = indexmap::IndexMap::new();
@@ -1961,14 +1917,14 @@ mod tests {
             assert_eq!(a.dtype(key), b.dtype(key), "{what}.{key}: dtype");
             assert_eq!(a.validity(key), b.validity(key), "{what}.{key}: validity");
             let (ca, cb) = (a.get(key).unwrap(), b.get(key).unwrap());
-            if let (Some(x), Some(y)) = (ca.as_float(), cb.as_float()) {
+            if let (Some(x), Some(y)) = (ca.get::<f64>(), cb.get::<f64>()) {
                 let bits = |v: &ArrayD<F>| v.iter().map(|f| f.to_bits()).collect::<Vec<_>>();
                 assert_eq!(bits(x), bits(y), "{what}.{key}: values, bit for bit");
             }
-            if let (Some(x), Some(y)) = (ca.as_string(), cb.as_string()) {
+            if let (Some(x), Some(y)) = (ca.get::<String>(), cb.get::<String>()) {
                 assert_eq!(x, y, "{what}.{key}: strings");
             }
-            if let (Some(x), Some(y)) = (ca.as_uint(), cb.as_uint()) {
+            if let (Some(x), Some(y)) = (ca.get::<u64>(), cb.get::<u64>()) {
                 assert_eq!(x, y, "{what}.{key}: u64");
             }
         }
@@ -1991,20 +1947,18 @@ mod tests {
             ("itom", ["CT", "HC"]),
             ("jtom", ["HC", "CT"]),
         ] {
-            pair14
-                .insert_column(column, string_column(&values))
-                .unwrap();
+            pair14.insert(column, string_column(&values), None).unwrap();
         }
         pair14
-            .insert_column("epsilon", float_column(&[0.1, 0.2]))
+            .insert("epsilon", float_column(&[0.1, 0.2]), None)
             .unwrap();
         ff.tables.insert("pair14.lj%2Fcut".to_owned(), pair14);
         ff.validate().unwrap();
 
         let dir = tempdir().unwrap();
         let path = dir.path().join("ff.mrec");
-        write_mrec_forcefield(&path, &ff, None).unwrap();
-        let back = read_mrec_forcefield(&path).unwrap().unwrap();
+        write_mrec(&path, &forcefield_record(&ff)).unwrap();
+        let back = opened(&path).forcefield().unwrap().unwrap();
         assert_eq!(back.document, ff.document);
         same_block(
             &ff.tables["pair14.lj%2Fcut"],
@@ -2018,14 +1972,15 @@ mod tests {
         let ff = awkward_forcefield();
         let dir = tempdir().unwrap();
         let path = dir.path().join("ff.mrec");
-        write_mrec_forcefield(&path, &ff, None).unwrap();
+        write_mrec(&path, &forcefield_record(&ff)).unwrap();
 
         assert!(
-            section_names(&path)
+            opened(&path)
+                .sections()
                 .unwrap()
                 .contains(&"forcefield".to_owned())
         );
-        let back = read_mrec_forcefield(&path).unwrap().unwrap();
+        let back = opened(&path).forcefield().unwrap().unwrap();
         assert_eq!(back.document, ff.document, "the document, key for key");
         assert_eq!(
             serde_json::to_string(&back.document).unwrap(),
@@ -2053,8 +2008,8 @@ mod tests {
     fn a_record_without_a_forcefield_reads_none() {
         let dir = tempdir().unwrap();
         let path = dir.path().join("frame.mrec");
-        write_mrec_frame(&path, &frame_with_atoms(1), None, None).unwrap();
-        assert!(read_mrec_forcefield(&path).unwrap().is_none());
+        write_mrec(&path, &frame_record(&frame_with_atoms(1), None)).unwrap();
+        assert!(opened(&path).forcefield().unwrap().is_none());
     }
 
     #[test]
@@ -2063,13 +2018,13 @@ mod tests {
         ff.tables.shift_remove("dihedral.periodic");
         let dir = tempdir().unwrap();
         let path = dir.path().join("ff.mrec");
-        let err = write_mrec_forcefield(&path, &ff, None).unwrap_err();
+        let err = write_mrec(&path, &forcefield_record(&ff)).unwrap_err();
         assert!(err.to_string().contains("dihedral.periodic"), "{err}");
 
         // Laid down behind the writer's back, the reader refuses it too.
-        write_mrec_forcefield(&path, &awkward_forcefield(), None).unwrap();
+        write_mrec(&path, &forcefield_record(&awkward_forcefield())).unwrap();
         std::fs::remove_dir_all(path.join("forcefield").join("dihedral.periodic")).unwrap();
-        let err = read_mrec_forcefield(&path).unwrap_err();
+        let err = opened(&path).forcefield().unwrap_err();
         assert!(err.to_string().contains("dihedral.periodic"), "{err}");
     }
 }

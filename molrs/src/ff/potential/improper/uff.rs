@@ -6,7 +6,7 @@ use ndarray::{Array2, ArrayView2};
 
 use crate::ff::ir::Params;
 use crate::ff::potential::flat_coords::{sub3, term_table, validate_coords};
-use crate::ff::potential::{ForceTerm, IndexedTerms, Potential};
+use crate::ff::potential::{Accumulator, ForceTerm, IndexedTerms, Potential};
 use crate::op::vec3::{cross, dot, norm};
 use molrs::core::Frame;
 use molrs::op::F;
@@ -110,21 +110,21 @@ impl ImproperUff {
 }
 
 impl Potential for ImproperUff {
-    fn calc_energy_forces(&self, coords: &[F]) -> (F, Vec<F>) {
-        let mut out = vec![0.0; coords.len()];
-        let energy = self.accumulate(coords, &mut out);
-        (energy, out)
-    }
-
-    fn accumulate(&self, coords: &[F], out: &mut [F]) -> F {
-        self.fold(coords, out, self.atom_i.len(), |t| {
-            (
-                self.atom_i[t],
-                self.atom_j[t],
-                self.atom_k[t],
-                self.atom_l[t],
-            )
-        })
+    fn evaluate(&self, coords: &[F], acc: &mut Accumulator<'_>) {
+        let energy = self.fold(
+            coords,
+            acc.forces_without_virial(),
+            self.atom_i.len(),
+            |t| {
+                (
+                    self.atom_i[t],
+                    self.atom_j[t],
+                    self.atom_k[t],
+                    self.atom_l[t],
+                )
+            },
+        );
+        acc.add_energy(energy);
     }
 }
 
@@ -132,30 +132,21 @@ impl IndexedTerms for ImproperUff {
     fn terms(&self) -> Array2<u32> {
         term_table(&[&self.atom_i, &self.atom_j, &self.atom_k, &self.atom_l])
     }
-    fn calc_energy_forces_with_terms(
-        &self,
-        coords: &[F],
-        terms: ArrayView2<'_, u32>,
-    ) -> (F, Vec<F>) {
-        let mut out = vec![0.0; coords.len()];
-        let energy = self.accumulate_with_terms(coords, terms, &mut out);
-        (energy, out)
-    }
-
-    fn accumulate_with_terms(&self, coords: &[F], terms: ArrayView2<'_, u32>, out: &mut [F]) -> F {
+    fn evaluate_terms(&self, coords: &[F], terms: ArrayView2<'_, u32>, acc: &mut Accumulator<'_>) {
         debug_assert_eq!(
             terms.nrows(),
             self.atom_i.len(),
             "the row set is the force field's; only the atoms a row names may be rebound"
         );
-        self.fold(coords, out, terms.nrows(), |t| {
+        let energy = self.fold(coords, acc.forces_without_virial(), terms.nrows(), |t| {
             (
                 terms[[t, 0]] as usize,
                 terms[[t, 1]] as usize,
                 terms[[t, 2]] as usize,
                 terms[[t, 3]] as usize,
             )
-        })
+        });
+        acc.add_energy(energy);
     }
 }
 
@@ -190,19 +181,19 @@ pub fn improper_uff_constructor(
     }
     let i = block
         .get("atomi")
-        .and_then(|c| c.as_uint())
+        .and_then(|c| c.get::<u64>())
         .ok_or("uff_inversion: missing atomi")?;
     let j = block
         .get("atomj")
-        .and_then(|c| c.as_uint())
+        .and_then(|c| c.get::<u64>())
         .ok_or("uff_inversion: missing atomj")?;
     let k = block
         .get("atomk")
-        .and_then(|c| c.as_uint())
+        .and_then(|c| c.get::<u64>())
         .ok_or("uff_inversion: missing atomk")?;
     let l = block
         .get("atoml")
-        .and_then(|c| c.as_uint())
+        .and_then(|c| c.get::<u64>())
         .ok_or("uff_inversion: missing atoml")?;
     let kk = param_reads::instance_col("uff_inversion", block, "K")?;
     let c0 = param_reads::instance_col("uff_inversion", block, "c0")?;
@@ -224,6 +215,7 @@ pub fn improper_uff_constructor(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ff::potential::fixtures::OneShot;
     use crate::ff::potential::fixtures::assert_forces_are_negative_gradient;
 
     fn inversion(c: [F; 3]) -> ImproperUff {
@@ -252,11 +244,11 @@ mod tests {
         // E = K·(c0 + c1·sinY + c2·cos2W): in the plane the fourth bond is
         // perpendicular to the normal, sinY = 1, and (1, −1, 0) gives zero.
         let pot = inversion([1.0, -1.0, 0.0]);
-        let (e_flat, _) = pot.calc_energy_forces(&planar());
+        let (e_flat, _) = pot.energy_forces_at(&planar());
         assert!(e_flat.abs() < 1e-9);
         let mut lifted = planar();
         lifted[11] = 0.4;
-        let (e_up, _) = pot.calc_energy_forces(&lifted);
+        let (e_up, _) = pot.energy_forces_at(&lifted);
         assert!(e_up > 1e-3);
     }
 

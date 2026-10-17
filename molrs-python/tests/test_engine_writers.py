@@ -16,6 +16,8 @@ The Rust tests (``molrs/src/ff/engine_codec_check.rs``,
 
 from __future__ import annotations
 
+from conftest import capture
+
 from pathlib import Path
 
 import molrs
@@ -27,11 +29,18 @@ ForceField = molrs.ff.forcefield.ForceField
 
 def _ethylene() -> molrs.core.Atomistic:
     mol = molrs.core.Atomistic()
-    c1 = mol.def_atom(element="C", type="c2", charge=-0.2, x=0.0, y=0.0, z=0.0)
-    c2 = mol.def_atom(element="C", type="c2", charge=-0.2, x=1.3, y=0.0, z=0.0)
-    mol.def_bond(c1, c2)
-    for c, (x, y) in ((c1, (-0.6, 0.9)), (c1, (-0.6, -0.9)), (c2, (1.9, 0.9)), (c2, (1.9, -0.9))):
-        mol.def_bond(c, mol.def_atom(element="H", type="ha", charge=0.1, x=x, y=y, z=0.0))
+    c1 = mol.add_atom(atomic_number=6, type="c2", charge=-0.2, x=0.0, y=0.0, z=0.0)
+    c2 = mol.add_atom(atomic_number=6, type="c2", charge=-0.2, x=1.3, y=0.0, z=0.0)
+    mol.add_bond(c1, c2)
+    for c, (x, y) in (
+        (c1, (-0.6, 0.9)),
+        (c1, (-0.6, -0.9)),
+        (c2, (1.9, 0.9)),
+        (c2, (1.9, -0.9)),
+    ):
+        mol.add_bond(
+            c, mol.add_atom(atomic_number=1, type="ha", charge=0.1, x=x, y=y, z=0.0)
+        )
     return mol
 
 
@@ -46,18 +55,22 @@ def _native_gaff() -> tuple[ForceField, molrs.core.Frame]:
     return ff, frame
 
 
-def _every_writer(ff: ForceField, frame: molrs.core.Frame, tmp_path: Path) -> dict[str, str]:
+def _every_writer(
+    ff: ForceField, frame: molrs.core.Frame, tmp_path: Path
+) -> dict[str, str]:
     top = tmp_path / "system.top"
-    molrs.io.write_top_system(top, ff, frame)
+    molrs.io.gromacs.GromacsTopForcefieldWriter().write_system(top, ff, frame)
     return {
-        "LAMMPS": molrs.io.write_lammps_forcefield_str(ff, frame),
+        "LAMMPS": capture(molrs.io.lammps.LammpsForcefieldWriter(frame).write, ff),
         "GROMACS": top.read_text(encoding="utf-8"),
-        "OpenMM": molrs.io.write_openmm_forcefield_str(ff),
-        "frcmod": molrs.io.write_frcmod_str(ff),
+        "OpenMM": capture(molrs.io.openmm_xml.OpenmmXmlWriter().write, ff),
+        "frcmod": capture(molrs.io.amber.AmberFrcmodWriter().write, ff),
     }
 
 
-def test_a_native_gaff_field_with_estimates_writes_to_every_engine(tmp_path: Path) -> None:
+def test_a_native_gaff_field_with_estimates_writes_to_every_engine(
+    tmp_path: Path,
+) -> None:
     ff, frame = _native_gaff()
     (improper,) = ff.get_types("improper")
     assert improper.params["estimated"] == 1.0
@@ -80,23 +93,29 @@ def test_a_parameter_no_format_holds_is_refused_by_every_writer(tmp_path: Path) 
     frame = _part(["C", "H"], ["A", "B"], [-0.1, 0.1], [(0, 1)])
     frame["atoms"]["mol_id"] = np.array([1, 1], dtype=np.uint64)
     with pytest.raises(ValueError, match="bogus"):
-        molrs.io.write_lammps_forcefield_str(ff, frame)
+        capture(molrs.io.lammps.LammpsForcefieldWriter(frame).write, ff)
     with pytest.raises(ValueError, match="bogus"):
-        molrs.io.write_top_system(tmp_path / "x.top", ff, frame)
+        molrs.io.gromacs.GromacsTopForcefieldWriter().write_system(
+            tmp_path / "x.top", ff, frame
+        )
     with pytest.raises(ValueError, match="bogus"):
-        molrs.io.write_openmm_forcefield_str(ff)
+        capture(molrs.io.openmm_xml.OpenmmXmlWriter().write, ff)
     with pytest.raises(ValueError, match="bogus"):
-        molrs.io.write_frcmod_str(ff)
+        capture(molrs.io.amber.AmberFrcmodWriter().write, ff)
 
 
-def test_coul_cut_delta_is_written_at_its_default_and_refused_off_it(tmp_path: Path) -> None:
+def test_coul_cut_delta_is_written_at_its_default_and_refused_off_it(
+    tmp_path: Path,
+) -> None:
     ff, frame = _native_gaff()
     _every_writer(ff, frame, tmp_path)
     ff.get_style("pair", "coul/cut")["delta"] = 0.5
     with pytest.raises(ValueError, match="delta"):
-        molrs.io.write_top_system(tmp_path / "x.top", ff, frame)
+        molrs.io.gromacs.GromacsTopForcefieldWriter().write_system(
+            tmp_path / "x.top", ff, frame
+        )
     with pytest.raises(ValueError, match="delta"):
-        molrs.io.write_lammps_forcefield_str(ff, frame)
+        capture(molrs.io.lammps.LammpsForcefieldWriter(frame).write, ff)
 
 
 # ---------------------------------------------------------------------------
@@ -104,7 +123,9 @@ def test_coul_cut_delta_is_written_at_its_default_and_refused_off_it(tmp_path: P
 # ---------------------------------------------------------------------------
 
 
-def _part(elements: list[str], types: list[str], charges: list[float], bonds) -> molrs.core.Frame:
+def _part(
+    elements: list[str], types: list[str], charges: list[float], bonds
+) -> molrs.core.Frame:
     n = len(elements)
     atoms = molrs.core.Block()
     atoms.insert("element", elements)
@@ -124,7 +145,9 @@ def _part(elements: list[str], types: list[str], charges: list[float], bonds) ->
 
 def _concat() -> molrs.core.Frame:
     """A water stated whole, then a C-H stating no id, name or residue."""
-    water = _part(["O", "H", "H"], ["OW", "HW", "HW"], [-0.8, 0.4, 0.4], [(0, 1), (0, 2)])
+    water = _part(
+        ["O", "H", "H"], ["OW", "HW", "HW"], [-0.8, 0.4, 0.4], [(0, 1), (0, 2)]
+    )
     water["atoms"]["id"] = np.array([1, 2, 3], dtype=np.uint64)
     water["atoms"]["name"] = ["OW", "HW1", "HW2"]
     water["atoms"]["res_name"] = ["SOL"] * 3
@@ -132,6 +155,9 @@ def _concat() -> molrs.core.Frame:
     ch = _part(["C", "H"], ["CT", "HC"], [-0.1, 0.1], [(0, 1)])
     joined = molrs.core.Frame.concat([water, ch])
     assert list(joined["atoms"].validity("id")) == [True, True, True, False, False]
+    joined["atoms"]["mass"] = [
+        float(molrs.core.Element.by_symbol(e).mass) for e in joined["atoms"]["element"]
+    ]
     joined["atoms"]["mol_id"] = np.array([1, 1, 1, 2, 2], dtype=np.uint64)
     return joined
 
@@ -139,9 +165,9 @@ def _concat() -> molrs.core.Frame:
 def test_the_lammps_data_writer_refuses_a_null_id_and_numbers_a_missing_one() -> None:
     frame = _concat()
     with pytest.raises(OSError, match=r"atoms\.id is null in 2 of 5 rows \(rows 3-4"):
-        molrs.io.write_lammps_data_str(frame)
+        capture(molrs.io.write_lammps_data, frame)
     del frame["atoms"]["id"]
-    text = molrs.io.write_lammps_data_str(frame)
+    text = capture(molrs.io.write_lammps_data, frame)
     atoms = text.split("Atoms")[1].strip().splitlines()[2:7]
     assert [line.split()[0] for line in atoms] == ["1", "2", "3", "4", "5"]
 
@@ -151,16 +177,18 @@ def test_a_null_charge_is_refused_by_column_and_rows() -> None:
     del frame["atoms"]["id"]
     frame["atoms"].set_validity("charge", [True, True, True, False, True])
     with pytest.raises(OSError, match=r"atoms\.charge is null in 1 of 5 rows \(row 3"):
-        molrs.io.write_lammps_data_str(frame)
+        capture(molrs.io.write_lammps_data, frame)
 
 
 def test_gro_and_pdb_generate_unset_names_and_residues() -> None:
     frame = _concat()
     with pytest.raises(OSError, match=r"atoms\.id is null"):
-        molrs.io.write_gro_str(frame)
+        capture(molrs.io.write_gro, frame)
     del frame["atoms"]["id"]
-    lines = molrs.io.write_gro_str(frame).splitlines()[2:7]
-    labels = [(line[0:5].strip(), line[5:10].strip(), line[10:15].strip()) for line in lines]
+    lines = capture(molrs.io.write_gro, frame).splitlines()[2:7]
+    labels = [
+        (line[0:5].strip(), line[5:10].strip(), line[10:15].strip()) for line in lines
+    ]
     assert labels == [
         ("7", "SOL", "OW"),
         ("7", "SOL", "HW1"),
@@ -168,5 +196,9 @@ def test_gro_and_pdb_generate_unset_names_and_residues() -> None:
         ("2", "MOL", "C1"),
         ("2", "MOL", "H1"),
     ]
-    pdb = [line for line in molrs.io.write_pdb_str(frame).splitlines() if line.startswith("ATOM")]
+    pdb = [
+        line
+        for line in capture(molrs.io.write_pdb, frame).splitlines()
+        if line.startswith("ATOM")
+    ]
     assert (pdb[3][12:16].strip(), pdb[3][17:20]) == ("C1", "MOL")

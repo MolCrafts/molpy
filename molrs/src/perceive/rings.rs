@@ -4,6 +4,7 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 
 use crate::core::Atomistic;
+use crate::core::MolRsError;
 
 use crate::core::Topology;
 use crate::core::{NodeId, RelationId};
@@ -342,7 +343,8 @@ pub fn perceive_rings(mol: &Atomistic) -> RingSet {
     // Fast (NodeId, NodeId) → RelationId lookup, used to lift ring edges back.
     let mut bond_map: HashMap<(NodeId, NodeId), RelationId> = HashMap::new();
     for &bid in &bond_vec {
-        let (n0, n1) = mol.bond_endpoints(bid).expect("bond must exist");
+        let ends = mol.get_bond(bid).expect("bond must exist").nodes;
+        let (n0, n1) = (ends[0], ends[1]);
         edges.push([atom_to_idx[&n0], atom_to_idx[&n1]]);
         bond_map.insert((n0, n1), bid);
         bond_map.insert((n1, n0), bid);
@@ -392,37 +394,43 @@ const IS_IN_RING: &str = "is_in_ring";
 /// atom / bond belongs to.
 const N_RINGS: &str = "n_rings";
 
-/// Perceive rings (SSSR) and write them onto a clone of `mol`.
+/// Perceive rings (SSSR) and write them onto `mol`, in place.
 ///
 /// The [`perceive_rings`] side table, projected as props: every atom and every
 /// bond receives `is_in_ring` (`0` / `1`) and `n_rings` — including the acyclic
-/// ones, which are explicitly flagged `0` rather than left unset. `mol` is left
-/// untouched.
+/// ones, which are explicitly flagged `0` rather than left unset.
+///
+/// # Errors
+///
+/// [`MolRsError`] when a flag cannot be written (a column of `mol` holding the
+/// key under a foreign dtype); `mol` may then be partly annotated.
 ///
 /// # Examples
 ///
 /// ```
-/// use molrs::core::Atomistic;
+/// use molrs::core::{Atomistic, Element, keys};
 /// use molrs::perceive::assign_rings;
+/// use molrs::props;
 ///
-/// let mol = Atomistic::new();
-/// let perceived = assign_rings(&mol);
-/// assert_eq!(perceived.n_atoms(), mol.n_atoms());
+/// let mut mol = Atomistic::new();
+/// let c = mol.add_atom(props! { keys::ATOMIC_NUMBER => Element::C }).unwrap();
+/// assign_rings(&mut mol).unwrap();
+/// let atom = mol.get_atom(c).unwrap();
+/// assert_eq!(atom.get_int("is_in_ring"), Some(0));
 /// ```
-pub fn assign_rings(mol: &Atomistic) -> Atomistic {
+pub fn assign_rings(mol: &mut Atomistic) -> Result<(), MolRsError> {
     let info = perceive_rings(mol);
-    let mut out = mol.clone();
-    let atom_ids: Vec<NodeId> = out.atoms().map(|(id, _)| id).collect();
+    let atom_ids: Vec<NodeId> = mol.atom_ids().collect();
     for id in atom_ids {
-        let _ = out.set_atom(id, IS_IN_RING, i32::from(info.is_atom_in_ring(id)));
-        let _ = out.set_atom(id, N_RINGS, saturating_i32(info.n_atom_rings(id)));
+        mol.set_atom(id, IS_IN_RING, i32::from(info.is_atom_in_ring(id)))?;
+        mol.set_atom(id, N_RINGS, saturating_i32(info.n_atom_rings(id)))?;
     }
-    let bond_ids: Vec<RelationId> = out.bonds().map(|(id, _)| id).collect();
+    let bond_ids: Vec<RelationId> = mol.bond_ids().collect();
     for bid in bond_ids {
-        let _ = out.set_bond_prop(bid, IS_IN_RING, i32::from(info.is_bond_in_ring(bid)));
-        let _ = out.set_bond_prop(bid, N_RINGS, saturating_i32(info.n_bond_rings(bid)));
+        mol.set_bond(bid, IS_IN_RING, i32::from(info.is_bond_in_ring(bid)))?;
+        mol.set_bond(bid, N_RINGS, saturating_i32(info.n_bond_rings(bid)))?;
     }
-    out
+    Ok(())
 }
 
 /// Narrow a count to the `i32` that [`crate::core::PropValue`] stores,
@@ -806,7 +814,7 @@ mod tests {
 
     #[test]
     fn sssr_empty() {
-        let topo = Topology::new();
+        let topo = Topology::with_atoms(0);
         assert_eq!(sssr(&topo).n_rings(), 0);
     }
 
@@ -965,13 +973,20 @@ mod tests {
         }
     }
 
-    use crate::core::Atom;
+    use crate::core::{Element, Props, keys};
+    use crate::props;
+
+    /// A carbon atom: ring perception reads only connectivity, but every
+    /// atom of an `Atomistic` carries a species.
+    fn carbon() -> Props {
+        props! { keys::ATOMIC_NUMBER => Element::C }
+    }
 
     fn cycle(n: usize) -> Atomistic {
         let mut g = Atomistic::new();
-        let ids: Vec<NodeId> = (0..n).map(|_| g.add_atom(Atom::new())).collect();
+        let ids: Vec<NodeId> = (0..n).map(|_| g.add_atom(carbon()).unwrap()).collect();
         for i in 0..n {
-            g.add_bond(ids[i], ids[(i + 1) % n])
+            g.add_bond(ids[i], ids[(i + 1) % n], props! {})
                 .expect("add cycle bond");
         }
         g
@@ -988,9 +1003,10 @@ mod tests {
     #[test]
     fn test_linear_no_rings() {
         let mut g = Atomistic::new();
-        let ids: Vec<NodeId> = (0..6).map(|_| g.add_atom(Atom::new())).collect();
+        let ids: Vec<NodeId> = (0..6).map(|_| g.add_atom(carbon()).unwrap()).collect();
         for i in 0..5 {
-            g.add_bond(ids[i], ids[i + 1]).expect("add chain bond");
+            g.add_bond(ids[i], ids[i + 1], props! {})
+                .expect("add chain bond");
         }
         assert_eq!(perceive_rings(&g).n_rings(), 0);
     }
@@ -1021,18 +1037,18 @@ mod tests {
     #[test]
     fn test_naphthalene() {
         let mut g = Atomistic::new();
-        let ids: Vec<NodeId> = (0..10).map(|_| g.add_atom(Atom::new())).collect();
+        let ids: Vec<NodeId> = (0..10).map(|_| g.add_atom(carbon()).unwrap()).collect();
         // Ring A: 0-1-2-3-4-5-0
         for i in 0..5 {
-            g.add_bond(ids[i], ids[i + 1]).expect("bond");
+            g.add_bond(ids[i], ids[i + 1], props! {}).expect("bond");
         }
-        g.add_bond(ids[5], ids[0]).expect("bond");
+        g.add_bond(ids[5], ids[0], props! {}).expect("bond");
         // Ring B: 2-3-6-7-8-9-2
-        g.add_bond(ids[3], ids[6]).expect("bond");
-        g.add_bond(ids[6], ids[7]).expect("bond");
-        g.add_bond(ids[7], ids[8]).expect("bond");
-        g.add_bond(ids[8], ids[9]).expect("bond");
-        g.add_bond(ids[9], ids[2]).expect("bond");
+        g.add_bond(ids[3], ids[6], props! {}).expect("bond");
+        g.add_bond(ids[6], ids[7], props! {}).expect("bond");
+        g.add_bond(ids[7], ids[8], props! {}).expect("bond");
+        g.add_bond(ids[8], ids[9], props! {}).expect("bond");
+        g.add_bond(ids[9], ids[2], props! {}).expect("bond");
 
         let ri = perceive_rings(&g);
         assert_eq!(ri.n_rings(), 2);
@@ -1047,9 +1063,9 @@ mod tests {
     fn test_max_ring_system_size_benzene_and_acyclic() {
         assert_eq!(perceive_rings(&cycle(6)).max_ring_system_size(), 6);
         let mut chain = Atomistic::new();
-        let ids: Vec<NodeId> = (0..3).map(|_| chain.add_atom(Atom::new())).collect();
-        chain.add_bond(ids[0], ids[1]).unwrap();
-        chain.add_bond(ids[1], ids[2]).unwrap();
+        let ids: Vec<NodeId> = (0..3).map(|_| chain.add_atom(carbon()).unwrap()).collect();
+        chain.add_bond(ids[0], ids[1], props! {}).unwrap();
+        chain.add_bond(ids[1], ids[2], props! {}).unwrap();
         assert_eq!(perceive_rings(&chain).max_ring_system_size(), 0);
     }
 
@@ -1060,15 +1076,16 @@ mod tests {
     fn joined_cycles(n: usize, shared: usize) -> (Atomistic, Vec<NodeId>) {
         let mut g = Atomistic::new();
         let total = 2 * n - shared;
-        let ids: Vec<NodeId> = (0..total).map(|_| g.add_atom(Atom::new())).collect();
+        let ids: Vec<NodeId> = (0..total).map(|_| g.add_atom(carbon()).unwrap()).collect();
         for i in 0..n {
-            g.add_bond(ids[i], ids[(i + 1) % n]).expect("ring A bond");
+            g.add_bond(ids[i], ids[(i + 1) % n], props! {})
+                .expect("ring A bond");
         }
         // Ring B reuses ids[0..shared] and continues through the fresh atoms.
         let mut ring_b: Vec<NodeId> = (0..shared).map(|i| ids[i]).collect();
         ring_b.extend(ids[n..].iter().copied());
         for i in 0..ring_b.len() {
-            g.add_bond(ring_b[i], ring_b[(i + 1) % ring_b.len()])
+            g.add_bond(ring_b[i], ring_b[(i + 1) % ring_b.len()], props! {})
                 .expect("ring B bond");
         }
         (g, ids)
@@ -1103,9 +1120,10 @@ mod tests {
     #[test]
     fn test_ring_systems_disconnected_rings_stay_separate() {
         let mut g = cycle(6);
-        let ids: Vec<NodeId> = (0..6).map(|_| g.add_atom(Atom::new())).collect();
+        let ids: Vec<NodeId> = (0..6).map(|_| g.add_atom(carbon()).unwrap()).collect();
         for i in 0..6 {
-            g.add_bond(ids[i], ids[(i + 1) % 6]).expect("second ring");
+            g.add_bond(ids[i], ids[(i + 1) % 6], props! {})
+                .expect("second ring");
         }
         let systems = perceive_rings(&g).ring_systems();
         assert_eq!(systems.len(), 2);
@@ -1115,9 +1133,9 @@ mod tests {
     #[test]
     fn test_ring_systems_acyclic_is_empty() {
         let mut chain = Atomistic::new();
-        let ids: Vec<NodeId> = (0..3).map(|_| chain.add_atom(Atom::new())).collect();
-        chain.add_bond(ids[0], ids[1]).unwrap();
-        chain.add_bond(ids[1], ids[2]).unwrap();
+        let ids: Vec<NodeId> = (0..3).map(|_| chain.add_atom(carbon()).unwrap()).collect();
+        chain.add_bond(ids[0], ids[1], props! {}).unwrap();
+        chain.add_bond(ids[1], ids[2], props! {}).unwrap();
         assert!(perceive_rings(&chain).ring_systems().is_empty());
     }
 
@@ -1145,13 +1163,14 @@ mod tests {
         // molecule than the one it was cut from.
         // Extraction re-wraps as an Atomistic, so these atoms need an element.
         let mut g = Atomistic::new();
-        let ring_ids: Vec<NodeId> = (0..6).map(|_| g.add_atom_bare("C")).collect();
+        let ring_ids: Vec<NodeId> = (0..6).map(|_| g.add_atom(carbon()).unwrap()).collect();
         for i in 0..6 {
-            g.add_bond(ring_ids[i], ring_ids[(i + 1) % 6])
+            g.add_bond(ring_ids[i], ring_ids[(i + 1) % 6], props! {})
                 .expect("ring bond");
         }
-        let methyl = g.add_atom_bare("C");
-        g.add_bond(ring_ids[0], methyl).expect("methyl bond");
+        let methyl = g.add_atom(carbon()).unwrap();
+        g.add_bond(ring_ids[0], methyl, props! {})
+            .expect("methyl bond");
 
         let ri = perceive_rings(&g);
         let plain = g.extract_subgraph(&[methyl], 2, false, &[]).unwrap();
@@ -1185,12 +1204,13 @@ mod tests {
     /// A ring of `n` carbons with a methyl on atom 0. Returns `(graph, methyl)`.
     fn methyl_on_ring(n: usize) -> (Atomistic, Vec<NodeId>, NodeId) {
         let mut g = Atomistic::new();
-        let ring: Vec<NodeId> = (0..n).map(|_| g.add_atom_bare("C")).collect();
+        let ring: Vec<NodeId> = (0..n).map(|_| g.add_atom(carbon()).unwrap()).collect();
         for i in 0..n {
-            g.add_bond(ring[i], ring[(i + 1) % n]).expect("ring bond");
+            g.add_bond(ring[i], ring[(i + 1) % n], props! {})
+                .expect("ring bond");
         }
-        let methyl = g.add_atom_bare("C");
-        g.add_bond(ring[0], methyl).expect("methyl bond");
+        let methyl = g.add_atom(carbon()).unwrap();
+        g.add_bond(ring[0], methyl, props! {}).expect("methyl bond");
         (g, ring, methyl)
     }
 
@@ -1244,15 +1264,17 @@ mod tests {
         // ring must not drag in the other.
         let mut g = Atomistic::new();
         let ring_of = |g: &mut Atomistic| -> Vec<NodeId> {
-            let r: Vec<NodeId> = (0..6).map(|_| g.add_atom_bare("C")).collect();
+            let r: Vec<NodeId> = (0..6).map(|_| g.add_atom(carbon()).unwrap()).collect();
             for i in 0..6 {
-                g.add_bond(r[i], r[(i + 1) % 6]).expect("ring bond");
+                g.add_bond(r[i], r[(i + 1) % 6], props! {})
+                    .expect("ring bond");
             }
             r
         };
         let left = ring_of(&mut g);
         let right = ring_of(&mut g);
-        g.add_bond(left[0], right[0]).expect("biaryl bond");
+        g.add_bond(left[0], right[0], props! {})
+            .expect("biaryl bond");
 
         let groups = small_ring_closure(&g, &[left[3]], 1, 8);
         assert_eq!(groups.len(), 1, "only the ring the ball is on");
@@ -1262,9 +1284,10 @@ mod tests {
     #[test]
     fn test_small_ring_closure_is_empty_for_an_acyclic_molecule() {
         let mut g = Atomistic::new();
-        let ids: Vec<NodeId> = (0..8).map(|_| g.add_atom_bare("C")).collect();
+        let ids: Vec<NodeId> = (0..8).map(|_| g.add_atom(carbon()).unwrap()).collect();
         for i in 0..7 {
-            g.add_bond(ids[i], ids[i + 1]).expect("chain bond");
+            g.add_bond(ids[i], ids[i + 1], props! {})
+                .expect("chain bond");
         }
         assert!(small_ring_closure(&g, &[ids[3]], 3, 8).is_empty());
     }

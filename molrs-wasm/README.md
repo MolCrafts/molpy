@@ -18,13 +18,20 @@ npm install @molcrafts/molrs
 ## Quick start
 
 ```js
-import { readSmilesStr, Conformer, writeXyzStr } from "@molcrafts/molrs";
+import { SmilesIr, Conformer, fillSymbols, writeXyz } from "@molcrafts/molrs";
 
 // Parse SMILES → 3D coordinates → XYZ string
-const frame = readSmilesStr("CCO");
+const frame = SmilesIr.parse("CCO").toFrame();      // atoms.atomic_number
 const mol3d = new Conformer("fast").generate(frame);
-console.log(writeXyzStr(mol3d));
+fillSymbols(mol3d);                                 // XYZ spells symbols: atoms.element
+console.log(writeXyz(mol3d));
 ```
+
+Species is `atoms.atomic_number` everywhere molrs reads it; `atoms.element`
+is raw symbol data. Readers keep what the file spells (`readXyz` gives
+`element`, `readCube` gives `atomic_number`) and nothing converts
+implicitly — `fillAtomicNumbers(frame)` / `fillSymbols(frame)` are the two
+conversions.
 
 The published package uses wasm-pack's `bundler` target: configure your bundler
 to load WebAssembly modules. A custom `--target web` build instead exports an
@@ -34,27 +41,56 @@ async `init()` function that must be awaited before calling the API.
 
 The exports are grouped as molrs groups them: one section per molrs module
 (`core`, `io`, `perceive`, `conformer`, `ff` / `optimize`, `compute`); the JS
-namespace itself is flat.
+namespace itself is flat. Every operation has exactly one door: no `Str` /
+`Bytes` twins, no constructor families, and removal is `del*` (`delBlock`,
+`delAtom` / `delAtoms` — a single and a batch removal are distinct).
 
 ### Core data model (`molrs::core`)
 
 - **`Frame`** — container mapping string keys (`"atoms"`, `"bonds"`) to
-  `Block`s, plus metadata (`getMeta` / `setMeta` / `metaKeys`, and
-  `getMetaScalar` / `setMetaScalar` for numbers)
+  `Block`s (`createBlock`, `get`, `set`, `has`, `delBlock`, `renameBlock`,
+  `keys`, `clear`), the `box`, and typed metadata: `getMeta(name)` returns the
+  value as its own JS type (`number` for `f64` / `i32` / `u32`, `bigint` for
+  `i64` / `u64`, `string`, `boolean`, a typed array for the vector dtypes, a
+  JSON value for `json`), `setMeta(name, value)` stores a JS value as the
+  dtype it is (`number` → `f64`, `bigint` → `i64`, `Float64Array(3)` →
+  `f64x3`, …), `metaKeys()
 - **`Block`** — column store with typed arrays. Float columns are `Float64Array` (dtype `float`, stored as f64).
-- **`Box`** — simulation box with periodic boundary conditions (`h()` the
-  cell matrix, `toFrac` / `toCart`, `wrap`, `corners()`, …)
+- **`Box`** — simulation box with periodic boundary conditions, one
+  constructor as `SimBox::new`: `new Box(cell, origin, pbc)` with a **`Cell`**
+  (`Cell.matrix(h)` — 9 values, row-major, lattice vectors as columns —
+  `Cell.lengths([a, b, c])`, `Cell.lengthsAngles(lengths, angles)`,
+  `Cell.lengthsTilts(lengths, tilts)`, `Cell.undefined()`), and
+  `Box.bounding(points, padding, pbc)` for the box around a point cloud.
+  One door per transform, each returning its result: `toFrac(xyz)`,
+  `toCart(frac)`, `delta(a, b, minimumImage)` → `NDArray`, and
+  `wrap(xyz)` → `{ xyz, shifts }` (the image shift applied to each point).
+  Also `volume()`, `origin()`, `lengths()`, `tilts()`, `pbc()`, `corners()`,
+  `h()` (the cell matrix, flat **column-major**)
+
+```js
+const box = new Box(Cell.lengths([10, 10, 10]), [0, 0, 0], [true, true, true]);
+const { xyz, shifts } = box.wrap(NDArray.from(positions, [n, 3]));
+```
 - **`NDArray`** — owned `Float64Array` plus a shape (what `Box.origin()`, `Box.h()` and `Box.lengths()` return)
 - **`Topology`** — the bond graph (`Topology.fromFrame(frame)` reads
-  `bonds.atomi` / `atomj`): angles, dihedrals, impropers, connected components
-- **`TriMesh`** — a triangle surface (what `readStlBytes` returns)
+  `bonds.atomi` / `atomj`): angles, dihedrals, impropers, connected
+  components; `addAtoms` / `addBonds`, and `delAtom(i)` / `delAtoms(idxs)`,
+  `delBond(i)` / `delBonds(idxs)` (swap-remove; an index out of range throws)
+- **`TriMesh`** — a triangle surface (what `readStl` returns)
 - **`Sphere`**, **`Cuboid`**, **`Parallelepiped`**, **`HalfSpace`**,
   **`Cylinder`**, **`Ellipsoid`**, **`Polyhedron`**, **`SphereUnion`** — regions
   (signed `distance`, `contains`, `bounds`; `and` / `or` / `not` compose into a
-  `Region`)
+  `Region`); `Parallelepiped.create(cell, origin)` takes a `Cell`, as a `Box`
+  does
 - **`NeighborList`**, **`Neighbors`**, **`NeighborQuery`** — neighbor search
   (see [Analysis](#analysis))
-- `covalentRadius(symbol)` — the element table's covalent radius (Å)
+- `covalentRadius(atomicNumber)` — the element table's covalent radius (Å)
+- `fillAtomicNumbers(frame)` / `fillSymbols(frame)` — the explicit species
+  conversions, in place: `atoms.element` symbols → `atoms.atomic_number`
+  (`uint`, `"*"` is 0) and back. molrs chemistry reads `atomic_number` only,
+  so a frame from a symbol format (XYZ, PDB, SDF, …) goes through
+  `fillAtomicNumbers` first; nothing converts implicitly
 
 Columns read like numpy: the column's dtype picks the array type, and no
 method names a dtype. Dtype names are molrs core's (`DType::name()`), the
@@ -82,49 +118,76 @@ atoms.dtype("x"); atoms.shape("pos"); atoms.has("x"); atoms.keys();
 
 ### Perception (`molrs::perceive`)
 
+Perception, `Conformer.generate`, the typifiers and `SmilesIr.fromFrame` read
+`atoms.atomic_number`; a frame that has only `element` symbols throws until
+`fillAtomicNumbers(frame)` converts it.
+
+The semantics are molrs's: `assign*` **mutate** the frame they are given (as
+`assign_*(&mut Atomistic)` does) — the perceived columns are added to its
+`atoms` / `bonds` blocks, everything else is kept, and block handles taken
+before the call must be taken again. `addHydrogens` / `removeHydrogens` change
+the graph itself and **return a new frame**, leaving their input alone.
+
 ```js
-const rings = assignRings(frame);     // atoms/bonds gain is_in_ring, n_rings
-const arom  = assignAromaticity(frame);
-const withH = addHydrogens(frame);
+assignRings(frame);                   // frame's atoms/bonds gain is_in_ring, n_rings
+assignAromaticity(frame);             // bond_type 4 on aromatic bonds, bond_number everywhere
+assignKekuleBondOrders(frame);        // → whether any bond was aromatic
+const withH = addHydrogens(frame);    // a new frame
 ```
 
 ### I/O (`molrs::io`)
 
-The binding's `io` sources mirror `molrs::io`: one module per format, holding
-that format's reader (or stream) and writer.
+The binding's `io` sources mirror `molrs::io`: one module per format, and one
+door per format and direction.
 
-- `readSmilesStr(smiles)` → `Frame` (one molecule); `SmilesIr.parse(smiles)` →
-  `SmilesIr` → `.toFrame()` (any SMILES, a `.`-separated set included);
-  `writeSmilesStr(frame)` → SMILES (molrs's default emit options);
-  `readCgsmilesStr(text)` → `Frame`
-- `readCsvBlockStr(text, delimiter?, header?)` → `Block`,
-  `writeCsvBlockStr(block, delimiter?, header?)` → CSV text
+- **`read<Fmt>(source)`** takes the whole file's content as a `Source`: a
+  `string` is always the file's **text** (WASM has no filesystem, so a string
+  is never a path), a `Uint8Array` its bytes. A binary format (DCD, TRR, XTC)
+  takes the `Uint8Array` alone. It returns the file's first (or only) frame.
+- **`write<Fmt>(frame)`** returns the whole one-frame file: a `string` for a
+  text format, a `Uint8Array` for a binary one.
+
+| Format | Read | Write |
+|--------|------|-------|
+| XYZ / extended XYZ | `readXyz` | `writeXyz` |
+| PDB | `readPdb` | `writePdb` |
+| GRO | `readGro` | `writeGro` |
+| SDF / MOL | `readSdf` | — |
+| MOL2 | `readMol2` | `writeMol2` |
+| CIF | `readCif` | `writeCif` |
+| XSF | `readXsf` | `writeXsf` |
+| Gaussian cube | `readCube` | `writeCube` |
+| POSCAR / CONTCAR | `readPoscar` | `writePoscar` |
+| CHGCAR | `readChgcar` | — |
+| AMBER inpcrd, `.ac`, prmtop | `readInpcrd`, `readAc`, `readPrmtop` | — |
+| LAMMPS data | `readLammpsData` | `writeLammpsData` |
+| LAMMPS dump | `readLammpsDump` | `writeLammpsDump(frame, columns?)` |
+| DCD, TRR, XTC (bytes) | `readDcd`, `readTrr`, `readXtc` | `writeDcd`, `writeTrr`, `writeXtc` |
+| STL (→ `TriMesh`) | `readStl` | — |
+| CSV (↔ `Block`) | `readCsvBlock(source, delimiter?, header?)` | `writeCsvBlock(block, delimiter?, header?)` |
+| LAMMPS log | `readLammpsLog(source, style?)` → the `LammpsLog` record; `isLammpsLog(text)` | — |
+| `molrs::stream` wire | `readWireFrame(source, encoding)` | `writeWireFrame(frame, encoding)` → `Uint8Array` |
+
+`encoding` is a `FrameEncoding`: `"msgpack"` or `"json"`.
+
+```js
+const frame = readXyz(await file.text());                         // text
+const same  = readXyz(new Uint8Array(await file.arrayBuffer()));  // bytes
+const dcd   = writeDcd(frame);                                    // Uint8Array
+```
+
+- SMILES and CGsmiles are their classes, as in molrs:
+  `SmilesIr.parse(text).toFrame()` reads (connectivity only — a `.`-separated
+  set becomes one frame of every component), `SmilesIr.fromFrame(frame).toString()`
+  writes (molrs's default emit options: canonical); `SmilesIr.parse(text).nComponents`;
+  `CgSmilesIr.parse(text).toFrame()` reads the molecule a CGsmiles string states
 - `XyzStream`, `PdbStream`, `SdfStream`, `LammpsDataStream`, `LammpsDumpStream`,
   `DcdStream`, `XtcStream`, `TrrStream` — chunk-fed readers, the one reader of
   their format (`allocInputBuffer` → `feedIndexChunk` / `finishIndex` →
   `parseRangeInInput` per frame)
-- `CifReader`, `GroReader`, `Mol2Reader`, `VaspPoscarReader` — whole-content
-  readers, the molrs reader classes of those formats; `readFrame(index)` reads
-  frame `index` (0-based), as every reader in every binding does
-- `readStlBytes(bytes)` → `TriMesh`
-- `readLammpsLogStr(text, style?)` → the `LammpsLog` record (runs, thermo
-  tables, timings — Rust and Python's field names); `isLammpsLog(text)` tells a
-  log by its first run
-- the in-memory doors, named as molrs's `read_<fmt>_str` / `_bytes` and
-  `write_<fmt>_str` / `_bytes` (camelCased; Python's `molrs.io` has the same
-  set): `readXyzStr` / `readXyzBytes` / `writeXyzStr`, `readPdbStr` /
-  `readPdbBytes` / `writePdbStr`, `readSdfStr` / `readSdfBytes`,
-  `readGroStr` / `writeGroStr`, `readMol2Str` / `writeMol2Str`, `readCifStr` /
-  `writeCifStr`, `readXsfStr` / `writeXsfStr`, `readCubeStr` / `writeCubeStr`,
-  `readPoscarStr` / `writePoscarStr`, `readChgcarStr`,
-  `readInpcrdStr`, `readAcStr`, `readPrmtopStr`,
-  `readLammpsDataStr` / `readLammpsDataBytes` / `writeLammpsDataStr`,
-  `readLammpsDumpStr` / `readLammpsDumpBytes` / `writeLammpsDumpStr(frame,
-  columns?)`; `readDcdBytes(bytes, decoderState?)` / `writeDcdBytes`,
-  `readTrrBytes` / `writeTrrBytes`, `readXtcBytes` / `writeXtcBytes` (binary,
-  one frame)
-- `readMsgpackFrameBytes` / `writeMsgpackFrameBytes`, `readJsonFrameStr` /
-  `writeJsonFrameStr` — the `molrs::stream` wire encodings
+- `CifReader`, `GroReader`, `Mol2Reader`, `VaspPoscarReader` — random-access
+  readers over a `Source` (`new GroReader(source)`): `readFrame(index)`
+  (0-based, `undefined` past the end), `len()`, `isEmpty()`
 
 ### 3D generation (`molrs::conformer`)
 
@@ -148,7 +211,10 @@ const report   = new Lbfgs(pots, nl.neighbors()).minimize(typed);  // pairs come
 - `typifier.forcefield()` → the `ForceField` typing assigned;
   `new PotentialCompiler(ff).compile(typedFrame)` → `Potentials` — the native
   composition, no typifier-to-potentials shortcut
-- `Potentials.calcEnergyForces(coords)` → `{ energy, forces }`
+- `Potentials.evaluate(coords)` → `{ energy, forces }` (flat `3N` coordinates)
+- `new Lbfgs(pots, neighbors, fmax?, maxStep?, memory?)`; `minimize(frame,
+  maxSteps?, fixed?)` minimizes in place. A given knob that is not positive
+  (or a `fixed` index outside the frame) throws; nothing is clamped
 
 ### Analysis (`molrs::compute`)
 
@@ -163,7 +229,8 @@ const pairs = nl.neighbors();             // materialize: distSq + disp
 const gr = new Rdf(100, 5.0, 0.0).compute([{ pairs }]);   // one object per frame
 console.log(gr.toJSON().rdf.data);
 
-const curve = new Msd(200).compute({ positions: traj, dt: 0.5 });  // TimeCorrelation
+// Msd / Vacf are accumulator-only in molrs: one record per frame, folded in order.
+const curve = new Msd(200).compute(traj.map((xyz) => ({ a: xyz, dt: 0.5 })));  // TimeCorrelation
 const fit = new LinearFit(0.2, 0.8).compute({ correlation: curve, channel: 0 });
 
 const clusters = new Cluster(5).compute({ pairs });
@@ -191,8 +258,12 @@ fabricated zero array. `disp` is the unnormalized minimum-image displacement
   The constructor takes the configuration only (optional parameters
   `undefined` keep the molrs default; choices are their canonical names);
   `compute(data)` takes one object whose fields are the core `Input`'s, with
-  the snake_case names `spec().inputs` lists. Shaped data is an `NDArray`, a
-  `{ dim, data }` object, or (for `N × 3` / `N × 4` rows) a flat array.
+  the snake_case names `spec().inputs` lists. A frame-form compute (`Rdf`,
+  `Msd`, `Vacf`, the distributions — the molrs accumulators) takes an array of
+  such objects, one per frame, and folds them in order (`Msd`: `{ a, dt,
+  simbox? }`, `Vacf`: `{ a, dt }` with `a` that frame's flat velocities).
+  Shaped data is an `NDArray`, a `{ dim, data }` object, or (for `N × 3` /
+  `N × 4` rows) a flat array.
 - Every `compute` returns a **handle** of the molrs output type
   (`TimeCorrelation`, `RdfResult`, `ClusterResult`, …): `toJSON()` gives its
   data with the molrs field names, and the handle itself is what a downstream
@@ -217,26 +288,31 @@ The Rust and Python bindings print the vocabulary with `schema.to_markdown()`.
 
 Records written by molrs in Python or Rust (see
 [Record files](https://docs.molcrafts.org/molrs/guides/records/)) read here
-from bytes. `readMrecFrameBytes(bytes)` returns the `frame` section (or
-`undefined`) of a packed `*.mrec.zip` and `sectionNamesBytes(bytes)` lists its
-sections; `readMrecFrameFiles(files)` and `sectionNamesFiles(files)` do the
-same for a `Map<path, Uint8Array>` of the record's files. Every reader decodes `zstd` and `shuffle`, so columns written with
-a declared precision read as they do natively.
+from an `MrecSource` — however JS holds the record:
 
-`MrecReader` opens a MolRec trajectory (Zarr V3) and decodes one frame
-per call; consecutive frames of the same chunk are slices, not decodes.
+- a `Uint8Array`: the bytes of a packed `*.mrec.zip`;
+- a `Map<path, Uint8Array>` of every file of a `*.mrec` directory;
+- an `MrecStorageHost`, serving keys on demand — only the chunks a frame
+  touches cross into wasm.
+
+Every reader decodes `zstd` and `shuffle`, so columns written with a declared
+precision read as they do natively.
+
+`MrecFile` reads a record one section at a time (as molrs `MrecFile`), and
+`MrecReader` opens its `trajectory` section and decodes one frame per call;
+consecutive frames of the same chunk are slices, not decodes.
 
 ```js
-import { MrecReader } from "@molcrafts/molrs";
+import { MrecFile, MrecReader } from "@molcrafts/molrs";
 
-// (a) every file in memory
+const file = new MrecFile(bytes);                // Uint8Array of *.mrec.zip
+file.sections();                                 // ["frame", "meta", …]
+const snapshot = file.frame();                   // Frame | undefined; also system(), meta()
+
 const reader = new MrecReader(files);            // Map<path, Uint8Array>
-// (b) a packed store
-const zipped = MrecReader.fromZip(bytes);        // Uint8Array of *.mrec.zip
-// (c) served on demand — only touched chunks cross into wasm
-const lazy = MrecReader.fromStorage({
+const lazy = new MrecReader({                    // served on demand
   get: (key) => ...,                                   // Uint8Array | null
-  getRange: (key, offset, length) => ...,              // length -1 = to end
+  getRange: (key, offset, length) => ...,              // optional; length -1 = to end
   size: (key) => ...,                                  // number | null
   list: (prefix) => [...],                             // keys under prefix
 });
@@ -248,9 +324,9 @@ reader.blockUpdateAt("bonds", t);                      // same value ⇒ same ro
 reader.boxAt(t);
 ```
 
-The host callbacks of `fromStorage` are synchronous: in a Worker that is
-`FileReaderSync` over `File` handles or a synchronous range request; on the
-main thread hand the reader a `Map` instead.
+The host callbacks are synchronous: in a Worker that is `FileReaderSync` over
+`File` handles or a synchronous range request; on the main thread hand the
+reader a `Map` instead.
 
 ## Build from source
 
