@@ -45,11 +45,11 @@ import molpy as mp
 from molpack import GencanPack, Target
 
 water = mp.Atomistic(name="water")
-o = water.def_atom(element="O", x=0.000, y=0.000, z=0.000)
-h1 = water.def_atom(element="H", x=0.957, y=0.000, z=0.000)
-h2 = water.def_atom(element="H", x=-0.239, y=0.927, z=0.000)
-water.def_bond(o, h1)
-water.def_bond(o, h2)
+o = water.add_atom(atomic_number=8, x=0.000, y=0.000, z=0.000)
+h1 = water.add_atom(atomic_number=1, x=0.957, y=0.000, z=0.000)
+h2 = water.add_atom(atomic_number=1, x=-0.239, y=0.927, z=0.000)
+water.add_bond(o, h1)
+water.add_bond(o, h2)
 
 target = (
  Target(water.to_frame(), count=500)
@@ -72,11 +72,11 @@ import molpy as mp
 from molpy.builder import Tip4pBuilder
 
 water = mp.Atomistic(name="water")
-o = water.def_atom(element="O", x=0.000, y=0.000, z=0.000, charge=-0.834)
-h1 = water.def_atom(element="H", x=0.957, y=0.000, z=0.000, charge=0.417)
-h2 = water.def_atom(element="H", x=-0.239, y=0.927, z=0.000, charge=0.417)
-water.def_bond(o, h1)
-water.def_bond(o, h2)
+o = water.add_atom(atomic_number=8, x=0.000, y=0.000, z=0.000, charge=-0.834)
+h1 = water.add_atom(atomic_number=1, x=0.957, y=0.000, z=0.000, charge=0.417)
+h2 = water.add_atom(atomic_number=1, x=-0.239, y=0.927, z=0.000, charge=0.417)
+water.add_bond(o, h1)
+water.add_bond(o, h2)
 
 # The M-site carries the oxygen's charge, so the input must already have one.
 water4p = Tip4pBuilder(d_om=0.1546).apply(

@@ -33,9 +33,9 @@ import molpy as mp
 
 # Atomistic: editable molecular graph (core APIs mutate in place)
 mol = mp.Atomistic(name="water")
-o = mol.def_atom(element="O", x=0.0, y=0.0, z=0.0)
-h = mol.def_atom(element="H", x=0.957, y=0.0, z=0.0)
-mol.def_bond(o, h)
+o = mol.add_atom(atomic_number=8, x=0.0, y=0.0, z=0.0)
+h = mol.add_atom(atomic_number=1, x=0.957, y=0.0, z=0.0)
+mol.add_bond(o, h)
 mol.generate_topology(gen_angle=True) # writes angles on mol; returns counts added
 # bulk reads: mol.atoms["x"] / mol.xyz — no full view materialization
 

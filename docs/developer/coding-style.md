@@ -9,7 +9,7 @@ Two layers, two rules — do not mix them up.
 
 ### Core data model (`Atomistic`, `Frame`, …) — mutate in place
 
-`def_atom`, `def_bond`, `generate_topology`, `translate`, `rotate`, `merge`,
+`add_atom`, `add_bond`, `generate_topology`, `translate`, `rotate`, `merge`,
 and friends modify the receiver. Transforms return `self` for chaining,
 factories return the created entity, and `generate_topology` / `merge` return
 what they added (counts, handle map) — not `self`, so do not chain them.
@@ -32,7 +32,7 @@ first, or build and return a new structure.
 ```python
 # wrong: helper silently mutates the caller's mol
 def add_hydrogens(mol):
-    mol.def_atom(...)  # caller did not ask for this
+    mol.add_atom(...)  # caller did not ask for this
 
 # right: return a new object
 def add_hydrogens(mol):
