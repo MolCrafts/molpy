@@ -2,12 +2,12 @@
 // Hosts `molrs.core.Trajectory` and `molrs.core.ObservableRecord`.
 #![allow(clippy::too_many_arguments)]
 
-use crate::array::{ArrayArg1, ArrayArgDyn};
+use crate::array::ArrayArg1;
 use molrs::core::Column;
 use molrs::core::{
     ObservableKind, ObservableRecord, ObservableValues, Trajectory as CoreTrajectory,
 };
-use molrs::op::{F, I, Idx};
+use molrs::op::F;
 use ndarray::{ArrayD, IxDyn};
 use numpy::{IntoPyArray, PyArrayDyn};
 use pyo3::exceptions::{PyIndexError, PyTypeError};
@@ -347,50 +347,7 @@ fn set_observable_metadata(
 }
 
 fn py_any_to_column(value: &Bound<'_, PyAny>) -> PyResult<Column> {
-    if let Ok(arr) = value.extract::<ArrayArgDyn<'_, f32>>() {
-        return Ok(Column::from(arr.as_array().mapv(|v| v as F).into_dyn()));
-    }
-    if let Ok(arr) = value.extract::<ArrayArgDyn<'_, f64>>() {
-        return Ok(Column::from(arr.as_array().mapv(|v| v as F).into_dyn()));
-    }
-    if let Ok(arr) = value.extract::<ArrayArgDyn<'_, i32>>() {
-        return Ok(Column::from(arr.as_array().mapv(|v| v as I).into_dyn()));
-    }
-    if let Ok(arr) = value.extract::<ArrayArgDyn<'_, i64>>() {
-        return Ok(Column::from(arr.as_array().mapv(|v| v as I).into_dyn()));
-    }
-    if let Ok(arr) = value.extract::<ArrayArgDyn<'_, u32>>() {
-        return Ok(Column::from(arr.as_array().mapv(|v| v as Idx).into_dyn()));
-    }
-    if let Ok(arr) = value.extract::<ArrayArgDyn<'_, u64>>() {
-        return Ok(Column::from(arr.as_array().mapv(|v| v as Idx).into_dyn()));
-    }
-    if let Ok(arr) = value.extract::<ArrayArgDyn<'_, bool>>() {
-        return Ok(Column::from(arr.as_array().to_owned().into_dyn()));
-    }
-    if let Ok(strings) = value.extract::<Vec<String>>() {
-        return Ok(Column::from(
-            ArrayD::from_shape_vec(IxDyn(&[strings.len()]), strings).unwrap(),
-        ));
-    }
-    if let Ok(v) = value.extract::<f64>() {
-        return Ok(Column::from(ArrayD::from_elem(IxDyn(&[]), v as F)));
-    }
-    if let Ok(v) = value.extract::<i64>() {
-        return Ok(Column::from(ArrayD::from_elem(IxDyn(&[]), v as I)));
-    }
-    if let Ok(v) = value.extract::<u64>() {
-        return Ok(Column::from(ArrayD::from_elem(IxDyn(&[]), v as Idx)));
-    }
-    if let Ok(v) = value.extract::<bool>() {
-        return Ok(Column::from(ArrayD::from_elem(IxDyn(&[]), v)));
-    }
-    if let Ok(v) = value.extract::<String>() {
-        return Ok(Column::from(ArrayD::from_elem(IxDyn(&[]), v)));
-    }
-    Err(PyTypeError::new_err(
-        "observable values must be a supported numpy array, scalar, or list[str]",
-    ))
+    crate::core::block::column_from_py(value)
 }
 
 fn observable_values_to_pyobject(py: Python<'_>, values: &ObservableValues) -> PyResult<Py<PyAny>> {
@@ -425,7 +382,11 @@ fn column_to_pyobject(py: Python<'_>, column: &Column) -> PyResult<Py<PyAny>> {
                 Ok(value.into_pyobject(py)?.unbind().into_any())
             } else {
                 let values: Vec<String> = array.iter().cloned().collect();
-                Ok(PyList::new(py, values)?.into_any().unbind())
+                if array.ndim() == 1 {
+                    Ok(PyList::new(py, values)?.into_any().unbind())
+                } else {
+                    crate::core::block::numpy_string_array(py, &values, array.shape().to_vec())
+                }
             }
         }
     }

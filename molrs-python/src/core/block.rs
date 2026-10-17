@@ -837,7 +837,7 @@ impl PyBlock {
         let frame = arena.borrow_mut().frame_new();
         arena
             .borrow_mut()
-            .set_block(frame, "__block__", block)
+            .set_block(frame, "__block__", block.deep_copy())
             .map_err(ffi_error_to_pyerr)?;
         let handle = arena
             .borrow()
@@ -856,10 +856,9 @@ impl PyBlock {
         Ok(block)
     }
 
-    /// Clone the underlying `CoreBlock` out of the store. Columns are shared
-    /// (`Arc`); see [`CoreBlock::deep_copy`] for an independent copy.
+    /// Independent snapshot: writable NumPy views cannot mutate its buffers.
     pub(crate) fn clone_core_block(&self) -> PyResult<CoreBlock> {
-        self.inner.clone_block().map_err(ffi_error_to_pyerr)
+        self.with_block(CoreBlock::deep_copy)
     }
 
     /// Run a read-only closure on the underlying `CoreBlock`.
@@ -1146,11 +1145,7 @@ impl PyBlock {
                     if let Some(col) = try_forge_foreign_column(pyarr, $holder) {
                         return self.insert_column(key, col, validity);
                     }
-                    return self.insert_array::<$t>(
-                        key,
-                        pyarr.readonly().as_array().to_owned(),
-                        validity,
-                    );
+                    return self.insert_column(key, column_from_py(array)?, validity);
                 }
             };
         }
@@ -1269,7 +1264,11 @@ pub(crate) fn coords_error(e: BlockError) -> PyErr {
 ///
 /// Built outside the store borrow. ``reshape`` keeps a rank above 1; it does
 /// not flatten the column down to a vector.
-fn numpy_string_array(py: Python<'_>, flat: &[String], shape: Vec<usize>) -> PyResult<Py<PyAny>> {
+pub(crate) fn numpy_string_array(
+    py: Python<'_>,
+    flat: &[String],
+    shape: Vec<usize>,
+) -> PyResult<Py<PyAny>> {
     // The dtype is explicit: numpy reads an empty list as float64.
     let numpy = py.import("numpy")?;
     let kwargs = PyDict::new(py);
@@ -1347,6 +1346,58 @@ fn adopt_schema_dtype<'py>(key: &str, array: &Bound<'py, PyAny>) -> PyResult<Bou
         )));
     }
     Ok(converted)
+}
+
+/// Owned Column conversion shared by block fallbacks and observable values.
+/// Storage widths survive; only narrow real floats normalize to core f64.
+pub(crate) fn column_from_py(value: &Bound<'_, PyAny>) -> PyResult<Column> {
+    let array = value
+        .py()
+        .import("numpy")?
+        .call_method1("asarray", (value,))?;
+    let kind: String = array.getattr("dtype")?.getattr("kind")?.extract()?;
+    if kind == "f"
+        && array
+            .getattr("dtype")?
+            .getattr("itemsize")?
+            .extract::<usize>()?
+            < 8
+    {
+        return column_from_py(&array.call_method1("astype", ("float64",))?);
+    }
+    macro_rules! exact {
+        ($t:ty) => {
+            if let Ok(a) = array.cast::<PyArrayDyn<$t>>() {
+                return Ok(Column::from(a.readonly().as_array().to_owned()));
+            }
+        };
+    }
+    exact!(f64);
+    exact!(i8);
+    exact!(i16);
+    exact!(i32);
+    exact!(i64);
+    exact!(u8);
+    exact!(u16);
+    exact!(u32);
+    exact!(u64);
+    exact!(bool);
+    exact!(Complex<f32>);
+    exact!(Complex<f64>);
+    if kind == "U" {
+        let shape: Vec<usize> = array.getattr("shape")?.extract()?;
+        let strings: Vec<String> = array
+            .call_method0("flatten")?
+            .call_method0("tolist")?
+            .extract()?;
+        return Ok(Column::from(
+            ArrayD::from_shape_vec(IxDyn(&shape), strings)
+                .map_err(|e| PyValueError::new_err(e.to_string()))?,
+        ));
+    }
+    Err(PyTypeError::new_err(
+        "values must have a supported numeric, bool, complex or string dtype",
+    ))
 }
 
 /// Forge a foreign-backed [`Column`] from a numpy array without copying its

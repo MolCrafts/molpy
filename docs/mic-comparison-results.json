@@ -1,0 +1,154 @@
+{
+  "versions": {
+    "ase": "3.29.0",
+    "freud-analysis": "3.6.1",
+    "numpy": "2.5.4"
+  },
+  "seed": 20261017,
+  "ase_full_periodic": {
+    "cells": 84,
+    "vectors": 21504,
+    "max_component_error": 7.815970093361102e-14,
+    "max_distance_error": 6.394884621840902e-14,
+    "max_wrap_error": 2.2737367544323206e-13,
+    "public_find_mic_distance_differences": 0
+  },
+  "ase_partial_counterexample": {
+    "h": [
+      [
+        -0.3356985668680283,
+        3.4047167857517766,
+        1.1774128640759605
+      ],
+      [
+        -4.817190960567463,
+        2.328703049082251,
+        -3.9362499102054933
+      ],
+      [
+        -4.428366160168158,
+        -0.7032760373961893,
+        3.804176201178737
+      ]
+    ],
+    "pbc": [
+      false,
+      false,
+      true
+    ],
+    "displacement": [
+      -10.71869926291945,
+      -8.882657658027762,
+      -1.6058546154939966
+    ],
+    "molrs_mic": [
+      -11.896112126995412,
+      -4.946407747822269,
+      -5.410030816672734
+    ],
+    "exhaustive_mic": [
+      -11.896112126995412,
+      -4.946407747822269,
+      -5.410030816672734
+    ],
+    "ase_general_mic": [
+      -10.71869926291945,
+      -8.882657658027762,
+      -1.605854615493997
+    ]
+  },
+  "all_pbc_masks": {
+    "cells": 16,
+    "vectors": 8192,
+    "max_component_error_vs_exhaustive": 7.105427357601002e-15,
+    "ase_general_distance_differences": 356
+  },
+  "freud_common_domain": {
+    "cells": 32,
+    "wrapped_vectors": 8192,
+    "max_wrap_component_error": 9.064080686016496e-06,
+    "safe_cutoff_mic_vectors": 4096,
+    "max_mic_component_error": 7.817531837872593e-06,
+    "neighbor_pair_sets_checked": 32,
+    "matching_unique_neighbor_pairs": 3263,
+    "arbitrary_distance_disagreements": 1130
+  },
+  "counterexample": {
+    "h": [
+      [
+        1.0,
+        0.5,
+        0.0
+      ],
+      [
+        0.0,
+        1.0,
+        0.0
+      ],
+      [
+        0.0,
+        0.0,
+        1.0
+      ]
+    ],
+    "displacement": [
+      0.735,
+      0.49,
+      0.0
+    ],
+    "molrs_mic": [
+      -0.265,
+      0.49,
+      0.0
+    ],
+    "ase_mic": [
+      -0.265,
+      0.49,
+      0.0
+    ],
+    "freud_wrap": [
+      0.7350000143051147,
+      0.49000000953674316,
+      0.0
+    ]
+  },
+  "ase_public_counterexample": {
+    "h": [
+      [
+        100.0,
+        99.0,
+        0.0
+      ],
+      [
+        0.0,
+        1.0,
+        0.0
+      ],
+      [
+        0.0,
+        0.0,
+        100.0
+      ]
+    ],
+    "displacement": [
+      1.48,
+      -0.48,
+      0.0
+    ],
+    "molrs_mic": [
+      0.48,
+      0.52,
+      0.0
+    ],
+    "ase_general_mic": [
+      0.48,
+      0.52,
+      0.0
+    ],
+    "ase_public_find_mic": [
+      1.4799999999999969,
+      -0.48,
+      0.0
+    ]
+  }
+}

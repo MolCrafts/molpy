@@ -115,25 +115,33 @@ impl<'a> BlockView<'a> {
 
     /// Creates an owned [`Block`] by cloning all viewed data, validity masks,
     /// declared precisions and targets, and structural shape included.
-    pub fn to_owned(&self) -> Block {
+    ///
+    /// # Errors
+    /// Returns the column or metadata validation error if an independently
+    /// assembled view cannot be represented by a valid Block. No columns are
+    /// silently omitted.
+    pub fn to_owned(&self) -> Result<Block, super::BlockError> {
         let mut block = Block::new();
         for (&key, col_view) in &self.map {
             let col: Column = col_view.to_owned();
-            let _ = block.insert(key, col, None);
+            block.insert(key, col, None)?;
         }
         for (&key, &mask) in &self.validity {
-            block.put_validity(key.to_owned(), mask.to_vec());
+            block.set_validity(key, mask.to_vec())?;
         }
         for (&key, &p) in &self.precision {
-            let _ = block.set_precision(key, p);
+            block.set_precision(key, p)?;
         }
         for (&key, &target) in &self.targets {
-            let _ = block.set_target(key, target);
+            block.set_target(key, target)?;
+        }
+        if self.map.is_empty() {
+            block.n_rows = self.n_rows;
         }
         if let Some(shape) = self.shape {
-            let _ = block.set_shape(shape);
+            block.set_shape(shape)?;
         }
-        block
+        Ok(block)
     }
 }
 
@@ -195,7 +203,7 @@ mod tests {
         block.set_shape(&[1, 2]).unwrap();
         block.set_precision("c", 1e-3).unwrap();
 
-        let owned = BlockView::from(&block).to_owned();
+        let owned = BlockView::from(&block).to_owned().unwrap();
         assert_eq!(owned.keys().collect::<Vec<_>>(), ["c", "a"]);
         assert_eq!(owned.validity("a"), Some(&[false, true][..]));
         assert_eq!(owned.precision("c"), Some(1e-3));
@@ -279,7 +287,7 @@ mod tests {
             .unwrap();
 
         let view = BlockView::from(&block);
-        let owned = view.to_owned();
+        let owned = view.to_owned().unwrap();
 
         assert_eq!(owned.n_rows(), Some(3));
         assert_eq!(owned.len(), 2);

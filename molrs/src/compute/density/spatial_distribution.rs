@@ -225,7 +225,7 @@ impl Accumulate for SpatialDistributionAccumulator {
     /// non-finite body-frame coordinate. A rejected frame bins nothing.
     fn push(&mut self, frame: SpatialDistributionFrame<'_>) -> Result<(), ComputeError> {
         self.check(&frame)?;
-        let mic = frame.simbox.map_or(Mic::Free, SimBox::mic);
+        let mic = frame.simbox.map_or(Mic::free(), SimBox::mic);
         let row = |i: usize| -> Vec3 {
             [
                 frame.positions[[i, 0]],

@@ -1245,7 +1245,7 @@ impl PyFrame {
         let id = arena.borrow_mut().frame_new();
         arena
             .borrow_mut()
-            .set_frame(id, frame)
+            .set_frame(id, frame.deep_copy())
             .map_err(ffi_error_to_pyerr)?;
         Ok(Self {
             inner: FrameRef::new(arena, id),
@@ -1254,7 +1254,7 @@ impl PyFrame {
 
     /// Clone the underlying `CoreFrame` out of the store (deep copy).
     pub(crate) fn clone_core_frame(&self) -> PyResult<CoreFrame> {
-        self.inner.clone_frame().map_err(ffi_error_to_pyerr)
+        self.with_frame(CoreFrame::deep_copy)
     }
 
     /// Run a read-only closure on the underlying `CoreFrame`.

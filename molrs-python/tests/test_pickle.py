@@ -375,3 +375,16 @@ def test_a_meta_dict_snapshot_with_a_document_pickles() -> None:
     frame = molrs.core.Frame(meta={"doc": {"ok": True, "tags": [1, 2]}, "step": 3})
     restored = roundtrip(dict(frame.meta))
     assert restored == {"doc": {"ok": True, "tags": (1, 2)}, "step": 3}
+
+
+def test_custom_term_declarations_survive_pickle():
+    molecule = molrs.core.Atomistic()
+    atoms = [molecule.add_atom(atomic_number=6) for _ in range(2)]
+    molecule.declare_term("empty_custom", 3)
+    molecule.declare_term("custom", 2)
+    molecule.add_term("custom", atoms)
+    restored = roundtrip(molecule)
+    assert restored.term_blocks() == ["empty_custom", "custom"]
+    assert restored.n_terms("custom") == 1
+    with pytest.raises(ValueError):
+        restored.add_term("empty_custom", list(restored.atoms))

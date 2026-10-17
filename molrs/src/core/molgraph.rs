@@ -394,9 +394,8 @@ enum TypedColumn<'a> {
 impl<'a> MaskedColumns<'a> {
     /// Type `block`'s columns, skipping the keys in `skip` (a relation
     /// block's endpoint columns, which are structure rather than properties).
-    /// Columns of any other element type are not graph properties and are
-    /// left out.
-    fn of(block: &'a Block, skip: &[String]) -> Self {
+    /// A dtype that graph properties cannot represent is refused explicitly.
+    fn of(block: &'a Block, skip: &[String]) -> Result<Self, MolRsError> {
         let mut cols = Vec::with_capacity(block.len());
         for key in block.keys() {
             if skip.iter().any(|s| s == key) {
@@ -415,11 +414,14 @@ impl<'a> MaskedColumns<'a> {
             } else if let Some(arr) = block.get(key).and_then(|c| c.get::<bool>()) {
                 TypedColumn::Bool(arr)
             } else {
-                continue;
+                return Err(MolRsError::validation(format!(
+                    "column '{key}' has dtype {}; graph properties cannot represent it",
+                    block.dtype(key).unwrap()
+                )));
             };
             cols.push((key, typed, block.validity(key)));
         }
-        MaskedColumns { cols }
+        Ok(MaskedColumns { cols })
     }
 
     /// The properties row `row` carries: one entry per column whose mask marks
@@ -1862,7 +1864,8 @@ impl MolGraph {
     /// refusal names the block and the column and comes before any node or
     /// relation is added), when a column value does not fit its canonical
     /// type, when a column's dtype contradicts a component `self` already
-    /// holds under that key, or when a registered kind's block is unreadable.
+    /// holds under that key, when a property dtype is not representable by
+    /// the graph, or when a registered kind's block is unreadable.
     pub(crate) fn extend_from_frame(&mut self, frame: &Frame) -> Result<(), MolRsError> {
         let atoms_block = frame
             .get("atoms")
@@ -1934,7 +1937,7 @@ impl MolGraph {
     /// already holds under that key.
     fn add_node_rows(&mut self, atoms: &Block) -> Result<Vec<NodeId>, MolRsError> {
         let nrows = atoms.n_rows().unwrap_or(0);
-        let columns = MaskedColumns::of(atoms, &[]);
+        let columns = MaskedColumns::of(atoms, &[])?;
         let mut node_ids: Vec<NodeId> = Vec::with_capacity(nrows);
         for row in 0..nrows {
             let mut node = Props::new();
@@ -1991,7 +1994,7 @@ impl MolGraph {
         // Non-endpoint columns are properties, read back at every dtype the
         // frame can carry (a string bond label, a UInt `type_id`, an `is_14`
         // flag), each honouring its validity mask.
-        let props = MaskedColumns::of(block, &endpoint_names);
+        let props = MaskedColumns::of(block, &endpoint_names)?;
 
         for row in 0..block.n_rows().unwrap_or(0) {
             let Some(nodes) = endpoints_at(&endpoint_cols, row, node_ids) else {

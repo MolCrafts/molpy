@@ -77,10 +77,19 @@ impl MolGraph {
     /// lookups, so cost is linear in the number of atoms with one pass per axis.
     pub fn translate(&mut self, delta: [f64; 3]) {
         let table = self.node_table_mut();
+        let complete: Vec<bool> = (0..table.len())
+            .map(|row| {
+                keys::COORDS.iter().all(|key| {
+                    table
+                        .column::<f64>(key)
+                        .is_ok_and(|(_, valid)| valid.get(row))
+                })
+            })
+            .collect();
         for (i, key) in keys::COORDS.iter().enumerate() {
             if let Ok((data, valid)) = table.column_mut::<f64>(key) {
                 for (row, val) in data.iter_mut().enumerate() {
-                    if valid.get(row) {
+                    if complete[row] && valid.get(row) {
                         *val += delta[i];
                     }
                 }
@@ -98,10 +107,19 @@ impl MolGraph {
     pub fn scale(&mut self, factor: [f64; 3], about: Option<[f64; 3]>) {
         let origin = about.unwrap_or([0.0, 0.0, 0.0]);
         let table = self.node_table_mut();
+        let complete: Vec<bool> = (0..table.len())
+            .map(|row| {
+                keys::COORDS.iter().all(|key| {
+                    table
+                        .column::<f64>(key)
+                        .is_ok_and(|(_, valid)| valid.get(row))
+                })
+            })
+            .collect();
         for (i, key) in keys::COORDS.iter().enumerate() {
             if let Ok((data, valid)) = table.column_mut::<f64>(key) {
                 for (row, val) in data.iter_mut().enumerate() {
-                    if valid.get(row) {
+                    if complete[row] && valid.get(row) {
                         *val = (*val - origin[i]) * factor[i] + origin[i];
                     }
                 }

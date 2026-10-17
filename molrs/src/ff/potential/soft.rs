@@ -86,7 +86,7 @@ impl SoftSpec {
         SoftPotential {
             spec: self.clone(),
             simbox: simbox.cloned(),
-            mic: simbox.map_or(Mic::Free, SimBox::mic),
+            mic: simbox.map_or(Mic::free(), SimBox::mic),
             pairs: Mutex::new(None),
         }
     }

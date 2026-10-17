@@ -551,6 +551,7 @@ impl Block {
         }
         out.precision = self.precision.clone();
         out.targets = self.targets.clone();
+        out.n_rows = Some(indices.len());
         Ok(out)
     }
 
@@ -574,6 +575,8 @@ impl Block {
                 out.targets.insert(key.to_owned(), target.clone());
             }
         }
+        out.n_rows = self.n_rows;
+        out.shape = self.shape.clone();
         Ok(out)
     }
 
@@ -802,6 +805,9 @@ impl Block {
     /// ```
     pub fn resize(&mut self, new_nrows: usize) -> Result<(), crate::core::MolRsError> {
         if self.is_empty() {
+            if self.n_rows != Some(new_nrows) {
+                self.shape = None;
+            }
             self.n_rows = Some(new_nrows);
             return Ok(());
         }
@@ -860,18 +866,32 @@ impl Block {
     /// assert_eq!(block1.n_rows(), Some(4));
     /// ```
     pub fn merge(&mut self, other: &Block) -> Result<(), BlockError> {
-        // If other is empty, nothing to do
-        if other.is_empty() {
+        if self.is_empty() && other.is_empty() {
+            self.n_rows = self
+                .n_rows
+                .or(other.n_rows)
+                .map(|_| self.n_rows.unwrap_or(0) + other.n_rows.unwrap_or(0));
+            self.shape = None;
             return Ok(());
         }
-
-        // If self is empty, clone other
-        if self.is_empty() {
+        // An unsized empty block is an accumulator; a sized one still owns
+        // rows and must obey the same-key contract rather than lose them.
+        if other.is_empty() && other.n_rows.unwrap_or(0) == 0 {
+            return Ok(());
+        }
+        if self.is_empty() && self.n_rows.unwrap_or(0) == 0 {
             self.adopt(other);
             return Ok(());
         }
 
         self.ensure_same_keys(other)?;
+        for key in self.keys() {
+            if self.target(key) != other.target(key) {
+                return Err(BlockError::validation(format!(
+                    "cannot merge column '{key}': conflicting row-reference targets"
+                )));
+            }
+        }
         let new_map = self.concat_with(other)?;
 
         // Update n_rows. As with `resize`, an explicit N-D shape becomes
@@ -947,6 +967,12 @@ impl Block {
                     union.insert(key, col);
                     continue;
                 };
+                let first_part = parts.iter().find(|p| p.contains_key(key)).unwrap();
+                if first_part.target(key) != part.target(key) {
+                    return Err(BlockError::validation(format!(
+                        "cannot stack column '{key}': part {index} has a conflicting row-reference target"
+                    )));
+                }
                 if first.dtype() != col.dtype() {
                     return Err(BlockError::StackDtype {
                         key: key.to_owned(),

@@ -145,3 +145,44 @@ def test_observable_record_pickles():
 def test_observable_record_refuses_an_unsupported_value():
     with pytest.raises(TypeError):
         molrs.core.ObservableRecord("bad", "scalar", object())
+
+
+def test_trajectory_snapshots_do_not_share_writable_arrays():
+    source = _frames(1)[0]
+    trajectory = Trajectory([source])
+    source["atoms"]["x"][0] = 41
+    assert _x(trajectory[0]) == 0
+    frame = trajectory[0]
+    frame["atoms"]["x"][0] = 42
+    assert _x(trajectory[0]) == 0
+    sliced = trajectory[:]
+    sliced.frames[0]["atoms"]["x"][0] = 43
+    assert _x(trajectory[0]) == 0
+
+
+@pytest.mark.parametrize(
+    "values",
+    [
+        np.array([2**40], dtype=np.int64),
+        np.array([7], dtype=np.uint8),
+        np.array([1 + 2j], dtype=np.complex128),
+        2**53 + 1,
+        True,
+    ],
+)
+def test_observable_preserves_values_and_dtype(values):
+    result = molrs.core.ObservableRecord("n", "scalar", values).values
+    expected = np.asarray(values)
+    np.testing.assert_array_equal(result, expected)
+    assert result.dtype == expected.dtype
+
+
+@pytest.mark.parametrize("shape", [(2, 2), (0, 2)])
+def test_string_observable_shape_survives_values_and_pickle(shape):
+    import pickle
+
+    values = np.full(shape, "a")
+    record = molrs.core.ObservableRecord("labels", "vector", values)
+    np.testing.assert_array_equal(np.asarray(record.values), values)
+    restored = pickle.loads(pickle.dumps(record))
+    np.testing.assert_array_equal(np.asarray(restored.values), values)

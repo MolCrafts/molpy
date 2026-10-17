@@ -927,6 +927,14 @@ impl Atomistic {
             .map_or(0, |kind| self.graph.n_relations(kind)))
     }
 
+    /// The declared (or canonical) arity of a term block.
+    pub fn term_arity(&self, block: &str) -> Result<usize, MolRsError> {
+        match self.term_kind(block)? {
+            Some(kind) => Ok(self.graph.arity(kind)),
+            None => schema_term_arity(block),
+        }
+    }
+
     /// The term blocks this molecule holds, in registration order — every
     /// registered relation block without typed methods.
     pub fn term_blocks(&self) -> impl Iterator<Item = &str> + '_ {
@@ -1296,13 +1304,13 @@ impl Atomistic {
     // ---- structural graph hash (see [`MolGraph::structural_hash`]) ----
 
     /// Isomorphism-invariant Weisfeiler–Lehman structural hash of the molecule
-    /// (element / charge / aromatic node labels, bond-order edge labels). A
+    /// (element / formal charge / aromatic node labels, bond-order edge labels). A
     /// stable, reproducible dedup key — identical for a node-permuted copy.
     pub fn structural_hash(&self) -> u64 {
         self.graph.structural_hash()
     }
 
-    /// Deterministic canonical atom ordering from the WL refinement, so two
+    /// Deterministic canonical atom ordering from individualization/refinement, so two
     /// isomorphic molecules line up node-by-node (see
     /// [`MolGraph::canonical_order`]).
     pub fn canonical_order(&self) -> Vec<NodeId> {

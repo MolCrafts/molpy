@@ -563,8 +563,26 @@ fn end(nodes: &[NodeId], i: usize, kind: &str) -> PyResult<NodeId> {
 /// relation through the typed adds, so a pickle cannot smuggle in an atom
 /// without a valid ``atomic_number``.
 fn load_atomistic(content: &Bound<'_, PyAny>) -> PyResult<Atomistic> {
-    let (nodes, kinds): LeafContent<'_> = content.extract()?;
     let mut mol = Atomistic::new();
+    // New state carries declarations separately; the two-field legacy content
+    // remains readable for existing standard-kind pickles.
+    let legacy;
+    let input = if let Ok(tuple) = content.cast::<PyTuple>() {
+        if tuple.len() == 3 {
+            let declarations: Vec<(String, usize)> = tuple.get_item(2)?.extract()?;
+            for (name, arity) in declarations {
+                mol.declare_term(&name, arity)
+                    .map_err(molrs_error_to_pyerr)?;
+            }
+            legacy = PyTuple::new(content.py(), [tuple.get_item(0)?, tuple.get_item(1)?])?;
+            legacy.as_any()
+        } else {
+            content
+        }
+    } else {
+        content
+    };
+    let (nodes, kinds): LeafContent<'_> = input.extract()?;
     let mut ids = Vec::with_capacity(nodes.len());
     for fields in nodes {
         ids.push(
@@ -1517,7 +1535,7 @@ macro_rules! leaf_impl {
                 self.inner.structural_hash()
             }
 
-            #[doc = concat!("Deterministic canonical ", $noun, " order from the WL refinement, so two")]
+            #[doc = concat!("Deterministic canonical ", $noun, " order from canonical labeling, so two")]
             /// isomorphic graphs line up node by node.
             fn canonical_order(slf: &Bound<'_, Self>) -> PyResult<PyRefs> {
                 let order: Vec<u64> = slf
@@ -2160,6 +2178,18 @@ impl PyAtomistic {
         kinds.extend(this.inner.term_blocks().map(str::to_owned));
         kinds.push("ports".to_owned());
         let content = dump_leaf(py, &this.inner, &kinds)?;
+        let declarations = this
+            .inner
+            .term_blocks()
+            .map(|name| {
+                Ok((
+                    name.to_owned(),
+                    this.inner.term_arity(name).map_err(molrs_error_to_pyerr)?,
+                ))
+            })
+            .collect::<PyResult<Vec<_>>>()?;
+        let content =
+            (content.get_item(0)?, content.get_item(1)?, declarations).into_pyobject(py)?;
         let state = (this.props.bind(py).clone(), content).into_pyobject(py)?;
         crate::pickle::reduce_with_state(slf.as_any(), PyTuple::empty(py), state.into_any())
     }
@@ -2601,7 +2631,8 @@ impl PyCoarseGrain {
     /// block, when present, is read back as bead membership (raw handles of
     /// no graph: :meth:`bead_members` refuses them). ``bead_type`` comes from
     /// the first column present: ``bead_type``, then ``type``, then
-    /// ``type_id`` (rendered in decimal). Other blocks are ignored.
+    /// ``type_id`` (rendered in decimal). CG bonds, ports and membership
+    /// survive; other topology blocks are ignored.
     ///
     /// Raises
     /// ------

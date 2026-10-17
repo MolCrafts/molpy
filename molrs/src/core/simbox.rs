@@ -4,9 +4,11 @@ use crate::op::vec3::{cross, dot, norm};
 use crate::op::{F, F3, F3View, Fnx3, Fnx3View, I, Pbc3};
 use crate::op::{Vec3, to_mat3, to_vec3};
 use crate::op::{det3, inv3};
-use ndarray::{Array1, Array2, Array3, ArrayView1, ArrayView2, array};
+use ndarray::{Array1, Array2, Array3, ArrayView2, array};
 
-/// Box geometry kind, detected once at construction.
+/// Box geometry descriptor, detected once at construction.
+/// Consumers with shape-specific domains may inspect it. Coordinate transforms,
+/// wrapping and minimum-image distances do not dispatch on this descriptor.
 #[derive(Debug, Clone, PartialEq)]
 pub enum BoxKind {
     /// Orthorhombic (diagonal H): lengths, inverse lengths cached.
@@ -49,6 +51,8 @@ pub struct SimBox {
 pub enum BoxError {
     /// The cell matrix H is singular (determinant ≈ 0).
     SingularCell,
+    /// The periodic lattice could not be reduced to a certified basis.
+    LatticeReduction,
     /// The matrix does not have shape 3x3.
     InvalidMatrixShape { rows: usize, cols: usize },
     /// A vector does not have the expected length.
@@ -76,6 +80,9 @@ impl std::fmt::Display for BoxError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             BoxError::SingularCell => write!(f, "the cell matrix is singular"),
+            BoxError::LatticeReduction => {
+                write!(f, "periodic lattice reduction could not be certified")
+            }
             BoxError::InvalidMatrixShape { rows, cols } => {
                 write!(f, "a cell matrix is 3x3, got {rows}x{cols}")
             }
@@ -330,7 +337,7 @@ impl SimBox {
             None => (Fnx3::eye(3), Fnx3::eye(3)),
         };
         let kind = detect_box_kind(&h);
-        let mic = Mic::of_cell(&kind, &h, &inv, pbc);
+        let mic = Mic::new(to_mat3(h.view()), pbc)?;
         Ok(Self {
             h,
             inv,
@@ -604,19 +611,8 @@ impl SimBox {
     /// coordinates of a point inside the cell.
     #[inline(always)]
     pub(crate) fn make_fractional_raw_arr3(&self, r: [F; 3]) -> [F; 3] {
-        match &self.kind {
-            BoxKind::Ortho { inv_len, .. } => [
-                (r[0] - self.origin[0]) * inv_len[0],
-                (r[1] - self.origin[1]) * inv_len[1],
-                (r[2] - self.origin[2]) * inv_len[2],
-            ],
-            BoxKind::Triclinic => {
-                let rv = ArrayView1::from_shape(3, &r).expect("make_fractional_raw_arr3 shape");
-                let dr = &rv - &self.origin.view();
-                let f = self.inv.dot(&dr);
-                [f[0], f[1], f[2]]
-            }
-        }
+        let d = std::array::from_fn::<_, 3, _>(|i| r[i] - self.origin[i]);
+        std::array::from_fn(|i| (0..3).map(|j| self.inv[[i, j]] * d[j]).sum())
     }
 
     /// Convert one fractional point to Cartesian coordinates. The batch form
@@ -878,38 +874,17 @@ impl SimBox {
                 absorbed[d] = g[d].round();
             }
         }
-        match &self.kind {
-            // Orthorhombic: axes are independent, so pinning the offending
-            // component to the origin is exact — the recomputed fractional
-            // coordinate is 0.0 to the bit, with no cross-axis perturbation.
-            BoxKind::Ortho { .. } => {
-                let mut snapped = out;
-                for d in 0..3 {
-                    if self.pbc[d] && !(0.0..1.0).contains(&g[d]) {
-                        snapped[d] = self.origin[d];
-                    }
+        let mut frac = g;
+        for (d, fd) in frac.iter_mut().enumerate() {
+            if self.pbc[d] {
+                *fd -= fd.floor();
+                if !(0.0..1.0).contains(fd) {
+                    *fd = 0.0;
                 }
-                (snapped, absorbed)
-            }
-            // Triclinic: the axes are coupled, so the clamp has to go through
-            // fractional space and costs one reconstruction. Only points within
-            // an ulp of a face ever reach here.
-            BoxKind::Triclinic => {
-                let mut frac = g;
-                for (d, fd) in frac.iter_mut().enumerate() {
-                    if !self.pbc[d] {
-                        continue;
-                    }
-                    *fd -= fd.floor();
-                    if !(0.0..1.0).contains(fd) {
-                        *fd = 0.0;
-                    }
-                }
-                let fv = ArrayView1::from_shape(3, &frac).expect("snap frac shape");
-                let cart = self.make_cartesian(fv);
-                ([cart[0], cart[1], cart[2]], absorbed)
             }
         }
+        let cart = self.make_cartesian(ndarray::arr1(&frac).view());
+        ([cart[0], cart[1], cart[2]], absorbed)
     }
 
     /// Wrap Cartesian points into the unit cell on the periodic axes **and**
@@ -1017,119 +992,194 @@ impl SimBox {
     }
 }
 
-/// Minimum-image convention as a standalone `Copy` value.
+/// Prepared periodic-distance kernel, shared by every cell geometry.
 ///
-/// Produced by [`SimBox::mic`]. Carries no periodicity of its own beyond the
-/// flags captured at construction, so a box that changes shape needs a fresh
-/// one — which is the point: it is meant to be captured once per evaluation and
-/// read many times.
+/// Construction reduces the periodic lattice and caches its dual basis and
+/// neighboring image translations. `apply` is always the same matrix/vector
+/// calculation plus a bounded minimum over at most 27 images; it never reduces
+/// a basis or searches an integer lattice at pair-evaluation time.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub enum Mic {
-    /// No axis wraps: displacements pass through untouched.
-    Free,
-    Ortho {
-        len: [F; 3],
-        inv_len: [F; 3],
-        pbc: [bool; 3],
-    },
-    Triclinic {
-        /// Row-major 3x3 lattice, columns are the lattice vectors.
-        h: [F; 9],
-        /// Row-major 3x3 inverse lattice.
-        inv: [F; 9],
-        pbc: [bool; 3],
-    },
+pub struct Mic {
+    // Basis vectors are stored as rows for contiguous dot products.
+    basis: [[F; 3]; 3],
+    dual: [[F; 3]; 3],
+    translations: [[F; 3]; 27],
+    n_translations: usize,
 }
 
 impl Mic {
-    /// The convention of a cell: the ortho fast path for a diagonal `h`, the
-    /// general `H · round(H⁻¹ · d)` form otherwise.
-    fn of_cell(kind: &BoxKind, h: &Fnx3, inv: &Fnx3, pbc: Pbc3) -> Mic {
-        match kind {
-            BoxKind::Ortho { len, inv_len } => Mic::Ortho {
-                len: [len[0], len[1], len[2]],
-                inv_len: [inv_len[0], inv_len[1], inv_len[2]],
-                pbc,
-            },
-            BoxKind::Triclinic => {
-                let mut hm = [0.0; 9];
-                let mut im = [0.0; 9];
-                for i in 0..3 {
-                    for j in 0..3 {
-                        hm[3 * i + j] = h[[i, j]];
-                        im[3 * i + j] = inv[[i, j]];
-                    }
-                }
-                Mic::Triclinic {
-                    h: hm,
-                    inv: im,
-                    pbc,
-                }
-            }
-        }
-    }
-
-    /// The orthorhombic convention from edge lengths alone, for a caller that
-    /// carries per-frame lengths rather than a [`SimBox`]. A non-positive edge
-    /// leaves that axis unwrapped.
-    pub fn ortho(len: [F; 3]) -> Mic {
-        Mic::Ortho {
-            len,
-            inv_len: len.map(|l| if l > 0.0 { 1.0 / l } else { 0.0 }),
-            pbc: len.map(|l| l > 0.0),
-        }
-    }
-
-    /// Minimum image of a displacement.
+    /// Prepare distances for a cell matrix (lattice vectors as columns).
+    /// Only periodic vectors enter the lattice; nonperiodic components remain
+    /// unrestricted. Orthogonal cells use this identical preparation and kernel.
     ///
-    /// Takes the displacement rather than two points: the convention depends
-    /// only on the separation, and callers in pair loops already have it.
-    #[inline(always)]
-    pub fn apply(&self, d: [F; 3]) -> [F; 3] {
-        match self {
-            Mic::Free => d,
-            Mic::Ortho { len, inv_len, pbc } => {
-                let mut dr = d;
-                for k in 0..3 {
-                    if pbc[k] {
-                        dr[k] -= (dr[k] * inv_len[k]).round() * len[k];
-                    }
+    /// # Errors
+    /// Refuses singular/nonfinite matrices and a lattice whose reduction cannot
+    /// be certified within the construction iteration limit.
+    pub fn new(h: [[F; 3]; 3], pbc: Pbc3) -> Result<Self, BoxError> {
+        inv3(&h).ok_or(BoxError::SingularCell)?;
+        let rank = pbc.iter().filter(|&&periodic| periodic).count();
+        let mut basis = [[0.0; 3]; 3];
+        for (i, axis) in (0..3).filter(|&axis| pbc[axis]).enumerate() {
+            basis[i] = [h[0][axis], h[1][axis], h[2][axis]];
+        }
+        Self::reduce_basis(&mut basis, rank)?;
+        let mut unit = [[0.0; 3]; 3];
+        let mut lengths = [1.0; 3];
+        for i in 0..rank {
+            lengths[i] = norm(basis[i]);
+            unit[i] = basis[i].map(|value| value / lengths[i]);
+        }
+        // Normalize before forming the Gram matrix so unequal cell lengths do
+        // not square its condition number. Unused dimensions form an identity
+        // block. The resulting dual is the left inverse of the periodic basis,
+        // including oblique partial-PBC cells (not rows of the full H inverse).
+        let gram = std::array::from_fn(|i| {
+            std::array::from_fn(|j| {
+                if i < rank && j < rank {
+                    dot(unit[i], unit[j])
+                } else {
+                    F::from(i == j)
                 }
-                dr
-            }
-            Mic::Triclinic { h, inv, pbc } => {
-                let mut f = [
-                    inv[0] * d[0] + inv[1] * d[1] + inv[2] * d[2],
-                    inv[3] * d[0] + inv[4] * d[1] + inv[5] * d[2],
-                    inv[6] * d[0] + inv[7] * d[1] + inv[8] * d[2],
-                ];
-                for (fk, &periodic) in f.iter_mut().zip(pbc.iter()) {
-                    if periodic {
-                        *fk -= fk.round();
+            })
+        });
+        let gram_inv = inv3(&gram).ok_or(BoxError::LatticeReduction)?;
+        let dual = std::array::from_fn(|i| {
+            std::array::from_fn(|axis| {
+                (0..rank).map(|j| gram_inv[i][j] * unit[j][axis]).sum::<F>() / lengths[i]
+            })
+        });
+        let mut result = Self {
+            basis,
+            dual,
+            ..Self::free()
+        };
+        // A Minkowski-reduced lattice in dimension <=3 needs only translations
+        // with coefficients -1,0,1. Keep zero first for deterministic ties.
+        for i in -1..=1 {
+            for j in -1..=1 {
+                for k in -1..=1 {
+                    let coefficients = [i, j, k];
+                    if coefficients == [0; 3] || (rank..3).any(|axis| coefficients[axis] != 0) {
+                        continue;
                     }
+                    result.translations[result.n_translations] = std::array::from_fn(|axis| {
+                        (0..rank)
+                            .map(|a| coefficients[a] as F * basis[a][axis])
+                            .sum()
+                    });
+                    result.n_translations += 1;
                 }
-                [
-                    h[0] * f[0] + h[1] * f[1] + h[2] * f[2],
-                    h[3] * f[0] + h[4] * f[1] + h[5] * f[2],
-                    h[6] * f[0] + h[7] * f[1] + h[8] * f[2],
-                ]
             }
+        }
+        Ok(result)
+    }
+
+    /// The zero-dimensional periodic lattice. It uses the same matrix kernel,
+    /// with zero projection and a single zero translation.
+    pub const fn free() -> Self {
+        Self {
+            basis: [[0.; 3]; 3],
+            dual: [[0.; 3]; 3],
+            translations: [[0.; 3]; 27],
+            n_translations: 1,
         }
     }
 
-    /// Collapse to [`Mic::Free`] when no axis wraps, so the hot path is a
-    /// single match arm instead of three predictable-but-present branches.
-    #[inline]
-    pub fn simplified(self) -> Self {
-        let pbc = match self {
-            Mic::Free => return self,
-            Mic::Ortho { pbc, .. } | Mic::Triclinic { pbc, .. } => pbc,
-        };
-        if pbc.iter().any(|&p| p) {
-            self
-        } else {
-            Mic::Free
+    /// Prepare a diagonal cell from per-axis lengths. A non-positive length
+    /// disables that periodic direction, as for callers carrying frame lengths.
+    pub fn ortho(lengths: [F; 3]) -> Self {
+        let pbc = lengths.map(|length| length > 0.0);
+        let h = std::array::from_fn(|i| {
+            std::array::from_fn(|j| {
+                if i == j {
+                    if pbc[i] { lengths[i] } else { 1.0 }
+                } else {
+                    0.0
+                }
+            })
+        });
+        Self::new(h, pbc).expect("finite, nonsingular cell lengths")
+    }
+
+    /// Minkowski's low-dimensional reduction inequalities are sufficient in
+    /// rank <=3: after sorting, each b_j must be no longer than any
+    /// b_j + sum_{i<j} c_i b_i, c_i in {-1,0,1}. Replacing b_j by a shorter
+    /// such vector is unimodular (its b_j coefficient is one). Integer pair
+    /// reduction accelerates large shears; the full inequalities certify exit.
+    fn reduce_basis(basis: &mut [[F; 3]; 3], rank: usize) -> Result<(), BoxError> {
+        let norm2 = |v: [F; 3]| dot(v, v);
+        let shorter = |a: [F; 3], b: [F; 3]| norm2(a) < norm2(b) * (1.0 - 64.0 * F::EPSILON);
+        for _ in 0..10_000 {
+            basis[..rank].sort_by(|a, b| norm2(*a).total_cmp(&norm2(*b)));
+            let mut changed = false;
+            for j in 1..rank {
+                for i in 0..j {
+                    let multiple = (dot(basis[j], basis[i]) / norm2(basis[i])).round();
+                    let candidate =
+                        std::array::from_fn(|axis| basis[j][axis] - multiple * basis[i][axis]);
+                    if shorter(candidate, basis[j]) {
+                        basis[j] = candidate;
+                        changed = true;
+                    }
+                }
+            }
+            if changed {
+                continue;
+            }
+            'certificate: for j in 1..rank {
+                for c0 in -1..=1 {
+                    for c1 in -1..=1 {
+                        if j == 1 && c1 != 0 {
+                            continue;
+                        }
+                        let coefficients = [c0, c1];
+                        let candidate = std::array::from_fn(|axis| {
+                            basis[j][axis]
+                                + (0..j)
+                                    .map(|i| coefficients[i] as F * basis[i][axis])
+                                    .sum::<F>()
+                        });
+                        if shorter(candidate, basis[j]) {
+                            basis[j] = candidate;
+                            changed = true;
+                            break 'certificate;
+                        }
+                    }
+                }
+            }
+            if !changed {
+                return Ok(());
+            }
         }
+        Err(BoxError::LatticeReduction)
+    }
+
+    /// Nearest periodic displacement. Project to the prepared periodic basis,
+    /// fold coefficients, evaluate the fixed candidate translations, and select
+    /// their minimum squared norm. All cell shapes and PBC ranks share this path.
+    #[inline]
+    pub fn apply(&self, d: [F; 3]) -> [F; 3] {
+        let coefficients = self.dual.map(|row| dot(row, d));
+        let integers = coefficients.map(F::round);
+        let reduced = std::array::from_fn::<_, 3, _>(|axis| {
+            (0..3)
+                .map(|i| (coefficients[i] - integers[i]) * self.basis[i][axis])
+                .sum::<F>()
+        });
+        let base = std::array::from_fn::<_, 3, _>(|axis| {
+            d[axis] - (0..3).map(|i| integers[i] * self.basis[i][axis]).sum::<F>()
+        });
+        let mut best = 0;
+        let mut best_sq = dot(reduced, reduced);
+        for i in 1..self.n_translations {
+            let candidate = std::array::from_fn(|axis| reduced[axis] - self.translations[i][axis]);
+            let sq = dot(candidate, candidate);
+            if sq < best_sq {
+                best = i;
+                best_sq = sq;
+            }
+        }
+        std::array::from_fn(|axis| base[axis] - self.translations[best][axis])
     }
 }
 
@@ -1823,9 +1873,9 @@ mod tests {
     #[test]
     fn a_box_with_no_periodic_axis_simplifies_to_free() {
         let free = SimBox::new(Cell::Lengths([10.0; 3]), [0.0, 0.0, 0.0], [false; 3]).unwrap();
-        assert_eq!(free.mic().simplified(), Mic::Free);
+        assert_eq!(free.mic(), Mic::free());
         let d = [123.0 as F, -456.0, 789.0];
-        assert_eq!(Mic::Free.apply(d), d);
+        assert_eq!(Mic::free().apply(d), d);
 
         let periodic = SimBox::new(
             Cell::Lengths([10.0; 3]),
@@ -1833,43 +1883,63 @@ mod tests {
             [false, true, false],
         )
         .unwrap();
-        assert_ne!(periodic.mic().simplified(), Mic::Free);
+        assert_ne!(periodic.mic(), Mic::free());
     }
 
     #[test]
-    fn triclinic_mic_matches_the_allocating_matrix_form() {
-        // The stack-arithmetic kernel must agree bit-for-bit with the
-        // `inv.dot(dr)` / `h.dot(frac)` formulation it replaced; ndarray sums
-        // a matrix-vector product with k ascending, and so does the kernel.
+    fn triclinic_mic_matches_independent_image_enumeration() {
         let bx = SimBox::new(
             Cell::LengthsAngles {
-                lengths: [10.0, 11.0, 12.0],
-                angles: [70.0, 80.0, 65.0],
+                lengths: [10., 11., 12.],
+                angles: [70., 80., 65.],
             },
             [0.3, -0.2, 1.1],
             [true, true, false],
         )
         .unwrap();
-
-        let pts = [
-            ([0.0 as F, 0.0, 0.0], [9.0 as F, 1.0, -3.0]),
-            ([1.5, -2.5, 3.5], [-7.25, 8.125, 0.0625]),
-            ([4.0, 4.0, 4.0], [4.0, 4.0, 4.0]),
-        ];
-        for (a, b) in pts {
-            let dr_cart = array![b[0] - a[0], b[1] - a[1], b[2] - a[2]];
-            let mut dr_frac = bx.inv.dot(&dr_cart);
-            for d in 0..3 {
-                if bx.pbc[d] {
-                    dr_frac[d] -= dr_frac[d].round();
+        for d in [[9., 1., -3.], [-8.75, 10.625, -3.4375], [0., 0., 0.]] {
+            let got = bx.mic().apply(d);
+            let mut want = F::INFINITY;
+            for i in -3..=3 {
+                for j in -3..=3 {
+                    let image: [F; 3] = std::array::from_fn(|axis| {
+                        d[axis] - bx.h[[axis, 0]] * i as F - bx.h[[axis, 1]] * j as F
+                    });
+                    want = want.min(dot(image, image));
                 }
             }
-            let want = bx.h.dot(&dr_frac);
-            let got = bx.mic().apply(crate::op::vec3::sub(b, a));
-            for d in 0..3 {
-                assert_eq!(got[d], want[d], "component {d} for {a:?} -> {b:?}");
-            }
+            assert!((dot(got, got) - want).abs() < 1e-11, "{d:?}: {got:?}");
         }
+    }
+
+    #[test]
+    fn every_geometry_uses_the_prepared_matrix_kernel() {
+        for (h, pbc, count) in [
+            ([[2., 0., 0.], [0., 3., 0.], [0., 0., 4.]], [true; 3], 27),
+            ([[2., 1., 0.], [0., 3., 1.], [0., 0., 4.]], [true; 3], 27),
+            (
+                [[2., 1., 0.], [0., 3., 1.], [0., 0., 4.]],
+                [true, false, true],
+                9,
+            ),
+            ([[2., 1., 0.], [0., 3., 1.], [0., 0., 4.]], [false; 3], 1),
+        ] {
+            let kernel = Mic::new(h, pbc).unwrap();
+            assert_eq!(kernel.n_translations, count);
+        }
+    }
+
+    #[test]
+    fn partial_pbc_uses_the_periodic_subspace_not_the_full_inverse() {
+        let mic = Mic::new(
+            [[1., 1000., 0.], [0., 1., 0.], [0., 0., 1.]],
+            [true, false, false],
+        )
+        .unwrap();
+        assert_eq!(mic.apply([1000., 0.6, 0.]), [0., 0.6, 0.]);
+        // A large perpendicular component must not hide small differences in
+        // periodic squared distance through floating-point cancellation.
+        assert_eq!(mic.apply([0.7, 1e12, 0.]), [-0.30000000000000004, 1e12, 0.]);
     }
 
     #[test]
@@ -1961,6 +2031,90 @@ mod tests {
             for d in 0..3 {
                 assert_eq!(w[d], ws[[0, d]], "{r:?} axis {d}");
                 assert_eq!(m[d], ms[[0, d]], "{r:?} axis {d}");
+            }
+        }
+    }
+    /// Frozen offline ASE 3.29.0 / freud-analysis 3.6.1 results. Scientific
+    /// software is deliberately absent from the default gate (AGENTS.md).
+    #[test]
+    fn prepared_mic_matches_external_static_goldens() {
+        let data: serde_json::Value =
+            serde_json::from_str(include_str!("simbox_oracle.json")).unwrap();
+        for case in data["cases"].as_array().unwrap() {
+            let h: [[F; 3]; 3] = serde_json::from_value(case["h"].clone()).unwrap();
+            let pbc: [bool; 3] = serde_json::from_value(case["pbc"].clone()).unwrap();
+            let vectors: Vec<[F; 3]> = serde_json::from_value(case["vectors"].clone()).unwrap();
+            let expected: Vec<[F; 3]> = serde_json::from_value(case["mic"].clone()).unwrap();
+            let tolerance = case["atol"].as_f64().unwrap_or(2e-9);
+            let mic = Mic::new(h, pbc).unwrap();
+            for (v, want) in vectors.into_iter().zip(expected) {
+                let got = mic.apply(v);
+                for axis in 0..3 {
+                    assert!(
+                        (got[axis] - want[axis]).abs() <= tolerance,
+                        "{}: {v:?}, got {got:?}, expected {want:?}",
+                        case["source"]
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn matrix_wrapping_matches_external_static_goldens() {
+        let data: serde_json::Value =
+            serde_json::from_str(include_str!("simbox_oracle.json")).unwrap();
+        for case in data["wrap_cases"].as_array().unwrap() {
+            let h: [[F; 3]; 3] = serde_json::from_value(case["h"].clone()).unwrap();
+            let pbc: [bool; 3] = serde_json::from_value(case["pbc"].clone()).unwrap();
+            let origin: [F; 3] = serde_json::from_value(case["origin"].clone()).unwrap();
+            let vectors: Vec<[F; 3]> = serde_json::from_value(case["vectors"].clone()).unwrap();
+            let expected: Vec<[F; 3]> = serde_json::from_value(case["wrapped"].clone()).unwrap();
+            let tolerance = case["atol"].as_f64().unwrap();
+            let bx = SimBox::new(Cell::Matrix(h), origin, pbc).unwrap();
+            let points = Array2::from_shape_fn((vectors.len(), 3), |(i, j)| vectors[i][j]);
+            let (got, images) = bx.wrap(points.view());
+            let restored = bx.unwrap(got.view(), images.view());
+            for i in 0..vectors.len() {
+                for j in 0..3 {
+                    assert!(
+                        (got[[i, j]] - expected[i][j]).abs() <= tolerance,
+                        "{}",
+                        case["source"]
+                    );
+                    assert!((restored[[i, j]] - vectors[i][j]).abs() <= 2e-9);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn periodic_basis_preparation_satisfies_minkowski_inequalities() {
+        let data: serde_json::Value =
+            serde_json::from_str(include_str!("simbox_oracle.json")).unwrap();
+        for case in data["cases"].as_array().unwrap() {
+            let h: [[F; 3]; 3] = serde_json::from_value(case["h"].clone()).unwrap();
+            let pbc: [bool; 3] = serde_json::from_value(case["pbc"].clone()).unwrap();
+            let rank = pbc.iter().filter(|&&p| p).count();
+            let mic = Mic::new(h, pbc).unwrap();
+            for j in 1..rank {
+                let length = norm(mic.basis[j]);
+                assert!(length >= norm(mic.basis[j - 1]) * (1. - 1e-13));
+                for c0 in -1..=1 {
+                    for c1 in -1..=1 {
+                        if j == 1 && c1 != 0 {
+                            continue;
+                        }
+                        let coefficients = [c0, c1];
+                        let candidate = std::array::from_fn(|axis| {
+                            mic.basis[j][axis]
+                                + (0..j)
+                                    .map(|i| coefficients[i] as F * mic.basis[i][axis])
+                                    .sum::<F>()
+                        });
+                        assert!(norm(candidate) >= length * (1. - 1e-13));
+                    }
+                }
             }
         }
     }
