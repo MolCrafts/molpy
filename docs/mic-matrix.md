@@ -140,7 +140,14 @@ there is no backend variant to simplify. The known sibling molpack checkout
 still pins molrs 0.14 and uses this old method; its caller must drop that method
 when migrating to the 0.18 API. No molpack dependency pins were changed here.
 
-## Verification of the working tree
+The accompanying core fixes also make `BlockView::to_owned()` and
+`FrameView::to_owned()` return `Result<_, BlockError>`: callers must propagate
+or handle malformed borrowed columns and metadata. Previously those errors
+could silently drop data. `Atomistic::term_arity(block)` exposes the declared
+arity needed to preserve empty custom terms in Python pickles. Structural
+identity now reads `formal_charge`; partial `charge` is not an identity label.
+
+## Verification before polish
 
 - `cargo mrs-test --quiet`: 4,200 passed, 1 existing ignored test.
 - `cargo mrs-doctest --quiet`: 151 passed, 10 ignored examples across the two rustdoc runs.
@@ -155,3 +162,78 @@ when migrating to the 0.18 API. No molpack dependency pins were changed here.
 These are correctness and build checks, not a claim of benchmarked throughput.
 The scientific comparisons used the locally rebuilt Python extension. No
 dependency-version bumps or releases are part of this change.
+
+## Polish review
+
+Scope: molrs `4e51c90b`, molpy `170512d`, and their direct callers.
+
+- Reuse / duplication: observable construction now directly calls the existing
+  `molrs-python/src/core/block.rs::column_from_py`; its forwarding-only helper
+  was removed. Canonical labeling and whole-graph isomorphism share the existing
+  sorted parallel-edge representation, now owned by `GraphView::edge_bundles`.
+  The topology-only subgraph matcher deliberately collapses parallel edges;
+  its semantics differ, so it retains its separate projection while sharing
+  the feasibility check.
+- Placement: Python dtype conversion stays at the binding boundary, and graph
+  label/multiplicity handling stays in the graph snapshot. No dependency or
+  public API was added by polish.
+- Leftovers / API: old MIC variants and `simplified()` have no remaining
+  source callers inside molrs or its binders. Migration notes above also cover
+  fallible borrowed-view conversion. The separately versioned molpack migration
+  remains outside this change.
+- Fixed: the exact graph matcher formerly collapsed parallel edges, allowing
+  a four-cycle with edge multiplicities `[1,3,1,3]` to match `[2,2,2,2]`.
+  A new regression failed before the fix. A second test checks that changing
+  the insertion order of parallel-edge labels preserves isomorphism.
+- Fixed: time monotonicity now compares neighboring values directly. The
+  former subtraction overflowed for finite times `[-1e308,1e308]` and the
+  reverse sequence, raising a warning instead of the documented `ValueError`.
+  Both new cases failed before the fix. An additional regression covers finite
+  time-bin indices above the int64 range.
+
+Verification during polish:
+
+- Baseline `cargo mrs-test --quiet -- core::`: 1,055 passed.
+- Baseline binding `python -m pytest -q tests/test_trajectory.py
+  tests/test_graph_hash.py tests/test_pickle.py tests/test_schema.py`: 52 passed.
+- Baseline molpy `python -m pytest -q tests/test_core/test_selector.py
+  tests/test_core/test_trajectory.py`: 49 passed; after the fixes, 52 passed.
+- `cargo mrs-test --quiet -- core::` after the first graph regression/fix:
+  1,056 passed; the final full run includes both graph regressions.
+- Final `cargo mrs-test --quiet`: 4,202 passed, 1 existing ignored test.
+- `maturin develop --locked --manifest-path Cargo.toml` in `molrs-python`:
+  rebuilt and installed the extension successfully.
+- Binding `python -m pytest -q`: 1,782 passed, 6 skipped, the same
+  intentional invalid-schema-cast NumPy warning as baseline.
+- Binding `python -m mypy python/molrs/_native.pyi` and
+  `python -m mypy.stubtest molrs._native --mypy-config-file pyproject.toml
+  --allowlist stubtest-allowlist.txt --ignore-disjoint-bases`: passed.
+- molpy `python -m pytest -q`: 1,070 passed, 36 skipped.
+- molpy `ruff check src/molpy/core tests/test_core` and
+  `ruff format --check src/molpy/core tests/test_core`: passed.
+- Root `cargo fmt --all --check`, binding
+  `cargo fmt --manifest-path molrs-python/Cargo.toml --check`, and both
+  repositories' `git diff --check`: passed. A formatting invocation initially
+  used this root-relative manifest from the binding directory and failed to
+  locate it; the corrected invocation from the root passed.
+- `cargo clippy --manifest-path molrs-python/Cargo.toml --all-targets
+  -- -D warnings`: passed.
+- `cargo mrs-clippy -- -D warnings`: passed.
+
+Locations (workspace-relative):
+
+- `molrs/molrs/src/core/graph_hash.rs:129` owns the shared edge bundles;
+  canonical labeling calls it at line 333, isomorphism at lines 516–517;
+  regressions start at lines 749 and 770.
+- `molrs/molrs-python/src/core/trajectory.rs:238` calls
+  `molrs/molrs-python/src/core/block.rs:1353` directly.
+- `molpy/src/molpy/core/_splitter.py:95` avoids subtraction;
+  regressions are `molpy/tests/test_core/test_trajectory.py:119` and line 124.
+- `molrs/docs/mic-matrix.md:143` documents borrowed-view API migration.
+
+Ready: yes, for the two reviewed repositories. No material issue remains in
+this scope. The earlier CXX and doctest results above remain applicable;
+polish changes no exported signature or MIC implementation. The offline
+ASE/freud campaigns were not rerun during polish.
+
+Next: none.

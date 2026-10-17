@@ -14,6 +14,7 @@ use pyo3::exceptions::{PyIndexError, PyTypeError};
 use pyo3::prelude::*;
 use pyo3::types::{PyAny, PyList, PySlice};
 
+use crate::core::block::column_from_py;
 use crate::core::frame::PyFrame;
 use crate::error::molrs_error_to_pyerr;
 
@@ -234,7 +235,7 @@ impl PyObservableRecord {
         target: Option<String>,
     ) -> PyResult<Self> {
         let mut inner =
-            ObservableRecord::new(name, ObservableKind::from(kind), py_any_to_column(values)?);
+            ObservableRecord::new(name, ObservableKind::from(kind), column_from_py(values)?);
         set_observable_metadata(
             &mut inner,
             description,
@@ -344,10 +345,6 @@ fn set_observable_metadata(
     observable.sampling = sampling;
     observable.domain = domain;
     observable.target = target;
-}
-
-fn py_any_to_column(value: &Bound<'_, PyAny>) -> PyResult<Column> {
-    crate::core::block::column_from_py(value)
 }
 
 fn observable_values_to_pyobject(py: Python<'_>, values: &ObservableValues) -> PyResult<Py<PyAny>> {
