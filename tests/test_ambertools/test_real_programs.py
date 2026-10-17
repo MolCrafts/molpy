@@ -25,6 +25,9 @@ They pin what the default routes rest on:
 
 from __future__ import annotations
 
+
+from molrs.core import Element
+
 import os
 import shutil
 import subprocess
@@ -75,7 +78,7 @@ def config():
 
 
 def _embedded(smiles: str) -> mp.Atomistic:
-    mol = mp.io.smiles.SmilesIr(smiles).to_atomistic()
+    mol = mp.io.smiles.SmilesIr.parse(smiles).to_atomistic()
     return mp.conformer.Conformer(add_hydrogens=True, seed=42).generate(mol)[0]
 
 
@@ -277,7 +280,7 @@ class TestPipeline:
             charge_method="bcc",
             work_dir=work,
             config=config,
-        ).assemble(mp.io.cgsmiles.CgSmilesIr("{[#PEO]|4}").to_coarsegrain())
+        ).assemble(mp.io.cgsmiles.CgSmilesIr.parse("{[#PEO]|4}").to_coarsegrain())
 
         commands = [
             r.extra["command"] for r in molpy_records if r.message == "process finished"
@@ -319,7 +322,7 @@ def _peo(parameter_set: str, work_dir: Path, config) -> mp.builder.AmberBuildRes
         charge_method="bcc",
         work_dir=work_dir,
         config=config,
-    ).assemble(mp.io.cgsmiles.CgSmilesIr("{[#PEO]|4}").to_coarsegrain())
+    ).assemble(mp.io.cgsmiles.CgSmilesIr.parse("{[#PEO]|4}").to_coarsegrain())
 
 
 def _charged(smiles: str, parameter_set: str, work_dir: Path, config):
@@ -345,7 +348,15 @@ def _native(smiles: str, parameter_set: str, work_dir: Path, config):
 def _lithium():
     """Li+ with Åqvist's Lennard-Jones parameters: GAFF has no Li type."""
     li = mp.Atomistic()
-    li.def_atom(element="Li", type="Li+", charge=1.0, mass=6.94, x=0.0, y=0.0, z=0.0)
+    li.add_atom(
+        atomic_number=Element.by_symbol("Li").z,
+        type="Li+",
+        charge=1.0,
+        mass=6.94,
+        x=0.0,
+        y=0.0,
+        z=0.0,
+    )
     ff = mp.ff.forcefield.ForceField("li", units="real")
     li_type = ff.def_style("atom", "full").def_type("Li+", mass=6.94, charge=1.0)
     ff.def_style("pair", "lj/cut").def_type(
@@ -391,7 +402,7 @@ def _box(parts, edge: float) -> mp.Frame:
         frames.append(frame)
     system = mp.Frame.concat(frames)
     system["atoms"]["id"] = np.arange(1, len(system["atoms"]["x"]) + 1)
-    system.box = mp.Box.cube(edge)
+    system.box = mp.Box(mp.core.Cell.lengths([edge] * 3))
     return system
 
 

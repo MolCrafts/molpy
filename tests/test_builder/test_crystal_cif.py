@@ -80,7 +80,7 @@ class TestFromCif:
         assert {s.label for s in lattice.basis if s.species == "Cl"} == {
             f"Cl1_{k}" for k in range(4)
         }
-        np.testing.assert_allclose(lattice.box.h, 5.6402 * np.eye(3), atol=1e-12)
+        np.testing.assert_allclose(lattice.box.matrix, 5.6402 * np.eye(3), atol=1e-12)
 
         structure = lattice.build(repeats=(2, 2, 2))
         assert len(list(structure.atoms)) == 64

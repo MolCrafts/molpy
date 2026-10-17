@@ -179,7 +179,7 @@ print("tags" in frame) # False
 A periodic simulation cell is attached directly to `frame.box`, not stored in metadata. This ensures `Frame.copy()` preserves the box and I/O round-trips work correctly.
 
 ```python
-frame.box = mp.Box.cube(20.0)
+frame.box = mp.Box(mp.core.Cell.lengths([20.0] * 3))
 print(frame.box.lengths) # [20. 20. 20.]
 
 # copy() preserves box

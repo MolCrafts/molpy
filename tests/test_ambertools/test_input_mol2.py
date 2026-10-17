@@ -19,7 +19,7 @@ def _bond_orders(text: str) -> list[str]:
 
 
 def _benzoic_acid() -> mp.Atomistic:
-    graph = mp.io.smiles.SmilesIr("c1ccccc1C(=O)O").to_atomistic()
+    graph = mp.io.smiles.SmilesIr.parse("c1ccccc1C(=O)O").to_atomistic()
     return mp.conformer.Conformer(seed=1).generate(graph)[0]
 
 
@@ -42,6 +42,9 @@ def test_a_force_field_bond_label_does_not_shadow_the_bond_order():
 
 def test_a_graph_read_from_mol2_keeps_its_bond_orders():
     first = input_mol2(_benzoic_acid(), rename=True)
-    graph = mp.Atomistic.from_frame(mp.io.read_mol2_str(first))
+    frame = mp.io.read_mol2(mp.io.Text(first))
+    frame["atoms"]["element"] = frame["atoms"]["type"]
+    mp.Element.fill_atomic_numbers(frame)
+    graph = mp.Atomistic.from_frame(frame)
     second = input_mol2(graph, rename=False)
     assert _bond_orders(second) == _bond_orders(first)

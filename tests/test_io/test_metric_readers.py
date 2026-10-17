@@ -296,9 +296,9 @@ class TestMlpJsonlReader:
 def write_mrec(path: Path, steps, times=None) -> Path:
     frame = mp.Frame()
     frame["atoms"] = {"x": [0.0], "y": [0.0], "z": [0.0]}
-    mp.io.write_mrec_trajectory(
+    mp.io.write_mrec(
         path,
-        mp.Trajectory(
+        trajectory=mp.Trajectory(
             [frame] * len(steps),
             step=np.array(steps),
             time=None if times is None else np.array(times),

@@ -77,7 +77,7 @@ xyz = np.array([
     [2.80, 0.0, 0.0],    # 2: acceptor O
     [3.20, 0.9, 0.0],    # 3: an H on the acceptor
 ]) + 10.0
-box = mp.Box.cube(30.0)
+box = mp.Box(mp.core.Cell.lengths([30.0] * 3))
 donors = np.array([[0, 1]])
 acceptors = np.array([2])
 

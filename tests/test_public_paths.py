@@ -195,14 +195,22 @@ _PROMOTED = {
 
 #: The per-format submodules of ``molrs.io``; molpy mirrors each by a module.
 _IO_FORMATS = (
+    "amber",
     "cgsmiles",
+    "cif",
+    "cube",
     "dcd",
     "gro",
+    "gromacs",
     "lammps",
+    "mol2",
     "mrec",
+    "openmm_xml",
     "pdb",
+    "sdf",
     "smiles",
     "trr",
+    "xml",
     "xtc",
     "xyz",
 )
@@ -352,22 +360,26 @@ def test_each_ff_submodule_is_a_molpy_module_mirroring_molrs(sub: str) -> None:
     ("ours", "native"),
     [
         ("io.read_gro", "io.read_gro"),
-        ("io.read_smiles_str", "io.read_smiles_str"),
-        ("io.write_smiles_str", "io.write_smiles_str"),
-        ("io.read_cgsmiles_str", "io.read_cgsmiles_str"),
-        ("io.read_prmtop_system", "io.read_prmtop_system"),
+        ("io.Text", "io.Text"),
+        (
+            "io.amber.AmberPrmtopForcefieldReader",
+            "io.amber.AmberPrmtopForcefieldReader",
+        ),
         ("io.read_ac", "io.read_ac"),
-        ("io.write_top_system", "io.write_top_system"),
-        ("io.read_lammps_log_str", "io.read_lammps_log_str"),
-        ("io.read_msgpack_frame_bytes", "io.read_msgpack_frame_bytes"),
-        ("io.read_json_frame_str", "io.read_json_frame_str"),
-        ("io.read_mrec_frame", "io.read_mrec_frame"),
-        ("io.read_mrec_trajectory", "io.read_mrec_trajectory"),
-        ("io.read_openmm_forcefield", "io.read_openmm_forcefield"),
-        ("io.write_openmm_forcefield", "io.write_openmm_forcefield"),
-        ("io.read_xml_forcefield", "io.read_xml_forcefield"),
-        ("io.write_xml_forcefield", "io.write_xml_forcefield"),
-        ("io.read_lammps_cmap_forcefield", "io.read_lammps_cmap_forcefield"),
+        (
+            "io.gromacs.GromacsTopForcefieldWriter",
+            "io.gromacs.GromacsTopForcefieldWriter",
+        ),
+        ("io.read_lammps_log", "io.read_lammps_log"),
+        ("io.read_wire_frame", "io.read_wire_frame"),
+        ("io.write_wire_frame", "io.write_wire_frame"),
+        ("io.mrec.MrecFile", "io.mrec.MrecFile"),
+        ("io.write_mrec", "io.write_mrec"),
+        ("io.openmm_xml.OpenmmXmlReader", "io.openmm_xml.OpenmmXmlReader"),
+        ("io.openmm_xml.OpenmmXmlWriter", "io.openmm_xml.OpenmmXmlWriter"),
+        ("io.xml.XmlForcefieldReader", "io.xml.XmlForcefieldReader"),
+        ("io.xml.XmlForcefieldWriter", "io.xml.XmlForcefieldWriter"),
+        ("io.lammps.LammpsForcefieldReader", "io.lammps.LammpsForcefieldReader"),
         ("io.write_lammps_bond_react_map", "io.write_lammps_bond_react_map"),
         ("io.read_csv_block", "io.read_csv_block"),
         ("io.read_chgcar", "io.read_chgcar"),
@@ -464,6 +476,7 @@ def test_the_top_of_io_holds_functions_and_format_modules_only() -> None:
         name
         for name in dir(molpy.io)
         if not name.startswith("_")
+        and name != "Text"
         and not inspect.isroutine(getattr(molpy.io, name))
         and not isinstance(getattr(molpy.io, name), ModuleType)
     )
@@ -538,8 +551,8 @@ def test_the_box_and_the_trajectory_are_the_native_classes() -> None:
     assert molpy.MolGraph is molrs.core.MolGraph
 
 
-def test_read_smiles_str_and_the_amber_system_reader_are_on_io() -> None:
-    assert "read_smiles_str" in molpy.io.__all__
-    assert "read_prmtop_system" in molpy.io.__all__
-    mol = molpy.io.read_smiles_str("CCO")
+def test_smiles_parser_and_amber_system_reader_have_format_owners() -> None:
+    assert "SmilesIr" in molpy.io.smiles.__all__
+    assert "AmberPrmtopForcefieldReader" in molpy.io.amber.__all__
+    mol = molpy.io.smiles.SmilesIr.parse("CCO").to_atomistic()
     assert isinstance(mol, molpy.Atomistic)

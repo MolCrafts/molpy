@@ -44,7 +44,7 @@ from typing import Any
 
 import numpy as np
 from molrs.core import Atomistic, BondNumber, BondOrder
-from molrs.core.keys import BOND_NUMBER, BOND_TYPE, ELEMENT, FORMAL_CHARGE
+from molrs.core.keys import ATOMIC_NUMBER, BOND_NUMBER, BOND_TYPE, FORMAL_CHARGE
 from rdkit import Chem
 from rdkit.Chem import rdDistGeom, rdForceFieldHelpers
 
@@ -54,7 +54,7 @@ PROP_PREFIX = "molpy:"
 _H_COUNT = "h_count"
 _XYZ = ("x", "y", "z")
 #: Atom components RDKit holds as its own fields, not as carried properties.
-_RDKIT_OWNED_ATOM_KEYS = frozenset({ELEMENT.key, FORMAL_CHARGE.key, *_XYZ})
+_RDKIT_OWNED_ATOM_KEYS = frozenset({ATOMIC_NUMBER.key, FORMAL_CHARGE.key, *_XYZ})
 
 _EMBED_ATTEMPTS = 10
 _EMBED_SEED = 0
@@ -108,8 +108,8 @@ def to_rdkit(atomistic: Atomistic) -> Chem.Mol:
     ]
     n_h_atoms = [0] * len(atom_fields)
     for i, j, _ in bonds:
-        n_h_atoms[i] += atom_fields[j].get(ELEMENT.key) == "H"
-        n_h_atoms[j] += atom_fields[i].get(ELEMENT.key) == "H"
+        n_h_atoms[i] += atom_fields[j].get(ATOMIC_NUMBER.key) == 1
+        n_h_atoms[j] += atom_fields[i].get(ATOMIC_NUMBER.key) == 1
 
     mol = Chem.RWMol()
     _set_props(mol, dict(atomistic.props), where="graph prop")
@@ -163,11 +163,11 @@ def from_rdkit(mol: Chem.Mol, *, conf_id: int = -1) -> Atomistic:
         mol.GetConformer(conf_id).GetPositions() if mol.GetNumConformers() else None
     )
     atoms = [
-        atomistic.def_atom(**_atom_fields(rd_atom, positions))
+        atomistic.add_atom(**_atom_fields(rd_atom, positions))
         for rd_atom in mol.GetAtoms()
     ]
     for rd_bond in mol.GetBonds():
-        atomistic.def_bond(
+        atomistic.add_bond(
             atoms[rd_bond.GetBeginAtomIdx()],
             atoms[rd_bond.GetEndAtomIdx()],
             **_bond_fields(rd_bond),
@@ -215,9 +215,9 @@ def generate_3d(
 
 
 def _rdkit_atom(idx: int, fields: dict[str, Any], n_h_atoms: int) -> Chem.Atom:
-    if ELEMENT.key not in fields:
-        raise KeyError(f"atom {idx} has no {ELEMENT.key!r}")
-    rd_atom = Chem.Atom(str(fields[ELEMENT.key]))
+    if ATOMIC_NUMBER.key not in fields:
+        raise KeyError(f"atom {idx} has no {ATOMIC_NUMBER.key!r}")
+    rd_atom = Chem.Atom(int(fields[ATOMIC_NUMBER.key]))
     rd_atom.SetFormalCharge(int(fields.get(FORMAL_CHARGE.key) or 0))
     if fields.get(_H_COUNT) is not None:
         # A bracket atom's exact hydrogen count (SMILES ``[nH]``, ``[CH2]``).
@@ -246,11 +246,10 @@ def _positions(atomistic: Atomistic) -> np.ndarray | None:
     A graph where only *some* atoms have coordinates raises (``KeyError``
     from the column read): a missing coordinate is not ``0.0``.
     """
-    cols = atomistic.columns()
-    if not any(k in cols for k in _XYZ):
+    atoms = list(atomistic.atoms)
+    if not any(any(key in atom for key in _XYZ) for atom in atoms):
         return None
-    # ``column`` raises on a hole; ``atoms["x", "y", "z"]`` would yield None.
-    return np.stack([np.asarray(atomistic.column(k)) for k in _XYZ], axis=1)
+    return np.asarray([[atom[key] for key in _XYZ] for atom in atoms])
 
 
 def _set_props(target: Any, fields: dict[str, Any], *, where: str) -> None:
@@ -293,7 +292,7 @@ def _atom_fields(rd_atom: Chem.Atom, positions: np.ndarray | None) -> dict[str, 
     fields = {
         k: v for k, v in _carried(rd_atom).items() if k not in _RDKIT_OWNED_ATOM_KEYS
     }
-    fields[ELEMENT.key] = rd_atom.GetSymbol()
+    fields[ATOMIC_NUMBER.key] = rd_atom.GetAtomicNum()
     if rd_atom.GetFormalCharge() != 0:
         fields[FORMAL_CHARGE.key] = rd_atom.GetFormalCharge()
     if positions is not None:

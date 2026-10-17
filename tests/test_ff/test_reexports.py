@@ -64,6 +64,6 @@ def test_a_kernel_built_by_hand_is_pushed_into_potentials() -> None:
             "angle", "harmonic", [[0, 1, 2]], k=50.0, theta0=120.0
         ).compile()
     )
-    energy, _ = pots.calc_energy_forces(pos)
+    energy, _ = pots.evaluate(pos)
     want = 300.0 * (0.1**2 + 0.3**2) + 50.0 * (math.pi / 2 - math.radians(120.0)) ** 2
     assert energy == pytest.approx(want, rel=1e-12)

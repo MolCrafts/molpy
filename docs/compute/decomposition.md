@@ -164,7 +164,7 @@ noise = np.random.default_rng(0)
 xyz[melted] += noise.normal(0.0, 0.7, size=(int(melted.sum()), 3))
 
 nl = mp.core.NeighborList(4.5)
-nl.build(xyz, mp.Box.cube(6 * a))
+nl.build(xyz, mp.Box(mp.core.Cell.lengths([6 * a] * 3)))
 order = Steinhardt(l=[4, 6]).compute(neighbors=nl.neighbors())
 phases = Pca(n_components=2).compute(features=order)
 labels = Kmeans(k=2, seed=0).compute(features=phases).labels

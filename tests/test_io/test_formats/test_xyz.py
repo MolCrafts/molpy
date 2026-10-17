@@ -55,7 +55,7 @@ class TestReadXyz:
         # lattice.xyz: Lattice="10 0 0 2 11 0 3 4 12" lists R1 R2 R3.
         box = mp.io.read_xyz(xyz_dir / "lattice.xyz").box
         np.testing.assert_allclose(
-            box.h, [[10.0, 2.0, 3.0], [0.0, 11.0, 4.0], [0.0, 0.0, 12.0]]
+            box.matrix, [[10.0, 2.0, 3.0], [0.0, 11.0, 4.0], [0.0, 0.0, 12.0]]
         )
 
     def test_species_property_is_the_element(self, xyz_dir):

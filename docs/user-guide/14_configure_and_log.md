@@ -197,7 +197,7 @@ water = mp.Frame(
         "bonds": {"atomi": [0, 0], "atomj": [1, 2], "type": ["OW-HW"] * 2},
     }
 )
-water.box = mp.Box.cube(20.0)
+water.box = mp.Box(mp.core.Cell.lengths([20.0] * 3))
 ff = mp.ff.forcefield.ForceField("tip3p", units="real")
 atoms = ff.def_style("atom", "full")
 ow = atoms.def_type("OW", mass=15.999, charge=-0.834, element="O")

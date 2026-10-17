@@ -124,7 +124,7 @@ rng = np.random.default_rng(0)
 L, n_frames, n_atoms = 20.0, 200, 200
 start = rng.uniform(0.0, L, size=(n_atoms, 3))
 positions = start + np.cumsum(rng.normal(0.0, 0.1, size=(n_frames, n_atoms, 3)), axis=0)
-boxes = [mp.Box.cube(L)] * n_frames
+boxes = [mp.Box(mp.core.Cell.lengths([L] * 3))] * n_frames
 
 result = VanHove(Axis(0.0, 6.0, 60), lags=[10, 50, 150]).compute(
     positions=positions, boxes=boxes

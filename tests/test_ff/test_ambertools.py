@@ -16,6 +16,8 @@ both generations against the real tleap.
 
 from __future__ import annotations
 
+from molrs.core import Element
+
 import inspect
 import shlex
 import shutil
@@ -27,7 +29,6 @@ from unittest.mock import patch
 import pytest
 
 import molpy as mp
-from molpy.core import Angle, Dihedral
 from molpy.wrapper import Tool, ToolError
 
 # LiTFSI in LiTFSI.prmtop row order: [F-C(F2)-S(O2)-N-S(O2)-C(F3)]- and Li+.
@@ -47,11 +48,11 @@ def _litfsi() -> mp.Atomistic:
     """Untyped LiTFSI with formal charges on N (-1) and Li (+1)."""
     graph = mp.Atomistic()
     atoms = [
-        graph.def_atom(element=e, x=1.5 * i, y=0.0, z=0.0)
+        graph.add_atom(atomic_number=Element.by_symbol(e).z, x=1.5 * i, y=0.0, z=0.0)
         for i, e in enumerate(ELEMENTS)
     ]
     for i, j in BONDS:
-        graph.def_bond(atoms[i], atoms[j])
+        graph.add_bond(atoms[i], atoms[j])
     atoms[N_ROW]["formal_charge"] = -1.0
     atoms[LI_ROW]["formal_charge"] = 1.0
     return graph
@@ -180,18 +181,18 @@ class TestAntechamberTypifier:
         assert bond["r0"] == pytest.approx(1.3497)
         assert _link(typed, typed.bonds, (7, 8))["type"] == "ne-sy"
 
-        angle = _link(typed, typed.links.exact_bucket(Angle), (4, 7, 8))
+        angle = _link(typed, typed.angles, (4, 7, 8))
         assert angle["type"] == "s6-ne-sy"
         assert angle["k"] == pytest.approx(65.9)  # TK
-        assert len(list(typed.links.exact_bucket(Angle))) == 25
+        assert len(list(typed.angles)) == 25
 
-        dihedral = _link(typed, typed.links.exact_bucket(Dihedral), (4, 7, 8, 11))
+        dihedral = _link(typed, typed.dihedrals, (4, 7, 8, 11))
         # A proper is named in TypeName::orient's spelling: the smaller of
         # the forward and the reversed type tuple (c3 < s6).
         assert dihedral["type"] == "c3-sy-ne-s6"
         assert dihedral["k1"] == pytest.approx(6.8)
         assert dihedral["k2"] == pytest.approx(0.5)
-        assert len(list(typed.links.exact_bucket(Dihedral))) == 24
+        assert len(list(typed.dihedrals)) == 24
 
         assert all(a.get("type") is None for a in graph.atoms)
 
@@ -211,7 +212,7 @@ class TestAntechamberTypifier:
     def test_graph_bond_missing_from_prmtop_raises(self, tools, tmp_path):
         graph = _litfsi()
         atoms = list(graph.atoms)
-        graph.def_bond(atoms[N_ROW], atoms[LI_ROW])
+        graph.add_bond(atoms[N_ROW], atoms[LI_ROW])
         with pytest.raises(ValueError, match=r"bond \(7, 15\) is not in the prmtop"):
             mp.ff.typifier.AntechamberTypifier(
                 parameter_set="gaff2", work_dir=tmp_path

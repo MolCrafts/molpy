@@ -53,7 +53,7 @@ Coordinates, force-field types, and a minimized geometry in a few calls.
 import molpy as mp
 
 # SMILES → 3D
-mol = mp.io.smiles.SmilesIr("CCO").to_atomistic()
+mol = mp.io.smiles.SmilesIr.parse("CCO").to_atomistic()
 mol, _ = mp.conformer.Conformer(seed=42).generate(mol)
 
 # OPLS-AA typing
@@ -90,7 +90,7 @@ eo = mp.conformer.Conformer(seed=42).generate(
 assembler = mp.builder.Assembler({"EO": eo}, mp.builder.GrowthPlacer())
 
 def build(cgsmiles):
-    sites = mp.io.cgsmiles.CgSmilesIr(cgsmiles).to_coarsegrain()
+    sites = mp.io.cgsmiles.CgSmilesIr.parse(cgsmiles).to_coarsegrain()
     return assembler.assemble(sites, mp.Atomistic)
 
 # shape from CGsmiles
@@ -143,7 +143,7 @@ LAMMPS, GROMACS, CP2K, and OpenMM inputs from one system and force field.
 </div>
 
 ```python
-frame.box = mp.Box.cube(30.0)
+frame.box = mp.Box(mp.core.Cell.lengths([30.0] * 3))
 # molecule IDs
 frame["atoms"]["mol_id"] = (
     mp.Topology.from_frame(frame).connected_components() + 1

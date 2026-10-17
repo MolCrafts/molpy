@@ -74,7 +74,7 @@ xyz[:3] = np.array([[10.0, 10, 10], [10.76, 10.59, 10], [9.24, 10.59, 10]])
 
 frame = mp.Frame()
 frame["atoms"] = {"x": xyz[:, 0], "y": xyz[:, 1], "z": xyz[:, 2]}
-frame.box = mp.Box.cube(20.0)
+frame.box = mp.Box(mp.core.Cell.lengths([20.0] * 3))
 ```
 
 `RegularGrid.centered(extent, dims)` lays `dims` voxels over a box of total

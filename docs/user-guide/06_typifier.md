@@ -25,7 +25,7 @@ import molpy as mp
 from molpy.ff.typifier import OplsAaTypifier
 
 # 1. Build the structure
-mol = mp.io.smiles.SmilesIr("CCO").to_atomistic()
+mol = mp.io.smiles.SmilesIr.parse("CCO").to_atomistic()
 mol, _ = mp.conformer.Conformer(add_hydrogens=True, seed=42).generate(mol)
 mol.generate_topology(gen_angle=True, gen_dihedral=True, clear_existing=True)  # in place
 
@@ -134,7 +134,7 @@ A typed structure is ready for simulation export. Convert to a `Frame`, attach a
 from pathlib import Path
 
 frame = typed_mol.to_frame()
-frame.box = mp.Box.cube(30.0)
+frame.box = mp.Box(mp.core.Cell.lengths([30.0] * 3))
 
 # LAMMPS molecular styles need a molecule ID per atom: one per bonded component
 frame["atoms"]["mol_id"] = mp.Topology.from_frame(frame).connected_components() + 1
@@ -174,7 +174,7 @@ library = {
     for name, body in units.items()
 }
 
-sites = mp.io.cgsmiles.CgSmilesIr("{[#CAPA][#EO]|6[#CAPB]}").to_coarsegrain()
+sites = mp.io.cgsmiles.CgSmilesIr.parse("{[#CAPA][#EO]|6[#CAPB]}").to_coarsegrain()
 chain = mp.builder.Assembler(library, mp.builder.GrowthPlacer()).assemble(sites, mp.Atomistic)
 
 typed_chain = OplsAaTypifier(strict=True).typify(chain)

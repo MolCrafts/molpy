@@ -18,6 +18,7 @@ def _ntf2_polarized(test_data_dir: Path) -> Atomistic:
     """CL&P-typed [NTf2]- (atoms named by element, spread along x), Drude-polarized."""
     frame = mp.io.read_mol2(test_data_dir / "mol2" / "ntf2_clp_typed.mol2")
     frame["atoms"]["element"] = frame["atoms"]["name"]
+    mp.Element.fill_atomic_numbers(frame)
     pol = DrudeBuilder().apply(Atomistic.from_frame(frame))
     for i, atom in enumerate(pol.atoms, start=1):
         atom["id"] = i
@@ -59,10 +60,10 @@ def test_data_writer_writes_drude_springs_as_bonds(tmp_path, TEST_DATA_DIR):
 def test_data_writer_no_drude_comment_for_plain_system(tmp_path):
     """A non-polarizable frame (no element ``D``) gets no fix-drude comment."""
     asm = Atomistic()
-    asm.def_atom(
+    asm.add_atom(
         id=1,
         mol_id=1,
-        element="C",
+        atomic_number=6,
         type="CT",
         charge=0.0,
         x=0.0,
@@ -70,10 +71,10 @@ def test_data_writer_no_drude_comment_for_plain_system(tmp_path):
         z=0.0,
         mass=12.0,
     )
-    asm.def_atom(
+    asm.add_atom(
         id=2,
         mol_id=1,
-        element="H",
+        atomic_number=1,
         type="HC",
         charge=0.0,
         x=1.0,

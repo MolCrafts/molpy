@@ -27,6 +27,8 @@ from molrs.core import (
     Atomistic,
     Block,
     Box,
+    Cell,
+    Element,
     Cuboid,
     Cylinder,
     Ellipsoid,
@@ -87,7 +89,7 @@ class Site:
 class Lattice:
     """Bravais lattice = a :class:`~molpy.Box` unit cell + basis :class:`Site` objects.
 
-    The box is molrs's: its cell matrix ``box.h`` holds the lattice vectors as
+    The box is molrs's: its cell matrix ``box.matrix`` holds the lattice vectors as
     columns, and it owns fractional ↔ Cartesian conversion
     (``lattice.box.to_cart(frac)`` / ``lattice.box.to_frac(cart)``).
 
@@ -97,7 +99,7 @@ class Lattice:
 
     Raises:
         TypeError: If ``box`` is not a :class:`~molpy.Box`.
-        ValueError: If ``box`` has no cell (``box.cell_defined`` is false).
+        ValueError: If ``box`` has no cell (``box.is_cell_defined`` is false).
     """
 
     def __init__(self, box: Box, basis: list[Site] | None = None) -> None:
@@ -106,25 +108,25 @@ class Lattice:
                 f"Lattice takes a molpy.Box, got {type(box).__name__}; "
                 "build one from vectors with Lattice.from_vectors(a1, a2, a3)"
             )
-        if not box.cell_defined:
+        if not box.is_cell_defined:
             raise ValueError("Lattice needs a box with a defined cell")
         self.box = box
         self.basis: tuple[Site, ...] = tuple(basis or ())
 
     @property
     def a1(self) -> np.ndarray:
-        """First lattice vector (column 0 of ``box.h``)."""
-        return self.box.h[:, 0]
+        """First lattice vector (column 0 of ``box.matrix``)."""
+        return self.box.matrix[:, 0]
 
     @property
     def a2(self) -> np.ndarray:
-        """Second lattice vector (column 1 of ``box.h``)."""
-        return self.box.h[:, 1]
+        """Second lattice vector (column 1 of ``box.matrix``)."""
+        return self.box.matrix[:, 1]
 
     @property
     def a3(self) -> np.ndarray:
-        """Third lattice vector (column 2 of ``box.h``)."""
-        return self.box.h[:, 2]
+        """Third lattice vector (column 2 of ``box.matrix``)."""
+        return self.box.matrix[:, 2]
 
     @classmethod
     def from_vectors(
@@ -136,7 +138,7 @@ class Lattice:
     ) -> Lattice:
         """Build a lattice from three lattice vectors (the box's columns)."""
         h = np.column_stack([np.asarray(a, dtype=float) for a in (a1, a2, a3)])
-        return cls(Box(h=h), basis)
+        return cls(Box(Cell.matrix(h)), basis)
 
     def with_site(self, site: Site) -> Lattice:
         """Return a new lattice with ``site`` appended to the basis."""
@@ -148,7 +150,7 @@ class Lattice:
         This is the simulation cell for a structure tiled with the same
         ``repeats``; ask the lattice for it rather than the built structure,
         which carries topology and chemistry but no cell of its own. Each
-        lattice vector (column of ``box.h``) is scaled by its repeat; the
+        lattice vector (column of ``box.matrix``) is scaled by its repeat; the
         origin and periodicity are the unit cell's.
         """
         counts = _positive_repeats(repeats)
@@ -157,13 +159,13 @@ class Lattice:
     @classmethod
     def sc(cls, a: float, species: str) -> Lattice:
         """Simple cubic lattice (1 atom / cell)."""
-        return cls(Box.cube(a), [Site("A", species, (0.0, 0.0, 0.0))])
+        return cls(Box(Cell.lengths([a] * 3)), [Site("A", species, (0.0, 0.0, 0.0))])
 
     @classmethod
     def bcc(cls, a: float, species: str) -> Lattice:
         """Body-centered cubic lattice (2 atoms / cell)."""
         return cls(
-            Box.cube(a),
+            Box(Cell.lengths([a] * 3)),
             [
                 Site("A", species, (0.0, 0.0, 0.0)),
                 Site("B", species, (0.5, 0.5, 0.5)),
@@ -174,7 +176,7 @@ class Lattice:
     def fcc(cls, a: float, species: str) -> Lattice:
         """Face-centered cubic lattice (4 atoms / cell)."""
         return cls(
-            Box.cube(a),
+            Box(Cell.lengths([a] * 3)),
             [
                 Site("A", species, (0.0, 0.0, 0.0)),
                 Site("B", species, (0.5, 0.5, 0.0)),
@@ -258,7 +260,7 @@ class Lattice:
                 built fully occupied; resolve the disorder before building.
         """
         box = frame.box
-        if box is None or not box.cell_defined:
+        if box is None or not box.is_cell_defined:
             raise ValueError(
                 "frame has no box (the CIF states no _cell_length_* / "
                 "_cell_angle_* cell); Lattice.from_cif needs the unit cell"
@@ -302,7 +304,7 @@ class Lattice:
             Site("B3", species_b, (0.0, 0.0, 0.5)),
             Site("B4", species_b, (0.5, 0.5, 0.5)),
         ]
-        return cls(Box.cube(a), basis)
+        return cls(Box(Cell.lengths([a] * 3)), basis)
 
     def build(
         self,
@@ -388,6 +390,7 @@ class Lattice:
         )
         frame = Frame()
         frame["atoms"] = columns
+        Element.fill_atomic_numbers(frame)
         return Atomistic.from_frame(frame)
 
 

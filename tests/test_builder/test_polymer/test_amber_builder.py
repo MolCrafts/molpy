@@ -15,6 +15,7 @@ import subprocess
 from pathlib import Path
 from unittest.mock import patch
 
+import numpy as np
 import pytest
 
 import molpy as mp
@@ -113,10 +114,10 @@ class _FakeTools:
 def _ether() -> mp.Atomistic:
     """CH3-O-CH2-CH2-O-CH3 with Amber atom names and no ports."""
     graph = mp.conformer.Conformer(seed=1).generate(
-        mp.io.smiles.SmilesIr("COCCOC").to_atomistic()
+        mp.io.smiles.SmilesIr.parse("COCCOC").to_atomistic()
     )[0]
     for index, atom in enumerate(graph.atoms, start=1):
-        atom["name"] = f"{atom['element']}{index}"
+        atom["name"] = f"{mp.Element.by_number(atom['atomic_number']).symbol}{index}"
     return graph
 
 
@@ -174,7 +175,7 @@ def _build(work: Path, sites: str = "{[#EO]|3}", **kwargs) -> mp.Frame:
     library = options.pop("library", {"EO": _ether()})
     cuts = options.pop("cuts", _cuts())
     builder = AmberPolymerBuilder(library, cuts, **options)
-    return builder.assemble(mp.io.cgsmiles.CgSmilesIr(sites).to_coarsegrain())
+    return builder.assemble(mp.io.cgsmiles.CgSmilesIr.parse(sites).to_coarsegrain())
 
 
 class TestAmberPieces:
@@ -366,6 +367,13 @@ class TestGropobOligomer:
         shutil.copy(data / "PEO_initial.frcmod", monomer / "PEO.frcmod")
         frame = mp.io.read_ac(data / "PEO.ac")
         del frame["atoms"]["xyz"]
+        frame["atoms"]["atomic_number"] = np.array(
+            [
+                {"c": 6, "h": 1, "o": 8}[str(t)[0].lower()]
+                for t in frame["atoms"]["type"]
+            ],
+            dtype=np.uint8,
+        )
         return mp.Atomistic.from_frame(frame)
 
     def test_connection_types_come_from_their_ac(self, tools, tmp_path, TEST_DATA_DIR):
@@ -404,9 +412,9 @@ class TestGropobOligomer:
 class TestRefused:
     def test_a_branched_site_graph(self, tools, tmp_path):
         sites = mp.CoarseGrain()
-        beads = [sites.def_bead(bead_type="EO") for _ in range(4)]
+        beads = [sites.add_bead(bead_type="EO") for _ in range(4)]
         for bead in beads[1:]:
-            sites.def_cgbond(beads[0], bead)
+            sites.add_bond(beads[0], bead)
         with pytest.raises(ValueError, match="linear"):
             AmberPolymerBuilder(
                 {"EO": _ether()}, _cuts(), parameter_set="gaff", work_dir=tmp_path
@@ -414,9 +422,9 @@ class TestRefused:
 
     def test_a_ring(self, tools, tmp_path):
         sites = mp.CoarseGrain()
-        beads = [sites.def_bead(bead_type="EO") for _ in range(3)]
+        beads = [sites.add_bead(bead_type="EO") for _ in range(3)]
         for left, right in zip(beads, beads[1:] + beads[:1], strict=True):
-            sites.def_cgbond(left, right)
+            sites.add_bond(left, right)
         with pytest.raises(ValueError, match="linear"):
             AmberPolymerBuilder(
                 {"EO": _ether()}, _cuts(), parameter_set="gaff", work_dir=tmp_path
@@ -494,7 +502,7 @@ class TestRefused:
 
     def test_unnamed_atoms_get_element_and_row(self):
         graph = mp.conformer.Conformer(seed=1).generate(
-            mp.io.smiles.SmilesIr("CO").to_atomistic()
+            mp.io.smiles.SmilesIr.parse("CO").to_atomistic()
         )[0]
         builder = AmberPolymerBuilder({"MO": graph}, {}, parameter_set="gaff")
         names = [str(atom["name"]) for atom in builder.library["MO"].atoms]
@@ -541,13 +549,13 @@ class TestToolFailures:
 
 def test_tleap_typifier_refuses_a_graph_that_still_has_ports(tmp_path):
     graph = mp.conformer.Conformer(seed=1).generate(
-        mp.io.smiles.SmilesIr("COC").to_atomistic()
+        mp.io.smiles.SmilesIr.parse("COC").to_atomistic()
     )[0]
     atoms = list(graph.atoms)
     for atom in atoms:
         atom["type"] = "c3"
         atom["charge"] = 0.0
-    graph.def_port(atoms[0], atoms[1], ">")
+    graph.add_port(atoms[0], atoms[1], kind=">")
     with pytest.raises(ValueError, match="ports"):
         mp.ff.typifier.TleapTypifier(parameter_set="gaff2", work_dir=tmp_path).typify(
             graph

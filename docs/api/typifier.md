@@ -71,7 +71,7 @@ import molpy as mp
 from molpy.ff.typifier import OplsAaTypifier
 
 mol, _ = mp.conformer.Conformer(add_hydrogens=True, seed=42).generate(
-    mp.io.smiles.SmilesIr("CCO").to_atomistic()
+    mp.io.smiles.SmilesIr.parse("CCO").to_atomistic()
 )
 
 typifier = OplsAaTypifier(strict=True)
@@ -129,7 +129,7 @@ class Tip3pTypifier(mp.ff.typifier.Typifier):
 
 
 tip3p = Tip3pTypifier()
-water = tip3p.typify(mp.io.smiles.SmilesIr("[H]O[H]").to_atomistic())
+water = tip3p.typify(mp.io.smiles.SmilesIr.parse("[H]O[H]").to_atomistic())
 assert [bond["type"] for bond in water.bonds] == ["OW-HW", "OW-HW"]
 assert tip3p.forcefield().get_style("bond", "harmonic").get_type_by_name("OW-HW")["k"] == 450.0
 ```

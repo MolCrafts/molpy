@@ -28,7 +28,7 @@ The examples below share this setup:
 ```python
 import molpy as mp
 
-mol = mp.io.smiles.SmilesIr("CCO").to_atomistic()
+mol = mp.io.smiles.SmilesIr.parse("CCO").to_atomistic()
 ```
 
 ```python
@@ -38,7 +38,7 @@ from molpy.adapter import from_rdkit, to_rdkit
 from rdkit import Chem
 from rdkit.Chem import AllChem
 
-mol = mp.io.smiles.SmilesIr("CCO").to_atomistic()
+mol = mp.io.smiles.SmilesIr.parse("CCO").to_atomistic()
 
 rd_mol = Chem.AddHs(to_rdkit(mol))
 AllChem.EmbedMolecule(rd_mol)  # RDKit's algorithm, on RDKit's object
@@ -84,7 +84,7 @@ below, the native path is the supported one and needs no third-party install:
 |------|--------|
 | 3D embedding | [`Conformer`](conformer.md) — ETKDGv3 → torsion refinement → MMFF94 cleanup |
 | Hydrogens / aromaticity / stereo | `mp.perceive.add_hydrogens(...)` / `mp.perceive.assign_aromaticity(...)` |
-| SMILES / SMARTS | `mp.io.smiles.SmilesIr(...).to_atomistic()`, `mp.perceive.SmartsPattern` — see [Notation](notation.md) |
+| SMILES / SMARTS | `mp.io.smiles.SmilesIr.parse(...).to_atomistic()`, `mp.perceive.SmartsPattern` — see [Notation](notation.md) |
 | Ring queries | `mp.perceive.perceive_rings(mol)` → `RingSet` |
 | GAFF types | [AmberTools wrapper](wrapper.md) — antechamber delegation |
 

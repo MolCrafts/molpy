@@ -1,5 +1,7 @@
 """XSF (XCrySDen) read and write."""
 
+from pathlib import Path
+
 import numpy as np
 import pytest
 
@@ -34,7 +36,7 @@ class TestXsfCore:
 
         # Check box
         assert frame.box.style == "orthogonal"
-        np.testing.assert_array_almost_equal(frame.box.h, np.diag([3.0, 3.0, 3.0]))
+        np.testing.assert_array_almost_equal(frame.box.matrix, np.diag([3.0, 3.0, 3.0]))
 
     def test_read_molecule_structure(self, tmp_path):
         """Test reading a molecule structure (non-periodic)."""
@@ -67,12 +69,12 @@ class TestXsfCore:
             }
         )
 
-        box = mp.Box(h=np.diag([3.0, 3.0, 3.0]))
+        box = mp.Box(mp.core.Cell.matrix(np.diag([3.0, 3.0, 3.0])))
         frame.box = box
 
         # Write to file
         tmp_file = tmp_path / "test.xsf"
-        mp.io.write_xsf(str(tmp_file), frame)
+        mp.io.write_xsf(tmp_file, frame)
 
         # Read back and verify
         frame2 = mp.io.read_xsf(tmp_file)
@@ -83,7 +85,9 @@ class TestXsfCore:
 
         # Check box
         assert frame2.box.style == "orthogonal"
-        np.testing.assert_array_almost_equal(frame2.box.h, np.diag([3.0, 3.0, 3.0]))
+        np.testing.assert_array_almost_equal(
+            frame2.box.matrix, np.diag([3.0, 3.0, 3.0])
+        )
 
     def test_write_molecule_structure(self, tmp_path):
         """Test writing a molecule structure."""
@@ -100,12 +104,12 @@ class TestXsfCore:
         )
 
         # Create with free box
-        box = mp.Box()  # Free box
+        box = mp.Box(mp.core.Cell.undefined())  # Free box
         frame.box = box
 
         # Write to file
         tmp_file = tmp_path / "test.xsf"
-        mp.io.write_xsf(str(tmp_file), frame)
+        mp.io.write_xsf(tmp_file, frame)
 
         # Read back and verify
         frame2 = mp.io.read_xsf(tmp_file)
@@ -131,12 +135,14 @@ class TestXsfCore:
             }
         )
 
-        box = mp.Box(h=[[5.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 5.0]])
+        box = mp.Box(
+            mp.core.Cell.matrix([[5.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 5.0]])
+        )
         frame.box = box
 
         # Write and read back
         tmp_file = tmp_path / "test.xsf"
-        mp.io.write_xsf(str(tmp_file), frame)
+        mp.io.write_xsf(tmp_file, frame)
         frame2 = mp.io.read_xsf(tmp_file)
 
         # Check consistency
@@ -151,13 +157,13 @@ class TestXsfCore:
             [frame2["atoms"]["x"], frame2["atoms"]["y"], frame2["atoms"]["z"]]
         )
         np.testing.assert_array_almost_equal(coords1, coords2)
-        np.testing.assert_array_almost_equal(frame.box.h, frame2.box.h)
+        np.testing.assert_array_almost_equal(frame.box.matrix, frame2.box.matrix)
 
     def test_error_handling(self, tmp_path):
         """Test basic error handling."""
         # Test reading non-existent file
         with pytest.raises(OSError):
-            mp.io.read_xsf("nonexistent.xsf")
+            mp.io.read_xsf(Path("nonexistent.xsf"))
 
         # Test reading empty file
         tmp_file = tmp_path / "empty.xsf"

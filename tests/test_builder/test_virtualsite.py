@@ -6,6 +6,7 @@ Tip4p uses plain water.
 
 from __future__ import annotations
 
+
 import math
 from pathlib import Path
 
@@ -25,16 +26,17 @@ def cation(TEST_DATA_DIR: Path) -> mp.Atomistic:
     """[C4C1im]+ with CL&P types and charges; the fixture names atoms by element."""
     frame = mp.io.read_mol2(TEST_DATA_DIR / "mol2" / "c4c1im_clp_typed.mol2")
     frame["atoms"]["element"] = frame["atoms"]["name"]
+    mp.Element.fill_atomic_numbers(frame)
     return mp.Atomistic.from_frame(frame)
 
 
 def _water(charge_o: float = -0.8, charge_h: float = 0.4):
     asm = mp.Atomistic()
-    o = asm.def_atom(element="O", charge=charge_o, x=0.0, y=0.0, z=0.0)
-    h1 = asm.def_atom(element="H", charge=charge_h, x=0.757, y=0.586, z=0.0)
-    h2 = asm.def_atom(element="H", charge=charge_h, x=-0.757, y=0.586, z=0.0)
-    asm.def_bond(o, h1)
-    asm.def_bond(o, h2)
+    o = asm.add_atom(atomic_number=8, charge=charge_o, x=0.0, y=0.0, z=0.0)
+    h1 = asm.add_atom(atomic_number=1, charge=charge_h, x=0.757, y=0.586, z=0.0)
+    h2 = asm.add_atom(atomic_number=1, charge=charge_h, x=-0.757, y=0.586, z=0.0)
+    asm.add_bond(o, h1)
+    asm.add_bond(o, h2)
     return asm, o
 
 
@@ -109,16 +111,16 @@ def test_drude_apply_does_not_mutate_input(cation):
     assert out is not struct
     assert len(list(struct.atoms)) == n_before
     assert sum(a.get("charge") for a in struct.atoms) == q_before
-    assert "drudes" not in struct.kinds()
+    assert "drudes" not in struct.term_blocks()
 
 
 def test_drude_count_matches_heavy_atoms_no_hydrogen(cation):
     struct = cation
     out = DrudeBuilder().apply(struct)
-    heavy = [a for a in struct.atoms if a.get("element") != "H"]
+    heavy = [a for a in struct.atoms if a.get("atomic_number") != 1]
     assert len(_drudes(out)) == len(heavy)
     for a in out.atoms:
-        if a.get("element") == "H":
+        if a.get("atomic_number") == 1:
             assert a.get("vsite") is None
 
 
@@ -217,9 +219,9 @@ def test_drude_later_row_wins(cation):
 def test_drude_rejects_untyped_graph():
     """An untyped graph raises instead of silently gaining zero shells."""
     asm = mp.Atomistic()
-    c = asm.def_atom(element="C", charge=0.0, x=0.0, y=0.0, z=0.0)
-    h = asm.def_atom(element="H", charge=0.0, x=1.0, y=0.0, z=0.0)
-    asm.def_bond(c, h)
+    c = asm.add_atom(atomic_number=6, charge=0.0, x=0.0, y=0.0, z=0.0)
+    h = asm.add_atom(atomic_number=1, charge=0.0, x=1.0, y=0.0, z=0.0)
+    asm.add_bond(c, h)
     with pytest.raises(ValueError, match="type"):
         DrudeBuilder().apply(asm)
 
@@ -246,7 +248,7 @@ def test_tip4p_msite_placement_and_charge_transfer():
     assert math.isclose(m.get("x"), 0.0, abs_tol=1e-9)
     assert m.get("y") > 0.0
     assert math.isclose(m.get("charge"), q_o, abs_tol=1e-12)
-    out_o = next(a for a in out.atoms if a.get("element") == "O")
+    out_o = next(a for a in out.atoms if a.get("atomic_number") == 8)
     assert math.isclose(out_o.get("charge"), 0.0, abs_tol=1e-12)
     assert len(list(out.bonds)) == n_bonds_before
     assert "element" not in m
@@ -262,8 +264,8 @@ def test_tip4p_records_average3_construction():
     assert row["style"] == "average3"
     site, o, h1, h2 = (atoms[row[k]] for k in ("atomi", "atomj", "atomk", "atoml"))
     assert site.get("vsite") == "massless"
-    assert o.get("element") == "O"
-    assert {h1.get("element"), h2.get("element")} == {"H"}
+    assert o.get("atomic_number") == 8
+    assert {h1.get("atomic_number"), h2.get("atomic_number")} == {1}
     w = (row["w1"], row["w2"], row["w3"])
     assert sum(w) == pytest.approx(1.0)
     assert w[1] == pytest.approx(w[2])
@@ -277,12 +279,12 @@ def test_tip4p_records_average3_construction():
 def test_tip4p_uses_minimum_image_across_the_box():
     """A water split by the periodic boundary still gets M on its bisector."""
     asm = mp.Atomistic()
-    o = asm.def_atom(element="O", charge=-0.8, x=0.1, y=5.0, z=5.0)
-    h1 = asm.def_atom(element="H", charge=0.4, x=9.343, y=5.586, z=5.0)
-    h2 = asm.def_atom(element="H", charge=0.4, x=0.857, y=5.586, z=5.0)
-    asm.def_bond(o, h1)
-    asm.def_bond(o, h2)
-    out = Tip4pBuilder(box=mp.Box.cube(10.0)).apply(asm)
+    o = asm.add_atom(atomic_number=8, charge=-0.8, x=0.1, y=5.0, z=5.0)
+    h1 = asm.add_atom(atomic_number=1, charge=0.4, x=9.343, y=5.586, z=5.0)
+    h2 = asm.add_atom(atomic_number=1, charge=0.4, x=0.857, y=5.586, z=5.0)
+    asm.add_bond(o, h1)
+    asm.add_bond(o, h2)
+    out = Tip4pBuilder(box=mp.Box(mp.core.Cell.lengths([10.0] * 3))).apply(asm)
     m = _msite(out)
     assert m.get("x") == pytest.approx(0.1, abs=1e-9)
     assert m.get("y") == pytest.approx(5.0 + 0.1546)
@@ -293,9 +295,9 @@ def test_tip4p_uses_minimum_image_across_the_box():
 def test_tip4p_finds_hydrogens_by_adjacency():
     """Only O atoms bonded to exactly two H atoms are hosts."""
     asm = mp.Atomistic()
-    o = asm.def_atom(element="O", charge=-0.4, x=0.0, y=0.0, z=0.0)
-    h = asm.def_atom(element="H", charge=0.4, x=0.96, y=0.0, z=0.0)
-    asm.def_bond(o, h)
+    o = asm.add_atom(atomic_number=8, charge=-0.4, x=0.0, y=0.0, z=0.0)
+    h = asm.add_atom(atomic_number=1, charge=0.4, x=0.96, y=0.0, z=0.0)
+    asm.add_bond(o, h)
     out = Tip4pBuilder().apply(asm)
     assert not [a for a in out.atoms if a.get("vsite") == "massless"]
     assert _rows(out, "virtual_sites") == []
@@ -303,6 +305,6 @@ def test_tip4p_finds_hydrogens_by_adjacency():
 
 def test_drude_rejects_uncharged_host():
     asm = mp.Atomistic()
-    asm.def_atom(element="C", type="CR", x=0.0, y=0.0, z=0.0)
+    asm.add_atom(atomic_number=6, type="CR", x=0.0, y=0.0, z=0.0)
     with pytest.raises(ValueError, match="charge"):
         DrudeBuilder().apply(asm)

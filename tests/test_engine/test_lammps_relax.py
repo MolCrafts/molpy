@@ -49,7 +49,7 @@ def _dimer_system(separation: float = 2.2) -> tuple[mp.Frame, ForceField]:
             },
         }
     )
-    frame.box = mp.Box.cube(30.0)
+    frame.box = mp.Box(mp.core.Cell.lengths([30.0] * 3))
     return frame, ff
 
 

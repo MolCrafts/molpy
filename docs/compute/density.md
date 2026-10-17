@@ -132,7 +132,7 @@ rng = np.random.default_rng(0)
 xyz = rng.uniform(0.0, 20.0, size=(400, 3))
 frame = mp.Frame()
 frame["atoms"] = {"x": xyz[:, 0], "y": xyz[:, 1], "z": xyz[:, 2]}
-frame.box = mp.Box.cube(20.0)
+frame.box = mp.Box(mp.core.Cell.lengths([20.0] * 3))
 ```
 
 `LocalDensity` is configured with the probe radius and computed on one

@@ -110,9 +110,11 @@ def write_mrec(tmp_path: Path) -> Path:
     frame = mp.Frame()
     frame["atoms"] = {"x": [0.0], "y": [0.0], "z": [0.0]}
     path = tmp_path / "run.mrec"
-    mp.io.write_mrec_trajectory(
+    mp.io.write_mrec(
         path,
-        mp.Trajectory([frame] * len(STEPS), step=np.array(STEPS), time=np.array(TIMES)),
+        trajectory=mp.Trajectory(
+            [frame] * len(STEPS), step=np.array(STEPS), time=np.array(TIMES)
+        ),
     )
     return path
 

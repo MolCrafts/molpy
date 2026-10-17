@@ -36,8 +36,9 @@ from typing import TYPE_CHECKING
 from molpy.engine._engine import Engine
 from molpy.engine._nonbonded import is_periodic, nonbonded_of, refuse_box_free
 from molpy.engine._script import Script
-from molpy.io import read_lammps_data, write_lammps_data, write_lammps_forcefield_str
+from molpy.io import read_lammps_data, write_lammps_data
 from molpy.io.lammps import infer_lammps_atom_style
+from molrs.io.lammps import LammpsForcefieldWriter
 from molpy.wrapper import ToolError
 from molpy.wrapper._process import tail_of
 
@@ -234,6 +235,17 @@ class LammpsEngine(Engine):
         long_range = pair_style is None and nonbonded_of(forcefield).coulomb == "long"
         if long_range and not periodic:
             raise refuse_box_free("LAMMPS", "a long-range Coulomb style (PPPM)")
+        if "atoms" in frame and "mass" not in frame["atoms"]:
+            masses = {
+                t.name: t.params["mass"]
+                for style in forcefield.get_styles("atom")
+                for t in style.get_types()
+                if "mass" in t.params
+            }
+            frame = frame.copy()
+            frame["atoms"]["mass"] = [
+                masses[str(name)] for name in frame["atoms"]["type"]
+            ]
         style = atom_style or infer_lammps_atom_style(frame)
         out = Path(output_dir)
         out.mkdir(parents=True, exist_ok=True)
@@ -247,13 +259,14 @@ class LammpsEngine(Engine):
         # Settings first: a style molrs cannot write fails before any file is
         # written. They carry the coefficients of the labels `frame` uses, the
         # same labels the data file declares.
-        settings = write_lammps_forcefield_str(
-            forcefield,
+        settings_bytes = bytearray()
+        LammpsForcefieldWriter(
             frame,
             skip_pair_style=pair_style is not None,
             skip_units=True,
             units=units,
-        )
+        ).write(settings_bytes, forcefield)
+        settings = settings_bytes.decode("utf-8")
         write_lammps_data(paths["data"], frame, atom_style=style, units=units)
         paths["settings"].write_text(settings, encoding="utf-8")
 

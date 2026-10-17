@@ -132,7 +132,7 @@ rng = np.random.default_rng(0)
 n_frames = 300
 coords_i = rng.normal(0.0, 0.3, size=(n_frames, 5, 3))
 coords_j = rng.normal(0.0, 0.3, size=(n_frames, 5, 3)) + np.array([3.2, 0.0, 0.0])
-box = mp.Box.cube(30.0)
+box = mp.Box(mp.core.Cell.lengths([30.0] * 3))
 
 tables = [
     mp.core.NeighborQuery(box, coords_j[t], 4.0).query(coords_i[t])

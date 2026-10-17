@@ -66,7 +66,7 @@ Quick definitions for MolPy's core terminology. Each entry links to the page tha
 : A place where a unit may bond: an *(anchor, handle)* pair, where the handle is a real atom bonded to the anchor (usually the capping hydrogen) that leaves when the bond forms. Its kind decides its partner — `<` joins `>`, `$` joins `$`, `!` joins `!` — and a label and bond order must match. In CGsmiles, ports are the bonding descriptors (`[<]OCC[>]`).
 
 **Site graph**
-: The topology of an assembly: an `mp.CoarseGrain` whose beads name library units (`bead_type`) and whose bonds say which units join. It comes from CGsmiles notation (`mp.io.cgsmiles.CgSmilesIr(...).to_coarsegrain()`) or from coarsening a CG model (`Coarsener`), in which case each site also has a position and an axis.
+: The topology of an assembly: an `mp.CoarseGrain` whose beads name library units (`bead_type`) and whose bonds say which units join. It comes from CGsmiles notation (`mp.io.cgsmiles.CgSmilesIr.parse(...).to_coarsegrain()`) or from coarsening a CG model (`Coarsener`), in which case each site also has a position and an axis.
 
 **Placer**
 : The assembler's rule for each copy's pose. `GrowthPlacer` grows each molecule onto its parents' ports and needs no coordinates; `SitePlacer` puts each copy's centre of mass on its site.

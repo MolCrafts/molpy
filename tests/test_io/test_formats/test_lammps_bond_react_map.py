@@ -12,6 +12,7 @@ from endpoint atom types.
 from __future__ import annotations
 
 from pathlib import Path
+import copy
 
 import pytest
 
@@ -56,19 +57,22 @@ def _build_reaction(test_data_dir: Path) -> BondReactTemplate:
     """
     frame = mp.io.read_mol2(test_data_dir / "mol2" / "bond_react_pre.mol2")
     frame["atoms"]["react_id"] = frame["atoms"]["id"]
+    frame["atoms"]["atomic_number"] = [
+        mp.Element.by_symbol(name).z for name in frame["atoms"]["name"]
+    ]
     pre = Atomistic.from_frame(frame)
     pre.generate_topology(gen_angle=True, gen_dihedral=True, clear_existing=True)
     by_react_id = {a["react_id"]: a for a in pre.atoms}
 
     # the same atoms, after the edit: drop the two C-H bonds, add the C-C bond
-    post = pre.copy()
+    post = copy.copy(pre)
     post_by_react_id = {a["react_id"]: a for a in post.atoms}
     for react_id in LEAVING:
         target = post_by_react_id[react_id]
         for bond in list(post.bonds):
             if target in bond.endpoints:
-                post.remove_bond(bond.handle)
-    post.def_bond(*(post_by_react_id[react_id] for react_id in INITIATORS))
+                post.del_bond(bond)
+    post.add_bond(*(post_by_react_id[react_id] for react_id in INITIATORS))
     # clear_existing: `post` inherited `pre`'s angles/dihedrals, including the ones
     # running through the hydrogens the reaction deletes. LAMMPS would then try to
     # build an angle on a deleted atom ("Angle atoms 2 3 9 missing").
@@ -105,7 +109,7 @@ class TestWriteBondReactMap:
         from molpy.io import write_lammps_bond_react_map
 
         template = _build_reaction(test_data_dir)
-        write_lammps_bond_react_map(template, tmp_path / "rxn1")
+        write_lammps_bond_react_map(tmp_path / "rxn1.map", template)
         content = (tmp_path / "rxn1.map").read_text(encoding="utf-8")
         return content, template
 
@@ -160,12 +164,12 @@ class TestWriteBondReactMap:
         from molpy.io import write_lammps_bond_react_map
 
         pre = Atomistic()
-        a1 = pre.def_atom(element="C", type="c3", react_id=1)
-        a2 = pre.def_atom(element="C", type="c3", react_id=2)
-        pre.def_bond(a1, a2, type="c3-c3")
+        a1 = pre.add_atom(atomic_number=6, type="c3", react_id=1)
+        a2 = pre.add_atom(atomic_number=6, type="c3", react_id=2)
+        pre.add_bond(a1, a2, type="c3-c3")
 
         post = Atomistic()
-        post.def_atom(element="C", type="c3", react_id=1)
+        post.add_atom(atomic_number=6, type="c3", react_id=1)
 
         template = BondReactTemplate(
             pre=pre,
@@ -175,4 +179,4 @@ class TestWriteBondReactMap:
             deleted_atoms=[],
         )
         with pytest.raises(ValueError):
-            write_lammps_bond_react_map(template, tmp_path / "bad")
+            write_lammps_bond_react_map(tmp_path / "bad.map", template)

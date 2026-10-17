@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from molrs.core import Cell
+
 import dataclasses
 
 import numpy as np
@@ -34,7 +36,9 @@ class TestSite:
             fractional=(0.0, 0.0, 0.0),
             attrs={"domain": "wall"},
         )
-        structure = Lattice(Box.cube(1.0), [site]).build(repeats=(1, 1, 1))
+        structure = Lattice(Box(Cell.lengths([1.0] * 3)), [site]).build(
+            repeats=(1, 1, 1)
+        )
         assert structure.atoms[0].get("domain") == "wall"
 
     def test_site_is_frozen(self):
@@ -45,7 +49,7 @@ class TestSite:
 
 class TestLattice:
     def test_lattice_holds_a_box(self):
-        box = Box.cube(1.0)
+        box = Box(Cell.lengths([1.0] * 3))
         lattice = Lattice(box, basis=[])
 
         assert lattice.box is box
@@ -57,11 +61,11 @@ class TestLattice:
 
     def test_lattice_rejects_a_box_without_a_cell(self):
         with pytest.raises(ValueError, match="cell"):
-            Lattice(Box())
+            Lattice(Box(Cell.undefined()))
 
     def test_lattice_vectors_are_the_box_columns(self):
         h = np.array([[3.0, 1.0, 0.5], [0.0, 4.0, 0.2], [0.0, 0.0, 5.0]])
-        lattice = Lattice(Box(h=h))
+        lattice = Lattice(Box(Cell.matrix(h)))
 
         np.testing.assert_allclose(lattice.a1, h[:, 0])
         np.testing.assert_allclose(lattice.a2, h[:, 1])
@@ -74,11 +78,11 @@ class TestLattice:
         lattice = Lattice.from_vectors(a1, a2, a3, basis=[])
 
         assert isinstance(lattice.box, Box)
-        np.testing.assert_allclose(lattice.box.h, np.column_stack([a1, a2, a3]))
+        np.testing.assert_allclose(lattice.box.matrix, np.column_stack([a1, a2, a3]))
         np.testing.assert_allclose(lattice.a2, a2)
 
     def test_with_site_is_immutable(self):
-        base = Lattice(Box.cube(1.0))
+        base = Lattice(Box(Cell.lengths([1.0] * 3)))
         site = Site(label="A", species="C", fractional=(0.0, 0.0, 0.0))
         extended = base.with_site(site)
 
@@ -88,13 +92,13 @@ class TestLattice:
         assert extended.box is base.box
 
     def test_box_to_cart_single(self):
-        lattice = Lattice(Box.ortho(np.array([3.0, 4.0, 5.0])))
+        lattice = Lattice(Box(Cell.lengths(np.array([3.0, 4.0, 5.0]))))
 
         cart = lattice.box.to_cart(np.array([[0.5, 0.5, 0.5]]))[0]
         assert np.allclose(cart, [1.5, 2.0, 2.5])
 
     def test_box_to_cart_multiple(self):
-        lattice = Lattice(Box.cube(2.0))
+        lattice = Lattice(Box(Cell.lengths([2.0] * 3)))
 
         frac = np.array(
             [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.5, 0.5, 0.5]]
@@ -119,7 +123,7 @@ class TestLattice:
     def test_sc(self):
         lat = Lattice.sc(a=2.0, species="Cu")
 
-        assert np.allclose(lat.box.h, 2.0 * np.eye(3))
+        assert np.allclose(lat.box.matrix, 2.0 * np.eye(3))
         assert len(lat.basis) == 1
         assert lat.basis[0].species == "Cu"
         assert lat.basis[0].fractional == (0.0, 0.0, 0.0)
@@ -127,7 +131,7 @@ class TestLattice:
     def test_bcc(self):
         lat = Lattice.bcc(a=3.0, species="Fe")
 
-        assert np.allclose(lat.box.h, 3.0 * np.eye(3))
+        assert np.allclose(lat.box.matrix, 3.0 * np.eye(3))
         assert len(lat.basis) == 2
 
         fracs = [site.fractional for site in lat.basis]
@@ -138,7 +142,7 @@ class TestLattice:
     def test_fcc(self):
         lat = Lattice.fcc(a=3.52, species="Ni")
 
-        assert np.allclose(lat.box.h, 3.52 * np.eye(3))
+        assert np.allclose(lat.box.matrix, 3.52 * np.eye(3))
         assert len(lat.basis) == 4
         fracs = [site.fractional for site in lat.basis]
         assert (0.0, 0.0, 0.0) in fracs
@@ -150,7 +154,7 @@ class TestLattice:
     def test_rocksalt(self):
         lat = Lattice.rocksalt(a=5.64, species_a="Na", species_b="Cl")
 
-        assert np.allclose(lat.box.h, 5.64 * np.eye(3))
+        assert np.allclose(lat.box.matrix, 5.64 * np.eye(3))
         assert len(lat.basis) == 8
         na_count = sum(1 for s in lat.basis if s.species == "Na")
         cl_count = sum(1 for s in lat.basis if s.species == "Cl")
@@ -167,7 +171,7 @@ class TestLattice:
 
     def test_from_spacegroup_takes_a_box(self):
         group = SpaceGroup.from_triplets(["x,y,z", "-x,-y,-z"])
-        box = Box.cube(4.0)
+        box = Box(Cell.lengths([4.0] * 3))
         lat = Lattice.from_spacegroup(box, [Site("C1", "C", (0.1, 0.2, 0.3))], group)
 
         assert lat.box is box
@@ -209,7 +213,7 @@ class TestBuildCrystalRepeats:
         assert cl == 32
 
     def test_empty_basis(self):
-        lat = Lattice(Box.cube(1.0))
+        lat = Lattice(Box(Cell.lengths([1.0] * 3)))
         structure = lat.build(repeats=(2, 2, 2))
 
         assert isinstance(structure, Atomistic)
@@ -220,26 +224,26 @@ class TestBuildCrystalRepeats:
 
         box = lat.supercell((2, 2, 2))
         assert isinstance(box, Box)
-        assert np.allclose(box.h, 6.0 * np.eye(3))
+        assert np.allclose(box.matrix, 6.0 * np.eye(3))
 
     def test_super_cell_box_holds_lattice_vectors_as_columns(self):
         a1, a2, a3 = [2.0, 0.0, 0.0], [1.0, 3.0, 0.0], [0.0, 0.0, 4.0]
         lat = Lattice.from_vectors(a1, a2, a3)
 
         box = lat.supercell((1, 2, 1))
-        np.testing.assert_allclose(box.h[:, 0], a1)
-        np.testing.assert_allclose(box.h[:, 1], 2.0 * np.asarray(a2))
-        np.testing.assert_allclose(box.h[:, 2], a3)
+        np.testing.assert_allclose(box.matrix[:, 0], a1)
+        np.testing.assert_allclose(box.matrix[:, 1], 2.0 * np.asarray(a2))
+        np.testing.assert_allclose(box.matrix[:, 2], a3)
 
     def test_super_cell_keeps_origin_and_periodicity(self):
         box = Box(
-            h=np.diag([1.0, 2.0, 3.0]),
+            Cell.matrix(np.diag([1.0, 2.0, 3.0])),
             origin=np.array([1.0, -1.0, 0.5]),
             pbc=np.array([True, False, True]),
         )
         supercell = Lattice(box).supercell((2, 1, 3))
 
-        np.testing.assert_allclose(supercell.h, np.diag([2.0, 2.0, 9.0]))
+        np.testing.assert_allclose(supercell.matrix, np.diag([2.0, 2.0, 9.0]))
         np.testing.assert_allclose(supercell.origin, box.origin)
         assert supercell.pbc.tolist() == [True, False, True]
 
@@ -276,7 +280,7 @@ class TestBuildCrystalRepeats:
 class TestBuildCrystalRegion:
     def test_box_region_infers_repeats(self):
         lat = Lattice.sc(a=2.0, species="Cu")
-        structure = lat.build(Cuboid.cube(3.0))
+        structure = lat.build(Cuboid((0, 0, 0), (3.0, 3.0, 3.0)))
 
         # cells inferred = ceil(3/2)=2 along each axis → 8 atoms generated,
         # all inside the [0,3]³ region (positions ∈ {0, 2}).
@@ -286,7 +290,7 @@ class TestBuildCrystalRegion:
         lat = Lattice.sc(a=2.0, species="Cu")
         # Force a 3-cell tile but clip to a 3 Å box: corner atoms at x=4 etc.
         # are filtered out.
-        structure = lat.build(Cuboid.cube(3.0), repeats=(3, 3, 3))
+        structure = lat.build(Cuboid((0, 0, 0), (3.0, 3.0, 3.0)), repeats=(3, 3, 3))
 
         assert len(list(structure.atoms)) == 8
 
@@ -306,7 +310,7 @@ class TestBuildCrystalRegion:
 
     def test_combined_regions(self):
         lat = Lattice.sc(a=1.0, species="Cu")
-        cube = Cuboid.cube(3.0)
+        cube = Cuboid((0, 0, 0), (3.0, 3.0, 3.0))
         sphere = Sphere([1.5, 1.5, 1.5], 1.5)
         # Intersection: atoms in both.
         structure = lat.build(cube & sphere, repeats=(4, 4, 4))

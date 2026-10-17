@@ -92,7 +92,7 @@ def _build(library, cuts, work: Path, sites: str = "{[#PEO]|5}"):
         charge_method="bcc",
         work_dir=work,
         config=load_config(_ENV),
-    ).assemble(mp.io.cgsmiles.CgSmilesIr(sites).to_coarsegrain())
+    ).assemble(mp.io.cgsmiles.CgSmilesIr.parse(sites).to_coarsegrain())
 
 
 def _type_charges(frame: mp.Frame) -> dict[str, list[float]]:

@@ -100,7 +100,7 @@ class AmberPolymerBuilder:
 
     Example:
         >>> oligomer, cuts = AmberPieces("COCC", "OCC", "OCCOC").oligomer()
-        >>> sites = mp.io.cgsmiles.CgSmilesIr("{[#PEO]|10}").to_coarsegrain()
+        >>> sites = mp.io.cgsmiles.CgSmilesIr.parse("{[#PEO]|10}").to_coarsegrain()
         >>> config = load_config(
         ...     {"wrapper": {"env": "AmberTools25", "env_manager": "conda"}}
         ... )
@@ -364,15 +364,18 @@ def _named(template: Atomistic) -> Atomistic:
         raise TypeError(
             f"library templates must be Atomistic, got {type(template).__name__}"
         )
-    copied = template.copy()
+    from copy import copy
+    from molrs.core import Element
+
+    copied = copy(template)
     seen: set[str] = set()
     for index, atom in enumerate(copied.atoms, start=1):
         name = atom.get("name")
         if name is None:
-            element = atom.get("element")
-            if not element:
+            atomic_number = atom.get("atomic_number")
+            if not atomic_number:
                 raise ValueError(f"atom {index} has no element and no name")
-            name = f"{element}{index}"
+            name = f"{Element.by_number(int(atomic_number)).symbol}{index}"
         name = str(name)
         if name in seen:
             raise ValueError(f"template repeats Amber atom name {name!r}")
@@ -395,7 +398,7 @@ def _linear_path(sites: CoarseGrain) -> list[Bead]:
             "AmberPolymerBuilder needs at least a head site and a tail site; "
             "type one molecule natively (AtdTypifier, GaffTypifier)"
         )
-    bonds = list(sites.cgbonds)
+    bonds = list(sites.bonds)
     adjacent: dict[int, list[Bead]] = defaultdict(list)
     for bond in bonds:
         left, right = bond.endpoints

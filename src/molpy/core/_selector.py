@@ -168,7 +168,7 @@ class AtomIndexSelector(MaskPredicate):
 
     def __call__(self, block: "Block") -> "Block":
         self._check(block)
-        return block.select_rows(self.indices)
+        return block[self.indices]
 
     def __repr__(self) -> str:
         return f"AtomIndexSelector({self.indices.tolist()!r})"

@@ -79,7 +79,7 @@ xyz = np.array(
 )
 crystal = mp.Frame()
 crystal["atoms"] = {"x": xyz[:, 0], "y": xyz[:, 1], "z": xyz[:, 2]}
-crystal.box = mp.Box.cube(4 * a)
+crystal.box = mp.Box(mp.core.Cell.lengths([4 * a] * 3))
 ```
 
 The diagram is built from one thing, the neighbour table. Positions and box

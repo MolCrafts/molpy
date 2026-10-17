@@ -31,12 +31,12 @@ import molpy as mp
 from molpack import GencanPack, Target
 
 water = mp.Atomistic(name="water")
-o = water.def_atom(element="O", x=0.0, y=0.0, z=0.0)
-water.def_bond(o, water.def_atom(element="H", x=0.957, y=0.0, z=0.0))
-water.def_bond(o, water.def_atom(element="H", x=-0.239, y=0.927, z=0.0))
+o = water.add_atom(atomic_number=8, x=0.0, y=0.0, z=0.0)
+water.add_bond(o, water.add_atom(atomic_number=1, x=0.957, y=0.0, z=0.0))
+water.add_bond(o, water.add_atom(atomic_number=1, x=-0.239, y=0.927, z=0.0))
 
 ion = mp.Atomistic(name="sodium")
-ion.def_atom(element="Na", x=0.0, y=0.0, z=0.0, charge=1.0)
+ion.add_atom(atomic_number=11, x=0.0, y=0.0, z=0.0, charge=1.0)
 
 box = mp.core.Cuboid([0.0, 0.0, 0.0], [30.0, 30.0, 30.0])
 targets = [

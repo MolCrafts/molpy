@@ -67,7 +67,7 @@ Canonical field names (`charge`, not `q`; `mol_id`, not `mol`) are used everywhe
 
 ## The mutation contract
 
-The core data-model API mutates in place: `def_atom`, `def_bond`, `generate_topology`, `translate`, `rotate`, `scale`, `merge` all modify the structure they are called on. The rigid-body transforms return `self` for chaining, factories return the created entity, and `generate_topology` / `merge` return what they added. `.copy()` is the explicit opt-in for an independent deep copy. Higher-level helpers in `builder` and `op` follow the opposite convention: they must not mutate caller-owned structures unexpectedly — copy first, or build and return a new structure.
+The core data-model API mutates in place: `add_atom`, `add_bond`, `generate_topology`, `translate`, `rotate`, `scale`, `merge` all modify the structure they are called on. Rigid transforms return `None`; additions return live views, `generate_topology` returns counts, and `merge` returns the added atom views. Use `copy.copy(graph)` for an independent graph and `frame.copy()` for an independent frame. Higher-level helpers in `builder` and `op` follow the opposite convention: they must not mutate caller-owned structures unexpectedly — copy first, or build and return a new structure.
 
 ## Performance model of assembly
 

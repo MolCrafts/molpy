@@ -38,8 +38,10 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, get_args
 
 from molpy.engine._engine import Engine
+from molrs.core import Element
 from molpy.engine._nonbonded import is_periodic, nonbonded_of, refuse_box_free
-from molpy.io import write_openmm_system, write_pdb
+from molpy.io import write_pdb
+from molrs.io.openmm_xml import OpenmmXmlWriter
 
 if TYPE_CHECKING:
     from molrs.core import Frame
@@ -327,6 +329,8 @@ class OpenmmEngine(Engine):
             forcefield,
             periodic=is_periodic(frame),
         )
+        frame = frame.copy()
+        Element.fill_symbols(frame)
         out = Path(output_dir)
         out.mkdir(parents=True, exist_ok=True)
 
@@ -338,7 +342,7 @@ class OpenmmEngine(Engine):
         # (same atom names), which createSystem matches the topology against.
         # It goes first: what OpenMM's XML cannot hold is refused before any
         # other file is written.
-        write_openmm_system(ff_path, forcefield, frame)
+        OpenmmXmlWriter().write_system(ff_path, forcefield, frame)
         write_pdb(pdb_path, frame)
 
         script_text = self._render_simulation_script(

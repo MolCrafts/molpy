@@ -5,7 +5,7 @@ with auxiliary particles placed by a rule — Drude shells, TIP4P M-sites, lone
 pairs, etc. This is the general pattern (one base class); CL&Pol's polarizer is
 just the :class:`DrudeBuilder` instance.
 
-The transform never mutates its input: ``apply`` works on ``struct.copy()`` and
+The transform never mutates its input: ``apply`` works on ``copy(struct)`` and
 returns the new structure.
 
 Sites are written in molrs's vocabulary: a site is an atom whose ``vsite`` field
@@ -17,6 +17,7 @@ is tied to its core by a ``drudes`` row (``drude/harmonic``: ``k``, ``alpha``,
 
 from abc import ABC, abstractmethod
 from collections.abc import Iterable, Mapping, Sequence
+from copy import copy
 from math import sqrt
 from typing import Any
 
@@ -25,6 +26,7 @@ from molrs.core import (
     Atom,
     Atomistic,
     Box,
+    Cell,
     DrudeParticle,
     MasslessSite,
     UnitPreset,
@@ -37,7 +39,7 @@ from molrs.ff.params import clpol_polarizability
 _KCAL_PER_KJ = UnitRegistry().quantity(1.0, "kJ/mol").to("kcal/mol").value
 # 4πε₀ in e² / (kJ/mol·Å), the paduagroup/clandpol polarizer's unit: the
 # inverse of the Coulomb constant (LAMMPS ``real``'s, kcal·Å/(mol·e²)) in kJ.
-_FOUR_PI_EPS0 = _KCAL_PER_KJ / UnitPreset.real().coulomb()
+_FOUR_PI_EPS0 = _KCAL_PER_KJ / UnitPreset("real").coulomb()
 # The columns of one CL&Pol ``alpha.ff`` row (``read_clpol_alpha``'s, less
 # ``type_name``).
 _CLPOL_KEYS = ("m_D", "q_D_sign", "k_D", "alpha", "a_thole")
@@ -49,25 +51,11 @@ TIP4P_OM = 0.1546
 Polarizability = Mapping[str, Mapping[str, float]] | Iterable[Mapping[str, Any]]
 
 
-def _relation_kind(struct: Atomistic, block: str) -> str:
-    """Register molrs's relation ``block`` on ``struct`` (once); return it."""
-    if block not in struct.kinds():
-        spec = schema.block(block)
-        if spec is None:
-            raise KeyError(f"molrs schema has no relation block {block!r}")
-        struct.register_kind(block, len(spec.endpoint_columns))
-    return block
-
-
 def _add_relation(
-    struct: Atomistic, block: str, nodes: Sequence[int], **props: float | str
+    struct: Atomistic, block: str, nodes: Sequence[Atom], **props: float | str
 ) -> int:
-    """Add one ``block`` row over node handles ``nodes`` carrying ``props``."""
-    kind = _relation_kind(struct, block)
-    rh = struct.add_relation(kind, list(nodes))
-    for key, value in props.items():
-        struct.set_relation_prop(kind, rh, key, value)
-    return rh
+    """Add a canonical term over live atom references."""
+    return struct.add_term(block, nodes, **props).handle
 
 
 def _polarizability_table(table: Polarizability) -> dict[str, dict[str, float]]:
@@ -107,7 +95,7 @@ class VirtualSiteBuilder(ABC):
 
     def apply(self, struct: Atomistic) -> Atomistic:
         """Return a new structure with virtual sites added; input untouched."""
-        work = struct.copy()
+        work = copy(struct)
         for host in list(self.select(work)):
             sites = self.build_sites(work, host)
             self.redistribute(work, host, sites)
@@ -191,6 +179,7 @@ class DrudeBuilder(VirtualSiteBuilder):
         # so the structure is fully typed before export (no untyped particles).
         attrs: dict[str, Any] = {
             "type": f"{self.drude_prefix}{host['type']}",
+            "atomic_number": 0,
             "charge": q_d,
             "mass": params["m_D"],
         }
@@ -198,7 +187,7 @@ class DrudeBuilder(VirtualSiteBuilder):
         for axis in ("x", "y", "z"):
             if host.get(axis) is not None:
                 attrs[axis] = host.get(axis)
-        return [struct.def_virtual_site(kind=DrudeParticle, **attrs)]
+        return [struct.add_atom(kind=DrudeParticle, **attrs)]
 
     def redistribute(
         self, struct: Atomistic, host: Atom, sites: Sequence[Atom]
@@ -211,7 +200,7 @@ class DrudeBuilder(VirtualSiteBuilder):
         _add_relation(
             struct,
             schema.DRUDES,
-            (host.handle, shell.handle),
+            (host, shell),
             type=f"{host['type']}-{shell['type']}",
             style="harmonic",
             # alpha.ff's k_D is kJ/mol/Å² in the ½k r² form; molrs's
@@ -239,27 +228,26 @@ class Tip4pBuilder(VirtualSiteBuilder):
 
     def __init__(self, d_om: float = TIP4P_OM, *, box: Box | None = None) -> None:
         self.d_om = d_om
-        self.box = box if box is not None else Box()
+        self.box = box if box is not None else Box(Cell.undefined(), pbc=[False] * 3)
 
     @staticmethod
-    def _xyz(struct: Atomistic, node: int) -> np.ndarray:
-        return np.array([struct.get(node, axis) for axis in "xyz"], dtype=float)
+    def _xyz(atom: Atom) -> np.ndarray:
+        return np.array([atom[axis] for axis in "xyz"], dtype=float)
 
     @staticmethod
-    def _hydrogens(struct: Atomistic, o: Atom) -> list[int]:
-        """Handles of the H atoms bonded to ``o``, from molrs's adjacency."""
+    def _hydrogens(struct: Atomistic, o: Atom) -> list[Atom]:
         return [
-            other
-            for _, other in struct.incident_relations(o.handle, schema.BONDS)
-            if struct.has(other, "element") and struct.get(other, "element") == "H"
+            neighbor
+            for neighbor, _ in struct.neighbor_bonds(o)
+            if neighbor.get("atomic_number") == 1
         ]
 
     def _bisector_weight(
-        self, struct: Atomistic, o: Atom, hydrogens: Sequence[int]
+        self, struct: Atomistic, o: Atom, hydrogens: Sequence[Atom]
     ) -> tuple[np.ndarray, float]:
         """Minimum-image O→H1 + O→H2 and the ``average3`` H weight ``a``."""
-        origin = self._xyz(struct, o.handle)
-        hs = np.stack([self._xyz(struct, h) for h in hydrogens])
+        origin = self._xyz(o)
+        hs = np.stack([self._xyz(h) for h in hydrogens])
         bis = self.box.delta(np.stack([origin, origin]), hs, minimum_image=True).sum(
             axis=0
         )
@@ -272,15 +260,16 @@ class Tip4pBuilder(VirtualSiteBuilder):
         return [
             a
             for a in struct.atoms
-            if a.get("element") == "O" and len(self._hydrogens(struct, a)) == 2
+            if a.get("atomic_number") == 8 and len(self._hydrogens(struct, a)) == 2
         ]
 
     def build_sites(self, struct: Atomistic, host: Atom) -> list[Atom]:
         bis, a = self._bisector_weight(struct, host, self._hydrogens(struct, host))
-        m = self._xyz(struct, host.handle) + a * bis
+        m = self._xyz(host) + a * bis
         return [
-            struct.def_virtual_site(
+            struct.add_atom(
                 kind=MasslessSite,
+                atomic_number=0,
                 charge=host["charge"],
                 x=float(m[0]),
                 y=float(m[1]),
@@ -298,7 +287,7 @@ class Tip4pBuilder(VirtualSiteBuilder):
         _add_relation(
             struct,
             schema.VIRTUAL_SITES,
-            (msite.handle, host.handle, *hydrogens),
+            (msite, host, *hydrogens),
             style="average3",
             w1=1.0 - 2.0 * a,
             w2=a,

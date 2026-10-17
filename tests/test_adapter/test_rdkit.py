@@ -13,15 +13,15 @@ from molpy.adapter import PROP_PREFIX, from_rdkit, generate_3d, to_rdkit
 
 def _ethanol_heavy() -> mp.Atomistic:
     m = mp.Atomistic(name="ethanol")
-    c1 = m.def_atom(element="C", x=0.0, y=0.0, z=0.0, name="C1", res_name="ETH")
-    c2 = m.def_atom(element="C", x=1.5, y=0.0, z=0.0, name="C2", res_name="ETH")
-    o = m.def_atom(element="O", x=2.2, y=1.2, z=0.0, name="O1", res_name="ETH")
+    c1 = m.add_atom(atomic_number=6, x=0.0, y=0.0, z=0.0, name="C1", res_name="ETH")
+    c2 = m.add_atom(atomic_number=6, x=1.5, y=0.0, z=0.0, name="C2", res_name="ETH")
+    o = m.add_atom(atomic_number=8, x=2.2, y=1.2, z=0.0, name="O1", res_name="ETH")
     for atom, q in zip((c1, c2, o), (-0.18, 0.15, -0.68), strict=True):
         atom["charge"] = q
         atom["res_id"] = 1
         atom["type"] = "c3" if atom["element"] == "C" else "oh"
-    m.def_bond(c1, c2, bond_type=1, bond_number=1, type="c3-c3")
-    m.def_bond(c2, o, bond_type=1, bond_number=1, type="c3-oh")
+    m.add_bond(c1, c2, bond_type=1, bond_number=1, type="c3-c3")
+    m.add_bond(c2, o, bond_type=1, bond_number=1, type="c3-oh")
     return m
 
 
@@ -52,9 +52,9 @@ class TestToRdkit:
 
     def test_bond_classes_map_one_to_one(self):
         m = mp.Atomistic()
-        a = m.def_atom(element="C")
-        b = m.def_atom(element="O")
-        m.def_bond(a, b, bond_type=2, bond_number=2)
+        a = m.add_atom(atomic_number=6)
+        b = m.add_atom(atomic_number=8)
+        m.add_bond(a, b, bond_type=2, bond_number=2)
         mol = to_rdkit(m)
         assert mol.GetBondWithIdx(0).GetBondType() == Chem.BondType.DOUBLE
         assert mol.GetNumConformers() == 0
@@ -68,19 +68,19 @@ class TestToRdkit:
         assert mol.GetProp(PROP_PREFIX + "name") == "ethanol"
 
     def test_bracket_hydrogen_count_reaches_rdkit(self):
-        pyrrole = mp.io.smiles.SmilesIr("c1cc[nH]c1").to_atomistic()
+        pyrrole = mp.io.smiles.SmilesIr.parse("c1cc[nH]c1").to_atomistic()
         mol = to_rdkit(pyrrole)
         assert mol.GetAtomWithIdx(3).GetTotalNumHs() == 1
 
     def test_a_coordinate_hole_is_an_error_not_a_zero(self):
         m = _ethanol_heavy()
-        m.def_atom(element="H")  # no x/y/z
+        m.add_atom(atomic_number=1)  # no x/y/z
         with pytest.raises(KeyError):
             to_rdkit(m)
 
     def test_a_non_scalar_graph_prop_is_refused_not_dropped(self):
         m = mp.Atomistic(meta={"source": "x"})
-        m.def_atom(element="C")
+        m.add_atom(atomic_number=6)
         with pytest.raises(TypeError, match="meta"):
             to_rdkit(m)
 
@@ -113,7 +113,7 @@ class TestFromRdkit:
 
     def test_numeric_looking_strings_stay_strings(self):
         m = mp.Atomistic()
-        m.def_atom(element="C", name="1")
+        m.add_atom(atomic_number=6, name="1")
         assert from_rdkit(to_rdkit(m)).atoms["name"].tolist() == ["1"]
 
     def test_rdkit_coordinates_and_added_atoms_come_back(self):
@@ -136,7 +136,7 @@ class TestFromRdkit:
         assert [b["type"] for b in back.bonds] == ["c3-c3", "c3-oh"]
 
     def test_a_bond_type_rdkit_changes_resets_the_bond_number(self):
-        benzene = mp.io.smiles.SmilesIr("c1ccccc1").to_atomistic()
+        benzene = mp.io.smiles.SmilesIr.parse("c1ccccc1").to_atomistic()
         mol = Chem.RWMol(to_rdkit(benzene))
         Chem.Kekulize(mol, clearAromaticFlags=True)
         back = from_rdkit(mol)

@@ -12,7 +12,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
 from molrs.core.keys import FORMAL_CHARGE
-from molrs.io import write_mol2_str
+from molrs.io import write_mol2
+from molrs.core import Element
 
 if TYPE_CHECKING:
     from molrs.core import Atomistic
@@ -54,6 +55,9 @@ def input_mol2(graph: Atomistic, *, rename: bool) -> str:
     the graph's own names are kept.
     """
     frame = graph.to_frame()
+    Element.fill_symbols(frame)
+    if "type" not in frame["atoms"]:
+        frame["atoms"]["type"] = frame["atoms"]["element"]
     if rename:
         frame["atoms"]["name"] = [
             f"{symbol}{row}"
@@ -61,7 +65,9 @@ def input_mol2(graph: Atomistic, *, rename: bool) -> str:
         ]
     if "bonds" in frame and "type" in frame["bonds"]:
         del frame["bonds"]["type"]
-    return write_mol2_str(frame)
+    buffer = bytearray()
+    write_mol2(buffer, frame)
+    return buffer.decode("utf-8")
 
 
 def leap_path(path: Path) -> str:

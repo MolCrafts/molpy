@@ -250,7 +250,7 @@ class TestNonbondedFromTheForceField:
     def boxed_water(self, water, tip3p):
         tip3p.get_style("pair", "lj/cut")["cutoff"] = 9.0
         frame = water.to_frame()
-        frame.box = mp.Box.cube(30.0)
+        frame.box = mp.Box(mp.core.Cell.lengths([30.0] * 3))
         return frame, tip3p
 
     def test_long_range_coulomb_is_pme_at_the_force_field_cutoff(self, boxed_water):

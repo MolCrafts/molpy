@@ -102,7 +102,8 @@ def _frame_times(trajectory: Trajectory) -> np.ndarray:
     if trajectory.time is not None:
         return np.asarray(trajectory.time, dtype=np.float64)
     times = []
-    for i, frame in enumerate(trajectory):
+    for i in range(len(trajectory)):
+        frame = trajectory[i]
         if _TIME not in frame.meta:
             raise ValueError(
                 f"TimeIntervalStrategy: the trajectory has no time array and "

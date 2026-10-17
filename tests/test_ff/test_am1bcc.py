@@ -10,6 +10,8 @@ antechamber ``-c bcc``'s charges is checked against the real programs in
 
 from __future__ import annotations
 
+from molrs.core import Element
+
 import shutil
 import subprocess
 from pathlib import Path
@@ -27,7 +29,7 @@ AM1 = [-0.254, -0.024, -0.327, 0.084, 0.088, 0.073, 0.104, 0.061, 0.195]
 
 
 def _ethanol() -> mp.Atomistic:
-    mol = mp.io.smiles.SmilesIr("CCO").to_atomistic()
+    mol = mp.io.smiles.SmilesIr.parse("CCO").to_atomistic()
     return mp.conformer.Conformer(add_hydrogens=True, seed=42).generate(mol)[0]
 
 
@@ -108,7 +110,9 @@ def test_net_charge_is_the_sum_of_formal_charges(ac, tmp_path):
 def test_an_ac_in_another_atom_order_raises(TEST_DATA_DIR, tmp_path):
     mol = mp.Atomistic()
     for index, element in enumerate(["O", "C", "C", *["H"] * 6]):
-        mol.def_atom(element=element, x=float(index), y=0.0, z=0.0)
+        mol.add_atom(
+            atomic_number=Element.by_symbol(element).z, x=float(index), y=0.0, z=0.0
+        )
     first, second = _faked(_FakeAntechamber(TEST_DATA_DIR / "ac" / "ethanol_am1.ac"))
     with first, second, pytest.raises(ValueError, match="reordered or dropped"):
         Am1BccModel(parameter_set="bcc", work_dir=tmp_path).am1(mol)

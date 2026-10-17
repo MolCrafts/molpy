@@ -383,9 +383,9 @@ def test_every_deck_names_its_runnable_input(tmp_path, water, tip3p):
     tip3p.def_style("angle", "harmonic").def_type(
         "HW-OW-HW", hw, ow, hw, k=55.0, theta0=104.52
     )
-    water.def_angle(h1, o, h2, type="HW-OW-HW")
+    water.add_angle(h1, o, h2, type="HW-OW-HW")
     frame = water.to_frame()
-    frame.box = mp.Box.cube(30.0)
+    frame.box = mp.Box(mp.core.Cell.lengths([30.0] * 3))
     for engine_cls in (LammpsEngine, GromacsEngine, OpenmmEngine):
         out = tmp_path / engine_cls.tool
         paths = engine_cls(check_executable=False).generate_inputs(frame, tip3p, out)

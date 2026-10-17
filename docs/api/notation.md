@@ -2,7 +2,7 @@
 
 Chemical string notation, parsed by the native core. Three notations are supported —
 SMILES, CGsmiles and SMARTS — and each is reached through a **type**; the reader
-functions are `mp.io.read_smiles_str` and `mp.io.read_cgsmiles_str`, a whole molecule straight to a graph. Every notation type is a native type in the molpy module that mirrors
+entry points are `SmilesIr.parse(text)` and `CgSmilesIr.parse(text)`. Every notation type mirrors
 its molrs owner — SMILES in `mp.io.smiles` (`mp.io.smiles.SmilesIr`), CGsmiles in
 `mp.io.cgsmiles` (`mp.io.cgsmiles.CgSmilesIr`),
 SMARTS in `mp.perceive` (`mp.perceive.SmartsPattern`).
@@ -11,11 +11,10 @@ SMARTS in `mp.perceive` (`mp.perceive.SmartsPattern`).
 
 | Expression | Input | Output | Use when |
 |------------|-------|--------|----------|
-| `mp.io.read_smiles_str(s)` | SMILES | `Atomistic` | One molecule (a `.`-separated set is refused) |
-| `mp.io.smiles.SmilesIr(s).to_atomistic()` | SMILES | `Atomistic` | Any SMILES (several components: one disconnected graph) |
-| `mp.io.smiles.SmilesIr(s)` | SMILES | `SmilesIr` | Inspect before converting |
-| `mp.io.smiles.SmilesIr(s).n_components` | SMILES | `int` | How many molecules the string names |
-| `mp.io.smiles.SmilesIr(s).components()` | dot-separated SMILES | `list[Atomistic]` | One graph per component (`[Li+].[F-]`) |
+| `mp.io.smiles.SmilesIr.parse(s).to_atomistic()` | SMILES | `Atomistic` | One graph; `.`-separated components remain disconnected |
+| `mp.io.smiles.SmilesIr.parse(s)` | SMILES | `SmilesIr` | Inspect before converting |
+| `mp.io.smiles.SmilesIr.parse(s).n_components` | SMILES | `int` | How many molecules the string names |
+| `mp.io.smiles.SmilesIr.parse(s).components()` | dot-separated SMILES | `list[Atomistic]` | One graph per component (`[Li+].[F-]`) |
 | `mp.perceive.SmartsPattern(p)` | SMARTS | `SmartsPattern` | Pattern matching / typification |
 
 ## Canonical example
@@ -23,18 +22,17 @@ SMARTS in `mp.perceive` (`mp.perceive.SmartsPattern`).
 ```python
 import molpy as mp
 
-mol = mp.io.read_smiles_str("CCO") # Atomistic (heavy atoms only)
+mol = mp.io.smiles.SmilesIr.parse("CCO").to_atomistic() # Atomistic (heavy atoms only)
 mol = mp.perceive.add_hydrogens(mol) #... with hydrogens
 
-ions = mp.io.smiles.SmilesIr("[Li+].[F-]").components() # [Atomistic, Atomistic]
+ions = mp.io.smiles.SmilesIr.parse("[Li+].[F-]").components() # [Atomistic, Atomistic]
 
 query = mp.perceive.SmartsPattern("[C;X4][O;H1]") # compiled query
 query.find_matches(mol) # -> list[SmartsMatch]
 ```
 
-A `.`-separated string names a *set* of molecules: `mp.io.read_smiles_str` refuses
-it, `SmilesIr(s).to_atomistic()` returns
-them as one disconnected graph, `components()` one graph each, and
+A `.`-separated string names a set of molecules: `to_atomistic()` returns
+them as one disconnected graph, `components()` returns one graph each, and
 `n_components` says how many there are.
 
 ## Polymer notations
@@ -57,8 +55,6 @@ BigSMILES and G-BigSMILES are not parsed.
 ---
 
 ## Full API
-
-::: molpy.io.read_smiles_str
 
 ::: molpy.io.smiles.SmilesIr
 

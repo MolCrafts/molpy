@@ -83,7 +83,7 @@ rng = np.random.default_rng(0)
 xyz = rng.uniform(0.0, 20.0, size=(400, 3))
 frame = mp.Frame()
 frame["atoms"] = {"x": xyz[:, 0], "y": xyz[:, 1], "z": xyz[:, 2]}
-frame.box = mp.Box.cube(20.0)
+frame.box = mp.Box(mp.core.Cell.lengths([20.0] * 3))
 ```
 
 The constructor holds the window and its resolution — $\pm x_\max \times \pm
@@ -194,7 +194,7 @@ axis = np.stack([np.cos(angle), np.sin(angle), np.zeros(n_rods)], axis=1)
 xyz = np.concatenate([centres + 0.5 * axis, centres - 0.5 * axis])
 rods = mp.Frame()
 rods["atoms"] = {"x": xyz[:, 0], "y": xyz[:, 1], "z": xyz[:, 2]}
-rods.box = mp.Box.cube(20.0)
+rods.box = mp.Box(mp.core.Cell.lengths([20.0] * 3))
 ```
 
 Atoms `0 … 199` are the heads and `200 … 399` the matching tails. Reading the

@@ -51,7 +51,7 @@ eo = conformer.generate(
 )[0]
 assert eo.n_ports == 2
 
-sites = mp.io.cgsmiles.CgSmilesIr("{[#EO]|5}").to_coarsegrain()
+sites = mp.io.cgsmiles.CgSmilesIr.parse("{[#EO]|5}").to_coarsegrain()
 assembler = mp.builder.Assembler({"EO": eo}, mp.builder.GrowthPlacer())
 chain = assembler.assemble(sites, mp.Atomistic)
 
@@ -161,7 +161,7 @@ fm3m = SpaceGroup.from_generators(
 )
 assert fm3m.order == 192
 salt = Lattice.from_spacegroup(
-    mp.Box.cube(5.64),
+    mp.Box(mp.core.Cell.lengths([5.64] * 3)),
     [Site("Na1", "Na", (0.0, 0.0, 0.0)), Site("Cl1", "Cl", (0.5, 0.5, 0.5))],
     fm3m,
 )
@@ -193,7 +193,7 @@ planner = SystemPlanner(
 plan = planner.plan_system(np.random.default_rng(42))
 chains = [
     assembler.assemble(
-        mp.io.cgsmiles.CgSmilesIr(
+        mp.io.cgsmiles.CgSmilesIr.parse(
             "{" + "".join(f"[#{m}]" for m in chain.monomers) + "}"
         ).to_coarsegrain(),
         mp.Atomistic,

@@ -46,7 +46,7 @@ def _ct_dimer() -> mp.Frame:
             "bonds": {"atomi": [0], "atomj": [1], "type": ["CT-CT"]},
         }
     )
-    frame.box = mp.Box.cube(10.0)
+    frame.box = mp.Box(mp.core.Cell.lengths([10.0] * 3))
     return frame
 
 
@@ -138,7 +138,7 @@ def test_relaxation_styles_come_from_the_molrs_include(tmp_path, monkeypatch):
             "bonds": {"atomi": [0], "atomj": [1], "type": ["CT-CT"]},
         }
     )
-    frame.box = mp.Box.cube(10.0)
+    frame.box = mp.Box(mp.core.Cell.lengths([10.0] * 3))
     seen = {}
 
     def run(script, *, workdir, **_kw):
@@ -201,7 +201,7 @@ def test_relaxation_runs_with_the_force_field_special_bonds(tmp_path, monkeypatc
             "bonds": {"atomi": [0], "atomj": [1], "type": ["CT-CT"]},
         }
     )
-    frame.box = mp.Box.cube(30.0)
+    frame.box = mp.Box(mp.core.Cell.lengths([30.0] * 3))
     # A singleton run: inside a Slurm step, MPI must not join the step's PMI.
     for key in [
         k for k in os.environ if k.startswith(("PMI", "PMIX", "SLURM", "OMPI"))
@@ -227,7 +227,7 @@ def _frame(ids, x):
         "z": np.zeros(len(ids)),
         "type": np.array(["A"] * len(ids)),
     }
-    frame.box = mp.Box.cube(10.0)
+    frame.box = mp.Box(mp.core.Cell.lengths([10.0] * 3))
     return frame
 
 
@@ -238,7 +238,7 @@ def test_splice_matches_relaxed_coordinates_by_id():
     assert out["atoms"]["x"].tolist() == [5.0, 7.0]
     assert list(out["atoms"]["type"]) == ["A", "A"]
     assert original["atoms"]["x"].tolist() == [0.0, 1.0], "input is not mutated"
-    np.testing.assert_allclose(out.box.h, original.box.h)
+    np.testing.assert_allclose(out.box.matrix, original.box.matrix)
 
 
 def test_splice_rejects_a_changed_atom_count():

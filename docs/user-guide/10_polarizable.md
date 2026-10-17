@@ -25,7 +25,7 @@ Every builder follows the same four-step pipeline and exposes one entry point,
 import molpy as mp
 from molpy.builder import DrudeBuilder
 
-struct, _ = mp.conformer.Conformer(seed=42).generate(mp.io.smiles.SmilesIr("CCO").to_atomistic())
+struct, _ = mp.conformer.Conformer(seed=42).generate(mp.io.smiles.SmilesIr.parse("CCO").to_atomistic())
 # DrudeBuilder looks up each atom's CL&P type and splits its charge, so the
 # structure must be typed and charged first (normally by a typifier).
 clp_types = {"C": "CT", "O": "OH", "H": "HC"}
@@ -78,7 +78,7 @@ protocol, a different rule:
 ```python
 from molpy.builder import Tip4pBuilder
 
-water, _ = mp.conformer.Conformer(add_hydrogens=True, seed=1).generate(mp.io.smiles.SmilesIr("O").to_atomistic())
+water, _ = mp.conformer.Conformer(add_hydrogens=True, seed=1).generate(mp.io.smiles.SmilesIr.parse("O").to_atomistic())
 # The M-site carries the oxygen's charge, so the input must already have one.
 for atom in water.atoms:
  atom["charge"] = -0.834 if atom["element"] == "O" else 0.417

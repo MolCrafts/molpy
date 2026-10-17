@@ -65,7 +65,7 @@ from molpy.ff.typifier import AtdTypifier, GaffTypifier
 output_dir = Path("13_output")
 output_dir.mkdir(exist_ok=True)
 
-tfsi = mp.io.smiles.SmilesIr("O=S(=O)(C(F)(F)F)[N-]S(=O)(=O)C(F)(F)F").to_atomistic()
+tfsi = mp.io.smiles.SmilesIr.parse("O=S(=O)(C(F)(F)F)[N-]S(=O)(=O)C(F)(F)F").to_atomistic()
 tfsi = mp.conformer.Conformer(add_hydrogens=False, seed=42).generate(tfsi)[0]
 tfsi = AtdTypifier(parameter_set="gaff2").typify(tfsi)  # GAFF2 atom types
 print(sorted({atom["type"] for atom in tfsi.atoms}))  # ['c3', 'f', 'ne', 'o', 's6', 'sy']
@@ -113,7 +113,7 @@ These were fitted to hydration free energies and are the standard choice for pol
 
 ```python
 li = mp.Atomistic()
-li.def_atom(element="Li", type="Li+", charge=1.0, mass=6.94, x=0.0, y=0.0, z=0.0)
+li.add_atom(element="Li", type="Li+", charge=1.0, mass=6.94, x=0.0, y=0.0, z=0.0)
 
 li_ff = mp.ff.forcefield.ForceField("li", units="real")
 li_type = li_ff.def_style("atom", "full").def_type("Li+", mass=6.94, charge=1.0)
@@ -151,7 +151,7 @@ other architectures. The site graph is only that sequence; it must be one
 linear path.
 
 ```python
-sites = mp.io.cgsmiles.CgSmilesIr("{[#PEO]|10}").to_coarsegrain()
+sites = mp.io.cgsmiles.CgSmilesIr.parse("{[#PEO]|10}").to_coarsegrain()
 ```
 
 ```python
@@ -237,7 +237,7 @@ targets = [
     Target(tfsi.to_frame(), count=10).with_restraint(box),
 ]
 system = GencanPack().with_seed(12345).run(targets, max_loops=200).frame
-system.box = mp.Box.cube(box_size)
+system.box = mp.Box(mp.core.Cell.lengths([box_size] * 3))
 ```
 
 ## The LAMMPS deck sets the cutoff and the long-range solver

@@ -42,11 +42,12 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
 import numpy as np
-from molrs.core import Atomistic
+from molrs.core import Atomistic, Element
 from molrs.ff.charge import BccModel
 from molrs.ff.forcefield import ForceField
 from molrs.ff.typifier import TypeAssignment
-from molrs.io import read_ac, write_frcmod_str
+from molrs.io import read_ac
+from molrs.io.amber import AmberFrcmodWriter
 
 from molpy._ambertools import (
     UNIT,
@@ -146,7 +147,8 @@ class Am1BccModel:
 
         atoms = read_ac(ac)["atoms"]
         expected = [
-            f"{atom.get('element')}{row}" for row, atom in enumerate(mol.atoms, 1)
+            f"{Element.by_number(atom['atomic_number']).symbol}{row}"
+            for row, atom in enumerate(mol.atoms, 1)
         ]
         found = [str(name) for name in atoms["name"]]
         if found != expected:
@@ -337,7 +339,10 @@ class TleapTypifier(AmberTypifier):
                     "TleapTypifier needs AMBER types and charges on every atom"
                 )
         text = input_mol2(graph, rename=True)
-        extra = write_frcmod_str(self.parameters) if self.parameters is not None else ""
+        buffer = bytearray()
+        if self.parameters is not None:
+            AmberFrcmodWriter().write(buffer, self.parameters)
+        extra = buffer.decode("utf-8")
         directory = run_directory(self.work_dir, text, self.parameter_set, extra)
         source = directory / "input.mol2"
         prmtop = directory / f"{UNIT}.prmtop"

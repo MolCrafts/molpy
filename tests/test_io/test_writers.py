@@ -27,31 +27,50 @@ def _forcefield() -> mp.ff.forcefield.ForceField:
 def _system_frame() -> mp.Frame:
     """A c3-c3 dimer: the system itself never uses ``oh`` or ``c3-oh``."""
     mol = Atomistic()
-    a = mol.def_atom(element="C", type="c3", x=0.0, y=0.0, z=0.0, charge=0.0, mol_id=1)
-    b = mol.def_atom(element="C", type="c3", x=1.53, y=0.0, z=0.0, charge=0.0, mol_id=1)
-    mol.def_bond(a, b, type="c3-c3")
+    a = mol.add_atom(
+        atomic_number=6,
+        type="c3",
+        mass=12.011,
+        x=0.0,
+        y=0.0,
+        z=0.0,
+        charge=0.0,
+        mol_id=1,
+    )
+    b = mol.add_atom(
+        atomic_number=6,
+        type="c3",
+        mass=12.011,
+        x=1.53,
+        y=0.0,
+        z=0.0,
+        charge=0.0,
+        mol_id=1,
+    )
+    mol.add_bond(a, b, type="c3-c3")
     frame = mol.to_frame()
-    frame.box = mp.Box.cube(20.0)
+    frame.meta["lammps_type_masses"] = {"oh": 15.999}
+    frame.box = mp.Box(mp.core.Cell.lengths([20.0] * 3))
     return frame
 
 
 def _template() -> BondReactTemplate:
     """c3 + oh → c3-oh: the new bond type exists only in the post template."""
     pre = Atomistic()
-    c_pre = pre.def_atom(
-        element="C", type="c3", x=0.0, y=0.0, z=0.0, charge=0.0, react_id=1
+    c_pre = pre.add_atom(
+        atomic_number=6, type="c3", x=0.0, y=0.0, z=0.0, charge=0.0, react_id=1
     )
-    o_pre = pre.def_atom(
-        element="O", type="oh", x=3.0, y=0.0, z=0.0, charge=0.0, react_id=2
+    o_pre = pre.add_atom(
+        atomic_number=8, type="oh", x=3.0, y=0.0, z=0.0, charge=0.0, react_id=2
     )
     post = Atomistic()
-    c_post = post.def_atom(
-        element="C", type="c3", x=0.0, y=0.0, z=0.0, charge=0.0, react_id=1
+    c_post = post.add_atom(
+        atomic_number=6, type="c3", x=0.0, y=0.0, z=0.0, charge=0.0, react_id=1
     )
-    o_post = post.def_atom(
-        element="O", type="oh", x=1.41, y=0.0, z=0.0, charge=0.0, react_id=2
+    o_post = post.add_atom(
+        atomic_number=8, type="oh", x=1.41, y=0.0, z=0.0, charge=0.0, react_id=2
     )
-    post.def_bond(c_post, o_post, type="c3-oh")
+    post.add_bond(c_post, o_post, type="c3-oh")
     return BondReactTemplate(
         pre=pre,
         post=post,

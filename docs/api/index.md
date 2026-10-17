@@ -26,7 +26,7 @@ its molrs subsystem.
 
 | Operation | Primary symbols | Package |
 |-----------|----------------|---------|
-| Construct a molecule from atoms and bonds | `Atomistic`, `def_atom`, `def_bond` | [Core](core.md) |
+| Construct a molecule from atoms and bonds | `Atomistic`, `add_atom`, `add_bond` | [Core](core.md) |
 | Store tabular molecular data | `Block`, `Frame` | [Core](core.md) |
 | Define a periodic simulation cell | `Box` | [Core](core.md) |
 | Represent a time-ordered frame sequence | `Trajectory` | [Core](core.md) |
@@ -43,7 +43,7 @@ its molrs subsystem.
 | Evaluate bond, angle, and pair potentials | `mp.ff.compile.PotentialCompiler`, `ExplicitTerms`, `mp.ff.potential.Potentials` | [Potential](potential.md) |
 | Register a force-field style or category from Python | `mp.ff.style_registry.StyleDeclaration`, `register_style`, `register_category` | [Potential](potential.md) |
 | Read and write molecular files (PDB, LAMMPS, GRO, …) | `mp.io.read_pdb`, `mp.io.write_lammps_data`, `mp.io.read_openmm_forcefield` | [I/O](io.md) |
-| Store a frame, trajectory or force field as a `*.mrec` record | `mp.io.write_mrec_frame`, `mp.io.read_mrec_trajectory`, `mp.io.read_mrec_forcefield` | [I/O](io.md) |
+| Store a frame, trajectory or force field as a `*.mrec` record | `mp.io.write_mrec`, `mp.io.mrec.MrecReader`, `mp.io.mrec.MrecFile` | [I/O](io.md) |
 | Bridge to a third-party library (in-memory) | `to_rdkit`, `from_rdkit` (optional example) | [Adapter](adapter.md) |
 | Invoke external CLI tools (antechamber, tleap) | `Wrapper`, `AntechamberWrapper` | [Wrapper](wrapper.md) |
 | Plan polydisperse polymer systems | `SystemPlanner`, `PolydisperseChainGenerator`, `SchulzZimmPolydisperse` | [Builder](builder.md) |

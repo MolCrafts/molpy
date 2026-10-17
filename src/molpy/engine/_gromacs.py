@@ -37,9 +37,11 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from molrs.io import write_gro, write_top_system
+from molrs.io import write_gro
+from molrs.io.gromacs import GromacsTopForcefieldWriter
 
 from molpy.engine._engine import Engine
+from molrs.core import Element
 from molpy.engine._nonbonded import is_periodic, nonbonded_of, refuse_box_free
 
 if TYPE_CHECKING:
@@ -267,6 +269,8 @@ class GromacsEngine(Engine):
         """
         if not is_periodic(frame):
             raise refuse_box_free("GROMACS", "the Verlet cutoff scheme (pbc = xyz)")
+        frame = frame.copy()
+        Element.fill_symbols(frame)
         out = Path(output_dir)
         out.mkdir(parents=True, exist_ok=True)
         paths = {
@@ -277,7 +281,7 @@ class GromacsEngine(Engine):
         }
         nonbonded = _nonbonded_mdp(forcefield, coulombtype, rcoulomb, rvdw)
         write_gro(paths["gro"], frame)
-        write_top_system(paths["top"], forcefield, frame)
+        GromacsTopForcefieldWriter().write_system(paths["top"], forcefield, frame)
         paths["input"].write_text(_EM_MDP.format(**nonbonded), encoding="utf-8")
         paths["nvt"].write_text(
             _NVT_MDP.format(temperature=temperature, **nonbonded), encoding="utf-8"

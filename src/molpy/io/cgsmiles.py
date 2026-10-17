@@ -2,7 +2,7 @@
 
 ``CgSmilesIr`` and the records it hands out (``CgGraph``, ``CgNode``,
 ``CgEdge``, ``CgFragmentDef``, ``ResolvedPair``, ``PairEnd``). One molecule
-straight from a CGsmiles string is ``mp.io.read_cgsmiles_str``.
+straight from a CGsmiles string is ``CgSmilesIr.parse(text).to_atomistic()``.
 """
 
 from molrs.io.cgsmiles import *  # noqa: F403

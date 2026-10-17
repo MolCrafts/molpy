@@ -271,7 +271,7 @@ refused rather than averaged:
 ```python
 import molpy as mp
 
-box = mp.Box.cube(10.0)
+box = mp.Box(mp.core.Cell.lengths([10.0] * 3))
 wrapped = walk[:50, :4] + 5.0
 wrapped[25:, 0, 0] -= 10.0              # atom 0 "re-enters" through the far face
 boxes = [box] * len(wrapped)

@@ -1,94 +1,31 @@
 # I/O
 
-Every file reader and writer: structure, trajectory and force-field files,
-SMILES, `*.mrec` records, frame bytes and LAMMPS logs. `mp.io` mirrors
-`molrs.io` by identity (`mp.io.read_pdb is molrs.io.read_pdb`). A file
-factory has one of two shapes: a `read_<fmt>` / `write_<fmt>` function at the
-top of `mp.io`, or a `<Fmt>Reader` / `<Fmt>Writer` class of the format's own
-submodule. A class that belongs to one format lives in that submodule —
-`mp.io.smiles` (`SmilesIr`, `SmilesError`, …), `mp.io.cgsmiles`
-(`CgSmilesIr`, …), `mp.io.lammps` (`LammpsLog`, `LammpsDumpReader`,
-`BondReactTemplate`, …), `mp.io.mrec` (`MrecReader`, `MrecWriter`, …), and
-each trajectory format's reader (`mp.io.pdb.PdbReader`, `mp.io.xyz.XyzReader`,
-`mp.io.gro.GroReader`, `mp.io.dcd.DcdReader`, `mp.io.trr.TrrReader`,
-`mp.io.xtc.XtcReader`). Each is a molpy module mirroring the molrs one; molpy
-adds its metric readers to `mp.io.lammps` and `mp.io.mrec`, and
-`mp.io.mlp_jsonl` holds `MlpJsonlMetricReader`.
+`mp.io` mirrors `molrs.io`. Single-frame formats have `read_<format>(source)`
+and `write_<format>(sink, frame)` functions. Pass a `pathlib.Path` for a file,
+`bytes` or `mp.io.Text(text)` for in-memory input, and a `bytearray` for
+in-memory output. A bare string cannot identify whether it is a path or file
+contents. Multi-frame readers and writers live in their format modules, for
+example `mp.io.lammps.LammpsDumpReader(path)` and
+`mp.io.lammps.LammpsDumpWriter(path)`.
 
-## Quick reference
+| Data | API |
+|------|-----|
+| Structure files | `read_pdb` / `write_pdb`, `read_mol2` / `write_mol2`, `read_gro` / `write_gro`, `read_xyz` / `write_xyz`, `read_lammps_data` / `write_lammps_data`, plus CIF, CUBE, XSF, POSCAR, SDF and AMBER readers |
+| Force fields | `mp.io.lammps.LammpsForcefieldReader` / `LammpsForcefieldWriter`; `mp.io.gromacs.GromacsTopForcefieldReader` / `GromacsTopForcefieldWriter`; corresponding classes in `amber`, `openmm_xml` and `xml` |
+| Trajectories | `<Format>Reader` / `<Format>Writer` in `pdb`, `gro`, `xyz`, `lammps`, `dcd`, `trr` and `xtc` |
+| SMILES and CGsmiles | `mp.io.smiles.SmilesIr.parse(text)`, `mp.io.cgsmiles.CgSmilesIr.parse(text)` |
+| Scientific records | `mp.io.write_mrec(path, frame=..., trajectory=..., forcefield=...)`, `mp.io.mrec.MrecFile(path)`, `mp.io.mrec.MrecReader(path)` |
+| Wire frames | `mp.io.read_wire_frame` / `mp.io.write_wire_frame` |
+| Logs and metrics | `mp.io.read_lammps_log`; molpy's `lammps.LammpsLogMetricReader`, `mrec.MrecMetricReader` and `mlp_jsonl.MlpJsonlMetricReader` |
 
-### Data files
+The format-specific force-field classes use `read(source)` and
+`write(sink, forcefield)`. GROMACS and AMBER readers also expose
+`read_system(source)` for a force field and its typed frame. LAMMPS data
+coefficients are read with `LammpsForcefieldReader().read_data_coeffs(frame)`.
 
-| Function | Format | Direction |
-|----------|--------|-----------|
-| `read_pdb` / `write_pdb` | PDB | read/write |
-| `read_lammps_data` / `write_lammps_data` | LAMMPS data | read/write |
-| `read_lammps_molecule` / `write_lammps_molecule` | LAMMPS molecule template | read/write |
-| `read_gro` / `write_gro` | GROMACS GRO | read/write |
-| `read_mol2` / `write_mol2` | MOL2 | read/write |
-| `read_xyz` / `write_xyz` | XYZ | read/write |
-| `read_xsf` / `write_xsf` | XSF (crystallographic) | read/write |
-| `read_cube` / `write_cube` | Gaussian Cube | read/write |
-| `read_chgcar` | VASP CHGCAR | read |
-| `read_inpcrd` | AMBER inpcrd (optionally into an existing frame) | read |
-| `read_prmtop` | AMBER prmtop (structure) | read |
-| `read_ac` | Antechamber AC | read |
-| `read_smiles_str` / `write_smiles_str` | one molecule from / to SMILES (connectivity only; a `.`-separated set is refused) | read |
-| `read_cgsmiles_str` | one molecule from CGsmiles, its lowest level expanded into atoms (topology only) | read |
-| `smiles.SmilesIr`, `cgsmiles.CgSmilesIr` | SMILES / CGsmiles text (`SmilesIr(s).to_atomistic()`, `.components()`) | parse / emit |
-| `write_lammps_bond_react_system`, `write_lammps_bond_react_map`, `lammps.BondReactTemplate` | LAMMPS `fix bond/react` | write |
-| `read_msgpack_frame_bytes` / `write_msgpack_frame_bytes` | one frame in the wire encoding `mp.stream.Publisher` streams (`"msgpack"` / `"json"`) | read/write |
-
-### Force fields
-
-The files map onto `mp.ff.forcefield.ForceField`, the data model
-`mp.ff.forcefield` owns.
-
-
-| Function | Format | Direction |
-|----------|--------|-----------|
-| `read_xml_forcefield` / `write_xml_forcefield` | Force-field XML: every style one element, in the declared units | read/write (lossless) |
-| `read_openmm_forcefield` / `write_openmm_forcefield` | OpenMM force-field XML (nm, kJ/mol) | read/write |
-| `read_lammps_forcefield` / `write_lammps_forcefield` | LAMMPS `*.ff` include | read/write (engine units ↔ LAMMPS `real`) |
-| `read_lammps_data_coeffs` / `read_lammps_data_coeffs_str` / `write_lammps_data_coeffs_str` | LAMMPS data `* Coeffs` | read (file or text) / write (text) |
-| `read_top_forcefield` / `write_top_forcefield` | GROMACS `.top` / `.itp` directives | read/write |
-| `read_top_system` / `write_top_system` | GROMACS topology: force field + typed frame | read/write |
-| `read_prmtop_forcefield` / `write_frcmod` | AMBER prmtop / frcmod | read / write |
-| `read_prmtop_system` | AMBER prmtop: force field + typed frame (per-pair 1-4 weights in `pairs`) | read |
-
-### Trajectories
-
-| Function | Format | Direction |
-|----------|--------|-----------|
-| `read_lammps_dump_trajectory` / `write_lammps_dump_trajectory` | LAMMPS dump | read (lazy) / write |
-| `write_lammps_dump_local` | LAMMPS dump local (bonds) | write |
-| `read_xyz_trajectory` / `write_xyz_trajectory` | XYZ trajectory | read (lazy) / write |
-| `read_pdb_trajectory` / `write_pdb_trajectory` | Multi-MODEL PDB | read (lazy) / write |
-| `read_gro_trajectory` / `write_gro_trajectory` | Multi-frame GRO | read (lazy) / write |
-| `read_dcd_trajectory` / `write_dcd_trajectory` | DCD | read (lazy) / write |
-| `read_trr_trajectory` / `write_trr_trajectory` | GROMACS TRR | read (lazy) / write |
-| `read_xtc_trajectory` / `write_xtc_trajectory` | GROMACS XTC | read (lazy) / write |
-| `read_mrec_trajectory` / `write_mrec_trajectory` | mrec record | read / write (whole trajectory) |
-| `mrec.MrecReader` | mrec record | read (lazy cursor) |
-| `mrec.MrecWriter` | mrec record | write (append-first) |
-
-Names pair: `read_X` / `write_X` for one frame, `read_X_trajectory` /
-`write_X_trajectory` for a sequence. A `*.mrec` record is read and written
-whole by functions at the top of `mp.io`: one-frame records use `read_mrec_frame` /
-`write_mrec_frame` (snapshot) and `read_mrec_system` / `write_mrec_system`
-(topology); `read_mrec_meta(path)` reads a record's identity document and
-`mrec.section_names(path)` lists what a record holds. A force field rides in
-the `forcefield` section: `write_mrec_frame(..., forcefield=ff)` /
-`write_mrec_system(..., forcefield=ff)` or `write_mrec_forcefield(path, ff)`
-write it, `read_mrec_forcefield(path)` returns a `mrec.ForceFieldSection` (or
-`None`), and `section.to_forcefield()` turns it back into a force
-field.
-
-### Logs
-
-| Function | Format | Direction |
-|----------|--------|-----------|
-| `read_lammps_log` / `read_lammps_log_str` | LAMMPS log (a path / in-memory text) → `lammps.LammpsLog` | read |
+For a record, `MrecFile.sections()` lists its sections and `frame()`,
+`system()`, `meta()` and `forcefield()` read them. `MrecReader` accesses its
+trajectory by index or iteration.
 
 ### Metric readers (molpy's)
 
@@ -116,40 +53,19 @@ Every reader enforces a viewer's request the same way:
   yet parseable); any other malformed line raises `ValueError` with its line
   number.
 
-## Canonical examples
+## Example
 
 ```python
-# docs: skip — reads offline artifact files; I/O unit-tested with fixtures
+from pathlib import Path
 import molpy as mp
 
-# Read/write structure
-frame = mp.io.read_pdb("molecule.pdb")
-mp.io.write_lammps_data("system.data", frame)
+frame = mp.io.read_pdb(Path("molecule.pdb"))
+mp.io.write_pdb(Path("copy.pdb"), frame)
 
-# Read force field (XML or LAMMPS *.ff)
-ff = mp.io.read_openmm_forcefield(mp.resources.get_path("forcefield/tip3p.xml"))
-ff = mp.io.read_lammps_forcefield("system.ff")
-
-# Write the LAMMPS coefficients the frame's type labels use
-mp.io.write_lammps_forcefield("system.ff", ff, frame)
-
-# Read trajectory (lazy)
-traj = mp.io.read_lammps_dump_trajectory("dump.lammpstrj")
-for frame in traj:
-    process(frame)
-
-# Read LAMMPS run output
-log = mp.io.read_lammps_log("log.lammps")
-thermo = log.runs[0].thermo
-print(thermo.columns)
+record = Path("snapshot.mrec")
+mp.io.write_mrec(record, frame=frame)
+restored = mp.io.mrec.MrecFile(record).frame()
 ```
-
-## Related
-
-- [Concepts: Block and Frame](../tutorials/02_block_and_frame.md)
-- [Concepts: Force Field](../tutorials/04_force_field.md)
-
----
 
 ## Full API
 
@@ -167,12 +83,10 @@ print(thermo.columns)
 
 ### mrec (scientific records)
 
-The whole-record functions are at the top of `mp.io`: `read_mrec_frame` /
-`write_mrec_frame`, `read_mrec_system` / `write_mrec_system`, `read_mrec_trajectory`
-/ `write_mrec_trajectory`, `read_mrec_forcefield` / `write_mrec_forcefield`
-and `read_mrec_meta`. `mp.io.mrec` mirrors `molrs.io.mrec`: `MrecReader`,
-`MrecWriter`, `SequenceSchema`, `ForceFieldSection`, `section_names`, `pack_mrec_zip`
-and `validation`, plus molpy's `MrecMetricReader`.
+`mp.io.write_mrec(path, frame=..., system=..., trajectory=..., forcefield=...)`
+writes a record. `mp.io.mrec.MrecFile(path)` reads its `sections()`, `meta()`,
+`frame()`, `system()` and `forcefield()`. `mp.io.mrec.MrecReader(path)` reads
+trajectory frames lazily.
 
 ### Metric readers
 

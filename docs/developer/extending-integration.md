@@ -102,7 +102,7 @@ def from_ase(atoms: ase.Atoms) -> Atomistic:
     """New ``Atomistic`` from ``atoms``; the input is not touched."""
     out = Atomistic()
     for atom in atoms:
-        out.def_atom(element=atom.symbol, **dict(zip(_XYZ, map(float, atom.position))))
+        out.add_atom(element=atom.symbol, **dict(zip(_XYZ, map(float, atom.position))))
     return out
 ```
 

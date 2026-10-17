@@ -37,14 +37,14 @@ Start empty, then add atoms and bonds. Properties are free-form keywords —
 import molpy as mp
 
 mol = mp.Atomistic(name="ethanol")
-c1 = mol.def_atom(element="C", name="C1", x=0.0, y=0.0, z=0.0)
-c2 = mol.def_atom(element="C", name="C2", x=1.54, y=0.0, z=0.0)
-o = mol.def_atom(element="O", name="O1", x=2.0, y=1.4, z=0.0)
-h_o = mol.def_atom(element="H", name="HO", x=2.9, y=1.4, z=0.0)
+c1 = mol.add_atom(atomic_number=6, name="C1", x=0.0, y=0.0, z=0.0)
+c2 = mol.add_atom(atomic_number=6, name="C2", x=1.54, y=0.0, z=0.0)
+o = mol.add_atom(atomic_number=8, name="O1", x=2.0, y=1.4, z=0.0)
+h_o = mol.add_atom(atomic_number=1, name="HO", x=2.9, y=1.4, z=0.0)
 
-mol.def_bond(c1, c2, order=1)
-mol.def_bond(c2, o, order=1)
-mol.def_bond(o, h_o, order=1)
+mol.add_bond(c1, c2, order=1)
+mol.add_bond(c2, o, order=1)
+mol.add_bond(o, h_o, order=1)
 print(f"{len(mol.atoms)} atoms, {len(mol.bonds)} bonds")
 # -> 4 atoms, 3 bonds
 ```
@@ -97,11 +97,11 @@ the molecule). If the bond graph changes later, call `generate_topology` again.
 
 ```python
 propane = mp.Atomistic(name="propane")
-ca = propane.def_atom(element="C", name="C1", x=0.0, y=0.0, z=0.0)
-cb = propane.def_atom(element="C", name="C2", x=1.54, y=0.0, z=0.0)
-cc = propane.def_atom(element="C", name="C3", x=3.08, y=0.0, z=0.0)
-propane.def_bond(ca, cb)
-propane.def_bond(cb, cc)
+ca = propane.add_atom(atomic_number=6, name="C1", x=0.0, y=0.0, z=0.0)
+cb = propane.add_atom(atomic_number=6, name="C2", x=1.54, y=0.0, z=0.0)
+cc = propane.add_atom(atomic_number=6, name="C3", x=3.08, y=0.0, z=0.0)
+propane.add_bond(ca, cb)
+propane.add_bond(cb, cc)
 
 print(len(propane.angles), len(propane.dihedrals))
 # -> 0 0
@@ -133,21 +133,22 @@ place (it returns the old-to-new handle map); many copies are repeated merges of
 translated copies.
 
 ```python
+from copy import copy
 water = mp.Atomistic(name="water")
-ow = water.def_atom(element="O", x=0.0, y=0.0, z=0.0)
-h1 = water.def_atom(element="H", x=0.957, y=0.0, z=0.0)
-h2 = water.def_atom(element="H", x=-0.239, y=0.927, z=0.0)
-water.def_bond(ow, h1)
-water.def_bond(ow, h2)
+ow = water.add_atom(atomic_number=8, x=0.0, y=0.0, z=0.0)
+h1 = water.add_atom(atomic_number=1, x=0.957, y=0.0, z=0.0)
+h2 = water.add_atom(atomic_number=1, x=-0.239, y=0.927, z=0.0)
+water.add_bond(ow, h1)
+water.add_bond(ow, h2)
 
-two = water.copy()
-two.merge(water.copy().translate([5.0, 0.0, 0.0]))
+two = copy(water)
+two.merge(copy(water).translate([5.0, 0.0, 0.0]))
 print(len(two.atoms), len(two.bonds))
 # -> 6 4
 
 row = mp.Atomistic(name="row")
 for i in range(4):
-    row.merge(water.copy().translate([i * 4.0, 0.0, 0.0]))
+    row.merge(copy(water).translate([i * 4.0, 0.0, 0.0]))
 print(len(row.atoms))
 # -> 12
 ```

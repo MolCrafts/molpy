@@ -59,7 +59,7 @@ water = mp.Frame(
         "angles": {"atomi": [1], "atomj": [0], "atomk": [2], "type": ["HW-OW-HW"]},
     }
 )
-water.box = mp.Box.cube(20.0)
+water.box = mp.Box(mp.core.Cell.lengths([20.0] * 3))
 
 ff = mp.ff.forcefield.ForceField("tip3p", units="real")
 atoms = ff.def_style("atom", "full")
@@ -155,7 +155,7 @@ rng = np.random.default_rng(0)
 xyz = rng.uniform(0.0, 20.0, size=(200, 3))
 frame = mp.Frame()
 frame["atoms"] = {"x": xyz[:, 0], "y": xyz[:, 1], "z": xyz[:, 2]}
-frame.box = mp.Box.cube(20.0)
+frame.box = mp.Box(mp.core.Cell.lengths([20.0] * 3))
 ```
 
 ```python

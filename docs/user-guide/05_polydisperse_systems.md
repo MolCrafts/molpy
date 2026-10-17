@@ -286,7 +286,7 @@ n_chains = 5  # a few chains for this guide; use len(sz_chains) for a production
 atomistic_chains = []
 for chain in sz_chains[:n_chains]:
     notation = "{[#HEAD]" + "".join(f"[#{m}]" for m in chain.monomers) + "[#TAIL]}"
-    sites = mp.io.cgsmiles.CgSmilesIr(notation).to_coarsegrain()
+    sites = mp.io.cgsmiles.CgSmilesIr.parse(notation).to_coarsegrain()
     atomistic_chains.append(assembler.assemble(sites, mp.Atomistic))
 
 for chain, built in zip(sz_chains, atomistic_chains):
@@ -352,7 +352,7 @@ for chain in typed_chains:
         .with_atom_radius(template.hydrogens, 0.2)  # H relaxes away in early MD
     )
 packed = GencanPack().with_seed(42).run(targets, max_loops=200).frame  # carries mol_id
-packed.box = mp.Box.cube(box_length)
+packed.box = mp.Box(mp.core.Cell.lengths([box_length] * 3))
 
 # the pair cutoff is a run setting: you declare it, molpy never invents one
 ff.get_style("pair", "lj/cut")["cutoff"] = 10.0
