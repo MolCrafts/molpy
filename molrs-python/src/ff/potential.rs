@@ -560,7 +560,6 @@ impl Potential for SubclassPotential {
 /// which kernel is which and how its close neighbours are scaled — because
 /// `PotentialCompiler::compile_typed` decided it. Anything else is one member
 /// that scales nothing.
-#[allow(dead_code)]
 pub(crate) type Members = Vec<(ForceTerm, molrs::ff::potential::SpecialWeights)>;
 
 /// Move the Rust potential out of any exposed potential class.
@@ -568,7 +567,6 @@ pub(crate) type Members = Vec<(ForceTerm, molrs::ff::potential::SpecialWeights)>
 /// Arm order is a hard invariant: concrete Rust types first, duck-typed
 /// fallback last. Putting the fallback first would wrap every `Potentials`
 /// as a Python dispatch object.
-#[allow(dead_code)]
 pub(crate) fn take_members(obj: &Bound<'_, PyAny>) -> PyResult<(Members, Vec<ErrSlot>)> {
     if let Ok(typed) = obj.cast::<PyWeightedTerms>() {
         let members = typed.borrow_mut().members.take().ok_or_else(|| {

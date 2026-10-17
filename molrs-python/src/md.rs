@@ -4,7 +4,7 @@
 use crate::array::ArrayArg2;
 use crate::core::frame::PyFrame;
 use crate::error::ffi_error_to_pyerr;
-use crate::ff::potential::PyPairLjCut;
+use crate::ff::potential::{ErrSlot, take_err, take_members};
 use molrs::md::{
     FfEvaluator, FixLangevin, MD, MaxwellBoltzmann, MdError, NeighborList, TimestepProvider,
     VelocityVerlet,
@@ -155,13 +155,17 @@ impl PyNeighborList {
 #[pyclass(name = "MD", module = "molrs.md", unsendable, subclass)]
 pub struct PyMD {
     inner: MD,
+    err_slots: Vec<ErrSlot>,
 }
 
 #[pymethods]
 impl PyMD {
     #[new]
     fn new() -> Self {
-        Self { inner: MD::new() }
+        Self {
+            inner: MD::new(),
+            err_slots: Vec::new(),
+        }
     }
 
     fn set_integrator(&mut self, integrator: &PyVelocityVerlet) -> PyResult<()> {
@@ -180,15 +184,13 @@ impl PyMD {
         self.inner.set_neighbor(list).map_err(md_err)
     }
 
-    /// Mount a `PairLjCut`. It reads the neighbour list published at `neighbor`.
+    /// Mount a `PairLjCut`, a compiled `Potentials` / `WeightedTerms`, or an
+    /// object with `evaluate(pos) -> (energy, forces)`.
     fn set_evaluator(&mut self, potential: &Bound<'_, PyAny>) -> PyResult<()> {
-        let lj = potential.cast::<PyPairLjCut>().map_err(|_| {
-            PyTypeError::new_err(
-                "set_evaluator expects a PairLjCut; a second force term uses on(Phase.force)",
-            )
-        })?;
+        let (members, slots) = take_members(potential)?;
+        self.err_slots = slots;
         self.inner
-            .set_evaluator(FfEvaluator::pair(lj.borrow().inner.clone()))
+            .set_evaluator(FfEvaluator::from_members(members))
             .map_err(md_err)
     }
 
@@ -199,7 +201,8 @@ impl PyMD {
             .inner
             .with_mut(|f| self.inner.run(f, n_steps))
             .map_err(ffi_error_to_pyerr)?
-            .map_err(md_err)
+            .map_err(md_err)?;
+        take_err(&self.err_slots)
     }
 }
 

@@ -17,11 +17,12 @@ use super::error::MdError;
 use super::phase::Phase;
 use super::scratch::Scratch;
 
-/// One potential term. Several of these may be mounted; each adds into the
-/// forces and `meta["energy"]` that the pre-force clear left at zero.
+/// One or more potential terms mounted as a single `force` component.
+///
+/// Each term adds into the forces and `meta["energy"]` that the pre-force
+/// clear left at zero.
 pub struct FfEvaluator {
-    term: ForceTerm,
-    special: SpecialWeights,
+    members: Vec<(ForceTerm, SpecialWeights)>,
     factors: Vec<F>,
     buf: Vec<F>,
 }
@@ -43,21 +44,31 @@ impl FfEvaluator {
     }
 
     pub(crate) fn from_term(term: ForceTerm) -> Self {
+        Self::from_members(vec![(term, SpecialWeights::default())])
+    }
+
+    /// Several terms, each with the weights on its close neighbours.
+    pub fn from_members(members: Vec<(ForceTerm, SpecialWeights)>) -> Self {
         Self {
-            term,
-            special: SpecialWeights::default(),
+            members,
             factors: Vec::new(),
             buf: Vec::new(),
         }
     }
 
     pub(crate) fn flags(&self) -> Flags {
-        let pair = matches!(self.term, ForceTerm::Pair(_));
-        let frozen = self.term.binds_a_fixed_pair_list();
+        let consumes_neighbors = self
+            .members
+            .iter()
+            .any(|(term, _)| matches!(term, ForceTerm::Pair(_)) && !term.binds_a_fixed_pair_list());
+        let frozen_pairs = self
+            .members
+            .iter()
+            .any(|(term, _)| term.binds_a_fixed_pair_list());
         Flags {
             kind: Kind::Evaluator,
-            consumes_neighbors: pair && !frozen,
-            frozen_pairs: frozen,
+            consumes_neighbors,
+            frozen_pairs,
             dt: None,
         }
     }
@@ -106,31 +117,34 @@ impl Component for FfEvaluator {
         self.buf.clear();
         self.buf.resize(n * 3, 0.0);
         let flat: Vec<F> = pos.iter().copied().collect();
-        let energy = match &mut self.term {
-            ForceTerm::Pair(pot) => {
-                let Some(pairs) = scratch.pairs.as_ref() else {
-                    return Err(MdError::Invalid(
-                        "pair evaluator ran with no neighbour list published this step; \
-                         mount one with set_neighbor"
-                            .into(),
-                    ));
-                };
-                let factors = self.special.factors_for(pairs, n, &[], &mut self.factors);
-                let mut acc = Accumulator::adding_into(&mut self.buf);
-                pot.evaluate_pairs(&flat, pairs, factors, &mut acc);
-                acc.energy()
-            }
-            ForceTerm::Indexed(pot) => {
-                let mut acc = Accumulator::adding_into(&mut self.buf);
-                pot.evaluate(&flat, &mut acc);
-                acc.energy()
-            }
-            ForceTerm::Plain(pot) => {
-                let mut acc = Accumulator::adding_into(&mut self.buf);
-                pot.evaluate(&flat, &mut acc);
-                acc.energy()
-            }
-        };
+        let mut energy = 0.0;
+        for (term, special) in &mut self.members {
+            energy += match term {
+                ForceTerm::Pair(pot) => {
+                    let Some(pairs) = scratch.pairs.as_ref() else {
+                        return Err(MdError::Invalid(
+                            "pair evaluator ran with no neighbour list published this step; \
+                             mount one with set_neighbor"
+                                .into(),
+                        ));
+                    };
+                    let factors = special.factors_for(pairs, n, &[], &mut self.factors);
+                    let mut acc = Accumulator::adding_into(&mut self.buf);
+                    pot.evaluate_pairs(&flat, pairs, factors, &mut acc);
+                    acc.energy()
+                }
+                ForceTerm::Indexed(pot) => {
+                    let mut acc = Accumulator::adding_into(&mut self.buf);
+                    pot.evaluate(&flat, &mut acc);
+                    acc.energy()
+                }
+                ForceTerm::Plain(pot) => {
+                    let mut acc = Accumulator::adding_into(&mut self.buf);
+                    pot.evaluate(&flat, &mut acc);
+                    acc.energy()
+                }
+            };
+        }
         self.add_onto_frame(frame, energy)
     }
 }

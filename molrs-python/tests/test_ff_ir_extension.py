@@ -482,16 +482,29 @@ def test_fene_is_lammps_bond_style_fene() -> None:
 
 def typed_energy_forces(ff: molrs.ff.forcefield.ForceField, f: molrs.core.Frame,
                         xyz: np.ndarray) -> tuple[float, np.ndarray]:
-    """The neighbour-driven door: ``compile_typed`` moved into an integrator
-    over a neighbour list past every pair, and its first force call."""
-    from molrs.md import VelocityVerlet
+    """The neighbour-driven door: ``compile_typed`` mounted on ``MD`` over a
+    neighbour list past every pair, and the setup force call."""
+    from molrs.md import MD, NeighborList, VelocityVerlet
 
-    box = molrs.core.Box(molrs.core.Cell.lengths([100.0] * 3), origin=np.full(3, -50.0), pbc=np.ones(3, dtype=bool))
-    skin = molrs.core.VerletSkin(molrs.core.NeighborList(30.0), 29.0, xyz, box, skin=1.0)
-    vv = VelocityVerlet(1.0, potential=molrs.ff.compile.PotentialCompiler(ff).compile_typed(f),
-                        neighbors=skin, mass=np.ones(len(xyz)))
-    state = vv.initial(xyz, np.zeros_like(xyz))
-    return float(state.energy), np.asarray(state.forces)
+    work = f.copy()
+    atoms = work["atoms"]
+    for axis, key in enumerate("xyz"):
+        atoms[key] = np.ascontiguousarray(xyz[:, axis])
+    for key in ("vx", "vy", "vz"):
+        atoms[key] = np.zeros(len(xyz))
+    atoms["mass"] = np.ones(len(xyz))
+    work.box = molrs.core.Box(
+        molrs.core.Cell.lengths([100.0] * 3),
+        origin=np.full(3, -50.0),
+        pbc=np.ones(3, dtype=bool),
+    )
+    sim = MD()
+    sim.set_integrator(VelocityVerlet(1.0))
+    sim.set_neighbor(NeighborList(29.0, 1.0))
+    sim.set_evaluator(molrs.ff.compile.PotentialCompiler(ff).compile_typed(f))
+    sim.run(work, 0)
+    forces = np.column_stack([np.asarray(work["atoms"][key]) for key in ("fx", "fy", "fz")])
+    return float(work.meta["energy"]), forces
 
 
 def test_a_python_pair_style_is_lammps_lj_smooth_linear_at_both_doors() -> None:
