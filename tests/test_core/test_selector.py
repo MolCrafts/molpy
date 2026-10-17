@@ -141,3 +141,21 @@ class TestComposition:
         assert (near & carbon).mask(block).tolist() == [True, False, False, False]
         assert (near | carbon).mask(block).tolist() == [True, True, True, False]
         assert (carbon | near)(block)["id"].tolist() == [1, 2, 3]
+
+
+def test_nullable_values_do_not_match_fill_values():
+    import numpy as np
+    from molpy.core import Block, ColumnSelector
+
+    block = Block({"foo": np.array([0, 0], dtype=np.int32)})
+    block.set_validity("foo", [False, True])
+    assert ColumnSelector(0, column="foo").mask(block).tolist() == [False, True]
+
+
+def test_unsigned_indices_cannot_wrap_to_negative():
+    import numpy as np
+    import pytest
+    from molpy.core import AtomIndexSelector
+
+    with pytest.raises(ValueError, match="range"):
+        AtomIndexSelector(np.array([2**64 - 1], dtype=np.uint64))

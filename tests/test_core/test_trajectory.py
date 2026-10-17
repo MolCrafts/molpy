@@ -175,3 +175,16 @@ class TestTrajectorySplitter:
             CustomStrategy(lambda traj: np.array([0, 4, 10]))
         )
         assert [len(seg) for seg in segments] == [4, 6]
+
+
+def test_time_bins_reject_nonfinite_values():
+    import numpy as np
+    import pytest
+    from molpy.core import Frame, Trajectory, TimeIntervalStrategy
+
+    for interval in [np.nan, np.inf, -np.inf]:
+        with pytest.raises(ValueError):
+            TimeIntervalStrategy(interval)
+    trajectory = Trajectory([Frame(), Frame()], time=np.array([0.0, np.nan]))
+    with pytest.raises(ValueError, match="finite"):
+        TimeIntervalStrategy(1.0).get_split_indices(trajectory)

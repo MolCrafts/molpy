@@ -73,15 +73,15 @@ class TimeIntervalStrategy(SplitStrategy):
 
     Args:
         interval: Time interval for splitting (same units as the times). Must
-            be positive.
+            be positive and finite.
 
     Raises:
         ValueError: From :meth:`get_split_indices`, if a frame has no time or
-            the times decrease.
+            the times decrease or contain non-finite values.
     """
 
     def __init__(self, interval: float) -> None:
-        if interval <= 0:
+        if not np.isfinite(interval) or interval <= 0:
             raise ValueError(f"Interval must be positive, got {interval}")
         self.interval = interval
 
@@ -90,10 +90,15 @@ class TimeIntervalStrategy(SplitStrategy):
         n = len(times)
         if n == 0:
             return [0]
+        if not np.all(np.isfinite(times)):
+            raise ValueError("TimeIntervalStrategy: frame times must be finite")
         if np.any(np.diff(times) < 0):
             raise ValueError("TimeIntervalStrategy: frame times must not decrease")
-        bins = np.floor((times - times[0]) / self.interval).astype(np.int64)
-        starts = np.flatnonzero(np.diff(bins)) + 1
+        with np.errstate(over="ignore", invalid="ignore"):
+            bins = np.floor((times - times[0]) / self.interval)
+        if not np.all(np.isfinite(bins)):
+            raise ValueError("TimeIntervalStrategy: time bins exceed finite range")
+        starts = np.flatnonzero(bins[1:] != bins[:-1]) + 1
         return [0, *starts.tolist(), n]
 
 

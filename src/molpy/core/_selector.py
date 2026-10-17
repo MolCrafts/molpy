@@ -96,7 +96,8 @@ class ColumnSelector(MaskPredicate):
     The value must have the column's type: ``ColumnSelector(1,
     column=keys.TYPE)`` on a string ``type`` column raises ``TypeError``
     instead of silently selecting nothing. A missing column raises
-    ``KeyError``.
+    ``KeyError``. A null cell never matches its stored fill value. Masks are
+    ordinary booleans, so negating a selector includes those unmatched rows.
 
     Args:
         value: The value to match (a string, integer, float or bool scalar).
@@ -123,7 +124,9 @@ class ColumnSelector(MaskPredicate):
                 f"ColumnSelector: column '{self.column}' holds {data.dtype}, "
                 f"not {type(self.value).__name__} ({self.value!r})"
             )
-        return data == self.value
+        matched = data == self.value
+        validity = block.validity(self.column)
+        return matched if validity is None else matched & validity
 
     def __repr__(self) -> str:
         return f"ColumnSelector({self.value!r}, column={self.column!r})"
@@ -151,10 +154,14 @@ class AtomIndexSelector(MaskPredicate):
             raise TypeError("AtomIndexSelector: indices must be a 1-D integer sequence")
         if array.size and array.min() < 0:
             raise ValueError("AtomIndexSelector: row indices must be non-negative")
+        if array.size and int(array.max()) > np.iinfo(np.int64).max:
+            raise ValueError("AtomIndexSelector: row index exceeds int64 range")
         self.indices = np.unique(array.astype(np.int64))
 
     def _check(self, block: "Block") -> None:
-        if self.indices.size and self.indices[-1] >= block.n_rows:
+        if self.indices.size and (
+            self.indices[0] < 0 or self.indices[-1] >= block.n_rows
+        ):
             raise ValueError(
                 f"AtomIndexSelector: row index {int(self.indices[-1])} out of range "
                 f"(n_rows={block.n_rows})"
