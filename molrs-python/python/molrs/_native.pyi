@@ -110,19 +110,52 @@ class Cell:
     def __reduce__(self) -> tuple[Any, ...]: ...
 
 class Box:
-    """Simulation box with periodic boundary conditions: a :class:`Cell`, an
-    origin and per-axis periodicity."""
+    """Simulation box with periodic boundary conditions: it holds a
+    :class:`Cell`, an origin and per-axis periodicity."""
 
     def __new__(
         cls,
-        cell: Cell,
+        cell: Cell | npt.ArrayLike,
         origin: npt.ArrayLike = ...,
         pbc: npt.ArrayLike = ...,
     ) -> Self:
-        """``Box(cell, origin=(0, 0, 0), pbc=(True, True, True))``.
+        """``Box(cell, origin=(0, 0, 0), pbc=(True, True, True))``; ``cell`` is
+        a :class:`Cell` or the ``(3, 3)`` cell matrix (Å, lattice vectors as
+        columns).
 
         Raises ``ValueError`` for a singular matrix, a non-positive length or
         lengths/angles that describe no cell."""
+    @staticmethod
+    def cube(
+        a: float, origin: npt.ArrayLike = ..., pbc: npt.ArrayLike = ...
+    ) -> Box:
+        """A cubic box of edge ``a`` (Å). Raises ``ValueError`` for a
+        non-positive or non-finite ``a``."""
+    @staticmethod
+    def ortho(
+        lengths: npt.ArrayLike, origin: npt.ArrayLike = ..., pbc: npt.ArrayLike = ...
+    ) -> Box:
+        """An orthorhombic box with edge lengths ``[a, b, c]`` (Å). Raises
+        ``ValueError`` for a non-positive or non-finite length."""
+    @staticmethod
+    def from_lengths_tilts(
+        lengths: npt.ArrayLike,
+        tilts: npt.ArrayLike,
+        origin: npt.ArrayLike = ...,
+        pbc: npt.ArrayLike = ...,
+    ) -> Box:
+        """A restricted-triclinic box from ``[lx, ly, lz]`` and tilts
+        ``[xy, xz, yz]`` (Å), the LAMMPS form."""
+    @staticmethod
+    def from_lengths_angles(
+        lengths: npt.ArrayLike,
+        angles: npt.ArrayLike,
+        origin: npt.ArrayLike = ...,
+        pbc: npt.ArrayLike = ...,
+    ) -> Box:
+        """A restricted-triclinic box from ``[a, b, c]`` (Å) and
+        ``[alpha, beta, gamma]`` (degrees). Raises ``ValueError`` for angles
+        that describe no cell."""
     @staticmethod
     def bounding(
         points: ArrayF, padding: npt.ArrayLike, pbc: npt.ArrayLike
