@@ -6172,129 +6172,58 @@ class PairLjCut:
 # ---------------------------------------------------------------------------
 
 class md:
-    """The ``_native.md`` submodule (``molrs.md``): NVE/Langevin integrators.
-    MD defines no potential; it integrates an ``PairLjCut``, a ``Potentials``
-    collection, or any object with ``evaluate(pos) -> (energy, forces)``.
+    """The ``_native.md`` submodule (``molrs.md``).
 
-    The engine is unit-agnostic — supply consistent units yourself; take
-    constants from :class:`UnitPreset` (``UnitPreset("real").boltzmann()``).
+    :class:`MD` walks the LAMMPS phase list. Potentials stay in
+    ``molrs.ff.potential``. The engine is unit-agnostic.
     """
 
-    class MdState:
-        """Dynamical state (pos/vel/forces ``(N, 3)`` float64 + potential energy).
+    class Phase:
+        """LAMMPS Verlet phase. Members are the phase names."""
 
-        Fields are settable wholesale (``state.vel = v``; shape-validated).
-        Getters return **copies**, so slice writes (``state.vel[:] = v``) are
-        silently ineffective.
-        """
-
-        def __init__(
-            self, pos: ArrayF, vel: ArrayF, forces: ArrayF, energy: float
-        ) -> None: ...
-        @property
-        def pos(self) -> ArrayF: ...
-        @pos.setter
-        def pos(self, value: ArrayF) -> None: ...
-        @property
-        def vel(self) -> ArrayF: ...
-        @vel.setter
-        def vel(self, value: ArrayF) -> None: ...
-        @property
-        def forces(self) -> ArrayF: ...
-        @forces.setter
-        def forces(self, value: ArrayF) -> None: ...
-        @property
-        def virial(self) -> tuple[float, float, float, float, float, float] | None:
-            """Virial ``Sigma f (x) r`` as ``(xx, yy, zz, xy, xz, yz)``, or ``None``.
-
-            ``None`` means the force provider does not tally one -- not that it
-            is zero. A kernel resolved against a fixed pair list declines, and
-            one member declining makes the whole sum ``None``.
-            """
-        @property
-        def images(self) -> ArrayI32: ...
-        @images.setter
-        def images(self, value: ArrayI32) -> None: ...
-        def pressure(self, kinetic: float, volume: float) -> float | None: ...
-        @property
-        def energy(self) -> float: ...
-        @energy.setter
-        def energy(self, value: float) -> None: ...
+        initial_integrate: Phase
+        post_integrate: Phase
+        pre_exchange: Phase
+        pre_neighbor: Phase
+        neighbor: Phase
+        pre_force: Phase
+        force: Phase
+        post_force: Phase
+        final_integrate: Phase
+        end_of_step: Phase
 
     class VelocityVerlet:
-        """NVE velocity-Verlet. ``potential`` (a ``PairLjCut`` /
-        ``Potentials`` / an object with ``evaluate``) and
-        ``neighbors`` (a ``VerletSkin``) are
-        moved in; the loop feeds fresh pairs to the potential after each
-        rebuild. ``PairLjCut`` requires ``neighbors=``."""
+        """NVE velocity Verlet. ``dt`` only; the frame carries mass and state."""
+
+        def __init__(self, dt: float) -> None: ...
+        @property
+        def dt(self) -> float: ...
+
+    class FixLangevin:
+        """LAMMPS ``fix langevin`` at ``post_force``. ``kb`` is the caller's
+        Boltzmann constant; ``T`` is in that temperature unit."""
 
         def __init__(
-            self,
-            dt: float,
-            *,
-            potential: PairLjCut | Potentials | WeightedTerms | _PotentialLike,
-            neighbors: VerletSkin | None = None,
-            mass: ArrayF,
-            box: Box | None = None,
+            self, t_start: float, t_stop: float, damp: float, dt: float, seed: int, *, kb: float
         ) -> None: ...
         @property
         def dt(self) -> float: ...
-        @property
-        def removed_dof(self) -> int: ...
-        @property
-        def n_edges(self) -> int | None: ...
-        @property
-        def n_rebuilds(self) -> int | None: ...
-        @property
-        def ago(self) -> int | None: ...
-        def initial(self, pos: ArrayF, vel: ArrayF) -> md.MdState: ...
-        def advance(self, state: Any) -> md.MdState: ...
-        def advance_n(self, state: Any, n_steps: int) -> md.MdState: ...
 
-    class Langevin:
-        """BAOAB Langevin; ``kbt`` is an energy in your unit system
-        (``UnitPreset(style).boltzmann() * T``).
+    class NeighborList:
+        """Verlet list mounted at the ``neighbor`` phase. ``cutoff`` and ``skin``
+        are in the frame's length unit. Moved into :meth:`MD.set_neighbor`."""
 
-        ``advance`` draws noise from the internal seeded RNG; ``step`` takes
-        the ``(N, 3)`` Gaussian draw explicitly."""
+        def __init__(self, cutoff: float, skin: float) -> None: ...
 
-        def __init__(
-            self,
-            dt: float,
-            *,
-            gamma: float,
-            kbt: float,
-            potential: PairLjCut | Potentials | WeightedTerms | _PotentialLike,
-            neighbors: VerletSkin | None = None,
-            mass: ArrayF,
-            seed: int = 0,
-            box: Box | None = None,
-        ) -> None: ...
-        @property
-        def dt(self) -> float: ...
-        @property
-        def gamma(self) -> float: ...
-        @property
-        def c1(self) -> float: ...
-        @property
-        def c2(self) -> float: ...
-        @property
-        def sigma(self) -> ArrayF: ...
-        @property
-        def inv_mass(self) -> ArrayF: ...
-        @property
-        def removed_dof(self) -> int: ...
-        @property
-        def n_edges(self) -> int | None: ...
-        @property
-        def n_rebuilds(self) -> int | None: ...
-        @property
-        def ago(self) -> int | None: ...
-        def initial(self, pos: ArrayF, vel: ArrayF) -> md.MdState: ...
-        def step(self, state: Any, noise: ArrayF) -> md.MdState: ...
-        def advance(self, state: Any) -> md.MdState: ...
-        def advance_n(self, state: Any, n_steps: int) -> md.MdState: ...
-        def draw_noise(self, n_atoms: int) -> ArrayF: ...
+    class MD:
+        """Phase driver. :meth:`run` writes the frame it is given."""
+
+        def __init__(self) -> None: ...
+        def set_integrator(self, integrator: VelocityVerlet) -> None: ...
+        def set_thermostat(self, thermostat: FixLangevin) -> None: ...
+        def set_neighbor(self, neighbor: NeighborList) -> None: ...
+        def set_evaluator(self, potential: PairLjCut) -> None: ...
+        def run(self, frame: Frame, n_steps: int) -> None: ...
 
     class MaxwellBoltzmann:
         """Velocity distribution at thermal energy ``kbt`` (optionally COM-free).

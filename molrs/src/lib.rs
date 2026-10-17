@@ -108,13 +108,9 @@ pub mod ff;
 // Geometry optimization; always compiled (its module docs say what needs `ff`).
 pub mod optimize;
 
-/// In-process MD: integrators (velocity-Verlet, Langevin) and force providers.
-/// The energy kernels are not here — they are in [`ff::potential`], consumed
-/// through the one [`ff::potential::Potential`]/[`ff::potential::Potentials`]
-/// seam (the `md` feature therefore enables `ff`). Required pieces go in the
-/// constructor (`VelocityVerlet::new(dt, forces, mass, simbox)`); pair search
-/// is core [`core::VerletSkin`]. Frame/`ForceField` wiring lives
-/// in molpy / molrs-python.
+/// In-process MD. [`md::MD`] walks the LAMMPS phase list. Integrators,
+/// evaluators, and fixes are components mounted on that list. Energy kernels
+/// stay in [`ff::potential`] (the `md` feature enables `ff`).
 #[cfg(feature = "md")]
 pub mod md;
 

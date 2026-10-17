@@ -1,7 +1,6 @@
-//! In-process molecular-dynamics engine: integrators and force providers.
-//! Energy kernels are not part of `md`; they live in
-//! [`crate::ff::potential`] and reach the integrators through a
-//! [`ForceProvider`](crate::md::ForceProvider).
+//! In-process molecular dynamics. [`MD`] walks the LAMMPS phase list and
+//! launches components bound to those phases. Energy kernels live in
+//! [`crate::ff::potential`] and reach the step through [`FfEvaluator`].
 //!
 //! Neighbour lists: [`crate::core::NeighborList`] (`NeighborList`,
 //! `VerletSkin`). Science here:
@@ -49,20 +48,32 @@
 //!
 //! No `bind_*` façades. Compose required pieces in the constructor.
 
+mod columns;
+mod component;
+mod driver;
 mod error;
+mod evaluator;
+mod fix_langevin;
 mod forces;
 mod ghost_topology;
+mod infra;
 mod integrators;
 mod maxwell;
+mod neighbor_list;
+mod phase;
+mod scratch;
 mod state;
+mod verlet;
 
-// No re-exports of `ff` or `core` types here. `PairLjCut`, `PairPotential`,
-// `Potential`, `Potentials` and `Virial` are owned by the modules that define
-// them, and a second public spelling is a second name to keep true — the
-// module doc above says where each lives, which is the pointer a reader needs.
+// The phase driver is the public surface. `forces`, `integrators`, and
+// `state` remain while their callers move onto components; they are not
+// re-exported.
+pub use component::{Barostat, Component, Evaluator, Integrator, Thermostat, TimestepProvider};
+pub use driver::MD;
 pub use error::MdError;
-pub use forces::{ForceProvider, GhostPairs, MicPairs, NeighborStats, SelfPairedForces};
-pub use ghost_topology::BondedLists;
-pub use integrators::{Langevin, VelocityVerlet, uniform_masses};
+pub use evaluator::FfEvaluator;
+pub use fix_langevin::FixLangevin;
 pub use maxwell::MaxwellBoltzmann;
-pub use state::{ForceOutput, MdState};
+pub use neighbor_list::NeighborList;
+pub use phase::Phase;
+pub use verlet::VelocityVerlet;

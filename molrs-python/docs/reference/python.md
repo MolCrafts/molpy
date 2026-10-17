@@ -46,7 +46,7 @@ and the docs build.
 | `molrs.ff.params` | `molrs::ff::params` | `clpol_polarizability` |
 | `molrs.ff.clpol_scaling` | `molrs::ff::clpol_scaling` | `FragmentScaling`, `compute_k_ij`, `scale_lj`, `fragment_table` (the shipped table) |
 | `molrs.optimize` | `molrs::optimize` | `Lbfgs`, `OptimizationReport` |
-| `molrs.md` | `molrs::md` | `VelocityVerlet`, `Langevin`, `MdState`, `MaxwellBoltzmann`, `MdDriver` |
+| `molrs.md` | `molrs::md` | `MD`, `Phase`, `VelocityVerlet`, `FixLangevin`, `NeighborList`, `MaxwellBoltzmann` |
 | `molrs.conformer` | `molrs::conformer` | `Conformer`, `ConformerReport`, `ConformerStageReport` |
 | `molrs.builder` | `molrs::builder` | `GrapheneBuilder`, `CarbonTubeBuilder`, `Assembler` and its placers / orienter, `Coarsener` |
 | `molrs.compute` | `molrs::compute` | one class per compute type, flat; their results; `ComputeSpec`; the `Compute` protocol |

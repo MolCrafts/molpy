@@ -29,8 +29,8 @@ path are the same words:
   (``forcefield``, ``potential``, ``typifier``, ``charge``, ``ir``,
   ``params``, ``clpol_scaling``).
 * :mod:`molrs.optimize` — geometry optimizers.
-* :mod:`molrs.md` — in-process molecular dynamics: the integrators and the
-  ``MdDriver``; it integrates potentials, it defines none.
+* :mod:`molrs.md` — in-process molecular dynamics. :class:`molrs.md.MD` walks
+  the LAMMPS phase list; potentials stay in :mod:`molrs.ff`.
 * :mod:`molrs.conformer` — 3D conformer generation.
 * :mod:`molrs.builder` — structure builders, site-graph assembly,
   coarse-graining.

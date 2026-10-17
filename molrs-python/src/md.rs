@@ -1,27 +1,15 @@
-//! Python bindings for `molrs::md`: the integrators and the `MD` state.
-//!
-//! ```text
-//! VelocityVerlet(dt, potential=lj, neighbors=nl, mass=mass)
-//! VelocityVerlet(dt, potential=potentials, mass=mass)   # ff Potentials / mix
-//! ```
-//!
-//! MD defines no potential. What it integrates is any member
-//! [`take_potential`](crate::ff::potential::take_potential) accepts: `molrs.ff.potential.PairLjCut`, the force-field
-//! `Potentials` collection (e.g. from `molrs.ff.compile.ExplicitTerms`), or a
-//! duck-typed Python object with
-//! `evaluate(pos) -> (energy, forces)`. MD has no unit knowledge. Integrators own the
-//! optional `VerletSkin`.
+//! Python bindings for [`molrs::md`]: the phase driver and the components
+//! it mounts. Potentials stay in `molrs.ff.potential`.
 
-use crate::array::{ArrayArg1, ArrayArg2};
-use crate::core::neighborlist::PyVerletSkin;
-use crate::core::simbox::PyBox;
-use crate::ff::potential::{ErrSlot, Members, PyPairLjCut, check_nx3, take_err, take_members};
-use molrs::core::Virial;
+use crate::array::ArrayArg2;
+use crate::core::frame::PyFrame;
+use crate::error::ffi_error_to_pyerr;
+use crate::ff::potential::PyPairLjCut;
 use molrs::md::{
-    ForceProvider, Langevin, MaxwellBoltzmann, MdError, MdState, MicPairs, SelfPairedForces,
+    FfEvaluator, FixLangevin, MD, MaxwellBoltzmann, MdError, NeighborList, Phase, TimestepProvider,
     VelocityVerlet,
 };
-use molrs::op::{F, I};
+use molrs::op::F;
 use ndarray::Array1;
 use numpy::{IntoPyArray, PyArray2};
 use pyo3::exceptions::{PyTypeError, PyValueError};
@@ -31,86 +19,19 @@ fn md_err(e: MdError) -> PyErr {
     PyValueError::new_err(e.to_string())
 }
 
-/// A Python-side neighbour argument picks the minimum-image provider; the
-/// ghost régime is not bound yet.
-fn provider(
-    members: Members,
-    skin: Option<molrs::core::VerletSkin>,
-) -> PyResult<Box<dyn ForceProvider>> {
-    // `MicPairs` refuses a kernel whose parameters were resolved against a
-    // fixed pair list — it would ignore the neighbour table and answer for the
-    // list it was built from, while the driver went on rebuilding and reporting
-    // that table. `PotentialCompiler.compile` builds exactly such kernels, so
-    // this is the path where that mistake is made, and the error says what to
-    // build instead.
-    Ok(match skin {
-        Some(s) => Box::new(MicPairs::from_members(members, s).map_err(md_err)?),
-        None => {
-            if members.len() != 1 {
-                return Err(PyValueError::new_err(
-                    "several members need a neighbour table to share; pass neighbors=",
-                ));
-            }
-            let (pot, special) = members.into_iter().next().expect("checked above");
-            if !special.is_empty() {
-                return Err(PyValueError::new_err(
-                    "special-bonds weights apply to a pair table; pass neighbors=",
-                ));
-            }
-            Box::new(SelfPairedForces::new(pot))
-        }
-    })
-}
-
-/// The state an integrator advances: an [`MdState`] as is (its accumulated
-/// image flags and all), or any object with `pos`, `vel`, `forces`, `energy`
-/// and `images` attributes.
-///
-/// The image flags are part of the state — `pos + H·images` is the continuous
-/// trajectory — so they are read like every other field. Rebuilding them as
-/// zeros here would make each `advance` restart the count, and the flags
-/// would only ever hold the crossings of the last call.
-fn extract_state(state: &Bound<'_, PyAny>) -> PyResult<MdState> {
-    if let Ok(state) = state.cast::<PyMdState>() {
-        return Ok(state.borrow().inner.clone());
-    }
-    let pos: ArrayArg2<f64> = state.getattr("pos")?.extract()?;
-    let vel: ArrayArg2<f64> = state.getattr("vel")?.extract()?;
-    let forces: ArrayArg2<f64> = state.getattr("forces")?.extract()?;
-    let images: ArrayArg2<I> = state.getattr("images")?.extract()?;
-    let energy: F = state.getattr("energy")?.extract()?;
-    check_nx3(&pos, "pos")?;
-    check_nx3(&vel, "vel")?;
-    check_nx3(&forces, "forces")?;
-    check_images(images.as_array(), pos.as_array().nrows())?;
-    Ok(MdState {
-        images: images.as_array().to_owned(),
-        pos: pos.as_array().to_owned(),
-        vel: vel.as_array().to_owned(),
-        forces: forces.as_array().to_owned(),
-        energy,
-        virial: None,
-    })
-}
-
-fn check_images(images: ndarray::ArrayView2<'_, I>, n_atoms: usize) -> PyResult<()> {
-    if images.ncols() != 3 || images.nrows() != n_atoms {
+fn check_nx3(pos: &ArrayArg2<'_, f64>, what: &str) -> PyResult<()> {
+    let view = pos.as_array();
+    let shape = view.shape();
+    if shape.len() != 2 || shape[1] != 3 {
         return Err(PyValueError::new_err(format!(
-            "images must have shape ({n_atoms}, 3) matching pos, got {:?}",
-            images.shape()
+            "{what} must have shape (N, 3), got {shape:?}"
         )));
     }
     Ok(())
 }
 
-/// Per-atom masses, a 1-D float64 array `(N,)`.
-///
-/// The integrators are built before they see a configuration, so they cannot
-/// broadcast a scalar to `N` atoms; a homogeneous system passes
-/// `np.full(N, m)`. A scalar is refused here rather than read as a one-atom
-/// array that fails later against `N`.
 fn mass_from(mass: &Bound<'_, PyAny>) -> PyResult<Array1<F>> {
-    match mass.extract::<ArrayArg1<f64>>() {
+    match mass.extract::<crate::array::ArrayArg1<f64>>() {
         Ok(arr) => Ok(arr.as_array().to_owned()),
         Err(_) if mass.extract::<F>().is_ok() => Err(PyTypeError::new_err(
             "mass: expected a 1-D float64 array of per-atom masses (N,), got a scalar; \
@@ -123,168 +44,74 @@ fn mass_from(mass: &Bound<'_, PyAny>) -> PyResult<Array1<F>> {
     }
 }
 
-/// Dynamical state advanced by the integrators.
-///
-/// Fields are settable (float64 `(N, 3)` arrays / a float energy) so hooks can
-/// replace them wholesale: `state.vel = new_vel`. Getters return copies —
-/// in-place slice writes (`state.vel[:] = …`) do NOT write through.
-#[pyclass(name = "MdState", module = "molrs.md")]
-pub struct PyMdState {
-    inner: MdState,
+/// LAMMPS Verlet phase names. `Phase.force` is the force accumulation point.
+#[pyclass(
+    eq,
+    eq_int,
+    frozen,
+    hash,
+    name = "Phase",
+    module = "molrs.md",
+    from_py_object
+)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+pub enum PyPhase {
+    #[pyo3(name = "initial_integrate")]
+    InitialIntegrate,
+    #[pyo3(name = "post_integrate")]
+    PostIntegrate,
+    #[pyo3(name = "pre_exchange")]
+    PreExchange,
+    #[pyo3(name = "pre_neighbor")]
+    PreNeighbor,
+    #[pyo3(name = "neighbor")]
+    Neighbor,
+    #[pyo3(name = "pre_force")]
+    PreForce,
+    #[pyo3(name = "force")]
+    Force,
+    #[pyo3(name = "post_force")]
+    PostForce,
+    #[pyo3(name = "final_integrate")]
+    FinalIntegrate,
+    #[pyo3(name = "end_of_step")]
+    EndOfStep,
 }
 
-#[pymethods]
-impl PyMdState {
-    #[new]
-    fn new(
-        pos: ArrayArg2<'_, f64>,
-        vel: ArrayArg2<'_, f64>,
-        forces: ArrayArg2<'_, f64>,
-        energy: F,
-    ) -> PyResult<Self> {
-        check_nx3(&pos, "pos")?;
-        check_nx3(&vel, "vel")?;
-        check_nx3(&forces, "forces")?;
-        Ok(Self {
-            inner: MdState {
-                images: numpy::ndarray::Array2::zeros((pos.as_array().nrows(), 3)),
-                pos: pos.as_array().to_owned(),
-                vel: vel.as_array().to_owned(),
-                forces: forces.as_array().to_owned(),
-                energy,
-                virial: None,
-            },
-        })
-    }
-
-    #[getter]
-    fn pos<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray2<f64>> {
-        self.inner.pos.clone().into_pyarray(py)
-    }
-    #[getter]
-    fn vel<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray2<f64>> {
-        self.inner.vel.clone().into_pyarray(py)
-    }
-    #[getter]
-    fn forces<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray2<f64>> {
-        self.inner.forces.clone().into_pyarray(py)
-    }
-    #[getter]
-    fn energy(&self) -> F {
-        self.inner.energy
-    }
-
-    /// Accumulated box crossings ``(N, 3)``, one signed count per lattice
-    /// vector, as ``int32`` — the schema's integer type for the
-    /// ``ix``/``iy``/``iz`` columns.
-    ///
-    /// A wrapped coordinate on its own has lost the atom's history. `pos +
-    /// H·images` is the continuous position, and mean-squared displacement,
-    /// diffusion and any other path-dependent quantity read that, not `pos`.
-    #[getter]
-    fn images<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray2<I>> {
-        self.inner.images.clone().into_pyarray(py)
-    }
-
-    #[setter]
-    fn set_images(&mut self, value: ArrayArg2<'_, I>) -> PyResult<()> {
-        check_images(value.as_array(), self.inner.pos.nrows())?;
-        self.inner.images = value.as_array().to_owned();
-        Ok(())
-    }
-
-    /// Scalar pressure from the virial, a kinetic energy and a cell volume.
-    ///
-    /// ``None`` when no virial was tallied — not zero. Units are the caller's,
-    /// as everywhere in MD: the result is in whatever `energy / volume` is.
-    fn pressure(&self, kinetic: F, volume: F) -> Option<F> {
-        self.inner.virial.map(|w| w.pressure(kinetic, volume))
-    }
-
-    /// Virial `Σ f ⊗ r` as ``(xx, yy, zz, xy, xz, yz)``, or ``None``.
-    ///
-    /// ``None`` means the force provider does not tally one — not that it is
-    /// zero. A pressure computed from a fabricated zero is wrong and looks
-    /// entirely plausible.
-    #[getter]
-    fn virial(&self) -> Option<[F; 6]> {
-        self.inner.virial.map(|w: Virial| w.components)
-    }
-
-    #[setter]
-    fn set_pos(&mut self, pos: ArrayArg2<'_, f64>) -> PyResult<()> {
-        check_nx3(&pos, "pos")?;
-        self.inner.pos = pos.as_array().to_owned();
-        Ok(())
-    }
-    #[setter]
-    fn set_vel(&mut self, vel: ArrayArg2<'_, f64>) -> PyResult<()> {
-        check_nx3(&vel, "vel")?;
-        self.inner.vel = vel.as_array().to_owned();
-        Ok(())
-    }
-    #[setter]
-    fn set_forces(&mut self, forces: ArrayArg2<'_, f64>) -> PyResult<()> {
-        check_nx3(&forces, "forces")?;
-        self.inner.forces = forces.as_array().to_owned();
-        Ok(())
-    }
-    #[setter]
-    fn set_energy(&mut self, energy: F) {
-        self.inner.energy = energy;
-    }
-
-    fn __repr__(&self) -> String {
-        format!(
-            "MdState(n_atoms={}, energy={})",
-            self.inner.pos.nrows(),
-            self.inner.energy
-        )
+impl PyPhase {
+    fn rust(self) -> Phase {
+        match self {
+            PyPhase::InitialIntegrate => Phase::InitialIntegrate,
+            PyPhase::PostIntegrate => Phase::PostIntegrate,
+            PyPhase::PreExchange => Phase::PreExchange,
+            PyPhase::PreNeighbor => Phase::PreNeighbor,
+            PyPhase::Neighbor => Phase::Neighbor,
+            PyPhase::PreForce => Phase::PreForce,
+            PyPhase::Force => Phase::Force,
+            PyPhase::PostForce => Phase::PostForce,
+            PyPhase::FinalIntegrate => Phase::FinalIntegrate,
+            PyPhase::EndOfStep => Phase::EndOfStep,
+        }
     }
 }
 
-// ---------------------------------------------------------------------------
-// Integrators
-// ---------------------------------------------------------------------------
-
-#[pyclass(name = "VelocityVerlet", module = "molrs.md", subclass)]
+/// NVE velocity Verlet. `dt` only — mass, positions, and velocities are frame columns.
+#[pyclass(
+    name = "VelocityVerlet",
+    module = "molrs.md",
+    subclass,
+    skip_from_py_object
+)]
 pub struct PyVelocityVerlet {
     inner: VelocityVerlet,
-    err_slots: Vec<ErrSlot>,
 }
 
 #[pymethods]
 impl PyVelocityVerlet {
     #[new]
-    #[pyo3(signature = (dt, *, potential, neighbors=None, mass, r#box=None))]
-    fn new(
-        dt: F,
-        potential: &Bound<'_, PyAny>,
-        neighbors: Option<&Bound<'_, PyVerletSkin>>,
-        mass: Bound<'_, PyAny>,
-        r#box: Option<PyBox>,
-    ) -> PyResult<Self> {
-        if potential.cast::<PyPairLjCut>().is_ok() && neighbors.is_none() {
-            return Err(PyValueError::new_err(
-                "an PairLjCut pair kernel needs neighbors= (a VerletSkin)",
-            ));
-        }
-        // Validate mass before moving the potential / neighbour state in.
-        let mass = mass_from(&mass)?;
-        let (members, err_slots) = take_members(potential)?;
-        let skin = match neighbors {
-            Some(nl) => Some(nl.borrow_mut().take()?),
-            None => None,
-        };
+    fn new(dt: F) -> PyResult<Self> {
         Ok(Self {
-            inner: VelocityVerlet::new(
-                dt,
-                provider(members, skin)?,
-                mass.view(),
-                r#box.map(|b| b.inner),
-            )
-            .map_err(md_err)?,
-            err_slots,
+            inner: VelocityVerlet::new(dt).map_err(md_err)?,
         })
     }
 
@@ -292,112 +119,29 @@ impl PyVelocityVerlet {
     fn dt(&self) -> F {
         self.inner.dt()
     }
-
-    #[getter]
-    fn removed_dof(&self) -> usize {
-        self.inner.removed_dof()
-    }
-
-    /// Number of pair edges in the current list (``None`` without neighbors).
-    #[getter]
-    fn n_edges(&self) -> Option<usize> {
-        self.inner.forces().neighbor_stats().edges
-    }
-
-    /// Neighbour-list rebuilds since construction (``None`` without neighbors).
-    #[getter]
-    fn n_rebuilds(&self) -> Option<usize> {
-        self.inner.forces().neighbor_stats().rebuilds
-    }
-
-    /// Updates since the last rebuild (``None`` without neighbors).
-    #[getter]
-    fn ago(&self) -> Option<usize> {
-        self.inner.forces().neighbor_stats().ago
-    }
-
-    fn initial(&mut self, pos: ArrayArg2<'_, f64>, vel: ArrayArg2<'_, f64>) -> PyResult<PyMdState> {
-        check_nx3(&pos, "pos")?;
-        check_nx3(&vel, "vel")?;
-        let result = self
-            .inner
-            .initial(pos.as_array().to_owned(), vel.as_array().to_owned());
-        take_err(&self.err_slots)?;
-        Ok(PyMdState {
-            inner: result.map_err(md_err)?,
-        })
-    }
-
-    fn advance(&mut self, state: &Bound<'_, PyAny>) -> PyResult<PyMdState> {
-        let result = self.inner.advance(extract_state(state)?);
-        take_err(&self.err_slots)?;
-        Ok(PyMdState {
-            inner: result.map_err(md_err)?,
-        })
-    }
-
-    fn advance_n(&mut self, state: &Bound<'_, PyAny>, n_steps: usize) -> PyResult<PyMdState> {
-        let result = self.inner.advance_n(extract_state(state)?, n_steps);
-        take_err(&self.err_slots)?;
-        Ok(PyMdState {
-            inner: result.map_err(md_err)?,
-        })
-    }
 }
 
-#[pyclass(name = "Langevin", module = "molrs.md", subclass)]
-pub struct PyLangevin {
-    inner: Langevin,
-    err_slots: Vec<ErrSlot>,
+/// LAMMPS `fix langevin`, mounted at `post_force`.
+///
+/// `kb` is Boltzmann's constant in the frame's energy unit per kelvin.
+/// The driver does not choose a unit system.
+#[pyclass(
+    name = "FixLangevin",
+    module = "molrs.md",
+    subclass,
+    skip_from_py_object
+)]
+pub struct PyFixLangevin {
+    inner: FixLangevin,
 }
 
 #[pymethods]
-impl PyLangevin {
+impl PyFixLangevin {
     #[new]
-    #[pyo3(signature = (dt, *, gamma, kbt, potential, neighbors=None, mass, seed=0, r#box=None))]
-    #[allow(clippy::too_many_arguments)]
-    fn new(
-        dt: F,
-        gamma: F,
-        kbt: F,
-        potential: &Bound<'_, PyAny>,
-        neighbors: Option<&Bound<'_, PyVerletSkin>>,
-        mass: Bound<'_, PyAny>,
-        seed: u64,
-        r#box: Option<PyBox>,
-    ) -> PyResult<Self> {
-        if potential.cast::<PyPairLjCut>().is_ok() && neighbors.is_none() {
-            return Err(PyValueError::new_err(
-                "an PairLjCut pair kernel needs neighbors= (a VerletSkin)",
-            ));
-        }
-        // Validate the scheme knobs and mass before moving anything in.
-        if gamma <= 0.0 {
-            return Err(PyValueError::new_err(
-                "Langevin requires gamma > 0; use VelocityVerlet for NVE",
-            ));
-        }
-        if kbt <= 0.0 {
-            return Err(PyValueError::new_err("Langevin requires kbt > 0"));
-        }
-        let mass = mass_from(&mass)?;
-        let (members, err_slots) = take_members(potential)?;
-        let skin = match neighbors {
-            Some(nl) => Some(nl.borrow_mut().take()?),
-            None => None,
-        };
+    #[pyo3(signature = (t_start, t_stop, damp, dt, seed, *, kb))]
+    fn new(t_start: F, t_stop: F, damp: F, dt: F, seed: u64, kb: F) -> PyResult<Self> {
         Ok(Self {
-            inner: Langevin::new(
-                dt,
-                gamma,
-                kbt,
-                provider(members, skin)?,
-                mass.view(),
-                seed,
-                r#box.map(|b| b.inner),
-            )
-            .map_err(md_err)?,
-            err_slots,
+            inner: FixLangevin::new(t_start, t_stop, damp, dt, seed, kb).map_err(md_err)?,
         })
     }
 
@@ -405,98 +149,74 @@ impl PyLangevin {
     fn dt(&self) -> F {
         self.inner.dt()
     }
-    #[getter]
-    fn gamma(&self) -> F {
-        self.inner.gamma()
+}
+
+/// Verlet neighbour list mounted at the `neighbor` phase.
+#[pyclass(name = "NeighborList", module = "molrs.md", subclass)]
+pub struct PyNeighborList {
+    inner: Option<NeighborList>,
+}
+
+#[pymethods]
+impl PyNeighborList {
+    #[new]
+    #[pyo3(signature = (cutoff, skin))]
+    fn new(cutoff: F, skin: F) -> PyResult<Self> {
+        Ok(Self {
+            inner: Some(NeighborList::new(cutoff, skin).map_err(md_err)?),
+        })
     }
-    #[getter]
-    fn c1(&self) -> F {
-        self.inner.c1()
-    }
-    #[getter]
-    fn c2(&self) -> F {
-        self.inner.c2()
-    }
-    #[getter]
-    fn sigma<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray2<f64>> {
-        self.inner
-            .sigma()
-            .view()
-            .insert_axis(ndarray::Axis(1))
-            .to_owned()
-            .into_pyarray(py)
-    }
-    #[getter]
-    fn inv_mass<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray2<f64>> {
-        self.inner
-            .inv_mass()
-            .view()
-            .insert_axis(ndarray::Axis(1))
-            .to_owned()
-            .into_pyarray(py)
-    }
-    #[getter]
-    fn removed_dof(&self) -> usize {
-        self.inner.removed_dof()
+}
+
+/// The phase driver. `run` writes the frame it is given.
+#[pyclass(name = "MD", module = "molrs.md", unsendable, subclass)]
+pub struct PyMD {
+    inner: MD,
+}
+
+#[pymethods]
+impl PyMD {
+    #[new]
+    fn new() -> Self {
+        Self { inner: MD::new() }
     }
 
-    /// Number of pair edges in the current list (``None`` without neighbors).
-    #[getter]
-    fn n_edges(&self) -> Option<usize> {
-        self.inner.forces().neighbor_stats().edges
+    fn set_integrator(&mut self, integrator: &PyVelocityVerlet) -> PyResult<()> {
+        self.inner.set_integrator(integrator.inner).map_err(md_err)
     }
 
-    /// Neighbour-list rebuilds since construction (``None`` without neighbors).
-    #[getter]
-    fn n_rebuilds(&self) -> Option<usize> {
-        self.inner.forces().neighbor_stats().rebuilds
+    fn set_thermostat(&mut self, thermostat: &PyFixLangevin) -> PyResult<()> {
+        self.inner.set_thermostat(thermostat.inner).map_err(md_err)
     }
 
-    /// Updates since the last rebuild (``None`` without neighbors).
-    #[getter]
-    fn ago(&self) -> Option<usize> {
-        self.inner.forces().neighbor_stats().ago
-    }
-
-    fn initial(&mut self, pos: ArrayArg2<'_, f64>, vel: ArrayArg2<'_, f64>) -> PyResult<PyMdState> {
-        check_nx3(&pos, "pos")?;
-        check_nx3(&vel, "vel")?;
-        let result = self
+    fn set_neighbor(&mut self, mut neighbor: PyRefMut<'_, PyNeighborList>) -> PyResult<()> {
+        let list = neighbor
             .inner
-            .initial(pos.as_array().to_owned(), vel.as_array().to_owned());
-        take_err(&self.err_slots)?;
-        Ok(PyMdState {
-            inner: result.map_err(md_err)?,
-        })
+            .take()
+            .ok_or_else(|| PyValueError::new_err("NeighborList was already moved into a driver"))?;
+        self.inner.set_neighbor(list).map_err(md_err)
     }
 
-    fn step(&mut self, state: &Bound<'_, PyAny>, noise: ArrayArg2<'_, f64>) -> PyResult<PyMdState> {
-        check_nx3(&noise, "noise")?;
-        let result = self.inner.step(extract_state(state)?, noise.as_array());
-        take_err(&self.err_slots)?;
-        Ok(PyMdState {
-            inner: result.map_err(md_err)?,
-        })
+    /// Mount a `PairLjCut`. It reads the neighbour list published at `neighbor`.
+    fn set_evaluator(&mut self, potential: &Bound<'_, PyAny>) -> PyResult<()> {
+        let lj = potential.cast::<PyPairLjCut>().map_err(|_| {
+            PyTypeError::new_err(
+                "set_evaluator expects a PairLjCut; a second force term uses on(Phase.force)",
+            )
+        })?;
+        self.inner
+            .set_evaluator(FfEvaluator::pair(lj.borrow().inner.clone()))
+            .map_err(md_err)
     }
 
-    fn advance(&mut self, state: &Bound<'_, PyAny>) -> PyResult<PyMdState> {
-        let result = self.inner.advance(extract_state(state)?);
-        take_err(&self.err_slots)?;
-        Ok(PyMdState {
-            inner: result.map_err(md_err)?,
-        })
-    }
-
-    fn advance_n(&mut self, state: &Bound<'_, PyAny>, n_steps: usize) -> PyResult<PyMdState> {
-        let result = self.inner.advance_n(extract_state(state)?, n_steps);
-        take_err(&self.err_slots)?;
-        Ok(PyMdState {
-            inner: result.map_err(md_err)?,
-        })
-    }
-
-    fn draw_noise<'py>(&mut self, py: Python<'py>, n_atoms: usize) -> Bound<'py, PyArray2<f64>> {
-        self.inner.draw_noise(n_atoms).into_pyarray(py)
+    /// Advance `frame` for `n_steps`. Coordinates, velocities, forces, image
+    /// flags, and `meta["energy"]` / `meta["kinetic"]` are written on `frame`.
+    fn run(&mut self, frame: &PyFrame, n_steps: usize) -> PyResult<()> {
+        frame
+            .inner
+            .with_mut(|f| self.inner.run(f, n_steps))
+            .map_err(ffi_error_to_pyerr)?
+            .map_err(md_err)
     }
 }
 
@@ -546,9 +266,11 @@ impl PyMaxwellBoltzmann {
 }
 
 pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    m.add_class::<PyMdState>()?;
+    m.add_class::<PyPhase>()?;
+    m.add_class::<PyMD>()?;
     m.add_class::<PyVelocityVerlet>()?;
-    m.add_class::<PyLangevin>()?;
+    m.add_class::<PyFixLangevin>()?;
+    m.add_class::<PyNeighborList>()?;
     m.add_class::<PyMaxwellBoltzmann>()?;
     Ok(())
 }
