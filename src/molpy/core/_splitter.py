@@ -92,7 +92,7 @@ class TimeIntervalStrategy(SplitStrategy):
             return [0]
         if not np.all(np.isfinite(times)):
             raise ValueError("TimeIntervalStrategy: frame times must be finite")
-        if np.any(np.diff(times) < 0):
+        if np.any(times[1:] < times[:-1]):
             raise ValueError("TimeIntervalStrategy: frame times must not decrease")
         with np.errstate(over="ignore", invalid="ignore"):
             bins = np.floor((times - times[0]) / self.interval)

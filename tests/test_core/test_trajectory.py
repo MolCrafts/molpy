@@ -108,6 +108,22 @@ class TestTimeIntervalStrategy:
         with pytest.raises(ValueError, match="must not decrease"):
             TimeIntervalStrategy(1.0).get_split_indices(traj)
 
+    @pytest.mark.parametrize(
+        "times, message",
+        [
+            ([-1e308, 1e308], "time bins exceed finite range"),
+            ([1e308, -1e308], "must not decrease"),
+        ],
+    )
+    def test_extreme_finite_times_raise_value_error(self, times, message):
+        traj = Trajectory([Frame(), Frame()], time=np.asarray(times))
+        with pytest.raises(ValueError, match=message):
+            TimeIntervalStrategy(1.0).get_split_indices(traj)
+
+    def test_time_bins_above_int64_range_remain_distinct(self):
+        traj = Trajectory([Frame(), Frame(), Frame()], time=np.array([0.0, 1.0, 2.0]))
+        assert TimeIntervalStrategy(1e-20).get_split_indices(traj) == [0, 1, 2, 3]
+
 
 class TestCustomStrategy:
     """Test the CustomStrategy class."""
