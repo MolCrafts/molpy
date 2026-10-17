@@ -1,5 +1,6 @@
 //! Bonded topology through the ghost halo: the bonded index lists of a force
 //! evaluation, resolved against the periodic copies that exist now.
+#![allow(dead_code)]
 
 use ndarray::{Array2, ArrayView2};
 

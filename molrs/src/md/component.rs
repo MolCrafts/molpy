@@ -85,6 +85,8 @@ pub(crate) enum Kind {
     Integrator,
     Evaluator,
     Thermostat,
+    /// Reserved for `set_barostat`. Nothing registers it yet.
+    #[allow(dead_code)]
     Barostat,
     Neighbor,
     /// Infrastructure and user `on(phase).add` components.

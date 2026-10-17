@@ -6,7 +6,7 @@ use crate::core::frame::PyFrame;
 use crate::error::ffi_error_to_pyerr;
 use crate::ff::potential::PyPairLjCut;
 use molrs::md::{
-    FfEvaluator, FixLangevin, MD, MaxwellBoltzmann, MdError, NeighborList, Phase, TimestepProvider,
+    FfEvaluator, FixLangevin, MD, MaxwellBoltzmann, MdError, NeighborList, TimestepProvider,
     VelocityVerlet,
 };
 use molrs::op::F;
@@ -52,7 +52,7 @@ fn mass_from(mass: &Bound<'_, PyAny>) -> PyResult<Array1<F>> {
     hash,
     name = "Phase",
     module = "molrs.md",
-    from_py_object
+    skip_from_py_object
 )]
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub enum PyPhase {
@@ -76,23 +76,6 @@ pub enum PyPhase {
     FinalIntegrate,
     #[pyo3(name = "end_of_step")]
     EndOfStep,
-}
-
-impl PyPhase {
-    fn rust(self) -> Phase {
-        match self {
-            PyPhase::InitialIntegrate => Phase::InitialIntegrate,
-            PyPhase::PostIntegrate => Phase::PostIntegrate,
-            PyPhase::PreExchange => Phase::PreExchange,
-            PyPhase::PreNeighbor => Phase::PreNeighbor,
-            PyPhase::Neighbor => Phase::Neighbor,
-            PyPhase::PreForce => Phase::PreForce,
-            PyPhase::Force => Phase::Force,
-            PyPhase::PostForce => Phase::PostForce,
-            PyPhase::FinalIntegrate => Phase::FinalIntegrate,
-            PyPhase::EndOfStep => Phase::EndOfStep,
-        }
-    }
 }
 
 /// NVE velocity Verlet. `dt` only — mass, positions, and velocities are frame columns.

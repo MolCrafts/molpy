@@ -1,4 +1,5 @@
 //! The integrators, [`VelocityVerlet`] and [`Langevin`], that advance an [`MdState`].
+#![allow(dead_code)]
 
 use ndarray::{Array1, Array2, ArrayView1, ArrayView2, Zip};
 

@@ -1,5 +1,6 @@
 //! Python bindings for the chemical-perception layer (`molrs::perceive`,
 //! Python `molrs.perceive`).
+#![allow(clippy::clone_on_copy)]
 //!
 //! Every perception is a free function at the Rust name, in one of two shapes:
 //! `perceive_<fact>(mol)` is a **query** — it reports a side table (here

@@ -6,6 +6,7 @@
 //! count that it did not carry, and the only object with all three is the
 //! runner that does not exist yet. It will be designed with that runner, when
 //! there is something to hand it to.
+#![allow(dead_code)]
 
 use ndarray::Array2;
 

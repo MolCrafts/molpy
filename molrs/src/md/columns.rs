@@ -16,13 +16,13 @@ use super::error::MdError;
 const VEL: [&str; 3] = [keys::VX, keys::VY, keys::VZ];
 const FORCE: [&str; 3] = [keys::FX, keys::FY, keys::FZ];
 
-pub(crate) fn atoms<'a>(frame: &'a Frame) -> Result<&'a Block, MdError> {
+pub(crate) fn atoms(frame: &Frame) -> Result<&Block, MdError> {
     frame
         .get(ATOMS)
         .ok_or_else(|| MdError::Invalid("frame has no \"atoms\" block".into()))
 }
 
-pub(crate) fn atoms_mut<'a>(frame: &'a mut Frame) -> Result<&'a mut Block, MdError> {
+pub(crate) fn atoms_mut(frame: &mut Frame) -> Result<&mut Block, MdError> {
     frame
         .get_mut(ATOMS)
         .ok_or_else(|| MdError::Invalid("frame has no \"atoms\" block".into()))

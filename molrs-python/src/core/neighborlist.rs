@@ -665,6 +665,7 @@ pub struct PyVerletSkin {
 }
 
 impl PyVerletSkin {
+    #[allow(dead_code)]
     pub(crate) fn take(&mut self) -> PyResult<RsVerletSkin> {
         self.inner
             .take()
