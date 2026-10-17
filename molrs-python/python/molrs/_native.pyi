@@ -6181,16 +6181,16 @@ class md:
     class Phase:
         """LAMMPS Verlet phase. Members are the phase names."""
 
-        initial_integrate: Phase
-        post_integrate: Phase
-        pre_exchange: Phase
-        pre_neighbor: Phase
-        neighbor: Phase
-        pre_force: Phase
-        force: Phase
-        post_force: Phase
-        final_integrate: Phase
-        end_of_step: Phase
+        initial_integrate: Self
+        post_integrate: Self
+        pre_exchange: Self
+        pre_neighbor: Self
+        neighbor: Self
+        pre_force: Self
+        force: Self
+        post_force: Self
+        final_integrate: Self
+        end_of_step: Self
 
     class VelocityVerlet:
         """NVE velocity Verlet. ``dt`` only; the frame carries mass and state."""
@@ -6219,9 +6219,9 @@ class md:
         """Phase driver. :meth:`run` writes the frame it is given."""
 
         def __init__(self) -> None: ...
-        def set_integrator(self, integrator: VelocityVerlet) -> None: ...
-        def set_thermostat(self, thermostat: FixLangevin) -> None: ...
-        def set_neighbor(self, neighbor: NeighborList) -> None: ...
+        def set_integrator(self, integrator: "md.VelocityVerlet") -> None: ...
+        def set_thermostat(self, thermostat: "md.FixLangevin") -> None: ...
+        def set_neighbor(self, neighbor: "md.NeighborList") -> None: ...
         def set_evaluator(self, potential: Any) -> None: ...
         def run(self, frame: Frame, n_steps: int) -> None: ...
 
