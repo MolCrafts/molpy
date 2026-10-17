@@ -1,6 +1,6 @@
 //! Read and write the atom columns a step touches.
 //!
-//! The hot step does not keep a parallel [`MdState`](crate::md::MdState).
+//! The hot step does not keep a parallel state struct.
 //! Positions, velocities, forces, masses, and image flags are the `atoms`
 //! columns. Scalar energy and kinetic energy are frame metadata.
 

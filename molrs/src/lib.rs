@@ -108,7 +108,7 @@ pub mod ff;
 // Geometry optimization; always compiled (its module docs say what needs `ff`).
 pub mod optimize;
 
-/// In-process MD. [`md::MD`] walks the LAMMPS phase list. Integrators,
+/// In-process MD. `md::MD` walks the LAMMPS phase list. Integrators,
 /// evaluators, and fixes are components mounted on that list. Energy kernels
 /// stay in [`ff::potential`] (the `md` feature enables `ff`).
 #[cfg(feature = "md")]

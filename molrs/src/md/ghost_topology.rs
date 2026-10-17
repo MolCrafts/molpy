@@ -14,7 +14,7 @@ use super::error::MdError;
 ///
 /// The copies themselves are [`GhostHalo`]'s; this type owns only the bonded
 /// indices resolved against them. Which periodic régime an integrator runs is
-/// not its question — that is the [`ForceProvider`](crate::md::ForceProvider)'s
+/// not its question — that is the force provider's
 /// identity, and it is open rather than enumerated.
 ///
 /// A bonded kernel holds indices, not geometry: it is told *these two atoms are

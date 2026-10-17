@@ -18,8 +18,7 @@ use super::phase::Phase;
 use super::scratch::Scratch;
 
 /// One potential term. Several of these may be mounted; each adds into the
-/// forces and `meta["energy"]` that [`ZeroForces`](crate::md::infra::ZeroForces)
-/// cleared.
+/// forces and `meta["energy"]` that the pre-force clear left at zero.
 pub struct FfEvaluator {
     term: ForceTerm,
     special: SpecialWeights,
