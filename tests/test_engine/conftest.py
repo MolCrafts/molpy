@@ -8,9 +8,9 @@ import molpy as mp
 @pytest.fixture
 def water() -> mp.Atomistic:
     mol = mp.Atomistic()
-    o = mol.def_atom(
+    o = mol.add_atom(
         name="O",
-        element="O",
+        atomic_number=8,
         type="OW",
         charge=-0.834,
         mass=15.999,
@@ -19,9 +19,9 @@ def water() -> mp.Atomistic:
         z=0.0,
         mol_id=1,
     )
-    h1 = mol.def_atom(
+    h1 = mol.add_atom(
         name="H1",
-        element="H",
+        atomic_number=1,
         type="HW",
         charge=0.417,
         mass=1.008,
@@ -30,9 +30,9 @@ def water() -> mp.Atomistic:
         z=0.0,
         mol_id=1,
     )
-    h2 = mol.def_atom(
+    h2 = mol.add_atom(
         name="H2",
-        element="H",
+        atomic_number=1,
         type="HW",
         charge=0.417,
         mass=1.008,
@@ -41,8 +41,8 @@ def water() -> mp.Atomistic:
         z=0.0,
         mol_id=1,
     )
-    mol.def_bond(o, h1, type="OW-HW")
-    mol.def_bond(o, h2, type="OW-HW")
+    mol.add_bond(o, h1, type="OW-HW")
+    mol.add_bond(o, h2, type="OW-HW")
     return mol
 
 

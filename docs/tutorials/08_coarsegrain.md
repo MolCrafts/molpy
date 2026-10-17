@@ -38,8 +38,8 @@ cg.def_bead(type="P4", x=1.0, y=2.0, z=3.0)
 
 # A bead that remembers which atoms it represents
 ato = mp.Atomistic()
-c1 = ato.def_atom(element="C", x=0.0, y=0.0, z=0.0)
-c2 = ato.def_atom(element="C", x=1.5, y=0.0, z=0.0)
+c1 = ato.add_atom(atomic_number=6, x=0.0, y=0.0, z=0.0)
+c2 = ato.add_atom(atomic_number=6, x=1.5, y=0.0, z=0.0)
 cg.def_bead(atoms=(c1, c2), type="CG_C2")
 
 # A bead that uses a vermouth-style residue template key
@@ -54,9 +54,9 @@ There is one and only one convention key the core data structure recognises: `be
 
 ```python
 ato = mp.Atomistic()
-a = ato.def_atom(element="C")
-b = ato.def_atom(element="C")
-c = ato.def_atom(element="O")
+a = ato.add_atom(atomic_number=6)
+b = ato.add_atom(atomic_number=6)
+c = ato.add_atom(atomic_number=8)
 
 # Membership names atoms of *one* atomistic world, so a mapping onto a new
 # world is a new coarse-grained graph, not more beads on the previous one.
@@ -88,11 +88,11 @@ The partition is always yours. `Coarsener` covers the common remaining choices â
 
 ```python
 ethanol = mp.Atomistic(name="ethanol")
-ca = ethanol.def_atom(element="C", x=0.0, y=0.0, z=0.0, mass=12.011)
-cb = ethanol.def_atom(element="C", x=1.5, y=0.0, z=0.0, mass=12.011)
-oh = ethanol.def_atom(element="O", x=2.9, y=0.0, z=0.0, mass=15.999)
-ethanol.def_bond(ca, cb)
-ethanol.def_bond(cb, oh)
+ca = ethanol.add_atom(atomic_number=6, x=0.0, y=0.0, z=0.0, mass=12.011)
+cb = ethanol.add_atom(atomic_number=6, x=1.5, y=0.0, z=0.0, mass=12.011)
+oh = ethanol.add_atom(atomic_number=8, x=2.9, y=0.0, z=0.0, mass=15.999)
+ethanol.add_bond(ca, cb)
+ethanol.add_bond(cb, oh)
 
 projected = mp.builder.Coarsener(ethanol).coarsen(
     [[ca.handle, cb.handle], [oh.handle]], ["C2", "OH"]

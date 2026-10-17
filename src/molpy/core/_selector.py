@@ -98,19 +98,22 @@ class AtomIndexSelector(MaskPredicate):
 
 
 class ElementSelector(MaskPredicate):
-    """Select atoms by their element symbol."""
+    """Select atoms by element, using the canonical atomic-number column."""
 
-    def __init__(self, element: str, field: str = "element"):
+    def __init__(self, element: str, field: str = "atomic_number"):
         """
         Initialize element Selector.
 
         Args:
             element: The element symbol to select (e.g., "C", "H", "O")
-            field: The field name containing element symbols (default: "element")
+            field: The species column (default: "atomic_number")
         """
         if not isinstance(element, str):
             raise TypeError("element must be a string")
+        from molrs.core import Element
+
         self.element = element
+        self.atomic_number = Element.by_symbol(element).z
         self.field = field
 
     def mask(self, block: "Block") -> np.ndarray:
@@ -119,7 +122,8 @@ class ElementSelector(MaskPredicate):
                 f"ElementSelector: block has no '{self.field}' column "
                 f"(available: {list(block.keys())})"
             )
-        return block[self.field] == self.element
+        value = self.atomic_number if self.field == "atomic_number" else self.element
+        return block[self.field] == value
 
 
 # ------------------------------------------------------------------ combinators

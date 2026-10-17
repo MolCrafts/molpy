@@ -33,7 +33,8 @@ import tempfile
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from molrs.io import read_lammps_data, write_lammps_data, write_lammps_forcefield_str
+from molrs.io import read_lammps_data, write_lammps_data
+from molrs.io.lammps import LammpsForcefieldWriter
 
 from ._engine import Engine
 from ._script import Script
@@ -213,6 +214,18 @@ class LammpsEngine(Engine):
             ``{"data", "settings", "init", "input"}`` mapped to the written
             paths.
         """
+        if "atoms" in frame and "mass" not in frame["atoms"]:
+            masses = {
+                atom_type.name: atom_type.params["mass"]
+                for style in forcefield.get_styles("atom")
+                for atom_type in style.get_types()
+                if "mass" in atom_type.params
+            }
+            frame = frame.copy()
+            frame["atoms"]["mass"] = [
+                masses[str(name)] for name in frame["atoms"]["type"]
+            ]
+
         out = Path(output_dir)
         out.mkdir(parents=True, exist_ok=True)
         paths = {
@@ -225,13 +238,14 @@ class LammpsEngine(Engine):
         # Settings first: a style molrs cannot write fails before any file is
         # written. They carry the coefficients of the labels `frame` uses, the
         # same labels the data file declares.
-        settings = write_lammps_forcefield_str(
-            forcefield,
+        settings_bytes = bytearray()
+        LammpsForcefieldWriter(
             frame,
             skip_pair_style=pair_style is not None,
             skip_units=True,
             units=units,
-        )
+        ).write(settings_bytes, forcefield)
+        settings = settings_bytes.decode("utf-8")
         write_lammps_data(paths["data"], frame)
         paths["settings"].write_text(settings, encoding="utf-8")
 

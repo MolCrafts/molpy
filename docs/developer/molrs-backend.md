@@ -69,10 +69,11 @@ assert mp.Box is molrs.core.Box  # it *is* the molrs box
 ```
 
 Likewise `frame.box` is accepted directly by Rust-side calls such as
-`mp.core.NeighborList.build`. Everything — the constructor (`Box(h=None,
-origin=None, pbc=None)`: a `(3, 3)` cell, a `(3,)` diagonal, or no cell for a
-free box), the geometry (`wrap`, `unwrap`, `delta`, `distances`, `to_frac`, …)
-and the factories (`Box.cube`, `Box.ortho`, `Box.from_bounds`) — is the
+`mp.core.NeighborList.build`. Everything — the constructor (`Box(cell,
+origin=(0, 0, 0), pbc=(True, True, True))`, the cell a `(3, 3)` matrix or a
+`mp.core.Cell`), the factories (`Box.cube`, `Box.ortho`,
+`Box.from_lengths_tilts`, `Box.from_lengths_angles`, `Box.bounding`) and the
+geometry (`wrap`, `unwrap`, `delta`, `distances`, `to_frac`, …) — is the
 native box's.
 
 ## Neighbor lists come from the linked-cell kernel

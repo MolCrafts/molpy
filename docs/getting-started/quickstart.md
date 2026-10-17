@@ -50,12 +50,12 @@ units, **Å** and radians, so the coordinates are in Å too.
 water_template = mp.Atomistic(name="water_tip3p")
 
 # TIP3P geometry: r(O-H) = 0.9572 Å, H-O-H = 104.52°
-o = water_template.def_atom(element="O", name="O", mass=15.999, charge=-0.834, x=0.0, y=0.0, z=0.0)
-h1 = water_template.def_atom(element="H", name="H1", mass=1.008, charge=0.417, x=0.9572, y=0.0, z=0.0)
-h2 = water_template.def_atom(element="H", name="H2", mass=1.008, charge=0.417, x=-0.2400, y=0.9266, z=0.0)
+o = water_template.add_atom(atomic_number=8, name="O", mass=15.999, charge=-0.834, x=0.0, y=0.0, z=0.0)
+h1 = water_template.add_atom(atomic_number=1, name="H1", mass=1.008, charge=0.417, x=0.9572, y=0.0, z=0.0)
+h2 = water_template.add_atom(atomic_number=1, name="H2", mass=1.008, charge=0.417, x=-0.2400, y=0.9266, z=0.0)
 
-water_template.def_bond(o, h1, order=1)
-water_template.def_bond(o, h2, order=1)
+water_template.add_bond(o, h1, order=1)
+water_template.add_bond(o, h2, order=1)
 
 # perceive angles from the bonds, in place (returns the counts added, not self)
 water_template.generate_topology(gen_angle=True, gen_dihedral=False)

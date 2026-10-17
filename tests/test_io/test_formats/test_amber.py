@@ -121,7 +121,7 @@ def test_inpcrd_with_box(tmp_inpcrd_dir):
     assert frame.box is not None
     # Box should use first 3 values as diagonal
     expected_box = np.diag([10.0, 20.0, 30.0])
-    np.testing.assert_array_almost_equal(frame.box.h, expected_box)
+    np.testing.assert_array_almost_equal(frame.box.matrix, expected_box)
 
 
 def test_inpcrd_with_velocities_and_box(tmp_inpcrd_dir):

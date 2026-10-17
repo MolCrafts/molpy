@@ -22,7 +22,7 @@ from typing import Any
 import numpy as np
 from molrs.core import Box, Cuboid, Cylinder, Ellipsoid, HalfSpace, Parallelepiped
 from molrs.core import Polyhedron, Region, Sphere, SphereUnion
-from molrs.core import Frame
+from molrs.core import Cell, Element, Frame
 from molrs.core import Atomistic
 from numpy.typing import ArrayLike
 
@@ -117,7 +117,7 @@ class Lattice:
         Fractional ↔ Cartesian conversion is the box's:
         ``lattice.box.to_cart(frac)`` / ``lattice.box.to_frac(cart)``.
         """
-        return Box(h=self.cell.T)
+        return Box(Cell.matrix(self.cell.T))
 
     def supercell(self, repeats: tuple[int, int, int]) -> Box:
         """The :class:`~molpy.Box` spanned by ``repeats`` unit cells.
@@ -131,7 +131,9 @@ class Lattice:
         nx, ny, nz = (int(r) for r in repeats)
         if nx <= 0 or ny <= 0 or nz <= 0:
             raise ValueError(f"repeats must be positive, got {repeats}")
-        return Box(h=(self.cell * np.array([nx, ny, nz], dtype=float)[:, None]).T)
+        return Box(
+            Cell.matrix((self.cell * np.array([nx, ny, nz], dtype=float)[:, None]).T)
+        )
 
     @classmethod
     def sc(cls, a: float, species: str) -> Lattice:
@@ -298,6 +300,10 @@ class Lattice:
             y=np.ascontiguousarray(carts[:, 1]),
             z=np.ascontiguousarray(carts[:, 2]),
             element=np.array([site.species for site in site_tiled]),
+            atomic_number=np.array(
+                [Element.by_symbol(site.species).z for site in site_tiled],
+                dtype=np.uint8,
+            ),
             charge=np.array([site.charge for site in site_tiled], dtype=float),
             label=np.array([site.label for site in site_tiled]),
         )

@@ -22,9 +22,9 @@ Use a graph factory to create data:
 from molpy.core import Atomistic
 
 mol = Atomistic(name="water")
-oxygen = mol.def_atom(element="O", x=0.0, y=0.0, z=0.0)
-hydrogen = mol.def_atom(element="H", x=0.96, y=0.0, z=0.0)
-bond = mol.def_bond(oxygen, hydrogen)
+oxygen = mol.add_atom(atomic_number=8, x=0.0, y=0.0, z=0.0)
+hydrogen = mol.add_atom(atomic_number=1, x=0.96, y=0.0, z=0.0)
+bond = mol.add_bond(oxygen, hydrogen)
 
 assert mol.atoms[0] == oxygen
 assert bond.endpoints == (oxygen, hydrogen)

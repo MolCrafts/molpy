@@ -19,11 +19,11 @@ If MolPy is installed, this runs as-is — no optional dependencies, not even RD
 import molpy as mp
 
 water = mp.Atomistic(name="water")
-o = water.def_atom(element="O", x=0.000, y=0.000, z=0.000)
-h1 = water.def_atom(element="H", x=0.957, y=0.000, z=0.000)
-h2 = water.def_atom(element="H", x=-0.239, y=0.927, z=0.000)
-water.def_bond(o, h1)
-water.def_bond(o, h2)
+o = water.add_atom(atomic_number=8, x=0.000, y=0.000, z=0.000)
+h1 = water.add_atom(atomic_number=1, x=0.957, y=0.000, z=0.000)
+h2 = water.add_atom(atomic_number=1, x=-0.239, y=0.927, z=0.000)
+water.add_bond(o, h1)
+water.add_bond(o, h2)
 
 frame = water.to_frame()
 mp.io.write_pdb("water.pdb", frame)

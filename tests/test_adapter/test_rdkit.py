@@ -12,11 +12,11 @@ from molpy.adapter import MP_ID, RdkitAdapter
 
 def _ethanol_heavy() -> mp.Atomistic:
     m = mp.Atomistic()
-    c1 = m.def_atom(element="C", x=0.0, y=0.0, z=0.0)
-    c2 = m.def_atom(element="C", x=1.5, y=0.0, z=0.0)
-    o = m.def_atom(element="O", x=2.2, y=1.2, z=0.0)
-    m.def_bond(c1, c2, bond_type=1, bond_number=1)
-    m.def_bond(c2, o, bond_type=1, bond_number=1)
+    c1 = m.add_atom(atomic_number=6, x=0.0, y=0.0, z=0.0)
+    c2 = m.add_atom(atomic_number=6, x=1.5, y=0.0, z=0.0)
+    o = m.add_atom(atomic_number=8, x=2.2, y=1.2, z=0.0)
+    m.add_bond(c1, c2, bond_type=1, bond_number=1)
+    m.add_bond(c2, o, bond_type=1, bond_number=1)
     return m
 
 
@@ -30,14 +30,14 @@ class TestTags:
     def test_every_atom_gets_a_unique_tag(self):
         m = _ethanol_heavy()
         RdkitAdapter(internal=m)
-        assert sorted(m.column(MP_ID).tolist()) == [0, 1, 2]
+        assert sorted([atom[MP_ID] for atom in m.atoms]) == [0, 1, 2]
 
     def test_existing_tags_are_kept_and_holes_filled_above_them(self):
         m = _ethanol_heavy()
         first = next(iter(m.atoms))
         first[MP_ID] = 7
         RdkitAdapter(internal=m)
-        tags = m.column(MP_ID).tolist()
+        tags = [atom[MP_ID] for atom in m.atoms]
         assert tags[0] == 7
         assert sorted(tags) == [7, 8, 9]
 
@@ -57,16 +57,18 @@ class TestSyncToExternal:
         mol = adapter.mol
         assert [a.GetSymbol() for a in mol.GetAtoms()] == ["C", "C", "O"]
         assert mol.GetNumBonds() == 2
-        assert [a.GetIntProp(MP_ID) for a in mol.GetAtoms()] == m.column(MP_ID).tolist()
+        assert [a.GetIntProp(MP_ID) for a in mol.GetAtoms()] == [
+            atom[MP_ID] for atom in m.atoms
+        ]
         np.testing.assert_allclose(
             mol.GetConformer().GetPositions(), m.atoms["x", "y", "z"]
         )
 
     def test_bond_classes_map_one_to_one(self):
         m = mp.Atomistic()
-        a = m.def_atom(element="C")
-        b = m.def_atom(element="O")
-        m.def_bond(a, b, bond_type=2, bond_number=2)
+        a = m.add_atom(atomic_number=6)
+        b = m.add_atom(atomic_number=8)
+        m.add_bond(a, b, bond_type=2, bond_number=2)
         adapter = RdkitAdapter(internal=m)
         adapter.sync_to_external()
         assert adapter.mol.GetBondWithIdx(0).GetBondType() == Chem.BondType.DOUBLE
@@ -74,7 +76,7 @@ class TestSyncToExternal:
 
     def test_a_coordinate_hole_is_an_error_not_a_zero(self):
         m = _ethanol_heavy()
-        m.def_atom(element="H")  # no x/y/z
+        m.add_atom(atomic_number=1)  # no x/y/z
         with pytest.raises(KeyError):
             RdkitAdapter(internal=m).sync_to_external()
 
@@ -85,9 +87,11 @@ class TestSyncToInternal:
         adapter = RdkitAdapter(external=mol)
         adapter.sync_to_internal()
         m = adapter.internal
-        assert list(m.atoms["element"]) == [a.GetSymbol() for a in mol.GetAtoms()]
+        assert list(m.atoms["atomic_number"]) == [
+            a.GetAtomicNum() for a in mol.GetAtoms()
+        ]
         assert len(list(m.bonds)) == mol.GetNumBonds()
-        assert m.column(MP_ID).tolist() == list(range(mol.GetNumAtoms()))
+        assert [atom[MP_ID] for atom in m.atoms] == list(range(mol.GetNumAtoms()))
 
     def test_negative_tags_become_new_atoms_and_bonds_are_rebuilt(self):
         m = _ethanol_heavy()
@@ -101,8 +105,8 @@ class TestSyncToInternal:
         adapter.set_external(mol)
         adapter.sync_to_internal()
 
-        assert len(m.entities()) == mol.GetNumAtoms()
-        tags = m.column(MP_ID).tolist()
+        assert len(m.atoms) == mol.GetNumAtoms()
+        tags = [atom[MP_ID] for atom in m.atoms]
         assert len(set(tags)) == len(tags)
         assert [a.GetIntProp(MP_ID) for a in mol.GetAtoms()] == tags
         assert len(list(m.bonds)) == mol.GetNumBonds()
@@ -116,7 +120,7 @@ class TestSyncToInternal:
         mol.GetConformer().SetAtomPosition(0, (9.0, 9.0, 9.0))
         adapter.set_external(mol)
         adapter.sync_to_internal()
-        assert len(m.entities()) == 3
+        assert len(m.atoms) == 3
         assert m.atoms["x", "y", "z"][0].tolist() == [9.0, 9.0, 9.0]
 
     def test_an_untagged_rdkit_atom_is_an_error(self):
@@ -132,7 +136,7 @@ def test_generate_3d_returns_a_new_hydrogenated_structure_with_coordinates():
     adapter = RdkitAdapter(internal=m)
     out = adapter.generate_3d(optimize=False)
     assert out is not m
-    assert len(out.entities()) == 9  # C2H5OH
+    assert len(out.atoms) == 9  # C2H5OH
     assert out.atoms["x", "y", "z"].shape == (9, 3)
     assert np.isfinite(out.atoms["x", "y", "z"]).all()
-    assert len(m.entities()) == 3  # the adapter's own structure is untouched
+    assert len(m.atoms) == 3  # the adapter's own structure is untouched

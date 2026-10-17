@@ -206,16 +206,16 @@ class TestBuildCrystalRepeats:
 
         box = lat.supercell((2, 2, 2))
         assert isinstance(box, Box)
-        assert np.allclose(box.h, 6.0 * np.eye(3))
+        assert np.allclose(box.matrix, 6.0 * np.eye(3))
 
     def test_super_cell_box_holds_lattice_vectors_as_columns(self):
         a1, a2, a3 = [2.0, 0.0, 0.0], [1.0, 3.0, 0.0], [0.0, 0.0, 4.0]
         lat = Lattice.from_vectors(a1, a2, a3)
 
         box = lat.supercell((1, 2, 1))
-        np.testing.assert_allclose(box.h[:, 0], a1)
-        np.testing.assert_allclose(box.h[:, 1], 2.0 * np.asarray(a2))
-        np.testing.assert_allclose(box.h[:, 2], a3)
+        np.testing.assert_allclose(box.matrix[:, 0], a1)
+        np.testing.assert_allclose(box.matrix[:, 1], 2.0 * np.asarray(a2))
+        np.testing.assert_allclose(box.matrix[:, 2], a3)
 
     def test_the_cell_is_never_written_onto_the_structure(self):
         """A structure is topology and chemistry; the cell lives on ``frame.box``."""
@@ -250,7 +250,7 @@ class TestBuildCrystalRepeats:
 class TestBuildCrystalRegion:
     def test_box_region_infers_repeats(self):
         lat = Lattice.sc(a=2.0, species="Cu")
-        structure = lat.build(Cuboid.cube(3.0))
+        structure = lat.build(Cuboid((0, 0, 0), (3.0, 3.0, 3.0)))
 
         # cells inferred = ceil(3/2)=2 along each axis → 8 atoms generated,
         # all inside the [0,3]³ region (positions ∈ {0, 2}).
@@ -260,7 +260,7 @@ class TestBuildCrystalRegion:
         lat = Lattice.sc(a=2.0, species="Cu")
         # Force a 3-cell tile but clip to a 3 Å box: corner atoms at x=4 etc.
         # are filtered out.
-        structure = lat.build(Cuboid.cube(3.0), repeats=(3, 3, 3))
+        structure = lat.build(Cuboid((0, 0, 0), (3.0, 3.0, 3.0)), repeats=(3, 3, 3))
 
         assert len(list(structure.atoms)) == 8
 
@@ -280,7 +280,7 @@ class TestBuildCrystalRegion:
 
     def test_combined_regions(self):
         lat = Lattice.sc(a=1.0, species="Cu")
-        cube = Cuboid.cube(3.0)
+        cube = Cuboid((0, 0, 0), (3.0, 3.0, 3.0))
         sphere = Sphere([1.5, 1.5, 1.5], 1.5)
         # Intersection: atoms in both.
         structure = lat.build(cube & sphere, repeats=(4, 4, 4))

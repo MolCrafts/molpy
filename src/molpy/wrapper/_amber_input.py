@@ -12,6 +12,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from molrs.io import write_mol2
+from molrs.core import Element
 from molrs.core.keys import FORMAL_CHARGE
 
 if TYPE_CHECKING:
@@ -41,10 +42,15 @@ def antechamber_input_mol2(graph: Atomistic, path: Path, *, rename: bool) -> Non
     tell elements apart; otherwise the graph's own names are kept.
     """
     frame = graph.to_frame()
+    atoms = frame["atoms"]
+    if "type" not in atoms:
+        atoms["type"] = [
+            Element.by_number(int(number)).symbol for number in atoms["atomic_number"]
+        ]
     if rename:
-        frame["atoms"]["name"] = [
-            f"{symbol}{row}"
-            for row, symbol in enumerate(frame["atoms"]["element"], start=1)
+        atoms["name"] = [
+            f"{Element.by_number(int(number)).symbol}{row}"
+            for row, number in enumerate(atoms["atomic_number"], start=1)
         ]
     if "bonds" in frame and "type" in frame["bonds"]:
         del frame["bonds"]["type"]

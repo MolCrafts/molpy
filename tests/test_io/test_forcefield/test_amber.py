@@ -1,12 +1,17 @@
-"""``mp.io.read_prmtop_system``: a prmtop's force field and structure frame."""
+"""The AMBER prmtop reader's force field and structure frame."""
 
 from __future__ import annotations
 
 import numpy as np
 import pytest
+from pathlib import Path
 
 from molpy.ff.forcefield import AngleType, AtomType, BondType
-from molpy.io import read_prmtop_system
+from molpy.io.amber import AmberPrmtopForcefieldReader
+
+
+def read_prmtop_system(path):
+    return AmberPrmtopForcefieldReader().read_system(path)
 
 
 @pytest.fixture
@@ -50,11 +55,11 @@ def test_prmtop_read_charges(litfsi_prmtop):
 def test_prmtop_read_atomic_numbers(litfsi_prmtop):
     _, frame = read_prmtop_system(litfsi_prmtop)
     atoms = frame["atoms"]
-    # LiTFSI.prmtop carries %FLAG ATOMIC_NUMBER, so both columns must exist.
+    # LiTFSI.prmtop carries %FLAG ATOMIC_NUMBER, the canonical species column.
     z = np.asarray(atoms["atomic_number"])
     assert len(z) == 16
     assert all(z > 0)
-    assert "element" in atoms
+    assert "atomic_number" in atoms
 
 
 def test_prmtop_read_masses(litfsi_prmtop):
@@ -112,15 +117,15 @@ def test_prmtop_read_residues(litfsi_prmtop):
 def test_prmtop_forcefield_structure(litfsi_prmtop):
     ff, _ = read_prmtop_system(litfsi_prmtop)
     assert ff.units == "real"
-    assert hasattr(ff, "styles")
+    assert ff.get_styles("atom")
     assert len(ff.get_types(AtomType)) > 0
     assert len(ff.get_types(BondType)) > 0
     assert len(ff.get_types(AngleType)) > 0
 
 
 def test_prmtop_nonexistent_file():
-    with pytest.raises(ValueError, match="nonexistent"):
-        read_prmtop_system("/nonexistent/file.prmtop")
+    with pytest.raises(FileNotFoundError, match="nonexistent"):
+        read_prmtop_system(Path("/nonexistent/file.prmtop"))
 
 
 def test_bond_atom_indices_zero_based(litfsi_prmtop):

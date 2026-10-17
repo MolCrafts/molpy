@@ -23,6 +23,7 @@ A Kremer-Grest bead-spring chain: LAMMPS `bond_style fene`, declared by its
 expression, and a typifier that types every bead `B` and every bond with it.
 
 ```python
+from pathlib import Path
 import molpy as mp
 from molpy.ff.forcefield import ForceField
 from molpy.ff.compile import PotentialCompiler
@@ -43,21 +44,21 @@ class BeadSpring(Typifier):  # every bead B, every bond FENE; lj units
         bead = {"type": ("full", "B", (), {"mass": 1.0})}
         spring = {"type": ("fene", "B-B", ("B", "B"),
                            {"k": 30.0, "r0": 1.5, "epsilon": 1.0, "sigma": 1.0})}
-        bonds = graph.links.exact_bucket(mp.Bond)
+        bonds = graph.bonds
         return TypeAssignment([bead] * len(graph.atoms), links={mp.Bond: [spring] * len(bonds)},
                      styles=[("atom", "full", {}), ("bond", "fene", {})])
 
 typifier = BeadSpring()
 frame = typifier.typify(chain).to_frame()  # chain: an mp.Atomistic of bonded beads
 ff = typifier.forcefield()
-energy, forces = PotentialCompiler(ff).compile(frame).calc_energy_forces(frame)
-mp.io.write_mrec_frame("chain.mrec", frame, forcefield=ff)  # the expression travels along
+energy, forces = PotentialCompiler(ff).compile(frame).evaluate(frame)
+mp.io.write_mrec(Path("chain.mrec"), frame=frame, forcefield=ff)
 ```
 
 Defining the class registers the style; `Fene.unregister()` takes it out
 again. The record carries the expression, so a process that registered
 nothing reads `chain.mrec` back with
-`mp.io.read_mrec_forcefield("chain.mrec").to_forcefield()` and
+`mp.io.mrec.MrecFile(Path("chain.mrec")).forcefield().to_forcefield()` and
 prices it identically. molpy's test suite runs this snippet as written
 (`tests/test_ff/test_user_style.py`), and proves the energy and forces
 equal the analytic FENE sum and that a fresh process prices the record bit for

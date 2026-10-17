@@ -39,7 +39,7 @@ def test_cuboid_mask_and_filter():
 
 
 def test_cube_and_its_geometry():
-    cube = mp.core.Cuboid.cube(2.0, [1.0, 1.0, 1.0])
+    cube = mp.core.Cuboid([1.0, 1.0, 1.0], [2.0, 2.0, 2.0])
     np.testing.assert_allclose(cube.origin, [1.0, 1.0, 1.0])
     np.testing.assert_allclose(cube.lengths, [2.0, 2.0, 2.0])
     np.testing.assert_allclose(cube.bounds(), [[1.0, 3.0]] * 3)
@@ -53,7 +53,7 @@ def test_sphere_geometry_and_mask():
 
 
 def test_composition():
-    box = mp.core.Cuboid.cube(2.0)
+    box = mp.core.Cuboid([0.0, 0.0, 0.0], [2.0, 2.0, 2.0])
     sphere = mp.core.Sphere([0.0, 0.0, 0.0], 1.0)
     assert (box & sphere).mask(_block()).tolist() == [True, False, False, True]
     assert (box | sphere).mask(_block()).tolist() == [True, False, True, True]
@@ -79,10 +79,14 @@ def test_a_slab_replaces_the_coordinate_range_selector():
 
 
 def test_a_selector_composes_with_a_region():
-    picked = mp.core.AtomTypeSelector(1, field="type_id") & mp.core.Cuboid.cube(2.0)
+    picked = mp.core.AtomTypeSelector(1, field="type_id") & mp.core.Cuboid(
+        [0.0, 0.0, 0.0], [2.0, 2.0, 2.0]
+    )
     assert picked.mask(_block()).tolist() == [True, False, False, False]
 
 
 def test_a_block_without_coordinates_raises():
     with pytest.raises(KeyError):
-        mp.core.Cuboid.cube(2.0).mask(mp.Block({"type_id": np.array([1, 2])}))
+        mp.core.Cuboid([0.0, 0.0, 0.0], [2.0, 2.0, 2.0]).mask(
+            mp.Block({"type_id": np.array([1, 2])})
+        )

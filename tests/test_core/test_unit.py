@@ -21,8 +21,8 @@ def test_quantity_and_conversion():
     units = mp.core.UnitRegistry()
     quantity = 1.5 * units.angstrom
     assert isinstance(quantity, mp.core.Quantity)
-    assert quantity.to("nanometer").magnitude == pytest.approx(0.15)
-    assert (1.0 * units.kilocalorie_per_mole).to("eV").magnitude == pytest.approx(
+    assert quantity.to("nanometer").value == pytest.approx(0.15)
+    assert (1.0 * units.kilocalorie_per_mole).to("eV").value == pytest.approx(
         0.0433641, rel=1e-5
     )
 
@@ -75,7 +75,7 @@ def test_a_registered_preset_is_named_and_refuses_a_taken_name():
 
 def test_boltzmann_constant_is_in_the_default_registry():
     units = mp.core.UnitRegistry()
-    assert (1.0 * units.k_B).to("electron_volt / kelvin").magnitude == pytest.approx(
+    assert (1.0 * units.k_B).to("electron_volt / kelvin").value == pytest.approx(
         8.617333262e-5, rel=1e-12
     )
 
@@ -85,9 +85,9 @@ def test_lj_reduced_units():
     argon.define_lj_units(
         39.948 * argon.amu, 3.405 * argon.angstrom, 0.2381 * argon.kilocalorie_per_mole
     )
-    assert (3.405 * argon.angstrom).to(argon.lj_sigma).magnitude == pytest.approx(1.0)
-    assert (1.0 * argon.lj_tau).to(argon.ps).magnitude == pytest.approx(2.16, abs=0.01)
-    assert (1.0 * argon.lj_epsilon_over_kB).to(argon.K).magnitude == pytest.approx(
+    assert (3.405 * argon.angstrom).to(argon.lj_sigma).value == pytest.approx(1.0)
+    assert (1.0 * argon.lj_tau).to(argon.ps).value == pytest.approx(2.16, abs=0.01)
+    assert (1.0 * argon.lj_epsilon_over_kB).to(argon.K).value == pytest.approx(
         119.8, abs=0.5
     )
 

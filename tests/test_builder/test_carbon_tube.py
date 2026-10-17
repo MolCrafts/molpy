@@ -79,7 +79,7 @@ class TestCarbonTubeBuilder:
 
     def test_per_atom_annotations_are_written_without_bonded_typing(self):
         tube = _graph(CarbonTubeBuilder(6, 0), atom_type="CA", charge=-0.125)
-        assert {atom.get("element") for atom in tube.atoms} == {"C"}
+        assert {atom.get("atomic_number") for atom in tube.atoms} == {6}
         assert {atom.get("type") for atom in tube.atoms} == {"CA"}
         assert {atom.get("charge") for atom in tube.atoms} == {-0.125}
         assert not list(tube.angles)

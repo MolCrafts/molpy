@@ -9,6 +9,7 @@ from __future__ import annotations
 import math
 from pathlib import Path
 
+import numpy as np
 import pytest
 
 import molpy as mp
@@ -24,22 +25,25 @@ FOUR_PI_EPS0 = 0.0007197587
 def cation(TEST_DATA_DIR: Path) -> mp.Atomistic:
     """[C4C1im]+ with CL&P types and charges; the fixture names atoms by element."""
     frame = mp.io.read_mol2(TEST_DATA_DIR / "mol2" / "c4c1im_clp_typed.mol2")
-    frame["atoms"]["element"] = frame["atoms"]["name"]
+    frame["atoms"]["atomic_number"] = np.array(
+        [mp.Element.by_symbol(str(name)).z for name in frame["atoms"]["name"]],
+        dtype=np.uint8,
+    )
     return mp.Atomistic.from_frame(frame)
 
 
 def _water(charge_o: float = -0.8, charge_h: float = 0.4):
     asm = mp.Atomistic()
-    o = asm.def_atom(element="O", charge=charge_o, x=0.0, y=0.0, z=0.0)
-    h1 = asm.def_atom(element="H", charge=charge_h, x=0.757, y=0.586, z=0.0)
-    h2 = asm.def_atom(element="H", charge=charge_h, x=-0.757, y=0.586, z=0.0)
-    asm.def_bond(o, h1)
-    asm.def_bond(o, h2)
+    o = asm.add_atom(atomic_number=8, charge=charge_o, x=0.0, y=0.0, z=0.0)
+    h1 = asm.add_atom(atomic_number=1, charge=charge_h, x=0.757, y=0.586, z=0.0)
+    h2 = asm.add_atom(atomic_number=1, charge=charge_h, x=-0.757, y=0.586, z=0.0)
+    asm.add_bond(o, h1)
+    asm.add_bond(o, h2)
     return asm, o
 
 
 def _drudes(struct):
-    return [a for a in struct.atoms if a.get("vsite") == "drude"]
+    return [a for a in struct.atoms if isinstance(a, mp.DrudeParticle)]
 
 
 def _drude_bonds(struct):
@@ -80,7 +84,7 @@ def test_drude_shell_is_typed_from_core(cation):
     assert all(s.get("type") and s.get("type").startswith("D") for s in shells)
     for bond in _drude_bonds(out):
         core, shell = bond.itom, bond.jtom
-        if core.get("vsite") == "drude":
+        if isinstance(core, mp.DrudeParticle):
             core, shell = shell, core
         assert shell.get("type") == "D" + core.get("type")
 
@@ -103,11 +107,11 @@ def test_drude_apply_does_not_mutate_input(cation):
 def test_drude_count_matches_heavy_atoms_no_hydrogen(cation):
     struct = cation
     out = DrudeBuilder().apply(struct)
-    heavy = [a for a in struct.atoms if a.get("element") != "H"]
+    heavy = [a for a in struct.atoms if a.get("atomic_number") != 1]
     assert len(_drudes(out)) == len(heavy)
     for a in out.atoms:
-        if a.get("element") == "H":
-            assert a.get("vsite") is None
+        if a.get("atomic_number") == 1:
+            assert not isinstance(a, mp.DrudeParticle)
 
 
 def test_drude_spring_force_constant(cation):
@@ -141,12 +145,12 @@ def test_tip4p_msite_placement_and_charge_transfer():
     q_o = o.get("charge")
     n_bonds_before = len(list(water.bonds))
     out = Tip4pBuilder().apply(water)
-    msites = [a for a in out.atoms if a.get("vsite") == "massless"]
+    msites = [a for a in out.atoms if isinstance(a, mp.MasslessSite)]
     assert len(msites) == 1
     m = msites[0]
     assert math.isclose(m.get("x"), 0.0, abs_tol=1e-9)
     assert m.get("y") > 0.0
     assert math.isclose(m.get("charge"), q_o, abs_tol=1e-12)
-    out_o = next(a for a in out.atoms if a.get("element") == "O")
+    out_o = next(a for a in out.atoms if a.get("atomic_number") == 8)
     assert math.isclose(out_o.get("charge"), 0.0, abs_tol=1e-12)
     assert len(list(out.bonds)) == n_bonds_before

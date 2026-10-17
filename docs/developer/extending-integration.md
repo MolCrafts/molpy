@@ -61,16 +61,16 @@ class AseAdapter(Adapter[Atomistic, "ase.Atoms"]):
     def _do_sync_to_external(self):
         """Atomistic → ASE Atoms."""
         import ase
-        symbols = [a.get("element") for a in self._internal.atoms]
+        numbers = [a.get("atomic_number") for a in self._internal.atoms]
         positions = [[a["x"], a["y"], a["z"]] for a in self._internal.atoms]
-        self._external = ase.Atoms(symbols=symbols, positions=positions)
+        self._external = ase.Atoms(numbers=numbers, positions=positions)
 
     def _do_sync_to_internal(self):
         """ASE Atoms → Atomistic."""
         mol = Atomistic()
         for atom in self._external:
-            mol.def_atom(
-                element=atom.symbol,
+            mol.add_atom(
+                atomic_number=atom.number,
                 x=atom.position[0],
                 y=atom.position[1],
                 z=atom.position[2],

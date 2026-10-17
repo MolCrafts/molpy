@@ -21,9 +21,9 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
-from molrs.ff.forcefield import ForceField
+from molrs.ff.forcefield import ForceField, Style
 from molrs.ff.typifier import Typifier, TypeAssignment
-from molrs.io import read_prmtop_system, write_frcmod
+from molrs.io.amber import AmberFrcmodWriter, AmberPrmtopForcefieldReader
 from molrs.core import Angle, Atomistic, Bond, Dihedral, Improper
 from molrs.core.constants import AMBER_SCEE, AMBER_SCNB
 
@@ -56,7 +56,7 @@ class _Prmtop:
     """
 
     def __init__(self, prmtop: Path) -> None:
-        self.forcefield, self.frame = read_prmtop_system(prmtop)
+        self.forcefield, self.frame = AmberPrmtopForcefieldReader().read_system(prmtop)
 
     def assignment(self, graph: Atomistic, charges: Sequence[float]) -> TypeAssignment:
         """Regenerate ``graph``'s terms to the prmtop's set and annotate them.
@@ -72,29 +72,35 @@ class _Prmtop:
         """
         atoms = self.frame["atoms"]
         types = [str(name) for name in atoms["type"]]
-        elements = [str(symbol) for symbol in atoms["element"]]
+        atomic_numbers = [int(number) for number in atoms["atomic_number"]]
         graph_atoms = list(graph.atoms)
         if len(graph_atoms) != len(types):
             raise ValueError(
                 f"the prmtop has {len(types)} atoms, the graph {len(graph_atoms)}"
             )
         for index, atom in enumerate(graph_atoms):
-            if atom.get("element") != elements[index]:
+            if atom.get("atomic_number") != atomic_numbers[index]:
                 raise ValueError(
-                    f"atom {index} is {atom.get('element')} in the graph but "
-                    f"{elements[index]} in the prmtop"
+                    f"atom {index} has atomic number {atom.get('atomic_number')} "
+                    f"in the graph but {atomic_numbers[index]} in the prmtop"
                 )
         row = {atom.handle: index for index, atom in enumerate(graph_atoms)}
 
         prmtop_terms = self._terms()
         graph.generate_topology(gen_angle=True, gen_dihedral=True, clear_existing=True)
-        graph.remove_link(*graph.impropers)
+        graph.del_impropers(list(graph.impropers))
         for term in prmtop_terms[Improper]:
-            graph.def_improper(*(graph_atoms[i] for i in term))
+            graph.add_improper(*(graph_atoms[i] for i in term))
 
         links: dict[type, list[dict]] = {}
-        for kind in (Bond, Angle, Dihedral, Improper):
-            relations = list(graph.links.exact_bucket(kind))
+        relations_by_kind = {
+            Bond: graph.bonds,
+            Angle: graph.angles,
+            Dihedral: graph.dihedrals,
+            Improper: graph.impropers,
+        }
+        for kind, bucket in relations_by_kind.items():
+            relations = list(bucket)
             ends = [tuple(row[a.handle] for a in r.endpoints) for r in relations]
             self._require_same(kind, ends, prmtop_terms[kind])
             lookup = self._lookup(kind.__name__.lower())
@@ -111,7 +117,9 @@ class _Prmtop:
             }
             for name, charge in zip(types, charges, strict=True)
         ]
-        styles = [(s.category, s.name, s.params) for s in self.forcefield.styles]
+        styles = [
+            (s.category, s.name, s.params) for s in self.forcefield.get_styles(Style)
+        ]
         pairs = [
             (
                 style.name,
@@ -380,7 +388,7 @@ class TleapTypifier(_AmberTypifier):
         script = f"source leaprc.{self.leaprc}\n"
         if self.parameters is not None:
             frcmod = directory / "forcefield.frcmod"
-            write_frcmod(frcmod, self.parameters)
+            AmberFrcmodWriter().write(frcmod, self.parameters)
             script += f"loadamberparams {frcmod}\n"
         script += (
             f"{_UNIT} = loadmol2 {source}\n"
