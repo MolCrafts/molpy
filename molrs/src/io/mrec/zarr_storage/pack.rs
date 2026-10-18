@@ -110,8 +110,9 @@ pub fn pack_mrec_zip(storage_path: impl AsRef<Path>) -> Result<PathBuf, MolRsErr
         let options = zip::write::SimpleFileOptions::default()
             .compression_method(zip::CompressionMethod::Stored)
             .large_file(bytes.len() as u64 >= u64::from(u32::MAX));
+        // ZIP keys always use '/', including on Windows directory stores.
         writer
-            .start_file(name, options)
+            .start_file_from_path(name, options)
             .map_err(|e| at(&entry, "pack", e))?;
         writer
             .write_all(&bytes)
