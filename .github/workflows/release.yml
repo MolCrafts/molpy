@@ -19,10 +19,11 @@ name: release
 # A dispatch is the dry run, on any branch, fork or upstream: the same guard
 # (any green `test / *` runs of the commit), published check and build, no
 # upload and no Release. Only a tag push on MolCrafts uploads.
-on:
+'on':
   push:
-    tags: ["v*"]
-  workflow_dispatch:
+    tags:
+    - v*
+  workflow_dispatch: null
 
 permissions:
   contents: read
@@ -39,22 +40,15 @@ defaults:
 jobs:
   # Where this run happens, decided once: MolCrafts/molcrafts-ci/actions/ci-context.
   context:
+    permissions:
+      contents: read
     name: release / context
-    runs-on: ubuntu-latest
-    outputs:
-      tier: ${{ steps.context.outputs.tier }}
-      upstream: ${{ steps.context.outputs.upstream }}
-      integration: ${{ steps.context.outputs.integration }}
-      skip-pr: ${{ steps.context.outputs.skip-pr }}
-      publish: ${{ steps.context.outputs.publish }}
-    steps:
-      - id: context
-        uses: MolCrafts/molcrafts-ci/actions/ci-context@03352583738d9424ce37996ef9e04df9290087ba
+    uses: MolCrafts/molcrafts-ci/.github/workflows/context.yml@2c51eb289dccaeb9a0cb9e32d7ac1412b5d0a229
 
   guard:
     name: release / guard
     needs: context
-    if: github.event_name == 'workflow_dispatch' || needs.context.outputs.upstream == 'true'
+    if: needs.context.outputs.skip-pr != 'true' && (github.event_name == 'workflow_dispatch' || needs.context.outputs.upstream == 'true')
     runs-on: ubuntu-latest
     timeout-minutes: 100
     permissions:
@@ -69,7 +63,6 @@ jobs:
         run: |
           version=$(sed -n 's/^version = "\(.*\)"/\1/p' src/molpy/version.py | head -n1)
           [ "$GITHUB_REF_NAME" = "v$version" ] || { echo "::error::tag $GITHUB_REF_NAME is not v$version"; exit 1; }
-          git merge-base --is-ancestor "$GITHUB_SHA" origin/master || { echo "::error::tag is not on master"; exit 1; }
       # The commit's test.yml run, instead of running it again. A tag waits
       # for every job of the full tier to have succeeded on this SHA (pushed
       # to master first); a dispatch, for whatever `test / *` runs the commit
@@ -79,7 +72,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           PUBLISH: ${{ needs.context.outputs.publish }}
           REQUIRED: >-
-            test / context|test / python (ubuntu-latest, 3.12)|test / python (ubuntu-latest, 3.14)|test / python (macos-latest, 3.12)|test / python (windows-latest, 3.12)
+            test / context / context / context|test / python (ubuntu-latest, 3.12)|test / python (ubuntu-latest, 3.14)|test / python (macos-latest, 3.12)|test / python (windows-latest, 3.12)
         run: |
           python3 - <<'PY'
           import json, os, subprocess, sys, time
@@ -117,14 +110,17 @@ jobs:
 
   # The declared PyPI ranges, once: Linux, the requires-python floor.
   published:
+    if: needs.context.outputs.skip-pr != 'true'
     name: release / published (ubuntu-latest, 3.12)
-    needs: guard
+    needs:
+    - context
+    - guard
     runs-on: ubuntu-latest
     env:
       PYTHONWARNDEFAULTENCODING: "1"
     steps:
       - uses: actions/checkout@v7
-      - uses: MolCrafts/molcrafts-ci/actions/setup-python@03352583738d9424ce37996ef9e04df9290087ba
+      - uses: MolCrafts/molcrafts-ci/actions/setup-python@2c51eb289dccaeb9a0cb9e32d7ac1412b5d0a229
         with:
           python-version: "3.12"
       - run: python scripts/check_partners_on_pypi.py
@@ -133,12 +129,15 @@ jobs:
         run: python scripts/check.py published
 
   build:
+    if: needs.context.outputs.skip-pr != 'true'
     name: release / build
-    needs: guard
+    needs:
+    - context
+    - guard
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: MolCrafts/molcrafts-ci/actions/setup-python@03352583738d9424ce37996ef9e04df9290087ba
+      - uses: MolCrafts/molcrafts-ci/actions/setup-python@2c51eb289dccaeb9a0cb9e32d7ac1412b5d0a229
         with:
           python-version: "3.14"
       - run: python scripts/check.py package

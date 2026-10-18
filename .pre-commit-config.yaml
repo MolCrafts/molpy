@@ -1,5 +1,5 @@
 # Same file in every repository. The profile name lives in
-# .github/partners.env as CI_PROFILE. This file does not contain a SHA.
+# .github/partners.env as CI_PROFILE; pin-ci keeps this URL aligned with CI_REF.
 default_install_hook_types: [pre-commit, pre-push]
 default_stages: [pre-commit, pre-push]
 
@@ -8,7 +8,7 @@ repos:
     hooks:
       - id: ci
         name: molcrafts-ci
-        entry: uv run --no-project --script https://raw.githubusercontent.com/MolCrafts/molcrafts-ci/master/hooks/ci.py
+        entry: uv run --no-project --script https://raw.githubusercontent.com/MolCrafts/molcrafts-ci/2c51eb289dccaeb9a0cb9e32d7ac1412b5d0a229/hooks/ci.py
         language: system
         pass_filenames: false
         always_run: true
@@ -18,7 +18,7 @@ repos:
         args: ["--stage", "pre-commit"]
       - id: ci-push
         name: molcrafts-ci pre-push
-        entry: uv run --no-project --script https://raw.githubusercontent.com/MolCrafts/molcrafts-ci/master/hooks/ci.py
+        entry: uv run --no-project --script https://raw.githubusercontent.com/MolCrafts/molcrafts-ci/2c51eb289dccaeb9a0cb9e32d7ac1412b5d0a229/hooks/ci.py
         language: system
         pass_filenames: false
         always_run: true

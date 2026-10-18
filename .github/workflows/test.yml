@@ -9,19 +9,22 @@ name: test
 #
 #   fast  a feature-branch push to MolCrafts: Linux, Python 3.12.
 #   full  every push to a fork (proven before its pull request), dev, master
-#         and master on MolCrafts, pull requests and dispatches: Linux,
+#         on MolCrafts, pull requests and dispatches: Linux,
 #         macOS and Windows on 3.12; Linux additionally checks 3.14.
 # OS and interpreter coverage use four legs instead of six.
 #
 # The strict docs build runs in the Linux 3.12 leg, after its tests, in the
 # same environment: the molrs it imports is the one that leg built and
 # tested, not a second compile.
-on:
+'on':
   push:
-    branches: ["**"]
+    branches:
+    - '**'
   pull_request:
-    branches: [dev, master]
-  workflow_dispatch:
+    branches:
+    - dev
+    - master
+  workflow_dispatch: null
 
 permissions:
   contents: read
@@ -46,17 +49,10 @@ env:
 jobs:
   # Where this run happens, decided once: MolCrafts/molcrafts-ci/actions/ci-context.
   context:
+    permissions:
+      contents: read
     name: test / context
-    runs-on: ubuntu-latest
-    outputs:
-      tier: ${{ steps.context.outputs.tier }}
-      upstream: ${{ steps.context.outputs.upstream }}
-      integration: ${{ steps.context.outputs.integration }}
-      skip-pr: ${{ steps.context.outputs.skip-pr }}
-      publish: ${{ steps.context.outputs.publish }}
-    steps:
-      - id: context
-        uses: MolCrafts/molcrafts-ci/actions/ci-context@03352583738d9424ce37996ef9e04df9290087ba
+    uses: MolCrafts/molcrafts-ci/.github/workflows/context.yml@2c51eb289dccaeb9a0cb9e32d7ac1412b5d0a229
 
   python:
     name: test / python (${{ matrix.os }}, ${{ matrix.python }})
@@ -69,12 +65,12 @@ jobs:
         include: ${{ fromJSON(needs.context.outputs.tier == 'full' && '[{"os":"ubuntu-latest","python":"3.12"},{"os":"ubuntu-latest","python":"3.14"},{"os":"macos-latest","python":"3.12"},{"os":"windows-latest","python":"3.12"}]' || '[{"os":"ubuntu-latest","python":"3.12"}]') }}
     steps:
       - uses: actions/checkout@v7
-      - uses: MolCrafts/molcrafts-ci/actions/setup-python@03352583738d9424ce37996ef9e04df9290087ba
+      - uses: MolCrafts/molcrafts-ci/actions/setup-python@2c51eb289dccaeb9a0cb9e32d7ac1412b5d0a229
         with:
           python-version: ${{ matrix.python }}
-      - uses: MolCrafts/molcrafts-ci/actions/setup-partners@03352583738d9424ce37996ef9e04df9290087ba
+      - uses: MolCrafts/molcrafts-ci/actions/setup-partners@2c51eb289dccaeb9a0cb9e32d7ac1412b5d0a229
       # molrs/rust-toolchain.toml pins the compiler that builds the molrs wheel.
-      - uses: MolCrafts/molcrafts-ci/actions/setup-rust@03352583738d9424ce37996ef9e04df9290087ba
+      - uses: MolCrafts/molcrafts-ci/actions/setup-rust@2c51eb289dccaeb9a0cb9e32d7ac1412b5d0a229
         with:
           toolchain-dir: ../molrs
           cache: molrs-python
@@ -91,7 +87,7 @@ jobs:
       # Counts and coverage in the run and pull request summary; report only.
       - name: Report
         if: ${{ !cancelled() }}
-        uses: MolCrafts/molcrafts-ci/actions/report@03352583738d9424ce37996ef9e04df9290087ba
+        uses: MolCrafts/molcrafts-ci/actions/report@2c51eb289dccaeb9a0cb9e32d7ac1412b5d0a229
         with:
           title: test / python (${{ matrix.os }}, ${{ matrix.python }})
           junit: .ci-out/junit.xml
@@ -106,3 +102,14 @@ jobs:
         env:
           UV_PYTHON: ${{ matrix.python }}
         run: python scripts/check.py docs
+
+  workflow-policy:
+    name: test / workflows
+    needs: context
+    if: needs.context.outputs.skip-pr != 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+    - uses: actions/checkout@v7
+    - uses: MolCrafts/molcrafts-ci/actions/check-workflows@2c51eb289dccaeb9a0cb9e32d7ac1412b5d0a229
