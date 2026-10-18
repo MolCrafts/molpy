@@ -8,7 +8,7 @@ repos:
     hooks:
       - id: ci
         name: molcrafts-ci
-        entry: uv run --no-project --script https://raw.githubusercontent.com/MolCrafts/molcrafts-ci/2c51eb289dccaeb9a0cb9e32d7ac1412b5d0a229/hooks/ci.py
+        entry: uv run --no-project --script https://raw.githubusercontent.com/MolCrafts/molcrafts-ci/b2c4441faa0743987a82bbc53d7ff9d7c2f974aa/hooks/ci.py
         language: system
         pass_filenames: false
         always_run: true
@@ -18,7 +18,7 @@ repos:
         args: ["--stage", "pre-commit"]
       - id: ci-push
         name: molcrafts-ci pre-push
-        entry: uv run --no-project --script https://raw.githubusercontent.com/MolCrafts/molcrafts-ci/2c51eb289dccaeb9a0cb9e32d7ac1412b5d0a229/hooks/ci.py
+        entry: uv run --no-project --script https://raw.githubusercontent.com/MolCrafts/molcrafts-ci/b2c4441faa0743987a82bbc53d7ff9d7c2f974aa/hooks/ci.py
         language: system
         pass_filenames: false
         always_run: true
