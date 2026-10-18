@@ -52,7 +52,7 @@ jobs:
     permissions:
       contents: read
     name: test / context
-    uses: MolCrafts/molcrafts-ci/.github/workflows/context.yml@2c51eb289dccaeb9a0cb9e32d7ac1412b5d0a229
+    uses: MolCrafts/molcrafts-ci/.github/workflows/context.yml@b2c4441faa0743987a82bbc53d7ff9d7c2f974aa
 
   python:
     name: test / python (${{ matrix.os }}, ${{ matrix.python }})
@@ -65,12 +65,12 @@ jobs:
         include: ${{ fromJSON(needs.context.outputs.tier == 'full' && '[{"os":"ubuntu-latest","python":"3.12"},{"os":"ubuntu-latest","python":"3.14"},{"os":"macos-latest","python":"3.12"},{"os":"windows-latest","python":"3.12"}]' || '[{"os":"ubuntu-latest","python":"3.12"}]') }}
     steps:
       - uses: actions/checkout@v7
-      - uses: MolCrafts/molcrafts-ci/actions/setup-python@2c51eb289dccaeb9a0cb9e32d7ac1412b5d0a229
+      - uses: MolCrafts/molcrafts-ci/actions/setup-python@b2c4441faa0743987a82bbc53d7ff9d7c2f974aa
         with:
           python-version: ${{ matrix.python }}
-      - uses: MolCrafts/molcrafts-ci/actions/setup-partners@2c51eb289dccaeb9a0cb9e32d7ac1412b5d0a229
+      - uses: MolCrafts/molcrafts-ci/actions/setup-partners@b2c4441faa0743987a82bbc53d7ff9d7c2f974aa
       # molrs/rust-toolchain.toml pins the compiler that builds the molrs wheel.
-      - uses: MolCrafts/molcrafts-ci/actions/setup-rust@2c51eb289dccaeb9a0cb9e32d7ac1412b5d0a229
+      - uses: MolCrafts/molcrafts-ci/actions/setup-rust@b2c4441faa0743987a82bbc53d7ff9d7c2f974aa
         with:
           toolchain-dir: ../molrs
           cache: molrs-python
@@ -87,7 +87,7 @@ jobs:
       # Counts and coverage in the run and pull request summary; report only.
       - name: Report
         if: ${{ !cancelled() }}
-        uses: MolCrafts/molcrafts-ci/actions/report@2c51eb289dccaeb9a0cb9e32d7ac1412b5d0a229
+        uses: MolCrafts/molcrafts-ci/actions/report@b2c4441faa0743987a82bbc53d7ff9d7c2f974aa
         with:
           title: test / python (${{ matrix.os }}, ${{ matrix.python }})
           junit: .ci-out/junit.xml
@@ -112,4 +112,4 @@ jobs:
       contents: read
     steps:
     - uses: actions/checkout@v7
-    - uses: MolCrafts/molcrafts-ci/actions/check-workflows@2c51eb289dccaeb9a0cb9e32d7ac1412b5d0a229
+    - uses: MolCrafts/molcrafts-ci/actions/check-workflows@b2c4441faa0743987a82bbc53d7ff9d7c2f974aa

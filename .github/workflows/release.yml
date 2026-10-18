@@ -43,7 +43,7 @@ jobs:
     permissions:
       contents: read
     name: release / context
-    uses: MolCrafts/molcrafts-ci/.github/workflows/context.yml@2c51eb289dccaeb9a0cb9e32d7ac1412b5d0a229
+    uses: MolCrafts/molcrafts-ci/.github/workflows/context.yml@b2c4441faa0743987a82bbc53d7ff9d7c2f974aa
 
   guard:
     name: release / guard
@@ -120,7 +120,7 @@ jobs:
       PYTHONWARNDEFAULTENCODING: "1"
     steps:
       - uses: actions/checkout@v7
-      - uses: MolCrafts/molcrafts-ci/actions/setup-python@2c51eb289dccaeb9a0cb9e32d7ac1412b5d0a229
+      - uses: MolCrafts/molcrafts-ci/actions/setup-python@b2c4441faa0743987a82bbc53d7ff9d7c2f974aa
         with:
           python-version: "3.12"
       - run: python scripts/check_partners_on_pypi.py
@@ -137,7 +137,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: MolCrafts/molcrafts-ci/actions/setup-python@2c51eb289dccaeb9a0cb9e32d7ac1412b5d0a229
+      - uses: MolCrafts/molcrafts-ci/actions/setup-python@b2c4441faa0743987a82bbc53d7ff9d7c2f974aa
         with:
           python-version: "3.14"
       - run: python scripts/check.py package
