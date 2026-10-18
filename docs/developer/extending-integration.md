@@ -93,7 +93,7 @@ def to_ase(atomistic: Atomistic) -> ase.Atoms:
     """New ``ase.Atoms`` from ``atomistic``; the input is not touched."""
     atoms = list(atomistic.atoms)
     return ase.Atoms(
-        symbols=[a["element"] for a in atoms],
+        numbers=[int(a["atomic_number"]) for a in atoms],
         positions=[[a[k] for k in _XYZ] for a in atoms],
     )
 
@@ -102,7 +102,7 @@ def from_ase(atoms: ase.Atoms) -> Atomistic:
     """New ``Atomistic`` from ``atoms``; the input is not touched."""
     out = Atomistic()
     for atom in atoms:
-        out.add_atom(element=atom.symbol, **dict(zip(_XYZ, map(float, atom.position))))
+        out.add_atom(atomic_number=int(atom.number), **dict(zip(_XYZ, map(float, atom.position))))
     return out
 ```
 

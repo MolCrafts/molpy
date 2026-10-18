@@ -31,7 +31,8 @@ and reacting molecules happen here, before the system is handed to an engine.
 ## Building a molecule
 
 Start empty, then add atoms and bonds. Properties are free-form keywords —
-`element`, coordinates, `charge`, or anything else your workflow needs.
+`atomic_number` (the species), coordinates, `charge`, or anything else your
+workflow needs.
 
 ```python
 import molpy as mp
@@ -53,7 +54,7 @@ Those atoms and bonds are live objects inside the graph — not detached copies.
 Change a property and the molecule changes immediately.
 
 ```python
-print(c1["element"])  # -> C
+print(c1["atomic_number"])  # -> 6
 c1["charge"] = -0.18
 print(c1["charge"])  # -> -0.18
 
