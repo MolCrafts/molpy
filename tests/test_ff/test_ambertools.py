@@ -157,9 +157,9 @@ class TestAntechamberTypifier:
         directory = tools.cwds[-1]
         assert lines == [
             "source leaprc.gaff",
-            f'loadamberparams "{directory / "parmchk2.frcmod"}"',
-            f'MOL = loadmol2 "{directory / "antechamber.mol2"}"',
-            f'saveamberparm MOL "{directory / "MOL.prmtop"}" "{directory / "MOL.inpcrd"}"',
+            f'loadamberparams "{(directory / "parmchk2.frcmod").as_posix()}"',
+            f'MOL = loadmol2 "{(directory / "antechamber.mol2").as_posix()}"',
+            f'saveamberparm MOL "{(directory / "MOL.prmtop").as_posix()}" "{(directory / "MOL.inpcrd").as_posix()}"',
             "quit",
         ]
 
