@@ -318,7 +318,7 @@ class TestScript:
         work = tmp_path / "my work"
         result = _build(work)
         script = _script(work)
-        monomer = (work / "monomers" / "EO").resolve()
+        monomer = (work / "monomers" / "EO").resolve().as_posix()
         assert f'loadamberparams "{monomer}/EO.frcmod"' in script
         assert f'loadamberprep "{monomer}/HEO.prepi"' in script
         assert result.prmtop_path.is_file()

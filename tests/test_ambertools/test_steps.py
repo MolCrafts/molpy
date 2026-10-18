@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import shlex
 import subprocess
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from unittest.mock import patch
 
 import pytest
@@ -61,6 +61,7 @@ def _run(fake: _Fake):
 class TestLeapScript:
     def test_every_path_is_quoted_in_load_order(self, tmp_path):
         work = tmp_path / "my work"
+        portable = work.as_posix()
         script = leap_script(
             "gaff2",
             leap_sequence(["HEO", "EO", "TEO"]),
@@ -71,18 +72,28 @@ class TestLeapScript:
         )
         assert script.splitlines() == [
             "source leaprc.gaff2",
-            f'loadamberparams "{work}/EO.frcmod"',
-            f'loadamberprep "{work}/HEO.prepi"',
-            f'loadamberprep "{work}/EO.prepi"',
+            f'loadamberparams "{portable}/EO.frcmod"',
+            f'loadamberprep "{portable}/HEO.prepi"',
+            f'loadamberprep "{portable}/EO.prepi"',
             "MOL = sequence { HEO EO TEO }",
-            f'saveamberparm MOL "{work}/polymer.prmtop" "{work}/polymer.inpcrd"',
+            f'saveamberparm MOL "{portable}/polymer.prmtop" "{portable}/polymer.inpcrd"',
             "quit",
         ]
         save = shlex.split(script.splitlines()[-2])
-        assert save[2:] == [str(work / "polymer.prmtop"), str(work / "polymer.inpcrd")]
+        assert save[2:] == [
+            (work / "polymer.prmtop").as_posix(),
+            (work / "polymer.inpcrd").as_posix(),
+        ]
 
     def test_loadmol2_quotes_its_path(self, tmp_path):
-        assert leap_mol2(tmp_path / "a b.mol2") == f'loadmol2 "{tmp_path}/a b.mol2"'
+        assert (
+            leap_mol2(tmp_path / "a b.mol2")
+            == f'loadmol2 "{(tmp_path / "a b.mol2").as_posix()}"'
+        )
+
+    def test_windows_paths_use_portable_separators(self):
+        path = PureWindowsPath("C:/my work/a b.mol2")
+        assert leap_mol2(path) == 'loadmol2 "C:/my work/a b.mol2"'
 
     def test_a_double_quote_cannot_be_written(self, tmp_path):
         with pytest.raises(ValueError, match="double quote"):

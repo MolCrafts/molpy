@@ -8,7 +8,7 @@ tleap as one word.
 from __future__ import annotations
 
 from collections.abc import Sequence
-from pathlib import Path
+from pathlib import Path, PurePath
 from typing import TYPE_CHECKING, Literal
 
 from molrs.core.keys import FORMAL_CHARGE
@@ -70,19 +70,19 @@ def input_mol2(graph: Atomistic, *, rename: bool) -> str:
     return buffer.decode("utf-8")
 
 
-def leap_path(path: Path) -> str:
-    """``path`` as one tleap word: double-quoted.
+def leap_path(path: PurePath) -> str:
+    """``path`` as one tleap word: forward slashes and double quotes.
 
     Raises:
         ValueError: The path holds a double quote, which tleap cannot escape.
     """
-    text = str(path)
+    text = path.as_posix()
     if '"' in text:
         raise ValueError(f"tleap cannot read a path with a double quote: {text!r}")
     return f'"{text}"'
 
 
-def leap_mol2(path: Path) -> str:
+def leap_mol2(path: PurePath) -> str:
     """The unit expression that loads a mol2."""
     return f"loadmol2 {leap_path(path)}"
 
