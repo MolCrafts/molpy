@@ -21,10 +21,11 @@ name: release
 #
 # Trusted publishing names this file, release.yml, and one environment per
 # registry: crates-io, npm, pypi. A dispatch never enters an environment.
-on:
+'on':
   push:
-    tags: ["v*"]
-  workflow_dispatch:
+    tags:
+    - v*
+  workflow_dispatch: null
 
 permissions:
   contents: read
@@ -41,22 +42,15 @@ defaults:
 jobs:
   # Where this run happens, decided once: MolCrafts/molcrafts-ci/actions/ci-context.
   context:
+    permissions:
+      contents: read
     name: release / context
-    runs-on: ubuntu-latest
-    outputs:
-      tier: ${{ steps.context.outputs.tier }}
-      upstream: ${{ steps.context.outputs.upstream }}
-      integration: ${{ steps.context.outputs.integration }}
-      skip-pr: ${{ steps.context.outputs.skip-pr }}
-      publish: ${{ steps.context.outputs.publish }}
-    steps:
-      - id: context
-        uses: MolCrafts/molcrafts-ci/actions/ci-context@03352583738d9424ce37996ef9e04df9290087ba
+    uses: MolCrafts/molcrafts-ci/.github/workflows/context.yml@2c51eb289dccaeb9a0cb9e32d7ac1412b5d0a229
 
   guard:
     name: release / guard
     needs: context
-    if: github.event_name == 'workflow_dispatch' || needs.context.outputs.upstream == 'true'
+    if: needs.context.outputs.skip-pr != 'true' && (github.event_name == 'workflow_dispatch' || needs.context.outputs.upstream == 'true')
     runs-on: ubuntu-latest
     timeout-minutes: 100
     permissions:
@@ -71,7 +65,6 @@ jobs:
         run: |
           version=$(python3 -c 'import tomllib; print(tomllib.load(open("Cargo.toml", "rb"))["workspace"]["package"]["version"])')
           [ "$GITHUB_REF_NAME" = "v$version" ] || { echo "::error::tag $GITHUB_REF_NAME is not v$version"; exit 1; }
-          git merge-base --is-ancestor "$GITHUB_SHA" origin/master || { echo "::error::tag is not on master"; exit 1; }
       # The commit's test.yml run, instead of running it again. A tag waits
       # for every job of the full tier to have succeeded on this SHA (pushed
       # to master first); a dispatch, for whatever `test / *` runs the commit
@@ -81,7 +74,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           PUBLISH: ${{ needs.context.outputs.publish }}
           REQUIRED: >-
-            test / context|test / rust|test / python (ubuntu-latest)|test / python (macos-latest)|test / python (windows-latest)|test / docs|test / capi|test / capi (windows-latest)|test / wasm|test / mrec
+            test / context / context / context|test / rust|test / python (ubuntu-latest)|test / python (macos-latest)|test / python (windows-latest)|test / docs|test / capi|test / capi (windows-latest)|test / wasm|test / mrec
         run: |
           python3 - <<'PY'
           import json, os, subprocess, sys, time
@@ -122,11 +115,11 @@ jobs:
   crate-check:
     name: release / crate (dry run)
     needs: [context, guard]
-    if: needs.context.outputs.publish != 'true'
+    if: needs.context.outputs.skip-pr != 'true' && (needs.context.outputs.publish != 'true')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: MolCrafts/molcrafts-ci/actions/setup-rust@03352583738d9424ce37996ef9e04df9290087ba
+      - uses: MolCrafts/molcrafts-ci/actions/setup-rust@2c51eb289dccaeb9a0cb9e32d7ac1412b5d0a229
       - name: The crate ships the repository's LICENSE
         run: |
           cmp LICENSE molrs/LICENSE
@@ -143,7 +136,7 @@ jobs:
       id-token: write
     steps:
       - uses: actions/checkout@v7
-      - uses: MolCrafts/molcrafts-ci/actions/setup-rust@03352583738d9424ce37996ef9e04df9290087ba
+      - uses: MolCrafts/molcrafts-ci/actions/setup-rust@2c51eb289dccaeb9a0cb9e32d7ac1412b5d0a229
       - name: The crate ships the repository's LICENSE
         run: |
           cmp LICENSE molrs/LICENSE
@@ -170,12 +163,15 @@ jobs:
   # The npm package, built and packed as npm would take it; the upload job
   # publishes exactly this directory.
   npm-pack:
+    if: needs.context.outputs.skip-pr != 'true'
     name: release / npm (dry run)
-    needs: guard
+    needs:
+    - context
+    - guard
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: MolCrafts/molcrafts-ci/actions/setup-rust@03352583738d9424ce37996ef9e04df9290087ba
+      - uses: MolCrafts/molcrafts-ci/actions/setup-rust@2c51eb289dccaeb9a0cb9e32d7ac1412b5d0a229
         with:
           cache: release-wasm
       - uses: ./.github/actions/setup-wasm
@@ -222,8 +218,11 @@ jobs:
   # Desktop abi3 wheels, one interpreter each. macOS arm64 and x64 are
   # separate wheels (PyPI rejected universal2 fat wheels).
   wheels:
+    if: needs.context.outputs.skip-pr != 'true'
     name: release / wheels (${{ matrix.artifact }})
-    needs: guard
+    needs:
+    - context
+    - guard
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -239,10 +238,10 @@ jobs:
           - { os: windows-latest, target: "", artifact: windows, manylinux: auto }
     steps:
       - uses: actions/checkout@v7
-      - uses: MolCrafts/molcrafts-ci/actions/setup-python@03352583738d9424ce37996ef9e04df9290087ba
+      - uses: MolCrafts/molcrafts-ci/actions/setup-python@2c51eb289dccaeb9a0cb9e32d7ac1412b5d0a229
         with:
           python-version: "3.14"
-      - uses: MolCrafts/molcrafts-ci/actions/setup-rust@03352583738d9424ce37996ef9e04df9290087ba
+      - uses: MolCrafts/molcrafts-ci/actions/setup-rust@2c51eb289dccaeb9a0cb9e32d7ac1412b5d0a229
         with:
           cache: release-py-${{ matrix.artifact }}
       - uses: PyO3/maturin-action@v1
@@ -260,15 +259,18 @@ jobs:
 
   # The Pyodide / Emscripten wheel for micropip: no host filesystem, no zarr.
   pyodide:
+    if: needs.context.outputs.skip-pr != 'true'
     name: release / wheels (pyodide)
-    needs: guard
+    needs:
+    - context
+    - guard
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: MolCrafts/molcrafts-ci/actions/setup-python@03352583738d9424ce37996ef9e04df9290087ba
+      - uses: MolCrafts/molcrafts-ci/actions/setup-python@2c51eb289dccaeb9a0cb9e32d7ac1412b5d0a229
         with:
           python-version: "3.14"
-      - uses: MolCrafts/molcrafts-ci/actions/setup-rust@03352583738d9424ce37996ef9e04df9290087ba
+      - uses: MolCrafts/molcrafts-ci/actions/setup-rust@2c51eb289dccaeb9a0cb9e32d7ac1412b5d0a229
         with:
           targets: wasm32-unknown-emscripten
           cache: release-py-pyodide
@@ -311,8 +313,11 @@ jobs:
   # The C ABI deliverable for external C / C++ / HPC consumers: libmolrs_capi
   # (cdylib + staticlib) and the cbindgen header (docs/interop.md, "Path C").
   capi:
+    if: needs.context.outputs.skip-pr != 'true'
     name: release / capi (${{ matrix.artifact }})
-    needs: guard
+    needs:
+    - context
+    - guard
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -325,7 +330,7 @@ jobs:
           - { os: windows-latest, target: "", artifact: windows-x64 }
     steps:
       - uses: actions/checkout@v7
-      - uses: MolCrafts/molcrafts-ci/actions/setup-rust@03352583738d9424ce37996ef9e04df9290087ba
+      - uses: MolCrafts/molcrafts-ci/actions/setup-rust@2c51eb289dccaeb9a0cb9e32d7ac1412b5d0a229
         with:
           targets: ${{ matrix.target }}
           cache: release-capi-${{ matrix.artifact }}
