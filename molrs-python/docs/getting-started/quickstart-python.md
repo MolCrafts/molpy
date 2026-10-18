@@ -76,17 +76,19 @@ hand, use `np.float64` for scientific floating-point columns.
 
 Several analyses need to know whether coordinates are periodic. Attach a
 `Box` before building neighbor lists if the system should be interpreted as a
-periodic simulation cell. A box is built from a `Cell` — `Cell.lengths`,
-`Cell.matrix`, `Cell.lengths_angles`, `Cell.lengths_tilts` or
-`Cell.undefined()` — plus an origin and per-axis periodicity;
+periodic simulation cell. A box holds a cell, an origin and per-axis
+periodicity. The factories build the common cells — `Box.cube(a)`,
+`Box.ortho([a, b, c])`, `Box.from_lengths_tilts(lengths, tilts)`,
+`Box.from_lengths_angles(lengths, angles)` — and `Box(h)` takes the 3×3 cell
+matrix; each also takes `origin=` and `pbc=`. Any other cell goes through a
+`Cell` (`Box(Cell.undefined(), pbc=…)` is a box with no cell), and
 `Box.bounding(points, padding, pbc)` encloses a point cloud.
 
 ```python
 import numpy as np
 
-frame.box = molrs.core.Box(
-    molrs.core.Cell.lengths([20.0, 20.0, 20.0]),
-    pbc=np.array([True, True, True], dtype=np.bool_),
+frame.box = molrs.core.Box.cube(
+    20.0, pbc=np.array([True, True, True], dtype=np.bool_)
 )
 
 print("box lengths:", frame.box.lengths)

@@ -3,11 +3,13 @@
 //!
 //! [`PyCell`] mirrors the core [`Cell`] enum — the one argument that says what
 //! the cell is — as a frozen class with one staticmethod per variant.
-//! [`PyBox`] wraps [`SimBox`]: one constructor `Box(cell, origin, pbc)`
-//! mirroring `SimBox::new(Cell, origin, pbc)`, `Box.bounding(points, padding,
-//! pbc)` mirroring `SimBox::bounding`, coordinate transformations (Cartesian
-//! <-> fractional), wrapping, and displacements with an optional
-//! minimum-image convention.
+//! [`PyBox`] wraps [`SimBox`], which holds a resolved [`Cell`]:
+//! `Box(cell, origin, pbc)` mirroring `SimBox::new(Cell, origin, pbc)` (the
+//! cell a `Cell` or a 3×3 matrix), the factories `Box.cube` / `Box.ortho` /
+//! `Box.from_lengths_tilts` / `Box.from_lengths_angles` for the common cells,
+//! `Box.bounding(points, padding, pbc)` mirroring `SimBox::bounding`,
+//! coordinate transformations (Cartesian <-> fractional), wrapping, and
+//! displacements with an optional minimum-image convention.
 //!
 //! All length quantities are in the unit of the stored coordinates (Å in
 //! molrs).
@@ -51,6 +53,23 @@ fn check_nx3(view: &ndarray::ArrayView2<'_, F>, label: &str) -> PyResult<()> {
         )));
     }
     Ok(())
+}
+
+/// What `Box(cell, …)` accepts as its cell: a [`PyCell`], or the 3×3 cell
+/// matrix itself (lattice vectors as columns), which is `Cell.matrix(h)`.
+#[derive(FromPyObject)]
+enum CellArg {
+    Cell(PyCell),
+    Matrix([[F; 3]; 3]),
+}
+
+impl CellArg {
+    fn into_cell(self) -> Cell {
+        match self {
+            CellArg::Cell(cell) => cell.inner,
+            CellArg::Matrix(h) => Cell::Matrix(h),
+        }
+    }
 }
 
 /// The geometry of a simulation cell, exposed to Python as `molrs.core.Cell`.
@@ -150,19 +169,30 @@ impl PyCell {
     }
 }
 
+impl PyBox {
+    /// The one place every constructor and factory resolves its cell.
+    fn from_cell(cell: Cell, origin: [F; 3], pbc: [bool; 3]) -> PyResult<Self> {
+        let inner = SimBox::new(cell, origin, pbc).map_err(box_error_to_pyerr)?;
+        Ok(PyBox { inner })
+    }
+}
+
 /// Simulation box with periodic boundary conditions, exposed to Python as
 /// `molrs.core.Box`.
 ///
-/// The box is a :class:`Cell` (a 3x3 matrix **H** whose columns are the
-/// lattice vectors), an origin point and per-axis PBC flags.
+/// The box holds a :class:`Cell` (resolved to a 3x3 matrix **H** whose
+/// columns are the lattice vectors), an origin point and per-axis PBC flags.
+/// The factories build the common cells without spelling the :class:`Cell`.
 ///
 /// # Python Examples
 ///
 /// ```python
 /// from molrs.core import Box, Cell
 ///
-/// box = Box(Cell.lengths([10.0, 20.0, 30.0]))   # orthorhombic, periodic
+/// box = Box.cube(10.0)                          # cubic, periodic
+/// box = Box.ortho([10.0, 20.0, 30.0])           # orthorhombic
 /// print(box.volume())                           # 6000.0
+/// slab = Box.cube(20.0, pbc=(True, True, False))
 /// free = Box(Cell.undefined(), pbc=(False, False, False))
 /// ```
 #[pyclass(module = "molrs.core", name = "Box", from_py_object, subclass)]
@@ -177,9 +207,10 @@ impl PyBox {
     ///
     /// Parameters
     /// ----------
-    /// cell : Cell
+    /// cell : Cell or array_like, shape (3, 3)
     ///     The cell geometry (``Cell.matrix`` / ``lengths`` /
-    ///     ``lengths_angles`` / ``lengths_tilts`` / ``undefined``).
+    ///     ``lengths_angles`` / ``lengths_tilts`` / ``undefined``), or the
+    ///     cell matrix itself (Å, lattice vectors as columns).
     /// origin : array_like, shape (3,)
     ///     Origin of the box in Cartesian coordinates (Å).
     /// pbc : array_like of bool, shape (3,)
@@ -192,9 +223,71 @@ impl PyBox {
     ///     lengths/angles that describe no cell.
     #[new]
     #[pyo3(signature = (cell, origin = [0.0; 3], pbc = [true; 3]))]
-    fn new(cell: PyCell, origin: [F; 3], pbc: [bool; 3]) -> PyResult<Self> {
-        let inner = SimBox::new(cell.inner, origin, pbc).map_err(box_error_to_pyerr)?;
-        Ok(PyBox { inner })
+    fn new(cell: CellArg, origin: [F; 3], pbc: [bool; 3]) -> PyResult<Self> {
+        Self::from_cell(cell.into_cell(), origin, pbc)
+    }
+
+    /// A cubic box of edge ``a`` (Å): ``Box(Cell.lengths([a, a, a]), …)``.
+    ///
+    /// Raises
+    /// ------
+    /// ValueError
+    ///     A non-positive or non-finite ``a``.
+    #[staticmethod]
+    #[pyo3(signature = (a, origin = [0.0; 3], pbc = [true; 3]))]
+    fn cube(a: F, origin: [F; 3], pbc: [bool; 3]) -> PyResult<Self> {
+        Self::from_cell(Cell::Lengths([a; 3]), origin, pbc)
+    }
+
+    /// An orthorhombic box with edge lengths ``[a, b, c]`` (Å):
+    /// ``Box(Cell.lengths(lengths), …)``.
+    ///
+    /// Raises
+    /// ------
+    /// ValueError
+    ///     A non-positive or non-finite length.
+    #[staticmethod]
+    #[pyo3(signature = (lengths, origin = [0.0; 3], pbc = [true; 3]))]
+    fn ortho(lengths: [F; 3], origin: [F; 3], pbc: [bool; 3]) -> PyResult<Self> {
+        Self::from_cell(Cell::Lengths(lengths), origin, pbc)
+    }
+
+    /// A restricted-triclinic box from the diagonal sizes ``[lx, ly, lz]``
+    /// (Å) and the tilts ``[xy, xz, yz]`` (Å), the LAMMPS form:
+    /// ``Box(Cell.lengths_tilts(lengths, tilts), …)``.
+    ///
+    /// Raises
+    /// ------
+    /// ValueError
+    ///     A non-positive or non-finite length.
+    #[staticmethod]
+    #[pyo3(signature = (lengths, tilts, origin = [0.0; 3], pbc = [true; 3]))]
+    fn from_lengths_tilts(
+        lengths: [F; 3],
+        tilts: [F; 3],
+        origin: [F; 3],
+        pbc: [bool; 3],
+    ) -> PyResult<Self> {
+        Self::from_cell(Cell::LengthsTilts { lengths, tilts }, origin, pbc)
+    }
+
+    /// A restricted-triclinic box from edge lengths ``[a, b, c]`` (Å) and the
+    /// angles ``[alpha, beta, gamma]`` between them, in degrees:
+    /// ``Box(Cell.lengths_angles(lengths, angles), …)``.
+    ///
+    /// Raises
+    /// ------
+    /// ValueError
+    ///     A non-positive length, or angles that describe no cell.
+    #[staticmethod]
+    #[pyo3(signature = (lengths, angles, origin = [0.0; 3], pbc = [true; 3]))]
+    fn from_lengths_angles(
+        lengths: [F; 3],
+        angles: [F; 3],
+        origin: [F; 3],
+        pbc: [bool; 3],
+    ) -> PyResult<Self> {
+        Self::from_cell(Cell::LengthsAngles { lengths, angles }, origin, pbc)
     }
 
     /// The orthorhombic box enclosing ``points``: their axis-aligned bounds
