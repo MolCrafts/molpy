@@ -51,7 +51,7 @@ jobs:
       publish: ${{ steps.context.outputs.publish }}
     steps:
       - id: context
-        uses: MolCrafts/molcrafts-ci/actions/ci-context@03352583738d9424ce37996ef9e04df9290087ba
+        uses: MolCrafts/molcrafts-ci/actions/ci-context@4e5a51d0c60518e028ed118abbd1adb4a04d28ae
 
   measure:
     name: nightly / measure
@@ -66,11 +66,11 @@ jobs:
         with:
           persist-credentials: false
       # llvm-tools ships llvm-profdata and llvm-cov next to rustc, off PATH.
-      - uses: MolCrafts/molcrafts-ci/actions/setup-rust@03352583738d9424ce37996ef9e04df9290087ba
+      - uses: MolCrafts/molcrafts-ci/actions/setup-rust@4e5a51d0c60518e028ed118abbd1adb4a04d28ae
         with:
           components: llvm-tools-preview
           cache: snapshot
-      - uses: MolCrafts/molcrafts-ci/actions/setup-python@03352583738d9424ce37996ef9e04df9290087ba
+      - uses: MolCrafts/molcrafts-ci/actions/setup-python@4e5a51d0c60518e028ed118abbd1adb4a04d28ae
       # molrec (the suite and its molrs adapter) at the commit
       # scripts/partners.py resolves, as `scripts/check.sh mrec` fetches it.
       - run: python3 scripts/partners.py fetch MOLREC .ci-out/molrec
@@ -164,7 +164,7 @@ jobs:
           name: ci-snapshots
           path: snapshots
       - if: ${{ hashFiles('snapshots/*.json') != '' }}
-        uses: MolCrafts/molcrafts-ci/actions/submit@03352583738d9424ce37996ef9e04df9290087ba
+        uses: MolCrafts/molcrafts-ci/actions/submit@4e5a51d0c60518e028ed118abbd1adb4a04d28ae
         with:
           snapshot-path: snapshots/*.json
           project: molrs
@@ -196,7 +196,7 @@ jobs:
         os: [ubuntu-latest, macos-latest, windows-latest]
     steps:
       - uses: actions/checkout@v7
-      - uses: MolCrafts/molcrafts-ci/actions/setup-python@03352583738d9424ce37996ef9e04df9290087ba
+      - uses: MolCrafts/molcrafts-ci/actions/setup-python@4e5a51d0c60518e028ed118abbd1adb4a04d28ae
       # The pyproject [project] version and name only: Cargo rejects PEP 440
       # `.devN`, so the crate version stays as it is.
       - name: Stamp the dev version and the nightly name

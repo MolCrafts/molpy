@@ -48,7 +48,7 @@ jobs:
       publish: ${{ steps.context.outputs.publish }}
     steps:
       - id: context
-        uses: MolCrafts/molcrafts-ci/actions/ci-context@03352583738d9424ce37996ef9e04df9290087ba
+        uses: MolCrafts/molcrafts-ci/actions/ci-context@4e5a51d0c60518e028ed118abbd1adb4a04d28ae
 
   rust:
     name: test / rust
@@ -57,7 +57,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: MolCrafts/molcrafts-ci/actions/setup-rust@03352583738d9424ce37996ef9e04df9290087ba
+      - uses: MolCrafts/molcrafts-ci/actions/setup-rust@4e5a51d0c60518e028ed118abbd1adb4a04d28ae
         with:
           cache: native
       - run: scripts/check.sh --report .ci-out test ${{ needs.context.outputs.tier == 'full' && 'ffi cxx ext' || '' }}
@@ -65,7 +65,7 @@ jobs:
       # coverage here: instrumenting the build is the nightly's job.
       - name: Report
         if: ${{ !cancelled() }}
-        uses: MolCrafts/molcrafts-ci/actions/report@03352583738d9424ce37996ef9e04df9290087ba
+        uses: MolCrafts/molcrafts-ci/actions/report@4e5a51d0c60518e028ed118abbd1adb4a04d28ae
         with:
           title: test / rust
           cargo-test: .ci-out/cargo-test.log
@@ -82,10 +82,10 @@ jobs:
         os: ${{ fromJSON(needs.context.outputs.tier == 'full' && '["ubuntu-latest","macos-latest","windows-latest"]' || '["ubuntu-latest"]') }}
     steps:
       - uses: actions/checkout@v7
-      - uses: MolCrafts/molcrafts-ci/actions/setup-rust@03352583738d9424ce37996ef9e04df9290087ba
+      - uses: MolCrafts/molcrafts-ci/actions/setup-rust@4e5a51d0c60518e028ed118abbd1adb4a04d28ae
         with:
           cache: python
-      - uses: MolCrafts/molcrafts-ci/actions/setup-python@03352583738d9424ce37996ef9e04df9290087ba
+      - uses: MolCrafts/molcrafts-ci/actions/setup-python@4e5a51d0c60518e028ed118abbd1adb4a04d28ae
       # The wheel is written to .ci-out/wheel and kept: the file this step
       # tested is the file the Linux leg uploads.
       - env:
@@ -102,7 +102,7 @@ jobs:
       # request summary; report only.
       - name: Report
         if: ${{ !cancelled() }}
-        uses: MolCrafts/molcrafts-ci/actions/report@03352583738d9424ce37996ef9e04df9290087ba
+        uses: MolCrafts/molcrafts-ci/actions/report@4e5a51d0c60518e028ed118abbd1adb4a04d28ae
         with:
           title: test / python (${{ matrix.os }})
           junit: .ci-out/junit.xml
@@ -118,7 +118,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: MolCrafts/molcrafts-ci/actions/setup-python@03352583738d9424ce37996ef9e04df9290087ba
+      - uses: MolCrafts/molcrafts-ci/actions/setup-python@4e5a51d0c60518e028ed118abbd1adb4a04d28ae
       - uses: actions/download-artifact@v8
         with:
           name: tested-wheel-linux
@@ -140,7 +140,7 @@ jobs:
         os: [ubuntu-latest, windows-latest]
     steps:
       - uses: actions/checkout@v7
-      - uses: MolCrafts/molcrafts-ci/actions/setup-rust@03352583738d9424ce37996ef9e04df9290087ba
+      - uses: MolCrafts/molcrafts-ci/actions/setup-rust@4e5a51d0c60518e028ed118abbd1adb4a04d28ae
         with:
           cache: capi
       # Visual Studio is multi-config; use the same configuration for build/test.
@@ -153,7 +153,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: MolCrafts/molcrafts-ci/actions/setup-rust@03352583738d9424ce37996ef9e04df9290087ba
+      - uses: MolCrafts/molcrafts-ci/actions/setup-rust@4e5a51d0c60518e028ed118abbd1adb4a04d28ae
         with:
           cache: wasm
       - uses: ./.github/actions/setup-wasm
@@ -168,7 +168,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: MolCrafts/molcrafts-ci/actions/setup-python@03352583738d9424ce37996ef9e04df9290087ba
+      - uses: MolCrafts/molcrafts-ci/actions/setup-python@4e5a51d0c60518e028ed118abbd1adb4a04d28ae
       - uses: actions/download-artifact@v8
         with:
           name: tested-wheel-linux
