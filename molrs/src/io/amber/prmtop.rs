@@ -41,6 +41,54 @@ fn length_mismatch(flag: &str, got: usize, expected: impl std::fmt::Display) -> 
 // Section map
 // ---------------------------------------------------------------------------
 
+/// Field width of a fixed-width integer `%FORMAT` (`10I8`, `1I8`); `None`
+/// for real and character formats.
+///
+/// Only integers need it: an `E16.8` value is at most 15 characters, so real
+/// fields are always blank-separated (and some writers print them with more
+/// digits than the width, which a fixed-width cut would split).
+fn integer_field_width(format_line: &str) -> Option<usize> {
+    let spec = format_line.split('(').nth(1)?.split(')').next()?;
+    let pos = spec.find(|c: char| matches!(c, 'I' | 'i'))?;
+    let width: String = spec[pos + 1..]
+        .chars()
+        .take_while(|c| c.is_ascii_digit())
+        .collect();
+    width.parse().ok().filter(|&w: &usize| w > 0)
+}
+
+/// Re-tokenise one `nIw` data line with single spaces.
+///
+/// Fortran fixed-width fields need not be separated: in `10I8` a negative
+/// index of 7 digits fills all 8 columns (`-1000011`) and touches its
+/// neighbour, so a whitespace split merges two values — topology sections
+/// of systems above ~3×10⁵ atoms hit this. Every downstream parser splits on
+/// whitespace, so the fields are cut here once. A line whose fixed-width
+/// cut does not yield integers (a free-format writer) keeps its whitespace
+/// tokens.
+fn split_integer_fields(raw: &str, width: usize) -> String {
+    let is_int = |f: &str| {
+        let digits = f.strip_prefix(['-', '+']).unwrap_or(f);
+        !digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit())
+    };
+    let free_format = || raw.split_whitespace().collect::<Vec<_>>().join(" ");
+    let mut fields = Vec::new();
+    for chunk in raw.as_bytes().chunks(width) {
+        let Ok(field) = std::str::from_utf8(chunk) else {
+            return free_format();
+        };
+        let field = field.trim();
+        if field.is_empty() {
+            continue;
+        }
+        if !is_int(field) {
+            return free_format();
+        }
+        fields.push(field);
+    }
+    fields.join(" ")
+}
+
 /// Parse a prmtop into flag → data lines (sanitized, non-empty).
 ///
 /// Public for the FF reader and for Python helpers that still need raw
@@ -52,6 +100,7 @@ pub(crate) fn parse_flag_sections<R: BufRead>(
     let mut sections: HashMap<String, Vec<String>> = HashMap::new();
     let mut flag: Option<String> = None;
     let mut data: Vec<String> = Vec::new();
+    let mut numeric_width: Option<usize> = None;
     let mut buf = String::new();
 
     loop {
@@ -62,6 +111,10 @@ pub(crate) fn parse_flag_sections<R: BufRead>(
         }
         let line = buf.trim();
         if line.is_empty() {
+            continue;
+        }
+        if line.starts_with("%FORMAT") {
+            numeric_width = integer_field_width(line);
             continue;
         }
         if line.starts_with("%FLAG") {
@@ -78,12 +131,12 @@ pub(crate) fn parse_flag_sections<R: BufRead>(
                 .to_string();
             flag = Some(name);
             data = Vec::new();
-        } else if line.starts_with("%FORMAT")
-            || line.starts_with("%VERSION")
-            || line.starts_with("%COMMENT")
-        {
+            numeric_width = None;
+        } else if line.starts_with("%VERSION") || line.starts_with("%COMMENT") {
             // Amber FileFormats: any number of %COMMENT lines may appear
             // between %FLAG and data; ignore them.
+        } else if let Some(width) = numeric_width {
+            data.push(split_integer_fields(buf.trim_end_matches(['\n', '\r']), width));
         } else {
             data.push(line.to_string());
         }
@@ -1013,6 +1066,41 @@ fn read_frame_from<R: BufRead>(reader: R) -> Result<Frame> {
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod fixed_width_tests {
+    use super::*;
+
+    #[test]
+    fn adjacent_eight_column_integers_are_split() {
+        let line = format!("{:>8}{:>8}{:>8}", -1000011, -1000014, 3);
+        assert_eq!(line, "-1000011-1000014       3");
+        assert_eq!(split_integer_fields(&line, 8), "-1000011 -1000014 3");
+    }
+
+    #[test]
+    fn free_format_integer_lines_keep_their_tokens() {
+        // Not aligned to 8 columns: the fixed-width cut is not all integers.
+        assert_eq!(split_integer_fields("12 345 6789 1", 8), "12 345 6789 1");
+    }
+
+    #[test]
+    fn integer_sections_parse_by_width_and_reals_by_blanks() {
+        let text = format!(
+            "%FLAG DIHEDRALS_INC_HYDROGEN\n%FORMAT(10I8)\n{:>8}{:>8}{:>8}{:>8}{:>8}\n\
+             %FLAG CHARGE\n%FORMAT(5E16.8)\n  1.00000000E+00 -2.000000000000001E+00\n",
+            3000030, -3000033, 3000036, -3000039, 7
+        );
+        let sections = parse_flag_sections(text.as_bytes()).unwrap();
+        let dih: Vec<i64> = parse_tokens(&sections["DIHEDRALS_INC_HYDROGEN"]).unwrap();
+        assert_eq!(dih, vec![3000030, -3000033, 3000036, -3000039, 7]);
+        let q: Vec<f64> = parse_tokens(&sections["CHARGE"]).unwrap();
+        assert_eq!(q, vec![1.0, -2.000000000000001]);
+        assert_eq!(integer_field_width("%FORMAT(10I8)"), Some(8));
+        assert_eq!(integer_field_width("%FORMAT(5E16.8)"), None);
+        assert_eq!(integer_field_width("%FORMAT(20a4)"), None);
+    }
+}
 
 #[cfg(test)]
 pub(crate) mod tests {
