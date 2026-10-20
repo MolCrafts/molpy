@@ -97,6 +97,11 @@ impl Stepper {
         mass: ArrayView1<'_, F>,
         simbox: Option<SimBox>,
     ) -> Result<Self, MdError> {
+        if !dt.is_finite() || dt <= 0.0 {
+            return Err(MdError::Invalid(
+                "dt must be finite and strictly positive".into(),
+            ));
+        }
         let mass_col = as_mass_col(mass)?;
         let inv_mass = mass_col.column(0).mapv(|m| 1.0 / m);
         Ok(Self {
@@ -218,6 +223,10 @@ impl VelocityVerlet {
     /// `dt` (fs), the force provider, per-atom mass `(N,)`, and the cell
     /// positions are folded into each step (`None` = free boundary, no
     /// wrapping and image flags stay zero).
+    ///
+    /// # Errors
+    ///
+    /// [`MdError::Invalid`] if `dt` or any mass is non-finite or not strictly positive.
     pub fn new(
         dt: F,
         forces: impl ForceProvider + 'static,
@@ -324,6 +333,11 @@ impl Langevin {
     ///
     /// `seed` fixes the internal noise stream, so [`advance`](Self::advance)
     /// is deterministic given the seed.
+    ///
+    /// # Errors
+    ///
+    /// [`MdError::Invalid`] if `dt`, `gamma`, `kbt` or any mass is non-finite
+    /// or not strictly positive.
     pub fn new(
         dt: F,
         gamma: F,
@@ -333,13 +347,13 @@ impl Langevin {
         seed: u64,
         simbox: Option<SimBox>,
     ) -> Result<Self, MdError> {
-        if gamma <= 0.0 {
+        if !gamma.is_finite() || gamma <= 0.0 {
             return Err(MdError::Invalid(
-                "Langevin requires gamma > 0; use VelocityVerlet for NVE".into(),
+                "Langevin requires finite gamma > 0; use VelocityVerlet for NVE".into(),
             ));
         }
-        if kbt <= 0.0 {
-            return Err(MdError::Invalid("Langevin requires kbt > 0".into()));
+        if !kbt.is_finite() || kbt <= 0.0 {
+            return Err(MdError::Invalid("Langevin requires finite kbt > 0".into()));
         }
         let inner = Stepper::new(dt, forces, mass, simbox)?;
         let sigma = inner.mass_col.column(0).mapv(|m| (kbt / m).sqrt());
@@ -504,6 +518,53 @@ mod tests {
     use super::super::forces::{MicPairs, SelfPairedForces};
     use super::*;
     use molrs::ff::potential::pair::PairLjCut;
+
+    #[test]
+    fn integrators_reject_invalid_parameters_at_construction() {
+        let mass = array![1.0];
+        for dt in [0.0, -0.01, F::NAN, F::INFINITY, F::NEG_INFINITY] {
+            assert!(
+                VelocityVerlet::new(
+                    dt,
+                    SelfPairedForces::new(Potentials::new()),
+                    mass.view(),
+                    None
+                )
+                .is_err(),
+                "dt={dt}"
+            );
+            assert!(
+                Langevin::new(
+                    dt,
+                    1.0,
+                    1.0,
+                    SelfPairedForces::new(Potentials::new()),
+                    mass.view(),
+                    0,
+                    None
+                )
+                .is_err(),
+                "dt={dt}"
+            );
+        }
+        for invalid in [0.0, -1.0, F::NAN, F::INFINITY, F::NEG_INFINITY] {
+            for (gamma, kbt) in [(invalid, 1.0), (1.0, invalid)] {
+                assert!(
+                    Langevin::new(
+                        0.01,
+                        gamma,
+                        kbt,
+                        SelfPairedForces::new(Potentials::new()),
+                        mass.view(),
+                        0,
+                        None
+                    )
+                    .is_err(),
+                    "gamma={gamma}, kbt={kbt}"
+                );
+            }
+        }
+    }
 
     fn cube(a: F) -> SimBox {
         SimBox::new(Cell::Lengths([a; 3]), [0.0, 0.0, 0.0], [true, true, true]).unwrap()

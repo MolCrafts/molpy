@@ -6,7 +6,7 @@ import molrs
 import numpy as np
 import pytest
 from molrs.ff.potential import PairLjCut, Potential
-from molrs.md import MdDriver, MaxwellBoltzmann, VelocityVerlet
+from molrs.md import Langevin, MdDriver, MaxwellBoltzmann, VelocityVerlet
 
 
 class Harmonic:
@@ -144,6 +144,23 @@ class TestImageFlags:
 
 
 class TestMass:
+    @pytest.mark.parametrize("parameter", ["dt", "gamma", "kbt", "mass"])
+    @pytest.mark.parametrize("invalid", [0.0, -1.0, np.nan, np.inf, -np.inf])
+    def test_invalid_parameters_do_not_consume_the_potential(self, parameter, invalid):
+        from molrs.ff.potential import Potentials
+
+        for integrator in ([VelocityVerlet, Langevin] if parameter in ("dt", "mass") else [Langevin]):
+            potential = Potentials()
+            kwargs = {"dt": 0.001, "potential": potential, "mass": np.ones(1)}
+            if integrator is Langevin:
+                kwargs.update(gamma=1.0, kbt=1.0)
+            kwargs[parameter] = np.array([invalid]) if parameter == "mass" else invalid
+            with pytest.raises(ValueError, match=parameter):
+                integrator(**kwargs)
+            # Failed validation must leave the native potential available.
+            valid = VelocityVerlet(0.001, potential=potential, mass=np.ones(1))
+            assert valid.initial(np.zeros((1, 3)), np.zeros((1, 3))).energy == 0.0
+
     def test_a_scalar_mass_is_refused_with_the_array_spelling(self) -> None:
         """Integrators are built before they see ``N``; the mass is per atom."""
         with pytest.raises(TypeError, match=r"np\.full\(n_atoms, mass\)"):

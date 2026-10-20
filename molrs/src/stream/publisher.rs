@@ -49,6 +49,7 @@ pub struct PublisherConfig {
     /// server → client   {"type":"ready"}            (✓)
     ///                   close(1008, "auth")         (✗ missing / wrong token)
     /// ```
+    /// WebSocket upgrades and token exchanges each time out after five seconds.
     pub token: Option<String>,
 }
 
@@ -409,6 +410,9 @@ impl Drop for Publisher {
 
 // --- Background runtime -------------------------------------------------------
 
+/// Bound both the WebSocket upgrade and the application token handshake.
+const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(5);
+
 async fn run_bound(
     listener: TcpListener,
     bcast_tx: broadcast::Sender<Bytes>,
@@ -423,15 +427,17 @@ async fn run_bound(
             _ = &mut shutdown_rx => break,
             accepted = listener.accept() => {
                 let Ok((stream, _)) = accepted else { continue };
-                let Ok(ws) = tokio_tungstenite::accept_async(stream).await else {
-                    continue;
-                };
-                n_clients.fetch_add(1, Ordering::Relaxed);
                 let bcast_rx = bcast_tx.subscribe();
                 let cmd_tx = cmd_tx.clone();
                 let n_clients = Arc::clone(&n_clients);
                 let token = token.clone();
                 tokio::spawn(async move {
+                    let Ok(Ok(ws)) = tokio::time::timeout(
+                        HANDSHAKE_TIMEOUT, tokio_tungstenite::accept_async(stream),
+                    ).await else {
+                        return;
+                    };
+                    n_clients.fetch_add(1, Ordering::Relaxed);
                     handle_client(ws, bcast_rx, cmd_tx, format, token).await;
                     n_clients.fetch_sub(1, Ordering::Relaxed);
                 });
@@ -444,7 +450,7 @@ use tokio_tungstenite::WebSocketStream;
 
 type WsStream = WebSocketStream<tokio::net::TcpStream>;
 
-/// A client's opening message when the server requires a token.
+/// A handshake message: `hello` carries a token, `ready` acknowledges it.
 #[derive(serde::Deserialize)]
 struct Hello {
     #[serde(rename = "type")]
@@ -514,15 +520,19 @@ async fn run_dialed(
     loop {
         let dialed = tokio::select! {
             _ = &mut shutdown_rx => break,
-            result = tokio_tungstenite::connect_async(&url) => result,
+            result = tokio::time::timeout(HANDSHAKE_TIMEOUT, tokio_tungstenite::connect_async(&url)) => result,
         };
 
         // A failed dial is the expected case while the collector is down; the
         // backoff below is the whole response to it.
-        if let Ok((ws, _)) = dialed {
+        if let Ok(Ok((ws, _))) = dialed {
             {
                 let (mut write, mut read) = ws.split();
-                if present_token(&mut write, &mut read, token.as_deref()).await {
+                let authenticated = tokio::select! {
+                    _ = &mut shutdown_rx => break,
+                    result = tokio::time::timeout(HANDSHAKE_TIMEOUT, present_token(&mut write, &mut read, token.as_deref())) => result.unwrap_or(false),
+                };
+                if authenticated {
                     n_clients.fetch_add(1, Ordering::Relaxed);
                     let bcast_rx = bcast_tx.subscribe();
                     tokio::select! {
@@ -568,7 +578,8 @@ where
     if write.send(Message::Text(hello.into())).await.is_err() {
         return false;
     }
-    matches!(read.next().await, Some(Ok(Message::Text(t))) if t.contains("ready"))
+    matches!(read.next().await, Some(Ok(Message::Text(t))) if
+        serde_json::from_str::<Hello>(&t).is_ok_and(|message| message.kind == "ready"))
 }
 
 async fn handle_client(
@@ -581,7 +592,13 @@ async fn handle_client(
     let (mut write, mut read) = ws.split();
 
     // Nothing goes out before the client is cleared — not one frame.
-    if !authenticate(&mut write, &mut read, token.as_deref()).await {
+    if !tokio::time::timeout(
+        HANDSHAKE_TIMEOUT,
+        authenticate(&mut write, &mut read, token.as_deref()),
+    )
+    .await
+    .unwrap_or(false)
+    {
         return;
     }
     pump(write, read, bcast_rx, cmd_tx, format).await;
@@ -717,6 +734,82 @@ mod tests {
 
         ws.close(None).await.ok();
         server.shutdown();
+    }
+
+    #[tokio::test]
+    async fn an_incomplete_handshake_does_not_block_other_clients_or_shutdown() {
+        let server = Publisher::bind("127.0.0.1:0", PublisherConfig::default()).unwrap();
+        let addr = server.local_addr().unwrap();
+        let stalled = tokio::net::TcpStream::connect(addr).await.unwrap();
+        let connected = tokio::time::timeout(
+            Duration::from_secs(1),
+            connect_async(format!("ws://{addr}")),
+        )
+        .await;
+        let (done_tx, done_rx) = std::sync::mpsc::channel();
+        let shutdown = std::thread::spawn(move || {
+            server.shutdown();
+            done_tx.send(()).unwrap();
+        });
+        let stopped = done_rx.recv_timeout(Duration::from_secs(1));
+        // Release the peer even on failure, so a regression cannot hang the test process.
+        drop(stalled);
+        shutdown.join().unwrap();
+        assert!(
+            connected.is_ok(),
+            "another client was blocked by the stalled handshake"
+        );
+        assert!(stopped.is_ok(), "shutdown waited for the stalled handshake");
+    }
+
+    #[tokio::test]
+    async fn shutdown_cancels_a_dialed_token_handshake() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let publisher = Publisher::connect(
+            format!("ws://{}", listener.local_addr().unwrap()),
+            PublisherConfig {
+                token: Some("secret".into()),
+                ..PublisherConfig::default()
+            },
+        )
+        .unwrap();
+        let (tcp, _) = listener.accept().await.unwrap();
+        let mut ws = tokio_tungstenite::accept_async(tcp).await.unwrap();
+        let hello = ws.next().await.unwrap().unwrap();
+        assert!(matches!(hello, Message::Text(_)));
+        let (done_tx, done_rx) = std::sync::mpsc::channel();
+        let shutdown = std::thread::spawn(move || {
+            publisher.shutdown();
+            done_tx.send(()).unwrap();
+        });
+        let stopped = done_rx.recv_timeout(Duration::from_secs(1));
+        drop(ws);
+        shutdown.join().unwrap();
+        assert!(
+            stopped.is_ok(),
+            "shutdown waited for a token acknowledgement"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_token_acknowledgement_must_be_a_ready_message() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let client = async {
+            let (ws, _) = connect_async(format!("ws://{addr}")).await.unwrap();
+            let (mut write, mut read) = ws.split();
+            present_token(&mut write, &mut read, Some("secret")).await
+        };
+        let collector = async {
+            let (tcp, _) = listener.accept().await.unwrap();
+            let mut ws = tokio_tungstenite::accept_async(tcp).await.unwrap();
+            ws.next().await.unwrap().unwrap();
+            ws.send(Message::Text(r#"{"type":"not_ready"}"#.into()))
+                .await
+                .unwrap();
+        };
+        let (accepted, ()) = tokio::join!(client, collector);
+        assert!(!accepted);
     }
 
     #[tokio::test]

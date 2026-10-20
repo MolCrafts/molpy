@@ -178,12 +178,18 @@ impl Block {
     ///
     /// Passing an empty slice clears the shape, reverting the block to
     /// plain-row-table semantics.
+    ///
+    /// Returns an error without changing the block if the product overflows
+    /// `usize` or disagrees with the row count.
     pub fn set_shape(&mut self, shape: &[usize]) -> Result<(), BlockError> {
         if shape.is_empty() {
             self.shape = None;
             return Ok(());
         }
-        let prod: usize = shape.iter().product();
+        let prod = shape
+            .iter()
+            .try_fold(1_usize, |n, &axis| n.checked_mul(axis))
+            .ok_or_else(|| BlockError::validation("shape product overflows the row count"))?;
         if let Some(n_rows) = self.n_rows {
             if prod != n_rows {
                 return Err(BlockError::validation(format!(
@@ -1377,6 +1383,14 @@ fn check_schema(key: &str, dtype: DType, shape: &[usize]) -> Result<(), BlockErr
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn an_overflowing_structural_shape_is_rejected_without_changing_the_block() {
+        let mut block = super::Block::new();
+        block.set_shape(&[2, 3]).unwrap();
+        assert!(block.set_shape(&[usize::MAX, 2]).is_err());
+        assert_eq!(block.n_rows(), Some(6));
+        assert_eq!(block.structural_shape(), Some(&[2, 3][..]));
+    }
     use super::*;
     use crate::op::{F, I, Idx};
     use ndarray::{Array1, ArrayD};

@@ -642,3 +642,19 @@ class TestForceFieldSection:
     def test_block_name_percent_encodes_the_style(self) -> None:
         name = molrs.io.mrec.ForceFieldSection.block_name("pair", "lj/cut/coul/long")
         assert name == "pair.lj%2Fcut%2Fcoul%2Flong"
+
+
+def test_packed_trajectory_keeps_portable_section_paths(tmp_path: Path) -> None:
+    import zipfile
+
+    path = tmp_path / "packed.mrec"
+    molrs.io.write_mrec(path, trajectory=molrs.core.Trajectory([_coords_frame()]))
+    packed = Path(molrs.io.mrec.pack_mrec_zip(path))
+    with zipfile.ZipFile(packed) as archive:
+        names = archive.namelist()
+        assert any(name.startswith("trajectory/") for name in names)
+        assert all("\\" not in name for name in names)
+    assert "trajectory" in _record(packed).sections()
+    reader = molrs.io.mrec.MrecReader(packed)
+    assert len(reader) == 1
+    _assert_coords(reader[0])

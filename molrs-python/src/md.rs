@@ -111,7 +111,14 @@ fn check_images(images: ndarray::ArrayView2<'_, I>, n_atoms: usize) -> PyResult<
 /// array that fails later against `N`.
 fn mass_from(mass: &Bound<'_, PyAny>) -> PyResult<Array1<F>> {
     match mass.extract::<ArrayArg1<f64>>() {
-        Ok(arr) => Ok(arr.as_array().to_owned()),
+        Ok(arr) => {
+            if arr.as_array().iter().any(|&m| !m.is_finite() || m <= 0.0) {
+                return Err(PyValueError::new_err(
+                    "mass must be finite and strictly positive",
+                ));
+            }
+            Ok(arr.as_array().to_owned())
+        }
         Err(_) if mass.extract::<F>().is_ok() => Err(PyTypeError::new_err(
             "mass: expected a 1-D float64 array of per-atom masses (N,), got a scalar; \
              for a homogeneous system pass np.full(n_atoms, mass)",
@@ -269,7 +276,12 @@ impl PyVelocityVerlet {
                 "an PairLjCut pair kernel needs neighbors= (a VerletSkin)",
             ));
         }
-        // Validate mass before moving the potential / neighbour state in.
+        // Validate parameters before moving the potential / neighbour state in.
+        if !dt.is_finite() || dt <= 0.0 {
+            return Err(PyValueError::new_err(
+                "dt must be finite and strictly positive",
+            ));
+        }
         let mass = mass_from(&mass)?;
         let (members, err_slots) = take_members(potential)?;
         let skin = match neighbors {
@@ -372,13 +384,18 @@ impl PyLangevin {
             ));
         }
         // Validate the scheme knobs and mass before moving anything in.
-        if gamma <= 0.0 {
+        if !dt.is_finite() || dt <= 0.0 {
             return Err(PyValueError::new_err(
-                "Langevin requires gamma > 0; use VelocityVerlet for NVE",
+                "dt must be finite and strictly positive",
             ));
         }
-        if kbt <= 0.0 {
-            return Err(PyValueError::new_err("Langevin requires kbt > 0"));
+        if !gamma.is_finite() || gamma <= 0.0 {
+            return Err(PyValueError::new_err(
+                "Langevin requires finite gamma > 0; use VelocityVerlet for NVE",
+            ));
+        }
+        if !kbt.is_finite() || kbt <= 0.0 {
+            return Err(PyValueError::new_err("Langevin requires finite kbt > 0"));
         }
         let mass = mass_from(&mass)?;
         let (members, err_slots) = take_members(potential)?;

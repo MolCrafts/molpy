@@ -805,6 +805,7 @@ impl PartialEq for SequenceSchema {
 }
 
 fn check_block_name(name: &str) -> Result<(), MolRsError> {
+    NodePath::new(&join_path(TRAJECTORY_GROUP, name)).map_err(zerr)?;
     if RESERVED_BLOCK_NAMES.contains(&name) {
         return Err(MolRsError::zarr(format!(
             "{name:?} is a reserved child of the trajectory group; a block cannot take it"
@@ -814,6 +815,7 @@ fn check_block_name(name: &str) -> Result<(), MolRsError> {
 }
 
 fn check_column_name(column: &str) -> Result<(), MolRsError> {
+    NodePath::new(&join_path("/", column)).map_err(zerr)?;
     if RESERVED_COLUMN_NAMES.contains(&column) {
         return Err(MolRsError::zarr(format!(
             "{column:?} is a reserved child of a block section; a column cannot take it"
@@ -823,6 +825,173 @@ fn check_column_name(column: &str) -> Result<(), MolRsError> {
 }
 
 impl SequenceSchema {
+    /// Preflight an in-memory trajectory without changing its destination.
+    pub(super) fn validate_frames(&self, frames: &[Frame]) -> Result<(), MolRsError> {
+        let mut resolved = BTreeMap::new();
+        for (ordinal, frame) in frames.iter().enumerate() {
+            self.validate_frame(frame)?;
+            self.resolve_meta(frame)?;
+            for (name, block) in frame.iter() {
+                let declared = &self.blocks[name];
+                resolved.insert(
+                    name.to_owned(),
+                    stored_presentation(declared, block)?.into_owned(),
+                );
+            }
+            check_resolved_frame(self, |name| resolved.get(name), ordinal as u64)?;
+        }
+        Ok(())
+    }
+
+    /// Check `frame` against the pinned schema.
+    ///
+    /// The schema pins a dtype, a trailing shape and a nullability per column.
+    /// A column declared nullable carries its [validity
+    /// mask](crate::core::Block::validity) into the store — a `bool`
+    /// array under the section's reserved `_validity` subgroup, grown row for
+    /// row with the values — so a masked column round-trips masked, and a
+    /// frame that leaves it whole round-trips whole.
+    ///
+    /// A mask on a column the pin declares **non-nullable** is refused here
+    /// rather than dropped: the pin is a contract, and a writer that silently
+    /// forgot which rows hold nothing is the data loss this check exists for.
+    fn validate_frame(&self, frame: &Frame) -> Result<(), MolRsError> {
+        if let Some(simbox) = &frame.simbox {
+            check_storable_cell(simbox)?;
+        }
+        for (name, block) in frame.iter() {
+            let Some(declared) = self.blocks.get(name) else {
+                return Err(MolRsError::zarr(format!(
+                    "block {name:?} is not declared by this sequence: a schema is pinned at \
+                     create and cannot grow mid-run"
+                )));
+            };
+            for (column, values) in block.iter() {
+                let Some(pinned) = declared.columns.get(column) else {
+                    return Err(MolRsError::zarr(format!(
+                        "column {column:?} of block {name:?} is not declared by this sequence: a \
+                         schema is pinned at create and cannot grow mid-run"
+                    )));
+                };
+                let dtype = dtype_tag(stored_dtype(column, values.dtype()));
+                if pinned.dtype != dtype {
+                    return Err(MolRsError::zarr(format!(
+                        "column {column:?} of block {name:?} is declared {} but this frame carries \
+                         {dtype}",
+                        pinned.dtype
+                    )));
+                }
+                if let Some(presented) = block.precision(column)
+                    && pinned.precision.map(f64::to_bits) != Some(presented.to_bits())
+                {
+                    return Err(MolRsError::zarr(format!(
+                        "column {column:?} of block {name:?} declares precision {presented} but \
+                         this sequence pins {}: a trajectory states a column's precision once, in \
+                         its schema",
+                        pinned
+                            .precision
+                            .map_or_else(|| "none".to_string(), |p| p.to_string())
+                    )));
+                }
+                if let Some(presented) = block.target(column)
+                    && declared.targets.get(column).map(String::as_str) != Some(presented)
+                {
+                    return Err(MolRsError::zarr(format!(
+                        "column {column:?} of block {name:?} references {presented:?} but this \
+                         sequence pins {}: a trajectory states a block's targets once, in its \
+                         schema",
+                        declared
+                            .targets
+                            .get(column)
+                            .map_or_else(|| "none".to_string(), |t| format!("{t:?}"))
+                    )));
+                }
+                if block.validity(column).is_some() && !pinned.nullable {
+                    return Err(MolRsError::zarr(format!(
+                        "column {column:?} of block {name:?} carries a validity mask but is \
+                         declared non-nullable by this sequence: a schema is pinned at create, \
+                         and landing the values without the mask would lose which rows hold \
+                         nothing"
+                    )));
+                }
+                let trailing: Vec<u64> = values.shape().iter().skip(1).map(|&n| n as u64).collect();
+                if pinned.trailing != trailing {
+                    return Err(MolRsError::zarr(format!(
+                        "column {column:?} of block {name:?} is declared with trailing shape {:?} \
+                         but this frame carries {trailing:?}",
+                        pinned.trailing
+                    )));
+                }
+            }
+            for column in declared.columns.keys() {
+                if !block.contains_key(column) {
+                    return Err(MolRsError::zarr(format!(
+                        "block {name:?} is present at this step but omits its declared column \
+                         {column:?}: sparsity is per block, not per column"
+                    )));
+                }
+            }
+            if let Some(shape) = &declared.structural_shape {
+                let expected = shape.iter().product::<usize>();
+                if block.n_rows() != Some(expected) {
+                    return Err(MolRsError::zarr(format!(
+                        "block {name:?} declares structural shape {shape:?} ({expected} rows) but \
+                         this frame carries {} rows: a shaped block keeps its row count",
+                        block.n_rows().unwrap_or(0)
+                    )));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Resolve every declared meta key to the value this step stores.
+    fn resolve_meta(&self, frame: &Frame) -> Result<MetaMap, MolRsError> {
+        for key in frame.meta.keys() {
+            if key == STEP_ARRAY || key == TIME_ARRAY {
+                continue;
+            }
+            if !self.meta.contains_key(key) {
+                return Err(MolRsError::zarr(format!(
+                    "meta key {key:?} is not declared by this sequence: a schema is pinned at \
+                     create and cannot grow mid-run"
+                )));
+            }
+        }
+        let mut resolved = MetaMap::new();
+        for (key, declared) in &self.meta {
+            let value = match frame.meta.get(key) {
+                Some(value) if value.dtype() == declared.dtype => value.clone(),
+                // A value that arrived at another width — a Python float for a
+                // declared `f32`, a JSON list for a declared `f64x3` — is
+                // re-read at the declared width, exactly; a value that cannot
+                // be is the error.
+                Some(value) => MetaValue::from_typed_json(&declared.dtype, &value.to_typed_json())
+                    .map_err(|e| {
+                        MolRsError::zarr(format!(
+                            "meta key {key:?} is declared {} but this frame carries {}: {e}",
+                            declared.dtype,
+                            value.dtype()
+                        ))
+                    })?,
+                None => {
+                    let fill = declared.fill.as_ref().ok_or_else(|| {
+                        MolRsError::zarr(format!(
+                            "this frame omits the declared meta key {key:?} and no fill value was \
+                             declared for it; there is no implicit fill"
+                        ))
+                    })?;
+                    // The pin stores the typed JSON form; the declared tag
+                    // says how to read it back.
+                    MetaValue::from_typed_json(&declared.dtype, fill)
+                        .map_err(|e| MolRsError::zarr(format!("meta key {key:?} fill: {e}")))?
+                }
+            };
+            resolved.insert(key.clone(), value);
+        }
+        Ok(resolved)
+    }
+
     /// An empty declaration, to be filled with `declare_*`.
     pub fn new() -> Self {
         Self::default()
@@ -1201,8 +1370,15 @@ impl SequenceSchema {
                  and {shape:?}"
             ))),
             _ => {
+                let rows = shape
+                    .iter()
+                    .try_fold(1_usize, |n, &axis| n.checked_mul(axis))
+                    .ok_or_else(|| {
+                        MolRsError::zarr(format!(
+                            "block {block:?}: structural shape product overflows"
+                        ))
+                    })? as u64;
                 entry.structural_shape = Some(shape.to_vec());
-                let rows = shape.iter().product::<usize>() as u64;
                 self.rows_hint.insert(block.to_string(), rows);
                 Ok(())
             }
@@ -1344,6 +1520,7 @@ impl SequenceSchema {
         dtype: &str,
         fill: Option<MetaValue>,
     ) -> Result<(), MolRsError> {
+        NodePath::new(&join_path(&join_path(TRAJECTORY_GROUP, META_GROUP), key)).map_err(zerr)?;
         if meta_layout(dtype).is_none() {
             return Err(MolRsError::zarr(format!(
                 "meta key {key:?} cannot be stored per step: unknown dtype {dtype}"
@@ -4009,8 +4186,8 @@ impl MrecWriter {
             Some(_) => {}
         }
 
-        self.validate(frame)?;
-        let meta = self.resolve_meta(frame)?;
+        self.schema.validate_frame(frame)?;
+        let meta = self.schema.resolve_meta(frame)?;
         self.ensure_arrays()?;
 
         // What would be stored, not what was presented: a precision column
@@ -4072,108 +4249,6 @@ impl MrecWriter {
         Ok(())
     }
 
-    /// Check `frame` against the pinned schema.
-    ///
-    /// The schema pins a dtype, a trailing shape and a nullability per column.
-    /// A column declared nullable carries its [validity
-    /// mask](crate::core::Block::validity) into the store — a `bool`
-    /// array under the section's reserved `_validity` subgroup, grown row for
-    /// row with the values — so a masked column round-trips masked, and a
-    /// frame that leaves it whole round-trips whole.
-    ///
-    /// A mask on a column the pin declares **non-nullable** is refused here
-    /// rather than dropped: the pin is a contract, and a writer that silently
-    /// forgot which rows hold nothing is the data loss this check exists for.
-    fn validate(&self, frame: &Frame) -> Result<(), MolRsError> {
-        if let Some(simbox) = &frame.simbox {
-            check_storable_cell(simbox)?;
-        }
-        for (name, block) in frame.iter() {
-            let Some(declared) = self.schema.blocks.get(name) else {
-                return Err(MolRsError::zarr(format!(
-                    "block {name:?} is not declared by this sequence: a schema is pinned at \
-                     create and cannot grow mid-run"
-                )));
-            };
-            for (column, values) in block.iter() {
-                let Some(pinned) = declared.columns.get(column) else {
-                    return Err(MolRsError::zarr(format!(
-                        "column {column:?} of block {name:?} is not declared by this sequence: a \
-                         schema is pinned at create and cannot grow mid-run"
-                    )));
-                };
-                let dtype = dtype_tag(stored_dtype(column, values.dtype()));
-                if pinned.dtype != dtype {
-                    return Err(MolRsError::zarr(format!(
-                        "column {column:?} of block {name:?} is declared {} but this frame carries \
-                         {dtype}",
-                        pinned.dtype
-                    )));
-                }
-                if let Some(presented) = block.precision(column)
-                    && pinned.precision.map(f64::to_bits) != Some(presented.to_bits())
-                {
-                    return Err(MolRsError::zarr(format!(
-                        "column {column:?} of block {name:?} declares precision {presented} but \
-                         this sequence pins {}: a trajectory states a column's precision once, in \
-                         its schema",
-                        pinned
-                            .precision
-                            .map_or_else(|| "none".to_string(), |p| p.to_string())
-                    )));
-                }
-                if let Some(presented) = block.target(column)
-                    && declared.targets.get(column).map(String::as_str) != Some(presented)
-                {
-                    return Err(MolRsError::zarr(format!(
-                        "column {column:?} of block {name:?} references {presented:?} but this \
-                         sequence pins {}: a trajectory states a block's targets once, in its \
-                         schema",
-                        declared
-                            .targets
-                            .get(column)
-                            .map_or_else(|| "none".to_string(), |t| format!("{t:?}"))
-                    )));
-                }
-                if block.validity(column).is_some() && !pinned.nullable {
-                    return Err(MolRsError::zarr(format!(
-                        "column {column:?} of block {name:?} carries a validity mask but is \
-                         declared non-nullable by this sequence: a schema is pinned at create, \
-                         and landing the values without the mask would lose which rows hold \
-                         nothing"
-                    )));
-                }
-                let trailing: Vec<u64> = values.shape().iter().skip(1).map(|&n| n as u64).collect();
-                if pinned.trailing != trailing {
-                    return Err(MolRsError::zarr(format!(
-                        "column {column:?} of block {name:?} is declared with trailing shape {:?} \
-                         but this frame carries {trailing:?}",
-                        pinned.trailing
-                    )));
-                }
-            }
-            for column in declared.columns.keys() {
-                if !block.contains_key(column) {
-                    return Err(MolRsError::zarr(format!(
-                        "block {name:?} is present at this step but omits its declared column \
-                         {column:?}: sparsity is per block, not per column"
-                    )));
-                }
-            }
-            if let Some(shape) = &declared.structural_shape {
-                let expected = shape.iter().product::<usize>();
-                if block.n_rows() != Some(expected) {
-                    return Err(MolRsError::zarr(format!(
-                        "block {name:?} declares structural shape {shape:?} ({expected} rows) but \
-                         this frame carries {} rows: a shaped block keeps its row count",
-                        block.n_rows().unwrap_or(0)
-                    )));
-                }
-            }
-        }
-        Ok(())
-    }
-
     /// Check the frame at `ordinal` as a reader resolves it — each declared
     /// block presented now, else carried forward from its latest update —
     /// against the rules that span blocks.
@@ -4187,53 +4262,6 @@ impl MrecWriter {
             |name| presented.get(name).or_else(|| self.landed_blocks.get(name)),
             ordinal,
         )
-    }
-
-    /// Resolve every declared meta key to the value this step stores.
-    fn resolve_meta(&self, frame: &Frame) -> Result<MetaMap, MolRsError> {
-        for key in frame.meta.keys() {
-            if key == STEP_ARRAY || key == TIME_ARRAY {
-                continue;
-            }
-            if !self.schema.meta.contains_key(key) {
-                return Err(MolRsError::zarr(format!(
-                    "meta key {key:?} is not declared by this sequence: a schema is pinned at \
-                     create and cannot grow mid-run"
-                )));
-            }
-        }
-        let mut resolved = MetaMap::new();
-        for (key, declared) in &self.schema.meta {
-            let value = match frame.meta.get(key) {
-                Some(value) if value.dtype() == declared.dtype => value.clone(),
-                // A value that arrived at another width — a Python float for a
-                // declared `f32`, a JSON list for a declared `f64x3` — is
-                // re-read at the declared width, exactly; a value that cannot
-                // be is the error.
-                Some(value) => MetaValue::from_typed_json(&declared.dtype, &value.to_typed_json())
-                    .map_err(|e| {
-                        MolRsError::zarr(format!(
-                            "meta key {key:?} is declared {} but this frame carries {}: {e}",
-                            declared.dtype,
-                            value.dtype()
-                        ))
-                    })?,
-                None => {
-                    let fill = declared.fill.as_ref().ok_or_else(|| {
-                        MolRsError::zarr(format!(
-                            "this frame omits the declared meta key {key:?} and no fill value was \
-                             declared for it; there is no implicit fill"
-                        ))
-                    })?;
-                    // The pin stores the typed JSON form; the declared tag
-                    // says how to read it back.
-                    MetaValue::from_typed_json(&declared.dtype, fill)
-                        .map_err(|e| MolRsError::zarr(format!("meta key {key:?} fill: {e}")))?
-                }
-            };
-            resolved.insert(key.clone(), value);
-        }
-        Ok(resolved)
     }
 
     /// Create every array on the first append, freezing the extents and the
@@ -9069,6 +9097,41 @@ mod tests {
         schema.declare_structural_shape("cells", &[1]).unwrap();
         assert!(schema.declare_aligned("cells", ATOMS).is_err());
         assert!(schema.declare_structural_shape(TYPES, &[3]).is_err());
+    }
+
+    #[test]
+    fn an_overflowing_structural_shape_does_not_change_the_schema() {
+        let mut schema = SequenceSchema::new();
+        schema.declare_block("cells", Some(6)).unwrap();
+        let before = schema.clone();
+        assert!(
+            schema
+                .declare_structural_shape("cells", &[usize::MAX, 2])
+                .is_err()
+        );
+        assert_eq!(schema, before);
+        assert_eq!(schema.rows_hint, before.rows_hint);
+    }
+
+    #[test]
+    fn trajectory_preflight_checks_carry_forward_references() {
+        let mut members = Block::new();
+        members
+            .insert("atom", ndarray::array![1_u64].into_dyn(), None)
+            .unwrap();
+        members.set_target("atom", "atoms").unwrap();
+        let mut atoms = Block::new();
+        atoms
+            .insert("x", ndarray::array![0.0, 1.0].into_dyn(), None)
+            .unwrap();
+        let mut first = Frame::new();
+        first.insert("atoms", atoms);
+        first.insert("members", members);
+        let mut second = Frame::new();
+        second.insert("atoms", first["atoms"].select_rows(&[0]).unwrap());
+        let frames = [first, second];
+        let schema = SequenceSchema::from_frames(&frames).unwrap();
+        assert!(schema.validate_frames(&frames).is_err());
     }
 
     #[test]

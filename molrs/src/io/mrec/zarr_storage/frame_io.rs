@@ -21,7 +21,7 @@ use zarrs::array::{
 };
 #[cfg(feature = "zarr")]
 use zarrs::group::GroupBuilder;
-use zarrs::node::{Node, NodeMetadata};
+use zarrs::node::{Node, NodeMetadata, NodePath};
 use zarrs::storage::{
     ListableStorageTraits, ReadableStorageTraits, ReadableWritableListableStorage,
 };
@@ -774,6 +774,61 @@ pub(crate) const BOX_GROUP: &str = "box";
 /// scanning a block, that this is not a chemistry column.
 pub(crate) const VALIDITY_GROUP: &str = "_validity";
 
+/// Check the frame-path layout before a caller replaces any stored data.
+pub(in crate::io::mrec::zarr_storage) fn check_storable_frame(
+    frame: &Frame,
+    prefix: &str,
+) -> Result<(), MolRsError> {
+    check_local_references(frame, prefix)?;
+    if frame.meta.contains_key(META_TYPES_ATTR) {
+        return Err(MolRsError::zarr(format!(
+            "{META_TYPES_ATTR:?} types a frame group's meta document; a meta key cannot take it"
+        )));
+    }
+    if let Some(simbox) = &frame.simbox {
+        check_storable_cell(simbox)?;
+    }
+    for (name, block) in frame.iter() {
+        if name == BOX_GROUP {
+            return Err(MolRsError::zarr(format!(
+                "{BOX_GROUP:?} names the cell in a frame group; a block cannot take it"
+            )));
+        }
+        // Validate both node names and column declarations before erasing.
+        NodePath::new(&join_path(prefix, name)).map_err(|e| MolRsError::zarr(e.to_string()))?;
+        check_storable_block(block, &join_path(prefix, name))?;
+    }
+    Ok(())
+}
+
+/// Check the block layout shared by frame sections and force-field tables.
+pub(in crate::io::mrec::zarr_storage) fn check_storable_block(
+    block: &Block,
+    path: &str,
+) -> Result<(), MolRsError> {
+    if block.contains_key(VALIDITY_GROUP) {
+        return Err(MolRsError::zarr(format!(
+            "{VALIDITY_GROUP:?} names the validity masks of a block group; a column cannot take it"
+        )));
+    }
+    for (name, column) in block.iter() {
+        NodePath::new(&join_path(path, name)).map_err(|e| MolRsError::zarr(e.to_string()))?;
+        canonical_width(name, column)?;
+    }
+    for (name, precision) in block.precisions() {
+        if block
+            .get(name)
+            .is_none_or(|column| column.dtype() != DType::Float)
+        {
+            return Err(MolRsError::zarr(format!(
+                "{path}/{name}: only an f64 column declares a precision"
+            )));
+        }
+        molrs::core::quantum(precision)?;
+    }
+    Ok(())
+}
+
 // Frame (system) write / read — writes all blocks under `{prefix}/`
 // ---------------------------------------------------------------------------
 
@@ -803,9 +858,7 @@ pub(crate) fn write_frame_group(
     prefix: &str,
     frame: &Frame,
 ) -> Result<(), MolRsError> {
-    // A declared row reference must resolve inside this frame: refused before
-    // anything is erased or written.
-    check_local_references(frame, prefix)?;
+    check_storable_frame(frame, prefix)?;
 
     // Erase before writing: this group is the target node, so whatever it held
     // before is not part of the frame being written.
@@ -818,11 +871,6 @@ pub(crate) fn write_frame_group(
     // Every value is written in its typed JSON form (a NaN is `"NaN"`, a
     // `u64` past 2^53 a decimal string), and `_meta_types` maps every key to
     // its tag, so a frame reads back with each value at its tag.
-    if frame.meta.contains_key(META_TYPES_ATTR) {
-        return Err(MolRsError::zarr(format!(
-            "{META_TYPES_ATTR:?} types a frame group's meta document; a meta key cannot take it"
-        )));
-    }
     let mut meta_attrs = serde_json::Map::new();
     let mut meta_types = serde_json::Map::new();
     for (k, v) in &frame.meta {
@@ -842,11 +890,6 @@ pub(crate) fn write_frame_group(
 
     // The cell. `box` is the one reserved name among a frame group's children.
     if let Some(ref simbox) = frame.simbox {
-        if frame.iter().any(|(name, _)| name == BOX_GROUP) {
-            return Err(MolRsError::zarr(format!(
-                "{BOX_GROUP:?} names the cell in a frame group; a block cannot take it"
-            )));
-        }
         write_simbox(store, &format!("{}/{}", prefix, BOX_GROUP), simbox)?;
     }
 
@@ -873,12 +916,7 @@ pub(crate) fn write_block_group(
     group_path: &str,
     block: &Block,
 ) -> Result<(), MolRsError> {
-    if block.contains_key(VALIDITY_GROUP) {
-        return Err(MolRsError::zarr(format!(
-            "{VALIDITY_GROUP:?} names the validity masks of a block group; a column cannot \
-             take it"
-        )));
-    }
+    check_storable_block(block, group_path)?;
     let mut block_attrs = serde_json::Map::new();
     block_attrs.insert(
         "count".to_string(),

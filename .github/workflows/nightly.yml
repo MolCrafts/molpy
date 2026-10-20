@@ -1,30 +1,14 @@
 name: nightly
 
-# Upstream only (MolCrafts/molrs); a fork sees every job but
-# `nightly / context` skipped.
-#
-#   measure + submit  (schedule, or a dispatch) one measured run of the Rust
-#       core, published to the MolCrafts CI index whose push rebuilds the
-#       engineering dashboard: `tests` (cargo test --lib, as cargo mrs-test),
-#       `coverage` (rustc -C instrument-coverage + the toolchain's llvm-cov)
-#       and `conformance` (molrec's suite through molrs.io's *.mrec doors).
-#       The schedule runs on master, whose records are tracked; the index
-#       skips a record it already holds. Two jobs, so no third-party code
-#       shares a job with a secret: `measure` builds molrec and runs its suite
-#       with a read-only token, `submit` alone holds MOLCRAFTS_CI_SSH_KEY.
-#   wheels + pypi  (a push to, or dispatch on, the `nightly` branch) a
-#       dev-versioned wheel set, <version>.dev<UTC timestamp>, to the SEPARATE
-#       PyPI project `molcrafts-molrs-nightly` (`pip install --pre
-#       molcrafts-molrs-nightly`; the import package stays `molrs`). Python
-#       only: crates.io and npm ship from a `v*` tag (release.yml). PyPI's
-#       trusted publisher for it names this file and the `pypi-nightly`
-#       environment, which must have no required reviewers.
-on:
+# Nightly snapshots and packages build one immutable dev commit selected by
+# molcrafts-ci. Only upstream schedules/manual nightly runs can publish.
+# Measurement uses that commit as provenance; submit holds the deploy key
+# in a separate job. Language-specific packaging stays in this repository.
+
+'on':
   schedule:
-    - cron: "17 3 * * *"
-  push:
-    branches: [nightly]
-  workflow_dispatch:
+  - cron: 17 3 * * *
+  workflow_dispatch: null
 
 permissions:
   contents: read
@@ -41,189 +25,177 @@ defaults:
 jobs:
   # Where this run happens, decided once: MolCrafts/molcrafts-ci/actions/ci-context.
   context:
+    permissions:
+      contents: read
     name: nightly / context
-    runs-on: ubuntu-latest
-    outputs:
-      tier: ${{ steps.context.outputs.tier }}
-      upstream: ${{ steps.context.outputs.upstream }}
-      integration: ${{ steps.context.outputs.integration }}
-      skip-pr: ${{ steps.context.outputs.skip-pr }}
-      publish: ${{ steps.context.outputs.publish }}
-    steps:
-      - id: context
-        uses: MolCrafts/molcrafts-ci/actions/ci-context@03352583738d9424ce37996ef9e04df9290087ba
+    uses: MolCrafts/molcrafts-ci/.github/workflows/context.yml@b2c4441faa0743987a82bbc53d7ff9d7c2f974aa
 
   measure:
     name: nightly / measure
     needs: context
-    if: needs.context.outputs.upstream == 'true' && github.ref != 'refs/heads/nightly'
+    if: needs.context.outputs.nightly == 'true'
     runs-on: ubuntu-latest
     env:
-      # Only master's records are project history.
-      TRACK: ${{ github.ref == 'refs/heads/master' && '--track' || '' }}
+      TRACK: --track
     steps:
-      - uses: actions/checkout@v7
-        with:
-          persist-credentials: false
-      # llvm-tools ships llvm-profdata and llvm-cov next to rustc, off PATH.
-      - uses: MolCrafts/molcrafts-ci/actions/setup-rust@03352583738d9424ce37996ef9e04df9290087ba
-        with:
-          components: llvm-tools-preview
-          cache: snapshot
-      - uses: MolCrafts/molcrafts-ci/actions/setup-python@03352583738d9424ce37996ef9e04df9290087ba
-      # molrec (the suite and its molrs adapter) at the commit
-      # scripts/partners.py resolves, as `scripts/check.sh mrec` fetches it.
-      - run: python3 scripts/partners.py fetch MOLREC .ci-out/molrec
+    - uses: actions/checkout@v7
+      with:
+        persist-credentials: false
+        ref: ${{ needs.context.outputs.source-ref }}
+    - uses: MolCrafts/molcrafts-ci/actions/setup-rust@b2c4441faa0743987a82bbc53d7ff9d7c2f974aa
+      with:
+        components: llvm-tools-preview
+        cache: snapshot
+    - uses: MolCrafts/molcrafts-ci/actions/setup-python@b2c4441faa0743987a82bbc53d7ff9d7c2f974aa
+    - run: python3 scripts/partners.py fetch MOLREC .ci-out/molrec
+    - name: Measure the Rust core
+      id: measure
+      run: |
+        mkdir -p .ci-out/profraw
+        sysroot=$(rustc --print sysroot)
+        host=$(rustc -vV | awk '/^host: / { print $2 }')
+        llvm=$sysroot/lib/rustlib/$host/bin
+        export RUSTFLAGS="-C instrument-coverage"
+        export LLVM_PROFILE_FILE="$PWD/.ci-out/profraw/molrs-%p-%m.profraw"
+        export CARGO_TERM_COLOR=never
+        args=(--locked -p molcrafts-molrs --lib --features "full,filesystem,stream")
 
-      # A red suite still leaves a `test result:` line and a tracefile; a
-      # compile failure does not, and fails this step.
-      - name: Measure the Rust core
-        id: measure
-        run: |
-          mkdir -p .ci-out/profraw
-          sysroot=$(rustc --print sysroot)
-          host=$(rustc -vV | awk '/^host: / { print $2 }')
-          llvm=$sysroot/lib/rustlib/$host/bin
-          export RUSTFLAGS="-C instrument-coverage"
-          export LLVM_PROFILE_FILE="$PWD/.ci-out/profraw/molrs-%p-%m.profraw"
-          export CARGO_TERM_COLOR=never
-          args=(--locked -p molcrafts-molrs --lib --features "full,filesystem,stream")
+        set +e
+        cargo test "${args[@]}" -- --color=never | tee .ci-out/cargo-test.log
+        status=${PIPESTATUS[0]}
+        set -e
+        grep -q '^test result:' .ci-out/cargo-test.log || exit "$status"
 
-          set +e
-          cargo test "${args[@]}" -- --color=never | tee .ci-out/cargo-test.log
-          status=${PIPESTATUS[0]}
-          set -e
-          grep -q '^test result:' .ci-out/cargo-test.log || exit "$status"
-
-          exe=$(cargo test "${args[@]}" --no-run --message-format=json | python3 -c '
-          import json, sys
-          found = None
-          for line in sys.stdin:
-              try:
-                  msg = json.loads(line)
-              except json.JSONDecodeError:
-                  continue
-              if msg.get("reason") == "compiler-artifact" and msg.get("executable") and (msg.get("profile") or {}).get("test"):
-                  found = msg["executable"]
-          if not found:
-              raise SystemExit("no instrumented test executable")
-          print(found)
-          ')
-          "$llvm/llvm-profdata" merge -sparse .ci-out/profraw/*.profraw -o .ci-out/coverage.profdata
-          "$llvm/llvm-cov" export -format=lcov -instr-profile=.ci-out/coverage.profdata \
-            -ignore-filename-regex='/\.cargo/registry/' -ignore-filename-regex='/rustlib/' \
-            "$exe" > .ci-out/lcov.info
-
-      # molci and maturin (molrs-python's build backend; the suite reaches the
-      # Rust core through the extension).
-      - name: Python tools
-        if: ${{ !cancelled() }}
-        run: |
-          uv venv -q --seed .ci-out/venv
-          source .ci-out/venv/bin/activate
-          uv pip install -q maturin ./.ci-out/molrec \
-            "molcrafts-ci @ git+https://github.com/MolCrafts/molcrafts-ci@$(sed -n 's/^CI_REF=//p' .github/partners.env)"
-
-      - name: Test and coverage snapshots
-        if: ${{ !cancelled() && steps.measure.outcome == 'success' }}
-        run: |
-          args=(--out .ci-out/snapshots --cargo-test .ci-out/cargo-test.log --coverage-producer llvm-cov)
-          [ ! -f .ci-out/lcov.info ] || args+=(--coverage .ci-out/lcov.info --coverage-format lcov)
-          .ci-out/venv/bin/molci snapshot "${args[@]}" ${TRACK:+"$TRACK"}
-
-      # `scripts/check.sh mrec` is this step as a gate (test.yml): keep the
-      # two in step. A red suite fails this job; its record is still written.
-      - name: Conformance snapshot
-        if: ${{ !cancelled() }}
-        run: |
-          source .ci-out/venv/bin/activate
-          maturin develop --locked --manifest-path molrs-python/Cargo.toml
-          python scripts/ci-conformance.py --suite .ci-out/molrec/tests \
-            --out .ci-out/snapshots/conformance.json ${TRACK:+"$TRACK"}
-
-      # Only the three records, by name.
-      - if: ${{ !cancelled() }}
-        uses: actions/upload-artifact@v7
-        with:
-          name: ci-snapshots
-          if-no-files-found: ignore
-          path: |
-            .ci-out/snapshots/tests.json
-            .ci-out/snapshots/coverage.json
-            .ci-out/snapshots/conformance.json
-
+        exe=$(cargo test "${args[@]}" --no-run --message-format=json | python3 -c '
+        import json, sys
+        found = None
+        for line in sys.stdin:
+            try:
+                msg = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if msg.get("reason") == "compiler-artifact" and msg.get("executable") and (msg.get("profile") or {}).get("test"):
+                found = msg["executable"]
+        if not found:
+            raise SystemExit("no instrumented test executable")
+        print(found)
+        ')
+        "$llvm/llvm-profdata" merge -sparse .ci-out/profraw/*.profraw -o .ci-out/coverage.profdata
+        "$llvm/llvm-cov" export -format=lcov -instr-profile=.ci-out/coverage.profdata \
+          -ignore-filename-regex='/\.cargo/registry/' -ignore-filename-regex='/rustlib/' \
+          "$exe" > .ci-out/lcov.info
+    - name: Python tools
+      if: ${{ !cancelled() }}
+      run: |
+        uv venv -q --seed .ci-out/venv
+        source .ci-out/venv/bin/activate
+        uv pip install -q maturin ./.ci-out/molrec \
+          "molcrafts-ci @ git+https://github.com/MolCrafts/molcrafts-ci@$(sed -n 's/^CI_REF=//p' .github/partners.env)"
+    - name: Test and coverage snapshots
+      if: ${{ !cancelled() && steps.measure.outcome == 'success' }}
+      run: |
+        GITHUB_SHA=$(git rev-parse HEAD)
+        export GITHUB_SHA
+        export GITHUB_REF=refs/heads/dev
+        args=(--out .ci-out/snapshots --cargo-test .ci-out/cargo-test.log --coverage-producer llvm-cov)
+        [ ! -f .ci-out/lcov.info ] || args+=(--coverage .ci-out/lcov.info --coverage-format lcov)
+        .ci-out/venv/bin/molci snapshot "${args[@]}" ${TRACK:+"$TRACK"}
+    - name: Conformance snapshot
+      if: ${{ !cancelled() }}
+      run: |
+        GITHUB_SHA=$(git rev-parse HEAD)
+        export GITHUB_SHA
+        export GITHUB_REF=refs/heads/dev
+        source .ci-out/venv/bin/activate
+        maturin develop --locked --manifest-path molrs-python/Cargo.toml
+        python scripts/ci-conformance.py --suite .ci-out/molrec/tests \
+          --out .ci-out/snapshots/conformance.json ${TRACK:+"$TRACK"}
+    - if: ${{ !cancelled() }}
+      uses: actions/upload-artifact@v7
+      with:
+        name: ci-snapshots
+        if-no-files-found: ignore
+        path: |
+          .ci-out/snapshots/tests.json
+          .ci-out/snapshots/coverage.json
+          .ci-out/snapshots/conformance.json
   submit:
     name: nightly / submit
-    needs: measure
-    if: ${{ !cancelled() && needs.measure.result != 'skipped' }}
+    needs:
+    - context
+    - measure
+    if: needs.context.outputs.nightly == 'true' && (!cancelled()) && (needs.measure.result != 'skipped')
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/download-artifact@v8
-        continue-on-error: true
-        with:
-          name: ci-snapshots
-          path: snapshots
-      - if: ${{ hashFiles('snapshots/*.json') != '' }}
-        uses: MolCrafts/molcrafts-ci/actions/submit@03352583738d9424ce37996ef9e04df9290087ba
-        with:
-          snapshot-path: snapshots/*.json
-          project: molrs
-          # A deploy key on molcrafts-ci: one repository, git only.
-          ssh-key: ${{ secrets.MOLCRAFTS_CI_SSH_KEY }}
+    - uses: actions/download-artifact@v8
+      continue-on-error: true
+      with:
+        name: ci-snapshots
+        path: snapshots
+    - if: ${{ hashFiles('snapshots/*.json') != '' }}
+      uses: MolCrafts/molcrafts-ci/actions/submit@b2c4441faa0743987a82bbc53d7ff9d7c2f974aa
+      with:
+        snapshot-path: snapshots/*.json
+        project: molrs
+        ssh-key: ${{ secrets.MOLCRAFTS_CI_SSH_KEY }}
 
   # One version for every runner: per-runner timestamps would not merge.
   version:
     name: nightly / version
     needs: context
-    if: needs.context.outputs.upstream == 'true' && github.ref == 'refs/heads/nightly'
+    if: needs.context.outputs.nightly == 'true'
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.v.outputs.version }}
     steps:
-      - uses: actions/checkout@v7
-      - id: v
-        run: |
-          BASE=$(sed -n 's/^version = "\(.*\)"/\1/p' molrs-python/pyproject.toml | head -n1)
-          echo "version=${BASE}.dev$(date -u +%Y%m%d%H%M)" | tee -a "$GITHUB_OUTPUT"
-
+    - uses: actions/checkout@v7
+      with:
+        ref: ${{ needs.context.outputs.source-ref }}
+    - id: v
+      run: |
+        BASE=$(sed -n 's/^version = "\(.*\)"/\1/p' molrs-python/pyproject.toml | head -n1)
+        echo "version=${BASE}.dev$(date -u +%Y%m%d%H%M)" | tee -a "$GITHUB_OUTPUT"
   wheels:
+    if: needs.context.outputs.nightly == 'true'
     name: nightly / wheels (${{ matrix.os }})
-    needs: version
+    needs:
+    - context
+    - version
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
     steps:
-      - uses: actions/checkout@v7
-      - uses: MolCrafts/molcrafts-ci/actions/setup-python@03352583738d9424ce37996ef9e04df9290087ba
-      # The pyproject [project] version and name only: Cargo rejects PEP 440
-      # `.devN`, so the crate version stays as it is.
-      - name: Stamp the dev version and the nightly name
-        run: |
-          python - "${{ needs.version.outputs.version }}" <<'PY'
-          import pathlib, re, sys
-          p = pathlib.Path("molrs-python/pyproject.toml")
-          t = p.read_text(encoding="utf-8")
-          t = re.sub(r'^name\s*=\s*"molcrafts-molrs"', 'name = "molcrafts-molrs-nightly"', t, count=1, flags=re.M)
-          t = re.sub(r'^version\s*=\s*".*?"', f'version = "{sys.argv[1]}"', t, count=1, flags=re.M)
-          p.write_text(t, encoding="utf-8")
-          PY
-      - uses: PyO3/maturin-action@v1
-        with:
-          working-directory: molrs-python
-          manylinux: auto
-          command: build
-          args: --release --out dist ${{ matrix.os == 'macos-latest' && '--target universal2-apple-darwin' || '' }}
-      - uses: actions/upload-artifact@v7
-        with:
-          name: nightly-wheels-${{ matrix.os }}
-          path: molrs-python/dist
+    - uses: actions/checkout@v7
+      with:
+        ref: ${{ needs.context.outputs.source-ref }}
+    - uses: MolCrafts/molcrafts-ci/actions/setup-python@b2c4441faa0743987a82bbc53d7ff9d7c2f974aa
+    - name: Stamp the dev version and the nightly name
+      run: |
+        python - "${{ needs.version.outputs.version }}" <<'PY'
+        import pathlib, re, sys
+        p = pathlib.Path("molrs-python/pyproject.toml")
+        t = p.read_text(encoding="utf-8")
+        t = re.sub(r'^name\s*=\s*"molcrafts-molrs"', 'name = "molcrafts-molrs-nightly"', t, count=1, flags=re.M)
+        t = re.sub(r'^version\s*=\s*".*?"', f'version = "{sys.argv[1]}"', t, count=1, flags=re.M)
+        p.write_text(t, encoding="utf-8")
+        PY
+    - uses: PyO3/maturin-action@v1
+      with:
+        working-directory: molrs-python
+        manylinux: auto
+        command: build
+        args: --release --out dist ${{ matrix.os == 'macos-latest' && '--target universal2-apple-darwin' || '' }}
+    - uses: actions/upload-artifact@v7
+      with:
+        name: nightly-wheels-${{ matrix.os }}
+        path: molrs-python/dist
 
   pypi:
     name: nightly / pypi
     needs: [context, wheels]
-    if: needs.context.outputs.upstream == 'true'
+    if: needs.context.outputs.nightly == 'true'
     runs-on: ubuntu-latest
     environment:
       name: pypi-nightly
@@ -231,12 +203,12 @@ jobs:
     permissions:
       id-token: write
     steps:
-      - uses: actions/download-artifact@v8
-        with:
-          path: dist
-          pattern: nightly-wheels-*
-          merge-multiple: true
-      - uses: pypa/gh-action-pypi-publish@release/v1
-        with:
-          packages-dir: dist
-          skip-existing: true
+    - uses: actions/download-artifact@v8
+      with:
+        path: dist
+        pattern: nightly-wheels-*
+        merge-multiple: true
+    - uses: pypa/gh-action-pypi-publish@release/v1
+      with:
+        packages-dir: dist
+        skip-existing: true

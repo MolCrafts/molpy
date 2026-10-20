@@ -9,9 +9,12 @@
 //!
 //! - `Frame`  -> `{ blocks: { <name>: Block }, meta: { k: {dtype,value} }, box?: SimBox }`
 //! - `Block`  -> `{ shape: [usize], columns: { <name>: Column },
-//!   validity?: { <name>: [bool] } }` — `validity` carries the per-row masks
+//!   validity?: { <name>: [bool] }, precision?: { <name>: f64 },
+//!   targets?: { <name>: string } }` — `validity` carries the per-row masks
 //!   of the nullable columns only, and is omitted when no column has one, so
 //!   a payload without it reads back as a block whose every cell is filled.
+//!   The optional `precision` and `targets` maps preserve the column's
+//!   declared tolerance and row-reference destination; absent maps mean no declarations.
 //!   Blocks, columns and meta keys are written and read back in insertion
 //!   order; nothing is sorted.
 //! - `Column` -> `{ dtype, shape: [usize], data }` — `data` is raw
@@ -252,14 +255,14 @@ impl<'de> Deserialize<'de> for Column {
 }
 
 fn build_column(dtype: DType, shape: &[usize], data: ColumnPayload) -> Result<Column, String> {
-    let n: usize = shape.iter().product();
+    let n = shape
+        .iter()
+        .try_fold(1_usize, |n, &axis| n.checked_mul(axis))
+        .ok_or_else(|| format!("column shape {shape:?} overflows the element count"))?;
     let ix = IxDyn(shape);
     let shape_err = |ty: &str| format!("{ty} column: element count does not match shape {shape:?}");
     match (dtype, data) {
         (DType::Float, ColumnPayload::Bytes(b)) => {
-            if b.len() != n * 8 {
-                return Err(format!("float column: {} byte(s) is not {n} × 8", b.len()));
-            }
             let v = le::<8, _>(&b, n, f64::from_le_bytes)?;
             Ok(Column::from(
                 ArrayD::from_shape_vec(ix, v).map_err(|e| e.to_string())?,
@@ -367,11 +370,14 @@ fn le<const N: usize, T>(
     n: usize,
     read: impl Fn([u8; N]) -> T,
 ) -> Result<Vec<T>, String> {
-    if bytes.len() != n * N {
+    let expected = n
+        .checked_mul(N)
+        .ok_or_else(|| "numeric payload byte count overflows".to_string())?;
+    if bytes.len() != expected {
         return Err(format!(
             "numeric payload has {} byte(s), expected {}",
             bytes.len(),
-            n * N
+            expected
         ));
     }
     Ok(bytes.as_chunks::<N>().0.iter().map(|c| read(*c)).collect())
@@ -391,12 +397,24 @@ impl Serialize for Block {
             .keys()
             .filter_map(|key| self.validity(key).map(|mask| (key, mask)))
             .collect();
-        let mut st = s.serialize_struct("Block", if masks.is_empty() { 2 } else { 3 })?;
+        let precision: IndexMap<&str, f64> = self.precisions().collect();
+        let targets: IndexMap<&str, &str> = self.targets().collect();
+        let fields = 2
+            + usize::from(!masks.is_empty())
+            + usize::from(!precision.is_empty())
+            + usize::from(!targets.is_empty());
+        let mut st = s.serialize_struct("Block", fields)?;
         st.serialize_field("shape", &self.shape())?;
         let columns: IndexMap<&str, &Column> = self.iter().collect();
         st.serialize_field("columns", &columns)?;
         if !masks.is_empty() {
             st.serialize_field("validity", &masks)?;
+        }
+        if !precision.is_empty() {
+            st.serialize_field("precision", &precision)?;
+        }
+        if !targets.is_empty() {
+            st.serialize_field("targets", &targets)?;
         }
         st.end()
     }
@@ -410,6 +428,10 @@ struct BlockRepr {
     columns: IndexMap<String, Column>,
     #[serde(default)]
     validity: IndexMap<String, Vec<bool>>,
+    #[serde(default)]
+    precision: IndexMap<String, f64>,
+    #[serde(default)]
+    targets: IndexMap<String, String>,
 }
 
 impl<'de> Deserialize<'de> for Block {
@@ -424,13 +446,26 @@ impl<'de> Deserialize<'de> for Block {
         // Restore an N-D structural shape (e.g. a volumetric block); a plain
         // table's `[count]` is already established by the inserts, but an empty
         // schema-only table needs its explicit row count restored.
-        if !shape.is_empty() && (!has_columns || shape.len() > 1) {
+        if !shape.is_empty() {
             block.set_shape(&shape).map_err(de::Error::custom)?;
+            if has_columns && shape.len() == 1 {
+                block.set_shape(&[]).map_err(de::Error::custom)?;
+            }
         }
         // Masks are restored after the columns, which is what `set_validity`
         // exists for: the decoder holds `Column` values, not typed arrays.
         for (name, mask) in r.validity {
             block.set_validity(&name, mask).map_err(de::Error::custom)?;
+        }
+        for (name, precision) in r.precision {
+            block
+                .set_precision(&name, precision)
+                .map_err(de::Error::custom)?;
+        }
+        for (name, target) in r.targets {
+            block
+                .set_target(&name, &target)
+                .map_err(de::Error::custom)?;
         }
         Ok(block)
     }
@@ -521,6 +556,63 @@ mod tests {
     use crate::core::MetaValue;
     use crate::core::SimBox;
     use ndarray::{Array1, array};
+
+    #[test]
+    #[cfg(all(feature = "stream", feature = "io"))]
+    fn column_declarations_survive_both_wire_encodings() {
+        let mut block = atoms();
+        block.set_precision("x", 1e-3).unwrap();
+        block
+            .insert("atom", array![0_u64, 1, 2].into_dyn(), None)
+            .unwrap();
+        block.set_target("atom", "/frame/atoms").unwrap();
+        let mut frame = Frame::new();
+        frame.insert("members", block);
+        for encoding in [
+            crate::stream::FrameEncoding::Json,
+            crate::stream::FrameEncoding::MessagePack,
+        ] {
+            let bytes = crate::io::write_wire_frame(&frame, encoding).unwrap();
+            let back = crate::io::read_wire_frame(&bytes, encoding).unwrap();
+            let members = back.get("members").unwrap();
+            assert_eq!(members.precision("x"), Some(1e-3));
+            assert_eq!(members.target("atom"), Some("/frame/atoms"));
+        }
+    }
+
+    #[test]
+    fn invalid_column_declarations_are_refused() {
+        for (field, value) in [
+            ("precision", serde_json::json!({"x": 0.0})),
+            ("precision", serde_json::json!({"missing": 1e-3})),
+            ("targets", serde_json::json!({"x": "atoms"})),
+            ("targets", serde_json::json!({"missing": "atoms"})),
+        ] {
+            let mut value_block = serde_json::to_value(atoms()).unwrap();
+            value_block[field] = value;
+            assert!(
+                serde_json::from_value::<Block>(value_block).is_err(),
+                "{field}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_block_rejects_a_row_count_that_disagrees_with_its_columns() {
+        let mut value = serde_json::to_value(atoms()).unwrap();
+        value["shape"] = serde_json::json!([999]);
+        assert!(serde_json::from_value::<Block>(value).is_err());
+    }
+
+    #[test]
+    fn oversized_shapes_and_byte_counts_return_errors() {
+        for shape in [vec![usize::MAX, 2], vec![usize::MAX / 8 + 1]] {
+            let value = serde_json::json!({"dtype": "float", "shape": shape, "data": []});
+            assert!(serde_json::from_value::<crate::core::Column>(value).is_err());
+        }
+        let value = serde_json::json!({"shape": [usize::MAX, 2], "columns": {}});
+        assert!(serde_json::from_value::<Block>(value).is_err());
+    }
 
     fn atoms() -> Block {
         let mut b = Block::new();
