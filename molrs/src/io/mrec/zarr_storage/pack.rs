@@ -178,7 +178,11 @@ pub(in crate::io::mrec::zarr_storage) fn unpack_zip_bytes(
         if entry.is_dir() {
             continue;
         }
-        let name = entry.name().trim_start_matches('/').to_string();
+        let name = entry
+            .name()
+            .map_err(|e| MolRsError::zarr(format!("packed record entry {index}: {e}")))?
+            .trim_start_matches('/')
+            .to_string();
         let mut content = Vec::with_capacity(entry.size() as usize);
         std::io::Read::read_to_end(&mut entry, &mut content)
             .map_err(|e| MolRsError::zarr(format!("packed record entry {name}: {e}")))?;
@@ -393,7 +397,7 @@ mod tests {
                 entry.compression(),
                 zip::CompressionMethod::Stored,
                 "{} is not a stored entry",
-                entry.name()
+                entry.name().unwrap()
             );
         }
     }

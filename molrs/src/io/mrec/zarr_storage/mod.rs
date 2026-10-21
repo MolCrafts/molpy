@@ -530,7 +530,7 @@ mod zarrs_pins {
                 entry.compression(),
                 zip::CompressionMethod::Stored,
                 "{} is not a stored entry",
-                entry.name()
+                entry.name().unwrap()
             );
         }
     }
