@@ -418,8 +418,9 @@ def test_each_ff_submodule_is_a_molpy_module_mirroring_molrs(sub: str) -> None:
         ("optimize.OptimizationReport", "optimize.OptimizationReport"),
         ("conformer.Conformer", "conformer.Conformer"),
         ("stream.ControlCommand", "stream.ControlCommand"),
-        ("md.MdDriver", "md.MdDriver"),
-        ("md.MdState", "md.MdState"),
+        ("md.MD", "md.MD"),
+        ("md.FixLangevin", "md.FixLangevin"),
+        ("md.Phase", "md.Phase"),
         ("ff.forcefield.ForceField", "ff.forcefield.ForceField"),
         ("ff.forcefield.ForceFieldType", "ff.forcefield.ForceFieldType"),
         ("ff.potential.PairLjCut", "ff.potential.PairLjCut"),
@@ -505,6 +506,10 @@ _KEPT_CAPITALS = ("DType", "HBond")
 #: written in capitals (``RDF``, ``LBFGS``, ``CP2K``, ``TLeap``).
 _ACRONYM = re.compile(r"[A-Z]{2,}")
 
+#: Whole class names molrs keeps in capitals: the phase driver ``MD``, the name
+#: Atomiverse and the user-facing API use (molrs's own acronym gate admits it).
+_ACRONYM_CLASS_NAMES = frozenset({"MD"})
+
 
 def test_no_class_spells_an_acronym_in_capitals() -> None:
     shouting = sorted(
@@ -512,7 +517,10 @@ def test_no_class_spells_an_acronym_in_capitals() -> None:
         for obj, paths in PATHS.values()
         if inspect.isclass(obj)
         for path in paths
-        if _ACRONYM.search(re.sub("|".join(_KEPT_CAPITALS), "", path.rsplit(".", 1)[1]))
+        if path.rsplit(".", 1)[1] not in _ACRONYM_CLASS_NAMES
+        and _ACRONYM.search(
+            re.sub("|".join(_KEPT_CAPITALS), "", path.rsplit(".", 1)[1])
+        )
     )
     assert not shouting
 
