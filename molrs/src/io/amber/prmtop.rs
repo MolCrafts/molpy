@@ -136,7 +136,10 @@ pub(crate) fn parse_flag_sections<R: BufRead>(
             // Amber FileFormats: any number of %COMMENT lines may appear
             // between %FLAG and data; ignore them.
         } else if let Some(width) = numeric_width {
-            data.push(split_integer_fields(buf.trim_end_matches(['\n', '\r']), width));
+            data.push(split_integer_fields(
+                buf.trim_end_matches(['\n', '\r']),
+                width,
+            ));
         } else {
             data.push(line.to_string());
         }

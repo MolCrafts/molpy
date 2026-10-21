@@ -55,7 +55,7 @@ bonds = molrs.core.Block({
 })
 frame = molrs.core.Frame(
     {"atoms": atoms, "bonds": bonds},
-    box=molrs.core.Box(molrs.core.Cell.lengths([20.0, 20.0, 20.0])),
+    box=molrs.core.Box.cube(20.0),
 )
 frame.meta["title"] = "water"
 frame.meta["temperature"] = 300.0

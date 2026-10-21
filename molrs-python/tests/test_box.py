@@ -6,6 +6,47 @@ import pytest
 from molrs.core import Box, Cell
 
 
+class TestBoxFactories:
+    """The factories are the matching Cell variant, nothing more."""
+
+    def test_cube_is_three_equal_lengths(self):
+        assert Box.cube(10.0).approx_eq(Box(Cell.lengths([10.0] * 3)), 1e-12)
+
+    def test_ortho_is_cell_lengths(self):
+        assert Box.ortho([2.0, 3.0, 4.0]).approx_eq(
+            Box(Cell.lengths([2.0, 3.0, 4.0])), 1e-12
+        )
+
+    def test_from_lengths_tilts_is_cell_lengths_tilts(self):
+        lengths, tilts = [10.0, 12.0, 15.0], [1.0, 0.5, 0.2]
+        b = Box.from_lengths_tilts(lengths, tilts)
+        assert b.approx_eq(Box(Cell.lengths_tilts(lengths, tilts)), 1e-12)
+        assert b.style == "triclinic"
+
+    def test_from_lengths_angles_is_cell_lengths_angles(self):
+        lengths, angles = [10.0, 11.0, 12.0], [80.0, 85.0, 95.0]
+        assert Box.from_lengths_angles(lengths, angles).approx_eq(
+            Box(Cell.lengths_angles(lengths, angles)), 1e-12
+        )
+
+    def test_factories_take_origin_and_pbc(self):
+        b = Box.cube(20.0, origin=[1.0, 2.0, 3.0], pbc=[True, True, False])
+        assert list(b.origin) == [1.0, 2.0, 3.0]
+        assert list(b.pbc) == [True, True, False]
+
+    def test_constructor_takes_the_matrix(self):
+        h = np.array([[2.0, 1.0, 0.0], [0.0, 3.0, 0.0], [0.0, 0.0, 4.0]])
+        assert Box(h).approx_eq(Box(Cell.matrix(h)), 1e-12)
+
+    def test_factories_check_like_the_cell(self):
+        with pytest.raises(ValueError):
+            Box.cube(0.0)
+        with pytest.raises(ValueError):
+            Box.ortho([1.0, -1.0, 1.0])
+        with pytest.raises(ValueError, match="singular"):
+            Box(np.zeros((3, 3)))
+
+
 class TestBoxConstruction:
     def test_cube(self):
         b = Box(Cell.lengths([10.0, 10.0, 10.0]))
@@ -108,7 +149,7 @@ class TestBoxConstruction:
         with pytest.raises(TypeError):
             Box()  # type: ignore[call-arg]
         with pytest.raises(TypeError):
-            Box(np.eye(3) * 10.0)  # type: ignore[arg-type]
+            Box([10.0, 10.0, 10.0])  # lengths go through Box.ortho
 
 
 class TestCell:
