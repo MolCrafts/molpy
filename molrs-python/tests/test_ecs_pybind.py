@@ -343,7 +343,7 @@ def test_rotate_about_a_degenerate_axis_is_a_value_error(cls, axis):
 
 def test_find_rings_system():
     bz = molrs.perceive.add_hydrogens(
-        molrs.io.smiles.SmilesIr.parse("C1=CC=CC=C1").to_atomistic()
+        molrs.io.smiles.read_smiles("C1=CC=CC=C1").to_atomistic()
     )
     rings = molrs.perceive.perceive_rings(bz).rings()
     assert len(rings) == 1
@@ -351,9 +351,7 @@ def test_find_rings_system():
 
 
 def test_gasteiger_charges_system():
-    eth = molrs.perceive.add_hydrogens(
-        molrs.io.smiles.SmilesIr.parse("CO").to_atomistic()
-    )
+    eth = molrs.perceive.add_hydrogens(molrs.io.smiles.read_smiles("CO").to_atomistic())
     charges = np.asarray(molrs.ff.charge.GasteigerModel().assign(eth))
     # One charge per atom, hydrogens included, and neutral methanol sums to ~0.
     assert charges.shape == (eth.n_atoms,)
@@ -363,7 +361,7 @@ def test_gasteiger_charges_system():
 def test_perceive_aromaticity_pipeline():
     # Aromaticity perception needs explicit hydrogens (pi-electron counting).
     bz = molrs.perceive.add_hydrogens(
-        molrs.io.smiles.SmilesIr.parse("C1=CC=CC=C1").to_atomistic()
+        molrs.io.smiles.read_smiles("C1=CC=CC=C1").to_atomistic()
     )
     molrs.perceive.assign_aromaticity(bz)
     aromatic = [atom for atom in bz.atoms if atom.get("is_aromatic")]
@@ -591,7 +589,7 @@ def test_to_frame_columns_are_selected_on_the_block():
 def test_perception_is_free_functions():
     # Two verbs: `perceive_*` reports a side table, `assign_*` writes onto the
     # molecule it is given.
-    mol = molrs.io.smiles.SmilesIr.parse("C1CC1C").to_atomistic()
+    mol = molrs.io.smiles.read_smiles("C1CC1C").to_atomistic()
     info = molrs.perceive.perceive_rings(mol)
     assert info.ring_sizes() == [3]
     with pytest.raises(TypeError):

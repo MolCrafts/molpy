@@ -106,7 +106,7 @@ def test_hydrogen_repletion_survives_a_frame_round_trip() -> None:
     declared ``h_count = 0``, which an explicit count short-circuits
     (``n_implicit_hydrogens``) into "already saturated".
     """
-    molecule = molrs.io.smiles.SmilesIr.parse("CC[OH]").to_atomistic()
+    molecule = molrs.io.smiles.read_smiles("CC[OH]").to_atomistic()
 
     direct = molrs.perceive.add_hydrogens(molecule).n_atoms
     round_tripped = molrs.perceive.add_hydrogens(
@@ -119,7 +119,7 @@ def test_hydrogen_repletion_survives_a_frame_round_trip() -> None:
 def test_hydrogen_repletion_survives_a_round_trip_without_declared_counts() -> None:
     """``CCO`` declares no ``h_count`` anywhere, so the column is absent rather
     than holed — the case the mask must leave alone."""
-    molecule = molrs.io.smiles.SmilesIr.parse("CCO").to_atomistic()
+    molecule = molrs.io.smiles.read_smiles("CCO").to_atomistic()
 
     direct = molrs.perceive.add_hydrogens(molecule).n_atoms
     round_tripped = molrs.perceive.add_hydrogens(

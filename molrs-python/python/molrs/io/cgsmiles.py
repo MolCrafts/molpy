@@ -2,14 +2,15 @@
 
 CGsmiles writes a molecule at one or more *coarse-grained* resolutions — a
 resolution at which one particle, a *bead*, stands in for a whole group of
-atoms. :meth:`CgSmilesIr.parse` reads a string; ``to_atomistic()`` expands its
+atoms. :func:`read_cgsmiles` reads a string; ``to_atomistic()`` expands its
 lowest level into atoms (topology only — atoms, bonds and the per-atom
 ``frag_id`` saying which bead each atom came from), ``templates()`` builds one
 ported template per fragment, and ``to_coarsegrain()`` reads the coarsest
 level as a bead graph. A line notation states no geometry, so coordinates,
 hydrogens and perception remain separate steps.
 
-:class:`CgSmilesIr` is the parsed string: one :class:`CgGraph` per resolution
+:class:`CgSmilesIr` is the parsed string, handed out by :func:`read_cgsmiles`
+and never constructed by the caller: one :class:`CgGraph` per resolution
 level plus the fragment tables that resolve them out. The records it hands
 out — :class:`CgGraph`, :class:`CgNode`, :class:`CgEdge`,
 :class:`CgFragmentDef` (whose atomistic body is a
@@ -33,6 +34,7 @@ from .._native import (
     CgSmilesIr,
     PairEnd,
     ResolvedPair,
+    read_cgsmiles,
 )
 
 __all__ = [
@@ -43,4 +45,5 @@ __all__ = [
     "CgSmilesIr",
     "PairEnd",
     "ResolvedPair",
+    "read_cgsmiles",
 ]

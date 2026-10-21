@@ -22,7 +22,7 @@ import pytest
 
 def _acetanilide() -> molrs.core.Atomistic:
     """Acetanilide with hydrogens and 3D coordinates."""
-    heavy = molrs.io.smiles.SmilesIr.parse("CC(=O)Nc1ccccc1").to_atomistic()
+    heavy = molrs.io.smiles.read_smiles("CC(=O)Nc1ccccc1").to_atomistic()
     mol, _ = molrs.conformer.Conformer(seed=7).generate(heavy)
     return mol
 

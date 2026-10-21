@@ -126,9 +126,7 @@ class Box:
         Raises ``ValueError`` for a singular matrix, a non-positive length or
         lengths/angles that describe no cell."""
     @staticmethod
-    def cube(
-        a: float, origin: npt.ArrayLike = ..., pbc: npt.ArrayLike = ...
-    ) -> Box:
+    def cube(a: float, origin: npt.ArrayLike = ..., pbc: npt.ArrayLike = ...) -> Box:
         """A cubic box of edge ``a`` (Å). Raises ``ValueError`` for a
         non-positive or non-finite ``a``."""
     @staticmethod
@@ -157,9 +155,7 @@ class Box:
         ``[alpha, beta, gamma]`` (degrees). Raises ``ValueError`` for angles
         that describe no cell."""
     @staticmethod
-    def bounding(
-        points: ArrayF, padding: npt.ArrayLike, pbc: npt.ArrayLike
-    ) -> Box:
+    def bounding(points: ArrayF, padding: npt.ArrayLike, pbc: npt.ArrayLike) -> Box:
         """The orthorhombic box enclosing ``points`` ``(N, 3)``, grown by
         ``padding[d] >= 0`` on each side of axis ``d``. Raises ``ValueError``
         for no points, a negative padding or an axis of zero extent."""
@@ -2577,46 +2573,45 @@ class schema:
 class SmilesIr:
     """Intermediate representation of a parsed SMILES string.
 
-    :meth:`parse` reads SMILES text, :meth:`from_atomistic` builds the IR of a
-    molecule and ``str(ir)`` writes it back as text. A fragment body with
-    bonding descriptors is :meth:`from_fragment`'s, a :class:`FragmentIr`.
+    :func:`read_smiles` hands it out; it has no constructor of its own.
+    ``str(ir)`` writes it back as text. A fragment body with bonding
+    descriptors is :func:`read_smiles_fragment`'s, a :class:`FragmentIr`.
     """
 
-    @staticmethod
-    def parse(smiles: str) -> SmilesIr:
-        """Parse SMILES text; ``SmilesError`` for text that is not SMILES."""
-    @staticmethod
-    def from_fragment(body: str) -> FragmentIr:
-        """Parse a fragment body (SMILES plus bonding descriptors, e.g.
-        ``"[<]OCC[>]"``)."""
-    @staticmethod
-    def from_atomistic(
-        mol: Atomistic,
-        *,
-        canonical: bool = True,
-        root: Atom | None = None,
-        aromatic: Literal["as_marked", "kekule_only"] = "as_marked",
-        hydrogens: Literal[
-            "organic_subset", "explicit_all", "as_stored"
-        ] = "organic_subset",
-        include_stereo: bool = False,
-        multi_component: Literal[
-            "error_if_multiple", "join_dot", "first_only"
-        ] = "error_if_multiple",
-        organic_subset: bool = True,
-    ) -> SmilesIr:
-        """The IR of ``mol``: ``str(SmilesIr.from_atomistic(mol))`` writes it
-        as SMILES."""
     @property
     def n_components(self) -> int: ...
     def to_atomistic(self) -> Atomistic:
         """Connectivity only: no implicit hydrogens added, no coordinates."""
     def components(self) -> list[Atomistic]: ...
 
+def read_smiles(smiles: str) -> SmilesIr:
+    """Read SMILES text; ``SmilesError`` for text that is not SMILES."""
+
+def read_smiles_fragment(body: str) -> FragmentIr:
+    """Read a fragment body (SMILES plus bonding descriptors, e.g.
+    ``"[<]OCC[>]"``)."""
+
+def write_smiles(
+    mol: Atomistic,
+    *,
+    canonical: bool = True,
+    root: Atom | None = None,
+    aromatic: Literal["as_marked", "kekule_only"] = "as_marked",
+    hydrogens: Literal[
+        "organic_subset", "explicit_all", "as_stored"
+    ] = "organic_subset",
+    include_stereo: bool = False,
+    multi_component: Literal[
+        "error_if_multiple", "join_dot", "first_only"
+    ] = "error_if_multiple",
+    organic_subset: bool = True,
+) -> str:
+    """``mol`` as SMILES text."""
+
 @final
 class FragmentIr:
     """A SMILES fragment body — SMILES plus bonding descriptors — as
-    :meth:`SmilesIr.from_fragment` parses it and a CGsmiles fragment table
+    :func:`read_smiles_fragment` parses it and a CGsmiles fragment table
     holds it; ``str(body)`` writes it back."""
 
     def to_atomistic(self) -> tuple[Atomistic, list[tuple[Atom, BondingDescriptor]]]:
@@ -2625,13 +2620,13 @@ class FragmentIr:
     def to_template(self) -> Atomistic:
         """The ported unit of this body: heavy atoms plus one hydrogen handle
         and one port per bonding descriptor; no coordinates, no ``frag_id``.
-        ``SmilesIr.from_fragment("[<]OCC[>]").to_template()`` equals
-        ``CgSmilesIr.parse("{[#EO]}.{#EO=[<]OCC[>]}").templates()["EO"]``."""
+        ``read_smiles_fragment("[<]OCC[>]").to_template()`` equals
+        ``read_cgsmiles("{[#EO]}.{#EO=[<]OCC[>]}").templates()["EO"]``."""
 
 # ---------------------------------------------------------------------------
 # CGsmiles — one front door plus the read-only records it hands out
 #
-# `CgSmilesIr` parses; every other class here is a read-only view over one
+# `read_cgsmiles` parses into a `CgSmilesIr`; every class here is a read-only view over one
 # record of the value it returns and has no constructor of its own. There is
 # no `CgSmilesReader`: "Reader" here means a lazy, path-backed trajectory
 # cursor, and a text-in / IR-out parser is not that — see the `molrs.io`
@@ -2787,15 +2782,13 @@ class ResolvedPair:
 class CgSmilesIr:
     """Intermediate representation of a parsed CGsmiles string.
 
-    Constructing it parses, validates, expands and resolves the whole string;
-    the value is then read, not built. ``levels`` are the resolution levels
+    :func:`read_cgsmiles` parses, validates, expands and resolves the whole
+    string and hands it out; it has no constructor of its own. ``levels`` are the resolution levels
     (coarsest first), ``fragments[k]`` resolves the names of ``levels[k]``, and
     ``to_atomistic()`` expands the lowest level into a topology-only graph
     whose atoms carry ``frag_id``.
     """
 
-    @staticmethod
-    def parse(text: str) -> CgSmilesIr: ...
     @property
     def levels(self) -> list[CgGraph]: ...
     @property
@@ -2806,7 +2799,7 @@ class CgSmilesIr:
     def templates(self) -> dict[str, Atomistic]:
         """One ported :class:`Atomistic` template per definition of the last
         fragment table, keyed by name. One body alone:
-        ``SmilesIr.from_fragment(body).to_template()``."""
+        ``read_smiles_fragment(body).to_template()``."""
     def to_coarsegrain(self) -> CoarseGrain:
         """The coarsest level, ``levels[0]``, as a bead graph: one bead per
         node (``bead_type`` only, no coordinates or mass), one CG bond per
@@ -2818,6 +2811,9 @@ class CgSmilesIr:
             (a ``ValueError``) the IR breaks a reader invariant;
             no parsed string reaches this.
         """
+
+def read_cgsmiles(text: str) -> CgSmilesIr:
+    """Read a CGsmiles string; ``SmilesError`` for text that is not CGsmiles."""
 
 # ---------------------------------------------------------------------------
 # I/O — readers and writers (molrs.io: one function per format and
@@ -6991,7 +6987,7 @@ class RingSet:
 
     Examples
     --------
-    >>> rings = molrs.perceive.perceive_rings(molrs.io.smiles.SmilesIr.parse("c1ccccc1").to_atomistic())
+    >>> rings = molrs.perceive.perceive_rings(molrs.io.smiles.read_smiles("c1ccccc1").to_atomistic())
     >>> rings.n_rings()
     1
     >>> rings.ring_sizes()

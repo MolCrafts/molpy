@@ -20,7 +20,7 @@ use crate::core::molgraph::PyAtomistic;
 ///
 /// Examples
 /// --------
-/// >>> rings = molrs.perceive.perceive_rings(molrs.io.smiles.SmilesIr.parse("c1ccccc1").to_atomistic())
+/// >>> rings = molrs.perceive.perceive_rings(molrs.io.smiles.read_smiles("c1ccccc1").to_atomistic())
 /// >>> rings.n_rings()
 /// 1
 /// >>> rings.ring_sizes()

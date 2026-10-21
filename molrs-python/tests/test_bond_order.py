@@ -42,7 +42,7 @@ def test_a_number_implies_its_class_and_counts_its_valence() -> None:
 
 
 def test_set_bond_class_takes_the_classes() -> None:
-    mol = molrs.io.smiles.SmilesIr.parse("CC").to_atomistic()
+    mol = molrs.io.smiles.read_smiles("CC").to_atomistic()
     bond = next(iter(mol.bonds))
     mol.set_bond_class(bond, BondOrder.Double, BondNumber.Double)
     assert BondOrder.from_code(int(bond["bond_type"])) == BondOrder.Double

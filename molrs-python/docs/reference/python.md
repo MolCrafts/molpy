@@ -33,8 +33,8 @@ and the docs build.
 | `molrs.io.pdb`, `.xyz`, `.gro`, `.mol2`, `.cif`, `.sdf`, `.dcd`, `.trr`, `.xtc` | `molrs::io::{pdb, xyz, gro, mol2, cif, sdf, dcd, trr, xtc}` | each format's multi-frame classes: `<Fmt>Reader(source)` and (all but SDF) `<Fmt>Writer(sink)` |
 | `molrs.io.lammps` | `molrs::io::lammps` | `LammpsDumpReader` / `LammpsDumpWriter`, `LammpsForcefieldReader` / `LammpsForcefieldWriter`, `BondReactTemplate`, the `Lammps*` log records, `is_lammps_log` |
 | `molrs.io.gromacs`, `.amber`, `.openmm_xml` | `molrs::io::{gromacs, amber, openmm_xml}` | the force-field classes: `GromacsTopForcefieldReader` / `Writer`, `AmberPrmtopForcefieldReader`, `AmberFrcmodWriter`, `OpenmmXmlReader` / `Writer` |
-| `molrs.io.smiles` | `molrs::io::smiles` | `SmilesIr`, `FragmentIr`, `SmilesError`, `BondingDescriptor` |
-| `molrs.io.cgsmiles` | `molrs::io::cgsmiles` | `CgSmilesIr` and the CGsmiles records |
+| `molrs.io.smiles` | `molrs::io::smiles` | `read_smiles`, `read_smiles_fragment`, `write_smiles`; `SmilesIr`, `FragmentIr`, `SmilesError`, `BondingDescriptor` |
+| `molrs.io.cgsmiles` | `molrs::io::cgsmiles` | `read_cgsmiles`; `CgSmilesIr` and the CGsmiles records |
 | `molrs.io.mrec` | `molrs::io::mrec` | `MrecFile`, `MrecReader`, `MrecWriter`, `SequenceSchema`, `ForceFieldSection`, `pack_mrec_zip`, `validation` |
 | `molrs.ff.forcefield` | `molrs::ff::forcefield` | `ForceField`, the `Style` / `ForceFieldType` handles (the data model; its files are `molrs.io`'s) |
 | `molrs.ff.potential` | `molrs::ff::potential` | `Potentials`, `WeightedTerms`, `PairLjCut`, `intramolecular_pairs`, `Potential` |
@@ -399,11 +399,21 @@ same class.
 
 ### SMILES and CGsmiles
 
+An IR is handed out by a `read_*` door, never constructed by the caller.
+
+::: molrs.io.smiles.read_smiles
+
+::: molrs.io.smiles.read_smiles_fragment
+
+::: molrs.io.smiles.write_smiles
+
 ::: molrs.io.smiles.SmilesIr
 
 ::: molrs.io.smiles.FragmentIr
 
 ::: molrs.io.smiles.SmilesError
+
+::: molrs.io.cgsmiles.read_cgsmiles
 
 ::: molrs.io.cgsmiles.CgSmilesIr
 

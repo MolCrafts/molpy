@@ -360,7 +360,7 @@ fn assign_equivalence_classes_py(mol: &Bound<'_, PyAtomistic>) -> PyResult<()> {
 /// Parameters
 /// ----------
 /// pattern : CoarseGrain
-///     The bead pattern, e.g. ``CgSmilesIr.parse("{[#1][#4]}").to_coarsegrain()``.
+///     The bead pattern, e.g. ``read_cgsmiles("{[#1][#4]}").to_coarsegrain()``.
 ///     It is copied, so later edits to it do not affect the matcher.
 ///
 /// Raises
@@ -372,8 +372,8 @@ fn assign_equivalence_classes_py(mol: &Bound<'_, PyAtomistic>) -> PyResult<()> {
 /// --------
 /// The two groups below share the middle bead:
 ///
-/// >>> pattern = molrs.io.cgsmiles.CgSmilesIr.parse("{[#1][#4]}").to_coarsegrain()
-/// >>> target = molrs.io.cgsmiles.CgSmilesIr.parse("{[#1][#4][#1]}").to_coarsegrain()
+/// >>> pattern = molrs.io.cgsmiles.read_cgsmiles("{[#1][#4]}").to_coarsegrain()
+/// >>> target = molrs.io.cgsmiles.read_cgsmiles("{[#1][#4][#1]}").to_coarsegrain()
 /// >>> len(molrs.perceive.SubgraphMatcher(pattern).find(target))
 /// 2
 #[pyclass(module = "molrs.perceive", name = "SubgraphMatcher", frozen)]

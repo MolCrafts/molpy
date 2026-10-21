@@ -10,7 +10,7 @@
 //! is ordinary atomistic SMILES. Reference: Grünewald et al., *J. Chem. Inf.
 //! Model.* (2025), DOI 10.1021/acs.jcim.5c00064.
 //!
-//! [`PyCgSmilesIr`] is the single front door: `molrs.io.cgsmiles.CgSmilesIr.parse(text)`
+//! [`PyCgSmilesIr`] is the single front door: `molrs.io.cgsmiles.read_cgsmiles(text)`
 //! parses, and every other class here is a read-only view over one record of
 //! the value it returns — a resolution level, a node, an edge, a fragment
 //! definition, a resolved descriptor pair, one end of such a pair, or a
@@ -20,7 +20,7 @@
 //! There is deliberately **no** `CgSmilesReader`: in this binding "Reader"
 //! means a lazy, indexed frame cursor (`molrs.io.pdb.PdbReader`, …), and a
 //! text-in / IR-out parser is not that object; the molecule a string states
-//! is `CgSmilesIr.parse(text).to_atomistic()`.
+//! is `read_cgsmiles(text).to_atomistic()`.
 //!
 //! # Values at the boundary
 //!
@@ -682,7 +682,7 @@ impl PyResolvedPair {
 ///
 /// Examples
 /// --------
-/// >>> ir = molrs.io.cgsmiles.CgSmilesIr.parse("{[#OH][#PEO]|3[#OH]}.{#OH=[$]O,#PEO=[$]COC[$]}")
+/// >>> ir = molrs.io.cgsmiles.read_cgsmiles("{[#OH][#PEO]|3[#OH]}.{#OH=[$]O,#PEO=[$]COC[$]}")
 /// >>> len(ir.levels[0].nodes)
 /// 5
 /// >>> ir.to_atomistic().n_atoms
@@ -697,40 +697,6 @@ pub struct PyCgSmilesIr {
 
 #[pymethods]
 impl PyCgSmilesIr {
-    /// Parse `text` into its `CGsmiles` intermediate representation.
-    ///
-    /// Parameters
-    /// ----------
-    /// text : str
-    ///     `CGsmiles` string — one ``{...}`` block per resolution, blocks
-    ///     separated by ``.``, the last one atomistic.
-    ///
-    /// Raises
-    /// ------
-    /// ValueError
-    ///     For every refusal the notation makes, with the offending column
-    ///     marked in the message. The four families are: a syntax error
-    ///     (an unclosed block or bracket, a bond symbol with nothing after
-    ///     it, a malformed annotation); a name no fragment table defines; a
-    ///     construct this version refuses outright (the squash operator
-    ///     ``[!]``, the virtual bond ``.``, a mapping weight ``w`` other than
-    ///     its default, the chirality key ``x``); and a written coarse edge
-    ///     whose two fragments offer no free pair of compatible bonding
-    ///     descriptors, as in ``{[#A][#B]}.{#A=[$a]C,#B=[$b]C}``.
-    ///
-    /// Examples
-    /// --------
-    /// >>> molrs.io.cgsmiles.CgSmilesIr.parse("{[#A][#B]}.{#A=[$]C,#B=[$]O}").to_atomistic().n_atoms
-    /// 2
-    #[staticmethod]
-    fn parse(text: &str) -> PyResult<Self> {
-        let inner = CgSmilesIr::parse(text).map_err(smiles_error_to_pyerr)?;
-        Ok(Self {
-            inner,
-            input: text.to_owned(),
-        })
-    }
-
     /// Resolution levels, coarsest first.
     ///
     /// Returns
@@ -839,7 +805,7 @@ impl PyCgSmilesIr {
     ///
     /// Examples
     /// --------
-    /// >>> ir = molrs.io.cgsmiles.CgSmilesIr.parse("{[#OH][#PEO]|3[#OH]}.{#OH=[$]O,#PEO=[$]COC[$]}")
+    /// >>> ir = molrs.io.cgsmiles.read_cgsmiles("{[#OH][#PEO]|3[#OH]}.{#OH=[$]O,#PEO=[$]COC[$]}")
     /// >>> ir.to_atomistic().n_atoms
     /// 11
     fn to_atomistic(&self, py: Python<'_>) -> PyResult<Py<PyAtomistic>> {
@@ -875,14 +841,14 @@ impl PyCgSmilesIr {
     ///
     /// Examples
     /// --------
-    /// >>> ir = molrs.io.cgsmiles.CgSmilesIr.parse("{[#OH][#PEO]|3[#OH]}.{#OH=[$]O,#PEO=[$]COC[$]}")
+    /// >>> ir = molrs.io.cgsmiles.read_cgsmiles("{[#OH][#PEO]|3[#OH]}.{#OH=[$]O,#PEO=[$]COC[$]}")
     /// >>> sorted(ir.templates())
     /// ['OH', 'PEO']
     /// >>> ir.templates()["PEO"].n_ports
     /// 2
     ///
     /// A single unit needs no table:
-    /// ``SmilesIr.from_fragment("[<]OCC[>]").to_template()`` builds the same
+    /// ``read_smiles_fragment("[<]OCC[>]").to_template()`` builds the same
     /// template from the body alone.
     fn templates<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
         let templates = self.inner.templates().map_err(smiles_error_to_pyerr)?;
@@ -920,7 +886,7 @@ impl PyCgSmilesIr {
     ///
     /// Examples
     /// --------
-    /// >>> cg = molrs.io.cgsmiles.CgSmilesIr.parse("{[#1][#1][#1][#4]}").to_coarsegrain()
+    /// >>> cg = molrs.io.cgsmiles.read_cgsmiles("{[#1][#1][#1][#4]}").to_coarsegrain()
     /// >>> cg.n_beads
     /// 4
     fn to_coarsegrain(&self, py: Python<'_>) -> PyResult<Py<PyCoarseGrain>> {
@@ -938,8 +904,47 @@ impl PyCgSmilesIr {
     }
 }
 
+/// Read a `CGsmiles` string into its intermediate representation.
+///
+/// Parameters
+/// ----------
+/// text : str
+///     `CGsmiles` string — one ``{...}`` block per resolution, blocks
+///     separated by ``.``, the last one atomistic.
+///
+/// Returns
+/// -------
+/// CgSmilesIr
+///
+/// Raises
+/// ------
+/// ValueError
+///     For every refusal the notation makes, with the offending column
+///     marked in the message. The four families are: a syntax error
+///     (an unclosed block or bracket, a bond symbol with nothing after
+///     it, a malformed annotation); a name no fragment table defines; a
+///     construct this version refuses outright (the squash operator
+///     ``[!]``, the virtual bond ``.``, a mapping weight ``w`` other than
+///     its default, the chirality key ``x``); and a written coarse edge
+///     whose two fragments offer no free pair of compatible bonding
+///     descriptors, as in ``{[#A][#B]}.{#A=[$a]C,#B=[$b]C}``.
+///
+/// Examples
+/// --------
+/// >>> molrs.io.cgsmiles.read_cgsmiles("{[#A][#B]}.{#A=[$]C,#B=[$]O}").to_atomistic().n_atoms
+/// 2
+#[pyfunction]
+fn read_cgsmiles(text: &str) -> PyResult<PyCgSmilesIr> {
+    let inner = CgSmilesIr::parse(text).map_err(smiles_error_to_pyerr)?;
+    Ok(PyCgSmilesIr {
+        inner,
+        input: text.to_owned(),
+    })
+}
+
 /// Register the CGsmiles front door and the read-only records it hands out.
 pub(crate) fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    crate::add_function(m, "molrs.io.cgsmiles", wrap_pyfunction!(read_cgsmiles, m)?)?;
     m.add_class::<PyCgSmilesIr>()?;
     m.add_class::<PyCgGraph>()?;
     m.add_class::<PyCgNode>()?;

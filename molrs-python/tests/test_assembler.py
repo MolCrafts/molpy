@@ -105,7 +105,7 @@ def test_placers_and_orienter_take_no_arguments() -> None:
 
 
 def test_growth_placer_builds_a_topology_without_positions() -> None:
-    sites = molrs.io.cgsmiles.CgSmilesIr.parse("{[#M]|3}").to_coarsegrain()
+    sites = molrs.io.cgsmiles.read_cgsmiles("{[#M]|3}").to_coarsegrain()
     world = Assembler({"M": _monomer()}, GrowthPlacer()).assemble(sites)
 
     # Three copies of 4 atoms, two links remove 4 hydrogens.
@@ -114,7 +114,7 @@ def test_growth_placer_builds_a_topology_without_positions() -> None:
 
 
 def test_an_orienter_on_a_site_graph_without_positions_is_a_value_error() -> None:
-    sites = molrs.io.cgsmiles.CgSmilesIr.parse("{[#M]|2}").to_coarsegrain()
+    sites = molrs.io.cgsmiles.read_cgsmiles("{[#M]|2}").to_coarsegrain()
     with pytest.raises(ValueError, match="needs site positions"):
         Assembler({"M": _monomer()}, GrowthPlacer(), AxisOrienter()).assemble(sites)
 
@@ -142,7 +142,7 @@ def _bare_monomer() -> molrs.core.MolGraph:
 
 
 def test_the_world_is_of_the_librarys_graph_type() -> None:
-    sites = molrs.io.cgsmiles.CgSmilesIr.parse("{[#M]|2}").to_coarsegrain()
+    sites = molrs.io.cgsmiles.read_cgsmiles("{[#M]|2}").to_coarsegrain()
     world = Assembler({"M": _bare_monomer()}, GrowthPlacer()).assemble(sites)
 
     assert type(world) is molrs.core.MolGraph

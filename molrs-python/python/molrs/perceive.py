@@ -33,7 +33,7 @@ perception's too; :meth:`Reaction.apply_many` returns one
 
 :class:`SubgraphMatcher` is the coarse-grained counterpart: it snapshots a bead
 pattern (a :class:`~molrs.core.CoarseGrain`, e.g. from
-``CgSmilesIr.parse(...).to_coarsegrain()``) and lists every occurrence of it in a
+``read_cgsmiles(...).to_coarsegrain()``) and lists every occurrence of it in a
 target ``CoarseGrain`` as groups of bead views. It does not partition
 overlapping groups. Mapping matched groups onto the sites of a new
 ``CoarseGrain`` is construction, not perception: that is

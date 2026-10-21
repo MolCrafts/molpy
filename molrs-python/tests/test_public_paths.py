@@ -157,8 +157,13 @@ def test_a_constant_is_a_value_not_a_second_door():
 # A factory that reads or writes a file format is either a function at the
 # top of molrs.io (``read_<fmt>[_<what>]`` / ``write_<fmt>[_<what>]``, one per
 # format and direction, over any source / sink) or a class of the format's own
-# submodule (``molrs.io.<fmt>.<Fmt>Reader`` / ``<Fmt>Writer``). Nothing else
-# may carry those names.
+# submodule (``molrs.io.<fmt>.<Fmt>Reader`` / ``<Fmt>Writer``). A line
+# notation is the one exception: its doors take the notation's own string, not
+# a source or sink, so they live in the notation's submodule
+# (``molrs.io.smiles.read_smiles``, ``molrs.io.cgsmiles.read_cgsmiles``).
+# Nothing else may carry those names.
+
+_NOTATION_MODULES = frozenset({"molrs.io.smiles", "molrs.io.cgsmiles"})
 
 
 def _factory_name(name: str) -> bool:
@@ -171,9 +176,16 @@ def test_read_and_write_functions_live_at_the_top_of_io():
         for path, value in _objects().items()
         if callable(value)
         and _factory_name(path.rpartition(".")[2])
-        and path.rpartition(".")[0] != "molrs.io"
+        and path.rpartition(".")[0] not in {"molrs.io", *_NOTATION_MODULES}
     )
     assert not stray
+
+
+def test_a_notation_reads_from_its_own_module_only():
+    """The SMILES / CGsmiles doors are not mirrored at the top of
+    ``molrs.io``: one door, one path."""
+    doors = ("read_smiles", "read_smiles_fragment", "write_smiles", "read_cgsmiles")
+    assert not [name for name in doors if hasattr(molrs.io, name)]
 
 
 def test_no_class_hides_a_read_or_write_factory():
@@ -268,7 +280,11 @@ def test_forcefield_is_the_data_model_and_stream_the_transport():
         "molrs.io.mrec.MrecWriter",
         "molrs.io.smiles.SmilesIr",
         "molrs.io.smiles.FragmentIr",
+        "molrs.io.smiles.read_smiles",
+        "molrs.io.smiles.read_smiles_fragment",
+        "molrs.io.smiles.write_smiles",
         "molrs.io.cgsmiles.CgSmilesIr",
+        "molrs.io.cgsmiles.read_cgsmiles",
         "molrs.io.lammps.LammpsLog",
         "molrs.io.lammps.BondReactTemplate",
         "molrs.io.lammps.infer_lammps_atom_style",

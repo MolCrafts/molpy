@@ -21,7 +21,7 @@ doc comments.
     ```python
     import molrs
 
-    ir = molrs.io.smiles.SmilesIr.parse("CCO")
+    ir = molrs.io.smiles.read_smiles("CCO")
     mol = ir.to_atomistic()
 
     mol3d, _report = molrs.conformer.Conformer(speed="fast", seed=42).generate(mol)

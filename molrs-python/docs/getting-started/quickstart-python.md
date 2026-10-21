@@ -17,7 +17,7 @@ between the graph representation (`Atomistic`) and the table representation
 ```python
 import molrs
 
-ir = molrs.io.smiles.SmilesIr.parse("CCO")  # ethanol
+ir = molrs.io.smiles.read_smiles("CCO")  # ethanol
 mol = ir.to_atomistic()
 
 print("components:", ir.n_components)
