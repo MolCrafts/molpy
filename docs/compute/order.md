@@ -157,7 +157,7 @@ xyz = np.array(
 )
 crystal = mp.Frame()
 crystal["atoms"] = {"x": xyz[:, 0], "y": xyz[:, 1], "z": xyz[:, 2]}
-crystal.box = mp.Box.cube(5 * a)
+crystal.box = mp.Box(mp.core.Cell.lengths([5 * a] * 3))
 ```
 
 The result holds the degrees you asked for and an `(n_atoms, n_degrees)` array
@@ -244,7 +244,7 @@ isotropic /= np.linalg.norm(isotropic, axis=1, keepdims=True)
 pos = np.concatenate([centres + 0.5 * isotropic, centres - 0.5 * isotropic])
 frame = mp.Frame()
 frame["atoms"] = {"x": pos[:, 0], "y": pos[:, 1], "z": pos[:, 2]}
-frame.box = mp.Box.cube(30.0)
+frame.box = mp.Box(mp.core.Cell.lengths([30.0] * 3))
 frame["bonds"] = {
     "atomi": np.arange(n_rods, dtype=np.uint32),
     "atomj": np.arange(n_rods, 2 * n_rods, dtype=np.uint32),

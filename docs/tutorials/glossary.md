@@ -66,7 +66,7 @@ Quick definitions for MolPy's core terminology. Each entry links to the page tha
 : A place where a unit may bond: an *(anchor, handle)* pair, where the handle is a real atom bonded to the anchor (usually the capping hydrogen) that leaves when the bond forms. Its kind decides its partner — `<` joins `>`, `$` joins `$`, `!` joins `!` — and a label and bond order must match. In CGsmiles, ports are the bonding descriptors (`[<]OCC[>]`).
 
 **Site graph**
-: The topology of an assembly: an `mp.CoarseGrain` whose beads name library units (`bead_type`) and whose bonds say which units join. It comes from CGsmiles notation (`mp.io.cgsmiles.CgSmilesIr(...).to_coarsegrain()`) or from coarsening a CG model (`Coarsener`), in which case each site also has a position and an axis.
+: The topology of an assembly: an `mp.CoarseGrain` whose beads name library units (`bead_type`) and whose bonds say which units join. It comes from CGsmiles notation (`mp.io.cgsmiles.read_cgsmiles(...).to_coarsegrain()`) or from coarsening a CG model (`Coarsener`), in which case each site also has a position and an axis.
 
 **Placer**
 : The assembler's rule for each copy's pose. `GrowthPlacer` grows each molecule onto its parents' ports and needs no coordinates; `SitePlacer` puts each copy's centre of mass on its site.
@@ -75,7 +75,7 @@ Quick definitions for MolPy's core terminology. Each entry links to the page tha
 : The optional rule that turns each copy before it is placed. `AxisOrienter` aligns a unit with its site's axis and bonds; it needs site positions.
 
 **Typifier**
-: Assigns force field types to atoms, bonds, angles, and dihedrals: implements `assign` (returning a `TypeAssignment`), and the base's `typify` returns a typed copy while `forcefield()` accumulates the assigned types. Native: `OplsAaTypifier`, `Mmff94Typifier`, `Mmff94sTypifier`, `ElementTypifier`. GAFF / GAFF2 through AmberTools: `AntechamberTypifier`, `TleapTypifier` (see [AmberTools Integration](../user-guide/13_ambertools_integration.md)). See [Force Field Typification](../user-guide/06_typifier.md).
+: Assigns force field types to atoms, bonds, angles, and dihedrals: implements `assign` (returning a `TypeAssignment`), and the base's `typify` returns a typed copy while `forcefield()` accumulates the assigned types. Native: `OplsAaTypifier`, `Mmff94Typifier`, `Mmff94sTypifier`, `ElementTypifier`, and GAFF / GAFF2 as `AtdTypifier` then `GaffTypifier`. AM1-BCC charges for the native route: `mp.ff.charge.Am1BccModel` (sqm via AmberTools). A native GAFF force field merges with an `AmberPolymerBuilder` chain's. The whole AmberTools pipeline, for parameters of your own on top of the leaprc and antechamber's other charge methods: `AntechamberTypifier`, `TleapTypifier` (see [AmberTools Integration](../user-guide/13_ambertools_integration.md)). See [Force Field Typification](../user-guide/06_typifier.md).
 
 **Selector**
 : A composable predicate that filters atoms in a `Block` by element, type, coordinate range, or distance. Combinable with `&`, `|`, `~`. See [Selector](06_selector.md).

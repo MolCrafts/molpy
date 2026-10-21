@@ -8,9 +8,26 @@ Usage::
     files = list(list_files("forcefield"))     # every file in a subdirectory
 """
 
+import atexit
 from collections.abc import Iterator
+from contextlib import ExitStack
 from importlib.resources import as_file, files
+from importlib.resources.abc import Traversable
 from pathlib import Path
+
+# A zip or other non-filesystem install has no file to point at: ``as_file``
+# extracts one, and deletes it when its context closes. The contexts are kept
+# open here until the interpreter exits, so a returned path stays valid.
+_EXTRACTED = ExitStack()
+atexit.register(_EXTRACTED.close)
+
+
+def _resource(relative_path: Path) -> Traversable:
+    """The bundled resource at ``relative_path`` (which may not exist)."""
+    resource = files(__package__ or "molpy.resources")
+    for part in relative_path.parts:
+        resource = resource / part
+    return resource
 
 
 def get_path(relative_path: str | Path) -> Path:
@@ -21,7 +38,9 @@ def get_path(relative_path: str | Path) -> Path:
         relative_path: Relative path to the data file (e.g., "forcefield/tip3p.xml")
 
     Returns:
-        Path object pointing to the data file
+        Path object pointing to the data file. On a normal install it is the
+        file itself; from a zip install it is an extracted copy that stays
+        until the interpreter exits.
 
     Raises:
         FileNotFoundError: If the file does not exist
@@ -33,18 +52,13 @@ def get_path(relative_path: str | Path) -> Path:
         /path/to/molpy/resources/forcefield/tip3p.xml
     """
     relative_path = Path(relative_path)
-
-    resource = files(__package__ or "molpy.resources")
-    for part in relative_path.parts:
-        resource = resource / part
-
-    with as_file(resource) as path:
-        if not path.exists():
-            raise FileNotFoundError(
-                f"Resource file not found: {relative_path}. "
-                f"Available files: {list(list_files(relative_path.parent))}"
-            )
-        return path
+    resource = _resource(relative_path)
+    if not resource.is_file():
+        raise FileNotFoundError(
+            f"Resource file not found: {relative_path}. "
+            f"Available files: {list(list_files(relative_path.parent))}"
+        )
+    return _EXTRACTED.enter_context(as_file(resource))
 
 
 def list_files(
@@ -76,10 +90,7 @@ def list_files(
         # Exclude Python files
         return bool(filename.endswith(".py") or filename == "__pycache__")
 
-    resource = files(__package__ or "molpy.resources")
-    for part in subdirectory.parts:
-        resource = resource / part
-
+    resource = _resource(subdirectory)
     if resource.is_dir():
         for item in resource.iterdir():
             if item.is_file():

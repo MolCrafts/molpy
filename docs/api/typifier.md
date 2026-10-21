@@ -34,12 +34,26 @@ creation — and it is the only writer of `forcefield()`.
 | `ElementTypifier` | `type` labels from element symbols; defines no force field | Writers that need labels on an untyped molecule |
 | `AtdTypifier` | `AtdTypifier(parameter_set="gaff2")`: antechamber's atom-type tables (`gaff`, `gaff2`, `amber`, `bcc`, …) evaluated natively — atom types only, no charges or parameters | GAFF / GAFF2 or BCC atom types without running antechamber |
 | `GaffTypifier` | `GaffTypifier(parameter_set="gaff2")`: GAFF / GAFF2 bonded terms and parameters, natively, for atoms `AtdTypifier` already typed (exact `gaff.dat` rows, wildcards, or `parmchk2`-style estimates marked `estimated`) | GAFF / GAFF2 parameters without AmberTools |
-| `AntechamberTypifier` | antechamber → parmchk2 → tleap for one complete molecule | GAFF / GAFF2 small molecules and monomers |
-| `TleapTypifier` | tleap alone over a finished graph that already carries AMBER types and charges (a graph with ports is refused) | Re-parameterising a typed molecule |
+| `AntechamberTypifier` | `AntechamberTypifier(parameter_set="gaff2")`: antechamber → parmchk2 → tleap for one complete molecule; needs AmberTools | An antechamber charge method other than AM1-BCC / ABCG2; exporting an estimated GAFF term while molrs's LAMMPS / GROMACS writers refuse it |
+| `TleapTypifier` | `TleapTypifier(parameter_set="gaff2")`: tleap alone over a finished graph that already carries AMBER types and charges (a graph with ports is refused); needs AmberTools | Extra frcmod parameters on top of the leaprc |
 
 Every name is on `mp.ff.typifier`, which mirrors `molrs.ff.typifier` (the
 native typifiers are the molrs objects) and adds the two AmberTools
-typifiers. Those shell out through `molpy.wrapper`; see
+typifiers. GAFF / GAFF2 is typed natively by `AtdTypifier` then
+`GaffTypifier`; that is the default route, and it assigns the types and
+parameter values tleap does for the same set. Its AM1-BCC charges come from
+`mp.ff.charge.Am1BccModel`: sqm's AM1 charges (through antechamber `-c mul`),
+corrected by the native `BccModel` exactly as antechamber `-c bcc` corrects
+them. A native GAFF force field merges with one read from tleap's prmtop, an
+`AmberPolymerBuilder` chain's included, so a small molecule mixed with a
+chain is typed natively too. The AmberTools typifiers read tleap's prmtop
+back; they are for what only that pipeline does: parameters of your own on
+top of the leaprc (`TleapTypifier`) and antechamber's other charge methods
+(`AntechamberTypifier`). molrs 0.18.0's LAMMPS and GROMACS writers refuse the
+`estimated` parameter `GaffTypifier` puts on a term it estimated, so such a
+molecule is exported through `AntechamberTypifier` for now. Every GAFF entry
+point takes the same required `parameter_set` (`"gaff"` or `"gaff2"`, no
+default). The AmberTools typifiers shell out through `molpy.wrapper`; see
 [Optional external tools](../getting-started/external-tools.md#ambertools-gaff-parameters).
 A GAFF polymer is not typed by joining typed monomers (each join folds the
 leaving group's charge onto its anchor): build it with
@@ -57,7 +71,7 @@ import molpy as mp
 from molpy.ff.typifier import OplsAaTypifier
 
 mol, _ = mp.conformer.Conformer(add_hydrogens=True, seed=42).generate(
-    mp.io.smiles.SmilesIr("CCO").to_atomistic()
+    mp.io.smiles.read_smiles("CCO").to_atomistic()
 )
 
 typifier = OplsAaTypifier(strict=True)
@@ -115,7 +129,7 @@ class Tip3pTypifier(mp.ff.typifier.Typifier):
 
 
 tip3p = Tip3pTypifier()
-water = tip3p.typify(mp.io.smiles.SmilesIr("[H]O[H]").to_atomistic())
+water = tip3p.typify(mp.io.smiles.read_smiles("[H]O[H]").to_atomistic())
 assert [bond["type"] for bond in water.bonds] == ["OW-HW", "OW-HW"]
 assert tip3p.forcefield().get_style("bond", "harmonic").get_type_by_name("OW-HW")["k"] == 450.0
 ```

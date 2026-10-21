@@ -129,7 +129,7 @@ frame["atoms"] = {
     "y": [1.0, 1.0, 1.0, 1.0],
     "z": [1.0, 1.0, 6.0, 6.0],
 }
-frame.box = mp.Box.cube(10.0)
+frame.box = mp.Box(mp.core.Cell.lengths([10.0] * 3))
 
 profile = SlabDensity(axis=2, n_bins=2)
 print(profile.compute(positions=frame.coords, simbox=frame.box))  # -> [0.004 0.004]

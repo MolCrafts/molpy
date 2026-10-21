@@ -9,7 +9,6 @@ import numpy as np
 import molpy as mp
 from molpy.core import Block, Frame, Trajectory
 
-
 _N_ATOMS = 3
 _ATOM_X = (0.0, 1.0, 0.5)
 _ATOM_Y = (0.25, 0.0, 2.0)

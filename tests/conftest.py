@@ -49,3 +49,10 @@ def molpy_records() -> Iterator[list[mollog.LogRecord]]:
         yield handler.records
     finally:
         logger.remove_handler(handler)
+
+
+def capture(writer, *args, **kwargs):
+    """Capture a production writer's bytearray sink for text assertions."""
+    buffer = bytearray()
+    writer(buffer, *args, **kwargs)
+    return buffer.decode("utf-8")

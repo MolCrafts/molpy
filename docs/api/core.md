@@ -46,7 +46,7 @@ frame = mp.Frame(
 )
 
 # Box: periodic cell
-box = mp.Box.cube(20.0)
+box = mp.Box(mp.core.Cell.lengths([20.0] * 3))
 wrapped = box.wrap(np.array([[21.0, 0.0, 0.0]]))
 d = box.distances(np.array([[0.0, 0.0, 0.0]]), np.array([[19.5, 0.0, 0.0]])) # minimum-image distance
 
@@ -128,9 +128,7 @@ Re-exported from the native core — `mp.Frame is molrs.core.Frame`:
 
 ::: molpy.core.MaskPredicate
 
-::: molpy.core.ElementSelector
-
-::: molpy.core.AtomTypeSelector
+::: molpy.core.ColumnSelector
 
 ::: molpy.core.AtomIndexSelector
 

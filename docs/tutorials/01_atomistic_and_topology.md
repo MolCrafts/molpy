@@ -134,6 +134,7 @@ place (it returns the old-to-new handle map); many copies are repeated merges of
 translated copies.
 
 ```python
+from copy import copy
 water = mp.Atomistic(name="water")
 ow = water.add_atom(atomic_number=8, x=0.0, y=0.0, z=0.0)
 h1 = water.add_atom(atomic_number=1, x=0.957, y=0.0, z=0.0)
@@ -141,14 +142,14 @@ h2 = water.add_atom(atomic_number=1, x=-0.239, y=0.927, z=0.0)
 water.add_bond(ow, h1)
 water.add_bond(ow, h2)
 
-two = water.copy()
-two.merge(water.copy().translate([5.0, 0.0, 0.0]))
+two = copy(water)
+two.merge(copy(water).translate([5.0, 0.0, 0.0]))
 print(len(two.atoms), len(two.bonds))
 # -> 6 4
 
 row = mp.Atomistic(name="row")
 for i in range(4):
-    row.merge(water.copy().translate([i * 4.0, 0.0, 0.0]))
+    row.merge(copy(water).translate([i * 4.0, 0.0, 0.0]))
 print(len(row.atoms))
 # -> 12
 ```

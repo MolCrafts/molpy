@@ -28,4 +28,6 @@ compute whose input is that curve::
 """
 
 from molrs.compute import *  # noqa: F403
-from molrs.compute import __all__ as __all__
+from molrs.compute import __all__ as _native
+
+__all__ = [*_native]

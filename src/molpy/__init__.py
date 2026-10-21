@@ -22,7 +22,9 @@ the root holds three kinds of name and nothing else:
   ``Element`` and ``Topology``. No function, algorithm or unit preset is
   promoted: everything else is reached through its subsystem
   (``mp.core.Cuboid``, ``mp.optimize.Lbfgs``, ``mp.io.read_pdb``);
-* the version metadata, ``version`` and ``release_date``.
+* the version metadata: ``__version__`` and ``release_date``, and the
+  :mod:`molpy.version` module that holds them with
+  :func:`~molpy.version.check_molrs_version`.
 
 The modules behind molpy's own additions are private, so each of their names
 has one path (``mp.engine.LammpsEngine``). Subsystems load lazily on first
@@ -31,15 +33,19 @@ attribute access (PEP 562).
 
 # Import version first: version.py runs the molcrafts-molrs compatibility check
 # on import, before any molrs-backed core import below, so a stale editable
-# build or a mismatched pin surfaces immediately.
-from .version import release_date, version
+# build or a mismatched pin surfaces immediately. ``molpy.version`` is the
+# module; the version string is ``__version__``.
+from molpy import version
+
+__version__ = version.version
+release_date = version.release_date
 
 from importlib import import_module as _import_module
 from types import ModuleType as _ModuleType
 from typing import TYPE_CHECKING as _TYPE_CHECKING
 
 if _TYPE_CHECKING:
-    from . import (
+    from molpy import (
         adapter,
         builder,
         compute,
@@ -94,7 +100,7 @@ def __dir__() -> list[str]:
 
 # The core data classes a user handles directly, promoted from molpy.core
 # (``mp.Frame is mp.core.Frame``). Nothing else from the core is on the root.
-from .core import (
+from molpy.core import (
     Angle,
     Atom,
     Atomistic,
@@ -108,9 +114,9 @@ from .core import (
     DrudeParticle,
     Element,
     Frame,
-    MolGraph,
     Improper,
     MasslessSite,
+    MolGraph,
     Port,
     Topology,
     Trajectory,

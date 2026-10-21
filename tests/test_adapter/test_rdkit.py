@@ -1,142 +1,173 @@
-"""RdkitAdapter: the ``mp_id`` join between an Atomistic and an RDKit Mol."""
+"""to_rdkit / from_rdkit: pure conversion between an Atomistic and an RDKit Mol."""
 
 import numpy as np
 import pytest
 
 pytest.importorskip("rdkit")
 from rdkit import Chem
+from rdkit.Chem import AllChem
 
 import molpy as mp
-from molpy.adapter import MP_ID, RdkitAdapter
+from molpy.adapter import PROP_PREFIX, from_rdkit, generate_3d, to_rdkit
 
 
 def _ethanol_heavy() -> mp.Atomistic:
-    m = mp.Atomistic()
-    c1 = m.add_atom(atomic_number=6, x=0.0, y=0.0, z=0.0)
-    c2 = m.add_atom(atomic_number=6, x=1.5, y=0.0, z=0.0)
-    o = m.add_atom(atomic_number=8, x=2.2, y=1.2, z=0.0)
-    m.add_bond(c1, c2, bond_type=1, bond_number=1)
-    m.add_bond(c2, o, bond_type=1, bond_number=1)
+    m = mp.Atomistic(name="ethanol")
+    c1 = m.add_atom(atomic_number=6, x=0.0, y=0.0, z=0.0, name="C1", res_name="ETH")
+    c2 = m.add_atom(atomic_number=6, x=1.5, y=0.0, z=0.0, name="C2", res_name="ETH")
+    o = m.add_atom(atomic_number=8, x=2.2, y=1.2, z=0.0, name="O1", res_name="ETH")
+    for atom, q in zip((c1, c2, o), (-0.18, 0.15, -0.68), strict=True):
+        atom["charge"] = q
+        atom["res_id"] = 1
+        atom["type"] = "c3" if atom["atomic_number"] == 6 else "oh"
+    m.add_bond(c1, c2, bond_type=1, bond_number=1, type="c3-c3")
+    m.add_bond(c2, o, bond_type=1, bond_number=1, type="c3-oh")
     return m
 
 
-def _tagged(mol: Chem.Mol) -> Chem.Mol:
-    for idx, rd_atom in enumerate(mol.GetAtoms()):
-        rd_atom.SetIntProp(MP_ID, idx)
-    return mol
+def _snapshot(m: mp.Atomistic) -> tuple:
+    return (
+        [dict(a.items()) for a in m.atoms],
+        [dict(b.items()) for b in m.bonds],
+        sorted(m.to_frame()["atoms"].keys()),
+        dict(m.props),
+    )
 
 
-class TestTags:
-    def test_every_atom_gets_a_unique_tag(self):
+class TestToRdkit:
+    def test_mol_mirrors_atoms_bonds_and_coordinates(self):
         m = _ethanol_heavy()
-        RdkitAdapter(internal=m)
-        assert sorted([atom[MP_ID] for atom in m.atoms]) == [0, 1, 2]
-
-    def test_existing_tags_are_kept_and_holes_filled_above_them(self):
-        m = _ethanol_heavy()
-        first = next(iter(m.atoms))
-        first[MP_ID] = 7
-        RdkitAdapter(internal=m)
-        tags = [atom[MP_ID] for atom in m.atoms]
-        assert tags[0] == 7
-        assert sorted(tags) == [7, 8, 9]
-
-    def test_duplicate_tags_raise(self):
-        m = _ethanol_heavy()
-        for atom in m.atoms:
-            atom[MP_ID] = 1
-        with pytest.raises(ValueError, match="duplicate"):
-            RdkitAdapter(internal=m)
-
-
-class TestSyncToExternal:
-    def test_mol_mirrors_atoms_bonds_tags_and_coordinates(self):
-        m = _ethanol_heavy()
-        adapter = RdkitAdapter(internal=m)
-        adapter.sync_to_external()
-        mol = adapter.mol
+        mol = to_rdkit(m)
         assert [a.GetSymbol() for a in mol.GetAtoms()] == ["C", "C", "O"]
         assert mol.GetNumBonds() == 2
-        assert [a.GetIntProp(MP_ID) for a in mol.GetAtoms()] == [
-            atom[MP_ID] for atom in m.atoms
-        ]
         np.testing.assert_allclose(
             mol.GetConformer().GetPositions(), m.atoms["x", "y", "z"]
         )
+
+    def test_the_input_is_not_mutated(self):
+        m = _ethanol_heavy()
+        before = _snapshot(m)
+        to_rdkit(m)
+        assert _snapshot(m) == before
 
     def test_bond_classes_map_one_to_one(self):
         m = mp.Atomistic()
         a = m.add_atom(atomic_number=6)
         b = m.add_atom(atomic_number=8)
         m.add_bond(a, b, bond_type=2, bond_number=2)
-        adapter = RdkitAdapter(internal=m)
-        adapter.sync_to_external()
-        assert adapter.mol.GetBondWithIdx(0).GetBondType() == Chem.BondType.DOUBLE
-        assert adapter.mol.GetNumConformers() == 0
+        mol = to_rdkit(m)
+        assert mol.GetBondWithIdx(0).GetBondType() == Chem.BondType.DOUBLE
+        assert mol.GetNumConformers() == 0
+
+    def test_molpy_components_ride_as_prefixed_props(self):
+        mol = to_rdkit(_ethanol_heavy())
+        atom = mol.GetAtomWithIdx(2)
+        assert atom.GetProp(PROP_PREFIX + "name") == "O1"
+        assert atom.GetDoubleProp(PROP_PREFIX + "charge") == pytest.approx(-0.68)
+        assert mol.GetBondWithIdx(1).GetProp(PROP_PREFIX + "type") == "c3-oh"
+        assert mol.GetProp(PROP_PREFIX + "name") == "ethanol"
+
+    def test_bracket_hydrogen_count_reaches_rdkit(self):
+        pyrrole = mp.io.smiles.read_smiles("c1cc[nH]c1").to_atomistic()
+        mol = to_rdkit(pyrrole)
+        assert mol.GetAtomWithIdx(3).GetTotalNumHs() == 1
 
     def test_a_coordinate_hole_is_an_error_not_a_zero(self):
         m = _ethanol_heavy()
         m.add_atom(atomic_number=1)  # no x/y/z
         with pytest.raises(KeyError):
-            RdkitAdapter(internal=m).sync_to_external()
+            to_rdkit(m)
+
+    def test_a_non_scalar_graph_prop_is_refused_not_dropped(self):
+        m = mp.Atomistic(meta={"source": "x"})
+        m.add_atom(atomic_number=6)
+        with pytest.raises(TypeError, match="meta"):
+            to_rdkit(m)
 
 
-class TestSyncToInternal:
-    def test_fresh_internal_is_built_from_the_mol(self):
-        mol = _tagged(Chem.AddHs(Chem.MolFromSmiles("CO")))
-        adapter = RdkitAdapter(external=mol)
-        adapter.sync_to_internal()
-        m = adapter.internal
+class TestFromRdkit:
+    def test_a_plain_rdkit_mol_becomes_an_atomistic(self):
+        mol = Chem.AddHs(Chem.MolFromSmiles("CO"))
+        m = from_rdkit(mol)
         assert list(m.atoms["atomic_number"]) == [
             a.GetAtomicNum() for a in mol.GetAtoms()
         ]
         assert len(list(m.bonds)) == mol.GetNumBonds()
-        assert [atom[MP_ID] for atom in m.atoms] == list(range(mol.GetNumAtoms()))
+        assert "x" not in m.to_frame()["atoms"].keys()
 
-    def test_negative_tags_become_new_atoms_and_bonds_are_rebuilt(self):
-        m = _ethanol_heavy()
-        adapter = RdkitAdapter(internal=m)
-        adapter.sync_to_external()
-        mol = Chem.AddHs(Chem.Mol(adapter.mol), addCoords=True)
-        for rd_atom in mol.GetAtoms():
-            if not rd_atom.HasProp(MP_ID):
-                rd_atom.SetIntProp(MP_ID, -1)
-
-        adapter.set_external(mol)
-        adapter.sync_to_internal()
-
-        assert len(m.atoms) == mol.GetNumAtoms()
-        tags = [atom[MP_ID] for atom in m.atoms]
-        assert len(set(tags)) == len(tags)
-        assert [a.GetIntProp(MP_ID) for a in mol.GetAtoms()] == tags
-        assert len(list(m.bonds)) == mol.GetNumBonds()
-        assert m.atoms["x", "y", "z"].shape == (mol.GetNumAtoms(), 3)
-
-    def test_known_atoms_are_updated_in_place(self):
-        m = _ethanol_heavy()
-        adapter = RdkitAdapter(internal=m)
-        adapter.sync_to_external()
-        mol = Chem.Mol(adapter.mol)
-        mol.GetConformer().SetAtomPosition(0, (9.0, 9.0, 9.0))
-        adapter.set_external(mol)
-        adapter.sync_to_internal()
-        assert len(m.atoms) == 3
-        assert m.atoms["x", "y", "z"][0].tolist() == [9.0, 9.0, 9.0]
-
-    def test_an_untagged_rdkit_atom_is_an_error(self):
-        adapter = RdkitAdapter(
-            internal=_ethanol_heavy(), external=Chem.MolFromSmiles("CCO")
+    def test_the_input_mol_is_not_mutated(self):
+        mol = to_rdkit(_ethanol_heavy())
+        before = (
+            Chem.MolToMolBlock(mol),
+            [sorted(a.GetPropsAsDict(False, False).items()) for a in mol.GetAtoms()],
         )
-        with pytest.raises(RuntimeError, match=MP_ID):
-            adapter.sync_to_internal()
+        from_rdkit(mol)
+        after = (
+            Chem.MolToMolBlock(mol),
+            [sorted(a.GetPropsAsDict(False, False).items()) for a in mol.GetAtoms()],
+        )
+        assert after == before
+
+    def test_round_trip_keeps_atom_bond_and_graph_data(self):
+        m = _ethanol_heavy()
+        back = from_rdkit(to_rdkit(m))
+        assert _snapshot(back) == _snapshot(m)
+
+    def test_numeric_looking_strings_stay_strings(self):
+        m = mp.Atomistic()
+        m.add_atom(atomic_number=6, name="1")
+        assert from_rdkit(to_rdkit(m)).atoms["name"].tolist() == ["1"]
+
+    def test_rdkit_coordinates_and_added_atoms_come_back(self):
+        m = _ethanol_heavy()
+        mol = Chem.AddHs(to_rdkit(m), addCoords=True)
+        mol.GetConformer().SetAtomPosition(0, (9.0, 9.0, 9.0))
+        back = from_rdkit(mol)
+        assert back.n_atoms == 9
+        assert back.atoms["x", "y", "z"][0].tolist() == [9.0, 9.0, 9.0]
+        assert back.atoms["name"].tolist()[:3] == ["C1", "C2", "O1"]
+        h = list(back.atoms)[3]
+        assert h["atomic_number"] == 1 and "name" not in h.keys()
+
+    def test_atoms_rdkit_removes_are_gone_with_their_bonds(self):
+        m = _ethanol_heavy()
+        hydrogenated = Chem.AddHs(to_rdkit(m), addCoords=True)
+        back = from_rdkit(Chem.RemoveHs(hydrogenated))
+        assert list(back.atoms["atomic_number"]) == [6, 6, 8]
+        assert len(list(back.bonds)) == 2
+        assert [b["type"] for b in back.bonds] == ["c3-c3", "c3-oh"]
+
+    def test_a_bond_type_rdkit_changes_resets_the_bond_number(self):
+        benzene = mp.io.smiles.read_smiles("c1ccccc1").to_atomistic()
+        mol = Chem.RWMol(to_rdkit(benzene))
+        Chem.Kekulize(mol, clearAromaticFlags=True)
+        back = from_rdkit(mol)
+        assert sorted(b["bond_type"] for b in back.bonds) == [1, 1, 1, 2, 2, 2]
+        for bond in back.bonds:
+            assert bond["bond_number"] == bond["bond_type"]
+
+    def test_conf_id_selects_the_conformer(self):
+        mol = Chem.AddHs(Chem.MolFromSmiles("CCO"))
+        ids = list(AllChem.EmbedMultipleConfs(mol, numConfs=2, randomSeed=7))
+        back = from_rdkit(mol, conf_id=ids[1])
+        np.testing.assert_allclose(
+            back.atoms["x", "y", "z"], mol.GetConformer(ids[1]).GetPositions()
+        )
 
 
 def test_generate_3d_returns_a_new_hydrogenated_structure_with_coordinates():
     m = _ethanol_heavy()
-    adapter = RdkitAdapter(internal=m)
-    out = adapter.generate_3d(optimize=False)
-    assert out is not m
-    assert len(out.atoms) == 9  # C2H5OH
-    assert out.atoms["x", "y", "z"].shape == (9, 3)
+    before = _snapshot(m)
+    out = generate_3d(m, optimize=False)
+    assert out.n_atoms == 9  # C2H5OH
     assert np.isfinite(out.atoms["x", "y", "z"]).all()
-    assert len(m.atoms) == 3  # the adapter's own structure is untouched
+    assert out.atoms["name"].tolist()[:3] == ["C1", "C2", "O1"]
+    assert _snapshot(m) == before
+
+
+def test_generate_3d_embeds_the_structure_as_it_is_now():
+    m = _ethanol_heavy()
+    generate_3d(m, optimize=False)
+    list(m.atoms)[2]["atomic_number"] = 7
+    out = generate_3d(m, optimize=False)
+    assert list(out.atoms["atomic_number"])[:3] == [6, 6, 7]

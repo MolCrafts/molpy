@@ -7,7 +7,6 @@ import importlib.metadata
 
 import pytest
 
-
 version_module = importlib.import_module("molpy.version")
 
 
@@ -67,3 +66,18 @@ def test_missing_molrs_metadata_fails(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_permissive_strict_switch_is_absent() -> None:
     with pytest.raises(TypeError):
         version_module.check_molrs_version(strict=False)
+
+
+def test_the_pyproject_pin_is_the_derived_molrs_line() -> None:
+    """``pyproject.toml`` pins molrs to molpy's own major.minor, as ``version.py`` derives."""
+    import re
+    import tomllib
+    from pathlib import Path
+
+    pyproject = Path(__file__).resolve().parents[1] / "pyproject.toml"
+    deps = tomllib.loads(pyproject.read_text(encoding="utf-8"))["project"][
+        "dependencies"
+    ]
+    (pin,) = [d for d in deps if re.match(r"molcrafts-molrs\b", d)]
+    spec = pin.removeprefix("molcrafts-molrs").replace(" ", "")
+    assert spec == version_module._molrs_requirement()

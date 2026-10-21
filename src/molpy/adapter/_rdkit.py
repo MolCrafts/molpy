@@ -1,34 +1,64 @@
-"""RDKit adapter for MolPy.
+"""Conversion between an :class:`~molpy.Atomistic` and an :class:`rdkit.Chem.Mol`.
 
-Bidirectional synchronisation between an :class:`~molpy.Atomistic`
-and an :class:`rdkit.Chem.Mol`. RDKit is an optional dependency.
+Two pure functions, :func:`to_rdkit` and :func:`from_rdkit`, each building a
+new object and leaving its input untouched. There is no cached pair and no join
+key: what an atom was on the molpy side travels with the RDKit atom itself.
 
-The two representations are joined by one integer tag, :data:`MP_ID`, stored
-as an atom component on the molpy side and as an atom property on the RDKit
-side. RDKit reorders and adds atoms freely (``AddHs``, ``RemoveHs``), so the
-join cannot be positional. An RDKit atom carrying a **negative** tag is one
-RDKit created and molpy has not seen yet; it becomes a new atom on the next
-sync. An RDKit atom with no tag at all is an error — build the Mol through
-:meth:`RdkitAdapter.sync_to_external` or tag it yourself.
+**What RDKit owns.** Element, formal charge, bond type and coordinates (one
+conformer) are written as RDKit's own fields, and on the way back RDKit's values
+win: an RDKit step that kekulizes, re-charges or moves an atom is reflected in
+the result. A bracket atom's ``h_count`` (SMILES ``[nH]``) also fixes RDKit's
+hydrogen count on that atom.
+
+**What rides along.** Every other atom and bond component (``name``,
+``res_name``, ``res_id``, ``type``, partial ``charge``, ``mass``, ``stereo``,
+``bond_number``, a bond's ``type`` label, …) and every scalar entry of
+:attr:`~molpy.Atomistic.props` is stored as an RDKit property named
+``"molpy:<key>"`` (:data:`PROP_PREFIX`) and restored unchanged on whatever atom
+or bond RDKit kept.
+
+**What does not survive the round trip:**
+
+- Atoms or bonds RDKit removes (``RemoveHs``, fragment stripping) are absent
+  from the result; atoms or bonds it creates (``AddHs``) carry only
+  RDKit-owned fields.
+- Only atoms and bonds cross. Angles, dihedrals, impropers and ports are
+  dropped; regenerate them with ``generate_topology``.
+- Stereo is not translated. molpy's ``stereo`` component is not turned into
+  RDKit chiral tags or bond stereo, and RDKit's chiral tags, bond stereo and CIP
+  labels are not turned back. The ``stereo`` component itself rides along
+  untouched, so it is stale if RDKit changed that atom's neighbours.
+- When RDKit changes a bond's type, the carried ``bond_number`` is replaced by
+  the number the new type implies (none for aromatic). Other carried components
+  are never recomputed: an atom whose element RDKit changes keeps its old
+  ``mass`` and ``type``.
+- Only one conformer comes back (``conf_id`` of :func:`from_rdkit`).
+- A graph-level prop that is not a bool, int, float or str is refused by
+  :func:`to_rdkit` (``TypeError``) rather than dropped.
 """
 
 from __future__ import annotations
 
 import warnings
-from copy import copy
 from typing import Any
 
 import numpy as np
+from molrs.core import Atomistic, BondNumber, BondOrder
+from molrs.core.keys import ATOMIC_NUMBER, BOND_NUMBER, BOND_TYPE, FORMAL_CHARGE
 from rdkit import Chem
 from rdkit.Chem import rdDistGeom, rdForceFieldHelpers
 
-from molrs.core.keys import FORMAL_CHARGE
-from molrs.core import Atomistic, BondNumber, BondOrder
+#: Namespace of the RDKit properties that carry molpy components across.
+PROP_PREFIX = "molpy:"
 
-from ._adapter import Adapter
+_H_COUNT = "h_count"
+_XYZ = ("x", "y", "z")
+#: Atom components RDKit holds as its own fields, not as carried properties.
+_RDKIT_OWNED_ATOM_KEYS = frozenset({ATOMIC_NUMBER.key, FORMAL_CHARGE.key, *_XYZ})
 
-#: The join key between an ``Atomistic`` atom and an RDKit atom (see module doc).
-MP_ID = "mp_id"
+_EMBED_ATTEMPTS = 10
+_EMBED_SEED = 0
+_UFF_MAX_ITERS = 200
 
 #: RDKit models aromaticity the same way molpy does — as a bond *type*
 #: alongside single/double/triple, never as a fractional order. The two
@@ -45,12 +75,159 @@ RDKIT_TO_BOND_TYPE: dict[Chem.BondType, int] = {
 }
 
 
-def _implied_number(bond_type: int) -> int:
-    """The localized integer order (``BondNumber`` code) a bond type implies;
-    aromatic and unknown bonds carry none, 0 (the Kekulé phase is a separate
-    fact, and RDKit keeps its own)."""
-    number = BondOrder.from_code(bond_type).implied_number()
-    return int(number) if number is not None else int(BondNumber.Unknown)
+# ---------------------------------------------------------------------------
+#  Public API
+# ---------------------------------------------------------------------------
+
+
+def to_rdkit(atomistic: Atomistic) -> Chem.Mol:
+    """Build a sanitized RDKit ``Mol`` from ``atomistic``; the input is not touched.
+
+    RDKit atom ``i`` is ``atomistic``'s atom ``i`` and RDKit bond ``k`` its
+    bond ``k``. A conformer is added when every atom has coordinates. See the
+    module docstring for what is carried and what is lost.
+
+    Args:
+        atomistic: The structure to convert. Every atom needs an ``atomic_number``.
+
+    Returns:
+        A new, sanitized ``rdkit.Chem.Mol``.
+
+    Raises:
+        KeyError: If an atom has no ``atomic_number``, or only some atoms have
+            coordinates (a missing coordinate is not ``0.0``).
+        ValueError: If a bond type has no RDKit counterpart.
+        TypeError: If a graph-level prop is not a bool, int, float or str.
+        RuntimeError: If RDKit cannot sanitize the result.
+    """
+    atom_fields = [dict(atom.items()) for atom in atomistic.atoms]
+    rd_index = {atom.handle: idx for idx, atom in enumerate(atomistic.atoms)}
+    bonds = [
+        (rd_index[bond.itom.handle], rd_index[bond.jtom.handle], dict(bond.items()))
+        for bond in atomistic.bonds
+    ]
+    n_h_atoms = [0] * len(atom_fields)
+    for i, j, _ in bonds:
+        n_h_atoms[i] += atom_fields[j].get(ATOMIC_NUMBER.key) == 1
+        n_h_atoms[j] += atom_fields[i].get(ATOMIC_NUMBER.key) == 1
+
+    mol = Chem.RWMol()
+    _set_props(mol, dict(atomistic.props), where="graph prop")
+    for idx, fields in enumerate(atom_fields):
+        mol.AddAtom(_rdkit_atom(idx, fields, n_h_atoms[idx]))
+    for i, j, fields in bonds:
+        bond_type = fields.get(BOND_TYPE.key, int(BondOrder.Single))
+        mol.AddBond(i, j, _rdkit_bond_type(bond_type))
+        _set_props(mol.GetBondBetweenAtoms(i, j), fields, where="bond")
+
+    positions = _positions(atomistic)
+    if positions is not None:
+        conf = Chem.Conformer(len(atom_fields))
+        for idx, xyz in enumerate(positions):
+            conf.SetAtomPosition(idx, tuple(float(v) for v in xyz))
+        mol.AddConformer(conf, assignId=True)
+
+    out = mol.GetMol()
+    try:
+        Chem.SanitizeMol(out)
+    except Exception as exc:
+        raise RuntimeError(
+            f"RDKit could not sanitize the molecule: {exc}. Fix the bond "
+            "types / formal charges on the Atomistic; they are not repaired."
+        ) from exc
+    return out
+
+
+def from_rdkit(mol: Chem.Mol, *, conf_id: int = -1) -> Atomistic:
+    """Build a new :class:`~molpy.Atomistic` from ``mol``; the input is not touched.
+
+    Atom ``i`` of the result is RDKit atom ``i``. Components carried by
+    :func:`to_rdkit` come back on the atoms and bonds RDKit kept; RDKit's own
+    fields (element, formal charge, bond type, coordinates) override them.
+    See the module docstring for what is lost.
+
+    Args:
+        mol: Any RDKit molecule — one from :func:`to_rdkit` after RDKit worked
+            on it, or one RDKit built itself.
+        conf_id: The conformer to read coordinates from; ``-1`` is RDKit's
+            default. A ``mol`` with no conformer gives atoms without coordinates.
+
+    Returns:
+        A new ``Atomistic`` with atoms and bonds only.
+
+    Raises:
+        ValueError: If a bond type has no molpy counterpart (dative, …).
+    """
+    atomistic = Atomistic(**_carried(mol))
+    positions = (
+        mol.GetConformer(conf_id).GetPositions() if mol.GetNumConformers() else None
+    )
+    atoms = [
+        atomistic.add_atom(**_atom_fields(rd_atom, positions))
+        for rd_atom in mol.GetAtoms()
+    ]
+    for rd_bond in mol.GetBonds():
+        atomistic.add_bond(
+            atoms[rd_bond.GetBeginAtomIdx()],
+            atoms[rd_bond.GetEndAtomIdx()],
+            **_bond_fields(rd_bond),
+        )
+    return atomistic
+
+
+def generate_3d(
+    atomistic: Atomistic,
+    *,
+    add_hydrogens: bool = True,
+    optimize: bool = True,
+) -> Atomistic:
+    """Embed 3D coordinates with RDKit's ETKDGv3, optionally UFF-relaxed.
+
+    A round trip through :func:`to_rdkit` and :func:`from_rdkit`: the result is
+    a new ``Atomistic`` and ``atomistic`` is not touched. Hydrogens RDKit adds
+    carry RDKit-owned fields only. For molpy's native embedder, use
+    :class:`molpy.conformer.Conformer` instead.
+
+    Args:
+        atomistic: The structure to embed.
+        add_hydrogens: Add explicit hydrogens before embedding.
+        optimize: Relax the embedded geometry with UFF.
+
+    Returns:
+        A new ``Atomistic`` with coordinates.
+
+    Raises:
+        ValueError: If ``atomistic`` has no atoms.
+        RuntimeError: If RDKit cannot sanitize or embed the molecule.
+    """
+    mol = to_rdkit(atomistic)
+    if add_hydrogens:
+        mol = Chem.AddHs(mol, addCoords=True)
+    mol = _embed(mol)
+    if optimize:
+        mol = _optimize_uff(mol)
+    return from_rdkit(mol)
+
+
+# ---------------------------------------------------------------------------
+#  Atomistic -> Mol
+# ---------------------------------------------------------------------------
+
+
+def _rdkit_atom(idx: int, fields: dict[str, Any], n_h_atoms: int) -> Chem.Atom:
+    if ATOMIC_NUMBER.key not in fields:
+        raise KeyError(f"atom {idx} has no {ATOMIC_NUMBER.key!r}")
+    rd_atom = Chem.Atom(int(fields[ATOMIC_NUMBER.key]))
+    rd_atom.SetFormalCharge(int(fields.get(FORMAL_CHARGE.key) or 0))
+    if fields.get(_H_COUNT) is not None:
+        # A bracket atom's exact hydrogen count (SMILES ``[nH]``, ``[CH2]``).
+        # Hydrogens already present as atoms are bonded, so only the rest
+        # become RDKit's explicit-H count, and RDKit adds no implicit ones.
+        rd_atom.SetNumExplicitHs(max(int(fields[_H_COUNT]) - n_h_atoms, 0))
+        rd_atom.SetNoImplicit(True)
+    carried = {k: v for k, v in fields.items() if k not in _RDKIT_OWNED_ATOM_KEYS}
+    _set_props(rd_atom, carried, where=f"atom {idx}")
+    return rd_atom
 
 
 def _rdkit_bond_type(bond_type: int) -> Chem.BondType:
@@ -63,453 +240,123 @@ def _rdkit_bond_type(bond_type: int) -> Chem.BondType:
     return BOND_TYPE_TO_RDKIT[code]
 
 
-def _bond_type_from_rdkit(bt: Chem.BondType) -> int:
-    if bt not in RDKIT_TO_BOND_TYPE:
-        raise ValueError(
-            f"RDKit bond type {bt} is not supported. "
-            f"Supported types: {list(RDKIT_TO_BOND_TYPE.keys())}"
-        )
-    return RDKIT_TO_BOND_TYPE[bt]
+def _positions(atomistic: Atomistic) -> np.ndarray | None:
+    """``(n, 3)`` coordinates, or ``None`` when the graph carries none at all.
+
+    A graph where only *some* atoms have coordinates raises (``KeyError``
+    from the column read): a missing coordinate is not ``0.0``.
+    """
+    atoms = list(atomistic.atoms)
+    if not any(any(key in atom for key in _XYZ) for atom in atoms):
+        return None
+    return np.asarray([[atom[key] for key in _XYZ] for atom in atoms])
 
 
-class RdkitAdapter(Adapter[Atomistic, Chem.Mol]):
-    """Bridge between MolPy's atomistic representation and ``rdkit.Chem.Mol``."""
-
-    def __init__(
-        self,
-        internal: Atomistic | None = None,
-        external: Chem.Mol | None = None,
-    ) -> None:
-        super().__init__(internal, external)
-        if internal is not None:
-            self._tag_atoms(internal)
-
-    @property
-    def internal(self) -> Atomistic:
-        return self.get_internal()
-
-    @property
-    def mol(self) -> Chem.Mol:
-        return self.get_external()
-
-    def generate_3d(
-        self,
-        *,
-        add_hydrogens: bool = True,
-        optimize: bool = True,
-    ) -> Atomistic:
-        """Add hydrogens, embed 3D coordinates, and optimize geometry via RDKit.
-
-        Returns a new :class:`~molpy.Atomistic` with coordinates;
-        this adapter is not mutated. For molpy's native (native) embedder, use
-        :class:`molpy.conformer.Conformer` instead.
-        """
-        working = self.copy()
-        if not working.has_external():
-            working.sync_to_external()
-        mol = Chem.Mol(working.get_external())
-
-        if add_hydrogens:
-            mol = _add_hydrogens(mol)
-        try:
-            Chem.SanitizeMol(mol)
-        except Exception as exc:
-            raise RuntimeError(
-                f"Sanitization failed: {exc}. "
-                "The molecule may have invalid valency or other issues."
-            ) from exc
-        mol = _embed(mol, 10, 0)
-        if optimize:
-            mol = _sanitize(mol)
-            if mol.GetNumConformers() > 0:
-                mol = _optimize_uff(mol, 200, False)
-
-        working.set_external(mol)
-        working.sync_to_internal()
-        return working.get_internal()
-
-    # ------------------------------------------------------------------
-    #  The join key
-    # ------------------------------------------------------------------
-
-    @staticmethod
-    def _tag_atoms(atomistic: Atomistic) -> None:
-        """Give every atom a unique :data:`MP_ID`, keeping the tags it already has."""
-        atoms = list(atomistic.atoms)
-        if not atoms:
-            return
-        tags = np.array([int(a[MP_ID]) for a in atoms if MP_ID in a], dtype=np.int64)
-        untagged = [a for a in atoms if MP_ID not in a]
-        if np.unique(tags).size != tags.size:
-            raise ValueError(f"duplicate {MP_ID} tags: every atom needs its own")
-        next_tag = int(tags.max()) + 1 if tags.size else 0
-        for atom in untagged:
-            atom[MP_ID] = next_tag
-            next_tag += 1
-
-    @staticmethod
-    def _tag_of(rd_atom: Chem.Atom) -> int:
-        if not rd_atom.HasProp(MP_ID):
-            raise RuntimeError(
-                f"RDKit atom {rd_atom.GetIdx()} ({rd_atom.GetSymbol()}) has no "
-                f"{MP_ID} property; build the Mol through sync_to_external() or "
-                "tag it (a negative tag marks an atom molpy has not seen)"
-            )
-        return int(rd_atom.GetIntProp(MP_ID))
-
-    @staticmethod
-    def _next_tag(mol: Chem.Mol, *taken: int) -> int:
-        """One above every non-negative tag on ``mol`` and in ``taken``."""
-        highest = max(taken, default=-1)
-        for rd_atom in mol.GetAtoms():
-            if rd_atom.HasProp(MP_ID):
-                highest = max(highest, int(rd_atom.GetIntProp(MP_ID)))
-        return highest + 1
-
-    # ------------------------------------------------------------------
-    #  Atomistic -> Mol
-    # ------------------------------------------------------------------
-
-    def _build_mol_from_atomistic(self, atomistic: Atomistic) -> Chem.Mol:
-        self._tag_atoms(atomistic)
-        atoms = list(atomistic.atoms)
-        charges = self._formal_charges(atomistic)
-        positions = self._positions(atomistic)
-
-        mol = Chem.RWMol()
-        for atom, charge in zip(atoms, charges, strict=True):
-            rd_atom = Chem.Atom(int(atom["atomic_number"]))
-            if charge:
-                rd_atom.SetFormalCharge(int(charge))
-            rd_atom.SetIntProp(MP_ID, int(atom[MP_ID]))
-            mol.AddAtom(rd_atom)
-
-        rd_index = {atom.handle: idx for idx, atom in enumerate(atoms)}
-        for bond in atomistic.bonds:
-            mol.AddBond(
-                rd_index[bond.itom.handle],
-                rd_index[bond.jtom.handle],
-                _rdkit_bond_type(bond.get("bond_type", int(BondOrder.Single))),
-            )
-
-        if positions is not None:
-            conf = Chem.Conformer(mol.GetNumAtoms())
-            for idx, xyz in enumerate(positions):
-                conf.SetAtomPosition(idx, tuple(float(v) for v in xyz))
-            mol.AddConformer(conf, assignId=True)
-
-        final_mol = mol.GetMol()
-        try:
-            Chem.SanitizeMol(final_mol)
-        except Exception as exc:
-            raise RuntimeError(
-                f"RDKit could not sanitize the molecule: {exc}. Fix the bond "
-                "types / formal charges on the Atomistic; they are not repaired."
-            ) from exc
-        return final_mol
-
-    @staticmethod
-    def _formal_charges(atomistic: Atomistic) -> list[int]:
-        """Per-atom formal charge, 0 where the component is absent (neutral)."""
-        return [int(atom.get(FORMAL_CHARGE.key) or 0) for atom in atomistic.atoms]
-
-    @staticmethod
-    def _positions(atomistic: Atomistic) -> np.ndarray | None:
-        """``(n, 3)`` coordinates, or ``None`` when the graph carries none at all.
-
-        A graph where only *some* atoms have coordinates raises (``KeyError``
-        from the column read): a missing coordinate is not ``0.0``.
-        """
-        atoms = list(atomistic.atoms)
-        if not any(any(k in atom for k in ("x", "y", "z")) for atom in atoms):
-            return None
-        return np.asarray([[atom[k] for k in ("x", "y", "z")] for atom in atoms])
-
-    # ------------------------------------------------------------------
-    #  Mol -> Atomistic
-    # ------------------------------------------------------------------
-
-    @staticmethod
-    def _atom_props(
-        rd_atom: Chem.Atom, tag: int, position: Any | None
-    ) -> dict[str, Any]:
-        props: dict[str, Any] = {"atomic_number": rd_atom.GetAtomicNum(), MP_ID: tag}
-        if rd_atom.GetFormalCharge() != 0:
-            props[FORMAL_CHARGE.key] = rd_atom.GetFormalCharge()
-        if position is not None:
-            props["x"] = float(position[0])
-            props["y"] = float(position[1])
-            props["z"] = float(position[2])
-        return props
-
-    def _build_atomistic_from_mol(self, mol: Chem.Mol) -> Atomistic:
-        atomistic = Atomistic()
-        positions = (
-            mol.GetConformer().GetPositions() if mol.GetNumConformers() > 0 else None
-        )
-        next_tag = self._next_tag(mol)
-
-        created = []
-        for idx, rd_atom in enumerate(mol.GetAtoms()):
-            tag = self._tag_of(rd_atom)
-            if tag < 0:
-                tag = next_tag
-                next_tag += 1
-                rd_atom.SetIntProp(MP_ID, tag)
-            position = positions[idx] if positions is not None else None
-            created.append(
-                atomistic.add_atom(**self._atom_props(rd_atom, tag, position))
-            )
-
-        for rd_bond in mol.GetBonds():
-            bond_type = _bond_type_from_rdkit(rd_bond.GetBondType())
-            bond = atomistic.add_bond(
-                created[rd_bond.GetBeginAtomIdx()],
-                created[rd_bond.GetEndAtomIdx()],
-            )
-            atomistic.set_bond_class(
-                bond,
-                BondOrder.from_code(bond_type),
-                BondNumber.from_code(_implied_number(bond_type)),
-            )
-        return atomistic
-
-    def _update_atomistic_from_mol(
-        self,
-        mol: Chem.Mol,
-        atomistic: Atomistic,
-        update_topology: bool = True,
-    ) -> None:
-        """Fold ``mol`` back onto ``atomistic``, joined by :data:`MP_ID`.
-
-        One pass over the RDKit atoms: a known tag updates that atom's element,
-        formal charge and coordinates in place; a negative or unknown tag spawns
-        a new atom (and writes its tag back onto the RDKit atom so the join
-        holds on the next sync). Bonds are rebuilt from RDKit when
-        ``update_topology`` is set.
-        """
-        self._tag_atoms(atomistic)
-        by_tag = dict(
-            zip(
-                (int(atom[MP_ID]) for atom in atomistic.atoms),
-                atomistic.atoms,
-                strict=True,
-            )
-        )
-        next_tag = self._next_tag(mol, *by_tag)
-        positions = (
-            mol.GetConformer().GetPositions() if mol.GetNumConformers() > 0 else None
-        )
-
-        atom_of_rd = []
-        for idx, rd_atom in enumerate(mol.GetAtoms()):
-            tag = self._tag_of(rd_atom)
-            position = positions[idx] if positions is not None else None
-            atom = by_tag.get(tag) if tag >= 0 else None
-            if atom is None:
-                if tag < 0:
-                    tag = next_tag
-                    next_tag += 1
-                    rd_atom.SetIntProp(MP_ID, tag)
-                atom = atomistic.add_atom(**self._atom_props(rd_atom, tag, position))
-                by_tag[tag] = atom
-                atom_of_rd.append(atom)
-                continue
-
-            atom["atomic_number"] = rd_atom.GetAtomicNum()
-            charge = rd_atom.GetFormalCharge()
-            if charge != 0 or FORMAL_CHARGE.key in atom:
-                atom[FORMAL_CHARGE.key] = charge
-            if position is not None:
-                atom["x", "y", "z"] = (float(v) for v in position)
-            atom_of_rd.append(atom)
-
-        if update_topology:
-            existing = list(atomistic.bonds)
-            if existing:
-                atomistic.del_bonds(existing)
-            for rd_bond in mol.GetBonds():
-                bond_type = _bond_type_from_rdkit(rd_bond.GetBondType())
-                bond = atomistic.add_bond(
-                    atom_of_rd[rd_bond.GetBeginAtomIdx()],
-                    atom_of_rd[rd_bond.GetEndAtomIdx()],
-                )
-                atomistic.set_bond_class(
-                    bond,
-                    BondOrder.from_code(bond_type),
-                    BondNumber.from_code(_implied_number(bond_type)),
-                )
-
-    # ------------------------------------------------------------------
-    #  Adapter protocol
-    # ------------------------------------------------------------------
-
-    def _do_sync_to_external(self) -> None:
-        if self._internal is None:
-            return
-        self._external = self._build_mol_from_atomistic(self._internal)
-
-    def sync_to_internal(self, update_topology: bool = True) -> None:
-        """Sync from external to internal representation.
-
-        Args:
-            update_topology: Whether to rebuild bonds when internal already exists.
-        """
-        if self._external is None:
-            raise ValueError(
-                "Cannot sync to internal: external representation is None. "
-                "Set external using set_external() first."
-            )
-        self._do_sync_to_internal(update_topology=update_topology)
-
-    def _do_sync_to_internal(self, update_topology: bool = True) -> None:
-        mol = self._external
-        if mol is None:
-            return
-        if self._internal is None:
-            self._internal = self._build_atomistic_from_mol(mol)
+def _set_props(target: Any, fields: dict[str, Any], *, where: str) -> None:
+    """Store each of ``fields`` on an RDKit atom, bond or Mol as a typed prop."""
+    for key, value in fields.items():
+        name = PROP_PREFIX + key
+        if isinstance(value, bool | np.bool_):
+            target.SetBoolProp(name, bool(value))
+        elif isinstance(value, int | np.integer):
+            target.SetIntProp(name, int(value))
+        elif isinstance(value, float | np.floating):
+            target.SetDoubleProp(name, float(value))
+        elif isinstance(value, str):
+            target.SetProp(name, value)
         else:
-            self._update_atomistic_from_mol(
-                mol, self._internal, update_topology=update_topology
+            raise TypeError(
+                f"{where} {key!r} is a {type(value).__name__}; only bool, int, "
+                "float and str cross to RDKit"
             )
 
-    def copy(self) -> RdkitAdapter:
-        """A new adapter over deep copies of both representations."""
-        new_internal = copy(self._internal) if self._internal is not None else None
-        new_external = Chem.Mol(self._external) if self._external is not None else None
-        return RdkitAdapter(internal=new_internal, external=new_external)
-
 
 # ---------------------------------------------------------------------------
-# RDKit 3D generation / geometry optimization
+#  Mol -> Atomistic
 # ---------------------------------------------------------------------------
 
 
-def _sanitize(mol: Chem.Mol) -> Chem.Mol:
-    """Sanitize *mol* for force-field readiness.
-
-    Tries strict sanitization first; falls back to inferring hybridization
-    from connectivity when that fails.
-
-    Returns:
-        A sanitized copy (the input is never mutated).
-
-    Raises:
-        RuntimeError: If both strict and fallback sanitization fail.
-    """
-    mol = Chem.Mol(mol)
-    try:
-        Chem.SanitizeMol(mol)
-    except Exception as e:
-        try:
-            mol.UpdatePropertyCache(strict=False)
-            for atom in mol.GetAtoms():
-                if atom.GetHybridization() == Chem.HybridizationType.UNSPECIFIED:
-                    degree = atom.GetDegree()
-                    hyb = {
-                        0: Chem.HybridizationType.S,
-                        1: Chem.HybridizationType.SP,
-                        2: Chem.HybridizationType.SP2,
-                        3: Chem.HybridizationType.SP3,
-                    }.get(degree, Chem.HybridizationType.SP3D)
-                    atom.SetHybridization(hyb)
-            mol.UpdatePropertyCache(strict=False)
-        except Exception as e2:
-            raise RuntimeError(
-                f"Failed to prepare molecule for optimization: {e}. "
-                f"Fallback also failed: {e2}. "
-                "The molecule may have structural issues."
-            ) from e
-    return mol
+def _carried(target: Any) -> dict[str, Any]:
+    """The ``molpy:``-prefixed props of an RDKit atom, bond or Mol, unprefixed."""
+    props = target.GetPropsAsDict(
+        includePrivate=False, includeComputed=False, autoConvertStrings=False
+    )
+    return {
+        key[len(PROP_PREFIX) :]: value
+        for key, value in props.items()
+        if key.startswith(PROP_PREFIX)
+    }
 
 
-def _optimize_uff(
-    mol: Chem.Mol,
-    max_iters: int,
-    raise_on_failure: bool,
-) -> Chem.Mol:
-    """Run UFF optimization on a copy of *mol*.
+def _atom_fields(rd_atom: Chem.Atom, positions: np.ndarray | None) -> dict[str, Any]:
+    fields = {
+        k: v for k, v in _carried(rd_atom).items() if k not in _RDKIT_OWNED_ATOM_KEYS
+    }
+    fields[ATOMIC_NUMBER.key] = rd_atom.GetAtomicNum()
+    if rd_atom.GetFormalCharge() != 0:
+        fields[FORMAL_CHARGE.key] = rd_atom.GetFormalCharge()
+    if positions is not None:
+        fields.update(zip(_XYZ, map(float, positions[rd_atom.GetIdx()]), strict=True))
+    return fields
 
-    Returns:
-        A new Mol with optimized coordinates.
-    """
-    mol = Chem.Mol(mol)
-    mol.UpdatePropertyCache(strict=False)
-    before = mol.GetConformer().GetPositions() if mol.GetNumConformers() > 0 else None
 
-    code = rdForceFieldHelpers.UFFOptimizeMolecule(mol, maxIters=int(max_iters))
-    if code != 0:
-        msg = (
-            f"UFF optimization returned code {code}. "
-            f"Code 1 typically means convergence not reached within {max_iters} "
-            "iterations. The structure may still be improved."
+def _bond_fields(rd_bond: Chem.Bond) -> dict[str, Any]:
+    rd_type = rd_bond.GetBondType()
+    if rd_type not in RDKIT_TO_BOND_TYPE:
+        raise ValueError(
+            f"RDKit bond type {rd_type} is not supported. "
+            f"Supported types: {list(RDKIT_TO_BOND_TYPE)}"
         )
-        if raise_on_failure:
-            raise RuntimeError(msg)
-        warnings.warn(msg, UserWarning)
-    elif before is not None and np.allclose(
-        before, mol.GetConformer().GetPositions(), atol=1e-5
-    ):
-        warnings.warn(
-            "UFF optimization left every coordinate unchanged: the structure "
-            "is already at a stationary point of UFF, or the optimizer did not run.",
-            UserWarning,
+    bond_type = RDKIT_TO_BOND_TYPE[rd_type]
+    fields = _carried(rd_bond)
+    if fields.get(BOND_TYPE.key) != bond_type or BOND_NUMBER.key not in fields:
+        number = BondOrder.from_code(bond_type).implied_number()
+        fields[BOND_NUMBER.key] = int(
+            number if number is not None else BondNumber.Unknown
         )
-    return mol
+    fields[BOND_TYPE.key] = bond_type
+    return fields
 
 
-def _add_hydrogens(mol: Chem.Mol) -> Chem.Mol:
-    """Add explicit hydrogens; each new atom gets a negative :data:`MP_ID`.
-
-    Returns:
-        A new Mol with explicit hydrogens.
-    """
-    mol = Chem.Mol(mol)
-    mol.UpdatePropertyCache(strict=False)
-    original_count = mol.GetNumAtoms()
-    mol = Chem.AddHs(mol, addCoords=True)
-    for idx in range(original_count, mol.GetNumAtoms()):
-        rd_atom = mol.GetAtomWithIdx(idx)
-        if not rd_atom.HasProp(MP_ID):
-            rd_atom.SetIntProp(MP_ID, -(idx - original_count + 1))
-    return mol
+# ---------------------------------------------------------------------------
+#  RDKit 3D generation
+# ---------------------------------------------------------------------------
 
 
-def _embed(
-    mol: Chem.Mol,
-    max_attempts: int,
-    random_seed: int | None,
-) -> Chem.Mol:
-    """Embed 3D coordinates into a copy of *mol*.
-
-    Returns:
-        A new Mol with 3D coordinates.
-
-    Raises:
-        ValueError: If the molecule has no atoms.
-        RuntimeError: If embedding fails after *max_attempts*.
-    """
-    mol = Chem.Mol(mol)
+def _embed(mol: Chem.Mol) -> Chem.Mol:
+    """Embed 3D coordinates into a copy of ``mol`` with ETKDGv3."""
     if mol.GetNumAtoms() == 0:
         raise ValueError("Cannot embed 3D coordinates for empty molecule")
-
+    mol = Chem.Mol(mol)
     params = rdDistGeom.ETKDGv3()
-    if random_seed is not None:
-        params.randomSeed = int(random_seed)
     params.useRandomCoords = True
+    for attempt in range(_EMBED_ATTEMPTS):
+        params.randomSeed = _EMBED_SEED + attempt
+        if rdDistGeom.EmbedMolecule(mol, params) != -1:
+            return mol
+    raise RuntimeError(
+        f"3D embedding failed after {_EMBED_ATTEMPTS} attempts. "
+        "The molecule may be too large or have structural issues."
+    )
 
-    embed_result = rdDistGeom.EmbedMolecule(mol, params)
-    attempts = 1
-    while embed_result == -1 and attempts < max_attempts:
-        params.useRandomCoords = True
-        if random_seed is not None:
-            params.randomSeed = int(random_seed) + attempts
-        embed_result = rdDistGeom.EmbedMolecule(mol, params)
-        attempts += 1
 
-    if embed_result == -1:
-        raise RuntimeError(
-            f"3D embedding failed after {max_attempts} attempts. "
-            "The molecule may be too large or have structural issues."
+def _optimize_uff(mol: Chem.Mol) -> Chem.Mol:
+    """Relax a copy of ``mol`` with UFF; warn when it does not converge."""
+    mol = Chem.Mol(mol)
+    before = mol.GetConformer().GetPositions()
+    code = rdForceFieldHelpers.UFFOptimizeMolecule(mol, maxIters=_UFF_MAX_ITERS)
+    if code != 0:
+        warnings.warn(
+            f"UFF optimization returned code {code}: not converged within "
+            f"{_UFF_MAX_ITERS} iterations. The structure may still be improved.",
+            UserWarning,
+            stacklevel=3,
+        )
+    elif np.allclose(before, mol.GetConformer().GetPositions(), atol=1e-5):
+        warnings.warn(
+            "UFF optimization left every coordinate unchanged: the structure "
+            "is already at a stationary point of UFF.",
+            UserWarning,
+            stacklevel=3,
         )
     return mol

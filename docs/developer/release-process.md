@@ -19,7 +19,7 @@ line when co-released. Patch may drift.
 
 | Mechanism | Rule |
 |-----------|------|
-| `pyproject.toml` | `molcrafts-molrs>=X.Y.0,<X.(Y+1)` (not `==X.Y.Z`) |
+| `pyproject.toml` | `molcrafts-molrs>=X.Y.0,<X.(Y+1)` (not `==X.Y.Z`), derived from `version`: `tests/test_version.py` fails until a minor bump moves the pin with it |
 | Import-time check | `check_molrs_version()` accepts any installed molrs with the same major.minor |
 | Release gate | `release.yml` requires the tagged commit's `test / *` checks to be green, runs `scripts/check_partners_on_pypi.py` (a published release in every partner range: molrs on that minor line, mollog and molcfg in theirs), then one `published` run on Linux, Python 3.12, against the partners from PyPI (`uv run --no-sources`) |
 

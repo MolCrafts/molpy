@@ -25,7 +25,13 @@ Every builder follows the same four-step pipeline and exposes one entry point,
 import molpy as mp
 from molpy.builder import DrudeBuilder
 
-struct, _ = mp.conformer.Conformer(seed=42).generate(mp.io.smiles.SmilesIr("CCO").to_atomistic())
+struct, _ = mp.conformer.Conformer(seed=42).generate(mp.io.smiles.read_smiles("CCO").to_atomistic())
+# DrudeBuilder looks up each atom's CL&P type and splits its charge, so the
+# structure must be typed and charged first (normally by a typifier).
+clp_types = {"C": "CT", "O": "OH", "H": "HC"}
+for atom in struct.atoms:
+ atom["type"] = clp_types[atom["element"]]
+ atom["charge"] = 0.0
 builder = DrudeBuilder(drude_prefix="D")
 
 new_struct = builder.apply(struct) # struct: Atomistic -> Atomistic (a copy)
@@ -50,8 +56,19 @@ polarized = drude.apply(struct)
 
 | Parameter | Meaning |
 |---|---|
-| `polarizability` | `dict[type -> dict[param -> float]]` of Drude parameters (`m_D`, `q_D_sign`, `k_D`, `alpha`, `a_thole`). `None` uses `mp.ff.params.clpol_polarizability()`, molrs's `alpha.ff`; `mp.io.read_clpol_alpha(path)` reads the rows of a custom `alpha.ff` (one dict per type, keyed by `type_name`). |
-| `drude_prefix` | Name prefix for the generated Drude particles (default `"D"`). |
+| `polarizability` | The CL&Pol Drude table: `dict[type -> dict[param -> float]]` (`m_D`, `q_D_sign`, `k_D`, `alpha`, `a_thole`), or the list of rows `mp.io.read_clpol_alpha(path)` returns for a custom `alpha.ff` (one dict per row, keyed by `type_name`; a type given twice keeps its later row). `None` uses `mp.ff.params.clpol_polarizability()`, molrs's `alpha.ff`. |
+| `drude_prefix` | Type prefix for the generated Drude particles (default `"D"`: core `NBT` gets shell type `DNBT`). |
+
+The structure must be typed first: `apply` raises `ValueError` if an atom has
+no `type`, since its polarizability cannot be looked up.
+
+Each shell is a `DrudeParticle` (`vsite == "drude"`, no `element`) tied to its
+core by a row of molrs's `drudes` relation (`atomi` the core, `atomj` the shell)
+with style `harmonic` and the `drude/harmonic` parameters: `k` (kcal/mol/Å² in
+molrs's `k*r^2` form, i.e. `k_D / 2` converted from kJ), `alpha` (Å³) and
+`thole` (CL&Pol's `a_thole`). It shows up as a `drudes` block in
+`polarized.to_frame()`, and molrs's LAMMPS data writer derives the `fix drude`
+C/D/N flags from it.
 
 ## TIP4P M-sites
 
@@ -61,7 +78,7 @@ protocol, a different rule:
 ```python
 from molpy.builder import Tip4pBuilder
 
-water, _ = mp.conformer.Conformer(add_hydrogens=True, seed=1).generate(mp.io.smiles.SmilesIr("O").to_atomistic())
+water, _ = mp.conformer.Conformer(add_hydrogens=True, seed=1).generate(mp.io.smiles.read_smiles("O").to_atomistic())
 # The M-site carries the oxygen's charge, so the input must already have one.
 for atom in water.atoms:
  atom["charge"] = -0.834 if atom["element"] == "O" else 0.417
@@ -71,6 +88,16 @@ water4p = tip4p.apply(water)
 ```
 
 `d_om` is the oxygen-to-M-site distance in Å; the default, 0.1546 Å, is the TIP4P/2005 geometry.
+
+The M-site is recorded as a `virtual_sites` row (style `average3`), so its position stays defined by O and the two H. LAMMPS has no data-file form for such a site: `write_lammps_data` refuses a frame with `virtual_sites` rows. For LAMMPS, drop the M atoms, put the M charge back on O, and use a `*/tip4p/*` pair style, which places M implicitly.
+Pass `box=` (a `mp.Box`) for a periodic system: the O–H vectors are then
+minimum-image deltas, so a water split by the boundary still gets M on its
+bisector. Hydrogens are found through the bond adjacency of each oxygen.
+
+The M-site is a `MasslessSite` (`vsite == "massless"`, no `element`) and is
+recorded as a row of molrs's `virtual_sites` relation (`atomi` = M, `atomj`,
+`atomk`, `atoml` = O, H, H) with style `average3` and weights `w1 = 1 - 2a`,
+`w2 = w3 = a`, so an engine can rebuild M from the moving water.
 
 ## Writing your own
 
@@ -87,6 +114,10 @@ and `Tip4pBuilder` are the two reference implementations.
  fixed-charge field.
 - `MasslessSite` / `DrudeParticle` are auxiliary particles — downstream exporters
  and engines must be told to treat them as virtual sites, not atoms.
+- molrs's LAMMPS data writer does not yet write the `drudes` springs into the
+ `Bonds` section, which the LAMMPS DRUDE package expects.
+- `mp.Atomistic.from_frame` does not yet read `drudes` / `virtual_sites` blocks
+ back; keep the builder's output graph, or its frame, rather than round-tripping.
 
 ## See also
 

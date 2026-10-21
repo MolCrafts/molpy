@@ -9,7 +9,7 @@ export — so you see every boundary you will later automate.
 ```python
 import molpy as mp
 
-mol = mp.io.smiles.SmilesIr("CCO").to_atomistic()  # ethanol from SMILES (heavy atoms)
+mol = mp.io.smiles.read_smiles("CCO").to_atomistic()  # ethanol from SMILES (heavy atoms)
 mol, _ = mp.conformer.Conformer(add_hydrogens=True, seed=42).generate(
     mol
 )  # add hydrogens + 3D coordinates
@@ -128,7 +128,7 @@ for idx in range(n**3):
     mol = water_template.copy().rotate([0.0, 0.0, 1.0], 0.1 * idx)
     water_box.merge(mol.translate([ix * spacing, iy * spacing, iz * spacing]))
 
-box = mp.Box.cube(n * spacing)
+box = mp.Box(mp.core.Cell.lengths([n * spacing] * 3))
 print("box lengths (Å):", box.lengths.tolist())
 print("box atoms:", len(water_box.atoms), "box bonds:", len(water_box.bonds))
 ```

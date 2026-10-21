@@ -192,7 +192,7 @@ xyz = np.array(
 )
 frame = mp.Frame()
 frame["atoms"] = {"x": xyz[:, 0], "y": xyz[:, 1], "z": xyz[:, 2]}
-frame.box = mp.Box.cube(4 * a)
+frame.box = mp.Box(mp.core.Cell.lengths([4 * a] * 3))
 ```
 
 That is a perfect FCC crystal, which makes a good first test: you know the

@@ -31,14 +31,23 @@ from __future__ import annotations
 
 import os
 import shutil
-import subprocess
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal, Mapping
+
+import mollog
+
+from molpy.wrapper._process import ToolError, run_process
 
 ManagerKind = Literal["conda", "venv"]
 
 _SUPPORTED = "'conda', 'venv'"
+
+#: Seconds a ``conda run … which`` lookup may take (conda starts slowly).
+RESOLVE_TIMEOUT = 60.0
+
+#: Where a lookup logs when its caller passes no logger.
+_LOGGER = "molpy.wrapper.environment"
 
 
 def _looks_like_path(value: str) -> bool:
@@ -63,7 +72,7 @@ def _bin_dir(prefix: Path) -> Path:
     return prefix / ("Scripts" if os.name == "nt" else "bin")
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True)
 class EnvironmentSpec:
     """Validated subprocess environment isolation.
 
@@ -74,11 +83,16 @@ class EnvironmentSpec:
     * conda prefix / venv — ``env: Path``, ``env_manager: "conda"|"venv"``
 
     ``conda_executable`` is the ``conda`` that ``conda run`` invokes.
+    :meth:`resolve_executable` remembers each answer for the life of the
+    instance (each engine and wrapper resolves its own).
     """
 
     env: str | Path | None = None
     env_manager: ManagerKind | None = None
     conda_executable: str = "conda"
+    _found: dict[str, str | None] = field(
+        default_factory=dict, init=False, repr=False, compare=False, hash=False
+    )
 
     # -- construction -------------------------------------------------------
 
@@ -212,13 +226,33 @@ class EnvironmentSpec:
             merged.update(extra)
         return merged
 
-    def resolve_executable(self, exe: str | Path) -> str | None:
+    def resolve_executable(
+        self, exe: str | Path, *, logger: mollog.Logger | None = None
+    ) -> str | None:
         """Best-effort absolute path for *exe* inside this environment.
 
         *exe* may be path-like at the public boundary; filesystem paths are
-        converted to :class:`~pathlib.Path` immediately.  Returns a ``str``
-        suitable for subprocess argv, or ``None`` if not found.
+        converted to :class:`~pathlib.Path` immediately.  A conda env is
+        asked with ``conda run … which`` through
+        :func:`~molpy.wrapper._process.run_process` (logged at DEBUG to
+        *logger*, killed after :data:`RESOLVE_TIMEOUT` seconds).  Each answer
+        is remembered by this instance.
+
+        Args:
+            exe: A program name or a path.
+            logger: Where the conda lookup logs; ``None`` is
+                ``molpy.wrapper.environment``.
+
+        Returns:
+            A ``str`` suitable for subprocess argv, or ``None`` if not found
+            (or the lookup could not run).
         """
+        key = str(exe)
+        if key not in self._found:
+            self._found[key] = self._lookup(exe, logger)
+        return self._found[key]
+
+    def _lookup(self, exe: str | Path, logger: mollog.Logger | None) -> str | None:
         # Explicit path (Path object or path-like string) — no PATH search.
         if isinstance(exe, Path) or (isinstance(exe, str) and _looks_like_path(exe)):
             exe_path = _as_path(exe)
@@ -241,17 +275,22 @@ class EnvironmentSpec:
             return shutil.which(name, path=self.merge_environ().get("PATH"))
 
         # conda: ask the env via ``conda run … which``
-        cmd_prefix = self.command_prefix()
+        log = logger if logger is not None else mollog.get_logger(_LOGGER)
         try:
-            proc = subprocess.run(
-                [*cmd_prefix, "which", name],
+            proc = run_process(
+                log,
+                [*self.command_prefix(), "which", name],
+                tool=f"conda env {self.env}",
+                cwd=None,
+                env=None,
                 capture_output=True,
-                text=True,
                 check=False,
-                env=self.merge_environ(),
-                encoding="utf-8",
+                timeout=RESOLVE_TIMEOUT,
+                quiet=True,
+                lookup=name,
             )
-        except OSError:
+        except ToolError as exc:  # conda missing or hung: say so, report not found
+            log.warning("executable lookup failed", lookup=name, error=str(exc))
             return None
         if proc.returncode != 0:
             return None

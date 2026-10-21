@@ -10,13 +10,13 @@ the next monomer label (:mod:`sequences`), how long the chains are
 (:mod:`distributions`), and how many of each to make (:mod:`system`).
 """
 
-from .ambertools import (
+from molpy.builder._polymer.ambertools import (
     AmberBuildResult,
     AmberCut,
     AmberPieces,
     AmberPolymerBuilder,
 )
-from .distributions import (
+from molpy.builder._polymer.distributions import (
     DpDistribution,
     FlorySchulzPolydisperse,
     MassDistribution,
@@ -24,13 +24,13 @@ from .distributions import (
     SchulzZimmPolydisperse,
     UniformPolydisperse,
 )
-from .sequences import (
+from molpy.builder._polymer.sequences import (
     AlternatingSequenceGenerator,
     BlockSequenceGenerator,
     SequenceGenerator,
     WeightedSequenceGenerator,
 )
-from .system import (
+from molpy.builder._polymer.system import (
     Chain,
     PolydisperseChainGenerator,
     SystemPlan,

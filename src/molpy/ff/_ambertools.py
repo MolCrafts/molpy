@@ -1,40 +1,67 @@
-"""AmberTools typifiers: GAFF / GAFF2 through the AmberTools executables.
+"""AmberTools-backed GAFF / GAFF2 typing and AM1-BCC charges.
 
-Two :class:`molrs.ff.typifier.Typifier` subclasses drive the
-:mod:`molpy.wrapper` shells and read tleap's prmtop back:
+GAFF typing is native: :class:`molrs.ff.typifier.AtdTypifier` stamps
+antechamber's atom types and :class:`molrs.ff.typifier.GaffTypifier` the
+gaff / gaff2 bonded terms (with parmchk2-style estimates), with no
+executable. Against AmberTools 26 they assign the types antechamber assigns
+and the parameters tleap's prmtop carries for the same ``parameter_set``.
+
+AM1-BCC charges need one program, sqm, for the QM step.
+:class:`Am1BccModel` runs it (through antechamber ``-c mul``, the sqm input
+``-c bcc`` writes) and corrects its AM1 charges with molrs's
+:class:`~molrs.ff.charge.BccModel`, which reproduces antechamber ``-c bcc``
+from the same sqm run. That is the default AM1-BCC route: native types and
+bonded terms, sqm for the charges alone.
+
+A native force field merges with one read from tleap's prmtop, so a small
+molecule mixed with an :class:`molpy.builder.AmberPolymerBuilder` chain is
+typed natively too. Two :class:`molrs.ff.typifier.Typifier` subclasses run
+the whole AmberTools pipeline (:mod:`molpy._ambertools`) and read tleap's
+prmtop back, for what only that pipeline does:
 
 * :class:`AntechamberTypifier` types a complete molecule from scratch:
-  antechamber (atom types and charges) → parmchk2 (missing parameters) → tleap.
+  antechamber (atom types and charges) → parmchk2 (missing parameters) →
+  tleap; for an antechamber charge method other than AM1-BCC / ABCG2.
 * :class:`TleapTypifier` parameterises a finished graph whose atoms already
-  carry AMBER types and charges, with tleap alone. A graph that still has
-  ports is refused. A polymer is built with
-  :class:`molpy.builder.AmberPolymerBuilder`: antechamber, parmchk2
-  and prepgen on one oligomer, then tleap ``sequence``.
+  carry AMBER types and charges, with tleap alone, loading parameters of
+  your own on top of the leaprc. A graph that still has ports is refused. A
+  polymer is built with :class:`molpy.builder.AmberPolymerBuilder`:
+  antechamber, parmchk2 and prepgen on one oligomer, then tleap
+  ``sequence``.
 
 Both return the prmtop's assignment as a :class:`~molrs.ff.typifier.TypeAssignment`; the
-molrs base owns ``typify`` and the accumulated ``forcefield()``.
+molrs base owns ``typify`` and the accumulated ``forcefield()``. Every
+GAFF entry point names the GAFF generation ``parameter_set``, as molrs does,
+and none has a default. Every class here reruns every program on every call
+(no caching), in a directory keyed by the input and every setting.
 """
 
 from __future__ import annotations
 
-from collections.abc import Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
-from molrs.ff.forcefield import ForceField, Style
-from molrs.ff.typifier import Typifier, TypeAssignment
-from molrs.io.amber import AmberFrcmodWriter, AmberPrmtopForcefieldReader
-from molrs.core import Angle, Atomistic, Bond, Dihedral, Improper
-from molrs.core.constants import AMBER_SCEE, AMBER_SCNB
+import numpy as np
+from molrs.core import Atomistic, Element
+from molrs.ff.charge import BccModel
+from molrs.ff.forcefield import ForceField
+from molrs.ff.typifier import TypeAssignment
+from molrs.io import read_ac
+from molrs.io.amber import AmberFrcmodWriter
 
-from molpy.config import load_config
-from molpy.wrapper import (
-    AntechamberWrapper,
-    Parmchk2Wrapper,
-    TleapWrapper,
-    run_step,
+from molpy._ambertools import (
+    UNIT,
+    AmberSteps,
+    AmberTypifier,
+    ParameterSet,
+    Prmtop,
+    input_mol2,
+    leap_mol2,
+    leap_script,
+    net_formal_charge,
+    run_directory,
 )
-from molpy.wrapper._amber_input import antechamber_input_mol2, net_formal_charge
+from molpy.config import load_config
 
 if TYPE_CHECKING:
     from molcfg import Config
@@ -44,207 +71,142 @@ if TYPE_CHECKING:
 # the last printed digit.
 _MOL2_CHARGE_TOLERANCE = 0.5e-4
 
-# The tleap unit name of the molecule being parameterised.
-_UNIT = "MOL"
+#: The ac file the QM step writes.
+_AM1_AC = "sqm.ac"
 
 
-class _Prmtop:
-    """A tleap prmtop, read back as the TypeAssignment it assigns to its source graph.
+class Am1BccModel:
+    """AM1-BCC (or ABCG2) charges: sqm's AM1 charges, corrected natively.
 
-    antechamber and tleap keep atom order, so prmtop atom *i* is graph atom *i*;
-    bonded terms are matched by their endpoint rows.
-    """
+    The QM step is the one AmberTools run: antechamber ``-c mul`` (sqm, with
+    the input antechamber ``-c bcc`` writes; net charge from the atoms'
+    formal charges) in a directory under ``work_dir`` keyed by the input
+    mol2 and the net charge. Its Mulliken charges go to molrs's
+    :class:`~molrs.ff.charge.BccModel`, which equivalences and corrects them
+    as antechamber does. Given the same sqm run, the result is antechamber
+    ``-c bcc`` / ``-c abcg2`` to the ac file's six printed decimals.
 
-    def __init__(self, prmtop: Path) -> None:
-        self.forcefield, self.frame = AmberPrmtopForcefieldReader().read_system(prmtop)
+    sqm picks its diagonaliser by timing it, and prints Mulliken charges to
+    three decimals, so two runs on one input can differ by 0.001 e on an
+    atom (antechamber ``-c bcc`` run twice does too).
 
-    def assignment(self, graph: Atomistic, charges: Sequence[float]) -> TypeAssignment:
-        """Regenerate ``graph``'s terms to the prmtop's set and annotate them.
+    Types and bonded terms come from the native typifiers, before or after::
 
-        Args:
-            graph: The graph the prmtop was built from (the typifier's private
-                copy; its angles, dihedrals and impropers are rewritten).
-            charges: The charge to stamp on each atom, in row order.
-
-        Raises:
-            ValueError: A graph term the prmtop lacks, or the reverse; an atom
-                count or element that disagrees with the prmtop.
-        """
-        atoms = self.frame["atoms"]
-        types = [str(name) for name in atoms["type"]]
-        atomic_numbers = [int(number) for number in atoms["atomic_number"]]
-        graph_atoms = list(graph.atoms)
-        if len(graph_atoms) != len(types):
-            raise ValueError(
-                f"the prmtop has {len(types)} atoms, the graph {len(graph_atoms)}"
-            )
-        for index, atom in enumerate(graph_atoms):
-            if atom.get("atomic_number") != atomic_numbers[index]:
-                raise ValueError(
-                    f"atom {index} has atomic number {atom.get('atomic_number')} "
-                    f"in the graph but {atomic_numbers[index]} in the prmtop"
-                )
-        row = {atom.handle: index for index, atom in enumerate(graph_atoms)}
-
-        prmtop_terms = self._terms()
-        graph.generate_topology(gen_angle=True, gen_dihedral=True, clear_existing=True)
-        graph.del_impropers(list(graph.impropers))
-        for term in prmtop_terms[Improper]:
-            graph.add_improper(*(graph_atoms[i] for i in term))
-
-        links: dict[type, list[dict]] = {}
-        relations_by_kind = {
-            Bond: graph.bonds,
-            Angle: graph.angles,
-            Dihedral: graph.dihedrals,
-            Improper: graph.impropers,
-        }
-        for kind, bucket in relations_by_kind.items():
-            relations = list(bucket)
-            ends = [tuple(row[a.handle] for a in r.endpoints) for r in relations]
-            self._require_same(kind, ends, prmtop_terms[kind])
-            lookup = self._lookup(kind.__name__.lower())
-            links[kind] = [
-                {"type": lookup[tuple(types[i] for i in term)]} for term in ends
-            ]
-
-        (atom_style,) = self.forcefield.get_styles("atom")
-        mass = {t.name: t.params["mass"] for t in atom_style.get_types()}
-        nodes = [
-            {
-                "type": (atom_style.name, name, (), {"mass": mass[name]}),
-                "charge": float(charge),
-            }
-            for name, charge in zip(types, charges, strict=True)
-        ]
-        styles = [
-            (s.category, s.name, s.params) for s in self.forcefield.get_styles(Style)
-        ]
-        pairs = [
-            (
-                style.name,
-                t.name,
-                [e.name for e in t.endpoints],
-                dict(t.params.items()),
-            )
-            for style in self.forcefield.get_styles("pair")
-            for t in style.get_types()
-        ]
-        return TypeAssignment(nodes, links, styles=styles, pairs=pairs)
-
-    def _terms(self) -> dict[type, list[tuple[int, ...]]]:
-        """The prmtop's terms per kind, as atom-row tuples in file order.
-
-        The structure reader already gives one proper dihedral per atom quartet
-        (a multi-term torsion is one term) and keeps impropers in their own
-        block.
-        """
-        four = ("atomi", "atomj", "atomk", "atoml")
-        columns = {
-            Bond: ("bonds", four[:2]),
-            Angle: ("angles", four[:3]),
-            Dihedral: ("dihedrals", four),
-            Improper: ("impropers", four),
-        }
-        rows: dict[type, list[tuple[int, ...]]] = {}
-        for kind, (block, keys) in columns.items():
-            rows[kind] = []
-            if block in self.frame:
-                cols = [self.frame[block][key] for key in keys]
-                rows[kind] = [tuple(int(v) for v in term) for term in zip(*cols)]
-        return rows
-
-    @staticmethod
-    def _require_same(
-        kind: type,
-        graph_terms: list[tuple[int, ...]],
-        prmtop_terms: list[tuple[int, ...]],
-    ) -> None:
-        """Raise unless the graph and the prmtop carry the same terms of ``kind``."""
-        graph_keys = {min(t, t[::-1]) for t in graph_terms}
-        prmtop_keys = {min(t, t[::-1]) for t in prmtop_terms}
-        for key in sorted(graph_keys - prmtop_keys):
-            raise ValueError(f"{kind.__name__.lower()} {key} is not in the prmtop")
-        for key in sorted(prmtop_keys - graph_keys):
-            raise ValueError(
-                f"prmtop {kind.__name__.lower()} {key} is not in the graph"
-            )
-
-    def _lookup(self, category: str) -> dict[tuple[str, ...], tuple]:
-        """Endpoint atom types (either orientation) → the term's annotation."""
-        lookup: dict[tuple[str, ...], tuple] = {}
-        for style in self.forcefield.get_styles(category):
-            for t in style.get_types():
-                ends = [e.name for e in t.endpoints]
-                annotation = (style.name, t.name, ends, dict(t.params.items()))
-                lookup[tuple(ends)] = annotation
-                lookup[tuple(reversed(ends))] = annotation
-        return lookup
-
-
-class _AmberTypifier(Typifier):
-    """The seed both AmberTools typifiers share: AMBER's declared settings.
-
-    A typifier's output force field starts as its ``source_forcefield()``'s empty
-    likeness, so declaring units ``real`` and the AMBER 1-4 scaling here is
-    what makes every typed output carry them (tleap's prmtop defaults:
-    ``coul_14 = 1 / SCEE``, ``lj_14 = 1 / SCNB``).
-    """
-
-    def source_forcefield(self) -> ForceField:
-        """An empty force field declaring AMBER units and 1-4 scaling."""
-        ff = ForceField("amber", units="real")
-        ff.set_special_bonds(
-            [0.0, 0.0, 1.0 / AMBER_SCNB],
-            [0.0, 0.0, 1.0 / AMBER_SCEE],
-        )
-        return ff
-
-
-class _PrmtopAssignment(_AmberTypifier):
-    """Assign a tleap prmtop to the graph it was written for.
-
-    No program runs: ``assign`` regenerates the graph's terms to the prmtop's
-    set and stamps the prmtop's types and charges on it, exactly as the
-    typifiers below do after tleap. The output force field is the typifiers'
-    likeness (AMBER units and 1-4 scaling, types without the prmtop's row
-    ids), so it merges with theirs.
+        labelled = AtdTypifier(parameter_set="gaff2").typify(mol)
+        charges = Am1BccModel(parameter_set="bcc").assign(labelled)
+        for atom, charge in zip(labelled.atoms, charges):
+            atom["charge"] = float(charge)
+        typed = GaffTypifier(parameter_set="gaff2").typify(labelled)
 
     Args:
-        prmtop: The prmtop; its atom *i* is graph atom *i*.
+        parameter_set: The correction family, molrs
+            :class:`~molrs.ff.charge.BccModel`'s ``parameter_set``:
+            ``"bcc"`` (AM1-BCC) or ``"abcg2"``. Required, as in molrs.
+        work_dir: Where the per-run directories are created.
+        config: molpy's configuration (:func:`molpy.config.load_config`):
+            the AmberTools executables and environment (``[wrapper]``,
+            ``[wrapper.<tool>]``); ``None`` loads it.
+
+    Raises:
+        ValueError: ``parameter_set`` names no correction family.
     """
 
-    def __init__(self, prmtop: Path) -> None:
-        super().__init__()
-        self._prmtop = _Prmtop(prmtop)
+    def __init__(
+        self,
+        *,
+        parameter_set: Literal["bcc", "abcg2"],
+        work_dir: str | Path = "amber_work",
+        config: Config | None = None,
+    ) -> None:
+        self.correction = BccModel(parameter_set=parameter_set)
+        self.config = config if config is not None else load_config()
+        self.work_dir = Path(work_dir).resolve()
 
-    def assign(self, graph: Atomistic) -> TypeAssignment:
-        """The prmtop's types, charges and terms for ``graph``.
+    @property
+    def parameter_set(self) -> str:
+        """The correction family: ``"bcc"`` or ``"abcg2"``."""
+        return self.correction.parameter_set
+
+    def am1(self, mol: Atomistic) -> np.ndarray:
+        """sqm's AM1 Mulliken charges, in graph atom order, unequivalenced.
+
+        ``mol`` needs 3D coordinates; it is left untouched.
 
         Raises:
-            ValueError: The graph and the prmtop disagree on an atom or term.
+            ValueError: antechamber's ac does not list ``mol``'s atoms in
+                ``mol``'s order.
+            molpy.wrapper.ToolError: antechamber or sqm failed.
         """
-        return self._prmtop.assignment(graph, self._prmtop.frame["atoms"]["charge"])
+        net = net_formal_charge(mol)
+        text = input_mol2(mol, rename=True)
+        directory = run_directory(self.work_dir, text, "mul", str(net))
+        source = directory / "input.mol2"
+        ac = directory / _AM1_AC
+        source.write_text(text, encoding="utf-8")
+        AmberSteps(directory, self.config).am1(source, ac, net_charge=net)
+
+        atoms = read_ac(ac)["atoms"]
+        expected = [
+            f"{Element.by_number(atom['atomic_number']).symbol}{row}"
+            for row, atom in enumerate(mol.atoms, 1)
+        ]
+        found = [str(name) for name in atoms["name"]]
+        if found != expected:
+            raise ValueError(
+                f"{ac} lists atoms {found}, not the graph's {expected}: "
+                "antechamber reordered or dropped atoms"
+            )
+        return np.asarray(atoms["charge"], dtype=np.float64)
+
+    def assign(self, mol: Atomistic) -> np.ndarray:
+        """The AM1-BCC charges of ``mol``, in graph atom order.
+
+        ``mol`` is left untouched: set ``atoms.charge`` from the result.
+
+        Raises:
+            ValueError: The ac disagrees with ``mol`` (see :meth:`am1`), or
+                ``mol`` carries an atom or bond the correction family cannot
+                type.
+            molpy.wrapper.ToolError: antechamber or sqm failed.
+        """
+        return self.correction.assign(mol, qm=self.am1(mol))
+
+    def __repr__(self) -> str:
+        return f"Am1BccModel(parameter_set={self.parameter_set!r})"
 
 
-class AntechamberTypifier(_AmberTypifier):
+class AntechamberTypifier(AmberTypifier):
     """GAFF / GAFF2 atom types, charges and parameters for a complete molecule.
 
-    ``assign`` runs antechamber (``-at atom_type -c charge_method``, net charge
-    from the atoms' formal charges), parmchk2 and tleap in a per-molecule
-    directory under ``work_dir``, and assigns the prmtop's types, charges and
-    bonded terms. Ports are allowed; their leaving groups are real atoms.
+    ``assign`` runs antechamber (``-at parameter_set -c charge_method``, net charge
+    from the atoms' formal charges), parmchk2 and tleap in a directory under
+    ``work_dir`` keyed by the input mol2 and every setting, and assigns the
+    prmtop's types, charges and bonded terms. Every program reruns, and each
+    step's output is deleted before it runs, so nothing an earlier run left
+    behind is read. Ports are allowed; their leaving groups are real atoms.
 
     A polymer chain is not typed here: joining typed monomers folds each
     leaving group's charge onto its anchor. Build it with
     :class:`molpy.builder.AmberPolymerBuilder`, which cuts one
     antechamber-typed oligomer with prepgen and sequences it with tleap.
 
+    The default GAFF route is native: :class:`~molrs.ff.typifier.AtdTypifier`
+    and :class:`~molrs.ff.typifier.GaffTypifier` assign the same types and
+    parameter values, and :class:`Am1BccModel` the same AM1-BCC charges, with
+    sqm the only program; that force field merges with an
+    :class:`~molpy.builder.AmberPolymerBuilder` chain's as this one does.
+    This typifier is for an antechamber charge method other than AM1-BCC /
+    ABCG2. Its prmtop force field also carries no estimate provenance, which
+    molrs 0.18.0's LAMMPS and GROMACS writers refuse on a term
+    ``GaffTypifier`` estimated.
+
     Args:
-        atom_type: The antechamber atom-type set, also the parmchk2 ``-s`` set
-            and the leaprc tleap sources.
+        parameter_set: The GAFF generation, molrs's ``parameter_set``
+            (``"gaff"`` or ``"gaff2"``): antechamber's ``-at``, parmchk2's
+            ``-s`` and the ``leaprc.<parameter_set>`` tleap sources.
+            Required, as in molrs.
         charge_method: The antechamber ``-c`` charge method.
-        work_dir: Where the per-molecule directories are created.
+        work_dir: Where the per-run directories are created.
         config: molpy's configuration (:func:`molpy.config.load_config`):
             the AmberTools executables and environment (``[wrapper]``,
             ``[wrapper.<tool>]``); ``None`` loads it.
@@ -253,14 +215,14 @@ class AntechamberTypifier(_AmberTypifier):
     def __init__(
         self,
         *,
-        atom_type: Literal["gaff", "gaff2"] = "gaff2",
+        parameter_set: ParameterSet,
         charge_method: str = "bcc",
         work_dir: str | Path = "amber_work",
         config: Config | None = None,
     ) -> None:
         super().__init__()
         self.config = config if config is not None else load_config()
-        self.atom_type = atom_type
+        self.parameter_set = parameter_set
         self.charge_method = charge_method
         self.work_dir = Path(work_dir).resolve()
 
@@ -269,73 +231,71 @@ class AntechamberTypifier(_AmberTypifier):
 
         Raises:
             ValueError: The prmtop disagrees with the graph.
-            RuntimeError: An AmberTools step failed.
+            molpy.wrapper.ToolError: An AmberTools step failed.
         """
         net = net_formal_charge(graph)
-        directory = self.work_dir / f"{graph.structural_hash():016x}"
-        directory.mkdir(parents=True, exist_ok=True)
-
+        text = input_mol2(graph, rename=True)
+        directory = run_directory(
+            self.work_dir, text, self.parameter_set, self.charge_method, str(net)
+        )
         source = directory / "input.mol2"
         typed = directory / "antechamber.mol2"
         frcmod = directory / "parmchk2.frcmod"
-        prmtop = directory / f"{_UNIT}.prmtop"
-        inpcrd = directory / f"{_UNIT}.inpcrd"
-        antechamber_input_mol2(graph, source, rename=True)
+        prmtop = directory / f"{UNIT}.prmtop"
+        source.write_text(text, encoding="utf-8")
 
-        ante = AntechamberWrapper(directory, config=self.config)
-        run_step(
-            ante,
+        steps = AmberSteps(directory, self.config)
+        steps.antechamber(
+            source,
             typed,
-            lambda: ante.atomtype_assign(
-                source,
-                typed,
-                input_format="mol2",
-                output_format="mol2",
-                charge_method=self.charge_method,
-                atom_type=self.atom_type,
-                net_charge=net,
+            parameter_set=self.parameter_set,
+            charge_method=self.charge_method,
+            net_charge=net,
+        )
+        steps.parmchk2(typed, frcmod, parameter_set=self.parameter_set)
+        steps.tleap(
+            leap_script(
+                self.parameter_set,
+                leap_mol2(typed),
+                prmtop,
+                directory / f"{UNIT}.inpcrd",
+                frcmods=[frcmod],
             ),
+            prmtop,
+            directory / f"{UNIT}.inpcrd",
         )
-        parmchk2 = Parmchk2Wrapper(directory, config=self.config)
-        run_step(
-            parmchk2,
-            frcmod,
-            lambda: parmchk2.generate_parameters(
-                typed, frcmod, input_format="mol2", force_field=self.atom_type
-            ),
-        )
-        leap = TleapWrapper(directory, config=self.config)
-        script = (
-            f"source leaprc.{self.atom_type}\n"
-            f"{_UNIT} = loadmol2 {typed}\n"
-            f"loadamberparams {frcmod}\n"
-            f"saveamberparm {_UNIT} {prmtop} {inpcrd}\n"
-            "quit\n"
-        )
-        run_step(leap, prmtop, lambda: leap.run_from_script(script))
 
-        result = _Prmtop(prmtop)
+        result = Prmtop(prmtop)
         return result.assignment(graph, result.frame["atoms"]["charge"])
 
 
-class TleapTypifier(_AmberTypifier):
+class TleapTypifier(AmberTypifier):
     """Parameterise an already typed graph with tleap alone.
 
     The graph's atoms must carry AMBER atom types and charges. ``assign``
     writes them as mol2, writes ``forcefield`` (the templates' parameters) as a
     frcmod, runs tleap and assigns the prmtop's bonded terms, so junction terms
-    come from the leaprc. It never runs antechamber or parmchk2. Types and
-    charges are left as they are; tleap changing one raises. A graph that
+    come from the leaprc. The run directory is keyed by the mol2, the
+    parameter set and the frcmod, and tleap's outputs are deleted before it runs. It never
+    runs antechamber or parmchk2. Types and charges are left as they are;
+    tleap changing one raises. A graph that
     still has ports is refused: joining those ports would fold the
     leaving-group charge onto the anchors. A polymer chain is built with
     :class:`molpy.builder.AmberPolymerBuilder`, whose prepgen step
     spreads that charge instead.
 
+    :class:`~molrs.ff.typifier.GaffTypifier` assigns the same bonded terms
+    natively, and its force field merges with an
+    :class:`~molpy.builder.AmberPolymerBuilder` chain's; this typifier is for
+    parameters of your own on top of the leaprc (``forcefield``).
+
     Args:
-        leaprc: The leaprc tleap sources (``source leaprc.<leaprc>``).
+        parameter_set: The GAFF generation, molrs's ``parameter_set``
+            (``"gaff"`` or ``"gaff2"``): tleap sources
+            ``leaprc.<parameter_set>``. Required, as in molrs.
         forcefield: Parameters tleap loads on top of the leaprc, written as a
             frcmod; ``None`` loads none.
-        work_dir: Where the per-graph directories are created.
+        work_dir: Where the per-run directories are created.
         config: molpy's configuration (:func:`molpy.config.load_config`):
             the AmberTools executables and environment (``[wrapper]``,
             ``[wrapper.<tool>]``); ``None`` loads it.
@@ -344,14 +304,14 @@ class TleapTypifier(_AmberTypifier):
     def __init__(
         self,
         *,
-        leaprc: Literal["gaff", "gaff2"] = "gaff2",
+        parameter_set: ParameterSet,
         forcefield: ForceField | None = None,
         work_dir: str | Path = "amber_work",
         config: Config | None = None,
     ) -> None:
         super().__init__()
         self.config = config if config is not None else load_config()
-        self.leaprc = leaprc
+        self.parameter_set = parameter_set
         self.parameters = forcefield
         self.work_dir = Path(work_dir).resolve()
 
@@ -361,7 +321,7 @@ class TleapTypifier(_AmberTypifier):
         Raises:
             ValueError: An atom lacks a type or charge, tleap changed one, or
                 the prmtop disagrees with the graph.
-            RuntimeError: tleap failed.
+            molpy.wrapper.ToolError: tleap failed.
         """
         if graph.n_ports:
             raise ValueError(
@@ -378,27 +338,33 @@ class TleapTypifier(_AmberTypifier):
                     f"atom {index} carries type {name!r} and charge {charge!r}; "
                     "TleapTypifier needs AMBER types and charges on every atom"
                 )
-        directory = self.work_dir / f"{graph.structural_hash():016x}"
-        directory.mkdir(parents=True, exist_ok=True)
-
-        source = directory / "input.mol2"
-        prmtop = directory / f"{_UNIT}.prmtop"
-        inpcrd = directory / f"{_UNIT}.inpcrd"
-        antechamber_input_mol2(graph, source, rename=True)
-        script = f"source leaprc.{self.leaprc}\n"
+        text = input_mol2(graph, rename=True)
+        buffer = bytearray()
         if self.parameters is not None:
-            frcmod = directory / "forcefield.frcmod"
-            AmberFrcmodWriter().write(frcmod, self.parameters)
-            script += f"loadamberparams {frcmod}\n"
-        script += (
-            f"{_UNIT} = loadmol2 {source}\n"
-            f"saveamberparm {_UNIT} {prmtop} {inpcrd}\n"
-            "quit\n"
+            AmberFrcmodWriter().write(buffer, self.parameters)
+        extra = buffer.decode("utf-8")
+        directory = run_directory(self.work_dir, text, self.parameter_set, extra)
+        source = directory / "input.mol2"
+        prmtop = directory / f"{UNIT}.prmtop"
+        inpcrd = directory / f"{UNIT}.inpcrd"
+        source.write_text(text, encoding="utf-8")
+        frcmods = []
+        if self.parameters is not None:
+            frcmods.append(directory / "forcefield.frcmod")
+            frcmods[0].write_text(extra, encoding="utf-8")
+        AmberSteps(directory, self.config).tleap(
+            leap_script(
+                self.parameter_set,
+                leap_mol2(source),
+                prmtop,
+                inpcrd,
+                frcmods=frcmods,
+            ),
+            prmtop,
+            inpcrd,
         )
-        leap = TleapWrapper(directory, config=self.config)
-        run_step(leap, prmtop, lambda: leap.run_from_script(script))
 
-        result = _Prmtop(prmtop)
+        result = Prmtop(prmtop)
         atoms = result.frame["atoms"]
         for index, (name, charge, leap_name, leap_charge) in enumerate(
             zip(types, charges, atoms["type"], atoms["charge"], strict=True)

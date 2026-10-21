@@ -45,7 +45,7 @@ Run a tiny import check to confirm the package is available and see where it is 
 ```python
 import molpy as mp
 
-print("MolPy:", mp.version)
+print("MolPy:", mp.__version__)
 print("Released on:", mp.release_date)
 ```
 

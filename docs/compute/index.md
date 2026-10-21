@@ -28,7 +28,7 @@ rng = np.random.default_rng(0)
 xyz = rng.uniform(0.0, 20.0, size=(200, 3))
 frame = mp.Frame()
 frame["atoms"] = {"x": xyz[:, 0], "y": xyz[:, 1], "z": xyz[:, 2]}
-frame.box = mp.Box.cube(20.0)
+frame.box = mp.Box(mp.core.Cell.lengths([20.0] * 3))
 
 nl = mp.core.NeighborList(10.0)
 nl.build(frame.coords, frame.box)
@@ -196,7 +196,7 @@ mixture = mp.Frame()
 mixture["atoms"] = {
     "x": xyz[:, 0], "y": xyz[:, 1], "z": xyz[:, 2], "type_id": kinds
 }
-mixture.box = mp.Box.cube(20.0)
+mixture.box = mp.Box(mp.core.Cell.lengths([20.0] * 3))
 
 selected = mixture["atoms"]["type_id"] == 1
 subset = mp.Frame()

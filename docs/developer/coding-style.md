@@ -9,18 +9,19 @@ Two layers, two rules — do not mix them up.
 
 ### Core data model (`Atomistic`, `Frame`, …) — mutate in place
 
-`add_atom`, `add_bond`, `generate_topology`, `translate`, `rotate`, `merge`,
-and friends modify the receiver. Transforms return `self` for chaining,
-factories return the created entity, and `generate_topology` / `merge` return
-what they added (counts, handle map) — not `self`, so do not chain them.
-`.copy()` is the **explicit** opt-in for an independent deep copy.
+`add_atom`, `add_bond`, `generate_topology`, `translate`, `rotate` and
+`merge` modify the receiver. Atom and relation additions return live views;
+`generate_topology` returns counts, `merge` returns the added atom views,
+and rigid transforms return `None`. Use `copy.copy(graph)` for an independent
+graph, or `frame.copy()` for an independent frame.
 
 ```python
+from copy import copy
 import molpy as mp
 
-mol = mp.io.smiles.SmilesIr("CCO").to_atomistic()
+mol = mp.io.smiles.read_smiles("CCO").to_atomistic()
 mol.generate_topology(gen_angle=True, gen_dihedral=True)  # writes angles/dihedrals on mol
-work = mol.copy()                                         # independent graph
+work = copy(mol)                                         # independent graph
 work.generate_topology(gen_angle=True, clear_existing=True)  # mol is untouched
 ```
 
@@ -30,13 +31,14 @@ Workflow helpers must not mutate a caller-owned structure unexpectedly. Copy
 first, or build and return a new structure.
 
 ```python
+from copy import copy
 # wrong: helper silently mutates the caller's mol
 def add_hydrogens(mol):
     mol.add_atom(...)  # caller did not ask for this
 
 # right: return a new object
 def add_hydrogens(mol):
-    new_mol = mol.copy()
+    new_mol = copy(mol)
     # ... populate new_mol
     return new_mol
 ```
@@ -63,7 +65,7 @@ molpy follows molrs's naming rules (`tests/test_public_paths.py` checks the modu
   Classes and functions follow (`EnvironmentSpec`, `tool_settings`,
   `TypeAssignment`, `source_forcefield`).
 - **Acronyms are cased as words**: `LammpsEngine`, `OpenmmEngine`,
-  `RdkitAdapter`, `TleapWrapper`, `SmilesIr`, `CgBond`, `Rdf`, `Msd`,
+  `TleapWrapper`, `SmilesIr`, `CgBond`, `Rdf`, `Msd`,
   `Lbfgs`, `PairLjCut`. numpy's `DType` and `HBond` (H is the element) keep
   their spelling.
 - **Counts are `n_*`** (numpy / freud): `n_atoms`, `n_pairs`, `n_rings()`,

@@ -1,9 +1,12 @@
 """Tests for ``molpy.resources``: the files molpy ships."""
 
+import gc
+import zipfile
 from pathlib import Path
 
 import pytest
 
+import molpy.resources
 from molpy.resources import exists, get_path, list_files
 
 
@@ -41,6 +44,21 @@ class TestResourceAccess:
         files = list(list_files("forcefield", exclude_python=False))
         # Should include __init__.py if it exists
         assert any("__init__.py" in f for f in files)
+
+    def test_get_path_from_a_zip_install_stays_valid(self, tmp_path, monkeypatch):
+        """A zipped install extracts the file; the path outlives the call."""
+        archive = tmp_path / "resources.zip"
+        with zipfile.ZipFile(archive, "w") as zf:
+            zf.writestr("res/forcefield/tip3p.xml", "<ForceField/>")
+        root = zipfile.Path(archive, "res/")
+        monkeypatch.setattr(molpy.resources, "files", lambda _package: root)
+
+        path = get_path("forcefield/tip3p.xml")
+        gc.collect()
+        assert path.is_file()
+        assert path.read_text(encoding="utf-8") == "<ForceField/>"
+        assert exists("forcefield/tip3p.xml")
+        assert not exists("forcefield/missing.xml")
 
     def test_exists(self):
         """``exists`` says whether a shipped file is there."""

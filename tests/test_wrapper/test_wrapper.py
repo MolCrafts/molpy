@@ -1,4 +1,4 @@
-"""The Wrapper base: settings from molpy's configuration, logged runs."""
+"""The Wrapper base: settings from molpy's configuration, logged runs, one failure."""
 
 from __future__ import annotations
 
@@ -16,6 +16,8 @@ from molpy.wrapper import (
     PrepgenWrapper,
     SanderWrapper,
     TleapWrapper,
+    Tool,
+    ToolError,
     Wrapper,
     run_step,
 )
@@ -29,15 +31,17 @@ _WRAPPERS = [
 ]
 
 
-def _done(returncode: int = 0) -> SimpleNamespace:
-    return SimpleNamespace(returncode=returncode, stdout="", stderr="")
+def _done(returncode: int = 0, stdout: str = "", stderr: str = "") -> SimpleNamespace:
+    return SimpleNamespace(returncode=returncode, stdout=stdout, stderr=stderr)
 
 
 @pytest.mark.parametrize(("cls", "tool"), _WRAPPERS)
 def test_package_defaults(cls: type[Wrapper], tool: str) -> None:
     wrapper = cls()
-    assert wrapper.exe == tool
+    assert wrapper.executable == tool
+    assert wrapper.key == f"wrapper.{tool}"
     assert wrapper.workdir is None
+    assert wrapper.launcher == []
     assert wrapper.env_vars == {}
     assert wrapper.timeout is None
     assert wrapper.environment.is_system
@@ -64,7 +68,7 @@ def test_each_wrapper_reads_its_own_table(cls: type[Wrapper], tool: str) -> None
         }
     )
     wrapper = cls(config=config)
-    assert wrapper.exe == f"/opt/amber/bin/{tool}"
+    assert wrapper.executable == f"/opt/amber/bin/{tool}"
     assert wrapper.environment.env == Path("/opt/amber")
     assert wrapper.environment.env_manager == "venv"
     assert wrapper.env_vars == {"AMBERHOME": "/opt/amber"}
@@ -77,6 +81,40 @@ def test_the_wrapper_table_reaches_every_ambertools_program() -> None:
         wrapper = cls(config=config)
         assert wrapper.environment.env == "AmberTools25"
         assert wrapper.settings.sources["env"] == ("run", "wrapper.env")
+
+
+class TestThirdPartyWrapper:
+    """A Wrapper subclass outside molpy resolves its settings like a built-in."""
+
+    class GmxWrapper(Wrapper):
+        tool = "gmx"
+
+        def _default_executable(self) -> str:
+            return "gmx"
+
+    def test_it_reads_its_own_table(self) -> None:
+        config = load_config(
+            {"wrapper": {"timeout": 5, "gmx": {"executable": "gmx_mpi"}}}
+        )
+        wrapper = self.GmxWrapper(config=config)
+        assert wrapper.executable == "gmx_mpi"
+        assert wrapper.timeout == 5.0
+        assert wrapper.settings.sources["executable"] == (
+            "run",
+            "wrapper.gmx.executable",
+        )
+
+    def test_without_a_table_it_takes_its_default(self) -> None:
+        wrapper = self.GmxWrapper()
+        assert wrapper.executable == "gmx"
+        assert "executable" not in wrapper.settings.sources
+
+    def test_without_a_default_it_names_the_setting(self) -> None:
+        class Bare(Wrapper):
+            tool = "bare"
+
+        with pytest.raises(ValueError, match="wrapper.bare.executable"):
+            Bare()
 
 
 def test_workdir_is_a_path(tmp_path: Path) -> None:
@@ -110,6 +148,7 @@ def test_conda_wraps_the_command() -> None:
     assert run.call_args.args[0] == [
         "/opt/conda/bin/conda",
         "run",
+        "--no-capture-output",
         "-n",
         "AmberTools25",
         "antechamber",
@@ -123,16 +162,84 @@ def test_incomplete_environment_raises() -> None:
         TleapWrapper(config=config)
 
 
-def test_check_names_the_setting_to_fix() -> None:
+def test_check_executable_names_the_setting_to_fix() -> None:
     config = load_config({"wrapper": {"tleap": {"executable": "no_such_tleap_x"}}})
-    with pytest.raises(FileNotFoundError, match="wrapper.tleap.executable"):
-        TleapWrapper(config=config).check()
+    with pytest.raises(ToolError, match="wrapper.tleap.executable") as raised:
+        TleapWrapper(config=config).check_executable()
+    assert raised.value.tool == "wrapper.tleap"
+    assert raised.value.returncode is None
 
 
 def test_repr() -> None:
     text = repr(TleapWrapper(Path("w")))
     assert "TleapWrapper" in text
     assert "tleap" in text
+
+
+class TestFailureContract:
+    """Every failure is a ToolError carrying the tool, exit code and output tail."""
+
+    def test_a_non_zero_exit_raises_by_default(self, tmp_path) -> None:
+        stderr = "".join(f"line {i}\n" for i in range(30))
+        with (
+            patch("subprocess.run", return_value=_done(4, stderr=stderr)),
+            pytest.raises(ToolError) as raised,
+        ):
+            TleapWrapper(tmp_path).run(["-f", "x.in"])
+        error = raised.value
+        assert isinstance(error, RuntimeError)
+        assert (error.tool, error.returncode) == ("wrapper.tleap", 4)
+        assert error.tail.splitlines() == [f"line {i}" for i in range(10, 30)]
+        assert "exited with status 4" in str(error)
+
+    def test_stdout_is_the_tail_when_stderr_is_empty(self, tmp_path) -> None:
+        with (
+            patch("subprocess.run", return_value=_done(1, stdout="FATAL: no unit")),
+            pytest.raises(ToolError, match="FATAL: no unit"),
+        ):
+            TleapWrapper(tmp_path).run([])
+
+    def test_check_false_returns_the_process(self, tmp_path) -> None:
+        with patch("subprocess.run", return_value=_done(1)):
+            assert TleapWrapper(tmp_path).run([], check=False).returncode == 1
+
+    def test_a_missing_program_is_a_tool_error(self, tmp_path) -> None:
+        with (
+            patch("subprocess.run", side_effect=FileNotFoundError("tleap")),
+            pytest.raises(ToolError, match="could not start") as raised,
+        ):
+            TleapWrapper(tmp_path).run([])
+        assert raised.value.returncode is None
+
+    def test_a_timeout_is_a_tool_error(self, tmp_path) -> None:
+        config = load_config({"wrapper": {"timeout": 1}})
+        with (
+            patch("subprocess.run", side_effect=subprocess.TimeoutExpired("t", 1)),
+            pytest.raises(ToolError, match="timed out after 1 s"),
+        ):
+            TleapWrapper(tmp_path, config=config).run([])
+
+
+class TestRunStep:
+    def test_a_missing_executable_refuses_to_start(self, tmp_path) -> None:
+        with (
+            patch.object(Tool, "resolve_executable", return_value=None),
+            pytest.raises(ToolError, match="not found"),
+        ):
+            run_step(TleapWrapper(tmp_path), tmp_path / "out", lambda: _done())
+
+    def test_a_missing_output_is_a_tool_error(self, tmp_path, molpy_records) -> None:
+        wrapper = TleapWrapper(tmp_path)
+        with (
+            patch.object(Tool, "resolve_executable", return_value="/bin/tleap"),
+            pytest.raises(ToolError, match="out.prmtop unwritten") as raised,
+        ):
+            run_step(wrapper, tmp_path / "out.prmtop", lambda: _done(stdout="warn"))
+        assert raised.value.returncode == 0
+        assert raised.value.tail == "warn"
+        (record,) = (r for r in molpy_records if r.message == "step output missing")
+        assert record.logger_name == "molpy.wrapper.tleap"
+        assert record.extra["output"] == str(tmp_path / "out.prmtop")
 
 
 class TestLogging:
@@ -155,7 +262,7 @@ class TestLogging:
         self, cls, tool, tmp_path, molpy_records
     ) -> None:
         with patch("subprocess.run", return_value=_done(1)):
-            cls(tmp_path).run([])
+            cls(tmp_path).run([], check=False)
         (failed,) = (r for r in molpy_records if r.message == "process failed")
         assert failed.logger_name == f"molpy.wrapper.{tool}"
         assert str(failed.level) == "ERROR"
@@ -166,19 +273,8 @@ class TestLogging:
         expired = subprocess.TimeoutExpired("tleap", 1)
         with (
             patch("subprocess.run", side_effect=expired),
-            pytest.raises(subprocess.TimeoutExpired),
+            pytest.raises(ToolError),
         ):
             TleapWrapper(tmp_path, config=config).run([])
         (record,) = (r for r in molpy_records if r.message == "process timed out")
         assert record.extra["timeout_s"] == 1.0
-
-    def test_run_step_logs_a_missing_output(self, tmp_path, molpy_records) -> None:
-        wrapper = TleapWrapper(tmp_path)
-        with (
-            patch.object(Wrapper, "is_available", return_value=True),
-            pytest.raises(RuntimeError, match="missing"),
-        ):
-            run_step(wrapper, tmp_path / "out.prmtop", lambda: _done())
-        (record,) = (r for r in molpy_records if r.message == "step output missing")
-        assert record.logger_name == "molpy.wrapper.tleap"
-        assert record.extra["output"] == str(tmp_path / "out.prmtop")

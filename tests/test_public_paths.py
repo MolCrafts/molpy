@@ -14,7 +14,10 @@ and not walked. Then:
   a ``molpy.io.<fmt>`` submodule;
 * the root holds the subsystem modules, the promoted core data classes and
   the version metadata only;
-* each molpy mirror is the molrs subsystem by identity;
+* each molpy mirror is the molrs subsystem by identity, and owns its
+  ``__all__`` (a copy, never molrs's list object);
+* every module path the walk reaches imports by that dotted path
+  (``from molpy.core.keys import ELEMENT``), as the same module;
 * acronyms are cased as words in every class name.
 """
 
@@ -23,6 +26,7 @@ from __future__ import annotations
 import importlib
 import inspect
 import re
+import sys
 from types import ModuleType
 
 import molrs
@@ -34,8 +38,15 @@ import molpy
 _EXPLICIT = ("molpy.wrapper",)
 
 
+#: ``dotted path -> module`` for every public module path the walk reaches.
+MODULES: dict[str, ModuleType] = {}
+
+
 def _walk() -> dict[int, tuple[object, list[str]]]:
-    """``id(obj) -> (obj, [public paths])`` for every class and function."""
+    """``id(obj) -> (obj, [public paths])`` for every class and function.
+
+    Records each module path it walks into :data:`MODULES`.
+    """
     seen: dict[int, tuple[object, list[str]]] = {}
     visited: set[str] = set()
     roots: list[tuple[str, ModuleType]] = [("molpy", molpy)]
@@ -48,6 +59,7 @@ def _walk() -> dict[int, tuple[object, list[str]]]:
         if path in visited:
             continue
         visited.add(path)
+        MODULES[path] = module
         for attr in dir(module):
             if attr.startswith("_"):
                 continue
@@ -86,6 +98,48 @@ def test_every_symbol_has_one_public_path() -> None:
         if len(own(paths)) > 1 or not own(paths)
     }
     assert not doubles
+
+
+def test_every_module_path_imports_by_its_dotted_name() -> None:
+    """``mp.core.keys`` reachable as an attribute is ``import molpy.core.keys``."""
+    broken = {}
+    for path, module in sorted(MODULES.items()):
+        try:
+            imported = importlib.import_module(path)
+        except ImportError as exc:
+            broken[path] = repr(exc)
+            continue
+        if imported is not module:
+            broken[path] = f"{imported.__name__} is not {module.__name__}"
+    assert not broken
+
+
+def test_no_molpy_module_shares_a_molrs_all_list() -> None:
+    shared = sorted(
+        path
+        for path, module in MODULES.items()
+        if module.__name__.startswith("molpy")
+        and hasattr(module, "__all__")
+        and any(
+            module.__all__ is getattr(native, "__all__", None)
+            for name, native in sys.modules.items()
+            if name.split(".")[0] == "molrs"
+        )
+    )
+    assert not shared
+
+
+def test_the_version_module_is_reachable_and_not_shadowed() -> None:
+    import molpy.version
+
+    assert molpy.version is importlib.import_module("molpy.version")
+    assert isinstance(molpy.version, ModuleType)
+    assert molpy.__version__ == molpy.version.version
+    assert molpy.release_date == molpy.version.release_date
+    assert (
+        "molpy.version.check_molrs_version"
+        in PATHS[id(molpy.version.check_molrs_version)][1]
+    )
 
 
 def test_no_public_path_runs_through_a_private_module() -> None:
@@ -177,7 +231,7 @@ _FF_MODULES = (
 
 def test_the_root_holds_modules_promoted_classes_and_the_version_only() -> None:
     names = {name for name in dir(molpy) if not name.startswith("_")}
-    metadata = {"version", "release_date", "__version__"}
+    metadata = {"release_date", "__version__"}
     modules = {n for n in names if isinstance(getattr(molpy, n), ModuleType)}
     assert names - metadata - modules == _PROMOTED
     assert set(molpy.__all__) == set(_MIRRORS) | set(_OWN) | _PROMOTED | {
@@ -203,12 +257,25 @@ def test_a_promoted_class_is_the_core_one_and_the_molrs_one(name: str) -> None:
     assert obj is getattr(molrs.core, name)
 
 
+def _is_molpy_mirror(obj: object) -> bool:
+    """A molpy module standing for a molrs submodule (``mp.core.keys``, …)."""
+    return isinstance(obj, ModuleType) and obj.__name__.startswith("molpy.")
+
+
 def test_core_mirrors_molrs_core_by_identity() -> None:
     assert set(molrs.core.__all__) <= set(molpy.core.__all__)
     for attr in molrs.core.__all__:
-        assert getattr(molpy.core, attr) is getattr(molrs.core, attr), attr
+        ours = getattr(molpy.core, attr)
+        if _is_molpy_mirror(ours):
+            continue  # the vocabularies, checked below
+        assert ours is getattr(molrs.core, attr), attr
     for vocabulary in ("keys", "schema", "constants"):
-        assert getattr(molpy.core, vocabulary) is getattr(molrs.core, vocabulary)
+        ours = importlib.import_module(f"molpy.core.{vocabulary}")
+        native = getattr(molrs.core, vocabulary)
+        assert getattr(molpy.core, vocabulary) is ours
+        assert set(ours.__all__) == set(native.__all__)
+        for attr in native.__all__:
+            assert getattr(ours, attr) is getattr(native, attr), (vocabulary, attr)
 
 
 @pytest.mark.parametrize("name", _MIRRORS)
@@ -220,7 +287,7 @@ def test_every_molrs_subsystem_has_its_molpy_module(name: str) -> None:
     assert set(native.__all__) <= set(module.__all__)
     for attr in native.__all__:
         ours = getattr(module, attr)
-        if isinstance(ours, ModuleType) and ours.__name__.startswith("molpy."):
+        if _is_molpy_mirror(ours):
             continue  # molpy's mirror of a molrs submodule (mp.io.lammps, mp.ff.ir, …)
         assert ours is getattr(native, attr), f"molpy.{name}.{attr}"
 
@@ -260,7 +327,14 @@ def test_each_io_format_is_a_molpy_module_mirroring_molrs(fmt: str) -> None:
     native = importlib.import_module(f"molrs.io.{fmt}")
     assert set(native.__all__) <= set(module.__all__)
     for attr in native.__all__:
-        assert getattr(module, attr) is getattr(native, attr), f"{fmt}.{attr}"
+        ours = getattr(module, attr)
+        if _is_molpy_mirror(ours):
+            mirrored = getattr(native, attr)
+            assert ours.__name__ == f"molpy.{mirrored.__name__.removeprefix('molrs.')}"
+            for name in mirrored.__all__:
+                assert getattr(ours, name) is getattr(mirrored, name), name
+            continue  # mp.io.mrec.validation
+        assert ours is getattr(native, attr), f"{fmt}.{attr}"
 
 
 def test_molpy_io_has_every_molrs_io_format_module() -> None:
@@ -325,9 +399,11 @@ def test_each_ff_submodule_is_a_molpy_module_mirroring_molrs(sub: str) -> None:
         ("Trajectory", "core.Trajectory"),
         ("MolGraph", "core.MolGraph"),
         ("CgBond", "core.CgBond"),
-        ("core.keys", "core.keys"),
-        ("core.schema", "core.schema"),
-        ("core.constants", "core.constants"),
+        ("core.keys.ELEMENT", "core.keys.ELEMENT"),
+        ("core.keys.Key", "core.keys.Key"),
+        ("core.schema.ColumnSpec", "core.schema.ColumnSpec"),
+        ("core.schema.column", "core.schema.column"),
+        ("core.constants.BOLTZMANN", "core.constants.BOLTZMANN"),
         ("Atomistic", "core.Atomistic"),
         ("core.NodeRef", "core.NodeRef"),
         ("Box", "core.Box"),
@@ -342,8 +418,9 @@ def test_each_ff_submodule_is_a_molpy_module_mirroring_molrs(sub: str) -> None:
         ("optimize.OptimizationReport", "optimize.OptimizationReport"),
         ("conformer.Conformer", "conformer.Conformer"),
         ("stream.ControlCommand", "stream.ControlCommand"),
-        ("md.MdDriver", "md.MdDriver"),
-        ("md.MdState", "md.MdState"),
+        ("md.MD", "md.MD"),
+        ("md.FixLangevin", "md.FixLangevin"),
+        ("md.Phase", "md.Phase"),
         ("ff.forcefield.ForceField", "ff.forcefield.ForceField"),
         ("ff.forcefield.ForceFieldType", "ff.forcefield.ForceFieldType"),
         ("ff.potential.PairLjCut", "ff.potential.PairLjCut"),
@@ -371,6 +448,11 @@ def _is_factory_name(name: str) -> bool:
     return name.startswith(("read_", "write_"))
 
 
+# A line notation's doors take the notation's own string, not a source or
+# sink, so they live in the notation's module, as in molrs.
+_NOTATION_MODULES = frozenset({"molpy.io.smiles", "molpy.io.cgsmiles"})
+
+
 def test_a_file_factory_function_is_public_only_on_top_of_io() -> None:
     misplaced = sorted(
         path
@@ -378,9 +460,18 @@ def test_a_file_factory_function_is_public_only_on_top_of_io() -> None:
         if inspect.isroutine(obj)
         for path in paths
         if _is_factory_name(path.rsplit(".", 1)[1])
-        and path.rsplit(".", 1)[0] != "molpy.io"
+        and path.rsplit(".", 1)[0] not in {"molpy.io", *_NOTATION_MODULES}
     )
     assert not misplaced
+
+
+def test_a_notation_is_read_through_its_door() -> None:
+    """``mp.io.smiles.read_smiles`` is the door; an IR has no constructor."""
+    assert _resolve(molpy, "io.smiles.read_smiles") is _resolve(
+        molrs, "io.smiles.read_smiles"
+    )
+    assert not hasattr(molpy.io.smiles.SmilesIr, "parse")
+    assert not hasattr(molpy.io.cgsmiles.CgSmilesIr, "parse")
 
 
 def test_a_reader_or_writer_class_lives_in_an_io_format_module() -> None:
@@ -415,6 +506,10 @@ _KEPT_CAPITALS = ("DType", "HBond")
 #: written in capitals (``RDF``, ``LBFGS``, ``CP2K``, ``TLeap``).
 _ACRONYM = re.compile(r"[A-Z]{2,}")
 
+#: Whole class names molrs keeps in capitals: the phase driver ``MD``, the name
+#: Atomiverse and the user-facing API use (molrs's own acronym gate admits it).
+_ACRONYM_CLASS_NAMES = frozenset({"MD"})
+
 
 def test_no_class_spells_an_acronym_in_capitals() -> None:
     shouting = sorted(
@@ -422,7 +517,10 @@ def test_no_class_spells_an_acronym_in_capitals() -> None:
         for obj, paths in PATHS.values()
         if inspect.isclass(obj)
         for path in paths
-        if _ACRONYM.search(re.sub("|".join(_KEPT_CAPITALS), "", path.rsplit(".", 1)[1]))
+        if path.rsplit(".", 1)[1] not in _ACRONYM_CLASS_NAMES
+        and _ACRONYM.search(
+            re.sub("|".join(_KEPT_CAPITALS), "", path.rsplit(".", 1)[1])
+        )
     )
     assert not shouting
 
@@ -478,5 +576,5 @@ def test_the_box_and_the_trajectory_are_the_native_classes() -> None:
 def test_smiles_parser_and_amber_system_reader_have_format_owners() -> None:
     assert "SmilesIr" in molpy.io.smiles.__all__
     assert "AmberPrmtopForcefieldReader" in molpy.io.amber.__all__
-    mol = molpy.io.smiles.SmilesIr.parse("CCO").to_atomistic()
+    mol = molpy.io.smiles.read_smiles("CCO").to_atomistic()
     assert isinstance(mol, molpy.Atomistic)

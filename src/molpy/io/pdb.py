@@ -4,4 +4,6 @@
 """
 
 from molrs.io.pdb import *  # noqa: F403
-from molrs.io.pdb import __all__ as __all__
+from molrs.io.pdb import __all__ as _native
+
+__all__ = [*_native]

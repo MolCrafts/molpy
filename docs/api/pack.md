@@ -21,7 +21,7 @@ build. Examples below are frozen illustrations — full API lives in the
 | `Target` | `molpack` | One species + count + restraints |
 | `Cuboid` / `Sphere` / `HalfSpace` | `molpy` (molrs regions) | Restraints: box, droplet, slab; combine with `&`, `\|`, `~` |
 | `State` | `molpack` | `run` result: `.frame`, `.converged`, `.fdist`, … |
-| `PackingTemplate` | `molpy.builder` | A built molecule's `.frame` plus the `.hydrogens` indices into it, for `Target(...).with_hydrogens(...)` / `.with_atom_radius(...)` |
+| `PackingTemplate` | `molpy.builder` | A built molecule's `.frame` plus the `.hydrogens` indices into it, for per-atom settings such as `Target(...).with_atom_radius(...)` |
 
 ## Canonical example
 
@@ -47,7 +47,9 @@ packed = GencanPack().with_seed(42).run(targets, max_loops=200).frame
 ```
 
 A built polymer goes in through `mp.builder.PackingTemplate`, so the atom
-indices a `Target` takes are read off the same frame it packs:
+indices a `Target` takes are read off the same frame it packs. molpack already
+treats element-`H` atoms as hydrogens, so the indices are only for per-atom
+settings such as a smaller radius:
 
 ```python
 # docs: skip — optional molcrafts-molpack; not a molpy runtime/doc dep
@@ -55,7 +57,6 @@ template = mp.builder.PackingTemplate(chain)  # chain: an assembled mp.Atomistic
 target = (
     Target(template.frame, count=10)
     .with_restraint(box)
-    .with_hydrogens(template.hydrogens)
     .with_atom_radius(template.hydrogens, 0.2)
 )
 ```

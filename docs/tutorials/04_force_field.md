@@ -194,7 +194,8 @@ field by its exact name, and types no label uses are not written. Its
 `pair_style` line needs a cutoff, and a cutoff is a run setting, not a force
 field parameter — so you declare it on the pair style yourself; molpy never
 invents one. (GROMACS keeps its cutoffs in the `.mdp`, so the GROMACS writer
-does not write a style-level cutoff.)
+does not write a style-level cutoff; `GromacsEngine.generate_inputs` writes it
+into the `.mdp` instead.)
 
 ```python
 ff.get_style("pair", "lj/cut")["cutoff"] = 10.0

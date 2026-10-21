@@ -3,12 +3,19 @@
 Wraps `GROMACS <https://www.gromacs.org>`_. :meth:`GromacsEngine.generate_inputs`
 writes a ready-to-run input set — coordinates (``.gro``), the whole topology
 (``.top``: directives, one ``[ moleculetype ]`` per molecule, ``[ system ]``
-and ``[ molecules ]``, from ``GromacsTopForcefieldWriter.write_system``) and the energy-minimisation and
+and ``[ molecules ]``, from ``write_top_system``) and the energy-minimisation and
 NVT ``.mdp`` templates. :meth:`GromacsEngine.run` takes one ``.mdp`` as its
 input script and runs::
 
-    gmx grompp -f <mdp> -c <prefix>.gro -p <prefix>.top -o <stem>.tpr
+    gmx grompp -f <mdp> -c <structure> -p <prefix>.top -o <stem>.tpr
     [launcher...] gmx mdrun -deffnm <stem>
+
+``<structure>`` is ``<prefix>.gro`` for the first stage; a later stage starts
+from the structure the stage before it wrote (``mdrun -deffnm em`` writes
+``em.gro``), named by ``run(..., structure="em.gro")``::
+
+    engine.run(Script.from_path(paths["input"]), workdir=d)  # em.mdp
+    engine.run(Script.from_path(paths["nvt"]), workdir=d, structure="em.gro")
 
 Only ``mdrun`` runs under the launcher; ``grompp`` is a serial preprocessor.
 The executable, launcher, environment and time limit (per step) are the
@@ -26,18 +33,29 @@ Reference:
 from __future__ import annotations
 
 import subprocess
+from collections.abc import Sequence
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from molrs.io import write_gro
 from molrs.io.gromacs import GromacsTopForcefieldWriter
 
-from ._engine import Engine
+from molpy.engine._engine import Engine
+from molrs.core import Element
+from molpy.engine._nonbonded import is_periodic, nonbonded_of, refuse_box_free
 
 if TYPE_CHECKING:
     from molcfg import Config
-    from molrs.ff.forcefield import ForceField
     from molrs.core import Frame
+    from molrs.ff.forcefield import ForceField
+
+    from molpy.engine._script import Script
+
+#: The .mdp's cutoff (nm) and electrostatics where the force field states none.
+_DEFAULT_CUTOFF_NM = 1.2
+_DEFAULT_COULOMBTYPE = "PME"
+#: GROMACS's ``coulombtype`` for the force field's kind of Coulomb style.
+_COULOMBTYPE = {"long": "PME", "cut": "Cut-off"}
 
 
 class GromacsEngine(Engine):
@@ -52,7 +70,9 @@ class GromacsEngine(Engine):
 
         engine = GromacsEngine(check_executable=False)
         paths = engine.generate_inputs(frame, ff, "./md")
-        engine.run(Script.from_path(paths["em"]), workdir="./md")
+        engine.run(Script.from_path(paths["input"]), workdir="./md")
+        # NVT from the minimised structure EM wrote:
+        engine.run(Script.from_path(paths["nvt"]), workdir="./md", structure="em.gro")
     """
 
     tool = "gromacs"
@@ -68,8 +88,9 @@ class GromacsEngine(Engine):
         """Initialise the GROMACS engine.
 
         Args:
-            prefix: Stem of the ``.gro`` / ``.top`` pair :meth:`run` passes to
-                ``grompp`` (what :meth:`generate_inputs` writes by default).
+            prefix: Stem of the ``.top`` :meth:`run` passes to ``grompp``,
+                and of the ``.gro`` it starts a first stage from (what
+                :meth:`generate_inputs` writes).
             config: molpy's configuration; ``None`` loads it (see
                 :class:`~molpy.engine.Engine`).
             workdir: Default working directory.
@@ -80,57 +101,115 @@ class GromacsEngine(Engine):
         )
         self.prefix = prefix
 
-    @property
-    def name(self) -> str:
-        """Return ``"GROMACS"``."""
-        return "GROMACS"
-
     def _get_default_extension(self) -> str:
         """Return ``".mdp"`` — a GROMACS run-parameter file."""
         return ".mdp"
 
+    def run(
+        self,
+        scripts: Script | str | Path | Sequence[Script | Path],
+        *,
+        workdir: str | Path | None = None,
+        structure: str | Path | None = None,
+        capture_output: bool = False,
+        check: bool = True,
+    ) -> subprocess.CompletedProcess[str]:
+        """``grompp`` then ``mdrun`` the ``.mdp`` *scripts* starts with.
+
+        As :meth:`Engine.run <molpy.engine.Engine.run>`, plus the structure
+        the stage starts from.
+
+        Args:
+            scripts: The ``.mdp`` (first) and any files written beside it.
+            workdir: Working directory for this run (see
+                :meth:`Engine.run <molpy.engine.Engine.run>`).
+            structure: The coordinates ``grompp -c`` reads, relative to the
+                run directory: ``None`` is ``<prefix>.gro`` (a first stage);
+                a later stage names the previous stage's output, e.g.
+                ``"em.gro"`` after ``em.mdp``.
+            capture_output: Capture stdout/stderr.
+            check: Raise :class:`~molpy.wrapper.ToolError` on a non-zero exit.
+
+        Raises:
+            ValueError: If *scripts* is an empty list.
+            ToolError: A step could not start, timed out, or (with *check*)
+                exited non-zero.
+        """
+        run_dir, input_file = self._write_scripts(scripts, workdir)
+        return self._grompp_mdrun(
+            run_dir,
+            input_file,
+            structure=str(structure) if structure is not None else None,
+            capture_output=capture_output,
+            check=check,
+        )
+
     def _execute(
         self,
         run_dir: Path,
-        capture_output: bool = False,
-        check: bool = True,
-        **kwargs: Any,
-    ) -> subprocess.CompletedProcess:
-        """Run ``grompp`` then ``mdrun`` for the input ``.mdp`` in *run_dir*.
+        input_file: Path,
+        *,
+        capture_output: bool,
+        check: bool,
+    ) -> subprocess.CompletedProcess[str]:
+        """``grompp`` then ``mdrun`` *input_file* from ``<prefix>.gro``."""
+        return self._grompp_mdrun(
+            run_dir,
+            input_file,
+            structure=None,
+            capture_output=capture_output,
+            check=check,
+        )
+
+    def _grompp_mdrun(
+        self,
+        run_dir: Path,
+        input_file: Path,
+        *,
+        structure: str | None,
+        capture_output: bool,
+        check: bool,
+    ) -> subprocess.CompletedProcess[str]:
+        """Run ``grompp`` then ``mdrun`` for the ``.mdp`` *input_file*.
+
+        ``grompp`` reads *structure* (``<prefix>.gro`` when ``None``) and
+        runs without the launcher; a failed ``mdrun`` carries the tail of
+        ``<stem>.log``.
 
         Raises:
-            RuntimeError: If no input script has been registered.
-            subprocess.CalledProcessError: If *check* is ``True`` and a step
-                exits non-zero.
-            subprocess.TimeoutExpired: If the configured ``timeout`` is
-                exceeded by a step.
+            ToolError: A step could not start, timed out, or (with *check*)
+                exited non-zero.
         """
-        if self.input_script is None or self.input_script.path is None:
-            raise RuntimeError("No input script found.  Pass an .mdp to run() first.")
-        mdp = self.input_script.path.name
-        stem = Path(mdp).stem
-        grompp = self.environment.command_prefix(no_capture_output=True) + [
-            self.executable,
-            "grompp",
-            "-f",
-            mdp,
-            "-c",
-            f"{self.prefix}.gro",
-            "-p",
-            f"{self.prefix}.top",
-            "-o",
-            f"{stem}.tpr",
-        ]
-        done = self._run_process(
-            grompp, run_dir, capture_output=capture_output, check=check, step="grompp"
+        stem = input_file.stem
+        grompp = self.command(
+            [
+                "grompp",
+                "-f",
+                input_file.name,
+                "-c",
+                structure if structure is not None else f"{self.prefix}.gro",
+                "-p",
+                f"{self.prefix}.top",
+                "-o",
+                f"{stem}.tpr",
+            ],
+            launch=False,
+        )
+        done = self.run_command(
+            grompp,
+            cwd=run_dir,
+            capture_output=capture_output,
+            check=check,
+            step="grompp",
         )
         if done.returncode != 0:
             return done
-        return self._run_process(
-            self._build_full_command(["mdrun", "-deffnm", stem]),
-            run_dir,
+        return self.run_command(
+            self.command(["mdrun", "-deffnm", stem]),
+            cwd=run_dir,
             capture_output=capture_output,
             check=check,
+            log=run_dir / f"{stem}.log",
             step="mdrun",
         )
 
@@ -141,6 +220,9 @@ class GromacsEngine(Engine):
         output_dir: str | Path,
         *,
         temperature: float = 300.0,
+        coulombtype: str | None = None,
+        rcoulomb: float | None = None,
+        rvdw: float | None = None,
     ) -> dict[str, Path]:
         """Write a ready-to-run GROMACS input set.
 
@@ -152,40 +234,93 @@ class GromacsEngine(Engine):
         (steepest-descent minimisation) and ``nvt.mdp`` (V-rescale NVT at
         *temperature* K).
 
+        The ``.mdp`` nonbonded settings are the force field's own:
+        ``coulombtype`` is ``PME`` for a long-range Coulomb style
+        (``coul/long/pme``) and ``Cut-off`` for a truncated one, ``rcoulomb``
+        is its Coulomb style's ``cutoff`` and ``rvdw`` its other pair styles'
+        (each defaulting to the other when only one is stated), and
+        ``rlist`` the larger. Only what the force field leaves unstated falls
+        back to ``PME`` and 1.2 nm; the keyword arguments override.
+
         Args:
             frame: The typed structure (``Atomistic.to_frame()`` for a graph)
                 with its angles and dihedrals (``generate_topology``): GROMACS
                 excludes every pair within three bonds, and those rows are
                 how the pair list knows them. Its atoms' ``mol_id`` splits it
-                into molecules, and its box is the ``.gro`` box.
+                into molecules, and its periodic box is the ``.gro`` box.
             forcefield: The force field the frame's types name.
             output_dir: Directory for the files (created if absent).
             temperature: Reference and initial-velocity temperature (K).
+            coulombtype: The ``.mdp`` ``coulombtype``; ``None`` is the force
+                field's.
+            rcoulomb: Coulomb cutoff (nm); ``None`` is the force field's.
+            rvdw: Van der Waals cutoff (nm); ``None`` is the force field's.
 
         Returns:
-            ``{"gro", "top", "em", "nvt"}`` mapped to the written paths.
+            ``{"input", "gro", "top", "nvt"}`` mapped to the written paths:
+            ``"input"`` is ``em.mdp``, the first stage :meth:`run` takes, and
+            ``"nvt"`` the stage after it.
+
+        Raises:
+            ValueError: If the frame has no periodic box, before any file is
+                written: GROMACS's Verlet cutoff scheme (its only one since
+                2020) simulates periodic systems only, so a vacuum system
+                needs a box larger than the molecule plus twice the cutoff.
         """
+        if not is_periodic(frame):
+            raise refuse_box_free("GROMACS", "the Verlet cutoff scheme (pbc = xyz)")
+        frame = frame.copy()
+        Element.fill_symbols(frame)
         out = Path(output_dir)
         out.mkdir(parents=True, exist_ok=True)
         paths = {
+            "input": out / "em.mdp",
             "gro": out / f"{self.prefix}.gro",
             "top": out / f"{self.prefix}.top",
-            "em": out / "em.mdp",
             "nvt": out / "nvt.mdp",
         }
+        nonbonded = _nonbonded_mdp(forcefield, coulombtype, rcoulomb, rvdw)
         write_gro(paths["gro"], frame)
         GromacsTopForcefieldWriter().write_system(paths["top"], forcefield, frame)
-        paths["em"].write_text(_EM_MDP, encoding="utf-8")
+        paths["input"].write_text(_EM_MDP.format(**nonbonded), encoding="utf-8")
         paths["nvt"].write_text(
-            _NVT_MDP.format(temperature=temperature), encoding="utf-8"
+            _NVT_MDP.format(temperature=temperature, **nonbonded), encoding="utf-8"
         )
         self.logger.info(
             "inputs written",
             output_dir=str(out),
             files={key: path.name for key, path in paths.items()},
             temperature=temperature,
+            **nonbonded,
         )
         return paths
+
+
+def _nonbonded_mdp(
+    forcefield: ForceField,
+    coulombtype: str | None,
+    rcoulomb: float | None,
+    rvdw: float | None,
+) -> dict[str, str | float]:
+    """The ``.mdp`` nonbonded settings: the overrides, else the force field's."""
+    stated = nonbonded_of(forcefield)
+    coulomb_nm, vdw_nm = stated.coulomb_cutoff_nm, stated.vdw_cutoff_nm
+    if rcoulomb is None:
+        rcoulomb = next(
+            (r for r in (coulomb_nm, vdw_nm) if r is not None), _DEFAULT_CUTOFF_NM
+        )
+    if rvdw is None:
+        rvdw = next(
+            (r for r in (vdw_nm, coulomb_nm) if r is not None), _DEFAULT_CUTOFF_NM
+        )
+    if coulombtype is None:
+        coulombtype = _COULOMBTYPE.get(stated.coulomb or "", _DEFAULT_COULOMBTYPE)
+    return {
+        "coulombtype": coulombtype,
+        "rcoulomb": rcoulomb,
+        "rvdw": rvdw,
+        "rlist": max(rcoulomb, rvdw),
+    }
 
 
 _EM_MDP = """\
@@ -197,10 +332,10 @@ nsteps          = 50000
 
 nstlist         = 10
 cutoff-scheme   = Verlet
-rlist           = 1.2
-coulombtype     = PME
-rcoulomb        = 1.2
-rvdw            = 1.2
+rlist           = {rlist:g}
+coulombtype     = {coulombtype}
+rcoulomb        = {rcoulomb:g}
+rvdw            = {rvdw:g}
 pbc             = xyz
 """
 
@@ -224,10 +359,10 @@ lincs_order     = 4
 
 cutoff-scheme   = Verlet
 nstlist         = 10
-rlist           = 1.2
-coulombtype     = PME
-rcoulomb        = 1.2
-rvdw            = 1.2
+rlist           = {rlist:g}
+coulombtype     = {coulombtype}
+rcoulomb        = {rcoulomb:g}
+rvdw            = {rvdw:g}
 
 tcoupl          = V-rescale
 tc-grps         = System

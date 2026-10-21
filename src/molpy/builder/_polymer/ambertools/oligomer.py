@@ -9,10 +9,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from molrs.conformer import Conformer
-from molrs.io.smiles import SmilesIr
 from molrs.core import Atomistic, Element
+from molrs.io.smiles import read_smiles
 
-from ._cut import AmberCut
+from molpy.builder._polymer.ambertools._cut import AmberCut
 
 
 @dataclass(frozen=True)
@@ -35,11 +35,11 @@ class AmberPieces:
     def oligomer(self, *, seed: int = 42) -> tuple[Atomistic, dict[str, AmberCut]]:
         """Embed the trimer and return it with the head, chain and tail cuts."""
         smiles, head, chain, tail = _spans(self)
-        mol = Conformer(seed=seed).generate(SmilesIr.parse(smiles).to_atomistic())[0]
+        mol = Conformer(seed=seed).generate(read_smiles(smiles).to_atomistic())[0]
         atoms = list(mol.atoms)
         seen: dict[str, int] = {}
         for atom in atoms:
-            element = Element.by_number(int(atom["atomic_number"])).symbol
+            element = Element.by_number(atom["atomic_number"]).symbol
             seen[element] = seen.get(element, 0) + 1
             # antechamber's ac writer has a 3-character name column.
             name = f"{element}{seen[element]}"
@@ -89,8 +89,8 @@ class AmberPieces:
 
 
 def _heavy_count(smiles: str) -> int:
-    mol = SmilesIr.parse(smiles).to_atomistic()
-    return sum(1 for atom in mol.atoms if atom["atomic_number"] != 1)
+    mol = read_smiles(smiles).to_atomistic()
+    return sum(1 for atom in mol.atoms if atom.get("atomic_number") != 1)
 
 
 def _spans(spec: AmberPieces) -> tuple[str, range, range, range]:

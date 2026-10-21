@@ -1,4 +1,6 @@
 """MOL2 I/O, mirrored from :mod:`molrs.io.mol2`."""
 
 from molrs.io.mol2 import *  # noqa: F403
-from molrs.io.mol2 import __all__ as __all__
+from molrs.io.mol2 import __all__ as _native_all
+
+__all__ = list(_native_all)

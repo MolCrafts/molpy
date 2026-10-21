@@ -5,4 +5,6 @@ centroids (``centroid``); ``mp.op.superpose is molrs.op.superpose``.
 """
 
 from molrs.op import *  # noqa: F403
-from molrs.op import __all__ as __all__
+from molrs.op import __all__ as _native
+
+__all__ = [*_native]

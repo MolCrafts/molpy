@@ -8,6 +8,7 @@ import pytest
 
 from molpy.config import load_config
 from molpy.engine import Cp2kEngine, GromacsEngine, LammpsEngine, OpenmmEngine, Script
+from molpy.wrapper import ToolError
 
 
 def _completed(returncode: int = 0) -> MagicMock:
@@ -30,7 +31,8 @@ class TestEngineSettings:
     def test_package_defaults(self):
         engine = _lammps()
         assert engine.executable == "lmp"
-        assert engine.work_dir is None
+        assert engine.key == "engine.lammps"
+        assert engine.workdir is None
         assert engine.launcher == []
         assert engine.env_vars == {}
         assert engine.timeout is None
@@ -102,7 +104,7 @@ class TestEngineSettings:
             }
         )
         engine = LammpsEngine(config=config, check_executable=False)
-        assert engine._build_full_command(["-in", "in.lmp"]) == [
+        assert engine.command(["-in", "in.lmp"]) == [
             "/opt/conda/bin/conda",
             "run",
             "--no-capture-output",
@@ -117,69 +119,95 @@ class TestEngineSettings:
         ]
 
     def test_check_executable_missing(self):
-        with pytest.raises(FileNotFoundError, match="engine.lammps.executable"):
+        with pytest.raises(ToolError, match="engine.lammps.executable") as raised:
             LammpsEngine(
                 config=load_config(
                     {"engine": {"lammps": {"executable": "no_such_lammps_xyz123"}}}
                 )
             )
+        assert raised.value.tool == "engine.lammps"
 
     def test_repr(self, tmp_path):
         engine = _lammps({"env": "myenv", "env_manager": "conda"}, workdir=tmp_path)
         text = repr(engine)
         assert "LammpsEngine" in text
         assert "lmp" in text
-        assert str(tmp_path) in text
+        assert repr(str(tmp_path)) in text
         assert "myenv" in text
 
 
 class TestEngineRun:
     """engine.run writes scripts; subprocess is mocked — never a real binary."""
 
-    def test_run_no_scripts_raises(self):
-        with pytest.raises(ValueError, match="At least one script is required"):
+    def test_run_needs_scripts(self):
+        with pytest.raises(TypeError):
             _lammps().run()
 
     def test_run_empty_list_raises(self):
         with pytest.raises(ValueError, match="At least one script is required"):
             _lammps().run([])
 
+    def test_run_rejects_unknown_keywords(self, tmp_path):
+        with pytest.raises(TypeError, match="timeout"):
+            _lammps(workdir=tmp_path).run("units real\n", timeout=60)
+
+    def test_run_keeps_no_state(self, tmp_path):
+        engine = _lammps(workdir=tmp_path)
+        with patch("subprocess.run", return_value=_completed()):
+            engine.run("units real\n")
+        assert not hasattr(engine, "scripts")
+        assert not hasattr(engine, "input_script")
+        with pytest.raises(TypeError):
+            engine.run()
+
+    def test_run_does_not_change_the_callers_script(self, tmp_path):
+        source = tmp_path / "src" / "in.lmp"
+        source.parent.mkdir()
+        source.write_text("units real\n", encoding="utf-8")
+        script = Script.from_path(source)
+        with patch("subprocess.run", return_value=_completed()):
+            _lammps().run(script, workdir=tmp_path / "run")
+        assert script.path == source
+        assert (tmp_path / "run" / "in.lmp").read_text(
+            encoding="utf-8"
+        ) == "units real\n"
+
     def test_run_with_script_saves_files(self, tmp_path):
         script = Script.from_text("input", "units real\natom_style full\n")
         engine = _lammps(workdir=tmp_path)
         with patch("subprocess.run", return_value=_completed()) as mock_run:
-            engine.run(script, capture_output=True, check=False)
+            engine.run(script, capture_output=True)
         assert (tmp_path / "input.lmp").exists()
         assert mock_run.call_args.args[0][0] == "lmp"
 
     def test_run_with_string(self, tmp_path):
         engine = _lammps(workdir=tmp_path)
         with patch("subprocess.run", return_value=_completed()):
-            engine.run("units real\n", capture_output=True, check=False)
+            engine.run("units real\n", capture_output=True)
         assert (
             (tmp_path / "input.lmp")
             .read_text(encoding="utf-8")
             .startswith("units real")
         )
 
-    def test_run_with_path(self, tmp_path):
-        script_file = tmp_path / "my_script.lmp"
-        script_file.write_text("units real\natom_style full\n", encoding="utf-8")
-        engine = _lammps(workdir=tmp_path)
-        with patch("subprocess.run", return_value=_completed()):
-            engine.run(script_file, capture_output=True, check=False)
-        assert len(engine.scripts) == 1
-        assert engine.scripts[0].path.name == "my_script.lmp"
+    def test_run_with_path_writes_it_verbatim(self, tmp_path):
+        script_file = tmp_path / "src" / "my_script.lmp"
+        script_file.parent.mkdir()
+        text = "  units real\natom_style full"
+        script_file.write_text(text, encoding="utf-8")
+        engine = _lammps(workdir=tmp_path / "run")
+        with patch("subprocess.run", return_value=_completed()) as mock_run:
+            engine.run(script_file, capture_output=True)
+        assert (tmp_path / "run" / "my_script.lmp").read_text(encoding="utf-8") == text
+        assert mock_run.call_args.args[0][:3] == ["lmp", "-in", "my_script.lmp"]
 
-    def test_run_with_multiple_scripts(self, tmp_path):
+    def test_run_with_multiple_scripts_runs_the_first(self, tmp_path):
         script1 = Script.from_text("main", "units real\n")
-        script1.tags.add("input")
         script2 = Script.from_text("data", "# data file\n")
         engine = _lammps(workdir=tmp_path)
-        with patch("subprocess.run", return_value=_completed()):
-            engine.run([script1, script2], capture_output=True, check=False)
-        assert len(engine.scripts) == 2
-        assert engine.input_script == script1
+        with patch("subprocess.run", return_value=_completed()) as mock_run:
+            engine.run([script1, script2], capture_output=True)
+        assert mock_run.call_args.args[0][:3] == ["lmp", "-in", "main.lmp"]
         assert (tmp_path / "main.lmp").read_text(encoding="utf-8") == "units real\n"
         assert (tmp_path / "data.lmp").read_text(encoding="utf-8") == "# data file\n"
 
@@ -187,7 +215,7 @@ class TestEngineRun:
         first, second = tmp_path / "a", tmp_path / "b"
         engine = _lammps(workdir=first)
         with patch("subprocess.run", return_value=_completed()):
-            engine.run("units real\n", workdir=second, capture_output=True, check=False)
+            engine.run("units real\n", workdir=second, capture_output=True)
         assert not (first / "input.lmp").exists()
         assert (second / "input.lmp").exists()
 
@@ -196,14 +224,14 @@ class TestEngineRun:
             {"timeout": 90, "env_vars": {"OMP_NUM_THREADS": "4"}}, workdir=tmp_path
         )
         with patch("subprocess.run", return_value=_completed()) as mock_run:
-            engine.run("units real\n", capture_output=True, check=False)
+            engine.run("units real\n", capture_output=True)
         assert mock_run.call_args.kwargs["timeout"] == 90.0
         assert mock_run.call_args.kwargs["env"]["OMP_NUM_THREADS"] == "4"
 
     def test_run_has_no_timeout_unless_configured(self, tmp_path):
         engine = _lammps(workdir=tmp_path)
         with patch("subprocess.run", return_value=_completed()) as mock_run:
-            engine.run("units real\n", capture_output=True, check=False)
+            engine.run("units real\n", capture_output=True)
         assert mock_run.call_args.kwargs["timeout"] is None
         assert mock_run.call_args.kwargs["env"] is None  # inherits the parent's
 
@@ -214,7 +242,7 @@ class TestEngineLogging:
     def test_a_finished_run_logs_start_and_finish(self, tmp_path, molpy_records):
         engine = _lammps({"launcher": ["mpirun", "-np", "2"]}, workdir=tmp_path)
         with patch("subprocess.run", return_value=_completed()):
-            engine.run("units real\n", check=False)
+            engine.run("units real\n")
         started, finished = (
             r for r in molpy_records if r.logger_name == "molpy.engine.lammps"
         )
@@ -231,27 +259,37 @@ class TestEngineLogging:
     def test_a_failed_run_logs_an_error(self, tmp_path, molpy_records):
         engine = _lammps(workdir=tmp_path)
         with patch("subprocess.run", return_value=_completed(3)):
-            engine.run("units real\n", check=False)
+            assert engine.run("units real\n", check=False).returncode == 3
         (failed,) = (r for r in molpy_records if r.message == "process failed")
         assert str(failed.level) == "ERROR"
         assert failed.extra["returncode"] == 3
 
-    def test_a_raising_run_logs_and_reraises(self, tmp_path, molpy_records):
+    def test_a_failed_run_raises_with_the_log_tail(self, tmp_path, molpy_records):
+        """-screen none: the failure's tail comes from log.lammps."""
         engine = _lammps(workdir=tmp_path)
-        error = subprocess.CalledProcessError(2, ["lmp"])
+
+        def fails(argv, *, cwd, **_):
+            (cwd / "log.lammps").write_text(
+                "LAMMPS (2 Aug 2023)\nERROR: Unknown command: bogus\n",
+                encoding="utf-8",
+            )
+            return _completed(1)
+
         with (
-            patch("subprocess.run", side_effect=error),
-            pytest.raises(subprocess.CalledProcessError),
+            patch("subprocess.run", side_effect=fails),
+            pytest.raises(ToolError, match="ERROR: Unknown command: bogus") as raised,
         ):
-            engine.run("units real\n")
+            engine.run("bogus\n")
+        assert raised.value.tool == "engine.lammps"
+        assert raised.value.returncode == 1
         (failed,) = (r for r in molpy_records if r.message == "process failed")
-        assert failed.extra["returncode"] == 2
+        assert failed.extra["returncode"] == 1
 
     def test_a_timeout_is_logged(self, tmp_path, molpy_records):
         engine = _lammps({"timeout": 5}, workdir=tmp_path)
         with (
             patch("subprocess.run", side_effect=subprocess.TimeoutExpired("lmp", 5)),
-            pytest.raises(subprocess.TimeoutExpired),
+            pytest.raises(ToolError, match="timed out after 5 s"),
         ):
             engine.run("units real\n")
         (record,) = (r for r in molpy_records if r.message == "process timed out")
@@ -261,7 +299,7 @@ class TestEngineLogging:
         engine = _lammps(workdir=tmp_path)
         with (
             patch("subprocess.run", side_effect=FileNotFoundError("lmp")),
-            pytest.raises(FileNotFoundError),
+            pytest.raises(ToolError, match="could not start"),
         ):
             engine.run("units real\n")
         (record,) = (r for r in molpy_records if r.message == "process not started")
@@ -290,7 +328,7 @@ class TestEngineLogging:
     ):
         engine = cls(check_executable=False, workdir=tmp_path)
         with patch("subprocess.run", return_value=_completed()):
-            engine.run("input\n", check=False)
+            engine.run("input\n")
         assert {
             r.logger_name for r in molpy_records if r.message.startswith("process")
         } == {logger}
@@ -298,12 +336,58 @@ class TestEngineLogging:
 
 def test_cp2k_identity():
     engine = Cp2kEngine(check_executable=False)
-    assert engine.name == "CP2K"
+    assert engine.key == "engine.cp2k"
     assert engine._get_default_extension() == ".inp"
 
 
 def test_lammps_identity():
     engine = _lammps()
-    assert engine.name == "LAMMPS"
+    assert engine.key == "engine.lammps"
     assert engine._get_default_extension() == ".lmp"
     assert Path(engine.executable).name == "lmp"
+    assert not hasattr(engine, "name")
+
+
+# ---------------------------------------------------------------------------
+# One input-writer contract
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("engine_cls", [LammpsEngine, GromacsEngine, OpenmmEngine])
+def test_generate_inputs_has_one_signature(engine_cls):
+    """``generate_inputs(frame, forcefield, output_dir, *, ...)`` everywhere."""
+    import inspect
+
+    params = list(inspect.signature(engine_cls.generate_inputs).parameters.values())
+    assert [p.name for p in params[:4]] == [
+        "self",
+        "frame",
+        "forcefield",
+        "output_dir",
+    ]
+    assert all(p.kind is inspect.Parameter.KEYWORD_ONLY for p in params[4:])
+
+
+def test_cp2k_generates_no_inputs():
+    assert not hasattr(Cp2kEngine, "generate_inputs")
+
+
+def test_every_deck_names_its_runnable_input(tmp_path, water, tip3p):
+    import molpy as mp
+
+    tip3p.get_style("pair", "lj/cut")["cutoff"] = 10.0
+    tip3p.def_style("pair", "coul/cut", {"cutoff": 10.0})
+    o, h1, h2 = list(water.atoms)
+    ow = tip3p.get_style("atom", "full").get_type_by_name("OW")
+    hw = tip3p.get_style("atom", "full").get_type_by_name("HW")
+    tip3p.def_style("angle", "harmonic").def_type(
+        "HW-OW-HW", hw, ow, hw, k=55.0, theta0=104.52
+    )
+    water.add_angle(h1, o, h2, type="HW-OW-HW")
+    frame = water.to_frame()
+    frame.box = mp.Box(mp.core.Cell.lengths([30.0] * 3))
+    for engine_cls in (LammpsEngine, GromacsEngine, OpenmmEngine):
+        out = tmp_path / engine_cls.tool
+        paths = engine_cls(check_executable=False).generate_inputs(frame, tip3p, out)
+        assert paths["input"].is_file()
+        assert paths["input"].parent == out

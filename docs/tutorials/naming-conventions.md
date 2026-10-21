@@ -199,7 +199,7 @@ The API itself follows the same rules as molrs, whose names molpy re-exports
 by identity:
 
 - **Acronyms are cased as words.** `mp.engine.LammpsEngine`,
-  `mp.adapter.RdkitAdapter`, `mp.io.smiles.SmilesIr`, `mp.CgBond`,
+  `mp.engine.OpenmmEngine`, `mp.io.smiles.SmilesIr`, `mp.CgBond`,
   `mp.compute.Rdf`, `mp.compute.Msd`, `mp.optimize.Lbfgs`,
   `mp.ff.potential.PairLjCut`. numpy's `DType` and `HBond` (H is the element)
   keep their spelling.

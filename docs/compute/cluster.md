@@ -109,7 +109,7 @@ xyz = np.concatenate([c + rng.normal(0.0, 0.8, size=(40, 3)) for c in centres])
 
 frame = mp.Frame()
 frame["atoms"] = {"x": xyz[:, 0], "y": xyz[:, 1], "z": xyz[:, 2]}
-frame.box = mp.Box.cube(40.0)
+frame.box = mp.Box(mp.core.Cell.lengths([40.0] * 3))
 
 nl = mp.core.NeighborList(2.0)
 nl.build(frame.coords, frame.box)
