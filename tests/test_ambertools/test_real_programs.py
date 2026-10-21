@@ -78,7 +78,7 @@ def config():
 
 
 def _embedded(smiles: str) -> mp.Atomistic:
-    mol = mp.io.smiles.SmilesIr.parse(smiles).to_atomistic()
+    mol = mp.io.smiles.read_smiles(smiles).to_atomistic()
     return mp.conformer.Conformer(add_hydrogens=True, seed=42).generate(mol)[0]
 
 
@@ -280,7 +280,7 @@ class TestPipeline:
             charge_method="bcc",
             work_dir=work,
             config=config,
-        ).assemble(mp.io.cgsmiles.CgSmilesIr.parse("{[#PEO]|4}").to_coarsegrain())
+        ).assemble(mp.io.cgsmiles.read_cgsmiles("{[#PEO]|4}").to_coarsegrain())
 
         commands = [
             r.extra["command"] for r in molpy_records if r.message == "process finished"
@@ -322,7 +322,7 @@ def _peo(parameter_set: str, work_dir: Path, config) -> mp.builder.AmberBuildRes
         charge_method="bcc",
         work_dir=work_dir,
         config=config,
-    ).assemble(mp.io.cgsmiles.CgSmilesIr.parse("{[#PEO]|4}").to_coarsegrain())
+    ).assemble(mp.io.cgsmiles.read_cgsmiles("{[#PEO]|4}").to_coarsegrain())
 
 
 def _charged(smiles: str, parameter_set: str, work_dir: Path, config):

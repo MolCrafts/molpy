@@ -19,7 +19,7 @@ graph, or `frame.copy()` for an independent frame.
 from copy import copy
 import molpy as mp
 
-mol = mp.io.smiles.SmilesIr.parse("CCO").to_atomistic()
+mol = mp.io.smiles.read_smiles("CCO").to_atomistic()
 mol.generate_topology(gen_angle=True, gen_dihedral=True)  # writes angles/dihedrals on mol
 work = copy(mol)                                         # independent graph
 work.generate_topology(gen_angle=True, clear_existing=True)  # mol is untouched

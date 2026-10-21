@@ -199,7 +199,7 @@ pipeline (ETKDGv3 → torsion refinement → MMFF94 cleanup):
 
 ```python
 
-mol = mp.io.smiles.SmilesIr.parse("CCO").to_atomistic()  # ethanol, heavy-atom graph
+mol = mp.io.smiles.read_smiles("CCO").to_atomistic()  # ethanol, heavy-atom graph
 mol_3d, report = mp.conformer.Conformer(add_hydrogens=True, seed=42).generate(mol)
 ```
 

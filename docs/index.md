@@ -53,7 +53,7 @@ Coordinates, force-field types, and a minimized geometry in a few calls.
 import molpy as mp
 
 # SMILES → 3D
-mol = mp.io.smiles.SmilesIr.parse("CCO").to_atomistic()
+mol = mp.io.smiles.read_smiles("CCO").to_atomistic()
 mol, _ = mp.conformer.Conformer(seed=42).generate(mol)
 
 # OPLS-AA typing
@@ -85,12 +85,12 @@ Define a unit once; a CGsmiles string sets the shape — chain, ring, star.
 ```python
 # a unit with two ports
 eo = mp.conformer.Conformer(seed=42).generate(
-    mp.io.smiles.SmilesIr.from_fragment("[<]OCC[>]").to_template()
+    mp.io.smiles.read_smiles_fragment("[<]OCC[>]").to_template()
 )[0]
 assembler = mp.builder.Assembler({"EO": eo}, mp.builder.GrowthPlacer())
 
 def build(cgsmiles):
-    sites = mp.io.cgsmiles.CgSmilesIr.parse(cgsmiles).to_coarsegrain()
+    sites = mp.io.cgsmiles.read_cgsmiles(cgsmiles).to_coarsegrain()
     return assembler.assemble(sites, mp.Atomistic)
 
 # shape from CGsmiles

@@ -18,7 +18,7 @@ are private.
 | `mp.builder.SitePlacer` | Puts each copy's centre of mass on its site | Sites with positions (a coarsened CG model) |
 | `mp.builder.AxisOrienter` | Turns each copy onto its site: backbone-to-centre along the site axis and joining atoms along the bonds for chain units; port directions fitted to bond directions for branch units | Backmapping with `SitePlacer` |
 | `mp.io.cgsmiles.CgSmilesIr` | `.templates()` → name → ported `mp.Atomistic`; `.to_coarsegrain()` → site graph | Writing units and topologies |
-| `mp.io.smiles.SmilesIr.from_fragment` | `SmilesIr.from_fragment(body).to_template()` → one ported `mp.Atomistic` from a fragment body | Writing one unit |
+| `mp.io.smiles.read_smiles_fragment` | `read_smiles_fragment(body).to_template()` → one ported `mp.Atomistic` from a fragment body | Writing one unit |
 | `mp.perceive.SubgraphMatcher` / `mp.builder.Coarsener` | Find bead groups in a CG model; turn them into sites with a position and an axis | Site graphs from a CG model |
 | `SystemPlanner` / `PolydisperseChainGenerator` / `Chain` / `SystemPlan` | Sample a polydisperse chain plan to a target mass | Bulk / MW-distributed systems |
 | `SchulzZimmPolydisperse` / `FlorySchulzPolydisperse` / `PoissonPolydisperse` / `UniformPolydisperse` | Chain-length distributions (`MassDistribution` / `DpDistribution` protocols) | Choosing a molecular-weight distribution |
@@ -47,11 +47,11 @@ import molpy as mp
 
 conformer = mp.conformer.Conformer(seed=42)
 eo = conformer.generate(
-    mp.io.smiles.SmilesIr.from_fragment("[<]OCC[>]").to_template()
+    mp.io.smiles.read_smiles_fragment("[<]OCC[>]").to_template()
 )[0]
 assert eo.n_ports == 2
 
-sites = mp.io.cgsmiles.CgSmilesIr.parse("{[#EO]|5}").to_coarsegrain()
+sites = mp.io.cgsmiles.read_cgsmiles("{[#EO]|5}").to_coarsegrain()
 assembler = mp.builder.Assembler({"EO": eo}, mp.builder.GrowthPlacer())
 chain = assembler.assemble(sites, mp.Atomistic)
 
@@ -193,7 +193,7 @@ planner = SystemPlanner(
 plan = planner.plan_system(np.random.default_rng(42))
 chains = [
     assembler.assemble(
-        mp.io.cgsmiles.CgSmilesIr.parse(
+        mp.io.cgsmiles.read_cgsmiles(
             "{" + "".join(f"[#{m}]" for m in chain.monomers) + "}"
         ).to_coarsegrain(),
         mp.Atomistic,

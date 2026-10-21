@@ -74,7 +74,7 @@ class ElementBondTypifier(mp.ff.typifier.Typifier):
 
 
 typifier = ElementBondTypifier()
-typed = typifier.typify(mp.io.smiles.SmilesIr.parse("CCO").to_atomistic())
+typed = typifier.typify(mp.io.smiles.read_smiles("CCO").to_atomistic())
 assert sorted({bond["type"] for bond in typed.bonds}) == ["C-C", "C-O"]
 assert {t.name for t in typifier.forcefield().get_style("bond", "harmonic").get_types()} == {"C-C", "C-O"}
 ```
@@ -85,7 +85,7 @@ The matcher is an implementation detail of a typifier, not the typifier itself.
 Use molrs SMARTS matching directly:
 
 ```python
-mol = mp.io.smiles.SmilesIr.parse("CCO").to_atomistic()
+mol = mp.io.smiles.read_smiles("CCO").to_atomistic()
 pattern = mp.perceive.SmartsPattern("[C:1][O:2]")
 matches = pattern.find_matches(mol)
 ```

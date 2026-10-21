@@ -29,7 +29,7 @@ AM1 = [-0.254, -0.024, -0.327, 0.084, 0.088, 0.073, 0.104, 0.061, 0.195]
 
 
 def _ethanol() -> mp.Atomistic:
-    mol = mp.io.smiles.SmilesIr.parse("CCO").to_atomistic()
+    mol = mp.io.smiles.read_smiles("CCO").to_atomistic()
     return mp.conformer.Conformer(add_hydrogens=True, seed=42).generate(mol)[0]
 
 

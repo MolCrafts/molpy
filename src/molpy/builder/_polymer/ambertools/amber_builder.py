@@ -100,7 +100,7 @@ class AmberPolymerBuilder:
 
     Example:
         >>> oligomer, cuts = AmberPieces("COCC", "OCC", "OCCOC").oligomer()
-        >>> sites = mp.io.cgsmiles.CgSmilesIr.parse("{[#PEO]|10}").to_coarsegrain()
+        >>> sites = mp.io.cgsmiles.read_cgsmiles("{[#PEO]|10}").to_coarsegrain()
         >>> config = load_config(
         ...     {"wrapper": {"env": "AmberTools25", "env_manager": "conda"}}
         ... )

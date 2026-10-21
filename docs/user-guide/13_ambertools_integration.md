@@ -65,7 +65,7 @@ from molpy.ff.typifier import AtdTypifier, GaffTypifier
 output_dir = Path("13_output")
 output_dir.mkdir(exist_ok=True)
 
-tfsi = mp.io.smiles.SmilesIr.parse("O=S(=O)(C(F)(F)F)[N-]S(=O)(=O)C(F)(F)F").to_atomistic()
+tfsi = mp.io.smiles.read_smiles("O=S(=O)(C(F)(F)F)[N-]S(=O)(=O)C(F)(F)F").to_atomistic()
 tfsi = mp.conformer.Conformer(add_hydrogens=False, seed=42).generate(tfsi)[0]
 tfsi = AtdTypifier(parameter_set="gaff2").typify(tfsi)  # GAFF2 atom types
 print(sorted({atom["type"] for atom in tfsi.atoms}))  # ['c3', 'f', 'ne', 'o', 's6', 'sy']
@@ -151,7 +151,7 @@ other architectures. The site graph is only that sequence; it must be one
 linear path.
 
 ```python
-sites = mp.io.cgsmiles.CgSmilesIr.parse("{[#PEO]|10}").to_coarsegrain()
+sites = mp.io.cgsmiles.read_cgsmiles("{[#PEO]|10}").to_coarsegrain()
 ```
 
 ```python

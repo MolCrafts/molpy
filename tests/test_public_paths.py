@@ -447,6 +447,11 @@ def _is_factory_name(name: str) -> bool:
     return name.startswith(("read_", "write_"))
 
 
+# A line notation's doors take the notation's own string, not a source or
+# sink, so they live in the notation's module, as in molrs.
+_NOTATION_MODULES = frozenset({"molpy.io.smiles", "molpy.io.cgsmiles"})
+
+
 def test_a_file_factory_function_is_public_only_on_top_of_io() -> None:
     misplaced = sorted(
         path
@@ -454,9 +459,18 @@ def test_a_file_factory_function_is_public_only_on_top_of_io() -> None:
         if inspect.isroutine(obj)
         for path in paths
         if _is_factory_name(path.rsplit(".", 1)[1])
-        and path.rsplit(".", 1)[0] != "molpy.io"
+        and path.rsplit(".", 1)[0] not in {"molpy.io", *_NOTATION_MODULES}
     )
     assert not misplaced
+
+
+def test_a_notation_is_read_through_its_door() -> None:
+    """``mp.io.smiles.read_smiles`` is the door; an IR has no constructor."""
+    assert _resolve(molpy, "io.smiles.read_smiles") is _resolve(
+        molrs, "io.smiles.read_smiles"
+    )
+    assert not hasattr(molpy.io.smiles.SmilesIr, "parse")
+    assert not hasattr(molpy.io.cgsmiles.CgSmilesIr, "parse")
 
 
 def test_a_reader_or_writer_class_lives_in_an_io_format_module() -> None:
@@ -554,5 +568,5 @@ def test_the_box_and_the_trajectory_are_the_native_classes() -> None:
 def test_smiles_parser_and_amber_system_reader_have_format_owners() -> None:
     assert "SmilesIr" in molpy.io.smiles.__all__
     assert "AmberPrmtopForcefieldReader" in molpy.io.amber.__all__
-    mol = molpy.io.smiles.SmilesIr.parse("CCO").to_atomistic()
+    mol = molpy.io.smiles.read_smiles("CCO").to_atomistic()
     assert isinstance(mol, molpy.Atomistic)

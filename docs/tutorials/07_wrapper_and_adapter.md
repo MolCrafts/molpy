@@ -21,7 +21,7 @@ The examples below share this setup:
 ```python
 import molpy as mp
 
-mol = mp.io.smiles.SmilesIr.parse("CCO").to_atomistic()
+mol = mp.io.smiles.read_smiles("CCO").to_atomistic()
 ```
 
 ```python
@@ -77,7 +77,7 @@ from molpy.adapter import from_rdkit, to_rdkit
 from rdkit import Chem
 from rdkit.Chem import AllChem
 
-mol = mp.io.smiles.SmilesIr.parse("CCO").to_atomistic()
+mol = mp.io.smiles.read_smiles("CCO").to_atomistic()
 
 rd_mol = Chem.AddHs(to_rdkit(mol))
 AllChem.EmbedMolecule(rd_mol)

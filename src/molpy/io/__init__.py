@@ -6,7 +6,7 @@ text; a bare string is ambiguous and rejected. A sink is a path or bytearray.
 Multi-frame readers and writers, and force-field readers and writers, live in
 their format modules. For example, ``mp.io.pdb.PdbReader(path)`` iterates PDB
 frames and ``mp.io.amber.AmberPrmtopForcefieldReader().read_system(path)``
-returns a force field and frame. ``mp.io.smiles.SmilesIr.parse(text)`` handles
+returns a force field and frame. ``mp.io.smiles.read_smiles(text)`` handles
 SMILES. ``mp.io.mrec.MrecFile(path)`` reads record sections; ``write_mrec``
 writes a whole record.
 

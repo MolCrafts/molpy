@@ -19,7 +19,7 @@ the input graph is never mutated.
 ```python
 import molpy as mp
 
-mol = mp.io.smiles.SmilesIr.parse("CCO").to_atomistic() # ethanol graph (heavy atoms only)
+mol = mp.io.smiles.read_smiles("CCO").to_atomistic() # ethanol graph (heavy atoms only)
 mol_3d, report = mp.conformer.Conformer(seed=42).generate(mol)
 
 print(mol_3d.n_atoms) # 9 — heavy atoms + added hydrogens

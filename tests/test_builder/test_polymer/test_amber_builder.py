@@ -114,7 +114,7 @@ class _FakeTools:
 def _ether() -> mp.Atomistic:
     """CH3-O-CH2-CH2-O-CH3 with Amber atom names and no ports."""
     graph = mp.conformer.Conformer(seed=1).generate(
-        mp.io.smiles.SmilesIr.parse("COCCOC").to_atomistic()
+        mp.io.smiles.read_smiles("COCCOC").to_atomistic()
     )[0]
     for index, atom in enumerate(graph.atoms, start=1):
         atom["name"] = f"{mp.Element.by_number(atom['atomic_number']).symbol}{index}"
@@ -175,7 +175,7 @@ def _build(work: Path, sites: str = "{[#EO]|3}", **kwargs) -> mp.Frame:
     library = options.pop("library", {"EO": _ether()})
     cuts = options.pop("cuts", _cuts())
     builder = AmberPolymerBuilder(library, cuts, **options)
-    return builder.assemble(mp.io.cgsmiles.CgSmilesIr.parse(sites).to_coarsegrain())
+    return builder.assemble(mp.io.cgsmiles.read_cgsmiles(sites).to_coarsegrain())
 
 
 class TestAmberPieces:
@@ -502,7 +502,7 @@ class TestRefused:
 
     def test_unnamed_atoms_get_element_and_row(self):
         graph = mp.conformer.Conformer(seed=1).generate(
-            mp.io.smiles.SmilesIr.parse("CO").to_atomistic()
+            mp.io.smiles.read_smiles("CO").to_atomistic()
         )[0]
         builder = AmberPolymerBuilder({"MO": graph}, {}, parameter_set="gaff")
         names = [str(atom["name"]) for atom in builder.library["MO"].atoms]
@@ -549,7 +549,7 @@ class TestToolFailures:
 
 def test_tleap_typifier_refuses_a_graph_that_still_has_ports(tmp_path):
     graph = mp.conformer.Conformer(seed=1).generate(
-        mp.io.smiles.SmilesIr.parse("COC").to_atomistic()
+        mp.io.smiles.read_smiles("COC").to_atomistic()
     )[0]
     atoms = list(graph.atoms)
     for atom in atoms:

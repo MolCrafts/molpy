@@ -9,7 +9,7 @@ export — so you see every boundary you will later automate.
 ```python
 import molpy as mp
 
-mol = mp.io.smiles.SmilesIr.parse("CCO").to_atomistic()  # ethanol from SMILES (heavy atoms)
+mol = mp.io.smiles.read_smiles("CCO").to_atomistic()  # ethanol from SMILES (heavy atoms)
 mol, _ = mp.conformer.Conformer(add_hydrogens=True, seed=42).generate(
     mol
 )  # add hydrogens + 3D coordinates

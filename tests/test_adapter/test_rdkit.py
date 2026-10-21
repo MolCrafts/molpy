@@ -19,7 +19,7 @@ def _ethanol_heavy() -> mp.Atomistic:
     for atom, q in zip((c1, c2, o), (-0.18, 0.15, -0.68), strict=True):
         atom["charge"] = q
         atom["res_id"] = 1
-        atom["type"] = "c3" if atom["element"] == "C" else "oh"
+        atom["type"] = "c3" if atom["atomic_number"] == 6 else "oh"
     m.add_bond(c1, c2, bond_type=1, bond_number=1, type="c3-c3")
     m.add_bond(c2, o, bond_type=1, bond_number=1, type="c3-oh")
     return m
@@ -29,7 +29,7 @@ def _snapshot(m: mp.Atomistic) -> tuple:
     return (
         [dict(a.items()) for a in m.atoms],
         [dict(b.items()) for b in m.bonds],
-        sorted(m.columns()),
+        sorted(m.to_frame()["atoms"].keys()),
         dict(m.props),
     )
 
@@ -68,7 +68,7 @@ class TestToRdkit:
         assert mol.GetProp(PROP_PREFIX + "name") == "ethanol"
 
     def test_bracket_hydrogen_count_reaches_rdkit(self):
-        pyrrole = mp.io.smiles.SmilesIr.parse("c1cc[nH]c1").to_atomistic()
+        pyrrole = mp.io.smiles.read_smiles("c1cc[nH]c1").to_atomistic()
         mol = to_rdkit(pyrrole)
         assert mol.GetAtomWithIdx(3).GetTotalNumHs() == 1
 
@@ -89,9 +89,11 @@ class TestFromRdkit:
     def test_a_plain_rdkit_mol_becomes_an_atomistic(self):
         mol = Chem.AddHs(Chem.MolFromSmiles("CO"))
         m = from_rdkit(mol)
-        assert list(m.atoms["element"]) == [a.GetSymbol() for a in mol.GetAtoms()]
+        assert list(m.atoms["atomic_number"]) == [
+            a.GetAtomicNum() for a in mol.GetAtoms()
+        ]
         assert len(list(m.bonds)) == mol.GetNumBonds()
-        assert "x" not in m.columns()
+        assert "x" not in m.to_frame()["atoms"].keys()
 
     def test_the_input_mol_is_not_mutated(self):
         mol = to_rdkit(_ethanol_heavy())
@@ -121,22 +123,22 @@ class TestFromRdkit:
         mol = Chem.AddHs(to_rdkit(m), addCoords=True)
         mol.GetConformer().SetAtomPosition(0, (9.0, 9.0, 9.0))
         back = from_rdkit(mol)
-        assert len(back.entities()) == 9
+        assert back.n_atoms == 9
         assert back.atoms["x", "y", "z"][0].tolist() == [9.0, 9.0, 9.0]
         assert back.atoms["name"].tolist()[:3] == ["C1", "C2", "O1"]
         h = list(back.atoms)[3]
-        assert h["element"] == "H" and "name" not in h.keys()
+        assert h["atomic_number"] == 1 and "name" not in h.keys()
 
     def test_atoms_rdkit_removes_are_gone_with_their_bonds(self):
         m = _ethanol_heavy()
         hydrogenated = Chem.AddHs(to_rdkit(m), addCoords=True)
         back = from_rdkit(Chem.RemoveHs(hydrogenated))
-        assert list(back.atoms["element"]) == ["C", "C", "O"]
+        assert list(back.atoms["atomic_number"]) == [6, 6, 8]
         assert len(list(back.bonds)) == 2
         assert [b["type"] for b in back.bonds] == ["c3-c3", "c3-oh"]
 
     def test_a_bond_type_rdkit_changes_resets_the_bond_number(self):
-        benzene = mp.io.smiles.SmilesIr.parse("c1ccccc1").to_atomistic()
+        benzene = mp.io.smiles.read_smiles("c1ccccc1").to_atomistic()
         mol = Chem.RWMol(to_rdkit(benzene))
         Chem.Kekulize(mol, clearAromaticFlags=True)
         back = from_rdkit(mol)
@@ -157,7 +159,7 @@ def test_generate_3d_returns_a_new_hydrogenated_structure_with_coordinates():
     m = _ethanol_heavy()
     before = _snapshot(m)
     out = generate_3d(m, optimize=False)
-    assert len(out.entities()) == 9  # C2H5OH
+    assert out.n_atoms == 9  # C2H5OH
     assert np.isfinite(out.atoms["x", "y", "z"]).all()
     assert out.atoms["name"].tolist()[:3] == ["C1", "C2", "O1"]
     assert _snapshot(m) == before
@@ -166,6 +168,6 @@ def test_generate_3d_returns_a_new_hydrogenated_structure_with_coordinates():
 def test_generate_3d_embeds_the_structure_as_it_is_now():
     m = _ethanol_heavy()
     generate_3d(m, optimize=False)
-    list(m.atoms)[2]["element"] = "N"
+    list(m.atoms)[2]["atomic_number"] = 7
     out = generate_3d(m, optimize=False)
-    assert list(out.atoms["element"])[:3] == ["C", "C", "N"]
+    assert list(out.atoms["atomic_number"])[:3] == [6, 6, 7]

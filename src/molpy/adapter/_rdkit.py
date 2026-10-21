@@ -88,13 +88,13 @@ def to_rdkit(atomistic: Atomistic) -> Chem.Mol:
     module docstring for what is carried and what is lost.
 
     Args:
-        atomistic: The structure to convert. Every atom needs an ``element``.
+        atomistic: The structure to convert. Every atom needs an ``atomic_number``.
 
     Returns:
         A new, sanitized ``rdkit.Chem.Mol``.
 
     Raises:
-        KeyError: If an atom has no ``element``, or only some atoms have
+        KeyError: If an atom has no ``atomic_number``, or only some atoms have
             coordinates (a missing coordinate is not ``0.0``).
         ValueError: If a bond type has no RDKit counterpart.
         TypeError: If a graph-level prop is not a bool, int, float or str.

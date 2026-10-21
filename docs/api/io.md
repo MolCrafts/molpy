@@ -13,7 +13,7 @@ example `mp.io.lammps.LammpsDumpReader(path)` and
 | Structure files | `read_pdb` / `write_pdb`, `read_mol2` / `write_mol2`, `read_gro` / `write_gro`, `read_xyz` / `write_xyz`, `read_lammps_data` / `write_lammps_data`, plus CIF, CUBE, XSF, POSCAR, SDF and AMBER readers |
 | Force fields | `mp.io.lammps.LammpsForcefieldReader` / `LammpsForcefieldWriter`; `mp.io.gromacs.GromacsTopForcefieldReader` / `GromacsTopForcefieldWriter`; corresponding classes in `amber`, `openmm_xml` and `xml` |
 | Trajectories | `<Format>Reader` / `<Format>Writer` in `pdb`, `gro`, `xyz`, `lammps`, `dcd`, `trr` and `xtc` |
-| SMILES and CGsmiles | `mp.io.smiles.SmilesIr.parse(text)`, `mp.io.cgsmiles.CgSmilesIr.parse(text)` |
+| SMILES and CGsmiles | `mp.io.smiles.read_smiles(text)`, `mp.io.cgsmiles.read_cgsmiles(text)` |
 | Scientific records | `mp.io.write_mrec(path, frame=..., trajectory=..., forcefield=...)`, `mp.io.mrec.MrecFile(path)`, `mp.io.mrec.MrecReader(path)` |
 | Wire frames | `mp.io.read_wire_frame` / `mp.io.write_wire_frame` |
 | Logs and metrics | `mp.io.read_lammps_log`; molpy's `lammps.LammpsLogMetricReader`, `mrec.MrecMetricReader` and `mlp_jsonl.MlpJsonlMetricReader` |

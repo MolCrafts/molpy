@@ -25,7 +25,7 @@ import molpy as mp
 from molpy.ff.typifier import OplsAaTypifier
 
 # 1. Build the structure
-mol = mp.io.smiles.SmilesIr.parse("CCO").to_atomistic()
+mol = mp.io.smiles.read_smiles("CCO").to_atomistic()
 mol, _ = mp.conformer.Conformer(add_hydrogens=True, seed=42).generate(mol)
 mol.generate_topology(gen_angle=True, gen_dihedral=True, clear_existing=True)  # in place
 
@@ -169,12 +169,12 @@ units = {"CAPA": "C[>]", "EO": "[<]OCC[>]", "CAPB": "[<]OC"}
 conformer = mp.conformer.Conformer(seed=42)
 library = {
     name: conformer.generate(
-        mp.io.smiles.SmilesIr.from_fragment(body).to_template()
+        mp.io.smiles.read_smiles_fragment(body).to_template()
     )[0]
     for name, body in units.items()
 }
 
-sites = mp.io.cgsmiles.CgSmilesIr.parse("{[#CAPA][#EO]|6[#CAPB]}").to_coarsegrain()
+sites = mp.io.cgsmiles.read_cgsmiles("{[#CAPA][#EO]|6[#CAPB]}").to_coarsegrain()
 chain = mp.builder.Assembler(library, mp.builder.GrowthPlacer()).assemble(sites, mp.Atomistic)
 
 typed_chain = OplsAaTypifier(strict=True).typify(chain)

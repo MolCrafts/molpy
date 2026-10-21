@@ -2,8 +2,8 @@
 
 ``SmilesIr`` (the parsed text), ``SmilesError`` (every refusal of the
 SMILES family) and ``BondingDescriptor``. Parse a molecule with
-``SmilesIr.parse(text).to_atomistic()`` and write it with
-``str(SmilesIr.from_atomistic(mol))``.
+``read_smiles(text).to_atomistic()`` and write it with
+``write_smiles(mol)``.
 SMARTS is :mod:`molpy.perceive`'s.
 """
 

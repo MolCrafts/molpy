@@ -19,7 +19,7 @@ def _bond_orders(text: str) -> list[str]:
 
 
 def _benzoic_acid() -> mp.Atomistic:
-    graph = mp.io.smiles.SmilesIr.parse("c1ccccc1C(=O)O").to_atomistic()
+    graph = mp.io.smiles.read_smiles("c1ccccc1C(=O)O").to_atomistic()
     return mp.conformer.Conformer(seed=1).generate(graph)[0]
 
 

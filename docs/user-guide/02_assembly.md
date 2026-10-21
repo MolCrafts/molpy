@@ -31,7 +31,7 @@ conformer = mp.conformer.Conformer(seed=42)
 
 def unit(body: str) -> mp.Atomistic:
     """One CGsmiles fragment body as a 3D molecule with hydrogens and ports."""
-    return conformer.generate(mp.io.smiles.SmilesIr.from_fragment(body).to_template())[0]
+    return conformer.generate(mp.io.smiles.read_smiles_fragment(body).to_template())[0]
 
 
 eo = unit("[<]OCC[>]")  # -O-CH2-CH2-
@@ -42,8 +42,8 @@ for port in eo.ports:
 # C H >
 ```
 
-`SmilesIr.from_fragment(body).to_template()` returns the fragment body as a ported
-`mp.Atomistic`; `CgSmilesIr.parse(s).templates()` returns a dict from fragment name to one
+`read_smiles_fragment(body).to_template()` returns the fragment body as a ported
+`mp.Atomistic`; `read_cgsmiles(s).templates()` returns a dict from fragment name to one
 such template for every fragment a CGsmiles string defines. Whether two ports may join is decided by their kind, label and order:
 
 | Port | Joins |
@@ -88,7 +88,7 @@ copy is turned and moved so that the anchor of its port lands on its parent's le
 handle, pointing back along that bond.
 
 ```python
-sites = mp.io.cgsmiles.CgSmilesIr.parse("{[#EO]|10}").to_coarsegrain()
+sites = mp.io.cgsmiles.read_cgsmiles("{[#EO]|10}").to_coarsegrain()
 chain = mp.builder.Assembler({"EO": eo}, mp.builder.GrowthPlacer()).assemble(sites, mp.Atomistic)
 print(chain.n_atoms, chain.n_ports)  # 72 2
 ```
@@ -118,7 +118,7 @@ for i in range(5):
         cg.def_cgbond(previous, backbone)
     previous = backbone
 
-groups = mp.perceive.SubgraphMatcher(mp.io.cgsmiles.CgSmilesIr.parse("{[#1][#2]}").to_coarsegrain()).find(cg)
+groups = mp.perceive.SubgraphMatcher(mp.io.cgsmiles.read_cgsmiles("{[#1][#2]}").to_coarsegrain()).find(cg)
 sites = mp.builder.Coarsener(cg).coarsen(groups, ["MMA"] * len(groups))
 
 mma = unit("[<]CC([>])(C)C(=O)OC")
@@ -163,8 +163,8 @@ Every atom of the world gets two integer ids:
 - `mol_id` — its connected component, counted from 1.
 
 ```python
-sites = mp.io.cgsmiles.CgSmilesIr.parse("{[#EO]|3}").to_coarsegrain()
-sites.merge(mp.io.cgsmiles.CgSmilesIr.parse("{[#EO]|4}").to_coarsegrain())
+sites = mp.io.cgsmiles.read_cgsmiles("{[#EO]|3}").to_coarsegrain()
+sites.merge(mp.io.cgsmiles.read_cgsmiles("{[#EO]|4}").to_coarsegrain())
 two = mp.builder.Assembler({"EO": eo}, mp.builder.GrowthPlacer()).assemble(sites, mp.Atomistic)
 atoms = two.to_frame()["atoms"]
 print(sorted(set(atoms["frag_id"].tolist())))  # [0, 1, 2, 3, 4, 5, 6]

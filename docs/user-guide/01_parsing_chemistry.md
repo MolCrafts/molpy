@@ -27,7 +27,7 @@ parsed CGsmiles string.
 
 ## SMILES describes one specific molecule
 
-`mp.io.smiles.SmilesIr.parse(s).to_atomistic()` is the way from a SMILES string to a
+`mp.io.smiles.read_smiles(s).to_atomistic()` is the way from a SMILES string to a
 structure. `SmilesIr` parses the string once; `to_atomistic()` returns an
 `Atomistic` containing its atoms and bonds.
 
@@ -35,7 +35,7 @@ structure. `SmilesIr` parses the string once; `to_atomistic()` returns an
 ```python
 import molpy as mp
 
-mol = mp.io.smiles.SmilesIr.parse("CC(=O)OCC").to_atomistic() # ethyl acetate
+mol = mp.io.smiles.read_smiles("CC(=O)OCC").to_atomistic() # ethyl acetate
 print(f"atoms: {len(mol.atoms)}, bonds: {len(mol.bonds)}")
 
 elements = [atom.get("element") for atom in mol.atoms]
@@ -55,7 +55,7 @@ them:
 
 
 ```python
-skeleton = mp.io.smiles.SmilesIr.parse("CCO").to_atomistic()
+skeleton = mp.io.smiles.read_smiles("CCO").to_atomistic()
 filled = mp.perceive.add_hydrogens(skeleton)
 
 print(f"skeleton: {len(skeleton.atoms)} atoms") # C, C, O
@@ -77,7 +77,7 @@ names; `to_atomistic()` returns them together as one disconnected graph, and
 
 
 ```python
-ir = mp.io.smiles.SmilesIr.parse("[Li+].[F-]")
+ir = mp.io.smiles.read_smiles("[Li+].[F-]")
 print(f"components: {ir.n_components}")
 
 together = ir.to_atomistic()
@@ -102,7 +102,7 @@ occurrence opens the ring, the second closes it.
 
 
 ```python
-benzene = mp.io.smiles.SmilesIr.parse("c1ccccc1").to_atomistic()
+benzene = mp.io.smiles.read_smiles("c1ccccc1").to_atomistic()
 print([atom.get("is_aromatic") for atom in benzene.atoms])
 ```
 
@@ -117,7 +117,7 @@ explicit double bonds comes out aromatic too:
 
 
 ```python
-kekule = mp.io.smiles.SmilesIr.parse("C1=CC=CC=C1").to_atomistic()
+kekule = mp.io.smiles.read_smiles("C1=CC=CC=C1").to_atomistic()
 print("as written:  ", [atom.get("is_aromatic") for atom in kekule.atoms])
 
 perceived = mp.perceive.assign_aromaticity(kekule)
@@ -143,7 +143,7 @@ read — it has matches to find.
 query = mp.perceive.SmartsPattern("[C;X4][O;H1]")
 print(f"query atoms: {query.n_query_atoms}, max bond depth: {query.max_bond_depth}")
 
-ethanol = mp.perceive.add_hydrogens(mp.io.smiles.SmilesIr.parse("CCO").to_atomistic())
+ethanol = mp.perceive.add_hydrogens(mp.io.smiles.read_smiles("CCO").to_atomistic())
 print("matches ethanol:", query.has_match(ethanol))
 for match in query.find_matches(ethanol):
  print(" matched atom handles:", match.atoms)
@@ -180,7 +180,7 @@ bond.
 
 
 ```python
-ir = mp.io.cgsmiles.CgSmilesIr.parse("{[#EO]|3}.{#EO=[<]OCC[>]}")
+ir = mp.io.cgsmiles.read_cgsmiles("{[#EO]|3}.{#EO=[<]OCC[>]}")
 
 eo = ir.templates()["EO"]  # the unit: a ported template
 print(f"EO template: {eo.n_atoms} atoms, {eo.n_ports} ports")
@@ -209,14 +209,14 @@ to_atomistic(): 9 heavy atoms, 8 bonds
 
 | You have | You want | Use |
 | --- | --- | --- |
-| A SMILES string, one molecule | An editable graph | `mp.io.smiles.SmilesIr.parse(s).to_atomistic()` |
-| A SMILES string, several molecules | One graph each | `mp.io.smiles.SmilesIr.parse(s).components()` |
-| A SMILES string | To inspect before converting | `mp.io.smiles.SmilesIr.parse(s)` |
+| A SMILES string, one molecule | An editable graph | `mp.io.smiles.read_smiles(s).to_atomistic()` |
+| A SMILES string, several molecules | One graph each | `mp.io.smiles.read_smiles(s).components()` |
+| A SMILES string | To inspect before converting | `mp.io.smiles.read_smiles(s)` |
 | A structural rule | To find where it matches | `mp.perceive.SmartsPattern(p)` |
 | Missing hydrogens / aromaticity | A perceived structure | `mp.perceive.add_hydrogens(mol)`, `mp.perceive.assign_*(mol)` |
-| A CGsmiles string with fragments | Ported unit templates | `mp.io.cgsmiles.CgSmilesIr.parse(s).templates()` |
-| One fragment body such as `[<]OCC[>]` | One ported unit template | `mp.io.smiles.SmilesIr.from_fragment(body).to_template()` |
-| A CGsmiles string | A site graph (topology) | `mp.io.cgsmiles.CgSmilesIr.parse(s).to_coarsegrain()` |
+| A CGsmiles string with fragments | Ported unit templates | `mp.io.cgsmiles.read_cgsmiles(s).templates()` |
+| One fragment body such as `[<]OCC[>]` | One ported unit template | `mp.io.smiles.read_smiles_fragment(body).to_template()` |
+| A CGsmiles string | A site graph (topology) | `mp.io.cgsmiles.read_cgsmiles(s).to_coarsegrain()` |
 | Unit templates and a site graph | A polymer | `mp.builder.Assembler(library, mp.builder.GrowthPlacer())` |
 
 Reach for `SmartsPattern` only for matching rules that feed the typifier, never

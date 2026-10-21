@@ -83,7 +83,7 @@ from molpy.ff.charge import Am1BccModel
 from molpy.ff.typifier import AtdTypifier, GaffTypifier
 
 mol, _ = mp.conformer.Conformer(add_hydrogens=True, seed=42).generate(
-    mp.io.smiles.SmilesIr.parse("CCO").to_atomistic()
+    mp.io.smiles.read_smiles("CCO").to_atomistic()
 )  # sqm needs 3D coordinates
 labelled = AtdTypifier(parameter_set="gaff2").typify(mol)  # GAFF2 types, native
 charges = Am1BccModel(parameter_set="bcc", work_dir="amber_work").assign(labelled)

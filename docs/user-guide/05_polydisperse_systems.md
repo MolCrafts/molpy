@@ -30,7 +30,7 @@ UNITS = {
 conformer = mp.conformer.Conformer(seed=42)
 library = {
     name: conformer.generate(
-        mp.io.smiles.SmilesIr.from_fragment(body).to_template()
+        mp.io.smiles.read_smiles_fragment(body).to_template()
     )[0]
     for name, body in UNITS.items()
 }
@@ -286,7 +286,7 @@ n_chains = 5  # a few chains for this guide; use len(sz_chains) for a production
 atomistic_chains = []
 for chain in sz_chains[:n_chains]:
     notation = "{[#HEAD]" + "".join(f"[#{m}]" for m in chain.monomers) + "[#TAIL]}"
-    sites = mp.io.cgsmiles.CgSmilesIr.parse(notation).to_coarsegrain()
+    sites = mp.io.cgsmiles.read_cgsmiles(notation).to_coarsegrain()
     atomistic_chains.append(assembler.assemble(sites, mp.Atomistic))
 
 for chain, built in zip(sz_chains, atomistic_chains):
