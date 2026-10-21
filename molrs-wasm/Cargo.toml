@@ -65,7 +65,7 @@ num-complex = "0.4"
 zarrs = { version = "0.23", default-features = false }
 # Packed `*.mrec.zip` stores hold stored (never deflated) entries, so the
 # reader needs only the zip container walk — no compression backends.
-zip = { version = "8", default-features = false }
+zip = { version = "9", default-features = false }
 console_error_panic_hook = "0.1"
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
