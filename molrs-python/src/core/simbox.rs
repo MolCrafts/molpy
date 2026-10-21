@@ -3,6 +3,7 @@
 //!
 //! [`PyCell`] mirrors the core [`Cell`] enum — the one argument that says what
 //! the cell is — as a frozen class with one staticmethod per variant.
+#![allow(clippy::clone_on_copy)]
 //! [`PyBox`] wraps [`SimBox`], which holds a resolved [`Cell`]:
 //! `Box(cell, origin, pbc)` mirroring `SimBox::new(Cell, origin, pbc)` (the
 //! cell a `Cell` or a 3×3 matrix), the factories `Box.cube` / `Box.ortho` /

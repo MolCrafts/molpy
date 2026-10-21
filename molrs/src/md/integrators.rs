@@ -1,4 +1,5 @@
 //! The integrators, [`VelocityVerlet`] and [`Langevin`], that advance an [`MdState`].
+#![allow(dead_code)]
 
 use ndarray::{Array1, Array2, ArrayView1, ArrayView2, Zip};
 
@@ -207,9 +208,9 @@ impl Stepper {
 /// The second argument is a [`ForceProvider`], and it is the only thing an
 /// integrator knows about force fields. The potential, the neighbour
 /// bookkeeping and the periodic régime all live behind it:
-/// [`SelfPairedForces`](crate::md::SelfPairedForces) hands the potential raw
-/// coordinates, [`MicPairs`](crate::md::MicPairs) gives it minimum-image
-/// pairs, and [`GhostPairs`](crate::md::GhostPairs) gives it periodic copies
+/// `SelfPairedForces` hands the potential raw
+/// coordinates, `MicPairs` gives it minimum-image
+/// pairs, and `GhostPairs` gives it periodic copies
 /// and folds the forces back. An integrator holds no skin, no halo and no
 /// potential, so adding a fourth way to make a force changes nothing here.
 ///

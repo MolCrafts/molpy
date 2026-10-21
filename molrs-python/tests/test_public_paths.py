@@ -414,6 +414,9 @@ def test_a_reader_or_writer_is_named_after_its_module_with_word_cased_acronyms()
 # Every subpackage cases acronyms as words. Kept as their owners write them:
 # numpy's ``DType``, and ``HBond`` -- H is the element, not an acronym.
 _CASING_KEPT_PREFIXES = ("DType", "HBond")
+# The phase driver is `MD`, the same name Atomiverse and the user-facing
+# API use. Every other acronym is still cased as a word.
+_ACRONYM_CLASS_NAMES = frozenset({"MD"})
 _ALL_CAPS_ACRONYM = re.compile(
     r"[A-Z]{2,}[a-z]|[A-Z]{3,}|[a-z0-9][A-Z]{2,}$|^[A-Z]{2,}$"
 )
@@ -434,6 +437,7 @@ def test_class_names_case_acronyms_as_words():
         path
         for path, value in _objects().items()
         if inspect.isclass(value)
+        and value.__name__ not in _ACRONYM_CLASS_NAMES
         and _ALL_CAPS_ACRONYM.search(_without_kept_prefix(value.__name__))
     )
     assert not wrong

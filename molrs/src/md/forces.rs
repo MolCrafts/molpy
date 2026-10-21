@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use ndarray::{Array2, ArrayView2};
 
 use molrs::core::VerletSkin;
