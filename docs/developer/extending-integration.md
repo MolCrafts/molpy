@@ -93,7 +93,7 @@ def to_ase(atomistic: Atomistic) -> ase.Atoms:
     """New ``ase.Atoms`` from ``atomistic``; the input is not touched."""
     atoms = list(atomistic.atoms)
     return ase.Atoms(
-        numbers=[a["atomic_number"] for a in atoms],
+        numbers=[int(a["atomic_number"]) for a in atoms],
         positions=[[a[k] for k in _XYZ] for a in atoms],
     )
 

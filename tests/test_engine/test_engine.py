@@ -132,7 +132,7 @@ class TestEngineSettings:
         text = repr(engine)
         assert "LammpsEngine" in text
         assert "lmp" in text
-        assert str(tmp_path) in text
+        assert repr(str(tmp_path)) in text
         assert "myenv" in text
 
 
