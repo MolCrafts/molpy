@@ -334,6 +334,78 @@ impl StyleSpec {
         Ok((gathered, rows))
     }
 
+    /// The style params a kernel of this style reads: every declared style
+    /// parameter, its default filled where `style` lacks it, and nothing
+    /// else. A key the spec does not declare is dropped.
+    ///
+    /// Two force fields that state a style differently but alike — one
+    /// spells out a default (`coul/cut`'s `delta = 0`), the other leaves it
+    /// out — give the same params here.
+    ///
+    /// # Errors
+    ///
+    /// A value of the wrong kind, as [`gather`](Self::gather).
+    pub fn priced_style_params(&self, style: &Params) -> Result<Params, IrError> {
+        self.priced("", &self.style_params, style)
+    }
+
+    /// The style params of `style` that are not at their declared default:
+    /// what a writer must find a place for. A parameter stated at its
+    /// default (`coul/cut`'s `delta = 0`, `lj/cut`'s `mixing =
+    /// "arithmetic"`) prices as its absence does — [`gather`](Self::gather)
+    /// fills that same value — so a format with no place for it loses
+    /// nothing by leaving it out; [`priced_style_params`] gives the two the
+    /// same params for the same reason. A key the spec does not declare, and
+    /// any array, is kept: it is the writer's to place or refuse.
+    ///
+    /// [`priced_style_params`]: Self::priced_style_params
+    pub fn style_params_off_default(&self, style: &Params) -> Params {
+        let mut defaults = Params::new();
+        self.fill("", &self.style_params, &mut defaults)
+            .expect("an empty params holds no value of the wrong kind");
+        style
+            .iter()
+            .filter(|(key, value)| defaults.get(key) != Some(*value))
+            .map(|(key, value)| (key, value.clone()))
+            .collect()
+    }
+
+    /// The first numeric parameter of `row` this spec does not declare (a
+    /// member of an indexed family is declared), passing over the keys that
+    /// price nothing (annotations and estimate provenance): what a writer of this
+    /// style's rows would drop, and so refuses.
+    pub fn undeclared_param<'a>(&self, row: &'a Params) -> Option<&'a str> {
+        row.iter_parameters()
+            .map(|(key, _)| key)
+            .find(|key| !declares(&self.params, key))
+    }
+
+    /// The row params a kernel of this style reads off `row`: every declared
+    /// per-type parameter (each member of an indexed family) with its
+    /// default filled, and nothing else. What the spec does not declare —
+    /// an annotation (`element`, `desc`), an estimate's provenance, a
+    /// reader's bookkeeping (`id`) — prices nothing and is dropped.
+    ///
+    /// # Errors
+    ///
+    /// A value of the wrong kind, as [`gather`](Self::gather).
+    pub fn priced_row(&self, label: &str, row: &Params) -> Result<Params, IrError> {
+        self.priced(label, &self.params, row)
+    }
+
+    /// `params` with the defaults of `decls` filled, restricted to the keys
+    /// `decls` declare.
+    fn priced(&self, label: &str, decls: &[ParamSpec], params: &Params) -> Result<Params, IrError> {
+        let mut filled = params.clone();
+        self.fill(label, decls, &mut filled)?;
+        let declared = |key: &str| declares(decls, key);
+        Ok(filled
+            .iter()
+            .filter(|(key, _)| declared(key))
+            .map(|(key, value)| (key, value.clone()))
+            .collect())
+    }
+
     /// A row that states nothing, with every per-type default: what a
     /// per-instance term without a type row reads.
     pub fn default_row(&self) -> Params {
@@ -449,27 +521,31 @@ impl StyleSpec {
     }
 }
 
+/// Whether `key` is a member `<base><m>` of the indexed family `base`, or
+/// `base` itself.
+/// Whether `decls` declare `key`: a plain parameter by its name, an indexed
+/// family by any member `<name><m>` (or the bare name).
+fn declares(decls: &[ParamSpec], key: &str) -> bool {
+    decls.iter().any(|d| {
+        if d.indexed {
+            is_member(key, &d.name)
+        } else {
+            key == d.name
+        }
+    })
+}
+
+fn is_member(key: &str, base: &str) -> bool {
+    key.strip_prefix(base)
+        .is_some_and(|m| m.is_empty() || m.bytes().all(|b| b.is_ascii_digit()))
+}
+
 /// Every key of `row` (numeric, text or array) that is a member
 /// `<base><m>` of the indexed family `base`, or `base` itself.
 fn family(row: &Params, base: &str) -> Vec<String> {
-    let member = |key: &str| {
-        key.strip_prefix(base)
-            .is_some_and(|m| m.is_empty() || m.bytes().all(|b| b.is_ascii_digit()))
-    };
     row.iter()
-        .filter_map(|(k, v)| v.as_num().map(|x| (k, x)))
-        .map(|(k, _)| k)
-        .chain(
-            row.iter()
-                .filter_map(|(k, v)| v.as_text().map(|s| (k, s)))
-                .map(|(k, _)| k),
-        )
-        .chain(
-            row.iter()
-                .filter_map(|(k, v)| v.as_array().map(|a| (k, a)))
-                .map(|(k, _)| k),
-        )
-        .filter(|k| member(k))
+        .map(|(key, _)| key)
+        .filter(|key| is_member(key, base))
         .map(str::to_owned)
         .collect()
 }

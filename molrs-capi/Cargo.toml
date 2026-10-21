@@ -1,6 +1,6 @@
 [package]
 name = "molcrafts-molrs-capi"
-version = "0.18.0"
+version = "0.19.0"
 edition = "2024"
 authors = ["MolCrafts"]
 license = "BSD-3-Clause"
@@ -32,8 +32,8 @@ default = []
 # section impls are `molrs_forcefield_to_json` / `molrs_forcefield_from_json` — build 2 in
 # .cargo/config.toml, shared with molrs-cxxapi. Never `stream`: no tokio /
 # tungstenite in a C archive.
-molrs = { path = "../molrs", package = "molcrafts-molrs", version = "0.18.0", default-features = false, features = ["full", "filesystem", "rayon", "serde"] }
-molrs-ffi = { path = "../molrs-ffi", package = "molcrafts-molrs-ffi", version = "0.18.0" }
+molrs = { path = "../molrs", package = "molcrafts-molrs", version = "0.19.0", default-features = false, features = ["full", "filesystem", "rayon", "serde"] }
+molrs-ffi = { path = "../molrs-ffi", package = "molcrafts-molrs-ffi", version = "0.19.0" }
 slotmap = "1.0"
 ndarray = "0.17"
 # The element type of molrs's `c64` / `c128` columns (`Complex<f32>` /

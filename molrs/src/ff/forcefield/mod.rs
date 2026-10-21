@@ -417,6 +417,28 @@ impl Style {
         endpoints: &[&str],
         params: &Params,
     ) -> Result<bool, DefError> {
+        self.check_type_by(
+            name,
+            endpoints,
+            params,
+            |a, b| a == b,
+            Params::same_parameters,
+        )
+    }
+
+    /// [`Self::check_type`] under the given sameness: `same_type` decides
+    /// whether `name`'s stored params are the given ones, `same_pair_params`
+    /// whether those of a pair type stated under another name are. The
+    /// conflict rule is `==` and [`Params::same_parameters`];
+    /// [`ForceField::merge`] compares what the kernel prices ([`Pricing`]).
+    fn check_type_by(
+        &self,
+        name: &str,
+        endpoints: &[&str],
+        params: &Params,
+        same_type: impl Fn(&Params, &Params) -> bool,
+        same_pair_params: impl Fn(&Params, &Params) -> bool,
+    ) -> Result<bool, DefError> {
         let pair = match (&self.defs, endpoints) {
             (StyleDefs::Pair(_), [only]) => Some((*only, *only)),
             (StyleDefs::Pair(_), [i, j]) => Some((*i, *j)),
@@ -434,7 +456,7 @@ impl Style {
                 Some(_) => same_pair(stored[0], stored[1]),
                 None => stored == endpoints,
             };
-            return if same_endpoints && stored_params == params {
+            return if same_endpoints && same_type(stored_params, params) {
                 Ok(true)
             } else {
                 Err(DefError::TypeConflict {
@@ -450,7 +472,7 @@ impl Style {
         let Some(stated) = types.iter().find(|t| same_pair(&t.itom, &t.jtom)) else {
             return Ok(false);
         };
-        if stated.params.same_parameters(params) {
+        if same_pair_params(&stated.params, params) {
             Ok(true)
         } else {
             Err(DefError::PairConflict {
@@ -1060,6 +1082,67 @@ fn is_category_name(name: &str) -> bool {
         && bytes.all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_')
 }
 
+/// The relative difference within which [`ForceField::merge`] takes two
+/// numbers for one value.
+///
+/// Two sources of one force field store its numbers at their own precision:
+/// an AMBER prmtop keeps eight significant digits (`6.66666667` for
+/// `gaff.dat`'s `20.000 / 3`), and tleap converts θ₀ to radians with
+/// π = 3.141594, so every angle it writes reads back 4.3·10⁻⁷ above the
+/// degrees `gaff.dat` states (`109.8000471` for `c3-c3-hc`'s `109.80`). A
+/// value that differs by more than this is another parameter: no force field
+/// states one to seven significant digits.
+pub const MERGE_REL_TOL: f64 = 1e-6;
+
+/// What [`ForceField::merge`] compares two definitions of one style on:
+/// the parameters its kernel prices, defaults filled
+/// ([`StyleSpec::priced_style_params`](crate::ff::ir::StyleSpec::priced_style_params),
+/// [`StyleSpec::priced_row`](crate::ff::ir::StyleSpec::priced_row)) — or,
+/// for a style no registry declares, every parameter column — within
+/// [`MERGE_REL_TOL`].
+struct Pricing {
+    spec: Option<crate::ff::ir::StyleSpec>,
+}
+
+impl Pricing {
+    /// The pricing of the style `(category, name)`, from the process-wide
+    /// registry.
+    fn of(category: &str, name: &str) -> Self {
+        let spec = crate::ff::style_registry::with_global_registry(|r| {
+            r.style(category, name).map(|(spec, _)| spec.clone())
+        });
+        Self { spec }
+    }
+
+    /// Whether two style-param sets of this style price alike.
+    fn styles_alike(&self, a: &Params, b: &Params) -> bool {
+        self.alike(a, b, |spec, p| spec.priced_style_params(p).ok())
+    }
+
+    /// Whether two params of the type `name` price alike.
+    fn rows_alike(&self, name: &str, a: &Params, b: &Params) -> bool {
+        self.alike(a, b, |spec, p| spec.priced_row(name, p).ok())
+    }
+
+    /// `priced` the two through the spec and compare within tolerance; a
+    /// value the spec refuses (of the wrong kind) is alike only when
+    /// identical.
+    fn alike(
+        &self,
+        a: &Params,
+        b: &Params,
+        priced: impl Fn(&crate::ff::ir::StyleSpec, &Params) -> Option<Params>,
+    ) -> bool {
+        match &self.spec {
+            Some(spec) => match (priced(spec, a), priced(spec, b)) {
+                (Some(a), Some(b)) => a.approx_eq(&b, MERGE_REL_TOL),
+                _ => a == b,
+            },
+            None => a.parameters().approx_eq(&b.parameters(), MERGE_REL_TOL),
+        }
+    }
+}
+
 /// The unit system of a force field that declares none (LAMMPS `real`).
 const DEFAULT_UNITS: &str = "real";
 
@@ -1138,18 +1221,42 @@ impl ForceField {
 
     /// Merge `other` into `self`: the union of both definitions.
     ///
-    /// `other` is replayed through the definition primitives
-    /// ([`Self::def_style`], [`Style::def_type`]), so the conflict rule
-    /// holds unchanged: an identical re-definition is a no-op, a different one
-    /// is an error. Style params (pair `cutoff`, `coulomb`, `mixing`, …) take
-    /// part in the style identity check. `self`'s styles come first, then
-    /// `other`'s new styles in `other`'s order; types keep their order.
+    /// A style is identified by `(category, name)` and a type by its name
+    /// within its style, as for the definition primitives
+    /// ([`Self::def_style`], [`Style::def_type`]); `other`'s new styles and
+    /// types are defined through them. Where both define one, the two are
+    /// one definition when they **price alike** — what the style's kernel
+    /// reads from them is the same:
+    ///
+    /// - only the parameters the style's [spec](crate::ff::ir::StyleSpec)
+    ///   declares are compared, each declared default filled in where a
+    ///   definition leaves it out ([`StyleSpec::priced_style_params`],
+    ///   [`StyleSpec::priced_row`]). A `coul/cut` that states `delta = 0`
+    ///   and one that leaves it out are one style; a type's annotations,
+    ///   an estimate's provenance and a reader's bookkeeping (a prmtop atom
+    ///   type's `id`) take no part. A style no registry declares compares
+    ///   every parameter column ([`Params::parameters`]).
+    /// - numbers agree within a relative [`MERGE_REL_TOL`]
+    ///   ([`Params::approx_eq`]): two sources store one value at their own
+    ///   precision (tleap writes θ₀ in radians converted with π = 3.141594,
+    ///   4.3·10⁻⁷ off `gaff.dat`'s degrees, and eight significant digits of
+    ///   every number).
+    ///
+    /// Alike, `self`'s definition is kept; otherwise it is
+    /// `Err(DefError::StyleConflict)` / `Err(DefError::TypeConflict)` /
+    /// `Err(DefError::PairConflict)`, as from the primitives (a pair type is
+    /// also identified by its unordered endpoints). `self`'s styles come
+    /// first, then `other`'s new styles in `other`'s order; types keep their
+    /// order.
     ///
     /// Declared `units` and `special_bonds` are adopted when `self` declares
     /// none; two declared values that differ are
     /// `Err(DefError::UnitsConflict)` / `Err(DefError::SpecialBondsConflict)`.
     ///
     /// All-or-nothing: on `Err`, `self` is unchanged. `self.name` is kept.
+    ///
+    /// [`StyleSpec::priced_style_params`]: crate::ff::ir::StyleSpec::priced_style_params
+    /// [`StyleSpec::priced_row`]: crate::ff::ir::StyleSpec::priced_row
     pub fn merge(&mut self, other: &ForceField) -> Result<(), DefError> {
         let mut out = self.clone();
         match (&out.units, &other.units) {
@@ -1170,13 +1277,35 @@ impl ForceField {
             _ => {}
         }
         for style in &other.styles {
-            let target = out.define_style(style.defs.empty_like(), &style.name, &style.params)?;
+            let pricing = Pricing::of(style.category(), &style.name);
+            let target = out.merge_style(style, &pricing)?;
             for (name, endpoints, params) in style.type_rows() {
-                target.def_type(name, &endpoints, params.clone())?;
+                let alike = |a: &Params, b: &Params| pricing.rows_alike(name, a, b);
+                if !target.check_type_by(name, &endpoints, params, alike, alike)? {
+                    target.def_type(name, &endpoints, params.clone())?;
+                }
             }
         }
         *self = out;
         Ok(())
+    }
+
+    /// [`Self::merge`]'s style step: `self`'s style of `theirs`'s
+    /// `(category, name)` when it prices alike, `theirs`'s style (with no
+    /// types yet) when `self` has none, `Err(DefError::StyleConflict)`
+    /// otherwise.
+    fn merge_style(&mut self, theirs: &Style, pricing: &Pricing) -> Result<&mut Style, DefError> {
+        let params = match self.get_style(theirs.category(), &theirs.name) {
+            Some(ours) if !pricing.styles_alike(&ours.params, &theirs.params) => {
+                return Err(DefError::StyleConflict {
+                    category: theirs.category().to_owned(),
+                    name: theirs.name.clone(),
+                });
+            }
+            Some(ours) => ours.params.clone(),
+            None => theirs.params.clone(),
+        };
+        self.define_style(theirs.defs.empty_like(), &theirs.name, &params)
     }
 
     /// Define the `category` style named `name`, or return the existing one.
@@ -3089,6 +3218,152 @@ pub(crate) mod tests {
             "{merged:?}"
         );
         assert_same_definitions(&ff, &before);
+    }
+
+    /// A style param one force field states at its spec default and the
+    /// other leaves out is one style param: `coul/cut`'s `delta = 0`,
+    /// `lj/cut`'s `mixing = arithmetic`. A non-default value is another.
+    #[test]
+    fn merge_fills_spec_defaults_before_comparing_style_params() {
+        let coulomb = Params::from_iter(
+            [("coulomb", 332.0522173), ("dielectric", 1.0)]
+                .iter()
+                .copied(),
+        );
+        let mut stated = coulomb.clone();
+        stated.set("delta", 0.0);
+        let mut arithmetic = Params::new();
+        arithmetic.set("mixing", "arithmetic");
+        let mut ff = ForceField::new("target");
+        ff.def_style("pair", "coul/cut", coulomb.clone()).unwrap();
+        ff.def_style("pair", "lj/cut", Params::new()).unwrap();
+        let mut other = ForceField::new("source");
+        other.def_style("pair", "coul/cut", stated).unwrap();
+        other.def_style("pair", "lj/cut", arithmetic).unwrap();
+
+        ff.merge(&other).unwrap();
+        assert_eq!(ff.styles().len(), 2);
+        assert_eq!(
+            ff.get_style("pair", "coul/cut").unwrap().params(),
+            &coulomb,
+            "self's statement is kept"
+        );
+
+        let mut geometric = Params::new();
+        geometric.set("mixing", "geometric");
+        let mut other = ForceField::new("source");
+        other.def_style("pair", "lj/cut", geometric).unwrap();
+        let merged = ff.merge(&other);
+        assert!(
+            matches!(merged, Err(DefError::StyleConflict { .. })),
+            "{merged:?}"
+        );
+    }
+
+    /// Two sources store one value at their own precision: a prmtop's θ₀ is
+    /// `gaff.dat`'s degrees through tleap's π = 3.141594, 4.3e-7 above them,
+    /// and its torsion k eight significant digits of `PK / IDIVF`. Within
+    /// `MERGE_REL_TOL` they are one value and self's is kept; beyond it they
+    /// are two.
+    #[test]
+    fn merge_takes_numbers_within_its_tolerance_for_one_value() {
+        let angle =
+            |theta0: f64| Params::from_iter([("k", 46.3), ("theta0", theta0)].iter().copied());
+        let torsion = |k: f64| {
+            Params::from_iter(
+                [("k1", k), ("periodicity1", 2.0), ("phase1", 180.0)]
+                    .iter()
+                    .copied(),
+            )
+        };
+        let define = |theta0: f64, k: f64| {
+            let mut ff = ForceField::new("ff");
+            ff.def_style("angle", "harmonic", Params::new())
+                .unwrap()
+                .def_type("c3-c3-hc", &["c3", "c3", "hc"], angle(theta0))
+                .unwrap();
+            ff.def_style("dihedral", "periodic", Params::new())
+                .unwrap()
+                .def_type("c3-s6-ne-sy", &["c3", "s6", "ne", "sy"], torsion(k))
+                .unwrap();
+            ff
+        };
+        let mut ff = define(109.80, 20.0 / 3.0);
+        ff.merge(&define(109.80004705760963, 6.66666667)).unwrap();
+        assert_eq!(ff.get_angletypes().len(), 1);
+        assert_eq!(ff.get_angletypes()[0].params, angle(109.80), "self's kept");
+        assert_eq!(ff.get_dihedraltypes().len(), 1);
+
+        let merged = ff.merge(&define(109.81, 20.0 / 3.0));
+        assert!(
+            matches!(merged, Err(DefError::TypeConflict { .. })),
+            "{merged:?}"
+        );
+    }
+
+    /// What the style's spec does not declare prices nothing, and a merge
+    /// does not compare it: a prmtop atom type's LJ-class `id`, an estimate's
+    /// provenance, an annotation. A declared parameter one lacks is a
+    /// difference.
+    #[test]
+    fn merge_compares_only_what_the_spec_declares() {
+        let mut ff = ForceField::new("native");
+        let mut estimated = Params::from_iter([("k", 63.1), ("theta0", 109.68)].iter().copied());
+        estimated.set("estimated", 1.0);
+        estimated.set("estimate_method", "analogy");
+        ff.def_style("atom", "full", Params::new())
+            .unwrap()
+            .def_type(
+                "c3",
+                &[],
+                Params::from_iter([("mass", 12.01)].iter().copied()),
+            )
+            .unwrap();
+        ff.def_style("angle", "harmonic", Params::new())
+            .unwrap()
+            .def_type("f-c3-sy", &["f", "c3", "sy"], estimated.clone())
+            .unwrap();
+        let mut prmtop = ForceField::new("prmtop");
+        let mut with_id = Params::from_iter([("id", 4.0), ("mass", 12.01)].iter().copied());
+        with_id.set("desc", "sp3 carbon");
+        prmtop
+            .def_style("atom", "full", Params::new())
+            .unwrap()
+            .def_type("c3", &[], with_id)
+            .unwrap();
+        prmtop
+            .def_style("angle", "harmonic", Params::new())
+            .unwrap()
+            .def_type(
+                "f-c3-sy",
+                &["f", "c3", "sy"],
+                Params::from_iter(
+                    [("k", 63.1), ("theta0", 109.68004677699743)]
+                        .iter()
+                        .copied(),
+                ),
+            )
+            .unwrap();
+
+        ff.merge(&prmtop).unwrap();
+        assert_eq!(ff.get_atomtypes().len(), 1);
+        assert_eq!(ff.get_angletypes()[0].params, estimated, "self's kept");
+
+        let mut no_theta = ForceField::new("partial");
+        no_theta
+            .def_style("angle", "harmonic", Params::new())
+            .unwrap()
+            .def_type(
+                "f-c3-sy",
+                &["f", "c3", "sy"],
+                Params::from_iter([("k", 63.1)].iter().copied()),
+            )
+            .unwrap();
+        let merged = ff.merge(&no_theta);
+        assert!(
+            matches!(merged, Err(DefError::TypeConflict { .. })),
+            "{merged:?}"
+        );
     }
 
     #[test]

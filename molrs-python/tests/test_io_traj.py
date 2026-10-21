@@ -99,7 +99,10 @@ class TestFrameWriters:
         frame = molrs.io.read_xyz(water_xyz)
         path = tmp_path / "two.dcd"
         buf = bytearray(b"stale")
-        with molrs.io.dcd.DcdWriter(path) as on_disk, molrs.io.dcd.DcdWriter(buf) as in_memory:
+        with (
+            molrs.io.dcd.DcdWriter(path) as on_disk,
+            molrs.io.dcd.DcdWriter(buf) as in_memory,
+        ):
             assert buf == b""
             for _ in range(2):
                 on_disk.write(frame)
@@ -181,7 +184,9 @@ class TestDumpColumnChoice:
     def test_default_writes_every_column(self, tmp_path):
         path = tmp_path / "all.lammpstrj"
         molrs.io.write_lammps_dump(path, self._frame())
-        assert "ITEM: ATOMS id element mass mol x y z" in path.read_text(encoding="utf-8")
+        assert "ITEM: ATOMS id element mass mol x y z" in path.read_text(
+            encoding="utf-8"
+        )
 
     def test_rejects_a_column_the_frame_lacks(self, tmp_path):
         path = tmp_path / "missing.lammpstrj"

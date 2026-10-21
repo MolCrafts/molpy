@@ -594,27 +594,46 @@ pub fn read_lammps_data(source: PySource<'_>, atom_style: Option<&str>) -> PyRes
 /// OSError
 ///     If the frame cannot be written.
 #[pyfunction]
-#[pyo3(signature = (sink, frame, *, type_labels = None))]
+#[pyo3(signature = (sink, frame, *, type_labels = None, atom_style = None, units = None))]
 pub fn write_lammps_data(
     sink: PySink<'_>,
     frame: &PyFrame,
     type_labels: Option<BTreeMap<String, Vec<String>>>,
+    atom_style: Option<String>,
+    units: Option<String>,
 ) -> PyResult<()> {
+    if let Some(ref units) = units {
+        molrs::io::lammps::parse_lammps_units_style(units).map_err(PyValueError::new_err)?;
+    }
+    let options = molrs::io::lammps::LammpsDataWriteOptions { atom_style, units };
+    let write = |f: &molrs::core::Frame| {
+        sink.put(
+            |s| {
+                use molrs::io::writer::FrameWriter;
+                molrs::io::lammps::LammpsDataWriter::create(s)?
+                    .with_options(options)
+                    .write(f)
+            },
+            io_error_to_pyerr,
+        )
+    };
     match type_labels {
-        None => frame
-            .with_frame(|f| sink.put(|s| molrs::io::write_lammps_data(s, f), io_error_to_pyerr))?,
+        None => frame.with_frame(write)?,
         Some(extra) => {
             let mut work = frame.clone_core_frame()?;
             for (block, labels) in &extra {
                 molrs::core::TypeLabels::declare(&mut work, block, labels)
                     .map_err(PyValueError::new_err)?;
             }
-            sink.put(
-                |s| molrs::io::write_lammps_data(s, &work),
-                io_error_to_pyerr,
-            )
+            write(&work)
         }
     }
+}
+
+/// The atom style the LAMMPS data writer infers from this frame's columns.
+#[pyfunction]
+pub fn infer_lammps_atom_style(frame: &PyFrame) -> PyResult<String> {
+    frame.with_frame(|f| molrs::io::lammps::infer_lammps_atom_style(f).to_owned())
 }
 
 /// Write a frame as a one-snapshot LAMMPS dump. Several snapshots:
@@ -859,5 +878,10 @@ pub(crate) fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     ] {
         crate::add_function(m, "molrs.io", door)?;
     }
+    crate::add_function(
+        m,
+        "molrs.io.lammps",
+        wrap_pyfunction!(infer_lammps_atom_style, m)?,
+    )?;
     Ok(())
 }

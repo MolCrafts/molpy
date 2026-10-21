@@ -14,6 +14,7 @@ import numpy as np
 import pytest
 from molrs.stream import ControlCommand
 
+
 def _frame(n: int = 3, offset: float = 0.0) -> molrs.core.Frame:
     return molrs.core.Frame(
         blocks={
@@ -30,7 +31,9 @@ def _frame(n: int = 3, offset: float = 0.0) -> molrs.core.Frame:
 class TestFrameWireCodec:
     def test_round_trip_preserves_columns(self):
         frame = _frame()
-        back = molrs.io.read_wire_frame(molrs.io.write_wire_frame(frame, "msgpack"), "msgpack")
+        back = molrs.io.read_wire_frame(
+            molrs.io.write_wire_frame(frame, "msgpack"), "msgpack"
+        )
         np.testing.assert_allclose(back["atoms"]["x"], frame["atoms"]["x"])
         assert list(back["atoms"]["element"]) == ["C", "C", "C"]
 
@@ -38,13 +41,17 @@ class TestFrameWireCodec:
         # `_native.Frame.from_bytes` is a staticmethod on the bare PyO3 core; the
         # rich layer shadows it. Without the shadow a decoded stream frame
         # would not accept `frame["atoms"]["x"]`.
-        back = molrs.io.read_wire_frame(molrs.io.write_wire_frame(_frame(), "msgpack"), "msgpack")
+        back = molrs.io.read_wire_frame(
+            molrs.io.write_wire_frame(_frame(), "msgpack"), "msgpack"
+        )
         assert isinstance(back, molrs.core.Frame)
 
     def test_round_trip_preserves_the_box(self):
         frame = _frame()
         frame.box = molrs.core.Box(molrs.core.Cell.matrix(np.eye(3) * 10.0))
-        back = molrs.io.read_wire_frame(molrs.io.write_wire_frame(frame, "msgpack"), "msgpack")
+        back = molrs.io.read_wire_frame(
+            molrs.io.write_wire_frame(frame, "msgpack"), "msgpack"
+        )
         assert back.box is not None
         np.testing.assert_allclose(back.box.matrix, frame.box.matrix)
 

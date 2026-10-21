@@ -323,7 +323,9 @@ macro_rules! region_methods {
                 compose_or_defer("or", slf.as_any(), other)
             }
 
-            /// Complement: ``~self``.
+            /// Complement: ``~self``, every point ``self`` does not contain.
+            /// A point on the boundary is ``self``'s, so ``self`` and
+            /// ``~self`` never share a point.
             fn __invert__(slf: &Bound<'_, Self>) -> PyResult<PyRegion> {
                 compose("not", slf.as_any(), None)
             }

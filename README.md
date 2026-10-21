@@ -69,7 +69,7 @@ for all of them (`builder`, `io`, `smiles`, `compute`, `voronoi`,
 drops `rayon` (wasm, Pyodide).
 
 ```toml
-molcrafts-molrs = { version = "0.17", features = ["io", "smiles", "conformer"] }
+molcrafts-molrs = { version = "0.19", features = ["io", "smiles", "conformer"] }
 ```
 
 | Environment | Install | Import / use |

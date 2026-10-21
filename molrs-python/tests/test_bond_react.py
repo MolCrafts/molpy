@@ -37,10 +37,24 @@ def _system() -> molrs.core.Frame:
     ``Masses`` section reads (the writer derives none from the species)."""
     mol = molrs.core.Atomistic()
     a = mol.add_atom(
-        atomic_number=6, type="c3", mass=12.011, x=0.0, y=0.0, z=0.0, charge=0.0, mol_id=1
+        atomic_number=6,
+        type="c3",
+        mass=12.011,
+        x=0.0,
+        y=0.0,
+        z=0.0,
+        charge=0.0,
+        mol_id=1,
     )
     b = mol.add_atom(
-        atomic_number=6, type="c3", mass=12.011, x=1.53, y=0.0, z=0.0, charge=0.0, mol_id=1
+        atomic_number=6,
+        type="c3",
+        mass=12.011,
+        x=1.53,
+        y=0.0,
+        z=0.0,
+        charge=0.0,
+        mol_id=1,
     )
     mol.add_bond(a, b, type="c3-c3")
     frame = mol.to_frame()
@@ -62,7 +76,9 @@ def _template() -> molrs.io.lammps.BondReactTemplate:
     c_post = post.add_atom(**c3, x=0.0, y=0.0, z=0.0, react_id=1)
     o_post = post.add_atom(**oh, x=1.41, y=0.0, z=0.0, react_id=2)
     post.add_bond(c_post, o_post, type="c3-oh")
-    return molrs.io.lammps.BondReactTemplate(pre=pre, post=post, initiator_atoms=[c_pre, o_pre])
+    return molrs.io.lammps.BondReactTemplate(
+        pre=pre, post=post, initiator_atoms=[c_pre, o_pre]
+    )
 
 
 def test_the_template_keeps_its_objects_and_writes_a_map(tmp_path):
@@ -73,7 +89,9 @@ def test_the_template_keeps_its_objects_and_writes_a_map(tmp_path):
     lines = (tmp_path / "rxn1.map").read_text(encoding="utf-8").splitlines()
     assert "2 equivalences" in lines
     assert "0 edgeIDs" in lines and "0 deleteIDs" in lines
-    sections = [lines.index(s) for s in ("InitiatorIDs", "EdgeIDs", "DeleteIDs", "Equivalences")]
+    sections = [
+        lines.index(s) for s in ("InitiatorIDs", "EdgeIDs", "DeleteIDs", "Equivalences")
+    ]
     assert sections == sorted(sections)
     assert lines[lines.index("Equivalences") + 2 :] == ["1   1", "2   2"]
     buf = bytearray(b"stale")
@@ -120,15 +138,21 @@ def test_a_forcefield_missing_a_label_writes_nothing(tmp_path):
     ff = molrs.ff.forcefield.ForceField("hand")
     atoms = ff.def_style("atom", "full")
     c3 = atoms.def_type("c3", mass=12.011)
-    ff.def_style("pair", "lj/cut", {"cutoff": 9.0}).def_type("c3", c3, epsilon=0.1, sigma=3.4)
+    ff.def_style("pair", "lj/cut", {"cutoff": 9.0}).def_type(
+        "c3", c3, epsilon=0.1, sigma=3.4
+    )
     with pytest.raises(ValueError):
-        molrs.io.write_lammps_bond_react_system(workdir, _system(), ff, {"rxn1": _template()})
+        molrs.io.write_lammps_bond_react_system(
+            workdir, _system(), ff, {"rxn1": _template()}
+        )
     assert not workdir.exists()
 
 
 def test_a_sequence_of_templates_is_named_rxn_n(tmp_path):
     workdir = tmp_path / "seq"
-    molrs.io.write_lammps_bond_react_system(workdir, _system(), _forcefield(), [_template()])
+    molrs.io.write_lammps_bond_react_system(
+        workdir, _system(), _forcefield(), [_template()]
+    )
     assert (workdir / "rxn1_pre.mol").exists()
 
 
@@ -142,7 +166,8 @@ def test_lammps_reads_the_file_set(tmp_path):
         "units real\natom_style full\n"
         "read_data rxn.data\ninclude rxn.ff\n"
         "molecule pre rxn1_pre.mol\nmolecule post rxn1_post.mol\n"
-        "run 0\n", encoding="utf-8"
+        "run 0\n",
+        encoding="utf-8",
     )
     run = subprocess.run(
         ["lmp", "-in", "in.check", "-log", "none"],

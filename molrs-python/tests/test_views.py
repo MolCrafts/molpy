@@ -80,7 +80,7 @@ class TestOneClass:
             __import__("molrs.views")
 
     def test_graph_out_paths_return_the_one_class(self) -> None:
-        from_smiles = molrs.io.smiles.SmilesIr.parse("CO").to_atomistic()
+        from_smiles = molrs.io.smiles.read_smiles("CO").to_atomistic()
         for graph in (
             from_smiles,
             copy.copy(from_smiles),
@@ -106,7 +106,7 @@ class TestProps:
         assert graph.props == {"label": "x"}
 
     def test_perception_output_keeps_props(self) -> None:
-        graph = molrs.io.smiles.SmilesIr.parse("CO").to_atomistic()
+        graph = molrs.io.smiles.read_smiles("CO").to_atomistic()
         graph.props["label"] = "methanol"
         perceived = molrs.perceive.add_hydrogens(graph)
         assert perceived.props == {"label": "methanol"}
@@ -268,7 +268,9 @@ class TestFactories:
     def test_virtual_site_kind_is_given_once(self) -> None:
         graph = molrs.core.Atomistic()
         with pytest.raises(ValueError, match="not both"):
-            graph.add_atom(kind=molrs.core.DrudeParticle, atomic_number=0, vsite="drude")
+            graph.add_atom(
+                kind=molrs.core.DrudeParticle, atomic_number=0, vsite="drude"
+            )
         with pytest.raises(TypeError, match="kind must be"):
             graph.add_atom(kind=molrs.core.Atom, atomic_number=0)
         assert len(graph.atoms) == 0
@@ -399,6 +401,30 @@ class TestRefs:
         assert empty["type"].shape == (0,)
         assert "impropers" in repr(empty)
 
+    def test_from_frame_reads_back_drudes_and_virtual_sites(self) -> None:
+        graph = molrs.core.Atomistic()
+        o = graph.add_atom(atomic_number=8, x=0.0, y=0.0, z=0.0)
+        h1 = graph.add_atom(atomic_number=1, x=0.96, y=0.0, z=0.0)
+        h2 = graph.add_atom(atomic_number=1, x=-0.24, y=0.93, z=0.0)
+        graph.add_bond(o, h1)
+        graph.add_bond(o, h2)
+        shell = graph.add_atom(
+            kind=molrs.core.DrudeParticle, atomic_number=0, charge=-1.0
+        )
+        m = graph.add_atom(kind=molrs.core.MasslessSite, atomic_number=0, charge=-1.0)
+        graph.add_term("drudes", [o, shell], type="OW-DOW", k=500.0)
+        graph.add_term("virtual_sites", [m, o, h1, h2], style="average3")
+
+        frame = graph.to_frame()
+        back = molrs.core.Atomistic.from_frame(frame)
+        assert back.n_terms("drudes") == 1
+        assert back.n_terms("virtual_sites") == 1
+        again = back.to_frame()
+        for block in ("drudes", "virtual_sites"):
+            for key in frame[block].keys():
+                np.testing.assert_array_equal(again[block][key], frame[block][key])
+        assert isinstance(back.atoms[3], molrs.core.DrudeParticle)
+
 
 class TestRefMapping:
     def test_node_ref_is_a_mapping_over_its_fields(self) -> None:
@@ -468,7 +494,9 @@ class TestSpeciesInvariant:
             bond["bond_type"] = 2
         with pytest.raises(ValueError):
             del bond["bond_number"]
-        graph.set_bond_class(bond, molrs.core.BondOrder.Double, molrs.core.BondNumber.Double)
+        graph.set_bond_class(
+            bond, molrs.core.BondOrder.Double, molrs.core.BondNumber.Double
+        )
         assert bond["bond_type", "bond_number"] == [2, 2]
 
     def test_a_bead_keeps_a_string_bead_type(self) -> None:

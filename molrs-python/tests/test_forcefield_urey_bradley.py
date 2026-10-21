@@ -18,18 +18,23 @@ import molrs
 import numpy as np
 
 
-def _lammps_include(ff: molrs.ff.forcefield.ForceField, frame: molrs.core.Frame, **options: object) -> str:
+def _lammps_include(
+    ff: molrs.ff.forcefield.ForceField, frame: molrs.core.Frame, **options: object
+) -> str:
     """The LAMMPS force-field include ``ff`` writes for ``frame``."""
     buf = bytearray()
     molrs.io.lammps.LammpsForcefieldWriter(frame, **options).write(buf, ff)  # type: ignore[arg-type]
     return buf.decode()
 
 
-def _lammps_data_coeffs(ff: molrs.ff.forcefield.ForceField, frame: molrs.core.Frame) -> str:
+def _lammps_data_coeffs(
+    ff: molrs.ff.forcefield.ForceField, frame: molrs.core.Frame
+) -> str:
     """The data file's ``* Coeffs`` sections ``ff`` writes for ``frame``."""
     buf = bytearray()
     molrs.io.lammps.LammpsForcefieldWriter(frame).write_data_coeffs(buf, ff)
     return buf.decode()
+
 
 K, THETA0, K_UB, R_UB = 33.43, 110.1, 22.53, 2.179
 XYZ = np.array([[1.53, 0.0, 0.0], [0.0, 0.0, 0.0], [-0.30, 1.05, 0.10]])
@@ -93,9 +98,10 @@ def test_it_round_trips_through_the_section_and_a_store(tmp_path: Path) -> None:
     (t,) = back.get_types("angle")
     assert (t["k"], t["theta0"], t["k_ub"], t["r_ub"]) == (K, THETA0, K_UB, R_UB)
     frame = _frame()
-    assert molrs.ff.compile.PotentialCompiler(back).compile(frame).evaluate(
-        frame
-    )[0] == molrs.ff.compile.PotentialCompiler(ff).compile(frame).evaluate(frame)[0]
+    assert (
+        molrs.ff.compile.PotentialCompiler(back).compile(frame).evaluate(frame)[0]
+        == molrs.ff.compile.PotentialCompiler(ff).compile(frame).evaluate(frame)[0]
+    )
 
 
 def test_the_lammps_writer_and_reader_keep_it_as_written(tmp_path: Path) -> None:

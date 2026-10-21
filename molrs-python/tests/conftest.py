@@ -185,3 +185,10 @@ def octahedron_frame(cx=5.0, cy=5.0, cz=5.0, box_len=20.0):
         dtype=np.float64,
     )
     return make_frame(pts, box_len=box_len), pts
+
+
+def capture(writer, *args, **kwargs):
+    """Capture a production writer's bytearray sink for text assertions."""
+    buffer = bytearray()
+    writer(buffer, *args, **kwargs)
+    return buffer.decode("utf-8")

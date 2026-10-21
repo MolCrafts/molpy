@@ -88,7 +88,9 @@ def test_a_path_and_its_content_read_alike(tmp_path):
     from_bytes = molrs.io.read_lammps_log(_LOG.encode())
     assert from_path.path == str(path)
     assert from_text.path == from_bytes.path == ""
-    assert from_path.runs[0].thermo.rows.tolist() == from_text.runs[0].thermo.rows.tolist()
+    assert (
+        from_path.runs[0].thermo.rows.tolist() == from_text.runs[0].thermo.rows.tolist()
+    )
     assert from_bytes.to_dict()["runs"] == from_text.to_dict()["runs"]
 
 

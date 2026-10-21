@@ -124,15 +124,15 @@ impl Provenance {
         PenaltyTier::of(self.penalty)
     }
 
-    /// The four provenance keys, in the order the module doc lists them.
-    /// Metadata, not parameters: a writer whose format has no column for
-    /// them (a frcmod row) skips exactly these.
-    pub const KEYS: [&'static str; 4] = [
-        "estimated",
-        "estimate_penalty",
-        "estimate_method",
-        "estimate_analog",
-    ];
+    /// The four provenance keys, in the order the module doc lists them:
+    /// the style table's [`PROVENANCE_COLUMNS`]. Metadata, not parameters:
+    /// they price nothing ([`is_unpriced_column`]), so every writer skips
+    /// them and [`ForceField::merge`] ignores them.
+    ///
+    /// [`PROVENANCE_COLUMNS`]: crate::ff::ir::PROVENANCE_COLUMNS
+    /// [`is_unpriced_column`]: crate::ff::ir::is_unpriced_column
+    /// [`ForceField::merge`]: crate::ff::forcefield::ForceField::merge
+    pub const KEYS: [&'static str; 4] = crate::ff::ir::PROVENANCE_COLUMNS;
 
     /// Write the four provenance keys onto an estimated term's params.
     pub fn apply_to(&self, params: &mut Params) {

@@ -157,8 +157,13 @@ def test_a_constant_is_a_value_not_a_second_door():
 # A factory that reads or writes a file format is either a function at the
 # top of molrs.io (``read_<fmt>[_<what>]`` / ``write_<fmt>[_<what>]``, one per
 # format and direction, over any source / sink) or a class of the format's own
-# submodule (``molrs.io.<fmt>.<Fmt>Reader`` / ``<Fmt>Writer``). Nothing else
-# may carry those names.
+# submodule (``molrs.io.<fmt>.<Fmt>Reader`` / ``<Fmt>Writer``). A line
+# notation is the one exception: its doors take the notation's own string, not
+# a source or sink, so they live in the notation's submodule
+# (``molrs.io.smiles.read_smiles``, ``molrs.io.cgsmiles.read_cgsmiles``).
+# Nothing else may carry those names.
+
+_NOTATION_MODULES = frozenset({"molrs.io.smiles", "molrs.io.cgsmiles"})
 
 
 def _factory_name(name: str) -> bool:
@@ -171,9 +176,16 @@ def test_read_and_write_functions_live_at_the_top_of_io():
         for path, value in _objects().items()
         if callable(value)
         and _factory_name(path.rpartition(".")[2])
-        and path.rpartition(".")[0] != "molrs.io"
+        and path.rpartition(".")[0] not in {"molrs.io", *_NOTATION_MODULES}
     )
     assert not stray
+
+
+def test_a_notation_reads_from_its_own_module_only():
+    """The SMILES / CGsmiles doors are not mirrored at the top of
+    ``molrs.io``: one door, one path."""
+    doors = ("read_smiles", "read_smiles_fragment", "write_smiles", "read_cgsmiles")
+    assert not [name for name in doors if hasattr(molrs.io, name)]
 
 
 def test_no_class_hides_a_read_or_write_factory():
@@ -192,7 +204,9 @@ def test_no_class_hides_a_read_or_write_factory():
 def test_readers_and_writers_are_classes_of_a_format_submodule():
     stray = []
     for path, value in _objects().items():
-        if not inspect.isclass(value) or not value.__name__.endswith(("Reader", "Writer")):
+        if not inspect.isclass(value) or not value.__name__.endswith(
+            ("Reader", "Writer")
+        ):
             continue
         owner = path.rpartition(".")[0]
         if not (owner.startswith("molrs.io.") and owner.count(".") == 2):
@@ -216,7 +230,11 @@ def test_the_top_of_io_is_functions_and_format_submodules():
 
 def test_forcefield_is_the_data_model_and_stream_the_transport():
     assert not [n for n in molrs.ff.forcefield.__all__ if _factory_name(n)]
-    assert set(molrs.stream.__all__) <= {"ControlCommand", "Publisher", "PublisherConfig"}
+    assert set(molrs.stream.__all__) <= {
+        "ControlCommand",
+        "Publisher",
+        "PublisherConfig",
+    }
     assert set(molrs.io.mrec.__all__) == {
         "ForceFieldSection",
         "MrecFile",
@@ -262,9 +280,14 @@ def test_forcefield_is_the_data_model_and_stream_the_transport():
         "molrs.io.mrec.MrecWriter",
         "molrs.io.smiles.SmilesIr",
         "molrs.io.smiles.FragmentIr",
+        "molrs.io.smiles.read_smiles",
+        "molrs.io.smiles.read_smiles_fragment",
+        "molrs.io.smiles.write_smiles",
         "molrs.io.cgsmiles.CgSmilesIr",
+        "molrs.io.cgsmiles.read_cgsmiles",
         "molrs.io.lammps.LammpsLog",
         "molrs.io.lammps.BondReactTemplate",
+        "molrs.io.lammps.infer_lammps_atom_style",
         "molrs.io.mrec.ForceFieldSection",
         "molrs.core.Frame",
         "molrs.core.Block",
@@ -333,7 +356,16 @@ def test_there_are_no_in_memory_twins():
     sink (a path or a ``bytearray``): there is no ``_str`` / ``_bytes`` twin,
     and no other spelling of one (``_text``, ``_string``, ``from_bytes``…)."""
     names = list(_io_doors())
-    for spelling in ("_str", "_bytes", "_text", "_string", "parse_", "format_", "_from_", "_to_"):
+    for spelling in (
+        "_str",
+        "_bytes",
+        "_text",
+        "_string",
+        "parse_",
+        "format_",
+        "_from_",
+        "_to_",
+    ):
         assert not [n for n in names if spelling in n], spelling
     assert "read_xyz" in names and "write_xyz" in names
 
@@ -366,20 +398,28 @@ def test_a_reader_or_writer_is_named_after_its_module_with_word_cased_acronyms()
     acronym (``PDBReader``, ``DCDTrajReader``)."""
     wrong = []
     for path, value in _objects().items():
-        if not inspect.isclass(value) or not value.__name__.endswith(("Reader", "Writer")):
+        if not inspect.isclass(value) or not value.__name__.endswith(
+            ("Reader", "Writer")
+        ):
             continue
         module = path.rpartition(".")[0].rpartition(".")[2]
         word = "".join(part.capitalize() for part in module.split("_"))
-        if not value.__name__.startswith(word) or re.search(r"[A-Z]{2}", value.__name__):
+        if not value.__name__.startswith(word) or re.search(
+            r"[A-Z]{2}", value.__name__
+        ):
             wrong.append(path)
     assert not wrong
-
 
 
 # Every subpackage cases acronyms as words. Kept as their owners write them:
 # numpy's ``DType``, and ``HBond`` -- H is the element, not an acronym.
 _CASING_KEPT_PREFIXES = ("DType", "HBond")
-_ALL_CAPS_ACRONYM = re.compile(r"[A-Z]{2,}[a-z]|[A-Z]{3,}|[a-z0-9][A-Z]{2,}$|^[A-Z]{2,}$")
+# The phase driver is `MD`, the same name Atomiverse and the user-facing
+# API use. Every other acronym is still cased as a word.
+_ACRONYM_CLASS_NAMES = frozenset({"MD"})
+_ALL_CAPS_ACRONYM = re.compile(
+    r"[A-Z]{2,}[a-z]|[A-Z]{3,}|[a-z0-9][A-Z]{2,}$|^[A-Z]{2,}$"
+)
 
 
 def _without_kept_prefix(name: str) -> str:
@@ -397,6 +437,7 @@ def test_class_names_case_acronyms_as_words():
         path
         for path, value in _objects().items()
         if inspect.isclass(value)
+        and value.__name__ not in _ACRONYM_CLASS_NAMES
         and _ALL_CAPS_ACRONYM.search(_without_kept_prefix(value.__name__))
     )
     assert not wrong
@@ -459,7 +500,11 @@ def test_unit_conversions_come_from_the_unit_registry():
     assert units.factor("angstrom", "nm") == 0.1
     assert units.factor("bohr", "angstrom") == pytest.approx(0.529177210903, rel=1e-15)
     names = set(molrs.core.constants.__all__)
-    assert not {n for n in names if n.endswith(("_PER_NM", "_PER_BOHR", "_PER_KCAL", "_PER_CM3"))}
+    assert not {
+        n
+        for n in names
+        if n.endswith(("_PER_NM", "_PER_BOHR", "_PER_KCAL", "_PER_CM3"))
+    }
 
 
 def test_scripts_convert_units_through_the_registry():

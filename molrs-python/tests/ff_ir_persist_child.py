@@ -39,7 +39,10 @@ def frame(block: str, rows: list[list[int]], types: list[str]) -> molrs.core.Fra
 
 
 def price(
-    ff: molrs.ff.forcefield.ForceField, block: str, rows: list[list[int]], types: list[str]
+    ff: molrs.ff.forcefield.ForceField,
+    block: str,
+    rows: list[list[int]],
+    types: list[str],
 ) -> dict:
     """Energy and forces of ``ff`` over the frame, exactly, or the refusal."""
     f = frame(block, rows, types)
@@ -76,7 +79,9 @@ def main(cases: dict) -> dict:
         out[name] = {
             "price": price(ff, block, rows, types),
             "section": exact(molrs.io.mrec.ForceFieldSection.from_forcefield(ff)),
-            "styles": [[s.category, s.name] for s in ff.get_styles(molrs.ff.forcefield.Style)],
+            "styles": [
+                [s.category, s.name] for s in ff.get_styles(molrs.ff.forcefield.Style)
+            ],
         }
     return out
 

@@ -54,7 +54,14 @@ class _Chain(Typifier):
     def assign(self, graph: molrs.core.Atomistic) -> TypeAssignment:
         nodes = [{"type": ("full", t, (), {"mass": 12.0})} for t in ATOM_TYPES]
         rows = [
-            {"type": (self.style, name, ends, {"k_ub": k_ub, "r_ub": r_ub, **self.extra})}
+            {
+                "type": (
+                    self.style,
+                    name,
+                    ends,
+                    {"k_ub": k_ub, "r_ub": r_ub, **self.extra},
+                )
+            }
             for name, ends, k_ub, r_ub in TERMS
         ]
         return TypeAssignment(
@@ -67,7 +74,9 @@ class _Chain(Typifier):
         )
 
 
-def _energy_forces(typifier: Typifier, kind: str) -> tuple[float, np.ndarray, molrs.core.Frame]:
+def _energy_forces(
+    typifier: Typifier, kind: str
+) -> tuple[float, np.ndarray, molrs.core.Frame]:
     frame = typifier.typify(_chain(kind)).to_frame()
     ff = typifier.forcefield()
     e, f = molrs.ff.compile.PotentialCompiler(ff).compile(frame).evaluate(frame)
@@ -123,4 +132,7 @@ def test_a_kind_the_graph_lacks_is_refused_by_name() -> None:
 
 def test_repr_lists_the_kinds() -> None:
     m = TypeAssignment([{}], {Bond: [{}], "urey_bradleys": [{}, {}]})
-    assert repr(m) == "TypeAssignment(nodes=1, links={bonds=1, urey_bradleys=2}, styles=0, pairs=0)"
+    assert (
+        repr(m)
+        == "TypeAssignment(nodes=1, links={bonds=1, urey_bradleys=2}, styles=0, pairs=0)"
+    )

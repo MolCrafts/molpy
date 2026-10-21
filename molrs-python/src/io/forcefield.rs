@@ -260,7 +260,7 @@ impl PyLammpsForcefieldWriter {
             molrs::io::lammps::parse_lammps_units_style(units).map_err(PyValueError::new_err)?;
         let (labels, pair_refusal) = frame.with_frame(|f| {
             (
-                TypeLabels::from_frame(f),
+                molrs::io::lammps::lammps_type_labels(f),
                 molrs::io::lammps::refuse_pair_overrides(f).err(),
             )
         })?;
@@ -755,6 +755,21 @@ impl PyOpenmmXmlWriter {
     ///     If the file cannot be written.
     fn write(&self, sink: PySink<'_>, forcefield: &PyForceField) -> PyResult<()> {
         sink.put(|s| self.inner.write(s, &forcefield.inner), write_error)
+    }
+
+    /// Write the force field and the residue templates matching this frame's PDB.
+    fn write_system(
+        &self,
+        sink: PySink<'_>,
+        forcefield: &PyForceField,
+        frame: &PyFrame,
+    ) -> PyResult<()> {
+        frame.with_frame(|f| {
+            sink.put(
+                |s| self.inner.write_system(s, &forcefield.inner, f),
+                write_error,
+            )
+        })?
     }
 
     fn __repr__(&self) -> &'static str {

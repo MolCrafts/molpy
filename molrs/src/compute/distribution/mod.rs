@@ -132,7 +132,7 @@ impl<O: Observable> Accumulate for DistributionAccumulator<O> {
     /// [`ComputeError::NonFinite`] for a non-finite sample. A rejected frame
     /// deposits nothing.
     fn push(&mut self, frame: DistributionFrame<'_>) -> Result<(), ComputeError> {
-        let mic = frame.simbox.map_or(Mic::Free, SimBox::mic);
+        let mic = frame.simbox.map_or(Mic::free(), SimBox::mic);
         self.observable
             .sample_into(frame.positions, &mic, frame.tuples, &mut self.samples)?;
         if let Some(index) = self.samples.iter().position(|v| !v.is_finite()) {

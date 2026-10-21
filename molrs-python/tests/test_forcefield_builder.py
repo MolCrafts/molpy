@@ -87,7 +87,9 @@ def test_empty_forcefield_constructs():
     assert ff.get_styles(molrs.ff.forcefield.Style) == []
 
 
-def _atoms(ff: molrs.ff.forcefield.ForceField, *names: str) -> list[molrs.ff.forcefield.AtomType]:
+def _atoms(
+    ff: molrs.ff.forcefield.ForceField, *names: str
+) -> list[molrs.ff.forcefield.AtomType]:
     atom_style = ff.def_style("atom", "full")
     return [atom_style.def_type(name, mass=1.0) for name in names]
 
@@ -290,7 +292,10 @@ def test_get_styles_and_get_types_select_by_category_or_class():
     ff.def_style("bond", "harmonic").def_type("CT-OH", ct, oh, k=1.0, r0=1.0)
     ff.def_style("bond", "morse").def_type("CT-OH", ct, oh, d0=1.0)
     assert [s.name for s in ff.get_styles("bond")] == ["harmonic", "morse"]
-    assert [s.name for s in ff.get_styles(molrs.ff.forcefield.BondStyle)] == ["harmonic", "morse"]
+    assert [s.name for s in ff.get_styles(molrs.ff.forcefield.BondStyle)] == [
+        "harmonic",
+        "morse",
+    ]
     assert len(ff.get_styles(molrs.ff.forcefield.Style)) == 3
     assert [t.name for t in ff.get_types("atom")] == ["CT", "OH"]
     assert len(ff.get_types(molrs.ff.forcefield.BondType)) == 2
@@ -353,7 +358,10 @@ def test_a_force_field_pickles_with_its_whole_definition():
     back = pickle.loads(pickle.dumps(ff))
     assert type(back) is molrs.ff.forcefield.ForceField
     assert (back.name, back.units) == ("full", "metal")
-    assert [(s.category, s.name, s.params) for s in back.get_styles(molrs.ff.forcefield.Style)] == [
+    assert [
+        (s.category, s.name, s.params)
+        for s in back.get_styles(molrs.ff.forcefield.Style)
+    ] == [
         (s.category, s.name, s.params) for s in ff.get_styles(molrs.ff.forcefield.Style)
     ]
     assert [

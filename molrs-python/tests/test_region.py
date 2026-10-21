@@ -104,6 +104,23 @@ class TestRegionNot:
         result = ~c
         assert isinstance(result, molrs.core.Region)
 
+    def test_complement_of_a_cube_refuses_the_atoms_on_its_faces(self):
+        # A simple-cubic cell's atoms all sit on the cube's corners, edges
+        # and faces: the boundary is the cube's, so `~cube` holds none of them.
+        cube = molrs.core.Cuboid([0.0, 0.0, 0.0], [1.5] * 3)
+        edge = np.array([0.0, 0.75, 1.5])
+        grid = np.array([[x, y, z] for x in edge for y in edge for z in edge])
+        pts = np.vstack([grid, [[3.0, 3.0, 3.0]]])
+        block = molrs.core.Block({"x": pts[:, 0], "y": pts[:, 1], "z": pts[:, 2]})
+        inside = cube.mask(block)
+        outside = (~cube).mask(block)
+        assert inside.tolist() == [True] * len(grid) + [False]
+        assert outside.tolist() == [False] * len(grid) + [True]
+        sphere = molrs.core.Sphere([0.0, 0.0, 0.0], 1.0)
+        for region in (cube, sphere, cube & ~sphere, cube | sphere):
+            assert not np.any(region.mask(block) & (~region).mask(block))
+            assert np.all(region.mask(block) | (~region).mask(block))
+
 
 class TestRegionChaining:
     def test_shell_via_and_not(self):
@@ -182,7 +199,9 @@ def _unit_cube_mesh() -> "molrs.core.TriMesh":
 
 class TestShapes:
     def test_half_space_and_its_complement(self):
-        below = molrs.core.HalfSpace(np.array([0.0, 0.0, 1.0]), np.array([0.0, 0.0, 5.0]))
+        below = molrs.core.HalfSpace(
+            np.array([0.0, 0.0, 1.0]), np.array([0.0, 0.0, 5.0])
+        )
         pts = np.array([[0.0, 0.0, 2.0], [0.0, 0.0, 9.0]])
         np.testing.assert_allclose(below.distance(pts), [-3.0, 4.0])
         assert list(below.contains(pts)) == [True, False]
@@ -293,7 +312,9 @@ class TestRegionSelection:
 
 class TestParallelepiped:
     def test_a_cube_from_cell_lengths(self):
-        p = molrs.core.Parallelepiped(molrs.core.Cell.lengths([2.0, 2.0, 2.0]), [1.0, 1.0, 1.0])
+        p = molrs.core.Parallelepiped(
+            molrs.core.Cell.lengths([2.0, 2.0, 2.0]), [1.0, 1.0, 1.0]
+        )
         assert p.volume() == pytest.approx(8.0)
         np.testing.assert_allclose(p.origin, [1.0, 1.0, 1.0])
         np.testing.assert_allclose(p.h, np.diag([2.0, 2.0, 2.0]))
@@ -312,7 +333,8 @@ class TestParallelepiped:
 
     def test_lengths_tilts_and_lengths_angles_cells(self):
         tilted = molrs.core.Parallelepiped(
-            molrs.core.Cell.lengths_tilts([2.0, 2.0, 2.0], [1.0, 0.0, 0.0]), [0.0, 0.0, 0.0]
+            molrs.core.Cell.lengths_tilts([2.0, 2.0, 2.0], [1.0, 0.0, 0.0]),
+            [0.0, 0.0, 0.0],
         )
         np.testing.assert_allclose(
             tilted.h, [[2.0, 1.0, 0.0], [0.0, 2.0, 0.0], [0.0, 0.0, 2.0]]
@@ -341,7 +363,8 @@ class TestParallelepiped:
         import pickle
 
         p = molrs.core.Parallelepiped(
-            molrs.core.Cell.lengths_tilts([2.0, 2.0, 2.0], [1.0, 0.0, 0.0]), [1.0, 0.0, 0.0]
+            molrs.core.Cell.lengths_tilts([2.0, 2.0, 2.0], [1.0, 0.0, 0.0]),
+            [1.0, 0.0, 0.0],
         )
         back = pickle.loads(pickle.dumps(p))
         np.testing.assert_allclose(back.h, p.h)

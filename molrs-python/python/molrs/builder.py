@@ -9,7 +9,7 @@ AxisOrienter()).assemble(sites)`` places one template copy per site of a
 (any topology), and returns the world as the library's graph type (every
 template is one type: ``Atomistic``, ``CoarseGrain`` or ``MolGraph``);
 ``Assembler(library, GrowthPlacer()).assemble(sites)`` grows a site graph
-without positions (e.g. ``CgSmilesIr.parse(...).to_coarsegrain()``).
+without positions (e.g. ``read_cgsmiles(...).to_coarsegrain()``).
 
 Coarse-graining: :class:`Coarsener` maps disjoint node groups of a held
 ``CoarseGrain`` or ``Atomistic`` onto the sites of a new ``CoarseGrain``, each

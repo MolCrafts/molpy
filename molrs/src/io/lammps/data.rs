@@ -4,12 +4,15 @@ use crate::core::Points;
 use crate::io::frame_columns::insert_column_of_length;
 use crate::io::frame_index::{FrameIndexBuilder, FrameOffset};
 use crate::io::lammps::atom_style::{
-    AtomStyleLayout, DataField, field_column_key, infer_write_style, is_int_token,
-    is_noninteger_float_token, layout_for_atom_style, layout_from_column_count,
-    normalize_atom_style, parse_atoms_style_hint,
+    AtomStyleLayout, DataField, field_column_key, is_int_token, is_noninteger_float_token,
+    layout_for_atom_style, layout_from_column_count, normalize_atom_style, parse_atoms_style_hint,
 };
 use crate::io::lammps::box_bounds::{BoxBounds, simbox_from_bounds};
 use crate::io::lammps::columns::OptionalColumn;
+use crate::io::lammps::data_options::{
+    DataUnits, LammpsDataWriteOptions, resolve_units, resolve_write_style,
+};
+use crate::io::lammps::drude::{SPRINGS, drude_flags, lammps_type_labels, refuse_virtual_sites};
 use crate::io::lammps::fields::{
     TypeRef, invert_type_labels, labels_to_meta, parse_f, parse_i, tokenize,
 };
@@ -22,7 +25,6 @@ use molrs::core::Frame;
 use molrs::core::FrameAccess;
 use molrs::core::MetaValue;
 use molrs::core::SimBox;
-use molrs::core::TypeLabels;
 use molrs::core::keys;
 use molrs::op::{F, I, Idx, Pbc3};
 use ndarray::ArrayViewD;
@@ -1513,18 +1515,37 @@ impl<R: BufRead + Seek> FrameReader for LammpsDataReader<R> {
 
 pub struct LammpsDataWriter<W: Write> {
     writer: W,
+    options: LammpsDataWriteOptions,
+}
+
+impl LammpsDataWriter<crate::io::SinkWriter<'_>> {
+    /// Open a file or buffer for writing a LAMMPS data frame.
+    pub fn create<'a>(
+        sink: impl Into<Sink<'a>>,
+    ) -> std::io::Result<LammpsDataWriter<crate::io::SinkWriter<'a>>> {
+        Ok(LammpsDataWriter::new(sink.into().writer()?))
+    }
 }
 
 impl<W: Write> crate::io::writer::Writer for LammpsDataWriter<W> {
     type W = W;
     fn new(writer: W) -> Self {
-        Self { writer }
+        Self::new(writer)
     }
 }
 
 impl<W: Write> LammpsDataWriter<W> {
     pub fn new(writer: W) -> Self {
-        Self { writer }
+        Self {
+            writer,
+            options: LammpsDataWriteOptions::default(),
+        }
+    }
+
+    /// Write in the `atom_style` and `units` `options` name.
+    pub fn with_options(mut self, options: LammpsDataWriteOptions) -> Self {
+        self.options = options;
+        self
     }
 }
 
@@ -1533,7 +1554,7 @@ impl<W: Write> FrameWriter for LammpsDataWriter<W> {
         // Refuse to emit a frame that violates the vocabulary: a bad file
         // looks fine and is found wrong later, by whatever reads it.
         crate::io::writer::check_write_frame(frame)?;
-        write_lammps_data_frame(&mut self.writer, frame)
+        write_lammps_data_frame_with(&mut self.writer, frame, &self.options)
     }
 }
 
@@ -1557,79 +1578,59 @@ fn write_type_label_section<W: Write>(
     Ok(())
 }
 
-/// The `fix drude` C/D/N flag list of the DRUDE package, one flag per atom
-/// type in type-id order, or `None` when the frame has no Drude particle.
-///
-/// A row is a Drude particle (`D`) when a `drudes` relation names it as its
-/// `atomj`, or its `vsite` column reads `"drude"` (a `DrudeParticle` node). A
-/// type is a polarisable core (`C`) when one of its rows is the `atomi` of a
-/// `drudes` relation or is bonded (`bonds`) to a Drude particle; every other
-/// type is `N`. <https://docs.lammps.org/fix_drude.html>
-fn drude_flags(frame: &impl FrameAccess, type_ids: &[Idx], n_types: usize) -> Option<String> {
-    let n = type_ids.len();
-    let mut shell = vec![false; n];
-    if let Some(vsite) = frame
-        .column("atoms", "vsite")
-        .and_then(|c| c.get::<String>())
-    {
-        for (i, v) in vsite.iter().enumerate().take(n) {
-            shell[i] = v == "drude";
-        }
+/// Refuse a null cell in any column the file is written from: an atom ID
+/// is not generated beside stated ones, and no other field has a stand-in
+/// (`crate::io::null_cells`). A frame without an `id` column is numbered
+/// 1..N instead.
+fn refuse_null_written_cells(
+    frame: &impl FrameAccess,
+    fields: &[DataField],
+) -> std::io::Result<()> {
+    // The type is checked by the column the writer actually reads.
+    let mut atoms: Vec<&str> = fields
+        .iter()
+        .filter(|&&f| f != DataField::Type)
+        .map(|&f| field_column_key(f))
+        .collect();
+    atoms.extend(written_type_keys(frame, "atoms").iter().copied());
+    atoms.extend([keys::IX, keys::IY, keys::IZ, keys::VX, keys::VY, keys::VZ]);
+    // Without a `mass` column the masses are the elements'.
+    if frame.column("atoms", keys::MASS).is_none() {
+        atoms.push(keys::ELEMENT);
     }
-    let pairs = |block: &str| -> Vec<(usize, usize)> {
-        match (
-            frame
-                .column(block, keys::ATOMI)
-                .and_then(|c| c.get::<u64>()),
-            frame
-                .column(block, keys::ATOMJ)
-                .and_then(|c| c.get::<u64>()),
-        ) {
-            (Some(i), Some(j)) => i
-                .iter()
-                .zip(j.iter())
-                .map(|(&a, &b)| (a as usize, b as usize))
-                .filter(|&(a, b)| a < n && b < n)
-                .collect(),
-            _ => Vec::new(),
-        }
-    };
-    let drudes = pairs("drudes");
-    for &(_, d) in &drudes {
-        shell[d] = true;
-    }
-    if !shell.iter().any(|&s| s) {
-        return None;
-    }
-    let mut core = vec![false; n];
-    for &(c, _) in &drudes {
-        core[c] = true;
-    }
-    for (a, b) in pairs("bonds") {
-        if shell[a] && !shell[b] {
-            core[b] = true;
-        } else if shell[b] && !shell[a] {
-            core[a] = true;
-        }
-    }
-    let mut flags = vec!['N'; n_types];
-    for (i, &t) in type_ids.iter().enumerate() {
-        let Some(slot) = (t as usize).checked_sub(1).and_then(|k| flags.get_mut(k)) else {
-            continue;
-        };
-        if shell[i] {
-            *slot = 'D';
-        } else if core[i] && *slot != 'D' {
-            *slot = 'C';
-        }
-    }
-    Some(
-        flags
+    crate::io::null_cells::refuse_null_cells(frame, "atoms", &atoms)?;
+    for block in [
+        "bonds",
+        SPRINGS.0,
+        "angles",
+        "dihedrals",
+        "impropers",
+        "cmaps",
+    ] {
+        let relation: Vec<&str> = keys::ENDPOINTS
             .iter()
-            .map(char::to_string)
-            .collect::<Vec<_>>()
-            .join(" "),
-    )
+            .copied()
+            .chain(written_type_keys(frame, block).iter().copied())
+            .collect();
+        crate::io::null_cells::refuse_null_cells(frame, block, &relation)?;
+    }
+    Ok(())
+}
+
+/// The type columns the writer reads for `block`. A string `type` wins over
+/// `type_id` (see `RowTypes`), so a numeric `type_id` beside it — a prmtop's
+/// own numbering on one part of a `Frame::concat` — is never written and its
+/// null cells are no reason to refuse.
+fn written_type_keys(frame: &impl FrameAccess, block: &str) -> &'static [&'static str] {
+    let labelled = frame
+        .column(block, keys::TYPE)
+        .and_then(|c| c.get::<String>())
+        .is_some();
+    if labelled {
+        &[keys::TYPE]
+    } else {
+        &[keys::TYPE, keys::TYPE_ID]
+    }
 }
 
 /// Per-row atom IDs: existing ``id`` column, else 1..N (file artifact).
@@ -1734,7 +1735,7 @@ fn no_mass_column() -> std::io::Error {
 }
 
 /// Does the atoms block have an int or float column for this data-file field?
-fn frame_has_atom_field(frame: &impl FrameAccess, field: DataField) -> bool {
+pub(crate) fn frame_has_atom_field(frame: &impl FrameAccess, field: DataField) -> bool {
     let key = field_column_key(field);
     if field == DataField::Mol {
         return frame
@@ -1794,11 +1795,13 @@ fn frame_has_atom_field(frame: &impl FrameAccess, field: DataField) -> bool {
 enum AtomColumn<'a> {
     Uint(ArrayViewD<'a, Idx>),
     Int(ArrayViewD<'a, I>),
-    Float(ArrayViewD<'a, F>),
+    /// A float column and the factor into the file's units.
+    Float(ArrayViewD<'a, F>, F),
     /// Already-resolved per-row values (type ids).
     IdxRows(&'a [Idx]),
-    /// Already-resolved per-row values (masses).
-    FloatRows(&'a [F]),
+    /// Already-resolved per-row values (masses), and the factor into the
+    /// file's units.
+    FloatRows(&'a [F], F),
 }
 
 impl<'a> AtomColumn<'a> {
@@ -1808,16 +1811,13 @@ impl<'a> AtomColumn<'a> {
         field: DataField,
         type_ids: &'a [Idx],
         row_masses: Option<&'a [F]>,
+        units: &DataUnits,
     ) -> std::io::Result<Self> {
         let key = field_column_key(field);
+        let factor = units.field_factor(field)?;
         let col = match field {
             DataField::Type => Self::IdxRows(type_ids),
-            DataField::Mass => match row_masses {
-                Some(rows) => Self::FloatRows(rows),
-                // The style has a per-atom mass field: the same error the
-                // Masses section gives.
-                None => return Err(no_mass_column()),
-            },
+            DataField::Mass => Self::FloatRows(row_masses.ok_or_else(no_mass_column)?, factor),
             DataField::Bodyflag
             | DataField::ShapeFlag
             | DataField::Espin
@@ -1846,6 +1846,7 @@ impl<'a> AtomColumn<'a> {
                     .column("atoms", key)
                     .and_then(|c| c.get::<f64>())
                     .ok_or_else(|| invalid_data(format!("Missing float column '{key}'")))?,
+                factor,
             ),
         };
         Ok(col)
@@ -1855,9 +1856,9 @@ impl<'a> AtomColumn<'a> {
         match self {
             Self::Uint(col) => write!(writer, " {}", col[[i]]),
             Self::Int(col) => write!(writer, " {}", col[[i]]),
-            Self::Float(col) => write!(writer, " {}", col[[i]]),
+            Self::Float(col, factor) => write!(writer, " {}", col[[i]] * factor),
             Self::IdxRows(rows) => write!(writer, " {}", rows[i]),
-            Self::FloatRows(rows) => write!(writer, " {}", rows[i]),
+            Self::FloatRows(rows, factor) => write!(writer, " {}", rows[i] * factor),
         }
     }
 }
@@ -1867,10 +1868,8 @@ fn write_atoms_section<W: Write>(
     writer: &mut W,
     frame: &impl FrameAccess,
     style_name: &str,
-    fields: &[DataField],
     atom_ids: &[Idx],
-    type_ids: &[Idx],
-    row_masses: Option<&[F]>,
+    columns: &[AtomColumn<'_>],
 ) -> std::io::Result<()> {
     let images = match (
         frame.column("atoms", keys::IX).and_then(|c| c.get::<i32>()),
@@ -1883,14 +1882,9 @@ fn write_atoms_section<W: Write>(
 
     writeln!(writer, "Atoms # {style_name}")?;
     writeln!(writer)?;
-    let columns = fields
-        .iter()
-        .filter(|&&f| f != DataField::Id)
-        .map(|&f| AtomColumn::resolve(frame, f, type_ids, row_masses))
-        .collect::<std::io::Result<Vec<_>>>()?;
     for (i, id) in atom_ids.iter().enumerate() {
         write!(writer, "{id}")?;
-        for col in &columns {
+        for col in columns {
             col.write_cell(writer, i)?;
         }
         if let Some([ix, iy, iz]) = &images {
@@ -1902,53 +1896,68 @@ fn write_atoms_section<W: Write>(
     Ok(())
 }
 
+/// One topology section: the rows of `blocks`, in order, numbered on from 1
+/// across them (a `Bonds` section holds the `bonds` rows, then the `drudes`
+/// rows). `type_ids` lists every block's rows in that order.
 fn write_topology_section<W: Write>(
     writer: &mut W,
     frame: &impl FrameAccess,
     section: &str,
-    block: &str,
+    blocks: &[&str],
     n_members: usize,
     atom_ids: &[Idx],
     type_ids: &[Idx],
 ) -> std::io::Result<()> {
-    let n = frame
-        .visit_block(block, |b| b.n_rows().unwrap_or(0))
-        .unwrap_or(0);
+    let keys_ep = &keys::ENDPOINTS[..n_members];
+    let mut parts = Vec::with_capacity(blocks.len());
+    for &block in blocks {
+        let n = frame
+            .visit_block(block, |b| b.n_rows().unwrap_or(0))
+            .unwrap_or(0);
+        if n == 0 {
+            continue;
+        }
+        let mut cols = Vec::with_capacity(n_members);
+        for k in keys_ep {
+            cols.push(
+                frame
+                    .column(block, k)
+                    .and_then(|c| c.get::<u64>())
+                    .ok_or_else(|| invalid_data(format!("Missing '{block}.{k}'")))?,
+            );
+        }
+        parts.push((block, n, cols));
+    }
+    let n: usize = parts.iter().map(|(_, n, _)| n).sum();
     if n == 0 {
         return Ok(());
     }
     if type_ids.len() != n {
         return Err(invalid_data(format!(
-            "internal: {block} type_ids length {} != nrows {n}",
+            "internal: {blocks:?} type_ids length {} != nrows {n}",
             type_ids.len()
         )));
-    }
-    let keys_ep = &keys::ENDPOINTS[..n_members];
-    let mut cols = Vec::with_capacity(n_members);
-    for k in keys_ep {
-        cols.push(
-            frame
-                .column(block, k)
-                .and_then(|c| c.get::<u64>())
-                .ok_or_else(|| invalid_data(format!("Missing '{block}.{k}'")))?,
-        );
     }
 
     writeln!(writer, "{section}")?;
     writeln!(writer)?;
-    for i in 0..n {
-        write!(writer, "{} {}", i + 1, type_ids[i])?;
-        for col in &cols {
-            let idx = col[[i]] as usize;
-            let atom_id = atom_ids.get(idx).ok_or_else(|| {
-                invalid_data(format!(
-                    "{block} endpoint index {idx} out of range for {n} atoms",
-                    n = atom_ids.len()
-                ))
-            })?;
-            write!(writer, " {atom_id}")?;
+    let mut row = 0;
+    for (block, n_rows, cols) in &parts {
+        for i in 0..*n_rows {
+            write!(writer, "{} {}", row + 1, type_ids[row])?;
+            for col in cols {
+                let idx = col[[i]] as usize;
+                let atom_id = atom_ids.get(idx).ok_or_else(|| {
+                    invalid_data(format!(
+                        "{block} endpoint index {idx} out of range for {n} atoms",
+                        n = atom_ids.len()
+                    ))
+                })?;
+                write!(writer, " {atom_id}")?;
+            }
+            writeln!(writer)?;
+            row += 1;
         }
-        writeln!(writer)?;
     }
     writeln!(writer)?;
     Ok(())
@@ -1986,19 +1995,45 @@ fn enclosing_bounds(coords: &[Vec<F>]) -> std::io::Result<([F; 3], [F; 3])> {
     Ok(([o[0], o[1], o[2]], [l[0], l[1], l[2]]))
 }
 
+/// [`write_lammps_data_frame_with`] with the default options (the tests'
+/// door into the writer).
+#[cfg(test)]
 fn write_lammps_data_frame<W: Write>(
     writer: &mut W,
     frame: &impl FrameAccess,
 ) -> std::io::Result<()> {
-    writeln!(writer, "# LAMMPS data file generated by molrs")?;
-    writeln!(writer)?;
+    write_lammps_data_frame_with(writer, frame, &LammpsDataWriteOptions::default())
+}
 
+/// Write `frame` as a data file in the `atom_style` and `units` `options`
+/// name. Type masses come from atom rows or the declared inventory metadata.
+fn write_lammps_data_frame_with<W: Write>(
+    writer: &mut W,
+    frame: &impl FrameAccess,
+    options: &LammpsDataWriteOptions,
+) -> std::io::Result<()> {
     let n_atoms = frame
         .visit_block("atoms", |b| b.n_rows().unwrap_or(0))
         .unwrap_or(0);
     if n_atoms == 0 {
         return Err(invalid_data("Frame has no atoms to write"));
     }
+    // Both decisions the input script shares with the file, before a byte
+    // of it is written.
+    let units = resolve_units(frame, options.units.as_deref())?;
+    let (style_name, layout) = resolve_write_style(frame, options.atom_style.as_deref())?;
+    refuse_null_written_cells(frame, layout.fields)?;
+
+    // `write_data` ends its title with the unit style; the reader takes it
+    // back into `lammps_units`.
+    match units.title {
+        Some(style) => writeln!(
+            writer,
+            "# LAMMPS data file generated by molrs, units = {style}"
+        )?,
+        None => writeln!(writer, "# LAMMPS data file generated by molrs")?,
+    }
+    writeln!(writer)?;
 
     // Core coords are required for every write style, and bound a box-less
     // frame's box.
@@ -2029,11 +2064,20 @@ fn write_lammps_data_frame<W: Write>(
         )));
     }
 
+    refuse_virtual_sites(frame)?;
+
     // Bonded sections need a molecular atom style, and every molecular style
     // carries a molecule ID. The writer never invents one: which atoms form a
     // molecule is the caller's call.
     if !frame_has_atom_field(frame, DataField::Mol) {
-        for block in ["bonds", "angles", "dihedrals", "impropers", "cmaps"] {
+        for block in [
+            "bonds",
+            SPRINGS.0,
+            "angles",
+            "dihedrals",
+            "impropers",
+            "cmaps",
+        ] {
             let n = frame
                 .visit_block(block, |b| b.n_rows().unwrap_or(0))
                 .unwrap_or(0);
@@ -2048,7 +2092,8 @@ fn write_lammps_data_frame<W: Write>(
         }
     }
 
-    let type_labels = TypeLabels::from_frame(frame).map_err(invalid_data)?;
+    // A Drude spring (`drudes` row) is a LAMMPS bond: one bond-type id space.
+    let type_labels = lammps_type_labels(frame).map_err(invalid_data)?;
     let atom_rt = type_labels.block("atoms").ok_or_else(|| {
         invalid_data(
             "frame['atoms'] has neither 'type' nor 'type_id'; \
@@ -2063,7 +2108,6 @@ fn write_lammps_data_frame<W: Write>(
 
     let atom_ids = resolve_atom_ids(frame, n_atoms);
     let row_masses = resolve_row_masses(frame, n_atoms);
-    let (style_name, layout) = infer_write_style(|f| frame_has_atom_field(frame, f));
     // A style that carries a per-atom mass (body's `mass`, sphere's / peri's /
     // line's / ellipsoid's `density`, smd's mass) has no per-type mass, and
     // LAMMPS refuses a Masses section for it. Every other style writes one,
@@ -2083,9 +2127,14 @@ fn write_lammps_data_frame<W: Write>(
         )?)
     };
 
-    let n_bonds = frame
-        .visit_block("bonds", |b| b.n_rows().unwrap_or(0))
-        .unwrap_or(0);
+    let n_bonds = [SPRINGS.1, SPRINGS.0]
+        .iter()
+        .map(|block| {
+            frame
+                .visit_block(block, |b| b.n_rows().unwrap_or(0))
+                .unwrap_or(0)
+        })
+        .sum::<usize>();
     let n_angles = frame
         .visit_block("angles", |b| b.n_rows().unwrap_or(0))
         .unwrap_or(0);
@@ -2155,6 +2204,9 @@ fn write_lammps_data_frame<W: Write>(
         let (origin, lengths) = enclosing_bounds(&coords)?;
         (origin, lengths, [0.0; 3])
     };
+    let box_origin = box_origin.map(|v| v * units.length);
+    let box_lengths = box_lengths.map(|v| v * units.length);
+    let tilts = tilts.map(|v| v * units.length);
     writeln!(
         writer,
         "{} {} xlo xhi",
@@ -2196,25 +2248,21 @@ fn write_lammps_data_frame<W: Write>(
         improper_rt.and_then(|r| r.labels()),
     )?;
 
-    // Masses, for every style without a per-atom mass.
     if let Some(type_masses) = &type_masses {
-        writeln!(writer, "Masses")?;
-        writeln!(writer)?;
-        for (k, m) in type_masses.iter().enumerate() {
-            writeln!(writer, "{} {m}", k + 1)?;
+        writeln!(writer, "Masses\n")?;
+        for (i, mass) in type_masses.iter().enumerate() {
+            writeln!(writer, "{} {}", i + 1, mass * units.mass)?;
         }
         writeln!(writer)?;
     }
 
-    write_atoms_section(
-        writer,
-        frame,
-        style_name,
-        layout.fields,
-        &atom_ids,
-        atom_rt.type_ids(),
-        row_masses.as_deref(),
-    )?;
+    let columns = layout
+        .fields
+        .iter()
+        .filter(|&&f| f != DataField::Id)
+        .map(|&f| AtomColumn::resolve(frame, f, atom_rt.type_ids(), row_masses.as_deref(), &units))
+        .collect::<std::io::Result<Vec<_>>>()?;
+    write_atoms_section(writer, frame, &style_name, &atom_ids, &columns)?;
 
     // Velocities section when all three components exist.
     if let (Some(vx), Some(vy), Some(vz)) = (
@@ -2229,19 +2277,21 @@ fn write_lammps_data_frame<W: Write>(
                 writer,
                 "{} {} {} {}",
                 atom_ids[i],
-                vx[[i]],
-                vy[[i]],
-                vz[[i]]
+                vx[[i]] * units.velocity,
+                vy[[i]] * units.velocity,
+                vz[[i]] * units.velocity
             )?;
         }
         writeln!(writer)?;
     }
 
+    // The bonds, then the Drude springs, in the order `lammps_type_labels`
+    // lists their type ids.
     write_topology_section(
         writer,
         frame,
         "Bonds",
-        "bonds",
+        &[SPRINGS.1, SPRINGS.0],
         2,
         &atom_ids,
         bond_rt.map(|r| r.type_ids()).unwrap_or(&[]),
@@ -2250,7 +2300,7 @@ fn write_lammps_data_frame<W: Write>(
         writer,
         frame,
         "Angles",
-        "angles",
+        &["angles"],
         3,
         &atom_ids,
         angle_rt.map(|r| r.type_ids()).unwrap_or(&[]),
@@ -2259,7 +2309,7 @@ fn write_lammps_data_frame<W: Write>(
         writer,
         frame,
         "Dihedrals",
-        "dihedrals",
+        &["dihedrals"],
         4,
         &atom_ids,
         dihedral_rt.map(|r| r.type_ids()).unwrap_or(&[]),
@@ -2268,7 +2318,7 @@ fn write_lammps_data_frame<W: Write>(
         writer,
         frame,
         "Impropers",
-        "impropers",
+        &["impropers"],
         4,
         &atom_ids,
         improper_rt.map(|r| r.type_ids()).unwrap_or(&[]),
@@ -2279,7 +2329,7 @@ fn write_lammps_data_frame<W: Write>(
         writer,
         frame,
         "CMAP",
-        "cmaps",
+        &["cmaps"],
         5,
         &atom_ids,
         cmap_rt.map(|r| r.type_ids()).unwrap_or(&[]),
@@ -2300,20 +2350,14 @@ pub fn read_lammps_data<'a>(src: impl Into<Source<'a>>) -> std::io::Result<Frame
         .ok_or_else(|| invalid_data(format!("{}: no LAMMPS data frame", src.name())))
 }
 
-/// Write `frame` as a LAMMPS data file.
-///
-/// The atoms block needs `x`/`y`/`z` and a `type` or `type_id`. For every
-/// atom style without a per-atom mass the Masses section states each type's
-/// mass from the frame — the `mass` of its first atom, else its entry in
-/// [`meta[LAMMPS_TYPE_MASSES]`](LAMMPS_TYPE_MASSES) (which is how a type the
-/// labels declare but no atom uses gets one) — and is never derived from the
-/// species nor defaulted.
+/// Write one LAMMPS data file with inferred atom style and unchanged frame units.
+/// Use `LammpsDataWriter` to select atom style and output units explicitly.
 pub fn write_lammps_data<'a>(
     sink: impl Into<Sink<'a>>,
     frame: &impl FrameAccess,
 ) -> std::io::Result<()> {
     let mut writer = sink.into().writer()?;
-    write_lammps_data_frame(&mut writer, frame)?;
+    write_lammps_data_frame_with(&mut writer, frame, &LammpsDataWriteOptions::default())?;
     writer.flush()
 }
 
@@ -3529,10 +3573,7 @@ Bonds
             )
             .unwrap();
         frame.meta.remove(keys::ATOM_TYPE_LABELS);
-        let mut drudes = Block::new();
-        insert_column_of_length(&mut drudes, keys::ATOMI, vec![0 as Idx], 1).unwrap();
-        insert_column_of_length(&mut drudes, keys::ATOMJ, vec![1 as Idx], 1).unwrap();
-        frame.insert("drudes", drudes);
+        frame.insert("drudes", drude_rows(&[(0, 1)], &["CT-DCT"]));
         let mut out = Vec::new();
         write_lammps_data_frame(&mut out, &frame).unwrap();
         let text = String::from_utf8(out).unwrap();
@@ -3542,6 +3583,152 @@ Bonds
         );
         // The comment sits in the header, where LAMMPS and this reader skip it.
         read_lammps_data(text.as_bytes()).unwrap();
+    }
+
+    /// `drudes` rows (`atomi` the core, `atomj` the shell) typed `types`.
+    fn drude_rows(pairs: &[(Idx, Idx)], types: &[&str]) -> Block {
+        let n = pairs.len();
+        let mut drudes = Block::new();
+        let (i, j): (Vec<Idx>, Vec<Idx>) = pairs.iter().copied().unzip();
+        insert_column_of_length(&mut drudes, keys::ATOMI, i, n).unwrap();
+        insert_column_of_length(&mut drudes, keys::ATOMJ, j, n).unwrap();
+        let types: Vec<String> = types.iter().map(|t| t.to_string()).collect();
+        insert_column_of_length(&mut drudes, keys::TYPE, types, n).unwrap();
+        drudes
+    }
+
+    /// A polarisable methane-like fragment: core `CT` (1) with shell `DCT`
+    /// (2) and two `HC` (3, 4), bonded `CT-HC`.
+    const DRUDE_HOST: &str = "\
+test
+
+4 atoms
+2 bonds
+3 atom types
+1 bond types
+
+0 10 xlo xhi
+0 10 ylo yhi
+0 10 zlo zhi
+
+Atom Type Labels
+
+1 CT
+2 DCT
+3 HC
+
+Bond Type Labels
+
+1 CT-HC
+
+Atoms # full
+
+1 1 1 0.5 0 0 0
+2 1 2 -0.5 0 0 0
+3 1 3 0 1 0 0
+4 1 3 0 -1 0 0
+
+Bonds
+
+1 1 1 3
+2 1 1 4
+";
+
+    fn drude_host() -> Frame {
+        let mut frame = read_lammps_data(DRUDE_HOST.as_bytes()).unwrap();
+        frame
+            .get_mut("atoms")
+            .unwrap()
+            .insert(
+                "mass",
+                ndarray::array![11.6, 0.4, 1.008, 1.008].into_dyn(),
+                None,
+            )
+            .unwrap();
+        frame.insert("drudes", drude_rows(&[(0, 1)], &["CT-DCT"]));
+        frame
+    }
+
+    fn written(frame: &Frame) -> std::io::Result<String> {
+        let mut out = Vec::new();
+        write_lammps_data_frame(&mut out, frame)?;
+        Ok(String::from_utf8(out).unwrap())
+    }
+
+    /// LAMMPS's DRUDE package reads the core-shell springs as bonds: each
+    /// `drudes` row is a `Bonds` row after the bonds, its type a bond type
+    /// of its own label.
+    #[test]
+    fn drude_springs_are_written_as_bonds_of_their_own_type() {
+        let text = written(&drude_host()).unwrap();
+        assert!(text.contains("\n3 bonds\n"), "{text}");
+        assert!(text.contains("\n2 bond types\n"), "{text}");
+        assert!(
+            text.contains("Bond Type Labels\n\n1 CT-DCT\n2 CT-HC\n"),
+            "{text}"
+        );
+        assert!(
+            text.contains("Bonds\n\n1 2 1 3\n2 2 1 4\n3 1 1 2\n"),
+            "{text}"
+        );
+        assert!(text.contains("# fix drude flags (atom-type order): C D N\n"));
+        // Read back, a spring is a bond: the data file has no other form.
+        let back = read_lammps_data(text.as_bytes()).unwrap();
+        assert_eq!(strings(&back, "bonds"), ["CT-HC", "CT-HC", "CT-DCT"]);
+    }
+
+    #[test]
+    fn a_drude_row_without_a_type_is_refused_naming_the_block() {
+        let mut frame = drude_host();
+        let mut untyped = Block::new();
+        insert_column_of_length(&mut untyped, keys::ATOMI, vec![0 as Idx], 1).unwrap();
+        insert_column_of_length(&mut untyped, keys::ATOMJ, vec![1 as Idx], 1).unwrap();
+        frame.insert("drudes", untyped);
+        let err = written(&frame).unwrap_err().to_string();
+        assert!(err.contains("drudes") && err.contains("type"), "{err}");
+    }
+
+    /// A spring is bonded topology: it needs a molecule ID per atom and a
+    /// style that holds bonds.
+    #[test]
+    fn drude_springs_need_a_molecular_style() {
+        let mut frame = drude_host();
+        frame.remove("bonds");
+        frame.get_mut("atoms").unwrap().remove("mol_id");
+        let err = written(&frame).unwrap_err().to_string();
+        assert!(err.contains("drudes") && err.contains("mol_id"), "{err}");
+
+        let options = LammpsDataWriteOptions {
+            atom_style: Some("charge".into()),
+            units: None,
+        };
+        let mut out = Vec::new();
+        let err = write_lammps_data_frame_with(&mut out, &frame, &options)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("drudes"), "{err}");
+    }
+
+    /// A data file builds no virtual site: a `virtual_sites` row is refused
+    /// by name, not written as a free atom.
+    #[test]
+    fn virtual_sites_are_refused_naming_the_tip4p_pair_style() {
+        let mut frame = read_lammps_data(LABELLED.as_bytes()).unwrap();
+        let mut sites = Block::new();
+        for (key, v) in [
+            ("atomi", 0 as Idx),
+            ("atomj", 1),
+            ("atomk", 2),
+            ("atoml", 1),
+        ] {
+            insert_column_of_length(&mut sites, key, vec![v], 1).unwrap();
+        }
+        frame.insert("virtual_sites", sites);
+        let err = written(&frame).unwrap_err().to_string();
+        assert!(
+            err.contains("virtual_sites") && err.contains("tip4p"),
+            "{err}"
+        );
     }
 
     #[test]

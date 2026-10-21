@@ -7,8 +7,6 @@
 //! `molrs.core.keys` is the field-name convention projected from the same tables:
 //! each constant is a :class:`Key` (not a bare ``str``).
 
-use std::hash::{Hash, Hasher};
-
 use pyo3::basic::CompareOp;
 use pyo3::exceptions::{PyTypeError, PyValueError};
 use pyo3::prelude::*;
@@ -54,10 +52,8 @@ impl PyKey {
         format!("Key({:?})", self.name)
     }
 
-    fn __hash__(&self) -> u64 {
-        let mut h = std::collections::hash_map::DefaultHasher::new();
-        self.name.hash(&mut h);
-        h.finish()
+    fn __hash__(&self, py: Python<'_>) -> PyResult<isize> {
+        pyo3::types::PyString::new(py, self.name).hash()
     }
 
     fn __richcmp__(&self, other: &Bound<'_, PyAny>, op: CompareOp) -> PyResult<bool> {

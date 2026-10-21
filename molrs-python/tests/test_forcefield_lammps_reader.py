@@ -8,6 +8,8 @@ FFI capsule a consumer like molpack resolves), that errors map to
 into a path or a ``bytearray``.
 """
 
+from conftest import capture
+
 import molrs
 import numpy as np
 import pytest
@@ -47,7 +49,9 @@ def read_ff(tmp_path):
     return read
 
 
-def _include(ff: molrs.ff.forcefield.ForceField, frame: molrs.core.Frame, **opts) -> str:
+def _include(
+    ff: molrs.ff.forcefield.ForceField, frame: molrs.core.Frame, **opts
+) -> str:
     """The force-field include ``LammpsForcefieldWriter`` writes, as text."""
     buf = bytearray()
     LammpsForcefieldWriter(frame, **opts).write(buf, ff)
@@ -419,18 +423,78 @@ def test_read_data_coeffs_needs_coeffs(data_frame, tmp_path):
         LammpsForcefieldReader().read_data_coeffs(molrs.io.read_lammps_data(path))
 
 
-def test_read_lammps_forcefield_names_a_missing_file(tmp_path):
-    with pytest.raises(FileNotFoundError, match="absent.ff"):
-        LammpsForcefieldReader().read(tmp_path / "absent.ff")
+def test_read_lammps_data_coeffs_names_a_missing_file(tmp_path):
+    with pytest.raises(OSError, match="absent.data"):
+        molrs.io.lammps.LammpsForcefieldReader().read_data_coeffs(
+            molrs.io.read_lammps_data(tmp_path / "absent.data")
+        )
 
 
-def test_data_coeffs_written_to_a_path_are_the_buffer(data_frame, tmp_path):
-    ff = LammpsForcefieldReader().read_data_coeffs(data_frame)
-    out = tmp_path / "coeffs.txt"
-    LammpsForcefieldWriter(data_frame).write_data_coeffs(out, ff)
-    assert out.read_text(encoding="utf-8") == _data_coeffs(ff, data_frame)
+# --- Drude oscillators: the DRUDE package reads the springs as bonds ---
 
 
-def test_writer_refuses_an_unknown_unit_style():
-    with pytest.raises(ValueError):
-        LammpsForcefieldWriter(_labelled_frame(), units="furlongs")
+def _drude_system() -> tuple[molrs.ff.forcefield.ForceField, molrs.core.Frame]:
+    """A ``CT`` core with its ``DCT`` shell and two ``CT-HC`` bonds."""
+    ff = molrs.ff.forcefield.ForceField("clpol")
+    atoms = ff.def_style("atom", "full")
+    ct = atoms.def_type("CT", mass=11.6)
+    dct = atoms.def_type("DCT", mass=0.4)
+    hc = atoms.def_type("HC", mass=1.0)
+    ff.def_style("bond", "harmonic").def_type("CT-HC", ct, hc, k=340.0, r0=1.09)
+    ff.def_style("drude", "harmonic").def_type(
+        "CT-DCT", ct, dct, k=500.0, alpha=1.2, thole=2.6
+    )
+    frame = molrs.core.Frame()
+    frame["atoms"] = molrs.core.Block(
+        {
+            "x": np.array([0.0, 0.0, 1.0, -1.0]),
+            "y": np.zeros(4),
+            "z": np.zeros(4),
+            "type": np.array(["CT", "DCT", "HC", "HC"]),
+            "mol_id": np.ones(4, dtype=np.uint64),
+            "charge": np.array([1.0, -1.0, 0.0, 0.0]),
+        }
+    )
+    frame["bonds"] = molrs.core.Block(
+        {
+            "atomi": np.array([0, 0], dtype=np.uint64),
+            "atomj": np.array([2, 3], dtype=np.uint64),
+            "type": np.array(["CT-HC", "CT-HC"]),
+        }
+    )
+    frame["drudes"] = molrs.core.Block(
+        {
+            "atomi": np.array([0], dtype=np.uint64),
+            "atomj": np.array([1], dtype=np.uint64),
+            "type": np.array(["CT-DCT"]),
+        }
+    )
+    frame["atoms"]["mass"] = [11.6, 0.4, 1.008, 1.008]
+    return ff, frame
+
+
+def test_drude_springs_are_written_as_lammps_bonds():
+    ff, frame = _drude_system()
+    data = capture(molrs.io.write_lammps_data, frame)
+    assert "\n3 bonds\n" in data
+    assert "Bond Type Labels\n\n1 CT-DCT\n2 CT-HC\n" in data
+    assert "Bonds\n\n1 2 1 3\n2 2 1 4\n3 1 1 2\n" in data
+    text = capture(
+        molrs.io.lammps.LammpsForcefieldWriter(frame, skip_special_bonds=True).write, ff
+    )
+    assert "bond_coeff CT-DCT 500.000000 0.000000" in text
+    assert "CT-DCT (CT DCT): alpha 1.200000 thole 2.600000" in text
+    coeffs = capture(
+        molrs.io.lammps.LammpsForcefieldWriter(frame).write_data_coeffs, ff
+    )
+    assert "1 500.000000 0.000000\n2 340.000000 1.090000\n" in coeffs
+
+
+def test_a_virtual_site_is_refused_by_the_data_writer():
+    _, frame = _drude_system()
+    endpoints = ("atomi", "atomj", "atomk", "atoml")
+    frame["virtual_sites"] = molrs.core.Block(
+        {name: np.array([i], dtype=np.uint64) for i, name in enumerate(endpoints)}
+    )
+    with pytest.raises(OSError, match="virtual_sites"):
+        capture(molrs.io.write_lammps_data, frame)

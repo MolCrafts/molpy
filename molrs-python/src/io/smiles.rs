@@ -1,7 +1,8 @@
-//! SMILES (`molrs::io::smiles`): [`PySmilesIr`], the parsed text —
-//! `SmilesIr.parse(text)` reads SMILES, `SmilesIr.from_atomistic(mol)` builds
-//! the IR of a molecule and ``str(ir)`` writes it — and [`PyFragmentIr`], a
-//! fragment body with bonding descriptors (`SmilesIr.from_fragment(body)`).
+//! SMILES (`molrs::io::smiles`): `read_smiles(text)` reads SMILES into a
+//! [`PySmilesIr`], `write_smiles(mol)` writes a molecule as SMILES text, and
+//! `read_smiles_fragment(body)` reads a fragment body with bonding descriptors
+//! into a [`PyFragmentIr`]. An IR is only ever handed out, never constructed
+//! by the caller.
 //! SMARTS — parsing, matching, and a pattern written from a molecule — is
 //! `molrs.perceive`'s.
 
@@ -18,28 +19,28 @@ use pyo3::prelude::*;
 /// Intermediate representation of a parsed SMILES string: the syntax tree
 /// the parser produces, one chain per ``'.'``-separated component.
 ///
-/// :meth:`parse` reads SMILES text, :meth:`from_atomistic` builds the IR of a
-/// molecule, and ``str(ir)`` writes it back as text (SMILES, or SMARTS where
-/// it holds query atoms or bond operators). :meth:`to_atomistic` turns it
-/// into a molecular graph. A fragment body with bonding descriptors is
-/// :meth:`from_fragment`'s, a :class:`FragmentIr`.
+/// :func:`read_smiles` hands it out; it has no constructor of its own.
+/// ``str(ir)`` writes it back as text (SMILES, or SMARTS where it holds query
+/// atoms or bond operators) and :meth:`to_atomistic` turns it into a
+/// molecular graph. A fragment body with bonding descriptors is
+/// :func:`read_smiles_fragment`'s, a :class:`FragmentIr`.
 ///
 /// Examples
 /// --------
-/// >>> ir = molrs.io.smiles.SmilesIr.parse("CCO")
+/// >>> ir = molrs.io.smiles.read_smiles("CCO")
 /// >>> ir.n_components
 /// 1
 /// >>> ir.to_atomistic().n_atoms
 /// 3
-/// >>> str(molrs.io.smiles.SmilesIr.from_atomistic(ir.to_atomistic()))
+/// >>> str(ir)
 /// 'CCO'
 #[pyclass(module = "molrs.io.smiles", name = "SmilesIr", frozen)]
 pub struct PySmilesIr {
     inner: SmilesIr,
 }
 
-/// `ir` as its text, `ValueError` for an IR no parser or
-/// `from_atomistic` produces (no components, or bonding descriptors).
+/// `ir` as its text, `ValueError` for an IR neither the parser nor
+/// `SmilesIr::from_atomistic` produces (no components, or bonding descriptors).
 fn smiles_text(ir: &SmilesIr) -> PyResult<String> {
     use std::fmt::Write;
     let mut text = String::new();
@@ -51,135 +52,6 @@ fn smiles_text(ir: &SmilesIr) -> PyResult<String> {
 
 #[pymethods]
 impl PySmilesIr {
-    /// Parse SMILES text into its IR.
-    ///
-    /// Parameters
-    /// ----------
-    /// smiles : str
-    ///     SMILES text (``"CCO"`` for ethanol, ``"c1ccccc1"``).
-    ///
-    /// Returns
-    /// -------
-    /// SmilesIr
-    ///
-    /// Raises
-    /// ------
-    /// SmilesError
-    ///     (a ``ValueError``) for text that is not SMILES: a syntax error, an
-    ///     unknown element, a bonding descriptor (a fragment body goes
-    ///     through :meth:`from_fragment`).
-    #[staticmethod]
-    fn parse(smiles: &str) -> PyResult<Self> {
-        let inner = SmilesIr::parse(smiles).map_err(smiles_error_to_pyerr)?;
-        Ok(Self { inner })
-    }
-
-    /// Parse a fragment body — SMILES plus ``CGsmiles`` / ``BigSMILES``
-    /// bonding descriptors (``[<]OCC[>]``, ``[$]COC[$]``) — into its IR.
-    ///
-    /// Parameters
-    /// ----------
-    /// body : str
-    ///     The fragment body.
-    ///
-    /// Returns
-    /// -------
-    /// FragmentIr
-    ///
-    /// Raises
-    /// ------
-    /// SmilesError
-    ///     (a ``ValueError``) for text that is not fragment notation.
-    ///
-    /// Examples
-    /// --------
-    /// >>> molrs.io.smiles.SmilesIr.from_fragment("[<]OCC[>]").to_template().n_ports
-    /// 2
-    #[staticmethod]
-    fn from_fragment(body: &str) -> PyResult<PyFragmentIr> {
-        let inner = SmilesIr::from_fragment(body).map_err(smiles_error_to_pyerr)?;
-        Ok(PyFragmentIr { inner })
-    }
-
-    /// Build the IR of a molecule — how a molecule is written as SMILES
-    /// (``str(SmilesIr.from_atomistic(mol))``).
-    ///
-    /// Every science or representation choice is an explicit keyword, the
-    /// fields of ``molrs::io::smiles::SmilesEmitOptions``.
-    ///
-    /// Parameters
-    /// ----------
-    /// mol : Atomistic
-    ///     The molecule.
-    /// canonical : bool
-    ///     Use the canonical atom order for root selection and branch order.
-    /// root : Atom, optional
-    ///     The atom the string starts at (overrides the canonical root).
-    /// aromatic : {"as_marked", "kekule_only"}
-    ///     Honour aromatic marks, or require integer bond numbers.
-    /// hydrogens : {"organic_subset", "explicit_all", "as_stored"}
-    ///     How hydrogens appear.
-    /// include_stereo : bool
-    ///     Write tetrahedral / double-bond stereo marks the graph holds.
-    /// multi_component : {"error_if_multiple", "join_dot", "first_only"}
-    ///     What a molecule of several connected components becomes.
-    /// organic_subset : bool
-    ///     Prefer the Daylight organic-subset letters when legal.
-    ///
-    /// Returns
-    /// -------
-    /// SmilesIr
-    ///
-    /// Raises
-    /// ------
-    /// ValueError
-    ///     An unknown option spelling, or ``root`` is not an atom.
-    /// SmilesError
-    ///     If the molecule cannot be written under these options.
-    #[staticmethod]
-    #[pyo3(signature = (
-        mol,
-        *,
-        canonical = true,
-        root = None,
-        aromatic = "as_marked",
-        hydrogens = "organic_subset",
-        include_stereo = false,
-        multi_component = "error_if_multiple",
-        organic_subset = true,
-    ))]
-    #[allow(clippy::too_many_arguments, reason = "Public Python keyword arguments")]
-    fn from_atomistic(
-        mol: &PyAtomistic,
-        canonical: bool,
-        root: Option<&Bound<'_, PyAny>>,
-        aromatic: &str,
-        hydrogens: &str,
-        include_stereo: bool,
-        multi_component: &str,
-        organic_subset: bool,
-    ) -> PyResult<Self> {
-        let root = root
-            .map(|atom| {
-                atom.getattr("handle")
-                    .and_then(|h| h.extract::<u64>())
-                    .map(NodeId::from)
-                    .map_err(|_| PyValueError::new_err("root must be an Atom of mol"))
-            })
-            .transpose()?;
-        let opts = emit_options(
-            canonical,
-            root,
-            aromatic,
-            hydrogens,
-            include_stereo,
-            multi_component,
-            organic_subset,
-        )?;
-        let inner = SmilesIr::from_atomistic(mol.core(), &opts).map_err(smiles_error_to_pyerr)?;
-        Ok(Self { inner })
-    }
-
     /// Number of ``'.'``-separated components.
     #[getter]
     fn n_components(&self) -> usize {
@@ -240,7 +112,146 @@ impl PySmilesIr {
     }
 }
 
-/// The emit options the keywords of [`PySmilesIr::from_atomistic`] spell.
+/// Read SMILES text into its IR.
+///
+/// Parameters
+/// ----------
+/// smiles : str
+///     SMILES text (``"CCO"`` for ethanol, ``"c1ccccc1"``).
+///
+/// Returns
+/// -------
+/// SmilesIr
+///
+/// Raises
+/// ------
+/// SmilesError
+///     (a ``ValueError``) for text that is not SMILES: a syntax error, an
+///     unknown element, a bonding descriptor (a fragment body goes through
+///     :func:`read_smiles_fragment`).
+///
+/// Examples
+/// --------
+/// >>> molrs.io.smiles.read_smiles("CCO").to_atomistic().n_atoms
+/// 3
+#[pyfunction]
+fn read_smiles(smiles: &str) -> PyResult<PySmilesIr> {
+    let inner = SmilesIr::parse(smiles).map_err(smiles_error_to_pyerr)?;
+    Ok(PySmilesIr { inner })
+}
+
+/// Read a fragment body — SMILES plus ``CGsmiles`` / ``BigSMILES`` bonding
+/// descriptors (``[<]OCC[>]``, ``[$]COC[$]``) — into its IR.
+///
+/// Parameters
+/// ----------
+/// body : str
+///     The fragment body.
+///
+/// Returns
+/// -------
+/// FragmentIr
+///
+/// Raises
+/// ------
+/// SmilesError
+///     (a ``ValueError``) for text that is not fragment notation.
+///
+/// Examples
+/// --------
+/// >>> molrs.io.smiles.read_smiles_fragment("[<]OCC[>]").to_template().n_ports
+/// 2
+#[pyfunction]
+fn read_smiles_fragment(body: &str) -> PyResult<PyFragmentIr> {
+    let inner = SmilesIr::from_fragment(body).map_err(smiles_error_to_pyerr)?;
+    Ok(PyFragmentIr { inner })
+}
+
+/// Write a molecule as SMILES text.
+///
+/// Every science or representation choice is an explicit keyword, the
+/// fields of ``molrs::io::smiles::SmilesEmitOptions``.
+///
+/// Parameters
+/// ----------
+/// mol : Atomistic
+///     The molecule.
+/// canonical : bool
+///     Use the canonical atom order for root selection and branch order.
+/// root : Atom, optional
+///     The atom the string starts at (overrides the canonical root).
+/// aromatic : {"as_marked", "kekule_only"}
+///     Honour aromatic marks, or require integer bond numbers.
+/// hydrogens : {"organic_subset", "explicit_all", "as_stored"}
+///     How hydrogens appear.
+/// include_stereo : bool
+///     Write tetrahedral / double-bond stereo marks the graph holds.
+/// multi_component : {"error_if_multiple", "join_dot", "first_only"}
+///     What a molecule of several connected components becomes.
+/// organic_subset : bool
+///     Prefer the Daylight organic-subset letters when legal.
+///
+/// Returns
+/// -------
+/// str
+///
+/// Raises
+/// ------
+/// ValueError
+///     An unknown option spelling, or ``root`` is not an atom.
+/// SmilesError
+///     If the molecule cannot be written under these options.
+///
+/// Examples
+/// --------
+/// >>> mol = molrs.io.smiles.read_smiles("CCO").to_atomistic()
+/// >>> molrs.io.smiles.read_smiles(molrs.io.smiles.write_smiles(mol)).to_atomistic().n_atoms
+/// 3
+#[pyfunction]
+#[pyo3(signature = (
+    mol,
+    *,
+    canonical = true,
+    root = None,
+    aromatic = "as_marked",
+    hydrogens = "organic_subset",
+    include_stereo = false,
+    multi_component = "error_if_multiple",
+    organic_subset = true,
+))]
+#[allow(clippy::too_many_arguments, reason = "Public Python keyword arguments")]
+fn write_smiles(
+    mol: &PyAtomistic,
+    canonical: bool,
+    root: Option<&Bound<'_, PyAny>>,
+    aromatic: &str,
+    hydrogens: &str,
+    include_stereo: bool,
+    multi_component: &str,
+    organic_subset: bool,
+) -> PyResult<String> {
+    let root = root
+        .map(|atom| {
+            atom.getattr("handle")
+                .and_then(|h| h.extract::<u64>())
+                .map(NodeId::from)
+                .map_err(|_| PyValueError::new_err("root must be an Atom of mol"))
+        })
+        .transpose()?;
+    let opts = emit_options(
+        canonical,
+        root,
+        aromatic,
+        hydrogens,
+        include_stereo,
+        multi_component,
+        organic_subset,
+    )?;
+    let ir = SmilesIr::from_atomistic(mol.core(), &opts).map_err(smiles_error_to_pyerr)?;
+    smiles_text(&ir)
+}
+
+/// The emit options the keywords of [`write_smiles`] spell.
 fn emit_options(
     canonical: bool,
     root: Option<NodeId>,
@@ -293,7 +304,7 @@ fn emit_options(
 }
 
 /// A SMILES fragment body — SMILES plus bonding descriptors (``[<]OCC[>]``)
-/// — as :meth:`SmilesIr.from_fragment` parses it, and as a ``CGsmiles``
+/// — as :func:`read_smiles_fragment` reads it, and as a ``CGsmiles``
 /// fragment table holds an atomistic body
 /// (:attr:`molrs.io.cgsmiles.CgFragmentDef.body`).
 ///
@@ -303,7 +314,7 @@ fn emit_options(
 ///
 /// Examples
 /// --------
-/// >>> body = molrs.io.smiles.SmilesIr.from_fragment("[<]OCC[>]")
+/// >>> body = molrs.io.smiles.read_smiles_fragment("[<]OCC[>]")
 /// >>> mol, descriptors = body.to_atomistic()
 /// >>> [d.kind for _, d in descriptors]
 /// ['<', '>']
@@ -388,7 +399,7 @@ impl PyFragmentIr {
     ///
     /// Examples
     /// --------
-    /// >>> eo = molrs.io.smiles.SmilesIr.from_fragment("[<]OCC[>]").to_template()
+    /// >>> eo = molrs.io.smiles.read_smiles_fragment("[<]OCC[>]").to_template()
     /// >>> eo.n_atoms, eo.n_ports
     /// (5, 2)
     fn to_template(&self, py: Python<'_>) -> PyResult<Py<PyAtomistic>> {
@@ -410,8 +421,16 @@ impl PyFragmentIr {
     }
 }
 
-/// Register `SmilesError`, `SmilesIr` and `FragmentIr`.
+/// Register `SmilesError`, `SmilesIr`, `FragmentIr` and the three doors
+/// `read_smiles`, `read_smiles_fragment` and `write_smiles`.
 pub(crate) fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    for door in [
+        wrap_pyfunction!(read_smiles, m)?,
+        wrap_pyfunction!(read_smiles_fragment, m)?,
+        wrap_pyfunction!(write_smiles, m)?,
+    ] {
+        crate::add_function(m, "molrs.io.smiles", door)?;
+    }
     m.add(
         "SmilesError",
         m.py().get_type::<crate::error::SmilesError>(),

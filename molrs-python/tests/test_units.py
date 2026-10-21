@@ -64,7 +64,9 @@ def test_openmm_preset_is_native_with_molrs_boltzmann():
     assert preset.energy() == "kilojoule_per_mole"
     real = molrs.core.UnitPreset("real")
     units = molrs.core.UnitRegistry()
-    kj = units.quantity(real.boltzmann(), "kilocalorie_per_mole").to("kilojoule_per_mole")
+    kj = units.quantity(real.boltzmann(), "kilocalorie_per_mole").to(
+        "kilojoule_per_mole"
+    )
     assert preset.boltzmann() == pytest.approx(kj.value, rel=1e-14)
     assert "openmm" in molrs.core.UnitPreset.names()
 
@@ -79,17 +81,31 @@ def test_register_a_custom_preset():
     table = {
         dim: getattr(molrs.core.UnitPreset("real"), dim)()
         for dim in (
-            "mass", "length", "time", "energy", "temperature",
-            "charge", "pressure", "velocity", "force", "density",
+            "mass",
+            "length",
+            "time",
+            "energy",
+            "temperature",
+            "charge",
+            "pressure",
+            "velocity",
+            "force",
+            "density",
         )
     }
     table["length"] = "nanometer"
-    preset = molrs.core.UnitPreset.register("real_nm_test", table, boltzmann=1.0, coulomb=2.0)
+    preset = molrs.core.UnitPreset.register(
+        "real_nm_test", table, boltzmann=1.0, coulomb=2.0
+    )
     assert molrs.core.UnitPreset("real_nm_test").length() == "nanometer"
     assert preset.coulomb() == 2.0
     with pytest.raises(ValueError, match="already"):
-        molrs.core.UnitPreset.register("real_nm_test", table, boltzmann=1.0, coulomb=2.0)
-    molrs.core.UnitPreset.register("real_nm_test", table, boltzmann=3.0, coulomb=2.0, overwrite=True)
+        molrs.core.UnitPreset.register(
+            "real_nm_test", table, boltzmann=1.0, coulomb=2.0
+        )
+    molrs.core.UnitPreset.register(
+        "real_nm_test", table, boltzmann=3.0, coulomb=2.0, overwrite=True
+    )
     assert molrs.core.UnitPreset("real_nm_test").boltzmann() == 3.0
     del table["mass"]
     with pytest.raises(ValueError, match="mass"):

@@ -33,8 +33,8 @@ and the docs build.
 | `molrs.io.pdb`, `.xyz`, `.gro`, `.mol2`, `.cif`, `.sdf`, `.dcd`, `.trr`, `.xtc` | `molrs::io::{pdb, xyz, gro, mol2, cif, sdf, dcd, trr, xtc}` | each format's multi-frame classes: `<Fmt>Reader(source)` and (all but SDF) `<Fmt>Writer(sink)` |
 | `molrs.io.lammps` | `molrs::io::lammps` | `LammpsDumpReader` / `LammpsDumpWriter`, `LammpsForcefieldReader` / `LammpsForcefieldWriter`, `BondReactTemplate`, the `Lammps*` log records, `is_lammps_log` |
 | `molrs.io.gromacs`, `.amber`, `.openmm_xml` | `molrs::io::{gromacs, amber, openmm_xml}` | the force-field classes: `GromacsTopForcefieldReader` / `Writer`, `AmberPrmtopForcefieldReader`, `AmberFrcmodWriter`, `OpenmmXmlReader` / `Writer` |
-| `molrs.io.smiles` | `molrs::io::smiles` | `SmilesIr`, `FragmentIr`, `SmilesError`, `BondingDescriptor` |
-| `molrs.io.cgsmiles` | `molrs::io::cgsmiles` | `CgSmilesIr` and the CGsmiles records |
+| `molrs.io.smiles` | `molrs::io::smiles` | `read_smiles`, `read_smiles_fragment`, `write_smiles`; `SmilesIr`, `FragmentIr`, `SmilesError`, `BondingDescriptor` |
+| `molrs.io.cgsmiles` | `molrs::io::cgsmiles` | `read_cgsmiles`; `CgSmilesIr` and the CGsmiles records |
 | `molrs.io.mrec` | `molrs::io::mrec` | `MrecFile`, `MrecReader`, `MrecWriter`, `SequenceSchema`, `ForceFieldSection`, `pack_mrec_zip`, `validation` |
 | `molrs.ff.forcefield` | `molrs::ff::forcefield` | `ForceField`, the `Style` / `ForceFieldType` handles (the data model; its files are `molrs.io`'s) |
 | `molrs.ff.potential` | `molrs::ff::potential` | `Potentials`, `WeightedTerms`, `PairLjCut`, `intramolecular_pairs`, `Potential` |
@@ -46,7 +46,7 @@ and the docs build.
 | `molrs.ff.params` | `molrs::ff::params` | `clpol_polarizability` |
 | `molrs.ff.clpol_scaling` | `molrs::ff::clpol_scaling` | `FragmentScaling`, `compute_k_ij`, `scale_lj`, `fragment_table` (the shipped table) |
 | `molrs.optimize` | `molrs::optimize` | `Lbfgs`, `OptimizationReport` |
-| `molrs.md` | `molrs::md` | `VelocityVerlet`, `Langevin`, `MdState`, `MaxwellBoltzmann`, `MdDriver` |
+| `molrs.md` | `molrs::md` | `MD`, `Phase`, `VelocityVerlet`, `FixLangevin`, `NeighborList`, `MaxwellBoltzmann` |
 | `molrs.conformer` | `molrs::conformer` | `Conformer`, `ConformerReport`, `ConformerStageReport` |
 | `molrs.builder` | `molrs::builder` | `GrapheneBuilder`, `CarbonTubeBuilder`, `Assembler` and its placers / orienter, `Coarsener` |
 | `molrs.compute` | `molrs::compute` | one class per compute type, flat; their results; `ComputeSpec`; the `Compute` protocol |
@@ -311,6 +311,8 @@ the canonical column names (`molrs.core.keys`).
 
 ::: molrs.io.write_lammps_data
 
+::: molrs.io.lammps.infer_lammps_atom_style
+
 ::: molrs.io.read_lammps_molecule
 
 ::: molrs.io.write_lammps_molecule
@@ -397,11 +399,21 @@ same class.
 
 ### SMILES and CGsmiles
 
+An IR is handed out by a `read_*` door, never constructed by the caller.
+
+::: molrs.io.smiles.read_smiles
+
+::: molrs.io.smiles.read_smiles_fragment
+
+::: molrs.io.smiles.write_smiles
+
 ::: molrs.io.smiles.SmilesIr
 
 ::: molrs.io.smiles.FragmentIr
 
 ::: molrs.io.smiles.SmilesError
+
+::: molrs.io.cgsmiles.read_cgsmiles
 
 ::: molrs.io.cgsmiles.CgSmilesIr
 

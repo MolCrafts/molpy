@@ -126,9 +126,7 @@ class Box:
         Raises ``ValueError`` for a singular matrix, a non-positive length or
         lengths/angles that describe no cell."""
     @staticmethod
-    def cube(
-        a: float, origin: npt.ArrayLike = ..., pbc: npt.ArrayLike = ...
-    ) -> Box:
+    def cube(a: float, origin: npt.ArrayLike = ..., pbc: npt.ArrayLike = ...) -> Box:
         """A cubic box of edge ``a`` (Å). Raises ``ValueError`` for a
         non-positive or non-finite ``a``."""
     @staticmethod
@@ -157,9 +155,7 @@ class Box:
         ``[alpha, beta, gamma]`` (degrees). Raises ``ValueError`` for angles
         that describe no cell."""
     @staticmethod
-    def bounding(
-        points: ArrayF, padding: npt.ArrayLike, pbc: npt.ArrayLike
-    ) -> Box:
+    def bounding(points: ArrayF, padding: npt.ArrayLike, pbc: npt.ArrayLike) -> Box:
         """The orthorhombic box enclosing ``points`` ``(N, 3)``, grown by
         ``padding[d] >= 0`` on each side of axis ``d``. Raises ``ValueError``
         for no points, a negative padding or an axis of zero extent."""
@@ -331,9 +327,7 @@ class Block:
     from a frame (``frame["atoms"]``) is a handle on the stored block.
     """
 
-    def __new__(
-        cls, data: _AbcMapping[ColumnKey, npt.ArrayLike] | None = None
-    ) -> Self:
+    def __new__(cls, data: _AbcMapping[ColumnKey, npt.ArrayLike] | None = None) -> Self:
         """Build from a mapping of column name -> array (each value goes through
         ``__setitem__``, so a canonical key adopts its schema dtype). Copying a
         block is :meth:`copy`; ``Block(block)`` raises ``TypeError``."""
@@ -1480,7 +1474,9 @@ class MolGraph:
             or a value that contradicts its column's type; the world is
             unchanged.
         """
-    def get_relation(self, kind: str, rel: int) -> tuple[list[int], dict[str, PropValue]]:
+    def get_relation(
+        self, kind: str, rel: int
+    ) -> tuple[list[int], dict[str, PropValue]]:
         """Relation ``rel`` of ``kind``: its endpoint handles and a new dict
         of its fields."""
     def incident_relations(self, node: int, kind: str) -> list[tuple[int, int]]: ...
@@ -1665,7 +1661,9 @@ class Atomistic:
         about: Sequence[float] | ArrayF | None = None,
     ) -> None: ...
     def scale(
-        self, factor: Sequence[float] | ArrayF, about: Sequence[float] | ArrayF | None = None
+        self,
+        factor: Sequence[float] | ArrayF,
+        about: Sequence[float] | ArrayF | None = None,
     ) -> None: ...
     def center(self, nodes: Iterable[Atom]) -> ArrayF:
         """Mass-weighted centre (Å) of ``nodes``, a float64 ``(3,)`` array."""
@@ -1681,7 +1679,9 @@ class Atomistic:
         returns the new atoms, copy-major. Atomic."""
     def merge(self, other: Self) -> Refs[Atom]:
         """Merge ``other`` in (emptying it); returns its atoms, now here."""
-    def induced_subgraph(self, nodes: Iterable[Atom]) -> tuple[Self, dict[Atom, Atom]]: ...
+    def induced_subgraph(
+        self, nodes: Iterable[Atom]
+    ) -> tuple[Self, dict[Atom, Atom]]: ...
     def extract_subgraph(
         self,
         centers: Iterable[Atom],
@@ -1793,7 +1793,9 @@ class CoarseGrain:
         about: Sequence[float] | ArrayF | None = None,
     ) -> None: ...
     def scale(
-        self, factor: Sequence[float] | ArrayF, about: Sequence[float] | ArrayF | None = None
+        self,
+        factor: Sequence[float] | ArrayF,
+        about: Sequence[float] | ArrayF | None = None,
     ) -> None: ...
     def center(self, nodes: Iterable[Bead]) -> ArrayF: ...
     # --- composition ---
@@ -1805,8 +1807,12 @@ class CoarseGrain:
         frag_ids: ArrayI32 | Sequence[int],
     ) -> Refs[Bead]: ...
     def merge(self, other: Self) -> Refs[Bead]: ...
-    def induced_subgraph(self, nodes: Iterable[Bead]) -> tuple[Self, dict[Bead, Bead]]: ...
-    def extract_subgraph(self, centers: Iterable[Bead], radius: int) -> ExtractedSubgraph: ...
+    def induced_subgraph(
+        self, nodes: Iterable[Bead]
+    ) -> tuple[Self, dict[Bead, Bead]]: ...
+    def extract_subgraph(
+        self, centers: Iterable[Bead], radius: int
+    ) -> ExtractedSubgraph: ...
     # --- structural graph hash (Weisfeiler-Lehman) ---
     def structural_hash(self) -> int: ...
     def canonical_order(self) -> Refs[Bead]: ...
@@ -1907,7 +1913,9 @@ class RelationRef:
         **kwargs: PropValue,
     ) -> None: ...
     @classmethod
-    def _restore(cls, world: Atomistic | CoarseGrain, kind: str, row: int) -> RelationRef: ...
+    def _restore(
+        cls, world: Atomistic | CoarseGrain, kind: str, row: int
+    ) -> RelationRef: ...
 
 class Bond(RelationRef):
     @property
@@ -2277,15 +2285,19 @@ class RotatableBond:
 def assign_rings(mol: Atomistic) -> None:
     """Write ``is_in_ring`` / ``n_rings`` onto every atom and bond of ``mol``,
     in place."""
+
 def assign_aromaticity(mol: Atomistic) -> None:
     """Bring ``mol`` to the standard aromatic representation, in place:
     ``is_aromatic`` on atoms, ``bond_type`` / ``bond_number`` on bonds."""
+
 def add_hydrogens(mol: Atomistic) -> Atomistic:
     """New graph: ``mol`` plus the hydrogens its open valences imply; ``mol``
     is untouched."""
+
 def assign_stereo(mol: Atomistic) -> None:
     """Write ``stereo`` onto each perceived stereocentre / bond of ``mol``,
     in place."""
+
 def perceive_rotatable_bonds(
     mol: Atomistic,
     *,
@@ -2294,25 +2306,31 @@ def perceive_rotatable_bonds(
     """The rotatable bonds of ``mol`` (single, acyclic, both endpoints of
     degree > 1); ``mol`` is untouched. ``unknown_bond`` defaults to
     ``UnknownBondPolicy.NotRotatable``."""
+
 def assign_rotatable_bonds(
     mol: Atomistic,
     *,
     unknown_bond: UnknownBondPolicy = ...,
 ) -> None:
     """Write ``is_rotatable`` (0/1) onto every bond of ``mol``, in place."""
+
 def assign_bond_orders(mol: Atomistic) -> None:
     """Write antechamber's Kekulé structure, judged from the connectivity
     (``bond_number`` / ``bond_type``), onto ``mol``, in place."""
+
 def assign_kekule_bond_orders(mol: Atomistic) -> bool:
     """Give every aromatic bond of ``mol`` a legal localized ``bond_number``,
     in place; ``False`` (and nothing changed) when no legal assignment
     exists."""
+
 def assign_bcc_bond_types(mol: Atomistic, source: BondOrderSource) -> None:
     """Write ``bcc_bond_type`` onto every bond of ``mol``, in place, from the
     bond orders ``source`` names."""
+
 def assign_equivalence_classes(mol: Atomistic) -> None:
     """Write ``equiv_class`` onto every atom of ``mol`` (antechamber
     ``-eq 1``), in place."""
+
 def perceive_rings(mol: Atomistic) -> RingSet:
     """The SSSR rings of ``mol`` as a :class:`RingSet`; ``mol`` is untouched."""
 
@@ -2325,6 +2343,10 @@ class keys:
     """``molrs.core.keys``: the canonical column and frame-meta names,
     projected from the Rust key tables; ordered groups are lists."""
 
+    H_COUNT: keys.Key
+    ISOTOPE: keys.Key
+    IS_AROMATIC: keys.Key
+    STEREO: keys.Key
     class Key:
         """A canonical name; ``str(key)`` / ``.key`` is the plain string."""
 
@@ -2389,7 +2411,9 @@ class keys:
     QUATW: Key
     RES_ID: Key
     RES_NAME: Key
+    SPACE_GROUP: Key
     STYLE: Key
+    SYMOPS: Key
     TYPE: Key
     TYPE_ID: Key
     UNITS: Key
@@ -2549,46 +2573,45 @@ class schema:
 class SmilesIr:
     """Intermediate representation of a parsed SMILES string.
 
-    :meth:`parse` reads SMILES text, :meth:`from_atomistic` builds the IR of a
-    molecule and ``str(ir)`` writes it back as text. A fragment body with
-    bonding descriptors is :meth:`from_fragment`'s, a :class:`FragmentIr`.
+    :func:`read_smiles` hands it out; it has no constructor of its own.
+    ``str(ir)`` writes it back as text. A fragment body with bonding
+    descriptors is :func:`read_smiles_fragment`'s, a :class:`FragmentIr`.
     """
 
-    @staticmethod
-    def parse(smiles: str) -> SmilesIr:
-        """Parse SMILES text; ``SmilesError`` for text that is not SMILES."""
-    @staticmethod
-    def from_fragment(body: str) -> FragmentIr:
-        """Parse a fragment body (SMILES plus bonding descriptors, e.g.
-        ``"[<]OCC[>]"``)."""
-    @staticmethod
-    def from_atomistic(
-        mol: Atomistic,
-        *,
-        canonical: bool = True,
-        root: Atom | None = None,
-        aromatic: Literal["as_marked", "kekule_only"] = "as_marked",
-        hydrogens: Literal[
-            "organic_subset", "explicit_all", "as_stored"
-        ] = "organic_subset",
-        include_stereo: bool = False,
-        multi_component: Literal[
-            "error_if_multiple", "join_dot", "first_only"
-        ] = "error_if_multiple",
-        organic_subset: bool = True,
-    ) -> SmilesIr:
-        """The IR of ``mol``: ``str(SmilesIr.from_atomistic(mol))`` writes it
-        as SMILES."""
     @property
     def n_components(self) -> int: ...
     def to_atomistic(self) -> Atomistic:
         """Connectivity only: no implicit hydrogens added, no coordinates."""
     def components(self) -> list[Atomistic]: ...
 
+def read_smiles(smiles: str) -> SmilesIr:
+    """Read SMILES text; ``SmilesError`` for text that is not SMILES."""
+
+def read_smiles_fragment(body: str) -> FragmentIr:
+    """Read a fragment body (SMILES plus bonding descriptors, e.g.
+    ``"[<]OCC[>]"``)."""
+
+def write_smiles(
+    mol: Atomistic,
+    *,
+    canonical: bool = True,
+    root: Atom | None = None,
+    aromatic: Literal["as_marked", "kekule_only"] = "as_marked",
+    hydrogens: Literal[
+        "organic_subset", "explicit_all", "as_stored"
+    ] = "organic_subset",
+    include_stereo: bool = False,
+    multi_component: Literal[
+        "error_if_multiple", "join_dot", "first_only"
+    ] = "error_if_multiple",
+    organic_subset: bool = True,
+) -> str:
+    """``mol`` as SMILES text."""
+
 @final
 class FragmentIr:
     """A SMILES fragment body — SMILES plus bonding descriptors — as
-    :meth:`SmilesIr.from_fragment` parses it and a CGsmiles fragment table
+    :func:`read_smiles_fragment` parses it and a CGsmiles fragment table
     holds it; ``str(body)`` writes it back."""
 
     def to_atomistic(self) -> tuple[Atomistic, list[tuple[Atom, BondingDescriptor]]]:
@@ -2597,13 +2620,13 @@ class FragmentIr:
     def to_template(self) -> Atomistic:
         """The ported unit of this body: heavy atoms plus one hydrogen handle
         and one port per bonding descriptor; no coordinates, no ``frag_id``.
-        ``SmilesIr.from_fragment("[<]OCC[>]").to_template()`` equals
-        ``CgSmilesIr.parse("{[#EO]}.{#EO=[<]OCC[>]}").templates()["EO"]``."""
+        ``read_smiles_fragment("[<]OCC[>]").to_template()`` equals
+        ``read_cgsmiles("{[#EO]}.{#EO=[<]OCC[>]}").templates()["EO"]``."""
 
 # ---------------------------------------------------------------------------
 # CGsmiles — one front door plus the read-only records it hands out
 #
-# `CgSmilesIr` parses; every other class here is a read-only view over one
+# `read_cgsmiles` parses into a `CgSmilesIr`; every class here is a read-only view over one
 # record of the value it returns and has no constructor of its own. There is
 # no `CgSmilesReader`: "Reader" here means a lazy, path-backed trajectory
 # cursor, and a text-in / IR-out parser is not that — see the `molrs.io`
@@ -2759,15 +2782,13 @@ class ResolvedPair:
 class CgSmilesIr:
     """Intermediate representation of a parsed CGsmiles string.
 
-    Constructing it parses, validates, expands and resolves the whole string;
-    the value is then read, not built. ``levels`` are the resolution levels
+    :func:`read_cgsmiles` parses, validates, expands and resolves the whole
+    string and hands it out; it has no constructor of its own. ``levels`` are the resolution levels
     (coarsest first), ``fragments[k]`` resolves the names of ``levels[k]``, and
     ``to_atomistic()`` expands the lowest level into a topology-only graph
     whose atoms carry ``frag_id``.
     """
 
-    @staticmethod
-    def parse(text: str) -> CgSmilesIr: ...
     @property
     def levels(self) -> list[CgGraph]: ...
     @property
@@ -2778,7 +2799,7 @@ class CgSmilesIr:
     def templates(self) -> dict[str, Atomistic]:
         """One ported :class:`Atomistic` template per definition of the last
         fragment table, keyed by name. One body alone:
-        ``SmilesIr.from_fragment(body).to_template()``."""
+        ``read_smiles_fragment(body).to_template()``."""
     def to_coarsegrain(self) -> CoarseGrain:
         """The coarsest level, ``levels[0]``, as a bead graph: one bead per
         node (``bead_type`` only, no coordinates or mass), one CG bond per
@@ -2790,6 +2811,9 @@ class CgSmilesIr:
             (a ``ValueError``) the IR breaks a reader invariant;
             no parsed string reaches this.
         """
+
+def read_cgsmiles(text: str) -> CgSmilesIr:
+    """Read a CGsmiles string; ``SmilesError`` for text that is not CGsmiles."""
 
 # ---------------------------------------------------------------------------
 # I/O — readers and writers (molrs.io: one function per format and
@@ -2832,17 +2856,21 @@ def read_prmtop(source: _IoSource) -> Frame: ...
 def read_inpcrd(source: _IoSource, frame: Frame | None = None) -> Frame:
     """The coordinates of an AMBER inpcrd / restrt; with ``frame``, merged into
     it in place and ``frame`` returned."""
+
 def read_prep(source: _IoSource) -> dict[str, Any]: ...
 def write_prep(sink: _IoSink, residue: _AbcMapping[str, Any]) -> None: ...
 def read_lammps_data(source: _IoSource, atom_style: str | None = None) -> Frame:
     """Read a LAMMPS data file. Typed blocks carry ``type_id`` and the string
     ``type``; ``atom_style`` fixes the ``Atoms`` layout as LAMMPS's
     ``atom_style`` does."""
+
 def write_lammps_data(
     sink: _IoSink,
     frame: Frame,
     *,
     type_labels: _AbcMapping[str, Sequence[str]] | None = None,
+    atom_style: str | None = None,
+    units: str | None = None,
 ) -> None: ...
 def read_lammps_dump(source: _IoSource) -> Frame: ...
 def write_lammps_dump(
@@ -2864,21 +2892,26 @@ def read_csv_block(
     source: _IoSource, delimiter: str = ",", header: list[str] | None = None
 ) -> Block:
     """CSV as a :class:`Block`; dtypes inferred int → float → str."""
+
 def write_csv_block(
     sink: _IoSink, block: Block, delimiter: str = ",", header: bool = True
 ) -> None: ...
 def read_clpol_alpha(source: _IoSource) -> list[dict[str, str | float]]:
     """``alpha.ff`` rows in file order: ``type_name``, ``m_D``,
     ``q_D_sign``, ``k_D``, ``alpha``, ``a_thole``."""
+
 def read_wire_frame(data: bytes, encoding: Literal["msgpack", "json"]) -> Frame: ...
 def write_wire_frame(frame: Frame, encoding: Literal["msgpack", "json"]) -> bytes: ...
 def read_lammps_log(source: _IoSource, style: str = "default") -> LammpsLog:
     """Read a LAMMPS log into a structured ``LammpsLog``."""
+
 def is_lammps_log(text: str) -> bool:
     """Whether ``text`` holds a LAMMPS run (a ``Per MPI rank memory allocation`` line)."""
+
 def write_lammps_bond_react_map(sink: _IoSink, template: BondReactTemplate) -> None:
     """The ``fix bond/react`` map file of ``template``. Raises ``ValueError``
     for a malformed template."""
+
 def write_lammps_bond_react_system(
     workdir: PathInput,
     frame: Frame,
@@ -2889,6 +2922,7 @@ def write_lammps_bond_react_system(
     ``{name}_pre.mol`` / ``{name}_post.mol`` / ``{name}.map`` into
     ``workdir``, with one type numbering for system and templates. Warns
     for untyped template topology it leaves out."""
+
 def write_mrec(
     sink: _IoSink,
     *,
@@ -3307,7 +3341,9 @@ class LammpsForcefieldReader:
 
     def __new__(cls) -> Self: ...
     def read(self, source: _IoSource) -> ForceField: ...
-    def read_data_coeffs(self, frame: Frame, units: str | None = None) -> ForceField: ...
+    def read_data_coeffs(
+        self, frame: Frame, units: str | None = None
+    ) -> ForceField: ...
     def read_cmap(self, source: _IoSource) -> ForceField: ...
 
 @final
@@ -3351,7 +3387,9 @@ class GromacsTopForcefieldWriter:
 
     def __new__(cls, *, precision: int = 6) -> Self: ...
     def write(self, sink: _IoSink, forcefield: ForceField) -> None: ...
-    def write_system(self, sink: _IoSink, forcefield: ForceField, frame: Frame) -> None: ...
+    def write_system(
+        self, sink: _IoSink, forcefield: ForceField, frame: Frame
+    ) -> None: ...
 
 @final
 class AmberPrmtopForcefieldReader:
@@ -3382,6 +3420,9 @@ class OpenmmXmlWriter:
 
     def __new__(cls, *, precision: int | None = None) -> Self: ...
     def write(self, sink: _IoSink, forcefield: ForceField) -> None: ...
+    def write_system(
+        self, sink: _IoSink, forcefield: ForceField, frame: Frame
+    ) -> None: ...
 
 @final
 class XmlForcefieldReader:
@@ -3442,7 +3483,9 @@ class mrec:
         """Lazy one-frame cursor over a record's ``trajectory`` section."""
 
         def __init__(self, source: _IoSource) -> None: ...
-        def frame_columns(self, index: int, columns: list[tuple[str, str]]) -> Frame: ...
+        def frame_columns(
+            self, index: int, columns: list[tuple[str, str]]
+        ) -> Frame: ...
         def block_update_at(self, name: str, index: int) -> int | None: ...
         def box_at(self, index: int) -> Box | None: ...
         def __len__(self) -> int: ...
@@ -3541,7 +3584,6 @@ class mrec:
 
         @staticmethod
         def validate_frame(frame: Frame) -> None: ...
-
 
 # The in-memory doors: each one its path twin on a str / bytes.
 # ---------------------------------------------------------------------------
@@ -3824,7 +3866,9 @@ class ForceField:
     def get_styles(self, category: str | type[Style]) -> list[Style]:
         """The styles of a category (a name or a style class; ``Style``
         selects every category), in definition order."""
-    def get_types(self, category: str | type[ForceFieldType]) -> list[ForceFieldType]: ...
+    def get_types(
+        self, category: str | type[ForceFieldType]
+    ) -> list[ForceFieldType]: ...
     def __reduce__(self) -> tuple[type, tuple[()], tuple[Any, ...]]: ...
     def __setstate__(self, state: tuple[Any, ...]) -> None: ...
 
@@ -3836,7 +3880,9 @@ class Style:
     def name(self) -> str: ...
     @property
     def category(self) -> str: ...
-    def get_types(self, type_cls: type[ForceFieldType] | None = None) -> list[ForceFieldType]: ...
+    def get_types(
+        self, type_cls: type[ForceFieldType] | None = None
+    ) -> list[ForceFieldType]: ...
     def get_type_by_name(self, name: str) -> ForceFieldType | None: ...
     @property
     def params(self) -> dict[str, ParamValue]: ...
@@ -4319,7 +4365,11 @@ type AssignmentParamValue = float | int | str
 #: ``name`` and every param and defines the type ``name`` on ``endpoints``
 #: (atom-type names; empty for an atom type) under the style.
 type Annotation = (
-    str | bool | int | float | tuple[str, str, Sequence[str], dict[str, AssignmentParamValue]]
+    str
+    | bool
+    | int
+    | float
+    | tuple[str, str, Sequence[str], dict[str, AssignmentParamValue]]
 )
 
 class TypeAssignment:
@@ -4343,7 +4393,9 @@ class TypeAssignment:
         | None = None,
         *,
         styles: Sequence[tuple[str, str, dict[str, AssignmentParamValue]]] = (),
-        pairs: Sequence[tuple[str, str, Sequence[str], dict[str, AssignmentParamValue]]] = (),
+        pairs: Sequence[
+            tuple[str, str, Sequence[str], dict[str, AssignmentParamValue]]
+        ] = (),
     ) -> Self: ...
 
 class Typifier(Generic[_TGraph]):
@@ -4420,7 +4472,10 @@ class OplsAaTypifier(Typifier[Atomistic]):
     ``str`` is refused), ``None`` for the embedded table."""
 
     def __new__(
-        cls, source: os.PathLike[str] | bytes | Text | None = None, *, strict: bool = True
+        cls,
+        source: os.PathLike[str] | bytes | Text | None = None,
+        *,
+        strict: bool = True,
     ) -> Self: ...
 
 type AtdParameterSet = Literal["bcc", "abcg2", "gas", "gaff", "gaff2", "amber", "sybyl"]
@@ -4460,7 +4515,9 @@ class GaffTypifier(Typifier[Atomistic]):
     estimate at a centre ``PARMCHK.DAT`` flags as planar; tleap's atom order,
     centre third); each term is an exact ``gaff.dat`` / ``gaff2.dat`` row, a wildcard row, or a
     ``parmchk2``-style estimate whose type carries ``estimated``,
-    ``estimate_penalty``, ``estimate_method`` and ``estimate_analog``.
+    ``estimate_penalty``, ``estimate_method`` and ``estimate_analog``. The
+    four price nothing: every engine writer (LAMMPS, GROMACS, OpenMM, frcmod)
+    passes them over, and ``ForceField.merge`` ignores them.
     ``parameter_set`` is required; there is no default.
 
     Raises
@@ -4620,7 +4677,6 @@ class ObservableRecord:
     @property
     def target(self) -> str | None: ...
 
-
 # ---------------------------------------------------------------------------
 # Analysis (molrs.compute, mirrors molrs::compute)
 #
@@ -4648,7 +4704,9 @@ class AngularSeparationGlobal:
     """Angles between ``(N, 4)`` query quaternions and ``(M, 4)`` reference
     ones (``molrs::compute::AngularSeparationGlobal``)."""
     def __new__(cls, *, equivalent_orientations: bool | None = None) -> Self: ...
-    def compute(self, *, query: ArrayF, reference: ArrayF) -> AngularSeparationGlobalResult: ...
+    def compute(
+        self, *, query: ArrayF, reference: ArrayF
+    ) -> AngularSeparationGlobalResult: ...
     @staticmethod
     def spec() -> ComputeSpec: ...
     def tunables(self) -> list[tuple[str, Any]]: ...
@@ -4665,7 +4723,13 @@ class AngularSeparationNeighbor:
     """Angles between the orientations of neighbouring particles
     (``molrs::compute::AngularSeparationNeighbor``)."""
     def __new__(cls, *, equivalent_orientations: bool | None = None) -> Self: ...
-    def compute(self, *, neighbors: Neighbors, query_orientations: ArrayF, point_orientations: ArrayF) -> AngularSeparationNeighborResult: ...
+    def compute(
+        self,
+        *,
+        neighbors: Neighbors,
+        query_orientations: ArrayF,
+        point_orientations: ArrayF,
+    ) -> AngularSeparationNeighborResult: ...
     @staticmethod
     def spec() -> ComputeSpec: ...
     def tunables(self) -> list[tuple[str, Any]]: ...
@@ -4722,7 +4786,14 @@ class BondOrientationalOrderResult:
 class CenterOfMass:
     """Mass-weighted centre of each group (``molrs::compute::CenterOfMass``)."""
     def __init__(self) -> None: ...
-    def compute(self, *, positions: ArrayF, simbox: Box | None = None, partition: Partition, masses: ArrayF) -> CenterOfMassResult: ...
+    def compute(
+        self,
+        *,
+        positions: ArrayF,
+        simbox: Box | None = None,
+        partition: Partition,
+        masses: ArrayF,
+    ) -> CenterOfMassResult: ...
     @staticmethod
     def spec() -> ComputeSpec: ...
     def tunables(self) -> list[tuple[str, Any]]: ...
@@ -4742,7 +4813,9 @@ class CenterOfMassResult:
 class Cluster:
     """Connected components of a neighbour table (``molrs::compute::Cluster``)."""
     def __new__(cls, *, min_cluster_size: int | None = None) -> Self: ...
-    def compute(self, *, pairs: Neighbors, merge: Partition | None = None) -> ClusterResult: ...
+    def compute(
+        self, *, pairs: Neighbors, merge: Partition | None = None
+    ) -> ClusterResult: ...
     @staticmethod
     def spec() -> ComputeSpec: ...
     def tunables(self) -> list[tuple[str, Any]]: ...
@@ -4764,8 +4837,20 @@ class ClusterResult:
 class CombinedDistribution:
     """Joint distribution of 2 or 3 internal coordinates over frames
     (``molrs::compute::CombinedDistribution``)."""
-    def __new__(cls, observables: Sequence[str], axes: Sequence[Axis], *, sin_weight: Sequence[int] | None = None) -> Self: ...
-    def compute(self, *, positions: Sequence[ArrayF], simbox: Sequence[Box | None] | None = None, tuples: Sequence[Sequence[Sequence[Sequence[int]]]]) -> CombinedDistributionResult: ...
+    def __new__(
+        cls,
+        observables: Sequence[str],
+        axes: Sequence[Axis],
+        *,
+        sin_weight: Sequence[int] | None = None,
+    ) -> Self: ...
+    def compute(
+        self,
+        *,
+        positions: Sequence[ArrayF],
+        simbox: Sequence[Box | None] | None = None,
+        tuples: Sequence[Sequence[Sequence[Sequence[int]]]],
+    ) -> CombinedDistributionResult: ...
     @staticmethod
     def spec() -> ComputeSpec: ...
     def tunables(self) -> list[tuple[str, Any]]: ...
@@ -4810,8 +4895,18 @@ class ComputeSpec:
 class ConductivitySumRule:
     """The conductivity sum rule ``∫ σ(ω) dω`` against its static value
     (``molrs::compute::ConductivitySumRule``)."""
-    def __new__(cls, units: str | UnitPreset, *, tolerance: float | None = None) -> Self: ...
-    def compute(self, *, frequencies: ArrayF, conductivity: ArrayF, current_sq_mean: float, volume: float, temperature: float) -> SumRuleCheck: ...
+    def __new__(
+        cls, units: str | UnitPreset, *, tolerance: float | None = None
+    ) -> Self: ...
+    def compute(
+        self,
+        *,
+        frequencies: ArrayF,
+        conductivity: ArrayF,
+        current_sq_mean: float,
+        volume: float,
+        temperature: float,
+    ) -> SumRuleCheck: ...
     @staticmethod
     def spec() -> ComputeSpec: ...
     def tunables(self) -> list[tuple[str, Any]]: ...
@@ -4820,7 +4915,9 @@ class ConductivitySumRule:
 class ContinuousCoordination:
     """Continuous coordination number (``molrs::compute::ContinuousCoordination``)."""
     def __new__(cls, power: float) -> Self: ...
-    def compute(self, *, qlm: QlmTable, neighbors: Neighbors) -> ContinuousCoordinationResult: ...
+    def compute(
+        self, *, qlm: QlmTable, neighbors: Neighbors
+    ) -> ContinuousCoordinationResult: ...
     @staticmethod
     def spec() -> ComputeSpec: ...
     def tunables(self) -> list[tuple[str, Any]]: ...
@@ -4839,7 +4936,9 @@ class CorrelationFunction:
     """Radial correlation of two per-point value arrays over a pair source
     (``molrs::compute::CorrelationFunction``)."""
     def __new__(cls, n_bins: int, r_max: float, r_min: float) -> Self: ...
-    def compute(self, *, pairs: Neighbors | NeighborList, values_a: ArrayF, values_b: ArrayF) -> CorrelationFunctionResult: ...
+    def compute(
+        self, *, pairs: Neighbors | NeighborList, values_a: ArrayF, values_b: ArrayF
+    ) -> CorrelationFunctionResult: ...
     @staticmethod
     def spec() -> ComputeSpec: ...
     def tunables(self) -> list[tuple[str, Any]]: ...
@@ -4860,8 +4959,27 @@ class CorrelationFunctionResult:
 @final
 class Correlator:
     """The one time-correlation estimator (``molrs::compute::Correlator``)."""
-    def __new__(cls, kernel: str, max_lag: int, *, l: int | None = None, origins: str | None = None, mean: str | None = None, normalization: str | None = None, reduction: str | None = None, stride: int | None = None, dimension: int | None = None) -> Self: ...
-    def compute(self, *, a: ArrayF, b: ArrayF | None = None, dt: float, boxes: Sequence[Box] | None = None) -> TimeCorrelation: ...
+    def __new__(
+        cls,
+        kernel: str,
+        max_lag: int,
+        *,
+        l: int | None = None,
+        origins: str | None = None,
+        mean: str | None = None,
+        normalization: str | None = None,
+        reduction: str | None = None,
+        stride: int | None = None,
+        dimension: int | None = None,
+    ) -> Self: ...
+    def compute(
+        self,
+        *,
+        a: ArrayF,
+        b: ArrayF | None = None,
+        dt: float,
+        boxes: Sequence[Box] | None = None,
+    ) -> TimeCorrelation: ...
     @staticmethod
     def spec() -> ComputeSpec: ...
     def tunables(self) -> list[tuple[str, Any]]: ...
@@ -4870,7 +4988,14 @@ class Correlator:
 class CorrelatorAccumulator:
     """The streaming correlator (``molrs::compute::CorrelatorAccumulator``),
     made by :meth:`Msd.accumulator` / :meth:`Vacf.accumulator`."""
-    def push(self, a: ArrayF, *, b: ArrayF | None = None, dt: float, simbox: Box | None = None) -> None:
+    def push(
+        self,
+        a: ArrayF,
+        *,
+        b: ArrayF | None = None,
+        dt: float,
+        simbox: Box | None = None,
+    ) -> None:
         """Fold one ``(N, D)`` frame (``CorrelatorFrame``); a rejected frame
         leaves the state unchanged."""
     def finish(self) -> TimeCorrelation:
@@ -4882,7 +5007,16 @@ class CorrelatorAccumulator:
 class Cubatic:
     """Cubatic order of ``(N, 3)`` directors by simulated annealing
     (``molrs::compute::Cubatic``)."""
-    def __new__(cls, *, seed: int | None = None, initial_temp: float | None = None, cooling_rate: float | None = None, min_temp: float | None = None, n_steps: int | None = None, n_chains: int | None = None) -> Self: ...
+    def __new__(
+        cls,
+        *,
+        seed: int | None = None,
+        initial_temp: float | None = None,
+        cooling_rate: float | None = None,
+        min_temp: float | None = None,
+        n_steps: int | None = None,
+        n_chains: int | None = None,
+    ) -> Self: ...
     def compute(self, *, directors: ArrayF) -> CubaticResult: ...
     @staticmethod
     def spec() -> ComputeSpec: ...
@@ -4901,7 +5035,9 @@ class CumulativeTrapezoid:
     """The running trapezoid integral of one channel of a correlation
     (``molrs::compute::CumulativeTrapezoid``) — a Green–Kubo integral."""
     def __new__(cls, *, n_lags: int | None = None) -> Self: ...
-    def compute(self, *, correlation: TimeCorrelation, channel: int) -> TimeCorrelation: ...
+    def compute(
+        self, *, correlation: TimeCorrelation, channel: int
+    ) -> TimeCorrelation: ...
     @staticmethod
     def spec() -> ComputeSpec: ...
     def tunables(self) -> list[tuple[str, Any]]: ...
@@ -4910,7 +5046,14 @@ class CumulativeTrapezoid:
 class CurrentAcf:
     """Current autocorrelation of a ``(T, 3)`` current series
     (``molrs::compute::CurrentAcf``)."""
-    def __new__(cls, max_lag: int, *, normalization: str | None = None, stride: int | None = None, mean: str | None = None) -> Self: ...
+    def __new__(
+        cls,
+        max_lag: int,
+        *,
+        normalization: str | None = None,
+        stride: int | None = None,
+        mean: str | None = None,
+    ) -> Self: ...
     def compute(self, *, current: ArrayF, dt: float) -> TimeCorrelation: ...
     @staticmethod
     def spec() -> ComputeSpec: ...
@@ -4921,7 +5064,9 @@ class DebyeFit:
     """Single-exponential (Debye) relaxation fit of one channel of a correlation
     (``molrs::compute::DebyeFit``)."""
     def __init__(self) -> None: ...
-    def compute(self, *, correlation: TimeCorrelation, channel: int) -> DebyeFitResult: ...
+    def compute(
+        self, *, correlation: TimeCorrelation, channel: int
+    ) -> DebyeFitResult: ...
     @staticmethod
     def spec() -> ComputeSpec: ...
     def tunables(self) -> list[tuple[str, Any]]: ...
@@ -4964,8 +5109,17 @@ class DielectricSpectrumResult:
 class DiffractionPattern:
     """A 2-D diffraction pattern of one snapshot projected along an axis
     (``molrs::compute::DiffractionPattern``)."""
-    def __new__(cls, n_grid: int, sigma: float, *, axis: int | None = None, cutoff: float | None = None) -> Self: ...
-    def compute(self, *, positions: ArrayF, simbox: Box) -> DiffractionPatternResult: ...
+    def __new__(
+        cls,
+        n_grid: int,
+        sigma: float,
+        *,
+        axis: int | None = None,
+        cutoff: float | None = None,
+    ) -> Self: ...
+    def compute(
+        self, *, positions: ArrayF, simbox: Box
+    ) -> DiffractionPatternResult: ...
     @staticmethod
     def spec() -> ComputeSpec: ...
     def tunables(self) -> list[tuple[str, Any]]: ...
@@ -4983,7 +5137,14 @@ class DiffractionPatternResult:
 class DipoleAcf:
     """Dipole autocorrelation of a ``(T, 3)`` dipole series
     (``molrs::compute::DipoleAcf``)."""
-    def __new__(cls, max_lag: int, *, normalization: str | None = None, stride: int | None = None, mean: str | None = None) -> Self: ...
+    def __new__(
+        cls,
+        max_lag: int,
+        *,
+        normalization: str | None = None,
+        stride: int | None = None,
+        mean: str | None = None,
+    ) -> Self: ...
     def compute(self, *, dipoles: ArrayF, dt: float) -> TimeCorrelation: ...
     @staticmethod
     def spec() -> ComputeSpec: ...
@@ -4993,8 +5154,24 @@ class DipoleAcf:
 class DipoleAutocorrelationSpectrum:
     """ε(ω) by the dipole-autocorrelation route
     (``molrs::compute::DipoleAutocorrelationSpectrum``)."""
-    def __new__(cls, units: str | UnitPreset, *, window: str | None = None, pad: int | None = None, epsilon_inf: float | None = None, plateau: tuple[float, float] | None = None, plateau_value: str | None = None) -> Self: ...
-    def compute(self, *, correlation: TimeCorrelation, volume: float, temperature: float, boundary: str) -> DielectricSpectrumResult: ...
+    def __new__(
+        cls,
+        units: str | UnitPreset,
+        *,
+        window: str | None = None,
+        pad: int | None = None,
+        epsilon_inf: float | None = None,
+        plateau: tuple[float, float] | None = None,
+        plateau_value: str | None = None,
+    ) -> Self: ...
+    def compute(
+        self,
+        *,
+        correlation: TimeCorrelation,
+        volume: float,
+        temperature: float,
+        boundary: str,
+    ) -> DielectricSpectrumResult: ...
     @staticmethod
     def spec() -> ComputeSpec: ...
     def tunables(self) -> list[tuple[str, Any]]: ...
@@ -5004,7 +5181,9 @@ class DipoleMoment:
     """The dipole moment ``Σ q r`` of each group in each frame
     (``molrs::compute::DipoleMoment``)."""
     def __init__(self) -> None: ...
-    def compute(self, *, positions: ArrayF, charges: ArrayF, partition: Partition | None = None) -> DipoleMomentResult: ...
+    def compute(
+        self, *, positions: ArrayF, charges: ArrayF, partition: Partition | None = None
+    ) -> DipoleMomentResult: ...
     @staticmethod
     def spec() -> ComputeSpec: ...
     def tunables(self) -> list[tuple[str, Any]]: ...
@@ -5023,8 +5202,22 @@ class DipoleMomentResult:
 class DipoleRateCrossSpectrum:
     """ε(ω) by the dipole–current cross-correlation route
     (``molrs::compute::DipoleRateCrossSpectrum``)."""
-    def __new__(cls, units: str | UnitPreset, *, window: str | None = None, pad: int | None = None, epsilon_inf: float | None = None) -> Self: ...
-    def compute(self, *, correlation: TimeCorrelation, volume: float, temperature: float, boundary: str) -> DielectricSpectrumResult: ...
+    def __new__(
+        cls,
+        units: str | UnitPreset,
+        *,
+        window: str | None = None,
+        pad: int | None = None,
+        epsilon_inf: float | None = None,
+    ) -> Self: ...
+    def compute(
+        self,
+        *,
+        correlation: TimeCorrelation,
+        volume: float,
+        temperature: float,
+        boundary: str,
+    ) -> DielectricSpectrumResult: ...
     @staticmethod
     def spec() -> ComputeSpec: ...
     def tunables(self) -> list[tuple[str, Any]]: ...
@@ -5033,8 +5226,16 @@ class DipoleRateCrossSpectrum:
 class DistributionFunction:
     """Distribution of one internal coordinate over frames
     (``molrs::compute::DistributionFunction``)."""
-    def __new__(cls, observable: str, *, axis: Axis | None = None, n_bins: int | None = None) -> Self: ...
-    def compute(self, *, positions: Sequence[ArrayF], simbox: Sequence[Box | None] | None = None, tuples: Sequence[Sequence[Sequence[int]]]) -> DistributionResult: ...
+    def __new__(
+        cls, observable: str, *, axis: Axis | None = None, n_bins: int | None = None
+    ) -> Self: ...
+    def compute(
+        self,
+        *,
+        positions: Sequence[ArrayF],
+        simbox: Sequence[Box | None] | None = None,
+        tuples: Sequence[Sequence[Sequence[int]]],
+    ) -> DistributionResult: ...
     @staticmethod
     def spec() -> ComputeSpec: ...
     def tunables(self) -> list[tuple[str, Any]]: ...
@@ -5060,8 +5261,22 @@ class EinsteinHelfandSpectrum:
     """ε(ω) by the Einstein–Helfand route from the fluctuation dipole ACF
     (``molrs::compute::EinsteinHelfandSpectrum``), e.g. ``DipoleAcf``'s
     curve."""
-    def __new__(cls, units: str | UnitPreset, *, window: str | None = None, pad: int | None = None, epsilon_inf: float | None = None) -> Self: ...
-    def compute(self, *, correlation: TimeCorrelation, volume: float, temperature: float, boundary: str) -> DielectricSpectrumResult: ...
+    def __new__(
+        cls,
+        units: str | UnitPreset,
+        *,
+        window: str | None = None,
+        pad: int | None = None,
+        epsilon_inf: float | None = None,
+    ) -> Self: ...
+    def compute(
+        self,
+        *,
+        correlation: TimeCorrelation,
+        volume: float,
+        temperature: float,
+        boundary: str,
+    ) -> DielectricSpectrumResult: ...
     @staticmethod
     def spec() -> ComputeSpec: ...
     def tunables(self) -> list[tuple[str, Any]]: ...
@@ -5070,7 +5285,13 @@ class EinsteinHelfandSpectrum:
 class EnvironmentMatch:
     """Cluster particles whose neighbour environments match within
     ``rmsd_threshold`` (``molrs::compute::EnvironmentMatch``)."""
-    def __new__(cls, rmsd_threshold: float, *, registration: bool | None = None, max_neighbors_for_registration: int | None = None) -> Self: ...
+    def __new__(
+        cls,
+        rmsd_threshold: float,
+        *,
+        registration: bool | None = None,
+        max_neighbors_for_registration: int | None = None,
+    ) -> Self: ...
     def compute(self, *, neighbors: Neighbors) -> EnvironmentMatchResult: ...
     @staticmethod
     def spec() -> ComputeSpec: ...
@@ -5101,7 +5322,14 @@ class FiniteFieldPolarizability:
 class GaussianDensity:
     """Gaussian-smeared density of points on a grid over the box
     (``molrs::compute::GaussianDensity``)."""
-    def __new__(cls, dims: Sequence[int], sigma: float, *, r_max: float | None = None, reach: str | None = None) -> Self: ...
+    def __new__(
+        cls,
+        dims: Sequence[int],
+        sigma: float,
+        *,
+        r_max: float | None = None,
+        reach: str | None = None,
+    ) -> Self: ...
     def compute(self, *, positions: ArrayF, simbox: Box) -> GaussianDensityResult: ...
     @staticmethod
     def spec() -> ComputeSpec: ...
@@ -5120,8 +5348,22 @@ class GaussianDensityResult:
 class GreenKuboSpectrum:
     """ε(ω) by the Green–Kubo route from the current ACF
     (``molrs::compute::GreenKuboSpectrum``), e.g. ``CurrentAcf``'s curve."""
-    def __new__(cls, units: str | UnitPreset, *, window: str | None = None, pad: int | None = None, epsilon_inf: float | None = None) -> Self: ...
-    def compute(self, *, correlation: TimeCorrelation, volume: float, temperature: float, boundary: str) -> DielectricSpectrumResult: ...
+    def __new__(
+        cls,
+        units: str | UnitPreset,
+        *,
+        window: str | None = None,
+        pad: int | None = None,
+        epsilon_inf: float | None = None,
+    ) -> Self: ...
+    def compute(
+        self,
+        *,
+        correlation: TimeCorrelation,
+        volume: float,
+        temperature: float,
+        boundary: str,
+    ) -> DielectricSpectrumResult: ...
     @staticmethod
     def spec() -> ComputeSpec: ...
     def tunables(self) -> list[tuple[str, Any]]: ...
@@ -5130,7 +5372,14 @@ class GreenKuboSpectrum:
 class GyrationTensor:
     """Weighted gyration tensor of each group (``molrs::compute::GyrationTensor``)."""
     def __init__(self) -> None: ...
-    def compute(self, *, positions: ArrayF, simbox: Box | None = None, partition: Partition, weights: ArrayF) -> GyrationTensorResult: ...
+    def compute(
+        self,
+        *,
+        positions: ArrayF,
+        simbox: Box | None = None,
+        partition: Partition,
+        weights: ArrayF,
+    ) -> GyrationTensorResult: ...
     @staticmethod
     def spec() -> ComputeSpec: ...
     def tunables(self) -> list[tuple[str, Any]]: ...
@@ -5164,8 +5413,22 @@ class HBond:
 class HBonds:
     """Geometric hydrogen-bond detection, frame by frame
     (``molrs::compute::HBonds``)."""
-    def __new__(cls, *, dist_cutoff: float | None = None, dist_kind: str | None = None, angle_cutoff: float | None = None, donor_acceptor_margin: float | None = None) -> Self: ...
-    def compute(self, *, positions: ArrayF, donors: Sequence[Sequence[int]], acceptors: Sequence[int], pairs: Sequence[Neighbors]) -> HBondsResult: ...
+    def __new__(
+        cls,
+        *,
+        dist_cutoff: float | None = None,
+        dist_kind: str | None = None,
+        angle_cutoff: float | None = None,
+        donor_acceptor_margin: float | None = None,
+    ) -> Self: ...
+    def compute(
+        self,
+        *,
+        positions: ArrayF,
+        donors: Sequence[Sequence[int]],
+        acceptors: Sequence[int],
+        pairs: Sequence[Neighbors],
+    ) -> HBondsResult: ...
     @staticmethod
     def spec() -> ComputeSpec: ...
     def tunables(self) -> list[tuple[str, Any]]: ...
@@ -5219,7 +5482,14 @@ class Histogram:
 class InertiaTensor:
     """Moment of inertia tensor of each group (``molrs::compute::InertiaTensor``)."""
     def __init__(self) -> None: ...
-    def compute(self, *, positions: ArrayF, simbox: Box | None = None, partition: Partition, masses: ArrayF) -> InertiaTensorResult: ...
+    def compute(
+        self,
+        *,
+        positions: ArrayF,
+        simbox: Box | None = None,
+        partition: Partition,
+        masses: ArrayF,
+    ) -> InertiaTensorResult: ...
     @staticmethod
     def spec() -> ComputeSpec: ...
     def tunables(self) -> list[tuple[str, Any]]: ...
@@ -5253,7 +5523,13 @@ class KineticEnergy:
     the constants of the unit preset ``units`` (``KineticEnergy::new``), each
     replaceable — ``mvv2e`` (``with_mvv2e``), ``boltzmann``
     (``with_boltzmann``)."""
-    def __new__(cls, units: str | UnitPreset, *, mvv2e: float | None = None, boltzmann: float | None = None) -> Self: ...
+    def __new__(
+        cls,
+        units: str | UnitPreset,
+        *,
+        mvv2e: float | None = None,
+        boltzmann: float | None = None,
+    ) -> Self: ...
     def compute(self, *, masses: ArrayF, velocities: ArrayF) -> KineticEnergyResult: ...
     @staticmethod
     def spec() -> ComputeSpec: ...
@@ -5273,7 +5549,9 @@ class KineticEnergyResult:
 class Kmeans:
     """K-means clustering of the rows of a feature matrix
     (``molrs::compute::Kmeans``)."""
-    def __new__(cls, k: int, *, max_iter: int | None = None, seed: int | None = None) -> Self: ...
+    def __new__(
+        cls, k: int, *, max_iter: int | None = None, seed: int | None = None
+    ) -> Self: ...
     def compute(self, *, features: FeatureMatrix) -> KmeansResult: ...
     @staticmethod
     def spec() -> ComputeSpec: ...
@@ -5292,7 +5570,12 @@ class KmeansResult:
 class KramersKronig:
     """Kramers–Kronig consistency check of a ε(ω) spectrum
     (``molrs::compute::KramersKronig``)."""
-    def __new__(cls, *, relative_tolerance: float | None = None, absolute_tolerance: float | None = None) -> Self: ...
+    def __new__(
+        cls,
+        *,
+        relative_tolerance: float | None = None,
+        absolute_tolerance: float | None = None,
+    ) -> Self: ...
     def compute(self, *, spectrum: DielectricSpectrumResult) -> KramersKronigCheck: ...
     @staticmethod
     def spec() -> ComputeSpec: ...
@@ -5318,7 +5601,9 @@ class LinearFit:
     its lags (``molrs::compute::LinearFit``) — e.g. the diffusive regime of an
     MSD."""
     def __new__(cls, start: float, end: float) -> Self: ...
-    def compute(self, *, correlation: TimeCorrelation, channel: int) -> LinearFitResult: ...
+    def compute(
+        self, *, correlation: TimeCorrelation, channel: int
+    ) -> LinearFitResult: ...
     @staticmethod
     def spec() -> ComputeSpec: ...
     def tunables(self) -> list[tuple[str, Any]]: ...
@@ -5344,7 +5629,13 @@ class LocalBondProjection:
     """Projections of each bond onto ``(M, 3)`` axes, in the particle frame when
     ``(N, 4)`` orientations are given (``molrs::compute::LocalBondProjection``)."""
     def __init__(self) -> None: ...
-    def compute(self, *, neighbors: Neighbors, proj_vectors: ArrayF, orientations: ArrayF | None = None) -> LocalBondProjectionResult: ...
+    def compute(
+        self,
+        *,
+        neighbors: Neighbors,
+        proj_vectors: ArrayF,
+        orientations: ArrayF | None = None,
+    ) -> LocalBondProjectionResult: ...
     @staticmethod
     def spec() -> ComputeSpec: ...
     def tunables(self) -> list[tuple[str, Any]]: ...
@@ -5416,7 +5707,14 @@ class Msd:
     """Mean-squared displacement (``molrs::compute::Msd``), the
     ``squared_displacement`` correlator — a stream only: push each frame's
     unwrapped ``(N, 3)`` positions into :meth:`accumulator`."""
-    def __new__(cls, max_lag: int, *, origins: str | None = None, reduction: str | None = None, stride: int | None = None) -> Self: ...
+    def __new__(
+        cls,
+        max_lag: int,
+        *,
+        origins: str | None = None,
+        reduction: str | None = None,
+        stride: int | None = None,
+    ) -> Self: ...
     def accumulator(self) -> CorrelatorAccumulator: ...
     @staticmethod
     def spec() -> ComputeSpec: ...
@@ -5462,7 +5760,9 @@ class OnsagerCorrelation:
     """Onsager cross-correlation of two ``(T, C)`` series
     (``molrs::compute::OnsagerCorrelation``)."""
     def __new__(cls, max_lag: int, *, stride: int | None = None) -> Self: ...
-    def compute(self, *, a: ArrayF, b: ArrayF, dt: float, boxes: Sequence[Box] | None = None) -> TimeCorrelation: ...
+    def compute(
+        self, *, a: ArrayF, b: ArrayF, dt: float, boxes: Sequence[Box] | None = None
+    ) -> TimeCorrelation: ...
     @staticmethod
     def spec() -> ComputeSpec: ...
     def tunables(self) -> list[tuple[str, Any]]: ...
@@ -5472,8 +5772,12 @@ class PairPresence:
     """Pair presence with hysteresis over frames
     (``molrs::compute::PairPresence``): a pair enters at distance ``≤ r0`` and
     stays while within ``r1``."""
-    def __new__(cls, r0: float, exclude_self: bool, *, r1: float | None = None) -> Self: ...
-    def compute(self, *, frames: Sequence[Neighbors | NeighborList]) -> Presence | None: ...
+    def __new__(
+        cls, r0: float, exclude_self: bool, *, r1: float | None = None
+    ) -> Self: ...
+    def compute(
+        self, *, frames: Sequence[Neighbors | NeighborList]
+    ) -> Presence | None: ...
     @staticmethod
     def spec() -> ComputeSpec: ...
     def tunables(self) -> list[tuple[str, Any]]: ...
@@ -5523,7 +5827,9 @@ class Plateau:
     """The mean of one channel of a correlation over a window of its lags
     (``molrs::compute::Plateau``) — e.g. the plateau of a Green–Kubo integral."""
     def __new__(cls, start: float, end: float) -> Self: ...
-    def compute(self, *, correlation: TimeCorrelation, channel: int) -> PlateauResult: ...
+    def compute(
+        self, *, correlation: TimeCorrelation, channel: int
+    ) -> PlateauResult: ...
     @staticmethod
     def spec() -> ComputeSpec: ...
     def tunables(self) -> list[tuple[str, Any]]: ...
@@ -5543,7 +5849,9 @@ class PlateauResult:
 class PmftR12:
     """PMFT in ``(r, θ1, θ2)`` of 2-D pairs (``molrs::compute::Pmft<R12>``)."""
     def __new__(cls, r_max: float, n_r: int, n_t1: int, n_t2: int) -> Self: ...
-    def compute(self, *, pairs: Neighbors, orientations: ArrayF | None = None) -> PmftResult: ...
+    def compute(
+        self, *, pairs: Neighbors, orientations: ArrayF | None = None
+    ) -> PmftResult: ...
     @staticmethod
     def spec() -> ComputeSpec: ...
     def tunables(self) -> list[tuple[str, Any]]: ...
@@ -5568,7 +5876,9 @@ class PmftXy:
     """PMFT in the ``(x, y)`` frame of a 2-D particle
     (``molrs::compute::Pmft<Xy>``)."""
     def __new__(cls, x_max: float, y_max: float, n_x: int, n_y: int) -> Self: ...
-    def compute(self, *, pairs: Neighbors, orientations: ArrayF | None = None) -> PmftResult: ...
+    def compute(
+        self, *, pairs: Neighbors, orientations: ArrayF | None = None
+    ) -> PmftResult: ...
     @staticmethod
     def spec() -> ComputeSpec: ...
     def tunables(self) -> list[tuple[str, Any]]: ...
@@ -5576,8 +5886,12 @@ class PmftXy:
 @final
 class PmftXyt:
     """PMFT in ``(x, y, θ)`` of 2-D pairs (``molrs::compute::Pmft<Xyt>``)."""
-    def __new__(cls, x_max: float, y_max: float, n_x: int, n_y: int, n_t: int) -> Self: ...
-    def compute(self, *, pairs: Neighbors, orientations: ArrayF | None = None) -> PmftResult: ...
+    def __new__(
+        cls, x_max: float, y_max: float, n_x: int, n_y: int, n_t: int
+    ) -> Self: ...
+    def compute(
+        self, *, pairs: Neighbors, orientations: ArrayF | None = None
+    ) -> PmftResult: ...
     @staticmethod
     def spec() -> ComputeSpec: ...
     def tunables(self) -> list[tuple[str, Any]]: ...
@@ -5586,8 +5900,12 @@ class PmftXyt:
 class PmftXyz:
     """PMFT in the ``(x, y, z)`` frame of a 3-D particle
     (``molrs::compute::Pmft<Xyz>``)."""
-    def __new__(cls, x_max: float, y_max: float, z_max: float, n_x: int, n_y: int, n_z: int) -> Self: ...
-    def compute(self, *, pairs: Neighbors, orientations: ArrayF | None = None) -> PmftResult: ...
+    def __new__(
+        cls, x_max: float, y_max: float, z_max: float, n_x: int, n_y: int, n_z: int
+    ) -> Self: ...
+    def compute(
+        self, *, pairs: Neighbors, orientations: ArrayF | None = None
+    ) -> PmftResult: ...
     @staticmethod
     def spec() -> ComputeSpec: ...
     def tunables(self) -> list[tuple[str, Any]]: ...
@@ -5644,7 +5962,9 @@ class RadicalVoronoi:
     """The radical (power) Voronoi tessellation of one snapshot
     (``molrs::compute::RadicalVoronoi``)."""
     def __init__(self) -> None: ...
-    def compute(self, *, positions: ArrayF, simbox: Box, radii: ArrayF) -> VoronoiCells: ...
+    def compute(
+        self, *, positions: ArrayF, simbox: Box, radii: ArrayF
+    ) -> VoronoiCells: ...
     @staticmethod
     def spec() -> ComputeSpec: ...
     def tunables(self) -> list[tuple[str, Any]]: ...
@@ -5653,8 +5973,21 @@ class RadicalVoronoi:
 class RamanSpectrum:
     """Raman spectrum from the isotropic and anisotropic polarizability
     correlations (``molrs::compute::RamanSpectrum``)."""
-    def __new__(cls, *, window: str | None = None, pad: int | None = None, incident_frequency: float | None = None, averaged: bool | None = None) -> Self: ...
-    def compute(self, *, isotropic: TimeCorrelation, anisotropic: TimeCorrelation, temperature: float | None = None) -> RamanSpectrumResult: ...
+    def __new__(
+        cls,
+        *,
+        window: str | None = None,
+        pad: int | None = None,
+        incident_frequency: float | None = None,
+        averaged: bool | None = None,
+    ) -> Self: ...
+    def compute(
+        self,
+        *,
+        isotropic: TimeCorrelation,
+        anisotropic: TimeCorrelation,
+        temperature: float | None = None,
+    ) -> RamanSpectrumResult: ...
     @staticmethod
     def spec() -> ComputeSpec: ...
     def tunables(self) -> list[tuple[str, Any]]: ...
@@ -5682,7 +6015,14 @@ class RamanSpectrumResult:
 class Rdf:
     """Radial distribution function g(r) (``molrs::compute::Rdf``) — a stream
     only: push one pair source per frame into :meth:`accumulator`."""
-    def __new__(cls, n_bins: int, r_max: float, r_min: float, *, dimensionality: int | None = None) -> Self: ...
+    def __new__(
+        cls,
+        n_bins: int,
+        r_max: float,
+        r_min: float,
+        *,
+        dimensionality: int | None = None,
+    ) -> Self: ...
     def accumulator(self) -> RdfAccumulator: ...
     @staticmethod
     def spec() -> ComputeSpec: ...
@@ -5732,7 +6072,13 @@ class RegularGrid:
     """A regular 3-D voxel grid (``molrs::compute::RegularGrid``): ``origin``,
     the three cell ``basis`` vectors (rows), ``dims`` voxels per axis and the
     periodicity ``pbc`` of each axis."""
-    def __new__(cls, origin: Sequence[float], basis: Sequence[Sequence[float]], dims: Sequence[int], pbc: Sequence[bool]) -> Self: ...
+    def __new__(
+        cls,
+        origin: Sequence[float],
+        basis: Sequence[Sequence[float]],
+        dims: Sequence[int],
+        pbc: Sequence[bool],
+    ) -> Self: ...
     @property
     def basis(self) -> ArrayF: ...
     @staticmethod
@@ -5753,7 +6099,14 @@ class ReorientationAcf:
     """Legendre reorientation correlation ``⟨P_l(u(0)·u(t))⟩`` of ``(T, N, D)``
     vectors, each normalised (``molrs::compute::ReorientationAcf``) — the
     orientational autocorrelation (OACF); ``l <= 2`` runs by FFT."""
-    def __new__(cls, l: int, max_lag: int, *, reduction: str | None = None, stride: int | None = None) -> Self: ...
+    def __new__(
+        cls,
+        l: int,
+        max_lag: int,
+        *,
+        reduction: str | None = None,
+        stride: int | None = None,
+    ) -> Self: ...
     def compute(self, *, vectors: ArrayF, dt: float) -> TimeCorrelation: ...
     @staticmethod
     def spec() -> ComputeSpec: ...
@@ -5773,8 +6126,12 @@ class RotationalAutocorrelation:
 class RouteAgreement:
     """Agreement of several ε(ω) routes on one system
     (``molrs::compute::RouteAgreement``)."""
-    def __new__(cls, *, part: str | None = None, tolerance: float | None = None) -> Self: ...
-    def compute(self, *, spectra: Sequence[DielectricSpectrumResult]) -> RouteAgreementCheck: ...
+    def __new__(
+        cls, *, part: str | None = None, tolerance: float | None = None
+    ) -> Self: ...
+    def compute(
+        self, *, spectra: Sequence[DielectricSpectrumResult]
+    ) -> RouteAgreementCheck: ...
     @staticmethod
     def spec() -> ComputeSpec: ...
     def tunables(self) -> list[tuple[str, Any]]: ...
@@ -5795,7 +6152,13 @@ class RouteAgreementCheck:
 class SolidLiquid:
     """Solid-liquid classification by bond coherence
     (``molrs::compute::SolidLiquid``)."""
-    def __new__(cls, *, q_threshold: float | None = None, n_threshold: int | None = None, normalize_q: bool | None = None) -> Self: ...
+    def __new__(
+        cls,
+        *,
+        q_threshold: float | None = None,
+        n_threshold: int | None = None,
+        normalize_q: bool | None = None,
+    ) -> Self: ...
     def compute(self, *, qlm: QlmTable, neighbors: Neighbors) -> SolidLiquidResult: ...
     @staticmethod
     def spec() -> ComputeSpec: ...
@@ -5815,8 +6178,19 @@ class SolidLiquidResult:
 class SpatialDistribution:
     """Spatial distribution of target atoms in the body frame of a rigid
     reference, over frames (``molrs::compute::SpatialDistribution``)."""
-    def __new__(cls, grid: RegularGrid, *, bulk_density: float | None = None) -> Self: ...
-    def compute(self, *, positions: Sequence[ArrayF], simbox: Sequence[Box | None] | None = None, reference: Sequence[Sequence[int]], template: Sequence[ArrayF], target: Sequence[Sequence[int]], orientation: Sequence[Sequence[Sequence[int]] | None] | None = None) -> SpatialDistributionResult: ...
+    def __new__(
+        cls, grid: RegularGrid, *, bulk_density: float | None = None
+    ) -> Self: ...
+    def compute(
+        self,
+        *,
+        positions: Sequence[ArrayF],
+        simbox: Sequence[Box | None] | None = None,
+        reference: Sequence[Sequence[int]],
+        template: Sequence[ArrayF],
+        target: Sequence[Sequence[int]],
+        orientation: Sequence[Sequence[Sequence[int]] | None] | None = None,
+    ) -> SpatialDistributionResult: ...
     @staticmethod
     def spec() -> ComputeSpec: ...
     def tunables(self) -> list[tuple[str, Any]]: ...
@@ -5855,7 +6229,9 @@ class SphereVoxelization:
     """Voxels covered by spheres of radius ``r_max`` around the points
     (``molrs::compute::SphereVoxelization``)."""
     def __new__(cls, dims: Sequence[int], r_max: float) -> Self: ...
-    def compute(self, *, positions: ArrayF, simbox: Box) -> SphereVoxelizationResult: ...
+    def compute(
+        self, *, positions: ArrayF, simbox: Box
+    ) -> SphereVoxelizationResult: ...
     @staticmethod
     def spec() -> ComputeSpec: ...
     def tunables(self) -> list[tuple[str, Any]]: ...
@@ -5875,8 +6251,12 @@ class SphereVoxelizationResult:
 class StaticDielectric:
     """Static permittivity from the fluctuation of the total dipole
     (``molrs::compute::StaticDielectric``)."""
-    def __new__(cls, units: str | UnitPreset, *, epsilon_inf: float | None = None) -> Self: ...
-    def compute(self, *, dipoles: ArrayF, volume: float, temperature: float, boundary: str) -> StaticDielectricResult: ...
+    def __new__(
+        cls, units: str | UnitPreset, *, epsilon_inf: float | None = None
+    ) -> Self: ...
+    def compute(
+        self, *, dipoles: ArrayF, volume: float, temperature: float, boundary: str
+    ) -> StaticDielectricResult: ...
     @staticmethod
     def spec() -> ComputeSpec: ...
     def tunables(self) -> list[tuple[str, Any]]: ...
@@ -5905,7 +6285,9 @@ class StaticDielectricResult:
 class StaticStructureFactorDebye:
     """Static structure factor by the Debye sum over all pairs
     (``molrs::compute::StaticStructureFactorDebye``)."""
-    def __new__(cls, k_values: Sequence[float], *, sinc_tolerance: float | None = None) -> Self: ...
+    def __new__(
+        cls, k_values: Sequence[float], *, sinc_tolerance: float | None = None
+    ) -> Self: ...
     def compute(self, *, positions: ArrayF) -> StaticStructureFactorDebyeResult: ...
     @staticmethod
     def spec() -> ComputeSpec: ...
@@ -5925,8 +6307,16 @@ class StaticStructureFactorDebyeResult:
 class StaticStructureFactorDirect:
     """Static structure factor from the density's Fourier components
     (``molrs::compute::StaticStructureFactorDirect``)."""
-    def __new__(cls, *, k_vecs: Sequence[Sequence[float]] | None = None, k_max: float | None = None, n_bins: int | None = None) -> Self: ...
-    def compute(self, *, positions: ArrayF, simbox: Box | None = None) -> StaticStructureFactorDirectResult: ...
+    def __new__(
+        cls,
+        *,
+        k_vecs: Sequence[Sequence[float]] | None = None,
+        k_max: float | None = None,
+        n_bins: int | None = None,
+    ) -> Self: ...
+    def compute(
+        self, *, positions: ArrayF, simbox: Box | None = None
+    ) -> StaticStructureFactorDirectResult: ...
     @staticmethod
     def spec() -> ComputeSpec: ...
     def tunables(self) -> list[tuple[str, Any]]: ...
@@ -5945,7 +6335,14 @@ class StaticStructureFactorDirectResult:
 @final
 class Steinhardt:
     """Steinhardt bond-orientational order (``molrs::compute::Steinhardt``)."""
-    def __new__(cls, l: Sequence[int], *, average: bool | None = None, wl: bool | None = None, wl_normalize: bool | None = None) -> Self: ...
+    def __new__(
+        cls,
+        l: Sequence[int],
+        *,
+        average: bool | None = None,
+        wl: bool | None = None,
+        wl_normalize: bool | None = None,
+    ) -> Self: ...
     def compute(self, *, neighbors: Neighbors) -> SteinhardtResult: ...
     @staticmethod
     def spec() -> ComputeSpec: ...
@@ -5982,8 +6379,22 @@ class SumRuleCheck:
 class Survival:
     """Survival correlation of a ``(T, C)`` presence series
     (``molrs::compute::Survival``), e.g. ``PairPresence``'s ``values``."""
-    def __new__(cls, kind: str, max_lag: int, *, normalization: str | None = None, origin: str | None = None) -> Self: ...
-    def compute(self, *, presence: ArrayF, dt: float, inner: ArrayF | None = None, n_reference: int | None = None) -> TimeCorrelation: ...
+    def __new__(
+        cls,
+        kind: str,
+        max_lag: int,
+        *,
+        normalization: str | None = None,
+        origin: str | None = None,
+    ) -> Self: ...
+    def compute(
+        self,
+        *,
+        presence: ArrayF,
+        dt: float,
+        inner: ArrayF | None = None,
+        n_reference: int | None = None,
+    ) -> TimeCorrelation: ...
     @staticmethod
     def spec() -> ComputeSpec: ...
     def tunables(self) -> list[tuple[str, Any]]: ...
@@ -6009,7 +6420,9 @@ class Unwrap:
     """Unwrap a wrapped ``(T, N, 3)`` trajectory (``molrs::compute::Unwrap``),
     from int32 image flags when given, else by minimum image between frames."""
     def __init__(self) -> None: ...
-    def compute(self, *, positions: ArrayF, images: ArrayI32 | None = None, boxes: Sequence[Box]) -> ArrayF: ...
+    def compute(
+        self, *, positions: ArrayF, images: ArrayI32 | None = None, boxes: Sequence[Box]
+    ) -> ArrayF: ...
     @staticmethod
     def spec() -> ComputeSpec: ...
     def tunables(self) -> list[tuple[str, Any]]: ...
@@ -6019,7 +6432,14 @@ class Vacf:
     """Velocity autocorrelation (``molrs::compute::Vacf``) — a stream only:
     push each frame's velocities as an ``(n_dof, 1)`` column into
     :meth:`accumulator`."""
-    def __new__(cls, max_lag: int, *, normalization: str | None = None, stride: int | None = None, mean: str | None = None) -> Self: ...
+    def __new__(
+        cls,
+        max_lag: int,
+        *,
+        normalization: str | None = None,
+        stride: int | None = None,
+        mean: str | None = None,
+    ) -> Self: ...
     def accumulator(self) -> CorrelatorAccumulator: ...
     @staticmethod
     def spec() -> ComputeSpec: ...
@@ -6029,7 +6449,15 @@ class Vacf:
 class VanHove:
     """The van Hove correlation G(r, t) over a trajectory
     (``molrs::compute::VanHove``)."""
-    def __new__(cls, axis: Axis, lags: Sequence[int], *, origins: str | None = None, stride: int | None = None, upper_edge: str | None = None) -> Self: ...
+    def __new__(
+        cls,
+        axis: Axis,
+        lags: Sequence[int],
+        *,
+        origins: str | None = None,
+        stride: int | None = None,
+        upper_edge: str | None = None,
+    ) -> Self: ...
     def compute(self, *, positions: ArrayF, boxes: Sequence[Box]) -> VanHoveResult: ...
     @staticmethod
     def spec() -> ComputeSpec: ...
@@ -6068,7 +6496,9 @@ class VoronoiDomainAnalysis:
     """Connected domains of the cells a partition selects
     (``molrs::compute::VoronoiDomainAnalysis``)."""
     def __init__(self) -> None: ...
-    def compute(self, *, cells: VoronoiCells, partition: Partition) -> VoronoiDomainResult: ...
+    def compute(
+        self, *, cells: VoronoiCells, partition: Partition
+    ) -> VoronoiDomainResult: ...
     @staticmethod
     def spec() -> ComputeSpec: ...
     def tunables(self) -> list[tuple[str, Any]]: ...
@@ -6101,7 +6531,17 @@ class VoronoiIntegration:
     """Integrate a density over the radical Voronoi cells of the atoms and sum
     the cells of each group (``molrs::compute::VoronoiIntegration``)."""
     def __new__(cls, unit: str) -> Self: ...
-    def compute(self, *, positions: ArrayF, radii: ArrayF, nuclear_charges: ArrayF, partition: Partition, simbox: Box, grid: RegularGrid, density: ArrayF) -> MolecularMoments: ...
+    def compute(
+        self,
+        *,
+        positions: ArrayF,
+        radii: ArrayF,
+        nuclear_charges: ArrayF,
+        partition: Partition,
+        simbox: Box,
+        grid: RegularGrid,
+        density: ArrayF,
+    ) -> MolecularMoments: ...
     @staticmethod
     def spec() -> ComputeSpec: ...
     def tunables(self) -> list[tuple[str, Any]]: ...
@@ -6111,7 +6551,9 @@ class VoronoiVoidAnalysis:
     """Cavities formed by connected void cells
     (``molrs::compute::VoronoiVoidAnalysis``)."""
     def __init__(self) -> None: ...
-    def compute(self, *, cells: VoronoiCells, is_void: Sequence[bool], box_volume: float) -> VoronoiVoidResult: ...
+    def compute(
+        self, *, cells: VoronoiCells, is_void: Sequence[bool], box_volume: float
+    ) -> VoronoiVoidResult: ...
     @staticmethod
     def spec() -> ComputeSpec: ...
     def tunables(self) -> list[tuple[str, Any]]: ...
@@ -6205,129 +6647,58 @@ class PairLjCut:
 # ---------------------------------------------------------------------------
 
 class md:
-    """The ``_native.md`` submodule (``molrs.md``): NVE/Langevin integrators.
-    MD defines no potential; it integrates an ``PairLjCut``, a ``Potentials``
-    collection, or any object with ``evaluate(pos) -> (energy, forces)``.
+    """The ``_native.md`` submodule (``molrs.md``).
 
-    The engine is unit-agnostic — supply consistent units yourself; take
-    constants from :class:`UnitPreset` (``UnitPreset("real").boltzmann()``).
+    :class:`MD` walks the LAMMPS phase list. Potentials stay in
+    ``molrs.ff.potential``. The engine is unit-agnostic.
     """
 
-    class MdState:
-        """Dynamical state (pos/vel/forces ``(N, 3)`` float64 + potential energy).
+    class Phase:
+        """LAMMPS Verlet phase. Members are the phase names."""
 
-        Fields are settable wholesale (``state.vel = v``; shape-validated).
-        Getters return **copies**, so slice writes (``state.vel[:] = v``) are
-        silently ineffective.
-        """
-
-        def __init__(
-            self, pos: ArrayF, vel: ArrayF, forces: ArrayF, energy: float
-        ) -> None: ...
-        @property
-        def pos(self) -> ArrayF: ...
-        @pos.setter
-        def pos(self, value: ArrayF) -> None: ...
-        @property
-        def vel(self) -> ArrayF: ...
-        @vel.setter
-        def vel(self, value: ArrayF) -> None: ...
-        @property
-        def forces(self) -> ArrayF: ...
-        @forces.setter
-        def forces(self, value: ArrayF) -> None: ...
-        @property
-        def virial(self) -> tuple[float, float, float, float, float, float] | None:
-            """Virial ``Sigma f (x) r`` as ``(xx, yy, zz, xy, xz, yz)``, or ``None``.
-
-            ``None`` means the force provider does not tally one -- not that it
-            is zero. A kernel resolved against a fixed pair list declines, and
-            one member declining makes the whole sum ``None``.
-            """
-        @property
-        def images(self) -> ArrayI32: ...
-        @images.setter
-        def images(self, value: ArrayI32) -> None: ...
-        def pressure(self, kinetic: float, volume: float) -> float | None: ...
-        @property
-        def energy(self) -> float: ...
-        @energy.setter
-        def energy(self, value: float) -> None: ...
+        initial_integrate: Self
+        post_integrate: Self
+        pre_exchange: Self
+        pre_neighbor: Self
+        neighbor: Self
+        pre_force: Self
+        force: Self
+        post_force: Self
+        final_integrate: Self
+        end_of_step: Self
 
     class VelocityVerlet:
-        """NVE velocity-Verlet. ``potential`` (a ``PairLjCut`` /
-        ``Potentials`` / an object with ``evaluate``) and
-        ``neighbors`` (a ``VerletSkin``) are
-        moved in; the loop feeds fresh pairs to the potential after each
-        rebuild. ``PairLjCut`` requires ``neighbors=``."""
+        """NVE velocity Verlet. ``dt`` only; the frame carries mass and state."""
+
+        def __init__(self, dt: float) -> None: ...
+        @property
+        def dt(self) -> float: ...
+
+    class FixLangevin:
+        """LAMMPS ``fix langevin`` at ``post_force``. ``kb`` is the caller's
+        Boltzmann constant; ``T`` is in that temperature unit."""
 
         def __init__(
-            self,
-            dt: float,
-            *,
-            potential: PairLjCut | Potentials | WeightedTerms | _PotentialLike,
-            neighbors: VerletSkin | None = None,
-            mass: ArrayF,
-            box: Box | None = None,
+            self, t_start: float, t_stop: float, damp: float, dt: float, seed: int, *, kb: float
         ) -> None: ...
         @property
         def dt(self) -> float: ...
-        @property
-        def removed_dof(self) -> int: ...
-        @property
-        def n_edges(self) -> int | None: ...
-        @property
-        def n_rebuilds(self) -> int | None: ...
-        @property
-        def ago(self) -> int | None: ...
-        def initial(self, pos: ArrayF, vel: ArrayF) -> md.MdState: ...
-        def advance(self, state: Any) -> md.MdState: ...
-        def advance_n(self, state: Any, n_steps: int) -> md.MdState: ...
 
-    class Langevin:
-        """BAOAB Langevin; ``kbt`` is an energy in your unit system
-        (``UnitPreset(style).boltzmann() * T``).
+    class NeighborList:
+        """Verlet list mounted at the ``neighbor`` phase. ``cutoff`` and ``skin``
+        are in the frame's length unit. Moved into :meth:`MD.set_neighbor`."""
 
-        ``advance`` draws noise from the internal seeded RNG; ``step`` takes
-        the ``(N, 3)`` Gaussian draw explicitly."""
+        def __init__(self, cutoff: float, skin: float) -> None: ...
 
-        def __init__(
-            self,
-            dt: float,
-            *,
-            gamma: float,
-            kbt: float,
-            potential: PairLjCut | Potentials | WeightedTerms | _PotentialLike,
-            neighbors: VerletSkin | None = None,
-            mass: ArrayF,
-            seed: int = 0,
-            box: Box | None = None,
-        ) -> None: ...
-        @property
-        def dt(self) -> float: ...
-        @property
-        def gamma(self) -> float: ...
-        @property
-        def c1(self) -> float: ...
-        @property
-        def c2(self) -> float: ...
-        @property
-        def sigma(self) -> ArrayF: ...
-        @property
-        def inv_mass(self) -> ArrayF: ...
-        @property
-        def removed_dof(self) -> int: ...
-        @property
-        def n_edges(self) -> int | None: ...
-        @property
-        def n_rebuilds(self) -> int | None: ...
-        @property
-        def ago(self) -> int | None: ...
-        def initial(self, pos: ArrayF, vel: ArrayF) -> md.MdState: ...
-        def step(self, state: Any, noise: ArrayF) -> md.MdState: ...
-        def advance(self, state: Any) -> md.MdState: ...
-        def advance_n(self, state: Any, n_steps: int) -> md.MdState: ...
-        def draw_noise(self, n_atoms: int) -> ArrayF: ...
+    class MD:
+        """Phase driver. :meth:`run` writes the frame it is given."""
+
+        def __init__(self) -> None: ...
+        def set_integrator(self, integrator: "md.VelocityVerlet") -> None: ...
+        def set_thermostat(self, thermostat: "md.FixLangevin") -> None: ...
+        def set_neighbor(self, neighbor: "md.NeighborList") -> None: ...
+        def set_evaluator(self, potential: Any) -> None: ...
+        def run(self, frame: Frame, n_steps: int) -> None: ...
 
     class MaxwellBoltzmann:
         """Velocity distribution at thermal energy ``kbt`` (optionally COM-free).
@@ -6380,6 +6751,7 @@ class ir:
     class NoMixingError(IrError): ...
     class MissingParamError(IrError): ...
     class BadValueError(IrError): ...
+
     class KernelShapeError(IrError):
         """A kernel output of the wrong shape or dtype, or a Python kernel
         that raised (the original exception is ``__cause__``)."""
@@ -6387,6 +6759,7 @@ class ir:
     class NoEngineFormError(IrError): ...
     class FormConflictError(IrError): ...
     class NoFormError(IrError): ...
+
     class OutOfImageError(IrError):
         """An exact form conversion refused; ``from_``, ``to``, ``type`` and
         ``reason`` name the row and the condition."""
@@ -6502,7 +6875,9 @@ class style_registry:
         lammps: str | None = None,
     ) -> None: ...
     @staticmethod
-    def register_engine_form(engine: str, category: str, name: str, form: str) -> None: ...
+    def register_engine_form(
+        engine: str, category: str, name: str, form: str
+    ) -> None: ...
     @staticmethod
     def unregister_style(category: str, name: str) -> None: ...
     @staticmethod
@@ -6519,7 +6894,6 @@ class style_registry:
         **params: Any,
     ) -> tuple[ArrayF, ArrayF]: ...
 
-
 # ---------------------------------------------------------------------------
 # Exports declared from the compiled module's own signatures.
 #
@@ -6527,7 +6901,6 @@ class style_registry:
 # signatures below are the PyO3 `text_signature`s verbatim; annotations are
 # only added where the parameter name fixes the type beyond doubt.
 # ---------------------------------------------------------------------------
-
 
 class RingSet:
     """
@@ -6543,7 +6916,7 @@ class RingSet:
 
     Examples
     --------
-    >>> rings = molrs.perceive.perceive_rings(molrs.io.smiles.SmilesIr.parse("c1ccccc1").to_atomistic())
+    >>> rings = molrs.perceive.perceive_rings(molrs.io.smiles.read_smiles("c1ccccc1").to_atomistic())
     >>> rings.n_rings()
     1
     >>> rings.ring_sizes()
@@ -6560,3 +6933,4 @@ class RingSet:
     def rings(self) -> list[list[Atom]]: ...
     def smallest_ring_containing_atom(self, atom: Atom) -> int | None: ...
 
+def infer_lammps_atom_style(frame: Frame) -> str: ...

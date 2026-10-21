@@ -371,7 +371,10 @@ impl Frame {
     ///   original order, with each endpoint rewritten to its new row.
     ///   Endpoints are assumed valid (run [`validate`](Self::validate)
     ///   first); a relation row whose endpoint is out of range is dropped.
-    /// - Every other block is copied unchanged, into new buffers, as are the
+    /// - References into filtered relation tables are filtered and renumbered
+    ///   transitively, including reference cycles. Selected rows themselves
+    ///   may not reference rows removed by that propagation.
+    /// - Every unaffected block is copied unchanged, into new buffers, as are the
     ///   box and `meta`: the subset shares no buffer with this frame.
     ///
     /// An empty `rows` is legal and gives zero-row blocks.
@@ -447,70 +450,130 @@ impl Frame {
             new_row[r] = Some(k);
         }
 
+        // Retain row sets for every block. Removing a relation row can invalidate
+        // references into that relation table, so propagate to a fixed point.
+        let mut kept: IndexMap<String, Vec<usize>> = self
+            .iter()
+            .map(|(name, b)| {
+                (
+                    name.to_owned(),
+                    if name == block {
+                        rows.to_vec()
+                    } else {
+                        (0..b.n_rows().unwrap_or(0)).collect()
+                    },
+                )
+            })
+            .collect();
+        let references: IndexMap<String, Vec<(String, String)>> = self
+            .iter()
+            .map(|(name, b)| {
+                (
+                    name.to_owned(),
+                    if b.n_rows().unwrap_or(0) == 0 {
+                        Vec::new()
+                    } else {
+                        local_reference_targets(name, b)
+                            .into_iter()
+                            .filter(|(col, target)| {
+                                self.contains_key(target)
+                                    || (b.target(col).is_some()
+                                        && b.validity(col)
+                                            .is_none_or(|mask| mask.iter().any(|&valid| valid)))
+                            })
+                            .collect()
+                    },
+                )
+            })
+            .collect();
+        for (name, refs) in &references {
+            let b = &self[name.as_str()];
+            for (col, target) in refs {
+                if !self.contains_key(target) {
+                    return Err(MolRsError::validation(format!(
+                        "cannot subset: '{name}.{col}' references absent block '{target}'"
+                    )));
+                }
+                if b.get(col)
+                    .and_then(|c| c.get::<u64>())
+                    .is_none_or(|v| v.ndim() != 1)
+                {
+                    return Err(MolRsError::validation(format!(
+                        "cannot subset: block '{name}' has no 1-D UInt reference column '{col}'"
+                    )));
+                }
+            }
+        }
+        loop {
+            let maps: IndexMap<String, Vec<Option<usize>>> = self
+                .iter()
+                .map(|(name, b)| {
+                    let mut map = vec![None; b.n_rows().unwrap_or(0)];
+                    for (new, &old) in kept[name].iter().enumerate() {
+                        map[old] = Some(new);
+                    }
+                    (name.to_owned(), map)
+                })
+                .collect();
+            let mut changed = false;
+            for (name, b) in self.iter() {
+                let inside = |row: usize| {
+                    references[name].iter().all(|(col, target)| {
+                        if b.validity(col).is_some_and(|m| !m[row]) {
+                            return true;
+                        }
+                        let value = b.get(col).unwrap().get::<u64>().unwrap()[[row]];
+                        usize::try_from(value)
+                            .ok()
+                            .and_then(|i| maps[target].get(i))
+                            .is_some_and(Option::is_some)
+                    })
+                };
+                if name == block && kept[name].iter().any(|&row| !inside(row)) {
+                    return Err(MolRsError::validation(format!(
+                        "cannot subset '{block}': a selected row references a row outside the selection"
+                    )));
+                }
+                let selection = kept.get_mut(name).unwrap();
+                let before = selection.len();
+                selection.retain(|&row| inside(row));
+                changed |= before != selection.len();
+            }
+            if !changed {
+                break;
+            }
+        }
+        let maps: IndexMap<String, Vec<Option<usize>>> = self
+            .iter()
+            .map(|(name, b)| {
+                let mut map = vec![None; b.n_rows().unwrap_or(0)];
+                for (new, &old) in kept[name].iter().enumerate() {
+                    map[old] = Some(new);
+                }
+                (name.to_owned(), map)
+            })
+            .collect();
         let mut out = Frame::new();
         out.meta = self.meta.clone();
         out.simbox = self.simbox.clone();
-
-        // Blocks keep the order this frame carries them in.
         for (name, b) in self.iter() {
-            let columns = local_references(name, b, block);
-            if columns.is_empty() {
-                out.insert(
-                    name,
-                    if name == block {
-                        target.select_rows(rows)?
-                    } else {
-                        b.deep_copy()
-                    },
-                );
-                continue;
-            }
-            let mut ends = Vec::with_capacity(columns.len());
-            for col in &columns {
-                let values = b
-                    .get(col)
-                    .and_then(|c| c.get::<u64>())
-                    .filter(|v| v.ndim() == 1)
-                    .ok_or_else(|| {
-                        MolRsError::validation(format!(
-                            "cannot subset '{block}': block '{name}' has no 1-D UInt reference \
-                             column '{col}'"
-                        ))
-                    })?;
-                ends.push((values, b.validity(col)));
-            }
-            let set = |mask: Option<&[bool]>, i: usize| mask.is_none_or(|m| m[i]);
-            let inside = |i: usize| {
-                ends.iter().all(|(e, mask)| {
-                    !set(*mask, i) || new_row.get(e[[i]] as usize).is_some_and(|n| n.is_some())
-                })
-            };
-            let kept: Vec<usize> = if name == block {
-                if let Some(&bad) = rows.iter().find(|&&i| !inside(i)) {
-                    return Err(MolRsError::validation(format!(
-                        "cannot subset '{block}': its row {bad} references a row outside the \
-                         selection"
-                    )));
-                }
-                rows.to_vec()
+            let selection = &kept[name];
+            let unchanged = selection.iter().copied().eq(0..b.n_rows().unwrap_or(0));
+            let mut cut = if unchanged {
+                b.deep_copy()
             } else {
-                (0..b.n_rows().unwrap_or(0))
-                    .filter(|&i| inside(i))
-                    .collect()
+                b.select_rows(selection)?
             };
-            let mut cut = b.select_rows(&kept)?;
-            for col in &columns {
+            for (col, target) in &references[name] {
                 let mask = cut.validity(col).map(<[bool]>::to_vec);
-                let values = cut
-                    .get_mut(col)
-                    .and_then(|c| c.get_mut::<u64>())
-                    .expect("select_rows keeps every column and its dtype");
-                for (i, v) in values.iter_mut().enumerate() {
-                    if !set(mask.as_deref(), i) {
+                let values = cut.get_mut(col).unwrap().get_mut::<u64>().unwrap();
+                for (row, value) in values.iter_mut().enumerate() {
+                    if mask.as_ref().is_some_and(|m| !m[row]) {
                         continue;
                     }
-                    let new = new_row[*v as usize].expect("kept rows lie in the selection");
-                    *v = new as crate::op::Idx;
+                    *value = maps[target][*value as usize]
+                        .expect("retained references have retained targets")
+                        as u64;
                 }
             }
             out.insert(name, cut);
@@ -696,6 +759,11 @@ impl Frame {
         for frame in &frames {
             for (name, b) in frame.iter() {
                 let mut part = b.clone();
+                for (col, target) in local_reference_targets(name, b) {
+                    if part.contains_key(&col) {
+                        part.set_target(&col, &target)?;
+                    }
+                }
                 let rows = b.n_rows().unwrap_or(0);
                 let references = if rows > 0 {
                     local_reference_targets(name, b)
@@ -703,6 +771,7 @@ impl Frame {
                     Vec::new()
                 };
                 for (col, target) in &references {
+                    part.set_target(col, target)?;
                     if frame.get(target).is_none() {
                         return Err(MolRsError::not_found(
                             "block",
@@ -816,15 +885,6 @@ fn local_reference_targets(name: &str, block: &Block) -> Vec<(String, String)> {
         .into_iter()
         .filter(|r| r.is_local())
         .map(|r| (r.column, r.target))
-        .collect()
-}
-
-/// The columns of block `name` that reference rows of block `target`.
-fn local_references(name: &str, block: &Block, target: &str) -> Vec<String> {
-    local_reference_targets(name, block)
-        .into_iter()
-        .filter(|(_, t)| t == target)
-        .map(|(column, _)| column)
         .collect()
 }
 

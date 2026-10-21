@@ -671,7 +671,7 @@ converted at the boundary:
 | `<CustomTorsionForce energy="k*(theta-theta0)^2">` `<Improper>` | `improper harmonic` | `k/4.184`; OpenMM's θ is signed and LAMMPS's χ = \|φ\|, which agree at `theta0 = 0` only — another `theta0` is refused (CHARMM36's two `theta0 = π` rows among them) |
 | `<CustomTorsionForce energy="k*(abs(theta)-theta0)^2">` | `improper harmonic` | `chi0` = theta0 in degrees (the writer's form when some `chi0 ≠ 0`) |
 | `<CMAPTorsionForce><Map>`, `<Torsion map>` | `cmap charmm` | [CMAP](#cmap) |
-| `<NonbondedForce coulomb14scale lj14scale><Atom charge sigma epsilon>` | `pair lj/cut` (`mixing` = the root's foyer `combining_rule`, else `arithmetic`) + `pair coul/cut`; `charge` on `atom full` | `sigma` × 10, `epsilon` ÷ 4.184; `special_bonds` `[0, 0, scale]` |
+| `<NonbondedForce coulomb14scale lj14scale><Atom charge sigma epsilon>` | `pair lj/cut` (`mixing` = the root's foyer `combining_rule`, else `arithmetic`) + `pair coul/cut`; `charge` on `atom full`; the writer writes `coul/long/pme` here too | `sigma` × 10, `epsilon` ÷ 4.184; `special_bonds` `[0, 0, scale]` |
 | `<LennardJonesForce lj14scale><Atom sigma epsilon [sigma14 epsilon14]>`, `<NBFixPair>` | `pair lj/charmm` (`arithmetic`, NBFIX as cross rows) + `pair coul/charmm`, the `<NonbondedForce>` beside it (its `epsilon` 0) giving the charges | 1-4: `special_bonds` `[0, 0, lj14scale]` / `[0, 0, coulomb14scale]`, and `one_four = "epsilon14"` when a type's 1-4 parameters differ ([1-4](#1-4-interactions)); an NBFIX row is OpenMM's 1-4 parameters for its pair too, LAMMPS's two-number cross row |
 
 Rows key on `class{n}` or `type{n}` as written; OpenMM's wildcard (an empty
@@ -685,7 +685,33 @@ pair untruncated, as `NoCutoff` does ([Cutoffs](#pair-styles)), and the
 caller states `inner` and `cutoff` of `lj/charmm` / `coul/charmm`, which
 have no default.
 
-**Refused**, by name: `<Script>` / `<InitializationScript>`, every
+The Coulomb style is written as the charges alone, the long-range
+`coul/long/pme` as `coul/cut` is: whether OpenMM sums them with `NoCutoff`, a
+cutoff, `Ewald` or `PME` is `createSystem`'s `nonbondedMethod` (with
+`nonbondedCutoff` and `ewaldErrorTolerance`), chosen when the System is
+built, as LAMMPS's `kspace_style` and GROMACS's `.mdp` `coulombtype` are. A
+`coul/long/pme` that states its Ewald parameters (`alpha`, `order`,
+`grid_*`) is refused: the XML has no place for them.
+
+OpenMM's `createSystem` mixes every `<NonbondedForce>` pair
+Lorentz-Berthelot, 1-4 exceptions included, and ignores foyer's
+`combining_rule`; no tag of its schema states a geometric σ for both the
+pairs and the 1-4 exceptions (a `<CustomNonbondedForce>` excludes whole
+bonded neighbours and scales none; a `<LennardJonesForce>` mixes arithmetic
+but for one `<NBFixPair>` per type pair). So a `geometric` `lj/cut` (OPLS-AA)
+is written with the root's `combining_rule="geometric"` and a `<Script>`,
+which `createSystem` runs last: it prices the Lennard-Jones in a
+`CustomNonbondedForce` named `GeometricLennardJones` (√(σᵢσⱼ), √(εᵢεⱼ), the
+`NonbondedForce`'s cutoff, switch and dispersion correction, periodic under
+`CutoffPeriodic`, `Ewald` and `PME`; `LJPME` is refused), keeps the charges
+in the `NonbondedForce` at ε = 0, and gives each 1-4 exception σ = √(σᵢσⱼ)
+at its `lj14scale`·√(εᵢεⱼ) — foyer's patch of the System. The reader reads
+that script, and only that one, as `mixing geometric`. Such an XML is for
+OpenMM's `app.ForceField`: a tool that applies `combining_rule` itself
+(foyer) is given the source file.
+
+**Refused**, by name: `<Script>` (but the writer's geometric-mixing one) /
+`<InitializationScript>`, every
 `Custom*Force` other than the harmonic improper, a `<Proper>` under it,
 an RB `<Improper>`, `ordering="smirnoff"`, a multi-term periodic improper,
 an odd CMAP size, a wildcard Urey–Bradley row, an `<NBFixPair>` of a type
@@ -700,7 +726,8 @@ mmff_torsion`, …),
 `sixthpower` mixing or `geometric` with cross rows, a cross row with its own
 1-4 parameters, `lj/charmm` under `one_four = "regular"` with 1-4 parameters
 of its own at a non-zero weight (OpenMM would use them), a Coulomb style
-with `dielectric ≠ 1` or `delta ≠ 0`, charges on some atom types only, a
+with `dielectric ≠ 1` or `delta ≠ 0`, a `coul/long/pme` stating Ewald
+parameters, charges on some atom types only, a
 shifted or Mie `lj/cut`, a force field in units other than `real`, and two
 types OpenMM's generator would match on the same labels with other
 parameters (bonds, angles, propers and crossterms either way round,
@@ -722,6 +749,27 @@ as one; an `improper periodic` row's two outer atoms must be in the order
 OpenMM's AMBER rule puts them (by element, then index). The equivalence
 check ([Cross-engine equivalence](#cross-engine-equivalence)) builds the
 templates from the frame and holds OpenMM's energies to molrs's.
+
+`write_openmm_system(path, ff, frame)` (`write_openmm_system_str`; Rust
+`OpenmmXmlWriter::write_system_str`) writes those templates: the field as
+`write_openmm_forcefield` writes it, plus one `<Residue>` per distinct
+residue of the frame. The residues and atom names are the ones OpenMM's
+`PDBFile` reads from `write_pdb` of the same frame (one rule, shared by
+both writers): runs of consecutive atoms with the same `chain`, `res_id`,
+`icode` and `res_name`; without `res_id`, each bonded molecule is a residue
+named `MOL`; an atom without a `name` is its element numbered within the
+residue (`C1`, `C2`, `H1`, …). Each template lists `<Atom name type
+charge>`, a `<Bond>` per bond inside the residue and an `<ExternalBond>` per
+bond leaving it. Charges are the frame's `charge` column, under
+`<UseAttributeFromResidue name="charge"/>` (without the column, the types'
+own charges, which every type must then carry), and every atom type the
+frame uses gets an `element`, which OpenMM matches residues by. So
+`ForceField(xml).createSystem(PDBFile(pdb).topology)` builds the System
+directly. Refused, by name: a type the force field lacks, one type on two
+elements, two atoms of one residue with the same name, no charges anywhere.
+Two residues with the same bond graph and elements but other types or
+charges become two templates OpenMM's matcher cannot choose between
+(`createSystem` then needs `residueTemplates`).
 
 ## AMBER prmtop
 
@@ -816,7 +864,12 @@ one (same labels, same function-code table), and a force field in units
 other than `real`. `dihedral class2`'s torsion goes out as funct-9 rows at
 phase φₙ + 180° (k[1 − cos(nφ − φₙ)] = k[1 + cos(nφ − φₙ − 180°)]). No
 Coulomb constant is written: GROMACS prices at its own, as LAMMPS and OpenMM
-do at theirs.
+do at theirs. No Coulomb style has a directive either — `coul/cut`,
+`coul/charmm` and the long-range `coul/long/pme` alike: the `.top` holds the
+charges, and how GROMACS sums them (`coulombtype = PME`, Ewald, cut-off,
+with `rcoulomb`, `fourier-spacing`, `pme-order`, `ewald-rtol`) is the
+`.mdp`'s, chosen at run time. A `coul/long/pme` stating its Ewald
+parameters (`alpha`, `order`, `grid_*`) is refused.
 
 **Systems.** `read_system` types each molecule row as GROMACS's own lookup
 does — bonds, angles, Fourier dihedrals and cmaps by exact bond types
@@ -892,13 +945,26 @@ estimate carries `estimated`, `estimate_penalty`, `estimate_method` and
   `cbaf`)·`WEIGHT_BA_CTR` at its vertex (caffeine's `c-cc-na` is
   `c2-cc-na` at 2.6).
 
+An estimate's numbers are the frcmod's, at the precision parmchk2 prints
+them (a bond's r₀ to three decimals: `ne-s6` copies `ne-sy`'s 1.6723 and
+prices 1.672), since that is what tleap reads.
+
+Every term is named by its types alone, as the prmtop reader names it: a
+bond, angle or torsion in the orientation that reads smaller, type by type
+(`c3-c3-oh-ho`, where `gaff.dat` writes `ho-oh-c3-c3`), its cosine terms
+numbered by periodicity, then phase; an improper in AMBER's order. An
+estimate is named the same way (`f-c3-sy`) and says what it is in its
+params. So the native force field of a molecule and the one
+`read_prmtop_forcefield` reads from tleap's prmtop of it merge
+(`ForceField.merge`) into one, type for type.
+
 parmchk2 searches the molecule in atom and bond order and reuses a name's
 first estimate (an improper estimate is itself a row later impropers can
 copy), so a name can be estimated differently in two molecules (aspirin's
 ester carbon takes `c3-o -c -oh`, ethyl acetate's the `X -X -c -o` amide
-term). An estimated term is therefore named with its analog and penalty,
-`<types>@<analog>_<penalty>` (`c3-o-c-os@c3.o.c.oh_8.5`; the improper
-default `@default_0.0`), so one output force field holds both.
+term). Typed into one output, the first keeps the name and each further
+estimate of it is `<types>@<n>` (`c3-o-c-os@2`), as the prmtop reader
+numbers a further term set on one quartet.
 
 **Which bond orders the types follow.** antechamber (its default `-j 4`)
 ignores the bond orders of its input: `bondtype -j full` judges new ones from
@@ -1068,7 +1134,8 @@ A `StyleSpec` carries `lammps: LammpsForm`:
 | `pair lj/class2` | `epsilon sigma`, mixing always `sixthpower` (LAMMPS's `init_one`) |
 | `pair coul/cut`, `coul/long/pme` | the Coulomb half of `lj/cut/coul/cut` / `lj/cut/coul/long` (or of a `hybrid/overlay` with another style, the Coulomb on `* *`); `delta ≠ 0`, `dielectric ≠ 1` and stated Ewald parameters refused |
 | `cmap charmm` | `fix cmap` and its grid file |
-| `dihedral rb`, MMFF, UFF, `thole`, `coul/tt`, `drude harmonic` | none |
+| `drude harmonic` | the DRUDE package's core-shell spring: `bond_style harmonic` `K 0` (`K = k`, both unhalved, `r0 = 0`); the data writer writes the `drudes` rows as `Bonds` rows of the same labels. `alpha` and `thole` go to a comment of the include, for the input's `pair_style thole` / `fix drude` |
+| `dihedral rb`, MMFF, UFF, `thole`, `coul/tt` | none |
 
 The reader resolves a LAMMPS style name through the registry
 (`Registry::lammps_style`): the style of that name when its form writes it,
@@ -1290,7 +1357,7 @@ ff::completeness::the_guide_holds_the_generated_table` rewrites it).
 | `pair lj/charmm` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | `pair coul/cut` | ✓ | ✓ | ✓ [22] | ✓ | ✓ [23] | ✓ | ✓ [24] | ✓ | ✓ |
 | `pair coul/charmm` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| `pair coul/long/pme` | ✓ | ✓ [25] | ✓ [26] | — | refused [27] | — | refused [28] | — | ✓ |
+| `pair coul/long/pme` | ✓ | ✓ [25] | ✓ [26] | — | ✓ [27] | — | ✓ [28] | — | ✓ |
 | `pair lj/class2` | ✓ | ✓ [29] | ✓ [29] | — | refused [30] | — | refused [4] | — | ✓ |
 | `pair buck` | ✓ | ✓ | ✓ | — | refused [31] | — | refused [4] | — | ✓ |
 | `pair morse` | ✓ | ✓ | ✓ | — | refused [31] | — | refused [4] | — | ✓ |
@@ -1340,8 +1407,8 @@ ff::completeness::the_guide_holds_the_generated_table` rewrites it).
 24. the Coulomb constant is GROMACS's own
 25. lj/cut/coul/long: cutoff and constant; its kspace_style states an accuracy, not an alpha, so pricing is refused until the Ewald parameters are stated
 26. the real-space lj/cut/coul/long; stated Ewald parameters refused (molrs's smooth PME is not LAMMPS's PPPM)
-27. the long-range method is a createSystem argument
-28. the long-range method is an .mdp setting
+27. the charges; PME / Ewald is a createSystem argument; stated Ewald parameters refused
+28. the charges; coulombtype = PME is an .mdp setting; stated Ewald parameters refused
 29. through its codec, mixing sixthpower as LAMMPS's always does; not run by LAMMPS: the installed lmp has no CLASS2 package
 30. its kernel prices a row per pair (cross rows), which a CustomNonbondedForce has not
 31. its parameters do not mix, so a pair's are a cross row's, which a CustomNonbondedForce has not
@@ -1351,7 +1418,7 @@ ff::completeness::the_guide_holds_the_generated_table` rewrites it).
 35. LAMMPS has no per-pair 1-4 parameters
 36. refused as such; its exact LAMMPS form is special_bonds 0 and one zero-K dihedral charmm row of w = 1 per 1-4 pair
 37. foyer's combining_rule, which OpenMM's own app.ForceField ignores
-38. foyer's combining_rule (OpenMM's own app.ForceField ignores it); with cross rows refused
+38. foyer's combining_rule and the <Script> that applies it (OpenMM's own app.ForceField ignores the attribute); with cross rows refused
 39. OpenMM mixes arithmetically
 40. no GROMACS comb-rule
 41. a cross row with 1-4 parameters of its own refused (OpenMM prices an NBFIX 1-4 pair with the NBFIX row)

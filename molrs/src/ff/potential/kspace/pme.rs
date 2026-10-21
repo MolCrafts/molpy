@@ -121,27 +121,8 @@ impl PairCoulLongPme {
         let recip_h = invert_box_vectors(&h);
         let volume = h[0][0] * h[1][1] * h[2][2]; // lower-triangular determinant
         // `h` keeps the lattice vectors as rows; `Mic` wants them as columns.
-        let mic = if h[1][0] == 0.0 && h[2][0] == 0.0 && h[2][1] == 0.0 {
-            Mic::Ortho {
-                len: [h[0][0], h[1][1], h[2][2]],
-                inv_len: [1.0 / h[0][0], 1.0 / h[1][1], 1.0 / h[2][2]],
-                pbc: [true; 3],
-            }
-        } else {
-            let mut hc = [0.0; 9];
-            let mut inv = [0.0; 9];
-            for i in 0..3 {
-                for j in 0..3 {
-                    hc[3 * i + j] = h[j][i];
-                    inv[3 * i + j] = recip_h[j][i];
-                }
-            }
-            Mic::Triclinic {
-                h: hc,
-                inv,
-                pbc: [true; 3],
-            }
-        };
+        let cell = std::array::from_fn(|i| std::array::from_fn(|j| h[j][i]));
+        let mic = Mic::new(cell, [true; 3]).expect("PME requires a valid periodic cell");
 
         // Self energy: -α/√π * C * Σq²
         let sum_q2: F = charges.iter().map(|q| q * q).sum();

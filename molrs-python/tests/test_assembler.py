@@ -105,7 +105,7 @@ def test_placers_and_orienter_take_no_arguments() -> None:
 
 
 def test_growth_placer_builds_a_topology_without_positions() -> None:
-    sites = molrs.io.cgsmiles.CgSmilesIr.parse("{[#M]|3}").to_coarsegrain()
+    sites = molrs.io.cgsmiles.read_cgsmiles("{[#M]|3}").to_coarsegrain()
     world = Assembler({"M": _monomer()}, GrowthPlacer()).assemble(sites)
 
     # Three copies of 4 atoms, two links remove 4 hydrogens.
@@ -114,7 +114,7 @@ def test_growth_placer_builds_a_topology_without_positions() -> None:
 
 
 def test_an_orienter_on_a_site_graph_without_positions_is_a_value_error() -> None:
-    sites = molrs.io.cgsmiles.CgSmilesIr.parse("{[#M]|2}").to_coarsegrain()
+    sites = molrs.io.cgsmiles.read_cgsmiles("{[#M]|2}").to_coarsegrain()
     with pytest.raises(ValueError, match="needs site positions"):
         Assembler({"M": _monomer()}, GrowthPlacer(), AxisOrienter()).assemble(sites)
 
@@ -132,13 +132,17 @@ def _bare_monomer() -> molrs.core.MolGraph:
     for i, j in ((0, 1), (0, 2), (1, 3)):
         graph.add_relation("bonds", [nodes[i], nodes[j]], bond_type=1, bond_number=1)
     graph.register_kind("ports", 2)
-    graph.add_relation("ports", [nodes[0], nodes[2]], port_kind=">", port_label="", port_order=1)
-    graph.add_relation("ports", [nodes[1], nodes[3]], port_kind="<", port_label="", port_order=1)
+    graph.add_relation(
+        "ports", [nodes[0], nodes[2]], port_kind=">", port_label="", port_order=1
+    )
+    graph.add_relation(
+        "ports", [nodes[1], nodes[3]], port_kind="<", port_label="", port_order=1
+    )
     return graph
 
 
 def test_the_world_is_of_the_librarys_graph_type() -> None:
-    sites = molrs.io.cgsmiles.CgSmilesIr.parse("{[#M]|2}").to_coarsegrain()
+    sites = molrs.io.cgsmiles.read_cgsmiles("{[#M]|2}").to_coarsegrain()
     world = Assembler({"M": _bare_monomer()}, GrowthPlacer()).assemble(sites)
 
     assert type(world) is molrs.core.MolGraph

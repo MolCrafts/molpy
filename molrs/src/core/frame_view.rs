@@ -74,15 +74,19 @@ impl<'a> FrameView<'a> {
     }
 
     /// Creates an owned [`Frame`] by cloning all viewed data.
-    pub fn to_owned(&self) -> Frame {
+    ///
+    /// # Errors
+    /// Propagates a viewed block's validation error rather than returning a
+    /// partially converted frame.
+    pub fn to_owned(&self) -> Result<Frame, crate::core::BlockError> {
         let mut block_map = IndexMap::with_capacity(self.map.len());
         for (&key, block_view) in &self.map {
-            block_map.insert(key.to_string(), block_view.to_owned());
+            block_map.insert(key.to_string(), block_view.to_owned()?);
         }
         let mut frame: Frame = block_map.into_iter().collect();
         frame.simbox = self.simbox.cloned();
         frame.meta = self.meta.clone();
-        frame
+        Ok(frame)
     }
 }
 
@@ -192,7 +196,7 @@ mod tests {
     fn test_to_owned_roundtrip() {
         let frame = make_frame();
         let view = FrameView::from(&frame);
-        let owned = view.to_owned();
+        let owned = view.to_owned().unwrap();
 
         assert_eq!(owned.len(), 2);
         assert!(owned.contains_key("atoms"));

@@ -125,6 +125,23 @@ pub(crate) struct GraphView {
 }
 
 impl GraphView {
+    /// Every pair's sorted edge-label multiset, preserving parallel relations.
+    fn edge_bundles(&self) -> Vec<HashMap<usize, Vec<u64>>> {
+        self.adj
+            .iter()
+            .map(|edges| {
+                let mut neighbors = HashMap::<usize, Vec<u64>>::new();
+                for &(node, label) in edges {
+                    neighbors.entry(node).or_default().push(label);
+                }
+                for labels in neighbors.values_mut() {
+                    labels.sort_unstable();
+                }
+                neighbors
+            })
+            .collect()
+    }
+
     /// Build the dense snapshot: assign contiguous indices, read edge labels
     /// (bond order bits) from each incident relation, then compute initial
     /// colors from element/bead label + degree + charge + aromatic flag.
@@ -179,10 +196,7 @@ impl GraphView {
         let label = atom.as_ref().map_or(NodeLabel::Unlabelled, NodeLabel::of);
         let degree = incident.len() as u64;
 
-        let charge = atom
-            .as_ref()
-            .and_then(|a| prop_as_f64(a.get(keys::CHARGE)))
-            .unwrap_or(0.0);
+        let charge = atom.as_ref().map_or(0.0, |a| a.formal_charge() as f64);
 
         // Aromatic: explicit `is_aromatic` prop wins; else infer from any
         // incident bond whose class is aromatic.
@@ -275,16 +289,186 @@ pub(crate) fn structural_hash(g: &impl Graph) -> u64 {
 /// `g.canonical_order()`; see [`MolGraph::canonical_order`].
 pub(crate) fn canonical_order(g: &impl Graph) -> Vec<NodeId> {
     let view = GraphView::build(g.graph());
-    let colors = wl_colors(&view);
+    // Canonicalize connected components independently. Repeated molecules
+    // must not create a factorial search over interchangeable components.
+    let mut visited = vec![false; view.nodes.len()];
+    let mut components = Vec::new();
+    for seed in 0..view.nodes.len() {
+        if visited[seed] {
+            continue;
+        }
+        let mut nodes = Vec::new();
+        let mut stack = vec![seed];
+        visited[seed] = true;
+        while let Some(node) = stack.pop() {
+            nodes.push(node);
+            for &(neighbor, _) in &view.adj[node] {
+                if !visited[neighbor] {
+                    visited[neighbor] = true;
+                    stack.push(neighbor);
+                }
+            }
+        }
+        let index: HashMap<usize, usize> = nodes
+            .iter()
+            .enumerate()
+            .map(|(i, &node)| (node, i))
+            .collect();
+        let local = GraphView {
+            nodes: nodes.iter().map(|&i| view.nodes[i]).collect(),
+            init_colors: nodes.iter().map(|&i| view.init_colors[i]).collect(),
+            adj: nodes
+                .iter()
+                .map(|&i| {
+                    view.adj[i]
+                        .iter()
+                        .map(|&(j, label)| (index[&j], label))
+                        .collect()
+                })
+                .collect(),
+            n_edges: nodes.iter().map(|&i| view.adj[i].len()).sum::<usize>() / 2,
+        };
+        let view = &local;
+        let colors = wl_colors(view);
+        let adjacency = view.edge_bundles();
+        let (code, order) = canonical_search(view, &adjacency, colors);
+        components.push((
+            code,
+            order.into_iter().map(|i| view.nodes[i]).collect::<Vec<_>>(),
+        ));
+    }
+    components.sort_by(|a, b| a.0.cmp(&b.0));
+    components
+        .into_iter()
+        .flat_map(|(_, order)| order)
+        .collect()
+}
 
-    let mut order: Vec<usize> = (0..view.nodes.len()).collect();
-    order.sort_by(|&a, &b| {
-        colors[a]
-            .cmp(&colors[b])
-            .then(view.init_colors[a].cmp(&view.init_colors[b]))
-            .then_with(|| node_ffi(view.nodes[a]).cmp(&node_ffi(view.nodes[b])))
-    });
-    order.into_iter().map(|i| view.nodes[i]).collect()
+/// Individualization/refinement on ordered color partitions. Compare complete
+/// labeled adjacency encodings, never local handles, to choose a canonical leaf.
+fn canonical_search(
+    view: &GraphView,
+    adjacency: &[HashMap<usize, Vec<u64>>],
+    mut colors: Vec<u64>,
+) -> (Vec<u64>, Vec<usize>) {
+    loop {
+        let signatures: Vec<_> = view
+            .adj
+            .iter()
+            .enumerate()
+            .map(|(i, edges)| {
+                let mut neighbors: Vec<_> =
+                    edges.iter().map(|&(j, label)| (label, colors[j])).collect();
+                neighbors.sort_unstable();
+                (colors[i], neighbors)
+            })
+            .collect();
+        let mut vocabulary = signatures.clone();
+        vocabulary.sort();
+        vocabulary.dedup();
+        let next: Vec<u64> = signatures
+            .iter()
+            .map(|s| vocabulary.binary_search(s).unwrap() as u64)
+            .collect();
+        let stable = distinct_count(&next) == distinct_count(&colors);
+        colors = next;
+        if stable {
+            break;
+        }
+    }
+    let mut classes = std::collections::BTreeMap::<u64, Vec<usize>>::new();
+    for (i, &color) in colors.iter().enumerate() {
+        classes.entry(color).or_default().push(i);
+    }
+    let Some(class) = classes
+        .values()
+        .filter(|c| c.len() > 1)
+        .min_by_key(|c| c.len())
+    else {
+        let order: Vec<usize> = classes.values().map(|c| c[0]).collect();
+        let mut code = vec![order.len() as u64];
+        code.extend(order.iter().map(|&i| view.init_colors[i]));
+        let mut rank = vec![0; order.len()];
+        for (position, &node) in order.iter().enumerate() {
+            rank[node] = position;
+        }
+        for &i in &order {
+            let mut edges: Vec<_> = view.adj[i]
+                .iter()
+                .map(|&(j, label)| (rank[j], label))
+                .collect();
+            edges.sort_unstable();
+            code.push(edges.len() as u64);
+            for (neighbor, label) in edges {
+                code.push(neighbor as u64);
+                code.push(label);
+            }
+        }
+        return (code, order);
+    };
+    let twins = |a: usize, b: usize| {
+        let swap = |node| {
+            if node == a {
+                b
+            } else if node == b {
+                a
+            } else {
+                node
+            }
+        };
+        adjacency[a].len() == adjacency[b].len()
+            && adjacency[a]
+                .iter()
+                .all(|(&node, label)| adjacency[b].get(&swap(node)) == Some(label))
+    };
+    if class.iter().skip(1).all(|&node| twins(class[0], node)) {
+        // Every permutation of this class is an automorphism. Assign all
+        // ranks in one step, avoiding linear recursion for stars and twins.
+        let mut individualized = colors.clone();
+        for (rank, &node) in class.iter().enumerate() {
+            individualized[node] = classes.len() as u64 + rank as u64;
+        }
+        return canonical_search(view, adjacency, individualized);
+    }
+    let by_color: HashMap<u64, Vec<usize>> =
+        classes.iter().map(|(&c, ids)| (c, ids.clone())).collect();
+    let mut representatives = Vec::new();
+    let mut best: Option<(Vec<u64>, Vec<usize>)> = None;
+    for &candidate in class {
+        // Equivalent branches have identical canonical leaves. The existing
+        // exact matcher proves the automorphism while fixing singleton cells.
+        let equivalent = representatives.iter().any(|&representative| {
+            if twins(representative, candidate) {
+                return true;
+            }
+            let mut ab = vec![usize::MAX; colors.len()];
+            let mut ba = ab.clone();
+            for ids in classes.values().filter(|ids| ids.len() == 1) {
+                ab[ids[0]] = ids[0];
+                ba[ids[0]] = ids[0];
+            }
+            if !feasible(representative, candidate, adjacency, adjacency, &ab, &ba) {
+                return false;
+            }
+            ab[representative] = candidate;
+            ba[candidate] = representative;
+            let order: Vec<_> = (0..colors.len()).filter(|&i| ab[i] == usize::MAX).collect();
+            backtrack(
+                0, &order, &colors, &colors, &by_color, adjacency, adjacency, &mut ab, &mut ba,
+            )
+        });
+        if equivalent {
+            continue;
+        }
+        representatives.push(candidate);
+        let mut individualized = colors.clone();
+        individualized[candidate] = classes.len() as u64;
+        let result = canonical_search(view, adjacency, individualized);
+        if best.as_ref().is_none_or(|b| result.0 < b.0) {
+            best = Some(result);
+        }
+    }
+    best.expect("a nonempty color class has a representative")
 }
 
 /// `a.is_isomorphic(b)`; see [`MolGraph::is_isomorphic`].
@@ -329,8 +513,8 @@ pub(crate) fn is_isomorphic(a: &impl Graph, b: &impl Graph) -> bool {
     let mut order: Vec<usize> = (0..n).collect();
     order.sort_by_key(|&i| (*freq.get(&ca[i]).unwrap_or(&0), i));
 
-    let adj_a = adjacency_map(&va);
-    let adj_b = adjacency_map(&vb);
+    let adj_a = va.edge_bundles();
+    let adj_b = vb.edge_bundles();
 
     let mut map_ab = vec![usize::MAX; n];
     let mut map_ba = vec![usize::MAX; n];
@@ -365,7 +549,7 @@ impl MolGraph {
     /// - **Initial node color** = a deterministic hash of the node's *label*: the
     ///   atomic number (atoms), the bead type (CG), or the one shared
     ///   "unlabelled" label of a node carrying neither + degree (incident edge count) + formal
-    ///   charge (the `charge` component, `0` when absent) + an aromatic flag (the
+    ///   charge (the `formal_charge` component, `0` when absent) + an aromatic flag (the
     ///   `is_aromatic` component when set, else inferred from any incident bond of
     ///   order `1.5`, matching the project aromaticity convention).
     /// - **Refinement round**: a node's new color = hash of its current color plus the
@@ -375,10 +559,9 @@ impl MolGraph {
     ///   bounded by the node count.
     /// - `structural_hash` = a hash of the *sorted multiset of final colors*, so it
     ///   is invariant under any node permutation.
-    /// - [`canonical_order`](Self::canonical_order) = nodes sorted by `(final color, initial color, stable
-    ///   handle tiebreak)` — deterministic within a graph, and consistent across two
-    ///   isomorphic graphs (tied nodes share a color, hence share every label
-    ///   attribute).
+    /// - [`canonical_order`](Self::canonical_order) refines and individualizes
+    ///   unresolved color classes, choosing the least labeled adjacency encoding.
+    ///   Exact automorphisms prune equivalent branches.
     /// - [`is_isomorphic`](Self::is_isomorphic) = a quick reject on `structural_hash` / edge-count
     ///   mismatch, then a WL-color-pruned backtracking bijective match.
     ///
@@ -389,9 +572,9 @@ impl MolGraph {
         structural_hash(self)
     }
 
-    /// Deterministic canonical node ordering from the WL refinement.
+    /// Deterministic canonical node ordering from individualization/refinement.
     ///
-    /// Nodes are sorted by `(final color, initial color, stable handle)`. Two
+    /// Symmetric color classes are resolved by canonical labeling. Two
     /// isomorphic graphs induce a consistent node bijection by pairing their
     /// `canonical_order` lists position-by-position.
     ///
@@ -401,7 +584,7 @@ impl MolGraph {
     }
 
     /// Whether `self` and `other` are isomorphic as labeled graphs
-    /// (atomic-number/bead-type + charge + aromatic node labels and
+    /// (atomic-number/bead-type + formal charge + aromatic node labels and
     /// bond-order edge labels all preserved).
     ///
     /// Quick-rejects on node-count, edge-count, or `structural_hash` mismatch,
@@ -419,6 +602,8 @@ impl MolGraph {
 // ---------------------------------------------------------------------------
 
 /// Neighbor → edge-label map per dense node index (O(1) edge lookup).
+/// Collapses parallel edges for the topology-only subgraph matcher. Whole-graph
+/// identity and canonical labeling use [`GraphView::edge_bundles`] instead.
 pub(crate) fn adjacency_map(view: &GraphView) -> Vec<HashMap<usize, u64>> {
     view.adj
         .iter()
@@ -429,14 +614,14 @@ pub(crate) fn adjacency_map(view: &GraphView) -> Vec<HashMap<usize, u64>> {
 /// Recursive WL-pruned bijective match. `order` drives the A-node visitation
 /// order; `map_ab` / `map_ba` are the partial forward / inverse maps.
 #[allow(clippy::too_many_arguments)]
-fn backtrack(
+fn backtrack<L: PartialEq>(
     depth: usize,
     order: &[usize],
     ca: &[u64],
     cb: &[u64],
     by_color: &HashMap<u64, Vec<usize>>,
-    adj_a: &[HashMap<usize, u64>],
-    adj_b: &[HashMap<usize, u64>],
+    adj_a: &[HashMap<usize, L>],
+    adj_b: &[HashMap<usize, L>],
     map_ab: &mut [usize],
     map_ba: &mut [usize],
 ) -> bool {
@@ -484,35 +669,32 @@ fn backtrack(
 /// `perceive::SubgraphMatcher` (where `map_ba` is sized to the larger graph and its
 /// unmapped slots are skipped); node-label compatibility is each caller's own
 /// test.
-pub(crate) fn feasible(
+pub(crate) fn feasible<L: PartialEq>(
     u: usize,
     v: usize,
-    adj_a: &[HashMap<usize, u64>],
-    adj_b: &[HashMap<usize, u64>],
+    adj_a: &[HashMap<usize, L>],
+    adj_b: &[HashMap<usize, L>],
     map_ab: &[usize],
     map_ba: &[usize],
 ) -> bool {
+    if adj_a[u].get(&u) != adj_b[v].get(&v) {
+        return false;
+    }
     // Every already-mapped A-neighbor of u must be a B-neighbor of v, same label.
-    for (&w, &label) in &adj_a[u] {
+    for (&w, label) in &adj_a[u] {
         let mw = map_ab[w];
-        if mw != usize::MAX && adj_b[v].get(&mw) != Some(&label) {
+        if mw != usize::MAX && adj_b[v].get(&mw) != Some(label) {
             return false;
         }
     }
     // Every already-mapped B-neighbor of v must be an A-neighbor of u, same label.
-    for (&x, &label) in &adj_b[v] {
+    for (&x, label) in &adj_b[v] {
         let mx = map_ba[x];
-        if mx != usize::MAX && adj_a[u].get(&mx) != Some(&label) {
+        if mx != usize::MAX && adj_a[u].get(&mx) != Some(label) {
             return false;
         }
     }
     true
-}
-
-/// Stable per-graph tiebreak key for a node handle.
-#[inline]
-fn node_ffi(id: NodeId) -> u64 {
-    u64::from(id)
 }
 
 // =========================================================================
@@ -561,6 +743,47 @@ mod tests {
             mol.add_bond(ids[i], ids[j], props! {}).unwrap();
         }
         (mol, ids)
+    }
+
+    #[test]
+    fn isomorphism_preserves_parallel_edge_multiplicity() {
+        let mut a = MolGraph::new();
+        let mut b = MolGraph::new();
+        for (graph, multiplicities) in [(&mut a, [1, 3, 1, 3]), (&mut b, [2, 2, 2, 2])] {
+            let nodes: Vec<_> = (0..4).map(|_| graph.add_node(props! {}).unwrap()).collect();
+            let kind = graph.register_kind("links", 2);
+            for (i, count) in multiplicities.into_iter().enumerate() {
+                for _ in 0..count {
+                    graph
+                        .add_relation(kind, &[nodes[i], nodes[(i + 1) % 4]], props! {})
+                        .unwrap();
+                }
+            }
+        }
+        // Every node has the same degree and WL environment. Only an exact
+        // edge-bundle comparison can distinguish these two multigraphs.
+        assert_eq!(a.structural_hash(), b.structural_hash());
+        assert!(!a.is_isomorphic(&b));
+    }
+
+    #[test]
+    fn parallel_edge_insertion_order_does_not_change_isomorphism() {
+        let mut a = MolGraph::new();
+        let mut b = MolGraph::new();
+        for (graph, numbers) in [(&mut a, [1, 2]), (&mut b, [2, 1])] {
+            let nodes = [
+                graph.add_node(props! {}).unwrap(),
+                graph.add_node(props! {}).unwrap(),
+            ];
+            let kind = graph.register_kind("links", 2);
+            for number in numbers {
+                graph
+                    .add_relation(kind, &nodes, props! { keys::BOND_NUMBER => number })
+                    .unwrap();
+            }
+        }
+        assert_eq!(a.structural_hash(), b.structural_hash());
+        assert!(a.is_isomorphic(&b));
     }
 
     /// Rebuild the same molecule with a permuted node-insertion order.
@@ -660,7 +883,7 @@ mod tests {
     fn charge_change_changes_hash() {
         let (a, ids) = ethanol();
         let mut b = a.clone();
-        b.set_atom(ids[2], keys::CHARGE, -1.0).unwrap();
+        b.set_atom(ids[2], keys::FORMAL_CHARGE, -1).unwrap();
         assert_ne!(
             a.structural_hash(),
             b.structural_hash(),

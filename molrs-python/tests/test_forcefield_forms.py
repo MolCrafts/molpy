@@ -17,9 +17,7 @@ import molrs
 import numpy as np
 import pytest
 
-XYZ = np.array(
-    [[0.1, 1.2, -0.3], [0.0, 0.0, 0.0], [1.4, 0.1, 0.2], [1.9, 1.1, 0.9]]
-)
+XYZ = np.array([[0.1, 1.2, -0.3], [0.0, 0.0, 0.0], [1.4, 0.1, 0.2], [1.9, 1.1, 0.9]])
 
 
 def _opls() -> molrs.ff.forcefield.ForceField:
@@ -76,7 +74,9 @@ def test_to_form_is_exact_or_raises_naming_the_condition() -> None:
     (t,) = rb.get_types("dihedral")
     assert math.isclose(_energy(rb), _energy(ff), rel_tol=1e-12)
     assert set(t.params) >= {"c0", "c1", "c2", "c3", "c4", "c5"}
-    with pytest.raises(molrs.ff.ir.OutOfImageError, match=r"CT-CT-CT-CT.*sin\(2φ\)") as err:
+    with pytest.raises(
+        molrs.ff.ir.OutOfImageError, match=r"CT-CT-CT-CT.*sin\(2φ\)"
+    ) as err:
         _periodic(30.0).to_form("dihedral", "rb")
     assert (err.value.type, err.value.to) == ("CT-CT-CT-CT", "dihedral rb")
     with pytest.raises(molrs.ff.ir.NoFormError, match="no form family") as err:
@@ -88,9 +88,18 @@ def test_fit_form_reports_its_residual() -> None:
     phi = np.linspace(-math.pi, math.pi, 36, endpoint=False)
     out, residual = _periodic(30.0).fit_form("dihedral", "opls", phi, offset=True)
     assert out.get_style("dihedral", "opls") is not None
-    assert residual["rms"] > 0.0 and set(residual) == {"sum_sq", "rms", "max_abs", "types"}
+    assert residual["rms"] > 0.0 and set(residual) == {
+        "sum_sq",
+        "rms",
+        "max_abs",
+        "types",
+    }
     (row,) = residual["types"]
-    assert (row["style"], row["type"], row["exact"]) == ("periodic", "CT-CT-CT-CT", False)
+    assert (row["style"], row["type"], row["exact"]) == (
+        "periodic",
+        "CT-CT-CT-CT",
+        False,
+    )
     # Heavier weights never lower the minimised Σ w r².
     _, heavier = _periodic(30.0).fit_form(
         "dihedral", "opls", phi, np.full(phi.size, 2.0), offset=True

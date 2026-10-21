@@ -40,6 +40,12 @@ pub enum TopologyError {
         /// The absent endpoint column (`atomi` / `atomj`).
         column: &'static str,
     },
+    /// A relation endpoint is null rather than an atom row.
+    NullEndpoint {
+        block: &'static str,
+        column: &'static str,
+        row: usize,
+    },
     /// Row `row` of `block` names atom `atom`, outside `0..n_atoms`.
     EndpointOutOfRange {
         /// The relation block (`bonds`).
@@ -61,7 +67,10 @@ impl std::fmt::Display for TopologyError {
                 write!(f, "'{block}' block has no nrows (empty block, no columns)")
             }
             TopologyError::MissingEndpoint { block, column } => {
-                write!(f, "'{block}' block is missing uint column '{column}'")
+                write!(f, "'{block}' block is missing 1-D uint column '{column}'")
+            }
+            TopologyError::NullEndpoint { block, column, row } => {
+                write!(f, "'{block}' row {row} has a null '{column}' endpoint")
             }
             TopologyError::EndpointOutOfRange {
                 block,
@@ -160,9 +169,20 @@ impl Topology {
             Some(_) => {}
         }
         let endpoint = |column: &'static str| {
+            if let Some(row) = bonds
+                .validity(column)
+                .and_then(|mask| mask.iter().position(|valid| !valid))
+            {
+                return Err(TopologyError::NullEndpoint {
+                    block: BONDS,
+                    column,
+                    row,
+                });
+            }
             bonds
                 .get(column)
                 .and_then(|c| c.get::<u64>())
+                .filter(|c| c.ndim() == 1)
                 .ok_or(TopologyError::MissingEndpoint {
                     block: BONDS,
                     column,

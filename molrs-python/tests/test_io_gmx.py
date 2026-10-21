@@ -28,10 +28,12 @@ class TestEagerReads:
 
     def test_one_frame_doors_read_the_first_frame(self, water_trr, water_xtc):
         np.testing.assert_allclose(
-            mio.read_trr(water_trr)["atoms"]["x"], mio.trr.TrrReader(water_trr)[0]["atoms"]["x"]
+            mio.read_trr(water_trr)["atoms"]["x"],
+            mio.trr.TrrReader(water_trr)[0]["atoms"]["x"],
         )
         np.testing.assert_allclose(
-            mio.read_xtc(water_xtc)["atoms"]["x"], mio.xtc.XtcReader(water_xtc)[0]["atoms"]["x"]
+            mio.read_xtc(water_xtc)["atoms"]["x"],
+            mio.xtc.XtcReader(water_xtc)[0]["atoms"]["x"],
         )
 
 

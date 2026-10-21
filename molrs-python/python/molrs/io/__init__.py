@@ -64,9 +64,9 @@ the wire encodings (``"msgpack"``, ``"json"``) a
 :class:`molrs.stream.Publisher` streams.
 
 SMILES and CGsmiles are :mod:`molrs.io.smiles`
-(``SmilesIr.parse(text).to_atomistic()``,
-``str(SmilesIr.from_atomistic(mol))``) and :mod:`molrs.io.cgsmiles`
-(``CgSmilesIr.parse(text).to_atomistic()``).
+(``read_smiles(text).to_atomistic()``,
+``write_smiles(mol)``) and :mod:`molrs.io.cgsmiles`
+(``read_cgsmiles(text).to_atomistic()``).
 """
 
 from .._native import (

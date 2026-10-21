@@ -110,10 +110,7 @@ class _DihedralTagger(Typifier):
 
     def assign(self, graph: molrs.core.Atomistic) -> TypeAssignment:
         nodes = [{"seen": str(atom["name"])} for atom in graph.atoms]
-        dihedrals = [
-            {"tag": _endpoint_label(link)}
-            for link in graph.dihedrals
-        ]
+        dihedrals = [{"tag": _endpoint_label(link)} for link in graph.dihedrals]
         return TypeAssignment(nodes, {Dihedral: dihedrals})
 
 

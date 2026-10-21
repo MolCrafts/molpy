@@ -202,7 +202,7 @@ impl<const N: usize> Accumulate for CombinedDistributionAccumulator<N> {
     /// for tuple arrays of different lengths; [`ComputeError::NonFinite`] for
     /// a non-finite sample. A rejected frame deposits nothing.
     fn push(&mut self, frame: CombinedDistributionFrame<'_, N>) -> Result<(), ComputeError> {
-        let mic = frame.simbox.map_or(Mic::Free, SimBox::mic);
+        let mic = frame.simbox.map_or(Mic::free(), SimBox::mic);
         let n_tuples = frame.tuples[0].nrows();
         for (a, tuples) in frame.tuples.iter().enumerate() {
             if tuples.nrows() != n_tuples {

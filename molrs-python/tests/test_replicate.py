@@ -42,12 +42,16 @@ class TestAtomisticReplicate:
         # Copy-major: copy 0's atoms come first.
         assert new["frag_id"].tolist() == [7, 7, 9, 9]
         # Copy 1 is the template shifted by (10, 0, 0): its carbon sits at x = 10.
-        carbons = {atom["frag_id"]: atom["x"] for atom in new if atom["atomic_number"] == 6}
+        carbons = {
+            atom["frag_id"]: atom["x"] for atom in new if atom["atomic_number"] == 6
+        }
         assert carbons == {7: 0.0, 9: 10.0}
 
     def test_the_template_is_not_mutated(self):
         template = _ch_template()
-        molrs.core.Atomistic().replicate(template, TWO_IDENTITIES, TWO_SHIFTS, TWO_FRAG_IDS)
+        molrs.core.Atomistic().replicate(
+            template, TWO_IDENTITIES, TWO_SHIFTS, TWO_FRAG_IDS
+        )
         assert template.n_atoms == 2
         assert all("frag_id" not in atom for atom in template.atoms)
 

@@ -48,7 +48,9 @@ def test_minimize_coords_relaxes_a_dimer_to_the_lj_minimum():
     assert report.converged
     assert report.final_fmax < 1e-6
     assert report.final_grad_rms <= report.final_fmax
-    assert np.linalg.norm(coords[1] - coords[0]) == pytest.approx(2 ** (1 / 6), abs=1e-5)
+    assert np.linalg.norm(coords[1] - coords[0]) == pytest.approx(
+        2 ** (1 / 6), abs=1e-5
+    )
 
 
 def test_minimize_coords_refuses_an_array_it_cannot_write_in_place():
@@ -67,7 +69,9 @@ def test_minimize_batch_relaxes_each_structure_in_place():
     reports = molrs.optimize.Lbfgs(_lj_dimer(), fmax=1e-6).minimize_batch(coords)
     assert len(reports) == 2 and all(r.converged for r in reports)
     for pair in coords:
-        assert np.linalg.norm(pair[1] - pair[0]) == pytest.approx(2 ** (1 / 6), abs=1e-5)
+        assert np.linalg.norm(pair[1] - pair[0]) == pytest.approx(
+            2 ** (1 / 6), abs=1e-5
+        )
 
 
 def test_minimize_relaxes_a_frame_in_place():

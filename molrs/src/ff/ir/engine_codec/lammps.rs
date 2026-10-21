@@ -136,8 +136,7 @@ impl LammpsCodec for FourierCodec {
             return Err(format!("{}: missing parameter `k1`", what(spec)));
         }
         if let Some((key, _)) = p
-            .iter()
-            .filter_map(|(k, v)| v.as_num().map(|x| (k, x)))
+            .iter_parameters()
             .find(|(k, _)| !known.iter().any(|n| n == k))
         {
             return Err(format!(
@@ -202,15 +201,11 @@ impl LammpsCodec for NharmonicCodec {
         units: &UnitScale,
     ) -> Result<LammpsCoeffs, String> {
         let a = nharmonic_coefficients(p)?;
-        if let Some((key, _)) = p
-            .iter()
-            .filter_map(|(k, v)| v.as_num().map(|x| (k, x)))
-            .find(|(k, _)| {
-                k.strip_prefix('a')
-                    .and_then(|i| i.parse::<usize>().ok())
-                    .is_none()
-            })
-        {
+        if let Some((key, _)) = p.iter_parameters().find(|(k, _)| {
+            k.strip_prefix('a')
+                .and_then(|i| i.parse::<usize>().ok())
+                .is_none()
+        }) {
             return Err(format!(
                 "{}: parameter `{key}` has no place on the nharmonic line",
                 what(spec)

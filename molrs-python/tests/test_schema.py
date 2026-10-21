@@ -65,3 +65,12 @@ def test_numpy_dtype_is_the_dtype_a_column_is_stored_at() -> None:
         values = np.ones(shape, dtype=bool) if spec.dtype == "bool" else np.ones(shape)
         block[spec.key] = values
         assert block[spec.key].dtype == np.dtype(spec.numpy_dtype), spec.key
+
+
+def test_key_hash_agrees_with_equal_string():
+    from molrs.core import keys
+
+    assert keys.X == "x"
+    assert hash(keys.X) == hash("x")
+    assert {"x": 1}[keys.X] == 1
+    assert len({keys.X, "x"}) == 1

@@ -463,14 +463,12 @@ pub mod positional {
     }
 
     /// Refuse a numeric parameter of `params` the spec does not declare:
-    /// writing the line would drop it.
+    /// writing the line would drop it. A key that prices nothing (an
+    /// annotation, an estimate's provenance) is no parameter, and passes
+    /// ([`StyleSpec::undeclared_param`]).
     pub fn refuse_undeclared_params(spec: &StyleSpec, params: &Params) -> Result<(), String> {
-        match params
-            .iter()
-            .filter_map(|(k, v)| v.as_num().map(|x| (k, x)))
-            .find(|(k, _)| spec.param(k).is_none())
-        {
-            Some((key, _)) => Err(format!(
+        match spec.undeclared_param(params) {
+            Some(key) => Err(format!(
                 "{} {}: parameter `{key}` has no place on the LAMMPS coefficient line",
                 spec.category, spec.name
             )),
@@ -548,38 +546,18 @@ pub mod positional {
         also: &[&str],
     ) -> Result<(), String> {
         let carried = |k: &str| matches!(k, "cutoff" | "mixing") || also.contains(&k);
-        for (key, v) in style.iter().filter_map(|(k, v)| v.as_num().map(|x| (k, x))) {
-            if carried(key) || PASSED.contains(&key) {
-                continue;
-            }
-            let default = spec
-                .style_param(key)
-                .and_then(|p| p.default.as_ref())
-                .and_then(ParamValue::as_num);
-            if default != Some(v) {
-                return Err(format!(
-                    "{} {}: style parameter `{key}` = {v} has no place on a LAMMPS line",
-                    spec.category, spec.name
-                ));
-            }
-        }
-        for (key, v) in style
+        let stated = spec.style_params_off_default(style);
+        let refuse = |key: &str, value: String| {
+            Err(format!(
+                "{} {}: style parameter `{key}` = {value} has no place on a LAMMPS line",
+                spec.category, spec.name
+            ))
+        };
+        if let Some((key, value)) = stated
             .iter()
-            .filter_map(|(k, v)| v.as_text().map(|s| (k, s)))
+            .find(|(key, _)| !carried(key) && !PASSED.contains(key))
         {
-            if carried(key) || PASSED.contains(&key) {
-                continue;
-            }
-            let default = spec
-                .style_param(key)
-                .and_then(|p| p.default.as_ref())
-                .and_then(ParamValue::as_text);
-            if default != Some(v) {
-                return Err(format!(
-                    "{} {}: style parameter `{key}` = {v:?} has no place on a LAMMPS line",
-                    spec.category, spec.name
-                ));
-            }
+            return refuse(key, format!("{value:?}"));
         }
         Ok(())
     }

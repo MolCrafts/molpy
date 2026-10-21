@@ -367,42 +367,13 @@ set)`. The checks never run per evaluation.
 
 ## From molpy
 
-molpy keeps no IR of its own: `molpy.potential.StyleDeclaration` **is**
-`molrs.ff.style_registry.StyleDeclaration`. A user's style in a class, a typifier that types a
-bead-spring chain with it, compiled, priced and saved — molpy's "Extending
-the force field" snippet, run as written by its
-`tests/test_potential/test_user_style.py`:
-
-```python
-from pathlib import Path
-
-import molpy as mp
-from molpy.potential import ParamSpec, StyleDeclaration
-from molpy.typifier import TypeAssignment, Typifier
-
-class Fene(StyleDeclaration):  # LAMMPS bond_style fene, by its expression
-    category, name = "bond", "fene"
-    params = [ParamSpec("k", "E/L^2"), ParamSpec("r0", "L"), ParamSpec("epsilon", "E"), ParamSpec("sigma", "L")]
-    expression = ("-0.5*k*r0^2*log(1-(r/r0)^2)"
-                  "+step(2^(1/6)*sigma-r)*(4*epsilon*((sigma/r)^12-(sigma/r)^6)+epsilon)")
-
-class BeadSpring(Typifier):  # every bead B, every bond FENE; lj units
-    def source_forcefield(self):
-        return mp.ForceField("bead-spring", units="lj")
-    def assign(self, graph):
-        bead = {"type": ("full", "B", (), {"mass": 1.0})}
-        spring = {"type": ("fene", "B-B", ("B", "B"),
-                           {"k": 30.0, "r0": 1.5, "epsilon": 1.0, "sigma": 1.0})}
-        bonds = graph.bonds
-        return TypeAssignment([bead] * len(graph.atoms), links={mp.Bond: [spring] * len(bonds)},
-                     styles=[("atom", "full", {}), ("bond", "fene", {})])
-
-typifier = BeadSpring()
-frame = typifier.typify(chain).to_frame()  # chain: an mp.Atomistic of bonded beads
-ff = typifier.forcefield()
-energy, forces = mp.PotentialCompiler(ff).compile(frame).evaluate(frame)
-mp.io.write_mrec(Path("chain.mrec"), frame=frame, forcefield=ff)  # the expression travels along
-```
+molpy keeps no IR of its own: `molpy.ff.style_registry` re-exports
+`molrs.ff.style_registry`, so `molpy.ff.style_registry.StyleDeclaration is
+molrs.ff.style_registry.StyleDeclaration`, and a style declared from either
+package is the same registration. molpy's own guide
+(`docs/developer/extending-forcefield.md`, "A new style in 30 lines") declares
+`bond fene` by its expression, types a bead-spring chain with it and prices
+it, and its `tests/test_ff/test_user_style.py` runs that snippet as written.
 
 ## How this is checked
 
@@ -446,7 +417,7 @@ numbers pinned in `ff_ir_extension_lammps.tsv` by the same script:
 | `dihedral table/linear` (`table: f64[N]`) by a numpy kernel = hand linear interpolation; round trip | rel ≤ 1e-12; bits | 0 |
 | class2 bond-angle: expression = numpy = −π/60 (= the Rust form) | rel ≤ 1e-12 | 2.4·10⁻¹⁵ |
 
-**molpy** — `tests/test_potential/test_user_style.py`: the 26-line snippet,
+**molpy** — `tests/test_ff/test_user_style.py`: its guide's snippet, run as written,
 energy = the analytic FENE sum to 1.1·10⁻¹⁶ relative, forces to 2.1·10⁻¹⁶ of
 the largest, and a fresh process that registered nothing prices the saved
 `.mrec` bit for bit.

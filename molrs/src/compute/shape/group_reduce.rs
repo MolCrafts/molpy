@@ -86,7 +86,7 @@ impl GroupReduce {
         }
 
         let keys: Vec<u64> = partition.sizes().into_keys().collect();
-        let mic = simbox.map_or(Mic::Free, SimBox::mic);
+        let mic = simbox.map_or(Mic::free(), SimBox::mic);
         let mut anchors: Vec<Option<[F; 3]>> = vec![None; keys.len()];
         let mut group = Vec::with_capacity(n);
         let mut offsets = Vec::with_capacity(n);

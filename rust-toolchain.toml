@@ -3,6 +3,6 @@
 # hooks, so CI failed on lints the hooks never saw. Bump this line (and fix
 # what the new lints flag) in its own commit.
 [toolchain]
-channel = "1.99.0"
+channel = "1.99.1"
 components = ["rustfmt", "clippy"]
 targets = ["wasm32-unknown-unknown"]

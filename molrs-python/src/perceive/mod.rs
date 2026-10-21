@@ -1,5 +1,6 @@
 //! Python bindings for the chemical-perception layer (`molrs::perceive`,
 //! Python `molrs.perceive`).
+#![allow(clippy::clone_on_copy)]
 //!
 //! Every perception is a free function at the Rust name, in one of two shapes:
 //! `perceive_<fact>(mol)` is a **query** — it reports a side table (here
@@ -72,7 +73,7 @@ fn assign_in_place<R>(
     hash,
     from_py_object
 )]
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum PyBondOrderSource {
     Stated = 0,
     Connectivity = 1,
@@ -111,7 +112,7 @@ impl From<BondOrderSource> for PyBondOrderSource {
     hash,
     from_py_object
 )]
-#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Clone, PartialEq, Eq, Hash)]
 pub enum PyUnknownBondPolicy {
     NotRotatable = 0,
     AsSingle = 1,
@@ -360,7 +361,7 @@ fn assign_equivalence_classes_py(mol: &Bound<'_, PyAtomistic>) -> PyResult<()> {
 /// Parameters
 /// ----------
 /// pattern : CoarseGrain
-///     The bead pattern, e.g. ``CgSmilesIr.parse("{[#1][#4]}").to_coarsegrain()``.
+///     The bead pattern, e.g. ``read_cgsmiles("{[#1][#4]}").to_coarsegrain()``.
 ///     It is copied, so later edits to it do not affect the matcher.
 ///
 /// Raises
@@ -372,8 +373,8 @@ fn assign_equivalence_classes_py(mol: &Bound<'_, PyAtomistic>) -> PyResult<()> {
 /// --------
 /// The two groups below share the middle bead:
 ///
-/// >>> pattern = molrs.io.cgsmiles.CgSmilesIr.parse("{[#1][#4]}").to_coarsegrain()
-/// >>> target = molrs.io.cgsmiles.CgSmilesIr.parse("{[#1][#4][#1]}").to_coarsegrain()
+/// >>> pattern = molrs.io.cgsmiles.read_cgsmiles("{[#1][#4]}").to_coarsegrain()
+/// >>> target = molrs.io.cgsmiles.read_cgsmiles("{[#1][#4][#1]}").to_coarsegrain()
 /// >>> len(molrs.perceive.SubgraphMatcher(pattern).find(target))
 /// 2
 #[pyclass(module = "molrs.perceive", name = "SubgraphMatcher", frozen)]

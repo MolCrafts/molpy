@@ -85,7 +85,7 @@ impl PyAtdTypifier {
         Ok((
             Self {
                 parameter_set,
-                bond_orders,
+                bond_orders: bond_orders.clone(),
             },
             PyTypifier::native(
                 AtdTypifier::new(parameter_set).with_bond_orders(bond_orders.into()),
@@ -102,7 +102,7 @@ impl PyAtdTypifier {
     /// Which bond orders the types follow.
     #[getter]
     fn bond_orders(&self) -> PyBondOrderSource {
-        self.bond_orders
+        self.bond_orders.clone()
     }
 
     fn __repr__(&self) -> String {

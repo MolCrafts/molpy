@@ -176,9 +176,7 @@ class TestFramePickle:
         import pickle
 
         f = Frame({"atoms": {"x": [1.0, 2.0]}})
-        f["atoms"].insert(
-            "tag", np.array([4, 0], dtype=np.int32), [True, False]
-        )
+        f["atoms"].insert("tag", np.array([4, 0], dtype=np.int32), [True, False])
         f.meta["temperature"] = MetaValue("f64", 300.0)
         f.box = molrs.core.Box(molrs.core.Cell.lengths([2.0, 2.0, 2.0]))
         restored = pickle.loads(pickle.dumps(f))

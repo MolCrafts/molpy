@@ -267,7 +267,7 @@ impl PyConformer {
     ///
     /// Examples
     /// --------
-    /// >>> mol = molrs.io.smiles.SmilesIr.parse("CCO").to_atomistic()
+    /// >>> mol = molrs.io.smiles.read_smiles("CCO").to_atomistic()
     /// >>> mol_3d, report = Conformer(speed="fast", seed=42).generate(mol)
     /// >>> mol_3d.n_atoms   # includes added hydrogens
     /// 9
@@ -275,7 +275,7 @@ impl PyConformer {
     /// Hydrogens this pipeline adds to a ported unit carry no ``frag_id``;
     /// the caller relabels them, which is one call:
     ///
-    /// >>> unit = molrs.io.smiles.SmilesIr.from_fragment("[$]CO").to_template()
+    /// >>> unit = molrs.io.smiles.read_smiles_fragment("[$]CO").to_template()
     /// >>> unit_3d, _ = Conformer(speed="fast", seed=42).generate(unit)
     /// >>> _ = unit_3d.inherit_frag_ids()
     fn generate(

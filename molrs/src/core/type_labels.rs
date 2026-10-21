@@ -263,33 +263,129 @@ impl BlockTypeLabels {
         block: &str,
         meta_key: &str,
     ) -> Result<Option<BlockTypeLabels>, String> {
-        let n = frame
-            .visit_block(block, |b| b.n_rows().unwrap_or(0))
-            .unwrap_or(0);
-        let inventory = match frame.meta_ref().get(meta_key) {
-            None => Vec::new(),
+        let rows = RowTypes::of(frame, block)?;
+        Self::build(block, rows, Self::inventory(frame, meta_key)?)
+    }
+
+    /// The labels the inventory meta value under `meta_key` declares, in id
+    /// order; empty when there is none.
+    fn inventory(frame: &impl FrameAccess, meta_key: &str) -> Result<Vec<String>, String> {
+        match frame.meta_ref().get(meta_key) {
+            None => Ok(Vec::new()),
             Some(value) => {
                 let raw = value
                     .as_str()
                     .ok_or_else(|| format!("meta {meta_key:?} must be a string"))?;
-                Self::parse_inventory(meta_key, raw)?
+                Self::parse_inventory(meta_key, raw)
             }
-        };
+        }
+    }
+
+    /// The types of `block` from its rows' types and its inventory (see the
+    /// [`TypeLabels`] id rules).
+    fn build(
+        block: &str,
+        rows: Option<RowTypes>,
+        inventory: Vec<String>,
+    ) -> Result<Option<BlockTypeLabels>, String> {
         let has_inventory = !inventory.is_empty();
         let min_types = if block == "atoms" { 1 } else { 0 };
 
-        if n == 0 {
-            if inventory.is_empty() {
-                return Ok(None);
+        let types = match rows {
+            None if inventory.is_empty() => return Ok(None),
+            None => {
+                let n_types = inventory.len();
+                return Ok(Some(BlockTypeLabels {
+                    type_ids: Vec::new(),
+                    labels: Some(inventory),
+                    n_types,
+                }));
             }
-            let n_types = inventory.len();
+            Some(RowTypes::Ids(type_ids)) => {
+                let max_id = type_ids.iter().copied().max().unwrap_or(0) as usize;
+                let n_types = max_id.max(inventory.len()).max(min_types);
+                let labels = if inventory.is_empty() {
+                    None
+                } else {
+                    Some(inventory)
+                };
+                return Ok(Some(BlockTypeLabels {
+                    type_ids,
+                    labels,
+                    n_types,
+                }));
+            }
+            Some(RowTypes::Labels(types)) => types,
+        };
+
+        let unique = Self::sorted(types.iter().cloned());
+        let pure_int = unique.iter().all(|t| is_int_token(t));
+
+        if pure_int && !has_inventory {
+            let mut type_ids = Vec::with_capacity(types.len());
+            let mut max_id: Idx = 0;
+            for t in &types {
+                let id: Idx = t
+                    .parse()
+                    .map_err(|e| format!("{block}: type {t:?} is not a type id: {e}"))?;
+                if id == 0 {
+                    return Err(format!("{block}: type id 0 is invalid (ids are 1-based)"));
+                }
+                max_id = max_id.max(id);
+                type_ids.push(id);
+            }
             return Ok(Some(BlockTypeLabels {
-                type_ids: Vec::new(),
-                labels: Some(inventory),
-                n_types,
+                type_ids,
+                labels: None,
+                n_types: (max_id as usize).max(1),
             }));
         }
 
+        let mut all: HashSet<String> = inventory.iter().cloned().collect();
+        all.extend(unique);
+        let ordered = Self::sorted(all);
+        let ids: HashMap<&str, Idx> = ordered
+            .iter()
+            .enumerate()
+            .map(|(i, s)| (s.as_str(), (i + 1) as Idx))
+            .collect();
+        let type_ids = types
+            .iter()
+            .map(|t| {
+                ids.get(t.as_str())
+                    .copied()
+                    .ok_or_else(|| format!("{block}: type {t:?} missing from its own ordering"))
+            })
+            .collect::<Result<Vec<Idx>, String>>()?;
+        let n_types = ordered.len().max(min_types);
+        Ok(Some(BlockTypeLabels {
+            type_ids,
+            labels: Some(ordered),
+            n_types,
+        }))
+    }
+}
+
+/// The per-row types of one block, as its columns state them.
+enum RowTypes {
+    /// A string `type` column (it wins over `type_id`).
+    Labels(Vec<String>),
+    /// Numeric ids: `type_id` (unsigned or signed), else a numeric `type`.
+    Ids(Vec<Idx>),
+}
+
+impl RowTypes {
+    /// The types of `block`'s rows; `None` when it has none.
+    ///
+    /// `Err` for an empty string label, and for rows with neither `type` nor
+    /// `type_id`.
+    fn of(frame: &impl FrameAccess, block: &str) -> Result<Option<RowTypes>, String> {
+        let n = frame
+            .visit_block(block, |b| b.n_rows().unwrap_or(0))
+            .unwrap_or(0);
+        if n == 0 {
+            return Ok(None);
+        }
         // String labels take precedence over `type_id`.
         if let Some(col) = frame
             .column(block, keys::TYPE)
@@ -301,54 +397,8 @@ impl BlockTypeLabels {
                     "{block}: empty type label; every row needs a non-empty type"
                 ));
             }
-            let unique = Self::sorted(types.iter().cloned());
-            let pure_int = unique.iter().all(|t| is_int_token(t));
-
-            if pure_int && !has_inventory {
-                let mut type_ids = Vec::with_capacity(n);
-                let mut max_id: Idx = 0;
-                for t in &types {
-                    let id: Idx = t
-                        .parse()
-                        .map_err(|e| format!("{block}: type {t:?} is not a type id: {e}"))?;
-                    if id == 0 {
-                        return Err(format!("{block}: type id 0 is invalid (ids are 1-based)"));
-                    }
-                    max_id = max_id.max(id);
-                    type_ids.push(id);
-                }
-                return Ok(Some(BlockTypeLabels {
-                    type_ids,
-                    labels: None,
-                    n_types: (max_id as usize).max(1),
-                }));
-            }
-
-            let mut all: HashSet<String> = inventory.iter().cloned().collect();
-            all.extend(unique);
-            let ordered = Self::sorted(all);
-            let ids: HashMap<&str, Idx> = ordered
-                .iter()
-                .enumerate()
-                .map(|(i, s)| (s.as_str(), (i + 1) as Idx))
-                .collect();
-            let type_ids = types
-                .iter()
-                .map(|t| {
-                    ids.get(t.as_str())
-                        .copied()
-                        .ok_or_else(|| format!("{block}: type {t:?} missing from its own ordering"))
-                })
-                .collect::<Result<Vec<Idx>, String>>()?;
-            let n_types = ordered.len().max(min_types);
-            return Ok(Some(BlockTypeLabels {
-                type_ids,
-                labels: Some(ordered),
-                n_types,
-            }));
+            return Ok(Some(RowTypes::Labels(types)));
         }
-
-        // Numeric ids (unsigned or signed; `type_id`, else a numeric `type`).
         let type_ids: Option<Vec<Idx>> = if let Some(col) = frame
             .column(block, keys::TYPE_ID)
             .and_then(|c| c.get::<u64>())
@@ -367,24 +417,12 @@ impl BlockTypeLabels {
                 .and_then(|c| c.get::<i32>())
                 .map(|col| (0..n).map(|i| col[[i]] as Idx).collect())
         };
-        let Some(type_ids) = type_ids else {
-            return Err(format!(
+        type_ids.map(RowTypes::Ids).map(Some).ok_or_else(|| {
+            format!(
                 "frame[{block:?}] has {n} rows but neither 'type' nor 'type_id'; \
                  assign a 'type' or 'type_id' column first"
-            ));
-        };
-        let max_id = type_ids.iter().copied().max().unwrap_or(0) as usize;
-        let n_types = max_id.max(inventory.len()).max(min_types);
-        let labels = if inventory.is_empty() {
-            None
-        } else {
-            Some(inventory)
-        };
-        Ok(Some(BlockTypeLabels {
-            type_ids,
-            labels,
-            n_types,
-        }))
+            )
+        })
     }
 }
 
@@ -448,6 +486,60 @@ impl TypeLabels {
             }
         }
         Ok(TypeLabels { blocks })
+    }
+
+    /// [`from_frame`](Self::from_frame), with the rows of the block `extra`
+    /// resolved as further rows of the covered `block`, after its own: one id
+    /// space over both, so `block`'s type `i` and `extra`'s are one type.
+    /// [`BlockTypeLabels::type_ids`] of `block` then lists `block`'s rows,
+    /// then `extra`'s. A format that writes two blocks as one section uses
+    /// it: a LAMMPS data file writes a `drudes` row (a Drude core–shell
+    /// spring) as a `Bonds` row.
+    ///
+    /// The two are joined by label, so `extra`'s rows need a string `type`,
+    /// and so do `block`'s when it has rows too.
+    ///
+    /// # Errors
+    ///
+    /// The errors of [`from_frame`](Self::from_frame); a `block` this
+    /// contract does not cover; and rows typed by numeric `type_id` in either
+    /// block while `extra` has rows, naming both blocks.
+    pub fn from_frame_folded(
+        frame: &impl FrameAccess,
+        block: &str,
+        extra: &str,
+    ) -> Result<TypeLabels, String> {
+        let Some(meta_key) = Self::inventory_key(block) else {
+            return Err(format!("block {block:?} has no type-label inventory"));
+        };
+        let mut labels = Self::from_frame(frame)?;
+        let Some(more) = RowTypes::of(frame, extra)? else {
+            return Ok(labels);
+        };
+        let joined = match (RowTypes::of(frame, block)?, more) {
+            (None, RowTypes::Labels(more)) => more,
+            (Some(RowTypes::Labels(mut own)), RowTypes::Labels(more)) => {
+                own.extend(more);
+                own
+            }
+            _ => {
+                return Err(format!(
+                    "frame[{extra:?}] rows are typed as frame[{block:?}] rows by their \
+                     string 'type' labels; give both blocks a 'type' column (not a \
+                     numeric 'type_id')"
+                ));
+            }
+        };
+        let inventory = BlockTypeLabels::inventory(frame, meta_key)?;
+        let types = BlockTypeLabels::build(block, Some(RowTypes::Labels(joined)), inventory)?;
+        let name = Self::BLOCKS
+            .iter()
+            .map(|(name, _)| *name)
+            .find(|name| *name == block)
+            .expect("inventory_key found it");
+        labels.blocks.retain(|(n, _)| *n != name);
+        labels.blocks.extend(types.map(|types| (name, types)));
+        Ok(labels)
     }
 
     /// The resolved types of `block`, or `None` when the block has neither
@@ -563,6 +655,43 @@ mod tests {
     use crate::core::keys;
     use crate::op::Idx;
     use ndarray::{ArrayD, IxDyn};
+
+    /// Folding `drudes` into `bonds` gives one id space: the bonds' rows,
+    /// then the drudes', ids by the sorted union of their labels.
+    #[test]
+    fn a_folded_block_shares_the_id_space_of_its_host() {
+        let mut frame = Frame::new();
+        frame.insert("bonds", label_block(&["c3-hc", "c3-c3", "c3-hc"]));
+        frame.insert("drudes", label_block(&["c3-Dc3"]));
+        let labels = TypeLabels::from_frame_folded(&frame, "bonds", "drudes").unwrap();
+        let bonds = labels.block("bonds").unwrap();
+        assert_eq!(bonds.labels().unwrap(), ["c3-Dc3", "c3-c3", "c3-hc"]);
+        assert_eq!(bonds.type_ids(), [3, 2, 3, 1]);
+        assert_eq!(bonds.n_types(), 3);
+
+        // Drude rows alone fold into an absent host.
+        let mut alone = Frame::new();
+        alone.insert("drudes", label_block(&["c3-Dc3"]));
+        let labels = TypeLabels::from_frame_folded(&alone, "bonds", "drudes").unwrap();
+        assert_eq!(labels.block("bonds").unwrap().type_ids(), [1]);
+
+        // No `extra` rows: exactly `from_frame`.
+        frame.remove("drudes");
+        assert_eq!(
+            TypeLabels::from_frame_folded(&frame, "bonds", "drudes").unwrap(),
+            TypeLabels::from_frame(&frame).unwrap()
+        );
+    }
+
+    #[test]
+    fn a_fold_over_numeric_type_ids_is_refused_naming_both_blocks() {
+        let mut frame = Frame::new();
+        frame.insert("bonds", type_id_block(&[1, 2]));
+        frame.insert("drudes", label_block(&["c3-Dc3"]));
+        let err = TypeLabels::from_frame_folded(&frame, "bonds", "drudes").unwrap_err();
+        assert!(err.contains("drudes") && err.contains("bonds"), "{err}");
+        assert!(TypeLabels::from_frame_folded(&frame, "widgets", "drudes").is_err());
+    }
 
     #[test]
     fn declare_merges_into_the_sorted_inventory() {

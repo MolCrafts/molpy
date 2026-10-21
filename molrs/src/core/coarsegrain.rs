@@ -160,10 +160,15 @@ impl CoarseGrain {
     /// # Errors
     ///
     /// [`MolRsError::NotFound`] when `bead` names no live bead; no membership
-    /// is recorded then.
+    /// is recorded then. Repeated atom handles are a validation error and
+    /// leave the existing membership unchanged.
     pub fn set_bead_members(&mut self, bead: NodeId, atoms: Vec<u64>) -> Result<(), MolRsError> {
         if !self.graph.node_table().contains(bead) {
             return Err(MolRsError::not_found("bead", format!("bead {bead:?}")));
+        }
+        let mut seen = std::collections::HashSet::new();
+        if atoms.iter().any(|atom| !seen.insert(*atom)) {
+            return Err(MolRsError::validation("bead membership repeats an atom"));
         }
         if atoms.is_empty() {
             self.members.remove(&bead);
@@ -698,9 +703,8 @@ impl CoarseGrain {
     /// every row must hold the same value. Select one molecule with
     /// [`Frame::subset`] first. A frame without `mol_id` is one molecule.
     ///
-    /// Only `atoms`, `bonds` and `members` are read. `angles`, `dihedrals`
-    /// and every other block are ignored, so a CG relation kind other than
-    /// `bonds` does not survive a round trip. A `members` block (see
+    /// `atoms`, `bonds`, `ports` and `members` are read. Other topology
+    /// blocks, such as `angles` and `dihedrals`, are ignored. A `members` block (see
     /// [`Self::to_frame`]) is read after the graph: row `ibead` of `atoms`
     /// gains atom handle `atom`, in block row order. The caller's frame is
     /// never mutated.
@@ -805,6 +809,9 @@ impl CoarseGrain {
         if let Some(bonds) = frame.get("bonds") {
             canonical.insert("bonds", bonds.clone());
         }
+        if let Some(ports) = frame.get("ports") {
+            canonical.insert("ports", ports.clone());
+        }
         let mut cg = Self::from_canonical_frame(&canonical)?;
         if let Some(members) = frame.get("members") {
             cg.attach_members(members)?;
@@ -832,12 +839,20 @@ impl CoarseGrain {
             members
                 .get(key)
                 .and_then(|c| c.get::<u64>())
+                .filter(|c| c.ndim() == 1)
                 .ok_or_else(|| {
                     MolRsError::validation(format!(
-                        "Frame 'members' block has no UInt '{key}' column"
+                        "Frame 'members' block has no 1-D UInt '{key}' column"
                     ))
                 })
         };
+        for key in ["ibead", "atom"] {
+            if members.validity(key).is_some() {
+                return Err(MolRsError::validation(format!(
+                    "Frame 'members' column '{key}' has a null row"
+                )));
+            }
+        }
         let ibead = column("ibead")?;
         let atom = column("atom")?;
         let bead_ids: Vec<NodeId> = self.graph.node_ids().collect();
@@ -984,7 +999,7 @@ impl CoarseGrain {
         self.graph.structural_hash()
     }
 
-    /// Deterministic canonical bead ordering from the WL refinement (see
+    /// Deterministic canonical bead ordering from individualization/refinement (see
     /// [`MolGraph::canonical_order`]).
     pub fn canonical_order(&self) -> Vec<NodeId> {
         self.graph.canonical_order()

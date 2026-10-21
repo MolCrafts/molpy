@@ -9,5 +9,6 @@
 //! [`PdbIndexBuilder`], the chunked frame indexer.
 
 pub(crate) mod codec;
+pub(crate) mod labels;
 
 pub use codec::{PdbIndexBuilder, PdbReader, PdbWriter};

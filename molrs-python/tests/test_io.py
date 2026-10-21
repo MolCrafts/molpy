@@ -6,6 +6,8 @@ no third-party scientific software.
 
 from __future__ import annotations
 
+from conftest import capture
+
 from pathlib import Path
 
 import molrs
@@ -214,7 +216,9 @@ class TestCsvBlock:
 
     def test_writes_and_reads_a_file(self, tmp_path):
         path = tmp_path / "out.csv"
-        assert molrs.io.write_csv_block(path, molrs.core.Block({"x": [1.0, 2.0]})) is None
+        assert (
+            molrs.io.write_csv_block(path, molrs.core.Block({"x": [1.0, 2.0]})) is None
+        )
         np.testing.assert_allclose(molrs.io.read_csv_block(path)["x"], [1.0, 2.0])
 
     def test_a_one_character_delimiter_is_used(self):
@@ -257,7 +261,8 @@ class TestCanonicalNativeColumns:
         path.write_text(
             "ATOM      1  OW  SOL A   7       0.000   0.000   0.000  1.00  0.00           O\n"
             "ATOM      2  HW1 SOL A   7       0.957   0.000   0.000  1.00  0.00           H\n"
-            "END\n", encoding="utf-8"
+            "END\n",
+            encoding="utf-8",
         )
         atoms = molrs.io.read_pdb(path)["atoms"]
         assert list(atoms["element"]) == ["O", "H"]
@@ -272,7 +277,8 @@ class TestCanonicalNativeColumns:
             "ITEM: TIMESTEP\n0\nITEM: NUMBER OF ATOMS\n2\n"
             "ITEM: BOX BOUNDS pp pp pp\n0 10\n0 10\n0 10\n"
             "ITEM: ATOMS id type mol q x y z\n"
-            "1 1 1 -0.5 0 0 0\n2 1 1 0.5 1 0 0\n", encoding="utf-8"
+            "1 1 1 -0.5 0 0 0\n2 1 1 0.5 1 0 0\n",
+            encoding="utf-8",
         )
         atoms = molrs.io.lammps.LammpsDumpReader(path)[0]["atoms"]
         np.testing.assert_allclose(atoms["charge"], [-0.5, 0.5])
@@ -284,7 +290,8 @@ class TestCanonicalNativeColumns:
         path = tmp_path / "m.mol"
         path.write_text(
             "two atoms\n\n2 atoms\n\nCoords\n\n1 0 0 0\n2 0 0 1\n\n"
-            "Types\n\n1 1\n2 1\n\nCharges\n\n1 0.1\n2 -0.1\n", encoding="utf-8"
+            "Types\n\n1 1\n2 1\n\nCharges\n\n1 0.1\n2 -0.1\n",
+            encoding="utf-8",
         )
         atoms = molrs.io.read_lammps_molecule(path)["atoms"]
         np.testing.assert_allclose(atoms["charge"], [0.1, -0.1])
@@ -295,7 +302,8 @@ class TestCanonicalNativeColumns:
         path.write_text(
             "@<TRIPOS>MOLECULE\nX\n2 1 2 0 0\nSMALL\nNO_CHARGES\n@<TRIPOS>ATOM\n"
             "1 C1 0.0 0.0 0.0 C.ar 7 BEN 0.0\n2 N1 1.4 0.0 0.0 N.am 9 AMD 0.0\n"
-            "@<TRIPOS>BOND\n1 1 2 am\n", encoding="utf-8"
+            "@<TRIPOS>BOND\n1 1 2 am\n",
+            encoding="utf-8",
         )
         frame = molrs.io.read_mol2(path)
         atoms = frame["atoms"]
@@ -307,11 +315,26 @@ class TestCanonicalNativeColumns:
         back = molrs.io.read_mol2(out)
         assert list(back["atoms"]["res_name"]) == ["BEN", "AMD"]
 
+    def test_mol2_bond_orders_survive_without_the_type_column(self, tmp_path):
+        path = tmp_path / "x.mol2"
+        path.write_text(
+            "@<TRIPOS>MOLECULE\nX\n3 2 1 0 0\nSMALL\nNO_CHARGES\n@<TRIPOS>ATOM\n"
+            "1 C1 0.0 0.0 0.0 C.ar 1 X\n2 C2 1.4 0.0 0.0 C.2 1 X\n"
+            "3 O1 2.6 0.0 0.0 O.2 1 X\n@<TRIPOS>BOND\n1 1 2 ar\n2 2 3 2\n",
+            encoding="utf-8",
+        )
+        frame = molrs.io.read_mol2(path)
+        del frame["bonds"]["type"]
+        back = molrs.io.read_mol2(molrs.io.Text(capture(molrs.io.write_mol2, frame)))
+        assert list(back["bonds"]["type"]) == ["ar", "2"]
+        assert list(back["bonds"]["bond_type"]) == [4, 2]
+
     def test_extxyz_species_is_element_and_wide_properties_stay_whole(self, tmp_path):
         path = tmp_path / "f.xyz"
         path.write_text(
             "2\nProperties=species:S:1:pos:R:3:forces:R:3\n"
-            "O 0 0 0 0.1 0.2 0.3\nH 1 0 0 -0.1 -0.2 -0.3\n", encoding="utf-8"
+            "O 0 0 0 0.1 0.2 0.3\nH 1 0 0 -0.1 -0.2 -0.3\n",
+            encoding="utf-8",
         )
         atoms = molrs.io.read_xyz(path)["atoms"]
         assert list(atoms["element"]) == ["O", "H"]
@@ -341,7 +364,8 @@ class TestLammpsDataLabels:
         path = tmp_path / "a.data"
         path.write_text(
             "t\n\n1 atoms\n1 atom types\n\n0 1 xlo xhi\n0 1 ylo yhi\n0 1 zlo zhi\n\n"
-            "Atoms # full\n\n1 1 0.1 0.2 0.3\n", encoding="utf-8"
+            "Atoms # full\n\n1 1 0.1 0.2 0.3\n",
+            encoding="utf-8",
         )
         atoms = molrs.io.read_lammps_data(path, atom_style="atomic")["atoms"]
         assert "charge" not in atoms and "mol_id" not in atoms
@@ -370,6 +394,82 @@ class TestLammpsDataLabels:
         assert "15.9994" in masses_section
         with pytest.raises(ValueError, match="empty"):
             molrs.io.write_lammps_data(out, frame, type_labels={"atoms": [""]})
+
+
+class TestLammpsDataStyleAndUnits:
+    """The data file owns ``atom_style`` and ``units``; the script repeats them."""
+
+    FULL = (
+        "t\n\n2 atoms\n1 bonds\n1 atom types\n1 bond types\n\n"
+        "0 10 xlo xhi\n0 10 ylo yhi\n0 10 zlo zhi\n\nMasses\n\n1 12.0\n\n"
+        "Atoms # full\n\n1 1 1 -0.5 1 2 3\n2 1 1 0.5 4 5 6\n\n"
+        "Velocities\n\n1 0.1 0.2 0.3\n2 -0.1 0 0.5\n\nBonds\n\n1 1 1 2\n"
+    )
+    LJ_FLUID = (
+        "t\n\n2 atoms\n1 atom types\n\n"
+        "0 10 xlo xhi\n0 10 ylo yhi\n0 10 zlo zhi\n\nMasses\n\n1 39.948\n\n"
+        "Atoms # atomic\n\n1 1 1 2 3\n2 1 4 5 6\n"
+    )
+
+    def test_inference_is_public_and_matches_the_default_write(self):
+        for text, style in [(self.FULL, "full"), (self.LJ_FLUID, "atomic")]:
+            frame = molrs.io.read_lammps_data(molrs.io.Text(text))
+            assert molrs.io.lammps.infer_lammps_atom_style(frame) == style
+            out = capture(molrs.io.write_lammps_data, frame)
+            assert f"Atoms # {style}\n" in out
+            # Naming the inferred style, or nothing, is the old output.
+            assert capture(molrs.io.write_lammps_data, frame, atom_style=style) == out
+            assert (
+                capture(molrs.io.write_lammps_data, frame, atom_style=None, units=None)
+                == out
+            )
+
+    def test_a_named_style_missing_columns_raises(self, tmp_path):
+        lj = molrs.io.read_lammps_data(molrs.io.Text(self.LJ_FLUID))
+        with pytest.raises(OSError, match=r"mol_id.*charge|charge.*mol_id"):
+            molrs.io.write_lammps_data(tmp_path / "lj.data", lj, atom_style="full")
+        with pytest.raises(OSError, match="frame\\['bonds'\\]"):
+            capture(
+                molrs.io.write_lammps_data,
+                molrs.io.read_lammps_data(molrs.io.Text(self.FULL)),
+                atom_style="charge",
+            )
+
+    def test_a_named_style_is_written_exactly(self, tmp_path):
+        frame = molrs.io.read_lammps_data(molrs.io.Text(self.FULL))
+        out = tmp_path / "m.data"
+        molrs.io.write_lammps_data(out, frame, atom_style="molecular")
+        text = out.read_text(encoding="utf-8")
+        assert "Atoms # molecular\n\n1 1 1 1 2 3\n2 1 1 4 5 6\n" in text
+
+    def test_units_convert_and_round_trip_through_the_reader(self):
+        frame = molrs.io.read_lammps_data(molrs.io.Text(self.FULL))
+        text = capture(molrs.io.write_lammps_data, frame, units="metal")
+        assert text.startswith("# LAMMPS data file generated by molrs, units = metal\n")
+        metal = molrs.io.read_lammps_data(molrs.io.Text(text))
+        assert metal.meta["lammps_units"] == "metal"
+        # Å/fs -> Å/ps; Å, g/mol and e are metal's too.
+        np.testing.assert_allclose(metal["atoms"]["vx"], [100.0, -100.0])
+        np.testing.assert_allclose(metal["atoms"]["x"], frame["atoms"]["x"])
+        lj = molrs.io.read_lammps_data(
+            molrs.io.Text(capture(molrs.io.write_lammps_data, frame, units="lj"))
+        )
+        # One e at the canonical sigma = 1 Å, epsilon = 1 kcal/mol.
+        np.testing.assert_allclose(lj["atoms"]["charge"], [-9.1112, 9.1112], rtol=1e-4)
+        for there in (metal, lj):
+            home = molrs.io.read_lammps_data(
+                molrs.io.Text(capture(molrs.io.write_lammps_data, there, units="real"))
+            )
+            for key in ("x", "charge", "vx", "vz"):
+                np.testing.assert_allclose(home["atoms"][key], frame["atoms"][key])
+
+    def test_an_unsupported_unit_style_is_a_value_error(self, tmp_path):
+        frame = molrs.io.read_lammps_data(molrs.io.Text(self.FULL))
+        for units in ("nano", "si"):
+            with pytest.raises(ValueError, match=units):
+                molrs.io.write_lammps_data(tmp_path / "x.data", frame, units=units)
+            with pytest.raises(ValueError, match=units):
+                capture(molrs.io.write_lammps_data, frame, units=units)
 
 
 class TestInpcrdIntoFrame:
@@ -402,3 +502,105 @@ class TestInpcrdIntoFrame:
         with pytest.raises(OSError, match="rows"):
             molrs.io.read_inpcrd(path, frame)
         assert "y" not in frame["atoms"]
+
+
+P21C_CIF = """\
+data_p21c
+_space_group_name_H-M_alt 'P 21/c'
+_cell_length_a 5.0
+_cell_length_b 6.0
+_cell_length_c 7.0
+_cell_angle_alpha 90.0
+_cell_angle_beta 100.0
+_cell_angle_gamma 90.0
+loop_
+_space_group_symop_id
+_space_group_symop_operation_xyz
+1 'x, y, z'
+2 '-x, y+1/2, -z+1/2'
+3 '-x, -y, -z'
+4 'x, -y+1/2, z+1/2'
+loop_
+_atom_site_label
+_atom_site_type_symbol
+_atom_site_fract_x
+_atom_site_fract_y
+_atom_site_fract_z
+C1 C 0.1 0.2 0.3
+"""
+P21C_OPS = ("x, y, z", "-x, y+1/2, -z+1/2", "-x, -y, -z", "x, -y+1/2, z+1/2")
+
+
+class TestCrystalSymmetryMeta:
+    """``read_cif`` keeps the symmetry operators and the space group; nothing
+    is expanded."""
+
+    def test_meta_keys_are_projected(self):
+        assert molrs.core.keys.SYMOPS == "symops"
+        assert molrs.core.keys.SPACE_GROUP == "space_group"
+
+    def test_read_cif_keeps_symops_as_a_sequence_of_str(self, tmp_path):
+        path = tmp_path / "p21c.cif"
+        path.write_text(P21C_CIF, encoding="utf-8")
+        frame = molrs.io.read_cif(path)
+        symops = frame.meta["symops"]
+        assert isinstance(symops, tuple)
+        assert all(isinstance(op, str) for op in symops)
+        assert symops == P21C_OPS
+        assert frame.meta["space_group"] == "P 21/c"
+        assert frame["atoms"].n_rows == 1
+
+    def test_symmetry_round_trips_through_write_cif(self, tmp_path):
+        frame = molrs.io.read_cif(molrs.io.Text(P21C_CIF))
+        out = tmp_path / "back.cif"
+        molrs.io.write_cif(out, frame)
+        back = molrs.io.read_cif(out)
+        assert back.meta["symops"] == P21C_OPS
+        assert back.meta["space_group"] == "P 21/c"
+
+    def test_symops_set_from_python_are_written(self):
+        frame = molrs.io.read_cif(molrs.io.Text(P21C_CIF))
+        frame.meta["symops"] = ["x,y,z", "-x,-y,-z"]
+        frame.meta["space_group"] = "P -1"
+        back = molrs.io.read_cif(molrs.io.Text(capture(molrs.io.write_cif, frame)))
+        assert back.meta["symops"] == ("x,y,z", "-x,-y,-z")
+        assert back.meta["space_group"] == "P -1"
+
+    def test_malformed_symops_are_refused_on_write(self):
+        frame = molrs.io.read_cif(molrs.io.Text(P21C_CIF))
+        frame.meta["symops"] = "x,y,z"
+        with pytest.raises(OSError, match="symops"):
+            capture(molrs.io.write_cif, frame)
+
+    def test_read_pdb_keeps_the_cryst1_space_group(self):
+        frame = molrs.io.read_pdb(
+            molrs.io.Text(
+                "CRYST1   52.000   58.600   61.900  90.00  90.00  90.00 P 21 21 21    8\nATOM      1  N   ALA A   1       1.000   2.000   3.000  1.00 20.00           N  \nEND\n"
+            )
+        )
+        assert frame.meta["space_group"] == "P 21 21 21"
+
+
+TRICLINIC_PDB = (
+    "CRYST1   10.000   11.000   12.000  70.00  80.00  65.00 P 1           1\n"
+    "ATOM      1  O   HOH A   1       1.000   2.000   3.000  1.00  0.00           O  \n"
+    "END\n"
+)
+
+
+def test_read_pdb_builds_the_triclinic_cell_cryst1_states():
+    frame = molrs.io.read_pdb(molrs.io.Text(TRICLINIC_PDB))
+    np.testing.assert_allclose(frame.box.lengths, [10.0, 11.0, 12.0])
+    np.testing.assert_allclose(frame.box.angles, [70.0, 80.0, 65.0])
+    assert frame.box.style == "triclinic"
+    assert "70.00  80.00  65.00" in capture(molrs.io.write_pdb, frame)
+    back = molrs.io.read_pdb(molrs.io.Text(capture(molrs.io.write_pdb, frame)))
+    assert back.box.approx_eq(frame.box, 1e-9)
+
+
+def test_a_frame_without_a_box_writes_no_cryst1_and_reads_back_without_one():
+    frame = molrs.io.read_pdb(molrs.io.Text(TRICLINIC_PDB))
+    frame.box = None
+    text = capture(molrs.io.write_pdb, frame)
+    assert "CRYST1" not in text
+    assert molrs.io.read_pdb(molrs.io.Text(text)).box is None

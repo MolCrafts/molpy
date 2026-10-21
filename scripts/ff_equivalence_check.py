@@ -112,12 +112,13 @@ def run_sander(d: Path):
 def openmm_written(sub: Path, sysj):
     """The molrs-written XML with one residue template per molecule (atoms
     named A<i>, charges per atom), the topology it matches and the topology's
-    atom order."""
+    atom order. No foyer patch: molrs's XML carries its geometric mixing as
+    the ``<Script>`` ``createSystem`` runs."""
     path = sub / "openmm" / "ff+residues.xml"
-    top, order, root = openmm_residue_topology(
+    top, order, _ = openmm_residue_topology(
         sub / "openmm" / "ff.xml", path, sysj["types"], sysj["bonds"], sysj["charges"]
     )
-    return path, top, order, root.get("combining_rule") == "geometric"
+    return path, top, order, False
 
 
 def openmm_native(sysj):

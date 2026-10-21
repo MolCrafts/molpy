@@ -33,7 +33,9 @@ use crate::io::mrec::zarr_storage::frame_io::{
     check_declared_references, join_path, read_column, read_frame_group,
 };
 #[cfg(feature = "zarr")]
-use crate::io::mrec::zarr_storage::frame_io::{node_prefix, write_column, write_frame_group};
+use crate::io::mrec::zarr_storage::frame_io::{
+    check_storable_block, check_storable_frame, node_prefix, write_column, write_frame_group,
+};
 #[cfg(feature = "filesystem")]
 use crate::io::mrec::zarr_storage::pack::{open_mrec_zip, pack_storage_zip, unpack_zip_bytes};
 #[cfg(feature = "filesystem")]
@@ -305,6 +307,10 @@ fn open_record(src: &Source<'_>) -> Result<ReadableListableStorage, MolRsError> 
 }
 
 /// Write a record into an open store, rooted at `/`.
+///
+/// Input layout, reference and sequence checks run before the previous
+/// record is erased. Storage failures during replacement can still leave a
+/// partial record; this operation is not a transactional store commit.
 #[cfg(feature = "zarr")]
 pub fn write_mrec_storage(
     store: ReadableWritableListableStorage,
@@ -312,6 +318,44 @@ pub fn write_mrec_storage(
 ) -> Result<(), MolRsError> {
     record.validate()?;
     check_absolute_references(record)?;
+    for (section, frame) in [("/system", &record.system), ("/frame", &record.frame)] {
+        if let Some(frame) = frame {
+            check_storable_frame(frame, section)?;
+        }
+    }
+    let sequence_schema = record
+        .trajectory
+        .as_ref()
+        .map(|trajectory| {
+            let schema = SequenceSchema::from_frames(&trajectory.frames)?;
+            schema.validate_frames(&trajectory.frames)?;
+            if let Some(steps) = &trajectory.step {
+                for pair in steps.windows(2) {
+                    if pair[1] <= pair[0] {
+                        return Err(MolRsError::zarr(format!(
+                            "step numbers must increase strictly: {} follows {}",
+                            pair[1], pair[0]
+                        )));
+                    }
+                }
+            }
+            Ok::<_, MolRsError>(schema)
+        })
+        .transpose()?;
+    if let Some(forcefield) = &record.forcefield {
+        for (name, table) in &forcefield.tables {
+            let path = join_path("/forcefield", name);
+            zarrs::node::NodePath::new(&path).map_err(zerr)?;
+            check_storable_block(table, &path)?;
+        }
+    }
+    for name in record.metrics_series.keys() {
+        safe_series_name(name)?;
+    }
+    for (name, _) in record.observables.iter() {
+        zarrs::node::NodePath::new(&join_path("/observables", name)).map_err(zerr)?;
+        zarrs::node::NodePath::new(&join_path("/observables/meta", name)).map_err(zerr)?;
+    }
     let prefix = "/";
 
     // Erase before writing: this record is the whole content of the store root,
@@ -338,7 +382,7 @@ pub fn write_mrec_storage(
         // node, which is what `create` insists on before it will mint.
         let mut writer = MrecWriter::create_in_storage(
             store.clone(),
-            SequenceSchema::from_frames(&trajectory.frames)?,
+            sequence_schema.expect("a trajectory was preflighted before erasing the store"),
         )?;
         for (index, frame) in trajectory.frames.iter().enumerate() {
             // `record.validate()` above pinned `step` and `time` to
@@ -914,6 +958,59 @@ mod tests {
     use ndarray::ArrayD;
     use std::path::Path;
     use tempfile::tempdir;
+
+    #[test]
+    fn invalid_replacements_leave_the_existing_record_untouched() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("record.mrec");
+        let original = MolRec {
+            frame: Some(frame_with_x(&[42.0])),
+            ..MolRec::new()
+        };
+        write_mrec(&path, &original).unwrap();
+
+        let mut reserved_meta = Frame::new();
+        reserved_meta.meta.insert("_meta_types", 1.0);
+        let mut reserved_column = Block::new();
+        reserved_column
+            .insert("_validity", ArrayD::from_elem(vec![1], 1.0), None)
+            .unwrap();
+        let mut reserved_column_frame = Frame::new();
+        reserved_column_frame.insert("atoms", reserved_column);
+        let mut missing_target = Block::new();
+        missing_target
+            .insert("atom", ArrayD::from_elem(vec![1], 0_u64), None)
+            .unwrap();
+        missing_target.set_target("atom", "missing").unwrap();
+        let mut missing_target_frame = Frame::new();
+        missing_target_frame.insert("members", missing_target);
+        for frame in [reserved_meta, reserved_column_frame, missing_target_frame] {
+            let invalid = MolRec {
+                frame: Some(frame),
+                ..MolRec::new()
+            };
+            assert!(write_mrec(&path, &invalid).is_err());
+            let back = frame_section(&path);
+            assert_eq!(
+                back["atoms"].get("x").unwrap().get::<f64>().unwrap()[[0]],
+                42.0
+            );
+        }
+        let invalid = MolRec {
+            trajectory: Some(Trajectory {
+                frames: vec![frame_with_x(&[1.0]), frame_with_x(&[2.0])],
+                step: Some(vec![1, 1]),
+                time: None,
+            }),
+            ..MolRec::new()
+        };
+        assert!(write_mrec(&path, &invalid).is_err());
+        let back = frame_section(&path);
+        assert_eq!(
+            back["atoms"].get("x").unwrap().get::<f64>().unwrap()[[0]],
+            42.0
+        );
+    }
 
     /// The record at `path`, opened.
     fn opened(path: &Path) -> MrecFile {

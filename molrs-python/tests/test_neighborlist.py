@@ -129,7 +129,9 @@ class TestNeighborsColumns:
         assert neigh.dist_sq() is not None
         assert neigh.disp() is not None
 
-    def test_default_materialization_column_shapes(self, cubic_box: molrs.core.Box) -> None:
+    def test_default_materialization_column_shapes(
+        self, cubic_box: molrs.core.Box
+    ) -> None:
         nl = molrs.core.NeighborList(1.2)
         nl.build(_unit_square(), cubic_box)
         neigh = nl.neighbors()
@@ -179,13 +181,17 @@ class TestNeighborsColumns:
 
         assert np.all(neigh.query_point_indices() < neigh.point_indices())
 
-    def test_self_search_is_tagged_as_self_query(self, cubic_box: molrs.core.Box) -> None:
+    def test_self_search_is_tagged_as_self_query(
+        self, cubic_box: molrs.core.Box
+    ) -> None:
         nl = molrs.core.NeighborList(1.5)
         nl.build(_unit_square(), cubic_box)
 
         assert nl.neighbors().is_self_query is True
 
-    def test_self_search_reports_one_population(self, cubic_box: molrs.core.Box) -> None:
+    def test_self_search_reports_one_population(
+        self, cubic_box: molrs.core.Box
+    ) -> None:
         nl = molrs.core.NeighborList(1.5)
         nl.build(_unit_square(), cubic_box)
         neigh = nl.neighbors()
@@ -310,7 +316,9 @@ class TestNeighborQueryCross:
 
         assert (1, 0) in _pair_set(nq.query(query_points))
 
-    def test_cross_query_reports_two_populations(self, cubic_box: molrs.core.Box) -> None:
+    def test_cross_query_reports_two_populations(
+        self, cubic_box: molrs.core.Box
+    ) -> None:
         points = np.array(
             [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [2.0, 0.0, 0.0]],
             dtype=np.float64,
@@ -321,13 +329,17 @@ class TestNeighborQueryCross:
         assert cross.n_query_points == 2
         assert cross.n_points == 3
 
-    def test_query_self_returns_a_half_shell_table(self, cubic_box: molrs.core.Box) -> None:
+    def test_query_self_returns_a_half_shell_table(
+        self, cubic_box: molrs.core.Box
+    ) -> None:
         neigh = molrs.core.NeighborQuery(cubic_box, _unit_square(), 1.5).query_self()
 
         assert neigh.is_self_query is True
         assert np.all(neigh.query_point_indices() < neigh.point_indices())
 
-    def test_query_self_table_carries_both_columns(self, cubic_box: molrs.core.Box) -> None:
+    def test_query_self_table_carries_both_columns(
+        self, cubic_box: molrs.core.Box
+    ) -> None:
         neigh = molrs.core.NeighborQuery(cubic_box, _unit_square(), 1.5).query_self()
 
         assert neigh.dist_sq() is not None

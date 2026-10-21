@@ -14,11 +14,14 @@ import pytest
 from molrs.ff import ir, style_registry
 
 
-def _lammps_include(ff: molrs.ff.forcefield.ForceField, frame: molrs.core.Frame, **options: object) -> str:
+def _lammps_include(
+    ff: molrs.ff.forcefield.ForceField, frame: molrs.core.Frame, **options: object
+) -> str:
     """The LAMMPS force-field include ``ff`` writes for ``frame``."""
     buf = bytearray()
     molrs.io.lammps.LammpsForcefieldWriter(frame, **options).write(buf, ff)  # type: ignore[arg-type]
     return buf.decode()
+
 
 FENE = (
     "-0.5*k*r0^2*log(1-(r/r0)^2)"
@@ -93,13 +96,19 @@ def test_built_ins_name_their_lammps_forms() -> None:
 
 
 def test_without_a_lammps_form_lammps_refuses_by_name(registered) -> None:
-    style_registry.register_style("bond", "fene/none", params=FENE_PARAMS, expression=FENE)
+    style_registry.register_style(
+        "bond", "fene/none", params=FENE_PARAMS, expression=FENE
+    )
     registered.append(("bond", "fene/none"))
     ff, frame = chain("fene/none")
-    with pytest.raises(ValueError, match=r"LAMMPS has no form for bond `fene/none`.*LEPTON"):
+    with pytest.raises(
+        ValueError, match=r"LAMMPS has no form for bond `fene/none`.*LEPTON"
+    ):
         _lammps_include(ff, frame)
     # A form given afterwards: the style writes.
-    style_registry.register_engine_form("lammps", "bond", "fene/none", "positional:fene")
+    style_registry.register_engine_form(
+        "lammps", "bond", "fene/none", "positional:fene"
+    )
     assert "bond_style fene\n" in _lammps_include(ff, frame)
 
 
@@ -110,9 +119,13 @@ def test_register_engine_form_refuses_by_variant(registered) -> None:
         style_registry.register_engine_form("gromacs", "bond", "fene/x", "positional")
     assert e.value.engine == "GROMACS"
     with pytest.raises(ir.SealedError):
-        style_registry.register_engine_form("lammps", "bond", "harmonic", "positional:other")
+        style_registry.register_engine_form(
+            "lammps", "bond", "harmonic", "positional:other"
+        )
     with pytest.raises(ir.NoKernelError):
-        style_registry.register_engine_form("lammps", "bond", "nothing/here", "positional")
+        style_registry.register_engine_form(
+            "lammps", "bond", "nothing/here", "positional"
+        )
     with pytest.raises(ValueError, match="positional"):
         style_registry.register_engine_form("lammps", "bond", "fene/x", "lepton")
     # A positional form the spec cannot have: a style parameter LAMMPS's

@@ -285,9 +285,13 @@ impl PyForceField {
 
     /// Merge ``other`` into this force field, in place, and return ``self``.
     ///
-    /// The union of both definitions: ``other``'s styles and types are defined
-    /// through the same primitives, so an identical re-definition is a no-op
-    /// and a different one raises ``ValueError``. Declared ``units`` and
+    /// The union of both definitions: ``other``'s new styles and types are
+    /// defined through the same primitives. A style or type both define is
+    /// one definition when the two price alike — the parameters the style's
+    /// spec declares, defaults filled in, numbers equal within a relative
+    /// 1e-6 (annotations, estimate provenance and a reader's bookkeeping such
+    /// as a prmtop atom type's ``id`` take no part) — and this force field's
+    /// is kept; otherwise it raises ``ValueError``. Declared ``units`` and
     /// ``special_bonds`` are adopted when this force field declares none; two
     /// declared values that differ raise ``ValueError``. On error nothing
     /// changes.

@@ -59,7 +59,14 @@ def test_read_clpol_alpha_reads_a_file(tmp_path):
     path = tmp_path / "alpha.ff"
     path.write_text(text, encoding="utf-8")
     rows = [
-        {"type_name": "XX", "m_D": 0.4, "q_D_sign": -1.0, "k_D": 4184.0, "alpha": a, "a_thole": 2.6}
+        {
+            "type_name": "XX",
+            "m_D": 0.4,
+            "q_D_sign": -1.0,
+            "k_D": 4184.0,
+            "alpha": a,
+            "a_thole": 2.6,
+        }
         for a in (2.0, 3.0)
     ]
     assert molrs.io.read_clpol_alpha(path) == rows

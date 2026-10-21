@@ -269,3 +269,14 @@ impl From<ForceFieldWriteError> for String {
         e.message
     }
 }
+
+/// Capture the bytes a writer emits for assertions in the unit suites.
+#[cfg(test)]
+pub(crate) fn capture<E: From<std::io::Error>>(
+    write: impl FnOnce(&mut Vec<u8>) -> std::result::Result<(), E>,
+) -> std::result::Result<String, E> {
+    let mut bytes = Vec::new();
+    write(&mut bytes)?;
+    String::from_utf8(bytes)
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e).into())
+}

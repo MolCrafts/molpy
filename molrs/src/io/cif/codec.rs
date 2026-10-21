@@ -1,9 +1,12 @@
 //! The Crystallographic Information File (CIF) codec — MVP subset.
+use crate::io::frame_index::FrameOffset;
+use crate::io::{Sink, SinkWriter, Source};
 
 use crate::core::Cell;
 use crate::io::frame_columns::insert_column;
-use crate::io::frame_index::FrameOffset;
-use crate::io::{Sink, SinkWriter, Source, invalid_data};
+use crate::io::invalid_data;
+use molrs::core::MetaValue;
+use molrs::core::keys;
 use std::collections::HashMap;
 use std::io::{BufRead, Result, Seek, Write};
 
@@ -34,6 +37,30 @@ fn strip_esd(token: &str) -> &str {
 
 fn parse_float(token: &str) -> Option<F> {
     strip_esd(token).parse::<F>().ok()
+}
+
+/// Data names whose values are the symmetry-operator triplets: core CIF 1.0
+/// (`_symmetry_equiv_pos_as_xyz`), core CIF 1.1 / 2.0
+/// (`_space_group_symop_operation_xyz`) and their DDL2 (mmCIF) spellings.
+const SYMOP_TAGS: &[&str] = &[
+    "_symmetry_equiv_pos_as_xyz",
+    "_space_group_symop_operation_xyz",
+    "_space_group_symop.operation_xyz",
+    "_symmetry_equiv.pos_as_xyz",
+];
+
+/// Data names whose value is the Hermann–Mauguin space-group symbol, in the
+/// same four dialects.
+const SPACE_GROUP_TAGS: &[&str] = &[
+    "_symmetry_space_group_name_H-M",
+    "_space_group_name_H-M_alt",
+    "_space_group.name_H-M_alt",
+    "_symmetry.space_group_name_H-M",
+];
+
+/// Is `key` one of `tags`? CIF data names are case-insensitive.
+fn is_tag(key: &str, tags: &[&str]) -> bool {
+    tags.iter().any(|tag| key.eq_ignore_ascii_case(tag))
 }
 
 // ---------------------------------------------------------------------------
@@ -212,6 +239,10 @@ struct FrameInProgress {
     cell_gamma: Option<F>,
     /// Misc exact-dtype metadata copied into the frame.
     meta: MetaMap,
+    /// The first symmetry-operator list the block states, verbatim.
+    symops: Option<Vec<String>>,
+    /// The first Hermann–Mauguin symbol the block states.
+    space_group: Option<String>,
     /// Per-atom column name → list of token values, in row order.
     atom_cols: HashMap<String, Vec<String>>,
 }
@@ -227,7 +258,23 @@ impl FrameInProgress {
             cell_beta: None,
             cell_gamma: None,
             meta: MetaMap::new(),
+            symops: None,
+            space_group: None,
             atom_cols: HashMap::new(),
+        }
+    }
+
+    /// Keep a key-value symmetry tag: the space-group symbol, or a lone
+    /// operator written as a tag instead of a one-row loop. The first
+    /// statement wins; a placeholder (`?`, `.`) states nothing.
+    fn set_symmetry(&mut self, key: &str, value: &str) {
+        if is_placeholder(value) {
+            return;
+        }
+        if is_tag(key, SPACE_GROUP_TAGS) && self.space_group.is_none() {
+            self.space_group = Some(value.trim().to_string());
+        } else if is_tag(key, SYMOP_TAGS) && self.symops.is_none() {
+            self.symops = Some(vec![value.to_string()]);
         }
     }
 
@@ -283,6 +330,15 @@ impl FrameInProgress {
                 .iter()
                 .map(|(key, value)| (key.clone(), value.clone())),
         );
+        if let Some(symbol) = self.space_group {
+            frame.meta.insert(keys::SPACE_GROUP, symbol);
+        }
+        if let Some(symops) = self.symops.filter(|ops| !ops.is_empty()) {
+            let ops = symops.into_iter().map(serde_json::Value::String).collect();
+            frame
+                .meta
+                .insert(keys::SYMOPS, MetaValue::Json(serde_json::Value::Array(ops)));
+        }
 
         // Cell → SimBox (only if all six are present)
         let cell_present = self.cell_a.is_some()
@@ -559,6 +615,7 @@ fn read_one_block<R: BufRead>(src: &mut LineSource<R>) -> Result<Option<Frame>> 
                 .next_token()?
                 .ok_or_else(|| invalid_data(format!("missing value for {}", key)))?;
             frame.set_cell(&key, &value);
+            frame.set_symmetry(&key, &value);
             // Save scalar string values into meta when small.
             if value.len() < 256 && key.starts_with("_chemical_") {
                 frame.meta.insert(key, value);
@@ -606,6 +663,15 @@ fn handle_loop<R: BufRead>(src: &mut LineSource<R>, frame: &mut FrameInProgress)
     let already_have_atoms = !frame.atom_cols.is_empty();
     let is_atom_loop = has_coord_col && !already_have_atoms;
 
+    // The symmetry-operator column of the first loop that has one; any
+    // other column of that loop (`_symmetry_equiv_pos_site_id`, …) is not
+    // kept.
+    let symop_col = keys
+        .iter()
+        .position(|k| is_tag(k, SYMOP_TAGS))
+        .filter(|_| frame.symops.is_none());
+    let mut symops = Vec::new();
+
     let n_cols = keys.len();
     if is_atom_loop {
         // Pre-allocate columns we care about.
@@ -647,11 +713,17 @@ fn handle_loop<R: BufRead>(src: &mut LineSource<R>, frame: &mut FrameInProgress)
             }
             row.push(tok);
         }
+        if let Some(col) = symop_col {
+            symops.push(row[col].clone());
+        }
         if is_atom_loop {
             for (key, val) in keys.iter().zip(row) {
                 frame.atom_cols.get_mut(key).unwrap().push(val);
             }
         }
+    }
+    if symop_col.is_some() {
+        frame.symops = Some(symops);
     }
 
     Ok(())
@@ -668,6 +740,15 @@ fn handle_loop<R: BufRead>(src: &mut LineSource<R>, frame: &mut FrameInProgress)
 ///   `_atom_site.*` (mmCIF) loops are extracted into an atoms block — all
 ///   other loops are tolerantly skipped.
 /// - Cell parameters: `_cell_length_a/b/c`, `_cell_angle_alpha/beta/gamma`.
+/// - Symmetry, kept as frame metadata: the operator triplets of the first
+///   `_symmetry_equiv_pos_as_xyz` / `_space_group_symop_operation_xyz` /
+///   `_space_group_symop.operation_xyz` loop under
+///   [`keys::SYMOPS`](crate::core::keys::SYMOPS) (a JSON array of strings,
+///   verbatim, in file order), and the `_symmetry_space_group_name_H-M` /
+///   `_space_group_name_H-M_alt` / `_space_group.name_H-M_alt` symbol under
+///   [`keys::SPACE_GROUP`](crate::core::keys::SPACE_GROUP) (a string). The
+///   mmCIF `_symmetry_equiv.pos_as_xyz` and `_symmetry.space_group_name_H-M`
+///   are read too. [`CifWriter`] writes both back.
 /// - Atom-site columns: `label`, `type_symbol`, `fract_x/y/z`, `Cartn_x/y/z`,
 ///   `occupancy`, `B_iso_or_equiv`.
 /// - Comments (`#`) and blank lines.
@@ -677,11 +758,9 @@ fn handle_loop<R: BufRead>(src: &mut LineSource<R>, frame: &mut FrameInProgress)
 /// - Special values `?` and `.` (treated as empty).
 ///
 /// Out of scope: full CIF dictionary validation, `save_` blocks, `loop_`
-/// nesting, and symmetry expansion (the parsed coordinates are exactly what the
-/// file holds).
-///
-/// Over a seekable stream it is also a [`TrajectoryReader`]: `data_` blocks
-/// by index, each starting at the line that opens it.
+/// nesting, and applying the symmetry operators. The atoms are exactly the
+/// sites the file lists (the asymmetric unit, for most crystal CIFs); the
+/// operators ride along in the metadata for a caller that expands them.
 pub struct CifReader<R: BufRead> {
     src: LineSource<R>,
     index: Option<Vec<FrameOffset>>,
@@ -801,6 +880,7 @@ fn write_frame_to<W: Write>(writer: &mut W, frame: &Frame) -> Result<()> {
         writeln!(writer, "_cell_angle_beta  {:.6}", beta)?;
         writeln!(writer, "_cell_angle_gamma {:.6}", gamma)?;
     }
+    write_symmetry(writer, frame)?;
     writeln!(writer)?;
     writeln!(writer, "loop_")?;
     writeln!(writer, "_atom_site_label")?;
@@ -855,6 +935,73 @@ fn write_frame_to<W: Write>(writer: &mut W, frame: &Frame) -> Result<()> {
         )?;
     }
     Ok(())
+}
+
+/// Write the frame's [`keys::SPACE_GROUP`] and [`keys::SYMOPS`] metadata
+/// back as the `_space_group_name_H-M_alt` tag and the
+/// `_space_group_symop_operation_xyz` loop, so a CIF read and written again
+/// keeps its symmetry.
+///
+/// # Errors
+///
+/// `InvalidData` when either key holds a value of the wrong form: the symbol
+/// must be a string, the operators a JSON array of strings.
+fn write_symmetry<W: Write>(writer: &mut W, frame: &Frame) -> Result<()> {
+    if let Some(value) = frame.meta.get(keys::SPACE_GROUP) {
+        let symbol = value.as_str().ok_or_else(|| {
+            invalid_data(format!(
+                "CIF write: meta '{}' must be a string, got {}",
+                keys::SPACE_GROUP,
+                value.dtype()
+            ))
+        })?;
+        writeln!(writer, "_space_group_name_H-M_alt {}", quote_value(symbol))?;
+    }
+    let Some(value) = frame.meta.get(keys::SYMOPS) else {
+        return Ok(());
+    };
+    let ops = symop_strings(value).ok_or_else(|| {
+        invalid_data(format!(
+            "CIF write: meta '{}' must be a JSON array of operator strings",
+            keys::SYMOPS
+        ))
+    })?;
+    if ops.is_empty() {
+        return Ok(());
+    }
+    writeln!(writer)?;
+    writeln!(writer, "loop_")?;
+    writeln!(writer, "_space_group_symop_operation_xyz")?;
+    for op in ops {
+        writeln!(writer, "{}", quote_value(op))?;
+    }
+    Ok(())
+}
+
+/// The operator strings of a [`keys::SYMOPS`] value, or `None` when it is
+/// not a JSON array of strings.
+fn symop_strings(value: &MetaValue) -> Option<Vec<&str>> {
+    let MetaValue::Json(serde_json::Value::Array(items)) = value else {
+        return None;
+    };
+    items.iter().map(serde_json::Value::as_str).collect()
+}
+
+/// A CIF value token: quoted when it holds whitespace or a quote, or starts
+/// with a character that would read as something else.
+fn quote_value(value: &str) -> String {
+    let plain = !value.is_empty()
+        && !value
+            .chars()
+            .any(|c| c.is_whitespace() || c == '\'' || c == '"')
+        && !value.starts_with(['_', '#', '$', ';', '[', ']']);
+    if plain {
+        value.to_string()
+    } else if value.contains('\'') {
+        format!("\"{value}\"")
+    } else {
+        format!("'{value}'")
+    }
 }
 
 fn sanitise_data_name(s: &str) -> String {
@@ -1021,6 +1168,133 @@ C2 C 0.5 0.5 0.5
     fn esd_strip() {
         assert_eq!(strip_esd("5.917(3)"), "5.917");
         assert_eq!(strip_esd("90.000"), "90.000");
+    }
+
+    const P21C_CIF: &str = "\
+data_p21c
+_symmetry_space_group_name_H-M   'P 21/c'
+_cell_length_a 5.0
+_cell_length_b 6.0
+_cell_length_c 7.0
+_cell_angle_alpha 90.0
+_cell_angle_beta  100.0
+_cell_angle_gamma 90.0
+loop_
+_symmetry_equiv_pos_site_id
+_symmetry_equiv_pos_as_xyz
+1 'x, y, z'
+2 '-x, y+1/2, -z+1/2'
+3 '-x, -y, -z'
+4 'x, -y+1/2, z+1/2'
+loop_
+_atom_site_label
+_atom_site_type_symbol
+_atom_site_fract_x
+_atom_site_fract_y
+_atom_site_fract_z
+C1 C 0.1 0.2 0.3
+";
+
+    const P21C_OPS: [&str; 4] = [
+        "x, y, z",
+        "-x, y+1/2, -z+1/2",
+        "-x, -y, -z",
+        "x, -y+1/2, z+1/2",
+    ];
+
+    fn symops(frame: &Frame) -> Vec<String> {
+        let value = frame.meta.get(keys::SYMOPS).expect("symops meta");
+        symop_strings(value)
+            .expect("a JSON array of strings")
+            .into_iter()
+            .map(str::to_string)
+            .collect()
+    }
+
+    #[test]
+    fn keeps_the_symmetry_operators_and_space_group_verbatim() {
+        let frame = crate::io::read_cif((P21C_CIF).as_bytes()).unwrap();
+        assert_eq!(symops(&frame), P21C_OPS);
+        assert_eq!(
+            frame.meta.get(keys::SPACE_GROUP).and_then(|v| v.as_str()),
+            Some("P 21/c")
+        );
+        // The atoms stay the asymmetric unit: nothing is expanded.
+        assert_eq!(frame.get("atoms").unwrap().n_rows(), Some(1));
+    }
+
+    #[test]
+    fn reads_the_modern_and_ddl2_symmetry_tags() {
+        let modern = P21C_CIF
+            .replace(
+                "_symmetry_space_group_name_H-M",
+                "_space_group_name_H-M_alt",
+            )
+            .replace("_symmetry_equiv_pos_site_id", "_space_group_symop_id")
+            .replace(
+                "_symmetry_equiv_pos_as_xyz",
+                "_space_group_symop_operation_xyz",
+            );
+        let ddl2 = P21C_CIF
+            .replace(
+                "_symmetry_space_group_name_H-M",
+                "_space_group.name_H-M_alt",
+            )
+            .replace("_symmetry_equiv_pos_site_id", "_space_group_symop.id")
+            .replace(
+                "_symmetry_equiv_pos_as_xyz",
+                "_space_group_symop.operation_xyz",
+            );
+        for text in [modern, ddl2] {
+            let frame = crate::io::read_cif(text.as_bytes()).unwrap();
+            assert_eq!(symops(&frame), P21C_OPS);
+            assert_eq!(
+                frame.meta.get(keys::SPACE_GROUP).and_then(|v| v.as_str()),
+                Some("P 21/c")
+            );
+        }
+    }
+
+    #[test]
+    fn a_block_without_symmetry_has_no_symmetry_meta() {
+        let frame = crate::io::read_cif((SMALL_CIF).as_bytes()).unwrap();
+        assert!(frame.meta.get(keys::SYMOPS).is_none());
+        assert!(frame.meta.get(keys::SPACE_GROUP).is_none());
+        let unknown = SMALL_CIF.replace("data_test\n", "data_test\n_space_group_name_H-M_alt ?\n");
+        let frame = crate::io::read_cif(unknown.as_bytes()).unwrap();
+        assert!(frame.meta.get(keys::SPACE_GROUP).is_none());
+    }
+
+    #[test]
+    fn symmetry_round_trips_through_the_writer() {
+        let frame = crate::io::read_cif((P21C_CIF).as_bytes()).unwrap();
+        let text = crate::io::writer::capture(|sink| crate::io::write_cif(sink, &frame)).unwrap();
+        let back = crate::io::read_cif(text.as_bytes()).unwrap();
+        assert_eq!(symops(&back), P21C_OPS);
+        assert_eq!(
+            back.meta.get(keys::SPACE_GROUP).and_then(|v| v.as_str()),
+            Some("P 21/c")
+        );
+        assert_eq!(back.get("atoms").unwrap().n_rows(), Some(1));
+    }
+
+    #[test]
+    fn writer_refuses_malformed_symmetry_meta() {
+        let mut frame = crate::io::read_cif((SMALL_CIF).as_bytes()).unwrap();
+        frame.meta.insert(keys::SYMOPS, "x,y,z");
+        assert!(crate::io::writer::capture(|sink| crate::io::write_cif(sink, &frame)).is_err());
+        let mut frame = crate::io::read_cif((SMALL_CIF).as_bytes()).unwrap();
+        frame.meta.insert(keys::SPACE_GROUP, 14_i64);
+        assert!(crate::io::writer::capture(|sink| crate::io::write_cif(sink, &frame)).is_err());
+    }
+
+    #[test]
+    fn quote_value_quotes_only_what_needs_it() {
+        assert_eq!(quote_value("x,y,z"), "x,y,z");
+        assert_eq!(quote_value("x, y, z"), "'x, y, z'");
+        assert_eq!(quote_value("P 21/c"), "'P 21/c'");
+        assert_eq!(quote_value("it's"), "\"it's\"");
+        assert_eq!(quote_value(""), "''");
     }
 
     const MMCIF: &str = "\

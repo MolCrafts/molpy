@@ -49,11 +49,14 @@ import pytest
 from molrs.ff import ir, style_registry
 
 
-def _lammps_include(ff: molrs.ff.forcefield.ForceField, frame: molrs.core.Frame, **options: object) -> str:
+def _lammps_include(
+    ff: molrs.ff.forcefield.ForceField, frame: molrs.core.Frame, **options: object
+) -> str:
     """The LAMMPS force-field include ``ff`` writes for ``frame``."""
     buf = bytearray()
     molrs.io.lammps.LammpsForcefieldWriter(frame, **options).write(buf, ff)  # type: ignore[arg-type]
     return buf.decode()
+
 
 PINNED = Path(__file__).with_name("ff_ir_extension_lammps.tsv")
 
@@ -81,8 +84,12 @@ SMOOTH_PARAMS = [
 ]
 SMOOTH_STYLE = [
     ir.ParamSpec("cutoff", "L"),
-    ir.ParamSpec("mixing", kind="text", choices=["arithmetic", "geometric", "sixthpower"],
-             default="arithmetic"),
+    ir.ParamSpec(
+        "mixing",
+        kind="text",
+        choices=["arithmetic", "geometric", "sixthpower"],
+        default="arithmetic",
+    ),
 ]
 UB = "k_ub*(distance(p1,p3)-r_ub)^2"
 BOND_ANGLE = (
@@ -152,7 +159,9 @@ def fene_kernel(r, k, r0, epsilon, sigma):
     e = -0.5 * k * r0**2 * np.log(1 - x) + np.where(
         inner, 4 * epsilon * (s6 * s6 - s6) + epsilon, 0.0
     )
-    de = k * r / (1 - x) + np.where(inner, 4 * epsilon * (6 * s6 - 12 * s6 * s6) / r, 0.0)
+    de = k * r / (1 - x) + np.where(
+        inner, 4 * epsilon * (6 * s6 - 12 * s6 * s6) / r, 0.0
+    )
     return e, de
 
 
@@ -207,28 +216,64 @@ def table_kernel(phi, table):
 def extensions() -> Iterator[None]:
     """Everything this module adds to the IR, taken out again at the end
     (the categories stay: a registered category is not removed)."""
-    style_registry.register_style("bond", "fene/proof", params=FENE_PARAMS, expression=FENE,
-                                  lammps="positional:fene")
-    style_registry.register_style("bond", "fene/proof-np", params=FENE_PARAMS, kernel=fene_kernel)
-    style_registry.register_style("pair", "lj/smooth/linear/proof", params=SMOOTH_PARAMS,
-                                  style_params=SMOOTH_STYLE, special="lj", expression=SMOOTH,
-                                  lammps="positional:lj/smooth/linear")
-    style_registry.register_style("pair", "lj/smooth/linear/proof-np", params=SMOOTH_PARAMS,
-                                  style_params=SMOOTH_STYLE, special="lj", kernel=smooth_kernel)
-    style_registry.register_category("urey_bradley", 3)
-    style_registry.register_style("urey_bradley", "proof", params={"k_ub": "E/L^2", "r_ub": "L"},
-                                  expression=UB)
-    style_registry.register_category("bond_angle", 3)
-    style_registry.register_style("bond_angle", "class2", params=BA_PARAMS, expression=BOND_ANGLE)
     style_registry.register_style(
-        "bond_angle", "class2/np", params=BA_PARAMS, expression=BOND_ANGLE,
-        kernel=bond_angle_kernel,
-        samples=[{"q": (1.2, 1.7), "n1": 10.0, "n2": 8.0, "r1": 1.5, "r2": 1.45,
-                  "theta0": 105.0}],
+        "bond",
+        "fene/proof",
+        params=FENE_PARAMS,
+        expression=FENE,
+        lammps="positional:fene",
     )
-    style_registry.register_style("dihedral", "table/linear",
-                                  params=[ir.ParamSpec("table", "E", kind="array", rank=1)],
-                                  kernel=table_kernel)
+    style_registry.register_style(
+        "bond", "fene/proof-np", params=FENE_PARAMS, kernel=fene_kernel
+    )
+    style_registry.register_style(
+        "pair",
+        "lj/smooth/linear/proof",
+        params=SMOOTH_PARAMS,
+        style_params=SMOOTH_STYLE,
+        special="lj",
+        expression=SMOOTH,
+        lammps="positional:lj/smooth/linear",
+    )
+    style_registry.register_style(
+        "pair",
+        "lj/smooth/linear/proof-np",
+        params=SMOOTH_PARAMS,
+        style_params=SMOOTH_STYLE,
+        special="lj",
+        kernel=smooth_kernel,
+    )
+    style_registry.register_category("urey_bradley", 3)
+    style_registry.register_style(
+        "urey_bradley", "proof", params={"k_ub": "E/L^2", "r_ub": "L"}, expression=UB
+    )
+    style_registry.register_category("bond_angle", 3)
+    style_registry.register_style(
+        "bond_angle", "class2", params=BA_PARAMS, expression=BOND_ANGLE
+    )
+    style_registry.register_style(
+        "bond_angle",
+        "class2/np",
+        params=BA_PARAMS,
+        expression=BOND_ANGLE,
+        kernel=bond_angle_kernel,
+        samples=[
+            {
+                "q": (1.2, 1.7),
+                "n1": 10.0,
+                "n2": 8.0,
+                "r1": 1.5,
+                "r2": 1.45,
+                "theta0": 105.0,
+            }
+        ],
+    )
+    style_registry.register_style(
+        "dihedral",
+        "table/linear",
+        params=[ir.ParamSpec("table", "E", kind="array", rank=1)],
+        kernel=table_kernel,
+    )
     yield
     for category, name in [
         ("bond", "fene/proof"),
@@ -251,8 +296,13 @@ MASSES = {"A": 12.011, "B": 14.007}
 ENDPOINTS = ("atomi", "atomj", "atomk", "atoml")
 
 
-def frame(xyz: np.ndarray, types: list[str], block: str | None = None,
-          rows: list[tuple[int, ...]] = (), row_types: list[str] = ()) -> molrs.core.Frame:
+def frame(
+    xyz: np.ndarray,
+    types: list[str],
+    block: str | None = None,
+    rows: list[tuple[int, ...]] = (),
+    row_types: list[str] = (),
+) -> molrs.core.Frame:
     """Atoms of ``types`` at ``xyz`` (masses, no charge, in a box past every
     atom) and the terms ``rows`` in ``block``."""
     n = len(xyz)
@@ -271,7 +321,11 @@ def frame(xyz: np.ndarray, types: list[str], block: str | None = None,
             terms.insert(key, np.array([r[i] for r in rows], dtype=np.uint32))
         terms.insert("type", list(row_types))
         out[block] = terms
-    out.box = molrs.core.Box(molrs.core.Cell.lengths([100.0] * 3), origin=np.full(3, -50.0), pbc=np.zeros(3, dtype=bool))
+    out.box = molrs.core.Box(
+        molrs.core.Cell.lengths([100.0] * 3),
+        origin=np.full(3, -50.0),
+        pbc=np.zeros(3, dtype=bool),
+    )
     return out
 
 
@@ -319,11 +373,18 @@ def ub_ff() -> molrs.ff.forcefield.ForceField:
 
 
 def ub_frame(xyz: np.ndarray, block: str = "urey_bradleys") -> molrs.core.Frame:
-    return frame(xyz, ["A", "B", "B", "A"], block, [r[0] for r in UB_ROWS],
-                 [r[1] for r in UB_ROWS])
+    return frame(
+        xyz,
+        ["A", "B", "B", "A"],
+        block,
+        [r[0] for r in UB_ROWS],
+        [r[1] for r in UB_ROWS],
+    )
 
 
-def price(ff: molrs.ff.forcefield.ForceField, f: molrs.core.Frame) -> tuple[float, np.ndarray]:
+def price(
+    ff: molrs.ff.forcefield.ForceField, f: molrs.core.Frame
+) -> tuple[float, np.ndarray]:
     e, forces = molrs.ff.compile.PotentialCompiler(ff).compile(f).evaluate(f)
     return float(e), np.asarray(forces)
 
@@ -341,7 +402,9 @@ def fene_analytic(xyz: np.ndarray) -> tuple[float, np.ndarray]:
     x = (r / R0) ** 2
     s6 = (SIG / r) ** 6
     wca = r < 2 ** (1 / 6) * SIG
-    e = -0.5 * K * R0**2 * np.log(1 - x) + np.where(wca, 4 * EPS * (s6 * s6 - s6) + EPS, 0)
+    e = -0.5 * K * R0**2 * np.log(1 - x) + np.where(
+        wca, 4 * EPS * (s6 * s6 - s6) + EPS, 0
+    )
     de = K * r / (1 - x) + np.where(wca, 4 * EPS * (6 * s6 - 12 * s6 * s6) / r, 0)
     f = np.zeros_like(xyz)
     pull = (de / r)[:, None] * d
@@ -355,16 +418,27 @@ def fene_analytic(xyz: np.ndarray) -> tuple[float, np.ndarray]:
 # ---------------------------------------------------------------------------
 
 
-def lammps_cases() -> dict[str, list[tuple[molrs.ff.forcefield.ForceField, molrs.core.Frame,
-                                           molrs.ff.forcefield.ForceField, molrs.core.Frame, str]]]:
+def lammps_cases() -> dict[
+    str,
+    list[
+        tuple[
+            molrs.ff.forcefield.ForceField,
+            molrs.core.Frame,
+            molrs.ff.forcefield.ForceField,
+            molrs.core.Frame,
+            str,
+        ]
+    ],
+]:
     """Per case and configuration: what molrs prices (style, frame), and the
     deck LAMMPS prices (its force field, frame, units)."""
     out = {"fene": [], "smooth": [], "urey_bradley": []}
     smooth = smooth_ff("lj/smooth/linear/proof")
     for xyz in (SMOOTH_XYZ, moved(SMOOTH_XYZ, 0.13)):
         # LAMMPS's data file carries no pair list.
-        out["smooth"].append((smooth, smooth_frame(xyz), smooth, frame(xyz, SMOOTH_TYPES),
-                              "real"))
+        out["smooth"].append(
+            (smooth, smooth_frame(xyz), smooth, frame(xyz, SMOOTH_TYPES), "real")
+        )
     fene = fene_ff("fene/proof")
     for xyz in (BEADS, moved(BEADS, 0.02)):
         f = bead_frame(xyz)
@@ -373,11 +447,18 @@ def lammps_cases() -> dict[str, list[tuple[molrs.ff.forcefield.ForceField, molrs
     deck, t = field("ub", "real")
     angle = deck.def_style("angle", "charmm")
     for _, name, k_ub, r_ub in UB_ROWS:
-        angle.def_type(name, *(t[e] for e in name.split("-")), k=0.0, theta0=109.5,
-                       k_ub=k_ub, r_ub=r_ub)
+        angle.def_type(
+            name,
+            *(t[e] for e in name.split("-")),
+            k=0.0,
+            theta0=109.5,
+            k_ub=k_ub,
+            r_ub=r_ub,
+        )
     for xyz in (CHAIN, moved(CHAIN, 0.09)):
-        out["urey_bradley"].append((ub_ff(), ub_frame(xyz), deck, ub_frame(xyz, "angles"),
-                                    "real"))
+        out["urey_bradley"].append(
+            (ub_ff(), ub_frame(xyz), deck, ub_frame(xyz, "angles"), "real")
+        )
     return out
 
 
@@ -393,12 +474,14 @@ def test_write_lammps_inputs() -> None:
         out.mkdir(parents=True, exist_ok=True)
         tsv = []
         for k, (ff, f, deck, deck_frame, units) in enumerate(configs):
-            text = _lammps_include(deck, deck_frame, precision=17,
-                                                         units=units)
+            text = _lammps_include(deck, deck_frame, precision=17, units=units)
             lines = text.splitlines(keepends=True)
-            (out / "pre.lmp").write_text("".join(l for l in lines if l.startswith("units")), encoding="utf-8")
-            (out / "system.ff").write_text("".join(l for l in lines
-                                                   if not l.startswith("units")), encoding="utf-8")
+            (out / "pre.lmp").write_text(
+                "".join(l for l in lines if l.startswith("units")), encoding="utf-8"
+            )
+            (out / "system.ff").write_text(
+                "".join(l for l in lines if not l.startswith("units")), encoding="utf-8"
+            )
             molrs.io.write_lammps_data(out / f"data_{k}.lmp", deck_frame)
             e, forces = price(ff, f)
             tsv.append(f"{case}\t{k}\tpe\t{e!r}\n")
@@ -424,8 +507,12 @@ def pinned() -> dict[tuple[str, int], tuple[float, np.ndarray]]:
     return {key: (pe[key], np.array(forces[key])) for key in pe}
 
 
-def against_lammps(case: str, ff_of: Callable[[molrs.ff.forcefield.ForceField], molrs.ff.forcefield.ForceField]
-                   = lambda ff: ff) -> float:
+def against_lammps(
+    case: str,
+    ff_of: Callable[
+        [molrs.ff.forcefield.ForceField], molrs.ff.forcefield.ForceField
+    ] = lambda ff: ff,
+) -> float:
     """The worst relative error of molrs (``ff_of`` the case's force field)
     against the pinned LAMMPS numbers of ``case``, every configuration."""
     table = pinned()
@@ -450,7 +537,9 @@ def test_fene_by_expression_is_the_analytic_formula() -> None:
         e, f = price(fene_ff("fene/proof"), bead_frame(xyz))
         e_ref, f_ref = fene_analytic(xyz)
         assert math.isclose(e, e_ref, rel_tol=1e-12)
-        worst = max(worst, abs(e - e_ref) / abs(e_ref), rel(f, f_ref, np.abs(f_ref).max()))
+        worst = max(
+            worst, abs(e - e_ref) / abs(e_ref), rel(f, f_ref, np.abs(f_ref).max())
+        )
     assert worst <= 1e-12
     print(f"MEASURED fene expression vs analytic: {worst:.1e}")
 
@@ -467,36 +556,56 @@ def test_a_numpy_kernel_is_the_expression() -> None:
 
 
 def test_fene_is_lammps_bond_style_fene() -> None:
-    deck = _lammps_include(fene_ff("fene/proof"), bead_frame(),
-                                                units="lj")
+    deck = _lammps_include(fene_ff("fene/proof"), bead_frame(), units="lj")
     assert "bond_style fene\n" in deck
     (coeff,) = [l for l in deck.splitlines() if l.startswith("bond_coeff B-B ")]
     assert [float(v) for v in coeff.split()[2:]] == [30.0, 1.5, 1.0, 1.0]
     assert against_lammps("fene") <= 1e-10
 
-    def numpy_twin(ff: molrs.ff.forcefield.ForceField) -> molrs.ff.forcefield.ForceField:
+    def numpy_twin(
+        ff: molrs.ff.forcefield.ForceField,
+    ) -> molrs.ff.forcefield.ForceField:
         return fene_ff("fene/proof-np")
 
     assert against_lammps("fene", numpy_twin) <= 1e-10
 
 
-def typed_energy_forces(ff: molrs.ff.forcefield.ForceField, f: molrs.core.Frame,
-                        xyz: np.ndarray) -> tuple[float, np.ndarray]:
-    """The neighbour-driven door: ``compile_typed`` moved into an integrator
-    over a neighbour list past every pair, and its first force call."""
-    from molrs.md import VelocityVerlet
+def typed_energy_forces(
+    ff: molrs.ff.forcefield.ForceField, f: molrs.core.Frame, xyz: np.ndarray
+) -> tuple[float, np.ndarray]:
+    """The neighbour-driven door: ``compile_typed`` mounted on ``MD`` over a
+    neighbour list past every pair, and the setup force call."""
+    from molrs.md import MD, NeighborList, VelocityVerlet
 
-    box = molrs.core.Box(molrs.core.Cell.lengths([100.0] * 3), origin=np.full(3, -50.0), pbc=np.ones(3, dtype=bool))
-    skin = molrs.core.VerletSkin(molrs.core.NeighborList(30.0), 29.0, xyz, box, skin=1.0)
-    vv = VelocityVerlet(1.0, potential=molrs.ff.compile.PotentialCompiler(ff).compile_typed(f),
-                        neighbors=skin, mass=np.ones(len(xyz)))
-    state = vv.initial(xyz, np.zeros_like(xyz))
-    return float(state.energy), np.asarray(state.forces)
+    work = f.copy()
+    atoms = work["atoms"]
+    for axis, key in enumerate("xyz"):
+        atoms[key] = np.ascontiguousarray(xyz[:, axis])
+    for key in ("vx", "vy", "vz"):
+        atoms[key] = np.zeros(len(xyz))
+    atoms["mass"] = np.ones(len(xyz))
+    work.box = molrs.core.Box(
+        molrs.core.Cell.lengths([100.0] * 3),
+        origin=np.full(3, -50.0),
+        pbc=np.ones(3, dtype=bool),
+    )
+    sim = MD()
+    sim.set_integrator(VelocityVerlet(1.0))
+    sim.set_neighbor(NeighborList(29.0, 1.0))
+    sim.set_evaluator(molrs.ff.compile.PotentialCompiler(ff).compile_typed(f))
+    sim.run(work, 0)
+    forces = np.column_stack(
+        [np.asarray(work["atoms"][key]) for key in ("fx", "fy", "fz")]
+    )
+    return float(work.meta["energy"]), forces
 
 
 def test_a_python_pair_style_is_lammps_lj_smooth_linear_at_both_doors() -> None:
-    deck = _lammps_include(smooth_ff("lj/smooth/linear/proof"),
-                                                frame(SMOOTH_XYZ, SMOOTH_TYPES), units="real")
+    deck = _lammps_include(
+        smooth_ff("lj/smooth/linear/proof"),
+        frame(SMOOTH_XYZ, SMOOTH_TYPES),
+        units="real",
+    )
     (style,) = [l.split() for l in deck.splitlines() if l.startswith("pair_style ")]
     assert style[1] == "lj/smooth/linear" and float(style[2]) == SMOOTH_RC, deck
     assert "pair_modify mix arithmetic" in deck, deck
@@ -510,12 +619,16 @@ def test_a_python_pair_style_is_lammps_lj_smooth_linear_at_both_doors() -> None:
             e, forces = price(ff, f)
             e_t, f_t = typed_energy_forces(ff, f, xyz)
             scale = float(np.abs(forces).max())
-            worst_doors = max(worst_doors, abs(e_t - e) / abs(e), rel(f_t, forces, scale))
+            worst_doors = max(
+                worst_doors, abs(e_t - e) / abs(e), rel(f_t, forces, scale)
+            )
     assert worst_doors <= 1e-12
     print(f"MEASURED smooth compile_typed vs compile: {worst_doors:.1e}")
     assert against_lammps("smooth") <= 1e-10
 
-    def numpy_twin(ff: molrs.ff.forcefield.ForceField) -> molrs.ff.forcefield.ForceField:
+    def numpy_twin(
+        ff: molrs.ff.forcefield.ForceField,
+    ) -> molrs.ff.forcefield.ForceField:
         return smooth_ff("lj/smooth/linear/proof-np")
 
     assert against_lammps("smooth", numpy_twin) <= 1e-10
@@ -571,28 +684,48 @@ def everything() -> tuple[molrs.ff.forcefield.ForceField, dict[str, dict]]:
     category from Python, a callable-only array style — and one frame per
     style (a style prices only where its block has rows)."""
     ff, t = field("everything", "real")
-    ff.def_style("bond", "fene/proof").def_type("B-B", t["B"], t["B"], k=K, r0=R0,
-                                                epsilon=EPS, sigma=SIG)
+    ff.def_style("bond", "fene/proof").def_type(
+        "B-B", t["B"], t["B"], k=K, r0=R0, epsilon=EPS, sigma=SIG
+    )
     ub = ff.def_style("urey_bradley", "proof")
     for _, name, k_ub, r_ub in UB_ROWS:
         ub.def_type(name, *(t[e] for e in name.split("-")), k_ub=k_ub, r_ub=r_ub)
     table = ff.def_style("dihedral", "table/linear")
     table.def_type("A-B-B-A", t["A"], t["B"], t["B"], t["A"], table=TABLE)
     frames = {
-        "fene": {"xyz": BEADS.tolist(), "types": ["B"] * 5, "block": "bonds",
-                 "rows": [[i, i + 1] for i in range(4)], "row_types": ["B-B"] * 4},
-        "urey_bradley": {"xyz": CHAIN.tolist(), "types": ["A", "B", "B", "A"],
-                         "block": "urey_bradleys", "rows": [list(r[0]) for r in UB_ROWS],
-                         "row_types": [r[1] for r in UB_ROWS]},
-        "table": {"xyz": CHAIN.tolist(), "types": ["A", "B", "B", "A"], "block": "dihedrals",
-                  "rows": [[0, 1, 2, 3]], "row_types": ["A-B-B-A"]},
+        "fene": {
+            "xyz": BEADS.tolist(),
+            "types": ["B"] * 5,
+            "block": "bonds",
+            "rows": [[i, i + 1] for i in range(4)],
+            "row_types": ["B-B"] * 4,
+        },
+        "urey_bradley": {
+            "xyz": CHAIN.tolist(),
+            "types": ["A", "B", "B", "A"],
+            "block": "urey_bradleys",
+            "rows": [list(r[0]) for r in UB_ROWS],
+            "row_types": [r[1] for r in UB_ROWS],
+        },
+        "table": {
+            "xyz": CHAIN.tolist(),
+            "types": ["A", "B", "B", "A"],
+            "block": "dihedrals",
+            "rows": [[0, 1, 2, 3]],
+            "row_types": ["A-B-B-A"],
+        },
     }
     return ff, frames
 
 
 def spec_frame(spec: dict) -> molrs.core.Frame:
-    return frame(np.array(spec["xyz"]), spec["types"], spec["block"],
-                 [tuple(r) for r in spec["rows"]], spec["row_types"])
+    return frame(
+        np.array(spec["xyz"]),
+        spec["types"],
+        spec["block"],
+        [tuple(r) for r in spec["rows"]],
+        spec["row_types"],
+    )
 
 
 @pytest.fixture(scope="module")
@@ -601,22 +734,34 @@ def fresh(tmp_path_factory: pytest.TempPathFactory) -> tuple[dict, dict, dict]:
     process that registered nothing makes of the record."""
     ff, frames = everything()
     path = tmp_path_factory.mktemp("proof") / "everything.mrec"
-    molrs.io.write_mrec(path, forcefield=molrs.io.mrec.ForceFieldSection.from_forcefield(ff))
+    molrs.io.write_mrec(
+        path, forcefield=molrs.io.mrec.ForceFieldSection.from_forcefield(ff)
+    )
     here = {}
     for name, spec in frames.items():
         e, f = price(ff, spec_frame(spec))
         here[name] = {"e": e.hex(), "f": [float(v).hex() for v in f.ravel()]}
-    done = subprocess.run([sys.executable, "-c", FRESH, str(path), json.dumps(frames)],
-                          capture_output=True, text=True, check=False, encoding="utf-8")
+    done = subprocess.run(
+        [sys.executable, "-c", FRESH, str(path), json.dumps(frames)],
+        capture_output=True,
+        text=True,
+        check=False,
+        encoding="utf-8",
+    )
     assert done.returncode == 0, done.stderr
-    return molrs.io.mrec.MrecFile(path).forcefield().document, here, json.loads(done.stdout)
+    return (
+        molrs.io.mrec.MrecFile(path).forcefield().document,
+        here,
+        json.loads(done.stdout),
+    )
 
 
 def test_a_record_prices_the_same_bits_in_a_fresh_process(fresh) -> None:
     document, here, there = fresh
     assert there["registered"] == []
-    expressions = {(s["category"], s["style"]): s.get("expression")
-                   for s in document["styles"]}
+    expressions = {
+        (s["category"], s["style"]): s.get("expression") for s in document["styles"]
+    }
     # Byte for byte: the registry's, written since the instance states none.
     assert expressions[("bond", "fene/proof")] == FENE
     assert expressions[("urey_bradley", "proof")] == UB
@@ -651,7 +796,9 @@ def _raising(r, k, r0):
 
 
 def _compile_with(kernel: Callable, name: str) -> None:
-    style_registry.register_style("bond", name, params={"k": "E/L^2", "r0": "L"}, kernel=kernel)
+    style_registry.register_style(
+        "bond", name, params={"k": "E/L^2", "r0": "L"}, kernel=kernel
+    )
     try:
         price(fene_ff("fene/proof"), bead_frame())  # unaffected
         ff, t = field("x", "lj")
@@ -663,7 +810,9 @@ def _compile_with(kernel: Callable, name: str) -> None:
 
 def _wrong_arity() -> None:
     ff, t = field("x", "real")
-    ff.def_style("urey_bradley", "proof").def_type("A-B", t["A"], t["B"], k_ub=1.0, r_ub=1.0)
+    ff.def_style("urey_bradley", "proof").def_type(
+        "A-B", t["A"], t["B"], k_ub=1.0, r_ub=1.0
+    )
 
 
 def _gromacs(tmp: Path) -> None:
@@ -676,33 +825,72 @@ def _gromacs(tmp: Path) -> None:
 
 
 REFUSALS = [
-    ("unknown function",
-     lambda tmp: style_registry.register_style("bond", "x/proof", params={"k": "E"}, expression="k*sinh(r)"),
-     ir.UnknownFunctionError, {"name": "sinh"}),
-    ("unbound variable",
-     lambda tmp: style_registry.register_style("bond", "x/proof", params={"k": "E"}, expression="k*theta"),
-     ir.UnboundVariableError, {"style": "x/proof", "name": "theta"}),
-    ("sealed bond harmonic",
-     lambda tmp: style_registry.register_style("bond", "harmonic", params={"k": "E/L^2", "r0": "L"},
-                                               expression="2*k*(r-r0)^2"),
-     ir.SealedError, {"category": "bond", "style": "harmonic"}),
-    ("wrong def_type arity", lambda tmp: _wrong_arity(),
-     ir.ArityError, {"category": "urey_bradley", "arity": 2}),
-    ("kernel of the wrong shape", lambda tmp: _compile_with(_short, "short/proof"),
-     ir.KernelShapeError, {"style": "short/proof"}),
-    ("kernel raising", lambda tmp: _compile_with(_raising, "raising/proof"),
-     ir.KernelShapeError, {"style": "raising/proof"}),
-    ("write_top_forcefield", _gromacs,
-     ir.NoEngineFormError, {"engine": "GROMACS", "category": "bond", "style": "fene/proof"}),
-    ("missing param at compile",
-     lambda tmp: price(fene_ff("fene/proof", sigma=None), bead_frame()),
-     ir.MissingParamError, {"style": "fene/proof", "type": "B-B", "param": "sigma"}),
+    (
+        "unknown function",
+        lambda tmp: style_registry.register_style(
+            "bond", "x/proof", params={"k": "E"}, expression="k*sinh(r)"
+        ),
+        ir.UnknownFunctionError,
+        {"name": "sinh"},
+    ),
+    (
+        "unbound variable",
+        lambda tmp: style_registry.register_style(
+            "bond", "x/proof", params={"k": "E"}, expression="k*theta"
+        ),
+        ir.UnboundVariableError,
+        {"style": "x/proof", "name": "theta"},
+    ),
+    (
+        "sealed bond harmonic",
+        lambda tmp: style_registry.register_style(
+            "bond",
+            "harmonic",
+            params={"k": "E/L^2", "r0": "L"},
+            expression="2*k*(r-r0)^2",
+        ),
+        ir.SealedError,
+        {"category": "bond", "style": "harmonic"},
+    ),
+    (
+        "wrong def_type arity",
+        lambda tmp: _wrong_arity(),
+        ir.ArityError,
+        {"category": "urey_bradley", "arity": 2},
+    ),
+    (
+        "kernel of the wrong shape",
+        lambda tmp: _compile_with(_short, "short/proof"),
+        ir.KernelShapeError,
+        {"style": "short/proof"},
+    ),
+    (
+        "kernel raising",
+        lambda tmp: _compile_with(_raising, "raising/proof"),
+        ir.KernelShapeError,
+        {"style": "raising/proof"},
+    ),
+    (
+        "write_top_forcefield",
+        _gromacs,
+        ir.NoEngineFormError,
+        {"engine": "GROMACS", "category": "bond", "style": "fene/proof"},
+    ),
+    (
+        "missing param at compile",
+        lambda tmp: price(fene_ff("fene/proof", sigma=None), bead_frame()),
+        ir.MissingParamError,
+        {"style": "fene/proof", "type": "B-B", "param": "sigma"},
+    ),
 ]
 
 
-@pytest.mark.parametrize(("what", "act", "variant", "names"), REFUSALS,
-                         ids=[r[0] for r in REFUSALS])
-def test_what_does_not_conform_is_refused_by_name(what, act, variant, names, tmp_path) -> None:
+@pytest.mark.parametrize(
+    ("what", "act", "variant", "names"), REFUSALS, ids=[r[0] for r in REFUSALS]
+)
+def test_what_does_not_conform_is_refused_by_name(
+    what, act, variant, names, tmp_path
+) -> None:
     with pytest.raises(variant) as err:
         act(tmp_path)
     assert isinstance(err.value, ir.IrError) and isinstance(err.value, ValueError)
@@ -717,7 +905,9 @@ def test_what_does_not_conform_is_refused_by_name(what, act, variant, names, tmp
 # ---------------------------------------------------------------------------
 
 
-def test_an_array_param_style_is_hand_linear_interpolation_and_round_trips(tmp_path) -> None:
+def test_an_array_param_style_is_hand_linear_interpolation_and_round_trips(
+    tmp_path,
+) -> None:
     (info,) = [s for s in style_registry.styles("dihedral") if s.name == "table/linear"]
     assert [(p.name, p.kind, p.rank) for p in info.params] == [("table", "array", 1)]
     ff, frames = everything()
@@ -727,7 +917,9 @@ def test_an_array_param_style_is_hand_linear_interpolation_and_round_trips(tmp_p
         e, f = price(ff, spec_frame(spec))
         b1, b2, b3 = xyz[1] - xyz[0], xyz[2] - xyz[1], xyz[3] - xyz[2]
         n1, n2 = np.cross(b1, b2), np.cross(b2, b3)
-        phi = math.atan2(np.dot(np.cross(n1, n2), b2 / np.linalg.norm(b2)), np.dot(n1, n2))
+        phi = math.atan2(
+            np.dot(np.cross(n1, n2), b2 / np.linalg.norm(b2)), np.dot(n1, n2)
+        )
         e_ref, de_ref = table_at(np.array([phi]), TABLE[None, :])
         worst = max(worst, abs(e - e_ref[0]) / abs(e_ref[0]))
         # The kernel's dE/dφ, through the chain rule: the force is −∇E.
@@ -737,9 +929,15 @@ def test_an_array_param_style_is_hand_linear_interpolation_and_round_trips(tmp_p
             up, down = xyz.copy().ravel(), xyz.copy().ravel()
             up[k] += h
             down[k] -= h
-            fd.append(-(price(ff, spec_frame(dict(spec, xyz=up.reshape(4, 3).tolist())))[0]
-                        - price(ff, spec_frame(dict(spec, xyz=down.reshape(4, 3).tolist())))[0])
-                      / (2 * h))
+            fd.append(
+                -(
+                    price(ff, spec_frame(dict(spec, xyz=up.reshape(4, 3).tolist())))[0]
+                    - price(
+                        ff, spec_frame(dict(spec, xyz=down.reshape(4, 3).tolist()))
+                    )[0]
+                )
+                / (2 * h)
+            )
         assert rel(f, np.array(fd), np.abs(f).max()) <= 1e-6
     assert worst <= 1e-12
     print(f"MEASURED table/linear vs hand interpolation: {worst:.1e}")
@@ -767,7 +965,15 @@ def test_class2_bond_angle_is_one_energy_three_ways() -> None:
     # 100°: E = (10·0.1 − 8·0.05)·(−5°) = −π/60 — the value
     # molrs-ext-example's `bond_angle_cross_term` holds the Rust form to.
     t = math.radians(100)
-    hand = np.array([[[1.6, 0.0, 0.0], [0.0, 0.0, 0.0], [1.4 * math.cos(t), 1.4 * math.sin(t), 0.0]]])
+    hand = np.array(
+        [
+            [
+                [1.6, 0.0, 0.0],
+                [0.0, 0.0, 0.0],
+                [1.4 * math.cos(t), 1.4 * math.sin(t), 0.0],
+            ]
+        ]
+    )
     want = -math.pi / 60
     worst = 0.0
     for style in ("class2", "class2/np"):
@@ -784,7 +990,9 @@ def test_class2_bond_angle_is_one_energy_three_ways() -> None:
     assert worst <= 1e-12
     # Compiled, the force is minus the central difference of the energy.
     ff, tp = field("ba", "real")
-    ff.def_style("bond_angle", "class2/np").def_type("A-B-B", tp["A"], tp["B"], tp["B"], **BA)
+    ff.def_style("bond_angle", "class2/np").def_type(
+        "A-B-B", tp["A"], tp["B"], tp["B"], **BA
+    )
     f0 = frame(CHAIN[:3], ["A", "B", "B"], "bond_angles", [(0, 1, 2)], ["A-B-B"])
     _, forces = price(ff, f0)
     h, fd = 1e-6, []
@@ -792,9 +1000,25 @@ def test_class2_bond_angle_is_one_energy_three_ways() -> None:
         up, down = CHAIN[:3].copy().ravel(), CHAIN[:3].copy().ravel()
         up[k] += h
         down[k] -= h
-        e_up = price(ff, frame(up.reshape(3, 3), ["A", "B", "B"], "bond_angles", [(0, 1, 2)], ["A-B-B"]))[0]
-        e_dn = price(ff, frame(down.reshape(3, 3), ["A", "B", "B"], "bond_angles", [(0, 1, 2)], ["A-B-B"]))[0]
+        e_up = price(
+            ff,
+            frame(
+                up.reshape(3, 3), ["A", "B", "B"], "bond_angles", [(0, 1, 2)], ["A-B-B"]
+            ),
+        )[0]
+        e_dn = price(
+            ff,
+            frame(
+                down.reshape(3, 3),
+                ["A", "B", "B"],
+                "bond_angles",
+                [(0, 1, 2)],
+                ["A-B-B"],
+            ),
+        )[0]
         fd.append(-(e_up - e_dn) / (2 * h))
     fd_err = rel(forces, np.array(fd), np.abs(forces).max())
     assert fd_err <= 1e-7
-    print(f"MEASURED bond_angle expression = numpy = hand: {worst:.1e}; F vs FD {fd_err:.1e}")
+    print(
+        f"MEASURED bond_angle expression = numpy = hand: {worst:.1e}; F vs FD {fd_err:.1e}"
+    )

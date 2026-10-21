@@ -1,0 +1,152 @@
+%VERSION  VERSION_STAMP = V0001.000  DATE = 10/16/26  20:27:40                  
+%FLAG TITLE                                                                     
+%FORMAT(20a4)                                                                   
+MOL                                                                             
+%FLAG POINTERS                                                                  
+%FORMAT(10I8)                                                                   
+       9       5       6       2      12       1      12       0       0       0
+      34       1       2       1       0       5       7       4       5       0
+       0       0       0       0       0       0       0       0       9       0
+       0
+%FLAG ATOM_NAME                                                                 
+%FORMAT(20a4)                                                                   
+C1  C2  O1  H1  H2  H3  H4  H5  H6  
+%FLAG CHARGE                                                                    
+%FORMAT(5E16.8)                                                                 
+ -7.62402810E-01  7.32736905E-01 -7.22833085E+00  4.62390863E-01  4.62390863E-01
+  4.62390863E-01  1.02181547E+00  1.02181547E+00  3.82717500E+00
+%FLAG ATOMIC_NUMBER                                                             
+%FORMAT(10I8)                                                                   
+       6       6       8       1       1       1       1       1       1
+%FLAG MASS                                                                      
+%FORMAT(5E16.8)                                                                 
+  1.20100000E+01  1.20100000E+01  1.60000000E+01  1.00800000E+00  1.00800000E+00
+  1.00800000E+00  1.00800000E+00  1.00800000E+00  1.00800000E+00
+%FLAG ATOM_TYPE_INDEX                                                           
+%FORMAT(10I8)                                                                   
+       1       1       2       3       3       3       4       4       5
+%FLAG NUMBER_EXCLUDED_ATOMS                                                     
+%FORMAT(10I8)                                                                   
+       8       7       6       4       3       2       2       1       1
+%FLAG NONBONDED_PARM_INDEX                                                      
+%FORMAT(10I8)                                                                   
+       1       2       4       7      11       2       3       5       8      12
+       4       5       6       9      13       7       8       9      10      14
+      11      12      13      14      15
+%FLAG RESIDUE_LABEL                                                             
+%FORMAT(20a4)                                                                   
+MOL 
+%FLAG RESIDUE_POINTER                                                           
+%FORMAT(10I8)                                                                   
+       1
+%FLAG BOND_FORCE_CONSTANT                                                       
+%FORMAT(5E16.8)                                                                 
+  2.28890000E+02  3.45250000E+02  2.85150000E+02  3.44220000E+02  5.35510000E+02
+%FLAG BOND_EQUIL_VALUE                                                          
+%FORMAT(5E16.8)                                                                 
+  1.53540000E+00  1.09620000E+00  1.42420000E+00  1.09690000E+00  9.72500000E-01
+%FLAG ANGLE_FORCE_CONSTANT                                                      
+%FORMAT(5E16.8)                                                                 
+  7.67900000E+01  4.32800000E+01  4.32700000E+01  6.51300000E+01  5.62900000E+01
+  3.58000000E+01  3.56400000E+01
+%FLAG ANGLE_EQUIL_VALUE                                                         
+%FORMAT(5E16.8)                                                                 
+  1.91392888E+00  1.91270715E+00  1.91427794E+00  1.87430989E+00  1.92649525E+00
+  1.88024401E+00  1.89455572E+00
+%FLAG DIHEDRAL_FORCE_CONSTANT                                                   
+%FORMAT(5E16.8)                                                                 
+  6.00000000E-02  9.00000000E-02  1.55555556E-01  1.23000000E-01
+%FLAG DIHEDRAL_PERIODICITY                                                      
+%FORMAT(5E16.8)                                                                 
+  3.00000000E+00  3.00000000E+00  3.00000000E+00  3.00000000E+00
+%FLAG DIHEDRAL_PHASE                                                            
+%FORMAT(5E16.8)                                                                 
+  0.00000000E+00  0.00000000E+00  0.00000000E+00  0.00000000E+00
+%FLAG SCEE_SCALE_FACTOR                                                         
+%FORMAT(5E16.8)                                                                 
+  1.20000000E+00  1.20000000E+00  1.20000000E+00  1.20000000E+00
+%FLAG SCNB_SCALE_FACTOR                                                         
+%FORMAT(5E16.8)                                                                 
+  2.00000000E+00  2.00000000E+00  2.00000000E+00  2.00000000E+00
+%FLAG SOLTY                                                                     
+%FORMAT(5E16.8)                                                                 
+  0.00000000E+00  0.00000000E+00  0.00000000E+00  0.00000000E+00  0.00000000E+00
+%FLAG LENNARD_JONES_ACOEF                                                       
+%FORMAT(5E16.8)                                                                 
+  1.02073671E+06  7.18991463E+05  5.03152404E+05  1.00235148E+05  6.80216136E+04
+  7.94617769E+03  6.97998263E+04  4.69084694E+04  5.22955465E+03  3.39005767E+03
+  3.03553352E+02  1.74176419E+02  8.80612241E+00  4.36660257E+00  1.10360882E-05
+%FLAG LENNARD_JONES_BCOEF                                                       
+%FORMAT(5E16.8)                                                                 
+  6.63431737E+02  5.36620538E+02  4.32634597E+02  1.37787728E+02  1.09393126E+02
+  2.57122925E+01  1.14981426E+02  9.08431526E+01  2.08590256E+01  1.67944276E+01
+  5.22789272E+00  3.81654050E+00  5.90150328E-01  4.15568027E-01  4.55498033E-04
+%FLAG BONDS_INC_HYDROGEN                                                        
+%FORMAT(10I8)                                                                   
+       0       9       2       0      12       2       0      15       2       3
+      18       4       3      21       4       6      24       5
+%FLAG BONDS_WITHOUT_HYDROGEN                                                    
+%FORMAT(10I8)                                                                   
+       0       3       1       3       6       3
+%FLAG ANGLES_INC_HYDROGEN                                                       
+%FORMAT(10I8)                                                                   
+       0       3      18       2       0       3      21       2       3       0
+       9       3       3       0      12       3       3       0      15       3
+       3       6      24       4       6       3      18       5       6       3
+      21       5       9       0      12       6       9       0      15       6
+      12       0      15       6      18       3      21       7
+%FLAG ANGLES_WITHOUT_HYDROGEN                                                   
+%FORMAT(10I8)                                                                   
+       0       3       6       1
+%FLAG DIHEDRALS_INC_HYDROGEN                                                    
+%FORMAT(10I8)                                                                   
+       0       3       6      24       1       9       0       3       6       2
+      12       0       3       6       2      15       0       3       6       2
+       9       0       3      18       3       9       0       3      21       3
+      12       0       3      18       3      12       0       3      21       3
+      15       0       3      18       3      15       0       3      21       3
+      18       3       6      24       4      21       3       6      24       4
+%FLAG DIHEDRALS_WITHOUT_HYDROGEN                                                
+%FORMAT(10I8)                                                                   
+
+%FLAG EXCLUDED_ATOMS_LIST                                                       
+%FORMAT(10I8)                                                                   
+       2       3       4       5       6       7       8       9       3       4
+       5       6       7       8       9       4       5       6       7       8
+       9       5       6       7       8       6       7       8       7       8
+       8       9       9       0
+%FLAG HBOND_ACOEF                                                               
+%FORMAT(5E16.8)                                                                 
+
+%FLAG HBOND_BCOEF                                                               
+%FORMAT(5E16.8)                                                                 
+
+%FLAG HBCUT                                                                     
+%FORMAT(5E16.8)                                                                 
+
+%FLAG AMBER_ATOM_TYPE                                                           
+%FORMAT(20a4)                                                                   
+c3  c3  oh  hc  hc  hc  h1  h1  ho  
+%FLAG TREE_CHAIN_CLASSIFICATION                                                 
+%FORMAT(20a4)                                                                   
+BLA BLA BLA BLA BLA BLA BLA BLA BLA 
+%FLAG JOIN_ARRAY                                                                
+%FORMAT(10I8)                                                                   
+       0       0       0       0       0       0       0       0       0
+%FLAG IROTAT                                                                    
+%FORMAT(10I8)                                                                   
+       0       0       0       0       0       0       0       0       0
+%FLAG RADIUS_SET                                                                
+%FORMAT(1a80)                                                                   
+modified Bondi radii (mbondi)                                                   
+%FLAG RADII                                                                     
+%FORMAT(5E16.8)                                                                 
+  1.70000000E+00  1.70000000E+00  1.50000000E+00  1.30000000E+00  1.30000000E+00
+  1.30000000E+00  1.30000000E+00  1.30000000E+00  8.00000000E-01
+%FLAG SCREEN                                                                    
+%FORMAT(5E16.8)                                                                 
+  7.20000000E-01  7.20000000E-01  8.50000000E-01  8.50000000E-01  8.50000000E-01
+  8.50000000E-01  8.50000000E-01  8.50000000E-01  8.50000000E-01
+%FLAG IPOL                                                                      
+%FORMAT(1I8)                                                                    
+       0

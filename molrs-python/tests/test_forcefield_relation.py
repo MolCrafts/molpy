@@ -130,7 +130,9 @@ def test_a_relation_style_round_trips_through_a_section_a_store_and_a_pickle(
     tmp_path: Path,
 ) -> None:
     ff = _ub_ff()
-    table = molrs.io.mrec.ForceFieldSection.from_forcefield(ff).table("urey_bradley", "spring")
+    table = molrs.io.mrec.ForceFieldSection.from_forcefield(ff).table(
+        "urey_bradley", "spring"
+    )
     assert list(table["k_ub"]) == [20.0, 11.0]
     path = tmp_path / "ff.mrec"
     molrs.io.write_mrec(path, forcefield=ff)
@@ -153,25 +155,38 @@ def _unregistered_section(expression: str | None) -> molrs.io.mrec.ForceFieldSec
     if expression is None:
         del entry["expression"]
     old = molrs.io.mrec.ForceFieldSection.block_name("urey_bradley", "spring")
-    tables[molrs.io.mrec.ForceFieldSection.block_name("bespoke", "spring")] = tables.pop(old)
+    tables[molrs.io.mrec.ForceFieldSection.block_name("bespoke", "spring")] = (
+        tables.pop(old)
+    )
     return molrs.io.mrec.ForceFieldSection(document, tables)
 
 
-def test_an_unregistered_category_is_kept_and_refused_by_name_without_an_expression() -> None:
+def test_an_unregistered_category_is_kept_and_refused_by_name_without_an_expression() -> (
+    None
+):
     back = _unregistered_section(None).to_forcefield()
     style = back.get_style("bespoke", "spring")
     assert isinstance(style, molrs.ff.forcefield.RelationStyle)
     assert style.arity == 3
-    assert [s.category for s in back.get_styles(molrs.ff.forcefield.Style)] == ["atom", "bespoke"]
+    assert [s.category for s in back.get_styles(molrs.ff.forcefield.Style)] == [
+        "atom",
+        "bespoke",
+    ]
     assert len(back.get_types("bespoke")) == 2
-    assert molrs.io.mrec.ForceFieldSection.from_forcefield(back).table("bespoke", "spring") is not None
+    assert (
+        molrs.io.mrec.ForceFieldSection.from_forcefield(back).table("bespoke", "spring")
+        is not None
+    )
     pickled = pickle.loads(pickle.dumps(back))
     assert pickled.get_style("bespoke", "spring").arity == 3
     compiler = molrs.ff.compile.PotentialCompiler(back)
     with pytest.raises(ValueError, match="no kernel for bespoke `spring`"):
         compiler.compile(_frame("bespokes"))
     # Without its block there is nothing to price.
-    assert compiler.compile(_frame("urey_bradleys")).evaluate(_frame("urey_bradleys"))[0] == 0.0
+    assert (
+        compiler.compile(_frame("urey_bradleys")).evaluate(_frame("urey_bradleys"))[0]
+        == 0.0
+    )
 
 
 def test_an_unregistered_category_with_an_expression_is_priced_by_it() -> None:

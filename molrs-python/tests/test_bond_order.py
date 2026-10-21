@@ -7,8 +7,16 @@ from molrs.core import BondNumber, BondOrder
 
 
 def test_codes_are_the_stored_ones() -> None:
-    assert [int(o) for o in (BondOrder.Unknown, BondOrder.Single, BondOrder.Double,
-                             BondOrder.Triple, BondOrder.Aromatic)] == [0, 1, 2, 3, 4]
+    assert [
+        int(o)
+        for o in (
+            BondOrder.Unknown,
+            BondOrder.Single,
+            BondOrder.Double,
+            BondOrder.Triple,
+            BondOrder.Aromatic,
+        )
+    ] == [0, 1, 2, 3, 4]
     assert BondOrder.Aromatic.code == 4
     assert BondNumber.Quadruple.code == 4
 
@@ -34,7 +42,7 @@ def test_a_number_implies_its_class_and_counts_its_valence() -> None:
 
 
 def test_set_bond_class_takes_the_classes() -> None:
-    mol = molrs.io.smiles.SmilesIr.parse("CC").to_atomistic()
+    mol = molrs.io.smiles.read_smiles("CC").to_atomistic()
     bond = next(iter(mol.bonds))
     mol.set_bond_class(bond, BondOrder.Double, BondNumber.Double)
     assert BondOrder.from_code(int(bond["bond_type"])) == BondOrder.Double

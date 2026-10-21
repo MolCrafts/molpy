@@ -115,11 +115,34 @@ def fresh(tmp_path_factory: pytest.TempPathFactory) -> tuple[dict, dict]:
     """Every record written here, and what a fresh process makes of it."""
     tmp = tmp_path_factory.mktemp("persist")
     records = {
-        "fene": (molrs.io.mrec.ForceFieldSection.from_forcefield(_fene()), "bonds", [[0, 1]], ["t"]),
-        "fene_registered": (molrs.io.mrec.ForceFieldSection.from_forcefield(_fene_registered()), "bonds", [[0, 1]], ["t"]),
-        "ub_expr": (molrs.io.mrec.ForceFieldSection.from_forcefield(_ub("spring", UB)), "urey_bradleys", *UB_ROWS),
-        "ub_native": (molrs.io.mrec.ForceFieldSection.from_forcefield(_ub("harmonic", None)), "urey_bradleys", *UB_ROWS),
-        "table": (molrs.io.mrec.ForceFieldSection.from_forcefield(_table()), "dihedrals", [[0, 1, 2, 3]], ["t"]),
+        "fene": (
+            molrs.io.mrec.ForceFieldSection.from_forcefield(_fene()),
+            "bonds",
+            [[0, 1]],
+            ["t"],
+        ),
+        "fene_registered": (
+            molrs.io.mrec.ForceFieldSection.from_forcefield(_fene_registered()),
+            "bonds",
+            [[0, 1]],
+            ["t"],
+        ),
+        "ub_expr": (
+            molrs.io.mrec.ForceFieldSection.from_forcefield(_ub("spring", UB)),
+            "urey_bradleys",
+            *UB_ROWS,
+        ),
+        "ub_native": (
+            molrs.io.mrec.ForceFieldSection.from_forcefield(_ub("harmonic", None)),
+            "urey_bradleys",
+            *UB_ROWS,
+        ),
+        "table": (
+            molrs.io.mrec.ForceFieldSection.from_forcefield(_table()),
+            "dihedrals",
+            [[0, 1, 2, 3]],
+            ["t"],
+        ),
         "bespoke": (_bespoke(), "bespokes", *UB_ROWS),
     }
     here_out, cases = {}, {}

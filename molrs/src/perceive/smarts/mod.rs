@@ -89,8 +89,9 @@ pub use reaction::{Reaction, ReactionBatch};
 
 /// Ring-related SMARTS atom primitives found in a compiled pattern.
 ///
-/// This is **syntax only**: callers (e.g. molpy `TypeScope`) decide which kinds
-/// make a pattern set unbounded. The engine never returns a boolean "is_bounded".
+/// This is **syntax only**: the caller decides what a kind means for it (for
+/// example, whether an untyped `[R]` leaves a pattern set without a bounded
+/// ring size). The engine never returns a boolean "is_bounded".
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum RingPrimitive {
     /// Sized ring membership, e.g. `[r6]` or a finite endpoint of `r{lo-hi}`.

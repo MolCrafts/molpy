@@ -21,6 +21,7 @@ def _atom(mol, symbol, x, y, z):
     """Add an atom of element ``symbol`` at ``(x, y, z)``; return its view."""
     return mol.add_atom(atomic_number=Z[symbol], x=x, y=y, z=z)
 
+
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
@@ -264,7 +265,9 @@ def test_apply_many_compiles_all_leaving_groups_before_mutation():
     world = first
     row_of = {atom: row for row, atom in enumerate(second.atoms)}
     merged = world.merge(second)  # second's atoms, now in world, in row order
-    binding_second = {label: merged[row_of[atom]] for label, atom in binding_second.items()}
+    binding_second = {
+        label: merged[row_of[atom]] for label, atom in binding_second.items()
+    }
     before = world.n_atoms
 
     batch = rxn.apply_many(world, [binding_first, binding_second], refresh=False)
@@ -275,7 +278,9 @@ def test_apply_many_compiles_all_leaving_groups_before_mutation():
     assert batch.created == [[], []]
     assert all(
         set(binding.values()) <= set(seed)
-        for binding, seed in zip((binding_first, binding_second), batch.touched, strict=True)
+        for binding, seed in zip(
+            (binding_first, binding_second), batch.touched, strict=True
+        )
     )
 
 

@@ -1349,4 +1349,135 @@ mod codecs {
             "{err}"
         );
     }
+
+    /// A water-like A-B-A under bond and angle `harmonic`, `lj/cut` and
+    /// `coul/cut` (its `delta` stated at the spec default), every bonded row
+    /// carrying `extra` besides its parameters.
+    fn with_row_extras(extra: &Params) -> (ForceField, Frame) {
+        let mut ff = ForceField::new("extras");
+        ff.set_units("real");
+        let atoms = ff.def_style("atom", "full", Params::new()).unwrap();
+        for (t, m) in [("A", 16.0), ("B", 1.008)] {
+            atoms
+                .def_type(t, &[], Params::from_iter([("mass", m)].iter().copied()))
+                .unwrap();
+        }
+        let row = |pairs: &[(&str, F)]| {
+            let mut p = Params::from_iter((pairs).iter().copied());
+            for (k, v) in extra.iter() {
+                p.set(k, v.clone());
+            }
+            p
+        };
+        ff.def_style("bond", "harmonic", Params::new())
+            .unwrap()
+            .def_type("A-B", &["A", "B"], row(&[("k", 450.0), ("r0", 0.96)]))
+            .unwrap();
+        ff.def_style("angle", "harmonic", Params::new())
+            .unwrap()
+            .def_type(
+                "B-A-B",
+                &["B", "A", "B"],
+                row(&[("k", 55.0), ("theta0", 104.5)]),
+            )
+            .unwrap();
+        let mut lj_style = Params::from_iter([("cutoff", 10.0)].iter().copied());
+        lj_style.set("mixing", "arithmetic");
+        let lj = ff.def_style("pair", "lj/cut", lj_style).unwrap();
+        for (t, eps, sigma) in [("A", 0.15, 3.15), ("B", 0.0, 0.0)] {
+            lj.def_type(
+                t,
+                &[t],
+                Params::from_iter([("epsilon", eps), ("sigma", sigma)].iter().copied()),
+            )
+            .unwrap();
+        }
+        ff.def_style(
+            "pair",
+            "coul/cut",
+            Params::from_iter([("cutoff", 10.0), ("delta", 0.0)].iter().copied()),
+        )
+        .unwrap();
+        let frame = frame(
+            &["B", "A", "B"],
+            &[("A", 16.0), ("B", 1.008)],
+            &[
+                ("bonds", &[(&[0, 1], "A-B"), (&[1, 2], "A-B")]),
+                ("angles", &[(&[0, 1, 2], "B-A-B")]),
+            ],
+        );
+        (ff, frame)
+    }
+
+    /// Every engine writer's output of `ff`, or its refusal.
+    fn every_writer(ff: &ForceField, frame: &Frame) -> Vec<(&'static str, Result<String, String>)> {
+        let labels = TypeLabels::from_frame(frame).unwrap();
+        let err = |e: crate::io::writer::ForceFieldWriteError| e.to_string();
+        vec![
+            (
+                "LAMMPS",
+                LammpsForcefieldWriter::new(&labels)
+                    .written(ff)
+                    .map_err(err),
+            ),
+            (
+                "GROMACS",
+                crate::io::writer::capture(|sink| {
+                    GromacsTopForcefieldWriter::new().write_system(sink, ff, frame)
+                })
+                .map_err(err),
+            ),
+            ("OpenMM", OpenmmXmlWriter::new().written(ff).map_err(err)),
+            (
+                "frcmod",
+                crate::io::writer::capture(|sink| {
+                    use crate::io::writer::ForceFieldWriter;
+                    crate::io::amber::AmberFrcmodWriter::new().write(sink, ff)
+                })
+                .map_err(err),
+            ),
+        ]
+    }
+
+    /// The keys that price nothing — an estimate's provenance, an
+    /// annotation — pass every writer, and a parameter at its spec default
+    /// (`coul/cut`'s `delta = 0`) needs no column; a numeric key no format
+    /// has a column for is still refused by each, by name.
+    #[test]
+    fn writers_skip_what_prices_nothing_and_refuse_the_unknown() {
+        let mut provenance = Params::new();
+        crate::ff::typifier::Provenance::analogy(2.5, "c3-os").apply_to(&mut provenance);
+        provenance.set("desc", "a water");
+        provenance.set("doi", "10.0/x");
+        let (ff, frame) = with_row_extras(&provenance);
+        for (writer, out) in every_writer(&ff, &frame) {
+            let text = out.unwrap_or_else(|e| panic!("{writer}: {e}"));
+            assert!(!text.contains("estimate_"), "{writer}: {text}");
+        }
+
+        let (ff, frame) = with_row_extras(&Params::from_iter([("bogus", 1.0)].iter().copied()));
+        for (writer, out) in every_writer(&ff, &frame) {
+            match out {
+                Err(e) => assert!(e.contains("bogus"), "{writer}: {e}"),
+                Ok(text) => panic!("{writer} dropped `bogus`:\n{text}"),
+            }
+        }
+    }
+
+    /// A style parameter is refused unless at its spec default: `coul/cut`
+    /// with `delta = 0` writes, with `delta = 0.5` (a soft core no engine
+    /// file here states) is refused by name.
+    #[test]
+    fn a_style_parameter_off_its_default_is_refused() {
+        let (mut ff, frame) = with_row_extras(&Params::new());
+        ff.get_style_mut("pair", "coul/cut")
+            .unwrap()
+            .set_param("delta", 0.5);
+        for (writer, out) in every_writer(&ff, &frame) {
+            let e = out
+                .err()
+                .unwrap_or_else(|| panic!("{writer} dropped delta"));
+            assert!(e.contains("delta"), "{writer}: {e}");
+        }
+    }
 }

@@ -2,6 +2,8 @@
 
 use crate::ff::ir::Engine;
 use crate::ff::style_registry::refuse_style;
+use crate::io::null_cells::refuse_null_cells;
+use crate::io::pdb::labels::{AtomLabels, LabelWidths};
 use std::collections::{BTreeMap, HashMap, HashSet};
 
 use crate::core::constants::VACUUM_DIELECTRIC;
@@ -91,12 +93,19 @@ const LJ_STYLES: [&str; 2] = ["lj/cut", "lj/charmm"];
 /// .mdp's `rvdw` / `rcoulomb` and switch), not force-field data, so they are
 /// not written.
 ///
-/// `pair/coul/cut` and `pair/coul/charmm` have no directive: GROMACS fixes
-/// its Coulomb constant (CODATA 2018, LAMMPS `real`'s × (1 + 9.9·10⁻⁹)) as
-/// LAMMPS and OpenMM fix theirs, so the field's stated `coulomb` is not
-/// written — an AMBER field's 332.0522173 is priced at GROMACS's constant,
-/// 3.5·10⁻⁵ above it, as every engine but AMBER's own prices it. Only
-/// dielectric 1 is accepted, and nothing is written.
+/// `pair/coul/cut`, `pair/coul/charmm` and the long-range
+/// `pair/coul/long/pme` have no directive: the `.top` holds the charges
+/// (`[ atomtypes ]`, `[ atoms ]`), and how GROMACS sums them — cut-off,
+/// reaction field, Ewald, PME — is the `.mdp`'s `coulombtype` (with
+/// `rcoulomb`, `fourier-spacing`, `pme-order`, `ewald-rtol`), chosen at run
+/// time, as LAMMPS's `kspace_style` and OpenMM's `createSystem` arguments are.
+/// GROMACS fixes its Coulomb constant (CODATA 2018, LAMMPS `real`'s × (1 +
+/// 9.9·10⁻⁹)) as LAMMPS and OpenMM fix theirs, so the field's stated
+/// `coulomb` is not written — an AMBER field's 332.0522173 is priced at
+/// GROMACS's constant, 3.5·10⁻⁵ above it, as every engine but AMBER's own
+/// prices it. Only dielectric 1 is accepted, and nothing is written; a
+/// `coul/long/pme` stating its Ewald parameters (`alpha`, `order`,
+/// `grid_*`, `.mdp` settings) is refused.
 ///
 /// The force field must be in `real` units (the conversions above are from
 /// Å and kcal/mol); another declared preset is refused.
@@ -135,6 +144,13 @@ const LJ_STYLES: [&str; 2] = ["lj/cut", "lj/charmm"];
 /// funct-9 line per periodic term, a single term included), so no lookup can
 /// pick another type; `cmaps` rows
 /// are found by GROMACS's lookup, which must give the row's own grid.
+/// The `[ atoms ]` residue number, residue name and atom name are the ones
+/// [`write_gro`](crate::io::write_gro) writes for the same frame (the PDB
+/// writer's labels at GROMACS's five columns): stated, else — no column, or
+/// an empty or null cell — the molecule's number, `MOL`, and the element
+/// numbered within its residue, so `grompp` finds the `.gro` and the `.top`
+/// alike. A null `type`, `charge` or `mass` cell is refused by column and
+/// rows.
 /// `[ pairs ]` lists the frame's 1-4 pairs (funct 1, or with parameters of
 /// their own from the override cells: funct 1 `σ ε` when only `epsilon` /
 /// `sigma` differ, else funct 2 `fudgeQQ qᵢqⱼ 1 σ lj_scale·ε`), and
@@ -469,11 +485,7 @@ impl GromacsTopForcefieldWriter {
     ) -> Result<Vec<Line>, ForceFieldWriteError> {
         let what = format!("{}/{} type '{name}'", style.category(), style.name());
         let allowed = |keys: &[&str]| -> Result<(), String> {
-            match p
-                .iter()
-                .filter_map(|(k, v)| v.as_num().map(|x| (k, x)))
-                .find(|(key, _)| !keys.contains(key))
-            {
+            match p.iter_parameters().find(|(key, _)| !keys.contains(key)) {
                 Some((key, _)) => Err(format!("{what}: parameter '{key}' has no GROMACS column")),
                 None => Ok(()),
             }
@@ -586,17 +598,13 @@ impl GromacsTopForcefieldWriter {
                     m += 1;
                 }
                 let terms = m - 1;
-                if let Some((key, _)) = p
-                    .iter()
-                    .filter_map(|(k, v)| v.as_num().map(|x| (k, x)))
-                    .find(|(key, _)| {
-                        ["k", "periodicity", "phase"].iter().all(|prefix| {
-                            key.strip_prefix(prefix)
-                                .and_then(|i| i.parse::<usize>().ok())
-                                .is_none_or(|i| i == 0 || i > terms)
-                        })
+                if let Some((key, _)) = p.iter_parameters().find(|(key, _)| {
+                    ["k", "periodicity", "phase"].iter().all(|prefix| {
+                        key.strip_prefix(prefix)
+                            .and_then(|i| i.parse::<usize>().ok())
+                            .is_none_or(|i| i == 0 || i > terms)
                     })
-                {
+                }) {
                     return Err(format!("{what}: parameter '{key}' has no GROMACS column").into());
                 }
                 Ok(lines)
@@ -715,7 +723,12 @@ impl GromacsTopForcefieldWriter {
 }
 
 /// The styles this writer reads: `Ok` when `style` is one, `Err` naming it
-/// otherwise.
+/// otherwise. A style parameter stated at its spec default (`coul/cut`'s
+/// `delta = 0`) prices as its absence does and needs no directive
+/// ([`StyleSpec::style_params_off_default`]); any other value a directive
+/// cannot carry is refused.
+///
+/// [`StyleSpec::style_params_off_default`]: crate::ff::ir::StyleSpec::style_params_off_default
 fn check_style(style: &Style) -> Result<(), ForceFieldWriteError> {
     let declared = |key: &str, value: f64| {
         style
@@ -724,19 +737,17 @@ fn check_style(style: &Style) -> Result<(), ForceFieldWriteError> {
             .and_then(|v| v.as_num())
             .is_none_or(|v| v == value)
     };
+    let stated = crate::ff::style_registry::with_global_registry(|r| {
+        r.style(style.category(), style.name())
+            .map(|(spec, _)| spec.style_params_off_default(style.params()))
+    })
+    .unwrap_or_else(|| style.params().clone());
     let extra_params = |keys: &[&str]| {
-        style
-            .params()
+        stated
             .iter()
             .filter_map(|(k, v)| v.as_num().map(|x| (k, x)))
             .map(|(k, _)| k)
-            .chain(
-                style
-                    .params()
-                    .iter()
-                    .filter_map(|(k, v)| v.as_text().map(|s| (k, s)))
-                    .map(|(k, _)| k),
-            )
+            .chain(stated.iter().filter_map(|(k, v)| v.as_text().map(|_| k)))
             .find(|k| !keys.contains(k))
             .map(str::to_owned)
     };
@@ -778,6 +789,22 @@ fn check_style(style: &Style) -> Result<(), ForceFieldWriteError> {
                     style.params()
                 )
                 .into());
+            }
+            Ok(())
+        }
+        // A long-range Coulomb is the charges too: the method (PME, Ewald)
+        // and its accuracy are the .mdp's.
+        ("pair", "coul/long/pme") => {
+            if let Some(key) = extra_params(&["coulomb", "cutoff"]) {
+                return Err(format!(
+                    "pair/coul/long/pme states its Ewald '{key}', which a .top has no place for: \
+                     the long-range method and its accuracy are .mdp settings (coulombtype = PME, \
+                     fourier-spacing, pme-order, ewald-rtol)"
+                )
+                .into());
+            }
+            if !style.type_rows().is_empty() {
+                return Err("pair/coul/long/pme has types: the charges are the atom types'".into());
             }
             Ok(())
         }
@@ -955,11 +982,7 @@ impl GromacsTopForcefieldWriter {
             let mut rows = String::new();
             for (name, ends, params) in cmap.type_rows() {
                 let cols = resolve(cmap, name, &ends)?;
-                if let Some((key, _)) = params
-                    .iter()
-                    .filter_map(|(k, v)| v.as_num().map(|x| (k, x)))
-                    .next()
-                {
+                if let Some((key, _)) = params.iter_parameters().next() {
                     return Err(format!(
                         "cmap/charmm type '{name}': parameter '{key}' has no GROMACS column"
                     )
@@ -1031,8 +1054,12 @@ impl GromacsTopForcefieldWriter {
             .and_then(|c| c.get::<f64>())
             .ok_or("atoms has no charge column")?;
         let masses = atoms.get("mass").and_then(|c| c.get::<f64>());
-        let (names, res_names) = (strings("name"), strings("res_name"));
-        let res_id = atoms.get("res_id").and_then(|c| c.get::<u64>());
+        // A stated type, charge or mass has no stand-in; an unset name is
+        // generated, as the `.gro` writer generates it (`null_cells`).
+        refuse_null_cells(frame, "atoms", &["type", "charge", "mass"])
+            .map_err(|e| e.to_string())?;
+        let labels =
+            AtomLabels::with_widths(frame, n, LabelWidths::GROMACS).map_err(|e| e.to_string())?;
         let atom_types: HashMap<&str, &AtomType> = ff
             .get_atomtypes()
             .into_iter()
@@ -1382,12 +1409,12 @@ impl GromacsTopForcefieldWriter {
                             format!("atom {}: no mass column and type '{t}' has no mass", i + 1)
                         })?,
                 };
-                let name = names.map_or_else(|| format!("A{}", i + 1), |c| c[[i]].clone());
-                let res_name = res_names.map_or_else(|| "MOL".to_owned(), |c| c[[i]].clone());
                 out.push_str(&format!(
-                    "  {}  {t}  {}  {res_name}  {name}  {}  {}  {}\n",
+                    "  {}  {t}  {}  {}  {}  {}  {}  {}\n",
                     i - lo + 1,
-                    res_id.map_or(1, |c| c[[i]]),
+                    labels.res_seqs[i],
+                    labels.res_names[i],
+                    labels.names[i],
                     i - lo + 1,
                     full(charges[[i]]),
                     full(mass)
@@ -2697,6 +2724,43 @@ SOL  1
             .unwrap()
             .set_param("coulomb", 332.0522173);
         assert_eq!(write(&a), write(&b));
+    }
+
+    /// A long-range Coulomb has no directive, as a cut one has none: the
+    /// `.top` holds the charges, and PME / Ewald is the `.mdp`'s
+    /// `coulombtype`. The `.top` is the `coul/cut` one; stated Ewald
+    /// parameters (`fourier-spacing`, `pme-order`, `ewald-rtol` in the
+    /// `.mdp`) are refused.
+    #[test]
+    fn a_long_range_coulomb_writes_the_coul_cut_top() {
+        let field = |coul: &str, params: Params| {
+            let mut ff = opls_ff(Some("geometric"));
+            ff.def_style("pair", coul, params).unwrap();
+            ff
+        };
+        let cut = write(&field(
+            "coul/cut",
+            Params::from_iter([("cutoff", 10.0)].iter().copied()),
+        ));
+        let long = field(
+            "coul/long/pme",
+            Params::from_iter(
+                [
+                    ("cutoff", 10.0),
+                    ("coulomb", crate::core::constants::gromacs_coulomb_real()),
+                ]
+                .iter()
+                .copied(),
+            ),
+        );
+        assert_eq!(write(&long), cut);
+        for key in ["alpha", "order", "grid_z"] {
+            let ff = field(
+                "coul/long/pme",
+                Params::from_iter([("cutoff", 10.0), (key, 4.0)].iter().copied()),
+            );
+            assert_names(&write_err(&ff), &["coul/long/pme", key, ".mdp"]);
+        }
     }
 
     /// The writer converts from real units; another declared preset is

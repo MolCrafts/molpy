@@ -98,7 +98,9 @@ class TestMrecReader:
             np.asarray(frame["atoms"]["x"]), np.array(_ATOM_X, dtype=np.float64)
         )
 
-    def test_a_record_without_a_trajectory_is_refused_by_name(self, tmp_path: Path) -> None:
+    def test_a_record_without_a_trajectory_is_refused_by_name(
+        self, tmp_path: Path
+    ) -> None:
         path = tmp_path / "snapshot.mrec"
         molrs.io.write_mrec(path, frame=_coords_frame())
         with pytest.raises(ValueError, match="trajectory"):
@@ -183,7 +185,9 @@ class TestMrecSurface:
         assert reader[0]["atoms"].n_rows == 3
 
     def test_the_record_writer_is_flat_on_io(self) -> None:
-        doors = sorted(name for name in dir(molrs.io) if "mrec" in name and name != "mrec")
+        doors = sorted(
+            name for name in dir(molrs.io) if "mrec" in name and name != "mrec"
+        )
         assert doors == ["write_mrec"]
         assert not [n for n in dir(molrs.io.mrec) if n.startswith(("read", "write"))]
 
@@ -260,7 +264,9 @@ class TestMetaArgument:
         assert meta["seeds"] == [1, 2]
 
         path = tmp_path / "nested.mrec"
-        molrs.io.write_mrec(path, frame=frame, meta={"run": run, "cell": frame.meta["cell"]})
+        molrs.io.write_mrec(
+            path, frame=frame, meta={"run": run, "cell": frame.meta["cell"]}
+        )
         meta = _record(path).meta()
         assert meta["run"] == {"engine": "md", "seeds": [1, 2]}
         assert meta["cell"] == [1.0, 2.0, 3.0]
@@ -297,7 +303,9 @@ class TestMetaArgument:
 
     def test_a_non_mapping_meta_is_refused(self, tmp_path: Path) -> None:
         with pytest.raises(TypeError, match="mapping"):
-            molrs.io.write_mrec(tmp_path / "bad.mrec", frame=_coords_frame(), meta=[1, 2])
+            molrs.io.write_mrec(
+                tmp_path / "bad.mrec", frame=_coords_frame(), meta=[1, 2]
+            )
 
 
 class TestDeclaredPrecision:
@@ -317,7 +325,9 @@ class TestDeclaredPrecision:
         return frame
 
     def test_block_declares_and_withdraws(self) -> None:
-        block = molrs.core.Block({"x": self._VALUES.copy(), "n": np.array([1, 2, 3, 4])})
+        block = molrs.core.Block(
+            {"x": self._VALUES.copy(), "n": np.array([1, 2, 3, 4])}
+        )
         assert block.precision("x") is None
         block.set_precision("x", 1e-3)
         assert block.precision("x") == 1e-3
@@ -410,7 +420,9 @@ class TestTypedFrameMeta:
         frame = molrs.io.mrec.MrecReader(path)[0]
         assert np.isnan(frame.meta["temp"])
 
-    def test_a_declared_meta_key_without_a_fill_is_required(self, tmp_path: Path) -> None:
+    def test_a_declared_meta_key_without_a_fill_is_required(
+        self, tmp_path: Path
+    ) -> None:
         schema = molrs.io.mrec.SequenceSchema.from_frames([_coords_frame()])
         schema.declare_meta("temp", "f64")
         assert ("temp", "f64") in schema.meta_keys()
@@ -600,7 +612,9 @@ class TestForceFieldSection:
         """molrec forcefield linking rule 3: B-A restating A-B is one row when
         the parameters agree (name and annotations aside), a refusal when not."""
 
-        def section(epsilon: list[float], desc: list[str]) -> molrs.io.mrec.ForceFieldSection:
+        def section(
+            epsilon: list[float], desc: list[str]
+        ) -> molrs.io.mrec.ForceFieldSection:
             rows = molrs.core.Block(
                 {
                     "name": np.array(["A", "B", "A-B", "B-A"]),
@@ -628,3 +642,19 @@ class TestForceFieldSection:
     def test_block_name_percent_encodes_the_style(self) -> None:
         name = molrs.io.mrec.ForceFieldSection.block_name("pair", "lj/cut/coul/long")
         assert name == "pair.lj%2Fcut%2Fcoul%2Flong"
+
+
+def test_packed_trajectory_keeps_portable_section_paths(tmp_path: Path) -> None:
+    import zipfile
+
+    path = tmp_path / "packed.mrec"
+    molrs.io.write_mrec(path, trajectory=molrs.core.Trajectory([_coords_frame()]))
+    packed = Path(molrs.io.mrec.pack_mrec_zip(path))
+    with zipfile.ZipFile(packed) as archive:
+        names = archive.namelist()
+        assert any(name.startswith("trajectory/") for name in names)
+        assert all("\\" not in name for name in names)
+    assert "trajectory" in _record(packed).sections()
+    reader = molrs.io.mrec.MrecReader(packed)
+    assert len(reader) == 1
+    _assert_coords(reader[0])

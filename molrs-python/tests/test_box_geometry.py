@@ -12,9 +12,7 @@ def test_box_exposes_native_minimum_image_geometry():
     box = _cube(10.0)
     r1 = np.array([1.0, 1.0, 1.0])
     r2 = np.array([9.0, 1.0, 1.0])
-    np.testing.assert_allclose(
-        box.delta(r1, r2, minimum_image=True), [-2.0, 0.0, 0.0]
-    )
+    np.testing.assert_allclose(box.delta(r1, r2, minimum_image=True), [-2.0, 0.0, 0.0])
     np.testing.assert_allclose(box.distances(r1[None], r2[None]), [2.0])
 
 

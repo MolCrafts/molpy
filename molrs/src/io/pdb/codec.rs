@@ -3,7 +3,7 @@
 //! Implements PDB 3.3 specification for coordinate section records:
 //! <https://www.wwpdb.org/documentation/file-format-content/format33/sect9.html>
 
-use crate::core::Cell;
+use crate::io::pdb::labels::AtomLabels;
 use crate::io::reader::{FrameReader, ReadSeek, Reader, TrajectoryReader};
 use crate::io::writer::FrameWriter;
 use crate::io::{Sink, SinkWriter, Source, invalid_data};
@@ -11,6 +11,7 @@ use molrs::core::Block;
 use molrs::core::Frame;
 use molrs::core::FrameAccess;
 use molrs::core::SimBox;
+use molrs::core::keys;
 use molrs::op::{F, I, Idx};
 use ndarray::{Array1, IxDyn};
 use std::collections::{HashMap, HashSet};
@@ -253,11 +254,9 @@ fn parse_cryst1_record(line: &str) -> Option<Cryst1Record> {
     let beta = substr(line, 40, 47).trim().parse::<f32>().unwrap_or(90.0);
     let gamma = substr(line, 47, 54).trim().parse::<f32>().unwrap_or(90.0);
 
-    let space_group = if line.len() >= 66 {
-        substr(line, 55, 66).trim().to_string()
-    } else {
-        String::new()
-    };
+    // `substr` clamps to the line, so a record whose trailing Z field (and
+    // blanks) were cut off still keeps its symbol.
+    let space_group = substr(line, 55, 66).trim().to_string();
 
     let z = if line.len() >= 70 {
         substr(line, 66, 70).trim().parse::<i32>().unwrap_or(1)
@@ -486,19 +485,58 @@ fn build_bonds_block(
     Ok(Some(block))
 }
 
-fn add_simbox_from_cryst1(frame: &mut Frame, cryst1: Option<&Cryst1Record>) {
-    if let Some(cryst) = cryst1
-        && cryst.a > 0.0
-        && cryst.b > 0.0
-        && cryst.c > 0.0
-    {
-        let lengths = [cryst.a as F, cryst.b as F, cryst.c as F];
-        let origin = [0.0 as F, 0.0, 0.0];
-        let pbc = [true, true, true];
-        if let Ok(simbox) = SimBox::new(Cell::Lengths(lengths), origin, pbc) {
-            frame.simbox = Some(simbox);
-        }
+/// The frame's box and space-group symbol from the `CRYST1` record: the
+/// symbol goes to [`keys::SPACE_GROUP`] when the record states one.
+///
+/// The box is the cell of `a`, `b`, `c`, `α`, `β`, `γ` in PDB's standard
+/// orthogonalization (`a` along x, `b` in the xy plane), whose lattice vectors
+/// are the columns of H ([`SimBox::matrix_from_lengths_angles`]), at the
+/// origin and periodic on every axis. A record with a non-positive length
+/// states no box, and neither does PDB's placeholder for a structure
+/// determined without a cell, `1 1 1 90 90 90 P 1` ([`is_cell_placeholder`]):
+/// the frame then has neither a box nor a space group.
+///
+/// # Errors
+///
+/// Angles no cell has (each in `(0°, 180°)` and together closing a cell),
+/// naming the record's six numbers.
+fn add_simbox_from_cryst1(frame: &mut Frame, cryst1: Option<&Cryst1Record>) -> std::io::Result<()> {
+    let Some(cryst) = cryst1.filter(|c| !is_cell_placeholder(c)) else {
+        return Ok(());
+    };
+    if !cryst.space_group.is_empty() {
+        frame
+            .meta
+            .insert(keys::SPACE_GROUP, cryst.space_group.clone());
     }
+    if cryst.a <= 0.0 || cryst.b <= 0.0 || cryst.c <= 0.0 {
+        return Ok(());
+    }
+    let lengths = [cryst.a as F, cryst.b as F, cryst.c as F];
+    let angles = [cryst.alpha as F, cryst.beta as F, cryst.gamma as F];
+    let refuse = |e| {
+        invalid_data(format!(
+            "CRYST1 a b c = {lengths:?}, alpha beta gamma = {angles:?}: no cell has these \
+             parameters ({e:?})"
+        ))
+    };
+    let simbox = SimBox::new(
+        crate::core::Cell::LengthsAngles { lengths, angles },
+        [0.0; 3],
+        [true; 3],
+    )
+    .map_err(refuse)?;
+    frame.simbox = Some(simbox);
+    Ok(())
+}
+
+/// PDB's `CRYST1` for a structure not determined by crystallography: "the
+/// unitary values" `a = b = c = 1.0`, `α = β = γ = 90°`, space group `P 1`
+/// (wwPDB format 3.3, `CRYST1`). It states no cell.
+fn is_cell_placeholder(cryst: &Cryst1Record) -> bool {
+    [cryst.a, cryst.b, cryst.c] == [1.0; 3]
+        && [cryst.alpha, cryst.beta, cryst.gamma] == [90.0; 3]
+        && matches!(cryst.space_group.as_str(), "" | "P 1")
 }
 
 fn build_frame(
@@ -520,7 +558,7 @@ fn build_frame(
         frame.insert("bonds", bonds_block);
     }
 
-    add_simbox_from_cryst1(&mut frame, cryst1);
+    add_simbox_from_cryst1(&mut frame, cryst1)?;
 
     Ok(frame)
 }
@@ -676,20 +714,28 @@ impl<'a> PdbWriter<SinkWriter<'a>> {
     }
 }
 
-/// Write the `CRYST1` record from the frame's simulation box, if any.
+/// Write the `CRYST1` record from the frame's simulation box, if any: the
+/// lengths of its lattice vectors and the angles between them
+/// ([`SimBox::lengths`], [`SimBox::angles`]).
+///
+/// CRYST1 states a cell's shape, not its orientation: a reader rebuilds it in
+/// PDB's standard orthogonalization (`a` along x, `b` in the xy plane), the
+/// orientation every molrs reader and LAMMPS's restricted triclinic box use.
+/// A box rotated away from it is written with its own lengths and angles, and
+/// read back in that standard orientation.
+///
+/// A frame without a box gets no `CRYST1`, as OpenMM's `PDBFile` writes
+/// none: any cell line would read back as a box (OpenMM takes even PDB's
+/// `1 1 1` placeholder as a 1 Å cell).
 fn write_cryst1<W: Write>(writer: &mut W, frame: &impl FrameAccess) -> std::io::Result<()> {
-    // Always emit CRYST1: PDB readers and OpenMM decks expect a cell line even
-    // when the frame has no simbox, which is written as a unit cube.
-    let (a, b, c) = if let Some(simbox) = frame.simbox_ref() {
-        let lengths = simbox.lengths();
-        (lengths[0], lengths[1], lengths[2])
-    } else {
-        (1.0, 1.0, 1.0)
+    let Some(simbox) = frame.simbox_ref() else {
+        return Ok(());
     };
+    let (lengths, angles) = (simbox.lengths(), simbox.angles());
     writeln!(
         writer,
         "CRYST1{:9.3}{:9.3}{:9.3}{:7.2}{:7.2}{:7.2} {:<11}{:>4}",
-        a, b, c, 90.00, 90.00, 90.00, "P 1", 1
+        lengths[0], lengths[1], lengths[2], angles[0], angles[1], angles[2], "P 1", 1
     )?;
     Ok(())
 }
@@ -739,11 +785,12 @@ fn write_atom_conect_records<W: Write>(
             .and_then(|arr| arr.as_slice().map(|s| s.to_vec()))
             .unwrap_or_default()
     };
-    let names = owned_str("name");
-    let res_names = owned_str("res_name");
-    let chains = owned_str("chain");
+    // A stated serial or coordinate has no stand-in (`null_cells`).
+    crate::io::null_cells::refuse_null_cells(frame, "atoms", &["id", "x", "y", "z"])?;
+    // Names and residues: the one definition the OpenMM system writer's
+    // residue templates also use.
+    let labels = AtomLabels::pdb(frame, n)?;
     let altlocs = owned_str("altloc");
-    let icodes = owned_str("icode");
     let owned_f64 = |col: &str| -> Vec<F> {
         frame
             .column("atoms", col)
@@ -752,6 +799,10 @@ fn write_atom_conect_records<W: Write>(
             .and_then(|arr| arr.as_slice().map(|s| s.to_vec()))
             .unwrap_or_default()
     };
+    // A null occupancy or B-factor is unset: the default an absent column
+    // takes (1.00, 0.00), not the cell's filler.
+    let unset = |col: &str| crate::io::null_cells::null_rows(frame, "atoms", col);
+    let (null_occupancy, null_b_factor) = (unset("occupancy"), unset("b_factor"));
     let occupancies = owned_f64("occupancy");
     let b_factors = owned_f64("b_factor");
     // PDB spells species as a symbol (columns 77-78); the writer reads the
@@ -769,13 +820,6 @@ fn write_atom_conect_records<W: Write>(
             )
         })?;
 
-    let res_seqs: Vec<Idx> = frame
-        .column("atoms", "res_id")
-        .and_then(|c| c.get::<u64>())
-        .as_ref()
-        .and_then(|arr| arr.as_slice().map(|s| s.to_vec()))
-        .unwrap_or_default();
-
     let ids: Vec<Idx> = frame
         .column("atoms", "id")
         .and_then(|c| c.get::<u64>())
@@ -791,39 +835,29 @@ fn write_atom_conect_records<W: Write>(
 
         let elem_raw = elements[i].trim();
 
-        // Atom name (cols 13-16): single-char names are offset one column. A
-        // frame with no `name` column writes the field blank — the name is
-        // not made up from the element.
-        let name_raw = names.get(i).map(|s| s.trim()).unwrap_or("");
+        // Atom name (cols 13-16): single-char names are offset one column.
+        let name_raw = labels.names[i].as_str();
         let name_field = if name_raw.chars().count() == 1 {
             format!(" {:<3}", name_raw)
         } else {
-            let truncated: String = name_raw.chars().take(4).collect();
-            format!("{:<4}", truncated)
+            format!("{:<4}", name_raw)
         };
-
-        let res_name: String = res_names
+        let res_name = labels.res_names[i].as_str();
+        let chain = labels.chains[i];
+        let altloc = altlocs
             .get(i)
-            .map(|s| s.trim())
-            .filter(|s| !s.is_empty())
-            .unwrap_or("UNK")
-            .chars()
-            .take(3)
-            .collect();
-
-        let one_char = |values: &[String]| {
+            .and_then(|s| s.trim().chars().next())
+            .unwrap_or(' ');
+        let icode = labels.icodes[i];
+        let stated = |values: &[F], nulls: &[usize]| {
             values
                 .get(i)
-                .and_then(|s| s.trim().chars().next())
-                .unwrap_or(' ')
+                .copied()
+                .filter(|_| nulls.binary_search(&i).is_err())
         };
-        let chain = one_char(&chains);
-        let altloc = one_char(&altlocs);
-        let icode = one_char(&icodes);
-        let occupancy = occupancies.get(i).copied().unwrap_or(1.0);
-        let b_factor = b_factors.get(i).copied().unwrap_or(0.0);
-
-        let res_seq = res_seqs.get(i).copied().unwrap_or(1);
+        let occupancy = stated(&occupancies, &null_occupancy).unwrap_or(1.0);
+        let b_factor = stated(&b_factors, &null_b_factor).unwrap_or(0.0);
+        let res_seq = labels.res_seqs[i];
 
         let elem_field: String = elem_raw
             .chars()
@@ -976,6 +1010,18 @@ pub fn read_pdb<'a>(src: impl Into<Source<'a>>) -> std::io::Result<Frame> {
 }
 
 /// Write one frame as a PDB file (`REMARK`, `CRYST1`, `ATOM`/`CONECT`, `END`).
+///
+/// `CRYST1` states the frame's box, and is not written for a frame without
+/// one, which then reads back without a box.
+///
+/// The atoms' `name`, `res_name`, `res_id`, `chain` and `icode` columns are
+/// written as given. Without `res_id`, each bonded molecule (a connected
+/// component of `bonds`) is one residue; without `res_name`, residues are
+/// `MOL`; an atom without a `name` is its element numbered within its
+/// residue (`C1`, `C2`, `H1`, …). Residue numbers wrap at 10 000. These are
+/// the residues and names
+/// [`OpenmmXmlWriter::write_system`](crate::io::openmm_xml::OpenmmXmlWriter::write_system) gives its
+/// templates.
 pub fn write_pdb<'a>(sink: impl Into<Sink<'a>>, frame: &impl FrameAccess) -> std::io::Result<()> {
     let mut out = sink.into().writer()?;
     write_frame_to(&mut out, frame)?;
@@ -1224,6 +1270,141 @@ mod tests {
         assert!((cryst.alpha - 90.0).abs() < 0.001);
         assert_eq!(cryst.space_group, "P 1");
         assert_eq!(cryst.z, 1);
+    }
+
+    const TRICLINIC_PDB: &str = concat!(
+        "CRYST1   10.000   11.000   12.000  70.00  80.00  65.00 P 1           1\n",
+        "ATOM      1  O   HOH A   1       1.000   2.000   3.000  1.00  0.00           O  \n",
+        "END\n",
+    );
+
+    /// CRYST1's angles shape the box: its lattice vectors (the columns of H)
+    /// are PDB's standard orthogonalization — `a` along x, `b` in the xy
+    /// plane — with the stated lengths and angles.
+    #[test]
+    fn cryst1_angles_build_a_triclinic_box() {
+        let frame = crate::io::read_pdb((TRICLINIC_PDB).as_bytes()).unwrap();
+        let simbox = frame.simbox.as_ref().expect("CRYST1 states a box");
+        let lengths = simbox.lengths();
+        let angles = simbox.angles();
+        for (got, want) in lengths.iter().zip([10.0, 11.0, 12.0]) {
+            assert!((got - want).abs() < 1e-9, "lengths {lengths:?}");
+        }
+        for (got, want) in angles.iter().zip([70.0, 80.0, 65.0]) {
+            assert!((got - want).abs() < 1e-9, "angles {angles:?}");
+        }
+        let a = simbox.lattice(0);
+        let b = simbox.lattice(1);
+        assert!((a[0] - 10.0).abs() < 1e-12 && a[1] == 0.0 && a[2] == 0.0);
+        assert_eq!(b[2], 0.0, "b lies in the xy plane");
+        assert_eq!(simbox.style(), "triclinic");
+    }
+
+    /// The writer states the box's real angles, so a triclinic box survives
+    /// a write and a read.
+    #[test]
+    fn a_triclinic_box_round_trips_through_cryst1() {
+        let frame = crate::io::read_pdb((TRICLINIC_PDB).as_bytes()).unwrap();
+        let text = crate::io::writer::capture(|sink| crate::io::write_pdb(sink, &frame)).unwrap();
+        let cryst1 = text
+            .lines()
+            .find(|l| l.starts_with("CRYST1"))
+            .expect("a CRYST1 line");
+        assert_eq!(
+            cryst1,
+            "CRYST1   10.000   11.000   12.000  70.00  80.00  65.00 P 1           1"
+        );
+        let back = crate::io::read_pdb(text.as_bytes()).unwrap();
+        assert!(
+            back.simbox
+                .as_ref()
+                .unwrap()
+                .approx_eq(frame.simbox.as_ref().unwrap(), 1e-9)
+        );
+    }
+
+    /// A frame without a box is written without `CRYST1` (as OpenMM's
+    /// `PDBFile` writes one) and reads back without a box, in one frame and
+    /// in a trajectory. PDB's own placeholder for a structure without a cell
+    /// — the unit cube `1 1 1 90 90 90 P 1 1`, which molrs wrote before —
+    /// states no box either.
+    #[test]
+    fn a_frame_without_a_box_has_no_cryst1_and_reads_back_without_one() {
+        let mut frame = crate::io::read_pdb((TRICLINIC_PDB).as_bytes()).unwrap();
+        frame.simbox = None;
+        let text = crate::io::writer::capture(|sink| crate::io::write_pdb(sink, &frame)).unwrap();
+        assert!(!text.contains("CRYST1"), "{text}");
+        assert!(
+            crate::io::read_pdb(text.as_bytes())
+                .unwrap()
+                .simbox
+                .is_none()
+        );
+
+        let mut out = Vec::new();
+        {
+            let mut writer = PdbWriter::create(&mut out).unwrap();
+            writer.write(&frame).unwrap();
+            writer.write(&frame).unwrap();
+        }
+        let text = String::from_utf8(out).unwrap();
+        assert!(!text.contains("CRYST1"), "{text}");
+
+        let unit = TRICLINIC_PDB.replace(
+            "   10.000   11.000   12.000  70.00  80.00  65.00",
+            "    1.000    1.000    1.000  90.00  90.00  90.00",
+        );
+        let back = crate::io::read_pdb(unit.as_bytes()).unwrap();
+        assert!(back.simbox.is_none());
+        assert!(back.meta.get(keys::SPACE_GROUP).is_none());
+    }
+
+    /// Angles no cell has (they sum past 360°) are a malformed record, not an
+    /// orthogonal box.
+    #[test]
+    fn cryst1_angles_no_cell_has_are_refused() {
+        let bad = TRICLINIC_PDB.replace("70.00  80.00  65.00", "170.00170.00170.00");
+        let err = crate::io::read_pdb(bad.as_bytes()).expect_err("no cell has these angles");
+        assert!(err.to_string().contains("CRYST1"), "{err}");
+    }
+
+    #[test]
+    fn cryst1_space_group_lands_in_frame_meta() {
+        let text = concat!(
+            "CRYST1   52.000   58.600   61.900  90.00  90.00  90.00 P 21 21 21    8\n",
+            "ATOM      1  N   ALA A   1       1.000   2.000   3.000  1.00 20.00           N  \n",
+            "END\n",
+        );
+        let frame = crate::io::read_pdb((text).as_bytes()).unwrap();
+        assert_eq!(
+            frame.meta.get(keys::SPACE_GROUP).and_then(|v| v.as_str()),
+            Some("P 21 21 21")
+        );
+
+        // A record cut short after the symbol keeps it; a blank symbol and
+        // a file with no CRYST1 state none.
+        let short = text.replace("P 21 21 21    8", "P 21 21 21");
+        let frame = crate::io::read_pdb(short.as_bytes()).unwrap();
+        assert_eq!(
+            frame.meta.get(keys::SPACE_GROUP).and_then(|v| v.as_str()),
+            Some("P 21 21 21")
+        );
+        let blank = text.replace("P 21 21 21    8", "");
+        assert!(
+            crate::io::read_pdb(blank.as_bytes())
+                .unwrap()
+                .meta
+                .get(keys::SPACE_GROUP)
+                .is_none()
+        );
+        let bare = text.lines().skip(1).collect::<Vec<_>>().join("\n");
+        assert!(
+            crate::io::read_pdb(bare.as_bytes())
+                .unwrap()
+                .meta
+                .get(keys::SPACE_GROUP)
+                .is_none()
+        );
     }
 
     #[test]
@@ -1513,7 +1694,11 @@ mod tests {
         }
         drop(writer);
         let text = String::from_utf8(out.clone()).unwrap();
-        assert_eq!(text.matches("CRYST1").count(), 1, "{text}");
+        assert_eq!(
+            text.matches("CRYST1").count(),
+            usize::from(frames[0].simbox.is_some()),
+            "{text}"
+        );
         assert_eq!(text.matches("ENDMDL").count(), 2, "{text}");
         let mut reader = PdbReader::open(&out).unwrap();
         assert_eq!(reader.len().unwrap(), 2);

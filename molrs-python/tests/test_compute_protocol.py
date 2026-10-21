@@ -48,7 +48,9 @@ class TestComputeProtocol:
         assert not [
             name for name, cls in computes.items() if not issubclass(cls, Compute)
         ]
-        assert not [name for name, cls in streams.items() if not issubclass(cls, Stream)]
+        assert not [
+            name for name, cls in streams.items() if not issubclass(cls, Stream)
+        ]
         assert not [name for name, cls in streams.items() if issubclass(cls, Compute)]
 
     def test_an_instance_satisfies_the_protocol(self) -> None:

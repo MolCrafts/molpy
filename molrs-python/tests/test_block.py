@@ -485,9 +485,7 @@ class TestBlockRowSelection:
 
     def test_a_selection_carries_the_validity_mask(self):
         b = Block()
-        b.insert(
-            "tag", np.array([1, 2, 3], dtype=np.int32), [True, False, True]
-        )
+        b.insert("tag", np.array([1, 2, 3], dtype=np.int32), [True, False, True])
         np.testing.assert_array_equal(
             b[np.array([1, 2])].validity("tag"), [False, True]
         )
@@ -509,9 +507,7 @@ class TestBlockRowSelection:
             self._three()[np.array([3])]
 
     def test_an_index_array_gathers_rows_in_its_order(self):
-        np.testing.assert_array_equal(
-            self._three()[np.array([2, 0])]["x"], [2.0, 0.0]
-        )
+        np.testing.assert_array_equal(self._three()[np.array([2, 0])]["x"], [2.0, 0.0])
 
 
 class TestBlockRename:

@@ -139,7 +139,9 @@ def analytic_chain() -> tuple[float, np.ndarray]:
 
 
 def register_fene(registered, name: str = "fene/expr", **kw) -> None:
-    style_registry.register_style("bond", name, params=FENE_PARAMS, expression=FENE, **kw)
+    style_registry.register_style(
+        "bond", name, params=FENE_PARAMS, expression=FENE, **kw
+    )
     registered.append(("bond", name))
 
 
@@ -223,7 +225,9 @@ def test_a_wrong_derivative_is_refused_at_registration_and_at_compile(
         )
     assert err.value.style == "half"
     # Without samples the check runs at the style's first compile.
-    style_registry.register_style("bond", "half", params={"k": "E/L^2", "r0": "L"}, kernel=wrong)
+    style_registry.register_style(
+        "bond", "half", params={"k": "E/L^2", "r0": "L"}, kernel=wrong
+    )
     registered.append(("bond", "half"))
     with pytest.raises(ir.DerivativeError, match="half"):
         energy_forces(bond_ff("half", k=300.0, r0=1.0), bond_frame())
@@ -270,7 +274,9 @@ def test_a_style_spec_base_can_opt_out_of_registering(registered) -> None:
         expression = "k*(r-r0)^2"
 
     registered.append(("bond", "quad"))
-    assert [p.name for p in style_registry.styles("bond") if p.name == "quad"] == ["quad"]
+    assert [p.name for p in style_registry.styles("bond") if p.name == "quad"] == [
+        "quad"
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -286,7 +292,9 @@ def test_a_kernel_that_raises_is_reraised_from_compile_and_calc(registered) -> N
             raise ZeroDivisionError("flaky kernel")
         return k * (r - r0) ** 2, 2 * k * (r - r0)
 
-    style_registry.register_style("bond", "flaky", params={"k": "E/L^2", "r0": "L"}, kernel=flaky)
+    style_registry.register_style(
+        "bond", "flaky", params={"k": "E/L^2", "r0": "L"}, kernel=flaky
+    )
     registered.append(("bond", "flaky"))
     ff, frame = bond_ff("flaky", k=300.0, r0=1.0), bond_frame()
     with pytest.raises(ir.KernelShapeError, match="flaky") as err:
@@ -313,7 +321,9 @@ def test_a_kernel_of_the_wrong_shape_is_named(registered) -> None:
     def short(r, k, r0):
         return k * (r - r0) ** 2, np.zeros(len(r) + 1)
 
-    style_registry.register_style("bond", "short", params={"k": "E/L^2", "r0": "L"}, kernel=short)
+    style_registry.register_style(
+        "bond", "short", params={"k": "E/L^2", "r0": "L"}, kernel=short
+    )
     registered.append(("bond", "short"))
     with pytest.raises(ir.KernelShapeError, match="de_dq") as err:
         style_registry.evaluate("bond", "short", [1.0, 1.1], k=1.0, r0=1.0)
@@ -322,7 +332,9 @@ def test_a_kernel_of_the_wrong_shape_is_named(registered) -> None:
     def single(r, k, r0):
         return k * (r - r0) ** 2
 
-    style_registry.register_style("bond", "single", params={"k": "E/L^2", "r0": "L"}, kernel=single)
+    style_registry.register_style(
+        "bond", "single", params={"k": "E/L^2", "r0": "L"}, kernel=single
+    )
     registered.append(("bond", "single"))
     with pytest.raises(ir.KernelShapeError, match=r"tuple \(e, de_dq\)"):
         energy_forces(bond_ff("single", k=1.0, r0=1.0), bond_frame())
@@ -398,21 +410,31 @@ def test_a_built_in_is_sealed() -> None:
     # Restating a built-in category exactly is a no-op; anything else is sealed.
     style_registry.register_category("bond", 2, coordinate="distance")
     with pytest.raises(ir.SealedError):
-        style_registry.register_category("bond", 2, coordinate="distance", order="ordered")
+        style_registry.register_category(
+            "bond", 2, coordinate="distance", order="ordered"
+        )
 
 
 def test_expressions_reading_what_is_not_there_are_refused() -> None:
     with pytest.raises(ir.UnboundVariableError) as err:
-        style_registry.register_style("bond", "bent", params={"k": "E"}, expression="k*theta^2")
+        style_registry.register_style(
+            "bond", "bent", params={"k": "E"}, expression="k*theta^2"
+        )
     assert (err.value.style, err.value.name) == ("bent", "theta")
     with pytest.raises(ir.UnknownFunctionError) as err:
-        style_registry.register_style("bond", "odd", params={"k": "E"}, expression="k*cosh(r)")
+        style_registry.register_style(
+            "bond", "odd", params={"k": "E"}, expression="k*cosh(r)"
+        )
     assert err.value.name == "cosh"
     with pytest.raises(ir.FunctionArityError) as err:
-        style_registry.register_style("bond", "odd", params={"k": "E"}, expression="k*min(r)")
+        style_registry.register_style(
+            "bond", "odd", params={"k": "E"}, expression="k*min(r)"
+        )
     assert (err.value.name, err.value.given, err.value.expected) == ("min", 1, 2)
     with pytest.raises(ir.ParseError):
-        style_registry.register_style("bond", "odd", params={"k": "E"}, expression="k*(r-")
+        style_registry.register_style(
+            "bond", "odd", params={"k": "E"}, expression="k*(r-"
+        )
     with pytest.raises(ir.PointError) as err:
         style_registry.register_style(
             "bond", "odd", params={"k": "E"}, expression="k*distance(p1,p3)"
@@ -428,18 +450,25 @@ def test_parameter_declarations_are_checked() -> None:
     with pytest.raises(ir.DimensionError):
         ir.ParamSpec("theta0", "A^2")  # a positive angle power is an angle value: A
     with pytest.raises(ir.DimensionError):
-        style_registry.register_style("bond", "odd", params={"k": "E/Z"}, expression="k*r")
+        style_registry.register_style(
+            "bond", "odd", params={"k": "E/Z"}, expression="k*r"
+        )
     with pytest.raises(ir.ReservedParamError) as err:
         style_registry.register_style("bond", "odd", params={"r": "L"}, expression="r")
     assert err.value.param == "r"
     with pytest.raises(ir.DuplicateParamError):
         style_registry.register_style(
-            "bond", "odd", params=[ir.ParamSpec("k"), ir.ParamSpec("k")], expression="k*r"
+            "bond",
+            "odd",
+            params=[ir.ParamSpec("k"), ir.ParamSpec("k")],
+            expression="k*r",
         )
     with pytest.raises(ir.BadNameError):
         style_registry.register_style("bond", "odd", params={"2k": "E"}, expression="r")
     with pytest.raises(ir.UnknownCategoryError) as err:
-        style_registry.register_style("nosuch", "odd", params={"k": "E"}, expression="k")
+        style_registry.register_style(
+            "nosuch", "odd", params={"k": "E"}, expression="k"
+        )
     assert err.value.category == "nosuch"
     with pytest.raises(ir.NoKernelError):
         style_registry.register_style("bond", "odd", params={"k": "E"})
@@ -464,18 +493,26 @@ def test_replace_overrides_a_custom_style_only(registered) -> None:
     with pytest.raises(ir.ConflictError) as err:
         style_registry.register_style(*fene, params=FENE_PARAMS, expression=FENE + "+0")
     assert (err.value.category, err.value.style) == fene
-    style_registry.register_style(*fene, params=FENE_PARAMS, expression=FENE + "+1", replace=True)
+    style_registry.register_style(
+        *fene, params=FENE_PARAMS, expression=FENE + "+1", replace=True
+    )
     (info,) = [s for s in style_registry.styles("bond") if s.name == "fene/r"]
     assert info.expression == FENE + "+1"
     # A refused replacement leaves the registered one in place.
     with pytest.raises(ir.UnknownFunctionError):
-        style_registry.register_style(*fene, params=FENE_PARAMS, expression="foo(r)", replace=True)
+        style_registry.register_style(
+            *fene, params=FENE_PARAMS, expression="foo(r)", replace=True
+        )
     (info,) = [s for s in style_registry.styles("bond") if s.name == "fene/r"]
     assert info.expression == FENE + "+1"
     # The same callable registered again is the same kernel: a no-op.
-    style_registry.register_style("bond", "fene/k", params=FENE_PARAMS, kernel=fene_kernel)
+    style_registry.register_style(
+        "bond", "fene/k", params=FENE_PARAMS, kernel=fene_kernel
+    )
     registered.append(("bond", "fene/k"))
-    style_registry.register_style("bond", "fene/k", params=FENE_PARAMS, kernel=fene_kernel)
+    style_registry.register_style(
+        "bond", "fene/k", params=FENE_PARAMS, kernel=fene_kernel
+    )
     with pytest.raises(ir.ConflictError):
         style_registry.register_style(
             "bond", "fene/k", params=FENE_PARAMS, kernel=lambda r, **p: (r, r)
@@ -546,7 +583,12 @@ def test_the_registry_lists_categories_and_styles(registered) -> None:
         ("epsilon", "E"),
         ("sigma", "L"),
     ]
-    assert {s.category for s in style_registry.styles()} >= {"bond", "angle", "pair", "cmap"}
+    assert {s.category for s in style_registry.styles()} >= {
+        "bond",
+        "angle",
+        "pair",
+        "cmap",
+    }
     assert style_registry.styles("dihedral")[0].category == "dihedral"
     assert {s.name for s in style_registry.styles("dihedral")} >= {"rb", "periodic"}
 
@@ -659,7 +701,9 @@ def test_a_pair_expression_reads_the_self_rows(registered) -> None:
     # evaluate: the self rows default to the pair value, or are given.
     e, _ = style_registry.evaluate("pair", "soft/x12", [1.0], a=3.0, cutoff=RC)
     assert math.isclose(e[0], 3.0 * (1 + math.cos(math.pi / RC)), rel_tol=1e-12)
-    e, _ = style_registry.evaluate("pair", "soft/x12", [1.0], a=0.0, a1=2.0, a2=8.0, cutoff=RC)
+    e, _ = style_registry.evaluate(
+        "pair", "soft/x12", [1.0], a=0.0, a1=2.0, a2=8.0, cutoff=RC
+    )
     assert math.isclose(e[0], 4.0 * (1 + math.cos(math.pi / RC)), rel_tol=1e-12)
     # A pair energy must not change when its atoms are exchanged.
     with pytest.raises(ir.AsymmetricError):
@@ -734,7 +778,9 @@ def test_a_new_category_registers_and_evaluates(registered) -> None:
     )
     d = x[:, 0] - x[:, 2]
     r13 = np.linalg.norm(d, axis=1)
-    e, grad = style_registry.evaluate("urey_bradley", "harmonic", x=x, k_ub=UB[0], r_ub=UB[1])
+    e, grad = style_registry.evaluate(
+        "urey_bradley", "harmonic", x=x, k_ub=UB[0], r_ub=UB[1]
+    )
     np.testing.assert_allclose(e, UB[0] * (r13 - UB[1]) ** 2, rtol=1e-12)
     g1 = (2 * UB[0] * (r13 - UB[1]) / r13)[:, None] * d
     np.testing.assert_allclose(grad[:, 0], g1, rtol=1e-12)
@@ -804,5 +850,9 @@ def test_a_category_that_does_not_conform_is_refused() -> None:
         style_registry.register_category("bent_pair", 2, coordinate="angle")
     with pytest.raises(ValueError, match="coordinate"):
         style_registry.register_category("odd", 2, coordinate="torsion")
-    style_registry.register_category("restraint2", 2, coordinate="distance", order="ordered")
-    assert {c.name: c.coordinate for c in style_registry.categories()}["restraint2"] == "distance"
+    style_registry.register_category(
+        "restraint2", 2, coordinate="distance", order="ordered"
+    )
+    assert {c.name: c.coordinate for c in style_registry.categories()}[
+        "restraint2"
+    ] == "distance"

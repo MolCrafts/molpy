@@ -38,7 +38,7 @@ pub trait Observable {
     /// reused across frames).
     ///
     /// `positions` is `N × 3`; `mic` is the frame's minimum-image convention
-    /// ([`Mic::Free`] for open boundaries); `tuples` is `n_tuples ×`
+    /// ([`Mic::free()`] for open boundaries); `tuples` is `n_tuples ×`
     /// [`arity`](Self::arity).
     ///
     /// # Errors

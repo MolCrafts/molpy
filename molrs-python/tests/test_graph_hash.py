@@ -101,12 +101,16 @@ def test_element_change_changes_hash():
     assert a.is_isomorphic(b) is False
 
 
-def test_charge_change_changes_hash():
+def test_formal_charge_changes_identity_but_partial_charge_does_not():
     a, _ha = _ethanol()
     b, hb = _ethanol()
     assert a.structural_hash() == b.structural_hash()
     hb[2]["charge"] = -1.0
+    assert a.structural_hash() == b.structural_hash()
+    assert a.is_isomorphic(b)
+    hb[2]["formal_charge"] = -1
     assert a.structural_hash() != b.structural_hash()
+    assert not a.is_isomorphic(b)
 
 
 def test_aromatic_flag_change_changes_hash():

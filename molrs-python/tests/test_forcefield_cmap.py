@@ -17,11 +17,14 @@ import numpy as np
 import pytest
 
 
-def _lammps_include(ff: molrs.ff.forcefield.ForceField, frame: molrs.core.Frame, **options: object) -> str:
+def _lammps_include(
+    ff: molrs.ff.forcefield.ForceField, frame: molrs.core.Frame, **options: object
+) -> str:
     """The LAMMPS force-field include ``ff`` writes for ``frame``."""
     buf = bytearray()
     molrs.io.lammps.LammpsForcefieldWriter(frame, **options).write(buf, ff)  # type: ignore[arg-type]
     return buf.decode()
+
 
 ENDS = ("C", "NH1", "CT1", "C2", "NH2")
 
@@ -175,7 +178,9 @@ def _number_lines(text: str) -> list[str]:
 
 
 def _alanine_ff() -> molrs.ff.forcefield.ForceField:
-    (row,) = molrs.io.lammps.LammpsForcefieldReader().read_cmap(ALANINE).get_types("cmap")
+    (row,) = (
+        molrs.io.lammps.LammpsForcefieldReader().read_cmap(ALANINE).get_types("cmap")
+    )
     ff = molrs.ff.forcefield.ForceField("charmm", units="real")
     atoms = ff.def_style("atom", "full")
     by_name = {name: atoms.def_type(name, mass=12.0) for name in set(ALA)}
@@ -229,11 +234,11 @@ def test_lammps_fix_cmap_files_round_trip(tmp_path: Path) -> None:
 
     cmap = tmp_path / "charmm.cmap"
     molrs.io.lammps.LammpsForcefieldWriter(frame).write_cmap(cmap, ff)
-    assert _number_lines(cmap.read_text(encoding="utf-8")) == _number_lines(ALANINE.read_text(encoding="utf-8"))
-
-    include = _lammps_include(
-        ff, frame, skip_pair_style=True, cmap_file="charmm.cmap"
+    assert _number_lines(cmap.read_text(encoding="utf-8")) == _number_lines(
+        ALANINE.read_text(encoding="utf-8")
     )
+
+    include = _lammps_include(ff, frame, skip_pair_style=True, cmap_file="charmm.cmap")
     assert "fix cmap all cmap charmm.cmap\nfix_modify cmap energy yes\n" in include
     with pytest.raises(ValueError, match="cmap_file"):
         _lammps_include(ff, frame, skip_pair_style=True)

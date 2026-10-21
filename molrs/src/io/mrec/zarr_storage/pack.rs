@@ -110,8 +110,9 @@ pub fn pack_mrec_zip(storage_path: impl AsRef<Path>) -> Result<PathBuf, MolRsErr
         let options = zip::write::SimpleFileOptions::default()
             .compression_method(zip::CompressionMethod::Stored)
             .large_file(bytes.len() as u64 >= u64::from(u32::MAX));
+        // ZIP keys always use '/', including on Windows directory stores.
         writer
-            .start_file(name, options)
+            .start_file_from_path(name, options)
             .map_err(|e| at(&entry, "pack", e))?;
         writer
             .write_all(&bytes)
@@ -177,7 +178,11 @@ pub(in crate::io::mrec::zarr_storage) fn unpack_zip_bytes(
         if entry.is_dir() {
             continue;
         }
-        let name = entry.name().trim_start_matches('/').to_string();
+        let name = entry
+            .name()
+            .map_err(|e| MolRsError::zarr(format!("packed record entry {index}: {e}")))?
+            .trim_start_matches('/')
+            .to_string();
         let mut content = Vec::with_capacity(entry.size() as usize);
         std::io::Read::read_to_end(&mut entry, &mut content)
             .map_err(|e| MolRsError::zarr(format!("packed record entry {name}: {e}")))?;
@@ -392,7 +397,7 @@ mod tests {
                 entry.compression(),
                 zip::CompressionMethod::Stored,
                 "{} is not a stored entry",
-                entry.name()
+                entry.name().unwrap()
             );
         }
     }

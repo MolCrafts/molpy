@@ -927,6 +927,14 @@ impl Atomistic {
             .map_or(0, |kind| self.graph.n_relations(kind)))
     }
 
+    /// The declared (or canonical) arity of a term block.
+    pub fn term_arity(&self, block: &str) -> Result<usize, MolRsError> {
+        match self.term_kind(block)? {
+            Some(kind) => Ok(self.graph.arity(kind)),
+            None => schema_term_arity(block),
+        }
+    }
+
     /// The term blocks this molecule holds, in registration order — every
     /// registered relation block without typed methods.
     pub fn term_blocks(&self) -> impl Iterator<Item = &str> + '_ {
@@ -1103,7 +1111,8 @@ impl Atomistic {
     // ---- frame conversion ----
 
     /// Export to a tabular [`Frame`] (atoms / bonds / angles / dihedrals /
-    /// impropers blocks, plus one block per port or term block held).
+    /// impropers blocks, and one block per other non-empty relation kind,
+    /// `drudes` or `virtual_sites` say, named by the kind).
     ///
     /// # Errors
     ///
@@ -1118,6 +1127,14 @@ impl Atomistic {
 
     /// Build from a [`Frame`], registering the standard kinds first so bond /
     /// angle / dihedral / improper blocks are read back.
+    ///
+    /// Every other relation block of the schema vocabulary whose endpoints
+    /// are `atoms` rows ([`schema::block`](crate::core::schema::block):
+    /// `drudes`, `virtual_sites`, `constraints`, `cmaps`, `pairs`,
+    /// `exclusions`) is registered as a kind of its name and arity when the
+    /// frame carries it, so a frame → graph → frame round trip keeps every
+    /// relation [`to_frame`](Self::to_frame) writes. A block outside the
+    /// vocabulary is not the graph's and is ignored.
     ///
     /// # Bond classes are read, never inferred
     ///
@@ -1159,18 +1176,11 @@ impl Atomistic {
     /// blocks.
     pub fn from_frame(frame: &Frame) -> Result<Self, MolRsError> {
         let mut mol = Self::new();
-        let mut term_blocks: Vec<(&str, usize)> = frame
-            .keys()
-            .filter(|name| typed_block(name).is_none())
-            .filter_map(|name| schema_term_arity(name).ok().map(|arity| (name, arity)))
-            .collect();
-        // Registration order is the order `term_blocks` and `to_frame`
-        // report; sort so it does not depend on the frame's map order.
-        term_blocks.sort_unstable();
-        for (name, arity) in term_blocks {
-            mol.graph.try_register_kind(name, arity)?;
+        for name in frame.keys() {
+            if let Some(arity) = atom_relation_arity(name) {
+                mol.graph.try_register_kind(name, arity)?;
+            }
         }
-        // The species guard refuses an atom row without a valid atomic number.
         mol.graph.extend_from_frame(frame)?;
         Ok(mol)
     }
@@ -1294,13 +1304,13 @@ impl Atomistic {
     // ---- structural graph hash (see [`MolGraph::structural_hash`]) ----
 
     /// Isomorphism-invariant Weisfeiler–Lehman structural hash of the molecule
-    /// (element / charge / aromatic node labels, bond-order edge labels). A
+    /// (element / formal charge / aromatic node labels, bond-order edge labels). A
     /// stable, reproducible dedup key — identical for a node-permuted copy.
     pub fn structural_hash(&self) -> u64 {
         self.graph.structural_hash()
     }
 
-    /// Deterministic canonical atom ordering from the WL refinement, so two
+    /// Deterministic canonical atom ordering from individualization/refinement, so two
     /// isomorphic molecules line up node-by-node (see
     /// [`MolGraph::canonical_order`]).
     pub fn canonical_order(&self) -> Vec<NodeId> {
@@ -1413,6 +1423,24 @@ impl TryFrom<MolGraph> for Atomistic {
     fn try_from(graph: MolGraph) -> Result<Self, MolRsError> {
         Atomistic::from_graph(graph)
     }
+}
+
+/// The arity of `name` when the schema declares it a relation block whose
+/// endpoints are all `atoms` rows (`bonds`, `drudes`, `virtual_sites`, …);
+/// `None` for any other block, `members` (its `atom` endpoint is declared per
+/// block) among them.
+fn atom_relation_arity(name: &str) -> Option<usize> {
+    use crate::core::schema::{EndpointTarget, RowKind, block, block_names};
+    let spec = block(name)?;
+    let RowKind::Relation { arity } = spec.row_kind else {
+        return None;
+    };
+    let endpoints = spec.endpoints?;
+    endpoints
+        .columns
+        .iter()
+        .all(|(_, target)| matches!(target, EndpointTarget::Block(b) if *b == block_names::ATOMS))
+        .then_some(arity)
 }
 
 impl sealed::Sealed for Atomistic {
@@ -2030,6 +2058,94 @@ mod tests {
         let back = Atomistic::from_frame(&frame).expect("an unknown block is ignored");
         assert_eq!(back.n_atoms(), 2);
         assert_eq!(back.n_bonds(), 1);
+    }
+
+    /// Every relation block `to_frame` writes comes back through
+    /// `from_frame`: a Drude oscillator (`drudes`), a TIP4P site
+    /// (`virtual_sites`), a constraint — each with its props.
+    #[test]
+    fn from_frame_reads_back_every_relation_kind_to_frame_writes() {
+        let mut mol = Atomistic::new();
+        let o = mol
+            .add_atom(crate::props! { "atomic_number" => 8_u8, "x" => 0.0, "y" => 0.0, "z" => 0.0 })
+            .unwrap();
+        let h1 = mol
+            .add_atom(
+                crate::props! { "atomic_number" => 1_u8, "x" => 0.96, "y" => 0.0, "z" => 0.0 },
+            )
+            .unwrap();
+        let h2 = mol
+            .add_atom(
+                crate::props! { "atomic_number" => 1_u8, "x" => -0.24, "y" => 0.93, "z" => 0.0 },
+            )
+            .unwrap();
+        let m = mol
+            .add_atom(crate::props! { "atomic_number" => 0_u8 })
+            .unwrap();
+        let shell = mol
+            .add_atom(crate::props! { "atomic_number" => 0_u8 })
+            .unwrap();
+        mol.add_bond(o, h1, Props::new()).unwrap();
+        mol.add_bond(o, h2, Props::new()).unwrap();
+        mol.add_term(
+            "drudes",
+            &[o, shell],
+            crate::props! { "type" => "OW-DOW", "k" => 500.0 },
+        )
+        .unwrap();
+        mol.add_term(
+            "virtual_sites",
+            &[m, o, h1, h2],
+            crate::props! { "style" => "average3", "w1" => 0.8 },
+        )
+        .unwrap();
+        mol.add_term("constraints", &[h1, h2], Props::new())
+            .unwrap();
+
+        let frame = mol.to_frame().unwrap();
+        for block in ["drudes", "virtual_sites", "constraints"] {
+            assert!(frame.get(block).is_some(), "to_frame writes {block}");
+        }
+        let back = Atomistic::from_frame(&frame).unwrap();
+        let again = back.to_frame().unwrap();
+        for block in ["atoms", "bonds", "drudes", "virtual_sites", "constraints"] {
+            let (a, b) = (&frame[block], &again[block]);
+            let keys: Vec<&str> = a.keys().collect();
+            assert_eq!(keys, b.keys().collect::<Vec<_>>(), "{block} columns");
+            for key in keys {
+                assert_eq!(
+                    a.get(key).map(|c| format!("{c:?}")),
+                    b.get(key).map(|c| format!("{c:?}")),
+                    "{block}.{key}"
+                );
+            }
+        }
+    }
+
+    /// A graph relation names every endpoint: a row with a null endpoint (a
+    /// virtual site built from two atoms in the four-endpoint block) is
+    /// refused rather than read as a relation to atom 0.
+    #[test]
+    fn from_frame_refuses_a_relation_row_with_a_null_endpoint() {
+        use crate::core::Block;
+        use ndarray::Array1;
+
+        let mut mol = Atomistic::new();
+        for _ in 0..3 {
+            mol.add_atom(crate::props! { "atomic_number" => 6_u8 })
+                .unwrap();
+        }
+        let mut frame = mol.to_frame().unwrap();
+        let mut sites = Block::new();
+        for (key, v) in [("atomi", 2_u64), ("atomj", 0), ("atomk", 1), ("atoml", 0)] {
+            sites
+                .insert(key, Array1::from_vec(vec![v]).into_dyn(), None)
+                .unwrap();
+        }
+        sites.set_validity("atoml", vec![false]).unwrap();
+        frame.insert("virtual_sites", sites);
+        let err = Atomistic::from_frame(&frame).expect_err("a null endpoint");
+        assert!(err.to_string().contains("atoml"), "{err}");
     }
 
     #[test]

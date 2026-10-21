@@ -22,7 +22,10 @@ class TestReadDcd:
 
     def test_the_one_frame_door_reads_the_first_frame(self, water_dcd):
         first = molrs.io.read_dcd(water_dcd)
-        assert first["atoms"].n_rows == molrs.io.dcd.DcdReader(water_dcd)[0]["atoms"].n_rows
+        assert (
+            first["atoms"].n_rows
+            == molrs.io.dcd.DcdReader(water_dcd)[0]["atoms"].n_rows
+        )
 
     def test_missing_file_raises_os_error(self):
         with pytest.raises(OSError):
