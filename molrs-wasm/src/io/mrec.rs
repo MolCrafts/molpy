@@ -483,7 +483,10 @@ fn memory_storage_from_zip(bytes: &[u8]) -> Result<ReadableListableStorage, JsVa
         if entry.is_dir() {
             continue;
         }
-        let name = entry.name().to_string();
+        let name = entry
+            .name()
+            .map_err(|e| JsValue::from_str(&format!("zip entry {index}: {e}")))?
+            .into_owned();
         let mut content = Vec::with_capacity(entry.size() as usize);
         entry.read_to_end(&mut content).map_err(js_string_err)?;
         let skey = StoreKey::new(name.trim_start_matches('/')).map_err(js_string_err)?;
@@ -657,7 +660,7 @@ mod tests {
             let mut content = Vec::new();
             entry.read_to_end(&mut content).unwrap();
             files.set(
-                &JsValue::from_str(entry.name()),
+                &JsValue::from_str(&entry.name().unwrap()),
                 &js_sys::Uint8Array::from(content.as_slice()).into(),
             );
         }
