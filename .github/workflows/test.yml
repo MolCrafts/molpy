@@ -43,8 +43,8 @@ jobs:
   context:
     permissions:
       contents: read
-    name: test / context
-    uses: MolCrafts/molcrafts-ci/.github/workflows/context.yml@b2c4441faa0743987a82bbc53d7ff9d7c2f974aa
+    name: test
+    uses: MolCrafts/molcrafts-ci/.github/workflows/context.yml@3b8332e6c8f2402618d21126f7fa4d50f4acb6dc
 
   rust:
     name: test / rust
@@ -53,7 +53,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: MolCrafts/molcrafts-ci/actions/setup-rust@b2c4441faa0743987a82bbc53d7ff9d7c2f974aa
+      - uses: MolCrafts/molcrafts-ci/actions/setup-rust@3b8332e6c8f2402618d21126f7fa4d50f4acb6dc
         with:
           cache: native
       - run: scripts/check.sh --report .ci-out test ${{ needs.context.outputs.tier == 'full' && 'ffi cxx ext' || '' }}
@@ -61,7 +61,7 @@ jobs:
       # coverage here: instrumenting the build is the nightly's job.
       - name: Report
         if: ${{ !cancelled() }}
-        uses: MolCrafts/molcrafts-ci/actions/report@b2c4441faa0743987a82bbc53d7ff9d7c2f974aa
+        uses: MolCrafts/molcrafts-ci/actions/report@3b8332e6c8f2402618d21126f7fa4d50f4acb6dc
         with:
           title: test / rust
           cargo-test: .ci-out/cargo-test.log
@@ -78,10 +78,10 @@ jobs:
         os: ${{ fromJSON(needs.context.outputs.tier == 'full' && '["ubuntu-latest","macos-latest","windows-latest"]' || '["ubuntu-latest"]') }}
     steps:
       - uses: actions/checkout@v7
-      - uses: MolCrafts/molcrafts-ci/actions/setup-rust@b2c4441faa0743987a82bbc53d7ff9d7c2f974aa
+      - uses: MolCrafts/molcrafts-ci/actions/setup-rust@3b8332e6c8f2402618d21126f7fa4d50f4acb6dc
         with:
           cache: python
-      - uses: MolCrafts/molcrafts-ci/actions/setup-python@b2c4441faa0743987a82bbc53d7ff9d7c2f974aa
+      - uses: MolCrafts/molcrafts-ci/actions/setup-python@3b8332e6c8f2402618d21126f7fa4d50f4acb6dc
       # The wheel is written to .ci-out/wheel and kept: the file this step
       # tested is the file the Linux leg uploads.
       - env:
@@ -98,7 +98,7 @@ jobs:
       # request summary; report only.
       - name: Report
         if: ${{ !cancelled() }}
-        uses: MolCrafts/molcrafts-ci/actions/report@b2c4441faa0743987a82bbc53d7ff9d7c2f974aa
+        uses: MolCrafts/molcrafts-ci/actions/report@3b8332e6c8f2402618d21126f7fa4d50f4acb6dc
         with:
           title: test / python (${{ matrix.os }})
           junit: .ci-out/junit.xml
@@ -114,7 +114,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: MolCrafts/molcrafts-ci/actions/setup-python@b2c4441faa0743987a82bbc53d7ff9d7c2f974aa
+      - uses: MolCrafts/molcrafts-ci/actions/setup-python@3b8332e6c8f2402618d21126f7fa4d50f4acb6dc
       - uses: actions/download-artifact@v8
         with:
           name: tested-wheel-linux
@@ -136,7 +136,7 @@ jobs:
         os: ${{ fromJSON(needs.context.outputs.tier == 'full' && '["ubuntu-latest", "windows-latest"]' || '["ubuntu-latest"]') }}
     steps:
       - uses: actions/checkout@v7
-      - uses: MolCrafts/molcrafts-ci/actions/setup-rust@b2c4441faa0743987a82bbc53d7ff9d7c2f974aa
+      - uses: MolCrafts/molcrafts-ci/actions/setup-rust@3b8332e6c8f2402618d21126f7fa4d50f4acb6dc
         with:
           cache: capi
       # Visual Studio is multi-config; use the same configuration for build/test.
@@ -149,7 +149,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: MolCrafts/molcrafts-ci/actions/setup-rust@b2c4441faa0743987a82bbc53d7ff9d7c2f974aa
+      - uses: MolCrafts/molcrafts-ci/actions/setup-rust@3b8332e6c8f2402618d21126f7fa4d50f4acb6dc
         with:
           cache: wasm
       - uses: ./.github/actions/setup-wasm
@@ -164,7 +164,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: MolCrafts/molcrafts-ci/actions/setup-python@b2c4441faa0743987a82bbc53d7ff9d7c2f974aa
+      - uses: MolCrafts/molcrafts-ci/actions/setup-python@3b8332e6c8f2402618d21126f7fa4d50f4acb6dc
       - uses: actions/download-artifact@v8
         with:
           name: tested-wheel-linux
@@ -184,4 +184,4 @@ jobs:
       contents: read
     steps:
     - uses: actions/checkout@v7
-    - uses: MolCrafts/molcrafts-ci/actions/check-workflows@b2c4441faa0743987a82bbc53d7ff9d7c2f974aa
+    - uses: MolCrafts/molcrafts-ci/actions/check-workflows@3b8332e6c8f2402618d21126f7fa4d50f4acb6dc
