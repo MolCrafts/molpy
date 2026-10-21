@@ -49,7 +49,7 @@ fn length_mismatch(flag: &str, got: usize, expected: impl std::fmt::Display) -> 
 /// digits than the width, which a fixed-width cut would split).
 fn integer_field_width(format_line: &str) -> Option<usize> {
     let spec = format_line.split('(').nth(1)?.split(')').next()?;
-    let pos = spec.find(|c: char| matches!(c, 'I' | 'i'))?;
+    let pos = spec.find(['I', 'i'])?;
     let width: String = spec[pos + 1..]
         .chars()
         .take_while(|c| c.is_ascii_digit())

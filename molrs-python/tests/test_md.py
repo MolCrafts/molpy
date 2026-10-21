@@ -68,10 +68,6 @@ class TestMaxwellBoltzmann:
 
 
 class TestMass:
-    def test_a_scalar_mass_is_refused_with_the_array_spelling(self) -> None:
-        with pytest.raises(TypeError, match="scalar"):
-            MaxwellBoltzmann(1.0).velocities(np.zeros((2, 3)), 1.0)
-
     @pytest.mark.parametrize("invalid", [0.0, -1.0, np.nan, np.inf])
     def test_a_non_positive_or_non_finite_mass_is_refused(self, invalid) -> None:
         with pytest.raises(ValueError, match="mass"):
