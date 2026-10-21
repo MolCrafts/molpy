@@ -42,8 +42,8 @@ jobs:
   context:
     permissions:
       contents: read
-    name: release / context
-    uses: MolCrafts/molcrafts-ci/.github/workflows/context.yml@b2c4441faa0743987a82bbc53d7ff9d7c2f974aa
+    name: release
+    uses: MolCrafts/molcrafts-ci/.github/workflows/context.yml@3b8332e6c8f2402618d21126f7fa4d50f4acb6dc
 
   guard:
     name: release / guard
@@ -72,7 +72,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           PUBLISH: ${{ needs.context.outputs.publish }}
           REQUIRED: >-
-            test / context / context / context|test / python (ubuntu-latest, 3.12)|test / python (ubuntu-latest, 3.14)|test / python (macos-latest, 3.12)|test / python (windows-latest, 3.12)
+            test / context|test / python (ubuntu-latest, 3.12)|test / python (ubuntu-latest, 3.14)|test / python (macos-latest, 3.12)|test / python (windows-latest, 3.12)
         run: |
           python3 - <<'PY'
           import json, os, subprocess, sys, time
@@ -120,7 +120,7 @@ jobs:
       PYTHONWARNDEFAULTENCODING: "1"
     steps:
       - uses: actions/checkout@v7
-      - uses: MolCrafts/molcrafts-ci/actions/setup-python@b2c4441faa0743987a82bbc53d7ff9d7c2f974aa
+      - uses: MolCrafts/molcrafts-ci/actions/setup-python@3b8332e6c8f2402618d21126f7fa4d50f4acb6dc
         with:
           python-version: "3.12"
       - run: python scripts/check_partners_on_pypi.py
@@ -137,7 +137,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: MolCrafts/molcrafts-ci/actions/setup-python@b2c4441faa0743987a82bbc53d7ff9d7c2f974aa
+      - uses: MolCrafts/molcrafts-ci/actions/setup-python@3b8332e6c8f2402618d21126f7fa4d50f4acb6dc
         with:
           python-version: "3.14"
       - run: python scripts/check.py package
