@@ -146,7 +146,7 @@ chain = np.cumsum(steps, axis=0) + 100.0
 
 frame = mp.Frame()
 frame["atoms"] = {"x": chain[:, 0], "y": chain[:, 1], "z": chain[:, 2]}
-frame.box = mp.Box.cube(200.0)
+frame.box = mp.Box(mp.core.Cell.lengths([200.0] * 3))
 ```
 
 The positions and the box are read from the frame once; the neighbour table,
@@ -215,7 +215,7 @@ Pass the box. With `simbox`, each group is measured about one of its own atoms
 anchor — the same unwrapping you would otherwise do by hand:
 
 ```python
-cell = mp.Box.cube(20.0)
+cell = mp.Box(mp.core.Cell.lengths([20.0] * 3))
 split = np.array(
     [[0.5, 10.0, 10.0], [1.0, 10.0, 10.0], [19.5, 10.0, 10.0], [19.0, 10.0, 10.0]]
 )

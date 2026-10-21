@@ -5,4 +5,6 @@
 """
 
 from molrs.optimize import *  # noqa: F403
-from molrs.optimize import __all__ as __all__
+from molrs.optimize import __all__ as _native
+
+__all__ = [*_native]

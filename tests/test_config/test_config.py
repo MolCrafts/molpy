@@ -129,12 +129,23 @@ class TestValidation:
         assert "engine.lammps.executible: unexpected field" in message
         assert str(path) in message
 
-    def test_an_unknown_tool_is_refused(self, home, project) -> None:
-        with pytest.raises(ValidationError, match="engine.namd: unexpected field"):
+    def test_a_third_party_tool_table_loads(self, home, project) -> None:
+        _project(project, '[engine.namd]\nexecutable = "namd2"\ntimeout = 9\n')
+        config = load_config(project_dir=project, environ=home)
+        assert config["engine.namd.executable"] == "namd2"
+
+    def test_a_third_party_tool_table_is_validated(self, home, project) -> None:
+        with pytest.raises(ValidationError, match="engine.namd.executible"):
             load_config(
-                {"engine": {"namd": {"executable": "namd2"}}},
+                {"engine": {"namd": {"executible": "namd2"}}},
                 project_dir=project,
                 environ=home,
+            )
+
+    def test_a_group_value_that_is_not_a_table_is_refused(self, home, project) -> None:
+        with pytest.raises(ValidationError, match="wrapper.launcher: unexpected"):
+            load_config(
+                {"wrapper": {"launcher": ["srun"]}}, project_dir=project, environ=home
             )
 
     def test_a_wrong_type_is_refused(self, home, project) -> None:
@@ -225,7 +236,30 @@ class TestToolSettings:
         assert settings.conda_executable == "/opt/miniforge/bin/conda"
         assert settings.sources["conda_executable"] == ("user", "conda.executable")
 
-    @pytest.mark.parametrize("tool", ["engine.namd", "wrapper.lammps", "lammps", ""])
+    def test_a_third_party_tool_resolves(self, home, project) -> None:
+        _project(
+            project, '[engine]\ntimeout = 50\n[engine.namd]\nexecutable = "namd2"\n'
+        )
+        config = load_config(project_dir=project, environ=home)
+        namd = tool_settings(config, "engine.namd")
+        assert namd.executable == "namd2"
+        assert namd.sources["executable"] == ("project", "engine.namd.executable")
+        assert namd.timeout == 50.0
+        assert namd.sources["timeout"] == ("project", "engine.timeout")
+
+    def test_an_unconfigured_tool_has_its_group_settings_and_no_executable(
+        self, home, project
+    ) -> None:
+        config = load_config(project_dir=project, environ=home)
+        other = tool_settings(config, "wrapper.mytool")
+        assert other.executable is None
+        assert "executable" not in other.sources
+        assert other.env_vars == {}
+        assert other.sources["env_vars"] == ("defaults", "wrapper.env_vars")
+
+    @pytest.mark.parametrize(
+        "tool", ["solver.namd", "engine.timeout", "engine.a.b", "lammps", ""]
+    )
     def test_an_unknown_tool_raises(self, home, project, tool) -> None:
         config = load_config(project_dir=project, environ=home)
         with pytest.raises(KeyError, match="unknown tool"):

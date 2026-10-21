@@ -14,15 +14,15 @@ def test_tleap_wrapper_initialization():
     """Test TleapWrapper initialization."""
 
     wrapper = TleapWrapper(Path("tmp_tleap"))
-    assert wrapper.exe == "tleap"
+    assert wrapper.executable == "tleap"
     assert wrapper.workdir == Path("tmp_tleap")
 
 
 def test_tleap_wrapper_default_exe():
-    """Test that exe defaults to 'tleap'."""
+    """Test that the executable defaults to 'tleap'."""
 
     wrapper = TleapWrapper()
-    assert wrapper.exe == "tleap"
+    assert wrapper.executable == "tleap"
 
 
 def test_tleap_wrapper_run_from_script(tmp_path: Path):

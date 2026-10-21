@@ -9,6 +9,9 @@ The tube's shape is fixed when the builder is constructed;
 unit-cell enumeration, seam closure, and connectivity are implementation
 details.
 
+Bulk crystals are molpy's `Lattice`, built from a CIF or from a cell and a
+basis; see [Bulk crystals from a CIF](#bulk-crystals-from-a-cif).
+
 ## Zigzag, armchair, and chiral tubes
 
 The usual `(n, m)` indices select the topology:
@@ -77,3 +80,37 @@ assert list(with_topology.dihedrals)
 For a very large tube, keep the atoms-only graph through construction and let
 the MD export workflow materialize higher-order topology when it is actually
 needed.
+
+## Bulk crystals from a CIF
+
+A crystal is a `mp.builder.Lattice`: a `mp.Box` unit cell plus basis sites in
+fractional coordinates. A CIF gives you the asymmetric unit and its space
+group's operators; `mp.io.read_cif` keeps the operators in
+`frame.meta["symops"]` and `Lattice.from_cif` expands every atom by them into
+the whole conventional cell:
+
+```python
+# docs: skip — reads an offline CIF; Lattice.from_cif is unit-tested with fixtures
+frame = mp.io.read_cif("NaCl.cif")  # Fm-3m: Na1 at 4a, Cl1 at 4b
+salt = mp.builder.Lattice.from_cif(frame)
+assert len(salt.basis) == 8  # 4 Na + 4 Cl per conventional cell
+
+crystal = salt.build(repeats=(4, 4, 4))
+frame = crystal.to_frame()
+frame.box = salt.supercell((4, 4, 4))
+```
+
+The cell is the file's own box, so a triclinic cell keeps its orientation:
+`box.h` holds the lattice vectors as columns. `from_cif` raises `ValueError`
+rather than guess when the frame has no box, when the file has no operator
+loop (it does not assume P1; list `x,y,z` for a P1 structure), or when a site
+is partially occupied, since a lattice places one atom per site.
+
+To cut a cluster or slab instead of a block of whole cells, pass a region;
+the tile covers its whole bounding box, on every side of the origin:
+
+```python
+nickel = mp.builder.Lattice.fcc(a=3.52, species="Ni")
+cluster = nickel.build(mp.core.Sphere([0.0, 0.0, 0.0], 5.0))
+assert len(cluster.atoms) == 55  # the centre atom and its first four shells
+```

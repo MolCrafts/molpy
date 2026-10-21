@@ -133,7 +133,7 @@ xyz[0::2], xyz[1::2] = first, second
 
 frame = mp.Frame()
 frame["atoms"] = {"x": xyz[:, 0], "y": xyz[:, 1], "z": xyz[:, 2]}
-frame.box = mp.Box.cube(100.0)
+frame.box = mp.Box(mp.core.Cell.lengths([100.0] * 3))
 index = np.arange(2 * n_bonds, dtype=np.uint32).reshape(n_bonds, 2)
 frame["bonds"] = {"atomi": index[:, 0], "atomj": index[:, 1]}
 ```
@@ -172,7 +172,7 @@ triples = np.arange(3 * 1000, dtype=np.uint32).reshape(1000, 3)
 angles = mp.Frame()
 pts = rng.normal(size=(3000, 3)) * 5.0 + 50.0
 angles["atoms"] = {"x": pts[:, 0], "y": pts[:, 1], "z": pts[:, 2]}
-angles.box = mp.Box.cube(100.0)
+angles.box = mp.Box(mp.core.Cell.lengths([100.0] * 3))
 angles["angles"] = {
     "atomi": triples[:, 0], "atomj": triples[:, 1], "atomk": triples[:, 2]
 }

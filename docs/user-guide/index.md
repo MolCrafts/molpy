@@ -26,7 +26,7 @@ From one ethylene-oxide kit to every architecture the site-graph assembler suppo
 
 ## Geometry & Packing
 
-- [Nanostructures](04_nanostructures.md) — zigzag, armchair, and chiral carbon nanotubes with open or periodic axial topology
+- [Nanostructures](04_nanostructures.md) — zigzag, armchair, and chiral carbon nanotubes with open or periodic axial topology, and bulk crystals expanded from a CIF
 - [3D Conformer Generation](07_conformers.md) — embedding chemically valid 3D coordinates for a parsed or constructed structure
 - [Geometry Optimization](08_geometry_optimization.md) — force-field-driven structure minimization and how to read the optimization report
 - [Packing Systems](09_packing.md) — filling a simulation cell with molecules under geometric restraints via molpack

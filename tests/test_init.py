@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import importlib
 from types import ModuleType
 
 import molrs
@@ -31,17 +30,8 @@ MIRRORED = tuple(
 )
 
 
-@pytest.mark.parametrize("sub", MIRRORED)
-def test_a_mirrored_subsystem_keeps_every_native_name(sub: str) -> None:
-    native = getattr(molrs, sub)
-    mine = importlib.import_module(f"molpy.{sub}")
-    assert getattr(molpy, sub) is mine
-    for name in native.__all__:
-        ours = getattr(mine, name)
-        if isinstance(ours, ModuleType) and ours.__name__.startswith("molpy."):
-            continue  # molpy's own mirror of a molrs submodule (mp.io.lammps, …)
-        assert ours is getattr(native, name), (sub, name)
-    assert set(native.__all__) <= set(mine.__all__)
+# Each mirror keeping every native name by identity is test_public_paths's
+# ``test_every_molrs_subsystem_has_its_molpy_module``.
 
 
 def test_only_promoted_core_classes_are_on_the_root() -> None:

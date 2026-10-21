@@ -9,16 +9,18 @@ programs when they are installed.
 
 from __future__ import annotations
 
+import shlex
 import shutil
 import subprocess
 from pathlib import Path
 from unittest.mock import patch
 
+import numpy as np
 import pytest
 
 import molpy as mp
 from molpy.builder import AmberCut, AmberPieces, AmberPolymerBuilder
-from molpy.wrapper import Wrapper
+from molpy.wrapper import Tool, ToolError
 
 
 def _inpcrd(path: Path, n_atoms: int = 16) -> None:
@@ -85,7 +87,7 @@ class _FakeTools:
             save = next(
                 line for line in script.splitlines() if line.startswith("saveamberparm")
             )
-            prmtop, inpcrd = save.split()[2:]
+            prmtop, inpcrd = shlex.split(save)[2:]
             shutil.copy(self.prmtop, prmtop)
             _inpcrd(Path(inpcrd))
         elif tool == "antechamber":
@@ -112,10 +114,10 @@ class _FakeTools:
 def _ether() -> mp.Atomistic:
     """CH3-O-CH2-CH2-O-CH3 with Amber atom names and no ports."""
     graph = mp.conformer.Conformer(seed=1).generate(
-        mp.io.smiles.SmilesIr("COCCOC").to_atomistic()
+        mp.io.smiles.read_smiles("COCCOC").to_atomistic()
     )[0]
     for index, atom in enumerate(graph.atoms, start=1):
-        atom["name"] = f"{atom['element']}{index}"
+        atom["name"] = f"{mp.Element.by_number(atom['atomic_number']).symbol}{index}"
     return graph
 
 
@@ -159,7 +161,7 @@ def _controls(work: Path, label: str = "EO") -> dict[str, str]:
 def tools(TEST_DATA_DIR: Path):
     fake = _FakeTools(TEST_DATA_DIR / "prmtop" / "LiTFSI.prmtop")
     with (
-        patch.object(Wrapper, "is_available", return_value=True),
+        patch.object(Tool, "resolve_executable", return_value="/amber/bin/tool"),
         patch("molpy.wrapper._process.subprocess.run", side_effect=fake),
         patch(
             "molrs.builder.Assembler.assemble", side_effect=AssertionError("no link")
@@ -169,11 +171,11 @@ def tools(TEST_DATA_DIR: Path):
 
 
 def _build(work: Path, sites: str = "{[#EO]|3}", **kwargs) -> mp.Frame:
-    options = {"force_field": "gaff", "work_dir": work} | kwargs
+    options = {"parameter_set": "gaff", "work_dir": work} | kwargs
     library = options.pop("library", {"EO": _ether()})
     cuts = options.pop("cuts", _cuts())
     builder = AmberPolymerBuilder(library, cuts, **options)
-    return builder.assemble(mp.io.cgsmiles.CgSmilesIr(sites).to_coarsegrain())
+    return builder.assemble(mp.io.cgsmiles.read_cgsmiles(sites).to_coarsegrain())
 
 
 class TestAmberPieces:
@@ -210,7 +212,7 @@ class TestAmberPieces:
             tmp_path, "{[#PEO]|4}", library={"PEO": oligomer}, cuts={"PEO": cuts}
         )
         assert result.monomer_count == 4
-        assert "mol = sequence { HPE PEO PEO TPE }" in _script(tmp_path)
+        assert "MOL = sequence { HPE PEO PEO TPE }" in _script(tmp_path)
         controls = _controls(tmp_path, "PEO")
         assert "TAIL_NAME C3" in controls["head"]
         assert "HEAD_NAME O2" in controls["chain"]
@@ -224,20 +226,17 @@ class TestAssemble:
 
         assert tools.names() == [
             "antechamber",
-            "antechamber",
             "parmchk2",
             "prepgen",
             "prepgen",
             "prepgen",
             "tleap",
         ]
-        formats = [
-            args[args.index("-fo") + 1]
-            for name, args in tools.calls
-            if name == "antechamber"
-        ]
-        assert formats == ["mol2", "ac"]
         first = tools.calls[0][1]
+        assert first[first.index("-fo") + 1] == "ac"  # one sqm run per oligomer
+        parmchk2 = tools.calls[1][1]
+        assert parmchk2[parmchk2.index("-f") + 1] == "ac"
+        assert Path(parmchk2[parmchk2.index("-i") + 1]).name == "EO.ac"
         assert first[first.index("-c") + 1] == "bcc"
         assert first[first.index("-at") + 1] == "gaff"
         assert first[first.index("-nc") + 1] == "0"
@@ -251,7 +250,7 @@ class TestAssemble:
         assert "loadamberparams" in script
         assert "loadamberprep" in script
         assert "loadmol2" not in script
-        assert "mol = sequence { HEO EO TEO }" in script
+        assert "MOL = sequence { HEO EO TEO }" in script
         assert result.monomer_count == 3
         assert result.chain.n_atoms == 16
         assert all(isinstance(atom["type"], str) for atom in result.chain.atoms)
@@ -284,7 +283,7 @@ class TestAssemble:
     def test_one_chain_residue_serves_every_middle_site(self, tools, tmp_path):
         result = _build(tmp_path, "{[#EO]|4}")
         assert result.monomer_count == 4
-        assert "mol = sequence { HEO EO EO TEO }" in _script(tmp_path)
+        assert "MOL = sequence { HEO EO EO TEO }" in _script(tmp_path)
         assert (tmp_path / "monomers" / "EO" / "EO.prepi").is_file()
         assert (tmp_path / "monomers" / "EO" / "HEO.prepi").is_file()
         assert tools.names().count("prepgen") == 3
@@ -294,7 +293,7 @@ class TestAssemble:
         del cuts["EO"]["chain"]
         _build(tmp_path, "{[#EO]|2}", cuts=cuts)
         assert tools.names().count("prepgen") == 2
-        assert "mol = sequence { HEO TEO }" in _script(tmp_path)
+        assert "MOL = sequence { HEO TEO }" in _script(tmp_path)
         assert not (tmp_path / "monomers" / "EO" / "EO.prepi").exists()
 
     def test_net_charge_is_the_sum_of_formal_charges(self, tools, tmp_path):
@@ -312,6 +311,18 @@ class TestAssemble:
     def test_net_charges_must_list_every_label(self, tools, tmp_path):
         with pytest.raises(KeyError, match="no entry for 'EO'"):
             _build(tmp_path, net_charges={"PEO": 0})
+
+
+class TestScript:
+    def test_a_work_dir_with_a_space_reaches_tleap_quoted(self, tools, tmp_path):
+        work = tmp_path / "my work"
+        result = _build(work)
+        script = _script(work)
+        monomer = (work / "monomers" / "EO").resolve().as_posix()
+        assert f'loadamberparams "{monomer}/EO.frcmod"' in script
+        assert f'loadamberprep "{monomer}/HEO.prepi"' in script
+        assert result.prmtop_path.is_file()
+        assert " " in str(result.prmtop_path)
 
 
 class TestCache:
@@ -337,7 +348,6 @@ class TestCache:
         _build(tmp_path, charge_method="gas")
         assert tools.names()[before:] == [
             "antechamber",
-            "antechamber",
             "parmchk2",
             "prepgen",
             "prepgen",
@@ -354,10 +364,16 @@ class TestGropobOligomer:
         monomer = work / "monomers" / "PEO"
         monomer.mkdir(parents=True)
         shutil.copy(data / "PEO.ac", monomer / "PEO.ac")
-        shutil.copy(data / "PEO_initial.mol2", monomer / "PEO.mol2")
         shutil.copy(data / "PEO_initial.frcmod", monomer / "PEO.frcmod")
         frame = mp.io.read_ac(data / "PEO.ac")
         del frame["atoms"]["xyz"]
+        frame["atoms"]["atomic_number"] = np.array(
+            [
+                {"c": 6, "h": 1, "o": 8}[str(t)[0].lower()]
+                for t in frame["atoms"]["type"]
+            ],
+            dtype=np.uint8,
+        )
         return mp.Atomistic.from_frame(frame)
 
     def test_connection_types_come_from_their_ac(self, tools, tmp_path, TEST_DATA_DIR):
@@ -380,7 +396,7 @@ class TestGropobOligomer:
         _build(tmp_path, "{[#PEO]|5}", library={"PEO": oligomer}, cuts=cuts)
         assert "antechamber" not in tools.names()
         assert "parmchk2" not in tools.names()
-        assert "mol = sequence { HPE PEO PEO PEO TPE }" in _script(tmp_path)
+        assert "MOL = sequence { HPE PEO PEO PEO TPE }" in _script(tmp_path)
         controls = _controls(tmp_path, "PEO")
         assert controls["head"] == (
             "TAIL_NAME C6\nPOST_TAIL_TYPE c3\n"
@@ -396,30 +412,32 @@ class TestGropobOligomer:
 class TestRefused:
     def test_a_branched_site_graph(self, tools, tmp_path):
         sites = mp.CoarseGrain()
-        beads = [sites.def_bead(bead_type="EO") for _ in range(4)]
+        beads = [sites.add_bead(bead_type="EO") for _ in range(4)]
         for bead in beads[1:]:
-            sites.def_cgbond(beads[0], bead)
+            sites.add_bond(beads[0], bead)
         with pytest.raises(ValueError, match="linear"):
-            AmberPolymerBuilder({"EO": _ether()}, _cuts(), work_dir=tmp_path).assemble(
-                sites
-            )
+            AmberPolymerBuilder(
+                {"EO": _ether()}, _cuts(), parameter_set="gaff", work_dir=tmp_path
+            ).assemble(sites)
 
     def test_a_ring(self, tools, tmp_path):
         sites = mp.CoarseGrain()
-        beads = [sites.def_bead(bead_type="EO") for _ in range(3)]
+        beads = [sites.add_bead(bead_type="EO") for _ in range(3)]
         for left, right in zip(beads, beads[1:] + beads[:1], strict=True):
-            sites.def_cgbond(left, right)
+            sites.add_bond(left, right)
         with pytest.raises(ValueError, match="linear"):
-            AmberPolymerBuilder({"EO": _ether()}, _cuts(), work_dir=tmp_path).assemble(
-                sites
-            )
+            AmberPolymerBuilder(
+                {"EO": _ether()}, _cuts(), parameter_set="gaff", work_dir=tmp_path
+            ).assemble(sites)
 
     def test_one_site(self, tools, tmp_path):
         with pytest.raises(ValueError, match="head site and a tail site"):
             _build(tmp_path, "{[#EO]}")
 
     def test_not_a_site_graph(self, tmp_path):
-        builder = AmberPolymerBuilder({"EO": _ether()}, _cuts(), work_dir=tmp_path)
+        builder = AmberPolymerBuilder(
+            {"EO": _ether()}, _cuts(), parameter_set="gaff", work_dir=tmp_path
+        )
         with pytest.raises(TypeError, match="coarse-grain site graph"):
             builder.assemble(_ether())  # type: ignore[arg-type]
 
@@ -460,29 +478,33 @@ class TestRefused:
         self, tools, tmp_path, variant, cut, error, match
     ):
         with pytest.raises(error, match=match):
-            AmberPolymerBuilder({"EO": _ether()}, {"EO": {variant: cut}})
+            AmberPolymerBuilder(
+                {"EO": _ether()}, {"EO": {variant: cut}}, parameter_set="gaff"
+            )
         assert tools.calls == []
 
     def test_bead_types_that_share_a_residue_name(self):
         with pytest.raises(ValueError, match="tleap residue 'HPE'"):
-            AmberPolymerBuilder({"PEO": _ether(), "PEOX": _ether()}, {})
+            AmberPolymerBuilder(
+                {"PEO": _ether(), "PEOX": _ether()}, {}, parameter_set="gaff"
+            )
 
     def test_a_repeated_atom_name(self):
         ether = _ether()
         for atom in ether.atoms:
             atom["name"] = "C"
         with pytest.raises(ValueError, match="repeats Amber atom name 'C'"):
-            AmberPolymerBuilder({"EO": ether}, {})
+            AmberPolymerBuilder({"EO": ether}, {}, parameter_set="gaff")
 
     def test_a_template_that_is_not_atomistic(self):
         with pytest.raises(TypeError, match="must be Atomistic"):
-            AmberPolymerBuilder({"EO": mp.CoarseGrain()}, {})  # type: ignore[dict-item]
+            AmberPolymerBuilder({"EO": mp.CoarseGrain()}, {}, parameter_set="gaff")  # type: ignore[dict-item]
 
     def test_unnamed_atoms_get_element_and_row(self):
         graph = mp.conformer.Conformer(seed=1).generate(
-            mp.io.smiles.SmilesIr("CO").to_atomistic()
+            mp.io.smiles.read_smiles("CO").to_atomistic()
         )[0]
-        builder = AmberPolymerBuilder({"MO": graph}, {})
+        builder = AmberPolymerBuilder({"MO": graph}, {}, parameter_set="gaff")
         names = [str(atom["name"]) for atom in builder.library["MO"].atoms]
         assert names[:2] == ["C1", "O2"]
         assert all(atom.get("name") is None for atom in graph.atoms)
@@ -491,34 +513,34 @@ class TestRefused:
 class TestToolFailures:
     def test_missing_tool(self, tmp_path):
         with (
-            patch.object(Wrapper, "is_available", return_value=False),
-            pytest.raises(RuntimeError, match="antechamber is not available"),
+            patch.object(Tool, "resolve_executable", return_value=None),
+            pytest.raises(ToolError, match="executable .antechamber. not found"),
         ):
             _build(tmp_path)
 
     def test_failing_prepgen_carries_its_stdout(self, TEST_DATA_DIR, tmp_path):
         fake = _FakeTools(TEST_DATA_DIR / "prmtop" / "LiTFSI.prmtop", fail="prepgen")
         with (
-            patch.object(Wrapper, "is_available", return_value=True),
+            patch.object(Tool, "resolve_executable", return_value="/amber/bin/tool"),
             patch("molpy.wrapper._process.subprocess.run", side_effect=fake),
-            pytest.raises(RuntimeError, match="prepgen: cannot do it"),
+            pytest.raises(ToolError, match="prepgen: cannot do it"),
         ):
             _build(tmp_path)
 
     def test_failing_tleap_leaves_no_chain_to_reuse(self, TEST_DATA_DIR, tmp_path):
         prmtop = TEST_DATA_DIR / "prmtop" / "LiTFSI.prmtop"
         with (
-            patch.object(Wrapper, "is_available", return_value=True),
+            patch.object(Tool, "resolve_executable", return_value="/amber/bin/tool"),
             patch(
                 "molpy.wrapper._process.subprocess.run",
                 side_effect=_FakeTools(prmtop, fail="tleap"),
             ),
-            pytest.raises(RuntimeError, match="tleap failed"),
+            pytest.raises(ToolError, match="tleap exited with status 1"),
         ):
             _build(tmp_path)
         fake = _FakeTools(prmtop)
         with (
-            patch.object(Wrapper, "is_available", return_value=True),
+            patch.object(Tool, "resolve_executable", return_value="/amber/bin/tool"),
             patch("molpy.wrapper._process.subprocess.run", side_effect=fake),
         ):
             _build(tmp_path)
@@ -527,12 +549,14 @@ class TestToolFailures:
 
 def test_tleap_typifier_refuses_a_graph_that_still_has_ports(tmp_path):
     graph = mp.conformer.Conformer(seed=1).generate(
-        mp.io.smiles.SmilesIr("COC").to_atomistic()
+        mp.io.smiles.read_smiles("COC").to_atomistic()
     )[0]
     atoms = list(graph.atoms)
     for atom in atoms:
         atom["type"] = "c3"
         atom["charge"] = 0.0
-    graph.def_port(atoms[0], atoms[1], ">")
+    graph.add_port(atoms[0], atoms[1], kind=">")
     with pytest.raises(ValueError, match="ports"):
-        mp.ff.typifier.TleapTypifier(work_dir=tmp_path).typify(graph)
+        mp.ff.typifier.TleapTypifier(parameter_set="gaff2", work_dir=tmp_path).typify(
+            graph
+        )

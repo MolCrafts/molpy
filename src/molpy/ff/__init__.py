@@ -11,7 +11,8 @@ molrs.ff.forcefield.ForceField``):
 * :mod:`~molpy.ff.compile` — ``PotentialCompiler`` and
   ``ExplicitTerms``: a force field bound to its kernels
 * :mod:`~molpy.ff.typifier` — the ``Typifier`` base, its ``TypeAssignment``, the
-  built-in typifiers and ``assign_cmaps``; plus molpy's AmberTools typifiers
+  built-in typifiers (GAFF natively: ``AtdTypifier`` + ``GaffTypifier``) and
+  ``assign_cmaps``; plus molpy's AmberTools typifiers (AM1-BCC charges)
 * :mod:`~molpy.ff.charge` — partial-charge models
 * :mod:`~molpy.ff.ir` — the force-field IR as vocabulary: categories, styles,
   parameters and their refusals
@@ -21,7 +22,7 @@ molrs.ff.forcefield.ForceField``):
 * :mod:`~molpy.ff.clpol_scaling` — CL&Pol fragment scaling of LJ parameters
 """
 
-from . import (
+from molpy.ff import (
     charge,
     clpol_scaling,
     compile,

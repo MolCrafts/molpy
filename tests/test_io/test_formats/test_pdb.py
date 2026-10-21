@@ -3,8 +3,8 @@
 import numpy as np
 import pytest
 
-from molpy.core import Block, Frame, MetaValue
 import molpy as mp
+from molpy.core import Block, Frame, MetaValue
 
 
 class TestWritePdb:
@@ -33,6 +33,7 @@ class TestWritePdb:
                 "x": np.array([1.0, 2.0, 3.0]),
                 "y": np.array([4.0, 5.0, 6.0]),
                 "z": np.array([7.0, 8.0, 9.0]),
+                "element": np.array(["C", "C", "H"]),
             }
         )
         frame["atoms"] = atoms
@@ -58,9 +59,8 @@ class TestWritePdb:
                 assert abs(y - (4.0 + i)) < 0.001
                 assert abs(z - (7.0 + i)) < 0.001
 
-    def test_a_missing_element_is_written_as_x(self, tmp_path):
-        """Without an ``element`` column the PDB element field is ``X``, never
-        a guess from frame meta."""
+    def test_a_missing_element_is_rejected(self, tmp_path):
+        """The PDB writer requires an explicit element column."""
         frame = Frame()
         frame["atoms"] = Block(
             {
@@ -71,13 +71,8 @@ class TestWritePdb:
             }
         )
         frame.meta = {"elements": MetaValue("string", "C O")}
-        mp.io.write_pdb(tmp_path / "test.pdb", frame)
-        atom_lines = [
-            line
-            for line in (tmp_path / "test.pdb").read_text(encoding="utf-8").splitlines()
-            if line.startswith("ATOM")
-        ]
-        assert [line[76:78].strip() for line in atom_lines] == ["X", "X"]
+        with pytest.raises(OSError, match="no string 'element' column"):
+            mp.io.write_pdb(tmp_path / "test.pdb", frame)
 
     def test_elements_from_atom_data(self, tmp_path):
         """Test that elements are extracted from atom data if metadata not available."""
@@ -110,6 +105,7 @@ class TestWritePdb:
                 "y": np.array([1.0, 2.0]),
                 "z": np.array([1.0, 2.0]),
                 "id": np.array([100, 200]),
+                "element": np.array(["C", "H"]),
             }
         )
         frame["atoms"] = atoms
@@ -132,6 +128,7 @@ class TestWritePdb:
                 "x": np.array([1.0, 2.0, 3.0]),
                 "y": np.array([1.0, 2.0, 3.0]),
                 "z": np.array([1.0, 2.0, 3.0]),
+                "element": np.array(["C", "C", "H"]),
             }
         )
         frame["atoms"] = atoms

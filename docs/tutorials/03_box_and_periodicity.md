@@ -24,34 +24,32 @@ periodicity is part of the physical model, not a hidden flag.
 ## Creating a box
 
 Factories cover the common cells: cubic and orthorhombic. A triclinic cell is
-built from its matrix, which `Box.matrix_from_lengths_tilts` assembles from edge
-lengths and LAMMPS tilt factors.
+built from edge lengths and LAMMPS tilt factors with `Box.from_lengths_tilts`
+(or from lengths and angles with `Box.from_lengths_angles`).
 
 ```python
 import molpy as mp
 import numpy as np
 
-cubic = mp.Box.cube(20.0)
+cubic = mp.Box(mp.core.Cell.lengths([20.0] * 3))
 ortho = mp.Box.ortho(np.array([10.0, 20.0, 30.0]))
-tric = mp.Box(
-    h=mp.Box.matrix_from_lengths_tilts(
-        np.array([10.0, 12.0, 15.0]), np.array([1.0, 0.5, 0.2])
-    )
+tric = mp.Box.from_lengths_tilts(
+    np.array([10.0, 12.0, 15.0]), np.array([1.0, 0.5, 0.2])
 )
 
 print(cubic.style, ortho.style, tric.style) # orthogonal orthogonal triclinic
 ```
 
 You can also pass the cell `h` directly: a 3×3 matrix whose columns are the
-lattice vectors, or a `(3,)` diagonal. No cell (`mp.Box()`, or an all-zero
-matrix) is a free box, non-periodic unless `pbc` says otherwise. The
-constructor is `Box(h=None, origin=None, pbc=None)`; pass them by keyword.
+lattice vectors. The constructor is `Box(cell, origin=(0, 0, 0),
+pbc=(True, True, True))`, where `cell` is that matrix or a `mp.core.Cell`;
+`mp.Box(mp.core.Cell.undefined(), pbc=[False] * 3)` is a free box with no cell.
 
 ```python
 matrix = np.array([[10.0, 1.0, 0.5],
  [0.0, 12.0, 0.2],
  [0.0, 0.0, 15.0]])
-box = mp.Box(h=matrix)
+box = mp.Box(matrix)
 print(box.lengths)
 ```
 
@@ -78,7 +76,7 @@ print(f"style: {box.style}")
 Atoms that have drifted outside the box during a simulation can be mapped back with `wrap`. This produces wrapped positions in the primary image.
 
 ```python
-box = mp.Box.cube(10.0)
+box = mp.Box(mp.core.Cell.lengths([10.0] * 3))
 
 points = np.array([
  [12.0, -2.0, 5.0],
@@ -116,7 +114,7 @@ print(np.allclose(restored, absolute)) # True
 In a periodic system, the physically meaningful separation between two points is the shortest one — the minimum-image displacement. `delta(..., minimum_image=True)` computes the displacement vector from the first point set to the second; `distances` computes the scalar distance.
 
 ```python
-box = mp.Box.cube(10.0)
+box = mp.Box(mp.core.Cell.lengths([10.0] * 3))
 
 r1 = np.array([[1.0, 1.0, 1.0]])
 r2 = np.array([[9.5, 9.5, 9.5]])
@@ -151,7 +149,7 @@ A box is attached to a Frame as `frame.box`, not stored in metadata. This is the
 frame = mp.Frame(blocks={
  "atoms": {"x": [1.0, 9.5], "y": [1.0, 9.5], "z": [1.0, 9.5]},
 })
-frame.box = mp.Box.cube(10.0)
+frame.box = mp.Box(mp.core.Cell.lengths([10.0] * 3))
 
 # I/O readers set frame.box automatically
 frame = mp.io.read_lammps_data("system.data", atom_style="full")

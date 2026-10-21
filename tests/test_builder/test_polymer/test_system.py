@@ -8,12 +8,19 @@ Tests cover:
 """
 
 import numpy as np
-
 import pytest
 
-from molpy.builder import SchulzZimmPolydisperse
-from molpy.builder import WeightedSequenceGenerator
-from molpy.builder import Chain, PolydisperseChainGenerator, SystemPlan, SystemPlanner
+from molpy.builder import (
+    AlternatingSequenceGenerator,
+    BlockSequenceGenerator,
+    Chain,
+    PolydisperseChainGenerator,
+    SchulzZimmPolydisperse,
+    SystemPlan,
+    SystemPlanner,
+    UniformPolydisperse,
+    WeightedSequenceGenerator,
+)
 
 
 class TestChain:
@@ -130,201 +137,253 @@ class TestPolydisperseChainGenerator:
         assert avg_dp == pytest.approx(15.0, abs=5.0)
 
 
+class FixedDp:
+    """A delta DP distribution, for predictable planner arithmetic."""
+
+    def __init__(self, dp: int):
+        self.dp = dp
+
+    def sample_dp(self, rng: np.random.Generator) -> int:
+        return self.dp
+
+    def dp_pmf(self, dp_array: np.ndarray) -> np.ndarray:
+        pmf = np.zeros_like(dp_array, dtype=float)
+        pmf[np.round(dp_array).astype(int) == self.dp] = 1.0
+        return pmf
+
+
+def _fixed_chains(dp: int, monomer_mass: float = 100.0) -> PolydisperseChainGenerator:
+    return PolydisperseChainGenerator(
+        seq_generator=WeightedSequenceGenerator({"A": 1.0}),
+        monomer_mass={"A": monomer_mass},
+        distribution=FixedDp(dp),
+    )
+
+
+class TestMassDistributionChains:
+    """A mass-space chain is one whole sequence, not dp sequences of length 1."""
+
+    def _chains(self, seq_gen, n: int = 50) -> list[Chain]:
+        chain_gen = PolydisperseChainGenerator(
+            seq_generator=seq_gen,
+            monomer_mass={"A": 100.0, "B": 100.0},
+            end_group_mass=0.0,
+            distribution=SchulzZimmPolydisperse(Mn=2000.0, Mw=2400.0),
+        )
+        rng = np.random.default_rng(7)
+        return [chain_gen.build_chain(rng) for _ in range(n)]
+
+    def test_alternating_sequence_survives_mass_sampling(self):
+        seq_gen = AlternatingSequenceGenerator(["A", "B"])
+        chains = self._chains(seq_gen)
+        assert sum(c.monomers.count("B") for c in chains) > 0
+        for chain in chains:
+            assert chain.monomers == seq_gen.generate_sequence(chain.dp)
+
+    def test_block_sequence_survives_mass_sampling(self):
+        seq_gen = BlockSequenceGenerator({"A": 0.5, "B": 0.5})
+        chains = self._chains(seq_gen)
+        assert sum(c.monomers.count("B") for c in chains) > 0
+        for chain in chains:
+            assert chain.monomers == seq_gen.generate_sequence(chain.dp)
+
+    def test_chain_masses_follow_the_target_mn(self):
+        chains = self._chains(WeightedSequenceGenerator({"A": 1.0, "B": 1.0}), 2000)
+        mn = np.mean([c.mass for c in chains])
+        assert mn == pytest.approx(2000.0, rel=0.03)
+
+    def test_dp_matches_the_sampled_mass(self):
+        chain_gen = PolydisperseChainGenerator(
+            seq_generator=WeightedSequenceGenerator({"A": 1.0}),
+            monomer_mass={"A": 100.0},
+            end_group_mass=18.0,
+            distribution=SchulzZimmPolydisperse(Mn=5000.0, Mw=6000.0),
+        )
+        target = chain_gen.sample_mass(np.random.default_rng(3))
+        chain = chain_gen.build_chain(np.random.default_rng(3))
+        assert chain.dp == max(1, round((target - 18.0) / 100.0))
+        assert chain.mass == pytest.approx(chain.dp * 100.0 + 18.0)
+
+
+class TestPolydisperseChainGeneratorInputs:
+    def test_copies_the_callers_masses(self):
+        masses = {"A": 100.0}
+        chain_gen = PolydisperseChainGenerator(
+            WeightedSequenceGenerator({"A": 1.0}), masses, distribution=FixedDp(3)
+        )
+        masses["A"] = 1.0
+        assert chain_gen.build_chain(np.random.default_rng(0)).mass == 300.0
+
+    def test_rejects_missing_distribution(self):
+        with pytest.raises(TypeError, match="exactly one"):
+            PolydisperseChainGenerator(
+                WeightedSequenceGenerator({"A": 1.0}), {"A": 1.0}
+            )
+
+    def test_rejects_distribution_with_both_capabilities(self):
+        class Both(FixedDp):
+            def sample_mass(self, rng):
+                return 1.0
+
+            def mass_pdf(self, m):
+                return m
+
+        with pytest.raises(TypeError, match="exactly one"):
+            PolydisperseChainGenerator(
+                WeightedSequenceGenerator({"A": 1.0}), {"A": 1.0}, distribution=Both(1)
+            )
+
+    @pytest.mark.parametrize("mass", [0.0, -1.0, float("nan"), float("inf")])
+    def test_rejects_non_positive_monomer_mass(self, mass):
+        with pytest.raises(ValueError, match="monomer_mass"):
+            PolydisperseChainGenerator(
+                WeightedSequenceGenerator({"A": 1.0}),
+                {"A": mass},
+                distribution=FixedDp(1),
+            )
+
+    def test_rejects_negative_end_group_mass(self):
+        with pytest.raises(ValueError, match="end_group_mass"):
+            PolydisperseChainGenerator(
+                WeightedSequenceGenerator({"A": 1.0}),
+                {"A": 1.0},
+                end_group_mass=-1.0,
+                distribution=FixedDp(1),
+            )
+
+    def test_rejects_monomer_without_mass(self):
+        with pytest.raises(ValueError, match="'B'"):
+            PolydisperseChainGenerator(
+                AlternatingSequenceGenerator(["A", "B"]),
+                {"A": 1.0},
+                distribution=FixedDp(1),
+            )
+
+    def test_rejects_dp_below_one(self):
+        chain_gen = _fixed_chains(dp=0)
+        with pytest.raises(ValueError, match="dp"):
+            chain_gen.build_chain(np.random.default_rng(0))
+
+    def test_rejects_sequence_of_wrong_length(self):
+        class Short:
+            def generate_sequence(self, dp, rng):
+                return ["A"]
+
+            def expected_composition(self):
+                return {"A": 1.0}
+
+        chain_gen = PolydisperseChainGenerator(
+            Short(), {"A": 1.0}, distribution=FixedDp(3)
+        )
+        with pytest.raises(ValueError, match="3"):
+            chain_gen.build_chain(np.random.default_rng(0))
+
+
 class TestSystemPlanner:
     """Tests for SystemPlanner (top layer)."""
 
     def test_system_planner_basic(self):
-        """Test basic system planning."""
         seq_gen = WeightedSequenceGenerator(monomer_weights={"A": 0.7, "B": 0.3})
-
-        dp_dist = SchulzZimmPolydisperse(Mn=1500.0, Mw=3000.0)
-
         chain_gen = PolydisperseChainGenerator(
             seq_generator=seq_gen,
             monomer_mass={"A": 100.0, "B": 150.0},
             end_group_mass=18.0,
-            distribution=dp_dist,
+            distribution=SchulzZimmPolydisperse(Mn=1500.0, Mw=3000.0),
         )
-
         planner = SystemPlanner(
-            chain_generator=chain_gen,
-            target_total_mass=1.0e6,
-            max_rel_error=0.02,
+            chain_generator=chain_gen, target_total_mass=1.0e6, max_rel_error=0.02
         )
-
-        rng = np.random.default_rng(42)
-        system_plan = planner.plan_system(rng)
+        system_plan = planner.plan_system(np.random.default_rng(42))
 
         assert isinstance(system_plan, SystemPlan)
         assert len(system_plan.chains) > 0
-        assert system_plan.total_mass > 0
         assert system_plan.target_mass == 1.0e6
-
-        # Total mass should be within max_rel_error of target
-        rel_error = (
-            abs(system_plan.total_mass - system_plan.target_mass)
-            / system_plan.target_mass
+        assert system_plan.total_mass == pytest.approx(
+            sum(c.mass for c in system_plan.chains)
         )
-        assert rel_error <= planner.max_rel_error * 1.1  # Allow small margin
+        rel_error = abs(system_plan.total_mass - 1.0e6) / 1.0e6
+        assert rel_error <= planner.max_rel_error
 
-    def test_system_planner_mass_constraint(self):
-        """Test that system planner respects mass constraints."""
-        seq_gen = WeightedSequenceGenerator(monomer_weights={"A": 1.0})
+    def test_fixed_chains_hit_the_target_exactly(self):
+        planner = SystemPlanner(_fixed_chains(dp=10), target_total_mass=5000.0)
+        system_plan = planner.plan_system(np.random.default_rng(42))
+        assert len(system_plan.chains) == 5
+        assert system_plan.total_mass == 5000.0
 
-        # Use fixed DP for predictable testing
-        import numpy as np
-
-        class FixedDpDistribution:
-            def __init__(self, dp: int):
-                self.dp = dp
-
-            def sample_dp(self, rng: np.random.Generator) -> int:
-                return self.dp
-
-            def dp_pmf(self, dp_array: np.ndarray) -> np.ndarray:
-                pmf = np.zeros_like(dp_array, dtype=float)
-                pmf[np.round(dp_array).astype(int) == self.dp] = 1.0
-                return pmf
-
-        chain_gen = PolydisperseChainGenerator(
-            seq_generator=seq_gen,
-            monomer_mass={"A": 100.0},
-            end_group_mass=0.0,
-            distribution=FixedDpDistribution(dp=10),
-        )
-
+    def test_trimming_brings_the_plan_within_tolerance(self):
+        # chains of 1000; target 1505 -> one full chain plus one trimmed to 50
         planner = SystemPlanner(
-            chain_generator=chain_gen,
-            target_total_mass=5000.0,  # Should get ~5 chains
-            max_rel_error=0.02,
-        )
-
-        rng = np.random.default_rng(42)
-        system_plan = planner.plan_system(rng)
-
-        # Should have approximately 5 chains
-        assert len(system_plan.chains) >= 4
-        assert len(system_plan.chains) <= 6
-
-        # Total mass should be close to target
-        assert system_plan.total_mass <= 5000.0 * 1.02
-
-    def test_system_planner_max_chains(self):
-        """Test that max_chains constraint is respected."""
-        seq_gen = WeightedSequenceGenerator(monomer_weights={"A": 1.0})
-
-        import numpy as np
-
-        class FixedDpDistribution:
-            def __init__(self, dp: int):
-                self.dp = dp
-
-            def sample_dp(self, rng: np.random.Generator) -> int:
-                return self.dp
-
-            def dp_pmf(self, dp_array: np.ndarray) -> np.ndarray:
-                pmf = np.zeros_like(dp_array, dtype=float)
-                pmf[np.round(dp_array).astype(int) == self.dp] = 1.0
-                return pmf
-
-        chain_gen = PolydisperseChainGenerator(
-            seq_generator=seq_gen,
-            monomer_mass={"A": 100.0},
-            end_group_mass=0.0,
-            distribution=FixedDpDistribution(dp=10),
-        )
-
-        planner = SystemPlanner(
-            chain_generator=chain_gen,
-            target_total_mass=1.0e6,  # Very large target
-            max_rel_error=0.02,
-            max_chains=10,  # Limit to 10 chains
-        )
-
-        rng = np.random.default_rng(42)
-        system_plan = planner.plan_system(rng)
-
-        assert len(system_plan.chains) <= 10
-
-    def test_system_planner_trimming(self):
-        """Test that chain trimming works when enabled."""
-        seq_gen = WeightedSequenceGenerator(monomer_weights={"A": 1.0})
-
-        import numpy as np
-
-        class FixedDpDistribution:
-            def __init__(self, dp: int):
-                self.dp = dp
-
-            def sample_dp(self, rng: np.random.Generator) -> int:
-                return self.dp
-
-            def dp_pmf(self, dp_array: np.ndarray) -> np.ndarray:
-                pmf = np.zeros_like(dp_array, dtype=float)
-                pmf[np.round(dp_array).astype(int) == self.dp] = 1.0
-                return pmf
-
-        chain_gen = PolydisperseChainGenerator(
-            seq_generator=seq_gen,
-            monomer_mass={"A": 100.0},
-            end_group_mass=0.0,
-            distribution=FixedDpDistribution(dp=100),  # Large chains
-        )
-
-        planner = SystemPlanner(
-            chain_generator=chain_gen,
-            target_total_mass=150.0,  # Less than one full chain
-            max_rel_error=0.02,
+            _fixed_chains(dp=100, monomer_mass=10.0),
+            target_total_mass=1505.0,
             enable_trimming=True,
         )
+        system_plan = planner.plan_system(np.random.default_rng(42))
+        assert [c.dp for c in system_plan.chains] == [100, 50]
+        assert system_plan.total_mass == pytest.approx(1500.0)
 
-        rng = np.random.default_rng(42)
-        system_plan = planner.plan_system(rng)
-
-        # Should have at least one chain (possibly trimmed)
-        assert len(system_plan.chains) >= 1
-
-        # If trimming worked, the last chain should be shorter
-        if len(system_plan.chains) > 0:
-            last_chain = system_plan.chains[-1]
-            # Last chain might be trimmed to fit
-            assert last_chain.dp <= 100
-
-    def test_system_planner_no_trimming(self):
-        """Test that trimming can be disabled."""
-        seq_gen = WeightedSequenceGenerator(monomer_weights={"A": 1.0})
-
-        import numpy as np
-
-        class FixedDpDistribution:
-            def __init__(self, dp: int):
-                self.dp = dp
-
-            def sample_dp(self, rng: np.random.Generator) -> int:
-                return self.dp
-
-            def dp_pmf(self, dp_array: np.ndarray) -> np.ndarray:
-                pmf = np.zeros_like(dp_array, dtype=float)
-                pmf[np.round(dp_array).astype(int) == self.dp] = 1.0
-                return pmf
-
-        chain_gen = PolydisperseChainGenerator(
-            seq_generator=seq_gen,
-            monomer_mass={"A": 100.0},
-            end_group_mass=0.0,
-            distribution=FixedDpDistribution(dp=100),
-        )
-
+    def test_max_chains_shortfall_raises(self):
         planner = SystemPlanner(
-            chain_generator=chain_gen,
-            target_total_mass=150.0,
-            max_rel_error=0.02,
-            enable_trimming=False,
+            _fixed_chains(dp=10), target_total_mass=1.0e4, max_chains=1
         )
+        with pytest.raises(RuntimeError, match="max_chains"):
+            planner.plan_system(np.random.default_rng(42))
 
-        rng = np.random.default_rng(42)
-        system_plan = planner.plan_system(rng)
+    def test_overshoot_without_trimming_raises(self):
+        # 6 chains of 1000 reach 6000; the 7th would overshoot 6500
+        planner = SystemPlanner(
+            _fixed_chains(dp=10), target_total_mass=6500.0, enable_trimming=False
+        )
+        with pytest.raises(RuntimeError, match="6000"):
+            planner.plan_system(np.random.default_rng(42))
 
-        # Without trimming, should stop before adding a chain that would exceed target
-        # So might have 0 chains or stop early
-        assert len(system_plan.chains) >= 0
+    def test_untrimmable_overshoot_raises(self):
+        # every chain is 10000 and one monomer is 100: 150 cannot be reached
+        planner = SystemPlanner(
+            _fixed_chains(dp=100), target_total_mass=150.0, enable_trimming=True
+        )
+        with pytest.raises(RuntimeError, match="max_rel_error"):
+            planner.plan_system(np.random.default_rng(42))
+
+    def test_mass_space_plan_with_deterministic_sequence(self):
+        chain_gen = PolydisperseChainGenerator(
+            AlternatingSequenceGenerator(["A", "B"]),
+            {"A": 100.0, "B": 50.0},
+            distribution=SchulzZimmPolydisperse(Mn=3000.0, Mw=3600.0),
+        )
+        plan = SystemPlanner(chain_gen, target_total_mass=1.0e5).plan_system(
+            np.random.default_rng(0)
+        )
+        assert abs(plan.total_mass - 1.0e5) / 1.0e5 <= 0.02
+        n_b = sum(c.monomers.count("B") for c in plan.chains)
+        n_a = sum(c.monomers.count("A") for c in plan.chains)
+        assert n_b >= n_a - len(plan.chains)
+
+    def test_dp_space_plan_lands_within_tolerance(self):
+        chain_gen = PolydisperseChainGenerator(
+            WeightedSequenceGenerator({"A": 1.0}),
+            {"A": 100.0},
+            distribution=UniformPolydisperse(5, 15),
+        )
+        plan = SystemPlanner(chain_gen, target_total_mass=1.0e5).plan_system(
+            np.random.default_rng(1)
+        )
+        # only trimmed chains (at the end) may fall below the sampled range
+        assert all(5 <= c.dp <= 15 for c in plan.chains[:-2])
+        assert abs(plan.total_mass - 1.0e5) / 1.0e5 <= 0.02
+
+
+class TestSystemPlannerInputs:
+    @pytest.mark.parametrize("target", [0.0, -1.0, float("nan"), float("inf")])
+    def test_rejects_bad_target(self, target):
+        with pytest.raises(ValueError, match="target_total_mass"):
+            SystemPlanner(_fixed_chains(dp=1), target_total_mass=target)
+
+    @pytest.mark.parametrize("err", [-0.1, float("nan"), float("inf")])
+    def test_rejects_bad_tolerance(self, err):
+        with pytest.raises(ValueError, match="max_rel_error"):
+            SystemPlanner(_fixed_chains(dp=1), target_total_mass=1.0, max_rel_error=err)
+
+    @pytest.mark.parametrize("cap", [0, -3])
+    def test_rejects_bad_max_chains(self, cap):
+        with pytest.raises(ValueError, match="max_chains"):
+            SystemPlanner(_fixed_chains(dp=1), target_total_mass=1.0, max_chains=cap)

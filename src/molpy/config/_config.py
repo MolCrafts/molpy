@@ -22,6 +22,12 @@ The schema, as TOML (every key optional)::
 A key in a tool's table replaces the same key of its group's table; the
 group's table holds what all of its tools share (one AmberTools environment
 for every AmberTools program).
+
+Every other table under ``[engine]`` or ``[wrapper]`` is a tool's: a
+third-party :class:`molpy.engine.Engine` or :class:`molpy.wrapper.Wrapper`
+subclass reads ``[<group>.<its tool>]`` like a built-in one does. The
+built-in tools are the tool tables of :data:`DEFAULTS`, the one place their
+default executables are stated.
 """
 
 from __future__ import annotations
@@ -29,7 +35,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, get_type_hints
 
 import mollog
 from molcfg import (
@@ -53,14 +59,12 @@ PROJECT_CONFIG_NAME = "molpy.toml"
 #: The user config's file name, in ``project_config_dir("molpy")``.
 _USER_CONFIG_NAME = "config.toml"
 
-_ENGINES = ("lammps", "gromacs", "openmm", "cp2k")
-_WRAPPERS = ("antechamber", "tleap", "parmchk2", "prepgen", "sander")
-
-#: molpy's package defaults: the ``defaults`` layer. The group tables carry
-#: every shared key, so a tool inherits them unless a later layer sets the
-#: key in the tool's own table; a tool table carries its executable only.
-#: ``engine.lammps.executable`` is ``None``: the engine takes the first of
-#: ``lmp``, ``lmp_serial``, ``lmp_mpi`` found in its environment.
+#: molpy's package defaults: the ``defaults`` layer, and the only place a
+#: default is stated. The group tables carry every shared key, so a tool
+#: inherits them unless a later layer sets the key in the tool's own table; a
+#: tool table carries its executable only, and the tool tables are the
+#: built-in tools. ``engine.lammps.executable`` is ``None``: the engine takes
+#: the first of ``lmp``, ``lmp_serial``, ``lmp_mpi`` found in its environment.
 DEFAULTS: dict[str, Any] = {
     "conda": {"executable": "conda"},
     "engine": {
@@ -91,52 +95,90 @@ _log = "molpy.config"
 
 
 # -- schema (molcfg.validate) -------------------------------------------------
+# Types only: every default lives in DEFAULTS. A tool's keys are optional (it
+# inherits its group's); conda.executable is always set by DEFAULTS.
 
 
 class _Conda:
-    executable: str = "conda"
+    executable: str
 
 
 class _Shared:
-    """The keys a group table and each of its tools' tables may hold."""
+    """The keys a wrapper group table and each of its tools' tables may hold."""
 
-    env: str | None = None
-    env_manager: Literal["conda", "venv"] | None = None
-    env_vars: dict[str, str] = {}
-    timeout: int | float | None = None
+    env: str | None
+    env_manager: Literal["conda", "venv"] | None
+    env_vars: dict[str, str] | None
+    timeout: int | float | None
 
 
 class _EngineShared(_Shared):
-    launcher: list[str] = []
+    """The keys an engine group table and each engine's table may hold."""
+
+    launcher: list[str] | None
 
 
-class _Wrapper(_Shared):
-    executable: str | None = None
+class _WrapperTool(_Shared):
+    executable: str | None
 
 
-class _Engine(_EngineShared):
-    executable: str | None = None
+class _EngineTool(_EngineShared):
+    executable: str | None
 
 
-class _Engines(_EngineShared):
-    lammps: _Engine | None = None
-    gromacs: _Engine | None = None
-    openmm: _Engine | None = None
-    cp2k: _Engine | None = None
+class _Top:
+    conda: _Conda | None
+    engine: dict | None
+    wrapper: dict | None
 
 
-class _Wrappers(_Shared):
-    antechamber: _Wrapper | None = None
-    tleap: _Wrapper | None = None
-    parmchk2: _Wrapper | None = None
-    prepgen: _Wrapper | None = None
-    sander: _Wrapper | None = None
+#: Group → (its shared keys, a tool table's keys).
+_GROUPS: dict[str, tuple[type, type]] = {
+    "engine": (_EngineShared, _EngineTool),
+    "wrapper": (_Shared, _WrapperTool),
+}
 
 
-class _Schema:
-    conda: _Conda | None = None
-    engine: _Engines | None = None
-    wrapper: _Wrappers | None = None
+def _shared_keys(group: str) -> tuple[str, ...]:
+    return tuple(get_type_hints(_GROUPS[group][0]))
+
+
+def _validate(data: Mapping[str, Any]) -> None:
+    """Validate a merged config: known keys, right types, tool tables as tables.
+
+    A group's own keys are its shared keys; every other key under it names a
+    tool, whose table holds the shared keys plus ``executable``.
+
+    Raises:
+        molcfg.ValidationError: Every offending key, at once.
+    """
+    errors: list[str] = []
+
+    def collect(table: Any, schema: type, prefix: str) -> None:
+        try:
+            validate(table, schema, prefix, allow_extra=False)
+        except ValidationError as exc:
+            errors.extend(exc.errors)
+
+    collect(dict(data), _Top, "")
+    for group, (shared, tool) in _GROUPS.items():
+        table = data.get(group)
+        if not isinstance(table, Mapping):
+            continue
+        keys = _shared_keys(group)
+        collect({k: v for k, v in table.items() if k in keys}, shared, group)
+        for name, value in table.items():
+            if name in keys:
+                continue
+            if isinstance(value, Mapping):
+                collect(dict(value), tool, f"{group}.{name}")
+            else:
+                errors.append(
+                    f"{group}.{name}: unexpected field (not a [{group}] key, "
+                    "and not a tool's table)"
+                )
+    if errors:
+        raise ValidationError(errors)
 
 
 # -- loading ------------------------------------------------------------------
@@ -200,7 +242,7 @@ def load_config(
 
     config = ConfigLoader(sources).load()
     try:
-        validate(config.to_dict(), _Schema, allow_extra=False)
+        _validate(config.to_dict())
     except ValidationError as exc:
         files = {"user": user, "project": project}
         layers = ", ".join(
@@ -265,27 +307,25 @@ def tool_settings(config: Config, tool: str) -> ToolSettings:
 
     Each setting is the tool's own key when a layer set it, else its group's
     (``engine.<key>`` / ``wrapper.<key>``); :attr:`ToolSettings.sources`
-    records which, and from which layer.
+    records which, and from which layer. Any tool name resolves: a tool with
+    no table of its own (a third-party engine or wrapper that nothing
+    configures) gets its group's settings and no executable.
 
     Args:
         config: A config from :func:`load_config`.
-        tool: ``"<group>.<name>"`` with group ``engine`` (``lammps``,
-            ``gromacs``, ``openmm``, ``cp2k``) or ``wrapper``
-            (``antechamber``, ``tleap``, ``parmchk2``, ``prepgen``,
-            ``sander``).
+        tool: ``"<group>.<name>"`` with group ``engine`` or ``wrapper``; the
+            built-in names are the tool tables of :data:`DEFAULTS`.
 
     Raises:
-        KeyError: *tool* is not a known engine or wrapper.
+        KeyError: *tool* is not ``"<group>.<name>"`` with a known group, or
+            its name is one of the group's own keys.
         ValueError: A ``timeout`` is not positive.
     """
     group, _, name = tool.partition(".")
-    known = {"engine": _ENGINES, "wrapper": _WRAPPERS}.get(group, ())
-    if name not in known:
+    if group not in _GROUPS or not name or "." in name or name in _shared_keys(group):
         raise KeyError(
-            f"unknown tool {tool!r}; known: "
-            + ", ".join(f"engine.{n}" for n in _ENGINES)
-            + ", "
-            + ", ".join(f"wrapper.{n}" for n in _WRAPPERS)
+            f"unknown tool {tool!r}; a tool is '<group>.<name>' with group "
+            + " or ".join(repr(g) for g in _GROUPS)
         )
 
     sources: dict[str, tuple[str, str]] = {}
@@ -330,8 +370,11 @@ def tool_settings(config: Config, tool: str) -> ToolSettings:
 
 
 def _read_conda(config: Config, sources: dict[str, tuple[str, str]]) -> str:
-    """``conda.executable``, recording its layer under ``conda_executable``."""
+    """``conda.executable``, recording its layer under ``conda_executable``.
+
+    :data:`DEFAULTS` always sets it, and the schema refuses a non-string.
+    """
     path = "conda.executable"
     meta = config.meta(path) or {}
     sources["conda_executable"] = (str(meta.get("source", "defaults")), path)
-    return str(config.get(path, "conda"))
+    return str(config[path])

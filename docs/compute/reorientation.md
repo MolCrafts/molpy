@@ -130,7 +130,7 @@ for _ in range(n_frames):
     pos = np.concatenate([centres - 0.5 * axis, centres + 0.5 * axis])
     frame = mp.Frame()
     frame["atoms"] = {"x": pos[:, 0], "y": pos[:, 1], "z": pos[:, 2]}
-    frame.box = mp.Box.cube(200.0)
+    frame.box = mp.Box(mp.core.Cell.lengths([200.0] * 3))
     frame["bonds"] = bonds
     frames.append(frame)
 ```

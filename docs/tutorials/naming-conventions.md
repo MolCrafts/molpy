@@ -138,9 +138,9 @@ At the Entity level, MolPy's topology objects (Bond, Angle, Dihedral, Improper) 
 
 ```python
 mol = mp.Atomistic()
-atom1 = mol.def_atom(element="C", x=0.0, y=0.0, z=0.0)
-atom2 = mol.def_atom(element="H", x=1.1, y=0.0, z=0.0)
-bond = mol.def_bond(atom1, atom2)
+atom1 = mol.add_atom(atomic_number=6, x=0.0, y=0.0, z=0.0)
+atom2 = mol.add_atom(atomic_number=1, x=1.1, y=0.0, z=0.0)
+bond = mol.add_bond(atom1, atom2)
 print(bond.itom) # Atom object
 print(bond.jtom) # Atom object
 print(bond.endpoints) # (Atom, Atom)
@@ -178,17 +178,17 @@ frame["bonds"] = Block(
 )
 ```
 
-When converting from Frame to Entity, each index is resolved back to an Atom object using the atoms container. A `Bond` is a view onto a graph's relation, so the graph creates it — `def_bond` is the conversion, and the namespace structure in the Frame guides which Entity types to ask for:
+When converting from Frame to Entity, each index is resolved back to an Atom object using the atoms container. A `Bond` is a view onto a graph's relation, so the graph creates it — `add_bond` is the conversion, and the namespace structure in the Frame guides which Entity types to ask for:
 
 ```python
 # Frame to Entity conversion for bonds
 rebuilt = mp.Atomistic()
-rebuilt_atoms = [rebuilt.def_atom(element=atom["element"]) for atom in atoms]
+rebuilt_atoms = [rebuilt.add_atom(atomic_number=atom["atomic_number"]) for atom in atoms]
 
 for i in range(len(frame["bonds"]["atomi"])):
  atomi = int(frame["bonds"]["atomi"][i])
  atomj = int(frame["bonds"]["atomj"][i])
- bond = rebuilt.def_bond(rebuilt_atoms[atomi], rebuilt_atoms[atomj])
+ bond = rebuilt.add_bond(rebuilt_atoms[atomi], rebuilt_atoms[atomj])
 ```
 
 These conversions must be explicit and localized at the boundary between Frame and Entity layers. Mixing the two representations inside the same object is not allowed. The namespace structure in Frame ensures that all related fields (such as bond indices and bond types) are kept together during conversion, simplifying the logic and reducing the chance of misalignment errors.
@@ -199,7 +199,7 @@ The API itself follows the same rules as molrs, whose names molpy re-exports
 by identity:
 
 - **Acronyms are cased as words.** `mp.engine.LammpsEngine`,
-  `mp.adapter.RdkitAdapter`, `mp.io.smiles.SmilesIr`, `mp.CgBond`,
+  `mp.engine.OpenmmEngine`, `mp.io.smiles.SmilesIr`, `mp.CgBond`,
   `mp.compute.Rdf`, `mp.compute.Msd`, `mp.optimize.Lbfgs`,
   `mp.ff.potential.PairLjCut`. numpy's `DType` and `HBond` (H is the element)
   keep their spelling.

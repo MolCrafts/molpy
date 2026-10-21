@@ -33,9 +33,9 @@ import molpy as mp
 
 # Atomistic: editable molecular graph (core APIs mutate in place)
 mol = mp.Atomistic(name="water")
-o = mol.def_atom(element="O", x=0.0, y=0.0, z=0.0)
-h = mol.def_atom(element="H", x=0.957, y=0.0, z=0.0)
-mol.def_bond(o, h)
+o = mol.add_atom(atomic_number=8, x=0.0, y=0.0, z=0.0)
+h = mol.add_atom(atomic_number=1, x=0.957, y=0.0, z=0.0)
+mol.add_bond(o, h)
 mol.generate_topology(gen_angle=True) # writes angles on mol; returns counts added
 # bulk reads: mol.atoms["x"] / mol.xyz — no full view materialization
 
@@ -46,7 +46,7 @@ frame = mp.Frame(
 )
 
 # Box: periodic cell
-box = mp.Box.cube(20.0)
+box = mp.Box(mp.core.Cell.lengths([20.0] * 3))
 wrapped = box.wrap(np.array([[21.0, 0.0, 0.0]]))
 d = box.distances(np.array([[0.0, 0.0, 0.0]]), np.array([[19.5, 0.0, 0.0]])) # minimum-image distance
 
@@ -128,9 +128,7 @@ Re-exported from the native core — `mp.Frame is molrs.core.Frame`:
 
 ::: molpy.core.MaskPredicate
 
-::: molpy.core.ElementSelector
-
-::: molpy.core.AtomTypeSelector
+::: molpy.core.ColumnSelector
 
 ::: molpy.core.AtomIndexSelector
 

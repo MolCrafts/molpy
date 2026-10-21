@@ -21,14 +21,14 @@ The examples below share this setup:
 ```python
 import molpy as mp
 
-mol = mp.io.smiles.SmilesIr("CCO").to_atomistic()
+mol = mp.io.smiles.read_smiles("CCO").to_atomistic()
 ```
 
 ```python
 from molpy.wrapper import AntechamberWrapper
 
 ante = AntechamberWrapper("ante_work")
-print(ante.exe)  # antechamber
+print(ante.executable)  # antechamber
 print(ante.environment)  # EnvironmentSpec(system)
 print(ante.is_available())  # True only where AmberTools is installed
 ```
@@ -45,72 +45,55 @@ from molpy.config import load_config
 
 config = load_config({"wrapper": {"env": "AmberTools25", "env_manager": "conda"}})
 ante = AntechamberWrapper("ante_work", config=config)
-ante.run(args=["-i", "input.pdb", "-fi", "pdb", "-o", "out.mol2", "-fo", "mol2"])
-# runs: conda run -n AmberTools25 antechamber -i input.pdb ...
+ante.run(["-i", "input.pdb", "-fi", "pdb", "-o", "out.mol2", "-fo", "mol2"])
+# runs: conda run --no-capture-output -n AmberTools25 antechamber -i input.pdb ...
 ```
+
+A run that fails raises `molpy.wrapper.ToolError`, carrying the tool
+(`"wrapper.antechamber"`), its exit code and the tail of its output; pass
+`check=False` to get the failed `CompletedProcess` back instead.
 
 Each run is logged to `molpy.wrapper.antechamber` as structured
 [mollog](https://docs.molcrafts.org/mollog/) records; see
 [Configure and Log a Run](../user-guide/14_configure_and_log.md).
 
 
-## Adapter: synchronized state across two object models
+## Adapter: conversion across two object models
 
-An `Adapter` holds an internal MolPy object and an external object, and keeps them synchronized. The protocol has two directions: `sync_to_external()` translates MolPy → external, and `sync_to_internal()` translates external → MolPy.
+An adapter is a pair of functions, `to_<lib>` and `from_<lib>`. Each builds a
+new object from the other side's object and leaves its input untouched: there
+is no cached pair to fall out of sync, and nothing is written onto your
+structure. MolPy keeps one: `to_rdkit` / `from_rdkit`, between an `Atomistic`
+and an RDKit `Mol`. RDKit is an optional extra — molpy never requires it, and
+`molpy.adapter.to_rdkit` raises a clear `ImportError` when it is missing.
 
-Here is a minimal adapter that converts a dictionary to a semicolon-separated string and back.
-
-```python
-from molpy.adapter import Adapter
-
-
-class StringDictAdapter(Adapter[dict[str, str], str]):
-    def _do_sync_to_external(self):
-        self._external = ";".join(f"{k}={v}" for k, v in self._internal.items())
-
-    def _do_sync_to_internal(self):
-        self._internal = dict(
-            item.split("=") for item in self._external.split(";") if item
-        )
-
-
-adapter = StringDictAdapter(internal={"name": "MolPy", "role": "toolkit"})
-adapter.sync_to_external()
-print(adapter.get_external())  # name=MolPy;role=toolkit
-
-adapter.set_external("name=MolPy;role=toolkit;version=0.2")
-adapter.sync_to_internal()
-print(adapter.get_internal())  # {'name': 'MolPy', 'role': 'toolkit', 'version': '0.2'}
-```
-
-The example is deliberately simple. The important point is not the data format — it is the synchronization protocol. No external process ran. No file was written. The concern is purely about keeping two representations of the same information consistent.
-
-
-## Real-world adapter: reaching RDKit's own algorithms
-
-An adapter earns its keep when you need an algorithm MolPy does not implement.
-`RdkitAdapter` bridges an `Atomistic` to an RDKit `Mol`, lets RDKit work on its
-own object, and brings the result back. RDKit is an optional extra — molpy
-never requires it.
+An adapter earns its keep when you need an algorithm MolPy does not implement:
+convert, let RDKit work on its own object, convert back.
 
 ```python
 # docs: skip — RDKit optional adapter example; not unit-tested
 import molpy as mp
-from molpy.adapter import RdkitAdapter
+from molpy.adapter import from_rdkit, to_rdkit
+from rdkit import Chem
 from rdkit.Chem import AllChem
 
-mol = mp.io.smiles.SmilesIr("CCO").to_atomistic()
+mol = mp.io.smiles.read_smiles("CCO").to_atomistic()
 
-adapter = RdkitAdapter(internal=mol)
-rd_mol = adapter.get_external()
-
+rd_mol = Chem.AddHs(to_rdkit(mol))
 AllChem.EmbedMolecule(rd_mol)
 AllChem.MMFFOptimizeMolecule(rd_mol)
 
-adapter.set_external(rd_mol)
-adapter.sync_to_internal()
-updated = adapter.get_internal()
+updated = from_rdkit(rd_mol)  # a new Atomistic; `mol` is unchanged
 ```
+
+The concern is fidelity, so know what crosses. RDKit owns element, formal
+charge, bond type and coordinates, and its values win on the way back. Every
+other atom and bond component — names, residues, partial charges, force-field
+types — rides along as an RDKit property and returns on the atoms and bonds
+RDKit kept. What does not survive: atoms RDKit removes (they are gone from the
+result), angles/dihedrals/impropers (only bonds cross; regenerate them), and
+stereo, which is not translated between molpy's `stereo` component and RDKit's
+chiral tags. The full list is in the [adapter API](../api/adapter.md).
 
 **But not for this one.** 3D embedding is native, and the native path is the
 supported one — no third-party install, and it returns a report of what each

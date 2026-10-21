@@ -4,7 +4,7 @@
 The reader returns the structure as a ``Frame`` (typed blocks carry
 ``type_id`` and the string ``type``) and keeps any ``* Coeffs`` sections as
 text in ``frame.meta["lammps_coeffs_text"]``; the force field is
-``mp.io.read_lammps_data_coeffs(path)``, which names the rows by
+``_read_lammps_data_coeffs(path)``, which names the rows by
 the file's Type Labels.
 """
 
@@ -14,8 +14,12 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-
 import molpy as mp
+
+
+def _read_lammps_data_coeffs(path: Path, units: str | None = None):
+    frame = mp.io.read_lammps_data(path)
+    return mp.io.lammps.LammpsForcefieldReader().read_data_coeffs(frame, units)
 
 
 def _section_rows(text: str, heading: str) -> list[list[str]]:
@@ -88,7 +92,7 @@ class TestReadLammpsData:
 
         # No `* Coeffs` sections: the file carries no force field.
         with pytest.raises(ValueError, match="Coeffs"):
-            mp.io.read_lammps_data_coeffs(lammps_dir / "molid.lmp")
+            _read_lammps_data_coeffs(lammps_dir / "molid.lmp")
 
     def test_whitespaces_file(self, lammps_dir):
         """Test reading whitespaces.lmp - file with extra whitespaces."""
@@ -192,7 +196,7 @@ class TestReadLammpsData:
 
         # No `* Coeffs` sections: the file carries no force field.
         with pytest.raises(ValueError, match="Coeffs"):
-            mp.io.read_lammps_data_coeffs(lammps_dir / "labelmap.lmp")
+            _read_lammps_data_coeffs(lammps_dir / "labelmap.lmp")
 
     @staticmethod
     def _styled(tmp_path: Path, style: str, row: str) -> Path:
@@ -282,6 +286,10 @@ class TestWriteLammpsData:
         original_frame = mp.io.read_lammps_data(
             lammps_dir / "molid.lmp", atom_style="full"
         )
+        # This fixture omits Masses, which the current writer requires.
+        original_frame["atoms"]["mass"] = np.full(
+            original_frame["atoms"].n_rows, 12.011
+        )
 
         # Write to temporary file
         tmp_file = tmp_path / "test.data"
@@ -334,6 +342,7 @@ class TestWriteLammpsData:
         frame = mp.io.read_lammps_data(path, atom_style="full")
         # Bond endpoints are unsigned; from_frame would drop signed ones.
         assert np.asarray(frame["bonds"]["atomi"]).dtype.kind == "u"
+        frame["atoms"]["atomic_number"] = np.full(4, 6, dtype=np.uint8)
         rebuilt = mp.Atomistic.from_frame(frame)
         assert sum(1 for _ in rebuilt.bonds) == 3
 
@@ -353,7 +362,7 @@ class TestWriteLammpsData:
         }
 
         frame["atoms"] = mp.Block(atoms_data)
-        frame.box = mp.Box(h=[10.0, 10.0, 10.0])
+        frame.box = mp.Box(mp.core.Cell.lengths([10.0, 10.0, 10.0]))
 
         # Write to temporary file
         tmp_file = tmp_path / "test.data"
@@ -377,13 +386,20 @@ class TestWriteLammpsData:
         """
         asm = mp.Atomistic()
         atoms = [
-            asm.def_atom(
-                element="C", type="CT", charge=0.0, x=float(i), y=0.0, z=0.0, mol_id=1
+            asm.add_atom(
+                atomic_number=6,
+                type="CT",
+                mass=12.011,
+                charge=0.0,
+                x=float(i),
+                y=0.0,
+                z=0.0,
+                mol_id=1,
             )
             for i in range(3)
         ]
-        asm.def_bond(atoms[0], atoms[1], type="CT-CT")
-        asm.def_bond(atoms[1], atoms[2], type="CT-CT")
+        asm.add_bond(atoms[0], atoms[1], type="CT-CT")
+        asm.add_bond(atoms[1], atoms[2], type="CT-CT")
         frame = asm.to_frame()
         assert "id" not in frame["atoms"]
 
@@ -414,7 +430,7 @@ class TestWriteLammpsData:
         }
 
         frame["atoms"] = mp.Block(atoms_data)
-        frame.box = mp.Box(h=[10.0, 10.0, 10.0])
+        frame.box = mp.Box(mp.core.Cell.lengths([10.0, 10.0, 10.0]))
 
         # Add bonds
         bonds_data = {
@@ -453,7 +469,7 @@ class TestWriteLammpsData:
             "mass": np.array([12.0, 16.0]),
         }
         frame["atoms"] = mp.Block(atoms_data)
-        frame.box = mp.Box(h=[10.0, 10.0, 10.0])
+        frame.box = mp.Box(mp.core.Cell.lengths([10.0, 10.0, 10.0]))
 
         tmp_file = tmp_path / "test.data"
 
@@ -472,7 +488,7 @@ class TestErrorHandling:
     def test_nonexistent_file(self):
         """Test reading nonexistent file."""
         with pytest.raises(OSError):
-            mp.io.read_lammps_data("nonexistent_file.data")
+            mp.io.read_lammps_data(Path("nonexistent_file.data"))
 
     def test_empty_file(self, tmp_path):
         """An empty file has no box, and the reader does not invent one."""
@@ -568,7 +584,7 @@ class TestForceFieldIntegration:
             "mass": np.array([12.0]),
         }
         frame["atoms"] = mp.Block(atoms_data)
-        frame.box = mp.Box(h=[10.0, 10.0, 10.0])
+        frame.box = mp.Box(mp.core.Cell.lengths([10.0, 10.0, 10.0]))
 
         tmp_file = tmp_path / "test.data"
 
@@ -595,7 +611,7 @@ class TestExplicitTypeLabels:
             "mass": np.array([12.0, 1.0, 16.0]),
         }
         frame["atoms"] = mp.Block(atoms_data)
-        frame.box = mp.Box(h=[10.0, 10.0, 10.0])
+        frame.box = mp.Box(mp.core.Cell.lengths([10.0, 10.0, 10.0]))
 
         tmp_file = tmp_path / "test.data"
         mp.io.write_lammps_data(tmp_file, frame)
@@ -623,11 +639,12 @@ class TestExplicitTypeLabels:
             "mass": np.array([12.0, 1.0]),
         }
         frame["atoms"] = mp.Block(atoms_data)
-        frame.box = mp.Box(h=[10.0, 10.0, 10.0])
+        frame.box = mp.Box(mp.core.Cell.lengths([10.0, 10.0, 10.0]))
 
         type_labels = {
             "atoms": ["C", "H", "O", "N"],  # Includes types not in atoms
         }
+        frame.meta["lammps_type_masses"] = {"N": 14.0, "O": 16.0}
 
         tmp_file = tmp_path / "test.data"
         mp.io.write_lammps_data(tmp_file, frame, type_labels=type_labels)
@@ -656,11 +673,12 @@ class TestExplicitTypeLabels:
             "mass": np.array([12.0, 1.0, 32.0]),
         }
         frame["atoms"] = mp.Block(atoms_data)
-        frame.box = mp.Box(h=[10.0, 10.0, 10.0])
+        frame.box = mp.Box(mp.core.Cell.lengths([10.0, 10.0, 10.0]))
 
         type_labels = {
             "atoms": ["C", "H", "O", "N"],
         }
+        frame.meta["lammps_type_masses"] = {"N": 14.0, "O": 16.0}
 
         tmp_file = tmp_path / "test.data"
         mp.io.write_lammps_data(tmp_file, frame, type_labels=type_labels)
@@ -700,7 +718,7 @@ class TestExplicitTypeLabels:
             "atomj": np.array([1, 2]),
         }
         frame["bonds"] = mp.Block(bonds_data)
-        frame.box = mp.Box(h=[10.0, 10.0, 10.0])
+        frame.box = mp.Box(mp.core.Cell.lengths([10.0, 10.0, 10.0]))
 
         type_labels = {
             "atoms": ["C", "O"],
@@ -732,7 +750,7 @@ class TestExplicitTypeLabels:
             "mass": np.array([12.0, 1.0, 16.0]),
         }
         frame["atoms"] = mp.Block(atoms_data)
-        frame.box = mp.Box(h=[10.0, 10.0, 10.0])
+        frame.box = mp.Box(mp.core.Cell.lengths([10.0, 10.0, 10.0]))
 
         type_labels = {
             "atoms": ["H", "O", "C"],  # Different order
@@ -768,7 +786,7 @@ def test_write_lammps_data_requires_type_columns(tmp_path):
     frame["atoms"] = mp.Block(
         {"x": np.zeros(1), "y": np.zeros(1), "z": np.zeros(1), "mass": np.ones(1)}
     )
-    frame.box = mp.Box(h=[5.0, 5.0, 5.0])
+    frame.box = mp.Box(mp.core.Cell.lengths([5.0, 5.0, 5.0]))
     with pytest.raises(OSError, match="neither 'type' nor 'type_id'"):
         mp.io.write_lammps_data(tmp_path / "bad.data", frame)
 
@@ -797,7 +815,7 @@ def test_write_keeps_reverse_angle_type_labels_as_two_types(tmp_path):
             "atomk": np.array([2, 0], dtype=np.uint32),
         }
     )
-    frame.box = mp.Box(h=[5.0, 5.0, 5.0])
+    frame.box = mp.Box(mp.core.Cell.lengths([5.0, 5.0, 5.0]))
     path = tmp_path / "rev.data"
     mp.io.write_lammps_data(path, frame)
     text = path.read_text(encoding="utf-8")
@@ -814,7 +832,7 @@ class TestForceFieldCoeffs:
         return lammps_dir / "coeffs.lmp"
 
     def test_coeffs_are_extracted(self, ff_file):
-        ff = mp.io.read_lammps_data_coeffs(ff_file)
+        ff = _read_lammps_data_coeffs(ff_file)
         pair = {
             t.name: (t.get("epsilon"), t.get("sigma"))
             for s in ff.get_styles(mp.ff.forcefield.PairStyle)
@@ -847,7 +865,7 @@ class TestForceFieldCoeffs:
             encoding="utf-8",
         )
         with pytest.raises(ValueError):
-            mp.io.read_lammps_data_coeffs(data)
+            _read_lammps_data_coeffs(data)
 
 
 class TestCoeffsAreText:
@@ -864,10 +882,10 @@ class TestCoeffsAreText:
 
     def test_unparseable_coeffs_raise_when_read(self, cosine_file):
         with pytest.raises(ValueError):
-            mp.io.read_lammps_data_coeffs(cosine_file)
+            _read_lammps_data_coeffs(cosine_file)
 
     def test_units_are_the_callers(self, lammps_dir):
-        ff = mp.io.read_lammps_data_coeffs(lammps_dir / "coeffs.lmp", units="metal")
+        ff = _read_lammps_data_coeffs(lammps_dir / "coeffs.lmp", units="metal")
         assert ff.units == "metal"
         epsilon = {
             t.name: t.get("epsilon")

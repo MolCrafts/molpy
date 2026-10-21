@@ -1,13 +1,14 @@
 import pytest
 
-from molpy.core import Atomistic
+from molpy.core import Atomistic, BondNumber, BondOrder
 
 
 def test_relation_endpoints_are_live_and_immutable() -> None:
     graph = Atomistic()
-    a = graph.def_atom(id=1)
-    b = graph.def_atom(id=2)
-    link = graph.def_bond(a, b, bond_type=1, bond_number=1)
+    a = graph.add_atom(id=1, atomic_number=6)
+    b = graph.add_atom(id=2, atomic_number=6)
+    link = graph.add_bond(a, b)
+    graph.set_bond_class(link, BondOrder.Single, BondNumber.Single)
 
     assert link.endpoints == (a, b)
     assert link["bond_type"] == 1

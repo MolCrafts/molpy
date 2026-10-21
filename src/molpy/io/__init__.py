@@ -1,68 +1,42 @@
 """File I/O — :mod:`molrs.io`, mirrored by identity.
 
-There is no package-root ``mp.read_*`` / ``mp.write_*``: every file reader and
-writer is here, and every name at this level is the molrs function
-(``mp.io.read_gro is molrs.io.read_gro``). A factory that reads or writes a
-format has one of two shapes, as in molrs:
+One-frame formats expose ``read_<fmt>(source)`` and ``write_<fmt>(sink, frame)``
+here. A source is a :class:`pathlib.Path`, bytes, or :class:`Text` for literal
+text; a bare string is ambiguous and rejected. A sink is a path or bytearray.
+Multi-frame readers and writers, and force-field readers and writers, live in
+their format modules. For example, ``mp.io.pdb.PdbReader(path)`` iterates PDB
+frames and ``mp.io.amber.AmberPrmtopForcefieldReader().read_system(path)``
+returns a force field and frame. ``mp.io.smiles.read_smiles(text)`` handles
+SMILES. ``mp.io.mrec.MrecFile(path)`` reads record sections; ``write_mrec``
+writes a whole record.
 
-* a function at this level, named after its format —
-  ``read_<fmt>[_<what>]`` / ``write_<fmt>[_<what>]`` for a path,
-  ``read_<fmt>_str`` / ``write_<fmt>_str`` for text in memory and
-  ``read_<fmt>_bytes`` / ``write_<fmt>_bytes`` for bytes: structure and
-  trajectory files (PDB, XYZ, LAMMPS data and dumps, GROMACS, AMBER, MOL2,
-  CIF, XSF, Cube, VASP, DCD/TRR/XTC, …), force-field files
-  (:func:`read_lammps_forcefield`, :func:`read_top_system`,
-  :func:`read_prmtop_system`, :func:`read_openmm_forcefield`, …),
-  ``*.mrec`` records (:func:`read_mrec_frame`, :func:`read_mrec_trajectory`,
-  …), wire-encoded frames (:func:`read_msgpack_frame_bytes`), LAMMPS logs
-  (:func:`read_lammps_log`, :func:`read_lammps_log_str`) and line notations
-  (:func:`read_smiles_str`, :func:`write_smiles_str`,
-  :func:`read_cgsmiles_str`). No door picks a format for the caller;
-* a class of the format's own submodule, ``mp.io.<fmt>.<Fmt>Reader`` /
-  ``<Fmt>Writer``.
-
-A class that belongs to one format lives in that format's submodule, each a
-molpy module mirroring the molrs one: :mod:`molpy.io.smiles` (``SmilesIr``,
-``SmilesError``, ``BondingDescriptor``), :mod:`molpy.io.cgsmiles`
-(``CgSmilesIr`` and its records), :mod:`molpy.io.lammps`
-(``LammpsDumpReader``, ``BondReactTemplate``, ``LammpsLog``, …),
-:mod:`molpy.io.mrec` (``MrecReader``, ``MrecWriter``, ``ForceFieldSection``,
-…) and the lazy trajectory readers of :mod:`molpy.io.pdb`,
-:mod:`molpy.io.xyz`, :mod:`molpy.io.gro`, :mod:`molpy.io.dcd`,
-:mod:`molpy.io.trr` and :mod:`molpy.io.xtc`. molpy adds its metric readers
-there — :class:`molpy.io.lammps.LammpsLogMetricReader` and
-:class:`molpy.io.mrec.MrecMetricReader` — and one format module of its own,
-:mod:`molpy.io.mlp_jsonl` (:class:`~molpy.io.mlp_jsonl.MlpJsonlMetricReader`).
-
-Names come in pairs, as in the native core: a format ``X`` holding one frame is
-read by ``read_X`` and written by ``write_X``; a sequence of frames by
-``read_X_trajectory`` (the format's lazy reader) / ``write_X_trajectory``.
-
-Basic usage::
-
-    import molpy as mp
-
-    frame = mp.io.read_pdb("structure.pdb")
-    frame = mp.io.read_lammps_data("data.lammps", atom_style="full")
-    traj = mp.io.read_lammps_dump_trajectory("dump.lammpstrj")
-    mol = mp.io.read_smiles_str("CCO")
+Every native object is re-exported by identity. Molpy adds metric readers in
+the ``lammps`` and ``mrec`` modules, plus its own ``mlp_jsonl`` module.
 """
+
+from importlib import import_module as _import_module
 
 from molrs.io import *  # noqa: F403
 from molrs.io import __all__ as _native
 
-from importlib import import_module as _import_module
-
 #: molrs's per-format submodules, each mirrored by a molpy module of its name.
 _FORMATS = (
+    "amber",
     "cgsmiles",
+    "cif",
+    "cube",
     "dcd",
     "gro",
+    "gromacs",
     "lammps",
+    "mol2",
     "mrec",
+    "openmm_xml",
     "pdb",
+    "sdf",
     "smiles",
     "trr",
+    "xml",
     "xtc",
     "xyz",
 )
@@ -72,12 +46,9 @@ _FORMATS = (
 # not: it returns an existing attribute without importing the submodule).
 # A format molrs did not export (mrec, without the fs feature) stays absent.
 for _fmt in _FORMATS:
-    try:
+    if _fmt in _native:
         _import_module(f"{__name__}.{_fmt}")
-    except ImportError:
-        if _fmt in _native:
-            raise
 
-from . import mlp_jsonl  # molpy's own format module
+from molpy.io import mlp_jsonl  # molpy's own format module
 
 __all__ = [*_native, "mlp_jsonl"]

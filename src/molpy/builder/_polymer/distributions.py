@@ -15,7 +15,6 @@ from typing import Protocol, runtime_checkable
 
 import numpy as np
 
-
 __all__ = [
     "DpDistribution",
     "MassDistribution",
@@ -106,16 +105,16 @@ class SchulzZimmPolydisperse:
     Implements :class:`MassDistribution` - sampling is done directly in
     molecular-weight space.
 
-    The probability density is:
+    The number distribution of chain masses is a Gamma distribution with
+    shape z and scale theta:
 
     .. math::
 
-        f(M) = \\frac{z^{z+1}}{\\Gamma(z+1)}
-               \\frac{M^{z-1}}{M_n^{z}}
-               \\exp\\left(-\\frac{z M}{M_n}\\right),
+        f(M) = \\frac{M^{z-1}}{\\Gamma(z)\\,\\theta^{z}}
+               \\exp\\left(-\\frac{M}{\\theta}\\right),
+        \\qquad z = \\frac{M_n}{M_w - M_n}, \\qquad \\theta = M_w - M_n = \\frac{M_n}{z},
 
-    where z = Mn / (Mw - Mn). This is equivalent to a Gamma distribution
-    with shape z and scale theta = Mw - Mn.
+    so its mean is Mn and its weight average is Mw.
 
     Args:
         Mn: Number-average molecular weight (g/mol).
@@ -261,8 +260,3 @@ class FlorySchulzPolydisperse:
         """Sample DP from Flory-Schulz distribution (>= 1)."""
         a = self.a
         return max(1, int(rng.geometric(p=a) + rng.geometric(p=a) - 1))
-
-
-# ============================================================================
-# Factory
-# ============================================================================

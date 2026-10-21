@@ -9,4 +9,6 @@ parameters (:class:`ParamSpec`) are, and every refusal: an :class:`IrError`
 """
 
 from molrs.ff.ir import *  # noqa: F403
-from molrs.ff.ir import __all__ as __all__
+from molrs.ff.ir import __all__ as _native
+
+__all__ = [*_native]

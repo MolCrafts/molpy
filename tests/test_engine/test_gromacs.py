@@ -28,9 +28,9 @@ def system(water, tip3p):
     tip3p.def_style("angle", "harmonic").def_type(
         "HW-OW-HW", hw, ow, hw, k=55.0, theta0=104.52
     )
-    water.def_angle(h1, o, h2, type="HW-OW-HW")
+    water.add_angle(h1, o, h2, type="HW-OW-HW")
     frame = water.to_frame()
-    frame.box = mp.Box.cube(30.0)
+    frame.box = mp.Box(mp.core.Cell.lengths([30.0] * 3))
     return frame, tip3p
 
 
@@ -39,9 +39,9 @@ def test_writes_coordinates_topology_and_mdps(tmp_path, system):
     engine = GromacsEngine(prefix="w", check_executable=False)
     paths = engine.generate_inputs(frame, ff, tmp_path, temperature=280.0)
     assert {key: p.name for key, p in paths.items()} == {
+        "input": "em.mdp",
         "gro": "w.gro",
         "top": "w.top",
-        "em": "em.mdp",
         "nvt": "nvt.mdp",
     }
     assert all(p.exists() for p in paths.values())
@@ -52,8 +52,85 @@ def test_writes_coordinates_topology_and_mdps(tmp_path, system):
         assert directive in top
     assert "[ system ]" in top
     assert "[ molecules ]" in top
-    assert "integrator      = steep" in paths["em"].read_text(encoding="utf-8")
+    assert "integrator      = steep" in paths["input"].read_text(encoding="utf-8")
     assert "ref_t           = 280.0" in paths["nvt"].read_text(encoding="utf-8")
+
+
+def _mdp(path) -> dict[str, str]:
+    """The ``key = value`` settings of an ``.mdp`` file."""
+    return {
+        key.strip(): value.strip()
+        for key, _, value in (
+            line.partition("=")
+            for line in path.read_text(encoding="utf-8").splitlines()
+            if "=" in line and not line.startswith(";")
+        )
+    }
+
+
+def _nonbonded(mdp: dict[str, str]) -> dict[str, str]:
+    return {k: mdp[k] for k in ("coulombtype", "rcoulomb", "rvdw", "rlist")}
+
+
+def test_mdp_nonbonded_settings_are_the_force_fields(tmp_path, system):
+    """A 10 Å lj/cut + 9 Å coul/cut force field runs cut-off Coulomb at
+    0.9 nm and van der Waals at 1.0 nm, in both stages."""
+    frame, ff = system
+    ff.get_style("pair", "lj/cut")["cutoff"] = 10.0
+    ff.def_style("pair", "coul/cut", {"cutoff": 9.0})
+    paths = GromacsEngine(check_executable=False).generate_inputs(frame, ff, tmp_path)
+    for stage in ("input", "nvt"):
+        assert _nonbonded(_mdp(paths[stage])) == {
+            "coulombtype": "Cut-off",
+            "rcoulomb": "0.9",
+            "rvdw": "1",
+            "rlist": "1",
+        }
+
+
+def test_a_single_stated_cutoff_is_both(tmp_path, system):
+    frame, ff = system
+    ff.get_style("pair", "lj/cut")["cutoff"] = 11.0
+    ff.def_style("pair", "coul/cut")
+    paths = GromacsEngine(check_executable=False).generate_inputs(frame, ff, tmp_path)
+    assert _nonbonded(_mdp(paths["input"])) == {
+        "coulombtype": "Cut-off",
+        "rcoulomb": "1.1",
+        "rvdw": "1.1",
+        "rlist": "1.1",
+    }
+
+
+def test_unstated_settings_fall_back_and_overrides_win(tmp_path, system):
+    frame, ff = system  # lj/cut with no cutoff, no Coulomb style
+    engine = GromacsEngine(check_executable=False)
+    paths = engine.generate_inputs(frame, ff, tmp_path / "default")
+    assert _nonbonded(_mdp(paths["input"])) == {
+        "coulombtype": "PME",
+        "rcoulomb": "1.2",
+        "rvdw": "1.2",
+        "rlist": "1.2",
+    }
+    paths = engine.generate_inputs(
+        frame, ff, tmp_path / "override", coulombtype="Reaction-Field", rvdw=1.0
+    )
+    assert _nonbonded(_mdp(paths["nvt"])) == {
+        "coulombtype": "Reaction-Field",
+        "rcoulomb": "1.2",
+        "rvdw": "1",
+        "rlist": "1.2",
+    }
+
+
+def test_a_box_free_frame_is_refused_before_any_file(tmp_path, system):
+    """GROMACS's Verlet scheme is periodic only: no zero box with pbc = xyz."""
+    frame, ff = system
+    frame.box = None
+    with pytest.raises(ValueError, match="GROMACS.*needs a periodic box"):
+        GromacsEngine(check_executable=False).generate_inputs(
+            frame, ff, tmp_path / "out"
+        )
+    assert not (tmp_path / "out").exists()
 
 
 def test_run_grompps_then_mdruns_the_input_mdp(tmp_path, system, monkeypatch):
@@ -71,7 +148,7 @@ def test_run_grompps_then_mdruns_the_input_mdp(tmp_path, system, monkeypatch):
     config = load_config({"engine": {"gromacs": {"launcher": ["mpirun", "-np", "4"]}}})
     engine = GromacsEngine(config=config, check_executable=False)
     paths = engine.generate_inputs(*system, tmp_path)
-    engine.run(Script.from_path(paths["em"]), workdir=tmp_path)
+    engine.run(Script.from_path(paths["input"]), workdir=tmp_path)
     assert calls == [
         [
             "gmx",
@@ -87,6 +164,29 @@ def test_run_grompps_then_mdruns_the_input_mdp(tmp_path, system, monkeypatch):
         ],
         ["mpirun", "-np", "4", "gmx", "mdrun", "-deffnm", "em"],
     ]
+
+
+def test_a_later_stage_starts_from_the_previous_stages_output(
+    tmp_path, system, monkeypatch
+):
+    """NVT after EM grompp's the minimised em.gro, not the initial gro."""
+    from molpy.engine import Script
+
+    calls = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        return subprocess.CompletedProcess(cmd, 0)
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    engine = GromacsEngine(check_executable=False)
+    paths = engine.generate_inputs(*system, tmp_path)
+    engine.run(Script.from_path(paths["input"]), workdir=tmp_path)
+    engine.run(Script.from_path(paths["nvt"]), workdir=tmp_path, structure="em.gro")
+    grompps = [cmd for cmd in calls if cmd[1] == "grompp"]
+    assert [cmd[cmd.index("-c") + 1] for cmd in grompps] == ["system.gro", "em.gro"]
+    assert [cmd[cmd.index("-o") + 1] for cmd in grompps] == ["em.tpr", "nvt.tpr"]
+    assert calls[-1] == ["gmx", "mdrun", "-deffnm", "nvt"]
 
 
 def test_grompp_accepts_the_generated_inputs(tmp_path, system):

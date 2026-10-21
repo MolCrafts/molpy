@@ -1,21 +1,24 @@
 """The LAMMPS data writer emits the ``fix drude`` C/D/N flag string.
 
-For a Drude-polarizable frame (shells carry element ``D`` + a type, springs are
-``style="drude"`` bonds), molrs's data writer — which owns the atom-type → ID
-ordering — writes the ``fix drude`` flags as a header comment.
+For a Drude-polarizable frame (shells are ``vsite == "drude"`` atoms with a type,
+each tied to its core by a molrs ``drudes`` row), molrs's data writer — which
+owns the atom-type → ID ordering — writes the ``fix drude`` flags as a header
+comment.
 """
 
 from pathlib import Path
 
+
 import molpy as mp
-from molpy.core import Atomistic
 from molpy.builder import DrudeBuilder
+from molpy.core import Atomistic
 
 
 def _ntf2_polarized(test_data_dir: Path) -> Atomistic:
     """CL&P-typed [NTf2]- (atoms named by element, spread along x), Drude-polarized."""
     frame = mp.io.read_mol2(test_data_dir / "mol2" / "ntf2_clp_typed.mol2")
     frame["atoms"]["element"] = frame["atoms"]["name"]
+    mp.Element.fill_atomic_numbers(frame)
     pol = DrudeBuilder().apply(Atomistic.from_frame(frame))
     for i, atom in enumerate(pol.atoms, start=1):
         atom["id"] = i
@@ -43,13 +46,24 @@ def test_data_writer_emits_fix_drude_flags(tmp_path, TEST_DATA_DIR):
     assert set(flags) <= {"C", "D", "N"}
 
 
+def test_data_writer_writes_drude_springs_as_bonds(tmp_path, TEST_DATA_DIR):
+    pol = _ntf2_polarized(TEST_DATA_DIR)
+    frame = pol.to_frame()
+    n_springs = len(frame["drudes"]["atomi"])
+    path = tmp_path / "ntf2.data"
+    mp.io.write_lammps_data(path, frame)
+    header = path.read_text(encoding="utf-8").splitlines()
+    n_bonds = int(next(line for line in header if line.endswith(" bonds")).split()[0])
+    assert n_bonds == len(list(pol.bonds)) + n_springs
+
+
 def test_data_writer_no_drude_comment_for_plain_system(tmp_path):
     """A non-polarizable frame (no element ``D``) gets no fix-drude comment."""
     asm = Atomistic()
-    asm.def_atom(
+    asm.add_atom(
         id=1,
         mol_id=1,
-        element="C",
+        atomic_number=6,
         type="CT",
         charge=0.0,
         x=0.0,
@@ -57,10 +71,10 @@ def test_data_writer_no_drude_comment_for_plain_system(tmp_path):
         z=0.0,
         mass=12.0,
     )
-    asm.def_atom(
+    asm.add_atom(
         id=2,
         mol_id=1,
-        element="H",
+        atomic_number=1,
         type="HC",
         charge=0.0,
         x=1.0,

@@ -1,12 +1,13 @@
 # PEO-LiTFSI with AmberTools
 
-Type TFSI with antechamber, build GAFF PEO chains from one antechamber-typed oligomer cut by prepgen and sequenced by tleap, and pack a PEO-LiTFSI electrolyte at target density — a complete AmberTools workflow driven from MolPy.
+Type TFSI natively with AM1-BCC charges, build GAFF PEO chains from one antechamber-typed oligomer cut by prepgen and sequenced by tleap, merge the two force fields, and pack a PEO-LiTFSI electrolyte at target density for LAMMPS.
 
 !!! warning "External dependencies"
     This guide requires **AmberTools** (via conda) and
-    **molcrafts-molpack**. Only the inputs (TFSI, Li⁺, the PEO oligomer and
-    its cuts) run without them; every block marked `# docs: skip` needs
-    AmberTools or molpack.
+    **molcrafts-molpack**: sqm for TFSI's AM1-BCC charges, and antechamber,
+    parmchk2, prepgen and tleap for the chain. Only the inputs (TFSI's atom
+    types, Li⁺, the PEO oligomer and its cuts) run without them; every block
+    marked `# docs: skip` needs AmberTools or molpack.
 
 ??? note "Setting up AmberTools"
     Install AmberTools in a dedicated conda environment:
@@ -19,7 +20,7 @@ Type TFSI with antechamber, build GAFF PEO chains from one antechamber-typed oli
     which tleap # should print a path
     ```
 
-    MolPy's AmberTools typifiers and `AmberPolymerBuilder` activate the conda environment automatically when running commands, so you do not need to keep it active in your shell. Which environment they activate is a setting of molpy's configuration, shared by every AmberTools program (`[wrapper]`; see [Configure and Log a Run](14_configure_and_log.md)). Put it in `molpy.toml` next to your scripts:
+    `Am1BccModel`, `AmberPolymerBuilder` and MolPy's AmberTools typifiers activate the conda environment automatically when running commands, so you do not need to keep it active in your shell. Which environment they activate is a setting of molpy's configuration, shared by every AmberTools program (`[wrapper]`; see [Configure and Log a Run](14_configure_and_log.md)). Put it in `molpy.toml` next to your scripts:
 
     ```toml
     [wrapper]
@@ -31,44 +32,76 @@ Type TFSI with antechamber, build GAFF PEO chains from one antechamber-typed oli
 
 ## Workflow overview
 
-`AntechamberTypifier` types a complete molecule: antechamber (GAFF types, BCC charges) → parmchk2 → tleap. A polymer is not that molecule. You build one oligomer in which the head, chain and tail monomers are already bonded, and you say how prepgen cuts it (`AmberCut`: the atoms each residue omits, and the atom across each junction). `AmberPolymerBuilder` then runs antechamber and parmchk2 on that oligomer, prepgen for each cut, and tleap `sequence`. `TleapTypifier` is only for a finished molecule that already carries types and charges; a graph that still has ports is refused. Li⁺ gets a force field you define. The three force fields are merged, molpack places the molecules at the target density, and the system is exported to LAMMPS.
+A small molecule takes the native route, in a builder system as on its own:
+`AtdTypifier` stamps antechamber's GAFF2 atom types, `mp.ff.charge.Am1BccModel`
+assigns AM1-BCC charges with sqm as its one program, and `GaffTypifier`
+assigns the bonded terms from `gaff2.dat` (see
+[Force Field Typification](06_typifier.md)). Against AmberTools these are the
+types and parameter values tleap gives the same molecule, and antechamber
+`-c bcc`'s charges to within sqm's rounding (0.001 e). The PEO chain needs
+the AmberTools pipeline: it is cut by prepgen and joined by tleap, and its
+force field is read back from tleap's prmtop.
 
-## Antechamber assigns GAFF2 types and BCC charges to TFSI
+The two force fields merge. molrs's `ForceField.merge` compares what each
+style prices (defaults filled in, within a relative 1e-6), and native GAFF
+names its terms and rounds its estimates as tleap's prmtop does, so a type or
+term the chain and TFSI share (`c3`) is one definition.
+Every GAFF entry point takes `parameter_set` (`"gaff"` or `"gaff2"`, as
+molrs names it); it has no default, so name the same set for every
+component.
 
-The net charge antechamber is given comes from the atoms' formal charges — here the `[N-]` of the SMILES. Antechamber needs 3D coordinates, so the anion is embedded first.
+A polymer is not typed as one molecule. You build one oligomer in which the head, chain and tail monomers are already bonded, and you say how prepgen cuts it (`AmberCut`: the atoms each residue omits, and the atom across each junction). `AmberPolymerBuilder` then runs antechamber and parmchk2 on that oligomer, prepgen for each cut, and tleap `sequence`. Li⁺ gets a force field you define. The three force fields are merged, molpack places the molecules at the target density, and `LammpsEngine` writes the LAMMPS deck.
+
+## TFSI is typed natively with AM1-BCC charges
+
+Atom types need no program. sqm, which computes the AM1 charges, needs 3D
+coordinates, so the anion is embedded first.
 
 ```python
 from pathlib import Path
 import molpy as mp
+from molpy.ff.typifier import AtdTypifier, GaffTypifier
 
 output_dir = Path("13_output")
 output_dir.mkdir(exist_ok=True)
 
-tfsi = mp.io.smiles.SmilesIr("O=S(=O)(C(F)(F)F)[N-]S(=O)(=O)C(F)(F)F").to_atomistic()
+tfsi = mp.io.smiles.read_smiles("O=S(=O)(C(F)(F)F)[N-]S(=O)(=O)C(F)(F)F").to_atomistic()
 tfsi = mp.conformer.Conformer(add_hydrogens=False, seed=42).generate(tfsi)[0]
+tfsi = AtdTypifier(parameter_set="gaff2").typify(tfsi)  # GAFF2 atom types
+print(sorted({atom["type"] for atom in tfsi.atoms}))  # ['c3', 'f', 'ne', 'o', 's6', 'sy']
 ```
 
-The typifier reads the AmberTools environment from `molpy.toml`
-(`load_config()` resolves it; passing nothing does the same):
+`Am1BccModel` reads the AmberTools environment from `molpy.toml`
+(`load_config()` resolves it; passing nothing does the same). The net charge
+sqm is given comes from the atoms' formal charges — here the `[N-]` of the
+SMILES:
 
 ```python
-# docs: skip — needs AmberTools
+# docs: skip — needs AmberTools (sqm)
 from molpy.config import load_config
+from molpy.ff.charge import Am1BccModel
 
 config = load_config()  # defaults, then ~/.molcrafts/molpy/config/config.toml, then ./molpy.toml
-tfsi_ante = mp.ff.typifier.AntechamberTypifier(
-    atom_type="gaff2",
-    charge_method="bcc",
-    work_dir=output_dir / "tfsi",
-    config=config,
-)
-tfsi = tfsi_ante.typify(tfsi)  # a typed copy: GAFF2 types, BCC charges, bonded terms
-tfsi_ff = tfsi_ante.forcefield()  # the parameters of the types just assigned
+am1bcc = Am1BccModel(parameter_set="bcc", work_dir=output_dir / "tfsi", config=config)
+charges = am1bcc.assign(tfsi)  # sqm's AM1 charges, then the native BCC correction
+for atom, charge in zip(tfsi.atoms, charges):
+    atom["charge"] = float(charge)
+print(round(float(charges.sum()), 3))  # -0.998
+
+tfsi_gaff = GaffTypifier(parameter_set="gaff2")
+tfsi = tfsi_gaff.typify(tfsi)  # a typed copy: bonded terms from gaff2.dat
+tfsi_ff = tfsi_gaff.forcefield()  # the parameters of the types just assigned
 ```
+
+The anion carries −0.998 e, not −1: sqm prints its Mulliken charges to three
+decimals, and neither the BCC correction nor antechamber renormalises
+(antechamber `-c bcc` gives the same charges). Four of TFSI's terms
+(`s6-ne-sy`, `f-c3-sy`, `o-s6-ne-sy`, `c3-s6-ne-sy`) are not in `gaff2.dat`;
+`GaffTypifier` estimates them as parmchk2 does and marks them `estimated`.
 
 ## Li⁺ needs no charge calculation — you define its force field
 
-Li⁺ has no bonded terms and no partial charges to compute, so antechamber is not needed. Build the atom with its type and charge, and define the force field it uses.
+Li⁺ has no bonded terms and no partial charges to compute, and GAFF has no lithium type (`GaffTypifier` refuses it: `gaff2.dat has no exact parameter for 1 term(s): MASS Li`). Build the atom with its type and charge, and define the force field it uses.
 
 **Li⁺ nonbond parameters** — Åqvist (1990), J. Phys. Chem. 94, 8021–8024, DOI: 10.1021/j100384a009.
 These were fitted to hydration free energies and are the standard choice for polymer electrolyte simulations with GAFF.
@@ -80,7 +113,7 @@ These were fitted to hydration free energies and are the standard choice for pol
 
 ```python
 li = mp.Atomistic()
-li.def_atom(element="Li", type="Li+", charge=1.0, mass=6.94, x=0.0, y=0.0, z=0.0)
+li.add_atom(atomic_number=3, type="Li+", charge=1.0, mass=6.94, x=0.0, y=0.0, z=0.0)
 
 li_ff = mp.ff.forcefield.ForceField("li", units="real")
 li_type = li_ff.def_style("atom", "full").def_type("Li+", mass=6.94, charge=1.0)
@@ -118,7 +151,7 @@ other architectures. The site graph is only that sequence; it must be one
 linear path.
 
 ```python
-sites = mp.io.cgsmiles.CgSmilesIr("{[#PEO]|10}").to_coarsegrain()
+sites = mp.io.cgsmiles.read_cgsmiles("{[#PEO]|10}").to_coarsegrain()
 ```
 
 ```python
@@ -126,7 +159,7 @@ sites = mp.io.cgsmiles.CgSmilesIr("{[#PEO]|10}").to_coarsegrain()
 built = mp.builder.AmberPolymerBuilder(
     {"PEO": oligomer},
     {"PEO": peo_cuts},
-    force_field="gaff2",
+    parameter_set="gaff2",
     charge_method="bcc",
     work_dir=output_dir / "peo",
     config=config,
@@ -136,14 +169,17 @@ peo_ff = built.forcefield  # units real, AMBER 1-4 scaling declared
 print(f"PEO 10-mer: {peo.n_atoms} atoms")  # 79
 ```
 
-antechamber and parmchk2 run on the oligomer, once, under
+antechamber runs on the oligomer once (`-fo ac`: types and charges from one
+sqm run), and parmchk2 and prepgen read its ac file, under
 `work_dir/monomers/<label>/`. They are not run on the assembled chain.
 Junction terms come from `leaprc.gaff2`. PEO and TFSI use the same
-GAFF generation, so their shared types (`c3`, `os`, …) agree when the force
-fields are merged. A later `assemble` reuses what is
+GAFF generation, so their shared type `c3` agrees when the force fields are
+merged. A later `assemble` reuses what is
 in `work_dir`: antechamber reruns only when the oligomer or the charge
 settings change, prepgen when a cut changes, and tleap when the sequence or
-a file it loads changes.
+a file it loads changes. A step that runs deletes its old outputs first, and
+the typifiers rerun every step in a directory keyed by the molecule and every
+setting, so a rerun never reads an earlier run's files.
 
 ### Cutting an oligomer you built yourself
 
@@ -173,22 +209,25 @@ gropob_cuts = {
 }
 ```
 
-An ac, mol2 and frcmod you put in `work_dir/monomers/<label>/` yourself (as
-`<label>.ac`, `<label>.mol2` and `<label>.frcmod`) are used as they are:
-only prepgen and tleap run.
+An ac and frcmod you put in `work_dir/monomers/<label>/` yourself (as
+`<label>.ac` and `<label>.frcmod`) are used as they are: only prepgen and
+tleap run.
 
 ## Merging three force fields before packing prevents type conflicts
 
 Merging is done before packing rather than after because packing operates on
 coordinates only — it has no awareness of force field types. If two components
 share a type name with different parameters, `merge` raises, so a collision is
-an error before coordinates are generated.
+an error before coordinates are generated. The chain's force field is tleap's
+prmtop and TFSI's is native GAFF; they merge like any two force fields.
+`merge` adds the other force field's styles and types to `peo_ff` in place and
+returns it; where both define a style, `peo_ff`'s is kept.
 
 ```python
 # docs: skip — needs AmberTools and molpack
 from molpack import GencanPack, Target
 
-ff = peo_ff.merge(tfsi_ff).merge(li_ff)
+ff = peo_ff.merge(tfsi_ff).merge(li_ff)  # peo_ff, now holding all three
 
 box_size = 60.0
 box = mp.core.Cuboid([0.0, 0.0, 0.0], [box_size] * 3)
@@ -198,25 +237,55 @@ targets = [
     Target(tfsi.to_frame(), count=10).with_restraint(box),
 ]
 system = GencanPack().with_seed(12345).run(targets, max_loops=200).frame
-system.box = mp.Box.cube(box_size)
+system.box = mp.Box(mp.core.Cell.lengths([box_size] * 3))
 ```
 
-## Exporting skips pair_style because long-range electrostatics need it in the script
+## The LAMMPS deck sets the cutoff and the long-range solver
+
+Neither the prmtop nor GAFF states a cutoff: it is a run setting, so the deck
+names it. `generate_inputs` writes the data file, the force-field settings
+(coefficients, AMBER's 1-4 `special_bonds`, `pair_modify mix`), the init
+(`units`, `atom_style`, `boundary`, `pair_style`) and the input script. The
+`pair_style` given here replaces the force field's cut-off Coulomb with
+`coul/long`, whose PPPM solver the body sets:
 
 ```python
 # docs: skip — needs AmberTools and molpack
-lammps_dir = output_dir / "lammps"
-lammps_dir.mkdir(exist_ok=True)
+from molpy.engine import LammpsEngine
 
 # full atom style needs mol_id: one per connected molecule
 system["atoms"]["mol_id"] = mp.Topology.from_frame(system).connected_components() + 1
-mp.io.write_lammps_data(lammps_dir / "system.data", system)
-mp.io.write_lammps_forcefield(
-    lammps_dir / "system.ff", ff, system, skip_pair_style=True, skip_units=True
+deck = LammpsEngine().generate_inputs(
+    system,
+    ff,
+    output_dir / "lammps",
+    pair_style="lj/cut/coul/long 12.0",
+    body="kspace_style pppm 1.0e-4\nthermo 100\nminimize 1.0e-4 1.0e-6 1000 10000\n",
 )
+print(sorted(deck))  # ['data', 'init', 'input', 'settings']
 ```
 
-`skip_pair_style=True` omits the `pair_style` line from the force-field file. This is required when using kspace (long-range electrostatics), because the `pair_style` — and its cutoff — must be set by the simulation input script rather than the force-field file. The file keeps the force field's `special_bonds` (AMBER's 1-4 weights) and `pair_modify mix`, which need a pair style, so the input reads it after its `pair_style`. `skip_units=True` leaves out the `units` line: the input states `units` before `read_data`, and LAMMPS refuses a second one once the box exists.
+`LammpsEngine().run(deck["input"], workdir=output_dir / "lammps")` runs it;
+it is the starting point for the equilibration you add to `body`. The four
+terms `GaffTypifier` estimated for TFSI (it marks them `estimated`, with the
+penalty, method and analog) export like any other: every molrs writer skips
+the provenance and writes the parameters.
+
+## When the AmberTools typifiers are still the route
+
+The native route covers GAFF / GAFF2 typing with AM1-BCC (or ABCG2) or
+Gasteiger charges, merged with a chain or not. The AmberTools pipeline,
+read back from tleap's prmtop, is kept for what it alone does:
+
+- **A GAFF polymer chain**: `AmberPolymerBuilder` (prepgen cuts, tleap
+  `sequence`), above.
+- **Parameters of your own on top of the leaprc**: `TleapTypifier(forcefield=...)`
+  writes them as a frcmod that tleap loads after `leaprc.<parameter_set>`,
+  over a graph whose atoms already carry AMBER types and charges.
+  `GaffTypifier` takes no extra parameters, and `merge` refuses a type it
+  would redefine.
+- **An antechamber charge method other than AM1-BCC / ABCG2**:
+  `AntechamberTypifier(charge_method=...)` passes it to antechamber `-c`.
 
 ## Troubleshooting
 
@@ -225,12 +294,12 @@ mp.io.write_lammps_forcefield(
 | Antechamber fails | The oligomer has 3D coordinates (embed it first) |
 | `ValueError: … cut names [...]` | An atom name in a cut is not on the oligomer; `AmberPieces` names atoms element + count (`C1`, `O2`, …) |
 | Chain O near −0.20 e, or typed `oh` | The chain was joined with `Assembler` (the leaving-group charge was folded onto the anchor). Build the oligomer with the monomers already bonded and cut it with prepgen |
-| TFSI charge wrong | The formal charges sum to the net charge (`[N-]` gives −1); use `charge_method="bcc"` |
+| TFSI charge wrong | The formal charges sum to the net charge (`[N-]` gives −1). −0.998 e is sqm's three-decimal rounding; antechamber `-c bcc` gives the same |
 | tleap fails on the chain | A junction term missing from the leaprc (`leaprc.gaff2` here); the error carries tleap's output. The connection atoms are the ones in the oligomer you cut |
 | `ValueError: … still has N ports` | `TleapTypifier` was given a template. A polymer goes through `AmberPolymerBuilder` |
 | Polymer assembly fails | The site graph is one path of at least two sites, and every bead type has an oligomer and a cut for the residue that site uses |
 | `ValueError: … both make tleap residue …` | Residue names are the first characters of the bead type (`HPE`, `PEO`, `TPE` for `PEO`); give the bead types distinct prefixes |
-| Force field merge conflict | Inspect type names for collisions between PEO, TFSI and Li⁺ |
+| Force field merge conflict | Every component names the same `parameter_set`; a type you define yourself (Li⁺) does not reuse a GAFF type name |
 | Packing fails | Increase box size or reduce molecule count |
 
 The raw subprocess wrappers (`AntechamberWrapper`, `Parmchk2Wrapper`,

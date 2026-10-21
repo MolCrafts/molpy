@@ -7,4 +7,6 @@ The table molrs ships is :func:`fragment_table`.
 """
 
 from molrs.ff.clpol_scaling import *  # noqa: F403
-from molrs.ff.clpol_scaling import __all__ as __all__
+from molrs.ff.clpol_scaling import __all__ as _native
+
+__all__ = [*_native]

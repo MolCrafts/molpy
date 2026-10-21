@@ -114,3 +114,21 @@ class TestBlockSequenceGenerator:
     def test_is_a_sequence_generator(self):
         gen: SequenceGenerator = BlockSequenceGenerator({"A": 0.5, "B": 0.5})
         assert len(gen.generate_sequence(4, np.random.default_rng(0))) == 4
+
+
+class TestWeightedSequenceGeneratorInputs:
+    def test_copies_the_callers_weights(self):
+        weights = {"A": 1.0, "B": 1.0}
+        generator = WeightedSequenceGenerator(weights)
+        weights["C"] = 5.0
+        weights["A"] = 0.0
+        assert generator.monomer_ids == ["A", "B"]
+        assert generator.expected_composition() == pytest.approx({"A": 0.5, "B": 0.5})
+
+    def test_rejects_weights_that_sum_to_zero(self):
+        with pytest.raises(ValueError, match="positive"):
+            WeightedSequenceGenerator({"A": 0.0, "B": 0.0})
+
+    def test_rejects_negative_weight(self):
+        with pytest.raises(ValueError, match="non-negative"):
+            WeightedSequenceGenerator({"A": 1.0, "B": -0.5})

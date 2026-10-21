@@ -16,7 +16,8 @@ class AmberBuildResult:
     Coordinates, types, charges and parameters are what tleap wrote. They
     are assigned the way :class:`~molpy.ff.typifier.AntechamberTypifier`
     assigns its prmtop, so ``chain`` is a typed graph like a typifier's
-    output and ``forcefield`` merges with a typifier's force field.
+    output and ``forcefield`` merges with a typifier's force field, a
+    native :class:`~molrs.ff.typifier.GaffTypifier`'s included.
 
     Attributes:
         chain: The typed polymer (coordinates, types, charges, bonded terms).

@@ -27,8 +27,9 @@ from molpy.builder import (
 
 
 def main() -> None:
-    # A styrene / methyl-acrylate copolymer, 80:20 by weight. Monomer molar
-    # masses (g/mol) set the chain masses the planner accumulates.
+    # A styrene / methyl-acrylate copolymer, 80:20 by mole (the weights are
+    # per-monomer draw probabilities). Monomer molar masses (g/mol) set the
+    # chain masses the planner accumulates.
     monomer_mass = {"Sty": 104.15, "MA": 86.09}
     seq_gen = WeightedSequenceGenerator(monomer_weights={"Sty": 8.0, "MA": 2.0})
 

@@ -1,6 +1,6 @@
 """Wrapper for the 'antechamber' CLI.
 
-Higher-level workflow decisions belong in compute nodes.
+Higher-level workflow decisions belong in the caller (a typifier or a builder).
 """
 
 from __future__ import annotations
@@ -9,8 +9,7 @@ import subprocess
 from pathlib import Path
 from typing import Literal
 
-
-from ._wrapper import Wrapper
+from molpy.wrapper._wrapper import Wrapper
 
 
 class AntechamberWrapper(Wrapper):
@@ -18,37 +17,20 @@ class AntechamberWrapper(Wrapper):
 
     tool = "antechamber"
 
-    def run_raw(
-        self,
-        args: list[str],
-        *,
-        input_text: str | None = None,
-        check: bool = False,
-    ) -> subprocess.CompletedProcess[str]:
-        """Execute antechamber with raw arguments.
-
-        Args:
-            args: Command-line arguments (without 'antechamber').
-            input_text: Text to send to stdin.
-            check: If True, raise ``CalledProcessError`` on a non-zero exit.
-
-        Returns:
-            The completed process result.
-        """
-        return self.run(args=args, input_text=input_text, check=check)
-
     def atomtype_assign(
         self,
         input_file: str | Path,
         output_file: str | Path,
         *,
+        parameter_set: Literal["gaff", "gaff2", "amber", "bcc", "abcg2", "sybyl"],
         input_format: Literal["pdb", "mol2", "ac"] = "pdb",
         output_format: Literal["mol2", "ac"] = "mol2",
-        charge_method: Literal["gas", "bcc", "be3", "cm2", "esp"] = "bcc",
-        atom_type: Literal["gaff", "gaff2", "amber", "sybyl"] = "gaff2",
+        charge_method: Literal[
+            "gas", "bcc", "abcg2", "mul", "be3", "cm2", "esp"
+        ] = "bcc",
         net_charge: int = 0,
         formal_charges: bool = False,
-        check: bool = False,
+        check: bool = True,
     ) -> subprocess.CompletedProcess[str]:
         """Perform atom type assignment and charge calculation.
 
@@ -58,14 +40,18 @@ class AntechamberWrapper(Wrapper):
         Args:
             input_file: Input structure file.
             output_file: Output structure file (with assigned atom types and charges).
+            parameter_set: The atom-type table (``-at``), molrs's
+                ``parameter_set`` (:class:`molpy.ff.typifier.AtdTypifier`):
+                ``gaff``, ``gaff2``, ``amber``, ``bcc``, ``abcg2`` or ``sybyl``.
+                Required, as in molrs.
             input_format: Input file format.
             output_format: Output file format.
-            charge_method: Method for charge calculation
-                (gas: Gasteiger; bcc: Bond charge correction; etc.).
-            atom_type: Atom type scheme (gaff, gaff2, amber, sybyl).
+            charge_method: Method for charge calculation (gas: Gasteiger;
+                bcc / abcg2: AM1-BCC / ABCG2; mul: sqm's AM1 Mulliken
+                charges, unequivalenced; etc.).
             net_charge: Net charge of the molecule.
             formal_charges: If True, use formal charges instead of computing them.
-            check: If True, raise ``CalledProcessError`` on a non-zero exit.
+            check: Raise :class:`~molpy.wrapper.ToolError` on a non-zero exit.
 
         Returns:
             The completed process result.
@@ -82,7 +68,7 @@ class AntechamberWrapper(Wrapper):
             "-c",
             charge_method,
             "-at",
-            atom_type,
+            parameter_set,
             "-nc",
             str(net_charge),
         ]
@@ -90,4 +76,4 @@ class AntechamberWrapper(Wrapper):
         if formal_charges:
             args.extend(["-cf", "y"])
 
-        return self.run_raw(args=args, check=check)
+        return self.run(args, check=check)

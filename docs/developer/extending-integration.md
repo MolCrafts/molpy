@@ -7,113 +7,160 @@ This page shows how to integrate external CLI tools (wrappers) and external Pyth
 | | Wrapper | Adapter |
 |--|---------|---------|
 | **Crosses** | Execution boundary (subprocess) | Representation boundary (in-memory) |
-| **Concerns** | Executable, environment, return codes, files | Field mapping, synchronization fidelity |
-| **May** | Run subprocesses, produce files | Hold two object models in sync |
-| **Must not** | Own workflow logic or chemistry semantics | Execute subprocesses or produce side effects |
+| **Concerns** | Executable, environment, return codes, files | Field mapping, conversion fidelity |
+| **May** | Run subprocesses, produce files | Build one object model from the other |
+| **Must not** | Own workflow logic or chemistry semantics | Execute subprocesses, mutate its input, or cache a copy |
 
 
 ## Adding a Wrapper
 
-Subclass `molpy.wrapper.Wrapper`. The base class handles executable resolution, conda/virtualenv activation, working directory management, and stdout/stderr capture.
+Subclass `molpy.wrapper.Wrapper` and name its configuration table in `tool`.
+The shared tool core (`molpy.wrapper.Tool`) resolves, in order, the settings
+(`[wrapper.<tool>]`, falling back to `[wrapper]`), the conda / venv
+environment, the executable, the environment variables, the time limit and
+the logger (`molpy.wrapper.<tool>`). Any table under `[wrapper]` is a
+tool's, so a third-party wrapper is configured exactly like a built-in one;
+give it a default executable by overriding `_default_executable()`, or leave
+the executable to the configuration.
 
 ```python
-from dataclasses import dataclass, field
+import subprocess
 from pathlib import Path
+
 from molpy.wrapper import Wrapper
 
-@dataclass
-class GmxWrapper(Wrapper):
-    """Wrapper for GROMACS gmx command."""
 
-    name: str = "gmx"
-    exe: str = "gmx"
+class PackmolWrapper(Wrapper):
+    """Wrapper for the packmol CLI (reads [wrapper.packmol])."""
 
-    def energy_minimize(self, tpr_file: Path) -> Path:
-        """Run energy minimization."""
-        result = self.run(args=["mdrun", "-s", str(tpr_file), "-deffnm", "em"])
-        if result.returncode != 0:
-            raise RuntimeError(f"gmx mdrun failed: {result.stderr}")
-        return self.workdir / "em.gro"
+    tool = "packmol"
+
+    def _default_executable(self) -> str:
+        return "packmol"
+
+    def run_from_input(self, input_text: str) -> subprocess.CompletedProcess[str]:
+        """Run packmol on an input deck given on stdin."""
+        return self.run(input_text=input_text)
 ```
 
-Higher-level methods (like `energy_minimize`) are convenience wrappers around `self.run()`. They should remain thin — workflow logic belongs in the calling code, not in the wrapper.
+```toml
+# molpy.toml
+[wrapper.packmol]
+executable = "/opt/packmol/bin/packmol"
+timeout = 600
+```
+
+Higher-level methods (like `run_from_input`) are thin conveniences around
+`self.run()`. Workflow logic — which files to require, what to do with them —
+belongs in the calling code, not in the wrapper.
 
 ### Key points
 
-- `self.run(args=[...])` executes the command and returns `subprocess.CompletedProcess`
-- `self.resolve_executable()` finds the binary on PATH or in the configured conda env
-- `self.is_available()` checks if the tool can be found (safe for conditional imports)
-- `workdir` is created automatically; all execution happens there
+- `self.run(args, *, input_text=None, capture_output=True, check=True)` runs
+  `[env prefix] executable args` in `self.workdir` (created if needed) and
+  returns `subprocess.CompletedProcess`
+- Every failure is a `molpy.wrapper.ToolError` carrying `tool`
+  (`"wrapper.packmol"`), `returncode` and `tail` (the last lines of stderr,
+  else stdout): a non-zero exit (unless `check=False`), a program that cannot
+  start, a timeout, a missing executable
+- `self.check_executable()` returns the resolved path or raises `ToolError`
+  naming the settings to fix; `self.is_available()` is the boolean form. Both
+  look the executable up once per instance
+- `run_step(tool, output, call)` checks the executable, runs one step and
+  raises `ToolError` if the file it must write is missing
 - Wrappers are safe to instantiate even if the tool is not installed
+- An engine is the same recipe on `molpy.engine.Engine`
+  ([Simulation Engines](../user-guide/12_engine.md#adding-a-new-engine-takes-a-table-and-two-methods))
 
 
 ## Adding an Adapter
 
-Subclass `molpy.adapter.Adapter[InternalT, ExternalT]`. Implement `_do_sync_to_internal()` and `_do_sync_to_external()`.
+An adapter is a pair of pure functions in `molpy.adapter`, named after the
+library: `to_<lib>(atomistic)` and `from_<lib>(obj)`. There is no base class to
+subclass — `to_rdkit` / `from_rdkit` (`src/molpy/adapter/_rdkit.py`) is the
+reference.
 
 ```python
-from molpy.adapter import Adapter
+# docs: skip — ASE is not a molpy dependency
+import ase
+
 from molpy.core import Atomistic
 
-class AseAdapter(Adapter[Atomistic, "ase.Atoms"]):
-    """Sync between MolPy Atomistic and ASE Atoms."""
+_XYZ = ("x", "y", "z")
 
-    def _do_sync_to_external(self):
-        """Atomistic → ASE Atoms."""
-        import ase
-        symbols = [a.get("element") for a in self._internal.atoms]
-        positions = [[a["x"], a["y"], a["z"]] for a in self._internal.atoms]
-        self._external = ase.Atoms(symbols=symbols, positions=positions)
 
-    def _do_sync_to_internal(self):
-        """ASE Atoms → Atomistic."""
-        mol = Atomistic()
-        for atom in self._external:
-            mol.def_atom(
-                element=atom.symbol,
-                x=atom.position[0],
-                y=atom.position[1],
-                z=atom.position[2],
-            )
-        self._internal = mol
+def to_ase(atomistic: Atomistic) -> ase.Atoms:
+    """New ``ase.Atoms`` from ``atomistic``; the input is not touched."""
+    atoms = list(atomistic.atoms)
+    return ase.Atoms(
+        numbers=[int(a["atomic_number"]) for a in atoms],
+        positions=[[a[k] for k in _XYZ] for a in atoms],
+    )
+
+
+def from_ase(atoms: ase.Atoms) -> Atomistic:
+    """New ``Atomistic`` from ``atoms``; the input is not touched."""
+    out = Atomistic()
+    for atom in atoms:
+        out.add_atom(
+            atomic_number=int(atom.number),
+            **dict(zip(_XYZ, map(float, atom.position))),
+        )
+    return out
 ```
 
 ### Key points
 
-- `get_external()` auto-syncs if external is `None` and internal is set (and vice versa)
-- Optional imports: if ASE is not installed, the adapter module should fail gracefully at import time
-- **Never** run subprocesses inside an adapter — that is a wrapper's job
-- Test round-trip fidelity: `internal → external → internal` should preserve atom count, connectivity, and coordinates
+- **Build, never mutate.** Each function returns a new object. Do not write
+  bookkeeping (ids, tags) onto the caller's structure, and do not keep a cached
+  copy of either side — a cache goes stale the moment the user edits one.
+- **Carry what the other side can hold.** Map the fields the library owns
+  natively; carry the rest in whatever per-atom / per-bond metadata it offers
+  (RDKit properties, ASE `arrays` / `info`) so it comes back unchanged.
+- **Document what is lost.** List, in the module docstring, every field or
+  relation that does not survive `from_<lib>(to_<lib>(x))`.
+- **Never** run subprocesses inside an adapter — that is a wrapper's job.
+- Test round-trip fidelity: `from_<lib>(to_<lib>(x))` should preserve atom
+  count, connectivity, coordinates and every carried component, and neither
+  function may change its input.
 
 
 ## Handling optional dependencies
 
-Follow the existing pattern for optional imports:
+The library is an optional extra, so `molpy.adapter` must import without it.
+Import the module that needs it inside a guard that treats *only* the library's
+own absence as "not installed" — any other `ModuleNotFoundError` is a broken
+install and must surface — and make the names raise a clear `ImportError` on use
+(`src/molpy/adapter/__init__.py`):
 
 ```python
-# In adapter module
+# docs: skip — illustrative; molpy has no ASE adapter
+_ASE_MISSING: ModuleNotFoundError | None = None
 try:
-    import ase
-    _HAS_ASE = True
-except ImportError:
-    _HAS_ASE = False
-    ase = None
+    from molpy.adapter._ase import from_ase, to_ase
+except ModuleNotFoundError as exc:
+    if exc.name != "ase":
+        raise
+    _ASE_MISSING = exc
 
-class AseAdapter(Adapter[Atomistic, "ase.Atoms"]):
-    def __init__(self, **kwargs):
-        if not _HAS_ASE:
-            raise ImportError("ASE is required: pip install ase")
-        super().__init__(**kwargs)
+
+def __getattr__(name: str) -> object:
+    if name in {"to_ase", "from_ase"} and _ASE_MISSING is not None:
+        raise ImportError(
+            f"molpy.adapter.{name} needs ASE: pip install ase"
+        ) from _ASE_MISSING
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 ```
 
-This way the module can be imported without the dependency, and the error only triggers when someone actually tries to use it.
+Never bind a missing name to `None`: the failure then surfaces far away, as
+`'NoneType' object is not callable`.
 
 
 ## Checklist
 
-- [ ] Wrapper: subclass `Wrapper`, keep `.run()` calls thin
+- [ ] Wrapper: subclass `Wrapper`, set `tool`, keep `.run()` calls thin
 - [ ] Adapter: subclass `Adapter[I, E]`, implement `_do_sync_to_internal/external`
 - [ ] Optional deps: guard imports, fail at usage not import
-- [ ] Tests: round-trip fidelity for adapters, return-code checking for wrappers
+- [ ] Tests: round-trip fidelity for adapters, `ToolError` on failure for wrappers
 - [ ] Add tests in `tests/test_wrapper/` or `tests/test_adapter/`
 - [ ] Unit-test wrappers/engines with mocks and script literals (never launch the binary)

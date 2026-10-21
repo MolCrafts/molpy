@@ -5,7 +5,17 @@ from __future__ import annotations
 import numpy as np
 
 import molpy as mp
-from molpy.io import read_xyz_trajectory, write_xyz_trajectory
+from molpy.io.xyz import XyzReader, XyzWriter
+
+
+def read_xyz_trajectory(path):
+    return XyzReader(path)
+
+
+def write_xyz_trajectory(path, frames):
+    with XyzWriter(path) as writer:
+        for frame in frames:
+            writer.write(frame)
 
 
 def _frame(n: int) -> mp.Frame:

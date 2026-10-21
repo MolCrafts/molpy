@@ -58,6 +58,12 @@ def test_pdb_round_trip(tmp_path):
 
 - **Wrappers / engines**: mock `subprocess` and assert argv / script *literals*
   written to disk. Never launch antechamber, tleap, or lmp in unit tests.
+- **Real-program tests** are the exception, and each skips unless its programs
+  are installed (`shutil.which`, else `$AMBERHOME/bin`): the GroPoB polymer
+  (`tests/test_builder/test_polymer/test_amber_gropob.py`), the AmberTools
+  routes (`tests/test_ambertools/test_real_programs.py`: AM1-BCC, native GAFF
+  against tleap, quoted paths) and the engine runs. They pin that a faked
+  test's stand-in still matches the real program.
 - **Doc code blocks** are not executed by the test gate. Blocks that shell out
   or need offline artifacts still declare `# docs: skip — <reason>` as the first
   non-empty line so a reader knows they are not runnable as-is.

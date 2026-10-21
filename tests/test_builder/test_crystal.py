@@ -1,12 +1,14 @@
 from __future__ import annotations
 
+from molrs.core import Cell
+
 import dataclasses
 
 import numpy as np
 import pytest
 
-from molpy.core import Atomistic, Box, Cuboid, Sphere
-from molpy.builder import Lattice, Site
+from molpy.builder import Lattice, Site, SpaceGroup
+from molpy.core import Atomistic, Box, Cuboid, HalfSpace, Sphere
 
 
 class TestSite:
@@ -34,7 +36,9 @@ class TestSite:
             fractional=(0.0, 0.0, 0.0),
             attrs={"domain": "wall"},
         )
-        structure = Lattice(np.eye(3), [site]).build(repeats=(1, 1, 1))
+        structure = Lattice(Box(Cell.lengths([1.0] * 3)), [site]).build(
+            repeats=(1, 1, 1)
+        )
         assert structure.atoms[0].get("domain") == "wall"
 
     def test_site_is_frozen(self):
@@ -44,54 +48,57 @@ class TestSite:
 
 
 class TestLattice:
-    def test_lattice_creation_from_matrix(self):
-        cell = np.eye(3)
-        lattice = Lattice(cell=cell, basis=[])
+    def test_lattice_holds_a_box(self):
+        box = Box(Cell.lengths([1.0] * 3))
+        lattice = Lattice(box, basis=[])
 
-        assert np.allclose(lattice.cell, cell)
+        assert lattice.box is box
         assert lattice.basis == ()
 
-    def test_lattice_rejects_bad_shape(self):
-        with pytest.raises(ValueError, match="shape"):
-            Lattice(cell=np.eye(2))
+    def test_lattice_rejects_a_matrix(self):
+        with pytest.raises(TypeError, match="Box"):
+            Lattice(np.eye(3))  # type: ignore[arg-type]
 
-    def test_lattice_vector_accessors(self):
-        cell = np.array([[3.0, 0.0, 0.0], [0.0, 4.0, 0.0], [0.0, 0.0, 5.0]])
-        lattice = Lattice(cell=cell)
+    def test_lattice_rejects_a_box_without_a_cell(self):
+        with pytest.raises(ValueError, match="cell"):
+            Lattice(Box(Cell.undefined()))
 
-        assert np.allclose(lattice.a1, [3.0, 0.0, 0.0])
-        assert np.allclose(lattice.a2, [0.0, 4.0, 0.0])
-        assert np.allclose(lattice.a3, [0.0, 0.0, 5.0])
+    def test_lattice_vectors_are_the_box_columns(self):
+        h = np.array([[3.0, 1.0, 0.5], [0.0, 4.0, 0.2], [0.0, 0.0, 5.0]])
+        lattice = Lattice(Box(Cell.matrix(h)))
+
+        np.testing.assert_allclose(lattice.a1, h[:, 0])
+        np.testing.assert_allclose(lattice.a2, h[:, 1])
+        np.testing.assert_allclose(lattice.a3, h[:, 2])
 
     def test_from_vectors(self):
         a1 = np.array([3.0, 0.0, 0.0])
-        a2 = np.array([0.0, 3.0, 0.0])
-        a3 = np.array([0.0, 0.0, 3.0])
+        a2 = np.array([1.0, 3.0, 0.0])
+        a3 = np.array([0.5, 0.5, 3.0])
         lattice = Lattice.from_vectors(a1, a2, a3, basis=[])
 
-        assert lattice.cell.shape == (3, 3)
-        assert np.allclose(lattice.cell[0], a1)
-        assert np.allclose(lattice.cell[1], a2)
-        assert np.allclose(lattice.cell[2], a3)
+        assert isinstance(lattice.box, Box)
+        np.testing.assert_allclose(lattice.box.matrix, np.column_stack([a1, a2, a3]))
+        np.testing.assert_allclose(lattice.a2, a2)
 
     def test_with_site_is_immutable(self):
-        base = Lattice(cell=np.eye(3))
+        base = Lattice(Box(Cell.lengths([1.0] * 3)))
         site = Site(label="A", species="C", fractional=(0.0, 0.0, 0.0))
         extended = base.with_site(site)
 
         assert base.basis == ()
         assert extended.basis == (site,)
         assert extended is not base
+        assert extended.box is base.box
 
     def test_box_to_cart_single(self):
-        cell = np.diag([3.0, 4.0, 5.0])
-        lattice = Lattice(cell=cell)
+        lattice = Lattice(Box(Cell.lengths(np.array([3.0, 4.0, 5.0]))))
 
         cart = lattice.box.to_cart(np.array([[0.5, 0.5, 0.5]]))[0]
         assert np.allclose(cart, [1.5, 2.0, 2.5])
 
     def test_box_to_cart_multiple(self):
-        lattice = Lattice(cell=2.0 * np.eye(3))
+        lattice = Lattice(Box(Cell.lengths([2.0] * 3)))
 
         frac = np.array(
             [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.5, 0.5, 0.5]]
@@ -102,21 +109,21 @@ class TestLattice:
         )
         assert np.allclose(cart, expected)
 
-    def test_box_to_frac_inverts_to_cart_and_rows_are_lattice_vectors(self):
-        cell = np.array([[2.0, 0.0, 0.0], [1.0, 2.0, 0.0], [0.0, 0.0, 3.0]])
-        lattice = Lattice(cell=cell)
+    def test_box_to_frac_inverts_to_cart_and_columns_are_lattice_vectors(self):
+        a1, a2, a3 = [2.0, 0.0, 0.0], [1.0, 2.0, 0.0], [0.0, 0.0, 3.0]
+        lattice = Lattice.from_vectors(a1, a2, a3)
 
         frac = np.array([[0.1, 0.2, 0.3], [0.7, 0.4, 0.9]])
         cart = lattice.box.to_cart(frac)
         recovered = lattice.box.to_frac(cart)
         assert np.allclose(recovered, frac)
-        # The cell's rows are the lattice vectors: cart = frac @ cell.
-        assert np.allclose(cart, frac @ cell)
+        # cart = u a1 + v a2 + w a3.
+        assert np.allclose(cart, frac @ np.array([a1, a2, a3]))
 
     def test_sc(self):
         lat = Lattice.sc(a=2.0, species="Cu")
 
-        assert np.allclose(lat.cell, 2.0 * np.eye(3))
+        assert np.allclose(lat.box.matrix, 2.0 * np.eye(3))
         assert len(lat.basis) == 1
         assert lat.basis[0].species == "Cu"
         assert lat.basis[0].fractional == (0.0, 0.0, 0.0)
@@ -124,7 +131,7 @@ class TestLattice:
     def test_bcc(self):
         lat = Lattice.bcc(a=3.0, species="Fe")
 
-        assert np.allclose(lat.cell, 3.0 * np.eye(3))
+        assert np.allclose(lat.box.matrix, 3.0 * np.eye(3))
         assert len(lat.basis) == 2
 
         fracs = [site.fractional for site in lat.basis]
@@ -135,6 +142,7 @@ class TestLattice:
     def test_fcc(self):
         lat = Lattice.fcc(a=3.52, species="Ni")
 
+        assert np.allclose(lat.box.matrix, 3.52 * np.eye(3))
         assert len(lat.basis) == 4
         fracs = [site.fractional for site in lat.basis]
         assert (0.0, 0.0, 0.0) in fracs
@@ -146,6 +154,7 @@ class TestLattice:
     def test_rocksalt(self):
         lat = Lattice.rocksalt(a=5.64, species_a="Na", species_b="Cl")
 
+        assert np.allclose(lat.box.matrix, 5.64 * np.eye(3))
         assert len(lat.basis) == 8
         na_count = sum(1 for s in lat.basis if s.species == "Na")
         cl_count = sum(1 for s in lat.basis if s.species == "Cl")
@@ -159,6 +168,15 @@ class TestLattice:
         cl_fracs = [s.fractional for s in lat.basis if s.species == "Cl"]
         assert (0.5, 0.0, 0.0) in cl_fracs
         assert (0.0, 0.5, 0.0) in cl_fracs
+
+    def test_from_spacegroup_takes_a_box(self):
+        group = SpaceGroup.from_triplets(["x,y,z", "-x,-y,-z"])
+        box = Box(Cell.lengths([4.0] * 3))
+        lat = Lattice.from_spacegroup(box, [Site("C1", "C", (0.1, 0.2, 0.3))], group)
+
+        assert lat.box is box
+        assert [s.label for s in lat.basis] == ["C1_0", "C1_1"]
+        np.testing.assert_allclose(lat.basis[1].fractional, [0.9, 0.8, 0.7])
 
 
 class TestBuildCrystalRepeats:
@@ -195,7 +213,7 @@ class TestBuildCrystalRepeats:
         assert cl == 32
 
     def test_empty_basis(self):
-        lat = Lattice(cell=np.eye(3))
+        lat = Lattice(Box(Cell.lengths([1.0] * 3)))
         structure = lat.build(repeats=(2, 2, 2))
 
         assert isinstance(structure, Atomistic)
@@ -206,16 +224,28 @@ class TestBuildCrystalRepeats:
 
         box = lat.supercell((2, 2, 2))
         assert isinstance(box, Box)
-        assert np.allclose(box.h, 6.0 * np.eye(3))
+        assert np.allclose(box.matrix, 6.0 * np.eye(3))
 
     def test_super_cell_box_holds_lattice_vectors_as_columns(self):
         a1, a2, a3 = [2.0, 0.0, 0.0], [1.0, 3.0, 0.0], [0.0, 0.0, 4.0]
         lat = Lattice.from_vectors(a1, a2, a3)
 
         box = lat.supercell((1, 2, 1))
-        np.testing.assert_allclose(box.h[:, 0], a1)
-        np.testing.assert_allclose(box.h[:, 1], 2.0 * np.asarray(a2))
-        np.testing.assert_allclose(box.h[:, 2], a3)
+        np.testing.assert_allclose(box.matrix[:, 0], a1)
+        np.testing.assert_allclose(box.matrix[:, 1], 2.0 * np.asarray(a2))
+        np.testing.assert_allclose(box.matrix[:, 2], a3)
+
+    def test_super_cell_keeps_origin_and_periodicity(self):
+        box = Box(
+            Cell.matrix(np.diag([1.0, 2.0, 3.0])),
+            origin=np.array([1.0, -1.0, 0.5]),
+            pbc=np.array([True, False, True]),
+        )
+        supercell = Lattice(box).supercell((2, 1, 3))
+
+        np.testing.assert_allclose(supercell.matrix, np.diag([2.0, 2.0, 9.0]))
+        np.testing.assert_allclose(supercell.origin, box.origin)
+        assert supercell.pbc.tolist() == [True, False, True]
 
     def test_the_cell_is_never_written_onto_the_structure(self):
         """A structure is topology and chemistry; the cell lives on ``frame.box``."""
@@ -250,7 +280,7 @@ class TestBuildCrystalRepeats:
 class TestBuildCrystalRegion:
     def test_box_region_infers_repeats(self):
         lat = Lattice.sc(a=2.0, species="Cu")
-        structure = lat.build(Cuboid.cube(3.0))
+        structure = lat.build(Cuboid((0, 0, 0), (3.0, 3.0, 3.0)))
 
         # cells inferred = ceil(3/2)=2 along each axis → 8 atoms generated,
         # all inside the [0,3]³ region (positions ∈ {0, 2}).
@@ -260,7 +290,7 @@ class TestBuildCrystalRegion:
         lat = Lattice.sc(a=2.0, species="Cu")
         # Force a 3-cell tile but clip to a 3 Å box: corner atoms at x=4 etc.
         # are filtered out.
-        structure = lat.build(Cuboid.cube(3.0), repeats=(3, 3, 3))
+        structure = lat.build(Cuboid((0, 0, 0), (3.0, 3.0, 3.0)), repeats=(3, 3, 3))
 
         assert len(list(structure.atoms)) == 8
 
@@ -280,7 +310,7 @@ class TestBuildCrystalRegion:
 
     def test_combined_regions(self):
         lat = Lattice.sc(a=1.0, species="Cu")
-        cube = Cuboid.cube(3.0)
+        cube = Cuboid((0, 0, 0), (3.0, 3.0, 3.0))
         sphere = Sphere([1.5, 1.5, 1.5], 1.5)
         # Intersection: atoms in both.
         structure = lat.build(cube & sphere, repeats=(4, 4, 4))
@@ -291,6 +321,38 @@ class TestBuildCrystalRegion:
         in_box = np.all((positions >= 0) & (positions <= 3.0), axis=1)
         assert np.all(in_sphere & in_box)
 
+    def test_sphere_at_origin_is_fully_covered(self):
+        """Inferred tiling spans negative cells too, not just the +++ octant."""
+        lat = Lattice.sc(a=1.0, species="Cu")
+        structure = lat.build(Sphere([0.0, 0.0, 0.0], 2.5))
+
+        grid = np.stack(
+            np.meshgrid(*[np.arange(-3, 4)] * 3, indexing="ij"), axis=-1
+        ).reshape(-1, 3)
+        expected = grid[np.linalg.norm(grid, axis=1) <= 2.5]
+        positions = structure.atoms["x", "y", "z"]
+        assert len(positions) == len(expected)
+        assert positions[:, 0].min() == pytest.approx(-2.0)
+        assert positions[:, 0].max() == pytest.approx(2.0)
+
+    def test_offset_region_on_a_sheared_cell_is_fully_covered(self):
+        a1, a2, a3 = [2.0, 0.0, 0.0], [1.0, 2.0, 0.0], [0.5, 0.5, 2.0]
+        lat = Lattice.from_vectors(a1, a2, a3, basis=[Site("A", "C", (0.0, 0.0, 0.0))])
+        region = Sphere([-3.0, 4.0, -1.0], 5.0)
+        structure = lat.build(region)
+
+        ijk = np.stack(
+            np.meshgrid(*[np.arange(-10, 11)] * 3, indexing="ij"), axis=-1
+        ).reshape(-1, 3)
+        points = ijk @ np.array([a1, a2, a3])
+        expected = region.contains(points).sum()
+        assert len(list(structure.atoms)) == expected
+
+    def test_unbounded_region_needs_repeats(self):
+        lat = Lattice.sc(a=1.0, species="Cu")
+        with pytest.raises(ValueError, match="unbounded"):
+            lat.build(HalfSpace([0.0, 0.0, 1.0], [0.0, 0.0, 0.0]))
+
     def test_requires_region_or_repeats(self):
         lat = Lattice.sc(a=1.0, species="Cu")
         with pytest.raises(ValueError, match="region.*repeats"):
@@ -298,5 +360,5 @@ class TestBuildCrystalRegion:
 
     def test_rejects_non_positive_repeats(self):
         lat = Lattice.sc(a=1.0, species="Cu")
-        with pytest.raises(ValueError, match="repeats must be positive"):
+        with pytest.raises(ValueError, match="repeats must be three positive integers"):
             lat.build(repeats=(0, 1, 1))

@@ -18,7 +18,7 @@ import pytest
 import molpy as mp
 from molpy.io.lammps import LammpsLogMetricReader
 from molpy.io.mlp_jsonl import MlpJsonlMetricReader
-from molpy.io.mrec import MrecMetricReader
+from molpy.io.mrec import MrecMetricReader, MrecReader, pack_mrec_zip
 
 LAMMPS_LOG = """LAMMPS (2 Aug 2023)
 Per MPI rank memory allocation (min/avg/max) = 3.5 | 3.5 | 3.5 Mbytes
@@ -190,6 +190,19 @@ class TestLammpsLogReader:
         )
         assert all(r["tags"]["source"] == "out/log.lammps" for r in records)
 
+    def test_without_a_step_column_s_is_the_row_ordinal_across_runs(
+        self, tmp_path: Path
+    ):
+        table = (
+            "Per MPI rank memory allocation (min/avg/max) = 3.5 | 3.5 | 3.5 Mbytes\n"
+            "   Temp\n   300.0\n   310.0\n"
+            "Loop time of 1.0 on 1 procs for 100 steps with 10 atoms\n"
+        )
+        path = tmp_path / "log.lammps"
+        path.write_text(f"LAMMPS (2 Aug 2023)\n{table}{table}", encoding="utf-8")
+        records = list(LammpsLogMetricReader().read(path, source="x"))
+        assert [r["s"] for r in records] == [0.0, 1.0, 2.0, 3.0]
+
 
 class TestMlpJsonlReader:
     @pytest.fixture
@@ -225,34 +238,145 @@ class TestMlpJsonlReader:
         assert {r["k"] for r in records} == {"energy", "temp"}
         assert len(records) == 4  # two samples of each of the two series
 
-    def test_a_malformed_line_is_skipped_not_fatal(self, tmp_path: Path):
+    def test_a_torn_last_line_is_skipped(self, tmp_path: Path):
+        """A live writer can be caught mid-line: the unterminated tail is not a
+        record yet, and the next poll reads it whole."""
         path = tmp_path / "metrics.mlp.jsonl"
-        path.write_text('{"t":"scalar","k":"a","v":1}\nnot json\n', encoding="utf-8")
-        assert len(list(MlpJsonlMetricReader().read(path, source="x"))) == 1
+        path.write_text('{"t":"scalar","k":"a","v":1}\n{"t":"sca', encoding="utf-8")
+        records = list(MlpJsonlMetricReader().read(path, source="x"))
+        assert [r["v"] for r in records] == [1]
+
+    def test_a_complete_last_line_without_newline_is_a_record(self, tmp_path: Path):
+        path = tmp_path / "metrics.mlp.jsonl"
+        path.write_text('{"k":"a","v":1}\n{"k":"a","v":2}', encoding="utf-8")
+        assert [r["v"] for r in MlpJsonlMetricReader().read(path, source="x")] == [
+            1,
+            2,
+        ]
+
+    @pytest.mark.parametrize(
+        "bad",
+        ["not json", "[1, 2]", '{"t": "scalar", "v": 1}'],
+        ids=["not-json", "not-an-object", "no-key"],
+    )
+    def test_a_malformed_line_before_the_end_raises(self, tmp_path: Path, bad: str):
+        """Only a torn tail is forgiven: a bad line anywhere else is corruption,
+        and skipping it would shift every later record's resume index."""
+        path = tmp_path / "metrics.mlp.jsonl"
+        path.write_text(
+            f'{{"k":"a","v":1}}\n{bad}\n{{"k":"a","v":2}}\n', encoding="utf-8"
+        )
+        with pytest.raises(ValueError, match=r"metrics\.mlp\.jsonl:2"):
+            list(MlpJsonlMetricReader().read(path, source="x"))
+
+    def test_a_malformed_terminated_last_line_raises(self, tmp_path: Path):
+        """A last line that ends in a newline was finished by its writer."""
+        path = tmp_path / "metrics.mlp.jsonl"
+        path.write_text('{"k":"a","v":1}\nnot json\n', encoding="utf-8")
+        with pytest.raises(ValueError, match=r"metrics\.mlp\.jsonl:2"):
+            list(MlpJsonlMetricReader().read(path, source="x"))
+
+    def test_blank_lines_are_not_records(self, tmp_path: Path):
+        path = tmp_path / "metrics.mlp.jsonl"
+        path.write_text('\n{"k":"a","v":1}\n\n{"k":"a","v":2}\n', encoding="utf-8")
+        records = MlpJsonlMetricReader().read(
+            path, source="x", request=Request(since=1)
+        )
+        assert [r["v"] for r in records] == [2]
+
+    def test_the_source_tag_never_overrides_the_writers(self, tmp_path: Path):
+        path = tmp_path / "metrics.mlp.jsonl"
+        path.write_text(
+            '{"k":"a","v":1,"tags":{"source":"mine","run":3}}\n', encoding="utf-8"
+        )
+        (record,) = MlpJsonlMetricReader().read(path, source="x")
+        assert record["tags"] == {"source": "mine", "run": 3}
+
+
+def write_mrec(path: Path, steps, times=None) -> Path:
+    frame = mp.Frame()
+    frame["atoms"] = {"x": [0.0], "y": [0.0], "z": [0.0]}
+    mp.io.write_mrec(
+        path,
+        trajectory=mp.Trajectory(
+            [frame] * len(steps),
+            step=np.array(steps),
+            time=None if times is None else np.array(times),
+        ),
+    )
+    return path
 
 
 class TestMrecReader:
-    def test_claims_the_mrec_suffix_only(self, tmp_path: Path):
-        record = tmp_path / "growth.mrec"
-        record.mkdir()
-        assert MrecMetricReader().sniff(record)
+    def test_claims_a_record_directory(self, tmp_path: Path):
+        path = write_mrec(tmp_path / "growth.mrec", [0, 10])
+        assert MrecMetricReader().sniff(path)
         assert not MrecMetricReader().sniff(tmp_path / "growth.xyz")
 
+    def test_claims_a_packed_record(self, tmp_path: Path):
+        """molrs packs a closed record into ``*.mrec.zip``; it is the same run."""
+        packed = Path(pack_mrec_zip(str(write_mrec(tmp_path / "run.mrec", [0, 10]))))
+        assert packed.name == "run.mrec.zip"
+        assert "**/*.mrec.zip" in MrecMetricReader.patterns
+        assert MrecMetricReader().sniff(packed)
+        records = list(MrecMetricReader().read(packed, source="run"))
+        assert [r["v"] for r in records if r["k"] == "mrec/step"] == [0.0, 10.0]
+
+    def test_rejects_what_only_looks_like_a_record(self, tmp_path: Path):
+        empty = tmp_path / "empty.mrec"
+        empty.mkdir()
+        junk = tmp_path / "junk.mrec.zip"
+        junk.write_bytes(b"not a zip")
+        plain = tmp_path / "plain.zip"
+        plain.write_bytes(b"PK")
+        assert not MrecMetricReader().sniff(empty)
+        assert not MrecMetricReader().sniff(junk)
+        assert not MrecMetricReader().sniff(plain)
+
+    def test_sniff_and_read_close_the_store(self, tmp_path: Path, monkeypatch):
+        import molpy.io.mrec as module
+
+        opened: list[Tracked] = []
+
+        class Tracked:
+            """Delegates to the native cursor and records that it was closed."""
+
+            def __init__(self, path):
+                self._inner = MrecReader(path)
+                self.closed = False
+                opened.append(self)
+
+            def __enter__(self):
+                self._inner.__enter__()
+                return self
+
+            def __exit__(self, *exc):
+                self.closed = True
+                return self._inner.__exit__(*exc)
+
+            def __getattr__(self, name):
+                return getattr(self._inner, name)
+
+        monkeypatch.setattr(module, "MrecReader", Tracked)
+        path = write_mrec(tmp_path / "run.mrec", [0, 10])
+        assert MrecMetricReader().sniff(path)
+        list(MrecMetricReader().read(path, source="run", request=Request(limit=1)))
+        assert len(opened) == 2
+        assert all(reader.closed for reader in opened)
+
     def test_emits_the_step_and_time_series(self, tmp_path: Path):
-        frame = mp.Frame()
-        frame["atoms"] = {"x": [0.0], "y": [0.0], "z": [0.0]}
-        path = tmp_path / "run.mrec"
-        mp.io.write_mrec_trajectory(
-            path,
-            mp.Trajectory(
-                [frame, frame, frame],
-                step=np.array([0, 10, 20]),
-                time=np.array([0.0, 0.5, 1.0]),
-            ),
-        )
+        path = write_mrec(tmp_path / "run.mrec", [0, 10, 20], [0.0, 0.5, 1.0])
         records = list(MrecMetricReader().read(path, source="run"))
         steps = [r["v"] for r in records if r["k"] == "mrec/step"]
         times = [r["v"] for r in records if r["k"] == "mrec/time"]
         assert steps == [0.0, 10.0, 20.0]
         assert times == [0.0, 0.5, 1.0]
         assert all(r["tags"] == {"source": "run"} for r in records)
+
+    def test_s_is_the_simulation_step_not_the_frame_index(self, tmp_path: Path):
+        path = write_mrec(tmp_path / "run.mrec", [0, 10, 20], [0.0, 0.5, 1.0])
+        records = list(MrecMetricReader().read(path, source="run"))
+        times = [r for r in records if r["k"] == "mrec/time"]
+        assert [r["s"] for r in times] == [0.0, 10.0, 20.0]
+        strided = MrecMetricReader().read(path, source="run", request=Request(stride=2))
+        assert [r["s"] for r in strided if r["k"] == "mrec/time"] == [0.0, 20.0]

@@ -79,7 +79,7 @@ from molpy.compute import RadicalVoronoi
 rng = np.random.default_rng(0)
 n_atoms, box_length = 400, 20.0
 xyz = rng.uniform(0.0, box_length, size=(n_atoms, 3))
-box = mp.Box.cube(box_length)
+box = mp.Box(mp.core.Cell.lengths([box_length] * 3))
 radii = np.zeros(n_atoms)                       # equal radii -> plain Voronoi
 
 cells = RadicalVoronoi().compute(positions=xyz, simbox=box, radii=radii)
@@ -171,7 +171,7 @@ must leave every molecule neutral:
 ```python
 from molpy.compute import RegularGrid, VoronoiIntegration
 
-cell = mp.Box.cube(4.0)
+cell = mp.Box(mp.core.Cell.lengths([4.0] * 3))
 sites = np.array([[x, y, z] for x in (1.1, 3.1) for y in (1.1, 3.1) for z in (1.1, 3.1)])
 molecule = np.array([0, 0, 0, 0, 1, 1, 1, 1], dtype=np.uint32)
 grid = RegularGrid.over_box(cell, [16, 16, 16])

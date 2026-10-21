@@ -2,29 +2,32 @@
 
 from __future__ import annotations
 
+import subprocess
 from pathlib import Path
 from unittest.mock import patch
 
-from molpy.wrapper import AntechamberWrapper
+import pytest
+
+from molpy.wrapper import AntechamberWrapper, ToolError
 
 
 def test_antechamber_wrapper_initialization():
     """Test AntechamberWrapper initialization."""
 
     wrapper = AntechamberWrapper(Path("tmp_ante"))
-    assert wrapper.exe == "antechamber"
+    assert wrapper.executable == "antechamber"
     assert wrapper.workdir == Path("tmp_ante")
 
 
 def test_antechamber_wrapper_default_exe():
-    """Test that exe defaults to 'antechamber'."""
+    """Test that the executable defaults to 'antechamber'."""
 
     wrapper = AntechamberWrapper()
-    assert wrapper.exe == "antechamber"
+    assert wrapper.executable == "antechamber"
 
 
-def test_antechamber_wrapper_run_raw(tmp_path: Path):
-    """Test run_raw() method."""
+def test_antechamber_wrapper_run(tmp_path: Path):
+    """Test run() with raw arguments."""
 
     wrapper = AntechamberWrapper(tmp_path / "work")
 
@@ -34,7 +37,7 @@ def test_antechamber_wrapper_run_raw(tmp_path: Path):
         mock_run.return_value.stderr = ""
 
         args = ["-i", "lig.mol2", "-fi", "mol2", "-o", "out.mol2", "-fo", "mol2"]
-        wrapper.run_raw(args=args)
+        wrapper.run(args)
 
         mock_run.assert_called_once()
         call_args = mock_run.call_args[0][0]
@@ -67,7 +70,7 @@ def test_antechamber_wrapper_atomtype_assign(tmp_path: Path):
             input_format="pdb",
             output_format="mol2",
             charge_method="bcc",
-            atom_type="gaff2",
+            parameter_set="gaff2",
             net_charge=-1,
         )
 
@@ -90,3 +93,29 @@ def test_antechamber_wrapper_atomtype_assign(tmp_path: Path):
             "-nc",
             "-1",
         ]
+
+
+def test_a_failing_atomtype_assign_raises(tmp_path: Path):
+    """check=True is the default: a non-zero exit is a ToolError, not a value."""
+    wrapper = AntechamberWrapper(tmp_path)
+    failed = subprocess.CompletedProcess([], 2, "", "Error: cannot open tfsi.pdb\n")
+    with (
+        patch("subprocess.run", return_value=failed),
+        pytest.raises(ToolError, match="cannot open tfsi.pdb") as raised,
+    ):
+        wrapper.atomtype_assign("tfsi.pdb", "tfsi.mol2", parameter_set="gaff2")
+    assert raised.value.tool == "wrapper.antechamber"
+    assert raised.value.returncode == 2
+    assert raised.value.tail == "Error: cannot open tfsi.pdb"
+
+
+def test_check_false_returns_the_failed_process(tmp_path: Path):
+    wrapper = AntechamberWrapper(tmp_path)
+    failed = subprocess.CompletedProcess([], 2, "", "")
+    with patch("subprocess.run", return_value=failed):
+        assert (
+            wrapper.atomtype_assign(
+                "a.pdb", "a.mol2", parameter_set="gaff2", check=False
+            ).returncode
+            == 2
+        )

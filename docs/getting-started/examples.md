@@ -16,7 +16,7 @@ Parse a SMILES string, add hydrogens and coordinates, and assign OPLS-AA types.
 ```python
 import molpy as mp
 
-mol = mp.io.smiles.SmilesIr("CCO").to_atomistic() # ethanol from SMILES (heavy atoms)
+mol = mp.io.smiles.read_smiles("CCO").to_atomistic() # ethanol from SMILES (heavy atoms)
 mol, _ = mp.conformer.Conformer(add_hydrogens=True, seed=42).generate(
  mol
 ) # add hydrogens + 3D coordinates
@@ -45,11 +45,11 @@ import molpy as mp
 from molpack import GencanPack, Target
 
 water = mp.Atomistic(name="water")
-o = water.def_atom(element="O", x=0.000, y=0.000, z=0.000)
-h1 = water.def_atom(element="H", x=0.957, y=0.000, z=0.000)
-h2 = water.def_atom(element="H", x=-0.239, y=0.927, z=0.000)
-water.def_bond(o, h1)
-water.def_bond(o, h2)
+o = water.add_atom(atomic_number=8, x=0.000, y=0.000, z=0.000)
+h1 = water.add_atom(atomic_number=1, x=0.957, y=0.000, z=0.000)
+h2 = water.add_atom(atomic_number=1, x=-0.239, y=0.927, z=0.000)
+water.add_bond(o, h1)
+water.add_bond(o, h2)
 
 target = (
  Target(water.to_frame(), count=500)
@@ -72,11 +72,11 @@ import molpy as mp
 from molpy.builder import Tip4pBuilder
 
 water = mp.Atomistic(name="water")
-o = water.def_atom(element="O", x=0.000, y=0.000, z=0.000, charge=-0.834)
-h1 = water.def_atom(element="H", x=0.957, y=0.000, z=0.000, charge=0.417)
-h2 = water.def_atom(element="H", x=-0.239, y=0.927, z=0.000, charge=0.417)
-water.def_bond(o, h1)
-water.def_bond(o, h2)
+o = water.add_atom(atomic_number=8, x=0.000, y=0.000, z=0.000, charge=-0.834)
+h1 = water.add_atom(atomic_number=1, x=0.957, y=0.000, z=0.000, charge=0.417)
+h2 = water.add_atom(atomic_number=1, x=-0.239, y=0.927, z=0.000, charge=0.417)
+water.add_bond(o, h1)
+water.add_bond(o, h2)
 
 # The M-site carries the oxygen's charge, so the input must already have one.
 water4p = Tip4pBuilder(d_om=0.1546).apply(
@@ -110,7 +110,7 @@ Minimal linear chain, ten EO units:
 import molpy as mp
 from eo_kit import library
 
-sites = mp.io.cgsmiles.CgSmilesIr("{[#EO]|10}").to_coarsegrain()
+sites = mp.io.cgsmiles.read_cgsmiles("{[#EO]|10}").to_coarsegrain()
 chain = mp.builder.Assembler(library(), mp.builder.GrowthPlacer()).assemble(sites, mp.Atomistic)
 ```
 
@@ -166,7 +166,7 @@ print(f"Planned {len(plan.chains)} chains") # reproducible chain population
 from eo_kit import library  # examples/topology/
 
 first = plan.chains[0]
-sites = mp.io.cgsmiles.CgSmilesIr("{" + "".join(f"[#{m}]" for m in first.monomers) + "}").to_coarsegrain()
+sites = mp.io.cgsmiles.read_cgsmiles("{" + "".join(f"[#{m}]" for m in first.monomers) + "}").to_coarsegrain()
 chain = mp.builder.Assembler(library(), mp.builder.GrowthPlacer()).assemble(sites, mp.Atomistic)
 ```
 
@@ -192,13 +192,17 @@ import molpy as mp
 pieces = mp.builder.AmberPieces(head="COCC", repeat="OCC", tail="OCCOC")
 oligomer, cuts = pieces.oligomer(seed=42)  # CH3O(CH2CH2O)3CH3 and its head/chain/tail cuts
 
-sites = mp.io.cgsmiles.CgSmilesIr("{[#PEO]|10}").to_coarsegrain()  # head, 8 x chain, tail
+sites = mp.io.cgsmiles.read_cgsmiles("{[#PEO]|10}").to_coarsegrain()  # head, 8 x chain, tail
 built = mp.builder.AmberPolymerBuilder(
-    {"PEO": oligomer}, {"PEO": cuts}, force_field="gaff2"
+    {"PEO": oligomer}, {"PEO": cuts}, parameter_set="gaff2"
 ).assemble(sites)
 peo = built.chain  # CH3-(OCH2CH2)10-OCH3: typed graph, 79 atoms
 ff = built.forcefield  # units real, AMBER 1-4 scaling declared
 ```
+
+`ff` merges with the force field of a small molecule typed natively
+(`AtdTypifier`, `Am1BccModel`, `GaffTypifier`), as the AmberTools guide does
+for TFSI.
 
 See also: [AmberTools Integration](../user-guide/13_ambertools_integration.md) ·
 [Assembly](../user-guide/02_assembly.md).

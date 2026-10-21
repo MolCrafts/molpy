@@ -9,21 +9,31 @@ The primitives are deliberately small:
 
 - :func:`parse_triplet` turns a Jones-faithful coordinate triplet
   (``"-y+1/2, x, z+1/4"`` — the form CIFs use in ``_symmetry_equiv_pos_as_xyz``)
-  into an affine operator ``(R, t)`` with integer/half-integer entries kept exact
-  via :class:`fractions.Fraction`.
+  into an affine operator ``(R, t)`` of ``float`` arrays. Each fraction is read
+  exactly (:class:`fractions.Fraction`) and reduced into ``[0, 1)`` before it
+  becomes a float.
 - :class:`SpaceGroup` holds a list of such operators. Build it from an explicit
-  operator list (:meth:`SpaceGroup.from_triplets`, e.g. pasted straight from a
-  CIF) or from a handful of generators closed into the full group
-  (:meth:`SpaceGroup.from_generators`).
+  operator list (:meth:`SpaceGroup.from_triplets`, e.g. the ``symops`` that
+  :func:`molpy.io.read_cif` keeps in ``frame.meta``) or from a handful of
+  generators closed into the full group (:meth:`SpaceGroup.from_generators`).
 - :meth:`SpaceGroup.equivalent_positions` expands one fractional site into all
   symmetry images, de-duplicated under the periodic boundary.
 
-:meth:`molpy.builder.Lattice.from_spacegroup` wires this into the crystal
-builder so a published structure becomes a tiling-ready :class:`~molpy.builder.Lattice`.
+Operators are composed in floating point, so a translation such as
+``1/3 + 2/3`` comes out as ``0.9999999999999999``. Every translation is wrapped
+into ``[0, 1)`` with a tolerance (:data:`_WRAP_TOL`), so it reads as the
+lattice translation ``0``, and operators are compared on keys rounded to
+:data:`_KEY_DECIMALS` places.
+
+:meth:`molpy.builder.Lattice.from_cif` wires this into the crystal builder, so
+a CIF read by :func:`molpy.io.read_cif` becomes a tiling-ready
+:class:`~molpy.builder.Lattice`; :meth:`~molpy.builder.Lattice.from_spacegroup`
+takes the cell, sites and group directly.
 """
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass
 from fractions import Fraction
 
@@ -31,6 +41,11 @@ import numpy as np
 from numpy.typing import ArrayLike
 
 __all__ = ["SpaceGroup", "parse_triplet"]
+
+#: A wrapped coordinate this close below 1 is the lattice translation 0.
+_WRAP_TOL = 1e-9
+#: Decimal places an operator is rounded to when two operators are compared.
+_KEY_DECIMALS = 6
 
 
 def _parse_component(comp: str) -> tuple[list[float], float]:
@@ -98,11 +113,13 @@ class SpaceGroup:
         return len(self.operators)
 
     @classmethod
-    def from_triplets(cls, triplets: list[str]) -> SpaceGroup:
+    def from_triplets(cls, triplets: Iterable[str]) -> SpaceGroup:
         """Build from an explicit, complete operator list.
 
-        Use this with the full ``_symmetry_equiv_pos_as_xyz`` loop copied from a
-        CIF — every operator is taken verbatim, nothing is generated.
+        Use this with a CIF's full operator loop, as :func:`molpy.io.read_cif`
+        keeps it in ``frame.meta["symops"]``. Every operator is taken verbatim;
+        nothing is generated. :meth:`molpy.builder.Lattice.from_cif` does this
+        for a CIF frame.
         """
         return cls(tuple(parse_triplet(t) for t in triplets))
 
@@ -113,8 +130,9 @@ class SpaceGroup:
         """Build by closing a set of generator triplets into the full group.
 
         Repeatedly composes operators until the set is closed under
-        multiplication (translations reduced mod 1). ``max_order`` guards against
-        a non-crystallographic generator set that would never close.
+        multiplication (translations wrapped into ``[0, 1)``). ``max_order``
+        guards against a non-crystallographic generator set that would never
+        close.
         """
         ops = [parse_triplet(t) for t in generators]
         if not any(np.allclose(R, np.eye(3)) and not t.any() for R, t in ops):
@@ -125,7 +143,7 @@ class SpaceGroup:
             Ri, ti = ops[i]
             for Rj, tj in list(ops):
                 R = Rj @ Ri
-                t = (Rj @ ti + tj) % 1.0
+                t = _wrap(Rj @ ti + tj)
                 key = _op_key(R, t)
                 if key not in seen:
                     seen.add(key)
@@ -153,15 +171,26 @@ class SpaceGroup:
         frac = np.asarray(frac, dtype=float)
         out: list[np.ndarray] = []
         for R, t in self.operators:
-            p = (R @ frac + t) % 1.0
+            p = _wrap(R @ frac + t, tol=symprec)
             if not any(_same_site(p, q, symprec) for q in out):
                 out.append(p)
         return np.array(out, dtype=float)
 
 
+def _wrap(x: np.ndarray, tol: float = _WRAP_TOL) -> np.ndarray:
+    """Reduce ``x`` into ``[0, 1)``; a value within ``tol`` below 1 becomes 0."""
+    w = np.mod(x, 1.0)
+    return np.where(w >= 1.0 - tol, 0.0, w)
+
+
 def _op_key(R: np.ndarray, t: np.ndarray) -> tuple:
-    """Hashable key for an operator (translations reduced mod 1, rounded)."""
-    return (tuple(np.round(R, 6).ravel()), tuple(np.round(t % 1.0, 6)))
+    """Hashable key for an operator, equal for operators that differ by rounding.
+
+    The translation is rounded *before* it is reduced mod 1, so
+    ``0.9999999999999999`` and ``0.0`` both key as ``0.0``.
+    """
+    t_key = np.mod(np.round(t, _KEY_DECIMALS), 1.0) + 0.0  # + 0.0 drops -0.0
+    return (tuple(np.round(R, _KEY_DECIMALS).ravel()), tuple(t_key))
 
 
 def _same_site(p: np.ndarray, q: np.ndarray, symprec: float) -> bool:

@@ -24,9 +24,9 @@ from pathlib import Path
 import pytest
 
 import molpy as mp
-from molpy.ff.forcefield import AngleType, BondType, DihedralType
 from molpy.builder import AmberCut, AmberPieces, AmberPolymerBuilder
 from molpy.config import load_config
+from molpy.ff.forcefield import AngleType, BondType, DihedralType
 
 _TOOLS = ("antechamber", "parmchk2", "prepgen", "tleap")
 
@@ -81,7 +81,6 @@ def _seed_monomer(data: Path, work: Path) -> None:
     monomer = work / "monomers" / "PEO"
     monomer.mkdir(parents=True)
     shutil.copy(data / "PEO.ac", monomer / "PEO.ac")
-    shutil.copy(data / "PEO_initial.mol2", monomer / "PEO.mol2")
     shutil.copy(data / "PEO_initial.frcmod", monomer / "PEO.frcmod")
 
 
@@ -89,11 +88,11 @@ def _build(library, cuts, work: Path, sites: str = "{[#PEO]|5}"):
     return AmberPolymerBuilder(
         library,
         cuts,
-        force_field="gaff",
+        parameter_set="gaff",
         charge_method="bcc",
         work_dir=work,
         config=load_config(_ENV),
-    ).assemble(mp.io.cgsmiles.CgSmilesIr(sites).to_coarsegrain())
+    ).assemble(mp.io.cgsmiles.read_cgsmiles(sites).to_coarsegrain())
 
 
 def _type_charges(frame: mp.Frame) -> dict[str, list[float]]:
@@ -118,7 +117,7 @@ def test_prepgen_from_their_ac_matches_the_25mer(gropob, tmp_path):
     _seed_monomer(gropob, tmp_path)
     result = _build({"PEO": _peo_template(gropob)}, _CUTS, tmp_path)
     (script,) = (tmp_path / "chains").glob("*/polymer.in")
-    assert "mol = sequence { HPE PEO PEO PEO TPE }" in script.read_text(
+    assert "MOL = sequence { HPE PEO PEO PEO TPE }" in script.read_text(
         encoding="utf-8"
     )
 

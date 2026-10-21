@@ -50,7 +50,7 @@ def _frame(step: int) -> mp.Frame:
     xyz = rng.uniform(0.0, 20.0, size=(200, 3)) + 0.1 * step
     frame = mp.Frame()
     frame["atoms"] = {"x": xyz[:, 0], "y": xyz[:, 1], "z": xyz[:, 2]}
-    frame.box = mp.Box.cube(20.0)
+    frame.box = mp.Box(mp.core.Cell.lengths([20.0] * 3))
     return frame
 
 
@@ -64,15 +64,16 @@ unchanged, as the same object with the same coordinates:
 import molrs
 import molpy as mp
 
-box = mp.Box.cube(10.0)
+box = mp.Box(mp.core.Cell.lengths([10.0] * 3))
 assert mp.Box is molrs.core.Box  # it *is* the molrs box
 ```
 
 Likewise `frame.box` is accepted directly by Rust-side calls such as
-`mp.core.NeighborList.build`. Everything — the constructor (`Box(h=None,
-origin=None, pbc=None)`: a `(3, 3)` cell, a `(3,)` diagonal, or no cell for a
-free box), the geometry (`wrap`, `unwrap`, `delta`, `distances`, `to_frac`, …)
-and the factories (`Box.cube`, `Box.ortho`, `Box.from_bounds`) — is the
+`mp.core.NeighborList.build`. Everything — the constructor (`Box(cell,
+origin=(0, 0, 0), pbc=(True, True, True))`, the cell a `(3, 3)` matrix or a
+`mp.core.Cell`), the factories (`Box.cube`, `Box.ortho`,
+`Box.from_lengths_tilts`, `Box.from_lengths_angles`, `Box.bounding`) and the
+geometry (`wrap`, `unwrap`, `delta`, `distances`, `to_frac`, …) — is the
 native box's.
 
 ## Neighbor lists come from the linked-cell kernel
@@ -90,7 +91,7 @@ xyz = rng.uniform(0.0, 20.0, size=(500, 3))
 
 frame = mp.Frame()
 frame["atoms"] = {"x": xyz[:, 0], "y": xyz[:, 1], "z": xyz[:, 2]}
-frame.box = mp.Box.cube(20.0)
+frame.box = mp.Box(mp.core.Cell.lengths([20.0] * 3))
 
 nl = mp.core.NeighborList(8.0)
 nl.build(frame.coords, frame.box)
@@ -198,12 +199,12 @@ pipeline (ETKDGv3 → torsion refinement → MMFF94 cleanup):
 
 ```python
 
-mol = mp.io.smiles.SmilesIr("CCO").to_atomistic()  # ethanol, heavy-atom graph
+mol = mp.io.smiles.read_smiles("CCO").to_atomistic()  # ethanol, heavy-atom graph
 mol_3d, report = mp.conformer.Conformer(add_hydrogens=True, seed=42).generate(mol)
 ```
 
 `generate` returns the new structure and a report of what each stage did; the
 input is untouched.
 
-The RDKit adapter (`molpy.adapter.RdkitAdapter`) remains available as an optional
+RDKit's embedder (`molpy.adapter.generate_3d`) remains available as an optional
 external backend, but the molrs pipeline is the default trunk.

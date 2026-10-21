@@ -31,19 +31,31 @@ from __future__ import annotations
 import subprocess
 import tempfile
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
-from molrs.io import read_lammps_data, write_lammps_data, write_lammps_forcefield_str
-
-from ._engine import Engine
-from ._script import Script
+from molpy.engine._engine import Engine
+from molpy.engine._nonbonded import is_periodic, nonbonded_of, refuse_box_free
+from molpy.engine._script import Script
+from molpy.io import read_lammps_data, write_lammps_data
+from molpy.io.lammps import infer_lammps_atom_style
+from molrs.io.lammps import LammpsForcefieldWriter
+from molpy.wrapper import ToolError
+from molpy.wrapper._process import tail_of
 
 if TYPE_CHECKING:
-    from molrs.ff.forcefield import ForceField
     from molrs.core import Frame
+    from molrs.ff.forcefield import ForceField
 
 # Common LAMMPS binary names, tried in order when none is configured.
 _LAMMPS_CANDIDATES = ("lmp", "lmp_serial", "lmp_mpi")
+
+# The LAMMPS `units` styles molrs writes a data file and its coefficients in.
+_LAMMPS_UNITS = ("real", "metal", "lj")
+
+# The long-range solver of a force field whose Coulomb style is long-range
+# (molrs writes its real-space half, `lj/cut/coul/long`): PPPM to a relative
+# force accuracy of 1e-4, LAMMPS's usual choice.
+_KSPACE_STYLE = "pppm 1.0e-4"
 
 
 class LammpsEngine(Engine):
@@ -60,13 +72,9 @@ class LammpsEngine(Engine):
         >>> from molpy.config import load_config
         >>> from molpy.engine import LammpsEngine, Script
         >>>
-        >>> script = Script.from_text(
-        ...     name="input",
-        ...     text="units real\\natom_style full\\nrun 0\\n",
-        ...     language="other",
-        ... )
+        >>> script = Script.from_text("input", "units real\\natom_style full\\nrun 0\\n")
         >>> engine = LammpsEngine(check_executable=False)
-        >>> result = engine.run(script, workdir="./calc", check=False)
+        >>> result = engine.run(script, workdir="./calc")
         >>> print(result.returncode)
         0
 
@@ -86,18 +94,13 @@ class LammpsEngine(Engine):
         ``lmp`` when none is found (``check_executable`` then reports it).
         """
         return next(
-            (c for c in _LAMMPS_CANDIDATES if self.environment.resolve_executable(c)),
+            (
+                c
+                for c in _LAMMPS_CANDIDATES
+                if self.environment.resolve_executable(c, logger=self.logger)
+            ),
             _LAMMPS_CANDIDATES[0],
         )
-
-    @property
-    def name(self) -> str:
-        """Return ``"LAMMPS"``.
-
-        Returns:
-            Engine identifier string.
-        """
-        return "LAMMPS"
 
     def _get_default_extension(self) -> str:
         """Return ``".lmp"`` — the conventional LAMMPS input extension.
@@ -110,11 +113,12 @@ class LammpsEngine(Engine):
     def _execute(
         self,
         run_dir: Path,
-        capture_output: bool = False,
-        check: bool = True,
-        **kwargs: Any,
-    ) -> subprocess.CompletedProcess:
-        """Run LAMMPS in *run_dir*.
+        input_file: Path,
+        *,
+        capture_output: bool,
+        check: bool,
+    ) -> subprocess.CompletedProcess[str]:
+        """Run LAMMPS on *input_file* in *run_dir*.
 
         Builds the command::
 
@@ -122,34 +126,21 @@ class LammpsEngine(Engine):
 
         ``-screen none`` prevents LAMMPS from writing timestep data to stdout
         (it still goes to *log.lammps*), avoiding pipe-buffer deadlocks when
-        the caller captures output.
-
-        Args:
-            run_dir: Directory containing the input files; used as ``cwd``.
-            capture_output: Capture stdout/stderr.
-            check: Raise :exc:`subprocess.CalledProcessError` on failure.
-            **kwargs: Ignored (reserved for future use).
-
-        Returns:
-            :class:`subprocess.CompletedProcess`.
+        the caller captures output; a failure carries the log's tail.
 
         Raises:
-            RuntimeError: If no input script has been registered.
-            subprocess.CalledProcessError: If *check* is ``True`` and LAMMPS
-                exits with a non-zero code.
-            subprocess.TimeoutExpired: If the configured ``timeout`` is
-                exceeded.
+            ToolError: LAMMPS could not start, timed out, or (with *check*)
+                exited non-zero.
         """
-        if self.input_script is None or self.input_script.path is None:
-            raise RuntimeError("No input script found.  Pass a script to run() first.")
-
-        input_file = self.input_script.path.name
-        command = self._build_full_command(
-            ["-in", input_file, "-log", "log.lammps", "-screen", "none"]
+        command = self.command(
+            ["-in", input_file.name, "-log", "log.lammps", "-screen", "none"]
         )
-
-        return self._run_process(
-            command, run_dir, capture_output=capture_output, check=check
+        return self.run_command(
+            command,
+            cwd=run_dir,
+            capture_output=capture_output,
+            check=check,
+            log=run_dir / "log.lammps",
         )
 
     # ------------------------------------------------------------------
@@ -163,7 +154,7 @@ class LammpsEngine(Engine):
         output_dir: str | Path,
         *,
         prefix: str = "system",
-        atom_style: str = "full",
+        atom_style: str | None = None,
         units: str = "real",
         pair_style: str | None = None,
         body: str | None = None,
@@ -172,26 +163,37 @@ class LammpsEngine(Engine):
 
         Files written (given ``prefix="system"``):
 
-        * ``system.data`` — the structure (molrs's LAMMPS data writer).
+        * ``system.data`` — the structure (molrs's LAMMPS data writer), in
+          *atom_style* and *units*.
         * ``system.in.settings`` — molrs's LAMMPS force-field include: the
           ``*_style`` line of every category the frame uses (built-in or a
           registered force-field IR style; ``hybrid`` when a category spans
           several styles), its coefficients, ``special_bonds`` and
           ``pair_modify``. It is included after ``read_data``, where LAMMPS
           rejects ``units``, so ``units`` is the init's.
-        * ``system.in.init`` — ``units``, ``atom_style``, ``boundary``,
+        * ``system.in.init`` — ``units`` and ``atom_style`` (the data
+          file's own), ``boundary``,
           ``neighbor`` and, when *pair_style* is given, that ``pair_style``
           line (the include then leaves its own out).
         * ``system.in`` — the input script: init, ``read_data``, settings,
-          then *body* (a starter minimise + NVT run by default).
+          ``kspace_style pppm 1.0e-4`` when the force field's Coulomb style is
+          long-range (``coul/long/pme``) and its pair style is in force, then
+          *body* (a starter minimise + NVT run by default).
+
+        The nonbonded settings are the force field's own: its pair style,
+        cutoffs and mixing are written as it states them, and only an
+        explicit *pair_style* replaces them.
 
         A frame with a periodic box gets ``boundary p p p`` and binned
         neighbour lists. A frame without one (``Atomistic.to_frame()``
-        carries no box) gets a non-periodic deck: molrs's data writer puts
-        the atoms inside the bounds of their coordinates widened by 1 length
-        unit on every side, ``boundary s s s`` shrink-wraps that box to the
-        atoms, and ``neighbor 2.0 nsq`` searches all pairs, since binning
-        needs a box wider than the pair cutoff.
+        carries no box) is a non-periodic system and gets a non-periodic
+        deck: molrs's data writer puts the atoms inside the bounds of their
+        coordinates widened by 1 length unit on every side, ``boundary s s
+        s`` shrink-wraps that box to the atoms, and ``neighbor 2.0 nsq``
+        searches all pairs, since binning needs a box wider than the pair
+        cutoff. A long-range Coulomb style, whose PPPM solver needs a
+        periodic cell, is refused for it (the policy every engine follows:
+        :mod:`molpy.engine`).
 
         molpy names no style itself: a style molrs can write is emitted and
         one it cannot is refused by molrs, by name, before any file is
@@ -202,17 +204,49 @@ class LammpsEngine(Engine):
             forcefield: The force field the settings are written from.
             output_dir: Directory for the deck (created if absent).
             prefix: Stem of the four file names.
-            atom_style: LAMMPS ``atom_style``.
-            units: LAMMPS ``units`` style; the coefficients are written in it.
+            atom_style: LAMMPS ``atom_style`` of the data file and the init;
+                ``None`` is the style the frame's atom columns hold
+                (:func:`molpy.io.lammps.infer_lammps_atom_style`: ``full``
+                with ``mol_id`` and ``charge``, ``atomic`` with neither, …).
+            units: LAMMPS ``units`` style — ``"real"``, ``"metal"`` or
+                ``"lj"`` — of the init, the data file and the coefficients,
+                each converted to it by molrs.
             pair_style: A ``pair_style`` line (without the command) that
-                replaces the force field's own.
+                replaces the force field's own; ``None`` (the default) keeps
+                the force field's. A replacement needing a long-range solver
+                sets its ``kspace_style`` in *body*.
             body: Commands after the settings include; ``None`` writes the
                 starter minimise + NVT run.
 
         Returns:
             ``{"data", "settings", "init", "input"}`` mapped to the written
             paths.
+
+        Raises:
+            ValueError: If *units* is not one molrs writes, or the frame has
+                no periodic box and the force field's Coulomb style is
+                long-range; before any file is written.
         """
+        if units not in _LAMMPS_UNITS:
+            raise ValueError(
+                f"units must be one of {list(_LAMMPS_UNITS)}, got {units!r}."
+            )
+        periodic = is_periodic(frame)
+        long_range = pair_style is None and nonbonded_of(forcefield).coulomb == "long"
+        if long_range and not periodic:
+            raise refuse_box_free("LAMMPS", "a long-range Coulomb style (PPPM)")
+        if "atoms" in frame and "mass" not in frame["atoms"]:
+            masses = {
+                t.name: t.params["mass"]
+                for style in forcefield.get_styles("atom")
+                for t in style.get_types()
+                if "mass" in t.params
+            }
+            frame = frame.copy()
+            frame["atoms"]["mass"] = [
+                masses[str(name)] for name in frame["atoms"]["type"]
+            ]
+        style = atom_style or infer_lammps_atom_style(frame)
         out = Path(output_dir)
         out.mkdir(parents=True, exist_ok=True)
         paths = {
@@ -225,21 +259,21 @@ class LammpsEngine(Engine):
         # Settings first: a style molrs cannot write fails before any file is
         # written. They carry the coefficients of the labels `frame` uses, the
         # same labels the data file declares.
-        settings = write_lammps_forcefield_str(
-            forcefield,
+        settings_bytes = bytearray()
+        LammpsForcefieldWriter(
             frame,
             skip_pair_style=pair_style is not None,
             skip_units=True,
             units=units,
-        )
-        write_lammps_data(paths["data"], frame)
+        ).write(settings_bytes, forcefield)
+        settings = settings_bytes.decode("utf-8")
+        write_lammps_data(paths["data"], frame, atom_style=style, units=units)
         paths["settings"].write_text(settings, encoding="utf-8")
 
-        periodic = frame.box is not None and not frame.box.is_free
         init = [
             f"# molpy-generated LAMMPS init for {prefix}",
             f"units {units}",
-            f"atom_style {atom_style}",
+            f"atom_style {style}",
             "boundary p p p" if periodic else "boundary s s s",
             "neighbor 2.0 bin" if periodic else "neighbor 2.0 nsq",
         ]
@@ -253,6 +287,7 @@ class LammpsEngine(Engine):
                 init=paths["init"].name,
                 data=paths["data"].name,
                 settings=paths["settings"].name,
+                kspace=f"kspace_style {_KSPACE_STYLE}\n" if long_range else "",
                 body=(_STARTER_BODY if body is None else body).rstrip("\n"),
             ),
             encoding="utf-8",
@@ -263,7 +298,7 @@ class LammpsEngine(Engine):
             files={key: path.name for key, path in paths.items()},
             periodic=periodic,
             units=units,
-            atom_style=atom_style,
+            atom_style=style,
         )
         return paths
 
@@ -280,8 +315,8 @@ class LammpsEngine(Engine):
         ftol: float = 1.0e-6,
         max_iter: int = 1000,
         max_eval: int = 10000,
-        pair_style: str = "lj/cut/coul/cut 10.0",
-        atom_style: str = "full",
+        pair_style: str | None = None,
+        atom_style: str | None = None,
         units: str = "real",
         workdir: str | Path | None = None,
         capture_output: bool = False,
@@ -298,17 +333,20 @@ class LammpsEngine(Engine):
             relaxed = eng.minimize(pack_result.frame, ff)
 
         Args:
-            frame: Input structure; must carry a periodic box (``frame.box``).
+            frame: Input structure: periodic when it carries a periodic box
+                (``frame.box``), else a non-periodic, shrink-wrapped system.
             ff: Typified force field providing pair/bond/angle/... coefficients.
             etol: Energy stopping tolerance (unitless).
             ftol: Force stopping tolerance (force units).
             max_iter: Maximum minimiser iterations.
             max_eval: Maximum force/energy evaluations.
-            pair_style: LAMMPS ``pair_style`` line for minimisation.  The default
-                ``lj/cut/coul/cut`` avoids a long-range solver; switch to
-                ``lj/cut/coul/long`` (with a ``kspace_style``) for production MD.
-            atom_style: LAMMPS ``atom_style`` (``full`` by default).
-            units: LAMMPS ``units`` (``real`` by default).
+            pair_style: A LAMMPS ``pair_style`` line replacing the force
+                field's own; ``None`` (the default) minimises under the force
+                field's pair style, cutoffs and long-range solver (see
+                :meth:`generate_inputs`).
+            atom_style: LAMMPS ``atom_style``; ``None`` is the frame's (see
+                :meth:`generate_inputs`).
+            units: LAMMPS ``units``: ``real`` (default), ``metal`` or ``lj``.
             workdir: Directory for input/output files; a temporary directory is
                 created when ``None``.
             capture_output: Capture LAMMPS stdout/stderr.
@@ -317,9 +355,9 @@ class LammpsEngine(Engine):
             A new :class:`~molpy.Frame` with relaxed coordinates.
 
         Raises:
-            ValueError: If *frame* has no box.
-            subprocess.CalledProcessError: If LAMMPS exits non-zero.
-            RuntimeError: If LAMMPS produces no output structure.
+            ValueError: As :meth:`generate_inputs` does.
+            ToolError: If LAMMPS fails or writes no output structure; the
+                error carries the tail of ``log.lammps``.
         """
         body = f"minimize {etol:g} {ftol:g} {int(max_iter)} {int(max_eval)}"
         return self._relax(
@@ -345,8 +383,8 @@ class LammpsEngine(Engine):
         timestep: float = 1.0,
         seed: int = 12345,
         limit: float = 0.1,
-        pair_style: str = "lj/cut/coul/cut 10.0",
-        atom_style: str = "full",
+        pair_style: str | None = None,
+        atom_style: str | None = None,
         units: str = "real",
         workdir: str | Path | None = None,
         capture_output: bool = False,
@@ -359,7 +397,8 @@ class LammpsEngine(Engine):
         ``nve``.
 
         Args:
-            frame: Input structure; must carry a periodic box (``frame.box``).
+            frame: Input structure: periodic when it carries a periodic box
+                (``frame.box``), else a non-periodic, shrink-wrapped system.
             ff: Typified force field.
             ensemble: One of ``"nve"``, ``"nve/limit"``, ``"nvt"``.
             steps: Number of MD steps.
@@ -367,9 +406,10 @@ class LammpsEngine(Engine):
             timestep: Timestep in *units* time (fs for ``real``).
             seed: RNG seed for the initial velocity distribution.
             limit: Per-step displacement cap (Å) for ``ensemble="nve/limit"``.
-            pair_style: LAMMPS ``pair_style`` line.
-            atom_style: LAMMPS ``atom_style``.
-            units: LAMMPS ``units``.
+            pair_style: A ``pair_style`` line replacing the force field's
+                own; ``None`` keeps the force field's.
+            atom_style: LAMMPS ``atom_style``; ``None`` is the frame's.
+            units: LAMMPS ``units``: ``real``, ``metal`` or ``lj``.
             workdir: Working directory; temporary when ``None``.
             capture_output: Capture LAMMPS stdout/stderr.
 
@@ -377,7 +417,7 @@ class LammpsEngine(Engine):
             A new :class:`~molpy.Frame` with the post-MD coordinates.
 
         Raises:
-            ValueError: If *ensemble* is unknown or *frame* has no box.
+            ValueError: If *ensemble* is unknown, or as :meth:`generate_inputs`.
         """
         fixes = {
             "nve": "fix integ all nve",
@@ -419,30 +459,23 @@ class LammpsEngine(Engine):
         body: str,
         *,
         thermo: int,
-        pair_style: str,
-        atom_style: str,
+        pair_style: str | None,
+        atom_style: str | None,
         units: str,
         workdir: str | Path | None,
         capture_output: bool,
     ) -> Frame:
         """Shared driver behind :meth:`minimize` / :meth:`md`.
 
-        Writes the deck with :meth:`generate_inputs` (the script's
-        *pair_style*, the force field's ``special_bonds`` and ``pair_modify``
-        mix), runs *body* followed by ``write_data``, then reads back and
+        Writes the deck with :meth:`generate_inputs` (the force field's pair
+        style unless *pair_style* replaces it, its ``special_bonds`` and
+        ``pair_modify`` mix), runs *body* followed by ``write_data``, then reads back and
         splices the relaxed coordinates onto a copy of *frame*.
         """
-        if frame.box is None:
-            raise ValueError(
-                "LAMMPS relaxation needs a periodic box on the frame. Set it via "
-                "molpack's `with_periodic_box(...)` or assign `frame.box`. "
-                "Box-free / shrink-wrap relaxation is not supported yet."
-            )
-
         run_dir = (
             Path(workdir)
             if workdir is not None
-            else (self.work_dir or Path(tempfile.mkdtemp()))
+            else (self.workdir or Path(tempfile.mkdtemp()))
         )
         out_name = "relaxed.data"
         paths = self.generate_inputs(
@@ -470,11 +503,16 @@ class LammpsEngine(Engine):
 
         out_path = run_dir / out_name
         if not out_path.exists():
-            raise RuntimeError(
-                f"LAMMPS finished but did not write {out_path}; "
-                f"inspect {run_dir / 'log.lammps'}."
+            log = run_dir / "log.lammps"
+            self.logger.error("relaxation output missing", output=str(out_path))
+            raise ToolError(
+                self.key,
+                f"finished but did not write {out_name} (log: {log})",
+                returncode=0,
+                tail=tail_of(log),
             )
-        relaxed = read_lammps_data(out_path, atom_style=atom_style)
+        # write_data names its style (`Atoms # full`), which the reader reads.
+        relaxed = read_lammps_data(out_path)
         self.logger.info(
             "relaxation finished", run_dir=str(run_dir), output=out_path.name
         )
@@ -489,7 +527,7 @@ _INPUT_TEMPLATE = """\
 include {init}
 read_data {data}
 include {settings}
-neigh_modify every 1 delay 0 check yes
+{kspace}neigh_modify every 1 delay 0 check yes
 
 {body}
 """

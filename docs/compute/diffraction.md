@@ -124,7 +124,7 @@ xyz = np.array(
 )
 frame = mp.Frame()
 frame["atoms"] = {"x": xyz[:, 0], "y": xyz[:, 1], "z": xyz[:, 2]}
-frame.box = mp.Box.cube(4 * a)
+frame.box = mp.Box(mp.core.Cell.lengths([4 * a] * 3))
 ```
 
 Where to evaluate $S(k)$ is configuration, so the $k$ grid goes to the

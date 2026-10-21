@@ -132,7 +132,7 @@ import molpy as mp
 xyz = np.array([[0.0, 0, 0], [2.0, 0, 0], [0, 2.0, 0], [8.0, 8, 8]])
 frame = mp.Frame()
 frame["atoms"] = {"x": xyz[:, 0], "y": xyz[:, 1], "z": xyz[:, 2]}
-frame.box = mp.Box.cube(20.0)
+frame.box = mp.Box(mp.core.Cell.lengths([20.0] * 3))
 
 nl = mp.core.NeighborList(3.0)
 nl.build(frame.coords, frame.box)
@@ -205,7 +205,7 @@ point) rather than half-shell, and the computes read that mode from the table.
 
 **`TypeError: argument 'box': 'None' is not an instance of 'Box'`.**
 The frame has no box. Neighbour search needs to know how space wraps. Set
-`frame.box = mp.Box.cube(L)`.
+`frame.box = mp.Box(mp.core.Cell.lengths([L] * 3))`.
 
 **Histograms are truncated at some radius.**
 The cutoff is smaller than the consumer's `r_max`. `Rdf` and friends can only

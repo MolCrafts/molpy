@@ -10,8 +10,8 @@ It is called once on ``import molpy`` so a stale major/minor pin surfaces
 immediately.
 """
 
-version = "0.18.0"
-release_date = "2026-10-13"
+version = "0.19.0"
+release_date = "2026-10-21"
 
 
 def _minor_tuple(ver: str) -> tuple[int, int]:
@@ -25,6 +25,18 @@ def _minor_tuple(ver: str) -> tuple[int, int]:
         return int(parts[0]), int(parts[1])
     except ValueError as exc:
         raise ValueError(f"non-numeric version {ver!r}") from exc
+
+
+def _molrs_requirement() -> str:
+    """The ``molcrafts-molrs`` range this molpy needs: its own major.minor line.
+
+    ``pyproject.toml`` pins exactly this range (a test holds them together).
+
+    Returns:
+        A PEP 440 specifier such as ``>=0.19.0,<0.20``.
+    """
+    major, minor = _minor_tuple(version)
+    return f">={major}.{minor}.0,<{major}.{minor + 1}"
 
 
 def check_molrs_version() -> str:
@@ -74,7 +86,7 @@ def check_molrs_version() -> str:
         f"but molcrafts-molrs {molrs_version}. "
         f"Patch versions are not part of the check — install any "
         f"molrs {major}.{minor}.* "
-        f"(`pip install 'molcrafts-molrs>={major}.{minor}.0,<{major}.{minor + 1}'`) "
+        f"(`pip install 'molcrafts-molrs{_molrs_requirement()}'`) "
         "or rebuild the editable molrs (`maturin develop` in molrs-python)."
     )
 

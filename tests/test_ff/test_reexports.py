@@ -11,7 +11,6 @@ import pytest
 import molpy as mp
 
 SUBMODULES = (
-    "charge",
     "clpol_scaling",
     "compile",
     "forcefield",
@@ -45,6 +44,13 @@ def test_the_typifier_adds_only_the_ambertools_typifiers() -> None:
     ]
 
 
+def test_the_charge_module_adds_only_the_am1bcc_model() -> None:
+    native = molrs.ff.charge
+    for name in native.__all__:
+        assert getattr(mp.ff.charge, name) is getattr(native, name)
+    assert sorted(set(mp.ff.charge.__all__) - set(native.__all__)) == ["Am1BccModel"]
+
+
 def test_a_kernel_built_by_hand_is_pushed_into_potentials() -> None:
     pos = np.array([0.0, 0.0, 0.0, 1.6, 0.0, 0.0, 1.6, 1.2, 0.0])
     pots = mp.ff.potential.Potentials()
@@ -58,6 +64,6 @@ def test_a_kernel_built_by_hand_is_pushed_into_potentials() -> None:
             "angle", "harmonic", [[0, 1, 2]], k=50.0, theta0=120.0
         ).compile()
     )
-    energy, _ = pots.calc_energy_forces(pos)
+    energy, _ = pots.evaluate(pos)
     want = 300.0 * (0.1**2 + 0.3**2) + 50.0 * (math.pi / 2 - math.radians(120.0)) ** 2
     assert energy == pytest.approx(want, rel=1e-12)

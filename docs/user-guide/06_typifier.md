@@ -25,7 +25,7 @@ import molpy as mp
 from molpy.ff.typifier import OplsAaTypifier
 
 # 1. Build the structure
-mol = mp.io.smiles.SmilesIr("CCO").to_atomistic()
+mol = mp.io.smiles.read_smiles("CCO").to_atomistic()
 mol, _ = mp.conformer.Conformer(add_hydrogens=True, seed=42).generate(mol)
 mol.generate_topology(gen_angle=True, gen_dihedral=True, clear_existing=True)  # in place
 
@@ -134,7 +134,7 @@ A typed structure is ready for simulation export. Convert to a `Frame`, attach a
 from pathlib import Path
 
 frame = typed_mol.to_frame()
-frame.box = mp.Box.cube(30.0)
+frame.box = mp.Box(mp.core.Cell.lengths([30.0] * 3))
 
 # LAMMPS molecular styles need a molecule ID per atom: one per bonded component
 frame["atoms"]["mol_id"] = mp.Topology.from_frame(frame).connected_components() + 1
@@ -169,12 +169,12 @@ units = {"CAPA": "C[>]", "EO": "[<]OCC[>]", "CAPB": "[<]OC"}
 conformer = mp.conformer.Conformer(seed=42)
 library = {
     name: conformer.generate(
-        mp.io.smiles.SmilesIr.from_fragment(body).to_template()
+        mp.io.smiles.read_smiles_fragment(body).to_template()
     )[0]
     for name, body in units.items()
 }
 
-sites = mp.io.cgsmiles.CgSmilesIr("{[#CAPA][#EO]|6[#CAPB]}").to_coarsegrain()
+sites = mp.io.cgsmiles.read_cgsmiles("{[#CAPA][#EO]|6[#CAPB]}").to_coarsegrain()
 chain = mp.builder.Assembler(library, mp.builder.GrowthPlacer()).assemble(sites, mp.Atomistic)
 
 typed_chain = OplsAaTypifier(strict=True).typify(chain)
@@ -188,6 +188,47 @@ atom types: ['opls_180', 'opls_181', 'opls_182', 'opls_185']
 ```
 
 
+## GAFF and GAFF2 are typed natively
+
+GAFF needs no external program either. `AtdTypifier` stamps antechamber's atom types (its `ATOMTYPE_*.DEF` rules), then `GaffTypifier` assigns the bonds, angles, dihedrals and impropers from the gaff / gaff2 tables, estimating a missing term as parmchk2 would. Both take `parameter_set` (`"gaff"` or `"gaff2"`), and it has no default: name the same set for every molecule of one system, since the two generations share type names. GAFF defines no charges, so a charge model sets them between the two steps — Gasteiger here.
+
+
+```python
+from molpy.ff.charge import GasteigerModel
+from molpy.ff.typifier import AtdTypifier, GaffTypifier
+
+labelled = AtdTypifier(parameter_set="gaff2").typify(mol)  # GAFF2 atom types
+charges = GasteigerModel().assign(labelled)
+for atom, charge in zip(labelled.atoms, charges):
+    atom["charge"] = float(charge)
+
+gaff = GaffTypifier(parameter_set="gaff2")
+gaff_mol = gaff.typify(labelled)  # bonded terms from gaff2.dat
+gaff_ff = gaff.forcefield()  # the parameters of the assigned types
+print([atom["type"] for atom in gaff_mol.atoms])
+print(sorted({bond["type"] for bond in gaff_mol.bonds}))
+```
+
+```text
+['c3', 'c3', 'oh', 'hc', 'hc', 'hc', 'h1', 'h1', 'ho']
+['c3-c3', 'c3-h1', 'c3-hc', 'c3-oh', 'ho-oh']
+```
+
+
+AM1-BCC charges need one external program, AmberTools' sqm, for the quantum-chemistry step. `mp.ff.charge.Am1BccModel` runs it (through antechamber `-c mul`, the sqm input antechamber's own `-c bcc` writes) and corrects its AM1 charges with the native `mp.ff.charge.BccModel`, which reproduces antechamber `-c bcc` for the same sqm run. It takes the place of Gasteiger above; types and bonded terms stay native:
+
+```python
+# docs: skip — needs AmberTools (sqm)
+from molpy.ff.charge import Am1BccModel
+
+charges = Am1BccModel(parameter_set="bcc").assign(labelled)  # sqm, then BccModel
+for atom, charge in zip(labelled.atoms, charges):
+    atom["charge"] = float(charge)
+gaff_mol = GaffTypifier(parameter_set="gaff2").typify(labelled)
+```
+
+The native route assigns the types and parameter values tleap does for the same `parameter_set`, and its force field merges with one read from tleap's prmtop, so a small molecule mixed with an `AmberPolymerBuilder` chain is typed this way too — see [AmberTools Integration](13_ambertools_integration.md). The AmberTools typifiers remain for what only that pipeline does: `TleapTypifier` loads parameters of your own on top of the leaprc, and `AntechamberTypifier` runs an antechamber charge method other than AM1-BCC / ABCG2. molrs 0.18.0's LAMMPS and GROMACS writers do not yet write a term `GaffTypifier` estimated (it carries an `estimated` parameter); such a molecule is exported through `AntechamberTypifier`, as that guide shows. Both take the same required `parameter_set`.
+
 ## When standard force fields are not enough
 
 Standard OPLS-AA covers common organic functional groups. Specialized molecules — ionic liquids (TFSI), metal complexes, reactive intermediates — often need custom force field parameters. In those cases:
@@ -195,6 +236,6 @@ Standard OPLS-AA covers common organic functional groups. Specialized molecules 
 1. Use a specialized OPLS-style force field XML that includes the required SMARTS patterns and types (`OplsAaTypifier(source="custom.xml")`)
 2. Or drop to the [Force Field](../tutorials/04_force_field.md) layer and define types manually
 
-The typifier itself is agnostic to the force field content. It only needs SMARTS patterns and type definitions in the XML. If those are present, it will match them. For GAFF / GAFF2 there is the native `mp.ff.typifier.AtdTypifier` (atom types only) and the AmberTools route.
+The typifier itself is agnostic to the force field content. It only needs SMARTS patterns and type definitions in the XML. If those are present, it will match them. GAFF / GAFF2 has its own native typifiers, shown above.
 
 See also: [Force Field](../tutorials/04_force_field.md), [Assembly](02_assembly.md).

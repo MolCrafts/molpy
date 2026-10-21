@@ -5,6 +5,8 @@ The ``*_style`` lines and coefficients are molrs's LAMMPS include, for every
 category the system uses; molpy names no style itself.
 """
 
+from tests.conftest import capture
+
 import os
 import shutil
 import subprocess
@@ -53,9 +55,11 @@ class TestGenerateInputs:
         assert "atom_style full" in init
         assert "_style " not in init.replace("atom_style ", "")
         settings = paths["settings"].read_text(encoding="utf-8")
-        assert settings == mp.io.write_lammps_forcefield_str(
-            water_ff, water.to_frame(), skip_units=True, units="real"
-        )
+        expected = bytearray()
+        mp.io.lammps.LammpsForcefieldWriter(
+            water.to_frame(), skip_units=True, units="real"
+        ).write(expected, water_ff)
+        assert settings == expected.decode("utf-8")
         assert "bond_style harmonic" in settings
         assert "pair_style lj/cut" in settings
         run = paths["input"].read_text(encoding="utf-8")
@@ -89,7 +93,7 @@ class TestGenerateInputs:
         water_ff.def_style("bond", "morse").def_type(
             "OW-HW2", ow, hw, d0=100.0, alpha=2.0, r0=1.0
         )
-        water.links.exact_bucket(mp.Bond)[1]["type"] = "OW-HW2"
+        water.bonds[1]["type"] = "OW-HW2"
         _deck(water, water_ff, tmp_path)
         settings = (tmp_path / "w.in.settings").read_text(encoding="utf-8").splitlines()
         assert "bond_style hybrid harmonic morse" in settings
@@ -129,6 +133,77 @@ class TestGenerateInputs:
         assert not [line for line in settings if line.startswith("units")]
 
 
+class TestAtomStyleAndUnits:
+    """The data file, the init and the coefficients agree on ``atom_style``
+    and ``units``: molrs's data writer is told both."""
+
+    @staticmethod
+    def _lj_fluid() -> tuple[mp.Frame, mp.ff.forcefield.ForceField]:
+        ff = mp.ff.forcefield.ForceField("lj", units="real")
+        ar = ff.def_style("atom", "full").def_type("AR", mass=39.948)
+        ff.def_style("pair", "lj/cut", {"cutoff": 8.5}).def_type(
+            "AR", ar, epsilon=0.238, sigma=3.405
+        )
+        frame = mp.Frame(
+            blocks={
+                "atoms": {
+                    "type": ["AR", "AR"],
+                    "x": [0.0, 4.0],
+                    "y": [0.0, 0.0],
+                    "z": [0.0, 0.0],
+                }
+            }
+        )
+        frame.box = mp.Box(mp.core.Cell.lengths([20.0] * 3))
+        return frame, ff
+
+    @staticmethod
+    def _data_style(path) -> str:
+        (header,) = [
+            line
+            for line in path.read_text(encoding="utf-8").splitlines()
+            if line.startswith("Atoms")
+        ]
+        return header.split("#")[1].strip()
+
+    def test_atom_style_defaults_to_the_one_the_data_file_is_written_in(self, tmp_path):
+        """An LJ fluid (no charge, no mol_id) is ``atomic`` in both files."""
+        frame, ff = self._lj_fluid()
+        paths = LammpsEngine(check_executable=False).generate_inputs(
+            frame, ff, tmp_path
+        )
+        init = paths["init"].read_text(encoding="utf-8").splitlines()
+        assert "atom_style atomic" in init
+        assert self._data_style(paths["data"]) == "atomic"
+
+    def test_a_named_atom_style_is_the_data_files(self, tmp_path, water, water_ff):
+        paths = _deck(water, water_ff, tmp_path, atom_style="full")
+        assert "atom_style full" in paths["init"].read_text(encoding="utf-8")
+        assert self._data_style(paths["data"]) == "full"
+
+    def test_units_reach_the_data_file_and_the_coefficients(
+        self, tmp_path, water, water_ff
+    ):
+        paths = _deck(water, water_ff, tmp_path, units="metal")
+        assert "units metal" in paths["init"].read_text(encoding="utf-8")
+        title = paths["data"].read_text(encoding="utf-8").splitlines()[0]
+        assert title.endswith("units = metal")
+        assert paths["settings"].read_text(encoding="utf-8") == capture(
+            mp.io.lammps.LammpsForcefieldWriter(
+                water.to_frame(), skip_units=True, units="metal"
+            ).write,
+            water_ff,
+        )
+
+    @pytest.mark.parametrize("units", ["si", "nano", "cgs", "electron", "micro"])
+    def test_units_molrs_cannot_write_are_refused_before_any_file(
+        self, tmp_path, water, water_ff, units
+    ):
+        with pytest.raises(ValueError, match="units must be one of"):
+            _deck(water, water_ff, tmp_path / "deck", units=units)
+        assert not (tmp_path / "deck").exists()
+
+
 def _with_urey_bradley(water: mp.Atomistic, ff: mp.ff.forcefield.ForceField) -> None:
     """Give the water its H-O-H angle, typed ``angle charmm`` with a UB term."""
     atoms = ff.get_style("atom", "full")
@@ -137,7 +212,7 @@ def _with_urey_bradley(water: mp.Atomistic, ff: mp.ff.forcefield.ForceField) -> 
         "HW-OW-HW", hw, ow, hw, k=55.0, theta0=104.52, k_ub=20.0, r_ub=1.5139
     )
     o, h1, h2 = list(water.atoms)
-    water.def_angle(h1, o, h2, type="HW-OW-HW")
+    water.add_angle(h1, o, h2, type="HW-OW-HW")
 
 
 @pytest.mark.skipif(shutil.which("lmp") is None, reason="needs the lmp executable")
@@ -177,6 +252,6 @@ def test_lammps_prices_the_emitted_bonded_terms_as_molrs_does(
 
     # No `pairs` block: molrs prices the bonded terms alone.
     frame = water.to_frame()
-    energy = mp.ff.compile.PotentialCompiler(water_ff).compile(frame).calc_energy(frame)
+    energy, _ = mp.ff.compile.PotentialCompiler(water_ff).compile(frame).evaluate(frame)
     assert ebond + eangle == pytest.approx(energy, rel=1e-5)
     assert eangle > 0.0

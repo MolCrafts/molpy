@@ -240,7 +240,7 @@ class TestReadLammpsMolecule:
     def test_nonexistent_file_error(self):
         """Test error handling for nonexistent files."""
         with pytest.raises(OSError):
-            mp.io.read_lammps_molecule("nonexistent_file.mol")
+            mp.io.read_lammps_molecule(Path("nonexistent_file.mol"))
 
     def test_invalid_json_format(self, tmp_path):
         """Test error handling for invalid JSON format."""

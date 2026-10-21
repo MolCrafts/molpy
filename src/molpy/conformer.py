@@ -4,4 +4,6 @@
 """
 
 from molrs.conformer import *  # noqa: F403
-from molrs.conformer import __all__ as __all__
+from molrs.conformer import __all__ as _native
+
+__all__ = [*_native]

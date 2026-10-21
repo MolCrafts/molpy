@@ -12,19 +12,19 @@ def test_parmchk2_wrapper_initialization():
     """Test Parmchk2Wrapper initialization."""
 
     wrapper = Parmchk2Wrapper(Path("tmp_parmchk"))
-    assert wrapper.exe == "parmchk2"
+    assert wrapper.executable == "parmchk2"
     assert wrapper.workdir == Path("tmp_parmchk")
 
 
 def test_parmchk2_wrapper_default_exe():
-    """Test that exe defaults to 'parmchk2'."""
+    """Test that the executable defaults to 'parmchk2'."""
 
     wrapper = Parmchk2Wrapper()
-    assert wrapper.exe == "parmchk2"
+    assert wrapper.executable == "parmchk2"
 
 
-def test_parmchk2_wrapper_run_raw(tmp_path: Path):
-    """Test run_raw() method."""
+def test_parmchk2_wrapper_run(tmp_path: Path):
+    """Test run() with raw arguments."""
 
     wrapper = Parmchk2Wrapper(tmp_path / "work")
 
@@ -34,7 +34,7 @@ def test_parmchk2_wrapper_run_raw(tmp_path: Path):
         mock_run.return_value.stderr = ""
 
         args = ["-i", "lig.mol2", "-f", "mol2", "-o", "lig.frcmod"]
-        wrapper.run_raw(args=args)
+        wrapper.run(args)
 
         mock_run.assert_called_once()
         call_args = mock_run.call_args[0][0]
@@ -63,7 +63,7 @@ def test_parmchk2_wrapper_generate_parameters(tmp_path: Path):
             input_file="tfsi_gaff2.mol2",
             output_file="tfsi.frcmod",
             input_format="mol2",
-            force_field="gaff2",
+            parameter_set="gaff2",
         )
 
         mock_run.assert_called_once()
