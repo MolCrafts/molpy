@@ -183,7 +183,7 @@ When converting from Frame to Entity, each index is resolved back to an Atom obj
 ```python
 # Frame to Entity conversion for bonds
 rebuilt = mp.Atomistic()
-rebuilt_atoms = [rebuilt.add_atom(element=atom["element"]) for atom in atoms]
+rebuilt_atoms = [rebuilt.add_atom(atomic_number=atom["atomic_number"]) for atom in atoms]
 
 for i in range(len(frame["bonds"]["atomi"])):
  atomi = int(frame["bonds"]["atomi"][i])

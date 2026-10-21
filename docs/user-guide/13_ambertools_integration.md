@@ -113,7 +113,7 @@ These were fitted to hydration free energies and are the standard choice for pol
 
 ```python
 li = mp.Atomistic()
-li.add_atom(element="Li", type="Li+", charge=1.0, mass=6.94, x=0.0, y=0.0, z=0.0)
+li.add_atom(atomic_number=3, type="Li+", charge=1.0, mass=6.94, x=0.0, y=0.0, z=0.0)
 
 li_ff = mp.ff.forcefield.ForceField("li", units="real")
 li_type = li_ff.def_style("atom", "full").def_type("Li+", mass=6.94, charge=1.0)
