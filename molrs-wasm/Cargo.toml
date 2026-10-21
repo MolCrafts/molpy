@@ -1,6 +1,6 @@
 [package]
 name = "molrs"
-version = "0.18.0"
+version = "0.19.0"
 edition = "2024"
 authors = ["MolCrafts"]
 description = "WASM bindings for molrs"
@@ -56,8 +56,8 @@ web-sys = { version = "0.3", features = ["console"] }
 # Both `default-features = false` below are deliberate: this crate ships bytes
 # over the wire, so it must not pull `filesystem` (host zlib), `rayon` (no
 # threads here) or any sub-system it does not bind (bundle weight).
-molrs = { path = "../molrs", package = "molcrafts-molrs", version = "0.18.0", default-features = false, features = ["zarr"] }
-molrs-ffi = { path = "../molrs-ffi", package = "molcrafts-molrs-ffi", version = "0.18.0", default-features = false }
+molrs = { path = "../molrs", package = "molcrafts-molrs", version = "0.19.0", default-features = false, features = ["zarr"] }
+molrs-ffi = { path = "../molrs-ffi", package = "molcrafts-molrs-ffi", version = "0.19.0", default-features = false }
 
 ndarray = "0.17"
 # Complex column element type (`Column::get::<Complex<f32|f64>>`).

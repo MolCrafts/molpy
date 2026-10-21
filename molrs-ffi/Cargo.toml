@@ -1,6 +1,6 @@
 [package]
 name = "molcrafts-molrs-ffi"
-version = "0.18.0"
+version = "0.19.0"
 edition = "2024"
 authors = ["MolCrafts"]
 description = "FFI layer for molrs with handle-based abstractions"
@@ -40,7 +40,7 @@ rayon      = ["molrs/rayon"]
 
 [dependencies]
 # Defaults off, then re-enabled through the forwards above — see [features].
-molrs = { path = "../molrs", package = "molcrafts-molrs", version = "0.18.0", default-features = false }
+molrs = { path = "../molrs", package = "molcrafts-molrs", version = "0.19.0", default-features = false }
 slotmap = "1.0"
 
 [dev-dependencies]

@@ -3,7 +3,7 @@ name = "molrs-ext-example"
 publish = false
 # Literal, not `.workspace = true`: a standalone workspace root (see
 # [workspace] below) inherits nothing. Keep in step with ../Cargo.toml.
-version = "0.18.0"
+version = "0.19.0"
 edition = "2024"
 rust-version = "1.91"
 authors = ["MolCrafts"]
@@ -22,7 +22,7 @@ homepage = "https://github.com/MolCrafts/molrs"
 # The feature set of the root workspace's `cargo mrs-*` builds (build 1 in
 # ../.cargo/config.toml, with molrs's default `rayon`): the same molrs
 # library unit, compiled once.
-molrs = { path = "../molrs", package = "molcrafts-molrs", version = "0.18.0", features = ["full", "filesystem", "stream"] }
+molrs = { path = "../molrs", package = "molcrafts-molrs", version = "0.19.0", features = ["full", "filesystem", "stream"] }
 ndarray = "0.17"
 
 # Standalone workspace root: does NOT inherit the repo root's profiles. Keep
