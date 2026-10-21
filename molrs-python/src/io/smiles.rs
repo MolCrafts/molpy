@@ -204,8 +204,9 @@ fn read_smiles_fragment(body: &str) -> PyResult<PyFragmentIr> {
 ///
 /// Examples
 /// --------
-/// >>> molrs.io.smiles.write_smiles(molrs.io.smiles.read_smiles("OCC").to_atomistic())
-/// 'CCO'
+/// >>> mol = molrs.io.smiles.read_smiles("CCO").to_atomistic()
+/// >>> molrs.io.smiles.read_smiles(molrs.io.smiles.write_smiles(mol)).to_atomistic().n_atoms
+/// 3
 #[pyfunction]
 #[pyo3(signature = (
     mol,
