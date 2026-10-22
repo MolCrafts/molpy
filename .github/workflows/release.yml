@@ -43,7 +43,7 @@ jobs:
     permissions:
       contents: read
     name: release
-    uses: MolCrafts/molcrafts-ci/.github/workflows/context.yml@3b8332e6c8f2402618d21126f7fa4d50f4acb6dc
+    uses: MolCrafts/molcrafts-ci/.github/workflows/context.yml@01317cbc43f961ab14c35d51d48c081a1acfe815
 
   guard:
     name: release / guard
@@ -64,15 +64,15 @@ jobs:
           version=$(sed -n 's/^version = "\(.*\)"/\1/p' src/molpy/version.py | head -n1)
           [ "$GITHUB_REF_NAME" = "v$version" ] || { echo "::error::tag $GITHUB_REF_NAME is not v$version"; exit 1; }
       # The commit's test.yml run, instead of running it again. A tag waits
-      # for every job of the full tier to have succeeded on this SHA (pushed
-      # to master first); a dispatch, for whatever `test / *` runs the commit
+      # for `test / result` (every job of the full tier) to have succeeded on
+      # this SHA (pushed to master first); a dispatch, for whatever `test / *` runs the commit
       # has. Any failed run fails the release; a re-run's newer result wins.
       - name: The commit's CI is green
         env:
           GH_TOKEN: ${{ github.token }}
           PUBLISH: ${{ needs.context.outputs.publish }}
           REQUIRED: >-
-            test / context|test / python (ubuntu-latest, 3.12)|test / python (ubuntu-latest, 3.14)|test / python (macos-latest, 3.12)|test / python (windows-latest, 3.12)
+            test / result
         run: |
           python3 - <<'PY'
           import json, os, subprocess, sys, time
@@ -120,7 +120,7 @@ jobs:
       PYTHONWARNDEFAULTENCODING: "1"
     steps:
       - uses: actions/checkout@v7
-      - uses: MolCrafts/molcrafts-ci/actions/setup-python@3b8332e6c8f2402618d21126f7fa4d50f4acb6dc
+      - uses: MolCrafts/molcrafts-ci/actions/setup-python@01317cbc43f961ab14c35d51d48c081a1acfe815
         with:
           python-version: "3.12"
       - run: python scripts/check_partners_on_pypi.py
@@ -137,7 +137,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: MolCrafts/molcrafts-ci/actions/setup-python@3b8332e6c8f2402618d21126f7fa4d50f4acb6dc
+      - uses: MolCrafts/molcrafts-ci/actions/setup-python@01317cbc43f961ab14c35d51d48c081a1acfe815
         with:
           python-version: "3.14"
       - run: python scripts/check.py package
