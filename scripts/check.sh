@@ -10,14 +10,14 @@
 #                                   # + each test gate's numbers, for
 #                                   # MolCrafts/molcrafts-ci/actions/report
 #
-# Gates: fmt ruff partners clippy doc test ffi cxx capi python molpy types
-# wasm mrec docs molpy_docs. Every check runs once, in one place:
+# Gates: fmt ruff partners clippy doc test ffi cxx capi python types wasm
+# mrec docs. Every check runs once, in one place:
 #   - static checks (fmt ruff partners clippy doc, and the hooks' workflows /
 #     os-cfg) run only locally: pre-commit, and `verify` at pre-push. CI does
 #     not repeat them.
 #   - the tests run once locally in `verify` and once per OS in test.yml;
-#     the wheel `python` built and tested is the one `molpy`, `types`, `mrec`,
-#     `docs` and `molpy_docs` use.
+#     the molpy wheel `python` built and tested is the one `types`, `mrec`
+#     and `docs` use.
 #   - every build is the dev profile; release/LTO artifacts are built only by
 #     release.yml, and `cargo publish` there verifies the crate tarball once.
 # Root-workspace cargo calls go through the `cargo mrs-*`
@@ -44,7 +44,7 @@ trap '[ "${#CLEANUP[@]}" -eq 0 ] || rm -rf "${CLEANUP[@]}"' EXIT
 
 # Every standalone workspace root besides the root one: the ABI layer and the
 # language bindings.
-ROOTS=(crates/molrs-ffi molrs-python molwasm molc molcxx)
+ROOTS=(crates/molrs-ffi molpy molwasm molc molcxx)
 # wasm-opt release that release.yml's npm build runs (.github/actions/setup-wasm
 # reads it from here). The wasm gate is `wasm-pack test`, which runs no wasm-opt.
 BINARYEN_VERSION=version_133
@@ -55,17 +55,17 @@ TARGET_DIR=${CARGO_TARGET_DIR:-$PWD/target}
 # lines are the totals), junit.xml and coverage.json (python). Nothing reads
 # them here; CI turns them into the run's summary.
 REPORT=
-# The wheel `types`, `mrec` and `docs` install instead of building their own. `python`
-# sets it to the wheel it just built and tested. CI's test.yml passes it in
-# the environment to the `mrec` and `docs` jobs: the Linux wheel the
-# `test / python (ubuntu-latest)` job of the SAME run built and tested,
-# downloaded as an artifact. It must never name any other wheel (a stale
-# local build, a PyPI download): these gates would then judge a binary no test
-# ran against.
-MOLRS_TESTED_WHEEL=${MOLRS_TESTED_WHEEL:-}
+# The molpy wheel `types`, `mrec` and `docs` install instead of building their
+# own. `python` sets it to the wheel it just built and tested. CI's test.yml
+# passes it in the environment to the `mrec` and `docs` jobs: the Linux wheel
+# the `test / python (ubuntu-latest)` job of the SAME run built and tested,
+# downloaded as an artifact. It must never name any other wheel (a stale local
+# build, a PyPI download): these gates would then judge a binary no test ran
+# against.
+MOLPY_TESTED_WHEEL=${MOLPY_TESTED_WHEEL:-}
 # Set by CI's `test / python (ubuntu-latest)`: `python` writes the wheel it
 # tests here, kept after exit, so the job can upload that same file.
-MOLRS_WHEEL_DIR=${MOLRS_WHEEL_DIR:-}
+MOLPY_WHEEL_DIR=${MOLPY_WHEEL_DIR:-}
 
 # `cargo test` that also appends its output to the report log.
 cargo_test() {
@@ -104,14 +104,14 @@ gate_ruff() {
 # where CI has no checkout, no workflow spells a partner commit of its own.
 gate_partners() {
     python3 scripts/partners.py check
-    uv --directory molrs-python lock --check
+    uv --directory molpy lock --check
 }
 
 # Native clippy of the core and every binder, except molwasm: that one is a
 # wasm32 crate, linted only for wasm32.
 gate_clippy() {
     cargo --locked mrs-clippy -- -D warnings
-    for crate in crates/molrs-ffi molcxx molrs-python molc; do
+    for crate in crates/molrs-ffi molcxx molpy molc; do
         clippy_binder "$crate"
     done
     clippy_binder molwasm --target wasm32-unknown-unknown
@@ -135,72 +135,66 @@ gate_cxx() {
     cargo_test test --locked --manifest-path molcxx/Cargo.toml
 }
 
-# Build one non-editable dev-profile wheel (no --release, no LTO) and test it
-# in the locked uv environment. No second tox/pip resolver or second copy of
-# pytest/numpy/maturin. `mrec` and `docs` reuse this wheel.
-gate_python() {
-    uv --directory molrs-python sync --locked --no-install-project --extra dev
+# molpy's locked environment (molpy/uv.lock) with one molpy wheel installed:
+# the one `python` built and tested (MOLPY_TESTED_WHEEL), or, run on its own,
+# a dev wheel built here. uv never builds molpy through `sync`. Sets
+# MOLPY_PYTHON and MOLPY_TESTED_WHEEL.
+molpy_env() {
+    uv --directory molpy sync --locked --no-install-project --extra dev "$@"
     # Ask the selected environment for its real executable, including .exe.
-    # Validate it before compiling: Bash's implicit .exe matching is not uv's.
-    local interpreter work wheel
-    interpreter=$(uv --directory molrs-python run --no-sync python -c \
+    MOLPY_PYTHON=$(uv --directory molpy run --no-sync python -c \
         'import sys; print(sys.executable, end="")')
-    uv pip check --python "$interpreter"
-    if [ -n "$MOLRS_WHEEL_DIR" ]; then
-        mkdir -p "$MOLRS_WHEEL_DIR"
-        work=$(cd "$MOLRS_WHEEL_DIR" && pwd)
-        if command -v cygpath >/dev/null; then work=$(cygpath -m "$work"); fi
-        rm -f "$work"/molcrafts_molrs-*.whl
-    else
-        work=$(uv --directory molrs-python run --no-sync python -c \
-            'import tempfile; print(tempfile.mkdtemp(prefix="molrs-wheel-"), end="")')
-        CLEANUP+=("$work")
+    uv pip check --python "$MOLPY_PYTHON"
+    if [ -z "$MOLPY_TESTED_WHEEL" ]; then
+        local work
+        if [ -n "$MOLPY_WHEEL_DIR" ]; then
+            mkdir -p "$MOLPY_WHEEL_DIR"
+            work=$(cd "$MOLPY_WHEEL_DIR" && pwd)
+            if command -v cygpath >/dev/null; then work=$(cygpath -m "$work"); fi
+            rm -f "$work"/molcrafts_molpy-*.whl
+        else
+            scratch
+            work=$WORK
+        fi
+        uv --directory molpy run --no-sync maturin build --locked \
+            --interpreter "$MOLPY_PYTHON" --out "$work"
+        MOLPY_TESTED_WHEEL=$(ls "$work"/molcrafts_molpy-*.whl)
     fi
-    uv --directory molrs-python run --no-sync maturin build --locked \
-        --interpreter "$interpreter" --out "$work"
-    wheel=$(ls "$work"/molcrafts_molrs-*.whl)
-    uv pip install -q --python "$interpreter" --no-deps --reinstall "$wheel"
-    uv pip check --python "$interpreter"
-    uv --directory molrs-python run --no-sync python -c \
-        'import molrs, pathlib; p=pathlib.Path(molrs.__file__).resolve(); assert "site-packages" in str(p), p'
-    local report=()
-    [ -z "$REPORT" ] || report=("--junitxml=$REPORT/junit.xml" --cov=molrs --cov-branch
-        "--cov-report=json:$REPORT/coverage.json")
-    uv --directory molrs-python run --no-sync python -X warn_default_encoding -m pytest -q \
-        ${report[@]+"${report[@]}"}
-    MOLRS_TESTED_WHEEL=$wheel
+    uv pip install -q --python "$MOLPY_PYTHON" --no-deps --reinstall "$MOLPY_TESTED_WHEEL"
+    uv pip check --python "$MOLPY_PYTHON"
 }
 
-# The stub is the Python type contract: python/molrs/_native.pyi is held to
-# itself and to the extension it describes, in the locked dev environment,
-# with molrs-python/pyproject.toml's [tool.mypy] (strict, the source-tree
-# stub first on the path). `mypy` type-checks the stub file; `mypy.stubtest`
-# imports molrs._native and checks every name, signature, parameter kind and
-# default the stub declares against the compiled module, and every public
-# runtime name the stub misses. stubtest-allowlist.txt holds the structural
-# exemptions only (stub-only type aliases, submodules spelled as classes);
-# PEP 800 @disjoint_base marking is not asked of the stub. Reuse the tested
-# wheel (pre-push, CI); run on its own, it builds one dev wheel, as `docs`
-# does.
+# Build one non-editable dev-profile molpy wheel (no --release, no LTO), then
+# check molpy's format and types and run the whole Python suite on it.
+# `pytest`, not `python -m pytest`: the latter would put the checkout on
+# sys.path ahead of the installed package. `types`, `mrec` and `docs` reuse
+# this wheel.
+gate_python() {
+    MOLPY_TESTED_WHEEL=
+    molpy_env
+    uv --directory molpy run --no-sync python -I -c \
+        'import molpy, pathlib; p=pathlib.Path(molpy.__file__).resolve(); assert "site-packages" in str(p), p'
+    uv --directory molpy run --no-sync ruff format --check molpy tests
+    uv --directory molpy run --no-sync ty check molpy
+    local report=()
+    [ -z "$REPORT" ] || report=("--junitxml=$REPORT/junit.xml" --cov=molpy --cov-branch
+        "--cov-report=json:$REPORT/coverage.json")
+    PYTHONWARNDEFAULTENCODING=1 uv --directory molpy run --no-sync pytest -q -n auto \
+        ${report[@]+"${report[@]}"}
+}
+
+# The stub is the Python type contract of the native module: molpy/_core.pyi
+# is held to itself and to the extension it describes, with
+# molpy/pyproject.toml's [tool.mypy] (strict, the source-tree stub first on
+# the path). `mypy` type-checks the stub; `mypy.stubtest` imports molpy._core
+# and checks every name, signature, parameter kind and default the stub
+# declares against the compiled module, and every public runtime name the
+# stub misses. stubtest-allowlist.txt holds the structural exemptions only.
 gate_types() {
-    uv --directory molrs-python sync --locked --no-install-project --extra dev
-    local interpreter
-    interpreter=$(uv --directory molrs-python run --no-sync python -c \
-        'import sys; print(sys.executable, end="")')
-    uv pip check --python "$interpreter"
-    local wheel=$MOLRS_TESTED_WHEEL
-    if [ -z "$wheel" ]; then
-        scratch
-        uv --directory molrs-python run --no-sync maturin build --locked \
-            --interpreter "$interpreter" --out "$WORK/wheels"
-        wheel=$(ls "$WORK"/wheels/molcrafts_molrs-*.whl)
-    fi
-    uv pip install -q --python "$interpreter" --no-deps --reinstall "$wheel"
-    uv pip check --python "$interpreter"
-    uv --directory molrs-python run --no-sync python -m mypy \
-        python/molrs/_native.pyi
-    uv --directory molrs-python run --no-sync python -m mypy.stubtest \
-        molrs._native --mypy-config-file pyproject.toml \
+    molpy_env
+    uv --directory molpy run --no-sync python -m mypy molpy/_core.pyi
+    uv --directory molpy run --no-sync python -m mypy.stubtest \
+        molpy._core --mypy-config-file pyproject.toml \
         --allowlist stubtest-allowlist.txt --ignore-disjoint-bases
 }
 
@@ -229,7 +223,7 @@ gate_wasm() {
     (cd molwasm && wasm-pack test --node -- --locked)
 }
 
-# molrec's conformance suite through molrs.io.mrec (test.yml's `test / mrec`;
+# molrec's conformance suite through molpy.io.mrec (test.yml's `test / mrec`;
 # nightly.yml's conformance snapshot runs the same suite): molrec at the
 # commit scripts/partners.py resolves (fetched into
 # a temp dir, never a sibling's working tree), the tested wheel (or, run on
@@ -247,79 +241,27 @@ gate_mrec() {
     source "$bin/activate"
     uv pip install -q "$work/molrec" \
         "molcrafts-ci @ git+https://github.com/MolCrafts/molcrafts-ci@$(sed -n 's/^CI_REF=//p' .github/partners.env)"
-    if [ -n "$MOLRS_TESTED_WHEEL" ]; then
-        uv pip install -q "$MOLRS_TESTED_WHEEL"
+    if [ -n "$MOLPY_TESTED_WHEEL" ]; then
+        uv pip install -q "$MOLPY_TESTED_WHEEL"
     else
         uv pip install -q maturin
-        maturin develop --locked --manifest-path molrs-python/Cargo.toml
+        maturin develop --locked --manifest-path molpy/Cargo.toml
     fi
     python scripts/ci-conformance.py --suite "$work/molrec/tests" --out "$work/conformance.json"
     deactivate
 }
 
-# molpy's locked environment (molpy/), with molrs installed from the tested
-# wheel: built here when no gate before this one built and tested it, as
-# `types` and `docs` do. uv never builds molrs through molpy's path source.
-# Sets MOLPY_PYTHON.
-molpy_env() {
-    uv --directory molpy sync --locked --extra dev "$@" \
-        --no-install-package molcrafts-molrs
-    MOLPY_PYTHON=$(uv --directory molpy run --no-sync python -c \
-        'import sys; print(sys.executable, end="")')
-    local wheel=$MOLRS_TESTED_WHEEL
-    if [ -z "$wheel" ]; then
-        scratch
-        uv --directory molrs-python sync --locked --no-install-project --extra dev
-        uv --directory molrs-python run --no-sync maturin build --locked \
-            --interpreter "$MOLPY_PYTHON" --out "$WORK/wheels"
-        wheel=$(ls "$WORK"/wheels/molcrafts_molrs-*.whl)
-    fi
-    uv pip install -q --python "$MOLPY_PYTHON" --no-deps --reinstall "$wheel"
-    uv pip check --python "$MOLPY_PYTHON"
-}
-
-# molpy (molpy/) on the tested molrs: format, types, then its unit suite.
-gate_molpy() {
-    molpy_env
-    uv --directory molpy run --no-sync ruff format --check src tests
-    uv --directory molpy run --no-sync ty check src/molpy
-    local report=()
-    [ -z "$REPORT" ] || report=("--junitxml=$REPORT/molpy-junit.xml" --cov=molpy
-        --cov-branch "--cov-report=json:$REPORT/molpy-coverage.json")
-    uv --directory molpy run --no-sync python -X warn_default_encoding -m pytest -q \
-        -n auto ${report[@]+"${report[@]}"}
-}
-
-# molpy's site, --strict, its API reference imported from the tested molrs.
-gate_molpy_docs() {
-    molpy_env --extra doc
-    uv --directory molpy run --no-sync zensical build --clean --strict
-}
-
-# Strict docs in the same locked tool environment. Reuse the tested wheel
-# (pre-push, CI); run on its own, it builds one dev wheel for API imports.
+# The manual (zensical.toml, docs/), --strict, its API reference imported from
+# the tested molpy wheel.
 gate_docs() {
-    uv --directory molrs-python sync --locked --no-install-project --extra dev --extra doc
-    local interpreter
-    interpreter=$(uv --directory molrs-python run --no-sync python -c \
-        'import sys; print(sys.executable, end="")')
-    uv pip check --python "$interpreter"
-    local wheel=$MOLRS_TESTED_WHEEL
-    if [ -z "$wheel" ]; then
-        scratch
-        uv --directory molrs-python run --no-sync maturin build --locked \
-            --interpreter "$interpreter" --out "$WORK/wheels"
-        wheel=$(ls "$WORK"/wheels/molcrafts_molrs-*.whl)
-    fi
-    uv pip install -q --python "$interpreter" --no-deps --reinstall "$wheel"
-    uv pip check --python "$interpreter"
-    uv --directory molrs-python run --no-sync zensical build --clean --strict
+    molpy_env --extra doc
+    uv --directory molpy run --no-sync zensical build --clean --strict -f ../zensical.toml
 }
 
 # The pre-push gate. The pre-commit stage (the CI profile's workflows, fmt,
 # ruff, os-cfg, partners) on every file, then every remaining gate once.
 # `partners` is not repeated here: the pre-commit stage ran it.
-VERIFY=(clippy doc test ffi cxx capi python molpy types wasm mrec docs molpy_docs)
+VERIFY=(clippy doc test ffi cxx capi python types wasm mrec docs)
 gate_verify() {
     uvx pre-commit run --all-files --hook-stage pre-commit --show-diff-on-failure
     for gate in "${VERIFY[@]}"; do
@@ -341,8 +283,7 @@ if [ "${1:-}" = --report ]; then
     # Python on Windows reads D:/a/..., not Git Bash's /d/a/...
     if command -v cygpath >/dev/null; then REPORT=$(cygpath -m "$REPORT"); fi
     # A previous run's numbers must not pass as this run's.
-    rm -f "$REPORT/cargo-test.log" "$REPORT/junit.xml" "$REPORT/coverage.json" \
-        "$REPORT/molpy-junit.xml" "$REPORT/molpy-coverage.json"
+    rm -f "$REPORT/cargo-test.log" "$REPORT/junit.xml" "$REPORT/coverage.json"
     shift 2
 fi
 [ "$#" -gt 0 ] || { echo "$usage" >&2; exit 2; }

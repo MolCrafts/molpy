@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """Run molrec's conformance suite against the Rust core and write its snapshot.
 
-The suite enters through the ``*.mrec`` doors at the top of ``molrs.io``
+The suite enters through the ``*.mrec`` doors at the top of ``molpy.io``
 (``read_mrec_frame`` / ``write_mrec_frame``, ``read_mrec_system`` /
 ``write_mrec_system``, ``read_mrec_trajectory``, ``read_mrec_meta``, …) and
 the store classes of
-``molrs.io.mrec`` (``MrecReader``, ``MrecWriter``, ``SequenceSchema``,
+``molpy.io.mrec`` (``MrecReader``, ``MrecWriter``, ``SequenceSchema``,
 ``ForceFieldSection``), all implemented in ``crates/molrs/src/io/mrec``. This does not
-collect ``molrs-python/tests`` or any other binding suite. An adapter author writes two methods; every assertion stays
+collect ``molpy/tests`` or any other binding suite. An adapter author writes two methods; every assertion stays
 in molrec.
 """
 

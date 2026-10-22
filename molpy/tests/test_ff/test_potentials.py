@@ -1,6 +1,6 @@
 """Compiled kernels pushed into ``mp.ff.potential.Potentials`` by hand.
 
-That ``mp.ff`` is ``molrs.ff`` submodule by submodule is ``test_public_paths.py``'s.
+That ``mp.ff`` is ``molpy.ff`` submodule by submodule is ``test_public_paths.py``'s.
 """
 
 from __future__ import annotations

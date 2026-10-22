@@ -456,7 +456,7 @@ fn the_ff_path_resolver_sees_relative_and_grouped_imports() {
 // conversion-factor constant (defined or named) outside the units module, a
 // `UnitFactor` defined anywhere but `core::unit_factors`, and a conversion
 // factor written by hand in non-test code — of molrs and of every binder
-// crate of the repository (molrs-python, molwasm, molc, crates/molrs-ffi,
+// crate of the repository (molpy, molwasm, molc, crates/molrs-ffi,
 // molcxx).
 //
 // Exemptions, each on purpose:
@@ -491,13 +491,7 @@ fn crate_sources() -> Vec<(PathBuf, String)> {
     let mut roots = vec![(manifest.join("src"), String::new())];
     // The repository root is two levels above crates/molrs.
     let repo = manifest.join("..").join("..");
-    for binder in [
-        "molrs-python",
-        "molwasm",
-        "molc",
-        "crates/molrs-ffi",
-        "molcxx",
-    ] {
+    for binder in ["molpy", "molwasm", "molc", "crates/molrs-ffi", "molcxx"] {
         let src = repo.join(binder).join("src");
         if src.is_dir() {
             roots.push((src, format!("{binder}/")));

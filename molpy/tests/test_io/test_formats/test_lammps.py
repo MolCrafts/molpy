@@ -324,7 +324,7 @@ class TestWriteLammpsData:
         """read_lammps_data -> Atomistic.from_frame must keep bonds/angles/dihedrals.
 
         Regression: the reader stored relation endpoints as a signed int, and
-        ``molrs.core.Atomistic.from_frame`` reads endpoints only as ``uint64`` — so it silently
+        ``molpy.core.Atomistic.from_frame`` reads endpoints only as ``uint64`` — so it silently
         dropped every bond on the Frame->Atomistic round-trip.
         """
         data = (

@@ -1774,7 +1774,7 @@ mod tests {
     /// encoder) through the pure-Rust `zstd` plugin.
     const WASM_PRECISION_FIXTURE: &str = concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../molwasm/tests/fixtures/precision.mrec.zip"
+        "/../../molwasm/tests/fixtures/precision.mrec.zip"
     );
 
     /// The values the fixture's `x` columns were presented with; the wasm

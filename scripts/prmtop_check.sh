@@ -31,8 +31,8 @@
 # is linear in it.
 #
 # $PYTHON (default python3) needs molrs installed: it reads LAMMPS's log
-# with molrs.io.read_lammps_log (scripts/engine_check_tables.py) and takes
-# `qqr2e` from molrs.core.constants.COULOMB_REAL.
+# with molpy.io.read_lammps_log (scripts/engine_check_tables.py) and takes
+# `qqr2e` from molpy.core.constants.COULOMB_REAL.
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 source scripts/without_slurm_step.sh

@@ -1,3 +1,7 @@
+[build-system]
+requires = ["maturin>=1.0,<2.0"]
+build-backend = "maturin"
+
 [project]
 name = "molcrafts-molpy"
 dynamic = ["version"]
@@ -24,20 +28,26 @@ classifiers = [
     "Programming Language :: Python :: 3.13",
     "Programming Language :: Python :: 3.14",
     "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Rust",
     "Topic :: Scientific/Engineering :: Chemistry",
     "Typing :: Typed",
 ]
-# Runtime: numpy (scientific baseline) + MolCrafts ecosystem only.
-# No lark / zarr / RDKit / etc. as hard deps — those live in molrs or optional extras.
+# Runtime: numpy (scientific baseline) + MolCrafts ecosystem only; the native
+# core is this wheel's own molpy._core. No lark / zarr / RDKit / etc. as hard deps.
 dependencies = [
     "numpy>=2.0",
-    "molcrafts-molrs>=0.19.0,<0.20",
     "molcrafts-mollog>=1.3.1,<2",
     "molcrafts-molcfg>=1.5.1,<2",
 ]
 
 [project.optional-dependencies]
+# Gate tools. scripts/check.sh python builds one non-editable wheel and installs
+# it into this locked environment; `maturin develop` builds it in place.
 dev = [
+    "maturin>=1.0,<2.0",
+    # The `types` gate: mypy.stubtest holds molpy/_core.pyi to the compiled
+    # extension, and mypy --strict holds the stub to itself.
+    "mypy>=1.13",
     "pytest>=6.0.0",
     "pytest-xdist>=3.0",
     "pytest-cov",
@@ -67,21 +77,25 @@ Documentation = "https://docs.molcrafts.org/molpy/"
 Repository = "https://github.com/MolCrafts/molrs.git"
 Issues = "https://github.com/MolCrafts/molrs/issues"
 
-[build-system]
-requires = ["setuptools>=77"]
-build-backend = "setuptools.build_meta"
+# A mixed Rust/Python project: Cargo.toml + src/ (pyo3) build molpy._core, and
+# the flat molpy/ directory beside them is the Python package. The version is
+# Cargo.toml's.
+[tool.maturin]
+module-name = "molpy._core"
+features = ["pyo3/extension-module"]
+exclude = [
+  "molpy/*.so",
+  "molpy/*.dylib",
+  "molpy/*.dll",
+  "molpy/*.dSYM",
+  "molpy/*.dSYM/**",
+]
 
-[tool.setuptools]
-package-dir = { "" = "src" }
-
-[tool.setuptools.dynamic]
-version = { attr = "molpy.version.version" }
-
-[tool.setuptools.packages.find]
-where = ["src"]
-
-[tool.setuptools.package-data]
-"molpy.resources.forcefield" = ["*.xml"]
+# uv caches a molpy it built from a checkout by these keys; with the commit as
+# a key, a checkout that moves is rebuilt. Uncommitted Rust edits still need
+# `--reinstall-package molcrafts-molpy`.
+[tool.uv]
+cache-keys = [{ file = "pyproject.toml" }, { file = "Cargo.toml" }, { git = { commit = true } }]
 
 [tool.ruff]
 # Matches requires-python: the lint gate must reject syntax the floor
@@ -108,12 +122,14 @@ ignore = ["E402", "E741"]
 ban-relative-imports = "all"
 
 [tool.ruff.lint.per-file-ignores]
+# The native stub mirrors the Rust names (`l`, the angular momentum number).
+"molpy/_core.pyi" = ["E743"]
 # The docs-series generator is a script package run with ``python -m``, not molpy.
 "scripts/**" = ["TID252"]
 
 [tool.ty.environment]
 python-version = "3.14"
-root = ["./src"]
+root = ["."]
 
 [tool.ty.rules]
 all = "warn"
@@ -146,8 +162,13 @@ output-format = "full"
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 # No __init__.py under tests/: same basenames (four test_lammps.py) resolve by path.
+# Tests import the installed molpy (a wheel, or `maturin develop`'s in-place
+# build), never the source tree: run `pytest`, not `python -m pytest`, which
+# would put the checkout on sys.path ahead of it.
 addopts = "--import-mode=importlib"
-pythonpath = ["src"]
+# The binding suite imports its helpers (`capture`, the persistence child
+# process) by module name.
+pythonpath = ["tests/test_bindings"]
 # "error" covers EncodingWarning too: PYTHONWARNDEFAULTENCODING=1 (CI, the
 # hooks and release.yml set it) makes every text-mode open without encoding= warn. Python
 # would decode with the locale, cp1252 on Windows, so such a read passes on
@@ -157,8 +178,18 @@ filterwarnings = [
     "ignore::pytest.PytestUnraisableExceptionWarning",
 ]
 
-# molrs is built from this repository (../molrs-python); scripts/check.sh's
-# `molpy` gate installs the wheel the `python` gate built and tested over it.
-# mollog and molcfg come from PyPI, within the [project] ranges.
-[tool.uv.sources]
-molcrafts-molrs = { path = "../molrs-python" }
+# The `types` gate (scripts/check.sh types): the stub molpy/_core.pyi is the
+# native module's type contract, checked strictly from the source tree
+# (`mypy_path`) against the installed extension (stubtest). molpy's
+# pure-Python modules are followed for their names only.
+[tool.mypy]
+strict = true
+mypy_path = "."
+
+[[tool.mypy.overrides]]
+module = ["molpy", "molpy.*"]
+follow_imports = "silent"
+
+[[tool.mypy.overrides]]
+module = ["molpy._core"]
+follow_imports = "normal"

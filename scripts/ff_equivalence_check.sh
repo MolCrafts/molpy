@@ -17,7 +17,7 @@
 #   PYTHON        python with openmm 8.x, pyedr and molrs (python3), e.g. a
 #                 venv made by `uv venv -p 3.12 omm && uv pip install -p
 #                 omm/bin/python openmm==8.6.1 pyedr numpy` plus molrs
-#                 (`maturin develop` of molrs-python)
+#                 (`maturin develop` of molpy)
 #   AMBER_ENV     a script that puts AmberTools' python (pysander) on PATH, e.g.
 #                 one running `module load buildtool-easybuild/5.2.1-hpca3ef7d197
 #                 GCC/14.3.0 MPICH/4.3.2 AmberTools/26.1`; sander runs in a

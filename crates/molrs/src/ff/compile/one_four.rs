@@ -1,6 +1,6 @@
 //! What a force field's 1-4 pairs are, made explicit on a frame.
 //!
-//! The IR prices a 1-4 pair by one of three mechanisms (molrs-python docs,
+//! The IR prices a 1-4 pair by one of three mechanisms (the manual,
 //! "Force-field IR", 1-4 interactions): `special_bonds` (the pair styles at
 //! their own parameters, times the weight), `dihedral charmm` `w`, and
 //! per-pair override cells on the frame's `pairs` block. LAMMPS's

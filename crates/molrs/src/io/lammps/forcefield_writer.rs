@@ -49,7 +49,7 @@ pub(crate) fn codec_of<'r>(
         Engine::Lammps.refuse(
             category,
             style,
-            "the style is not registered (molrs.ff.style_registry.register_style), so nothing states \
+            "the style is not registered (molpy.ff.style_registry.register_style), so nothing states \
              its parameters' order and dimensions",
         )
     })?;

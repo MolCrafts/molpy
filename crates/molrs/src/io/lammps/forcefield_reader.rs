@@ -78,7 +78,7 @@ impl LammpsTypeLabelMaps {
 ///
 /// # The identity on coefficients
 ///
-/// molrs's convention **is** LAMMPS's (molrs-python docs, "Force-field
+/// molrs's convention **is** LAMMPS's (the manual, "Force-field
 /// conventions"): every style's energy expression, factors and parameter
 /// units are the LAMMPS style's, with angle-valued parameters in degrees. So
 /// this reader converts nothing: each coefficient is stored as written, under
@@ -716,7 +716,7 @@ fn lammps_style<'r>(
     reg.lammps_style(category, name).ok_or_else(|| {
         format!(
             "{}: unsupported {category}_style `{name}`: no registered style has this LAMMPS form \
-             (molrs.ff.style_registry.register_style with a LAMMPS form registers one)",
+             (molpy.ff.style_registry.register_style with a LAMMPS form registers one)",
             where_()
         )
     })

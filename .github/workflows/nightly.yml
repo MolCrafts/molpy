@@ -107,7 +107,7 @@ jobs:
         export GITHUB_SHA
         export GITHUB_REF=refs/heads/dev
         source .ci-out/venv/bin/activate
-        maturin develop --locked --manifest-path molrs-python/Cargo.toml
+        maturin develop --locked --manifest-path molpy/Cargo.toml
         python scripts/ci-conformance.py --suite .ci-out/molrec/tests \
           --out .ci-out/snapshots/conformance.json ${TRACK:+"$TRACK"}
     - if: ${{ !cancelled() }}
@@ -136,7 +136,7 @@ jobs:
       uses: MolCrafts/molcrafts-ci/actions/submit@01317cbc43f961ab14c35d51d48c081a1acfe815
       with:
         snapshot-path: snapshots/*.json
-        project: molrs
+        project: molpy
         ssh-key: ${{ secrets.MOLCRAFTS_CI_SSH_KEY }}
 
   # One version for every runner: per-runner timestamps would not merge.
@@ -153,7 +153,7 @@ jobs:
         ref: ${{ needs.context.outputs.source-ref }}
     - id: v
       run: |
-        BASE=$(sed -n 's/^version = "\(.*\)"/\1/p' molrs-python/pyproject.toml | head -n1)
+        BASE=$(sed -n 's/^version = "\(.*\)"/\1/p' molpy/Cargo.toml | head -n1)
         echo "version=${BASE}.dev$(date -u +%Y%m%d%H%M)" | tee -a "$GITHUB_OUTPUT"
   wheels:
     if: needs.context.outputs.nightly == 'true'
@@ -175,22 +175,24 @@ jobs:
       run: |
         python - "${{ needs.version.outputs.version }}" <<'PY'
         import pathlib, re, sys
-        p = pathlib.Path("molrs-python/pyproject.toml")
+        p = pathlib.Path("molpy/pyproject.toml")
         t = p.read_text(encoding="utf-8")
-        t = re.sub(r'^name\s*=\s*"molcrafts-molrs"', 'name = "molcrafts-molrs-nightly"', t, count=1, flags=re.M)
-        t = re.sub(r'^version\s*=\s*".*?"', f'version = "{sys.argv[1]}"', t, count=1, flags=re.M)
+        t = re.sub(r'^name\s*=\s*"molcrafts-molpy"', 'name = "molcrafts-molpy-nightly"', t, count=1, flags=re.M)
+        # The release version comes from Cargo.toml (dynamic); a nightly states
+        # its PEP 440 dev version here instead.
+        t = re.sub(r'^dynamic\s*=\s*\["version"\]', f'version = "{sys.argv[1]}"', t, count=1, flags=re.M)
         p.write_text(t, encoding="utf-8")
         PY
     - uses: PyO3/maturin-action@v1
       with:
-        working-directory: molrs-python
+        working-directory: molpy
         manylinux: auto
         command: build
         args: --release --out dist ${{ matrix.os == 'macos-latest' && '--target universal2-apple-darwin' || '' }}
     - uses: actions/upload-artifact@v7
       with:
         name: nightly-wheels-${{ matrix.os }}
-        path: molrs-python/dist
+        path: molpy/dist
 
   pypi:
     name: nightly / pypi
@@ -199,7 +201,7 @@ jobs:
     runs-on: ubuntu-latest
     environment:
       name: pypi-nightly
-      url: https://pypi.org/p/molcrafts-molrs-nightly
+      url: https://pypi.org/p/molcrafts-molpy-nightly
     permissions:
       id-token: write
     steps:

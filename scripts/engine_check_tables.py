@@ -6,9 +6,9 @@ force groups of an OpenMM System.
 Shared by scripts/ff_engine_codec_check.py, scripts/ff_equivalence_check.py,
 scripts/openmm_xml_check.py and the LAMMPS / GROMACS steps of
 scripts/*_check.sh (which import it with ``PYTHONPATH=scripts``). LAMMPS's log
-and dump are parsed by molrs's own readers (``molrs.io.read_lammps_log``,
-``molrs.io.read_lammps_dump_trajectory``), engine constants come from
-``molrs.core.constants`` and every unit conversion from molrs's unit registry
+and dump are parsed by molrs's own readers (``molpy.io.read_lammps_log``,
+``molpy.io.read_lammps_dump_trajectory``), engine constants come from
+``molpy.core.constants`` and every unit conversion from molrs's unit registry
 (:func:`unit_factor`). molrs and OpenMM are imported inside the functions
 that need them, so AmberTools' python (no molrs) can still load this module
 for the sander step of ff_equivalence_check.
@@ -43,9 +43,8 @@ def read_energy_tsv(path: Path) -> dict[tuple[str, int, str, str], float]:
 def lammps_thermo(path: Path | str) -> dict[str, float]:
     """The first thermo row of the last run of the LAMMPS log at ``path``
     (a ``run 0`` single point), as ``{column: value}``."""
-    import molrs
-
-    log = molrs.io.read_lammps_log(path)
+    import molpy
+    log = molpy.io.read_lammps_log(path)
     runs = [r.thermo for r in log.runs if r.thermo is not None and r.thermo.n_rows]
     if not runs:
         raise SystemExit(f"{path}: no thermo output")
@@ -55,7 +54,7 @@ def lammps_thermo(path: Path | str) -> dict[str, float]:
 
 @cache
 def _element_masses() -> list[tuple[str, float]]:
-    from molrs.core import Element
+    from molpy.core import Element
 
     out, z = [], 1
     while True:
@@ -78,23 +77,22 @@ def molecule_ids(n: int, bonds) -> list[int]:
     ``bonds`` (molrs's ``Topology``), numbered in order of their first atom."""
     import numpy as np
 
-    import molrs
-
+    import molpy
     pairs = np.asarray(list(bonds), dtype=np.uint32).reshape(-1, 2)
-    frame = molrs.core.Frame(
+    frame = molpy.core.Frame(
         {
             "atoms": {"x": np.zeros(n)},
             "bonds": {"atomi": pairs[:, 0].copy(), "atomj": pairs[:, 1].copy()},
         }
     )
-    return molrs.core.Topology.from_frame(frame).connected_components().tolist()
+    return molpy.core.Topology.from_frame(frame).connected_components().tolist()
 
 
 @cache
 def unit_factor(from_unit: str, to_unit: str) -> float:
     """The factor taking a value in ``from_unit`` to ``to_unit``
     (``value_to = value_from * factor``), from molrs's unit registry."""
-    from molrs.core import UnitRegistry
+    from molpy.core import UnitRegistry
 
     return UnitRegistry().factor(from_unit, to_unit)
 
@@ -102,9 +100,8 @@ def unit_factor(from_unit: str, to_unit: str) -> float:
 def lammps_dump_forces(path: Path | str) -> list[list[float]]:
     """The per-atom forces (``fx fy fz``) of the first frame of the LAMMPS
     dump at ``path``, in atom-id order."""
-    import molrs
-
-    atoms = molrs.io.read_lammps_dump_trajectory(path).read_frame(0)["atoms"]
+    import molpy
+    atoms = molpy.io.read_lammps_dump_trajectory(path).read_frame(0)["atoms"]
     rows = sorted(zip(atoms["id"], atoms["fx"], atoms["fy"], atoms["fz"]))
     return [[float(fx), float(fy), float(fz)] for _, fx, fy, fz in rows]
 

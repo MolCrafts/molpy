@@ -1,4 +1,4 @@
-"""``mp.md`` is ``molrs.md``: the phase driver runs a frame through molpy names.
+"""``mp.md`` is ``molpy.md``: the phase driver runs a frame through molpy names.
 
 The driver's behaviour is molrs's and tested there; this pins one step of the
 seam molpy users call (the mirror's identity is ``test_public_paths.py``'s).

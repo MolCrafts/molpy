@@ -25,7 +25,7 @@
 # Needs a compute node (cargo builds), $GMX (default gmx_d: GROMACS in double
 # precision, e.g. `module load GROMACS/2025.3-gcc-2025b-eb`), $LMP (default lmp,
 # with MOLECULE and EXTRA-MOLECULE) and $PYTHON (default python3) with `pyedr` and molrs (LAMMPS's log is read
-# by molrs.io.read_lammps_log, kJ→kcal is a factor of molrs's unit registry).
+# by molpy.io.read_lammps_log, kJ→kcal is a factor of molrs's unit registry).
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 source scripts/without_slurm_step.sh
@@ -42,13 +42,13 @@ if [[ ${1:-} == --regen ]]; then
 import sys
 from pathlib import Path
 
-import molrs
+import molpy
 
-DEG = molrs.core.UnitRegistry().factor("deg", "rad")
+DEG = molpy.core.UnitRegistry().factor("deg", "rad")
 
 def place(a, b, c, bond, ang, tor):
     """The atom bonded to c at `bond` Å, angle b-c-x `ang`°, dihedral a-b-c-x `tor`° (NeRF)."""
-    return list(molrs.op.place_from_internal_coords(a, b, c, bond, ang * DEG, tor * DEG))
+    return list(molpy.op.place_from_internal_coords(a, b, c, bond, ang * DEG, tor * DEG))
 
 # ACE-ALA-ALA-NME heavy atoms, phi/psi off the CMAP grid.
 X = {}

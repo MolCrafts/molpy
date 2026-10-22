@@ -1,4 +1,4 @@
-"""Regions are molrs's (``mp.core.Cuboid is molrs.core.Cuboid``).
+"""Regions are molrs's (``mp.core.Cuboid is molpy.core.Cuboid``).
 
 molpy keeps no region classes: masking a block, filtering it, composing
 regions with ``&`` / ``|`` / ``~`` and selecting by distance are native. These

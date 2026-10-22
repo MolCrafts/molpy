@@ -49,8 +49,8 @@ AGENTS.md
 
 # Example output files
 *.xyz
-!molrs-python/tests/data/*.xyz
-!molrs-python/tests/data/*.pdb
+!molpy/tests/test_bindings/data/*.xyz
+!molpy/tests/test_bindings/data/*.pdb
 
 # Generated bindings and packaging artifacts
 site/
@@ -59,10 +59,10 @@ molc/include/molc.h
 pkg/
 molwasm/pkg/
 molwasm/dist/
-molrs-python/python/molrs/*.dylib
-molrs-python/python/molrs/*.dll
-molrs-python/python/molrs/*.so
-molrs-python/python/molrs/*.dylib.dSYM/
+molpy/molpy/*.dylib
+molpy/molpy/*.dll
+molpy/molpy/*.so
+molpy/molpy/*.dylib.dSYM/
 
 .claude/worktrees/
 
@@ -70,7 +70,7 @@ molrs-python/python/molrs/*.dylib.dSYM/
 
 # Per-arch / per-consumer cargo target dirs (target-aarch64, target-x86_64-molnex, ...).
 **/target-*/
-molrs-python/python/molrs/_native.abi3.so.*
+molpy/molpy/_core.abi3.so.*
 
 # Per-architecture toolchain and wheel output for the GH200 build job
 .cargo-aarch64/

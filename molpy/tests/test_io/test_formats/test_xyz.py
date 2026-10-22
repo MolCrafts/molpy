@@ -34,7 +34,6 @@ class TestReadXyz:
     def test_element_symbols_are_read(self, xyz_dir):
         atoms = mp.io.read_xyz(xyz_dir / "methane.xyz")["atoms"]
         assert list(atoms["element"]) == ["C", "H", "H", "H", "H"]
-        assert mp.io.read_xyz is __import__("molrs").io.read_xyz
 
     def test_ragged_spacing_and_trailing_blank_lines_are_tolerated(self, xyz_dir):
         # Leading blanks on the count line, uneven columns, empty lines after

@@ -1,6 +1,6 @@
 """Physical sanity of molrs-backed conformer generation.
 
-``molpy.conformer.Conformer`` subclasses :class:`molrs.conformer.Conformer` (distance
+``molpy.conformer.Conformer`` subclasses :class:`molpy.conformer.Conformer` (distance
 geometry + minimization), operating on a :class:`molpy.Atomistic` graph and
 returning a fresh structure. RDKit's embedder (``molpy.adapter.generate_3d``) remains
 available as a separate external backend, but is not the trunk.

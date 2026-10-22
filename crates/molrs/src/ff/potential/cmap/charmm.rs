@@ -226,7 +226,7 @@ fn spline(y: &[F], dx: F) -> Vec<F> {
 /// # The interpolation is LAMMPS's
 ///
 /// This is a port of LAMMPS `src/MOLECULE/fix_cmap.cpp`, step for step, so a
-/// molrs energy is the `fix cmap` energy (molrs-python docs, "Force-field
+/// molrs energy is the `fix cmap` energy (the manual, "Force-field
 /// conventions", CMAP):
 ///
 /// 1. **Node derivatives** (`set_map_derivatives`). The map is extended

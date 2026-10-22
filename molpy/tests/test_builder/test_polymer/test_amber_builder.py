@@ -164,7 +164,7 @@ def tools(TEST_DATA_DIR: Path):
         ),
         patch("molpy.tool.process.subprocess.run", side_effect=fake),
         patch(
-            "molrs.builder.Assembler.assemble", side_effect=AssertionError("no link")
+            "molpy.builder.Assembler.assemble", side_effect=AssertionError("no link")
         ),
     ):
         yield fake

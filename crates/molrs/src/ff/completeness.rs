@@ -3,7 +3,7 @@
 //! and the record (molrec v2), each cell exact — and the tests that hold it —
 //! or refused by name, or not a thing the format has.
 //!
-//! The table in `molrs-python/docs/guides/forcefield-ir.md` ("Completeness")
+//! The table in `docs/developer/forcefield-ir.md` ("Completeness")
 //! is rendered from [`MATRIX`] and checked against it, so it cannot go stale:
 //!
 //! - every kernel [`BuiltinKernels::builtin`] registers has a row, and every
@@ -1487,8 +1487,7 @@ fn every_registered_style_persists_through_a_record() {
 /// `MOLRS_WRITE_COMPLETENESS` set, the guide is rewritten.
 #[test]
 fn the_guide_holds_the_generated_table() {
-    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../molrs-python/docs/guides/forcefield-ir.md");
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/developer/forcefield-ir.md");
     let guide = std::fs::read_to_string(&path).unwrap();
     let start = guide.find(BEGIN).expect("the guide's completeness markers") + BEGIN.len();
     let end = guide[start..].find(END).expect("the end marker") + start;

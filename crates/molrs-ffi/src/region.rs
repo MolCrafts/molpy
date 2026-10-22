@@ -2,7 +2,7 @@
 //! [`crate::FrameRef`].
 //!
 //! A region is geometry that a consumer *evaluates*, not data it reads: the
-//! producing binding (molrs-python) hands out a `PyCapsule` wrapping a clone
+//! producing binding (molpy) hands out a `PyCapsule` wrapping a clone
 //! of this handle, and a consuming Rust binding (e.g. molpack) resolves the
 //! capsule back to a `RegionRef`, takes the shared [`Region`] through
 //! [`RegionRef::region`], and calls its methods. No marshalling, no parallel
@@ -22,7 +22,7 @@
 //! ## Cross-image calls
 //!
 //! This is the first handle whose *code* runs in the producer's image: the
-//! `Region` methods dispatch through a vtable compiled into molrs-python. The
+//! `Region` methods dispatch through a vtable compiled into molpy. The
 //! contract a consumer may rely on is the `[F; 3]` surface —
 //! [`Region::distance`], [`Region::distance_grad`], [`Region::contains_point`]
 //! and [`Region::bounds`] — none of which panics on finite input. The batched

@@ -1,5 +1,5 @@
 # One shared build cache for every workspace root in this repo (root workspace,
-# crates/molrs-ffi, molrs-python, molwasm, molc, molcxx). `build.target-dir` is
+# crates/molrs-ffi, molpy, molwasm, molc, molcxx). `build.target-dir` is
 # resolved relative to this config file, so any cargo invocation with cwd under
 # this repo lands in <repo>/target regardless of which sub-workspace it builds.
 # Fingerprints include (rustc, features, profile), so invocations from

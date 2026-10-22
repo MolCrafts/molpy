@@ -30,7 +30,7 @@ use crate::bridge;
 ///
 /// `#[repr(transparent)]` guarantees this newtype has exactly the layout of
 /// the wrapped `molrs_ffi::FrameRef`, so a `*const molrs_ffi::FrameRef` (e.g.
-/// the pointer carried by molrs-python's `_ffi_frameref_capsule`) and a
+/// the pointer carried by molpy's `_ffi_frameref_capsule`) and a
 /// `*const FrameRef` are layout-compatible. `frame_clone_from_addr` relies on
 /// this only as a defensive guarantee — it still dereferences the pointer as
 /// the *real* `molrs_ffi::FrameRef` type, never as a layout cast.
@@ -47,7 +47,7 @@ pub(crate) fn frame_new() -> Box<FrameRef> {
 /// Clone a `molrs_ffi::FrameRef` reachable through a `molrs.FrameRef`
 /// PyCapsule address into a bridge-side [`FrameRef`] handle.
 ///
-/// This is the cross-extension ingress point. molrs-python's
+/// This is the cross-extension ingress point. molpy's
 /// `Frame._ffi_frameref_capsule()` produces a `PyCapsule` named
 /// `molrs_ffi::abi::frameref_capsule_name()` — `"molrs.FrameRef/<major.minor>"`,
 /// carrying the ABI line. PyO3 heap-boxes the capsule payload, and that payload

@@ -227,9 +227,8 @@ GMX_TERMS = {
 def trr_forces(path: Path):
     """The forces of a GROMACS .trr's first frame, flattened ``fx fy fz`` per
     atom, in kcal/(mol·Å). molrs's TRR reader gives kJ/(mol·Å)."""
-    import molrs
-
-    atoms = molrs.io.read_trr_trajectory(path).read_frame(0)["atoms"]
+    import molpy
+    atoms = molpy.io.read_trr_trajectory(path).read_frame(0)["atoms"]
     kj_per_kcal = unit_factor("kcal", "kJ")
     return [
         float(c) / kj_per_kcal

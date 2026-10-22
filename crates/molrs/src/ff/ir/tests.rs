@@ -1603,7 +1603,7 @@ fn fresh_process_reads_custom_styles() {
         .compile(&two_terms("urey_bradley"))
         .unwrap_err();
     assert!(
-        err.to_string().contains("no kernel for urey_bradley `harmonic`: register it (molrs.ff.style_registry.register_style) or give it an expression"),
+        err.to_string().contains("no kernel for urey_bradley `harmonic`: register it (molpy.ff.style_registry.register_style) or give it an expression"),
         "{err}"
     );
     let table = read("table");

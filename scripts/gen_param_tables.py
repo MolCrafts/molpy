@@ -96,14 +96,14 @@ PARM_DIR = "dat/leap/parm"
 RUSTFMT_SKIP = "#[rustfmt::skip]"
 
 # --- Element symbol <-> atomic number --------------------------------------
-# molrs's periodic table (molrs.core.Element). A name is an element only when
+# molrs's periodic table (molpy.core.Element). A name is an element only when
 # it is the element's exact symbol (`Cl`, never `CL` or `chlorine`).
 
 
 @cache
 def atomic_number(symbol: str) -> int | None:
     """The atomic number of the element whose symbol is exactly ``symbol``."""
-    from molrs.core import Element
+    from molpy.core import Element
 
     try:
         element = Element(symbol)
@@ -113,7 +113,7 @@ def atomic_number(symbol: str) -> int | None:
 
 
 def element_symbol(z: int) -> str:
-    from molrs.core import Element
+    from molpy.core import Element
 
     return Element(z).symbol
 

@@ -2,7 +2,7 @@
 //! parameters *are*, stated as data.
 //!
 //! The IR adopts the LAMMPS standard for every style LAMMPS has
-//! (`molrs-python/docs/guides/forcefield-ir.md`); this module states that
+//! (`docs/developer/forcefield-ir.md`); this module states that
 //! standard as data, so a new style or a new category is a registration
 //! ([`crate::ff::style_registry`]), not an edit:
 //!

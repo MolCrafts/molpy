@@ -597,7 +597,7 @@ fn charmm_switch() -> String {
 /// styles of the categories that price no energy.
 ///
 /// Names, order and dimensions are the force-field IR's
-/// (`molrs-python/docs/guides/forcefield-ir.md`, Style reference; molrec
+/// (`docs/developer/forcefield-ir.md`, Style reference; molrec
 /// `docs/spec/forcefield.md`, Style registry); the expressions are
 /// Appendix A of `ff-ir-02-protocol`, byte for byte (the generated ones,
 /// `dihedral periodic` and `nharmonic`, are left to the expression engine).

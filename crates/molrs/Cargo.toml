@@ -8,7 +8,7 @@ license.workspace = true
 description = "Molecular simulation toolkit: core data structures, IO, trajectory analysis, force fields, SMILES, and 3D conformer generation (feature-gated modules)"
 repository.workspace = true
 homepage.workspace = true
-readme = "../README.md"
+readme = "../../README.md"
 keywords = ["molecular-modeling", "chemistry", "simulation", "molecular-dynamics"]
 categories = ["science"]
 # The generator example is a repository tool, not part of the published crate.
@@ -74,7 +74,7 @@ ff        = ["io", "smiles", "dep:rustfft", "dep:roxmltree"]
 # `conformer` depends on the `ff` module.
 conformer = ["ff"]
 # In-process MD: integrators and force providers (the kernels are
-# `ff::potential`). Pair search is core NeighborList. Python composer / hooks live in molrs-python. Consumes
+# `ff::potential`). Pair search is core NeighborList. Python composer / hooks live in molpy. Consumes
 # the one `ff::potential::Potential`/`Potentials` seam, so it enables `ff`; its
 # kinetic observables (kinetic energy, centre-of-mass velocity) are `compute`'s.
 md        = ["ff", "compute"]

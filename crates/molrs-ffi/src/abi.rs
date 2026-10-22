@@ -1,6 +1,6 @@
 //! The ABI contract of the molrs FFI layer.
 //!
-//! All cross-extension interop (molrs-python ↔ molpack, cxxapi consumers)
+//! All cross-extension interop (molpy ↔ molpack, cxxapi consumers)
 //! exchanges raw `molrs_ffi` handles, so both sides must embed a
 //! layout-identical molrs core. The project rule is **minor-line = ABI
 //! version**: every downstream shares one molrs minor line, and the layout of

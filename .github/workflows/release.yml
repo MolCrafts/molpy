@@ -1,7 +1,7 @@
 name: release
 
 # A `v*` tag on MolCrafts/molrs: guard -> build -> every channel. crates.io
-# (molcrafts-molrs), npm (@molcrafts/molwasm), PyPI (desktop abi3 wheels + the
+# (molcrafts-molrs), npm (@molcrafts/molwasm), PyPI (molcrafts-molpy: desktop abi3 wheels + the
 # Pyodide wheel), and the GitHub Release with the C API archives (lib +
 # header + LICENSE + sha256).
 #
@@ -246,7 +246,7 @@ jobs:
           cache: release-py-${{ matrix.artifact }}
       - uses: PyO3/maturin-action@v1
         with:
-          working-directory: molrs-python
+          working-directory: molpy
           target: ${{ matrix.target }}
           manylinux: ${{ matrix.manylinux }}
           command: build
@@ -255,7 +255,7 @@ jobs:
       - uses: actions/upload-artifact@v7
         with:
           name: wheels-${{ matrix.artifact }}
-          path: molrs-python/dist
+          path: molpy/dist
 
   # The Pyodide / Emscripten wheel for micropip: no host filesystem, no zarr.
   pyodide:
@@ -284,12 +284,12 @@ jobs:
           CIBW_XBUILD_TOOLS: rustc cargo rustup
           CIBW_BEFORE_BUILD_PYODIDE: rustup target add wasm32-unknown-emscripten
         with:
-          package-dir: molrs-python
-          output-dir: molrs-python/dist-pyodide
+          package-dir: molpy
+          output-dir: molpy/dist-pyodide
       - uses: actions/upload-artifact@v7
         with:
           name: wheels-pyodide
-          path: molrs-python/dist-pyodide
+          path: molpy/dist-pyodide
 
   pypi:
     name: release / pypi
@@ -311,7 +311,7 @@ jobs:
           skip-existing: true
 
   # The C ABI deliverable for external C / C++ / HPC consumers: libmolc
-  # (cdylib + staticlib) and the cbindgen header (docs/interop.md, "Path C").
+  # (cdylib + staticlib) and the cbindgen header (docs/bindings/interop.md, "Path C").
   capi:
     if: needs.context.outputs.skip-pr != 'true'
     name: release / capi (${{ matrix.artifact }})

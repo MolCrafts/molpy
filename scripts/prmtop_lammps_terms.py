@@ -9,7 +9,7 @@ LAMMPS run; see that script for what each run changes) and prints
 import sys
 from pathlib import Path
 
-from molrs.core.constants import COULOMB_REAL  # LAMMPS's qqr2e, units real
+from molpy.core.constants import COULOMB_REAL  # LAMMPS's qqr2e, units real
 
 
 def main():

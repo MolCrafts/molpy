@@ -234,7 +234,7 @@ pub mod ffi {
         fn frame_new() -> Box<FrameRef>;
 
         // Cross-extension ingress: rebuild a bridge handle from the raw
-        // address of a molrs-python `*mut molrs_ffi::FrameRef` (carried by
+        // address of a molpy `*mut molrs_ffi::FrameRef` (carried by
         // `Frame._ffi_frameref_capsule()`). `unsafe` — caller must pass a
         // live pointer; see the `# Safety` note on the Rust impl.
         unsafe fn frame_clone_from_addr(addr: usize) -> Box<FrameRef>;

@@ -7,7 +7,7 @@ updates:
     directories:
       - "/"
       - "/crates/molrs-ffi"
-      - "/molrs-python"
+      - "/molpy"
       - "/molwasm"
       - "/molc"
       - "/molcxx"
@@ -19,7 +19,7 @@ updates:
         patterns: ["*"]
 
   - package-ecosystem: uv
-    directory: "/molrs-python"
+    directory: "/molpy"
     schedule:
       interval: weekly
     target-branch: dev
