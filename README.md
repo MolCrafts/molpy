@@ -166,7 +166,7 @@ Python and JavaScript/TypeScript quickstarts live in the documentation.
 
 | Project | Role |
 |---------|------|
-| [molpy](https://github.com/MolCrafts/molpy)     | Python toolkit — the shared molecular data model & workflow layer |
+| [molpy](molpy/)     | Python toolkit — the shared molecular data model & workflow layer; lives in this repo at `molpy/` (molpy-unification) |
 | **molrs** | Rust core — molecular data structures & compute kernels (native + WASM) — this repo |
 | [molpack](https://github.com/MolCrafts/molpack) | Packmol-grade molecular packing (Rust + Python) |
 | [molvis](https://github.com/MolCrafts/molvis)   | WebGL molecular visualization & editing |

@@ -10,14 +10,14 @@
 #                                   # + each test gate's numbers, for
 #                                   # MolCrafts/molcrafts-ci/actions/report
 #
-# Gates: fmt ruff partners clippy doc test ffi cxx ext capi python types wasm
-# mrec docs. Every check runs once, in one place:
+# Gates: fmt ruff partners clippy doc test ffi cxx ext capi python molpy types
+# wasm mrec docs molpy_docs. Every check runs once, in one place:
 #   - static checks (fmt ruff partners clippy doc, and the hooks' workflows /
 #     os-cfg) run only locally: pre-commit, and `verify` at pre-push. CI does
 #     not repeat them.
 #   - the tests run once locally in `verify` and once per OS in test.yml;
-#     the wheel `python` built and tested is the one `types`, `mrec` and
-#     `docs` use.
+#     the wheel `python` built and tested is the one `molpy`, `types`, `mrec`,
+#     `docs` and `molpy_docs` use.
 #   - every build is the dev profile; release/LTO artifacts are built only by
 #     release.yml, and `cargo publish` there verifies the crate tarball once.
 # Root-workspace cargo calls go through the `cargo mrs-*`
@@ -266,6 +266,45 @@ gate_mrec() {
     deactivate
 }
 
+# molpy's locked environment (molpy/), with molrs installed from the tested
+# wheel: built here when no gate before this one built and tested it, as
+# `types` and `docs` do. uv never builds molrs through molpy's path source.
+# Sets MOLPY_PYTHON.
+molpy_env() {
+    uv --directory molpy sync --locked --extra dev "$@" \
+        --no-install-package molcrafts-molrs
+    MOLPY_PYTHON=$(uv --directory molpy run --no-sync python -c \
+        'import sys; print(sys.executable, end="")')
+    local wheel=$MOLRS_TESTED_WHEEL
+    if [ -z "$wheel" ]; then
+        scratch
+        uv --directory molrs-python sync --locked --no-install-project --extra dev
+        uv --directory molrs-python run --no-sync maturin build --locked \
+            --interpreter "$MOLPY_PYTHON" --out "$WORK/wheels"
+        wheel=$(ls "$WORK"/wheels/molcrafts_molrs-*.whl)
+    fi
+    uv pip install -q --python "$MOLPY_PYTHON" --no-deps --reinstall "$wheel"
+    uv pip check --python "$MOLPY_PYTHON"
+}
+
+# molpy (molpy/) on the tested molrs: format, types, then its unit suite.
+gate_molpy() {
+    molpy_env
+    uv --directory molpy run --no-sync ruff format --check src tests
+    uv --directory molpy run --no-sync ty check src/molpy
+    local report=()
+    [ -z "$REPORT" ] || report=("--junitxml=$REPORT/molpy-junit.xml" --cov=molpy
+        --cov-branch "--cov-report=json:$REPORT/molpy-coverage.json")
+    uv --directory molpy run --no-sync python -X warn_default_encoding -m pytest -q \
+        -n auto ${report[@]+"${report[@]}"}
+}
+
+# molpy's site, --strict, its API reference imported from the tested molrs.
+gate_molpy_docs() {
+    molpy_env --extra doc
+    uv --directory molpy run --no-sync zensical build --clean --strict
+}
+
 # Strict docs in the same locked tool environment. Reuse the tested wheel
 # (pre-push, CI); run on its own, it builds one dev wheel for API imports.
 gate_docs() {
@@ -289,7 +328,7 @@ gate_docs() {
 # The pre-push gate. The pre-commit stage (the CI profile's workflows, fmt,
 # ruff, os-cfg, partners) on every file, then every remaining gate once.
 # `partners` is not repeated here: the pre-commit stage ran it.
-VERIFY=(clippy doc test ffi cxx ext capi python types wasm mrec docs)
+VERIFY=(clippy doc test ffi cxx ext capi python molpy types wasm mrec docs molpy_docs)
 gate_verify() {
     uvx pre-commit run --all-files --hook-stage pre-commit --show-diff-on-failure
     for gate in "${VERIFY[@]}"; do
@@ -311,7 +350,8 @@ if [ "${1:-}" = --report ]; then
     # Python on Windows reads D:/a/..., not Git Bash's /d/a/...
     if command -v cygpath >/dev/null; then REPORT=$(cygpath -m "$REPORT"); fi
     # A previous run's numbers must not pass as this run's.
-    rm -f "$REPORT/cargo-test.log" "$REPORT/junit.xml" "$REPORT/coverage.json"
+    rm -f "$REPORT/cargo-test.log" "$REPORT/junit.xml" "$REPORT/coverage.json" \
+        "$REPORT/molpy-junit.xml" "$REPORT/molpy-coverage.json"
     shift 2
 fi
 [ "$#" -gt 0 ] || { echo "$usage" >&2; exit 2; }

@@ -1,0 +1,232 @@
+# Clustering
+
+Micelles, droplets, aggregates, percolating gel networks — all of them are the
+same computational question: which particles are connected to which?
+
+`Cluster` answers it by building a graph. Every pair inside the
+[neighbour cutoff](neighborlist.md) becomes an edge, and each connected
+component of that graph is a cluster. The algorithm is standard and not the
+interesting part.
+
+**The cutoff is the interesting part**, because the cutoff *is* your definition
+of an aggregate. Nothing in the physics tells you where one droplet ends and
+another begins; you decide, by choosing a number, and the answer follows from
+that choice far more strongly than most people expect.
+
+## How strongly: a 0.15 Å window
+
+Here is the same 500-atom argon liquid, clustered at a range of cutoffs.
+
+<figure id="fig-percolation" class="molcrafts-figure" markdown>
+<div class="molcrafts-figure__body molcrafts-figure__body--chart">
+
+```molplot preset="molplot" theme="auto" aspect="16:10"
+config:
+  legend:
+    orient: bottom
+    direction: horizontal
+    title: null
+data: {$file: series/cluster/argon_percolation.json}
+mark: {type: line, strokeWidth: 2.4, interpolate: monotone}
+encoding:
+  x:
+    field: cutoff
+    type: quantitative
+    title: "cutoff (Å)"
+  y:
+    field: value
+    type: quantitative
+    title: null
+  color:
+    field: series
+    type: nominal
+    title: null
+```
+
+</div>
+
+**Figure 1.** Cluster count and largest-cluster size against the neighbour
+cutoff, for one configuration of the reference argon run (seed 0, 88.3 K).
+Nothing about the configuration changes across
+this plot — only the definition of "connected".
+</figure>
+
+Read the numbers, all with `min_cluster_size=2` so that lone atoms are not
+counted as clusters:
+
+| cutoff (Å) | clusters (size ≥ 2) | largest cluster |
+|---|---|---|
+| 3.3 | 12 | 0.5 % (2–3 atoms) |
+| 3.5 | 86 | 2.5 % |
+| 3.6 | 47 | 37 % |
+| 3.65 | 17 | 80 % |
+| 3.7 | 8 | 92 % |
+| 3.8 | 1 | 98.9 % |
+| 4.0 | 1 | 100 % |
+
+The cluster count rises and then falls, which is not a mistake: at 3.3 Å almost
+nothing is within range, so there are a handful of isolated pairs; by 3.5 Å most
+atoms have a partner and there are 86 small fragments; past that the fragments
+start merging into each other, so the count collapses while the largest cluster
+grows. Nearly all the atoms are in no cluster at all at the small cutoffs, which
+is why 12 clusters and "largest = 2 atoms" are consistent.
+
+Between 3.55 and 3.70 Å the system goes from dozens of small aggregates to one
+network containing essentially every atom. That is a **percolation transition**,
+and it happens inside a 0.15 Å window. For scale, the first peak of
+[$g(r)$](rdf.md) is centred at 3.68 Å and is roughly 1 Å wide at half height —
+so the entire transition fits inside the leading edge of the first coordination
+shell.
+
+So a colleague who used 3.6 Å and a colleague who used 3.7 Å on the same
+trajectory would publish qualitatively different conclusions, and neither would
+be wrong about the arithmetic. This is why the cutoff must be reported with any
+cluster result, and why it should be justified physically rather than picked.
+
+The defensible choice for a *contact* definition is the **first minimum of
+$g(r)$** — 5.4 Å for this argon, deep in the "everything is one cluster" regime,
+which is the correct answer: a dense liquid *is* one connected blob at contact
+distance. If you want droplets, you need a system that actually has droplets,
+not a smaller cutoff on a homogeneous one.
+
+## Computing it
+
+Clustering needs only the graph, so the data `Cluster` consumes is the
+neighbour table — built from the frame's positions and box, at the cutoff that
+defines "connected". The cutoff therefore lives in the `NeighborList`, not in
+`Cluster`; the only thing `Cluster` itself is configured with is the smallest
+component worth reporting.
+
+```python
+import numpy as np
+import molpy as mp
+from molpy.compute import Cluster
+
+rng = np.random.default_rng(0)
+# Three well-separated blobs of 40 points each.
+centres = np.array([[5.0, 5.0, 5.0], [25.0, 5.0, 5.0], [5.0, 25.0, 5.0]])
+xyz = np.concatenate([c + rng.normal(0.0, 0.8, size=(40, 3)) for c in centres])
+
+frame = mp.Frame()
+frame["atoms"] = {"x": xyz[:, 0], "y": xyz[:, 1], "z": xyz[:, 2]}
+frame.box = mp.Box(mp.core.Cell.lengths([40.0] * 3))
+
+nl = mp.core.NeighborList(2.0)
+nl.build(frame.coords, frame.box)
+nlist = nl.neighbors()
+result = Cluster(min_cluster_size=5).compute(pairs=nlist)
+print(result.n_clusters)                      # -> 3
+print(sorted(result.cluster_sizes.tolist()))  # -> [40, 40, 40]
+```
+
+Three blobs in, three clusters out. The result also carries `cluster_idx`, the
+per-particle cluster label you need in order to colour a rendering or select one
+aggregate:
+
+```python
+labels = result.cluster_idx
+print(labels.shape, len(set(labels.tolist())))  # -> (120,) 3
+```
+
+`min_cluster_size` discards components smaller than the threshold; their
+particles are labelled `-1`, in no cluster. Use it to drop monomers, but be
+aware it changes `n_clusters` — it is a reporting filter, not part of the
+physics.
+
+Sometimes connectivity is only half the definition. Two molecules that touch
+are one aggregate, but the atoms of one molecule belong together whether or
+not they touch. `merge` takes a partition — your `mol_id` column, say — and
+fuses every group of it into whichever cluster its atoms join:
+
+```python
+mol_id = np.repeat(np.array([0, 0, 1], dtype=np.uint32), 40)  # blobs 1 and 2 are one molecule
+merged = Cluster().compute(pairs=nlist, merge=mol_id)
+print(merged.sizes())                         # -> [(0, 80), (1, 40)]
+```
+
+### Per-cluster properties are a second compute
+
+A cluster result is not just a report: it is a **partition**, one label per
+particle, and every compute that reduces over groups accepts it as its
+`partition`. So "the centre and the radius of gyration of every cluster" is the
+cluster result handed to `CenterOfMass` and `GyrationTensor`, with the
+positions and box read from the same frame:
+
+```python
+from molpy.compute import CenterOfMass, GyrationTensor
+
+positions, box = frame.coords, frame.box
+unit = np.ones(len(positions))
+centres_found = CenterOfMass().compute(
+    positions=positions, simbox=box, partition=result, masses=unit
+)
+gyration = GyrationTensor().compute(
+    positions=positions, simbox=box, partition=result, weights=unit
+)
+print(np.round(centres_found.centers, 1).tolist())
+# -> [[4.9, 5.0, 5.3], [24.9, 4.9, 4.8], [5.0, 25.0, 4.9]]
+print(np.round(gyration.radius_of_gyration(), 2).tolist())  # -> [1.29, 1.45, 1.39]
+```
+
+The weights are explicit: unit weights here, so these are **geometric**
+descriptors — every particle counted once. Pass the masses read from your
+frame and the same two calls become mass-weighted. Passing `simbox` makes each
+cluster be measured about one of its own atoms under minimum image, so an
+aggregate split by the periodic boundary is still measured whole (see
+[Shape](shape.md)).
+
+Each blob was drawn from a Gaussian of width 0.8 Å per direction, so its radius
+of gyration should be close to $\sqrt{3}\times 0.8 = 1.39$ Å. The three come out
+at 1.29, 1.45 and 1.39, averaging 1.38 — a case where you can predict the output
+before running it, and the spread tells you the sampling noise on 40 points. See [Shape](shape.md) for
+what the gyration tensor tells you beyond its trace.
+
+## When it goes wrong
+
+**Everything is one cluster.**
+Usually correct for a dense liquid at a contact cutoff. If you expected
+droplets, either the cutoff is too generous or the system is genuinely
+homogeneous. Check the largest-cluster fraction against cutoff, as in Figure 1,
+before assuming a bug.
+
+**The cluster count changes wildly between frames.**
+You are sitting on the percolation transition. Move the cutoff away from it, or
+report the transition itself rather than a number from inside it.
+
+**A single molecule is reported as two clusters.**
+Its atoms are not all within the cutoff of each other — a long chain whose
+bonded neighbours are further apart than the cutoff, for instance. Pass the
+molecule labels as `merge` so that bonded atoms always share a cluster.
+
+**Per-cluster shapes are enormous — comparable to the box.**
+A cluster straddles a periodic boundary and the shape compute was called
+without `simbox`. Cluster *identification* is fine under minimum image, so
+`n_clusters` is right; it is the per-cluster *shape* that breaks. Pass the box
+to `GyrationTensor` and `CenterOfMass`, as on [Shape](shape.md).
+
+**`n_clusters` disagrees with the number of components you expected.**
+`min_cluster_size` is filtering. Set it to 1 to see everything.
+
+## Check yourself
+
+- Build well-separated blobs, as above, and confirm you get exactly as many
+  clusters as blobs. Then move two blobs together and watch them merge.
+- Scan the cutoff on your own system and plot the largest-cluster fraction. If
+  your chosen cutoff sits on the steep part, no conclusion drawn from it is
+  robust.
+- Compare your cutoff with the first minimum of $g(r)$. If they differ, be able
+  to say why.
+
+## References
+
+- V. Ramasubramani et al., *Comput. Phys. Commun.* **254**, 107275 (2020) — the
+  freud `cluster` module this mirrors.
+- D. Stauffer, A. Aharony, *Introduction to Percolation Theory*, 2nd ed. (1994)
+  — why the transition in Figure 1 is sharp.
+
+## See also
+
+- [NeighborList](neighborlist.md) — where the cutoff lives
+- [RDF](rdf.md) — where a defensible cutoff comes from
+- [Shape](shape.md) — what to measure once you have clusters
+- [API reference](../api/compute.md)

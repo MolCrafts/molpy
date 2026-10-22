@@ -1,0 +1,223 @@
+## Naming Conventions in MolPy
+
+### What the convention is
+
+MolPy adopts a strict and explicit naming convention that operates at two levels: namespace organization and field naming. At the namespace level, molecular data is organized into semantic groupings such as `atoms`, `bonds`, `angles`, and `dihedrals`. Each namespace corresponds to a physical or topological category and acts as a first-level key in the data hierarchy. At the field level, individual properties are accessed as second-level keys under their parent namespace, using names that distinguish between integer atom indices and object references.
+
+MolPy intentionally supports two complementary representations of molecular topology, each optimized for different stages of a molecular modeling workflow. The Frame and Block representation serves as the data interchange layer, optimized for serialization, storage, numerical processing, and interoperability with external simulation engines. The Entity representation serves as the interactive construction layer, optimized for structure building, graph traversal, and chemistry-aware manipulation. Although both representations describe the same physical topology, they operate at different abstraction levels and therefore use distinct naming schemes to avoid semantic confusion.
+
+At the Frame and Block level, topology is expressed purely in terms of integer atom indices. These indices are always 0-based and refer to rows in the atoms block. For this representation, MolPy uses the field names `atomi`, `atomj`, `atomk`, and `atoml`. For example, a bond stored in a frame is represented as:
+
+The examples below share this setup:
+
+```python
+import molpy as mp
+from molpy.core import Block
+
+frame = mp.Frame()
+frame["atoms"] = {"x": [0.0, 1.0], "y": [0.0, 0.0], "z": [0.0, 0.0]}
+```
+
+```python
+frame["bonds"] = Block(
+ {
+ "type": ["C-H"],
+ "atomi": [0],
+ "atomj": [1],
+ }
+)
+```
+
+Here, `atomi` and `atomj` are integers that refer to positions in the atoms block. A strict rule applies: `atomi`, `atomj`, `atomk`, and `atoml` must always store integers and must never store Atom objects.
+
+### Frame Schema with Namespaces
+
+The following sections define the complete schema for Frame and Block structures. Each namespace groups related fields according to their physical meaning and usage patterns. Fields are accessed using string keys for both namespace and field, such as `frame["atoms"]` to retrieve the atoms Block, or `frame["atoms"]["x"]` to access positions directly.
+
+#### Atomic Properties (`atoms`)
+
+The `atoms` namespace contains per-atom properties, including atomic numbers, positions, charges, and optional identifiers. All arrays within this Block have length `N`, where `N` is the number of atoms. Atomic positions are stored as three separate 1D arrays (`x`, `y`, `z`) of length `N`, which is the standard convention used by MolPy readers and expected by downstream code (e.g., potential energy calculations).
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | uint64 array | Atom IDs (1-indexed, optional) |
+| `mol_id` | uint64 array | Molecule IDs (1-indexed, optional) |
+| `atomic_number` | uint64 array | Atomic numbers (optional) |
+| `element` | string array | Element symbols (optional) |
+| `type` | string array | Atom type labels (optional) |
+| `type_id` | uint64 array | Numeric atom type ids, e.g. LAMMPS (optional) |
+| `mass` | float64 array | Atomic masses in amu (optional) |
+| `charge` | float64 array | Partial charges in elementary charge units (optional) |
+| `formal_charge` | int64 array | Integer formal charges (optional) |
+| `x` | float64 array (N) | Atomic x-coordinates |
+| `y` | float64 array (N) | Atomic y-coordinates |
+| `z` | float64 array (N) | Atomic z-coordinates |
+| `vx` / `vy` / `vz` | float64 array (N) | Velocities (optional) |
+| `fx` / `fy` / `fz` | float64 array (N) | Forces (optional) |
+| `ix` / `iy` / `iz` | int32 array (N) | Periodic image flags (optional) |
+| `name` | string array | Atom names, e.g. PDB/GRO (optional) |
+| `res_id` | uint64 array | Residue IDs (optional) |
+| `res_name` | string array | Residue names (optional) |
+| `chain` | string array | Chain identifiers (optional) |
+| `altloc` / `icode` | string array | PDB/mmCIF alternate location and insertion code (optional) |
+| `occupancy` / `b_factor` | float64 array | PDB/mmCIF occupancy and B-factor (optional) |
+
+Floats are always `float64`: a float32 array is widened when it is inserted.
+The identifier and index columns (`id`, `mol_id`, `atomic_number`, `res_id`,
+`type_id`, `atomi` … `atoml`) are stored `uint64`; a narrower unsigned array is
+widened on insert, and a `*.mrec` store holding them at another width is refused
+on read. `mp.core.schema.column(key)` is the authoritative table.
+
+Format-specific aliases such as LAMMPS `q` and `mol` exist only at the I/O boundary. Readers canonicalize them to `charge` and `mol_id`; writers localize them back when required by the target format.
+
+**Units.** `mass` is in amu and `charge` in elementary-charge units, but coordinates (`x/y/z`) and velocities (`vx/vy/vz`) carry *no intrinsic unit* — MolPy stores raw numbers. The length convention is fixed by the force field you apply (its `units=` setting, e.g. LAMMPS `real` ⇒ Å) and by the file format you read from or export to. Keep your input coordinates consistent with that convention. Readers convert to the store units on the way in: the bundled `tip3p.xml` is written in nm and kJ/mol, and `mp.io.read_openmm_forcefield` hands back Å and kcal/mol.
+
+#### Bond Topology (`bonds`)
+
+The `bonds` namespace stores bond connectivity using separate index arrays for source and target atoms. This design simplifies indexing and aligns with the naming convention used in Entity-level representations. All arrays have length `E`, where `E` is the number of bonds.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `atomi` | uint64 array | Bond source atom indices |
+| `atomj` | uint64 array | Bond target atom indices |
+| `type` | string array | Bond type labels (optional) |
+
+#### Angle Topology (`angles`)
+
+The `angles` namespace represents three-body interactions. Atom indices are stored separately as `atomi`, `atomj`, and `atomk`, where `atomj` is the center atom. All arrays have length `A`, where `A` is the number of angles.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `atomi` | uint64 array | First atom index |
+| `atomj` | uint64 array | Center atom index |
+| `atomk` | uint64 array | Third atom index |
+| `type` | string array | Angle type labels (optional) |
+
+#### Dihedral Topology (`dihedrals`)
+
+The `dihedrals` namespace represents four-body torsional interactions. Atom indices are stored separately as `atomi`, `atomj`, `atomk`, and `atoml`, following the same convention as the `angles` namespace. All arrays have length `D`, where `D` is the number of dihedrals.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `atomi` | uint64 array | First atom index |
+| `atomj` | uint64 array | Second atom index |
+| `atomk` | uint64 array | Third atom index |
+| `atoml` | uint64 array | Fourth atom index |
+| `type` | string array | Dihedral type labels (optional) |
+
+#### Improper Topology (`impropers`)
+
+The `impropers` namespace represents improper dihedral interactions, typically used to enforce planarity or chirality constraints. The index naming follows the same convention as `dihedrals`.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `atomi` | uint64 array | First atom index |
+| `atomj` | uint64 array | Second atom index |
+| `atomk` | uint64 array | Third atom index |
+| `atoml` | uint64 array | Fourth atom index |
+| `type` | string array | Improper type labels (optional) |
+
+#### Other relation blocks
+
+The vocabulary also names `constraints` (`atomi`, `atomj`, optional `r0`),
+`drudes` (`atomi` the core, `atomj` its Drude particle), `virtual_sites`
+(`atomi` the site, built from `atomj` … `atoml`; trailing endpoints may be
+null) and, on a coarse-grained frame, `members` (`ibead` → `atoms`, and `atom`
+into the all-atom block its declared target names). Their endpoint columns are
+`uint64` row indices like the bonded blocks above.
+
+### Namespace Naming Conventions
+
+Namespace names use lowercase and typically use plural forms (such as `atoms`, `bonds`, `angles`, `dihedrals`, `impropers`) to indicate that they contain collections of related items. This convention makes namespace keys self-documenting and consistent across the codebase. Namespaces are accessed using string keys: `frame["atoms"]` retrieves the atoms Block, which can then be indexed again with field names such as `frame["atoms"]["x"]` for positions.
+
+Field names within a namespace use lowercase with underscore separators for multi-word names. Topology index fields use the pattern `atomi`, `atomj`, `atomk`, `atoml` to indicate their role (source, target, center, endpoints) while maintaining a consistent suffix-free naming that distinguishes them from entity-level object references.
+
+### Entity-Level Topology: Object References
+
+At the Entity level, MolPy's topology objects (Bond, Angle, Dihedral, Improper) refer directly to Atom views. These objects are used during molecular construction, editing, and chemical reasoning. Every relation lists its atoms in order as `endpoints`, which corresponds to the Frame-level `atomi`, `atomj`, `atomk`, `atoml` but holds atom views instead of integer indices; a bond also names its two atoms `itom` and `jtom`. For example:
+
+```python
+mol = mp.Atomistic()
+atom1 = mol.add_atom(atomic_number=6, x=0.0, y=0.0, z=0.0)
+atom2 = mol.add_atom(atomic_number=1, x=1.1, y=0.0, z=0.0)
+bond = mol.add_bond(atom1, atom2)
+print(bond.itom) # Atom object
+print(bond.jtom) # Atom object
+print(bond.endpoints) # (Atom, Atom)
+```
+
+In this context, `itom`, `jtom` and `endpoints` are Atom views, not indices. The naming is intentionally short because these fields are accessed frequently during structure manipulation, and the `tom` suffix signals that the value is an object rather than a numeric identifier. An angle, dihedral or improper has no `itom` … `ltom`: read its atoms from `endpoints` (`angle.endpoints[1]` is the centre atom).
+
+This parallel naming scheme ensures that the semantic role of each atom (first, second, center, etc.) remains consistent across both representations — position *k* of `endpoints` is the column `atomi`, `atomj`, … of the same rank — while the naming itself (`atomi` versus `itom`) makes the representation explicit at every use site.
+
+### Why the convention exists
+
+The namespace and naming convention addresses two complementary problems: data organization and type safety. At the organization level, namespaces eliminate ambiguity about where a field belongs and what category of data it represents. Without explicit namespaces, field names must encode their semantic category through prefixes or suffixes, leading to inconsistent conventions such as `atom_z` versus `z_atom` versus `atomic_number` versus `element`. Namespaces make the category explicit and separate it from the field identity, so atomic numbers are always accessed as `frame["atoms"]["atomic_number"]` regardless of context.
+
+At the type safety level, MolPy deliberately avoids using the same field name for both indices and references. While names such as `atom_i` or `atom1` are common in other libraries, they tend to blur the distinction between "position in a table" and "object in memory". By using `atomi` and `atomj` at the Frame level and `itom` and `jtom` at the Entity level, the code makes this distinction visible at the point of use and enforceable through type checking or runtime validation.
+
+This separation prevents subtle bugs where a field silently changes meaning depending on context. Such bugs become especially problematic when adding serialization, caching, multiprocessing, or cross-language bindings, since the interchange format must operate on indices while the in-process API operates on object references. The Frame-level design is fully serializable to JSON, Arrow, and HDF5, and it is language-agnostic, making it straightforward to implement equivalent data structures in Rust, C++, or TypeScript. It aligns naturally with the data layouts expected by MD engines such as LAMMPS, which operate on indexed atom tables rather than pointer-based object graphs.
+
+At the same time, the Entity-level design supports the fluent and expressive APIs needed for interactive molecular construction, where graph traversal and chemical reasoning require direct access to atom properties without repeated index lookups. By keeping the two layers separate and enforcing explicit conversion at boundaries, MolPy avoids the common pitfall of "universal" data structures that try to serve both purposes but end up being awkward for both.
+
+### How to convert between representations
+
+MolPy provides explicit conversion paths between these two representations. When converting from Entity to Frame (for example, via `Atomistic.to_frame()`), each endpoint is replaced by the corresponding atom index, and the results are stored in namespace-organized Blocks. The resulting frame uses `atomi`, `atomj`, and so on exclusively within their respective namespace blocks. Conceptually, this works as:
+
+```python
+# Entity to Frame conversion for bonds
+atoms, bonds = list(mol.atoms), list(mol.bonds)
+atomi_list = [atoms.index(bond.itom) for bond in bonds]
+atomj_list = [atoms.index(bond.jtom) for bond in bonds]
+
+frame["bonds"] = Block(
+ {
+ "atomi": atomi_list,
+ "atomj": atomj_list,
+ }
+)
+```
+
+When converting from Frame to Entity, each index is resolved back to an Atom object using the atoms container. A `Bond` is a view onto a graph's relation, so the graph creates it — `add_bond` is the conversion, and the namespace structure in the Frame guides which Entity types to ask for:
+
+```python
+# Frame to Entity conversion for bonds
+rebuilt = mp.Atomistic()
+rebuilt_atoms = [rebuilt.add_atom(atomic_number=atom["atomic_number"]) for atom in atoms]
+
+for i in range(len(frame["bonds"]["atomi"])):
+ atomi = int(frame["bonds"]["atomi"][i])
+ atomj = int(frame["bonds"]["atomj"][i])
+ bond = rebuilt.add_bond(rebuilt_atoms[atomi], rebuilt_atoms[atomj])
+```
+
+These conversions must be explicit and localized at the boundary between Frame and Entity layers. Mixing the two representations inside the same object is not allowed. The namespace structure in Frame ensures that all related fields (such as bond indices and bond types) are kept together during conversion, simplifying the logic and reducing the chance of misalignment errors.
+
+### Names in the Python API
+
+The API itself follows the same rules as molrs, whose names molpy re-exports
+by identity:
+
+- **Acronyms are cased as words.** `mp.engine.LammpsEngine`,
+  `mp.engine.OpenmmEngine`, `mp.io.smiles.SmilesIr`, `mp.CgBond`,
+  `mp.compute.Rdf`, `mp.compute.Msd`, `mp.optimize.Lbfgs`,
+  `mp.ff.potential.PairLjCut`. numpy's `DType` and `HBond` (H is the element)
+  keep their spelling.
+- **Counts are `n_*`**, as in numpy and freud: `mol.n_atoms`,
+  `neighbors.n_pairs`, `ring_info.n_rings()`, `pattern.n_query_atoms`.
+- **No module is a container word** (`data`, `base`, `types`, `common`,
+  `utils`, `helpers`, `env`): a module says what it holds — the bundled files
+  are `mp.resources`, the CL&Pol LJ scaling is `mp.ff.clpol_scaling`.
+- **One I/O door per format**: `read_<fmt>[_<what>]` / `write_<fmt>[_<what>]`
+  (`read_pdb`, `read_lammps_data`, `read_top_forcefield`), with `_str`,
+  `_bytes` and `_trajectory` for text, bytes and every frame of a multi-frame
+  file.
+
+```python
+assert mp.io.read_smiles_str("CCO").n_atoms == 3
+assert mp.perceive.SmartsPattern("[#6][#8]").n_query_atoms == 2
+```
+
+### For contributors
+
+When extending MolPy, treat this scheme as a hard invariant: Frame/Block topology always uses `atomi/atomj/atomk/atoml` (indices); Entity topology always uses `endpoints` (and a bond's `itom` / `jtom`), which are atom views; convert explicitly at the boundary, never mix the two inside one object. The rationale (type-safety, serialization to JSON/Arrow/HDF5, and cross-language backends) is covered in the [Developer Guide](../developer/index.md).

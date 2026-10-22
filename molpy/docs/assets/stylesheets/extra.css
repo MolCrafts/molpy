@@ -1,0 +1,28 @@
+/*
+ * MolPy product-only docs CSS.
+ *
+ * Theme owns palette, hero, manual-home, sections, workflow-list,
+ * feature-matrix, doc-map, tile-grid, link-list, figures (molvis/molplot).
+ * Accent: zensical.toml → [project.extra.molcrafts].
+ *
+ * Only the short-wordmark tweak below is product-specific.
+ * Do not re-skin .molcrafts-* components here.
+ */
+
+/* Short "MolPy" wordmark — theme title gradient spans a short name tightly. */
+html[data-molcrafts-product="molpy"] .molcrafts-home-hero h1 {
+  max-width: 13rem;
+}
+
+@media screen and (max-width: 36em) {
+  html[data-molcrafts-product="molpy"] .molcrafts-home-hero h1 {
+    max-width: none;
+  }
+}
+
+/* The hidden permalink (¶) after a home-section title wraps onto its own line
+   whenever the title fills its line, leaving a blank gap under it. Take it out
+   of the line box. Belongs in the shared theme; remove once the theme does it. */
+.md-typeset .molcrafts-manual-section__header h2 .headerlink {
+  position: absolute;
+}

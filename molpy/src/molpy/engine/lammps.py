@@ -1,0 +1,577 @@
+"""LAMMPS molecular dynamics engine.
+
+Wraps the `LAMMPS <https://www.lammps.org>`_ molecular dynamics code.
+The engine writes an input script to the working directory and runs::
+
+    [launcher...] lmp -in <input> -log log.lammps -screen none
+
+The ``-screen none`` flag suppresses duplicate stdout output; all
+per-timestep data is written exclusively to *log.lammps*.
+
+:meth:`LammpsEngine.generate_inputs` is the one LAMMPS deck writer: data
+file, force-field settings, init and input script, for a periodic frame or a
+box-free one. :meth:`LammpsEngine.minimize` and :meth:`LammpsEngine.md` run
+the same deck with their own command block.
+
+The executable, MPI / scheduler launcher, environment and time limit are the
+``[engine.lammps]`` settings of molpy's configuration (:mod:`molpy.config`)::
+
+    [engine.lammps]
+    executable = "lmp_mpi"
+    launcher = ["mpirun", "-np", "16"]
+
+Reference:
+    Thompson, A. P. et al. (2022). LAMMPS — A flexible simulation tool for
+    particle-based materials modeling. *Comput. Phys. Commun.* **271**, 108171.
+    https://doi.org/10.1016/j.cpc.2021.108171
+"""
+
+from __future__ import annotations
+
+import subprocess
+import tempfile
+from pathlib import Path
+from typing import TYPE_CHECKING
+
+from molpy.engine.engine import Engine
+from molpy.engine.nonbonded import is_periodic, nonbonded_of, refuse_box_free
+from molpy.engine.script import Script
+from molpy.io import read_lammps_data, write_lammps_data
+from molpy.io.lammps import infer_lammps_atom_style
+from molrs.io.lammps import LammpsForcefieldWriter
+from molpy.tool.process import ToolError
+from molpy.tool.process import tail_of
+
+if TYPE_CHECKING:
+    from molrs.core import Frame
+    from molrs.ff.forcefield import ForceField
+
+# Common LAMMPS binary names, tried in order when none is configured.
+_LAMMPS_CANDIDATES = ("lmp", "lmp_serial", "lmp_mpi")
+
+# The LAMMPS `units` styles molrs writes a data file and its coefficients in.
+_LAMMPS_UNITS = ("real", "metal", "lj")
+
+# The long-range solver of a force field whose Coulomb style is long-range
+# (molrs writes its real-space half, `lj/cut/coul/long`): PPPM to a relative
+# force accuracy of 1e-4, LAMMPS's usual choice.
+_KSPACE_STYLE = "pppm 1.0e-4"
+
+
+class LammpsEngine(Engine):
+    """LAMMPS molecular dynamics engine.
+
+    Runs LAMMPS input scripts.  The engine binary is typically named ``lmp``,
+    ``lmp_serial``, or ``lmp_mpi`` depending on the build; with no
+    ``engine.lammps.executable`` configured, the first of those found in the
+    engine's environment is used, so ``LammpsEngine()`` works out of the box
+    on a typical install.  Settings: ``[engine.lammps]``; logger:
+    ``molpy.engine.lammps``.
+
+    Example:
+        >>> from molpy.config import load_config
+        >>> from molpy.engine import LammpsEngine, Script
+        >>>
+        >>> script = Script.from_text("input", "units real\\natom_style full\\nrun 0\\n")
+        >>> engine = LammpsEngine(check_executable=False)
+        >>> result = engine.run(script, workdir="./calc")
+        >>> print(result.returncode)
+        0
+
+        MPI execution, as a run override::
+
+            config = load_config(
+                {"engine": {"lammps": {"launcher": ["mpirun", "-np", "16"]}}}
+            )
+            result = LammpsEngine(config=config).run(script, workdir="./calc")
+    """
+
+    tool = "lammps"
+
+    def _default_executable(self) -> str:
+        """The first of ``lmp``, ``lmp_serial``, ``lmp_mpi`` in the environment.
+
+        ``lmp`` when none is found (``check_executable`` then reports it).
+        """
+        return next(
+            (
+                c
+                for c in _LAMMPS_CANDIDATES
+                if self.environment.resolve_executable(c, logger=self.logger)
+            ),
+            _LAMMPS_CANDIDATES[0],
+        )
+
+    def _get_default_extension(self) -> str:
+        """Return ``".lmp"`` — the conventional LAMMPS input extension.
+
+        Returns:
+            ``".lmp"``
+        """
+        return ".lmp"
+
+    def _execute(
+        self,
+        run_dir: Path,
+        input_file: Path,
+        *,
+        capture_output: bool,
+        check: bool,
+    ) -> subprocess.CompletedProcess[str]:
+        """Run LAMMPS on *input_file* in *run_dir*.
+
+        Builds the command::
+
+            [launcher...] lmp -in <input_file> -log log.lammps -screen none
+
+        ``-screen none`` prevents LAMMPS from writing timestep data to stdout
+        (it still goes to *log.lammps*), avoiding pipe-buffer deadlocks when
+        the caller captures output; a failure carries the log's tail.
+
+        Raises:
+            ToolError: LAMMPS could not start, timed out, or (with *check*)
+                exited non-zero.
+        """
+        command = self.command(
+            ["-in", input_file.name, "-log", "log.lammps", "-screen", "none"]
+        )
+        return self.run_command(
+            command,
+            cwd=run_dir,
+            capture_output=capture_output,
+            check=check,
+            log=run_dir / "log.lammps",
+        )
+
+    # ------------------------------------------------------------------
+    # Input generation (the one LAMMPS deck writer)
+    # ------------------------------------------------------------------
+
+    def generate_inputs(
+        self,
+        frame: Frame,
+        forcefield: ForceField,
+        output_dir: str | Path,
+        *,
+        prefix: str = "system",
+        atom_style: str | None = None,
+        units: str = "real",
+        pair_style: str | None = None,
+        body: str | None = None,
+    ) -> dict[str, Path]:
+        """Write a complete LAMMPS deck for *frame* under *forcefield*.
+
+        Files written (given ``prefix="system"``):
+
+        * ``system.data`` — the structure (molrs's LAMMPS data writer), in
+          *atom_style* and *units*.
+        * ``system.in.settings`` — molrs's LAMMPS force-field include: the
+          ``*_style`` line of every category the frame uses (built-in or a
+          registered force-field IR style; ``hybrid`` when a category spans
+          several styles), its coefficients, ``special_bonds`` and
+          ``pair_modify``. It is included after ``read_data``, where LAMMPS
+          rejects ``units``, so ``units`` is the init's.
+        * ``system.in.init`` — ``units`` and ``atom_style`` (the data
+          file's own), ``boundary``,
+          ``neighbor`` and, when *pair_style* is given, that ``pair_style``
+          line (the include then leaves its own out).
+        * ``system.in`` — the input script: init, ``read_data``, settings,
+          ``kspace_style pppm 1.0e-4`` when the force field's Coulomb style is
+          long-range (``coul/long/pme``) and its pair style is in force, then
+          *body* (a starter minimise + NVT run by default).
+
+        The nonbonded settings are the force field's own: its pair style,
+        cutoffs and mixing are written as it states them, and only an
+        explicit *pair_style* replaces them.
+
+        A frame with a periodic box gets ``boundary p p p`` and binned
+        neighbour lists. A frame without one (``Atomistic.to_frame()``
+        carries no box) is a non-periodic system and gets a non-periodic
+        deck: molrs's data writer puts the atoms inside the bounds of their
+        coordinates widened by 1 length unit on every side, ``boundary s s
+        s`` shrink-wraps that box to the atoms, and ``neighbor 2.0 nsq``
+        searches all pairs, since binning needs a box wider than the pair
+        cutoff. A long-range Coulomb style, whose PPPM solver needs a
+        periodic cell, is refused for it (the policy every engine follows:
+        :mod:`molpy.engine`).
+
+        molpy names no style itself: a style molrs can write is emitted and
+        one it cannot is refused by molrs, by name, before any file is
+        written.
+
+        Args:
+            frame: Typed structure (``type`` columns keyed to *forcefield*).
+            forcefield: The force field the settings are written from.
+            output_dir: Directory for the deck (created if absent).
+            prefix: Stem of the four file names.
+            atom_style: LAMMPS ``atom_style`` of the data file and the init;
+                ``None`` is the style the frame's atom columns hold
+                (:func:`molpy.io.lammps.infer_lammps_atom_style`: ``full``
+                with ``mol_id`` and ``charge``, ``atomic`` with neither, …).
+            units: LAMMPS ``units`` style — ``"real"``, ``"metal"`` or
+                ``"lj"`` — of the init, the data file and the coefficients,
+                each converted to it by molrs.
+            pair_style: A ``pair_style`` line (without the command) that
+                replaces the force field's own; ``None`` (the default) keeps
+                the force field's. A replacement needing a long-range solver
+                sets its ``kspace_style`` in *body*.
+            body: Commands after the settings include; ``None`` writes the
+                starter minimise + NVT run.
+
+        Returns:
+            ``{"data", "settings", "init", "input"}`` mapped to the written
+            paths.
+
+        Raises:
+            ValueError: If *units* is not one molrs writes, or the frame has
+                no periodic box and the force field's Coulomb style is
+                long-range; before any file is written.
+        """
+        if units not in _LAMMPS_UNITS:
+            raise ValueError(
+                f"units must be one of {list(_LAMMPS_UNITS)}, got {units!r}."
+            )
+        periodic = is_periodic(frame)
+        long_range = pair_style is None and nonbonded_of(forcefield).coulomb == "long"
+        if long_range and not periodic:
+            raise refuse_box_free("LAMMPS", "a long-range Coulomb style (PPPM)")
+        if "atoms" in frame and "mass" not in frame["atoms"]:
+            masses = {
+                t.name: t.params["mass"]
+                for style in forcefield.get_styles("atom")
+                for t in style.get_types()
+                if "mass" in t.params
+            }
+            frame = frame.copy()
+            frame["atoms"]["mass"] = [
+                masses[str(name)] for name in frame["atoms"]["type"]
+            ]
+        style = atom_style or infer_lammps_atom_style(frame)
+        out = Path(output_dir)
+        out.mkdir(parents=True, exist_ok=True)
+        paths = {
+            "data": out / f"{prefix}.data",
+            "settings": out / f"{prefix}.in.settings",
+            "init": out / f"{prefix}.in.init",
+            "input": out / f"{prefix}.in",
+        }
+
+        # Settings first: a style molrs cannot write fails before any file is
+        # written. They carry the coefficients of the labels `frame` uses, the
+        # same labels the data file declares.
+        settings_bytes = bytearray()
+        LammpsForcefieldWriter(
+            frame,
+            skip_pair_style=pair_style is not None,
+            skip_units=True,
+            units=units,
+        ).write(settings_bytes, forcefield)
+        settings = settings_bytes.decode("utf-8")
+        write_lammps_data(paths["data"], frame, atom_style=style, units=units)
+        paths["settings"].write_text(settings, encoding="utf-8")
+
+        init = [
+            f"# molpy-generated LAMMPS init for {prefix}",
+            f"units {units}",
+            f"atom_style {style}",
+            "boundary p p p" if periodic else "boundary s s s",
+            "neighbor 2.0 bin" if periodic else "neighbor 2.0 nsq",
+        ]
+        if pair_style is not None:
+            init.append(f"pair_style {pair_style}")
+        paths["init"].write_text("\n".join(init) + "\n", encoding="utf-8")
+
+        paths["input"].write_text(
+            _INPUT_TEMPLATE.format(
+                prefix=prefix,
+                init=paths["init"].name,
+                data=paths["data"].name,
+                settings=paths["settings"].name,
+                kspace=f"kspace_style {_KSPACE_STYLE}\n" if long_range else "",
+                body=(_STARTER_BODY if body is None else body).rstrip("\n"),
+            ),
+            encoding="utf-8",
+        )
+        self.logger.info(
+            "inputs written",
+            output_dir=str(out),
+            files={key: path.name for key, path in paths.items()},
+            periodic=periodic,
+            units=units,
+            atom_style=style,
+        )
+        return paths
+
+    # ------------------------------------------------------------------
+    # High-level structure relaxation (frame in -> relaxed frame out)
+    # ------------------------------------------------------------------
+
+    def minimize(
+        self,
+        frame: Frame,
+        ff: ForceField,
+        *,
+        etol: float = 1.0e-4,
+        ftol: float = 1.0e-6,
+        max_iter: int = 1000,
+        max_eval: int = 10000,
+        pair_style: str | None = None,
+        atom_style: str | None = None,
+        units: str = "real",
+        workdir: str | Path | None = None,
+        capture_output: bool = False,
+    ) -> Frame:
+        """Energy-minimise *frame* under force field *ff* and return a new frame.
+
+        Writes a LAMMPS data file and coefficient settings from *frame* / *ff*,
+        runs ``minimize``, then splices the relaxed coordinates back onto a copy
+        of *frame* (topology, types, and box preserved). *frame* is not mutated.
+
+        Typical use is removing residual overlaps after packing::
+
+            eng = LammpsEngine()
+            relaxed = eng.minimize(pack_result.frame, ff)
+
+        Args:
+            frame: Input structure: periodic when it carries a periodic box
+                (``frame.box``), else a non-periodic, shrink-wrapped system.
+            ff: Typified force field providing pair/bond/angle/... coefficients.
+            etol: Energy stopping tolerance (unitless).
+            ftol: Force stopping tolerance (force units).
+            max_iter: Maximum minimiser iterations.
+            max_eval: Maximum force/energy evaluations.
+            pair_style: A LAMMPS ``pair_style`` line replacing the force
+                field's own; ``None`` (the default) minimises under the force
+                field's pair style, cutoffs and long-range solver (see
+                :meth:`generate_inputs`).
+            atom_style: LAMMPS ``atom_style``; ``None`` is the frame's (see
+                :meth:`generate_inputs`).
+            units: LAMMPS ``units``: ``real`` (default), ``metal`` or ``lj``.
+            workdir: Directory for input/output files; a temporary directory is
+                created when ``None``.
+            capture_output: Capture LAMMPS stdout/stderr.
+
+        Returns:
+            A new :class:`~molpy.Frame` with relaxed coordinates.
+
+        Raises:
+            ValueError: As :meth:`generate_inputs` does.
+            ToolError: If LAMMPS fails or writes no output structure; the
+                error carries the tail of ``log.lammps``.
+        """
+        body = f"minimize {etol:g} {ftol:g} {int(max_iter)} {int(max_eval)}"
+        return self._relax(
+            frame,
+            ff,
+            body,
+            thermo=max(1, int(max_iter) // 10),
+            pair_style=pair_style,
+            atom_style=atom_style,
+            units=units,
+            workdir=workdir,
+            capture_output=capture_output,
+        )
+
+    def md(
+        self,
+        frame: Frame,
+        ff: ForceField,
+        *,
+        ensemble: str = "nve",
+        steps: int = 1000,
+        temperature: float = 300.0,
+        timestep: float = 1.0,
+        seed: int = 12345,
+        limit: float = 0.1,
+        pair_style: str | None = None,
+        atom_style: str | None = None,
+        units: str = "real",
+        workdir: str | Path | None = None,
+        capture_output: bool = False,
+    ) -> Frame:
+        """Run short MD on *frame* under *ff* and return a new frame.
+
+        A thin sibling of :meth:`minimize` for settling a packed box.  Note that
+        a freshly packed box carries residual clashes; run :meth:`minimize`
+        first, or use ``ensemble="nve/limit"``, to avoid a blow-up under plain
+        ``nve``.
+
+        Args:
+            frame: Input structure: periodic when it carries a periodic box
+                (``frame.box``), else a non-periodic, shrink-wrapped system.
+            ff: Typified force field.
+            ensemble: One of ``"nve"``, ``"nve/limit"``, ``"nvt"``.
+            steps: Number of MD steps.
+            temperature: Initial / target temperature (K).
+            timestep: Timestep in *units* time (fs for ``real``).
+            seed: RNG seed for the initial velocity distribution.
+            limit: Per-step displacement cap (Å) for ``ensemble="nve/limit"``.
+            pair_style: A ``pair_style`` line replacing the force field's
+                own; ``None`` keeps the force field's.
+            atom_style: LAMMPS ``atom_style``; ``None`` is the frame's.
+            units: LAMMPS ``units``: ``real``, ``metal`` or ``lj``.
+            workdir: Working directory; temporary when ``None``.
+            capture_output: Capture LAMMPS stdout/stderr.
+
+        Returns:
+            A new :class:`~molpy.Frame` with the post-MD coordinates.
+
+        Raises:
+            ValueError: If *ensemble* is unknown, or as :meth:`generate_inputs`.
+        """
+        fixes = {
+            "nve": "fix integ all nve",
+            "nve/limit": f"fix integ all nve/limit {limit:g}",
+            "nvt": (
+                f"fix integ all nvt temp {temperature:g} {temperature:g} "
+                f"{100 * timestep:g}"
+            ),
+        }
+        if ensemble not in fixes:
+            raise ValueError(
+                f"ensemble must be one of {sorted(fixes)}, got {ensemble!r}."
+            )
+        body = "\n".join(
+            [
+                f"velocity all create {temperature:g} {int(seed)} loop geom",
+                fixes[ensemble],
+                f"timestep {timestep:g}",
+                f"run {int(steps)}",
+                "unfix integ",
+            ]
+        )
+        return self._relax(
+            frame,
+            ff,
+            body,
+            thermo=max(1, int(steps) // 10),
+            pair_style=pair_style,
+            atom_style=atom_style,
+            units=units,
+            workdir=workdir,
+            capture_output=capture_output,
+        )
+
+    def _relax(
+        self,
+        frame: Frame,
+        ff: ForceField,
+        body: str,
+        *,
+        thermo: int,
+        pair_style: str | None,
+        atom_style: str | None,
+        units: str,
+        workdir: str | Path | None,
+        capture_output: bool,
+    ) -> Frame:
+        """Shared driver behind :meth:`minimize` / :meth:`md`.
+
+        Writes the deck with :meth:`generate_inputs` (the force field's pair
+        style unless *pair_style* replaces it, its ``special_bonds`` and
+        ``pair_modify`` mix), runs *body* followed by ``write_data``, then reads back and
+        splices the relaxed coordinates onto a copy of *frame*.
+        """
+        run_dir = (
+            Path(workdir)
+            if workdir is not None
+            else (self.workdir or Path(tempfile.mkdtemp()))
+        )
+        out_name = "relaxed.data"
+        paths = self.generate_inputs(
+            frame,
+            ff,
+            run_dir,
+            atom_style=atom_style,
+            units=units,
+            pair_style=pair_style,
+            body="\n".join(
+                [
+                    f"thermo {int(thermo)}",
+                    "thermo_style custom step temp pe ke etotal press",
+                    body,
+                    f"write_data {out_name} nocoeff",
+                ]
+            ),
+        )
+        self.run(
+            Script.from_path(paths["input"]),
+            workdir=run_dir,
+            capture_output=capture_output,
+            check=True,
+        )
+
+        out_path = run_dir / out_name
+        if not out_path.exists():
+            log = run_dir / "log.lammps"
+            self.logger.error("relaxation output missing", output=str(out_path))
+            raise ToolError(
+                self.key,
+                f"finished but did not write {out_name} (log: {log})",
+                returncode=0,
+                tail=tail_of(log),
+            )
+        # write_data names its style (`Atoms # full`), which the reader reads.
+        relaxed = read_lammps_data(out_path)
+        self.logger.info(
+            "relaxation finished", run_dir=str(run_dir), output=out_path.name
+        )
+        return _splice_coords(frame, relaxed)
+
+
+# The input script around a command block: the init, the structure, then the
+# settings include (molrs's LAMMPS force-field writer: every ``*_style`` line
+# with its coefficients, ``special_bonds`` and ``pair_modify``).
+_INPUT_TEMPLATE = """\
+# molpy-generated LAMMPS input for {prefix}
+include {init}
+read_data {data}
+include {settings}
+{kspace}neigh_modify every 1 delay 0 check yes
+
+{body}
+"""
+
+# The default body: minimise, then a short NVT run to edit.
+_STARTER_BODY = """\
+minimize        1.0e-4 1.0e-6 1000 10000
+
+velocity        all create 300.0 12345 loop geom
+fix             1 all nvt temp 300.0 300.0 100.0
+timestep        1.0
+thermo          100
+thermo_style    custom step temp pe ke etotal press
+run             1000
+unfix           1
+"""
+
+
+def _splice_coords(original: Frame, relaxed: Frame) -> Frame:
+    """Return a copy of *original* with coordinates taken from *relaxed*.
+
+    Coordinates are matched by atom ``id`` when *original* carries one,
+    otherwise by row order (LAMMPS assigns ``id`` sequentially on write). All
+    other columns, topology blocks, and the box come from *original*; neither
+    input is mutated.
+    """
+    import numpy as np
+
+    relaxed_atoms = relaxed["atoms"]
+    rid = relaxed_atoms["id"]
+
+    new = original.copy()
+    atoms = new["atoms"]
+    n = atoms.n_rows
+    if relaxed_atoms.n_rows != n:
+        raise RuntimeError(
+            f"atom count changed during relaxation: {n} in, {relaxed_atoms.n_rows} out."
+        )
+
+    if "id" in atoms:
+        row_of = {int(i): k for k, i in enumerate(rid)}
+        sel = np.array([row_of[int(i)] for i in atoms["id"]], dtype=np.intp)
+    else:
+        sel = np.argsort(rid, kind="stable")
+
+    atoms["x", "y", "z"] = relaxed_atoms["x", "y", "z"][sel]
+    return new

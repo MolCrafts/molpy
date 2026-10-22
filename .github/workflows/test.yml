@@ -83,10 +83,11 @@ jobs:
           cache: python
       - uses: MolCrafts/molcrafts-ci/actions/setup-python@01317cbc43f961ab14c35d51d48c081a1acfe815
       # The wheel is written to .ci-out/wheel and kept: the file this step
-      # tested is the file the Linux leg uploads.
+      # tested is the file the Linux leg uploads. molpy (molpy/) runs in the
+      # same call, on that same wheel.
       - env:
           MOLRS_WHEEL_DIR: .ci-out/wheel
-        run: scripts/check.sh --report .ci-out python
+        run: scripts/check.sh --report .ci-out python molpy
       - if: matrix.os == 'ubuntu-latest'
         uses: actions/upload-artifact@v7
         with:
@@ -103,10 +104,18 @@ jobs:
           title: test / python (${{ matrix.os }})
           junit: .ci-out/junit.xml
           coverage: .ci-out/coverage.json
+      - name: Report molpy
+        if: ${{ !cancelled() }}
+        uses: MolCrafts/molcrafts-ci/actions/report@01317cbc43f961ab14c35d51d48c081a1acfe815
+        with:
+          title: test / molpy (${{ matrix.os }})
+          junit: .ci-out/molpy-junit.xml
+          coverage: .ci-out/molpy-coverage.json
 
-  # The site as Cloudflare Pages builds it, --strict: any warning fails.
-  # Cloudflare Pages deploys it from MolCrafts itself (its Git integration),
-  # so no job here deploys. The API reference imports the tested wheel.
+  # The sites as Cloudflare Pages builds them, --strict: any warning fails.
+  # Cloudflare Pages deploys them from MolCrafts itself (its Git integration;
+  # molpy's from molpy/), so no job here deploys. Both API references import
+  # the tested wheel.
   docs:
     name: test / docs
     needs: [context, python]
@@ -123,7 +132,7 @@ jobs:
         run: |
           MOLRS_TESTED_WHEEL=$(ls "$PWD"/.ci-out/wheel/molcrafts_molrs-*.whl)
           export MOLRS_TESTED_WHEEL
-          scripts/check.sh docs
+          scripts/check.sh docs molpy_docs
 
   capi:
     name: test / capi${{ matrix.os == 'windows-latest' && ' (windows-latest)' || '' }}

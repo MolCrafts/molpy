@@ -1,0 +1,5 @@
+3
+Lattice="10 0 0 2 11 0 3 4 12" IsStrange Properties=species:S:1:pos:R:3:CS:R:2 ENERGY=-2069.85 Natoms=3 NAME=COBHUW
+O 2.34 4.55 11.58 24.10 31.34
+C 7.42 14.42 3.33 -74.64 -90.59
+H 3.47 6.03 10.33 0.00 0.00

@@ -1,0 +1,164 @@
+[project]
+name = "molcrafts-molpy"
+dynamic = ["version"]
+description = "Modern Python framework for molecular simulation and analysis"
+readme = "README.md"
+requires-python = ">=3.12"
+license = "BSD-3-Clause"
+license-files = ["LICENSE"]
+authors = [{ name = "Roy Kid", email = "lijichen365@gmail.com" }]
+maintainers = [{ name = "Roy Kid", email = "lijichen365@gmail.com" }]
+keywords = [
+    "molecular-simulation",
+    "computational-chemistry",
+    "molecular-dynamics",
+    "force-fields",
+    "scientific-computing",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Science/Research",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Programming Language :: Python :: 3 :: Only",
+    "Topic :: Scientific/Engineering :: Chemistry",
+    "Typing :: Typed",
+]
+# Runtime: numpy (scientific baseline) + MolCrafts ecosystem only.
+# No lark / zarr / RDKit / etc. as hard deps — those live in molrs or optional extras.
+dependencies = [
+    "numpy>=2.0",
+    "molcrafts-molrs>=0.19.0,<0.20",
+    "molcrafts-mollog>=1.3.1,<2",
+    "molcrafts-molcfg>=1.5.1,<2",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=6.0.0",
+    "pytest-xdist>=3.0",
+    "pytest-cov",
+    "ruff==0.16.1",
+    "ty==0.0.65",
+]
+doc = [
+    "zensical>=0.0.53",
+    # 0.2.9: equal chart margins + plain VL fences (no annotation passthrough).
+    # 0.2.8+ required for ``$file`` data refs in molplot fences.
+    "molcrafts-zensical-theme>=0.2.9",
+    "mkdocstrings[python]>=0.24.0",
+]
+all = ["molcrafts-molpy[dev,doc]"]
+
+# Formats molpy owns, published for any molcrafts viewer to read. Declaring
+# them here rather than importing a host keeps the arrow one-way: molpy says
+# what it can parse, and a platform picks it up at install time.
+[project.entry-points."molcrafts.metric_readers"]
+lammps_log = "molpy.io.lammps:LammpsLogMetricReader"
+mrec = "molpy.io.mrec:MrecMetricReader"
+mlp_jsonl = "molpy.io.mlp_jsonl:MlpJsonlMetricReader"
+
+[project.urls]
+Homepage = "https://github.com/MolCrafts/molrs/tree/dev/molpy"
+Documentation = "https://docs.molcrafts.org/molpy/"
+Repository = "https://github.com/MolCrafts/molrs.git"
+Issues = "https://github.com/MolCrafts/molrs/issues"
+
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+package-dir = { "" = "src" }
+
+[tool.setuptools.dynamic]
+version = { attr = "molpy.version.version" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+"molpy.resources.forcefield" = ["*.xml"]
+
+[tool.ruff]
+# Matches requires-python: the lint gate must reject syntax the floor
+# (3.12) cannot parse — PEP 758 `except A, B:` slipped in exactly this way.
+target-version = "py312"
+line-length = 88
+
+[tool.ruff.lint]
+# The default-style gate (E4/E7/E9/F), selected explicitly so a ruff release
+# that widens its defaults does not widen this gate mid-release.
+# PLW1514 (a preview rule; explicit-preview-rules keeps every other preview
+# rule off): text-mode file I/O names its encoding. Unnamed, Python decodes
+# with the locale -- cp1252 on Windows -- so a read that passes every Linux
+# hook fails only on CI's Windows leg.
+# TID252: imports within molpy are absolute (docs/developer/coding-style.md).
+select = ["E4", "E7", "E9", "F", "RUF100", "PLW1514", "TID252"]
+preview = true
+explicit-preview-rules = true
+# E402: readers/writers import lazily inside functions by design (layering);
+# E741: single-letter names in the maths-heavy kernels stay.
+ignore = ["E402", "E741"]
+
+[tool.ruff.lint.flake8-tidy-imports]
+ban-relative-imports = "all"
+
+[tool.ruff.lint.per-file-ignores]
+# The docs-series generator is a script package run with ``python -m``, not molpy.
+"scripts/**" = ["TID252"]
+
+[tool.ty.environment]
+python-version = "3.14"
+root = ["./src"]
+
+[tool.ty.rules]
+all = "warn"
+# ty 0.0.65 is stricter; keep release gate green while types catch up.
+missing-override-decorator = "ignore"
+missing-type-argument = "ignore"
+unresolved-import = "ignore"
+invalid-argument-type = "ignore"
+invalid-assignment = "ignore"
+invalid-method-override = "ignore"
+invalid-return-type = "ignore"
+unsupported-operator = "ignore"
+not-iterable = "ignore"
+unknown-argument = "ignore"
+invalid-type-arguments = "ignore"
+not-subscriptable = "ignore"
+index-out-of-bounds = "ignore"
+no-matching-overload = "ignore"
+missing-argument = "ignore"
+division-by-zero = "ignore"
+invalid-parameter-default = "ignore"
+too-many-positional-arguments = "ignore"
+invalid-type-form = "ignore"
+call-non-callable = "ignore"
+redundant-cast = "ignore"
+
+[tool.ty.terminal]
+output-format = "full"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# No __init__.py under tests/: same basenames (four test_lammps.py) resolve by path.
+addopts = "--import-mode=importlib"
+pythonpath = ["src"]
+# "error" covers EncodingWarning too: PYTHONWARNDEFAULTENCODING=1 (CI, the
+# hooks and release.yml set it) makes every text-mode open without encoding= warn. Python
+# would decode with the locale, cp1252 on Windows, so such a read passes on
+# Linux and fails only on Windows; ruff's PLW1514 sees only typed receivers.
+filterwarnings = [
+    "error",
+    "ignore::pytest.PytestUnraisableExceptionWarning",
+]
+
+# molrs is built from this repository (../molrs-python); scripts/check.sh's
+# `molpy` gate installs the wheel the `python` gate built and tested over it.
+# mollog and molcfg come from PyPI, within the [project] ranges.
+[tool.uv.sources]
+molcrafts-molrs = { path = "../molrs-python" }

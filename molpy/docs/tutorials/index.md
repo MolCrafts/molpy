@@ -1,0 +1,112 @@
+# Tutorials
+
+Learn MolPy in order: get it running, then understand the data model.
+Each data-model chapter opens with a **question**, a one-line **definition**,
+and what the object is **not** — then builds from there. When you have a
+concrete task (build, typify, pack, export), go to
+[Guides](../user-guide/index.md), which assume these tutorials.
+
+## Get running
+
+1. **[Installation](../getting-started/installation.md)** — install the package and verify it imports. *~2 min*
+2. **[Quickstart](../getting-started/quickstart.md)** — the whole pipeline in six lines, then a TIP3P water box built with full control. *~10 min*
+3. **[Example Gallery](../getting-started/examples.md)** — copy-paste workflows: small molecules, packed boxes, polymers, virtual sites.
+4. **[FAQ](../getting-started/faq.md)** — why MolPy exists, how it relates to RDKit / ASE / mBuild, and when another tool is the better choice.
+
+If MolPy is installed, this runs as-is — no optional dependencies, not even RDKit:
+
+```python
+import molpy as mp
+
+water = mp.Atomistic(name="water")
+o = water.add_atom(atomic_number=8, x=0.000, y=0.000, z=0.000)
+h1 = water.add_atom(atomic_number=1, x=0.957, y=0.000, z=0.000)
+h2 = water.add_atom(atomic_number=1, x=-0.239, y=0.927, z=0.000)
+water.add_bond(o, h1)
+water.add_bond(o, h2)
+
+frame = water.to_frame()
+mp.io.write_pdb("water.pdb", frame)
+print(f"Wrote {frame['atoms'].n_rows} atoms to water.pdb")
+```
+
+`Wrote 3 atoms to water.pdb` means you are ready — and those few lines already
+crossed MolPy's one essential boundary: **edit chemistry on a graph
+(`Atomistic`), compute and export from arrays (`Frame`)**. The chapters below
+explain that split and everything built on it.
+
+## The data model
+
+MolPy rests on three ideas: **edit on graphs, compute and export on arrays,
+keep parameters apart**. These chapters explain the data structures behind
+them — what each object *is*, why it exists, and where its boundaries lie.
+Read them in order once; afterwards each chapter stands alone as reference.
+
+- **Identity vs data.** Entities (atoms, links) are unique identities; bulk numbers live in columnar arrays. Two atoms with identical properties are still different atoms — they can take part in different bonds, selections, and edits.
+- **Graph → arrays.** Build and edit as a graph (`Atomistic`); compute and export from arrays (`Frame`). The conversion is explicit (`Atomistic.to_frame()`).
+- **Derived topology.** Angles and dihedrals are *derived* from bonds on demand, not stored and hand-maintained — no stale caches when the bond graph changes.
+- **Parameters are separate.** Force-field typing is independent of structure, so a system can be rebuilt and re-typed deterministically.
+
+The typical flow:
+
+> `Atomistic` (edit) → derive topology → `Frame` (arrays) → I/O → simulate → analyze
+
+### Representational hierarchy
+
+The diagram below illustrates the standard data flow through a MolPy pipeline. Each node represents a core data structure; each edge represents an explicit transformation.
+
+```text
+SMILES / CGsmiles / file
+        │  mp.io.read_* · mp.io.smiles.SmilesIr · mp.io.cgsmiles.CgSmilesIr
+        ▼
+┌───────────────────────────┐
+│ Atomistic                 │  editable molecular graph:
+│ atoms + bonds (+ ports)   │  atoms, bonds, angles, dihedrals
+└─────────────┬─────────────┘
+              │  typifier.typify(mol)  → typed copy
+              │  typifier.forcefield() → ForceField
+              ▼
+┌───────────────────────────┐
+│ typed Atomistic           │  atoms and links carry
+│                           │  type labels and charges
+└─────────────┬─────────────┘
+              │  .to_frame()
+              ▼
+┌───────────────────────────┐
+│ Frame                     │  Block tables + box + meta
+└─────────────┬─────────────┘
+              │  mp.io.write_*
+              ▼
+LAMMPS / GROMACS / PDB / *.mrec files
+```
+
+**`Atomistic`** is the primary editing surface. Atom addition and removal, bond formation, reaction execution, and structure assembly all operate on this representation.
+
+**`Frame`** is the primary numerical surface. Vectorized distance computation, file I/O, and engine export all operate on `Frame` objects and their constituent `Block` tables.
+
+**`ForceField`** is an independent data structure that travels alongside a molecular system. Force field parameters are neither embedded in atoms nor derived implicitly; they are stored in a queryable typed dictionary.
+
+**`Box`** specifies the periodic simulation cell and attaches to a `Frame` as a first-class attribute, not as metadata.
+
+**`Trajectory`** is an in-memory, time-ordered sequence of `Frame` objects. Lazy, seekable access to a file on disk is the job of the `mp.io` trajectory readers.
+
+### Chapter map
+
+| Layer | What it is | In depth |
+|-------|-----------|----------|
+| **Nodes & relations** — `Atom`, `Bond`, `Angle`, `Dihedral` | Identity-first graph model for building and editing | [Atomistic and Topology](01_atomistic_and_topology.md) |
+| **Topology** | Angles/dihedrals *derived* from the bond graph and written in place by `generate_topology()`; bond-graph distances via `topo_distances()`; molecule ids of a `Frame` via `mp.Topology.from_frame(frame).connected_components()` | [Atomistic and Topology](01_atomistic_and_topology.md) |
+| **Block & Frame** | Columnar tables (`atoms`, `bonds`, …) plus box and metadata — the exchange object that writers and compute operate on | [Block and Frame](02_block_and_frame.md) |
+| **Box** | Simulation cell + periodic boundaries (wrapping, minimum-image distances) | [Box and Periodicity](03_box_and_periodicity.md) |
+| **ForceField & Typifier** | A parameter catalog (styles + type tables) and the rule engine that assigns types onto a structure | [Force Field](04_force_field.md) |
+| **Trajectory** | An ordered sequence of `Frame` objects | [Trajectory](05_trajectory.md) |
+| **Selector** | Composable, predicate-based atom filters over `Block` columns | [Selector](06_selector.md) |
+| **CoarseGrain** | `Bead` / `CgBond` graph for coarse-grained models | [Coarse-Grained Structure](08_coarsegrain.md) |
+| **Units** | Unit-system presets and explicit quantity conversion | [Units](09_units.md) |
+
+## Appendix
+
+- [Naming Conventions](naming-conventions.md) — canonical field names and topology-key rules used across the data model
+- [Glossary](glossary.md) — concise definitions for the core data structures and modules
+
+If you remember one sentence: **edit on graphs, compute and export on arrays.**

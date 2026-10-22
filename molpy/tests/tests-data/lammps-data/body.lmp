@@ -1,0 +1,21 @@
+two body particles, then a Bodies section that must not leak into Atoms
+2 atoms
+2 bodies
+1 atom types
+-15.532224567 15.532224567 xlo xhi
+-15.532224567 15.532224567 ylo yhi
+-0.5 0.5 zlo zhi
+
+Atoms # body
+
+1 1 1 6 -15.5322 -15.5322 0 1 2 0
+2 1 1 4 -12.4258 -15.5322 0 0 -1 0
+
+Bodies
+
+1 1 9
+2
+1 1 1 0.5 0 0 -0.5 0 0
+2 1 9
+2
+1 1 1 0.4 0 0 -0.4 0 0

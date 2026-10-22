@@ -145,24 +145,71 @@ has 864 passing tests and 0 skipped.
 **Goal.** One repository, so that one change can span the Rust core and the
 Python API and be tested together.
 
+**Rulings (2026-10-22).**
+
+- molpy lives at `molpy/`, next to `molrs-python/`. It is the whole molpy
+  project: `pyproject.toml`, `src/`, `tests/`, `docs/`, `examples/` and
+  `scripts/`. 03 reshapes the layout.
+- The source is molpy `6a2c480` (branch `user-paths`), copied as is. The
+  molpy repository is frozen from then on.
+- mollog and molcfg come from PyPI ranges. molpy's `../mollog` and `../molcfg`
+  path sources and their partner pins go away; molrs's `partners.env` is
+  unchanged.
+- Releases are frozen until 03 ships. molpy's release and nightly workflows
+  are deleted. molrs's release workflows stay, but no tag is pushed.
+
 **Scope.**
 
-- Copy molpy's `src/`, `tests/`, `docs/`, `examples/`, `scripts/` and
-  `pyproject.toml` into the molrs repo, next to `molrs-python/`, in one commit
-  (D6). No subtree and no tags.
-- The two Python dists still build locally. molpy's `uv` sources point at the
-  in-repo `molrs-python/`. Nothing is published between 02 and the end of 03.
-- CI: a change to Rust or `molrs-python/` runs molpy's tests against the wheel
-  built from that commit. Reuse molpy's workflows where they fit; delete the
-  rest. molpy's docs join molrs's docs build.
+1. **Copy.** Extract `git archive 6a2c480` into `molpy/`, without the
+   repository infrastructure the molrs root owns:
+   - `.github/` and `.pre-commit-config.yaml`;
+   - `scripts/check.py`, `scripts/partners.py`,
+     `scripts/check_partners_on_pypi.py` and `scripts/hook-run.sh`.
+
+   `.github/copilot-instructions.md` becomes `molpy/AGENTS.md`, which is local
+   only: molrs's `.gitignore` ignores every `AGENTS.md`, and the text stays in
+   molpy's history. The issue templates go too: GitHub reads them only at the
+   repository root. Files molpy tracked despite its own `.gitignore` are added
+   with `git add -f`, which keeps exactly molpy's tracked set:
+   - the 36 fixtures under `molpy/tests/tests-data/` (the directory stays
+     ignored);
+   - 4 files under `docs/assets/`.
+
+   The `uv.lock` ignore rule is deleted: `uv sync --locked` needs the lock.
+2. **Dependencies.** In `molpy/pyproject.toml`, `[tool.uv.sources]` keeps only
+   `molcrafts-molrs = { path = "../molrs-python" }`, and `molpy/uv.lock` is
+   regenerated.
+3. **Gates in `scripts/check.sh`.** The `rust-python` CI profile runs
+   `check.sh` gates, so molcrafts-ci needs no change.
+   - `molpy`: sync molpy's locked environment, install `MOLRS_TESTED_WHEEL`
+     (or build one), then run `ruff format --check`, `ty check src/molpy` and
+     `pytest`.
+   - `molpy_docs`: zensical `--strict` for `molpy/` on the same wheel.
+   - Both join `VERIFY` after `python`. The root `ruff` gate already covers
+     `molpy/`, through `molpy/pyproject.toml`'s `[tool.ruff]`.
+4. **CI (`test.yml`).** The `python` job runs `check.sh python molpy` in one
+   process, so molpy is tested on the wheel that job built, on every OS leg.
+   The `docs` job runs `check.sh docs molpy_docs`. `test / result` is
+   unchanged.
+5. **Docs deploy.** The operator re-points the Cloudflare Pages project for
+   docs.molcrafts.org/molpy to this repository, with root `molpy/`.
+6. **Freeze the old repository.** The operator archives MolCrafts/molpy after
+   its README is pointed at `molrs/molpy/`.
+
+**Status (2026-10-22):** on molrs's local branch `molpy-repo-merge`.
+`scripts/check.sh molpy molpy_docs` passes locally: format and ty are clean,
+864 tests pass in 239 s on the dev wheel, and the docs build `--strict`.
 
 **Acceptance.**
 
-- The molrs repo's CI runs molpy's full test suite against the in-tree wheel.
-- molpy's prek hooks run from the molrs root.
+- `scripts/check.sh python molpy molpy_docs` passes locally: molpy runs on the
+  wheel built from the same commit.
+- `git ls-files molpy/tests/tests-data` lists the 36 fixtures.
+- molpy's suite passes with only the tracked fixtures present.
 
-**Risk.** CI time grows. Mitigate with path filters, so that a docs-only
-change in molpy does not rebuild the native crate.
+**Risk.** CI time grows by molpy's suite on each `python` leg: about 4 min,
+measured locally on the dev-profile wheel the `python` gate builds.
+molpy loses its Python 3.14 leg until 03; it is pure Python on an abi3 core.
 
 ## 3. 03-api-fold — one Python package, native `molpy._core`
 

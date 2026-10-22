@@ -1,0 +1,203 @@
+"""Sequence generation for polymer assembly.
+
+This module provides generators that produce sequences of monomer identifiers
+based on connection probabilities and weights.
+
+The SequenceGenerator is the bottom layer in the three-layer architecture:
+- SystemPlanner (top, system level)
+- PolydisperseChainGenerator (middle, chain level)
+- SequenceGenerator (bottom, monomer level)
+"""
+
+from __future__ import annotations
+
+from collections import Counter
+from collections.abc import Mapping, Sequence
+from typing import Protocol
+
+import numpy as np
+
+__all__ = [
+    "AlternatingSequenceGenerator",
+    "BlockSequenceGenerator",
+    "SequenceGenerator",
+    "WeightedSequenceGenerator",
+]
+
+
+class SequenceGenerator(Protocol):
+    """Protocol for sequence generators.
+
+    A sequence generator controls how monomers are arranged in a single chain.
+    """
+
+    def generate_sequence(self, dp: int, rng: np.random.Generator) -> list[str]:
+        """Generate a monomer sequence of specified degree of polymerization.
+
+        Args:
+            dp: Degree of polymerization (number of monomers)
+            rng: numpy random Generator
+
+        Returns:
+            List of monomer identifiers (strings)
+        """
+        ...
+
+    def expected_composition(self) -> dict[str, float]:
+        """Return expected long-chain monomer fractions.
+
+        Returns:
+            Dictionary mapping monomer identifiers to expected fractions
+        """
+        ...
+
+
+class WeightedSequenceGenerator:
+    """Sequence generator based on monomer weights/proportions.
+
+    Each selection is independent (no memory of previous selections).
+    """
+
+    def __init__(self, monomer_weights: Mapping[str, float]):
+        if not monomer_weights:
+            raise ValueError("monomer_weights must be a non-empty dictionary")
+        for monomer_id in monomer_weights:
+            if not isinstance(monomer_id, str) or not monomer_id:
+                raise ValueError(
+                    "monomer_weights keys must be non-empty string monomer identifiers"
+                )
+        if any(w < 0 for w in monomer_weights.values()):
+            raise ValueError("monomer_weights must be non-negative")
+        if float(sum(monomer_weights.values())) <= 0.0:
+            raise ValueError("monomer_weights must sum to a positive value")
+
+        self.monomer_weights = dict(monomer_weights)
+        self.monomer_ids = sorted(self.monomer_weights)
+        self.n_monomers = len(self.monomer_ids)
+
+    def generate_sequence(self, dp: int, rng: np.random.Generator) -> list[str]:
+        """Generate a sequence of specified degree of polymerization.
+
+        Args:
+            dp: Degree of polymerization (number of monomers)
+            rng: numpy random Generator
+
+        Returns:
+            List of monomer identifiers
+        """
+        weights = np.array([self.monomer_weights[mid] for mid in self.monomer_ids])
+        probs = weights / weights.sum()
+        indices = rng.choice(len(self.monomer_ids), size=dp, p=probs)
+        return [self.monomer_ids[i] for i in indices]
+
+    def expected_composition(self) -> dict[str, float]:
+        """Return expected long-chain monomer fractions."""
+        total_weight = float(sum(self.monomer_weights.values()))
+        return {
+            mid: float(self.monomer_weights[mid]) / total_weight
+            for mid in self.monomer_ids
+        }
+
+    def __repr__(self) -> str:
+        return (
+            f"WeightedSequenceGenerator(n_monomers={self.n_monomers}, "
+            f"monomer_weights={self.monomer_weights})"
+        )
+
+
+def _check_monomer_ids(monomers: Sequence[str]) -> None:
+    for monomer_id in monomers:
+        if not isinstance(monomer_id, str) or not monomer_id:
+            raise ValueError("monomer ids must be non-empty strings")
+
+
+class AlternatingSequenceGenerator:
+    """Strictly alternating (periodic) copolymer sequence generator.
+
+    The monomer ids cycle in the given order: ``["A", "B"]`` yields
+    ``A B A B ...`` and ``["A", "B", "C"]`` yields ``A B C A B C ...``. The
+    sequence is deterministic, so ``rng`` is accepted for
+    :class:`SequenceGenerator` compatibility and ignored.
+
+    Example:
+        >>> AlternatingSequenceGenerator(["A", "B"]).generate_sequence(4)
+        ['A', 'B', 'A', 'B']
+    """
+
+    def __init__(self, monomers: Sequence[str]):
+        monomers = list(monomers)
+        if len(monomers) < 2:
+            raise ValueError(
+                "AlternatingSequenceGenerator needs at least 2 monomer ids"
+            )
+        _check_monomer_ids(monomers)
+        self.monomers = monomers
+
+    def generate_sequence(
+        self, dp: int, rng: np.random.Generator | None = None
+    ) -> list[str]:
+        """Return the first ``dp`` monomers of the alternating cycle."""
+        if dp < 0:
+            raise ValueError("dp must be non-negative")
+        n = len(self.monomers)
+        return [self.monomers[i % n] for i in range(dp)]
+
+    def expected_composition(self) -> dict[str, float]:
+        """Long-chain fractions — each monomer's share of one cycle."""
+        n = len(self.monomers)
+        return {m: c / n for m, c in Counter(self.monomers).items()}
+
+    def __repr__(self) -> str:
+        return f"AlternatingSequenceGenerator(monomers={self.monomers})"
+
+
+class BlockSequenceGenerator:
+    """Block copolymer sequence generator: one contiguous block per monomer.
+
+    Blocks appear in the order the monomers are given, with block sizes
+    proportional to ``monomer_fractions`` and apportioned by the
+    largest-remainder method so they sum exactly to ``dp``. Deterministic;
+    ``rng`` is accepted for :class:`SequenceGenerator` compatibility and ignored.
+
+    Example:
+        >>> BlockSequenceGenerator({"A": 0.5, "B": 0.5}).generate_sequence(6)
+        ['A', 'A', 'A', 'B', 'B', 'B']
+    """
+
+    def __init__(self, monomer_fractions: Mapping[str, float]):
+        if not monomer_fractions:
+            raise ValueError("monomer_fractions must be a non-empty mapping")
+        _check_monomer_ids(list(monomer_fractions))
+        if any(f < 0 for f in monomer_fractions.values()):
+            raise ValueError("fractions must be non-negative")
+        total = float(sum(monomer_fractions.values()))
+        if total <= 0.0:
+            raise ValueError("fractions must sum to a positive value")
+        self.monomer_fractions = dict(monomer_fractions)
+        self._order = list(monomer_fractions.keys())
+        self._norm = {m: f / total for m, f in monomer_fractions.items()}
+
+    def generate_sequence(
+        self, dp: int, rng: np.random.Generator | None = None
+    ) -> list[str]:
+        """Return ``dp`` monomers grouped into one block per id."""
+        if dp < 0:
+            raise ValueError("dp must be non-negative")
+        raw = {m: self._norm[m] * dp for m in self._order}
+        sizes = {m: int(np.floor(raw[m])) for m in self._order}
+        remainder = dp - sum(sizes.values())
+        # hand the leftover slots to the largest fractional parts (stable order)
+        by_frac = sorted(self._order, key=lambda m: raw[m] - sizes[m], reverse=True)
+        for m in by_frac[:remainder]:
+            sizes[m] += 1
+        sequence: list[str] = []
+        for m in self._order:
+            sequence.extend([m] * sizes[m])
+        return sequence
+
+    def expected_composition(self) -> dict[str, float]:
+        """Long-chain fractions — the normalised input fractions."""
+        return dict(self._norm)
+
+    def __repr__(self) -> str:
+        return f"BlockSequenceGenerator(monomer_fractions={self.monomer_fractions})"
