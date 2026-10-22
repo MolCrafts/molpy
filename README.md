@@ -2,172 +2,165 @@
 
 <h1>
   <img src=".github/assets/moko.svg" alt="" height="48" align="absmiddle">
-  &nbsp;molrs
+  &nbsp;molpy
 </h1>
 
-<p><strong>Rust core for molecular modeling — data structures, I/O, and compute kernels, native and in the browser.</strong></p>
+<p><strong>A programmable toolkit for molecular simulation workflows</strong></p>
 
 <p>
-  <a href="https://img.shields.io/github/actions/workflow/status/MolCrafts/molrs/test.yml?style=flat-square&logo=githubactions&logoColor=white&label=CI"><img src="https://img.shields.io/github/actions/workflow/status/MolCrafts/molrs/test.yml?style=flat-square&logo=githubactions&logoColor=white&label=CI" alt="CI"></a>
-  <a href="https://crates.io/crates/molcrafts-molrs"><img src="https://img.shields.io/crates/v/molcrafts-molrs?style=flat-square&logo=rust&logoColor=white" alt="crates.io"></a>
-  <a href="https://docs.rs/molcrafts-molrs"><img src="https://img.shields.io/docsrs/molcrafts-molrs?style=flat-square&logo=docsdotrs&logoColor=white" alt="docs.rs"></a>
-  <a href="https://pypi.org/project/molcrafts-molrs/"><img src="https://img.shields.io/pypi/v/molcrafts-molrs?style=flat-square&logo=pypi&logoColor=white&label=PyPI" alt="PyPI"></a>
-  <a href="https://www.npmjs.com/package/@molcrafts/molrs"><img src="https://img.shields.io/npm/v/@molcrafts/molrs?style=flat-square&logo=npm&logoColor=white" alt="npm"></a>
-  <a href="LICENSE"><img src="https://img.shields.io/badge/license-BSD--3--Clause-18432B?style=flat-square" alt="License"></a>
+  <a href="https://github.com/MolCrafts/molrs/actions"><img alt="CI" src="https://img.shields.io/github/actions/workflow/status/MolCrafts/molrs/test.yml?style=flat-square&logo=githubactions&logoColor=white&label=CI"></a>
+  <a href="https://pypi.org/project/molcrafts-molpy/"><img alt="PyPI" src="https://img.shields.io/pypi/v/molcrafts-molpy?style=flat-square&logo=pypi&logoColor=white&label=PyPI"></a>
+  <a href="https://pypi.org/project/molcrafts-molpy/"><img alt="Python" src="https://img.shields.io/pypi/pyversions/molcrafts-molpy?style=flat-square&logo=python&logoColor=white"></a>
+  <a href="./LICENSE"><img alt="License" src="https://img.shields.io/badge/license-BSD--3--Clause-18432B?style=flat-square"></a>
+  <a href="https://github.com/astral-sh/ruff"><img alt="Ruff" src="https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json&style=flat-square"></a>
 </p>
 
 <p>
-  <a href="https://docs.molcrafts.org/molrs/"><b>Documentation</b></a> &nbsp;&middot;&nbsp;
+  <a href="https://docs.molcrafts.org/molpy/"><b>Documentation</b></a> &nbsp;&middot;&nbsp;
   <a href="#quick-start"><b>Quick start</b></a> &nbsp;&middot;&nbsp;
+  <a href="https://docs.molcrafts.org/molpy/getting-started/examples/"><b>Examples</b></a> &nbsp;&middot;&nbsp;
   <a href="#molcrafts-ecosystem"><b>Ecosystem</b></a>
 </p>
 
 </div>
 
-molrs is a Rust library for molecular modeling: a column-oriented data model, format readers and writers, trajectory analysis, force fields, and 3D structure generation. The same code runs natively, from Python (PyO3), and in the browser (WASM).
+MolPy is a toolkit for the full molecular-system workflow — parsing,
+building, editing, typing, analyzing, and reading/writing simulation formats.
+One Rust core, [molrs](crates/molrs), carries the data model and the
+kernels; the same core is bound to Python (`molpy`), WebAssembly (`molwasm`),
+C (`molc`) and C++ (`molcxx`). Packing a box is the job of the companion
+package [molpack](https://docs.molcrafts.org/molpack/).
 
 > **Under active development.** Public APIs may change between minor releases.
 
 ## Vision
 
-Molecular modeling tools have long forced a choice between fast and reusable. The performance-critical kernels live in aging C and Fortran, while the science is written in Python wrappers that cannot run anywhere a Python interpreter does not. molrs exists to dissolve that split: one correct, well-tested implementation of the molecular data model and its compute kernels, written once in Rust.
+Molecular modeling is fragmented. Every simulation code has its own file formats
+and conventions; every task — parsing, building, typing, analysis,
+visualization — lives in a separate library; and moving a system between them
+means writing throwaway glue.
 
-That single implementation is meant to be portable everywhere molecules are studied — a native library, a Python package, and a WebAssembly module that runs in a browser tab with no install. The aspiration is that a researcher, a pipeline, and an interactive web tool can all reach for the exact same neighbor search, the same RDF, the same force-field evaluation, and get identical numbers.
+molpy aims to be the **common foundation** beneath that workflow: one explicit,
+programmable representation of a molecular system that every stage can share.
+Parse a structure into it, build on it, type and analyze it — then hand the
+*same object* onward, with no conversion step in between.
 
-By becoming the dependable core the rest of the MolCrafts ecosystem builds on, molrs aims to make high-performance, reference-grade molecular computation something you take for granted rather than something you reimplement.
+That representation is meant to be built on, not just used. It is the data model
+the [MolCrafts ecosystem](#molcrafts-ecosystem) extends — visualization,
+experiment management, agent access — and it reads the same whether a human
+writes it or an agent calls it.
 
 ## Capabilities
 
-One crate, `molcrafts-molrs`, whose sub-systems are feature-gated modules
-(`core` and `perceive` are always on):
+In Python every name is reached through `import molpy as mp`, one module per
+subsystem of the Rust core, so the Python path and the Rust path are the same
+words (`mp.core` is `molrs::core` — stores, graphs, box, neighbour search and
+units — then `mp.io`, `mp.ff`, `mp.perceive`, `mp.compute`, `mp.builder`, …).
+The core data classes you handle directly (`mp.Frame`, `mp.Block`,
+`mp.Trajectory`, `mp.Box`, `mp.Atomistic`, …) are promoted to the root, as
+the same objects.
 
-| Module (feature) | Capability |
-|------------------|------------|
-| `core`, `perceive` *(always on)* | Frame / Block column store, MolGraph topology, elements, `SimBox` + minimum-image convention, spatial regions, neighbor search, chemical perception, SMARTS matching |
-| `builder` | Structure builders: graphene, nanotubes, lattices, self-avoiding walks, site-graph assembly (`Assembler`, placers, orienters) |
-| `io` | Readers / writers for PDB, XYZ, mol2, SDF, CIF, GRO, POSCAR, CHGCAR, Cube, LAMMPS data/dump, DCD, TRR, XTC; `*.mrec` record files following the [molrec](https://docs.molcrafts.org/molrec/) contract — frames, topologies, trajectories and force fields (`zarr` / `filesystem`); SMILES / CGsmiles parser under the `smiles` feature |
-| `compute` | Trajectory analysis on one `Compute` contract (`new` = configuration, `compute` = data): one `Correlator` behind `Msd` / `Vacf` / … and the spectra (FFT, windows, frequency grids), RDF, clustering, gyration / inertia tensors, PCA, k-means, density, diffraction, PMFT, order parameters, dielectric, environment matching |
-| `ff` | Force fields and potentials — `def_style` / `def_type` model, MMFF94 / OPLS-AA / GAFF / UFF typing through `Typing`, `PotentialCompiler`, LJ, PME; LAMMPS / GROMACS / OpenMM XML read and write; L-BFGS geometry optimization over a `Potential` |
-| `conformer` | 3D conformer generation: ETKDGv3 distance geometry, experimental-torsion refinement, MMFF94 cleanup, stereo guards |
-| `md` | In-process molecular dynamics: velocity-Verlet and Langevin integration over force-field potentials |
-| `stream` | MessagePack/JSON frame transport and native WebSocket streaming |
-
-A separate `molcrafts-molcxx` crate (built from source, not published)
-provides a CXX bridge for zero-copy integration with Atomiverse C++.
+| Where | Capability |
+|---|---|
+| **`mp.*`, `core`, `perceive`, `conformer`, `optimize`** | Explicit data model — `Frame` / `Block` columnar arrays, `Trajectory`, editable `Atomistic` / `CoarseGrain` graphs and `Box` on the root; regions, neighbour search, units, molpy's selectors and trajectory splitters in `mp.core`; perception and SMARTS (`mp.perceive.SmartsPattern`), 3D conformers (`mp.conformer.Conformer`), the `mp.optimize.Lbfgs` minimizer |
+| **`ff`** | Force fields — `forcefield` (the `ForceField` data model), `potential` (kernels), `compile` (`PotentialCompiler`), `typifier` (OPLS-AA, MMFF94, GAFF / GAFF2 natively; AM1-BCC charges via AmberTools), `charge`, `ir` (the IR's vocabulary), `style_registry` (your own styles from Python), `params`, `clpol_scaling` |
+| **`builder`** | Site-graph assembly (`Assembler`), graphene and nanotubes, polymer planning and polydispersity, crystals, virtual sites, packing templates |
+| **`compute`** | Analysis — `Rdf`, `Msd`, conductivity, order parameters, Voronoi, dielectric and vibrational spectra, time-correlation functions, … (native kernels) |
+| **`io`** | Read/write — PDB, GRO, LAMMPS data, XYZ, AMBER, SMILES / CGsmiles, trajectories, `*.mrec` records, … |
+| **`engine`** | MD input generation & run management — LAMMPS, GROMACS, OpenMM, CP2K |
+| **`tool`** | The external programs molpy runs (engines, the AmberTools pipeline): settings, environment, `ToolError` |
 
 ## Install
 
-```bash
-cargo add molcrafts-molrs
-```
+| Binding | Install | Use |
+|---------|---------|-----|
+| **Python** | `pip install molcrafts-molpy` | `import molpy as mp` |
+| **Python (browser / Pyodide)** | `await micropip.install("molcrafts-molpy")` | `import molpy as mp` |
+| **JavaScript (browser)** | `npm install @molcrafts/molwasm` | the wasm-bindgen API ([guide](https://docs.molcrafts.org/molpy/bindings/wasm/)) |
+| **C** | `molc-*.tar.gz` from [GitHub Releases](https://github.com/MolCrafts/molrs/releases) | link `libmolc`, `#include "molc.h"` ([interop](https://docs.molcrafts.org/molpy/bindings/interop/)) |
+| **C++** | built from source (`molcxx/`) | the CXX bridge |
+| **Rust** | `cargo add molcrafts-molrs` | `use molrs::…` ([guide](https://docs.molcrafts.org/molpy/bindings/rust/)) |
 
-The default build is core only (`core`, `perceive`, the `optimize` contract)
-plus `rayon`. Every sub-system is opt-in: name the modules you need, or `full`
-for all of them (`builder`, `io`, `smiles`, `compute`, `voronoi`,
-`ff`, `conformer`, `md`). `full` does not enable `stream` or `filesystem`
-(path-backed Zarr); add them explicitly. `default-features = false` also
-drops `rayon` (wasm, Pyodide).
+The Python wheel carries the native core as `molpy._core`; its other
+dependencies are NumPy and the MolCrafts logging/config packages. Optional:
+AmberTools (AM1-BCC charges and AMBER polymer chains; GAFF typing itself is
+native).
 
-```toml
-molcrafts-molrs = { version = "0.19", features = ["io", "smiles", "conformer"] }
-```
+> **Nightly builds** are paused while the project is restructured; the last
+> snapshots stay on `molcrafts-molpy-nightly` (versioned `X.Y.Z.devN`).
 
-| Environment | Install | Import / use |
-|-------------|---------|----------------|
-| **Rust** | `cargo add molcrafts-molrs` | `use molrs::…` |
-| **Python (desktop)** | `pip install molcrafts-molrs` | `import molrs` |
-| **Python (browser / Pyodide)** | `await micropip.install("molcrafts-molrs")` | `import molrs` |
-| **JS (browser)** | `npm install @molcrafts/molrs` | wasm-bindgen API (not `import molrs`) |
-| **C / C++** | `molc-*.tar.gz` from [GitHub Releases](https://github.com/MolCrafts/molrs/releases) | link `libmolc` + `#include "molrs.h"` — see `docs/interop.md`, Path C |
+<details>
+<summary>Build from source (development)</summary>
 
-PyPI ships **desktop** wheels (manylinux / macOS / Windows) and a **Pyodide
-(Emscripten)** wheel for micropip. The npm package is a separate **wasm-bindgen**
-build used by MolVis; it is not the Python extension.
-
-```python
-# In Pyodide (browser or Node)
-import micropip
-await micropip.install("molcrafts-molrs")
-import molrs
-```
-
-> **Python nightly.** Bleeding-edge wheels go to `molcrafts-molrs-nightly`
-> (`X.Y.Z.devN`) on the `nightly` branch. `pip install --pre molcrafts-molrs-nightly`
-> imports as `molrs` and cannot sit beside stable `molcrafts-molrs`.
-
-## Build from source
-
-Building from source needs the Rust toolchain. `rust-toolchain.toml` pins one
-exact rustc / rustfmt / clippy release plus the `wasm32-unknown-unknown`
-target, so [`rustup`](https://rustup.rs/) selects them automatically on the
-first build, and local builds, the prek hooks and CI all use the same compiler.
+Building needs the Rust toolchain; `rust-toolchain.toml` pins it, so
+[`rustup`](https://rustup.rs/) selects it on the first build.
 
 ```bash
 git clone https://github.com/MolCrafts/molrs.git
 cd molrs
-# `mrs-*` are cargo aliases committed in .cargo/config.toml. They pin one
-# feature set, so every command reuses the same build instead of compiling
-# the crate again under a slightly different spelling.
-cargo mrs-build   # compile the Rust library
-cargo mrs-test    # unit tests
-cargo mrs-doctest # rustdoc examples
-scripts/check.sh verify  # the pre-push gate: every check, once
+uvx pre-commit install
+uv --directory molpy sync --extra dev   # builds molpy (maturin) into molpy/.venv
+scripts/check.sh verify                 # the pre-push gate: every check, once
 ```
 
-Binding crates are standalone workspaces. Build each with
-`cargo build --manifest-path <crate>/Cargo.toml`.
+Each binding is a standalone Cargo workspace (`molpy/`, `molwasm/`, `molc/`,
+`molcxx/`), built with `cargo build --manifest-path <dir>/Cargo.toml`; the
+Rust core has `cargo mrs-build` / `mrs-test` aliases (`.cargo/config.toml`).
+See [Development Setup](https://docs.molcrafts.org/molpy/developer/development-setup/).
 
-**Python bindings** are built from the `molrs-python` crate with
-[maturin](https://www.maturin.rs/). `maturin develop` compiles the PyO3
-extension and installs it editable into the active virtualenv under the import
-name `molrs`:
-
-```bash
-pip install maturin
-maturin develop -m molrs-python/Cargo.toml --release
-python -c "import molrs; print(molrs.io.smiles.SmilesIr('O').n_components)"
-```
-
-**WASM / npm** is built with [wasm-pack](https://rustwasm.github.io/wasm-pack/),
-using the same flags as release publishing:
-
-```bash
-cd molwasm
-wasm-pack build --release --target bundler --scope molcrafts --out-name molrs
-```
-
-See the [installation guide](https://docs.molcrafts.org/molrs/getting-started/installation/)
-for environment-verification snippets and the
-[contributing guide](https://docs.molcrafts.org/molrs/contributing/) for the
-documentation loop.
+</details>
 
 ## Quick start
 
-```rust
-use molrs::conformer::{Conformer, ConformerOptions};
-use molrs::io::read_smiles_str;
+Parse a SMILES string, assign OPLS-AA types, and write LAMMPS input files:
 
-let mol = read_smiles_str("c1ccccc1").unwrap();      // benzene
-let (mol3d, _report) = Conformer::new(ConformerOptions::default()).generate(&mol).unwrap();
+```python
+import molpy as mp
+
+from pathlib import Path
+
+mol       = mp.io.smiles.SmilesIr("CCO").to_atomistic()     # ethanol from SMILES
+mol3d, _  = mp.conformer.Conformer(seed=42).generate(mol)   # hydrogens + 3D coordinates
+
+typifier  = mp.ff.typifier.OplsAaTypifier()          # carries the OPLS-AA library
+typed     = typifier.typify(mol3d)
+ff        = typifier.forcefield()                 # parameters of the assigned types
+
+system    = typed.to_frame()
+system.box = mp.Box.cube(30.0)
+system["atoms"]["mol_id"] = mp.Topology.from_frame(system).connected_components() + 1
+
+# the pair cutoff is a run setting: you declare it, molpy never invents one
+ff.get_style("pair", "lj/cut")["cutoff"] = 10.0
+ff.get_style("pair", "coul/cut")["cutoff"] = 10.0
+
+out = Path("output"); out.mkdir(exist_ok=True)
+mp.io.write_lammps_data(out / "system.data", system)
+mp.io.write_lammps_forcefield(out / "system.ff", ff, system)
 ```
 
-Python and JavaScript/TypeScript quickstarts live in the documentation.
+More workflows — packed solvent boxes, virtual-site models, polymer
+architectures (the stress test for MolPy's editing machinery), AmberTools
+parameterization — are in the
+**[Example Gallery](https://docs.molcrafts.org/molpy/getting-started/examples/)**
+and the task-oriented [Guides](https://docs.molcrafts.org/molpy/user-guide/).
 
 ## Documentation
 
-- [Documentation site](https://docs.molcrafts.org/molrs/) — guides and references
-- [Getting started](https://docs.molcrafts.org/molrs/getting-started/installation/) — Rust, Python, and WASM quickstarts
-- [Python reference](https://docs.molcrafts.org/molrs/reference/python/) — the binding surface, rendered from the installed package
-- [Task-oriented guides](https://docs.molcrafts.org/molpy/) — data model, SMILES, neighbor search, 3D embedding, force fields, I/O, trajectory analysis (molpy, the Python library built on molrs)
-- [Rust API reference](https://docs.rs/molcrafts-molrs) — full rustdoc on docs.rs
-- [Record files](https://docs.molcrafts.org/molrs/guides/records/) — saving frames, trajectories and force fields as `*.mrec`
+Full documentation, including executable notebooks:
+**[docs.molcrafts.org/molpy](https://docs.molcrafts.org/molpy/)**
+
+- [Getting Started](https://docs.molcrafts.org/molpy/getting-started/) — install and first example
+- [Example Gallery](https://docs.molcrafts.org/molpy/getting-started/examples/) — short copy-paste workflows
+- [Guides](https://docs.molcrafts.org/molpy/user-guide/) — task-oriented notebooks
+- [Concepts](https://docs.molcrafts.org/molpy/tutorials/) — data model deep dives
+- [API Reference](https://docs.molcrafts.org/molpy/api/) — full API
 
 ## MolCrafts ecosystem
 
 | Project | Role |
 |---------|------|
-| [molpy](molpy/)     | Python toolkit — the shared molecular data model & workflow layer; lives in this repo at `molpy/` (molpy-unification) |
-| **molrs** | Rust core — molecular data structures & compute kernels (native + WASM) — this repo |
+| **molpy** | This project: the shared molecular data model & workflow layer, its Rust core (molrs) and its Python, WebAssembly, C and C++ bindings |
 | [molpack](https://github.com/MolCrafts/molpack) | Packmol-grade molecular packing (Rust + Python) |
 | [molvis](https://github.com/MolCrafts/molvis)   | WebGL molecular visualization & editing |
 | [molexp](https://github.com/MolCrafts/molexp)   | Workflow & experiment-management platform |
@@ -181,9 +174,8 @@ Python and JavaScript/TypeScript quickstarts live in the documentation.
 
 ## Contributing
 
-See [CONTRIBUTING](https://docs.molcrafts.org/molrs/contributing/) for development setup and guidelines.
-The [release checklist](docs/releasing.md) covers local verification, package
-inspection, and the tag-triggered publishing workflow.
+Issues and pull requests are welcome — see
+[Contributing](https://docs.molcrafts.org/molpy/developer/contributing/).
 
 ## License
 

@@ -295,9 +295,23 @@ Rust core, one Python package with the native module `molpy._core`, and no
    - The binder directories in the prek hooks, `dependabot.yml` and
      `.gitignore` follow.
 
+**Status (2026-10-22): implemented locally on molrs `dev` (unpushed), for
+operator review before the force-push.**
+- molrs-python's `molpy/tests/test_bindings` join molpy's suite: 2473 tests
+  pass, 0 skipped.
+- Per D9 and D8, the binding suite's identity, absence, `__all__`-location,
+  public-path and stub-parity tests and its OpenMM / LAMMPS-binary tests were
+  deleted.
+- try/except remains only at external boundaries (subprocesses, config files,
+  file sniffing, JSON lines). The Pyodide-only names (`Publisher`, mrec) are
+  gated on `sys.platform != "emscripten"`, not on an import failure (operator
+  ruling).
+- Known red until 04: the `mrec` gate, whose molrec adapter
+  (`molrec/tests/molrs_adapter.py`) imports `molrs`.
+
 **Acceptance.**
 
-- `scripts/check.sh verify` passes.
+- `scripts/check.sh verify` passes (except `mrec`, until 04).
 - `import molrs` fails in a fresh environment that has only the built
   `molcrafts-molpy` wheel.
 - `rg -n 'molrs-(python|wasm|capi|cxxapi)|molrs_capi|molrs_cxxapi|molrs\._native'`
