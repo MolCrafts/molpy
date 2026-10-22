@@ -25,9 +25,9 @@ use std::ffi::{CStr, CString, c_char};
 use molrs::core::Block;
 use molrs::core::MetaValue;
 
-use crate::error::{self, MolrsStatus, ffi_err_to_status};
+use crate::error::{self, MolcStatus, ffi_err_to_status};
 use crate::handle::{
-    MolrsBlockHandle, MolrsBoxHandle, MolrsFrameHandle, block_handle_to_c, box_key_to_handle,
+    MolcBlockHandle, MolcBoxHandle, MolcFrameHandle, block_handle_to_c, box_key_to_handle,
     frame_id_to_handle, handle_to_box_key, handle_to_frame_id,
 };
 use crate::handle_registry::lock_registry;
@@ -36,7 +36,7 @@ use crate::{ffi_try, null_check};
 /// Exact frame-metadata dtype exposed by the C API.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum MolrsMetaType {
+pub enum MolcMetaType {
     Bool = 0,
     I32 = 1,
     I64 = 2,
@@ -57,12 +57,12 @@ pub enum MolrsMetaType {
 /// Tagged exact-dtype frame metadata value.
 ///
 /// Only the field selected by `dtype` is read. A string returned by
-/// `molrs_frame_get_meta` is owned by the caller and must be released with
-/// `molrs_free_string`.
+/// `molc_frame_get_meta` is owned by the caller and must be released with
+/// `molc_free_string`.
 #[repr(C)]
 #[derive(Clone, Copy)]
-pub struct MolrsMetaValue {
-    pub dtype: MolrsMetaType,
+pub struct MolcMetaValue {
+    pub dtype: MolcMetaType,
     pub bool_value: bool,
     pub i32_value: i32,
     pub i64_value: i64,
@@ -78,8 +78,8 @@ pub struct MolrsMetaValue {
     pub f64x9: [f64; 9],
 }
 
-impl MolrsMetaValue {
-    fn zeroed(dtype: MolrsMetaType) -> Self {
+impl MolcMetaValue {
+    fn zeroed(dtype: MolcMetaType) -> Self {
         Self {
             dtype,
             bool_value: false,
@@ -99,9 +99,9 @@ impl MolrsMetaValue {
     }
 }
 
-impl Default for MolrsMetaValue {
+impl Default for MolcMetaValue {
     fn default() -> Self {
-        Self::zeroed(MolrsMetaType::Bool)
+        Self::zeroed(MolcMetaType::Bool)
     }
 }
 
@@ -110,7 +110,7 @@ impl Default for MolrsMetaValue {
 /// # C signature
 ///
 /// ```c
-/// MolrsStatus molrs_frame_new(MolrsFrameHandle* out);
+/// MolcStatus molc_frame_new(MolcFrameHandle* out);
 /// ```
 ///
 /// # Arguments
@@ -119,32 +119,32 @@ impl Default for MolrsMetaValue {
 ///
 /// # Returns
 ///
-/// * `MolrsStatus::Ok` on success.
-/// * `MolrsStatus::NullPointer` if `out` is null.
+/// * `MolcStatus::Ok` on success.
+/// * `MolcStatus::NullPointer` if `out` is null.
 ///
 /// # Safety
 ///
-/// `out` must point to a writable `MolrsFrameHandle`.
+/// `out` must point to a writable `MolcFrameHandle`.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn molrs_frame_new(out: *mut MolrsFrameHandle) -> MolrsStatus {
+pub unsafe extern "C" fn molc_frame_new(out: *mut MolcFrameHandle) -> MolcStatus {
     ffi_try!({
         null_check!(out);
         let mut registry = lock_registry();
         let id = registry.frames.frame_new();
         unsafe { *out = frame_id_to_handle(id) };
-        MolrsStatus::Ok
+        MolcStatus::Ok
     })
 }
 
 /// Drop a frame and invalidate all handles that reference it.
 ///
-/// Any [`MolrsBlockHandle`] derived from this frame becomes invalid
+/// Any [`MolcBlockHandle`] derived from this frame becomes invalid
 /// after this call.
 ///
 /// # C signature
 ///
 /// ```c
-/// MolrsStatus molrs_frame_drop(MolrsFrameHandle handle);
+/// MolcStatus molc_frame_drop(MolcFrameHandle handle);
 /// ```
 ///
 /// # Arguments
@@ -153,20 +153,20 @@ pub unsafe extern "C" fn molrs_frame_new(out: *mut MolrsFrameHandle) -> MolrsSta
 ///
 /// # Returns
 ///
-/// * `MolrsStatus::Ok` on success.
-/// * `MolrsStatus::InvalidFrameHandle` if `handle` is stale or unknown.
+/// * `MolcStatus::Ok` on success.
+/// * `MolcStatus::InvalidFrameHandle` if `handle` is stale or unknown.
 ///
 /// # Safety
 ///
 /// The caller must not use `handle` or any block handle derived from it
 /// after this call.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn molrs_frame_drop(handle: MolrsFrameHandle) -> MolrsStatus {
+pub unsafe extern "C" fn molc_frame_drop(handle: MolcFrameHandle) -> MolcStatus {
     ffi_try!({
         let mut registry = lock_registry();
         let id = handle_to_frame_id(handle);
         match registry.frames.drop_frame(id) {
-            Ok(()) => MolrsStatus::Ok,
+            Ok(()) => MolcStatus::Ok,
             Err(e) => ffi_err_to_status(&e),
         }
     })
@@ -180,8 +180,8 @@ pub unsafe extern "C" fn molrs_frame_drop(handle: MolrsFrameHandle) -> MolrsStat
 /// # C signature
 ///
 /// ```c
-/// MolrsStatus molrs_frame_clone(MolrsFrameHandle src,
-///                                MolrsFrameHandle* out);
+/// MolcStatus molc_frame_clone(MolcFrameHandle src,
+///                                MolcFrameHandle* out);
 /// ```
 ///
 /// # Arguments
@@ -191,18 +191,18 @@ pub unsafe extern "C" fn molrs_frame_drop(handle: MolrsFrameHandle) -> MolrsStat
 ///
 /// # Returns
 ///
-/// * `MolrsStatus::Ok` on success.
-/// * `MolrsStatus::NullPointer` if `out` is null.
-/// * `MolrsStatus::InvalidFrameHandle` if `src` is stale or unknown.
+/// * `MolcStatus::Ok` on success.
+/// * `MolcStatus::NullPointer` if `out` is null.
+/// * `MolcStatus::InvalidFrameHandle` if `src` is stale or unknown.
 ///
 /// # Safety
 ///
-/// `out` must point to a writable `MolrsFrameHandle`.
+/// `out` must point to a writable `MolcFrameHandle`.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn molrs_frame_clone(
-    src: MolrsFrameHandle,
-    out: *mut MolrsFrameHandle,
-) -> MolrsStatus {
+pub unsafe extern "C" fn molc_frame_clone(
+    src: MolcFrameHandle,
+    out: *mut MolcFrameHandle,
+) -> MolcStatus {
     ffi_try!({
         null_check!(out);
         let mut registry = lock_registry();
@@ -216,7 +216,7 @@ pub unsafe extern "C" fn molrs_frame_clone(
             return ffi_err_to_status(&e);
         }
         unsafe { *out = frame_id_to_handle(new_id) };
-        MolrsStatus::Ok
+        MolcStatus::Ok
     })
 }
 
@@ -227,30 +227,27 @@ pub unsafe extern "C" fn molrs_frame_clone(
 /// # C signature
 ///
 /// ```c
-/// MolrsStatus molrs_frame_set_block(MolrsFrameHandle frame,
+/// MolcStatus molc_frame_set_block(MolcFrameHandle frame,
 ///                                    uint32_t key_id);
 /// ```
 ///
 /// # Arguments
 ///
 /// * `frame` -- Target frame.
-/// * `key_id` -- Interned key (see [`molrs_intern_key`](crate::molrs_intern_key)).
+/// * `key_id` -- Interned key (see [`molc_intern_key`](crate::molc_intern_key)).
 ///   Conventional keys: `"atoms"`, `"bonds"`, `"angles"`, `"dihedrals"`.
 ///
 /// # Returns
 ///
-/// * `MolrsStatus::Ok` on success.
-/// * `MolrsStatus::KeyNotFound` if `key_id` has not been interned.
-/// * `MolrsStatus::InvalidFrameHandle` if `frame` is stale.
+/// * `MolcStatus::Ok` on success.
+/// * `MolcStatus::KeyNotFound` if `key_id` has not been interned.
+/// * `MolcStatus::InvalidFrameHandle` if `frame` is stale.
 ///
 /// # Safety
 ///
 /// `frame` must be a live frame handle.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn molrs_frame_set_block(
-    frame: MolrsFrameHandle,
-    key_id: u32,
-) -> MolrsStatus {
+pub unsafe extern "C" fn molc_frame_set_block(frame: MolcFrameHandle, key_id: u32) -> MolcStatus {
     ffi_try!({
         let mut registry = lock_registry();
         let frame_id = handle_to_frame_id(frame);
@@ -258,12 +255,12 @@ pub unsafe extern "C" fn molrs_frame_set_block(
             Some(s) => s.to_owned(),
             None => {
                 error::set_last_error(format!("unknown key_id {key_id}"));
-                return MolrsStatus::KeyNotFound;
+                return MolcStatus::KeyNotFound;
             }
         };
         let block = Block::new();
         match registry.frames.set_block(frame_id, &key_str, block) {
-            Ok(()) => MolrsStatus::Ok,
+            Ok(()) => MolcStatus::Ok,
             Err(e) => ffi_err_to_status(&e),
         }
     })
@@ -271,12 +268,12 @@ pub unsafe extern "C" fn molrs_frame_set_block(
 
 /// Delete a block from a frame by its interned key.
 ///
-/// All [`MolrsBlockHandle`]s that reference this block become invalid.
+/// All [`MolcBlockHandle`]s that reference this block become invalid.
 ///
 /// # C signature
 ///
 /// ```c
-/// MolrsStatus molrs_frame_del_block(MolrsFrameHandle frame,
+/// MolcStatus molc_frame_del_block(MolcFrameHandle frame,
 ///                                    uint32_t key_id);
 /// ```
 ///
@@ -287,19 +284,16 @@ pub unsafe extern "C" fn molrs_frame_set_block(
 ///
 /// # Returns
 ///
-/// * `MolrsStatus::Ok` on success.
-/// * `MolrsStatus::KeyNotFound` if `key_id` was not interned or the
+/// * `MolcStatus::Ok` on success.
+/// * `MolcStatus::KeyNotFound` if `key_id` was not interned or the
 ///   block does not exist.
-/// * `MolrsStatus::InvalidFrameHandle` if `frame` is stale.
+/// * `MolcStatus::InvalidFrameHandle` if `frame` is stale.
 ///
 /// # Safety
 ///
 /// `frame` must be a live frame handle.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn molrs_frame_del_block(
-    frame: MolrsFrameHandle,
-    key_id: u32,
-) -> MolrsStatus {
+pub unsafe extern "C" fn molc_frame_del_block(frame: MolcFrameHandle, key_id: u32) -> MolcStatus {
     ffi_try!({
         let mut registry = lock_registry();
         let frame_id = handle_to_frame_id(frame);
@@ -307,11 +301,11 @@ pub unsafe extern "C" fn molrs_frame_del_block(
             Some(s) => s.to_owned(),
             None => {
                 error::set_last_error(format!("unknown key_id {key_id}"));
-                return MolrsStatus::KeyNotFound;
+                return MolcStatus::KeyNotFound;
             }
         };
         match registry.frames.del_block(frame_id, &key_str) {
-            Ok(()) => MolrsStatus::Ok,
+            Ok(()) => MolcStatus::Ok,
             Err(e) => ffi_err_to_status(&e),
         }
     })
@@ -319,15 +313,15 @@ pub unsafe extern "C" fn molrs_frame_del_block(
 
 /// Obtain a block handle for a named block inside a frame.
 ///
-/// The returned handle can be used with `molrs_block_*` functions to
+/// The returned handle can be used with `molc_block_*` functions to
 /// inspect and modify individual columns.
 ///
 /// # C signature
 ///
 /// ```c
-/// MolrsStatus molrs_frame_get_block(MolrsFrameHandle frame,
+/// MolcStatus molc_frame_get_block(MolcFrameHandle frame,
 ///                                    uint32_t key_id,
-///                                    MolrsBlockHandle* out);
+///                                    MolcBlockHandle* out);
 /// ```
 ///
 /// # Arguments
@@ -338,22 +332,22 @@ pub unsafe extern "C" fn molrs_frame_del_block(
 ///
 /// # Returns
 ///
-/// * `MolrsStatus::Ok` on success.
-/// * `MolrsStatus::NullPointer` if `out` is null.
-/// * `MolrsStatus::KeyNotFound` if `key_id` was not interned or no
+/// * `MolcStatus::Ok` on success.
+/// * `MolcStatus::NullPointer` if `out` is null.
+/// * `MolcStatus::KeyNotFound` if `key_id` was not interned or no
 ///   block with that key exists in the frame.
-/// * `MolrsStatus::InvalidFrameHandle` if `frame` is stale.
+/// * `MolcStatus::InvalidFrameHandle` if `frame` is stale.
 ///
 /// # Safety
 ///
 /// * `frame` must be a live frame handle.
-/// * `out` must point to a writable `MolrsBlockHandle`.
+/// * `out` must point to a writable `MolcBlockHandle`.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn molrs_frame_get_block(
-    frame: MolrsFrameHandle,
+pub unsafe extern "C" fn molc_frame_get_block(
+    frame: MolcFrameHandle,
     key_id: u32,
-    out: *mut MolrsBlockHandle,
-) -> MolrsStatus {
+    out: *mut MolcBlockHandle,
+) -> MolcStatus {
     ffi_try!({
         null_check!(out);
         let registry = lock_registry();
@@ -362,7 +356,7 @@ pub unsafe extern "C" fn molrs_frame_get_block(
             Some(s) => s.to_owned(),
             None => {
                 error::set_last_error(format!("unknown key_id {key_id}"));
-                return MolrsStatus::KeyNotFound;
+                return MolcStatus::KeyNotFound;
             }
         };
         let bh = match registry.frames.get_block(frame_id, &key_str) {
@@ -373,11 +367,11 @@ pub unsafe extern "C" fn molrs_frame_get_block(
             Some(h) => h,
             None => {
                 error::set_last_error("failed to intern block key");
-                return MolrsStatus::InternalError;
+                return MolcStatus::InternalError;
             }
         };
         unsafe { *out = c_handle };
-        MolrsStatus::Ok
+        MolcStatus::Ok
     })
 }
 
@@ -390,8 +384,8 @@ pub unsafe extern "C" fn molrs_frame_get_block(
 /// # C signature
 ///
 /// ```c
-/// MolrsStatus molrs_frame_set_box(MolrsFrameHandle frame,
-///                                     MolrsBoxHandle simbox);
+/// MolcStatus molc_frame_set_box(MolcFrameHandle frame,
+///                                     MolcBoxHandle simbox);
 /// ```
 ///
 /// # Arguments
@@ -401,18 +395,18 @@ pub unsafe extern "C" fn molrs_frame_get_block(
 ///
 /// # Returns
 ///
-/// * `MolrsStatus::Ok` on success.
-/// * `MolrsStatus::InvalidFrameHandle` if `frame` is stale.
-/// * `MolrsStatus::InvalidBoxHandle` if `simbox` is stale.
+/// * `MolcStatus::Ok` on success.
+/// * `MolcStatus::InvalidFrameHandle` if `frame` is stale.
+/// * `MolcStatus::InvalidBoxHandle` if `simbox` is stale.
 ///
 /// # Safety
 ///
 /// Both `frame` and `simbox` must be live handles.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn molrs_frame_set_box(
-    frame: MolrsFrameHandle,
-    box_handle: MolrsBoxHandle,
-) -> MolrsStatus {
+pub unsafe extern "C" fn molc_frame_set_box(
+    frame: MolcFrameHandle,
+    box_handle: MolcBoxHandle,
+) -> MolcStatus {
     ffi_try!({
         let mut registry = lock_registry();
         let frame_id = handle_to_frame_id(frame);
@@ -421,11 +415,11 @@ pub unsafe extern "C" fn molrs_frame_set_box(
             Some(sb) => sb.clone(),
             None => {
                 error::set_last_error("invalid simbox handle");
-                return MolrsStatus::InvalidBoxHandle;
+                return MolcStatus::InvalidBoxHandle;
             }
         };
         match registry.frames.set_frame_box(frame_id, Some(sb)) {
-            Ok(()) => MolrsStatus::Ok,
+            Ok(()) => MolcStatus::Ok,
             Err(e) => ffi_err_to_status(&e),
         }
     })
@@ -436,7 +430,7 @@ pub unsafe extern "C" fn molrs_frame_set_box(
 /// # C signature
 ///
 /// ```c
-/// MolrsStatus molrs_frame_del_box(MolrsFrameHandle frame);
+/// MolcStatus molc_frame_del_box(MolcFrameHandle frame);
 /// ```
 ///
 /// # Arguments
@@ -445,19 +439,19 @@ pub unsafe extern "C" fn molrs_frame_set_box(
 ///
 /// # Returns
 ///
-/// * `MolrsStatus::Ok` on success (including if the frame had no Box).
-/// * `MolrsStatus::InvalidFrameHandle` if `frame` is stale.
+/// * `MolcStatus::Ok` on success (including if the frame had no Box).
+/// * `MolcStatus::InvalidFrameHandle` if `frame` is stale.
 ///
 /// # Safety
 ///
 /// `frame` must be a live frame handle.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn molrs_frame_del_box(frame: MolrsFrameHandle) -> MolrsStatus {
+pub unsafe extern "C" fn molc_frame_del_box(frame: MolcFrameHandle) -> MolcStatus {
     ffi_try!({
         let mut registry = lock_registry();
         let frame_id = handle_to_frame_id(frame);
         match registry.frames.set_frame_box(frame_id, None) {
-            Ok(()) => MolrsStatus::Ok,
+            Ok(()) => MolcStatus::Ok,
             Err(e) => ffi_err_to_status(&e),
         }
     })
@@ -467,13 +461,13 @@ pub unsafe extern "C" fn molrs_frame_del_box(frame: MolrsFrameHandle) -> MolrsSt
 ///
 /// A new Box handle is created each time this function is called.
 /// The caller is responsible for freeing it with
-/// [`molrs_box_drop`](crate::molrs_box_drop).
+/// [`molc_box_drop`](crate::molc_box_drop).
 ///
 /// # C signature
 ///
 /// ```c
-/// MolrsStatus molrs_frame_get_box(MolrsFrameHandle frame,
-///                                     MolrsBoxHandle* out);
+/// MolcStatus molc_frame_get_box(MolcFrameHandle frame,
+///                                     MolcBoxHandle* out);
 /// ```
 ///
 /// # Arguments
@@ -483,20 +477,20 @@ pub unsafe extern "C" fn molrs_frame_del_box(frame: MolrsFrameHandle) -> MolrsSt
 ///
 /// # Returns
 ///
-/// * `MolrsStatus::Ok` on success.
-/// * `MolrsStatus::NullPointer` if `out` is null.
-/// * `MolrsStatus::KeyNotFound` if the frame has no Box.
-/// * `MolrsStatus::InvalidFrameHandle` if `frame` is stale.
+/// * `MolcStatus::Ok` on success.
+/// * `MolcStatus::NullPointer` if `out` is null.
+/// * `MolcStatus::KeyNotFound` if the frame has no Box.
+/// * `MolcStatus::InvalidFrameHandle` if `frame` is stale.
 ///
 /// # Safety
 ///
 /// * `frame` must be a live frame handle.
-/// * `out` must point to a writable `MolrsBoxHandle`.
+/// * `out` must point to a writable `MolcBoxHandle`.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn molrs_frame_get_box(
-    frame: MolrsFrameHandle,
-    out: *mut MolrsBoxHandle,
-) -> MolrsStatus {
+pub unsafe extern "C" fn molc_frame_get_box(
+    frame: MolcFrameHandle,
+    out: *mut MolcBoxHandle,
+) -> MolcStatus {
     ffi_try!({
         null_check!(out);
         let mut registry = lock_registry();
@@ -505,20 +499,20 @@ pub unsafe extern "C" fn molrs_frame_get_box(
             Ok(Some(sb)) => sb,
             Ok(None) => {
                 error::set_last_error("frame has no simbox");
-                return MolrsStatus::KeyNotFound;
+                return MolcStatus::KeyNotFound;
             }
             Err(e) => return ffi_err_to_status(&e),
         };
         let key = registry.simboxes.insert(sb_clone);
         unsafe { *out = box_key_to_handle(key) };
-        MolrsStatus::Ok
+        MolcStatus::Ok
     })
 }
 
-fn meta_to_c(value: &MetaValue) -> Result<MolrsMetaValue, MolrsStatus> {
+fn meta_to_c(value: &MetaValue) -> Result<MolcMetaValue, MolcStatus> {
     macro_rules! base {
         ($dtype:ident) => {
-            MolrsMetaValue::zeroed(MolrsMetaType::$dtype)
+            MolcMetaValue::zeroed(MolcMetaType::$dtype)
         };
     }
     Ok(match value {
@@ -557,7 +551,7 @@ fn meta_to_c(value: &MetaValue) -> Result<MolrsMetaValue, MolrsStatus> {
             out.string_value = CString::new(v.as_str())
                 .map_err(|_| {
                     error::set_last_error("string metadata contains an interior NUL byte");
-                    MolrsStatus::InvalidArgument
+                    MolcStatus::InvalidArgument
                 })?
                 .into_raw();
             out
@@ -612,35 +606,35 @@ fn meta_to_c(value: &MetaValue) -> Result<MolrsMetaValue, MolrsStatus> {
     })
 }
 
-unsafe fn meta_from_c(value: &MolrsMetaValue) -> Result<MetaValue, MolrsStatus> {
+unsafe fn meta_from_c(value: &MolcMetaValue) -> Result<MetaValue, MolcStatus> {
     Ok(match value.dtype {
-        MolrsMetaType::Bool => MetaValue::Bool(value.bool_value),
-        MolrsMetaType::I32 => MetaValue::I32(value.i32_value),
-        MolrsMetaType::I64 => MetaValue::I64(value.i64_value),
-        MolrsMetaType::U32 => MetaValue::U32(value.u32_value),
-        MolrsMetaType::U64 => MetaValue::U64(value.u64_value),
-        MolrsMetaType::F64 => MetaValue::F64(value.f64_value),
-        MolrsMetaType::String => {
+        MolcMetaType::Bool => MetaValue::Bool(value.bool_value),
+        MolcMetaType::I32 => MetaValue::I32(value.i32_value),
+        MolcMetaType::I64 => MetaValue::I64(value.i64_value),
+        MolcMetaType::U32 => MetaValue::U32(value.u32_value),
+        MolcMetaType::U64 => MetaValue::U64(value.u64_value),
+        MolcMetaType::F64 => MetaValue::F64(value.f64_value),
+        MolcMetaType::String => {
             if value.string_value.is_null() {
                 error::set_last_error("string metadata has a null payload");
-                return Err(MolrsStatus::NullPointer);
+                return Err(MolcStatus::NullPointer);
             }
             let text = unsafe { CStr::from_ptr(value.string_value) }
                 .to_str()
                 .map_err(|_| {
                     error::set_last_error("string metadata is not valid UTF-8");
-                    MolrsStatus::Utf8Error
+                    MolcStatus::Utf8Error
                 })?;
             MetaValue::String(text.to_owned())
         }
-        MolrsMetaType::Bool3 => MetaValue::Bool3(value.bool3),
-        MolrsMetaType::I32x3 => MetaValue::I32x3(value.i32x3),
-        MolrsMetaType::I64x3 => MetaValue::I64x3(value.i64x3),
-        MolrsMetaType::U32x3 => MetaValue::U32x3(value.u32x3),
-        MolrsMetaType::U64x3 => MetaValue::U64x3(value.u64x3),
-        MolrsMetaType::F64x3 => MetaValue::F64x3(value.f64x9[..3].try_into().unwrap()),
-        MolrsMetaType::F64x6 => MetaValue::F64x6(value.f64x9[..6].try_into().unwrap()),
-        MolrsMetaType::F64x9 => MetaValue::F64x9(value.f64x9),
+        MolcMetaType::Bool3 => MetaValue::Bool3(value.bool3),
+        MolcMetaType::I32x3 => MetaValue::I32x3(value.i32x3),
+        MolcMetaType::I64x3 => MetaValue::I64x3(value.i64x3),
+        MolcMetaType::U32x3 => MetaValue::U32x3(value.u32x3),
+        MolcMetaType::U64x3 => MetaValue::U64x3(value.u64x3),
+        MolcMetaType::F64x3 => MetaValue::F64x3(value.f64x9[..3].try_into().unwrap()),
+        MolcMetaType::F64x6 => MetaValue::F64x6(value.f64x9[..6].try_into().unwrap()),
+        MolcMetaType::F64x9 => MetaValue::F64x9(value.f64x9),
     })
 }
 
@@ -649,30 +643,30 @@ unsafe fn meta_from_c(value: &MolrsMetaValue) -> Result<MetaValue, MolrsStatus> 
 /// # C signature
 ///
 /// ```c
-/// MolrsStatus molrs_frame_set_meta(MolrsFrameHandle frame, const char* key,
-///                                  const MolrsMetaValue* value);
+/// MolcStatus molc_frame_set_meta(MolcFrameHandle frame, const char* key,
+///                                  const MolcMetaValue* value);
 /// ```
 ///
 /// Block handles on the frame stay valid: only the metadata changes.
 ///
 /// # Returns
 ///
-/// * `MolrsStatus::Ok` on success.
-/// * `MolrsStatus::NullPointer` if `key` or `value` (or a string payload) is null.
-/// * `MolrsStatus::InvalidArgument` if `key` is empty.
-/// * `MolrsStatus::Utf8Error` if `key` or a string payload is not UTF-8.
-/// * `MolrsStatus::InvalidFrameHandle` if `frame` is stale.
+/// * `MolcStatus::Ok` on success.
+/// * `MolcStatus::NullPointer` if `key` or `value` (or a string payload) is null.
+/// * `MolcStatus::InvalidArgument` if `key` is empty.
+/// * `MolcStatus::Utf8Error` if `key` or a string payload is not UTF-8.
+/// * `MolcStatus::InvalidFrameHandle` if `frame` is stale.
 ///
 /// # Safety
 ///
 /// `key` must be a NUL-terminated C string and `value` must point to a
-/// readable `MolrsMetaValue`.
+/// readable `MolcMetaValue`.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn molrs_frame_set_meta(
-    frame: MolrsFrameHandle,
+pub unsafe extern "C" fn molc_frame_set_meta(
+    frame: MolcFrameHandle,
     key: *const c_char,
-    value: *const MolrsMetaValue,
-) -> MolrsStatus {
+    value: *const MolcMetaValue,
+) -> MolcStatus {
     ffi_try!({
         null_check!(key);
         null_check!(value);
@@ -680,11 +674,11 @@ pub unsafe extern "C" fn molrs_frame_set_meta(
             Ok(key) if !key.is_empty() => key.to_owned(),
             Ok(_) => {
                 error::set_last_error("metadata key must not be empty");
-                return MolrsStatus::InvalidArgument;
+                return MolcStatus::InvalidArgument;
             }
             Err(_) => {
                 error::set_last_error("metadata key is not valid UTF-8");
-                return MolrsStatus::Utf8Error;
+                return MolcStatus::Utf8Error;
             }
         };
         let value = match unsafe { meta_from_c(&*value) } {
@@ -697,7 +691,7 @@ pub unsafe extern "C" fn molrs_frame_set_meta(
             .with_frame_meta_mut(handle_to_frame_id(frame), |meta| {
                 meta.insert(key, value);
             }) {
-            Ok(()) => MolrsStatus::Ok,
+            Ok(()) => MolcStatus::Ok,
             Err(e) => ffi_err_to_status(&e),
         }
     })
@@ -708,30 +702,30 @@ pub unsafe extern "C" fn molrs_frame_set_meta(
 /// # C signature
 ///
 /// ```c
-/// MolrsStatus molrs_frame_get_meta(MolrsFrameHandle frame, const char* key,
-///                                  MolrsMetaValue* out);
+/// MolcStatus molc_frame_get_meta(MolcFrameHandle frame, const char* key,
+///                                  MolcMetaValue* out);
 /// ```
 ///
-/// A string value (`MOLRS_META_TYPE_STRING`; a JSON value is returned as its
+/// A string value (`MOLC_META_TYPE_STRING`; a JSON value is returned as its
 /// text) is owned by the caller: free `out->string_value` with
-/// `molrs_free_string`.
+/// `molc_free_string`.
 ///
 /// # Returns
 ///
-/// * `MolrsStatus::Ok` on success.
-/// * `MolrsStatus::KeyNotFound` if the frame has no entry `key`.
-/// * `MolrsStatus::NullPointer`, `Utf8Error`, `InvalidFrameHandle` as usual.
+/// * `MolcStatus::Ok` on success.
+/// * `MolcStatus::KeyNotFound` if the frame has no entry `key`.
+/// * `MolcStatus::NullPointer`, `Utf8Error`, `InvalidFrameHandle` as usual.
 ///
 /// # Safety
 ///
 /// `key` must be a NUL-terminated C string and `out` a writable
-/// `MolrsMetaValue`.
+/// `MolcMetaValue`.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn molrs_frame_get_meta(
-    frame: MolrsFrameHandle,
+pub unsafe extern "C" fn molc_frame_get_meta(
+    frame: MolcFrameHandle,
     key: *const c_char,
-    out: *mut MolrsMetaValue,
-) -> MolrsStatus {
+    out: *mut MolcMetaValue,
+) -> MolcStatus {
     ffi_try!({
         null_check!(key);
         null_check!(out);
@@ -739,7 +733,7 @@ pub unsafe extern "C" fn molrs_frame_get_meta(
             Ok(key) => key,
             Err(_) => {
                 error::set_last_error("metadata key is not valid UTF-8");
-                return MolrsStatus::Utf8Error;
+                return MolcStatus::Utf8Error;
             }
         };
         let registry = lock_registry();
@@ -749,34 +743,31 @@ pub unsafe extern "C" fn molrs_frame_get_meta(
         };
         let Some(value) = frame.meta.get(key) else {
             error::set_last_error(format!("metadata key '{key}' not found"));
-            return MolrsStatus::KeyNotFound;
+            return MolcStatus::KeyNotFound;
         };
         let value = match meta_to_c(value) {
             Ok(value) => value,
             Err(status) => return status,
         };
         unsafe { *out = value };
-        MolrsStatus::Ok
+        MolcStatus::Ok
     })
 }
 
-/// Number of metadata entries; with [`molrs_frame_meta_key`] this lists the
+/// Number of metadata entries; with [`molc_frame_meta_key`] this lists the
 /// keys (the C shape of `meta_keys`).
 ///
 /// # C signature
 ///
 /// ```c
-/// MolrsStatus molrs_frame_n_meta(MolrsFrameHandle frame, size_t* out);
+/// MolcStatus molc_frame_n_meta(MolcFrameHandle frame, size_t* out);
 /// ```
 ///
 /// # Safety
 ///
 /// `out` must point to a writable `size_t`.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn molrs_frame_n_meta(
-    frame: MolrsFrameHandle,
-    out: *mut usize,
-) -> MolrsStatus {
+pub unsafe extern "C" fn molc_frame_n_meta(frame: MolcFrameHandle, out: *mut usize) -> MolcStatus {
     ffi_try!({
         null_check!(out);
         let registry = lock_registry();
@@ -787,7 +778,7 @@ pub unsafe extern "C" fn molrs_frame_n_meta(
         unsafe {
             *out = frame.meta.len();
         }
-        MolrsStatus::Ok
+        MolcStatus::Ok
     })
 }
 
@@ -796,22 +787,22 @@ pub unsafe extern "C" fn molrs_frame_n_meta(
 /// # C signature
 ///
 /// ```c
-/// MolrsStatus molrs_frame_meta_key(MolrsFrameHandle frame, size_t index,
+/// MolcStatus molc_frame_meta_key(MolcFrameHandle frame, size_t index,
 ///                                  char** out);
 /// ```
 ///
-/// The caller owns `*out`: free it with `molrs_free_string`. An index past
+/// The caller owns `*out`: free it with `molc_free_string`. An index past
 /// the end is `InvalidArgument`.
 ///
 /// # Safety
 ///
 /// `out` must point to a writable `char*`.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn molrs_frame_meta_key(
-    frame: MolrsFrameHandle,
+pub unsafe extern "C" fn molc_frame_meta_key(
+    frame: MolcFrameHandle,
     index: usize,
     out: *mut *mut c_char,
-) -> MolrsStatus {
+) -> MolcStatus {
     ffi_try!({
         null_check!(out);
         let registry = lock_registry();
@@ -822,16 +813,16 @@ pub unsafe extern "C" fn molrs_frame_meta_key(
         let keys: Vec<_> = frame.meta.keys().collect();
         let Some(key) = keys.get(index) else {
             error::set_last_error(format!("metadata index {index} out of range"));
-            return MolrsStatus::InvalidArgument;
+            return MolcStatus::InvalidArgument;
         };
         let key = match CString::new(key.as_str()) {
             Ok(key) => key,
             Err(_) => {
                 error::set_last_error("metadata key contains an interior NUL byte");
-                return MolrsStatus::InvalidArgument;
+                return MolcStatus::InvalidArgument;
             }
         };
         unsafe { *out = key.into_raw() };
-        MolrsStatus::Ok
+        MolcStatus::Ok
     })
 }

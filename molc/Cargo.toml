@@ -29,7 +29,7 @@ default = []
 [dependencies]
 # molrs defaults to core only, so the set is spelled here: `full` +
 # `filesystem` + `rayon` (molrs-ffi's default) + `serde`, whose force-field
-# section impls are `molrs_forcefield_to_json` / `molrs_forcefield_from_json` — build 2 in
+# section impls are `molc_forcefield_to_json` / `molc_forcefield_from_json` — build 2 in
 # .cargo/config.toml, shared with molcxx. Never `stream`: no tokio /
 # tungstenite in a C archive.
 molrs = { path = "../crates/molrs", package = "molcrafts-molrs", version = "0.19.0", default-features = false, features = ["full", "filesystem", "rayon", "serde"] }
@@ -37,7 +37,7 @@ molrs-ffi = { path = "../crates/molrs-ffi", package = "molcrafts-molrs-ffi", ver
 slotmap = "1.0"
 ndarray = "0.17"
 # The element type of molrs's `c64` / `c128` columns (`Complex<f32>` /
-# `Complex<f64>`), which `molrs_block_set` / `molrs_block_get` name.
+# `Complex<f64>`), which `molc_block_set` / `molc_block_get` name.
 num-complex = "0.4"
 serde_json = "1"
 

@@ -1,10 +1,10 @@
 //! Error types and thread-local error buffer for the C API.
 //!
-//! Every `extern "C"` function returns a [`MolrsStatus`] code.  On
+//! Every `extern "C"` function returns a [`MolcStatus`] code.  On
 //! failure, a human-readable message is stored in a thread-local buffer
-//! and can be retrieved via [`crate::molrs_last_error`].
+//! and can be retrieved via [`crate::molc_last_error`].
 //!
-//! Column data types are exposed to C as [`MolrsDType`] discriminants
+//! Column data types are exposed to C as [`MolcDType`] discriminants
 //! that map one-to-one to the internal [`molrs::core::DType`] enum.
 
 use std::cell::RefCell;
@@ -16,26 +16,26 @@ use molrs_ffi::FfiError;
 /// Status codes returned by every `extern "C"` function.
 ///
 /// A value of `Ok` (0) indicates success.  All other values are errors.
-/// Call [`molrs_last_error`](crate::molrs_last_error) to obtain a
+/// Call [`molc_last_error`](crate::molc_last_error) to obtain a
 /// human-readable description of the most recent error.
 ///
 /// # C mapping
 ///
-/// In the generated header this is `enum MolrsStatus` with the same
+/// In the generated header this is `enum MolcStatus` with the same
 /// integer discriminants listed below.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum MolrsStatus {
+pub enum MolcStatus {
     /// Operation completed successfully.
     Ok = 0,
-    /// The supplied `MolrsFrameHandle` does not refer to a live frame.
+    /// The supplied `MolcFrameHandle` does not refer to a live frame.
     InvalidFrameHandle = 1,
-    /// The supplied `MolrsBlockHandle` does not refer to a live block,
+    /// The supplied `MolcBlockHandle` does not refer to a live block,
     /// or its version has been invalidated.
     InvalidBlockHandle = 2,
-    /// The supplied `MolrsBoxHandle` does not refer to a live Box.
+    /// The supplied `MolcBoxHandle` does not refer to a live Box.
     InvalidBoxHandle = 3,
-    /// The supplied `MolrsForceFieldHandle` does not refer to a live
+    /// The supplied `MolcForceFieldHandle` does not refer to a live
     /// force field.
     InvalidForceFieldHandle = 4,
     /// A requested key (block name, column name, metadata key) was not
@@ -61,7 +61,7 @@ pub enum MolrsStatus {
     SingularCell = 12,
     /// A parse error occurred (e.g. invalid SMILES or JSON string).
     ParseError = 13,
-    /// The supplied `MolrsRegionHandle` does not refer to a live region.
+    /// The supplied `MolcRegionHandle` does not refer to a live region.
     InvalidRegionHandle = 14,
 }
 
@@ -73,14 +73,14 @@ pub enum MolrsStatus {
 /// Discriminants 0–4 stay where they were; later variants are appended.
 ///
 /// Each variant is named after the core dtype name (`DType::name()`), so the
-/// C constant is `MOLRS_D_TYPE_` + that name upper-cased: `MOLRS_D_TYPE_FLOAT`,
-/// `MOLRS_D_TYPE_UINT`, `MOLRS_D_TYPE_I64`, `MOLRS_D_TYPE_C128`, ….
+/// C constant is `MOLC_D_TYPE_` + that name upper-cased: `MOLC_D_TYPE_FLOAT`,
+/// `MOLC_D_TYPE_UINT`, `MOLC_D_TYPE_I64`, `MOLC_D_TYPE_C128`, ….
 ///
-/// A string column has no flat scalar buffer. [`molrs_block_get`](crate::molrs_block_get)
+/// A string column has no flat scalar buffer. [`molc_block_get`](crate::molc_block_get)
 /// reports that as `TypeMismatch`, not as a missing key.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum MolrsDType {
+pub enum MolcDType {
     /// `float`: `f64` column.
     Float = 0,
     /// `int`: `i32` column.
@@ -109,7 +109,7 @@ pub enum MolrsDType {
     C128 = 12,
 }
 
-impl From<DType> for MolrsDType {
+impl From<DType> for MolcDType {
     fn from(dt: DType) -> Self {
         match dt {
             DType::Float => Self::Float,
@@ -162,15 +162,15 @@ pub(crate) fn last_error_ptr() -> *const c_char {
     })
 }
 
-/// Convert an `FfiError` to a `MolrsStatus`, storing the message.
-pub(crate) fn ffi_err_to_status(err: &FfiError) -> MolrsStatus {
+/// Convert an `FfiError` to a `MolcStatus`, storing the message.
+pub(crate) fn ffi_err_to_status(err: &FfiError) -> MolcStatus {
     set_last_error(err.to_string());
     match err {
-        FfiError::InvalidFrameId => MolrsStatus::InvalidFrameHandle,
-        FfiError::InvalidBlockHandle => MolrsStatus::InvalidBlockHandle,
-        FfiError::KeyNotFound { .. } => MolrsStatus::KeyNotFound,
-        FfiError::NonContiguous { .. } => MolrsStatus::NonContiguous,
-        FfiError::DTypeMismatch { .. } => MolrsStatus::TypeMismatch,
+        FfiError::InvalidFrameId => MolcStatus::InvalidFrameHandle,
+        FfiError::InvalidBlockHandle => MolcStatus::InvalidBlockHandle,
+        FfiError::KeyNotFound { .. } => MolcStatus::KeyNotFound,
+        FfiError::NonContiguous { .. } => MolcStatus::NonContiguous,
+        FfiError::DTypeMismatch { .. } => MolcStatus::TypeMismatch,
     }
 }
 
@@ -180,19 +180,19 @@ mod tests {
 
     #[test]
     fn dtype_keeps_its_discriminants() {
-        assert_eq!(MolrsDType::from(DType::Float) as u8, 0);
-        assert_eq!(MolrsDType::from(DType::Int) as u8, 1);
-        assert_eq!(MolrsDType::from(DType::Bool) as u8, 2);
-        assert_eq!(MolrsDType::from(DType::Uint) as u8, 3);
-        assert_eq!(MolrsDType::from(DType::String) as u8, 4);
+        assert_eq!(MolcDType::from(DType::Float) as u8, 0);
+        assert_eq!(MolcDType::from(DType::Int) as u8, 1);
+        assert_eq!(MolcDType::from(DType::Bool) as u8, 2);
+        assert_eq!(MolcDType::from(DType::Uint) as u8, 3);
+        assert_eq!(MolcDType::from(DType::String) as u8, 4);
     }
 
     #[test]
     fn every_variant_is_named_after_the_core_dtype() {
-        // The C constant is MOLRS_D_TYPE_<name>: the variant's name must be
+        // The C constant is MOLC_D_TYPE_<name>: the variant's name must be
         // the core `DType::name()` for every dtype the core has.
         for dtype in DType::ALL {
-            let variant = format!("{:?}", MolrsDType::from(dtype)).to_lowercase();
+            let variant = format!("{:?}", MolcDType::from(dtype)).to_lowercase();
             assert_eq!(variant, dtype.name());
         }
     }

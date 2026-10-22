@@ -6,7 +6,7 @@
 //! through [`lock_registry`].
 //!
 //! The registry is lazily initialised on first access and lives for the
-//! entire process lifetime.  [`molrs_shutdown`](crate::molrs_shutdown)
+//! entire process lifetime.  [`molc_shutdown`](crate::molc_shutdown)
 //! clears all contents but does not destroy the mutex.
 
 use std::collections::HashMap;
@@ -30,7 +30,7 @@ pub(crate) struct HandleRegistry {
     pub frames: molrs_ffi::FrameArena,
 
     /// Interned key strings, stored null-terminated for direct return
-    /// to C callers via [`molrs_key_name`](crate::molrs_key_name).
+    /// to C callers via [`molc_key_name`](crate::molc_key_name).
     /// The vector index is the `key_id`.
     pub interned_keys: Vec<CString>,
 
@@ -84,7 +84,7 @@ impl HandleRegistry {
     /// and every interned key forgotten.
     pub fn clear(&mut self) {
         // Destructured so a field added later cannot be forgotten here: a
-        // field missed by `clear` would survive `molrs_shutdown`.
+        // field missed by `clear` would survive `molc_shutdown`.
         let Self {
             frames,
             interned_keys,

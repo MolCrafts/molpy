@@ -8,13 +8,13 @@
 //! # Design
 //!
 //! * **Handle-based** -- all objects live in one global, mutex-protected
-//!   handle registry.  C callers receive opaque `MolrsFrameHandle`,
-//!   `MolrsBlockHandle`, `MolrsBoxHandle`, `MolrsForceFieldHandle`, or
-//!   `MolrsRegionHandle` values (plain `repr(C)` structs that fit in two
+//!   handle registry.  C callers receive opaque `MolcFrameHandle`,
+//!   `MolcBlockHandle`, `MolcBoxHandle`, `MolcForceFieldHandle`, or
+//!   `MolcRegionHandle` values (plain `repr(C)` structs that fit in two
 //!   machine words).
-//! * **Status codes** -- every function returns [`MolrsStatus`].  On
+//! * **Status codes** -- every function returns [`MolcStatus`].  On
 //!   failure the last error message is stored in a thread-local buffer
-//!   and retrieved via [`molrs_last_error`].
+//!   and retrieved via [`molc_last_error`].
 //! * **Panic safety** -- every `extern "C"` body is wrapped in
 //!   `catch_unwind` so Rust panics never unwind across the FFI boundary.
 //!
@@ -24,30 +24,30 @@
 //!
 //! | Rust | C type     | Column dtype                 |
 //! |------|------------|------------------------------|
-//! | `F`  | `F` (`double`) | `MOLRS_D_TYPE_FLOAT` (f64) |
-//! | `I`  | `int32_t`  | `MOLRS_D_TYPE_INT` (i32)     |
-//! | `Idx`| `uint64_t` | `MOLRS_D_TYPE_UINT` (u64)    |
+//! | `F`  | `F` (`double`) | `MOLC_D_TYPE_FLOAT` (f64) |
+//! | `I`  | `int32_t`  | `MOLC_D_TYPE_INT` (i32)     |
+//! | `Idx`| `uint64_t` | `MOLC_D_TYPE_UINT` (u64)    |
 //!
-//! Each `MolrsDType` constant is `MOLRS_D_TYPE_` + the upper-cased core
+//! Each `MolcDType` constant is `MOLC_D_TYPE_` + the upper-cased core
 //! dtype name (`DType::name()`: `float`, `int`, `uint`, `i64`, `u8`, …).
-//! Every fixed-width dtype is written with `molrs_block_set` (the dtype is
-//! an argument) and read with `molrs_block_get`, which reports the dtype as
-//! a `MolrsDType`.
+//! Every fixed-width dtype is written with `molc_block_set` (the dtype is
+//! an argument) and read with `molc_block_get`, which reports the dtype as
+//! a `MolcDType`.
 //!
 //! # Typical C usage
 //!
 //! ```c
 //! #include "molc.h"
 //!
-//! molrs_init();
+//! molc_init();
 //!
-//! MolrsFrameHandle frame;
-//! molrs_frame_new(&frame);
+//! MolcFrameHandle frame;
+//! molc_frame_new(&frame);
 //!
 //! // ... populate frame with blocks, columns, simbox ...
 //!
-//! molrs_frame_drop(frame);
-//! molrs_shutdown();
+//! molc_frame_drop(frame);
+//! molc_shutdown();
 //! ```
 //!
 //! # Safety
@@ -70,11 +70,11 @@ mod simbox;
 mod smiles;
 
 pub use block::*;
-pub use error::{MolrsDType, MolrsStatus};
+pub use error::{MolcDType, MolcStatus};
 pub use forcefield::*;
 pub use frame::*;
 pub use handle::{
-    MolrsBlockHandle, MolrsBoxHandle, MolrsForceFieldHandle, MolrsFrameHandle, MolrsRegionHandle,
+    MolcBlockHandle, MolcBoxHandle, MolcForceFieldHandle, MolcFrameHandle, MolcRegionHandle,
 };
 pub use region::*;
 pub use schema::*;
@@ -99,7 +99,7 @@ macro_rules! ffi_try {
             Ok(status) => status,
             Err(_) => {
                 error::set_last_error("internal panic in FFI call");
-                MolrsStatus::InternalError
+                MolcStatus::InternalError
             }
         }
     }};
@@ -111,7 +111,7 @@ macro_rules! null_check {
     ($ptr:expr) => {
         if $ptr.is_null() {
             error::set_last_error(concat!("null pointer: ", stringify!($ptr)));
-            return MolrsStatus::NullPointer;
+            return MolcStatus::NullPointer;
         }
     };
 }
@@ -129,7 +129,7 @@ pub(crate) use null_check;
 /// # C signature
 ///
 /// ```c
-/// void molrs_init(void);
+/// void molc_init(void);
 /// ```
 ///
 /// # Safety
@@ -137,7 +137,7 @@ pub(crate) use null_check;
 /// No pointer arguments.  This function only initialises the handle
 /// registry and cannot violate memory safety.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn molrs_init() {
+pub unsafe extern "C" fn molc_init() {
     // Force lazy initialization of the handle registry.
     drop(lock_registry());
 }
@@ -151,7 +151,7 @@ pub unsafe extern "C" fn molrs_init() {
 /// # C signature
 ///
 /// ```c
-/// const char* molrs_version(void);
+/// const char* molc_version(void);
 /// ```
 ///
 /// # Safety
@@ -159,7 +159,7 @@ pub unsafe extern "C" fn molrs_init() {
 /// The caller must not write through the returned pointer. The pointer is
 /// valid for the lifetime of the process.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn molrs_version() -> *const c_char {
+pub unsafe extern "C" fn molc_version() -> *const c_char {
     static VERSION: std::sync::OnceLock<CString> = std::sync::OnceLock::new();
     VERSION
         .get_or_init(|| CString::new(env!("CARGO_PKG_VERSION")).expect("version has no NUL"))
@@ -169,21 +169,21 @@ pub unsafe extern "C" fn molrs_version() -> *const c_char {
 /// Destroy all objects and reset the handle registry.
 ///
 /// Every handle obtained before this call becomes invalid.
-/// It is safe (but unnecessary) to call [`molrs_init`] again afterwards.
+/// It is safe (but unnecessary) to call [`molc_init`] again afterwards.
 ///
 /// # C signature
 ///
 /// ```c
-/// void molrs_shutdown(void);
+/// void molc_shutdown(void);
 /// ```
 ///
 /// # Safety
 ///
 /// After this call, any previously obtained handle (frame, block,
 /// box, force field, region) is dangling.  Using a stale handle will return
-/// `MolrsStatus::Invalid*Handle`.
+/// `MolcStatus::Invalid*Handle`.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn molrs_shutdown() {
+pub unsafe extern "C" fn molc_shutdown() {
     let mut registry = lock_registry();
     registry.clear();
 }
@@ -197,7 +197,7 @@ pub unsafe extern "C" fn molrs_shutdown() {
 /// # C signature
 ///
 /// ```c
-/// const char* molrs_last_error(void);
+/// const char* molc_last_error(void);
 /// ```
 ///
 /// # Lifetime
@@ -210,7 +210,7 @@ pub unsafe extern "C" fn molrs_shutdown() {
 ///
 /// The caller must not write through the returned pointer.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn molrs_last_error() -> *const c_char {
+pub unsafe extern "C" fn molc_last_error() -> *const c_char {
     error::last_error_ptr()
 }
 
@@ -223,7 +223,7 @@ pub unsafe extern "C" fn molrs_last_error() -> *const c_char {
 /// # C signature
 ///
 /// ```c
-/// MolrsStatus molrs_intern_key(const char* key, uint32_t* out_key_id);
+/// MolcStatus molc_intern_key(const char* key, uint32_t* out_key_id);
 /// ```
 ///
 /// # Arguments
@@ -233,16 +233,16 @@ pub unsafe extern "C" fn molrs_last_error() -> *const c_char {
 ///
 /// # Returns
 ///
-/// * `MolrsStatus::Ok` on success.
-/// * `MolrsStatus::NullPointer` if `key` or `out_key_id` is null.
-/// * `MolrsStatus::Utf8Error` if `key` is not valid UTF-8.
+/// * `MolcStatus::Ok` on success.
+/// * `MolcStatus::NullPointer` if `key` or `out_key_id` is null.
+/// * `MolcStatus::Utf8Error` if `key` is not valid UTF-8.
 ///
 /// # Safety
 ///
 /// * `key` must be a valid, null-terminated C string.
 /// * `out_key_id` must point to a writable `uint32_t`.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn molrs_intern_key(key: *const c_char, out_key_id: *mut u32) -> MolrsStatus {
+pub unsafe extern "C" fn molc_intern_key(key: *const c_char, out_key_id: *mut u32) -> MolcStatus {
     ffi_try!({
         null_check!(key);
         null_check!(out_key_id);
@@ -251,13 +251,13 @@ pub unsafe extern "C" fn molrs_intern_key(key: *const c_char, out_key_id: *mut u
             Ok(s) => s,
             Err(_) => {
                 error::set_last_error("key is not valid UTF-8");
-                return MolrsStatus::Utf8Error;
+                return MolcStatus::Utf8Error;
             }
         };
         let mut registry = lock_registry();
         let id = registry.intern(key_str);
         unsafe { *out_key_id = id };
-        MolrsStatus::Ok
+        MolcStatus::Ok
     })
 }
 
@@ -266,12 +266,12 @@ pub unsafe extern "C" fn molrs_intern_key(key: *const c_char, out_key_id: *mut u
 /// # C signature
 ///
 /// ```c
-/// const char* molrs_key_name(uint32_t key_id);
+/// const char* molc_key_name(uint32_t key_id);
 /// ```
 ///
 /// # Arguments
 ///
-/// * `key_id` -- An identifier obtained from [`molrs_intern_key`].
+/// * `key_id` -- An identifier obtained from [`molc_intern_key`].
 ///
 /// # Returns
 ///
@@ -280,13 +280,13 @@ pub unsafe extern "C" fn molrs_intern_key(key: *const c_char, out_key_id: *mut u
 ///
 /// # Lifetime
 ///
-/// The returned pointer is valid until [`molrs_shutdown`] is called.
+/// The returned pointer is valid until [`molc_shutdown`] is called.
 ///
 /// # Safety
 ///
 /// The caller must not write through or free the returned pointer.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn molrs_key_name(key_id: u32) -> *const c_char {
+pub unsafe extern "C" fn molc_key_name(key_id: u32) -> *const c_char {
     let registry = lock_registry();
     match registry.interned_keys.get(key_id as usize) {
         Some(cstr) => cstr.as_ptr(),
@@ -296,8 +296,8 @@ pub unsafe extern "C" fn molrs_key_name(key_id: u32) -> *const c_char {
 
 /// Free a string that was allocated by the C API.
 ///
-/// Several functions (e.g. [`molrs_forcefield_to_json`],
-/// [`molrs_frame_get_meta`])
+/// Several functions (e.g. [`molc_forcefield_to_json`],
+/// [`molc_frame_get_meta`])
 /// return heap-allocated C strings that the caller owns.  Pass those
 /// pointers to this function when they are no longer needed.
 ///
@@ -306,7 +306,7 @@ pub unsafe extern "C" fn molrs_key_name(key_id: u32) -> *const c_char {
 /// # C signature
 ///
 /// ```c
-/// void molrs_free_string(char* s);
+/// void molc_free_string(char* s);
 /// ```
 ///
 /// # Arguments
@@ -320,7 +320,7 @@ pub unsafe extern "C" fn molrs_key_name(key_id: u32) -> *const c_char {
 /// * `s` must not be used after this call.
 /// * Double-free is undefined behaviour.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn molrs_free_string(s: *mut c_char) {
+pub unsafe extern "C" fn molc_free_string(s: *mut c_char) {
     if !s.is_null() {
         unsafe {
             drop(CString::from_raw(s));

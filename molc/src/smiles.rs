@@ -5,8 +5,8 @@ use std::ffi::{CStr, c_char};
 
 use molrs::io::smiles::SmilesIr;
 
-use crate::error::{self, MolrsStatus, ffi_err_to_status};
-use crate::handle::{MolrsFrameHandle, frame_id_to_handle};
+use crate::error::{self, MolcStatus, ffi_err_to_status};
+use crate::handle::{MolcFrameHandle, frame_id_to_handle};
 use crate::handle_registry::lock_registry;
 use crate::{ffi_try, null_check};
 
@@ -29,8 +29,8 @@ use crate::{ffi_try, null_check};
 /// # C signature
 ///
 /// ```c
-/// MolrsStatus molrs_read_smiles(const char* smiles,
-///                               MolrsFrameHandle* out);
+/// MolcStatus molc_read_smiles(const char* smiles,
+///                               MolcFrameHandle* out);
 /// ```
 ///
 /// # Arguments
@@ -41,57 +41,57 @@ use crate::{ffi_try, null_check};
 ///
 /// # Returns
 ///
-/// * `MolrsStatus::Ok` on success.
-/// * `MolrsStatus::NullPointer` if either pointer is null.
-/// * `MolrsStatus::Utf8Error` if `smiles` is not valid UTF-8.
-/// * `MolrsStatus::ParseError` if the SMILES string is malformed or names
+/// * `MolcStatus::Ok` on success.
+/// * `MolcStatus::NullPointer` if either pointer is null.
+/// * `MolcStatus::Utf8Error` if `smiles` is not valid UTF-8.
+/// * `MolcStatus::ParseError` if the SMILES string is malformed or names
 ///   more than one molecule.
-/// * `MolrsStatus::InternalError` if the parsed molecule cannot be expressed
+/// * `MolcStatus::InternalError` if the parsed molecule cannot be expressed
 ///   as a frame (a property contradicting the Frame schema).
 ///
 /// # Safety
 ///
 /// * `smiles` must be a valid, null-terminated UTF-8 C string.
-/// * `out` must point to a writable `MolrsFrameHandle`.
+/// * `out` must point to a writable `MolcFrameHandle`.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn molrs_read_smiles(
+pub unsafe extern "C" fn molc_read_smiles(
     smiles: *const c_char,
-    out: *mut MolrsFrameHandle,
-) -> MolrsStatus {
+    out: *mut MolcFrameHandle,
+) -> MolcStatus {
     ffi_try!({
         null_check!(smiles);
         null_check!(out);
         let Ok(smiles_str) = (unsafe { CStr::from_ptr(smiles) }).to_str() else {
             error::set_last_error("SMILES string is not valid UTF-8");
-            return MolrsStatus::Utf8Error;
+            return MolcStatus::Utf8Error;
         };
         let ir = match SmilesIr::parse(smiles_str) {
             Ok(ir) => ir,
             Err(e) => {
                 error::set_last_error(format!("{e}"));
-                return MolrsStatus::ParseError;
+                return MolcStatus::ParseError;
             }
         };
         if ir.components.len() != 1 {
             error::set_last_error(format!(
                 "SMILES '{smiles_str}' names {} molecules ('.'-separated components); \
-                 molrs_read_smiles reads one -- read each component separately",
+                 molc_read_smiles reads one -- read each component separately",
                 ir.components.len()
             ));
-            return MolrsStatus::ParseError;
+            return MolcStatus::ParseError;
         }
         let mol = match ir.to_atomistic() {
             Ok(m) => m,
             Err(e) => {
                 error::set_last_error(format!("{e}"));
-                return MolrsStatus::ParseError;
+                return MolcStatus::ParseError;
             }
         };
         let frame = match mol.to_frame() {
             Ok(f) => f,
             Err(e) => {
                 error::set_last_error(format!("{e}"));
-                return MolrsStatus::InternalError;
+                return MolcStatus::InternalError;
             }
         };
 
@@ -101,7 +101,7 @@ pub unsafe extern "C" fn molrs_read_smiles(
             return ffi_err_to_status(&e);
         }
         unsafe { *out = frame_id_to_handle(id) };
-        MolrsStatus::Ok
+        MolcStatus::Ok
     })
 }
 
@@ -112,9 +112,9 @@ mod tests {
 
     #[test]
     fn ethanol_has_the_documented_columns() {
-        let mut out = MolrsFrameHandle { idx: 0, version: 0 };
-        let status = unsafe { molrs_read_smiles(c"CCO".as_ptr(), &mut out) };
-        assert_eq!(status, MolrsStatus::Ok);
+        let mut out = MolcFrameHandle { idx: 0, version: 0 };
+        let status = unsafe { molc_read_smiles(c"CCO".as_ptr(), &mut out) };
+        assert_eq!(status, MolcStatus::Ok);
         let frame = lock_registry()
             .frames
             .clone_frame(handle_to_frame_id(out))
@@ -145,8 +145,8 @@ mod tests {
 
     #[test]
     fn two_molecules_are_a_parse_error() {
-        let mut out = MolrsFrameHandle { idx: 0, version: 0 };
-        let status = unsafe { molrs_read_smiles(c"CCO.O".as_ptr(), &mut out) };
-        assert_eq!(status, MolrsStatus::ParseError);
+        let mut out = MolcFrameHandle { idx: 0, version: 0 };
+        let status = unsafe { molc_read_smiles(c"CCO.O".as_ptr(), &mut out) };
+        assert_eq!(status, MolcStatus::ParseError);
     }
 }

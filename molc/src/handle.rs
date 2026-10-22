@@ -32,9 +32,9 @@ new_key_type! {
 
 /// Opaque handle to a Frame in the handle registry.
 ///
-/// Obtained from [`molrs_frame_new`](crate::molrs_frame_new) or
-/// [`molrs_read_smiles`](crate::molrs_read_smiles).
-/// Freed with [`molrs_frame_drop`](crate::molrs_frame_drop).
+/// Obtained from [`molc_frame_new`](crate::molc_frame_new) or
+/// [`molc_read_smiles`](crate::molc_read_smiles).
+/// Freed with [`molc_frame_drop`](crate::molc_frame_drop).
 ///
 /// # Layout (C)
 ///
@@ -42,14 +42,14 @@ new_key_type! {
 /// typedef struct {
 ///     uint32_t idx;      /* slot index       */
 ///     uint32_t version;  /* generation count  */
-/// } MolrsFrameHandle;
+/// } MolcFrameHandle;
 /// ```
 ///
 /// Both fields are opaque -- C callers should never interpret them
 /// directly.
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
-pub struct MolrsFrameHandle {
+pub struct MolcFrameHandle {
     /// Slot index (opaque).
     pub idx: u32,
     /// Generation counter for stale-handle detection (opaque).
@@ -59,8 +59,8 @@ pub struct MolrsFrameHandle {
 /// Opaque handle to a Block (column group) inside a Frame.
 ///
 /// A block handle is obtained from
-/// [`molrs_frame_get_block`](crate::molrs_frame_get_block) and
-/// carries an embedded [`MolrsFrameHandle`], an interned key identifier,
+/// [`molc_frame_get_block`](crate::molc_frame_get_block) and
+/// carries an embedded [`MolcFrameHandle`], an interned key identifier,
 /// and a version counter for invalidation tracking.
 ///
 /// When a block is mutated through `_mut` accessors, the
@@ -71,17 +71,17 @@ pub struct MolrsFrameHandle {
 ///
 /// ```c
 /// typedef struct {
-///     MolrsFrameHandle frame;     /* owning frame       */
+///     MolcFrameHandle frame;     /* owning frame       */
 ///     uint32_t         key_id;    /* interned block key  */
 ///     uint64_t         block_version; /* version counter */
-/// } MolrsBlockHandle;
+/// } MolcBlockHandle;
 /// ```
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
-pub struct MolrsBlockHandle {
+pub struct MolcBlockHandle {
     /// Handle of the frame that owns this block.
-    pub frame: MolrsFrameHandle,
-    /// Interned key identifier (see [`molrs_intern_key`](crate::molrs_intern_key)).
+    pub frame: MolcFrameHandle,
+    /// Interned key identifier (see [`molc_intern_key`](crate::molc_intern_key)).
     pub key_id: u32,
     /// Version counter; bumped on mutation for stale-handle detection.
     pub block_version: u64,
@@ -89,9 +89,9 @@ pub struct MolrsBlockHandle {
 
 /// Opaque handle to a Box (simulation cell) in the handle registry.
 ///
-/// Obtained from [`molrs_box_new`](crate::molrs_box_new) or
-/// [`molrs_frame_get_box`](crate::molrs_frame_get_box).
-/// Freed with [`molrs_box_drop`](crate::molrs_box_drop).
+/// Obtained from [`molc_box_new`](crate::molc_box_new) or
+/// [`molc_frame_get_box`](crate::molc_frame_get_box).
+/// Freed with [`molc_box_drop`](crate::molc_box_drop).
 ///
 /// # Layout (C)
 ///
@@ -99,11 +99,11 @@ pub struct MolrsBlockHandle {
 /// typedef struct {
 ///     uint32_t idx;
 ///     uint32_t version;
-/// } MolrsBoxHandle;
+/// } MolcBoxHandle;
 /// ```
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
-pub struct MolrsBoxHandle {
+pub struct MolcBoxHandle {
     /// Slot index (opaque).
     pub idx: u32,
     /// Generation counter (opaque).
@@ -112,9 +112,9 @@ pub struct MolrsBoxHandle {
 
 /// Opaque handle to a Region in the handle registry.
 ///
-/// Obtained from any `molrs_region_*` constructor, or from a boolean
+/// Obtained from any `molc_region_*` constructor, or from a boolean
 /// composition of two regions. Freed with
-/// [`molrs_region_drop`](crate::molrs_region_drop).
+/// [`molc_region_drop`](crate::molc_region_drop).
 ///
 /// # Layout (C)
 ///
@@ -122,11 +122,11 @@ pub struct MolrsBoxHandle {
 /// typedef struct {
 ///     uint32_t idx;
 ///     uint32_t version;
-/// } MolrsRegionHandle;
+/// } MolcRegionHandle;
 /// ```
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
-pub struct MolrsRegionHandle {
+pub struct MolcRegionHandle {
     /// Slot index (opaque).
     pub idx: u32,
     /// Generation counter (opaque).
@@ -135,9 +135,9 @@ pub struct MolrsRegionHandle {
 
 /// Opaque handle to a ForceField in the handle registry.
 ///
-/// Obtained from [`molrs_forcefield_new`](crate::molrs_forcefield_new) or
-/// [`molrs_forcefield_from_json`](crate::molrs_forcefield_from_json).
-/// Freed with [`molrs_forcefield_drop`](crate::molrs_forcefield_drop).
+/// Obtained from [`molc_forcefield_new`](crate::molc_forcefield_new) or
+/// [`molc_forcefield_from_json`](crate::molc_forcefield_from_json).
+/// Freed with [`molc_forcefield_drop`](crate::molc_forcefield_drop).
 ///
 /// # Layout (C)
 ///
@@ -145,84 +145,84 @@ pub struct MolrsRegionHandle {
 /// typedef struct {
 ///     uint32_t idx;
 ///     uint32_t version;
-/// } MolrsForceFieldHandle;
+/// } MolcForceFieldHandle;
 /// ```
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
-pub struct MolrsForceFieldHandle {
+pub struct MolcForceFieldHandle {
     /// Slot index (opaque).
     pub idx: u32,
     /// Generation counter (opaque).
     pub version: u32,
 }
 
-// --- Conversion: FrameId ↔ MolrsFrameHandle ---
+// --- Conversion: FrameId ↔ MolcFrameHandle ---
 
-pub(crate) fn frame_id_to_handle(id: FrameId) -> MolrsFrameHandle {
+pub(crate) fn frame_id_to_handle(id: FrameId) -> MolcFrameHandle {
     let ffi = id.data().as_ffi();
-    MolrsFrameHandle {
+    MolcFrameHandle {
         idx: ffi as u32,
         version: (ffi >> 32) as u32,
     }
 }
 
-pub(crate) fn handle_to_frame_id(h: MolrsFrameHandle) -> FrameId {
+pub(crate) fn handle_to_frame_id(h: MolcFrameHandle) -> FrameId {
     let ffi = (h.version as u64) << 32 | h.idx as u64;
     FrameId::from(slotmap::KeyData::from_ffi(ffi))
 }
 
-// --- Conversion: BoxKey ↔ MolrsBoxHandle ---
+// --- Conversion: BoxKey ↔ MolcBoxHandle ---
 
-pub(crate) fn box_key_to_handle(key: BoxKey) -> MolrsBoxHandle {
+pub(crate) fn box_key_to_handle(key: BoxKey) -> MolcBoxHandle {
     let ffi = key.data().as_ffi();
-    MolrsBoxHandle {
+    MolcBoxHandle {
         idx: ffi as u32,
         version: (ffi >> 32) as u32,
     }
 }
 
-pub(crate) fn handle_to_box_key(h: MolrsBoxHandle) -> BoxKey {
+pub(crate) fn handle_to_box_key(h: MolcBoxHandle) -> BoxKey {
     let ffi = (h.version as u64) << 32 | h.idx as u64;
     BoxKey::from(slotmap::KeyData::from_ffi(ffi))
 }
 
-// --- Conversion: ForceFieldKey ↔ MolrsForceFieldHandle ---
+// --- Conversion: ForceFieldKey ↔ MolcForceFieldHandle ---
 
-pub(crate) fn forcefield_key_to_handle(key: ForceFieldKey) -> MolrsForceFieldHandle {
+pub(crate) fn forcefield_key_to_handle(key: ForceFieldKey) -> MolcForceFieldHandle {
     let ffi = key.data().as_ffi();
-    MolrsForceFieldHandle {
+    MolcForceFieldHandle {
         idx: ffi as u32,
         version: (ffi >> 32) as u32,
     }
 }
 
-pub(crate) fn handle_to_forcefield_key(h: MolrsForceFieldHandle) -> ForceFieldKey {
+pub(crate) fn handle_to_forcefield_key(h: MolcForceFieldHandle) -> ForceFieldKey {
     let ffi = (h.version as u64) << 32 | h.idx as u64;
     ForceFieldKey::from(slotmap::KeyData::from_ffi(ffi))
 }
 
-// --- Conversion: BlockHandle ↔ MolrsBlockHandle ---
+// --- Conversion: BlockHandle ↔ MolcBlockHandle ---
 
-/// Convert a Rust `BlockHandle` to a C `MolrsBlockHandle`.
+/// Convert a Rust `BlockHandle` to a C `MolcBlockHandle`.
 ///
 /// Requires the HandleRegistry to look up the interned key_id.
 pub(crate) fn block_handle_to_c(
     bh: &BlockHandle,
     key_to_id: &std::collections::HashMap<String, u32>,
-) -> Option<MolrsBlockHandle> {
+) -> Option<MolcBlockHandle> {
     let key_id = key_to_id.get(bh.key())?;
-    Some(MolrsBlockHandle {
+    Some(MolcBlockHandle {
         frame: frame_id_to_handle(bh.frame_id()),
         key_id: *key_id,
         block_version: bh.version(),
     })
 }
 
-/// Convert a C `MolrsBlockHandle` to a Rust `BlockHandle`.
+/// Convert a C `MolcBlockHandle` to a Rust `BlockHandle`.
 ///
 /// Requires the HandleRegistry to look up the key string from key_id.
 pub(crate) fn c_to_block_handle(
-    ch: &MolrsBlockHandle,
+    ch: &MolcBlockHandle,
     interned_keys: &[std::ffi::CString],
 ) -> Option<BlockHandle> {
     let key_cstr = interned_keys.get(ch.key_id as usize)?;
@@ -235,15 +235,15 @@ pub(crate) fn c_to_block_handle(
     ))
 }
 
-pub(crate) fn region_key_to_handle(key: RegionKey) -> MolrsRegionHandle {
+pub(crate) fn region_key_to_handle(key: RegionKey) -> MolcRegionHandle {
     let ffi = key.data().as_ffi();
-    MolrsRegionHandle {
+    MolcRegionHandle {
         idx: ffi as u32,
         version: (ffi >> 32) as u32,
     }
 }
 
-pub(crate) fn handle_to_region_key(h: MolrsRegionHandle) -> RegionKey {
+pub(crate) fn handle_to_region_key(h: MolcRegionHandle) -> RegionKey {
     let ffi = (h.version as u64) << 32 | h.idx as u64;
     RegionKey::from(slotmap::KeyData::from_ffi(ffi))
 }

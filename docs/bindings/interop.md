@@ -186,7 +186,7 @@ process).
 
 - **Download**: `molc-<version>-<platform>.tar.gz` (lib + `molc.h` +
   LICENSE + sha256) attached to each GitHub Release on `v*` tags.
-- **Identity**: `molrs_version()` reports the embedded molrs release for
+- **Identity**: `molc_version()` reports the embedded molrs release for
   diagnostics. There is no C or CXX API version handshake before 1.0;
   a breaking signature change ships as a new library, not a version gate.
 
@@ -196,33 +196,33 @@ A region is `Arc<dyn Region>` — a trait object — and it does **not** cross a
 boundary. What crosses is `molrs_ffi::RegionRef`, the same handle the Python
 capsule (`molrs.RegionRef/<abi_line>`) and the WASM binder carry; the C API
 keeps it in its handle registry and hands back the usual two-word
-`MolrsRegionHandle`. So a region is no different from a `SimBox` or a
+`MolcRegionHandle`. So a region is no different from a `SimBox` or a
 `ForceField` at this seam, and the vtable stays on the Rust side where it was
 compiled.
 
 ```c
-MolrsRegionHandle outer, inner, hole, shell;
-molrs_region_sphere((const double[3]){0, 0, 0}, 3.0, &outer);
-molrs_region_sphere((const double[3]){0, 0, 0}, 2.0, &inner);
-molrs_region_not(inner, &hole);
-molrs_region_and(outer, hole, &shell);          /* a shell */
+MolcRegionHandle outer, inner, hole, shell;
+molc_region_sphere((const double[3]){0, 0, 0}, 3.0, &outer);
+molc_region_sphere((const double[3]){0, 0, 0}, 2.0, &inner);
+molc_region_not(inner, &hole);
+molc_region_and(outer, hole, &shell);          /* a shell */
 
 bool inside[1];
-molrs_region_contains(shell, (const double[3]){2.5, 0, 0}, 1, inside);
+molc_region_contains(shell, (const double[3]){2.5, 0, 0}, 1, inside);
 
-molrs_region_drop(shell);                       /* operands stay alive */
-molrs_region_drop(hole);
-molrs_region_drop(inner);
-molrs_region_drop(outer);
+molc_region_drop(shell);                       /* operands stay alive */
+molc_region_drop(hole);
+molc_region_drop(inner);
+molc_region_drop(outer);
 ```
 
-Three questions, one answer shape on every surface: `molrs_region_distance`
-gives the signed distance (negative inside), `molrs_region_contains` is its
-sign, and `molrs_region_bounds` writes `[xmin, xmax, ymin, ymax, zmin, zmax]`.
+Three questions, one answer shape on every surface: `molc_region_distance`
+gives the signed distance (negative inside), `molc_region_contains` is its
+sign, and `molc_region_bounds` writes `[xmin, xmax, ymin, ymax, zmin, zmax]`.
 Composition — `and` / `or` / `not` — returns an ordinary handle, so
 compositions nest, and each handle owns its own reference: dropping a
 composition never disturbs its operands. A stale handle is reported as
-`MolrsStatus::InvalidRegionHandle`, never dereferenced.
+`MolcStatus::InvalidRegionHandle`, never dereferenced.
 
 The CXX bridge carries the same surface as free functions over a
 `Box<RegionRef>` (`region_sphere`, `region_and`, `region_distance`, …), gated

@@ -5,8 +5,8 @@
 //! `bounds` is the axis-aligned box the solid fits in — the same three
 //! questions the Python and WASM binders ask.
 //!
-//! Regions compose: [`molrs_region_and`], [`molrs_region_or`] and
-//! [`molrs_region_not`] build a new region from existing ones, so the outside
+//! Regions compose: [`molc_region_and`], [`molc_region_or`] and
+//! [`molc_region_not`] build a new region from existing ones, so the outside
 //! of a shape is its complement and a shell is `outer AND NOT inner`.
 //!
 //! # Handles, not pointers
@@ -14,10 +14,10 @@
 //! A region is internally `Arc<dyn Region>`, a trait object. That never
 //! crosses this boundary: the handle registry keeps a `molrs_ffi::RegionRef` — the same
 //! handle type the Python capsule carries — and C receives the usual two-word
-//! [`MolrsRegionHandle`]. A composed region is an ordinary handle, so
+//! [`MolcRegionHandle`]. A composed region is an ordinary handle, so
 //! compositions nest without a special case.
 //!
-//! Every handle must be released with [`molrs_region_drop`]. Dropping a
+//! Every handle must be released with [`molc_region_drop`]. Dropping a
 //! composed region does not disturb its operands: they are shared, and each
 //! handle owns its own reference.
 //!
@@ -34,46 +34,45 @@ use molrs::op::{F3, Fnx3};
 use molrs_ffi::RegionRef;
 use ndarray::{Array2, ArrayView2};
 
-use crate::error::{self, MolrsStatus};
+use crate::error::{self, MolcStatus};
 use crate::handle::{
-    MolrsBoxHandle, MolrsRegionHandle, handle_to_box_key, handle_to_region_key,
-    region_key_to_handle,
+    MolcBoxHandle, MolcRegionHandle, handle_to_box_key, handle_to_region_key, region_key_to_handle,
 };
 use crate::handle_registry::lock_registry;
-use crate::simbox::{MolrsCellKind, cell_from_c};
+use crate::simbox::{MolcCellKind, cell_from_c};
 use crate::{ffi_try, null_check};
 use molrs::op::F;
 
 /// Insert a freshly built region and hand back its handle.
-fn publish(region: Arc<dyn Region + Send + Sync>, out: *mut MolrsRegionHandle) -> MolrsStatus {
+fn publish(region: Arc<dyn Region + Send + Sync>, out: *mut MolcRegionHandle) -> MolcStatus {
     let mut registry = lock_registry();
     let key = registry.regions.insert(RegionRef::new(region));
     unsafe { *out = region_key_to_handle(key) };
-    MolrsStatus::Ok
+    MolcStatus::Ok
 }
 
 /// Run `f` against a live region, or report a stale handle.
 fn with_region<R>(
-    handle: MolrsRegionHandle,
+    handle: MolcRegionHandle,
     f: impl FnOnce(&dyn Region) -> R,
-) -> Result<R, MolrsStatus> {
+) -> Result<R, MolcStatus> {
     let registry = lock_registry();
     match registry.regions.get(handle_to_region_key(handle)) {
         Some(r) => Ok(r.with_region(f)),
         None => {
             error::set_last_error("stale or unknown region handle");
-            Err(MolrsStatus::InvalidRegionHandle)
+            Err(MolcStatus::InvalidRegionHandle)
         }
     }
 }
 
-fn region_arc(handle: MolrsRegionHandle) -> Result<Arc<dyn Region + Send + Sync>, MolrsStatus> {
+fn region_arc(handle: MolcRegionHandle) -> Result<Arc<dyn Region + Send + Sync>, MolcStatus> {
     let registry = lock_registry();
     match registry.regions.get(handle_to_region_key(handle)) {
         Some(r) => Ok(r.region()),
         None => {
             error::set_last_error("stale or unknown region handle");
-            Err(MolrsStatus::InvalidRegionHandle)
+            Err(MolcStatus::InvalidRegionHandle)
         }
     }
 }
@@ -90,19 +89,19 @@ fn triple(ptr: *const F) -> [F; 3] {
 /// Ball of `radius` about `center3`.
 ///
 /// ```c
-/// MolrsStatus molrs_region_sphere(const F center3[3],
+/// MolcStatus molc_region_sphere(const F center3[3],
 ///                                 F radius,
-///                                 MolrsRegionHandle* out);
+///                                 MolcRegionHandle* out);
 /// ```
 ///
 /// # Safety
 /// `center3` must point to 3 readable floats; `out` must be writable.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn molrs_region_sphere(
+pub unsafe extern "C" fn molc_region_sphere(
     center3: *const F,
     radius: F,
-    out: *mut MolrsRegionHandle,
-) -> MolrsStatus {
+    out: *mut MolcRegionHandle,
+) -> MolcStatus {
     ffi_try!({
         null_check!(center3);
         null_check!(out);
@@ -116,11 +115,11 @@ pub unsafe extern "C" fn molrs_region_sphere(
 /// # Safety
 /// `origin3` and `lengths3` must each point to 3 readable floats.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn molrs_region_cuboid(
+pub unsafe extern "C" fn molc_region_cuboid(
     origin3: *const F,
     lengths3: *const F,
-    out: *mut MolrsRegionHandle,
-) -> MolrsStatus {
+    out: *mut MolcRegionHandle,
+) -> MolcStatus {
     ffi_try!({
         null_check!(origin3);
         null_check!(lengths3);
@@ -139,11 +138,11 @@ pub unsafe extern "C" fn molrs_region_cuboid(
 
 /// The parallelepiped a cell spans from the corner `origin3` — the C face
 /// of molrs's `Parallelepiped::new(cell, origin)`. The cell is stated as
-/// [`molrs_box_new`](crate::molrs_box_new) takes one: a [`MolrsCellKind`]
+/// [`molc_box_new`](crate::molc_box_new) takes one: a [`MolcCellKind`]
 /// and the values it reads (the edges are the columns of a `MATRIX` cell).
 ///
 /// # Errors
-/// `InvalidArgument` for `MOLRS_CELL_KIND_UNDEFINED` (no geometric cell), a
+/// `InvalidArgument` for `MOLC_CELL_KIND_UNDEFINED` (no geometric cell), a
 /// non-positive length, an impossible angle, or a singular or non-finite
 /// cell matrix; `NullPointer` when a kind that reads values gets a null
 /// `cell`.
@@ -152,12 +151,12 @@ pub unsafe extern "C" fn molrs_region_cuboid(
 /// `cell` must point to the number of readable `F` values `kind` names,
 /// `origin3` to 3.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn molrs_region_parallelepiped(
-    kind: MolrsCellKind,
+pub unsafe extern "C" fn molc_region_parallelepiped(
+    kind: MolcCellKind,
     cell: *const F,
     origin3: *const F,
-    out: *mut MolrsRegionHandle,
-) -> MolrsStatus {
+    out: *mut MolcRegionHandle,
+) -> MolcStatus {
     ffi_try!({
         null_check!(origin3);
         null_check!(out);
@@ -170,7 +169,7 @@ pub unsafe extern "C" fn molrs_region_parallelepiped(
             Ok(r) => publish(Arc::new(r), out),
             Err(e) => {
                 error::set_last_error(e);
-                MolrsStatus::InvalidArgument
+                MolcStatus::InvalidArgument
             }
         }
     })
@@ -181,11 +180,11 @@ pub unsafe extern "C" fn molrs_region_parallelepiped(
 /// # Safety
 /// `normal3` and `point3` must each point to 3 readable floats.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn molrs_region_half_space(
+pub unsafe extern "C" fn molc_region_half_space(
     normal3: *const F,
     point3: *const F,
-    out: *mut MolrsRegionHandle,
-) -> MolrsStatus {
+    out: *mut MolcRegionHandle,
+) -> MolcStatus {
     ffi_try!({
         null_check!(normal3);
         null_check!(point3);
@@ -194,7 +193,7 @@ pub unsafe extern "C" fn molrs_region_half_space(
             Ok(r) => publish(Arc::new(r), out),
             Err(e) => {
                 error::set_last_error(e);
-                MolrsStatus::InvalidArgument
+                MolcStatus::InvalidArgument
             }
         }
     })
@@ -205,13 +204,13 @@ pub unsafe extern "C" fn molrs_region_half_space(
 /// # Safety
 /// `base3` and `axis3` must each point to 3 readable floats.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn molrs_region_cylinder(
+pub unsafe extern "C" fn molc_region_cylinder(
     base3: *const F,
     axis3: *const F,
     radius: F,
     length: F,
-    out: *mut MolrsRegionHandle,
-) -> MolrsStatus {
+    out: *mut MolcRegionHandle,
+) -> MolcStatus {
     ffi_try!({
         null_check!(base3);
         null_check!(axis3);
@@ -220,7 +219,7 @@ pub unsafe extern "C" fn molrs_region_cylinder(
             Ok(r) => publish(Arc::new(r), out),
             Err(e) => {
                 error::set_last_error(e);
-                MolrsStatus::InvalidArgument
+                MolcStatus::InvalidArgument
             }
         }
     })
@@ -231,11 +230,11 @@ pub unsafe extern "C" fn molrs_region_cylinder(
 /// # Safety
 /// `center3` and `semi_axes3` must each point to 3 readable floats.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn molrs_region_ellipsoid(
+pub unsafe extern "C" fn molc_region_ellipsoid(
     center3: *const F,
     semi_axes3: *const F,
-    out: *mut MolrsRegionHandle,
-) -> MolrsStatus {
+    out: *mut MolcRegionHandle,
+) -> MolcStatus {
     ffi_try!({
         null_check!(center3);
         null_check!(semi_axes3);
@@ -244,7 +243,7 @@ pub unsafe extern "C" fn molrs_region_ellipsoid(
             Ok(r) => publish(Arc::new(r), out),
             Err(e) => {
                 error::set_last_error(e);
-                MolrsStatus::InvalidArgument
+                MolcStatus::InvalidArgument
             }
         }
     })
@@ -253,20 +252,20 @@ pub unsafe extern "C" fn molrs_region_ellipsoid(
 /// Solid bounded by a watertight triangle mesh.
 ///
 /// `vertices` is `n_vertices * 3` floats and `faces` is `n_faces * 3` vertex
-/// indices, the same flat layout `molrs_region_polyhedron` callers already use
+/// indices, the same flat layout `molc_region_polyhedron` callers already use
 /// for STL data.
 ///
 /// # Safety
 /// `vertices` must hold `n_vertices * 3` floats and `faces` `n_faces * 3`
 /// `uint32_t`.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn molrs_region_polyhedron(
+pub unsafe extern "C" fn molc_region_polyhedron(
     vertices: *const F,
     n_vertices: usize,
     faces: *const u32,
     n_faces: usize,
-    out: *mut MolrsRegionHandle,
-) -> MolrsStatus {
+    out: *mut MolcRegionHandle,
+) -> MolcStatus {
     ffi_try!({
         null_check!(vertices);
         null_check!(faces);
@@ -279,14 +278,14 @@ pub unsafe extern "C" fn molrs_region_polyhedron(
             Ok(m) => m,
             Err(face) => {
                 error::set_last_error(format!("face {face} indexes a vertex that is not there"));
-                return MolrsStatus::InvalidArgument;
+                return MolcStatus::InvalidArgument;
             }
         };
         match Polyhedron::new(mesh) {
             Ok(r) => publish(Arc::new(r), out),
             Err(e) => {
                 error::set_last_error(e.to_string());
-                MolrsStatus::InvalidArgument
+                MolcStatus::InvalidArgument
             }
         }
     })
@@ -297,13 +296,13 @@ pub unsafe extern "C" fn molrs_region_polyhedron(
 /// # Safety
 /// `centers` must hold `n * 3` floats and `radii` `n` floats.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn molrs_region_sphere_union(
+pub unsafe extern "C" fn molc_region_sphere_union(
     centers: *const F,
     radii: *const F,
     n: usize,
-    bx: MolrsBoxHandle,
-    out: *mut MolrsRegionHandle,
-) -> MolrsStatus {
+    bx: MolcBoxHandle,
+    out: *mut MolcRegionHandle,
+) -> MolcStatus {
     ffi_try!({
         null_check!(centers);
         null_check!(radii);
@@ -314,13 +313,13 @@ pub unsafe extern "C" fn molrs_region_sphere_union(
             Ok(m) => m,
             Err(e) => {
                 error::set_last_error(format!("centers: {e}"));
-                return MolrsStatus::InvalidArgument;
+                return MolcStatus::InvalidArgument;
             }
         };
         let registry = lock_registry();
         let Some(simbox) = registry.simboxes.get(handle_to_box_key(bx)) else {
             error::set_last_error("stale or unknown box handle");
-            return MolrsStatus::InvalidBoxHandle;
+            return MolcStatus::InvalidBoxHandle;
         };
         let built = SphereUnion::new(centers_arr.view(), r, simbox);
         drop(registry);
@@ -328,7 +327,7 @@ pub unsafe extern "C" fn molrs_region_sphere_union(
             Ok(u) => publish(Arc::new(u), out),
             Err(e) => {
                 error::set_last_error(e.to_string());
-                MolrsStatus::InvalidArgument
+                MolcStatus::InvalidArgument
             }
         }
     })
@@ -344,11 +343,11 @@ type DynRegion = Arc<dyn Region + Send + Sync>;
 /// spelled out as functions, not generated by a macro, so cbindgen declares
 /// them in `molc.h`.
 fn binary_op(
-    a: MolrsRegionHandle,
-    b: MolrsRegionHandle,
-    out: *mut MolrsRegionHandle,
+    a: MolcRegionHandle,
+    b: MolcRegionHandle,
+    out: *mut MolcRegionHandle,
     compose: fn(DynRegion, DynRegion) -> DynRegion,
-) -> MolrsStatus {
+) -> MolcStatus {
     ffi_try!({
         null_check!(out);
         let (ra, rb) = match (region_arc(a), region_arc(b)) {
@@ -366,11 +365,11 @@ fn binary_op(
 /// # Safety
 /// `out` must be writable.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn molrs_region_and(
-    a: MolrsRegionHandle,
-    b: MolrsRegionHandle,
-    out: *mut MolrsRegionHandle,
-) -> MolrsStatus {
+pub unsafe extern "C" fn molc_region_and(
+    a: MolcRegionHandle,
+    b: MolcRegionHandle,
+    out: *mut MolcRegionHandle,
+) -> MolcStatus {
     binary_op(a, b, out, |ra, rb| Arc::new(AndRegion::new(ra, rb)))
 }
 
@@ -381,11 +380,11 @@ pub unsafe extern "C" fn molrs_region_and(
 /// # Safety
 /// `out` must be writable.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn molrs_region_or(
-    a: MolrsRegionHandle,
-    b: MolrsRegionHandle,
-    out: *mut MolrsRegionHandle,
-) -> MolrsStatus {
+pub unsafe extern "C" fn molc_region_or(
+    a: MolcRegionHandle,
+    b: MolcRegionHandle,
+    out: *mut MolcRegionHandle,
+) -> MolcStatus {
     binary_op(a, b, out, |ra, rb| Arc::new(OrRegion::new(ra, rb)))
 }
 
@@ -394,10 +393,10 @@ pub unsafe extern "C" fn molrs_region_or(
 /// # Safety
 /// `out` must be writable.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn molrs_region_not(
-    a: MolrsRegionHandle,
-    out: *mut MolrsRegionHandle,
-) -> MolrsStatus {
+pub unsafe extern "C" fn molc_region_not(
+    a: MolcRegionHandle,
+    out: *mut MolcRegionHandle,
+) -> MolcStatus {
     ffi_try!({
         null_check!(out);
         let ra = match region_arc(a) {
@@ -419,12 +418,12 @@ pub unsafe extern "C" fn molrs_region_not(
 /// # Safety
 /// `points` must hold `n * 3` readable floats and `out` `n` writable floats.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn molrs_region_distance(
-    region: MolrsRegionHandle,
+pub unsafe extern "C" fn molc_region_distance(
+    region: MolcRegionHandle,
     points: *const F,
     n: usize,
     out: *mut F,
-) -> MolrsStatus {
+) -> MolcStatus {
     ffi_try!({
         null_check!(points);
         null_check!(out);
@@ -435,7 +434,7 @@ pub unsafe extern "C" fn molrs_region_distance(
                 *slot = r.distance(&[p[3 * i], p[3 * i + 1], p[3 * i + 2]]);
             }
         }) {
-            Ok(()) => MolrsStatus::Ok,
+            Ok(()) => MolcStatus::Ok,
             Err(s) => s,
         }
     })
@@ -446,12 +445,12 @@ pub unsafe extern "C" fn molrs_region_distance(
 /// # Safety
 /// `points` must hold `n * 3` readable floats and `out` `n` writable bools.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn molrs_region_contains(
-    region: MolrsRegionHandle,
+pub unsafe extern "C" fn molc_region_contains(
+    region: MolcRegionHandle,
     points: *const F,
     n: usize,
     out: *mut bool,
-) -> MolrsStatus {
+) -> MolcStatus {
     ffi_try!({
         null_check!(points);
         null_check!(out);
@@ -461,7 +460,7 @@ pub unsafe extern "C" fn molrs_region_contains(
             Ok(m) => m,
             Err(e) => {
                 error::set_last_error(format!("points: {e}"));
-                return MolrsStatus::InvalidArgument;
+                return MolcStatus::InvalidArgument;
             }
         };
         let view: ArrayView2<'_, F> = pts.view();
@@ -471,7 +470,7 @@ pub unsafe extern "C" fn molrs_region_contains(
                 *slot = hit;
             }
         }) {
-            Ok(()) => MolrsStatus::Ok,
+            Ok(()) => MolcStatus::Ok,
             Err(s) => s,
         }
     })
@@ -482,10 +481,7 @@ pub unsafe extern "C" fn molrs_region_contains(
 /// # Safety
 /// `out6` must point to 6 writable floats.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn molrs_region_bounds(
-    region: MolrsRegionHandle,
-    out6: *mut F,
-) -> MolrsStatus {
+pub unsafe extern "C" fn molc_region_bounds(region: MolcRegionHandle, out6: *mut F) -> MolcStatus {
     ffi_try!({
         null_check!(out6);
         let dst = unsafe { std::slice::from_raw_parts_mut(out6, 6) };
@@ -494,7 +490,7 @@ pub unsafe extern "C" fn molrs_region_bounds(
                 *slot = v;
             }
         }) {
-            Ok(()) => MolrsStatus::Ok,
+            Ok(()) => MolcStatus::Ok,
             Err(s) => s,
         }
     })
@@ -505,14 +501,14 @@ pub unsafe extern "C" fn molrs_region_bounds(
 /// # Safety
 /// The handle must not be used afterwards.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn molrs_region_drop(region: MolrsRegionHandle) -> MolrsStatus {
+pub unsafe extern "C" fn molc_region_drop(region: MolcRegionHandle) -> MolcStatus {
     ffi_try!({
         let mut registry = lock_registry();
         match registry.regions.remove(handle_to_region_key(region)) {
-            Some(_) => MolrsStatus::Ok,
+            Some(_) => MolcStatus::Ok,
             None => {
                 error::set_last_error("stale or unknown region handle");
-                MolrsStatus::InvalidRegionHandle
+                MolcStatus::InvalidRegionHandle
             }
         }
     })

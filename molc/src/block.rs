@@ -7,19 +7,19 @@
 //!
 //! | Pattern   | Function | Semantics |
 //! |-----------|----------|-----------|
-//! | **Pointer (read)**  | `molrs_block_get` | Zero-copy bytes; `out_dtype` is the stored variant |
-//! | **Pointer (write)** | `molrs_block_get_mut` | Zero-copy mutable bytes; version bumped |
-//! | **Copy**  | `molrs_block_copy` | Copies the column's bytes into a caller buffer |
-//! | **Insert**| `molrs_block_set` | Copies caller data of the stated `MolrsDType` into a new column |
+//! | **Pointer (read)**  | `molc_block_get` | Zero-copy bytes; `out_dtype` is the stored variant |
+//! | **Pointer (write)** | `molc_block_get_mut` | Zero-copy mutable bytes; version bumped |
+//! | **Copy**  | `molc_block_copy` | Copies the column's bytes into a caller buffer |
+//! | **Insert**| `molc_block_set` | Copies caller data of the stated `MolcDType` into a new column |
 //!
 //! `get`, `get_mut`, `copy` and `set` work for every fixed-width dtype. A
 //! string column has no flat scalar buffer: reading one returns
 //! `TypeMismatch`, which is not `KeyNotFound`, and `set` refuses
-//! `MOLRS_D_TYPE_STRING` with `TypeMismatch`. Shape and dtype stay on
-//! [`molrs_block_column_shape`] and [`molrs_block_column_dtype`].
+//! `MOLC_D_TYPE_STRING` with `TypeMismatch`. Shape and dtype stay on
+//! [`molc_block_column_shape`] and [`molc_block_column_dtype`].
 //!
 //! `F` is `f64`, `I` is `i32`, `Idx` is `u64`. `out_len` is an element
-//! count. `molrs_block_copy`'s `buf_bytes` is a byte capacity.
+//! count. `molc_block_copy`'s `buf_bytes` is a byte capacity.
 
 use std::ffi::c_void;
 
@@ -28,8 +28,8 @@ use molrs::op::{F, I, Idx};
 use ndarray::ArrayD;
 use num_complex::Complex;
 
-use crate::error::{self, MolrsDType, MolrsStatus, ffi_err_to_status};
-use crate::handle::{MolrsBlockHandle, c_to_block_handle};
+use crate::error::{self, MolcDType, MolcStatus, ffi_err_to_status};
+use crate::handle::{MolcBlockHandle, c_to_block_handle};
 use crate::handle_registry::lock_registry;
 use crate::{ffi_try, null_check};
 
@@ -44,7 +44,7 @@ macro_rules! resolve_block {
             Some(bh) => bh,
             None => {
                 error::set_last_error("invalid block handle or unknown key_id");
-                return MolrsStatus::InvalidBlockHandle;
+                return MolcStatus::InvalidBlockHandle;
             }
         }
     };
@@ -57,7 +57,7 @@ macro_rules! resolve_col_key {
             Some(s) => s.to_owned(),
             None => {
                 error::set_last_error(format!("unknown col_key_id {}", $col_key_id));
-                return MolrsStatus::KeyNotFound;
+                return MolcStatus::KeyNotFound;
             }
         }
     };
@@ -74,7 +74,7 @@ macro_rules! resolve_col_key {
 /// # C signature
 ///
 /// ```c
-/// MolrsStatus molrs_block_n_rows(MolrsBlockHandle block, size_t* out);
+/// MolcStatus molc_block_n_rows(MolcBlockHandle block, size_t* out);
 /// ```
 ///
 /// # Arguments
@@ -84,19 +84,16 @@ macro_rules! resolve_col_key {
 ///
 /// # Returns
 ///
-/// * `MolrsStatus::Ok` on success.
-/// * `MolrsStatus::NullPointer` if `out` is null.
-/// * `MolrsStatus::InvalidBlockHandle` if `block` is stale or invalid.
+/// * `MolcStatus::Ok` on success.
+/// * `MolcStatus::NullPointer` if `out` is null.
+/// * `MolcStatus::InvalidBlockHandle` if `block` is stale or invalid.
 ///
 /// # Safety
 ///
 /// * `block` must be a live block handle.
 /// * `out` must point to a writable `size_t`.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn molrs_block_n_rows(
-    block: MolrsBlockHandle,
-    out: *mut usize,
-) -> MolrsStatus {
+pub unsafe extern "C" fn molc_block_n_rows(block: MolcBlockHandle, out: *mut usize) -> MolcStatus {
     ffi_try!({
         null_check!(out);
         let registry = lock_registry();
@@ -104,11 +101,11 @@ pub unsafe extern "C" fn molrs_block_n_rows(
         match registry.frames.with_block(&bh, |b| b.n_rows()) {
             Ok(Some(n)) => {
                 unsafe { *out = n };
-                MolrsStatus::Ok
+                MolcStatus::Ok
             }
             Ok(None) => {
                 unsafe { *out = 0 };
-                MolrsStatus::Ok
+                MolcStatus::Ok
             }
             Err(e) => ffi_err_to_status(&e),
         }
@@ -120,7 +117,7 @@ pub unsafe extern "C" fn molrs_block_n_rows(
 /// # C signature
 ///
 /// ```c
-/// MolrsStatus molrs_block_n_columns(MolrsBlockHandle block, size_t* out);
+/// MolcStatus molc_block_n_columns(MolcBlockHandle block, size_t* out);
 /// ```
 ///
 /// # Arguments
@@ -130,19 +127,19 @@ pub unsafe extern "C" fn molrs_block_n_rows(
 ///
 /// # Returns
 ///
-/// * `MolrsStatus::Ok` on success.
-/// * `MolrsStatus::NullPointer` if `out` is null.
-/// * `MolrsStatus::InvalidBlockHandle` if `block` is stale or invalid.
+/// * `MolcStatus::Ok` on success.
+/// * `MolcStatus::NullPointer` if `out` is null.
+/// * `MolcStatus::InvalidBlockHandle` if `block` is stale or invalid.
 ///
 /// # Safety
 ///
 /// * `block` must be a live block handle.
 /// * `out` must point to a writable `size_t`.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn molrs_block_n_columns(
-    block: MolrsBlockHandle,
+pub unsafe extern "C" fn molc_block_n_columns(
+    block: MolcBlockHandle,
     out: *mut usize,
-) -> MolrsStatus {
+) -> MolcStatus {
     ffi_try!({
         null_check!(out);
         let registry = lock_registry();
@@ -150,7 +147,7 @@ pub unsafe extern "C" fn molrs_block_n_columns(
         match registry.frames.with_block(&bh, |b| b.len()) {
             Ok(n) => {
                 unsafe { *out = n };
-                MolrsStatus::Ok
+                MolcStatus::Ok
             }
             Err(e) => ffi_err_to_status(&e),
         }
@@ -159,15 +156,15 @@ pub unsafe extern "C" fn molrs_block_n_columns(
 
 /// Query the data type of a column.
 ///
-/// The returned [`MolrsDType`] is the stored variant. An `i64` column is
-/// `Int64`, not `Int`. Pair it with [`molrs_block_get`](crate::molrs_block_get).
+/// The returned [`MolcDType`] is the stored variant. An `i64` column is
+/// `Int64`, not `Int`. Pair it with [`molc_block_get`](crate::molc_block_get).
 ///
 /// # C signature
 ///
 /// ```c
-/// MolrsStatus molrs_block_column_dtype(MolrsBlockHandle block,
+/// MolcStatus molc_block_column_dtype(MolcBlockHandle block,
 ///                                    uint32_t col_key_id,
-///                                    MolrsDType* out);
+///                                    MolcDType* out);
 /// ```
 ///
 /// # Arguments
@@ -178,38 +175,38 @@ pub unsafe extern "C" fn molrs_block_n_columns(
 ///
 /// # Returns
 ///
-/// * `MolrsStatus::Ok` on success.
-/// * `MolrsStatus::NullPointer` if `out` is null.
-/// * `MolrsStatus::KeyNotFound` if `col_key_id` was not interned or
+/// * `MolcStatus::Ok` on success.
+/// * `MolcStatus::NullPointer` if `out` is null.
+/// * `MolcStatus::KeyNotFound` if `col_key_id` was not interned or
 ///   the column does not exist.
-/// * `MolrsStatus::InvalidBlockHandle` if `block` is stale.
+/// * `MolcStatus::InvalidBlockHandle` if `block` is stale.
 ///
 /// # Safety
 ///
 /// * `block` must be a live block handle.
-/// * `out` must point to a writable `MolrsDType`.
+/// * `out` must point to a writable `MolcDType`.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn molrs_block_column_dtype(
-    block: MolrsBlockHandle,
+pub unsafe extern "C" fn molc_block_column_dtype(
+    block: MolcBlockHandle,
     col_key_id: u32,
-    out: *mut MolrsDType,
-) -> MolrsStatus {
+    out: *mut MolcDType,
+) -> MolcStatus {
     ffi_try!({
         null_check!(out);
         let registry = lock_registry();
         let bh = resolve_block!(registry, &block);
         let col_key = resolve_col_key!(registry, col_key_id);
         let result = registry.frames.with_block(&bh, |b| {
-            b.get(&col_key).map(|col| MolrsDType::from(col.dtype()))
+            b.get(&col_key).map(|col| MolcDType::from(col.dtype()))
         });
         match result {
             Ok(Some(dt)) => {
                 unsafe { *out = dt };
-                MolrsStatus::Ok
+                MolcStatus::Ok
             }
             Ok(None) => {
                 error::set_last_error(format!("column '{}' not found", col_key));
-                MolrsStatus::KeyNotFound
+                MolcStatus::KeyNotFound
             }
             Err(e) => ffi_err_to_status(&e),
         }
@@ -226,7 +223,7 @@ pub unsafe extern "C" fn molrs_block_column_dtype(
 /// # C signature
 ///
 /// ```c
-/// MolrsStatus molrs_block_column_shape(MolrsBlockHandle block,
+/// MolcStatus molc_block_column_shape(MolcBlockHandle block,
 ///                                    uint32_t col_key_id,
 ///                                    size_t*  out_shape,
 ///                                    size_t*  inout_ndim);
@@ -241,10 +238,10 @@ pub unsafe extern "C" fn molrs_block_column_dtype(
 ///
 /// # Returns
 ///
-/// * `MolrsStatus::Ok` on success.
-/// * `MolrsStatus::NullPointer` if `out_shape` or `inout_ndim` is null.
-/// * `MolrsStatus::KeyNotFound` if the column does not exist.
-/// * `MolrsStatus::InvalidBlockHandle` if `block` is stale.
+/// * `MolcStatus::Ok` on success.
+/// * `MolcStatus::NullPointer` if `out_shape` or `inout_ndim` is null.
+/// * `MolcStatus::KeyNotFound` if the column does not exist.
+/// * `MolcStatus::InvalidBlockHandle` if `block` is stale.
 ///
 /// # Safety
 ///
@@ -253,12 +250,12 @@ pub unsafe extern "C" fn molrs_block_column_dtype(
 ///   writable `size_t` elements.
 /// * `inout_ndim` must point to a writable `size_t`.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn molrs_block_column_shape(
-    block: MolrsBlockHandle,
+pub unsafe extern "C" fn molc_block_column_shape(
+    block: MolcBlockHandle,
     col_key_id: u32,
     out_shape: *mut usize,
     inout_ndim: *mut usize,
-) -> MolrsStatus {
+) -> MolcStatus {
     ffi_try!({
         null_check!(out_shape);
         null_check!(inout_ndim);
@@ -276,11 +273,11 @@ pub unsafe extern "C" fn molrs_block_column_shape(
                 let copy_len = actual_ndim.min(max_ndim);
                 let out_slice = unsafe { std::slice::from_raw_parts_mut(out_shape, copy_len) };
                 out_slice.copy_from_slice(&shape[..copy_len]);
-                MolrsStatus::Ok
+                MolcStatus::Ok
             }
             Ok(None) => {
                 error::set_last_error(format!("column '{}' not found", col_key));
-                MolrsStatus::KeyNotFound
+                MolcStatus::KeyNotFound
             }
             Err(e) => ffi_err_to_status(&e),
         }
@@ -299,62 +296,59 @@ enum ReadFail {
     TooSmall,
 }
 
-fn fail_status(fail: ReadFail, key: &str) -> MolrsStatus {
+fn fail_status(fail: ReadFail, key: &str) -> MolcStatus {
     let (status, msg) = match fail {
-        ReadFail::Missing => (
-            MolrsStatus::KeyNotFound,
-            format!("column '{key}' not found"),
-        ),
+        ReadFail::Missing => (MolcStatus::KeyNotFound, format!("column '{key}' not found")),
         ReadFail::String => (
-            MolrsStatus::TypeMismatch,
+            MolcStatus::TypeMismatch,
             format!("column '{key}' is string; a string column has no flat scalar buffer"),
         ),
         ReadFail::NonContiguous => (
-            MolrsStatus::NonContiguous,
+            MolcStatus::NonContiguous,
             format!("column '{key}' is not contiguous"),
         ),
-        ReadFail::TooSmall => (MolrsStatus::InvalidArgument, "buffer too small".to_string()),
+        ReadFail::TooSmall => (MolcStatus::InvalidArgument, "buffer too small".to_string()),
     };
     error::set_last_error(msg);
     status
 }
 
 /// Run `$f::<T>($args)` with `T` the element type of the fixed-width
-/// [`MolrsDType`] `$dtype`; `string => $string` is the arm for
-/// [`MolrsDType::String`], which has no flat scalar buffer.
+/// [`MolcDType`] `$dtype`; `string => $string` is the arm for
+/// [`MolcDType::String`], which has no flat scalar buffer.
 macro_rules! dispatch_scalar {
     ($dtype:expr, $f:ident($($arg:expr),*), string => $string:expr) => {
         match $dtype {
-            MolrsDType::Float => $f::<F>($($arg),*),
-            MolrsDType::Int => $f::<I>($($arg),*),
-            MolrsDType::Bool => $f::<bool>($($arg),*),
-            MolrsDType::Uint => $f::<Idx>($($arg),*),
-            MolrsDType::I8 => $f::<i8>($($arg),*),
-            MolrsDType::I16 => $f::<i16>($($arg),*),
-            MolrsDType::I64 => $f::<i64>($($arg),*),
-            MolrsDType::U8 => $f::<u8>($($arg),*),
-            MolrsDType::U16 => $f::<u16>($($arg),*),
-            MolrsDType::U32 => $f::<u32>($($arg),*),
-            MolrsDType::C64 => $f::<Complex<f32>>($($arg),*),
-            MolrsDType::C128 => $f::<Complex<f64>>($($arg),*),
-            MolrsDType::String => $string,
+            MolcDType::Float => $f::<F>($($arg),*),
+            MolcDType::Int => $f::<I>($($arg),*),
+            MolcDType::Bool => $f::<bool>($($arg),*),
+            MolcDType::Uint => $f::<Idx>($($arg),*),
+            MolcDType::I8 => $f::<i8>($($arg),*),
+            MolcDType::I16 => $f::<i16>($($arg),*),
+            MolcDType::I64 => $f::<i64>($($arg),*),
+            MolcDType::U8 => $f::<u8>($($arg),*),
+            MolcDType::U16 => $f::<u16>($($arg),*),
+            MolcDType::U32 => $f::<u32>($($arg),*),
+            MolcDType::C64 => $f::<Complex<f32>>($($arg),*),
+            MolcDType::C128 => $f::<Complex<f64>>($($arg),*),
+            MolcDType::String => $string,
         }
     };
 }
 
-fn scalar_view(col: &Column) -> Result<(*const u8, usize, MolrsDType), ReadFail> {
+fn scalar_view(col: &Column) -> Result<(*const u8, usize, MolcDType), ReadFail> {
     fn view<T: BlockDtype>(col: &Column) -> Result<(*const u8, usize), ReadFail> {
         // `col.dtype()` named `T`, so the column holds `T` elements.
         let arr = col.get::<T>().ok_or(ReadFail::String)?;
         let slice = arr.as_slice_memory_order().ok_or(ReadFail::NonContiguous)?;
         Ok((slice.as_ptr().cast(), slice.len()))
     }
-    let dtype = MolrsDType::from(col.dtype());
+    let dtype = MolcDType::from(col.dtype());
     let (ptr, len) = dispatch_scalar!(dtype, view(col), string => Err(ReadFail::String))?;
     Ok((ptr, len, dtype))
 }
 
-fn scalar_view_mut(col: &mut Column) -> Result<(*mut u8, usize, MolrsDType), ReadFail> {
+fn scalar_view_mut(col: &mut Column) -> Result<(*mut u8, usize, MolcDType), ReadFail> {
     fn view_mut<T: BlockDtype>(col: &mut Column) -> Result<(*mut u8, usize), ReadFail> {
         let arr = col.get_mut::<T>().ok_or(ReadFail::String)?;
         let slice = arr
@@ -362,7 +356,7 @@ fn scalar_view_mut(col: &mut Column) -> Result<(*mut u8, usize, MolrsDType), Rea
             .ok_or(ReadFail::NonContiguous)?;
         Ok((slice.as_mut_ptr().cast(), slice.len()))
     }
-    let dtype = MolrsDType::from(col.dtype());
+    let dtype = MolcDType::from(col.dtype());
     let (ptr, len) = dispatch_scalar!(dtype, view_mut(col), string => Err(ReadFail::String))?;
     Ok((ptr, len, dtype))
 }
@@ -392,13 +386,13 @@ fn scalar_bytes(col: &Column) -> Result<Vec<u8>, ReadFail> {
 /// * The returned pointer is valid until the block is mutated or the frame
 ///   is dropped.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn molrs_block_get(
-    block: MolrsBlockHandle,
+pub unsafe extern "C" fn molc_block_get(
+    block: MolcBlockHandle,
     col_key_id: u32,
     out_ptr: *mut *const u8,
     out_len: *mut usize,
-    out_dtype: *mut MolrsDType,
-) -> MolrsStatus {
+    out_dtype: *mut MolcDType,
+) -> MolcStatus {
     ffi_try!({
         null_check!(out_ptr);
         null_check!(out_len);
@@ -417,7 +411,7 @@ pub unsafe extern "C" fn molrs_block_get(
                     *out_len = len;
                     *out_dtype = dtype;
                 }
-                MolrsStatus::Ok
+                MolcStatus::Ok
             }
             Ok(Err(fail)) => fail_status(fail, &col_key),
             Err(e) => ffi_err_to_status(&e),
@@ -427,23 +421,23 @@ pub unsafe extern "C" fn molrs_block_get(
 
 /// Mutable byte pointer for one column. Bumps `block->block_version`.
 ///
-/// Same dtype and status rules as [`molrs_block_get`]. The call bumps the
+/// Same dtype and status rules as [`molc_block_get`]. The call bumps the
 /// version itself, so a write through the pointer needs no follow-up call.
 ///
 /// # Safety
 ///
-/// * `block` must point to a live, writable `MolrsBlockHandle`.
+/// * `block` must point to a live, writable `MolcBlockHandle`.
 /// * `out_ptr`, `out_len`, and `out_dtype` must be non-null and writable.
 /// * The returned pointer is valid until another mutating call on the same
 ///   block, or until the frame is dropped.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn molrs_block_get_mut(
-    block: *mut MolrsBlockHandle,
+pub unsafe extern "C" fn molc_block_get_mut(
+    block: *mut MolcBlockHandle,
     col_key_id: u32,
     out_ptr: *mut *mut u8,
     out_len: *mut usize,
-    out_dtype: *mut MolrsDType,
-) -> MolrsStatus {
+    out_dtype: *mut MolcDType,
+) -> MolcStatus {
     ffi_try!({
         null_check!(block);
         null_check!(out_ptr);
@@ -468,7 +462,7 @@ pub unsafe extern "C" fn molrs_block_get_mut(
                     *out_len = len;
                     *out_dtype = dtype;
                 }
-                MolrsStatus::Ok
+                MolcStatus::Ok
             }
             Ok(Err(fail)) => fail_status(fail, &col_key),
             Err(e) => ffi_err_to_status(&e),
@@ -487,12 +481,12 @@ pub unsafe extern "C" fn molrs_block_get_mut(
 /// * `block` must be a live block handle.
 /// * `out_buf` must point at `buf_bytes` writable bytes.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn molrs_block_copy(
-    block: MolrsBlockHandle,
+pub unsafe extern "C" fn molc_block_copy(
+    block: MolcBlockHandle,
     col_key_id: u32,
     out_buf: *mut u8,
     buf_bytes: usize,
-) -> MolrsStatus {
+) -> MolcStatus {
     ffi_try!({
         null_check!(out_buf);
         let registry = lock_registry();
@@ -512,7 +506,7 @@ pub unsafe extern "C" fn molrs_block_copy(
             Ok(Ok(data)) => {
                 let out_slice = unsafe { std::slice::from_raw_parts_mut(out_buf, data.len()) };
                 out_slice.copy_from_slice(&data);
-                MolrsStatus::Ok
+                MolcStatus::Ok
             }
             Ok(Err(fail)) => fail_status(fail, &col_key),
             Err(e) => ffi_err_to_status(&e),
@@ -590,8 +584,8 @@ unsafe fn column_from_c<T: CScalar>(
 /// # C signature
 ///
 /// ```c
-/// MolrsStatus molrs_block_set(MolrsBlockHandle* block, uint32_t col_key_id,
-///                             MolrsDType dtype, const void* data,
+/// MolcStatus molc_block_set(MolcBlockHandle* block, uint32_t col_key_id,
+///                             MolcDType dtype, const void* data,
 ///                             const size_t* shape, size_t ndim);
 /// ```
 ///
@@ -599,53 +593,53 @@ unsafe fn column_from_c<T: CScalar>(
 ///
 /// * `block` -- Pointer to the block handle; its `block_version` is updated.
 /// * `col_key_id` -- Interned column name.
-/// * `dtype` -- Element type of `data`: `MOLRS_D_TYPE_FLOAT` (`F`),
-///   `MOLRS_D_TYPE_INT` (`int32_t`), `MOLRS_D_TYPE_UINT` (`uint64_t`),
-///   `MOLRS_D_TYPE_BOOL` (one byte, 0 or 1), `MOLRS_D_TYPE_I8` … `U32`,
-///   `MOLRS_D_TYPE_C64` / `C128` (a `float` / `double` pair per element).
-///   `MOLRS_D_TYPE_STRING` has no flat buffer and is refused.
+/// * `dtype` -- Element type of `data`: `MOLC_D_TYPE_FLOAT` (`F`),
+///   `MOLC_D_TYPE_INT` (`int32_t`), `MOLC_D_TYPE_UINT` (`uint64_t`),
+///   `MOLC_D_TYPE_BOOL` (one byte, 0 or 1), `MOLC_D_TYPE_I8` … `U32`,
+///   `MOLC_D_TYPE_C64` / `C128` (a `float` / `double` pair per element).
+///   `MOLC_D_TYPE_STRING` has no flat buffer and is refused.
 /// * `data` -- Pointer to the source data (row-major).
 /// * `shape` -- Pointer to `ndim` dimension sizes.
 /// * `ndim` -- Number of dimensions (must be >= 1).
 ///
 /// # Returns
 ///
-/// * `MolrsStatus::Ok` on success.
-/// * `MolrsStatus::NullPointer` if any pointer is null.
-/// * `MolrsStatus::TypeMismatch` if `dtype` is `MOLRS_D_TYPE_STRING`.
-/// * `MolrsStatus::InvalidArgument` if `ndim == 0`, the element count is 0,
+/// * `MolcStatus::Ok` on success.
+/// * `MolcStatus::NullPointer` if any pointer is null.
+/// * `MolcStatus::TypeMismatch` if `dtype` is `MOLC_D_TYPE_STRING`.
+/// * `MolcStatus::InvalidArgument` if `ndim == 0`, the element count is 0,
 ///   a `bool` element is neither 0 nor 1, or the column does not fit the
 ///   block (a row count other than the block's).
-/// * `MolrsStatus::KeyNotFound` if `col_key_id` was not interned.
-/// * `MolrsStatus::InvalidBlockHandle` if the block handle is stale.
+/// * `MolcStatus::KeyNotFound` if `col_key_id` was not interned.
+/// * `MolcStatus::InvalidBlockHandle` if the block handle is stale.
 ///
 /// # Safety
 ///
-/// * `block` must point to a live, writable `MolrsBlockHandle`.
+/// * `block` must point to a live, writable `MolcBlockHandle`.
 /// * `data` must point to at least `product(shape[0..ndim])` readable,
 ///   aligned elements of the C type `dtype` names.
 /// * `shape` must point to `ndim` elements.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn molrs_block_set(
-    block: *mut MolrsBlockHandle,
+pub unsafe extern "C" fn molc_block_set(
+    block: *mut MolcBlockHandle,
     col_key_id: u32,
-    dtype: MolrsDType,
+    dtype: MolcDType,
     data: *const c_void,
     shape: *const usize,
     ndim: usize,
-) -> MolrsStatus {
+) -> MolcStatus {
     ffi_try!({
         null_check!(block);
         null_check!(data);
         null_check!(shape);
         if ndim == 0 {
             error::set_last_error("ndim must be > 0");
-            return MolrsStatus::InvalidArgument;
+            return MolcStatus::InvalidArgument;
         }
         let shape_slice = unsafe { std::slice::from_raw_parts(shape, ndim) };
         if shape_slice.iter().product::<usize>() == 0 {
             error::set_last_error("total element count is 0");
-            return MolrsStatus::InvalidArgument;
+            return MolcStatus::InvalidArgument;
         }
         // SAFETY: the caller guarantees `data` holds `product(shape)`
         // aligned elements of the C type `dtype` names.
@@ -655,10 +649,10 @@ pub unsafe extern "C" fn molrs_block_set(
                 column_from_c(data, shape_slice),
                 string => {
                     error::set_last_error(
-                        "a string column has no flat scalar buffer; molrs_block_set takes a \
-                         fixed-width MolrsDType",
+                        "a string column has no flat scalar buffer; molc_block_set takes a \
+                         fixed-width MolcDType",
                     );
-                    return MolrsStatus::TypeMismatch;
+                    return MolcStatus::TypeMismatch;
                 }
             )
         };
@@ -666,7 +660,7 @@ pub unsafe extern "C" fn molrs_block_set(
             Ok(c) => c,
             Err(msg) => {
                 error::set_last_error(msg);
-                return MolrsStatus::InvalidArgument;
+                return MolcStatus::InvalidArgument;
             }
         };
 
@@ -682,11 +676,11 @@ pub unsafe extern "C" fn molrs_block_set(
             Ok(Ok(())) => {
                 let c_block = unsafe { &mut *block };
                 c_block.block_version = bh.version();
-                MolrsStatus::Ok
+                MolcStatus::Ok
             }
             Ok(Err(block_err)) => {
                 error::set_last_error(format!("block insert error: {block_err}"));
-                MolrsStatus::InvalidArgument
+                MolcStatus::InvalidArgument
             }
             Err(e) => ffi_err_to_status(&e),
         }
@@ -703,7 +697,7 @@ mod scalar_view_tests {
         let col = Column::from(Array1::from_vec(vec![7_i64, 8]).into_dyn());
         let (ptr, len, dtype) = scalar_view(&col).unwrap();
         assert_eq!(len, 2);
-        assert_eq!(dtype, MolrsDType::I64);
+        assert_eq!(dtype, MolcDType::I64);
         let vals = unsafe { std::slice::from_raw_parts(ptr as *const i64, len) };
         assert_eq!(vals, &[7, 8]);
     }

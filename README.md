@@ -119,7 +119,7 @@ import molpy as mp
 
 from pathlib import Path
 
-mol       = mp.io.smiles.SmilesIr("CCO").to_atomistic()     # ethanol from SMILES
+mol       = mp.io.smiles.read_smiles("CCO").to_atomistic()  # ethanol from SMILES
 mol3d, _  = mp.conformer.Conformer(seed=42).generate(mol)   # hydrogens + 3D coordinates
 
 typifier  = mp.ff.typifier.OplsAaTypifier()          # carries the OPLS-AA library
@@ -136,7 +136,7 @@ ff.get_style("pair", "coul/cut")["cutoff"] = 10.0
 
 out = Path("output"); out.mkdir(exist_ok=True)
 mp.io.write_lammps_data(out / "system.data", system)
-mp.io.write_lammps_forcefield(out / "system.ff", ff, system)
+mp.io.lammps.LammpsForcefieldWriter(system).write(out / "system.ff", ff)
 ```
 
 More workflows — packed solvent boxes, virtual-site models, polymer

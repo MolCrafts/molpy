@@ -1,7 +1,7 @@
 //! C API for inspecting the Frame schema.
 //!
 //! The vocabulary crosses the boundary as **JSON**, not as a mirrored struct
-//! layout. A `MolrsColumnSpec` struct would have to be kept in sync by hand in
+//! layout. A `MolcColumnSpec` struct would have to be kept in sync by hand in
 //! the C header, which is the very duplication this schema exists to remove —
 //! and it would break its ABI every time a field is added. One JSON document
 //! costs the caller a parse and can never disagree with the Rust tables.
@@ -20,22 +20,22 @@ use molrs::core::schema;
 /// # C signature
 ///
 /// ```c
-/// char* molrs_schema_document(void);
+/// char* molc_schema_document(void);
 /// ```
 ///
 /// # Returns
 ///
 /// A heap-allocated, NUL-terminated JSON string the caller owns. Free it with
-/// [`molrs_free_string`](crate::molrs_free_string). Never `NULL`.
+/// [`molc_free_string`](crate::molc_free_string). Never `NULL`.
 ///
 /// The bytes are stable across runs, so two releases of the library can be
 /// diffed to see exactly what changed about the data contract.
 ///
 /// # Safety
 ///
-/// The returned pointer must be freed exactly once with `molrs_free_string`.
+/// The returned pointer must be freed exactly once with `molc_free_string`.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn molrs_schema_document() -> *mut c_char {
+pub unsafe extern "C" fn molc_schema_document() -> *mut c_char {
     CString::new(schema::document().to_json())
         .expect("schema JSON contains no interior NUL")
         .into_raw()
@@ -46,10 +46,10 @@ pub unsafe extern "C" fn molrs_schema_document() -> *mut c_char {
 /// # C signature
 ///
 /// ```c
-/// size_t molrs_schema_n_columns(void);
+/// size_t molc_schema_n_columns(void);
 /// ```
 #[unsafe(no_mangle)]
-pub extern "C" fn molrs_schema_n_columns() -> usize {
+pub extern "C" fn molc_schema_n_columns() -> usize {
     schema::SCHEMA_COLUMNS.len()
 }
 
@@ -58,10 +58,10 @@ pub extern "C" fn molrs_schema_n_columns() -> usize {
 /// # C signature
 ///
 /// ```c
-/// size_t molrs_schema_n_blocks(void);
+/// size_t molc_schema_n_blocks(void);
 /// ```
 #[unsafe(no_mangle)]
-pub extern "C" fn molrs_schema_n_blocks() -> usize {
+pub extern "C" fn molc_schema_n_blocks() -> usize {
     schema::SCHEMA_BLOCKS.len()
 }
 
@@ -70,7 +70,7 @@ pub extern "C" fn molrs_schema_n_blocks() -> usize {
 /// # C signature
 ///
 /// ```c
-/// const char* molrs_schema_column_dtype(const char* key);
+/// const char* molc_schema_column_dtype(const char* key);
 /// ```
 ///
 /// # Returns
@@ -86,7 +86,7 @@ pub extern "C" fn molrs_schema_n_blocks() -> usize {
 ///
 /// `key` must be a valid NUL-terminated UTF-8 string.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn molrs_schema_column_dtype(key: *const c_char) -> *const c_char {
+pub unsafe extern "C" fn molc_schema_column_dtype(key: *const c_char) -> *const c_char {
     if key.is_null() {
         return std::ptr::null();
     }
@@ -120,7 +120,7 @@ fn dtype_c_name(dtype: DType) -> *const c_char {
 /// # C signature
 ///
 /// ```c
-/// bool molrs_schema_has_block(const char* name);
+/// bool molc_schema_has_block(const char* name);
 /// ```
 ///
 /// A `false` return does not mean the block is illegal: the block set is open,
@@ -130,7 +130,7 @@ fn dtype_c_name(dtype: DType) -> *const c_char {
 ///
 /// `name` must be a valid NUL-terminated UTF-8 string.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn molrs_schema_has_block(name: *const c_char) -> bool {
+pub unsafe extern "C" fn molc_schema_has_block(name: *const c_char) -> bool {
     if name.is_null() {
         return false;
     }
@@ -146,10 +146,10 @@ mod tests {
 
     #[test]
     fn json_is_valid_and_non_empty() {
-        let p = unsafe { molrs_schema_document() };
+        let p = unsafe { molc_schema_document() };
         assert!(!p.is_null());
         let s = unsafe { CStr::from_ptr(p) }.to_str().unwrap().to_string();
-        unsafe { crate::molrs_free_string(p) };
+        unsafe { crate::molc_free_string(p) };
         let v: serde_json::Value = serde_json::from_str(&s).expect("valid JSON");
         assert!(v["columns"].is_array());
         assert!(v["blocks"].is_array());
@@ -157,8 +157,8 @@ mod tests {
 
     #[test]
     fn counts_match_the_tables() {
-        assert_eq!(molrs_schema_n_columns(), schema::SCHEMA_COLUMNS.len());
-        assert_eq!(molrs_schema_n_blocks(), schema::SCHEMA_BLOCKS.len());
+        assert_eq!(molc_schema_n_columns(), schema::SCHEMA_COLUMNS.len());
+        assert_eq!(molc_schema_n_blocks(), schema::SCHEMA_BLOCKS.len());
     }
 
     #[test]
@@ -167,7 +167,7 @@ mod tests {
         // mapping is wrong cannot hide behind the ones that are right.
         for spec in schema::SCHEMA_COLUMNS {
             let k = CString::new(spec.key).unwrap();
-            let p = unsafe { molrs_schema_column_dtype(k.as_ptr()) };
+            let p = unsafe { molc_schema_column_dtype(k.as_ptr()) };
             assert!(!p.is_null(), "{} not found", spec.key);
             let got = unsafe { CStr::from_ptr(p) }.to_str().unwrap();
             assert_eq!(got, spec.dtype.name(), "{}", spec.key);
@@ -177,8 +177,8 @@ mod tests {
     #[test]
     fn unknown_key_is_null_not_a_crash() {
         let k = CString::new("definitely_not_canonical").unwrap();
-        assert!(unsafe { molrs_schema_column_dtype(k.as_ptr()) }.is_null());
-        assert!(unsafe { molrs_schema_column_dtype(std::ptr::null()) }.is_null());
+        assert!(unsafe { molc_schema_column_dtype(k.as_ptr()) }.is_null());
+        assert!(unsafe { molc_schema_column_dtype(std::ptr::null()) }.is_null());
     }
 
     #[test]
@@ -186,12 +186,12 @@ mod tests {
         for spec in schema::SCHEMA_BLOCKS {
             let n = CString::new(spec.name).unwrap();
             assert!(
-                unsafe { molrs_schema_has_block(n.as_ptr()) },
+                unsafe { molc_schema_has_block(n.as_ptr()) },
                 "{}",
                 spec.name
             );
         }
         let n = CString::new("not_a_block").unwrap();
-        assert!(!unsafe { molrs_schema_has_block(n.as_ptr()) });
+        assert!(!unsafe { molc_schema_has_block(n.as_ptr()) });
     }
 }

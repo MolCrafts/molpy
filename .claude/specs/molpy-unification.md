@@ -343,7 +343,10 @@ release (0.19) until 04.
   bindings, the Cloudflare Pages project (root `.`), the fork remotes and the
   monorepo `repos.toml`.
 
-## Open questions
+## Settled questions (operator, 2026-10-22)
 
-- The npm package name for molwasm (`@molcrafts/molwasm`?).
-- The C header names for molc and molcxx (`molc.h`, `molcxx.hpp`?).
+- The npm package is `@molcrafts/molwasm`.
+- The C binding is `molc`. Its header is `molc.h`, and its whole C surface
+  is renamed: functions `molc_*`, types `Molc*`, constants `MOLC_*`. There
+  was no consumer outside vendored molrs copies, which follow in 04.
+- Every LICENSE copy is the project's: "Copyright (c) 2025, MolCrafts".
