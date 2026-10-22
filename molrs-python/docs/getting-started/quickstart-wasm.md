@@ -74,7 +74,7 @@ columns but becomes invalid when the module's memory grows, so read it
 immediately or prefer `copy` until profiling says otherwise. `set(key, array)`
 writes a column and takes its dtype from the typed array's constructor
 (`Float32Array` and plain `number[]` are refused). The
-[package README](https://github.com/MolCrafts/molrs/tree/master/molrs-wasm#core-data-model-molrscore)
+[package README](https://github.com/MolCrafts/molrs/tree/master/molwasm#core-data-model-molrscore)
 has the full dtype table.
 
 ## 4. Read Record Files
@@ -108,17 +108,17 @@ trajectory never has to be downloaded whole.
 The npm publish pipeline uses this bundler target:
 
 ```bash
-cd molrs-wasm
+cd molwasm
 wasm-pack build --release --target bundler --scope molcrafts --out-name molrs
 ```
 
-This writes `molrs-wasm/pkg/`. That directory is generated and ignored by git.
+This writes `molwasm/pkg/`. That directory is generated and ignored by git.
 Applications can link it locally during development:
 
 ```json
 {
   "dependencies": {
-    "@molcrafts/molrs": "link:../molrs-wasm/pkg"
+    "@molcrafts/molrs": "link:../molwasm/pkg"
   }
 }
 ```

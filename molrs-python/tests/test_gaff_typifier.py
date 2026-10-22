@@ -1,7 +1,7 @@
 """Python-binding coverage for ``GaffTypifier`` and ``ForceField.materialize_params``.
 
 The GAFF / GAFF2 matching itself (table rows, parmchk2's estimates, tleap's
-impropers) is owned by the Rust tests in ``molrs/src/ff/typifier/gaff`` and
+impropers) is owned by the Rust tests in ``crates/molrs/src/ff/typifier/gaff`` and
 checked there against an AmberTools-built prmtop; these tests prove the
 binding seam: construction, the ATD → GAFF composition, the output force
 field, and the per-row parameter columns. The two pinned numbers below are
@@ -319,7 +319,7 @@ def test_find_bond_orders_judges_from_connectivity() -> None:
 # ---------------------------------------------------------------------------
 
 #: AmberTools 26.0 builds of the molecules below (``scripts/gaff_merge_fixtures.sh``).
-GAFF_FIXTURES = Path(__file__).resolve().parents[2] / "molrs/src/io/amber/testdata/gaff"
+GAFF_FIXTURES = Path(__file__).resolve().parents[2] / "crates/molrs/src/io/amber/testdata/gaff"
 
 
 def _ethanol() -> molrs.core.Atomistic:

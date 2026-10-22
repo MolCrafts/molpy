@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""OpenMM's own energies for molrs's OpenMM-XML check (molrs/src/ff/openmm_check.rs).
+"""OpenMM's own energies for molrs's OpenMM-XML check (crates/molrs/src/ff/openmm_check.rs).
 
 Builds three molecules with OpenMM's ``app.ForceField`` from XML files cut
 out of real force fields, and prices them term by term on the Reference
@@ -25,7 +25,7 @@ Rust test reads. Re-run it after a change to the molecules; the energies it
 prints are the ones the test pins.
 
     python scripts/openmm_xml_check.py --oplsaa <molpy>/data/forcefield/oplsaa.xml \
-        [--out molrs/src/ff/testdata/openmm] [--written <MOLRS_OPENMM_CHECK_DIR>]
+        [--out crates/molrs/src/ff/testdata/openmm] [--written <MOLRS_OPENMM_CHECK_DIR>]
 
 ``--written`` also prices the XML molrs writes back from each fixture (the
 ``report`` test writes ``<case>.written.xml`` there) with OpenMM.
@@ -322,7 +322,7 @@ def case(name, xml_text, mol, x, atoms, out_dir, foyer_geometric=False):
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--oplsaa", required=True, type=Path, help="molpy's data/forcefield/oplsaa.xml")
-    ap.add_argument("--out", type=Path, default=Path(__file__).resolve().parents[1] / "molrs/src/ff/testdata/openmm")
+    ap.add_argument("--out", type=Path, default=Path(__file__).resolve().parents[1] / "crates/molrs/src/ff/testdata/openmm")
     ap.add_argument("--written", type=Path, help="a MOLRS_OPENMM_CHECK_DIR holding <case>.written.xml: price molrs's XML too")
     args = ap.parse_args()
     args.out.mkdir(parents=True, exist_ok=True)

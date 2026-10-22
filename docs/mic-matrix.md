@@ -120,7 +120,7 @@ projection into the periodic subspace when nonperiodic cell vectors are oblique.
 ## Frozen evidence and default tests
 
 [mic-comparison-results.json](mic-comparison-results.json) records versions,
-counts, errors and counterexamples. `molrs/src/core/simbox_oracle.json` contains
+counts, errors and counterexamples. `crates/molrs/src/core/simbox_oracle.json` contains
 114 MIC and 80 wrapping vector goldens with their input cells and tolerances.
 It includes both counterexamples above and an independently enumerated partial
 PBC counterexample.
@@ -153,7 +153,7 @@ identity now reads `formal_charge`; partial `charge` is not an identity label.
 - `cargo mrs-doctest --quiet`: 151 passed, 10 ignored examples across the two rustdoc runs.
 - `cargo mrs-clippy -- -D warnings`: passed.
 - `cargo clippy --manifest-path molrs-python/Cargo.toml --all-targets -- -D warnings`: passed.
-- `cargo clippy --manifest-path molrs-cxxapi/Cargo.toml --all-targets -- -D warnings`: passed.
+- `cargo clippy --manifest-path molcxx/Cargo.toml --all-targets -- -D warnings`: passed.
 - `cargo fmt --all --check` and the Python binder's formatting check: passed.
 - molrs Python suite: 1,782 passed, 6 skipped; the existing invalid-schema-cast test emits one NumPy RuntimeWarning, also present at baseline.
 - molpy Python suite: 1,067 passed, 36 skipped.

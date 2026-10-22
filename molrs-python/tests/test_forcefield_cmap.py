@@ -153,7 +153,7 @@ def test_a_cmaps_block_renumbers_atomi_through_atomm(tmp_path: Path) -> None:
 
 ALANINE = (
     Path(__file__).resolve().parents[2]
-    / "molrs/src/ff/potential/cmap/testdata/charmm36_alanine.cmap"
+    / "crates/molrs/src/ff/potential/cmap/testdata/charmm36_alanine.cmap"
 )
 ALA = ("C", "NH1", "CT1", "C", "NH1")
 

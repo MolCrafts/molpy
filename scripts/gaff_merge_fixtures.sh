@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build the fixtures of molrs's GAFF merge check (molrs/src/io/amber/
+# Build the fixtures of molrs's GAFF merge check (crates/molrs/src/io/amber/
 # gaff_merge_check.rs): for each molecule and GAFF set, antechamber's mol2 and
 # tleap's prmtop.
 #
@@ -21,7 +21,7 @@
 #
 # Gasteiger charges keep antechamber fast; charges take no part in the check.
 set -euo pipefail
-cd "$(dirname "${BASH_SOURCE[0]}")/../molrs/src/io/amber/testdata/gaff"
+cd "$(dirname "${BASH_SOURCE[0]}")/../crates/molrs/src/io/amber/testdata/gaff"
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 

@@ -6,12 +6,11 @@ updates:
   - package-ecosystem: cargo
     directories:
       - "/"
-      - "/molrs-ffi"
+      - "/crates/molrs-ffi"
       - "/molrs-python"
-      - "/molrs-wasm"
-      - "/molrs-capi"
-      - "/molrs-cxxapi"
-      - "/molrs-ext-example"
+      - "/molwasm"
+      - "/molc"
+      - "/molcxx"
     schedule:
       interval: weekly
     target-branch: dev

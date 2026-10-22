@@ -1,0 +1,55 @@
+[package]
+name = "molcrafts-molcxx"
+publish = false
+# Literal, not `.workspace = true`: this crate left the root workspace (see
+# [workspace] below), so there is no workspace.package to inherit from. Keep
+# these in step with ../Cargo.toml's [workspace.package] by hand — same rule the
+# other standalone binder roots already live by.
+version = "0.19.0"
+edition = "2024"
+rust-version = "1.91"
+authors = ["MolCrafts"]
+license = "BSD-3-Clause"
+description = "CXX bridge for Atomiverse C++ integration"
+repository = "https://github.com/MolCrafts/molrs"
+homepage = "https://github.com/MolCrafts/molrs"
+
+[lib]
+name = "molcxx"
+crate-type = ["staticlib", "rlib"]
+
+# Standalone workspace root, like every other binder crate. Lint/build it with
+# `--manifest-path molcxx/Cargo.toml`.
+[workspace]
+
+# Standalone workspace root: does NOT inherit the repo root's [profile.release].
+# Keep the four keys identical to ../Cargo.toml so every root ships the same
+# optimisation.
+[profile.release]
+codegen-units = 1
+lto = "thin"
+opt-level = 3
+strip = "symbols"
+
+[dependencies]
+# The merged crate, imported under the extern name `molrs`. molrs defaults to
+# core only, so the set is spelled here: `full` + `filesystem` + `rayon` +
+# `serde` — the same set molc links (build 2 in .cargo/config.toml), so
+# the two compile molrs once. Never `stream`.
+molrs = { path = "../crates/molrs", package = "molcrafts-molrs", version = "0.19.0", default-features = false, features = ["full", "filesystem", "rayon", "serde"] }
+molrs-ffi = { path = "../crates/molrs-ffi", package = "molcrafts-molrs-ffi", version = "0.19.0" }
+cxx = "1"
+ndarray = "0.17"
+
+[build-dependencies]
+cxx-build = "1"
+
+# Standalone workspace root: does NOT inherit the repo root's [profile.dev].
+# Keep these two keys identical to ../Cargo.toml -- they are what keeps the
+# shared target/ small enough to stay fast on Lustre (see ../Cargo.toml for the
+# measurement).
+[profile.dev]
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+debug = false

@@ -6,8 +6,8 @@ instead of copying signatures or rustdoc text.
 | Crate | Reference |
 | --- | --- |
 | Library (single crate) | [`molcrafts-molrs`](https://docs.rs/molcrafts-molrs) |
-| C API (`libmolrs_capi` + `molrs.h`) | archives on [GitHub Releases](https://github.com/MolCrafts/molrs/releases); see [Path C](https://github.com/MolCrafts/molrs/blob/master/docs/interop.md#path-c--c-abi-libmolrs_capi) |
-| CXX bridge (Atomiverse) | `molcrafts-molrs-cxxapi`, built from source; not published to crates.io |
+| C API (`libmolc` + `molrs.h`) | archives on [GitHub Releases](https://github.com/MolCrafts/molrs/releases); see [Path C](https://github.com/MolCrafts/molrs/blob/master/docs/interop.md#path-c--c-abi-libmolc) |
+| CXX bridge (Atomiverse) | `molcrafts-molcxx`, built from source; not published to crates.io |
 
 Always compiled inside `molcrafts-molrs`: `core`, `perceive`, `op` and the
 `optimize` engine. Feature-gated modules: `builder`, `io` (with `smiles`

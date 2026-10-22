@@ -1,6 +1,6 @@
 """Python-binding coverage for the native SMARTS matcher + graph-edit conveniences.
 
-Exposes the validated Rust ``SmartsPattern`` (``molrs/src/core/chem/smarts``) to
+Exposes the validated Rust ``SmartsPattern`` (``crates/molrs/src/core/chem/smarts``) to
 Python with map-keyed results (the molecule's own atom views), plus the graph
 edits a reaction workflow leans on (``del_atom`` / ``del_bond`` /
 ``set_bond_class`` / ``copy.copy``) on ``Atomistic``. The matching algorithm

@@ -23,7 +23,7 @@ XYZ = (
     'pbc="T T T"\nO 1.0 2.0 3.0 OW\nH 1.5 2.0 3.0 HW\n'
 )
 
-FIXTURES = Path(__file__).resolve().parents[2] / "molrs/src/ff/testdata/openmm"
+FIXTURES = Path(__file__).resolve().parents[2] / "crates/molrs/src/ff/testdata/openmm"
 
 XSF = "CRYSTAL\nPRIMVEC\n 10 0 0\n 0 11 0\n 0 0 12\nPRIMCOORD\n 2 1\n 8 1.0 2.0 3.0\n 1 1.5 2.0 3.0\n"
 

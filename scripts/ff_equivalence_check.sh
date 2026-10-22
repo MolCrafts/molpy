@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# The force-field IR across engines (molrs/src/ff/equivalence_check.rs pins
+# The force-field IR across engines (crates/molrs/src/ff/equivalence_check.rs pins
 # what this prints): five sources — AMBER ff14SB, GAFF2 and CHARMM36 (chamber)
 # prmtops, CHARMM36 OpenMM XML, OPLS-AA GROMACS .top — read into the IR,
 # written by molrs to a LAMMPS data file + include, an OpenMM XML and a
@@ -8,7 +8,7 @@
 #
 #   scripts/ff_equivalence_check.sh          # run, print engines beside molrs
 #   scripts/ff_equivalence_check.sh --pin    # also rewrite the pinned table
-#                                            # (molrs/src/ff/testdata/equivalence/engines.tsv)
+#                                            # (crates/molrs/src/ff/testdata/equivalence/engines.tsv)
 #
 # Run it where cargo may build (a compute node). Engines (override by env):
 #   LMP           LAMMPS with MOLECULE, EXTRA-MOLECULE and the CMAP fix (lmp)
@@ -32,7 +32,7 @@ LMP=${LMP:-lmp}
 GMX=${GMX:-gmx_d}
 PYTHON=${PYTHON:-python3}
 pin=
-[[ ${1:-} == --pin ]] && pin=molrs/src/ff/testdata/equivalence/engines.tsv
+[[ ${1:-} == --pin ]] && pin=crates/molrs/src/ff/testdata/equivalence/engines.tsv
 dir=${FF_EQUIV_DIR:-$(mktemp -d)}
 [[ -n ${FF_EQUIV_DIR:-} || -n ${KEEP:-} ]] && echo "work directory: $dir" || trap 'rm -rf "$dir"' EXIT
 mkdir -p "$dir"

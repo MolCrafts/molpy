@@ -10,7 +10,7 @@
 #                                   # + each test gate's numbers, for
 #                                   # MolCrafts/molcrafts-ci/actions/report
 #
-# Gates: fmt ruff partners clippy doc test ffi cxx ext capi python molpy types
+# Gates: fmt ruff partners clippy doc test ffi cxx capi python molpy types
 # wasm mrec docs molpy_docs. Every check runs once, in one place:
 #   - static checks (fmt ruff partners clippy doc, and the hooks' workflows /
 #     os-cfg) run only locally: pre-commit, and `verify` at pre-push. CI does
@@ -42,17 +42,16 @@ unset $(git rev-parse --local-env-vars)
 CLEANUP=()
 trap '[ "${#CLEANUP[@]}" -eq 0 ] || rm -rf "${CLEANUP[@]}"' EXIT
 
-BINDERS=(molrs-ffi molrs-python molrs-wasm molrs-capi molrs-cxxapi)
-# Every standalone workspace root besides the root one: the binders, and the
-# force-field IR extension proof crate.
-ROOTS=("${BINDERS[@]}" molrs-ext-example)
+# Every standalone workspace root besides the root one: the ABI layer and the
+# language bindings.
+ROOTS=(crates/molrs-ffi molrs-python molwasm molc molcxx)
 # wasm-opt release that release.yml's npm build runs (.github/actions/setup-wasm
 # reads it from here). The wasm gate is `wasm-pack test`, which runs no wasm-opt.
 BINARYEN_VERSION=version_133
 WASM_PACK_VERSION=0.15.0
 TARGET_DIR=${CARGO_TARGET_DIR:-$PWD/target}
 # --report <dir>: the test gates also write what they ran into <dir> --
-# cargo-test.log (every `cargo test` of test/ffi/cxx/ext; its `test result:`
+# cargo-test.log (every `cargo test` of test/ffi/cxx; its `test result:`
 # lines are the totals), junit.xml and coverage.json (python). Nothing reads
 # them here; CI turns them into the run's summary.
 REPORT=
@@ -108,14 +107,14 @@ gate_partners() {
     uv --directory molrs-python lock --check
 }
 
-# Native clippy of the core and every binder, except molrs-wasm: that one is a
+# Native clippy of the core and every binder, except molwasm: that one is a
 # wasm32 crate, linted only for wasm32.
 gate_clippy() {
     cargo --locked mrs-clippy -- -D warnings
-    for crate in molrs-ffi molrs-cxxapi molrs-ext-example molrs-python molrs-capi; do
+    for crate in crates/molrs-ffi molcxx molrs-python molc; do
         clippy_binder "$crate"
     done
-    clippy_binder molrs-wasm --target wasm32-unknown-unknown
+    clippy_binder molwasm --target wasm32-unknown-unknown
 }
 
 gate_doc() {
@@ -129,19 +128,11 @@ gate_test() {
 }
 
 gate_ffi() {
-    cargo_test test --locked --manifest-path molrs-ffi/Cargo.toml
+    cargo_test test --locked --manifest-path crates/molrs-ffi/Cargo.toml
 }
 
 gate_cxx() {
-    cargo_test test --locked --manifest-path molrs-cxxapi/Cargo.toml
-}
-
-# The force-field IR as a protocol (ff-ir-02-protocol, P-Rust): a third
-# party's crate extending it through molrs's pub API alone — a pair style, a
-# new category, an expression style — priced against pinned LAMMPS numbers
-# (scripts/ff_ir_extension_lammps_check.sh), persisted, and refused by name.
-gate_ext() {
-    cargo_test test --locked --manifest-path molrs-ext-example/Cargo.toml
+    cargo_test test --locked --manifest-path molcxx/Cargo.toml
 }
 
 # Build one non-editable dev-profile wheel (no --release, no LTO) and test it
@@ -216,11 +207,11 @@ gate_types() {
 # Profile and target dir are explicit: CMake caches both, and a build-test/
 # configured once for release would otherwise keep rebuilding the release lib.
 gate_capi() {
-    cargo test --locked --manifest-path molrs-capi/Cargo.toml
-    cmake -S molrs-capi/tests/cpp -B molrs-capi/build-test \
+    cargo test --locked --manifest-path molc/Cargo.toml
+    cmake -S molc/tests/cpp -B molc/build-test \
         -DCARGO_PROFILE=debug -DCARGO_TARGET_DIR="$TARGET_DIR"
-    cmake --build molrs-capi/build-test --config Debug
-    ctest --test-dir molrs-capi/build-test --build-config Debug --output-on-failure
+    cmake --build molc/build-test --config Debug
+    ctest --test-dir molc/build-test --build-config Debug --output-on-failure
 }
 
 # `wasm-pack test` compiles the wasm32 crate once and runs the Node suite on
@@ -235,7 +226,7 @@ gate_wasm() {
     local major=${have#v}
     major=${major%%.*}
     [ "$major" -ge 24 ] 2>/dev/null || { echo "Node >= 24 is required (found $have)" >&2; return 1; }
-    (cd molrs-wasm && wasm-pack test --node -- --locked)
+    (cd molwasm && wasm-pack test --node -- --locked)
 }
 
 # molrec's conformance suite through molrs.io.mrec (test.yml's `test / mrec`;
@@ -328,7 +319,7 @@ gate_docs() {
 # The pre-push gate. The pre-commit stage (the CI profile's workflows, fmt,
 # ruff, os-cfg, partners) on every file, then every remaining gate once.
 # `partners` is not repeated here: the pre-commit stage ran it.
-VERIFY=(clippy doc test ffi cxx ext capi python molpy types wasm mrec docs molpy_docs)
+VERIFY=(clippy doc test ffi cxx capi python molpy types wasm mrec docs molpy_docs)
 gate_verify() {
     uvx pre-commit run --all-files --hook-stage pre-commit --show-diff-on-failure
     for gate in "${VERIFY[@]}"; do

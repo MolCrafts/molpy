@@ -18,16 +18,16 @@ It is the same script, on the same pinned `rust-toolchain.toml` compiler, that
 the prek hooks and the CI workflows call. No gate compiles the crates.io
 archive: `cargo publish` in `release.yml` verifies it once (the dispatch dry
 run, `cargo publish --dry-run`, rehearses that). Inspect
-`cargo package --list --manifest-path molrs/Cargo.toml` for files left out. Downstream molpy pins the major.minor ABI line and must be released
+`cargo package --list --manifest-path crates/molrs/Cargo.toml` for files left out. Downstream molpy pins the major.minor ABI line and must be released
 after molrs.
 
 Check version metadata before tagging. One version appears in:
 
 - `[workspace.package].version` in `Cargo.toml` (inherited by `molrs/`);
 - `version` and the `molcrafts-molrs` / `molcrafts-molrs-ffi` dependency
-  versions in `molrs-ffi/`, `molrs-python/`, `molrs-wasm/`, `molrs-capi/`
-  and `molrs-cxxapi/Cargo.toml` (the npm `package.json` is generated from
-  `molrs-wasm/Cargo.toml` by wasm-pack), and in
+  versions in `molrs-ffi/`, `molrs-python/`, `molwasm/`, `molc/`
+  and `molcxx/Cargo.toml` (the npm `package.json` is generated from
+  `molwasm/Cargo.toml` by wasm-pack), and in
   `molrs-ext-example/Cargo.toml` (unpublished, a standalone workspace kept
   in step);
 - `version` in `molrs-python/pyproject.toml`;

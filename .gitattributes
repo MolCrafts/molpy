@@ -7,4 +7,4 @@
 *.lock text eol=lf
 
 # Byte-exact conformance inputs must not undergo newline conversion.
-molrs/src/ff/testdata/builtin_conformance/** -text
+crates/molrs/src/ff/testdata/builtin_conformance/** -text

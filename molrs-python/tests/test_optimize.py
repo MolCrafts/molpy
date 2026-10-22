@@ -1,7 +1,7 @@
 """``molrs.optimize``: the L-BFGS minimizer and its one report type.
 
 The minimizer's numerics are proven by the Rust unit tests in
-``molrs/src/optimize/``; these check the Python face: the Rust names, the
+``crates/molrs/src/optimize/``; these check the Python face: the Rust names, the
 defaults read from ``LbfgsSettings::DEFAULT``, the report fields, the three
 doors of the core ``Lbfgs`` object (each relaxing its input in place), and
 that ``minimize(frame)`` honours the frame's ``atoms.free`` mask.

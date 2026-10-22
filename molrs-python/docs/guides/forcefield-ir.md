@@ -1218,7 +1218,7 @@ only ([GROMACS topologies](#gromacs-topologies), [AMBER prmtop](#amber-prmtop)).
 ### Checked against the engines
 
 `ff::engine_codec_check` (`scripts/ff_engine_codec_check.sh`, pinned in
-`molrs/src/ff/testdata/engine_codecs/engines.tsv`): files molrs writes,
+`crates/molrs/src/ff/testdata/engine_codecs/engines.tsv`): files molrs writes,
 priced by LAMMPS `run 0` and OpenMM 8.6.1 (`Reference`, `NoCutoff`, one
 force group per term) at two configurations each, against molrs's energy:
 
@@ -1306,7 +1306,7 @@ holds each to molrs at that constant. Every file written also reads back
 into the IR it was written from — written again it is the same file, and
 molrs prices it the same (`every_written_file_reads_back_as_written`) — and
 every source's IR, and each engine's form of it, persists through a record.
-The engines' numbers are pinned in `molrs/src/ff/testdata/equivalence/
+The engines' numbers are pinned in `crates/molrs/src/ff/testdata/equivalence/
 engines.tsv`, so the check runs without the engines;
 `scripts/ff_equivalence_check.sh --pin` reruns them on a compute node.
 

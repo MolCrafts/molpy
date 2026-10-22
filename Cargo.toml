@@ -1,11 +1,9 @@
 [workspace]
-members = ["molrs"]
-# Every binder crate — molrs-ffi, molrs-python, molrs-capi, molrs-wasm and
-# molrs-cxxapi — and molrs-ext-example (a third party extending the
-# force-field IR through molrs's pub API) is a standalone workspace root with
-# its own `[workspace]`.
-# Address them by `--manifest-path <dir>/Cargo.toml`, never `-p`.
-exclude = ["molrs-ffi"]
+members = ["crates/molrs"]
+# The ABI layer (crates/molrs-ffi) and every language binding — molpy (Python),
+# molwasm, molc, molcxx — are standalone workspace roots with their own
+# `[workspace]`. Address them by `--manifest-path <dir>/Cargo.toml`, never `-p`.
+exclude = ["crates/molrs-ffi"]
 resolver = "3"
 
 [workspace.package]

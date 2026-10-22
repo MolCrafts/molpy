@@ -1,10 +1,10 @@
-"""FFI seam of ``molrs.op`` (assembly-07, mirrors ``molrs/src/op/``).
+"""FFI seam of ``molrs.op`` (assembly-07, mirrors ``crates/molrs/src/op/``).
 
 These prove that the numeric primitives cross: arrays arrive as float64 of the
 documented shape, ``Superposition`` is a frozen record whose ``freedom`` crosses as its
 lowercase name, and ``SuperpositionError`` maps to ``ValueError``. They re-derive
 no numerics: superposition and the eigen-gap are proven by the unit tests in
-``molrs/src/op/superpose.rs``. The one geometric value asserted (a pure
+``crates/molrs/src/op/superpose.rs``. The one geometric value asserted (a pure
 translation) is hand-checkable.
 """
 

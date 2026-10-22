@@ -1,7 +1,7 @@
 name: release
 
 # A `v*` tag on MolCrafts/molrs: guard -> build -> every channel. crates.io
-# (molcrafts-molrs), npm (@molcrafts/molrs), PyPI (desktop abi3 wheels + the
+# (molcrafts-molrs), npm (@molcrafts/molwasm), PyPI (desktop abi3 wheels + the
 # Pyodide wheel), and the GitHub Release with the C API archives (lib +
 # header + LICENSE + sha256).
 #
@@ -122,9 +122,9 @@ jobs:
       - uses: MolCrafts/molcrafts-ci/actions/setup-rust@01317cbc43f961ab14c35d51d48c081a1acfe815
       - name: The crate ships the repository's LICENSE
         run: |
-          cmp LICENSE molrs/LICENSE
-          cargo package --list --locked --manifest-path molrs/Cargo.toml | grep -qx LICENSE
-      - run: cargo publish --dry-run --locked --manifest-path molrs/Cargo.toml
+          cmp LICENSE crates/molrs/LICENSE
+          cargo package --list --locked --manifest-path crates/molrs/Cargo.toml | grep -qx LICENSE
+      - run: cargo publish --dry-run --locked --manifest-path crates/molrs/Cargo.toml
 
   crate:
     name: release / crate
@@ -139,21 +139,21 @@ jobs:
       - uses: MolCrafts/molcrafts-ci/actions/setup-rust@01317cbc43f961ab14c35d51d48c081a1acfe815
       - name: The crate ships the repository's LICENSE
         run: |
-          cmp LICENSE molrs/LICENSE
-          cargo package --list --locked --manifest-path molrs/Cargo.toml | grep -qx LICENSE
+          cmp LICENSE crates/molrs/LICENSE
+          cargo package --list --locked --manifest-path crates/molrs/Cargo.toml | grep -qx LICENSE
       - id: auth
         uses: rust-lang/crates-io-auth-action@v1
       - env:
           CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
         run: |
-          VERSION=$(cargo metadata --no-deps --format-version 1 --manifest-path molrs/Cargo.toml | jq -r '.packages[0].version')
+          VERSION=$(cargo metadata --no-deps --format-version 1 --manifest-path crates/molrs/Cargo.toml | jq -r '.packages[0].version')
           # crates.io rejects a request without a User-Agent.
           if curl -sfL -A "molrs-release/1.0" "https://crates.io/api/v1/crates/molcrafts-molrs/$VERSION" >/dev/null; then
             echo "molcrafts-molrs@$VERSION is already on crates.io"
             exit 0
           fi
           set +e
-          OUT=$(cargo publish --locked --manifest-path molrs/Cargo.toml 2>&1)
+          OUT=$(cargo publish --locked --manifest-path crates/molrs/Cargo.toml 2>&1)
           CODE=$?
           set -e
           printf '%s\n' "$OUT"
@@ -175,14 +175,14 @@ jobs:
         with:
           cache: release-wasm
       - uses: ./.github/actions/setup-wasm
-      - working-directory: molrs-wasm
-        run: wasm-pack build --release --target bundler --scope molcrafts --out-name molrs -- --locked
-      - working-directory: molrs-wasm/pkg
+      - working-directory: molwasm
+        run: wasm-pack build --release --target bundler --scope molcrafts --out-name molwasm -- --locked
+      - working-directory: molwasm/pkg
         run: npm pack --dry-run
       - uses: actions/upload-artifact@v7
         with:
           name: npm-pkg
-          path: molrs-wasm/pkg
+          path: molwasm/pkg
 
   npm:
     name: release / npm
@@ -200,10 +200,10 @@ jobs:
       - uses: actions/download-artifact@v8
         with:
           name: npm-pkg
-          path: molrs-wasm/pkg
+          path: molwasm/pkg
       # setup-node's registry-url exports a placeholder NODE_AUTH_TOKEN that
       # would override OIDC; empty, npm >= 11.5 publishes through the id-token.
-      - working-directory: molrs-wasm/pkg
+      - working-directory: molwasm/pkg
         env:
           NODE_AUTH_TOKEN: ""
         run: |
@@ -310,7 +310,7 @@ jobs:
           packages-dir: dist
           skip-existing: true
 
-  # The C ABI deliverable for external C / C++ / HPC consumers: libmolrs_capi
+  # The C ABI deliverable for external C / C++ / HPC consumers: libmolc
   # (cdylib + staticlib) and the cbindgen header (docs/interop.md, "Path C").
   capi:
     if: needs.context.outputs.skip-pr != 'true'
@@ -337,14 +337,14 @@ jobs:
       - name: Build and package (lib + header + LICENSE + sha256)
         run: |
           target=${{ matrix.target }}
-          cargo build --locked --release --manifest-path molrs-capi/Cargo.toml ${target:+--target "$target"}
-          VERSION=$(cargo metadata --no-deps --format-version 1 --manifest-path molrs-capi/Cargo.toml | jq -r '.packages[0].version')
-          OUT="molrs-capi-${VERSION}-${{ matrix.artifact }}"
+          cargo build --locked --release --manifest-path molc/Cargo.toml ${target:+--target "$target"}
+          VERSION=$(cargo metadata --no-deps --format-version 1 --manifest-path molc/Cargo.toml | jq -r '.packages[0].version')
+          OUT="molc-${VERSION}-${{ matrix.artifact }}"
           LIBDIR="target/${target:+$target/}release"
           mkdir -p "stage/$OUT"
-          cp molrs-capi/include/molrs.h LICENSE "stage/$OUT/"
+          cp molc/include/molc.h LICENSE "stage/$OUT/"
           found=0
-          for f in libmolrs_capi.dylib libmolrs_capi.so libmolrs_capi.a molrs_capi.dll molrs_capi.dll.lib molrs_capi.lib; do
+          for f in libmolc.dylib libmolc.so libmolc.a molc.dll molc.dll.lib molc.lib; do
             if [ -f "$LIBDIR/$f" ]; then cp "$LIBDIR/$f" "stage/$OUT/"; found=1; fi
           done
           [ "$found" -eq 1 ]
@@ -353,7 +353,7 @@ jobs:
       - uses: actions/upload-artifact@v7
         with:
           name: capi-${{ matrix.artifact }}
-          path: molrs-capi-*.tar.gz*
+          path: molc-*.tar.gz*
 
   github:
     name: release / github

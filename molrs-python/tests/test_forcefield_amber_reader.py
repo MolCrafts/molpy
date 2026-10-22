@@ -16,7 +16,7 @@ import pytest
 from molrs.io.amber import AmberPrmtopForcefieldReader
 
 #: The Rust prmtop fixtures (AmberTools 26.1 tleap / ParmEd chamber builds).
-FIXTURES = Path(__file__).resolve().parents[2] / "molrs/src/io/amber/testdata/prmtop"
+FIXTURES = Path(__file__).resolve().parents[2] / "crates/molrs/src/io/amber/testdata/prmtop"
 
 
 def test_glycam_mixed_scee_keeps_its_per_pair_weights():

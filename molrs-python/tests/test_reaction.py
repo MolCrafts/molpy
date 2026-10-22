@@ -1,6 +1,6 @@
 """Python-binding coverage for the native reaction-SMARTS (SMIRKS) engine.
 
-Exposes the validated Rust ``Reaction`` (``molrs/src/core/chem/smarts/reaction.rs``)
+Exposes the validated Rust ``Reaction`` (``crates/molrs/src/core/chem/smarts/reaction.rs``)
 to Python: parse a Daylight reaction SMARTS ``reactants >> products``, read back
 the reactant components + forming-bond map pairs, and apply the compiled
 transform to one matched occurrence in place. The transform compilation itself

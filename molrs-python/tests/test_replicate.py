@@ -4,7 +4,7 @@ The leaf method grows *this* graph
 by one rigid copy of ``template`` per row of ``rotations (N,3,3)`` /
 ``translations (N,3)``, stamping ``frag_id = frag_ids[c]`` on copy ``c``.
 Column-wise copying, relation offsets and atomicity are proven by
-``MolGraph::replicate`` in ``molrs/src/core/molgraph.rs``; these tests
+``MolGraph::replicate`` in ``crates/molrs/src/core/molgraph.rs``; these tests
 check only that the arrays cross, the graph grows, and bad shapes map to
 ``ValueError``. The one position asserted is a pure translation.
 """

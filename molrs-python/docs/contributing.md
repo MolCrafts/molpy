@@ -43,7 +43,7 @@ fails is a CI job that would have failed.
 | CI (`test.yml`) | the tests only, on native Linux/macOS/Windows runners. A local host only proves its own OS. |
 
 - `clippy` — `-D warnings` on the core (`cargo mrs-clippy`, the one `full`
-  feature set: no per-feature matrix) and each binder; `molrs-wasm` is linted
+  feature set: no per-feature matrix) and each binder; `molwasm` is linted
   for wasm32 only.
 - `python` — one dev-profile wheel (no `--release`, no LTO), installed and
   tested once; `mrec` and `docs` install that same wheel.

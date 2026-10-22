@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """The engines' side of molrs's engine-codec check
-(molrs/src/ff/engine_codec_check.rs; driven by scripts/ff_engine_codec_check.sh).
+(crates/molrs/src/ff/engine_codec_check.rs; driven by scripts/ff_engine_codec_check.sh).
 
 ``collect DIR [--pin FILE]``: reads LAMMPS's logs of the LAMMPS cases (the
 shell script ran ``lmp``), prices the OpenMM cases' molrs-written XML on the

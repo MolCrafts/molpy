@@ -3,8 +3,8 @@
 debug
 target
 target-aarch64/
-# Host-arch wasm-pack output (x86_64 login node). Publish uses npm @molcrafts/molrs.
-molrs-wasm/.x86_64/
+# Host-arch wasm-pack output (x86_64 login node). Publish uses npm @molcrafts/molwasm.
+molwasm/.x86_64/
 # Isolated Cargo target dirs for verification runs (capi CMake honours
 # CARGO_TARGET_DIR; the repo's own target/ lives on Lustre, where cargo can
 # deadlock on flock).
@@ -55,10 +55,10 @@ AGENTS.md
 # Generated bindings and packaging artifacts
 site/
 docs/site/
-molrs-capi/include/molrs.h
+molc/include/molc.h
 pkg/
-molrs-wasm/pkg/
-molrs-wasm/dist/
+molwasm/pkg/
+molwasm/dist/
 molrs-python/python/molrs/*.dylib
 molrs-python/python/molrs/*.dll
 molrs-python/python/molrs/*.so

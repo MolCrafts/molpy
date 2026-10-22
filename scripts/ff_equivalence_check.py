@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """The engines' side of molrs's cross-engine equivalence check
-(molrs/src/ff/equivalence_check.rs; driven by scripts/ff_equivalence_check.sh).
+(crates/molrs/src/ff/equivalence_check.rs; driven by scripts/ff_equivalence_check.sh).
 
 The Rust test writes, per source, the files each engine reads and a
 ``system.json`` (atoms, bonds, the IR's impropers, the configurations in Å

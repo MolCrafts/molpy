@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# LAMMPS's energies for molrs's OpenMM-XML check (molrs/src/ff/openmm_check.rs).
+# LAMMPS's energies for molrs's OpenMM-XML check (crates/molrs/src/ff/openmm_check.rs).
 # The test writes, for each case (charmm, amber, opls), the data file and the
 # include molrs writes from the OpenMM-read force field when
 # MOLRS_OPENMM_CHECK_DIR is set, and prints molrs's and OpenMM's per-term

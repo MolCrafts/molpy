@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Engine codecs against the engines (molrs/src/ff/engine_codec_check.rs pins
+# Engine codecs against the engines (crates/molrs/src/ff/engine_codec_check.rs pins
 # what this prints): styles written through their LAMMPS codecs (a run-time
 # `bond fene` and `pair lj/smooth/linear` registered with a positional LAMMPS
 # form; built-in `bond morse` and `pair buck` written in `metal`) priced by
@@ -10,7 +10,7 @@
 #
 #   scripts/ff_engine_codec_check.sh          # run, print engines beside molrs
 #   scripts/ff_engine_codec_check.sh --pin    # also rewrite the pinned table
-#                                             # (molrs/src/ff/testdata/engine_codecs/engines.tsv)
+#                                             # (crates/molrs/src/ff/testdata/engine_codecs/engines.tsv)
 #
 # Run it where cargo may build (a compute node). Engines (override by env):
 #   LMP     LAMMPS with MOLECULE (lmp); `bond_style fene`, `pair_style
@@ -22,7 +22,7 @@ source scripts/without_slurm_step.sh
 LMP=${LMP:-lmp}
 PYTHON=${PYTHON:-python3}
 pin=
-[[ ${1:-} == --pin ]] && pin=molrs/src/ff/testdata/engine_codecs/engines.tsv
+[[ ${1:-} == --pin ]] && pin=crates/molrs/src/ff/testdata/engine_codecs/engines.tsv
 dir=${FF_CODEC_DIR:-$(mktemp -d)}
 [[ -n ${FF_CODEC_DIR:-} || -n ${KEEP:-} ]] && echo "work directory: $dir" || trap 'rm -rf "$dir"' EXIT
 mkdir -p "$dir"

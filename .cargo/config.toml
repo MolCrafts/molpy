@@ -1,5 +1,5 @@
 # One shared build cache for every workspace root in this repo (root workspace,
-# molrs-ffi, molrs-python, molrs-wasm, molrs-capi). `build.target-dir` is
+# crates/molrs-ffi, molrs-python, molwasm, molc, molcxx). `build.target-dir` is
 # resolved relative to this config file, so any cargo invocation with cwd under
 # this repo lands in <repo>/target regardless of which sub-workspace it builds.
 # Fingerprints include (rustc, features, profile), so invocations from
@@ -32,12 +32,12 @@ target-dir = "target"
 #      The generator links this same library unit; it adds exactly one example
 #      unit (`example-gen_opls_params`), and `mrs-check` / `mrs-clippy
 #      --all-targets` add their check units for it;
-#   2. `full,filesystem,rayon,serde` — what molrs-capi and molrs-cxxapi link
+#   2. `full,filesystem,rayon,serde` — what molc and molcxx link
 #      (`serde`: the C API's force-field JSON is the core section's serde
 #      form). They must not ship `stream` (tokio + tungstenite in a C
 #      archive), so this set stays separate on purpose;
 #   3. molrs-ffi's `default-features = false` minimal set;
-#   4. the wasm32 build of molrs-wasm.
+#   4. the wasm32 build of molwasm.
 # Anything else in target/debug/.fingerprint/molcrafts-molrs-* is drift.
 [alias]
 mrs-build   = ["build",  "-p", "molcrafts-molrs", "--features", "full,filesystem,stream"]
@@ -46,5 +46,5 @@ mrs-clippy  = ["clippy", "-p", "molcrafts-molrs", "--all-targets", "--features",
 mrs-test    = ["test",   "-p", "molcrafts-molrs", "--lib", "--features", "full,filesystem,stream"]
 mrs-doctest = ["test",   "--doc", "-p", "molcrafts-molrs", "--features", "full,filesystem,stream"]
 mrs-doc     = ["doc",    "-p", "molcrafts-molrs", "--no-deps", "--features", "full,filesystem,stream"]
-# Regenerate molrs/src/ff/params/oplsaa.rs: `cargo mrs-gen-opls --gromacs <dir>`.
+# Regenerate crates/molrs/src/ff/params/oplsaa.rs: `cargo mrs-gen-opls --gromacs <dir>`.
 mrs-gen-opls = ["run",  "-p", "molcrafts-molrs", "--example", "gen_opls_params", "--features", "full,filesystem,stream", "--"]

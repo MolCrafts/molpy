@@ -3,8 +3,8 @@
 # to the IR — a pair style written as a Rust ScalarForm, a new category, a
 # style given by its expression alone — written to a LAMMPS deck by molrs's
 # own LAMMPS writer (the positional codecs the specs derive) and priced by
-# `lmp` `run 0`, beside molrs's numbers. molrs-ext-example/tests/proof.rs and
-# molrs-python/tests/test_ff_ir_extension.py pin what this prints.
+# `lmp` `run 0`, beside molrs's numbers. molrs-python/tests/test_ff_ir_extension.py
+# pins what this prints.
 #
 #   scripts/ff_ir_extension_lammps_check.sh          # run, print LAMMPS beside molrs
 #   scripts/ff_ir_extension_lammps_check.sh --pin    # also rewrite the pinned tables
@@ -12,10 +12,8 @@
 # Each case directory holds a deck written by a test with MOLRS_FFEXT_DIR set
 # (pre.lmp, system.ff, data_<k>.lmp) and molrs's numbers (molrs.tsv); LAMMPS
 # prints its energy with `thermo_modify format float %.17g` and its forces in
-# a `%.17g` dump. Cases: `rust/*` from the Rust proof crate
-# (molrs-ext-example, pinned in molrs-ext-example/tests/lammps.tsv);
-# `python/*` from the Python proof, when MOLRS_PYTHON names a python with the
-# molrs wheel installed (pinned in molrs-python/tests/ff_ir_extension_lammps.tsv).
+# a `%.17g` dump. Cases: `python/*` from the Python proof, run by the python
+# MOLRS_PYTHON names (pinned in molrs-python/tests/ff_ir_extension_lammps.tsv).
 #
 # `lmp` needs `bond_style fene`, `pair_style lj/smooth/linear` and
 # `angle_style charmm` (MOLECULE, EXTRA-MOLECULE, EXTRA-PAIR). The
@@ -28,7 +26,7 @@
 #   LMP               LAMMPS with MOLECULE (lmp)
 #   MOLRS_LMP_CLASS2  LAMMPS with CLASS2 (scripts/build_lammps_class2.sh;
 #                     unset: the bond_angle cases are skipped)
-#   MOLRS_PYTHON      python with molrs installed (unset: the python cases are skipped)
+#   MOLRS_PYTHON      python with molrs installed (required)
 #   PYTHON            python with molrs installed, which reads LAMMPS's logs
 #                     and dumps (molrs.io.read_lammps_log,
 #                     molrs.io.read_lammps_dump_trajectory; python3)
@@ -44,12 +42,9 @@ dir=${MOLRS_FFEXT_DIR:-$(mktemp -d)}
 mkdir -p "$dir"
 export MOLRS_FFEXT_DIR=$dir
 
-cargo test --locked --manifest-path molrs-ext-example/Cargo.toml --test proof -- \
-    write_lammps_inputs --exact >/dev/null
-if [[ -n ${MOLRS_PYTHON:-} ]]; then
-    "$MOLRS_PYTHON" -m pytest -q -p no:cacheprovider \
-        molrs-python/tests/test_ff_ir_extension.py -k write_lammps_inputs >/dev/null
-fi
+: "${MOLRS_PYTHON:?name a python with molrs installed}"
+"$MOLRS_PYTHON" -m pytest -q -p no:cacheprovider \
+    molrs-python/tests/test_ff_ir_extension.py -k write_lammps_inputs >/dev/null
 
 for case in "$dir"/*/*/; do
     case=${case%/}
@@ -92,7 +87,6 @@ from engine_check_tables import lammps_dump_forces, lammps_thermo
 root = Path(sys.argv[1])
 pin = "--pin" in sys.argv
 PINS = {
-    "rust": Path("molrs-ext-example/tests/lammps.tsv"),
     "python": Path("molrs-python/tests/ff_ir_extension_lammps.tsv"),
 }
 HEADER = "# case\tconfig\tpe | f atom\tLAMMPS's value(s) (scripts/ff_ir_extension_lammps_check.sh --pin)\n"

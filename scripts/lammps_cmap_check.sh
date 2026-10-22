@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# molrs's CMAP kernel against LAMMPS `fix cmap` (molrs/src/ff/potential/cmap/
+# molrs's CMAP kernel against LAMMPS `fix cmap` (crates/molrs/src/ff/potential/cmap/
 # lammps_check.rs). The test writes the LAMMPS inputs — data file with its
 # CMAP section, the fix cmap file, the include with the `fix` line — when
 # MOLRS_LAMMPS_CMAP_DIR is set; this script runs `run 0` on them and prints

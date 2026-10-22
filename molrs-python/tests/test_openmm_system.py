@@ -5,7 +5,7 @@ typed frame, which OpenMM's ``createSystem`` needs for the PDB
 The structure tests run everywhere. The OpenMM tests run only where
 ``openmm`` is importable (binding tests never require it): they build the
 System from the two written files, as a generated deck does, and price the
-fixtures' molecules (``molrs/src/ff/testdata/openmm``), whose OpenMM
+fixtures' molecules (``crates/molrs/src/ff/testdata/openmm``), whose OpenMM
 energies the fixtures pin.
 """
 
@@ -21,7 +21,7 @@ import molrs
 import numpy as np
 import pytest
 
-FIXTURES = Path(__file__).resolve().parents[2] / "molrs/src/ff/testdata/openmm"
+FIXTURES = Path(__file__).resolve().parents[2] / "crates/molrs/src/ff/testdata/openmm"
 OFFSET = 50.0  # Å between copies
 
 

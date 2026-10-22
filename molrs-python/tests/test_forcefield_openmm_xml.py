@@ -1,6 +1,6 @@
 """OpenMM force-field XML across the FFI seam, and ``ForceField.materialize_one_four``.
 
-The fixtures are the Rust check's (``molrs/src/ff/testdata/openmm``): XML
+The fixtures are the Rust check's (``crates/molrs/src/ff/testdata/openmm``): XML
 cut from CHARMM36, AMBER ff14SB and OPLS-AA, whose energies the Rust tests
 hold to OpenMM's and LAMMPS's.
 """
@@ -14,7 +14,7 @@ import numpy as np
 import pytest
 from molrs.io.openmm_xml import OpenmmXmlReader, OpenmmXmlWriter
 
-FIXTURES = Path(__file__).resolve().parents[2] / "molrs/src/ff/testdata/openmm"
+FIXTURES = Path(__file__).resolve().parents[2] / "crates/molrs/src/ff/testdata/openmm"
 
 
 def test_a_charmm_port_reads_every_section() -> None:

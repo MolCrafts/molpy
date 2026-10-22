@@ -1,0 +1,93 @@
+[package]
+name = "molwasm"
+version = "0.19.0"
+edition = "2024"
+authors = ["MolCrafts"]
+description = "WebAssembly bindings of the molpy project (the molrs core)"
+license = "BSD-3-Clause"
+repository = "https://github.com/MolCrafts/molrs"
+homepage = "https://github.com/MolCrafts/molrs"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+name = "molwasm"
+
+[workspace]
+
+# Standalone workspace root: does NOT inherit the repo root's [profile.release].
+# Keep the four keys identical to ../Cargo.toml so every root ships the same
+# optimisation. This block was missing until 2026-09-22, so every published
+# wasm bundle before then was built without lto/opt-level/codegen-units while
+# the other four binder roots had them.
+[profile.release]
+codegen-units = 1
+lto = "thin"
+opt-level = 3
+strip = "symbols"
+
+[features]
+# Default build = full (all subsystems). Each forwards to the merged crate's
+# matching module feature.
+default = ["smiles", "io", "compute", "conformer", "voronoi", "stream", "builder"]
+# Graphene / nanotube / walk generators behind `builder.rs`.
+builder = ["molrs/builder"]
+smiles  = ["io", "molrs/smiles"]
+io      = ["molrs/io"]
+# Live-stream wire encoding (MessagePack / JSON). On wasm32 this pulls only
+# the codec and `ControlCommand`; `FrameServer` is native-only upstream.
+stream  = ["io", "molrs/stream"]
+# `serde`: every compute result reaches JS as its core type, serialised.
+compute = ["molrs/compute", "molrs/serde"]
+conformer = ["molrs/conformer"]
+# Radical Voronoi tessellation + its domain/void consumers. Pure Rust, no FFI,
+# so it is WASM-clean and ships in the default build.
+voronoi = ["compute", "molrs/voronoi"]
+
+[dependencies]
+wasm-bindgen = "0.2.123"
+serde = { version = "1", features = ["derive"] }
+serde-wasm-bindgen = "0.6"
+js-sys = "0.3"
+web-sys = { version = "0.3", features = ["console"] }
+
+# The merged crate (core always on via `zarr`; sub-system modules pulled in by
+# the wasm features above) + the FFI handle layer.
+#
+# Both `default-features = false` below are deliberate: this crate ships bytes
+# over the wire, so it must not pull `filesystem` (host zlib), `rayon` (no
+# threads here) or any sub-system it does not bind (bundle weight).
+molrs = { path = "../crates/molrs", package = "molcrafts-molrs", version = "0.19.0", default-features = false, features = ["zarr"] }
+molrs-ffi = { path = "../crates/molrs-ffi", package = "molcrafts-molrs-ffi", version = "0.19.0", default-features = false }
+
+ndarray = "0.17"
+# Complex column element type (`Column::get::<Complex<f32|f64>>`).
+num-complex = "0.4"
+zarrs = { version = "0.23", default-features = false }
+# Packed `*.mrec.zip` stores hold stored (never deflated) entries, so the
+# reader needs only the zip container walk — no compression backends.
+zip = { version = "9", default-features = false }
+console_error_panic_hook = "0.1"
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+getrandom = { version = "0.4", features = ["wasm_js"] }
+
+[dev-dependencies]
+wasm-bindgen-test = "0.3"
+
+[package.metadata.wasm-pack.profile.release]
+# Binaryen wasm-opt after wasm-bindgen. -O1: ~19% smaller than rustc-only
+# release on Apple M4 (~4s); ABI/smoke-tested locally. Requires `wasm-opt` on PATH
+# (e.g. `brew install binaryen`).
+# rustc enables bulk-memory and nontrapping-fptoint for wasm32 by default;
+# older binaryen releases reject them unless the features are named.
+wasm-opt = ["-O1", "--enable-bulk-memory", "--enable-nontrapping-float-to-int"]
+
+# Standalone workspace root: does NOT inherit the repo root's [profile.dev].
+# Keep these two keys identical to ../Cargo.toml -- they are what keeps the
+# shared target/ small enough to stay fast on Lustre (see ../Cargo.toml for the
+# measurement).
+[profile.dev]
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+debug = false

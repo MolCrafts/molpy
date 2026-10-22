@@ -10,8 +10,8 @@
   ``id``, charge or coordinate is refused by column and rows (``OSError``
   from a frame writer, as its other refusals).
 
-The Rust tests (``molrs/src/ff/engine_codec_check.rs``,
-``molrs/src/io/null_cells.rs``) own the cases; these prove the seam.
+The Rust tests (``crates/molrs/src/ff/engine_codec_check.rs``,
+``crates/molrs/src/io/null_cells.rs``) own the cases; these prove the seam.
 """
 
 from __future__ import annotations

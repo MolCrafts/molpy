@@ -1145,7 +1145,7 @@ impl PyFrame {
     ///
     /// The capsule wraps a *clone* of this frame's ``FrameRef`` handle. The
     /// clone shares the same underlying ``Store`` (``Rc<RefCell<Store>>``),
-    /// so a consumer (e.g. Atomiverse C++ via the molrs-cxxapi bridge) that
+    /// so a consumer (e.g. Atomiverse C++ via the molcxx bridge) that
     /// resolves the capsule reads and writes the *same* frame data: no deep
     /// copy is made. The capsule's destructor reclaims the boxed
     /// ``FrameRef`` on capsule destruction, dropping its two ``Rc``
@@ -1230,7 +1230,7 @@ impl PyFrame {
 /// the wrapped `*mut FrameRef`. PyO3's `PyCapsule::new` heap-boxes the
 /// payload, so the capsule's `void*` is `*mut FrameRefPtr`; the transparent
 /// repr makes that pointer reinterpretable as `*mut *mut FrameRef`, which is
-/// how Atomiverse's molrs-cxxapi bridge resolves it
+/// how Atomiverse's molcxx bridge resolves it
 /// (`frame_clone_from_addr`).
 #[repr(transparent)]
 struct FrameRefPtr(*mut FrameRef);

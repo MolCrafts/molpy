@@ -52,7 +52,7 @@ One crate, `molcrafts-molrs`, whose sub-systems are feature-gated modules
 | `md` | In-process molecular dynamics: velocity-Verlet and Langevin integration over force-field potentials |
 | `stream` | MessagePack/JSON frame transport and native WebSocket streaming |
 
-A separate `molcrafts-molrs-cxxapi` crate (built from source, not published)
+A separate `molcrafts-molcxx` crate (built from source, not published)
 provides a CXX bridge for zero-copy integration with Atomiverse C++.
 
 ## Install
@@ -78,7 +78,7 @@ molcrafts-molrs = { version = "0.19", features = ["io", "smiles", "conformer"] }
 | **Python (desktop)** | `pip install molcrafts-molrs` | `import molrs` |
 | **Python (browser / Pyodide)** | `await micropip.install("molcrafts-molrs")` | `import molrs` |
 | **JS (browser)** | `npm install @molcrafts/molrs` | wasm-bindgen API (not `import molrs`) |
-| **C / C++** | `molrs-capi-*.tar.gz` from [GitHub Releases](https://github.com/MolCrafts/molrs/releases) | link `libmolrs_capi` + `#include "molrs.h"` — see `docs/interop.md`, Path C |
+| **C / C++** | `molc-*.tar.gz` from [GitHub Releases](https://github.com/MolCrafts/molrs/releases) | link `libmolc` + `#include "molrs.h"` — see `docs/interop.md`, Path C |
 
 PyPI ships **desktop** wheels (manylinux / macOS / Windows) and a **Pyodide
 (Emscripten)** wheel for micropip. The npm package is a separate **wasm-bindgen**
@@ -132,7 +132,7 @@ python -c "import molrs; print(molrs.io.smiles.SmilesIr('O').n_components)"
 using the same flags as release publishing:
 
 ```bash
-cd molrs-wasm
+cd molwasm
 wasm-pack build --release --target bundler --scope molcrafts --out-name molrs
 ```
 

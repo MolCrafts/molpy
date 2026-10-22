@@ -4,7 +4,7 @@ These are FFI-seam tests: they prove that the Rust ``SmilesError`` crosses as
 one Python class carrying the four facts it owns — ``kind``, ``span``,
 ``input``, ``notation`` — instead of collapsing to a bare ``ValueError``
 message. They re-derive no chemistry: every ``kind`` asserted here is the
-variant the Rust unit tests in ``molrs/src/io/smiles/`` already pin
+variant the Rust unit tests in ``crates/molrs/src/io/smiles/`` already pin
 (``parser.rs`` for ``UnclosedBranch``, ``cgsmiles/parser.rs::split_blocks``
 for ``UnexpectedEnd``, ``cgsmiles/to_atomistic.rs`` /
 ``cgsmiles/templates.rs`` for ``CgNotExpandable``), reused only to show
@@ -19,12 +19,12 @@ import molrs
 import pytest
 
 # An unterminated block: ``split_blocks`` finds no ``}`` and reports
-# ``UnexpectedEnd`` (molrs/src/io/cgsmiles/parser.rs, the
+# ``UnexpectedEnd`` (crates/molrs/src/io/cgsmiles/parser.rs, the
 # ``input[pos..].find('}')`` arm).
 UNTERMINATED_BLOCK = "{[#A]"
 
 # A branch that never closes: ``parse_branch`` reports ``UnclosedBranch``
-# spanned at the ``(`` it opened (molrs/src/io/smiles/parser.rs).
+# spanned at the ``(`` it opened (crates/molrs/src/io/smiles/parser.rs).
 UNCLOSED_BRANCH = "C("
 
 # A base-only CGsmiles string: it parses, but there is no fragment table to
@@ -32,7 +32,7 @@ UNCLOSED_BRANCH = "C("
 BASE_ONLY = "{[#A][#B]}"
 
 # A bracket atom whose symbol is not an element: the SMILES parser reports
-# ``InvalidElement`` naming ``Xx`` (molrs/src/io/smiles/parser.rs, the bracket
+# ``InvalidElement`` naming ``Xx`` (crates/molrs/src/io/smiles/parser.rs, the bracket
 # symbol arm; the same kind and payload
 # ``smiles/validate.rs::validate_symbol`` uses for the same rule).
 UNKNOWN_BRACKET_ELEMENT = "[Xx]"

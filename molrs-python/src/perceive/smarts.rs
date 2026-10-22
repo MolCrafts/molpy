@@ -101,7 +101,7 @@ impl PySmartsMatch {
 
 /// Compiled SMARTS query, exposed to Python as `molrs.perceive.SmartsPattern`.
 ///
-/// A thin wrapper over the core [`SmartsPattern`] (`molrs/src/core/chem/smarts`)
+/// A thin wrapper over the core [`SmartsPattern`] (`crates/molrs/src/core/chem/smarts`)
 /// — the same backtracking subgraph-isomorphism engine that drives the OPLS-AA
 /// typifier. Matching is non-uniquified (RDKit ``uniquify=False``): every
 /// distinct query-atom → mol-atom embedding is reported as a
@@ -354,7 +354,7 @@ impl PySmartsPattern {
 
 /// Compiled reaction SMARTS, exposed to Python as `molrs.perceive.Reaction`.
 ///
-/// A thin wrapper over the core [`Reaction`] (`molrs/src/core/chem/smarts`).
+/// A thin wrapper over the core [`Reaction`] (`crates/molrs/src/core/chem/smarts`).
 /// Parses ``reactants >> products`` (tolerating an ignored ``>agent>`` field),
 /// derives the graph edit from the Daylight atom-map diff, and applies it to one
 /// matched occurrence in place. Reacting atoms may carry SMARTS queries

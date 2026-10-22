@@ -5,7 +5,7 @@ name, params=None)`` and the per-category ``def_type`` of the returned style
 handle — the type's name, then its endpoints (``AtomType`` handles), then
 keyword params — which returns the type's handle. The Rust builder semantics
 (style identity, arity, the conflict rule, names never split) are unit-tested
-in ``molrs/src/ff/forcefield/mod.rs``. These tests prove only the binding
+in ``crates/molrs/src/ff/forcefield/mod.rs``. These tests prove only the binding
 seam: the typed doors, the str/float split of params, and error mapping.
 """
 
@@ -378,7 +378,7 @@ def test_a_force_field_pickles_with_its_whole_definition():
 # ---- PotentialCompiler: the one door from a ForceField to kernels ----
 #
 # The compile semantics (skipping absent blocks, the 1.5 kcal/mol closed form,
-# refusals) are unit-tested in ``molrs/src/ff/compile/mod.rs``. These
+# refusals) are unit-tested in ``crates/molrs/src/ff/compile/mod.rs``. These
 # tests prove only the binding seam: construction, the three doors, their
 # return types, error mapping and the single public path.
 

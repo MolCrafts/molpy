@@ -110,8 +110,8 @@ cargo mrs-doctest        # rustdoc examples
 scripts/check.sh verify  # the pre-push gate: every check, once
 ```
 
-The binding crates (`molrs-python`, `molrs-wasm`, `molrs-capi`,
-`molrs-cxxapi`, `molrs-ffi`) are standalone workspaces; build each with
+The binding crates (`molrs-python`, `molwasm`, `molc`,
+`molcxx`, `molrs-ffi`) are standalone workspaces; build each with
 `cargo build --manifest-path <crate>/Cargo.toml`.
 
 ### Python extension
@@ -131,7 +131,7 @@ python -c "import molrs; print(molrs.io.smiles.read_smiles('O').n_components)"
 For the npm package, build the same bundler target used by release publishing:
 
 ```bash
-cd molrs-wasm
+cd molwasm
 wasm-pack build --release --target bundler --scope molcrafts --out-name molrs
 ```
 

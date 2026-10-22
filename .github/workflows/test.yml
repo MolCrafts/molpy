@@ -56,7 +56,7 @@ jobs:
       - uses: MolCrafts/molcrafts-ci/actions/setup-rust@01317cbc43f961ab14c35d51d48c081a1acfe815
         with:
           cache: native
-      - run: scripts/check.sh --report .ci-out test ${{ needs.context.outputs.tier == 'full' && 'ffi cxx ext' || '' }}
+      - run: scripts/check.sh --report .ci-out test ${{ needs.context.outputs.tier == 'full' && 'ffi cxx' || '' }}
       # The counts in the run and pull request summary; report only. No
       # coverage here: instrumenting the build is the nightly's job.
       - name: Report

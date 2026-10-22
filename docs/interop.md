@@ -93,7 +93,7 @@ Field). Same composition; no electrostatics.
 
 ## Path B — Python / WASM via the `molrs-ffi` handle API
 
-Language binders (`molrs-python`, `molrs-wasm`, the C API) link `molrs-ffi` and hold
+Language binders (`molrs-python`, `molwasm`, the C API) link `molrs-ffi` and hold
 a **handle** — a `FrameRef` (a `FrameId` paired with the shared `FrameArenaCell` that owns the frame) — forwarding
 every column access through the shared helpers. Numeric columns are borrowed as
 contiguous slices (zero-copy); strings are copied (they aren't contiguous scalars).
@@ -156,7 +156,7 @@ cross-image contract is the `[F; 3]` surface only: `distance`, `distance_grad`,
 `contains_point`, `bounds` — none panics on finite input. The batched
 `contains(&Fnx3)` can panic on a malformed array and is not part of it.
 
-Enforcement on the supply side: `molrs-ffi/src/abi.rs` carries a **layout
+Enforcement on the supply side: `crates/molrs-ffi/src/abi.rs` carries a **layout
 snapshot test** (size / align / field offsets of every FFI-crossing type,
 committed as `src/layout.snapshot`). Changing any of those layouts within a
 minor fails CI; a toolchain update that alone changes the report is treated
@@ -174,17 +174,17 @@ re-align and ship after ("Release before molpy" iron law).
 
 ---
 
-## Path C — C ABI (`libmolrs_capi`)
+## Path C — C ABI (`libmolc`)
 
 The **only sanctioned dynamic-linking deliverable**. External C / C++ / HPC
-consumers link `libmolrs_capi` (cdylib or staticlib) against the
-cbindgen-generated `molrs.h` — a flat, handle-based C API over frames,
+consumers link `libmolc` (cdylib or staticlib) against the
+cbindgen-generated `molc.h` — a flat, handle-based C API over frames,
 blocks, boxes, force fields, and regions (feature surface: always-on core
 + perceive, plus `ff`, `io`, `smiles`; every object lives in one global,
 mutex-protected handle registry, so treat the library as single-threaded per
 process).
 
-- **Download**: `molrs-capi-<version>-<platform>.tar.gz` (lib + `molrs.h` +
+- **Download**: `molc-<version>-<platform>.tar.gz` (lib + `molc.h` +
   LICENSE + sha256) attached to each GitHub Release on `v*` tags.
 - **Identity**: `molrs_version()` reports the embedded molrs release for
   diagnostics. There is no C or CXX API version handshake before 1.0;
@@ -231,7 +231,7 @@ is linked against a bridge without it. A vector argument that is not
 exactly three values, or a ragged point list, throws `rust::Error`; nothing
 falls back to the origin or to an empty answer.
 
-The rest of the CXX bridge (`molrs-cxxapi`, consumed by Atomiverse) names
+The rest of the CXX bridge (`molcxx`, consumed by Atomiverse) names
 each item after the molrs owner it fronts:
 
 | Bridge item | molrs owner |

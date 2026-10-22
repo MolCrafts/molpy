@@ -457,7 +457,7 @@ def test_keys_convention_exposed():
 
 def test_column_spec_exposes_dimension_and_the_unit_derived_from_it():
     # SchemaDocument: `x` has dimension "length", whose real-preset unit is
-    # "angstrom" (molrs/src/core/schema/document.rs).
+    # "angstrom" (crates/molrs/src/core/schema/document.rs).
     x = molrs.core.schema.column("x")
     assert x is not None
     assert x.dimension == "length"
@@ -511,7 +511,7 @@ def test_scale_uniform_about_origin():
 # --------------------------------------------------------------------------- #
 #
 # Seam only: the mass-weighted centre R = sum(m_i r_i) / sum(m_i) and every
-# refusal are proven by molrs/src/op/geometry.rs. These tests check the call
+# refusal are proven by crates/molrs/src/op/geometry.rs. These tests check the call
 # shape per leaf, the ndarray that crosses back, and the error mapping (every
 # CenterError is a ValueError naming the int handle).
 

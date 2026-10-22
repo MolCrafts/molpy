@@ -4,7 +4,7 @@ These are FFI-seam tests: they prove that ``molrs.io.cgsmiles.CgSmilesIr`` impor
 constructs, hands every fact of the notation across the boundary with the
 right Python type and spelling, and maps a malformed string to ``ValueError``.
 They re-derive no numeric: every count asserted here is a value the Rust unit
-tests in ``molrs/src/io/cgsmiles/`` already prove (F2 in
+tests in ``crates/molrs/src/io/cgsmiles/`` already prove (F2 in
 ``resolve.rs`` / ``to_atomistic.rs``, F8 in ``resolve.rs`` /
 ``instantiate.rs``), reused only to show Python sees the same number.
 

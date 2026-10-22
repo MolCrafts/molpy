@@ -1,7 +1,7 @@
 """Python-binding coverage for the Weisfeiler-Lehman structural graph hash.
 
 Exercises the PyO3 surface of the native ``graph_hash`` primitive
-(``molrs/src/core/graph_hash.rs``) exposed on ``Atomistic`` and
+(``crates/molrs/src/core/graph_hash.rs``) exposed on ``Atomistic`` and
 ``CoarseGrain``:
 
 - ``structural_hash()`` — isomorphism-invariant 64-bit dedup key,

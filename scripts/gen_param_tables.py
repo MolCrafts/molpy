@@ -3,7 +3,7 @@
 
 molrs parses NO parameter text at runtime. This script reads the upstream tables
 from `$AMBERHOME` and emits typed Rust `const`s into
-`molrs/src/ff/params/`. The emitted `.rs` is the single in-repo source
+`crates/molrs/src/ff/params/`. The emitted `.rs` is the single in-repo source
 of truth: the raw `.DAT` / `.DEF` files are NOT vendored.
 
 Fourteen tables, from two upstream directories:
@@ -43,7 +43,7 @@ than a rule that silently never matches.
 
 The other tables under `ff/params/` are not this script's: `oplsaa.rs` is
 generated from GROMACS's `oplsaa.ff` by `cargo mrs-gen-opls`
-(`molrs/examples/gen_opls_params.rs`); `oplsaa_typing.rs`, `mmff.rs`, `uff.rs`,
+(`crates/molrs/examples/gen_opls_params.rs`); `oplsaa_typing.rs`, `mmff.rs`, `uff.rs`,
 `clpol.rs`, `amber.rs` and `mod.rs` are hand-maintained source.
 
 Run it where AmberTools, `rustfmt` (which formats the output as `cargo fmt`
@@ -69,7 +69,7 @@ from pathlib import Path
 from typing import ClassVar
 
 REPO = Path(__file__).resolve().parent.parent
-OUT_DIR = REPO / "molrs/src/ff/params"
+OUT_DIR = REPO / "crates/molrs/src/ff/params"
 
 # Every emitted table opens by saying where it came from — which is the ONLY place
 # provenance belongs. It is not a directory name, and it is not the table's name:

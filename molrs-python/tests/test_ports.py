@@ -8,8 +8,8 @@ and its ports, and that the port vocabulary crosses as the notation glyph.
 
 They re-derive no chemistry and no geometry: every claim about ports,
 embedding and ``frag_id`` propagation is owned by the Rust unit tests in
-``molrs/src/core/port.rs``, ``molrs/src/io/cgsmiles/`` and
-``molrs/src/conformer/``, and is reused here only to show Python sees the same
+``crates/molrs/src/core/port.rs``, ``crates/molrs/src/io/cgsmiles/`` and
+``crates/molrs/src/conformer/``, and is reused here only to show Python sees the same
 answer. Fixtures are built in process; no third-party scientific software runs.
 """
 
@@ -254,7 +254,7 @@ def test_plain_smiles_ir_refuses_a_descriptor() -> None:
 # merge / link
 #
 # Seam only: the handle maps, the leaving-group removal and the refusals are
-# proven by ``molrs/src/core/port.rs`` and ``link.rs``. These tests
+# proven by ``crates/molrs/src/core/port.rs`` and ``link.rs``. These tests
 # check the Python shapes (the merged atoms, the new bond's view) and that
 # every refusal is a ``ValueError`` that leaves the graph as it was.
 # ---------------------------------------------------------------------------

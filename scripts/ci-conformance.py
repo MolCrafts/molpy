@@ -6,7 +6,7 @@ The suite enters through the ``*.mrec`` doors at the top of ``molrs.io``
 ``write_mrec_system``, ``read_mrec_trajectory``, ``read_mrec_meta``, …) and
 the store classes of
 ``molrs.io.mrec`` (``MrecReader``, ``MrecWriter``, ``SequenceSchema``,
-``ForceFieldSection``), all implemented in ``molrs/src/io/mrec``. This does not
+``ForceFieldSection``), all implemented in ``crates/molrs/src/io/mrec``. This does not
 collect ``molrs-python/tests`` or any other binding suite. An adapter author writes two methods; every assertion stays
 in molrec.
 """

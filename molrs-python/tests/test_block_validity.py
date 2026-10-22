@@ -9,8 +9,8 @@ labelled fragment loses its labels and a partially declared ``h_count`` tells
 hydrogen repletion that the undeclared atoms are saturated.
 
 These are FFI-seam tests. The chemistry they lean on is owned by the Rust unit
-tests (``molrs/src/core/molgraph.rs`` for ``frag_id``,
-``molrs/src/perceive/hydrogens.rs`` for repletion); nothing here re-derives a
+tests (``crates/molrs/src/core/molgraph.rs`` for ``frag_id``,
+``crates/molrs/src/perceive/hydrogens.rs`` for repletion); nothing here re-derives a
 number, and no third-party scientific software runs.
 """
 

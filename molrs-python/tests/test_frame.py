@@ -827,7 +827,7 @@ class TestFrameSubset:
     """Seam of ``molrs.core.Frame.subset``.
 
     Row gathering and relation renumbering are proven by
-    ``molrs/src/core/frame.rs``; these check the return type, the row
+    ``crates/molrs/src/core/frame.rs``; these check the return type, the row
     normaliser (bool mask, int rows, negative wrap) and the error mapping.
     """
 
