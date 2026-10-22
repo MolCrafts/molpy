@@ -42,7 +42,6 @@ __pycache__/
 
 # Codex local state
 .agents/
-AGENTS.md
 
 # Claude Code scheduler lock
 .claude/scheduled_tasks.lock
