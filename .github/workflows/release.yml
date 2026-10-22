@@ -45,7 +45,7 @@ jobs:
     permissions:
       contents: read
     name: release
-    uses: MolCrafts/molcrafts-ci/.github/workflows/context.yml@3b8332e6c8f2402618d21126f7fa4d50f4acb6dc
+    uses: MolCrafts/molcrafts-ci/.github/workflows/context.yml@01317cbc43f961ab14c35d51d48c081a1acfe815
 
   guard:
     name: release / guard
@@ -66,15 +66,15 @@ jobs:
           version=$(python3 -c 'import tomllib; print(tomllib.load(open("Cargo.toml", "rb"))["workspace"]["package"]["version"])')
           [ "$GITHUB_REF_NAME" = "v$version" ] || { echo "::error::tag $GITHUB_REF_NAME is not v$version"; exit 1; }
       # The commit's test.yml run, instead of running it again. A tag waits
-      # for every job of the full tier to have succeeded on this SHA (pushed
-      # to master first); a dispatch, for whatever `test / *` runs the commit
+      # for `test / result` (every job of the full tier) to have succeeded on
+      # this SHA (pushed to master first); a dispatch, for whatever `test / *` runs the commit
       # has. Any failed run fails the release; a re-run's newer result wins.
       - name: The commit's CI is green
         env:
           GH_TOKEN: ${{ github.token }}
           PUBLISH: ${{ needs.context.outputs.publish }}
           REQUIRED: >-
-            test / context|test / rust|test / python (ubuntu-latest)|test / python (macos-latest)|test / python (windows-latest)|test / docs|test / capi|test / capi (windows-latest)|test / wasm|test / mrec
+            test / result
         run: |
           python3 - <<'PY'
           import json, os, subprocess, sys, time
@@ -119,7 +119,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: MolCrafts/molcrafts-ci/actions/setup-rust@3b8332e6c8f2402618d21126f7fa4d50f4acb6dc
+      - uses: MolCrafts/molcrafts-ci/actions/setup-rust@01317cbc43f961ab14c35d51d48c081a1acfe815
       - name: The crate ships the repository's LICENSE
         run: |
           cmp LICENSE molrs/LICENSE
@@ -136,7 +136,7 @@ jobs:
       id-token: write
     steps:
       - uses: actions/checkout@v7
-      - uses: MolCrafts/molcrafts-ci/actions/setup-rust@3b8332e6c8f2402618d21126f7fa4d50f4acb6dc
+      - uses: MolCrafts/molcrafts-ci/actions/setup-rust@01317cbc43f961ab14c35d51d48c081a1acfe815
       - name: The crate ships the repository's LICENSE
         run: |
           cmp LICENSE molrs/LICENSE
@@ -171,7 +171,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: MolCrafts/molcrafts-ci/actions/setup-rust@3b8332e6c8f2402618d21126f7fa4d50f4acb6dc
+      - uses: MolCrafts/molcrafts-ci/actions/setup-rust@01317cbc43f961ab14c35d51d48c081a1acfe815
         with:
           cache: release-wasm
       - uses: ./.github/actions/setup-wasm
@@ -238,10 +238,10 @@ jobs:
           - { os: windows-latest, target: "", artifact: windows, manylinux: auto }
     steps:
       - uses: actions/checkout@v7
-      - uses: MolCrafts/molcrafts-ci/actions/setup-python@3b8332e6c8f2402618d21126f7fa4d50f4acb6dc
+      - uses: MolCrafts/molcrafts-ci/actions/setup-python@01317cbc43f961ab14c35d51d48c081a1acfe815
         with:
           python-version: "3.14"
-      - uses: MolCrafts/molcrafts-ci/actions/setup-rust@3b8332e6c8f2402618d21126f7fa4d50f4acb6dc
+      - uses: MolCrafts/molcrafts-ci/actions/setup-rust@01317cbc43f961ab14c35d51d48c081a1acfe815
         with:
           cache: release-py-${{ matrix.artifact }}
       - uses: PyO3/maturin-action@v1
@@ -267,10 +267,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: MolCrafts/molcrafts-ci/actions/setup-python@3b8332e6c8f2402618d21126f7fa4d50f4acb6dc
+      - uses: MolCrafts/molcrafts-ci/actions/setup-python@01317cbc43f961ab14c35d51d48c081a1acfe815
         with:
           python-version: "3.14"
-      - uses: MolCrafts/molcrafts-ci/actions/setup-rust@3b8332e6c8f2402618d21126f7fa4d50f4acb6dc
+      - uses: MolCrafts/molcrafts-ci/actions/setup-rust@01317cbc43f961ab14c35d51d48c081a1acfe815
         with:
           targets: wasm32-unknown-emscripten
           cache: release-py-pyodide
@@ -330,7 +330,7 @@ jobs:
           - { os: windows-latest, target: "", artifact: windows-x64 }
     steps:
       - uses: actions/checkout@v7
-      - uses: MolCrafts/molcrafts-ci/actions/setup-rust@3b8332e6c8f2402618d21126f7fa4d50f4acb6dc
+      - uses: MolCrafts/molcrafts-ci/actions/setup-rust@01317cbc43f961ab14c35d51d48c081a1acfe815
         with:
           targets: ${{ matrix.target }}
           cache: release-capi-${{ matrix.artifact }}

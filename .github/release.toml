@@ -1,0 +1,16 @@
+# What molrs publishes. molcrafts-ci check-workflows holds the workflows to it
+# and `molci audit` holds the GitHub settings to it.
+
+[crates-io]
+packages = ["molcrafts-molrs"]
+
+[npm]
+packages = ["@molcrafts/molrs"]
+
+[pypi]
+packages = ["molcrafts-molrs"]
+
+[pypi-nightly]
+packages = ["molcrafts-molrs-nightly"]
+
+[github-release]
