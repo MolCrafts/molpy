@@ -3,8 +3,8 @@ title: molpy unification — one project, one Python package, molrs as its nativ
 slug: molpy-unification
 status: approved
 created: 2026-10-22
-chain: molpy-unification (01-user-paths → 02-repo-merge → 03-api-fold → 04-binder-rename → 05-repo-rename)
-repos: molpy (01), molrs (02–05), molpack / molvis / molab / Atomiverse / molnex / molhub / monorepo (03, 04 consumers)
+chain: molpy-unification (01-user-paths → 02-repo-merge → 03-restructure → 04-downstream → 05-repo-rename)
+repos: molpy (01), molrs (02, 03, 05), molpack / molvis / molab / Atomiverse / molnex / molhub / monorepo (04)
 ---
 
 # molpy unification
@@ -17,20 +17,37 @@ through v0.19 match one to one. molpy pins `molcrafts-molrs>=0.X.0,<0.X+1`, and
 rebuild before molpy's tests see it. Every release costs two PRs, two tags and
 a pin bump.
 
-The end state mirrors numpy: one project named **molpy**, one Python package
-and one native core.
+The end state is one project named **molpy**, in one repository whose
+language bindings stand side by side (D10):
+
+```
+molpy/                     the project repository (today's molrs repo, renamed)
+├── README.md  CONTRIBUTING.md  LICENSE …   project level (molpy's)
+├── docs/  zensical.toml                     the project manual (molpy's)
+├── scripts/check.sh                         every gate
+├── Cargo.toml                               the workspace
+├── crates/
+│   ├── molrs/         Rust core (crates.io molcrafts-molrs)
+│   └── molrs-ffi/     the ABI layer
+├── molpy/             Python binding: pyproject.toml, Cargo.toml + src/ (pyo3),
+│                      molpy/ (the package, flat), tests/, examples/
+├── molwasm/           WebAssembly binding
+├── molc/              C binding
+└── molcxx/            C++ binding
+```
 
 | Today | End state |
 |---|---|
 | repo `MolCrafts/molrs` + repo `MolCrafts/molpy` | repo `MolCrafts/molpy` (the molrs repo, renamed) |
 | Python dist `molcrafts-molrs` (`import molrs`, native `molrs._native`) | gone, no shim |
 | Python dist `molcrafts-molpy` (pure Python) | `molcrafts-molpy`, a maturin abi3 wheel; native module `molpy._core` |
-| `molrs-python/` | folded into the molpy package; directory deleted |
+| `molrs-python/` | folded into `molpy/` (its pyo3 crate is `molpy/Cargo.toml` + `molpy/src/`) |
+| `molrs/`, `molrs-ffi/` | `crates/molrs/`, `crates/molrs-ffi/` (crate names unchanged) |
 | `molrs-wasm/` (npm `@molcrafts/molrs`) | `molwasm/` |
 | `molrs-capi/` (`molcrafts-molrs-capi`) | `molc/` |
 | `molrs-cxxapi/` (`molcrafts-molrs-cxxapi`) | `molcxx/` |
-| `molrs-ffi/` | unchanged |
-| Rust core crate `molcrafts-molrs` (`molrs`) | unchanged |
+| `molrs-ext-example/` | deleted |
+| molrs README, `docs/`, `molrs-python/docs` | deleted; useful pages folded into the molpy manual |
 
 ## Decisions (operator, 2026-10-22)
 
@@ -66,18 +83,37 @@ and one native core.
   hid real rot (`mp.io.read_prmtop_system`). External programs are tested
   with a mocked `subprocess`.
 
+- **D10. One project, equal bindings (ruled 2026-10-22).** The repository
+  is the molpy *project*, not the Python package's repository. Every
+  language binding is a self-contained `mol<language>/` directory at the
+  root (`molpy/`, `molwasm/`, `molc/`, `molcxx/`), each with its own build
+  manifest, sources and tests. The Rust core and the ABI layer, which are not
+  bindings, live in `crates/`. The project manual, README and contributor
+  files are molpy's, at the root.
+- **D11. Flat Python package.** The package is `molpy/molpy/`, next to the
+  binding's `Cargo.toml` and `src/`; maturin picks it up as the mixed
+  project's Python source. Every `src/` in the repository is Rust. Tests run
+  against an installed molpy (`maturin develop` puts `_core` into the
+  package; CI installs the tested wheel and runs `pytest`, never
+  `python -m pytest` from a directory that shadows it).
+- **D12. molrs-ext-example is deleted.**
+- **D13. molrs's docs are folded.** The molrs-python docs site and the
+  molrs README are deleted. `attribution`, `interop` and `mic-matrix` move to
+  the manual's `docs/developer/`; `releasing` folds into `release-process`.
+- **D14. This round changes this repository only.** Downstream repositories
+  migrate in 04, after the operator reviews the structure. Releases stay
+  frozen until then. The result is force-pushed after review.
 ## Chain
 
-No release happens inside 02. 03 and its downstream migrations ship together
-as one minor release.
+No release happens from 02 until 04 is done.
 
 | Link | Scope | Depends |
 |---|---|---|
 | 01-user-paths | §1, in the molpy repo. | — |
 | 02-repo-merge | §2. | 01 |
-| 03-api-fold | §3. Breaking change; minor bump; downstream in the same minor. | 02 |
-| 04-binder-rename | §4. | 03 |
-| 05-repo-rename | §5. | 03 |
+| 03-restructure | §3: the D10 layout, the Python fold, the binder renames. Breaking. | 02 |
+| 04-downstream | §4: every downstream repository moves to `molpy`; the minor release. | 03 |
+| 05-repo-rename | §5. | 04 |
 
 ## 1. 01-user-paths — the user-facing test contract (molpy repo)
 
@@ -211,76 +247,89 @@ Python API and be tested together.
 measured locally on the dev-profile wheel the `python` gate builds.
 molpy loses its Python 3.14 leg until 03; it is pure Python on an abi3 core.
 
-## 3. 03-api-fold — one Python package, native `molpy._core`
+## 3. 03-restructure — the D10 layout, one Python package, the binder renames
 
-**Goal.** molrs's Python API becomes molpy's. Each mirror module is the place
-where its names are defined, not a re-export.
+**Goal.** The repository has its final shape: equal bindings around a
+Rust core, one Python package with the native module `molpy._core`, and no
+`molrs` Python package.
 
-**Scope.**
+**Scope, in local commits (reviewed before the force-push).**
 
-- The pyo3 crate builds `molpy._core` (maturin `module-name = "molpy._core"`,
-  `python-source` pointing at the molpy package). `molcrafts-molpy` becomes an
-  abi3 maturin wheel. Its version comes from `[workspace.package].version`.
-- Fold `molrs-python/python/molrs/*` into molpy's subsystems of the same name.
-  Rename `_protocol.py` and `_style_declaration.py` under D4.
-- Delete `molrs-python/`, `molpy.version.check_molrs_version`, the
-  `molcrafts-molrs` Python dist, and every molpy-vs-molrs identity assertion
-  (`test_public_paths.py`, `test_init.py`, R4's exception list).
-- The ABI capsules keep their names (`molrs.FrameRef/<major.minor>`,
-  `molrs.ForceFieldRef/<major.minor>`), which are defined by molrs-ffi. Their
-  host module becomes `molpy._core`, and that is an ABI change: bump the minor.
-- **Downstream, in the same minor (D2):**
-  - molpack `python/`;
-  - molvis `python/`;
-  - molab;
-  - Atomiverse (`python/` and its vendored `molrs/`);
-  - molnex and molhub (pin bump);
-  - the monorepo `repos.toml` and the `*-ci-align` mirrors.
-
-**Acceptance.**
-
-- `import molrs` fails in a fresh environment with only `molcrafts-molpy`
-  installed.
-- `rg -n 'import molrs|from molrs' --type py` is empty across all MolCrafts
-  repos.
-- molpack's capsule round-trip tests pass against `molpy._core`.
-
-**Risk.** This is the one breaking release. Every downstream PR must be ready
-before the tag. Rollback means re-tagging the previous minor; no shim is
-offered.
-
-## 4. 04-binder-rename
-
-**Scope.**
-
-- `molrs-wasm` → `molwasm`: directory, crate, npm package (today
-  `@molcrafts/molrs`), and molvis's `@molcrafts/molrs` dependency and
-  jsdelivr URLs.
-- `molrs-capi` → `molc`: directory, crate, library and header names.
-- `molrs-cxxapi` → `molcxx`: directory, crate, library and header names.
-- `molrs-ffi` and the core crate are unchanged.
-- Re-point npm and crates.io Trusted Publishing. Update the prek hooks
-  (link-static / verify-shared-dylib) and every `--manifest-path`.
+1. **Rust layout.**
+   - `molrs/` and `molrs-ffi/` move under `crates/`.
+   - `molrs-wasm/` becomes `molwasm/`, `molrs-capi/` becomes `molc/`, and
+     `molrs-cxxapi/` becomes `molcxx/`: directories, crate and library names,
+     headers and CMake targets.
+   - `molrs-ext-example/` is deleted.
+   - The workspace, the binders' path dependencies, `.cargo/config.toml`
+     aliases and the shared target directory follow.
+2. **The Python fold.**
+   - `molrs-python/`'s pyo3 crate becomes `molpy/Cargo.toml` + `molpy/src/`,
+     built as `molpy._core`. Every `#[pyclass(module = "molrs.…")]` and
+     registered submodule name becomes `molpy.…`.
+   - The ABI capsule names (`molrs.FrameRef/<major.minor>`, …) are molrs-ffi's
+     and stay.
+   - Each `molrs-python/python/molrs/<m>` merges into `molpy/molpy/<m>`. The
+     molrs module is the base, and molpy's additions join it (`Am1BccModel`
+     in `ff.charge`, the metric readers in `io.*`, the selectors in `core`, …).
+     molpy's identity re-export shells disappear.
+   - `_native.pyi` becomes `_core.pyi`; the `_protocol` and
+     `_style_declaration` modules lose their underscore (D4).
+   - `molpy/src/molpy/` becomes `molpy/molpy/` (D11).
+   - `molpy/pyproject.toml` builds with maturin.
+   - `molrs-python/tests` join `molpy/tests`, and `import molrs` becomes
+     `import molpy as mp`.
+   - `molpy.version.check_molrs_version` is deleted; the version comes from
+     `[workspace.package].version`.
+3. **Project level.**
+   - molpy's `README.md`, `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md`,
+     `SECURITY.md`, `LICENSE`, `docs/` and `zensical.toml` move to the root.
+   - molrs's README, root `docs/` and `molrs-python/docs` go, per D13.
+4. **Gates and CI.**
+   - `scripts/check.sh`: `python` builds and tests the molpy wheel; `types`
+     checks `molpy/molpy/_core.pyi`; `docs` builds the one manual; the
+     separate `molpy` and `molpy_docs` gates fold into those.
+   - `test.yml`, `release.yml` and `nightly.yml` use the new paths;
+     `release.yml` publishes `molcrafts-molpy` and no longer publishes
+     `molcrafts-molrs` to PyPI.
+   - The binder directories in the prek hooks, `dependabot.yml` and
+     `.gitignore` follow.
 
 **Acceptance.**
 
-- `rg 'molrs-(wasm|capi|cxxapi)'` is empty, apart from changelogs.
-- `prek run --all-files --hook-stage pre-push` is green.
+- `scripts/check.sh verify` passes.
+- `import molrs` fails in a fresh environment that has only the built
+  `molcrafts-molpy` wheel.
+- `rg -n 'molrs-(python|wasm|capi|cxxapi)|molrs_capi|molrs_cxxapi|molrs\._native'`
+  finds only the changelog.
+- `git ls-files | rg '(^|/)_[a-z][^/]*\.py$'` lists nothing but `_core`
+  stubs.
+
+**Risk.** This is one large breaking change. It is reviewed locally as a
+series of commits before the force-push, and downstream stays on the last
+release (0.19) until 04.
+
+## 4. 04-downstream — every consumer moves to molpy; the minor release
+
+- `import molrs` becomes `import molpy as mp` in molpack (`python/`), molvis
+  (`python/`), molab, Atomiverse, molnex and molhub, and in the monorepo's
+  `repos.toml` and `*-ci-align` mirrors.
+- The molvis npm dependency `@molcrafts/molrs` becomes the molwasm package.
+- molpack's capsule round trip runs against `molpy._core`. The capsule host
+  changed, so this is a minor (ABI) bump.
+- One `v*` tag publishes the crate, the npm package and `molcrafts-molpy`.
+- Re-point the publishing pipelines: crates.io, npm and PyPI Trusted
+  Publishing, and the prek link-static / verify-shared-dylib pair.
 
 ## 5. 05-repo-rename
 
-**Scope.**
-
-- Archive or delete the old `MolCrafts/molpy` repository, then rename
-  `MolCrafts/molrs` to `MolCrafts/molpy`.
-- Update the PyPI and crates.io Trusted Publishing repository bindings, the
-  docs domain, the fork remotes (Roy-Kid) and the monorepo `repos.toml`.
-
-**Acceptance.** A `v*` tag on the renamed repository publishes the crate, the
-wheel and the npm package.
+- Archive or delete MolCrafts/molpy, then rename MolCrafts/molrs to
+  MolCrafts/molpy.
+- Re-point the PyPI / crates.io / npm Trusted Publishing repository
+  bindings, the Cloudflare Pages project (root `.`), the fork remotes and the
+  monorepo `repos.toml`.
 
 ## Open questions
 
-- The name of the pyo3 crate after `molrs-python/` is gone.
 - The npm package name for molwasm (`@molcrafts/molwasm`?).
-- The C header prefix for molc and molcxx.
+- The C header names for molc and molcxx (`molc.h`, `molcxx.hpp`?).
